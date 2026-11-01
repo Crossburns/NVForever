@@ -75,7 +75,9 @@ Contents:
   for the owner: one save from a real MO2 start (sessions cannot start MO2), then check
   in MO2 that the plugin shows ticked in the right pane and the file is in the mod's
   folder (or in overwrite for a new one).
-- [ ] `editor open <plugin>` / choose the target plugin when editor mode starts (§6.1).
+- [x] `editor open <plugin>` / choose the target plugin when editor mode starts (§6.1;
+  console form, see the progress log). The "New plugin… / Open…" dialog waits for the UI
+  toolkit (§8).
 - [ ] Gizmo drag (mouse) instead of only the keys (§7.2); snap to surface.
 - [ ] A record picker for placing (search by Editor ID or name; the console's `SearchIndex`
   already indexes records) instead of typing a FormID.
@@ -207,6 +209,19 @@ turns and deletes. Smoke `editor-delete-undo` passes on 0x0010A206.
   is now made absolute first, and the scenario's pattern is strict enough to catch it.
 - Not checked: a save from a real MO2 start, and whether MO2 keeps the `plugins.txt` line
   when it refreshes after the game closes [hypothesis].
+
+### 2026-11-01 (second session): the target plugin
+
+- `editor open` lists what it could open: the loaded `.esp` files and the plugins in
+  `<home>\mods\`, each with its reference count, or "not yet" when it holds other
+  records. `editor open <Name.esp>` checks the plugin as a save would and makes it the
+  target. `editor save` without a name writes into the target, and a save with a name
+  makes that plugin the target. The panel shows the target.
+- The last target is kept as `Target=` under `[Editor]` in the home's `NVForever.ini`.
+  The first `editor` of the next run opens it again and says so, or says why it can't.
+- Smoke `editor-open-write` (lists the plugins, refuses FalloutNV.esm, opens a new
+  plugin, saves with no name) and `editor-open-last` (the next run reopens it and saves
+  into it).
 
 **Next** (phase 3 on): place new references from a picker (needs new FormIDs and
 next object ID upkeep), delete as disable-and-sink, undo, a gizmo drag instead of keys,
@@ -580,7 +595,9 @@ the decoder reads back the new value.
 - On entering: the simulation freezes (§3.5), the HUD hides, the mouse pointer shows, the
   camera detaches at the player's eye.
 - On first entering in a run, the target plugin is chosen: "New plugin…", "Open…" (a list
-  of the load order's plugins and `<home>\mods\`), or the last one used.
+  of the load order's plugins and `<home>\mods\`), or the last one used. Built for now
+  as console commands: `editor open` lists, `editor open <Name.esp>` picks, and the last
+  one used (`[Editor] Target=` in `NVForever.ini`) is opened on the first entry.
 - On leaving: the reset choices (§3.4), unsaved changes remain in the session (saved to
   the session file, §17.3; nothing is lost by leaving without saving), the camera returns
   to the player.

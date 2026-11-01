@@ -17237,6 +17237,37 @@ forbid = [
 
 
 [[scenario]]
+name = "editor-open-write"
+source = "local editor design §6.1: editor open lists the plugins and picks the target, refusing a master; editor save without a name writes into the target, which the home's INI remembers; editor-open-last reads it, so run them together"
+areas = ["editor"]
+paths = ["engine/nvf-play/src/editor.rs", "engine/nvf-play/src/console.rs"]
+env = { NVFOREVER_HOME = "editor-home-open", NVF_PLAY_TEST_EDITOR = "1", NVF_PLAY_TEST_EDITOR_REPLACE = "1", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:editor;17:editor open;17.3:editor open FalloutNV.esm;17.6:editor open EditOpen;18:editor select 0010A202;18.3:editor move 32 0 0;18.6:editor save;19.5:editor;20:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'console: Plugins to open', label = "editor open lists the plugins" },
+  { re = 'editor: not opened: FalloutNV\.esm holds \w+ records', label = "a master holding other records is refused" },
+  { re = 'editor: target EditOpen\.esp \((new|loaded, \d+ reference)', label = "the target is picked (loaded when the smoke home is kept from a run before)" },
+  { re = 'editor: saved 1 references and 0 new \(\) into .*EditOpen\.esp', label = "editor save without a name writes into the target" },
+]
+
+
+[[scenario]]
+name = "editor-open-last"
+source = "local editor design §6.1: the next run's first editor opens the last target again, and editor save without a name writes into it"
+areas = ["editor"]
+paths = ["engine/nvf-play/src/editor.rs", "engine/nvf-play/src/console.rs"]
+env = { NVFOREVER_HOME = "editor-home-open", NVF_PLAY_TEST_EDITOR = "1", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:editor;17:editor select 0010A202;17.5:editor move 0 32 0;18:editor save;19:editor;19.5:close" }
+# Smoke runs load the fixed masters whatever the home's list says: the plugin is named.
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--plugins", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm", "EditOpen.esp"]
+run_seconds = 22
+expect = [
+  { re = 'editor: target EditOpen\.esp \(loaded, 1 reference\(s\) of its own.*the last one used', label = "the last target is opened again, loaded with its reference" },
+  { re = 'editor: saved 1 references and 0 new \(\) into .*EditOpen\.esp', label = "saved into it without a name" },
+]
+
+
+[[scenario]]
 name = "editor-place-write"
 source = "owner 2026-11-01 (local editor design): editor mode places a new reference and saves it as the plugin's own; editor-place-load finds it, so run them together"
 areas = ["editor"]

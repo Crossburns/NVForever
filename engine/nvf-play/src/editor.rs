@@ -35,6 +35,15 @@
 //! - **From the console** (and test aids): `editor select <FormID>`, `editor move <dx>
 //!   <dy> <dz>` (world axes, game units), `editor turn <degrees>` (about Z), `editor
 //!   place <base>`, `editor delete` and `editor undo` do what a click and the keys do.
+//! - **The target plugin** (§6.1, through the console until editor mode has a UI):
+//!   `editor open` lists the plugins it could open (the loaded `.esp` files and those in
+//!   NVForever's mods folder, with what each holds); `editor open <Name.esp>` makes that
+//!   plugin the target, refusing what a save would refuse (a file of that name not loaded,
+//!   a plugin holding records other than placed references). A name no file has yet is a
+//!   new plugin. The target is remembered as `Target=` under `[Editor]` in the home's
+//!   `NVForever.ini` and opened again on the first `editor` of the next run; the panel
+//!   shows it. `editor save` without a name writes into it; with a name, that plugin
+//!   becomes the target.
 //! - **Saving**: `editor save <Name.esp>` in the console writes the moved references, at
 //!   their places in the run, into that plugin in NVForever's mods folder
 //!   (`<home>\mods\`, read before Data: `fnv_install::plugins`) with `fnv_esm::edit`,
@@ -105,8 +114,15 @@ pub struct Editor {
     to_place: Vec<(u32, bool)>,
     /// What Ctrl+Z puts back, newest last.
     history: Vec<Step>,
-    /// `editor save <name>` asked for.
+    /// `editor save <name>` asked for (empty: into the target plugin).
     pub save_asked: Option<String>,
+    /// `editor open <name>` asked for (empty: list the plugins it could open).
+    pub open_asked: Option<String>,
+    /// The plugin saves go into (`editor open`, `editor save <name>`, else the last one
+    /// used, from `[Editor] Target` in the home's INI).
+    pub target: Option<String>,
+    /// Whether this run has looked for the last target yet.
+    target_looked: bool,
     /// `editor select`, `editor move`, `editor turn` asked for, in order.
     pub ops: Vec<Op>,
     /// Whether the HUD was hidden (`tm`) before editor mode hid it.
@@ -179,7 +195,7 @@ pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Editor>().add_systems(Update, (switch, save, pick, nudge, place_new, describe, draw, outline).chain().in_set(PlaySet::Ui).after(crate::console::ConsoleSet));
+        app.init_resource::<Editor>().add_systems(Update, (switch, open, save, pick, nudge, place_new, describe, draw, outline).chain().in_set(PlaySet::Ui).after(crate::console::ConsoleSet));
     }
 }
 
@@ -233,6 +249,9 @@ fn switch(
         free.look_on_button = true;
         spawn(&mut commands);
         info!("editor: on");
+        if !std::mem::replace(&mut ed.target_looked, true) && ed.target.is_none() {
+            ed.open_asked = remembered(file.as_deref()).map(|n| format!("{LAST}{n}"));
+        }
     } else {
         ed.on = false;
         cam.menus_hidden = ed.menus_were_hidden;
@@ -249,9 +268,158 @@ fn switch(
     }
 }
 
+/// Whether `rest` (the words after `editor`) starts with the word `verb`.
+pub fn verb_is(rest: &str, verb: &str) -> bool {
+    rest.split_whitespace().next().is_some_and(|w| w.eq_ignore_ascii_case(verb))
+}
+
+/// Marks a target looked up from the INI (so `open` says it is the last one used).
+const LAST: &str = "\u{1}";
+
+/// The section and key of the home's INI that remember the last target [design].
+const INI_SECTION: &str = "Editor";
+const INI_TARGET: &str = "Target";
+
+/// The target remembered in the home's INI.
+fn remembered(file: Option<&crate::settings::SettingsFile>) -> Option<String> {
+    let text = std::fs::read_to_string(file?.0.as_ref()?).ok()?;
+    fnv_install::ini_get(&text, INI_SECTION, INI_TARGET).filter(|v| !v.trim().is_empty())
+}
+
+/// Remember `name` as the target in the home's INI (other lines kept); nothing without one.
+fn remember(file: Option<&crate::settings::SettingsFile>, name: &str) {
+    let Some(path) = file.and_then(|f| f.0.as_ref()) else { return };
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    if fnv_install::ini_get(&text, INI_SECTION, INI_TARGET).is_some_and(|v| v == name) {
+        return;
+    }
+    if fnv_install::guard_write(path, None).is_ok() {
+        if let Err(e) = std::fs::write(path, fnv_install::ini_set(&text, INI_SECTION, INI_TARGET, name)) {
+            warn!("editor: could not remember the target in {}: {e}", path.display());
+        }
+    }
+}
+
+/// What a target plugin would be, or why it cannot be one: a loaded plugin that holds
+/// only placed references (those editor mode writes so far), or a name no file has yet.
+fn check_target(name: &str, d: &crate::PlayData, home: &fnv_install::EngineHome) -> Result<(String, String), String> {
+    let name = plugin_name(name)?;
+    let target = Target::choose(home, &name);
+    let own = d.lo.plugins.iter().position(|p| p.name.eq_ignore_ascii_case(&name));
+    let replace = std::env::var("NVF_PLAY_TEST_EDITOR_REPLACE").is_ok_and(|v| v == "1");
+    let Some(pi) = own else {
+        if target.exists && !replace {
+            return Err(format!("{} exists but is not loaded: turn it on in {} and start again, or choose another name", target.path.display(), target.list_name(home)));
+        }
+        return Ok((name, format!("new; editor save writes it to {}", target.path.display())));
+    };
+    let (refs, other) = plugin_contents(d, pi);
+    if let Some(sig) = other {
+        return Err(format!("{name} holds {sig} records; editor mode writes only placed references so far"));
+    }
+    Ok((name, format!("loaded, {refs} reference(s) of its own; saves go to {}", target.path.display())))
+}
+
+/// A loaded plugin's placed references, and the first other kind of record it holds
+/// (cells and worldspaces aside: they carry the references).
+fn plugin_contents(d: &crate::PlayData, pi: usize) -> (usize, Option<String>) {
+    let mut refs = 0;
+    for r in &d.lo.records[pi] {
+        match &r.header.sig {
+            b"REFR" | b"ACHR" | b"ACRE" | b"PGRE" | b"PMIS" => refs += 1,
+            b"CELL" | b"WRLD" => {}
+            other => return (refs, Some(String::from_utf8_lossy(other).into_owned())),
+        }
+    }
+    (refs, None)
+}
+
+/// The plugins `editor open` offers: loaded `.esp` files (and any loaded from NVForever's
+/// mods folder), then the mods folder's plugins not loaded, each with what it holds.
+fn open_list(d: &crate::PlayData, home: &fnv_install::EngineHome, mo2: bool) -> Vec<String> {
+    let mods = home.mods();
+    let mut lines = vec!["Plugins to open (editor open <Name.esp>; a new name makes a new plugin):".to_string()];
+    for (pi, p) in d.lo.plugins.iter().enumerate() {
+        let in_mods = !mo2 && mods.join(&p.name).is_file();
+        if !p.name.to_ascii_lowercase().ends_with(".esp") && !in_mods {
+            continue;
+        }
+        let what = match plugin_contents(d, pi) {
+            (_, Some(sig)) => format!("holds {sig} records: not yet"),
+            (refs, None) => format!("{refs} reference(s)"),
+        };
+        lines.push(format!("  {} (loaded, {what}){}", p.name, if in_mods { ", in the mods folder" } else { "" }));
+    }
+    if !mo2 {
+        let mut idle: Vec<String> = std::fs::read_dir(&mods)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .filter(|n| {
+                let l = n.to_ascii_lowercase();
+                (l.ends_with(".esp") || l.ends_with(".esm")) && !d.lo.plugins.iter().any(|p| p.name.eq_ignore_ascii_case(n))
+            })
+            .collect();
+        idle.sort();
+        for n in idle {
+            lines.push(format!("  {n} (in the mods folder, not loaded: turn it on and start again)"));
+        }
+    }
+    if lines.len() == 1 {
+        lines.push("  none yet".into());
+    }
+    lines
+}
+
+/// `editor open [<name>]`: list the plugins, or make `name` the target.
+fn open(mut ed: ResMut<Editor>, mut console: ResMut<Console>, play: Res<PlayWorld>, file: Option<Res<crate::settings::SettingsFile>>) {
+    let Some(asked) = ed.open_asked.take() else { return };
+    let Some(home) = fnv_install::EngineHome::user() else {
+        console.say("No home folder for NVForever");
+        return;
+    };
+    let (last, name) = match asked.strip_prefix(LAST) {
+        Some(n) => (true, n.to_string()),
+        None => (false, asked.trim().to_string()),
+    };
+    if name.is_empty() {
+        let mo2 = Target::choose(&home, "-.esp").mo2.is_some();
+        for l in open_list(&play.0, &home, mo2) {
+            console.say(l);
+        }
+        return;
+    }
+    match check_target(&name, &play.0, &home) {
+        Ok((name, what)) => {
+            let note = if last { "; the last one used, editor open <Name.esp> to change it" } else { "" };
+            info!("editor: target {name} ({what}){note}");
+            console.say(format!("Target plugin: {name} ({what}){note}"));
+            remember(file.as_deref(), &name);
+            ed.target = Some(name);
+        }
+        Err(e) if last => {
+            info!("editor: the last target {name} cannot be opened: {e}");
+            console.say(format!("The last target plugin, {name}, cannot be opened ({e}): editor open <Name.esp> picks another"));
+        }
+        Err(e) => {
+            info!("editor: not opened: {e}");
+            console.say(format!("Not opened: {e}"));
+        }
+    }
+}
+
 /// `editor save <name>`: write the moved references into the plugin `name`.
 fn save(mut ed: ResMut<Editor>, mut console: ResMut<Console>, play: Res<PlayWorld>, sim: Res<SimState>) {
     let Some(name) = ed.save_asked.take() else { return };
+    let name = match (name.trim(), &ed.target) {
+        ("", Some(t)) => t.clone(),
+        ("", None) => {
+            console.say("No target plugin: editor open <Name.esp> picks one (editor open lists them), or editor save <Name.esp>");
+            return;
+        }
+        (n, _) => n.to_string(),
+    };
     let place = |id: u32| live_place(&sim, id);
     let new: Vec<(u32, u32, Option<u32>)> = ed
         .created
@@ -262,6 +430,9 @@ fn save(mut ed: ResMut<Editor>, mut console: ResMut<Console>, play: Res<PlayWorl
         Ok(lines) => {
             for l in lines {
                 console.say(l);
+            }
+            if let Ok(n) = plugin_name(&name) {
+                ed.target = Some(n);
             }
         }
         Err(e) => console.say(format!("Not saved: {e}")),
@@ -696,8 +867,12 @@ fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mu
          Fly: W A S D, Q down, E up, Shift faster, wheel speed; hold the right mouse button to look\n\
          Click: select   Arrows: move   Page Up/Down: up/down   Ctrl+Left/Right: turn   Alt: fine steps   Delete: delete   Ctrl+Z: undo   P: place another\n\
          Console: editor place <base FormID> places a new reference where the screen's centre points\n\
-         Console: editor save <Name.esp> writes the moved references into the mods folder and turns the plugin on\n",
+         Console: editor open <Name.esp> picks the plugin to save into (editor open lists them); editor save writes into it\n",
     );
+    match &ed.target {
+        Some(t) => text.push_str(&format!("Target plugin: {t}\n")),
+        None => text.push_str("Target plugin: none yet (editor open <Name.esp>)\n"),
+    }
     match ed.selected {
         Some(id) => {
             let lines = crate::console::describe(id, &play.0, &sim, script.as_deref_mut().and_then(|s| s.rt.as_mut()));
@@ -706,7 +881,7 @@ fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mu
         None => text.push_str("Nothing selected"),
     }
     let (moved, placed) = ed.counts();
-    text.push_str(&format!("\n{moved} reference(s) moved, {} deleted, {placed} placed this session (editor save <Name.esp> to keep them)", ed.deleted.len()));
+    text.push_str(&format!("\n{moved} reference(s) moved, {} deleted, {placed} placed this session (editor save to keep them)", ed.deleted.len()));
     if ed.text != text {
         ed.text = text;
     }
@@ -786,6 +961,14 @@ editor=1
         assert_eq!(plugin_name(" My Edits.ESM ").unwrap(), "My Edits.ESM");
         assert!(plugin_name("..\\Data\\x.esp").is_err());
         assert!(plugin_name("").is_err());
+    }
+
+    #[test]
+    fn open_and_save_words() {
+        assert!(verb_is("open", "open") && verb_is("OPEN My.esp", "open") && verb_is("save", "save"));
+        assert!(!verb_is("opener", "open") && !verb_is("", "save") && !verb_is("select 1", "save"));
+        // Neither is one of the Ops (the console sends them to the target fields instead).
+        assert_eq!(Op::parse("open x.esp"), None);
     }
 
     #[test]

@@ -420,15 +420,11 @@ fn typing(
                 close(&mut c, &mut next, &mut commands, &roots);
                 return;
             }
-            // `editor save <name>`: the moved references into a plugin (`crate::editor`).
-            "editor" if rest.len() >= 4 && rest[..4].eq_ignore_ascii_case("save") => {
-                let name = rest[4..].trim();
-                if name.is_empty() {
-                    c.print("editor save <Name.esp>: the references moved in editor mode, into that plugin in NVForever's mods folder");
-                } else {
-                    editor.save_asked = Some(name.to_string());
-                }
-            }
+            // `editor save [<name>]`: the moved references into a plugin (the target when
+            // no name is given); `editor open [<name>]`: list the plugins or pick the
+            // target (`crate::editor`).
+            "editor" if crate::editor::verb_is(rest, "save") => editor.save_asked = Some(rest[4..].trim().to_string()),
+            "editor" if crate::editor::verb_is(rest, "open") => editor.open_asked = Some(rest[4..].trim().to_string()),
             "editor" if crate::editor::Op::parse(rest).is_some() => match crate::editor::Op::parse(rest) {
                 Some(Ok(op)) if editor.on => editor.ops.push(op),
                 Some(Ok(_)) => c.print("Editor mode is off: type editor first"),
