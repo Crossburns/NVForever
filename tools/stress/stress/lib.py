@@ -16,6 +16,7 @@ import threading
 import time
 import tomllib
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
@@ -293,6 +294,7 @@ def run(ctx: Ctx, launch: Launch) -> Result:
     cores = os.cpu_count() or 1
     status, stacks = "ok", None
     started = time.monotonic()
+    started_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     try:
         with open(log, "w", encoding="utf-8", errors="replace") as f:
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=ctx.out,
@@ -340,6 +342,7 @@ def run(ctx: Ctx, launch: Launch) -> Result:
         if ctx.locks:
             ctx.locks.release()
     secs = time.monotonic() - started
+    finished_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     lines = [clean(x) for x in log.read_text(encoding="utf-8", errors="replace").splitlines()]
     crashes = collect_crashes(home)
     code = p.returncode
@@ -354,7 +357,8 @@ def run(ctx: Ctx, launch: Launch) -> Result:
             m.writelines(f"{s},{w},{pb}\n" for s, w, pb in memory)
     r = Result(launch.name, code, round(secs, 1), status, log, lines, crashes, memory, stacks, cpu)
     (ctx.out / f"{launch.name}.exit.json").write_text(json.dumps(
-        {"exit": code, "status": status, "seconds": r.seconds, "crashes": [c.path for c in crashes]}), encoding="utf-8")
+        {"exit": code, "status": status, "seconds": r.seconds, "crashes": [c.path for c in crashes],
+         "started_at_utc": started_at_utc, "finished_at_utc": finished_at_utc}), encoding="utf-8")
     return r
 
 

@@ -328,6 +328,14 @@ was 1,344 ms. When one fails, run it again with a profile build and
 `--aid NVF_PLAY_TEST_PROFILE=5` for the spans of each slow frame. The battle places all its
 fighters at once (`ai::draw_and_place`, about 130 ms), which play does not.
 
+### 6.2 Comparing two builds
+
+[documented] `compare tour`, `compare battle` and `compare soak` use four measured launches per side in ABBA order after one discarded warm-up each, with separate homes, metadata, early frame captures and retained coarse metrics (`tools/stress/stress/comparison.py:1`). The versioned `comparison.json` and `comparison.md` retain every launch and explain exclusions, spread and verdicts. See [reproducible stress comparisons](stress-comparisons.md) for the ten-second settle, thirty-second window, validation rules, accepted thresholds and the planned stage B scene test; captures cover only the first sixty seconds, so later laps retain coarse results.
+
+```powershell
+python tools/stress compare battle --exe-base '<base.exe>' --exe-candidate '<candidate.exe>' --base-label base --candidate-label candidate --data '<Data>' --ini '<NVForever.ini>' --name battle-abba --per-side 10 --seconds 90 --repetitions 4 --order ABBA --warmup 1 --settle-seconds 10 --measure-seconds 30 --telemetry-seconds 60
+```
+
 ## 7. Adding a test
 
 1. Write a module in `tools/stress/stress/` with `run(ctx, …) -> dict` and

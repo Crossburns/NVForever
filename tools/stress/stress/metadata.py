@@ -80,6 +80,11 @@ def _file_info(path: Path, cache: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def file_info(path: Path) -> dict[str, Any]:
+    """Take a fresh file snapshot, including a hash and mutation detection."""
+    return _file_info(Path(path), {})
+
+
 def _runner_git(repo: Path) -> dict[str, Any]:
     """Read the runner checkout identity, without allowing Git failures to stop a run."""
     result: dict[str, Any] = {

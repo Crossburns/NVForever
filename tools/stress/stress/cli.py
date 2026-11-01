@@ -2,7 +2,8 @@
 target/stress/<test>/<run>/results.json and report.md (docs/design/stress-tests.md).
 
 `python tools/stress list` names the tests. Each test is a module with `run(...)` and
-`report(results)`; adding one is a module and an entry in TESTS.
+`report(results)`. `compare <test>` uses the same dispatch under one lock sequence.
+EXTRA_TESTS supplies the parser and dispatch hooks for additional scenarios.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ import math
 import os
 from pathlib import Path
 
-from . import battle, cells, lib, markers, soak, tour
+from . import battle, cells, comparison, lib, markers, soak, tour
 from .metadata import collect_manifest
 
 TESTS = {
@@ -24,10 +25,54 @@ TESTS = {
 }
 
 COMPARISON_TESTS = {"tour", "battle", "soak"}
+# Additional tests supply configure(parser) and run(args, context). The latter returns
+# the ordinary (results, report lines, failure count) tuple used by run_once.
+EXTRA_TESTS = {}
 
 
-def common(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--exe", type=Path, default=None, help="nvforever (default NVF_EXE or <repo>/engine/target/release)")
+def repetitions(value):
+    n = positive_int(value)
+    if n < 3:
+        raise argparse.ArgumentTypeError("a comparison needs at least three repetitions per side")
+    return n
+
+
+def nonnegative_int(value):
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer") from None
+    if n < 0:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer")
+    return n
+
+
+def seconds(value):
+    try:
+        n = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be finite nonnegative seconds") from None
+    if not math.isfinite(n) or n < 0:
+        raise argparse.ArgumentTypeError("must be finite nonnegative seconds")
+    return n
+
+
+def paired_options(p):
+    p.add_argument("--exe-base", type=Path, required=True)
+    p.add_argument("--exe-candidate", type=Path, required=True)
+    p.add_argument("--base-label", default="base")
+    p.add_argument("--candidate-label", default="candidate")
+    p.add_argument("--repetitions", type=repetitions, default=4)
+    p.add_argument("--order", choices=["ABBA"], default="ABBA")
+    p.add_argument("--warmup", type=nonnegative_int, default=1)
+    p.add_argument("--settle-seconds", type=seconds, default=10.0)
+    p.add_argument("--measure-seconds", type=seconds, default=30.0)
+    p.add_argument("--telemetry-seconds", type=seconds, default=60.0)
+    p.set_defaults(exe=None, build_label=None)
+
+def common(p: argparse.ArgumentParser, comparing=False) -> None:
+    if not comparing:
+        p.add_argument("--exe", type=Path, default=None, help="nvforever (default NVF_EXE or <repo>/engine/target/release)")
     p.add_argument("--data", default=None, help="game Data folder (default NVF_DATA or FNVLAB_DATA_DIR)")
     p.add_argument("--fnvtool", type=Path, default=None, help="fnvtool (default NVF_FNVTOOL or <repo>/target/release)")
     p.add_argument("--name", default=None, help="the run's folder name under target/stress/<test>/ (default: the time)")
@@ -53,91 +98,98 @@ def comparison_options(p: argparse.ArgumentParser) -> None:
                    help="a caller-supplied build label recorded with each run (features are otherwise unknown)")
 
 
+def configure_test(p, name):
+    if name == "cells":
+        p.add_argument("--kinds", choices=["all", "interior", "exterior"], default="interior",
+                       help="interior by default: the tour streams the exteriors (owner, 2026-10-21)")
+        p.add_argument("--worlds", nargs="*", default=None, help="only these worldspaces (Editor IDs or FormIDs)")
+        p.add_argument("--stride", type=int, default=1, help="exteriors on every N-th grid line both ways (1: every cell)")
+        p.add_argument("--limit", type=int, default=None, help="at most this many cells")
+        p.add_argument("--batch", type=int, default=100, help="cells per launch (50 to 200 is usual)")
+        p.add_argument("--dwell", type=float, default=2.0, help="seconds in each cell once it is in")
+        p.add_argument("--hang", type=float, default=180.0, help="seconds without progress that count as a hang")
+        p.add_argument("--start", default="GSGeneralStore", help="the cell each launch starts in (--cell)")
+        p.add_argument("--abort-after", type=int, default=cells.ABORT_AFTER,
+                       help="stop after this many launches in a row end before their first cell (the game does not start)")
+        p.add_argument("--resume", default=None, metavar="RUN",
+                       help="go on with an earlier run (its folder name under target/stress/cells/): cells it has done are skipped")
+    elif name == "markers":
+        p.add_argument("--worlds", nargs="*", default=None, help="only these worldspaces (Editor IDs or FormIDs)")
+        p.add_argument("--limit", type=int, default=None, help="at most this many markers")
+        p.add_argument("--batch", type=int, default=25, help="markers per launch")
+        p.add_argument("--every", type=float, default=30.0, help="seconds between one marker's ask and the next's")
+        p.add_argument("--hang", type=float, default=180.0, help="seconds without progress that count as a hang")
+        p.add_argument("--start", default="GSGeneralStore", help="the cell each launch starts in (--cell)")
+    elif name == "tour":
+        p.add_argument("--world", default="WastelandNV")
+        p.add_argument("--path", choices=["towns", "ring"], default="towns",
+                       help="towns: Goodsprings, Primm, Mojave Outpost, Nipton, Novac, Camp McCarran, Nellis, Jacobstown "
+                            "and back (--towns to change them); ring: a ring on the walkable cells")
+        p.add_argument("--towns", nargs="+", default=None, metavar="CELL",
+                       help="exterior cell Editor IDs to go through in order, back to the first (with --path towns)")
+        p.add_argument("--laps", type=int, default=1)
+        p.add_argument("--waypoints", type=int, default=12, help="waypoints on the ring (without --route)")
+        p.add_argument("--inset", type=float, default=0.3,
+                       help="how far in from the walkable world's edge (its largest navmesh area) the ring lies (0..1)")
+        p.add_argument("--route", type=Path, default=None, help="a route file of your own (nvf-play stress.rs parse_route)")
+        p.add_argument("--step", type=float, default=1024.0, help="units a step")
+        p.add_argument("--dwell", type=float, default=1.0, help="seconds between steps")
+        p.add_argument("--every", type=float, default=5.0, help="seconds between samples")
+        p.add_argument("--slice", default=None, metavar="START:END",
+                       help="only waypoints START to END (1-based) of the ring, to go over one stretch again "
+                            "(the waypoint numbers are the tour log's `at waypoint i/n`)")
+        p.add_argument("--hang", type=float, default=180.0)
+        p.add_argument("--hour", type=float, default=12.0, help="the game hour the tour starts at (19: dusk, for what changes at night)")
+        p.add_argument("--aid", action="append", default=[], metavar="NAME=VALUE",
+                       help="a further test aid for the game, e.g. NVF_PLAY_TEST_NO_READ_AHEAD=1 to compare a run without "
+                            "the actor read-ahead (repeatable)")
+    elif name == "soak":
+        p.add_argument("--world", default="WastelandNV")
+        p.add_argument("--towns", nargs="+", default=None, metavar="CELL", help="the towns of the lap (default: the tour's)")
+        p.add_argument("--laps", type=int, default=1)
+        p.add_argument("--step", type=float, default=1024.0, help="units a step")
+        p.add_argument("--dwell", type=float, default=1.0, help="seconds between steps")
+        p.add_argument("--every", type=float, default=5.0, help="seconds between samples")
+        p.add_argument("--event-every", type=float, default=20.0, help="seconds between events (container, door, fight in turn)")
+        p.add_argument("--hang", type=float, default=180.0)
+        p.add_argument("--aid", action="append", default=[], metavar="NAME=VALUE",
+                       help="a further test aid for the game, e.g. NVF_PLAY_TEST_PROFILE=5 with a profile build (repeatable)")
+    elif name == "battle":
+        p.add_argument("--per-side", type=int, default=10, help="fighters a side (10, 25, 50)")
+        p.add_argument("--aid", action="append", default=[], metavar="NAME=VALUE",
+                       help="a further test aid for the game, e.g. NVF_PLAY_TEST_SIGHT_CHECK=1 to check the detection's "
+                            "shared and kept lines of sight (repeatable)")
+        p.add_argument("--third", type=int, default=0, help="fighters in a third group (creatures), 0 for none")
+        p.add_argument("--seconds", type=float, default=180.0, help="how long the run lasts")
+        p.add_argument("--every", type=float, default=2.0, help="seconds between samples")
+        p.add_argument("--centre", default=f"{battle.CENTRE[0]:g},{battle.CENTRE[1]:g}", help="x,y the battle is round")
+        p.add_argument("--gap", type=float, default=3000.0, help="units between the sides")
+    else:
+        EXTRA_TESTS[name]["configure"](p)
+
+
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="python tools/stress", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="the tests")
-    run = sub.add_parser("run", help="run a test")
-    tests = run.add_subparsers(dest="test", required=True)
-
-    c = tests.add_parser("cells", help=TESTS["cells"])
-    common(c)
-    c.add_argument("--kinds", choices=["all", "interior", "exterior"], default="interior",
-                   help="interior by default: the tour streams the exteriors (owner, 2026-10-21)")
-    c.add_argument("--worlds", nargs="*", default=None, help="only these worldspaces (Editor IDs or FormIDs)")
-    c.add_argument("--stride", type=int, default=1, help="exteriors on every N-th grid line both ways (1: every cell)")
-    c.add_argument("--limit", type=int, default=None, help="at most this many cells")
-    c.add_argument("--batch", type=int, default=100, help="cells per launch (50 to 200 is usual)")
-    c.add_argument("--dwell", type=float, default=2.0, help="seconds in each cell once it is in")
-    c.add_argument("--hang", type=float, default=180.0, help="seconds without progress that count as a hang")
-    c.add_argument("--start", default="GSGeneralStore", help="the cell each launch starts in (--cell)")
-    c.add_argument("--abort-after", type=int, default=cells.ABORT_AFTER,
-                   help="stop after this many launches in a row end before their first cell (the game does not start)")
-    c.add_argument("--resume", default=None, metavar="RUN",
-                   help="go on with an earlier run (its folder name under target/stress/cells/): cells it has done are skipped")
-
-    m = tests.add_parser("markers", help=TESTS["markers"])
-    common(m)
-    m.add_argument("--worlds", nargs="*", default=None, help="only these worldspaces (Editor IDs or FormIDs)")
-    m.add_argument("--limit", type=int, default=None, help="at most this many markers")
-    m.add_argument("--batch", type=int, default=25, help="markers per launch")
-    m.add_argument("--every", type=float, default=30.0, help="seconds between one marker's ask and the next's")
-    m.add_argument("--hang", type=float, default=180.0, help="seconds without progress that count as a hang")
-    m.add_argument("--start", default="GSGeneralStore", help="the cell each launch starts in (--cell)")
-    t = tests.add_parser("tour", help=TESTS["tour"])
-    common(t)
-    t.add_argument("--world", default="WastelandNV")
-    t.add_argument("--path", choices=["towns", "ring"], default="towns",
-                   help="towns: Goodsprings, Primm, Mojave Outpost, Nipton, Novac, Camp McCarran, Nellis, Jacobstown "
-                        "and back (--towns to change them); ring: a ring on the walkable cells")
-    t.add_argument("--towns", nargs="+", default=None, metavar="CELL",
-                   help="exterior cell Editor IDs to go through in order, back to the first (with --path towns)")
-    t.add_argument("--laps", type=int, default=1)
-    t.add_argument("--waypoints", type=int, default=12, help="waypoints on the ring (without --route)")
-    t.add_argument("--inset", type=float, default=0.3,
-                   help="how far in from the walkable world's edge (its largest navmesh area) the ring lies (0..1)")
-    t.add_argument("--route", type=Path, default=None, help="a route file of your own (nvf-play stress.rs parse_route)")
-    t.add_argument("--step", type=float, default=1024.0, help="units a step")
-    t.add_argument("--dwell", type=float, default=1.0, help="seconds between steps")
-    t.add_argument("--every", type=float, default=5.0, help="seconds between samples")
-    t.add_argument("--slice", default=None, metavar="START:END",
-                   help="only waypoints START to END (1-based) of the ring, to go over one stretch again "
-                        "(the waypoint numbers are the tour log's `at waypoint i/n`)")
-    t.add_argument("--hang", type=float, default=180.0)
-    t.add_argument("--hour", type=float, default=12.0, help="the game hour the tour starts at (19: dusk, for what changes at night)")
-    t.add_argument("--aid", action="append", default=[], metavar="NAME=VALUE",
-                   help="a further test aid for the game, e.g. NVF_PLAY_TEST_NO_READ_AHEAD=1 to compare a run without "
-                        "the actor read-ahead (repeatable)")
-
-    s = tests.add_parser("soak", help=TESTS["soak"])
-    common(s)
-    s.add_argument("--world", default="WastelandNV")
-    s.add_argument("--towns", nargs="+", default=None, metavar="CELL", help="the towns of the lap (default: the tour's)")
-    s.add_argument("--laps", type=int, default=1)
-    s.add_argument("--step", type=float, default=1024.0, help="units a step")
-    s.add_argument("--dwell", type=float, default=1.0, help="seconds between steps")
-    s.add_argument("--every", type=float, default=5.0, help="seconds between samples")
-    s.add_argument("--event-every", type=float, default=20.0, help="seconds between events (container, door, fight in turn)")
-    s.add_argument("--hang", type=float, default=180.0)
-    s.add_argument("--aid", action="append", default=[], metavar="NAME=VALUE",
-                   help="a further test aid for the game, e.g. NVF_PLAY_TEST_PROFILE=5 with a profile build (repeatable)")
-    b = tests.add_parser("battle", help=TESTS["battle"])
-    common(b)
-    b.add_argument("--per-side", type=int, default=10, help="fighters a side (10, 25, 50)")
-    b.add_argument("--aid", action="append", default=[], metavar="NAME=VALUE",
-                   help="a further test aid for the game, e.g. NVF_PLAY_TEST_SIGHT_CHECK=1 to check the detection's "
-                        "shared and kept lines of sight (repeatable)")
-    b.add_argument("--third", type=int, default=0, help="fighters in a third group (creatures), 0 for none")
-    b.add_argument("--seconds", type=float, default=180.0, help="how long the run lasts")
-    b.add_argument("--every", type=float, default=2.0, help="seconds between samples")
-    b.add_argument("--centre", default=f"{battle.CENTRE[0]:g},{battle.CENTRE[1]:g}", help="x,y the battle is round")
-    b.add_argument("--gap", type=float, default=3000.0, help="units between the sides")
-    for p in (t, b, s):
-        comparison_options(p)
-        g = p.add_argument_group("budget", "frame-time limits after start-up; a run over any of them fails (exit 1)")
-        g.add_argument("--budget-mean-ms", type=float, default=None, help="largest mean frame")
-        g.add_argument("--budget-low1-ms", type=float, default=None, help="largest 1%% low frame")
-        g.add_argument("--budget-worst-ms", type=float, default=None, help="largest single frame")
+    for command in ("run", "compare"):
+        parent = sub.add_parser(command, help="run a test" if command == "run" else "compare two builds in ABBA order")
+        tests = parent.add_subparsers(dest="test", required=True)
+        for name in [*TESTS, *EXTRA_TESTS]:
+            if command == "compare" and name not in COMPARISON_TESTS and name not in EXTRA_TESTS:
+                continue
+            p = tests.add_parser(name, help=TESTS.get(name, name))
+            common(p, comparing=command == "compare")
+            configure_test(p, name)
+            if name in COMPARISON_TESTS or name in EXTRA_TESTS:
+                if command == "compare":
+                    paired_options(p)
+                else:
+                    comparison_options(p)
+                g = p.add_argument_group("budget", "existing frame-time limits after start-up")
+                g.add_argument("--budget-mean-ms", type=float, default=None)
+                g.add_argument("--budget-low1-ms", type=float, default=None)
+                g.add_argument("--budget-worst-ms", type=float, default=None)
     return ap
 
 
@@ -187,7 +239,7 @@ def requested_config(a) -> dict:
 def run_once(a, ctx: lib.Ctx) -> tuple[dict, list[str], int]:
     """Run one selected stress test and return its existing result/report pair."""
     manifest = None
-    if a.test in COMPARISON_TESTS:
+    if a.test in COMPARISON_TESTS or a.test in EXTRA_TESTS:
         manifest = collect_manifest(
             ctx.repo,
             ctx.exe,
@@ -270,12 +322,14 @@ def run_once(a, ctx: lib.Ctx) -> tuple[dict, list[str], int]:
                        tour_seconds, a.event_every, dict(kv.split("=", 1) for kv in a.aid))
         lines = soak.report(res)
         bad = 0 if res["status"] == "ok" else 1
-    else:
+    elif a.test == "battle":
         cx, cy = (float(v) for v in a.centre.split(","))
         res = battle.run(ctx, a.per_side, a.third, a.seconds, a.every, (cx, cy), a.gap, dict(kv.split("=", 1) for kv in a.aid))
         lines = battle.report(res)
         bad = 0 if res["status"] == "ok" else 1
-    if a.test in ("tour", "battle", "soak"):
+    else:
+        res, lines, bad = EXTRA_TESTS[a.test]["run"](a, ctx)
+    if a.test in COMPARISON_TESTS or a.test in EXTRA_TESTS:
         budget = lib.Budget(a.budget_mean_ms, a.budget_low1_ms, a.budget_worst_ms)
         failed = lib.over_budget(res.get("frames"), budget)
         res["budget"] = {"mean_ms": budget.mean_ms, "low1_ms": budget.low1_ms, "worst_ms": budget.worst_ms, "failed": failed}
@@ -391,9 +445,25 @@ def write_comparison(out: Path, index: dict) -> None:
 def main(argv=None) -> int:
     a = parser().parse_args(argv)
     if a.cmd == "list":
-        for k, v in TESTS.items():
+        for k, v in {**TESTS, **{name: "additional stress test" for name in EXTRA_TESTS}}.items():
             print(f"{k:<8} {v}")
         return 0
+    if a.cmd == "compare":
+        if a.exe_base.resolve() == a.exe_candidate.resolve():
+            raise SystemExit("base and candidate must use different executable paths")
+        for exe in (a.exe_base, a.exe_candidate):
+            if not exe.is_file():
+                raise SystemExit(f"no executable at {exe}")
+        if a.measure_seconds <= 0 or not 0 < a.telemetry_seconds <= 60:
+            raise SystemExit("measurement must be positive and telemetry duration must be in (0, 60] seconds")
+        if a.settle_seconds + a.measure_seconds > a.telemetry_seconds:
+            raise SystemExit("settle and measurement exceed the capture duration before loading")
+        for aid in a.aid:
+            if "=" not in aid or not aid.split("=", 1)[0]:
+                raise SystemExit("test aids must use NAME=VALUE")
+        a.exe = a.exe_base
+        ctx = context(a, a.test)
+        return comparison.run(a, ctx, run_once, comparison_quality)
     ctx = context(a, a.test)
     repetitions = getattr(a, "repetitions", 1)
     if repetitions == 1:
