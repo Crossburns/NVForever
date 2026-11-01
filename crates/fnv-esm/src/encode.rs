@@ -57,7 +57,7 @@ fn write_base(p: Prim, n: i128, out: &mut Vec<u8>) -> Result<(), String> {
     }
 }
 
-fn write_prim(p: Prim, v: &Value, out: &mut Vec<u8>) -> Result<(), String> {
+fn write_prim(p: Prim, v: &Value, out: &mut Vec<u8>, map: &mut dyn FnMut(u32) -> u32) -> Result<(), String> {
     let s = || v.as_str().ok_or_else(|| format!("expected a string, got {v}"));
     match p {
         Prim::U8 | Prim::U16 | Prim::U32 | Prim::U64 | Prim::I8 | Prim::I16 | Prim::I32 | Prim::I64 => write_int(p, int_of(v)?, out),
@@ -75,7 +75,7 @@ fn write_prim(p: Prim, v: &Value, out: &mut Vec<u8>) -> Result<(), String> {
             let t = s()?;
             let h = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")).unwrap_or(t);
             let id = u32::from_str_radix(h, 16).map_err(|_| format!("not a FormID: {t:?}"))?;
-            out.extend(id.to_le_bytes());
+            out.extend(map(id).to_le_bytes());
             Ok(())
         }
         Prim::ZString => {
@@ -115,8 +115,14 @@ fn write_prim(p: Prim, v: &Value, out: &mut Vec<u8>) -> Result<(), String> {
 
 /// Append the bytes of `v`, a value of type `t` in the form `decode_type` gives.
 pub fn encode_type(t: &TypeDef, v: &Value, schema: &Schema, out: &mut Vec<u8>) -> Result<(), String> {
+    encode_type_mapped(t, v, schema, out, &mut |id| id)
+}
+
+/// [`encode_type`], writing every FormID field through `map` (a record copied into
+/// another plugin has its FormIDs' master indexes rewritten, `crate::edit`).
+pub fn encode_type_mapped(t: &TypeDef, v: &Value, schema: &Schema, out: &mut Vec<u8>, map: &mut dyn FnMut(u32) -> u32) -> Result<(), String> {
     match schema.resolve(t) {
-        TypeDef::Prim(p) => write_prim(*p, v, out),
+        TypeDef::Prim(p) => write_prim(*p, v, out, map),
         TypeDef::Named(_) => Err("unresolved type".into()),
         TypeDef::Union(variants) => {
             // Decoding chose by the bytes left: the first variant whose size matched,
@@ -124,13 +130,13 @@ pub fn encode_type(t: &TypeDef, v: &Value, schema: &Schema, out: &mut Vec<u8>) -
             // and keeps the first that comes out at its own size, else the fallback.
             for (size, vt) in variants.iter().filter(|(n, _)| n.is_some()) {
                 let mut tmp = Vec::new();
-                if encode_type(vt, v, schema, &mut tmp).is_ok() && Some(tmp.len()) == *size {
+                if encode_type_mapped(vt, v, schema, &mut tmp, map).is_ok() && Some(tmp.len()) == *size {
                     out.extend(tmp);
                     return Ok(());
                 }
             }
             let (_, vt) = variants.iter().find(|(n, _)| n.is_none()).ok_or("no union variant fits the value")?;
-            encode_type(vt, v, schema, out)
+            encode_type_mapped(vt, v, schema, out, map)
         }
         TypeDef::Struct(fields) => {
             let obj = v.as_object().ok_or_else(|| format!("expected an object, got {v}"))?;
@@ -141,7 +147,7 @@ pub fn encode_type(t: &TypeDef, v: &Value, schema: &Schema, out: &mut Vec<u8>) -
                         if let Some(gap) = ended {
                             return Err(format!("{}: present after the absent optional field {gap}", f.name));
                         }
-                        encode_type(&f.ty, fv, schema, out).map_err(|e| format!("{}: {e}", f.name))?;
+                        encode_type_mapped(&f.ty, fv, schema, out, map).map_err(|e| format!("{}: {e}", f.name))?;
                     }
                     None if f.optional => ended = ended.or(Some(f.name.as_str())),
                     None => return Err(format!("{}: missing", f.name)),
@@ -160,7 +166,7 @@ pub fn encode_type(t: &TypeDef, v: &Value, schema: &Schema, out: &mut Vec<u8>) -
                 }
             }
             for (i, it) in items.iter().enumerate() {
-                encode_type(elem, it, schema, out).map_err(|e| format!("[{i}]: {e}"))?;
+                encode_type_mapped(elem, it, schema, out, map).map_err(|e| format!("[{i}]: {e}"))?;
             }
             Ok(())
         }

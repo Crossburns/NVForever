@@ -187,10 +187,13 @@ pub fn plugin_list(game: &GameInstall) -> Result<Vec<String>, String> {
         );
     }
     if !s.missing.is_empty() {
-        eprintln!("setup: plugins turned on in {} but not in Data, skipped: {}", file.display(), s.missing.join(", "));
+        eprintln!("setup: plugins turned on in {} but in neither Data nor {}, skipped: {}", file.display(), home.mods().display(), s.missing.join(", "));
     }
     if s.base_forced {
         eprintln!("setup: FalloutNV.esm loads first whatever {} says", file.display());
+    }
+    if !s.from_mods.is_empty() {
+        eprintln!("setup: plugins from {}: {}", home.mods().display(), s.from_mods.join(", "));
     }
     eprintln!("setup: plugins: {}", s.load.join(", "));
     Ok(s.load)

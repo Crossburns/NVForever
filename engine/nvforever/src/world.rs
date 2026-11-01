@@ -53,18 +53,19 @@ pub struct OpenedPlugins {
     pub dropped: Vec<String>,
 }
 
-/// Open the plugins `names` (load order) in `data_dir` for the game. A plugin that cannot
+/// Open the plugins `names` (load order) for the game: from the mods folder `mods` when it
+/// has the file, else from `data_dir` (`fnv_install::plugins::plugin_path`). A plugin that cannot
 /// be read or parsed (a truncated or broken mod) is left out, and then every plugin the
 /// load order would refuse: a missing master, a master that loads after it, a second
 /// copy, past the 255th (`fnv_esm::loadorder::drop_unloadable`). The game goes on without
 /// them; a line for each is printed now (the log is not up yet) and kept for the log.
-pub fn open_plugins(data_dir: &Path, names: &[String]) -> OpenedPlugins {
+pub fn open_plugins(data_dir: &Path, mods: Option<&Path>, names: &[String]) -> OpenedPlugins {
     let mut dropped = Vec::new();
     let mut plugins = Vec::with_capacity(names.len());
     for n in names {
         // The file whatever its case on disk (a case-sensitive copy may hold
         // `deadmoney.esm`; #995); the plugin keeps the name the load order gives it.
-        let path = fnv_install::child_ci(data_dir, n).unwrap_or_else(|| data_dir.join(n));
+        let path = fnv_install::plugins::plugin_path(data_dir, mods, n);
         match EsmPlugin::open(path) {
             Ok(mut p) => {
                 p.name = n.clone();

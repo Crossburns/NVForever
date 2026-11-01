@@ -17161,3 +17161,36 @@ expect = [
   { re = 'test aid: screenshot .*font_glyph_baseline[.]png', label = "the glyph comparison frame is saved" },
 ]
 manual = "font_glyph_baseline.png, compared with upstream main and the original at 1280x720: every x-height letter in 'NVF box without buttons' has the same top and bottom ink rows; the two u glyphs have equal heights; capitals and ascenders share their own height. Check the whole box, including its frame and Ok button, for position or size changes. Log expectations only verify the scene and capture; the glyph appearance needs this image review."
+
+[[scenario]]
+name = "editor-save-write"
+source = "owner 2026-11-01 (local editor design): editor mode from the console moves a placed reference and saves it into a plugin in the home's mods folder; editor-save-load reads it, so run them together"
+areas = ["editor"]
+paths = ["engine/nvf-play/src/editor.rs", "crates/fnv-esm/src/edit.rs", "crates/fnv-esm/src/encode.rs", "crates/fnv-install/src/plugins.rs"]
+# The bottle 0x0010A202 (Goodsprings, at x -68375.41) moves 64 along X and turns 45°.
+env = { NVFOREVER_HOME = "editor-home", NVF_PLAY_TEST_EDITOR_REPLACE = "1", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:editor;17:editor select 0010A202;17.5:editor move 64 0 0;18:editor turn 45;18.5:0010A202.getpos x;19:editor save EditSmoke;20:editor;20.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 23
+expect = [
+  "editor: on",
+  "editor: selected 0x0010A202",
+  { re = 'editor: moved 0x0010A202 by \(64, 0, 0\), turned 0°', label = "the move" },
+  { re = 'editor: moved 0x0010A202 by \(0, 0, 0\), turned 45°', label = "the turn" },
+  { re = 'console: GetPos on 0x0010A202 >> -68311\.4', label = "it is drawn at its new place in the run" },
+  { re = 'editor: saved 1 references into .*EditSmoke\.esp \(\d+ bytes, 10 masters\)', label = "the plugin is written to the mods folder" },
+  { re = 'console: EditSmoke\.esp (is|was already) on in .*plugins\.txt', label = "and on in the home's plugin list (already, when the smoke home is kept from a run before)" },
+  { re = 'editor: off; 1 reference\(s\) moved this session', label = "editor mode goes off" },
+]
+
+[[scenario]]
+name = "editor-save-load"
+source = "owner 2026-11-01 (local editor design): the second half: a start with the plugin editor-save-write saved finds the bottle where it was moved"
+areas = ["editor"]
+paths = ["engine/nvf-play/src/editor.rs", "crates/fnv-esm/src/edit.rs", "crates/fnv-install/src/plugins.rs", "engine/nvforever/src/world.rs"]
+env = { NVFOREVER_HOME = "editor-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:0010A202.getpos x;16.5:0010A202.getangle z;17:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--plugins", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm", "EditSmoke.esp"]
+run_seconds = 20
+expect = [
+  { re = 'console: GetPos on 0x0010A202 >> -68311\.4', label = "the bottle starts where editor mode moved it" },
+  { re = 'console: GetAngle on 0x0010A202 >> 222\.6', label = "turned as it was" },
+]

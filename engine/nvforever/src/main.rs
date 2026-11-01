@@ -845,7 +845,10 @@ fn main() -> AppExit {
     };
     // The plugins, opened: a broken mod's plugin (and any that need it) is left out with
     // a warning, and the rest of the start uses the list without it (world.rs).
-    let opened = world::open_plugins(args.data(), &args.plugins);
+    // A plugin in NVForever's own mods folder is opened instead of Data's copy
+    // (fnv_install::plugins).
+    let mods = fnv_install::EngineHome::user().map(|h| h.mods());
+    let opened = world::open_plugins(args.data(), mods.as_deref(), &args.plugins);
     args.plugins = opened.plugins.iter().map(|p| p.name.clone()).collect();
     // `--load`: the save's place decides where the world starts (its worldspace before
     // the world is opened); its body waits for the scripts (nvf_play::save).

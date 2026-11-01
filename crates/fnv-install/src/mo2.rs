@@ -242,7 +242,7 @@ pub fn sync(game: &GameInstall) -> Result<Option<(PathBuf, PluginSync)>, Install
 fn load(names: &[String], present: &[String]) -> PluginSync {
     let list = PluginList { entries: names.iter().map(|n| PluginEntry { name: n.clone(), active: true }).collect() };
     let (load, missing, base_forced) = list.load_order(present);
-    PluginSync { load, added: Vec::new(), missing, base_forced, written: false }
+    PluginSync { load, from_mods: Vec::new(), added: Vec::new(), missing, base_forced, written: false }
 }
 
 #[cfg(test)]

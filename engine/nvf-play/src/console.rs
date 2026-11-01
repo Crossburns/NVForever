@@ -38,6 +38,7 @@
 //!   unselects it.
 //! - Keys: Enter runs the line, Up/Down recall earlier lines, Page Up/Down scroll, `` ` ``
 //!   or Esc close it.
+//! - `editor` closes the console and switches editor mode on or off (`crate::editor`).
 //! - **Several statements on a line** (2026-10-19) [design; docs/design/console.md]: `;`
 //!   outside quotes ends a statement, so `player.additem f 100; tgm; coc Goodsprings` runs
 //!   three, in order, each echoed and answered as a line of its own ([`statements`]); the
@@ -100,6 +101,10 @@ pub struct ConsoleReply {
     /// What console-only commands asked of the engine (`fnv_game::functions::console`).
     pub requests: Vec<ConsoleRequest>,
 }
+
+/// The console's systems, for systems that must see a frame's lines first (`crate::editor`).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConsoleSet;
 
 /// The console's state.
 #[derive(Resource, Default)]
@@ -217,7 +222,7 @@ impl Plugin for ConsolePlugin {
             .insert_resource(ConsoleAid(aid))
             .init_resource::<SearchIndex>()
             .init_resource::<RenderToggles>()
-            .add_systems(Update, (toggle, typing, search_ready, replies, script_lines, click, draw, outline).chain().in_set(PlaySet::Ui))
+            .add_systems(Update, (toggle, typing, search_ready, replies, script_lines, click, draw, outline).chain().in_set(PlaySet::Ui).in_set(ConsoleSet))
             .add_systems(OnExit(PlayState::Menu), close_on_exit);
     }
 }
@@ -312,7 +317,7 @@ fn typing(
     mut clicks: Local<Vec<Vec2>>,
     (mut index, play, mut poker, location): (ResMut<SearchIndex>, Res<PlayWorld>, MessageWriter<crate::poker::OpenPoker>, Option<Res<crate::Location>>),
     (mut saves, mut loads, save_cfg, mut save_log): (MessageWriter<crate::save::SaveRequest>, MessageWriter<crate::save::LoadRequest>, Res<crate::save::SaveConfig>, ResMut<crate::save::SaveLog>),
-    pipboy: Option<Res<crate::pipboy::data::DataState>>,
+    (pipboy, mut editor): (Option<Res<crate::pipboy::data::DataState>>, ResMut<crate::editor::Editor>),
 ) {
     let typed: Vec<KeyboardInput> = typed.read().cloned().collect();
     if !c.open {
@@ -393,7 +398,7 @@ fn typing(
                 if terms.is_empty() {
                     c.print("A line is a script function: [reference.]Function argument ...  e.g. player.additem 0000000F 100");
                     c.print("help <text>: records and functions whose name or Editor ID contains it (not case sensitive); \"two words\" for a phrase, several words must all match");
-                    c.print("prid <ref>, coc <cell>, cow <world> <x> <y>, coe <x> <y>, tgm, cls, save <name>, load [name], saves, set <var> to <value>. Click something to select it; calls without a reference run on it.");
+                    c.print("prid <ref>, coc <cell>, cow <world> <x> <y>, coe <x> <y>, tgm, cls, save <name>, load [name], saves, set <var> to <value>, editor (editor mode on/off), editor save <Name.esp>. Click something to select it; calls without a reference run on it.");
                     c.print("Quests and info: sq, sqt, movetoqt [n], sqs <quest>, sqv <quest>, sv, caqs, inv, getavinfo <av>, setgs <setting> <value>, cam, qqq, advlevel (level up), poker [casino] (a poker table)");
                     c.print("Toggles: tcl (collision), tai (actors' AI), tdetect, tgm, tscr (scripts), tg (grass), ts (sky), tws (water), tt (trees), ToggleLODLand, ToggleNavmesh");
                 } else {
@@ -412,6 +417,28 @@ fn typing(
                 }
             }
             "close" => {
+                close(&mut c, &mut next, &mut commands, &roots);
+                return;
+            }
+            // `editor save <name>`: the moved references into a plugin (`crate::editor`).
+            "editor" if rest.len() >= 4 && rest[..4].eq_ignore_ascii_case("save") => {
+                let name = rest[4..].trim();
+                if name.is_empty() {
+                    c.print("editor save <Name.esp>: the references moved in editor mode, into that plugin in NVForever's mods folder");
+                } else {
+                    editor.save_asked = Some(name.to_string());
+                }
+            }
+            "editor" if crate::editor::Op::parse(rest).is_some() => match crate::editor::Op::parse(rest) {
+                Some(Ok(op)) if editor.on => editor.ops.push(op),
+                Some(Ok(_)) => c.print("Editor mode is off: type editor first"),
+                Some(Err(e)) => c.print(e),
+                None => {}
+            },
+            // Editor mode (`crate::editor`) takes the screen: the console closes.
+            "editor" => {
+                editor.asked = true;
+                c.print(if editor.on { "Leaving editor mode" } else { "Editor mode: type editor in the console again to leave" });
                 close(&mut c, &mut next, &mut commands, &roots);
                 return;
             }
@@ -825,40 +852,8 @@ fn click(
         let g = space::to_game(o);
         info!("console: the ray from the free camera at ({:.0}, {:.0}, {:.0})", g[0], g[1], g[2]);
     }
-    let (eye, dir) = (space::to_game(o), {
-        let p = space::to_game(o + d);
-        let e = space::to_game(o);
-        [p[0] - e[0], p[1] - e[1], p[2] - e[2]]
-    });
-    // Every collision hit along the ray, walls too: the first is the crosshair's hit, the
-    // rest what the wheel steps to behind it.
-    let hits: Vec<(Option<u32>, f32)> = phys
-        .map(|mut p| {
-            let mut filter = Filter::default();
-            filter.exclude_layers.insert(layers::TRIGGER);
-            p.ray_all(eye, dir, CLICK_REACH, filter)
-        })
-        .unwrap_or_default()
-        .into_iter()
-        .map(|h| {
-            let form_id = match h.owner {
-                Owner::Ref { form_id, .. } | Owner::Actor { form_id, .. } => Some(form_id),
-                _ => None,
-            };
-            (form_id, h.distance)
-        })
-        .collect();
-    let hit = hits.first().map(|&(form_id, distance)| RayHit { form_id, distance });
-    let bounds: Vec<(u32, f32)> = visuals
-        .iter()
-        .filter(|(_, _, _, v)| v.get())
-        .filter_map(|(r, aabb, gt, _)| {
-            let t = gt.affine();
-            let (ce, he) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
-            Some((r.0, pick::ray_box(o, d, &t, ce, he)?))
-        })
-        .collect();
-    match pick::choose(hit, bounds.iter().copied(), CLICK_REACH, |_| true) {
+    let Under { hits, bounds, choice, .. } = pick_under(o, d, CLICK_REACH, phys.map(|p| p.into_inner()), &visuals);
+    match choice {
         // Clicking the selected reference again unselects it.
         Some(p) if c.selected == Some(p.form_id) => {
             info!("console: unselected {}", FormId(p.form_id));
@@ -882,6 +877,58 @@ fn click(
             c.print("Nothing there to select");
         }
     }
+}
+
+/// What a click's ray met ([`pick_under`]).
+pub struct Under {
+    /// The reference picked: the crosshair's rule (`activate::pick::choose`).
+    pub picked: Option<u32>,
+    choice: Option<pick::Pick>,
+    /// Every collision hit along the ray, walls too (reference, distance), nearest first.
+    hits: Vec<(Option<u32>, f32)>,
+    /// The drawn references whose render bounds the ray enters (reference, distance).
+    bounds: Vec<(u32, f32)>,
+}
+
+/// The reference a ray from `o` along `d` (Bevy space) picks within `reach` game units:
+/// the first collision hit, else the render bounds it enters, as the console's click and
+/// the crosshair pick.
+pub fn pick_under(o: Vec3, d: Vec3, reach: f32, phys: Option<&mut PhysState>, visuals: &Query<(&RefVisual, &Aabb, &GlobalTransform, &InheritedVisibility)>) -> Under {
+    let (eye, dir) = (space::to_game(o), {
+        let p = space::to_game(o + d);
+        let e = space::to_game(o);
+        [p[0] - e[0], p[1] - e[1], p[2] - e[2]]
+    });
+    // Every collision hit along the ray, walls too: the first is the crosshair's hit, the
+    // rest what the wheel steps to behind it.
+    let hits: Vec<(Option<u32>, f32)> = phys
+        .map(|p| {
+            let mut filter = Filter::default();
+            filter.exclude_layers.insert(layers::TRIGGER);
+            p.ray_all(eye, dir, reach, filter)
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .map(|h| {
+            let form_id = match h.owner {
+                Owner::Ref { form_id, .. } | Owner::Actor { form_id, .. } => Some(form_id),
+                _ => None,
+            };
+            (form_id, h.distance)
+        })
+        .collect();
+    let hit = hits.first().map(|&(form_id, distance)| RayHit { form_id, distance });
+    let bounds: Vec<(u32, f32)> = visuals
+        .iter()
+        .filter(|(_, _, _, v)| v.get())
+        .filter_map(|(r, aabb, gt, _)| {
+            let t = gt.affine();
+            let (ce, he) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
+            Some((r.0, pick::ray_box(o, d, &t, ce, he)?))
+        })
+        .collect();
+    let choice = pick::choose(hit, bounds.iter().copied(), reach, |_| true);
+    Under { picked: choice.as_ref().map(|p| p.form_id), choice, hits, bounds }
 }
 
 /// The references a click's ray passes through, nearest first: those its collision

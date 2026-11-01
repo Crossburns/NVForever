@@ -52,6 +52,9 @@ pub struct FreeCam {
     pub pitch: f32,
     /// The wheel's share of the speed.
     pub wheel: f32,
+    /// The mouse looks round only while the right button is held, leaving the pointer to
+    /// click with (editor mode, `crate::editor`).
+    pub look_on_button: bool,
     /// Where it left the player, and the player's feet then (game space).
     start: Vec3,
     feet: [f32; 3],
@@ -154,7 +157,7 @@ fn take_requests(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn fly(
     real: Res<Time<Real>>,
-    keys: Res<ButtonInput<KeyCode>>,
+    (keys, buttons): (Res<ButtonInput<KeyCode>>, Res<ButtonInput<MouseButton>>),
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     (state, console, paused, menu, loading): (Res<State<PlayState>>, Res<Console>, Res<crate::pause::Paused>, Res<crate::menu::ActiveMenu>, Res<crate::loading::Loading>),
@@ -174,8 +177,10 @@ fn fly(
     let Ok(mut t) = cams.single_mut() else { return };
     if free.active {
         let f = &mut *free;
-        f.yaw -= motion.delta.x * LOOK_PER_PIXEL;
-        f.pitch = (f.pitch - motion.delta.y * LOOK_PER_PIXEL).clamp(-1.55, 1.55);
+        if !f.look_on_button || buttons.pressed(MouseButton::Right) {
+            f.yaw -= motion.delta.x * LOOK_PER_PIXEL;
+            f.pitch = (f.pitch - motion.delta.y * LOOK_PER_PIXEL).clamp(-1.55, 1.55);
+        }
         if scroll.delta.y != 0.0 {
             f.wheel = (f.wheel * 1.2f32.powf(scroll.delta.y)).clamp(50.0 / FLY_SPEED, 50_000.0 / FLY_SPEED);
         }

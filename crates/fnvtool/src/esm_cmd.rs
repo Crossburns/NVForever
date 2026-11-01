@@ -38,6 +38,7 @@ pub fn run(cmd: EsmCmd) -> anyhow::Result<Value> {
             }
             Ok(v)
         }
+        EsmCmd::EditMove { plugins, schema, refs, dx, out } => edit_move(&plugins, &Schema::load_dir(schema)?, &refs, dx, &out),
         EsmCmd::EncodeCheck { plugins, schema, max_rows } => encode_check(&plugins, &Schema::load_dir(schema)?, max_rows),
         EsmCmd::Decode { plugin, schema, formid: want_fid, edid } => {
             let schema = Schema::load_dir(schema)?;
@@ -418,4 +419,21 @@ fn encode_check(plugins: &[std::path::PathBuf], schema: &Schema, max_rows: usize
         },
         "failing": rows,
     }))
+}
+
+fn edit_move(paths: &[std::path::PathBuf], schema: &Schema, refs: &[u32], dx: f32, out: &Path) -> anyhow::Result<Value> {
+    use fnv_esm::edit::{write_placements, NewPlugin, Placement};
+    let plugins: Vec<Plugin> = paths.iter().map(Plugin::open).collect::<Result<_, _>>()?;
+    let lo = LoadOrder::new(&plugins)?;
+    let mut edits = Vec::new();
+    for &id in refs {
+        let (_, r) = lo.winner(id).with_context(|| format!("{id:08X} is not in the load order"))?;
+        let data = r.subrecords()?.into_iter().find(|s| &s.sig == b"DATA").context("no DATA")?.data;
+        let f = |i: usize| f32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().unwrap());
+        edits.push(Placement { form_id: id, pos: [f(0) + dx, f(1), f(2)], rot: [f(3), f(4), f(5)] });
+    }
+    let name = out.file_name().context("no file name")?.to_string_lossy().into_owned();
+    let w = write_placements(&lo, schema, &NewPlugin { name, ..Default::default() }, &edits).map_err(anyhow::Error::msg)?;
+    std::fs::write(out, &w.bytes)?;
+    Ok(json!({"out": out.display().to_string(), "bytes": w.bytes.len(), "masters": w.masters, "references": w.references, "warnings": w.warnings}))
 }
