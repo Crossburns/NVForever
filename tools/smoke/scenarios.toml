@@ -17217,6 +17217,26 @@ expect = [
 ]
 
 [[scenario]]
+name = "editor-save-mo2"
+source = "owner 2026-11-01 (local editor design §21.2 item 4): under Mod Organizer 2 a save goes into the mod that gives Data the plugin, else MO2's overwrite folder, and is turned on in the MO2 profile, not NVForever's list"
+areas = ["editor"]
+paths = ["engine/nvf-play/src/editor.rs", "crates/fnv-install/src/mo2.rs"]
+# NVF_PLAY_TEST_EDITOR_MO2 stands in for MO2 (sessions cannot start it): a fresh instance
+# folder gets profile Smoke, no mods, so a new plugin goes to its overwrite folder.
+env = { NVFOREVER_HOME = "editor-home-mo2", NVF_PLAY_TEST_EDITOR = "1", NVF_PLAY_TEST_EDITOR_REPLACE = "1", NVF_PLAY_TEST_EDITOR_MO2 = "editor-mo2", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:editor;17:editor select 0010A202;17.5:editor move 64 0 0;18:editor save EditMo2;19:editor;19.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'editor: saved 1 references and 0 new \(\) into .*smoke.editor-mo2.overwrite.EditMo2\.esp \(\d+ bytes, 10 masters\)', label = "written into the MO2 overwrite folder" },
+  { re = 'console: \(MO2: into the overwrite folder\)', label = "the console says where" },
+  { re = 'console: EditMo2\.esp (is|was already) on in MO2.s profile .*smoke.editor-mo2.profiles.Smoke', label = "on in the MO2 profile's list (already, when the instance is kept from a run before)" },
+]
+forbid = [
+  { re = 'editor-home-mo2.mods.EditMo2', label = "not into NVForever's own mods folder" },
+]
+
+
+[[scenario]]
 name = "editor-place-write"
 source = "owner 2026-11-01 (local editor design): editor mode places a new reference and saves it as the plugin's own; editor-place-load finds it, so run them together"
 areas = ["editor"]

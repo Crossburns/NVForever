@@ -71,8 +71,10 @@ Contents:
   New Vegas/Data" --area editor`.
 
 **Open tasks, in the order I'd take them**
-- [ ] MO2 saving (§21.2 item 4): into the plugin being edited, else MO2's overwrite folder.
-  Find how `crates/fnv-install/src/mo2.rs` learns the instance's folders first.
+- [x] MO2 saving (§21.2 item 4, §4.1, §4.6; second session, see the progress log). Left
+  for the owner: one save from a real MO2 start (sessions cannot start MO2), then check
+  in MO2 that the plugin shows ticked in the right pane and the file is in the mod's
+  folder (or in overwrite for a new one).
 - [ ] `editor open <plugin>` / choose the target plugin when editor mode starts (§6.1).
 - [ ] Gizmo drag (mouse) instead of only the keys (§7.2); snap to surface.
 - [ ] A record picker for placing (search by Editor ID or name; the console's `SearchIndex`
@@ -186,6 +188,25 @@ turns and deletes. Smoke `editor-delete-undo` passes on 0x0010A206.
 - Open question for §4.5: editor mode lets you delete a reference that follows an enable
   parent. In the run that does nothing visible, but the save writes it Initially Disabled
   and sunk. Whether to warn, or refuse, for such references is still to decide.
+
+### 2026-11-01 (second session): saving under MO2
+
+- `fnv_install::mo2::Layout` reads the instance's mods, overwrite and profile folders from
+  `ModOrganizer.ini` (MO2's defaults when unset, which is how both of the owner's
+  instances have it [observed]). `save_target` looks for the plugin in overwrite first,
+  then in the enabled mods by `modlist.txt` priority, matching names without case and
+  keeping the file's own spelling; otherwise it picks a new file in overwrite. `turn_on`
+  adds the plugin to the profile's `plugins.txt` (ANSI, CRLF) and `loadorder.txt`.
+- `editor.rs` `Target`: under MO2 the save goes there and the `.bak` goes to
+  `<home>\editor-backups\`. Without MO2 nothing changes.
+- Test aid `NVF_PLAY_TEST_EDITOR_MO2=<instance folder>`, because sessions cannot start
+  MO2. Smoke `editor-save-mo2` passes: the plugin is written to `overwrite\` and listed
+  in `profiles\Smoke\plugins.txt`. The other six editor scenarios still pass.
+- Bug found on the first run: a relative instance folder was doubled
+  (`editor-mo2\editor-mo2\overwrite`), because `%BASE_DIR%` already held it. The instance
+  is now made absolute first, and the scenario's pattern is strict enough to catch it.
+- Not checked: a save from a real MO2 start, and whether MO2 keeps the `plugins.txt` line
+  when it refreshes after the game closes [hypothesis].
 
 **Next** (phase 3 on): place new references from a picker (needs new FormIDs and
 next object ID upkeep), delete as disable-and-sink, undo, a gizmo drag instead of keys,
@@ -382,9 +403,17 @@ type with no refresh handler, a race or body change on the player). A full reloa
   with the same name; the original in `Data` is untouched. The UI says this plainly.
 - To play the plugin in the original game, the user copies it into `Data` themselves.
   The editor can open the folder in Explorer; it never copies.
-- Under Mod Organizer 2 (usvfs, install-layout.md): MO2 would normally catch writes into
-  its overwrite folder. NVForever writes to its own home anyway; whether to also offer
-  writing into an MO2 mod folder is an open question (§21).
+- Under Mod Organizer 2 (owner 2026-11-01, §21.2 item 4; built: `fnv_install::mo2::Layout`,
+  `editor.rs` `Target`): when MO2 started the game, a save goes into the real file of
+  the enabled mod that gives `Data` the plugin (MO2's overwrite folder first, then the
+  mods from the highest priority down, by the profile's `modlist.txt`), else into a new
+  file in the overwrite folder. The folders come from the instance's `ModOrganizer.ini`
+  (`mod_directory`, `overwrite_directory`, `profiles_directory`, `base_directory` under
+  `[Settings]`, MO2's defaults beside the INI when unset [documented: MO2 `PathSettings`])
+  and the profile from `selected_profile`. The file a save replaces is kept in
+  `<home>\editor-backups\`, so no mod folder gains a stray file. A plugin that only the
+  game folder has is never written there (`guard_write`); its save is a copy in
+  overwrite, which shadows it as MO2 does [hypothesis].
 
 ### 4.2 Header
 
@@ -466,8 +495,10 @@ not its cell, for exteriors [hypothesis: to be checked in ours and the original]
 
 On first save of a new plugin, the editor adds it to `<home>\plugins.txt` (active, after
 every other plugin) when the user agrees (a checkbox in the save dialog, on by default).
-Under MO2, the home's `plugins.txt` is not read (install-layout.md); the editor then
-only tells the user to enable it in MO2.
+Under MO2, the home's `plugins.txt` is not read (install-layout.md); the editor turns
+the plugin on in the MO2 profile instead: a line at the end of its `plugins.txt` (ANSI,
+CRLF, as MO2 writes it) and of its `loadorder.txt` when it has one. That MO2 keeps the
+line when it refreshes after the game closes is a [hypothesis] (observer check below).
 
 Prerequisite: the engine must load plugins from `<home>\mods\` (§2.2 item 9).
 
@@ -1389,8 +1420,8 @@ tool at once.
    into NVForever: saved scripts hold vanilla syntax only (§12.2); extender syntax is
    refused when saving.
 4. **MO2**: under Mod Organizer 2 a save goes into the plugin being edited, or else into
-   MO2's overwrite folder, as part of its virtual file system (§4.1; not built yet: how
-   `fnv_install::mo2` finds the instance's overwrite folder is to be checked).
+   MO2's overwrite folder, as part of its virtual file system (§4.1, §4.6; built
+   2026-11-01, `fnv_install::mo2::Layout`; not yet tried from a real MO2 start).
 5. **No key**: `editor` in the console opens editor mode and `editor` again closes it
    (as built).
 6. **New plugins are added to `plugins.txt` and on**, so a plugin is part of the load
