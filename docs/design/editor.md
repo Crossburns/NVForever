@@ -43,8 +43,8 @@ Contents:
 
 ## Handover (2026-11-01, end of the second session)
 
-**Start here: one step left from the second session.** The record picker (commit after
-`86d32752`, "record picker") is written and its 11 editor unit tests pass, but the
+**Start here: one step left from the second session.** The record picker (commit
+`a38217f3`) is written and its 11 editor unit tests pass, but the
 engine build was stopped for the handover, so smoke `editor-find-place` has **never
 run**. Build the engine, then run `--area editor` (command below). All 11 editor
 scenarios should pass; the ten other than `editor-find-place` passed on `86d32752`.
