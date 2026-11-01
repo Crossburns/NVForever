@@ -17238,12 +17238,12 @@ name = "editor-place-load"
 source = "owner 2026-11-01 (local editor design): the second half: a start with EditPlace.esp has its new reference"
 areas = ["editor"]
 paths = ["engine/nvf-play/src/editor.rs", "crates/fnv-esm/src/edit.rs"]
-env = { NVFOREVER_HOME = "editor-home-place", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:0A000800.getpos x;16.5:0A000800.getbaseobject;17:close" }
+env = { NVFOREVER_HOME = "editor-home-place", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:0A000800.getpos x;16.5:0A000800.getpos z;17:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--plugins", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm", "EditPlace.esp"]
 run_seconds = 20
 expect = [
   { re = 'console: GetPos on 0x0A000800 >> -6\d{4}\.\d+', label = "the new reference is in the world, near Goodsprings" },
-  { re = 'console: GetBaseObject on 0x0A000800 >> ', label = "with a base" },
+  { re = 'console: GetPos on 0x0A000800 >> 8\d{3}\.\d+', label = "at the height it was placed (about 8400; the ground under the camera's centre)" },
 ]
 
 [[scenario]]

@@ -51,37 +51,26 @@ Contents:
   `F:/nvf-target/editor-engine` (engine). Build the engine with
   `cd engine && CARGO_TARGET_DIR=F:/nvf-target/editor-engine cargo build --release -p nvforever`.
 - Commits: `96569a33` encoder; `c1c6dd6d` mods-folder plugins + writer + editor mode;
-  `37574624` delete/undo; then the WIP commit below (placing, INI lock, this doc).
+  `37574624` delete/undo; `46a528e6` placing, INI lock, this doc; then the commit that
+  verified it.
 - The owner's decisions: §21.2. Read them before choosing behaviour.
 
-**Last commit, WIP: written, not yet run in game.**
-- Placing (`editor place <base>`, P, undo of a placing, new references saved via
-  `fnv_esm::edit::write_plugin` / `NewRef`). The writer unit test passes; the engine had not
-  finished building when the session ended.
-- The INI lock (`editor=1` under `[Settings]`; test aid `NVF_PLAY_TEST_EDITOR=1`; `ini_allows`
-  unit test).
-- The enable-parent warning on delete.
-- Smoke scenarios added but **never run**: `editor-place-write`, `editor-place-load`,
-  `editor-locked`. Also updated (their expected log lines changed):
-  `editor-save-write`, `editor-delete-undo`.
-
-**First steps for the next session**
-1. Build the engine (command above). Fix any compile errors in `engine/nvf-play/src/editor.rs`
-   (`place_new`, `switch` now takes `Console` and `SettingsFile`).
-2. `python tools/smoke run --exe F:/nvf-target/editor-engine/release/nvforever.exe --data
-   "F:/SteamLibrary/steamapps/common/Fallout New Vegas/Data" --area editor`: 7 scenarios. Last
-   known: save-write, save-load and delete-undo passed before the WIP changes.
-   - Watch out: the console names references with an Editor ID by that name, not their
-     FormID, so expectations must match what it prints.
-   - The smoke homes (`target/smoke/editor-home*`) persist between runs.
-   - `editor-place-load` expects the new reference at `0x0A000800` (ten masters, then the
-     plugin) and x starting -6…; adjust only if the placing lands elsewhere for a good reason.
-3. `cargo test -p fnv-esm -p fnv-install` (root target), `cargo test --release -p nvf-play`
-   and engine clippy (`cargo clippy --release --all-targets -- -D warnings` in `engine/`),
-   then commit on the local branch (`git commit -s`, the attribution line).
+**Verified at the end of the session** (all six editor smoke scenarios pass:
+`editor-save-write`, `editor-save-load`, `editor-delete-undo`, `editor-place-write`,
+`editor-place-load`, `editor-locked`; `cargo test -p nvf-play editor`; engine clippy clean).
+- Placing: `editor place <base>` / P put a new reference where the camera's ray hits, undo
+  removes it, and a save writes it as the plugin's own (`0x0A000800` = ten masters, then the
+  plugin). The next start finds it at the same place.
+- The INI lock (`editor=1` under `[Settings]`; test aid `NVF_PLAY_TEST_EDITOR=1`).
+- Scenario notes: the console names references with an Editor ID by that name, and prints
+  `<ref>.<function> >> ran` for functions that return a form (so check numbers, not
+  GetBaseObject). The smoke homes (`target/smoke/editor-home*`) persist between runs (hence
+  `NVF_PLAY_TEST_EDITOR_REPLACE`).
+- To rerun: build the engine (command above), then `python tools/smoke run --exe
+  F:/nvf-target/editor-engine/release/nvforever.exe --data "F:/SteamLibrary/steamapps/common/Fallout
+  New Vegas/Data" --area editor`.
 
 **Open tasks, in the order I'd take them**
-- [ ] Verify and finish the WIP above (steps 1–3).
 - [ ] MO2 saving (§21.2 item 4): into the plugin being edited, else MO2's overwrite folder.
   Find how `crates/fnv-install/src/mo2.rs` learns the instance's folders first.
 - [ ] `editor open <plugin>` / choose the target plugin when editor mode starts (§6.1).
