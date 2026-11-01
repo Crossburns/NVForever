@@ -973,6 +973,16 @@ pub enum EsmCmd {
         #[arg(long, default_value_t = 200)]
         max_rows: usize,
     },
+    /// Decode every subrecord with the schema, encode it back and compare the bytes
+    /// (the editor's encoder, fnv_esm::encode); one report over all the plugins.
+    EncodeCheck {
+        #[arg(required = true, num_args = 1..)]
+        plugins: Vec<PathBuf>,
+        #[arg(long)]
+        schema: PathBuf,
+        #[arg(long, default_value_t = 200)]
+        max_rows: usize,
+    },
     /// Decode records with the schema, selected by FormID or Editor ID.
     #[command(group(clap::ArgGroup::new("select").required(true).args(["formid", "edid"])))]
     Decode {

@@ -10,6 +10,7 @@
 //! - [`inventory`]: per-plugin record inventory (the Layer 1 parity scenario)
 
 pub mod decode;
+pub mod encode;
 pub mod inventory;
 pub mod loadorder;
 pub mod plugin;

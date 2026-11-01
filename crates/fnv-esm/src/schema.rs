@@ -201,6 +201,14 @@ fn parse_type(v: &Value, ctx: &str) -> Result<TypeDef, SchemaError> {
                     let optional = f.get("optional").and_then(Value::as_bool).unwrap_or(false);
                     out.push(Field { name: name.to_string(), ty, optional });
                 }
+                // A repeated name would make the decoded object keep only the last field,
+                // and the encoder could not write the others back (CSTY CSTD had six
+                // "unused").
+                for (i, f) in out.iter().enumerate() {
+                    if out[..i].iter().any(|g| g.name == f.name) {
+                        return Err(SchemaError(format!("{ctx}: field {:?} named twice", f.name)));
+                    }
+                }
                 // Only a trailing run of fields may be optional.
                 let first_opt = out.iter().position(|f| f.optional).unwrap_or(out.len());
                 if out[first_opt..].iter().any(|f| !f.optional) {
@@ -551,6 +559,9 @@ mod tests {
         assert!(s.merge_str(opt_mid, "x").is_err());
         let mut s = Schema::default();
         assert!(s.merge_str(r#"{"format":"fnv.schema/1","common":{"TOOLONG":{"type":"u8"}}}"#, "x").is_err());
+        let mut s = Schema::default();
+        let twice = r#"{"format":"fnv.schema/1","types":{"T":{"struct":[{"name":"unused","type":"u8"},{"name":"unused","type":"u8"}]}}}"#;
+        assert!(s.merge_str(twice, "x").unwrap_err().0.contains("named twice"));
         let mut s = Schema::default();
         let dup = r#"{"format":"fnv.schema/1","common":{"EDID":{"type":"u8"},"EDID":{"type":"u16"}}}"#;
         assert!(s.merge_str(dup, "x").unwrap_err().0.contains("duplicate key"));

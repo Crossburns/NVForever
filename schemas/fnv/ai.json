@@ -556,7 +556,7 @@
         "type": "u8"
        },
        {
-        "name": "unused",
+        "name": "unused_1",
         "type": {
          "array": "u8",
          "count": 2
@@ -603,7 +603,7 @@
         "type": "u8"
        },
        {
-        "name": "unused",
+        "name": "unused_2",
         "type": {
          "array": "u8",
          "count": 2
@@ -626,7 +626,7 @@
         "type": "u8"
        },
        {
-        "name": "unused",
+        "name": "unused_3",
         "type": {
          "array": "u8",
          "count": 3
@@ -661,7 +661,7 @@
         "type": "u8"
        },
        {
-        "name": "unused",
+        "name": "unused_4",
         "type": {
          "array": "u8",
          "count": 3
@@ -692,7 +692,7 @@
         }
        },
        {
-        "name": "unused",
+        "name": "unused_5",
         "type": {
          "array": "u8",
          "count": 2
@@ -710,7 +710,7 @@
         "optional": true
        },
        {
-        "name": "unused",
+        "name": "unused_6",
         "type": {
          "array": "u8",
          "count": 2
