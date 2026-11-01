@@ -78,7 +78,12 @@ Contents:
 - [x] `editor open <plugin>` / choose the target plugin when editor mode starts (§6.1;
   console form, see the progress log). The "New plugin… / Open…" dialog waits for the UI
   toolkit (§8).
-- [ ] Gizmo drag (mouse) instead of only the keys (§7.2); snap to surface.
+- [x] Mouse drag (§7.2; across, Shift for up and down, Ctrl for the grid) and snap to
+  surface (End / `editor drop`); see the progress log. Still open from §7.2: drawn
+  gizmo handles, rotating by mouse, local space, snap to reference, aligning to the
+  surface normal, duplicate, physics drop, scale. The mouse itself has no test aid, so
+  the real mouse drag is untried until the owner uses it. Static collision of a moved
+  reference stays at its old place until its cell reloads (progress log).
 - [ ] A record picker for placing (search by Editor ID or name; the console's `SearchIndex`
   already indexes records) instead of typing a FormID.
 - [ ] Clean masters on save (masters nothing refers to dropped), and a `.bsa` beside a plugin
@@ -222,6 +227,40 @@ turns and deletes. Smoke `editor-delete-undo` passes on 0x0010A206.
 - Smoke `editor-open-write` (lists the plugins, refuses FalloutNV.esm, opens a new
   plugin, saves with no name) and `editor-open-last` (the next run reopens it and saves
   into it).
+
+### 2026-11-01 (second session): drag and set down
+
+- **Drag**: a left press on a reference selects it. Moving the pointer 4 pixels with the
+  button held starts a drag: the reference slides on the horizontal plane at its own
+  height, keeping the grabbed point under the pointer. Shift at the press moves it on
+  the upright plane through it that faces the camera, so up and down only. Ctrl snaps
+  the new place to the 16-unit grid. A whole drag is one undo step. A click without a
+  drag on the selection unselects it, as before. The plane maths (`ray_at_height`,
+  `ray_at_upright`, `drag_place`) has unit tests; a point past reach or behind the eye
+  is ignored.
+- **Set down** (snap to surface): End or `editor drop` casts a ray straight down from
+  the bottom of the selection's drawn bounds, leaving its own collision out, and moves it
+  so that bottom rests on the hit. One undo step. The log names what it landed on.
+- Test form `editor drag <x0> <y0> <x1> <y1>` (fractions of the screen) puts the
+  selection through the same maths, because the mouse has no test aid. Smoke
+  `editor-drag-drop` places a bottle, raises it 64, sets it down, undoes that, then
+  drags it.
+- **Engine bug found and fixed on the way** (`phys.rs` `repose_ref`, `RefRepose` from
+  `script.rs`): SetPos/SetAngle on an object whose collision is one dynamic body (loose
+  clutter, a placed or dropped item) did not move the body, and the settle write-back
+  copied the body's old pose back over the move straight away. The raised bottle read
+  `GetPos Z 8396.80` after `SetPos Z 8461`, and every editor move of clutter would have
+  snapped back. Now any reference a script moved, turned or resized has that single
+  dynamic body rebuilt at the simulation's pose when the two differ. This holds for
+  game scripts too, not only editor mode. A second cause: console lines run before the
+  tick, which clears `Game::turned` first, so the console's moves are collected before
+  the tick. Not covered: collision that isn't one dynamic body (static or multi-part)
+  stays at the old place until its cell loads again, though it is drawn at the new one.
+- Checks for that change: the `nvf-play` tests (716), engine clippy, and the 29 smoke
+  scenarios that watch `phys.rs`/`script.rs`/`lib.rs`, plus the editor ones: 37 of 38
+  pass. `knockdown-player` fails with and without the change (twice with it, once
+  without, each time on a different timing check of the get-up). The rebuild never
+  fired in its runs, so it is not this change. Left for whoever owns knockdowns.
 
 **Next** (phase 3 on): place new references from a picker (needs new FormIDs and
 next object ID upkeep), delete as disable-and-sink, undo, a gizmo drag instead of keys,

@@ -13,6 +13,16 @@
 //!   console's click does (the collision ray, else the render bounds;
 //!   `crate::console::pick_under`); clicking it again unselects it. A box is drawn
 //!   around it and its details are shown in the panel.
+//! - **Dragging** (§7.2): a left-button press on a reference selects it, and moving the
+//!   mouse while the button is held (4 pixels or more) drags it: it slides on the
+//!   horizontal plane at its own height, keeping the point that was grabbed under the
+//!   pointer; with Shift held at the press it moves up and down instead (on the upright
+//!   plane through it that faces the camera); with Ctrl held its new place snaps to the
+//!   16-unit grid. A drag is one undo step. A press and release without moving on the
+//!   selection unselects it, as a click did before.
+//! - **Setting down** (§7.2, snap to surface): End or `editor drop` lowers or raises the
+//!   selection so the bottom of its drawn bounds rests on the first collision straight
+//!   below them (its own collision left out). One undo step.
 //! - **Moving**: the arrow keys move the selection along the world's X and Y axes, the
 //!   one nearest to the camera's view (up: away from the camera); Page Up and Page Down
 //!   move it up and down; Ctrl with Left and Right turns it about Z; 16 units or 15° a
@@ -32,7 +42,9 @@
 //!   as its parent has it in the run (Disable does nothing to it), which the console says;
 //!   it is still written Initially Disabled [design].
 //! - **Undo**: Ctrl+Z puts the last move, turn, delete or placing back, one step at a time.
-//! - **From the console** (and test aids): `editor select <FormID>`, `editor move <dx>
+//! - **From the console** (and test aids): `editor drag <x0> <y0> <x1> <y1>` drags the
+//!   selection as the mouse would between those points of the screen (fractions of its
+//!   width and height), `editor drop` sets it down; `editor select <FormID>`, `editor move <dx>
 //!   <dy> <dz>` (world axes, game units), `editor turn <degrees>` (about Z), `editor
 //!   place <base>`, `editor delete` and `editor undo` do what a click and the keys do.
 //! - **The target plugin** (§6.1, through the console until editor mode has a UI):
@@ -125,6 +137,8 @@ pub struct Editor {
     target_looked: bool,
     /// `editor select`, `editor move`, `editor turn` asked for, in order.
     pub ops: Vec<Op>,
+    /// A left-button press on a reference, and the drag it may become.
+    drag: Option<Drag>,
     /// Whether the HUD was hidden (`tm`) before editor mode hid it.
     menus_were_hidden: bool,
     text: String,
@@ -161,6 +175,11 @@ pub enum Op {
     Undo,
     /// A new reference of this base.
     Place(u32),
+    /// Drag the selection as the mouse would from one point of the screen to another
+    /// (fractions of its width and height): the test form of a drag.
+    Drag([f32; 4]),
+    /// Set the selection down on what is below it (End).
+    Drop,
 }
 
 impl Op {
@@ -180,6 +199,9 @@ impl Op {
             ("place", [id]) => crate::console::parse_form_id(id).map(|f| Op::Place(f.0)).ok_or_else(|| format!("{id:?} is not a FormID")),
             ("place", _) => Err("editor place <base FormID>".into()),
             ("delete", []) => Ok(Op::Delete),
+            ("drop", []) => Ok(Op::Drop),
+            ("drag", [a, b, c, d]) => (|| Ok(Op::Drag([f(a)?, f(b)?, f(c)?, f(d)?])))(),
+            ("drag", _) => Err("editor drag <x0> <y0> <x1> <y1>: fractions of the screen's width and height".into()),
             ("undo", []) => Ok(Op::Undo),
             _ => return None,
         })
@@ -195,7 +217,7 @@ pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Editor>().add_systems(Update, (switch, open, save, pick, nudge, place_new, describe, draw, outline).chain().in_set(PlaySet::Ui).after(crate::console::ConsoleSet));
+        app.init_resource::<Editor>().add_systems(Update, (switch, open, save, pick, set_down, nudge, place_new, describe, draw, outline).chain().in_set(PlaySet::Ui).after(crate::console::ConsoleSet));
     }
 }
 
@@ -615,10 +637,112 @@ fn save_plugin(
     Ok(lines)
 }
 
-/// A left click selects the reference under the pointer.
+/// How far the pointer moves with the button held before a press becomes a drag, pixels [design].
+const DRAG_START: f32 = 4.0;
+
+/// A press on a reference and the drag it may become.
+#[derive(Debug, Clone, Copy)]
+struct Drag {
+    id: u32,
+    /// Where the pointer was pressed, window pixels.
+    press: Vec2,
+    /// The reference's place when pressed (game units, radians).
+    pos: [f32; 3],
+    rot: [f32; 3],
+    /// The grabbed point on the drag's plane, game units.
+    grab: [f32; 3],
+    /// Up and down (Shift at the press) rather than across.
+    vertical: bool,
+    /// The camera's horizontal forward at the press (the upright plane's normal).
+    facing: [f32; 2],
+    /// Whether the selection was already this reference (a click without a drag then unselects it).
+    was_selected: bool,
+    dragging: bool,
+}
+
+/// Where the ray `eye` + t·`dir` (t > 0) meets the horizontal plane at height `z`, within reach.
+fn ray_at_height(eye: [f32; 3], dir: [f32; 3], z: f32) -> Option<[f32; 3]> {
+    if dir[2].abs() < 1e-6 {
+        return None;
+    }
+    let t = (z - eye[2]) / dir[2];
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+    (t > 0.0 && t * len <= REACH).then(|| [eye[0] + dir[0] * t, eye[1] + dir[1] * t, z])
+}
+
+/// Where the ray meets the upright plane through `through` whose normal is the horizontal
+/// direction `facing`, within reach.
+fn ray_at_upright(eye: [f32; 3], dir: [f32; 3], through: [f32; 3], facing: [f32; 2]) -> Option<[f32; 3]> {
+    let denom = dir[0] * facing[0] + dir[1] * facing[1];
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let t = ((through[0] - eye[0]) * facing[0] + (through[1] - eye[1]) * facing[1]) / denom;
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+    (t > 0.0 && t * len <= REACH).then(|| [eye[0] + dir[0] * t, eye[1] + dir[1] * t, eye[2] + dir[2] * t])
+}
+
+/// The point the drag's plane holds under a ray.
+fn drag_point(d: &Drag, eye: [f32; 3], dir: [f32; 3]) -> Option<[f32; 3]> {
+    if d.vertical {
+        ray_at_upright(eye, dir, d.pos, d.facing)
+    } else {
+        ray_at_height(eye, dir, d.pos[2])
+    }
+}
+
+/// The dragged reference's new place for a pointer ray: moved by as much as the grabbed
+/// point, across or up and down only, on the grid when `snap`.
+fn drag_place(d: &Drag, eye: [f32; 3], dir: [f32; 3], snap: bool) -> Option<[f32; 3]> {
+    let at = drag_point(d, eye, dir)?;
+    let mut p = d.pos;
+    let axes: &[usize] = if d.vertical { &[2] } else { &[0, 1] };
+    for &i in axes {
+        p[i] = d.pos[i] + at[i] - d.grab[i];
+        if snap {
+            p[i] = (p[i] / STEP).round() * STEP;
+        }
+    }
+    Some(p)
+}
+
+/// A pointer ray in game space, from window pixels.
+fn pointer_ray(cam: &Camera, cam_t: &GlobalTransform, at: Vec2) -> Option<([f32; 3], [f32; 3])> {
+    let ray = cam.viewport_to_world(cam_t, at).ok()?;
+    let eye = space::to_game(ray.origin);
+    let p = space::to_game(ray.origin + *ray.direction);
+    Some((eye, [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]]))
+}
+
+/// Start a press on reference `id` at window pixels `at`.
+fn press_on(id: u32, at: Vec2, ray: ([f32; 3], [f32; 3]), place: ([f32; 3], [f32; 3]), vertical: bool, cam_fwd: [f32; 3], was_selected: bool) -> Option<Drag> {
+    let h = (cam_fwd[0] * cam_fwd[0] + cam_fwd[1] * cam_fwd[1]).sqrt().max(1e-6);
+    let mut d = Drag { id, press: at, pos: place.0, rot: place.1, grab: [0.0; 3], vertical, facing: [cam_fwd[0] / h, cam_fwd[1] / h], was_selected, dragging: false };
+    d.grab = drag_point(&d, ray.0, ray.1)?;
+    Some(d)
+}
+
+/// Send the reference to `to` (only the axes that changed) through SetPos.
+fn set_pos(st: &mut ScriptState, id: u32, from: [f32; 3], to: [f32; 3]) {
+    for (i, axis) in ["X", "Y", "Z"].iter().enumerate() {
+        if (to[i] - from[i]).abs() > 1e-3 {
+            st.console.push(ConsoleCall { line: format!("SetPos {axis} {}", to[i]), selected: Some(id), active_quest: None });
+        }
+    }
+}
+
+/// The end of a drag: one undo step, counted as moved.
+fn end_drag(ed: &mut Editor, d: &Drag, to: [f32; 3]) {
+    ed.history.push(Step::Placed { id: d.id, pos: d.pos, rot: d.rot });
+    ed.moved.insert(d.id);
+    info!("editor: dragged {} by ({:.0}, {:.0}, {:.0})", FormId(d.id), to[0] - d.pos[0], to[1] - d.pos[1], to[2] - d.pos[2]);
+}
+
+/// A left press selects the reference under the pointer and may become a drag (module notes).
 #[allow(clippy::too_many_arguments)]
 fn pick(
     mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut ed: ResMut<Editor>,
     console: Res<Console>,
     free: Res<crate::free_cam::FreeCam>,
@@ -627,25 +751,156 @@ fn pick(
     phys: Option<ResMut<PhysState>>,
     visuals: Query<(&RefVisual, &Aabb, &GlobalTransform, &InheritedVisibility)>,
     panel: Query<&PointerState, With<EditorRoot>>,
+    sim: Res<SimState>,
+    script: Option<ResMut<ScriptState>>,
 ) {
-    if !ed.on || console.open || !free.active || !mouse.just_pressed(MouseButton::Left) || panel.iter().any(|p| *p != PointerState::None) {
+    let (Ok(window), Ok((cam, cam_t))) = (windows.single(), camera.single()) else { return };
+    let mut st = script.filter(|s| s.rt.is_some());
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    let fwd = {
+        let (o, f) = (space::to_game(cam_t.translation()), space::to_game(cam_t.translation() + cam_t.forward().as_vec3()));
+        [f[0] - o[0], f[1] - o[1], f[2] - o[2]]
+    };
+    // The test form: `editor drag x0 y0 x1 y1` drags the selection in one go.
+    let (drags, rest): (Vec<Op>, Vec<Op>) = std::mem::take(&mut ed.ops).into_iter().partition(|o| matches!(o, Op::Drag(_)));
+    ed.ops = rest;
+    for op in drags {
+        let Op::Drag([x0, y0, x1, y1]) = op else { continue };
+        let px = |x: f32, y: f32| Vec2::new(window.width() * x, window.height() * y);
+        let (Some(id), Some(st)) = (ed.selected, st.as_deref_mut()) else {
+            info!("editor: nothing selected to drag");
+            continue;
+        };
+        let Some(place) = live_place(&sim, id) else { continue };
+        let (Some(r0), Some(r1)) = (pointer_ray(cam, cam_t, px(x0, y0)), pointer_ray(cam, cam_t, px(x1, y1))) else { continue };
+        let Some(d) = press_on(id, px(x0, y0), r0, place, shift, fwd, true) else {
+            info!("editor: the drag's start is off the plane");
+            continue;
+        };
+        match drag_place(&d, r1.0, r1.1, ctrl) {
+            Some(to) => {
+                set_pos(st, id, d.pos, to);
+                end_drag(&mut ed, &d, to);
+            }
+            None => info!("editor: the drag's end is off the plane"),
+        }
+    }
+    if !ed.on {
+        ed.drag = None;
         return;
     }
-    let (Ok(window), Ok((cam, cam_t))) = (windows.single(), camera.single()) else { return };
-    let Some(at) = window.cursor_position() else { return };
+    let at = window.cursor_position();
+    // Holding: a drag past the threshold follows the pointer.
+    if let (Some(mut d), true, Some(at)) = (ed.drag, mouse.pressed(MouseButton::Left), at) {
+        if !d.dragging && at.distance(d.press) >= DRAG_START {
+            d.dragging = true;
+        }
+        if d.dragging {
+            if let (Some(r), Some(st)) = (pointer_ray(cam, cam_t, at), st.as_deref_mut()) {
+                if let (Some(to), Some(now)) = (drag_place(&d, r.0, r.1, ctrl), live_place(&sim, d.id)) {
+                    set_pos(st, d.id, now.0, to);
+                }
+            }
+        }
+        ed.drag = Some(d);
+    }
+    if mouse.just_released(MouseButton::Left) {
+        if let Some(d) = ed.drag.take() {
+            if d.dragging {
+                let to = at.and_then(|a| pointer_ray(cam, cam_t, a)).and_then(|r| drag_place(&d, r.0, r.1, ctrl)).or_else(|| live_place(&sim, d.id).map(|p| p.0)).unwrap_or(d.pos);
+                if let Some(st) = st.as_deref_mut() {
+                    if let Some(now) = live_place(&sim, d.id) {
+                        set_pos(st, d.id, now.0, to);
+                    }
+                }
+                end_drag(&mut ed, &d, to);
+            } else if d.was_selected {
+                ed.selected = None;
+                info!("editor: unselected {}", FormId(d.id));
+            }
+        }
+    }
+    if console.open || !free.active || !mouse.just_pressed(MouseButton::Left) || panel.iter().any(|p| *p != PointerState::None) {
+        return;
+    }
+    let Some(at) = at else { return };
     let Ok(ray) = cam.viewport_to_world(cam_t, at) else { return };
     let picked = crate::console::pick_under(ray.origin, *ray.direction, REACH, phys.map(|p| p.into_inner()), &visuals).picked;
-    match picked {
-        Some(id) if ed.selected == Some(id) => {
-            ed.selected = None;
-            info!("editor: unselected {}", FormId(id));
-        }
-        Some(id) => {
-            ed.selected = Some(id);
-            info!("editor: selected {}", FormId(id));
-        }
-        None => info!("editor: nothing there to select"),
+    let Some(id) = picked else {
+        info!("editor: nothing there to select");
+        return;
+    };
+    let was_selected = ed.selected == Some(id);
+    if !was_selected {
+        ed.selected = Some(id);
+        info!("editor: selected {}", FormId(id));
     }
+    ed.drag = match (live_place(&sim, id), pointer_ray(cam, cam_t, at)) {
+        (Some(place), Some(r)) => press_on(id, at, r, place, shift, fwd, was_selected),
+        _ => None,
+    };
+}
+
+/// End or `editor drop`: set the selection down on the first collision below its drawn
+/// bounds (its own collision left out).
+#[allow(clippy::too_many_arguments)]
+fn set_down(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut ed: ResMut<Editor>,
+    console: Res<Console>,
+    free: Res<crate::free_cam::FreeCam>,
+    phys: Option<ResMut<PhysState>>,
+    visuals: Query<(&RefVisual, &Aabb, &GlobalTransform)>,
+    sim: Res<SimState>,
+    script: Option<ResMut<ScriptState>>,
+) {
+    let mut asked = ed.ops.iter().filter(|o| matches!(o, Op::Drop)).count();
+    ed.ops.retain(|o| !matches!(o, Op::Drop));
+    if ed.on && !console.open && free.active && keys.just_pressed(KeyCode::End) {
+        asked += 1;
+    }
+    if asked == 0 || !ed.on {
+        return;
+    }
+    let Some(id) = ed.selected else {
+        info!("editor: nothing selected to set down");
+        return;
+    };
+    let (Some(mut st), Some(phys)) = (script.filter(|s| s.rt.is_some()), phys) else { return };
+    let Some((pos, rot)) = live_place(&sim, id) else { return };
+    // The bottom of the drawn bounds, game units (the lowest corner of every part's box).
+    let mut bottom: Option<f32> = None;
+    for (r, aabb, gt) in &visuals {
+        if r.0 != id {
+            continue;
+        }
+        let (c, h) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
+        for k in 0..8 {
+            let corner = c + Vec3::new(if k & 1 == 0 { -h.x } else { h.x }, if k & 2 == 0 { -h.y } else { h.y }, if k & 4 == 0 { -h.z } else { h.z });
+            let z = space::to_game(gt.transform_point(corner))[2];
+            bottom = Some(bottom.map_or(z, |b: f32| b.min(z)));
+        }
+    }
+    let bottom = bottom.unwrap_or(pos[2]);
+    let mut filter = fnv_phys::Filter::default();
+    filter.exclude_layers.insert(fnv_phys::layers::TRIGGER);
+    filter.exclude.push(fnv_phys::Key::Ref(id));
+    let hits = phys.into_inner().ray_all([pos[0], pos[1], bottom + 1.0], [0.0, 0.0, -1.0], REACH, filter);
+    let Some(h) = hits.first() else {
+        info!("editor: nothing below {} to set it down on", FormId(id));
+        return;
+    };
+    let to = [pos[0], pos[1], pos[2] + h.point[2] - bottom];
+    let onto = match h.owner {
+        fnv_phys::Owner::Terrain { .. } => "the ground".to_string(),
+        fnv_phys::Owner::Ref { form_id, .. } => FormId(form_id).to_string(),
+        _ => "something".to_string(),
+    };
+    set_pos(&mut st, id, pos, to);
+    ed.history.push(Step::Placed { id, pos, rot });
+    ed.moved.insert(id);
+    info!("editor: set {} down by {:.0} onto {onto}", FormId(id), to[2] - pos[2]);
 }
 
 /// The world axis (game space, X or Y, with its sign) nearest to `dir`'s horizontal part.
@@ -689,6 +944,7 @@ fn nudge(
             Op::Move(d) => (0..3).for_each(|i| asked.0[i] += d[i]),
             Op::Turn(t) => asked.1 += t,
             Op::Place(base) => ed.to_place.push((base, false)),
+            Op::Drag(_) | Op::Drop => {}
             Op::Delete => {
                 let Some(id) = ed.selected.take() else {
                     info!("editor: nothing selected to delete");
@@ -865,7 +1121,8 @@ fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mu
     let mut text = String::from(
         "EDITOR MODE   (type `editor` in the console to leave)\n\
          Fly: W A S D, Q down, E up, Shift faster, wheel speed; hold the right mouse button to look\n\
-         Click: select   Arrows: move   Page Up/Down: up/down   Ctrl+Left/Right: turn   Alt: fine steps   Delete: delete   Ctrl+Z: undo   P: place another\n\
+         Click: select   Drag: move (Shift: up/down, Ctrl: 16-unit grid)   End: set down on what is below\n\
+         Arrows: move   Page Up/Down: up/down   Ctrl+Left/Right: turn   Alt: fine steps   Delete: delete   Ctrl+Z: undo   P: place another\n\
          Console: editor place <base FormID> places a new reference where the screen's centre points\n\
          Console: editor open <Name.esp> picks the plugin to save into (editor open lists them); editor save writes into it\n",
     );
@@ -961,6 +1218,45 @@ editor=1
         assert_eq!(plugin_name(" My Edits.ESM ").unwrap(), "My Edits.ESM");
         assert!(plugin_name("..\\Data\\x.esp").is_err());
         assert!(plugin_name("").is_err());
+    }
+
+    fn drag(vertical: bool) -> Drag {
+        // A reference at (100, 200, 50); the camera looks along +X from (0, 200, 150).
+        let ray = ([0.0, 200.0, 150.0], [1.0, 0.0, -1.0]);
+        press_on(7, Vec2::ZERO, ray, ([100.0, 200.0, 50.0], [0.0; 3]), vertical, [1.0, 0.0, -0.5], false).unwrap()
+    }
+
+    #[test]
+    fn drag_across_keeps_the_grab_and_height() {
+        let d = drag(false);
+        // Grabbed where the ray meets z = 50: x 100.
+        assert_eq!(d.grab, [100.0, 200.0, 50.0]);
+        // The pointer now meets the plane at (130, 210): the reference moves by as much.
+        let to = drag_place(&d, [0.0, 210.0, 150.0], [1.3, 0.0, -1.0], false).unwrap();
+        assert!((to[0] - 130.0).abs() < 1e-3 && (to[1] - 210.0).abs() < 1e-3 && to[2] == 50.0, "{to:?}");
+        // On the grid: 128, 208.
+        assert_eq!(drag_place(&d, [0.0, 210.0, 150.0], [1.3, 0.0, -1.0], true).unwrap(), [128.0, 208.0, 50.0]);
+        // A ray going up never meets the plane below the eye; nor one past reach.
+        assert_eq!(drag_place(&d, [0.0, 200.0, 150.0], [1.0, 0.0, 1.0], false), None);
+        assert_eq!(drag_place(&d, [0.0, 200.0, 150.0], [1.0, 0.0, -1e-5], false), None);
+    }
+
+    #[test]
+    fn drag_up_and_down_on_the_upright_plane() {
+        let d = drag(true);
+        // The upright plane through x 100 facing the camera: grabbed at z 50.
+        assert_eq!(d.facing, [1.0, 0.0]);
+        assert!((d.grab[2] - 50.0).abs() < 1e-3);
+        // A flatter ray meets it at z 100: the reference rises 50, x and y stay.
+        let to = drag_place(&d, [0.0, 200.0, 150.0], [1.0, 0.0, -0.5], false).unwrap();
+        assert!((to[2] - 100.0).abs() < 1e-3 && to[0] == 100.0 && to[1] == 200.0, "{to:?}");
+    }
+
+    #[test]
+    fn drag_and_drop_words() {
+        assert_eq!(Op::parse("drop"), Some(Ok(Op::Drop)));
+        assert_eq!(Op::parse("drag 0.5 0.5 0.6 0.5"), Some(Ok(Op::Drag([0.5, 0.5, 0.6, 0.5]))));
+        assert!(matches!(Op::parse("drag 0.5"), Some(Err(_))));
     }
 
     #[test]

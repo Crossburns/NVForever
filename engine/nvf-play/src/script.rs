@@ -1645,7 +1645,7 @@ pub(crate) fn run_scripts(
     mut hud: ResMut<ScriptHud>,
     mut corner: ResMut<crate::corner_messages::CornerMessages>,
     mut quest_lines: ResMut<crate::quest_messages::QuestMessages>,
-    (mut changed, mut fades): (MessageWriter<RefChanged>, MessageWriter<crate::fade::RefFade>),
+    (mut changed, mut fades, mut repose): (MessageWriter<RefChanged>, MessageWriter<crate::fade::RefFade>, MessageWriter<crate::RefRepose>),
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
@@ -1749,6 +1749,8 @@ pub(crate) fn run_scripts(
     let used = std::mem::take(&mut st.used);
     let console = std::mem::take(&mut st.console);
     let mut console_out = Vec::new();
+    // What the console's lines moved (SetPos ...): the tick clears `Game::turned` first.
+    let mut console_turned: BTreeSet<FormId> = BTreeSet::new();
     // A script's menu or box left open by an unattended run: answered with OK / Done.
     let on_screen = st.rt.as_ref().and_then(|rt| {
         let m = rt.game.menu.filter(|&m| is_script_menu(m))?;
@@ -1837,6 +1839,7 @@ pub(crate) fn run_scripts(
                 console_out.push(crate::console::run_call(rt, c));
             }
         });
+        console_turned.extend(rt.game.turned.iter().copied());
         if let Some(i) = rt.activate_pick.take() {
             rt.pick_activate_choice(i);
         }
@@ -1893,6 +1896,10 @@ pub(crate) fn run_scripts(
     let move_fades = std::mem::take(&mut rt.game.script_looks.fades);
     let ctx = PlayCtx { sim: &sim, data: rt.game.data, index: play.index, children: &rt.children, quests: &rt.game.quests };
     let mut effects = script_events::effects(&events, &skip, &ctx);
+    // Objects a script moved, turned or resized: their collision follows (`crate::phys`).
+    for r in rt.game.turned.union(&console_turned) {
+        repose.write(crate::RefRepose { form_id: r.0 });
+    }
     for r in late {
         info!("script: {} disabled after its fade", rt.game.data.name(r));
         effects.push(ScriptEffect::RefChanged(r.0));

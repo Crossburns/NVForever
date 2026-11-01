@@ -17268,6 +17268,27 @@ expect = [
 
 
 [[scenario]]
+name = "editor-drag-drop"
+source = "local editor design §7.2: a drag moves the selection on its plane (editor drag, the test form of the mouse drag), End / editor drop sets it down on what is below, each one undo step"
+areas = ["editor"]
+paths = ["engine/nvf-play/src/editor.rs", "engine/nvf-play/src/phys.rs"]
+# A bottle (base 0x0010A1F6) placed where the screen's centre points, raised 64, set
+# down again (about 64 back), the set-down undone, then dragged from below the centre to
+# the right of it: across only, its height kept.
+env = { NVFOREVER_HOME = "editor-home-drag", NVF_PLAY_TEST_EDITOR = "1", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:editor;17:editor place 0010A1F6;17.5:editor move 0 0 64;17.8:FF000000.getpos z;18:editor drop;18.5:editor undo;19:editor drag 0.5 0.6 0.6 0.6;20:editor;20.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'editor: placed 0x0010A1F6 as 0x[0-9A-F]{8}', label = "a bottle is placed" },
+  { re = 'console: GetPos on 0xFF000000 >> 846\d\.', label = "the raise sticks: a dynamic body's collision follows SetPos (phys repose_ref)" },
+  { re = 'editor: set 0x[0-9A-F]{8} down by -(5\d|6\d|7\d) onto ', label = "raised 64, it is set down by about as much" },
+  { re = 'editor: undid the move of 0x[0-9A-F]{8}', label = "the set-down is one undo step" },
+  { re = 'editor: dragged 0x[0-9A-F]{8} by \((-?[1-9]\d*, -?\d+|-?\d+, -?[1-9]\d*), -?0\)', label = "the drag moves it across, not up or down" },
+  { re = 'editor: off; 0 reference\(s\) moved, 0 deleted, 1 placed this session', label = "counted as placed" },
+]
+
+
+[[scenario]]
 name = "editor-place-write"
 source = "owner 2026-11-01 (local editor design): editor mode places a new reference and saves it as the plugin's own; editor-place-load finds it, so run them together"
 areas = ["editor"]

@@ -279,6 +279,14 @@ pub struct RefChanged {
     pub form_id: u32,
 }
 
+/// A script moved or turned a placed or created reference (SetPos, SetAngle, Rotate,
+/// SetScale: `fnv_game::Game::turned`): its collision follows when the settle write-back
+/// would otherwise undo the move (`crate::phys::PhysState::repose_ref`).
+#[derive(Message, Clone, Copy, Debug)]
+pub struct RefRepose {
+    pub form_id: u32,
+}
+
 /// The player used up an item from the inventory (an aid item): the script runtime
 /// uses it (`crate::aid`, `fnv_game::Game::ingest`: its effects, effect scripts
 /// included, with potency, the usage monitor and the addiction roll).
