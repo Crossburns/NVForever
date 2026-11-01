@@ -58,10 +58,35 @@ class Ctx:
     ini: Path | None = None  # an NVForever.ini copied into each launch's home (the player's settings)
 
 
+def folder_name(name: str) -> str:
+    """A single output-directory component, never a path supplied by the caller."""
+    path = Path(name)
+    if not name or name in {".", ".."} or "/" in name or "\\" in name or ":" in name or path.drive or path.name != name:
+        raise ValueError(f"invalid run name {name!r}: use one directory name")
+    return name
+
+
+def new_folder(parent: Path, name: str) -> Path:
+    """Make one new named output folder without reusing a previous run's files."""
+    d = Path(parent) / folder_name(name)
+    try:
+        d.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as e:
+        raise FileExistsError(f"run output already exists: {d}") from e
+    return d
+
+
 def run_folder(repo: Path, test: str, name: str | None = None) -> Path:
-    stamp = name or time.strftime("%Y%m%d-%H%M%S")
-    d = repo / "target" / "stress" / test / stamp
-    d.mkdir(parents=True, exist_ok=True)
+    """Make a fresh run folder below this test's output root."""
+    root = repo / "target" / "stress" / folder_name(test)
+    return new_folder(root, name or time.strftime("%Y%m%d-%H%M%S"))
+
+
+def existing_run_folder(repo: Path, test: str, name: str) -> Path:
+    """Find a named prior run for an explicit resume, without accepting traversal."""
+    d = repo / "target" / "stress" / folder_name(test) / folder_name(name)
+    if not d.is_dir():
+        raise FileNotFoundError(f"no run {name} under target/stress/{test}/")
     return d
 
 

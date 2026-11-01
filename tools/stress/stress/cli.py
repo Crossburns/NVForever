@@ -7,10 +7,13 @@ target/stress/<test>/<run>/results.json and report.md (docs/design/stress-tests.
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import os
 from pathlib import Path
 
 from . import battle, cells, lib, markers, soak, tour
+from .metadata import collect_manifest
 
 TESTS = {
     "cells": "every interior cell of the masters loads without crashing (exteriors: tour)",
@@ -19,6 +22,8 @@ TESTS = {
     "battle": "NCR against the Legion in Goodsprings: frame time, memory, combat measures",
     "soak": "the tour's lap with containers, doors and fights mixed in: hitches put down to their cause",
 }
+
+COMPARISON_TESTS = {"tour", "battle", "soak"}
 
 
 def common(p: argparse.ArgumentParser) -> None:
@@ -29,6 +34,23 @@ def common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-locks", action="store_true", help="do not take the game locks (a machine of your own)")
     p.add_argument("--ini", type=Path, default=None,
                    help="an NVForever.ini to play with (e.g. the player's, for their graphics settings); default: the engine's defaults")
+
+
+def positive_int(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError("must be a positive integer") from e
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return n
+
+
+def comparison_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--repetitions", type=positive_int, default=1,
+                   help="run this tour, battle or soak serially this many times and summarize the current metrics")
+    p.add_argument("--build-label", default=None,
+                   help="a caller-supplied build label recorded with each run (features are otherwise unknown)")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -111,6 +133,7 @@ def parser() -> argparse.ArgumentParser:
     b.add_argument("--centre", default=f"{battle.CENTRE[0]:g},{battle.CENTRE[1]:g}", help="x,y the battle is round")
     b.add_argument("--gap", type=float, default=3000.0, help="units between the sides")
     for p in (t, b, s):
+        comparison_options(p)
         g = p.add_argument_group("budget", "frame-time limits after start-up; a run over any of them fails (exit 1)")
         g.add_argument("--budget-mean-ms", type=float, default=None, help="largest mean frame")
         g.add_argument("--budget-low1-ms", type=float, default=None, help="largest 1%% low frame")
@@ -128,22 +151,53 @@ def context(a, test: str) -> lib.Ctx:
     if not Path(exe).exists():
         raise SystemExit(f"no nvforever at {exe}: build it (engine workspace) or pass --exe / NVF_EXE")
     resume = getattr(a, "resume", None)
-    if resume and not (repo / "target" / "stress" / test / resume).is_dir():
-        raise SystemExit(f"no run {resume} to resume under target/stress/{test}/")
-    out = lib.run_folder(repo, test, resume or a.name)
+    try:
+        out = lib.existing_run_folder(repo, test, resume) if resume else lib.run_folder(repo, test, a.name)
+    except (FileExistsError, FileNotFoundError, ValueError) as e:
+        raise SystemExit(str(e)) from e
     locks = None if a.no_locks else lib.Locks(lib.default_lock_paths(repo))
     if a.ini and not a.ini.is_file():
         raise SystemExit(f"no settings file at {a.ini}")
     return lib.Ctx(repo, Path(exe), data, Path(tool), out, print, locks, lib.masters(repo), a.ini)
 
 
-def main(argv=None) -> int:
-    a = parser().parse_args(argv)
-    if a.cmd == "list":
-        for k, v in TESTS.items():
-            print(f"{k:<8} {v}")
-        return 0
-    ctx = context(a, a.test)
+def requested_config(a) -> dict:
+    """What the caller requested, without pretending saved settings took effect."""
+    def plain(value):
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, (list, tuple)):
+            return [plain(v) for v in value]
+        return value
+
+    skip = {"cmd", "test", "repetitions", "build_label"}
+    options = {key: plain(value) for key, value in vars(a).items() if key not in skip}
+    aids = list(getattr(a, "aid", []))
+    return {
+        "options": options,
+        "aids_requested": aids,
+        "cache_state": {"requested": "unknown", "effective": "unknown"},
+        "settings": {
+            "ini_requested": str(a.ini) if a.ini else None,
+            "effective": "unknown",
+        },
+    }
+
+
+def run_once(a, ctx: lib.Ctx) -> tuple[dict, list[str], int]:
+    """Run one selected stress test and return its existing result/report pair."""
+    manifest = None
+    if a.test in COMPARISON_TESTS:
+        manifest = collect_manifest(
+            ctx.repo,
+            ctx.exe,
+            ctx.fnvtool,
+            ctx.ini,
+            test=a.test,
+            requested=requested_config(a),
+            masters=ctx.masters,
+            build_label=getattr(a, "build_label", None),
+        )
     if a.test == "cells":
         if not ctx.fnvtool.exists():
             raise SystemExit(f"no fnvtool at {ctx.fnvtool}: build it (root workspace) or pass --fnvtool")
@@ -228,7 +282,140 @@ def main(argv=None) -> int:
         # Right after the status line, so the first lines printed carry the verdict.
         lines[3:3] = lib.budget_report(budget, failed)
         bad += len(failed)
-    lib.write_results(ctx.out, res, lines)
-    print("\n".join(lines[:12]))
-    print(f"\nresults: {ctx.out / 'results.json'}\nreport:  {ctx.out / 'report.md'}")
+    if manifest is not None:
+        res["manifest"] = manifest
+    return res, lines, bad
+
+
+def comparison_quality(res: dict) -> tuple[str, bool, str | None]:
+    """Whether a repeat is usable for an aggregate of the current coarse metrics."""
+    if res.get("status") != "ok":
+        return "unknown", False, f"run status {res.get('status', 'unknown')}"
+    machine = res.get("machine")
+    if not isinstance(machine, dict):
+        return "unknown", False, "no background-CPU samples"
+    busy_fraction = machine.get("busy_fraction")
+    if isinstance(busy_fraction, bool) or not isinstance(busy_fraction, (int, float)) or not math.isfinite(busy_fraction):
+        return "unknown", False, "background-CPU samples have no finite busy fraction"
+    if busy_fraction > 0.1:
+        return "busy", False, "other programs exceeded the busy threshold"
+    frames = res.get("frames")
+    count = frames.get("count") if isinstance(frames, dict) else None
+    if isinstance(count, bool) or not isinstance(count, (int, float)) or not math.isfinite(count) or count <= 0:
+        return "below_busy_threshold", False, "no positive frame count"
+    # This says only that the runner warning did not trigger; it is not a quiet-machine claim.
+    return "below_busy_threshold", True, None
+
+
+def comparison_row(index: int, out: Path, res: dict) -> dict:
+    quality, included, reason = comparison_quality(res)
+    frames = res.get("frames") or {}
+    return {
+        "repeat": index,
+        "output": str(out.name),
+        "status": res.get("status"),
+        "quality": quality,
+        "included": included,
+        "exclusion": reason,
+        "frames": {key: frames.get(key) for key in ("count", "mean_ms", "low1_ms", "worst_ms")},
+        # Tour/soak retain their existing top-ten hitch list; battle has none. Do not turn it into a total.
+        "reported_hitches": len(res["hitches"]) if "hitches" in res else None,
+    }
+
+
+def metric_summary(rows: list[dict], key: str) -> dict | None:
+    values = [row["frames"][key] for row in rows if row["frames"].get(key) is not None]
+    if not values:
+        return None
+    return {"mean": sum(values) / len(values), "min": min(values), "max": max(values)}
+
+
+def comparison_index(test: str, label: str | None, rows: list[dict], requested_repetitions: int | None = None,
+                     complete: bool = True) -> dict:
+    included = [row for row in rows if row["included"]]
+    aggregate = {
+        "status": "available" if included else "unavailable",
+        "included_repetitions": len(included),
+        "excluded_repetitions": len(rows) - len(included),
+        "metrics": None if not included else {
+            key: metric_summary(included, key) for key in ("mean_ms", "low1_ms", "worst_ms")
+        },
+    }
+    return {
+        "test": test,
+        "status": "complete" if complete else "incomplete",
+        "repetitions": len(rows),
+        "requested_repetitions": requested_repetitions if requested_repetitions is not None else len(rows),
+        "build_label": label,
+        "runs": rows,
+        "aggregate": aggregate,
+    }
+
+
+def comparison_report(index: dict) -> list[str]:
+    out = [f"# Stress comparison: {index['test']}", "",
+           f"{index['repetitions']} of {index['requested_repetitions']} serial repetitions"
+           + (f" ({index['build_label']})" if index["build_label"] else "") + ".",
+           "" if index["status"] == "complete" else "This index is incomplete; it contains only repetitions that finished before the runner stopped.",
+           "", "Each row retains the existing whole-run frame metrics after start-up. `1% low` is the mean of the slowest 1% of frames, not p99.",
+           "", "| repeat | status | CPU quality | used | mean ms | 1% low ms | worst ms | reported hitches | exclusion |",
+           "|---|---|---|---|---:|---:|---:|---:|---|"]
+    for row in index["runs"]:
+        f = row["frames"]
+        out.append(f"| {row['repeat']} | {row['status']} | {row['quality']} | {'yes' if row['included'] else 'no'} | "
+                   f"{f['mean_ms'] if f['mean_ms'] is not None else ''} | {f['low1_ms'] if f['low1_ms'] is not None else ''} | "
+                   f"{f['worst_ms'] if f['worst_ms'] is not None else ''} | "
+                   f"{row['reported_hitches'] if row['reported_hitches'] is not None else ''} | {row['exclusion'] or ''} |")
+    aggregate = index["aggregate"]
+    out += ["", "## Aggregate", ""]
+    if aggregate["status"] == "unavailable":
+        out.append("Unavailable: no repetitions met the current status and background-CPU criteria.")
+        return out
+    out += [f"{aggregate['included_repetitions']} repetitions included; {aggregate['excluded_repetitions']} excluded.", "",
+            "| metric | mean | min | max |", "|---|---:|---:|---:|"]
+    for key, label in (("mean_ms", "mean frame ms"), ("low1_ms", "slowest-1% mean ms"), ("worst_ms", "worst frame ms")):
+        value = aggregate["metrics"][key]
+        out.append(f"| {label} | {value['mean']:.3f} | {value['min']:.3f} | {value['max']:.3f} |" if value else f"| {label} |  |  |  |")
+    return out
+
+
+def repeated_context(ctx: lib.Ctx, out: Path) -> lib.Ctx:
+    return lib.Ctx(ctx.repo, ctx.exe, ctx.data, ctx.fnvtool, out, ctx.say, ctx.locks, ctx.masters, ctx.ini)
+
+
+def write_comparison(out: Path, index: dict) -> None:
+    (out / "comparison.json").write_text(json.dumps(index, indent=1) + "\n", encoding="utf-8")
+    (out / "comparison.md").write_text("\n".join(comparison_report(index)) + "\n", encoding="utf-8")
+
+
+def main(argv=None) -> int:
+    a = parser().parse_args(argv)
+    if a.cmd == "list":
+        for k, v in TESTS.items():
+            print(f"{k:<8} {v}")
+        return 0
+    ctx = context(a, a.test)
+    repetitions = getattr(a, "repetitions", 1)
+    if repetitions == 1:
+        res, lines, bad = run_once(a, ctx)
+        lib.write_results(ctx.out, res, lines)
+        print("\n".join(lines[:12]))
+        print(f"\nresults: {ctx.out / 'results.json'}\nreport:  {ctx.out / 'report.md'}")
+        return 1 if bad else 0
+
+    rows, bad = [], 0
+    for repeat in range(1, repetitions + 1):
+        try:
+            out = lib.new_folder(ctx.out, f"run-{repeat:03d}")
+        except (FileExistsError, ValueError) as e:
+            raise SystemExit(str(e)) from e
+        res, lines, run_bad = run_once(a, repeated_context(ctx, out))
+        lib.write_results(out, res, lines)
+        rows.append(comparison_row(repeat, out, res))
+        bad += run_bad
+        write_comparison(ctx.out, comparison_index(a.test, a.build_label, rows, repetitions, complete=False))
+    index = comparison_index(a.test, a.build_label, rows, repetitions)
+    # The top-level files are an index; the old per-run names remain inside every run-NNN folder.
+    write_comparison(ctx.out, index)
+    print(f"\ncomparison: {ctx.out / 'comparison.json'}\nreport:     {ctx.out / 'comparison.md'}")
     return 1 if bad else 0

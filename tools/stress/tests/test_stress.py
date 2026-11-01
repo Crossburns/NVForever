@@ -9,10 +9,12 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from stress import battle, cells, lib, markers, soak, tour  # noqa: E402
+from stress import cli  # noqa: E402
 
 REPORT = textwrap.dedent("""\
     NVForever 0.2.0 crashed (panic)
@@ -551,6 +553,112 @@ class PerfTest(unittest.TestCase):
         self.assertEqual(lib.over_budget(None, lib.Budget(worst_ms=250)), ["no frame statistics in the log (the run ended early?)"])
         self.assertIn("Budget: FAIL (1% low 33.4 ms, worst 250 ms)", lib.budget_report(lib.Budget(low1_ms=33.4, worst_ms=250), failed))
         self.assertEqual(lib.budget_report(lib.Budget(worst_ms=250), []), ["", "Budget: PASS (worst 250 ms)."])
+
+
+class ComparisonTest(unittest.TestCase):
+    def frames(self, **more):
+        return {"status": "ok", "machine": {"busy_fraction": 0.0},
+                "frames": {"count": 100, "mean_ms": 10.0, "low1_ms": 20.0, "worst_ms": 30.0}, **more}
+
+    def test_repetition_option_is_positive_and_legacy_default_is_one(self):
+        args = cli.parser().parse_args(["run", "tour"])
+        self.assertEqual((args.repetitions, args.build_label), (1, None))
+        args = cli.parser().parse_args(["run", "battle", "--repetitions", "3", "--build-label", "candidate"])
+        self.assertEqual((args.repetitions, args.build_label), (3, "candidate"))
+        with self.assertRaises(SystemExit):
+            cli.parser().parse_args(["run", "soak", "--repetitions", "0"])
+
+    def test_quality_keeps_below_busy_threshold_distinct_from_quiet(self):
+        self.assertEqual(cli.comparison_quality(self.frames()), ("below_busy_threshold", True, None))
+        busy = self.frames(machine={"busy_fraction": 0.101})
+        self.assertEqual(cli.comparison_quality(busy), ("busy", False, "other programs exceeded the busy threshold"))
+        self.assertEqual(cli.comparison_quality(self.frames(machine=None))[0:2], ("unknown", False))
+        self.assertEqual(cli.comparison_quality(self.frames(status="failed"))[0:2], ("unknown", False))
+
+    def test_quality_rejects_incomplete_cpu_samples_and_empty_frames(self):
+        for machine in ({}, {"busy_fraction": "0.0"}, {"busy_fraction": float("nan")}, {"busy_fraction": float("inf")}):
+            self.assertEqual(cli.comparison_quality(self.frames(machine=machine))[0:2], ("unknown", False))
+        self.assertEqual(cli.comparison_quality(self.frames(frames={"count": 0})),
+                         ("below_busy_threshold", False, "no positive frame count"))
+
+    def test_aggregate_excludes_busy_unknown_and_failed_rows(self):
+        out = Path("run-001")
+        good = cli.comparison_row(1, out, self.frames())
+        busy = cli.comparison_row(2, Path("run-002"), self.frames(machine={"busy_fraction": 0.5}))
+        unknown = cli.comparison_row(3, Path("run-003"), self.frames(machine=None))
+        failed = cli.comparison_row(4, Path("run-004"), self.frames(status="failed"))
+        index = cli.comparison_index("tour", None, [good, busy, unknown, failed])
+        self.assertEqual((index["aggregate"]["status"], index["aggregate"]["included_repetitions"]), ("available", 1))
+        self.assertEqual(index["aggregate"]["metrics"]["mean_ms"], {"mean": 10.0, "min": 10.0, "max": 10.0})
+        empty = cli.comparison_index("tour", None, [busy, unknown, failed])
+        self.assertEqual((empty["aggregate"]["status"], empty["aggregate"]["metrics"]), ("unavailable", None))
+        self.assertIn("Unavailable", "\n".join(cli.comparison_report(empty)))
+
+    def test_repetitions_use_isolated_children_and_leave_legacy_result_names_there(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "comparison"
+            root.mkdir()
+            ctx = lib.Ctx(Path(td), Path("engine"), "Data", Path("fnvtool"), root, say=lambda *_: None)
+            seen = []
+
+            def fake_once(args, child):
+                seen.append(child.out)
+                return self.frames(), ["# synthetic"], 0
+
+            with mock.patch.object(cli, "context", return_value=ctx), \
+                 mock.patch.object(cli, "run_once", side_effect=fake_once), \
+                 mock.patch.object(cli, "write_comparison", wraps=cli.write_comparison) as written:
+                self.assertEqual(cli.main(["run", "tour", "--repetitions", "2"]), 0)
+
+            self.assertEqual([p.name for p in seen], ["run-001", "run-002"])
+            self.assertEqual([call.args[1]["status"] for call in written.call_args_list], ["incomplete", "incomplete", "complete"])
+            self.assertTrue(all((p / "results.json").is_file() and (p / "report.md").is_file() for p in seen))
+            self.assertTrue((root / "comparison.json").is_file())
+            self.assertTrue((root / "comparison.md").is_file())
+            self.assertFalse((root / "results.json").exists())
+
+    def test_manifest_is_collected_before_the_scenario_runs(self):
+        args = cli.parser().parse_args(["run", "battle"])
+        ctx = lib.Ctx(Path("repo"), Path("engine"), "Data", Path("fnvtool"), Path("out"), say=lambda *_: None)
+        order = []
+        result = self.frames()
+        with mock.patch.object(cli, "collect_manifest", side_effect=lambda *_, **__: order.append("manifest") or {"at": "start"}), \
+             mock.patch.object(cli.battle, "run", side_effect=lambda *_, **__: order.append("scenario") or result), \
+             mock.patch.object(cli.battle, "report", return_value=[]):
+            got, _, _ = cli.run_once(args, ctx)
+        self.assertEqual(order, ["manifest", "scenario"])
+        self.assertEqual(got["manifest"], {"at": "start"})
+
+    def test_cells_and_markers_keep_their_existing_checkpoint_results(self):
+        ctx = lib.Ctx(Path("repo"), Path("engine"), "Data", Path(__file__), Path("out"), say=lambda *_: None)
+        cells_result = {"status": "ok", "crashed": 0, "hung": 0}
+        markers_result = {"status": "ok", "crashed": 0, "hung": 0}
+        with mock.patch.object(cli, "collect_manifest", side_effect=AssertionError("not a comparison run")), \
+             mock.patch.object(cli.cells, "enumerate_cells", return_value=[]), \
+             mock.patch.object(cli.cells, "choose", return_value=[]), \
+             mock.patch.object(cli.cells, "run", return_value=cells_result), \
+             mock.patch.object(cli.cells, "report", return_value=[]):
+            got, _, _ = cli.run_once(cli.parser().parse_args(["run", "cells"]), ctx)
+        self.assertNotIn("manifest", got)
+        with mock.patch.object(cli, "collect_manifest", side_effect=AssertionError("not a comparison run")), \
+             mock.patch.object(cli.markers, "enumerate_markers", return_value=[]), \
+             mock.patch.object(cli.markers, "run", return_value=markers_result), \
+             mock.patch.object(cli.markers, "report", return_value=[]):
+            got, _, _ = cli.run_once(cli.parser().parse_args(["run", "markers"]), ctx)
+        self.assertNotIn("manifest", got)
+
+
+class RunFoldersTest(unittest.TestCase):
+    def test_named_runs_are_new_single_components(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            first = lib.new_folder(root, "trial")
+            self.assertTrue(first.is_dir())
+            with self.assertRaises(FileExistsError):
+                lib.new_folder(root, "trial")
+            for bad in ("", ".", "..", "a/b", "a\\b", "C:other"):
+                with self.assertRaises(ValueError):
+                    lib.new_folder(root, bad)
 
 
 @unittest.skipUnless(os.name == "nt", "the fake game is a .cmd")
