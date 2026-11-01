@@ -17289,6 +17289,26 @@ expect = [
 
 
 [[scenario]]
+name = "editor-find-place"
+source = "local editor design §7.3: editor find lists placeable records by name (the console's record index), editor place #n places one, an actor base is refused (a new reference is written as a REFR)"
+areas = ["editor"]
+paths = ["engine/nvf-play/src/editor.rs", "engine/nvf-play/src/console.rs"]
+# 0x00000007 is the player's NPC_ base: refused. The find runs as soon as the index the
+# console builds on opening is ready (under a second).
+env = { NVFOREVER_HOME = "editor-home-find", NVF_PLAY_TEST_EDITOR = "1", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:editor;17:editor find nuka cola;18.5:editor place #1;19:editor place 00000007;19.5:editor place NoSuchEditorId;20:editor;20.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'editor: find "nuka cola": [1-9]\d* placeable record\(s\)', label = "the find lists placeable records" },
+  { re = 'console:   #1 0x[0-9A-F]{8} [A-Z_]{4} ', label = "numbered in the console" },
+  { re = 'editor: placed 0x[0-9A-F]{8} as 0x[0-9A-F]{8} at', label = "editor place #1 places the first" },
+  { re = 'editor: 0x00000007 not placed: a NPC_ is placed as an actor', label = "an actor base is refused" },
+  { re = 'editor: not placed: no record has the Editor ID "NoSuchEditorId"', label = "an unknown Editor ID is refused" },
+  { re = 'editor: off; 0 reference\(s\) moved, 0 deleted, 1 placed this session', label = "one placed" },
+]
+
+
+[[scenario]]
 name = "editor-place-write"
 source = "owner 2026-11-01 (local editor design): editor mode places a new reference and saves it as the plugin's own; editor-place-load finds it, so run them together"
 areas = ["editor"]

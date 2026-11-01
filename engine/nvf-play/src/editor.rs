@@ -29,6 +29,12 @@
 //!   step, Alt for 1 unit or 1° [design]. A move goes through the script functions
 //!   SetPos and SetAngle (`fnv_game::functions::refs`) as a console line would, so the
 //!   world draws it at once. The references moved this session are counted in the panel.
+//! - **The record picker** (§7.3, console form): `editor find <words>` lists the
+//!   placeable base records whose name or Editor ID holds every word (the console's
+//!   record index, `help`'s), named ones first, numbered; `editor place #<n>` places the
+//!   n-th, `editor place <Editor ID>` one by its exact Editor ID. Only the types in
+//!   [`PLACEABLE`]: actor bases (NPC_, CREA, LVLN, LVLC) are refused, as is any other
+//!   record, because a new reference is written as a REFR.
 //! - **Placing**: `editor place <base FormID>` makes a new reference of that base in the
 //!   run where the screen's centre points (the first collision along the camera's ray,
 //!   else 512 units ahead), in the player's cell (outdoors: the exterior cell under it),
@@ -137,6 +143,12 @@ pub struct Editor {
     target_looked: bool,
     /// `editor select`, `editor move`, `editor turn` asked for, in order.
     pub ops: Vec<Op>,
+    /// `editor find <words>` asked for (answered when the record index is ready).
+    pub find_asked: Option<String>,
+    /// `editor place <#n | Editor ID>` asked for.
+    pub place_named: Option<String>,
+    /// The bases the last `editor find` listed, in its order (`#1` first).
+    found: Vec<u32>,
     /// A left-button press on a reference, and the drag it may become.
     drag: Option<Drag>,
     /// Whether the HUD was hidden (`tm`) before editor mode hid it.
@@ -196,8 +208,9 @@ impl Op {
             ("move", _) => Err("editor move <dx> <dy> <dz>: game units along the world's axes".into()),
             ("turn", [d]) => f(d).map(Op::Turn),
             ("turn", _) => Err("editor turn <degrees>: about the vertical axis".into()),
-            ("place", [id]) => crate::console::parse_form_id(id).map(|f| Op::Place(f.0)).ok_or_else(|| format!("{id:?} is not a FormID")),
-            ("place", _) => Err("editor place <base FormID>".into()),
+            ("place", [id]) if !id.starts_with('#') && crate::console::parse_form_id(id).is_some() => Ok(Op::Place(crate::console::parse_form_id(id)?.0)),
+            ("place", []) => Err("editor place <#n from editor find | Editor ID | base FormID>".into()),
+            ("place", _) => return None,
             ("delete", []) => Ok(Op::Delete),
             ("drop", []) => Ok(Op::Drop),
             ("drag", [a, b, c, d]) => (|| Ok(Op::Drag([f(a)?, f(b)?, f(c)?, f(d)?])))(),
@@ -217,7 +230,7 @@ pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Editor>().add_systems(Update, (switch, open, save, pick, set_down, nudge, place_new, describe, draw, outline).chain().in_set(PlaySet::Ui).after(crate::console::ConsoleSet));
+        app.init_resource::<Editor>().add_systems(Update, (switch, open, save, pick, set_down, nudge, find, place_new, describe, draw, outline).chain().in_set(PlaySet::Ui).after(crate::console::ConsoleSet));
     }
 }
 
@@ -1064,6 +1077,7 @@ fn place_new(
     phys: Option<ResMut<PhysState>>,
     mut sim: ResMut<SimState>,
     script: Option<ResMut<ScriptState>>,
+    play: Res<PlayWorld>,
 ) {
     if ed.on && !console.open && free.active && keys.just_pressed(KeyCode::KeyP) {
         match ed.last_base {
@@ -1079,6 +1093,10 @@ fn place_new(
     let Some(mut st) = script.filter(|s| s.rt.is_some()) else { return };
     let mut phys = phys.map(|p| p.into_inner());
     for (base, at_pointer) in asked {
+        if let Err(e) = play.0.lo.winner(base).ok_or_else(|| format!("{} is no record", FormId(base))).and_then(|(_, r)| placeable(&r.header.sig)) {
+            info!("editor: {} not placed: {e}", FormId(base));
+            continue;
+        }
         let at = if at_pointer { window.cursor_position() } else { None }.unwrap_or(Vec2::new(window.width() / 2.0, window.height() / 2.0));
         let Ok(ray) = cam.viewport_to_world(cam_t, at) else { continue };
         let eye = space::to_game(ray.origin);
@@ -1113,6 +1131,84 @@ fn place_new(
     }
 }
 
+/// The base record types editor mode places as a new REFR (§7.3's list less the actors:
+/// NPC_, CREA, LVLN and LVLC are placed as ACHR/ACRE, which the writer does not write
+/// yet, and a REFR of an actor base would not load in the original game [design]).
+pub const PLACEABLE: [&[u8; 4]; 22] = [
+    b"STAT", b"MSTT", b"SCOL", b"FURN", b"DOOR", b"CONT", b"LIGH", b"ACTI", b"TACT", b"TERM", b"MISC", b"WEAP", b"ARMO", b"AMMO", b"ALCH", b"BOOK", b"NOTE", b"KEYM", b"IDLM", b"TREE", b"ADDN", b"SOUN",
+];
+
+/// How many matches `editor find` lists [design: a console screen].
+const FIND_SHOWN: usize = 20;
+
+/// Whether base record type `sig` can be placed, or why not.
+fn placeable(sig: &[u8; 4]) -> Result<(), String> {
+    if PLACEABLE.contains(&sig) {
+        return Ok(());
+    }
+    let s = String::from_utf8_lossy(sig);
+    Err(match sig {
+        b"NPC_" | b"CREA" | b"LVLN" | b"LVLC" => format!("a {s} is placed as an actor (ACHR/ACRE), which editor mode does not write yet"),
+        _ => format!("a {s} is not something editor mode places"),
+    })
+}
+
+/// The placeable records of the index matching `terms`, things with a name first.
+fn find_placeable<'a>(ix: &'a [crate::console::Found], terms: &[String]) -> Vec<&'a crate::console::Found> {
+    let mut hits: Vec<&crate::console::Found> = ix.iter().filter(|f| PLACEABLE.contains(&&f.sig) && crate::console::matches(f, terms)).collect();
+    hits.sort_by_key(|f| (f.name.is_none(), f.edid.as_ref().map(|e| e.len()).unwrap_or(usize::MAX)));
+    hits
+}
+
+/// What `editor place <what>` names: `#n` from the last `editor find`, else an Editor ID
+/// (exact, without case) of a placeable record.
+fn resolve_place(what: &str, found: &[u32], ix: &[crate::console::Found]) -> Result<u32, String> {
+    let w = what.trim();
+    if let Some(n) = w.strip_prefix('#') {
+        let n: usize = n.parse().map_err(|_| format!("{w:?}: #<number> from the last editor find"))?;
+        return found.get(n.wrapping_sub(1)).copied().ok_or_else(|| format!("#{n}: the last editor find listed {} record(s)", found.len()));
+    }
+    let f = ix.iter().find(|f| f.edid.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(w))).ok_or_else(|| format!("no record has the Editor ID {w:?}: editor find <words> searches by name"))?;
+    placeable(&f.sig)?;
+    Ok(f.id.0)
+}
+
+/// `editor find <words>` and `editor place <#n | Editor ID>`: answered once the console's
+/// record index is ready (it is built on a thread when the console first opens).
+fn find(mut ed: ResMut<Editor>, mut console: ResMut<Console>, index: Res<crate::console::SearchIndex>) {
+    if ed.find_asked.is_none() && ed.place_named.is_none() {
+        return;
+    }
+    let Some(ix) = index.ready.as_deref() else { return };
+    if let Some(q) = ed.find_asked.take() {
+        let terms = crate::console::query_terms(&q);
+        let hits = find_placeable(ix, &terms);
+        ed.found = hits.iter().take(FIND_SHOWN).map(|f| f.id.0).collect();
+        info!("editor: find {q:?}: {} placeable record(s)", hits.len());
+        if hits.is_empty() {
+            console.say(format!("Nothing placeable is named like {q}"));
+        } else {
+            console.say(format!("{} placeable record(s) match {q} (editor place #<n> places one):", hits.len()));
+            for (i, f) in hits.iter().take(FIND_SHOWN).enumerate() {
+                let name = f.name.as_deref().map(|n| format!(" \"{n}\"")).unwrap_or_default();
+                console.say(format!("  #{} {} {} {}{name}", i + 1, f.id, String::from_utf8_lossy(&f.sig), f.edid.as_deref().unwrap_or("-")));
+            }
+            if hits.len() > FIND_SHOWN {
+                console.say(format!("  ... {} more: narrow the search", hits.len() - FIND_SHOWN));
+            }
+        }
+    }
+    if let Some(what) = ed.place_named.take() {
+        match resolve_place(&what, &ed.found, ix) {
+            Ok(base) => ed.to_place.push((base, false)),
+            Err(e) => {
+                info!("editor: not placed: {e}");
+                console.say(format!("Not placed: {e}"));
+            }
+        }
+    }
+}
+
 /// The selected reference's details for the panel.
 fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mut script: Option<ResMut<ScriptState>>) {
     if !ed.on {
@@ -1123,7 +1219,7 @@ fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mu
          Fly: W A S D, Q down, E up, Shift faster, wheel speed; hold the right mouse button to look\n\
          Click: select   Drag: move (Shift: up/down, Ctrl: 16-unit grid)   End: set down on what is below\n\
          Arrows: move   Page Up/Down: up/down   Ctrl+Left/Right: turn   Alt: fine steps   Delete: delete   Ctrl+Z: undo   P: place another\n\
-         Console: editor place <base FormID> places a new reference where the screen's centre points\n\
+         Console: editor find <words> lists things to place; editor place #<n> (or an Editor ID, or a base FormID) places one where the screen's centre points\n\
          Console: editor open <Name.esp> picks the plugin to save into (editor open lists them); editor save writes into it\n",
     );
     match &ed.target {
@@ -1250,6 +1346,41 @@ editor=1
         // A flatter ray meets it at z 100: the reference rises 50, x and y stay.
         let to = drag_place(&d, [0.0, 200.0, 150.0], [1.0, 0.0, -0.5], false).unwrap();
         assert!((to[2] - 100.0).abs() < 1e-3 && to[0] == 100.0 && to[1] == 200.0, "{to:?}");
+    }
+
+    fn rec(id: u32, sig: &[u8; 4], edid: &str, name: Option<&str>) -> crate::console::Found {
+        crate::console::Found { id: FormId(id), sig: *sig, edid: Some(edid.into()), name: name.map(Into::into) }
+    }
+
+    #[test]
+    fn picker_finds_placeable_records_only() {
+        let ix = vec![
+            rec(1, b"MISC", "NukaColaBottleEmpty", Some("Nuka-Cola bottle")),
+            rec(2, b"STAT", "BottleRack01", None),
+            rec(3, b"NPC_", "BottleNPC", Some("Bottle Man")),
+            rec(4, b"QUST", "BottleQuest", Some("Bottle")),
+        ];
+        let terms = crate::console::query_terms("bottle");
+        let hits: Vec<u32> = find_placeable(&ix, &terms).iter().map(|f| f.id.0).collect();
+        // Named first; the actor and the quest left out.
+        assert_eq!(hits, vec![1, 2]);
+        // #n from the list, an Editor ID without case; an actor's Editor ID refused.
+        assert_eq!(resolve_place("#2", &hits, &ix), Ok(2));
+        assert!(resolve_place("#3", &hits, &ix).is_err() && resolve_place("#x", &hits, &ix).is_err());
+        assert_eq!(resolve_place("nukacolabottleempty", &hits, &ix), Ok(1));
+        assert!(resolve_place("BottleNPC", &hits, &ix).unwrap_err().contains("ACHR"));
+        assert!(resolve_place("NoSuch", &hits, &ix).is_err());
+        assert!(placeable(b"STAT").is_ok() && placeable(b"CREA").is_err() && placeable(b"GRAS").is_err());
+    }
+
+    #[test]
+    fn place_words() {
+        assert_eq!(Op::parse("place 0010A1F6"), Some(Ok(Op::Place(0x0010_A1F6))));
+        // #n and Editor IDs are not Ops: the console sends them to the picker.
+        assert_eq!(Op::parse("place #2"), None);
+        assert_eq!(Op::parse("place NukaColaBottleEmpty"), None);
+        assert!(matches!(Op::parse("place"), Some(Err(_))));
+        assert!(verb_is("find nuka cola", "find"));
     }
 
     #[test]

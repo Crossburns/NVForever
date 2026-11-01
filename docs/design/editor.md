@@ -41,7 +41,34 @@ Contents:
 
 ---
 
-## Handover (2026-11-01, end of the first session)
+## Handover (2026-11-01, end of the second session)
+
+**Start here: one step left from the second session.** The record picker (commit after
+`86d32752`, "record picker") is written and its 11 editor unit tests pass, but the
+engine build was stopped for the handover, so smoke `editor-find-place` has **never
+run**. Build the engine, then run `--area editor` (command below). All 11 editor
+scenarios should pass; the ten other than `editor-find-place` passed on `86d32752`.
+`editor-find-place` expects that `editor find nuka cola` lists something, `#1` places,
+the player's NPC_ base `0x00000007` is refused, and an unknown Editor ID is refused.
+Fix the scenario's setup if a regex is off (for example the console's indent on the `#1`
+line), not the expectation's meaning. Then run engine clippy.
+
+**Second session, in short** (details in the progress log, newest last):
+- `56d53aa3` MO2 saving: into the owning mod, else overwrite; on in the MO2 profile.
+- `33ccae44` the target plugin: `editor open`, `editor save` with no name, remembered in
+  `[Editor] Target=`.
+- `86d32752` mouse drag, End / `editor drop`, and an **engine fix**: SetPos on a single
+  dynamic body (loose clutter) snapped back at once because the settle write-back undid
+  it. `phys.rs` `repose_ref` with `RefRepose` from `script.rs` fixes it. Because it
+  affects game scripts on `main` too, it is being ported to `main` with an issue and PR
+  by the session "Port SetPos clutter-collision fix to main" (branch
+  `claude/funny-yalow-018453`), engine code only, no editor code. When that merges, this
+  branch's copy of the change in `phys.rs`, `script.rs` and `lib.rs` will conflict on
+  the next merge of `main`; keep `main`'s version.
+- Record picker (this handover's commit): `editor find`, `editor place #n | <Editor ID>`;
+  actor bases refused, by FormID too.
+- `knockdown-player` fails on this branch with and without the engine fix (each time a
+  different get-up timing check). It is not caused here; left alone.
 
 **Where everything is**
 - Worktree `C:\Users\Loot\source\repos\NVForever-editor`, branch `local/editor-encoder`, on
@@ -50,12 +77,12 @@ Contents:
 - Build caches: `F:/nvf-target/editor-root` (root crates, fnvtool) and
   `F:/nvf-target/editor-engine` (engine). Build the engine with
   `cd engine && CARGO_TARGET_DIR=F:/nvf-target/editor-engine cargo build --release -p nvforever`.
-- Commits: `96569a33` encoder; `c1c6dd6d` mods-folder plugins + writer + editor mode;
-  `37574624` delete/undo; `46a528e6` placing, INI lock, this doc; then the commit that
-  verified it.
+- Commits (first session): `96569a33` encoder; `c1c6dd6d` mods-folder plugins + writer +
+  editor mode; `37574624` delete/undo; `46a528e6` placing, INI lock, this doc;
+  `3ff57a51` verified.
 - The owner's decisions: §21.2. Read them before choosing behaviour.
 
-**Verified at the end of the session** (all six editor smoke scenarios pass:
+**Verified at the end of the first session** (all six editor smoke scenarios pass:
 `editor-save-write`, `editor-save-load`, `editor-delete-undo`, `editor-place-write`,
 `editor-place-load`, `editor-locked`; `cargo test -p nvf-play editor`; engine clippy clean).
 - Placing: `editor place <base>` / P put a new reference where the camera's ray hits, undo
@@ -84,8 +111,10 @@ Contents:
   surface normal, duplicate, physics drop, scale. The mouse itself has no test aid, so
   the real mouse drag is untried until the owner uses it. Static collision of a moved
   reference stays at its old place until its cell reloads (progress log).
-- [ ] A record picker for placing (search by Editor ID or name; the console's `SearchIndex`
-  already indexes records) instead of typing a FormID.
+- [x] A record picker for placing (console form: `editor find`, `editor place #n`; see
+  the progress log; **its smoke run is still to do**, top of this section). Open: the
+  visual list with type and plugin filters and the model preview (needs the UI toolkit,
+  §8), and actor bases (needs the writer to write ACHR/ACRE).
 - [ ] Clean masters on save (masters nothing refers to dropped), and a `.bsa` beside a plugin
   in `mods\` mounted (§2.2 item 9 is only half done: plugins load, archives don't).
 - [ ] The quest and dialogue debugger (§13–§14). It needs no writer: per-condition results
@@ -261,6 +290,20 @@ turns and deletes. Smoke `editor-delete-undo` passes on 0x0010A206.
   pass. `knockdown-player` fails with and without the change (twice with it, once
   without, each time on a different timing check of the get-up). The rebuild never
   fired in its runs, so it is not this change. Left for whoever owns knockdowns.
+
+### 2026-11-01 (second session): the record picker
+
+- `editor find <words>` lists up to 20 placeable base records whose name or Editor ID
+  holds every word, using the console's record index (the one `help` uses, built on a
+  thread when the console opens, under a second). Named records come first. `editor
+  place #<n>` places the n-th, `editor place <Editor ID>` one by its exact Editor ID, and
+  `editor place <FormID>` works as before.
+- Only §7.3's types less the actors can be placed (`PLACEABLE`): NPC_, CREA, LVLN and
+  LVLC are refused, by FormID too. Before this, `editor place` took any base, and the
+  writer would have saved an actor as a REFR, which breaks the compatibility line
+  (§21.2 item 2). Actors need the writer to write ACHR/ACRE first.
+- Smoke `editor-find-place` (written, not run yet: the build was stopped for the
+  handover). Unit tests: `picker_finds_placeable_records_only`, `place_words`.
 
 **Next** (phase 3 on): place new references from a picker (needs new FormIDs and
 next object ID upkeep), delete as disable-and-sink, undo, a gizmo drag instead of keys,

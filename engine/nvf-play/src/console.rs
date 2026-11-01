@@ -425,12 +425,18 @@ fn typing(
             // target (`crate::editor`).
             "editor" if crate::editor::verb_is(rest, "save") => editor.save_asked = Some(rest[4..].trim().to_string()),
             "editor" if crate::editor::verb_is(rest, "open") => editor.open_asked = Some(rest[4..].trim().to_string()),
+            "editor" if crate::editor::verb_is(rest, "find") => match rest[4..].trim() {
+                "" => c.print("editor find <words>: the placeable records named like that"),
+                q => editor.find_asked = Some(q.to_string()),
+            },
             "editor" if crate::editor::Op::parse(rest).is_some() => match crate::editor::Op::parse(rest) {
                 Some(Ok(op)) if editor.on => editor.ops.push(op),
                 Some(Ok(_)) => c.print("Editor mode is off: type editor first"),
                 Some(Err(e)) => c.print(e),
                 None => {}
             },
+            // `editor place <#n | Editor ID>` (a FormID is an `Op::Place`).
+            "editor" if crate::editor::verb_is(rest, "place") && editor.on => editor.place_named = Some(rest[5..].trim().to_string()),
             // Editor mode (`crate::editor`) takes the screen: the console closes.
             "editor" => {
                 editor.asked = true;
