@@ -430,7 +430,7 @@ fn edit_move(paths: &[std::path::PathBuf], schema: &Schema, refs: &[u32], dx: f3
         let (_, r) = lo.winner(id).with_context(|| format!("{id:08X} is not in the load order"))?;
         let data = r.subrecords()?.into_iter().find(|s| &s.sig == b"DATA").context("no DATA")?.data;
         let f = |i: usize| f32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().unwrap());
-        edits.push(Placement { form_id: id, pos: [f(0) + dx, f(1), f(2)], rot: [f(3), f(4), f(5)] });
+        edits.push(Placement { form_id: id, pos: [f(0) + dx, f(1), f(2)], rot: [f(3), f(4), f(5)], disabled: false });
     }
     let name = out.file_name().context("no file name")?.to_string_lossy().into_owned();
     let w = write_placements(&lo, schema, &NewPlugin { name, ..Default::default() }, &edits).map_err(anyhow::Error::msg)?;

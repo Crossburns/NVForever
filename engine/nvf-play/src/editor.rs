@@ -16,9 +16,14 @@
 //!   step, Alt for 1 unit or 1° [design]. A move goes through the script functions
 //!   SetPos and SetAngle (`fnv_game::functions::refs`) as a console line would, so the
 //!   world draws it at once. The references moved this session are counted in the panel.
+//! - **Deleting**: Delete disables the selection in the run; saved, it is written
+//!   Initially Disabled and moved far below the ground, the community's way of removing
+//!   another plugin's reference without the Deleted flag [hypothesis: xEdit's "Undelete
+//!   and Disable References" practice; the design notes §4.5 say why].
+//! - **Undo**: Ctrl+Z puts the last move, turn or delete back, one step at a time.
 //! - **From the console** (and test aids): `editor select <FormID>`, `editor move <dx>
-//!   <dy> <dz>` (world axes, game units) and `editor turn <degrees>` (about Z) do what a
-//!   click and the keys do.
+//!   <dy> <dz>` (world axes, game units), `editor turn <degrees>` (about Z), `editor
+//!   delete` and `editor undo` do what a click and the keys do.
 //! - **Saving**: `editor save <Name.esp>` in the console writes the moved references, at
 //!   their places in the run, into that plugin in NVForever's mods folder
 //!   (`<home>\mods\`, read before Data: `fnv_install::plugins`) with `fnv_esm::edit`,
@@ -52,6 +57,9 @@ const REACH: f32 = 20_000.0;
 /// A move step and a fine one, game units [design: a power of two common in modular kits].
 const STEP: f32 = 16.0;
 const FINE_STEP: f32 = 1.0;
+/// Where a deleted reference is written, game units below the origin [hypothesis: the
+/// height the community's tools sink disabled references to].
+const SUNK_Z: f32 = -30_000.0;
 /// A turn step and a fine one, degrees [design].
 const TURN: f32 = 15.0;
 const FINE_TURN: f32 = 1.0;
@@ -65,6 +73,10 @@ pub struct Editor {
     pub selected: Option<u32>,
     /// The references moved or turned this session.
     pub moved: BTreeSet<u32>,
+    /// The references deleted this session (disabled in the run).
+    pub deleted: BTreeSet<u32>,
+    /// What Ctrl+Z puts back, newest last.
+    history: Vec<Step>,
     /// `editor save <name>` asked for.
     pub save_asked: Option<String>,
     /// `editor select`, `editor move`, `editor turn` asked for, in order.
@@ -72,6 +84,14 @@ pub struct Editor {
     /// Whether the HUD was hidden (`tm`) before editor mode hid it.
     menus_were_hidden: bool,
     text: String,
+}
+
+/// One step Ctrl+Z can put back.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Step {
+    /// A reference moved or turned from here (game units, radians).
+    Placed { id: u32, pos: [f32; 3], rot: [f32; 3] },
+    Deleted { id: u32 },
 }
 
 /// What the console asked of editor mode.
@@ -82,6 +102,10 @@ pub enum Op {
     Move([f32; 3]),
     /// Degrees about Z.
     Turn(f32),
+    /// Delete the selection.
+    Delete,
+    /// Put the last step back.
+    Undo,
 }
 
 impl Op {
@@ -98,6 +122,8 @@ impl Op {
             ("move", _) => Err("editor move <dx> <dy> <dz>: game units along the world's axes".into()),
             ("turn", [d]) => f(d).map(Op::Turn),
             ("turn", _) => Err("editor turn <degrees>: about the vertical axis".into()),
+            ("delete", []) => Ok(Op::Delete),
+            ("undo", []) => Ok(Op::Undo),
             _ => return None,
         })
     }
@@ -148,7 +174,7 @@ fn switch(mut ed: ResMut<Editor>, script: Option<ResMut<ScriptState>>, mut free:
         for e in &roots {
             commands.entity(e).despawn();
         }
-        info!("editor: off; {} reference(s) moved this session", ed.moved.len());
+        info!("editor: off; {} reference(s) moved, {} deleted this session", ed.moved.difference(&ed.deleted).count(), ed.deleted.len());
     }
 }
 
@@ -156,7 +182,7 @@ fn switch(mut ed: ResMut<Editor>, script: Option<ResMut<ScriptState>>, mut free:
 fn save(mut ed: ResMut<Editor>, mut console: ResMut<Console>, play: Res<PlayWorld>, sim: Res<SimState>) {
     let Some(name) = ed.save_asked.take() else { return };
     let place = |id: u32| live_place(&sim, id);
-    match save_plugin(&name, &ed.moved, &play.0, place) {
+    match save_plugin(&name, &ed.moved, &ed.deleted, &play.0, place) {
         Ok(lines) => {
             for l in lines {
                 console.say(l);
@@ -189,7 +215,7 @@ fn plugin_name(name: &str) -> Result<String, String> {
 
 /// Write `moved` (at the places `place` gives) into plugin `name` in the mods folder and
 /// turn it on; the lines say what was done.
-fn save_plugin(name: &str, moved: &BTreeSet<u32>, d: &crate::PlayData, place: impl Fn(u32) -> Option<([f32; 3], [f32; 3])>) -> Result<Vec<String>, String> {
+fn save_plugin(name: &str, moved: &BTreeSet<u32>, deleted: &BTreeSet<u32>, d: &crate::PlayData, place: impl Fn(u32) -> Option<([f32; 3], [f32; 3])>) -> Result<Vec<String>, String> {
     use fnv_esm::edit::{write_placements, NewPlugin, Placement};
     let name = plugin_name(name)?;
     let home = fnv_install::EngineHome::user().ok_or("no home folder for NVForever")?;
@@ -207,9 +233,9 @@ fn save_plugin(name: &str, moved: &BTreeSet<u32>, d: &crate::PlayData, place: im
             let global = d.lo.to_global(pi, r.header.form_id).unwrap_or(r.header.form_id);
             match &r.header.sig {
                 b"REFR" | b"ACHR" | b"ACRE" | b"PGRE" | b"PMIS" => {
-                    if !moved.contains(&global) {
+                    if !moved.contains(&global) && !deleted.contains(&global) {
                         let (pos, rot) = place(global).ok_or_else(|| format!("{} of {name} has no place", FormId(global)))?;
-                        edits.push(Placement { form_id: global, pos, rot });
+                        edits.push(Placement { form_id: global, pos, rot, disabled: false });
                     }
                 }
                 b"CELL" | b"WRLD" => {}
@@ -217,12 +243,16 @@ fn save_plugin(name: &str, moved: &BTreeSet<u32>, d: &crate::PlayData, place: im
             }
         }
     }
-    for &id in moved {
+    for &id in moved.difference(deleted) {
         let (pos, rot) = place(id).ok_or_else(|| format!("{} has no place", FormId(id)))?;
-        edits.push(Placement { form_id: id, pos, rot });
+        edits.push(Placement { form_id: id, pos, rot, disabled: false });
+    }
+    for &id in deleted {
+        let (pos, rot) = place(id).ok_or_else(|| format!("{} has no place", FormId(id)))?;
+        edits.push(Placement { form_id: id, pos: [pos[0], pos[1], SUNK_Z], rot, disabled: true });
     }
     if edits.is_empty() {
-        return Err("nothing to save: move something first".into());
+        return Err("nothing to save: move or delete something first".into());
     }
     let w = write_placements(d.lo, d.schema, &NewPlugin { name: name.clone(), author: None, description: Some("Made in NVForever's editor mode".into()) }, &edits)?;
     fnv_install::guard_write(&path, None).map_err(|e| e.to_string())?;
@@ -301,11 +331,21 @@ fn nudge(
     console: Res<Console>,
     free: Res<crate::free_cam::FreeCam>,
     script: Option<ResMut<ScriptState>>,
-    sim: Res<SimState>,
+    mut sim: ResMut<SimState>,
     camera: Query<&GlobalTransform, With<PlayerCamera>>,
 ) {
-    let ops = std::mem::take(&mut ed.ops);
+    let mut ops = std::mem::take(&mut ed.ops);
+    let keys_on = ed.on && !console.open && free.active;
+    let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    if keys_on && keys.just_pressed(KeyCode::Delete) {
+        ops.push(Op::Delete);
+    }
+    if keys_on && ctrl && keys.just_pressed(KeyCode::KeyZ) {
+        ops.push(Op::Undo);
+    }
+    let Some(mut st) = script.filter(|s| s.rt.is_some()) else { return };
     let mut asked = ([0.0f32; 3], 0.0f32);
+    let call = |st: &mut ScriptState, id: u32, line: String| st.console.push(ConsoleCall { line, selected: Some(id), active_quest: None });
     for op in ops {
         match op {
             Op::Select(id) => {
@@ -314,15 +354,42 @@ fn nudge(
             }
             Op::Move(d) => (0..3).for_each(|i| asked.0[i] += d[i]),
             Op::Turn(t) => asked.1 += t,
+            Op::Delete => {
+                let Some(id) = ed.selected.take() else {
+                    info!("editor: nothing selected to delete");
+                    continue;
+                };
+                call(&mut st, id, "Disable".into());
+                ed.deleted.insert(id);
+                ed.history.push(Step::Deleted { id });
+                info!("editor: deleted {}", FormId(id));
+            }
+            Op::Undo => match ed.history.pop() {
+                Some(Step::Placed { id, pos, rot }) => {
+                    for (i, axis) in ["X", "Y", "Z"].iter().enumerate() {
+                        call(&mut st, id, format!("SetPos {axis} {}", pos[i]));
+                        call(&mut st, id, format!("SetAngle {axis} {}", rot[i].to_degrees()));
+                    }
+                    info!("editor: undid the move of {}", FormId(id));
+                }
+                Some(Step::Deleted { id }) => {
+                    // Straight back on, not through Enable, which leaves a reference with
+                    // an enable parent alone (`fnv_game::functions::refs::enable`); the
+                    // engine draws it again on the event, as after Enable.
+                    if sim.world.set_enabled(FormId(id), true).is_ok() {
+                        if let Some(rt) = st.rt.as_mut() {
+                            rt.game.emit(fnv_game::trace::EventKind::RefEnabled { reference: FormId(id), fade: false });
+                        }
+                    }
+                    ed.deleted.remove(&id);
+                    ed.selected = Some(id);
+                    info!("editor: undid the delete of {}", FormId(id));
+                }
+                None => info!("editor: nothing to undo"),
+            },
         }
     }
-    let keys_on = ed.on && !console.open && free.active;
     let Some(id) = ed.selected.filter(|_| ed.on) else { return };
-    let Some(mut st) = script else { return };
-    if st.rt.is_none() {
-        return;
-    }
-    let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let fine = keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
     let (step, turn) = if fine { (FINE_STEP, FINE_TURN) } else { (STEP, TURN) };
     let Some((pos, rot)) = live_place(&sim, id) else { return };
@@ -367,8 +434,9 @@ fn nudge(
     }
     info!("editor: moved {} by ({:.0}, {:.0}, {:.0}), turned {turned:.0}°", FormId(id), d[0], d[1], d[2]);
     for line in lines {
-        st.console.push(ConsoleCall { line, selected: Some(id), active_quest: None });
+        call(&mut st, id, line);
     }
+    ed.history.push(Step::Placed { id, pos, rot });
     ed.moved.insert(id);
 }
 
@@ -380,7 +448,7 @@ fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mu
     let mut text = String::from(
         "EDITOR MODE   (type `editor` in the console to leave)\n\
          Fly: W A S D, Q down, E up, Shift faster, wheel speed; hold the right mouse button to look\n\
-         Click: select   Arrows: move   Page Up/Down: up/down   Ctrl+Left/Right: turn   Alt: fine steps\n\
+         Click: select   Arrows: move   Page Up/Down: up/down   Ctrl+Left/Right: turn   Alt: fine steps   Delete: delete   Ctrl+Z: undo\n\
          Console: editor save <Name.esp> writes the moved references into the mods folder and turns the plugin on\n",
     );
     match ed.selected {
@@ -390,7 +458,7 @@ fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mu
         }
         None => text.push_str("Nothing selected"),
     }
-    text.push_str(&format!("\n{} reference(s) moved this session (editor save <Name.esp> to keep them)", ed.moved.len()));
+    text.push_str(&format!("\n{} reference(s) moved, {} deleted this session (editor save <Name.esp> to keep them)", ed.moved.difference(&ed.deleted).count(), ed.deleted.len()));
     if ed.text != text {
         ed.text = text;
     }
@@ -437,6 +505,8 @@ mod tests {
         assert_eq!(Op::parse("MOVE 16 0 -8"), Some(Ok(Op::Move([16.0, 0.0, -8.0]))));
         assert_eq!(Op::parse("turn 90"), Some(Ok(Op::Turn(90.0))));
         assert!(matches!(Op::parse("move 1 2"), Some(Err(_))));
+        assert_eq!(Op::parse("delete"), Some(Ok(Op::Delete)));
+        assert_eq!(Op::parse("undo"), Some(Ok(Op::Undo)));
         assert_eq!(Op::parse("save x.esp"), None);
         assert_eq!(Op::parse(""), None);
     }

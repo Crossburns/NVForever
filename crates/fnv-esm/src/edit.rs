@@ -35,12 +35,19 @@ use bytes::Bytes;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A placed reference (load-order FormID) at a new place: game units, radians.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Placement {
     pub form_id: u32,
     pub pos: [f32; 3],
     pub rot: [f32; 3],
+    /// Written Initially Disabled (record flag 0x800 [documented: GECK wiki, Initially
+    /// Disabled; `fnv_sim::refs::FLAG_INITIALLY_DISABLED`]): how editor mode deletes a
+    /// reference of another plugin. Off leaves the flag as the copied record has it.
+    pub disabled: bool,
 }
+
+/// Record flag of a reference that starts disabled.
+pub const INITIALLY_DISABLED: u32 = 0x0000_0800;
 
 /// The plugin to write.
 #[derive(Debug, Clone, Default)]
@@ -257,7 +264,10 @@ pub fn write_placements(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edi
                 };
                 chain.push((h, owner));
             }
-            let (header, mut subs) = w.copy(pi, r)?;
+            let (mut header, mut subs) = w.copy(pi, r)?;
+            if e.disabled {
+                header.flags |= INITIALLY_DISABLED;
+            }
             let mut data = Vec::with_capacity(24);
             for v in e.pos.iter().chain(&e.rot) {
                 data.extend(v.to_le_bytes());
@@ -377,10 +387,10 @@ mod tests {
         let lo = LoadOrder::new(&ps).unwrap();
         let s = schema();
         let edits = [
-            Placement { form_id: 0x0000_3000, pos: [10.0, 20.0, 30.0], rot: [0.0, 0.0, 1.5] },
-            Placement { form_id: 0x0000_3001, pos: [7.0, 0.0, 0.0], rot: [0.0; 3] },
+            Placement { form_id: 0x0000_3000, pos: [10.0, 20.0, 30.0], rot: [0.0, 0.0, 1.5], disabled: false },
+            Placement { form_id: 0x0000_3001, pos: [7.0, 0.0, 0.0], rot: [0.0; 3], disabled: false },
             // The add-on's own reference: load-order index 2, its file's index 1.
-            Placement { form_id: 0x0200_0005, pos: [9.0, 0.0, 0.0], rot: [0.0; 3] },
+            Placement { form_id: 0x0200_0005, pos: [9.0, 0.0, 0.0], rot: [0.0; 3], disabled: false },
         ];
         let out = write_placements(&lo, &s, &NewPlugin { name: "Edits.esp".into(), author: Some("me".into()), description: None }, &edits).unwrap();
         assert_eq!(out.masters, ["Base.esm", "Other.esm", "Addon.esm"]);
@@ -403,6 +413,18 @@ mod tests {
         let data = r.subrecords().unwrap().into_iter().find(|s| &s.sig == b"DATA").unwrap().data;
         assert_eq!(data, pos_rot([10.0, 20.0, 30.0, 0.0, 0.0, 1.5]));
         assert_eq!(lo2.winner(0x0200_0005).unwrap().0.name, "Edits.esp");
+        assert_eq!(lo2.winner(0x0000_3000).unwrap().1.header.flags & INITIALLY_DISABLED, 0);
+        // Deleted as editor mode deletes: Initially Disabled.
+        let gone = [Placement { form_id: 0x0000_3001, pos: [0.0, 0.0, -30000.0], rot: [0.0; 3], disabled: true }];
+        let out = write_placements(&lo, &s, &NewPlugin { name: "Gone.esp".into(), ..Default::default() }, &gone).unwrap();
+        let p = Plugin::parse(&out.bytes, "Gone.esp".into()).unwrap();
+        let mut flags = Vec::new();
+        visit_records(&p.nodes[1..], &mut |r, _| {
+            if &r.header.sig == b"REFR" {
+                flags.push(r.header.flags);
+            }
+        });
+        assert_eq!(flags, [INITIALLY_DISABLED]);
         // The add-on's reference names its base in the master, still 0x10 after the remap.
         let name = lo2.winner(0x0200_0005).unwrap().1.subrecords().unwrap().into_iter().find(|s| &s.sig == b"NAME").unwrap().data;
         assert_eq!(name, 0x10u32.to_le_bytes());
@@ -423,13 +445,13 @@ mod tests {
         let lo = LoadOrder::new(&ps).unwrap();
         let s = schema();
         let np = NewPlugin { name: "Edits.esp".into(), ..Default::default() };
-        let cell = [Placement { form_id: 0x0000_2000, pos: [0.0; 3], rot: [0.0; 3] }];
+        let cell = [Placement { form_id: 0x0000_2000, pos: [0.0; 3], rot: [0.0; 3], disabled: false }];
         assert!(write_placements(&lo, &s, &np, &cell).unwrap_err().contains("not a placed reference"));
-        let missing = [Placement { form_id: 0x0000_9999, pos: [0.0; 3], rot: [0.0; 3] }];
+        let missing = [Placement { form_id: 0x0000_9999, pos: [0.0; 3], rot: [0.0; 3], disabled: false }];
         assert!(write_placements(&lo, &s, &np, &missing).unwrap_err().contains("not in the load order"));
         // Written into the add-on's place in the order: its own reference is its own index.
         let np = NewPlugin { name: "Addon.esm".into(), ..Default::default() };
-        let own = [Placement { form_id: 0x0200_0005, pos: [1.0; 3], rot: [0.0; 3] }];
+        let own = [Placement { form_id: 0x0200_0005, pos: [1.0; 3], rot: [0.0; 3], disabled: false }];
         let out = write_placements(&lo, &s, &np, &own).unwrap();
         assert_eq!(out.masters, ["Base.esm", "Other.esm"]);
         let p = Plugin::parse(&out.bytes, "Addon.esm".into()).unwrap();

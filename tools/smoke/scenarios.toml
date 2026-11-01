@@ -17179,7 +17179,7 @@ expect = [
   { re = 'console: GetPos on 0x0010A202 >> -68311\.4', label = "it is drawn at its new place in the run" },
   { re = 'editor: saved 1 references into .*EditSmoke\.esp \(\d+ bytes, 10 masters\)', label = "the plugin is written to the mods folder" },
   { re = 'console: EditSmoke\.esp (is|was already) on in .*plugins\.txt', label = "and on in the home's plugin list (already, when the smoke home is kept from a run before)" },
-  { re = 'editor: off; 1 reference\(s\) moved this session', label = "editor mode goes off" },
+  { re = 'editor: off; 1 reference\(s\) moved, 0 deleted this session', label = "editor mode goes off" },
 ]
 
 [[scenario]]
@@ -17193,4 +17193,25 @@ run_seconds = 20
 expect = [
   { re = 'console: GetPos on 0x0010A202 >> -68311\.4', label = "the bottle starts where editor mode moved it" },
   { re = 'console: GetAngle on 0x0010A202 >> 222\.6', label = "turned as it was" },
+]
+
+[[scenario]]
+name = "editor-delete-undo"
+source = "owner 2026-11-01 (local editor design): editor mode deletes a reference (disabled in the run, Initially Disabled when saved), and Ctrl+Z / editor undo puts a move and a delete back"
+areas = ["editor"]
+paths = ["engine/nvf-play/src/editor.rs", "crates/fnv-esm/src/edit.rs"]
+# 0x0010A206 (VCG02SunnyPatrolTrigger) has no enable parent: Disable and Enable act on it
+# itself, unlike the bottle 0x0010A202, which follows a disabled parent.
+env = { NVFOREVER_HOME = "editor-home-delete", NVF_PLAY_TEST_EDITOR_REPLACE = "1", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:editor;17:editor select 0010A206;17.5:editor move 64 0 0;18:editor undo;18.5:0010A206.getpos x;19:editor delete;19.5:0010A206.getdisabled;20:editor undo;20.5:0010A206.getdisabled;21:editor delete;21.5:editor save EditGone;22:editor;22.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 25
+expect = [
+  "editor: undid the move of 0x0010A206",
+  { re = 'console: GetPos on VCG02SunnyPatrolTriggerREF >> -68299\.2', label = "the move is put back" },
+  "editor: deleted 0x0010A206",
+  { re = 'console: GetDisabled on VCG02SunnyPatrolTriggerREF >> 1\.00', label = "deleted: disabled in the run" },
+  "editor: undid the delete of 0x0010A206",
+  { re = 'console: GetDisabled on VCG02SunnyPatrolTriggerREF >> 0\.00', label = "the delete is put back" },
+  { re = 'editor: saved 1 references into .*EditGone\.esp', label = "the delete is saved" },
+  { re = 'editor: off; 0 reference\(s\) moved, 1 deleted this session', label = "counted as deleted" },
 ]
