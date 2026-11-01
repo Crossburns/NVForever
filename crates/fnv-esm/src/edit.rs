@@ -1,7 +1,7 @@
 //! Writing a plugin of edits (the in-game editor; local design notes
-//! `local/editor-design.md` §4, not yet in docs/). This first version writes placed
-//! references at new positions and rotations: each is an override of the winning
-//! record, with its new DATA.
+//! `local/editor-design.md` §4, not yet in docs/): placed references at new positions
+//! and rotations (each an override of the winning record, with its new DATA) and new
+//! references the plugin adds ([`NewRef`]).
 //!
 //! - **Masters**: every plugin loaded before the new one, in load order (the new one
 //!   last, or where it already loads). A FormID in the new file is then its load-order
@@ -17,11 +17,15 @@
 //!   back ([`crate::encode::encode_type_mapped`]). A subrecord the schema does not decode
 //!   exactly is kept as it was; when its plugin's FormIDs need rewriting, that is a
 //!   warning in [`Written::warnings`].
+//! - **New references** get the plugin's own index and object IDs from its next object
+//!   ID on (0x800 for a new plugin [hypothesis: the first ID an editor gives a new
+//!   plugin's records], the header's value for one already loaded). Each holds NAME (its
+//!   base) and DATA, in its cell's temporary children group, which is found as above from
+//!   the chain of groups the cell's winning record sits in.
 //! - **Header**: HEDR version 1.34 (the highest of the shipped masters [observed:
 //!   plugin.rs]), the record count as the masters have it (records + groups, the header
-//!   record not counted [observed: plugin.rs]), next object ID 0x800 for a plugin that
-//!   adds no records of its own [hypothesis: the first ID an editor gives a new plugin's
-//!   records; nothing here adds records yet], CNAM author, SNAM description, MAST/DATA
+//!   record not counted [observed: plugin.rs]), the next object ID after the new
+//!   references, CNAM author, SNAM description, MAST/DATA
 //!   (DATA 0, as every shipped master [observed]), and ONAM: the overridden master records
 //!   that sit in temporary children groups, the set every shipped add-on lists [observed:
 //!   esm.md].
@@ -46,6 +50,19 @@ pub struct Placement {
     pub disabled: bool,
 }
 
+/// A reference the plugin adds: its base and cell (load-order FormIDs), place (game
+/// units) and rotation (radians).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct NewRef {
+    pub base: u32,
+    pub cell: u32,
+    pub pos: [f32; 3],
+    pub rot: [f32; 3],
+}
+
+/// The object ID a new plugin's first record gets [hypothesis, module notes].
+pub const FIRST_OBJECT_ID: u32 = 0x800;
+
 /// Record flag of a reference that starts disabled.
 pub const INITIALLY_DISABLED: u32 = 0x0000_0800;
 
@@ -63,8 +80,11 @@ pub struct NewPlugin {
 pub struct Written {
     pub bytes: Vec<u8>,
     pub masters: Vec<String>,
-    /// References written.
+    /// References written (moved or deleted ones).
     pub references: usize,
+    /// The FormIDs the new references got, in the file's own numbering (top byte the
+    /// plugin's index among its masters), in [`write_plugin`]'s order.
+    pub new_ids: Vec<u32>,
     pub warnings: Vec<String>,
 }
 
@@ -170,6 +190,50 @@ impl Writer<'_, '_> {
     }
 }
 
+impl Writer<'_, '_> {
+    /// The chain of groups `groups` (plugin `pi`'s) as the new file writes it: FormID
+    /// labels remapped, and the worldspace and cell records that own groups copied.
+    fn chain(&mut self, pi: usize, groups: &[GroupHeader]) -> Result<Vec<(GroupHeader, Option<Record>)>, String> {
+        let mut chain = Vec::with_capacity(groups.len());
+        for g in groups {
+            let mut h = g.clone();
+            let owner = if label_is_form(g.group_type) {
+                let global = self.lo.to_global(pi, g.label_u32()).ok_or("group label cannot be mapped")?;
+                h.label = self.new_local(global)?.to_le_bytes();
+                match g.group_type {
+                    group_type::WORLD_CHILDREN | group_type::CELL_CHILDREN => Some(self.copy_winner(global)?),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            chain.push((h, owner));
+        }
+        Ok(chain)
+    }
+
+    /// The chain of groups a new reference in cell `cell` (load-order FormID) goes under:
+    /// the cell's own, then its children and temporary children groups.
+    fn new_ref_chain(&mut self, cell: u32) -> Result<Vec<(GroupHeader, Option<Record>)>, String> {
+        let d = *self.lo.index.get(&cell).and_then(|v| v.last()).ok_or_else(|| format!("cell {cell:08X} is not in the load order"))?;
+        let pi = d.plugin as usize;
+        let local = self.lo.records[pi][d.ordinal as usize].header.form_id;
+        let mut above: Option<Vec<GroupHeader>> = None;
+        visit_records(&self.lo.plugins[pi].nodes[1..], &mut |r, stack| {
+            if above.is_none() && r.header.form_id == local && &r.header.sig == b"CELL" {
+                above = Some(stack.iter().map(|g| (*g).clone()).collect());
+            }
+        });
+        let above = above.ok_or_else(|| format!("{cell:08X} is not a CELL"))?;
+        let mut chain = self.chain(pi, &above)?;
+        let label = self.new_local(cell)?.to_le_bytes();
+        let group = |group_type| GroupHeader { size: 0, label, group_type, stamp: 0, unknown1: 0, version: 0, unknown2: 0 };
+        chain.push((group(group_type::CELL_CHILDREN), Some(self.copy_winner(cell)?)));
+        chain.push((group(group_type::CELL_TEMPORARY_CHILDREN), None));
+        Ok(chain)
+    }
+}
+
 fn record(mut header: RecordHeader, subs: &[Subrecord]) -> Record {
     let raw = write_subrecords(subs);
     header.data_size = raw.len() as u32;
@@ -223,6 +287,11 @@ fn zstring(s: &str) -> Result<Vec<u8>, String> {
 /// Write `plugin` holding `edits`, against the load order `lo` (which may or may not
 /// already hold a plugin of that name; when it does, its records are copied from it).
 pub fn write_placements(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edits: &[Placement]) -> Result<Written, String> {
+    write_plugin(lo, schema, plugin, edits, &[])
+}
+
+/// [`write_placements`], and the references `new` the plugin adds.
+pub fn write_plugin(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edits: &[Placement], new: &[NewRef]) -> Result<Written, String> {
     let own = lo.plugins.iter().position(|p| p.name.eq_ignore_ascii_case(&plugin.name));
     let n_masters = own.unwrap_or(lo.plugins.len());
     let mut w = Writer { lo, schema, own, n_masters, warnings: Vec::new() };
@@ -249,21 +318,7 @@ pub fn write_placements(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edi
         });
         for (r, groups) in found {
             let e = want[&r.header.form_id];
-            let mut chain = Vec::with_capacity(groups.len());
-            for g in groups {
-                let mut h = g.clone();
-                let owner = if label_is_form(g.group_type) {
-                    let global = lo.to_global(pi, g.label_u32()).ok_or("group label cannot be mapped")?;
-                    h.label = w.new_local(global)?.to_le_bytes();
-                    match g.group_type {
-                        group_type::WORLD_CHILDREN | group_type::CELL_CHILDREN => Some(w.copy_winner(global)?),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                chain.push((h, owner));
-            }
+            let chain = w.chain(pi, &groups)?;
             let (mut header, mut subs) = w.copy(pi, r)?;
             if e.disabled {
                 header.flags |= INITIALLY_DISABLED;
@@ -284,6 +339,26 @@ pub fn write_placements(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edi
             written += 1;
         }
     }
+    // New references, numbered on from the plugin's next object ID.
+    let form_version = lo.plugins.first().map_or(15, |p| p.header_record().header.form_version);
+    let mut next = own.map_or(FIRST_OBJECT_ID, |pi| lo.plugins[pi].header.next_object_id.max(FIRST_OBJECT_ID));
+    let mut new_ids = Vec::with_capacity(new.len());
+    for n in new {
+        let chain = w.new_ref_chain(n.cell)?;
+        if next > 0x00FF_FFFF {
+            return Err("the plugin has no object IDs left".into());
+        }
+        let form_id = ((n_masters as u32) << 24) | next;
+        next += 1;
+        let mut data = Vec::with_capacity(24);
+        for v in n.pos.iter().chain(&n.rot) {
+            data.extend(v.to_le_bytes());
+        }
+        let subs = [Subrecord { sig: *b"NAME", data: w.new_local(n.base)?.to_le_bytes().to_vec(), extended: false }, Subrecord { sig: *b"DATA", data, extended: false }];
+        let header = RecordHeader { sig: *b"REFR", data_size: 0, flags: 0, form_id, vc_info: 0, form_version, vc_info2: 0 };
+        insert(&mut root, &chain, record(header, &subs));
+        new_ids.push(form_id);
+    }
     // The top groups in the masters' order: cells before worldspaces.
     root.sort_by_key(|n| match n {
         Node::Group(g) if &g.header.label == b"CELL" => 0,
@@ -292,7 +367,7 @@ pub fn write_placements(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edi
     let masters: Vec<String> = lo.plugins[..n_masters].iter().map(|p| p.name.clone()).collect();
     let mut subs = vec![Subrecord {
         sig: *b"HEDR",
-        data: [1.34f32.to_le_bytes(), (count(&root) as i32).to_le_bytes(), 0x800u32.to_le_bytes()].concat(),
+        data: [1.34f32.to_le_bytes(), (count(&root) as i32).to_le_bytes(), next.to_le_bytes()].concat(),
         extended: false,
     }];
     subs.push(Subrecord { sig: *b"CNAM", data: zstring(plugin.author.as_deref().unwrap_or("NVForever"))?, extended: false });
@@ -306,12 +381,11 @@ pub fn write_placements(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edi
     if !onam.is_empty() {
         subs.push(Subrecord { sig: *b"ONAM", data: onam.iter().flat_map(|f| f.to_le_bytes()).collect(), extended: false });
     }
-    let form_version = lo.plugins.first().map_or(15, |p| p.header_record().header.form_version);
     let tes4 = record(RecordHeader { sig: *b"TES4", data_size: 0, flags: 0, form_id: 0, vc_info: 0, form_version, vc_info2: 0 }, &subs);
     let mut bytes = Vec::new();
     write_nodes(&[Node::Record(tes4)], &mut bytes);
     write_nodes(&root, &mut bytes);
-    Ok(Written { bytes, masters, references: written, warnings: w.warnings })
+    Ok(Written { bytes, masters, references: written, new_ids, warnings: w.warnings })
 }
 
 #[cfg(test)]
@@ -437,6 +511,40 @@ mod tests {
             }
         });
         assert_eq!(cells, 1);
+    }
+
+    #[test]
+    fn new_references_go_in_their_cells_temporary_group() {
+        let ps = plugins();
+        let lo = LoadOrder::new(&ps).unwrap();
+        let s = schema();
+        let np = NewPlugin { name: "Adds.esp".into(), ..Default::default() };
+        // Two new references in the master's cell, and the master's persistent one moved.
+        let new = [NewRef { base: 0x10, cell: 0x2000, pos: [1.0, 2.0, 3.0], rot: [0.0; 3] }, NewRef { base: 0x0200_0006, cell: 0x2000, pos: [4.0, 5.0, 6.0], rot: [0.0; 3] }];
+        let moved = [Placement { form_id: 0x0000_3000, pos: [0.0; 3], rot: [0.0; 3], disabled: false }];
+        let out = write_plugin(&lo, &s, &np, &moved, &new).unwrap();
+        assert_eq!(out.new_ids, [0x0300_0800, 0x0300_0801]);
+        let p = Plugin::parse(&out.bytes, "Adds.esp".into()).unwrap();
+        assert_eq!(p.header.next_object_id, 0x802);
+        let mut refs = Vec::new();
+        visit_records(&p.nodes[1..], &mut |r, stack| {
+            if &r.header.sig == b"REFR" {
+                let name = r.subrecords().unwrap().into_iter().find(|s| &s.sig == b"NAME").unwrap().data;
+                refs.push((r.header.form_id, stack.last().unwrap().group_type, u32::from_le_bytes(name.try_into().unwrap())));
+            }
+        });
+        // The add-on's base keeps its load-order index: the add-on is the new file's third master.
+        assert_eq!(refs, [(0x0000_3000, 8, 0x10), (0x0300_0800, 9, 0x10), (0x0300_0801, 9, 0x0200_0006)]);
+        // One cell record, one temporary group for both new references.
+        let mut cells = 0;
+        visit_records(&p.nodes[1..], &mut |r, _| cells += (&r.header.sig == b"CELL") as usize);
+        assert_eq!(cells, 1);
+        // Loaded next to the others, the new references are found at their load-order FormIDs.
+        let mut all = plugins();
+        all.push(p);
+        let lo2 = LoadOrder::new(&all).unwrap();
+        assert_eq!(lo2.winner(0x0300_0801).unwrap().0.name, "Adds.esp");
+        assert!(write_plugin(&lo, &s, &np, &[], &[NewRef { cell: 0x3000, ..Default::default() }]).unwrap_err().contains("not a CELL"));
     }
 
     #[test]

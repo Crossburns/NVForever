@@ -1,6 +1,9 @@
-//! Editor mode (NVForever's own; the local design notes, `local/editor-design.md` §6–§7,
-//! not yet in docs/): `editor` typed in the console switches it on and off.
+//! Editor mode (NVForever's own; docs/design/editor.md §6–§7): `editor` typed in the
+//! console switches it on and off. It has no key of its own (owner 2026-11-01).
 //!
+//! - **Locked by the INI**: only with `editor=1` under `[Settings]` in the home's
+//!   `NVForever.ini` (owner 2026-11-01; read when `editor` is typed, not a row of the
+//!   settings page); otherwise the console says how to turn it on.
 //! - **On**: the console closes, the world stands still (the free camera's mode 1,
 //!   `crate::free_cam`: no game logic, no game clock), the HUD hides and the mouse
 //!   pointer stays free. The camera flies with W/A/S/D, Q down, E up, Shift faster, the
@@ -16,14 +19,22 @@
 //!   step, Alt for 1 unit or 1° [design]. A move goes through the script functions
 //!   SetPos and SetAngle (`fnv_game::functions::refs`) as a console line would, so the
 //!   world draws it at once. The references moved this session are counted in the panel.
+//! - **Placing**: `editor place <base FormID>` makes a new reference of that base in the
+//!   run where the screen's centre points (the first collision along the camera's ray,
+//!   else 512 units ahead), in the player's cell (outdoors: the exterior cell under it),
+//!   and selects it; P then places another of the same base under the mouse pointer. Saved,
+//!   it is a new reference of the plugin (`fnv_esm::edit::NewRef`).
 //! - **Deleting**: Delete disables the selection in the run; saved, it is written
 //!   Initially Disabled and moved far below the ground, the community's way of removing
 //!   another plugin's reference without the Deleted flag [hypothesis: xEdit's "Undelete
-//!   and Disable References" practice; the design notes §4.5 say why].
-//! - **Undo**: Ctrl+Z puts the last move, turn or delete back, one step at a time.
+//!   and Disable References" practice; the design notes §4.5 say why]. A reference this
+//!   session placed is simply not saved. A reference that follows an enable parent stays
+//!   as its parent has it in the run (Disable does nothing to it), which the console says;
+//!   it is still written Initially Disabled [design].
+//! - **Undo**: Ctrl+Z puts the last move, turn, delete or placing back, one step at a time.
 //! - **From the console** (and test aids): `editor select <FormID>`, `editor move <dx>
 //!   <dy> <dz>` (world axes, game units), `editor turn <degrees>` (about Z), `editor
-//!   delete` and `editor undo` do what a click and the keys do.
+//!   place <base>`, `editor delete` and `editor undo` do what a click and the keys do.
 //! - **Saving**: `editor save <Name.esp>` in the console writes the moved references, at
 //!   their places in the run, into that plugin in NVForever's mods folder
 //!   (`<home>\mods\`, read before Data: `fnv_install::plugins`) with `fnv_esm::edit`,
@@ -34,7 +45,8 @@
 //! - **Off**: `editor` again: the camera returns to the player, the HUD comes back as it
 //!   was, the world goes on.
 //!
-//! Test aid `NVF_PLAY_TEST_EDITOR_REPLACE=1`: `editor save` replaces a plugin of that name
+//! Test aid `NVF_PLAY_TEST_EDITOR=1`: editor mode is allowed without the INI line (a
+//! smoke home has no INI). `NVF_PLAY_TEST_EDITOR_REPLACE=1`: `editor save` replaces a plugin of that name
 //! in the mods folder that is not loaded (a smoke home kept from an earlier run), keeping
 //! the `.bak` as always.
 //!
@@ -57,6 +69,8 @@ const REACH: f32 = 20_000.0;
 /// A move step and a fine one, game units [design: a power of two common in modular kits].
 const STEP: f32 = 16.0;
 const FINE_STEP: f32 = 1.0;
+/// How far ahead a new reference goes when the camera's ray hits nothing, game units [design].
+const PLACE_AHEAD: f32 = 512.0;
 /// Where a deleted reference is written, game units below the origin [hypothesis: the
 /// height the community's tools sink disabled references to].
 const SUNK_Z: f32 = -30_000.0;
@@ -75,6 +89,12 @@ pub struct Editor {
     pub moved: BTreeSet<u32>,
     /// The references deleted this session (disabled in the run).
     pub deleted: BTreeSet<u32>,
+    /// The references placed this session (made in the run, new in the plugin).
+    pub created: BTreeSet<u32>,
+    /// The base the last placing used (P places another).
+    last_base: Option<u32>,
+    /// Placings asked for: the base, and whether at the mouse pointer (else the screen's centre).
+    to_place: Vec<(u32, bool)>,
     /// What Ctrl+Z puts back, newest last.
     history: Vec<Step>,
     /// `editor save <name>` asked for.
@@ -86,12 +106,21 @@ pub struct Editor {
     text: String,
 }
 
+impl Editor {
+    /// References moved (not deleted, not placed) and placed (not deleted) this session.
+    fn counts(&self) -> (usize, usize) {
+        let moved = self.moved.iter().filter(|id| !self.deleted.contains(id) && !self.created.contains(id)).count();
+        (moved, self.created.difference(&self.deleted).count())
+    }
+}
+
 /// One step Ctrl+Z can put back.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Step {
     /// A reference moved or turned from here (game units, radians).
     Placed { id: u32, pos: [f32; 3], rot: [f32; 3] },
     Deleted { id: u32 },
+    Created { id: u32 },
 }
 
 /// What the console asked of editor mode.
@@ -106,6 +135,8 @@ pub enum Op {
     Delete,
     /// Put the last step back.
     Undo,
+    /// A new reference of this base.
+    Place(u32),
 }
 
 impl Op {
@@ -122,6 +153,8 @@ impl Op {
             ("move", _) => Err("editor move <dx> <dy> <dz>: game units along the world's axes".into()),
             ("turn", [d]) => f(d).map(Op::Turn),
             ("turn", _) => Err("editor turn <degrees>: about the vertical axis".into()),
+            ("place", [id]) => crate::console::parse_form_id(id).map(|f| Op::Place(f.0)).ok_or_else(|| format!("{id:?} is not a FormID")),
+            ("place", _) => Err("editor place <base FormID>".into()),
             ("delete", []) => Ok(Op::Delete),
             ("undo", []) => Ok(Op::Undo),
             _ => return None,
@@ -138,13 +171,42 @@ pub struct EditorPlugin;
 
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Editor>().add_systems(Update, (switch, save, pick, nudge, describe, draw, outline).chain().in_set(PlaySet::Ui).after(crate::console::ConsoleSet));
+        app.init_resource::<Editor>().add_systems(Update, (switch, save, pick, nudge, place_new, describe, draw, outline).chain().in_set(PlaySet::Ui).after(crate::console::ConsoleSet));
     }
 }
 
+/// Whether the INI (or the test aid) allows editor mode.
+fn allowed(file: Option<&crate::settings::SettingsFile>) -> bool {
+    if std::env::var("NVF_PLAY_TEST_EDITOR").is_ok_and(|v| v == "1") {
+        return true;
+    }
+    let text = file.and_then(|f| f.0.as_ref()).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    ini_allows(&text)
+}
+
+/// `editor=1` (or true, on, yes) under `[Settings]`.
+fn ini_allows(text: &str) -> bool {
+    fnv_install::ini_get(text, crate::settings::SECTION, "editor").is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes"))
+}
+
 /// `editor` in the console: on or off.
-fn switch(mut ed: ResMut<Editor>, script: Option<ResMut<ScriptState>>, mut free: ResMut<crate::free_cam::FreeCam>, mut commands: Commands, roots: Query<Entity, With<EditorRoot>>) {
+#[allow(clippy::too_many_arguments)]
+fn switch(
+    mut ed: ResMut<Editor>,
+    script: Option<ResMut<ScriptState>>,
+    mut free: ResMut<crate::free_cam::FreeCam>,
+    mut commands: Commands,
+    roots: Query<Entity, With<EditorRoot>>,
+    mut console: ResMut<Console>,
+    file: Option<Res<crate::settings::SettingsFile>>,
+) {
     if !std::mem::take(&mut ed.asked) {
+        return;
+    }
+    if !ed.on && !allowed(file.as_deref()) {
+        let line = "Editor mode is locked: add editor=1 under [Settings] in NVForever.ini (in NVForever's home) and type editor again";
+        info!("editor: {line}");
+        console.say(line);
         return;
     }
     let Some(rt) = script.and_then(|s| s.into_inner().rt.as_mut()) else {
@@ -174,7 +236,8 @@ fn switch(mut ed: ResMut<Editor>, script: Option<ResMut<ScriptState>>, mut free:
         for e in &roots {
             commands.entity(e).despawn();
         }
-        info!("editor: off; {} reference(s) moved, {} deleted this session", ed.moved.difference(&ed.deleted).count(), ed.deleted.len());
+        let (moved, placed) = ed.counts();
+        info!("editor: off; {moved} reference(s) moved, {} deleted, {placed} placed this session", ed.deleted.len());
     }
 }
 
@@ -182,7 +245,12 @@ fn switch(mut ed: ResMut<Editor>, script: Option<ResMut<ScriptState>>, mut free:
 fn save(mut ed: ResMut<Editor>, mut console: ResMut<Console>, play: Res<PlayWorld>, sim: Res<SimState>) {
     let Some(name) = ed.save_asked.take() else { return };
     let place = |id: u32| live_place(&sim, id);
-    match save_plugin(&name, &ed.moved, &ed.deleted, &play.0, place) {
+    let new: Vec<(u32, u32, Option<u32>)> = ed
+        .created
+        .difference(&ed.deleted)
+        .filter_map(|&id| sim.world.peek(FormId(id)).map(|s| (id, s.base.0, s.cell.map(|c| c.0))))
+        .collect();
+    match save_plugin(&name, &ed.moved, &ed.deleted, &ed.created, &new, &play.0, place) {
         Ok(lines) => {
             for l in lines {
                 console.say(l);
@@ -215,8 +283,19 @@ fn plugin_name(name: &str) -> Result<String, String> {
 
 /// Write `moved` (at the places `place` gives) into plugin `name` in the mods folder and
 /// turn it on; the lines say what was done.
-fn save_plugin(name: &str, moved: &BTreeSet<u32>, deleted: &BTreeSet<u32>, d: &crate::PlayData, place: impl Fn(u32) -> Option<([f32; 3], [f32; 3])>) -> Result<Vec<String>, String> {
-    use fnv_esm::edit::{write_placements, NewPlugin, Placement};
+/// `created` are the references placed this session (left out of the overrides), `new`
+/// those of them to write: (reference, base, cell).
+#[allow(clippy::too_many_arguments)]
+fn save_plugin(
+    name: &str,
+    moved: &BTreeSet<u32>,
+    deleted: &BTreeSet<u32>,
+    created: &BTreeSet<u32>,
+    new: &[(u32, u32, Option<u32>)],
+    d: &crate::PlayData,
+    place: impl Fn(u32) -> Option<([f32; 3], [f32; 3])>,
+) -> Result<Vec<String>, String> {
+    use fnv_esm::edit::{write_plugin, NewPlugin, NewRef, Placement};
     let name = plugin_name(name)?;
     let home = fnv_install::EngineHome::user().ok_or("no home folder for NVForever")?;
     let mods = home.mods();
@@ -243,18 +322,24 @@ fn save_plugin(name: &str, moved: &BTreeSet<u32>, deleted: &BTreeSet<u32>, d: &c
             }
         }
     }
-    for &id in moved.difference(deleted) {
+    for &id in moved.iter().filter(|id| !deleted.contains(id) && !created.contains(id)) {
         let (pos, rot) = place(id).ok_or_else(|| format!("{} has no place", FormId(id)))?;
         edits.push(Placement { form_id: id, pos, rot, disabled: false });
     }
-    for &id in deleted {
+    for &id in deleted.difference(created) {
         let (pos, rot) = place(id).ok_or_else(|| format!("{} has no place", FormId(id)))?;
         edits.push(Placement { form_id: id, pos: [pos[0], pos[1], SUNK_Z], rot, disabled: true });
     }
-    if edits.is_empty() {
-        return Err("nothing to save: move or delete something first".into());
+    let mut news = Vec::with_capacity(new.len());
+    for &(id, base, cell) in new {
+        let (pos, rot) = place(id).ok_or_else(|| format!("{} has no place", FormId(id)))?;
+        let cell = cell.ok_or_else(|| format!("{} placed in no cell", FormId(id)))?;
+        news.push(NewRef { base, cell, pos, rot });
     }
-    let w = write_placements(d.lo, d.schema, &NewPlugin { name: name.clone(), author: None, description: Some("Made in NVForever's editor mode".into()) }, &edits)?;
+    if edits.is_empty() && news.is_empty() {
+        return Err("nothing to save: move, delete or place something first".into());
+    }
+    let w = write_plugin(d.lo, d.schema, &NewPlugin { name: name.clone(), author: None, description: Some("Made in NVForever's editor mode".into()) }, &edits, &news)?;
     fnv_install::guard_write(&path, None).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&mods).map_err(|e| format!("{}: {e}", mods.display()))?;
     if path.exists() {
@@ -268,8 +353,9 @@ fn save_plugin(name: &str, moved: &BTreeSet<u32>, deleted: &BTreeSet<u32>, d: &c
     if let Err(e) = fnv_esm::Plugin::open(&path) {
         return Err(format!("{} was written but does not read back: {e}", path.display()));
     }
-    info!("editor: saved {} references into {} ({} bytes, {} masters)", w.references, path.display(), w.bytes.len(), w.masters.len());
-    let mut lines = vec![format!("Saved {} reference(s) into {} ({} bytes)", w.references, path.display(), w.bytes.len())];
+    let ids: Vec<String> = w.new_ids.iter().map(|&f| FormId(f).to_string()).collect();
+    info!("editor: saved {} references and {} new ({}) into {} ({} bytes, {} masters)", w.references, w.new_ids.len(), ids.join(" "), path.display(), w.bytes.len(), w.masters.len());
+    let mut lines = vec![format!("Saved {} changed and {} new reference(s) into {} ({} bytes)", w.references, w.new_ids.len(), path.display(), w.bytes.len())];
     for warning in w.warnings.iter().take(10) {
         lines.push(format!("warning: {warning}"));
     }
@@ -328,7 +414,7 @@ fn nearest_axis(dir: [f32; 3]) -> [f32; 2] {
 fn nudge(
     keys: Res<ButtonInput<KeyCode>>,
     mut ed: ResMut<Editor>,
-    console: Res<Console>,
+    mut console: ResMut<Console>,
     free: Res<crate::free_cam::FreeCam>,
     script: Option<ResMut<ScriptState>>,
     mut sim: ResMut<SimState>,
@@ -354,11 +440,21 @@ fn nudge(
             }
             Op::Move(d) => (0..3).for_each(|i| asked.0[i] += d[i]),
             Op::Turn(t) => asked.1 += t,
+            Op::Place(base) => ed.to_place.push((base, false)),
             Op::Delete => {
                 let Some(id) = ed.selected.take() else {
                     info!("editor: nothing selected to delete");
                     continue;
                 };
+                if let Some(parent) = sim.refs.get(FormId(id)).and_then(|p| p.enable_parent) {
+                    let line = format!(
+                        "{} follows the enable parent {}: in the run it stays as its parent has it; saved, it is written Initially Disabled",
+                        FormId(id),
+                        parent.reference
+                    );
+                    info!("editor: {line}");
+                    console.say(line);
+                }
                 call(&mut st, id, "Disable".into());
                 ed.deleted.insert(id);
                 ed.history.push(Step::Deleted { id });
@@ -371,6 +467,18 @@ fn nudge(
                         call(&mut st, id, format!("SetAngle {axis} {}", rot[i].to_degrees()));
                     }
                     info!("editor: undid the move of {}", FormId(id));
+                }
+                Some(Step::Created { id }) => {
+                    if sim.world.set_enabled(FormId(id), false).is_ok() {
+                        if let Some(rt) = st.rt.as_mut() {
+                            rt.game.emit(fnv_game::trace::EventKind::RefDisabled { reference: FormId(id), fade: false });
+                        }
+                    }
+                    ed.created.remove(&id);
+                    if ed.selected == Some(id) {
+                        ed.selected = None;
+                    }
+                    info!("editor: undid the placing of {}", FormId(id));
                 }
                 Some(Step::Deleted { id }) => {
                     // Straight back on, not through Enable, which leaves a reference with
@@ -440,6 +548,67 @@ fn nudge(
     ed.moved.insert(id);
 }
 
+/// Make the references asked for (`editor place`, P) in the run and select the last.
+#[allow(clippy::too_many_arguments)]
+fn place_new(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut ed: ResMut<Editor>,
+    console: Res<Console>,
+    free: Res<crate::free_cam::FreeCam>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    camera: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+    phys: Option<ResMut<PhysState>>,
+    mut sim: ResMut<SimState>,
+    script: Option<ResMut<ScriptState>>,
+) {
+    if ed.on && !console.open && free.active && keys.just_pressed(KeyCode::KeyP) {
+        match ed.last_base {
+            Some(b) => ed.to_place.push((b, true)),
+            None => info!("editor: P places another of the last base; place one first (editor place <base>)"),
+        }
+    }
+    let asked = std::mem::take(&mut ed.to_place);
+    if asked.is_empty() || !ed.on {
+        return;
+    }
+    let (Ok(window), Ok((cam, cam_t))) = (windows.single(), camera.single()) else { return };
+    let Some(mut st) = script.filter(|s| s.rt.is_some()) else { return };
+    let mut phys = phys.map(|p| p.into_inner());
+    for (base, at_pointer) in asked {
+        let at = if at_pointer { window.cursor_position() } else { None }.unwrap_or(Vec2::new(window.width() / 2.0, window.height() / 2.0));
+        let Ok(ray) = cam.viewport_to_world(cam_t, at) else { continue };
+        let eye = space::to_game(ray.origin);
+        let dir = {
+            let p = space::to_game(ray.origin + *ray.direction);
+            [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]]
+        };
+        let dist = phys
+            .as_deref_mut()
+            .and_then(|p| {
+                let mut filter = fnv_phys::Filter::default();
+                filter.exclude_layers.insert(fnv_phys::layers::TRIGGER);
+                p.ray_all(eye, dir, REACH, filter).first().map(|h| h.distance)
+            })
+            .unwrap_or(PLACE_AHEAD);
+        let pos = [eye[0] + dir[0] * dist, eye[1] + dir[1] * dist, eye[2] + dir[2] * dist];
+        let cell = sim.world.peek(FormId::PLAYER_REF).and_then(|s| s.cell);
+        let cell = cell.map(|c| sim.world.placed.exterior_cell_at(c, pos).unwrap_or(c));
+        match sim.world.place(FormId(base), cell, pos, [0.0; 3], 1) {
+            Ok(id) => {
+                if let Some(rt) = st.rt.as_mut() {
+                    rt.game.emit(fnv_game::trace::EventKind::Placed { reference: id, base: FormId(base), cell, pos });
+                }
+                ed.created.insert(id.0);
+                ed.history.push(Step::Created { id: id.0 });
+                ed.selected = Some(id.0);
+                ed.last_base = Some(base);
+                info!("editor: placed {} as {id} at ({:.0}, {:.0}, {:.0})", FormId(base), pos[0], pos[1], pos[2]);
+            }
+            Err(e) => info!("editor: {} cannot be placed: {e}", FormId(base)),
+        }
+    }
+}
+
 /// The selected reference's details for the panel.
 fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mut script: Option<ResMut<ScriptState>>) {
     if !ed.on {
@@ -448,7 +617,8 @@ fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mu
     let mut text = String::from(
         "EDITOR MODE   (type `editor` in the console to leave)\n\
          Fly: W A S D, Q down, E up, Shift faster, wheel speed; hold the right mouse button to look\n\
-         Click: select   Arrows: move   Page Up/Down: up/down   Ctrl+Left/Right: turn   Alt: fine steps   Delete: delete   Ctrl+Z: undo\n\
+         Click: select   Arrows: move   Page Up/Down: up/down   Ctrl+Left/Right: turn   Alt: fine steps   Delete: delete   Ctrl+Z: undo   P: place another\n\
+         Console: editor place <base FormID> places a new reference where the screen's centre points\n\
          Console: editor save <Name.esp> writes the moved references into the mods folder and turns the plugin on\n",
     );
     match ed.selected {
@@ -458,7 +628,8 @@ fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mu
         }
         None => text.push_str("Nothing selected"),
     }
-    text.push_str(&format!("\n{} reference(s) moved, {} deleted this session (editor save <Name.esp> to keep them)", ed.moved.difference(&ed.deleted).count(), ed.deleted.len()));
+    let (moved, placed) = ed.counts();
+    text.push_str(&format!("\n{moved} reference(s) moved, {} deleted, {placed} placed this session (editor save <Name.esp> to keep them)", ed.deleted.len()));
     if ed.text != text {
         ed.text = text;
     }
@@ -506,9 +677,30 @@ mod tests {
         assert_eq!(Op::parse("turn 90"), Some(Ok(Op::Turn(90.0))));
         assert!(matches!(Op::parse("move 1 2"), Some(Err(_))));
         assert_eq!(Op::parse("delete"), Some(Ok(Op::Delete)));
+        assert_eq!(Op::parse("place 0010A1F6"), Some(Ok(Op::Place(0x0010_A1F6))));
+        assert!(matches!(Op::parse("place"), Some(Err(_))));
         assert_eq!(Op::parse("undo"), Some(Ok(Op::Undo)));
         assert_eq!(Op::parse("save x.esp"), None);
         assert_eq!(Op::parse(""), None);
+    }
+
+    #[test]
+    fn the_ini_unlocks_it() {
+        assert!(ini_allows("[Settings]
+editor=1
+"));
+        assert!(ini_allows("[Game]
+Path=x
+[settings]
+Editor = on
+"));
+        assert!(!ini_allows("[Settings]
+editor=0
+"));
+        assert!(!ini_allows("[Game]
+editor=1
+"));
+        assert!(!ini_allows(""));
     }
 
     #[test]
