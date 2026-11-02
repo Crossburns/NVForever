@@ -360,3 +360,10 @@ a save. In the original game a save is written to `Documents\My Games\FalloutNV\
 which you have not cleared for probes the way you cleared the game install. Not done.
 *Answered 2026-10-26:* yes, one save named `nvfprobe`, removed after the run, the owner's
 own saves untouched.
+
+## Code mods: the script host's language (2026-11-02)
+
+Not a gameplay decision, and not needed before phase M5. The script host (an authoring
+route with no compiler) runs either Lua or GECK/xNVSE-style script compiled by
+NVForever's own compiler. Hooks for ESP scripts are a third option.
+[code-mods](design/code-mods.md) §12.1, §17 item 8.

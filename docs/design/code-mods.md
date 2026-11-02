@@ -1,7 +1,9 @@
 # Design: code mods (WebAssembly plugins inside the engine)
 
-**Status: approved by the owner 2026-11-02 (#1398), with every §17 recommendation taken.**
-Nothing here is built yet. §17 records the rulings. Implementation follows in phases
+**Status: approved by the owner 2026-11-02 (#1398), with every §17 recommendation taken;
+revised the same day after the review on #1399 (fuel limits, bone overrides, authoring
+tools, script host).** Nothing here is built yet. §17 records the rulings and the one
+open decision (item 8, not needed before M5). Implementation follows in phases
 (§16), each on its own issue and branch.
 
 ## 1. Goal
@@ -158,15 +160,22 @@ memory-mb = 32
 | Limit | Default | Notes |
 |---|---|---|
 | Linear memory | 32 MB | The manifest may ask for up to 256 MB. Enforced by a `ResourceLimiter` [documented: wasmtime] |
-| Time per gameplay call (event, function, hook) | 2 ms | Epoch interruption: one engine thread advances the epoch every 1 ms [documented: wasmtime `Config::epoch_interruption`] |
-| Time per visual tick | 2 ms per mod | Per frame |
-| Total time for all code mods per frame | 6 ms | When exceeded, the overrunning mod's remaining events for that frame are dropped and logged |
-| `init` | 500 ms | Once, at game start |
+| Work per gameplay call (event, function, hook) | 10 M fuel | **Fuel**, not time: wasmtime counts executed work, about one unit per wasm instruction [documented: wasmtime `Config::consume_fuel`], so the cutoff falls at the same point on every machine (§6.4) |
+| Work per gameplay frame, per mod | 20 M fuel | All of a mod's gameplay calls in one frame together. Running out stops the mod (§6.3), the same on every machine |
+| `init` | 200 M fuel | Once, at game start |
+| Time per visual tick | 1 ms per mod | **Epoch interruption** (real time): one engine thread advances the epoch every 0.5 ms [documented: wasmtime `Config::epoch_interruption`]. Visual only, where real time cannot change a trace |
+| Time for all visual ticks per frame | 2 ms total, `[CodeMods] VisualBudgetMs` in `NVForever.ini` | When it is used up, the remaining mods skip **this frame's visual tick only** (load order rotates the first mod each frame so none is always last). Nothing gameplay is ever skipped for time |
 | Script-function call depth across mods | 8 | §9.2 |
 | Save data | 1 MB per mod | §10.3 |
 
-All the numbers are [hypothesis] starting values, to be tuned with frame telemetry
-(frame-telemetry.md).
+All the numbers are [hypothesis] starting values. M1 measures fuel's overhead and how
+many fuel units a millisecond is on the owner's machine, then sets them. Gameplay time is
+measured but **never enforced**: each mod's real time per frame (gameplay and visual) goes
+into the existing frame telemetry (frame-telemetry.md), and a mod averaging over 1 ms of
+gameplay time gets a log warning. Real time decides nothing in the gameplay tier.
+
+Why not time for gameplay too: a mod close to a time limit would be stopped on a slow
+machine and not on a fast one, and the traces would then differ (review on #1399).
 
 ### 6.3 Failure
 
@@ -183,6 +192,10 @@ a host call that returns a fatal error. Then:
    "Code mod Cape Physics stopped. See the log.").
 4. The game carries on. Its saved data stays as it was (§10.3).
 
+**Exception:** a mod stopped for real time in its visual tick (§6.2) loses only its
+visual tier for the session. Its gameplay side keeps running, because stopping it there
+would make gameplay depend on the machine's speed.
+
 ### 6.4 Determinism rules (gameplay tier)
 
 - NaN canonicalisation on [documented: wasmtime `Config::cranelift_nan_canonicalization`].
@@ -193,6 +206,8 @@ a host call that returns a fatal error. Then:
   from the save's seed and the mod id (dependencies.md already chose `rand_chacha` for
   the simulation). This stream is saved.
 - Calls run in load order at fixed points (§9). Nothing runs on other threads.
+- Limits are counted in fuel, never in time (§6.2). Running out of fuel or memory happens
+  at the same point on every machine.
 
 Visual-tier mods may read the real clock. They cannot touch the simulation, so they
 cannot break a trace.
@@ -405,12 +420,13 @@ interface events {
     equip, unequip, item-added, item-removed,
     hit, death, activate, combat-start, combat-end,
     quest-stage, menu-open, menu-close,
+    message-box-answer,                 // the player answered a mod's ui.show-message-box
     tick,                               // once per simulation frame
   }
   record filter { kind: kind, subject: option<ref-id>, form: option<form-id> }
   subscribe: func(f: filter);
   unsubscribe: func(f: filter);
-  // Payloads are delivered through the guest export `on-event` (§8.11).
+  // Payloads are delivered through the guest export `on-event` (§8.12).
   variant event {
     game-loaded, new-game, before-save,
     cell(tuple<kind, form-id>),
@@ -421,6 +437,7 @@ interface events {
     combat(tuple<kind, ref-id, option<ref-id>>),
     quest-stage(tuple<form-id, u16>),
     menu(tuple<kind, string>),
+    message-box-answer(tuple<u32, u32>), // (box id from show-message-box, button index)
     tick(f32),                           // simulated seconds this frame
   }
   record equip-info    { actor: ref-id, item: form-id }
@@ -493,12 +510,17 @@ an `on-config-changed` export call.
 ```wit
 interface ui {
   show-message: func(text: string);                       // HUD corner message
-  show-message-box: func(text: string, buttons: list<string>) -> u32;  // answer via event
+  show-message-box: func(text: string, buttons: list<string>) -> u32;  // box id; answer: §8.6 message-box-answer
   set-float: func(path: string, v: f32) -> result<_, error>;   // tile tree paths
   get-float: func(path: string) -> result<f32, error>;
   set-text: func(path: string, v: string) -> result<_, error>;
 }
 ```
+
+`show-message-box` returns at once with a box id. The answer comes later as the
+`message-box-answer` event, which is sent only to the mod that opened the box (no
+subscription needed). A mod cannot wait for it inside the call: that would block the
+frame.
 
 The paths are the tile tree's (ui-tile-tree.md, extender-compat §5.6, owner chose option
 A). A mod's `ui/` folder is injected like extender menu XML. A code mod therefore gets
@@ -542,7 +564,25 @@ interface world-query {
 ```
 
 Overrides belong to the mod that set them. They are cleared when the actor's 3D unloads
-or the mod stops. If two mods override the same bone, the later one in load order wins,
+or the mod stops.
+
+**Overrides and animation (prerequisite for M4).** Animation does not rewrite every bone
+every frame. It starts from the bone's *current* transform, writes only the channels its
+track has (translation, rotation, scale), writes through `set_if_neq`, and leaves out
+tracks that never move (engine/nvf-assets/src/anim_play.rs `step`; model.rs `moves`)
+[observed: code, 2026-11-02]. If an override were written straight into the bone's
+`Transform`, three things would go wrong:
+- a channel the clip does not animate would keep the override;
+- a bone in a still track would never return after `clear-override`;
+- extra cape bones (below) have no track at all, so nothing would ever reset them.
+
+So overrides are not written into the animated pose. The host keeps, for each
+overridden bone, its **base pose**: the pose animation produced this frame, or the bind
+pose for a bone no clip drives. Each frame, after animation, it records the base pose,
+then writes the override (all channels) and marks the transform changed. On
+`clear-override`, or when the mod stops, it writes the base pose back. `local-transform`
+and `world-transform` return the base pose, never the override, so a simulation does not
+read its own last output as input. If two mods override the same bone, the later one in load order wins,
 and a log line names both.
 
 **Extra bones:** a worn armor's NIF may contain bones that are not in the skeleton (cape
@@ -582,7 +622,7 @@ Exports a mod does not need are filled in with no-ops by the SDK.
 | Init | Once, after plugins and the save are loaded, before the first `PlaySet::Scripts` | `init` in load order: subscriptions, registrations, hooks |
 | Gameplay | `PlaySet::Scripts`, after the script VM's frame (engine/nvf-play/src/lib.rs `PlaySet`) | The queued events of this frame, in the order they happened. Each event goes to its subscribers in load order. Then `tick` |
 | Inline | Wherever the engine calls them | Script functions (when a script calls them) and hooks (when the system computes the value) |
-| Visual | `PostUpdate`, after animation is applied, before `TransformSystems::Propagate` and skinning [hypothesis: exact placement to check against the engine's animation systems] | `on-visual-tick` for mods with `visual.bones` |
+| Visual | `PostUpdate`, after animation is applied, before `TransformSystems::Propagate` and skinning [hypothesis: exact placement to check against the engine's animation systems] | `on-visual-tick` for mods with `visual.bones`, then the host applies overrides over the recorded base poses (§8.11) |
 
 During gameplay calls the host holds `&mut Game`, so writes take effect at once, as a
 script function's do.
@@ -603,8 +643,9 @@ script function's do.
 - A host call costs on the order of tens of nanoseconds. Copying strings and lists
   across the boundary costs more [hypothesis: to measure in M1]. The API passes ids and
   small records, and leaves bulk data with the host.
-- Per-mod time is recorded in frame telemetry and shown by the console command
-  `codemods` (§13).
+- Per-mod time is recorded in the existing frame telemetry (frame-telemetry.md) and shown
+  by the console command `codemods` (§13). Real time is only measured, never enforced, in
+  the gameplay tier (§6.2).
 
 ## 10. Integration with the engine
 
@@ -674,7 +715,30 @@ also serves the visual tier.
 - Other languages: anything with a Component Model toolchain (C/C++ with
   `wit-bindgen c`, Go, JavaScript through `jco`). Only Rust is supported and tested by
   this project at first.
-- A template: `examples/codemods/hello` copied with a new id.
+- A template: `examples/codemods/hello` copied with a new id (`fnvtool codemod new`, §13).
+- A **GitHub template repository** whose Actions workflow builds the `.wasm`, runs
+  `fnvtool codemod check` and attaches the packaged zip to every tag. Authors who never
+  want a local toolchain can use it.
+
+### 12.1 Script host (an authoring route with no compiler)
+
+Most Fallout: New Vegas modders come from GECK and xNVSE script, not Rust (review on
+#1399). NVForever ships one prebuilt code mod, the **script host**. It embeds an
+interpreter and runs the script files in an author's code mod folder.
+
+- **Manifest:** the author's mod names the host (`runtime = "script-host"`) and its
+  script files. Each script mod is its own instance of the host component, with its own
+  id, permissions, storage and limits.
+- **Files:** the engine hands the host the mod's script files at `init`, as read-only
+  bytes. No file-reading call is added, so the "no file system" rule of §7 stays as it is.
+- **Determinism:** the interpreter and its maths library are compiled into the
+  component, so its results are the same on every machine. The §6.2 fuel limits count
+  the interpreter's work.
+- **Scope:** events, hooks, quests, UI and config, the bulk of gameplay mods. Heavy
+  per-frame work (cape physics) stays in Rust.
+- **Language:** open, owner decision §17 item 8.
+- **Phase:** M5, after the API has settled, so the host's bindings are written once.
+  Example: `hello` again in the chosen script language.
 
 ## 13. Tooling and diagnostics
 
@@ -682,6 +746,16 @@ also serves the visual tier.
   imports and exports, compares them with the permissions and the API version, and
   checks the function prefix.
 - `fnvtool codemod list`: what would load, in which order, and why each mod is off.
+- Authoring commands, so making a mod does not start with learning Cargo (review on
+  #1399):
+  - `doctor`: checks for rustup and the `wasm32-wasip2` target; prints the install
+    commands, or runs them when asked.
+  - `new <id>`: a working project from the template.
+  - `build`: compiles, then runs `check`.
+  - `watch`: rebuilds on save and reloads the mod in a running game (`--codemod` and the
+    console's `codemod reload`).
+  - `package`: a zip laid out as `NVForever\CodeMods\<id>\`, ready for Mod Organizer 2
+    or a mod site.
 - Log lines are prefixed `codemod[<id>]:` so smoke expectations can match them.
 
 ## 14. Examples (shipped with the SDK, also the tests)
@@ -702,8 +776,9 @@ also serves the visual tier.
 - **Host unit tests** (`crates/fnv-codemod`): small components built from the examples in
   a build step and checked in as test inputs. They are our own code, so committing their
   binaries is fine; or they are built in CI with the `wasm32-wasip2` target added to the
-  toolchain. They cover: permission refusal at link time, memory and time limits (a
-  looping guest must be stopped within the budget), traps that turn a mod off, load order
+  toolchain. They cover: permission refusal at link time, memory and fuel limits (a
+  looping gameplay guest is stopped at the same instruction count on every run), the
+  visual time limit (a looping visual tick loses only the visual tier), traps that turn a mod off, load order
   and cycles, storage round trips, and re-entry refusal.
 - **Determinism test:** the same scenario run twice with the `bounty` example gives the
   same trace bit for bit.
@@ -717,19 +792,19 @@ also serves the visual tier.
 | Phase | Contents | Exit test |
 |---|---|---|
 | **M0** | Owner rulings on §17 (done 2026-11-02) | Doc approved |
-| **M1** Host core | wasmtime added, with its licence expression in `deny.toml`; `fnv-codemod`: manifest, discovery, load order, wasmtime engine and cache, limits, failure handling, `log`/`game-time`/`random`/`codemod`, `fnvtool codemod check/list`, `hello` without registration | Host unit tests; a looping guest is stopped within 2 ms ± one epoch; measured host-call cost written down |
-| **M2** Gameplay API | Registry by name (shared with extender Phase 1/2 work), `Kind::CodeMod`, `forms`/`refs`/`actors`/`inventory`/`quests`/`globals`/`script`, `storage` and the save section, console commands | `codemod-hello` smoke passes; save round trip; determinism test |
+| **M1** Host core | wasmtime added, with its licence expression in `deny.toml`; `fnv-codemod`: manifest, discovery, load order, wasmtime engine and cache, limits, failure handling, `log`/`game-time`/`random`/`codemod`, `fnvtool codemod check/list/doctor/new/build`, `hello` without registration | Host unit tests; a looping gameplay guest is stopped by fuel at the same count on every run, a looping visual guest within 1 ms ± one epoch; fuel's overhead, fuel units per ms and host-call cost measured and written down, and the §6.2 numbers set from them |
+| **M2** Gameplay API | Registry by name (shared with extender Phase 1/2 work), `Kind::CodeMod`, `forms`/`refs`/`actors`/`inventory`/`quests`/`globals`/`script`, `storage` and the save section, console commands, `fnvtool codemod watch/package` | `codemod-hello` smoke passes; save round trip; determinism test |
 | **M3** Events, hooks, config, UI | The `events` interface over the extender dispatcher (as many firing points as exist), the hook list of §8.7 with spec-note entries, `config` and the settings tab, `ui` over the tile tree | `bounty` works in play; hook chain order test |
-| **M4** Visual tier | Extra-bone attachment for worn armor, bone overrides in `PostUpdate`, `nif-data`, `world-query`, `visual-tick` | `codemod-cape` smoke passes; the cape example in the release |
-| **M5** SDK release | The SDK crate published with docs, template and examples; API frozen as `0.1` | An outside author builds `hello` from the docs alone |
+| **M4** Visual tier | Extra-bone attachment for worn armor, bone overrides over recorded base poses in `PostUpdate` (§8.11), `nif-data`, `world-query`, `visual-tick` | `codemod-cape` smoke passes; the cape example in the release |
+| **M5** SDK release | The SDK crate published with docs, examples and the GitHub template repository; the script host (§12.1); the linking exception text (§17 item 1); API frozen as `0.1` | On a clean Windows machine with no Rust installed, an outside author goes from the shipped tools to a working mod in the game, following only the docs, by both routes: Rust through `doctor`/`new`/`build`, and the script host with no install at all |
 
 M1 does not depend on the extender work. M2 shares the registry-by-name change with
 extender Phase 1/2, so whichever comes first builds it. M3's events are as complete as
 the dispatcher's firing points are at the time.
 
-## 17. Owner decisions (all ruled 2026-11-02)
+## 17. Owner decisions (items 1-7 ruled 2026-11-02, item 8 open)
 
-The owner took the recommendation on every item. Item 3 had no recommendation, so the
+The owner took the recommendation on items 1-7. Item 3 had no recommendation, so the
 list the spec already proposed (§8.7) stands.
 
 1. **Licence of code mods: a linking exception.** Code mods that use only the code mod API
@@ -759,3 +834,12 @@ list the spec already proposed (§8.7) stands.
    builds it.
 7. **No native-DLL tier is planned.** Revisit only when a real mod cannot be done in
    WebAssembly.
+8. **Script host language** (§12.1). *Open, added 2026-11-02 after the review on #1399.*
+   - **Lua** (proposed in the review): small, widely known, easy to embed and to compile
+     to WebAssembly.
+   - **GECK/xNVSE-style script**, built from NVForever's own compiler (extender-compat
+     Phase 1) for WebAssembly: the language these modders already write. It depends on
+     the compiler being finished.
+
+   A related option: expose hooks to ESP scripts the way extender event handlers are,
+   which serves the same modders without a host. Not needed before M5.
