@@ -36,7 +36,7 @@
 use crate::fly::FlyCam;
 use crate::sky::{SkyState, Sun};
 use crate::ssao::AmbientOcclusion;
-use bevy::light::{DirectionalLightShadowMap, ShadowFilteringMethod};
+use bevy::light::{CascadeShadowConfig, DirectionalLightShadowMap, ShadowFilteringMethod};
 use crate::post::PostEffects;
 use crate::shafts::LightShafts;
 use bevy::prelude::*;
@@ -332,7 +332,7 @@ impl Plugin for GraphicsPlugin {
             .insert_resource(DirectionalLightShadowMap { size: if g.fine_shadows { FINE_SHADOW_MAP } else { SHADOW_MAP } })
             .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin))
             .add_systems(Startup, |g: Res<Graphics>| info!("graphics: {}", g.describe()))
-            .add_systems(Update, (apply, sun_shadow_quality.after(crate::sky::update_sky)).chain());
+            .add_systems(Update, (apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky)).chain());
         if let Some(ft) = self.2.clone().filter(|f| f.every > 0.0) {
             // GPU time per render pass (timestamp queries), logged with the frame time.
             ensure_render_diagnostics(app);
@@ -467,8 +467,12 @@ enum SunShadows {
 
 impl SunShadows {
     /// For the sun's height above the horizon (below 0: the moon) and the light's fade.
-    fn at(height: f32, fade: f32) -> Self {
-        if fade < SHADOW_FADED {
+    /// Indoors the sun is the cell's directional light (XCLL), which has nothing to do with
+    /// the hour outside: it casts the day's shadows.
+    fn at(indoors: bool, height: f32, fade: f32) -> Self {
+        if indoors {
+            SunShadows::Day
+        } else if fade < SHADOW_FADED {
             SunShadows::Faded
         } else if height < 0.0 {
             SunShadows::Moon
@@ -478,44 +482,78 @@ impl SunShadows {
     }
 }
 
+/// What the sun's shadows depend on: the phase and the shadow settings.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct SunShadowKey {
+    phase: SunShadows,
+    shadows: bool,
+    fine: bool,
+    distance: f32,
+    reach: f32,
+    cascades: usize,
+}
+
+/// The phase for the sun's height now (the day's indoors) and the shadow settings.
+fn sun_shadow_key(g: Res<Graphics>, sky: Res<SkyState>) -> SunShadowKey {
+    let indoors = sky.interior.is_some();
+    let (height, fade) = if indoors { (1.0, 1.0) } else { crate::sky::sun_height_and_fade(&sky) };
+    SunShadowKey {
+        phase: SunShadows::at(indoors, height, fade),
+        shadows: sky.shadows,
+        fine: g.fine_shadows,
+        distance: sky.shadow_distance,
+        reach: sky.shadow_reach,
+        cascades: sky.shadow_cascades,
+    }
+}
+
 /// The sun's shadow quality for the hour: by day the settings' cascades, reach and map size;
 /// by night the moon's cheaper ones ([`MOON_SHADOW_DISTANCE`]); none while the light is
-/// faded at the horizon. Applied when the phase or a shadow setting changes, after
-/// [`apply`] and [`crate::sky::set_shadows`] (which put the day's cascades on).
+/// faded at the horizon. Applied when the phase or a shadow setting changes, and again when
+/// a sun is spawned (a worldspace switch makes a new one with the day's cascades) or someone
+/// else puts cascades on it ([`apply`], [`crate::sky::set_shadows`] with an unchanged value).
+/// It writes the cascades in place, so its own writes do not count as someone else's.
 #[allow(clippy::type_complexity)]
 fn sun_shadow_quality(
+    In(key): In<SunShadowKey>,
     mut commands: Commands,
-    g: Res<Graphics>,
-    sky: Res<SkyState>,
     mut shadow_map: ResMut<DirectionalLightShadowMap>,
-    mut suns: Query<(Entity, &mut DirectionalLight), With<Sun>>,
-    mut done: Local<Option<(SunShadows, bool, bool, f32, f32, usize, usize)>>,
+    new_suns: Query<(), Added<Sun>>,
+    mut suns: Query<(Entity, &mut DirectionalLight, Option<&mut CascadeShadowConfig>), With<Sun>>,
+    mut done: Local<Option<SunShadowKey>>,
 ) {
-    let (height, fade) = crate::sky::sun_height_and_fade(&sky);
-    let phase = SunShadows::at(height, fade);
-    let count = suns.iter().count();
-    let key = (phase, sky.shadows, g.fine_shadows, sky.shadow_distance, sky.shadow_reach, sky.shadow_cascades, count);
-    if count == 0 || done.as_ref() == Some(&key) {
+    if suns.is_empty() {
         return;
     }
-    if done.is_some_and(|d| d.0 != phase) {
+    let replaced = !new_suns.is_empty() || suns.iter_mut().any(|(_, _, c)| c.is_some_and(|c| c.is_changed()));
+    if !replaced && *done == Some(key) {
+        return;
+    }
+    let phase = key.phase;
+    if done.is_some_and(|d| d.phase != phase) {
         info!("sun shadows: {phase:?}");
     }
     *done = Some(key);
-    let size = if g.fine_shadows && phase == SunShadows::Day { FINE_SHADOW_MAP } else { SHADOW_MAP };
+    let size = if key.fine && phase == SunShadows::Day { FINE_SHADOW_MAP } else { SHADOW_MAP };
     if shadow_map.size != size {
         shadow_map.size = size;
     }
-    let on = sky.shadows && phase != SunShadows::Faded;
-    for (e, mut light) in &mut suns {
+    let on = key.shadows && phase != SunShadows::Faded;
+    for (e, mut light, cascades) in &mut suns {
         if light.shadow_maps_enabled != on {
             light.shadow_maps_enabled = on;
         }
         if on {
-            commands.entity(e).insert(match phase {
-                SunShadows::Moon => crate::sky::shadow_cascades(MOON_SHADOW_DISTANCE.min(sky.shadow_distance), 1.0, 1),
-                _ => crate::sky::shadow_cascades(sky.shadow_distance, sky.shadow_reach, sky.shadow_cascades),
-            });
+            let want = match phase {
+                SunShadows::Moon => crate::sky::shadow_cascades(MOON_SHADOW_DISTANCE.min(key.distance), 1.0, 1),
+                _ => crate::sky::shadow_cascades(key.distance, key.reach, key.cascades),
+            };
+            match cascades {
+                Some(mut c) => *c = want,
+                None => {
+                    commands.entity(e).insert(want);
+                }
+            }
         }
     }
 }
@@ -634,11 +672,89 @@ mod tests {
 
     #[test]
     fn the_moon_casts_cheaper_shadows_and_none_at_the_horizon() {
-        assert_eq!(SunShadows::at(0.8, 1.0), SunShadows::Day);
-        assert_eq!(SunShadows::at(-0.5, 1.0), SunShadows::Moon);
-        assert_eq!(SunShadows::at(0.005, 0.05), SunShadows::Faded, "sunrise: the light a twentieth of itself");
-        assert_eq!(SunShadows::at(-0.005, 0.05), SunShadows::Faded, "moonset");
-        assert_eq!(SunShadows::at(0.02, SHADOW_FADED), SunShadows::Day, "back on at the threshold");
+        assert_eq!(SunShadows::at(false, 0.8, 1.0), SunShadows::Day);
+        assert_eq!(SunShadows::at(false, -0.5, 1.0), SunShadows::Moon);
+        assert_eq!(SunShadows::at(false, 0.005, 0.05), SunShadows::Faded, "sunrise: the light a twentieth of itself");
+        assert_eq!(SunShadows::at(false, -0.005, 0.05), SunShadows::Faded, "moonset");
+        assert_eq!(SunShadows::at(false, 0.02, SHADOW_FADED), SunShadows::Day, "back on at the threshold");
+        // Indoors the sun is the cell's light: the day's shadows whatever the hour outside.
+        assert_eq!(SunShadows::at(true, -0.5, 1.0), SunShadows::Day, "an interior at night");
+        assert_eq!(SunShadows::at(true, 0.005, 0.05), SunShadows::Day, "an interior at dawn");
+    }
+
+    #[derive(Resource)]
+    struct TestKey(SunShadowKey);
+
+    fn shadow_app(phase: SunShadows) -> App {
+        let mut app = App::new();
+        app.insert_resource(DirectionalLightShadowMap { size: FINE_SHADOW_MAP })
+            .insert_resource(TestKey(SunShadowKey { phase, shadows: true, fine: true, distance: 8000.0, reach: 1.0, cascades: 3 }))
+            .add_systems(Update, (|k: Res<TestKey>| k.0).pipe(sun_shadow_quality));
+        app
+    }
+
+    /// A sun as `setup_sky` spawns it: shadows on, the day's cascades.
+    fn spawn_day_sun(app: &mut App) -> Entity {
+        let day = crate::sky::shadow_cascades(8000.0, 1.0, 3);
+        app.world_mut().spawn((Sun, DirectionalLight { shadow_maps_enabled: true, ..default() }, day)).id()
+    }
+
+    fn bounds(app: &App, e: Entity) -> Vec<f32> {
+        app.world().get::<CascadeShadowConfig>(e).expect("cascades").bounds.clone()
+    }
+
+    #[test]
+    fn a_new_sun_or_new_cascades_get_the_phase_again() {
+        let mut app = shadow_app(SunShadows::Moon);
+        let moon = crate::sky::shadow_cascades(MOON_SHADOW_DISTANCE, 1.0, 1).bounds;
+        let first = spawn_day_sun(&mut app);
+        app.update();
+        assert_eq!(bounds(&app, first), moon);
+        assert_eq!(app.world().resource::<DirectionalLightShadowMap>().size, SHADOW_MAP);
+
+        // A worldspace switch: the old sun goes, a new one with the day's cascades comes in
+        // the same frame, under the same phase.
+        app.world_mut().despawn(first);
+        let second = spawn_day_sun(&mut app);
+        app.update();
+        assert_eq!(bounds(&app, second), moon, "the new sun casts the moon's cascade");
+
+        // sky::set_shadows(true) with nothing changed puts the day's cascades back.
+        app.world_mut().entity_mut(second).insert(crate::sky::shadow_cascades(8000.0, 1.0, 3));
+        app.update();
+        assert_eq!(bounds(&app, second), moon, "someone else's cascades are replaced");
+
+        // Its own write does not count as someone else's: no re-apply every frame.
+        let tick = app.world().entity(second).get_ref::<CascadeShadowConfig>().unwrap().last_changed();
+        app.update();
+        app.update();
+        assert_eq!(app.world().entity(second).get_ref::<CascadeShadowConfig>().unwrap().last_changed(), tick);
+
+        // While the light fades at the horizon a new sun casts nothing.
+        app.world_mut().resource_mut::<TestKey>().0.phase = SunShadows::Faded;
+        app.update();
+        let third = spawn_day_sun(&mut app);
+        app.update();
+        assert!(!app.world().get::<DirectionalLight>(third).unwrap().shadow_maps_enabled);
+        assert!(!app.world().get::<DirectionalLight>(second).unwrap().shadow_maps_enabled);
+    }
+
+    #[test]
+    fn going_indoors_at_night_gives_the_day_shadows_back() {
+        let mut app = shadow_app(SunShadows::Moon);
+        let sun = spawn_day_sun(&mut app);
+        app.update();
+        assert_eq!(bounds(&app, sun).len(), 1);
+        // Indoors the key's phase is Day (SunShadows::at with indoors), whatever the hour.
+        app.world_mut().resource_mut::<TestKey>().0.phase = SunShadows::at(true, -0.5, 1.0);
+        app.update();
+        assert_eq!(bounds(&app, sun), crate::sky::shadow_cascades(8000.0, 1.0, 3).bounds);
+        assert_eq!(app.world().resource::<DirectionalLightShadowMap>().size, FINE_SHADOW_MAP);
+        // And back out into the night.
+        app.world_mut().resource_mut::<TestKey>().0.phase = SunShadows::at(false, -0.5, 1.0);
+        app.update();
+        assert_eq!(bounds(&app, sun).len(), 1);
+        assert_eq!(app.world().resource::<DirectionalLightShadowMap>().size, SHADOW_MAP);
     }
 
     #[test]

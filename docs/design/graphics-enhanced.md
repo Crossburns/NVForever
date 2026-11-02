@@ -114,6 +114,14 @@ this switch says; while the light is under a tenth of its strength in its fade a
 horizon (`SHADOW_FADED`), no shadow maps are drawn. [observed 2026-11-02, i9-14900K, RTX 4070,
 1920 × 1080, 8x MSAA, enhanced] With the day's 3 cascades at 4096² the moon's shadows cost
 about 2.5 ms on the Strip at 22:00 (9.2 ms against 6.7 ms without sun shadows).
+In interiors the sun is the cell's directional light (XCLL) and the clock stands still, so
+it always casts the day's shadows there. The map size (`DirectionalLightShadowMap`) is one
+setting for every directional light, so the first-person arms' shade light (`player_body.rs`
+`shade_light`, its own 256-unit cascade) also drops to 2048² by night and at the horizon
+[hypothesis, not checked by eye: the arms' cascade is small, so 2048² still gives it
+fine texels].
+The phase is applied again when a new sun is spawned (a worldspace switch) and when
+something else puts cascades on the sun (`sky::set_shadows`, the settings page).
 
 ### 3.3 Bloom (`bloom`)
 
