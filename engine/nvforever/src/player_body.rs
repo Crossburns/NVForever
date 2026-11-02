@@ -2389,6 +2389,12 @@ fn drive_body(
             m.after_idle = Some(1.0);
         }
     }
+    // The game put the player somewhere else while held (a script's move landing after
+    // the idle began): the scene plays there.
+    if let Some(h) = idles.held.and_then(|h| h.moved(player.placed, player.heading, player.pitch)) {
+        info!("player view: the game moved the player while an idle holds them: held at ({:.0}, {:.0}, {:.0}) now", h.feet[0], h.feet[1], h.feet[2]);
+        idles.held = Some(h);
+    }
     // A second later: where the collision has left the character (a smoke check).
     if let Some(t) = m.after_idle.as_mut() {
         *t -= dt;

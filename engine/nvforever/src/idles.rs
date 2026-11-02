@@ -380,6 +380,24 @@ pub struct Held {
     pub pitch: f32,
 }
 
+impl Held {
+    /// How far (units) the game's placement may lie from `feet` and still be the same.
+    const SAME_PLACE: f32 = 1.0;
+
+    /// Where the player is held now that the game has put them somewhere else while the
+    /// idles held them, `None` when it has not. A script's `MoveTo` lands a frame after
+    /// the idle it starts with: Tale of Two Wastelands' opening starts the birth idle in
+    /// its start room and moves the player into the birth cell in the same script run,
+    /// and the view stayed at the start room's spot in the birth cell, an empty screen
+    /// [observed: owner's TTW run 2026-11-02, the idle at (2036, 1946), the travel to
+    /// (-5276, -7148)].
+    pub fn moved(&self, placed: Option<[f32; 3]>, heading: f32, pitch: f32) -> Option<Held> {
+        let p = placed?;
+        let far = (0..3).any(|i| (p[i] - self.feet[i]).abs() > Self::SAME_PLACE);
+        far.then_some(Held { feet: p, free: p, heading, pitch })
+    }
+}
+
 /// An actor's place in an idle collection.
 struct Collection {
     /// A marker's (true) or a package's, and its form.
@@ -1197,5 +1215,16 @@ mod tests {
         let mut r = Rng(7);
         assert!((0..200).all(|_| r.below(5) < 5));
         assert_eq!(r.below(0), 0);
+    }
+
+    #[test]
+    fn held_follows_the_games_move() {
+        // TTW's opening: the birth idle begins in the start room, the move lands after.
+        let h = Held { feet: [2036.0, 1946.0, 7608.7], free: [2036.0, 1946.0, 7608.7], heading: 3.1, pitch: -0.2 };
+        let to = [-5276.0, -7148.0, 7543.2];
+        assert_eq!(h.moved(Some(to), 1.0, 0.1), Some(Held { feet: to, free: to, heading: 1.0, pitch: 0.1 }));
+        // Where it was held (the opening's bed marker), or no placement: stays held there.
+        assert_eq!(h.moved(Some([2036.4, 1946.0, 7608.7]), 1.0, 0.1), None);
+        assert_eq!(h.moved(None, 1.0, 0.1), None);
     }
 }
