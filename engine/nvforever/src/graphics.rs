@@ -91,6 +91,10 @@ pub struct Graphics {
     pub screen_aa: ScreenAa,
     pub light_shafts: bool,
     pub water_reflections: bool,
+    /// Water mirrors the world through the reflection camera (`reflection.rs`; on in
+    /// vanilla, as the original's water reflects the world). Off, water reflects the sky,
+    /// and what is on the screen where `water_reflections` is on.
+    pub water_mirror: bool,
     /// How the sun's shadow maps are filtered (Bevy's default, Gaussian, in vanilla).
     pub shadow_filter: ShadowFilteringMethod,
 }
@@ -131,6 +135,7 @@ impl Graphics {
             screen_aa: ScreenAa::Off,
             light_shafts: on,
             water_reflections: on,
+            water_mirror: true,
             shadow_filter: ShadowFilteringMethod::Gaussian,
         }
     }
@@ -144,6 +149,7 @@ impl Graphics {
             "glow" => &mut self.glow,
             "eye-adaptation" => &mut self.eye_adaptation,
             "neon-glow" => &mut self.neon_glow,
+            "water-mirror" => &mut self.water_mirror,
             "sharpen" => &mut self.sharpen,
             "anisotropic" => &mut self.anisotropic,
             "light-shafts" => &mut self.light_shafts,
@@ -166,9 +172,10 @@ impl Graphics {
                 "no-glow" => g.glow = false,
                 "no-eye-adaptation" => g.eye_adaptation = false,
                 "no-neon-glow" => g.neon_glow = false,
+                "no-water-mirror" => g.water_mirror = false,
                 _ => match g.switch(k) {
                     Some(on) => *on = true,
-                    None => return Err(format!("--graphics-only {k}: expected one of {}, no-glow, no-eye-adaptation, no-neon-glow", KEYS.join(", "))),
+                    None => return Err(format!("--graphics-only {k}: expected one of {}, no-glow, no-eye-adaptation, no-neon-glow, no-water-mirror", KEYS.join(", "))),
                 },
             }
         }
@@ -191,6 +198,7 @@ impl Graphics {
             (self.screen_aa == ScreenAa::Taa, "temporal anti-aliasing"),
             (self.light_shafts, "sun shafts"),
             (self.water_reflections, "screen-space water reflections"),
+            (!self.water_mirror, "no mirrored water"),
             (self.shadow_filter == ShadowFilteringMethod::Hardware2x2, "hardware 2x2 shadow filtering"),
             (self.shadow_filter == ShadowFilteringMethod::Temporal, "temporal shadow filtering"),
         ];

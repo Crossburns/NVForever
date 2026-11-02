@@ -30,6 +30,17 @@
 //! to water, the camera comes on a few frames after the water shows, which reflects only
 //! the sky until then; the texture it shows is drawn in the frame it comes on (it renders
 //! before the main camera, order -1), never an old one.
+//!
+//! Switched off by the `water-mirror` setting (graphics.rs `Graphics::water_mirror`;
+//! #1380): water then reflects the sky, and the screen where screen-space reflections are
+//! on.
+//!
+//! No sun shadows in the reflection (#1380): Bevy draws the sun's cascades for every
+//! view the sun lights, and gives a view without them no way through its renderer, so the
+//! camera keeps its cascades but [`no_reflected_shadows`] empties their caster lists:
+//! the passes draw nothing and the reflected world is all sunlit, as the original's world
+//! is everywhere (it casts no sun shadows from the world). At Hoover Dam by day the
+//! camera with its shadows cost about 0.6 ms a frame (#1380) [observed].
 
 use crate::water::{DistantWater, WaterCache, WaterMaterial};
 use crate::world::{bevy_to_game, Streamer, WorldData};
@@ -78,7 +89,10 @@ pub struct ReflectionPlugin;
 
 impl Plugin for ReflectionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WaterPixels>().add_systems(Startup, setup_reflection).add_systems(
+        app.init_resource::<WaterPixels>()
+            .add_systems(Startup, setup_reflection)
+            .add_systems(PostUpdate, no_reflected_shadows.after(SimulationLightSystems::CheckLightVisibility))
+            .add_systems(
             PostUpdate,
             (resize_reflection, read_water_pixels, update_reflection)
                 .chain()
@@ -405,8 +419,9 @@ fn update_reflection(
         return;
     };
     let cam = main_gt.translation();
+    let mirror = graphics.as_ref().is_none_or(|g| g.water_mirror);
     let near_water = match (streamer.interior, main_proj) {
-        (None, Projection::Perspective(_)) => reflection_height(&world, &mut dw, bevy_to_game(cam)),
+        (None, Projection::Perspective(_)) if mirror => reflection_height(&world, &mut dw, bevy_to_game(cam)),
         _ => None,
     };
     // Only while water is on screen (module notes, "Only when water is seen"), and never
@@ -437,6 +452,7 @@ fn update_reflection(
             (Some(_), Some(SeenWater::Cell(c))) => info!("water reflection: on (the water of cell {},{} on screen)", c.0, c.1),
             (Some(_), Some(SeenWater::Placed(r))) => info!("water reflection: on (placed water {r:08X} on screen)"),
             (Some(_), None) => {}
+            (None, _) if !mirror => info!("water reflection: off (mirrored water switched off)"),
             (None, _) if near_water.is_some() => info!("water reflection: off (no water on screen for {KEEP_UNSEEN} s)"),
             (None, _) => info!("water reflection: off (no water near)"),
         }
@@ -457,6 +473,23 @@ fn update_reflection(
         ..p.clone()
     });
     *fog = main_fog.clone();
+}
+
+/// Empty the reflection camera's share of every shadow-casting directional light's
+/// cascades (module notes, "No sun shadows in the reflection"); PostUpdate, after Bevy's
+/// light visibility.
+fn no_reflected_shadows(
+    refl: Query<Entity, With<ReflectionCamera>>,
+    mut lights: Query<&mut bevy::camera::visibility::CascadesVisibleEntities>,
+) {
+    let Ok(refl) = refl.single() else { return };
+    for mut visible in &mut lights {
+        if let Some(cascades) = visible.entities.get_mut(&refl) {
+            for cascade in cascades.iter_mut() {
+                cascade.entities.clear();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
