@@ -355,6 +355,7 @@ impl Plugin for PlayerPlugin {
             .add_systems(Update, (grab_cursor, read_input, crate::control::read_controls, mouse_look).chain().in_set(PlaySet::Input))
             .init_resource::<RunPace>()
             .init_resource::<PerkSpeed>()
+            .init_resource::<StatSpeed>()
             .init_resource::<ReloadPace>()
             .init_resource::<Lunge>()
             .add_systems(Update, take_knockbacks.after(PlaySet::Input).before(PlaySet::Physics))
@@ -638,8 +639,20 @@ impl Default for ReloadPace {
 }
 
 /// What slows or speeds the player's steps: crippled legs, a two-handed weapon's run, the
-/// Modify Run Speed perks, a reload.
-type Paces<'w> = (Option<Res<'w, crate::combat::PlayerLimbs>>, Option<Res<'w, RunPace>>, Option<Res<'w, PerkSpeed>>, Option<Res<'w, ReloadPace>>);
+/// Modify Run Speed perks, a reload, Speed Mult and body armour.
+type Paces<'w> = (Option<Res<'w, crate::combat::PlayerLimbs>>, Option<Res<'w, RunPace>>, Option<Res<'w, PerkSpeed>>, Option<Res<'w, ReloadPace>>, Option<Res<'w, StatSpeed>>);
+
+/// The player's Speed Mult and body armour's factor on its movement, walking, running
+/// and sneaking, as people's (`fnv_game::Game::move_speed_mult`, `crate::combat`'s
+/// `stat_speed`; actors.md §8.10, issue #1364).
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub struct StatSpeed(pub f32);
+
+impl Default for StatSpeed {
+    fn default() -> Self {
+        StatSpeed(1.0)
+    }
+}
 
 /// The player's Modify Run Speed perks' factor on its movement, walking, running and
 /// sneaking (`crate::combat`'s `perk_speed`; perk-entry-points.md §8).
@@ -1031,7 +1044,7 @@ fn step(
     mut phys: ResMut<PhysState>,
     mut player: ResMut<Player>,
     mut status: ResMut<Status>,
-    (limbs, pace, perk_pace, reload_pace): Paces,
+    (limbs, pace, perk_pace, reload_pace, stat_pace): Paces,
     turbo: Option<Res<crate::script::PlayerTimeScale>>,
     (mut seat, mut landed): (ResMut<crate::furniture::PlayerSeat>, MessageWriter<crate::rumble::Landed>),
     (mut blocks, noclip): (Option<ResMut<crate::blocking::ActorBlocks>>, Res<NoClip>),
@@ -1158,6 +1171,8 @@ fn step(
             let k = k * perk_pace.as_deref().map_or(1.0, |p| p.0);
             // Slower while reloading, when the setting is on (`crate::combat::reload_pace`).
             let k = k * reload_pace.as_deref().map_or(1.0, |p| p.0);
+            // Speed Mult and the body armour's class, as people's (`StatSpeed`).
+            let k = k * stat_pace.as_deref().map_or(1.0, |p| p.0);
             let [x, y] = velocity(&intent, player.heading, *speeds);
             // An attack's clip carries the player (`Lunge`).
             if lunge.carrying && lunge.from.is_none() {
