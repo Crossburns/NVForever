@@ -243,6 +243,10 @@ fn camera_settings_keys_and_eyes() {
     assert_eq!(num(&mut g, "GetAimZoomFirstPersonOnly"), 1.0);
     query(&mut g, "SetCameraAngle 1 10 20 90");
     assert_eq!(g.other.itr.camera_angle, Some([10.0, 20.0, 90.0]));
+    // Not a finite number: nothing changes.
+    query(&mut g, "SetCameraAngle 1 ((-1) ^ 0.5) 0 0
+SetCameraAngle 1 0 (10 ^ 400) 0");
+    assert_eq!(g.other.itr.camera_angle, Some([10.0, 20.0, 90.0]));
     query(&mut g, "SetCameraAngle 0 0 0 0");
     assert_eq!(g.other.itr.camera_angle, None);
     assert_eq!(num(&mut g, "SetDialogueCameraMode 4"), 0.0);
@@ -259,6 +263,9 @@ fn camera_settings_keys_and_eyes() {
     query(&mut g, "SetDialogueCameraShake 0");
     query(&mut g, "SetDialogueCameraShake -1");
     query(&mut g, "SetDialogueCameraDolly 0.5 2");
+    assert_eq!(num(&mut g, "SetDialogueCameraShake (10 ^ 400)"), 0.0);
+    assert_eq!(num(&mut g, "SetDialogueCameraDolly (10 ^ 400) 2"), 0.0);
+    assert_eq!(num(&mut g, "SetDialogueCameraDolly 0.5 ((-1) ^ 0.5)"), 0.0);
     let cam = &g.other.itr.dialogue_camera;
     assert_eq!((cam.mode, cam.fixed_angle, cam.shake, cam.dolly), (2, 3, 3.0, (0.5, 2.0, true)));
     // Keys: a mask group holds the key until it is released.
@@ -269,6 +276,12 @@ fn camera_settings_keys_and_eyes() {
     assert_eq!(num(&mut g, "IsKeyDisabled 34"), 1.0);
     query(&mut g, "EnableKeyEx 34 2");
     assert_eq!(num(&mut g, "IsKeyDisabled 34"), 0.0);
+    // EnableKey frees the key and its groups: a group added later is the only one left.
+    query(&mut g, "DisableKeyEx 35 1
+EnableKey 35
+DisableKeyEx 35 2
+EnableKeyEx 35 2");
+    assert_eq!(num(&mut g, "IsKeyDisabled 35"), 0.0);
     assert_eq!(num(&mut g, "DisableKeyEx -5"), 0.0);
     // A code past the keys and mouse buttons is taken [observed: itr probes].
     assert_eq!(num(&mut g, "DisableKeyEx 300"), 1.0);
@@ -395,6 +408,8 @@ fn tile_watches_textures_item_mods_and_the_emissive_colour() {
     assert_eq!(num(&mut g, &format!("UnwatchTileValue {id}")), 0.0);
     assert_eq!(num(&mut g, "SetUITexOffset \"TestMenu/Pic\" 1.25 -0.25"), 1.0);
     assert_eq!(g.other.itr.tex_offsets.get("TestMenu/Pic"), Some(&(0.25, 0.75)));
+    assert_eq!(num(&mut g, "SetUITexOffset \"TestMenu/Pic\" (10 ^ 400) 0"), 0.0);
+    assert_eq!(g.other.itr.tex_offsets.get("TestMenu/Pic"), Some(&(0.25, 0.75)));
     assert_eq!(num(&mut g, "SetUITexOffset \"TestMenu/Box\" 0.5 0"), 0.0);
     assert_eq!(num(&mut g, "SetUIAlphaMap \"TestMenu/Box\" \"Interface\\mask.dds\""), 1.0);
     assert_eq!(num(&mut g, "SetUIAlphaMap \"TestMenu/None\" \"Interface\\mask.dds\""), 0.0);
@@ -410,6 +425,7 @@ fn tile_watches_textures_item_mods_and_the_emissive_colour() {
     assert_eq!(num(&mut g, "SetWeaponEmissiveColor 1 0 0 2"), 0.0);
     assert_eq!(num(&mut g, "ClearWeaponEmissiveColor"), 0.0);
     query(&mut g, &format!("player.EquipItem {gun}"));
+    assert_eq!(num(&mut g, "SetWeaponEmissiveColor 1 0 0 ((-1) ^ 0.5)"), 0.0);
     assert_eq!(num(&mut g, "SetWeaponEmissiveColor 1 0 0 2"), 1.0);
     assert_eq!(num(&mut g, "ClearWeaponEmissiveColor"), 1.0);
 }

@@ -159,6 +159,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
         return Some(r);
     }
     if let Some(v) = crate::script_input::call(&mut g.input, name, args) {
+        // EnableKey frees the key whatever holds it, so DisableKeyEx's mask groups on it
+        // go too; else a later EnableKeyEx would find a stale group and keep the key
+        // disabled [hypothesis: ITR's groups sit on top of DisableKey's one switch].
+        if name == "enablekey" {
+            if let Some(k) = args.first().and_then(|a| a.num().ok()).and_then(|c| u16::try_from(c as i64).ok()) {
+                g.other.itr.key_masks.remove(&k);
+            }
+        }
         return Some(Ok(v));
     }
     let subject = on.or(ctx.self_ref);
@@ -202,6 +210,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
         return Some(r);
     }
     if let Some(r) = crate::nvse_jg4::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_sup1::call(g, ctx, name, subject, args) {
         return Some(r);
     }
     if let Some(r) = crate::nvse_jip5::call(g, ctx, name, subject, args) {

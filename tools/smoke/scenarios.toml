@@ -5995,7 +5995,7 @@ expect = [
 
 [[scenario]]
 name = "load-handoff"
-source = "owner 2026-10-16: loading a save while playing keeps the window: the old run's loading screen stays up while a new run loads behind it with its window hidden, then the new window takes over (engine/nvforever/src/handoff.rs)"
+source = "owner 2026-10-16: loading a save while playing keeps the window: the old run's loading screen stays up while a new run starts behind it with its window hidden, then the new window takes over (engine/nvforever/src/handoff.rs); owner 2026-11-01 (#1357): the new window takes over as soon as its own loading screen is up, and the old run ends then instead of holding its game through the whole load"
 areas = ["save"]
 paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/loading.rs", "engine/nvf-play/src/save.rs", "engine/nvf-play/src/pause.rs"]
 # The save waits past the add-on packs' message boxes (each held 0.3 s), which run to about 13 s.
@@ -6003,18 +6003,62 @@ env = { NVFOREVER_HOME = "handoff-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 90
 # The old run ends by handing over, not at run_seconds; the new one by its test aid.
-ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over"
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its world is in"
 expect = [
   { re = 'save: wrote .*handoff-test\.nvfsave', label = "the save is written" },
   { re = 'loading screen up: .* for worldspace 000DA726 ', label = "a loading screen for the save's place comes up" },
   { re = 'load: handing over to a new run with --load .*handoff-test\.nvfsave', count = 1, label = "a new run starts behind it" },
   { re = 'load: .*handoff-test\.nvfsave .*starting at', label = "the new run starts at the saved place" },
   { re = 'load: restored .*handoff-test\.nvfsave: \d+ changed references', label = "the new run restores the save" },
-  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown once the world is in" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown once its loading screen is up (not past the time limit)" },
+  { text = "the new run took over and its world is in; ending it", label = "the new run goes on loading alone and its world comes in" },
   { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends when the new one is up" },
   { re = 'the previous run did not end normally', count = 0, label = "the new run does not take the old one for a crash" },
   { re = 'before the world was in|before it was ready', count = 0, label = "no time limit or failure" },
   { text = "menu pause: the picture runs again", count = 0, label = "the world behind the loading screen stands still while the new run loads (owner 2026-10-23: a load from the main menu played the opening behind it)" },
+]
+order = [[
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window shows" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new window shows" },
+  { re = 'load: restored .*handoff-test\.nvfsave', label = "only then is the save put back (owner 2026-11-01: the old run does not stay through the load)" },
+  { text = "the new run took over and its world is in; ending it", label = "and the world comes in" },
+]]
+
+[[scenario]]
+name = "load-handoff-refused"
+source = "owner 2026-11-01 (#1357): a save that cannot be loaded opens the main menu with a message box saying why (the old run of a load no longer stays to fall back on) (engine/nvforever/src/handoff.rs, engine/nvforever/src/main.rs)"
+areas = ["save"]
+paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/save.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "handoff-refused-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = '20:load C:\Windows\win.ini', NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
+expect = [
+  { re = 'load: handing over to a new run with --load .*win\.ini', count = 1, label = "a new run starts for the load" },
+  { re = 'load: --load .*win\.ini.*; opening the main menu', count = 1, label = "the new run cannot load the file and opens the main menu" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown (not past the time limit)" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends" },
+  { text = "the new run took over and its main menu is in; ending it", label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: --load .*win\.ini', count = 1, label = "the player is told why (the box itself is skipped in unattended runs)" },
+]
+order = [[
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window shows" },
+  { re = 'load: message box .*the save could not be loaded', label = "the box comes once the new window is up" },
+]]
+
+[[scenario]]
+name = "load-bad-save-by-hand"
+source = "owner 2026-11-01 (#1357): a save given with --load that cannot be loaded opens the main menu with a message box saying why, instead of the game ending with an error (engine/nvforever/src/main.rs start_from_save)"
+areas = ["save"]
+paths = ["engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "bad-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--load", 'C:\Windows\win.ini']
+run_seconds = 12
+expect = [
+  { re = 'load: --load .*win\.ini.*; opening the main menu', count = 1, label = "the file is not loaded and the main menu opens instead" },
+  { re = 'main menu: open \(', label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: --load .*win\.ini', count = 1, label = "the player is told why" },
+  { re = '^error: ', count = 0, label = "the game does not stop with an error" },
 ]
 
 [[scenario]]

@@ -179,6 +179,13 @@ impl Session {
     }
 }
 
+/// Finish the capture now, as the app's teardown would (`Drop for Telemetry`, the bounded
+/// wait): a run that ends its process without the teardown (nvforever `handoff.rs`,
+/// `end_now`) calls this first.
+pub fn finish_for_exit(world: &mut World) {
+    drop(world.remove_resource::<Telemetry>());
+}
+
 impl Drop for Telemetry {
     fn drop(&mut self) {
         // App/world teardown is outside the Update collector. This is the only bounded
