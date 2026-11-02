@@ -510,7 +510,7 @@ fn register_graphics(app: &mut App) {
     for s in choices {
         add_setting(app, s);
     }
-    let switches: [Switch; 10] = [
+    let switches: [Switch; 11] = [
         (
             "ambient-occlusion",
             "Ambient occlusion",
@@ -583,6 +583,13 @@ fn register_graphics(app: &mut App) {
             "On: water the mirrored reflection does not reach (another height, interiors) reflects what is on the screen instead of only the sky. (--graphics)",
             |w| w.resource::<Graphics>().water_reflections,
             |w, on| w.resource_mut::<Graphics>().water_reflections = on,
+        ),
+        (
+            "water-mirror",
+            "Mirrored water reflections",
+            "On: water mirrors the world above it, as in the original; the scene is drawn a second time for it while water is on screen. Off: water reflects the sky, and what is on the screen with screen-space reflections. (--graphics-only no-water-mirror turns it off)",
+            |w| w.resource::<Graphics>().water_mirror,
+            |w, on| w.resource_mut::<Graphics>().water_mirror = on,
         ),
     ];
     for (key, label, note, get, set) in switches {
