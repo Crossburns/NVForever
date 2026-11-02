@@ -232,6 +232,15 @@ the spec it links to.
    about 11.4 ms there) and the arms take only the sun's shadows from past the body.
    See [player-body.md §1.6](design/player-body.md).
 
+42. **Cheaper moon shadows (#1369, #1371): a look by eye.** By night the moon's shadows
+   reach 3,000 units in one cascade at 2048² (by day: the settings' cascades and reach,
+   4096² with finer shadows), and while the light is under a tenth of its strength at the
+   horizon there are none. It saves about 2.5 ms on the Strip at 22:00. Not checked by
+   eye: walk the Strip or open desert at night and see whether shadows ending at 3,000
+   units or their softer edges look wrong, and watch sunrise and sunset for a visible pop
+   when shadows switch off or back on at the fade. If they do, the reach can grow or the
+   moon keep the day's cascades. [graphics-enhanced.md §3.2](design/graphics-enhanced.md)
+
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 
 

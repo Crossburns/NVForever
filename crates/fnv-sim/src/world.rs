@@ -704,15 +704,16 @@ impl<'a> World<'a> {
         Some(wear.into_iter().chain(weapon.map(|w| w.1)).collect())
     }
 
-    /// What actor `id` (not the player) wears and holds by the rules: its equipped items
-    /// once outfitted ([`World::outfit`]), before that the ones its outfitting will
-    /// equip, so what is drawn does not change when it is. `None` while the simulation
-    /// holds no inventory for it, or for an inventory not rolled from an actor base. For
-    /// the engine, which dresses and arms NPCs by it [design].
+    /// What actor `id` wears and holds by the rules: its equipped items once outfitted
+    /// ([`World::outfit`]), before that the ones its outfitting will equip, so what is
+    /// drawn does not change when it is. The player, never outfitted, has its equipped
+    /// items (issue #1364: before, the armour it carried counted as worn). `None` while
+    /// the simulation holds no inventory for it, or for an inventory not rolled from an
+    /// actor base. For the engine, which dresses and arms NPCs by it [design].
     pub fn equipment(&self, id: FormId) -> Option<Vec<FormId>> {
         let s = self.refs.get(&id)?;
         let inv = s.inventory.as_ref()?;
-        if s.outfitted {
+        if s.outfitted || id == FormId::PLAYER_REF {
             return Some(inv.equipped());
         }
         self.default_choice(self.inventory_base(id, s.base), inv)

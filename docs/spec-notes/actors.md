@@ -393,8 +393,11 @@ Rules [hypothesis; owner's report for the vault suit]: an addon whose model is t
 own hand for the actor's sex gives way to another worn item taking its slot itself, as the
 race's hand does (the vault suit shows the Pip-Boy Glove's hand); a worn item whose every
 slot other items' addons take is not drawn (the Pip-Boy Glove gives way to an outfit's
-glove or a power armour's gauntlet). The first-person rig takes the same parts. Smoke:
-`pipboy-glove-vault-suit`, `pipboy-glove-leather`.
+glove or a power armour's gauntlet). The first-person rig takes the same parts
+(`first_person::appearance` filters the resolved list): with the vault suit and a rifle
+drawn, the arms rig draws `lefthandpipboyglove1st.nif` and no bare left hand [observed:
+smoke log and frame, 2026-11-02, #1366]. Smoke: `pipboy-glove-vault-suit`,
+`pipboy-glove-leather`, `pipboy-glove-first-person`.
 
 ### 2.4 Parts
 
@@ -1624,8 +1627,16 @@ stopped and started, as Victor's walk had before #258). Code:
     (the paladins walked holstered with Gauss rifles at about the heavy armour's pace).
   - **Not built**: the walk with a weapon drawn outside combat (77–78 here, about the
     `1hm`/`h2h` clip or `fMoveBaseSpeed`, which of the two is open); in combat, walking
-    with a weapon drawn was faster (a fiend 105, Cook-Cook 97; not explained); the
-    same rule for the player (not measured).
+    with a weapon drawn was faster (a fiend 105, Cook-Cook 97; not explained).
+  - **The player** (issue #1364) [hypothesis: the people's rule; not measured on the
+    player]: the player's walk and run (86.8 and 344) are multiplied by its current Speed
+    Mult over 100 (SetAV's base, ModAV's and effects' modifiers and damage, as
+    GetActorValue reads it; 0 at the least) and by its body armour's share (1, 0.925,
+    0.85 as above), on top of the crippled legs, the two-handed run, the Modify Run Speed
+    perks and the reload (`Game::move_speed_mult`, nvf-play `StatSpeed`, asked every
+    frame; smoke `player-speedmult`). Whether `setav speedmult` on the player changes
+    its speed in the original, and whether its animations then keep up, is to be checked
+    with the observer (docs/handoff/observer-checks.md).
 - **Alert stance** [observed: the owner, 2026-10-16: "the cazadors scurry along the
   ground when not alert and fly when they are alert/in combat"]: the cazador's folder
   has `h2hforward.kf` (298.15 units/s), `h2hfastforward.kf` (545.54) and `h2hidle.kf`

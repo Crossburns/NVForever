@@ -1103,3 +1103,15 @@ The numbers above stay put so links to them hold; each item here gives its own p
     128 units) and read them again. Repeat with a Frag Grenade thrown by the player, and
     once on the player. The answer: which limbs lose condition, how much each against the
     Health lost, and whether distance or the side facing the blast matters.
+
+## Added 2026-11-02 (the player's Speed Mult and armour, issue #1364)
+
+75. **Does Speed Mult, and body armour, change the player's speed?** (P2; actors.md
+    §8.10, The player.) NVForever now multiplies the player's walk and run by its current
+    Speed Mult / 100 and by its body armour's share (medium 0.925, heavy 0.85), as
+    measured on people [hypothesis for the player]. In the original (`nvfairport`, the
+    runway, holstered, light or no armour): run 1,500 units forward and time it at
+    `player.setav speedmult 100`, `150` and `50`; then at 100 in medium armour
+    (ArmorNVNCRTrooper*) and in metal armour (ArmorMetal 0003307F). Also once with
+    `player.modav speedmult 50` (whether a modifier counts as SetAV does), and whether the
+    run clip plays faster at 150 or the feet slide. The answer: the speeds in units/s.

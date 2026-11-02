@@ -2923,6 +2923,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "player-speedmult"
+source = "issue #1364: the player's speed follows its Speed Mult actor value and its body armour's class, as people's (actors.md §8.10)"
+note = "SetAV SpeedMult 200 at 8 s, 50 at 10 s, 100 at 12 s; metal armour (ArmorMetal 0003307F, heavy: 1 - fMoveHeavyArmorPenalty 0.15) is given and put on at 14 s"
+areas = ["controls"]
+paths = ["engine/nvf-play/src/player.rs", "engine/nvf-play/src/combat.rs", "crates/fnv-game/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav speedmult 200;8.3:close;10:player.setav speedmult 50;10.3:close;12:player.setav speedmult 100;12.3:close;14:player.additem 0003307F 1;14.3:player.equipitem 0003307F;14.6:close" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
+run_seconds = 18
+order = [[
+  { re = 'movement: Speed Mult and body armour make the player move at 200% \(armour 100%\)', label = "SpeedMult 200: twice as fast" },
+  { re = 'movement: Speed Mult and body armour make the player move at 50% \(armour 100%\)', label = "SpeedMult 50: half" },
+  { re = 'movement: Speed Mult and body armour make the player move at 100% \(armour 100%\)', label = "back to 100" },
+  { re = 'movement: Speed Mult and body armour make the player move at 85% \(armour 85%\)', label = "heavy armour on: 85%, as people's" },
+]]
+
+[[scenario]]
 name = "bear-trap"
 source = "CLAUDE.md: after changes to groups' sound keys (activators.md §6–§8): the bear trap"
 areas = ["actor-groups", "object-anims"]
@@ -17806,6 +17822,20 @@ run_seconds = 9
 expect = [
   { re = 'player body: armour drawn \["PipBoy", "PipBoyGlove", "VaultSuit21", "BaseFemaleGloveR"\]', label = "the suit with its right bare hand and the Pip-Boy Glove" },
   { re = 'player body: armour drawn \[[^\]]*"BaseFemaleGloveL"', count = 0, label = "the suit's left bare hand is left out under the Pip-Boy Glove" },
+]
+
+[[scenario]]
+name = "pipboy-glove-first-person"
+source = "#1366 (docs/spec-notes/actors.md §2.3): the owner saw the Pip-Boy Glove and the outfit's left hand both drawn in first person with a rifle; the first-person rig takes the parts #1067 chose, so one left hand is drawn there too"
+note = "the player wears the Vault 21 Jumpsuit (VaultSuit21 0x00104184) and draws the Varmint Rifle (0x0007EA24) in first person in Goodsprings; a frame at 8 s (one left hand, the Pip-Boy Glove's)"
+areas = ["actors", "player-body"]
+paths = ["crates/fnv-actor/src/resolve.rs", "crates/fnv-actor/src/first_person.rs"]
+env = { RUST_LOG = "info,nvforever::player_body=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_EQUIP = "00104184,0007EA24", NVF_PLAY_TEST_CONTROL = "4:weapon", NVF_PLAY_TEST_SHOTS = "8:pipboy_glove_first_person.png" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm"]
+run_seconds = 10
+expect = [
+  { re = 'player First rig part armor \S+ \S*lefthandpipboyglove1st\.nif', label = "the arms rig draws the Pip-Boy Glove's first-person hand" },
+  { re = 'player First rig part \S+ \S+ \S*\\(female)?lefthand(1st)?\.nif', count = 0, label = "and no bare left hand beside it" },
 ]
 
 [[scenario]]
