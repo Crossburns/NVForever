@@ -682,32 +682,61 @@ formula is ours [design], built from what is documented and observed.
   documented: GECK wiki GetNthPerkEntryFunction, the codes; docs/handoff/
   perk-audit-2026-10-23.md §3.9].
 
-### 17.2 The chance [design]
+### 17.2 The chance (fitted to the original, 2026-11-01)
+
+The original's formula is not documented, so it was measured (issue #1361): its VATS
+percentages, read from the VATS menu's tiles (`VATSMenu/GlowBranch/*:N`, traits
+`_LimbName` and `string`, through JIP's GetUIString), against an NCR trooper held still
+at 350 to 4,200 units, with a 9mm pistol, a varmint rifle, a sawed-off shotgun and a
+hunting rifle, at Guns 17, 32, 67 and 117, standing and sneaking, Strength 5 (save
+`nvfVATS`, 276 readings) [observed]. The structure below is ours [design], each constant
+fitted to those readings [observed: fitted]:
 
 ```
-chance = clamp( perks( base × skill × range × fVATSHitChanceMult )
+chance = clamp( perks( base × CLOSE_MULT × range × fVATSHitChanceMult )
                 + concentrated, 0, fVATSMaxChance )
-skill  = 0.5 + 1.5 × weapon skill / 100 × fVATSSkillFactor      (0.5 … 2.0)
-range  = 1 / (1 + (open / 32)^fVATSDistanceFactor)              (1 for a melee mark)
+range  = 1 / (1 + (open / (FOCUS × size))^FALLOFF)          (1 for a melee mark)
 open   = distance × tan(cone × fVATSSpreadMult)
+cone   = the VATS actor spread (below) and the weapon's Min Spread, in degrees, halved
 ```
 
-- **base**: the marked part's BPTD To Hit Chance; an actor marked whole (no parts)
-  `WHOLE_TO_HIT` 75; an NPC's held weapon `HELD_WEAPON_TO_HIT` 30 (its WEAP's own value is
-  read into `WeaponStats::base_vats_to_hit` but the NPC's weapon is not looked up yet).
-- **skill**: the player's actor value for the weapon's WEAP skill (Guns, Energy Weapons,
-  Melee Weapons, Unarmed, Explosives), read on entering. Skill 0 halves the base, 50
-  gives 1.25 ×, 100 doubles it, so a torso (60) at skill 100 close by reaches the cap
-  and a head (30) about 60 %.
-- **range**: how wide the shot's spread has opened by the time it reaches the mark,
-  against `FOCUS` 32 units (about a torso's width): half the chance where the spread is
-  that wide. The cone is the gun's own (`Combat::vats_cone`): the Gun Spread Formula
-  with the sights up, the stance (moving, sneaking, crippled arms), the skill's wobble,
-  the weapon's Min Spread and the ammo's spread effects, after the Calculate Gun Spread
-  perks, no bloom. So a rifle keeps its chance far longer than a pistol or a shotgun,
-  sneaking helps, and the spread perks help. A melee mark has no range: the player is put
-  beside it (§16.2). A grenade's own cone is used for throws.
-- The distance is the eye's to the mark's point now: the chance is worked out again
+- What the readings showed [observed]: close by, nearly every part is at the 95 % cap,
+  even at Guns 17 (a torso 95 %, a head 53–66 % at 350 units). The chance falls steeply
+  with distance, and faster for a wide gun (sawed-off torso: 52 % at 350 units, 10 % at
+  1,050; varmint rifle: 95 %, 79 %). Skill helps a rifle a lot and a pistol little
+  (at 1,050 units, the hunting rifle's torso is 43 % at Guns 32 and 85 % at 117; the
+  pistol's is 38 % at 17 and 55 % at 117), so the skill acts through the spread and not
+  as a separate multiplier. Sneaking changed nothing (within a point). The held weapon
+  reads about a fifth of the torso. `GetGameSetting` gives `fVATSDistanceFactor` 0 in
+  the running game.
+- **The VATS actor spread** (`spread::vats_actor_spread`): not aiming and standing
+  (`fUnaimedSpreadPenalty` + `fStandingSpreadPenalty`, 0.3) whatever the stance, plus an
+  unmet Strength requirement and crippled limbs, times 1 − `fWobbleToSkillConversion` ×
+  skill / 100. The fit found 0.32 units and a 51 % drop at skill 100, matching these
+  documented settings (0.3, 0.5) [observed: fitted]; the hunting rifle's extra matches its
+  Strength requirement 6 against Strength 5. A skill below the weapon's requirement adds
+  nothing: with that penalty the fit got worse [observed]. Moving and jumping are left
+  out as sneaking is [hypothesis]; crippled arms stay in [design].
+- **CLOSE_MULT** 7.58, **FOCUS** 3.3 units, **FALLOFF** 1.29 [observed: fitted]. The base from the
+  BPTD part, as before.
+- **size**: torso 1, head 0.89, arms 0.84, legs 0.91 (by the part's condition actor
+  value), held weapon 0.32 [observed: fitted]. A held weapon's base is its WEAP's Base VATS To-Hit
+  Chance [documented; the Service Rifle's 42 fits within 1.3 points]; ours still uses
+  `HELD_WEAPON_TO_HIT` 30 until the NPC's weapon is looked up. An actor without parts:
+  `WHOLE_TO_HIT` 75 at size 1 [design, not measured].
+- How close: over all 276 readings, 2.8 points RMS, 214 within 3 points. The pistol,
+  the hunting rifle and the heads come within 2 points at the test's sample points. The
+  varmint rifle and the sawed-off up close come out 5–8 points low, unexplained. Arms
+  vary with the pose: one arm read 76 % or 95 % in the same setup.
+- `fVATSSkillFactor` and `fVATSDistanceFactor` are read and not used.
+- **Melee** (no cone: the player is put beside the mark) keeps the old skill share in
+  place of CLOSE_MULT: base × (0.5 + 1.5 × skill / 100), so skill 0 halves the base and 100
+  doubles it (`MELEE_SKILL_BASE`, `MELEE_SKILL_SPAN`) [design: melee was not measured;
+  CLOSE_MULT alone would put every human part at the cap whatever the skill].
+- **An object** marked with a gun (`WHOLE_TO_HIT` 75, size 1) takes the gun's cone like an
+  actor's part, from the first frame after the mark; with a melee weapon it takes the
+  melee share.
+- The distance is from the eye to the mark's point now. The chance is worked out again
   every frame while marking and firing, so it changes as the actor and the player move.
 - **perks**: the player's Calculate To Hit Chance entries with the tabs Weapon and
   Target (the conditions of each tab as for the other entry points,
@@ -715,12 +744,10 @@ open   = distance × tan(cone × fVATSSpreadMult)
   that mark (so Sniper's head and Hobbler's legs see the marked part) and GetVATSMode for
   the mode as it is (`fnv_game::Game::vats_hit_perks`). Not read again while the mark
   stays [design: the conditions are about the weapon, the target and the part, which do
-  not change].
+  not change]. Not measured.
 - **concentrated**: with Concentrated Fire, `iVATSConcentratedFireBonus` for each mark
   made before it on the same actor and part [documented].
-- Examples [from the formula, a cone of 1° and `fVATSSpreadMult` 1.1]: at skill 50 a
-  human torso (60) is 69 % at 500 units (7 m), 55 % at 1,000, 29 % at 2,100 (30 m); its
-  head (30) 34 %, 28 %, 14 %; at skill 100 the torso 95 %, 88 %, 46 %.
+- Not measured yet: Energy Weapons, melee and thrown marks, creatures' parts, perks.
 
 ### 17.3 Where it is worked out
 
@@ -770,9 +797,10 @@ open   = distance × tan(cone × fVATSSpreadMult)
 
 ### 17.7 Checks
 
-- Unit: `fnv-combat` `vats` (`the_hit_chance_grows_with_skill_and_falls_with_range`,
+- Unit: `fnv-combat` `vats` (`the_hit_chance_falls_with_range_and_part_size`,
+  `the_chance_matches_the_originals_samples`,
   `perks_concentrated_fire_and_the_cap`, `a_miss_passes_wide_and_never_below`),
-  `nvf-play` `vats_mode` (`a_marks_chance_follows_skill_range_and_perks`,
+  `nvf-play` `vats_mode` (`a_marks_chance_follows_range_and_perks`,
   `a_chance_reads_as_whole_percent`), `fnv-game` `perk_combat`.
 - Smoke: `vats-mode-hit-chance` (two marks on the Goodsprings dogs show their chances and
   are rolled), `vats-mode-miss` (every roll forced to miss: the shot goes wide and the

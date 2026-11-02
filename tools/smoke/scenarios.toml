@@ -379,6 +379,7 @@ expect = [
   "graphics:",
   { re = '\bprofile: \d', max = 0, label = "no profile report when profiling is disabled" },
   { re = '\bframe time: \d', max = 0, label = "no frame-time report when frame-time logging is disabled" },
+  { re = 'physics: [\d.]+ ticks a frame', max = 0, label = "no physics-step report when frame-time logging is disabled" },
 ]
 
 [[scenario]]
@@ -473,6 +474,21 @@ run_seconds = 15
 expect = [
   { re = '\bprofile: \d', min = 1, label = "profile reporting remains enabled" },
   { re = '\bframe time: \d', min = 1, label = "frame-time logging remains enabled" },
+]
+
+[[scenario]]
+name = "physics-load-line"
+source = "docs/design/frame-rate-audit.md (the physics line, zones phys::*) and issue #1383: with --log-frame-times the player's fixed steps are counted and timed, and one physics line is logged each period beside the frame time"
+areas = ["physics", "profiling"]
+paths = ["engine/nvf-play/src/phys_load.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/graphics.rs"]
+# A test aid makes the run unattended, so the player's own NVForever.ini is not read.
+env = { NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "14", "--log-frame-times", "5"]
+run_seconds = 25
+note = "The controller moves range [1, 1000] holds only on the walking path, where the player's controller counts as 1 a tick: a period spent seated or flying (ToggleCollision), or with no ticks, reads 0.0. Do not reuse this check for seated or noclip runs"
+expect = [
+  { re = '\bframe time: \d', min = 1, label = "frame-time logging is enabled" },
+  { re = 'physics: [\d.]+ ticks a frame \(max \d+\) over [1-9]\d* frames, (?P<n>[\d.]+) controller moves a tick \(max \d+\), [\d.]+ blocks, [\d.]+ ms a frame in player::step, [\d.]+ ms a tick', range = [1, 1000], label = "the physics line: at least the player's controller moves each tick" },
 ]
 
 [[scenario]]
@@ -17806,6 +17822,20 @@ run_seconds = 9
 expect = [
   { re = 'player body: armour drawn \["PipBoy", "PipBoyGlove", "VaultSuit21", "BaseFemaleGloveR"\]', label = "the suit with its right bare hand and the Pip-Boy Glove" },
   { re = 'player body: armour drawn \[[^\]]*"BaseFemaleGloveL"', count = 0, label = "the suit's left bare hand is left out under the Pip-Boy Glove" },
+]
+
+[[scenario]]
+name = "pipboy-glove-first-person"
+source = "#1366 (docs/spec-notes/actors.md §2.3): the owner saw the Pip-Boy Glove and the outfit's left hand both drawn in first person with a rifle; the first-person rig takes the parts #1067 chose, so one left hand is drawn there too"
+note = "the player wears the Vault 21 Jumpsuit (VaultSuit21 0x00104184) and draws the Varmint Rifle (0x0007EA24) in first person in Goodsprings; a frame at 8 s (one left hand, the Pip-Boy Glove's)"
+areas = ["actors", "player-body"]
+paths = ["crates/fnv-actor/src/resolve.rs", "crates/fnv-actor/src/first_person.rs"]
+env = { RUST_LOG = "info,nvforever::player_body=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_EQUIP = "00104184,0007EA24", NVF_PLAY_TEST_CONTROL = "4:weapon", NVF_PLAY_TEST_SHOTS = "8:pipboy_glove_first_person.png" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm"]
+run_seconds = 10
+expect = [
+  { re = 'player First rig part armor \S+ \S*lefthandpipboyglove1st\.nif', label = "the arms rig draws the Pip-Boy Glove's first-person hand" },
+  { re = 'player First rig part \S+ \S+ \S*\\(female)?lefthand(1st)?\.nif', count = 0, label = "and no bare left hand beside it" },
 ]
 
 [[scenario]]

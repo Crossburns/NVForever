@@ -393,8 +393,11 @@ Rules [hypothesis; owner's report for the vault suit]: an addon whose model is t
 own hand for the actor's sex gives way to another worn item taking its slot itself, as the
 race's hand does (the vault suit shows the Pip-Boy Glove's hand); a worn item whose every
 slot other items' addons take is not drawn (the Pip-Boy Glove gives way to an outfit's
-glove or a power armour's gauntlet). The first-person rig takes the same parts. Smoke:
-`pipboy-glove-vault-suit`, `pipboy-glove-leather`.
+glove or a power armour's gauntlet). The first-person rig takes the same parts
+(`first_person::appearance` filters the resolved list): with the vault suit and a rifle
+drawn, the arms rig draws `lefthandpipboyglove1st.nif` and no bare left hand [observed:
+smoke log and frame, 2026-11-02, #1366]. Smoke: `pipboy-glove-vault-suit`,
+`pipboy-glove-leather`, `pipboy-glove-first-person`.
 
 ### 2.4 Parts
 
