@@ -505,6 +505,10 @@ pub const SIZE_HEAD: f32 = 0.89;
 pub const SIZE_ARM: f32 = 0.84;
 pub const SIZE_LEG: f32 = 0.91;
 pub const SIZE_HELD_WEAPON: f32 = 0.32;
+/// A melee mark's skill share, at skill 0 and what 100 skill adds: the player is put
+/// beside the mark, so there is no range; melee was not measured (§17.2) [design].
+pub const MELEE_SKILL_BASE: f32 = 0.5;
+pub const MELEE_SKILL_SPAN: f32 = 1.5;
 /// The to-hit chance of an actor marked whole (no body parts), percent [design: as a
 /// large part, a dog's torso is 75].
 pub const WHOLE_TO_HIT: f32 = 75.0;
@@ -530,6 +534,9 @@ pub struct HitInputs {
     pub base: f32,
     /// The part's size against a torso's ([`part_size`], [`SIZE_HELD_WEAPON`]).
     pub size: f32,
+    /// The weapon's skill, 0–100: only a melee mark reads it here (a gun's acts
+    /// through its cone).
+    pub skill: f32,
     /// From the eye to the mark, units.
     pub distance: f32,
     /// The cone the shot would leave in (half-angle, degrees), before `fVATSSpreadMult`;
@@ -549,7 +556,11 @@ pub fn range_term(distance: f32, cone_deg: Option<f32>, size: f32, t: &HitTuning
 
 /// The chance before the perks and the cap, percent.
 pub fn raw_chance(i: &HitInputs, t: &HitTuning) -> f32 {
-    i.base.max(0.0) * CLOSE_MULT * range_term(i.distance, i.cone_deg, i.size, t) * t.hit_chance_mult
+    let close = match i.cone_deg {
+        Some(_) => CLOSE_MULT,
+        None => MELEE_SKILL_BASE + MELEE_SKILL_SPAN * i.skill.clamp(0.0, 100.0) / 100.0,
+    };
+    i.base.max(0.0) * close * range_term(i.distance, i.cone_deg, i.size, t) * t.hit_chance_mult
 }
 
 /// The chance shown and rolled, percent: the perks' Calculate To Hit Chance on the raw
@@ -884,7 +895,7 @@ mod tests {
     fn the_hit_chance_falls_with_range_and_part_size() {
         let t = HitTuning { spread_mult: 1.1, ..HitTuning::default() };
         // A human torso (BPTD 60) with a 1° cone: close, far over the cap.
-        let at = |distance, size| raw_chance(&HitInputs { base: 60.0, size, distance, cone_deg: Some(1.0) }, &t);
+        let at = |distance, size| raw_chance(&HitInputs { base: 60.0, size, skill: 50.0, distance, cone_deg: Some(1.0) }, &t);
         assert!((at(0.0, SIZE_TORSO) - 60.0 * CLOSE_MULT).abs() < 1e-3);
         // Farther, the spread opens past the focus and the chance falls.
         assert!(at(500.0, SIZE_TORSO) > at(1000.0, SIZE_TORSO) && at(1000.0, SIZE_TORSO) > at(3000.0, SIZE_TORSO));
@@ -899,6 +910,9 @@ mod tests {
         assert_eq!(part_size(Some("PerceptionCondition")), SIZE_HEAD);
         assert_eq!(part_size(Some("RightMobilityCondition")), SIZE_LEG);
         assert_eq!(part_size(None), SIZE_TORSO);
+        // Melee: the skill's share, no range: skill 0 halves the base, 100 doubles it.
+        let swing = |skill| raw_chance(&HitInputs { base: 30.0, size: SIZE_HEAD, skill, distance: 5000.0, cone_deg: None }, &t);
+        assert!((swing(0.0) - 15.0).abs() < 1e-4 && (swing(100.0) - 60.0).abs() < 1e-3);
     }
 
     /// The original's VATS percentages against an NCR trooper, Guns 67, Strength 5
@@ -925,7 +939,7 @@ mod tests {
             (0.3 * skill, 0.024, 1050.0, 42.0, SIZE_HELD_WEAPON, 16.0), // a Service Rifle held
         ];
         for (actor, min_spread, distance, base, size, seen) in samples {
-            let ours = final_chance(raw_chance(&HitInputs { base, size, distance, cone_deg: Some(cone(actor, min_spread)) }, &t), |c| c, None, &t);
+            let ours = final_chance(raw_chance(&HitInputs { base, size, skill: 67.0, distance, cone_deg: Some(cone(actor, min_spread)) }, &t), |c| c, None, &t);
             assert!((ours - seen).abs() <= 8.0, "{distance} units, base {base}: ours {ours:.1}, the original's {seen}");
         }
     }

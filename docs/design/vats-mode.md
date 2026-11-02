@@ -729,6 +729,13 @@ cone   = the VATS actor spread (below) and the weapon's Min Spread, in degrees, 
   varmint rifle and the sawed-off up close come out 5–8 points low, unexplained. Arms
   vary with the pose: one arm read 76 % or 95 % in the same setup.
 - `fVATSSkillFactor` and `fVATSDistanceFactor` are read and not used.
+- **Melee** (no cone: the player is put beside the mark) keeps the old skill share in
+  place of CLOSE_MULT: base × (0.5 + 1.5 × skill / 100), so skill 0 halves the base and 100
+  doubles it (`MELEE_SKILL_BASE`, `MELEE_SKILL_SPAN`) [design: melee was not measured;
+  CLOSE_MULT alone would put every human part at the cap whatever the skill].
+- **An object** marked with a gun (`WHOLE_TO_HIT` 75, size 1) takes the gun's cone like an
+  actor's part, from the first frame after the mark; with a melee weapon it takes the
+  melee share.
 - The distance is from the eye to the mark's point now. The chance is worked out again
   every frame while marking and firing, so it changes as the actor and the player move.
 - **perks**: the player's Calculate To Hit Chance entries with the tabs Weapon and

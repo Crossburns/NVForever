@@ -518,7 +518,7 @@ fn forced_roll() -> Option<bool> {
 fn chance_of(spot: &Spot, w: &InHand, eye: [f32; 3], cone: Option<f32>) -> f32 {
     let distance = crate::combat::distance(eye, spot.point);
     let cone = if w.style == AttackStyle::Melee { None } else { Some(cone.unwrap_or(0.0)) };
-    let raw = raw_chance(&HitInputs { base: spot.base, size: spot.size, distance, cone_deg: cone }, &w.hit);
+    let raw = raw_chance(&HitInputs { base: spot.base, size: spot.size, skill: w.skill, distance, cone_deg: cone }, &w.hit);
     final_chance(raw, |c| spot.perks.apply(c as f64) as f32, spot.perks.concentrated_fire.then_some(spot.earlier), &w.hit)
 }
 
@@ -1623,6 +1623,10 @@ mod tests {
         // Melee ignores the range: the player is put beside the mark.
         let blade = w(AttackStyle::Melee, 50.0);
         assert_eq!(chance_of(&torso, &blade, [0.0; 3], None), chance_of(&Spot { point: [300.0, 0.0, 0.0], ..torso.clone() }, &blade, [0.0; 3], None));
+        // A melee mark follows the skill and is not pinned at the cap.
+        let head = Spot { base: 30.0, ..torso.clone() };
+        let (weak, strong) = (chance_of(&head, &w(AttackStyle::Melee, 0.0), [0.0; 3], None), chance_of(&head, &blade, [0.0; 3], None));
+        assert!(weak < strong && strong < 95.0, "{weak} {strong}");
         // Close by: capped at fVATSMaxChance.
         assert_eq!(chance_of(&torso, &gun, [490.0, 0.0, 0.0], Some(2.0)), 95.0);
         // Concentrated Fire's bonus counts only with the perk.
