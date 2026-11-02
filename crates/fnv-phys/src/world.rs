@@ -738,9 +738,16 @@ impl PhysWorld {
             self.dirty = true;
             self.update_queries();
         }
-        self.drive_grip();
-        self.buoy();
-        self.step_world();
+        // Spans for profiling (the engine's Tracy build shows them as zones) [design].
+        {
+            let _span = tracing::info_span!("phys::grip_buoy").entered();
+            self.drive_grip();
+            self.buoy();
+        }
+        {
+            let _span = tracing::info_span!("phys::rapier_step").entered();
+            self.step_world();
+        }
         self.dirty = false;
         self.new_bodies.clear();
         self.struck.clear();
@@ -755,6 +762,8 @@ impl PhysWorld {
     /// see them, without advancing time.
     pub fn update_queries(&mut self) {
         if self.dirty {
+            // Only when there is work: this is called before every query.
+            let _span = tracing::info_span!("phys::query_refresh").entered();
             self.detect();
             // rapier 0.36's collision-only pipeline consumes the change flags of bodies
             // inserted since the last step without registering them with the island
