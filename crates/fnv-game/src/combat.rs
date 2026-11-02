@@ -707,6 +707,18 @@ impl Game<'_> {
         armor_speed(self, worn_armor_class(&self.world, r))
     }
 
+    /// The share of the standard speeds an actor moves at for its stats: its current
+    /// Speed Mult (percent: SetAV's base, ModAV's and effects' modifiers, damage) over 100
+    /// [documented: GECK wiki Stats Tab - NPC, "The Player Character would have a Speed of
+    /// 100%"; observed for people: SetAV SpeedMult 150 ran 1.5 times as fast,
+    /// actors.md §8.10], times its body armour's share ([`Game::armor_speed_mult`]).
+    /// The player's walk and run take it (issue #1364) [hypothesis: the player follows
+    /// the people's rule; not measured on the player].
+    pub fn move_speed_mult(&mut self, r: FormId) -> f64 {
+        let mult = actor::actor_value(self, r, crate::actor_values::SPEED_MULTIPLIER).unwrap_or(100.0);
+        (mult / 100.0).clamp(0.0, 10.0) * self.armor_speed_mult(r)
+    }
+
     /// An actor's limb conditions, codes 25–31 in order.
     pub fn limb_conditions(&mut self, r: FormId) -> [f64; 7] {
         let mut out = [100.0; 7];

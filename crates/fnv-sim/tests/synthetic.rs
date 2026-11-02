@@ -1686,6 +1686,13 @@ fn an_npcs_equipment_is_what_it_has_equipped_once_outfitted() {
     // A container is no actor.
     let s = w.place(id(SAFE), None, [0.0; 3], [0.0; 3], 1).unwrap();
     assert!(w.equipment(s).is_none());
+    // The player, never outfitted: only what it has equipped, not the armour it carries
+    // (issue #1364).
+    let p = FormId::PLAYER_REF;
+    w.add_item(p, id(SUIT), 1).unwrap();
+    assert!(!w.equipment(p).unwrap().contains(&id(SUIT)));
+    w.equip(p, id(SUIT)).unwrap();
+    assert!(w.equipment(p).unwrap().contains(&id(SUIT)));
 }
 
 // ---- quest items ----------------------------------------------------------------
