@@ -88,9 +88,12 @@ from the reverse-infinite depth (distance = near / depth), the normal from the n
 depths on the side with the smaller step, 12 samples on a 3-turn spiral within 64 game units
 (about 0.9 m; at most 80 pixels on the screen), turned per pixel by a 4 × 4 ordered pattern;
 each sample occludes by its cosine to the normal above 0.12, fading out between half and the
-whole radius. Strength 0.55. The result is blurred over the 4 × 4 pixels of the pattern,
-keeping to pixels within about 5 % of the same distance, and multiplied into the tonemapped
-picture. It fades out between 4,000 and 7,000 units (where the radius is a pixel or two and the
+whole radius. Strength 0.55. Since 2026-11-02 (#1370) this is worked out at half resolution,
+for the top-left pixel of each 2 × 2 block, into a two-channel texture that keeps the pixel's
+distance beside its openness (a quarter of the work; the pattern turns per half-resolution
+texel). The result is blurred over the 4 × 4 texels of the pattern around each pixel, keeping
+to texels within about 5 % of the pixel's own distance (so nothing bleeds across a depth edge),
+and multiplied into the tonemapped picture. It fades out between 4,000 and 7,000 units (where the radius is a pixel or two and the
 fog takes over). The sky is left alone: the dome is opaque and in the depth prepass, but at
 175,000 units or more, far beyond the fade (corrected 2026-10-12: not depth 0 as first written).
 

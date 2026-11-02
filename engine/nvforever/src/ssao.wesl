@@ -1,7 +1,9 @@
 // Screen-space ambient occlusion from the depth prepass (ssao.rs; enhanced graphics,
-// docs/design/graphics-enhanced.md §3.1). Entry `occlusion` writes how open each pixel is
-// (1 open, 0 closed) into a texture of its own; entry `apply` blurs that over the 4 x 4
-// pixels its sample pattern repeats over, keeping to pixels at about the same depth, and
+// docs/design/graphics-enhanced.md §3.1). Entry `occlusion` runs at half resolution: for
+// each 2 x 2 block of the picture it works out how open the block's top-left pixel is
+// (1 open, 0 closed) and writes that with the pixel's distance into a texture of its own;
+// entry `apply` blurs that over the 4 x 4 texels its sample pattern repeats over, keeping
+// to texels at about this pixel's distance (so nothing bleeds across a depth edge), and
 // multiplies the picture by it. An engineering choice, not the original game's.
 
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
@@ -22,11 +24,14 @@ struct Ao {
 // `apply` only.
 @group(0) @binding(2) var screen: texture_2d<f32>;
 @group(0) @binding(3) var screen_sampler: sampler;
+// Half resolution: r how open, g the distance (game units).
 @group(0) @binding(4) var openness: texture_2d<f32>;
 
 const SAMPLES: i32 = 12;
 // Turns of the sample spiral.
 const TURNS: f32 = 3.0;
+// The distance written for the sky, beyond any real one (half-float range).
+const SKY: f32 = 60000.0;
 // Below this cosine between the normal and a sample a surface does not occlude itself.
 const BIAS: f32 = 0.12;
 const TAU: f32 = 6.2831853;
@@ -60,17 +65,18 @@ fn pattern(p: vec2<i32>) -> f32 {
 
 @fragment
 fn occlusion(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
-    let px = vec2<i32>(floor(in.position.xy));
+    let half = vec2<i32>(floor(in.position.xy));
+    let px = half * 2;
     let d = depth_at(px);
     if d <= 0.0 {
-        return vec4(1.0);
+        return vec4(1.0, SKY, 0.0, 0.0);
     }
     let c = vec2<f32>(px) + 0.5;
     let p = view_pos(c, d);
     let dist = -p.z;
     let fade = 1.0 - smoothstep(ao.proj.w, ao.params.w, dist);
     if fade <= 0.0 {
-        return vec4(1.0);
+        return vec4(1.0, dist, 0.0, 0.0);
     }
     // The normal from the neighbours on the side with the smaller step in depth, so an
     // edge does not bend it.
@@ -88,9 +94,10 @@ fn occlusion(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let size = vec2<f32>(dims());
     let on_screen = min(radius * ao.proj.y * 0.5 * size.y / dist, ao.proj.z);
     if on_screen < 1.0 {
-        return vec4(1.0);
+        return vec4(1.0, dist, 0.0, 0.0);
     }
-    let turn = pattern(px) * TAU;
+    // Turned by the half-resolution texel, so the 4 x 4 blur in `apply` sees every turn.
+    let turn = pattern(half) * TAU;
     var sum = 0.0;
     for (var i = 0; i < SAMPLES; i++) {
         let a = (f32(i) + 0.5) / f32(SAMPLES);
@@ -108,7 +115,7 @@ fn occlusion(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         sum += max(cosine - BIAS, 0.0) * range;
     }
     let open = clamp(1.0 - ao.params.y * sum / f32(SAMPLES) * 2.0, 0.0, 1.0);
-    return vec4(mix(1.0, open, fade));
+    return vec4(mix(1.0, open, fade), dist, 0.0, 0.0);
 }
 
 @fragment
@@ -121,16 +128,16 @@ fn apply(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     }
     let z = ao.params.z / d;
     let size = vec2<i32>(textureDimensions(openness));
+    // The 4 x 4 texels around this pixel: texel q stands for full pixel 2q.
+    let first = (px >> vec2(1u)) - 2 + (px & vec2(1));
     var total = 0.0;
     var weight = 0.0;
-    for (var y = -2; y < 2; y++) {
-        for (var x = -2; x < 2; x++) {
-            let q = clamp(px + vec2(x, y), vec2(0), size - 1);
-            let qd = depth_at(q);
-            let qz = ao.params.z / max(qd, 1e-7);
-            // Only pixels within a few per cent of this one's distance.
-            let w = max(1.0 - abs(qz - z) / (0.05 * z + 1.0), 0.0);
-            total += textureLoad(openness, q, 0).r * w;
+    for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+            let t = textureLoad(openness, clamp(first + vec2(x, y), vec2(0), size - 1), 0);
+            // Only texels within a few per cent of this pixel's distance.
+            let w = max(1.0 - abs(t.g - z) / (0.05 * z + 1.0), 0.0);
+            total += t.r * w;
             weight += w;
         }
     }
