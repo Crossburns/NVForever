@@ -571,6 +571,12 @@ pub fn drive(
         None => (residents.as_deref_mut().and_then(|r| r.own_game()), false),
     };
     let Some(game) = game else { return };
+    // A script's menu (a message box, the character menus) holds the game, as the AI's
+    // walks are held (`residents.rs`): the idles may start but stand still until it
+    // closes, so a scene goes on where it was [observed: owner's TTW run 2026-11-02, the
+    // stage that opens the trait menu starts the birth scene's last section, which
+    // played out behind the menu; hypothesis: the original's menu mode stops it].
+    let dt = if game.menu.is_some() { 0.0 } else { dt };
     // Between frames the game being played keeps its world in the simulation
     // (`nvf_play::script::with_world`); conditions are evaluated with it put back.
     let mut with_world = |game: &mut Game<'static>, f: &mut dyn FnMut(&mut Game<'static>)| match sim.as_deref_mut().filter(|_| played) {
