@@ -1355,6 +1355,14 @@ pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> Cascad
     .build()
 }
 
+/// Height of the sun's direction above the horizon (the sine of its elevation; below 0
+/// the directional light is the moon, from the opposite side) and the share of its
+/// strength the light has at that height (it fades out within [`HORIZON_FADE`]; [`update_sky`]).
+pub fn sun_height_and_fade(sky: &SkyState) -> (f32, f32) {
+    let y = (game_to_bevy().rotation * Vec3::from_array(sun_direction(&sky.climate, sky.hour, SUN_SOUTH))).y;
+    (y, (y.abs() / HORIZON_FADE.sin()).min(1.0))
+}
+
 /// Switch the sun's shadows on or off now (the settings page); they reach
 /// [`SkyState::shadow_distance`].
 pub fn set_shadows(world: &mut World, on: bool) {
