@@ -126,8 +126,10 @@ cargo build --release -p nvforever --features nvforever/tracy    # or nvforever/
   each enhanced key in turn, vanilla and no sun shadows; a key's cost is "all on" minus
   "all on but it". Periods are grouped by the set the log line names, not by position.
 - With `NVF_PLAY_TEST_PROFILE`: `profile shadows:` (casters per cascade of each
-  directional light, nearest first) and `profile visibility:` (entities Bevy's visibility
-  systems walk every frame, meshes or not).
+  directional light, nearest first), `profile visibility:` (entities Bevy's visibility
+  systems walk every frame, meshes or not) and `profile transforms:` (transforms written
+  that frame, with a mesh, by name: about 950 of 7,200 at the Strip and Novac, nearly all
+  the animated actors' skeleton nodes [observed 2026-11-02]).
 - Test aids, off unless `=1`: `NVF_PLAY_TEST_NO_REFLECTION` (the water reflection camera
   stays off), `NVF_PLAY_TEST_NO_ARMS_SHADE` (no arms shade light, #1374),
   `NVF_PLAY_TEST_ACTOR_NO_SHADOWS` (actor meshes cast no shadows; still drawn).
