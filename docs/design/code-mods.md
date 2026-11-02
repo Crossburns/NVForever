@@ -1,7 +1,7 @@
 # Design: code mods (WebAssembly plugins inside the engine)
 
-**Status: proposal, written 2026-11-02 at the owner's request (#1398).** Nothing here is
-built. §17 lists the decisions still open for the owner. Implementation follows in phases
+**Status: approved by the owner 2026-11-02 (#1398), with every §17 recommendation taken.**
+Nothing here is built yet. §17 records the rulings. Implementation follows in phases
 (§16), each on its own issue and branch.
 
 ## 1. Goal
@@ -80,7 +80,7 @@ xNVSE / JIP LN / JohnnyGuitar function libraries (extender-compat.md).
 ### 4.1 Where code mods are found
 
 1. `<home>\codemods\<id>\`. The home is `Documents\My Games\NVForever` (install-layout.md).
-2. [option, §17 item 2] `Data\NVForever\CodeMods\<id>\`, read through the virtual file
+2. `Data\NVForever\CodeMods\<id>\` (§17 item 2), read through the virtual file
    system, so Mod Organizer 2 can install and order code mods like any other mod
    (mod-organizer-2.md). This is read-only; nothing is written there.
 
@@ -716,7 +716,7 @@ also serves the visual tier.
 
 | Phase | Contents | Exit test |
 |---|---|---|
-| **M0** | Owner rulings on §17 (item 5 ruled: wasmtime) | Doc approved |
+| **M0** | Owner rulings on §17 (done 2026-11-02) | Doc approved |
 | **M1** Host core | wasmtime added, with its licence expression in `deny.toml`; `fnv-codemod`: manifest, discovery, load order, wasmtime engine and cache, limits, failure handling, `log`/`game-time`/`random`/`codemod`, `fnvtool codemod check/list`, `hello` without registration | Host unit tests; a looping guest is stopped within 2 ms ± one epoch; measured host-call cost written down |
 | **M2** Gameplay API | Registry by name (shared with extender Phase 1/2 work), `Kind::CodeMod`, `forms`/`refs`/`actors`/`inventory`/`quests`/`globals`/`script`, `storage` and the save section, console commands | `codemod-hello` smoke passes; save round trip; determinism test |
 | **M3** Events, hooks, config, UI | The `events` interface over the extender dispatcher (as many firing points as exist), the hook list of §8.7 with spec-note entries, `config` and the settings tab, `ui` over the tile tree | `bounty` works in play; hook chain order test |
@@ -727,28 +727,35 @@ M1 does not depend on the extender work. M2 shares the registry-by-name change w
 extender Phase 1/2, so whichever comes first builds it. M3's events are as complete as
 the dispatcher's firing points are at the time.
 
-## 17. Owner decisions
+## 17. Owner decisions (all ruled 2026-11-02)
 
-1. **Licence of code mods.** The engine is GPL-3.0-or-later. Whether a code mod is a
-   derivative work is a legal question we don't settle here. Options: (a) say nothing;
-   (b) add a GPL linking exception for components that use only the code mod API, so mods
-   can use any licence (the usual choice for engines that want a mod scene); (c) require
-   GPL-compatible mods. **Recommendation: (b), with the SDK itself MIT or Apache-2.0.**
-2. **Where code mods live:** only `<home>\codemods\`, or also `Data\NVForever\CodeMods\`
-   through the VFS, so Mod Organizer 2 manages them (§4.1). **Recommendation: both.**
-3. **Hooks in 0.1:** the list in §8.7, a shorter one, or none until later.
-4. **Default on or off** for newly installed code mods. **Recommendation: off with a
-   permissions prompt**, as for new plugins.
-5. *Ruled 2026-11-02 (owner): **wasmtime**.* It compiles to native code, which the
-   per-frame visual tier needs, and it has the most complete Component Model support. Its
-   cost is several MB in the executable and a longer build. The interpreter `wasmi` was
-   the alternative and is not used. `deny.toml` does not yet allow wasmtime's licence
-   expression `Apache-2.0 WITH LLVM-exception`. Phase M1 adds it, with the crate list
-   that `cargo deny` reports.
-6. **Order relative to extender work:** M1 now, alongside extender Phase 1; or after
-   extender Phase 2, when the registry by name and the dispatcher exist.
-   **Recommendation: M1 now** (it is independent), M2 together with the registry change.
-7. **A native-DLL tier later** (for mods that need full speed, such as a cloth solver
-   over every vertex), built over the same WIT-defined API as plain C functions. It would
-   mean no sandbox and code built separately for each platform. **Recommendation: not
-   planned.** Revisit when a real mod cannot be done in WebAssembly.
+The owner took the recommendation on every item. Item 3 had no recommendation, so the
+list the spec already proposed (§8.7) stands.
+
+1. **Licence of code mods: a linking exception.** Code mods that use only the code mod API
+   may use any licence. The SDK and the WIT files are MIT OR Apache-2.0. Not yet done:
+   - The exception text goes into `LICENSE`/`LEGAL.md` before the SDK release (M5).
+   - Under GPL-3.0 §7, only copyright holders can grant an additional permission for
+     their own code. The history has another major author, so the exception needs their
+     agreement, or it must be limited to code they did not write. The owner settles that
+     before M5.
+   - The wording is the owner's to approve; sessions do not draft legal terms on their
+     own.
+2. **Where code mods live: both.** `<home>\codemods\` and, read-only through the VFS,
+   `Data\NVForever\CodeMods\` for Mod Organizer 2 (§4.1). The home copy wins.
+3. **Hooks in 0.1: the six in §8.7** (damage, hit chance, barter price, XP reward, loot
+   roll, fall damage). Each gets its spec-note entry before it is built (M3). Later
+   hooks come through issues.
+4. **New code mods are off** until the player turns them on, and see the permissions
+   prompt first (§5).
+5. **Runtime: wasmtime.** It compiles to native code, which the per-frame visual tier
+   needs, and it has the most complete Component Model support. Its cost is several MB
+   in the executable and a longer build. The interpreter `wasmi` was the alternative and
+   is not used. `deny.toml` does not yet allow wasmtime's licence expression
+   `Apache-2.0 WITH LLVM-exception`. Phase M1 adds it, with the crate list that
+   `cargo deny` reports.
+6. **Order: M1 now.** M1 is independent of the extender work. M2 goes together with the
+   registry-by-name change that extender Phase 1/2 also needs; whichever starts first
+   builds it.
+7. **No native-DLL tier is planned.** Revisit only when a real mod cannot be done in
+   WebAssembly.

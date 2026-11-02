@@ -360,11 +360,3 @@ a save. In the original game a save is written to `Documents\My Games\FalloutNV\
 which you have not cleared for probes the way you cleared the game install. Not done.
 *Answered 2026-10-26:* yes, one save named `nvfprobe`, removed after the run, the owner's
 own saves untouched.
-
-## Code mods (WebAssembly plugins): decisions for the design (2026-11-02)
-
-Not a gameplay decision. The proposal in [code-mods](design/code-mods.md) (#1398) needs
-your rulings in its §17: the licence of code mods (recommended: a linking exception for
-mods that use only the API), where they are installed (recommended: the home and, for
-Mod Organizer 2, `Data\NVForever\CodeMods`), the hook list for version 0.1, new mods
-off until turned on, and starting M1 now. (The runtime is ruled: wasmtime, 2026-11-02.)
