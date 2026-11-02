@@ -236,6 +236,13 @@ pub(crate) fn menu_key(button: GamepadButton) -> Option<KeyCode> {
     ALWAYS.iter().chain(IN_MENUS.iter()).find(|(b, _)| *b == button).map(|(_, k)| *k)
 }
 
+/// Whether `button` went down this frame on a controller that works the controls: for a
+/// menu's own controller buttons beyond the keys [`menu_keys`] stands in for (the ITEMS
+/// page's X drop, `crate::pipboy::items`).
+pub(crate) fn menu_button(pads: &Query<&Gamepad>, bindings: Option<&crate::bindings::Bindings>, button: GamepadButton) -> bool {
+    bindings.is_some_and(|b| b.device == crate::bindings::InputDevice::Controller) && pads.iter().any(|g| g.just_pressed(button))
+}
+
 /// A controller's arrival and departure, in the log.
 fn log_pads(added: Query<(Entity, Option<&Name>), Added<Gamepad>>, mut gone: RemovedComponents<Gamepad>) {
     for (e, name) in &added {

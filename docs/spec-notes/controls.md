@@ -101,6 +101,11 @@ key text [observed: the prefab's `_xbox` switch]. `FalloutPrefs.ini` also holds
   (docs/spec-notes/wait-menu.md).
 - Grab (Z) held picks up and carries what is under the crosshair; E held does too
   (docs/spec-notes/grab.md §2).
+- Dropping from the Pip-Boy's ITEMS page is a right click on the row (Shift + right click
+  the stack); X is the mod menu's, the original's PC key for Mod; the controller's X
+  drops, as the original's `IM_DropButton` (`&xbuttonx;` [documented:
+  inventory_menu.xml]) [design: owner 2026-11-02, #1393; a deliberate difference, the
+  original's PC drop key is not in the menu file] (pipboy.md §6).
 - Not built yet (a line on screen says so): attacking, reloading, VATS, the
   hotkeys and Ammo Swap, Quick Save, Quick Load.
 

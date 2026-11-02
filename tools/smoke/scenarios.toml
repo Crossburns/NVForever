@@ -6411,6 +6411,22 @@ expect = [
 order = [["pipboy mod: open", "pipboy mod: 10mm Pistol + 10mm", "combat: weapon Weap10mmPistol mods 1 on"], ["pipboy mod: 10mm Pistol + 10mm", "pipboy mod: 10mm Pistol + - 10mm"]]
 
 [[scenario]]
+name = "pipboy-right-click-drop"
+source = "#1393 (owner 2026-11-02; docs/spec-notes/pipboy.md §6): a right click on an ITEMS row drops it; on a 10mm Pistol (Weap10mmPistol, a weapon with mod slots, first in the Weapons tab by name) with a fitting mod carried, so Mod X) shows, the right click drops the pistol and never opens the mod menu or equips it"
+areas = ["pipboy"]
+paths = ["engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy/test_aid.rs"]
+env = { NVFOREVER_HOME = "pipboy-right-click-drop-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:call:player:AddItem:Weap10mmPistol:1,9.6:call:player:AddItem:ModNV10mmPistolExtMags:1", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=items,13.5:tab=0,15:rclick=260:150,18:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 21
+expect = [
+  { re = 'pipboy items: 10mm Pistol Mod X\)', label = "the pistol's Mod X) shows: a weapon with mod slots" },
+  { text = "test aid: pipboy clicked the screen", label = "the right click lands on the screen" },
+  { re = 'menu: Drop: Dropped 10mm Pistol x1', label = "the right click drops the pistol" },
+  { text = "pipboy mod: open", count = 0, label = "the mod menu stays closed" },
+  { re = 'menu: (Select|One).*Equipped 10mm Pistol', count = 0, label = "the right click does not equip it" },
+]
+
+[[scenario]]
 name = "combat-silenced-sound"
 source = "ESM gap audit row 12 (docs/spec-notes/weapon-mods.md §7): a weapon with a Silence or Suppressor mod on shoots with its WEAP WMS1/WMS2 sounds [documented: GECK wiki Weapons]; the 10mm Pistol (Weap10mmPistol) gets its silencer (ModNV10mmPistolSilencer, slot 3, flags 4) through the Pip-Boy mod menu, is drawn and fired twice, and the player's shot plays the mod 2D sound WPNPistolSilenced22Fire2D instead of WPN10mmFire2D"
 areas = ["combat", "pipboy"]

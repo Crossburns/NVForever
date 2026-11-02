@@ -359,6 +359,8 @@ pub struct PipBoyAid {
     pub target: Option<AidTarget>,
     /// A click on the target in progress: 3 asked, 2 the pointer is on it, 1 pressed.
     pub click: u8,
+    /// The click is with the right button (`rclick=`).
+    pub right: bool,
     /// A drag of the map shown (canvas units), as the left button held and moved would
     /// (`drag=`), taken by the DATA page.
     pub drag: Vec2,
@@ -874,6 +876,7 @@ fn drive_pointer(
         out.write(PointerInput::new(PIPBOY_POINTER, Location { target: target.clone(), position }, action));
     }
     // The test aid's click: a frame on the spot first, then a press, then a release.
+    let aid_button = if aid.right { PointerButton::Secondary } else { PointerButton::Primary };
     match aid.click {
         3 => aid.click = 2,
         1 | 2 if at.is_none() => {
@@ -881,11 +884,11 @@ fn drive_pointer(
             aid.click = 0;
         }
         2 => {
-            out.write(PointerInput::new(PIPBOY_POINTER, Location { target: target.clone(), position }, PointerAction::Press(PointerButton::Primary)));
+            out.write(PointerInput::new(PIPBOY_POINTER, Location { target: target.clone(), position }, PointerAction::Press(aid_button)));
             aid.click = 1;
         }
         1 => {
-            out.write(PointerInput::new(PIPBOY_POINTER, Location { target, position }, PointerAction::Release(PointerButton::Primary)));
+            out.write(PointerInput::new(PIPBOY_POINTER, Location { target, position }, PointerAction::Release(aid_button)));
             info!("test aid: pipboy clicked the screen at ({:.0}, {:.0})", position.x, position.y);
             aid.click = 0;
         }
