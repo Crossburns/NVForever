@@ -354,6 +354,11 @@ fn report(
         Query<(Entity, &bevy::camera::visibility::CascadesVisibleEntities), With<DirectionalLight>>,
         Query<(&InheritedVisibility, Has<Mesh3d>, Has<Children>)>,
     ),
+    (transforms, changed_transforms, same_transforms): (
+        Query<(), With<Transform>>,
+        Query<(Entity, Has<Mesh3d>, Option<&Name>), Changed<Transform>>,
+        Query<Ref<GlobalTransform>, Changed<Transform>>,
+    ),
 ) {
     let pipelines = PIPELINES.load(std::sync::atomic::Ordering::Relaxed);
     let new_pipelines = pipelines.saturating_sub(*pipelines_before);
@@ -426,6 +431,25 @@ fn report(
         bare += usize::from(!mesh && !children);
     }
     info!("profile visibility: {with_vis} entities with visibility ({shown} not hidden), {bare} with neither a mesh nor children");
+    // Transforms written this frame (each makes its tree dirty for propagation), how many
+    // of them carry a mesh, the most common names, and how many ended where they were.
+    let mut names: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let (mut changed, mut with_mesh) = (0usize, 0usize);
+    for (_, mesh, name) in &changed_transforms {
+        changed += 1;
+        with_mesh += usize::from(mesh);
+        let key = name.map(|n| n.as_str().split(|c: char| c.is_ascii_digit()).next().unwrap_or("").to_string()).unwrap_or_else(|| "(no name)".into());
+        *names.entry(key).or_default() += 1;
+    }
+    let unmoved = same_transforms.iter().filter(|g| !g.is_changed()).count();
+    let mut top: Vec<(String, usize)> = names.into_iter().collect();
+    top.sort_by_key(|t| std::cmp::Reverse(t.1));
+    let top: Vec<String> = top.iter().take(8).map(|(n, c)| format!("{n} {c}")).collect();
+    info!(
+        "profile transforms: {changed} of {} written this frame ({with_mesh} with a mesh; {unmoved} not yet propagated), most: {}",
+        transforms.iter().count(),
+        top.join(", ")
+    );
     info!("profile shadows: casters per cascade, nearest first: {}", shadows.join("; "));
     let per = |n: u64| n as f64 / frames;
     let o = std::mem::take(&mut *OUTFITS.lock().unwrap_or_else(|e| e.into_inner()));
