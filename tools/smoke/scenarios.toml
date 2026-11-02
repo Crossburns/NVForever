@@ -17793,6 +17793,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "pipboy-glove-first-person"
+source = "#1366 (docs/spec-notes/actors.md §2.3): the owner saw the Pip-Boy Glove and the outfit's left hand both drawn in first person with a rifle; the first-person rig takes the parts #1067 chose, so one left hand is drawn there too"
+note = "the player wears the Vault 21 Jumpsuit (VaultSuit21 0x00104184) and draws the Varmint Rifle (0x0007EA24) in first person in Goodsprings; a frame at 8 s (one left hand, the Pip-Boy Glove's)"
+areas = ["actors", "player-body"]
+paths = ["crates/fnv-actor/src/resolve.rs", "crates/fnv-actor/src/first_person.rs"]
+env = { RUST_LOG = "info,nvforever::player_body=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_EQUIP = "00104184,0007EA24", NVF_PLAY_TEST_CONTROL = "4:weapon", NVF_PLAY_TEST_SHOTS = "8:pipboy_glove_first_person.png" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm"]
+run_seconds = 10
+expect = [
+  { re = 'player First rig part armor \S+ \S*lefthandpipboyglove1st\.nif', label = "the arms rig draws the Pip-Boy Glove's first-person hand" },
+  { re = 'player First rig part \S+ \S+ \S*\\(female)?lefthand(1st)?\.nif', count = 0, label = "and no bare left hand beside it" },
+]
+
+[[scenario]]
 name = "pipboy-glove-leather"
 source = "#1067 (docs/spec-notes/actors.md §2.3): an outfit's glove addon (ArmorLeather's ArmorLeatherList: LeatherArmorGloveR, LeatherArmorGloveL) was drawn together with the always-worn Pip-Boy Glove's hand; a worn item whose every slot another item's addons take is now left out"
 note = "the player wears Leather Armor (ArmorLeather 0x00020423) in Goodsprings; third person, the camera turned to the player's front at 6 s, a frame at 7 s (one left hand, the leather glove)"
