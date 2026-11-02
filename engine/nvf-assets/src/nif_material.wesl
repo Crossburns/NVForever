@@ -20,8 +20,9 @@
 // first, as Bevy's own PBR fragment does.
 //
 // SHADE_LIGHT (shapes with NifSurface::shade_light, the player's first-person arms): the
-// sun's shadows on the shape are those in the shade light's shadow map
-// (`with_shade_light`) [engineering choice].
+// sun's shadows on the shape are those in the shade light's shadow map, which holds only
+// casters near the camera, and those in the sun's own map cast from beyond the player's
+// unseen body (`with_shade_light`, `shadow_past_body`) [engineering choice].
 //
 // REFRACT (shapes with the Refraction shader flag, main pass): what lies behind the shape
 // (Bevy's view transmission texture), shifted on the screen by the shape's normal (normal
@@ -71,7 +72,8 @@ import bevy_pbr::{
     render::pbr_types::PbrInput,
     render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT,
     render::mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
-    render::shadows::fetch_directional_shadow,
+    render::shadows::{fetch_directional_shadow, get_cascade_index},
+    render::shadow_sampling::sample_shadow_map,
 };
 
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, normal_map_texel};
@@ -216,8 +218,46 @@ fn blend_colour_scale(a: f32) -> f32 {
     @if(!PREPASS_PIPELINE && !DEPTH_PREPASS) return 1.0;
 }
 
-// The lit colour of a fragment whose sun shadows are those of the shade light
-// (nif_material.rs, "Shade light"). Of the directional lights with shadows, the brightest
+// How far past the plane through the eye, square to the sun, a past-body shadow lookup
+// starts (game units): the unseen body's half-width and the top of its head
+// [engineering choice; nvforever player_body.rs "The shadow"].
+const BODY_CLEARANCE: f32 = 24.0;
+
+// The sun's shadow on a fragment from what lies beyond the player's unseen body: the
+// sun's own shadow map, read where the fragment is but with the depth of a point moved
+// toward the sun past the plane through the eye and BODY_CLEARANCE more. Casters between
+// the fragment and that point, the body standing round the eye among them, do not count.
+// A point past the cascade's near plane takes a depth just short of it, so casters
+// squashed onto that plane still shade (nvforever sky.rs `reach_toward_sun` puts the
+// plane well behind the body). One cascade, the one the fragment's depth picks, without
+// Bevy's blend into the next (the arms lie in the first) and without the PCSS path
+// (NVForever sets no soft shadows).
+@if(!PREPASS_PIPELINE && SHADE_LIGHT) fn shadow_past_body(sun: u32, in: PbrInput, view_z: f32) -> f32 {
+    let light = &lights.directional_lights[sun];
+    let cascade_index = get_cascade_index(sun, view_z);
+    if cascade_index >= (*light).num_cascades {
+        return 1.0;
+    }
+    let cascade = &(*light).cascades[cascade_index];
+    let to_sun = (*light).direction_to_light.xyz;
+    // As in Bevy's sample_directional_cascade.
+    let normal_offset = (*light).shadow_normal_bias * (*cascade).texel_size * in.world_normal;
+    let at = in.world_position.xyz + normal_offset + (*light).shadow_depth_bias * to_sun;
+    // Orthographic: clip space is NDC.
+    let ndc = ((*cascade).clip_from_world * vec4(at, 1.0)).xyz;
+    if any(ndc.xy < vec2(-1.0)) || any(ndc.xy > vec2(1.0)) || ndc.z < 0.0 {
+        return 1.0;
+    }
+    let past = max(dot(view.world_position - at, to_sun), 0.0) + BODY_CLEARANCE;
+    let depth = min(((*cascade).clip_from_world * vec4(at + to_sun * past, 1.0)).z, 0.99999);
+    let uv = ndc.xy * vec2(0.5, -0.5) + vec2(0.5);
+    let array_index = i32((*light).depth_texture_base_index + cascade_index);
+    return sample_shadow_map(uv, depth, array_index, in.frag_coord.xy, (*cascade).texel_size);
+}
+
+// The lit colour of a fragment whose sun shadows are those of the shade light and those
+// from beyond the unseen body, the darker of the two (nif_material.rs, "Shade light").
+// Of the directional lights with shadows, the brightest
 // is the sun and the next the shade light, which has the sun's colour at `share` of its
 // strength. `shadowed` is Bevy's lighting of `in`, each light with its own shadows.
 // Without two such lights it is the result.
@@ -228,7 +268,9 @@ fn blend_colour_scale(a: f32) -> f32 {
 //   shadowed = R + S * (own + share * shade)    (the shadow values of the two maps)
 //   lit      = R + S * (1 + share)              (the same without shadows)
 // so S = (lit - shadowed) / ((1 - own) + share * (1 - shade)), and the colour wanted,
-// R + S * shade, is lit - S * (1 + share - shade).
+// R + S * wanted with wanted = min(shade, past), is lit - S * (1 + share - wanted).
+// Whatever shades the point past the body lies on the fragment's own line to the sun, so
+// past >= own: where neither map has a shadow (own = shade = 1) the result is `shadowed`.
 @if(!PREPASS_PIPELINE && SHADE_LIGHT) fn with_shade_light(in: PbrInput, shadowed: vec4<f32>) -> vec4<f32> {
     if (in.flags & MESH_FLAGS_SHADOW_RECEIVER_BIT) == 0u {
         return shadowed;
@@ -272,10 +314,11 @@ fn blend_colour_scale(a: f32) -> f32 {
         // Neither map has a shadow here.
         return shadowed;
     }
+    let wanted = min(shade, shadow_past_body(sun, in, view_z));
     var unshadowed = in;
     unshadowed.flags &= ~MESH_FLAGS_SHADOW_RECEIVER_BIT;
     let lit = apply_pbr_lighting(unshadowed);
-    let k = (1.0 + share - shade) / missing;
+    let k = (1.0 + share - wanted) / missing;
     if lights.ambient_color.a < 0.0 {
         // The display-value sum (nvforever lights.rs DISPLAY_HELPERS): the diffuse light is
         // texture × sum^2.2, so its display value (^(1/2.2)) is linear in the shadow
