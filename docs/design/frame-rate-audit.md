@@ -126,6 +126,12 @@ while playing; controller moves are the player's (on the walking path) and each 
 actor's per step; blocks is the mean length of the actor block list (`crate::blocking`);
 the two times are `Instant`-based, the whole system per frame and the steps alone per
 step. Without frame-time logging nothing is counted or timed and the line is not logged.
+The two lines do not count the same frames: the physics counts cover every frame of the
+period in which the game was playing, while the `frame time:` mean also counts frames
+that were not (menus, loading) and, only with `--graphics-cycle`, leaves out the first
+0.5 s of each period (`graphics.rs`). The logging system and `step` are not ordered, so
+the frame at a period's boundary can land in either period. Compare the two as rates,
+not as one sample.
 
 In a Tracy (or `profile`) build the steps show as zones: `phys::tick` per fixed step,
 holding `phys::blocks` (the block list and the push and clip passes),
@@ -136,8 +142,10 @@ run on the compute pool from 8 actors: the zone is the calling thread's wait) an
 `fnv_phys`' own `phys::grip_buoy` and `phys::rapier_step`; `phys::after` is the
 once-a-frame work after the steps (camera interpolation, drawn sinks).
 `phys::query_refresh` is the broad-phase refresh wherever it does work (inside a step or
-before a query). Held by furniture or flying with ToggleCollision only `phys::tick` (and
-the actors' zones) are drawn.
+before a query). Held by furniture or flying with ToggleCollision the steps still call
+`PhysWorld::step`, so `phys::tick` holds the actors' zones, `phys::grip_buoy`,
+`phys::rapier_step` and perhaps `phys::query_refresh`, but not the walking path's
+`phys::blocks`, `phys::player_move`, `phys::world_step` and `phys::after` wrappers.
 
 ## 2. Item 4: the mantis ootheca
 
