@@ -96,6 +96,11 @@ pub struct PreparedModel {
     /// a hanging lamp): its rig is built though no sequence moves it, so that the bodies
     /// can move its nodes (nvforever `swing_traps.rs`).
     pub jointed: bool,
+    /// The file has two or more dynamic Havok bodies and no constraints: loose parts, a
+    /// destroyed car's doors, hood and trunk (`vehicles\carhulk01.nif`) modelled where
+    /// the blast throws them. Its rig is built too, so that the bodies can move its nodes
+    /// once they fall (nvforever `wrecks.rs`).
+    pub loose: bool,
 }
 
 /// A light inside a model whose colour or dimmer a sequence drives. Lights are not
@@ -132,6 +137,13 @@ pub struct ModelNode {
     /// [documented: nif.xml BSRangeNode fields; hypothesis: their meaning,
     /// docs/spec-notes/destruction-stages.md].
     pub damage_stages: Option<(i32, i32)>,
+}
+
+/// How many of a file's Havok bodies are dynamic: motion systems 1 to 5, 8 and 9, as
+/// `fnv_collide::nif::motion` reads them [documented: nif.xml hkMotionType].
+fn dynamic_bodies(file: &NifFile, dec: &Decoded) -> usize {
+    let motion = |i: usize| dec.blocks[i].as_ref().ok().and_then(|b| b.strukt("rigid_body_info")).and_then(|s| s.int("motion_system"));
+    file.blocks.iter().enumerate().filter(|(i, b)| b.type_name.starts_with("bhkRigidBody") && matches!(motion(*i), Some(1..=5 | 8 | 9))).count()
 }
 
 /// The model damage stages node `i` of `nodes` is shown at: the overlap of the ranges of
@@ -1456,7 +1468,8 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     // Rig nodes: the root first, then every object reachable from it.
     let jointed = file.blocks.iter().any(|b| b.type_name.ends_with("Constraint"));
     out.jointed = jointed;
-    let animated = idle.is_some() || door.is_some() || !groups.is_empty() || effect.is_some() || jointed;
+    out.loose = !jointed && dynamic_bodies(&file, &dec) >= 2;
+    let animated = idle.is_some() || door.is_some() || !groups.is_empty() || effect.is_some() || jointed || out.loose;
     let mut rig = animated
         .then(|| {
         let root = root?;

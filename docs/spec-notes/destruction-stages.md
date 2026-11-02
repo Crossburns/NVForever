@@ -83,6 +83,37 @@ self-damage) is in `combat-rules.md` (step C7); this note is about the model.
     thrown (`dismember.rs` `throw_object_debris`) [design: speeds and spin]. In the
     masters 18 activator and 12 container stages name debris [observed: `fnvtool esm
     fields`]; not yet seen in a game run.
+- Since 2026-11-02 (issue #1410, `engine/nvforever/src/wrecks.rs`):
+  - **A hulk's loose parts.** A player blew up a car and its doors, hood and debris hung
+    in the air. `vehicles\carhulk01.nif` (DMDL of `Car01` `00014E78`, last stage 65 %,
+    Cap Damage + Destroy) holds six dynamic bodies (motion system 4, quality 3) and no
+    constraint: the chassis (layer 20, 300 kg), `CarLeftDoor01`, `CarRightDoor01`,
+    `CarHood01`, `CarTrunk01` (layer 19, 300 kg) and `CarPort01` (80 kg). Every node has
+    the identity rotation and the parts are modelled where the blast throws them: the
+    doors 113 units out to the sides, the hood raised [observed: `fnvtool nif decode`,
+    owner's install]. The intact `car01.nif` has one dynamic body (layer 10, 600 kg).
+    Of the 28 DMDL models of the masters, 18 have two or more dynamic bodies and no
+    constraint: every vehicle hulk (cars 01-03 and 10, trucks 01-06 and 08, the
+    motorcycle, the street cleaner, the bus `FFEU08FallingObject` with 29, the
+    vertibird with 49), the baby carriage, grenade bouquet and mailbox bomb traps, the
+    electric box, the fire extinguisher and the fusion generator; the other 10 have
+    none or one [observed: the DMDL subrecords of the ten masters, each model's bodies].
+    [hypothesis: the original hands these bodies to Havok when the hulk swaps in, and
+    the parts fall; not seen in the original yet.]
+  - **Collision.** A destroyed reference collides as its destruction model
+    (`nvf_play::phys::PhysState::set_destruction_models`, `RefCollisionOptions::model`):
+    built again when the stage is reached and whenever its cell loads, held where it is
+    drawn (`hold_jointed`, physics.md §4.3.1). Log `phys: 0x<ref> collides as its
+    destruction model <DMDL>`. ClearDestruction brings the base model's back.
+  - **The parts fall.** A model with two or more dynamic bodies and no constraint is
+    `PreparedModel::loose`; drawn as a reference's destruction model it gets its own
+    nodes, and once its collision is in, its bodies become an object ragdoll without
+    joints at their nodes' poses, the held collision stops taking part, and each moving
+    body moves its node (as a swinging trap's, traps.md §4). Log `wrecks: <ref>
+    <model>: <n> parts fall (<m> moving)`, `wrecks: <ref> came to rest after <s> s`.
+    [design: they start at rest, the blast does not push them; they do not hurt
+    actors; drawn again (cell reload, a loaded save) they fall again from the file's
+    poses, where they came to rest is not kept.]
 - Not built: a model's own particle systems below a damage-stage node are not gated;
   shapes below one in a model drawn as a rig (an idle, a door); blast nodes
   (`nif-node-audit.md` item 3); creatures' destruction stages (76 stages with debris, the

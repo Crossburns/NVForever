@@ -75,7 +75,7 @@ fn fake_cell(job: &Job) -> Prepared {
         let obj = object(if dynamic { 15.0 } else { 50.0 }, if dynamic { Motion::Dynamic } else { Motion::Static });
         let prepared = PreparedRef::new(&params, &RefPose::from_placement(&pl), &[obj]);
         let dynamic_local = dynamic.then_some(Iso::IDENTITY);
-        refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local, door: None, drawn: None }) });
+        refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local, door: None, drawn: None, model: None }) });
     }
     // A pond: a reference with only a water volume (placed water, physics.md §6.6).
     let pond = Placement {
@@ -93,7 +93,7 @@ fn fake_cell(job: &Job) -> Prepared {
         imposter: false,
     };
     let water = vec![CollisionObject { layer: fnv_phys::layers::WATER, ..object(100.0, Motion::Static) }];
-    refs.push(Entry { form_id: pond.form_id, placement: Some(pond), shapes: Some(RefShapes { tallies: vec!["water_volume"], water, prepared: None, dynamic_local: None, door: None, drawn: None }) });
+    refs.push(Entry { form_id: pond.form_id, placement: Some(pond), shapes: Some(RefShapes { tallies: vec!["water_volume"], water, prepared: None, dynamic_local: None, door: None, drawn: None, model: None }) });
     let terrain = Some(PreparedTerrain::new(&params, (gx, gy), &heights));
     Prepared { cell: job.cell, heights: Some(heights), terrain, refs, times: LoadTimes::default() }
 }
@@ -273,7 +273,7 @@ fn bridge_cell(job: &Job) -> Prepared {
         };
         let obj = CollisionObject { shape: Shape::Box { half_extents: [600.0, 600.0, 20.0] }.into(), ..object(0.0, Motion::Static) };
         let prepared = PreparedRef::new(&PhysParams::default(), &RefPose::from_placement(&pl), &[obj]);
-        p.refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local: None, door: None, drawn: None }) });
+        p.refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local: None, door: None, drawn: None, model: None }) });
     }
     p
 }
@@ -384,7 +384,7 @@ fn placed_clutter_moved_by_physics_is_written_back_and_reloads_there() {
     assert!(!p.placed_dynamic.contains_key(&id));
     // (The made-up cells have no records, so the job names the crate itself.)
     let cell = PhysCell::Exterior(0, 0);
-    let job = with_poses(Job { cell, refs: vec![id], land: None, poses: Vec::new(), scales: Vec::new() }, &sim);
+    let job = with_poses(Job { cell, refs: vec![id], land: None, poses: Vec::new(), scales: Vec::new(), models: Vec::new() }, &sim);
     p.insert(&LoadCtx { d: &d, sim: &sim, data: None }, fake_cell(&job));
     let b = p.world.ref_bodies(id)[0];
     for i in 0..3 {
