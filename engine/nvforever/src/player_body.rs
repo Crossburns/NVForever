@@ -53,8 +53,10 @@
 //! body is on [`BODY_LAYER`], which the sun casts from and the flashlight does not. The unseen body stands where
 //! the arms rig is and would shade it, so the arms rig takes its sun shadows from a light
 //! of its own ([`ArmsShade`], `NifSurface::shade_light`) that casts from the world's
-//! layer and the arms': buildings, what is seen of the body and the arms themselves shade
-//! the arms, as before the unseen body cast anything.
+//! layer and the arms', but only what lies near the camera ([`near_shade_casters`]), and
+//! from the sun's own map what lies beyond the unseen body (`nif_material.wesl`
+//! `shadow_past_body`): buildings, hills, what is seen of the body and the arms
+//! themselves shade the arms, as before the unseen body cast anything.
 //!
 //! **Lying on a bed** ([`lying_view`]; owner requests 2026-10-10): in first person the
 //! view is the lying body's, whether or not the body is drawn. It keeps its place in the
@@ -215,9 +217,48 @@ const ARMS_SHADE_REACH: f32 = 256.0;
 /// [`ARMS_SHADE_REACH`] from the camera, around the arms: a cascade takes every caster
 /// between it and the sun, so what shades the arms still does, while the pass draws only
 /// those (before 2026-10-12 it was the sun's first cascade, about 190 casters at
-/// Goodsprings against about 30 now; the arms' shadows are finer for it).
+/// Goodsprings against about 30 now; the arms' shadows are finer for it). Of those it
+/// draws only the ones near the camera ([`near_shade_casters`]).
 #[derive(Component)]
 struct ArmsShade;
+
+/// Keep in the [`ArmsShade`] light's cascades only the casters whose bounds come within
+/// [`ARMS_SHADE_REACH`] of the view's camera (PostUpdate, after Bevy's light visibility).
+/// Bevy keeps every caster between a cascade and the light, so at a low sun the column
+/// toward the sun took in hills, buildings and distant land far off, each drawn into a map
+/// as large as the sun's: up to 3.6 ms a frame at Novac at 07:00 for 36-38 casters
+/// [observed 2026-11-02, #1374]. What shades the arms from further off is read from the
+/// sun's own map beyond the unseen body instead (`nif_material.wesl` `shadow_past_body`),
+/// so this light is left with what the body's clearance hides there: the arms on
+/// themselves, the seen body, a roof or door frame right at the head.
+#[allow(clippy::type_complexity)]
+fn near_shade_casters(
+    mut shade: Query<&mut bevy::camera::visibility::CascadesVisibleEntities, With<ArmsShade>>,
+    views: Query<&GlobalTransform, With<Camera>>,
+    casters: Query<(&bevy::camera::primitives::Aabb, &GlobalTransform)>,
+) {
+    for mut visible in &mut shade {
+        for (view, cascades) in visible.entities.iter_mut() {
+            let Ok(eye) = views.get(*view) else { continue };
+            let eye = eye.translation();
+            for cascade in cascades.iter_mut() {
+                cascade.entities.retain(|e| match casters.get(*e) {
+                    Ok((aabb, at)) => near_eye(aabb, at, eye),
+                    Err(_) => true,
+                });
+            }
+        }
+    }
+}
+
+/// Whether the bounds `aabb` at `at` come within [`ARMS_SHADE_REACH`] of `eye` (by their
+/// bounding sphere).
+fn near_eye(aabb: &bevy::camera::primitives::Aabb, at: &GlobalTransform, eye: Vec3) -> bool {
+    let (scale, _, _) = at.to_scale_rotation_translation();
+    let centre = at.transform_point(Vec3::from(aabb.center));
+    let radius = (Vec3::from(aabb.half_extents) * scale.abs()).length();
+    centre.distance(eye) - radius <= ARMS_SHADE_REACH
+}
 
 /// A copy of material `m` whose sun shadows are the [`ArmsShade`] light's and whose depth
 /// is squeezed in front of the world, so no wall, door or actor the camera stands against
@@ -892,6 +933,7 @@ impl Plugin for PlayerBodyPlugin {
             .init_resource::<crate::furniture::PlayerUse>()
             .init_resource::<crate::weapon_lower::Ahead>()
             .add_systems(Update, (crate::furniture::drive_player, ensure_body, crate::weapon_lower::sense, drive_body, drive_weapon_emitters, shade_light).chain().in_set(nvf_play::player::BodySet))
+            .add_systems(PostUpdate, near_shade_casters.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
             .add_systems(Last, report);
     }
 }
@@ -2629,6 +2671,21 @@ fn drive_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shade_casters_near_the_eye() {
+        use bevy::camera::primitives::Aabb;
+        let eye = Vec3::new(100.0, 0.0, 120.0);
+        // A 20-unit box beside the eye, a 20-unit box 1,000 units off, and a hill 1,000
+        // units off whose 1,800-unit bounds reach past the eye.
+        let small = Aabb::from_min_max(Vec3::splat(-10.0), Vec3::splat(10.0));
+        let hill = Aabb::from_min_max(Vec3::splat(-900.0), Vec3::splat(900.0));
+        assert!(near_eye(&small, &GlobalTransform::from_translation(eye + Vec3::X * 50.0), eye));
+        assert!(!near_eye(&small, &GlobalTransform::from_translation(eye + Vec3::X * 1000.0), eye));
+        assert!(near_eye(&hill, &GlobalTransform::from_translation(eye + Vec3::X * 1000.0), eye));
+        // Scale counts: the small box scaled 100 times reaches the eye.
+        assert!(near_eye(&small, &GlobalTransform::from(Transform::from_translation(eye + Vec3::X * 1000.0).with_scale(Vec3::splat(100.0))), eye));
+    }
 
     #[test]
     fn head_slots() {
