@@ -546,8 +546,17 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             list(g, rows)
         }
-        // [decision: TTW's gene projector menu is not built]: nothing.
-        "ttw_showgeneprojector" => zero,
+        // TTW's gene projector is the race menu: the scripts that call it wait in a
+        // `MenuMode 1036` block (MQ05AirlockSignSCRIPT's "change your face" button)
+        // [observed: TaleOfTwoWastelands.esm source text; its CG00 stage 60 calls it where
+        // Fallout 3's calls ShowRaceMenu]. It opens NVForever's character creator as
+        // ShowRaceMenu does [design: owner 2026-11-02, "can we reuse our character
+        // creator"; before, nothing opened and the birth scene went on without it].
+        "ttw_showgeneprojector" => {
+            g.race_menu = crate::game::RaceMenu::Creator;
+            g.open_menu(crate::game::menus::RACE);
+            zero
+        }
         // ---- Stewie's Tweaks ----
         // `"key:section"` (StewVal): the value in the plugin's INI, a number when it reads
         // as one [documented: StewieGetValue; hypothesis: the INI is
