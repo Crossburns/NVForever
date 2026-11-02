@@ -432,9 +432,15 @@ adapters), give a factor per value (`ScreenModifiers::hdr_ratio`):
   adaptation's speed (`eye_adapt::modifier_ev`). The image space's own Target LUM keeps
   its fitted role in the eye adaptation (world.md §6).
 - **Bright Scale and Bright Clamp**: the light glow's strength times the Bright Scale
-  factor over the Bright Clamp factor ("Bright Clamp: the clamp for which lum levels
-  bloom" [documented: GECK wiki ImageSpace]: a lower clamp lets more glow), up to a
-  full-strength glow (`post::modified_glow`).
+  factor, up to a full-strength glow (`post::modified_glow`); the bright pass (what is
+  brighter than its threshold, world.md §6) from the image space's Bright Scale times
+  that factor over the Bright Clamp factor ("Bright Clamp: the clamp for which lum
+  levels bloom" [documented: GECK wiki ImageSpace]: a lower clamp lets more glow)
+  (`post::modified_bright_pass`). Until 2026-11-02 the clamp factor raised the light
+  glow too; the light glow scatters every pixel, so the birth scene of Tale of Two
+  Wastelands (CG00BirthBaseISFX: Bright Scale ×2, Bright Clamp ×0.2) came out blurred
+  all over, where the original keeps the people and the frame sharp under blooming
+  lamps [observed: owner's TTW run and a Fallout 3 frame, 2026-11-02].
 - **Eye Adapt Speed**: the adaptation speed, from the value with the modifiers on it
   (`eye_adapt::adapt_speed`): 3 EV/s at the common 0.9, in proportion to it ("higher
   numbers give faster chasing"), at once at 0 [documented: GECK wiki ImageSpace]. The
