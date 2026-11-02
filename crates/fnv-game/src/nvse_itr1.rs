@@ -397,9 +397,13 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         }
         "getaimzoomfirstpersononly" => yes(g.other.itr.aim_zoom_first_person_only.unwrap_or(false)),
         // `enable x y z` in degrees; 0 releases it [documented: SetCameraAngle]. The
-        // page's return type is None: 0 [hypothesis].
+        // page's return type is None: 0 [hypothesis]. An angle that is not a finite
+        // number changes nothing [decision].
         "setcameraangle" => {
-            g.other.itr.camera_angle = (num(args, 0, 0.0) != 0.0).then(|| [num(args, 1, 0.0), num(args, 2, 0.0), num(args, 3, 0.0)]);
+            let angle = [num(args, 1, 0.0), num(args, 2, 0.0), num(args, 3, 0.0)];
+            if angle.iter().all(|a| a.is_finite()) {
+                g.other.itr.camera_angle = (num(args, 0, 0.0) != 0.0).then_some(angle);
+            }
             zero
         }
         // ---- the dialogue camera ----
@@ -457,14 +461,23 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             None => zero,
         },
         // `speed maxDist [runOnce]`, runOnce 1 by default [documented: SetDialogueCameraDolly].
+        // A speed or distance that is not a finite number is refused: 0 [decision].
         "setdialoguecameradolly" => {
-            g.other.itr.dialogue_camera.dolly = (num(args, 0, 0.0).max(0.0), num(args, 1, 0.0).max(0.0), num(args, 2, 1.0) != 0.0);
+            let (speed, dist) = (num(args, 0, 0.0), num(args, 1, 0.0));
+            if !speed.is_finite() || !dist.is_finite() {
+                return Some(Ok(zero));
+            }
+            g.other.itr.dialogue_camera.dolly = (speed.max(0.0), dist.max(0.0), num(args, 2, 1.0) != 0.0);
             one
         }
         // `amplitude`: 0 off, -1 the default 3 [documented: SetDialogueCameraShake]; below 0
-        // otherwise taken as 0 [hypothesis].
+        // otherwise taken as 0 [hypothesis]; one that is not a finite number refused, 0
+        // [decision].
         "setdialoguecamerashake" => {
             let a = num(args, 0, 0.0);
+            if !a.is_finite() {
+                return Some(Ok(zero));
+            }
             g.other.itr.dialogue_camera.shake = if a == -1.0 { 3.0 } else { a.max(0.0) };
             one
         }
@@ -757,20 +770,25 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             one
         }
         // `tile x y`: wrapped into 0-1; image and radial tiles only [documented:
-        // SetUITexOffset].
+        // SetUITexOffset]. An offset that is not a finite number is refused, as it wraps
+        // to no number [decision].
         "setuitexoffset" => {
             let path = text(args, 0);
+            let (x, y) = (num(args, 1, 0.0), num(args, 2, 0.0));
+            if !x.is_finite() || !y.is_finite() {
+                return Some(Ok(zero));
+            }
             let Some(t) = g.ui_tree.find_tile(&path) else { return Some(Ok(zero)) };
             if !matches!(g.ui_tree.tile(t).kind.as_str(), "image" | "radial") {
                 return Some(Ok(zero));
             }
-            g.other.itr.tex_offsets.insert(path, (num(args, 1, 0.0).rem_euclid(1.0), num(args, 2, 0.0).rem_euclid(1.0)));
+            g.other.itr.tex_offsets.insert(path, (x.rem_euclid(1.0), y.rem_euclid(1.0)));
             one
         }
         // ---- item mods ----
         // On an inventory reference: the weapon's mod bits (1, 2, 4) [documented:
         // GetItemModFlags]; SetItemModFlags `[flags]`, 1 by default, 0 takes them off
-        // [documented]; 1 done [hypothesis].
+        // [documented]; 1 done, 0 when the item could not be changed [hypothesis].
         "getitemmodflags" => match subject.and_then(|r| g.temp_item(r)) {
             Some((c, it)) => XVal::Num(f64::from(g.world.inventory_mut(c).map(|inv| inv.groups().find(|(i, _, _)| *i == it).map_or(0, |(_, e, _)| e.mods)).unwrap_or(0))),
             None => zero,
@@ -780,18 +798,19 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             let m = (num(args, 0, 1.0) as i64 as u32 & 7) as u8;
             let Ok(inv) = g.world.inventory_mut(c) else { return Some(Ok(zero)) };
             let Some(e) = inv.groups().find(|(i, _, _)| *i == it).map(|(_, e, _)| e) else { return Some(Ok(zero)) };
-            inv.set_mods_one(it, e, m);
-            one
+            yes(inv.set_mods_one(it, e, m))
         }
         // ---- the weapon's emissive colour ----
         // `r g b mult` on the player's first-person weapon, for the engine's materials
         // (follow-up); 0 with no weapon in hand [documented: SetWeaponEmissiveColor;
-        // hypothesis: the weapon in hand stands for its first-person node].
+        // hypothesis: the weapon in hand stands for its first-person node], or for a
+        // value that is not a finite number [decision].
         "setweaponemissivecolor" => {
-            if crate::functions::items::equipped_weapon(g, FormId::PLAYER_REF).is_none() {
+            let colour = [num(args, 0, 0.0), num(args, 1, 0.0), num(args, 2, 0.0), num(args, 3, 1.0)];
+            if crate::functions::items::equipped_weapon(g, FormId::PLAYER_REF).is_none() || !colour.iter().all(|c| c.is_finite()) {
                 return Some(Ok(zero));
             }
-            g.other.itr.emissive = Some([num(args, 0, 0.0), num(args, 1, 0.0), num(args, 2, 0.0), num(args, 3, 1.0)]);
+            g.other.itr.emissive = Some(colour);
             one
         }
         // 0 when nothing was set [documented: ClearWeaponEmissiveColor].

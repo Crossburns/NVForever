@@ -379,6 +379,7 @@ expect = [
   "graphics:",
   { re = '\bprofile: \d', max = 0, label = "no profile report when profiling is disabled" },
   { re = '\bframe time: \d', max = 0, label = "no frame-time report when frame-time logging is disabled" },
+  { re = 'physics: [\d.]+ ticks a frame', max = 0, label = "no physics-step report when frame-time logging is disabled" },
 ]
 
 [[scenario]]
@@ -473,6 +474,21 @@ run_seconds = 15
 expect = [
   { re = '\bprofile: \d', min = 1, label = "profile reporting remains enabled" },
   { re = '\bframe time: \d', min = 1, label = "frame-time logging remains enabled" },
+]
+
+[[scenario]]
+name = "physics-load-line"
+source = "docs/design/frame-rate-audit.md (the physics line, zones phys::*) and issue #1383: with --log-frame-times the player's fixed steps are counted and timed, and one physics line is logged each period beside the frame time"
+areas = ["physics", "profiling"]
+paths = ["engine/nvf-play/src/phys_load.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/graphics.rs"]
+# A test aid makes the run unattended, so the player's own NVForever.ini is not read.
+env = { NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "14", "--log-frame-times", "5"]
+run_seconds = 25
+note = "The controller moves range [1, 1000] holds only on the walking path, where the player's controller counts as 1 a tick: a period spent seated or flying (ToggleCollision), or with no ticks, reads 0.0. Do not reuse this check for seated or noclip runs"
+expect = [
+  { re = '\bframe time: \d', min = 1, label = "frame-time logging is enabled" },
+  { re = 'physics: [\d.]+ ticks a frame \(max \d+\) over [1-9]\d* frames, (?P<n>[\d.]+) controller moves a tick \(max \d+\), [\d.]+ blocks, [\d.]+ ms a frame in player::step, [\d.]+ ms a tick', range = [1, 1000], label = "the physics line: at least the player's controller moves each tick" },
 ]
 
 [[scenario]]
@@ -5995,7 +6011,7 @@ expect = [
 
 [[scenario]]
 name = "load-handoff"
-source = "owner 2026-10-16: loading a save while playing keeps the window: the old run's loading screen stays up while a new run loads behind it with its window hidden, then the new window takes over (engine/nvforever/src/handoff.rs)"
+source = "owner 2026-10-16: loading a save while playing keeps the window: the old run's loading screen stays up while a new run starts behind it with its window hidden, then the new window takes over (engine/nvforever/src/handoff.rs); owner 2026-11-01 (#1357): the new window takes over as soon as its own loading screen is up, and the old run ends then instead of holding its game through the whole load"
 areas = ["save"]
 paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/loading.rs", "engine/nvf-play/src/save.rs", "engine/nvf-play/src/pause.rs"]
 # The save waits past the add-on packs' message boxes (each held 0.3 s), which run to about 13 s.
@@ -6003,18 +6019,62 @@ env = { NVFOREVER_HOME = "handoff-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 90
 # The old run ends by handing over, not at run_seconds; the new one by its test aid.
-ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over"
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its world is in"
 expect = [
   { re = 'save: wrote .*handoff-test\.nvfsave', label = "the save is written" },
   { re = 'loading screen up: .* for worldspace 000DA726 ', label = "a loading screen for the save's place comes up" },
   { re = 'load: handing over to a new run with --load .*handoff-test\.nvfsave', count = 1, label = "a new run starts behind it" },
   { re = 'load: .*handoff-test\.nvfsave .*starting at', label = "the new run starts at the saved place" },
   { re = 'load: restored .*handoff-test\.nvfsave: \d+ changed references', label = "the new run restores the save" },
-  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown once the world is in" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown once its loading screen is up (not past the time limit)" },
+  { text = "the new run took over and its world is in; ending it", label = "the new run goes on loading alone and its world comes in" },
   { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends when the new one is up" },
   { re = 'the previous run did not end normally', count = 0, label = "the new run does not take the old one for a crash" },
   { re = 'before the world was in|before it was ready', count = 0, label = "no time limit or failure" },
   { text = "menu pause: the picture runs again", count = 0, label = "the world behind the loading screen stands still while the new run loads (owner 2026-10-23: a load from the main menu played the opening behind it)" },
+]
+order = [[
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window shows" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new window shows" },
+  { re = 'load: restored .*handoff-test\.nvfsave', label = "only then is the save put back (owner 2026-11-01: the old run does not stay through the load)" },
+  { text = "the new run took over and its world is in; ending it", label = "and the world comes in" },
+]]
+
+[[scenario]]
+name = "load-handoff-refused"
+source = "owner 2026-11-01 (#1357): a save that cannot be loaded opens the main menu with a message box saying why (the old run of a load no longer stays to fall back on) (engine/nvforever/src/handoff.rs, engine/nvforever/src/main.rs)"
+areas = ["save"]
+paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/save.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "handoff-refused-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = '20:load C:\Windows\win.ini', NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
+expect = [
+  { re = 'load: handing over to a new run with --load .*win\.ini', count = 1, label = "a new run starts for the load" },
+  { re = 'load: --load .*win\.ini.*; opening the main menu', count = 1, label = "the new run cannot load the file and opens the main menu" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown (not past the time limit)" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends" },
+  { text = "the new run took over and its main menu is in; ending it", label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: --load .*win\.ini', count = 1, label = "the player is told why (the box itself is skipped in unattended runs)" },
+]
+order = [[
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window shows" },
+  { re = 'load: message box .*the save could not be loaded', label = "the box comes once the new window is up" },
+]]
+
+[[scenario]]
+name = "load-bad-save-by-hand"
+source = "owner 2026-11-01 (#1357): a save given with --load that cannot be loaded opens the main menu with a message box saying why, instead of the game ending with an error (engine/nvforever/src/main.rs start_from_save)"
+areas = ["save"]
+paths = ["engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "bad-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--load", 'C:\Windows\win.ini']
+run_seconds = 12
+expect = [
+  { re = 'load: --load .*win\.ini.*; opening the main menu', count = 1, label = "the file is not loaded and the main menu opens instead" },
+  { re = 'main menu: open \(', label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: --load .*win\.ini', count = 1, label = "the player is told why" },
+  { re = '^error: ', count = 0, label = "the game does not stop with an error" },
 ]
 
 [[scenario]]
@@ -17746,6 +17806,20 @@ run_seconds = 9
 expect = [
   { re = 'player body: armour drawn \["PipBoy", "PipBoyGlove", "VaultSuit21", "BaseFemaleGloveR"\]', label = "the suit with its right bare hand and the Pip-Boy Glove" },
   { re = 'player body: armour drawn \[[^\]]*"BaseFemaleGloveL"', count = 0, label = "the suit's left bare hand is left out under the Pip-Boy Glove" },
+]
+
+[[scenario]]
+name = "pipboy-glove-first-person"
+source = "#1366 (docs/spec-notes/actors.md §2.3): the owner saw the Pip-Boy Glove and the outfit's left hand both drawn in first person with a rifle; the first-person rig takes the parts #1067 chose, so one left hand is drawn there too"
+note = "the player wears the Vault 21 Jumpsuit (VaultSuit21 0x00104184) and draws the Varmint Rifle (0x0007EA24) in first person in Goodsprings; a frame at 8 s (one left hand, the Pip-Boy Glove's)"
+areas = ["actors", "player-body"]
+paths = ["crates/fnv-actor/src/resolve.rs", "crates/fnv-actor/src/first_person.rs"]
+env = { RUST_LOG = "info,nvforever::player_body=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_EQUIP = "00104184,0007EA24", NVF_PLAY_TEST_CONTROL = "4:weapon", NVF_PLAY_TEST_SHOTS = "8:pipboy_glove_first_person.png" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm"]
+run_seconds = 10
+expect = [
+  { re = 'player First rig part armor \S+ \S*lefthandpipboyglove1st\.nif', label = "the arms rig draws the Pip-Boy Glove's first-person hand" },
+  { re = 'player First rig part \S+ \S+ \S*\\(female)?lefthand(1st)?\.nif', count = 0, label = "and no bare left hand beside it" },
 ]
 
 [[scenario]]

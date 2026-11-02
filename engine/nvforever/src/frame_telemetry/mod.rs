@@ -2,7 +2,7 @@
 //! The plugin supplies engine metadata, elapsed times and a guarded output path.
 
 mod plugin;
-pub use plugin::FrameTelemetryPlugin;
+pub use plugin::{finish_for_exit, FrameTelemetryPlugin};
 
 mod git_paths;
 

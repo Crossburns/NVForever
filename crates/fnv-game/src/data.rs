@@ -1465,6 +1465,16 @@ struct Read {
 
 const UNIT_SIGS: &[&[u8; 4]] = &[b"SCPT", b"QUST", b"INFO", b"PACK", b"TERM", b"PERK"];
 
+/// Winning records read at a time while [`GameData::build`] takes them in [engineering
+/// choice: a few tens of MB of reads, enough work per slice for every core].
+const READ_SLICE: usize = 16_384;
+
+/// Whether [`read_one`] finds script units in the record: a [`UNIT_SIGS`] type, or a
+/// patrol point's result script (REFR with XPPA).
+fn carries_units(r: &Record) -> bool {
+    UNIT_SIGS.contains(&&r.header.sig) || (&r.header.sig == b"REFR" && r.subrecords().is_ok_and(|subs| subs.iter().any(|s| &s.sig == b"XPPA")))
+}
+
 /// The base form types whose OBND [`GameData::object_bounds`] keeps (GetObjectDimensions).
 const BOUNDS_SIGS: [[u8; 4]; 20] = [
     *b"NPC_", *b"CREA", *b"CONT", *b"ACTI", *b"STAT", *b"MSTT", *b"FURN", *b"DOOR", *b"LIGH", *b"TERM", *b"MISC", *b"WEAP", *b"ARMO", *b"ALCH", *b"AMMO",
@@ -1644,13 +1654,21 @@ impl GameData {
                 Some((g, d.plugin as usize, lo.records[d.plugin as usize][d.ordinal as usize]))
             })
             .collect();
-        let reads: Vec<(FormId, [u8; 4], Read)> = winners
+        // The records with script units are read first (their units are decoded before the
+        // rest is taken in); every other record is read a slice at a time as the loop below
+        // takes it in. A `Read` is about 3.8 KB and the base game with its add-ons has about
+        // 900 000 winning records: read all at once, they held some 3.3 GB until the build
+        // ended, at every start and in both runs of a load while playing (#1357).
+        let mut winners = winners;
+        winners.sort_by_key(|w| w.0);
+        let mut unit_reads: Vec<(u32, Read)> = winners
             .par_iter()
-            .map(|&(g, pi, r)| (FormId(g), r.header.sig, read_one(lo, schema, &param_types, g, pi, r)))
+            .filter(|w| carries_units(w.2))
+            .map(|&(g, pi, r)| (g, read_one(lo, schema, &param_types, g, pi, r)))
             .collect();
         let mut d = GameData {
             table,
-            param_types,
+            param_types: param_types.clone(),
             load_order: lo.plugins.iter().map(|p| p.name.clone()).collect(),
             plugin_versions: lo.plugins.iter().map(|p| p.header.version).collect(),
             units: Vec::new(),
@@ -1762,11 +1780,9 @@ impl GameData {
         };
         // Decode every unit once.
         let mut all_units: Vec<(FormId, ScriptUnit)> = Vec::new();
-        let mut reads = reads;
-        reads.sort_by_key(|r| r.0);
-        for (id, _, r) in &mut reads {
+        for (id, r) in &mut unit_reads {
             for u in r.units.drain(..) {
-                all_units.push((*id, u));
+                all_units.push((FormId(*id), u));
             }
         }
         let mut compiled: Vec<(FormId, Compiled)> = all_units
@@ -1785,6 +1801,14 @@ impl GameData {
             d.units.push(c);
         }
         let label = |o: UnitOwner| o.label();
+        // In form order, as one list read all at once was.
+        let mut unit_reads: HashMap<u32, Read> = unit_reads.into_iter().collect();
+        let reads = winners.chunks(READ_SLICE).flat_map(|slice| {
+            let read: Vec<Option<Read>> = slice.par_iter().map(|&(g, pi, r)| (!unit_reads.contains_key(&g)).then(|| read_one(lo, schema, &param_types, g, pi, r))).collect();
+            let taken: Vec<(FormId, [u8; 4], Read)> =
+                slice.iter().zip(read).map(|(&(g, _, r), read)| (FormId(g), r.header.sig, read.or_else(|| unit_reads.remove(&g)).unwrap_or_default())).collect();
+            taken
+        });
         for (id, sig, r) in reads {
             d.sigs.insert(id, sig);
             if let Some(e) = r.edid {
@@ -3423,3 +3447,4 @@ pub(crate) fn field_code(schema: &Schema, sig: &[u8; 4], sub: &[u8; 4], field: O
         _ => None,
     }
 }
+

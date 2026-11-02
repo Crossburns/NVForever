@@ -2643,9 +2643,8 @@ pub(crate) fn fire(
             );
         }
         c.player_spread = Some(if c.no_spread { 0.0 } else { actor_spread.max(0.0) });
-        // VATS mode's hit chance: as aimed, no bloom (vats-mode.md §17.2).
-        let aimed = Stance { aiming: true, ..stance.clone() };
-        let vats_spread = spread::actor_spread(&c.rules, &c.tuning, &w, &aimed);
+        // VATS mode's hit chance: its own actor spread, no bloom (vats-mode.md §17.2).
+        let vats_spread = spread::vats_actor_spread(&c.rules, &c.tuning, &w, &stance);
         let (vats_spread, _) = player_weapon_perk(script.as_deref_mut(), &mut sim, fnv_game::perks::CALCULATE_GUN_SPREAD, id, vats_spread);
         c.vats_cone = Some(if c.no_spread { 0.0 } else { spread::cone_deg(vats_spread.max(0.0), 0.0, &w, &effects) });
     }
