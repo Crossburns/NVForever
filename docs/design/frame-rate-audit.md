@@ -125,7 +125,7 @@ counts and times itself, and each period logs, beside `frame time:`:
 while playing; controller moves are the player's (on the walking path) and each walked
 actor's per step; blocks is the mean length of the actor block list (`crate::blocking`);
 the two times are `Instant`-based, the whole system per frame and the steps alone per
-step. Without frame-time logging nothing is counted or timed and the line is not logged.
+step. Without frame-time logging no `PhysLoad` statistics are kept, no `Instant` is read and the line is not logged (the `phys::*` spans are independent of it).
 The two lines do not count the same frames: the physics counts cover every frame of the
 period in which the game was playing, while the `frame time:` mean also counts frames
 that were not (menus, loading) and, only with `--graphics-cycle`, leaves out the first
