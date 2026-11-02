@@ -153,7 +153,7 @@ WeaponHasModType's list], with what the values do [documented: GECK wiki Weapon 
   does nothing; a right click drops [design: owner 2026-11-02, #1393; pipboy.md §6].
   The original's controller button for Mod is LB (`&xbuttonlb;`) and for Drop X
   (`IM_DropButton`, `&xbuttonx;`) [documented: inventory_menu.xml]; NVForever's
-  controller drops on X, and LB pages up, so it has no mod button yet [design].
+  controller follows both (`pad::menu_buttons`, controller.md §3).
 
 ## 5. The mod menu
 

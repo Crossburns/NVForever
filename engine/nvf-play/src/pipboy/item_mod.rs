@@ -268,9 +268,8 @@ pub fn effect_text(effect: Option<&str>, a: f32) -> Option<String> {
 
 /// The keys of the mod menu and X on the ITEMS page; X on an item that is not a weapon
 /// with mod slots, and Shift+X, do nothing (dropping is a right click, `super::items`).
-/// The original's controller button for Mod is LB (`IM_ModButton`'s `&xbuttonlb;`
-/// [documented: inventory_menu.xml]), which pages up here (`crate::pad`), so the
-/// controller has no mod button yet.
+/// The controller's LB presses X here (`IM_ModButton`'s `&xbuttonlb;` [documented:
+/// inventory_menu.xml], `crate::pad::menu_buttons`).
 #[allow(clippy::too_many_arguments)]
 pub fn keys(
     pip: Res<PipBoy>,
