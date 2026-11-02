@@ -34,13 +34,11 @@
 //! Switched off by the `water-mirror` setting (graphics.rs `Graphics::water_mirror`;
 //! #1380): water then reflects the sky, and the screen where screen-space reflections are
 //! on.
-//!
-//! No sun shadows in the reflection (#1380): Bevy draws the sun's cascades for every
-//! view the sun lights, and gives a view without them no way through its renderer, so the
-//! camera keeps its cascades but [`no_reflected_shadows`] empties their caster lists:
-//! the passes draw nothing and the reflected world is all sunlit, as the original's world
-//! is everywhere (it casts no sun shadows from the world). At Hoover Dam by day the
-//! camera with its shadows cost about 0.6 ms a frame (#1380) [observed].
+//! At Hoover Dam by day (Lake Mead in view) the camera costs about 0.5 ms a frame, where
+//! the CPU sets the frame: 7.6 ms with it, 7.1 without [observed 2026-11-02, #1380]. Its
+//! own set of the sun's cascades stays: Bevy's renderer needs cascades for every view the
+//! sun lights, and emptying their caster lists saved 0.12 ms of shadow-pass GPU time and
+//! nothing of the frame there, so the reflected world keeps its shadows.
 
 use crate::water::{DistantWater, WaterCache, WaterMaterial};
 use crate::world::{bevy_to_game, Streamer, WorldData};
@@ -89,10 +87,7 @@ pub struct ReflectionPlugin;
 
 impl Plugin for ReflectionPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WaterPixels>()
-            .add_systems(Startup, setup_reflection)
-            .add_systems(PostUpdate, no_reflected_shadows.after(SimulationLightSystems::CheckLightVisibility))
-            .add_systems(
+        app.init_resource::<WaterPixels>().add_systems(Startup, setup_reflection).add_systems(
             PostUpdate,
             (resize_reflection, read_water_pixels, update_reflection)
                 .chain()
@@ -473,23 +468,6 @@ fn update_reflection(
         ..p.clone()
     });
     *fog = main_fog.clone();
-}
-
-/// Empty the reflection camera's share of every shadow-casting directional light's
-/// cascades (module notes, "No sun shadows in the reflection"); PostUpdate, after Bevy's
-/// light visibility.
-fn no_reflected_shadows(
-    refl: Query<Entity, With<ReflectionCamera>>,
-    mut lights: Query<&mut bevy::camera::visibility::CascadesVisibleEntities>,
-) {
-    let Ok(refl) = refl.single() else { return };
-    for mut visible in &mut lights {
-        if let Some(cascades) = visible.entities.get_mut(&refl) {
-            for cascade in cascades.iter_mut() {
-                cascade.entities.clear();
-            }
-        }
-    }
 }
 
 #[cfg(test)]

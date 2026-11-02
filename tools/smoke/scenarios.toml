@@ -206,6 +206,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "reflection-switched-off"
+source = "issue #1380: the water-mirror switch off (--graphics-only no-water-mirror, the settings page's Mirrored water reflections) keeps the water reflection camera off with Lake Mead in view (engine/nvforever/src/reflection.rs update_reflection)"
+note = "reflection-lake's shore and look, the switch off: the log names it and the camera never comes on"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/reflection.rs", "engine/nvforever/src/graphics.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_LOOK = "4:90:-10" }
+args = ["--play", "--pos=56992,37536,2745", "--hour", "12", "--no-voice", "--no-messages", "--graphics-only", "no-water-mirror"]
+run_seconds = 14
+expect = [
+  "no mirrored water",
+  { text = "water reflection: on", count = 0, label = "the camera stays off with the lake in view" },
+]
+
+[[scenario]]
 name = "reflection-hidden-water"
 source = "issue #1059: water the console hides (ToggleWaterSystem) does not switch the water reflection camera on (engine/nvforever/src/reflection.rs update_reflection)"
 note = "reflection-lake's shore, the lake in view from the start (the camera comes on, with #1060 maybe on and off while the world settles); the water hidden from the console: the camera goes off a second later with the lake still in view. That it stays off afterwards is not checked: the expectations cannot say 'no line after this one'"

@@ -246,6 +246,18 @@ far shore's cliffs show in the water as with the planar reflection, without arte
 reflects weakly, so the difference is small. It runs only on the water pixels it applies to, so
 its cost was not measured.
 
+### 3.8.1 Mirrored water (`water-mirror`; on in both presets)
+
+The planar reflection itself (reflection.rs): a second camera draws the world mirrored in the
+nearest water plane while that water is on screen. It is on in vanilla too, since the original's
+water reflects the world; `--graphics-only no-water-mirror` or the settings switch turns it off
+(#1380), and water then reflects the sky gradient, and the picture where `water-reflections` is
+on. Cost at Hoover Dam by day, Lake Mead in view, where the CPU sets the frame: 7.6 ms a frame
+with it, 7.1 without [observed 2026-11-02, RTX 4070, 1920x1080, `enhanced`]. The camera keeps
+its own set of the sun's cascades (Bevy's renderer needs them for every view the sun lights);
+emptying their caster lists was tried and saved 0.12 ms of shadow-pass GPU time and nothing of
+the frame, so the reflected world keeps its shadows.
+
 ### 3.9 Shadow filtering (`shadow-filter`; not part of `enhanced`)
 
 How the sun's shadow maps are sampled at a shadow's edge, Bevy's `ShadowFilteringMethod` on the

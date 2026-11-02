@@ -804,6 +804,17 @@ mod tests {
         assert!(Graphics::only(&["bloom".into()]).unwrap().describe().contains("light glow"));
     }
 
+    #[test]
+    fn water_mirror_is_vanilla_and_can_be_switched_off() {
+        assert!(Graphics::preset(Preset::Vanilla).water_mirror && Graphics::preset(Preset::Enhanced).water_mirror);
+        let off = Graphics::only(&["no-water-mirror".into()]).expect("no-water-mirror");
+        assert!(!off.water_mirror);
+        assert_eq!(off.describe(), "light glow, no mirrored water");
+        let mut g = Graphics::preset(Preset::Vanilla);
+        *g.switch("water-mirror").expect("settings key") = false;
+        assert_eq!(g, off);
+    }
+
     // The guard alone: repeated requests and an earlier registration. Both callers
     // together are covered by the smoke scenario render-diagnostics-combined.
     #[test]
