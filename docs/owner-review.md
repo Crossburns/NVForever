@@ -223,6 +223,14 @@ the spec it links to.
    first, and Ready Item draws the new one. The original may draw it. Kept here only so
    it is on record as a difference; if you want a drawn weapon to stay drawn on a swap,
    it is one function (`holster_for_new_weapon`). [weapon-wheel.md §4](design/weapon-wheel.md)
+41. **The first-person arms' shadows on themselves cost about 0.75 ms (#1374).** The
+   arms' shade light now draws only what lies by the eye toward the sun, and far
+   shadows (hills, buildings) come from the sun's own map: 15.4 → 12.4 ms at Novac
+   07:00 with finer shadows. What is left is the light's own pass, about 0.75 ms
+   whatever it draws, at 4096² maps; it is what lets the weapon shade the hand and a
+   roof right at the head shade the arms. If you rule it out, the light goes (12.4 →
+   about 11.4 ms there) and the arms take only the sun's shadows from past the body.
+   See [player-body.md §1.6](design/player-body.md).
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

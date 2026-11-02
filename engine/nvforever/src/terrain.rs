@@ -242,6 +242,10 @@ pub fn prepare_terrain(lo: &LoadOrder, schema: &EsmSchema, land_id: u32, grid: (
     Some(TerrainPrep { land, meshes })
 }
 
+/// A mesh of a cell's land (its base or a texture layer over it).
+#[derive(Component)]
+pub struct LandMesh;
+
 /// Spawn a cell's terrain from its prepared landscape ([`prepare_terrain`]); returns the
 /// landscape (for the grass).
 pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx) -> Land {
@@ -255,7 +259,7 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
         let mat = tm.base_material(tex);
         if let Some(mesh) = meshes.remove(&(q, None)) {
             let mesh = tm.assets.meshes.add(mesh);
-            commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY));
+            commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
         }
         let mut layers: Vec<_> = land.layers.iter().enumerate().filter(|(_, l)| !l.base && l.quadrant == q).collect();
         layers.sort_by_key(|(_, l)| l.layer);
@@ -264,7 +268,7 @@ pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, p
             let Some(mat) = tm.layer_material(tex, rank) else { continue };
             if let Some(mesh) = meshes.remove(&(q, Some(i))) {
                 let mesh = tm.assets.meshes.add(mesh);
-                commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY));
+                commands.entity(cell).with_child((Mesh3d(mesh), MeshMaterial3d(mat), Transform::IDENTITY, LandMesh));
                 tm.tm.cache.layers += 1;
             }
         }
