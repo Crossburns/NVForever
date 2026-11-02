@@ -51,6 +51,9 @@ pub struct PathParams {
     pub max_slope_deg: Option<f32>,
     /// Keys the actor carries: locked doors these open may be used.
     pub keys: Vec<u32>,
+    /// Locked doors the actor owns (its base or a faction it is in): these may be used
+    /// as if it carried their key.
+    pub owned_doors: Vec<u32>,
     /// Doors that open in place known to stand open: a path that starts (or turns) within
     /// the approach to one goes straight on through it instead of backing off to the stop
     /// in front of it ([`NavGraph::square_approach`]).
@@ -83,6 +86,7 @@ impl Default for PathParams {
             open_locked: false,
             max_slope_deg: None,
             keys: Vec::new(),
+            owned_doors: Vec::new(),
             open_doors: Vec::new(),
             opens_doors: true,
             refused_doors: Vec::new(),
@@ -355,14 +359,14 @@ impl NavGraph {
     }
 
     /// Whether a path may go through door `d`: its arrival is usable and the door is not
-    /// locked, or the traveller holds its key, or may open locks.
+    /// locked, or the traveller holds its key or owns it, or may open locks.
     pub fn door_open(&self, d: &DoorEdge, p: &PathParams) -> bool {
         if !self.usable(d.to) || !p.opens_doors || p.refused_doors.contains(&d.door) {
             return false;
         }
         match self.door_locks.get(&d.door) {
             None => true,
-            Some(_) if p.open_locked => true,
+            Some(_) if p.open_locked || p.owned_doors.contains(&d.door) => true,
             Some(l) => l.key.is_some_and(|k| p.keys.contains(&k)),
         }
     }

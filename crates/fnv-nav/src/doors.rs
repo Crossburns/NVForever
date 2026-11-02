@@ -280,13 +280,13 @@ impl NavGraph {
     }
 
     /// Whether an actor with `p` may cross triangle `t`: no locked door it cannot open
-    /// stands on it.
+    /// (without the key, not its own) stands on it.
     pub fn door_tri_open(&self, t: u32, p: &PathParams) -> bool {
         let Some(doors) = self.door_tris.get(&t) else { return true };
         doors.iter().all(|d| match self.door_locks.get(d) {
             _ if p.refused_doors.contains(d) => false,
             None => true,
-            Some(_) if p.open_locked => true,
+            Some(_) if p.open_locked || p.owned_doors.contains(d) => true,
             Some(l) => l.key.is_some_and(|k| p.keys.contains(&k)),
         })
     }

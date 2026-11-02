@@ -577,7 +577,8 @@ fn locked_doors_that_open_in_place_close_the_way_without_the_key() {
     assert!(matches!(g.find_path(from, to, &PathParams::default()), Err(PathError::Unreachable { .. })));
     // Short of the door is still reachable.
     assert!(g.find_path(from, Place { space: W, pos: [350.0, 50.0, 0.0] }, &PathParams::default()).is_ok());
-    for p in [PathParams { keys: vec![0x4B], ..Default::default() }, PathParams { open_locked: true, ..Default::default() }] {
+    // Its owner may use it without the key (Fallout 3's playroom door, Dad's).
+    for p in [PathParams { keys: vec![0x4B], ..Default::default() }, PathParams { open_locked: true, ..Default::default() }, PathParams { owned_doors: vec![0xD00], ..Default::default() }] {
         let path = g.find_path(from, to, &p).unwrap();
         assert_eq!(path.legs[0].door_stops.len(), 1);
     }
