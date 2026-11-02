@@ -367,4 +367,4 @@ Not a gameplay decision. The proposal in [code-mods](design/code-mods.md) (#1398
 your rulings in its §17: the licence of code mods (recommended: a linking exception for
 mods that use only the API), where they are installed (recommended: the home and, for
 Mod Organizer 2, `Data\NVForever\CodeMods`), the hook list for version 0.1, new mods
-off until turned on, wasmtime over wasmi, and starting M1 now.
+off until turned on, and starting M1 now. (The runtime is ruled: wasmtime, 2026-11-02.)

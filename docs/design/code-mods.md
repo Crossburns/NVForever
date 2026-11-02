@@ -143,8 +143,8 @@ memory-mb = 32
 
 ### 6.1 Engine
 
-- wasmtime with the Component Model and the Cranelift compiler, pinned to an exact
-  version for determinism, the same rule as rapier.
+- wasmtime (owner ruling 2026-11-02, §17 item 5) with the Component Model and the
+  Cranelift compiler, pinned to an exact version for determinism, the same rule as rapier.
 - Compiled code is cached under `<cache>\codemods\`, keyed by the component's hash, the
   wasmtime version and the engine configuration. Later starts skip compilation
   [documented: wasmtime `Engine::precompile_component` / `Component::deserialize`].
@@ -716,8 +716,8 @@ also serves the visual tier.
 
 | Phase | Contents | Exit test |
 |---|---|---|
-| **M0** | Owner rulings on §17; wasmtime added to dependencies.md with the licence check (`deny.toml`) | Doc approved |
-| **M1** Host core | `fnv-codemod`: manifest, discovery, load order, wasmtime engine and cache, limits, failure handling, `log`/`game-time`/`random`/`codemod`, `fnvtool codemod check/list`, `hello` without registration | Host unit tests; a looping guest is stopped within 2 ms ± one epoch; measured host-call cost written down |
+| **M0** | Owner rulings on §17 (item 5 ruled: wasmtime) | Doc approved |
+| **M1** Host core | wasmtime added, with its licence expression in `deny.toml`; `fnv-codemod`: manifest, discovery, load order, wasmtime engine and cache, limits, failure handling, `log`/`game-time`/`random`/`codemod`, `fnvtool codemod check/list`, `hello` without registration | Host unit tests; a looping guest is stopped within 2 ms ± one epoch; measured host-call cost written down |
 | **M2** Gameplay API | Registry by name (shared with extender Phase 1/2 work), `Kind::CodeMod`, `forms`/`refs`/`actors`/`inventory`/`quests`/`globals`/`script`, `storage` and the save section, console commands | `codemod-hello` smoke passes; save round trip; determinism test |
 | **M3** Events, hooks, config, UI | The `events` interface over the extender dispatcher (as many firing points as exist), the hook list of §8.7 with spec-note entries, `config` and the settings tab, `ui` over the tile tree | `bounty` works in play; hook chain order test |
 | **M4** Visual tier | Extra-bone attachment for worn armor, bone overrides in `PostUpdate`, `nif-data`, `world-query`, `visual-tick` | `codemod-cape` smoke passes; the cape example in the release |
@@ -739,10 +739,12 @@ the dispatcher's firing points are at the time.
 3. **Hooks in 0.1:** the list in §8.7, a shorter one, or none until later.
 4. **Default on or off** for newly installed code mods. **Recommendation: off with a
    permissions prompt**, as for new plugins.
-5. **Runtime:** wasmtime (fast, compiles to native code, adds several MB to the
-   executable) or `wasmi` (an interpreter, much smaller, roughly an order of magnitude
-   slower [hypothesis]). **Recommendation: wasmtime**, because the visual tier runs every
-   frame.
+5. *Ruled 2026-11-02 (owner): **wasmtime**.* It compiles to native code, which the
+   per-frame visual tier needs, and it has the most complete Component Model support. Its
+   cost is several MB in the executable and a longer build. The interpreter `wasmi` was
+   the alternative and is not used. `deny.toml` does not yet allow wasmtime's licence
+   expression `Apache-2.0 WITH LLVM-exception`. Phase M1 adds it, with the crate list
+   that `cargo deny` reports.
 6. **Order relative to extender work:** M1 now, alongside extender Phase 1; or after
    extender Phase 2, when the registry by name and the dispatcher exist.
    **Recommendation: M1 now** (it is independent), M2 together with the registry change.
