@@ -93,7 +93,11 @@ for the top-left pixel of each 2 × 2 block, into a two-channel texture that kee
 distance beside its openness (a quarter of the work; the pattern turns per half-resolution
 texel). The result is blurred over the 4 × 4 texels of the pattern around each pixel, keeping
 to texels within about 5 % of the pixel's own distance (so nothing bleeds across a depth edge),
-and multiplied into the tonemapped picture. It fades out between 4,000 and 7,000 units (where the radius is a pixel or two and the
+and multiplied into the tonemapped picture. Those 4 × 4 texels span about 8 × 8 pixels of the
+picture against 4 × 4 before, so contact shadows are a little softer. A pixel no nearby texel
+shares a distance with (a pole or a grass blade a pixel wide) takes the texel nearest its
+distance. Distances are held to 60,000 units (half floats end at 65,504; the sky dome is at
+175,000 or more, far past the fade). It fades out between 4,000 and 7,000 units (where the radius is a pixel or two and the
 fog takes over). The sky is left alone: the dome is opaque and in the depth prepass, but at
 175,000 units or more, far beyond the fade (corrected 2026-10-12: not depth 0 as first written).
 

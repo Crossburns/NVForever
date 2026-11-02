@@ -30,8 +30,15 @@ struct Ao {
 const SAMPLES: i32 = 12;
 // Turns of the sample spiral.
 const TURNS: f32 = 3.0;
-// The distance written for the sky, beyond any real one (half-float range).
+// The distance written for depth 0, and the most any texel holds: half floats end at
+// 65,504, and the sky dome lies in the depth prepass at 175,000 units or more. Far beyond
+// the fade, so nothing compares against it but other far texels.
 const SKY: f32 = 60000.0;
+
+// What `occlusion` writes: how open, and the distance held to SKY.
+fn texel(open: f32, dist: f32) -> vec4<f32> {
+    return vec4(open, min(dist, SKY), 0.0, 0.0);
+}
 // Below this cosine between the normal and a sample a surface does not occlude itself.
 const BIAS: f32 = 0.12;
 const TAU: f32 = 6.2831853;
@@ -69,14 +76,14 @@ fn occlusion(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let px = half * 2;
     let d = depth_at(px);
     if d <= 0.0 {
-        return vec4(1.0, SKY, 0.0, 0.0);
+        return texel(1.0, SKY);
     }
     let c = vec2<f32>(px) + 0.5;
     let p = view_pos(c, d);
     let dist = -p.z;
     let fade = 1.0 - smoothstep(ao.proj.w, ao.params.w, dist);
     if fade <= 0.0 {
-        return vec4(1.0, dist, 0.0, 0.0);
+        return texel(1.0, dist);
     }
     // The normal from the neighbours on the side with the smaller step in depth, so an
     // edge does not bend it.
@@ -94,7 +101,7 @@ fn occlusion(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let size = vec2<f32>(dims());
     let on_screen = min(radius * ao.proj.y * 0.5 * size.y / dist, ao.proj.z);
     if on_screen < 1.0 {
-        return vec4(1.0, dist, 0.0, 0.0);
+        return texel(1.0, dist);
     }
     // Turned by the half-resolution texel, so the 4 x 4 blur in `apply` sees every turn.
     let turn = pattern(half) * TAU;
@@ -115,7 +122,7 @@ fn occlusion(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         sum += max(cosine - BIAS, 0.0) * range;
     }
     let open = clamp(1.0 - ao.params.y * sum / f32(SAMPLES) * 2.0, 0.0, 1.0);
-    return vec4(mix(1.0, open, fade), dist, 0.0, 0.0);
+    return texel(mix(1.0, open, fade), dist);
 }
 
 @fragment
@@ -132,15 +139,24 @@ fn apply(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let first = (px >> vec2(1u)) - 2 + (px & vec2(1));
     var total = 0.0;
     var weight = 0.0;
+    // The texel nearest this pixel's distance, for a pixel no texel shares it with (a
+    // pole or a grass blade a pixel wide, a silhouette pixel in an odd row or column).
+    var nearest = 1.0;
+    var nearest_gap = 3.4e38;
     for (var y = 0; y < 4; y++) {
         for (var x = 0; x < 4; x++) {
             let t = textureLoad(openness, clamp(first + vec2(x, y), vec2(0), size - 1), 0);
+            let gap = abs(t.g - z);
             // Only texels within a few per cent of this pixel's distance.
-            let w = max(1.0 - abs(t.g - z) / (0.05 * z + 1.0), 0.0);
+            let w = max(1.0 - gap / (0.05 * z + 1.0), 0.0);
             total += t.r * w;
             weight += w;
+            if gap < nearest_gap {
+                nearest_gap = gap;
+                nearest = t.r;
+            }
         }
     }
-    let open = select(1.0, total / weight, weight > 0.0);
+    let open = select(nearest, total / weight, weight > 0.0);
     return vec4(src.rgb * open, src.a);
 }
