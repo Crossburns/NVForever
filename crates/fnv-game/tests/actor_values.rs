@@ -453,6 +453,28 @@ fn the_character_revision_is_kept_from_an_add_on_copy_of_its_script() {
     assert_eq!((sheet.values[6], sheet.total, sheet.remaining()), (9, sum.max(40), sum.max(40) - sum));
 }
 
+/// SetSPECIALPoints from any script and Fallout 3's S.P.E.C.I.A.L. book
+/// (ShowSPECIALBookMenuParams, `ssbmp`) open the attributes page; only
+/// ShowLoveTesterMenuParams opens the Vigor Tester (owner 2026-11-02).
+#[test]
+fn only_the_love_tester_function_opens_the_vigor_tester() {
+    use fnv_game::game::menus;
+    let f = fixture();
+    let mut g = game(&f);
+    // Tale of Two Wastelands' rebuild at Vault 101's exit: SetSPECIALPoints 40.
+    call(&mut g, 0x1218, PLAYER, &[n(40.0)]);
+    assert_eq!(g.open_menu_code(), Some(menus::TAG_SKILLS));
+    assert_eq!(fnv_game::chargen::SpecialSheet::for_menu(&mut g).total, 40);
+    g.close_menu();
+    // The book: ssbmp 40.
+    call(&mut g, 0x11EE, PLAYER, &[n(40.0)]);
+    assert_eq!(g.open_menu_code(), Some(menus::TAG_SKILLS));
+    assert_eq!(fnv_game::chargen::SpecialSheet::for_menu(&mut g).total, 40);
+    g.close_menu();
+    call(&mut g, 0x1245, PLAYER, &[n(40.0)]);
+    assert_eq!(g.open_menu_code(), Some(menus::LOVE_TESTER));
+}
+
 /// The player's speed follows its current Speed Mult: SetActorValue, ModActorValue and
 /// ForceActorValue (issue #1364).
 #[test]
