@@ -305,6 +305,24 @@ pub struct IdleHolds {
     /// fades out at once (a looping one too), and they walk once it has gone
     /// [design: owner 2026-10-31].
     pub breaking: HashSet<u32>,
+    /// Written here: those of `held` whose idle carries the body away from the reference
+    /// ([`carries_body`]).
+    pub carried_off: HashSet<u32>,
+}
+
+/// How far (units, across the ground) an idle's `Bip01 NonAccum` must take the body from
+/// the reference for [`carries_body`] [engineering choice: a standing idle's sway stays
+/// within a few units; Dad's walk in the birth scene reaches 144].
+const CARRY_DISTANCE: f32 = 32.0;
+
+/// Whether `clip` moves `Bip01 NonAccum` (where the body hangs from the reference) more
+/// than [`CARRY_DISTANCE`] across the ground at any of a few times through it: a scene
+/// that walks its actor about while the reference stays (Fallout 3's birth scene: Dad's
+/// sections keep him 96, 108 to 128 units forward and aside of his marker [observed:
+/// `cg00dadsection00.kf` .. `02.kf`, fnvtool nif decode]).
+pub fn carries_body(clip: &Clip) -> bool {
+    let Some((_, t)) = clip.tracks.iter().find(|(n, _)| n.eq_ignore_ascii_case("Bip01 NonAccum")) else { return false };
+    (0..=8).any(|k| t.translation.sample(clip.start + clip.length() * k as f32 / 8.0).is_some_and(|v| v[0].hypot(v[1]) > CARRY_DISTANCE))
 }
 
 /// Whether a track drives a leg: the people's `Bip01 L Thigh`, `Bip01 R Calf`,
@@ -1017,12 +1035,16 @@ pub fn drive(
     // Advance, and tell the rules what plays.
     let mut now: HashMap<u32, u32> = HashMap::new();
     let mut holding: HashSet<u32> = HashSet::new();
+    let mut carried_off: HashSet<u32> = HashSet::new();
     for (e, v, _, idle, _, _) in &mut actors {
         let Some(mut idle) = idle else { continue };
         idle.0.advance(dt);
         // Held while it shows, its fade-out too (one gone is no longer `cur`).
-        if idle.0.cur.as_ref().is_some_and(|p| p.holds) {
+        if let Some(p) = idle.0.cur.as_ref().filter(|p| p.holds) {
             holding.insert(v.0);
+            if carries_body(&p.clip.clip) {
+                carried_off.insert(v.0);
+            }
         }
         match idle.0.playing() {
             // A script's animation group is not an idle.
@@ -1058,6 +1080,7 @@ pub fn drive(
         info!("idle hold: {} ({a:08X}) may walk again: its idle has gone", game.data.name(FormId(*a)));
     }
     holds.held = holding;
+    holds.carried_off = carried_off;
 }
 
 /// Whether `actor` flees from a fight (`GetCurrentAIProcedure` 16).
@@ -1215,6 +1238,19 @@ mod tests {
         let mut r = Rng(7);
         assert!((0..200).all(|_| r.below(5) < 5));
         assert_eq!(r.below(0), 0);
+    }
+
+    #[test]
+    fn a_scene_idle_carries_the_body_off_its_reference() {
+        use fnv_nif::anim::{Channel, TransformTrack};
+        let clip = |at: [f32; 3]| Clip {
+            name: String::new(), start: 0.0, stop: 9.97, frequency: 1.0, cycle_type: 0,
+            tracks: vec![("Bip01 NonAccum".into(), Arc::new(TransformTrack { translation: Channel::Static(Some(at)), rotation: Channel::Static(None), euler: None, scale: Channel::Static(None) }))],
+            priorities: vec![13], skipped: 0, accum_root: Some("Bip01".into()), text_keys: Vec::new(), visibility: Vec::new(), emitters: Vec::new(), materials: Vec::new(), free: Vec::new(), free_visibility: Vec::new(), lights: Vec::new(),
+        };
+        // Dad in the birth scene, against a body standing over its reference.
+        assert!(carries_body(&clip([96.0, 110.6, 66.3])));
+        assert!(!carries_body(&clip([0.66, 0.0, 79.1])));
     }
 
     #[test]
