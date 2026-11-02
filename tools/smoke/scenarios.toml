@@ -485,6 +485,7 @@ paths = ["engine/nvf-play/src/phys_load.rs", "engine/nvf-play/src/player.rs", "e
 env = { NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "14", "--log-frame-times", "5"]
 run_seconds = 25
+note = "The controller moves range [1, 1000] holds only on the walking path, where the player's controller counts as 1 a tick: a period spent seated or flying (ToggleCollision), or with no ticks, reads 0.0. Do not reuse this check for seated or noclip runs"
 expect = [
   { re = '\bframe time: \d', min = 1, label = "frame-time logging is enabled" },
   { re = 'physics: [\d.]+ ticks a frame \(max \d+\) over [1-9]\d* frames, (?P<n>[\d.]+) controller moves a tick \(max \d+\), [\d.]+ blocks, [\d.]+ ms a frame in player::step, [\d.]+ ms a tick', range = [1, 1000], label = "the physics line: at least the player's controller moves each tick" },

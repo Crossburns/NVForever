@@ -122,16 +122,18 @@ counts and times itself, and each period logs, beside `frame time:`:
 `physics: 2.00 ticks a frame (max 4) over 600 frames, 7.1 controller moves a tick (max 12), 31 blocks, 5.68 ms a frame in player::step, 2.84 ms a tick`
 
 (an example of the format, not a measurement). Frames are those in which the system ran
-while playing; controller moves are the player's (on the walking path) and each walked
-actor's per step; blocks is the mean length of the actor block list (`crate::blocking`);
-the two times are `Instant`-based, the whole system per frame and the steps alone per
-step. Without frame-time logging no `PhysLoad` statistics are kept, no `Instant` is read and the line is not logged (the `phys::*` spans are independent of it).
-The two lines do not count the same frames: the physics counts cover every frame of the
-period in which the game was playing, while the `frame time:` mean also counts frames
-that were not (menus, loading) and, only with `--graphics-cycle`, leaves out the first
-0.5 s of each period (`graphics.rs`). The logging system and `step` are not ordered, so
-the frame at a period's boundary can land in either period. Compare the two as rates,
-not as one sample.
+while playing; frames with no player character or waiting for a cell to load are not
+counted (`Meter::skip`). Controller moves are the player's (on the walking path) and each
+walked actor's per step; blocks is the mean length of the actor block list
+(`crate::blocking`); the two times are `Instant`-based, the whole system per frame and the
+steps alone per step. Without frame-time logging no `PhysLoad` statistics are kept, no
+`Instant` is read and the line is not logged (the `phys::*` spans are independent of it).
+The two lines do not count the same frames: the physics counts cover the frames of the
+period in which the game was playing (less those skipped above), while the
+`frame time:` mean also counts frames that were not (menus, loading) and, only with
+`--graphics-cycle`, leaves out the first 0.5 s of each period (`graphics.rs`). The logging
+system and `step` are not ordered, so the frame at a period's boundary can land in either
+period. Compare the two as rates, not as one sample.
 
 In a Tracy (or `profile`) build the steps show as zones: `phys::tick` per fixed step,
 holding `phys::blocks` (the block list and the push and clip passes),

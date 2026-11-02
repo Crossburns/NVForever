@@ -1113,9 +1113,15 @@ fn step(
         player.feet = lerp3(p.prev_feet, c.feet, alpha);
         return;
     }
-    let Some(feet) = phys.player.as_ref().map(|c| c.feet) else { return };
+    // A frame with no player character or waiting for a cell is not a played frame for
+    // `PhysLoad`: the meter is dropped without recording it.
+    let Some(feet) = phys.player.as_ref().map(|c| c.feet) else {
+        meter.skip();
+        return;
+    };
     if !phys.ready_at(feet) {
         // Walked into a cell that is not loaded yet: wait for it.
+        meter.skip();
         phys.stepper = default();
         status.waiting_frames += 1;
         return;

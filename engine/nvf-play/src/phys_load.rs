@@ -5,16 +5,20 @@
 //!
 //! Nothing here changes what the steps do: it reads how many there were, how many
 //! character controllers moved and how many blocks stood in the list, and times the
-//! system and each step with [`Instant`]. Without the resource nothing is timed.
+//! system and each step with [`Instant`]. Without the resource nothing is timed. Frames
+//! on the walking path with no player character, or waiting for a cell to load, are not
+//! counted ([`Meter::skip`]).
 
 use bevy::prelude::*;
 use std::time::Instant;
 
 /// Counts over one logging period. Frames are those in which `step` ran while playing
-/// (all three of its paths: walking, held by furniture, flying with ToggleCollision).
+/// (all three of its paths: walking, held by furniture, flying with ToggleCollision),
+/// except frames of the walking path with no player character or waiting for a cell.
 #[derive(Resource, Default, Debug, Clone, PartialEq)]
 pub struct PhysLoad {
-    /// Frames in which the system ran while playing.
+    /// Frames in which the system ran while playing; frames with no player character or
+    /// waiting for a cell to load are not counted.
     pub frames: u32,
     /// Fixed steps over those frames.
     pub ticks: u32,
@@ -83,7 +87,8 @@ impl PhysLoad {
 }
 
 /// Times one run of `step` into the [`PhysLoad`], if there is one: the frame is recorded
-/// when the meter is dropped, so every return of the system counts it.
+/// when the meter is dropped, so every return of the system counts it, unless the meter
+/// was given up with [`Meter::skip`].
 pub(crate) struct Meter<'a> {
     load: Option<&'a mut PhysLoad>,
     start: Option<Instant>,
@@ -99,6 +104,13 @@ impl<'a> Meter<'a> {
     /// The start of a fixed step (none when not measuring).
     pub(crate) fn now(&self) -> Option<Instant> {
         self.start.map(|_| Instant::now())
+    }
+
+    /// Gives the meter up: the frame is not recorded. For returns before any fixed step
+    /// (the steps already recorded would stay counted).
+    pub(crate) fn skip(mut self) {
+        debug_assert_eq!(self.ticks, 0, "a meter is skipped only before its fixed steps");
+        self.load = None;
     }
 
     /// The end of a fixed step begun at `began` ([`Meter::now`]).
@@ -158,5 +170,13 @@ mod tests {
             m.tick(t, 1, Some(7));
         }
         assert_eq!((l.frames, l.ticks, l.max_ticks, l.moves, l.block_ticks, l.blocks), (1, 2, 2, 3, 1, 7));
+    }
+
+    #[test]
+    fn a_skipped_meter_records_nothing() {
+        let mut l = PhysLoad::default();
+        Meter::start(Some(&mut l)).skip();
+        assert_eq!(l, PhysLoad::default());
+        Meter::start(None).skip();
     }
 }
