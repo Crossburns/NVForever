@@ -1141,3 +1141,15 @@ The numbers above stay put so links to them hold; each item here gives its own p
     its path while it moves, walk where it stood closed once it has opened, then save,
     load and walk there again. The answer: whether the player is pushed, stopped or passed
     through while it moves, and whether it is open (drawn and solid) after the load.
+
+## Added 2026-11-03 (localized installs' code page, issue #1439)
+
+78. **What code page and glyphs does a Russian install use?** (P3; fonts.md §2.1, needs a
+    Russian install, not the English one.) NVForever reads all 8-bit text in one code page
+    per run (`[Text] CodePage=` in NVForever.ini, or `NVF_CODE_PAGE`; 1252 by default) and
+    draws a letter with the glyph at its code in it. In a Russian install: the bytes of a
+    few `FULL` names and dialogue lines (Windows-1251 or something else?); whether its
+    `.fnt` files are still 14 632 bytes with Cyrillic glyphs at their 1251 codes; whether
+    any archive or model file name uses bytes above 0x7F; which setting (INI key or file)
+    names the language, so the code page can be detected. Then with `CodePage=1251`:
+    menus, dialogue, the Pip-Boy and the HUD show Cyrillic, not `?` or wrong letters.

@@ -807,6 +807,18 @@ fn main() -> AppExit {
         eprintln!("explore: the free-camera explorer (--explore)");
     }
     let developer_data = args.data.is_some();
+    match setup::text_code_page() {
+        Ok(c) => {
+            if c != fnv_util::text::CodePage::default() {
+                eprintln!("setup: game text read as {c}");
+            }
+            fnv_util::text::set_code_page(c);
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return AppExit::error();
+        }
+    }
     // The game's folder: `--data`, NVForever.ini or asked for; its files checked (setup.rs).
     let install = match setup::game_install(args.data.as_deref()) {
         Ok(g) => g,

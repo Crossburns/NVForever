@@ -2593,7 +2593,8 @@ impl<'a> Game<'a> {
             }
         }
         let bytes = crate::mod_files::read_data(&format!("nvse\\user_defined_functions\\{key}"))?;
-        let src = String::from_utf8_lossy(&bytes).into_owned();
+        // UTF-8 when it is, else 8-bit text in this run's code page (#1439).
+        let src = std::str::from_utf8(&bytes).map_or_else(|_| fnv_util::text::decode(&bytes), str::to_owned);
         let id = self.compile_source(&format!("CompileScript {path}"), src)?;
         self.compiled_paths.insert(key, id);
         Some(id)
