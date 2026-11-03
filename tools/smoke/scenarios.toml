@@ -18252,3 +18252,18 @@ expect = [
   { re = 'ai \[\d\d:\d\d\] GSChetRef: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Chet stands in front of the window" },
   { re = 'dialogue: conversation with GSChetRef started', label = "the dialogue camera frames his head" },
 ]
+
+[[scenario]]
+name = "fo3-functions-console"
+source = "[documented + hypothesis] docs/handoff/ttw-fo3-script-audit-2026-11-02.md §1 (Outcome), functions::fo3: Fallout 3's KillQuestUpdates drops the HUD's waiting quest lines, DisableAllMines disables the player's cell's mines, GetLastPlayerAction reads 0 with nothing done, IsWaiting 0 for an actor never told to wait; TTW's own data is not a smoke data dir, so the console runs them in Goodsprings"
+areas = ["scripts", "console", "ui"]
+paths = ["crates/fnv-game/src/functions/fo3.rs", "engine/nvf-play/src/mines.rs", "engine/nvf-play/src/quest_messages.rs"]
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:KillQuestUpdates;10.5:DisableAllMines;11:PrintC \"nvf fo3 last action %g\", (GetLastPlayerAction);11.5:PrintC \"nvf fo3 waiting %g\", (RingoRef.IsWaiting);12:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 16
+expect = [
+  { re = 'quest messages: \d+ waiting line\(s\) dropped \(KillQuestUpdates\)', label = "KillQuestUpdates reaches the HUD's quest lines" },
+  { re = 'mines: \d+ mine\(s\) of the player.s cell disabled \(DisableAllMines\)', label = "DisableAllMines reaches the engine's mines" },
+  { re = 'script: print "nvf fo3 last action 0(?:\.0+)?"', label = "GetLastPlayerAction reads 0 with nothing done" },
+  { re = 'script: print "nvf fo3 waiting 0(?:\.0+)?"', label = "IsWaiting reads 0 for an actor never told to wait" },
+]
