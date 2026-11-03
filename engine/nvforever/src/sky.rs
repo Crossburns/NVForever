@@ -1382,6 +1382,76 @@ pub fn reach_toward_sun(mut suns: Query<&mut bevy::light::Cascades, With<Sun>>) 
     }
 }
 
+/// Drop the sun's casters that cannot shade anything a cascade covers. Seen from the sun,
+/// a caster shades a receiver only if it covers it, and a cascade's receivers all lie in
+/// the slice of the camera's view it was fitted to; Bevy draws everything in the square
+/// around that slice's outline (`bevy_light` `calculate_cascade`), so the square's corners
+/// hold casters for nothing. Kept: whatever comes within [`SLICE_MARGIN_TEXELS`] of the
+/// outline, for the shadow filter's reach.
+#[allow(clippy::type_complexity)]
+pub fn sun_casters_over_slice(
+    mut suns: Query<(&mut bevy::camera::visibility::CascadesVisibleEntities, &bevy::light::Cascades, &CascadeShadowConfig, &GlobalTransform), With<Sun>>,
+    views: Query<(&GlobalTransform, &Projection)>,
+    casters: Query<(&bevy::camera::primitives::Aabb, &GlobalTransform)>,
+) {
+    for (mut visible, cascades, config, light) in &mut suns {
+        let light_from_world = Mat3::from_quat(light.rotation()).transpose();
+        let near_bounds = std::iter::once(config.minimum_distance).chain(config.bounds.iter().map(|b| b * (1.0 - config.overlap_proportion)));
+        let bounds: Vec<(f32, f32)> = near_bounds.zip(config.bounds.iter().copied()).collect();
+        for (view, lists) in visible.entities.iter_mut() {
+            let (Ok((at, projection)), Some(cs)) = (views.get(*view), cascades.cascades.get(view)) else { continue };
+            let world_from_view = at.affine();
+            for ((list, c), (near, far)) in lists.iter_mut().zip(cs).zip(&bounds) {
+                let outline = hull(projection.get_frustum_corners(-near, -far).map(|p| (light_from_world * Vec3::from(world_from_view.transform_point3a(p))).truncate()));
+                let margin = SLICE_MARGIN_TEXELS * c.texel_size;
+                list.entities.retain(|e| {
+                    let Ok((aabb, at)) = casters.get(*e) else { return true };
+                    let place = at.affine();
+                    let centre = (light_from_world * Vec3::from(place.transform_point3a(aabb.center))).truncate();
+                    let m = light_from_world * Mat3::from(place.matrix3);
+                    let half = Vec3::from(aabb.half_extents);
+                    let reach = Vec2::new(m.row(0).abs().dot(half), m.row(1).abs().dot(half));
+                    overlaps(&outline, centre, reach + margin)
+                });
+            }
+        }
+    }
+}
+
+/// How far past a slice's outline a caster still counts, in the cascade's shadow-map
+/// texels [engineering choice: wider than the shadow filter's reach, a few texels].
+const SLICE_MARGIN_TEXELS: f32 = 8.0;
+
+/// The convex hull of `points`, counter-clockwise (monotone chain).
+fn hull<const N: usize>(mut points: [Vec2; N]) -> Vec<Vec2> {
+    points.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    let mut out: Vec<Vec2> = Vec::with_capacity(2 * N);
+    for pass in 0..2 {
+        let start = out.len();
+        for i in 0..N {
+            let p = if pass == 0 { points[i] } else { points[N - 1 - i] };
+            while out.len() >= start + 2 && (out[out.len() - 1] - out[out.len() - 2]).perp_dot(p - out[out.len() - 2]) <= 0.0 {
+                out.pop();
+            }
+            out.push(p);
+        }
+        out.pop();
+    }
+    out
+}
+
+/// Whether the rectangle `centre` ± `reach` overlaps the convex polygon `outline`
+/// (counter-clockwise): separated only along one of the outline's edges (the rectangle's
+/// own axes are the cascade's square, which Bevy has tested already).
+fn overlaps(outline: &[Vec2], centre: Vec2, reach: Vec2) -> bool {
+    (0..outline.len()).all(|i| {
+        let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+        let out = -(b - a).perp();
+        let n = out.normalize_or_zero();
+        n.dot(centre - a) - n.abs().dot(reach) <= 0.0
+    })
+}
+
 /// The sun's shadow cascades, in game units: the first covers the area right around the
 /// camera (a twelfth of `distance`), the last ends at `distance` × `reach`.
 pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> CascadeShadowConfig {
@@ -1819,6 +1889,21 @@ pub fn initial_fog() -> DistanceFog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_caster_counts_only_near_the_slice_outline() {
+        // A diamond with a point inside it; the hull keeps the four corners.
+        let outline = hull([Vec2::new(0.0, -10.0), Vec2::new(10.0, 0.0), Vec2::new(0.0, 10.0), Vec2::new(-10.0, 0.0), Vec2::new(1.0, 1.0)]);
+        assert_eq!(outline.len(), 4);
+        // Inside, and touching an edge.
+        assert!(overlaps(&outline, Vec2::ZERO, Vec2::splat(1.0)));
+        assert!(overlaps(&outline, Vec2::new(6.0, 6.0), Vec2::splat(1.0)));
+        // In the diamond's bounding square but past its edge: Bevy would draw it, nothing
+        // in the slice is under it.
+        assert!(!overlaps(&outline, Vec2::new(8.0, 8.0), Vec2::splat(1.0)));
+        // The same with the margin added to its reach.
+        assert!(overlaps(&outline, Vec2::new(8.0, 8.0), Vec2::splat(1.0 + 5.0)));
+    }
 
     #[test]
     fn cascade_reaches_further_toward_the_light() {
