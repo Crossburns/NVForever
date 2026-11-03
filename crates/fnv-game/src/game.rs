@@ -434,6 +434,10 @@ pub struct RefExtra {
     /// (`functions::actor::get_disposition`).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub dispositions: BTreeMap<FormId, f64>,
+    /// SetMerchantContainer: the container of the actor's goods in place of its
+    /// reference's (`Game::merchant_container`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub merchant_container: Option<FormId>,
     /// The special idle the actor plays (IsIdlePlaying): told by whoever animates the
     /// actor ([`Game::set_idle_playing`]); not part of the saved state.
     #[serde(skip)]
@@ -781,6 +785,18 @@ pub struct PlayerState {
     /// SetPCCanUsePowerArmor.
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub power_armor: bool,
+    /// SetPCYoung (Fallout 3's childhood): the race's default hair, no face attachments.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub young: bool,
+    /// SetPCToddler: the toddler's walk animations.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub toddler: bool,
+    /// SetNoActivationSound: the sound of a refused activation in place of the default.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub no_activation_sound: Option<FormId>,
+    /// SetLocationSpecificLoadScreensOnly 1: only load screens tied to the place loaded.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub location_load_screens_only: bool,
     /// Dialogue topics added with AddTopic and lines' Add Topics, newest first
     /// ([`KnownTopics`]).
     #[serde(skip_serializing_if = "KnownTopics::is_empty", default)]
