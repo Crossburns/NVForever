@@ -506,6 +506,7 @@ dependencies = [
 name = "fnv-font"
 version = "0.1.0"
 dependencies = [
+ "fnv-util",
  "thiserror",
 ]
 
@@ -643,6 +644,9 @@ dependencies = [
 [[package]]
 name = "fnv-ui"
 version = "0.1.0"
+dependencies = [
+ "fnv-util",
+]
 
 [[package]]
 name = "fnv-util"
