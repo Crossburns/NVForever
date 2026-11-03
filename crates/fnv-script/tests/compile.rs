@@ -1073,3 +1073,62 @@ fn ignore_crippled_limbs_is_an_actor_value() {
     let (c, _) = build("float f\nbegin GameMode\nlet f := player.GetAV IgnoreCrippledLimbs\nend");
     assert!(c.diags.iter().all(|d| !d.error), "{:?}", c.diags);
 }
+
+// ---- grammar forms of the owner's mods' scripts (#1470) ----------------------------
+
+#[test]
+fn a_typed_declaration_as_an_output_argument() {
+    // `(float f)` where a function writes a variable declares it there (#1470: ln_
+    // files of the owner's mod lists, GetNifRotAlt and GetAngleEx).
+    let (c, p) = build("begin GameMode\nPlayer.GetNifRotAlt \"RadNeedle\" (float fA) (float fB) (float fC) 2 2\nPlayer.GetAngleEx (float fX) (float fY) (float fZ)\nend");
+    assert_eq!(c.variables.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["fA", "fB", "fC", "fX", "fY", "fZ"]);
+    let Stmt::Eval { expr: XExpr::Call { call } } = &body(&p)[0] else { panic!("{:?}", body(&p)[0]) };
+    assert_eq!(call.args.iter().map(x).collect::<Vec<_>>(), ["\"RadNeedle\"", "v1", "v2", "v3", "2", "2"]);
+}
+
+#[test]
+fn a_declaration_inside_an_arguments_inline_expression() {
+    let (c, p) = build("begin GameMode\nSetUIFloatAlt \"HudMainMenu\\X\\_y\" (int iState = GetPCDetectionState)\nend");
+    assert_eq!(c.variables.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["iState"]);
+    let Stmt::Eval { expr: XExpr::Call { call } } = &body(&p)[0] else { panic!("{:?}", body(&p)[0]) };
+    assert_eq!(x(&call.args[1]), "(v1 Set= GetPCDetectionState())");
+}
+
+#[test]
+fn a_format_string_takes_its_values_before_the_next_parameter() {
+    // [documented: SetModelPathEx, Bugs: 20 `%z` values, then the base form.]
+    let z = "%z".repeat(20);
+    let s = vec!["s"; 20].join(" ");
+    let (_, p) = build(&format!("begin GameMode\nstring_var s = \"\"\nref rB = Caps001\nSetModelPathEx \"a\\b.nif{z}\" {s} rB\nend"));
+    let Some(Stmt::Eval { expr: XExpr::Call { call } }) = body(&p).iter().find(|s| matches!(s, Stmt::Eval { .. })) else { panic!() };
+    assert_eq!(call.args.len(), 22);
+    assert_eq!(x(&call.args[21]), "v2");
+}
+
+#[test]
+fn values_follow_variables_among_dispatched_arguments() {
+    let (_, p) = build("int xkD\nbegin GameMode\nDispatchEventAlt \"B42OCND\" 0\nDispatchEventAlt \"name\" xkD 0\nend");
+    let calls: Vec<_> = body(&p).iter().filter_map(|s| match s {
+        Stmt::Eval { expr: XExpr::Call { call } } => Some(call.args.iter().map(x).collect::<Vec<_>>()),
+        _ => None,
+    }).collect();
+    assert_eq!(calls, [vec!["\"B42OCND\"", "0"], vec!["\"name\"", "v1", "0"]]);
+    // A call line's arguments past those its function takes are dropped, with a warning:
+    // ln_B42Optics.txt hands SetJohnnyOnRenderUpdateEventHandler (three parameters) four.
+    let (c, _) = build("begin GameMode
+SetJohnnyOnRenderUpdateEventHandler 1 (begin function {}
+DispatchEventAlt \"B42OCND\" 0
+float xiR = 1
+DispatchEventAlt \"B42O7\"
+end) 0 0
+end");
+    assert!(c.errors().next().is_none(), "{:?}", c.diags);
+    assert!(c.diags.iter().any(|d| d.kind == "surplus_arguments" && !d.error), "{:?}", c.diags);
+}
+
+#[test]
+fn a_block_lambda_may_open_with_a_space() {
+    // `CallWhen ( begin function {}` (Bullet Belt Framework's ln_ file, #1470).
+    let (c, _) = build("begin GameMode\nCallWhen ( begin function {}\nPrintC \"x\"\nend) ({}=> (GetSecondsPassed) != 0) (0b10100)\nend");
+    assert!(c.errors().next().is_none(), "{:?}", c.diags);
+}
