@@ -353,6 +353,19 @@ expect = [
 ]
 
 [[scenario]]
+name = "sun-casters-over-slice"
+source = "docs/design/graphics-enhanced.md §5.7 (#1378, 2026-11-03): each of the sun's cascades draws only the casters over the outline of the view's slice it covers, not its whole square: at Novac 07:00 about 78, 750 and 1,750 casters (154, 1,420 and 3,200 before)"
+areas = ["renderer", "graphics", "sky"]
+paths = ["engine/nvforever/src/sky.rs"]
+env = { NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Novac", "--play", "--no-voice", "--no-messages", "--hour", "7", "--sun-shadows", "--log-frame-times", "8"]
+run_seconds = 25
+expect = [
+  { re = 'shadow casters per cascade: .*Sun for view: \[\d+, (?P<n>\d+), \d+\]', range = [200, 1100], label = "the middle cascade draws the casters over its slice (about 750; 1,420 with the whole square)" },
+  { re = 'shadow casters per cascade: .*Sun for view: \[\d+, \d+, (?P<n>\d+)\]', range = [500, 2400], label = "the last cascade draws the casters over its slice (about 1,750; 3,200 with the whole square)" },
+]
+
+[[scenario]]
 name = "nif-bindless-batches"
 source = "docs/design/graphics-enhanced.md §5.6 (2026-10-23): NIF materials are bindless, so shapes of different materials share batch sets: at the Goodsprings start with sun shadows about 49 shadow sets (830 before) and 9 opaque sets (169 before) in the profile aid's batch line"
 note = "fails on a device Bevy runs without bindless (the counts go back to hundreds); this machine's RTX 4070 has it"
@@ -537,9 +550,9 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16,19.5:20
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--graphics", "enhanced"]
 run_seconds = 24
 order = [[
-  "graphics: ambient occlusion, finer, longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections",
-  { re = 'graphics: finer, longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
-  { re = 'graphics: finer, longer shadows, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
+  "graphics: ambient occlusion, longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections",
+  { re = 'graphics: longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
+  { re = 'graphics: longer shadows, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
   { re = 'graphics: light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
   { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
   { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, temporal anti-aliasing, sun shafts, screen-space water reflections$' },

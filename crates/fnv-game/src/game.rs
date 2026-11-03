@@ -4639,6 +4639,20 @@ impl<'a> Game<'a> {
     fn update_effects(&mut self, dt: f64) {
         self.refresh_suspended(dt);
         self.recheck_conditions();
+        // An inactive effect's time runs all the same, and it goes when its duration has
+        // passed, with no update or finish of its own: a Hardcore Stimpak's heal over time
+        // used outside Hardcore lasts its 6 s inactive and is gone, rather than waiting to
+        // take hold whenever Hardcore is turned on (#1438) [hypothesis: the original
+        // counts a lasting effect's duration whether or not its conditions pass;
+        // aid-items.md §6].
+        let idle: Vec<u32> = self.effects.iter().filter(|e| e.inactive && !e.permanent).map(|e| e.id).collect();
+        for id in idle {
+            let Some(e) = self.effects.iter_mut().find(|x| x.id == id) else { continue };
+            e.elapsed += dt;
+            if e.elapsed + 1e-9 >= e.duration {
+                self.finish_effect(id, true);
+            }
+        }
         let ids: Vec<u32> = self.effects.iter().filter(|e| !e.inactive).map(|e| e.id).collect();
         for id in ids {
             let Some(e) = self.effects.iter_mut().find(|x| x.id == id) else { continue };
