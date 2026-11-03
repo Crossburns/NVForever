@@ -342,8 +342,10 @@ pub fn keys(
     if keys.just_pressed(Backspace) {
         send(Command::Back);
     }
-    // The controller's X drops one (module notes); the keyboard's X is the mod menu's.
-    if crate::pad::menu_button(&pads, bindings.as_deref(), GamepadButton::West) {
+    // The controller's X drops one (module notes); the keyboard's X is the mod menu's. Not
+    // while "How many?" is up (the model would ignore it there too).
+    let asking = active.0.as_ref().is_some_and(|m| m.quantity.is_some());
+    if !asking && crate::pad::menu_button(&pads, bindings.as_deref(), GamepadButton::West) {
         send(Command::Drop);
     }
     for w in wheel.read() {

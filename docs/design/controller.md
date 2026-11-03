@@ -61,7 +61,7 @@ Start cannot be bound.
   | Container | X Take All |
   | Barter | X Accept |
   | Pip-Boy (every page) | LT / RT the previous / next page (STATS, ITEMS, DATA, round again); D-pad left / right the tabs [design: owner 2026-11-02] |
-  | Pip-Boy ITEMS | X Drop (`pipboy::items`), Y Repair, LB Mod |
+  | Pip-Boy ITEMS | X Drop (`pipboy::items`, not while "How many?" is up), Y Repair, LB Mod |
   | Pip-Boy STATS | status tab: A Stimpak, Y Doctor's Bag, X Rad-X; General tab: X switch lists |
   | Pip-Boy DATA | Y Challenges (Notes tab) |
   | Crafting | X Accept |
@@ -73,6 +73,11 @@ Start cannot be bound.
   | Roulette | A Place, Y Remove, X Finish, LT Lower, RT Raise, B Exit |
   | Slot machine | A Spin, RT Raise, LT Lower, Y Payouts, X Max Bet, B Exit |
   | Tutorial | RT Next, LT Previous |
+
+  On the ITEMS page the triggers are the pages and LB is Mod, so of the shared paging
+  buttons only RB (Page Down) is left there; the D-pad steps the rows both ways.
+  On the STATS status tab X is Rad-X, which only acts on the RAD view; on CND and EFF it
+  does nothing.
 
   Not followed: the ITEMS page's RB Hotkey (the hotkeys are held digit keys), RadAway's
   A on the RAD view (not usable from the STATS page), caravan (its menu files are not
