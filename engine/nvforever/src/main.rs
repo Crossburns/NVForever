@@ -1177,6 +1177,30 @@ fn main() -> AppExit {
             })
             // Sound goes through nvf_play::audio_out, which follows the output device.
             .disable::<bevy::audio::AudioPlugin>()
+            // Parts of Bevy the game never uses: sprites and 2D text (their layout,
+            // bounds and picking), world serialization, Bevy's own animation (actors are
+            // posed by nvf_play's clips), the clipboard and the UI widgets (the menus are
+            // bevy_ui nodes with their own controls). Each adds systems that run every
+            // frame (#1381). Kept: the sprite renderer, whose resources bevy_ui_render
+            // reads, and glTF and scenes, as PbrPlugin registers a glTF extension.
+            .disable::<bevy::sprite::SpritePlugin>()
+            .disable::<bevy::world_serialization::WorldSerializationPlugin>()
+            .disable::<bevy::animation::AnimationPlugin>()
+            .disable::<bevy::clipboard::ClipboardPlugin>()
+            .disable::<bevy::ui_widgets::ButtonPlugin>()
+            .disable::<bevy::ui_widgets::CheckboxPlugin>()
+            .disable::<bevy::ui_widgets::TextInputPlugin>()
+            .disable::<bevy::ui_widgets::ListBoxPlugin>()
+            .disable::<bevy::ui_widgets::MenuPlugin>()
+            .disable::<bevy::ui_widgets::DialogPlugin>()
+            .disable::<bevy::ui_widgets::ModalDialogPlugin>()
+            .disable::<bevy::ui_widgets::popover::PopoverPlugin>()
+            .disable::<bevy::ui_widgets::RadioGroupPlugin>()
+            .disable::<bevy::ui_widgets::ScrollAreaPlugin>()
+            .disable::<bevy::ui_widgets::ScrollbarPlugin>()
+            .disable::<bevy::ui_widgets::SliderPlugin>()
+            .disable::<bevy::ui_widgets::TabPlugin>()
+            .disable::<bevy::input_focus::pointer_focus::PointerFocusPlugin>()
             // The console's lines go to the run log too (crash.rs).
             .set(bevy::log::LogPlugin { custom_layer: crash::file_layer, ..default() })
             .set(WindowPlugin {
