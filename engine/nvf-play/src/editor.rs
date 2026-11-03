@@ -626,7 +626,7 @@ fn save_plugin(
     if let Err(e) = fnv_esm::Plugin::open(&path) {
         return Err(format!("{} was written but does not read back: {e}", path.display()));
     }
-    let ids: Vec<String> = w.new_ids.iter().map(|&f| FormId(f).to_string()).collect();
+    let ids: Vec<String> = w.new_load_ids.iter().map(|&f| FormId(f).to_string()).collect();
     info!("editor: saved {} references and {} new ({}) into {} ({} bytes, {} masters)", w.references, w.new_ids.len(), ids.join(" "), path.display(), w.bytes.len(), w.masters.len());
     let mut lines = vec![format!("Saved {} changed and {} new reference(s) into {} ({} bytes)", w.references, w.new_ids.len(), path.display(), w.bytes.len())];
     for warning in w.warnings.iter().take(10) {

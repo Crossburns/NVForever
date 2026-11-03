@@ -18176,7 +18176,7 @@ expect = [
   { re = 'editor: moved 0x0010A202 by \(64, 0, 0\), turned 0°', label = "the move" },
   { re = 'editor: moved 0x0010A202 by \(0, 0, 0\), turned 45°', label = "the turn" },
   { re = 'console: GetPos on 0x0010A202 >> -68311\.4', label = "it is drawn at its new place in the run" },
-  { re = 'editor: saved 1 references and 0 new \(\) into .*EditSmoke\.esp \(\d+ bytes, 10 masters\)', label = "the plugin is written to the mods folder" },
+  { re = 'editor: saved 1 references and 0 new \(\) into .*EditSmoke\.esp \(\d+ bytes, 1 masters\)', label = "the plugin is written to the mods folder" },
   { re = 'console: EditSmoke\.esp (is|was already) on in .*plugins\.txt', label = "and on in the home's plugin list (already, when the smoke home is kept from a run before)" },
   { re = 'editor: off; 1 reference\(s\) moved, 0 deleted, 0 placed this session', label = "editor mode goes off" },
 ]
@@ -18226,7 +18226,7 @@ env = { NVFOREVER_HOME = "editor-home-mo2", NVF_PLAY_TEST_EDITOR = "1", NVF_PLAY
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
 run_seconds = 22
 expect = [
-  { re = 'editor: saved 1 references and 0 new \(\) into .*smoke.editor-mo2.overwrite.EditMo2\.esp \(\d+ bytes, 10 masters\)', label = "written into the MO2 overwrite folder" },
+  { re = 'editor: saved 1 references and 0 new \(\) into .*smoke.editor-mo2.overwrite.EditMo2\.esp \(\d+ bytes, 1 masters\)', label = "written into the MO2 overwrite folder" },
   { re = 'console: \(MO2: into the overwrite folder\)', label = "the console says where" },
   { re = 'console: EditMo2\.esp (is|was already) on in MO2.s profile .*smoke.editor-mo2.profiles.Smoke', label = "on in the MO2 profile's list (already, when the instance is kept from a run before)" },
 ]
@@ -18313,7 +18313,8 @@ source = "owner 2026-11-01 (local editor design): editor mode places a new refer
 areas = ["editor"]
 paths = ["engine/nvf-play/src/editor.rs", "crates/fnv-esm/src/edit.rs"]
 # The bottle's base 0x0010A1F6, placed where the screen's centre points; the plugin's
-# first new reference is 0x0A000800 (the ten masters, then the plugin).
+# first new reference is 0x0A000800 in the load order (the ten masters, then the plugin);
+# in the file it is 0x01000800, FalloutNV.esm being its one master (clean masters).
 env = { NVFOREVER_HOME = "editor-home-place", NVF_PLAY_TEST_EDITOR = "1", NVF_PLAY_TEST_EDITOR_REPLACE = "1", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "16:editor;17:editor place 0010A1F6;17.5:editor place 0010A1F6;18:editor undo;18.5:editor save EditPlace;19:editor;19.5:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
 run_seconds = 22

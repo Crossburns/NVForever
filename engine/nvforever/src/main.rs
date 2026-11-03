@@ -900,7 +900,8 @@ fn main() -> AppExit {
             }
         }
     }
-    let game = match GameData::open_for_plugins(args.data(), &args.plugins, &args.nif_schema) {
+    // The archives beside a plugin in the mods folder are mounted with it.
+    let game = match GameData::open_for_plugins_in(args.data(), mods.as_deref(), &args.plugins, &args.nif_schema) {
         Ok(g) => g,
         Err(e) => return fail(e),
     };

@@ -1,6 +1,6 @@
 # In-game plugin editor and quest debugger (design)
 
-Work in progress on the local branch `local/editor-encoder` (not pushed; no issue or pull
+Work in progress on the branch `local/editor-encoder` (backed up to GitHub 2026-11-03; no issue or pull
 request yet: the owner keeps it off the repo until it is known to work, 2026-11-01). The
 owner's decisions are in §21.2.
 
@@ -41,17 +41,18 @@ Contents:
 
 ---
 
+## Handover (2026-11-03, third session; the second session's below)
+
+**Start here.** `origin/main` is merged in (2026-11-03), and all 11 editor smoke scenarios
+pass on it, `editor-find-place` for the first time. Clean masters and archives in
+`mods\` are built (progress log, third session). The branch is backed up to GitHub as
+`origin/local/editor-encoder` on the owner's request; still no issue or PR. Back it up
+with `git push origin local/editor-encoder` (the branch's `pushRemote` is `no_push`).
+Next open task: the quest and dialogue debugger (list below).
+
 ## Handover (2026-11-01, end of the second session)
 
-**Start here: one step left from the second session.** The record picker (commit
-`a38217f3`) is written and its 11 editor unit tests pass, but the
-engine build was stopped for the handover, so smoke `editor-find-place` has **never
-run**. Build the engine, then run `--area editor` (command below). All 11 editor
-scenarios should pass; the ten other than `editor-find-place` passed on `86d32752`.
-`editor-find-place` expects that `editor find nuka cola` lists something, `#1` places,
-the player's NPC_ base `0x00000007` is refused, and an unknown Editor ID is refused.
-Fix the scenario's setup if a regex is off (for example the console's indent on the `#1`
-line), not the expectation's meaning. Then run engine clippy.
+The record picker's smoke `editor-find-place`, left unrun here, passed in the third session.
 
 **Second session, in short** (details in the progress log, newest last):
 - `56d53aa3` MO2 saving: into the owning mod, else overwrite; on in the MO2 profile.
@@ -115,8 +116,8 @@ line), not the expectation's meaning. Then run engine clippy.
   the progress log; **its smoke run is still to do**, top of this section). Open: the
   visual list with type and plugin filters and the model preview (needs the UI toolkit,
   §8), and actor bases (needs the writer to write ACHR/ACRE).
-- [ ] Clean masters on save (masters nothing refers to dropped), and a `.bsa` beside a plugin
-  in `mods\` mounted (§2.2 item 9 is only half done: plugins load, archives don't).
+- [x] Clean masters on save, and a `.bsa` beside a plugin in `mods\` mounted (third
+  session, see the progress log).
 - [ ] The quest and dialogue debugger (§13–§14). It needs no writer: per-condition results
   from `fnv-game/src/cond.rs` and `dialogue.rs` (`can_say_explained`).
 - [ ] The record property panel (§8): needs a UI toolkit (bevy_egui; add it to
@@ -310,6 +311,27 @@ next object ID upkeep), delete as disable-and-sink, undo, a gizmo drag instead o
 `editor open <plugin>` to pick the target at the start, the record property panel
 (§8, needs a UI toolkit: bevy_egui), then the quest and dialogue debugger (§13–§14,
 which needs no writer and could start any time).
+
+### 2026-11-03 (third session): main merged, clean masters, archives in `mods\`
+
+- `origin/main` merged (437 commits). The SetPos clutter fix had landed on `main` as
+  `c1e38465` with the same code, so `phys.rs` took `main`'s copy; `console.rs`
+  (`bat` beside `editor`), `lib.rs` and `scenarios.toml` kept both sides.
+- **Clean masters** (§4.2): `fnv_esm::edit::write_plugin` writes in two passes. The first
+  decodes every copied record and notes which masters the file's FormIDs (record
+  headers, group labels, subrecords) belong to; the second writes with only those, in
+  load order, and renumbers. When a copied subrecord does not decode exactly, its
+  FormIDs are unknown and every master stays (unit test
+  `keeps_every_master_when_a_subrecord_is_not_decoded`). `Written::new_load_ids` gives
+  the new references' load-order FormIDs (what the console takes), which the save line
+  now prints; `new_ids` stays in the file's numbering.
+- **Archives beside a plugin in `mods\`** (§2.2 item 9, second half):
+  `fnv_vfs::Vfs::archive_order_in` also looks in the mods folder for `<stem>.bsa` and
+  `<stem> - *.bsa`, names them by full path, and prefers the mods folder's copy of a name
+  in both (as `plugin_path` does for plugins); the base list and `Update.bsa` stay
+  Data's. The engine passes the mods folder (`GameData::open_for_plugins_in`). Unit test
+  `mods_folder_archives_follow_their_plugins`; no smoke, since an archive cannot be
+  committed.
 
 ## 1. Goals and non-goals
 

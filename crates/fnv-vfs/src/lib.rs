@@ -153,14 +153,33 @@ pub struct Vfs {
 impl Vfs {
     /// Archive file names in precedence order for `plugins` (lowest first).
     pub fn archive_order(data_dir: &Path, archive_list: &[&str], plugins: &[&str]) -> Vec<String> {
-        let present: Vec<String> = std::fs::read_dir(data_dir)
-            .map(|rd| {
-                rd.filter_map(|e| e.ok())
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .filter(|n| n.to_ascii_lowercase().ends_with(".bsa"))
-                    .collect()
-            })
-            .unwrap_or_default();
+        Vfs::archive_order_in(data_dir, None, archive_list, plugins)
+    }
+
+    /// [`Vfs::archive_order`], with the plugins' archives also looked for in NVForever's
+    /// mods folder `mods`, beside the plugins it holds (docs/design/editor.md §2.2 item 9).
+    /// One found there is named by its full path ([`Vfs::open`] joins a relative name to
+    /// `data_dir`); a name in both folders is the mods folder's, as a plugin is
+    /// (`fnv_install::plugins::plugin_path`). The base list and `Update.bsa` come from
+    /// `data_dir` only.
+    pub fn archive_order_in(data_dir: &Path, mods: Option<&Path>, archive_list: &[&str], plugins: &[&str]) -> Vec<String> {
+        let bsas = |dir: &Path| -> Vec<String> {
+            std::fs::read_dir(dir)
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .filter(|n| n.to_ascii_lowercase().ends_with(".bsa"))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let present = bsas(data_dir);
+        let in_mods: Vec<String> = mods.map(bsas).unwrap_or_default();
+        // Each plugin archive's name, and what `Vfs::open` is given for it.
+        let mut owned: Vec<(String, String)> = present.iter().filter(|n| !in_mods.iter().any(|m| m.eq_ignore_ascii_case(n))).map(|n| (n.clone(), n.clone())).collect();
+        if let Some(m) = mods {
+            owned.extend(in_mods.iter().map(|n| (n.clone(), m.join(n).to_string_lossy().into_owned())));
+        }
         let find = |name: &str| present.iter().find(|p| p.eq_ignore_ascii_case(name)).cloned();
         let mut order: Vec<String> = Vec::new();
         let push = |n: Option<String>, order: &mut Vec<String>| {
@@ -182,14 +201,10 @@ impl Vfs {
         for stem in &stems {
             // An archive several plugins' stems match belongs to the longest of them:
             // `Foo - Bar.bsa` is `Foo - Bar.esp`'s, not `Foo.esp`'s (#996).
-            let mut own: Vec<String> = present
-                .iter()
-                .filter(|n| claims(stem, n) && !stems.iter().any(|o| o.len() > stem.len() && claims(o, n)))
-                .cloned()
-                .collect();
-            own.sort_by_key(|n| n.to_ascii_lowercase());
-            for n in own {
-                push(Some(n), &mut order);
+            let mut own: Vec<&(String, String)> = owned.iter().filter(|(n, _)| claims(stem, n) && !stems.iter().any(|o| o.len() > stem.len() && claims(o, n))).collect();
+            own.sort_by_key(|(n, _)| n.to_ascii_lowercase());
+            for (_, open_as) in own {
+                push(Some(open_as.clone()), &mut order);
             }
         }
         order
@@ -254,7 +269,13 @@ impl Vfs {
     /// its plugin loads after them, and loose files stay above every archive. The
     /// [`ARCHIVE_ORDER_ENV`] override applies as there.
     pub fn open_for_plugins<S: AsRef<str>>(data_dir: &Path, plugins: &[S]) -> Result<Vfs, VfsError> {
-        Vfs::open(data_dir, &Vfs::order_for_plugins(data_dir, plugins).0)
+        Vfs::open_for_plugins_in(data_dir, None, plugins)
+    }
+
+    /// [`Vfs::open_for_plugins`] with the archives beside the plugins in NVForever's mods
+    /// folder `mods` too ([`Vfs::archive_order_in`]).
+    pub fn open_for_plugins_in<S: AsRef<str>>(data_dir: &Path, mods: Option<&Path>, plugins: &[S]) -> Result<Vfs, VfsError> {
+        Vfs::open(data_dir, &Vfs::order_for_plugins_in(data_dir, mods, plugins).0)
     }
 
     /// The archives [`Vfs::open_for_plugins`] mounts, lowest precedence first, and
@@ -262,13 +283,18 @@ impl Vfs {
     /// The base list is [`archive_list`]'s: an `SArchiveList` set for the run, else the
     /// shipped default.
     pub fn order_for_plugins<S: AsRef<str>>(data_dir: &Path, plugins: &[S]) -> (Vec<String>, bool) {
+        Vfs::order_for_plugins_in(data_dir, None, plugins)
+    }
+
+    /// [`Vfs::order_for_plugins`] with the mods folder's archives ([`Vfs::archive_order_in`]).
+    pub fn order_for_plugins_in<S: AsRef<str>>(data_dir: &Path, mods: Option<&Path>, plugins: &[S]) -> (Vec<String>, bool) {
         match std::env::var(ARCHIVE_ORDER_ENV) {
             Ok(list) if !list.trim().is_empty() => (parse_archive_list(&list), true),
             _ => {
                 let plugins: Vec<&str> = plugins.iter().map(AsRef::as_ref).collect();
                 let list = archive_list();
                 let list: Vec<&str> = list.iter().map(String::as_str).collect();
-                (Vfs::archive_order(data_dir, &list, &plugins), false)
+                (Vfs::archive_order_in(data_dir, mods, &list, &plugins), false)
             }
         }
     }
@@ -563,6 +589,29 @@ mod tests {
         let order = Vfs::archive_order(&dir, &DEFAULT_ARCHIVE_LIST, &DEFAULT_PLUGINS);
         assert!(!order.iter().any(|n| n.starts_with("MyMod")));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A plugin in NVForever's mods folder brings the archives beside it, named by their
+    /// full path; one in both folders is the mods folder's copy.
+    #[test]
+    fn mods_folder_archives_follow_their_plugins() {
+        let root = std::env::temp_dir().join(format!("nvf-vfs-modsdir-{}", std::process::id()));
+        let (data, mods) = (root.join("Data"), root.join("mods"));
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&mods).unwrap();
+        for n in ["Fallout - Meshes.bsa", "Update.bsa", "Both.bsa"] {
+            std::fs::write(data.join(n), b"").unwrap();
+        }
+        for n in ["Edits.bsa", "Edits - Textures.bsa", "Both.bsa", "Update.bsa", "Stray.bsa"] {
+            std::fs::write(mods.join(n), b"").unwrap();
+        }
+        let full = |n: &str| mods.join(n).to_string_lossy().into_owned();
+        let order = Vfs::archive_order_in(&data, Some(&mods), &DEFAULT_ARCHIVE_LIST, &["FalloutNV.esm", "Both.esp", "Edits.esp"]);
+        // The base list and Update.bsa only from Data; no plugin claims Stray.bsa.
+        assert_eq!(order, ["Fallout - Meshes.bsa".to_string(), "Update.bsa".into(), full("Both.bsa"), full("Edits - Textures.bsa"), full("Edits.bsa")]);
+        // Without a mods folder, as before.
+        assert_eq!(Vfs::archive_order_in(&data, None, &DEFAULT_ARCHIVE_LIST, &["FalloutNV.esm", "Both.esp", "Edits.esp"]), ["Fallout - Meshes.bsa", "Update.bsa", "Both.bsa"]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// `Foo - Bar.bsa` matches both `Foo.esp` ("Foo - *") and `Foo - Bar.esp`: it takes

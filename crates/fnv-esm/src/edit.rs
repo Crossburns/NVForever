@@ -5,8 +5,10 @@
 //!
 //! - **Masters**: every plugin loaded before the new one, in load order (the new one
 //!   last, or where it already loads). A FormID in the new file is then its load-order
-//!   FormID, except the new plugin's own index. Masters nothing refers to stay listed
-//!   (no "clean masters" yet).
+//!   FormID, except the new plugin's own index. Then masters nothing in the file refers
+//!   to are dropped ("clean masters", design §4.2) and the FormIDs renumbered to the
+//!   shorter list; when a copied subrecord does not decode exactly, so that its FormIDs
+//!   are unknown, every master stays.
 //! - **Groups**: a reference goes in the same chain of groups its winning record sits
 //!   in (worldspace children, exterior block and sub-block, cell children, persistent or
 //!   temporary children), copied from that plugin with FormID labels remapped, and the
@@ -36,6 +38,7 @@ use crate::loadorder::LoadOrder;
 use crate::raw::{group_type, record_flags, visit_records, write_nodes, write_subrecords, Group, GroupHeader, Node, Record, RecordHeader, Subrecord};
 use crate::schema::Schema;
 use bytes::Bytes;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A placed reference (load-order FormID) at a new place: game units, radians.
@@ -85,6 +88,9 @@ pub struct Written {
     /// The FormIDs the new references got, in the file's own numbering (top byte the
     /// plugin's index among its masters), in [`write_plugin`]'s order.
     pub new_ids: Vec<u32>,
+    /// The same references' load-order FormIDs, once the plugin loads where it already
+    /// is, or after the others.
+    pub new_load_ids: Vec<u32>,
     pub warnings: Vec<String>,
 }
 
@@ -100,6 +106,18 @@ struct Writer<'l, 'a> {
     own: Option<usize>,
     /// Plugins before it: its masters.
     n_masters: usize,
+    /// The file index each of those masters gets when unused ones are dropped (`None`:
+    /// dropped); `None` keeps them all at their load-order index.
+    keep: Option<Vec<Option<u32>>>,
+    /// The file index of the plugin's own records: the number of masters it keeps.
+    own_index: u32,
+    /// Decode every copied record, even one whose FormIDs need no rewriting, so that
+    /// `used` sees all of them.
+    decode_all: bool,
+    /// Masters (load-order index) a written FormID belongs to.
+    used: RefCell<BTreeSet<usize>>,
+    /// A copied subrecord was kept as it was: its FormIDs were not seen.
+    opaque: bool,
     warnings: Vec<String>,
 }
 
@@ -109,9 +127,13 @@ impl Writer<'_, '_> {
         let t = (global >> 24) as usize;
         let low = global & 0x00FF_FFFF;
         if Some(t) == self.own {
-            Ok(((self.n_masters as u32) << 24) | low)
+            Ok((self.own_index << 24) | low)
         } else if t < self.n_masters {
-            Ok(global)
+            self.used.borrow_mut().insert(t);
+            match &self.keep {
+                None => Ok(global),
+                Some(k) => k[t].map(|i| (i << 24) | low).ok_or_else(|| format!("{global:08X} belongs to {}, a dropped master", self.lo.plugins[t].name)),
+            }
         } else {
             Err(format!("{global:08X} belongs to {}, which loads after the new plugin", self.lo.plugins.get(t).map_or("?", |p| p.name.as_str())))
         }
@@ -127,6 +149,9 @@ impl Writer<'_, '_> {
 
     /// Whether plugin `pi`'s FormIDs are written unchanged.
     fn identity(&self, pi: usize) -> bool {
+        if self.decode_all || self.keep.as_ref().is_some_and(|k| k.iter().enumerate().any(|(i, &n)| n != Some(i as u32))) {
+            return false;
+        }
         let m = self.lo.master_map(pi);
         m.iter().enumerate().all(|(i, &g)| g as usize == i) && (m.len() == pi && Some(pi) != self.own || Some(pi) == self.own && m.len() == self.n_masters)
     }
@@ -161,6 +186,7 @@ impl Writer<'_, '_> {
                     out.push(Subrecord { data, ..s });
                 }
                 _ => {
+                    self.opaque = true;
                     self.warnings.push(format!(
                         "{} {:08X} {}: not decoded exactly, kept as it was; FormIDs in it are not remapped",
                         r.sig_str(),
@@ -292,9 +318,37 @@ pub fn write_placements(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edi
 
 /// [`write_placements`], and the references `new` the plugin adds.
 pub fn write_plugin(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edits: &[Placement], new: &[NewRef]) -> Result<Written, String> {
+    // A first pass finds the masters the file refers to; the second writes it with only those.
+    let first = write_with(lo, schema, plugin, edits, new, None, true)?;
+    let n_masters = lo.plugins.iter().position(|p| p.name.eq_ignore_ascii_case(&plugin.name)).unwrap_or(lo.plugins.len());
+    if first.opaque || first.used.len() == n_masters {
+        return Ok(write_with(lo, schema, plugin, edits, new, None, false)?.written);
+    }
+    let mut next = 0;
+    let keep = (0..n_masters)
+        .map(|i| {
+            first.used.contains(&i).then(|| {
+                next += 1;
+                next - 1
+            })
+        })
+        .collect();
+    Ok(write_with(lo, schema, plugin, edits, new, Some(keep), false)?.written)
+}
+
+/// One pass of [`write_plugin`]: what it wrote, the masters it referred to, and whether
+/// a subrecord's FormIDs went unseen.
+struct Pass {
+    written: Written,
+    used: BTreeSet<usize>,
+    opaque: bool,
+}
+
+fn write_with(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edits: &[Placement], new: &[NewRef], keep: Option<Vec<Option<u32>>>, decode_all: bool) -> Result<Pass, String> {
     let own = lo.plugins.iter().position(|p| p.name.eq_ignore_ascii_case(&plugin.name));
     let n_masters = own.unwrap_or(lo.plugins.len());
-    let mut w = Writer { lo, schema, own, n_masters, warnings: Vec::new() };
+    let own_index = keep.as_ref().map_or(n_masters, |k| k.iter().flatten().count()) as u32;
+    let mut w = Writer { lo, schema, own, n_masters, keep, own_index, decode_all, used: RefCell::new(BTreeSet::new()), opaque: false, warnings: Vec::new() };
     // Each reference's winning definition, by plugin.
     let mut wanted: BTreeMap<usize, BTreeMap<u32, Placement>> = BTreeMap::new();
     for e in edits {
@@ -332,7 +386,7 @@ pub fn write_plugin(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edits: 
                 None => subs.push(Subrecord { sig: *b"DATA", data, extended: false }),
             }
             let in_temporary = chain.last().is_some_and(|(g, _)| g.group_type == group_type::CELL_TEMPORARY_CHILDREN);
-            if in_temporary && (header.form_id >> 24) as usize != n_masters {
+            if in_temporary && header.form_id >> 24 != own_index {
                 onam.insert(header.form_id);
             }
             insert(&mut root, &chain, record(header, &subs));
@@ -343,12 +397,14 @@ pub fn write_plugin(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edits: 
     let form_version = lo.plugins.first().map_or(15, |p| p.header_record().header.form_version);
     let mut next = own.map_or(FIRST_OBJECT_ID, |pi| lo.plugins[pi].header.next_object_id.max(FIRST_OBJECT_ID));
     let mut new_ids = Vec::with_capacity(new.len());
+    let mut new_load_ids = Vec::with_capacity(new.len());
     for n in new {
         let chain = w.new_ref_chain(n.cell)?;
         if next > 0x00FF_FFFF {
             return Err("the plugin has no object IDs left".into());
         }
-        let form_id = ((n_masters as u32) << 24) | next;
+        let form_id = (own_index << 24) | next;
+        new_load_ids.push(((n_masters as u32) << 24) | next);
         next += 1;
         let mut data = Vec::with_capacity(24);
         for v in n.pos.iter().chain(&n.rot) {
@@ -364,7 +420,7 @@ pub fn write_plugin(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edits: 
         Node::Group(g) if &g.header.label == b"CELL" => 0,
         _ => 1,
     });
-    let masters: Vec<String> = lo.plugins[..n_masters].iter().map(|p| p.name.clone()).collect();
+    let masters: Vec<String> = lo.plugins[..n_masters].iter().enumerate().filter(|(i, _)| w.keep.as_ref().is_none_or(|k| k[*i].is_some())).map(|(_, p)| p.name.clone()).collect();
     let mut subs = vec![Subrecord {
         sig: *b"HEDR",
         data: [1.34f32.to_le_bytes(), (count(&root) as i32).to_le_bytes(), next.to_le_bytes()].concat(),
@@ -385,7 +441,8 @@ pub fn write_plugin(lo: &LoadOrder, schema: &Schema, plugin: &NewPlugin, edits: 
     let mut bytes = Vec::new();
     write_nodes(&[Node::Record(tes4)], &mut bytes);
     write_nodes(&root, &mut bytes);
-    Ok(Written { bytes, masters, references: written, new_ids, warnings: w.warnings })
+    let used = w.used.take();
+    Ok(Pass { written: Written { bytes, masters, references: written, new_ids, new_load_ids, warnings: w.warnings }, used, opaque: w.opaque })
 }
 
 #[cfg(test)]
@@ -467,20 +524,21 @@ mod tests {
             Placement { form_id: 0x0200_0005, pos: [9.0, 0.0, 0.0], rot: [0.0; 3], disabled: false },
         ];
         let out = write_placements(&lo, &s, &NewPlugin { name: "Edits.esp".into(), author: Some("me".into()), description: None }, &edits).unwrap();
-        assert_eq!(out.masters, ["Base.esm", "Other.esm", "Addon.esm"]);
+        // Nothing refers to Other.esm: it is dropped, and the add-on becomes the second master.
+        assert_eq!(out.masters, ["Base.esm", "Addon.esm"]);
         assert_eq!(out.references, 3);
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
         // Loads after the others, and its overrides win.
         let mut all = plugins();
         all.push(Plugin::parse(&out.bytes, "Edits.esp".into()).unwrap());
         let edit = &all[3];
-        assert_eq!(edit.header.masters.len(), 3);
+        assert_eq!(edit.header.masters.len(), 2);
         assert_eq!(edit.header.author.as_deref(), Some("me"));
         // Records + groups: WRLD, CELL, 3 REFR; WRLD top, world children, block, sub-block,
         // cell children, persistent, temporary.
         assert_eq!(edit.header.num_records, 12);
         // ONAM: the master's temporary reference and the add-on's (in its new index).
-        assert_eq!(edit.header.overridden_forms, vec![0x0000_3001, 0x0200_0005]);
+        assert_eq!(edit.header.overridden_forms, vec![0x0000_3001, 0x0100_0005]);
         let lo2 = LoadOrder::new(&all).unwrap();
         let (p, r) = lo2.winner(0x0000_3000).unwrap();
         assert_eq!(p.name, "Edits.esp");
@@ -523,7 +581,11 @@ mod tests {
         let new = [NewRef { base: 0x10, cell: 0x2000, pos: [1.0, 2.0, 3.0], rot: [0.0; 3] }, NewRef { base: 0x0200_0006, cell: 0x2000, pos: [4.0, 5.0, 6.0], rot: [0.0; 3] }];
         let moved = [Placement { form_id: 0x0000_3000, pos: [0.0; 3], rot: [0.0; 3], disabled: false }];
         let out = write_plugin(&lo, &s, &np, &moved, &new).unwrap();
-        assert_eq!(out.new_ids, [0x0300_0800, 0x0300_0801]);
+        // Masters Base and Addon (Other is dropped): the plugin's own index is 2 in the file,
+        // 3 in the load order.
+        assert_eq!(out.masters, ["Base.esm", "Addon.esm"]);
+        assert_eq!(out.new_ids, [0x0200_0800, 0x0200_0801]);
+        assert_eq!(out.new_load_ids, [0x0300_0800, 0x0300_0801]);
         let p = Plugin::parse(&out.bytes, "Adds.esp".into()).unwrap();
         assert_eq!(p.header.next_object_id, 0x802);
         let mut refs = Vec::new();
@@ -533,8 +595,8 @@ mod tests {
                 refs.push((r.header.form_id, stack.last().unwrap().group_type, u32::from_le_bytes(name.try_into().unwrap())));
             }
         });
-        // The add-on's base keeps its load-order index: the add-on is the new file's third master.
-        assert_eq!(refs, [(0x0000_3000, 8, 0x10), (0x0300_0800, 9, 0x10), (0x0300_0801, 9, 0x0200_0006)]);
+        // The add-on's base is renumbered: the add-on is the new file's second master.
+        assert_eq!(refs, [(0x0000_3000, 8, 0x10), (0x0200_0800, 9, 0x10), (0x0200_0801, 9, 0x0100_0006)]);
         // One cell record, one temporary group for both new references.
         let mut cells = 0;
         visit_records(&p.nodes[1..], &mut |r, _| cells += (&r.header.sig == b"CELL") as usize);
@@ -561,10 +623,28 @@ mod tests {
         let np = NewPlugin { name: "Addon.esm".into(), ..Default::default() };
         let own = [Placement { form_id: 0x0200_0005, pos: [1.0; 3], rot: [0.0; 3], disabled: false }];
         let out = write_placements(&lo, &s, &np, &own).unwrap();
-        assert_eq!(out.masters, ["Base.esm", "Other.esm"]);
+        assert_eq!(out.masters, ["Base.esm"]);
         let p = Plugin::parse(&out.bytes, "Addon.esm".into()).unwrap();
         let mut ids = Vec::new();
         visit_records(&p.nodes[1..], &mut |r, _| ids.push(r.header.form_id));
-        assert!(ids.contains(&0x0200_0005));
+        assert!(ids.contains(&0x0100_0005));
+    }
+
+    #[test]
+    fn keeps_every_master_when_a_subrecord_is_not_decoded() {
+        // The schema does not know XSCL: the moved reference's FormIDs cannot all be seen.
+        let mut ps = plugins();
+        let refr = rec(b"REFR", 0x0000_3000, &[sub(b"NAME", &0x10u32.to_le_bytes()), sub(b"XSCL", &1.0f32.to_le_bytes()), sub(b"DATA", &pos_rot([1.0, 0.0, 0.0, 0.0, 0.0, 0.0]))]);
+        let cell = rec(b"CELL", 0x0000_2000, &[sub(b"XCLC", &[2i32.to_le_bytes(), 3i32.to_le_bytes()].concat())]);
+        let block = grp([0; 4], 4, &grp([0; 4], 5, &[cell, grp(0x2000u32.to_le_bytes(), 6, &grp(0x2000u32.to_le_bytes(), 8, &refr))].concat()));
+        let world = [rec(b"WRLD", 0x0000_1000, &[sub(b"EDID", b"World ")]), grp(0x1000u32.to_le_bytes(), 1, &block)].concat();
+        ps[0] = Plugin::parse(&[header(&[]), grp(*b"WRLD", 0, &world)].concat(), "Base.esm".into()).unwrap();
+        let lo = LoadOrder::new(&ps).unwrap();
+        let s = schema();
+        let moved = [Placement { form_id: 0x0000_3000, pos: [0.0; 3], rot: [0.0; 3], disabled: false }];
+        let out = write_placements(&lo, &s, &NewPlugin { name: "Edits.esp".into(), ..Default::default() }, &moved).unwrap();
+        assert_eq!(out.masters, ["Base.esm", "Other.esm", "Addon.esm"]);
+        // Its plugin's FormIDs need no rewriting, so keeping it as it was is no warning.
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     }
 }

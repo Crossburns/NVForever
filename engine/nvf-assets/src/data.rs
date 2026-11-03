@@ -21,7 +21,13 @@ impl GameData {
     /// [`GameData::open`] with the archives of `plugins` (load order): mods' archives
     /// over the base game's, loose files over both.
     pub fn open_for_plugins<S: AsRef<str>>(data_dir: &Path, plugins: &[S], schema_dir: &Path) -> Result<GameData, String> {
-        let vfs = Vfs::open_for_plugins(data_dir, plugins).map_err(|e| e.to_string())?;
+        GameData::open_for_plugins_in(data_dir, None, plugins, schema_dir)
+    }
+
+    /// [`GameData::open_for_plugins`] with the archives beside the plugins in NVForever's
+    /// mods folder `mods` too (`fnv_vfs::Vfs::archive_order_in`).
+    pub fn open_for_plugins_in<S: AsRef<str>>(data_dir: &Path, mods: Option<&Path>, plugins: &[S], schema_dir: &Path) -> Result<GameData, String> {
+        let vfs = Vfs::open_for_plugins_in(data_dir, mods, plugins).map_err(|e| e.to_string())?;
         let schema = Schema::load_dir(schema_dir).map_err(|e| e.to_string())?;
         Ok(GameData { vfs: Arc::new(vfs), schema: Arc::new(schema) })
     }
