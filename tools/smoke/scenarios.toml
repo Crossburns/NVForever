@@ -1887,6 +1887,8 @@ run_seconds = 90
 expect = [
   "VCG01 stage 55 set",
   "idle summary: 10 idles asked for (1 by scripts, 4 by packages' begin, end and change, 1 from collections, 4 by dialogue lines); 5 started on actors, 5 on the player; 0 for actors not drawn, 0 without a usable clip",
+  # #1429: an idle's clip is read on a worker thread, not in the frame the idle starts.
+  { re = 'idle clip summary: .*; 0 read in the frame they started after', label = "no idle clip read on the main thread after waiting for the worker (#1429)" },
   { re = 'furniture:.*by clip SpecialIdle_DocSitLeftExit', label = "Doc Mitchell getting off his chair by clip SpecialIdle_DocSitLeftExit" },
   # playtest list 5 item 40: that clip's Bip01 starts 52 units beside the seat; it is played from the seat.
   { re = 'furniture: 00104C0F: SpecialIdle_DocSitLeftExit starts (?P<n>\d+) units from where the body sits: played from the seat', range = [40, 100], label = "Doc Mitchell's exit played from his seat" },
