@@ -336,6 +336,9 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     walks through it [design].
   - Setting an unchanged volume does nothing; the shape is rebuilt only when its size
     changes.
+  - Since 2026-11-03 the capsules are colliders of no body, placed beside the kinematic
+    body (not attached to it), which makes a frame's rewrite cheap; `NVF_PHYS_HITVOL_ATTACHED=1`
+    attaches them again (physics.md §5.1) [design].
 - **In play** (`engine/nvf-play/src/hitvol.rs`): every drawn, present ACHR/ACRE gets a
   volume each frame from its render bounds [design]:
   - the union of its drawn parts' world boxes;

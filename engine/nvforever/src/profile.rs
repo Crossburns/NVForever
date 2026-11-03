@@ -587,7 +587,7 @@ fn report_counts(time: Res<Time<Real>>, phys: Option<Res<nvf_play::phys::PhysSta
         let now = p.world.refresh_stats();
         // A new world starts its counts again.
         let before = if now.refreshes < w.phys.refreshes || now.marks.iter().zip(&w.phys.marks).any(|(a, b)| a < b) { fnv_phys::RefreshStats::default() } else { w.phys };
-        info!("{}", phys_refresh_line(secs, frames, &now, &before));
+        info!("{}", phys_refresh_line(secs, frames, &now, &before, p.world.standalone_hit_volumes()));
         w.phys = now;
     }
     let nav = fnv_nav::path::probe::searches();
@@ -601,14 +601,16 @@ fn report_counts(time: Res<Time<Real>>, phys: Option<Res<nvf_play::phys::PhysSta
 /// hitvol_only=player:<n>/npc:<n>/step:<n>/cast:<n> dirty_hitvol=<n> dirty_bodies=<n>
 /// dirty_transform=<n> dirty_other=<n> with_hitvol=<n> with_bodies=<n> with_transform=<n>
 /// with_other=<n> step_absorbed=<n> hitvol_colliders=<n> colliders_mean=<x>
-/// repair_new=<n> repair_sleep=<n> repair_struck=<n>`, the counts of `now` less `before`.
-fn phys_refresh_line(secs: f32, frames: u32, now: &fnv_phys::RefreshStats, before: &fnv_phys::RefreshStats) -> String {
+/// repair_new=<n> repair_sleep=<n> repair_struck=<n> hitvol_written=<n> hitvol_skipped=<n>
+/// hitvol_standalone=<0|1>`, the counts of `now` less `before`; `hitvol_standalone` is the
+/// world's setting (1 unless `nvf_play::phys::HITVOL_ATTACHED_VAR`), not a count.
+fn phys_refresh_line(secs: f32, frames: u32, now: &fnv_phys::RefreshStats, before: &fnv_phys::RefreshStats, standalone: bool) -> String {
     let d = |a: u64, b: u64| a.saturating_sub(b);
     let by = |a: &[u64; 4], b: &[u64; 4]| format!("player:{}/npc:{}/step:{}/cast:{}", d(a[0], b[0]), d(a[1], b[1]), d(a[2], b[2]), d(a[3], b[3]));
     let refreshes = d(now.refreshes, before.refreshes);
     let colliders = d(now.colliders, before.colliders) as f64 / refreshes.max(1) as f64;
     format!(
-        "phys-refresh: secs={secs:.1} frames={frames} refreshes={refreshes} by_consumer={} hitvol_only={} dirty_hitvol={} dirty_bodies={} dirty_transform={} dirty_other={} with_hitvol={} with_bodies={} with_transform={} with_other={} step_absorbed={} hitvol_colliders={} colliders_mean={colliders:.0} repair_new={} repair_sleep={} repair_struck={}",
+        "phys-refresh: secs={secs:.1} frames={frames} refreshes={refreshes} by_consumer={} hitvol_only={} dirty_hitvol={} dirty_bodies={} dirty_transform={} dirty_other={} with_hitvol={} with_bodies={} with_transform={} with_other={} step_absorbed={} hitvol_colliders={} colliders_mean={colliders:.0} repair_new={} repair_sleep={} repair_struck={} hitvol_written={} hitvol_skipped={} hitvol_standalone={}",
         by(&now.by_consumer, &before.by_consumer),
         by(&now.hitvol_only, &before.hitvol_only),
         d(now.marks[0], before.marks[0]),
@@ -624,6 +626,9 @@ fn phys_refresh_line(secs: f32, frames: u32, now: &fnv_phys::RefreshStats, befor
         d(now.repair_new, before.repair_new),
         d(now.repair_sleep, before.repair_sleep),
         d(now.repair_struck, before.repair_struck),
+        d(now.hitvol_written, before.hitvol_written),
+        d(now.hitvol_skipped, before.hitvol_skipped),
+        u8::from(standalone),
     )
 }
 
@@ -727,9 +732,10 @@ mod tests {
     fn count_lines_are_key_value_pairs_after_their_prefix() {
         let mut now = fnv_phys::RefreshStats { refreshes: 7, colliders: 70, ..Default::default() };
         now.by_consumer = [4, 2, 0, 1];
-        let l = phys_refresh_line(5.0, 300, &now, &fnv_phys::RefreshStats::default());
+        let l = phys_refresh_line(5.0, 300, &now, &fnv_phys::RefreshStats::default(), true);
         assert!(l.starts_with("phys-refresh: secs=5.0 frames=300 refreshes=7 by_consumer=player:4/npc:2/step:0/cast:1 "), "{l}");
         assert!(l.contains(" colliders_mean=10 "), "{l}");
+        assert!(l.ends_with(" hitvol_written=0 hitvol_skipped=0 hitvol_standalone=1"), "{l}");
         let a = ai_counts_line(5.0, 300, (3, 2), (1, 4, 6), &[0; AI_COUNTS]);
         assert!(a.starts_with("ai-counts: secs=5.0 frames=300 think=0 path_searches=3 path_hits=2 separation_passes=1 separation_bodies=4 separation_pairs=6 "), "{a}");
         for l in [&l, &a] {

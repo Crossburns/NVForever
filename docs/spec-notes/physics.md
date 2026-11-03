@@ -672,6 +672,80 @@ playtest list 5 item 59].
   and activation rays should start near what they test; `fnvtool phys` starts ground rays
   1,000 units above the highest loaded terrain.
 
+### 5.1 Actor hit volumes in rapier (2026-11-03)
+
+Actor hit capsules (combat-rules.md §7 and §12, `fnv_phys::actors`) are rewritten every
+frame from the posed skeleton, about 19 per drawn actor. How they are placed in rapier
+decides what the next query refresh costs.
+
+- **Before**: each capsule was a collider attached to the actor's kinematic body and
+  placed with `Collider::set_position_wrt_parent`. In rapier 0.36 that call always flags
+  the collider `PARENT`, with no equality test [design: rapier3d 0.36.0
+  `geometry/collider.rs:439-444`]. The broad phase treats `PARENT` as a re-parent. At the
+  next update it removes the leaf and inserts it again as a new one
+  [design: `geometry/broad_phase_bvh/update.rs:79-94`]. Any such re-insertion forces a
+  refit of the whole tree [design: same file `:272`]. Every overlap of the leaf is then
+  reported again and rejected by the pair filter. All of this happened even for an
+  identical pose. On the towns route, the refresh under the player controller cost
+  1.7-2.6 ms a frame, most of it these writes [observed: tracy spans
+  `phys::refresh_detect` under `phys::player_move`, 2026-11-03].
+- **Now**: the capsules are colliders of no body, placed with `Collider::set_position`.
+  That flags only `POSITION`, so the leaf is updated in place, or left alone while the
+  capsule stays inside its margin [design: `update.rs:216-223`].
+  - Each kinematic body stays as it was, moved as before. The body set, `state_digest`
+    and the body counts are unchanged.
+  - A write queues `(collider, body, pose on the body)`. `PhysWorld::flush_hit_volumes`
+    places the capsule at `body pose * pose on the body`, at the start of every query
+    refresh that has work and at the start of every `step`
+    [design: `crates/fnv-phys/src/world.rs:820,865`, `actors.rs:311`]. That is the same
+    product, from the same operands, at the same point where rapier places an attached
+    collider [design: rapier `pipeline/user_changes.rs:24`]. So poses read after a
+    refresh are bit-identical to the attached ones, and direct reads before a refresh
+    (aim points, part centres) are exactly as stale as before.
+  - A new capsule starts where rapier puts a new attached one
+    [design: rapier `dynamics/rigid_body_components.rs:1242`]. Removing the actor
+    removes its capsules explicitly [design: `actors.rs:284`].
+  - `update_queries_for` and `step` are the only rapier pipeline entry points in
+    `fnv-phys`. Any new direct call into rapier's pipeline needs a flush first.
+  - A parentless collider gets no soft-CCD or motion margin from a parent
+    [design: rapier `geometry/collider.rs:623-651`]. That only changes broad-phase
+    culling: the exact shape tests decide every hit.
+- **Identical writes are skipped**: a `set_actor_parts` call whose volume and parts
+  match the last write to the bit writes nothing and dirties nothing
+  [design: `actors.rs:234`]. This holds in both representations.
+- **Switching back**: `NVF_PHYS_HITVOL_ATTACHED=1` (any value but empty or `0`) gives
+  the attached capsules again, for comparison
+  [design: `engine/nvf-play/src/phys.rs:158-172`]. The library switch is
+  `PhysWorld::set_standalone_hit_volumes`, on by default. The startup log says which is
+  in use (`actor hit volumes: standalone colliders` or `... attached to their bodies`).
+  The `phys-refresh:` line ends with `hitvol_standalone=<0|1>`.
+- **Measured** [observed: release builds, the same exe run with and without the switch,
+  this project's towns route, 2026-11-03]: settled frame means went from 23.81 to
+  22.56 ms and from 25.48 to 22.57 ms (two route pairs; median gain 2.08 ms).
+- **Exact ties.** A first-hit `ray` or `sweep` with two candidates at the same time of
+  impact returns the first in tree-traversal order: parry replaces a result only on a
+  strictly smaller cost [design: parry3d 0.31.1 `partitioning/bvh/bvh_traverse.rs:393`].
+  This happens with a ray starting inside two overlapping capsules (distance 0), with
+  coincident actors, or with mirrored capsules. `ray_all` orders by distance, then
+  owner, and the owner includes the part [design: `world.rs:1226`]. So two segments of
+  one part at the same distance keep traversal order too.
+  - The two representations shape the tree differently, so they can pick a different
+    winner among exactly tied hits: another owner or part (combat reads both from the
+    hit), or the other order of same-owner hits in `ray_all`.
+  - The winner already depended on the tree's history with attached capsules. An
+    attached world that writes an identical pose again picks other winners than one
+    that skips it. This is the same class of non-determinism as before, with a
+    different arbitrary winner.
+  - Differential tests in `crates/fnv-phys/tests/synthetic.rs` (`hitvol_diff_*`,
+    `hitvol_ties_*`) run the same script on both representations
+    [observed: `cargo test -p fnv-phys --test synthetic hitvol`, 2026-11-03]:
+    - 10 scenarios agree to the bit, among them 20 actors × 19 parts over 50 frames with
+      falling boxes and a walking character, and remove/re-add with handle reuse.
+    - 6 scenarios differ only in which exactly tied candidate wins; they are kept
+      `#[ignore]`d with the observed values.
+    - Distances, points, fractions, hit sets, overlaps, aim points, other bodies'
+      trajectories and the character agree in every scenario.
+
 ## 6. Character controller and capture questions
 
 A kinematic vertical body standing on its feet point, over rapier's

@@ -1425,6 +1425,100 @@ fn part_capsules_say_which_part_was_hit() {
     assert_eq!(shot(&mut w, 125.0).unwrap().0, Owner::Actor { form_id: 0x10, layer: layers::BIPED, part: fnv_phys::actors::WHOLE });
 }
 
+/// The torso, head and a leg of `part_capsules_say_which_part_was_hit`, `dx` along x.
+fn three_parts(dx: f32) -> Vec<PartCapsule> {
+    [
+        PartCapsule { part: 0, a: [200.0, 0.0, 70.0], b: [200.0, 0.0, 110.0], radius: 15.0 },
+        PartCapsule { part: 1, a: [200.0, 0.0, 120.0], b: [200.0, 0.0, 130.0], radius: 9.0 },
+        PartCapsule { part: 4, a: [200.0, 0.0, 60.0], b: [220.0, 0.0, 10.0], radius: 7.0 },
+    ]
+    .iter()
+    .map(|p| PartCapsule { a: [p.a[0] + dx, p.a[1], p.a[2]], b: [p.b[0] + dx, p.b[1], p.b[2]], ..*p })
+    .collect()
+}
+
+#[test]
+fn bit_identical_part_writes_are_skipped_and_dirty_nothing() {
+    let mut w = ground();
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &three_parts(0.0));
+    w.update_queries();
+    let before = w.refresh_stats();
+    assert_eq!(before.hitvol_written, 3);
+    // The same pose again: nothing written, nothing for a refresh to do.
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &three_parts(0.0));
+    w.update_queries();
+    let same = w.refresh_stats();
+    assert_eq!((same.hitvol_written, same.hitvol_skipped, same.refreshes), (3, 3, before.refreshes));
+    assert_eq!(same.hitvol_colliders, 6, "every capsule handed in is still counted");
+    // -0.0 is not 0.0 to the bit: written.
+    let mut signed = three_parts(0.0);
+    signed[1].a[1] = -0.0;
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &signed);
+    assert_eq!(w.refresh_stats().hitvol_written, 6);
+    // Dead now (same pose): written, the colliders move to DEAD_BIP.
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], true), &signed);
+    w.update_queries();
+    assert_eq!(w.refresh_stats().hitvol_written, 9);
+    assert_eq!(w.refresh_stats().refreshes, before.refreshes + 1);
+    let shot = w.queries().ray([0.0, 0.0, 90.0], [1.0, 0.0, 0.0], 1000.0, &Filter::default()).unwrap();
+    assert_eq!(shot.owner, Owner::Actor { form_id: 0x10, layer: layers::DEAD_BIP, part: 0 });
+    // After the single capsule, the same parts are written again (its parts were dropped).
+    w.set_actor_volume(0x10, person([200.0, 0.0, 0.0], true));
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], true), &signed);
+    assert_eq!(w.actor_part_count(0x10), 3);
+    assert_eq!(w.refresh_stats().hitvol_written, 13);
+}
+
+#[test]
+fn standalone_hit_volumes_answer_as_attached_ones_to_the_bit() {
+    // The same writes into a world with attached capsules and one with standalone ones
+    // (both set explicitly, whatever the default): every query, aim point, body digest and
+    // step agrees to the bit, including aim points read between a write and the next refresh.
+    let mut a = ground();
+    a.set_standalone_hit_volumes(false);
+    let mut b = ground();
+    b.set_standalone_hit_volumes(true);
+    let bits = |h: Option<RayHit>| h.map(|h| (h.owner, h.distance.to_bits(), h.point.map(f32::to_bits), h.normal.map(f32::to_bits)));
+    let look = |w: &mut PhysWorld| {
+        let aims = (w.actor_aim_point(0x10).map(|p| p.map(f32::to_bits)), w.actor_part_centers(0x10).iter().map(|p| p.map(f32::to_bits)).collect::<Vec<_>>());
+        let mut shots = Vec::new();
+        for z in [10.0, 35.0, 69.0, 90.0, 115.0, 125.0, 131.0, 145.0] {
+            for y in [-12.0, -3.0, 0.0, 4.5, 11.0] {
+                shots.push(bits(w.queries().ray([0.0, y, z], [1.0, 0.0, 0.0], 1000.0, &Filter::default())));
+            }
+        }
+        shots.push(bits(w.queries().ray([210.0, 0.0, 300.0], [0.0, 0.0, -1.0], 1000.0, &Filter::default())));
+        (aims, shots, w.state_digest())
+    };
+    let script: Vec<Box<dyn Fn(&mut PhysWorld)>> = vec![
+        Box::new(|w| w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &three_parts(0.0))),
+        Box::new(|w| w.set_actor_parts(0x10, person([213.5, 1.25, 0.5], false), &three_parts(13.5))),
+        Box::new(|w| w.step()),
+        Box::new(|w| w.set_actor_parts(0x10, person([213.5, 1.25, 0.5], true), &three_parts(13.5)[..2])),
+        Box::new(|w| w.set_actor_volume(0x10, person([250.0, -3.0, 0.0], false))),
+        Box::new(|w| w.step()),
+        Box::new(|w| w.set_actor_parts(0x10, person([180.0, 0.0, 0.0], false), &three_parts(-20.0))),
+    ];
+    for (i, act) in script.iter().enumerate() {
+        act(&mut a);
+        act(&mut b);
+        // Before any refresh (aim points read the colliders as they stand), then after.
+        let early = |w: &PhysWorld| (w.actor_aim_point(0x10).map(|p| p.map(f32::to_bits)), w.actor_part_centers(0x10).iter().map(|p| p.map(f32::to_bits)).collect::<Vec<_>>());
+        assert_eq!(early(&a), early(&b), "write {i}, before the refresh");
+        assert_eq!(look(&mut a), look(&mut b), "write {i}");
+    }
+    for _ in 0..5 {
+        a.step();
+        b.step();
+    }
+    assert_eq!(a.state_digest(), b.state_digest());
+    assert_eq!((a.stats().bodies_kinematic, a.stats().colliders), (b.stats().bodies_kinematic, b.stats().colliders));
+    assert!(a.remove_actor_volume(0x10) && b.remove_actor_volume(0x10));
+    assert_eq!(a.stats().colliders, b.stats().colliders, "the standalone colliders went with the volume");
+    assert_eq!(look(&mut a), look(&mut b));
+    assert!(b.queries().ray([0.0, 0.0, 90.0], [1.0, 0.0, 0.0], 1000.0, &Filter::default()).is_none());
+}
+
 #[test]
 fn a_swinging_door_is_not_solid() {
     // The closed panel of `keyframed_door_blocks_until_posed_open`, made non-solid as

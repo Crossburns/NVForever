@@ -339,6 +339,11 @@ pub struct RefreshStats {
     pub step_absorbed: u64,
     /// Hit-volume capsules written by the hit-volume setters.
     pub hitvol_colliders: u64,
+    /// Hit-volume capsules the setters actually wrote to rapier.
+    pub hitvol_written: u64,
+    /// Hit-volume capsules the setters left alone, bit-identical to the last write (the
+    /// single capsule's equal-volume return counts one).
+    pub hitvol_skipped: u64,
     /// Colliders in the world, summed over the refreshes (divide by `refreshes`).
     pub colliders: u64,
     /// Bodies added since the last step, summed over the refreshes (re-flagged after
@@ -392,6 +397,11 @@ pub struct PhysWorld {
     pub(crate) water: crate::water::Waters,
     /// The body held by the player's grab (`crate::grab`), driven before every step.
     pub(crate) grip: Option<crate::grab::Grip>,
+    /// New actors' hit volumes get colliders of no body (`crate::actors`; on by default).
+    pub(crate) standalone_hit_volumes: bool,
+    /// Standalone hit-volume colliders written since the last refresh or step: (collider,
+    /// actor body, pose on the body), placed by `flush_hit_volumes`.
+    pub(crate) hitvol_pending: Vec<(ColliderHandle, RigidBodyHandle, Pose)>,
 }
 
 impl PhysWorld {
@@ -429,6 +439,8 @@ impl PhysWorld {
             steps: 0,
             water: Default::default(),
             grip: None,
+            standalone_hit_volumes: true,
+            hitvol_pending: Vec::new(),
         }
     }
 
@@ -803,6 +815,9 @@ impl PhysWorld {
 
     /// Advance one fixed step.
     pub fn step(&mut self) {
+        // Standalone hit volumes written since the last refresh, placed as rapier's step
+        // would place attached ones (`crate::actors`).
+        self.flush_hit_volumes();
         if !self.pending_sleep.is_empty() {
             // Find the contacts of bodies added asleep first (`update_queries`).
             self.mark_dirty(DirtyBy::Other);
@@ -846,6 +861,8 @@ impl PhysWorld {
             // Only when there is work: this is called before every query.
             let _span = tracing::info_span!("phys::query_refresh").entered();
             self.count_refresh(by);
+            // Standalone hit volumes written since the last refresh (`crate::actors`).
+            self.flush_hit_volumes();
             {
                 // The collision-only broad- and narrow-phase update.
                 let _span = tracing::info_span!("phys::refresh_detect").entered();
@@ -934,6 +951,13 @@ impl PhysWorld {
         self.refresh_stats.hitvol_colliders += n as u64;
     }
 
+    /// Diagnostics: hit-volume capsules written to rapier and left alone as bit-identical
+    /// ([`RefreshStats::hitvol_written`], [`RefreshStats::hitvol_skipped`]).
+    pub(crate) fn count_hitvol_writes(&mut self, written: u64, skipped: u64) {
+        self.refresh_stats.hitvol_written += written;
+        self.refresh_stats.hitvol_skipped += skipped;
+    }
+
     /// Bounding box (game units: min and max corners) of every collider on a fixed body —
     /// terrain and references' static collision, not characters or dynamic bodies; `None`
     /// when there are none.
@@ -1010,6 +1034,8 @@ impl PhysWorld {
             steps: self.steps,
             water: self.water.clone(),
             grip: self.grip.clone(),
+            standalone_hit_volumes: self.standalone_hit_volumes,
+            hitvol_pending: self.hitvol_pending.clone(),
         }
     }
 

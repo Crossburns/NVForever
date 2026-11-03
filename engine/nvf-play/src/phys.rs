@@ -151,10 +151,30 @@ pub fn play_params() -> PhysParams {
     PhysParams { max_substeps: (MAX_FRAME_SECONDS / p.dt).ceil() as u32, ..p }
 }
 
+/// Switch back (any value but empty or `0`, e.g. `1`): actor hit volumes are attached to
+/// their bodies again, the representation before 2026-11-03, instead of standalone colliders
+/// (`PhysWorld::set_standalone_hit_volumes`, `fnv_phys::actors`: the cost of a write;
+/// physics.md §5.1). For comparing; not a test aid: it does not make the run unattended.
+pub const HITVOL_ATTACHED_VAR: &str = "NVF_PHYS_HITVOL_ATTACHED";
+
+/// The physics world of play: [`play_params`], hit volumes standalone unless
+/// [`HITVOL_ATTACHED_VAR`] is set.
+fn play_world() -> PhysWorld {
+    let mut w = PhysWorld::new(play_params());
+    let attached = std::env::var(HITVOL_ATTACHED_VAR).is_ok_and(|v| !v.is_empty() && v != "0");
+    if attached {
+        info!("actor hit volumes: attached to their bodies ({HITVOL_ATTACHED_VAR})");
+    } else {
+        info!("actor hit volumes: standalone colliders ({HITVOL_ATTACHED_VAR}=1 attaches them)");
+    }
+    w.set_standalone_hit_volumes(!attached);
+    w
+}
+
 impl Default for PhysState {
     fn default() -> Self {
         PhysState {
-            world: PhysWorld::new(play_params()),
+            world: play_world(),
             stepper: Stepper::default(),
             player: None,
             npcs: BTreeMap::new(),
