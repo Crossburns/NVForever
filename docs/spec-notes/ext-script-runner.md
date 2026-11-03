@@ -116,7 +116,12 @@ from source; tests in `crates/fnv-script/tests/compile.rs`):
   `SetJohnnyOnRenderUpdateEventHandler 1 (begin function {} … end) 0 0` hands a
   three-parameter function four [hypothesis: the extender's call lines do the same; the
   page lists three]. This was the `syntax: unexpected 0` the files reported, not
-  DispatchEventAlt. Only a run of arguments is dropped; anything else is still an error.
+  DispatchEventAlt. Only a run of arguments is dropped; anything else is still an error,
+  as is a dropped argument that cannot be read (`Nobody.GetAV Luck`). Reading the dropped
+  arguments leaves nothing behind (no reference list entries, lambda numbers, variables
+  or warnings). The cost: where the catalogue lists too few parameters, a real argument is
+  lost with only a warning. Observer check 81 (observer-checks.md) settles whether the
+  original drops them.
 - **`( begin function`**, a space after the parenthesis, opens a block lambda as
   `(begin function` does (`CallWhen ( begin function {} … end) ({}=> …) (0b10100)`)
   [hypothesis: spaces between tokens do not matter; documented: Lambda shows

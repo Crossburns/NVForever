@@ -874,12 +874,20 @@ impl<'a> Gen<'a> {
         }
         let rest = p.rest();
         if matches!(e, crate::ir::XExpr::Call { .. }) {
-            let diags = self.diags.len();
-            if let Some(n) = self.surplus_args(&mut p) {
+            // The dropped arguments leave nothing behind: what reading them registered
+            // (reference list entries and their spellings, a lambda's number and the
+            // variables its body declares) and what it reported is put back. One that
+            // cannot be read at all (`Mistyped.Fn`) still fails the line: an argument is
+            // dropped only when it is one [hypothesis, observer-checks.md "Surplus
+            // arguments on an extender call line"].
+            let saved = (self.refs.clone(), self.claims.clone(), self.vars.clone(), self.ref_vars.clone(), self.lambda_seq, self.diags.len());
+            let n = self.surplus_args(&mut p);
+            (self.refs, self.claims, self.vars, self.ref_vars, self.lambda_seq) = (saved.0, saved.1, saved.2, saved.3, saved.4);
+            self.diags.truncate(saved.5);
+            if let Some(n) = n {
                 self.diag("surplus_arguments", false, format!("{n} dropped: {rest}"));
                 return Some(e);
             }
-            self.diags.truncate(diags);
         }
         self.diag("syntax", true, format!("unexpected {rest}"));
         None

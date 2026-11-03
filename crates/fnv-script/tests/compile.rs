@@ -1113,17 +1113,31 @@ fn values_follow_variables_among_dispatched_arguments() {
         _ => None,
     }).collect();
     assert_eq!(calls, [vec!["\"B42OCND\"", "0"], vec!["\"name\"", "v1", "0"]]);
-    // A call line's arguments past those its function takes are dropped, with a warning:
-    // ln_B42Optics.txt hands SetJohnnyOnRenderUpdateEventHandler (three parameters) four.
-    let (c, _) = build("begin GameMode
-SetJohnnyOnRenderUpdateEventHandler 1 (begin function {}
-DispatchEventAlt \"B42OCND\" 0
-float xiR = 1
-DispatchEventAlt \"B42O7\"
-end) 0 0
-end");
-    assert!(c.errors().next().is_none(), "{:?}", c.diags);
-    assert!(c.diags.iter().any(|d| d.kind == "surplus_arguments" && !d.error), "{:?}", c.diags);
+}
+
+#[test]
+fn a_call_lines_surplus_arguments_are_dropped() {
+    // ln_B42Optics.txt hands SetJohnnyOnRenderUpdateEventHandler (three parameters) four:
+    // the fourth is dropped with a warning, as the vanilla compiler drops them (#1470).
+    let (c, _) = build("begin GameMode\nSetJohnnyOnRenderUpdateEventHandler 1 (begin function {}\nDispatchEventAlt \"B42OCND\" 0\nfloat xiR = 1\nend) 0 0\nend");
+    let warned: Vec<_> = c.diags.iter().filter(|d| d.kind == "surplus_arguments").collect();
+    assert!(warned.len() == 1 && !warned[0].error, "{:?}", c.diags);
+    // What reading the dropped ones registered is put back: no reference entry for
+    // Caps001, no warning for the bare word, and the next lambda keeps the next number.
+    let (c, p) = build("begin GameMode\nSetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC \"a\") 0 Caps001 Nothing ({} => PrintC \"b\")\nSetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC \"c\") 0\nend");
+    assert!(c.refs.is_empty(), "{:?}", c.refs);
+    assert_eq!(c.diags.iter().map(|d| d.kind).collect::<Vec<_>>(), ["surplus_arguments"]);
+    let lambdas: Vec<u32> = body(&p).iter().filter_map(|s| match s {
+        Stmt::Eval { expr: XExpr::Call { call } } => match &call.args[1] {
+            XExpr::Lambda { index, .. } => Some(*index),
+            _ => None,
+        },
+        _ => None,
+    }).collect();
+    assert_eq!(lambdas, [0, 1]);
+    // An argument that cannot be read is not dropped: the line fails.
+    let c = compile("begin GameMode\nSetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC \"a\") 0 Nobody.GetAV Luck\nend", &table(), &World, None);
+    assert!(c.errors().any(|d| d.kind == "syntax"), "{:?}", c.diags);
 }
 
 #[test]

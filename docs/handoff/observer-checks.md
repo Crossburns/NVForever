@@ -1181,3 +1181,21 @@ The numbers above stay put so links to them hold; each item here gives its own p
     registered still fire after a save is loaded? The answers fix NVForever's moments
     (`fnv_game::script_runner::Prefix`). The files go in the original game's Data, so the
     owner places them (sessions don't write into the game folder).
+
+## Added 2026-11-03 (surplus arguments on an extender call line, issue #1470)
+
+81. **Does the extender's compiler drop arguments past those a call line's function takes,
+    and does it read them first?** (P3; ext-script-runner.md §6, `xcall_line` in
+    `crates/fnv-script/src/compile/gen.rs`.) NVForever drops them with a
+    `surplus_arguments` warning, as the vanilla compiler drops them, but still fails the
+    line when a dropped one cannot be read. Since then, a function whose catalogue lists
+    too few parameters loses a real argument with only a warning, where it used to be an
+    error. Unattended, with JohnnyGuitar and JIP LN loaded: `RunScriptSnippet 0` on
+    (a) `SetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC "nvf a") 0 0` (ln_B42Optics.txt
+    does this: four arguments to three parameters), (b) the same with `0 Nobody.GetAV Luck`
+    in place of the last `0`, and (c) `Player.IsAnimPlayingEx 5 0 0 1` printed with
+    `PrintC "%g"` (four arguments where the page lists three; a fourth parameter would show
+    up as a different result from `5 0 0`). Then see which compile (console error or not),
+    whether (a)'s handler prints, and what (c) returns. If (a) is refused, the drop goes
+    and ln_B42Optics.txt is the mod's own error. If (b) compiles, dropped arguments are not
+    read. If (c) differs from `5 0 0`, the catalogue needs the fourth parameter.
