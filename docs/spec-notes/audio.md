@@ -153,7 +153,8 @@ environment: §14.6.
   the frame's requests were played, as they would have started then, so a file decoded
   a few milliseconds late can still start in the frame it was asked for [engineering
   choice]. The exit line adds how many it started, how many of those in their own frame
-  and the longest wall-clock wait among them in milliseconds.
+  and, for those only, the longest time in milliseconds from joining the waiting list to
+  the start: not the delay from the request until the sound is heard.
 - Log: `music: in marker …`, `music: <set> day|night started, layers …`,
   `music: <set> layers …`, `music: <set> fades out`, `music: battle begins …`,
   `music: battle over …`, `music: intro|outro of …`, `music: a script plays …`,
