@@ -67,11 +67,25 @@ impl Calendar {
                 days %= 365;
                 continue;
             }
+            // The long straight runs of such a date: a day below 1 only counts up, and a
+            // month below 0 has 31 days and no year to roll.
+            if day < 1 {
+                let steps = days.min(1i64.saturating_sub(day));
+                day += steps;
+                days -= steps;
+                continue;
+            }
+            if month < 0 && day == 1 && days >= 31 {
+                let months = (days / 31).min(0i64.saturating_sub(month));
+                month += months;
+                days -= months * 31;
+                continue;
+            }
             days -= 1;
-            day += 1;
+            day = day.saturating_add(1);
             if day > days_in_month(year, month) {
                 day = 1;
-                month += 1;
+                month = month.saturating_add(1);
                 if month > 11 {
                     month = 0;
                     year = year.saturating_add(1);
@@ -129,7 +143,8 @@ impl FineClock {
     /// The copies of a snapshot, each kept only if it still rounds to its global.
     pub fn restored(hour: Option<&str>, days_passed: Option<&str>, stored: &Calendar) -> FineClock {
         FineClock {
-            hour: Carried::restored(hour, stored.hour, stored_hour),
+            // The clock never carries 24 or more, and `stored_hour` would hide one.
+            hour: Carried::restored(hour, stored.hour, stored_hour).filter(|c| c.value < 24.0),
             days_passed: Carried::restored(days_passed, stored.days_passed, |v| v as f32),
         }
     }
@@ -194,7 +209,7 @@ impl FineClock {
         // A value too small for its own rem_euclid comes back as 24.
         let to = if to >= 24.0 { 0.0 } else { to };
         let now = self.hour_now(stored.hour);
-        if stored_hour(to) == stored_hour(now) {
+        if stored_hour(to) == stored.hour {
             return (stored, 0.0);
         }
         let mut hours = to - now;
@@ -469,5 +484,69 @@ mod tests {
         assert_eq!(moved.saved(), (None, days.clone()));
         assert_eq!(FineClock::restored(None, None, &c).saved(), (None, None));
         assert_eq!(FineClock::restored(Some("x"), Some("NaN"), &c).saved(), (None, None));
+    }
+
+    #[test]
+    fn a_saved_hour_of_24_or_more_falls_back_to_the_global() {
+        let c = Calendar { hour: LAST_HOUR, ..START };
+        for bad in ["24", "48", "1e300"] {
+            let mut clock = FineClock::restored(Some(bad), None, &c);
+            assert_eq!(clock.saved(), (None, None), "{bad}");
+            let n = clock.advance(c, 1.0);
+            assert_eq!(n.day, 19.0, "{bad}: one day, not two");
+            assert!((n.hour - 1.0).abs() < 1e-5, "{bad}: {}", n.hour);
+        }
+        // Just under 24 is what the clock really carries; a negative hour a script wrote
+        // goes on as it did.
+        let just_under = "23.9999999";
+        assert_eq!(FineClock::restored(Some(just_under), None, &c).saved().0.as_deref(), Some(just_under));
+        let negative = Calendar { hour: -5.0, ..START };
+        let mut clock = FineClock::restored(Some("-5"), None, &negative);
+        assert_eq!(clock.saved().0.as_deref(), Some("-5"));
+        assert_eq!(clock.advance(negative, 1.0).hour, -4.0);
+    }
+
+    #[test]
+    fn the_hour_shown_is_the_stored_global_not_a_clamped_one() {
+        // GameHour written past 24: the request is a real move, about 18 hours on.
+        let written = Calendar { hour: 30.0, ..START };
+        let (to, hours) = FineClock::default().advance_to_hour(written, LAST_HOUR as f64);
+        assert_eq!((to.day, to.hour), (19.0, LAST_HOUR));
+        assert!((hours - 18.0).abs() < 1e-4, "{hours}");
+        // And written as exactly 24.
+        let (to, hours) = FineClock::default().advance_to_hour(Calendar { hour: 24.0, ..START }, LAST_HOUR as f64);
+        assert_eq!((to.day, to.hour), (19.0, LAST_HOUR));
+        assert!((hours - 24.0).abs() < 1e-4, "{hours}");
+        // Really showing it: no move.
+        let shown = Calendar { hour: LAST_HOUR, ..START };
+        assert_eq!(FineClock::default().advance_to_hour(shown, LAST_HOUR as f64), (shown, 0.0));
+    }
+
+    #[test]
+    fn a_far_out_date_skips_its_straight_runs() {
+        // Against the steps, as far as they can be run here.
+        let c = |month: f32, day: f32| Calendar { month, day, ..START };
+        for (month, day) in [(5.0, -1000.0), (-50.0, 1.0), (-50.0, -20.0), (-3.0, 40.0), (-3.0, 31.0), (20.0, -10.0)] {
+            for jump in [1.0, 30.0, 31.0, 32.0, 1000.0, 1001.0, 1002.0, 1549.0, 1550.0, 1551.0, 2600.0, 2601.0, 3000.0] {
+                let n = c(month, day).advance(jump * 24.0);
+                assert_eq!((n.year, n.month, n.day, n.hour), stepped_day_by_day(c(month, day), jump * 24.0), "{month} {day} + {jump}");
+            }
+        }
+        let far = c(-200.0, -5_000_000.0);
+        let jump = (5_000_001.0 + 200.0 * 31.0 + 400.0) * 24.0;
+        let n = far.advance(jump);
+        assert_eq!((n.year, n.month, n.day, n.hour), stepped_day_by_day(far, jump));
+
+        // Beyond them: a billion days from day -1,000,000,000 end at once, on what the
+        // steps count to by hand.
+        let day = -1_000_000_000.0;
+        assert_eq!(c(5.0, day).roll_days(1_000_000_000), (2281, 5, 0));
+        assert_eq!(c(5.0, day).roll_days(1_000_000_001), (2281, 5, 1));
+        assert_eq!(c(5.0, day).roll_days(1_000_000_001 + 365), (2282, 5, 1));
+        assert_eq!(c(-1_000_000_000.0, 1.0).roll_days(31_000_000_000), (2281, 0, 1));
+        // Too far to step at all: the extremes neither hang nor overflow.
+        assert_eq!(c(f32::MAX, f32::MAX).roll_days(1), (2282, 0, 1));
+        assert_eq!(c(f32::MIN, f32::MIN).roll_days(1), (2281, i64::MIN, i64::MIN + 1));
+        assert_eq!(c(5.0, f32::MIN).roll_days(i64::MAX), (2281, 5, -1));
     }
 }

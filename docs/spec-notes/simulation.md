@@ -732,8 +732,8 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   `set` use), and a stored value other than the one last written replaces it. The copies
   are saved beside the globals as optional fields (`Snapshot::clock_hour`,
   `clock_days_passed`; `SNAPSHOT_FORMAT` is unchanged), so a restored run goes on exactly as
-  the uninterrupted one; an older save, or a copy that no longer rounds to its global,
-  seeds from the global. A stored GameHour stays below 24 until the day wraps. Commands
+  the uninterrupted one; an older save, a copy that no longer rounds to its global, or an
+  hour copy of 24 or more seeds from the global. A stored GameHour stays below 24 until the day wraps. Commands
   that name an hour (SetGameHour) land on it (`World::advance_to_hour`) rather than adding
   time computed from the rounded global, which would stop short of midnight. A GameHour
   that is no number counts as hour 0 at the next advance.

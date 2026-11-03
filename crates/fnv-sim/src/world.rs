@@ -290,7 +290,8 @@ pub struct Snapshot {
     pub globals: BTreeMap<FormId, f32>,
     /// GameHour and GameDaysPassed at the clock's own precision, as decimal strings like
     /// `rng_word_pos`; absent in older snapshots, which go on from the globals
-    /// ([`clock::FineClock`]).
+    /// ([`clock::FineClock`]). An editor that changes one of those globals in a snapshot
+    /// must clear its field here: a same-value write cannot be seen from the values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock_hour: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
