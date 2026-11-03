@@ -361,8 +361,8 @@ env = { NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "Novac", "--play", "--no-voice", "--no-messages", "--hour", "7", "--sun-shadows", "--log-frame-times", "8"]
 run_seconds = 25
 expect = [
-  { re = 'shadow casters per cascade: Sun for view: \[\d+, (?P<n>\d+), \d+\]', range = [200, 1100], label = "the middle cascade draws the casters over its slice (about 750; 1,420 with the whole square)" },
-  { re = 'shadow casters per cascade: Sun for view: \[\d+, \d+, (?P<n>\d+)\]', range = [500, 2400], label = "the last cascade draws the casters over its slice (about 1,750; 3,200 with the whole square)" },
+  { re = 'shadow casters per cascade: .*Sun for view: \[\d+, (?P<n>\d+), \d+\]', range = [200, 1100], label = "the middle cascade draws the casters over its slice (about 750; 1,420 with the whole square)" },
+  { re = 'shadow casters per cascade: .*Sun for view: \[\d+, \d+, (?P<n>\d+)\]', range = [500, 2400], label = "the last cascade draws the casters over its slice (about 1,750; 3,200 with the whole square)" },
 ]
 
 [[scenario]]
