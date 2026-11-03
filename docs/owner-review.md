@@ -150,6 +150,12 @@ the spec it links to.
     strong, too weak, or should either be off by default?
     ([controller §5](design/controller.md))
 
+44. **No keyboard drop key on the Pip-Boy's ITEMS page (#1393).** Dropping is a right
+    click on a row (Shift + right click the stack), and X is only the mod menu's, as the
+    original's PC file gives it; the controller drops with X. A keyboard-only player can't
+    drop. If you want a key, name it and it drops one (Shift with it the stack); free on
+    that page are, for example, G or Delete. ([pipboy §6](spec-notes/pipboy.md))
+
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
 19. **Walking away from a conversation.** The world freezes while you talk, as in the

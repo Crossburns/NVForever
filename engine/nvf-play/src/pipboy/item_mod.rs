@@ -266,8 +266,10 @@ pub fn effect_text(effect: Option<&str>, a: f32) -> Option<String> {
     })
 }
 
-/// The keys of the mod menu and X on the ITEMS page (Shift+X drops the stack there,
-/// `super::items`; X on an item that is not a weapon with mod slots drops one).
+/// The keys of the mod menu and X on the ITEMS page; X on an item that is not a weapon
+/// with mod slots, and Shift+X, do nothing (dropping is a right click, `super::items`).
+/// The controller's LB presses X here (`IM_ModButton`'s `&xbuttonlb;` [documented:
+/// inventory_menu.xml], `crate::pad::menu_buttons`).
 #[allow(clippy::too_many_arguments)]
 pub fn keys(
     pip: Res<PipBoy>,
@@ -311,7 +313,7 @@ pub fn keys(
         let step = resolve(menu.0.as_ref().map(|s| s.selected), step);
         match (menu.0.as_mut(), step) {
             (None, ModInput::Open) => {
-                // Not a weapon with mod slots: X drops instead (`super::items::keys`).
+                // Not a weapon with mod slots: X does nothing.
                 let Some(o) = current(&active, &sim, combat.as_deref()) else { continue };
                 info!("pipboy mod: open {} (flags {}): {}", o.name, o.extra.mods, o.choices.iter().map(|c| format!("{} (slot {}{})", c.name, c.slot, if c.attached { ", on" } else { "" })).collect::<Vec<_>>().join(", "));
                 menu.0 = Some(Session { offer: o, first: 0, selected: 0 });

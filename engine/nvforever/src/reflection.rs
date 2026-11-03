@@ -390,6 +390,13 @@ fn reflection_height(world: &WorldData, dw: &mut DistantWater, cam_game: Vec3) -
     })
 }
 
+/// Test aid `NVF_PLAY_TEST_NO_REFLECTION=1`: the camera stays off (water reflects the sky),
+/// for measuring what it costs where water is seen (docs/design/frame-rate-audit.md §1).
+fn no_reflection() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("NVF_PLAY_TEST_NO_REFLECTION").is_ok_and(|v| v == "1"))
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_reflection(
     world: Res<WorldData>,
@@ -434,6 +441,7 @@ fn update_reflection(
         *unseen_for += time.delta_secs();
     }
     let height = near_water.filter(|_| seen.is_some() || (camera.is_active && *unseen_for <= KEEP_UNSEEN));
+    let height = height.filter(|_| !no_reflection());
     // z: screen-space reflections stand in where this plane is not (graphics.rs).
     let ssr = if graphics.is_some_and(|g| g.water_reflections) { 1.0 } else { 0.0 };
     let plane = match height {

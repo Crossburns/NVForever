@@ -99,6 +99,14 @@ pub struct PhysState {
     /// Doors that open in place, in the world now: their keyframed bodies follow
     /// `crate::doors::Doors` ([`pose_doors`]).
     pub doors: BTreeMap<u32, PosedDoor>,
+    /// Destroyed references whose destruction stage names a model (DSTD's DMDL as stored,
+    /// a car's hulk): their collision is built from it ([`destruction_models`]).
+    pub destruction_models: HashMap<u32, String>,
+    /// The destruction model each reference was last given collision from.
+    built_models: HashMap<u32, String>,
+    /// References given collision so far (each add, and each build again): a reader that
+    /// must act on rebuilt collision (nvforever `wrecks.rs`) looks again only when it grew.
+    pub refs_built: u64,
     /// The drawn floors of the references in the world whose collision stays where it
     /// was placed, with their pose ([`PhysState::drawn_ground`]).
     drawn: HashMap<u32, (Arc<DrawnFloors>, RefPose)>,
@@ -158,6 +166,9 @@ impl Default for PhysState {
             placed_dynamic: BTreeMap::new(),
             moved_now: Vec::new(),
             doors: BTreeMap::new(),
+            destruction_models: HashMap::new(),
+            built_models: HashMap::new(),
+            refs_built: 0,
             drawn: HashMap::new(),
             player_sink: 0.0,
             player_lift: step_lift::StepLift::default(),
@@ -695,7 +706,8 @@ impl PhysState {
             PhysCell::Exterior(..) => record.and_then(|c| c.land),
             PhysCell::Interior(_) => None,
         };
-        Job { cell, refs, land, poses: Vec::new(), scales: Vec::new() }
+        let models = refs.iter().filter_map(|r| self.destruction_models.get(r).map(|m| (*r, m.clone()))).collect();
+        Job { cell, refs, land, poses: Vec::new(), scales: Vec::new(), models }
     }
 
     fn source(&self, ctx: &LoadCtx) -> Source {
@@ -707,6 +719,7 @@ impl PhysState {
         let job = with_poses(self.job(ctx.d, cell), ctx.sim);
         #[cfg(test)]
         if let Some(fake) = self.fake {
+            let job = Job { models: self.fake_models(), ..job };
             return Box::new(move || fake(&job));
         }
         let src = self.source(ctx);
@@ -792,7 +805,7 @@ impl PhysState {
             *counts.entry("not_present").or_default() += 1;
             return false;
         }
-        let RefShapes { tallies, water, prepared, dynamic_local, door, drawn } = shapes(&pl);
+        let RefShapes { tallies, water, prepared, dynamic_local, door, drawn, model } = shapes(&pl);
         for what in tallies {
             *counts.entry(what).or_default() += 1;
         }
@@ -815,6 +828,15 @@ impl PhysState {
                 return false;
             }
         };
+        match model {
+            Some(m) => {
+                self.built_models.insert(pl.form_id, m);
+            }
+            None => {
+                self.built_models.remove(&pl.form_id);
+            }
+        }
+        self.refs_built += 1;
         let counts = &mut self.stats.counts;
         *counts.entry("with_collision").or_default() += 1;
         match drawn {
@@ -843,6 +865,14 @@ impl PhysState {
     /// Add a reference's collision if it is in the world and has any. Returns whether it
     /// now has collision.
     fn add_ref(&mut self, ctx: &LoadCtx, r: u32) -> bool {
+        // Test aid: the reference as its made-up cell has it.
+        #[cfg(test)]
+        if let (Some(fake), Some(&cell)) = (self.fake, self.ref_cell.get(&r)) {
+            let job = Job { models: self.fake_models(), ..self.job(ctx.d, cell) };
+            let Some(e) = fake(&job).refs.into_iter().find(|e| e.form_id == r) else { return false };
+            let shapes = e.shapes;
+            return self.apply(ctx, e.placement, |_| shapes.expect("made up with its placement"));
+        }
         let src = self.source(ctx);
         let mut times = LoadTimes::default();
         let t = Instant::now();
@@ -856,7 +886,8 @@ impl PhysState {
             p.scale = s;
         }
         times.records += ms_since(t);
-        let added = self.apply(ctx, pl, |pl| prepare::reference(&src, pl, &mut times));
+        let model = self.destruction_models.get(&r).cloned();
+        let added = self.apply(ctx, pl, |pl| prepare::reference(&src, pl, model.as_deref(), &mut times));
         self.stats.times.add(&times);
         added
     }
@@ -877,6 +908,7 @@ impl PhysState {
             self.placed_dynamic.remove(&r);
             self.doors.remove(&r);
             self.drawn.remove(&r);
+            self.built_models.remove(&r);
             if self.ref_cell.get(&r) == Some(&cell) {
                 self.ref_cell.remove(&r);
             }
@@ -943,6 +975,50 @@ impl PhysState {
             self.add_ref(ctx, id)
         };
         info!("collision of 0x{id:08X} built again where a script moved it ({:.1} from its body){}", dist, if built { "" } else { ": none now" });
+    }
+
+    /// Test aid: every destruction model, by FormID (made-up cells have no index for
+    /// [`Self::job`] to list their references from).
+    #[cfg(test)]
+    fn fake_models(&self) -> Vec<(u32, String)> {
+        let mut m: Vec<(u32, String)> = self.destruction_models.iter().map(|(r, m)| (*r, m.clone())).collect();
+        m.sort_unstable();
+        m
+    }
+
+    /// The destruction model reference `r`'s collision was last built from (`None`: its
+    /// base object's).
+    pub fn built_model(&self, r: u32) -> Option<&str> {
+        self.built_models.get(&r).map(String::as_str)
+    }
+
+    /// Take the game's destruction models (`want`, by reference) and build again the
+    /// collision of each reference in the world whose model changed: a car reaching the
+    /// stage that names its hulk collides as the hulk, whose loose parts
+    /// (`prepare::hold_jointed`) are held until the drawing lets them fall (nvforever
+    /// `wrecks.rs`); ClearDestruction brings the base model's back.
+    pub fn set_destruction_models(&mut self, ctx: &LoadCtx, want: HashMap<u32, String>) {
+        let changed: BTreeSet<u32> = want
+            .keys()
+            .chain(self.built_models.keys())
+            .copied()
+            .filter(|r| want.get(r).map(String::as_str) != self.built_model(*r))
+            .collect();
+        self.destruction_models = want;
+        for r in changed {
+            if !self.ref_cell.contains_key(&r) || !self.has_collision(r) {
+                continue;
+            }
+            self.placed_dynamic.remove(&r);
+            self.doors.remove(&r);
+            self.drawn.remove(&r);
+            self.world.remove_ref(r);
+            let built = self.add_ref(ctx, r);
+            match self.built_model(r) {
+                Some(m) => info!("phys: 0x{r:08X} collides as its destruction model {m}{}", if built { "" } else { ": none now" }),
+                None => info!("phys: 0x{r:08X} collides as its base model again{}", if built { "" } else { ": none now" }),
+            }
+        }
     }
 
     /// A created reference (dropped item): collision while it is present and the physics
@@ -1327,7 +1403,7 @@ impl Plugin for PhysPlugin {
             .add_systems(Startup, init_phys)
             .add_systems(Last, (frame_times, report).chain())
             .add_message::<crate::RefRepose>()
-            .add_systems(Update, (travel, ref_changed, stream, pose_doors).chain().in_set(PhysSystems).in_set(crate::PlaySet::Physics))
+            .add_systems(Update, (travel, ref_changed, destruction_models, stream, pose_doors).chain().in_set(PhysSystems).in_set(crate::PlaySet::Physics))
             .add_systems(PostUpdate, trace::trace);
     }
 }
@@ -1417,6 +1493,34 @@ fn ref_changed(
     for id in moved {
         phys.repose_ref(&ctx, id);
     }
+}
+
+/// How often the game's destruction models are looked at, seconds [design: as nvforever's
+/// `destroyed.rs` swaps the drawn model].
+const DESTRUCTION_LOOK_EVERY: f32 = 0.25;
+
+/// Destroyed references collide as their destruction model ([`PhysState::set_destruction_models`]).
+fn destruction_models(
+    time: Res<Time>,
+    mut wait: Local<f32>,
+    script: Option<Res<crate::script::ScriptState>>,
+    d: Res<PlayWorld>,
+    sim: Res<SimState>,
+    data: Option<Res<GameData>>,
+    mut phys: ResMut<PhysState>,
+) {
+    *wait -= time.delta_secs();
+    if *wait > 0.0 {
+        return;
+    }
+    *wait = DESTRUCTION_LOOK_EVERY;
+    let Some(game) = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game) else { return };
+    let want: HashMap<u32, String> = game.damaged_refs().filter_map(|r| game.destruction_model(r).map(|m| (r.0, m.to_string()))).collect();
+    if want.is_empty() && phys.destruction_models.is_empty() && phys.built_models.is_empty() {
+        return;
+    }
+    let ctx = LoadCtx { d: &d, sim: &sim, data: data.as_deref() };
+    phys.set_destruction_models(&ctx, want);
 }
 
 /// The settle write-back for dropped items ([`PhysState::settle_created`]) after the

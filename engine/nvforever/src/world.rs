@@ -1144,7 +1144,13 @@ pub fn spawn_model(
     // An activator whose model joins its bodies (a swinging trap): its nodes, for its
     // bodies to move once it is let go (swing_traps.rs).
     let jointed = model.jointed && &base.sig == b"ACTI";
-    if let Some(rig) = model.rig.as_ref().filter(|rig| (rig.idle.is_some() && idle.is_some()) || door.is_some() || activator.is_some() || scripted || jointed) {
+    // A destroyed reference drawn with its destruction model (destroyed.rs: not its base
+    // object's model) whose bodies are loose parts, a car's hulk: its nodes, for the
+    // bodies to move once they fall (wrecks.rs). Any other model in place of the base's
+    // passes this test too; wrecks.rs lets the parts fall only when the game has the
+    // reference destroyed to that model and physics built its collision from it.
+    let wreck = model.loose && p.base.and_then(|b| base_object(world.lo, world.schema, b)).and_then(|b| b.world_model_path()).is_some_and(|m| m != path);
+    if let Some(rig) = model.rig.as_ref().filter(|rig| (rig.idle.is_some() && idle.is_some()) || door.is_some() || activator.is_some() || scripted || jointed || wreck) {
         // Animated (Idle sequence): its own node hierarchy per reference.
         // "Random Anim Start" bases start their idle at a phase spread by reference
         // (fnv_actor::anims::random_anim_start; animation.md §8).
@@ -1179,6 +1185,9 @@ pub fn spawn_model(
         }
         if jointed {
             commands.entity(root).insert(crate::swing_traps::TrapRig { form_id: r, path: path.clone(), nodes: nodes.clone() });
+        }
+        if wreck {
+            commands.entity(root).insert(crate::wrecks::WreckRig { form_id: r, path: path.clone(), nodes: nodes.clone() });
         }
         if !rig.groups.is_empty() {
             commands.entity(root).insert(crate::object_anims::GroupRig::new(r, model.clone(), &path, nodes));

@@ -149,6 +149,39 @@ before a query). Held by furniture or flying with ToggleCollision the steps stil
 `phys::rapier_step` and perhaps `phys::query_refresh`, but not the walking path's
 `phys::blocks`, `phys::player_move`, `phys::world_step` and `phys::after` wrappers.
 
+### Many cells, each option, and the stored settings (#1375)
+
+- **Stored settings win over the command line** [documented: `settings.rs` module notes]:
+  `NVForever.ini` `[Settings]` (the settings page) sets the resolution, the anti-aliasing,
+  sun shadows and every enhanced key after the arguments are read, so `--size`, `--msaa`,
+  `--no-sun-shadows` and `--graphics` are silently overruled there. [observed 2026-11-02]
+  On the desktop the stored `resolution=1920x1080;desktop` and `anti-aliasing=0.50` (8x
+  MSAA) held every run. Measure with `NVFOREVER_HOME` set to a home whose `NVForever.ini`
+  is a copy without `[Settings]` (with `plugins.txt`); `--graphics-cycle` steps switch at
+  run time and hold either way. Test runs (`--run-seconds`) default to `--graphics vanilla`.
+- `tools/profile/tracy-tour.ps1` + `cells.csv`: one launch per cell of a Tracy build, a
+  `tracy-capture` after the load, CPU and GPU (`tracy-csvexport -g`) zone CSVs per cell;
+  `summarise.py <folder>` gives per cell the main/extract/render-thread split, the GPU passes
+  and the heaviest spans. `-NvfHome`, `-Graphics`, `-Repeat`, `-Vsync`, `-NoCollector`.
+- `tools/profile/option-costs.ps1`: per cell, `--graphics-cycle` through all on, all on but
+  each enhanced key in turn, vanilla and no sun shadows; a key's cost is "all on" minus
+  "all on but it". Periods are grouped by the set the log line names, not by position.
+- With `NVF_PLAY_TEST_PROFILE`: `profile shadows:` (casters per cascade of each
+  directional light, nearest first), `profile visibility:` (entities Bevy's visibility
+  systems walk every frame, meshes or not) and `profile transforms:` (transforms written
+  that frame, with a mesh, by name: about 950 of 7,200 at the Strip and Novac, nearly all
+  the animated actors' skeleton nodes [observed 2026-11-02]).
+- Test aids, off unless `=1`: `NVF_PLAY_TEST_NO_REFLECTION` (the water reflection camera
+  stays off), `NVF_PLAY_TEST_NO_ARMS_SHADE` (no arms shade light, #1374),
+  `NVF_PLAY_TEST_ACTOR_NO_SHADOWS` (actor meshes cast no shadows; still drawn).
+- [observed 2026-11-02, i9-14900K, RTX 4070, 1920x1080, enhanced, vsync off] What they
+  found: the sun's 4096² maps (#1367), moon shadows (#1369, fixed in #1371), full-size
+  ambient occlusion (#1370), the arms shade light (#1374: 3.6 ms at Novac 07:00); 8x MSAA
+  costs about 2.3 ms against none at Novac and Goodsprings; a low sun about doubles the
+  sun's shadow cost (Novac 4.4 ms at noon, 7.9-8.3 ms at 07:00 and 19:00, with the shade
+  light); the reflection camera at Hoover Dam 0.6 ms; the Tracy build adds about 0.85 ms
+  where the CPU sets the frame (Hoover) and nothing where the GPU does (Novac).
+
 ## 2. Item 4: the mantis ootheca
 
 **What happens** [observed: `fnvtool script decompile --form 000EF406`, `esm decode`]:

@@ -149,9 +149,11 @@ WeaponHasModType's list], with what the values do [documented: GECK wiki Weapon 
   [documented: MESG `HelpPipBoyItems`].
 - NVForever shows it for a weapon with mod slots [hypothesis], always bright, since the
   menu takes mods off as well as putting them on [design: the owner's rule, 2026-10-27].
-  X on a weapon with mod slots opens the mod menu; on anything else X still drops one
-  (Shift+X the stack) [design: NVForever's drop key; the original's PC drop key is not
-  in the file].
+  X on a weapon with mod slots opens the mod menu; on anything else, and with Shift, X
+  does nothing; a right click drops [design: owner 2026-11-02, #1393; pipboy.md §6].
+  The original's controller button for Mod is LB (`&xbuttonlb;`) and for Drop X
+  (`IM_DropButton`, `&xbuttonx;`) [documented: inventory_menu.xml]; NVForever's
+  controller follows both (`pad::menu_buttons`, controller.md §3).
 
 ## 5. The mod menu
 

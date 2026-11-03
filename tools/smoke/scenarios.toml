@@ -6411,6 +6411,22 @@ expect = [
 order = [["pipboy mod: open", "pipboy mod: 10mm Pistol + 10mm", "combat: weapon Weap10mmPistol mods 1 on"], ["pipboy mod: 10mm Pistol + 10mm", "pipboy mod: 10mm Pistol + - 10mm"]]
 
 [[scenario]]
+name = "pipboy-right-click-drop"
+source = "#1393 (owner 2026-11-02; docs/spec-notes/pipboy.md §6): a right click on an ITEMS row drops it; on a 10mm Pistol (Weap10mmPistol, a weapon with mod slots, first in the Weapons tab by name) with a fitting mod carried, so Mod X) shows, the right click drops the pistol and never opens the mod menu or equips it"
+areas = ["pipboy"]
+paths = ["engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy/test_aid.rs"]
+env = { NVFOREVER_HOME = "pipboy-right-click-drop-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:call:player:AddItem:Weap10mmPistol:1,9.6:call:player:AddItem:ModNV10mmPistolExtMags:1", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=items,13.5:tab=0,15:rclick=260:150,18:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 21
+expect = [
+  { re = 'pipboy items: 10mm Pistol Mod X\)', label = "the pistol's Mod X) shows: a weapon with mod slots" },
+  { text = "test aid: pipboy clicked the screen", label = "the right click lands on the screen" },
+  { re = 'menu: Drop: Dropped 10mm Pistol x1', label = "the right click drops the pistol" },
+  { text = "pipboy mod: open", count = 0, label = "the mod menu stays closed" },
+  { re = 'menu: (Select|One).*Equipped 10mm Pistol', count = 0, label = "the right click does not equip it" },
+]
+
+[[scenario]]
 name = "combat-silenced-sound"
 source = "ESM gap audit row 12 (docs/spec-notes/weapon-mods.md §7): a weapon with a Silence or Suppressor mod on shoots with its WEAP WMS1/WMS2 sounds [documented: GECK wiki Weapons]; the 10mm Pistol (Weap10mmPistol) gets its silencer (ModNV10mmPistolSilencer, slot 3, flags 4) through the Pip-Boy mod menu, is drawn and fired twice, and the player's shot plays the mod 2D sound WPNPistolSilenced22Fire2D instead of WPN10mmFire2D"
 areas = ["combat", "pipboy"]
@@ -10288,6 +10304,45 @@ order = [[
   { re = 'destroyed: 00157C97 drawn with Vehicles\\Motorcycle01Hulk\.NIF', label = "the destroyed bike is drawn as its hulk (DSTD's DMDL, destruction-stages.md §4)" },
 ]]
 expect = ["Screenshot saved to bike_smoke_2.png"]
+
+[[scenario]]
+name = "wreck-parts-fall"
+source = "docs/spec-notes/destruction-stages.md §4 (issue #1410: a blown-up car's doors and hood hung in the air): the destructible Motorcycle01 (ref 00157C97) taken by 140 damage to its destroying stage 4 is drawn and collides as Vehicles\\Motorcycle01Hulk.NIF, whose five dynamic bodies have no constraints; they become an object ragdoll and fall, then come to rest; god mode against its stage explosions; frames wreck_parts_0..1.png in target/smoke from the west of the wreck pile, before and after"
+areas = ["destruction", "physics"]
+paths = ["engine/nvforever/src/wrecks.rs", "engine/nvforever/src/destroyed.rs", "engine/nvforever/src/swing_traps.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvf-assets/src/model.rs", "crates/fnv-phys/src/placed.rs", "crates/fnv-phys/src/ragdoll.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:prid 00157C97;8.2:damageobject 140;8.4:close", NVF_PLAY_TEST_SHOTS = "7:wreck_parts_0.png,20:wreck_parts_1.png" }
+args = ["--cell", "Goodsprings", "--pos=32550,16717,4700", "--heading", "90", "--pitch", "-10", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 22
+order = [[
+  { re = 'destroyed: 00157C97 drawn with Vehicles\\Motorcycle01Hulk\.NIF', label = "the destroyed bike is drawn as its hulk" },
+  { re = 'wrecks: 00157C97 \S*motorcycle01hulk\.nif: 5 parts fall \(5 moving\)', label = "the hulk's five loose bodies fall as an object ragdoll" },
+  { re = 'wrecks: 00157C97 came to rest after', label = "its parts come to rest" },
+]]
+expect = [
+  { re = 'phys: 0x00157C97 collides as its destruction model Vehicles\\Motorcycle01Hulk\.NIF', label = "its collision is built from the hulk" },
+  "Screenshot saved to wreck_parts_1.png",
+]
+forbid = [{ re = 'wrecks: \S+ .*a body.s node is not drawn', label = "a wreck's body has no drawn node" }]
+
+[[scenario]]
+name = "wreck-car-parts-fall"
+source = "issue #1410 (a player blew up a car; its doors, hood and debris hung in the air); docs/spec-notes/destruction-stages.md §4: the lone Car01 (MSTT 00014E78, 325 health) at ref 0013DA2F north of the player, taken by 200 damage to its capping stage 4 (65 %, Destroy, DMDL Vehicles\\CarHulk01.NIF), is drawn and collides as its hulk, whose six dynamic bodies (chassis, both doors, hood, trunk, CarPort01) have no constraints; they become an object ragdoll, fall and come to rest near where they started; god mode against its explosion; frames wreck_car_0..1.png in target/smoke, before and after (the doors and hood on the ground, none in the air)"
+areas = ["destruction", "physics"]
+paths = ["engine/nvforever/src/wrecks.rs", "engine/nvforever/src/destroyed.rs", "engine/nvforever/src/swing_traps.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvf-assets/src/model.rs", "crates/fnv-phys/src/placed.rs", "crates/fnv-phys/src/ragdoll.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:prid 0013DA2F;8.2:damageobject 200;8.4:close", NVF_PLAY_TEST_SHOTS = "7:wreck_car_0.png,20:wreck_car_1.png" }
+args = ["--world", "WastelandNV", "--pos=-42000,36500,4500", "--heading", "0", "--pitch", "-10", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 22
+manual = "wreck_car_1.png: the burnt car with its doors and hood lying on the ground beside it, no part hanging in the air"
+order = [[
+  { re = 'destroyed: 0013DA2F drawn with Vehicles\\CarHulk01\.NIF', label = "the destroyed car is drawn as its hulk" },
+  { re = 'wrecks: 0013DA2F \S*carhulk01\.nif: 6 parts fall \(6 moving\)', label = "the hulk's six loose bodies fall as an object ragdoll" },
+  { re = 'wrecks: 0013DA2F came to rest after \S+ s; farthest part \S+ \d{1,3} units from its start', label = "its parts come to rest within 1000 units of where they started (none falls through the ground)" },
+]]
+expect = [
+  { re = 'phys: 0x0013DA2F collides as its destruction model Vehicles\\CarHulk01\.NIF', label = "its collision is built from the hulk" },
+  "Screenshot saved to wreck_car_1.png",
+]
+forbid = [{ re = 'wrecks: \S+ .*a body.s node is not drawn', label = "a wreck's body has no drawn node" }]
 
 [[scenario]]
 name = "vertex-morphs"

@@ -585,7 +585,11 @@ display case, and a resting dropped item not woken by `SetPos` (§4.3, `pc_drop_
 - A placed reference with **two or more dynamic bodies keeps them keyframed** at its
   placement (`hold_jointed` in `phys/prepare.rs`; tallied `jointed_held`): solid where it
   is drawn, never moving [engineering choice until constraints are modelled for placed
-  references; then they would hang and swing as in the game].
+  references; then they would hang and swing as in the game]. Two kinds are let go
+  later, their bodies then an object ragdoll the drawing follows: a swinging trap once
+  the game has it live (traps.md §4), and a destroyed object's hulk, whose loose parts
+  (no constraints) fall once its collision is built from it (destruction-stages.md §4,
+  issue #1410).
 
 `fnvtool phys cell` keeps the shared rule (dynamic bodies awake, jointed parts dynamic):
 it simulates only its probes, and the parity lab's L4 scenarios are built on it.
