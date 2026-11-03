@@ -745,6 +745,7 @@ expect = [
   { re = 'sfx: WPN10mmSMGFire2D: (?P<n>\d+) started', range = [20, 40], label = "every shot of the 3 s burst starts its sound" },
   { re = 'sfx: WPN10mmSMGFire2D: .* (?P<n>\d+) refused at the voice limit', range = [0, 0], label = "none of the burst's shots is refused (#1098: some were)" },
   { re = 'not started at the voice limit, at most (?P<n>\d+) one-shots at once', range = [1, 64], label = "the voices stay within the limit" },
+  { re = 'sfx files: (?P<n>\d+) sounds began in the frame they were asked for, \d+ later while their file was read', range = [10, 100000], label = "#1428: files decoded on worker threads; the shots after the first find their file ready and begin at once" },
 ]
 
 [[scenario]]
