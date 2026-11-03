@@ -1115,3 +1115,16 @@ The numbers above stay put so links to them hold; each item here gives its own p
     (ArmorNVNCRTrooper*) and in metal armour (ArmorMetal 0003307F). Also once with
     `player.modav speedmult 50` (whether a modifier counts as SetAV does), and whether the
     run clip plays faster at 150 or the feet slide. The answer: the speeds in units/s.
+
+## Added 2026-11-03 (a Stimpak's Hardcore effects outside Hardcore, issue #1438)
+
+76. **Does an aid effect whose conditions fail still count down its duration?** (P3;
+    aid-items.md §6.) The Stimpak's Health effects split by IsHardcore. NVForever now
+    holds a lasting effect whose conditions fail as inactive and lets its time run, so
+    outside Hardcore the Stimpak's 6 s heal over time is gone 6 s after the use
+    [hypothesis]. In the original (`nvfstrip`, Hardcore off): `player.damageav health
+    60`, use a Stimpak, wait 3 s, `SetHardcore 1` (or the settings switch), and log
+    `player.getav health` each second for 10 s: whether Health rises after Hardcore comes
+    on (the held effect taking hold) or not. Then again with 10 s between the use and
+    Hardcore on. Also whether STATS EFF lists the Stimpak at any point outside Hardcore.
+    The answer: the Health log and the EFF screenshots.
