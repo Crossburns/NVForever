@@ -1115,3 +1115,16 @@ The numbers above stay put so links to them hold; each item here gives its own p
     (ArmorNVNCRTrooper*) and in metal armour (ArmorMetal 0003307F). Also once with
     `player.modav speedmult 50` (whether a modifier counts as SetAV does), and whether the
     run clip plays faster at 150 or the feet slide. The answer: the speeds in units/s.
+
+## Added 2026-11-03 (collision of animated objects, issue #1396)
+
+76. **Does an animated activator's collision move with it, keep its pose after a load,
+    and push the player?** (P3; activators.md §5.3, Collision follows the drawn model.)
+    NVForever now poses the keyframed bodies a sequence moves from the group the object
+    plays, keeps them solid while they move [engine choice], and after a load shows and
+    poses the last group a script asked of it (a group played once at its end) [design].
+    In the original, find an activator gate or lift a script opens with `PlayGroup` (one
+    whose model has a keyframed collision body under a node its sequence moves): stand in
+    its path while it moves, walk where it stood closed once it has opened, then save,
+    load and walk there again. The answer: whether the player is pushed, stopped or passed
+    through while it moves, and whether it is open (drawn and solid) after the load.

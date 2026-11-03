@@ -162,6 +162,27 @@ impl ModelAnim {
         ModelAnim { nodes, by_block, sequences }
     }
 
+    /// A model built in code (tests, tools): its nodes as (block, name, parent block, bind
+    /// transform), the first the file's root; sequences added with
+    /// [`ModelAnim::add_sequence`].
+    pub fn from_nodes(nodes: impl IntoIterator<Item = (usize, Option<String>, Option<usize>, Similarity)>) -> ModelAnim {
+        let list: Vec<_> = nodes.into_iter().collect();
+        let by_block: HashMap<usize, usize> = list.iter().enumerate().map(|(k, n)| (n.0, k)).collect();
+        let nodes = list
+            .iter()
+            .enumerate()
+            .map(|(k, (_, name, parent, bind))| Node { name: name.clone(), parent: parent.and_then(|p| by_block.get(&p).copied()), bind: *bind, root: k == 0 })
+            .collect();
+        ModelAnim { nodes, by_block, sequences: Vec::new() }
+    }
+
+    /// Add a sequence from 0 to `stop` seconds moving the nodes at the given blocks (a
+    /// track on a block that is not a node is dropped).
+    pub fn add_sequence(&mut self, name: &str, stop: f32, cycle_type: i64, tracks: Vec<(usize, TransformTrack)>) {
+        let tracks = tracks.into_iter().filter_map(|(b, t)| Some((*self.by_block.get(&b)?, Arc::new(t)))).collect();
+        self.sequences.push(AnimSequence { name: name.to_string(), start: 0.0, stop, cycle_type, text_keys: Vec::new(), tracks });
+    }
+
     /// The sequence called `name` (either case).
     pub fn sequence(&self, name: &str) -> Option<&AnimSequence> {
         self.sequences.iter().find(|s| s.name.eq_ignore_ascii_case(name))
@@ -172,6 +193,28 @@ impl ModelAnim {
     pub fn door(&self) -> Option<(&AnimSequence, &AnimSequence)> {
         let (o, c) = (self.sequence("Open")?, self.sequence("Close")?);
         (o.drives_nodes() && c.drives_nodes()).then_some((o, c))
+    }
+
+    /// Whether some sequence moves the node at `block` or one of its ancestors (the
+    /// file's root left out: its transform is the placement's). False when `block` is
+    /// not a scene node.
+    pub fn moves_block(&self, block: usize) -> bool {
+        let Some(&first) = self.by_block.get(&block) else { return false };
+        let mut k = first;
+        for _ in 0..256 {
+            let n = &self.nodes[k];
+            if n.root && n.parent.is_none() {
+                return false;
+            }
+            if self.sequences.iter().any(|s| s.tracks.iter().any(|(t, _)| *t == k)) {
+                return true;
+            }
+            match n.parent {
+                Some(p) => k = p,
+                None => return false,
+            }
+        }
+        false
     }
 
     /// The node at `block` in the mesh root's frame (the root's own transform left out)
@@ -364,6 +407,9 @@ mod tests {
         assert!((p1[0] - 10.0).abs() < 1e-4 && (p1[1] - 5.0).abs() < 1e-4, "{p1:?}");
         // Held at the end.
         assert_eq!(at(5.0), p1);
+        // The hinge and the leaf under it move; the root (the placement's) does not count.
+        assert!(anim.moves_block(1) && anim.moves_block(2));
+        assert!(!anim.moves_block(0) && !anim.moves_block(9));
         // Bind pose without a sequence.
         let b = anim.node_to_root(None, 0.0, 2).unwrap().apply([0.0; 3]);
         assert!((b[0] - 15.0).abs() < 1e-4);
