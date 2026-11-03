@@ -21,6 +21,11 @@
 //!   the frame (9-15 ms in the slow frames of the profiling campaign's exterior runs).
 //!   What the original game does with a sound whose file is not in memory yet is not
 //!   known. The exit report counts the requests that began at once and those that waited.
+//! - **A second chance in the frame** (#1428) [engineering choice]: late in the frame,
+//!   before the audio output takes up new players ([`late_start`], `PostUpdate`), the
+//!   decodes finished since [`play`] are taken in once more and the requests whose file
+//!   is now ready start as [`play`] starts them, so a file decoded a few milliseconds
+//!   after it was asked for can start in that frame. The exit report counts them apart.
 //! - **Loudness**: the static attenuation is taken off (gain 10^(−dB ÷ 20)). A sound with
 //!   a place follows its record's attenuation curve [documented: GECK wiki Sound,
 //!   Attenuation tab: five sliders, "the sound's volume percentage at its inner radius"
@@ -70,7 +75,7 @@ use std::collections::{HashMap, HashSet};
 use std::num::NonZero;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How sound effects behave; insert before the play plugins to change the defaults.
 #[derive(Resource, Clone, Copy, Debug)]
@@ -655,12 +660,14 @@ enum Wanted {
 
 /// A request waiting for its file: the SOUN, the file picked for it (a folder's random
 /// pick is made once; `None` while the folder index is still being listed, the pick is
-/// made when it is in), the frame it was asked in, what it plays.
+/// made when it is in), the frame it was asked in and when (the exit report's wait in
+/// milliseconds), what it plays.
 #[derive(Clone, Debug, PartialEq)]
 struct Waiting {
     sound: FormId,
     path: Option<String>,
     frame: u64,
+    asked: Instant,
     wanted: Wanted,
 }
 
@@ -697,6 +704,12 @@ pub struct Waits {
     pub broken: u32,
     /// Play At Random rolls skipped because the file was still being read.
     pub rolls_skipped: u32,
+    /// Requests started by the second chance late in the frame ([`late_start`]), those
+    /// of them that began in the frame they were asked for, and the longest one of them
+    /// waited from its request to its start, milliseconds (a frame is no fixed time).
+    pub late_started: u32,
+    pub late_same_frame: u32,
+    pub late_most_ms: f32,
 }
 
 impl Waits {
@@ -714,6 +727,14 @@ impl Waits {
             self.over_one += (waited > 1) as u32;
         }
         self.most_frames = self.most_frames.max(waited);
+    }
+
+    /// A request started by [`late_start`], `waited` frames and `ms` milliseconds after
+    /// it was asked for.
+    fn started_late(&mut self, waited: u64, ms: f32) {
+        self.late_started += 1;
+        self.late_same_frame += (waited == 0) as u32;
+        self.late_most_ms = self.late_most_ms.max(ms);
     }
 }
 
@@ -961,7 +982,7 @@ pub(crate) struct Out<'a, 'w, 's> {
 /// The entity playing it, if it started.
 fn request(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, heard: &mut Vec<(u32, Option<f32>)>, sound: FormId, wanted: Wanted) -> Option<Entity> {
     if folder_unlisted(sfx, sound) {
-        sfx.waiting.push(Waiting { sound, path: None, frame: sfx.frame, wanted });
+        sfx.waiting.push(Waiting { sound, path: None, frame: sfx.frame, asked: Instant::now(), wanted });
         return None;
     }
     let Some(r) = resolve(sfx, vfs, sound) else {
@@ -973,7 +994,7 @@ fn request(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, heard: &mut Ve
     };
     match file_now(sfx, vfs, &r.path, &r.name) {
         FileNow::Pending => {
-            sfx.waiting.push(Waiting { sound, path: Some(r.path), frame: sfx.frame, wanted });
+            sfx.waiting.push(Waiting { sound, path: Some(r.path), frame: sfx.frame, asked: Instant::now(), wanted });
             None
         }
         FileNow::Ready(h) => begin(out, sfx, heard, &r, Some(h), sound, wanted, 0),
@@ -1078,7 +1099,6 @@ fn play(
         return;
     };
     let sfx = &mut *sfx;
-    let frame = sfx.frame;
     let vfs = &data.vfs;
     let ss = &mut *script_sounds;
     let mut out = Out { commands: &mut commands, assets: &mut assets, settings: &settings, player: player.as_deref() };
@@ -1119,44 +1139,7 @@ fn play(
     }
     // Requests whose file is now ready (or will not play), oldest first, then this
     // frame's.
-    let decided = {
-        let Sfx { waiting, files, index, .. } = &mut *sfx;
-        let listing = index.is_some();
-        take_decided(waiting, |w| match &w.path {
-            None => listing,
-            Some(p) => matches!(files.get(p), Some(FileState::Decoding(..))),
-        })
-    };
-    for mut w in decided {
-        let waited = frame - w.frame;
-        let Some(path) = w.path.take() else {
-            // The folder index is in: the folder's file is picked now.
-            let Some(r) = resolve(sfx, vfs, w.sound) else {
-                sfx.waits.broken += 1;
-                if let Wanted::Script { id, .. } = w.wanted {
-                    ss.heard.push((id, Some(0.0)));
-                }
-                continue;
-            };
-            match file_now(sfx, vfs, &r.path, &r.name) {
-                FileNow::Pending => sfx.waiting.push(Waiting { path: Some(r.path), ..w }),
-                FileNow::Ready(h) => {
-                    begin(&mut out, sfx, &mut ss.heard, &r, Some(h), w.sound, w.wanted, waited);
-                }
-                FileNow::Broken => {
-                    begin(&mut out, sfx, &mut ss.heard, &r, None, w.sound, w.wanted, waited);
-                }
-            }
-            continue;
-        };
-        let Some(s) = sfx.forms.sounds.get(&w.sound).cloned() else { continue };
-        let handle = match sfx.files.get(&path) {
-            Some(FileState::Ready(h)) => Some(h.clone()),
-            _ => None,
-        };
-        let r = Resolved { name: s.edid.clone().unwrap_or_else(|| w.sound.to_string()), s, path };
-        begin(&mut out, sfx, &mut ss.heard, &r, handle, w.sound, w.wanted, waited);
-    }
+    start_decided(&mut out, sfx, vfs, &mut ss.heard, false);
     for r in requests.read() {
         request(&mut out, sfx, vfs, &mut ss.heard, r.sound, Wanted::Once(r.at));
     }
@@ -1168,6 +1151,87 @@ fn play(
         let looping = sfx.forms.sounds.get(&sound).is_some_and(|s| s.has("Loop"));
         request(&mut out, sfx, vfs, &mut ss.heard, sound, Wanted::Script { id, at, looping });
     }
+}
+
+/// The decodes finished on the workers taken in, then the waiting requests whose file is
+/// now ready (or will not play), or whose folder index is in, decided, oldest first:
+/// started as a request is (the voice limits as counted this frame, the listener as it
+/// is now), played silent or answered; a folder's file is picked once its index is in
+/// (and may wait for its file then). Each is taken off the waiting list before it
+/// starts, so it is decided once. The frames waited count from each request's frame.
+/// For [`play`], and for [`late_start`] (`late`: its starts counted apart).
+fn start_decided(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, heard: &mut Vec<(u32, Option<f32>)>, late: bool) {
+    collect_files(sfx, out.assets);
+    if sfx.waiting.is_empty() {
+        return;
+    }
+    let frame = sfx.frame;
+    let decided = {
+        let Sfx { waiting, files, index, .. } = &mut *sfx;
+        let listing = index.is_some();
+        take_decided(waiting, |w| match &w.path {
+            None => listing,
+            Some(p) => matches!(files.get(p), Some(FileState::Decoding(..))),
+        })
+    };
+    for mut w in decided {
+        let waited = frame - w.frame;
+        let started = match w.path.take() {
+            None => {
+                // The folder index is in: the folder's file is picked now.
+                let Some(r) = resolve(sfx, vfs, w.sound) else {
+                    sfx.waits.broken += 1;
+                    if let Wanted::Script { id, .. } = w.wanted {
+                        heard.push((id, Some(0.0)));
+                    }
+                    continue;
+                };
+                match file_now(sfx, vfs, &r.path, &r.name) {
+                    FileNow::Pending => {
+                        sfx.waiting.push(Waiting { path: Some(r.path), ..w });
+                        continue;
+                    }
+                    FileNow::Ready(h) => begin(out, sfx, heard, &r, Some(h), w.sound, w.wanted, waited),
+                    FileNow::Broken => begin(out, sfx, heard, &r, None, w.sound, w.wanted, waited),
+                }
+            }
+            Some(path) => {
+                let Some(s) = sfx.forms.sounds.get(&w.sound).cloned() else { continue };
+                let handle = match sfx.files.get(&path) {
+                    Some(FileState::Ready(h)) => Some(h.clone()),
+                    _ => None,
+                };
+                let r = Resolved { name: s.edid.clone().unwrap_or_else(|| w.sound.to_string()), s, path };
+                begin(out, sfx, heard, &r, handle, w.sound, w.wanted, waited)
+            }
+        };
+        if late && started.is_some() {
+            sfx.waits.started_late(waited, w.asked.elapsed().as_secs_f32() * 1000.0);
+        }
+    }
+}
+
+/// The second chance in the frame (see the module notes): in `PostUpdate`, before the
+/// audio output takes up new players (`crate::audio_out::AudioOutSystems`, which then
+/// finds these players, the commands applied before it), the requests whose file was
+/// decoded since [`play`] start as [`play`] starts them ([`start_decided`]). It reads no
+/// requests of its own: those are [`play`]'s. [`prepare`]'s frame number and voice counts
+/// hold, so frames waited count from the request's frame.
+fn late_start(
+    mut commands: Commands,
+    mut script_sounds: ResMut<ScriptSounds>,
+    sfx: Option<ResMut<Sfx>>,
+    settings: Res<SfxSettings>,
+    player: Option<Res<Player>>,
+    data: Option<Res<nvf_assets::GameData>>,
+    mut assets: ResMut<Assets<PcmSound>>,
+) {
+    let (Some(mut sfx), Some(data)) = (sfx, data) else { return };
+    if sfx.waiting.is_empty() {
+        return;
+    }
+    let mut out = Out { commands: &mut commands, assets: &mut assets, settings: &settings, player: player.as_deref() };
+    start_decided(&mut out, &mut sfx, &data.vfs, &mut script_sounds.heard, true);
 }
 
 /// Whether a script's sound `id` of `sound` was asked for before one of `stops` of that
@@ -1342,8 +1406,8 @@ fn report(mut exit: MessageReader<AppExit>, sfx: Option<Res<Sfx>>) {
             // Sounds whose file was still being read when they were asked for (#1428).
             let w = &s.waits;
             info!(
-                "sfx files: {} sounds began in the frame they were asked for, {} later while their file was read ({} more than one frame later, at most {} frames); {} decided silent (too quiet, under water, sounds off or the voice limit); {} dropped while they waited, {} waited for a file that could not be played, {} still waiting at the end; {} random sound rolls skipped while their file was read",
-                w.at_once, w.late, w.over_one, w.most_frames, w.silent, w.cancelled, w.broken, s.waiting.len(), w.rolls_skipped
+                "sfx files: {} sounds began in the frame they were asked for, {} later while their file was read ({} more than one frame later, at most {} frames); {} decided silent (too quiet, under water, sounds off or the voice limit); {} dropped while they waited, {} waited for a file that could not be played, {} still waiting at the end; {} random sound rolls skipped while their file was read; {} started late in a frame once their file came in, {} of them in the frame they were asked for, at most {:.1} ms after it",
+                w.at_once, w.late, w.over_one, w.most_frames, w.silent, w.cancelled, w.broken, s.waiting.len(), w.rolls_skipped, w.late_started, w.late_same_frame, w.late_most_ms
             );
             if s.voice_stolen > 0 {
                 info!("sfx: {} one-shots took over the oldest voice of their sound at {MAX_SAME} playing", s.voice_stolen);
@@ -1391,6 +1455,9 @@ impl Plugin for SfxPlugin {
             .configure_sets(Update, (SfxStep::Prepare, SfxStep::Ambient, SfxStep::Play).chain().in_set(SfxSet))
             .add_systems(Update, (listener_submerged, prepare).chain().in_set(SfxStep::Prepare))
             .add_systems(Update, (play, pan_sounds).chain().in_set(SfxStep::Play))
+            // The second chance: ordinary `before`, so its players are spawned (the
+            // commands applied) before the output attaches new players.
+            .add_systems(PostUpdate, late_start.before(crate::audio_out::AudioOutSystems))
             .add_systems(Last, report);
         crate::reverb::build(app);
     }
@@ -1637,7 +1704,9 @@ mod tests {
     }
 
     fn waiting(sound: u32, path: &str, frame: u64, wanted: Wanted) -> Waiting {
-        Waiting { sound: FormId(sound), path: Some(path.into()), frame, wanted }
+        // One request time for all, so requests compare by what they ask.
+        static ASKED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        Waiting { sound: FormId(sound), path: Some(path.into()), frame, asked: *ASKED.get_or_init(Instant::now), wanted }
     }
 
     #[test]
@@ -1779,6 +1848,68 @@ mod tests {
         assert_eq!(heard(&mut app), vec![(2, Some(h[0].1.unwrap()))]);
         assert_eq!(app.world().resource::<Sfx>().waits.at_once, 1);
         assert!(app.world().resource::<Sfx>().waiting.is_empty());
+    }
+
+    /// [`sound_app`] with the second chance in `PostUpdate`; `ask` is asked for in this
+    /// frame's [`play`] (its file not decoded yet), and the worker has finished the
+    /// decode before `PostUpdate` runs.
+    fn asked_then_decoded_in_one_frame(ask: impl FnOnce(&mut App)) -> (App, TestFiles) {
+        let (mut app, files) = sound_app();
+        app.add_systems(PostUpdate, late_start);
+        ask(&mut app);
+        app.world_mut().run_schedule(Update);
+        assert_eq!(app.world().resource::<Sfx>().waiting.len(), 1);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !matches!(app.world().resource::<Sfx>().files.get("sound\\fx\\beep.wav"), Some(FileState::Decoding(t, _)) if t.is_finished()) {
+            assert!(std::time::Instant::now() < deadline, "the decode did not finish in time");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        app.world_mut().run_schedule(PostUpdate);
+        (app, files)
+    }
+
+    #[test]
+    fn a_file_decoded_after_play_starts_in_that_frames_post_update() {
+        let (mut app, _files) = asked_then_decoded_in_one_frame(|app| {
+            app.world_mut().write_message(PlaySound { sound: BEEP, at: None });
+        });
+        assert_eq!(count::<OneShot>(&mut app), 1);
+        let sfx = app.world().resource::<Sfx>();
+        assert!(sfx.waiting.is_empty());
+        // In the frame it was asked for: on time, counted as a late start too.
+        assert_eq!((sfx.waits.at_once, sfx.waits.late, sfx.waits.most_frames), (1, 0, 0));
+        assert_eq!((sfx.waits.late_started, sfx.waits.late_same_frame), (1, 1));
+        assert!(sfx.waits.late_most_ms >= 0.0);
+    }
+
+    #[test]
+    fn a_request_started_late_is_not_started_again() {
+        let (mut app, _files) = asked_then_decoded_in_one_frame(|app| {
+            app.world_mut().write_message(PlaySound { sound: BEEP, at: None });
+        });
+        // The next frames' play and second chance find nothing waiting.
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(count::<OneShot>(&mut app), 1);
+        let sfx = app.world().resource::<Sfx>();
+        assert_eq!(sfx.played, 1);
+        assert_eq!((sfx.waits.at_once, sfx.waits.late, sfx.waits.late_started), (1, 0, 1));
+    }
+
+    #[test]
+    fn a_script_sound_started_late_answers_heard_once() {
+        let (mut app, _files) = asked_then_decoded_in_one_frame(|app| script_plays(app, &[(1, BEEP)]));
+        let h = heard(&mut app);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].0, 1);
+        assert!((h[0].1.unwrap() - 0.5).abs() < 1e-3, "its seconds: {h:?}");
+        assert_eq!(count::<ScriptPlayed>(&mut app), 1);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(heard(&mut app).is_empty());
+        assert_eq!(count::<ScriptPlayed>(&mut app), 1);
     }
 
     #[test]

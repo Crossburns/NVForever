@@ -148,6 +148,12 @@ environment: §14.6.
   arrives, the marker plays on a later roll. The exit line `sfx files: …` counts the
   sounds that began in the frame they were asked for, those that waited, those decided
   silent and the rolls skipped.
+- A second chance late in each frame (`late_start`, `PostUpdate`, before the audio
+  output takes up new players) starts the requests whose file finished decoding since
+  the frame's requests were played, as they would have started then, so a file decoded
+  a few milliseconds late can still start in the frame it was asked for [engineering
+  choice]. The exit line adds how many it started, how many of those in their own frame
+  and the longest wall-clock wait among them in milliseconds.
 - Log: `music: in marker …`, `music: <set> day|night started, layers …`,
   `music: <set> layers …`, `music: <set> fades out`, `music: battle begins …`,
   `music: battle over …`, `music: intro|outro of …`, `music: a script plays …`,
