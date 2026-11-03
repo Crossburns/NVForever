@@ -5543,3 +5543,46 @@ impl Host for Exec<'_, '_> {
         seen.insert(key)
     }
 }
+
+#[cfg(test)]
+mod effect_lookup_tests {
+    use super::*;
+
+    fn fx(id: u32) -> ActiveEffect {
+        ActiveEffect {
+            id,
+            target: FormId::PLAYER_REF,
+            source: FormId(0x800),
+            effect: FormId(0x801),
+            index: 0,
+            magnitude: 0,
+            duration: 1.0,
+            elapsed: 0.0,
+            permanent: false,
+            caster: None,
+            script: None,
+            change: None,
+            usage: 0.0,
+            worn: None,
+            inactive: false,
+        }
+    }
+
+    /// Every hint and every starting point finds what the search from the start (the
+    /// lookup before #1389) finds, present or missing, stale hints and ends included.
+    #[test]
+    fn a_checked_hint_or_cursor_finds_the_effect_a_search_finds() {
+        let list: Vec<ActiveEffect> = [3, 5, 8, 9, 12].into_iter().map(fx).collect();
+        let search = |id: u32| list.iter().position(|e| e.id == id);
+        for id in [1, 3, 5, 8, 9, 12, 13] {
+            for hint in [None, Some(0), Some(1), Some(2), Some(3), Some(4), Some(5), Some(99)] {
+                assert_eq!(effect_index(&list, id, hint), search(id), "id {id} hint {hint:?}");
+            }
+            for from in 0..=7 {
+                assert_eq!(effect_from(&list, id, from), search(id), "id {id} from {from}");
+            }
+        }
+        assert_eq!(effect_index(&[], 3, Some(0)), None);
+        assert_eq!(effect_from(&[], 3, 2), None);
+    }
+}

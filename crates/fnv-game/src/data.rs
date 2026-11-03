@@ -3466,3 +3466,41 @@ pub(crate) fn field_code(schema: &Schema, sig: &[u8; 4], sub: &[u8; 4], field: O
     }
 }
 
+
+#[cfg(test)]
+mod unit_key_tests {
+    use super::*;
+    use fnv_script::unit::{Header, PackageEvent};
+    use fnv_script::ScriptKind;
+
+    fn unit(plugin: &str, owner: UnitOwner) -> ScriptUnit {
+        ScriptUnit { plugin: plugin.into(), owner, kind: ScriptKind::Object, header: Header::default(), variables: Vec::new(), refs: Vec::new(), has_scda: false, bytes: Vec::new(), source: None }
+    }
+
+    #[test]
+    fn the_built_key_is_the_units_key_for_every_owner() {
+        let owners = [
+            UnitOwner::Script { form: 0x0001_0F2A },
+            UnitOwner::QuestStage { form: 0x0010_4C1C, stage: 10, entry: 0 },
+            UnitOwner::Info { form: 0x0200_0801, end: true },
+            UnitOwner::Info { form: 0x0200_0801, end: false },
+            UnitOwner::Package { form: 0x5, event: PackageEvent::Begin },
+            UnitOwner::Package { form: 0x5, event: PackageEvent::End },
+            UnitOwner::Package { form: 0x5, event: PackageEvent::Change },
+            UnitOwner::Terminal { form: 0x7, item: 3 },
+            UnitOwner::Perk { form: 0x9, entry: 1 },
+            UnitOwner::Patrol { form: 0xA },
+            UnitOwner::Other { sig: "NOTE".into(), form: 0xB, ordinal: 2 },
+        ];
+        for owner in owners {
+            let u = unit("FalloutNV.esm", owner);
+            let c = Compiled::new(u.clone(), Program::default(), 0);
+            assert_eq!(c.key(), u.key());
+            assert_eq!(&**c.shared_key(), u.key().as_str());
+            // A clone of the unit shares the text.
+            assert!(Arc::ptr_eq(c.shared_key(), c.clone().shared_key()));
+        }
+        let c = Compiled::new(unit("FalloutNV.esm", UnitOwner::QuestStage { form: 0x0010_4C1C, stage: 10, entry: 0 }), Program::default(), 0);
+        assert_eq!(c.key(), "FalloutNV.esm|QUST 0x00104C1C stage 10 entry 0");
+    }
+}
