@@ -2593,7 +2593,8 @@ impl<'a> Game<'a> {
             }
         }
         let bytes = crate::mod_files::read_data(&format!("nvse\\user_defined_functions\\{key}"))?;
-        let src = String::from_utf8_lossy(&bytes).into_owned();
+        // UTF-8 when it is, else 8-bit text in this run's code page (#1439).
+        let src = std::str::from_utf8(&bytes).map_or_else(|_| fnv_util::text::decode(&bytes), str::to_owned);
         let id = self.compile_source(&format!("CompileScript {path}"), src)?;
         self.compiled_paths.insert(key, id);
         Some(id)
@@ -4025,7 +4026,10 @@ impl<'a> Game<'a> {
         }
     }
 
-    /// Whether a reference is in the world and enabled (enable parents followed).
+    /// Whether a reference is in the world and enabled (enable parents followed). Reads
+    /// the world's reference states alone, so it changes only with
+    /// `fnv_sim::World::presence_serial` (the AI's obstacle poll relies on that,
+    /// `fnv_ai::Ai::obstacles_in_line`): keep it so, or key that poll on the new input.
     pub fn present(&self, r: FormId) -> bool {
         self.world.peek(r).is_none_or(|s| !s.deleted) && self.world.is_enabled(r).unwrap_or(false)
     }
