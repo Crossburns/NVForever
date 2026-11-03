@@ -434,6 +434,20 @@ engine plays them. Without SystemSound a sound asked for in a menu waits for the
 [observed]: a DLC start-up script's `PlaySound` (0x03016173). `PlayMusic` queues a music
 type for music.rs (`Game::music_requests`, traced `music_asked`; §13).
 
+Since a sound's file is read on a worker (§7, #1428), a script's sound can still be
+waiting for its file when the script acts on it again. What the original does in these
+cases is not known; NVForever does this [engineering choice; hypothesis for the
+original] (`fnv-game/src/nvse_sound.rs` `SoundState::stop`, `nvf-play/src/sfx.rs`
+`play` and `begin`):
+
+- `PlaySound X; StopSound X` in one frame plays nothing: the stop covers the sounds of X
+  asked for before it, also in the same frame. `StopSound X; PlaySound X` plays X.
+  Observer check 79.
+- A looping script sound (a SOUN with the Loop flag) whose file cannot be played is over
+  at once: IsSoundPlaying reads 0 for it, as for a one-shot with no file.
+- `LoopSound` on then off for one SOUN in one frame leaves nothing playing (the off drops
+  the start still waiting for its file).
+
 ### 11.6 Checks and what is left
 
 Log: `impact: …` (debug: collision material, impact material, IPCT, sounds), `knock: …`

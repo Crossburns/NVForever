@@ -39,7 +39,9 @@ pub struct SoundState {
     /// Sounds StopSound stopped, for the engine to take: the SOUN and the id of the last
     /// sound asked for before the stop ([`SoundState::ask`]'s ids rise), so the engine
     /// stops the playings asked for before it, also those of the same frame, and still
-    /// plays one asked for after it.
+    /// plays one asked for after it. So `PlaySound X; StopSound X` in one frame plays
+    /// nothing [engineering choice; hypothesis: what the original does with that order in
+    /// one frame is not known, docs/spec-notes/audio.md §11.5, observer check 79].
     pub stops: Vec<(FormId, u32)>,
 }
 
@@ -63,7 +65,9 @@ impl SoundState {
     }
 
     /// StopSound of `sound` in `frame`: every playing of it not stopped yet is stopped, and
-    /// the engine is told (with the last id asked for so far) when there was one.
+    /// the engine is told (with the last id asked for so far) when there was one. A playing
+    /// asked for earlier in the same frame is stopped too, before it is heard
+    /// [engineering choice; the original's behaviour is not known, audio.md §11.5].
     pub fn stop(&mut self, sound: FormId, frame: u64) {
         let mut any = false;
         for p in self.played.iter_mut().filter(|p| p.sound == sound && p.stopped.is_none()) {

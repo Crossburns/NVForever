@@ -927,7 +927,13 @@ pub(crate) fn prefetch(sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, path: &str, name:
     // On the I/O pool, not the compute pool, which reads cells, models and actors on its
     // few threads [engineering choice; hypothesis: a sound asked for while a cell streams
     // in waits behind those reads, the smoke runs of 2026-11-03 had starts up to about
-    // 100 frames late on the compute pool]. Nothing else of the game uses the I/O pool.
+    // 100 frames late on the compute pool]. Bevy's `AssetServer` loads on the I/O pool
+    // too, but this engine loads only its embedded shaders through it, at start-up (the
+    // `RenderStartup` systems, e.g. engine/nvforever/src/post.rs `init_pipelines`, and
+    // the materials' shaders when their plugins are built, grass.rs, tree.rs, sky.rs);
+    // the game's files are read by nvf-assets on the async compute pool and added to
+    // `Assets` directly (nvf-assets/src/model.rs, actor.rs) [design]. During play the
+    // I/O pool holds this module's decodes and its folder index only.
     let task = IoTaskPool::get_or_init(TaskPool::default).spawn(async move { decode_file(&vfs, &owned) });
     sfx.files.insert(path.to_string(), FileState::Decoding(task, name.to_string()));
     sfx.decoding.push(path.to_string());
@@ -1017,6 +1023,10 @@ fn begin(out: &mut Out, sfx: &mut Sfx, heard: &mut Vec<(u32, Option<f32>)>, r: &
     let Some(handle) = handle else {
         sfx.failed += 1;
         sfx.waits.broken += waited.is_some() as u32;
+        // A script's sound whose file cannot be played is over at once (0 seconds), also
+        // one with the Loop flag, so IsSoundPlaying reads 0 for it [engineering choice;
+        // hypothesis: what the original answers for a broken looping sound is not known,
+        // audio.md §11.5].
         if let Wanted::Script { id, .. } = wanted {
             heard.push((id, Some(0.0)));
         }
@@ -1110,6 +1120,8 @@ fn play(
     let mut out = Out { commands: &mut commands, assets: &mut assets, settings: &settings, player: player.as_deref() };
     // LoopSound: any word on a SOUN stops it going round, also one started earlier in
     // this frame, and drops a start of it still waiting for its file; on starts it anew.
+    // So on then off in one frame leaves nothing playing [engineering choice; hypothesis:
+    // what the original does with both in one frame is not known, audio.md §11.5].
     let mut new_loops: Vec<(FormId, Entity)> = Vec::new();
     for l in loops.read() {
         for (e, p) in &looping {
@@ -1133,7 +1145,8 @@ fn play(
     // StopSound: what a script played of that SOUN stops, its requests still waiting
     // for their file are dropped (all asked for in earlier frames), and so are this
     // frame's asked for before the stop (`PlaySound X; StopSound X`); one asked for after
-    // it (`StopSound X; PlaySound X`, a higher id) plays.
+    // it (`StopSound X; PlaySound X`, a higher id) plays [engineering choice; hypothesis:
+    // the original's order in one frame is not known, audio.md §11.5, observer check 79].
     let stops = std::mem::take(&mut ss.stops);
     for &(s, _) in &stops {
         for (e, p) in &scripted {
