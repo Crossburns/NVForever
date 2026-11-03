@@ -143,7 +143,7 @@ impl Plugin for WeatherFxPlugin {
             aid: Aid::from_env(),
             flashes: 0,
         })
-        .add_systems(Update, weather_fx.before(crate::sky::update_sky));
+        .add_systems(Update, weather_fx.before(crate::sky::update_sky).before(nvf_play::sfx::SfxSet));
     }
 }
 
