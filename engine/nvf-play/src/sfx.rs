@@ -16,8 +16,8 @@
 //! - **Off the main thread** (#1428) [engineering choice]: a file is read and decoded on a
 //!   worker thread the first time it is asked for ([`FileState`]); the request waits for
 //!   it ([`Waiting`]) and starts once it is ready, with the listener as it is then; a
-//!   one-shot whose file comes in more than [`MAX_ONE_SHOT_WAIT`] after it was asked for
-//!   is dropped instead. A
+//!   game event's one-shot whose file comes in more than [`MAX_ONE_SHOT_WAIT`] after it
+//!   was asked for is dropped instead. A
 //!   folder's files come from an index of the folders the SOUN records name, listed on
 //!   a worker at the start; a request for a folder before it is in waits for it. Before, the first playing of a file read and decoded it in
 //!   the frame (9-15 ms in the slow frames of the profiling campaign's exterior runs).
@@ -673,18 +673,17 @@ struct Waiting {
     wanted: Wanted,
 }
 
-/// The longest a one-shot ([`Wanted::Once`], or a script's sound without the Loop flag)
+/// The longest a game event's one-shot ([`Wanted::Once`]: a footstep, a shot, an impact)
 /// waits for its file: one decided later than this after it joined the waiting list is
-/// dropped, not started, so a footstep or a shot held up behind a busy pool is not heard
-/// long after its moment; a script is answered as for a sound that played and ended (0
-/// seconds), so nothing waits on it. Loops are started however late [engineering choice:
-/// about nine frames at 60 Hz; the original's behaviour with a sound not yet in memory is
-/// not known, docs/spec-notes/audio.md §7].
+/// dropped, not started, so it is not heard long after its moment. Loops and scripts'
+/// sounds are started however late, so what a script hears of its sound does not change
+/// [engineering choice: about nine frames at 60 Hz; the original's behaviour with a sound
+/// not yet in memory is not known, docs/spec-notes/audio.md §7].
 pub const MAX_ONE_SHOT_WAIT: Duration = Duration::from_millis(150);
 
 /// Whether a request is a one-shot that [`MAX_ONE_SHOT_WAIT`] holds to.
 fn wait_limited(wanted: Wanted) -> bool {
-    matches!(wanted, Wanted::Once(_) | Wanted::Script { looping: false, .. })
+    matches!(wanted, Wanted::Once(_))
 }
 
 /// Drop the waiting requests `drop` picks; how many were dropped.
@@ -1937,19 +1936,20 @@ mod tests {
             }
         }
         run_until(&mut app, |w| w.resource::<Sfx>().waiting.is_empty());
-        // The two one-shots are dropped (the script's answered as over), the loop starts.
+        // The game event's one-shot is dropped; the script's one-shot and loop start late.
         let mut h = heard(&mut app);
         h.sort_by_key(|&(id, _)| id);
-        assert_eq!(h, vec![(1, Some(0.0)), (2, None)]);
-        assert_eq!(count::<OneShot>(&mut app), 0);
-        assert_eq!(count::<ScriptPlayed>(&mut app), 1);
+        assert_eq!(h.len(), 2);
+        assert!(matches!(h[0], (1, Some(s)) if s > 0.0), "{h:?}");
+        assert_eq!(h[1], (2, None));
+        assert_eq!(count::<ScriptPlayed>(&mut app), 2);
         let w = app.world().resource::<Sfx>().waits.clone();
-        assert_eq!((w.too_late, w.late), (2, 1));
+        assert_eq!((w.too_late, w.late), (1, 2));
         // A fresh one-shot of the now-ready file plays as usual.
         app.world_mut().write_message(PlaySound { sound: BEEP, at: None });
         app.update();
-        assert_eq!(count::<OneShot>(&mut app), 1);
-        assert_eq!(app.world().resource::<Sfx>().waits.too_late, 2);
+        assert_eq!(count::<OneShot>(&mut app), 2);
+        assert_eq!(app.world().resource::<Sfx>().waits.too_late, 1);
     }
 
     /// What a probe in the output's set saw: the sound effects' players there.
