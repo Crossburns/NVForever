@@ -15,14 +15,19 @@
 //!   body's pose is written to its node from then on (`swing_traps::follow_bodies`)
 //!   [hypothesis: the original hands them to Havok when the hulk swaps in, which the
 //!   missing constraints and the thrown-out poses suggest; not seen in the original yet].
-//! - The parts start at rest [design: the blast's push on them is not modelled] and do
-//!   not hurt actors [design].
+//! - The parts start still and do not hurt actors [design]; the stage's explosion
+//!   pushes them as it pushes loose objects (`combat: explosion … loose object(s)
+//!   pushed`). Calm for `ragdoll::CALM_TIME` as a corpse is, or still moving after
+//!   [`MAX_FALLING`], the wreck is held at rest where it lies
+//!   (`PhysWorld::set_ragdoll_at_rest`) until a blast or a push rouses it.
 //! - A wreck whose rig leaves the world (its cell unloads, ClearDestruction) loses its
 //!   ragdoll; drawn again, its parts fall again from the file's poses [design: where they
 //!   came to rest is not kept].
 //!
-//! Log: `wrecks: <ref> <model>: <n> parts fall (<m> moving)`, `wrecks: <ref> came to
-//! rest after <s> s`.
+//! Log: `wrecks: <ref> <model>: <n> parts fall (<m> moving)`, `wrecks: <ref> falling:
+//! fastest part <v> units/s, <w> rad/s` (once a second), `wrecks: <ref> came to rest
+//! after <s> s; farthest part <node> <d> units from its start (<dz> in height)` (or
+//! `held at rest still moving after`).
 
 use crate::ragdoll::game_iso;
 use bevy::prelude::*;
@@ -38,6 +43,13 @@ use nvf_play::phys::PhysState;
 use nvf_play::script::ScriptState;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// A wreck still moving this long after its parts fell is held at rest where it lies,
+/// seconds [engineering choice, a cost guard as `ragdoll::MAX_AWAKE`].
+const MAX_FALLING: f32 = 20.0;
+
+/// A wreck's fall is logged once a second for this long.
+const FALL_LOG_SECONDS: f32 = 15.0;
 
 /// On the root of a drawn wreck: its reference, model and nodes by name.
 #[derive(Component)]
@@ -55,6 +67,17 @@ struct Fallen {
     scale: f32,
     /// Seconds since its parts started to fall, until they come to rest.
     falling: Option<f32>,
+    /// Seconds to the next log line of its fall.
+    log_in: f32,
+    /// Where each body's node started (game space), for the distance it fell.
+    start: Vec<[f32; 3]>,
+    /// Each body's node name, for the log.
+    names: Vec<String>,
+    /// The bodies' poses at the start of the current calm window
+    /// (`ragdoll::CALM_WINDOW`), seconds into it, and how long it has been calm.
+    since: Vec<Option<Iso>>,
+    window: f32,
+    calm: f32,
 }
 
 #[derive(Resource, Default)]
@@ -162,7 +185,9 @@ fn fall(
         info!("wrecks: {r:08X} {}: {} parts fall ({moving} moving)", rig.path, built.bodies);
         wrecks.count += 1;
         let nodes = rag.bodies.iter().map(|b| node(b).filter(|_| b.object.motion == Motion::Dynamic)).collect();
-        wrecks.fallen.insert(r, Fallen { root, nodes, scale, falling: Some(0.0) });
+        let start = poses.iter().map(|p| p.translation).collect();
+        let names = rag.bodies.iter().map(|b| b.object.node.clone().unwrap_or_default()).collect();
+        wrecks.fallen.insert(r, Fallen { root, nodes, scale, falling: Some(0.0), log_in: 1.0, start, names, since: Vec::new(), window: 0.0, calm: 0.0 });
     }
 }
 
@@ -170,21 +195,63 @@ fn fall(
 fn follow(
     time: Res<Time>,
     mut wrecks: ResMut<Wrecks>,
-    phys: Option<Res<PhysState>>,
+    phys: Option<ResMut<PhysState>>,
     parents: Query<&ChildOf>,
     globals: Query<&GlobalTransform>,
     mut transforms: Query<&mut Transform>,
 ) {
-    let Some(phys) = phys else { return };
+    let Some(mut phys) = phys else { return };
     let dt = time.delta_secs();
     for (&id, f) in wrecks.fallen.iter_mut() {
         let Some(bodies) = phys.world.ragdoll_nodes(id) else { continue };
         crate::swing_traps::follow_bodies(&bodies, &f.nodes, f.scale, f.root, &parents, &globals, &mut transforms);
+        if f.falling.is_none() && !phys.world.ragdoll_asleep(id) {
+            // Roused by a blast or a push: it falls again.
+            (f.falling, f.calm, f.window) = (Some(0.0), 0.0, 0.0);
+            f.since.clear();
+        }
+        // Calm as a corpse is (`ragdoll::CALM_SPEED`, `CALM_SPIN`, `CALM_TIME`): the parts'
+        // net motion over short windows, not their velocities. A hubcap (`CarPort01`, a
+        // thin 15-sided disc) rocked on its edges at up to 1.7 rad/s for 45 s without the
+        // physics engine calling it asleep [observed: smoke wreck-car-parts-fall].
+        let now: Vec<Option<Iso>> = bodies.iter().map(|b| b.as_ref().map(|b| Iso { translation: b.translation, rotation: b.rotation })).collect();
+        if f.falling.is_some() {
+            f.window += dt;
+            if f.since.len() != now.len() {
+                (f.since, f.window) = (now, 0.0);
+            } else if f.window >= crate::ragdoll::CALM_WINDOW {
+                let moved = crate::ragdoll::net_motion(&f.since, &now, f.window);
+                let calm = moved.iter().all(|&(v, w)| v < crate::ragdoll::CALM_SPEED && w < crate::ragdoll::CALM_SPIN);
+                f.calm = if calm { f.calm + f.window } else { 0.0 };
+                (f.since, f.window) = (now, 0.0);
+            }
+        }
         if let Some(t) = f.falling.as_mut() {
             *t += dt;
-            if phys.world.ragdoll_asleep(id) {
-                info!("wrecks: {id:08X} came to rest after {:.1} s", *t);
+            f.log_in -= dt;
+            let held = *t >= MAX_FALLING;
+            if f.calm >= crate::ragdoll::CALM_TIME || held || phys.world.ragdoll_asleep(id) {
+                phys.world.set_ragdoll_at_rest(id);
+                // The part that ended farthest from where it started.
+                let moved = bodies.iter().zip(&f.start).enumerate().filter_map(|(i, (b, s))| {
+                    let b = b.as_ref()?;
+                    let d = (0..3).map(|k| (b.translation[k] - s[k]).powi(2)).sum::<f32>().sqrt();
+                    Some((d, b.translation[2] - s[2], i))
+                });
+                let (d, dz, i) = moved.fold((0.0f32, 0.0f32, 0), |a, m| if m.0 > a.0 { m } else { a });
+                let name = f.names.get(i).map_or("", String::as_str);
+                let how = if held { "held at rest still moving" } else { "came to rest" };
+                info!("wrecks: {id:08X} {how} after {:.1} s; farthest part {name} {d:.0} units from its start ({dz:+.0} in height)", *t);
                 f.falling = None;
+            } else if f.log_in <= 0.0 && *t < FALL_LOG_SECONDS {
+                // Its fall in the log: the fastest part, once a second.
+                if let Some((v, w)) = phys.world.ragdoll_speed(id) {
+                    let speed = |b: &fnv_phys::BodyState| (b.linvel[0].powi(2) + b.linvel[1].powi(2) + b.linvel[2].powi(2)).sqrt();
+                    let fastest = bodies.iter().enumerate().filter_map(|(i, b)| Some((speed(b.as_ref()?), i, b.as_ref()?.translation))).max_by(|a, b| a.0.total_cmp(&b.0));
+                    let (name, at) = fastest.map_or((String::new(), [0.0; 3]), |(_, i, t)| (f.names.get(i).cloned().unwrap_or_default(), t));
+                    info!("wrecks: {id:08X} falling: fastest part {v:.0} units/s, {w:.1} rad/s ({name} at {:.0}, {:.0}, {:.0})", at[0], at[1], at[2]);
+                }
+                f.log_in = 1.0;
             }
         }
     }

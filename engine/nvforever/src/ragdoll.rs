@@ -418,7 +418,7 @@ fn start(
 /// Per body, how fast its bone moved and turned on average between the poses `a` and `b`
 /// taken `seconds` apart: game units per second and radians per second (0 for a body
 /// missing from either).
-fn net_motion(a: &[Option<Iso>], b: &[Option<Iso>], seconds: f32) -> Vec<(f32, f32)> {
+pub(crate) fn net_motion(a: &[Option<Iso>], b: &[Option<Iso>], seconds: f32) -> Vec<(f32, f32)> {
     let t = seconds.max(1e-6);
     a.iter()
         .zip(b)

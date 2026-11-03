@@ -109,11 +109,21 @@ self-damage) is in `combat-rules.md` (step C7); this note is about the model.
     `PreparedModel::loose`; drawn as a reference's destruction model it gets its own
     nodes, and once its collision is in, its bodies become an object ragdoll without
     joints at their nodes' poses, the held collision stops taking part, and each moving
-    body moves its node (as a swinging trap's, traps.md §4). Log `wrecks: <ref>
-    <model>: <n> parts fall (<m> moving)`, `wrecks: <ref> came to rest after <s> s`.
-    [design: they start at rest, the blast does not push them; they do not hurt
-    actors; drawn again (cell reload, a loaded save) they fall again from the file's
-    poses, where they came to rest is not kept.]
+    body moves its node (as a swinging trap's, traps.md §4). They start still; the
+    stage's explosion pushes them as it pushes any loose object. Calm as a corpse is
+    (net motion under 12 units/s and 0.6 rad/s for 1.5 s, ragdoll.md §4 "Rest"), or
+    still moving after 20 s, the wreck is held at rest where it lies until a blast or a
+    push rouses it: the car's hubcap (`CarPort01`, a thin 15-sided disc) otherwise
+    rocked on its edges for 45 s without the physics engine calling it asleep. Log
+    `wrecks: <ref> <model>: <n> parts fall (<m> moving)`, `wrecks: <ref> came to rest
+    after <s> s; farthest part <node> <d> units from its start (<dz> in height)`.
+    [observed, smoke `wreck-car-parts-fall` and `wreck-parts-fall`, 2026-11-02: the
+    lone `Car01` `0013DA2F` and the two cars its blast destroyed came to rest in 1.6 to
+    2.0 s, no part farther than 322 units from where it started (the hood); at the
+    Goodsprings wreck pile the motorcycle's seat was thrown 3012 units by the
+    neighbouring wrecks' explosions, the other parts within 511.]
+    [design: they do not hurt actors; drawn again (cell reload, a loaded save) they fall
+    again from the file's poses, where they came to rest is not kept.]
 - Not built: a model's own particle systems below a damage-stage node are not gated;
   shapes below one in a model drawn as a rig (an idle, a door); blast nodes
   (`nif-node-audit.md` item 3); creatures' destruction stages (76 stages with debris, the
