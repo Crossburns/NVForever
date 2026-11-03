@@ -1657,7 +1657,8 @@ impl<'a> World<'a> {
     ///
     /// The fields are public through [`World::get`]'s `&mut RefState`: a writer of
     /// `enabled` or `deleted` that does not go through these functions must bump this
-    /// itself (none does; fork-notes/cpu-frame-cost/frame-budget/ai-split-2026-11-03.md).
+    /// itself (none does: the writers are listed in docs/spec-notes/navmesh.md §4c;
+    /// issue #1430).
     pub fn presence_serial(&self) -> u64 {
         self.presence_serial
     }

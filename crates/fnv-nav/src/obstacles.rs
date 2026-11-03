@@ -158,8 +158,8 @@ impl NavGraph {
     /// [`NavGraph::sync_obstacles`]): each change takes a number no graph of this process
     /// had, so two graphs (or one graph before and after) with the same stamp have the
     /// same obstacles in the same states. 0 while none was learnt. A writer of the public
-    /// `obstacles` map other than these two must not exist (none does,
-    /// fork-notes/cpu-frame-cost/frame-budget/ai-split-2026-11-03.md).
+    /// `obstacles` map other than these two must not exist (none does:
+    /// docs/spec-notes/navmesh.md §4c; issue #1430).
     pub fn obstacles_stamp(&self) -> u64 {
         self.obstacles_stamp
     }
