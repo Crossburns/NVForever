@@ -1609,6 +1609,10 @@ pub struct Game<'a> {
     empty_ref_traced: BTreeSet<(u32, u16)>,
     /// Game time of the next scan for actors whose package choice is due (`crate::ai`).
     pub(crate) package_scan_due: f64,
+    /// Actors choosing their package now (`Game::select_package`): a condition of one
+    /// of their packages that asks for the current package gets the one they had
+    /// rather than starting the choice again (`Game::current_package`). Not saved.
+    pub(crate) choosing_package: Vec<FormId>,
 }
 
 /// A lambda in a save: the unit it is written in (by key), the lambda, the instance whose
@@ -2180,6 +2184,7 @@ impl<'a> Game<'a> {
             stop_run: false,
             empty_ref_traced: BTreeSet::new(),
             package_scan_due: 0.0,
+            choosing_package: Vec::new(),
         }
     }
 

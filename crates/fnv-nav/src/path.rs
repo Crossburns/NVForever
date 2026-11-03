@@ -11,6 +11,37 @@ use serde::Serialize;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap};
 
+/// Path searches ([`NavGraph::find_path`]) since [`probe::enable`], for attributing
+/// their cost (diagnostics only: never read by the searches; a reader takes differences
+/// between two reads). Nothing is counted until it is enabled.
+pub mod probe {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+
+    static ON: AtomicBool = AtomicBool::new(false);
+    static SEARCHES: AtomicU64 = AtomicU64::new(0);
+    static FOUND: AtomicU64 = AtomicU64::new(0);
+
+    pub(crate) fn searched(found: bool) {
+        if !ON.load(Relaxed) {
+            return;
+        }
+        SEARCHES.fetch_add(1, Relaxed);
+        if found {
+            FOUND.fetch_add(1, Relaxed);
+        }
+    }
+
+    /// Count from now on (the engine's `NVF_PLAY_TEST_PROFILE_COUNTS`).
+    pub fn enable() {
+        ON.store(true, Relaxed);
+    }
+
+    /// (searches, searches that found a path) so far.
+    pub fn searches() -> (u64, u64) {
+        (SEARCHES.load(Relaxed), FOUND.load(Relaxed))
+    }
+}
+
 /// What a path may use and what it costs.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PathParams {
@@ -455,6 +486,16 @@ impl NavGraph {
     /// and the route is planned again. With ledges allowed, A* runs over everything at
     /// once (ledges join areas the area labels keep apart).
     pub fn find_path(&self, from: Place, to: Place, p: &PathParams) -> Result<Path, PathError> {
+        // A span for profiling and a count for diagnostics ([`probe`]); the search is
+        // the same.
+        let _span = tracing::info_span!("nav::find_path").entered();
+        let found = self.search_path(from, to, p);
+        probe::searched(found.is_ok());
+        found
+    }
+
+    /// [`NavGraph::find_path`]'s search.
+    fn search_path(&self, from: Place, to: Place, p: &PathParams) -> Result<Path, PathError> {
         let (start, s_at) = self.nearest(from.space, from.pos, SNAP_RADIUS).ok_or(PathError::NoTriangle { which: "start", at: from.pos })?;
         let (goal, g_at) = self.nearest(to.space, to.pos, SNAP_RADIUS).ok_or(PathError::NoTriangle { which: "goal", at: to.pos })?;
         // Water closed to it ([`PathParams::water`]): a goal in water is out of reach at
