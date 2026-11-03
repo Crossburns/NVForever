@@ -17,6 +17,7 @@
 //!   stops; an unattended run closes it as any script menu (`NVF_PLAY_TEST_SCRIPT_MENUS`).
 //!
 //! Log lines: `tutorial menu: page <n>/<N> "<title>" (<message>)` when a page shows,
+//! `tutorial menu: scroll <value> of <range>` when the hand-built drawing's scroll changes,
 //! `tutorial menu: closed (<how>)`.
 //!
 //! With `[UI] TileMenus=TutorialMenu` the same rules work the menu drawn from its file
@@ -410,6 +411,7 @@ fn draw(
             info!("tutorial menu: page {}/{} {:?} ({})", page + 1, pages.len(), p.title, p.message);
         }
     }
+    let scroll_moved = now.2 != shown.2;
     *shown = now;
     for e in &roots {
         commands.entity(e).despawn();
@@ -435,6 +437,9 @@ fn draw(
     let text_h = if lines == 0 { 0.0 } else { crate::chargen::draw::BODY_H + LINE_PITCH * (lines - 1) as f32 };
     view.max_scroll = max_scroll(text_h + TEXT_Y, l.column[3]);
     view.scroll = view.scroll.min(view.max_scroll);
+    if scroll_moved {
+        info!("tutorial menu: scroll {} of {}", view.scroll, view.max_scroll);
+    }
     let root = Node {
         position_type: PositionType::Absolute,
         width: Val::Percent(100.0),

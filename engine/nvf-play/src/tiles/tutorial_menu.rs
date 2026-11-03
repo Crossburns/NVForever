@@ -9,11 +9,11 @@
 //!   default), none of this runs and `clipwindow` stays unread.
 //! - **What the model writes** ([`write`], when the page shown changes): the strings the
 //!   file leaves "replaced in code" (`TM_title`, `TM_page`), the body (`TM_text`), the page
-//!   count's and the buttons' state, the background's opacity, and the two marks that make
-//!   this file come out as captured: `clipwindow` turned on
-//!   (`fnv_ui::input::mark_clip_windows`) and the background's alpha kept from its children
-//!   ([`super::layout::OWN_ALPHA`]). The file has no `io()` traits [documented]; the menu's
-//!   code addresses its tiles by `<id>` and by these traits [hypothesis].
+//!   count's and the buttons' state, the background's opacity, and the mark that keeps the
+//!   background's alpha from its children ([`super::layout::OWN_ALPHA`]). The file has no
+//!   `io()` traits [documented]; the menu's code addresses its tiles by `<id>` and by these
+//!   traits [hypothesis]. `clipwindow` is turned on every frame after the scripts
+//!   ([`mark_windows`]), so a window injected or enabled later is covered too.
 //! - **What the model does not work out**: the sizes. `TM_text`'s measured height goes to
 //!   `_text_height`, that plus a step to the scrollbar's `_number_of_items`, the column's
 //!   height to `_number_of_visible_items`, and the scroll range is what those leave
@@ -24,12 +24,13 @@
 //!   the text by that value (`_text_y`); the layout moves nothing (menu-xml.md §3.1.1).
 //! - **The order in a frame** (`super::write_tutorial`, after `crate::tutorial_menu::keys`,
 //!   before the scripts): the frame's commands are applied first, then the page they lead
-//!   to is written, measured and its scroll written, so no frame draws new text with an old
-//!   scroll or the other way round.
+//!   to is written, measured and its scroll written ([`settle`]), so a key or a click never
+//!   draws new text with an old scroll or the other way round. A page a script adds in the
+//!   frame's own `run_scripts` reaches the tree the next frame (tutorial-menu.md §5).
 
 use super::layout::Rect;
-use super::menus::Tiled;
-use crate::tutorial_menu::{Command, Page};
+use super::menus::{SizesWritten, Size, Tiled};
+use crate::tutorial_menu::{Command, Page, TutorialView};
 use fnv_ui::{TileId, Ui, Value};
 
 /// The menu's name [documented: tutorial_menu.xml].
@@ -45,15 +46,23 @@ const COLUMN: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_
 const TEXT: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_text_container/TM_text";
 const BAR: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_scrollbar";
 const MARKER: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_scrollbar/scrollbar_vert_marker";
+const UP: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_scrollbar/scrollbar_vert_up";
+const DOWN: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_scrollbar/scrollbar_vert_down";
+const PAGE_UP: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_scrollbar/scrollbar_vert_page_up";
+const PAGE_DOWN: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_scrollbar/scrollbar_vert_page_down";
 const NEXT: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_next_button";
 const PREVIOUS: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_prev_button";
 const CLOSE: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_close_button";
+const NEXT_TEXT: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_next_button/button_text";
+const PREVIOUS_TEXT: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_prev_button/button_text";
+const CLOSE_TEXT: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_close_button/button_text";
 const SYMBOL: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_VDSG_symbol";
 
-/// [design] Every fixed path the model writes or input reads is part of a successful build;
-/// a file a mod restructured keeps the hand-built menu.
+/// [design] Every fixed path the model writes or input reads is part of a successful build,
+/// and the buttons' words, which give them and the column their sizes; a file a mod
+/// restructured keeps the hand-built menu.
 pub fn built(ui: &Ui) -> Tiled {
-    for path in [TUTORIAL_MENU, BACKGROUND, DEPTH, TITLE, COUNT, COLUMN, TEXT, BAR, MARKER, NEXT, PREVIOUS, CLOSE, SYMBOL] {
+    for path in [TUTORIAL_MENU, BACKGROUND, DEPTH, TITLE, COUNT, COLUMN, TEXT, BAR, MARKER, UP, DOWN, PAGE_UP, PAGE_DOWN, NEXT, PREVIOUS, CLOSE, NEXT_TEXT, PREVIOUS_TEXT, CLOSE_TEXT, SYMBOL] {
         if ui.find_tile(path).is_none() {
             return Tiled::No(format!("{path} missing"));
         }
@@ -100,7 +109,7 @@ pub fn write(ui: &mut Ui, shown: &Shown, alpha: f64) {
     if !built(ui).yes() {
         return;
     }
-    let Shown { menu, page, at, of } = shown;
+    let Shown { page, at, of, .. } = shown;
     set(ui, TITLE, "string", Value::Str(page.title.clone()));
     set(ui, TEXT, "string", Value::Str(page.text.clone()));
     let many = *of > 1;
@@ -113,7 +122,35 @@ pub fn write(ui: &mut Ui, shown: &Shown, alpha: f64) {
     set(ui, PREVIOUS, "target", on(*at > 0));
     set(ui, BACKGROUND, "alpha", Value::Num(alpha));
     set(ui, DEPTH, super::layout::OWN_ALPHA, Value::Num(1.0));
-    fnv_ui::input::mark_clip_windows(ui, *menu);
+}
+
+/// Turn the menu's `clipwindow`s on: on every tiled frame, once the tree is worked out after
+/// the scripts and before it is drawn, so a window injected or enabled at any time crops from
+/// that frame on. A walk of the menu's tiles, writing only for a window not marked yet.
+pub fn mark_windows(ui: &mut Ui) {
+    if let Some(menu) = ui.menu(TUTORIAL_MENU) {
+        fnv_ui::input::mark_clip_windows(ui, menu);
+    }
+}
+
+/// A tiled frame's sizes, range and scroll, after what it writes of the page: the tree worked
+/// out first, as the screen may have changed with the page the same (a new window size leads
+/// to the column's width and the body's wrap width); the sizes lead to the places, and the
+/// column's width to the wrap width, so worked out again until the body is measured at its
+/// final width [design: three rounds are the buttons, the column and the body]. Only then the
+/// range is read and the scroll, held in it, written. Returns the scroll written.
+pub fn settle(ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten, size: &Size<'_>, view: &mut TutorialView) -> f64 {
+    ui.update();
+    for _ in 0..3 {
+        if super::menus::write_text_sizes_of(ui, texts, sizes, size) == 0 {
+            break;
+        }
+        ui.update();
+    }
+    view.set_scroll_bound(scroll_bound(ui) as f32);
+    let scroll = f64::from(view.scroll);
+    write_scroll(ui, scroll);
+    scroll
 }
 
 /// The VDSG symbol's picture's width, which its `width` and the words after it are worked
@@ -170,6 +207,25 @@ pub enum TutorialTile {
     Marker,
 }
 
+/// What a click on `tile` stands for, while the tutorial menu is drawn from its tiles: `menu`
+/// is that menu ([`tiled_menu`]), none otherwise. Off or in the fallback a script's queued
+/// click on the file's tile acts on nothing: the hand-built menu takes only its own input.
+pub fn clicked(ui: &Ui, tile: TileId, menu: Option<TileId>) -> Option<TutorialTile> {
+    if menu? != ui.root_of(tile) {
+        return None;
+    }
+    tutorial_tile(ui, tile)
+}
+
+/// The menu when it is drawn from its tiles ([`tiled`]).
+pub fn tiled_menu(on: bool, game: &fnv_game::Game<'_>) -> Option<TileId> {
+    if tiled(on, game) {
+        game.ui_tree.menu(TUTORIAL_MENU)
+    } else {
+        None
+    }
+}
+
 /// The menu's tile `tile` stands for, by its name or a parent's. A button's text and key
 /// hint are its button.
 pub fn tutorial_tile(ui: &Ui, tile: TileId) -> Option<TutorialTile> {
@@ -209,22 +265,36 @@ pub fn tile_command(ui: &Ui, what: TutorialTile) -> Option<Command> {
     })
 }
 
-/// What a press on the marker holds while it drags: the scrollbar's top and how far under
-/// the marker's top the pointer took it (interface units). The layout lists the drawn
-/// tiles (the marker, not the scrollbar's hotrect), so this lays out the whole menu: worked
-/// out once a press, as the wait menu's slider [design].
-pub fn marker_grab(ui: &Ui, pointer_y: f64) -> Option<(f64, f64)> {
+/// What a press on the marker holds while it drags: the menu it was made in, the scrollbar's
+/// top and how far under the marker's top the pointer took it (interface units).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drag {
+    pub menu: TileId,
+    pub top: f64,
+    pub grab: f64,
+}
+
+/// Whether a drag goes on: the press held and that very menu still drawn from its tiles
+/// (`now`, [`tiled_menu`]); a menu closed, or built again, ends it.
+pub fn drag_holds(drag: &Drag, now: Option<TileId>, held: bool) -> bool {
+    held && now == Some(drag.menu)
+}
+
+/// The [`Drag`] of a press on the marker. The layout lists the drawn tiles (the marker, not
+/// the scrollbar's hotrect), so this lays out the whole menu: worked out once a press, as
+/// the wait menu's slider [design].
+pub fn marker_grab(ui: &Ui, pointer_y: f64) -> Option<Drag> {
     let marker = ui.find_tile(MARKER)?;
     let menu = ui.menu(TUTORIAL_MENU)?;
     let placed: Rect = super::layout::layout(ui, menu, &|_, _, _| (0.0, 0.0), true).into_iter().find(|i| i.tile == marker)?.rect;
-    Some((placed.top - ui.tile(marker).get("y").map_or(0.0, Value::num), pointer_y - placed.top))
+    Some(Drag { menu, top: placed.top - ui.tile(marker).get("y").map_or(0.0, Value::num), grab: pointer_y - placed.top })
 }
 
-/// The scroll for the pointer at `pointer_y` with a marker held at `grab` ([`marker_grab`]):
+/// The scroll for the pointer at `pointer_y` with the marker held ([`marker_grab`]):
 /// the marker's place over the file's `_step_height`, whole values [documented:
 /// scrollbar_vert.xml's `_drag_value`; design: the marker's own drag traits are not built,
 /// as the wait menu's slider].
-pub fn scroll_under(ui: &Ui, (top, grab): (f64, f64), pointer_y: f64) -> Option<f64> {
+pub fn scroll_under(ui: &Ui, Drag { top, grab, .. }: Drag, pointer_y: f64) -> Option<f64> {
     let step = ui.get_float(&format!("{MARKER}/_step_height")).filter(|s| *s > 0.0)?;
     // A hair over, so a marker held where it stands gives its own value back.
     Some(((pointer_y - grab - top) / step + 1e-9).floor().clamp(0.0, scroll_bound(ui)))
@@ -257,7 +327,7 @@ pub const HAND_BUILT_KEYS: [&str; 11] = ["A", "S", "E", "xleft", "xright", "xup"
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tutorial_menu::{TutorialView, SYMBOL_DEAD, SYMBOL_W};
+    use crate::tutorial_menu::{SYMBOL_DEAD, SYMBOL_W};
     use fnv_sim::FormId;
     use fnv_ui::MemSource;
 
@@ -303,7 +373,8 @@ mod tests {
         <y><copy src="parent()" trait="_text_y"/></y></text>
     </hotrect>
     <hotrect name="TM_next_button"><target>&true;</target><text name="button_text"/></hotrect>
-    <hotrect name="TM_prev_button"><x>1157</x><target>&true;</target><text name="button_text"/></hotrect>
+    <hotrect name="TM_prev_button"><target>&true;</target><text name="button_text"/>
+      <x><copy src="screen()" trait="width"/><mul>0.8</mul><sub>208</sub></x></hotrect>
     <hotrect name="TM_close_button"><target>&true;</target><text name="button_text"/></hotrect>
     <image name="TM_VDSG_symbol"><filename>loading\symbol.dds</filename>
       <width><copy src="me()" trait="filewidth"/><sub src="me()" trait="_dead_space"/></width><_dead_space>36</_dead_space></image>
@@ -312,8 +383,16 @@ mod tests {
         );
         let mut ui = Ui::new();
         ui.load_menu(&src, "tm.xml").unwrap();
+        // Previous at 1157: 0.8 of the screen less 208.
+        screen(&mut ui, 1706.25);
         ui.update();
         ui
+    }
+
+    /// A new window size, as `super::super::write_screen` writes it: no evaluation with it.
+    fn screen(ui: &mut Ui, width: f64) {
+        let id = ui.screen();
+        ui.set_trait(id, "width", Value::Num(width));
     }
 
     fn shown(ui: &Ui, title: &str, text: &str, at: usize, of: usize) -> Shown {
@@ -331,27 +410,28 @@ mod tests {
         (wrap.unwrap_or(500.0).min(500.0), lines(text.split_whitespace().count().max(1)))
     }
 
-    /// `write`, the sizes and the scroll as `super::super::write_tutorial` does for a change.
+    /// The text's height with words 100 wide each, so its lines follow the wrap width.
+    fn wrapped(_: f64, text: &str, wrap: Option<f64>) -> (f64, f64) {
+        let words = text.split_whitespace().count().max(1) as f64;
+        let per_line = wrap.map_or(words, |w| (w / 100.0).floor().max(1.0));
+        (wrap.unwrap_or(words * 100.0), lines((words / per_line).ceil() as usize))
+    }
+
+    /// A page's change as `super::super::write_tutorial` does it: `write`, the symbol, then
+    /// [`settle`], and what `update` does after the scripts.
     fn frame(ui: &mut Ui, s: &Shown, view: &mut TutorialView) {
         write(ui, s, 191.25);
         write_symbol(ui, Some(128.0));
-        ui.update();
-        settle(ui, view);
-        ui.update();
+        unchanged_frame(ui, &mut SizesWritten::default(), &size, view);
     }
 
-    fn settle(ui: &mut Ui, view: &mut TutorialView) {
+    /// A frame with the page the same: [`settle`] with the sizes kept from the frames before.
+    fn unchanged_frame(ui: &mut Ui, sizes: &mut SizesWritten, measure: &Size<'_>, view: &mut TutorialView) {
         let menu = ui.menu(TUTORIAL_MENU).unwrap();
         let texts = super::super::menus::texts(ui, menu);
-        let mut last = super::super::menus::SizesWritten::default();
-        for _ in 0..3 {
-            if super::super::menus::write_text_sizes_of(ui, &texts, &mut last, &size) == 0 {
-                break;
-            }
-            ui.update();
-        }
-        view.set_scroll_bound(scroll_bound(ui) as f32);
-        write_scroll(ui, f64::from(view.scroll));
+        settle(ui, &texts, sizes, measure, view);
+        ui.update();
+        mark_windows(ui);
     }
 
     fn words(n: usize) -> String {
@@ -467,16 +547,103 @@ mod tests {
         let short = shown(&ui, "Short", &words(3), 1, 2);
         frame(&mut ui, &short, &mut view);
         assert_eq!(text_y(&ui), Some(21.0));
-        // Back on the long page, at its bottom: when its text comes out shorter (a wider
-        // window wraps it less), a scroll past the new range is held in it.
-        assert!(!view.apply(2, Command::Previous));
-        frame(&mut ui, &long, &mut view);
-        assert!(!view.apply(2, Command::Scroll(500.0)));
-        let shorter = shown(&ui, "Long", &words(16), 0, 2);
-        frame(&mut ui, &shorter, &mut view);
-        assert_eq!(scroll_bound(&ui), lines(16) + 30.0 - 440.0);
-        assert_eq!(f64::from(view.scroll), scroll_bound(&ui));
-        assert_eq!(text_y(&ui), Some(21.0 - scroll_bound(&ui)));
+    }
+
+    #[test]
+    fn a_resize_with_the_page_the_same_settles_in_its_own_frame() {
+        // 180 words 100 wide. Previous at 1157: wrap 980, nine a line, 20 lines, 625 high.
+        let mut ui = menu();
+        let mut view = TutorialView::default();
+        let mut sizes = SizesWritten::default();
+        let s = shown(&ui, "Long", &words(180), 0, 1);
+        write(&mut ui, &s, 191.25);
+        unchanged_frame(&mut ui, &mut sizes, &wrapped, &mut view);
+        assert_eq!((ui.get_float(&format!("{TEXT}/height")), scroll_bound(&ui)), (Some(625.0), 215.0));
+        assert!(!view.apply(1, Command::Scroll(500.0)));
+        unchanged_frame(&mut ui, &mut sizes, &wrapped, &mut view);
+        assert_eq!(text_y(&ui), Some(21.0 - 215.0));
+        // Narrower: Previous at 957, wrap 780, seven a line, 26 lines, 811 high. One frame, the
+        // model not written again: the body, the range and the scroll are all of the new size
+        // as the frame's writes end, before the tree is worked out after the scripts.
+        screen(&mut ui, 1456.25);
+        let texts = super::super::menus::texts(&ui, ui.menu(TUTORIAL_MENU).unwrap());
+        settle(&mut ui, &texts, &mut sizes, &wrapped, &mut view);
+        assert_eq!(ui.get_float(&format!("{TEXT}/wrapwidth")), Some(780.0));
+        assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(811.0));
+        assert_eq!(scroll_bound(&ui), 401.0);
+        assert_eq!(view.scroll, 215.0, "still in the wider range");
+        ui.update();
+        assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(811.0), "nothing moves after the scripts");
+        assert_eq!(text_y(&ui), Some(21.0 - 215.0));
+        // Wider: wrap 1980, 19 a line, 10 lines, 315 high: no range left, the scroll held to it.
+        screen(&mut ui, 2956.25);
+        settle(&mut ui, &texts, &mut sizes, &wrapped, &mut view);
+        assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(315.0));
+        assert_eq!((scroll_bound(&ui), view.scroll), (0.0, 0.0));
+        ui.update();
+        assert_eq!(text_y(&ui), Some(21.0));
+    }
+
+    #[test]
+    fn a_window_injected_or_enabled_later_crops_on_its_next_frame() {
+        let mut ui = menu_changed(|xml| xml.replace("<clipwindow>&true;</clipwindow>", "<clipwindow>&false;</clipwindow>"));
+        let mut view = TutorialView::default();
+        let s = shown(&ui, "Long", &words(20), 0, 1);
+        frame(&mut ui, &s, &mut view);
+        let menu = ui.menu(TUTORIAL_MENU).unwrap();
+        let text = ui.find_tile(TEXT).unwrap();
+        let clip = |ui: &Ui, t| super::super::layout::layout(ui, menu, &size, true).into_iter().find(|i| i.tile == t).unwrap().clip;
+        assert_eq!(clip(&ui, text), None, "false: nothing crops");
+        // Enabled with the page the same.
+        let column = ui.find_tile(COLUMN).unwrap();
+        ui.set_trait(column, "clipwindow", Value::Num(1.0));
+        unchanged_frame(&mut ui, &mut SizesWritten::default(), &size, &mut view);
+        assert_eq!(clip(&ui, text).map(|c| c.height), Some(440.0));
+        // Injected with the page the same, by a mod's script.
+        let src = MemSource::default();
+        let depth = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect";
+        assert!(ui.inject_text(&src, depth, r#"<hotrect name="Late"><width>10</width><height>10</height><clipwindow>1</clipwindow><image name="Inner"><width>99</width><height>99</height></image></hotrect>"#));
+        unchanged_frame(&mut ui, &mut SizesWritten::default(), &size, &mut view);
+        let inner = ui.find_tile(&format!("{depth}/Late/Inner")).unwrap();
+        assert_eq!(clip(&ui, inner).map(|c| c.width), Some(10.0));
+    }
+
+    #[test]
+    fn a_click_counts_only_while_drawn_from_tiles() {
+        let mut ui = menu();
+        ui.load_menu(&MemSource::default().with("o.xml", r#"<menu name="Other"><image name="scrollbar_vert_up"/></menu>"#), "o.xml").unwrap();
+        let tutorial = ui.menu(TUTORIAL_MENU);
+        let next = ui.find_tile(NEXT).unwrap();
+        let close = ui.find_tile(&format!("{CLOSE}/button_text")).unwrap();
+        // Drawn from tiles: its tiles' commands.
+        assert_eq!(clicked(&ui, next, tutorial), Some(TutorialTile::Next));
+        assert_eq!(clicked(&ui, close, tutorial), Some(TutorialTile::Close));
+        // Off or in the fallback a script's queued click on the same tiles does nothing.
+        assert_eq!(clicked(&ui, next, None), None);
+        assert_eq!(clicked(&ui, close, None), None);
+        // A tile of that name in another menu is not this menu's.
+        let other = ui.find_tile("Other/scrollbar_vert_up").unwrap();
+        assert_eq!(clicked(&ui, other, tutorial), None);
+    }
+
+    #[test]
+    fn a_drag_ends_with_its_press_and_its_menu() {
+        let mut ui = menu();
+        let mut view = TutorialView::default();
+        let s = shown(&ui, "Long", &words(20), 0, 1);
+        frame(&mut ui, &s, &mut view);
+        let drag = marker_grab(&ui, 278.0).unwrap();
+        let menu = ui.menu(TUTORIAL_MENU);
+        assert!(drag_holds(&drag, menu, true));
+        assert!(!drag_holds(&drag, menu, false), "the press let go");
+        assert!(!drag_holds(&drag, None, true), "the menu closed, or no longer tiled");
+        // Opened again with the mouse still down: a new menu tile, and no old grab.
+        let again = ui.find_tile(BAR);
+        assert!(!drag_holds(&drag, again, true), "another tile than the one it was made in");
+        let src = MemSource::default().with("tm2.xml", r#"<menu name="TutorialMenu"/>"#);
+        let built_again = ui.load_menu(&src, "tm2.xml").unwrap();
+        assert_ne!(Some(built_again), menu);
+        assert!(!drag_holds(&drag, Some(built_again), true));
     }
 
     #[test]
@@ -542,7 +709,7 @@ mod tests {
         // The bar's top on the screen: the background's 96 and its own 172; a step of
         // (424 - 32) / 215 units, the marker taken 10 under its top at value 0.
         let grab = marker_grab(&ui, 278.0).unwrap();
-        assert_eq!(grab, (268.0, 10.0));
+        assert_eq!((grab.top, grab.grab), (268.0, 10.0));
         let step = 392.0 / 215.0;
         assert_eq!(scroll_under(&ui, grab, 278.0), Some(0.0));
         assert_eq!(scroll_under(&ui, grab, 278.0 + 100.5 * step), Some(100.0));
@@ -557,12 +724,34 @@ mod tests {
 
     #[test]
     fn missing_required_paths_fall_back() {
-        for (name, missing) in [("TM_title", TITLE), ("TM_page", COUNT), ("TM_text_container", COLUMN), ("TM_scrollbar", BAR), ("TM_next_button", NEXT), ("TM_close_button", CLOSE), ("TM_VDSG_symbol", SYMBOL)] {
+        for (name, missing) in [
+            ("TM_title", TITLE),
+            ("TM_page", COUNT),
+            ("TM_text_container", COLUMN),
+            ("TM_text", TEXT),
+            ("TM_scrollbar", BAR),
+            ("scrollbar_vert_marker", MARKER),
+            ("scrollbar_vert_up", UP),
+            ("scrollbar_vert_down", DOWN),
+            ("scrollbar_vert_page_up", PAGE_UP),
+            ("scrollbar_vert_page_down", PAGE_DOWN),
+            ("TM_next_button", NEXT),
+            ("TM_prev_button", PREVIOUS),
+            ("TM_close_button", CLOSE),
+            ("button_text", NEXT_TEXT),
+            ("TM_VDSG_symbol", SYMBOL),
+        ] {
             let mut ui = menu_changed(|xml| xml.replace(&format!("name=\"{name}\""), "name=\"Modded\""));
             assert_eq!(built(&ui), Tiled::No(format!("{missing} missing")));
             let s = shown(&ui, "T", "x", 0, 1);
             write(&mut ui, &s, 200.0);
             assert_eq!(ui.get_float(&format!("{BACKGROUND}/alpha")), Some(32.0), "nothing written");
+        }
+        // Each button's words on their own.
+        for (button, missing) in [("TM_prev_button", PREVIOUS_TEXT), ("TM_close_button", CLOSE_TEXT)] {
+            let was = format!(r#"<hotrect name="{button}"><target>&true;</target><text name="button_text"/>"#);
+            let ui = menu_changed(|xml| xml.replace(&was, &format!(r#"<hotrect name="{button}"><target>&true;</target><text name="Modded"/>"#)));
+            assert_eq!(built(&ui), Tiled::No(format!("{missing} missing")));
         }
         assert_eq!(built(&menu()), Tiled::Yes);
     }

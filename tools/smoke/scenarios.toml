@@ -17772,6 +17772,11 @@ order = [[
   "tutorial menu: closed (key)",
   "pipboy: menu code 1003",
   "pipboy: down",
+], [
+  { re = 'tiles: TutorialMenu scroll drawn at (\d+(?:\.\d+)?) of \1, text y -', label = "at the first page's bottom" },
+  { re = 'tiles: TutorialMenu drawn from tiles: page 2/2 ' },
+  { re = 'tiles: TutorialMenu scroll drawn at 0 of \d+(\.\d+)?, text y 21\b', label = "A's turn starts the page at its top, before any reopening" },
+  "tutorial menu: closed (key)",
 ]]
 
 [[scenario]]
@@ -17788,12 +17793,19 @@ expect = [
   { text = 'tutorial menu: page 2/2 "Healing Limbs"', count = 1, label = "A turns once; the A at the last page does nothing" },
   { text = "tutorial menu: page 1/2", count = 2, label = "the second message's arrival and S; the S at the first page does nothing" },
   { text = "tutorial menu: closed (key)", count = 1, label = "E closes it" },
+  { re = 'tutorial menu: scroll 30 of [1-9]', count = 1, label = "Down moves one step, once a press, the commands shared with the tile menu" },
+  { re = 'tutorial menu: scroll (\d+) of \1$', label = "the hand-built range's end reached by keys and wheel alone (ten steps are past it)" },
 ]
 order = [[
   "script: test aid calls ShowTutorialMenu",
   'tutorial menu: page 1/1',
+  'tutorial menu: scroll 30 of',
+  { re = 'tutorial menu: scroll (\d+) of \1$', label = "at its end" },
+  { re = 'tutorial menu: scroll [1-9]\d* of', label = "Up, back from the end" },
+  { re = 'tutorial menu: scroll [1-9]\d* of', label = "the wheel, back again" },
   "script: test aid calls ShowTutorialMenu",
   'tutorial menu: page 2/2 "Healing Limbs"',
+  { re = 'tutorial menu: scroll 0 of \d+', label = "A's turn starts the page at its top" },
   "tutorial menu: closed (key)",
 ]]
 

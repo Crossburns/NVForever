@@ -124,7 +124,9 @@ values in interface units; the message 0x0007235B]:
 - **Clipping and scrolling are apart.** The file moves the text: `TM_text`'s `y` is
   `_text_y`, 21 less the value [documented]. `clipwindow` on `TM_text_container` crops it
   (menu-xml.md §3.1.1) [hypothesis: a rectangular crop, nothing captured says more]; the model
-  turns the reading on for this menu alone.
+  turns the reading on for this menu alone, every frame after the scripts and before the
+  drawing, so a window injected or enabled later crops at once. `_NVFClipWindow` and
+  `_NVFOwnAlpha` are engine-written marks, ordinary traits to the tree.
 - **Alpha**: all of the menu's content is inside its background picture, whose alpha is 193.8
   in the original, and its title, body, lines and symbol read full strength, (255, 182, 66)
   [observed: shot 091 of hud_menus, 1280 x 720]. NVForever's layout multiplies alpha down from
@@ -152,7 +154,14 @@ values in interface units; the message 0x0007235B]:
   file. A script's MenuTapKey and ClickMenuButton act through the file.
 - **The order in a frame**: the tile input's commands reach the hand-built `keys` the same
   frame; then the page, its sizes, its range and the scroll are written together, before the
-  scripts and the tree's evaluation, so no frame draws a new page at an old scroll.
-- A file a mod restructured (a model path missing) keeps the whole hand-built drawing, with
+  scripts, so a key or a click never draws a new page at an old scroll. A window resize
+  settles in its own frame too (the tree is worked out before the text is measured). The
+  writer runs before `run_scripts`, so a page a script adds there reaches the tree the next
+  frame: the count and the buttons are one frame behind the game's pages; the page shown
+  and its scroll do not change with it [design].
+- Off, or in the fallback, a script's queued click on the file's tiles does nothing: the
+  commands take the drawing's own decision. A marker drag ends with its press or its menu.
+- A file a mod restructured (a model path, a scrollbar piece or a button's words missing)
+  keeps the whole hand-built drawing, with
   one warning. The frame a menu opens on its tree is not built yet, so the hand-built drawing
   shows for that one frame [design: as the other T15 menus].

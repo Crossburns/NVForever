@@ -597,10 +597,9 @@ struct TutorialScrollCheck {
 }
 
 /// T15b: write the tutorial menu's traits after its keys and clicks were applied
-/// (`crate::tutorial_menu::keys`), before the scripts: the page when it changed, the text
-/// sizes every frame it is drawn (measured again only when a string or wrap width changed),
-/// how far it scrolls and the scroll, so the frame's page and scroll reach the tree together
-/// (`tutorial_menu`).
+/// (`crate::tutorial_menu::keys`), before the scripts: the page when it changed, then its
+/// sizes, range and scroll every frame it is drawn (`tutorial_menu::settle`), so the frame's
+/// page and scroll reach the tree together (`tutorial_menu`).
 fn write_tutorial(
     mut script: ResMut<ScriptState>,
     switch: Res<vanilla::TileMenus>,
@@ -636,22 +635,10 @@ fn write_tutorial(
         let file = tutorial_menu::symbol_file(ui);
         let texels = *written.symbol.get_or_insert_with(|| file.and_then(|f| fonts.picture_size(&f)).map(|s| f64::from(s.x)));
         tutorial_menu::write_symbol(ui, texels);
-        ui.update();
     }
-    // The sizes lead to the places, and the column's width to the body's wrap width: worked
-    // out again until the body is measured at its final width [design: three rounds are the
-    // buttons, the column and the body].
     let texts = menus::texts(ui, menu);
     let size = fonts.menu_measure(&menus::fonts_of(ui, &texts));
-    for _ in 0..3 {
-        if menus::write_text_sizes_of(ui, &texts, &mut written.sizes, &size) == 0 {
-            break;
-        }
-        ui.update();
-    }
-    view.set_scroll_bound(tutorial_menu::scroll_bound(ui) as f32);
-    let scroll = f64::from(view.scroll);
-    tutorial_menu::write_scroll(ui, scroll);
+    let scroll = tutorial_menu::settle(ui, &texts, &mut written.sizes, &size, &mut view);
     if changed {
         info!("{}", tutorial_menu::describe(ui, &now));
         written.shown = Some(now);
@@ -662,9 +649,11 @@ fn write_tutorial(
 /// T15b: the scroll and the body's place once the tree is worked out after scripts (what is
 /// drawn), logged when they change, and when the scroll is not the value written this frame
 /// (smoke reads both: the model's value must outlast a click's pulse, as the wait menu's).
-fn check_tutorial_drawn(ui: &fnv_ui::Ui, check: &mut TutorialScrollCheck) {
+/// Its `clipwindow`s are turned on here, after the scripts and before the drawing.
+fn check_tutorial_drawn(ui: &mut fnv_ui::Ui, check: &mut TutorialScrollCheck) {
     use tutorial_menu::{scroll_bound, scroll_shown, text_y, TUTORIAL_MENU};
     let Some(wrote) = check.wrote.take() else { return };
+    tutorial_menu::mark_windows(ui);
     let (Some(v), Some(y)) = (scroll_shown(ui), text_y(ui)) else { return };
     let n = |x: f64| Value::Num(x).text();
     if check.drawn != Some((v, y)) {
@@ -685,7 +674,7 @@ fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check
     if rt.game.ui_files.is_some() {
         rt.game.ui_tree.update();
         input::check_wait_drawn(&rt.game.ui_tree, &mut wait_check);
-        check_tutorial_drawn(&rt.game.ui_tree, &mut tutorial_check);
+        check_tutorial_drawn(&mut rt.game.ui_tree, &mut tutorial_check);
         // Once, if something changes the tree's shape every frame (#1061).
         if let Some(line) = rt.game.ui_tree.take_reshape_warning() {
             warn!("{line}");

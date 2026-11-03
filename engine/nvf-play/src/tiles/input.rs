@@ -176,7 +176,7 @@ pub(crate) struct MenuInputs<'w, 's> {
     tutorial_commands: MessageWriter<'w, crate::tutorial_menu::TutorialInput>,
     /// A press on the tutorial menu's scroll marker, held: what
     /// `super::tutorial_menu::marker_grab` worked out at the press.
-    tutorial_drag: Local<'s, Option<(f64, f64)>>,
+    tutorial_drag: Local<'s, Option<super::tutorial_menu::Drag>>,
 }
 
 impl MenuInputs<'_, '_> {
@@ -233,14 +233,12 @@ impl MenuInputs<'_, '_> {
     }
 
     /// T15b: act on a click on the tutorial menu's tiles: the hand-built menu's command for
-    /// the piece, unless a key made it that the hand-built menu took this frame. `None` when
-    /// the tile is not that menu's, so the other menus' rules see it.
-    fn follow_tutorial(&mut self, ui: &fnv_ui::Ui, c: &fnv_ui::input::Click, at: Option<(f64, f64)>, held: bool, physical: &[&str]) -> Option<()> {
-        use super::tutorial_menu::{marker_grab, tile_command, tutorial_tile, TutorialTile, TUTORIAL_MENU};
-        if ui.menu(TUTORIAL_MENU) != Some(ui.root_of(c.tile)) {
-            return None;
-        }
-        let what = tutorial_tile(ui, c.tile)?;
+    /// the piece, unless a key made it that the hand-built menu took this frame. `tiled` is
+    /// the menu while it is drawn from tiles (`super::tutorial_menu::tiled_menu`, the drawing's
+    /// own decision). `None` when the click is not for it, so the other menus' rules see it.
+    fn follow_tutorial(&mut self, ui: &fnv_ui::Ui, c: &fnv_ui::input::Click, at: Option<(f64, f64)>, held: bool, physical: &[&str], tiled: Option<fnv_ui::TileId>) -> Option<()> {
+        use super::tutorial_menu::{clicked, marker_grab, tile_command, TutorialTile, TUTORIAL_MENU};
+        let what = clicked(ui, c.tile, tiled)?;
         if let fnv_ui::input::By::Key(k) = &c.by {
             if !super::menus::key_click_acts(TUTORIAL_MENU, k, physical) {
                 return Some(());
@@ -257,13 +255,10 @@ impl MenuInputs<'_, '_> {
         Some(())
     }
 
-    /// T15b: a drag on the tutorial menu's scroll marker: the scroll under the pointer while
-    /// the press holds and the menu is there.
-    fn drag_tutorial(&mut self, ui: &fnv_ui::Ui, at: Option<(f64, f64)>, held: bool) {
-        use super::tutorial_menu::{scroll_under, TUTORIAL_MENU};
-        if !held || ui.menu(TUTORIAL_MENU).is_none() {
-            *self.tutorial_drag = None;
-        }
+    /// T15b: a drag on the tutorial menu's scroll marker: the scroll under the pointer, while
+    /// `feed` keeps it ([`super::tutorial_menu::drag_holds`]).
+    fn drag_tutorial(&mut self, ui: &fnv_ui::Ui, at: Option<(f64, f64)>) {
+        use super::tutorial_menu::scroll_under;
         if let (Some(grab), Some((_, y))) = (*self.tutorial_drag, at) {
             if let Some(v) = scroll_under(ui, grab, y) {
                 self.tutorial_commands.write(crate::tutorial_menu::TutorialInput(crate::tutorial_menu::Command::ScrollTo(v as f32)));
@@ -274,7 +269,7 @@ impl MenuInputs<'_, '_> {
     /// Act on a frame's report (see the module doc): `at` the pointer, `held` the left
     /// button down, `physical` the keys from the keyboard (or a controller standing in for
     /// them) this frame.
-    fn follow(&mut self, ui: &fnv_ui::Ui, report: &fnv_ui::input::Report, at: Option<(f64, f64)>, held: bool, physical: &[&str]) -> Option<u32> {
+    fn follow(&mut self, ui: &fnv_ui::Ui, report: &fnv_ui::input::Report, at: Option<(f64, f64)>, held: bool, physical: &[&str], tutorial: Option<fnv_ui::TileId>) -> Option<u32> {
         use super::menus::{chosen_row, key_click_acts, message_pick, nav_by_hand, quantity_tile, row_button, QuantityTile, QUANTITY_MENU};
         use crate::menu::{model::Command, MenuInput};
         use fnv_ui::input::By;
@@ -296,9 +291,9 @@ impl MenuInputs<'_, '_> {
             *self.wait_left = None;
         }
         let mut wait_clicked = false;
-        self.drag_tutorial(ui, at, held);
+        self.drag_tutorial(ui, at);
         for c in report.clicks.iter().filter(|c| ui.is_live(c.tile)) {
-            if self.follow_tutorial(ui, c, at, held, physical).is_some() {
+            if self.follow_tutorial(ui, c, at, held, physical, tutorial).is_some() {
                 continue;
             }
             if let Some(hours) = self.follow_wait(ui, c, at, held, physical) {
@@ -442,6 +437,11 @@ pub(crate) fn feed(
     if menus.start && paused.as_ref().zip(page.as_ref()).is_some_and(|(p, pg)| crate::pause::mods_open(p, pg)) {
         taking.extend(rt.game.ui_tree.menu(super::mods::START_MENU));
     }
+    // T15b: a drag on the tutorial menu's marker ends with its press or that menu, whether or
+    // not any menu takes input this frame.
+    let tutorial = super::tutorial_menu::tiled_menu(menus.tutorial, &rt.game);
+    let held = aid_click || devices.mouse.pressed(MouseButton::Left);
+    *inputs.tutorial_drag = inputs.tutorial_drag.filter(|d| super::tutorial_menu::drag_holds(d, tutorial, held));
     let wait_tiled = super::wait_menu::tiled(menus.sleep_wait, &rt.game);
     inputs.wait_check.wrote = None;
     if !wait_tiled {
@@ -469,7 +469,7 @@ pub(crate) fn feed(
     let mut physical: Vec<&'static str> = Vec::new();
     // The tutorial menu's triggers stand for its own keys (`crate::pad::menu_buttons`), which
     // a press of them would otherwise turn a page with twice: here and through the file.
-    let pad_menu = crate::pad::MenuAt { code: super::tutorial_menu::tiled(menus.tutorial, &rt.game).then_some(fnv_game::game::menus::TUTORIAL), tab: 0 };
+    let pad_menu = crate::pad::MenuAt { code: tutorial.map(|_| fnv_game::game::menus::TUTORIAL), tab: 0 };
     for k in devices.keys.get_just_pressed() {
         if let Some(n) = key_name(*k) {
             push(&mut input, n);
@@ -491,7 +491,7 @@ pub(crate) fn feed(
     }
     let report = fnv_game::ui_input::step(&mut rt.game, &taking, &input, &no_measure);
     let ui = &rt.game.ui_tree;
-    let slider = inputs.follow(ui, &report, at, aid_click || devices.mouse.pressed(MouseButton::Left), &physical);
+    let slider = inputs.follow(ui, &report, at, held, &physical, tutorial);
     if let Some((_, to)) = report.over {
         match to.filter(|&t| ui.is_live(t)) {
             Some(t) => {
