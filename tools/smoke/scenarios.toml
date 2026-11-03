@@ -137,6 +137,11 @@ name = "stress runner tests"
 paths = ["tools/stress/", "tools/smoke/smoke/runner.py", "tools/smoke/smoke/stacks.py", "tools/smoke/smoke/expect.py"]
 cmd = ["python", "-m", "unittest", "discover", "-s", "tools/stress/tests"]
 
+[[check]]
+name = "profile campaign tests"
+paths = ["tools/profile/", "tools/stress/"]
+cmd = ["python", "-m", "unittest", "discover", "-s", "tools/profile/tests"]
+
 # ------------------------------------------------------------------ renderer, sky, image space
 
 [[scenario]]
@@ -460,6 +465,18 @@ run_seconds = 15
 expect = [
   { re = 'frame telemetry: disabled: NVF_PLAY_TEST_FRAME_TELEMETRY: expected finite, nonnegative seconds', count = 1, label = "one invalid-aid warning" },
   { re = 'frame telemetry: capturing', max = 0, label = "invalid aids start no capture" },
+]
+
+[[scenario]]
+name = "profile-slow-frames"
+source = "docs/design/frame-rate-audit.md §5 (#1421, 2026-11-03): NVF_PLAY_TEST_PROFILE_HITCH_MS sets the threshold of the profile's hitch lines, so the profiling campaign sees what its 20 ms frames hold; at 1 ms every frame is listed"
+areas = ["profiling"]
+paths = ["engine/nvforever/src/profile.rs", "tools/profile/campaign.py"]
+env = { NVF_PLAY_TEST_PROFILE = "2", NVF_PLAY_TEST_PROFILE_HITCH_MS = "1" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { re = 'profile hitch: \d', min = 100, label = "with a 1 ms threshold every frame is listed (100 ms by default: none in a quiet room)" },
 ]
 
 [[scenario]]
@@ -1870,6 +1887,8 @@ run_seconds = 90
 expect = [
   "VCG01 stage 55 set",
   "idle summary: 10 idles asked for (1 by scripts, 4 by packages' begin, end and change, 1 from collections, 4 by dialogue lines); 5 started on actors, 5 on the player; 0 for actors not drawn, 0 without a usable clip",
+  # #1429: an idle's clip is read on a worker thread, not in the frame the idle starts.
+  { re = 'idle clip summary: .*; 0 read in the frame they started after', label = "no idle clip read on the main thread after waiting for the worker (#1429)" },
   { re = 'furniture:.*by clip SpecialIdle_DocSitLeftExit', label = "Doc Mitchell getting off his chair by clip SpecialIdle_DocSitLeftExit" },
   # playtest list 5 item 40: that clip's Bip01 starts 52 units beside the seat; it is played from the seat.
   { re = 'furniture: 00104C0F: SpecialIdle_DocSitLeftExit starts (?P<n>\d+) units from where the body sits: played from the seat', range = [40, 100], label = "Doc Mitchell's exit played from his seat" },
@@ -6032,6 +6051,35 @@ expect = [
   { re = 'load: .*smoke-high\.nvfsave .*starting at .*feet: \[-50[01]\d\d\.\d+, -552\d\d\.\d+, 66[5-9]\d\.\d+\]', label = "the save holds the height on the track" },
   { re = 'player placed: feet \(-50[01]\d\d, -552\d\d, 66[5-9]\d\.\d\), ground z 66[5-9]\d\.\d \(Ref', label = "the load places the player on the track at the saved height" },
   { re = 'console: GetPos on player >> 66[5-9]\d\.', label = "and they stay there" },
+]
+
+[[scenario]]
+name = "animated-collision-write"
+source = "#1396 (activators.md §5.3): an activator whose collision sits under a node its sequence moves follows the group a script plays; the first half: PlayGroup Forward on a Goodsprings banana yucca (0x00106B2E, the harvest plant: ACTI with its one collision body under the node Forward moves [observed: survey run 2026-11-03]), then a save; animated-collision-load reads it"
+note = "No vanilla activator gate fits: the gate-like activators whose collision follows a sequence open by Open/Close, which are not PlayGroup groups (ProtectronPod01: 'Open is not an animation group'), and the Vault 3 gear door 0x000EC6EB has no Forward [observed 2026-11-03]; the plant is an activator a script plays a group on, the same path"
+areas = ["object-anims", "physics", "save"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/object_anims.rs", "crates/fnv-game/src/anims.rs", "crates/fnv-collide/src/anim.rs"]
+env = { NVFOREVER_HOME = "animated-collision-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "10:play_group:0x00106B2E:Forward:1", NVF_PLAY_TEST_CONSOLE = "20:save smoke-animated;21:close" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 24
+expect = [
+  { re = 'phys: 0x00106B2E: 1 animated collision bodies follow \w+ at', label = "the plant's collision body follows its drawn model" },
+  "playgroup: 0x00106B2E plays Forward (once",
+  { re = 'save: wrote .*smoke-animated\.nvfsave \(manual', label = "the save is written" },
+]
+
+[[scenario]]
+name = "animated-collision-load"
+source = "#1396: the second half: --load the save animated-collision-write made; the plant is drawn again at Forward's end (the last group asked of it, saved with the game) and its collision body follows Forward"
+areas = ["object-anims", "physics", "save"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/object_anims.rs", "crates/fnv-game/src/anims.rs", "crates/fnv-collide/src/anim.rs"]
+env = { NVFOREVER_HOME = "animated-collision-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--load", "smoke-animated", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'load: restored .*smoke-animated\.nvfsave', label = "the save loads" },
+  "playgroup: 0x00106B2E drawn again, shows Forward at its end",
+  { re = 'phys: 0x00106B2E: 1 animated collision bodies follow Forward at 0\.0\d s', label = "its collision body follows Forward, held at the end" },
 ]
 
 [[scenario]]
@@ -10447,6 +10495,21 @@ order = [[
   { re = 'weather roll: NVWastelandClear \(100 of 100 among 1 eligible\) from climate NVDefaultClimate at the start', label = "the start rolls the climate's list" },
   { re = 'test aid: go to \(-20000, 85000, 9000\)', label = "the player is put in NVUrbanRegion" },
   { re = 'weather roll: (NVUrbanClear \(85|NVWastelandClear \(15) of 100 among 2 eligible\) from region NVUrbanRegion \(priority 100\) on entering the region', label = "the region's list replaces the climate's, weighted 85/15" },
+]]
+
+[[scenario]]
+name = "sky-dome-new-worldspace"
+source = "issue #1395 (owner's TTW screenshot 2026-11-02: the Capital Wasteland sky a flat green-to-red gradient): on a worldspace change the sky is spawned again with the dome's vertex colours still the atmosphere's raw weights, and the dome was coloured again only when the sky colours moved, which they had already done against the old dome; at midday they then hold still and the raw weights stay on screen"
+note = "Goodsprings at noon, then cow into FreesideWorld (another worldspace, its own climate) at 12 s: the new dome must be coloured from the weather like the first. The clock runs, but at noon the colours hold still between the day keys"
+areas = ["sky"]
+paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/worldspace.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "2.5", NVF_PLAY_TEST_CONSOLE = "12:cow FreesideWorld -2 -3;12.3:close" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 30
+order = [[
+  { re = 'sky: a new dome coloured from ', label = "the start's dome is coloured" },
+  { re = 'render: worldspace 000DA726 -> [0-9A-F]{8} \(FreesideWorld\)', label = "into Freeside's worldspace" },
+  { re = 'sky: a new dome coloured from ', label = "the new worldspace's dome is coloured too, not left with its raw weights" },
 ]]
 
 [[scenario]]

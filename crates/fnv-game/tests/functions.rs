@@ -1408,10 +1408,12 @@ fn reset_3d_state_forgets_the_animation() {
     g.anims.driven = true;
     g.ask_anim(fnv_game::anims::AnimRequest { on, group: 1, name: Some("Forward".into()), start: fnv_game::anims::Start::Normal });
     assert_eq!(g.anims.playing(on), Some(1));
+    assert_eq!(g.anims.asked(on), Some((1, "Forward")));
     call(&mut g, 0x1146, Some(ADULT_REF), &[]);
     call(&mut g, 0x1146, Some(ADULT_REF), &[]);
     assert_eq!(g.anims.playing(on), None);
     assert!(g.anims.requests.is_empty());
+    assert_eq!(g.anims.asked(on), None, "nothing to show when drawn again");
     assert_eq!(g.anims.resets, vec![on]);
 }
 

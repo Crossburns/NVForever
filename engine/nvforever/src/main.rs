@@ -807,6 +807,18 @@ fn main() -> AppExit {
         eprintln!("explore: the free-camera explorer (--explore)");
     }
     let developer_data = args.data.is_some();
+    match setup::text_code_page() {
+        Ok(c) => {
+            if c != fnv_util::text::CodePage::default() {
+                eprintln!("setup: game text read as {c}");
+            }
+            fnv_util::text::set_code_page(c);
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return AppExit::error();
+        }
+    }
     // The game's folder: `--data`, NVForever.ini or asked for; its files checked (setup.rs).
     let install = match setup::game_install(args.data.as_deref()) {
         Ok(g) => g,
@@ -1527,7 +1539,8 @@ fn main() -> AppExit {
         let follow = n.follow;
         app.insert_resource(n).add_systems(Startup, nav::log_startup).add_systems(
             Update,
-            (nav::drive.after(world::stream), nav::follow_camera.after(fly::fly).before(world::stream), nav::draw.after(nav::drive)),
+            // After the read-ahead, which sets its loading-screen rule (`ReadAhead::unseen`) for this frame.
+            (nav::drive.after(world::stream).after(readahead::read_ahead), nav::follow_camera.after(fly::fly).before(world::stream), nav::draw.after(nav::drive)),
         ).add_systems(
             Last,
             nav::report,
@@ -1535,7 +1548,7 @@ fn main() -> AppExit {
         if let Some(r) = residents {
             app.insert_resource(r)
                 .add_systems(Startup, residents::log_startup)
-                .add_systems(Update, residents::drive.after(world::stream).after(nvf_play::PlaySet::Scripts).before(nav::drive))
+                .add_systems(Update, residents::drive.after(world::stream).after(readahead::read_ahead).after(nvf_play::PlaySet::Scripts).before(nav::drive))
                 .add_systems(Last, residents::report);
             // Patrols and sandboxes go on after a load where the save had them.
             if play.is_some() {
