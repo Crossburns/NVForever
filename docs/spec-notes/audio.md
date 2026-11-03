@@ -142,8 +142,12 @@ environment: §14.6.
 - Sound effects are decoded whole, on a worker thread the first time a file is asked
   for; the request starts once the file is ready (`nvf-play/src/sfx.rs`, #1428)
   [engineering choice; what the original does with a sound not yet in memory is not
-  known]. The exit line `sfx files: …` counts the sounds that began in the frame they
-  were asked for and those that waited.
+  known]. A folder's file is picked from an index of the folders listed on a worker at
+  the start; a request before it is in waits for it. A Play At Random marker whose
+  file is still being read skips that roll: the sound is not played when the file
+  arrives, the marker plays on a later roll. The exit line `sfx files: …` counts the
+  sounds that began in the frame they were asked for, those that waited, those decided
+  silent and the rolls skipped.
 - Log: `music: in marker …`, `music: <set> day|night started, layers …`,
   `music: <set> layers …`, `music: <set> fades out`, `music: battle begins …`,
   `music: battle over …`, `music: intro|outro of …`, `music: a script plays …`,

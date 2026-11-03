@@ -43,7 +43,7 @@
 use crate::music::{cell_at, game_hour, AudioPlaces, LayeredMusic, Space};
 use crate::pause::Paused;
 use crate::player::Player;
-use crate::sfx::{collect_files, distance_gain, one_shot_heard, pan_gains, resolve, static_gain, OneShotNow, Out, Pan, Panned, PcmSound, Resolved, Sfx, SfxSettings, SoundSource};
+use crate::sfx::{distance_gain, folder_unlisted, one_shot_heard, pan_gains, resolve, static_gain, OneShotNow, Out, Pan, Panned, PcmSound, Resolved, Sfx, SfxSettings, SoundSource};
 use crate::sim::SimState;
 use crate::{Location, PlayState, PlayWorld};
 use bevy::audio::AudioSinkPlayback;
@@ -150,6 +150,10 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// plays at a place.
 #[allow(clippy::too_many_arguments)]
 fn start_loop(commands: &mut Commands, amb: &mut Ambient, sfx: &mut Sfx, settings: &SfxSettings, vfs: &fnv_vfs::Vfs, assets: &mut Streams, sound: u32, pan: Option<Pan>) -> Option<(Playing, f32)> {
+    // A folder of loops not listed yet (sfx's folder index): tried again next frame.
+    if folder_unlisted(sfx, FormId(sound)) {
+        return None;
+    }
     let Resolved { s, name, path } = resolve(sfx, vfs, FormId(sound))?;
     let bytes = amb
         .files
@@ -219,8 +223,6 @@ fn play(
         return;
     };
     let (amb, sfx) = (&mut *amb, &mut *sfx);
-    // Sound files decoded since sfx's play ran: a random marker's may be ready now.
-    collect_files(sfx, &mut pcm);
     // The poker table holds them too: it plays its casino's sounds (`crate::poker`). A
     // film holds them unless its PlayBink said `muteAudio 0` (`crate::intro`).
     let film_keeps = intro.as_deref().and_then(|i| i.film_keeps_world_sound());
@@ -354,7 +356,10 @@ fn play(
         let space = (*amb.spaces.entry(c).or_insert_with(|| audio::cell_audio(d.lo, d.schema, c).acoustic_space))?;
         places.forms.spaces.get(&space)?.loop_at(hour)
     });
-    if amb.bed.as_ref().map(|b| b.sound) != wanted && !held {
+    // A bed naming a folder waits for sfx's folder index (it would be remembered as
+    // having no file otherwise).
+    let listing = wanted.is_some_and(|s| folder_unlisted(sfx, FormId(s)));
+    if amb.bed.as_ref().map(|b| b.sound) != wanted && !held && !listing {
         if let Some(old) = amb.bed.take() {
             amb.beds_leaving.push(old);
         }
@@ -495,8 +500,10 @@ impl Plugin for AmbientPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Ambient>()
             .add_audio_source::<Panned<LayeredMusic>>()
-            // Before sfx's play, which plays what these ask for in the same frame.
-            .add_systems(Update, (play, region_sounds).after(crate::PlaySet::Activation).before(crate::sfx::SfxSet))
+            // After sfx's prepare (the decodes finished, the voices playing, the
+            // listener under water) and before its play, which plays the region sounds
+            // asked for here in the same frame.
+            .add_systems(Update, (play, region_sounds).chain().in_set(crate::sfx::SfxStep::Ambient))
             .add_systems(Last, report);
     }
 }
