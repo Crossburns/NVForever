@@ -1175,6 +1175,8 @@ pub struct Game<'a> {
     pub traits: crate::nvse_traits::TraitState,
     /// kNVSE's animation paths and script-played sequences (`crate::nvse_anim`).
     pub anim_paths: crate::nvse_anim::AnimPaths,
+    /// kNVSE's AnimGroupOverride folders (`crate::nvse_anim_folders`).
+    pub anim_folders: crate::nvse_anim_folders::AnimFolders,
     /// kNVSE's animation clock, weights, text keys and blends (`crate::nvse_knvse`).
     pub knvse: crate::nvse_knvse::KnvseState,
     /// JIP PP LN's runtime node lists and ground requests (`crate::nvse_jippp`).
@@ -2023,6 +2025,7 @@ impl<'a> Game<'a> {
             mod_files: Default::default(),
             traits: Default::default(),
             anim_paths: Default::default(),
+            anim_folders: Default::default(),
             knvse: Default::default(),
             jippp: Default::default(),
             vheyes: Default::default(),
@@ -2629,6 +2632,13 @@ impl<'a> Game<'a> {
     /// are compiled in one game, and a new text past that is refused [decision: PR #1291
     /// review, memory bounded].
     pub(crate) fn evaluate_string(&mut self, text: &str) -> Result<bool, String> {
+        self.evaluate_on(text, None)
+    }
+
+    /// EvaluateString's test run on a reference (`this` and the functions without a
+    /// reference name it): kNVSE's AnimGroupOverride conditions
+    /// (`crate::nvse_anim_folders`). The compiled texts are EvaluateString's.
+    pub(crate) fn evaluate_on(&mut self, text: &str, on: Option<FormId>) -> Result<bool, String> {
         let id = match self.pp.evaluated.get(text) {
             Some(&id) => id,
             None => {
@@ -2642,7 +2652,8 @@ impl<'a> Game<'a> {
             }
         };
         let id = id.ok_or_else(|| format!("{text:?} does not compile"))?;
-        Ok(self.run_function(&fnv_script::vm::XVal::Ref(id), None, Vec::new(), None, RunCtx::default())?.truthy())
+        let ctx = RunCtx { self_ref: on, ..RunCtx::default() };
+        Ok(self.run_function(&fnv_script::vm::XVal::Ref(id), on.map(|f| Value::Ref(f.0)), Vec::new(), None, ctx)?.truthy())
     }
 
     /// A function script from source text, kept as CompileScript keeps its files; `None`
@@ -3239,6 +3250,8 @@ impl<'a> Game<'a> {
         self.small_tick();
         self.vheyes_tick();
         self.knvse_tick();
+        // kNVSE's AnimGroupOverride folders: which hold for each actor.
+        self.anim_folders_tick();
         // ppNVSE's CallLoop functions due (`crate::nvse_pp`).
         self.run_pp_loops();
         self.run_box_callback();

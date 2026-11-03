@@ -131,6 +131,63 @@ fn on_disk(base: &Path, rel: &str) -> Option<PathBuf> {
     Some(p)
 }
 
+/// A folder under `base` by a Data-relative path, each part matched without regard to
+/// case (mods spell `_1stPerson`, `_1stperson` and `Meshes` as they like, and other
+/// systems than Windows tell them apart); `None` when a part is missing or could leave
+/// `base` (as [`on_disk`]).
+fn find_dir(base: &Path, rel: &str) -> Option<PathBuf> {
+    on_disk(base, rel)?;
+    let mut p = base.to_path_buf();
+    for part in rel.split(['\\', '/']).filter(|c| !c.is_empty()) {
+        let direct = p.join(part);
+        p = if direct.is_dir() {
+            direct
+        } else {
+            std::fs::read_dir(&p).ok()?.flatten().map(|e| e.path()).find(|e| e.is_dir() && e.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(part)))?
+        };
+    }
+    Some(p)
+}
+
+/// The loose files under a Data folder, as paths relative to it (`\` between parts),
+/// walked through every read root: a path in an earlier root (NVForever's layer) hides
+/// the same path, compared without regard to case, in a later one. Sorted without
+/// regard to case. kNVSE's AnimGroupOverride folders (`crate::nvse_anim_folders`).
+pub fn files_under(rel: &str) -> Vec<String> {
+    fn walk(dir: &Path, prefix: &str, out: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let rel = if prefix.is_empty() { name } else { format!("{prefix}\\{name}") };
+            if e.path().is_dir() {
+                walk(&e.path(), &rel, out);
+            } else if !out.iter().any(|o| o.eq_ignore_ascii_case(&rel)) {
+                out.push(rel);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for root in roots().read {
+        if let Some(dir) = find_dir(&root, rel) {
+            walk(&dir, "", &mut out);
+        }
+    }
+    out.sort_by_key(|n| n.to_ascii_lowercase());
+    out
+}
+
+/// A loose Data file's text through the read roots (the first that has it), the path's
+/// parts matched without regard to case.
+pub fn read_loose(rel: &str) -> Option<Vec<u8>> {
+    let (dir, name) = rel.rsplit_once(['\\', '/']).unwrap_or(("", rel));
+    roots().read.iter().find_map(|root| {
+        let d = find_dir(root, dir)?;
+        let direct = d.join(name);
+        let path = if direct.is_file() { direct } else { std::fs::read_dir(&d).ok()?.flatten().map(|e| e.path()).find(|e| e.is_file() && e.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)))? };
+        std::fs::read(path).ok()
+    })
+}
+
 /// Whether NVForever may write `path`: never inside the game's install or the original
 /// game's user folder (`fnv_install::guard_write`), nor under the game folder the Data
 /// read root stands in (a headless run that did not register the install).

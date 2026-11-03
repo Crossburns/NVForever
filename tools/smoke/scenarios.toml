@@ -17942,7 +17942,7 @@ expect = [
 name = "knvse-anim-replace"
 source = "N5 slice 2 (docs/design/knvse-anim.md): SetActorAnimationPath with a standing-stance file replaces that move in the actor's own copy of its set; taking it back restores the shared set"
 areas = ["scripts", "actors"]
-paths = ["crates/fnv-game/src/nvse_anim.rs", "engine/nvforever/src/anim_paths.rs", "engine/nvforever/src/locomotion.rs"]
+paths = ["crates/fnv-game/src/nvse_anim.rs", "crates/fnv-game/src/nvse_anim_folders.rs", "engine/nvforever/src/anim_paths.rs", "engine/nvforever/src/locomotion.rs"]
 env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:RingoRef.MoveTo player 0 200 0;11:PrintC \"nvf set %g\", (RingoRef.SetActorAnimationPath 0 1 \"characters\\_male\\locomotion\\mtidle.kf\");13:PrintC \"nvf unset %g\", (RingoRef.SetActorAnimationPath 0 0 \"characters\\_male\\locomotion\\mtidle.kf\")" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
 run_seconds = 16

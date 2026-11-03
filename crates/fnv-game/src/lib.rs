@@ -126,6 +126,7 @@ pub mod ray;
 pub mod mod_files;
 pub mod nvse_traits;
 pub mod nvse_anim;
+pub mod nvse_anim_folders;
 pub mod nif_blocks;
 pub mod nvse_settings;
 pub mod nvse_tokens;
