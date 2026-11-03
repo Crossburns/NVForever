@@ -143,7 +143,12 @@ pub struct ModelNode {
 /// `fnv_collide::nif::motion` reads them [documented: nif.xml hkMotionType].
 fn dynamic_bodies(file: &NifFile, dec: &Decoded) -> usize {
     let motion = |i: usize| dec.blocks[i].as_ref().ok().and_then(|b| b.strukt("rigid_body_info")).and_then(|s| s.int("motion_system"));
-    file.blocks.iter().enumerate().filter(|(i, b)| b.type_name.starts_with("bhkRigidBody") && matches!(motion(*i), Some(1..=5 | 8 | 9))).count()
+    file.blocks.iter().enumerate().filter(|(i, b)| b.type_name.starts_with("bhkRigidBody") && is_dynamic_motion(motion(*i))).count()
+}
+
+/// Whether a body's stored motion system moves it under physics.
+fn is_dynamic_motion(system: Option<i64>) -> bool {
+    matches!(system, Some(1..=5 | 8 | 9))
 }
 
 /// The model damage stages node `i` of `nodes` is shown at: the overlap of the ranges of
@@ -1692,6 +1697,18 @@ mod tests {
         assert!(clip.materials[2..].iter().all(|t| t.target == MaterialTarget::SelfIllum));
         // Again: nothing more (each already driven).
         assert!(share_material_tracks(&mut clip, &sharers, &names).is_empty());
+    }
+
+    #[test]
+    fn dynamic_motion_systems_are_those_fnv_collide_simulates() {
+        // carhulk01.nif's bodies are 4 (box inertia); the globe's stand is 2 (sphere
+        // inertia); 6 is keyframed and 7 fixed, as `fnv_collide::nif::motion` reads them.
+        for m in [1, 2, 3, 4, 5, 8, 9] {
+            assert!(is_dynamic_motion(Some(m)), "{m}");
+        }
+        for m in [Some(0), Some(6), Some(7), Some(10), Some(-1), None] {
+            assert!(!is_dynamic_motion(m), "{m:?}");
+        }
     }
 
     #[test]

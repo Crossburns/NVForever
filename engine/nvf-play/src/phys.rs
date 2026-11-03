@@ -104,6 +104,9 @@ pub struct PhysState {
     pub destruction_models: HashMap<u32, String>,
     /// The destruction model each reference was last given collision from.
     built_models: HashMap<u32, String>,
+    /// References given collision so far (each add, and each build again): a reader that
+    /// must act on rebuilt collision (nvforever `wrecks.rs`) looks again only when it grew.
+    pub refs_built: u64,
     /// The drawn floors of the references in the world whose collision stays where it
     /// was placed, with their pose ([`PhysState::drawn_ground`]).
     drawn: HashMap<u32, (Arc<DrawnFloors>, RefPose)>,
@@ -165,6 +168,7 @@ impl Default for PhysState {
             doors: BTreeMap::new(),
             destruction_models: HashMap::new(),
             built_models: HashMap::new(),
+            refs_built: 0,
             drawn: HashMap::new(),
             player_sink: 0.0,
             player_lift: step_lift::StepLift::default(),
@@ -715,6 +719,7 @@ impl PhysState {
         let job = with_poses(self.job(ctx.d, cell), ctx.sim);
         #[cfg(test)]
         if let Some(fake) = self.fake {
+            let job = Job { models: self.fake_models(), ..job };
             return Box::new(move || fake(&job));
         }
         let src = self.source(ctx);
@@ -831,6 +836,7 @@ impl PhysState {
                 self.built_models.remove(&pl.form_id);
             }
         }
+        self.refs_built += 1;
         let counts = &mut self.stats.counts;
         *counts.entry("with_collision").or_default() += 1;
         match drawn {
@@ -859,6 +865,14 @@ impl PhysState {
     /// Add a reference's collision if it is in the world and has any. Returns whether it
     /// now has collision.
     fn add_ref(&mut self, ctx: &LoadCtx, r: u32) -> bool {
+        // Test aid: the reference as its made-up cell has it.
+        #[cfg(test)]
+        if let (Some(fake), Some(&cell)) = (self.fake, self.ref_cell.get(&r)) {
+            let job = Job { models: self.fake_models(), ..self.job(ctx.d, cell) };
+            let Some(e) = fake(&job).refs.into_iter().find(|e| e.form_id == r) else { return false };
+            let shapes = e.shapes;
+            return self.apply(ctx, e.placement, |_| shapes.expect("made up with its placement"));
+        }
         let src = self.source(ctx);
         let mut times = LoadTimes::default();
         let t = Instant::now();
@@ -961,6 +975,15 @@ impl PhysState {
             self.add_ref(ctx, id)
         };
         info!("collision of 0x{id:08X} built again where a script moved it ({:.1} from its body){}", dist, if built { "" } else { ": none now" });
+    }
+
+    /// Test aid: every destruction model, by FormID (made-up cells have no index for
+    /// [`Self::job`] to list their references from).
+    #[cfg(test)]
+    fn fake_models(&self) -> Vec<(u32, String)> {
+        let mut m: Vec<(u32, String)> = self.destruction_models.iter().map(|(r, m)| (*r, m.clone())).collect();
+        m.sort_unstable();
+        m
     }
 
     /// The destruction model reference `r`'s collision was last built from (`None`: its

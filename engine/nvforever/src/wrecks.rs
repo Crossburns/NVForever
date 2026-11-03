@@ -22,7 +22,9 @@
 //!   (`PhysWorld::set_ragdoll_at_rest`) until a blast or a push rouses it.
 //! - A wreck whose rig leaves the world (its cell unloads, ClearDestruction) loses its
 //!   ragdoll; drawn again, its parts fall again from the file's poses [design: where they
-//!   came to rest is not kept].
+//!   came to rest is not kept]. A change of drawn model (a later stage with another
+//!   DMDL) draws the reference anew (destroyed.rs despawns its entities), so its rig is
+//!   a new one: the old ragdoll goes with the old rig and the new model's parts fall.
 //!
 //! Log: `wrecks: <ref> <model>: <n> parts fall (<m> moving)`, `wrecks: <ref> falling:
 //! fastest part <v> units/s, <w> rad/s` (once a second), `wrecks: <ref> came to rest
@@ -73,6 +75,8 @@ struct Fallen {
     start: Vec<[f32; 3]>,
     /// Each body's node name, for the log.
     names: Vec<String>,
+    /// `PhysState::refs_built` when its held collision was last set aside.
+    built: u64,
     /// The bodies' poses at the start of the current calm window
     /// (`ragdoll::CALM_WINDOW`), seconds into it, and how long it has been calm.
     since: Vec<Option<Iso>>,
@@ -143,10 +147,14 @@ fn fall(
     }
     for (root, rig) in &rigs {
         let r = rig.form_id;
-        if let Some(f) = wrecks.fallen.get(&r) {
+        if let Some(f) = wrecks.fallen.get_mut(&r) {
             if f.root == root {
-                // Collision built again (a cell loaded under it) is held solid again.
-                phys.world.set_ref_keyframed_solid(r, false);
+                // Collision built again (a cell loaded under it) is held solid: set aside
+                // again, looked at only after physics built some.
+                if f.built != phys.refs_built {
+                    phys.world.set_ref_keyframed_solid(r, false);
+                    f.built = phys.refs_built;
+                }
                 continue;
             }
         }
@@ -187,7 +195,7 @@ fn fall(
         let nodes = rag.bodies.iter().map(|b| node(b).filter(|_| b.object.motion == Motion::Dynamic)).collect();
         let start = poses.iter().map(|p| p.translation).collect();
         let names = rag.bodies.iter().map(|b| b.object.node.clone().unwrap_or_default()).collect();
-        wrecks.fallen.insert(r, Fallen { root, nodes, scale, falling: Some(0.0), log_in: 1.0, start, names, since: Vec::new(), window: 0.0, calm: 0.0 });
+        wrecks.fallen.insert(r, Fallen { root, nodes, scale, falling: Some(0.0), log_in: 1.0, start, names, since: Vec::new(), window: 0.0, calm: 0.0, built: phys.refs_built });
     }
 }
 
