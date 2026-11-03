@@ -810,6 +810,9 @@ fn pick_file(sfx: &mut Sfx, vfs: &fnv_vfs::Vfs, file: &str) -> Option<String> {
         let ogg = format!("{stem}.ogg");
         return Some(if !vfs.exists(&path) && vfs.exists(&ogg) { ogg } else { path });
     }
+    if path.ends_with(".ogg") {
+        return Some(path);
+    }
     let folder = folder_of(&path)?;
     if !sfx.folders.contains_key(&folder) {
         let files = if sfx.indexed { Vec::new() } else { list_folder(vfs, &folder) };
@@ -1775,6 +1778,24 @@ mod tests {
         };
         assert!((seconds - 0.5).abs() < 1e-3);
         assert_eq!(once(&mut app), OneShotNow::Played(seconds));
+    }
+
+    #[test]
+    fn a_record_names_a_wav_an_ogg_or_a_folder() {
+        let (mut app, files) = sound_app();
+        std::fs::write(files.0.join("sound").join("fx").join("only.ogg"), b"OggS").unwrap();
+        let vfs = Arc::new(fnv_vfs::Vfs::open(&files.0, &[]).unwrap());
+        let mut sfx = app.world_mut().resource_mut::<Sfx>();
+        // A .wav that is there; a .wav the archives hold as .ogg; an .ogg named as such
+        // (#1428 review: this one had stopped resolving); a folder's take; nothing.
+        assert_eq!(pick_file(&mut sfx, &vfs, "fx\\beep.wav").as_deref(), Some("sound\\fx\\beep.wav"));
+        assert_eq!(pick_file(&mut sfx, &vfs, "FX/Only.wav").as_deref(), Some("sound\\fx\\only.ogg"));
+        assert_eq!(pick_file(&mut sfx, &vfs, "\\fx\\only.ogg").as_deref(), Some("sound\\fx\\only.ogg"));
+        let take = pick_file(&mut sfx, &vfs, "fx\\takes").unwrap();
+        assert!(["sound\\fx\\takes\\a.wav", "sound\\fx\\takes\\b.wav"].contains(&take.as_str()), "{take}");
+        assert_eq!(pick_file(&mut sfx, &vfs, "fx\\empty"), None);
+        // A named file that is not there keeps its name (and fails when it is read).
+        assert_eq!(pick_file(&mut sfx, &vfs, "fx\\gone.wav").as_deref(), Some("sound\\fx\\gone.wav"));
     }
 
     #[test]
