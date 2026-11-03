@@ -677,9 +677,9 @@ mod tests {
         assert_eq!((of(text).rect.top, of(text).rect.height), (268.0 + 21.0, 625.0));
         assert_eq!(of(title).clip, None);
         // [observed] Under a background of alpha 193.8 the text and lines read full strength.
-        assert_eq!((of(title).alpha, of(text).alpha), (1.0, 1.0));
+        assert_eq!((of(title).alpha, of(text).alpha), (255.0, 255.0));
         let bg = ui.find_tile(BACKGROUND).unwrap();
-        assert!((of(bg).alpha - 191.25 / 255.0).abs() < 1e-9);
+        assert!((of(bg).alpha - 191.25).abs() < 1e-9);
     }
 
     #[test]

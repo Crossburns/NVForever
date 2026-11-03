@@ -220,7 +220,7 @@ fn place(tile: &Tile, kind: &Kind, parent: Context, measure: &Measure<'_>) -> Co
             // [design] Gate this hypothesis with `tiles::interface_screen`: default
             // play, including mod HUD tiles, retains its pre-T15 alpha products.
             // Applying it unconditionally is a candidate for a separate PR.
-            _ if tile.get(OWN_ALPHA).is_some_and(Value::truthy) => number(tile, "alpha", 255.0).clamp(0.0, 255.0) / 255.0,
+            _ if tile.get(OWN_ALPHA).is_some_and(Value::truthy) => number(tile, "alpha", 255.0).clamp(0.0, 255.0),
             Kind::Hotrect if parent.t15 => parent.alpha,
             _ => parent.alpha * number(tile, "alpha", 255.0).clamp(0.0, 255.0) / 255.0,
         },
@@ -406,11 +406,12 @@ mod tests {
             <rect name="R"><image name="I"><alpha>127.5</alpha></image></rect></image></menu>"#;
         let (mut ui, root) = tree(xml);
         let alpha = |ui: &Ui, name: &str| layout(ui, root, &unmeasured, false).into_iter().find(|i| ui.tile(i.tile).name == name).unwrap().alpha;
-        assert_eq!(alpha(&ui, "I"), 0.1, "unmarked, the product through the picture");
+        assert_eq!(alpha(&ui, "I"), 25.5, "unmarked, the product through the picture, 0 to 255");
         let r = ui.find_tile("M/B/R").unwrap();
         ui.set_trait(r, OWN_ALPHA, Value::Num(1.0));
-        assert_eq!(alpha(&ui, "B"), 0.2, "the picture keeps its own");
-        assert_eq!(alpha(&ui, "I"), 0.5, "under the mark, only what is below it");
+        assert_eq!(alpha(&ui, "B"), 51.0, "the picture keeps its own");
+        assert_eq!(alpha(&ui, "R"), 255.0, "the mark starts again at full strength");
+        assert_eq!(alpha(&ui, "I"), 127.5, "under the mark, only what is below it");
     }
 
     #[test]
