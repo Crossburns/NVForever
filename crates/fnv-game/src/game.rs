@@ -4026,7 +4026,10 @@ impl<'a> Game<'a> {
         }
     }
 
-    /// Whether a reference is in the world and enabled (enable parents followed).
+    /// Whether a reference is in the world and enabled (enable parents followed). Reads
+    /// the world's reference states alone, so it changes only with
+    /// `fnv_sim::World::presence_serial` (the AI's obstacle poll relies on that,
+    /// `fnv_ai::Ai::obstacles_in_line`): keep it so, or key that poll on the new input.
     pub fn present(&self, r: FormId) -> bool {
         self.world.peek(r).is_none_or(|s| !s.deleted) && self.world.is_enabled(r).unwrap_or(false)
     }
