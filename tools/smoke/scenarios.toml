@@ -6035,6 +6035,35 @@ expect = [
 ]
 
 [[scenario]]
+name = "animated-collision-write"
+source = "#1396 (activators.md §5.3): an activator whose collision sits under a node its sequence moves follows the group a script plays; the first half: PlayGroup Forward on a Goodsprings banana yucca (0x00106B2E, the harvest plant: ACTI with its one collision body under the node Forward moves [observed: survey run 2026-11-03]), then a save; animated-collision-load reads it"
+note = "No vanilla activator gate fits: the gate-like activators whose collision follows a sequence open by Open/Close, which are not PlayGroup groups (ProtectronPod01: 'Open is not an animation group'), and the Vault 3 gear door 0x000EC6EB has no Forward [observed 2026-11-03]; the plant is an activator a script plays a group on, the same path"
+areas = ["object-anims", "physics", "save"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/object_anims.rs", "crates/fnv-game/src/anims.rs", "crates/fnv-collide/src/anim.rs"]
+env = { NVFOREVER_HOME = "animated-collision-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "10:play_group:0x00106B2E:Forward:1", NVF_PLAY_TEST_CONSOLE = "20:save smoke-animated;21:close" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages"]
+run_seconds = 24
+expect = [
+  { re = 'phys: 0x00106B2E: 1 animated collision bodies follow \w+ at', label = "the plant's collision body follows its drawn model" },
+  "playgroup: 0x00106B2E plays Forward (once",
+  { re = 'save: wrote .*smoke-animated\.nvfsave \(manual', label = "the save is written" },
+]
+
+[[scenario]]
+name = "animated-collision-load"
+source = "#1396: the second half: --load the save animated-collision-write made; the plant is drawn again at Forward's end (the last group asked of it, saved with the game) and its collision body follows Forward"
+areas = ["object-anims", "physics", "save"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvf-play/src/phys/prepare.rs", "engine/nvforever/src/object_anims.rs", "crates/fnv-game/src/anims.rs", "crates/fnv-collide/src/anim.rs"]
+env = { NVFOREVER_HOME = "animated-collision-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--load", "smoke-animated", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'load: restored .*smoke-animated\.nvfsave', label = "the save loads" },
+  "playgroup: 0x00106B2E drawn again, shows Forward at its end",
+  { re = 'phys: 0x00106B2E: 1 animated collision bodies follow Forward at 0\.0\d s', label = "its collision body follows Forward, held at the end" },
+]
+
+[[scenario]]
 name = "script-saves-reticle"
 source = "docs/outstanding.md §1 rows 2 and 12 (2026-10-18): SystemSave writes the one system slot, ForceSave a new save by hand, PlaceAtReticle places where the crosshair hits (docs/spec-notes/script-saves-and-reticle.md)"
 areas = ["save", "script"]

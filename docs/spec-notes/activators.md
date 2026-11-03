@@ -275,15 +275,22 @@ script), and whether that base's model has a sequence named like the group.
     (`object_groups` in the snapshot). An object drawn again with no request waiting
     (after a load, or streamed back in) shows it: a group played once at its end, a
     loop from its start [design: a gate a script opened and left open is open after a
-    load; whether the original keeps the pose is the capture question below].
+    load; whether the original keeps the pose is the capture question below]. Each rig
+    is looked at once when the scripts run (not only in the frame it was drawn: a load
+    draws the cells before the scripts start). Smoke test: `animated-collision-write`
+    and `-load` (a Goodsprings plant played Forward, saved, loaded: `… drawn again,
+    shows Forward at its end` and its collision following Forward).
   - **Collision follows the drawn model** (issue #1396; nvf-play `phys`): a reference that
     is not a door opening in place (doors: docs/spec-notes/doors.md) and whose model's
-    sequences move the node of a keyframed collision body (a gate, a lift, a drawbridge
-    built as an activator or a static) keeps those bodies posed from the sequence its
+    sequences move the node of a collision body physics does not move itself (a gate, a
+    lift, a drawbridge built as an activator or a static) keeps those bodies posed from the sequence its
     rig plays. The renderer publishes each rig's clip and time every frame
     (`nvf_play::phys::ObjectPoses`, from the clip drawn: one clock for both); an object
     not drawn is posed at the last group asked (a group played once at its end, a loop at
-    its start), otherwise in its bind pose. The bodies stay solid while they move
+    its start), otherwise in its bind pose. A sequence moves a node when it has a track
+    on that node or a parent whose pose leaves the node's stored transform somewhere in
+    the sequence (sampled at its keys and at 16 even steps); a track holding the stored
+    pose (an idle listing every node) does not count [engine choice]. The bodies stay solid while they move
     [engine choice: a lift or a drawbridge has to carry and stop actors; a door's leaf is
     not solid while it swings; hypothesis: the original pushes actors with them, as with
     doors]; nothing pushes an actor out of a body that moves into it beyond what the

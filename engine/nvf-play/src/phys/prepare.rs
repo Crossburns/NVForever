@@ -452,8 +452,9 @@ fn reference_unguarded(src: &Source, pl: &Placement, model: Option<&str>, times:
         }
         _ => None,
     };
-    if animated.is_some() {
+    if let Some(a) = &animated {
         tallies.push("animated_collision");
+        bevy::log::debug!("phys: 0x{:08X} {}: {} collision bodies follow its sequences", pl.form_id, model_path.as_deref().unwrap_or(""), a.objects.len());
     }
     // Clutter starts asleep (physics.md §4.3.1).
     let prepared = (!rc.objects.is_empty()).then(|| {

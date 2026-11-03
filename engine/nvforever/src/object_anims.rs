@@ -186,6 +186,7 @@ pub fn drive(
     sim: Option<Res<nvf_play::sim::SimState>>,
     mut for_actors: ResMut<ActorGroups>,
     time: Res<Time>,
+    mut seen: Local<std::collections::HashSet<Entity>>,
 ) {
     let st = &mut *st;
     let now = time.elapsed_secs();
@@ -202,10 +203,15 @@ pub fn drive(
     // Rigs started this frame: their new clip is on them from the next frame.
     let mut started: std::collections::HashSet<Entity> = std::collections::HashSet::new();
 
-    // Objects drawn since last frame that a script asked for while they were not, or
-    // asked of before (drawn again after a load or streaming).
+    // Objects drawn since they were last looked at here that a script asked for while
+    // they were not, or asked of before (drawn again after a load or streaming). Not
+    // `is_added`: rigs drawn before the scripts run (the first frames of a load) were
+    // added while this returned early above.
+    if seen.len() > by_ref.len() {
+        seen.retain(|e| rigs.contains(*e));
+    }
     for (root, mut rig, _, mats, _) in &mut rigs {
-        if !rig.is_added() {
+        if !seen.insert(root) {
             continue;
         }
         let Some((r, asked)) = st.waiting.remove(&rig.form_id) else {
