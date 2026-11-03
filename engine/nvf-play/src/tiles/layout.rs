@@ -3,6 +3,13 @@
 
 use fnv_ui::{Tile, TileId, Ui, Value};
 
+/// The private trait of a tile that takes no `alpha` from the tiles above it [observed:
+/// `tutorial_menu.xml` nests all its content under its background picture, and under that
+/// picture at alpha 193.8 the text and lines read full strength (255, 182, 66) at 1280 x 720,
+/// shot 091 of hud_menus; hypothesis: only this tile is known, whether images pass alpha on
+/// elsewhere is observer check 81] [design: written by a menu's model, so nothing else changes].
+pub const OWN_ALPHA: &str = "_NVFOwnAlpha";
+
 /// [design] Rectangle in the tree's screen units, without viewport scaling.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
@@ -210,6 +217,7 @@ fn place(tile: &Tile, kind: &Kind, parent: Context, measure: &Measure<'_>) -> Co
             // [design] Gate this hypothesis with `tiles::interface_screen`: default
             // play, including mod HUD tiles, retains its pre-T15 alpha products.
             // Applying it unconditionally is a candidate for a separate PR.
+            _ if tile.get(OWN_ALPHA).is_some_and(Value::truthy) => number(tile, "alpha", 255.0).clamp(0.0, 255.0) / 255.0,
             Kind::Hotrect if parent.t15 => parent.alpha,
             _ => parent.alpha * number(tile, "alpha", 255.0).clamp(0.0, 255.0) / 255.0,
         },
@@ -387,6 +395,19 @@ mod tests {
         assert_eq!(items[1].rect.width, 200.0);
         assert_eq!(items[3].clip.unwrap().width, 0.0);
         assert_eq!(layout(&ui, items[1].tile, &unmeasured, false), items[1..2]);
+    }
+
+    #[test]
+    fn a_marked_tile_takes_no_alpha_from_above() {
+        let xml = r#"<menu name="M"><image name="B"><alpha>51</alpha><width>9</width><height>9</height>
+            <rect name="R"><image name="I"><alpha>127.5</alpha></image></rect></image></menu>"#;
+        let (mut ui, root) = tree(xml);
+        let alpha = |ui: &Ui, name: &str| layout(ui, root, &unmeasured, false).into_iter().find(|i| ui.tile(i.tile).name == name).unwrap().alpha;
+        assert_eq!(alpha(&ui, "I"), 0.1, "unmarked, the product through the picture");
+        let r = ui.find_tile("M/B/R").unwrap();
+        ui.set_trait(r, OWN_ALPHA, Value::Num(1.0));
+        assert_eq!(alpha(&ui, "B"), 0.2, "the picture keeps its own");
+        assert_eq!(alpha(&ui, "I"), 0.5, "under the mark, only what is below it");
     }
 
     #[test]

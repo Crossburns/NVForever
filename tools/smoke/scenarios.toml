@@ -17716,6 +17716,88 @@ order = [[
 ]]
 
 [[scenario]]
+name = "tiles-tutorial"
+source = "[design] ui-tile-tree.md §6.2 step 3 (T15b part 2, docs/handoff/ui-tile-tree-tasks.md, tutorial-menu.md §5): with [UI] TileMenus=TutorialMenu the tutorial menu is drawn from the game's TutorialMenu tiles (menu 1059 builds it; the model writes the page's strings, the count, the buttons' state and the scroll), the hand-built drawing is not spawned, a message whose text overflows its column scrolls by key, wheel, arrow and page area to its bound, a second message is a page with bounded Next and Previous by key and pointer, E and a click on Close close it, it opens again, and over the Pip-Boy its close gives the Pip-Boy back"
+note = "NVF_PLAY_TEST_SCRIPT_MENUS is off so the test aid's auto-close hides nothing. 0x0007235B overflows in the original at this size (text 625 high, 215 to scroll, hud_menus capture), 0x00072358 is the short HelpHealingLimbs. All aids on one clock (NVF_PLAY_AIDS_FROM_SCRIPTS 0) as the tile pointer keeps the time since the start, so the first step stands well after a late script start. At 1280 x 720 the screen is 1706.7 x 960 interface units, TM_Background at 170.7, 96 (tutorial_menu.xml): the scrollbar's x 204 to 236, its top 268 and bottom 692, the down arrow 692 to 708, so (220, 700) is the arrow and (220, 600) the page area under the marker at value 120 (marker 32 high at 268 + value x 392/215); the buttons' right side 1455, Next y 268 to 320, Previous 320 to 372, Close 656 to 708. Compare the shots with tutorial-default-drawing's at the same times: tiles_tutorial_top and _bottom are the top and bottom of the scroll, tiles_tutorial_two_pages the first of two pages, tiles_tutorial_page2 the second"
+areas = ["ui", "menus", "scripts"]
+paths = [
+  "engine/nvf-play/src/tiles/tutorial_menu.rs", "engine/nvf-play/src/tutorial_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/pad.rs",
+  "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TutorialMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:call:-:ShowTutorialMenu:0x0007235B,28:call:-:ShowTutorialMenu:0x00072358,36:call:-:ShowTutorialMenu:0x00072358,41:call:-:ShowTutorialMenu:0x00072358", NVF_PLAY_TEST_KEYS = "22:down,22.5:down,23:wheel-down,27:up,27.5:wheel-up,30:a,30.5:a,31.5:s,32:s,34:e,42:e", NVF_PLAY_TEST_POINTER = "23.5:220:700,24:220:700:click,24.5:220:600,25:220:600:click,25.5:220:700:click,26:off,32.2:1420:294,32.5:1420:294:click,33:1420:346,33.2:1420:346:click,33.5:off,37.5:1420:680,38:1420:680:click,38.5:off", NVF_PLAY_TEST_PIPBOY = "40:open,43:page=stats,44:close", NVF_PLAY_TEST_SHOTS = "21.5:tiles_tutorial_top.png,26.5:tiles_tutorial_bottom.png,29:tiles_tutorial_two_pages.png,31:tiles_tutorial_page2.png,37:tiles_tutorial_short.png,41.5:tiles_tutorial_over_pipboy.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 48
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=TutorialMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): TutorialMenu drawn from tiles', label = "the switch is read from the test aid" },
+  { re = 'ui: built TutorialMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', min = 3, label = "each opening builds its file" },
+  { re = 'tiles: TutorialMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', min = 3, label = "the menu's tree draws" },
+  { text = "TutorialMenu drawn by hand", count = 0, label = "the file has every path the model needs" },
+  { re = 'tiles: TutorialMenu drawn from tiles: page 1/1 "[^"]+", count hidden, text height \d+, column 440 high, scroll to [1-9]', label = "the first message overflows its column" },
+  { re = 'tiles: TutorialMenu scroll drawn at 0 of [1-9]\d*(\.\d+)?, text y 21\b', label = "it opens at the top" },
+  { re = 'tiles: TutorialMenu scroll drawn at 30 of \d+(\.\d+)?, text y -9\b', label = "Down scrolls one step, the text moved by the file" },
+  { re = 'tiles: TutorialMenu scroll drawn at 60 of \d+(\.\d+)?, text y -39\b', label = "a second Down" },
+  { re = 'tiles: TutorialMenu scroll drawn at 90 of \d+(\.\d+)?, text y -69\b', label = "the wheel" },
+  { re = 'tiles: TutorialMenu scroll drawn at 120 of \d+(\.\d+)?, text y -99\b', label = "a click on the down arrow" },
+  { re = 'tiles: TutorialMenu scroll drawn at (\d+(?:\.\d+)?) of \1, text y -', label = "the page area scrolls to the bound" },
+  { text = "tiles: TutorialMenu Scroll(30.0) on its tiles", count = 2, label = "the two clicks on the down arrow, the keys not acting twice" },
+  { text = "tiles: TutorialMenu Scroll(410.0) on its tiles", count = 1, label = "a click on the page area: the column's height less a step" },
+  { re = 'tiles: TutorialMenu scroll drawn at \S+, not the \S+ written', count = 0, label = "the scroll never draws the file's own count of the clicks" },
+  { re = 'tiles: TutorialMenu drawn from tiles: page 1/2 "[^"]+", count 1/2', label = "a second message is a page, and the count shows" },
+  { re = 'tiles: TutorialMenu drawn from tiles: page 2/2 "[^"]+", count 2/2', label = "the next page" },
+  { re = 'tutorial menu: page 1/2 "(?!Healing Limbs)[^"]+"', label = "two distinct messages: the first" },
+  { text = 'tutorial menu: page 2/2 "Healing Limbs"', count = 2, label = "and the second, by A and by the pointer; the A at the last page does nothing" },
+  { text = "tutorial menu: page 1/2", count = 3, label = "a page shown three times: the second message's arrival, S and the pointer; the S at the first page does nothing" },
+  { re = 'tiles: TutorialMenu scroll drawn at 0 of \d+(\.\d+)?, text y 21\b', min = 3, label = "a turned page starts at its top" },
+  { text = "tiles: TutorialMenu Next on its tiles", count = 1, label = "a click on Next, the keys not acting twice" },
+  { text = "tiles: TutorialMenu Previous on its tiles", count = 1, label = "a click on Previous" },
+  { text = "tiles: TutorialMenu Close on its tiles", count = 1, label = "a click on Close" },
+  { text = "tutorial menu: closed (key)", count = 2, label = "E closes it, once a press" },
+  { text = "tutorial menu: closed (click)", count = 1, label = "a click closes it" },
+  { re = 'test aid: closed menu 1059 after', count = 0, label = "no test aid closed it" },
+  { re = 'ui: dropped TutorialMenu', min = 3, label = "the closed menu drops its tiles" },
+]
+order = [[
+  "script: test aid calls ShowTutorialMenu",
+  "tiles: TutorialMenu Scroll(410.0) on its tiles",
+  "script: test aid calls ShowTutorialMenu",
+  'tutorial menu: page 2/2 "Healing Limbs"',
+  "tutorial menu: closed (key)",
+  "ui: dropped TutorialMenu",
+  "script: test aid calls ShowTutorialMenu",
+  "tiles: TutorialMenu Close on its tiles",
+  "tutorial menu: closed (click)",
+  "pipboy: up",
+  "script: test aid calls ShowTutorialMenu",
+  "tutorial menu: closed (key)",
+  "pipboy: menu code 1003",
+  "pipboy: down",
+]]
+
+[[scenario]]
+name = "tutorial-default-drawing"
+source = "docs/spec-notes/tutorial-menu.md §3 and §5: without the switch the tutorial menu is the hand-built drawing: no tile of it is drawn or written, and its keys, wheel, page bounds and close work as before the commands were shared with the tile menu; the shots are the default drawing to compare with tiles-tutorial's"
+note = "the same messages and times as tiles-tutorial, by keys alone, ten steps being past the hand-built scroll's end for 0x0007235B at this size"
+areas = ["ui", "menus", "scripts"]
+paths = ["engine/nvf-play/src/tutorial_menu.rs", "engine/nvf-play/src/tiles/tutorial_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:call:-:ShowTutorialMenu:0x0007235B,28:call:-:ShowTutorialMenu:0x00072358", NVF_PLAY_TEST_KEYS = "22:down,22.25:down,22.5:down,22.75:down,23:down,23.25:down,23.5:down,23.75:down,24:wheel-down,24.25:wheel-down,27:up,27.5:wheel-up,30:a,30.5:a,31.5:s,32:s,34:e", NVF_PLAY_TEST_SHOTS = "21.5:tutorial_default_top.png,26.5:tutorial_default_bottom.png,29:tutorial_default_two_pages.png,31:tutorial_default_page2.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 38
+expect = [
+  { re = 'tiles: TutorialMenu', count = 0, label = "nothing of the tile menu runs without its switch" },
+  { text = 'tutorial menu: page 2/2 "Healing Limbs"', count = 1, label = "A turns once; the A at the last page does nothing" },
+  { text = "tutorial menu: page 1/2", count = 2, label = "the second message's arrival and S; the S at the first page does nothing" },
+  { text = "tutorial menu: closed (key)", count = 1, label = "E closes it" },
+]
+order = [[
+  "script: test aid calls ShowTutorialMenu",
+  'tutorial menu: page 1/1',
+  "script: test aid calls ShowTutorialMenu",
+  'tutorial menu: page 2/2 "Healing Limbs"',
+  "tutorial menu: closed (key)",
+]]
+
+[[scenario]]
 name = "tiles-quantity"
 source = "[design] ui-tile-tree.md §6.2 step 3 (T15a, docs/handoff/ui-tile-tree-tasks.md): with [UI] TileMenus=QuantityMenu the \"How many?\" prompt over the Pip-Boy is drawn from the game's QuantityMenu tiles (Game::ui_prompt builds it; the model writes the meter's user0 and user2, the file works out the tiled fill and the amount), the hand-built prompt is not spawned, and pointer clicks on the decrease arrow and on OK drop one fewer than the stack"
 note = "the drop aid asks at 21 s for the 20 rounds given (the prompt opens at the whole stack, and `ask` holds it open until answered); the shot at 23 s; at 1280 x 800 the decrease arrow stands at 550-567 x 452-487 and OK ends at x 1085, y 492-543 (QM_Background centred by screen(), QM_MainRect 22, 42 in; quantity_menu.xml)"

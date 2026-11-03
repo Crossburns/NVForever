@@ -18,6 +18,11 @@
 //!
 //! Log lines: `tutorial menu: page <n>/<N> "<title>" (<message>)` when a page shows,
 //! `tutorial menu: closed (<how>)`.
+//!
+//! With `[UI] TileMenus=TutorialMenu` the same rules work the menu drawn from its file
+//! (`crate::tiles::tutorial_menu`): this module keeps the pages, the keys, the wheel and
+//! [`TutorialView`]; clicks on the tiles come as [`TutorialInput`], and how far the text
+//! scrolls comes from the file ([`TutorialView::set_scroll_bound`]) [design].
 
 use crate::chargen::draw::{Align, Ctx, Kit, Which, BODY_BASE, LINE_PITCH, THICK};
 use crate::interface::{amber, at, set_line, u};
@@ -63,7 +68,7 @@ const STEP: f32 = 30.0;
 /// starts that much before its place.
 const SYMBOL: &str = "interface\\loading\\glow_loading_vdsgsymbol.dds";
 const SYMBOL_H: f32 = 64.0;
-const SYMBOL_DEAD: f32 = 36.0;
+pub(crate) const SYMBOL_DEAD: f32 = 36.0;
 /// The text after the symbol stands 7 lower than centred on the bottom line.
 const VDSG_DROP: f32 = 7.0;
 /// The PC key hint's place: 5 right of its button (text_box.xml `PCShortcutLabel`).
@@ -105,7 +110,13 @@ impl Words {
 /// file's fill alpha of 32 of 255 leaves the text hard to read over the Pip-Boy].
 const SHADE: f32 = crate::interface::MENU_BACKING;
 /// The picture's width when its file cannot be read.
-const SYMBOL_W: f32 = 64.0;
+pub(crate) const SYMBOL_W: f32 = 64.0;
+
+/// The background's `alpha` (0 to 255) when the menu is drawn from its file: this menu's
+/// [`SHADE`], the choice above [design]; the original reads 193.8 [observed: b2_tutorial].
+pub(crate) fn backing_alpha() -> f64 {
+    f64::from(SHADE) * 255.0
+}
 
 /// A button of the menu.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,7 +179,11 @@ pub fn plain_text(s: &str) -> String {
 /// The pages of the open tutorial menu, none when it is not the open menu.
 pub fn pages(script: &ScriptState) -> Vec<Page> {
     let Some(rt) = script.rt.as_ref().filter(|rt| rt.game.menu == Some(menus::TUTORIAL)) else { return Vec::new() };
-    let g = &rt.game;
+    pages_of(&rt.game)
+}
+
+/// The pages of the tutorial menu of `g`.
+pub(crate) fn pages_of(g: &fnv_game::Game<'_>) -> Vec<Page> {
     g.tutorial
         .iter()
         .map(|&m| {
@@ -228,18 +243,65 @@ pub struct TutorialView {
     kit: Option<Kit>,
 }
 
+/// What the menu is asked to do, by a key, a click or a tile.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Command {
+    Next,
+    Previous,
+    Close,
+    /// Move the text by so many units (down the text when positive).
+    Scroll(f32),
+    /// Put the scroll at a value.
+    ScrollTo(f32),
+}
+
+/// A command from the menu's tiles (`crate::tiles::input`), read by [`keys`] the same frame.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct TutorialInput(pub Command);
+
+impl TutorialView {
+    /// Apply a command for `n` pages (at least one): pages turn within their bounds and a
+    /// turn starts the page at its top; the scroll stays in its range. True when it asks the
+    /// menu to close, which goes through `ScriptState::answer`.
+    pub fn apply(&mut self, n: usize, command: Command) -> bool {
+        let page = self.page.min(n.saturating_sub(1));
+        let mut turn = |to: usize| {
+            if to != self.page {
+                self.page = to;
+                self.scroll = 0.0;
+            }
+        };
+        match command {
+            Command::Next => turn((page + 1).min(n.saturating_sub(1))),
+            Command::Previous => turn(page.saturating_sub(1)),
+            Command::Close => return true,
+            Command::Scroll(by) => self.scroll = (self.scroll + by).clamp(0.0, self.max_scroll),
+            Command::ScrollTo(to) => self.scroll = to.clamp(0.0, self.max_scroll),
+        }
+        false
+    }
+
+    /// How far the shown page scrolls, from the menu's file when it is drawn from tiles; the
+    /// scroll is held in the range (a new page, another window size).
+    pub fn set_scroll_bound(&mut self, max: f32) {
+        self.max_scroll = max.max(0.0);
+        self.scroll = self.scroll.clamp(0.0, self.max_scroll);
+    }
+}
+
 #[derive(Component)]
 struct TutorialRoot;
 
-/// What was drawn last: the pages, the view and the screen's size in units.
+/// What was drawn last: the pages, the view, the screen's size in units and whether the
+/// menu is drawn from its tiles (the scroll and the hover are then not this drawing's).
 #[derive(Default, PartialEq)]
-struct Shown(Vec<Page>, usize, i32, Option<TmButton>, (i32, i32));
+struct Shown(Vec<Page>, usize, i32, Option<TmButton>, (i32, i32), bool);
 
 pub struct TutorialMenuPlugin;
 
 impl Plugin for TutorialMenuPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TutorialView>().add_systems(Update, draw.in_set(PlaySet::Ui));
+        app.init_resource::<TutorialView>().add_message::<TutorialInput>().add_systems(Update, draw.in_set(PlaySet::Ui));
     }
 }
 
@@ -247,7 +309,7 @@ impl Plugin for TutorialMenuPlugin {
 /// `crate::script`): pages, scrolling, Close through `ScriptState::answer`.
 pub fn keys(
     keys: Res<ButtonInput<KeyCode>>,
-    mut wheel: MessageReader<MouseWheel>,
+    (mut wheel, mut tiles): (MessageReader<MouseWheel>, MessageReader<TutorialInput>),
     clicks: Query<(&PointerState, &TmButton), Changed<PointerState>>,
     mut view: ResMut<TutorialView>,
     mut script: ResMut<ScriptState>,
@@ -256,6 +318,7 @@ pub fn keys(
     let n = pages(&script).len();
     if n == 0 {
         wheel.clear();
+        tiles.clear();
         if view.page != 0 || view.scroll != 0.0 {
             view.page = 0;
             view.scroll = 0.0;
@@ -275,23 +338,26 @@ pub fn keys(
     if let Some(h) = hover.filter(|h| *h != view.hover) {
         view.hover = h;
     }
-    let page = view.page.min(n - 1);
-    let turn = |to: usize, view: &mut TutorialView| {
-        if to != view.page {
-            view.page = to;
-            view.scroll = 0.0;
-        }
-    };
     if keys.any_just_pressed([KeyA, ArrowRight]) || clicked == Some(TmButton::Next) {
-        turn((page + 1).min(n - 1), &mut view);
+        view.apply(n, Command::Next);
     } else if keys.any_just_pressed([KeyS, ArrowLeft]) || clicked == Some(TmButton::Previous) {
-        turn(page.saturating_sub(1), &mut view);
+        view.apply(n, Command::Previous);
     } else if keys.any_just_pressed([KeyE, Escape, Enter, NumpadEnter]) || clicked == Some(TmButton::Close) {
         let how = if clicked.is_some() { "click" } else { "key" };
         if script.answer(None, how) {
             info!("tutorial menu: closed ({how})");
         }
+        tiles.clear();
         return;
+    }
+    // What the tiles asked this frame (`crate::tiles::input`), each once.
+    for TutorialInput(command) in tiles.read().copied() {
+        if view.apply(n, command) {
+            if script.answer(None, "click") {
+                info!("tutorial menu: closed (click)");
+            }
+            return;
+        }
     }
     let mut by = 0.0;
     if keys.just_pressed(ArrowDown) {
@@ -308,10 +374,7 @@ pub fn keys(
         by -= lines.signum() * STEP;
     }
     if by != 0.0 {
-        let s = (view.scroll + by).clamp(0.0, view.max_scroll);
-        if s != view.scroll {
-            view.scroll = s;
-        }
+        view.apply(n, Command::Scroll(by));
     }
 }
 
@@ -326,15 +389,19 @@ fn draw(
     windows: Query<&Window, With<PrimaryWindow>>,
     data: Option<Res<GameData>>,
     mut images: ResMut<Assets<Image>>,
-    formats: Option<Res<CompressedImageFormatSupport>>,
+    (formats, switch): (Option<Res<CompressedImageFormatSupport>>, Option<Res<crate::tiles::vanilla::TileMenus>>),
     mut shown: Local<Shown>,
 ) {
     let pages = pages(&script);
+    // T15b: with `[UI] TileMenus=TutorialMenu` the menu is drawn from its file
+    // (`crate::tiles::tutorial_menu`); only the pages' lines and a sheet are left here.
+    let tiled = script.rt.as_ref().is_some_and(|rt| crate::tiles::tutorial_menu::tiled(switch.as_ref().is_some_and(|s| s.tutorial), &rt.game));
     let words = Words::read(script.rt.as_ref().map(|rt| &rt.game));
     // The screen in the interface's units: 960 high.
     let screen = windows.single().map_or(Vec2::new(1280.0, 960.0), |w| Vec2::new(960.0 * w.width() / w.height().max(1.0), 960.0));
     let page = view.page.min(pages.len().saturating_sub(1));
-    let now = Shown(pages.clone(), page, view.scroll.round() as i32, view.hover, (screen.x.round() as i32, screen.y.round() as i32));
+    let (scroll, hover) = if tiled { (0, None) } else { (view.scroll.round() as i32, view.hover) };
+    let now = Shown(pages.clone(), page, scroll, hover, (screen.x.round() as i32, screen.y.round() as i32), tiled);
     if now == *shown {
         return;
     }
@@ -348,6 +415,15 @@ fn draw(
         commands.entity(e).despawn();
     }
     let Some(p) = pages.get(page) else { return };
+    // Drawn from tiles, the menu keeps the pointer from what is under it with a sheet alone:
+    // no click goes past it [documented: tutorial_menu.xml, `stackingtype` `&no_click_past;`].
+    if crate::tiles::menus::modal(true, tiled) == crate::tiles::menus::Modal::Sheet {
+        let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
+        commands.spawn((full, GlobalZIndex(crate::tiles::draw::TUTORIAL_Z), TutorialRoot)).with_children(|r| {
+            r.spawn(crate::tiles::menus::modal_sheet());
+        });
+        return;
+    }
     let bc = crate::interface::bc_supported(formats.as_deref());
     let view = view.into_inner();
     let kit = view.kit.get_or_insert_with(|| Kit::load(data.as_deref(), &mut images, bc));
@@ -368,7 +444,7 @@ fn draw(
         ..default()
     };
     let (count, scroll, hover, max) = ((page + 1, pages.len()), view.scroll, view.hover, view.max_scroll);
-    commands.spawn((root, GlobalZIndex(109), TutorialRoot)).with_children(|r| {
+    commands.spawn((root, GlobalZIndex(crate::tiles::draw::TUTORIAL_Z), TutorialRoot)).with_children(|r| {
         r.spawn(Node { width: u(w), height: u(h), ..default() }).with_children(|b| spawn_page(b, &mut c, &l, p, &words, count, scroll, max, hover));
     });
 }
@@ -480,6 +556,28 @@ mod tests {
         // The column: after the title's stub, down to the lower corners' lines, 64 short
         // of Previous.
         assert_eq!(l.column, [108.0, 156.0, 1024.0 - 81.0 - 100.0 - 64.0 - 108.0, 768.0 - 312.0]);
+    }
+
+    #[test]
+    fn the_commands_keep_pages_and_scroll_in_their_bounds() {
+        let mut v = TutorialView::default();
+        v.set_scroll_bound(100.0);
+        assert!(!v.apply(2, Command::Previous));
+        assert_eq!(v.page, 0, "no wrapping back");
+        assert!(!v.apply(2, Command::Scroll(30.0)));
+        assert_eq!(v.scroll, 30.0);
+        assert!(!v.apply(2, Command::Scroll(-50.0)));
+        assert_eq!(v.scroll, 0.0);
+        assert!(!v.apply(2, Command::ScrollTo(70.0)));
+        assert!(!v.apply(2, Command::Next));
+        assert_eq!((v.page, v.scroll), (1, 0.0), "a turn starts the page at its top");
+        assert!(!v.apply(2, Command::ScrollTo(500.0)));
+        assert_eq!(v.scroll, 100.0);
+        assert!(!v.apply(2, Command::Next));
+        assert_eq!((v.page, v.scroll), (1, 100.0), "no wrapping on; the page and its scroll stay");
+        v.set_scroll_bound(40.0);
+        assert_eq!(v.scroll, 40.0, "a smaller range holds the scroll in it");
+        assert!(v.apply(2, Command::Close));
     }
 
     #[test]

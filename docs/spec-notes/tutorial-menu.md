@@ -76,3 +76,83 @@ The strings are game settings that are not in the masters (the executable's defa
   first (the capture shows only that it stays one menu, 1059); which menu was open under
   it in the capture (MenuMode was 1 before the first call, its code not asked), so whether
   the menu under the tutorial answers MenuMode is not settled.
+
+## 5. Drawn from the menu file (T15b part 2)
+
+Behind `[UI] TileMenus=TutorialMenu` (`engine/nvf-play/src/tiles/tutorial_menu.rs`) the open
+menu (1059) is drawn from `menus\tutorial_menu.xml` and the hand-built drawing gives way to a
+sheet taking the pointer at the same stacking level (109); its pages, keys, wheel and close
+stay the hand-built menu's (§3) [design]. Smoke: `tiles-tutorial`, `tutorial-default-drawing`.
+
+The original's values, read at three window sizes [observed: capture b2_tutorial, private;
+values in interface units; the message 0x0007235B]:
+
+| tile | 1280 x 720 | 1280 x 1024 |
+|---|---|---|
+| `TM_Background` | 170.67, 96, 1365.33 x 768, alpha 193.8 | 120, 96, 960 x 768 |
+| `TM_title` | 108, 83.33, 145 x 38, font 6 (y 82.89 at 1920 x 1080) | y 82.94 |
+| `TM_page` | x 1257.33, 75 x 38, font 6, the file's `??/??`, not on the shot | x 852 |
+| `TM_text_container` | 108, 172, 985.33 x 440, `_text_height` 625, `_text_y` 21 | width 580, `_text_height` 811 |
+| `TM_text` | 5, 21, 965 x 625, no font trait (font 1), wrap 980.33 | 558 x 811, wrap 575 |
+| `TM_scrollbar` | 33.33, 172, 32 x 424, `_number_of_items` 655 | items 841 |
+
+- **The file has no `io()` traits** [documented: tutorial_menu.xml; the review's plan expected
+  some]. It gives ids to `TM_text` 0, Next 1, Previous 2, Close 3, `TM_title` 4, `TM_page` 5,
+  `TM_scrollbar` 6 and the words after the symbol 7, and says "replaced in code" of the title
+  and the count; the body has no string at all. So the model writes the tiles' own traits:
+  `string`, and `visible` and `target` on the count and the buttons [design; what the
+  original's code writes is not known].
+- **Sizes**: the body's height is the measured one, font 1's 36 + (lines - 1) x 31 [observed:
+  625 = 36 + 19 x 31, 811 = 36 + 25 x 31]. The file carries it on: `_text_height`, and the
+  scrollbar's items are that plus its step of 30 [documented; observed: 655, 841]; its visible
+  items the column's height, its jump the height less a step [documented]. Every text is
+  measured by the renderer's fonts, worked out and measured again until the body stands at its
+  final wrap width: that width follows Previous's place, 985.33 = 1284.33 - 127 - 108 - 64
+  [observed], and that place its word's width.
+- **The scroll's range** is the file's, items less visible items and at least 0: 215 here, and
+  the last step is what is left of the range, not a whole step [documented: scrollbar_vert.xml,
+  `_current_value`]. The hand-built `max_scroll` adds the text's 21 and rounds up to steps; it
+  is not used [design].
+- **The scroll's value** is the hand-built menu's. The prefab's `_current_value` adds the
+  arrows' and page areas' clicks to its old value [documented]; in NVForever's tree an
+  expression starts from 0 (wait-menu.md §12), so the model writes the value and pokes
+  `_SetInCode` on every frame the menu is tiled, as that prefab's comment asks [documented], and
+  clicks on the pieces are the hand-built menu's commands: arrows 30, page areas 410 at this
+  size, the marker the value under the pointer with the prefab's `_step_height` [documented;
+  design: the marker's own drag traits are not built]. The wheel and the keys stay hand-built;
+  the file's `wheelmoved` stays 0.
+- **Clipping and scrolling are apart.** The file moves the text: `TM_text`'s `y` is
+  `_text_y`, 21 less the value [documented]. `clipwindow` on `TM_text_container` crops it
+  (menu-xml.md §3.1.1) [hypothesis: a rectangular crop, nothing captured says more]; the model
+  turns the reading on for this menu alone.
+- **Alpha**: all of the menu's content is inside its background picture, whose alpha is 193.8
+  in the original, and its title, body, lines and symbol read full strength, (255, 182, 66)
+  [observed: shot 091 of hud_menus, 1280 x 720]. NVForever's layout multiplies alpha down from
+  a picture, so the model marks `TM_depth_rect` to take none from above
+  (`tiles::layout::OWN_ALPHA`); whether pictures pass alpha on elsewhere is open (observer
+  check 81). The backing keeps the hand-built menu's 0.75 (191.25 of 255) [design], 1 % from
+  the original's.
+- **The symbol**: `width` is `filewidth` less 36 and the words after it follow, so the file
+  alone reads -36 until the code writes `filewidth` [documented]. The picture is 128 x 64
+  [documented: the texture's header, Fallout - Textures2.bsa]; it is read from the name the file gives, once.
+- **The buttons**: with one page neither Next nor Previous shows [observed: the same shot], and
+  the count is hidden with `TM_fill_line` in its place by the file's rule [documented; observed:
+  not on the shot]. Previous still keeps its width, so the column keeps its place [observed:
+  985.33]. With more pages a button with nowhere to go stops being a target: the file's
+  `_line_alpha` dims it and it takes no highlight [documented: text_box.xml; design: the
+  hand-built menu's rule; multi-page is not captured, observer check 82]. `n/N` is NVForever's
+  (§3). Close is read (206, 147, 53) at its brightest on that shot, against the body's
+  (255, 182, 66) [observed]; font 2's texels or an alpha, not settled.
+- **One press acts once.** A click a key makes through the file's `_PCButton_*` or `x…` refs
+  acts unless the hand-built menu took that key this frame (`tiles::menus::key_click_acts`).
+  The triggers needed care: RT and LT stand for this menu's A and S
+  (`crate::pad::menu_buttons`), not for the shared Page Up and Page Down, so the tile input asks
+  `pad::menu_key_at` for them, or RT would turn the page by hand and again by the file's
+  `xbuttonrt`. RB and LB, which the hand-built menu does not read, page the text through the
+  file. A script's MenuTapKey and ClickMenuButton act through the file.
+- **The order in a frame**: the tile input's commands reach the hand-built `keys` the same
+  frame; then the page, its sizes, its range and the scroll are written together, before the
+  scripts and the tree's evaluation, so no frame draws a new page at an old scroll.
+- A file a mod restructured (a model path missing) keeps the whole hand-built drawing, with
+  one warning. The frame a menu opens on its tree is not built yet, so the hand-built drawing
+  shows for that one frame [design: as the other T15 menus].
