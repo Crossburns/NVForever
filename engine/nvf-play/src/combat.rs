@@ -1429,7 +1429,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Startup, init_combat)
             .add_systems(
                 Update,
-                (track_limbs, perk_speed, player_flinch, arm_sway, weapon_state, equip_sync, run_pace, reload_pace, weapon_sounds, fire, melee, actor_attacks, fly, crate::dismember::resolve, crate::mines::tick, crate::thrown::land, disarm, death_drops, meltdown, log_combat_lines).chain().in_set(PlaySet::Activation).run_if(in_state(PlayState::Playing)).run_if(resource_exists::<Combat>),
+                (track_limbs, (perk_speed, stat_speed), player_flinch, arm_sway, weapon_state, equip_sync, run_pace, reload_pace, weapon_sounds, fire, melee, actor_attacks, fly, crate::dismember::resolve, crate::mines::tick, crate::thrown::land, disarm, death_drops, meltdown, log_combat_lines).chain().in_set(PlaySet::Activation).run_if(in_state(PlayState::Playing)).run_if(resource_exists::<Combat>),
             )
             .add_systems(Update, (draw_marks, watch_hit_effects).run_if(resource_exists::<Combat>))
             .add_systems(Last, report);
@@ -1635,6 +1635,24 @@ fn perk_speed(c: Res<Combat>, mut anim: ResMut<WeaponAnim>, mut script: Option<R
         } else {
             info!("movement: the Modify Run Speed perks make the player move at {:.0}% ({})", want * 100.0, by.join(", "));
         }
+    }
+}
+
+/// The player's Speed Mult, body armour and size (`crate::player::StatSpeed`): asked every
+/// frame, so SetAV / ModAV / ForceAV, effects, changes of armour and SetScale count at
+/// once. A smaller player takes smaller steps: the speed goes with a script's scale, as a
+/// creature's pace goes with its scale (`creature_pace`) [hypothesis: the clips' root
+/// motion shrinks with the body; owner's TTW run 2026-11-02, the baby at
+/// `player.SetScale 0.4` moved at full speed].
+fn stat_speed(mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::StatSpeed>>) {
+    let (Some(mut speed), Some(rt)) = (speed, script.as_deref_mut().and_then(|s| s.rt.as_mut())) else { return };
+    let (mult, armor) = with_world(rt, &mut sim, |rt| (rt.game.move_speed_mult(FormId::PLAYER_REF) as f32, rt.game.armor_speed_mult(FormId::PLAYER_REF)));
+    let scale = sim.script_scale(FormId::PLAYER_REF.0).unwrap_or(1.0).max(crate::sim::MIN_DRAWN_SCALE);
+    let want = mult * scale;
+    if (speed.0 - want).abs() > 1e-4 {
+        speed.0 = want;
+        let size = if scale == 1.0 { String::new() } else { format!(", scale {scale:.2}") };
+        info!("movement: Speed Mult and body armour make the player move at {:.0}% (armour {:.0}%{size})", want * 100.0, armor * 100.0);
     }
 }
 
@@ -2643,9 +2661,8 @@ pub(crate) fn fire(
             );
         }
         c.player_spread = Some(if c.no_spread { 0.0 } else { actor_spread.max(0.0) });
-        // VATS mode's hit chance: as aimed, no bloom (vats-mode.md §17.2).
-        let aimed = Stance { aiming: true, ..stance.clone() };
-        let vats_spread = spread::actor_spread(&c.rules, &c.tuning, &w, &aimed);
+        // VATS mode's hit chance: its own actor spread, no bloom (vats-mode.md §17.2).
+        let vats_spread = spread::vats_actor_spread(&c.rules, &c.tuning, &w, &stance);
         let (vats_spread, _) = player_weapon_perk(script.as_deref_mut(), &mut sim, fnv_game::perks::CALCULATE_GUN_SPREAD, id, vats_spread);
         c.vats_cone = Some(if c.no_spread { 0.0 } else { spread::cone_deg(vats_spread.max(0.0), 0.0, &w, &effects) });
     }

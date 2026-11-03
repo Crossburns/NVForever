@@ -30,6 +30,15 @@
 //! to water, the camera comes on a few frames after the water shows, which reflects only
 //! the sky until then; the texture it shows is drawn in the frame it comes on (it renders
 //! before the main camera, order -1), never an old one.
+//!
+//! Switched off by the `water-mirror` setting (graphics.rs `Graphics::water_mirror`;
+//! #1380): water then reflects the sky, and the screen where screen-space reflections are
+//! on.
+//! At Hoover Dam by day (Lake Mead in view) the camera costs about 0.5 ms a frame, where
+//! the CPU sets the frame: 7.6 ms with it, 7.1 without [observed 2026-11-02, #1380]. Its
+//! own set of the sun's cascades stays: Bevy's renderer needs cascades for every view the
+//! sun lights, and emptying their caster lists saved 0.12 ms of shadow-pass GPU time and
+//! nothing of the frame there, so the reflected world keeps its shadows.
 
 use crate::water::{DistantWater, WaterCache, WaterMaterial};
 use crate::world::{bevy_to_game, Streamer, WorldData};
@@ -412,8 +421,9 @@ fn update_reflection(
         return;
     };
     let cam = main_gt.translation();
+    let mirror = graphics.as_ref().is_none_or(|g| g.water_mirror);
     let near_water = match (streamer.interior, main_proj) {
-        (None, Projection::Perspective(_)) => reflection_height(&world, &mut dw, bevy_to_game(cam)),
+        (None, Projection::Perspective(_)) if mirror => reflection_height(&world, &mut dw, bevy_to_game(cam)),
         _ => None,
     };
     // Only while water is on screen (module notes, "Only when water is seen"), and never
@@ -445,6 +455,7 @@ fn update_reflection(
             (Some(_), Some(SeenWater::Cell(c))) => info!("water reflection: on (the water of cell {},{} on screen)", c.0, c.1),
             (Some(_), Some(SeenWater::Placed(r))) => info!("water reflection: on (placed water {r:08X} on screen)"),
             (Some(_), None) => {}
+            (None, _) if !mirror => info!("water reflection: off (mirrored water switched off)"),
             (None, _) if near_water.is_some() => info!("water reflection: off (no water on screen for {KEEP_UNSEEN} s)"),
             (None, _) => info!("water reflection: off (no water near)"),
         }

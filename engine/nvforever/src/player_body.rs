@@ -53,8 +53,10 @@
 //! body is on [`BODY_LAYER`], which the sun casts from and the flashlight does not. The unseen body stands where
 //! the arms rig is and would shade it, so the arms rig takes its sun shadows from a light
 //! of its own ([`ArmsShade`], `NifSurface::shade_light`) that casts from the world's
-//! layer and the arms': buildings, what is seen of the body and the arms themselves shade
-//! the arms, as before the unseen body cast anything.
+//! layer and the arms', but only what lies by the eye toward the sun ([`near_shade_casters`]), and
+//! from the sun's own map what lies beyond the unseen body (`nif_material.wesl`
+//! `shadow_past_body`): buildings, hills, what is seen of the body and the arms
+//! themselves shade the arms, as before the unseen body cast anything.
 //!
 //! **Lying on a bed** ([`lying_view`]; owner requests 2026-10-10): in first person the
 //! view is the lying body's, whether or not the body is drawn. It keeps its place in the
@@ -215,9 +217,70 @@ const ARMS_SHADE_REACH: f32 = 256.0;
 /// [`ARMS_SHADE_REACH`] from the camera, around the arms: a cascade takes every caster
 /// between it and the sun, so what shades the arms still does, while the pass draws only
 /// those (before 2026-10-12 it was the sun's first cascade, about 190 casters at
-/// Goodsprings against about 30 now; the arms' shadows are finer for it).
+/// Goodsprings against about 30 then; the arms' shadows are finer for it). Of those it
+/// draws only the ones by the eye toward the sun ([`near_shade_casters`]).
 #[derive(Component)]
 struct ArmsShade;
+
+/// How far toward the sun from the eye the [`ArmsShade`] light's casters are looked for,
+/// and how far from that line they may lie (game units): the arms rig and its weapon reach
+/// about 60 units from the eye, and past the plane through the eye and 24 units more the
+/// sun's own map takes over (`nif_material.wesl` `shadow_past_body`) [engineering
+/// choice].
+const ARMS_SHADE_LINE: f32 = 96.0;
+const ARMS_SHADE_NEAR: f32 = 64.0;
+
+/// Keep in the [`ArmsShade`] light's cascades only the casters whose bounds come within
+/// [`ARMS_SHADE_NEAR`] of the line from the view's camera [`ARMS_SHADE_LINE`] toward the
+/// sun (PostUpdate, after Bevy's light visibility). Bevy keeps every caster between a
+/// cascade and the light, so at a low sun the column toward the sun took in hills,
+/// buildings and distant land far off, each drawn into a map as large as the sun's: up to
+/// 3.6 ms a frame at Novac at 07:00 for 36-38 casters [observed 2026-11-02, #1374]. The
+/// land is left out too: a cell's land box spans its hills, so it holds the eye wherever
+/// the player stands, and the land filling the whole map still cost about 0.9 ms there
+/// [observed 2026-11-02, 5 casters left]; a slope rising toward the sun shades the arms
+/// from past the body, through the sun's map. What
+/// shades the arms from further off is read from the sun's own map beyond the unseen body
+/// instead, so this light is left with what the body's clearance hides there: the arms on
+/// themselves, a roof or a door frame right at the head. What it still costs is the pass
+/// itself, whatever it draws: about 0.75 ms at Novac at 07:00 with 4096² maps for one
+/// caster as for three, against 0.25 ms for none [observed 2026-11-02, #1374].
+#[allow(clippy::type_complexity)]
+fn near_shade_casters(
+    mut shade: Query<(&mut bevy::camera::visibility::CascadesVisibleEntities, &GlobalTransform), With<ArmsShade>>,
+    views: Query<&GlobalTransform, With<Camera>>,
+    casters: Query<(&bevy::camera::primitives::Aabb, &GlobalTransform, Has<crate::terrain::LandMesh>)>,
+) {
+    for (mut visible, light) in &mut shade {
+        // A directional light shines along its forward axis.
+        let to_sun = light.back().as_vec3();
+        for (view, cascades) in visible.entities.iter_mut() {
+            let Ok(eye) = views.get(*view) else { continue };
+            let eye = eye.translation();
+            for cascade in cascades.iter_mut() {
+                cascade.entities.retain(|e| match casters.get(*e) {
+                    Ok((aabb, at, land)) => !land && near_line(aabb, at, eye, to_sun),
+                    Err(_) => true,
+                });
+            }
+        }
+    }
+}
+
+/// Whether the bounds `aabb` at `at` come within [`ARMS_SHADE_NEAR`] of the line from
+/// `eye` [`ARMS_SHADE_LINE`] along `to_sun`: the nearest point of the box, as placed, to
+/// points every 16 units along the line.
+fn near_line(aabb: &bevy::camera::primitives::Aabb, at: &GlobalTransform, eye: Vec3, to_sun: Vec3) -> bool {
+    let place = at.affine();
+    let back = place.inverse();
+    let (min, max) = (Vec3::from(aabb.min()), Vec3::from(aabb.max()));
+    let steps = (ARMS_SHADE_LINE / 16.0) as usize;
+    (0..=steps).any(|i| {
+        let p = eye + to_sun * (i as f32 * 16.0);
+        let nearest = back.transform_point3(p).clamp(min, max);
+        place.transform_point3(nearest).distance(p) <= ARMS_SHADE_NEAR
+    })
+}
 
 /// A copy of material `m` whose sun shadows are the [`ArmsShade`] light's and whose depth
 /// is squeezed in front of the world, so no wall, door or actor the camera stands against
@@ -899,6 +962,7 @@ impl Plugin for PlayerBodyPlugin {
             .init_resource::<crate::furniture::PlayerUse>()
             .init_resource::<crate::weapon_lower::Ahead>()
             .add_systems(Update, (crate::furniture::drive_player, ensure_body, crate::weapon_lower::sense, drive_body, drive_weapon_emitters, shade_light).chain().in_set(nvf_play::player::BodySet))
+            .add_systems(PostUpdate, near_shade_casters.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
             .add_systems(Last, report);
     }
 }
@@ -2058,7 +2122,7 @@ fn drive_weapon_emitters(state: Res<PlayerBody>, mut emitters: Query<&mut crate:
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive_body(
     mut commands: Commands,
-    (time, turbo): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>),
+    (time, turbo, sim, mut told_scale): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>, Option<Res<nvf_play::sim::SimState>>, Local<Option<f32>>),
     d: Res<PlayWorld>,
     intent: Res<MoveIntent>,
     control: Res<PlayerControl>,
@@ -2332,6 +2396,12 @@ fn drive_body(
             m.after_idle = Some(1.0);
         }
     }
+    // The game put the player somewhere else while held (a script's move landing after
+    // the idle began): the scene plays there.
+    if let Some(h) = idles.held.and_then(|h| h.moved(player.placed, player.heading, player.pitch)) {
+        info!("player view: the game moved the player while an idle holds them: held at ({:.0}, {:.0}, {:.0}) now", h.feet[0], h.feet[1], h.feet[2]);
+        idles.held = Some(h);
+    }
     // A second later: where the collision has left the character (a smoke check).
     if let Some(t) = m.after_idle.as_mut() {
         *t -= dt;
@@ -2385,14 +2455,25 @@ fn drive_body(
     // The body stands on the drawn ground under the feet (`nvf_play::phys::drawn_sink`);
     // its eye counts from the feet as before.
     let sink = Vec3::Z * phys.drawn_sink_of(FormId::PLAYER_REF.0);
-    let root = Transform { translation: Vec3::from_array(feet) - sink, rotation: Quat::from_rotation_z(-player.heading), scale: Vec3::splat(body.scale) };
+    // A script's SetScale on the player sizes both rigs, so the view (the first-person
+    // camera node) comes down with the body: Fallout 3's baby stage, CG01 stage 0,
+    // `player.SetScale 0.4`, stage 100 `1` [observed: TTW's Fallout3.esm, fnvtool script
+    // decompile; owner's TTW run 2026-11-02, the baby was drawn full size].
+    let script_scale = sim.as_deref().and_then(|s| s.script_scale(FormId::PLAYER_REF.0)).unwrap_or(1.0).max(nvf_play::sim::MIN_DRAWN_SCALE);
+    if *told_scale != Some(script_scale) {
+        if told_scale.is_some() || script_scale != 1.0 {
+            info!("player body: drawn at scale {script_scale:.2} (SetScale), race height {:.2}", body.scale);
+        }
+        *told_scale = Some(script_scale);
+    }
+    let root = Transform { translation: Vec3::from_array(feet) - sink, rotation: Quat::from_rotation_z(-player.heading), scale: Vec3::splat(body.scale * script_scale) };
     let third = Posed { root, look_pitch: player.pitch, special: &idles.third, pipboy: None, sway: SwayPose::NONE, sights: None };
     let third_eye = pose_rig(&mut body.third, &frame, &events, third, &mut ctx, &mut transforms).map(|(e, _)| e + sink);
     // The third-person body's melee attack clip carries the player by its root's travel
     // (actors.md §8.13), turned by the heading and scaled with the body.
     if let Some(d) = body.third.carry.filter(|_| dt > 0.0) {
         let (s, c) = player.heading.sin_cos();
-        let k = body.scale;
+        let k = body.scale * script_scale;
         lunge.owed[0] += (d.x * c + d.y * s) * k;
         lunge.owed[1] += (-d.x * s + d.y * c) * k;
         if !was_carrying {
@@ -2535,7 +2616,7 @@ fn drive_body(
     // The body in first person stands where its eyes are under the camera (and a little
     // behind), feet on the ground: the view is the arms rig's, the body is moved to it.
     if let (true, Some(cam), Some(head)) = (frame.upright, first_eye, third_eye) {
-        let back = root.rotation * Vec3::new(0.0, OWN_BODY_BACK * body.scale, 0.0);
+        let back = root.rotation * Vec3::new(0.0, OWN_BODY_BACK * root.scale.x, 0.0);
         if let Ok(mut t) = transforms.get_mut(body.third.root) {
             t.translation += Vec3::new(cam.x - head.x - back.x, cam.y - head.y - back.y, 0.0);
         }
@@ -2636,6 +2717,29 @@ fn drive_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shade_casters_near_the_line_to_the_sun() {
+        use bevy::camera::primitives::Aabb;
+        let eye = Vec3::new(100.0, 120.0, 0.0);
+        let up = Vec3::Y;
+        let low = Vec3::new(1.0, 0.25, 0.0).normalize();
+        let small = Aabb::from_min_max(Vec3::splat(-10.0), Vec3::splat(10.0));
+        // Land 120 units below the eye, 4,096 units square: never near the line.
+        let land = Aabb::from_min_max(Vec3::new(-2048.0, -5.0, -2048.0), Vec3::new(2048.0, 5.0, 2048.0));
+        let ground = GlobalTransform::from_translation(Vec3::new(100.0, 0.0, 0.0));
+        assert!(!near_line(&land, &ground, eye, up));
+        assert!(!near_line(&land, &ground, eye, low));
+        // A roof 80 units over the head with the sun overhead; not with a low sun off to the side.
+        let roof = GlobalTransform::from_translation(eye + up * 80.0);
+        assert!(near_line(&small, &roof, eye, up));
+        assert!(!near_line(&small, &roof, eye, Vec3::new(0.0, 0.0, 1.0)));
+        // A box beside the eye (the arms), and one 1,000 units off.
+        assert!(near_line(&small, &GlobalTransform::from_translation(eye + Vec3::X * 50.0), eye, up));
+        assert!(!near_line(&small, &GlobalTransform::from_translation(eye + Vec3::X * 1000.0), eye, low));
+        // Scale counts: the far box scaled 100 times reaches the line.
+        assert!(near_line(&small, &GlobalTransform::from(Transform::from_translation(eye + Vec3::X * 1000.0).with_scale(Vec3::splat(100.0))), eye, low));
+    }
 
     #[test]
     fn head_slots() {

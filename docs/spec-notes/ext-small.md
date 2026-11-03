@@ -54,7 +54,7 @@ game, so nothing here is `[observed]`. Changes last for the session.
 | TTW_CRC32 `plugin` | the CRC-32 (IEEE) of the plugin file; 0 when it cannot be read [documented; decision: the variant]. Table-driven, and kept per plugin name for the session (a plugin does not change while the game runs; FalloutNV.esm is too large to read on every call) [decision] |
 | TTW_GetEquippedWeaponSkill `skill` | 1 when the equipped weapon's skill (DNAM, an actor value code) is that one [documented] |
 | TTW_GetPlugins | `[name, version, description]` per loaded plugin [documented; decision: version 0 and "", no plugin header is kept] |
-| TTW_ShowGeneProjector | nothing [decision: TTW's menu is not built] |
+| TTW_ShowGeneProjector | opens the race menu (1036), NVForever's character creator, as ShowRaceMenu does [observed: TTW's scripts wait in `MenuMode 1036` after it; design: owner 2026-11-02] |
 | StewieGetValue `"key:section"` (StewVal) | the value in `Data\NVSE\Plugins\nvse_stewie_tweaks.ini`, a number when it reads as one; 0 without [documented; hypothesis: the file's name] |
 | GetCellRegions `cell` | an exterior cell's regions (XCLR); none for an interior [documented] |
 | SetWorldspaceMapBounds `world nwX nwY seX seY` | the WRLD MNAM cells, read by every reader of the record (`Game::world_map_bounds`) [documented; follow-up: the engine's map reads its bounds once] |

@@ -1342,6 +1342,46 @@ pub fn setup_sky(
     }
 }
 
+/// How far toward the sun each of the sun's shadow cascades reaches before its casters
+/// are squashed onto its near plane, past the nearest of the view's slice (game units).
+/// Bevy puts a cascade's near plane at the slice's corner nearest the sun, which with the
+/// sun behind the camera lies just in front of the eye: the player's unseen body and a
+/// wall behind it would both land on that plane, and the arms' shadows from beyond the
+/// body (nif_material.wesl `shadow_past_body`) could not tell them apart. Pushed back by
+/// this much the body keeps its true depth [engineering choice: well past the body's
+/// reach behind the eye, about 100 units].
+pub const SUN_REACH_BACK: f32 = 256.0;
+
+/// Move the near plane of a directional light's cascade `extra` units further toward the
+/// light, keeping its far plane: the depth range (reverse Z, near 1, far 0) is stretched
+/// over the longer box. Its projection and view-projection change alike.
+pub fn reach_toward_light(cascade: &mut bevy::light::cascade::Cascade, extra: f32) {
+    // Bevy's projection maps the light-space depth z (0 at the near plane, -range at the
+    // far) to r z + 1 with r = 1 / range; wanted is r' (z - extra) + 1 with
+    // r' = 1 / (range + extra), so NDC depth d becomes s d + 1 - s - r' extra, s = r' / r.
+    let r = cascade.clip_from_cascade.z_axis.z;
+    if r <= 0.0 || extra <= 0.0 {
+        return;
+    }
+    let r_new = 1.0 / (1.0 / r + extra);
+    let s = r_new / r;
+    let remap = Mat4::from_cols(Vec4::X, Vec4::Y, Vec4::new(0.0, 0.0, s, 0.0), Vec4::new(0.0, 0.0, 1.0 - s - r_new * extra, 1.0));
+    cascade.clip_from_cascade = remap * cascade.clip_from_cascade;
+    cascade.clip_from_world = remap * cascade.clip_from_world;
+}
+
+/// Stretch the sun's shadow cascades [`SUN_REACH_BACK`] toward the sun (PostUpdate, after
+/// Bevy builds them each frame and before their frusta and shadow views are made).
+pub fn reach_toward_sun(mut suns: Query<&mut bevy::light::Cascades, With<Sun>>) {
+    for mut cascades in &mut suns {
+        for view in cascades.cascades.values_mut() {
+            for cascade in view.iter_mut() {
+                reach_toward_light(cascade, SUN_REACH_BACK);
+            }
+        }
+    }
+}
+
 /// The sun's shadow cascades, in game units: the first covers the area right around the
 /// camera (a twelfth of `distance`), the last ends at `distance` × `reach`.
 pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> CascadeShadowConfig {
@@ -1353,6 +1393,14 @@ pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> Cascad
         overlap_proportion: 0.2,
     }
     .build()
+}
+
+/// Height of the sun's direction above the horizon (the sine of its elevation; below 0
+/// the directional light is the moon, from the opposite side) and the share of its
+/// strength the light has at that height (it fades out within [`HORIZON_FADE`]; [`update_sky`]).
+pub fn sun_height_and_fade(sky: &SkyState) -> (f32, f32) {
+    let y = (game_to_bevy().rotation * Vec3::from_array(sun_direction(&sky.climate, sky.hour, SUN_SOUTH))).y;
+    (y, (y.abs() / HORIZON_FADE.sin()).min(1.0))
 }
 
 /// Switch the sun's shadows on or off now (the settings page); they reach
@@ -1771,6 +1819,37 @@ pub fn initial_fog() -> DistanceFog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cascade_reaches_further_toward_the_light() {
+        // A light shining straight down; a box 100 units deep whose near plane is at y = 50.
+        let range = 100.0;
+        let near_y = 50.0;
+        let clip_from_cascade = Mat4::from_cols(Vec4::new(0.01, 0.0, 0.0, 0.0), Vec4::new(0.0, 0.01, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0 / range, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0));
+        // Light space: z points up toward the light, origin on the near plane.
+        let cascade_from_world = Mat4::from_cols(Vec4::X, Vec4::new(0.0, 0.0, 1.0, 0.0), Vec4::new(0.0, -1.0, 0.0, 0.0), Vec4::new(0.0, 0.0, -near_y, 1.0));
+        let mut cascade = bevy::light::cascade::Cascade {
+            world_from_cascade: cascade_from_world.inverse(),
+            clip_from_cascade,
+            clip_from_world: clip_from_cascade * cascade_from_world,
+            texel_size: 1.0,
+        };
+        let depth = |c: &bevy::light::cascade::Cascade, y: f32| c.clip_from_world.project_point3(Vec3::new(3.0, y, 4.0)).z;
+        assert!((depth(&cascade, near_y) - 1.0).abs() < 1e-6);
+        assert!(depth(&cascade, near_y - range).abs() < 1e-6);
+        reach_toward_light(&mut cascade, 200.0);
+        // The far plane stays, the near plane moves 200 units toward the light.
+        assert!(depth(&cascade, near_y - range).abs() < 1e-6);
+        assert!((depth(&cascade, near_y + 200.0) - 1.0).abs() < 1e-6);
+        assert!((depth(&cascade, near_y) - 1.0 / 3.0).abs() < 1e-6);
+        // Projection and view-projection agree.
+        let both = cascade.clip_from_cascade * cascade_from_world;
+        assert!(both.abs_diff_eq(cascade.clip_from_world, 1e-6));
+        // Nothing to stretch.
+        let before = cascade.clip_from_world;
+        reach_toward_light(&mut cascade, 0.0);
+        assert_eq!(before, cascade.clip_from_world);
+    }
 
     #[test]
     fn horizon_weight_falls_with_elevation() {

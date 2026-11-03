@@ -67,6 +67,18 @@ pub fn actor_spread(r: &Rules, t: &CombatTuning, w: &WeaponStats, s: &Stance) ->
     (skill_mult * (unaimed + moving + standing + arms + str_req + skill_req + jump)).max(r.min_gun_spread)
 }
 
+/// The actor spread VATS works its chance from, spread units (docs/design/vats-mode.md
+/// §17.2): not aiming and standing whatever the stance, the Strength requirement and
+/// crippled limbs, times the skill's share; no moving, crouching, jumping or skill
+/// requirement [observed: sneaking and a skill below a weapon's requirement left the
+/// original's VATS chances as they were, issue #1361]. The crippled limbs are [design].
+pub fn vats_actor_spread(r: &Rules, t: &CombatTuning, w: &WeaponStats, s: &Stance) -> f32 {
+    let arms = crippled_spread(r, t, w, s);
+    let str_req = (w.strength_req as f32 - s.strength_req_cut - s.strength.min(10.0)).max(0.0) * r.strength_req_penalty;
+    let skill_mult = 1.0 - r.wobble_to_skill * s.skill.clamp(0.0, 100.0) / 100.0;
+    (skill_mult * (r.spread_unaimed + r.spread_standing + arms + str_req)).max(r.min_gun_spread)
+}
+
 /// The crippled limbs' part of the actor spread, spread units: the documented
 /// crippled-arm penalties by one or two arms and one- or two-handed weapons, and the
 /// head's [design]. VATS mode's shots, which have no other spread, keep this
