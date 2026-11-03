@@ -106,8 +106,10 @@ pub struct Ambient {
     space: Option<Space>,
     /// Looping markers that sound, by reference, and sources, by key.
     loops: HashMap<u64, Playing>,
-    /// Random markers and sources: the real time until which each still sounds.
+    /// Random markers and sources: the real time until which each still sounds, and the
+    /// file a skipped roll picked (still being read), which its next roll plays.
     busy_until: HashMap<u64, f64>,
+    picks: HashMap<u64, String>,
     next_roll: f64,
     /// CELL `XCAS` by cell.
     spaces: HashMap<u32, Option<u32>>,
@@ -261,6 +263,7 @@ fn play(
             commands.entity(p.entity).try_despawn();
         }
         amb.busy_until.clear();
+        amb.picks.clear();
         amb.space = Some(space);
     }
     let roll = !held && now >= amb.next_roll;
@@ -324,7 +327,12 @@ fn play(
             let chance = s.random_chance_percent / 100.0;
             if sfx.rng.next_f32() < chance {
                 let mut out = Out { commands: &mut commands, assets: &mut pcm, settings: &settings, player: Some(&*player) };
-                match one_shot_heard(&mut out, sfx, &data.vfs, FormId(m.sound), Some(m.at)) {
+                let mut pick = amb.picks.remove(&m.key);
+                let now_heard = one_shot_heard(&mut out, sfx, &data.vfs, FormId(m.sound), Some(m.at), &mut pick);
+                if let Some(p) = pick {
+                    amb.picks.insert(m.key, p);
+                }
+                match now_heard {
                     OneShotNow::Played(seconds) => {
                         amb.busy_until.insert(m.key, now + seconds as f64);
                         if m.source {
@@ -336,7 +344,8 @@ fn play(
                     // Its file is being read (sfx, #1428): this roll is skipped and the
                     // marker stays quiet until the file is ready [engineering choice:
                     // the plays are at random anyway, so a skipped roll is not heard as
-                    // a delay, where a late start could be].
+                    // a delay, where a late start could be]. The file picked is kept
+                    // (`picks`) for the marker's next roll.
                     OneShotNow::Waiting => sfx.waits.rolls_skipped += 1,
                     OneShotNow::NoFile => {}
                 }

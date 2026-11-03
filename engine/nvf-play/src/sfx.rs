@@ -1341,14 +1341,26 @@ pub(crate) enum OneShotNow {
 }
 
 /// Play a SOUN once now for the player, at a place (panned for them) or at the listener,
-/// if its file is ready; nothing is queued (see [`OneShotNow`]).
-pub(crate) fn one_shot_heard(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, sound: FormId, at: Option<[f32; 3]>) -> OneShotNow {
+/// if its file is ready; nothing is queued (see [`OneShotNow`]). `pick`: the file an
+/// earlier try picked and found still being read, played this time instead of a new
+/// random pick of a folder (so that decode is not wasted); set when this try finds its
+/// file being read, emptied otherwise.
+pub(crate) fn one_shot_heard(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, sound: FormId, at: Option<[f32; 3]>, pick: &mut Option<String>) -> OneShotNow {
     if folder_unlisted(sfx, sound) {
         return OneShotNow::Waiting;
     }
-    let Some(r) = resolve(sfx, vfs, sound) else { return OneShotNow::NoFile };
+    let r = match (pick.take(), sfx.forms.sounds.get(&sound)) {
+        (Some(path), Some(s)) => Resolved { name: s.edid.clone().unwrap_or_else(|| sound.to_string()), s: s.clone(), path },
+        _ => {
+            let Some(r) = resolve(sfx, vfs, sound) else { return OneShotNow::NoFile };
+            r
+        }
+    };
     match file_now(sfx, vfs, &r.path, &r.name) {
-        FileNow::Pending => OneShotNow::Waiting,
+        FileNow::Pending => {
+            *pick = Some(r.path);
+            OneShotNow::Waiting
+        }
         FileNow::Broken => {
             sfx.failed += 1;
             OneShotNow::NoFile
@@ -2304,7 +2316,7 @@ mod tests {
                 .run_system_once(|mut commands: Commands, mut sfx: ResMut<Sfx>, mut assets: ResMut<Assets<PcmSound>>, data: Res<nvf_assets::GameData>, settings: Res<SfxSettings>| {
                     collect_files(&mut sfx, &mut assets);
                     let mut out = Out { commands: &mut commands, assets: &mut assets, settings: &settings, player: None };
-                    one_shot_heard(&mut out, &mut sfx, &data.vfs, BEEP, None)
+                    one_shot_heard(&mut out, &mut sfx, &data.vfs, BEEP, None, &mut None)
                 })
                 .unwrap()
         };
@@ -2322,6 +2334,32 @@ mod tests {
         };
         assert!((seconds - 0.5).abs() < 1e-3);
         assert_eq!(once(&mut app), OneShotNow::Played(seconds));
+        // A folder's pick skipped while its file is read is kept for the next roll: one
+        // file of the two decoded, the same one played.
+        let takes = FormId(0x22);
+        app.world_mut().resource_mut::<Sfx>().forms.sounds.insert(takes, record("TestRandomTakes", Some("fx\\takes"), &[]));
+        let mut pick = None;
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let before: Option<String> = pick.clone();
+            let given = before.clone();
+            let now = app.world_mut().run_system_once(move |mut commands: Commands, mut sfx: ResMut<Sfx>, mut assets: ResMut<Assets<PcmSound>>, data: Res<nvf_assets::GameData>, settings: Res<SfxSettings>| {
+                collect_files(&mut sfx, &mut assets);
+                let mut out = Out { commands: &mut commands, assets: &mut assets, settings: &settings, player: None };
+                let mut pick = given.clone();
+                (one_shot_heard(&mut out, &mut sfx, &data.vfs, takes, None, &mut pick), pick)
+            });
+            let (now, after) = now.unwrap();
+            if now != OneShotNow::Waiting {
+                assert!(after.is_none());
+                break;
+            }
+            assert!(before.is_none() || before == after, "the pick changed: {before:?} {after:?}");
+            pick = after;
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(app.world().resource::<Sfx>().files.keys().filter(|p| p.contains("takes")).count(), 1);
     }
 
     #[test]
