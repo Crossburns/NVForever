@@ -518,7 +518,8 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
 ## 6. Keys and pointer [hypothesis unless marked]
 
 - Tab opens and closes; Esc closes. F1, F2, F3 show STATS, ITEMS, DATA; A/D and
-  Left/Right the tabs [design]. ITEMS: Up/Down (W/S), Page Up/Down, the wheel, Enter or
+  Left/Right the tabs [design]. On the controller LT/RT step the pages (round again)
+  and the D-pad's left/right the tabs [design: owner 2026-11-02; controller.md §3]. ITEMS: Up/Down (W/S), Page Up/Down, the wheel, Enter or
   Space to equip, unequip or use [design]. A right click on a row drops one (a stack asks
   how many), Shift + right click the stack; it never equips or uses [design: owner
   2026-11-02, #1393]. X opens the mod menu on a weapon with mod slots and does nothing

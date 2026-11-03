@@ -208,6 +208,10 @@ pub struct MenuAt {
 pub fn menu_buttons(at: MenuAt) -> &'static [(GamepadButton, KeyCode)] {
     use fnv_game::game::menus;
     use GamepadButton::{East, LeftTrigger, LeftTrigger2, North, RightTrigger2, South, West};
+    // The Pip-Boy: LT and RT step through its pages, STATS, ITEMS, DATA and round again,
+    // through their keys F1-F3 (`crate::pipboy`); the D-pad's left and right step the tabs
+    // as the arrow keys do [design: owner 2026-11-02; the original's page buttons are not in
+    // its menu files].
     use KeyCode::*;
     let Some(code) = at.code else { return &[] };
     match code {
@@ -217,13 +221,14 @@ pub fn menu_buttons(at: MenuAt) -> &'static [(GamepadButton, KeyCode)] {
         menus::BARTER => &[(West, KeyA)],
         // inventory_menu.xml: Repair Y, Mod LB (Drop X: `crate::pipboy::items`, which has
         // no key for it; Hotkey RB: the hotkeys are held digits, not built for the pad).
-        menus::INVENTORY => &[(North, KeyR), (LeftTrigger, KeyX)],
+        menus::INVENTORY => &[(North, KeyR), (LeftTrigger, KeyX), (LeftTrigger2, F1), (RightTrigger2, F3)],
         // stats_menu.xml: Stimpak A, Doctor's Bag Y, Rad-X X on the status tab; the
         // General/Reputation switch X on the General tab.
-        menus::STATS if at.tab == 0 => &[(South, KeyS), (North, KeyE), (West, KeyX)],
-        menus::STATS if at.tab == 4 => &[(West, KeyR)],
+        menus::STATS if at.tab == 0 => &[(South, KeyS), (North, KeyE), (West, KeyX), (LeftTrigger2, F3), (RightTrigger2, F2)],
+        menus::STATS if at.tab == 4 => &[(West, KeyR), (LeftTrigger2, F3), (RightTrigger2, F2)],
+        menus::STATS => &[(LeftTrigger2, F3), (RightTrigger2, F2)],
         // map_menu.xml: the Challenges toggle Y (R on the Notes tab).
-        menus::MAP => &[(North, KeyR)],
+        menus::MAP => &[(North, KeyR), (LeftTrigger2, F2), (RightTrigger2, F1)],
         // recipe_menu.xml: Accept X.
         fnv_game::crafting::RECIPE_MENU => &[(West, KeyA)],
         // repair_services_menu.xml: Repair All X.
@@ -334,12 +339,18 @@ mod tests {
         use GamepadButton::*;
         let at = |code, tab| MenuAt { code: Some(code), tab };
         // The ITEMS page: Repair Y, Mod LB (the keyboard's R and X); X is the drop button.
-        assert_eq!(menu_buttons(at(menus::INVENTORY, 0)), &[(North, KeyCode::KeyR), (LeftTrigger, KeyCode::KeyX)]);
+        assert!(menu_buttons(at(menus::INVENTORY, 0)).starts_with(&[(North, KeyCode::KeyR), (LeftTrigger, KeyCode::KeyX)]));
         assert!(menu_buttons(at(menus::INVENTORY, 0)).iter().all(|(b, _)| *b != West));
         assert!(menu_buttons(at(crate::script::MENU_CONTAINER, 0)).contains(&(West, KeyCode::KeyR)));
         assert!(menu_buttons(at(menus::BARTER, 0)).contains(&(West, KeyCode::KeyA)));
         assert!(menu_buttons(at(menus::STATS, 4)).contains(&(West, KeyCode::KeyR)));
-        assert!(menu_buttons(at(menus::STATS, 1)).is_empty());
+        // The triggers step the Pip-Boy's pages, round from DATA to STATS.
+        for (code, lt, rt) in [(menus::STATS, KeyCode::F3, KeyCode::F2), (menus::INVENTORY, KeyCode::F1, KeyCode::F3), (menus::MAP, KeyCode::F2, KeyCode::F1)] {
+            for tab in 0..5 {
+                let t = menu_buttons(at(code, tab));
+                assert!(t.contains(&(LeftTrigger2, lt)) && t.contains(&(RightTrigger2, rt)), "menu {code} tab {tab}");
+            }
+        }
         assert!(menu_buttons(MenuAt::default()).is_empty());
         // No menu gives one button two keys.
         for code in 1000..1200 {

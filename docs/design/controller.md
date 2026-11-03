@@ -60,6 +60,7 @@ Start cannot be bound.
   |------|---------|
   | Container | X Take All |
   | Barter | X Accept |
+  | Pip-Boy (every page) | LT / RT the previous / next page (STATS, ITEMS, DATA, round again); D-pad left / right the tabs [design: owner 2026-11-02] |
   | Pip-Boy ITEMS | X Drop (`pipboy::items`), Y Repair, LB Mod |
   | Pip-Boy STATS | status tab: A Stimpak, Y Doctor's Bag, X Rad-X; General tab: X switch lists |
   | Pip-Boy DATA | Y Challenges (Notes tab) |
@@ -146,8 +147,7 @@ those settings so a mod that changes them changes this too.
 ## 6. Not built yet
 
 - The button pictures from `Interface\Shared\Button\` in place of letters.
-- The rest of the menus' own controller buttons (§3's "not followed"; the Pip-Boy's
-  pages and tabs), and hints in menus ("E) Exit", lockpick, Pip-Boy, container)
+- The rest of the menus' own controller buttons (§3's "not followed"), and hints in menus ("E) Exit", lockpick, Pip-Boy, container)
   following the device.
 - A pointer moved by a stick for the mouse-only parts of menus (the dialogue list, the
   Pip-Boy map).
