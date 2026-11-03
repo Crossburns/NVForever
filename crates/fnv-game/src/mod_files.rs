@@ -76,10 +76,11 @@ pub fn data_dir() -> Option<PathBuf> {
     roots().read.last().cloned()
 }
 
-/// Whether a Data path is a file of the game: in a read root or in an archive.
+/// Whether a Data path is a file of the game: in a read root (its parts in any case, as
+/// on Windows; mods spell `Meshes` and `meshes` both) or in an archive.
 pub fn exists(path: &str) -> bool {
     let r = roots();
-    r.read.iter().any(|root| on_disk(root, path).is_some_and(|p| p.is_file())) || r.lookup.as_ref().is_some_and(|f| f(path) > 0)
+    r.read.iter().any(|root| on_disk(root, path).is_some_and(|p| p.is_file()) || find_file(root, path).is_some()) || r.lookup.as_ref().is_some_and(|f| f(path) > 0)
 }
 
 fn roots() -> Roots {
@@ -176,16 +177,22 @@ pub fn files_under(rel: &str) -> Vec<String> {
     out
 }
 
-/// A loose Data file's text through the read roots (the first that has it), the path's
+/// A file under `base` by a Data-relative path, each part matched without regard to
+/// case (as [`find_dir`]).
+fn find_file(base: &Path, rel: &str) -> Option<PathBuf> {
+    let (dir, name) = rel.rsplit_once(['\\', '/']).unwrap_or(("", rel));
+    let d = find_dir(base, dir)?;
+    let direct = d.join(name);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    std::fs::read_dir(&d).ok()?.flatten().map(|e| e.path()).find(|e| e.is_file() && e.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)))
+}
+
+/// A loose Data file's bytes through the read roots (the first that has it), the path's
 /// parts matched without regard to case.
 pub fn read_loose(rel: &str) -> Option<Vec<u8>> {
-    let (dir, name) = rel.rsplit_once(['\\', '/']).unwrap_or(("", rel));
-    roots().read.iter().find_map(|root| {
-        let d = find_dir(root, dir)?;
-        let direct = d.join(name);
-        let path = if direct.is_file() { direct } else { std::fs::read_dir(&d).ok()?.flatten().map(|e| e.path()).find(|e| e.is_file() && e.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)))? };
-        std::fs::read(path).ok()
-    })
+    roots().read.iter().find_map(|root| std::fs::read(find_file(root, rel)?).ok())
 }
 
 /// Whether NVForever may write `path`: never inside the game's install or the original
