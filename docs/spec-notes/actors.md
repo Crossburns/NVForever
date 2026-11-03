@@ -1234,6 +1234,15 @@ Owner's machine, 2026-10-09, release build [observed].
   idle clip; part G stays in that range with blending on (up to 17 actors posed at once,
   0.17 ms per frame). The frame rate is set by other work.
 
+- **A finished death pose is not sampled again** [design; `BlendPlayer::pose_held`,
+  `locomotion::drive`, #1391]: a dead actor's layers are still built each frame, and the
+  bones are sampled only when the layers (clip, phase, weight, in each slot) or a rest pose
+  differ from the last pose, or a bone that pose writes was written by another system since
+  `drive` last ran (it would have been put back, so it is). A pose of the layers alone is
+  the same bones, so a frame ends with what sampling would have left. Such an actor is not
+  counted as posed; the `death poses` line of the summary counts the frames held, those
+  sampled at the clip's end and the tracks sampled on the dead. Unmeasured in time.
+
 ### 8.7 Visual check
 
 Screenshots held at fixed script times (`--actor-walk-test 85 --actor-pose-time t`, and

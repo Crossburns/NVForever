@@ -1633,6 +1633,16 @@ fn main() -> AppExit {
                     info!("actor idle under movement: {} actor frames with the idle laid under another clip", c.under_frames);
                     info!("actor moves without a clip: {} actor frames moving with no movement clip showing; {} actor frames of a creature's blow on its head and neck over its run", c.clipless_frames, c.head_blow_frames);
                 }
+                if c.held_frames + c.dead_tracks > 0 {
+                    info!(
+                        "death poses: {} actor frames held without sampling, {} sampled at the clip's end ({:.2} finished poses per frame), {} tracks sampled on dead actors ({:.1} per frame)",
+                        c.held_frames,
+                        c.finished_frames,
+                        (c.held_frames + c.finished_frames) as f64 / f64::from(c.frames.max(1)),
+                        c.dead_tracks,
+                        c.dead_tracks as f64 / f64::from(c.frames.max(1))
+                    );
+                }
                 if let Some(a) = actors {
                     let fg = a.facegen.lock().expect("facegen cache");
                     info!(
