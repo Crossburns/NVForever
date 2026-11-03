@@ -137,6 +137,11 @@ name = "stress runner tests"
 paths = ["tools/stress/", "tools/smoke/smoke/runner.py", "tools/smoke/smoke/stacks.py", "tools/smoke/smoke/expect.py"]
 cmd = ["python", "-m", "unittest", "discover", "-s", "tools/stress/tests"]
 
+[[check]]
+name = "profile campaign tests"
+paths = ["tools/profile/", "tools/stress/"]
+cmd = ["python", "-m", "unittest", "discover", "-s", "tools/profile/tests"]
+
 # ------------------------------------------------------------------ renderer, sky, image space
 
 [[scenario]]
@@ -460,6 +465,18 @@ run_seconds = 15
 expect = [
   { re = 'frame telemetry: disabled: NVF_PLAY_TEST_FRAME_TELEMETRY: expected finite, nonnegative seconds', count = 1, label = "one invalid-aid warning" },
   { re = 'frame telemetry: capturing', max = 0, label = "invalid aids start no capture" },
+]
+
+[[scenario]]
+name = "profile-slow-frames"
+source = "docs/design/frame-rate-audit.md §5 (#1421, 2026-11-03): NVF_PLAY_TEST_PROFILE_HITCH_MS sets the threshold of the profile's hitch lines, so the profiling campaign sees what its 20 ms frames hold; at 1 ms every frame is listed"
+areas = ["profiling"]
+paths = ["engine/nvforever/src/profile.rs", "tools/profile/campaign.py"]
+env = { NVF_PLAY_TEST_PROFILE = "2", NVF_PLAY_TEST_PROFILE_HITCH_MS = "1" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { re = 'profile hitch: \d', min = 100, label = "with a 1 ms threshold every frame is listed (100 ms by default: none in a quiet room)" },
 ]
 
 [[scenario]]
