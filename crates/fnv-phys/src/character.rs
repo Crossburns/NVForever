@@ -328,7 +328,7 @@ impl PhysWorld {
         let groups = InteractionGroups::new(CHARACTER_SOLVER, Group::ALL, InteractionTestMode::And);
         self.w.insert_collider(ColliderBuilder::new(c.shape.clone()).user_data(owner.encode()).collision_groups(groups).solver_groups(groups), Some(body));
         c.body = body;
-        self.mark_dirty();
+        self.mark_dirty(crate::world::DirtyBy::Bodies);
         c
     }
 
@@ -365,7 +365,7 @@ impl PhysWorld {
     /// Wedged into a concave corner of walls, the character does not move horizontally
     /// (see [`wedged`]).
     pub fn move_character(&mut self, c: &mut Character, input: CharacterInput) -> CharacterStep {
-        self.update_queries();
+        self.update_queries_for(crate::world::QueryConsumer::Controller);
         let (step, push) = self.plan_move(c, input);
         self.apply_move(c, push);
         step
