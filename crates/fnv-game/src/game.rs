@@ -4570,7 +4570,14 @@ impl<'a> Game<'a> {
 
     /// Run an effect's script block (if its script has one) on the effect's target.
     fn effect_event(&mut self, id: u32, ev: u16, elapsed: f64) {
-        let Some(e) = self.effects.iter().find(|x| x.id == id) else { return };
+        self.effect_event_at(id, None, ev, elapsed);
+    }
+
+    /// [`Game::effect_event`] with the effect's position, if known (`hint`, checked by id:
+    /// [`effect_index`]).
+    fn effect_event_at(&mut self, id: u32, hint: Option<usize>, ev: u16, elapsed: f64) {
+        let Some(i) = effect_index(&self.effects, id, hint) else { return };
+        let e = &self.effects[i];
         let (Some(script), target, caster) = (e.script, e.target, e.caster) else { return };
         if !self.data.script(script).is_some_and(|u| u.has_block(ev)) {
             return;
@@ -4640,13 +4647,20 @@ impl<'a> Game<'a> {
         self.refresh_suspended(dt);
         self.recheck_conditions();
         let ids: Vec<u32> = self.effects.iter().filter(|e| !e.inactive).map(|e| e.id).collect();
+        // Each effect is looked up once (#1389): the ids are in list order, so the next one
+        // is searched from where the last one was; its position then goes to the value
+        // change and the script, which check it by id, as a callback (a dispel, a cast)
+        // may have moved it.
+        let mut cursor = 0;
         for id in ids {
-            let Some(e) = self.effects.iter_mut().find(|x| x.id == id) else { continue };
+            let Some(i) = effect_from(&self.effects, id, cursor) else { continue };
+            cursor = i;
+            let e = &mut self.effects[i];
             let before = e.elapsed;
             e.elapsed += dt;
             let done = !e.permanent && e.elapsed + 1e-9 >= e.duration;
-            self.tick_change(id, before);
-            self.effect_event(id, event::SCRIPT_EFFECT_UPDATE, dt);
+            self.tick_change_at(id, Some(i), before);
+            self.effect_event_at(id, Some(i), event::SCRIPT_EFFECT_UPDATE, dt);
             if done {
                 self.finish_effect(id, true);
             }
@@ -5080,6 +5094,25 @@ pub fn arg_json(data: &GameData, a: &ArgValue) -> serde_json::Value {
         ArgValue::Vars(v) => json!(v.iter().map(|x| x.num()).collect::<Vec<_>>()),
         ArgValue::Int32(i) => json!(i),
     }
+}
+
+/// The position of effect `id` in `effects`: `hint` when the effect there has that id,
+/// else the first with it. Effect ids are unique [design: each is taken from
+/// `Game::next_effect`, which only grows, in `Game::apply_magic_item_with`, and a save
+/// keeps the counter], so a checked hint is the effect a search finds (#1389).
+pub(crate) fn effect_index(effects: &[ActiveEffect], id: u32, hint: Option<usize>) -> Option<usize> {
+    match hint {
+        Some(i) if effects.get(i).is_some_and(|e| e.id == id) => Some(i),
+        _ => effects.iter().position(|e| e.id == id),
+    }
+}
+
+/// The position of effect `id`, searched from `from` on, then before it (a callback
+/// removed effects ahead of it); with unique ids ([`effect_index`]) the same effect a
+/// search from the start finds.
+fn effect_from(effects: &[ActiveEffect], id: u32, from: usize) -> Option<usize> {
+    let from = from.min(effects.len());
+    effects[from..].iter().position(|e| e.id == id).map(|i| from + i).or_else(|| effects[..from].iter().position(|e| e.id == id))
 }
 
 /// The host the VM runs against for one script run.
