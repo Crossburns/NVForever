@@ -53,7 +53,7 @@
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::NotShadowCaster;
 use bevy::math::Affine3A;
-use bevy::mesh::{Indices, VertexAttributeValues};
+use bevy::mesh::{Indices, MeshVertexAttribute, VertexAttributeValues};
 use bevy::prelude::*;
 use fnv_combat::rng::SplitMix;
 use nvf_assets::anim_play::Playing;
@@ -265,6 +265,11 @@ struct Live {
 /// The mesh and this scratch storage each retain one set of capacities. Replacing mesh
 /// attributes with new vectors every frame would drop the mesh's old allocation; swapping
 /// lets both sets reach their high-water marks and be reused on subsequent frames.
+///
+/// The ADDN and shot effect systems live as long as the run, so a burst would otherwise
+/// pin its high-water mark for good: each rebuilt set gives back memory once it uses
+/// under a quarter of it ([`trim`]), so both sets stay within about four times the
+/// last frames' geometry, and a system that empties drops its scratch set.
 #[derive(Default)]
 struct ParticleGeometry {
     positions: Vec<[f32; 3]>,
@@ -272,6 +277,15 @@ struct ParticleGeometry {
     uvs: Vec<[f32; 2]>,
     colors: Vec<[f32; 4]>,
     indices: Vec<u32>,
+    /// A ribbon's points (its trail and its place), reused from ribbon to ribbon.
+    points: Vec<Vec3>,
+}
+
+/// Shrink `v` to twice its length when it uses under a quarter of its capacity.
+fn trim<T>(v: &mut Vec<T>) {
+    if v.len() < v.capacity() / 4 {
+        v.shrink_to(v.len() * 2);
+    }
 }
 
 impl ParticleGeometry {
@@ -281,6 +295,14 @@ impl ParticleGeometry {
         self.uvs.clear();
         self.colors.clear();
         self.indices.clear();
+    }
+
+    fn trim(&mut self) {
+        trim(&mut self.positions);
+        trim(&mut self.normals);
+        trim(&mut self.uvs);
+        trim(&mut self.colors);
+        trim(&mut self.indices);
     }
 
     fn rebuild(&mut self, d: &ParticleSystemDef, particles: &[Particle], right: Vec3, up: Vec3, back: Vec3) {
@@ -295,7 +317,9 @@ impl ParticleGeometry {
             // camera; the texture rectangle's width across, its height along, the oldest
             // point at its bottom (particles.md §6.2).
             for q in particles {
-                let points: Vec<Vec3> = q.trail.iter().copied().chain([q.pos]).collect();
+                let points = &mut self.points;
+                points.clear();
+                points.extend(q.trail.iter().copied().chain([q.pos]));
                 let count = points.len();
                 if count < 2 {
                     continue;
@@ -307,8 +331,8 @@ impl ParticleGeometry {
                 let e = d.emitter.color;
                 let colour = display_colour([tint[0] * e[0], tint[1] * e[1], tint[2] * e[2], tint[3] * e[3] * keyed_alpha(d, q)]);
                 let base = self.positions.len() as u32;
-                for (i, p) in points.iter().enumerate() {
-                    let tangent = points[(i + 1).min(count - 1)] - points[i.saturating_sub(1)];
+                for (i, p) in self.points.iter().enumerate() {
+                    let tangent = self.points[(i + 1).min(count - 1)] - self.points[i.saturating_sub(1)];
                     let side = tangent.cross(back).normalize_or(right) * half;
                     self.positions.extend([(*p - side).to_array(), (*p + side).to_array()]);
                     let along = v + h * (1.0 - i as f32 / (count - 1) as f32);
@@ -338,32 +362,53 @@ impl ParticleGeometry {
             self.indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
         }
         self.normals.resize(self.positions.len(), back.to_array());
+        self.trim();
+        trim(&mut self.points);
     }
 
     /// Replace every live attribute's contents while retaining both the mesh and scratch
-    /// capacities. [`particle_mesh`] establishes these exact attribute and index types.
-    fn swap_into_mesh(&mut self, mesh: &mut Mesh) {
-        let Some(VertexAttributeValues::Float32x3(values)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) else {
-            unreachable!("particle mesh has Float32x3 positions");
-        };
-        std::mem::swap(values, &mut self.positions);
-        let Some(VertexAttributeValues::Float32x3(values)) = mesh.attribute_mut(Mesh::ATTRIBUTE_NORMAL) else {
-            unreachable!("particle mesh has Float32x3 normals");
-        };
-        std::mem::swap(values, &mut self.normals);
-        let Some(VertexAttributeValues::Float32x2(values)) = mesh.attribute_mut(Mesh::ATTRIBUTE_UV_0) else {
-            unreachable!("particle mesh has Float32x2 UVs");
-        };
-        std::mem::swap(values, &mut self.uvs);
-        let Some(VertexAttributeValues::Float32x4(values)) = mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) else {
-            unreachable!("particle mesh has Float32x4 colours");
-        };
-        std::mem::swap(values, &mut self.colors);
-        let Some(Indices::U32(values)) = mesh.indices_mut() else {
-            unreachable!("particle mesh has U32 indices");
-        };
-        std::mem::swap(values, &mut self.indices);
+    /// capacities. [`particle_mesh`] establishes these exact attribute and index types;
+    /// should a mesh lack one or hold another type, the geometry is inserted instead
+    /// (that set's capacity goes to the mesh) and false is returned.
+    fn swap_into_mesh(&mut self, mesh: &mut Mesh) -> bool {
+        let mut matched = swap_attribute(mesh, Mesh::ATTRIBUTE_POSITION, &mut self.positions, |v| match v {
+            VertexAttributeValues::Float32x3(v) => Some(v),
+            _ => None,
+        });
+        matched &= swap_attribute(mesh, Mesh::ATTRIBUTE_NORMAL, &mut self.normals, |v| match v {
+            VertexAttributeValues::Float32x3(v) => Some(v),
+            _ => None,
+        });
+        matched &= swap_attribute(mesh, Mesh::ATTRIBUTE_UV_0, &mut self.uvs, |v| match v {
+            VertexAttributeValues::Float32x2(v) => Some(v),
+            _ => None,
+        });
+        matched &= swap_attribute(mesh, Mesh::ATTRIBUTE_COLOR, &mut self.colors, |v| match v {
+            VertexAttributeValues::Float32x4(v) => Some(v),
+            _ => None,
+        });
+        if let Some(Indices::U32(values)) = mesh.indices_mut() {
+            std::mem::swap(values, &mut self.indices);
+        } else {
+            mesh.insert_indices(Indices::U32(std::mem::take(&mut self.indices)));
+            matched = false;
+        }
+        matched
     }
+}
+
+/// Swap `scratch` with the mesh's `attribute` when `values` finds a vector of its type
+/// there; otherwise insert it (taking its storage) and return false.
+fn swap_attribute<T>(mesh: &mut Mesh, attribute: MeshVertexAttribute, scratch: &mut Vec<T>, values: fn(&mut VertexAttributeValues) -> Option<&mut Vec<T>>) -> bool
+where
+    Vec<T>: Into<VertexAttributeValues>,
+{
+    if let Some(v) = mesh.attribute_mut(attribute.id).and_then(values) {
+        std::mem::swap(v, scratch);
+        return true;
+    }
+    mesh.insert_attribute(attribute, std::mem::take(scratch));
+    false
 }
 
 #[derive(Resource)]
@@ -869,11 +914,16 @@ fn draw(
             }
         }
         if !shown {
+            // An emptied system keeps only the mesh's set (its last geometry, hidden).
+            if live.geometry.positions.capacity() > 0 {
+                live.geometry = ParticleGeometry::default();
+            }
             continue;
         }
         let Some(mut mesh) = meshes.get_mut(&live.mesh) else { continue };
         live.geometry.rebuild(&live.def, &live.particles, right, up, back);
-        live.geometry.swap_into_mesh(&mut mesh);
+        let matched = live.geometry.swap_into_mesh(&mut mesh);
+        debug_assert!(matched, "particles: {}: mesh layout differs from particle_mesh's; geometry inserted", live.def.name);
     }
 }
 
@@ -1038,7 +1088,7 @@ mod tests {
             let b = (k * 4) as u32;
             indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
         }
-        ParticleGeometry { normals: vec![back.to_array(); positions.len()], positions, uvs, colors, indices }
+        ParticleGeometry { normals: vec![back.to_array(); positions.len()], positions, uvs, colors, indices, points: Vec::new() }
     }
 
     fn assert_geometry_eq(actual: &ParticleGeometry, expected: &ParticleGeometry) {
@@ -1115,21 +1165,102 @@ mod tests {
             ];
             let mut geometry = ParticleGeometry::default();
             let mut mesh = particle_mesh();
-            // Warm both storage sets before shrinking, clearing and growing again.
+            // Warm both storage sets before shrinking and growing again (an empty system
+            // is not rebuilt: `draw` hides it and drops the scratch set).
             for _ in 0..3 {
-                geometry.rebuild(&d, &particles, Vec3::X, Vec3::Z, Vec3::Y);
-                geometry.swap_into_mesh(&mut mesh);
+                assert!(geometry.rebuild_and_swap(&d, &particles, Vec3::X, Vec3::Z, Vec3::Y, &mut mesh));
             }
             let retained = capacities(&geometry);
-            for (frame, count) in [1, 0, 3, 2, 3, 0, 1, 3].into_iter().enumerate() {
+            for (frame, count) in [1, 3, 2, 3, 1, 3].into_iter().enumerate() {
                 let rotation = Quat::from_rotation_z(frame as f32 * 0.37);
                 let (right, up, back) = (rotation * Vec3::X, Vec3::Z, rotation * Vec3::Y);
                 let expected = reference_geometry(&d, &particles[..count], right, up, back);
-                geometry.rebuild(&d, &particles[..count], right, up, back);
-                geometry.swap_into_mesh(&mut mesh);
+                assert!(geometry.rebuild_and_swap(&d, &particles[..count], right, up, back, &mut mesh));
                 assert_mesh(&mesh, &expected);
                 assert_eq!(capacities(&geometry), retained);
             }
         }
+    }
+
+    impl ParticleGeometry {
+        fn rebuild_and_swap(&mut self, d: &ParticleSystemDef, particles: &[Particle], right: Vec3, up: Vec3, back: Vec3, mesh: &mut Mesh) -> bool {
+            self.rebuild(d, particles, right, up, back);
+            self.swap_into_mesh(mesh)
+        }
+    }
+
+    /// Two squares worked by hand: camera right X, up Z, back Y, no spin, radius 2, the
+    /// subtexture u 0.25 + 0.5, v 0.125 + 0.75.
+    #[test]
+    fn billboard_geometry_by_hand() {
+        let d = test_def(None);
+        let mut a = test_particle(Vec3::new(1.0, 2.0, 3.0), Vec::new());
+        a.angle = 0.0;
+        let mut b = test_particle(Vec3::ZERO, Vec::new());
+        b.angle = 0.0;
+        let mut g = ParticleGeometry::default();
+        g.rebuild(&d, &[a, b], Vec3::X, Vec3::Z, Vec3::Y);
+        assert_eq!(&g.positions[..4], &[[-1.0, 2.0, 1.0], [3.0, 2.0, 1.0], [3.0, 2.0, 5.0], [-1.0, 2.0, 5.0]]);
+        assert_eq!(&g.positions[4..], &[[-2.0, 0.0, -2.0], [2.0, 0.0, -2.0], [2.0, 0.0, 2.0], [-2.0, 0.0, 2.0]]);
+        assert_eq!(&g.uvs[..4], &[[0.25, 0.875], [0.75, 0.875], [0.75, 0.125], [0.25, 0.125]]);
+        assert_eq!(g.indices, [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+        assert_eq!(g.normals, vec![[0.0, 1.0, 0.0]; 8]);
+        assert_eq!(g.colors, vec![[1.0; 4]; 8]);
+    }
+
+    /// A two-point ribbon from the origin to X: its sides 2 either way along Z (X × Y),
+    /// the oldest point at the subtexture's bottom.
+    #[test]
+    fn ribbon_geometry_by_hand() {
+        let d = test_def(Some(Strip { max_points: 4, step: 0.1 }));
+        let mut g = ParticleGeometry::default();
+        g.rebuild(&d, &[test_particle(Vec3::X, vec![Vec3::ZERO])], Vec3::X, Vec3::Z, Vec3::Y);
+        assert_eq!(g.positions, [[0.0, 0.0, -2.0], [0.0, 0.0, 2.0], [1.0, 0.0, -2.0], [1.0, 0.0, 2.0]]);
+        assert_eq!(g.uvs, [[0.25, 0.875], [0.75, 0.875], [0.25, 0.125], [0.75, 0.125]]);
+        assert_eq!(g.indices, [0, 1, 3, 0, 3, 2]);
+    }
+
+    /// A mesh without `particle_mesh`'s layout (a missing attribute, another type, other
+    /// indices) gets the geometry inserted, and the swap says so.
+    #[test]
+    fn mesh_with_another_layout_gets_geometry_inserted() {
+        let d = test_def(None);
+        let particles = [test_particle(Vec3::ZERO, Vec::new()), test_particle(Vec3::X, Vec::new())];
+        let expected = reference_geometry(&d, &particles, Vec3::X, Vec3::Z, Vec3::Y);
+        let mut mesh = particle_mesh();
+        mesh.remove_attribute(Mesh::ATTRIBUTE_NORMAL);
+        // (insert_attribute refuses a wrong format, so the colours are changed in place.)
+        *mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR).unwrap() = VertexAttributeValues::Float32x3(vec![[0.0; 3]]);
+        mesh.insert_indices(Indices::U16(vec![0]));
+        let mut g = ParticleGeometry::default();
+        assert!(!g.rebuild_and_swap(&d, &particles, Vec3::X, Vec3::Z, Vec3::Y, &mut mesh));
+        assert_eq!(mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap(), expected.positions);
+        assert_eq!(mesh.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap().as_float3().unwrap(), expected.normals);
+        let Some(VertexAttributeValues::Float32x4(colors)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else { panic!("colour type") };
+        assert_eq!(colors, &expected.colors);
+        let Some(Indices::U32(indices)) = mesh.indices() else { panic!("index type") };
+        assert_eq!(indices, &expected.indices);
+        // Once inserted the layout matches, and the next frame swaps again.
+        assert!(g.rebuild_and_swap(&d, &particles, Vec3::X, Vec3::Z, Vec3::Y, &mut mesh));
+    }
+
+    /// After a burst, a set drawing a quarter or less of its capacity gives memory back.
+    #[test]
+    fn burst_capacity_is_given_back() {
+        let d = test_def(None);
+        let burst: Vec<Particle> = (0..256).map(|i| test_particle(Vec3::splat(i as f32), Vec::new())).collect();
+        let mut g = ParticleGeometry::default();
+        let mut mesh = particle_mesh();
+        for _ in 0..2 {
+            g.rebuild_and_swap(&d, &burst, Vec3::X, Vec3::Z, Vec3::Y, &mut mesh);
+        }
+        assert!(g.positions.capacity() >= 1024);
+        for _ in 0..2 {
+            g.rebuild_and_swap(&d, &burst[..4], Vec3::X, Vec3::Z, Vec3::Y, &mut mesh);
+        }
+        // Both sets (the scratch one and the mesh's) are back to twice four squares.
+        assert!(g.positions.capacity() <= 32 && g.indices.capacity() <= 48, "{} {}", g.positions.capacity(), g.indices.capacity());
+        let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!("position type") };
+        assert!(positions.capacity() <= 32);
     }
 }
