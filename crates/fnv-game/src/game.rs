@@ -1728,6 +1728,10 @@ pub struct GameSnapshot {
     /// game"] (`crate::nvse_pp`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub form_instances: Vec<(FormId, crate::nvse_pp::Instance)>,
+    /// The last animation group scripts asked of each reference (code, name;
+    /// `crate::anims::ObjectAnims::asked`): a gate left open shows and collides open.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub object_groups: BTreeMap<FormId, (u16, String)>,
 }
 
 impl GameSnapshot {
@@ -4968,6 +4972,7 @@ impl<'a> Game<'a> {
             awareness: self.awareness.actors.iter().filter(|(_, a)| a.state.in_combat() || !a.targets.is_empty() || !a.alarms.is_empty() || a.fighting.is_some()).map(|(&r, a)| (r, a.clone())).collect(),
             forced_combat: self.awareness.forced.clone(),
             form_instances: self.pp.instances.iter().map(|(k, v)| (*k, v.clone())).collect(),
+            object_groups: self.anims.asked_all().clone(),
         }
     }
 
@@ -5036,6 +5041,7 @@ impl<'a> Game<'a> {
         g.queued_ref_events = s.queued_ref_events.clone();
         g.door_open_seen = s.door_open_seen.clone();
         g.pp_restore_instances(&s.form_instances);
+        g.anims.restore_asked(s.object_groups.clone());
         g.awareness.actors = s.awareness.clone();
         g.awareness.forced = s.forced_combat.clone();
         g.coop =crate::coop::checked(s.coop.clone()).map_err(|e| e.to_string())?;
