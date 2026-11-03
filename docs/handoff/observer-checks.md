@@ -1166,10 +1166,25 @@ The numbers above stay put so links to them hold; each item here gives its own p
     The same at a place whose music type names a shipped file (Kimble's hail,
     `special\mus_hailchief.mp3`, −5.36 dB; console `PlayMusic` did not start it over the
     cell's music) gives the in-game level against NVForever's.
+## Added 2026-11-03 (JIP Script Runner, issue #1460)
+
+80. **When does each Script Runner prefix run, and in what order?** (P2;
+    ext-script-runner.md §2, §5.) Only `gr_` (game restart) is documented in the wiki
+    export; the introduction page that lists the others is missing from it. With JIP LN
+    installed, files under `Data\NVSE\plugins\scripts\` named `gr_a.txt`, `gr_b.txt`,
+    `gl_x.txt`, `ln_x.txt`, `gn_x.txt`, `gx_x.txt`, each printing its name and
+    GetGameRestarted / GetGameLoaded to the console (or a log file): which run at the main
+    menu, at a new game, at a load from the main menu, at a load from the pause menu, and at
+    quit; the order of `gr_a` and `gr_b` (and with a capital letter in one name); whether
+    `gr_` runs again on a load from the pause menu; and whether `gl_` and `ln_` run before
+    or after a LoadGame/PostLoadGame handler. Also: does a lambda handler a `gr_` file
+    registered still fire after a save is loaded? The answers fix NVForever's moments
+    (`fnv_game::script_runner::Prefix`). The files go in the original game's Data, so the
+    owner places them (sessions don't write into the game folder).
 
 ## Added 2026-11-03 (sounds decoded on worker threads, issue #1428)
 
-80. **Does `PlaySound X; StopSound X` in one frame play anything?** (P3; audio.md §11.5.)
+81. **Does `PlaySound X; StopSound X` in one frame play anything?** (P3; audio.md §11.5.)
     NVForever reads a sound's file on a worker, and a StopSound covers the sounds of X
     asked for before it, also in the same frame, so the pair plays nothing; `StopSound X;
     PlaySound X` plays X [hypothesis]. In the original (`nvfstrip`, a probe like sound1):

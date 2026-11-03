@@ -214,14 +214,7 @@ impl<'a> Gen<'a> {
             s.kw.extended()
                 || matches!(&s.kw, Kw::Call(t) if self.function(&t[0]).is_none() && self.xfunction_name(&t[0].text))
         });
-        for s in &stmts {
-            if let Kw::Decl { ty, names, .. } = &s.kw {
-                self.line = s.line;
-                for n in names {
-                    self.declare(n, *ty);
-                }
-            }
-        }
+        self.declare_all(&stmts);
         for s in &stmts {
             self.line = s.line;
             self.text = s.text.clone();
@@ -292,13 +285,20 @@ impl<'a> Gen<'a> {
         let saved = (std::mem::take(&mut self.out), self.stmts, std::mem::take(&mut self.chains), self.block.take(), self.loops, self.line, self.text.clone());
         self.stmts = 0;
         self.loops = 0;
+        let mut stmts = Vec::new();
         for l in &lines {
-            self.line = l.no;
-            self.text = l.text.clone();
             match parse::statement(l) {
-                Ok(s) => self.statement(&s.kw),
+                Ok(s) => stmts.push(s),
                 Err(e) => self.diags.push(Diag { line: e.line, kind: "syntax", error: true, detail: e.msg }),
             }
+        }
+        // The body's declarations first, as the unit's (`unit`): its variables are the
+        // maker's [documented: Lambda].
+        self.declare_all(&stmts);
+        for s in &stmts {
+            self.line = s.line;
+            self.text = s.text.clone();
+            self.statement(&s.kw);
         }
         let bytes = std::mem::replace(&mut self.out, saved.0);
         self.stmts = saved.1;
@@ -310,6 +310,22 @@ impl<'a> Gen<'a> {
         let body = crate::decode::decode(&bytes, self.table).program.top;
         let index = self.next_lambda();
         Some(crate::ir::XExpr::Lambda { params, body, value: None, index })
+    }
+
+    /// The variables a run of statements declares: `int a`, `int a = 1` and the inline
+    /// declarations of extender lines ([`parse::inline_decls`]).
+    fn declare_all(&mut self, stmts: &[parse::Statement]) {
+        for s in stmts {
+            self.line = s.line;
+            if let Kw::Decl { ty, names, .. } = &s.kw {
+                for n in names {
+                    self.declare(n, *ty);
+                }
+            }
+            for (ty, n) in &s.decls {
+                self.declare(n, *ty);
+            }
+        }
     }
 
     /// The number of the next lambda of this unit.

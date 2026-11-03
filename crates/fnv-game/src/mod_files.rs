@@ -71,6 +71,50 @@ pub fn nif_has_name(bytes: &[u8], name: &str) -> bool {
     bytes.windows(pat.len()).any(|w| w == pat.as_slice())
 }
 
+/// The loose files directly in a Data folder: each name (as on disk) with its path, from
+/// the read roots in order (NVForever's layer first), a name once, the first root's.
+/// Archives are not looked in.
+pub fn data_files(folder: &str) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for root in roots().read {
+        let Some(dir) = on_disk_any_case(&root, folder) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if e.path().is_file() && !out.iter().any(|(x, _)| x.eq_ignore_ascii_case(&n)) {
+                out.push((n, e.path()));
+            }
+        }
+    }
+    out
+}
+
+/// A Data file's bytes: the first read root's loose copy (NVForever's layer before the
+/// game's Data), else through the host (archives included).
+pub fn read_data_file(path: &str) -> Option<Vec<u8>> {
+    roots().read.iter().filter_map(|root| on_disk_any_case(root, path)).find_map(|p| std::fs::read(p).ok()).or_else(|| read_data(path))
+}
+
+/// [`on_disk`], each part of the path matched to what is on disk in any case, as Windows
+/// does: mods spell `NVSE\Plugins\Scripts` every way [observed: the owner's MO2 mods], and
+/// a case-sensitive file system (Linux) would miss them. `None` when a part is missing.
+fn on_disk_any_case(base: &Path, rel: &str) -> Option<PathBuf> {
+    let exact = on_disk(base, rel)?;
+    if exact.exists() {
+        return Some(exact);
+    }
+    let mut p = base.to_path_buf();
+    for part in rel.split(['\\', '/']).filter(|c| !c.is_empty()) {
+        let direct = p.join(part);
+        p = if direct.exists() {
+            direct
+        } else {
+            std::fs::read_dir(&p).ok()?.flatten().map(|e| e.path()).find(|e| e.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(part)))?
+        };
+    }
+    Some(p)
+}
+
 /// The game's Data folder, when the host gave one (the last read root).
 pub fn data_dir() -> Option<PathBuf> {
     roots().read.last().cloned()
@@ -649,8 +693,20 @@ fn glob(pat: &str, s: &str) -> bool {
 
 #[cfg(test)]
 mod path_tests {
-    use super::on_disk;
+    use super::{on_disk, on_disk_any_case};
     use std::path::Path;
+
+    #[test]
+    fn a_data_path_matches_folders_in_any_case() {
+        let base = std::env::temp_dir().join(format!("nvf-any-case-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("NVSE").join("Plugins").join("Scripts")).unwrap();
+        std::fs::write(base.join("NVSE").join("Plugins").join("Scripts").join("gr_A.txt"), "").unwrap();
+        let found = on_disk_any_case(&base, "nvse\\plugins\\scripts\\GR_a.txt").expect("found in any case");
+        assert!(found.is_file());
+        assert_eq!(on_disk_any_case(&base, "nvse\\plugins\\missing.txt"), None);
+        assert_eq!(on_disk_any_case(&base, "..\\x"), None, "the plain-name rule of on_disk still holds");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn only_plain_names_stay_under_the_base() {

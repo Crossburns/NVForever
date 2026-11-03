@@ -41,7 +41,7 @@ pub struct SoundState {
     /// stops the playings asked for before it, also those of the same frame, and still
     /// plays one asked for after it. So `PlaySound X; StopSound X` in one frame plays
     /// nothing [engineering choice; hypothesis: what the original does with that order in
-    /// one frame is not known, docs/spec-notes/audio.md §11.5, observer check 80].
+    /// one frame is not known, docs/spec-notes/audio.md §11.5, observer check 81].
     pub stops: Vec<(FormId, u32)>,
 }
 
