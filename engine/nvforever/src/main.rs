@@ -816,6 +816,18 @@ fn main() -> AppExit {
         }
     };
     args.data = Some(install.data.clone());
+    match setup::text_code_page() {
+        Ok(c) => {
+            if c != fnv_util::text::CodePage::default() {
+                eprintln!("setup: game text read as {c}");
+            }
+            fnv_util::text::set_code_page(c);
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return AppExit::error();
+        }
+    }
     // Every `fnv_install::guard_write` from here on refuses writes into this install,
     // also where the writer has none at hand (saves, test aids; #994).
     fnv_install::remember_game(&install);

@@ -1115,3 +1115,15 @@ The numbers above stay put so links to them hold; each item here gives its own p
     (ArmorNVNCRTrooper*) and in metal armour (ArmorMetal 0003307F). Also once with
     `player.modav speedmult 50` (whether a modifier counts as SetAV does), and whether the
     run clip plays faster at 150 or the feet slide. The answer: the speeds in units/s.
+
+## Added 2026-11-03 (localized installs' code page, issue #1439)
+
+76. **What code page and glyphs does a Russian install use?** (P3; fonts.md §2.1, needs a
+    Russian install, not the English one.) NVForever reads all 8-bit text in one code page
+    per run (`[Text] CodePage=` in NVForever.ini, or `NVF_CODE_PAGE`; 1252 by default) and
+    draws a letter with the glyph at its code in it. In a Russian install: the bytes of a
+    few `FULL` names and dialogue lines (Windows-1251 or something else?); whether its
+    `.fnt` files are still 14 632 bytes with Cyrillic glyphs at their 1251 codes; whether
+    any archive or model file name uses bytes above 0x7F; which setting (INI key or file)
+    names the language, so the code page can be detected. Then with `CodePage=1251`:
+    menus, dialogue, the Pip-Boy and the HUD show Cyrillic, not `?` or wrong letters.
