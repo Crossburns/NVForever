@@ -197,9 +197,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let Some(item) = g.world.peek(r).map(|s| s.base) else { return Some(Ok(zero)) };
             let count = g.world.peek(r).map_or(1, |s| s.count.max(1));
             if g.world.add_item(to, item, count).is_ok() {
-                if let Ok(s) = g.world.get(r) {
-                    s.enabled = false;
-                    s.deleted = true;
+                if g.world.set_enabled(r, false).is_ok() {
+                    let _ = g.world.set_deleted(r, true);
                 }
             }
             zero
