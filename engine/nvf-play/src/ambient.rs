@@ -5,7 +5,8 @@
 //!   distance of it, at the loudness [`crate::sfx`] gives a sound at that distance,
 //!   followed as the player moves. One whose sound has Play At Random plays a file of
 //!   its folder now and then: once a second, when it is not already sounding, it is
-//!   rolled against the record's Random Chance [hypothesis: the chance is per second].
+//!   rolled against the record's Random Chance [hypothesis: the chance is per second];
+//!   a roll won while the file is still being read ([`crate::sfx`]) is skipped.
 //!   Either only between the sound's start and stop hours, and only while the reference
 //!   is enabled.
 //! - **The background loop** of the cell the player is in: its acoustic space (ASPC)
@@ -42,7 +43,7 @@
 use crate::music::{cell_at, game_hour, AudioPlaces, LayeredMusic, Space};
 use crate::pause::Paused;
 use crate::player::Player;
-use crate::sfx::{distance_gain, one_shot_heard, pan_gains, resolve, static_gain, Pan, Panned, PcmSound, Sfx, SfxSettings, SoundSource};
+use crate::sfx::{collect_files, distance_gain, one_shot_heard, pan_gains, resolve, static_gain, OneShotNow, Out, Pan, Panned, PcmSound, Resolved, Sfx, SfxSettings, SoundSource};
 use crate::sim::SimState;
 use crate::{Location, PlayState, PlayWorld};
 use bevy::audio::AudioSinkPlayback;
@@ -149,7 +150,7 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// plays at a place.
 #[allow(clippy::too_many_arguments)]
 fn start_loop(commands: &mut Commands, amb: &mut Ambient, sfx: &mut Sfx, settings: &SfxSettings, vfs: &fnv_vfs::Vfs, assets: &mut Streams, sound: u32, pan: Option<Pan>) -> Option<(Playing, f32)> {
-    let (s, name, path) = resolve(sfx, vfs, FormId(sound))?;
+    let Resolved { s, name, path } = resolve(sfx, vfs, FormId(sound))?;
     let bytes = amb
         .files
         .entry(path.clone())
@@ -218,6 +219,8 @@ fn play(
         return;
     };
     let (amb, sfx) = (&mut *amb, &mut *sfx);
+    // Sound files decoded since sfx's play ran: a random marker's may be ready now.
+    collect_files(sfx, &mut pcm);
     // The poker table holds them too: it plays its casino's sounds (`crate::poker`). A
     // film holds them unless its PlayBink said `muteAudio 0` (`crate::intro`).
     let film_keeps = intro.as_deref().and_then(|i| i.film_keeps_world_sound());
@@ -318,13 +321,22 @@ fn play(
         } else if s.has("Play At Random") && roll && amb.busy_until.get(&m.key).is_none_or(|&t| now >= t) {
             let chance = s.random_chance_percent / 100.0;
             if sfx.rng.next_f32() < chance {
-                if let Some(seconds) = one_shot_heard(&mut commands, sfx, &data.vfs, &mut pcm, &settings, FormId(m.sound), Some(m.at), Some(&player)) {
-                    amb.busy_until.insert(m.key, now + seconds as f64);
-                    if m.source {
-                        amb.source_random_played += 1;
-                    } else {
-                        amb.random_played += 1;
+                let mut out = Out { commands: &mut commands, assets: &mut pcm, settings: &settings, player: Some(&*player) };
+                match one_shot_heard(&mut out, sfx, &data.vfs, FormId(m.sound), Some(m.at)) {
+                    OneShotNow::Played(seconds) => {
+                        amb.busy_until.insert(m.key, now + seconds as f64);
+                        if m.source {
+                            amb.source_random_played += 1;
+                        } else {
+                            amb.random_played += 1;
+                        }
                     }
+                    // Its file is being read (sfx, #1428): this roll is skipped and the
+                    // marker stays quiet until the file is ready [engineering choice:
+                    // the plays are at random anyway, so a skipped roll is not heard as
+                    // a delay, where a late start could be].
+                    OneShotNow::Waiting => sfx.waits.rolls_skipped += 1,
+                    OneShotNow::NoFile => {}
                 }
             }
         }
@@ -483,7 +495,8 @@ impl Plugin for AmbientPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Ambient>()
             .add_audio_source::<Panned<LayeredMusic>>()
-            .add_systems(Update, (play.after(crate::PlaySet::Activation), region_sounds.after(crate::PlaySet::Activation)))
+            // Before sfx's play, which plays what these ask for in the same frame.
+            .add_systems(Update, (play, region_sounds).after(crate::PlaySet::Activation).before(crate::sfx::SfxSet))
             .add_systems(Last, report);
     }
 }

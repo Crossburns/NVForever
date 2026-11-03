@@ -13,6 +13,14 @@
 //!   PCM (8, 16 or 24 bits) and 32-bit float are decoded here, Ogg Vorbis by rodio, both
 //!   to samples played through Bevy's audio as a source of our own ([`PcmSound`]).
 //!   Other encodings are reported once and not played.
+//! - **Off the main thread** (#1428) [engineering choice]: a file is read and decoded on a
+//!   worker thread the first time it is asked for ([`FileState`]); the request waits for
+//!   it ([`Waiting`]) and starts once it is ready, with the listener as it is then. A
+//!   folder's files come from an index of the folders the SOUN records name, listed on
+//!   a worker at the start. Before, the first playing of a file read and decoded it in
+//!   the frame (9-15 ms in the slow frames of the profiling campaign's exterior runs).
+//!   What the original game does with a sound whose file is not in memory yet is not
+//!   known. The exit report counts the requests that began at once and those that waited.
 //! - **Loudness**: the static attenuation is taken off (gain 10^(−dB ÷ 20)). A sound with
 //!   a place follows its record's attenuation curve [documented: GECK wiki Sound,
 //!   Attenuation tab: five sliders, "the sound's volume percentage at its inner radius"
@@ -54,6 +62,7 @@ use crate::PlayWorld;
 use bevy::audio::{ChannelCount, Decodable, Sample, SampleRate, Source, Volume};
 use crate::audio_out::{AddAudioSource, KeepsSpeed, SoundCategory};
 use bevy::prelude::*;
+use bevy::tasks::{futures::check_ready, AsyncComputeTaskPool, Task, TaskPool};
 use fnv_combat::fx::{FxForms, Sound, DEFAULT_ATTENUATION_CURVE};
 use fnv_combat::rng::SplitMix;
 use fnv_sim::FormId;
@@ -523,10 +532,21 @@ pub fn static_gain(s: &Sound) -> f32 {
 #[derive(Resource)]
 pub struct Sfx {
     pub forms: FxForms,
-    /// Decoded files by archive path; `None`: not there or not decoded.
-    files: HashMap<String, Option<Handle<PcmSound>>>,
-    /// The `.wav` files of a folder.
+    /// Sound files by archive path ([`FileState`]), and the paths still being decoded.
+    files: HashMap<String, FileState>,
+    decoding: Vec<String>,
+    /// The `.wav` and `.ogg` files of a folder. Once the folder index is in (`indexed`;
+    /// `index` while a worker lists it), a folder not in it has none; before, a folder is
+    /// listed on its first use.
     folders: HashMap<String, Vec<String>>,
+    index: Option<Task<HashMap<String, Vec<String>>>>,
+    indexed: bool,
+    /// Requests waiting for their file, oldest first.
+    waiting: Vec<Waiting>,
+    /// [`play`]'s runs: the frame a request is asked in.
+    frame: u64,
+    /// How long requests waited for their files (the exit report).
+    pub waits: Waits,
     reported: HashSet<String>,
     pub(crate) rng: SplitMix,
     pub played: u32,
@@ -565,6 +585,127 @@ pub struct Sfx {
     per_sound: HashMap<FormId, [u32; 3]>,
 }
 
+impl Sfx {
+    fn new(forms: FxForms) -> Sfx {
+        Sfx {
+            forms,
+            files: HashMap::new(),
+            decoding: Vec::new(),
+            folders: HashMap::new(),
+            index: None,
+            indexed: false,
+            waiting: Vec::new(),
+            frame: 0,
+            waits: Waits::default(),
+            reported: HashSet::new(),
+            rng: SplitMix(0x5f37_59df),
+            played: 0,
+            silent: 0,
+            failed: 0,
+            room_reverb: None,
+            reverbed: 0,
+            reverb_kept_out: 0,
+            reverb_send_sum: 0.0,
+            own_curve: 0,
+            submerged: false,
+            muted_submerged: 0,
+            deepest: 0.0,
+            flat_2d: 0,
+            voices: 0,
+            same: HashMap::new(),
+            next_voice: 0,
+            most_voices: 0,
+            voice_limited: 0,
+            voice_stolen: 0,
+            per_sound: HashMap::new(),
+        }
+    }
+}
+
+/// A sound file in [`Sfx`]'s cache.
+enum FileState {
+    /// Being read and decoded on a worker thread ([`decode_file`]); the SOUN it was first
+    /// asked for, named in the warning if it fails.
+    Decoding(Task<Result<PcmSound, String>>, String),
+    Ready(Handle<PcmSound>),
+    /// Not there or not decoded: warned of once, never played.
+    Broken,
+}
+
+/// A file as a request finds it.
+enum FileNow {
+    Ready(Handle<PcmSound>),
+    Pending,
+    Broken,
+}
+
+/// What a request waiting for its file does once the file is ready.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Wanted {
+    /// [`LoopSound`] on: goes round at the listener.
+    Loop,
+    /// [`PlaySound`]: once, at a place or at the listener.
+    Once(Option<[f32; 3]>),
+    /// A sound a script played: its id (for [`ScriptSounds::heard`]), its place, and
+    /// whether it goes round until StopSound (the Loop flag).
+    Script { id: u32, at: Option<[f32; 3]>, looping: bool },
+}
+
+/// A request waiting for its file: the SOUN, the file picked for it (a folder's random
+/// pick is made once, as it is asked), the frame it was asked in, what it plays.
+#[derive(Clone, Debug, PartialEq)]
+struct Waiting {
+    sound: FormId,
+    path: String,
+    frame: u64,
+    wanted: Wanted,
+}
+
+/// Drop the waiting requests `drop` picks; how many were dropped.
+fn cancel(waiting: &mut Vec<Waiting>, drop: impl Fn(&Waiting) -> bool) -> u32 {
+    let before = waiting.len();
+    waiting.retain(|w| !drop(w));
+    (before - waiting.len()) as u32
+}
+
+/// The waiting requests whose file is no longer `pending` (it is ready, or it cannot be
+/// played), oldest first; the others go on waiting.
+fn take_decided(waiting: &mut Vec<Waiting>, pending: impl Fn(&str) -> bool) -> Vec<Waiting> {
+    let (wait, go): (Vec<Waiting>, Vec<Waiting>) = std::mem::take(waiting).into_iter().partition(|w| pending(&w.path));
+    *waiting = wait;
+    go
+}
+
+/// How long requests waited for their file, for the exit report.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Waits {
+    /// Sounds begun in the frame they were asked in, those begun later, those more than
+    /// one frame later, and the most frames one waited.
+    pub at_once: u32,
+    pub late: u32,
+    pub over_one: u32,
+    pub most_frames: u64,
+    /// Requests dropped while they waited (LoopSound off or on again, StopSound), and
+    /// those whose file turned out not to play.
+    pub cancelled: u32,
+    pub broken: u32,
+    /// Play At Random rolls skipped because the file was still being read.
+    pub rolls_skipped: u32,
+}
+
+impl Waits {
+    /// A request began (heard or silent) `waited` frames after it was asked for.
+    fn began(&mut self, waited: u64) {
+        if waited == 0 {
+            self.at_once += 1;
+        } else {
+            self.late += 1;
+            self.over_one += (waited > 1) as u32;
+        }
+        self.most_frames = self.most_frames.max(waited);
+    }
+}
+
 #[derive(Component)]
 struct SfxSound;
 
@@ -577,7 +718,8 @@ struct OneShot(FormId, u64);
 /// [engineering choice: the game's own limit is not known. Two dozen mantis nymphs walking
 /// started about 130 footsteps a second; each mixed through its own reverb, the mixer fell
 /// behind real time, sounds stopped ending and 1,800 piled up (docs/design/
-/// frame-rate-audit.md §2)]. Interface sounds are not limited.
+/// frame-rate-audit.md §2)]. Interface sounds are not limited. Requests waiting for their
+/// file are not counted until they start.
 pub const MAX_VOICES: usize = 64;
 /// The same SOUN playing at once, at most (a crowd's footsteps, a burst of shots)
 /// [engineering choice]. One more of it stops the oldest playing voice of that SOUN and
@@ -596,7 +738,7 @@ pub fn voice_free(voices: usize, same: usize) -> bool {
     voices < MAX_VOICES && same < MAX_SAME
 }
 
-fn init(mut commands: Commands, d: Res<PlayWorld>) {
+fn init(mut commands: Commands, d: Res<PlayWorld>, data: Option<Res<nvf_assets::GameData>>) {
     let t = std::time::Instant::now();
     let forms = FxForms::build(d.lo, d.schema);
     info!(
@@ -607,27 +749,73 @@ fn init(mut commands: Commands, d: Res<PlayWorld>) {
         forms.addons.len(),
         t.elapsed().as_secs_f64() * 1000.0
     );
-    commands.insert_resource(Sfx { forms, files: HashMap::new(), folders: HashMap::new(), reported: HashSet::new(), rng: SplitMix(0x5f37_59df), played: 0, silent: 0, failed: 0, room_reverb: None, reverbed: 0, reverb_kept_out: 0, reverb_send_sum: 0.0, own_curve: 0, submerged: false, muted_submerged: 0, deepest: 0.0, flat_2d: 0, voices: 0, same: HashMap::new(), next_voice: 0, most_voices: 0, voice_limited: 0, voice_stolen: 0, per_sound: HashMap::new() });
+    let mut sfx = Sfx::new(forms);
+    if let Some(data) = data {
+        // The folders the records name, listed on a worker (a folder's first use would
+        // otherwise go through every path of the archives in the frame).
+        let wanted: HashSet<String> = sfx.forms.sounds.values().filter_map(|s| s.file.as_deref()).filter_map(|f| folder_of(&sound_path(f))).collect();
+        let vfs = data.vfs.clone();
+        sfx.index = Some(AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move {
+            let _span = info_span!("sfx::folders").entered();
+            folder_index(vfs.paths(|p| is_sound_file(p) && p.rfind('\\').is_some_and(|i| wanted.contains(&p[..=i]))))
+        }));
+    }
+    commands.insert_resource(sfx);
+}
+
+/// The archive path a SOUN's `FNAM` names, under `sound\`.
+fn sound_path(file: &str) -> String {
+    fnv_vfs::normalize(&format!("sound\\{}", file.trim_start_matches(['\\', '/'])))
+}
+
+/// A `.wav` or an `.ogg` file.
+fn is_sound_file(path: &str) -> bool {
+    path.ends_with(".wav") || path.ends_with(".ogg")
+}
+
+/// The folder (ending in `\`) a SOUN's path stands for; `None` for a file.
+fn folder_of(path: &str) -> Option<String> {
+    if is_sound_file(path) {
+        return None;
+    }
+    Some(if path.ends_with('\\') { path.to_string() } else { format!("{path}\\") })
+}
+
+/// The `.wav` and `.ogg` files directly in a folder, sorted.
+fn list_folder(vfs: &fnv_vfs::Vfs, folder: &str) -> Vec<String> {
+    vfs.paths(|p| p.starts_with(folder) && is_sound_file(p) && !p[folder.len()..].contains('\\'))
+}
+
+/// `paths` (sound files) by the folder each is directly in, each folder's sorted: what
+/// [`list_folder`] gives for that folder.
+fn folder_index(paths: Vec<String>) -> HashMap<String, Vec<String>> {
+    let mut by: HashMap<String, Vec<String>> = HashMap::new();
+    for p in paths {
+        if let Some(i) = p.rfind('\\') {
+            by.entry(p[..=i].to_string()).or_default().push(p);
+        }
+    }
+    for v in by.values_mut() {
+        v.sort();
+    }
+    by
 }
 
 /// The archive path of the file a SOUN plays this time: the file it names, or the Ogg
 /// Vorbis file of the same name when the archives hold that instead; of a folder, one
 /// of its `.wav` and `.ogg` files.
 fn pick_file(sfx: &mut Sfx, vfs: &fnv_vfs::Vfs, file: &str) -> Option<String> {
-    let path = fnv_vfs::normalize(&format!("sound\\{}", file.trim_start_matches(['\\', '/'])));
+    let path = sound_path(file);
     if let Some(stem) = path.strip_suffix(".wav") {
         let ogg = format!("{stem}.ogg");
         return Some(if !vfs.exists(&path) && vfs.exists(&ogg) { ogg } else { path });
     }
-    if path.ends_with(".ogg") {
-        return Some(path);
+    let folder = folder_of(&path)?;
+    if !sfx.folders.contains_key(&folder) {
+        let files = if sfx.indexed { Vec::new() } else { list_folder(vfs, &folder) };
+        sfx.folders.insert(folder.clone(), files);
     }
-    let folder = if path.ends_with('\\') { path } else { format!("{path}\\") };
-    let files = sfx.folders.entry(folder.clone()).or_insert_with(|| {
-        let mut v = vfs.paths(|p| p.starts_with(folder.as_str()) && (p.ends_with(".wav") || p.ends_with(".ogg")) && !p[folder.len()..].contains('\\'));
-        v.sort();
-        v
-    });
+    let files = &sfx.folders[&folder];
     if files.is_empty() {
         return None;
     }
@@ -635,9 +823,16 @@ fn pick_file(sfx: &mut Sfx, vfs: &fnv_vfs::Vfs, file: &str) -> Option<String> {
     Some(files[k.min(files.len() - 1)].clone())
 }
 
+/// A SOUN for one playing of it: its record, name and file.
+pub(crate) struct Resolved {
+    pub s: Sound,
+    pub name: String,
+    pub path: String,
+}
+
 /// The record, name and file of a SOUN for this playing of it; a sound without a file
 /// is counted and reported once.
-pub(crate) fn resolve(sfx: &mut Sfx, vfs: &fnv_vfs::Vfs, sound: FormId) -> Option<(Sound, String, String)> {
+pub(crate) fn resolve(sfx: &mut Sfx, vfs: &fnv_vfs::Vfs, sound: FormId) -> Option<Resolved> {
     let s = sfx.forms.sounds.get(&sound).cloned()?;
     let name = s.edid.clone().unwrap_or_else(|| sound.to_string());
     let Some(path) = s.file.as_deref().and_then(|f| pick_file(sfx, vfs, f)) else {
@@ -647,42 +842,172 @@ pub(crate) fn resolve(sfx: &mut Sfx, vfs: &fnv_vfs::Vfs, sound: FormId) -> Optio
         }
         return None;
     };
-    Some((s, name, path))
+    Some(Resolved { s, name, path })
 }
 
-/// The record, name, file and decoded samples of a SOUN for this playing of it; a
-/// sound without a file we can play is counted and reported once.
-pub(crate) fn source(sfx: &mut Sfx, vfs: &fnv_vfs::Vfs, assets: &mut Assets<PcmSound>, sound: FormId) -> Option<(Sound, String, String, Handle<PcmSound>)> {
-    let (s, name, path) = resolve(sfx, vfs, sound)?;
-    if !sfx.files.contains_key(&path) {
-        // A panic decoding a broken file is that file's failure, not the game's
-        // (nvf_assets::guard).
-        let decoded = nvf_assets::guard::guarded(|| match vfs.read(&path) {
-            Some(Ok(bytes)) => {
-                let bytes = nvf_assets::data::test_broken(&path, bytes).ok_or_else(|| format!("{path}: not in the archives"))?;
-                if path.ends_with(".wav") {
-                    PcmSound::from_wav(&bytes).map_err(|e| format!("{path}: {e}"))
-                } else {
-                    PcmSound::from_encoded(bytes).map_err(|e| format!("{path}: {e}"))
-                }
-            }
-            Some(Err(e)) => Err(format!("{path}: {e}")),
-            None => Err(format!("{path}: not in the archives")),
-        });
-        let handle = match decoded {
-            Ok(p) => Some(assets.add(p)),
+/// Read and decode the sound file at `path` whole (on a worker thread). A panic decoding
+/// a broken file is that file's failure, not the game's (nvf_assets::guard).
+fn decode_file(vfs: &fnv_vfs::Vfs, path: &str) -> Result<PcmSound, String> {
+    nvf_assets::guard::guarded(|| {
+        let read = {
+            let _span = info_span!("sfx::read").entered();
+            vfs.read(path)
+        };
+        let bytes = match read {
+            Some(Ok(bytes)) => nvf_assets::data::test_broken(path, bytes).ok_or_else(|| format!("{path}: not in the archives"))?,
+            Some(Err(e)) => return Err(format!("{path}: {e}")),
+            None => return Err(format!("{path}: not in the archives")),
+        };
+        let _span = info_span!("sfx::decode").entered();
+        if path.ends_with(".wav") {
+            PcmSound::from_wav(&bytes).map_err(|e| format!("{path}: {e}"))
+        } else {
+            PcmSound::from_encoded(bytes).map_err(|e| format!("{path}: {e}"))
+        }
+    })
+}
+
+/// Start reading and decoding the file at `path` on a worker thread, unless it is known
+/// already (being decoded, ready, or not playable). `name`: the SOUN asking for it, named
+/// if it fails. A read-ahead can call this for files about to be asked for.
+pub(crate) fn prefetch(sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, path: &str, name: &str) {
+    if sfx.files.contains_key(path) {
+        return;
+    }
+    let (vfs, owned) = (vfs.clone(), path.to_string());
+    let task = AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move { decode_file(&vfs, &owned) });
+    sfx.files.insert(path.to_string(), FileState::Decoding(task, name.to_string()));
+    sfx.decoding.push(path.to_string());
+}
+
+/// The file at `path` as it is now; its decode is started if nobody asked for it before.
+fn file_now(sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, path: &str, name: &str) -> FileNow {
+    prefetch(sfx, vfs, path, name);
+    match sfx.files.get(path) {
+        Some(FileState::Ready(h)) => FileNow::Ready(h.clone()),
+        Some(FileState::Decoding(..)) => FileNow::Pending,
+        Some(FileState::Broken) | None => FileNow::Broken,
+    }
+}
+
+/// Take in the decodes the worker threads have finished: a sound ready to play, or a
+/// file that cannot be played (warned of once); and the folder index once it is listed.
+pub(crate) fn collect_files(sfx: &mut Sfx, assets: &mut Assets<PcmSound>) {
+    if let Some(index) = sfx.index.as_mut().and_then(check_ready) {
+        sfx.index = None;
+        sfx.indexed = true;
+        for (folder, files) in index {
+            sfx.folders.entry(folder).or_insert(files);
+        }
+    }
+    if sfx.decoding.is_empty() {
+        return;
+    }
+    let Sfx { files, decoding, .. } = sfx;
+    decoding.retain(|path| {
+        let Some(state) = files.get_mut(path) else { return false };
+        let FileState::Decoding(task, name) = state else { return false };
+        let Some(result) = check_ready(task) else { return true };
+        *state = match result {
+            Ok(pcm) => FileState::Ready(assets.add(pcm)),
             Err(e) => {
                 warn!("sfx: {name}: {e}");
-                None
+                FileState::Broken
             }
         };
-        sfx.files.insert(path.clone(), handle);
-    }
-    let Some(handle) = sfx.files[&path].clone() else {
-        sfx.failed += 1;
+        false
+    });
+}
+
+/// What starting a sound needs of the frame: the commands, the decoded sounds, the
+/// settings, the listener.
+pub(crate) struct Out<'a, 'w, 's> {
+    pub commands: &'a mut Commands<'w, 's>,
+    pub assets: &'a mut Assets<PcmSound>,
+    pub settings: &'a SfxSettings,
+    pub player: Option<&'a Player>,
+}
+
+/// A request: started or played silent at once when its file is ready, a script
+/// answered at once when there is no file to play, otherwise left waiting for its file.
+/// The entity playing it, if it started.
+fn request(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, heard: &mut Vec<(u32, Option<f32>)>, sound: FormId, wanted: Wanted) -> Option<Entity> {
+    let Some(r) = resolve(sfx, vfs, sound) else {
+        // No file to play: over at once.
+        if let Wanted::Script { id, .. } = wanted {
+            heard.push((id, Some(0.0)));
+        }
         return None;
     };
-    Some((s, name, path, handle))
+    match file_now(sfx, vfs, &r.path, &r.name) {
+        FileNow::Pending => {
+            sfx.waiting.push(Waiting { sound, path: r.path, frame: sfx.frame, wanted });
+            None
+        }
+        FileNow::Ready(h) => begin(out, sfx, heard, &r, Some(h), sound, wanted, 0),
+        FileNow::Broken => begin(out, sfx, heard, &r, None, sound, wanted, 0),
+    }
+}
+
+/// A request decided, its file known: `handle`, or `None` for a file that cannot be
+/// played. It starts, or plays silent (muted under water, too far, sounds off, the voice
+/// limit); a script is told its seconds (`None` going round; 0 without a file). `waited`:
+/// the frames since it was asked for. The entity playing it, if any.
+#[allow(clippy::too_many_arguments)]
+fn begin(out: &mut Out, sfx: &mut Sfx, heard: &mut Vec<(u32, Option<f32>)>, r: &Resolved, handle: Option<Handle<PcmSound>>, sound: FormId, wanted: Wanted, waited: u64) -> Option<Entity> {
+    let Some(handle) = handle else {
+        sfx.failed += 1;
+        sfx.waits.broken += (waited > 0) as u32;
+        if let Wanted::Script { id, .. } = wanted {
+            heard.push((id, Some(0.0)));
+        }
+        return None;
+    };
+    sfx.waits.began(waited);
+    if waited > 0 {
+        debug!("sfx: {} {} began {waited} frames after it was asked for (its file was being read)", r.name, r.path);
+    }
+    match wanted {
+        Wanted::Loop => start_looping(out, sfx, r, handle, sound, false),
+        // A SOUN with the Loop flag goes round until StopSound stops it [observed:
+        // sound1, EMTMedicalBeep01 (Loop) still playing 120 frames on; UIVATSLoop (no
+        // Loop flag) over after one frame]; a placed one loops at the listener [design].
+        Wanted::Script { id, looping: true, .. } => {
+            heard.push((id, None));
+            start_looping(out, sfx, r, handle, sound, true)
+        }
+        Wanted::Script { id, at, looping: false } => {
+            let (seconds, e) = one_shot_ready(out, sfx, r, handle, sound, at);
+            heard.push((id, Some(seconds)));
+            if let Some(e) = e {
+                out.commands.entity(e).insert(ScriptPlayed(sound));
+            }
+            e
+        }
+        Wanted::Once(at) => one_shot_ready(out, sfx, r, handle, sound, at).1,
+    }
+}
+
+/// Start a SOUN going round at the listener: for [`LoopSound`], or for a script
+/// (StopSound stops it).
+fn start_looping(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<PcmSound>, sound: FormId, script: bool) -> Option<Entity> {
+    let gain = static_gain(&r.s) * out.settings.volume.max(0.0);
+    debug!("sfx: {} {} looping{}, gain {gain:.3}", r.name, r.path, if script { " for a script" } else { "" });
+    if !out.settings.play {
+        sfx.silent += 1;
+        return None;
+    }
+    sfx.played += 1;
+    let mut e = out.commands.spawn((AudioPlayer::<PcmSound>(handle), PlaybackSettings::LOOP.with_volume(Volume::Linear(gain)), SfxSound, SoundCategory::of_effect(r.s.edid.as_deref())));
+    if script {
+        e.insert(ScriptPlayed(sound));
+    } else {
+        e.insert(Looping(sound));
+        if is_interface(r.s.edid.as_deref()) {
+            e.insert(KeepsSpeed);
+        }
+    }
+    Some(e.id())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -706,75 +1031,70 @@ fn play(
         return;
     };
     let sfx = &mut *sfx;
+    collect_files(sfx, &mut assets);
+    sfx.frame += 1;
+    let frame = sfx.frame;
     sfx.same.clear();
     for (e, o) in &playing {
         sfx.same.entry(o.0).or_default().push((o.1, e));
     }
     sfx.voices = playing.iter().count();
-    for l in loops.read() {
-        for (e, playing) in &looping {
-            if playing.0 == l.sound {
-                commands.entity(e).try_despawn();
-            }
-        }
-        if !l.on {
-            continue;
-        }
-        let Some((s, name, path, handle)) = source(sfx, &data.vfs, &mut assets, l.sound) else { continue };
-        let gain = static_gain(&s) * settings.volume.max(0.0);
-        debug!("sfx: {name} {path} looping, gain {gain:.3}");
-        if settings.play {
-            sfx.played += 1;
-            let mut e = commands.spawn((AudioPlayer::<PcmSound>(handle), PlaybackSettings::LOOP.with_volume(Volume::Linear(gain)), Looping(l.sound), SfxSound, SoundCategory::of_effect(s.edid.as_deref())));
-            if is_interface(s.edid.as_deref()) {
-                e.insert(KeepsSpeed);
-            }
-        } else {
-            sfx.silent += 1;
-        }
-    }
-    for r in requests.read() {
-        one_shot_heard(&mut commands, sfx, &data.vfs, &mut assets, &settings, r.sound, r.at, player.as_deref());
-    }
-    // Scripts' sounds: StopSound's first, then the new ones. A SOUN with the Loop flag
-    // goes round until StopSound stops it [observed: sound1, EMTMedicalBeep01 (Loop)
-    // still playing 120 frames on; UIVATSLoop (no Loop flag) over after one frame];
-    // a placed one loops at the listener [design].
+    let vfs = &data.vfs;
     let ss = &mut *script_sounds;
+    let mut out = Out { commands: &mut commands, assets: &mut assets, settings: &settings, player: player.as_deref() };
+    // LoopSound: any word on a SOUN stops it going round, also one started earlier in
+    // this frame, and drops a start of it still waiting for its file; on starts it anew.
+    let mut new_loops: Vec<(FormId, Entity)> = Vec::new();
+    for l in loops.read() {
+        for (e, p) in &looping {
+            if p.0 == l.sound {
+                out.commands.entity(e).try_despawn();
+            }
+        }
+        new_loops.retain(|&(s, e)| {
+            if s == l.sound {
+                out.commands.entity(e).try_despawn();
+            }
+            s != l.sound
+        });
+        sfx.waits.cancelled += cancel(&mut sfx.waiting, |w| w.sound == l.sound && w.wanted == Wanted::Loop);
+        if l.on {
+            if let Some(e) = request(&mut out, sfx, vfs, &mut ss.heard, l.sound, Wanted::Loop) {
+                new_loops.push((l.sound, e));
+            }
+        }
+    }
+    // StopSound: before this frame's new script sounds, so a PlaySound after it plays;
+    // it drops the script requests of that SOUN still waiting for their file.
     for s in ss.stops.drain(..) {
         for (e, p) in &scripted {
             if p.0 == s {
-                commands.entity(e).try_despawn();
+                out.commands.entity(e).try_despawn();
             }
         }
+        sfx.waits.cancelled += cancel(&mut sfx.waiting, |w| w.sound == s && matches!(w.wanted, Wanted::Script { .. }));
+    }
+    // Requests whose file is now ready (or will not play), oldest first, then this
+    // frame's.
+    let decided = {
+        let Sfx { waiting, files, .. } = &mut *sfx;
+        take_decided(waiting, |p| matches!(files.get(p), Some(FileState::Decoding(..))))
+    };
+    for w in decided {
+        let Some(s) = sfx.forms.sounds.get(&w.sound).cloned() else { continue };
+        let handle = match sfx.files.get(&w.path) {
+            Some(FileState::Ready(h)) => Some(h.clone()),
+            _ => None,
+        };
+        let r = Resolved { name: s.edid.clone().unwrap_or_else(|| w.sound.to_string()), s, path: w.path };
+        begin(&mut out, sfx, &mut ss.heard, &r, handle, w.sound, w.wanted, frame - w.frame);
+    }
+    for r in requests.read() {
+        request(&mut out, sfx, vfs, &mut ss.heard, r.sound, Wanted::Once(r.at));
     }
     for (id, sound, at) in std::mem::take(&mut ss.plays) {
         let looping = sfx.forms.sounds.get(&sound).is_some_and(|s| s.has("Loop"));
-        if looping {
-            ss.heard.push((id, None));
-            let Some((s, name, path, handle)) = source(sfx, &data.vfs, &mut assets, sound) else { continue };
-            let gain = static_gain(&s) * settings.volume.max(0.0);
-            debug!("sfx: {name} {path} looping for a script, gain {gain:.3}");
-            if settings.play {
-                sfx.played += 1;
-                commands.spawn((AudioPlayer::<PcmSound>(handle), PlaybackSettings::LOOP.with_volume(Volume::Linear(gain)), ScriptPlayed(sound), SfxSound, SoundCategory::of_effect(s.edid.as_deref())));
-            } else {
-                sfx.silent += 1;
-            }
-            continue;
-        }
-        let placed = at.zip(player.as_deref()).map(|(at, p)| SoundAt::new(at, Some(p)));
-        let eye = player.as_deref().map(Player::eye);
-        match one_shot_spawn(&mut commands, sfx, &data.vfs, &mut assets, &settings, sound, at, eye, placed) {
-            Some((seconds, e)) => {
-                ss.heard.push((id, Some(seconds)));
-                if let Some(e) = e {
-                    commands.entity(e).insert(ScriptPlayed(sound));
-                }
-            }
-            // No file to play: over at once.
-            None => ss.heard.push((id, Some(0.0))),
-        }
+        request(&mut out, sfx, vfs, &mut ss.heard, sound, Wanted::Script { id, at, looping });
     }
 }
 
@@ -804,82 +1124,56 @@ pub fn pan_sounds(player: Option<Res<Player>>, sounds: Query<&SoundAt>) {
     }
 }
 
-/// Play a SOUN once, at a place (heard from `eye`) or at the listener. The seconds it
-/// lasts as played, also when it is too quiet to be heard or sounds are switched off;
-/// `None` without a file we can play. Not panned: [`one_shot_heard`] pans.
-#[allow(clippy::too_many_arguments, dead_code)]
-pub(crate) fn one_shot(
-    commands: &mut Commands,
-    sfx: &mut Sfx,
-    vfs: &fnv_vfs::Vfs,
-    assets: &mut Assets<PcmSound>,
-    settings: &SfxSettings,
-    sound: FormId,
-    at: Option<[f32; 3]>,
-    eye: Option<[f32; 3]>,
-) -> Option<f32> {
-    one_shot_at(commands, sfx, vfs, assets, settings, sound, at, eye, None)
+/// A one-shot played now, as [`one_shot_heard`] found it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum OneShotNow {
+    /// Its seconds as played, also when it is too quiet to be heard or sounds are off.
+    Played(f32),
+    /// Its file is still being read: nothing played (the file's decode is under way).
+    Waiting,
+    /// No file we can play.
+    NoFile,
 }
 
-/// [`one_shot`] heard by the player: a sound with a place is panned for them.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn one_shot_heard(
-    commands: &mut Commands,
-    sfx: &mut Sfx,
-    vfs: &fnv_vfs::Vfs,
-    assets: &mut Assets<PcmSound>,
-    settings: &SfxSettings,
-    sound: FormId,
-    at: Option<[f32; 3]>,
-    player: Option<&Player>,
-) -> Option<f32> {
-    let placed = at.zip(player).map(|(at, p)| SoundAt::new(at, Some(p)));
-    one_shot_at(commands, sfx, vfs, assets, settings, sound, at, player.map(Player::eye), placed)
+/// Play a SOUN once now for the player, at a place (panned for them) or at the listener,
+/// if its file is ready; nothing is queued (see [`OneShotNow`]).
+pub(crate) fn one_shot_heard(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, sound: FormId, at: Option<[f32; 3]>) -> OneShotNow {
+    let Some(r) = resolve(sfx, vfs, sound) else { return OneShotNow::NoFile };
+    match file_now(sfx, vfs, &r.path, &r.name) {
+        FileNow::Pending => OneShotNow::Waiting,
+        FileNow::Broken => {
+            sfx.failed += 1;
+            OneShotNow::NoFile
+        }
+        FileNow::Ready(h) => {
+            sfx.waits.began(0);
+            OneShotNow::Played(one_shot_ready(out, sfx, &r, h, sound, at).0)
+        }
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn one_shot_at(
-    commands: &mut Commands,
-    sfx: &mut Sfx,
-    vfs: &fnv_vfs::Vfs,
-    assets: &mut Assets<PcmSound>,
-    settings: &SfxSettings,
-    sound: FormId,
-    at: Option<[f32; 3]>,
-    eye: Option<[f32; 3]>,
-    placed: Option<SoundAt>,
-) -> Option<f32> {
-    one_shot_spawn(commands, sfx, vfs, assets, settings, sound, at, eye, placed).map(|(s, _)| s)
-}
-
-/// [`one_shot_at`], with the entity playing it (`None` when nothing is heard).
-#[allow(clippy::too_many_arguments)]
-fn one_shot_spawn(
-    commands: &mut Commands,
-    sfx: &mut Sfx,
-    vfs: &fnv_vfs::Vfs,
-    assets: &mut Assets<PcmSound>,
-    settings: &SfxSettings,
-    sound: FormId,
-    at: Option<[f32; 3]>,
-    eye: Option<[f32; 3]>,
-    placed: Option<SoundAt>,
-) -> Option<(f32, Option<Entity>)> {
-    let (s, name, path, handle) = source(sfx, vfs, assets, sound)?;
+/// Play a SOUN once whose file is ready, at a place (heard from the player's eye and
+/// panned for them) or at the listener: the seconds it lasts as played, also when it is
+/// too quiet to be heard or sounds are switched off, and the entity playing it (`None`
+/// when nothing is heard).
+fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<PcmSound>, sound: FormId, at: Option<[f32; 3]>) -> (f32, Option<Entity>) {
+    let (s, name, path) = (&r.s, &r.name, &r.path);
+    let (settings, eye) = (out.settings, out.player.map(Player::eye));
+    let placed = at.zip(out.player).map(|(at, p)| SoundAt::new(at, Some(p)));
     let distance = at.zip(eye).map(|(at, e)| ((at[0] - e[0]).powi(2) + (at[1] - e[1]).powi(2) + (at[2] - e[2]).powi(2)).sqrt());
-    let gain = static_gain(&s) * distance.map_or(1.0, |d| distance_gain(&s, d)) * settings.volume.max(0.0);
+    let gain = static_gain(s) * distance.map_or(1.0, |d| distance_gain(s, d)) * settings.volume.max(0.0);
     let mut speed = 1.0 + s.frequency_adjust_percent / 100.0;
     if s.has("Random Frequency Shift") {
         speed *= 0.95 + 0.1 * sfx.rng.next_f32();
     }
     let speed = speed.clamp(0.25, 4.0);
-    let seconds = assets.get(&handle).map_or(0.0, |p| p.seconds() as f32) / speed;
+    let seconds = out.assets.get(&handle).map_or(0.0, |p| p.seconds() as f32) / speed;
     debug!("sfx: {name} {path} gain {gain:.3}{} speed {speed:.2}", distance.map_or(String::new(), |d| format!(" at {d:.0} units")));
     // Under water a sound so flagged is not heard; a 2D one is not panned (audio.md §15.2).
     if sfx.submerged && s.has("Mute When Submerged") {
         sfx.muted_submerged += 1;
         sfx.silent += 1;
-        return Some((seconds, None));
+        return (seconds, None);
     }
     let placed = match placed {
         Some(_) if s.has("2D") => {
@@ -890,7 +1184,7 @@ fn one_shot_spawn(
     };
     if !settings.play || gain < 0.001 {
         sfx.silent += 1;
-        return Some((seconds, None));
+        return (seconds, None);
     }
     let interface = is_interface(s.edid.as_deref());
     if !interface {
@@ -900,14 +1194,14 @@ fn one_shot_spawn(
             let list = sfx.same.get_mut(&sound).expect("counted above");
             let oldest = (0..list.len()).min_by_key(|&i| list[i].0).expect("not empty");
             let (_, e) = list.swap_remove(oldest);
-            commands.entity(e).try_despawn();
+            out.commands.entity(e).try_despawn();
             sfx.voices = sfx.voices.saturating_sub(1);
             sfx.voice_stolen += 1;
             sfx.per_sound.entry(sound).or_default()[1] += 1;
         } else if !voice_free(sfx.voices, same) {
             sfx.voice_limited += 1;
             sfx.per_sound.entry(sound).or_default()[2] += 1;
-            return Some((seconds, None));
+            return (seconds, None);
         }
         sfx.voices += 1;
         sfx.most_voices = sfx.most_voices.max(sfx.voices);
@@ -915,7 +1209,7 @@ fn one_shot_spawn(
     sfx.played += 1;
     let playback = PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)).with_speed(speed);
     let category = SoundCategory::of_effect(s.edid.as_deref());
-    let reverb = crate::reverb::for_sound(sfx.room_reverb, settings, &s);
+    let reverb = crate::reverb::for_sound(sfx.room_reverb, settings, s);
     if reverb.is_none() && sfx.room_reverb.is_some() && settings.reverb && crate::reverb::send_of(s.reverb_attenuation_percent) <= 0.0 {
         sfx.reverb_kept_out += 1;
     }
@@ -928,11 +1222,11 @@ fn one_shot_spawn(
         debug!("sfx: {name} through reverb {} (send {:.2})", p.preset.name, p.send);
     }
     let own = |pcm: PcmSound, pan: Option<Pan>| PcmSound { pan, reverb, ..pcm };
-    let mut e = match (placed, assets.get(&handle).cloned()) {
+    let mut e = match (placed, out.assets.get(&handle).cloned()) {
         // This playing's own asset: the samples are shared, the pan and reverb are its own.
-        (Some(placed), Some(pcm)) => commands.spawn((AudioPlayer::<PcmSound>(assets.add(own(pcm, Some(placed.pan.clone())))), playback, placed, SfxSound, category)),
-        (None, Some(pcm)) if reverb.is_some() => commands.spawn((AudioPlayer::<PcmSound>(assets.add(own(pcm, None))), playback, SfxSound, category)),
-        _ => commands.spawn((AudioPlayer::<PcmSound>(handle), playback, SfxSound, category)),
+        (Some(placed), Some(pcm)) => out.commands.spawn((AudioPlayer::<PcmSound>(out.assets.add(own(pcm, Some(placed.pan.clone())))), playback, placed, SfxSound, category)),
+        (None, Some(pcm)) if reverb.is_some() => out.commands.spawn((AudioPlayer::<PcmSound>(out.assets.add(own(pcm, None))), playback, SfxSound, category)),
+        _ => out.commands.spawn((AudioPlayer::<PcmSound>(handle), playback, SfxSound, category)),
     };
     if interface {
         e.insert(KeepsSpeed);
@@ -944,7 +1238,7 @@ fn one_shot_spawn(
         sfx.same.entry(sound).or_default().push((n, id));
         sfx.per_sound.entry(sound).or_default()[0] += 1;
     }
-    Some((seconds, Some(e.id())))
+    (seconds, Some(e.id()))
 }
 
 /// An interface sound by its SOUN editor ID (`UI…`: menus, VATS, the Pip-Boy), which keeps
@@ -961,6 +1255,12 @@ fn report(mut exit: MessageReader<AppExit>, sfx: Option<Res<Sfx>>) {
                 "sfx: {} sounds played, {} too quiet or switched off, {} without a file we can play; {} silenced under water (at most {:.0} under a surface), {} 2D sounds not panned; {} not started at the voice limit, at most {} one-shots at once; {} placed by a curve of their own",
                 s.played, s.silent, s.failed, s.muted_submerged, s.deepest, s.flat_2d, s.voice_limited, s.most_voices, s.own_curve
             );
+            // Sounds whose file was still being read when they were asked for (#1428).
+            let w = &s.waits;
+            info!(
+                "sfx files: {} sounds began in the frame they were asked for, {} later while their file was read ({} more than one frame later, at most {} frames); {} dropped while they waited, {} waited for a file that could not be played, {} still waiting at the end; {} random sound rolls skipped while their file was read",
+                w.at_once, w.late, w.over_one, w.most_frames, w.cancelled, w.broken, s.waiting.len(), w.rolls_skipped
+            );
             if s.voice_stolen > 0 {
                 info!("sfx: {} one-shots took over the oldest voice of their sound at {MAX_SAME} playing", s.voice_stolen);
             }
@@ -975,6 +1275,11 @@ fn report(mut exit: MessageReader<AppExit>, sfx: Option<Res<Sfx>>) {
     }
 }
 
+/// The system that plays the requested sounds ([`play`]); senders in Update that are
+/// not in a [`crate::PlaySet`] order themselves before it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SfxSet;
+
 pub struct SfxPlugin;
 
 impl Plugin for SfxPlugin {
@@ -986,7 +1291,10 @@ impl Plugin for SfxPlugin {
             .init_resource::<ScriptSounds>()
             .add_message::<SoundSource>()
             .add_systems(Startup, init)
-            .add_systems(Update, (listener_submerged, play.after(crate::PlaySet::Activation), pan_sounds).chain())
+            // After every Update sender of sounds (the scripts' sounds in PlaySet::Sync,
+            // the ambient's, which orders itself before SfxSet), so a request is seen in
+            // the frame it is asked in.
+            .add_systems(Update, (listener_submerged, play.in_set(SfxSet), pan_sounds).chain().after(crate::PlaySet::Sync))
             .add_systems(Last, report);
         crate::reverb::build(app);
     }
@@ -1192,7 +1500,7 @@ mod tests {
     #[test]
     fn broken_encoded_files_are_refused() {
         // Empty, garbage, a cut Ogg and a WAV of rate 0 through rodio: an error, never a
-        // panic out of the guard the play path runs it in ([`source`]; symphonia-core
+        // panic out of the guard the play path runs it in ([`decode_file`]; symphonia-core
         // 0.5.5 itself panics opening a WAV of rate 0 [observed: units.rs:150]).
         let ogg = fnv_voice::length::synth::ogg_vorbis(2, 44100, 44100, 4);
         let mut garbage = Vec::new();
@@ -1230,5 +1538,261 @@ mod tests {
         assert_eq!(distance_gain(&s, f32::INFINITY), 0.0);
         let point = Sound { min_distance: 100.0, max_distance: 0.0, ..Sound::default() };
         assert_eq!(distance_gain(&point, f32::NAN), 0.0);
+    }
+
+    fn waiting(sound: u32, path: &str, frame: u64, wanted: Wanted) -> Waiting {
+        Waiting { sound: FormId(sound), path: path.into(), frame, wanted }
+    }
+
+    #[test]
+    fn waiting_requests_are_dropped_and_decided_in_order() {
+        let script = |id| Wanted::Script { id, at: None, looping: false };
+        let mut q = vec![waiting(1, "a", 1, Wanted::Loop), waiting(1, "a", 1, script(7)), waiting(2, "b", 2, Wanted::Loop), waiting(1, "c", 3, Wanted::Once(None))];
+        // LoopSound of SOUN 1: only its own loop start goes.
+        assert_eq!(cancel(&mut q, |w| w.sound == FormId(1) && w.wanted == Wanted::Loop), 1);
+        // StopSound of SOUN 1: only the scripts' requests of it.
+        assert_eq!(cancel(&mut q, |w| w.sound == FormId(1) && matches!(w.wanted, Wanted::Script { .. })), 1);
+        assert_eq!(q, vec![waiting(2, "b", 2, Wanted::Loop), waiting(1, "c", 3, Wanted::Once(None))]);
+        // Nothing decided while every file is pending; then the ready ones, oldest first.
+        assert!(take_decided(&mut q, |_| true).is_empty());
+        assert_eq!(q.len(), 2);
+        q.push(waiting(3, "b", 4, Wanted::Once(Some([1.0, 2.0, 3.0]))));
+        let go = take_decided(&mut q, |p| p == "c");
+        assert_eq!(go, vec![waiting(2, "b", 2, Wanted::Loop), waiting(3, "b", 4, Wanted::Once(Some([1.0, 2.0, 3.0])))]);
+        assert_eq!(q, vec![waiting(1, "c", 3, Wanted::Once(None))]);
+    }
+
+    #[test]
+    fn waits_count_late_starts() {
+        let mut w = Waits::default();
+        for waited in [0, 0, 1, 3, 2] {
+            w.began(waited);
+        }
+        assert_eq!((w.at_once, w.late, w.over_one, w.most_frames), (2, 3, 2, 3));
+    }
+
+    /// A data folder of loose files, removed when dropped.
+    struct TestFiles(std::path::PathBuf);
+
+    impl Drop for TestFiles {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const BEEP: FormId = FormId(0x10);
+    const BROKEN: FormId = FormId(0x11);
+    const BEEP_LOOP: FormId = FormId(0x12);
+    const BROKEN_LOOP: FormId = FormId(0x13);
+    const NO_FILE: FormId = FormId(0x14);
+
+    fn record(edid: &str, file: Option<&str>, flags: &[&str]) -> Sound {
+        Sound { edid: Some(edid.into()), file: file.map(Into::into), flags: flags.iter().map(|f| f.to_string()).collect(), ..Sound::default() }
+    }
+
+    /// Half a second of silence, 22,050 Hz mono.
+    fn half_second() -> Vec<u8> {
+        wav(1, 1, 22050, 16, &[0; 22050])
+    }
+
+    /// An app running [`play`] over a data folder holding a sound, a broken file and a
+    /// folder of two takes, without game data otherwise.
+    fn sound_app() -> (App, TestFiles) {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let dir = TestFiles(std::env::temp_dir().join(format!("nvf-sfx-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))));
+        let fx = dir.0.join("sound").join("fx");
+        std::fs::create_dir_all(fx.join("takes")).unwrap();
+        std::fs::write(fx.join("beep.wav"), half_second()).unwrap();
+        std::fs::write(fx.join("broken.wav"), b"not a sound file").unwrap();
+        std::fs::write(fx.join("takes").join("a.wav"), half_second()).unwrap();
+        std::fs::write(fx.join("takes").join("b.wav"), half_second()).unwrap();
+        let data = nvf_assets::GameData {
+            vfs: Arc::new(fnv_vfs::Vfs::open(&dir.0, &[]).unwrap()),
+            schema: Arc::new(fnv_nif::Schema::load_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/nif")).unwrap()),
+        };
+        let mut forms = FxForms::default();
+        forms.sounds.insert(BEEP, record("TestBeep", Some("fx\\beep.wav"), &[]));
+        forms.sounds.insert(BROKEN, record("TestBroken", Some("fx\\broken.wav"), &[]));
+        forms.sounds.insert(BEEP_LOOP, record("TestBeepLoop", Some("fx\\beep.wav"), &["Loop"]));
+        forms.sounds.insert(BROKEN_LOOP, record("TestBrokenLoop", Some("fx\\broken.wav"), &["Loop"]));
+        forms.sounds.insert(NO_FILE, record("TestNoFile", None, &[]));
+        let mut app = App::new();
+        app.insert_resource(data)
+            .insert_resource(Sfx::new(forms))
+            .init_resource::<SfxSettings>()
+            .init_resource::<ScriptSounds>()
+            .init_resource::<Assets<PcmSound>>()
+            .add_message::<PlaySound>()
+            .add_message::<LoopSound>()
+            .add_systems(Update, play);
+        (app, dir)
+    }
+
+    /// Frames run until `done` holds (the workers decode meanwhile); how many.
+    fn run_until(app: &mut App, done: impl Fn(&mut World) -> bool) -> u32 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut n = 0;
+        loop {
+            app.update();
+            n += 1;
+            if done(app.world_mut()) {
+                return n;
+            }
+            assert!(std::time::Instant::now() < deadline, "the sound files were not decoded in time");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn script_plays(app: &mut App, plays: &[(u32, FormId)]) {
+        app.world_mut().resource_mut::<ScriptSounds>().plays.extend(plays.iter().map(|&(id, s)| (id, s, None)));
+    }
+
+    fn heard(app: &mut App) -> Vec<(u32, Option<f32>)> {
+        std::mem::take(&mut app.world_mut().resource_mut::<ScriptSounds>().heard)
+    }
+
+    fn count<C: Component>(app: &mut App) -> usize {
+        let world = app.world_mut();
+        world.query::<&C>().iter(world).count()
+    }
+
+    #[test]
+    fn a_cold_file_is_decoded_on_a_worker_and_the_request_starts_when_it_is_ready() {
+        let (mut app, _files) = sound_app();
+        script_plays(&mut app, &[(1, BEEP)]);
+        app.update();
+        // Asked for, not yet decided: the script hears nothing and nothing plays.
+        assert!(heard(&mut app).is_empty());
+        assert_eq!(app.world().resource::<Sfx>().waiting.len(), 1);
+        assert_eq!(count::<OneShot>(&mut app), 0);
+        run_until(&mut app, |w| !w.resource::<ScriptSounds>().heard.is_empty());
+        let h = heard(&mut app);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].0, 1);
+        assert!((h[0].1.unwrap() - 0.5).abs() < 1e-3, "its seconds: {h:?}");
+        assert_eq!(count::<ScriptPlayed>(&mut app), 1);
+        let w = app.world().resource::<Sfx>().waits.clone();
+        assert_eq!((w.at_once, w.late), (0, 1));
+        assert!(w.most_frames >= 1);
+        // The file is ready now: the next request is decided in its own frame.
+        script_plays(&mut app, &[(2, BEEP)]);
+        app.update();
+        assert_eq!(heard(&mut app), vec![(2, Some(h[0].1.unwrap()))]);
+        assert_eq!(app.world().resource::<Sfx>().waits.at_once, 1);
+        assert!(app.world().resource::<Sfx>().waiting.is_empty());
+    }
+
+    #[test]
+    fn stop_sound_drops_the_waiting_requests_asked_before_it() {
+        let (mut app, _files) = sound_app();
+        script_plays(&mut app, &[(1, BEEP)]);
+        app.update();
+        // StopSound, then PlaySound again, in one frame: the first is dropped, the new one
+        // plays.
+        app.world_mut().resource_mut::<ScriptSounds>().stops.push(BEEP);
+        script_plays(&mut app, &[(2, BEEP)]);
+        run_until(&mut app, |w| !w.resource::<ScriptSounds>().heard.is_empty());
+        let h = heard(&mut app);
+        assert_eq!(h.iter().map(|x| x.0).collect::<Vec<_>>(), vec![2]);
+        let sfx = app.world().resource::<Sfx>();
+        assert_eq!(sfx.waits.cancelled, 1);
+        assert!(sfx.waiting.is_empty());
+    }
+
+    #[test]
+    fn loop_sound_on_and_off_while_the_file_is_read() {
+        let (mut app, _files) = sound_app();
+        let on = |on| LoopSound { sound: BEEP, on };
+        // On, off, on, off, then on twice, in one frame: each word drops the start
+        // before it; the last one waits.
+        app.world_mut().write_message_batch([on(true), on(false), on(true), on(false), on(true), on(true)]);
+        app.update();
+        assert_eq!(app.world().resource::<Sfx>().waits.cancelled, 3);
+        assert_eq!(app.world().resource::<Sfx>().waiting.len(), 1);
+        // One loop once the file is ready.
+        run_until(&mut app, |w| w.resource::<Sfx>().waiting.is_empty());
+        assert_eq!(count::<Looping>(&mut app), 1);
+        // The file ready: on and off in one frame leave nothing going round.
+        app.world_mut().write_message_batch([on(true), on(false)]);
+        app.update();
+        app.update();
+        assert_eq!(count::<Looping>(&mut app), 0);
+    }
+
+    #[test]
+    fn broken_missing_and_muted_requests_answer_the_script() {
+        let (mut app, _files) = sound_app();
+        // No file at all: over at once.
+        script_plays(&mut app, &[(1, NO_FILE)]);
+        app.update();
+        assert_eq!(heard(&mut app), vec![(1, Some(0.0))]);
+        // A file that does not decode: over (0 s) once that is known, a loop too (not
+        // "going round" before it was tried).
+        script_plays(&mut app, &[(2, BROKEN), (3, BROKEN_LOOP)]);
+        app.update();
+        assert!(heard(&mut app).is_empty());
+        run_until(&mut app, |w| w.resource::<ScriptSounds>().heard.len() == 2);
+        assert_eq!(heard(&mut app), vec![(2, Some(0.0)), (3, Some(0.0))]);
+        assert_eq!(app.world().resource::<Sfx>().waits.broken, 2);
+        assert_eq!(count::<SfxSound>(&mut app), 0);
+        // Sounds switched off: a one-shot still says its seconds and a loop that it goes
+        // round, with nothing playing.
+        app.world_mut().resource_mut::<SfxSettings>().play = false;
+        script_plays(&mut app, &[(4, BEEP), (5, BEEP_LOOP)]);
+        run_until(&mut app, |w| w.resource::<ScriptSounds>().heard.len() == 2);
+        let h = heard(&mut app);
+        assert_eq!(h[0].0, 4);
+        assert!((h[0].1.unwrap() - 0.5).abs() < 1e-3);
+        assert_eq!(h[1], (5, None));
+        assert_eq!(count::<SfxSound>(&mut app), 0);
+        assert_eq!(app.world().resource::<Sfx>().silent, 2);
+    }
+
+    #[test]
+    fn a_random_marker_skips_its_roll_while_the_file_is_read() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut app, _files) = sound_app();
+        let once = |app: &mut App| {
+            app.world_mut()
+                .run_system_once(|mut commands: Commands, mut sfx: ResMut<Sfx>, mut assets: ResMut<Assets<PcmSound>>, data: Res<nvf_assets::GameData>, settings: Res<SfxSettings>| {
+                    collect_files(&mut sfx, &mut assets);
+                    let mut out = Out { commands: &mut commands, assets: &mut assets, settings: &settings, player: None };
+                    one_shot_heard(&mut out, &mut sfx, &data.vfs, BEEP, None)
+                })
+                .unwrap()
+        };
+        assert_eq!(once(&mut app), OneShotNow::Waiting);
+        // Nothing is queued for it: the marker rolls again later.
+        assert!(app.world().resource::<Sfx>().waiting.is_empty());
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let seconds = loop {
+            match once(&mut app) {
+                OneShotNow::Played(s) => break s,
+                r => assert_eq!(r, OneShotNow::Waiting),
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert!((seconds - 0.5).abs() < 1e-3);
+        assert_eq!(once(&mut app), OneShotNow::Played(seconds));
+    }
+
+    #[test]
+    fn the_folder_index_lists_what_a_folder_scan_lists() {
+        let (mut app, _files) = sound_app();
+        let vfs = app.world().resource::<nvf_assets::GameData>().vfs.clone();
+        let index = folder_index(vfs.paths(is_sound_file));
+        assert_eq!(index["sound\\fx\\takes\\"], list_folder(&vfs, "sound\\fx\\takes\\"));
+        assert_eq!(index["sound\\fx\\"], list_folder(&vfs, "sound\\fx\\"));
+        assert_eq!(index["sound\\fx\\"], vec!["sound\\fx\\beep.wav".to_string(), "sound\\fx\\broken.wav".into()]);
+        assert_eq!(folder_of(&sound_path("fx\\takes")).as_deref(), Some("sound\\fx\\takes\\"));
+        assert_eq!(folder_of(&sound_path("fx\\beep.wav")), None);
+        // A folder's take is picked from the index once it is in, the same files.
+        let mut sfx = app.world_mut().resource_mut::<Sfx>();
+        sfx.indexed = true;
+        sfx.folders = index;
+        let picked = pick_file(&mut sfx, &vfs, "fx\\takes").unwrap();
+        assert!(picked.starts_with("sound\\fx\\takes\\"), "{picked}");
+        assert_eq!(pick_file(&mut sfx, &vfs, "fx\\nothing"), None);
     }
 }
