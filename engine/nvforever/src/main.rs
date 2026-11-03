@@ -1624,7 +1624,7 @@ fn main() -> AppExit {
                     "actor animation: up to {} actors posed at once, {:.3} ms per frame on average, {:.2} us per actor and frame, {:.2} clips per actor and frame ({:.1}% of actor frames with more than one clip), {:.1} tracks per actor and frame",
                     c.peak,
                     c.total.as_secs_f64() * 1e3 / f64::from(c.frames.max(1)),
-                    c.total.as_secs_f64() * 1e6 / c.actor_frames.max(1) as f64,
+                    c.total.saturating_sub(c.held_time).as_secs_f64() * 1e6 / c.actor_frames.max(1) as f64,
                     c.layer_frames as f64 / c.actor_frames.max(1) as f64,
                     100.0 * c.blend_frames as f64 / c.actor_frames.max(1) as f64,
                     c.tracks as f64 / c.actor_frames as f64
@@ -1635,12 +1635,14 @@ fn main() -> AppExit {
                 }
                 if c.held_frames + c.dead_tracks > 0 {
                     info!(
-                        "death poses: {} actor frames held without sampling, {} sampled at the clip's end ({:.2} finished poses per frame), {} tracks sampled on dead actors ({:.1} per frame)",
+                        "death poses: {} actor frames held without sampling ({} at the clip's end), {} more at the clip's end sampled ({:.2} finished poses per frame), {} tracks sampled on dead actors ({:.1} per frame), {:.2} us per held pose (in the actor animation line's ms, not its per actor figures)",
                         c.held_frames,
-                        c.finished_frames,
-                        (c.held_frames + c.finished_frames) as f64 / f64::from(c.frames.max(1)),
+                        c.finished_held_frames,
+                        c.finished_sampled_frames,
+                        (c.finished_held_frames + c.finished_sampled_frames) as f64 / f64::from(c.frames.max(1)),
                         c.dead_tracks,
-                        c.dead_tracks as f64 / f64::from(c.frames.max(1))
+                        c.dead_tracks as f64 / f64::from(c.frames.max(1)),
+                        c.held_time.as_secs_f64() * 1e6 / c.held_frames.max(1) as f64
                     );
                 }
                 if let Some(a) = actors {

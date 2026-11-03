@@ -982,11 +982,11 @@ impl BlendPlayer {
     ///
     /// The pose is a function of the layers, the rest poses and the bind transforms alone,
     /// so with the same layers and rest poses [`Self::pose`] would write the values the
-    /// last call wrote. It would also put back any other system's write to those nodes (a
-    /// head turn easing out, foot IK letting go), so a node written since the calling
-    /// system last ran is sampled for too: every frame ends with the bones [`Self::pose`]
-    /// would have left. The nodes checked are those it would write; the caller's own writes
-    /// do not count as changes on its next run.
+    /// last call wrote. It would also put back any other system's write to those nodes
+    /// (foot IK easing out on a corpse, the lips giving a turned head back), so a node
+    /// written since the calling system last ran is sampled for too: every frame ends with
+    /// the bones [`Self::pose`] would have left. The nodes checked are those it would
+    /// write; the caller's own writes do not count as changes on its next run.
     pub fn pose_held(&mut self, scratch: &mut Vec<(usize, Transform)>, transforms: &mut Query<&mut Transform>) -> Option<usize> {
         if pose_stands(self.posed_from.as_ref(), &self.layers, self.rest_changes) && !self.nodes_written(transforms) {
             return None;
@@ -1398,17 +1398,6 @@ mod tests {
         assert_eq!(held!(p), None);
         assert_transform(&world, node, posed, false);
 
-        // The rest poses: set again as they were, nothing; changed, a pose, both ways.
-        p.set_rest(1, None);
-        assert_eq!(held!(p), None);
-        p.set_rest(1, Some(posed));
-        assert_eq!(held!(p), Some(1));
-        p.set_rest(1, Some(posed));
-        assert_eq!(held!(p), None);
-        p.set_rest(1, None);
-        assert_eq!(held!(p), Some(1));
-        assert_eq!(held!(p), None);
-
         // A weapon layer comes and goes.
         p.layers[2] = Some(Layer { clip: on_node_0(9.0), phase: 0.0, weight: 1.0 });
         assert_eq!(held!(p), Some(2));
@@ -1451,6 +1440,52 @@ mod tests {
         fresh.layers = p.layers.clone();
         assert_eq!(held!(fresh), Some(1));
         assert_eq!(held!(fresh), None);
+    }
+
+    #[test]
+    fn a_held_pose_takes_a_changed_rest_pose_at_once() {
+        // Node 0 is keyed by the clip; node 1 no clip keys, so its rest pose is its pose.
+        let mut world = World::new();
+        let keyed = world.spawn(Transform::IDENTITY).id();
+        let bind = Transform::from_xyz(5.0, 0.0, 0.0);
+        let unkeyed = world.spawn(bind).id();
+        let rest = Transform::from_xyz(1.0, 2.0, 3.0);
+        let mut p = BlendPlayer::new(vec![keyed, unkeyed], Arc::new(vec![Transform::IDENTITY, bind]));
+        p.layers[0] = Some(Layer { clip: on_node_0(9.0), phase: 0.999, weight: 1.0 });
+        let mut scratch = Vec::new();
+        let mut state = SystemState::<Query<&mut Transform>>::new(&mut world);
+        macro_rules! held {
+            () => {{
+                world.clear_trackers();
+                p.pose_held(&mut scratch, &mut state.get_mut(&mut world).unwrap())
+            }};
+        }
+        assert_eq!(held!(), Some(1));
+        assert_eq!(held!(), None);
+        assert_transform(&world, unkeyed, bind, false);
+
+        // Set again as it was: nothing.
+        p.set_rest(1, None);
+        assert_eq!(held!(), None);
+        // Changed: on the bone at once, and it holds there.
+        p.set_rest(1, Some(rest));
+        assert_eq!(held!(), Some(1));
+        assert_transform(&world, unkeyed, rest, true);
+        p.set_rest(1, Some(rest));
+        assert_eq!(held!(), None);
+        assert_transform(&world, unkeyed, rest, false);
+        // That bone is one the pose writes: another writer's change is put back.
+        world.clear_trackers();
+        *world.get_mut::<Transform>(unkeyed).unwrap() = bind;
+        assert_eq!(held!(), Some(1));
+        assert_transform(&world, unkeyed, rest, true);
+        assert_eq!(held!(), None);
+        // Taken away: back to its bind transform at once.
+        p.set_rest(1, None);
+        assert_eq!(held!(), Some(1));
+        assert_transform(&world, unkeyed, bind, true);
+        assert_eq!(held!(), None);
+        assert_transform(&world, unkeyed, bind, false);
     }
 
     #[test]

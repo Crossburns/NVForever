@@ -3658,14 +3658,15 @@ expect = [
 [[scenario]]
 name = "death-pose-held"
 source = "issue #1391 (engine/nvf-assets/src/anim_play.rs BlendPlayer::pose_held, engine/nvforever/src/locomotion.rs): a corpse holding a finished death clip is not sampled every frame"
-note = "the run of dead-on-spawn: the tribal village's corpses and those on ground not loaded yet hold the end of a death pose until their ragdoll starts (docs/spec-notes/dead-on-spawn.md §3), and skeletons without a ragdoll keep it"
+note = "the player stands in square (-17, 7), its physics squares reach x -18 (engine/nvf-play/src/phys/cells.rs RADIUS), and nothing moves them there; ten of the tribal village's corpses (TCFiend0?DEAD, TCGreatKhan0?DEAD, male skeleton, 0x001578F7 among them) lie in square (-19, 7), two squares off: drawn (--radius 2), dead from the start, on ground not loaded, so their ragdolls do not start and they hold the end of a death pose all run (docs/spec-notes/dead-on-spawn.md §3; ragdoll.rs start)"
 areas = ["combat", "deaths", "animation"]
 paths = ["engine/nvf-assets/src/anim_play.rs", "engine/nvforever/src/locomotion.rs", "engine/nvforever/src/deaths.rs", "engine/nvforever/src/ragdoll.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1" }
-args = ["--play", "--pos=-73500,29700,8000", "--heading", "300", "--hour", "12", "--no-voice"]
+args = ["--play", "--pos=-67584,30720,10300", "--heading", "270", "--hour", "12", "--no-voice"]
 run_seconds = 40
 expect = [
-  { re = 'death poses: (?P<n>\d+) actor frames held without sampling', range = [1, 100000000], label = "finished death poses held without sampling" },
+  { re = "death poses: \\d+ actor frames held without sampling \\((?P<n>\\d+) at the clip's end\\)", range = [100, 1000000000], label = "corpses on ground not loaded hold their finished death poses without sampling, frame after frame" },
+  { re = "death poses: .*\\), (?P<n>\\d+) more at the clip's end sampled", range = [1, 1000000000], label = "each was sampled when it first came to the clip's end" },
 ]
 
 [[scenario]]
