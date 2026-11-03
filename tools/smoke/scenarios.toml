@@ -7790,7 +7790,7 @@ env = { NVFOREVER_HOME = "controls-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 12
 expect = [
-  { re = 'controls: 65 of 65 line\(s\) read from .*NVForever\.ini, 3 changed: Activate E -> F, Jump Space -> J, Toggle POV F, Middle Mouse -> E, Middle Mouse; input device Keyboard and Mouse', label = "the stored keys are bound at the start (the INI also lists the input device and the controller's buttons)" },
+  { re = 'controls: 66 of 66 line\(s\) read from .*NVForever\.ini, 3 changed: Activate E -> F, Jump Space -> J, Toggle POV F, Middle Mouse -> E, Middle Mouse; input device Keyboard and Mouse', label = "the stored keys are bound at the start (the INI also lists the input device and the controller's buttons)" },
 ]
 
 [[scenario]]
@@ -7833,7 +7833,34 @@ env = { NVFOREVER_HOME = "controller-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 12
 expect = [
-  { re = 'controls: 65 of 65 line\(s\) read from .*NVForever\.ini, 4 changed: Input Device Controller, \[Controller\] Jump Y -> RB, \[Controller\] Vats RB -> Y, \[Controller\] Rumble 0; input device Controller', label = "the stored device, buttons and Rumble off are taken at the start" },
+  { re = 'controls: 66 of 66 line\(s\) read from .*NVForever\.ini, 4 changed: Input Device Controller, \[Controller\] Jump Y -> RB, \[Controller\] Vats RB -> Y, \[Controller\] Rumble 0; input device Controller', label = "the stored device, buttons and Rumble off are taken at the start" },
+]
+
+[[scenario]]
+name = "look-sensitivity-write"
+source = "owner 2026-11-03 (#1451): Invert Y and a sensitivity slider (as the sound sliders) on the settings page's Controls tab, Mouse Sensitivity with keyboard and mouse and Stick Sensitivity with a controller, kept apart; NVForever's own range (25%-300% of the game's); the first half of a round trip (look-sensitivity-read starts in the same home), run them together"
+areas = ["main-menu", "save"]
+paths = ["engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/pause.rs"]
+env = { NVFOREVER_HOME = "look-sensitivity-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:17", NVF_PLAY_TEST_SETTINGS = "10.5:controls,11:device:Keyboard and Mouse,11.5:invert:0,12:sensitivity:100,12.5:invert:1,13:sensitivity:150,14:device:Controller,14.5:sensitivity:100,15:sensitivity:50" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 19
+expect = [
+  { text = "controls: invert Y on", label = "the Invert Y row turns the vertical look over" },
+  { text = "controls: mouse sensitivity 150% (0.0030)", label = "the Mouse Sensitivity slider sets the mouse's as a percentage of the game's" },
+  { text = "controls: stick sensitivity 50%", label = "with a controller the slider is Stick Sensitivity, set apart from the mouse's" },
+]
+order = [["controls: invert Y off", "controls: invert Y on", "controls: mouse sensitivity 150%", "controls: input device Controller", "controls: stick sensitivity 50%"]]
+
+[[scenario]]
+name = "look-sensitivity-read"
+source = "owner 2026-11-03 (#1451): the second half of the look round trip: a new start in look-sensitivity-write's home takes Invert Y, the mouse's and the stick's sensitivity it stored from NVForever.ini"
+areas = ["main-menu", "save"]
+paths = ["engine/nvf-play/src/bindings.rs"]
+env = { NVFOREVER_HOME = "look-sensitivity-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 12
+expect = [
+  { re = 'controls: 66 of 66 line\(s\) read from .*NVForever\.ini, 4 changed: Invert Y 1, Mouse Sensitivity 0\.003, Input Device Controller, \[Controller\] Stick Sensitivity 0\.5; input device Controller', label = "the stored Invert Y and the two sensitivities are taken at the start" },
 ]
 
 [[scenario]]
