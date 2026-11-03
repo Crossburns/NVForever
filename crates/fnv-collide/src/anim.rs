@@ -196,8 +196,10 @@ impl ModelAnim {
     }
 
     /// Whether some sequence moves the node at `block` or one of its ancestors (the
-    /// file's root left out: its transform is the placement's). False when `block` is
-    /// not a scene node.
+    /// file's root left out: its transform is the placement's): a track on it whose
+    /// pose leaves the node's stored transform at some point of the sequence. A track
+    /// that only holds the stored pose (an idle listing every node of the model) does
+    /// not count. False when `block` is not a scene node.
     pub fn moves_block(&self, block: usize) -> bool {
         let Some(&first) = self.by_block.get(&block) else { return false };
         let mut k = first;
@@ -206,7 +208,7 @@ impl ModelAnim {
             if n.root && n.parent.is_none() {
                 return false;
             }
-            if self.sequences.iter().any(|s| s.tracks.iter().any(|(t, _)| *t == k)) {
+            if self.sequences.iter().any(|s| self.track_moves(s, k)) {
                 return true;
             }
             match n.parent {
@@ -238,6 +240,35 @@ impl ModelAnim {
             guard += 1;
         }
         Some(acc)
+    }
+
+    /// Whether `seq` has a track on node `k` that takes it away from its stored
+    /// transform, sampled at the track's key times and at even steps over the sequence
+    /// (an engine choice: a hundredth of a unit, a thousandth of a rotation matrix entry
+    /// or of the scale).
+    fn track_moves(&self, seq: &AnimSequence, k: usize) -> bool {
+        use fnv_nif::anim::Channel;
+        let Some((_, track)) = seq.tracks.iter().find(|(n, _)| *n == k) else { return false };
+        fn times<const N: usize>(c: &Channel<N>, out: &mut Vec<f32>) {
+            if let Channel::Keys(k) = c {
+                out.extend(k.keys.iter().map(|k| k.time));
+            }
+        }
+        const STEPS: usize = 16;
+        let mut ts: Vec<f32> = (0..=STEPS).map(|i| seq.start + (seq.stop - seq.start) * i as f32 / STEPS as f32).collect();
+        times(&track.translation, &mut ts);
+        times(&track.rotation, &mut ts);
+        times(&track.scale, &mut ts);
+        if let Some(e) = &track.euler {
+            ts.extend(e.iter().flat_map(|k| k.keys.iter().map(|k| k.time)));
+        }
+        let bind = self.nodes[k].bind;
+        ts.into_iter().any(|t| {
+            let p = self.local(Some(seq), t, k);
+            p.iso.translation.iter().zip(bind.iso.translation).any(|(a, b)| (a - b).abs() > 0.01)
+                || p.iso.rotation.iter().zip(bind.iso.rotation).any(|(a, b)| (a - b).abs() > 1e-3)
+                || (p.scale - bind.scale).abs() > 1e-3
+        })
     }
 
     fn local(&self, seq: Option<&AnimSequence>, t: f32, k: usize) -> Similarity {
@@ -413,6 +444,38 @@ mod tests {
         // Bind pose without a sequence.
         let b = anim.node_to_root(None, 0.0, 2).unwrap().apply([0.0; 3]);
         assert!((b[0] - 15.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_track_holding_the_stored_pose_moves_nothing() {
+        use fnv_nif::anim::{Channel, Key, KeyKind, Keys};
+        let sim = |t: [f32; 3]| Similarity { iso: Iso { translation: t, rotation: Iso::IDENTITY.rotation }, scale: 1.0 };
+        let key = |time: f32, value: [f32; 3]| Key { time, value, forward: [0.0; 3], backward: [0.0; 3], tbc: [0.0; 3] };
+        let held = |v: [f32; 3]| TransformTrack {
+            translation: Channel::Keys(Keys { kind: KeyKind::Linear, keys: vec![key(0.0, v), key(2.0, v)] }),
+            rotation: Channel::Static(Some([1.0, 0.0, 0.0, 0.0])),
+            euler: None,
+            scale: Channel::Static(Some([1.0])),
+        };
+        let mut anim = ModelAnim::from_nodes([
+            (0, Some("Root".into()), None, sim([0.0; 3])),
+            (1, Some("Gate".into()), Some(0), sim([10.0, 0.0, 0.0])),
+            (2, Some("Post".into()), Some(0), sim([-10.0, 0.0, 0.0])),
+            (3, Some("Leaf".into()), Some(2), sim([0.0, 5.0, 0.0])),
+        ]);
+        // An idle listing every node at its stored pose, keys that never change.
+        anim.add_sequence("Idle", 2.0, 0, vec![(1, held([10.0, 0.0, 0.0])), (2, held([-10.0, 0.0, 0.0])), (3, held([0.0, 5.0, 0.0]))]);
+        assert!(!anim.moves_block(1) && !anim.moves_block(2) && !anim.moves_block(3));
+        // A group whose keys stay put but away from the stored pose does move the node.
+        anim.add_sequence("Open", 2.0, 0, vec![(1, held([10.0, 0.0, 50.0]))]);
+        assert!(anim.moves_block(1) && !anim.moves_block(3));
+        // So does one whose keys change, and the node under it with it.
+        let swing = TransformTrack {
+            translation: Channel::Keys(Keys { kind: KeyKind::Linear, keys: vec![key(0.0, [-10.0, 0.0, 0.0]), key(2.0, [-10.0, 0.0, 80.0])] }),
+            ..held([0.0; 3])
+        };
+        anim.add_sequence("Forward", 2.0, 0, vec![(2, swing)]);
+        assert!(anim.moves_block(2) && anim.moves_block(3));
     }
 
     #[test]
