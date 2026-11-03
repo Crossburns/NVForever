@@ -9,9 +9,13 @@
 //!   Caps [observed: the owner's screenshots; documented: their places].
 //! - The list: one row per stack, its name in font 2 with the count in brackets, a filled
 //!   square before what is equipped; the selected row boxed.
-//! - Keys: Up/Down (W/S) select, Enter or Space equip, unequip or use, X drop one,
-//!   Shift+X the stack [design: as the inventory had]; the wheel scrolls; a click on a
-//!   row selects it, a click on the selected row acts on it.
+//! - Keys: Up/Down (W/S) select, Enter or Space equip, unequip or use; the wheel
+//!   scrolls; a left click on a row selects it, a left click on the selected row acts on
+//!   it. A right click on a row drops one (a stack asks how many), Shift + right click
+//!   the stack [design: owner 2026-11-02, #1393]. The keyboard has no drop key: X is the
+//!   original's PC key for Mod (`IM_ModButton`), and X on the controller is its drop
+//!   button (`IM_DropButton`'s `&xbuttonx;` [documented: inventory_menu.xml]), which
+//!   drops one here when the controller works the controls.
 //! - The scroll bar at the list's left, only while the list is longer than its window:
 //!   the arrows at its ends and a line for the part shown [observed: the owner's scroll
 //!   screenshot; the DATA lists' bar, `data::scroll_bar`].
@@ -30,7 +34,7 @@
 //!   weapon with mod slots, always bright: the mod menu attaches and removes mods
 //!   [documented: place, key; hypothesis: when it shows; design: always bright, the
 //!   owner's rule 2026-10-27]. X on it opens the mod menu (`super::item_mod`,
-//!   weapon-mods.md §5); elsewhere X drops one (design).
+//!   weapon-mods.md §5); elsewhere X does nothing.
 //! - A modded weapon's figures are its modded ones (`WeaponStats::modded`).
 //! - While a hotkey's key is held, the hotkey panel stands in the picture's place and a
 //!   left click (or Enter) puts the row's item in that slot (`super::hotkey_panel`).
@@ -300,6 +304,7 @@ pub fn keys(
     mut lines: Local<f32>,
     mut out: MessageWriter<MenuInput>,
     (mut hold, mut hotkeys): (ResMut<HotkeyHold>, ResMut<Hotkeys>),
+    (pads, bindings): (Query<&Gamepad>, Option<Res<crate::bindings::Bindings>>),
 ) {
     use KeyCode::*;
     // The repair list and the mod menu have the keys while one is shown (`super::repair`,
@@ -317,7 +322,6 @@ pub fn keys(
     if active.0.as_ref().is_some_and(|m| m.category[Side::Player as usize] != want) {
         send(Command::SetCategory(Side::Player, want));
     }
-    let shift = keys.any_pressed([ShiftLeft, ShiftRight]);
     for (k, c) in [([ArrowUp, KeyW], Command::Up), ([ArrowDown, KeyS], Command::Down), ([PageUp, PageUp], Command::PageUp), ([PageDown, PageDown], Command::PageDown)] {
         if keys.any_just_pressed(k) {
             send(c);
@@ -338,8 +342,11 @@ pub fn keys(
     if keys.just_pressed(Backspace) {
         send(Command::Back);
     }
-    if keys.just_pressed(KeyX) {
-        send(if shift { Command::DropStack } else { Command::Drop });
+    // The controller's X drops one (module notes); the keyboard's X is the mod menu's. Not
+    // while "How many?" is up (the model would ignore it there too).
+    let asking = active.0.as_ref().is_some_and(|m| m.quantity.is_some());
+    if !asking && crate::pad::menu_button(&pads, bindings.as_deref(), GamepadButton::West) {
+        send(Command::Drop);
     }
     for w in wheel.read() {
         *lines += match w.unit {
@@ -366,16 +373,26 @@ fn on_row_over(over: On<PointerOver>, rows: Query<&RowButton>, active: Res<Activ
     }
 }
 
-/// A click selects the row (and on the selected row acts on it); with a hotkey's key held,
-/// a left click puts the row's item in that slot instead (`super::hotkey_panel`).
+/// A left click selects the row (and on the selected row acts on it); with a hotkey's key
+/// held, it puts the row's item in that slot instead (`super::hotkey_panel`). A right
+/// click selects the row without acting and drops one, with Shift the stack (module notes).
 fn on_row_click(
     click: On<PointerClick>,
     rows: Query<&RowButton>,
     active: Res<ActiveMenu>,
+    keys: Res<ButtonInput<KeyCode>>,
     (mut hold, mut hotkeys): (ResMut<HotkeyHold>, ResMut<Hotkeys>),
     mut out: MessageWriter<MenuInput>,
 ) {
     let Ok(r) = rows.get(click.entity) else { return };
+    if click.button == PointerButton::Secondary {
+        if hold.slot.is_none() {
+            let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+            out.write(MenuInput(Command::Hover(Side::Player, r.0)));
+            out.write(MenuInput(if shift { Command::DropStack } else { Command::Drop }));
+        }
+        return;
+    }
     match hold.slot {
         Some(slot) if click.button == PointerButton::Primary => {
             if let Some(row) = active.0.as_ref().and_then(|m| m.list(Side::Player).rows.get(r.0)) {
