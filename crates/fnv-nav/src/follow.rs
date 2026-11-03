@@ -18,7 +18,8 @@ pub enum Steer {
     /// (to its end, or to the door that ends this leg).
     Walk { target: [f32; 3], dir: [f32; 2], to_target: f32, remaining: f32 },
     /// At a door: move the actor to `arrival` (in the next leg's space), then call
-    /// [`Follower::door_used`].
+    /// [`Follower::door_used`]. An actor that can turn first stops and faces the door
+    /// ([`Walker::face_door`]) while this is given.
     Door(DoorEdge),
     /// At the stop in front of a door that opens in place (`at`): stand, open the door,
     /// and once it is fully open (its "Open" sequence has ended) call
@@ -544,6 +545,26 @@ impl Walker {
         heading_delta(self.heading, heading).abs() <= FACING
     }
 
+    /// At load door `d` (given [`Steer::Door`]) with the feet at `feet`: stand and turn on
+    /// the spot to face the door itself before going through, rather than carry on into
+    /// it along the way the actor came, which from the side walked it past the frame
+    /// (#1472) [design: how the game turns actors at doors is not measured]. Returns
+    /// whether it is still turning; once it faces the door (or the door's place is not
+    /// known) the door is used.
+    pub fn face_door(&mut self, d: &DoorEdge, feet: [f32; 3], dt: f32) -> bool {
+        let Some(at) = d.door_at else { return false };
+        let dir = [at[0] - feet[0], at[1] - feet[1]];
+        if dir[0].hypot(dir[1]) < 1.0 {
+            return false;
+        }
+        let want = heading_of(dir);
+        if heading_delta(self.heading, want).abs() <= FACING {
+            return false;
+        }
+        self.face(want, dt);
+        true
+    }
+
     /// Plan a path from the walker's feet to `to` and start following it.
     pub fn go_to(&mut self, nav: &NavGraph, to: Place, params: &PathParams) -> Result<&Path, PathError> {
         let path = nav.find_path(Place { space: self.space, pos: self.feet }, to, params)?;
@@ -615,6 +636,15 @@ impl Walker {
                     return WalkEvent::WaitingForDoor(door);
                 }
                 Steer::Door(d) => {
+                    // It stops at the door and faces it (after this step's walk, on
+                    // the next update) before it goes through.
+                    if moved && d.door_at.is_some() {
+                        return WalkEvent::Moved;
+                    }
+                    if self.face_door(&d, self.feet, dt) {
+                        self.turning = false;
+                        return WalkEvent::Turned;
+                    }
                     f.door_used();
                     self.space = f.space().unwrap_or(self.space);
                     self.feet = d.arrival;
