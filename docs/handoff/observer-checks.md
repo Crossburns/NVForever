@@ -1154,9 +1154,22 @@ The numbers above stay put so links to them hold; each item here gives its own p
     names the language, so the code page can be detected. Then with `CodePage=1251`:
     menus, dialogue, the Pip-Boy and the HUD show Cyrillic, not `?` or wrong letters.
 
+## Added 2026-11-03 (volume sliders, issue #1450)
+
+79. **How does the original's Music slider turn its music down, and does the main menu
+    theme follow it?** (P2; audio.md §17.) Needs a hand on the in-game Settings slider:
+    JIP's `SetGameVolume` from the console does not reach the playing mix. With the PC
+    otherwise silent, a session records the loopback (scratch tool: fit the recording to
+    the decoded file, as audio.md §17 did for the theme) while the owner sets Music to
+    30 and 0 and goes back to the main menu each time: the theme at 0.30 of the file
+    (linear), lower (a decibel curve), or 0.61 throughout (the menu ignores the slider).
+    The same at a place whose music type names a shipped file (Kimble's hail,
+    `special\mus_hailchief.mp3`, −5.36 dB; console `PlayMusic` did not start it over the
+    cell's music) gives the in-game level against NVForever's.
+
 ## Added 2026-11-03 (sounds decoded on worker threads, issue #1428)
 
-79. **Does `PlaySound X; StopSound X` in one frame play anything?** (P3; audio.md §11.5.)
+80. **Does `PlaySound X; StopSound X` in one frame play anything?** (P3; audio.md §11.5.)
     NVForever reads a sound's file on a worker, and a StopSound covers the sounds of X
     asked for before it, also in the same frame, so the pair plays nothing; `StopSound X;
     PlaySound X` plays X [hypothesis]. In the original (`nvfstrip`, a probe like sound1):
