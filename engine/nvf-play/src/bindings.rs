@@ -312,6 +312,12 @@ impl Default for Bindings {
 }
 
 impl Bindings {
+    /// The Look Sensitivity as a part of the game's (1 at [`MOUSE_SENSITIVITY`]): what the
+    /// right stick's look speed is scaled by.
+    pub fn look_scale(&self) -> f32 {
+        self.mouse_sensitivity / MOUSE_SENSITIVITY
+    }
+
     pub fn game_defaults() -> Bindings {
         Bindings {
             map: GAME_CONTROLS.iter().map(|&(c, _, v)| (c, Binding::from_ini(v))).collect(),
@@ -774,6 +780,47 @@ pub fn set_rumble(world: &mut World, on: bool) {
     store(world);
 }
 
+/// Turn the vertical look's inversion on or off (the Controls tab's Invert Y row).
+pub fn set_invert_y(world: &mut World, on: bool) {
+    let Some(mut b) = world.get_resource_mut::<Bindings>() else { return };
+    b.invert_y = on;
+    info!("controls: invert Y {}", if on { "on" } else { "off" });
+    store(world);
+}
+
+/// The Controls tab's Look Sensitivity, as multiples of [`MOUSE_SENSITIVITY`]: from a
+/// quarter of it to three times it in twentieths [design: owner 2026-11-03, #1451:
+/// NVForever's own range, not the original slider's, to be tuned by playing].
+pub const SENSITIVITY_LEAST: f32 = 0.25;
+pub const SENSITIVITY_MOST: f32 = 3.0;
+pub const SENSITIVITY_STEP: f32 = 0.05;
+
+/// `s` (radians per count) as the Controls tab shows it: a percentage of the game's.
+pub fn sensitivity_text(s: f32) -> String {
+    format!("{:.0}%", s / MOUSE_SENSITIVITY * 100.0)
+}
+
+/// The sensitivity `steps` of [`SENSITIVITY_STEP`] from `s`, kept in the tab's range; with
+/// `wrap` a step past the most goes back to the least (Enter or a click on the row).
+pub fn step_sensitivity_from(s: f32, steps: i32, wrap: bool) -> f32 {
+    let at = (s / MOUSE_SENSITIVITY / SENSITIVITY_STEP).round() as i32 + steps;
+    let (least, most) = ((SENSITIVITY_LEAST / SENSITIVITY_STEP).round() as i32, (SENSITIVITY_MOST / SENSITIVITY_STEP).round() as i32);
+    let at = if wrap && at > most { least } else { at.clamp(least, most) };
+    at as f32 * SENSITIVITY_STEP * MOUSE_SENSITIVITY
+}
+
+/// Set the mouse look's sensitivity, radians per count (the Controls tab's Look
+/// Sensitivity row, which scales the right stick's look by the same part); acts at once.
+pub fn set_mouse_sensitivity(world: &mut World, s: f32) {
+    let Some(mut b) = world.get_resource_mut::<Bindings>() else { return };
+    if (b.mouse_sensitivity - s).abs() <= 1e-7 {
+        return;
+    }
+    b.mouse_sensitivity = s;
+    info!("controls: mouse sensitivity {} ({s:.4})", sensitivity_text(s));
+    store(world);
+}
+
 /// Take the key off `c` (the Controls page's Delete), keeping its mouse button.
 pub fn clear_key(world: &mut World, c: Control) {
     let Some(mut b) = world.get_resource_mut::<Bindings>() else { return };
@@ -939,6 +986,20 @@ impl ControlInput<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sensitivity_steps_within_its_range() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-7;
+        assert_eq!(sensitivity_text(MOUSE_SENSITIVITY), "100%");
+        assert!(near(step_sensitivity_from(MOUSE_SENSITIVITY, 1, false), 0.0021));
+        assert!(near(step_sensitivity_from(MOUSE_SENSITIVITY, -2, false), 0.0018));
+        assert!(near(step_sensitivity_from(MOUSE_SENSITIVITY, -100, false), 0.0005), "not under a quarter");
+        assert!(near(step_sensitivity_from(MOUSE_SENSITIVITY, 100, false), 0.0060), "not past three times");
+        assert!(near(step_sensitivity_from(0.0060, 1, true), 0.0005), "Enter past the most goes to the least");
+        // A value from the INI off the steps is brought onto them.
+        assert!(near(step_sensitivity_from(0.00213, 0, false), 0.0021));
+        assert_eq!(sensitivity_text(0.0005), "25%");
+    }
 
     #[test]
     fn ini_values_decode() {
