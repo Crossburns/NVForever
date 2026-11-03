@@ -1,9 +1,10 @@
-//! Frames of active effects whose effect scripts change the effect list while it runs, on
-//! a synthetic plugin (no game data): a dispel of an effect still to come this frame, of
-//! two effects that already ran, and a cast that adds one. The effects run in list order,
-//! a removed one is skipped, an added one waits for the next frame, a value changed by the
-//! second keeps its rate, and a call's trace carries its unit's key (#1389;
-//! docs/spec-notes/scripts.md §7.6, aid-items.md).
+//! Frames of active effects whose scripts change the effect list while it runs, on a
+//! synthetic plugin (no game data): a dispel of an effect still to come this frame, of two
+//! effects that already ran, a cast that adds one, and a lethal tick whose death ends
+//! effects before and at the one ticking, inside its value change. The effects run in list
+//! order, a removed one is skipped, an added one waits for the next frame, a value changed
+//! by the second keeps its rate, and a call's trace carries its unit's key (#1389;
+//! docs/spec-notes/scripts.md §7.6, aid-items.md, hit-effects.md §4).
 
 mod common;
 
@@ -35,6 +36,13 @@ const D_START: u32 = 0x808;
 const D_UP: u32 = 0x809;
 const E_UP: u32 = 0x80A;
 const F_UP: u32 = 0x80B;
+const DEATH: u32 = 0x80C;
+const W_UP: u32 = 0x80D;
+const W_FIN: u32 = 0x80E;
+const K1_UP: u32 = 0x80F;
+const K2_UP: u32 = 0x810;
+const Z_UP: u32 = 0x811;
+const Z_FIN: u32 = 0x812;
 
 const FX_A: u32 = 0x850;
 const FX_B: u32 = 0x851;
@@ -44,6 +52,11 @@ const FX_E: u32 = 0x854;
 const FX_F: u32 = 0x855;
 const FX_HEAL: u32 = 0x856;
 const FX_BAD: u32 = 0x857;
+const FX_W: u32 = 0x858;
+const FX_POISON: u32 = 0x859;
+const FX_K1: u32 = 0x85A;
+const FX_K2: u32 = 0x85B;
+const FX_Z: u32 = 0x85C;
 
 const S_A: u32 = 0x901;
 const S_B: u32 = 0x902;
@@ -52,6 +65,11 @@ const S_D: u32 = 0x904;
 const S_E: u32 = 0x905;
 const S_F: u32 = 0x906;
 const S_BAD: u32 = 0x907;
+const S_W: u32 = 0x908;
+const S_K1: u32 = 0x909;
+const S_K2: u32 = 0x90A;
+const S_Z: u32 = 0x90B;
+const S_NPC: u32 = 0x90C;
 
 const SP_A: u32 = 0x860;
 const SP_B: u32 = 0x861;
@@ -61,6 +79,19 @@ const SP_E: u32 = 0x864;
 const SP_F: u32 = 0x865;
 const SP_HEAL: u32 = 0x866;
 const SP_BAD: u32 = 0x867;
+const SP_W: u32 = 0x868;
+const SP_POISON: u32 = 0x869;
+const SP_K1: u32 = 0x86A;
+const SP_K2: u32 = 0x86B;
+const SP_Z: u32 = 0x86C;
+
+const NPC: u32 = 0x720;
+const NPC_REF: u32 = 0x320;
+
+/// MGEF flags: Hostile, Detrimental, No Death Dispel (hit-effects.md §4).
+const HOSTILE: u32 = 1;
+const DETRIMENTAL: u32 = 4;
+const NO_DEATH_DISPEL: u32 = 1 << 28;
 
 fn f32b(v: f32) -> Vec<u8> {
     v.to_le_bytes().to_vec()
@@ -117,6 +148,13 @@ fn plugin_bytes() -> Vec<u8> {
         glob(D_UP, "DUp"),
         glob(E_UP, "EUp"),
         glob(F_UP, "FUp"),
+        glob(DEATH, "Death"),
+        glob(W_UP, "WUp"),
+        glob(W_FIN, "WFin"),
+        glob(K1_UP, "K1Up"),
+        glob(K2_UP, "K2Up"),
+        glob(Z_UP, "ZUp"),
+        glob(Z_FIN, "ZFin"),
     ]
     .concat();
     use fnv_game::game::event::{SCRIPT_EFFECT_FINISH as FINISH, SCRIPT_EFFECT_START as START, SCRIPT_EFFECT_UPDATE as UPDATE};
@@ -140,6 +178,14 @@ fn plugin_bytes() -> Vec<u8> {
         scpt(S_F, "FScript", &[(UPDATE, None, mark(2))], &[G_N, F_UP]),
         // Bad: casts a global, which is no magic item: the call fails.
         scpt(S_BAD, "BadScript", &[(UPDATE, None, call_on(CAST_IMMEDIATE_ON_SELF, 1))], &[G_N]),
+        // The lethal tick's neighbours: W before it, K1 and K2 (No Death Dispel) and Z
+        // after it.
+        scpt(S_W, "WScript", &[(UPDATE, None, mark(2)), (FINISH, None, mark(3))], &[G_N, W_UP, W_FIN]),
+        scpt(S_K1, "K1Script", &[(UPDATE, None, mark(2))], &[G_N, K1_UP]),
+        scpt(S_K2, "K2Script", &[(UPDATE, None, mark(2))], &[G_N, K2_UP]),
+        scpt(S_Z, "ZScript", &[(UPDATE, None, mark(2)), (FINISH, None, mark(3))], &[G_N, Z_UP, Z_FIN]),
+        // The NPC's object script: OnDeath noted.
+        record(b"SCPT", 0, S_NPC, &[vec![sub(b"EDID", z("NpcScript"))], unit(0, &script(&[(fnv_game::game::event::ON_DEATH, None, mark(2))]), &[], &[G_N, DEATH])].concat()),
     ]
     .concat();
     let mgefs = [
@@ -152,6 +198,12 @@ fn plugin_bytes() -> Vec<u8> {
         script_fx(FX_BAD, "BadEffect", S_BAD),
         // Restore Health by the second: a Value Modifier without Recover (aid-items.md §3).
         mgef(FX_HEAL, "RestoreHealth", 0, 0, 0, i32::from(HEALTH)),
+        script_fx(FX_W, "WEffect", S_W),
+        mgef(FX_K1, "K1Effect", NO_DEATH_DISPEL, S_K1, 1, -1),
+        mgef(FX_K2, "K2Effect", NO_DEATH_DISPEL, S_K2, 1, -1),
+        script_fx(FX_Z, "ZEffect", S_Z),
+        // Damage Health by the second: harmful, so the magnitude is taken as it is.
+        mgef(FX_POISON, "Poison", HOSTILE | DETRIMENTAL, 0, 0, i32::from(HEALTH)),
     ]
     .concat();
     let spels = [
@@ -164,18 +216,38 @@ fn plugin_bytes() -> Vec<u8> {
         spel(SP_BAD, "BadSpell", FX_BAD, 0, 10, -1),
         // 2 Health a second for 2 s.
         spel(SP_HEAL, "HealSpell", FX_HEAL, 2, 2, i32::from(HEALTH)),
+        spel(SP_W, "WSpell", FX_W, 0, 10, -1),
+        spel(SP_K1, "K1Spell", FX_K1, 0, 10, -1),
+        spel(SP_K2, "K2Spell", FX_K2, 0, 10, -1),
+        spel(SP_Z, "ZSpell", FX_Z, 0, 10, -1),
+        // 1000 Health a second for 10 s: the first second kills.
+        spel(SP_POISON, "PoisonSpell", FX_POISON, 1000, 10, i32::from(HEALTH)),
     ]
     .concat();
     let player = record(b"NPC_", 0, 0x7, &[sub(b"EDID", z("Player")), sub(b"DATA", [100i32.to_le_bytes().to_vec(), vec![5; 7]].concat())]);
+    // An NPC with Health 100 and the OnDeath script, placed in the cell.
+    let npc = record(
+        b"NPC_",
+        0,
+        NPC,
+        &[
+            sub(b"EDID", z("TestNpc")),
+            sub(b"ACBS", [&0u32.to_le_bytes()[..], &[0; 4], &4u16.to_le_bytes(), &[0; 6], &0f32.to_le_bytes(), &[0; 4]].concat()),
+            sub(b"DATA", [&100i32.to_le_bytes()[..], &[5, 5, 5, 5, 5, 5, 5]].concat()),
+            sub(b"SCRI", S_NPC.to_le_bytes().to_vec()),
+        ],
+    );
+    let achr = record(b"ACHR", 0, NPC_REF, &[sub(b"NAME", NPC.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
     let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", z("TestCell"))]);
+    let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &achr));
     [
         tes4(),
         top(b"GLOB", &globs),
-        top(b"NPC_", &player),
+        top(b"NPC_", &[player, npc].concat()),
         top(b"MGEF", &mgefs),
         top(b"SCPT", &scripts),
         top(b"SPEL", &spels),
-        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cell))),
+        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
     ]
     .concat()
 }
@@ -287,4 +359,35 @@ fn a_failed_call_names_its_unit_by_the_units_key() {
     let key = f.data.script(FormId(S_BAD)).unwrap().unit.key();
     assert_eq!(key, "Effects.esm|SCPT 0x00000907");
     assert_eq!(units, [key.as_str()]);
+}
+
+#[test]
+fn a_lethal_tick_whose_death_ends_effects_leaves_the_rest_in_order() {
+    let f = fixture();
+    let mut g = game(&f);
+    let npc = FormId(NPC_REF);
+    for spell in [SP_W, SP_POISON, SP_K1, SP_K2, SP_Z] {
+        assert_eq!(g.apply_magic_item(npc, FormId(spell), None, false).len(), 1, "{spell:X} took");
+    }
+    let death_marks = |g: &Game| [DEATH, W_UP, W_FIN, K1_UP, K2_UP, Z_UP, Z_FIN].map(|id| glob_value(g, id));
+    let sources = |g: &Game| g.effects.iter().filter(|e| e.target == npc).map(|e| e.source.0).collect::<Vec<_>>();
+    assert_eq!(sources(&g), [SP_W, SP_POISON, SP_K1, SP_K2, SP_Z]);
+
+    // Frame 1. W runs (1). The poison's tick kills inside its value change: OnDeath runs
+    // (2), then the death ends W (its Finish, 3), the poison itself and Z (its Finish,
+    // 4), in list order, and keeps K1 and K2. The poison's change and Update then find
+    // no effect (its old place now holds K2); K1, now before the cursor, runs (5), then
+    // K2 (6); Z is skipped.
+    let from = g.events.len();
+    g.advance_effects(1.0);
+    assert!(g.is_dead(npc));
+    //                     DEATH W_UP W_FIN K1_UP K2_UP Z_UP Z_FIN
+    assert_eq!(death_marks(&g), [2.0, 1.0, 3.0, 5.0, 6.0, 0.0, 4.0]);
+    assert_eq!(finished(&g, from), [SP_W, SP_POISON, SP_Z]);
+    assert_eq!(sources(&g), [SP_K1, SP_K2]);
+
+    // Frame 2: K1 (7) and K2 (8) go on on the body; no second death.
+    g.advance_effects(1.0);
+    assert_eq!(death_marks(&g), [2.0, 1.0, 3.0, 7.0, 8.0, 0.0, 4.0]);
+    assert_eq!(glob_value(&g, G_N), 8.0);
 }

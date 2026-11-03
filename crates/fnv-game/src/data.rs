@@ -33,6 +33,10 @@ impl Compiled {
     /// the unit's plugin and owner, which nothing changes afterwards [design:
     /// `crate::source_compile::apply` replaces the bytes, references, variables and
     /// program only].
+    ///
+    /// Known limit: `unit` is a public field, so code that changed its `plugin` or
+    /// `owner` after this would leave the cached key stale; no code does [design: checked
+    /// for #1389]. Such a change would have to build a new `Compiled`.
     pub fn new(unit: ScriptUnit, program: Program, raw: usize) -> Self {
         let key: Arc<str> = Arc::from(unit.key());
         Compiled { unit, program, raw, key }

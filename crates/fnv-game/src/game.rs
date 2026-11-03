@@ -5100,6 +5100,12 @@ pub fn arg_json(data: &GameData, a: &ArgValue) -> serde_json::Value {
 /// else the first with it. Effect ids are unique [design: each is taken from
 /// `Game::next_effect`, which only grows, in `Game::apply_magic_item_with`, and a save
 /// keeps the counter], so a checked hint is the effect a search finds (#1389).
+///
+/// Known limits, where ids could repeat and a hint could pick a later copy than a search
+/// from the start: a save whose `next_effect` is at or below an id it lists (a hand-edited
+/// or broken save; the next cast reuses the id), a save that lists one id twice, and the
+/// `u32` counter wrapping after 2^32 effects. Nothing guards against them; with a
+/// repeated id, the searches before #1389 found its first copy and a hint may find another.
 pub(crate) fn effect_index(effects: &[ActiveEffect], id: u32, hint: Option<usize>) -> Option<usize> {
     match hint {
         Some(i) if effects.get(i).is_some_and(|e| e.id == id) => Some(i),
