@@ -875,7 +875,8 @@ pub fn drive(
     }
 
     // Talking gestures: NPCs drawn in a conversation (idles.md §12).
-    let asked_now: Vec<u32> = game.idle_requests.iter().map(|r| r.actor.0).collect();
+    // Those waiting for their clip were asked for too (#1429).
+    let asked_now: Vec<u32> = game.idle_requests.iter().chain(st.waiting.iter().map(|(r, _)| r)).map(|r| r.actor.0).collect();
     st.gesturing.retain(|a, _| talk_parts.iter().any(|p| p.actor.0 == *a));
     let mut gestures: Vec<(u32, FormId, Vec<FormId>, TalkKey)> = Vec::new();
     for part in &talk_parts {
