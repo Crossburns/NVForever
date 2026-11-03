@@ -1270,7 +1270,8 @@ pub struct ActorValueInfo {
 
 /// A NUL-terminated string as stored.
 fn zstring(b: &[u8]) -> String {
-    String::from_utf8_lossy(b.split(|c| *c == 0).next().unwrap_or_default()).trim().to_string()
+    // In this run's code page (fnv_util::text, #1439).
+    fnv_util::text::decode_z(b).trim().to_string()
 }
 
 /// The timing of an image space modifier (IMAD DNAM) [documented: xEdit

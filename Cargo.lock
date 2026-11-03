@@ -473,6 +473,7 @@ version = "0.1.0"
 dependencies = [
  "fnv-esm",
  "fnv-sim",
+ "fnv-util",
  "rayon",
  "serde",
  "serde_json",
@@ -558,6 +559,7 @@ name = "fnv-nav"
 version = "0.1.0"
 dependencies = [
  "fnv-esm",
+ "fnv-util",
  "fnv-world",
  "proptest",
  "rayon",
@@ -599,6 +601,7 @@ name = "fnv-save"
 version = "0.1.0"
 dependencies = [
  "fnv-install",
+ "fnv-util",
  "serde",
  "serde_json",
  "thiserror",
@@ -676,6 +679,7 @@ dependencies = [
  "fnv-esm",
  "fnv-game",
  "fnv-sim",
+ "fnv-util",
  "fnv-vfs",
  "serde",
  "serde_json",
