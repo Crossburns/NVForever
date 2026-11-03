@@ -156,7 +156,8 @@ impl PhysWorld {
                 co.set_shape(SharedShape::capsule_z(half * k, radius * k));
             }
         }
-        self.mark_dirty();
+        self.count_hitvol_colliders(1);
+        self.mark_dirty(crate::world::DirtyBy::HitVolume);
     }
 
     /// One capsule per body part (step C8): `v` is the actor's overall extent (its body
@@ -204,7 +205,8 @@ impl PhysWorld {
                 }
             }
         }
-        self.mark_dirty();
+        self.count_hitvol_colliders(parts.len());
+        self.mark_dirty(crate::world::DirtyBy::HitVolume);
     }
 
     /// Remove an actor's hit volume (it left the loaded area or was disabled).

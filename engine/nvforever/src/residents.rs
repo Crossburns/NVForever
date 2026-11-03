@@ -1282,8 +1282,12 @@ impl Core {
         if let Ok(c) = game.world.calendar() {
             self.clock_hours = c.days_passed as f64 * 24.0;
         }
+        // Diagnostics (`profile::AiCount`): residents classified, remaining paths scanned
+        // for the loaded area and their points tested, levels changed.
+        let (mut classified, mut scans, mut points, mut changes) = (0usize, 0usize, 0usize, 0usize);
         for r in self.list.iter_mut().filter(|r| r.joined && !r.failed) {
             let Some(a) = self.ai.agents.get(&r.actor) else { continue };
+            classified += 1;
             let (space, feet) = (a.walker.space, a.walker.feet);
             let high = drawn(world, streamer, space, feet);
             r.been_loaded |= high;
@@ -1311,10 +1315,20 @@ impl Core {
             let coming = !high
                 && (streamer.buffer.holds(space, feet) || self.ai.follows_near_leader(r.actor))
                 && a.activity == fnv_ai::Activity::Travelling
-                && a.walker.follower.as_ref().is_some_and(|f| f.path.legs.iter().skip(f.leg).any(|l| l.points.iter().any(|p| drawn(world, streamer, l.space, *p))));
+                && a.walker.follower.as_ref().is_some_and(|f| {
+                    let _span = info_span!("ai::coming_scan").entered();
+                    scans += 1;
+                    f.path.legs.iter().skip(f.leg).any(|l| {
+                        l.points.iter().any(|p| {
+                            points += 1;
+                            drawn(world, streamer, l.space, *p)
+                        })
+                    })
+                });
             let level = level_for(high, coming, streamer.buffer.holds(space, feet));
             let was_high = self.ai.is_high(r.actor);
             if self.ai.set_level(game, r.actor, level) {
+                changes += 1;
                 let line = format!(
                     "ai [{}] {}: {} at ({:.0}, {:.0}, {:.0}) in {}",
                     self.clock_text,
@@ -1339,6 +1353,10 @@ impl Core {
                 }
             }
         }
+        crate::profile::ai_count(crate::profile::AiCount::Classified, classified);
+        crate::profile::ai_count(crate::profile::AiCount::ComingScans, scans);
+        crate::profile::ai_count(crate::profile::AiCount::PathPointsTested, points);
+        crate::profile::ai_count(crate::profile::AiCount::LevelChanges, changes);
     }
 
     /// The residents not handed to the AI yet are.
@@ -1481,20 +1499,37 @@ impl Core {
     /// again when a door was unlocked (`fnv_ai::Ai::apply_navmesh_switches`,
     /// `apply_door_locks`).
     fn switch_navmeshes(&mut self, game: &mut Game, nav: &mut NavState) {
-        if let Some(replanned) = self.ai.apply_navmesh_switches(game, &mut nav.graph) {
+        use crate::profile::{ai_count, AiCount};
+        ai_count(AiCount::NavPolls, 1);
+        ai_count(AiCount::SwitchesPolled, game.nav_switches.navmeshes.len());
+        let span = info_span!("ai::nav_switches").entered();
+        let switched = self.ai.apply_navmesh_switches(game, &mut nav.graph);
+        drop(span);
+        if let Some(replanned) = switched {
+            ai_count(AiCount::SwitchesChanged, 1);
             let off: Vec<String> = game.nav_switches.navmeshes.iter().filter(|(_, on)| !**on).map(|(m, _)| format!("{:08X}", m.0)).collect();
             let on = game.nav_switches.navmeshes.len() - off.len();
             info!("nav: navmeshes switched by scripts: {on} enabled, disabled [{}]; {} actors plan their way again", off.join(", "), replanned.len());
         }
         // Doors locked and unlocked since (scripts, keys, picked locks) reach the paths
         // (`fnv_ai::Ai::apply_door_locks`).
-        if let Some(again) = self.ai.apply_door_locks(game, &mut nav.graph) {
+        crate::profile::ai_lock_serial(game.world.lock_serial());
+        let span = info_span!("ai::door_locks").entered();
+        let locks = self.ai.apply_door_locks(game, &mut nav.graph);
+        drop(span);
+        if let Some(again) = locks {
+            ai_count(AiCount::LocksChanged, 1);
             let who: Vec<String> = again.iter().map(|a| format!("{:08X}", a.0)).collect();
             info!("nav: door locks changed; {} actors choose their package again [{}]", again.len(), who.join(", "));
         }
         // Obstacles enabled or disabled since cut or free the navmesh under them
         // (`fnv_ai::Ai::apply_obstacles`, docs/spec-notes/navmesh.md §7).
-        if let Some((changed, again)) = self.ai.apply_obstacles(game, &mut nav.graph) {
+        ai_count(AiCount::ObstaclesPolled, nav.graph.obstacles.len());
+        let span = info_span!("ai::obstacles").entered();
+        let obstacles = self.ai.apply_obstacles(game, &mut nav.graph);
+        drop(span);
+        if let Some((changed, again)) = obstacles {
+            ai_count(AiCount::ObstaclesChanged, 1);
             let which: Vec<String> = changed.iter().map(|r| format!("{r:08X} {}", if nav.graph.obstacles.get(r).is_some_and(|o| o.enabled) { "on" } else { "off" })).collect();
             info!("nav: obstacles switched [{}]; {} triangles cut now; {} actors plan their way again", which.join(", "), nav.graph.cut_triangles(), again.len());
         }
@@ -1638,6 +1673,7 @@ impl Core {
 
     #[allow(clippy::too_many_arguments)]
     fn think(&mut self, game: &mut Game, own: bool, nav: &NavState, world: &WorldData, doors: &mut nvf_play::doors::Doors, mut phys: Option<&mut PhysState>, mut blocks: Option<&mut ActorBlocks>, dt: f32, now: f32, waited: u32) {
+        crate::profile::ai_count(crate::profile::AiCount::Think, 1);
         // Who a walker pushed since the last frame, and (below) who may be pushed in
         // the next: nobody while the game is held.
         let pushed = blocks.as_deref_mut().map(|b| {
@@ -1691,7 +1727,10 @@ impl Core {
             self.ai.update_held(game, dt);
             return;
         }
-        self.join(game);
+        {
+            let _span = info_span!("ai::join").entered();
+            self.join(game);
+        }
         if own {
             // The game being played advances its own calendar (`nvf_play::sim`) and
             // ticks itself; this module's game state is moved on here.
@@ -1740,11 +1779,19 @@ impl Core {
         }
         let mut moved = [0usize; 6];
         let mut mover = PhysMover { doors, phys: phys.as_deref_mut(), unstuck: &mut self.unstuck, skip_until: &mut self.skip_until, hopped: &mut self.hopped, now, stats: &mut moved, held: &held, coasting: &mut self.coasting, fighting: &self.aims };
-        self.ai.update_moved(game, &nav.graph, dt, &mut mover);
+        {
+            // Every high-process actor's update and the low-process ones due (package,
+            // goal and walk; path searches are `nav::find_path` inside).
+            let _span = info_span!("ai::update_moved").entered();
+            self.ai.update_moved(game, &nav.graph, dt, &mut mover);
+        }
         // Knockbacks push their actors, and attack clips that travel carry theirs, over
         // their walks.
-        self.knock(game, phys.as_deref(), dt);
-        self.carry(game, phys.as_deref_mut(), dt);
+        {
+            let _span = info_span!("ai::knock_carry").entered();
+            self.knock(game, phys.as_deref(), dt);
+            self.carry(game, phys.as_deref_mut(), dt);
+        }
         if let Some(b) = blocks.as_deref_mut().filter(|b| b.carried.len() != self.carried.len() || !b.carried.iter().all(|id| self.carried.contains_key(id))) {
             b.carried = self.carried.keys().copied().collect();
         }
@@ -1783,9 +1830,15 @@ impl Core {
         // controller walks, and those on furniture, are kept clear of but not moved.
         let mut fixed = held.clone();
         fixed.extend(phys.as_deref().into_iter().flat_map(|p| p.npcs.keys().copied()));
-        self.ai.keep_apart(game, &nav.graph, dt, &fixed);
+        {
+            let _span = info_span!("ai::keep_apart").entered();
+            self.ai.keep_apart(game, &nav.graph, dt, &fixed);
+        }
         // Hellos to the player and random conversations.
-        self.ai.social(game, &nav.graph, dt);
+        {
+            let _span = info_span!("ai::social").entered();
+            self.ai.social(game, &nav.graph, dt);
+        }
         // No character is kept for an actor that is not on its way, nor for one that is
         // dead, restrained or out cold: the AI no longer walks it (`fnv_ai`), so its
         // character would go on at the velocity of its last step, the body drawn gliding
@@ -1825,6 +1878,8 @@ impl Core {
         for (actor, package, locked, n) in std::mem::take(&mut game.package_door_notes) {
             info!("ai [{}] {}: {} {n} doors of its cell ({})", self.clock_text, game.data.name(actor), if locked { "locks" } else { "unlocks" }, game.data.name(package));
         }
+        // The events told, the fighters' aims, and the notes (to the end).
+        let _tell_span = info_span!("ai::tell_note").entered();
         self.tell(game, world);
         // Fighters face their target, on the move as well as standing: they strafe and
         // back away instead of turning to where they go (owner 2026-10-16: NCR troopers
