@@ -62,7 +62,7 @@ use crate::PlayWorld;
 use bevy::audio::{ChannelCount, Decodable, Sample, SampleRate, Source, Volume};
 use crate::audio_out::{AddAudioSource, KeepsSpeed, SoundCategory};
 use bevy::prelude::*;
-use bevy::tasks::{futures::check_ready, AsyncComputeTaskPool, Task, TaskPool};
+use bevy::tasks::{futures::check_ready, IoTaskPool, Task, TaskPool};
 use fnv_combat::fx::{FxForms, Sound, DEFAULT_ATTENUATION_CURVE};
 use fnv_combat::rng::SplitMix;
 use fnv_sim::FormId;
@@ -766,7 +766,7 @@ fn init(mut commands: Commands, d: Res<PlayWorld>, data: Option<Res<nvf_assets::
         // otherwise go through every path of the archives in the frame).
         let wanted: HashSet<String> = sfx.forms.sounds.values().filter_map(|s| s.file.as_deref()).filter_map(|f| folder_of(&sound_path(f))).collect();
         let vfs = data.vfs.clone();
-        sfx.index = Some(AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move {
+        sfx.index = Some(IoTaskPool::get_or_init(TaskPool::default).spawn(async move {
             let _span = info_span!("sfx::folders").entered();
             folder_index(vfs.paths(|p| is_sound_file(p) && p.rfind('\\').is_some_and(|i| wanted.contains(&p[..=i]))))
         }));
@@ -899,7 +899,11 @@ pub(crate) fn prefetch(sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, path: &str, name:
         return;
     }
     let (vfs, owned) = (vfs.clone(), path.to_string());
-    let task = AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move { decode_file(&vfs, &owned) });
+    // On the I/O pool, not the compute pool, which reads cells, models and actors on its
+    // few threads [engineering choice; hypothesis: a sound asked for while a cell streams
+    // in waits behind those reads, the smoke runs of 2026-11-03 had starts up to about
+    // 100 frames late on the compute pool]. Nothing else of the game uses the I/O pool.
+    let task = IoTaskPool::get_or_init(TaskPool::default).spawn(async move { decode_file(&vfs, &owned) });
     sfx.files.insert(path.to_string(), FileState::Decoding(task, name.to_string()));
     sfx.decoding.push(path.to_string());
 }
@@ -1169,7 +1173,9 @@ fn play(
 /// Whether a script's sound `id` of `sound` was asked for before one of `stops` of that
 /// sound ([`ScriptSounds::stops`]), which then stops it before it starts.
 fn stopped_before(stops: &[(FormId, u32)], sound: FormId, id: u32) -> bool {
-    stops.iter().any(|&(s, last)| s == sound && id <= last)
+    // Ids are handed out with `wrapping_add`: `id` is at or before `last` when it is less
+    // than half the id space behind it.
+    stops.iter().any(|&(s, last)| s == sound && last.wrapping_sub(id) < 1 << 31)
 }
 
 /// Whether the listener (the player's eye) is under water: the surface of the water it
@@ -1328,7 +1334,7 @@ pub(crate) fn is_interface(edid: Option<&str>) -> bool {
 
 fn report(mut exit: MessageReader<AppExit>, sfx: Option<Res<Sfx>>) {
     if let (Some(_), Some(s)) = (exit.read().last(), sfx) {
-        if s.played + s.silent + s.failed > 0 || !s.waiting.is_empty() {
+        if s.played + s.silent + s.failed + s.waits.cancelled + s.waits.rolls_skipped > 0 || !s.waiting.is_empty() {
             info!(
                 "sfx: {} sounds played, {} too quiet or switched off, {} without a file we can play; {} silenced under water (at most {:.0} under a surface), {} 2D sounds not panned; {} not started at the voice limit, at most {} one-shots at once; {} placed by a curve of their own",
                 s.played, s.silent, s.failed, s.muted_submerged, s.deepest, s.flat_2d, s.voice_limited, s.most_voices, s.own_curve
@@ -1814,6 +1820,8 @@ mod tests {
         assert!(heard(&mut app).is_empty());
         assert_eq!(app.world().resource::<Sfx>().waits.cancelled, 3);
         assert!(stopped_before(&[(BEEP, 4)], BEEP, 4) && !stopped_before(&[(BEEP, 4)], BEEP, 5) && !stopped_before(&[(BEEP, 4)], BEEP_LOOP, 1));
+        // Across the wrap of the ids: MAX was asked before a stop at 0, 0 after a stop at MAX.
+        assert!(stopped_before(&[(BEEP, 0)], BEEP, u32::MAX) && !stopped_before(&[(BEEP, u32::MAX)], BEEP, 0));
     }
 
     #[test]
@@ -1825,7 +1833,7 @@ mod tests {
         let gate: Arc<Mutex<(bool, Option<Waker>)>> = Arc::default();
         let worker_gate = gate.clone();
         let vfs = app.world().resource::<nvf_assets::GameData>().vfs.clone();
-        let task = AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move {
+        let task = IoTaskPool::get_or_init(TaskPool::default).spawn(async move {
             std::future::poll_fn(move |cx| {
                 let mut g = worker_gate.lock().unwrap();
                 if g.0 {
