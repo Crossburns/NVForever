@@ -42,7 +42,7 @@ Constraints that decide what fits:
 |---|---|---|---|
 | Ambient occlusion (own pass from the depth prepass) | High: grounds objects, adds depth to interiors | ~1-2 ms; darkens direct light too (post-process) | **Built** (§3.1) |
 | Bevy SSAO (GTAO-like) | High | Needs MSAA off + normal prepass in every custom prepass shader | Rejected |
-| Finer, longer sun shadows (4096² maps, reach ×1.5) | Medium: sharper edges near, shadows further out | Shadow pass fill rate, 4 × 64 MB per shadowed directional light | **Built** (§3.2) |
+| Longer sun shadows (reach ×1.5; 4096² maps until #1367) | Medium: shadows further out | About 0.2-0.3 ms at Novac for the longer reach; the 4096² maps cost about 2 ms more and went | **Built** (§3.2) |
 | Contact shadows (Bevy, screen-space ray march) | Low-medium | Tried: speckled self-shadowing on near surfaces and per-frame noise without TAA | Rejected (§4) |
 | Bloom (own LDR pass, thresholded) | Medium: lamps, windows, the sun glow as in the game's own frames (world.md §6 notes the halos the renderer lacks) | ~0.5 ms at quarter size | **Built** (§3.3) |
 | Bevy bloom | Medium | Needs an HDR main view: Rgba16Float targets (twice the traffic with MSAA 4x on the 1050) and every pass reading the picture runs on another format | **Built** 2026-10-23 as the light glow, on in vanilla (§3.11; the owner's PC now has an RTX 4070) |
@@ -65,7 +65,7 @@ Constraints that decide what fits:
 
 `--graphics vanilla|enhanced` picks the look; each improvement is also a switch on the pause
 menu's settings page (category "Graphics") and can be compared alone with
-`--graphics-only <keys>`. The log says what is on: `graphics: ambient occlusion, finer, longer
+`--graphics-only <keys>`. The log says what is on: `graphics: ambient occlusion, longer
 shadows, bloom, sharpening, 16x anisotropic filtering, sun shafts, screen-space water
 reflections` (or `graphics: vanilla (no engine-level improvements)`), again whenever a switch
 changes. Anti-aliasing (`anti-aliasing`: multisampling off/2x/4x/8x, FXAA, SMAA or TAA) and
@@ -105,9 +105,29 @@ Known limits: it darkens sunlit creases too (a post-process cannot tell ambient 
 light); water is not in the depth prepass, so the lake bed's occlusion shows faintly through
 the water surface; the first-person arms take a little occlusion from their own folds.
 
-### 3.2 Finer, longer sun shadows (`fine-shadows`)
+### 3.2 Longer sun shadows (`fine-shadows`)
 
-`DirectionalLightShadowMap` 4096² instead of 2048², and the last cascade at 1.5 ×
+**Since 2026-11-03 (#1367) the maps stay 2048²**; the switch keeps only the longer reach,
+and the settings page calls it "Longer sun shadows" (the INI key stays `fine-shadows`).
+The owner chose the frame rate: "we're going for the smaller one i want as much frames we can
+get". [observed 2026-11-03, main 650911ee, i9-14900K, RTX 4070, 1920 × 1080,
+`--graphics enhanced`, `--play` standing still, `NVFOREVER_HOME` without stored settings;
+one run per place cycling the three sets every 10 s (`--graphics-cycle`), the first loop left
+out, three or four periods each]
+
+| Place | 4096², reach 12,000 (before) | 2048², reach 12,000 (now) | 2048², reach 8,000 (switch off) |
+|---|---|---|---|
+| Novac 07:00 | 11.30 ms | 9.02 ms | 8.70 ms |
+| Novac 12:00 | 10.88 ms | 8.75 ms | 8.52 ms |
+| Goodsprings 12:00 | 7.60 ms | 6.94 ms | 6.77 ms |
+| Strip 22:00 (moon shadows, always 2048²) | 6.14 ms | 6.10 ms | 6.11 ms |
+
+The shadow passes' GPU time at Novac 12:00 went from 1.82 to 0.87 ms with the smaller maps;
+the rest of the difference was the render thread waiting for the GPU. Screenshots from the
+free camera close to the ground (Goodsprings 12:00, Novac 07:00, two headings each, pitch
+−35°) show the same shadows with slightly softer edges at 2048².
+
+Before #1367: `DirectionalLightShadowMap` 4096² instead of 2048², and the last cascade at 1.5 ×
 `--shadow-distance` (12,000 units by default since #254), the first cascade bound unchanged (a twelfth of
 `--shadow-distance`): the nearest shadows get twice the texels per unit, the far cascades about
 1.3 times, and shadows reach half as far again. Before #254 the arms' shade light copied the
@@ -119,14 +139,12 @@ Since #254 it has one cascade of its own (256 units); the total has not been mea
 and it casts one cascade out to 3,000 units (`MOON_SHADOW_DISTANCE`) in 2048² maps whatever
 this switch says; while the light is under a tenth of its strength in its fade at the
 horizon (`SHADOW_FADED`), no shadow maps are drawn. [observed 2026-11-02, i9-14900K, RTX 4070,
-1920 × 1080, 8x MSAA, enhanced] With the day's 3 cascades at 4096² the moon's shadows cost
+1920 × 1080, 8x MSAA, enhanced] With the day's 3 cascades at 4096² (before #1367) the moon's shadows cost
 about 2.5 ms on the Strip at 22:00 (9.2 ms against 6.7 ms without sun shadows).
 In interiors the sun is the cell's directional light (XCLL) and the clock stands still, so
 it always casts the day's shadows there. The map size (`DirectionalLightShadowMap`) is one
 setting for every directional light, so the first-person arms' shade light (`player_body.rs`
-`shade_light`, its own 256-unit cascade) also drops to 2048² by night and at the horizon
-[hypothesis, not checked by eye: the arms' cascade is small, so 2048² still gives it
-fine texels].
+`shade_light`, its own 256-unit cascade) has 2048² maps too.
 The phase is applied again when a new sun is spawned (a worldspace switch) and when
 something else puts cascades on the sun (`sky::set_shadows`, the settings page).
 
@@ -432,7 +450,8 @@ casters, as it did. Changed [engineering choices]:
   (`C:\fnv-private\references\shadows_sun\shadow_limits_before_after.png`); at dusk the long
   shadows of distant rocks and buildings end nearer. The original casts no sun shadows from
   the world at all (world.md §6), so this is no further from its look.
-- Finer shadows (§3.2) keep their 4096² maps and reach 1.5 × the distance, now 12,000.
+- Finer shadows (§3.2) keep their 4096² maps and reach 1.5 × the distance, now 12,000
+  (the 4096² maps went in #1367; the longer reach stays).
 
 Not changed: the water's reflection camera, while active, gets its own cascades of the sun (Bevy
 builds them for every active camera, with no way to leave one out), doubling the shadow passes

@@ -550,9 +550,9 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16,19.5:20
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--graphics", "enhanced"]
 run_seconds = 24
 order = [[
-  "graphics: ambient occlusion, finer, longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections",
-  { re = 'graphics: finer, longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
-  { re = 'graphics: finer, longer shadows, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
+  "graphics: ambient occlusion, longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections",
+  { re = 'graphics: longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
+  { re = 'graphics: longer shadows, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
   { re = 'graphics: light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
   { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections$' },
   { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, temporal anti-aliasing, sun shafts, screen-space water reflections$' },
