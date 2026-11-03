@@ -574,6 +574,50 @@ No pipeline or shader error was logged by any of the three builds.
 Not measured: the owner's GTX 1050 (Bevy decides bindless per device; without it the plain
 bindings are used, as before this change), and other places than Goodsprings.
 
+### 5.7 Casters over the slice, not the square (2026-11-03, #1378)
+
+The sun's shadows cost more at a low sun: at Novac the frame was 11.4 ms at 07:00 against 10.7
+at noon, with the shadow passes' GPU time at 2.17 against 1.84 ms. Counting the casters each cascade
+drew showed why [observed: a temporary probe of `CascadesVisibleEntities`]:
+
+- Bevy fits each cascade to the light-space box around its slice of the camera's view and
+  draws every caster in that box's square, plus everything between the box and the sun
+  (`check_dir_light_mesh_visibility` skips the near plane). At 07:00 the sun stands 15°
+  above the horizon, so more ground lies up-sun of each slice. That was 32, 201 and 13
+  casters in the three cascades that lay wholly toward the sun past the near plane, against
+  none at noon.
+- Those are not waste. A test of whether any ray from the lowest ground could pass through
+  them, given their height, removed 10 of them. They are the long morning shadows.
+- The waste is the square. Seen from the sun, a slice of a perspective view is a trapezoid,
+  and the square around it holds about as many casters again that shade nothing in the slice.
+  This holds at every hour.
+
+Changed (`sky.rs` `sun_casters_over_slice`, after Bevy's light visibility): each cascade
+keeps only the casters whose light-space box overlaps the outline of its slice seen from
+the sun, plus 8 shadow-map texels for the filter's reach. A cascade's receivers all lie in its
+slice (the shader picks a cascade by view depth, and the overlap with the next cascade is in
+both slices), and a caster can only shade what lies under it seen from the sun.
+
+| Novac, casters per cascade | 07:00 | 12:00 |
+|---|---|---|
+| before | 154, 1,438, 3,248 | 120, 1,283, 2,928 |
+| over the slice | 80, 761, 1,767 | 65, 480, 1,549 |
+
+[observed 2026-11-03] Release builds, i9-14900K, RTX 4070, 1920 × 1080, `--graphics enhanced`,
+`--play` standing still, `NVFOREVER_HOME` without stored settings. Each run is 45 s and logs its
+frame time every 10 s; main and this change were interleaved over 3 rounds. One main run at 07:00
+hit a throttled window at 16.67 ms and is left out.
+
+| Novac | frame, main | frame, over the slice | shadow passes GPU, main / over the slice |
+|---|---|---|---|
+| 12:00 | 10.70-10.76 ms | 9.41-9.49 ms | 1.84 / 1.24 ms |
+| 07:00 | 11.39-11.47 ms | 9.75-9.80 ms | 2.17 / 1.39 ms |
+
+So 07:00 is now 0.33 ms from noon, against about 0.7 before. Screenshots of both builds at
+07:00 and noon, from the free camera in four headings, differ only in wind-blown grass. The
+casters dropped from the passes are still extracted for the frame (they stay visible to the
+light), so the saving is in the passes, not in extraction.
+
 ## 6. Test aids for measuring
 
 `--log-frame-times <seconds>` logs the mean and slowest frame time and the GPU time of the
