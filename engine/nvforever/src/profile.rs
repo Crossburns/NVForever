@@ -26,7 +26,8 @@
 //! transform changed. And from the render world `profile batches: <phase> <v> views,
 //! <m> multi-drawn sets, <b> batched bins, <u> unbatched bins; …` per binned phase,
 //! summed over its views: each multi-drawn set is one indirect draw, each other bin one
-//! draw, and the per-view preparing scales with them (graphics-enhanced.md §5.5).
+//! draw, and the per-view preparing scales with them (graphics-enhanced.md §5.5); then
+//! `transparent <v> views, <n> sorted draws`, the blended draws, one each.
 //!
 //! `profile outfits:` counts successful NPC spawns by appearance source and committed
 //! `follow_inventory` replacements per window, with their total synchronous time in ms.
@@ -194,38 +195,59 @@ pub fn layer() -> Option<BoxedLayer> {
 
 struct SpanTimes;
 
-/// A span's key (its name, with the `name` field of Bevy's system spans) and when it was
-/// last entered.
+/// A span's key (its name, with the `name` field of Bevy's system spans, or the `system`
+/// field of the render app's `finish_command_buffer` spans: which render system recorded the
+/// encoder being finished) and when it was last entered.
 struct Timing {
     key: String,
     entered: Option<Instant>,
 }
 
-/// Reads the `name` field of a span.
-struct NameField(Option<String>);
+/// Reads the `name` and `system` fields of a span.
+#[derive(Default)]
+struct NameField {
+    name: Option<String>,
+    system: Option<String>,
+}
+
+impl NameField {
+    fn slot(&mut self, field: &Field) -> Option<&mut Option<String>> {
+        match field.name() {
+            "name" => Some(&mut self.name),
+            "system" => Some(&mut self.system),
+            _ => None,
+        }
+    }
+}
 
 impl Visit for NameField {
     fn record_str(&mut self, field: &Field, value: &str) {
-        if field.name() == "name" {
-            self.0 = Some(value.to_string());
+        if let Some(slot) = self.slot(field) {
+            *slot = Some(value.to_string());
         }
     }
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "name" && self.0.is_none() {
-            self.0 = Some(format!("{value:?}").trim_matches('"').to_string());
+        if let Some(slot) = self.slot(field).filter(|s| s.is_none()) {
+            *slot = Some(format!("{value:?}").trim_matches('"').to_string());
         }
+    }
+}
+
+/// The key a span's time is summed under: a system span by its system's short name, a
+/// span with a `system` field (`finish_command_buffer`) by its own name and that system's.
+fn span_key(base: &str, fields: NameField) -> String {
+    match fields {
+        NameField { name: Some(n), .. } => short_name(&n),
+        NameField { system: Some(s), .. } => format!("{base}[{}]", short_name(&s)),
+        _ => base.to_string(),
     }
 }
 
 impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for SpanTimes {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        let mut name = NameField(None);
-        attrs.record(&mut name);
-        let base = attrs.metadata().name();
-        let key = match name.0 {
-            Some(n) => short_name(&n),
-            None => base.to_string(),
-        };
+        let mut fields = NameField::default();
+        attrs.record(&mut fields);
+        let key = span_key(attrs.metadata().name(), fields);
         if let Some(span) = ctx.span(id) {
             span.extensions_mut().insert(Timing { key, entered: None });
         }
@@ -292,7 +314,7 @@ impl Plugin for ProfilePlugin {
         app.insert_resource(ProfileWindow { every, ..default() }).init_resource::<AssetChanges>().add_systems(Last, (count_asset_changes, report).chain());
         if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
             render.add_systems(bevy::render::Render, pipeline_counts.in_set(bevy::render::RenderSystems::Render));
-            render.add_systems(bevy::render::Render, (move |mut last: Local<Option<Instant>>, shadow: Res<ViewBinnedRenderPhases<bevy::pbr::Shadow>>, opaque: Res<ViewBinnedRenderPhases<Opaque3d>>, mask: Res<ViewBinnedRenderPhases<AlphaMask3d>>, prepass: Res<ViewBinnedRenderPhases<Opaque3dPrepass>>, mask_prepass: Res<ViewBinnedRenderPhases<AlphaMask3dPrepass>>| {
+            render.add_systems(bevy::render::Render, (move |mut last: Local<Option<Instant>>, shadow: Res<ViewBinnedRenderPhases<bevy::pbr::Shadow>>, opaque: Res<ViewBinnedRenderPhases<Opaque3d>>, mask: Res<ViewBinnedRenderPhases<AlphaMask3d>>, prepass: Res<ViewBinnedRenderPhases<Opaque3dPrepass>>, mask_prepass: Res<ViewBinnedRenderPhases<AlphaMask3dPrepass>>, transparent: Res<bevy::render::render_phase::ViewSortedRenderPhases<bevy::core_pipeline::core_3d::Transparent3d>>| {
                 // The render world has no clock of its own: real time.
                 let now = Instant::now();
                 let at = *last.get_or_insert(now);
@@ -301,12 +323,14 @@ impl Plugin for ProfilePlugin {
                 }
                 *last = Some(now);
                 info!(
-                    "profile batches: {}; {}; {}; {}; {}",
+                    "profile batches: {}; {}; {}; {}; {}; transparent {} views, {} sorted draws",
                     batches("shadow", &shadow),
                     batches("opaque", &opaque),
                     batches("alpha-mask", &mask),
                     batches("opaque prepass", &prepass),
-                    batches("alpha-mask prepass", &mask_prepass)
+                    batches("alpha-mask prepass", &mask_prepass),
+                    transparent.len(),
+                    transparent.values().map(|p| p.items.len()).sum::<usize>()
                 );
             })
             .in_set(bevy::render::RenderSystems::Render));
@@ -728,6 +752,14 @@ mod tests {
         assert_eq!(short_name("nvforever::residents::drive"), "residents::drive");
         assert_eq!(short_name("drive"), "drive");
         assert_eq!(short_name("bevy_ecs::event::update<nvf_play::Foo>"), "event::update<…>");
+    }
+
+    #[test]
+    fn finished_encoders_are_keyed_by_the_system_that_recorded_them() {
+        let f = |name: Option<&str>, system: Option<&str>| NameField { name: name.map(Into::into), system: system.map(Into::into) };
+        assert_eq!(span_key("system", f(Some("nvforever::residents::drive"), None)), "residents::drive");
+        assert_eq!(span_key("finish_command_buffer", f(None, Some("bevy_pbr::ssao::ssao"))), "finish_command_buffer[ssao::ssao]");
+        assert_eq!(span_key("queue_submit", f(None, None)), "queue_submit");
     }
 
     #[test]
