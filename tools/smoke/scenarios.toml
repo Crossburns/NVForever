@@ -610,7 +610,7 @@ order = [[
   "settings: volume-master 80%",
   "settings: volume-footstep 25%",
   "settings: volume-voice 50%",
-  { re = 'volumes master 80%, music 100%, footstep 25%, voice 50%, effects 100%, radio 100%$' },
+  { re = 'volumes master 80%, music 60%, footstep 25%, voice 50%, effects 100%, radio 50%$' },
 ]]
 expect = [
   { re = 'audio categories: music (?P<n>[\d.]+) s', range = [3, 1e9], label = "the music plays into the Music category" },
@@ -1808,7 +1808,7 @@ expect = [
   { re = 'radio: RadioNewVegasTA says RNVNews', label = "and reads the news" },
   { re = 'the Pip-Boy tuned to RadioNewVegasTA playing sound\\voice\\', min = 5, label = "the Pip-Boy plays his lines" },
   { re = 'the Pip-Boy tuned to RadioNewVegasTA playing sound\\songs', count = 0, label = "and no song before it is turned off (the programme runs on after): the Radio mixer holds only his speech" },
-  { re = 'volumes master 100%, music 100%, footstep 100%, voice 0%, effects 100%, radio 100%$' },
+  { re = 'volumes master 100%, music 60%, footstep 50%, voice 0%, effects 100%, radio 50%$' },
   { re = 'audio categories after volumes: .*radio (?P<n>[\d.]+) s audible', range = [25, 1e9], label = "his speech is heard with Voice at 0 (#1077)" },
 ]
 
@@ -1824,7 +1824,7 @@ expect = [
   "settings: volume-radio 0%",
   "pipboy radio: on, tuned to RadioNewVegasTA",
   { re = 'radio: RadioNewVegasTA says RNVNews', label = "Mr. New Vegas reads the news" },
-  { re = 'volumes master 100%, music 100%, footstep 100%, voice 100%, effects 100%, radio 0%$' },
+  { re = 'volumes master 100%, music 60%, footstep 50%, voice 60%, effects 100%, radio 0%$' },
   { re = 'audio categories: .*radio (?P<n>[\d.]+) s heard', range = [25, 1e9], label = "his speech plays on the Radio mixer" },
   { re = 'audio categories after volumes: .*radio (?P<n>[\d.]+) s audible', range = [0, 0], label = "and is silent with Radio at 0" },
 ]
