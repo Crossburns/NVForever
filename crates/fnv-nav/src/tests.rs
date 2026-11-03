@@ -353,6 +353,7 @@ fn a_walker_stops_and_faces_a_load_door_before_going_through() {
                 assert_eq!(stood_at, Some(feet));
                 let want = heading_of([door[0] - feet[0], door[1] - feet[1]]);
                 assert!(heading_delta(heading, want).abs() < 1e-3, "faced {heading}, door at {want}");
+                assert!(w.door_off.is_some_and(|o| o < 1e-3));
                 assert_eq!(w.space, inside);
                 return;
             }

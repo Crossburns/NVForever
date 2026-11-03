@@ -853,7 +853,11 @@ areas = ["nav"]
 paths = ["crates/fnv-nav/", "engine/nvforever/src/nav.rs", "engine/nvforever/src/locomotion.rs", "engine/nvf-play/src/doors.rs"]
 args = ["--cell", "Goodsprings", "--npc-travel", "DocMitchellREF=GSChetRef", "--npc-travel", "SunnyRef=EasyPeteRef", "--follow-npc"]
 run_seconds = 105
-expect = ["nav summary: 2 of 2 travellers arrived"]
+expect = [
+  "nav summary: 2 of 2 travellers arrived",
+  { re = 'nav: \w+ used door \w+ into \w+ after [\d.]+s, facing it \(0 degrees off\)', min = 3, label = "travellers stop and face a load door before going through it (#1472)" },
+  { re = 'used door \w+ into \w+ after [\d.]+s, facing it \([1-9]\d* degrees off\)', count = 0, label = "none goes through a load door facing away from it" },
+]
 
 [[scenario]]
 name = "ai-packages"

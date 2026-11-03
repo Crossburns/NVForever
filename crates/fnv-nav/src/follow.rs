@@ -430,6 +430,9 @@ pub struct Walker {
     /// Ledges jumped (taken off over) and landings, so far.
     pub flights: u32,
     pub landings: u32,
+    /// How far its heading was off the door (radians) when it last went through a load
+    /// door whose place is known: 0 once it has turned to it ([`Walker::face_door`]).
+    pub door_off: Option<f32>,
 }
 
 /// How far from a ledge link's take-off point the feet may be for the flight to leave
@@ -529,6 +532,7 @@ impl Walker {
             air: None,
             flights: 0,
             landings: 0,
+            door_off: None,
         }
     }
 
@@ -645,6 +649,7 @@ impl Walker {
                         self.turning = false;
                         return WalkEvent::Turned;
                     }
+                    self.door_off = d.door_at.map(|at| heading_delta(self.heading, heading_of([at[0] - self.feet[0], at[1] - self.feet[1]])).abs());
                     f.door_used();
                     self.space = f.space().unwrap_or(self.space);
                     self.feet = d.arrival;
