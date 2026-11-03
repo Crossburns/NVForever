@@ -335,7 +335,8 @@ Each scenario is one launch of a `profile` build through tools/stress's launcher
 Each launch runs at 1920 × 1080 with `--graphics enhanced` and vsync off, and logs the span
 profile and stress samples every 5 s. The first 15 s after the first frame-time line are
 left out. `NVF_PLAY_TEST_PROFILE_HITCH_MS` (new, `profile.rs`) lists every frame over the
-scenario's `slow_ms` (16 ms; battles 40 or 100) with its spans. The report subtracts each
+scenario's `slow_ms` (16 ms; battles 40 or 100) with its 25 heaviest spans
+(`NVF_PLAY_TEST_PROFILE_HITCH_SPANS=<n>` lists more). The report subtracts each
 span's mean over every frame from its mean in the slow frames, which names what makes the
 slow frames slow.
 

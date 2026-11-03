@@ -18,7 +18,8 @@
 //! next; `NVF_PLAY_TEST_PROFILE_HITCH_MS=<ms>` sets another threshold, to see what the
 //! occasional 20 ms frames hold) also logs `profile hitch: <ms> ms; spans ms: <span> <ms> (<entries>), …`: the
 //! spans that ended in it, over every thread, so a single stall is not lost in a window's
-//! means.
+//! means. A line lists the [`LISTED_HITCH`] heaviest; `NVF_PLAY_TEST_PROFILE_HITCH_SPANS=<n>`
+//! lists more, for the small spans inside a system (`tiles::write::<part>`, issue #1457).
 //!
 //! Each window also logs `profile scene: <n> mesh entities (<v> visible, <c> moved this
 //! frame), <m> distinct meshes, <u> distinct materials in use (<a> material assets)`: what
@@ -76,6 +77,12 @@ fn hitch_ms() -> f64 {
 
 /// Spans listed in a hitch's line.
 const LISTED_HITCH: usize = 25;
+
+/// How many spans a hitch's line lists: [`LISTED_HITCH`] or `NVF_PLAY_TEST_PROFILE_HITCH_SPANS`.
+fn listed_hitch() -> usize {
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| std::env::var("NVF_PLAY_TEST_PROFILE_HITCH_SPANS").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|n| *n > 0).unwrap_or(LISTED_HITCH))
+}
 
 /// The window in seconds, when `NVF_PLAY_TEST_PROFILE` asks for a profile.
 pub fn interval() -> Option<f32> {
@@ -693,7 +700,7 @@ fn line(secs: f32, frames: u32, frame_secs: f32, totals: &HashMap<String, (f64, 
 fn hitch_line(ms: f64, frame: &HashMap<String, (f64, u64)>) -> String {
     let mut spans: Vec<(&String, &(f64, u64))> = frame.iter().collect();
     spans.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
-    let listed: Vec<String> = spans.iter().take(LISTED_HITCH).map(|(k, (s, n))| format!("{k} {:.1} ({n})", s * 1000.0)).collect();
+    let listed: Vec<String> = spans.iter().take(listed_hitch()).map(|(k, (s, n))| format!("{k} {:.1} ({n})", s * 1000.0)).collect();
     if listed.is_empty() {
         format!("profile hitch: {ms:.0} ms; no spans seen (build with --features profile)")
     } else {

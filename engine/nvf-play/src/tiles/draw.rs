@@ -131,6 +131,9 @@ impl FontKit<'_> {
     fn load(&mut self, font: f64) {
         let n = font_number(font);
         if !self.fonts.faces.contains_key(&n) {
+            // Only when a face is read: entries in a `profile hitch` line are the fonts read
+            // in that frame (a tile-drawn menu's own first use in `draw` counts here too).
+            let _span = info_span!("tiles::write::font_load").entered();
             let bc = bc_supported(self.formats.as_deref());
             let f = face(FONT_FILES[n as usize - 1], plain_font(31.0, 15.0), self.data.as_deref(), &mut self.images, bc);
             self.fonts.faces.insert(n, f);
@@ -140,6 +143,11 @@ impl FontKit<'_> {
 
     fn face(&self, font: f64) -> Option<&Face> {
         self.fonts.faces.get(&font_number(font))
+    }
+
+    /// The fonts read so far (`NVF_PLAY_TEST_TILE_COUNTS`).
+    pub(crate) fn faces_read(&self) -> usize {
+        self.fonts.faces.len()
     }
 
     /// The hand-built HUD's corner label places (`crate::hud::label_places`) in font 7, the
