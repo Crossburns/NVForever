@@ -536,6 +536,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "hitvol-standalone"
+source = "docs/spec-notes/physics.md §5.1 (issue #1436, PR #1437): actor hit volumes are colliders of no body by default, placed at the next query refresh or step; NVF_PHYS_HITVOL_ATTACHED switches back. The startup line says which is in use and the phys-refresh count line (NVF_PLAY_TEST_PROFILE_COUNTS) carries the setting and the capsules written or skipped"
+areas = ["physics", "profiling", "actors"]
+paths = ["crates/fnv-phys/src/actors.rs", "crates/fnv-phys/src/world.rs", "engine/nvf-play/src/phys.rs", "engine/nvforever/src/profile.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_PROFILE_COUNTS = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "14"]
+run_seconds = 25
+expect = [
+  { re = 'actor hit volumes: standalone colliders', min = 1, label = "hit volumes are standalone colliders by default" },
+  { re = 'actor hit volumes: attached to their bodies', count = 0, label = "and not attached without NVF_PHYS_HITVOL_ATTACHED" },
+  { re = 'phys-refresh: .* hitvol_written=(?P<n>\d+) hitvol_skipped=\d+ hitvol_standalone=1$', range = [1, 100000000], label = "the count line: Goodsprings' drawn people get capsules written, setting 1" },
+  { re = 'ai-counts: .* separation_passes=(?P<n>\d+) ', range = [1, 100000000], label = "the AI count line counts the residents' separation passes (fnv_ai's probe switched on by the aid)" },
+]
+
+[[scenario]]
 name = "shadow-probe"
 source = "engine/nvforever/src/shadow_probe.rs (playtest list 4 item 5, the first-person shadow flicker; found 2026-10-26): the debug probe NVF_PLAY_DEBUG_SHADOWS runs and finds no stretched skin, lost joint, wrong skin slot or moved mesh outside Doc Mitchell's house in first person with a weapon out, the hidden third-person body stays body-sized, and switching view four times leaves no two render views with one key (player_body.rs shade_light)"
 areas = ["renderer", "player-body"]
@@ -7790,7 +7805,7 @@ env = { NVFOREVER_HOME = "controls-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 12
 expect = [
-  { re = 'controls: 65 of 65 line\(s\) read from .*NVForever\.ini, 3 changed: Activate E -> F, Jump Space -> J, Toggle POV F, Middle Mouse -> E, Middle Mouse; input device Keyboard and Mouse', label = "the stored keys are bound at the start (the INI also lists the input device and the controller's buttons)" },
+  { re = 'controls: 66 of 66 line\(s\) read from .*NVForever\.ini, 3 changed: Activate E -> F, Jump Space -> J, Toggle POV F, Middle Mouse -> E, Middle Mouse; input device Keyboard and Mouse', label = "the stored keys are bound at the start (the INI also lists the input device and the controller's buttons)" },
 ]
 
 [[scenario]]
@@ -7833,7 +7848,34 @@ env = { NVFOREVER_HOME = "controller-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 12
 expect = [
-  { re = 'controls: 65 of 65 line\(s\) read from .*NVForever\.ini, 4 changed: Input Device Controller, \[Controller\] Jump Y -> RB, \[Controller\] Vats RB -> Y, \[Controller\] Rumble 0; input device Controller', label = "the stored device, buttons and Rumble off are taken at the start" },
+  { re = 'controls: 66 of 66 line\(s\) read from .*NVForever\.ini, 4 changed: Input Device Controller, \[Controller\] Jump Y -> RB, \[Controller\] Vats RB -> Y, \[Controller\] Rumble 0; input device Controller', label = "the stored device, buttons and Rumble off are taken at the start" },
+]
+
+[[scenario]]
+name = "look-sensitivity-write"
+source = "owner 2026-11-03 (#1451): Invert Y and a sensitivity slider (as the sound sliders) on the settings page's Controls tab, Mouse Sensitivity with keyboard and mouse and Stick Sensitivity with a controller, kept apart; NVForever's own range (25%-300% of the game's); the first half of a round trip (look-sensitivity-read starts in the same home), run them together"
+areas = ["main-menu", "save"]
+paths = ["engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/pause.rs"]
+env = { NVFOREVER_HOME = "look-sensitivity-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:17", NVF_PLAY_TEST_SETTINGS = "10.5:controls,11:device:Keyboard and Mouse,11.5:invert:0,12:sensitivity:100,12.5:invert:1,13:sensitivity:150,14:device:Controller,14.5:sensitivity:100,15:sensitivity:50" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 19
+expect = [
+  { text = "controls: invert Y on", label = "the Invert Y row turns the vertical look over" },
+  { text = "controls: mouse sensitivity 150% (0.0030)", label = "the Mouse Sensitivity slider sets the mouse's as a percentage of the game's" },
+  { text = "controls: stick sensitivity 50%", label = "with a controller the slider is Stick Sensitivity, set apart from the mouse's" },
+]
+order = [["controls: invert Y off", "controls: invert Y on", "controls: mouse sensitivity 150%", "controls: input device Controller", "controls: stick sensitivity 50%"]]
+
+[[scenario]]
+name = "look-sensitivity-read"
+source = "owner 2026-11-03 (#1451): the second half of the look round trip: a new start in look-sensitivity-write's home takes Invert Y, the mouse's and the stick's sensitivity it stored from NVForever.ini"
+areas = ["main-menu", "save"]
+paths = ["engine/nvf-play/src/bindings.rs"]
+env = { NVFOREVER_HOME = "look-sensitivity-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 12
+expect = [
+  { re = 'controls: 66 of 66 line\(s\) read from .*NVForever\.ini, 4 changed: Invert Y 1, Mouse Sensitivity 0\.003, Input Device Controller, \[Controller\] Stick Sensitivity 0\.5; input device Controller', label = "the stored Invert Y and the two sensitivities are taken at the start" },
 ]
 
 [[scenario]]
@@ -18210,6 +18252,20 @@ expect = [
   { re = 'collision of 0xFF000000 built again where a script moved it', label = "the move rebuilds its collision at the new place" },
   { re = 'console: GetPos on 0xFF000000 >> -683\d\d\.', count = 1, label = "before the move it lies at the player" },
   { re = 'console: GetPos on 0xFF000000 >> -6815\d\.', min = 2, label = "the move sticks: x reads the new value half a second and two seconds later (it read the old x again before #1311)" },
+]
+
+[[scenario]]
+name = "hair-solid-chet"
+source = "issue #1454: Chet's hair (hairwavy.nif) drew as a see-through shell around his head against the general store's window; its outer layer is mapped onto the soft edge of the texture's alpha. Hair models are now cut-outs (nif_spawn::hair_model_cut_out, nif.md §6 'Hair models are cut-outs'); beards stay blended. The owner's frame of the original (2026-11-03) shows a solid cap and a thin beard"
+note = "Chet is moved in front of the south window (0x001057F3), the player stands facing him and talks to him; frame hair_solid_chet.png in target/smoke shows his head against the window: the hair must be solid to its edge, with no see-through band, and his beard thin"
+areas = ["actors", "render"]
+paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/actors.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "5:moveto:GSChetRef:0x001057F3:0:75:-38", NVF_PLAY_TEST_GOTO = "6:-575:560:545", NVF_PLAY_TEST_TALK = "8:GSChetRef=leave", NVF_PLAY_TEST_TALK_DELAY = "6", NVF_PLAY_TEST_SHOTS = "11:hair_solid_chet.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-sound", "--no-music", "--hour", "8.5"]
+run_seconds = 16
+expect = [
+  { re = 'ai \[\d\d:\d\d\] GSChetRef: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Chet stands in front of the window" },
+  { re = 'dialogue: conversation with GSChetRef started', label = "the dialogue camera frames his head" },
 ]
 
 [[scenario]]

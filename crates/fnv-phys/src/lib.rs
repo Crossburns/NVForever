@@ -53,6 +53,6 @@ pub use placed::{ref_collision, ref_collision_with, ModelCollision, RefCollision
 pub use swim::Stroke;
 pub use water::{PlacedWater, WaterArea};
 pub use world::{
-    AddReport, BodyState, Filter, Key, Owner, PhysParams, PhysWorld, PreparedRef, PreparedTerrain, Queries, RayHit, RefPose, Stats, Stepper,
-    SweepHit, TERRAIN_SHELL,
+    AddReport, BodyState, DirtyBy, Filter, Key, Owner, PhysParams, PhysWorld, PreparedRef, PreparedTerrain, Queries, QueryConsumer, RayHit,
+    RefPose, RefreshStats, Stats, Stepper, SweepHit, TERRAIN_SHELL,
 };
