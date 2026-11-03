@@ -18278,9 +18278,15 @@ commands = [["ext", "script-runner", "{data}", "{masters}", "--schema", "schemas
 expect = [
   { json = "files", schema = "fnv.ext.script_runner/1", equals = 3, label = "the folder's three files (the registered one is in a subfolder)" },
   { json = "compiled", schema = "fnv.ext.script_runner/1", equals = 2 },
-  { json = "ran.restart.?file=gr_nvfsmoke.txt.ok", schema = "fnv.ext.script_runner/1", equals = true, label = "the gr_ file ran at the restart" },
-  { json = "ran.restart.?file=gr_nvfsmoke_broken.txt.ok", schema = "fnv.ext.script_runner/1", equals = false, label = "the broken file is skipped" },
-  { json = "ran.new_game.?file=ln_nvfsmoke.txt.ok", schema = "fnv.ext.script_runner/1", equals = true, label = "the ln_ file ran at the new game" },
+  # By index: a `?file=` filter cannot hold the name's dot. The restart's files in the
+  # order of their names.
+  { json = "ran.restart.0.file", schema = "fnv.ext.script_runner/1", equals = "gr_nvfsmoke.txt" },
+  { json = "ran.restart.0.ok", schema = "fnv.ext.script_runner/1", equals = true, label = "the gr_ file ran at the restart" },
+  { json = "ran.restart.1.file", schema = "fnv.ext.script_runner/1", equals = "gr_nvfsmoke_broken.txt" },
+  { json = "ran.restart.1.ok", schema = "fnv.ext.script_runner/1", equals = false, label = "the broken file is skipped" },
+  { json = "ran.restart.#", schema = "fnv.ext.script_runner/1", equals = 2, label = "no other file runs at the restart" },
+  { json = "ran.new_game.0.file", schema = "fnv.ext.script_runner/1", equals = "ln_nvfsmoke.txt" },
+  { json = "ran.new_game.0.ok", schema = "fnv.ext.script_runner/1", equals = true, label = "the ln_ file ran at the new game" },
 ]
 
 [[scenario]]

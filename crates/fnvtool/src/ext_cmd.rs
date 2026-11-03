@@ -352,7 +352,7 @@ fn script_runner(lo: &LoadOrderArgs, schema: &Path, functions: Option<PathBuf>, 
     let compiled = rows(g.compile_script_runner());
     let failed = compiled.iter().filter(|r| r["ok"] == false).count();
     let mut doc = json!({
-        "format": "fnv.ext.script_runner/1",
+        "schema": "fnv.ext.script_runner/1",
         "files": compiled.len(),
         "compiled": compiled.len() - failed,
         "failed": failed,
