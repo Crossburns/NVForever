@@ -15,7 +15,9 @@
 //!   Other encodings are reported once and not played.
 //! - **Off the main thread** (#1428) [engineering choice]: a file is read and decoded on a
 //!   worker thread the first time it is asked for ([`FileState`]); the request waits for
-//!   it ([`Waiting`]) and starts once it is ready, with the listener as it is then. A
+//!   it ([`Waiting`]) and starts once it is ready, with the listener as it is then; a
+//!   one-shot whose file comes in more than [`MAX_ONE_SHOT_WAIT`] after it was asked for
+//!   is dropped instead. A
 //!   folder's files come from an index of the folders the SOUN records name, listed on
 //!   a worker at the start; a request for a folder before it is in waits for it. Before, the first playing of a file read and decoded it in
 //!   the frame (9-15 ms in the slow frames of the profiling campaign's exterior runs).
@@ -671,6 +673,20 @@ struct Waiting {
     wanted: Wanted,
 }
 
+/// The longest a one-shot ([`Wanted::Once`], or a script's sound without the Loop flag)
+/// waits for its file: one decided later than this after it joined the waiting list is
+/// dropped, not started, so a footstep or a shot held up behind a busy pool is not heard
+/// long after its moment; a script is answered as for a sound that played and ended (0
+/// seconds), so nothing waits on it. Loops are started however late [engineering choice:
+/// about nine frames at 60 Hz; the original's behaviour with a sound not yet in memory is
+/// not known, docs/spec-notes/audio.md §7].
+pub const MAX_ONE_SHOT_WAIT: Duration = Duration::from_millis(150);
+
+/// Whether a request is a one-shot that [`MAX_ONE_SHOT_WAIT`] holds to.
+fn wait_limited(wanted: Wanted) -> bool {
+    matches!(wanted, Wanted::Once(_) | Wanted::Script { looping: false, .. })
+}
+
 /// Drop the waiting requests `drop` picks; how many were dropped.
 fn cancel(waiting: &mut Vec<Waiting>, drop: impl Fn(&Waiting) -> bool) -> u32 {
     let before = waiting.len();
@@ -702,6 +718,8 @@ pub struct Waits {
     /// those whose file turned out not to play.
     pub cancelled: u32,
     pub broken: u32,
+    /// One-shots dropped when their file came in after more than [`MAX_ONE_SHOT_WAIT`].
+    pub too_late: u32,
     /// Play At Random rolls skipped because the file was still being read.
     pub rolls_skipped: u32,
     /// Requests started by the second chance late in the frame ([`late_start`]), those
@@ -1195,6 +1213,13 @@ fn start_decided(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, heard: &
     };
     for mut w in decided {
         let waited = frame - w.frame;
+        if wait_limited(w.wanted) && w.asked.elapsed() > MAX_ONE_SHOT_WAIT {
+            sfx.waits.too_late += 1;
+            if let Wanted::Script { id, .. } = w.wanted {
+                heard.push((id, Some(0.0)));
+            }
+            continue;
+        }
         let started = match w.path.take() {
             None => {
                 // The folder index is in: the folder's file is picked now.
@@ -1434,7 +1459,7 @@ pub(crate) fn is_interface(edid: Option<&str>) -> bool {
 
 fn report(mut exit: MessageReader<AppExit>, sfx: Option<Res<Sfx>>) {
     if let (Some(_), Some(s)) = (exit.read().last(), sfx) {
-        if s.played + s.silent + s.failed + s.waits.cancelled + s.waits.rolls_skipped > 0 || !s.waiting.is_empty() {
+        if s.played + s.silent + s.failed + s.waits.cancelled + s.waits.rolls_skipped + s.waits.too_late > 0 || !s.waiting.is_empty() {
             info!(
                 "sfx: {} sounds played, {} too quiet or switched off, {} without a file we can play; {} silenced under water (at most {:.0} under a surface), {} 2D sounds not panned; {} not started at the voice limit, at most {} one-shots at once; {} placed by a curve of their own",
                 s.played, s.silent, s.failed, s.muted_submerged, s.deepest, s.flat_2d, s.voice_limited, s.most_voices, s.own_curve
@@ -1442,8 +1467,8 @@ fn report(mut exit: MessageReader<AppExit>, sfx: Option<Res<Sfx>>) {
             // Sounds whose file was still being read when they were asked for (#1428).
             let w = &s.waits;
             info!(
-                "sfx files: {} sounds began in the frame they were asked for, {} later while their file was read ({} more than one frame later, at most {} frames); {} decided silent (too quiet, under water, sounds off or the voice limit); {} dropped while they waited, {} waited for a file that could not be played, {} still waiting at the end; {} random sound rolls skipped while their file was read; {} started late in a frame once their file came in, {} of them in the frame they were asked for, those at most {:.1} ms from joining the waiting list to their start (not the delay until heard)",
-                w.at_once, w.late, w.over_one, w.most_frames, w.silent, w.cancelled, w.broken, s.waiting.len(), w.rolls_skipped, w.late_started, w.late_same_frame, w.late_most_ms
+                "sfx files: {} sounds began in the frame they were asked for, {} later while their file was read ({} more than one frame later, at most {} frames); {} decided silent (too quiet, under water, sounds off or the voice limit); {} dropped while they waited, {} waited for a file that could not be played, {} still waiting at the end; {} random sound rolls skipped while their file was read; {} started late in a frame once their file came in, {} of them in the frame they were asked for, those at most {:.1} ms from joining the waiting list to their start (not the delay until heard); {} one-shots dropped, their file in after more than {} ms",
+                w.at_once, w.late, w.over_one, w.most_frames, w.silent, w.cancelled, w.broken, s.waiting.len(), w.rolls_skipped, w.late_started, w.late_same_frame, w.late_most_ms, w.too_late, MAX_ONE_SHOT_WAIT.as_millis()
             );
             if s.voice_stolen > 0 {
                 info!("sfx: {} one-shots took over the oldest voice of their sound at {MAX_SAME} playing", s.voice_stolen);
@@ -1882,6 +1907,37 @@ mod tests {
         assert_eq!(heard(&mut app), vec![(2, Some(h[0].1.unwrap()))]);
         assert_eq!(app.world().resource::<Sfx>().waits.at_once, 1);
         assert!(app.world().resource::<Sfx>().waiting.is_empty());
+    }
+
+    #[test]
+    fn a_one_shot_whose_file_comes_in_too_late_is_dropped_and_loops_are_not() {
+        let (mut app, _files) = sound_app();
+        app.world_mut().write_message(PlaySound { sound: BEEP, at: None });
+        script_plays(&mut app, &[(1, BEEP), (2, BEEP_LOOP)]);
+        app.update();
+        // All three wait for the cold file; make them older than the limit.
+        let old = Instant::now().checked_sub(MAX_ONE_SHOT_WAIT + Duration::from_millis(50)).unwrap();
+        {
+            let mut sfx = app.world_mut().resource_mut::<Sfx>();
+            assert_eq!(sfx.waiting.len(), 3);
+            for w in &mut sfx.waiting {
+                w.asked = old;
+            }
+        }
+        run_until(&mut app, |w| w.resource::<Sfx>().waiting.is_empty());
+        // The two one-shots are dropped (the script's answered as over), the loop starts.
+        let mut h = heard(&mut app);
+        h.sort_by_key(|&(id, _)| id);
+        assert_eq!(h, vec![(1, Some(0.0)), (2, None)]);
+        assert_eq!(count::<OneShot>(&mut app), 0);
+        assert_eq!(count::<ScriptPlayed>(&mut app), 1);
+        let w = app.world().resource::<Sfx>().waits.clone();
+        assert_eq!((w.too_late, w.late), (2, 1));
+        // A fresh one-shot of the now-ready file plays as usual.
+        app.world_mut().write_message(PlaySound { sound: BEEP, at: None });
+        app.update();
+        assert_eq!(count::<OneShot>(&mut app), 1);
+        assert_eq!(app.world().resource::<Sfx>().waits.too_late, 2);
     }
 
     /// What a probe in the output's set saw: the sound effects' players there.

@@ -142,12 +142,18 @@ environment: §14.6.
 - Sound effects are decoded whole, on a worker thread the first time a file is asked
   for; the request starts once the file is ready (`nvf-play/src/sfx.rs`, #1428)
   [engineering choice; what the original does with a sound not yet in memory is not
-  known]. A folder's file is picked from an index of the folders listed on a worker at
-  the start; a request before it is in waits for it. A Play At Random marker whose
-  file is still being read skips that roll: the sound is not played when the file
-  arrives, the marker plays on a later roll. The exit line `sfx files: …` counts the
+  known]. A one-shot (a shot, a footstep, any sound played once; a script's sound
+  without the Loop flag) whose file comes in more than
+  150 ms after it joined the waiting list is dropped, not started, so a shot or a
+  footstep is not heard long after its moment; a script asking for it is answered as
+  for a sound that played and ended (0 seconds); loops start however late
+  (`MAX_ONE_SHOT_WAIT`) [engineering choice]. A folder's file is picked from an index
+  of the folders listed on a worker at the start; a request before it is in waits for
+  it. A Play At Random marker whose file is still being read skips that roll: the
+  sound is not played when the file arrives, the marker plays on a later roll. The
+  exit line `sfx files: …` counts the
   sounds that began in the frame they were asked for, those that waited, those decided
-  silent and the rolls skipped.
+  silent and the rolls skipped; at its end, the one-shots dropped as too late.
 - A second chance late in each frame (`late_start`, `PostUpdate`, before the audio
   output takes up new players) starts the requests whose file finished decoding since
   the frame's requests were played, as they would have started then, so a file decoded
@@ -447,6 +453,8 @@ original] (`fnv-game/src/nvse_sound.rs` `SoundState::stop`, `nvf-play/src/sfx.rs
   at once: IsSoundPlaying reads 0 for it, as for a one-shot with no file.
 - `LoopSound` on then off for one SOUN in one frame leaves nothing playing (the off drops
   the start still waiting for its file).
+- A script's one-shot whose file comes in more than 150 ms late is not played and is
+  answered as over (§7): IsSoundPlaying reads 0 from then on.
 
 ### 11.6 Checks and what is left
 
