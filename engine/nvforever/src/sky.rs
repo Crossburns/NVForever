@@ -1620,6 +1620,16 @@ pub fn update_night_sky(
     }
 }
 
+/// The dome mesh last coloured and the sky colours it was coloured with.
+type DomeShown = (AssetId<Mesh>, [f32; 10]);
+
+/// Whether the dome mesh `mesh` needs colouring for the sky colours `now`: a new dome (a
+/// worldspace change spawns one whose vertex colours are still the atmosphere's weights,
+/// drawn as a green-to-red sky, #1395) or colours that moved noticeably since `shown`.
+fn dome_needs_colour(shown: Option<DomeShown>, mesh: AssetId<Mesh>, now: [f32; 10]) -> bool {
+    shown.is_none_or(|(was_mesh, was)| was_mesh != mesh || was.iter().zip(now).any(|(a, b)| (a - b).abs() > 1e-3))
+}
+
 /// Colour of an atmosphere vertex at `elevation` (degrees) with sky-upper weight `up_w`
 /// (the vertex colour's blue), linear RGB. Mixed as display (sRGB) values: sky-upper ×
 /// `up_w` plus horizon × `horizon_weight(elevation, twilight)`; below the horizon the
@@ -1720,7 +1730,7 @@ pub fn update_sky(
     mut sun: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>, Without<FlyCam>, Without<SkyDome>, Without<CloudLayer>)>,
     mut materials: ResMut<Assets<SkyMaterial>>,
     mut flashed: Local<bool>,
-    mut dome_shown: Local<Option<[f32; 10]>>,
+    mut dome_shown: Local<Option<DomeShown>>,
     screen: Option<Res<crate::imagespace::ScreenModifiers>>,
 ) {
     let mut cam = cam;
@@ -1817,9 +1827,11 @@ pub fn update_sky(
     // The dome is coloured again only when its colours moved noticeably (as the sky
     // materials above): a changed mesh is sent to the GPU again, every frame before (#897).
     let shown = [upper[0], upper[1], upper[2], lower[0], lower[1], lower[2], horizon[0], horizon[1], horizon[2], twilight];
-    let dome_moved = dome_shown.is_none_or(|was| was.iter().zip(shown).any(|(a, b)| (a - b).abs() > 1e-3));
-    if let (true, Ok((m, weights, _))) = (dome_moved, dome.single()) {
-        *dome_shown = Some(shown);
+    if let Some((m, weights, _)) = dome.single().ok().filter(|(m, _, _)| dome_needs_colour(*dome_shown, m.0.id(), shown)) {
+        if dome_shown.is_none_or(|(was, _)| was != m.0.id()) {
+            info!("sky: a new dome coloured from {}'s sky colours", sky.weather.edid.as_deref().unwrap_or("the weather"));
+        }
+        *dome_shown = Some((m.0.id(), shown));
         if let Some(mut mesh) = meshes.get_mut(&m.0) {
             let cols: Vec<[f32; 4]> = weights
                 .0
@@ -1889,6 +1901,20 @@ pub fn initial_fog() -> DistanceFog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_dome_is_coloured_even_when_the_sky_colours_stay() {
+        // #1395: on a worldspace change the colours were recorded against the old dome in
+        // the frame before the new one spawned; the new one kept its raw weights.
+        let colours = [0.2, 0.4, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 1.0];
+        let (old, new) = (AssetId::<Mesh>::from(bevy::asset::uuid::Uuid::from_u128(1)), AssetId::<Mesh>::from(bevy::asset::uuid::Uuid::from_u128(2)));
+        assert!(dome_needs_colour(None, old, colours));
+        assert!(!dome_needs_colour(Some((old, colours)), old, colours));
+        assert!(dome_needs_colour(Some((old, colours)), new, colours));
+        let mut moved = colours;
+        moved[0] += 0.01;
+        assert!(dome_needs_colour(Some((old, colours)), old, moved));
+    }
 
     #[test]
     fn a_caster_counts_only_near_the_slice_outline() {
