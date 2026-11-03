@@ -199,7 +199,7 @@ fn start_loop(commands: &mut Commands, amb: &mut Ambient, sfx: &mut Sfx, setting
 }
 
 /// The loops' stream assets: as they are (background loops) and panned (placed ones).
-type Streams<'a> = (ResMut<'a, Assets<LayeredMusic>>, ResMut<'a, Assets<Panned<LayeredMusic>>>);
+pub(crate) type Streams<'a> = (ResMut<'a, Assets<LayeredMusic>>, ResMut<'a, Assets<Panned<LayeredMusic>>>);
 
 #[allow(clippy::too_many_arguments)]
 fn play(
@@ -356,21 +356,7 @@ fn play(
         let space = (*amb.spaces.entry(c).or_insert_with(|| audio::cell_audio(d.lo, d.schema, c).acoustic_space))?;
         places.forms.spaces.get(&space)?.loop_at(hour)
     });
-    // A bed naming a folder waits for sfx's folder index (it would be remembered as
-    // having no file otherwise).
-    let listing = wanted.is_some_and(|s| folder_unlisted(sfx, FormId(s)));
-    if amb.bed.as_ref().map(|b| b.sound) != wanted && !held && !listing {
-        if let Some(old) = amb.bed.take() {
-            amb.beds_leaving.push(old);
-        }
-        if let Some(sound) = wanted {
-            let started = start_loop(&mut commands, amb, sfx, &settings, &data.vfs, &mut streams, sound, None);
-            amb.beds_started += started.is_some() as u32;
-            // A sound without a file is remembered too, so it is not asked for again.
-            let gain = started.as_ref().map_or(0.0, |s| s.1);
-            amb.bed = Some(Bed { sound, playing: started.map(|s| s.0), level: 0.0, gain });
-        }
-    }
+    switch_bed(&mut commands, amb, sfx, &settings, &data.vfs, &mut streams, wanted, held);
     let step = time.delta_secs() / BED_FADE;
     if let Some(b) = amb.bed.as_mut() {
         b.level = (b.level + step).min(1.0);
@@ -395,6 +381,26 @@ fn play(
             (true, false) => sink.pause(),
             (false, true) => sink.play(),
             _ => {}
+        }
+    }
+}
+
+/// The background loop of the cell becomes `wanted` (`None`: none), the last one fading
+/// out, unless the loops are `held`. A bed naming a folder waits for sfx's folder index,
+/// tried again each frame (it would be remembered as having no file otherwise).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn switch_bed(commands: &mut Commands, amb: &mut Ambient, sfx: &mut Sfx, settings: &SfxSettings, vfs: &fnv_vfs::Vfs, streams: &mut Streams, wanted: Option<u32>, held: bool) {
+    let listing = wanted.is_some_and(|s| folder_unlisted(sfx, FormId(s)));
+    if amb.bed.as_ref().map(|b| b.sound) != wanted && !held && !listing {
+        if let Some(old) = amb.bed.take() {
+            amb.beds_leaving.push(old);
+        }
+        if let Some(sound) = wanted {
+            let started = start_loop(commands, amb, sfx, settings, vfs, streams, sound, None);
+            amb.beds_started += started.is_some() as u32;
+            // A sound without a file is remembered too, so it is not asked for again.
+            let gain = started.as_ref().map_or(0.0, |s| s.1);
+            amb.bed = Some(Bed { sound, playing: started.map(|s| s.0), level: 0.0, gain });
         }
     }
 }

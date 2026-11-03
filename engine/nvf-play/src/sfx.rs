@@ -2130,13 +2130,13 @@ mod tests {
         assert!(stopped_before(&[(BEEP, 0)], BEEP, u32::MAX) && !stopped_before(&[(BEEP, u32::MAX)], BEEP, 0));
     }
 
-    #[test]
-    fn a_folder_pick_waits_for_the_folder_index() {
-        use std::sync::Mutex;
-        use std::task::{Poll, Waker};
-        let (mut app, _files) = sound_app();
-        // A folder index being listed, held until the gate opens.
-        let gate: Arc<Mutex<(bool, Option<Waker>)>> = Arc::default();
+    /// A folder index being listed on a worker, held until [`open_gate`].
+    type Gate = Arc<std::sync::Mutex<(bool, Option<std::task::Waker>)>>;
+
+    /// [`sound_app`]'s folder index listed on a worker held at the gate returned.
+    fn gated_index(app: &mut App) -> Gate {
+        use std::task::Poll;
+        let gate: Gate = Arc::default();
         let worker_gate = gate.clone();
         let vfs = app.world().resource::<nvf_assets::GameData>().vfs.clone();
         let task = IoTaskPool::get_or_init(TaskPool::default).spawn(async move {
@@ -2152,12 +2152,24 @@ mod tests {
             .await;
             folder_index(vfs.paths(is_sound_file))
         });
-        let takes = FormId(0x20);
-        {
-            let mut sfx = app.world_mut().resource_mut::<Sfx>();
-            sfx.index = Some(task);
-            sfx.forms.sounds.insert(takes, record("TestTakes", Some("fx\\takes"), &[]));
+        app.world_mut().resource_mut::<Sfx>().index = Some(task);
+        gate
+    }
+
+    fn open_gate(gate: &Gate) {
+        let mut g = gate.lock().unwrap();
+        g.0 = true;
+        if let Some(w) = g.1.take() {
+            w.wake();
         }
+    }
+
+    #[test]
+    fn a_folder_pick_waits_for_the_folder_index() {
+        let (mut app, _files) = sound_app();
+        let gate = gated_index(&mut app);
+        let takes = FormId(0x20);
+        app.world_mut().resource_mut::<Sfx>().forms.sounds.insert(takes, record("TestTakes", Some("fx\\takes"), &[]));
         script_plays(&mut app, &[(1, takes)]);
         for _ in 0..3 {
             app.update();
@@ -2170,18 +2182,68 @@ mod tests {
             assert!(sfx.folders.is_empty() && sfx.files.is_empty());
         }
         assert!(heard(&mut app).is_empty());
-        let mut g = gate.lock().unwrap();
-        g.0 = true;
-        if let Some(w) = g.1.take() {
-            w.wake();
-        }
-        drop(g);
+        open_gate(&gate);
         run_until(&mut app, |w| !w.resource::<ScriptSounds>().heard.is_empty());
         let h = heard(&mut app);
         assert!((h[0].1.unwrap() - 0.5).abs() < 1e-3, "{h:?}");
         let sfx = app.world().resource::<Sfx>();
         assert!(sfx.indexed && sfx.index.is_none());
         assert_eq!(sfx.waits.late, 1);
+    }
+
+    /// A background bed of a folder of loops, for the ambient's bed test.
+    const FOLDER_BED: FormId = FormId(0x21);
+
+    /// The ambient's bed step, wanting [`FOLDER_BED`] every frame.
+    fn bed_wanted(mut commands: Commands, mut amb: ResMut<crate::ambient::Ambient>, mut sfx: ResMut<Sfx>, settings: Res<SfxSettings>, data: Res<nvf_assets::GameData>, mut streams: crate::ambient::Streams) {
+        crate::ambient::switch_bed(&mut commands, &mut amb, &mut sfx, &settings, &data.vfs, &mut streams, Some(FOLDER_BED.0), false);
+    }
+
+    #[test]
+    fn an_ambient_bed_on_a_folder_waits_for_the_folder_index_then_starts() {
+        use crate::music::LayeredMusic;
+        let (mut app, files) = sound_app();
+        // A folder of one loop, a plain 44-byte-header WAV (the streamed loops' decoder
+        // wants the RIFF size [`wav`] leaves 0).
+        let data = [0u8; 4410];
+        let mut bed = b"RIFF".to_vec();
+        bed.extend((36 + data.len() as u32).to_le_bytes());
+        bed.extend(b"WAVEfmt ");
+        bed.extend(16u32.to_le_bytes());
+        bed.extend(1u16.to_le_bytes());
+        bed.extend(1u16.to_le_bytes());
+        bed.extend(22050u32.to_le_bytes());
+        bed.extend(44100u32.to_le_bytes());
+        bed.extend(2u16.to_le_bytes());
+        bed.extend(16u16.to_le_bytes());
+        bed.extend(b"data");
+        bed.extend((data.len() as u32).to_le_bytes());
+        bed.extend(data);
+        let beds = files.0.join("sound").join("fx").join("beds");
+        std::fs::create_dir_all(&beds).unwrap();
+        std::fs::write(beds.join("a.wav"), bed).unwrap();
+        let vfs = Arc::new(fnv_vfs::Vfs::open(&files.0, &[]).unwrap());
+        app.world_mut().resource_mut::<nvf_assets::GameData>().vfs = vfs;
+        let gate = gated_index(&mut app);
+        app.world_mut().resource_mut::<Sfx>().forms.sounds.insert(FOLDER_BED, record("TestBed", Some("fx\\beds"), &["Loop"]));
+        app.init_resource::<crate::ambient::Ambient>()
+            .init_resource::<Assets<LayeredMusic>>()
+            .init_resource::<Assets<Panned<LayeredMusic>>>()
+            .add_systems(Update, bed_wanted.after(prepare).before(play));
+        // While the index is listed the bed is tried each frame, not remembered as
+        // having no file.
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<crate::ambient::Ambient>().beds_started, 0);
+        // Once it is in, the bed starts, once.
+        open_gate(&gate);
+        run_until(&mut app, |w| w.resource::<crate::ambient::Ambient>().beds_started > 0);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<crate::ambient::Ambient>().beds_started, 1);
+        assert!(app.world().resource::<Sfx>().indexed);
     }
 
     #[test]
