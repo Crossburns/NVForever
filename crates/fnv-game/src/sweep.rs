@@ -14,6 +14,11 @@
 //! needs the state an earlier scene leaves (a reference variable set, an actor enabled)
 //! may fail here and not in play, so the causes are leads, not stalls.
 //!
+//! A script that never stops calling itself ends at a guard and is a cause like any
+//! other: nesting deeper than `crate::game::MAX_DEPTH` is a `script_error`, and a
+//! package condition asking for the current package of an actor choosing its first one
+//! (GetIsCurrentPackage; `Game::current_package`) is `skipped` (tests/sweep.rs).
+//!
 //! `arg_unread` (#1122) lists the calls that succeeded although the function could not
 //! read an argument they passed (`functions::Unread`): it went on with a default, so the
 //! script ran with a value it did not give. They are not counted in `with_problems`.
