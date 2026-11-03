@@ -75,7 +75,9 @@ fn fake_cell(job: &Job) -> Prepared {
         let obj = object(if dynamic { 15.0 } else { 50.0 }, if dynamic { Motion::Dynamic } else { Motion::Static });
         let prepared = PreparedRef::new(&params, &RefPose::from_placement(&pl), &[obj]);
         let dynamic_local = dynamic.then_some(Iso::IDENTITY);
-        refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local, door: None, drawn: None }) });
+        // As `prepare::reference` does: built from its destruction model when it has one.
+        let model = job.model_of(pl.form_id).map(str::to_string);
+        refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local, door: None, drawn: None, model }) });
     }
     // A pond: a reference with only a water volume (placed water, physics.md §6.6).
     let pond = Placement {
@@ -93,7 +95,7 @@ fn fake_cell(job: &Job) -> Prepared {
         imposter: false,
     };
     let water = vec![CollisionObject { layer: fnv_phys::layers::WATER, ..object(100.0, Motion::Static) }];
-    refs.push(Entry { form_id: pond.form_id, placement: Some(pond), shapes: Some(RefShapes { tallies: vec!["water_volume"], water, prepared: None, dynamic_local: None, door: None, drawn: None }) });
+    refs.push(Entry { form_id: pond.form_id, placement: Some(pond), shapes: Some(RefShapes { tallies: vec!["water_volume"], water, prepared: None, dynamic_local: None, door: None, drawn: None, model: None }) });
     let terrain = Some(PreparedTerrain::new(&params, (gx, gy), &heights));
     Prepared { cell: job.cell, heights: Some(heights), terrain, refs, times: LoadTimes::default() }
 }
@@ -110,6 +112,56 @@ fn centre(gx: i32, gy: i32) -> [f32; 3] {
 /// Bit-identical worlds: every body's state in handle order, and what is loaded.
 fn fingerprint(p: &PhysState) -> (u64, Vec<PhysCell>, fnv_phys::Stats) {
     (p.world.state_digest(), p.cells.keys().copied().collect(), p.world.stats())
+}
+
+/// FormID of made-up reference `i` of cell (`gx`, `gy`) ([`fake_cell`]).
+fn fake_ref(gx: i32, gy: i32, i: u32) -> u32 {
+    0x0100_0000 + (((gx + 100) as u32) << 12) + (((gy + 100) as u32) << 4) + i
+}
+
+#[test]
+fn a_destroyed_reference_collides_as_its_destruction_model_and_back() {
+    let (d, sim) = (play_data(), sim());
+    let ctx = LoadCtx { d: &d, sim: &sim, data: None };
+    let mut p = state(true);
+    p.load(&ctx, PhysCell::Exterior(0, 0));
+    let (car, other) = (fake_ref(0, 0, 1), fake_ref(0, 0, 2));
+    let hulk = "Vehicles\\CarHulk01.NIF".to_string();
+    assert_eq!(p.built_model(car), None);
+    // The stage that names a model: built again from it, the others left alone.
+    let built = p.refs_built;
+    p.set_destruction_models(&ctx, HashMap::from([(car, hulk.clone())]));
+    assert_eq!(p.built_model(car), Some(hulk.as_str()));
+    assert!(p.has_collision(car));
+    assert_eq!(p.built_model(other), None);
+    assert_eq!(p.refs_built, built + 1, "only the destroyed reference is built again");
+    // Nothing changed: nothing built.
+    p.set_destruction_models(&ctx, HashMap::from([(car, hulk.clone())]));
+    assert_eq!(p.refs_built, built + 1);
+    // ClearDestruction: the base model's collision again.
+    p.set_destruction_models(&ctx, HashMap::new());
+    assert_eq!(p.built_model(car), None);
+    assert!(p.has_collision(car));
+    assert_eq!(p.refs_built, built + 2);
+    // A reference whose cell is not loaded gets nothing now, and its model when the
+    // cell loads.
+    let far = fake_ref(5, 5, 1);
+    p.set_destruction_models(&ctx, HashMap::from([(far, hulk.clone())]));
+    assert_eq!(p.built_model(far), None);
+    assert!(!p.has_collision(far));
+    p.load(&ctx, PhysCell::Exterior(5, 5));
+    assert_eq!(p.built_model(far), Some(hulk.as_str()));
+    // Its cell unloaded: forgotten with it.
+    p.unload(PhysCell::Exterior(5, 5));
+    assert_eq!(p.built_model(far), None);
+}
+
+#[test]
+fn a_job_knows_its_references_destruction_models() {
+    let job = Job { cell: PhysCell::Exterior(0, 0), refs: vec![1, 5, 9], land: None, poses: Vec::new(), scales: Vec::new(), models: vec![(5, "a.nif".into()), (9, "b.nif".into())] };
+    assert_eq!(job.model_of(5), Some("a.nif"));
+    assert_eq!(job.model_of(9), Some("b.nif"));
+    assert_eq!(job.model_of(1), None);
 }
 
 #[test]
@@ -273,7 +325,7 @@ fn bridge_cell(job: &Job) -> Prepared {
         };
         let obj = CollisionObject { shape: Shape::Box { half_extents: [600.0, 600.0, 20.0] }.into(), ..object(0.0, Motion::Static) };
         let prepared = PreparedRef::new(&PhysParams::default(), &RefPose::from_placement(&pl), &[obj]);
-        p.refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local: None, door: None, drawn: None }) });
+        p.refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local: None, door: None, drawn: None, model: None }) });
     }
     p
 }
@@ -384,7 +436,7 @@ fn placed_clutter_moved_by_physics_is_written_back_and_reloads_there() {
     assert!(!p.placed_dynamic.contains_key(&id));
     // (The made-up cells have no records, so the job names the crate itself.)
     let cell = PhysCell::Exterior(0, 0);
-    let job = with_poses(Job { cell, refs: vec![id], land: None, poses: Vec::new(), scales: Vec::new() }, &sim);
+    let job = with_poses(Job { cell, refs: vec![id], land: None, poses: Vec::new(), scales: Vec::new(), models: Vec::new() }, &sim);
     p.insert(&LoadCtx { d: &d, sim: &sim, data: None }, fake_cell(&job));
     let b = p.world.ref_bodies(id)[0];
     for i in 0..3 {

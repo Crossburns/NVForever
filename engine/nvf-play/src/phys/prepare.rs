@@ -182,6 +182,9 @@ pub struct Job {
     /// References a script scaled (SetScale; `SimState::script_scale`), by FormID: their
     /// collision is built at that scale, none below `crate::sim::MIN_DRAWN_SCALE`.
     pub scales: Vec<(u32, f32)>,
+    /// Destroyed references' destruction models (`PhysState::destruction_models`), by
+    /// FormID: their collision is built from it.
+    pub models: Vec<(u32, String)>,
 }
 
 impl Job {
@@ -193,6 +196,11 @@ impl Job {
     /// The scale a script set on `r`, when it overrides the placement's.
     pub(crate) fn scale_of(&self, r: u32) -> Option<f32> {
         self.scales.binary_search_by_key(&r, |p| p.0).ok().map(|i| self.scales[i].1)
+    }
+
+    /// The destruction model `r` collides as, when it has one.
+    pub(crate) fn model_of(&self, r: u32) -> Option<&str> {
+        self.models.binary_search_by_key(&r, |p| p.0).ok().map(|i| self.models[i].1.as_str())
     }
 }
 
@@ -222,6 +230,8 @@ pub struct RefShapes {
     /// The floors of the model's drawn geometry, for a reference whose collision stays
     /// where it was placed (not dynamic, not a door that opens in place).
     pub drawn: Option<Arc<DrawnFloors>>,
+    /// The destruction model the collision was built from (`Job::models`).
+    pub model: Option<String>,
 }
 
 /// The keyframed bodies of a door that opens in place (`crate::doors`), posed from its
@@ -288,7 +298,7 @@ pub fn cell(src: &Source, job: &Job) -> Prepared {
             });
         }
         times.records += ms_since(t);
-        let shapes = pl.as_ref().map(|pl| reference(src, pl, &mut times));
+        let shapes = pl.as_ref().map(|pl| reference(src, pl, job.model_of(r), &mut times));
         out.refs.push(Entry { form_id: r, placement: pl, shapes });
     }
     out.times = times;
@@ -299,7 +309,9 @@ pub fn cell(src: &Source, job: &Job) -> Prepared {
 /// chain, a globe on its stand, a bucket and its handle: the parts the model's constraints
 /// join) keeps them keyframed where it was placed (physics.md §4.3.1): the constraints are
 /// not modelled, so the parts fell apart, and the reference is drawn where it was placed
-/// whatever its bodies do. Tallied as `jointed_held`.
+/// whatever its bodies do. Tallied as `jointed_held`. A destroyed car's hulk
+/// (`vehicles\carhulk01.nif`: doors, hood, trunk, chassis, no constraints) is held so
+/// too, until the drawing lets its parts fall (nvforever `wrecks.rs`).
 fn hold_jointed(objects: &mut [fnv_collide::CollisionObject], tallies: &mut Vec<&'static str>) {
     use fnv_collide::Motion;
     if objects.iter().filter(|o| o.motion == Motion::Dynamic).count() < 2 {
@@ -346,14 +358,14 @@ pub(super) fn fix_static_base(base_sig: Option<[u8; 4]>, objects: &mut [fnv_coll
 /// ([`fix_static_base`]), a posed one's put in its stored pose ([`pose_stored`]) and a
 /// jointed object's held ([`hold_jointed`]). A panic while preparing it (bad data met by
 /// a bug of ours, `nvf_assets::guard`) leaves that reference without collision, logged.
-pub fn reference(src: &Source, pl: &Placement, times: &mut LoadTimes) -> RefShapes {
-    nvf_assets::guard::guarded(|| Ok(reference_unguarded(src, pl, times))).unwrap_or_else(|e| {
+pub fn reference(src: &Source, pl: &Placement, model: Option<&str>, times: &mut LoadTimes) -> RefShapes {
+    nvf_assets::guard::guarded(|| Ok(reference_unguarded(src, pl, model, times))).unwrap_or_else(|e| {
         bevy::log::warn!("phys: 0x{:08X}: collision not prepared ({e}); the reference has none", pl.form_id);
-        RefShapes { tallies: vec!["prepare_failed"], water: Vec::new(), prepared: None, dynamic_local: None, door: None, drawn: None }
+        RefShapes { tallies: vec!["prepare_failed"], water: Vec::new(), prepared: None, dynamic_local: None, door: None, drawn: None, model: None }
     })
 }
 
-fn reference_unguarded(src: &Source, pl: &Placement, times: &mut LoadTimes) -> RefShapes {
+fn reference_unguarded(src: &Source, pl: &Placement, model: Option<&str>, times: &mut LoadTimes) -> RefShapes {
     let t0 = Instant::now();
     let before = *times;
     let mut tallies = Vec::new();
@@ -363,7 +375,7 @@ fn reference_unguarded(src: &Source, pl: &Placement, times: &mut LoadTimes) -> R
         (Some(data), Some(path)) => src.models.door_anim(data, &path, times),
         _ => None,
     };
-    let options = RefCollisionOptions { posed_doors: anim.is_some() };
+    let options = RefCollisionOptions { posed_doors: anim.is_some(), model };
     let mut models = src.data.as_ref().map(|data| Models { data, cache: &src.models, times: &mut *times });
     let rc = ref_collision_with(
         src.d.lo,
@@ -376,7 +388,10 @@ fn reference_unguarded(src: &Source, pl: &Placement, times: &mut LoadTimes) -> R
     let in_models = (times.read - before.read) + (times.parse - before.parse) + (times.convert - before.convert);
     times.records += ms_since(t0) - in_models;
     let mut rc = rc;
-    let model_path = pl.base.and_then(|b| base_object(src.d.lo, src.d.schema, b)).and_then(|b| b.world_model_path());
+    let model_path = match model {
+        Some(m) => fnv_world::placed::archive_path(m),
+        None => pl.base.and_then(|b| base_object(src.d.lo, src.d.schema, b)).and_then(|b| b.world_model_path()),
+    };
     fix_static_base(rc.base_sig, &mut rc.objects, &mut tallies);
     let posed = match (&src.data, rc.base_sig, &model_path) {
         (Some(data), Some(sig), Some(path)) if fnv_world::xrgd::posable(&sig) && !rc.objects.is_empty() => fnv_world::xrgd::stored(src.d.lo, pl.form_id)
@@ -416,5 +431,5 @@ fn reference_unguarded(src: &Source, pl: &Placement, times: &mut LoadTimes) -> R
         (Some(_), Some(path)) if fixed => src.models.drawn(&path),
         _ => None,
     };
-    RefShapes { tallies, water: rc.water, prepared, dynamic_local, door, drawn }
+    RefShapes { tallies, water: rc.water, prepared, dynamic_local, door, drawn, model: model.map(str::to_string) }
 }
