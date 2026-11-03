@@ -438,6 +438,14 @@ pub struct RefExtra {
     /// reference's (`Game::merchant_container`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub merchant_container: Option<FormId>,
+    /// Wait: the Follow or Accompany package the actor waits in, standing where it is,
+    /// until StopWaiting (`functions::fo3`; the AI's follow step reads [`Game::waits`]).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub waiting: Option<FormId>,
+    /// MatchFaceGeometry: the morphs of the actor's face towards others', in call order
+    /// (`crate::appearance::FaceMatch`; the engine draws the head with them).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub face_matches: Vec<crate::appearance::FaceMatch>,
     /// The special idle the actor plays (IsIdlePlaying): told by whoever animates the
     /// actor ([`Game::set_idle_playing`]); not part of the saved state.
     #[serde(skip)]
@@ -525,6 +533,19 @@ pub struct FormChanges {
     /// SetCellImageSpace: cell → the image space it has instead of its XCIM.
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub cell_image_spaces: BTreeMap<FormId, FormId>,
+    /// SetFactionReaction: faction → other faction → disposition modifier, in place of
+    /// FACT XNAM's (`functions::fo3`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub faction_modifiers: BTreeMap<FormId, BTreeMap<FormId, i64>>,
+    /// ResetInterior: interior cells reset at their next load (`crate::respawn`).
+    #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty", default)]
+    pub expired_cells: std::collections::BTreeSet<FormId>,
+    /// RemapWaterType: water type → the one drawn in its place ([`Game::water_type`]).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub water_remaps: BTreeMap<FormId, FormId>,
+    /// TriggerLODApocalypse has run (Megaton's destruction, `functions::fo3`).
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub lod_apocalypse: bool,
 }
 
 /// A magic effect active on an actor (docs/spec-notes/scripts.md §7.6).

@@ -302,6 +302,10 @@ pub struct Snapshot {
     /// Encounter zones entered and their levels (`crate::zones`); absent when none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub zone_levels: BTreeMap<FormId, u16>,
+    /// Encounter zones whose respawning a script turned on or off (SetZoneRespawns,
+    /// `crate::zones`); absent when none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub zone_respawns: BTreeMap<FormId, bool>,
     /// The level fixed for each reference whose cell was loaded (`crate::zones`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ref_levels: BTreeMap<FormId, crate::zones::LevelAt>,
@@ -420,6 +424,8 @@ pub struct World<'a> {
     power_armor_training: bool,
     /// Encounter zones entered and their levels (`crate::zones`).
     pub(crate) zone_levels: BTreeMap<FormId, u16>,
+    /// SetZoneRespawns: zone → whether it respawns, over its "Never Resets" flag.
+    pub(crate) zone_respawns: BTreeMap<FormId, bool>,
     /// The leveled-list level fixed per reference (`crate::zones`).
     pub(crate) ref_levels: BTreeMap<FormId, crate::zones::LevelAt>,
     /// Death items owed to dead actors not read yet, rolled into the inventory when it is
@@ -466,6 +472,7 @@ impl<'a> World<'a> {
             setting_changes: BTreeMap::new(),
             power_armor_training: false,
             zone_levels: BTreeMap::new(),
+            zone_respawns: BTreeMap::new(),
             ref_levels: BTreeMap::new(),
             death_items: BTreeMap::new(),
             deleted_created: BTreeMap::new(),
@@ -1577,6 +1584,13 @@ impl<'a> World<'a> {
         if self.cell_never_resets(cell) {
             return Ok(Vec::new());
         }
+        Ok(self.reset_containers(cell))
+    }
+
+    /// The containers of `cell` whose base has the Respawns flag go back to their
+    /// authored state now, as [`World::attach_cell`] does after the respawn delay (a
+    /// script's ResetInterior). Returns the containers reset.
+    pub fn reset_containers(&mut self, cell: FormId) -> Vec<FormId> {
         let forms = self.forms;
         let respawns = |base: FormId| matches!(forms.get(base).map(|b| &b.data), Some(BaseData::Container(c)) if c.respawns);
         let reset: Vec<FormId> = self
@@ -1594,7 +1608,7 @@ impl<'a> World<'a> {
             // Made anew: its level is fixed again when the cell is entered.
             self.ref_levels.remove(id);
         }
-        Ok(reset)
+        reset
     }
 
     pub fn set_enabled(&mut self, id: FormId, enabled: bool) -> Result<(), SimError> {
@@ -1967,6 +1981,7 @@ impl<'a> World<'a> {
             quest_objects: self.quest_objects.clone(),
             leveled_added: self.leveled_added.clone(),
             zone_levels: self.zone_levels.clone(),
+            zone_respawns: self.zone_respawns.clone(),
             ref_levels: self.ref_levels.iter().filter(|(id, _)| kept(id)).map(|(&k, &v)| (k, v)).collect(),
             death_items: self.death_items.iter().filter(|(id, _)| kept(id)).map(|(&k, &v)| (k, v)).collect(),
             // The same `kept` set as the references: a pruned one keeps no source.
@@ -2009,6 +2024,7 @@ impl<'a> World<'a> {
         w.quest_objects = s.quest_objects.clone();
         w.leveled_added = s.leveled_added.clone();
         w.zone_levels = s.zone_levels.clone();
+        w.zone_respawns = s.zone_respawns.clone();
         w.ref_levels = s.ref_levels.clone();
         w.death_items = s.death_items.clone();
         w.deleted_created = s.deleted_created.clone();
