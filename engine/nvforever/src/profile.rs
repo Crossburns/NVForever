@@ -194,6 +194,10 @@ pub struct ProfilePlugin;
 
 impl Plugin for ProfilePlugin {
     fn build(&self, app: &mut App) {
+        if std::env::var("NVF_PLAY_TEST_ACTOR_NO_SHADOWS").is_ok_and(|v| v == "1") {
+            info!("test aid NVF_PLAY_TEST_ACTOR_NO_SHADOWS: actors cast no shadows");
+            app.add_systems(Last, actors_cast_no_shadows);
+        }
         let Some(every) = interval() else { return };
         info!("test aid NVF_PLAY_TEST_PROFILE: a span profile every {every} s");
         // GPU time per render pass (timestamp queries, Vulkan and DX12): `profile gpu:`.
@@ -310,6 +314,31 @@ struct ProfileWindow {
     frame_secs: f32,
 }
 
+/// Test aid `NVF_PLAY_TEST_ACTOR_NO_SHADOWS=1`: every mesh under an actor's skeleton stops
+/// casting shadows (still drawn), for measuring what the actors' shadows cost.
+fn actors_cast_no_shadows(
+    mut commands: Commands,
+    meshes: Query<Entity, (With<Mesh3d>, Without<bevy::light::NotShadowCaster>)>,
+    parents: Query<&ChildOf>,
+    rigs: Query<(), With<crate::limbs::ActorRig>>,
+    mut checked: Local<std::collections::HashSet<Entity>>,
+    mut marked: Local<usize>,
+) {
+    let before = *marked;
+    for e in &meshes {
+        if !checked.insert(e) {
+            continue;
+        }
+        if parents.iter_ancestors(e).any(|a| rigs.contains(a)) {
+            commands.entity(e).insert(bevy::light::NotShadowCaster);
+            *marked += 1;
+        }
+    }
+    if *marked / 100 != before / 100 || (before == 0 && *marked > 0) {
+        info!("test aid NVF_PLAY_TEST_ACTOR_NO_SHADOWS: {} actor meshes cast no shadows, {} rigs", *marked, rigs.iter().count());
+    }
+}
+
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn report(
     time: Res<Time<Real>>,
@@ -321,6 +350,15 @@ fn report(
     loading: Option<Res<nvf_play::loading::Loading>>,
     mut pipelines_before: Local<u64>,
     (diagnostics, mut changes): (Res<bevy::diagnostic::DiagnosticsStore>, ResMut<AssetChanges>),
+    (suns, visibles): (
+        Query<(Entity, &bevy::camera::visibility::CascadesVisibleEntities), With<DirectionalLight>>,
+        Query<(&InheritedVisibility, Has<Mesh3d>, Has<Children>)>,
+    ),
+    (transforms, changed_transforms, same_transforms): (
+        Query<(), With<Transform>>,
+        Query<(Entity, Has<Mesh3d>, Option<&Name>), Changed<Transform>>,
+        Query<Ref<GlobalTransform>, Changed<Transform>>,
+    ),
 ) {
     let pipelines = PIPELINES.load(std::sync::atomic::Ordering::Relaxed);
     let new_pipelines = pipelines.saturating_sub(*pipelines_before);
@@ -376,6 +414,43 @@ fn report(
         mats.len(),
         materials.len()
     );
+    // Shadow casters each cascade of each directional light drew this frame: whether a nearer,
+    // smaller cascade really holds fewer casters than the far one.
+    let shadows: Vec<String> = suns
+        .iter()
+        .flat_map(|(light, c)| c.entities.values().map(move |cascades| {
+            let counts: Vec<String> = cascades.iter().map(|v| v.entities.len().to_string()).collect();
+            format!("light {light}: {}", counts.join("/"))
+        }))
+        .collect();
+    // Every entity with visibility is walked by Bevy's visibility systems each frame, meshes or not.
+    let (mut with_vis, mut shown, mut bare) = (0usize, 0usize, 0usize);
+    for (inherited, mesh, children) in &visibles {
+        with_vis += 1;
+        shown += usize::from(inherited.get());
+        bare += usize::from(!mesh && !children);
+    }
+    info!("profile visibility: {with_vis} entities with visibility ({shown} not hidden), {bare} with neither a mesh nor children");
+    // Transforms written this frame (each makes its tree dirty for propagation), how many
+    // of them carry a mesh, the most common names, and how many ended where they were.
+    let mut names: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let (mut changed, mut with_mesh) = (0usize, 0usize);
+    for (_, mesh, name) in &changed_transforms {
+        changed += 1;
+        with_mesh += usize::from(mesh);
+        let key = name.map(|n| n.as_str().split(|c: char| c.is_ascii_digit()).next().unwrap_or("").to_string()).unwrap_or_else(|| "(no name)".into());
+        *names.entry(key).or_default() += 1;
+    }
+    let unmoved = same_transforms.iter().filter(|g| !g.is_changed()).count();
+    let mut top: Vec<(String, usize)> = names.into_iter().collect();
+    top.sort_by_key(|t| std::cmp::Reverse(t.1));
+    let top: Vec<String> = top.iter().take(8).map(|(n, c)| format!("{n} {c}")).collect();
+    info!(
+        "profile transforms: {changed} of {} written this frame ({with_mesh} with a mesh; {unmoved} not yet propagated), most: {}",
+        transforms.iter().count(),
+        top.join(", ")
+    );
+    info!("profile shadows: casters per cascade, nearest first: {}", shadows.join("; "));
     let per = |n: u64| n as f64 / frames;
     let o = std::mem::take(&mut *OUTFITS.lock().unwrap_or_else(|e| e.into_inner()));
     info!(
