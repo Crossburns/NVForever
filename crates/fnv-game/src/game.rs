@@ -2523,7 +2523,7 @@ impl<'a> Game<'a> {
             bytes: c.bytes,
             source: Some(src.to_string()),
         };
-        let unit: &'a Compiled = Box::leak(Box::new(Compiled { unit, program: d.program, raw: d.report.raw_total() }));
+        let unit: &'a Compiled = Box::leak(Box::new(Compiled::new(unit, d.program, d.report.raw_total())));
         self.exec(unit, &unit.program.top, Locals::Temp(BTreeMap::new()), ctx);
         Ok(warnings)
     }
@@ -2554,7 +2554,7 @@ impl<'a> Game<'a> {
             source: Some(src.to_string()),
         };
         // Leaked as the console's lines are: a lambda the query makes may outlive it.
-        let unit: &'a Compiled = Box::leak(Box::new(Compiled { unit, program: d.program, raw: d.report.raw_total() }));
+        let unit: &'a Compiled = Box::leak(Box::new(Compiled::new(unit, d.program, d.report.raw_total())));
         let block = unit.program.blocks.iter().find(|b| b.event == fnv_script::ir::FUNCTION_BLOCK).ok_or("the script has no Function block")?;
         let data = self.data;
         let opts = self.opts();
@@ -2645,7 +2645,7 @@ impl<'a> Game<'a> {
             bytes: c.bytes,
             source: Some(src),
         };
-        let unit: &'a Compiled = Box::leak(Box::new(Compiled { unit, program: d.program, raw: d.report.raw_total() }));
+        let unit: &'a Compiled = Box::leak(Box::new(Compiled::new(unit, d.program, d.report.raw_total())));
         let id = COMPILED_BASE + self.compiled_files.len() as u32;
         self.compiled_files.push(unit);
         Some(id)
@@ -4793,7 +4793,7 @@ impl<'a> Game<'a> {
 
     pub(crate) fn condition_value(&mut self, c: &Condition, on: Option<FormId>, label: &str) -> f64 {
         let ctx = Ctx {
-            unit: label.to_string(),
+            unit: label.into(),
             opcode: c.opcode(),
             on,
             self_ref: on,
@@ -4839,10 +4839,10 @@ impl<'a> Game<'a> {
             }
             None => {
                 *self.unhandled.entry(ctx.opcode).or_default() += 1;
-                if self.unhandled_seen.insert((ctx.opcode, ctx.unit.clone())) {
+                if self.unhandled_seen.insert((ctx.opcode, ctx.unit.to_string())) {
                     let n = name();
                     tracing::debug!(opcode = ctx.opcode, name = %n, unit = %ctx.unit, "unhandled script function");
-                    self.emit(EventKind::Unhandled { opcode: format!("0x{:04X}", ctx.opcode), name: n, unit: ctx.unit.clone() });
+                    self.emit(EventKind::Unhandled { opcode: format!("0x{:04X}", ctx.opcode), name: n, unit: ctx.unit.to_string() });
                 }
                 Value::ZERO
             }
@@ -4858,12 +4858,12 @@ impl<'a> Game<'a> {
             Ok(v) => {
                 // Read wrong without failing: the call went on with a default.
                 for u in unread {
-                    if self.arg_unread_seen.insert((ctx.opcode, ctx.unit.clone(), u.param)) {
+                    if self.arg_unread_seen.insert((ctx.opcode, ctx.unit.to_string(), u.param)) {
                         let n = name();
                         self.emit(EventKind::ArgUnread {
                             opcode: format!("0x{:04X}", ctx.opcode),
                             name: n,
-                            unit: ctx.unit.clone(),
+                            unit: ctx.unit.to_string(),
                             param: u.param,
                             got: u.got.into(),
                             wanted: u.wanted.into(),
@@ -4874,7 +4874,7 @@ impl<'a> Game<'a> {
             }
             Err(e) => {
                 let n = name();
-                self.emit(EventKind::CallFailed { opcode: format!("0x{:04X}", ctx.opcode), name: n, unit: ctx.unit.clone(), error: e });
+                self.emit(EventKind::CallFailed { opcode: format!("0x{:04X}", ctx.opcode), name: n, unit: ctx.unit.to_string(), error: e });
                 Value::ZERO
             }
         }
@@ -4888,10 +4888,10 @@ impl<'a> Game<'a> {
         let args: Vec<serde_json::Value> = args.iter().map(|a| arg_json(data, a)).collect();
         let on = ctx.on.or(ctx.self_ref);
         let sig = format!("{on:?}{args:?}");
-        if !self.stubs_seen.insert((ctx.opcode, ctx.unit.clone(), sig)) {
+        if !self.stubs_seen.insert((ctx.opcode, ctx.unit.to_string(), sig)) {
             return;
         }
-        self.emit(EventKind::Stub { opcode: format!("0x{:04X}", ctx.opcode), name, unit: ctx.unit.clone(), on, args });
+        self.emit(EventKind::Stub { opcode: format!("0x{:04X}", ctx.opcode), name, unit: ctx.unit.to_string(), on, args });
     }
 
     // ---- snapshots -----------------------------------------------------------------
@@ -5248,7 +5248,8 @@ impl Host for Exec<'_, '_> {
             None => None,
         };
         let ctx = Ctx {
-            unit: self.unit.key(),
+            // The unit's key, built once for the unit (#1389).
+            unit: std::sync::Arc::clone(self.unit.shared_key()),
             opcode,
             on,
             self_ref: self.ctx.self_ref,

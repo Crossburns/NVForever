@@ -15,7 +15,7 @@ use fnv_sim::{FormId, RefTable};
 use rayon::prelude::*;
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// A unit with its decoded program.
 #[derive(Debug, Clone)]
@@ -24,11 +24,29 @@ pub struct Compiled {
     pub program: Program,
     /// Undecodable pieces (none in the shipped masters).
     pub raw: usize,
+    /// [`ScriptUnit::key`], built once in [`Compiled::new`] (#1389).
+    key: Arc<str>,
 }
 
 impl Compiled {
+    /// A unit with its decoded program. Its key is built here, once: the key reads only
+    /// the unit's plugin and owner, which nothing changes afterwards [design:
+    /// `crate::source_compile::apply` replaces the bytes, references, variables and
+    /// program only].
+    pub fn new(unit: ScriptUnit, program: Program, raw: usize) -> Self {
+        let key: Arc<str> = Arc::from(unit.key());
+        Compiled { unit, program, raw, key }
+    }
+
+    /// `<plugin>|<owner label>` ([`ScriptUnit::key`]).
     pub fn key(&self) -> String {
-        self.unit.key()
+        self.key.to_string()
+    }
+
+    /// The same key, shared: a clone copies no text. Every function call the unit's
+    /// script makes carries it in its `functions::Ctx` (#1389).
+    pub fn shared_key(&self) -> &Arc<str> {
+        &self.key
     }
 
     pub fn has_block(&self, event: u16) -> bool {
@@ -1790,7 +1808,7 @@ impl GameData {
             .map(|(id, unit)| {
                 let dec = decode(&unit.bytes, &d.table);
                 let raw = dec.report.raw_total();
-                (id, Compiled { unit, program: dec.program, raw })
+                (id, Compiled::new(unit, dec.program, raw))
             })
             .collect();
         crate::source_compile::apply(lo, &d.table, &mut compiled, &mut d.issues);
