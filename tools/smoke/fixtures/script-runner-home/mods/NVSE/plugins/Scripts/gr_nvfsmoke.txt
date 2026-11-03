@@ -1,0 +1,3 @@
+; NVForever smoke (script-runner): runs at the game restart.
+player.SetAV Luck 3
+int iDone = RegisterSRScript "optional\gl_nvfsmoke_late.txt"

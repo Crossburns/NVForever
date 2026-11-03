@@ -466,6 +466,32 @@ fn inline_declarations_hex_and_binary_and_block_comments() {
 }
 
 #[test]
+fn inline_declarations_in_let_eval_and_while() {
+    // `let int i := 10`, a type in `if eval` and in a `while` condition [documented: Inline
+    // variable declaration]; `Let array_var a = …` with the macro's `=` (#1460, the
+    // Script Runner files of the owner's mod lists).
+    let h = run("begin GameMode\nlet int i := 10\nif eval (int j = i + 1) > 10\nlet float f := j * 2\nendif\nwhile (int k = 0) > 1\nloop\nend");
+    assert_eq!(h.0[&1], Value::Num(10.0));
+    assert_eq!(h.0[&2], Value::Num(11.0));
+    assert_eq!(h.0[&3], Value::Num(22.0));
+    let (c, _) = build("begin GameMode\nLet array_var a = ar_List 1, 2\nforeach array_var e <- a\nloop\nend");
+    assert!(c.errors().next().is_none(), "{:?}", c.diags);
+    assert_eq!(c.variables.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["a", "e"]);
+    // A lambda's typed parameters stay parameters.
+    let (c, _) = build("begin GameMode\nSetEventHandler \"OnHit\" ({ref rT, int iX} => PrintC \"x\")\nend");
+    assert!(c.errors().next().is_none(), "{:?}", c.diags);
+}
+
+#[test]
+fn a_block_lambdas_body_declares_its_variables() {
+    // `ref r = …` inside `(Begin Function {…} … End)`: declared before the body compiles,
+    // as the unit's declarations are (#1460, gr_ files of the owner's mod lists).
+    let (c, _) = build("begin GameMode\nSetOnControlUpEventHandler (Begin Function {int iCon}\nref rW = Player.GetEquippedObject 5\nint iN = 0\niN = 1\nEnd) 1\nend");
+    assert!(c.errors().next().is_none(), "{:?}", c.diags);
+    assert!(c.variables.iter().any(|v| v.name == "rW") && c.variables.iter().any(|v| v.name == "iN"));
+}
+
+#[test]
 fn calls_on_results_chain() {
     let l = lets("ref r\nfloat f\nbegin GameMode\nlet f := (GetSelf).GetAV Luck\nend");
     assert!(l[0].starts_with("(v2 Set= "), "{}", l[0]);

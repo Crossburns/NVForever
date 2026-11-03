@@ -18275,3 +18275,59 @@ expect = [
   { re = 'ai \[\d\d:\d\d\] GSChetRef: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Chet stands in front of the window" },
   { re = 'dialogue: conversation with GSChetRef started', label = "the dialogue camera frames his head" },
 ]
+
+[[scenario]]
+name = "script-runner-tool"
+kind = "tool"
+source = "issue #1460, docs/spec-notes/ext-script-runner.md: JIP's Script Runner files of the fixture home's mods layer compiled and run headless (game restart, new game)"
+areas = ["scripts", "extender"]
+paths = ["crates/fnv-game/src/script_runner.rs", "crates/fnv-game/src/mod_files.rs", "crates/fnvtool/src/ext_cmd.rs", "crates/fnv-script/src/compile/", "tools/smoke/fixtures/script-runner-home/"]
+commands = [["ext", "script-runner", "{data}", "{masters}", "--schema", "schemas/fnv", "--root", "{repo}/tools/smoke/fixtures/script-runner-home/mods", "--run"]]
+expect = [
+  { json = "files", schema = "fnv.ext.script_runner/1", equals = 3, label = "the folder's three files (the registered one is in a subfolder)" },
+  { json = "compiled", schema = "fnv.ext.script_runner/1", equals = 2 },
+  # By index: a `?file=` filter cannot hold the name's dot. The restart's files in the
+  # order of their names.
+  { json = "ran.restart.0.file", schema = "fnv.ext.script_runner/1", equals = "gr_nvfsmoke.txt" },
+  { json = "ran.restart.0.ok", schema = "fnv.ext.script_runner/1", equals = true, label = "the gr_ file ran at the restart" },
+  { json = "ran.restart.1.file", schema = "fnv.ext.script_runner/1", equals = "gr_nvfsmoke_broken.txt" },
+  { json = "ran.restart.1.ok", schema = "fnv.ext.script_runner/1", equals = false, label = "the broken file is skipped" },
+  { json = "ran.restart.#", schema = "fnv.ext.script_runner/1", equals = 2, label = "no other file runs at the restart" },
+  { json = "ran.new_game.0.file", schema = "fnv.ext.script_runner/1", equals = "ln_nvfsmoke.txt" },
+  { json = "ran.new_game.0.ok", schema = "fnv.ext.script_runner/1", equals = true, label = "the ln_ file ran at the new game" },
+]
+
+[[scenario]]
+name = "script-runner-new"
+source = "issue #1460, docs/spec-notes/ext-script-runner.md §2: a run without a save runs the gr_ files, then the gn_/ln_ files; a file that does not compile is skipped with its line; then a save for script-runner-load"
+note = 'The mods layer of the fixture home: gr_nvfsmoke.txt sets the Luck of the player to 3 and registers optional\gl_nvfsmoke_late.txt, ln_nvfsmoke.txt adds 2'
+areas = ["scripts", "extender"]
+paths = ["crates/fnv-game/src/script_runner.rs", "engine/nvf-play/src/script.rs", "tools/smoke/fixtures/script-runner-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-runner-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "9:player.getav luck;10:save nvfsmoke-script-runner;11:close" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+run_seconds = 14
+expect = [
+  { text = "script runner: gr_nvfsmoke.txt ran (game restart)", count = 1 },
+  { re = 'script runner: gr_nvfsmoke_broken\.txt skipped \(game restart\): line 2: ', count = 1, label = "the broken file is skipped with its line" },
+  { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1 },
+  { re = 'console: GetActorValue on player >> 5\.00', label = "Luck 3 from gr_, then 2 more from ln_" },
+]
+order = [["script runner: gr_nvfsmoke.txt ran", "script runner: ln_nvfsmoke.txt ran", "console: GetActorValue on player"]]
+forbid = [{ text = "gl_nvfsmoke_late.txt ran", label = "the registered gl_ file waits for a load" }]
+
+[[scenario]]
+name = "script-runner-load"
+source = "issue #1460, docs/spec-notes/ext-script-runner.md §2-§3: a load runs the gr_ files after the save is in place, then LoadGame, then the gl_/ln_ files, the one gr_ registered included"
+note = "Loads the save script-runner-new wrote in the same home (the runner keeps them in order)"
+areas = ["scripts", "extender", "save"]
+paths = ["crates/fnv-game/src/script_runner.rs", "engine/nvf-play/src/script.rs", "tools/smoke/fixtures/script-runner-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-runner-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "9:player.getav luck;10:close" }
+args = ["--play", "--load", "nvfsmoke-script-runner", "--no-voice"]
+run_seconds = 14
+expect = [
+  { re = 'load: restored .*nvfsmoke-script-runner\.nvfsave', label = "the save is restored" },
+  { text = "script runner: gr_nvfsmoke.txt ran (game restart)", count = 1 },
+  { text = "script runner: ln_nvfsmoke.txt ran (game load)", count = 1 },
+  { text = 'script runner: optional\gl_nvfsmoke_late.txt ran (game load)', count = 1, label = "the file gr_ registered runs at the load" },
+]
+order = [["load: restored", "script runner: gr_nvfsmoke.txt ran", "script runner: ln_nvfsmoke.txt ran (game load)", 'script runner: optional\gl_nvfsmoke_late.txt ran']]

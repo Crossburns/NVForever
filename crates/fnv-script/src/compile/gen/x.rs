@@ -319,7 +319,10 @@ impl Gen<'_> {
         }) {
             None
         } else {
-            Some(named)
+            // A parameter typed `arg(up to 15)` (DispatchEventAlt, the Call… family) or
+            // `variable(up to 14)` stands for that many [documented: their pages' types].
+            let repeats: usize = u.params.iter().filter_map(|p| up_to(p.wiki_type.as_deref()?)).map(|n| n.saturating_sub(1)).sum();
+            Some(named + repeats)
         };
         Some(XFn { func: FuncId::Name(u.name.clone()), params, opcode: None, aware: u.aware })
     }
@@ -528,5 +531,22 @@ fn val_expr(v: Val) -> XExpr {
         Val::Global(r) => XExpr::Var { var: VarRef { on: None, var: VarSlot::Global { global: RefIndex(r) } }, form: false },
         Val::Remote { on, index, letter } => XExpr::Var { var: VarRef { on: Some(RefIndex(on)), var: VarSlot::Local { index, letter } }, form: false },
         Val::Ref(r) => XExpr::Ref { r: RefIndex(r) },
+    }
+}
+
+/// The count of a catalogue type `…(up to N)`: `arg(up to 15)` is 15.
+fn up_to(wiki_type: &str) -> Option<usize> {
+    let t = wiki_type.to_ascii_lowercase();
+    let n = t.split_once("(up to ")?.1.strip_suffix(')')?;
+    n.trim().parse().ok()
+}
+
+#[cfg(test)]
+mod up_to_tests {
+    #[test]
+    fn repeated_parameters() {
+        assert_eq!(super::up_to("arg(up to 15)"), Some(15));
+        assert_eq!(super::up_to("variable(up to 14)"), Some(14));
+        assert_eq!(super::up_to("string"), None);
     }
 }
