@@ -18211,3 +18211,17 @@ expect = [
   { re = 'console: GetPos on 0xFF000000 >> -683\d\d\.', count = 1, label = "before the move it lies at the player" },
   { re = 'console: GetPos on 0xFF000000 >> -6815\d\.', min = 2, label = "the move sticks: x reads the new value half a second and two seconds later (it read the old x again before #1311)" },
 ]
+
+[[scenario]]
+name = "hair-solid-chet"
+source = "issue #1454: Chet's hair (hairwavy.nif) drew as a see-through shell around his head against the general store's window; its outer layer is mapped onto the soft edge of the texture's alpha. Hair models are now cut-outs (nif_spawn::hair_model_cut_out, nif.md §6 'Hair models are cut-outs'); beards stay blended. The owner's frame of the original (2026-11-03) shows a solid cap and a thin beard"
+note = "Chet is moved in front of the south window (0x001057F3), the player stands facing him and talks to him; frame hair_solid_chet.png in target/smoke shows his head against the window: the hair must be solid to its edge, with no see-through band, and his beard thin"
+areas = ["actors", "render"]
+paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/actors.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "5:moveto:GSChetRef:0x001057F3:0:75:-38", NVF_PLAY_TEST_GOTO = "6:-575:560:545", NVF_PLAY_TEST_TALK = "8:GSChetRef=leave", NVF_PLAY_TEST_TALK_DELAY = "6", NVF_PLAY_TEST_SHOTS = "11:hair_solid_chet.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-sound", "--no-music", "--hour", "8.5"]
+run_seconds = 16
+expect = [
+  { re = 'ai \[\d\d:\d\d\] GSChetRef: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Chet stands in front of the window" },
+  { re = 'dialogue: conversation with GSChetRef started', label = "the dialogue camera frames his head" },
+]
