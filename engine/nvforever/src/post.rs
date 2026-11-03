@@ -143,17 +143,28 @@ impl Default for BrightPass {
 pub const GLOW_MODIFIED_MAX: f32 = 1.0;
 
 /// The light glow's strength with the image space modifiers on the screen: the image
-/// space's ([`glow_intensity`]) times the modifiers' change to Bright Scale and divided by
-/// their change to Bright Clamp ("the clamp for which lum levels bloom": a lower clamp
-/// lets more of the picture glow) [hypothesis: image-modifiers.md §11; documented: GECK
-/// wiki ImageSpace Modifiers, HDR], up to [`GLOW_MODIFIED_MAX`]; never below the
-/// image space's own when the modifiers raise it.
-pub fn modified_glow(base: f32, scale_ratio: f32, clamp_ratio: f32) -> f32 {
-    let k = scale_ratio / clamp_ratio.max(0.01);
-    if (k - 1.0).abs() < 1e-4 {
+/// space's ([`glow_intensity`]) times the modifiers' change to Bright Scale, up to
+/// [`GLOW_MODIFIED_MAX`]; never below the image space's own when the modifiers raise it
+/// [hypothesis: image-modifiers.md §11]. Their change to Bright Clamp goes to the bright
+/// pass ([`modified_bright_pass`]): the light glow scatters every pixel, so at full
+/// strength it blurs the whole picture, while a lower clamp lets more of what is bright
+/// glow [observed: the birth scene (CG00BirthBaseISFX, Bright Scale ×2, Bright Clamp ×0.2)
+/// blurred out entirely through the light glow, where the original keeps the people and
+/// the frame sharp under blooming lamps; owner's TTW run and Fallout 3 frame, 2026-11-02].
+pub fn modified_glow(base: f32, scale_ratio: f32) -> f32 {
+    if (scale_ratio - 1.0).abs() < 1e-4 {
         return base;
     }
-    (base * k).clamp(0.0, GLOW_MODIFIED_MAX.max(base))
+    (base * scale_ratio).clamp(0.0, GLOW_MODIFIED_MAX.max(base))
+}
+
+/// The bright pass ([`bright_pass`]) with the modifiers on the screen: the image space's
+/// Bright Scale times the modifiers' change to it, divided by their change to Bright Clamp
+/// ("the clamp for which lum levels bloom": a lower clamp lets more glow [documented: GECK
+/// wiki ImageSpace]; the division is ours [hypothesis]). Only what is brighter than
+/// [`BRIGHT_PASS_THRESHOLD`] feeds it, so the rest of the picture stays sharp.
+pub fn modified_bright_pass(scale: f32, scale_ratio: f32, clamp_ratio: f32) -> f32 {
+    bright_pass(scale * scale_ratio / clamp_ratio.max(0.01))
 }
 
 /// Set the light glow's strength on [`ImageSpaceGlow`] cameras from the image space now,
@@ -167,8 +178,8 @@ fn image_space_glow(
     let Some(sky) = sky else { return };
     let ratio = |i: usize| screen.as_deref().map_or(1.0, |s| s.hdr_ratio(i));
     let hdr = &sky.cinematic().hdr;
-    let intensity = modified_glow(glow_intensity(hdr), ratio(fnv_world::imagespace::HDR_BRIGHT_SCALE), ratio(fnv_world::imagespace::HDR_BRIGHT_CLAMP));
-    let pass = bright_pass(hdr.v[fnv_world::imagespace::HDR_BRIGHT_SCALE] * ratio(fnv_world::imagespace::HDR_BRIGHT_SCALE));
+    let intensity = modified_glow(glow_intensity(hdr), ratio(fnv_world::imagespace::HDR_BRIGHT_SCALE));
+    let pass = modified_bright_pass(hdr.v[fnv_world::imagespace::HDR_BRIGHT_SCALE], ratio(fnv_world::imagespace::HDR_BRIGHT_SCALE), ratio(fnv_world::imagespace::HDR_BRIGHT_CLAMP));
     if (pass - *told).abs() > 0.05 {
         info!("light glow: bright pass {pass:.2} (Bright Scale {:.1})", hdr.v[fnv_world::imagespace::HDR_BRIGHT_SCALE]);
         *told = pass;
@@ -445,5 +456,16 @@ mod tests {
         // The Strip's night adapter, Bright Scale 7.
         assert!((bright_pass(7.0) - 0.4).abs() < 1e-6);
         assert_eq!(bright_pass(1000.0), BRIGHT_PASS_MAX);
+    }
+
+    #[test]
+    fn a_lower_bright_clamp_feeds_the_bright_pass_not_the_whole_picture() {
+        // The birth scene: the room's Bright Scale 1.6, CG00BirthBaseISFX ×2 and clamp ×0.2.
+        let base = GLOW_INTENSITY * 0.8;
+        assert!((modified_glow(base, 2.0) - base * 2.0).abs() < 1e-6);
+        assert_eq!(modified_bright_pass(1.6, 2.0, 0.2), BRIGHT_PASS_MAX);
+        // No modifier: as the image space has it.
+        assert_eq!(modified_glow(base, 1.0), base);
+        assert_eq!(modified_bright_pass(7.0, 1.0, 1.0), bright_pass(7.0));
     }
 }

@@ -692,6 +692,7 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             (0x11C8, "OpenTeammateContainer", Impl(crate::followers::open_teammate_container)),
             (0x1219, "AddSPECIALPoints", Impl(ui::add_special_points)),
             (0x1218, "SetSPECIALPoints", Impl(ui::set_special_points)),
+            (0x11EE, "ShowSPECIALBookMenuParams", Impl(ui::show_special_book_menu)),
             (0x117A, "ShowRepairMenu", Impl(misc::show_repair_menu)),
             (0x1250, "ShowRecipeMenu", Impl(misc::show_recipe_menu)),
             (0x1254, "ShowBlackJackMenuParams", Impl(misc::show_blackjack_menu)),

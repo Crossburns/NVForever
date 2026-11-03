@@ -568,6 +568,9 @@ struct Resident {
     /// The target it was held on last frame ([`LOCK_HOLD`]): it stays on that target
     /// however far it moves in a frame.
     lock_held: Option<u32>,
+    /// The heading it is drawn with while an idle holds it in place (`Core::posed`): the
+    /// one it had when the idle began.
+    posed_heading: Option<f32>,
     /// It has been drawn in the loaded area. Going from there through a door into an
     /// interior takes the interior into the cell buffer (`carries_cell`); an actor a
     /// script keeps in a holding cell (Malcolm Holmes in RandomEncounterNPCs) never was,
@@ -705,6 +708,9 @@ struct Core {
     /// Actors an idle holds in place (`idles::IdleHolds`, docs/spec-notes/idles.md §15):
     /// they stand as a staggering actor does while it shows.
     posed: HashSet<u32>,
+    /// Of those, the ones whose idle carries the body away from the reference
+    /// (`idles::IdleHolds::carried_off`): they are drawn facing as they did when it began.
+    carried_off: HashSet<u32>,
     /// Of those, the ones whose AI has somewhere to go: they break out of the idle.
     breaking: HashSet<u32>,
     /// How far their attack clips carry actors this frame (`attack_anims::AttackTravel`,
@@ -925,6 +931,7 @@ impl Residents {
             held_now: false,
             staggering: HashSet::new(),
             posed: HashSet::new(),
+            carried_off: HashSet::new(),
             breaking: HashSet::new(),
             travel: HashMap::new(),
             carried: HashMap::new(),
@@ -1143,6 +1150,7 @@ impl Core {
             last_space: None,
             aim_heading: None,
             lock_held: None,
+            posed_heading: None,
             been_loaded: false,
         });
     }
@@ -2364,8 +2372,12 @@ pub fn drive(
         Some(mut h) => {
             h.breaking = std::mem::take(&mut res.core.breaking);
             res.core.posed = h.held.clone();
+            res.core.carried_off = h.carried_off.clone();
         }
-        None => res.core.posed.clear(),
+        None => {
+            res.core.posed.clear();
+            res.core.carried_off.clear();
+        }
     }
     // The game state: this module's, or the game being played (once its data is in).
     match (res.own.as_deref_mut(), script, sim.as_deref_mut()) {
@@ -2617,6 +2629,24 @@ pub fn drive(
                 r.aim_heading = None;
                 w.heading
             }
+        };
+        // An idle that holds its actor in place and carries the body away from the
+        // reference keeps the body facing as it did when the idle began: the AI turning
+        // the reference to whom it speaks swung the body sideways about it (Dad in Fallout
+        // 3's birth scene, `Bip01 NonAccum` about 144 units forward of his marker)
+        // [observed: owner's TTW run 2026-11-02, Dad turned 27° at his first line;
+        // hypothesis: the original does not turn such an actor]. An idle that leaves the
+        // body over its reference (a dialogue response's) still lets it turn. Let go, it
+        // turns back to the walker's heading as a fighter does.
+        let heading = match (core.carried_off.contains(&r.actor.0), r.posed_heading) {
+            (true, Some(h)) => h,
+            (true, None) => *r.posed_heading.insert(heading),
+            (false, Some(h)) => {
+                r.posed_heading = None;
+                r.aim_heading = Some(h);
+                h
+            }
+            (false, None) => heading,
         };
         let strafe = r.aim_heading.is_some();
         // How a fighter facing its target moves (the fight summary): forward, sideways or

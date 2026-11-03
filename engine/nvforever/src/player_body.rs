@@ -2115,7 +2115,7 @@ fn drive_weapon_emitters(state: Res<PlayerBody>, mut emitters: Query<&mut crate:
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive_body(
     mut commands: Commands,
-    (time, turbo): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>),
+    (time, turbo, sim, mut told_scale): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>, Option<Res<nvf_play::sim::SimState>>, Local<Option<f32>>),
     d: Res<PlayWorld>,
     intent: Res<MoveIntent>,
     control: Res<PlayerControl>,
@@ -2389,6 +2389,12 @@ fn drive_body(
             m.after_idle = Some(1.0);
         }
     }
+    // The game put the player somewhere else while held (a script's move landing after
+    // the idle began): the scene plays there.
+    if let Some(h) = idles.held.and_then(|h| h.moved(player.placed, player.heading, player.pitch)) {
+        info!("player view: the game moved the player while an idle holds them: held at ({:.0}, {:.0}, {:.0}) now", h.feet[0], h.feet[1], h.feet[2]);
+        idles.held = Some(h);
+    }
     // A second later: where the collision has left the character (a smoke check).
     if let Some(t) = m.after_idle.as_mut() {
         *t -= dt;
@@ -2442,14 +2448,25 @@ fn drive_body(
     // The body stands on the drawn ground under the feet (`nvf_play::phys::drawn_sink`);
     // its eye counts from the feet as before.
     let sink = Vec3::Z * phys.drawn_sink_of(FormId::PLAYER_REF.0);
-    let root = Transform { translation: Vec3::from_array(feet) - sink, rotation: Quat::from_rotation_z(-player.heading), scale: Vec3::splat(body.scale) };
+    // A script's SetScale on the player sizes both rigs, so the view (the first-person
+    // camera node) comes down with the body: Fallout 3's baby stage, CG01 stage 0,
+    // `player.SetScale 0.4`, stage 100 `1` [observed: TTW's Fallout3.esm, fnvtool script
+    // decompile; owner's TTW run 2026-11-02, the baby was drawn full size].
+    let script_scale = sim.as_deref().and_then(|s| s.script_scale(FormId::PLAYER_REF.0)).unwrap_or(1.0).max(nvf_play::sim::MIN_DRAWN_SCALE);
+    if *told_scale != Some(script_scale) {
+        if told_scale.is_some() || script_scale != 1.0 {
+            info!("player body: drawn at scale {script_scale:.2} (SetScale), race height {:.2}", body.scale);
+        }
+        *told_scale = Some(script_scale);
+    }
+    let root = Transform { translation: Vec3::from_array(feet) - sink, rotation: Quat::from_rotation_z(-player.heading), scale: Vec3::splat(body.scale * script_scale) };
     let third = Posed { root, look_pitch: player.pitch, special: &idles.third, pipboy: None, sway: SwayPose::NONE, sights: None };
     let third_eye = pose_rig(&mut body.third, &frame, &events, third, &mut ctx, &mut transforms).map(|(e, _)| e + sink);
     // The third-person body's melee attack clip carries the player by its root's travel
     // (actors.md §8.13), turned by the heading and scaled with the body.
     if let Some(d) = body.third.carry.filter(|_| dt > 0.0) {
         let (s, c) = player.heading.sin_cos();
-        let k = body.scale;
+        let k = body.scale * script_scale;
         lunge.owed[0] += (d.x * c + d.y * s) * k;
         lunge.owed[1] += (-d.x * s + d.y * c) * k;
         if !was_carrying {
@@ -2592,7 +2609,7 @@ fn drive_body(
     // The body in first person stands where its eyes are under the camera (and a little
     // behind), feet on the ground: the view is the arms rig's, the body is moved to it.
     if let (true, Some(cam), Some(head)) = (frame.upright, first_eye, third_eye) {
-        let back = root.rotation * Vec3::new(0.0, OWN_BODY_BACK * body.scale, 0.0);
+        let back = root.rotation * Vec3::new(0.0, OWN_BODY_BACK * root.scale.x, 0.0);
         if let Ok(mut t) = transforms.get_mut(body.third.root) {
             t.translation += Vec3::new(cam.x - head.x - back.x, cam.y - head.y - back.y, 0.0);
         }
