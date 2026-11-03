@@ -68,7 +68,9 @@ A file is a list of entries, or one entry; 59 files are empty. An entry's keys:
   virtual Data is one root), read in name order without regard to case. An entry is kept
   when its plugin is loaded and its folder has animation files; its `form` IDs become the
   plugin's load-order IDs. A file that is empty is skipped; one that is not JSON, an entry
-  without a folder, and one whose folder is missing or empty are logged and skipped
+  without a folder, one naming a plugin but no form [hypothesis: a slip; only entries
+  with neither are for every actor], and one whose folder is missing or empty are logged
+  and skipped
   (the broken-files rule). The start-up line `AnimGroupOverride: N entries from M files`
   says what was read. Only loose files are read [hypothesis: mods ship them loose; none
   was seen in an archive].

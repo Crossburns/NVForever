@@ -100,13 +100,16 @@ fn folder_files(folder: &str) -> (Vec<String>, Vec<String>) {
 /// Every entry of the JSON files directly under the folder, the files read in name order
 /// without regard to case [hypothesis: mods name files `1Another_Millenia_base.json` and
 /// `zzz_heavy_fatman.json` to come first or last]. A file that is empty, not JSON, or an
-/// entry without a folder, whose plugin is not loaded or whose folder is missing is
+/// entry without a folder, whose plugin is not loaded, that names a plugin but no form
+/// [hypothesis: a slip, not an entry for every actor], or whose folder is missing is
 /// logged and left out (the broken-files rule) [observed: 59 empty files, 20 entries
 /// naming a folder that is not there].
 fn load(g: &Game) -> Vec<FolderEntry> {
     let mut out = Vec::new();
     let root = format!("meshes\\{ROOT}");
-    let files: Vec<String> = crate::mod_files::files_under(&root).into_iter().filter(|f| !f.contains('\\') && f.to_ascii_lowercase().ends_with(".json")).collect();
+    let files: Vec<String> = crate::mod_files::files_in(&root).into_iter().filter(|f| f.to_ascii_lowercase().ends_with(".json")).collect();
+    // A folder's files, walked once however many entries name it.
+    let mut walked: HashMap<String, (Vec<String>, Vec<String>)> = HashMap::new();
     for file in &files {
         let Some(bytes) = crate::mod_files::read_loose(&format!("{root}\\{file}")) else { continue };
         let text = String::from_utf8_lossy(&bytes);
@@ -138,13 +141,18 @@ fn load(g: &Game) -> Vec<FolderEntry> {
                         tracing::debug!("AnimGroupOverride: {file}: {m} is not loaded");
                         continue;
                     };
+                    if ids.is_empty() {
+                        // Not every actor: a plugin was named, the form was left out.
+                        tracing::warn!("AnimGroupOverride: {file}: an entry for {m} without a form");
+                        continue;
+                    }
                     ids.iter().map(|id| FormId(((index as u32) << 24) | (id & 0x00FF_FFFF))).collect()
                 }
                 None if ids.is_empty() => Vec::new(),
                 // A form with no plugin: a full ID [hypothesis].
                 None => ids.into_iter().map(FormId).collect(),
             };
-            let (third, first) = folder_files(&folder);
+            let (third, first) = walked.entry(folder.to_ascii_lowercase()).or_insert_with(|| folder_files(&folder)).clone();
             if third.is_empty() && first.is_empty() {
                 tracing::warn!("AnimGroupOverride: {file}: folder {folder} has no animation files");
                 continue;

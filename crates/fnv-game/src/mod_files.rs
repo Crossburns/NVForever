@@ -155,22 +155,33 @@ fn find_dir(base: &Path, rel: &str) -> Option<PathBuf> {
 /// the same path, compared without regard to case, in a later one. Sorted without
 /// regard to case. kNVSE's AnimGroupOverride folders (`crate::nvse_anim_folders`).
 pub fn files_under(rel: &str) -> Vec<String> {
-    fn walk(dir: &Path, prefix: &str, out: &mut Vec<String>) {
+    list_files(rel, true)
+}
+
+/// The loose files directly in a Data folder (no subfolders), as [`files_under`].
+pub fn files_in(rel: &str) -> Vec<String> {
+    list_files(rel, false)
+}
+
+fn list_files(rel: &str, deep: bool) -> Vec<String> {
+    fn walk(dir: &Path, prefix: &str, deep: bool, seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>) {
         let Ok(rd) = std::fs::read_dir(dir) else { return };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             let rel = if prefix.is_empty() { name } else { format!("{prefix}\\{name}") };
             if e.path().is_dir() {
-                walk(&e.path(), &rel, out);
-            } else if !out.iter().any(|o| o.eq_ignore_ascii_case(&rel)) {
+                if deep {
+                    walk(&e.path(), &rel, deep, seen, out);
+                }
+            } else if seen.insert(rel.to_ascii_lowercase()) {
                 out.push(rel);
             }
         }
     }
-    let mut out = Vec::new();
+    let (mut seen, mut out) = (std::collections::HashSet::new(), Vec::new());
     for root in roots().read {
         if let Some(dir) = find_dir(&root, rel) {
-            walk(&dir, "", &mut out);
+            walk(&dir, "", deep, &mut seen, &mut out);
         }
     }
     out.sort_by_key(|n| n.to_ascii_lowercase());
@@ -180,6 +191,8 @@ pub fn files_under(rel: &str) -> Vec<String> {
 /// A file under `base` by a Data-relative path, each part matched without regard to
 /// case (as [`find_dir`]).
 fn find_file(base: &Path, rel: &str) -> Option<PathBuf> {
+    // The whole path stays under `base`, the file's name too (`C:x` names a drive).
+    on_disk(base, rel)?;
     let (dir, name) = rel.rsplit_once(['\\', '/']).unwrap_or(("", rel));
     let d = find_dir(base, dir)?;
     let direct = d.join(name);
@@ -650,10 +663,8 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
             let p = text(args, 0).unwrap_or_default().replace('/', "\\");
             let folder = num(args, 1, 0.0) != 0.0;
             let r = roots();
-            let loose = r.read.iter().any(|root| {
-                let full = root.join(&p);
-                if folder { full.is_dir() } else { full.is_file() }
-            }) || (!folder && g.mod_files.written.contains_key(&norm(&p)));
+            // In any case, and never outside the root (`find_dir`, `find_file`).
+            let loose = r.read.iter().any(|root| if folder { find_dir(root, &p).is_some() } else { find_file(root, &p).is_some() }) ||(!folder && g.mod_files.written.contains_key(&norm(&p)));
             if loose {
                 XVal::Num(1.0)
             } else if !folder {

@@ -76,7 +76,8 @@ fn files() {
             {"mod": "Folders.esm", "form": "800", "folder": "Gun"},
             {"mod": "Folders.esm", "form": ["801", "800"], "folder": "Gun\\Flag", "condition": "TestFlag == 1", "priority": 1},
             {"mod": "NotLoaded.esp", "form": "800", "folder": "Gun\\Flag"},
-            {"mod": "Folders.esm", "form": "800", "folder": "Missing"}
+            {"mod": "Folders.esm", "form": "800", "folder": "Missing"},
+            {"mod": "Folders.esm", "folder": "Gun"}
         ]"#,
     )
     .unwrap();
