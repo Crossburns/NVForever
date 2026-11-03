@@ -1063,24 +1063,167 @@ fn script_writes_to_the_time_globals_win_over_the_running_clock() {
 }
 
 #[test]
+fn a_write_to_a_time_global_counts_even_when_the_value_is_the_same() {
+    let f = fixture();
+    // GameDaysPassed: four frames round back to 1000, and the write of 1000 is the time.
+    let frame = 1.0 / 60.0;
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 4);
+    assert_eq!(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1000.0);
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 2);
+    assert_eq!(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1000.0, "two frames after the write");
+    clock_frames(&mut w, frame, 4);
+    assert!(w.global(id(GAME_DAYS_PASSED)).unwrap() > 1000.0, "six frames after the write");
+
+    // Written away and back before the next frame is the same.
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 4);
+    w.set_global(id(GAME_DAYS_PASSED), 5.0).unwrap();
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 2);
+    assert_eq!(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1000.0);
+
+    // GameHour, on its own: a step under half its f32 step, and GameDaysPassed goes on.
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(TIME_SCALE), 1.0).unwrap();
+    w.set_global(id(GAME_HOUR), 16.0).unwrap();
+    let dt = 1.0 / 1000.0;
+    clock_frames(&mut w, dt, 3);
+    let carried = w.snapshot().clock_days_passed;
+    assert_eq!(w.global(id(GAME_HOUR)).unwrap(), 16.0);
+    w.set_global(id(GAME_HOUR), 16.0).unwrap();
+    assert_eq!(w.snapshot().clock_hour, None);
+    assert_eq!(w.snapshot().clock_days_passed, carried);
+    clock_frames(&mut w, dt, 3);
+    assert_eq!(w.global(id(GAME_HOUR)).unwrap(), 16.0, "the three frames before the write are gone");
+
+    // The clock's own writes go on, frame after frame.
+    let elapsed = clock_frames(&mut w, dt, 2000);
+    assert!(close_to(w.global(id(GAME_HOUR)).unwrap(), 16.0 + (elapsed + 3.0 * dt / 86400.0) * 24.0, 1e-5));
+}
+
+#[test]
+fn advancing_to_an_hour_reaches_midnight_and_the_date() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAY), 18.0).unwrap();
+    // Start 12, one frame at TimeScale 30 and 60 frames a second.
+    clock_frames(&mut w, 1.0 / 60.0, 1);
+    let hours = w.advance_to_hour(0.0).unwrap();
+    assert!((hours - 12.0).abs() < 1e-3, "{hours}");
+    let c = w.calendar().unwrap();
+    assert_eq!((c.day, c.hour), (19.0, 0.0));
+    // The hour it shows is no move, and leaves nothing behind.
+    assert_eq!(w.advance_to_hour(0.0).unwrap(), 0.0);
+    assert_eq!(w.calendar().unwrap(), c);
+}
+
+/// Through JSON and back, as a save goes.
+fn reload<'a>(f: &'a Fixture, w: &World) -> World<'a> {
+    let text = serde_json::to_string(&w.snapshot()).unwrap();
+    World::restore(&f.forms, &f.refs, &serde_json::from_str(&text).unwrap()).unwrap()
+}
+
+#[test]
 fn save_and_load_keep_the_clock() {
     let f = fixture();
     let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
     w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
-    let before = clock_frames(&mut w, 1.0 / 60.0, 3600);
-    // The fine clock is not saved: the snapshot holds the globals and nothing new.
-    let snap = w.snapshot();
-    assert!(serde_json::to_value(&snap).unwrap().get("fine_clock").is_none());
-    let mut r = World::restore(&f.forms, &f.refs, &snap).unwrap();
-    assert_eq!(r.calendar().unwrap(), w.calendar().unwrap());
-    // A world loaded with the clock far on goes on from it as the running one does.
-    let after = clock_frames(&mut r, 1.0 / 60.0, 3600);
     clock_frames(&mut w, 1.0 / 60.0, 3600);
-    let want = 1000.0 + before + after;
-    assert!(close_to(r.global(id(GAME_DAYS_PASSED)).unwrap(), want, PAST_DAY_1000));
-    assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), want, PAST_DAY_1000));
-    let (rh, wh) = (r.global(id(GAME_HOUR)).unwrap(), w.global(id(GAME_HOUR)).unwrap());
-    assert!((rh - wh).abs() < 1e-3, "loaded {rh}, running {wh}");
+    let mut r = reload(&f, &w);
+    assert_eq!(r.calendar().unwrap(), w.calendar().unwrap());
+    assert_eq!(r.snapshot(), w.snapshot());
+    // A world loaded with the clock far on goes on from it as the running one does.
+    clock_frames(&mut r, 1.0 / 60.0, 3600);
+    clock_frames(&mut w, 1.0 / 60.0, 3600);
+    assert_eq!(r.snapshot(), w.snapshot());
+}
+
+#[test]
+fn a_restored_run_matches_the_uninterrupted_one_through_a_restock() {
+    let f = fixture();
+    let (p, safe) = (FormId::PLAYER_REF, id(SAFE_REF));
+    let frame = 1.0 / 60.0;
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.unlock(safe).unwrap();
+    w.transfer_all(safe, p).unwrap();
+    // Day 1001 is a restock day (7 x 143); a game day is 172800 frames here.
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 172_793);
+    let mut r = reload(&f, &w);
+    for at in 172_794..=172_830 {
+        clock_frames(&mut w, frame, 1);
+        clock_frames(&mut r, frame, 1);
+        assert_eq!(r.snapshot(), w.snapshot(), "frame {at}");
+        let restock = (at >= 172_795).then_some(1001.0);
+        assert_eq!(r.peek(safe).unwrap().last_restock, restock, "frame {at}");
+    }
+    assert_eq!(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1001.0002);
+    assert_eq!(w.item_count(safe, id(CAPS)).unwrap(), 3);
+}
+
+#[test]
+fn restoring_every_frame_does_not_stop_the_clock() {
+    let f = fixture();
+    let frame = 1.0 / 60.0;
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    let mut r = reload(&f, &w);
+    for _ in 0..2000 {
+        clock_frames(&mut w, frame, 1);
+        clock_frames(&mut r, frame, 1);
+        r = reload(&f, &r);
+    }
+    assert_eq!(r.snapshot(), w.snapshot());
+    assert!(r.global(id(GAME_DAYS_PASSED)).unwrap() > 1000.01);
+}
+
+#[test]
+fn a_restore_just_before_midnight_rolls_the_date_on_the_same_frame() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(TIME_SCALE), 1.0).unwrap();
+    w.set_global(id(GAME_HOUR), 23.0).unwrap();
+    let c = w.advance_hours(1.0 - 1e-9).unwrap();
+    assert!(c.hour < 24.0);
+    let mut r = reload(&f, &w);
+    assert_eq!(r.calendar().unwrap(), c);
+    clock_frames(&mut w, 1.0 / 240.0, 1);
+    clock_frames(&mut r, 1.0 / 240.0, 1);
+    assert_eq!(r.calendar().unwrap(), w.calendar().unwrap());
+    assert_ne!(r.calendar().unwrap().day, c.day);
+    assert_eq!(r.snapshot(), w.snapshot());
+}
+
+#[test]
+fn a_save_without_the_clock_copies_or_with_stale_ones_goes_on_from_the_globals() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, 1.0 / 60.0, 3600);
+    let stored = w.calendar().unwrap();
+
+    // An older save: the fields are absent, and it still loads.
+    let mut json = serde_json::to_value(w.snapshot()).unwrap();
+    let fields = json.as_object_mut().unwrap();
+    assert!(fields.remove("clock_hour").is_some() && fields.remove("clock_days_passed").is_some());
+    let mut old = World::restore(&f.forms, &f.refs, &serde_json::from_value(json).unwrap()).unwrap();
+    assert_eq!(old.calendar().unwrap(), stored);
+    let before = old.global(id(GAME_DAYS_PASSED)).unwrap() as f64;
+    let elapsed = clock_frames(&mut old, 1.0 / 60.0, 3600);
+    assert!(close_to(old.global(id(GAME_DAYS_PASSED)).unwrap(), before + elapsed, PAST_DAY_1000));
+
+    // A global edited in the save: the copy that no longer rounds to it does not count.
+    let mut snap = w.snapshot();
+    snap.globals.insert(id(GAME_DAYS_PASSED), 7.0);
+    let mut edited = World::restore(&f.forms, &f.refs, &snap).unwrap();
+    assert_eq!(edited.calendar().unwrap().days_passed, 7.0);
+    let c = edited.advance_hours(24.0).unwrap();
+    assert!((c.days_passed - 8.0).abs() < 1e-5);
+    assert_eq!(edited.snapshot().clock_hour, w.snapshot().clock_hour);
 }
 
 #[test]
