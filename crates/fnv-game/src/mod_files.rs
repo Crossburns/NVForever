@@ -71,6 +71,30 @@ pub fn nif_has_name(bytes: &[u8], name: &str) -> bool {
     bytes.windows(pat.len()).any(|w| w == pat.as_slice())
 }
 
+/// The loose files directly in a Data folder: each name (as on disk) with its path, from
+/// the read roots in order (NVForever's layer first), a name once, the first root's.
+/// Archives are not looked in.
+pub fn data_files(folder: &str) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for root in roots().read {
+        let Some(dir) = on_disk(&root, folder) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if e.path().is_file() && !out.iter().any(|(x, _)| x.eq_ignore_ascii_case(&n)) {
+                out.push((n, e.path()));
+            }
+        }
+    }
+    out
+}
+
+/// A Data file's bytes: the first read root's loose copy (NVForever's layer before the
+/// game's Data), else through the host (archives included).
+pub fn read_data_file(path: &str) -> Option<Vec<u8>> {
+    roots().read.iter().filter_map(|root| on_disk(root, path)).find_map(|p| std::fs::read(p).ok()).or_else(|| read_data(path))
+}
+
 /// The game's Data folder, when the host gave one (the last read root).
 pub fn data_dir() -> Option<PathBuf> {
     roots().read.last().cloned()

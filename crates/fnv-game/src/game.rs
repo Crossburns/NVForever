@@ -1108,6 +1108,8 @@ pub struct Game<'a> {
     /// (lower case) to them.
     compiled_files: Vec<&'a Compiled>,
     compiled_paths: std::collections::HashMap<String, u32>,
+    /// JIP's Script Runner: its files and their units (`crate::script_runner`).
+    pub(crate) sr: crate::script_runner::SrState<'a>,
     /// A lambda already made, by its unit, its number in the unit and whose variables it
     /// shares ([`LambdaKey`]).
     lambda_ids: std::collections::HashMap<LambdaKey, u32>,
@@ -1893,6 +1895,8 @@ pub struct Session {
     pp: crate::nvse_pp::PpSession,
     /// ITR's settings that outlast a load (`crate::nvse_itr1::ItrKept`).
     itr_kept: crate::nvse_itr1::ItrKept,
+    /// The Script Runner files RegisterSRScript added (`crate::script_runner`).
+    sr_registered: Vec<String>,
 }
 
 /// An event handler: the event (lower case), the function or lambda, the filters by
@@ -1981,6 +1985,7 @@ impl<'a> Game<'a> {
             lambdas: Vec::new(),
             compiled_files: Vec::new(),
             compiled_paths: std::collections::HashMap::new(),
+            sr: Default::default(),
             lambda_ids: Default::default(),
             handlers: Vec::new(),
             handler_seq: 0,
@@ -2526,15 +2531,29 @@ impl<'a> Game<'a> {
     /// ([`GameEnv`]). The compiled unit lives as long as the game data (it is leaked:
     /// one per such line, a debugging aid). Returns the compiler's warnings.
     pub fn run_source(&mut self, src: &str, ctx: RunCtx) -> Result<Vec<String>, String> {
+        let (unit, warnings) = self.compile_statements(src, "console", "CONS")?;
+        self.run_statements(unit, ctx);
+        Ok(warnings)
+    }
+
+    /// `src` compiled as a result script (statements without blocks), its unit leaked so it
+    /// lives as long as the game data, named `plugin` with an owner of record type `sig`;
+    /// with the compiler's warnings. The console's lines and the Script Runner's files
+    /// (`crate::script_runner`).
+    pub(crate) fn compile_statements(&mut self, src: &str, plugin: &str, sig: &str) -> Result<(&'a Compiled, Vec<String>), String> {
         let c = fnv_script::compile::compile(src, &self.data.table, &GameEnv { g: self }, None);
         if let Some(e) = c.errors().next() {
-            return Err(format!("{}: {}", e.kind.replace('_', " "), e.detail));
+            // The console's own line needs no number.
+            return Err(match sig {
+                "CONS" => format!("{}: {}", e.kind.replace('_', " "), e.detail),
+                _ => format!("line {}: {}: {}", e.line, e.kind.replace('_', " "), e.detail),
+            });
         }
         let warnings = c.diags.iter().map(|d| format!("{}: {}", d.kind.replace('_', " "), d.detail)).collect();
         let d = fnv_script::decode(&c.bytes, &self.data.table);
         let unit = fnv_script::ScriptUnit {
-            plugin: "console".into(),
-            owner: fnv_script::UnitOwner::Other { sig: "CONS".into(), form: 0, ordinal: 0 },
+            plugin: plugin.into(),
+            owner: fnv_script::UnitOwner::Other { sig: sig.into(), form: 0, ordinal: 0 },
             kind: fnv_script::ScriptKind::Object,
             header: Default::default(),
             variables: c.variables,
@@ -2544,8 +2563,17 @@ impl<'a> Game<'a> {
             source: Some(src.to_string()),
         };
         let unit: &'a Compiled = Box::leak(Box::new(Compiled { unit, program: d.program, raw: d.report.raw_total() }));
+        Ok((unit, warnings))
+    }
+
+    /// Run a unit of [`Game::compile_statements`] now, with temporary locals; its strings
+    /// and arrays are not freed when it ends (as a result script's). False when it stopped
+    /// on an error (traced as `ScriptError`).
+    pub(crate) fn run_statements(&mut self, unit: &'a Compiled, ctx: RunCtx) -> bool {
+        let errors = self.events.len();
         self.exec(unit, &unit.program.top, Locals::Temp(BTreeMap::new()), ctx);
-        Ok(warnings)
+        let key = unit.key();
+        !self.events[errors..].iter().any(|e| matches!(&e.kind, EventKind::ScriptError { unit, .. } if *unit == key))
     }
 
     /// A whole function script from source, run once as nvf_capture's query step runs one
@@ -2923,7 +2951,8 @@ impl<'a> Game<'a> {
             })
             .collect();
         let pp = self.pp_take_session();
-        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept) }
+        let sr_registered = self.sr.take_registered();
+        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -2934,6 +2963,7 @@ impl<'a> Game<'a> {
         self.handler_seq = s.handler_seq;
         self.pp_put_session(s.pp);
         self.other.itr.kept = s.itr_kept;
+        self.sr.put_registered(s.sr_registered);
     }
 
     /// Run every handler registered for `event` whose filters match, highest priority
