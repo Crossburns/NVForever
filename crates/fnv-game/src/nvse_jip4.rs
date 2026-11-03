@@ -470,8 +470,10 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             zero
         }
         // Seconds since this run of the game began, menus included [documented:
-        // GetSessionTime; hypothesis: a loaded save does not start a new session].
-        "getsessiontime" => XVal::Num(g.frame as f64 * g.cfg.frame_seconds),
+        // GetSessionTime; hypothesis: a loaded save does not start a new session]: each
+        // frame's own length added up (`Game::time_real`), since the engine changes
+        // `frame_seconds` every frame and the frame count times it jumps (#1297).
+        "getsessiontime" => XVal::Num(g.time_real()),
         "getpcdetectionstate" => XVal::Num(g.jip4_pc_detection()),
         // The type code of the reference itself (REFR, ACHR, ACRE …), not its base
         // [documented: GetRefType; the codes: docs/spec-notes/ext-forms.md].

@@ -144,6 +144,27 @@ count-prefixed arrays (CREA NIFT). Size-decided unions (`{"union": [{"size": n, 
 T}, ..., {"type": fallback}]}`) exist since 2026-10-09; NUL-separated string lists have
 the primitive `zstring_array` (2026-10-08, KFFZ/NIFZ).
 
+### 2.6 Records the schema cannot express, and readers still by hand (issue #1000)
+
+Runtime readers take their values from the schema's decoded fields wherever the schema
+has the layout (CLAS, CPTH, IDLE and RADS/DEHY/HUNG/SLPD moved over 2026-10-31/11-01).
+The records below stay hand-read because schema v1 cannot say their layout:
+
+| Record | Subrecords | What v1 lacks |
+|---|---|---|
+| PERK | DATA, EPFD | Context: DATA after the record header is the perk's data, DATA after a PRKE header is the effect's, laid out by that header's type; EPFD is a float, a FormID, a script or text by the EPFT before it (sibling-decided union) [documented: xEdit wbDefinitionsFNV.pas PERK; observed: docs/spec-notes/perk-entry-points.md, `data.rs` PerkEntry]. The headers (PRKE, PRKC, EPFT, EPF2, EPF3) are in `gameplay.json`. |
+| DEBR | DATA | A NUL-ended model path in the middle of a struct, followed by a byte; `zstring` reads to the subrecord's end [documented: docs/spec-notes/combat-data.md §1]. |
+| NAVM | NVGD | Per grid square a u16 count and that many u16 indices, for divisor² squares: an array whose count is computed from an earlier field [documented: docs/spec-notes/navmesh.md §1.1]. The other NAVM arrays are fixed-size elements to the end and could go in the schema; `fnv-nav` reads the whole record by hand. |
+| NAVI | NVMI | The island block is present only when flag bit 5 is set (a flag-decided field) [documented: navmesh.md §1.2]. NVCI (a FormID, then three u32-counted FormID arrays) fits the count-prefixed arrays. |
+
+Records the schema could express but has no entry for yet, read by hand at runtime
+[observed: `esm coverage` lists them unknown; readers in `crates/fnv-game/src/data.rs`,
+`crafting.rs`, `caravan.rs`]: RCPE, RCCT, CDCK, AVIF (ANAM), VTYP (DNAM); LSCT DATA is read
+by nothing. CSNO and CCRD have entries (`objects.json`) but `casino.rs` and `caravan.rs`
+still slice their bytes. Each needs an xEdit-sourced entry where missing (schemas/README.md)
+and its reader switched to the decoded fields, as was done for CLAS; the masters' totals in
+`tools/smoke/expected/esm-coverage.toml` move with each new entry.
+
 ## 3. Code and schema
 
 - Code: `crates/*` (tests: `cargo test --workspace --release`).

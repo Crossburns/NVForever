@@ -110,6 +110,8 @@ impl Plugin for PipBoyArmPlugin {
 pub(crate) struct Swapped {
     screen: Option<(Entity, Handle<NifMaterial>)>,
     menus: Option<Handle<NifMaterial>>,
+    /// The menus' missing place was logged for this raise.
+    warned: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -139,6 +141,23 @@ pub(crate) fn show_screen(
         }
     }
     screen.on_model = shown && model_screen.is_some();
+    // Said once each time the Pip-Boy comes up when the menus have nowhere to show, so a
+    // player's log says why the arm came up blank or not at all (#1330).
+    if !pip.on_arm() {
+        swapped.warned = false;
+    } else if !swapped.warned && pip.clip_time >= nvf_play::pipboy::HOLD_SECONDS {
+        let why = if !body.first_person_drawn() {
+            Some("the first-person arms are not drawn")
+        } else if model_screen.is_none() {
+            Some("the arm's model has no screen shape (pipboyscreen:0)")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            warn!("pipboy: up, but the menus are not on the arm: {why}");
+            swapped.warned = true;
+        }
+    }
     if let (true, Some((e, mut own))) = (shown, model_screen) {
         if swapped.screen.is_none() {
             // Under a Stealth Boy the screen wears the field's see-through copy: take the

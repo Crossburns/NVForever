@@ -41,6 +41,8 @@ const CONCUSSED: u32 = 0x877;
 const SHARP_EYES: u32 = 0x8A0;
 const ROBOT: u32 = 0x400;
 const ROBOT_TEMPLATE: u32 = 0x401;
+/// Takes its actor effects from the robot, so from the robot's template.
+const ROBOT_COPY: u32 = 0x40F;
 const GHOUL: u32 = 0x402;
 const ROBOT_REF: u32 = 0x500;
 const GHOUL_REF: u32 = 0x501;
@@ -199,6 +201,7 @@ fn plugin_bytes() -> Vec<u8> {
         npc(0x7, "Player", vec![acbs(0), sub(b"RNAM", RACE_HUMAN.to_le_bytes().to_vec())]),
         // The robot's own SPLO is ignored: its template supplies the actor effects.
         npc(ROBOT, "Robot", vec![acbs(0x08), sub(b"TPLT", ROBOT_TEMPLATE.to_le_bytes().to_vec()), splo(RAD_IMMUNITY)]),
+        npc(ROBOT_COPY, "RobotCopy", vec![acbs(0x08), sub(b"TPLT", ROBOT.to_le_bytes().to_vec())]),
         npc(ROBOT_TEMPLATE, "RobotTemplate", vec![acbs(0), splo(DT_ABILITY), splo(RAD_IMMUNITY), splo(AURA)]),
         npc(GHOUL, "Ghoul", vec![acbs(0), sub(b"RNAM", RACE_GHOUL.to_le_bytes().to_vec())]),
     ]
@@ -594,4 +597,26 @@ fn perk_abilities_follow_the_perks() {
     g.player.perks.remove(&FormId(SHARP_EYES));
     assert_eq!(av(&mut g, P, PERCEPTION), 5.0);
     assert_eq!(target(&mut g, P, PERK_SPELL_2), 0.0);
+}
+
+/// GetBaseSpellListSpells reads the Use Actor Effect List template's list through NPC
+/// records, in record order (actors.md §2.2; observed: tmpl3, #1057).
+#[test]
+fn base_spell_list_follows_the_actor_effect_template() {
+    use fnv_script::vm::XVal;
+    let f = fixture();
+    let mut g = game(&f);
+    let mut q = |body: &str| g.run_query(&format!("Begin Function {{ }}
+{body}
+End
+"), Default::default()).expect("the query runs");
+    for npc in ["Robot", "RobotCopy"] {
+        assert_eq!(q(&format!("SetFunctionValue (ar_Size (GetBaseSpellListSpells {npc}))")), XVal::Num(3.0), "{npc}");
+        assert_eq!(q(&format!("SetFunctionValue ((GetBaseSpellListSpells {npc})[0])")), XVal::Ref(DT_ABILITY), "{npc}");
+    }
+    // GenericAddForm starts from the same list: the template's three, then the new one.
+    q("GenericAddForm 6, RobotCopy, GhoulRad, -2");
+    assert_eq!(q("SetFunctionValue (ar_Size (GetBaseSpellListSpells RobotCopy))"), XVal::Num(4.0));
+    assert_eq!(q("SetFunctionValue ((GetBaseSpellListSpells RobotCopy)[0])"), XVal::Ref(DT_ABILITY));
+    assert_eq!(q("SetFunctionValue ((GetBaseSpellListSpells RobotCopy)[3])"), XVal::Ref(GHOUL_RAD));
 }

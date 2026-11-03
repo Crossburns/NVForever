@@ -89,10 +89,26 @@ fn click(g: &mut Game, tile: Option<fnv_ui::TileId>, times: usize) -> bool {
     true
 }
 
-/// The trait path MCM's functions stand for: `StartMenu/MCM/*:child/*:grandchild/setting`.
-fn mcm_path(args: &[XVal]) -> String {
-    let i = |k| num(args, k) as i64;
-    format!("StartMenu/MCM/*:{}/*:{}/{}", i(0), i(1), text(args, 2))
+/// The tile and trait name MCM's functions stand for: `child` and `grandchild` of the
+/// `StartMenu/MCM` rect, counted from 1 in file order, 0 stopping at the level above
+/// (`0 0` is the MCM rect itself, `1 0` its first child) [hypothesis, from MCM's files and
+/// a mod's script, menu-xml.md §10: Option1..Option36 are the first children of
+/// MCM_Options, MCM's first child, each with `_optionID` 1..36; FOV Slider reads
+/// `GetMCMFloat 0 0 "_ActiveMod"`, a trait of the MCM rect, and `GetMCMFloat 1 0
+/// "_optionID"`, the one MCM_Options works out from its rows]. The wiki gives `SetMCMFloat
+/// 1 1` as `SetUIFloat "StartMenu/MCM/*:1/*:1/…"` [documented]; NVForever's `*:N` counts
+/// from the last child [observed on the HUD, menu-xml.md §5], so it is not used here.
+fn mcm_trait(ui: &fnv_ui::Ui, args: &[XVal]) -> Option<(fnv_ui::TileId, String)> {
+    let mut at = ui.find_tile("StartMenu/MCM")?;
+    for k in [0, 1] {
+        let i = num(args, k) as i64;
+        if i <= 0 {
+            break;
+        }
+        let kids: Vec<_> = ui.tile(at).children.iter().copied().filter(|&c| ui.is_live(c)).collect();
+        at = *kids.get(i as usize - 1)?;
+    }
+    Some((at, text(args, 2)))
 }
 
 /// GetUIFloatInherited: `x`, `y` and `depth` with the values of every parent tile whose
@@ -151,13 +167,17 @@ pub fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVal, Stri
         // they equal]. A trait that is not there reads 0, not GetUIFloat's -999 [observed:
         // the mcm set, GetMCMFloat 1 1 "_enable" 0 and GetUIFloat on StartMenu -999 with
         // the start menu closed]; SetMCMFloat returns 0 [hypothesis].
-        "getmcmfloat" => XVal::Num(g.ui_tree.get_float(&mcm_path(args)).unwrap_or(0.0)),
+        "getmcmfloat" => XVal::Num(mcm_trait(&g.ui_tree, args).and_then(|(t, n)| g.ui_tree.tile(t).get(&n).map(|v| v.num())).unwrap_or(0.0)),
         "setmcmfloat" => {
-            g.ui_tree.set_float(&mcm_path(args), num(args, 3));
+            if let Some((t, n)) = mcm_trait(&g.ui_tree, args) {
+                g.ui_tree.set_existing(t, &n, fnv_ui::value::Value::Num(num(args, 3)));
+            }
             XVal::Num(0.0)
         }
         "setmcmstring" => {
-            g.ui_tree.set_string(&mcm_path(args), &text(args, 3));
+            if let Some((t, n)) = mcm_trait(&g.ui_tree, args) {
+                g.ui_tree.set_existing(t, &n, fnv_ui::value::Value::Str(text(args, 3)));
+            }
             XVal::Num(0.0)
         }
         "iscomponentloaded" => yes(g.ui_tree.is_loaded(&path)),

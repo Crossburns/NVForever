@@ -231,7 +231,7 @@ pub fn after_tick(rt: &mut Runtime, from: usize) {
     }
     for item in ended {
         // Only once no effect of the item is left on the player.
-        if rt.game.effects.iter().any(|e| e.target == P && e.source == item && e.effect != fnv_game::aid::USAGE_MONITOR) {
+        if rt.game.effects.iter().any(|e| e.target == P && e.source == item && !e.inactive && e.effect != fnv_game::aid::USAGE_MONITOR) {
             continue;
         }
         let Some(codes) = rt.aid.lasting.remove(&item) else { continue };
@@ -251,6 +251,9 @@ pub fn hour_passed(rt: &mut Runtime, sleeping: bool, hour: u32) {
     if !p.limbs_healed.is_empty() {
         let names: Vec<&str> = p.limbs_healed.iter().map(|&c| av_name(c)).collect();
         info!("sleep: crippled limbs healed: {}", names.join(", "));
+    }
+    if p.health_restored > 0.0 {
+        info!("sleep: Health restored by {}", whole(p.health_restored));
     }
     info!(
         "wait: hour {hour} passed for the player ({:.0} s of effects): {} effect(s) ended{}",

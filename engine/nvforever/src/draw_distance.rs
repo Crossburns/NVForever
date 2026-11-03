@@ -121,7 +121,17 @@ pub struct DrawDistancePlugin(pub DrawDistances);
 
 impl Plugin for DrawDistancePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(self.0.clone()).add_systems(Update, apply_ranges.after(fade::fade_cells));
+        app.insert_resource(self.0.clone())
+            .insert_resource(nvf_play::perk_marks::ActorDrawDistance(self.0.distance(DrawClass::Actor)))
+            .add_systems(Update, (apply_ranges.after(fade::fade_cells), share_actor_distance));
+    }
+}
+
+/// How far actors are drawn, for Spotter (`nvf_play::perk_marks`): the Actors slider's
+/// distance, or as far as their cells at 100%.
+fn share_actor_distance(distances: Res<DrawDistances>, mut shared: ResMut<nvf_play::perk_marks::ActorDrawDistance>) {
+    if distances.is_changed() {
+        shared.set_if_neq(nvf_play::perk_marks::ActorDrawDistance(distances.distance(DrawClass::Actor)));
     }
 }
 

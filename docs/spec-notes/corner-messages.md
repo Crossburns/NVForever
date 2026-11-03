@@ -168,6 +168,14 @@ within a pixel in every one of these (§7).
   (`activate::HudMessage`) [owner, list 5 items 43, 50, 53]. Quests added, completed or failed
   and objectives shown or completed have their own place, as in the original
   (`quest-messages.md`); they no longer come here.
+- **Notes** [owner's request, issue #1163]. A note (NOTE) the player gets for the first
+  time, by any way (picked up, taken from a container, AddItem, AddNote, a terminal's Add
+  Note item), shows "Note: " and its name (FULL, else its editor ID), with the default
+  icon and the 2 seconds. No string setting in FalloutNV.esm or the add-on masters names
+  notes [observed: search of their GMST records, 2026-10-31], so the words are
+  NVForever's (the owner's example). That the original shows it for script-given notes
+  too is a hypothesis (observer-checks.md item 67). No sound: none in the masters is
+  named for it [observed: SOUN editor IDs, only the holotape player's].
 - **Icons.** A message's icon is its Menu Icon's file, from the atlas if the index has
   its file name, else the file itself, stretched to 160 by 160. Without an icon, or if
   the file cannot be read, the default icon.

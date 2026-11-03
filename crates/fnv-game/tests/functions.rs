@@ -118,7 +118,7 @@ fn plugin_bytes() -> Vec<u8> {
     let misc = record(b"MISC", 0, MISC, &[sub(b"EDID", z("Junk")), sub(b"DATA", [1i32.to_le_bytes().to_vec(), f32b(1.0)].concat())]);
     let weap_data = [10i32.to_le_bytes().to_vec(), 100i32.to_le_bytes().to_vec(), f32b(2.0), 5i16.to_le_bytes().to_vec(), vec![6]].concat();
     let weap = record(b"WEAP", 0, WEAP, &[sub(b"EDID", z("Gun")), sub(b"DATA", weap_data), sub(b"REPL", FLST.to_le_bytes().to_vec())]);
-    let note = record(b"NOTE", 0, NOTE, &[sub(b"EDID", z("TestHolotape"))]);
+    let note = record(b"NOTE", 0, NOTE, &[sub(b"EDID", z("TestHolotape")), sub(b"FULL", z("Test Holotape"))]);
     let flst = record(b"FLST", 0, FLST, &[sub(b"EDID", z("GunList")), sub(b"LNAM", WEAP.to_le_bytes().to_vec())]);
     // The base effect: archetype 1 (Script), its script 0x851 (scripts.md §7.6).
     let mgef_data = [u32s(&[0]), f32b(0.0), u32s(&[EFFECT_SCRIPT]), vec![0xFF; 8], vec![0; 4], vec![0; 4], f32b(1.0), vec![0; 24], vec![0; 8], u32s(&[1]), vec![0xFF; 4]].concat();
@@ -494,19 +494,39 @@ End
     // Axes 0 and 1 set the value and go on.
     assert_eq!(q(&mut g, "SetReputation RepTest 0 5"), Ok(XVal::Num(7.0)));
     assert_eq!(g.player.reputation[&FormId(REP)], [5.0, 12.0]);
-    for line in ["SetReputation RepTest 2 5", "SetReputation RepTest 3 7"] {
+    // So do AddReputation, RemoveReputation and AddReputationExact (capture o11_00,
+    // observer check 62).
+    for line in [
+        "SetReputation RepTest 2 5",
+        "SetReputation RepTest 3 7",
+        "AddReputation RepTest 3 1",
+        "AddReputation RepTest 2 1",
+        "RemoveReputation RepTest 2 1",
+        "RemoveReputation RepTest 3 1",
+        "AddReputationExact RepTest 2 5",
+        "AddReputationExact RepTest 3 5",
+    ] {
         let before = g.events.len();
         assert_ne!(q(&mut g, line), Ok(XVal::Num(7.0)), "{line}: the line after it does not run");
         assert!(g.events[before..].iter().any(|e| matches!(&e.kind, EventKind::CallFailed { .. })), "{line}: traced as a failed call");
         assert_eq!(g.player.reputation[&FormId(REP)], [5.0, 12.0], "{line}");
     }
-    for line in ["AddReputation RepTest 3 1", "AddReputation RepTest 2 1", "RemoveReputation RepTest 2 1", "AddReputationExact RepTest 2 1"] {
-        assert_eq!(q(&mut g, line), Ok(XVal::Num(7.0)), "{line}: goes on");
-        assert_eq!(g.player.reputation[&FormId(REP)], [5.0, 12.0], "{line}");
-    }
     // The stop lasts for that run only.
     assert_eq!(q(&mut g, "SetReputation RepTest 1 3"), Ok(XVal::Num(7.0)));
     assert_eq!(g.player.reputation[&FormId(REP)], [5.0, 3.0]);
+}
+
+/// `RemoveItem <item> 0` removes nothing and is no failed call: the script goes on
+/// (observer check 44, capture o5_00; #1113).
+#[test]
+fn remove_item_of_none_is_a_no_op() {
+    let f = fixture();
+    let mut g = game(&f);
+    call(&mut g, 0x1002, Some(ADULT_REF), &[r(MISC), n(3.0)]);
+    // `call` panics on a failed call.
+    call(&mut g, 0x1052, Some(ADULT_REF), &[r(MISC), n(0.0)]);
+    assert_eq!(call(&mut g, 0x102F, Some(ADULT_REF), &[r(MISC)]), 3.0);
+    assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::ItemRemoved { .. })));
 }
 
 /// Damage and restore [documented: catalogue; observed: layer5-captures.md §9.3 b].
@@ -1388,10 +1408,12 @@ fn reset_3d_state_forgets_the_animation() {
     g.anims.driven = true;
     g.ask_anim(fnv_game::anims::AnimRequest { on, group: 1, name: Some("Forward".into()), start: fnv_game::anims::Start::Normal });
     assert_eq!(g.anims.playing(on), Some(1));
+    assert_eq!(g.anims.asked(on), Some((1, "Forward")));
     call(&mut g, 0x1146, Some(ADULT_REF), &[]);
     call(&mut g, 0x1146, Some(ADULT_REF), &[]);
     assert_eq!(g.anims.playing(on), None);
     assert!(g.anims.requests.is_empty());
+    assert_eq!(g.anims.asked(on), None, "nothing to show when drawn again");
     assert_eq!(g.anims.resets, vec![on]);
 }
 
@@ -1457,6 +1479,16 @@ fn script_function_audit_fixes() {
     g.tick();
     assert!(g.player.notes.contains(&FormId(NOTE)));
     assert_eq!(g.world.item_count(FormId(PLAYER), FormId(NOTE)).unwrap(), 0);
+    // Its corner notice (#1163), by its FULL name; AddNote of a note the player has
+    // shows no second one.
+    assert_eq!(g.take_note_notices(), vec![FormId(NOTE)]);
+    assert_eq!(g.note_notice_text(FormId(NOTE)), "Note: Test Holotape");
+    call(&mut g, 0x117C, None, &[r(NOTE)]);
+    assert!(g.take_note_notices().is_empty());
+    call(&mut g, 0x117D, None, &[r(NOTE)]);
+    // AddNote of a new note: its notice too [hypothesis: the original's, observer-checks].
+    call(&mut g, 0x117C, None, &[r(NOTE)]);
+    assert_eq!(g.take_note_notices(), vec![FormId(NOTE)]);
     call(&mut g, 0x117D, None, &[r(NOTE)]);
     // KillActor's cause of death; ResurrectActor brings the actor back unharmed.
     call(&mut g, 0x1181, Some(ADULT_REF), &[av(16), n(5.0)]);
@@ -2021,4 +2053,49 @@ fn an_argument_read_wrong_without_failing_is_traced_once() {
     let ctx = Ctx { unit: "other".into(), opcode: 0x1173, on: None, self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
     g.call_function(&ctx, &[ArgValue::Str("ten".into())]);
     assert_eq!(unread(&g), 1);
+}
+
+/// Functions only Fallout 3's scripts call (Tale of Two Wastelands; the TTW audit of
+/// 2026-11-02 §1): ModDisposition, GetForceSneak, SetMerchantContainer, GetPCSleepHours
+/// and the player's childhood flags.
+#[test]
+fn fallout_3_functions() {
+    let mut f = fixture();
+    // A merchant container must be persistent: the fixture's container is made so.
+    f.refs.refs.get_mut(&FormId(CONT_REF)).unwrap().in_persistent_group = true;
+    let mut g = game(&f);
+    let (get_disp, set_disp, mod_disp) = (0x104C, 0x1184, 0x1053);
+    // ModDisposition from SetDisposition's value, kept within 0..100.
+    call(&mut g, set_disp, Some(ADULT_REF), &[r(CHILD_REF), n(20.0)]);
+    call(&mut g, mod_disp, Some(ADULT_REF), &[r(CHILD_REF), n(15.0)]);
+    assert_eq!(call(&mut g, get_disp, Some(ADULT_REF), &[r(CHILD_REF)]), 35.0);
+    call(&mut g, mod_disp, Some(ADULT_REF), &[r(CHILD_REF), n(-80.0)]);
+    assert_eq!(call(&mut g, get_disp, Some(ADULT_REF), &[r(CHILD_REF)]), 0.0);
+    // GetForceSneak reads SetForceSneak.
+    assert_eq!(call(&mut g, 0x10D2, Some(ADULT_REF), &[]), 0.0);
+    call(&mut g, 0x10D3, Some(ADULT_REF), &[n(1.0)]);
+    assert_eq!(call(&mut g, 0x10D2, Some(ADULT_REF), &[]), 1.0);
+    // SetMerchantContainer: a persistent container stands for the reference's own.
+    assert_eq!(g.merchant_container(FormId(ADULT_REF)), None);
+    call(&mut g, 0x11B7, Some(ADULT_REF), &[r(CONT_REF)]);
+    assert_eq!(g.merchant_container(FormId(ADULT_REF)), Some(FormId(CONT_REF)));
+    let ctx = Ctx { unit: "test".into(), opcode: 0x11B7, on: Some(FormId(CHILD_REF)), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+    g.call_function(&ctx, &[r(ACTI_REF)]);
+    assert_eq!(g.merchant_container(FormId(CHILD_REF)), None, "a temporary reference is refused");
+    // GetPCSleepHours: the hours of a sleep, none for a wait.
+    assert_eq!(call(&mut g, 0x10BC, None, &[]), 0.0);
+    g.rest.begin(true, 8);
+    assert_eq!(call(&mut g, 0x10BC, None, &[]), 8.0);
+    g.rest.begin(false, 3);
+    assert_eq!(call(&mut g, 0x10BC, None, &[]), 0.0);
+    // The childhood flags.
+    call(&mut g, 0x11E6, None, &[n(1.0)]);
+    call(&mut g, 0x1202, None, &[n(1.0)]);
+    call(&mut g, 0x1200, None, &[n(1.0)]);
+    assert!(g.player.young && g.player.toddler && g.player.location_load_screens_only);
+    call(&mut g, 0x1202, None, &[n(0.0)]);
+    assert!(!g.player.toddler);
+    // SetLastExtDoorActivated is what GetPCLastExteriorDoor reads.
+    call(&mut g, 0x1230, None, &[r(ACTI_REF)]);
+    assert_eq!(g.gaps.jip3.last_exterior_door, Some(FormId(ACTI_REF)));
 }

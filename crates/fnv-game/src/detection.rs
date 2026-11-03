@@ -410,7 +410,7 @@ pub struct Situation {
 }
 
 /// Where a detection value falls against the two thresholds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub enum Band {
     /// At or below fSneakNoticedMin (−20).
     #[default]

@@ -15,6 +15,11 @@
 //!   hand stays in hand [design: no unequip by accident]: equip a weapon, put on or take
 //!   off apparel, use one aid item. A slot whose item is no longer carried stays, drawn at
 //!   half strength on the wheel, and does nothing [design until a capture says].
+//!   A weapon equipped from a slot (a key or the wheel) comes in holstered: one in hand
+//!   is put away first, and the player draws the new one with Ready Item [design, the
+//!   owner 2026-10-31, #1106; it may not match the original]. With a weapon drawn the
+//!   equip waits until its holster clip has run, so the old weapon is the one seen and
+//!   heard going away (`crate::weapon_wheel`'s `SwapWait`).
 //! - **Saved** under `hotkeys` in the engine's part of a save ([`SAVE_HOOK`]).
 //!
 //! Log lines: `hotkeys: slot <n> holds <name> (<form>)`, `hotkeys: slot <n>: <outcome>`.
@@ -130,6 +135,17 @@ pub fn carried(world: &mut World<'_>, slot: Slot) -> (i32, Pick) {
     } else {
         (inv.count(item), Pick::ANY)
     }
+}
+
+/// Whether using the slot would put a new weapon in the player's hand: a carried weapon
+/// that is not the one equipped (`use_slot` gives `Used::Equipped` for it).
+pub fn takes_hand(world: &mut World<'_>, slot: Option<Slot>) -> bool {
+    let Some(slot) = slot else { return false };
+    let item = FormId(slot.item);
+    if world.forms.item(item).map(|i| i.kind) != Some(ItemKind::Weapon) || carried(world, slot).0 <= 0 {
+        return false;
+    }
+    !world.inventory_mut(PLAYER).is_ok_and(|i| i.is_equipped(item))
 }
 
 /// Use the item in a slot (module notes).

@@ -75,6 +75,28 @@ impl SceneMirror {
     }
 }
 
+impl Game<'_> {
+    /// A model's nodes attached at once under a node of a reference's drawn tree (its
+    /// root when `target` is `None`), for the engine (JIPPPLN's AttachFormModel); false
+    /// when the tree or the node is not known.
+    pub(crate) fn attach_model_now(&mut self, r: FormId, target: Option<&str>, model: &str) -> bool {
+        let Some(t) = self.scene.tree(r) else { return false };
+        let node = match target {
+            Some(n) => find(t, n).map(|i| t[i].name.clone()),
+            None => t.iter().find(|n| n.parent.is_none()).map(|n| n.name.clone()),
+        };
+        let Some(node) = node else { return false };
+        self.scene.edits.push(SceneEdit::Attach { r, target: node, model: model.to_string() });
+        true
+    }
+
+    /// A node of a reference's drawn tree taken away, for the engine (JIPPPLN's
+    /// ClearRuntimeNodes); the mirror forgets it at once.
+    pub(crate) fn remove_node_now(&mut self, r: FormId, node: &str) {
+        crate::nif_blocks::call(self, "removenifblock", Some(r), &[XVal::Str(node.to_string())]);
+    }
+}
+
 /// The node of that name: exactly, else without regard to case [observed:
 /// "bip01 head|…" still inserted; ModelHasBlock is exact].
 fn find(t: &[SceneNode], name: &str) -> Option<usize> {
@@ -133,7 +155,7 @@ fn axis(v: Option<&XVal>) -> Option<usize> {
 }
 
 /// The model file of a base form (MODL), under meshes.
-fn model_of(g: &Game, f: FormId) -> Option<String> {
+pub(crate) fn model_of(g: &Game, f: FormId) -> Option<String> {
     let b = crate::functions::base_of(g, f).unwrap_or(f);
     match crate::nvse::record_value(g, b, "MODL", "").or_else(|| crate::nvse::record_value(g, b, "MODL", "model")) {
         Some(XVal::Str(s)) if !s.is_empty() => Some(s),
@@ -273,9 +295,15 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // [documented: InsertNode; observed: both return 1 and show in the walks].
         "insertnode" | "attachmodel" => {
             let target_ref = form(args, 0).unwrap_or(r);
-            let add = num(args, 1, 1.0) != 0.0;
+            // Modes 1 and 3 insert, 0 and 2 remove [documented: InsertNode's addOrRemove
+            // table]. The mirror drops nothing on a remove: mode 0 waits for a reload and
+            // mode 2's instant removal is a follow-up (ext-jippp.md).
+            let mode = num(args, 1, 1.0);
+            let add = mode as i64 & 1 == 1;
             let spec = text(args, 2);
             let Some((target, what)) = spec.split_once('|') else { return Some(Ok(zero)) };
+            // JIPPPLN's runtime node lists (`crate::nvse_jippp`) keep every well-formed call.
+            crate::nvse_jippp::record(g, target_ref, name == "attachmodel", &spec, mode);
             if !add {
                 return Some(Ok(zero));
             }

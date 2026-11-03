@@ -144,3 +144,13 @@ What is left, by cause [observed: runs/latest.md of that run]:
 
 After #944 (2026-10-30): 20 of 60 `L5.ext.*` scenarios match in full (rgbui and jip.forms
 added), no regressions.
+
+The save reader (2026-11-01, #1023): `fnvtool ext queries … --save <nvfairport.fos>` starts
+the run from the save (`fnv_save::fos`, save-files.md §6.4): globals and game time, quest
+flags, stages, objectives and variables, SPECIAL, tag skills, skill points, the inventory
+and the place. From nvfairport, gaps2 now counts 27 item kinds and gaps5 reads Guns 17,
+the save's values. Not yet carried over: faction relations, reputations, references'
+changes (positions, packages, disabled state, Doc's place), the talked-to bits, always-run
+and difficulty. The `L5.ext.*` scenarios do not pass `--save` yet: the extender goldens are
+on the other machine, so pointing them at the save (a `save_path` lab variable, the
+decision in owner-review.md) and the pass count wait for a run there.

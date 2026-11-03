@@ -333,8 +333,11 @@ player's hearing`. Checked: Violet's NormalToAlert from 3,018 units, the Fiends'
 lines near Cook-Cook from 2,268 units, no subtitle; from 1,596 units gain 0.11 and a
 subtitle (alert.md §8).
 
-Not done [decision]: the response's sound form (§6) and emotions; occlusion and reverb
-(`fDialogReverbAttenuation` is not used). Lip sync follows the voice from
+Reverb (2026-11-01, #987): a line heard where it is said plays through the room's
+reverb, cut at the line's end, at a send of 0.85 from `fDialogReverbAttenuation=0.15`
+[hypothesis: the unit is undocumented]; the conversation stays dry (audio.md §14.6).
+
+Not done [decision]: the response's sound form (§6) and emotions; occlusion. Lip sync follows the voice from
 `engine/nvforever/src/lips.rs` (`VoiceState::spoken`; docs/spec-notes/lipsync.md §5),
 and holds with it.
 

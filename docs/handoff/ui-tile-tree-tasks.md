@@ -120,11 +120,15 @@ owner to add to its pull request or issue (owner, 2026-10-29).
     or 0 font 1. What each trait is taken to mean: menu-xml.md §3.1.2. Log line
     `tiles: HUDMainMenu: N mod tiles drawn (M items)` when the counts change.
   - Which tiles: `Ui::mod_tile_drawn` (Injected/Template always, Code never, File only
-    against the archived file's name paths, `Ui::file_name_paths`). The game cannot read
-    the archived copy under a loose file (one VFS location per path), so a loose HUD
-    replacement draws none of its file tiles in v1; `fnvtool ui mod-tiles --menu …`
-    shows the comparison (test install: vanilla 0, Clean Vanilla Hud 0, Vanilla UI
-    Plus 5, its `VUI+` outlines).
+    against the archived file's name paths, `Ui::archived_name_paths`). The archived
+    copy under a loose file is read since #975 (`fnv_vfs::Vfs::read_archived`,
+    `Source::read_archived`, `fnv_ui::tree::Archived`), so a loose HUD replacement draws
+    its own file tiles, the archived names read once per file (`draw.rs`
+    `archived_names`); `fnvtool ui mod-tiles --menu …` shows the same comparison (test
+    install: vanilla 0, Clean Vanilla Hud 0, Vanilla UI Plus 5, its `VUI+` outlines).
+    Tests: `fnv_vfs` `the_archived_copy_under_a_loose_file_still_reads`, `fnv_ui`
+    `the_archived_copy_under_a_loose_file_gives_the_names_compared_with`, `nvf-play`
+    `a_loose_hud_over_an_archived_one_draws_its_own_tiles`.
   - Carried over from T4, done: text widths written back before scripts
     (`fnv_game::ui_hud::write_text_widths`): the sneak word, the prompt's `button_text`
     (its hotrect follows by the file's expression), the radiation value; the observed
@@ -137,9 +141,7 @@ owner to add to its pull request or issue (owner, 2026-10-29).
     `ui-mod-tile-drawn` (a box, picture and text injected by the console, shot
     `ui_mod_tile.png`) and `ui-mod-tiles-vanilla` (fnvtool, 0 tiles).
   - Left: nif and radial tiles; another `.tai` than the shared atlas, `zoom`, `tile`,
-    `cropx`, `cropy`; numeric `justify` and system colour numbers; reading the archived
-    copy under a loose file in the VFS (then loose HUD files draw their own tiles);
-    every hypothesis in menu-xml.md §3.1.2 against the original (screenshots of a HUD
+    `cropx`, `cropy`; numeric `justify` and system colour numbers; every hypothesis in menu-xml.md §3.1.2 against the original (screenshots of a HUD
     mod at the same view size); a HUD mod from a Viva New Vegas `mods` folder in game
     (JAM's meters after T6).
 
@@ -247,6 +249,15 @@ owner to add to its pull request or issue (owner, 2026-10-29).
      modlist-scan-2026-10-26.md) as tree writes;
    - a test that runs one MCM mod's menu script in `MenuMode 1013` against the tree and
      checks the traits it sets.
+   - **Built 2026-11-01** (claude/mcm-pause-976, issue #976): the MCM shorthands find
+     their tile by counting the `MCM` rect's children from 1 in file order, 0 stopping
+     at the level above [hypothesis, from MCM's files: menu-xml.md §10; observer check
+     69], not through `*:N`; GetSelfModIndex gives the calling script's plugin index
+     (it gave 0, which made every MCM mod take MCM's page as its own). Test
+     `crates/fnv-game/tests/ui_mcm.rs`: StartMenu built through an MCM-shaped include
+     chain with the start menu open, a quest script compiled from source whose
+     `MenuMode 1013` block acts only on its own page, fills in its option and takes a
+     new value (FOV Slider's way), and stops when the menu closes.
 4. **T8. Input on tiles.**
    - Pointer hit-tests over hotrects (`target`, `id`, `depth`): `mouseover` and
      `clicked` traits written each frame, `ref` links followed, `_PCButton_*` keys,
@@ -311,6 +322,49 @@ owner to add to its pull request or issue (owner, 2026-10-29).
 7. **T11. MCM drawn.** MCM's page from tiles inside NVForever's pause menu (design §7,
     after the owner's ruling), mouse and keys through T8. Done when an MCM mod's
     settings change in game.
+    - **Plan** (2026-11-01, after T7; issue #976 stays open for it). In order, each
+      with a smoke scenario on the owner's MCM install (vanilla Data has MCM's ESP and
+      files, not in the load order by default):
+      1. Scripts under the pause menu: while NVForever's pause menu is open with a mod
+         that added tiles to `StartMenu`, `Game::menu` is `menus::START` and the
+         MenuMode blocks run (`nvf_play::script` skips scripts while paused today;
+         `game::menus::START` says "not reported"). Whether every `Begin MenuMode`
+         block should run under our pause menu, as the original's start menu does, or
+         only with a Mods page open, is the first decision (vanilla has `MenuMode
+         1007 || MenuMode 1013` effect scripts).
+      2. The Mods entry in `pause.rs`'s column, shown only when
+         `Ui::has_mod_added_tiles(StartMenu)`; choosing it opens a page that shows
+         MCM the way its trigger does (MCM's own ESP scripts take it from there).
+      3. The page drawn from tiles: `tiles::draw` selecting the `StartMenu/MCM`
+         subtree (as T12 draws `HUDMainMenu`), sized by `screen()`.
+      4. T8's pointer and keys fed to `StartMenu` while the page is open
+         (`tiles/input.rs`: no menu takes input in play yet).
+      5. Done when an MCM mod's option changes in game and its INI value is written.
+    - **Built 2026-11-01** (claude/mcm-pause-976-t11, issue #976): steps 1-4 as the
+      plumbing, behind `[UI] TileMenus=StartMenu` (off by default; `nvf-play
+      tiles/mods.rs`, `pause.rs`). With it on and a mod's tiles in `StartMenu`, the column
+      has a Mods entry before Quit (`pause::ModsEntry`; a tile counts as a mod's as T5
+      tells the HUD's apart, so a loose `start_menu.xml` that only reskins the menu gives
+      no entry); its page draws StartMenu's mod tiles over the pause menu (`tiles::draw`,
+      as T5 draws the HUD's: a loose replacement's own tiles, not the archived file's;
+      interface units), feeds them T8's pointer and keys, and each frame runs only the
+      `MenuMode 1013` blocks, in the played world, with `MenuMode 1013` true
+      (`Game::page_tick`: no GameMode block, no game time, no queued events or OnLoad
+      blocks, the open menu left as a block's box or tutorial set it; only on that page:
+      our pause menu still holds every script elsewhere, the first decision above kept
+      narrow) [design]. Esc, Backspace or Back close it. Tests: `tiles::mods` (the
+      entry's rule, a reskin), `pause` (the entries, the page), fnv-game
+      `a_page_tick_runs_only_the_start_menus_blocks_and_keeps_the_open_menu`; smoke
+      `pause-mods-page` (MCM's own 1013 block clears its `iInstallCheck`).
+    - **Blocked: MCM's own page** (step 5). MCM's ESP shows MCM only when
+      `StartMenu/NOGLOW_BRANCH/main_container/childcount` is 8 (the original's pause
+      column, filled in by the game's code; NVForever's column is hand-built and the
+      rule is not documented), places its trigger from that column's x/y/width, and
+      fills its mod list with MCM.dll functions no source describes (SetMCMModList,
+      GetMCMListWidth, SetMCMFloatMass, SetMCMStringMass: `{{Incomplete}}` wiki stubs,
+      not in functions.json). Until a source for those turns up (an observer capture of
+      the start menu's `main_container` traits, the functions' effects on the tree), the
+      Mods page shows only what a mod's own MenuMode script draws.
 8. **T12. The vanilla HUD on tiles**, behind `[UI] TileMenus=HUDMainMenu`. Compare
     with the hud.md screenshots; keep the old HUD the default until the owner agrees.
     - **T12a done** 2026-10-29 (claude/t12-hud-tiles): the switch and the drawing.
@@ -710,3 +764,15 @@ owner to add to its pull request or issue (owner, 2026-10-29).
         prompt open; text sizes per axis; `screen()` gated; `_name_` only after a constant
         with a known number; the drop aid's `ask` holds the prompt; the message scenario
         closes the console.
+    - **T15b, part 1 built** 2026-11-01 (`claude/tile-menus-978`, issue #978): the Wait /
+      Sleep menu from `sleep_wait_menu.xml` behind `[UI] TileMenus=SleepWaitMenu`, in T15a's
+      shape (`tiles/wait_menu.rs`, wait-menu.md §12). The model writes the three texts, the
+      Wait button's bare word, the slider's `_current_value` (with `_SetInCode` poked) and
+      the background's opacity; clicks on the buttons and the slider's pieces are the
+      hand-built menu's commands (`crate::wait::WaitInput`), the slider's value written
+      again after them (the prefab's own value counts clicks from 0 in this tree); the
+      hand-built keys stay, W presses Wait through the file. Interface `screen()` units
+      while it is switched on (`interface_screen`). Tests: `tiles::wait_menu`,
+      `tiles::vanilla` (the switch). Smoke: `tiles-sleep-wait`. **Left for part 2: the
+      tutorial menu**: `tutorial_menu.xml`'s text scrolls inside `TM_text_container`, a
+      `clipwindow` hotrect, and the tile renderer clips nothing yet; that comes first.

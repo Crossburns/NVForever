@@ -127,6 +127,8 @@ Notes [observed]:
     chosen; what the original reads for axis 3 decides it.
 11. Say Once per actor: the Yes Man mainframe repeats the Tops Yes Man's first-meeting
     greeting (0x001164F1, shared by GetIsID OR) once (dialogue.md question 13).
+    **Fixed (#1113)**: the original does not repeat it (observer check 31); a Say Once
+    line now holds for every actor once any has said it.
 12. `GetStage Q N == 1` compiled with an extra argument leaves two values on the stack.
     Three begin scripts (e.g. INFO 0x00160731) stop there; ours gives a script error.
     Settled 2026-10-30: the original stops them too (scripts.md §4.2, issue #908).
@@ -210,7 +212,8 @@ at its midpoint (saves of 70-370 KB). With 41 chains, two differ, `fail-boulder-
 `come-fly-with-me`: both save while the player is hunted (after a fight); awareness (detection states,
 who hunts whom) is not part of a save by design (save-load.md: the engine measures again),
 and a headless run has no detection to measure it, so after the load the player is out of
-combat and CGTutorial's script resets its `VATSTimer` (0, not 16). Soft, and a lead for
+combat and CGTutorial's script resets its `VATSTimer` (0, not 16). (Since 2026-11-01, #971,
+the save keeps each actor's detection state and lists, so the player stays hunted.) Soft, and a lead for
 play: in the engine the quest script may run in the first frame after a load before
 detection does, read IsInCombat 0 and show the VATS tutorial message again when combat
 comes back [hypothesis, not run]. The smoke check carries it as known failing. The first run differed in two of intro's stopwatch
@@ -235,8 +238,10 @@ Result over the ten masters [observed, 2026-10-27]: 8639 line, 1040 stage,
 56 causes. No function is unknown (no `unhandled` cause). By what they are:
 - **Context the sweep cannot give** (most): "no calling reference" (a terminal used only as
   a sub menu, a package only AddScriptPackage gives), "called on an empty reference" (a
-  reference variable an earlier scene sets), RemoveItem/AddItem "count must be positive"
-  (Nipton's and the Kings' trade lines remove as many as the player carries: 0 alone),
+  reference variable an earlier scene sets), AddItem "count must be positive"
+  (Nipton's and the Kings' trade lines move as many as the player carries: 0 alone;
+  RemoveItem of 0 removes nothing and goes on since #1113, observer check 44; AddItem of
+  0 is still refused, not observed),
   EquipItem of an item the actor does not carry yet.
 - **AddPerk on an actor other than the player** (26 scripts, companion perks among them):
   was refused; fixed by the companions walkthrough (perks kept per actor), which brought
@@ -251,7 +256,6 @@ The commonest call failures:
   |---|---|---|
   | 47 | GetLinkedRef: no calling reference | TERM FalloutNV.esm:064B6E item 0 |
   | 34 | SetActorValue: no calling reference | PACK FalloutNV.esm:02800E begin |
-  | 32 | RemoveItem: count must be positive, got # | INFO FalloutNV.esm:0F3E50 end |
   | 26 | AddPerk: perks of actors other than the player are not modelled | INFO FalloutNV.esm:0B16C8 begin |
   | 21 | AddItem: count must be positive, got # | INFO FalloutNV.esm:0F3E50 end |
   | 20 | Disable: no calling reference | PACK FalloutNV.esm:07E1D1 end |
@@ -342,8 +346,8 @@ to talk (the play loop does); a container opened by the player runs OnOpen/OnClo
    dialogue packages start no conversation headless (§2 item 6); AI arrivals and sitting are
    stood in; MoveTo travel leaves Dead Money's collar radios counting the player in range
    (their check runs only while their cell is loaded); no pickpocket, loot or sit op.
-5. Soft: save and load drops awareness (by design, §6), so a headless run loaded mid-fight
-   reads IsInCombat 0; in play the VATS tutorial message may show again.
+5. Fixed 2026-11-01 (#971): save and load dropped awareness (§6), so a headless run loaded
+   mid-fight read IsInCombat 0; detection states and lists are now saved.
 6. Data notes [observed]: SetStage on stages a quest does not define does nothing (Dead
    Money); NVDLC02MQ02 is never started (its errands take its place); the Pine Creek tunnel
    trigger script and Jason's farewell trigger have no placed reference; `scripted:X#n`
@@ -439,15 +443,17 @@ World Blues X-8/X-13 setups and Lonesome Road's launch-at-both ending (NVDLC04MQ
    the Sink's appliances talk after their install; the old-world-blues-sink chain no
    longer stands in `talk` for the station and the Jukebox.
 
-**Soft** (headless only, stood in): `wait_talk` returns before a Goodbye greeting's line
-ends, so a following conversation cuts it and its end script never runs (Carlitos INFO
-0x0011F861, Joana 0x00127A55; fix: wait for `line_ended`); `end_talk` on an ended
-conversation is a step error; AddScriptPackage is a stub (Joana, the Omertas, Sarah's tour,
-Logan, Boone's BSArrive, the VEFR messengers); SayTo ping-pong with no line runs every frame
-until a condition passes (VFSPacerGreetsSimon, SCPT 0x001205B7 / 0x001251C6); StartConversation
+**Soft** (headless only, stood in): **done** (#1282): `wait_talk` waits while a Goodbye
+greeting is said at the player, so its end script runs (Carlitos INFO 0x0011F861, Joana
+0x00127A55; bye-bye-love and the Yes Man chains wait for it with no timed stand-in);
+`end_talk` on an ended conversation does nothing; a runner `hit` on an actor provokes it as
+the engine's detection pass does, and every runner frame settles awareness, so a fight whose
+target died ends (Simon after the bomber: birds-of-a-feather drops its StopCombat). Left
+(#1114): AddScriptPackage is a stub (Joana, the Omertas, Sarah's tour, Logan, Boone's
+BSArrive, the VEFR messengers); SayTo ping-pong with no line runs every frame until a
+condition passes (VFSPacerGreetsSimon, SCPT 0x001205B7 / 0x001251C6); StartConversation
 starts at any distance, so Nelson's explorers pull the player in from about 4000 units
-(nvNelsonExplorerBarkSCRIPT 0x0014EA06); no detection headless, so combat does not end when
-the target dies (Simon after the bomber).
+(nvNelsonExplorerBarkSCRIPT 0x0014EA06).
 
 **Data notes** [observed]: Billy Knight is enabled only by the Strip code box
 (VStreetEventStarterScript 0x00163E9B), which needs its `Bot05` filled by the Freeside gate
@@ -518,12 +524,27 @@ Jules' Topic007 borrow another topic's line (INFC/INFX).
    NVDLC03Enc 10 are never set there. old-world-blues-setups spends 6 s first and reaches
    them [observed]. Observer check 43.
 3. **Soft: `RemoveItem x 0` is refused** (Loyal's reward line, INFO 0x0010A1BF, when the
-   arrays were fixed by hand). Not blocking. Observer check 44.
+   arrays were fixed by hand). Not blocking. Observer check 44. **Fixed (#1113)**: the
+   original removes nothing and goes on (o5_00); ours does the same.
 4. **Soft:** a second Nelson explorer force-greets at once (the any-distance
-   StartConversation stall, check 45); the HELIOS One west-terminal password lands on
+   StartConversation stall, check 45; since #1113 it finds no greeting, the explorers'
+   0x0014E9FF being Say Once and held for every actor once said, check 31); the HELIOS One west-terminal password lands on
    Fantastic as the speaker (check 46); Kilborn's conversation ends when stage 100 stops
-   vNiptonVulpes; Doctors 30's line (0x000BE417) is offered by none of the doctors tried;
-   VNellisInfestation's iInfestation stays 0 when the emitter is used before the power.
+   vNiptonVulpes: every line he has as a fixed speaker is that quest's, so nothing is left
+   to offer and ours closes it, as dialogue.md's [hypothesis] says (check 72). Two are the
+   data's own (#1113) [observed]: Doctors 30's line (DoctorRadiationYES 0x000BE417, Info
+   Refusal, no conditions) can be said by no placed actor: Doctors' quest conditions ask
+   for DoctorsDialogueFaction and not Doc Mitchell's voice type 0x0010512F; of the
+   faction's NPCs, Sawbones and Markland have VDoctors lines of the topic (priority 76 over
+   Doctors' 75, a GetIsID line with no other condition always among them), Doc Mitchell is
+   left out by his voice, Doctor Barrows and DocAATEMPLATE are placed nowhere, and Doctor
+   Rotson (Hell's Motel, templated on DocAATEMPLATE with no template flags) is not in the
+   faction. VNellisInfestation's iInfestation stays 0 when the emitter is used before the
+   power: the emitter's OnActivate sets it only when objective 15 (the power) is done, the
+   ants' OnDeath only when objective 20 is still open (the emitter has completed it), and
+   the generator door's script asks for GetDeadCount NellisAntWorkerExplosive == 15 while
+   5 are placed (10 soldiers), so no script sets it (a door activation after the power
+   reads 5 and 10 headless).
 5. **Not from this batch:** `GetQuestVariable` "parameter 1 is not a form" in every Hidden
    Valley/Freeside run (INFO 0x0014B595-97); issue #907.
 
@@ -578,7 +599,9 @@ chains using the op still pass.
    completing it on every pass, so a recruit killed after the quest starts leaves 24/34 open
    and Garret's short-handed line unoffered. The chain kills them before the quest starts.
    Fixed (#1108): the original keeps the flag (check 40), and so does `set_objective` now.
-3. **Soft, headless only:** a hit starts no AI combat (Daniel, check 49); no line of sight
+3. **Soft, headless only:** a hit starts no AI combat (Daniel, check 49; **done**, #1282: the
+   runner's `hit` provokes the actor, and fail-honest-hearts-flight and fail-boulder-force
+   hit instead of calling StartCombat); no line of sight
    (VMS31 60, check 50); Jed and the caravan guards are essential until stage 100, so
    NVDLC02MQ00 255 cannot be reached; CGTutorial 214 counts only markers play discovers.
 4. **Soft:** Oliver's Topic065 has two lines with the same conditions; ours always says
@@ -593,3 +616,41 @@ CGTutorial 18-24, 62, 72, 92 (a branch of the intro chain); NVDLC01MQ02c 60, MQ0
 20; NVDLC02MS02 27/35/40, MQ03a/b/c 20; NVDLC03 HQBuddySamples 20, SonicEmitterQuest 10,
 ThinkTankQuest 35; NVDLC04 GenericPerkQUEST 30, MQ02 30; VMQNCRFail 2 (#931). The --detail
 report lists them all with their setters.
+
+**Triage of the settable, not walked (2026-11-01, issue #1115, in progress).** On main
+`5fb0b80e` `script cover` counts 114 (`missing_settable`; two were walked since). 32 of them
+are VCG00 5-85, the cut cemetery scene: VCG00ScriptNV's GameMode would step through them
+only from stage 0, but stage 0's own result script plays the intro film and sets 90 at its
+end, so the GameMode never sees stage 0 [observed, decompiled QUST 0x00102037 stage 0 and
+SCPT 0x00102035]. They count as settable (a script names them) but cannot be walked. That
+leaves 82.
+
+**Batch 1 (2026-11-01, issue #1115):** 11 chains, each with its `mq-*` smoke scenario, reach
+12 of the 82 [observed: each chain's run, 0 step and 0 given errors]:
+
+| chain | stages | path |
+|---|---|---|
+| kings-gambit-pacer-killed | VMS29 102 | Pacer killed outright; Crocker refuses a reward (Topic016, 017) |
+| kings-gambit-energy-weapon | VMS29 100 | Pacer shot with a laser rifle (his OnHitWith marks the energy weapon): the Van Graff frame |
+| kings-gambit-psycho | VMS29 101 | the jet on Pacer's table spiked (its box, button 4, needs Psycho carried); Pacer's jet package ends |
+| kings-gambit-moore | VMS29 20, 111 | the King, owed no favour, refuses; Moore's squad gives the ultimatum and fights the Kings |
+| kings-gambit-hsu-peace | VMS29 20, 120 | refused; Hsu's offer, the King agrees, Pacer breaks with him (KingAndPacerArgue) and is killed |
+| kings-gambit-hsu-fight | VMS29 20, 121 | refused; Hsu's offer taken as a challenge, the squad fights |
+| kings-gambit-crocker-killed | VMS29 200 | Crocker killed while the quest runs |
+| things-that-go-boom-wait | VMS23 40 | Volare! done, the Boomers not yet asked: Crocker waits (Topic006, 023) |
+| things-that-go-boom-no-boomers | VMS23 102 | Volare! failed (Jack killed) before the player meets Crocker |
+| things-that-go-boom-crocker-killed | VMS23 200 | Crocker killed while the quest runs |
+| why-cant-we-be-friends-lem-gives-up | VMS42 50 | Lem's job, the sulfur cave's microcline charge armed (Science 40, Explosives 60, three charges), Lem talked out of the gang (Topic179, 197) |
+
+The VMS29 and VMS23 chains fork the NCR chain (ncr.actions.json) before Crocker's ask; the
+VMS42 one goes on from why-cant-we-be-friends-lem. Stand-ins: `kill` for the fights with
+Pacer and Crocker, `hit` with a laser rifle for the shot, `package done` for Pacer's walk to
+his jet and the NCR squad's return, `move_player` for the walks.
+
+**Settable but cannot be reached** [observed, decompiled]:
+- VMS29 110: Crocker's line 0x00120580 needs objective 80 shown, and nothing in the load
+  order shows it (the squad's package shows 81 or 91, Pacer's OnDeath 20 or 90).
+- VMSTopsTalentPool 25, 35, 45: only Tommy's Billy haggle (Topic013, 0x00120005/06) sets
+  them, and its topic TommyToriniBillyBargain (0x00120000) needs BillyRecruited = 2, which
+  nothing sets (Billy's two recruiting lines set 1). Stages 20, 30 and 40, which the
+  haggle's 35 and 45 branches would follow, are set by nothing either.

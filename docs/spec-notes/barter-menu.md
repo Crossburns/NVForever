@@ -258,7 +258,8 @@ What NVForever does (`engine/nvf-play/src/menu/model.rs` `Quantity`, `look.rs`
 what asked with that many, Cancel (or closing) does nothing and leaves the menu open. Keys:
 Left/Right and the wheel ±1, Page Up/Down ±10, Home/End 1 and the stack, A/Enter/Space
 Ok, E/Esc Cancel [documented: A) and E); the rest ours]. While it is open the menu and the
-Pip-Boy take no other key. Shift (whole stack) and Shift+X (drop the stack) still move the
+Pip-Boy take no other key. Shift (whole stack) and Shift + right click on the
+Pip-Boy's ITEMS page (drop the stack) still move the
 stack without asking [design]. Over the Pip-Boy the prompt is drawn centred on the window
 [hypothesis: the original draws it on the Pip-Boy's screen; the screenshots show it
 centred over it]. Smoke scenario `item-stacks`; `NVF_PLAY_TEST_DROP=<s>:<item>:ask`

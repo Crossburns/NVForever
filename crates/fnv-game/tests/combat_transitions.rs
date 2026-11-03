@@ -278,3 +278,44 @@ fn a_knocked_out_actor_says_koed_and_wake_when_it_gets_up() {
     assert_eq!(g.tick_knockouts(0.0), vec![watchman]);
     assert_eq!(g.combat_lines.said, vec![("Wake", watchman, Some(line_of(&f, "Wake")))]);
 }
+
+#[test]
+fn a_fight_survives_a_save_and_load() {
+    // #971: whoever fought before a save still fights after the load, at the same target,
+    // and IsInCombat on the player reads 1 before any detection round has measured again
+    // (headless runs never measure; the engine's first script frame comes before it).
+    let f = fixture();
+    let mut g = game(&f);
+    let (raider, watchman) = (FormId(RAIDER_REF), FormId(WATCHMAN_REF));
+    fight(&mut g, raider, FormId::PLAYER_REF);
+    g.start_combat(watchman, raider);
+    assert!(g.awareness.hunted(FormId::PLAYER_REF));
+    let snap = g.snapshot();
+    let json = serde_json::to_string(&snap).unwrap();
+    let back: fnv_game::game::GameSnapshot = serde_json::from_str(&json).unwrap();
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert_eq!(h.awareness.actors, g.awareness.actors, "states, lists and targets fought");
+    assert_eq!(h.awareness.forced, g.awareness.forced, "StartCombat's pair");
+    assert_eq!(h.awareness.state(raider), State::Combat);
+    assert_eq!(h.awareness.state(watchman), State::Combat);
+    assert!(h.awareness.hunted(FormId::PLAYER_REF), "the player is still a target");
+    assert_eq!(h.combat_target_of(raider), Some(FormId::PLAYER_REF));
+    assert_eq!(h.combat_target_of(watchman), Some(raider));
+    // A settle with nobody measured goes on as it would have without the load.
+    g.settle_awareness();
+    h.settle_awareness();
+    assert_eq!(h.awareness.state(raider), g.awareness.state(raider));
+    // A save with nobody fighting writes no awareness, and an older save without the
+    // fields still loads with nobody fighting.
+    let calm = game(&f).snapshot();
+    let calm_json = serde_json::to_value(&calm).unwrap();
+    assert!(calm_json.get("awareness").is_none() && calm_json.get("forced_combat").is_none());
+    let mut old = serde_json::to_value(&snap).unwrap();
+    old.as_object_mut().unwrap().remove("awareness");
+    old.as_object_mut().unwrap().remove("forced_combat");
+    let old: fnv_game::game::GameSnapshot = serde_json::from_value(old).unwrap();
+    let world = World::restore(&f.forms, &f.refs, &old.sim).unwrap();
+    let o = Game::restore(&f.data, world, GameConfig::default(), &old).unwrap();
+    assert!(!o.awareness.hunted(FormId::PLAYER_REF));
+}

@@ -598,6 +598,9 @@ pub struct ParticleSystemDef {
     /// each particle's alpha is scaled by it at the emitter time it is drawn at; the
     /// material is then built with alpha 1.
     pub alpha_keys: Option<FloatKeys>,
+    /// Units over which its particles fade out towards the surface behind them
+    /// ([`particle_soft_distance`]); 0: not faded (an opaque or alpha-tested system).
+    pub soft: f32,
 }
 
 /// A node above a system's emitter that a sequence of the file moves, played on the
@@ -714,6 +717,9 @@ impl ParticleSystemDef {
         }
         if self.alpha_keys.is_some() {
             s += ", keyed alpha";
+        }
+        if self.soft > 0.0 {
+            s += &format!(", soft over {:.1}", self.soft);
         }
         if let Some(m) = &self.mover {
             s += &format!(", moved by {} ({:.1} s)", m.node, m.cycle.stop);
@@ -1021,6 +1027,15 @@ fn sequence_rank(name: &str) -> u8 {
     }
 }
 
+/// The soft-intersection fade distance of a system's particles: the shapes' rule
+/// (`nif_material::soft_distance`, a quarter of the largest side, at most 160 units)
+/// applied to its largest particle, twice the emitter's radius plus its variation.
+/// Its blood mist (radius 50 ± 10) fades over 30 units, a drop (1.25 ± 0.5) over 1
+/// [engineering choice; nif.md §6 "Soft intersections of particles"].
+pub fn particle_soft_distance(v: &EmitterValues) -> f32 {
+    crate::nif_material::soft_distance(2.0 * (v.radius + v.radius_variation.abs()).max(0.0))
+}
+
 /// The `NiAlphaController` keys a particle system's own material has: its own
 /// interpolator's keys on its own cycle, or the blend interpolator's from a sequence
 /// (controlled block named after the system, controller type `NiAlphaController`)
@@ -1208,17 +1223,13 @@ impl ModelCtx<'_> {
                 props.material_alpha = Some(1.0);
             }
             let mut template = particle_mesh();
+            // Its soft distance is set once its emitter's radius is read (below).
             let (mut material, _missing) = shape_material(&props, &mut template, &mut self.textures, &self.data, &mut self.images, self.formats.as_deref());
-            // The template is one unit across; particles keep the full soft distance.
-            if material.extension.soft.x > 0.0 {
-                material.extension.soft.x = crate::nif_material::SOFT_DISTANCE;
-            }
-            let material = self.materials.add(material);
             let data = ps.block_ref("data").and_then(|r| dec.get(r));
             let mut def = ParticleSystemDef {
                 name: ps.text("name").unwrap_or_default().to_string(),
                 max: (data.and_then(|d| d.int("bs_max_vertices")).unwrap_or(0).max(0) as usize).min(MAX_PARTICLES),
-                material,
+                material: Handle::default(),
                 emitter: Emitter::blank(),
                 rate: 0.0,
                 rate_keys: None,
@@ -1244,6 +1255,7 @@ impl ModelCtx<'_> {
                     .unwrap_or_default(),
                 mover: None,
                 alpha_keys,
+                soft: 0.0,
             };
             // The modifiers' on/off keys: a `NiPSysModifierActiveCtlr` in the system's
             // controller chain names its modifier; a blend interpolator leaves the keys to
@@ -1547,6 +1559,20 @@ impl ModelCtx<'_> {
                 }
             }
             def.mover = mover_of(&file, &dec, &by_block, anchor, &place);
+            // A particle fades out towards the surface behind it over a quarter of its
+            // largest width, as an effect shape does over a quarter of its largest side
+            // (the template quad is one unit across, so the particle's own size is used):
+            // over the shapes' full 160 units, the blood mist puffed a few units off a
+            // body drew at a few percent and no hit on an actor showed its spray
+            // (#1074; nif.md §6 "Soft intersections of particles").
+            if material.extension.soft.x > 0.0 {
+                // A keyed radius as it starts, or the field's own if that is larger.
+                let v = def.emitter.values(0.0);
+                let v = EmitterValues { radius: v.radius.max(def.emitter.radius), radius_variation: v.radius_variation.abs().max(def.emitter.radius_variation.abs()), ..v };
+                material.extension.soft.x = particle_soft_distance(&v);
+                def.soft = material.extension.soft.x;
+            }
+            def.material = self.materials.add(material);
             if has_emitter && def.max > 0 {
                 out.systems.push(def);
             }
@@ -1593,6 +1619,7 @@ mod tests {
             subtextures: Vec::new(),
             mover: None,
             alpha_keys: None,
+            soft: 0.0,
         }
     }
 
@@ -1672,6 +1699,17 @@ mod tests {
         assert!((d.on_time(0.0, 2.0) - 1.0).abs() < 1e-5);
         let always = ParticleSystemDef { active: Vec::new(), ..def() };
         assert!((always.on_time(3.0, 3.5) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn particles_fade_over_a_quarter_of_their_width() {
+        let v = |radius: f32, radius_variation: f32| EmitterValues { radius, radius_variation, ..Emitter::blank().values(0.0) };
+        // The blood mist and spray of `mpsbloodsplat01.nif`; a particle of no size keeps
+        // the shapes' full distance; a huge smoke puff is capped at it.
+        assert_eq!(particle_soft_distance(&v(50.0, 10.0)), 30.0);
+        assert_eq!(particle_soft_distance(&v(1.25, 0.5)), 1.0);
+        assert_eq!(particle_soft_distance(&v(0.0, 0.0)), crate::nif_material::SOFT_DISTANCE);
+        assert_eq!(particle_soft_distance(&v(1_000.0, 0.0)), crate::nif_material::SOFT_DISTANCE);
     }
 
     #[test]

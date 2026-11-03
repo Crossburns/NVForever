@@ -1,5 +1,5 @@
 //! NVForever's own save files (docs/design/save-load.md §4). Not the original's `.fos`:
-//! NVForever neither reads nor writes those.
+//! the game neither reads nor writes those; [`fos`] reads them for the extender lab only.
 //!
 //! A file is
 //!
@@ -18,6 +18,8 @@
 //!
 //! The body is JSON for now (inspectable, what the snapshots' tests already use); the
 //! container version is bumped if it changes encoding.
+
+pub mod fos;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

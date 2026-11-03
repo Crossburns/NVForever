@@ -50,19 +50,19 @@ fn form(args: &[XVal], k: usize) -> Option<FormId> {
 /// paths do not keep the original's spelling, which the game compares exactly
 /// (observed: "mtidle.kf" in lower case did not match the game's "Characters\_Male\
 /// Locomotion\mtidle.kf")].
-fn same(a: &str, b: &str) -> bool {
+pub(crate) fn same(a: &str, b: &str) -> bool {
     a.replace('/', "\\").eq_ignore_ascii_case(&b.replace('/', "\\"))
 }
 
 /// Whether a path under meshes is a file of the game (loose or in an archive).
-fn file_exists(path: &str) -> bool {
+pub(crate) fn file_exists(path: &str) -> bool {
     crate::mod_files::exists(&format!("meshes\\{}", path.replace('/', "\\")))
 }
 
 impl Game<'_> {
     /// The sequences an actor plays as far as this side knows: its body's clip, then
     /// what scripts played.
-    fn playing_sequences(&self, a: FormId) -> Vec<String> {
+    pub(crate) fn playing_sequences(&self, a: FormId) -> Vec<String> {
         let mut v: Vec<String> = self.senses.anim.get(&a).and_then(|s| s.clip.clone()).into_iter().collect();
         v.extend(self.anim_paths.played.get(&a).cloned().unwrap_or_default());
         v
@@ -106,7 +106,9 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             if file_exists(&path) {
                 let p = g.anim_paths.played.entry(a).or_default();
                 if !p.iter().any(|x| same(x, &path)) {
-                    p.push(path);
+                    p.push(path.clone());
+                    // Its current time counts from here (`crate::nvse_knvse`).
+                    g.knvse_started(a, &path);
                 }
             }
             zero

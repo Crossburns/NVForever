@@ -206,7 +206,7 @@ fn x(e: &XExpr) -> String {
         XExpr::Binary { op, l, r } => format!("({} {op:?} {})", x(l), x(r)),
         XExpr::Member { l, key } => format!("{}->{key}", x(l)),
         XExpr::Assign { op, target, value } => format!("({} {op:?}= {})", x(target), x(value)),
-        XExpr::Lambda { params, body, value } => format!(
+        XExpr::Lambda { params, body, value, .. } => format!(
             "lambda[{}]({})",
             params.len(),
             value.as_ref().map(|v| x(v)).unwrap_or_else(|| format!("{} statements", body.len()))

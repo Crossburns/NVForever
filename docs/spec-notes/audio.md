@@ -911,8 +911,24 @@ reverb indoors, owner-review.md].
 - **The sounds** [hypothesis]: every sound effect (§10–§14: shots, impacts, footsteps,
   doors, creatures, the random placed sounds) and the placed loops, as they start; not
   the records with Environment Ignored or Menu Sound, the interface sounds (`UI…`), the
-  background loops (the room's own tone), music, voices, radios, or the loops a weapon
+  background loops (the room's own tone), music, radios, or the loops a weapon
   holds while it fires (they repeat their file, and the tail would break at each repeat).
+- **Voices** (`reverb::for_voice`, played by `voice.rs`; built 2026-11-01, #987): a line
+  heard where it is said (SayTo, Say, hellos, barks, lines between actors; voice.md §9)
+  goes into the listener's environment after the voice filter, and its reverb stops
+  with the line, no tail: "during dialogue the reverberation if any is abruptly cut off
+  at the end of each spoken line" [documented: GECK wiki "Special Effect" notes, owner
+  export]. A line cut early stops with its reverb. The send is 0.85: the
+  [Audio] `fDialogReverbAttenuation=0.15` of `Fallout_default.ini` [observed] read as a
+  SOUN's Reverb Attenuation Control is (0 all, 1 nothing) [hypothesis: its unit is not
+  documented]. The conversation with the player and 2D lines stay dry [design: the wiki
+  note can be read as the conversation being reverbed in the original; NVForever keeps
+  it whole and unplaced, as voice.md has it]. `bEnableEnviroEffectsOnPC=0` of the
+  shipped INI (above) is not followed for voices, as it is not for world sounds: the
+  owner asked for reverb indoors, and voices follow the same Reverb switch [decision].
+  The Sound tab's Voice reverb switch (`voice-reverb`, kept in the INI) keeps every
+  voice dry. Log: `voice: … in the room's reverb: <environment> (send 0.85, cut at its end)`; the
+  `reverb summary` and `voice summary` count the lines through it.
 - **Per sound** [hypothesis: DirectSound's effects run on each sound buffer, so a sound's
   reverb falls with its distance as the sound does]: each sound has its own reverb and
   plays in stereo, and goes on for the preset's delays plus its decay time (at most 6 s)
@@ -927,9 +943,8 @@ reverb indoors, owner-review.md].
   inputs are scaled so an impulse's late tail carries its level's energy. Density scales
   the comb lengths (half to whole), Diffusion the all-passes' gain (up to 0.5). Room
   Rolloff Factor is 0 in every preset.
-- Not built: the `GNAM` reverb attenuation, voices in rooms (the wiki says the
-  original's reverb is cut at the end of each spoken line), a reverb that changes under a
-  sound already playing.
+- Not built: a reverb that changes under a sound already playing. (The `GNAM` reverb
+  attenuation was built 2026-10-24, §15.5; voices in rooms 2026-11-01, above.)
 - Smoke: `reverb-cave-exit` (the Goodsprings cave, a shot, out through its door).
 
 ### 14.7 Checks
@@ -1180,3 +1195,32 @@ Attack without a key (above), super mutants' and robots' combat voices (dialogue
 topics, not creature sounds), and the 26 creatures whose templates give none. Checks:
 the `anim sounds summary` (types counted, "Aware n"), smoke `creature-sounds-ghoul`,
 `creature-sounds-aware`, `bighorner`.
+
+## 17. Volume sliders (issue #1450, 2026-11-03)
+
+- **Defaults** [observed: `Fallout_default.ini` `[Audio]`]: `fDefaultMasterVolume=1.0`,
+  `fDefaultFootVolume=0.5`, `fDefaultMusicVolume=0.6`, `fDefaultRadioVolume=0.5`,
+  `fDefaultEffectsVolume=1.0`, `fDefaultVoiceVolume=0.6`. An install left at its
+  defaults reads back the same with JIP's `GetGameVolume` 0-5 (master, footsteps, voice,
+  effects, music, radio): 100, 50, 60, 100, 60, 50 [observed: capture job, the owner's
+  install]. NVForever starts its sliders there (`audio_out::DEFAULT_VOLUMES`); before,
+  all were 1, and music, voices and radio played louder than the original's.
+- **Main menu theme** [observed: WASAPI loopback of the original at its main menu,
+  `MainTitle.mp3` decoded and fitted to the recording per channel, offset by
+  cross-correlation; four runs, the fit explaining all of the recording]: the theme
+  plays at 0.61 of the file (−4.3 dB) with the Music slider at 60, master 100 and
+  `fMainMenuMusicVolume=0.6`. One 0.6, not the two multiplied (0.36): either the theme
+  takes the slider and not the INI value, or the INI value and not the slider.
+  NVForever takes the slider alone [hypothesis], so the default menu matches the
+  original and the slider still turns the theme down.
+- **`SetGameVolume` from the console** (JIP) changed nothing heard, at the main menu
+  (the theme's level was the same after `SetGameVolume 4` 80, 60, 40 and 20) or in game
+  (no step in the level when the music slider was set to 0 and back, and the other
+  categories kept playing after being set to 0) [observed: loopback, same runs]; the
+  sliders read back at their defaults afterwards. It does not reach the playing mix, so
+  it cannot measure the slider's curve.
+- **The curve** stays linear [hypothesis]; the menu result fits it (0.6 → 0.6) but does
+  not tell it from the other hypothesis above. The reporter of #1450 found NVForever's
+  music at 0.6 still louder than the original's in game; the in-game music level (music
+  types' `ANAM` decibels, §13) was not measured. Owner checks:
+  docs/handoff/observer-checks.md.

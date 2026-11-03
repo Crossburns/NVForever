@@ -4,8 +4,9 @@
 //!
 //! - **Ambient occlusion**: a screen-space pass on the depth prepass darkens creases,
 //!   corners and the ground under things (`ssao.rs`; works with the multisampled view).
-//! - **Finer, longer shadows**: the sun's shadow maps at 4096 instead of 2048 texels and
-//!   reaching half as far again (`SkyState::shadow_reach`), the first cascade as near.
+//! - **Longer shadows** (`fine-shadows`): the sun's shadows reach half as far again
+//!   (`SkyState::shadow_reach`), the first cascade as near. Their maps stay 2048² like
+//!   everyone's: 4096² cost about 2 ms at Novac (#1367; the owner chose the frame rate).
 //! - **Bloom**: bright light (the sun and its glare, lamps, lit windows) glows into what
 //!   lies around it, thresholded on the tonemapped picture (`post.rs`).
 //!
@@ -36,7 +37,7 @@
 use crate::fly::FlyCam;
 use crate::sky::{SkyState, Sun};
 use crate::ssao::AmbientOcclusion;
-use bevy::light::{DirectionalLightShadowMap, ShadowFilteringMethod};
+use bevy::light::{CascadeShadowConfig, DirectionalLightShadowMap, ShadowFilteringMethod};
 use crate::post::PostEffects;
 use crate::shafts::LightShafts;
 use bevy::prelude::*;
@@ -91,6 +92,10 @@ pub struct Graphics {
     pub screen_aa: ScreenAa,
     pub light_shafts: bool,
     pub water_reflections: bool,
+    /// Water mirrors the world through the reflection camera (`reflection.rs`; on in
+    /// vanilla, as the original's water reflects the world). Off, water reflects the sky,
+    /// and what is on the screen where `water_reflections` is on.
+    pub water_mirror: bool,
     /// How the sun's shadow maps are filtered (Bevy's default, Gaussian, in vanilla).
     pub shadow_filter: ShadowFilteringMethod,
 }
@@ -131,6 +136,7 @@ impl Graphics {
             screen_aa: ScreenAa::Off,
             light_shafts: on,
             water_reflections: on,
+            water_mirror: true,
             shadow_filter: ShadowFilteringMethod::Gaussian,
         }
     }
@@ -144,6 +150,7 @@ impl Graphics {
             "glow" => &mut self.glow,
             "eye-adaptation" => &mut self.eye_adaptation,
             "neon-glow" => &mut self.neon_glow,
+            "water-mirror" => &mut self.water_mirror,
             "sharpen" => &mut self.sharpen,
             "anisotropic" => &mut self.anisotropic,
             "light-shafts" => &mut self.light_shafts,
@@ -166,9 +173,10 @@ impl Graphics {
                 "no-glow" => g.glow = false,
                 "no-eye-adaptation" => g.eye_adaptation = false,
                 "no-neon-glow" => g.neon_glow = false,
+                "no-water-mirror" => g.water_mirror = false,
                 _ => match g.switch(k) {
                     Some(on) => *on = true,
-                    None => return Err(format!("--graphics-only {k}: expected one of {}, no-glow, no-eye-adaptation, no-neon-glow", KEYS.join(", "))),
+                    None => return Err(format!("--graphics-only {k}: expected one of {}, no-glow, no-eye-adaptation, no-neon-glow, no-water-mirror", KEYS.join(", "))),
                 },
             }
         }
@@ -179,7 +187,7 @@ impl Graphics {
     pub fn describe(&self) -> String {
         let names = [
             (self.ambient_occlusion, "ambient occlusion"),
-            (self.fine_shadows, "finer, longer shadows"),
+            (self.fine_shadows, "longer shadows"),
             (self.bloom, "bloom"),
             (self.glow, "light glow"),
             (self.glow && !self.eye_adaptation, "no eye adaptation"),
@@ -191,6 +199,7 @@ impl Graphics {
             (self.screen_aa == ScreenAa::Taa, "temporal anti-aliasing"),
             (self.light_shafts, "sun shafts"),
             (self.water_reflections, "screen-space water reflections"),
+            (!self.water_mirror, "no mirrored water"),
             (self.shadow_filter == ShadowFilteringMethod::Hardware2x2, "hardware 2x2 shadow filtering"),
             (self.shadow_filter == ShadowFilteringMethod::Temporal, "temporal shadow filtering"),
         ];
@@ -203,10 +212,12 @@ impl Graphics {
     }
 }
 
-/// Shadow map side with finer shadows, and without (Bevy's default).
-const FINE_SHADOW_MAP: usize = 4096;
+/// Shadow map side of every directional light, with longer shadows or without (Bevy's
+/// default). 4096² with longer shadows cost about 2.1 ms a frame at Novac and 0.65 ms at
+/// Goodsprings for edges hardly sharper near the player [observed 2026-11-03, RTX 4070,
+/// 1920x1080; owner's choice 2026-11-03, #1367: the smaller maps, for the frame rate].
 const SHADOW_MAP: usize = 2048;
-/// With finer shadows they reach this many times `--shadow-distance`.
+/// With longer shadows they reach this many times `--shadow-distance`.
 pub const FINE_SHADOW_REACH: f32 = 1.5;
 
 /// The multisampling of the main view: `--msaa`, then the settings page's anti-aliasing
@@ -316,22 +327,32 @@ impl FrameTimes {
 /// The improvements to start with, `--msaa` and the frame-time test aid.
 pub struct GraphicsPlugin(pub Graphics, pub Msaa, pub Option<FrameTimes>);
 
+/// Add the shared GPU diagnostics once when either profiling path needs them.
+pub(crate) fn ensure_render_diagnostics(app: &mut App) {
+    if !app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+}
+
 impl Plugin for GraphicsPlugin {
     fn build(&self, app: &mut App) {
         let g = self.0;
         nvf_assets::texture::set_anisotropy(if g.anisotropic { 16 } else { 8 });
         app.insert_resource(g)
             .insert_resource(MsaaSetting(self.1))
-            .insert_resource(DirectionalLightShadowMap { size: if g.fine_shadows { FINE_SHADOW_MAP } else { SHADOW_MAP } })
+            .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
             .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin))
             .add_systems(Startup, |g: Res<Graphics>| info!("graphics: {}", g.describe()))
-            .add_systems(Update, apply);
+            .add_systems(Update, (apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky)).chain());
         if let Some(ft) = self.2.clone().filter(|f| f.every > 0.0) {
             // GPU time per render pass (timestamp queries), logged with the frame time.
-            app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+            ensure_render_diagnostics(app);
+            // What the player's fixed steps cost, counted while this resource exists and
+            // logged with the frame time (`nvf_play::phys_load`).
+            app.init_resource::<nvf_play::phys_load::PhysLoad>();
             // (time in this period, time counted, slowest, frames counted, cycle index)
             #[allow(clippy::type_complexity)]
-            app.add_systems(Update, move |mut commands: Commands, time: Res<Time<Real>>, mut g: ResMut<Graphics>, sky: Res<SkyState>, store: Res<bevy::diagnostic::DiagnosticsStore>, lights: Query<(Option<&Name>, &DirectionalLight, &bevy::camera::visibility::CascadesVisibleEntities)>, views: Query<Option<&Name>, With<Camera>>, mut acc: Local<(f32, f32, f32, u32, usize)>, mut start_shadows: Local<Option<(bool, f32, usize, f32)>>, thin: Res<crate::shadow_thin::ShadowThin>, refs: Query<&nvf_play::RefVisual>| {
+            app.add_systems(Update, move |mut commands: Commands, time: Res<Time<Real>>, mut g: ResMut<Graphics>, sky: Res<SkyState>, store: Res<bevy::diagnostic::DiagnosticsStore>, lights: Query<(Option<&Name>, &DirectionalLight, &bevy::camera::visibility::CascadesVisibleEntities)>, views: Query<Option<&Name>, With<Camera>>, mut acc: Local<(f32, f32, f32, u32, usize)>, mut start_shadows: Local<Option<(bool, f32, usize, f32)>>, thin: Res<crate::shadow_thin::ShadowThin>, refs: Query<&nvf_play::RefVisual>, mut phys_load: ResMut<nvf_play::phys_load::PhysLoad>| {
                 let first = start_shadows.is_none();
                 let start = *start_shadows.get_or_insert((sky.shadows, sky.shadow_distance, sky.shadow_cascades, thin.ratio));
                 if first {
@@ -359,6 +380,11 @@ impl Plugin for GraphicsPlugin {
                     let total: f64 = passes.iter().filter(|(n, _)| !n.contains('/')).map(|(_, t)| t).sum();
                     let list: Vec<String> = passes.iter().filter(|(n, _)| !n.contains('/')).take(12).map(|(n, t)| format!("{n} {t:.2}")).collect();
                     info!("gpu time: {total:.2} ms in all top-level passes; {}", list.join(", "));
+                    // The player's fixed steps over the whole period (none logged when no
+                    // frame was played).
+                    if let Some(line) = phys_load.take_line() {
+                        info!("{line}");
+                    }
                     // What the shadow passes draw (Bevy times no shadow pass): the casters
                     // in each cascade of each light with shadows, per view.
                     let mut casters = Vec::new();
@@ -440,6 +466,110 @@ fn apply_shadow_step(commands: &mut Commands, sky: &SkyState, start: (bool, f32,
     }
 }
 
+/// The moon's shadows (the sun's light below the horizon) reach this far, in one cascade
+/// [engineering choice, owner
+/// 2026-11-02 (#1369): by night the light is dimmer and softer and the dark hides the far
+/// shadows; by day's settings they cost about 2.5 ms on the Strip at 22:00, RTX 4070].
+pub const MOON_SHADOW_DISTANCE: f32 = 3_000.0;
+/// Below this share of its strength (the fade at the horizon) the sun or moon casts no
+/// shadows at all: its maps are not drawn [engineering choice: at a tenth of the light the
+/// shadow is too faint to see go].
+const SHADOW_FADED: f32 = 0.1;
+
+/// Which shadows the sun's light casts at the sun's current height.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum SunShadows {
+    Day,
+    Moon,
+    Faded,
+}
+
+impl SunShadows {
+    /// For the sun's height above the horizon (below 0: the moon) and the light's fade.
+    /// Indoors the sun is the cell's directional light (XCLL), which has nothing to do with
+    /// the hour outside: it casts the day's shadows.
+    fn at(indoors: bool, height: f32, fade: f32) -> Self {
+        if indoors {
+            SunShadows::Day
+        } else if fade < SHADOW_FADED {
+            SunShadows::Faded
+        } else if height < 0.0 {
+            SunShadows::Moon
+        } else {
+            SunShadows::Day
+        }
+    }
+}
+
+/// What the sun's shadows depend on: the phase and the shadow settings.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct SunShadowKey {
+    phase: SunShadows,
+    shadows: bool,
+    distance: f32,
+    reach: f32,
+    cascades: usize,
+}
+
+/// The phase for the sun's height now (the day's indoors) and the shadow settings.
+fn sun_shadow_key(sky: Res<SkyState>) -> SunShadowKey {
+    let indoors = sky.interior.is_some();
+    let (height, fade) = if indoors { (1.0, 1.0) } else { crate::sky::sun_height_and_fade(&sky) };
+    SunShadowKey {
+        phase: SunShadows::at(indoors, height, fade),
+        shadows: sky.shadows,
+        distance: sky.shadow_distance,
+        reach: sky.shadow_reach,
+        cascades: sky.shadow_cascades,
+    }
+}
+
+/// The sun's shadow quality for the hour: by day the settings' cascades, reach and map size;
+/// by night the moon's cheaper ones ([`MOON_SHADOW_DISTANCE`]); none while the light is
+/// faded at the horizon. Applied when the phase or a shadow setting changes, and again when
+/// a sun is spawned (a worldspace switch makes a new one with the day's cascades) or someone
+/// else puts cascades on it ([`apply`], [`crate::sky::set_shadows`] with an unchanged value).
+/// It writes the cascades in place, so its own writes do not count as someone else's.
+#[allow(clippy::type_complexity)]
+fn sun_shadow_quality(
+    In(key): In<SunShadowKey>,
+    mut commands: Commands,
+    new_suns: Query<(), Added<Sun>>,
+    mut suns: Query<(Entity, &mut DirectionalLight, Option<&mut CascadeShadowConfig>), With<Sun>>,
+    mut done: Local<Option<SunShadowKey>>,
+) {
+    if suns.is_empty() {
+        return;
+    }
+    let replaced = !new_suns.is_empty() || suns.iter_mut().any(|(_, _, c)| c.is_some_and(|c| c.is_changed()));
+    if !replaced && *done == Some(key) {
+        return;
+    }
+    let phase = key.phase;
+    if done.is_some_and(|d| d.phase != phase) {
+        info!("sun shadows: {phase:?}");
+    }
+    *done = Some(key);
+    let on = key.shadows && phase != SunShadows::Faded;
+    for (e, mut light, cascades) in &mut suns {
+        if light.shadow_maps_enabled != on {
+            light.shadow_maps_enabled = on;
+        }
+        if on {
+            let want = match phase {
+                SunShadows::Moon => crate::sky::shadow_cascades(MOON_SHADOW_DISTANCE.min(key.distance), 1.0, 1),
+                _ => crate::sky::shadow_cascades(key.distance, key.reach, key.cascades),
+            };
+            match cascades {
+                Some(mut c) => *c = want,
+                None => {
+                    commands.entity(e).insert(want);
+                }
+            }
+        }
+    }
+}
+
 /// Put the improvements that are on onto the main camera and the sun, take those that are
 /// off away (when a switch changes, and once at the start).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -448,7 +578,6 @@ fn apply(
     g: Res<Graphics>,
     msaa: Res<MsaaSetting>,
     mut sky: ResMut<SkyState>,
-    mut shadow_map: ResMut<DirectionalLightShadowMap>,
     cams: Query<(Entity, &Msaa), With<FlyCam>>,
     suns: Query<(Entity, &DirectionalLight), With<Sun>>,
     eye: Res<crate::eye_adapt::EyeCurve>,
@@ -531,10 +660,6 @@ fn apply(
             e.remove::<LightShafts>();
         }
     }
-    let size = if g.fine_shadows { FINE_SHADOW_MAP } else { SHADOW_MAP };
-    if shadow_map.size != size {
-        shadow_map.size = size;
-    }
     let reach = if g.fine_shadows { FINE_SHADOW_REACH } else { 1.0 };
     let reach_changed = sky.shadow_reach != reach;
     if reach_changed {
@@ -558,11 +683,93 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_moon_casts_cheaper_shadows_and_none_at_the_horizon() {
+        assert_eq!(SunShadows::at(false, 0.8, 1.0), SunShadows::Day);
+        assert_eq!(SunShadows::at(false, -0.5, 1.0), SunShadows::Moon);
+        assert_eq!(SunShadows::at(false, 0.005, 0.05), SunShadows::Faded, "sunrise: the light a twentieth of itself");
+        assert_eq!(SunShadows::at(false, -0.005, 0.05), SunShadows::Faded, "moonset");
+        assert_eq!(SunShadows::at(false, 0.02, SHADOW_FADED), SunShadows::Day, "back on at the threshold");
+        // Indoors the sun is the cell's light: the day's shadows whatever the hour outside.
+        assert_eq!(SunShadows::at(true, -0.5, 1.0), SunShadows::Day, "an interior at night");
+        assert_eq!(SunShadows::at(true, 0.005, 0.05), SunShadows::Day, "an interior at dawn");
+    }
+
+    #[derive(Resource)]
+    struct TestKey(SunShadowKey);
+
+    fn shadow_app(phase: SunShadows) -> App {
+        let mut app = App::new();
+        app.insert_resource(TestKey(SunShadowKey { phase, shadows: true, distance: 8000.0, reach: 1.0, cascades: 3 }))
+            .add_systems(Update, (|k: Res<TestKey>| k.0).pipe(sun_shadow_quality));
+        app
+    }
+
+    /// A sun as `setup_sky` spawns it: shadows on, the day's cascades.
+    fn spawn_day_sun(app: &mut App) -> Entity {
+        let day = crate::sky::shadow_cascades(8000.0, 1.0, 3);
+        app.world_mut().spawn((Sun, DirectionalLight { shadow_maps_enabled: true, ..default() }, day)).id()
+    }
+
+    fn bounds(app: &App, e: Entity) -> Vec<f32> {
+        app.world().get::<CascadeShadowConfig>(e).expect("cascades").bounds.clone()
+    }
+
+    #[test]
+    fn a_new_sun_or_new_cascades_get_the_phase_again() {
+        let mut app = shadow_app(SunShadows::Moon);
+        let moon = crate::sky::shadow_cascades(MOON_SHADOW_DISTANCE, 1.0, 1).bounds;
+        let first = spawn_day_sun(&mut app);
+        app.update();
+        assert_eq!(bounds(&app, first), moon);
+
+        // A worldspace switch: the old sun goes, a new one with the day's cascades comes in
+        // the same frame, under the same phase.
+        app.world_mut().despawn(first);
+        let second = spawn_day_sun(&mut app);
+        app.update();
+        assert_eq!(bounds(&app, second), moon, "the new sun casts the moon's cascade");
+
+        // sky::set_shadows(true) with nothing changed puts the day's cascades back.
+        app.world_mut().entity_mut(second).insert(crate::sky::shadow_cascades(8000.0, 1.0, 3));
+        app.update();
+        assert_eq!(bounds(&app, second), moon, "someone else's cascades are replaced");
+
+        // Its own write does not count as someone else's: no re-apply every frame.
+        let tick = app.world().entity(second).get_ref::<CascadeShadowConfig>().unwrap().last_changed();
+        app.update();
+        app.update();
+        assert_eq!(app.world().entity(second).get_ref::<CascadeShadowConfig>().unwrap().last_changed(), tick);
+
+        // While the light fades at the horizon a new sun casts nothing.
+        app.world_mut().resource_mut::<TestKey>().0.phase = SunShadows::Faded;
+        app.update();
+        let third = spawn_day_sun(&mut app);
+        app.update();
+        assert!(!app.world().get::<DirectionalLight>(third).unwrap().shadow_maps_enabled);
+        assert!(!app.world().get::<DirectionalLight>(second).unwrap().shadow_maps_enabled);
+    }
+
+    #[test]
+    fn going_indoors_at_night_gives_the_day_shadows_back() {
+        let mut app = shadow_app(SunShadows::Moon);
+        let sun = spawn_day_sun(&mut app);
+        app.update();
+        assert_eq!(bounds(&app, sun).len(), 1);
+        // Indoors the key's phase is Day (SunShadows::at with indoors), whatever the hour.
+        app.world_mut().resource_mut::<TestKey>().0.phase = SunShadows::at(true, -0.5, 1.0);
+        app.update();
+        assert_eq!(bounds(&app, sun), crate::sky::shadow_cascades(8000.0, 1.0, 3).bounds);
+        // And back out into the night.
+        app.world_mut().resource_mut::<TestKey>().0.phase = SunShadows::at(false, -0.5, 1.0);
+        app.update();
+        assert_eq!(bounds(&app, sun).len(), 1);
+    }
+
+    #[test]
     fn every_key_is_a_switch_and_enhanced_leaves_taa_off() {
         let all = Graphics::only(&KEYS.map(String::from)).expect("keys");
-        // "finer, longer shadows" has a comma of its own; of the three anti-aliasings and
-        // the two shadow filters the last named is on.
-        assert_eq!(all.describe().split(", ").count(), KEYS.len() + 2 - 3);
+        // Of the three anti-aliasings and the two shadow filters the last named is on.
+        assert_eq!(all.describe().split(", ").count(), KEYS.len() + 1 - 3);
         assert_eq!((all.screen_aa, all.shadow_filter), (ScreenAa::Taa, ShadowFilteringMethod::Temporal));
         let enhanced = Graphics::preset(Preset::Enhanced);
         assert!(enhanced.screen_aa == ScreenAa::Off && enhanced.light_shafts && enhanced.water_reflections);
@@ -586,5 +793,31 @@ mod tests {
         assert_eq!(off.describe(), "vanilla (no engine-level improvements)");
         // Bloom, when on, adds to the glow.
         assert!(Graphics::only(&["bloom".into()]).unwrap().describe().contains("light glow"));
+    }
+
+    #[test]
+    fn water_mirror_is_vanilla_and_can_be_switched_off() {
+        assert!(Graphics::preset(Preset::Vanilla).water_mirror && Graphics::preset(Preset::Enhanced).water_mirror);
+        let off = Graphics::only(&["no-water-mirror".into()]).expect("no-water-mirror");
+        assert!(!off.water_mirror);
+        assert_eq!(off.describe(), "light glow, no mirrored water");
+        let mut g = Graphics::preset(Preset::Vanilla);
+        *g.switch("water-mirror").expect("settings key") = false;
+        assert_eq!(g, off);
+    }
+
+    // The guard alone: repeated requests and an earlier registration. Both callers
+    // together are covered by the smoke scenario render-diagnostics-combined.
+    #[test]
+    fn render_diagnostics_guard_allows_repeated_requests() {
+        let mut app = App::new();
+        ensure_render_diagnostics(&mut app);
+        ensure_render_diagnostics(&mut app);
+        assert!(app.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>());
+
+        let mut already_added = App::new();
+        already_added.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        ensure_render_diagnostics(&mut already_added);
+        assert!(already_added.is_plugin_added::<bevy::render::diagnostic::RenderDiagnosticsPlugin>());
     }
 }

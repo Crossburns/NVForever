@@ -23,9 +23,11 @@ pub enum ScriptEffect {
     /// it fades in, or out, instead of popping (`crate::fade`). Follows its
     /// `RefChanged`.
     Fade { form_id: u32, fade_in: bool },
-    /// The player was moved by a script (`MoveTo`) or went through a door a script
-    /// activated.
+    /// The player was moved by a script (`MoveTo`).
     Travel(Travel),
+    /// The player went through a load door a script activated (the player's own trip,
+    /// `crate::loading::Loading::arriving`).
+    DoorTravel(Travel),
     /// A scripted activation opened a container for the player.
     OpenContainer(u32),
     /// A short line on screen (a message without the message-box flag, items a script
@@ -315,7 +317,7 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
                         // Only the player travels and opens menus; another actor's door or
                         // container use moves only that actor (its state is the world's).
                         Effect::Travel { world, interior, feet, heading_deg } if *by == player => {
-                            out.push(ScriptEffect::Travel(Travel { world, interior, feet, heading_deg }))
+                            out.push(ScriptEffect::DoorTravel(Travel { world, interior, feet, heading_deg }))
                         }
                         Effect::OpenContainer(c) if *by == player => out.push(ScriptEffect::OpenContainer(c)),
                         // A pickup's "added" line comes from its ItemAdded event
@@ -904,7 +906,7 @@ mod tests {
         let a = Activation { outcome: tp, unlocked_with: None, script: None };
         let o = Some(serde_json::to_value(&a).unwrap());
         let e = run(vec![EventKind::Activated { reference: DOOR, by: FormId::PLAYER_REF, outcome: o.clone() }]);
-        assert_eq!(e, vec![ScriptEffect::Travel(Travel { world: Some(WORLD), interior: None, feet: [1004.3, 8722.3, 1024.0], heading_deg: 0.0 })]);
+        assert_eq!(e, vec![ScriptEffect::DoorTravel(Travel { world: Some(WORLD), interior: None, feet: [1004.3, 8722.3, 1024.0], heading_deg: 0.0 })]);
         // Another actor going through the same door does not move the player.
         assert!(run(vec![EventKind::Activated { reference: DOOR, by: FormId(0x99), outcome: o }]).is_empty());
         // A locked door says so.

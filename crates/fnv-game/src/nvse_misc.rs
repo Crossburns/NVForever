@@ -123,8 +123,8 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             let v = if n.to_ascii_lowercase().starts_with('i') { Setting::Int(x as i32) } else { Setting::Float(x as f32) };
             yes(g.world.change_setting(&n, v).is_ok())
         }
-        // [documented: GetClass] the actor base's class.
-        "getclass" => XVal::Ref(g.data.actors.get(&item(g, 0)).and_then(|d| d.class).map_or(0, |c| c.0)),
+        // [documented: GetClass] the actor's class (`Game::traits_class`).
+        "getclass" => XVal::Ref(form(args, 0).or(subject).and_then(|f| g.traits_class(f)).map_or(0, |c| c.0)),
         // [documented: GetRefCount] the count of a stacked reference (1 without one).
         "getrefcount" => {
             let r = subject.unwrap_or(FormId(0));

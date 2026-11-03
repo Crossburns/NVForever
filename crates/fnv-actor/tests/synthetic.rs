@@ -323,6 +323,10 @@ fn an_addon_gives_way_to_a_worn_item_in_its_slot() {
     let a = r.resolve(FormId(DWELLER), FormId(0x904)).unwrap();
     let armor: Vec<String> = roles(&a).into_iter().filter(|p| !p.starts_with("head") && !p.starts_with("hair")).collect();
     assert_eq!(armor, vec!["armor vaultsuit.nif", "armor righthand.nif", "armor lefthandpipboyglove.nif"]);
+    // The first-person arms are drawn from the same parts: one left hand, the glove's
+    // `1st` model (#1366).
+    let (fa, _) = fnv_actor::first_person::appearance(&f.actors, &a, |p| p.ends_with("1st.nif"));
+    assert_eq!(roles(&fa), vec!["armor vaultsuit.nif", "armor righthand1st.nif", "armor lefthandpipboyglove1st.nif"]);
     // An outfit's glove is no bare hand: the Pip-Boy Glove gives way to it.
     let a = r.resolve(FormId(RANGER), FormId(0x905)).unwrap();
     let armor: Vec<String> = roles(&a).into_iter().filter(|p| !p.starts_with("head") && !p.starts_with("hair")).collect();

@@ -42,6 +42,12 @@
 //!   "No Voice Filter" is heard through the voice filter (`voice: playing … through the
 //!   voice filter`).
 //!
+//! - **In the room** ([`crate::reverb::for_voice`]): a line heard where it is said goes,
+//!   after the voice filter, into the reverb of the place the listener is in, and its
+//!   reverb stops when the line does (`voice: … in the room's reverb: <environment>`); the
+//!   conversation with the player stays dry. [`VoiceSettings::reverb`] (the Sound tab's
+//!   Voice reverb) keeps every line dry.
+//!
 //! - **A response's own sound.** A response with a sound (TRDT; creatures' and robots'
 //!   combat lines, `fnv_game::combat_lines`) plays that SOUN where its speaker stands
 //!   instead of a voice file, through `crate::sfx` (`voice: … plays its sound <edid>`); the
@@ -76,11 +82,13 @@ pub struct VoiceSettings {
     pub volume: f32,
     /// Lines last as long as their sound (off: the fitted length).
     pub lengths: bool,
+    /// Lines said at a place go into the room's reverb ([`crate::reverb::for_voice`]).
+    pub reverb: bool,
 }
 
 impl Default for VoiceSettings {
     fn default() -> Self {
-        VoiceSettings { play: true, volume: 1.0, lengths: std::env::var("NVF_PLAY_VOICE_LENGTHS").map_or(true, |v| v != "0") }
+        VoiceSettings { play: true, volume: 1.0, lengths: std::env::var("NVF_PLAY_VOICE_LENGTHS").map_or(true, |v| v != "0"), reverb: true }
     }
 }
 
@@ -221,6 +229,8 @@ pub struct VoiceState {
     pub unheard: u64,
     /// Responses played through the voice filter ([`crate::voice_filter`]).
     pub filtered: u64,
+    /// Responses played through the room's reverb ([`crate::reverb::for_voice`]).
+    pub reverbed: u64,
 }
 
 /// Marks the audio entity of a line.
@@ -404,6 +414,7 @@ fn play(
     paused: Res<crate::pause::Paused>,
     sinks: Query<&AudioSink, With<VoiceSound>>,
     mut effects: MessageWriter<PlaySound>,
+    (sfx, sfx_settings): (Option<Res<crate::sfx::Sfx>>, Option<Res<crate::sfx::SfxSettings>>),
 ) {
     let player = player.as_deref();
     let st = &mut *state;
@@ -521,6 +532,10 @@ fn play(
                 // near (or the player does) while it lasts.
                 // Said through a helmet or a speaker: the voice filter (crate::voice_filter).
                 let filtered = crate::voice_filter::speaker_filtered(&sim, s.speaker);
+                // Said at a place: into the listener's room, cut at the line's end.
+                let room = sfx.as_ref().and_then(|x| x.room_reverb);
+                let reverb_on = sfx_settings.as_ref().is_some_and(|x| x.reverb);
+                let reverb = crate::reverb::for_voice(room, reverb_on, settings.reverb, pan.is_some() && out_of_hearing.is_none());
                 let entity = match (settings.play, sounds.as_mut(), bank.read(path).and_then(|b| crate::sfx::checked(path, b))) {
                     (true, Some(assets), Some(bytes)) => {
                         let source = AudioSource { bytes: bytes.into() };
@@ -530,7 +545,7 @@ fn play(
                         let pan = pan.clone().or_else(|| filtered.then(|| Pan::new([1.0, 1.0])));
                         match (&pan, panned.as_mut()) {
                             (Some(pan), Some(panned)) => {
-                                let handle = panned.add(Panned { voice_filter: filtered, ..Panned::new(source, pan.clone()) });
+                                let handle = panned.add(Panned { voice_filter: filtered, reverb, ..Panned::new(source, pan.clone()) });
                                 Some(commands.spawn((AudioPlayer::<Panned<AudioSource>>(handle), playback, VoiceSound, SoundCategory::Voice)).id())
                             }
                             _ => Some(commands.spawn((AudioPlayer::new(assets.add(source)), playback, VoiceSound, SoundCategory::Voice)).id()),
@@ -540,6 +555,8 @@ fn play(
                 };
                 st.started += 1;
                 st.filtered += u64::from(filtered && entity.is_some());
+                let reverb = reverb.filter(|_| entity.is_some());
+                st.reverbed += u64::from(reverb.is_some());
                 let place = match heard {
                     Some(Some((_, d))) => format!(" at {d:.0} units, gain {:.2}", voice_gain(d)),
                     _ => String::new(),
@@ -551,6 +568,9 @@ fn play(
                 };
                 let filter = if filtered { " through the voice filter" } else { "" };
                 info!("voice: playing {path} ({seconds:.2} s) {who} line {} response {number}{place}{filter}{silent}", g.data.name(s.info));
+                if let Some(r) = reverb {
+                    info!("voice: {who} line {} response {number} in the room's reverb: {} (send {:.2}, cut at its end)", g.data.name(s.info), r.preset.name, r.send);
+                }
                 (entity, seconds)
             }
             None => {
@@ -599,8 +619,8 @@ impl Plugin for VoicePlugin {
 fn report(mut exit: MessageReader<AppExit>, state: Res<VoiceState>) {
     if exit.read().next().is_some() {
         info!(
-            "voice summary: {} responses started with a file, {} without one, {} started out of the player's hearing (silent, no subtitle while out of it), {} through the voice filter",
-            state.started, state.missing, state.unheard, state.filtered
+            "voice summary: {} responses started with a file, {} without one, {} started out of the player's hearing (silent, no subtitle while out of it), {} through the voice filter, {} through the room's reverb",
+            state.started, state.missing, state.unheard, state.filtered, state.reverbed
         );
     }
 }

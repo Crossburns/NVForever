@@ -120,7 +120,7 @@ pub struct Item {
     pub armor_dt: Option<f32>,
     /// The damage the weapon choice ranks a weapon by ([`weapon_choice_damage`]): WEAP
     /// DATA "Base Damage" [documented: xEdit], plus the damage of the explosion its
-    /// projectile sets off unless it is thrown or laid. `None` for other items. Not part of
+    /// projectile sets off unless it is thrown or laid or an Explosives weapon. `None` for other items. Not part of
     /// `fnv.sim.items/1`.
     #[serde(skip)]
     pub weapon_damage: Option<f32>,
@@ -691,8 +691,9 @@ fn load_one(lo: &LoadOrder, schema: &Schema, id: FormId, pi: usize, r: &Record, 
                 };
                 if kind == ItemKind::Weapon {
                     let anim = first(&d, b"DNAM").and_then(|v| v.get("animation_type")).and_then(text);
+                    let skill = first(&d, b"DNAM").and_then(|v| v.get("skill")).and_then(text);
                     let proj = i.projectile.map(|p| projectile_facts(lo, schema, p)).unwrap_or_default();
-                    i.weapon_damage = i.weapon_damage.map(|base| weapon_choice_damage(base, proj.explosion_damage, anim.as_deref()));
+                    i.weapon_damage = i.weapon_damage.map(|base| weapon_choice_damage(base, proj.explosion_damage, anim.as_deref(), skill.as_deref()));
                     if let Some(t) = i.weapon_traits.as_mut() {
                         (t.projectile_range, t.blast, t.flame) = (proj.range, proj.blast, proj.flame);
                     }
@@ -907,14 +908,20 @@ pub const THROWN_ANIM_TYPES: [&str; 4] = ["Grenade Throw (1 Hand)", "Thrown (1 H
 
 /// The damage an actor's weapon choice ranks a weapon by (docs/spec-notes/actors.md §9.3):
 /// its base damage, plus the damage of the explosion its projectile sets off for a weapon
-/// that is not thrown or laid [hypothesis: fitted to Cook-Cook drawing his Incinerator
-/// (base 1, its glob's explosion 20) and never his Flamer (16) in three runs of the
-/// original, npc-behaviour-compare.md §9.1; thrown weapons stay at their base damage, as
-/// grenade use is not built].
-pub fn weapon_choice_damage(base: f32, explosion: f32, anim_type: Option<&str>) -> f32 {
+/// that is not thrown or laid and whose skill (WEAP DNAM "Skill") is not Explosives
+/// [hypothesis: fitted to Cook-Cook drawing his Incinerator (base 1, its glob's explosion
+/// 20; Energy Weapons) and never his Flamer (16) in three runs of the original,
+/// npc-behaviour-compare.md §9.1, and to five Goodsprings residents none of whom took a
+/// Grenade Rifle (2, Explosives) with its grenades over a Hunting Rifle, .357 or Varmint
+/// Rifle, observer check 1, o13_reequip; thrown weapons stay at their base damage].
+pub fn weapon_choice_damage(base: f32, explosion: f32, anim_type: Option<&str>, skill: Option<&str>) -> f32 {
     let thrown = anim_type.is_some_and(|a| THROWN_ANIM_TYPES.contains(&a));
-    base + if thrown { 0.0 } else { explosion }
+    base + if thrown || skill == Some(EXPLOSIVES_SKILL) { 0.0 } else { explosion }
 }
+
+/// WEAP DNAM "Skill" of grenade rifles, launchers and other explosive weapons, as the
+/// schema names it [documented: xEdit WEAP, the ActorValue enum].
+pub const EXPLOSIVES_SKILL: &str = "Explosives";
 
 /// The damage of the explosion projectile `proj` (a global FormID) sets off: PROJ DATA
 /// flag "Explosion" and "Explosion" → EXPL DATA "Damage" [documented: xEdit PROJ, EXPL;

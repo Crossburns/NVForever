@@ -224,10 +224,12 @@ impl GroupSettings {
 }
 
 /// Allies within this distance of an actor that starts fighting or notices a hostile hear
-/// its alarm, game units [design: the wiki gives none; a whole exterior cell. Half a cell
-/// (2,048) until the owner's playtest list 5 item 31: friendly actors joined a fight only
-/// from too near].
-pub const ALARM_RADIUS: f32 = 4096.0;
+/// its alarm, game units [design: the wiki gives none. Half a cell (2,048) until the
+/// owner's playtest list 5 item 31, a whole cell (4,096) until #972; now the farthest
+/// pair of combat allies the original listed in the Goodsprings gunfight, 9,026 units
+/// (median 1,044, 95th percentile 4,864) [observed: observer-jip-audit-2026-10-25.md
+/// §3.5], rounded up to a quarter cell; docs/spec-notes/combat-groups.md §1].
+pub const ALARM_RADIUS: f32 = 9216.0;
 
 /// The groups' state: strengths, posts, flights, boosts, searches done. Not saved
 /// (fights are not saved).
@@ -243,6 +245,8 @@ pub struct Tactics {
     pub boosts: BTreeMap<FormId, u8>,
     /// Complete searches each actor has made for each alarm owner.
     pub searched: BTreeMap<(FormId, FormId), u32>,
+    /// When each fighter first went to Combat in this fight ([`Game::first_starter`]).
+    pub started: BTreeMap<FormId, f64>,
     pub notes: Vec<GroupNote>,
     pub settings: Option<GroupSettings>,
 }
@@ -255,6 +259,7 @@ impl Tactics {
         self.flights.remove(&actor);
         self.boosts.remove(&actor);
         self.searched.retain(|(a, _), _| *a != actor);
+        self.started.remove(&actor);
     }
 
     pub fn take_notes(&mut self) -> Vec<GroupNote> {
@@ -432,19 +437,103 @@ impl Game<'_> {
         self.awareness.tactics.flights.remove(&actor);
     }
 
+    /// The first of `foe`'s side to start this fight: the member of its combat group that
+    /// went to Combat earliest (ties by FormID), `foe` itself when none of them is
+    /// fighting [observed: in the Goodsprings gunfight every townsperson's OnStartCombat
+    /// named GSPG03Ref, the first Ganger to start, observer-jip-audit-2026-10-25.md §3.5;
+    /// docs/spec-notes/combat-groups.md §2]. A member dead or out cold (knocked out, or
+    /// set unconscious) is passed over: it is not fighting [design].
+    pub fn first_starter(&self, foe: FormId) -> FormId {
+        let started = &self.awareness.tactics.started;
+        self.combat_group(foe).into_iter().filter(|m| *m == foe || (!self.is_dead(*m) && !self.is_out_cold(*m))).filter_map(|m| started.get(&m).map(|t| (*t, m))).min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1))).map_or(foe, |(_, m)| m)
+    }
+
+    /// Who may hear an alarm, and where: the actors measured this round (`near`), then
+    /// the other actors of the loaded cells where the world has them (not drawn yet, or
+    /// out of the high process) [design: #972, the original's allies reached past the
+    /// actors near the player; docs/spec-notes/combat-groups.md §1].
+    fn alarm_hearers(&self, near: &BTreeMap<FormId, [f32; 3]>) -> BTreeMap<FormId, [f32; 3]> {
+        let mut out = near.clone();
+        for r in self.package_actors() {
+            if out.contains_key(&r) || !self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c)) {
+                continue;
+            }
+            if let Some(pos) = self.world.peek(r).map(|s| s.pos).or_else(|| self.world.placed.get(r).map(|p| p.pos)) {
+                out.insert(r, pos);
+            }
+        }
+        out
+    }
+
+    /// Before a round's [`Game::settle_awareness`]: each fighter in Combat learns when a
+    /// member of its combat group (a comrade with the same target) last detected each
+    /// target it does not detect itself, and where; it neither loses nor forgets a target
+    /// a mate still detects (`Awareness::settle`) and closes in on where the mate saw it
+    /// [hypothesis: the original's fighters stayed in combat with a hidden player for half
+    /// an hour while only some of them detected it, observer-jip-audit-2026-10-25.md §3.3;
+    /// docs/spec-notes/combat-groups.md §3].
+    pub fn share_sightings(&mut self) {
+        // Who detected each target, latest first.
+        let mut seen: BTreeMap<FormId, Vec<(f64, FormId, [f32; 3])>> = BTreeMap::new();
+        for (&id, a) in &self.awareness.actors {
+            if a.state != State::Combat {
+                continue;
+            }
+            for (&t, x) in &a.targets {
+                if let Some(d) = x.detected {
+                    seen.entry(t).or_default().push((d, id, x.at));
+                }
+            }
+        }
+        for v in seen.values_mut() {
+            v.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        }
+        let mut mates: BTreeMap<(FormId, FormId), bool> = BTreeMap::new();
+        let mut learnt = Vec::new();
+        for (&id, a) in &self.awareness.actors {
+            if a.state != State::Combat {
+                continue;
+            }
+            for (&t, x) in &a.targets {
+                if x.band == crate::detection::Band::Detected {
+                    continue;
+                }
+                let own = x.detected.unwrap_or(f64::NEG_INFINITY);
+                let mate = seen.get(&t).into_iter().flatten().take_while(|(d, ..)| *d > own).find(|(_, m, _)| *m != id && *mates.entry((id, *m)).or_insert_with(|| self.comrades(id, *m)));
+                if let Some(&(d, _, at)) = mate {
+                    learnt.push((id, t, d, at));
+                }
+            }
+        }
+        for (id, t, d, at) in learnt {
+            let a = self.awareness.actors.get_mut(&id).expect("listed");
+            a.shared.insert(t, d);
+            if let Some(x) = a.targets.get_mut(&t) {
+                x.at = at;
+            }
+        }
+    }
+
     /// After a round of measurements and [`Game::settle_awareness`]: every actor that
     /// started fighting (→ Combat) or noticed a hostile (Normal → Alert) since the
-    /// engine last took the changes alarms its comrades among `near` (the actors measured
-    /// in this round: drawn, near the player, in the high process) within
-    /// [`ALARM_RADIUS`] (module notes). An alarm passed on by an ally is not passed on
-    /// again. Returns how many were alarmed.
+    /// engine last took the changes alarms its comrades within [`ALARM_RADIUS`] (module
+    /// notes): those measured in this round (`near`: drawn, in the high process) and the
+    /// other actors of the loaded cells (`alarm_hearers`). The alarm names the
+    /// first of the foe's side to start ([`Game::first_starter`]). An alarm passed on by
+    /// an ally is not passed on again. Returns how many were alarmed.
     pub fn raise_alarms(&mut self, near: &BTreeMap<FormId, [f32; 3]>) -> usize {
         let changes: Vec<_> = self.awareness.changes.iter().filter(|c| matches!(c.to, State::Combat | State::Alert) && c.from != State::Combat && c.cause != Some(Cause::Ally)).copied().collect();
         let mut alarmed = 0;
+        if changes.is_empty() {
+            return alarmed;
+        }
         let s = self.group_settings();
+        let hearers = self.alarm_hearers(near);
         for c in changes {
             let (Some(about), Some(from)) = (c.about, near.get(&c.actor).copied()) else { continue };
             let at = c.at.or_else(|| near.get(&about).copied()).unwrap_or(from);
+            let starter = self.first_starter(about);
+            let starter_at = hearers.get(&starter).copied().unwrap_or(at);
             let combat = c.to == State::Combat;
             // "If a faction is flagged as Special Combat, members can attack one another
             // without sending a combat alarm" [documented: GECK wiki Category:Factions].
@@ -462,13 +551,17 @@ impl Game<'_> {
                     continue;
                 }
             }
-            for (&receiver, &where_) in near {
+            for (&receiver, &where_) in &hearers {
                 if receiver == c.actor || receiver == about || receiver == FormId::PLAYER_REF || (where_[0] - from[0]).hypot(where_[1] - from[1]) > ALARM_RADIUS {
                     continue;
                 }
                 if self.is_dead(receiver) || !self.present(receiver) || self.awareness.state(receiver) == State::Combat {
                     continue;
                 }
+                // The foe's first starter, unless that is this receiver or its comrade; the
+                // foe it was called about stays `foe`, for its grudges.
+                let foe = about;
+                let (about, at) = if receiver == starter || self.comrades(receiver, starter) { (about, at) } else { (starter, starter_at) };
                 let relation = self.reaction_to(receiver, c.actor);
                 let assistance = actor_value(self, receiver, crate::actor_values::ASSISTANCE).unwrap_or(0.0) as i64;
                 // Its own kind (a faction or base in common) always hears it [design];
@@ -480,14 +573,19 @@ impl Game<'_> {
                 if self.awareness.get(receiver).is_some_and(|a| a.alarms.iter().any(|x| x.owner == about)) {
                     continue;
                 }
-                if !self.would_attack(receiver, about) {
-                    // Never against its own allies and friends; a coward stays out
-                    // (`crate::provocation`, item 14 of playtest list 4).
-                    if self.comrades(receiver, about) || self.stays_out(receiver, c.actor) {
+                // A grudge against the foe it was called about, and against the starter it
+                // is sent after when that is another, so it can still fight the foe once the
+                // starter is gone. Never against its own allies and friends; a coward stays
+                // out (`crate::provocation`, item 14 of playtest list 4).
+                let grudges: Vec<FormId> = [foe, about].into_iter().filter(|&x| !self.would_attack(receiver, x)).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+                if !grudges.is_empty() {
+                    if grudges.iter().any(|&x| self.comrades(receiver, x)) || self.stays_out(receiver, c.actor) {
                         continue;
                     }
                     let now = self.time;
-                    self.provocations.grudges.insert((receiver, about), Grudge { why: Why::Assist { victim: c.actor }, since: now });
+                    for x in grudges {
+                        self.provocations.grudges.insert((receiver, x), Grudge { why: Why::Assist { victim: c.actor }, since: now });
+                    }
                 }
                 let t = self.awareness.timers.unwrap_or_default();
                 let now = self.time;

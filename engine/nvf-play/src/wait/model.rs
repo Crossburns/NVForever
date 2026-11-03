@@ -54,6 +54,9 @@ pub struct View {
     /// The slider mark the marker stands on.
     pub marker: u32,
     pub accept: String,
+    /// The verb alone ("Wait", "Sleep"), for the menu file's Wait button, which shows its
+    /// key hint itself (`crate::tiles::wait_menu`).
+    pub action: String,
     pub cancel: String,
     /// Not while the hours pass.
     pub can_accept: bool,
@@ -108,15 +111,21 @@ impl Model {
         true
     }
 
+    /// The hours the slider shows: those chosen, or those left while they pass.
+    pub fn marker(&self) -> u32 {
+        self.passing.map_or(self.hours, |p| p.left)
+    }
+
     /// What the menu shows at the game time `now`.
     pub fn view(&self, words: &Words, now: &Calendar) -> View {
-        let hours = self.passing.map_or(self.hours, |p| p.left);
+        let hours = self.marker();
         View {
             title: if self.sleep { words.sleep_title.clone() } else { words.wait_title.clone() },
             hours: words.hours_line(hours, minute_of_day(now)),
             date: words.date_line(now),
             marker: hours,
             accept: format!("{} E)", if self.sleep { &words.sleep } else { &words.wait }),
+            action: if self.sleep { words.sleep.clone() } else { words.wait.clone() },
             cancel: format!("{} X)", words.cancel),
             can_accept: self.passing.is_none(),
         }

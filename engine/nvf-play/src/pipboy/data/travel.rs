@@ -353,11 +353,17 @@ pub fn depart(
     mut travel: MessageWriter<TravelRequest>,
     mut passed: MessageWriter<HourPassed>,
     landing: Option<ResMut<crate::save::FastTravelLanding>>,
+    screen: Option<ResMut<crate::loading::Loading>>,
 ) {
     if *state.get() != PlayState::Playing {
         return;
     }
     let Some(t) = pending.0.take() else { return };
+    // The player's own trip (`Loading::arriving`): the destination's actors are put at
+    // their package's place behind the screen.
+    if let Some(mut s) = screen {
+        s.arriving = true;
+    }
     travel.write(TravelRequest(t.travel));
     if let Some(mut l) = landing {
         l.0 = true;

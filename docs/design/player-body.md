@@ -261,7 +261,26 @@ camera sees is as it was.
   (`nif_material.wesl` `with_shade_light`) reads both shadow maps and works the lit
   colour out from two results of Bevy's lighting, with and without shadows (Bevy's
   lighting has no opening for another shadow value; the small share of light is what
-  makes the sun's part of the light measurable that way). The light is there only while
+  makes the sun's part of the light measurable that way). Since 2026-11-02 (#1374) the light draws only
+  the casters whose bounds come within 64 units of the line from the eye 96 units toward
+  the sun, and no land (`near_shade_casters`, `terrain::LandMesh`; so steep ground within the
+  24-unit body clearance, crouched against a cliff with the sun behind it or the lying
+  view, no longer shades the arms [engineering choice]): Bevy keeps every
+  caster between a cascade and the light, so at a low sun the whole column toward the
+  sun, hills and buildings far off, was drawn into a map as large as the sun's, up to
+  3.6 ms a frame at Novac at 07:00; a cell's land box spans its hills and holds the eye
+  wherever the player stands. What shades the arms from further off comes from the
+  sun's own map (`nif_material.wesl` `shadow_past_body`), read at a depth moved toward
+  the sun past the plane through the eye and 24 units more (`BODY_CLEARANCE`), so the
+  unseen body round the eye is left out; the arms take the darker of the two. The sun's
+  cascades reach 256 units further toward the sun for it (`sky.rs` `SUN_REACH_BACK`,
+  `reach_toward_sun`): Bevy puts a cascade's near plane at the view slice's corner
+  nearest the sun, just in front of the eye when the sun is behind the camera, and every
+  caster before it lands on that plane, the body and a wall behind it alike. Measured
+  [observed 2026-11-02, RTX 4070, 1920x1080, finer shadows, Novac 07:00, interleaved
+  runs]: main 15.4 ms, now 12.4 ms, without the light 11.4 ms; the light's pass costs
+  about 0.75 ms whatever it draws (one caster as three), 0.25 ms when it draws nothing
+  (owner-review item 43). The light is there only while
   the arms rig is drawn and the sun casts shadows, and is despawned otherwise, never
   hidden: a hidden directional light keeps its shadow views in Bevy 0.19.1's render
   world and gets a second set when shown again, and the doubled views upset the shadow

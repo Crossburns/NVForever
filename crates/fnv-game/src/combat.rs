@@ -317,8 +317,17 @@ impl Game<'_> {
     /// (template flag Stats) [hypothesis for the reach: which template group RNAM belongs
     /// to is not checked]. `None` for an NPC.
     pub fn creature_attack(&self, r: FormId) -> Option<(f64, Option<f64>)> {
-        let d = self.stats_def(r)?;
-        (&d.sig == b"CREA").then(|| (d.attack_damage.unwrap_or(0) as f64, d.attack_reach.map(f64::from)))
+        // A base form reads its own (a script's base form argument).
+        let (id, d) = self.template_source(base_of(self, r).unwrap_or(r), r, |d| d.template_stats)?;
+        if &d.sig != b"CREA" {
+            return None;
+        }
+        // SetCreatureDamage's change first (`crate::nvse_jip6`).
+        let damage = match self.field_overrides.get(&(id, "DATA/damage".to_string())) {
+            Some(fnv_script::vm::XVal::Num(x)) => *x,
+            _ => d.attack_damage.unwrap_or(0) as f64,
+        };
+        Some((damage, d.attack_reach.map(f64::from)))
     }
 
     /// The actor dies: dead flag, killer, GetDeadCount, OnDeath (KillActor's effect).
@@ -511,20 +520,9 @@ impl Game<'_> {
         let health = actor::actor_value(self, target, HEALTH).unwrap_or(before - dealt);
         let mut out = HitResult { dealt, health, max_health, ..HitResult::default() };
         if let Some(l) = info.limb {
-            let (condition, crippled) = self.damage_limb(target, l, max_health);
+            let (condition, crippled) = self.hit_limb(target, l, max_health);
             out.limb = Some((l.condition, condition));
             out.crippled = crippled;
-            if crippled {
-                if let Some(h) = self.jip.hits.get_mut(&target) {
-                    h.flags |= 1 << 5;
-                }
-                // [documented: SetOnCrippledLimbEventHandler] 0 head … 6 brain.
-                let limb = f64::from(l.condition - crate::actor_values::LIMB_CONDITIONS.start());
-                self.jip_event("crippledlimb", Some(target), vec![fnv_script::vm::XVal::Num(limb)]);
-            }
-            if crippled && target == FormId::PLAYER_REF {
-                self.count_stat(crate::misc_stats::HAVE_LIMBS_CRIPPLED, 1.0);
-            }
         }
         // The player's hit counts towards the hit and damage challenges (`crate::challenges`).
         if info.attacker == Some(FormId::PLAYER_REF) {
@@ -618,6 +616,45 @@ impl Game<'_> {
         !unequipped && !fleeing && (self.draws_weapon(actor) || drawn || held || self.active_weapon_use(actor).is_some())
     }
 
+    /// A hit's limb damage on one limb ([`Game::damage_limb`]) with what crippling it
+    /// tells: the hit record's crippled flag, JIP's crippled-limb handlers and the
+    /// player's Limbs Crippled statistic.
+    fn hit_limb(&mut self, target: FormId, l: LimbHit, max_health: f64) -> (f64, bool) {
+        let (condition, crippled) = self.damage_limb(target, l, max_health);
+        if crippled {
+            if let Some(h) = self.jip.hits.get_mut(&target) {
+                h.flags |= 1 << 5;
+            }
+            // [documented: SetOnCrippledLimbEventHandler] 0 head … 6 brain.
+            let limb = f64::from(l.condition - crate::actor_values::LIMB_CONDITIONS.start());
+            self.jip_event("crippledlimb", Some(target), vec![fnv_script::vm::XVal::Num(limb)]);
+            if target == FormId::PLAYER_REF {
+                self.count_stat(crate::misc_stats::HAVE_LIMBS_CRIPPLED, 1.0);
+            }
+        }
+        (condition, crippled)
+    }
+
+    /// An explosion's limb damage on the actor it caught (docs/spec-notes/crippled-limbs.md
+    /// §5): every limb in `limbs` at once, after its health damage ([`Game::hit`], whose
+    /// hit record this marks crippled), scaled by the difficulty as a hit's. Nothing on a
+    /// dead or immune actor. Returns each limb's condition code, its condition after and
+    /// whether this blast crippled it.
+    pub fn blast_limbs(&mut self, target: FormId, attacker: Option<FormId>, limbs: &[LimbHit]) -> Vec<(u16, f64, bool)> {
+        if self.is_dead(target) || self.is_immune(target) {
+            return Vec::new();
+        }
+        let mult = self.damage_mult(attacker, target);
+        let max_health = actor::actor_value_base(self, target, HEALTH);
+        limbs
+            .iter()
+            .map(|&l| {
+                let (after, crippled) = self.hit_limb(target, LimbHit { damage: l.damage * mult, ..l }, max_health);
+                (l.condition, after, crippled)
+            })
+            .collect()
+    }
+
     /// Lower a limb's condition by a hit (see the module notes): its condition after, and
     /// whether this hit crippled it.
     pub fn damage_limb(&mut self, target: FormId, l: LimbHit, max_health: f64) -> (f64, bool) {
@@ -670,6 +707,18 @@ impl Game<'_> {
         armor_speed(self, worn_armor_class(&self.world, r))
     }
 
+    /// The share of the standard speeds an actor moves at for its stats: its current
+    /// Speed Mult (percent: SetAV's base, ModAV's and effects' modifiers, damage) over 100
+    /// [documented: GECK wiki Stats Tab - NPC, "The Player Character would have a Speed of
+    /// 100%"; observed for people: SetAV SpeedMult 150 ran 1.5 times as fast,
+    /// actors.md §8.10], times its body armour's share ([`Game::armor_speed_mult`]).
+    /// The player's walk and run take it (issue #1364) [hypothesis: the player follows
+    /// the people's rule; not measured on the player].
+    pub fn move_speed_mult(&mut self, r: FormId) -> f64 {
+        let mult = actor::actor_value(self, r, crate::actor_values::SPEED_MULTIPLIER).unwrap_or(100.0);
+        (mult / 100.0).clamp(0.0, 10.0) * self.armor_speed_mult(r)
+    }
+
     /// An actor's limb conditions, codes 25–31 in order.
     pub fn limb_conditions(&mut self, r: FormId) -> [f64; 7] {
         let mut out = [100.0; 7];
@@ -718,7 +767,7 @@ impl Game<'_> {
 
     /// Whether the reference's base has destruction data.
     pub fn is_destructible(&self, r: FormId) -> bool {
-        base_of(self, r).is_some_and(|b| self.data.destructibles.contains_key(&b))
+        base_of(self, r).is_some_and(|b| self.destruction(b).is_some())
     }
 
     /// The model damage stage the reference is drawn at: the DSTD damage stage of the
@@ -736,7 +785,7 @@ impl Game<'_> {
         if stage < 0 {
             return None;
         }
-        let def = base_of(self, r).and_then(|b| self.data.destructibles.get(&b))?;
+        let def = base_of(self, r).and_then(|b| self.destruction(b))?;
         def.stages.iter().filter(|s| i32::from(s.index) <= stage && s.model.is_some()).max_by_key(|s| s.index).and_then(|s| s.model.as_deref())
     }
 
@@ -747,7 +796,7 @@ impl Game<'_> {
 
     pub fn model_damage_stage(&self, r: FormId) -> u8 {
         let stage = crate::functions::objects_destruction_stage(self, r);
-        let def = base_of(self, r).and_then(|b| self.data.destructibles.get(&b));
+        let def = base_of(self, r).and_then(|b| self.destruction(b));
         def.and_then(|d| d.stages.iter().find(|s| s.index as i32 == stage)).map_or(0, |s| s.damage_stage)
     }
 
@@ -764,7 +813,7 @@ impl Game<'_> {
     ///
     /// `None` when the reference has no destruction data or nothing changed hands.
     pub fn damage_object(&mut self, r: FormId, amount: f64) -> Option<DestructionChange> {
-        let def = base_of(self, r).and_then(|b| self.data.destructibles.get(&b)).cloned()?;
+        let def = base_of(self, r).and_then(|b| self.destruction(b)).cloned()?;
         let e = self.extra.get(&r);
         if e.is_some_and(|e| e.destroyed) && e.and_then(|e| e.burning).is_none() {
             return None;

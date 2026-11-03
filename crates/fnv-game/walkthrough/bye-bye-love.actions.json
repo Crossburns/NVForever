@@ -87,7 +87,7 @@
     {"op": "get_quest", "quest": "VMS21a", "fields": ["var.CarlitosInAlley", "var.GunsAtAlley"], "label": "carlitos in the alley"},
     {"op": "move_player", "to": "VMS21aCarlitosREF"},
     {"op": "talk", "actor": "VMS21aCarlitosREF", "label": "carlitos reunion"},
-    {"op": "advance_seconds", "seconds": 6},
+    {"op": "wait_talk"},
     {"op": "get_quest", "quest": "VMS21a", "fields": ["var.FSAmbushed"], "label": "ambushed"},
     {"op": "note", "text": "Stand-in for the Omertas' walk to the meeting (their ambush packages, AddScriptPackage): their leader is talked to where he stands. Speech 85: the money Cachino hid from the family (Topic005, then Topic006) sends them home."},
     {"op": "move_player", "to": "VMS21aOmertaThug01REF"},
@@ -105,7 +105,7 @@
     {"op": "get_quest", "quest": "VMS21a", "fields": ["stage", "done.90"], "label": "milestone: VMS21a 90"},
     {"op": "move_player", "to": "VMS21JoanaREF"},
     {"op": "talk", "actor": "VMS21JoanaREF", "label": "joana thanks"},
-    {"op": "advance_seconds", "seconds": 35},
+    {"op": "wait_talk"},
     {"op": "get_quest", "quest": "VMS21a", "fields": ["stage", "done.100", "done.105", "completed", "var.CoupleFree"], "label": "final: VMS21a 105"}
   ]
 }

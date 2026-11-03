@@ -584,6 +584,7 @@ pub fn read_controls(
             c.ready_held = Some(0.0);
         } else {
             c.weapon_out = true;
+            info!("Ready Item pressed: the weapon drawn");
         }
     }
     if let Some(t) = c.ready_held.as_mut() {
@@ -591,6 +592,7 @@ pub fn read_controls(
         if *t >= HOLSTER_HOLD {
             c.weapon_out = false;
             c.ready_held = None;
+            info!("Ready Item held: the weapon holstered");
         } else if input.just_released(Control::ReadyItem) || !input.pressed(Control::ReadyItem) {
             c.ready_held = None;
             c.reload = true;

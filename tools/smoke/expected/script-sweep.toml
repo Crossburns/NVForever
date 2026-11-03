@@ -11,9 +11,12 @@
 
 [summary.scripts.info]
 run = 8639
+# 6 of them since #1299: the axis-2/3 AddReputation lines (Severus's tag trades, INFO
+# 0x001131DE, 0x001131E2 ...) fail and stop the script, as in the original (o11_00).
 # 3 of them since #1127: the axis-2 SetReputation lines (INFO 0x00119094, 0x00131F74,
 # 0x001543A9) fail and stop the script, as in the original (o5_00/o5_01).
-with_problems = 117
+# 117 before #1113: `RemoveItem <item> 0` removes nothing and goes on (observer check 44).
+with_problems = 104
 
 [summary.scripts.package]
 run = 558
@@ -21,15 +24,18 @@ with_problems = 95
 
 [summary.scripts.stage]
 run = 1040
-with_problems = 5
+# 1 of them since #1299: VMS20 stage 100 entry 1 stops at `AddReputation RepNVGreatKhans
+# 2 5`, as in the original (o11_05); the stage's Complete Quest flag still completes it.
+with_problems = 6
 
 [summary.scripts.terminal]
 run = 384
 with_problems = 50
 
 [summary.problems.call_failed]
+# +1 cause, +7 scripts since #1299 (AddReputation with axis 2 or 3).
 causes = 54
-scripts = 384
+scripts = 359
 
 [summary.problems.script_error]
 causes = 1

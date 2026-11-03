@@ -128,6 +128,12 @@ within one cell's width (4096 units) passes no time [design].
 player"]: the teammates following the player come along, put beside them
 (`fnv_game::Game::bring_teammates`, as through a load door).
 
+**The people at the destination** [observed, owner, issue #1208]: they are already where
+their package has them on arrival (Boone at the dinosaur, fast travelling to Novac at
+5am), not walking there. The residents near the destination that the player did not see
+in the last game hour are put at their package's place behind the loading screen; those
+the player saw stay put (docs/spec-notes/packages.md §8).
+
 ## 5. Checking it
 
 Pip-Boy test aid steps (`NVF_PLAY_TEST_PIPBOY`): `travel=<marker FormID>` does what a

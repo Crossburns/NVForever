@@ -455,7 +455,8 @@ role; their exact names come from C1.
 - **Skills** act through the documented spread and damage formulas: with low skill a
   gun is wider, never useless.
 - **No auto-aim** with the mouse (the original's auto-aim settings, §4.2, are not used)
-  [design]. It can come back as an aim assist for controllers.
+  [design]. Controllers get an aim assist instead: the stick slows on a nearby hostile
+  and aiming down the sights eases onto one (docs/design/controller.md §5).
 - **Determinism**: each shot draws from an RNG seeded by (attacker, shot counter), so a
   headless replay gives the same hits.
 

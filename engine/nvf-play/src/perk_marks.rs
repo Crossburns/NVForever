@@ -4,13 +4,13 @@
 //! - **Spotter** (Boone; entry point 70 Has Improved Spotting, "Enemy highlighting"
 //!   [documented: GECK wiki Perk entry points]): while the player aims, the actors hostile
 //!   to the player (`crate::compass`'s rule: fighting the player or ready to attack it,
-//!   aware of the player or not) within the detection reach (fSneakMaxDistance, × the
-//!   exterior multiplier outdoors: 2,500 / 5,000 units in the masters) play the DOBJ's
-//!   Spotter Effect, `fxSpotterShader` 0015FF60 [observed: FalloutNV.esm's DOBJ slot 31].
-//!   The reach is not the compass's (Perception × 300, 1,500 at Perception 5): the
-//!   enemies the player spots before they notice it are mostly farther than that, and
-//!   went unmarked [owner's playtest, #1094; hypothesis: the original's reach is not
-//!   documented, the detection reach is the farthest an actor perceives anything].
+//!   aware of the player or not) as far as actors are drawn ([`ActorDrawDistance`]: the
+//!   loaded cells, cut to the Actors draw-distance slider when it is below 100%) play the
+//!   DOBJ's Spotter Effect, `fxSpotterShader` 0015FF60 [observed: FalloutNV.esm's DOBJ
+//!   slot 31]. The original marks "every enemy in render distance" [observed 2026-10-31,
+//!   owner, observer check 19; #1171], farther than the detection reach (5,000 units
+//!   outdoors) used before; and farther than the compass's (Perception × 300), which left
+//!   the enemies the player spots before they notice it unmarked [owner's playtest, #1094].
 //! - **Search and Mark** (Rex; entry point 71 Has Improved Item Detection, "Item
 //!   highlighting" [documented: the same page]): while the player aims, the chems, guns and
 //!   ammunition lying within [`SEARCH_RANGE`] play the DOBJ's Item Detected Effect,
@@ -39,6 +39,20 @@ use std::collections::BTreeSet;
 /// "within a short distance"; no setting names it].
 pub const SEARCH_RANGE: f32 = 1500.0;
 
+/// How far actors are drawn from the camera, game units; `None`: as far as their cells
+/// are loaded (the Actors draw-distance slider at 100%). The body keeps it (nvforever
+/// `draw_distance.rs`); Spotter marks no farther (module notes).
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
+pub struct ActorDrawDistance(pub Option<f32>);
+
+/// Whether an actor `dist` units away is drawn, and so can be marked by Spotter: every
+/// actor of the loaded cells ([`crate::compass`]'s `actors_near`) when the draw distance
+/// is the cells', otherwise those within it [design: measured from the player's feet,
+/// not the camera; the two are a few units apart].
+pub fn spotter_reaches(dist: f32, drawn: ActorDrawDistance) -> bool {
+    drawn.0.is_none_or(|d| dist <= d)
+}
+
 /// Seconds between updates [design].
 const POLL: f32 = 0.1;
 
@@ -50,7 +64,7 @@ pub struct PerkMarksPlugin;
 
 impl Plugin for PerkMarksPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PerkMarks>().add_systems(Update, mark.in_set(PlaySet::Ui));
+        app.init_resource::<PerkMarks>().init_resource::<ActorDrawDistance>().add_systems(Update, mark.in_set(PlaySet::Ui));
     }
 }
 
@@ -74,7 +88,7 @@ fn mark(
     player: Option<Res<Player>>,
     phys: Option<Res<PhysState>>,
     combat: Option<Res<Combat>>,
-    location: Option<Res<crate::Location>>,
+    drawn: Res<ActorDrawDistance>,
     mut script: Option<ResMut<ScriptState>>,
     mut sim: ResMut<SimState>,
     mut marks: ResMut<PerkMarks>,
@@ -89,16 +103,15 @@ fn mark(
     let mut now: Vec<(FormId, FormId, &'static str)> = Vec::new();
     if let (true, Some(player), Some(phys), Some(rt)) = (aiming, player, phys, script.as_deref_mut().and_then(|s| s.rt.as_mut())) {
         let feet = player.feet;
+        let drawn = *drawn;
         let bodies: std::collections::HashMap<u32, [f32; 3]> = phys.npcs.iter().map(|(&id, b)| (id, b.ch.feet)).collect();
         now = with_world(rt, &mut sim, |rt| {
             let g = &mut rt.game;
             let mut out = Vec::new();
             let dist = |at: [f32; 3]| ((at[0] - feet[0]).powi(2) + (at[1] - feet[1]).powi(2) + (at[2] - feet[2]).powi(2)).sqrt();
             if let Some(shader) = g.data.default_object(DefaultObject::SpotterEffect).filter(|_| g.player_has_entry(fnv_game::perks::HAS_IMPROVED_SPOTTING)) {
-                let exterior = location.as_deref().is_none_or(|l| l.interior.is_none());
-                let range = fnv_game::detection::Settings::read(g).max_distance(exterior) as f32;
                 for (r, at) in crate::compass::actors_near(g, &bodies) {
-                    if dist(at) > range || g.is_dead(r) || !g.present(r) {
+                    if !spotter_reaches(dist(at), drawn) || g.is_dead(r) || !g.present(r) {
                         continue;
                     }
                     let fighting = g.awareness.get(r).and_then(|a| a.combat_target()).is_some_and(|(t, _)| t == FormId::PLAYER_REF);
@@ -141,5 +154,23 @@ fn mark(
     }
     if marks.0 != now {
         marks.0 = now;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spotter_reaches_every_drawn_actor_past_the_detection_reach() {
+        // The draw distance at its full slider: every actor of the loaded cells, however
+        // far (#1171: the detection reach, 5,000 units outdoors, stopped it before).
+        assert!(spotter_reaches(5_001.0, ActorDrawDistance(None)));
+        assert!(spotter_reaches(40_000.0, ActorDrawDistance(None)));
+        // The Actors slider cut down: no farther than actors are drawn.
+        let half = ActorDrawDistance(Some(8_000.0));
+        assert!(spotter_reaches(7_999.0, half));
+        assert!(spotter_reaches(8_000.0, half));
+        assert!(!spotter_reaches(8_001.0, half));
     }
 }

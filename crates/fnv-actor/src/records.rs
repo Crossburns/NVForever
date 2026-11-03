@@ -200,6 +200,10 @@ pub struct Weapon {
     /// [`ActorForms::build`] (actors.md §9.3). Not part of any report.
     #[serde(skip)]
     pub explosion_damage: f32,
+    /// DNAM "Skill" as the schema names it (e.g. "Guns", "Explosives"); the weapon choice
+    /// reads it (actors.md §9.3). Not part of any report.
+    #[serde(skip)]
+    pub skill: Option<String>,
     /// DNAM flags: "Embedded Weapon" (part of a creature body), "Non-Playable".
     pub embedded: bool,
     pub non_playable: bool,
@@ -755,6 +759,7 @@ fn weapon(lo: &LoadOrder, pi: usize, id: FormId, d: &[Decoded], issues: &mut Iss
         damage: first(d, b"DATA").and_then(|v| int(v, "base_damage")).unwrap_or(0) as i32,
         projectile: fid(lo, pi, id, "DNAM projectile", dnam.and_then(|v| v.get("projectile")), issues),
         explosion_damage: 0.0,
+        skill: dnam.and_then(|v| v.get("skill")).and_then(text),
         embedded: flags.is_some_and(|f| has_flag(f, "Embedded Weapon")),
         non_playable: flags.is_some_and(|f| has_flag(f, "Non-Playable")),
         not_for_npcs: dnam.and_then(|v| v.get("flags2")).is_some_and(|f| has_flag(f, "Player Only") || has_flag(f, "Not Used In Normal Combat")),
@@ -786,7 +791,7 @@ mod tests {
 
     #[test]
     fn a_modded_weapon_draws_the_model_of_its_mods() {
-        let mut w = Weapon { edid: None, model: Some("plain.nif".into()), anim_type: None, damage: 0, projectile: None, explosion_damage: 0.0, embedded: false, non_playable: false, not_for_npcs: false, first_person: None, first_person_model: Some("1st.nif".into()), mod_models: Default::default(), mod_first_person: [None; 7], mod_first_person_models: Default::default(), held_world_model: None, grip: None, hide_backpack: false };
+        let mut w = Weapon { edid: None, model: Some("plain.nif".into()), anim_type: None, damage: 0, projectile: None, explosion_damage: 0.0, skill: None, embedded: false, non_playable: false, not_for_npcs: false, first_person: None, first_person_model: Some("1st.nif".into()), mod_models: Default::default(), mod_first_person: [None; 7], mod_first_person_models: Default::default(), held_world_model: None, grip: None, hide_backpack: false };
         w.mod_models[0] = Some("ext.nif".into());
         w.mod_models[2] = Some("ext_scope.nif".into());
         w.mod_first_person_models[2] = Some("1st_ext_scope.nif".into());
@@ -812,7 +817,7 @@ mod tests {
     #[test]
     fn a_weapon_without_first_person_forms_shows_its_mods_in_first_person() {
         // As a mod's weapon may be: MODL and MWD models, no WNAM or WNM forms.
-        let mut w = Weapon { edid: None, model: Some("plain.nif".into()), anim_type: None, damage: 0, projectile: None, explosion_damage: 0.0, embedded: false, non_playable: false, not_for_npcs: false, first_person: None, first_person_model: None, mod_models: Default::default(), mod_first_person: [None; 7], mod_first_person_models: Default::default(), held_world_model: None, grip: None, hide_backpack: false };
+        let mut w = Weapon { edid: None, model: Some("plain.nif".into()), anim_type: None, damage: 0, projectile: None, explosion_damage: 0.0, skill: None, embedded: false, non_playable: false, not_for_npcs: false, first_person: None, first_person_model: None, mod_models: Default::default(), mod_first_person: [None; 7], mod_first_person_models: Default::default(), held_world_model: None, grip: None, hide_backpack: false };
         w.mod_models[3] = Some("ext.nif".into());
         assert_eq!(w.model_for(true, 0), Some("plain.nif"));
         assert_eq!(w.model_for(true, 4), Some("ext.nif"));

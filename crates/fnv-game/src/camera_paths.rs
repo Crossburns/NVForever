@@ -29,6 +29,7 @@ use crate::game::Game;
 use crate::vats::{CameraRoom, VatsOutcome, VatsShot, VatsState, MODE_PLAYBACK};
 use fnv_script::vm::{ArgValue, Value};
 use fnv_sim::FormId;
+use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
 
 /// What starts a shot (CAMS DATA "Action") [documented: xEdit; GECK wiki CameraShot
@@ -139,18 +140,27 @@ pub struct CameraPathDef {
 }
 
 impl CameraPathDef {
-    /// From the raw subrecords; `cond` reads one CTDA.
-    pub fn from_raw(subs: &[fnv_esm::Subrecord], map: &dyn Fn(u32) -> Option<u32>, cond: &mut dyn FnMut(&fnv_esm::Subrecord) -> Option<Condition>) -> CameraPathDef {
-        let form = |b: &[u8], o: usize| b.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).filter(|&l| l != 0).and_then(map).map(FormId);
+    /// From the subrecords as the schema decodes them (`val`; `effects.json` CPTH: ANAM
+    /// two FormIDs, DATA the zoom enum, which `zoom` turns back into its code, SNAM a
+    /// FormID); `cond` reads one CTDA.
+    pub fn from_fields(
+        subs: &[fnv_esm::Subrecord],
+        val: &mut dyn FnMut(&fnv_esm::Subrecord) -> Option<Json>,
+        zoom: &dyn Fn(&Json) -> Option<i64>,
+        map: &dyn Fn(u32) -> Option<u32>,
+        cond: &mut dyn FnMut(&fnv_esm::Subrecord) -> Option<Condition>,
+    ) -> CameraPathDef {
+        let form = |v: Option<&Json>| v.and_then(crate::data::hexid).filter(|&l| l != 0).and_then(map).map(FormId);
         let mut p = CameraPathDef::default();
         for s in subs {
             match &s.sig {
                 b"ANAM" => {
-                    p.parent = form(&s.data, 0);
-                    p.previous = form(&s.data, 4);
+                    let v = val(s);
+                    p.parent = form(v.as_ref().and_then(|a| a.get(0)));
+                    p.previous = form(v.as_ref().and_then(|a| a.get(1)));
                 }
-                b"DATA" => p.zoom = s.data.first().copied().unwrap_or(0),
-                b"SNAM" => p.shots.extend(form(&s.data, 0)),
+                b"DATA" => p.zoom = val(s).as_ref().and_then(zoom).unwrap_or(0) as u8,
+                b"SNAM" => p.shots.extend(form(val(s).as_ref())),
                 b"CTDA" => p.conditions.extend(cond(s)),
                 _ => {}
             }
@@ -304,8 +314,8 @@ pub fn hit_shots(path: &CameraPathDef, shots: &HashMap<FormId, CameraShotDef>) -
 }
 
 fn zstring(b: &[u8]) -> String {
-    let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
-    String::from_utf8_lossy(&b[..end]).into_owned()
+    // In this run's code page (fnv_util::text, #1439).
+    fnv_util::text::decode_z(b)
 }
 
 #[cfg(test)]
@@ -362,6 +372,27 @@ mod tests {
         let short = fnv_esm::Subrecord { sig: *b"DATA", data: shot(0).data[..28].to_vec(), extended: false };
         let s = CameraShotDef::from_raw(&[short], &|l| Some(l)).unwrap();
         assert_eq!((s.action, s.max_time, s.min_time), (ShotAction::Shoot, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_paths_links_zoom_and_shots_read_through_the_schema() {
+        let schema = fnv_esm::Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+        let mut ctx = fnv_esm::decode::DecodeCtx { schema: &schema, on_formid: None };
+        let mut val = |s: &fnv_esm::Subrecord| fnv_esm::decode::decode_sub(b"CPTH", s, &mut ctx).value;
+        let zoom = |v: &Json| crate::data::field_code(&schema, b"CPTH", b"DATA", None, v);
+        let sub = |sig: &[u8; 4], data: Vec<u8>| fnv_esm::Subrecord { sig: *sig, data, extended: false };
+        let words = |w: &[u32]| w.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+        // ANAM parent and previous sibling, DATA Shot List (2), two shots and a null one;
+        // the FormIDs are mapped (here +0x100).
+        let subs = vec![sub(b"ANAM", words(&[0x10, 0])), sub(b"DATA", vec![2]), sub(b"SNAM", words(&[0x20])), sub(b"SNAM", words(&[0])), sub(b"SNAM", words(&[0x21]))];
+        let p = CameraPathDef::from_fields(&subs, &mut val, &zoom, &|l| Some(l + 0x100), &mut |_| None);
+        assert_eq!((p.parent, p.previous, p.zoom), (Some(FormId(0x110)), None, 2));
+        assert_eq!(p.shots, vec![FormId(0x120), FormId(0x121)]);
+        // A zoom code past the schema's names keeps its number.
+        let p = CameraPathDef::from_fields(&[sub(b"DATA", vec![1]), sub(b"ANAM", words(&[0, 0x11]))], &mut val, &zoom, &|l| Some(l), &mut |_| None);
+        assert_eq!((p.parent, p.previous, p.zoom), (None, Some(FormId(0x11)), 1));
+        let p = CameraPathDef::from_fields(&[sub(b"DATA", vec![7])], &mut val, &zoom, &|l| Some(l), &mut |_| None);
+        assert_eq!(p.zoom, 7);
     }
 
     #[test]

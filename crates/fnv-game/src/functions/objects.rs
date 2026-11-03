@@ -211,7 +211,7 @@ pub fn set_cell_public_flag(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value,
 /// stage; −1 without destruction data or damage [documented: GECK wiki
 /// GetDestructionStage for −1; hypothesis for the rest].
 pub fn destruction_stage(g: &Game, r: FormId) -> i32 {
-    let Some(def) = base_of(g, r).and_then(|b| g.data.destructibles.get(&b)) else { return -1 };
+    let Some(def) = base_of(g, r).and_then(|b| g.destruction(b)) else { return -1 };
     let Some(d) = g.extra.get(&r).and_then(|e| e.damage) else { return -1 };
     if def.health <= 0 {
         return def.stages.iter().map(|s| s.index as i32).max().unwrap_or(0);

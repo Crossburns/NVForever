@@ -59,7 +59,8 @@ impl Game<'_> {
             if let Some(race) = self.player.race {
                 return Some(race);
             }
-        } else if let Some(race) = self.extra.get(&r).and_then(|e| e.race) {
+        } else if let Some(race) = self.itr_race(r).or_else(|| self.extra.get(&r).and_then(|e| e.race)) {
+            // ITR's SetRaceAlt first (`crate::nvse_itr2`), then a script's change.
             return Some(race);
         }
         self.traits_def(r).and_then(|d| d.race)
@@ -101,6 +102,15 @@ impl Game<'_> {
             self.appearance_changes.push(AppearanceChange { actor: r, reset: false });
         }
         Some(to)
+    }
+
+    /// `actor.MatchRace source` (`functions::fo3`): the actor takes `race`, drawn again
+    /// as AgeRace's change is.
+    pub(crate) fn change_race(&mut self, r: FormId, race: FormId) {
+        if self.actor_race(r) != Some(race) {
+            self.set_race(r, race);
+            self.appearance_changes.push(AppearanceChange { actor: r, reset: false });
+        }
     }
 
     fn set_race(&mut self, r: FormId, race: FormId) {

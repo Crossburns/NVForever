@@ -490,7 +490,7 @@ pub trait Mover {
 }
 
 /// [`Ai::pass_time`]'s mover: the walker's own steps, every door open.
-struct Passed;
+pub(crate) struct Passed;
 
 impl Mover for Passed {}
 
@@ -539,7 +539,7 @@ pub struct Agent {
     /// target went before that plan, when known.
     following: Option<(Place, f64, Option<f32>)>,
     /// The number of the script's weapon use it carries out ([`Ai::weapon_step`]).
-    weapon_order: Option<u64>,
+    pub(crate) weapon_order: Option<u64>,
     /// An Escort, Find, Use Item At, Ambush or Flee Not Combat package's progress
     /// (`crate::errand`).
     pub errand: Option<crate::errand::Errand>,
@@ -582,6 +582,12 @@ pub struct Ai {
     applied_switches: Option<BTreeMap<u32, bool>>,
     /// The world's lock serial last brought into the graph ([`Ai::apply_door_locks`]).
     applied_locks: Option<u64>,
+    /// The world's presence serial and the graph's obstacle stamp after the obstacles
+    /// were last brought into the graph ([`Ai::obstacles_in_line`]).
+    applied_obstacles: Option<(u64, u64)>,
+    /// The graph's locked doors as last brought in ([`Ai::apply_door_locks`]): the ones an
+    /// actor owns are open to its paths ([`Ai::path_params`]).
+    locked_doors: Vec<u32>,
     /// Actors near enough to force-greet the one their Dialogue package names but with a
     /// wall or a closed door between ([`Game::greet_sight`]), logged once until they talk
     /// or the line clears.
@@ -597,6 +603,9 @@ pub struct Ai {
     /// The columns of followers: for each one followed, its followers in their order
     /// in the line ([`Ai::ahead_in_column`]).
     columns: BTreeMap<FormId, Vec<FormId>>,
+    /// When (`Game::time`) a script last put each actor somewhere ([`Ai::relocate`]):
+    /// [`Ai::arrive`] leaves such an actor where it was put for a while.
+    pub(crate) script_moved: BTreeMap<FormId, f64>,
 }
 
 /// A walker turning at its actor's own rate ([`ActorSpeeds::turn_rate`]).
@@ -615,7 +624,7 @@ fn hdist(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 impl Ai {
     pub fn new(cfg: AiConfig) -> Ai {
-        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), restored: BTreeMap::new() }
+        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, applied_obstacles: None, locked_doors: Vec::new(), unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), script_moved: BTreeMap::new(), restored: BTreeMap::new() }
     }
 
     /// Bring the graph's navmeshes in line with the scripts' switches (EnableNavMesh,
@@ -674,6 +683,8 @@ impl Ai {
             Some((id.0, lock.locked.then_some(fnv_nav::graph::DoorLock { level: lock.level, key: lock.key.map(|k| k.0) })))
         });
         let changes = nav.sync_door_locks(states.collect::<Vec<_>>());
+        self.locked_doors = nav.door_locks.keys().copied().collect();
+        self.locked_doors.sort_unstable();
         if changes.is_empty() {
             return None;
         }
@@ -707,12 +718,21 @@ impl Ai {
     /// triangle takes up its package afresh from where it stands, as for a navmesh
     /// switched off ([`Ai::apply_navmesh_switches`]). Returns the obstacles that changed
     /// and the actors sent to plan again, `None` when none changed.
+    ///
+    /// Nothing is polled while [`Ai::obstacles_in_line`] holds: then every obstacle's
+    /// state in the graph is the game's already, and the poll would change nothing.
     pub fn apply_obstacles(&mut self, game: &Game, nav: &mut NavGraph) -> Option<(Vec<u32>, Vec<FormId>)> {
         if nav.obstacles.is_empty() {
             return None;
         }
+        if self.obstacles_in_line(game, nav) {
+            // A missed writer of the presence serial would show here in debug builds.
+            debug_assert!(nav.obstacles.iter().all(|(&r, o)| o.enabled == game.present(FormId(r))), "obstacle cache out of line with the game");
+            return None;
+        }
         let states: Vec<(u32, bool)> = nav.obstacles.keys().map(|&r| (r, game.present(FormId(r)))).collect();
         let changed = nav.sync_obstacles(states);
+        self.applied_obstacles = Some((game.world.presence_serial(), nav.obstacles_stamp()));
         if changed.is_empty() {
             return None;
         }
@@ -730,6 +750,17 @@ impl Ai {
             }
         }
         Some((changed, blocked))
+    }
+
+    /// Whether the graph's obstacles were brought in line with this game's world and
+    /// nothing that could change either happened since: the world's presence serial
+    /// (`fnv_sim::World::presence_serial`: every write of a reference's `enabled` or
+    /// `deleted`, every state made, created or reset, a new world) and the graph's
+    /// obstacle stamp (`fnv_nav::NavGraph::obstacles_stamp`: obstacles learnt again or
+    /// switched) are the ones seen after the last poll. [`Game::present`] reads nothing
+    /// else, so a poll now would find every obstacle as the graph has it.
+    pub fn obstacles_in_line(&self, game: &Game, nav: &NavGraph) -> bool {
+        self.applied_obstacles == Some((game.world.presence_serial(), nav.obstacles_stamp()))
     }
 
     /// Give `actor` speeds of its own; its walker turns at its own rate from now on.
@@ -803,6 +834,7 @@ impl Ai {
     pub fn relocate(&mut self, game: &mut Game, actor: FormId) {
         let Some(place) = goal::place_of_ref(game, actor) else { return };
         let heading = game.world.peek(actor).map_or(0.0, |s| s.rot[2]);
+        self.script_moved.insert(actor, game.time);
         self.set_using(game, actor, None);
         let Some(a) = self.agents.get_mut(&actor) else { return };
         let w = &mut a.walker;
@@ -1747,6 +1779,13 @@ impl Ai {
         if let Ok(s) = game.world.get(actor) {
             params.keys.extend(s.inventory.iter().flat_map(|inv| inv.iter()).map(|(item, _)| item.0));
         }
+        // Locked doors whose own owner it is (its base, or a faction it is in at the rank
+        // asked for; not by the cell's ownership) are open to it as if it carried the key
+        // [hypothesis: Fallout 3's baby stage has Dad
+        // walk out of the playroom through CG01PlayroomDoor, locked Requires Key with no
+        // key and owned by Dad's base (TTW's Fallout3.esm REFR 0602EA4A); without this his
+        // package was out of reach and the scene stopped, owner's TTW run 2026-11-02].
+        params.owned_doors.extend(self.locked_doors.iter().copied().filter(|&d| game.ownership(FormId(d)).is_some_and(|o| !o.from_cell && game.counts_as_owner(actor, &o))));
         // Doors the game has open (opened, or open by default and since touched).
         params.open_doors.extend(game.world.changed().filter(|(_, s)| s.open).map(|(id, _)| id.0));
         // A creature flagged "Can't Open Doors" [documented: GECK wiki
@@ -1786,7 +1825,7 @@ impl Ai {
     }
 
     /// A sandboxing actor whose behaviour is over chooses the next one and sets off.
-    fn sandbox_step(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
+    pub(crate) fn sandbox_step(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
         let a = self.agents.get_mut(&actor).expect("listed");
         let Some(sb) = a.sandbox.as_mut() else { return };
         if sb.pending.is_some() || !sb.due(game) {
@@ -2174,7 +2213,7 @@ impl Ai {
         }
     }
 
-    fn arrived(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
+    pub(crate) fn arrived(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
         let a = self.agents.get_mut(&actor).expect("listed");
         a.walker.follower = None;
         // The end of the way to a conversation partner: `crate::social` starts the
@@ -2269,7 +2308,7 @@ impl Ai {
     /// where the chain loops, round again; a repeatable patrol whose chain ends starts
     /// over at its first point [hypothesis: the documentation says "loop or go back and
     /// forth"]; else the patrol is done.
-    fn patrol_on(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
+    pub(crate) fn patrol_on(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
         let a = &self.agents[&actor];
         let (Some(package), Some(Goal::Route(route))) = (a.package, a.goal.clone()) else { return };
         let at = a.route_at;

@@ -1372,7 +1372,7 @@ impl MenuModel {
                 "Click a row to put it up or take it back   [ ] categories   Wheel scroll   X/Esc/Tab exit",
             ],
             Mode::Inventory => [
-                "Up/Down select   Enter/Space equip/unequip (aid: use)   X drop one   Shift+X drop stack",
+                "Up/Down select   Enter/Space equip/unequip (aid: use)   Right click drop one   Shift+right click drop stack",
                 "Click a row to select it, again to equip   Wheel scroll   Tab/Esc/E close   * equipped   Q quest item",
             ],
         }

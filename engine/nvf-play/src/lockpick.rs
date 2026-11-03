@@ -40,6 +40,12 @@
 //! message names the owner and a line is logged ("crime hook"); `crate::crime` judges it
 //! (`fnv_game::Game::player_opened_lock`).
 //!
+//! The console's `ShowLockPickMenu` (`slpm`, docs/design/console.md) asks for a practice
+//! lock of a difficulty ([`PracticeLock`]): once the console has closed the menu opens on
+//! it with the player's skill and pins, whatever the skill; pins wear and break as on any
+//! lock, but opening, forcing or breaking it changes no reference, gives no XP and is no
+//! crime [hypothesis: a designer's test of the minigame].
+//!
 //! Test aid `NVF_PLAY_TEST_LOCKPICK=<seconds>:<step>[,…]`: `open:<reference hex>` as if
 //! the player had activated that locked reference, `skill:<n>` makes the player's Lockpick
 //! that for locks, `pin:<degrees>` puts the pin there, `spot` in the middle of the sweet
@@ -89,6 +95,11 @@ pub const MOVE_SOUND_DEGREES: f32 = 8.0;
 pub struct OpenLockpick {
     pub reference: u32,
 }
+
+/// A practice lock asked for by the console (`ShowLockPickMenu`), opened once the player
+/// is back in the world.
+#[derive(Resource, Default, Debug)]
+pub struct PracticeLock(pub Option<rules::Level>);
 
 /// A lock was picked or forced open, or a terminal hacked (`crate::terminal`): the crime
 /// hook (`crate::crime` reads it). `owner`: the door's or container's owner, or its
@@ -193,7 +204,10 @@ impl Words {
 }
 
 pub struct Session {
+    /// The locked reference; none (0) for a practice lock.
     pub reference: FormId,
+    /// A practice lock (`ShowLockPickMenu`): nothing in the world is opened or broken.
+    pub practice: bool,
     pub name: String,
     pub game: Picking,
     /// The status line (a pin broke, the lock opened …) [documented: the menu file's
@@ -342,6 +356,7 @@ impl Plugin for LockpickPlugin {
             info!("debug switch NVF_PLAY_DEBUG_LOCKPICK: the lockpicking menu shows its debug meter");
         }
         app.init_resource::<LockpickScreen>()
+            .init_resource::<PracticeLock>()
             .init_resource::<LockpickStats>()
             .init_resource::<PointerOverLock>()
             .insert_resource(LockpickDebug(debug))
@@ -410,7 +425,7 @@ pub fn refusal_line(r: Refusal) -> String {
 
 #[allow(clippy::too_many_arguments)]
 fn open(
-    mut requests: MessageReader<OpenLockpick>,
+    (mut requests, mut practice): (MessageReader<OpenLockpick>, ResMut<PracticeLock>),
     state: Res<State<PlayState>>,
     mut next: ResMut<NextState<PlayState>>,
     mut screen: ResMut<LockpickScreen>,
@@ -421,9 +436,17 @@ fn open(
     time: AidTime,
     (mut stats, mut corner, mut sounds, bindings): (ResMut<LockpickStats>, Option<ResMut<crate::corner_messages::CornerMessages>>, MessageWriter<UiSound>, Res<Bindings>),
 ) {
-    let Some(asked) = requests.read().last().copied() else { return };
+    let in_world = *state.get() == PlayState::Playing && screen.0.is_none() && !paused.0;
+    // A practice lock waits for the console to have closed.
+    let (asked, practice) = match requests.read().last().copied() {
+        Some(o) => (o, None),
+        None => match practice.0.take_if(|_| in_world) {
+            Some(level) => (OpenLockpick { reference: 0 }, Some(level)),
+            None => return,
+        },
+    };
     stats.asked += 1;
-    if *state.get() != PlayState::Playing || screen.0.is_some() || paused.0 {
+    if !in_world {
         info!("lockpick: request for {:08X} ignored, the player is not in the world", asked.reference);
         return;
     }
@@ -432,11 +455,21 @@ fn open(
         return;
     };
     let reference = FormId(asked.reference);
-    let name = sim.base_of(asked.reference).and_then(|b| sim.name(b)).map_or_else(|| reference.to_string(), str::to_string);
+    let name = match practice {
+        Some(_) => "practice lock".to_string(),
+        None => sim.base_of(asked.reference).and_then(|b| sim.name(b)).map_or_else(|| reference.to_string(), str::to_string),
+    };
     let now = time.elapsed_secs();
     let (opening, skill) = with_world(rt, &mut sim, |rt| {
         let skill = aid.skill.unwrap_or_else(|| rules::skill(&mut rt.game));
-        (rules::opening(&mut rt.game, reference, skill), skill)
+        let opening = match practice {
+            Some(level) => match rules::pins(&mut rt.game) {
+                n if n <= 0 => Opening::Refused(Refusal::NoPins),
+                pins => Opening::Pick { level, skill, pins },
+            },
+            None => rules::opening(&mut rt.game, reference, skill),
+        };
+        (opening, skill)
     });
     match opening {
         Opening::NotLocked => info!("lockpick: {reference} {name} is not locked"),
@@ -468,6 +501,7 @@ fn open(
             }
             screen.0 = Some(Session {
                 reference,
+                practice: practice.is_some(),
                 name,
                 game,
                 status: None,
@@ -636,16 +670,20 @@ fn apply(
                     Some(true) => {
                         stats.forced += 1;
                         let level = g.level;
-                        let owner = with_world(rt, &mut sim, |rt| rules::opened(&mut rt.game, reference, level, false));
                         info!("lockpick: Force Lock ({chance:.0}%, roll {roll:.1}): {reference} forced open");
-                        crime_hook(&mut opened, reference, owner, true);
+                        if !s.practice {
+                            let owner = with_world(rt, &mut sim, |rt| rules::opened(&mut rt.game, reference, level, false));
+                            crime_hook(&mut opened, reference, owner, true);
+                        }
                         s.status = Some("Lock forced open".into());
                         s.ended = Some(now);
                         sounds.write(UiSound { menu: UiMenu::Lockpick, event: UiEvent::Unlocked });
                     }
                     Some(false) => {
                         stats.broken += 1;
-                        with_world(rt, &mut sim, |rt| rules::broke(&mut rt.game, reference));
+                        if !s.practice {
+                            with_world(rt, &mut sim, |rt| rules::broke(&mut rt.game, reference));
+                        }
                         info!("lockpick: Force Lock ({chance:.0}%, roll {roll:.1}): {reference} broken for good, the pin with it ({} left)", g.pins);
                         s.status = Some("The lock is broken".into());
                         s.ended = Some(now);
@@ -755,10 +793,14 @@ fn step(
                 stats.picked += 1;
                 let level = s.game.level;
                 let Some(rt) = script.as_mut().and_then(|s| s.rt.as_mut()) else { continue };
-                let xp_before = rt.game.player.xp;
-                let owner = with_world(rt, &mut sim, |rt| rules::opened(&mut rt.game, reference, level, true));
-                info!("lockpick: the lock turned all the way: {reference} picked open ({} lock, {:.0} XP)", level.name(), rt.game.player.xp - xp_before);
-                crime_hook(&mut opened, reference, owner, false);
+                if s.practice {
+                    info!("lockpick: the lock turned all the way: practice lock picked open ({} lock)", level.name());
+                } else {
+                    let xp_before = rt.game.player.xp;
+                    let owner = with_world(rt, &mut sim, |rt| rules::opened(&mut rt.game, reference, level, true));
+                    info!("lockpick: the lock turned all the way: {reference} picked open ({} lock, {:.0} XP)", level.name(), rt.game.player.xp - xp_before);
+                    crime_hook(&mut opened, reference, owner, false);
+                }
                 if strained {
                     ui(UiEvent::Strain { on: false });
                 }
@@ -783,7 +825,7 @@ fn close(
     let Some(s) = screen.0.take() else { return };
     // Picked or forced open: the door or container is used as if the player activated
     // it (playtest list 5 item 64; `crate::activate::ActivateNext`).
-    if s.game.phase == Phase::Open {
+    if s.game.phase == Phase::Open && !s.practice {
         if let Some(mut n) = next {
             n.0 = Some(s.reference.0);
         }

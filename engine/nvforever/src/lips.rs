@@ -29,6 +29,11 @@
 //!   Speakers without a rig — creatures, robots, talking activators, the unseen — are
 //!   skipped, with a log line.
 //!
+//! - **The console** (docs/design/console.md): `temo` (ToggleEmotions) leaves out every
+//!   expression and mood, a line's emotion and those asked through [`FaceMorphs`]
+//!   ([`LipState::emotions_off`]); `MFG` sets morphs on a face through [`FaceMorphs`]
+//!   ([`mfg`]), its head modifiers turning the head bone as a `.lip`'s head channels do.
+//!
 //! One log line per response: `lip: animating <path> ...` or `lip: skipped <path>: <why>`;
 //! a `lip summary:` and a `face idle summary:` at the end. `--no-lip` turns it all off,
 //! `--no-face-idle` the faces between lines only.
@@ -496,6 +501,8 @@ impl Speaking {
 #[derive(Resource)]
 pub struct LipState {
     pub enabled: bool,
+    /// The console's ToggleEmotions: no expression or mood is shown.
+    pub emotions_off: bool,
     /// The faces between lines (`--no-face-idle` turns them off).
     pub idle: bool,
     tris: HashMap<String, Option<Arc<Tri>>>,
@@ -538,6 +545,7 @@ impl LipState {
     fn new(enabled: bool, idle: bool, hold: Option<Weights>) -> LipState {
         LipState {
             enabled,
+            emotions_off: false,
             idle,
             tris: HashMap::new(),
             faces: HashMap::new(),
@@ -703,6 +711,8 @@ fn asked(m: &FaceMorphs, unknown: &mut HashSet<&'static str>) -> Vec<(usize, f32
     for (&label, &w) in &m.0 {
         match slot(label) {
             Some(s) if morph_slot(s) => out.push((s, w.clamp(0.0, 1.0))),
+            // A head turn (MFG's head modifiers): either way.
+            Some(s) if (HEAD_PITCH..=HEAD_YAW).contains(&s) => out.push((s, w.clamp(-1.0, 1.0))),
             _ => {
                 if unknown.insert(label) {
                     warn!("face: no morph slot for the label {label:?} (FaceMorphs); left out");
@@ -920,7 +930,7 @@ fn drive(
             w[..CHANNELS].copy_from_slice(&lip);
             face.turn = head_turn(&lip);
             w[HEAD_PITCH..=HEAD_YAW].fill(0.0);
-            if let Some((s, full)) = sp.emotion {
+            if let Some((s, full)) = sp.emotion.filter(|_| !st.emotions_off) {
                 taken = sp.emotion_share(now);
                 w[s] += full * taken;
             }
@@ -934,9 +944,15 @@ fn drive(
                 let names: Vec<String> = list.iter().map(|&(s, x)| format!("{} {x:.2}{}", slot_name(s), if carried(s) { "" } else { " (no morph)" })).collect();
                 info!("face: {reference:08X} shows asked morphs: {}", names.join(", "));
             }
+            let mut head: Weights = [0.0; SLOTS];
             for (s, x) in list {
-                w[s] += if expression_class(s) { x * (1.0 - taken) } else { x };
+                if (HEAD_PITCH..=HEAD_YAW).contains(&s) {
+                    head[s] = x;
+                } else if !(st.emotions_off && expression_class(s)) {
+                    w[s] += if expression_class(s) { x * (1.0 - taken) } else { x };
+                }
             }
+            face.turn *= head_turn(&head);
         }
         let idle_here = idle_on && !off && !far && face.held.is_none();
         if idle_here && speech < 1.0 {
@@ -1079,6 +1095,57 @@ fn parse_face_test(v: &str) -> Result<Vec<(&'static str, f32)>, String> {
     Ok(out)
 }
 
+/// The console's `MFG` (`fnv_game::Game::mfg`): each rigged actor's face asks for the
+/// morphs set on it, intensity 100 a weight of 1 [hypothesis: as a `.lip`'s channels],
+/// through [`FaceMorphs`]; a morph taken off (or the whole face, by `MFG Reset`) is set
+/// back to 0. Labels: the expressions by `MFG_EXPRESSIONS`, phonemes and modifiers by the
+/// `.lip` channel of the same number.
+fn mfg(mut commands: Commands, script: Option<Res<nvf_play::script::ScriptState>>, mut shown: Local<HashMap<Entity, Vec<(&'static str, f32)>>>, mut rigs: Query<(Entity, &ActorRig, Option<&mut FaceMorphs>), With<LipRig>>) {
+    use fnv_game::functions::console::MFG_EXPRESSIONS;
+    let Some(game) = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game) else { return };
+    if game.mfg.is_empty() && shown.is_empty() {
+        return;
+    }
+    for (e, rig, morphs) in &mut rigs {
+        let mut want: Vec<(&'static str, f32)> = Vec::new();
+        if let Some(f) = game.mfg.get(&FormId(rig.reference)) {
+            want.extend(f.expression.and_then(|(id, v)| Some((*MFG_EXPRESSIONS.get(usize::from(id))?, v))));
+            want.extend(f.phonemes.iter().filter_map(|(&id, &v)| Some((*CHANNEL_NAMES.get(usize::from(id))?, v))));
+            want.extend(f.modifiers.iter().filter_map(|(&id, &v)| Some((*CHANNEL_NAMES.get(PHONEMES + usize::from(id))?, v))));
+        }
+        let before = shown.remove(&e).unwrap_or_default();
+        if want.is_empty() && before.is_empty() {
+            continue;
+        }
+        let mut fresh = FaceMorphs::default();
+        let had = morphs.is_some();
+        let m = match morphs {
+            Some(m) => m.into_inner(),
+            None => &mut fresh,
+        };
+        for &(label, _) in &before {
+            if !want.iter().any(|&(w, _)| w == label) {
+                m.set(label, 0.0);
+            }
+        }
+        for &(label, v) in &want {
+            if m.get(label) != v / 100.0 {
+                m.set(label, v / 100.0);
+            }
+        }
+        if want != before {
+            let list: Vec<String> = want.iter().map(|(l, v)| format!("{l} {v:.0}")).collect();
+            info!("face: {:08X} MFG {}", rig.reference, if list.is_empty() { "reset".to_string() } else { list.join(", ") });
+        }
+        if !want.is_empty() {
+            shown.insert(e, want);
+        }
+        if !had && !fresh.is_empty() {
+            commands.entity(e).try_insert(fresh);
+        }
+    }
+}
+
 /// Rigged actors not yet given [`FaceMorphs`].
 type Unasked = (With<LipRig>, Without<FaceMorphs>);
 
@@ -1122,6 +1189,7 @@ impl Plugin for LipsPlugin {
                     .after(crate::dialogue_look::turn_speaker)
                     .after(crate::speech_look::face),
             )
+            .add_systems(Update, mfg.before(drive))
             .add_systems(PostUpdate, check_heads.before(bevy::transform::TransformSystems::Propagate))
             .add_systems(Last, report);
         match std::env::var("NVF_FACE_TEST_MORPHS").map(|v| parse_face_test(&v)) {

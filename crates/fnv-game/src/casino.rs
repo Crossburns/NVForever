@@ -82,8 +82,8 @@ impl CasinoDef {
 }
 
 fn zstring(b: &[u8]) -> String {
-    let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
-    String::from_utf8_lossy(&b[..end]).trim().to_string()
+    // In this run's code page (fnv_util::text, #1439).
+    fnv_util::text::decode_z(b).trim().to_string()
 }
 
 /// The winnings level (0 to 4) of `earnings` at a casino whose max winnings are `max`: 4
@@ -110,6 +110,12 @@ pub fn add_earnings(g: &mut Game, casino: FormId, net: i64, max: u32) -> i64 {
     let l = g.player.casino_levels.entry(casino).or_insert(0);
     *l = (*l).max(level);
     earnings
+}
+
+/// The casino's chip: SetCasinoChip's for the session (`crate::nvse_jg3`), else the
+/// record's (DATA currency).
+pub fn chip(g: &Game, casino: FormId) -> Option<FormId> {
+    g.other.casino_chips.get(&casino).copied().or_else(|| g.data.casinos.get(&casino)?.chip)
 }
 
 /// The max winnings a table plays to: the menu call's, else (0) the casino's own

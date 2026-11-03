@@ -1,9 +1,10 @@
 # Save files (`.fos`): layout as observed
 
 Clean-room notes on the original game's save file, written to plan NVForever's own save
-and load system ([design/save-load.md](../design/save-load.md)). NVForever does not read or
+and load system ([design/save-load.md](../design/save-load.md)). The game does not read or
 write `.fos` files; this note says what the original keeps, so our save keeps the same
-state. Tags: [documented] (public page named), [observed] (bytes in the saves below),
+state. One reader exists, for the extender lab only: `fnv_save::fos` and `fnvtool ext
+queries --save` start a probe run from the save the probes ran from (§6.4, issue #1023). Tags: [documented] (public page named), [observed] (bytes in the saves below),
 [hypothesis] (a reading that fits the bytes but is not proven). Offsets are byte offsets
 in the file, little-endian unless stated.
 
@@ -238,7 +239,15 @@ to 55 done and 60 not done]:
   completed]. B: VCG01 objective 10 = 1; C: objectives 10, 30, 40, 50 = 3.
 
 Variables are stored as f64 even though scripts declare short/int/float/ref [observed:
-`00 00 00 00 00 00 F0 3F` = 1.0]; ref variables were not identified.
+`00 00 00 00 00 00 F0 3F` = 1.0]. A **reference variable** has the top bit of its index
+set (`41 00 00 80` = variable 0x41) and holds a 3-byte ref instead of the f64 (`00 14 19`)
+[observed: nvfairport, VStreetCombat, VFactionSquad, NVDLC02RainQuest; every quest record
+of that save then walks to its end].
+
+The flags byte (bit 1), across nvfairport's 32 quests that have it: 0x21 VMQ01 and 0x31
+on the five story DLCs' MQ00 (running), 0x32 VCG01 (done), 0x20 VCG02, 0x00 VCG04 and
+VGenericTimer [observed] [hypothesis: bit 0 running, bit 1 completed; the other bits
+unknown].
 
 **REFR** [observed bytes; meanings hypothesis unless said]:
 
@@ -325,6 +334,47 @@ plugin's position in the save's list.
 Size guide for our own format: a 61-hour game keeps state for about 42,800 forms; most of
 it is per-reference (REFR, ACHR, ACRE: 33,000) and per-cell (4,200) [observed].
 
+### 6.4 The player record, as far as `fnv_save::fos` reads it [observed unless tagged]
+
+Read in the 19 `nvf*.fos` saves of the owner's `Saves` folder (2026-11-01; flags
+0xB0000832, 0x90000832, 0xB0400832 and 0xB0400C32). The data starts the same in all of them:
+
+| Part | Encoding | Notes |
+|---|---|---|
+| place | ref, six f32, `\|` | the worldspace outdoors (WastelandNV, TheStripWorldNew) or the interior cell (GSDocMitchellHouse), position, rotation in radians (nvfairport: z 1.309 = 75°) |
+| actor values | 232 × (f32, `\|`) | three arrays of 77 (the actor value count) and one more entry. First array: 2.0 at codes 38 (Melee Weapons) and 43 (Speech) in 17 saves, 2.0 at code 5 (Strength) in the two level-50 saves (nvfLanius, nvfSlides). Second array: code 24 holds 10 in nvfairport, 143 to 3,419 in mid-game saves and 186,200 in the level-50 ones, code 23 holds 50 to 1,000 [hypothesis: the first is the permanent modifiers, where skill points spent go; the second the base values that play changes, experience (24) and karma (23)]. nvfairport's Melee is 34 = 2 + 2 × 5 + ⌈10 × 0.5⌉ + 15 tag + 2, which matches its probe |
+| unknown | u8, `\|`, f32 (1.0), `\|`, vsval, `\|`, u8 (0x5E), `\|`, vsval n, `\|`, n × (ref, `\|`, u8, `\|`), u8 (0x18), `\|`, ref, `\|`, three f32, `\|`, f32, `\|` | the same shape in every save but nvfLanius, whose entries do not fit it |
+| bit 29 | `74 \|` ref `\|` | present when change flag 29 is set; in four saves (nvf1topsym, nvf38door, nvf47suite, nvfBoone) it is followed by more entries (`1D \| 04 \| …`) whose sizes are not known, and the reader stops there |
+| inventory | vsval count, `\|`, then per item: ref, `\|`, i32 count, `\|`, vsval lists, `\|`, per list: vsval extras, `\|`, per extra: type byte, `\|`, payload, `\|` | nvfairport: 27 items, the same 27 kinds its probes counted |
+
+Extra data sizes seen in the inventory: 0x16 none (on the worn suit, Pip-Boy and glove),
+0x21 a ref (3 bytes), 0x25 an f32 (on weapons and armour, 41.25 on a pistol)
+[hypothesis: worn, owner, condition]. 0x0D (nvf31mainframe, nvfSlides) has a payload not
+mapped; the reader gives no inventory for such a save rather than guess.
+
+The Pip-Boy and its glove are listed worn with count 0 [hypothesis: the count is the
+change against the base form's inventory, which holds them].
+
+The player's base form (NPC_ 0x7, bit 2) holds SPECIAL: `05 05 05 05 05 05 0A` in
+nvfairport, Luck 10 as its probes read. PlayerClass (CLAS, bit 1) holds the three tag
+skills as actor value codes and −1 (38, 43, 44: Melee Weapons, Speech, Survival).
+
+Global table 1 type 1, decoded further: next created ID `|`, world ref `|`, grid x (i32)
+`|`, grid y (i32) `|`, world or cell ref `|`, three f32 `|`, quest ref `|`, u32 `|`, f32 `|`,
+u32 `|`. nvfairport: grid (9, −29), which holds the player's position (37000, −117160)
+[observed].
+
+`fnvtool ext queries --save` gives the runner, in this order: the globals, each quest's
+running/completed bits, stages done and not done, objectives and variables (by the
+script's variable names), SPECIAL as the player's actor values, the tag skills, the skill
+entries of the first modifier array as skill points spent, the inventory as changes on
+top of the new game's, and the place. What it leaves out is counted in its output
+(`save.skipped`, by reason): a quest record the reader does not understand (bytes left
+over, a non-empty list after the variables), a form of a plugin not loaded, a form the save
+created (0xFF...), a reference past the form ID array. The inventory's fixed markers
+(0x00, 1.0, 0x5E, 0x18 and, with flag 29, 0x74) are checked: a record of another shape
+gives no inventory. The tag skills are read only from PlayerClass's record (0x00057E6A).
+
 ## 7. What moves between C and D [observed]
 
 C and D: same starting save, same door, about a second of game time apart (GameHour
@@ -352,11 +402,14 @@ records (script variables), the player and every actor.
 ## 8. Open questions
 
 - The meaning of global types 2, 4, 5, 6, 9, 10, 11 and of the 9-byte tail.
-- The ACHR/ACRE layouts (flags 1, 11, 18, 29, 31) and the player record: inventory,
-  actor values, effects, perks, AI state.
+- The ACHR/ACRE layouts (flags 1, 11, 18, 29, 31) and the rest of the player record:
+  effects, perks, AI state, the second and third actor value arrays, the bit-29 block's
+  other entries, the record of nvfLanius and nvfSlides (flag 10, a different shape after
+  the actor values) and the inventory's other extra data types (§6.4).
 - The full layout of created references (M has 574; their base form and extra data were
   not decoded), and of global types 9 and 10, which grow with play.
 - The QUST date stamp's day encoding.
 
 None of these is needed for NVForever's own format; they would matter only to import a
-`.fos`, which is not planned (design/save-load.md §6).
+`.fos`, which is not planned (design/save-load.md §6). The lab reader (§6.4) reads only
+what the probe sets need.

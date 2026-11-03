@@ -85,7 +85,7 @@ The same as Enter on that item in the Pip-Boy's ITEMS page (`pipboy/items.rs`) [
 
 | item | tap / release |
 |---|---|
-| weapon not equipped | equip it (`World::equip_at`) and draw it [design: RDR2's wheel readies the weapon; hypothesis: the original's hotkeys do too] |
+| weapon not equipped | equip it (`World::equip_at`) holstered: a weapon in hand is put away, and Ready Item draws the new one [design, the owner 2026-10-31, #1106; until then it was drawn, as RDR2's wheel readies the weapon; hypothesis: the original's hotkeys draw it] |
 | the equipped weapon | nothing [design: RDR2 keeps it; no accidental unequip] |
 | apparel | put on, or take off if worn (Pip-Boy behaviour) |
 | aid item | use one (`aid::use_item`) |

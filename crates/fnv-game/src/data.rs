@@ -573,6 +573,27 @@ pub struct LeveledActorDef {
 pub struct RegionDef {
     pub world: Option<FormId>,
     pub areas: Vec<Vec<[f32; 2]>>,
+    /// The weather block (RDAT type 3, then RDWT), when the region has one.
+    pub weathers: Option<RegionWeathers>,
+}
+
+/// A region's weather block [documented: xEdit wbRegionDataEntries type 3; schema
+/// `sky.json` REGN RDAT, RDWT]: its RDAT flags (bit 0 override,
+/// `fnv_world::sky::REGION_WEATHER_OVERRIDE`) and priority, and the weathers with their
+/// chances and globals.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RegionWeathers {
+    pub flags: u8,
+    pub priority: u8,
+    pub list: Vec<RegionWeather>,
+}
+
+/// One RDWT entry: a weather, its chance and the global that gates it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionWeather {
+    pub weather: FormId,
+    pub chance: i32,
+    pub global: Option<FormId>,
 }
 
 impl RegionDef {
@@ -1073,15 +1094,14 @@ pub struct IdleDef {
 pub const IDLE_SECTION_UPPER_BODY: u8 = 21;
 
 impl IdleDef {
-    /// From the raw `MODL` (a NUL-terminated name) and `DATA` (animation group section,
-    /// loop minimum, loop maximum, … [documented: xEdit IDLE DATA]) subrecords.
-    pub fn from_raw(modl: Option<&[u8]>, data: Option<&[u8]>) -> IdleDef {
-        let model = modl
-            .map(|b| String::from_utf8_lossy(b.split(|c| *c == 0).next().unwrap_or_default()).trim().to_string())
-            .filter(|s| !s.is_empty());
-        let byte = |i: usize| data.and_then(|d| d.get(i)).copied().unwrap_or(0);
-        let replay_delay = i16::from_le_bytes([byte(4), byte(5)]);
-        IdleDef { model, loop_min: byte(1), loop_max: byte(2), conditions: Some(Vec::new()), parent: None, previous: None, replay_delay, no_attacking: byte(6) & 1 != 0, section: byte(0) & 0x3F }
+    /// From the decoded `MODL` (the name) and `DATA` (schema `gameplay.json` IDLE:
+    /// animation group section, loop minimum and maximum, replay delay, flags
+    /// [documented: xEdit wbDefinitionsFNV.pas IDLE DATA]); a missing field reads 0.
+    pub fn from_fields(model: Option<&str>, data: Option<&Json>) -> IdleDef {
+        let model = model.map(|m| m.trim().to_string()).filter(|s| !s.is_empty());
+        let n = |k: &str| data.and_then(|d| d.get(k)).and_then(Json::as_i64).unwrap_or(0);
+        let no_attacking = flag_bits(data.and_then(|d| d.get("flags"))) & 1 != 0;
+        IdleDef { model, loop_min: n("loop_min") as u8, loop_max: n("loop_max") as u8, conditions: Some(Vec::new()), parent: None, previous: None, replay_delay: n("replay_delay") as i16, no_attacking, section: n("animation_group_section") as u8 & 0x3F }
     }
 
     /// Whether the record names an animation file.
@@ -1250,7 +1270,8 @@ pub struct ActorValueInfo {
 
 /// A NUL-terminated string as stored.
 fn zstring(b: &[u8]) -> String {
-    String::from_utf8_lossy(b.split(|c| *c == 0).next().unwrap_or_default()).trim().to_string()
+    // In this run's code page (fnv_util::text, #1439).
+    fnv_util::text::decode_z(b).trim().to_string()
 }
 
 /// The timing of an image space modifier (IMAD DNAM) [documented: xEdit
@@ -1264,7 +1285,7 @@ pub struct ImageModifierDef {
     pub duration: f32,
 }
 
-fn hexid(v: &Json) -> Option<u32> {
+pub(crate) fn hexid(v: &Json) -> Option<u32> {
     let s = v.as_str()?;
     u32::from_str_radix(s.strip_prefix("0x")?, 16).ok()
 }
@@ -1445,6 +1466,16 @@ struct Read {
 
 const UNIT_SIGS: &[&[u8; 4]] = &[b"SCPT", b"QUST", b"INFO", b"PACK", b"TERM", b"PERK"];
 
+/// Winning records read at a time while [`GameData::build`] takes them in [engineering
+/// choice: a few tens of MB of reads, enough work per slice for every core].
+const READ_SLICE: usize = 16_384;
+
+/// Whether [`read_one`] finds script units in the record: a [`UNIT_SIGS`] type, or a
+/// patrol point's result script (REFR with XPPA).
+fn carries_units(r: &Record) -> bool {
+    UNIT_SIGS.contains(&&r.header.sig) || (&r.header.sig == b"REFR" && r.subrecords().is_ok_and(|subs| subs.iter().any(|s| &s.sig == b"XPPA")))
+}
+
 /// The base form types whose OBND [`GameData::object_bounds`] keeps (GetObjectDimensions).
 const BOUNDS_SIGS: [[u8; 4]; 20] = [
     *b"NPC_", *b"CREA", *b"CONT", *b"ACTI", *b"STAT", *b"MSTT", *b"FURN", *b"DOOR", *b"LIGH", *b"TERM", *b"MISC", *b"WEAP", *b"ARMO", *b"ALCH", *b"AMMO",
@@ -1452,7 +1483,7 @@ const BOUNDS_SIGS: [[u8; 4]; 20] = [
 ];
 
 /// The record types whose fields [`GameData::record_fields`] keeps.
-pub const FIELD_SIGS: [[u8; 4]; 45] = [
+pub const FIELD_SIGS: [[u8; 4]; 47] = [
     *b"PROJ", *b"EXPL", *b"AMMO", *b"WEAP", *b"ARMO", *b"LSCR", *b"NOTE", *b"PERK", *b"MESG", *b"TERM", *b"IMOD", *b"CHAL", *b"BOOK", *b"BPTD", *b"MISC", *b"ALCH", *b"KEYM",
     *b"NPC_", *b"CREA", *b"FACT", *b"RACE", *b"HAIR", *b"EYES", *b"SOUN", *b"WTHR", *b"IMGS", *b"IMAD", *b"AMEF", *b"CLMT", *b"CELL", *b"WRLD", *b"IPDS", *b"IPCT", *b"IDLE", *b"ACTI",
     // JIP batch 4 (`crate::nvse_jip4`).
@@ -1461,6 +1492,8 @@ pub const FIELD_SIGS: [[u8; 4]; 45] = [
     *b"MUSC", *b"CONT", *b"LGTM",
     // JIP batch 5 (`crate::nvse_jip5`).
     *b"LTEX",
+    // JohnnyGuitar batch 3 (`crate::nvse_jg3`).
+    *b"EFSH", *b"MSET",
 ];
 
 /// The winning records of the [`FIELD_SIGS`] types, each decoded by
@@ -1499,7 +1532,10 @@ impl RecordFields {
 
 /// The subrecords kept of an actor record, which are many: what xNVSE's actor-base
 /// getters read.
-const ACTOR_SUBS: [[u8; 4]; 16] = [*b"ACBS", *b"HNAM", *b"LNAM", *b"ENAM", *b"HCLR", *b"NAM6", *b"NAM7", *b"RNAM", *b"PNAM", *b"KFFZ", *b"VTCK", *b"DATA", *b"MODL", *b"TNAM", *b"BNAM", *b"WNAM"];
+///
+/// CSCR (a creature's sounds template) and NIFZ (its model list): JIP batch 6
+/// (`crate::nvse_jip6`). NAM4 (the impact material): JIP batch 7 (`crate::nvse_jip7`).
+const ACTOR_SUBS: [[u8; 4]; 19] = [*b"ACBS", *b"HNAM", *b"LNAM", *b"ENAM", *b"HCLR", *b"NAM6", *b"NAM7", *b"RNAM", *b"PNAM", *b"KFFZ", *b"VTCK", *b"DATA", *b"MODL", *b"TNAM", *b"BNAM", *b"WNAM", *b"CSCR", *b"NIFZ", *b"NAM4"];
 
 /// A record's subrecords decoded by the schema, with each enum as its number (the
 /// decoder names them) so a script getter can return it.
@@ -1619,13 +1655,21 @@ impl GameData {
                 Some((g, d.plugin as usize, lo.records[d.plugin as usize][d.ordinal as usize]))
             })
             .collect();
-        let reads: Vec<(FormId, [u8; 4], Read)> = winners
+        // The records with script units are read first (their units are decoded before the
+        // rest is taken in); every other record is read a slice at a time as the loop below
+        // takes it in. A `Read` is about 3.8 KB and the base game with its add-ons has about
+        // 900 000 winning records: read all at once, they held some 3.3 GB until the build
+        // ended, at every start and in both runs of a load while playing (#1357).
+        let mut winners = winners;
+        winners.sort_by_key(|w| w.0);
+        let mut unit_reads: Vec<(u32, Read)> = winners
             .par_iter()
-            .map(|&(g, pi, r)| (FormId(g), r.header.sig, read_one(lo, schema, &param_types, g, pi, r)))
+            .filter(|w| carries_units(w.2))
+            .map(|&(g, pi, r)| (g, read_one(lo, schema, &param_types, g, pi, r)))
             .collect();
         let mut d = GameData {
             table,
-            param_types,
+            param_types: param_types.clone(),
             load_order: lo.plugins.iter().map(|p| p.name.clone()).collect(),
             plugin_versions: lo.plugins.iter().map(|p| p.header.version).collect(),
             units: Vec::new(),
@@ -1737,11 +1781,9 @@ impl GameData {
         };
         // Decode every unit once.
         let mut all_units: Vec<(FormId, ScriptUnit)> = Vec::new();
-        let mut reads = reads;
-        reads.sort_by_key(|r| r.0);
-        for (id, _, r) in &mut reads {
+        for (id, r) in &mut unit_reads {
             for u in r.units.drain(..) {
-                all_units.push((*id, u));
+                all_units.push((FormId(*id), u));
             }
         }
         let mut compiled: Vec<(FormId, Compiled)> = all_units
@@ -1760,6 +1802,14 @@ impl GameData {
             d.units.push(c);
         }
         let label = |o: UnitOwner| o.label();
+        // In form order, as one list read all at once was.
+        let mut unit_reads: HashMap<u32, Read> = unit_reads.into_iter().collect();
+        let reads = winners.chunks(READ_SLICE).flat_map(|slice| {
+            let read: Vec<Option<Read>> = slice.par_iter().map(|&(g, pi, r)| (!unit_reads.contains_key(&g)).then(|| read_one(lo, schema, &param_types, g, pi, r))).collect();
+            let taken: Vec<(FormId, [u8; 4], Read)> =
+                slice.iter().zip(read).map(|(&(g, _, r), read)| (FormId(g), r.header.sig, read.or_else(|| unit_reads.remove(&g)).unwrap_or_default())).collect();
+            taken
+        });
         for (id, sig, r) in reads {
             d.sigs.insert(id, sig);
             if let Some(e) = r.edid {
@@ -2366,12 +2416,6 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
         let flags = subs.iter().find(|s| &s.sig == b"MNAM").and_then(|s| <[u8; 4]>::try_from(s.data.as_slice()).ok()).map(u32::from_le_bytes);
         out.furniture = Some(flags.unwrap_or(0));
     }
-    if &sig == b"IDLE" {
-        out.idle = Some(IdleDef::from_raw(
-            subs.iter().find(|s| &s.sig == b"MODL").map(|s| s.data.as_slice()),
-            subs.iter().find(|s| &s.sig == b"DATA").map(|s| s.data.as_slice()),
-        ));
-    }
     // A stage of a need: the value from which it holds, and its actor effect (DATA,
     // schema type NeedStage [documented: xEdit RADS/DEHY/HUNG/SLPD]; observed: 200, 400 …
     // 1000 and a SPEL named for that number, Water1: 200, Dehydration200;
@@ -2444,7 +2488,8 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
                 }
             }
         };
-        out.camera_path = Some(crate::camera_paths::CameraPathDef::from_raw(&subs, &map, &mut cond));
+        let zoom = |v: &Json| field_code(schema, b"CPTH", b"DATA", None, v);
+        out.camera_path = Some(crate::camera_paths::CameraPathDef::from_fields(&subs, &mut val, &zoom, &map, &mut cond));
     }
     if &sig == b"CAMS" {
         out.camera_shot = crate::camera_paths::CameraShotDef::from_raw(&subs, &map);
@@ -2452,10 +2497,10 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
     if &sig == b"RCCT" {
         out.recipe_category = Some(crate::crafting::RecipeCategoryDef::from_raw(&subs));
     }
-    // CLAS DATA: four tag skills (i32), the class flags (u32), then the services (u32)
-    // [documented: xEdit wbDefinitionsFNV.pas CLAS; schema `gameplay.json`].
+    // CLAS DATA "services" (schema `gameplay.json` ServiceFlags) [documented: xEdit
+    // wbDefinitionsFNV.pas CLAS].
     if &sig == b"CLAS" {
-        out.class_services = subs.iter().find(|s| &s.sig == b"DATA").and_then(|s| <[u8; 4]>::try_from(s.data.get(20..24)?).ok()).map(u32::from_le_bytes);
+        out.class_services = subs.iter().find(|s| &s.sig == b"DATA").and_then(&mut val).and_then(|v| v.get("services").map(|f| flag_bits(Some(f))));
     }
     if &sig == b"CSNO" {
         out.casino = Some(crate::casino::CasinoDef::from_raw(&subs, &map));
@@ -2475,7 +2520,7 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
     for s in &subs {
         match &s.sig {
             b"EDID" if out.edid.is_none() => out.edid = val(s).and_then(|v| v.as_str().map(str::to_string)),
-            b"FULL" if out.full.is_none() => out.full = Some(fnv_util::cp1252::decode_z(&s.data)).filter(|n| !n.is_empty()),
+            b"FULL" if out.full.is_none() => out.full = Some(fnv_util::text::decode_z(&s.data)).filter(|n| !n.is_empty()),
             b"SCRI" if out.script.is_none() => out.script = val(s).as_ref().and_then(hexid).and_then(map).map(FormId),
             _ => {}
         }
@@ -2828,7 +2873,7 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
                 .collect();
             n.snam = form_of(b"SNAM");
             match n.kind {
-                1 => n.text = subs.iter().find(|s| &s.sig == b"TNAM").map(|s| fnv_util::cp1252::decode_z(&s.data)),
+                1 => n.text = subs.iter().find(|s| &s.sig == b"TNAM").map(|s| fnv_util::text::decode_z(&s.data)),
                 3 => n.topic = form_of(b"TNAM"),
                 _ => {}
             }
@@ -3096,8 +3141,27 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
         }
         b"REGN" => {
             let mut rg = RegionDef::default();
+            let num = |v: Option<&Json>| v.and_then(|x| x.as_f64().or_else(|| x.get("value")?.as_f64())).unwrap_or(0.0);
+            let mut header: Option<&Json> = None;
             for (s, v) in &decoded {
                 match *s {
+                    b"RDAT" => header = v.as_ref(),
+                    // A weather list follows a header of type 3 [documented: xEdit
+                    // wbRegionDataEntries].
+                    b"RDWT" if num(header.and_then(|h| h.get("type"))) == 3.0 => {
+                        let h = header;
+                        let list = v
+                            .as_ref()
+                            .and_then(Json::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|w| {
+                                let form = |k: &str| w.get(k).and_then(hexid).filter(|&x| x != 0).and_then(map).map(FormId);
+                                Some(RegionWeather { weather: form("weather")?, chance: num(w.get("chance")) as i32, global: form("global") })
+                            })
+                            .collect();
+                        rg.weathers = Some(RegionWeathers { flags: num(h.and_then(|h| h.get("flags"))) as u8, priority: num(h.and_then(|h| h.get("priority"))) as u8, list });
+                    }
                     b"WNAM" => rg.world = fid(v),
                     b"RPLI" => rg.areas.push(Vec::new()),
                     b"RPLD" => {
@@ -3315,14 +3379,14 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
             // is only marked as one that cannot be judged.
             let mut unread = Issues::default();
             let conds: Vec<Option<Condition>> = decoded.iter().filter(|(s, _)| *s == b"CTDA").map(|(_, v)| cond(v, &mut unread)).collect();
-            if let Some(i) = out.idle.as_mut() {
-                i.conditions = conds.into_iter().collect();
-                // ANAM: parent and previous IDLE, file-local FormIDs (null: none).
-                let anam = subs.iter().find(|s| &s.sig == b"ANAM").map(|s| s.data.as_slice()).unwrap_or_default();
-                let link = |at: usize| anam.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).filter(|l| *l != 0).and_then(map).map(FormId);
-                i.parent = link(0);
-                i.previous = link(4);
-            }
+            let field = |sub: &[u8; 4]| decoded.iter().find(|(s, _)| *s == sub).and_then(|(_, v)| v.as_ref());
+            let mut i = IdleDef::from_fields(field(b"MODL").and_then(Json::as_str), field(b"DATA"));
+            i.conditions = conds.into_iter().collect();
+            // ANAM: parent and previous IDLE, file-local FormIDs (null: none).
+            let link = |k: &str| field(b"ANAM").and_then(|a| a.get(k)).and_then(hexid).filter(|l| *l != 0).and_then(map).map(FormId);
+            i.parent = link("parent");
+            i.previous = link("previous");
+            out.idle = Some(i);
         }
         b"IDLM" => {
             let code = |sub: &[u8; 4], field: &str, v: &Json| field_code(schema, &sig, sub, Some(field), v);
@@ -3368,7 +3432,7 @@ fn skills(v: &Json) -> Option<[u8; 14]> {
     Some(out)
 }
 
-fn field_code(schema: &Schema, sig: &[u8; 4], sub: &[u8; 4], field: Option<&str>, v: &Json) -> Option<i64> {
+pub(crate) fn field_code(schema: &Schema, sig: &[u8; 4], sub: &[u8; 4], field: Option<&str>, v: &Json) -> Option<i64> {
     if let Some(n) = v.as_i64() {
         return Some(n);
     }
@@ -3384,3 +3448,4 @@ fn field_code(schema: &Schema, sig: &[u8; 4], sub: &[u8; 4], field: Option<&str>
         _ => None,
     }
 }
+

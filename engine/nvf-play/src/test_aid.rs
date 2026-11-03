@@ -92,7 +92,7 @@
 //! With any `NVF_PLAY_TEST_*` variable set the run is unattended ([`Unattended`]): the
 //! cursor is not grabbed, so the desktop's mouse neither leaves the user nor turns the
 //! view (as with `--auto-walk`). Not the aids that only measure ([`MEASURING_AIDS`]:
-//! `NVF_PLAY_TEST_SAMPLE`, `NVF_PLAY_TEST_PROFILE`): with them alone the run is played by
+//! `NVF_PLAY_TEST_SAMPLE`, `NVF_PLAY_TEST_PROFILE`, `NVF_PLAY_TEST_PROFILE_COUNTS`): with them alone the run is played by
 //! hand as usual and only logs its frame times, and a load's new run keeps them
 //! (nvforever handoff.rs) [owner 2026-10-27: hitch logging for a session played from MO2].
 //!
@@ -356,7 +356,7 @@ fn take_due<T: Clone>(due: &mut Vec<(f32, T)>, now: f32) -> Vec<T> {
 
 /// The test aids that only log what the run costs (nvforever stress_sample.rs and
 /// profile.rs): they leave the run attended, and a load's new run keeps them.
-pub const MEASURING_AIDS: [&str; 2] = ["NVF_PLAY_TEST_SAMPLE", "NVF_PLAY_TEST_PROFILE"];
+pub const MEASURING_AIDS: [&str; 3] = ["NVF_PLAY_TEST_SAMPLE", "NVF_PLAY_TEST_PROFILE", "NVF_PLAY_TEST_PROFILE_COUNTS"];
 
 /// Whether this environment variable is a test aid that drives the run (any
 /// `NVF_PLAY_TEST_*` but the [`MEASURING_AIDS`]).

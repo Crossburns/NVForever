@@ -95,10 +95,7 @@ pub fn get_has_note(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String>
 }
 
 pub fn add_note(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
-    let n = a.form(0)?;
-    if g.player.notes.insert(n) {
-        g.jip_event("noteadded", None, vec![fnv_script::vm::XVal::Ref(n.0)]);
-    }
+    g.file_note(a.form(0)?);
     none()
 }
 
@@ -435,7 +432,8 @@ pub fn set_pc_can_use_power_armor(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<
 /// message box shown under a menu (`Game::show_box`). Returns the message, `None` when
 /// the load order has none.
 pub fn refuse_power_armor(g: &mut Game) -> Option<FormId> {
-    let m = g.data.by_edid("PowerArmorMessage")?;
+    // SetMessageDisabled keeps it from showing (`crate::nvse_jip6`).
+    let m = g.data.by_edid("PowerArmorMessage").filter(|&m| !g.message_disabled(m))?;
     let text = g.data.messages.get(&m).and_then(|d| d.text.clone());
     g.emit(crate::trace::EventKind::MessageShown { message: m, text, buttons: Vec::new(), hidden: Vec::new() });
     g.show_box(m);

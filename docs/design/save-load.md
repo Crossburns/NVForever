@@ -96,7 +96,8 @@ original lacks it); **Save?**: *yes* (must be saved), *have* (already in the sna
 | Long-lived provocations | `provocations.grudges/forgiven` | not found | **yes: add** (cheap) |
 | Package scan time | `package_scan_due` | none | rebuild (reset on load) |
 | Trespass warnings | `crimes.warnings/trespassing` | not found | drop |
-| Request queues, animations, detection, awareness, Wait/Sleep in progress | marked "Not saved" in `Game` | none | drop |
+| Request queues, animations, detection values, detection events, Wait/Sleep in progress | marked "Not saved" in `Game` | none | drop |
+| Detection states: each actor's state (Normal/Alert/Combat/Lost), alert and target lists, the target fought; StartCombat's forced pairs | `awareness` (`awareness.actors`, `awareness.forced`) | not found | **saved since 2026-11-01** (#971): a fight goes on after a load, and IsInCombat on the player reads the same before the first detection round; the next round measures again as before. Combat groups' tactics, barks and the engine's engage/aim/crouch hints are rebuilt |
 | Config | `cfg: GameConfig` | none | rebuild from settings (seed: see §5) |
 
 ### 3.3 AI (fnv-ai, used by `engine/nvforever`)
@@ -248,7 +249,12 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
    `NVF_PLAY_TEST_SAVE_SAME_ROLLS=1` keeps the saved positions.
 4. **AI continuity**: packages start again from where each actor stands. Since
    2026-10-25 a patrol goes on to the point the save had it walk to (one that does not
-   repeat started again at its first point and walked back) and a sandbox keeps the
+   repeat started again at its first point and walked back), as the original does
+   [observed 2026-11-01, observer check 24, o23_town victor_save and o22_reload: Victor
+   (enabled by script) on VGSVictorCircuitPatrol, 11 points, not repeating, saved just
+   after point 5 on his way to point 6; after loading that save he went on to points
+   6-10 and his home marker and stopped there, the same path as the run that was not
+   reloaded, never back to point 1] and a sandbox keeps the
    day's times and its random numbers (§3.3); a wait at a patrol point, walks under way,
    furniture and errands start again.
 5. **Physics**: objects load at rest where they were.
@@ -291,20 +297,36 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   so a save always lands in a world built fresh from the plugins and nothing of the run
   before carries over.
 - **The change of run is hidden** (`engine/nvforever/src/handoff.rs`) [design, owner
-  2026-10-16: the window closing and another opening was jarring]: the old run puts a
-  loading screen up (its picture one for the save's place) and holds the game, then
-  starts the new run with `--handoff <file>` and its window's place and size
-  (`--window-at`, `--size`, `--window-maximized`), and updates only 20 times a second
-  while it waits. The new run opens its window hidden, streams with long frames as behind
-  a loading screen and holds its sounds; once the cells around the player are drawn and
-  in physics and the save is put back (and 0.25 s more), it shows its window over the old
-  one, takes the focus and writes the file, and the old run ends. The pause menu's return
-  to the main menu (`--menu`) goes the same way. If the new run ends first, the screen
-  comes down and the old game goes on; closing the old window while it waits ends the new
-  run; a new run still hidden after 120 s shows itself. The new run gets none of the old
-  run's test aids (`NVF_PLAY_TEST_*`) except `NVF_PLAY_TEST_HANDOFF_EXIT=1` (end once it
-  has taken over; smoke `load-handoff`). For the seconds of the load both runs hold the
-  game in memory.
+  2026-10-16: the window closing and another opening was jarring; owner 2026-11-01,
+  #1357: the two runs no longer overlap for the whole load]: the old run puts a loading
+  screen up (its picture one for the save's place) and holds the game, then starts the
+  new run with `--handoff <file>` and its window's place and size (`--window-at`,
+  `--size`, `--window-maximized`), and updates only 20 times a second while it waits. The
+  new run opens its window hidden; as soon as its own loading screen (or the main menu)
+  is up and drawn for 0.25 s, it shows its window over the old one, takes the focus and
+  writes the file, and loads behind its screen alone. The old run sees the file, writes
+  its exit logs and ends the process at once (not taking its world apart, which held its
+  memory about 2 s more). The pause menu's return to the main menu (`--menu`) goes the
+  same way. If the new run ends before it is shown (it stops at the start), the screen
+  comes down and the old game goes on; a new run that fails later is on its own (its
+  crash report). Closing the old window while it waits ends the new run; a new run
+  still hidden after 120 s shows itself. The new run gets none of the old run's test aids
+  (`NVF_PLAY_TEST_*`) except `NVF_PLAY_TEST_HANDOFF_EXIT=1` (end once it has taken over
+  and its world or main menu is in; smoke `load-handoff`; the smoke runner waits for the
+  processes a launch starts).
+- **A save that cannot be loaded** [owner 2026-11-01] (made with plugins that cannot be
+  loaded now, damaged, of another format; nvforever `start_from_save`): the run opens the
+  main menu instead, and once its window is up a message box says the save could not be
+  loaded and why (none in unattended runs; the log line `load: <why>; opening the main
+  menu` carries it). The same for `--load` given by hand and for a load while playing
+  (smoke `load-handoff-refused`).
+- **Memory** (#1357, load-handoff scenario at Goodsprings, private bytes): one run's
+  start peak was 6.9 GB, 3.3 GB of it the script data build holding every record's read
+  at once (now read a slice at a time, `fnv_game::data`): 4.1 GB. Old and new run
+  together during a load: 10.5 GB before, 7.6 GB now, for the seconds until the new
+  window shows; the new run grows to its full size in that time. Holding the new run's
+  script build until the swap took the peak to 6.1 GB but the load from 6-12 s to 16 s:
+  not done.
 - **Console**: `save <name>`, `load [name]` (the quicksave without a name), `saves` (the
   list: name, level, place, game date, kind).
 - **Thumbnail** (`save.rs`): the snapshot is taken at the end of the frame as before; that

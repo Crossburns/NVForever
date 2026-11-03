@@ -75,7 +75,9 @@ fn fake_cell(job: &Job) -> Prepared {
         let obj = object(if dynamic { 15.0 } else { 50.0 }, if dynamic { Motion::Dynamic } else { Motion::Static });
         let prepared = PreparedRef::new(&params, &RefPose::from_placement(&pl), &[obj]);
         let dynamic_local = dynamic.then_some(Iso::IDENTITY);
-        refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local, door: None, drawn: None }) });
+        // As `prepare::reference` does: built from its destruction model when it has one.
+        let model = job.model_of(pl.form_id).map(str::to_string);
+        refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local, door: None, animated: None, drawn: None, model }) });
     }
     // A pond: a reference with only a water volume (placed water, physics.md §6.6).
     let pond = Placement {
@@ -93,7 +95,7 @@ fn fake_cell(job: &Job) -> Prepared {
         imposter: false,
     };
     let water = vec![CollisionObject { layer: fnv_phys::layers::WATER, ..object(100.0, Motion::Static) }];
-    refs.push(Entry { form_id: pond.form_id, placement: Some(pond), shapes: Some(RefShapes { tallies: vec!["water_volume"], water, prepared: None, dynamic_local: None, door: None, drawn: None }) });
+    refs.push(Entry { form_id: pond.form_id, placement: Some(pond), shapes: Some(RefShapes { tallies: vec!["water_volume"], water, prepared: None, dynamic_local: None, door: None, animated: None, drawn: None, model: None }) });
     let terrain = Some(PreparedTerrain::new(&params, (gx, gy), &heights));
     Prepared { cell: job.cell, heights: Some(heights), terrain, refs, times: LoadTimes::default() }
 }
@@ -110,6 +112,56 @@ fn centre(gx: i32, gy: i32) -> [f32; 3] {
 /// Bit-identical worlds: every body's state in handle order, and what is loaded.
 fn fingerprint(p: &PhysState) -> (u64, Vec<PhysCell>, fnv_phys::Stats) {
     (p.world.state_digest(), p.cells.keys().copied().collect(), p.world.stats())
+}
+
+/// FormID of made-up reference `i` of cell (`gx`, `gy`) ([`fake_cell`]).
+fn fake_ref(gx: i32, gy: i32, i: u32) -> u32 {
+    0x0100_0000 + (((gx + 100) as u32) << 12) + (((gy + 100) as u32) << 4) + i
+}
+
+#[test]
+fn a_destroyed_reference_collides_as_its_destruction_model_and_back() {
+    let (d, sim) = (play_data(), sim());
+    let ctx = LoadCtx { d: &d, sim: &sim, data: None };
+    let mut p = state(true);
+    p.load(&ctx, PhysCell::Exterior(0, 0));
+    let (car, other) = (fake_ref(0, 0, 1), fake_ref(0, 0, 2));
+    let hulk = "Vehicles\\CarHulk01.NIF".to_string();
+    assert_eq!(p.built_model(car), None);
+    // The stage that names a model: built again from it, the others left alone.
+    let built = p.refs_built;
+    p.set_destruction_models(&ctx, HashMap::from([(car, hulk.clone())]));
+    assert_eq!(p.built_model(car), Some(hulk.as_str()));
+    assert!(p.has_collision(car));
+    assert_eq!(p.built_model(other), None);
+    assert_eq!(p.refs_built, built + 1, "only the destroyed reference is built again");
+    // Nothing changed: nothing built.
+    p.set_destruction_models(&ctx, HashMap::from([(car, hulk.clone())]));
+    assert_eq!(p.refs_built, built + 1);
+    // ClearDestruction: the base model's collision again.
+    p.set_destruction_models(&ctx, HashMap::new());
+    assert_eq!(p.built_model(car), None);
+    assert!(p.has_collision(car));
+    assert_eq!(p.refs_built, built + 2);
+    // A reference whose cell is not loaded gets nothing now, and its model when the
+    // cell loads.
+    let far = fake_ref(5, 5, 1);
+    p.set_destruction_models(&ctx, HashMap::from([(far, hulk.clone())]));
+    assert_eq!(p.built_model(far), None);
+    assert!(!p.has_collision(far));
+    p.load(&ctx, PhysCell::Exterior(5, 5));
+    assert_eq!(p.built_model(far), Some(hulk.as_str()));
+    // Its cell unloaded: forgotten with it.
+    p.unload(PhysCell::Exterior(5, 5));
+    assert_eq!(p.built_model(far), None);
+}
+
+#[test]
+fn a_job_knows_its_references_destruction_models() {
+    let job = Job { cell: PhysCell::Exterior(0, 0), refs: vec![1, 5, 9], land: None, poses: Vec::new(), scales: Vec::new(), models: vec![(5, "a.nif".into()), (9, "b.nif".into())] };
+    assert_eq!(job.model_of(5), Some("a.nif"));
+    assert_eq!(job.model_of(9), Some("b.nif"));
+    assert_eq!(job.model_of(1), None);
 }
 
 #[test]
@@ -273,7 +325,7 @@ fn bridge_cell(job: &Job) -> Prepared {
         };
         let obj = CollisionObject { shape: Shape::Box { half_extents: [600.0, 600.0, 20.0] }.into(), ..object(0.0, Motion::Static) };
         let prepared = PreparedRef::new(&PhysParams::default(), &RefPose::from_placement(&pl), &[obj]);
-        p.refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local: None, door: None, drawn: None }) });
+        p.refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local: None, door: None, animated: None, drawn: None, model: None }) });
     }
     p
 }
@@ -384,7 +436,7 @@ fn placed_clutter_moved_by_physics_is_written_back_and_reloads_there() {
     assert!(!p.placed_dynamic.contains_key(&id));
     // (The made-up cells have no records, so the job names the crate itself.)
     let cell = PhysCell::Exterior(0, 0);
-    let job = with_poses(Job { cell, refs: vec![id], land: None, poses: Vec::new(), scales: Vec::new() }, &sim);
+    let job = with_poses(Job { cell, refs: vec![id], land: None, poses: Vec::new(), scales: Vec::new(), models: Vec::new() }, &sim);
     p.insert(&LoadCtx { d: &d, sim: &sim, data: None }, fake_cell(&job));
     let b = p.world.ref_bodies(id)[0];
     for i in 0..3 {
@@ -449,4 +501,108 @@ fn small_actors_get_characters_of_their_size() {
     let dog = super::npc_params(Some(80.0));
     assert!((dog.radius - 13.6).abs() < 1e-3 && dog.height == 80.0, "{dog:?}");
     assert_eq!(super::npc_params(Some(3.0)).height, super::NPC_MIN_HEIGHT);
+}
+
+/// The gate of [`gate_cell`]: placed at x 1000 in square (0, 0); its "Forward" (played
+/// once, 1 s) slides its keyframed panel 300 units along x.
+const GATE: u32 = 0x0200_0002;
+const GATE_X: f32 = 1000.0;
+
+fn gate_anim() -> fnv_collide::anim::ModelAnim {
+    use fnv_collide::nif::Similarity;
+    use fnv_nif::anim::{Channel, Key, KeyKind, Keys, TransformTrack};
+    let mut anim = fnv_collide::anim::ModelAnim::from_nodes([(0, Some("Root".to_string()), None, Similarity::IDENTITY), (1, Some("Panel".to_string()), Some(0), Similarity::IDENTITY)]);
+    let key = |time: f32, x: f32| Key { time, value: [x, 0.0, 0.0], forward: [0.0; 3], backward: [0.0; 3], tbc: [0.0; 3] };
+    let slide = TransformTrack {
+        translation: Channel::Keys(Keys { kind: KeyKind::Linear, keys: vec![key(0.0, 0.0), key(1.0, 300.0)] }),
+        rotation: Channel::Static(None),
+        euler: None,
+        scale: Channel::Static(None),
+    };
+    anim.add_sequence("Forward", 1.0, 2, vec![(1, slide)]);
+    anim
+}
+
+/// [`fake_cell`], with square (0, 0) also holding [`GATE`]: an activator (as
+/// `prepare::reference` finds it) whose one collision object, a keyframed 100-unit wall,
+/// hangs from the node its sequence moves.
+fn gate_cell(job: &Job) -> Prepared {
+    let mut p = fake_cell(job);
+    if job.cell == PhysCell::Exterior(0, 0) {
+        let pl = Placement {
+            form_id: GATE,
+            sig: *b"REFR",
+            flags: 0,
+            base: None,
+            position: [GATE_X, 3000.0, 100.0],
+            rotation: [0.0; 3],
+            scale: 1.0,
+            enable_parent: None,
+            open_by_default: false,
+            teleport: false,
+            emittance: None,
+            imposter: false,
+        };
+        let obj = CollisionObject { node: Some("Panel".into()), node_block: 1, shape: Shape::Box { half_extents: [50.0, 10.0, 100.0] }.into(), ..object(0.0, Motion::Keyframed) };
+        let prepared = PreparedRef::new(&PhysParams::default(), &RefPose::from_placement(&pl), &[obj]);
+        let animated = Some(prepare::AnimatedBodies { anim: Arc::new(gate_anim()), objects: vec![(0, 1, Iso::IDENTITY)] });
+        p.refs.push(Entry { form_id: pl.form_id, placement: Some(pl), shapes: Some(RefShapes { tallies: vec!["fake"], water: Vec::new(), prepared: Some(prepared), dynamic_local: None, door: None, animated, drawn: None, model: None }) });
+    }
+    p
+}
+
+/// Issue #1396: an animated object's collision follows the group its drawn model plays
+/// (the TTW Megaton gate stayed solid where it stood closed), stays at the end of a group
+/// played once, and is posed there from the last group asked when nothing draws it (after
+/// a load).
+#[test]
+fn an_animated_objects_collision_follows_its_group() {
+    let (d, sim) = (play_data(), sim());
+    let ctx = LoadCtx { d: &d, sim: &sim, data: None };
+    let mut p = PhysState { fake: Some(gate_cell), loader: loader::Loader::manual(), ..Default::default() };
+    p.load(&ctx, PhysCell::Exterior(0, 0));
+    assert!(p.animated.contains_key(&GATE));
+    let x = |p: &PhysState| p.world.ref_bodies(GATE)[0].translation[0];
+    // A ray along y, 20 units off the ground, through where the panel stands closed.
+    let blocks = |p: &mut PhysState, at: f32| p.world.queries().ray([at, 2900.0, 120.0], [0.0, 1.0, 0.0], 200.0, &Filter { no_terrain: true, ..Default::default() }).is_some_and(|h| matches!(h.owner, Owner::Ref { form_id: GATE, .. }));
+    assert!((x(&p) - GATE_X).abs() < 1e-3);
+    assert!(blocks(&mut p, GATE_X));
+    // Nothing plays: the bind pose stays.
+    p.pose_animated(None, |_| None);
+    assert!((x(&p) - GATE_X).abs() < 1e-3);
+    // Halfway through, as drawn.
+    let mut poses = ObjectPoses::default();
+    poses.playing.insert(GATE, ("Forward".into(), 0.5));
+    p.pose_animated(Some(&poses), |_| None);
+    assert!((x(&p) - (GATE_X + 150.0)).abs() < 1e-2, "{}", x(&p));
+    // At its end: out of the way, solid where it is drawn open.
+    poses.playing.insert(GATE, ("Forward".into(), 1.0));
+    p.pose_animated(Some(&poses), |_| None);
+    assert!((x(&p) - (GATE_X + 300.0)).abs() < 1e-2, "{}", x(&p));
+    assert!(!blocks(&mut p, GATE_X), "the way through is open");
+    assert!(blocks(&mut p, GATE_X + 300.0), "the open panel is solid");
+    // Reloaded (the cell and its collision built again, nothing drawn yet): posed at the
+    // end of the last group asked, which the saved game keeps.
+    p.unload(PhysCell::Exterior(0, 0));
+    assert!(!p.animated.contains_key(&GATE));
+    p.load(&ctx, PhysCell::Exterior(0, 0));
+    assert!((x(&p) - GATE_X).abs() < 1e-3, "built closed");
+    p.pose_animated(None, |r| (r == GATE).then_some("forward"));
+    assert!((x(&p) - (GATE_X + 300.0)).abs() < 1e-2, "{}", x(&p));
+    assert!(!blocks(&mut p, GATE_X));
+    // A sequence the model does not have, or none: the bind pose again.
+    p.pose_animated(None, |_| Some("Backward"));
+    assert!((x(&p) - GATE_X).abs() < 1e-3);
+}
+
+#[test]
+fn the_pose_of_a_group_not_drawn_is_its_end_or_its_loops_start() {
+    let mut anim = gate_anim();
+    anim.add_sequence("Idle", 2.0, 0, Vec::new());
+    assert_eq!(super::group_pose(&anim, None, Some("Forward")), (Some(0), 1.0));
+    assert_eq!(super::group_pose(&anim, None, Some("idle")), (Some(1), 0.0));
+    assert_eq!(super::group_pose(&anim, Some(&("Idle".into(), 0.7)), Some("Forward")), (Some(1), 0.7));
+    // What is drawn but not in the collision's model: the last group asked.
+    assert_eq!(super::group_pose(&anim, Some(&("Other".into(), 0.7)), Some("Forward")), (Some(0), 1.0));
+    assert_eq!(super::group_pose(&anim, None, None), (None, 0.0));
 }

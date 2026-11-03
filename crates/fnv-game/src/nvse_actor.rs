@@ -62,7 +62,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // The base form's factions and ranks as arrays, in GetBaseNthFaction's order
         // [hypothesis: the same order, from the record's last SNAM back].
         "getbasefactions" | "getbaseranks" => {
-            let a = item(g, 0);
+            let a = g.data.base_template_source(item(g, 0), |d| d.template_factions);
             let mut f = g.data.actors.get(&a).map(|d| d.factions.clone()).unwrap_or_default();
             f.reverse();
             let items = f.into_iter().map(|(x, r)| if name == "getbasefactions" { XVal::Ref(x.0) } else { XVal::Num(f64::from(r)) }).collect();
@@ -166,15 +166,12 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             let items = ps.into_iter().map(|p| XVal::Ref(p.0)).collect();
             list(g, items)
         }
-        // [documented: GetBaseSpellListSpells] the record's actor effects (SPLO), the
-        // template's when it supplies them.
+        // [documented: GetBaseSpellListSpells] the record's actor effects (SPLO), in record
+        // order; the Use Actor Effect List template's [observed: tmpl3 (#1057), four
+        // creatures read their template's list, one with none of its own].
         "getbasespelllistspells" => {
             let b = item(g, 0);
-            let def = g.data.actors.get(&b);
-            let src = match def.and_then(|d| d.template.filter(|_| d.template_spells)) {
-                Some(t) => g.data.actors.get(&t),
-                None => def,
-            };
+            let src = g.data.actors.get(&g.data.base_template_source(b, |d| d.template_spells));
             // GenericAddForm's and the others' changes first (`crate::nvse_lists`).
             let items = match g.other.generic.get(&(6, b)) {
                 Some(l) => l.iter().map(|s| XVal::Ref(s.0)).collect(),
@@ -196,7 +193,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         },
         // [documented: GetNameOfClass] the actor's class's name.
         "getnameofclass" => {
-            let class = g.data.actors.get(&item(g, 0)).and_then(|d| d.class);
+            let class = form(args, 0).or(subject).and_then(|f| g.traits_class(f));
             XVal::Str(class.and_then(|c| g.data.full_names.get(&c).cloned()).unwrap_or_default())
         }
         // [documented: IsPlayerSwimming].

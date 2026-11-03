@@ -45,6 +45,7 @@ const RESISTANT: u32 = 0x891;
 const LEAD_BELLY: u32 = 0x892;
 const MAGAZINE: u32 = 0x869;
 const BLOOD: u32 = 0x86A;
+const STIM_GATED: u32 = 0x86B;
 
 const P: FormId = FormId::PLAYER_REF;
 const STRENGTH: u16 = 5;
@@ -82,6 +83,15 @@ fn has_perk(perk: u32, value: f32) -> fnv_esm::raw::Subrecord {
     d.extend([0, 0]);
     d.extend(perk.to_le_bytes());
     d.extend([0; 12]);
+    sub(b"CTDA", d)
+}
+
+/// A condition `IsHardcore == value` (function 586).
+fn is_hardcore(value: f32) -> fnv_esm::raw::Subrecord {
+    let mut d = vec![0x00, 0, 0, 0];
+    d.extend(value.to_le_bytes());
+    d.extend(586u16.to_le_bytes());
+    d.extend([0; 18]);
     sub(b"CTDA", d)
 }
 
@@ -159,6 +169,9 @@ fn plugin_bytes() -> Vec<u8> {
         // Comprehension); a Blood Pack: 1 Health at once, 4 a second for 5 s more with the
         // perk (as Hematophage).
         alch(MAGAZINE, "Magazine", 0, 0, 0.0, vec![effect_if(MOD_STR, 1, 60, 5, vec![has_perk(RESISTANT, 0.0)]), effect_if(MOD_STR, 2, 60, 5, vec![has_perk(RESISTANT, 1.0)])]),
+        // A Stimpak as the masters' (aid-items.md §14): 30 at once outside Hardcore, 5 a
+        // second for 6 s in it, each behind IsHardcore.
+        alch(STIM_GATED, "StimGated", 4, 0, 0.0, vec![effect_if(PARTS, 30, 0, 16, vec![is_hardcore(0.0)]), effect_if(RESTORE_HEALTH, 5, 6, 16, vec![is_hardcore(1.0)])]),
         alch(BLOOD, "Blood", 0, 0, 0.0, vec![effect_if(RESTORE_HEALTH, 4, 5, 16, vec![has_perk(LEAD_BELLY, 1.0)]), effect(RESTORE_HEALTH, 1, 0, 16)]),
     ]
     .concat();
@@ -307,14 +320,16 @@ fn restoration_over_time_follows_the_seconds() {
     add_actor_value_damage(&mut g, P, HEALTH, 60.0);
     g.ingest(P, FormId(STIM_HC));
     assert!(near(av(&mut g, HEALTH), 40.0));
+    // 5 a second at Medicine 15's potency 1.3 is 6.5, rounded down to 6 (#1167).
     g.frames(180);
-    assert!((av(&mut g, HEALTH) - 59.5).abs() < 1e-3, "{}", av(&mut g, HEALTH));
+    assert!((av(&mut g, HEALTH) - 58.0).abs() < 1e-3, "{}", av(&mut g, HEALTH));
     g.frames(240);
-    assert!((av(&mut g, HEALTH) - 79.0).abs() < 1e-3);
+    assert!((av(&mut g, HEALTH) - 76.0).abs() < 1e-3);
     assert!(g.effects.is_empty());
 }
 
-/// Food's potency follows Survival (55 → 2.1, the GECK wiki's example).
+/// Food's potency follows Survival (55 → 2.1, the GECK wiki's example); the scaled
+/// magnitude is rounded down.
 #[test]
 fn food_follows_survival() {
     let f = fixture();
@@ -322,8 +337,9 @@ fn food_follows_survival() {
     add_actor_value_damage(&mut g, P, HEALTH, 50.0);
     let r = g.ingest(P, FormId(FOOD));
     assert!(near(r.potency, 2.1));
+    // 2 a second × 2.1 = 4.2, rounded down to 4, for 5 s.
     g.frames(300);
-    assert!((av(&mut g, HEALTH) - 71.0).abs() < 1e-3);
+    assert!((av(&mut g, HEALTH) - 70.0).abs() < 1e-3);
 }
 
 /// Recover: a temporary modifier while the effect lasts; the base and the permanent
@@ -433,15 +449,15 @@ fn waiting_advances_effect_timers() {
     // A restoration by the second gives what is left of it, no more.
     add_actor_value_damage(&mut g, P, HEALTH, 60.0);
     g.ingest(P, FormId(STIM_HC));
-    g.pass_hours(1.0, true);
-    assert!((av(&mut g, HEALTH) - 79.0).abs() < 1e-6);
+    g.pass_hours(1.0, false);
+    assert!((av(&mut g, HEALTH) - 76.0).abs() < 1e-6);
     // Outside Hardcore the needs do not move.
     assert_eq!(av(&mut g, HUNGER), 0.0);
 }
 
 /// In Hardcore the needs rise one point every `rate` seconds of play (hunger 25, sleep
-/// 50, dehydration 10 from the owner's table), in play and while waiting; sleep lowers sleep
-/// deprivation (aid-items.md §11).
+/// 50, dehydration 10 from the owner's table) in play, and by whole points an hour while
+/// waiting (12, 4, 2); sleep lowers sleep deprivation (aid-items.md §11).
 #[test]
 fn hardcore_needs_rise_with_time() {
     let f = fixture();
@@ -455,16 +471,51 @@ fn hardcore_needs_rise_with_time() {
     assert!((av(&mut g, SLEEP_DEPRIVATION) - 0.5).abs() < 1e-6);
     let passed = g.pass_hours(10.0, false);
     assert_eq!(passed.needs.len(), 3);
-    assert!((av(&mut g, HUNGER) - 49.0).abs() < 1e-6);
-    assert!((av(&mut g, SLEEP_DEPRIVATION) - 24.5).abs() < 1e-6);
+    assert!((av(&mut g, HUNGER) - 41.0).abs() < 1e-6);
+    assert!((av(&mut g, SLEEP_DEPRIVATION) - 20.5).abs() < 1e-6);
     g.pass_hours(1.0, true);
-    assert_eq!(av(&mut g, SLEEP_DEPRIVATION), 0.0);
-    assert!((av(&mut g, HUNGER) - 53.8).abs() < 1e-6);
+    assert_eq!(av(&mut g, SLEEP_DEPRIVATION), 2.0);
+    assert!((av(&mut g, HUNGER) - 45.0).abs() < 1e-6);
     // Food lowers hunger ("Restore" on a need), never below 0.
     g.ingest(P, FormId(BREAD));
-    assert!((av(&mut g, HUNGER) - 23.8).abs() < 1e-6);
+    assert!((av(&mut g, HUNGER) - 15.0).abs() < 1e-6);
     g.ingest(P, FormId(BREAD));
     assert_eq!(av(&mut g, HUNGER), 0.0);
+}
+
+/// The owner's check in the original (2026-10-31, Hardcore, all needs at 0, #1177): 3
+/// hours waited give H2O 36, FOD 12, SLP 6; 3 hours slept give 36, 12 and 2. In
+/// Hardcore the sleep heals no Health.
+#[test]
+fn waits_and_sleeps_give_the_originals_totals() {
+    let f = fixture();
+    for (sleeping, slp) in [(false, 6.0), (true, 2.0)] {
+        let mut g = game(&f);
+        g.player.hardcore = Some(true);
+        add_actor_value_damage(&mut g, P, HEALTH, 40.0);
+        for _ in 0..3 {
+            g.pass_hours(1.0, sleeping);
+        }
+        assert_eq!((av(&mut g, DEHYDRATION), av(&mut g, HUNGER), av(&mut g, SLEEP_DEPRIVATION)), (36.0, 12.0, slp), "sleeping {sleeping}");
+        // Hours passed at once give the same.
+        let mut h = game(&f);
+        h.player.hardcore = Some(true);
+        h.pass_hours(3.0, sleeping);
+        assert_eq!((av(&mut h, DEHYDRATION), av(&mut h, HUNGER), av(&mut h, SLEEP_DEPRIVATION)), (36.0, 12.0, slp));
+        assert_eq!(av(&mut g, HEALTH), 60.0);
+    }
+}
+
+/// Outside Hardcore a sleep restores all Health (and limbs); a wait restores none.
+#[test]
+fn a_sleep_outside_hardcore_restores_health() {
+    let f = fixture();
+    let mut g = game(&f);
+    add_actor_value_damage(&mut g, P, HEALTH, 70.0);
+    assert_eq!(g.pass_hours(1.0, false).health_restored, 0.0);
+    assert_eq!(av(&mut g, HEALTH), 30.0);
+    assert_eq!(g.pass_hours(1.0, true).health_restored, 70.0);
+    assert_eq!(av(&mut g, HEALTH), 100.0);
 }
 
 /// SetHardcore turns on the simulation's switch too (ammunition weighs), and turning it
@@ -575,6 +626,21 @@ fn perks_change_chems_addiction_and_rads() {
     assert!(near(av(&mut g, RAD_LEVEL), 15.0));
 }
 
+/// In god mode (tgm) a damaging effect leaves the player alone: the original's Beer and
+/// Nuka-Cola, drunk with tgm on, raised no Dehydration (o7_00, #1167). Without it the
+/// soda's damage holds.
+#[test]
+fn god_mode_keeps_damaging_effects_off_the_player() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.toggles.god_mode = true;
+    g.ingest(P, FormId(NUKA));
+    assert_eq!(av(&mut g, RAD_LEVEL), 0.0);
+    g.toggles.god_mode = false;
+    g.ingest(P, FormId(NUKA));
+    assert!(near(av(&mut g, RAD_LEVEL), 10.0));
+}
+
 /// Buffout's +2 Strength raises the carry capacity the menus show by 20 while it lasts
 /// (aid-items.md §12).
 #[test]
@@ -611,4 +677,38 @@ fn the_preview_keeps_the_effects_that_apply() {
     // Nothing was used.
     assert!(g.effects.is_empty());
     assert_eq!(av(&mut g, STRENGTH), 5.0);
+}
+
+/// A Stimpak's effects split by IsHardcore (#1438): outside Hardcore it heals at once and
+/// leaves no active effect (its Hardcore heal is held inactive for its 6 s, then gone, and
+/// never takes hold if Hardcore comes on later); in Hardcore one heal over time runs.
+#[test]
+fn a_hardcore_gated_stimpak_applies_only_its_mode() {
+    let f = fixture();
+    let active = |g: &Game| g.effects.iter().filter(|e| e.target == P && e.source == FormId(STIM_GATED) && !e.inactive).count();
+    // Outside Hardcore: 30 × 1.3 at once.
+    let mut g = game(&f);
+    add_actor_value_damage(&mut g, P, HEALTH, 60.0);
+    assert_eq!(g.aid_preview(P, FormId(STIM_GATED)), vec![(HEALTH, 39.0)]);
+    let r = g.ingest(P, FormId(STIM_GATED));
+    assert_eq!(r.applied.len(), 1);
+    assert!(near(av(&mut g, HEALTH), 79.0));
+    assert_eq!(active(&g), 0);
+    g.frames(6 * 60 + 2);
+    assert!(!g.effects.iter().any(|e| e.source == FormId(STIM_GATED)), "{:?}", g.effects);
+    g.player.hardcore = Some(true);
+    g.frames(3 * 60);
+    assert!(near(av(&mut g, HEALTH), 79.0));
+    // In Hardcore: one heal over time, 5 × 1.3 floored to 6 a second for 6 s.
+    let mut g = game(&f);
+    g.player.hardcore = Some(true);
+    add_actor_value_damage(&mut g, P, HEALTH, 60.0);
+    assert_eq!(g.aid_preview(P, FormId(STIM_GATED)), vec![(HEALTH, 36.0)]);
+    let r = g.ingest(P, FormId(STIM_GATED));
+    assert_eq!(r.applied.len(), 1);
+    assert!(near(av(&mut g, HEALTH), 40.0));
+    assert_eq!(active(&g), 1);
+    g.frames(6 * 60 + 2);
+    assert!(near(av(&mut g, HEALTH), 76.0), "{}", av(&mut g, HEALTH));
+    assert!(!g.effects.iter().any(|e| e.source == FormId(STIM_GATED)));
 }

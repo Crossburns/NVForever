@@ -565,16 +565,26 @@ struct Resident {
     /// The heading it is drawn with while it fights, facing its target (`Core::aims`),
     /// until it is back on the walker's.
     aim_heading: Option<f32>,
-    /// It has been in the loaded area: leaving it takes its cell into the cell buffer.
-    /// An actor a script put far away (Malcolm Holmes) never was, so its cell is not
-    /// buffered and it stays at the Low level (`process_levels`).
+    /// The target it was held on last frame ([`LOCK_HOLD`]): it stays on that target
+    /// however far it moves in a frame.
+    lock_held: Option<u32>,
+    /// The heading it is drawn with while an idle holds it in place (`Core::posed`): the
+    /// one it had when the idle began.
+    posed_heading: Option<f32>,
+    /// It has been drawn in the loaded area. Going from there through a door into an
+    /// interior takes the interior into the cell buffer (`carries_cell`); an actor a
+    /// script keeps in a holding cell (Malcolm Holmes in RandomEncounterNPCs) never was,
+    /// so its cell is not buffered and it stays at the Low level.
     been_loaded: bool,
 }
 
 /// A fighter locked on its target (`npc_combat::Fighters::lock_on`) and turned within
 /// this of it (radians, 10°) follows it exactly: the original's gunmen stayed within about
 /// 1.5° of their target while they fought [observed 2026-10-25, observer campaign
-/// fiend_facing]; a bigger turn (a new target) goes at the turn rate [design].
+/// fiend_facing]; a bigger turn (a new target) goes at the turn rate [design]. Once held,
+/// it stays on that target even when the target sweeps past this in one frame (a melee
+/// Fiend circling a trooper 70 units away, a long frame): smoke battle-ncr-fiends saw up
+/// to 21 frames past 10° while such fighters turned back at the turn rate (#1162).
 const LOCK_HOLD: f32 = 10.0 * std::f32::consts::PI / 180.0;
 
 /// ACBS flag bits 5, "Flies", and 23, "Immobile" [documented: xEdit wbDefinitionsFNV.pas
@@ -698,6 +708,9 @@ struct Core {
     /// Actors an idle holds in place (`idles::IdleHolds`, docs/spec-notes/idles.md §15):
     /// they stand as a staggering actor does while it shows.
     posed: HashSet<u32>,
+    /// Of those, the ones whose idle carries the body away from the reference
+    /// (`idles::IdleHolds::carried_off`): they are drawn facing as they did when it began.
+    carried_off: HashSet<u32>,
     /// Of those, the ones whose AI has somewhere to go: they break out of the idle.
     breaking: HashSet<u32>,
     /// How far their attack clips carry actors this frame (`attack_anims::AttackTravel`,
@@ -729,7 +742,76 @@ struct Core {
     /// and step sideways or back as they go, so they can fire on the move (owner's
     /// playtest list 5 item 33; owner 2026-10-16, strafing and backing away) [design].
     aims: HashMap<FormId, [f32; 3]>,
+    /// The player's trip behind a loading screen under way (a fast travel, a load door):
+    /// the actors coming into the loaded area are put at their package's place
+    /// ([`Core::arrive`], issue #1208).
+    trip: Option<Trip>,
+    /// When (game hours: GameDaysPassed x 24) each resident was last in the loaded area,
+    /// and the game hours at the last frame: a trip leaves alone whoever the player saw
+    /// within [`RECENTLY_LOADED_HOURS`] ([`recently_loaded`]).
+    loaded_at: HashMap<FormId, f64>,
+    clock_hours: f64,
+    /// Of all trips: actors put at their package's place, actors seated at once (put on
+    /// their furniture, or found on it already), and actors left where they were because
+    /// they were in the loaded area before the trip.
+    arrivals: [usize; 3],
 }
+
+/// A trip of the player behind a loading screen ([`Core::arrive`]).
+struct Trip {
+    /// The residents in the loaded area before it: they are never moved (a short fast
+    /// travel inside the loaded area moves nobody, issue #1208).
+    before: HashSet<FormId>,
+    /// The residents looked at since.
+    seen: HashSet<FormId>,
+    /// Frames since the loaded cells settled with the game no longer held by the screen.
+    settled: u32,
+    /// Residents put at their package's place in this trip, and those seated at once
+    /// (put on their furniture, or found on it already).
+    put: [usize; 2],
+    /// The interiors behind the doors of the loaded cells, once they settled: actors in
+    /// them are near the player ([`interiors_behind_doors`]).
+    doors: Option<HashSet<u32>>,
+}
+
+/// A resident the player saw in the loaded area within this many game hours before a
+/// trip is not moved by it: out of a house and straight back, the street is as it was
+/// [design: coordinator review of #1269; the cell buffer's own life in the original is
+/// not known in hours].
+const RECENTLY_LOADED_HOURS: f64 = 1.0;
+
+/// The residents in the loaded area within [`RECENTLY_LOADED_HOURS`] of `now` (game
+/// hours), from when each was last there.
+fn recently_loaded(loaded_at: &HashMap<FormId, f64>, now: f64) -> HashSet<FormId> {
+    loaded_at.iter().filter(|(_, at)| now - **at <= RECENTLY_LOADED_HOURS).map(|(a, _)| *a).collect()
+}
+
+/// The interiors a load door of the loaded cells leads into (the original's Mid-Low
+/// level, as `Core::take_cells` finds them).
+fn interiors_behind_doors(world: &WorldData, streamer: &Streamer, refs: &RefTable) -> HashSet<u32> {
+    let keys: Vec<CellKey> = match streamer.interior {
+        Some(c) => vec![CellKey::Interior(c)],
+        None => streamer.loaded.keys().map(|g| CellKey::Exterior(*g)).collect(),
+    };
+    let mut out = HashSet::new();
+    for key in keys {
+        let (cell, persistent) = match key {
+            CellKey::Exterior(g) => (world.grid_cell(g), world.persistent_by_grid.get(&g)),
+            CellKey::Interior(id) => (world.index.cells.get(&id), None),
+        };
+        for r in cell.into_iter().flat_map(|c| c.refs.iter()).chain(persistent.into_iter().flatten()) {
+            if let Some(tp) = refs.get(FormId(*r)).and_then(|d| d.teleport.as_ref()) {
+                out.extend(refs.teleport_cell(tp).filter(|c| refs.world_of(*c).is_none() && key != CellKey::Interior(c.0)).map(|c| c.0));
+            }
+        }
+    }
+    out
+}
+
+/// A trip ends this many frames after the loaded cells settled and the loading screen
+/// let the game go [our choice: the frame the last cells' actors join, and the one
+/// they are put in].
+const TRIP_SETTLE_FRAMES: u32 = 2;
 
 #[derive(Resource)]
 pub struct Residents {
@@ -741,6 +823,12 @@ pub struct Residents {
     started: bool,
     warned: bool,
     startup: Vec<(bool, String)>,
+}
+
+/// Standalone packages own their simulation; in play mode `SimState` owns it
+/// [design: `drive`]. Shared by drawing and prefetch so neither selects a stale world.
+pub(crate) fn equipment_world<'a, 'w>(private: Option<&'a World<'w>>, shared: Option<&'a World<'w>>) -> Option<&'a World<'w>> {
+    private.or(shared)
 }
 
 fn set_global(g: &mut Game, edid: &str, v: f32) -> Result<(), String> {
@@ -843,6 +931,7 @@ impl Residents {
             held_now: false,
             staggering: HashSet::new(),
             posed: HashSet::new(),
+            carried_off: HashSet::new(),
             breaking: HashSet::new(),
             travel: HashMap::new(),
             carried: HashMap::new(),
@@ -854,6 +943,10 @@ impl Residents {
             knocked: (0, 0.0),
             door_uses: Vec::new(),
             aims: HashMap::new(),
+            trip: None,
+            loaded_at: HashMap::new(),
+            clock_hours: 0.0,
+            arrivals: [0; 3],
         };
         for name in names.iter().flat_map(|n| n.split(',')).map(str::trim).filter(|n| !n.is_empty()) {
             if name.eq_ignore_ascii_case("all") {
@@ -917,6 +1010,13 @@ impl Residents {
     /// This module's own game state (without `--play`).
     pub fn own_game(&mut self) -> Option<&mut Game<'static>> {
         self.own.as_deref_mut()
+    }
+
+    /// Use the same simulation as `drive` for resident prefetch, including a resident
+    /// also listed among its cell's placed references [design: `read_ahead`].
+    pub fn prefetch_world<'a>(&'a self, reference: u32, shared: Option<&'a World<'static>>) -> Option<&'a World<'static>> {
+        let private = self.core.known.contains(&reference).then(|| self.own.as_deref().map(|g| &g.world)).flatten();
+        equipment_world(private, shared)
     }
 
     pub fn references(&self) -> impl Iterator<Item = u32> + '_ {
@@ -1049,6 +1149,8 @@ impl Core {
             moved: false,
             last_space: None,
             aim_heading: None,
+            lock_held: None,
+            posed_heading: None,
             been_loaded: false,
         });
     }
@@ -1177,16 +1279,31 @@ impl Core {
         if self.ai.loaded() != Some(&loaded) {
             self.ai.set_loaded(Some(loaded));
         }
+        if let Ok(c) = game.world.calendar() {
+            self.clock_hours = c.days_passed as f64 * 24.0;
+        }
+        // Diagnostics (`profile::AiCount`): residents classified, remaining paths scanned
+        // for the loaded area and their points tested, levels changed.
+        let (mut classified, mut scans, mut points, mut changes) = (0usize, 0usize, 0usize, 0usize);
         for r in self.list.iter_mut().filter(|r| r.joined && !r.failed) {
             let Some(a) = self.ai.agents.get(&r.actor) else { continue };
+            classified += 1;
             let (space, feet) = (a.walker.space, a.walker.feet);
             let high = drawn(world, streamer, space, feet);
             r.been_loaded |= high;
+            if high {
+                self.loaded_at.insert(r.actor, self.clock_hours);
+            }
             // Out of the loaded area: Mid-High in the cell buffer, Low beyond (`cell_buffer.rs`).
-            // Walking out of the loaded area, or on into another cell, takes the cell along.
+            // Walking out of the loaded area into a cell the buffer does not hold drops the
+            // actor to Low: the original's Victor went from process level 0 straight to 3,
+            // never 1 [observed: docs/handoff/observer-jip-audit-2026-10-25.md §3.1]. One
+            // already at Mid-High walking on into another cell takes that cell along, and so
+            // does one going through a door into an interior: interiors behind the loaded
+            // area's doors read Mid-Low there (same §3.1; Benny into the presidential suite).
             let new_cell = fnv_world::cell_of(r.last_feet[0], r.last_feet[1]) != fnv_world::cell_of(feet[0], feet[1]);
-            let carries = !high && !streamer.buffer.holds(space, feet) && ((self.ai.is_high(r.actor) && r.been_loaded) || (new_cell && self.ai.level(r.actor) == fnv_ai::ProcessLevel::MidHigh));
-            if carries {
+            let into_interior = r.been_loaded && matches!(space, Space::Interior(_));
+            if carries_cell(high, streamer.buffer.holds(space, feet), new_cell, into_interior, self.ai.level(r.actor)) {
                 streamer.buffer.carry(space, feet);
             }
             // On its way into the loaded area (a corner of the rest of its path is in
@@ -1198,15 +1315,20 @@ impl Core {
             let coming = !high
                 && (streamer.buffer.holds(space, feet) || self.ai.follows_near_leader(r.actor))
                 && a.activity == fnv_ai::Activity::Travelling
-                && a.walker.follower.as_ref().is_some_and(|f| f.path.legs.iter().skip(f.leg).any(|l| l.points.iter().any(|p| drawn(world, streamer, l.space, *p))));
-            let level = match (high, coming, streamer.buffer.holds(space, feet)) {
-                (true, _, _) => fnv_ai::ProcessLevel::High,
-                (false, true, _) => fnv_ai::ProcessLevel::Coming,
-                (false, false, true) => fnv_ai::ProcessLevel::MidHigh,
-                (false, false, false) => fnv_ai::ProcessLevel::Low,
-            };
+                && a.walker.follower.as_ref().is_some_and(|f| {
+                    let _span = info_span!("ai::coming_scan").entered();
+                    scans += 1;
+                    f.path.legs.iter().skip(f.leg).any(|l| {
+                        l.points.iter().any(|p| {
+                            points += 1;
+                            drawn(world, streamer, l.space, *p)
+                        })
+                    })
+                });
+            let level = level_for(high, coming, streamer.buffer.holds(space, feet));
             let was_high = self.ai.is_high(r.actor);
             if self.ai.set_level(game, r.actor, level) {
+                changes += 1;
                 let line = format!(
                     "ai [{}] {}: {} at ({:.0}, {:.0}, {:.0}) in {}",
                     self.clock_text,
@@ -1231,6 +1353,142 @@ impl Core {
                 }
             }
         }
+        crate::profile::ai_count(crate::profile::AiCount::Classified, classified);
+        crate::profile::ai_count(crate::profile::AiCount::ComingScans, scans);
+        crate::profile::ai_count(crate::profile::AiCount::PathPointsTested, points);
+        crate::profile::ai_count(crate::profile::AiCount::LevelChanges, changes);
+    }
+
+    /// The residents not handed to the AI yet are.
+    fn join(&mut self, game: &Game) {
+        for r in self.list.iter_mut().filter(|r| !r.joined) {
+            r.joined = true;
+            if let Err(e) = self.ai.add(game, r.actor) {
+                if r.named {
+                    warn!("ai: {} cannot be handed to the AI: {e}", r.label);
+                }
+                r.failed = true;
+            } else if r.rooted == Some(true) {
+                self.ai.root(game, r.actor);
+                info!("ai: {} cannot move (no movement animations, or flagged Immobile): it stays where it is{}", r.label, if r.perched { "; it flies, so it is in nobody's way" } else { "" });
+            }
+        }
+    }
+
+    /// The player sets off through a load door or on a fast travel, behind a loading
+    /// screen (`nvf_play::Travel` with `Loading::arriving`): who was in the loaded area
+    /// within [`RECENTLY_LOADED_HOURS`] stays where it is through the trip. The clock is
+    /// the last frame's: a fast travel's hours have passed already, so the residents of
+    /// the place left are not kept.
+    fn begin_trip(&mut self) {
+        let before = recently_loaded(&self.loaded_at, self.clock_hours);
+        info!("ai [{}] trip behind a loading screen: {} residents in the loaded area in the last {RECENTLY_LOADED_HOURS} game hour(s) stay where they are", self.clock_text, before.len());
+        self.arrivals[2] += before.len();
+        self.trip = Some(Trip { before, seen: HashSet::new(), settled: 0, put: [0; 2], doors: None });
+    }
+
+    /// While a trip is under way: the residents near the player (in the loaded area, the
+    /// cell buffer, or an interior behind a door of the loaded cells) whose package's
+    /// walk starts there are put where that walk ends, on its furniture (seated at once),
+    /// before the loading screen comes down (`fnv_ai::arrive`; issue #1208: Boone at the
+    /// dinosaur on a fast travel to Novac at 5am, Cass at the Mojave Outpost's bar on
+    /// entering) [observed, owner; the placing itself: hypothesis]. They join the AI and
+    /// are drawn under the screen, so the screen waits for their bodies
+    /// (`readahead::actors_waiting`). They are put once the cells around the player have
+    /// all loaded (`Streamer::settled`, which the screen waits for too), each resident
+    /// looked at once; the others are not touched (the low process keeps them). A
+    /// resident a script moved this frame (MoveTo) stays where it was put. The trip ends
+    /// [`TRIP_SETTLE_FRAMES`] after that and the screen let the game go.
+    fn arrive(&mut self, game: &mut Game, nav: &NavState, world: &WorldData, streamer: &Streamer, mut phys: Option<&mut PhysState>) {
+        if self.trip.is_none() {
+            return;
+        }
+        self.join(game);
+        // Once the cells around the player are all in (the screen stays up for them):
+        // before, a walk's end could be in a cell not loaded yet and the walk left to be
+        // made in sight (Boone stopped in the gift shop, the dinosaur's cell not in).
+        if !streamer.settled {
+            return;
+        }
+        let trip = self.trip.as_mut().expect("checked");
+        let doors = trip.doors.get_or_insert_with(|| interiors_behind_doors(world, streamer, game.world.placed));
+        let near = |p: fnv_nav::Place| drawn(world, streamer, p.space, p.pos) || streamer.buffer.holds(p.space, p.pos) || matches!(p.space, Space::Interior(c) if doors.contains(&c));
+        for r in self.list.iter_mut().filter(|r| r.joined && !r.failed) {
+            // Each resident once; those seen shortly before, and one a script has just
+            // moved (MoveTo), are left as they are.
+            if trip.before.contains(&r.actor) || !trip.seen.insert(r.actor) || r.moved {
+                continue;
+            }
+            let Some(a) = self.ai.agents.get(&r.actor) else { continue };
+            if !near(fnv_nav::Place { space: a.walker.space, pos: a.walker.feet }) {
+                continue;
+            }
+            let arrival = self.ai.arrive(game, &nav.graph, r.actor, &near);
+            r.present = game.present(r.actor);
+            let Some(arr) = arrival else {
+                // Already at its place and on its furniture (the low process had it
+                // there, behind the door): seated at once too, not walked up to it in
+                // sight (the Goodsprings settler's bar stool in the Prospector Saloon).
+                let a = &self.ai.agents[&r.actor];
+                // Its seat not yet taken up (`Seat::Wanted`: it was never drawn there).
+                let unseated = matches!(r.seat, Seat::None | Seat::Wanted(..));
+                if let (Some(f), Activity::There, true) = (a.using, a.activity, unseated) {
+                    r.wants = Some(f.0);
+                    r.seat = Seat::Wanted(f.0, true);
+                    self.arrivals[1] += 1;
+                    trip.put[1] += 1;
+                    let line = format!("ai [{}] {}: already on {} at its package's place on arrival: seated at once", self.clock_text, r.label, game.data.name(f));
+                    if r.named {
+                        info!("{line}");
+                    } else {
+                        debug!("{line}");
+                    }
+                }
+                continue;
+            };
+            self.arrivals[0] += 1;
+            trip.put[0] += 1;
+            // Its character, if it had one, is made again where it is now (as after a
+            // MoveTo, [`Core::take_moved`]).
+            if let Some(p) = phys.as_deref_mut() {
+                p.remove_npc(r.actor.0);
+            }
+            self.unstuck.remove(&r.actor.0);
+            self.skip_until.remove(&r.actor.0);
+            if let Some(f) = arr.furniture {
+                // Sat down at once, as found sitting (no walk up, no sitting-down clip).
+                r.wants = Some(f.0);
+                r.seat = Seat::Wanted(f.0, true);
+                self.arrivals[1] += 1;
+                trip.put[1] += 1;
+            }
+            let line = format!(
+                "ai [{}] {}: put at its package's place on arrival ({}): ({:.0}, {:.0}, {:.0}) in {}, {:.0} units from ({:.0}, {:.0}, {:.0}) in {}, {} walk(s) skipped{}",
+                self.clock_text,
+                r.label,
+                game.data.name(arr.package),
+                arr.to.pos[0],
+                arr.to.pos[1],
+                arr.to.pos[2],
+                nav::space_name(world, arr.to.space),
+                arr.skipped,
+                arr.from.pos[0],
+                arr.from.pos[1],
+                arr.from.pos[2],
+                nav::space_name(world, arr.from.space),
+                arr.walks,
+                arr.furniture.map_or_else(String::new, |f| format!(", seated on {}", game.data.name(f)))
+            );
+            // Every one: a trip puts few, and the smoke tests read where they came from.
+            info!("{line}");
+        }
+        if streamer.settled && !game.loading {
+            trip.settled += 1;
+        }
+        if trip.settled >= TRIP_SETTLE_FRAMES {
+            info!("ai [{}] trip over: {} residents put at their package's place, {} seated at once", self.clock_text, trip.put[0], trip.put[1]);
+            self.trip = None;
+        }
     }
 
     /// One frame of the package choice and the walks in `game`. `own`: the game state is
@@ -1241,20 +1499,37 @@ impl Core {
     /// again when a door was unlocked (`fnv_ai::Ai::apply_navmesh_switches`,
     /// `apply_door_locks`).
     fn switch_navmeshes(&mut self, game: &mut Game, nav: &mut NavState) {
-        if let Some(replanned) = self.ai.apply_navmesh_switches(game, &mut nav.graph) {
+        use crate::profile::{ai_count, AiCount};
+        ai_count(AiCount::NavPolls, 1);
+        ai_count(AiCount::SwitchesPolled, game.nav_switches.navmeshes.len());
+        let span = info_span!("ai::nav_switches").entered();
+        let switched = self.ai.apply_navmesh_switches(game, &mut nav.graph);
+        drop(span);
+        if let Some(replanned) = switched {
+            ai_count(AiCount::SwitchesChanged, 1);
             let off: Vec<String> = game.nav_switches.navmeshes.iter().filter(|(_, on)| !**on).map(|(m, _)| format!("{:08X}", m.0)).collect();
             let on = game.nav_switches.navmeshes.len() - off.len();
             info!("nav: navmeshes switched by scripts: {on} enabled, disabled [{}]; {} actors plan their way again", off.join(", "), replanned.len());
         }
         // Doors locked and unlocked since (scripts, keys, picked locks) reach the paths
         // (`fnv_ai::Ai::apply_door_locks`).
-        if let Some(again) = self.ai.apply_door_locks(game, &mut nav.graph) {
+        crate::profile::ai_lock_serial(game.world.lock_serial());
+        let span = info_span!("ai::door_locks").entered();
+        let locks = self.ai.apply_door_locks(game, &mut nav.graph);
+        drop(span);
+        if let Some(again) = locks {
+            ai_count(AiCount::LocksChanged, 1);
             let who: Vec<String> = again.iter().map(|a| format!("{:08X}", a.0)).collect();
             info!("nav: door locks changed; {} actors choose their package again [{}]", again.len(), who.join(", "));
         }
         // Obstacles enabled or disabled since cut or free the navmesh under them
         // (`fnv_ai::Ai::apply_obstacles`, docs/spec-notes/navmesh.md §7).
-        if let Some((changed, again)) = self.ai.apply_obstacles(game, &mut nav.graph) {
+        ai_count(AiCount::ObstaclesPolled, nav.graph.obstacles.len());
+        let span = info_span!("ai::obstacles").entered();
+        let obstacles = self.ai.apply_obstacles(game, &mut nav.graph);
+        drop(span);
+        if let Some((changed, again)) = obstacles {
+            ai_count(AiCount::ObstaclesChanged, 1);
             let which: Vec<String> = changed.iter().map(|r| format!("{r:08X} {}", if nav.graph.obstacles.get(r).is_some_and(|o| o.enabled) { "on" } else { "off" })).collect();
             info!("nav: obstacles switched [{}]; {} triangles cut now; {} actors plan their way again", which.join(", "), nav.graph.cut_triangles(), again.len());
         }
@@ -1398,6 +1673,7 @@ impl Core {
 
     #[allow(clippy::too_many_arguments)]
     fn think(&mut self, game: &mut Game, own: bool, nav: &NavState, world: &WorldData, doors: &mut nvf_play::doors::Doors, mut phys: Option<&mut PhysState>, mut blocks: Option<&mut ActorBlocks>, dt: f32, now: f32, waited: u32) {
+        crate::profile::ai_count(crate::profile::AiCount::Think, 1);
         // Who a walker pushed since the last frame, and (below) who may be pushed in
         // the next: nobody while the game is held.
         let pushed = blocks.as_deref_mut().map(|b| {
@@ -1451,17 +1727,9 @@ impl Core {
             self.ai.update_held(game, dt);
             return;
         }
-        for r in self.list.iter_mut().filter(|r| !r.joined) {
-            r.joined = true;
-            if let Err(e) = self.ai.add(game, r.actor) {
-                if r.named {
-                    warn!("ai: {} cannot be handed to the AI: {e}", r.label);
-                }
-                r.failed = true;
-            } else if r.rooted == Some(true) {
-                self.ai.root(game, r.actor);
-                info!("ai: {} cannot move (no movement animations, or flagged Immobile): it stays where it is{}", r.label, if r.perched { "; it flies, so it is in nobody's way" } else { "" });
-            }
+        {
+            let _span = info_span!("ai::join").entered();
+            self.join(game);
         }
         if own {
             // The game being played advances its own calendar (`nvf_play::sim`) and
@@ -1511,11 +1779,19 @@ impl Core {
         }
         let mut moved = [0usize; 6];
         let mut mover = PhysMover { doors, phys: phys.as_deref_mut(), unstuck: &mut self.unstuck, skip_until: &mut self.skip_until, hopped: &mut self.hopped, now, stats: &mut moved, held: &held, coasting: &mut self.coasting, fighting: &self.aims };
-        self.ai.update_moved(game, &nav.graph, dt, &mut mover);
+        {
+            // Every high-process actor's update and the low-process ones due (package,
+            // goal and walk; path searches are `nav::find_path` inside).
+            let _span = info_span!("ai::update_moved").entered();
+            self.ai.update_moved(game, &nav.graph, dt, &mut mover);
+        }
         // Knockbacks push their actors, and attack clips that travel carry theirs, over
         // their walks.
-        self.knock(game, phys.as_deref(), dt);
-        self.carry(game, phys.as_deref_mut(), dt);
+        {
+            let _span = info_span!("ai::knock_carry").entered();
+            self.knock(game, phys.as_deref(), dt);
+            self.carry(game, phys.as_deref_mut(), dt);
+        }
         if let Some(b) = blocks.as_deref_mut().filter(|b| b.carried.len() != self.carried.len() || !b.carried.iter().all(|id| self.carried.contains_key(id))) {
             b.carried = self.carried.keys().copied().collect();
         }
@@ -1554,9 +1830,15 @@ impl Core {
         // controller walks, and those on furniture, are kept clear of but not moved.
         let mut fixed = held.clone();
         fixed.extend(phys.as_deref().into_iter().flat_map(|p| p.npcs.keys().copied()));
-        self.ai.keep_apart(game, &nav.graph, dt, &fixed);
+        {
+            let _span = info_span!("ai::keep_apart").entered();
+            self.ai.keep_apart(game, &nav.graph, dt, &fixed);
+        }
         // Hellos to the player and random conversations.
-        self.ai.social(game, &nav.graph, dt);
+        {
+            let _span = info_span!("ai::social").entered();
+            self.ai.social(game, &nav.graph, dt);
+        }
         // No character is kept for an actor that is not on its way, nor for one that is
         // dead, restrained or out cold: the AI no longer walks it (`fnv_ai`), so its
         // character would go on at the velocity of its last step, the body drawn gliding
@@ -1596,6 +1878,8 @@ impl Core {
         for (actor, package, locked, n) in std::mem::take(&mut game.package_door_notes) {
             info!("ai [{}] {}: {} {n} doors of its cell ({})", self.clock_text, game.data.name(actor), if locked { "locks" } else { "unlocks" }, game.data.name(package));
         }
+        // The events told, the fighters' aims, and the notes (to the end).
+        let _tell_span = info_span!("ai::tell_note").entered();
         self.tell(game, world);
         // Fighters face their target, on the move as well as standing: they strafe and
         // back away instead of turning to where they go (owner 2026-10-16: NCR troopers
@@ -2065,6 +2349,8 @@ type Moves<'w, 's> = (
     MessageWriter<'w, nvf_play::world_sounds::DoorPassed>,
     Option<ResMut<'w, crate::attack_anims::AttackTravel>>,
     Option<MessageReader<'w, 's, nvf_play::combat::Knockback>>,
+    Option<MessageReader<'w, 's, nvf_play::Travel>>,
+    Option<ResMut<'w, nvf_play::loading::Loading>>,
 );
 
 type Held<'w, 's> = (
@@ -2084,16 +2370,16 @@ pub fn drive(
     mut nav: ResMut<NavState>,
     world: Res<WorldData>,
     streamer: Res<Streamer>,
-    actor_world: Option<Res<ActorWorld>>,
+    (actor_world, mut ahead): (Option<Res<ActorWorld>>, ResMut<crate::readahead::ReadAhead>),
     mut parts: ResMut<ActorParts>,
     mut models: ModelCtx,
     root: Query<Entity, With<WorldRoot>>,
     roots: Query<(Entity, &RefVisual, &ChildOf)>,
     mut actors: Query<(&mut Transform, Option<&mut Locomotion>), Without<OnFurniture>>,
     mut doors: ResMut<nvf_play::doors::Doors>,
-    (script, sim, mut phys, mut blocks): PlayState,
+    (script, mut sim, mut phys, mut blocks): PlayState,
     (seated, hours, flinches, fighters, idle_holds): Held,
-    (mut door_fades, mut door_sounds, mut travel, mut knocks): Moves,
+    (mut door_fades, mut door_sounds, mut travel, mut knocks, trips, screen): Moves,
 ) {
     // Hours passed in the Wait menu since the last frame (`--play` only: without it
     // there is no menu and no such message).
@@ -2113,6 +2399,16 @@ pub fn drive(
         }
         res.started = true;
     }
+    // The player set off behind a loading screen through a load door or on a fast
+    // travel (not a script's MoveTo: `Loading::arriving`): who was in the loaded area
+    // shortly before stays put; the others near the destination are put at their
+    // package's place (`Core::arrive`).
+    if trips.is_some_and(|mut t| t.read().count() > 0) {
+        let arriving = screen.is_some_and(|mut s| std::mem::take(&mut s.arriving));
+        if arriving {
+            res.core.begin_trip();
+        }
+    }
     let all = res.all;
     // Who staggers (a hit reaction playing) stands until it ends.
     res.core.on_furniture = seated.iter().map(|v| v.0).collect();
@@ -2131,11 +2427,15 @@ pub fn drive(
         Some(mut h) => {
             h.breaking = std::mem::take(&mut res.core.breaking);
             res.core.posed = h.held.clone();
+            res.core.carried_off = h.carried_off.clone();
         }
-        None => res.core.posed.clear(),
+        None => {
+            res.core.posed.clear();
+            res.core.carried_off.clear();
+        }
     }
     // The game state: this module's, or the game being played (once its data is in).
-    match (res.own.as_deref_mut(), script, sim) {
+    match (res.own.as_deref_mut(), script, sim.as_deref_mut()) {
         (Some(game), _, _) => {
             if all {
                 res.core.take_cells(&world, &streamer, game.world.placed);
@@ -2147,11 +2447,12 @@ pub fn drive(
                 res.core.take_created(game);
             }
             res.core.process_levels(game, &world, &streamer);
+            res.core.arrive(game, &nav, &world, &streamer, None);
             res.core.switch_navmeshes(game, &mut nav);
             let _span = info_span!("ai::think").entered();
             res.core.think(game, true, &nav, &world, &mut doors, None, None, dt, now, 0);
         }
-        (None, Some(mut script), Some(mut sim)) => {
+        (None, Some(mut script), Some(sim)) => {
             let script = &mut *script;
             let Some(rt) = script.rt.as_mut() else {
                 if let (Some(why), false) = (&script.off, res.warned) {
@@ -2167,7 +2468,7 @@ pub fn drive(
             let core = &mut res.core;
             let (phys, blocks) = (phys.as_deref_mut(), blocks.as_deref_mut());
             let (world_ref, streamer_ref) = (&*world, &*streamer);
-            nvf_play::script::with_world(rt, &mut sim, |rt| {
+            nvf_play::script::with_world(rt, sim, |rt| {
                 let mut phys = phys;
                 let span = info_span!("ai::take_moved").entered();
                 core.take_moved(&mut rt.game, all, phys.as_deref_mut());
@@ -2182,6 +2483,9 @@ pub fn drive(
                 let span = info_span!("ai::process_levels").entered();
                 core.process_levels(&rt.game, world_ref, streamer_ref);
                 drop(span);
+                let span = info_span!("ai::arrive").entered();
+                core.arrive(&mut rt.game, &nav, world_ref, streamer_ref, phys.as_deref_mut());
+                drop(span);
                 let span = info_span!("ai::switch_navmeshes").entered();
                 core.switch_navmeshes(&mut rt.game, &mut nav);
                 drop(span);
@@ -2191,6 +2495,8 @@ pub fn drive(
         }
         _ => return,
     }
+    let equipment_world = equipment_world(res.own.as_deref().map(|g| &g.world), sim.as_deref().map(|s| &s.world));
+    let mut spawn_stats = crate::actors::ActorStats::default();
     let core = &mut res.core;
     // Load doors used: the doors' sounds where the listener is, the body left at the door
     // fades out, the one drawn at the other side fades in (`door_fade.rs`).
@@ -2350,6 +2656,10 @@ pub fn drive(
         // from its AI place, and the trooper shooting at it faced 16° off), and once
         // turned to it, it stays on it.
         let lock = fighters.as_deref().and_then(|f| f.lock_on(r.actor.0));
+        let lock_target = lock.map(|(t, _)| t);
+        let held = lock_target.is_some() && r.lock_held == lock_target;
+        let lock = lock.map(|(_, at)| at);
+        r.lock_held = None;
         let heading = match (lock.or_else(|| core.aims.get(&r.actor).copied()), r.aim_heading) {
             (Some(t), from) => {
                 let want = heading_of([t[0] - feet[0], t[1] - feet[1]]);
@@ -2357,7 +2667,11 @@ pub fn drive(
                 // Standing, at the rate the AI turns a fighter (`fnv_ai::alert`), so one
                 // that never moves is drawn as its walker turns.
                 let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE * 2.0 } else { fnv_nav::follow::SPOT_TURN_RATE * fnv_ai::alert::COMBAT_TURN };
-                let h = if lock.is_some() && heading_delta(from, want).abs() <= LOCK_HOLD { want } else { turn_towards(from, want, rate * dt) };
+                let hold = lock.is_some() && (held || heading_delta(from, want).abs() <= LOCK_HOLD);
+                let h = if hold { want } else { turn_towards(from, want, rate * dt) };
+                if hold {
+                    r.lock_held = lock_target;
+                }
                 r.aim_heading = Some(h);
                 h
             }
@@ -2370,6 +2684,24 @@ pub fn drive(
                 r.aim_heading = None;
                 w.heading
             }
+        };
+        // An idle that holds its actor in place and carries the body away from the
+        // reference keeps the body facing as it did when the idle began: the AI turning
+        // the reference to whom it speaks swung the body sideways about it (Dad in Fallout
+        // 3's birth scene, `Bip01 NonAccum` about 144 units forward of his marker)
+        // [observed: owner's TTW run 2026-11-02, Dad turned 27° at his first line;
+        // hypothesis: the original does not turn such an actor]. An idle that leaves the
+        // body over its reference (a dialogue response's) still lets it turn. Let go, it
+        // turns back to the walker's heading as a fighter does.
+        let heading = match (core.carried_off.contains(&r.actor.0), r.posed_heading) {
+            (true, Some(h)) => h,
+            (true, None) => *r.posed_heading.insert(heading),
+            (false, Some(h)) => {
+                r.posed_heading = None;
+                r.aim_heading = Some(h);
+                h
+            }
+            (false, None) => heading,
         };
         let strafe = r.aim_heading.is_some();
         // How a fighter facing its target moves (the fight summary): forward, sideways or
@@ -2385,13 +2717,14 @@ pub fn drive(
             }
         }
         let stage = (&mut r.spawned, &mut r.root);
-        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some() }, stage, (feet, heading), moving, dt) {
+        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), equipment_world, &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some() }, stage, (feet, heading), moving, dt) {
             if r.named {
                 warn!("ai: {} could not be drawn ({e})", r.label);
             }
             r.failed = true;
         }
     }
+    crate::profile::actor_spawns(spawn_stats.equipment_spawns, spawn_stats.record_spawns);
 }
 
 /// The residents' state when the app exits (smoke tests read it).
@@ -2519,11 +2852,90 @@ pub fn report(
         p.coming_updates,
         p.reached_loaded
     );
+    info!(
+        "arrival summary: {} residents put at their package's place behind a loading screen, {} seated at once on their furniture; {} left where they were (in the loaded area before the trip)",
+        core.arrivals[0], core.arrivals[1], core.arrivals[2]
+    );
+}
+
+/// Whether an actor out of the loaded area takes its cell into the cell buffer, when the
+/// buffer does not hold it: one already at Mid-High walking on into another cell, and one
+/// going from the loaded area through a door into an interior (`into_interior`: it has
+/// been drawn there, and is in an interior now). One walking out of the
+/// loaded area in a worldspace does not, so it drops to Low (#958).
+fn carries_cell(high: bool, buffered: bool, new_cell: bool, into_interior: bool, level: fnv_ai::ProcessLevel) -> bool {
+    use fnv_ai::ProcessLevel::{High, MidHigh};
+    !high && !buffered && ((new_cell && level == MidHigh) || (into_interior && level == High))
+}
+
+/// The process level for an actor: High in the loaded area, Coming on its way in, Mid-High
+/// in the cell buffer, Low beyond.
+fn level_for(high: bool, coming: bool, buffered: bool) -> fnv_ai::ProcessLevel {
+    match (high, coming, buffered) {
+        (true, _, _) => fnv_ai::ProcessLevel::High,
+        (false, true, _) => fnv_ai::ProcessLevel::Coming,
+        (false, false, true) => fnv_ai::ProcessLevel::MidHigh,
+        (false, false, false) => fnv_ai::ProcessLevel::Low,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{RunEnd, StopRun};
+    use super::{carries_cell, level_for, recently_loaded, RunEnd, StopRun, RECENTLY_LOADED_HOURS};
+    use fnv_ai::ProcessLevel;
+    use fnv_sim::FormId;
+    use std::collections::HashMap;
+
+    #[test]
+    fn private_world_prefetch_matches_resident_spawn_even_with_a_shared_world() {
+        use super::{Clock, Residents};
+        use crate::outfits::tests::{actor_forms, appearance_world, empty_world_data, equipped, game, OTHER};
+        let world = appearance_world();
+        let forms = Box::leak(Box::new(actor_forms(vec![])));
+        let refs = Box::leak(Box::new(fnv_sim::RefTable::default()));
+        let mut private = fnv_sim::World::new(forms, refs, Default::default());
+        let mut shared = fnv_sim::World::new(forms, refs, Default::default());
+        let id = private.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap();
+        assert_eq!(shared.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap(), id);
+        private.get(id).unwrap().inventory = Some(equipped());
+        let outsider = private.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap();
+        assert_eq!(shared.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap(), outsider);
+        private.get(outsider).unwrap().inventory = Some(equipped());
+        let mut residents = Residents::build(&empty_world_data(), &[], Clock { hour: 12.0, days_passed: 1.0, rate: 0.0 }, 100.0, true).unwrap();
+        residents.own = Some(Box::new(game(private)));
+        residents.core.known.insert(id.0);
+        let private = &residents.own.as_ref().unwrap().world;
+        let plan = crate::readahead::actor_plan(&world, residents.prefetch_world(id.0, Some(&shared)), id.0, OTHER.0, false).unwrap();
+        assert_eq!(plan, crate::readahead::actor_plan(&world, Some(private), id.0, OTHER.0, false).unwrap());
+        assert_ne!(plan, crate::readahead::actor_plan(&world, Some(&shared), id.0, OTHER.0, false).unwrap());
+        assert!(plan.parts.iter().any(|p| p.ends_with("modded.nif")));
+        assert!(std::ptr::eq(residents.prefetch_world(id.0, None).unwrap(), private));
+        // Even a reference present in the private simulation is not a resident until
+        // it is in known. The placed-reference prefetch must use the shared world.
+        assert!(std::ptr::eq(residents.prefetch_world(outsider.0, Some(&shared)).unwrap(), &shared));
+        assert!(residents.prefetch_world(outsider.0, None).is_none());
+        residents.own = None;
+        assert!(std::ptr::eq(residents.prefetch_world(id.0, Some(&shared)).unwrap(), &shared));
+        assert!(residents.prefetch_world(id.0, None).is_none());
+    }
+
+    /// Out of a house and straight back: the residents seen in the street before are not
+    /// moved by the trip back; those not seen for longer than the memory are (coordinator
+    /// review of #1269).
+    #[test]
+    fn residents_seen_shortly_before_a_trip_stay_where_they_are() {
+        let (street, earlier, never) = (FormId(0x100), FormId(0x101), FormId(0x102));
+        // GameDaysPassed 5 at 12:00, as game hours; the street seen until 12:00, the
+        // other a day before.
+        let at: HashMap<FormId, f64> = [(street, 5.5 * 24.0), (earlier, 4.5 * 24.0)].into();
+        // Out to Doc Mitchell's and back 20 game minutes later.
+        let back = 5.5 * 24.0 + 20.0 / 60.0;
+        let kept = recently_loaded(&at, back);
+        assert!(kept.contains(&street));
+        assert!(!kept.contains(&earlier) && !kept.contains(&never));
+        // A fast travel's hours later, nobody of the place left is kept.
+        assert!(recently_loaded(&at, 5.5 * 24.0 + RECENTLY_LOADED_HOURS + 0.1).is_empty());
+    }
 
     fn ends(frames: &[bool]) -> Vec<RunEnd> {
         let mut run = StopRun::default();
@@ -2547,5 +2959,43 @@ mod tests {
         assert_eq!(ends(&[false, true, false, false, false, true, false, false, false, false, true]), vec![RunEnd::SetOff, RunEnd::Stop(3), RunEnd::Stop(4)]);
         // Standing at the end of a walk ends nothing.
         assert_eq!(ends(&[true, true, false, false]), vec![]);
+    }
+
+    /// The original's Victor walked out of the loaded area from process level 0 straight to
+    /// 3, never 1 (#958): a High actor stepping out into a cell the buffer does not hold
+    /// does not carry the cell, so it is Low on the next pass.
+    #[test]
+    fn walking_out_of_the_loaded_area_drops_to_low() {
+        // The frame it steps out: it was High, the new cell is neither drawn nor buffered.
+        assert!(!carries_cell(false, false, true, false, ProcessLevel::High));
+        assert!(!carries_cell(false, false, false, false, ProcessLevel::High));
+        assert_eq!(level_for(false, false, false), ProcessLevel::Low);
+        // Into a cell the buffer already holds: Mid-High.
+        assert_eq!(level_for(false, false, true), ProcessLevel::MidHigh);
+    }
+
+    #[test]
+    fn mid_high_walking_on_into_another_cell_takes_it_along() {
+        assert!(carries_cell(false, false, true, false, ProcessLevel::MidHigh));
+        // Same cell, a held cell, or back in the loaded area: nothing to carry.
+        assert!(!carries_cell(false, false, false, false, ProcessLevel::MidHigh));
+        assert!(!carries_cell(false, true, true, false, ProcessLevel::MidHigh));
+        assert!(!carries_cell(true, false, true, false, ProcessLevel::MidHigh));
+        // Low actors walking about beyond the buffer never pull cells in.
+        assert!(!carries_cell(false, false, true, false, ProcessLevel::Low));
+        assert_eq!(level_for(true, false, false), ProcessLevel::High);
+        assert_eq!(level_for(false, true, false), ProcessLevel::Coming);
+    }
+
+    /// Interiors behind the loaded area's doors read Mid-Low in the original (audit §3.1):
+    /// Benny riding the lift from the casino into the presidential suite keeps the suite.
+    #[test]
+    fn going_through_a_door_into_an_interior_takes_it_along() {
+        assert!(carries_cell(false, false, true, true, ProcessLevel::High));
+        assert!(carries_cell(false, false, false, true, ProcessLevel::High));
+        // Already Low, or the interior is held or loaded: nothing to carry.
+        assert!(!carries_cell(false, false, true, true, ProcessLevel::Low));
+        assert!(!carries_cell(false, true, true, true, ProcessLevel::High));
+        assert!(!carries_cell(true, false, true, true, ProcessLevel::High));
     }
 }

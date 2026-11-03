@@ -33,12 +33,13 @@ use crate::game::{event, Game};
 use crate::package::flags;
 use fnv_script::vm::Value;
 use fnv_sim::FormId;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const AGGRESSION: u16 = crate::actor_values::AGGRESSION;
 
 /// An actor's detection state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 pub enum State {
     #[default]
     Normal,
@@ -98,7 +99,7 @@ impl State {
 }
 
 /// CreateDetectionEvent's event types [documented: GECK wiki CreateDetectionEvent].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum EventType {
     Bullet,
     Beam,
@@ -127,7 +128,7 @@ impl EventType {
 }
 
 /// Why an alarm is on an actor's alert list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Cause {
     /// A hostile it noticed (above −20, not detected).
     Noticed,
@@ -154,7 +155,7 @@ impl Cause {
 }
 
 /// An entry of an actor's alert list: something of `owner` happened at `at`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Alarm {
     pub owner: FormId,
     /// Game space.
@@ -169,7 +170,7 @@ pub struct Alarm {
 }
 
 /// An entry of an actor's target list.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Target {
     /// The band and value of the latest measurement.
     pub band: Band,
@@ -264,7 +265,7 @@ pub struct Said {
 }
 
 /// One actor's detection state, alert list and target list.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Awareness {
     pub state: State,
     /// `Game::time` the state began.
@@ -282,6 +283,11 @@ pub struct Awareness {
     pub committed: bool,
     /// Where it stood at its latest measurement (game space), for the commitment.
     pub at: Option<[f32; 3]>,
+    /// When a member of its combat group last detected each of its targets
+    /// ([`Game::share_sightings`]): a target a mate still detects is neither lost nor
+    /// forgotten (docs/spec-notes/combat-groups.md §3).
+    #[serde(default)]
+    pub shared: BTreeMap<FormId, f64>,
 }
 
 /// A fighter keeps its target while it detects it, unless another detected one is more
@@ -369,6 +375,7 @@ impl Awareness {
     /// Forget an actor (dead, gone, no longer hostile).
     pub fn forget(&mut self, who: FormId) {
         self.targets.remove(&who);
+        self.shared.remove(&who);
         self.alarms.retain(|a| a.owner != who);
     }
 
@@ -394,7 +401,21 @@ impl Awareness {
     /// become Alert (its package does not forbid it). Returns the change, if any.
     pub fn settle(&mut self, actor: FormId, now: f64, t: &Timers, may_alert: bool) -> Option<Change> {
         self.alarms.retain(|a| a.expires > now);
-        self.targets.retain(|_, x| !x.hidden_since.is_some_and(|h| now - h >= t.forget_target));
+        // A target a member of its group detected within the forget timer stays on the
+        // list (docs/spec-notes/combat-groups.md §3).
+        let shared = &self.shared;
+        self.targets.retain(|id, x| !x.hidden_since.is_some_and(|h| now - h >= t.forget_target) || shared.get(id).is_some_and(|s| now - s < t.forget_target));
+        self.shared.retain(|id, _| self.targets.contains_key(id));
+        // Called by an ally and not fighting yet: it takes the alarm's owner, the first of
+        // the foe's side to start, while it detects it (§2).
+        if self.fighting.is_none() {
+            let called = self.alarms.iter().filter(|a| a.cause == Cause::Ally).max_by(|a, b| a.refreshed.total_cmp(&b.refreshed)).map(|a| a.owner);
+            if let Some(owner) = called.filter(|o| self.targets.get(o).is_some_and(|x| x.band == Band::Detected)) {
+                self.fighting = Some(owner);
+                self.fighting_since = now;
+                self.committed = true;
+            }
+        }
         let detected = self.combat_target().map(|(id, x)| (id, x.value, x.at));
         // A new target starts the commitment; one out of sight is remembered, so the
         // fighter goes back to it when it shows again.
@@ -415,9 +436,9 @@ impl Awareness {
             (State::Combat, None, _) => {
                 if self.targets.is_empty() && latest.is_none() {
                     (State::Normal, None, None, None, None)
-                } else if self.targets.values().all(|x| x.detected.is_none_or(|d| now - d >= t.lost)) {
-                    // Every target undetected long enough: search where each was last
-                    // known to be.
+                } else if self.targets.iter().all(|(id, x)| x.detected.into_iter().chain(self.shared.get(id).copied()).all(|d| now - d >= t.lost)) {
+                    // Every target undetected long enough, by it and by every member of
+                    // its group: search where each was last known to be.
                     let lost: Vec<(FormId, Target)> = self.targets.iter().map(|(id, x)| (*id, *x)).collect();
                     for (id, x) in &lost {
                         self.alarm(*id, x.at, x.value, Cause::LostTarget, now, t);
@@ -443,6 +464,7 @@ impl Awareness {
             self.alarms.clear();
             self.fighting = None;
             self.committed = false;
+            self.shared.clear();
         }
         Some(Change { actor, from, to, time: now, about, cause, at, value })
     }
@@ -767,6 +789,7 @@ impl Game<'_> {
     pub fn settle_awareness(&mut self) {
         let t = self.awareness_timers();
         let now = self.time;
+        self.share_sightings();
         let ids: Vec<FormId> = self.awareness.actors.keys().copied().collect();
         for id in ids {
             if !self.present(id) || self.is_dead(id) || self.extra.get(&id).is_some_and(|e| e.dead) {
@@ -807,6 +830,10 @@ impl Game<'_> {
                 if c.to == State::Normal {
                     self.provocations.calm(id);
                     self.awareness.tactics.calm(id);
+                }
+                // When it first fought in this fight, for the alarms' first starter.
+                if c.to == State::Combat {
+                    self.awareness.tactics.started.entry(id).or_insert(now);
                 }
                 self.awareness.changes.push(c);
                 if let Some(topic) = c.from.topic_to(c.to) {
@@ -1029,6 +1056,10 @@ impl Game<'_> {
     /// run on "Combat Target" runs on (docs/spec-notes/packages.md §7.5).
     pub fn combat_target_of(&self, r: FormId) -> Option<FormId> {
         let a = self.awareness.get(r).filter(|a| a.state == State::Combat)?;
+        // ITR's ForceCombatTarget over the actor's own choice (`crate::nvse_itr2`).
+        if let Some(t) = self.itr_forced_target(r) {
+            return Some(t);
+        }
         a.combat_target().map(|(t, _)| t)
     }
 }
@@ -1072,7 +1103,7 @@ impl Game<'_> {
     /// Whether `actor` has its weapon out for alertness: SetAlert or a combat state
     /// ([`get_is_alerted`]).
     pub fn is_alerted(&self, actor: FormId) -> bool {
-        self.extra.get(&actor).is_some_and(|e| e.alerted) || self.awareness.state(actor).in_combat()
+        self.extra.get(&actor).is_some_and(|e| e.alerted) || self.awareness.state(actor).in_combat() || self.itr_alert(actor)
     }
 
     /// Whether `actor` draws its weapon (a creature its unarmed stance): alerted, or
@@ -1249,6 +1280,49 @@ mod tests {
         assert!(a.targets.contains_key(&FOE), "lost before it is forgotten");
         assert_eq!(step(&mut a, s + t.lost + t.alarm - 0.5), None, "the alarm still runs");
         assert_eq!(step(&mut a, s + t.lost + t.alarm), Some((State::Lost, State::Normal)));
+    }
+
+    #[test]
+    fn a_target_a_mate_detects_is_neither_lost_nor_forgotten() {
+        // #972 (docs/spec-notes/combat-groups.md §3): hidden from it for longer than both
+        // timers, but a member of its group saw it half a second ago.
+        let t = Timers::default();
+        let mut a = Awareness::default();
+        a.observe(FOE, &det(10.0), [0.0; 3], 0.0, &t);
+        step(&mut a, 0.0);
+        a.observe(FOE, &det(-50.0), [0.0; 3], 0.5, &t);
+        let end = t.lost.max(t.forget_target) + 5.0;
+        let mut s = 1.0;
+        while s <= end {
+            a.shared.insert(FOE, s - 0.5);
+            assert_eq!(step(&mut a, s), None, "at {s}");
+            s += 1.0;
+        }
+        assert!(a.targets.contains_key(&FOE));
+        // The mates lose it too: Lost the lost timer after their last sighting.
+        let last = s - 1.5;
+        assert_eq!(step(&mut a, last + t.lost - 0.5), None);
+        assert_eq!(step(&mut a, last + t.lost), Some((State::Combat, State::Lost)));
+    }
+
+    #[test]
+    fn a_fighter_called_by_an_ally_takes_the_alarms_owner() {
+        // #972 (combat-groups.md §2): alarmed about FOE2 (the first of the foes to start),
+        // it detects FOE far better, yet takes FOE2 while it detects it.
+        let t = Timers::default();
+        let mut a = Awareness::default();
+        a.alarm(FOE2, [0.0; 3], 0.0, Cause::Ally, 0.0, &t);
+        step(&mut a, 0.0);
+        a.observe(FOE, &det(10.0 + TARGET_KEEP_MARGIN + 30.0), [0.0; 3], 1.0, &t);
+        a.observe(FOE2, &det(10.0), [0.0; 3], 1.0, &t);
+        assert_eq!(step(&mut a, 1.0), Some((State::Alert, State::Combat)));
+        assert_eq!(a.combat_target().map(|x| x.0), Some(FOE2));
+        // Without the call it takes the one it detects best.
+        let mut b = Awareness::default();
+        b.observe(FOE, &det(10.0 + TARGET_KEEP_MARGIN + 30.0), [0.0; 3], 1.0, &t);
+        b.observe(FOE2, &det(10.0), [0.0; 3], 1.0, &t);
+        step(&mut b, 1.0);
+        assert_eq!(b.combat_target().map(|x| x.0), Some(FOE));
     }
 
     #[test]

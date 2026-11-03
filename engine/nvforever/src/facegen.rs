@@ -120,6 +120,12 @@ impl FaceGenCache {
         self.egm.contains_key(path) || self.egt.contains_key(path)
     }
 
+    /// `morph` tries shape-specific files only after the whole model's EGM is known
+    /// absent [design: `morph`]. Read-ahead discovers those names from prepared parts.
+    pub fn needs_shape_egms(&self, model: &str) -> bool {
+        matches!(self.egm.get(&sibling(model, "egm")), Some(None))
+    }
+
     /// A FaceGen file read ahead on a worker thread ([`read_file`]); kept unless it has
     /// been read here meanwhile.
     pub fn offer(&mut self, path: String, file: FaceGenFile) {
@@ -264,6 +270,21 @@ fn offset_image(columns: usize, rows: usize, planes: &[Vec<f32>; 3]) -> Result<I
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absent_whole_egm_discovers_shape_files_and_missing_files_finish_readiness() {
+        let mut cache = FaceGenCache::default();
+        assert!(!cache.needs_shape_egms("hair.nif"));
+        cache.offer("hair.egm".into(), FaceGenFile::Egm(None));
+        assert!(cache.has("hair.egm"));
+        assert!(cache.needs_shape_egms("hair.nif"));
+        let shape = shape_sibling("hair.nif", "NoHat", "egm");
+        assert!(!cache.has(&shape));
+        cache.offer(shape.clone(), FaceGenFile::Egm(None));
+        assert!(cache.has(&shape));
+        cache.offer("head.egt".into(), FaceGenFile::Egt(None));
+        assert!(cache.has("head.egt"));
+    }
 
     #[test]
     fn siblings() {

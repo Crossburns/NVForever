@@ -16,10 +16,16 @@
 //!   sleep "1 every 50s", which the two settings agree with].
 //! - **Waiting and sleeping** "will also affect your needs" [documented: the help
 //!   message]: an hour waited counts as the seconds of play in which an hour passes at
-//!   the TimeScale (3600 / 30 = 120 s) for the effects' timers and the needs
-//!   [hypothesis]; an hour slept also lowers sleep deprivation by
-//!   [`SLEEP_RECOVERY_PER_HOUR`] instead of raising it [documented: the owner's Hardcore
-//!   table, 2026-10-23, "~ -60/h Sleep"].
+//!   the TimeScale (3600 / 30 = 120 s) for the effects' timers [hypothesis]. Each need
+//!   rises by whole points an hour, the hour's seconds over its rate rounded down
+//!   (120 / 10, 25, 50 = 12, 4, 2) [observed: the owner, 2026-10-31, Hardcore save from
+//!   all needs at 0, Pip-Boy values: 3 hours waited gave H2O 36, FOD 12, SLP 6
+//!   (observer-checks.md item 4, #1177); hypothesis: the rounding down]. An hour slept
+//!   first lowers sleep deprivation by [`SLEEP_RECOVERY_PER_HOUR`] (never below 0)
+//!   [documented: the owner's Hardcore table, 2026-10-23, "~ -60/h Sleep"] and then
+//!   raises it by the hour's points as a wait does [observed: 3 hours slept from 0 gave
+//!   SLP 2, H2O 36, FOD 12, the same owner's check; hypothesis: the order, which is
+//!   what leaves 2 and not 0; one case].
 //! - **Stages**: RADS, DEHY, HUNG and SLPD records give from which value each stage holds
 //!   and its actor effect (200 Minor … 1000 Fatal). The player has the effect of the
 //!   highest stage reached, added as AddSpell adds it, and loses it when the value drops
@@ -32,7 +38,9 @@
 //!   `HelpHealingLimbs`, "to heal a crippled limb, you have three choices: sleep in a
 //!   bed, find a doctor, or use a Stimpak"; "In Hardcore Mode, you may only heal crippled
 //!   limbs by using Doctor's Bags or by visiting a doctor"; hypothesis: the first hour
-//!   heals them all] (docs/spec-notes/crippled-limbs.md §6).
+//!   heals them all] (docs/spec-notes/crippled-limbs.md §6). The same sleep restores
+//!   all Health; in Hardcore it heals neither [observed: the owner, 2026-10-31, "outside
+//!   Hardcore a sleep restores Health and every crippled limb in full"; #1177].
 //! - Only the player has needs here [design].
 
 use crate::aid::{DEHYDRATION, HUNGER, RAD_LEVEL, SLEEP_DEPRIVATION};
@@ -73,6 +81,21 @@ pub struct Passed {
     pub effects_ended: usize,
     /// Crippled limbs the sleep healed (condition codes).
     pub limbs_healed: Vec<u16>,
+    /// The Health the sleep restored (outside Hardcore).
+    pub health_restored: f64,
+}
+
+/// Points of a need for `step` hour(s) whose whole hour's share is `share` points: whole
+/// points of a share of one or more, else the share added to `carry` and its whole points
+/// taken out ([`Game::need_hour_points`]).
+pub fn hour_points(share: f64, step: f64, carry: &mut f64) -> f64 {
+    if share >= 1.0 {
+        return share.floor() * step;
+    }
+    *carry += share * step;
+    let whole = (*carry + 1e-9).floor();
+    *carry = (*carry - whole).max(0.0);
+    whole
 }
 
 impl Game<'_> {
@@ -98,6 +121,7 @@ impl Game<'_> {
             for (code, _, _) in NEEDS {
                 let _ = fa::set_current(self, p, code, 0.0);
             }
+            self.player.need_carry.clear();
             self.update_need_stages();
         }
     }
@@ -133,9 +157,21 @@ impl Game<'_> {
         self.world.time_scale().filter(|s| *s > 0.0).unwrap_or(DEFAULT_TIME_SCALE)
     }
 
+    /// Points a need rises in `step` (at most one) hour waited or slept: the hour's share,
+    /// its seconds of play over the need's rate, rounded down to whole points (module
+    /// notes). A share under one point (TimeScale above 72 for sleep deprivation) would
+    /// round to nothing, so it builds up from hour to hour instead and gives a point
+    /// whenever a whole one is reached [design: keeps the long-run rate; the original at
+    /// TimeScale 30, where every share is over one point, is matched as before].
+    pub fn need_hour_points(&mut self, code: u16, step: f64) -> f64 {
+        let share = 3600.0 / self.time_scale() / self.need_rate(code);
+        hour_points(share, step, self.player.need_carry.entry(code).or_default())
+    }
+
     /// `hours` of a wait or a sleep have passed on the clock (the caller moved the
     /// calendar): active effects advance by the seconds of play those hours stand for,
-    /// needs rise (Hardcore), a sleep lowers sleep deprivation, and stages follow.
+    /// needs rise (Hardcore) hour by hour, a sleep lowers sleep deprivation, and stages
+    /// follow. A sleep outside Hardcore restores Health and heals crippled limbs.
     pub fn pass_hours(&mut self, hours: f64, sleeping: bool) -> Passed {
         let seconds = hours.max(0.0) * 3600.0 / self.time_scale();
         let p = FormId::PLAYER_REF;
@@ -146,17 +182,29 @@ impl Game<'_> {
         let effects_ended = started.iter().filter(|id| !self.effects.iter().any(|e| e.id == **id)).count();
         let mut needs = Vec::new();
         if self.hardcore() {
-            for (code, _, _) in NEEDS {
-                let from = fa::actor_value(self, p, code).unwrap_or(0.0);
-                let by = if sleeping && code == SLEEP_DEPRIVATION { -SLEEP_RECOVERY_PER_HOUR * hours } else { seconds / self.need_rate(code) };
-                self.shift_need(code, by);
-                needs.push((code, from, fa::actor_value(self, p, code).unwrap_or(0.0)));
+            let from: Vec<f64> = NEEDS.iter().map(|n| fa::actor_value(self, p, n.0).unwrap_or(0.0)).collect();
+            let mut left = hours.max(0.0);
+            while left > 0.0 {
+                let step = left.min(1.0);
+                left -= step;
+                for (code, _, _) in NEEDS {
+                    if sleeping && code == SLEEP_DEPRIVATION {
+                        self.shift_need(code, -SLEEP_RECOVERY_PER_HOUR * step);
+                    }
+                    let by = self.need_hour_points(code, step);
+                    self.shift_need(code, by);
+                }
+            }
+            for (i, (code, _, _)) in NEEDS.into_iter().enumerate() {
+                needs.push((code, from[i], fa::actor_value(self, p, code).unwrap_or(0.0)));
             }
         }
         self.update_need_stages();
-        let limbs_healed = if sleeping && hours > 0.0 && !self.hardcore() { self.heal_limbs(p) } else { Vec::new() };
+        let healing = sleeping && hours > 0.0 && !self.hardcore();
+        let limbs_healed = if healing { self.heal_limbs(p) } else { Vec::new() };
+        let health_restored = if healing { self.restore_health(p) } else { 0.0 };
         self.emit(EventKind::TimePassed { hours, seconds, sleeping });
-        Passed { seconds, needs, effects_ended, limbs_healed }
+        Passed { seconds, needs, effects_ended, limbs_healed, health_restored }
     }
 
     /// Take away the damage of every limb condition of `r`; the crippled ones healed.
@@ -168,6 +216,14 @@ impl Game<'_> {
             }
         }
         crippled
+    }
+
+    /// Take away all the damage to `r`'s Health; the amount restored.
+    pub fn restore_health(&mut self, r: FormId) -> f64 {
+        let code = crate::actor_values::HEALTH;
+        let d = fa::damage(self, r, code);
+        fa::restore(self, r, code, d);
+        d
     }
 
     /// The player gets the effect of the stage each need (and rads) has reached, and
@@ -215,7 +271,21 @@ mod tests {
     fn the_masters_rates_make_dehydration_fastest_and_sleep_slowest() {
         let rate = |c: u16| NEEDS.iter().find(|n| n.0 == c).unwrap().2;
         assert!(rate(DEHYDRATION) < rate(HUNGER) && rate(HUNGER) < rate(SLEEP_DEPRIVATION));
-        // An hour waited at TimeScale 30 is 120 s of play: 4.8 points of hunger.
+        // An hour waited at TimeScale 30 is 120 s of play: 4.8 points of hunger, which
+        // waits and sleeps round down to 4.
         assert!((120.0 / rate(HUNGER) - 4.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_share_under_a_point_builds_up_over_the_hours() {
+        // TimeScale 120: an hour is 30 s of play, 0.6 of a point of sleep deprivation;
+        // ten hours give 6, not 0.
+        let mut carry = 0.0;
+        let hours: Vec<f64> = (0..10).map(|_| hour_points(3600.0 / 120.0 / 50.0, 1.0, &mut carry)).collect();
+        assert_eq!(hours, [0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0]);
+        // At TimeScale 30 hunger's 4.8 stays 4 an hour, as the original gave (#1177).
+        let mut carry = 0.0;
+        assert_eq!((0..3).map(|_| hour_points(4.8, 1.0, &mut carry)).sum::<f64>(), 12.0);
+        assert_eq!(carry, 0.0);
     }
 }

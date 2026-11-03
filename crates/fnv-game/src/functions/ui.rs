@@ -271,7 +271,22 @@ pub fn set_special_points(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, St
         n = n.max(sum);
     }
     g.ui.special = Some(SpecialMenu::Set(n));
-    g.open_menu(if revision { menus::TAG_SKILLS } else { menus::LOVE_TESTER });
+    // Always the attributes page: the Vigor Tester is ShowLoveTesterMenuParams's menu
+    // alone, New Vegas's call at Doc Mitchell's [design: owner 2026-11-02, Tale of Two
+    // Wastelands' character rebuild at Vault 101's exit (SetSPECIALPoints 40) showed the
+    // Vigor Tester; one function, one menu, instead of telling the calls apart].
+    g.open_menu(menus::TAG_SKILLS);
+    none()
+}
+
+/// `ShowSPECIALBookMenuParams n` (`ssbmp`): Fallout 3's S.P.E.C.I.A.L. book, a menu to
+/// distribute or redistribute the points up to `n` in all [documented: GECK wiki
+/// ShowSPECIALBookMenuParams]. NVForever has no book menu: it opens the attributes page
+/// as SetSPECIALPoints does [design: owner 2026-11-02, "the intense training special
+/// menu"; Tale of Two Wastelands' CG01SpecialBookSCRIPT calls `ssbmp 40`].
+pub fn show_special_book_menu(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    g.ui.special = Some(SpecialMenu::Set(a.int(0)?));
+    g.open_menu(menus::TAG_SKILLS);
     none()
 }
 

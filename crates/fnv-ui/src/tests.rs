@@ -418,6 +418,38 @@ fn a_loose_replacement_draws_only_what_the_archived_file_lacks() {
 }
 
 #[test]
+fn the_archived_copy_under_a_loose_file_gives_the_names_compared_with() {
+    // [design] One source holds both copies of the menu file (as the VFS does since #975);
+    // the archived one includes a prefab a mod also replaced loose.
+    let src = MemSource::default()
+        .with_loose_over(
+            "menus/m.xml",
+            r#"<menu name="M"><rect name="Piece"><include src="p.xml"/><image name="ModBar"/></rect></menu>"#,
+            r#"<menu name="M"><rect name="Piece"><include src="p.xml"/></rect></menu>"#,
+        )
+        .with_loose_over("menus/prefabs/p.xml", r#"<text name="Label"/><text name="ModLabel"/>"#, r#"<text name="Label"/>"#)
+        .with("menus/other.xml", r#"<menu name="Other"/>"#)
+        .with_loose("menus/new.xml", r#"<menu name="New"/>"#);
+    let mut ui = Ui::new();
+    let root = ui.load_menu(&src, "menus/m.xml").unwrap();
+    assert_eq!(ui.mod_added_tiles(root), [root]);
+    let vanilla = Ui::archived_name_paths(&src, "menus/m.xml").unwrap();
+    let mut expected: Vec<&str> = vec!["m", "m/piece", "m/piece/label"];
+    let mut got: Vec<&str> = vanilla.iter().map(String::as_str).collect();
+    got.sort();
+    expected.sort();
+    assert_eq!(got, expected);
+    let mut drawn: Vec<String> = ui.name_paths(root).into_iter().filter(|p| ui.mod_tile_drawn(ui.find_tile(p).unwrap(), Some(&vanilla))).collect();
+    drawn.sort();
+    assert_eq!(drawn, ["m/piece/modbar", "m/piece/modlabel"]);
+    // A file that is not loose reads as it wins; a loose file with no archive under it
+    // has no archived copy.
+    assert_eq!(src.read_archived("Menus/Other.xml"), src.read("menus/other.xml"));
+    assert!(src.read_archived("menus/new.xml").is_none());
+    assert!(Ui::archived_name_paths(&src, "menus/new.xml").is_none());
+}
+
+#[test]
 fn game_strings_resolve_from_the_load_order_then_the_built_in_table() {
     // menu-xml.md §2.4 (T10): `&-sName;` reads the load order's GMST, then the built-in
     // table; a name in neither reads empty. Synthetic names and text only.

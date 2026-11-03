@@ -1474,7 +1474,7 @@ _FREFS = {"doc": "104C0F", "chet": "104C79", "joecobb": "104C68", "sunny": "104E
           "hidden.16941d": "16941D", "hidden.1690f1": "1690F1", "hidden.e7514": "E7514", "hidden.101a47": "101A47"}
 _HF = ("ref rPlayer\nref rF\nref rItem\nfloat fRes\nstring_var sText\nBegin Function { }\n" + _form("rPlayer", NF["player"]))
 _FLAGS_OF = ('if IsFormValid rF\n  SetFunctionValue (sv_Construct "%g %g" (GetFlagsLow rF) (rF.GetDisabled))\n'
-             'else\n  SetFunctionValue "none"\nendif')
+             'else\n  SetFunctionValue \"none\"\nendif')
 _AUXF = 'let rF := rPlayer.AuxVarGetRef "*nvfFL"\n'
 
 
@@ -2143,6 +2143,50 @@ KNVSE_PROBES = [
     _kn("kn.player.paths", "let aA := rPlayer.GetPlayingAnimSequencePaths\n" + _JOIN, True),
     _kn("kn.player.animplaying.idle", "SetFunctionValue (rPlayer.IsAnimPlayingAlt Idle)"),
     _kn("kn.cleanup", _GETA + 'rA.Disable\nrA.MarkForDelete\nrPlayer.AuxVarErase "*nvfKA"\nSetFunctionValue 1'),
+]
+
+# Set knvse2 (#1018): kNVSE's second slice on a placed copy of Doc's NPC, as knvse-anim:
+# the animation clock, a sequence's current time, weight and text keys, the blends'
+# refusals, the attributes of a sequence the actor does not play. AllowAttack is not in
+# the installed kNVSE 37 (a runtime compile fails). The placed actor goes at the end.
+_KN2_ATTR = 'let aA := rA.GetAnimationAttributes "' + _KF_SMILE + '"\n'
+KNVSE2_PROBES = [
+    _kn("k2.place", _form("rObj", NF["doc"]) + 'let rA := rPlayer.PlaceAtMe rObj 1\nrPlayer.AuxVarSetRef "*nvfKA" rA\nSetFunctionValue 1'),
+] + [_kn(f"k2.settle{i}", "SetFunctionValue 1") for i in range(1, 6)] + [
+    _knv("k2.global", "Ceil (rA.GetGlobalAnimTime 0)"),
+    _kn("k2.global.set", _GETA + "rA.SetGlobalAnimTime 5 0\nSetFunctionValue (Floor (rA.GetGlobalAnimTime 0))"),
+    _knv("k2.global.next", "Floor (rA.GetGlobalAnimTime 0)"),
+    _kn("k2.play", _GETA + f'rA.PlayAnimationPath "{_KF_SMILE}" 0\nSetFunctionValue (rA.IsAnimSequencePlaying "{_KF_SMILE}")'),
+    _kn("k2.curtime.set", _GETA + f'rA.SetAnimCurrentTime "{_KF_SMILE}" 1.5\nSetFunctionValue (Floor ((rA.GetAnimCurrentTime "{_KF_SMILE}") * 10))'),
+    # The next frame's time is 1.5 plus that frame (16 tenths in a first run, the frames
+    # being slow): whole seconds only.
+    _knv("k2.curtime.next", f'Floor (rA.GetAnimCurrentTime "{_KF_SMILE}")'),
+    # Array elements go through a float first (as the nif-blocks set's _V3).
+    _kn("k2.weight", _GETA + f'rA.SetAnimWeight "{_KF_SMILE}" 0.25\n' + _KN2_ATTR + 'let fRes := aA["seqWeight"]\nSetFunctionValue (Floor (fRes * 100))'),
+    # AddAnimTextKey changes the loaded KF, which every actor shares, and kNVSE 37 has no
+    # function that takes a key off again (no RemoveAnimTextKey page; SetAnimTextKeys
+    # sets one actor's keys and "does nothing" while it plays the sequence). The change
+    # is in the game's memory only, never on disk, and a job is one set per game launch,
+    # which quits after k2.cleanup, so nothing reads the key after this set.
+    _knv("k2.addkey", f'AddAnimTextKey "{_KF_SMILE}" 0.5 "nvfKey"'),
+    _knv("k2.addkey.missing", 'AddAnimTextKey "characters\\_male\\nvfnone.kf" 0.5 "nvfKey"'),
+    _kn("k2.addkey.read", _GETA + _KN2_ATTR + 'let aA := aA["textKeyValues"]\nSetFunctionValue ((ar_Find "nvfKey" aA) >= 0)'),
+    _kn("k2.settextkeys.playing", _GETA + f'rA.SetAnimTextKeys "{_KF_SMILE}" (ar_List 0, 1) (ar_List "nvfA", "nvfB")\n' + _KN2_ATTR
+        + 'let aA := aA["textKeyValues"]\nSetFunctionValue ((ar_Find "nvfA" aA) >= 0)'),
+    _kn("k2.attrs.played", _GETA + _KN2_ATTR + "SetFunctionValue (ar_Size aA)"),
+    _kn("k2.attrs.notplayed", _GETA + f'let aA := rA.GetAnimationAttributes "{_KF_JUMP}"\nSetFunctionValue (ar_Size aA)'),
+    _kn("k2.attrs.noref", f'let aA := GetAnimationAttributes "{_KF_SMILE}"\nSetFunctionValue (ar_Size aA)'),
+    _kn("k2.attrs.state", _GETA + _KN2_ATTR + 'SetFunctionValue aA["state"]'),
+    _kn("k2.attrs.cycle", _GETA + _KN2_ATTR + 'SetFunctionValue aA["cycleType"]'),
+    _kn("k2.attrs.root", _GETA + _KN2_ATTR + 'SetFunctionValue aA["accumRootName"]', True),
+    _kn("k2.bytype.idle", _GETA + "let aA := rA.GetPlayingAnimBySequenceType 0\nSetFunctionValue (ar_Size aA)"),
+    _kn("k2.bytype.special", _GETA + "let aA := rA.GetPlayingAnimBySequenceType 7\nSetFunctionValue (ar_Size aA)"),
+    _knv("k2.crossfade.notplaying", f'rA.CrossFadeAnims "{_KF_H2H}" "{_KF_JUMP}" 0'),
+    _knv("k2.blend.notplaying", f'rA.BlendToAnim "{_KF_H2H}" "{_KF_JUMP}" 0'),
+    _knv("k2.blendpose", f'rA.BlendToAnimFromPose "{_KF_H2H}" 0 0.2'),
+    _knv("k2.additive", f'rA.SetAnimAdditive "{_KF_JUMP}" 0'),
+    _knv("k2.additive.missing", 'rA.SetAnimAdditive "characters\\_male\\nvfnone.kf" 0'),
+    _kn("k2.cleanup", _GETA + 'rA.Disable\nrA.MarkForDelete\nrPlayer.AuxVarErase "*nvfKA"\nSetFunctionValue 1'),
 ]
 
 # Thirty-seventh set (next batch N6): JIP's NIF block functions on a loaded actor (a
@@ -5051,6 +5095,105 @@ JIP5_PROBES = (
 )
 
 
+
+# pp (writes, session only, each change put back where the plugin allows; #1014): ppNVSE
+# (docs/spec-notes/ext-pp.md), installed as VanillaPluginsPlus.dll, on FalloutNV.esm forms
+# [observed: fnvtool esm inventory; fnvtool dialogue lines]: the baseball bat, the 10mm
+# pistol and its silencer, two of Doc Mitchell's lines (one with a 27-character prompt, one
+# without). Read-only probes first. Left out after the first runs: AX_Exists with no form
+# (the game crashed on it), and what did not compile in the game: HasFormTrait with the
+# catalogue's index-first arguments, AX_Find without the deep flag, CreateFormInstance
+# without a key, and a literal -1 argument (the AX probes pass -1 in a variable). The AX keys are dropped at the end; the form instance
+# made here cannot be deleted (the plugin has no such script function) and lives for the
+# session only; pp.file.write writes nvfpp_probe.txt into the game's folder (in-game probes may
+# write the base install; NVForever writes its own layer). Not probed: CallLoop and the
+# instance and item-mod handlers (they run on later frames or on a load),
+# ReplaceItemInInventory (needs an inventory reference), the Devkit-only setters, and the
+# six names the DLL does not register (EvaluateString, GetAllAttachedWeaponMods,
+# GetAllModsInSlot, GetWeaponBase, IsWeaponInstance, NewWeaponInstance).
+PP = {"bat": "421C", "pistol": "434F", "silencer": "129878", "info": "10749E", "info.none": "105570"}
+
+
+def _pp(pid, body, text=False):
+    return (f"pp.{pid}", "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\n"
+            "string_var sText\narray_var aList\nBegin Function { }\n" + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _ppv(pid, key, expr, text=False):
+    return _pp(pid, _form("rObj", PP[key]) + f"SetFunctionValue ({expr})", text)
+
+
+# The instance pp.inst makes, kept under an AX key on the player for the probes after it.
+_INST = 'let rInst := AX_Get "nvfppinst" 0 rP\n'
+
+PP_PROBES = [
+    # ---- read-only ----
+    _pp("third", "SetFunctionValue (IsThirdPerson)"),
+    _pp("sight", "SetFunctionValue (GetCurrentSightingNode)", True),
+    _ppv("static.bat", "bat", "GetFormIDString (GetStaticForm rObj)", True),
+    _ppv("isinst.bat", "bat", "IsFormInstance rObj"),
+    _ppv("hasext.pistol", "pistol", "HasExtendedMods rObj"),
+    _ppv("hasext.pistol.vanilla", "pistol", "HasExtendedMods rObj 1"),
+    _pp("allmods.pistol", _form("rObj", PP["pistol"]) + "let aList := GetAllAttachedMods rObj\n"
+        "SetFunctionValue (ar_Size aList)"),
+    _ppv("akimbo.pistol", "pistol", "IsAkimboForm rObj"),
+    _pp("akimboset.pistol", _form("rObj", PP["pistol"]) + "SetFunctionValue (HasAkimboSet rObj rObj)"),
+    _ppv("trait.pistol", "pistol", 'GetFormTrait 0 rObj "MoveNode"'),
+    _ppv("prompt", "info", "sv_Length (GetTopicPrompt rObj)"),
+    _ppv("prompt.none", "info.none", "sv_Length (GetTopicPrompt rObj)"),
+    # The hypothesis (ext-pp.md §4): the camera looks where the player does; the
+    # differences from the player's angles, and the roll.
+    _pp("camrot", "GetPlayerCameraRotation fA fB fC\n"
+        'SetFunctionValue (sv_Construct "%.0f %.0f %.0f" (fA - (rP.GetAngle X)) fB (fC - (rP.GetAngle Z)))', True),
+    _ppv("ammo.bat", "bat", "GetFormIDString (rP.FindWeaponAmmo rObj)", True),
+    _pp("readfile", 'let aList := pReadFile "Fallout_default.ini"\nSetFunctionValue (ar_Size aList)'),
+    _pp("readfile.lines", 'let aList := pReadFile "Fallout_default.ini" 0 3\nSetFunctionValue (ar_Size aList)'),
+    _pp("ax.none", _form("rObj", PP["bat"]) + 'SetFunctionValue (sv_Construct "%g %g %g" (AX_Exists "nvfppnone" rObj) '
+        '(AX_GetType "nvfppnone" 0 rObj) (AX_Size "nvfppnone" rObj))', True),
+    # ---- writing ----
+    _pp("ax.set", _form("rObj", PP["bat"]) + 'AX_Set 777 "nvfpp" 0 rObj\nAX_Set "Hello" "nvfpp" 1 rObj\n'
+        'let aList := ar_List 4 5 6\nAX_Set aList "nvfpp" 2 rObj\nSetFunctionValue (AX_Size "nvfpp" rObj)'),
+    _ppv("ax.get0", "bat", 'AX_Get "nvfpp" 0 rObj'),
+    _pp("ax.get1", _form("rObj", PP["bat"]) + 'let sText := AX_Get "nvfpp" 1 rObj\nSetFunctionValue sText', True),
+    _pp("ax.get2", _form("rObj", PP["bat"]) + 'let aList := AX_Get "nvfpp" 2 rObj\nSetFunctionValue aList[1]'),
+    _ppv("ax.types", "bat", 'sv_Construct "%g %g %g %g" (AX_GetType "nvfpp" 0 rObj) (AX_GetType "nvfpp" 1 rObj) '
+         '(AX_GetType "nvfpp" 2 rObj) (AX_GetType "nvfpp" 7 rObj)', True),
+    _ppv("ax.exists", "bat", 'sv_Construct "%g %g" (AX_Exists "nvfpp" rObj) (AX_Exists "NVFPP" rObj)', True),
+    _ppv("ax.find", "bat", 'sv_Construct "%g %g %g" (AX_Find "hello" "nvfpp" 0 rObj) (AX_Find 5 "nvfpp" 0 rObj) '
+         '(AX_Find 5 "nvfpp" 1 rObj)', True),
+    _pp("ax.null", _form("rObj", PP["bat"]) + 'let fRes := AX_Null "nvfpp" 0 rObj\n'
+        'SetFunctionValue (sv_Construct "%g %g %g" fRes (AX_GetType "nvfpp" 0 rObj) (AX_Size "nvfpp" rObj))', True),
+    _pp("ax.erase", _form("rObj", PP["bat"]) + 'let fRes := AX_Erase "nvfpp" 0 rObj\n'
+        'SetFunctionValue (sv_Construct "%g %g %g" fRes (AX_Size "nvfpp" rObj) (AX_GetType "nvfpp" 0 rObj))', True),
+    # A literal -1 argument did not compile in the game (run 2): the index from a variable.
+    _pp("ax.drop", _form("rObj", PP["bat"]) + 'let fA := -1\nlet fRes := AX_Erase "nvfpp" fA rObj\n'
+        'SetFunctionValue (sv_Construct "%g %g" fRes (AX_Exists "nvfpp" rObj))', True),
+    _ppv("edid.pistol", "pistol", "GetEditorID rObj", True),
+    _pp("inst", _form("rObj", PP["pistol"]) + 'let rInst := CreateFormInstance rObj "nvfpp"\nAX_Set rInst "nvfppinst" 0 rP\n'
+        'SetFunctionValue (sv_Construct "%g %z %z" (IsFormInstance rInst) (GetFormIDString (GetStaticForm rInst)) '
+        '(GetEditorID rInst))', True),
+    _pp("inst.mod", _INST + _form("rObj", PP["pistol"])
+        + 'SetFunctionValue (sv_Construct "%z %z" (GetFormIDString (GetWeaponItemMod 1 rInst)) '
+        "(GetFormIDString (GetWeaponItemMod 1 rObj)))", True),
+    # A slot name no Devkit file defines.
+    _pp("attach", _INST + _form("rObj", PP["silencer"]) + 'let fRes := AttachMod rInst "nvfslot" rObj\n'
+        "let fA := HasExtendedMods rInst\nlet aList := GetAllAttachedMods rInst\nlet fB := ar_Size aList\n"
+        'AttachMod rInst "nvfslot"\nlet aList := GetAllAttachedMods rInst\n'
+        'SetFunctionValue (sv_Construct "%g %g %g %g %g" fRes fA fB (HasExtendedMods rInst) (ar_Size aList))', True),
+    # A vanilla slot on the instance (session only).
+    _pp("attach.vanilla", _INST + 'let fRes := AttachMod rInst "1"\nlet aList := GetAllAttachedMods rInst\n'
+        'SetFunctionValue (sv_Construct "%g %g" fRes (ar_Size aList))', True),
+    _pp("inst.drop", 'let fA := -1\nSetFunctionValue (AX_Erase "nvfppinst" fA rP)'),
+    _pp("sight.set", 'SetSightingNode "Bip01 Head"\nlet sText := GetCurrentSightingNode\n'
+        'SetSightingNode "##SightingNode"\nSetFunctionValue (sv_Construct "%z %z" sText (GetCurrentSightingNode))', True),
+    # Run 2: the default name did not take; another name does?
+    _pp("sight.set2", 'SetSightingNode "NVFNodeTwo"\nSetFunctionValue (GetCurrentSightingNode)', True),
+    _pp("file.write", 'let aList := ar_List "nvf one" "nvf two"\nSetFunctionValue (pWriteFile "nvfpp_probe.txt" aList)'),
+    _pp("file.read", 'let aList := pReadFile "nvfpp_probe.txt"\nlet sText := aList[1]\n'
+        'SetFunctionValue (sv_Construct "%g %z" (ar_Size aList) sText)', True),
+]
+
+
 # format1 (read-only; #1006): how sv_Construct writes %g, %G and %e in the game (the wiki's
 # "%g as an integer, 1E+006" is the older runtime's; ext-format.md §2), and two texture
 # sets' flags (jip5's open row).
@@ -5099,6 +5242,320 @@ TMPL2_PROBES = [
     )],
 ]
 
+# tmpl3 (#1057): factions and spells where the record's own list and its NPC template's
+# differ (tmpl1's NPC templates all carried the record's own SNAM, so it could not tell)
+# [observed: load-order scan, 842 actors for factions and 345 for spells]. Raider1MeleeAM
+# (own 3 SNAM, Use Factions from Raider1MeleeAAFTEMPLATE with 5); SniperShackRadroach01 (own
+# 1, CrRadroach 2); CrMisterGutsyEnclave (own 1 SPLO, Use Actor Effect List from CrMisterGutsy
+# with 3); Shakes (1, CrProtectron 3); FFEU02DeathClaw (0, CrDeathClaw 1); CrFeralGhoul2B
+# (2, CrFeralGhoul2A's other 2). Then a reference whose Traits come from a leveled list:
+# LvlRaiderRandomMale (own RNAM 0x19; every NPC its list can give has race 0x0004BF72)
+# placed beside the player, read and removed (session only).
+TM3 = {"raider": "0295FA", "roach": "01FEC8", "gutsy": "021EBE", "shakes": "017A03", "claw": "031E29",
+       "feral": "01CF77", "lvlraider": "07E40E"}
+_H3 = ("ref rPlayer\nref rObj\nref rF\narray_var aA\nfloat fRes\nBegin Function { }\n" + _form("rPlayer", NF["player"]))
+_AUX3 = 'let rF := rPlayer.AuxVarGetRef "*nvfT3"\n'
+
+
+def _tm3(pid, key, expr, text=False):
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return (f"tmpl3.{pid}", _H3 + _form("rObj", TM3[key]) + rd, bool(text), None, "")
+
+
+def _tm3ref(pid, expr, text=False):
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return (f"tmpl3.{pid}", _H3 + _AUX3 + rd, bool(text), None, "")
+
+
+TMPL3_PROBES = [
+    *[p for k in ("raider", "roach") for p in (
+        _tm3(f"{k}.factions", k, "GetBaseNumFactions rObj"),
+        _tm3(f"{k}.faction0", k, "GetBaseNthFaction 0 rObj", "form"),
+        _tm3(f"{k}.rank0", k, "GetBaseNthRank 0 rObj"),
+        _tm3(f"{k}.basefactions", k, "ar_Size (GetBaseFactions rObj)"),
+    )],
+    *[p for k in ("gutsy", "shakes", "claw", "feral") for p in (
+        _tm3(f"{k}.spells", k, "ar_Size (GetBaseSpellListSpells rObj)"),
+        _tm3(f"{k}.spell0", k, "(GetBaseSpellListSpells rObj)[0]", "form"),
+    )],
+    ("tmpl3.lvlraider.place", _H3 + _form("rObj", TM3["lvlraider"]) + 'let rF := rPlayer.PlaceAtMe rObj 1\n'
+     'rPlayer.AuxVarSetRef "*nvfT3" rF\nSetFunctionValue 1', False, None, ""),
+    _tm3ref("lvlraider.race", "GetRace rF", "form"),
+    _tm3ref("lvlraider.class", "GetClass rF", "form"),
+    _tm3ref("lvlraider.base", "rF.GetBaseObject", "form"),
+    _tm3ref("lvlraider.baserace", "GetRace (rF.GetBaseObject)", "form"),
+    _tm3("lvlraider.recordrace", "lvlraider", "GetRace rObj", "form"),
+    ("tmpl3.lvlraider.cleanup", _H3 + _AUX3 + 'rF.Disable\nrF.MarkForDelete\nrPlayer.AuxVarErase "*nvfT3"\nSetFunctionValue 1',
+     False, None, ""),
+]
+
+# itr (writes, session only, each change put back; #1011): the ITR plugin's functions
+# (docs/spec-notes/ext-itr.md) on FalloutNV.esm forms [observed: fnvtool esm inventory]:
+# Doc Mitchell's and Sunny's bases, the Caucasian race and eyes, the casinos, the Mojave
+# worldspace, two greeting lines, GREETING and GOODBYE, perks, the 10mm pistol, the dog.
+# Read-only steps first; each writing step saves what it changes and puts it back in the
+# same step. Settings ITR keeps "in static memory" (fall damage) are cleared by the step.
+ITR = {"doc": "104C0C", "sunnyref": "104E85", "caucasian": "19", "eyeraider": "4CB10", "eyeblue": "4253",
+       "wasteland": "DA726", "info1": "104E7E", "info2": "104E7F", "greeting": "C8", "goodbye": "D4",
+       "toughness": "31DE0", "actionboy": "31DBA", "wildwasteland": "ED568", "intense": "44CB1",
+       "commando": "99828", "gunslinger": "94EBB", "pistol": "434F", "dog": "14F425", "stimpak": "15169",
+       "tops": "144C3F", "ultraluxe": "144C40", "gomorrah": "140521", "wrangler": "144C42", "vikki": "144C41"}
+
+
+def _itr(pid, body, text=False):
+    return (f"itr.{pid}", "ref rP\nref rDoc\nref rObj\nref rOther\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fC\n"
+            "string_var sText\narray_var aA\nBegin Function { }\n"
+            + _form("rP", NF["player"]) + _form("rDoc", NF["docref"]) + body, text, None, "")
+
+
+# one111 (#1012): the 1111 NVSE plugin (OneOneOneOne.dll, installed 2026-11-01;
+# docs/spec-notes/ext-one111.md) on FalloutNV.esm forms [observed: fnvtool esm
+# inventory]: the Brahmin Wellington recipe, HitReactionIdles, Sunny's sleep package,
+# GomorraElevatorMessage, the companion dismissal terminal, the Stealth Boy, the Nerd
+# Rage! spell and perk, Run Goodsprings Run, the 10mm pistol, the varmint and sniper
+# rifles, 5mm hollow point rounds and their DT effect, fxCateye. Read-only getters first;
+# every writing step saves what it changes and puts it back in the same step.
+ONE = {"recipe": "175AAA", "idle": "14F54", "package": "176AD3", "message": "10DDBD", "terminal": "17B7A0",
+       "stealthboy": "43E94", "nerdspell": "44CA4", "nerdperk": "44CA7", "quest": "15EC5B", "pistol": "434F",
+       "varmint": "7EA24", "sniper": "4353", "ammohp": "1613FF", "amefhp": "17BA47", "cateye": "15FF5F"}
+
+
+def _one(pid, body, text=False):
+    return (f"one.{pid}", "ref rP\nref rDoc\nref rObj\nref rOther\nref rSave\nfloat fRes\nfloat fSave\nfloat fN\n"
+            "string_var sText\narray_var aA\nBegin Function { }\n"
+            + _form("rP", NF["player"]) + _form("rDoc", NF["docref"]) + body, text, None, "")
+
+
+def _itrv(pid, key, expr, text=False):
+    return _itr(pid, _form("rObj", ITR[key]) + f"SetFunctionValue ({expr})", text)
+
+
+ITR_PROBES = (
+    # Strings (no page for these three: ext-itr.md §1).
+    [_itr("sv.join", 'let aA := ar_List "a" "b" "c"\nSetFunctionValue (Sv_Join aA "-")', True),
+     _itr("sv.join.nodelim", 'let aA := ar_List "a" "b" "c"\nSetFunctionValue (Sv_Join aA)', True),
+     _itr("sv.reverse", 'SetFunctionValue (Sv_Reverse "abc d")', True),
+     _itr("sv.trim", 'let sText := Sv_TrimStr "  ab c  "\nSetFunctionValue (sv_Construct "[%z]" sText)', True)]
+    # Switches and settings as the save leaves them.
+    + [_itr("fall.global", "SetFunctionValue (GetFallDamageMult)"),
+       _itr("fall.player", "SetFunctionValue (rP.GetFallDamageMult)"),
+       _itr("noweaponsearch.doc", "SetFunctionValue (rDoc.GetNoWeaponSearch)"),
+       _itr("preventswitch.doc", "SetFunctionValue (rDoc.GetPreventWeaponSwitch)"),
+       _itr("contactwatch.doc", "SetFunctionValue (rDoc.GetOnContactWatch)"),
+       _itr("alertns.doc", "SetFunctionValue (rDoc.GetAlertNS)"),
+       _itr("aimzoom", "SetFunctionValue (GetAimZoomFirstPersonOnly)"),
+       _itr("radio.queuesize", "SetFunctionValue (GetRadioQueueSize)"),
+       _itr("dialogue.displayed", "let aA := GetDisplayedDialogueInfos\nSetFunctionValue (ar_Size aA)"),
+       _itr("issaying.doc", _form("rObj", ITR["greeting"]) + "SetFunctionValue (rDoc.IsSaying rObj)"),
+       _itr("rigidbody.player", "SetFunctionValue (rP.IsRigidBodyAtRest)")]
+    # Records.
+    + [_itr(f"hair.doc.{c}", f'SetFunctionValue (sv_Construct "%.0f" (rDoc.GetHairColorAlt {c}))', True) for c in range(4)]
+    + [_itrv(f"hair.sunny.{c}", "sunnyref", f'sv_Construct "%.0f" (rObj.GetHairColorAlt {c})', True) for c in (0, 1)]
+    + [_itrv(f"casino.{k}", k, "GetCasinoBan rObj") for k in ("tops", "ultraluxe", "gomorrah", "wrangler", "vikki")]
+    + [_itrv("casino.notcasino", "doc", "GetCasinoBan rObj")]
+    + [_itrv(f"wrld.{n}", "wasteland", f"GetWorldspaceOffset{s} rObj") for n, s in (("scale", "Scale"), ("x", "X"), ("y", "Y"))]
+    + [_itrv(f"infoflags.{k}", k, "GetDialogueInfoFlags rObj") for k in ("info1", "info2")]
+    # References and doors (the save stands outdoors, Doc indoors).
+    + [_itr("exteriordoor.player", "SetFunctionValue (GetFormIDString (rP.GetRefExteriorDoor))", True),
+       _itr("exteriordoor.doc", "SetFunctionValue (GetFormIDString (rDoc.GetRefExteriorDoor))", True),
+       _itr("nextdoor.doc", "SetFunctionValue (GetFormIDString (rDoc.GetRefNextTeleportDoor))", True),
+       _itr("navmesh.player", "SetFunctionValue (IsPointOnNavmesh (rP.GetPos X) (rP.GetPos Y) (rP.GetPos Z))"),
+       _itr("cover.zero", "let aA := GetCoverPointsInRadius (rP.GetPos X) (rP.GetPos Y) (rP.GetPos Z) 0\nSetFunctionValue (ar_Size aA)")]
+    # Perks: what the records give, then what depends on the player.
+    + [_itr(f"perkcond.{k}.size", _form("rObj", ITR[k]) + "let aA := GetPerkConditions rObj\nSetFunctionValue (ar_Size aA)")
+       for k in ("toughness", "actionboy", "wildwasteland", "intense", "commando", "gunslinger")]
+    + [_itr(f"perkcond.toughness.0.{f}", _form("rObj", ITR["toughness"]) + f'let aA := GetPerkConditions rObj\nSetFunctionValue (aA[0]["{f}"])', t)
+       for f, t in (("function", True), ("comparison", True), ("comparisonValue", False), ("kind", True), ("source", True))]
+    + [_itr(f"perkelig.toughness.{f}", _form("rObj", ITR["toughness"]) + f'let aA := GetPerkEligibility rObj\nSetFunctionValue (aA["{f}"])', t)
+       for f, t in (("name", True), ("maxRank", False), ("ownedRank", False), ("nextRank", False), ("eligible", False), ("status", True))]
+    + [_itr(f"perkelig.{k}.status", _form("rObj", ITR[k]) + 'let aA := GetPerkEligibility rObj\nSetFunctionValue (aA["status"])', True)
+       for k in ("wildwasteland", "actionboy", "commando")]
+    + [_itr("perkblockers.toughness.size", _form("rObj", ITR["toughness"]) + "let aA := GetPerkBlockers rObj\nSetFunctionValue (ar_Size aA)"),
+       _itr("perksforform.pistol.size", _form("rObj", ITR["pistol"]) + "let aA := GetPerksForForm rObj\nSetFunctionValue (ar_Size aA)"),
+       _itr("eligibleperks.size", "let aA := GetEligiblePerks\nSetFunctionValue (ar_Size aA)")]
+    # Writing steps, each put back.
+    + [_itr("fall.set", "let fA := SetFallDamageMult 2\nlet fB := rP.SetFallDamageMult 0.5\n"
+            "let sText := sv_Construct \"%g %g %g %g\" fA fB (GetFallDamageMult) (rP.GetFallDamageMult)\n"
+            "SetFallDamageMult -3\nlet fC := GetFallDamageMult\nClearFallDamageMult\n"
+            'SetFunctionValue (sv_Construct "%z %g %g %g" sText fC (GetFallDamageMult) (rP.GetFallDamageMult))', True),
+       _itr("switches.doc", "let fA := rDoc.SetNoWeaponSearch 1\nlet fB := rDoc.GetNoWeaponSearch\nrDoc.SetNoWeaponSearch 0\n"
+            "let sText := sv_Construct \"%g %g %g\" fA fB (rDoc.GetNoWeaponSearch)\n"
+            "let fA := rDoc.SetPreventWeaponSwitch 1\nlet fB := rDoc.GetPreventWeaponSwitch\nrDoc.SetPreventWeaponSwitch 0\n"
+            "let sText := sv_Construct \"%z %g %g %g\" sText fA fB (rDoc.GetPreventWeaponSwitch)\n"
+            "let fA := rDoc.SetOnContactWatch 1\nlet fB := rDoc.GetOnContactWatch\nrDoc.SetOnContactWatch 0\n"
+            'SetFunctionValue (sv_Construct "%z %g %g %g" sText fA fB (rDoc.GetOnContactWatch))', True),
+       _itr("aimzoom.set", "let fSave := GetAimZoomFirstPersonOnly\nlet fA := SetAimZoomFirstPersonOnly 1\nlet fB := GetAimZoomFirstPersonOnly\n"
+            "let fC := SetAimZoomFirstPersonOnly 0\nSetAimZoomFirstPersonOnly fSave\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB fC (GetAimZoomFirstPersonOnly))', True),
+       _itr("alertns.set", "let fA := rDoc.SetAlertNS 1 10\nlet fB := rDoc.GetAlertNS\nrDoc.SetAlertNS 1\nlet fC := rDoc.GetAlertNS\n"
+            "let fRes := rDoc.GetIsAlerted\nrDoc.SetAlertNS 0\n"
+            'SetFunctionValue (sv_Construct "%g %.0f %g %g %g" fA fB fC fRes (rDoc.GetAlertNS))', True),
+       _itr("hair.set", "let fA := rDoc.GetHairColorAlt 1\nlet fB := rDoc.GetHairColorAlt 2\nlet fC := rDoc.GetHairColorAlt 3\n"
+            "let fRes := rDoc.SetHairColorAlt 300 20 30\n"
+            "let sText := sv_Construct \"%g %g %g %g %.0f\" fRes (rDoc.GetHairColorAlt 1) (rDoc.GetHairColorAlt 2) (rDoc.GetHairColorAlt 3) (rDoc.GetHairColorAlt 0)\n"
+            "rDoc.SetHairColorAlt fA fB fC\n"
+            'SetFunctionValue (sv_Construct "%z | %.0f" sText (rDoc.GetHairColorAlt 0))', True),
+       _itr("infoflags.set", _form("rObj", ITR["info1"]) + "let fSave := GetDialogueInfoFlags rObj\nlet fA := SetDialogueInfoFlags rObj 258\n"
+            "let fB := GetDialogueInfoFlags rObj\nSetDialogueInfoFlags rObj fSave\n"
+            'SetFunctionValue (sv_Construct "%g %g %g" fA fB (GetDialogueInfoFlags rObj))', True),
+       _itr("combatskill.set", _form("rObj", ITR["dog"]) + "let fSave := GetCreatureCombatSkill rObj\nlet fA := SetCreatureCombatSkill 300 rObj\n"
+            "let fB := GetCreatureCombatSkill rObj\nSetCreatureCombatSkill fSave rObj\n"
+            'SetFunctionValue (sv_Construct "%g %g %g" fA fB ((GetCreatureCombatSkill rObj) == fSave))', True),
+       # Mask groups: a key held by two groups stays disabled until both let go
+       # [hypothesis, ext-itr.md §3]; EnableKeyEx without a mask; a code that is no key.
+       _itr("keys.masks", "let fA := DisableKeyEx 87 1\nDisableKeyEx 87 2\nEnableKeyEx 87 1\nlet fB := IsKeyDisabled 87\n"
+            "EnableKeyEx 87 2\nlet fC := IsKeyDisabled 87\n"
+            "DisableKeyEx 87 4\nEnableKeyEx 87\nlet fRes := IsKeyDisabled 87\nEnableKeyEx 87\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g %g" fA fB fC fRes (DisableKeyEx 300))', True),
+       _itr("radio.queue", 'let fA := QueueRadioTrack "nvf\\a.mp3"\nlet fB := QueueRadioTrack "nvf\\a.ogg"\n'
+            'let fC := QueueRadioTrack "C:\\nvf\\b.ogg"\nlet fRes := GetRadioQueueSize\nlet fSave := ClearRadioQueue\n'
+            'SetFunctionValue (sv_Construct "%g %g %g %g %g %g" fA fB fC fRes fSave (GetRadioQueueSize))', True),
+       _itr("topics.rules", _form("rObj", ITR["greeting"]) + _form("rOther", ITR["goodbye"])
+            + "let fA := SetDialogueTopicHidden rObj 1\nSetDialogueTopicHidden rOther 1\nlet fB := SetDialogueTopicOrder rObj 5\n"
+            "let fC := SetDialogueTopicHidden rDoc 1\nlet fRes := ClearDialogueTopicOverrides\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g %g" fA fB fC fRes (ClearDialogueTopicOverrides))', True),
+       _itr("topics.entry.closed", 'SetFunctionValue (AddDialogueTopicEntry "nvf" 5)'),
+       _itr("dialoguecamera.range", 'SetFunctionValue (sv_Construct "%g %g %g" (SetDialogueCameraMode 9) '
+            "(SetDialogueCameraFixedAngle 12) (SetDialogueCameraAngleEnabled 15 1))", True),
+       _itr("raceeye.raider", _form("rObj", ITR["caucasian"]) + _form("rOther", ITR["eyeraider"])
+            + "let fA := AddRaceEye rObj rOther\nlet fB := RemoveRaceEye rObj rOther\n"
+            'SetFunctionValue (sv_Construct "%g %g" fA fB)', True),
+       _itr("eyemesh.set", _form("rObj", ITR["eyeblue"]) + 'let fA := SetEyeMesh rObj "nvf\\eye.nif"\n'
+            "let fB := ClearEyeMesh rObj\n"
+            'SetFunctionValue (sv_Construct "%g %g %g" fA fB (ClearEyeMesh rObj))', True),
+       _itr("tile.watch", 'let fA := WatchTileValue "HUDMainMenu" "_nvfnone"\nlet fB := WatchTileValue "HUDMainMenu" "visible"\n'
+            "let fC := UnwatchTileValue fB\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fA (fB > 0) fC (UnwatchTileValue fB))', True),
+       _itr("gesture.player", 'SetFunctionValue (sv_Construct "%g %g" (rP.Gesture "wave" 1 1) (rP.Gesture "Nod" 0.1 0.2))', True),
+       _itr("emissive.clear", "SetFunctionValue (ClearWeaponEmissiveColor)"),
+       _itr("cameraangle.release", "SetFunctionValue (SetCameraAngle 0 0 0 0)"),
+       _itr("useaid.notaid", _form("rObj", ITR["pistol"]) + "SetFunctionValue (rP.UseAidItem rObj)")]
+    # Last (a hang in them costs nothing before): which perks GetPerksForForm gives the
+    # pistol and which blockers hold Wild Wasteland back (the first run differed:
+    # ext-itr.md §13). One row per index, no loops and no if blocks (neither compiled
+    # in the game's runtime compiler here); an index past the end is an error row.
+    + [_itr(f"perkblockers.wildwasteland.kind.{i}", _form("rObj", ITR["wildwasteland"])
+            + f'let aA := GetPerkBlockers rObj\nSetFunctionValue (aA[{i}]["kind"])', True) for i in range(2)]
+    + [_itr(f"perksforform.pistol.perk.{i}", _form("rObj", ITR["pistol"])
+            + f'let aA := GetPerksForForm rObj\nSetFunctionValue (GetFormIDString (aA[{i}]["perk"]))', True) for i in range(6)]
+    + [_itr(f"perksforform.pistol.status.{i}", _form("rObj", ITR["pistol"])
+            + f'let aA := GetPerksForForm rObj\nSetFunctionValue (aA[{i}]["status"])', True) for i in range(6)]
+)
+
+
+def _onev(pid, key, expr, text=False):
+    return _one(pid, _form("rObj", ONE[key]) + f"SetFunctionValue ({expr})", text)
+
+
+# FormOne lists, FormTwo (form first), FormThree (form first second): (key, the arguments
+# after the form that name the list).
+_ONE_LISTS = [("One", "recipe", ""), ("One", "idle", ""), ("One", "package", ""),
+              ("Two", "message", " 0"), ("Two", "message", " 1"), ("Two", "terminal", " 0"),
+              ("Two", "stealthboy", " 0"), ("Two", "nerdspell", " 0"),
+              ("Three", "quest", " (-1) 0"), ("Three", "quest", " 0 0"), ("Three", "nerdperk", " (-1) 0"),
+              ("Three", "nerdperk", " 0 0"), ("Three", "nerdperk", " 0 1")]
+
+
+def _lid(fam, key, args):
+    return f"{fam.lower()}.{key}" + args.replace(" (-1)", ".m1").replace(" ", ".")
+
+
+ONE111_PROBES = (
+    [_onev(f"count.{_lid(f, k, a)}", k, f"GetConditionForm{f}Count rObj{a}") for f, k, a in _ONE_LISTS]
+    + [_onev("count.one.pistol", "pistol", "GetConditionFormOneCount rObj"),
+       _onev("count.two.message.9", "message", "GetConditionFormTwoCount rObj 9")]
+    # The first condition of the lists that have one, every value ID of each kind.
+    + [_onev(f"int.{_lid(f, k, a)}.{i}", k, f"GetConditionForm{f}Int rObj{a} 0 {i}")
+       for f, k, a in _ONE_LISTS[:5] for i in range(0, 6)]
+    + [_onev(f"float.{_lid(f, k, a)}.{i}", k, f"GetConditionForm{f}Float rObj{a} 0 {i}")
+       for f, k, a in _ONE_LISTS[:5] for i in range(0, 3)]
+    # The form goes through a ref variable: the game compiles the call as a number, which
+    # GetFormIDString refuses as its argument.
+    + [_one(f"form.{_lid(f, k, a)}.{i}", _form("rObj", ONE[k]) + f"let rOther := GetConditionForm{f}Form rObj{a} 0 {i}\n"
+            "SetFunctionValue (GetFormIDString rOther)", True)
+       for f, k, a in _ONE_LISTS[:5] for i in range(0, 4)]
+    + [_onev("int.one.recipe.9", "recipe", "GetConditionFormOneInt rObj 9 0")]
+    + [_one("eval.one.recipe", _form("rObj", ONE["recipe"]) + "SetFunctionValue (EvalConditionListFormOne rObj rP rP)"),
+       _one("eval.two.message.0", _form("rObj", ONE["message"]) + "SetFunctionValue (EvalConditionListFormTwo rObj 0 rP rP)"),
+       _one("eval.three.quest", _form("rObj", ONE["quest"]) + "SetFunctionValue (EvalConditionListFormThree rObj (-1) 0 rP rP)")]
+    # Outside a damage event.
+    + [_one(f"damage.numb.{i}", f"SetFunctionValue (GetOnDamageCalcNumb {i})") for i in (0, 5)]
+    + [_one("damage.addnumb.0", "SetFunctionValue (GetOnDamageCalcAdditionalNumb 0)"),
+       _one("damage.flag", "SetFunctionValue (GetOnDamageCalcFlag)"),
+       _one("damage.ref.0", "SetFunctionValue (GetFormIDString (GetOnDamageCalcRef 0))", True),
+       _one("damage.setnumb", "SetFunctionValue (SetOnDamageCalcNumb 0 5)")]
+    + [_onev("weap.flag", "pistol", "GetWeapAdditionalFlag rObj 0"),
+       _onev("weap.vector.none", "pistol", "GetWeapAdditionalVectorValue rObj 0 1"),
+       _onev("weap.vector.scale.none", "pistol", "GetWeapAdditionalVectorValueScale rObj 0 0.5"),
+       _one("weap.vector.array.none", _form("rObj", ONE["pistol"]) + "let aA := GetWeapAdditionalVectorArray rObj 0\nSetFunctionValue (ar_Size aA)")]
+    + [_one(f"armor.doc.{k}", f"SetFunctionValue (rDoc.GetActorTotalArmor{k})") for k in ("DR", "DT")]
+    + [_onev(f"ammo.apply.{t}", "ammohp", f"ApplyAmmoEffects rObj {t} 10") for t in range(0, 6)]
+    + [_onev(f"scope.{k}", k, "GetFormIDString (GetWeaponScopeEffectShader rObj)", True) for k in ("varmint", "sniper", "pistol")]
+    + [_one("projammo.player", "SetFunctionValue (GetFormIDString (rP.GetProjectileRefAmmo))", True)]
+    # ---- writing steps, each put back ----
+    # A new condition at the end: GetVampire == 1 on the subject; then deleted.
+    + [_one("add.one.recipe", _form("rObj", ONE["recipe"]) + "let fN := GetConditionFormOneCount rObj\n"
+            "let fRes := AddConditionFormOne rObj\nlet sText := sv_Construct \"%g %g %g %g %g\" fRes (GetConditionFormOneCount rObj) "
+            "(GetConditionFormOneInt rObj fN 0) (GetConditionFormOneFloat rObj fN 0) (GetConditionFormOneInt rObj fN 5)\n"
+            "DeleteConditionFormOne rObj fN\nSetFunctionValue (sv_Construct \"%z %g\" sText (GetConditionFormOneCount rObj))", True),
+       _one("add.one.recipe.at0", _form("rObj", ONE["recipe"]) + "let fSave := GetConditionFormOneInt rObj 0 0\n"
+            "let fRes := AddConditionFormOne rObj 0\nlet sText := sv_Construct \"%g %g %g\" fRes (GetConditionFormOneInt rObj 0 0) "
+            "(GetConditionFormOneInt rObj 1 0)\nDeleteConditionFormOne rObj 0\n"
+            "SetFunctionValue (sv_Construct \"%z %g\" sText ((GetConditionFormOneInt rObj 0 0) == fSave))", True),
+       _one("add.one.recipe.bad", _form("rObj", ONE["recipe"]) + "let fN := GetConditionFormOneCount rObj\n"
+            "let fRes := AddConditionFormOne rObj 40\nSetFunctionValue (sv_Construct \"%g %g\" fRes ((GetConditionFormOneCount rObj) - fN))", True),
+       _one("add.two.message", _form("rObj", ONE["message"]) + "let fN := GetConditionFormTwoCount rObj 0\n"
+            "let fRes := AddConditionFormTwo rObj 0\nlet sText := sv_Construct \"%g %g %g\" fRes (GetConditionFormTwoCount rObj 0) "
+            "(GetConditionFormTwoInt rObj 0 fN 0)\nDeleteConditionFormTwo rObj 0 fN\n"
+            "SetFunctionValue (sv_Construct \"%z %g\" sText (GetConditionFormTwoCount rObj 0))", True),
+       _one("add.three.quest", _form("rObj", ONE["quest"]) + "let fN := GetConditionFormThreeCount rObj (-1) 0\n"
+            "let fRes := AddConditionFormThree rObj (-1) 0\nlet sText := sv_Construct \"%g %g\" fRes (GetConditionFormThreeCount rObj (-1) 0)\n"
+            "DeleteConditionFormThree rObj (-1) 0 fN\nSetFunctionValue (sv_Construct \"%z %g\" sText (GetConditionFormThreeCount rObj (-1) 0))", True),
+       # Two new ones swapped (the record's own conditions are left in place).
+       _one("swap.one.recipe", _form("rObj", ONE["recipe"]) + "let fN := GetConditionFormOneCount rObj\n"
+            "AddConditionFormOne rObj\nAddConditionFormOne rObj\nSetConditionFormOneInt rObj fN 4 3\n"
+            "let fRes := SwapConditionFormOne rObj fN (fN + 1)\n"
+            "let sText := sv_Construct \"%g %g %g\" fRes (GetConditionFormOneInt rObj fN 4) (GetConditionFormOneInt rObj (fN + 1) 4)\n"
+            "let fRes := SwapConditionFormOne rObj fN (fN + 9)\n"
+            "DeleteConditionFormOne rObj (fN + 1)\nDeleteConditionFormOne rObj fN\n"
+            "SetFunctionValue (sv_Construct \"%z %g %g\" sText fRes ((GetConditionFormOneCount rObj) - fN))", True),
+       # A condition's comparison, value and flags on a new one, then the new one deleted.
+       _one("set.one.recipe", _form("rObj", ONE["recipe"]) + "let fN := GetConditionFormOneCount rObj\nAddConditionFormOne rObj\n"
+            "let fRes := SetConditionFormOneInt rObj fN 4 2\nlet sText := sv_Construct \"%g %g\" fRes (GetConditionFormOneInt rObj fN 4)\n"
+            "let fRes := SetConditionFormOneFloat rObj fN 0 7.5\nlet sText := sv_Construct \"%z %g %g\" sText fRes (GetConditionFormOneFloat rObj fN 0)\n"
+            "let fRes := SetConditionFormOneInt rObj fN 5 9\nlet sText := sv_Construct \"%z %g %g\" sText fRes (GetConditionFormOneInt rObj fN 5)\n"
+            "let fRes := SetConditionFormOneInt rObj fN 1 0\nlet sText := sv_Construct \"%z %g %g\" sText fRes (GetConditionFormOneInt rObj fN 1)\n"
+            "let fRes := SetConditionFormOneForm rObj fN 3 rP\nlet sText := sv_Construct \"%z %g\" sText fRes\n"
+            "let fRes := EvalConditionListFormOne rObj rP rP\nDeleteConditionFormOne rObj fN\n"
+            "SetFunctionValue (sv_Construct \"%z %g %g\" sText fRes ((GetConditionFormOneCount rObj) - fN))", True),
+       # The weapon's additional vector: two pairs, read, scaled, deleted.
+       _one("weap.vector", _form("rObj", ONE["pistol"]) + "let fRes := SetWeapAdditionalVectorValue rObj 0 0.9 1\n"
+            "SetWeapAdditionalVectorValue rObj 0 0.5 0.2\nlet fN := SetWeapAdditionalVectorValue rObj 0 0.7 -1\n"
+            "let aA := GetWeapAdditionalVectorArray rObj 0\n"
+            "let sText := sv_Construct \"%g %g %g %g %g %g %g\" fRes fN (GetWeapAdditionalVectorValue rObj 0 0.9) "
+            "(GetWeapAdditionalVectorValueScale rObj 0 0.7) (GetWeapAdditionalVectorValueScale rObj 0 0.2) (ar_Size aA) "
+            "(GetWeapAdditionalVectorValueScale rObj 0 1)\n"
+            "DeleteWeapAdditionalVectorValue rObj 0 0.9\nDeleteWeapAdditionalVectorValue rObj 0 0.5\n"
+            "SetFunctionValue (sv_Construct \"%z %g\" sText (GetWeapAdditionalVectorValue rObj 0 0.9))", True),
+       _one("ammo.settrait", _form("rObj", ONE["amefhp"]) + "let fSave := GetAmmoEffectTraitNumeric rObj 2\n"
+            "let fRes := SetAmmoEffectTraitNumericAlt rObj 2 42\nlet sText := sv_Construct \"%g %g\" fRes (GetAmmoEffectTraitNumeric rObj 2)\n"
+            "SetAmmoEffectTraitNumericAlt rObj 2 fSave\nSetFunctionValue (sv_Construct \"%z %g\" sText ((GetAmmoEffectTraitNumeric rObj 2) == fSave))", True),
+       _one("mod.effect", _form("rObj", ONE["varmint"]) + "let fSave := GetWeaponItemModEffect 1 rObj\n"
+            "let fRes := SetWeaponItemModEffectAlt rObj 1 20\nlet sText := sv_Construct \"%g %g %g\" fSave fRes (GetWeaponItemModEffect 1 rObj)\n"
+            "SetWeaponItemModEffectAlt rObj 1 fSave\nSetFunctionValue (sv_Construct \"%z %g\" sText (GetWeaponItemModEffect 1 rObj))", True),
+       _one("mod.value2", _form("rObj", ONE["varmint"]) + "let fSave := GetWeaponItemModValue2 1 rObj\n"
+            "let fRes := SetWeaponItemModValue2 rObj 1 3.5\nlet sText := sv_Construct \"%g %g %g\" fSave fRes (GetWeaponItemModValue2 1 rObj)\n"
+            "SetWeaponItemModValue2 rObj 1 fSave\nSetFunctionValue (sv_Construct \"%z %g\" sText (GetWeaponItemModValue2 1 rObj))", True),
+       # A scope shader that is not an effect shader (the pistol itself): refused or not.
+       # No vanilla weapon has a scope shader to put back and a set one may not clear
+       # again, so a real shader is not set here.
+       _one("scope.set.notshader", _form("rObj", ONE["sniper"]) + _form("rOther", ONE["pistol"])
+            + "let fRes := SetWeaponScopeEffectShader rObj rOther\nlet rSave := GetWeaponScopeEffectShader rObj\n"
+            "if rSave != rOther\nSetFunctionValue (sv_Construct \"%g %z\" fRes (GetFormIDString rSave))\nreturn\nendif\n"
+            "let rOther := GetFormFromMod \"FalloutNV.esm\" \"0\"\nSetWeaponScopeEffectShader rObj rOther\n"
+            "SetFunctionValue (sv_Construct \"%g %z %z\" fRes (GetFormIDString rSave) (GetFormIDString (GetWeaponScopeEffectShader rObj)))", True)]
+)
+
 SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PROBES, "jip-events": EVENT_PROBES,
         "jip-hits": HIT_PROBES, "jip-records": RECORD_PROBES, "nvse-forms": NVSE_FORM_PROBES, "nvse-vars": VAR_PROBES,
         "nvse-refs": REF_PROBES, "nvse-controls": CONTROL_PROBES, "nvse-actors": ACTOR_PROBES,
@@ -5119,6 +5576,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "projectile": PROJECTILE_PROBES,
         "sky-sound": SKY_SOUND_PROBES,
         "knvse-anim": KNVSE_PROBES,
+        "knvse2": KNVSE2_PROBES,
         "nif-blocks": NIF_PROBES,
         "nvse-events": NVSE_EVENT_PROBES,
         "jip-events2": JIP_EVENT2_PROBES,
@@ -5163,13 +5621,17 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "tmpl1": TMPL1_PROBES,
         "jg1": JG1_PROBES,
         "jg2": JG2_PROBES,
+        "one111": ONE111_PROBES,
         "jip5": JIP5_PROBES,
+        "pp": PP_PROBES,
         "format1": FORMAT1_PROBES,
-        "tmpl2": TMPL2_PROBES}
+        "tmpl2": TMPL2_PROBES,
+        "tmpl3": TMPL3_PROBES,
+        "itr": ITR_PROBES}
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jip5"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jip5", "tmpl3", "knvse2", "itr", "one111", "pp"}
 
 
 def script(body):

@@ -40,6 +40,16 @@ pub trait Source {
     fn is_loose(&self, _path: &str) -> bool {
         false
     }
+    /// [design] The archived copy of a file, also when a loose file replaces it (the
+    /// file a loose replacement is compared against, [`Ui::archived_name_paths`]); `None`
+    /// when no archive has it. By default a path that is not loose reads as it wins.
+    fn read_archived(&self, path: &str) -> Option<Vec<u8>> {
+        if self.is_loose(path) {
+            None
+        } else {
+            self.read(path)
+        }
+    }
     /// A game setting's string, for `&-sName;` (the GMST `sName`): the engine answers
     /// from a [`crate::GameStrings`] (the load order's GMSTs, then the built-in table).
     fn game_string(&self, _name: &str) -> Option<String> {
@@ -54,6 +64,8 @@ pub struct MemSource {
     pub strings: HashMap<String, String>,
     /// [design] Loose-file provenance for synthetic sources, using normalized paths.
     pub loose_files: HashSet<String>,
+    /// [design] The archived copies under synthetic loose files, by normalized path.
+    pub archived: HashMap<String, Vec<u8>>,
 }
 
 impl MemSource {
@@ -67,6 +79,12 @@ impl MemSource {
         self.loose_files.insert(norm(path));
         self.files.insert(norm(path), text.as_bytes().to_vec());
         self
+    }
+
+    /// [design] Add a synthetic loose file over an archived copy of the same path.
+    pub fn with_loose_over(mut self, path: &str, loose: &str, archived: &str) -> MemSource {
+        self.archived.insert(norm(path), archived.as_bytes().to_vec());
+        self.with_loose(path, loose)
     }
 }
 
@@ -85,9 +103,31 @@ impl Source for MemSource {
         self.files.get(&norm(path)).cloned()
     }
 
+    fn read_archived(&self, path: &str) -> Option<Vec<u8>> {
+        let path = norm(path);
+        if self.loose_files.contains(&path) {
+            self.archived.get(&path).cloned()
+        } else {
+            self.files.get(&path).cloned()
+        }
+    }
+
     /// Without case, as the original [observed: menu-xml.md §2.4].
     fn game_string(&self, name: &str) -> Option<String> {
         self.strings.get(name).or_else(|| self.strings.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v)).cloned()
+    }
+}
+
+/// [design] A source's archived copies alone ([`Source::read_archived`]): the menu files
+/// as the archives hold them, under any loose replacement. No discovery, no loose files.
+pub struct Archived<'a>(pub &'a dyn Source);
+
+impl Source for Archived<'_> {
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        self.0.read_archived(path)
+    }
+    fn game_string(&self, name: &str) -> Option<String> {
+        self.0.game_string(name)
     }
 }
 
@@ -854,6 +894,17 @@ impl Ui {
         self.set(path, Value::Str(s.to_string()))
     }
 
+    /// Sets a tile's trait by name as [`Ui::set`] does by path: false, and nothing made,
+    /// when the tile has no such trait (MCM's shorthands, which find their tile by place).
+    pub fn set_existing(&mut self, tile: TileId, name: &str, v: Value) -> bool {
+        if !self.is_live(tile) {
+            return false;
+        }
+        let Some(k) = self.tile(tile).trait_index(name) else { return false };
+        self.set_at(tile, k, v);
+        true
+    }
+
     /// Adds to a trait by path (`ModUIFloat`).
     pub fn mod_float(&mut self, path: &str, by: f64) -> bool {
         let Some((t, k)) = self.find_trait(path) else { return false };
@@ -1025,6 +1076,13 @@ impl Ui {
         let mut ui = Ui::new();
         let root = ui.load_menu(src, path).ok()?;
         Some(ui.name_paths(root))
+    }
+
+    /// [design] [`Ui::file_name_paths`] of the archived copy of the menu file at `path`
+    /// ([`Archived`]), also under a loose replacement: the names [`Ui::mod_tile_drawn`]
+    /// compares a loose file's tiles with (#975). `None` when no archive has the file.
+    pub fn archived_name_paths(src: &dyn Source, path: &str) -> Option<HashSet<String>> {
+        Ui::file_name_paths(&Archived(src), path)
     }
 
     /// [design] Whether a tile inside a root of [`Ui::mod_added_tiles`] is the mod's own,

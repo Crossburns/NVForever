@@ -128,7 +128,11 @@ fn floored(code: u16) -> bool {
 /// value (another archetype, or no actor value named). The EFIT's actor value is used,
 /// else the MGEF's [hypothesis; aid-items.md §2]. `potency` multiplies the magnitude of
 /// an effect that is neither Hostile nor Detrimental [documented: GECK wiki Ingestible,
-/// Medicine; Ingestible Settings].
+/// Medicine; Ingestible Settings], and the product is rounded down to a whole number
+/// [hypothesis fitting the original: in Hardcore at Medicine 15 the Stimpak's 5 a second
+/// gave about 6 a second, 36 in all, not 6.5 (o7_05, 2026-10-31, #1167); the normal one,
+/// 30 at Medicine 17's potency 1.34, restored 40 and 48 with Better Healing, not 40.2
+/// and 48.24 (captures pk_better_healing*); aid-items.md §4].
 pub fn value_change(m: &MagicEffectDef, e: &EffectItem, potency: f64, permanent: bool) -> Option<ValueChange> {
     let (parts, code) = match m.archetype {
         // Invisibility and Chameleon change their actor value as a Value Modifier does
@@ -145,7 +149,8 @@ pub fn value_change(m: &MagicEffectDef, e: &EffectItem, potency: f64, permanent:
     };
     let harmful = m.has(MagicEffectDef::HOSTILE) || m.has(MagicEffectDef::DETRIMENTAL);
     let sign = if m.has(MagicEffectDef::DETRIMENTAL) { -1.0 } else { 1.0 };
-    let amount = sign * e.magnitude as f64 * if harmful { 1.0 } else { potency };
+    let magnitude = e.magnitude as f64;
+    let amount = sign * if harmful { magnitude } else { (magnitude * potency + 1e-9).floor() };
     let kind = if m.has(MagicEffectDef::RECOVER) && m.archetype != ARCHETYPE_LIMB_CONDITION {
         ChangeKind::Modifier
     } else if e.duration == 0 || permanent {
@@ -443,7 +448,14 @@ impl Game<'_> {
 
     /// Change an actor value at once by `amount` (positive restores, negative damages);
     /// a value that grows (rads) moves the other way (see [`grows`]).
+    /// In god mode (`tgm`) the player takes no damage from an effect: a need does not
+    /// rise either [hypothesis fitting the original: Beer and Nuka-Cola, whose "Damage
+    /// Dehydration" holds in Hardcore, left Dehydration at its normal rise when drunk
+    /// with tgm on (o7_00, 2026-10-31, #1167)].
     fn change_value(&mut self, actor: FormId, code: u16, amount: f64, parts: bool, limb: Option<u16>, caster: Option<FormId>) {
+        if amount < 0.0 && actor == FormId::PLAYER_REF && self.toggles.god_mode {
+            return;
+        }
         if code == crate::actor_values::HEALTH && amount < 0.0 {
             // Health damage can kill (a burn, a poison; hit-effects.md §4).
             self.effect_health_damage(actor, -amount, caster);
@@ -626,10 +638,9 @@ mod tests {
         // Buffout's Strength: Recover, a duration.
         let c = value_change(&mgef(0, R, Some(5)), &item(2, 240, Some(5)), 1.0, false).unwrap();
         assert_eq!((c.kind, c.amount, c.code), (ChangeKind::Modifier, 2.0, 5));
-        // Hardcore Stimpak: no Recover, 5 a second for 6 s.
+        // Hardcore Stimpak: no Recover, 5 a second for 6 s; 6.5 rounds down to 6.
         let c = value_change(&mgef(0, 0, Some(16)), &item(5, 6, Some(16)), 1.3, false).unwrap();
-        assert_eq!(c.kind, ChangeKind::PerSecond);
-        assert!((c.amount - 6.5).abs() < 1e-9);
+        assert_eq!((c.kind, c.amount), (ChangeKind::PerSecond, 6.0));
         // Value And Parts at once; withdrawal's Reduce Strength is a negative modifier.
         let c = value_change(&mgef(34, 0, Some(16)), &item(30, 0, Some(16)), 1.0, false).unwrap();
         assert_eq!((c.kind, c.parts), (ChangeKind::Once, true));
@@ -673,7 +684,7 @@ mod tests {
         // potency, restored 40 and 48 with Better Healing; Medicine 100: 90 and 108.
         let s = |n: &str| SETTINGS.iter().find(|x| x.0 == n).unwrap().1;
         let m = Mods { health: 1.2, ..Mods::default() };
-        for (medicine, without, with) in [(17.0, 40.2, 48.24), (100.0, 90.0, 108.0)] {
+        for (medicine, without, with) in [(17.0, 40.0, 48.0), (100.0, 90.0, 108.0)] {
             let p = potency(IngestibleDef::MEDICINE, medicine, 0.0, s);
             let stim = value_change(&mgef(34, 0, Some(16)), &item(30, 0, Some(16)), p, false).unwrap();
             assert!((stim.amount - without).abs() < 1e-6, "{}", stim.amount);
@@ -688,6 +699,19 @@ mod tests {
         assert_eq!(m.on_change(water).amount, water.amount);
         let harm = value_change(&mgef(0, MagicEffectDef::DETRIMENTAL, Some(16)), &item(5, 0, Some(16)), 1.0, false).unwrap();
         assert_eq!(m.on_change(harm).amount, harm.amount);
+    }
+
+    #[test]
+    fn the_hardcore_stimpak_heals_whole_points() {
+        // The original game in Hardcore at Medicine 15 (o7_05, #1167): about 6 a second
+        // for 6 s, 36 in all, from the record's 5 a second at potency 1.3.
+        let s = |n: &str| SETTINGS.iter().find(|x| x.0 == n).unwrap().1;
+        let p = potency(IngestibleDef::MEDICINE, 15.0, 0.0, s);
+        let c = value_change(&mgef(0, 0, Some(16)), &item(5, 6, Some(16)), p, false).unwrap();
+        assert_eq!((c.kind, c.amount * 6.0), (ChangeKind::PerSecond, 36.0));
+        // The normal Stimpak's 30 at once stays 39.
+        let c = value_change(&mgef(34, 0, Some(16)), &item(30, 0, Some(16)), p, false).unwrap();
+        assert_eq!(c.amount, 39.0);
     }
 
     #[test]

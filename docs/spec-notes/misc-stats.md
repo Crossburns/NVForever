@@ -70,7 +70,8 @@ names]. Locations Discovered also counts the map markers found (`found_markers`)
 | Health From Food, Water Consumed | a food item (ENIT Food): the health it restores; one water when it lowers dehydration [hypothesis] | same |
 | Times Addicted | an addiction roll that addicts | `Game::ingest` |
 | Mines Disarmed | the player disarms a placed mine | `Game::default_activation` |
-| Speech Successes | a Fallout 3 style speech challenge line is said (the roll is not modelled, dialogue.md §3.3) | `Game::choose` |
+| Speech Successes | a Fallout 3 style speech challenge line is said (the roll is not modelled, dialogue.md §3.3), or the player picks the pass line of a New Vegas Speech check (KNAM, its condition `GetActorValue Speech >= N` met) [hypothesis: by the name; observer-checks.md item 70] | `Game::choose` |
+| Speech Failures | the player picks the fail line of a New Vegas Speech check (`< N`) [hypothesis, same]. Checks of other skills and perks count neither [hypothesis, same] | `Game::choose` |
 | Challenges Completed | a challenge completes (each time for a recurring one) [hypothesis] | `functions::ui` |
 | Books Read | the player reads a skill book (one per book; books that teach nothing do not count) [hypothesis] ([skill-books](skill-books.md) §5) | `Game::read_book` |
 | Have Limbs Crippled | a hit cripples one of the player's limbs | `Game::hit` |
@@ -87,9 +88,7 @@ names]. Locations Discovered also counts the map markers found (`found_markers`)
 
 **Not counted** (only ModPCMiscStat changes them): Weapons Created, Sandman Kills,
 Paralyzing Punches, Robots Disabled, Corpses Eaten, Mysterious Stranger Visits, Miss
-Fortunate Occurrences, Dismembered Limbs (no dismemberment), Speech
-Failures and New Vegas skill-check successes (the checks' pass and fail are not judged by
-the dialogue yet), Weapon Modifications. "Days passed" is not a statistic of the list; it is
+Fortunate Occurrences, Dismembered Limbs (no dismemberment), Weapon Modifications. "Days passed" is not a statistic of the list; it is
 the GameDaysPassed global.
 
 ## 4. The Pip-Boy

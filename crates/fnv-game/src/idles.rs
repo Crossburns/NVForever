@@ -663,24 +663,35 @@ mod tests {
         assert_eq!(d(4, 3).loops(|_| 0), Loops::Times(3));
     }
 
+    /// An IDLE's MODL and DATA as the schema decodes them (`gameplay.json` IDLE).
+    fn idle(modl: Option<&[u8]>, data: Option<&[u8]>) -> IdleDef {
+        let schema = fnv_esm::Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+        let mut ctx = fnv_esm::decode::DecodeCtx { schema: &schema, on_formid: None };
+        let mut val = |sig: &[u8; 4], b: Option<&[u8]>| b.and_then(|b| fnv_esm::decode::decode_sub(b"IDLE", &fnv_esm::Subrecord { sig: *sig, data: b.to_vec(), extended: false }, &mut ctx).value);
+        let model = val(b"MODL", modl);
+        let data = val(b"DATA", data);
+        IdleDef::from_fields(model.as_ref().and_then(|m| m.as_str()), data.as_ref())
+    }
+
     #[test]
-    fn idle_records_from_raw_subrecords() {
-        let d = IdleDef::from_raw(Some(b"Characters\\_Male\\IdleAnims\\Talk.KF\0"), Some(&[0x47, 2, 3, 0, 0, 0, 0, 0]));
+    fn idle_records_read_through_the_schema() {
+        let d = idle(Some(b"Characters\\_Male\\IdleAnims\\Talk.KF\0"), Some(&[0x47, 2, 3, 0, 0, 0, 0, 0]));
         assert_eq!((d.model.as_deref(), d.loop_min, d.loop_max, d.has_file()), (Some("Characters\\_Male\\IdleAnims\\Talk.KF"), 2, 3, true));
         // An inner node of the tree names a folder; the short DATA form has six bytes.
-        let d = IdleDef::from_raw(Some(b"Characters\\_Male\\IdleAnims\0"), Some(&[0, 255, 255, 0, 0, 0]));
+        let d = idle(Some(b"Characters\\_Male\\IdleAnims\0"), Some(&[0, 255, 255, 0, 0, 0]));
         assert_eq!((d.has_file(), d.loop_min, d.loop_max), (false, 255, 255));
-        assert!(!IdleDef::from_raw(None, None).has_file());
-        // The replay delay is the i16 after the unused byte.
-        assert_eq!(IdleDef::from_raw(None, Some(&[0, 0, 0, 0, 45, 0])).replay_delay, 45);
+        assert!(!idle(None, None).has_file());
+        // The replay delay is the i16 after the unused byte, signed.
+        assert_eq!(idle(None, Some(&[0, 0, 0, 0, 45, 0])).replay_delay, 45);
+        assert_eq!(idle(None, Some(&[0, 0, 0, 0, 0xFF, 0xFF])).replay_delay, -1);
         // "No attacking" is bit 0 of the flags byte after it (`NVgeckoHiss`); the short
         // form has none.
-        assert!(IdleDef::from_raw(None, Some(&[7, 1, 1, 0, 0, 0, 1, 0])).no_attacking);
-        assert!(!IdleDef::from_raw(None, Some(&[7, 1, 1, 0, 0, 0])).no_attacking);
+        assert!(idle(None, Some(&[7, 1, 1, 0, 0, 0, 1, 0])).no_attacking);
+        assert!(!idle(None, Some(&[7, 1, 1, 0, 0, 0])).no_attacking);
         // The section is the group byte's low six bits: 0x47 Special Idle (loose),
         // 0x55 Upper Body.
-        assert_eq!(IdleDef::from_raw(None, Some(&[0x47, 1, 2, 0, 0, 0])).section, 7);
-        assert_eq!(IdleDef::from_raw(None, Some(&[0x55, 1, 2, 0, 0, 0])).section, crate::data::IDLE_SECTION_UPPER_BODY);
+        assert_eq!(idle(None, Some(&[0x47, 1, 2, 0, 0, 0])).section, 7);
+        assert_eq!(idle(None, Some(&[0x55, 1, 2, 0, 0, 0])).section, crate::data::IDLE_SECTION_UPPER_BODY);
     }
 
     #[test]

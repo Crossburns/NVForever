@@ -375,8 +375,18 @@ fn read(
     mut wheel: ResMut<WeaponWheel>,
     mut control: ResMut<PlayerControl>,
     (hotkeys, mut sim, mut used, mut stats): (Res<Hotkeys>, ResMut<SimState>, MessageWriter<ItemUsed>, ResMut<WheelStats>),
-    mut sounds: MessageWriter<UiSound>,
+    (mut sounds, anim, mut wait): (MessageWriter<UiSound>, Option<Res<crate::combat::WeaponAnim>>, Local<SwapWait>),
 ) {
+    // A swap waiting for the weapon in hand to go away: the clips of the last frame say
+    // whether it has (`crate::combat::WeaponAnim`; no body to time it: at once).
+    let away = anim.as_deref().is_none_or(|a| !a.ready && !a.drawing && !a.holstering);
+    match wait.step(clock.delta_secs(), control.weapon_out, away) {
+        Some(SwapStep::Equip(n)) => {
+            act(n, &hotkeys, &mut sim, &mut control, &mut used, &mut sounds, &mut wait, true);
+        }
+        Some(SwapStep::CalledOff(n)) => info!("hotkeys: slot {}: the swap called off, the weapon in hand drawn again", n + 1),
+        None => {}
+    }
     let mut f = Frame { dt: real.delta_secs(), ..default() };
     for (i, &c) in CONTROLS.iter().enumerate() {
         f.down[i] = input.pressed(c);
@@ -430,7 +440,7 @@ fn read(
                 } else {
                     stats.chosen.push(n);
                 }
-                let line = act(n, &hotkeys, &mut sim, &mut control, &mut used, &mut sounds);
+                let line = act(n, &hotkeys, &mut sim, &mut control, &mut used, &mut sounds, &mut wait, false);
                 if matches!(o, Outcome::Chose(_)) {
                     info!("weapon wheel: closed: slot {}: {line}", n + 1);
                 }
@@ -466,8 +476,10 @@ fn sound_of(slot: Option<Slot>, outcome: &Used) -> Option<UiEvent> {
     }
 }
 
-/// Use slot `n` (a tap, or the wheel let go on it); returns what happened.
-fn act(n: usize, hotkeys: &Hotkeys, sim: &mut SimState, control: &mut PlayerControl, used: &mut MessageWriter<ItemUsed>, sounds: &mut MessageWriter<UiSound>) -> String {
+/// Use slot `n` (a tap, or the wheel let go on it); returns what happened. `put_away`:
+/// a waiting swap whose weapon in hand has just gone away (`SwapWait`).
+#[allow(clippy::too_many_arguments)]
+fn act(n: usize, hotkeys: &Hotkeys, sim: &mut SimState, control: &mut PlayerControl, used: &mut MessageWriter<ItemUsed>, sounds: &mut MessageWriter<UiSound>, wait: &mut SwapWait, put_away: bool) -> String {
     if n == AMMO_SWAP {
         control.ammo_swap = true;
         info!("hotkeys: slot 2: Ammo Swap");
@@ -475,6 +487,16 @@ fn act(n: usize, hotkeys: &Hotkeys, sim: &mut SimState, control: &mut PlayerCont
     }
     let slot = hotkeys.0[n];
     let name = slot.map_or_else(String::new, |s| crate::menu::model::display_name(sim.forms, FormId(s.item)));
+    // A new weapon with one drawn: holster first, equip once it is away. Equipping now
+    // would swap the model at once and play the holster clip and the Unequip sound on
+    // the new weapon (the #1258 review). Another weapon picked while one waits takes
+    // its place.
+    if (control.weapon_out || wait.slot.is_some()) && hotkeys::takes_hand(&mut sim.world, slot) {
+        holster_for_new_weapon(control);
+        *wait = SwapWait { slot: Some(n), waited: 0.0 };
+        info!("hotkeys: slot {}: putting the weapon in hand away for {name}", n + 1);
+        return format!("putting the weapon in hand away for {name}");
+    }
     let outcome = hotkeys::use_slot(&mut sim.world, slot);
     if let Some(event) = sound_of(slot, &outcome) {
         sounds.write(UiSound { menu: UiMenu::Inventory, event });
@@ -483,17 +505,63 @@ fn act(n: usize, hotkeys: &Hotkeys, sim: &mut SimState, control: &mut PlayerCont
         Used::UsedUp(item) => {
             used.write(ItemUsed { item: item.0, limb: None });
         }
-        // A weapon taken from the wheel is drawn up, not lowered by hand as the last one
-        // was (`PlayerControl::lowered`).
         Used::Equipped if slot.is_some_and(|s| sim.forms.item(FormId(s.item)).is_some_and(|i| i.kind == fnv_sim::forms::ItemKind::Weapon)) => {
-            control.weapon_out = true;
-            control.lowered = false;
+            holster_for_new_weapon(control);
+            info!("hotkeys: slot {}: {name} equipped holstered ({})", n + 1, if put_away { "the weapon in hand put away" } else { "nothing was drawn" });
         }
         _ => {}
     }
     let line = outcome.describe(&name);
     info!("hotkeys: slot {}: {line}", n + 1);
     line
+}
+
+/// A weapon taken from a hotkey or the wheel comes in holstered: one in hand is put
+/// away, and the player draws the new one with Ready Item [design, the owner 2026-10-31,
+/// #1106: may differ from the original]. Returns whether a weapon was out.
+fn holster_for_new_weapon(control: &mut PlayerControl) -> bool {
+    let was_out = control.weapon_out;
+    control.weapon_out = false;
+    control.lowered = false;
+    control.ready_held = None;
+    control.trigger = false;
+    was_out
+}
+
+/// The longest a swap waits for the holster clip (game seconds); a clip that never ends
+/// does not keep the new weapon out of reach [engineering choice].
+const SWAP_WAIT_MAX: f32 = 4.0;
+
+/// A weapon from a slot waiting for the weapon in hand to be put away.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct SwapWait {
+    slot: Option<usize>,
+    waited: f32,
+}
+
+/// What a waiting swap does this frame.
+#[derive(Debug, PartialEq)]
+enum SwapStep {
+    /// The weapon in hand is away: equip the slot's.
+    Equip(usize),
+    /// Ready Item drew the weapon in hand again before it was away: no swap.
+    CalledOff(usize),
+}
+
+impl SwapWait {
+    fn step(&mut self, dt: f32, weapon_out: bool, away: bool) -> Option<SwapStep> {
+        let n = self.slot?;
+        self.waited += dt;
+        if weapon_out {
+            self.slot = None;
+            Some(SwapStep::CalledOff(n))
+        } else if away || self.waited >= SWAP_WAIT_MAX {
+            self.slot = None;
+            Some(SwapStep::Equip(n))
+        } else {
+            None
+        }
+    }
 }
 
 fn report(mut exit: MessageReader<AppExit>, stats: Res<WheelStats>) {
@@ -507,6 +575,38 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<WheelStats>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hotkeyed_weapon_comes_in_holstered() {
+        // Holstered: it stays holstered.
+        let mut c = PlayerControl { weapon_out: false, ..default() };
+        assert!(!holster_for_new_weapon(&mut c));
+        assert!(!c.weapon_out, "a holstered player is not made to draw");
+        // Drawn (and lowered, mid hold of Ready Item, trigger down): the weapon in hand is
+        // put away and nothing carries over to the new one.
+        let mut c = PlayerControl { weapon_out: true, lowered: true, ready_held: Some(0.2), trigger: true, ..default() };
+        assert!(holster_for_new_weapon(&mut c));
+        assert!(!c.weapon_out && !c.lowered && !c.trigger && c.ready_held.is_none(), "{c:?}");
+    }
+
+    #[test]
+    fn a_swap_waits_for_the_weapon_in_hand_to_go_away() {
+        let mut w = SwapWait::default();
+        assert_eq!(w.step(0.1, false, true), None, "nothing waiting");
+        // Holstering: wait; holstered: equip, once.
+        w.slot = Some(2);
+        assert_eq!(w.step(0.1, false, false), None);
+        assert_eq!(w.step(0.1, false, true), Some(SwapStep::Equip(2)));
+        assert_eq!(w.step(0.1, false, true), None);
+        // Drawn again before it was away: no swap.
+        let mut w = SwapWait { slot: Some(0), waited: 0.0 };
+        assert_eq!(w.step(0.1, true, false), Some(SwapStep::CalledOff(0)));
+        assert_eq!(w.slot, None);
+        // A holster that never ends gives up waiting.
+        let mut w = SwapWait { slot: Some(3), waited: 0.0 };
+        assert_eq!(w.step(SWAP_WAIT_MAX - 0.5, false, false), None);
+        assert_eq!(w.step(1.0, false, false), Some(SwapStep::Equip(3)));
+    }
 
     fn frame(dt: f32) -> Frame {
         Frame { dt, ..default() }

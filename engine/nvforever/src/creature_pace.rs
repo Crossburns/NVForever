@@ -16,10 +16,11 @@
 //!   (`Locomotion::pace`), as the movement comes from them, and the move is chosen for the
 //!   velocity divided by that: a medium cazador walking at 379 units/s plays its walk clip
 //!   at 1.75, not its run clip at 0.7.
-//! - **Turning**: a creature turns at [`CREATURE_TURN_RATE`] × its scale, walking and
-//!   standing, and turns on the spot only when its way is more than 60 degrees off; the
-//!   people's 120 degrees a second and 20 degrees made a fast cazador stop at the start of
-//!   every short walk.
+//! - **Turning**: a creature turns at its CREA `TNAM` × [`TNAM_TURN_MULT`] degrees a
+//!   second, walking and standing, whatever its scale ([`creature_turn_rate`];
+//!   [`CREATURE_TURN_RATE`] × its scale when TNAM is 0), and turns on the spot only when
+//!   its way is more than 60 degrees off; the people's 120 degrees a second and 20
+//!   degrees made a fast cazador stop at the start of every short walk.
 //! - **Stance**: a creature whose folder has `h2h` movement clips (the cazador, the dog,
 //!   the mirelurk king) moves on them while it is not in the Normal detection state
 //!   (Alert, Combat, Lost: `locomotion::Locomotion::set_alert`), on its `mt` clips
@@ -106,12 +107,34 @@ pub fn has_alert_stance(skeleton: &str) -> bool {
     !fnv_vfs::normalize(skeleton).ends_with("creatures\\dog\\skeleton_sonicbark.nif")
 }
 
-/// A creature's turn rate at scale 1, degrees per second, walking and standing; it
-/// scales with the creature's size [observed: the same observations' headings, 0.16 s
-/// apart: medium cazadors (scale 1) turned at up to 304 degrees a second, young ones
-/// (scale 0.5) at up to 137 (300 × 0.5 = 150); hypothesis: the rule and other
-/// creatures; CREA TNAM (720 and 90 on these records) does not match it].
+/// What a creature's CREA `TNAM` "Turning Speed" is multiplied by for its turn rate in
+/// degrees per second, walking and standing [observed 2026-10-30: the AI observer in the
+/// original game, campaign `o4turn` on the Searchlight Airport runway (issue #915,
+/// actors.md §8.10 "TNAM"), headings every game loop: 35 of 38 steady turns of 13
+/// creatures were TNAM × 1.25, × 3 or × 0.075 to within 1%, the base scale playing no
+/// part (VCrCazadorTier1TypeA, scale 0.8, TNAM 200: 250.0 and 600.1); × 1.25 is the one
+/// every creature showed on big turns, walking or standing (CrMoleRat 100: 125.0,
+/// NVCrCazador 720: 900.2, CrDeathClaw 75: 93.7 five times)]. × 3, also on big turns
+/// towards a target, is left out until what picks it is known (observer-checks 36), and
+/// × 0.075 (aim tracking within about 6 degrees) is not a turn the walker makes [design].
+pub const TNAM_TURN_MULT: f32 = 1.25;
+
+/// A creature's turn rate at scale 1, degrees per second, when its TNAM is 0 (templated
+/// records whose stats come from elsewhere carry 0; a mod's creature may too): it scales
+/// with the creature's size [observed: medium cazadors (scale 1) turned at up to 304
+/// degrees a second, young ones (scale 0.5) at up to 137, headings 0.16 s apart;
+/// hypothesis: the rule; the fit came before TNAM was measured, [`TNAM_TURN_MULT`]].
 pub const CREATURE_TURN_RATE: f32 = 300.0;
+
+/// A creature's turn rate, degrees per second, walking and standing: its `tnam` (CREA
+/// TNAM through the template chain, `Game::creature_turning_speed`) × [`TNAM_TURN_MULT`],
+/// its `scale` playing no part; [`CREATURE_TURN_RATE`] × `scale` without a TNAM above 0.
+pub fn creature_turn_rate(tnam: Option<f32>, scale: f32) -> f32 {
+    match tnam.filter(|t| t.is_finite() && *t > 0.0) {
+        Some(t) => t * TNAM_TURN_MULT,
+        None => CREATURE_TURN_RATE * scale,
+    }
+}
 
 /// How far off its way a standing creature may be before it turns on the spot instead
 /// of turning as it sets off, radians [design: the cazadors made 85-89% of their fast
@@ -280,15 +303,17 @@ fn give_speeds(
             lo.pace = mult / 100.0 * share.walk;
             let calm = clip_speeds(&lo.stand, scale, mult, share, default);
             let alert = lo.alert.as_deref().map_or(calm, |a| clip_speeds(a, scale, mult, share, default));
+            let tnam = game.creature_turning_speed(FormId(rig.base), id);
+            let turn = creature_turn_rate(tnam, scale);
             info!(
-                "creature pace: {} {id} walks {:.0} and runs {:.0} units/s, turns {:.0} degrees/s{} (scale {scale:.2}, Speed Mult {mult:.0})",
+                "creature pace: {} {id} walks {:.0} and runs {:.0} units/s, turns {turn:.0} degrees/s{} (scale {scale:.2}, Speed Mult {mult:.0}, TNAM {})",
                 game.data.name(FormId(rig.base)),
                 calm.walk,
                 calm.run,
-                CREATURE_TURN_RATE * scale,
-                if lo.alert.is_some() { format!(", alert {:.0} and {:.0}", alert.walk, alert.run) } else { String::new() }
+                if lo.alert.is_some() { format!(", alert {:.0} and {:.0}", alert.walk, alert.run) } else { String::new() },
+                tnam.map_or("none".to_string(), |t| format!("{t:.0}"))
             );
-            let turn = CREATURE_TURN_RATE.to_radians() * scale;
+            let turn = turn.to_radians();
             given.push((id, ActorSpeeds { calm, alert, turn_rate: Some(turn), spot_turn_start: Some(CREATURE_SPOT_TURN_START) }));
         }
     }
@@ -384,6 +409,23 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<PaceStats>) {
 mod tests {
     use super::*;
     use fnv_actor::locomotion::ClipInfo;
+
+    #[test]
+    fn creatures_turn_at_their_tnam() {
+        // Measured in the original (campaign o4turn): steady big turns at TNAM × 1.25,
+        // the base scale playing no part.
+        let near = |got: f32, seen: f32| assert!((got - seen).abs() <= seen * 0.01, "{got} against {seen}");
+        near(creature_turn_rate(Some(100.0), 1.0), 125.0); // CrMoleRat
+        near(creature_turn_rate(Some(150.0), 1.0), 187.5); // CrCoyote
+        near(creature_turn_rate(Some(75.0), 1.0), 93.75); // CrDeathClaw
+        near(creature_turn_rate(Some(720.0), 1.0), 900.2); // NVCrCazador
+        near(creature_turn_rate(Some(200.0), 0.8), 250.0); // VCrCazadorTier1TypeA
+        near(creature_turn_rate(Some(90.0), 1.05), 112.5); // VCrNightStalkerTier1TypeB
+        // TNAM 0 (or none): the fitted rate × scale.
+        assert_eq!(creature_turn_rate(Some(0.0), 0.5), CREATURE_TURN_RATE * 0.5);
+        assert_eq!(creature_turn_rate(None, 1.0), CREATURE_TURN_RATE);
+        assert_eq!(creature_turn_rate(Some(f32::NAN), 1.0), CREATURE_TURN_RATE);
+    }
 
     #[test]
     fn skeletons_keep_their_measured_shares() {

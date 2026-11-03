@@ -50,6 +50,94 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def process_times(pid: int) -> tuple[int, int] | None:
+    """A Windows process's creation and exit times (FILETIME ticks; exit 0 while it
+    runs), None when it cannot be opened."""
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.windll.kernel32
+    k32.OpenProcess.restype = wintypes.HANDLE
+    h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None
+    t = [ctypes.c_ulonglong() for _ in range(4)]
+    ok = k32.GetProcessTimes(wintypes.HANDLE(h), *[ctypes.byref(x) for x in t])
+    k32.CloseHandle(wintypes.HANDLE(h))
+    return (t[0].value, t[1].value) if ok else None
+
+
+def child_pids(pid: int, born: tuple[int, int] | None, exe: str) -> list[int]:
+    """The processes `pid` started that are still running (a load's new run, which goes on
+    after the run that started it ends: engine/nvforever/src/handoff.rs). Windows keeps a
+    process's parent id after the parent ends and reuses ids, so only a process running
+    `exe` (its file name) created while `pid` ran (`born`: its times from
+    [`process_times`], read while it was still open) counts. None elsewhere."""
+    if os.name != "nt" or born is None:
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+
+    k32 = ctypes.windll.kernel32
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snap in (None, wintypes.HANDLE(-1).value):
+        return []
+    out = []
+    e = Entry()
+    e.dwSize = ctypes.sizeof(Entry)
+    ok = k32.Process32FirstW(snap, ctypes.byref(e))
+    while ok:
+        if e.th32ParentProcessID == pid and e.th32ProcessID != pid and e.szExeFile.lower() == exe.lower():
+            out.append(e.th32ProcessID)
+        ok = k32.Process32NextW(snap, ctypes.byref(e))
+    k32.CloseHandle(snap)
+    start, end = born
+    own = []
+    for c in out:
+        t = process_times(c)
+        if t and t[0] >= start and (end == 0 or t[0] <= end):
+            own.append(c)
+    return own
+
+
+def own_times(p: subprocess.Popen) -> tuple[int, int] | None:
+    """`p`'s creation and exit times through its own handle (still open after it ends,
+    so its id cannot have been reused). None elsewhere."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    t = [ctypes.c_ulonglong() for _ in range(4)]
+    ok = ctypes.windll.kernel32.GetProcessTimes(wintypes.HANDLE(int(p._handle)), *[ctypes.byref(x) for x in t])
+    return (t[0].value, t[1].value) if ok else None
+
+
+def wait_for_children(pid: int, children: list[int], deadline: float) -> str:
+    """Wait for the processes `pid` started (their output is the launch's too) until
+    `deadline` (time.monotonic()); past it, end them (they are this launch's own). An
+    error text when they had to be ended."""
+    while children and time.monotonic() < deadline:
+        children = [c for c in children if pid_alive(c)]
+        if children:
+            time.sleep(0.2)
+    if not children:
+        return ""
+    for c in children:
+        try:
+            os.kill(c, 9)
+        except OSError:
+            pass
+    return f"a process it started (pid {', '.join(map(str, children))}) ran past the time limit"
+
+
 GAME_PROCESSES = ("nvforever", "falloutnv")
 
 
@@ -376,15 +464,21 @@ def run_launch(launch: Launch, env: Env, locks: Locks | None) -> tuple[int | Non
             with open(log, "w", encoding="utf-8", errors="replace") as f:
                 p = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=env.out,
                                      env=aid_free_environ(aids))
+                exe = Path(env.exe).name
                 try:
                     code = p.wait(timeout=launch_timeout(launch))
-                    err = ""
+                    # A load hands over to a new run that goes on writing to this log.
+                    born = own_times(p)
+                    err = wait_for_children(p.pid, child_pids(p.pid, born, exe), started + launch_timeout(launch))
                 except subprocess.TimeoutExpired:
                     # Where it stopped, before it goes: every thread's stack.
                     stacks = env.out / f"{launch.name}.stacks.txt"
                     stacks.write_text(dump_stacks(p.pid, Path(env.exe).parent), encoding="utf-8")
+                    born = own_times(p)
                     p.kill()
                     p.wait()
+                    # A new run it started goes too: it is this launch's.
+                    wait_for_children(p.pid, child_pids(p.pid, born, exe), time.monotonic())
                     code, err = None, f"timed out after {launch_timeout(launch):.0f} s; thread stacks in {stacks}"
         finally:
             if locks:

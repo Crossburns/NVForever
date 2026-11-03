@@ -54,11 +54,13 @@ impl Game<'_> {
         Some(match code {
             0 => ids(self.data.record_field(target, "HNAM", "")),
             1 => ids(self.data.record_field(target, "ENAM", "")),
+            // From the template's list where GetBasePackages and GetBaseSpellListSpells
+            // read it (actors.md §2.2).
             5 => match self.other.package_lists.get(&target) {
                 Some(l) => l.clone(),
-                None => self.data.actors.get(&target).map(|d| d.packages.clone()).unwrap_or_default(),
+                None => self.data.actors.get(&self.data.base_template_source(target, |d| d.template_packages)).map(|d| d.packages.clone()).unwrap_or_default(),
             },
-            6 => self.data.actors.get(&target).map(|d| d.spells.clone()).unwrap_or_default(),
+            6 => self.data.actors.get(&self.data.base_template_source(target, |d| d.template_spells)).map(|d| d.spells.clone()).unwrap_or_default(),
             7 => Vec::new(),
             // In GetHeadParts' order [observed: nvse-fourth, the record's order reversed].
             10 => {

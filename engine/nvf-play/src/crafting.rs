@@ -492,7 +492,8 @@ fn make_recipe(rt: &mut crate::script::Runtime, sim: &mut SimState, recipe: &Rec
                 info!("recipe menu: made {:?} ({what})", recipe.name);
             }
             sounds.write(UiSound { menu: UiMenu::Recipe, event: UiEvent::Picked });
-            if let Some(c) = corner {
+            // ToggleCraftingMessages 0 keeps them off (`fnv_game::nvse_jip6`).
+            if let Some(c) = corner.filter(|_| rt.game.crafting_messages_shown()) {
                 for (i, k) in added {
                     let name = crate::menu::model::display_name(forms, i);
                     c.push(if k > 1 { format!("{name} ({k}) added") } else { format!("{name} added") }.into());

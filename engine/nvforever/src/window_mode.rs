@@ -73,9 +73,13 @@ impl MonitorModes {
 
 pub struct WindowModePlugin;
 
+/// Apply the chosen window settings before telemetry snapshots their physical size.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ApplyWindowMode;
+
 impl Plugin for WindowModePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<FullScreenSize>().init_resource::<MonitorModes>().add_systems(Update, (watch_monitor, apply_display, log_mode).chain());
+        app.init_resource::<FullScreenSize>().init_resource::<MonitorModes>().add_systems(Update, (watch_monitor, apply_display, log_mode).chain().in_set(ApplyWindowMode));
     }
 }
 

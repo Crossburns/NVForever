@@ -318,12 +318,13 @@ NVForever's own HUD, from the layout of §3.1.1. What it takes the traits to mea
   height/960 window pixels (`interface::u`), as the current HUD.
 - [design] Which tiles: §7's `mod_added_tiles` roots, and inside them each tile
   `mod_tile_drawn` accepts: Injected and Template always, Code never, File tiles only
-  against the archived file's name paths. In the game no File tile draws in v1:
-  `fnv_vfs::Vfs` keeps one location per path, so the archived copy under a loose file
-  cannot be read [documented: crates/fnv-vfs/src/lib.rs, `Vfs::open`]. `fnvtool ui
-  mod-tiles` makes the comparison where overlays and archives are separate (2026-10-29,
-  over the test install [observed]: vanilla 0 tiles, Clean Vanilla Hud's loose HUD 0,
-  Vanilla UI Plus 5, its `VUI+` outline tiles in the prompt box).
+  against the archived file's name paths. Since #975 `fnv_vfs::Vfs` keeps the highest
+  archive's copy under each loose file (`Vfs::read_archived`), and the game and `fnvtool
+  ui mod-tiles` both compare a loose replacement with it (`Ui::archived_name_paths`);
+  before, the game drew no File tile, as the VFS kept one location per path. `fnvtool`'s
+  comparison over the test install (2026-10-29, overlays [observed]): vanilla 0 tiles,
+  Clean Vanilla Hud's loose HUD 0, Vanilla UI Plus 5, its `VUI+` outline tiles in the
+  prompt box.
 - [design] A `rect` draws a filled box only when it sets `red`, `green` or `blue`
   itself; otherwise it only places its children. `nif`, `radial` and `window` tiles,
   and empty pictures and strings, draw nothing in v1 (the whole HUD's drawing draws
@@ -829,6 +830,11 @@ What the original can settle (copied to docs/handoff/observer-checks.md):
     GetActiveUIComponentName, GetActiveUIComponentFullName and GetActiveUIComponentID in
     game mode with no menu open (ours: "", "" and -1), and over a target with no `<id>`
     (ours: its name and -1); ClickMenuTile's return value.
+11. **Where MCM's shorthands point** (#976). With MCM installed and a mod's page open,
+    GetUIFloat on `StartMenu/MCM/*:1/*:1/_optionID` and on
+    `StartMenu/MCM/MCM_Options/Option1/_optionID`, and `GetMCMFloat 1 1 "_optionID"`,
+    `GetMCMFloat 1 0 "_optionID"` with the pointer on the first row (ours: the
+    shorthands count from 1 in file order, 0 stopping, §10; `*:N` from the last child).
 
 ## 9. The rest of the tile functions (task T9)
 
@@ -877,3 +883,57 @@ Not built, with why:
 - **The cursor's tile** for GetUIElementType and DumpTileInfo without a path, and the
   menu events: T8's pointer (`Game::ui_pointer`, #957) is on main now; these functions
   do not read it yet.
+
+## 10. MCM: its places and its menu scripts (tasks T7, T11; issue #976)
+
+Described from MCM's data files (its `menus\prefabs\MCM\*.xml` and
+`includes_StartMenu.xml`, version 1.5 as installed in the owner's Data folder) and one
+mod's script source (FOV Slider 2.6's `FOVSliderConfigScript`); no extender or DLL code
+read.
+
+- **Where MCM lives** [observed: the files]: MCM's `start_menu.xml` replaces the
+  vanilla one and includes `includes_StartMenu.xml`, which includes `MCM\MCM.xml`
+  (§7 item 2). That file is one `rect` named `MCM`, hidden (`visible` false), with the
+  traits the mods and MCM's own script talk through: `_ActiveMod`, `_ActiveMenu`,
+  `_ActiveOption`, `_ActiveSubMenu`, `_Value`, `_NewValue`, `_Reset`, `_Default`,
+  `_DefaultScale`, `_ShowScale`, `_ShowList`, `_ShowMultiScale`, `_Value1`-`_Value3` with
+  their `Min`, `Max`, `Increment` and `Decimal` traits, `_MCM` (1.5, its version) and
+  others. Its children, in file order: `MCM_Options`, `MCM_Scale`, `MCM_List` (from the
+  includes it starts with), then `MCM_Trigger`, `MCM_ModList`, the background, brackets,
+  titles and buttons, `MCM_Version` last (19 in all).
+- **The rows** [observed: the files]: `MCM_Options` begins with `Option1`-`Option36`
+  (hotrects, each with `_optionID` 1-36, `_title`, `_enable` and the rest from
+  `OptionRect.xml`), then its arrows and scroll bar; its own `_optionID` adds up its
+  rows' `_optionIDX`, which is a row's `_optionID` while the pointer is on it, so it is
+  the id of the row under the pointer. `MCM_List` begins with `Item1`, `Item2`, ….
+- **The shorthands' places** [hypothesis, from the above]: `GetMCMFloat child grandchild
+  "setting"` and its setters count `child` and `grandchild` from 1 in file order under
+  the `MCM` rect, and 0 stops at the level above: `0 0` is the `MCM` rect itself, `1 0`
+  `MCM_Options`, `1 3` `Option3`. FOV Slider reads `GetMCMFloat 0 0 "_ActiveMod"` (a
+  trait only the `MCM` rect has) and `GetMCMFloat 1 0 "_optionID"` (the row under the
+  pointer) and sets `SetMCMFloat 0 0 "_NewValue" 0`. The GECK wiki writes `SetMCMFloat
+  1 1 "_enable" 1` as `SetUIFloat "StartMenu/MCM/*:1/*:1/_enable" 1` [documented:
+  SetMCMFloat], but NVForever's `*:N` counts from the last child (§5, observed on the
+  HUD), which would reach `MCM_Version`, so the shorthands do not go through `*:N`
+  (`fnv_game::ui_functions::mcm_trait`). Which of the two the original's `*:N` really does
+  for MCM is an observer check (§8). A trait or place that is not there reads 0; the
+  setters make nothing (as SetUIFloat, §5) [hypothesis].
+- **A mod's menu script** [observed: FOV Slider's source]: a quest script with a
+  `Begin MenuMode 1013` block (the start menu, `fnv_game::game::menus::START`). It
+  returns unless `IsModLoaded "The Mod Configuration Menu.esp"`, and acts only while
+  `GetMCMFloat 0 0 "_ActiveMod" == GetSelfModIndex`, i.e. while MCM shows this mod's page.
+  Then, one at a time: `_Reset` 1 means fill in the page again; `_NewValue` 1 means a
+  value was entered (`_Value`, for the option `_ActiveOption`), which the script takes,
+  then sets `_NewValue` 0 and `_Reset` 1; `_ShowScale` 1 asks it to fill in the scale
+  (it sets 2); `_DefaultScale` 1 asks for the default. At `GetGameRestarted` the mod adds
+  a form to MCM's list (`ListAddForm` on MCM's form `ae6` from `GetFormFromMod`) and
+  checks `_MCM`'s global (`b0d`) for version 1.5 or later.
+- **GetSelfModIndex** is "the mod index of the script that calls the function"
+  [documented: GetSelfModIndex]: the calling unit's plugin's place in the load order;
+  0 for a script typed at the console or run as a query [observed: plugins1, 0]. MCM
+  mods depend on it being their own index.
+- **Built (#976, T7)**: the shorthands as above; GetSelfModIndex; a headless test
+  (`crates/fnv-game/tests/ui_mcm.rs`) that builds `StartMenu` through MCM's include
+  chain while the start menu is open and runs a compiled `MenuMode 1013` quest script
+  written in FOV Slider's way, checking the traits it sets. The files and the script are
+  written for the test; no mod data is used.

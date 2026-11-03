@@ -49,9 +49,7 @@ xNVSE's own forms (QFromAxisAngle …) are different functions with observed con
 | GetZoneMinLevel, GetZoneMatchLevel, GetZoneOwner `zone` | the ECZN record's minimum level, "Match PC Below Minimum Level" flag and owner [documented] |
 | SetZoneMinLevel `zone level`, SetZoneOwner `zone owner` | for the session, read by the getters; a zone already entered keeps its level [documented: the pages' examples; hypothesis: not applied to entering] |
 
-## 4. Not built
+## 4. The last three (2026-11-01)
 
-- ArrayToString: the text's form is not documented.
-- GetCameraFOV `1stPersonFOV`: the default field of view the game starts with is not
-  recorded.
-- UpdateTubeMesh: a NIF tube mesh the engine does not build.
+ArrayToString (the VM), GetCameraFOV and UpdateTubeMesh (`nvse_small.rs`): ext-small.md
+§1.

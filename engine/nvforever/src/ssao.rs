@@ -6,7 +6,9 @@
 //! views are multisampled (alpha-tested plants are smoothed with it) and the NIF, grass,
 //! tree and water prepasses write depth only. So this pass works from the depth alone:
 //! normals from the neighbouring depths, a 12-sample spiral turned by a 4 x 4 pattern,
-//! the result blurred over those 4 x 4 pixels at about the same depth and multiplied
+//! worked out at half resolution (one pixel of each 2 x 2 block, a quarter of the
+//! work: about 1.0-1.25 ms a frame at 1920x1080 at full resolution, #1370), the result
+//! blurred over those 4 x 4 texels at about the same distance and multiplied
 //! into the picture after tonemapping, before the image-space grade and its blur
 //! (imagespace.rs). It darkens all light, not only the ambient light as the lighting
 //! itself could [engineering choice: the strength is kept low for that].
@@ -116,7 +118,8 @@ pub(crate) struct AoView {
     texture: CachedTexture,
 }
 
-const OCCLUSION_FORMAT: TextureFormat = TextureFormat::R8Unorm;
+/// How open a texel is, and its distance (the apply pass weighs texels by it).
+const OCCLUSION_FORMAT: TextureFormat = TextureFormat::Rg16Float;
 
 fn init_pipelines(mut commands: Commands, device: Res<RenderDevice>, assets: Res<AssetServer>, fullscreen: Res<FullscreenShader>) {
     let occlusion_layout = |multi: bool| {
@@ -201,7 +204,8 @@ fn prepare(
                 id
             }
         };
-        let size = view.viewport.zw().max(UVec2::ONE);
+        // Half resolution, rounded up (texel q stands for the picture's pixel 2q).
+        let size = ((view.viewport.zw() + UVec2::ONE) / 2).max(UVec2::ONE);
         let texture = textures.get(
             &device,
             TextureDescriptor {

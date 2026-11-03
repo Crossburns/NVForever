@@ -347,6 +347,13 @@ impl RefTable {
         self.world_grid.get(world)?.get(&(gx, gy)).copied()
     }
 
+    /// The exterior cell of worldspace `world` at `pos`, if a cell exists at that grid
+    /// square.
+    pub fn world_cell_at(&self, world: FormId, pos: [f32; 3]) -> Option<FormId> {
+        let (gx, gy) = fnv_world::cell_of(pos[0], pos[1]);
+        self.world_grid.get(&world)?.get(&(gx, gy)).copied()
+    }
+
     /// The encounter zone of a cell: its own (CELL XEZN), else its worldspace's (WRLD
     /// XEZN) [hypothesis: the worldspace's zone covers its cells that name none;
     /// docs/spec-notes/encounter-zones.md §1].

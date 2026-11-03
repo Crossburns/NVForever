@@ -64,6 +64,7 @@ fn show_changes(
     mut commands: Commands,
     script: Option<ResMut<ScriptState>>,
     actor_world: Option<Res<ActorWorld>>,
+    sim: Option<Res<nvf_play::sim::SimState>>,
     mut residents: Option<ResMut<crate::residents::Residents>>,
     world: Res<WorldData>,
     creator: Option<Res<nvf_play::creator::CreatorData>>,
@@ -76,6 +77,7 @@ fn show_changes(
     let Some(mut script) = script else { return };
     let Some(rt) = script.rt.as_mut() else { return };
     let Some(aw) = actor_world else { return };
+    let mut spawn_stats = crate::actors::ActorStats::default();
     // The changes of a loaded game (or of scripts run before the actors were read).
     let due = since_sync.is_none_or(|n| n >= RESYNC_FRAMES);
     *since_sync = Some(if due { 0 } else { since_sync.unwrap_or(0) + 1 });
@@ -129,7 +131,7 @@ fn show_changes(
         let Some(state) = g.world.peek(c.actor).map(|s| (s.pos, s.rot)) else { continue };
         let hidden = !g.present(c.actor);
         let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
-        let drawn = crate::resurrect::respawn(&mut commands, e, parent.parent(), id, state, hidden, &aw, &world, &mut ctx, &transforms);
+        let drawn = crate::resurrect::respawn(&mut commands, e, parent.parent(), id, state, hidden, &aw, sim.as_deref().map(|s| &s.world), &world, &mut ctx, &transforms, &mut spawn_stats);
         let how = match drawn {
             Some(true) => "drawn anew",
             Some(false) => "could not be drawn",
@@ -137,4 +139,5 @@ fn show_changes(
         };
         info!("appearance: {} ({name}) is now {race} {sex}: {how}", c.actor);
     }
+    crate::profile::actor_spawns(spawn_stats.equipment_spawns, spawn_stats.record_spawns);
 }

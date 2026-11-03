@@ -40,8 +40,8 @@ does not run [observed: the table's source line; the opcodes are not invented].
 | NX_GetSkeletonPath | the folder of the actor's base's skeleton model (MODL, as GetSkeletonModel reads it): `_male` for `Characters\_Male\Skeleton.NIF` [documented: "_male" for a human, "NVGecko" for geckos]. A reference placed with a leveled list reads the actor drawn for it, and a template with Use Model/Animation set gives its model [documented: actors.md §2.2; hypothesis: the skeleton is in the Model/Animation group] |
 | NX_IsUsingSkeleton `name [actor]` | 1 when a folder of the skeleton model's path (under meshes) is `name`, without regard to case [documented]; any folder of the path counts [hypothesis] |
 
-Not built: NX_GetQVEVFL, a condition function whose use the page leaves to an outside
-tutorial [documented: NX_GetQVEVFL].
+NX_GetQVEVFL, a condition function whose use the page leaves to an outside tutorial
+[documented: NX_GetQVEVFL], reads 0 [decision; ext-small.md §1].
 
 ## 3. Checks
 

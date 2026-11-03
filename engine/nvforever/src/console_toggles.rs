@@ -1,10 +1,12 @@
 //! The console's render toggles (docs/design/console.md): `tg`, `ts`, `tws`, `tt`,
-//! `ToggleLODLand`, `ToggleNavmesh` and xNVSE's Con_TFIK (foot IK) asked through
+//! `ToggleLODLand`, `ToggleNavmesh`, `tlik` (head tracking), `temo` (faces' emotions)
+//! and xNVSE's Con_TFIK (foot IK) asked through
 //! `nvf_play::console::RenderToggles`,
 //! switched here and reported in the console.
 //!
-//! - Grass, distant land and the navmesh drawing switch what the settings page
-//!   switches (`GrassConfig::enabled`, the LOD as `--no-lod`, `NavState::show`).
+//! - Grass, distant land, the navmesh drawing and head tracking switch what the settings
+//!   page switches (`GrassConfig::enabled`, the LOD as `--no-lod`, `NavState::show`,
+//!   `HeadLookSettings::enabled`); emotions `LipState::emotions_off`.
 //! - Sky, water and trees have no switch of their own: their meshes are kept hidden
 //!   ([`keep_hidden`]) while the toggle is off, each frame after the systems that show and
 //!   hide them, and given back their visibility when it is on again. Sky: the dome,
@@ -34,12 +36,13 @@ pub struct Hidden {
     pub sky: bool,
     pub water: bool,
     pub trees: bool,
+    pub leaves: bool,
 }
 
 pub fn register(app: &mut App) {
     app.init_resource::<Hidden>()
         .add_systems(Update, apply.after(nvf_play::PlaySet::Ui))
-        .add_systems(PostUpdate, (hide_sky, hide_water, hide_trees).before(VisibilitySystems::VisibilityPropagate));
+        .add_systems(PostUpdate, (hide_sky, hide_water, (hide_leaves, hide_trees).chain()).before(VisibilitySystems::VisibilityPropagate));
 }
 
 fn state(off: bool) -> &'static str {
@@ -74,6 +77,11 @@ fn apply(world: &mut World) {
                 h.trees = !h.trees;
                 format!("Trees {}", state(h.trees))
             }
+            Toggle::Leaves => {
+                let mut h = world.resource_mut::<Hidden>();
+                h.leaves = !h.leaves;
+                format!("Tree leaves {}", state(h.leaves))
+            }
             Toggle::LodLand => {
                 // As the settings page's distant-land switch (`--no-lod`).
                 let on = world.resource::<Args>().no_lod;
@@ -97,6 +105,20 @@ fn apply(world: &mut World) {
                     format!("Foot IK {}", state(!f.enabled))
                 }
                 None => "No foot IK in this run".to_string(),
+            },
+            Toggle::LookIk => match world.get_resource_mut::<crate::head_look::HeadLookSettings>() {
+                Some(mut h) => {
+                    h.enabled = !h.enabled;
+                    format!("Head tracking {}", state(!h.enabled))
+                }
+                None => "No head tracking in this run".to_string(),
+            },
+            Toggle::Emotions => match world.get_resource_mut::<crate::lips::LipState>() {
+                Some(mut l) => {
+                    l.emotions_off = !l.emotions_off;
+                    format!("Emotions {}", state(l.emotions_off))
+                }
+                None => "No faces move in this run".to_string(),
             },
             other => format!("{other:?}: not a render toggle"),
         };
@@ -132,6 +154,13 @@ fn hide_sky(h: Res<Hidden>, mut saved: Local<HashMap<Entity, Visibility>>, q: Qu
 
 fn hide_water(h: Res<Hidden>, mut saved: Local<HashMap<Entity, Visibility>>, q: Query<(Entity, &mut Visibility), With<MeshMaterial3d<WaterMaterial>>>) {
     keep_hidden(h.water, &mut saved, q);
+}
+
+/// The SpeedTrees' leaf cards; distant trees' billboards keep theirs [hypothesis: the
+/// catalogue speaks of SpeedTrees' leaves only]. Run before [`hide_trees`], so leaves shown
+/// again under hidden trees are hidden again in the same frame.
+fn hide_leaves(h: Res<Hidden>, mut saved: Local<HashMap<Entity, Visibility>>, q: Query<(Entity, &mut Visibility), With<MeshMaterial3d<LeafMaterial>>>) {
+    keep_hidden(h.leaves, &mut saved, q);
 }
 
 fn hide_trees(h: Res<Hidden>, mut saved: Local<HashMap<Entity, Visibility>>, q: Query<(Entity, &mut Visibility), TreeParts>) {

@@ -64,6 +64,25 @@ Each is also listed in the module notes of `detection.rs`.
 
 Pairs not measured for 1 s of game time are dropped from the table.
 
+**The original's light at the player** (GetActorLightAmount, JIP; no Pip-Boy light, god
+mode, standing at the `coc Goodsprings` spot or the interiors' `coc` spots; weather as the
+`nvftest` save had it) [observed: campaign o11_light, 2026-11-01, issue #970; earlier noon
+100 and midnight 82.4 in observer-jip-audit-2026-10-25.md §3.2]:
+
+| Where | Hour | Light |
+|---|---|---|
+| Goodsprings outdoors | 03:00, 05:00 | 82.35 (210/255) steady |
+| Goodsprings outdoors | 06:00–06:06 | 82.35 falling to 79.2, then 81.9 |
+| Goodsprings outdoors | 07:10, 08:00, 17:00, 18:00, 19:00 | 100 |
+| Goodsprings outdoors | 20:05–20:12 | 77.0 falling to 74.4 |
+| Goodsprings outdoors | 21:00 | 73.5 rising to 82.35 |
+| Prospector Saloon, Doc Mitchell's house | 12:00 and 00:00 | 100 |
+
+So outdoors the value is capped at 100 all day, sits at one night level (82.35) and dips
+under it at dusk and dawn; indoors both rooms read 100 at both hours, whatever their
+lamps. Ours is lower indoors and at night (the table's formula); not fitted yet: the next
+step of #970 is to log ours at the same spots and hours.
+
 ## 4. `fnvtool actor detect`
 
 ```

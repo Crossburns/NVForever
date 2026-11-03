@@ -220,7 +220,7 @@ impl Decompiler<'_> {
             XExpr::Binary { op, l, r } => format!("({} {} {})", self.xexpr(l), xop_symbol(*op), self.xexpr(r)),
             XExpr::Member { l, key } => format!("{}->{key}", self.xexpr(l)),
             XExpr::Assign { op, target, value } => format!("({} {} {})", self.xexpr(target), xassign_symbol(*op), self.xexpr(value)),
-            XExpr::Lambda { params, body, value } => {
+            XExpr::Lambda { params, body, value, .. } => {
                 let ps: Vec<String> = params.iter().map(|p| self.var(p)).collect();
                 match value {
                     Some(v) => format!("({{{}}} => {})", ps.join(" "), self.xexpr(v)),

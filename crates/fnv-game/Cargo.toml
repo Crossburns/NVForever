@@ -13,6 +13,8 @@ fnv-script = { path = "../fnv-script" }
 fnv-util = { path = "../fnv-util" }
 fnv-ui = { path = "../fnv-ui" }
 fnv-vfs = { path = "../fnv-vfs" }
+# guard_write: no write into the game install or its user folder (mod_files).
+fnv-install = { path = "../fnv-install" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

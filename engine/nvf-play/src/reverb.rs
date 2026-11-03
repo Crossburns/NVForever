@@ -18,9 +18,18 @@
 //!   place or at the listener: shots, impacts, footsteps, doors, creatures, random
 //!   markers) and the placed loops of [`crate::ambient`]; not the records flagged
 //!   Environment Ignored or Menu Sound, not interface sounds (`UI…`), not the
-//!   background loops (the space's own room tone), music, voices or radios; not the
+//!   background loops (the space's own room tone), music or radios; not the
 //!   loops [`crate::sfx::LoopSound`] starts (they repeat their file, and each repeat
 //!   would cut the tail). A sound takes the environment of the moment it starts.
+//! - **Voices** ([`for_voice`], played by [`crate::voice`]): a line said at a place (a
+//!   SayTo or Say line, a hello, a bark, a line between two actors) goes into the
+//!   listener's environment after the voice filter, at [`VOICE_SEND`], and its reverb
+//!   stops with the line: "during dialogue the reverberation if any is abruptly cut off
+//!   at the end of each spoken line" [documented: GECK wiki "Special Effect" notes,
+//!   owner export], so no tail is played after the file ([`RoomSend::cut_at_end`]).
+//!   The conversation with the player and 2D lines stay dry [design: they are heard
+//!   whole and unplaced, as voice.md has them]. The Sound tab's Voice reverb switch
+//!   (`voice-reverb`) keeps every voice dry; the Reverb switch keeps out voices too.
 //! - **How much**: a sound sends into the reverb as much as its SOUN's Reverb
 //!   Attenuation Control lets through, 100 nothing and 0 all of it [documented: GECK
 //!   wiki Sound, Attenuation tab]; in between that share of the amplitude ([`send_of`],
@@ -242,19 +251,33 @@ pub struct RoomSend {
     pub preset: &'static Preset,
     /// 0 to 1, from the SOUN's Reverb Attenuation Control ([`send_of`]).
     pub send: f32,
+    /// The reverb ends with the sound: no tail after it (a spoken line, [`for_voice`]).
+    pub cut_at_end: bool,
 }
 
 impl RoomSend {
     /// The whole sound into `preset`.
     pub fn full(preset: &'static Preset) -> RoomSend {
-        RoomSend { preset, send: 1.0 }
+        RoomSend { preset, send: 1.0, cut_at_end: false }
     }
 
     /// This sound's reverb at `rate`.
     pub fn reverb(&self, rate: u32) -> Reverb {
-        Reverb { send: self.send.clamp(0.0, 1.0), ..Reverb::new(self.preset, rate) }
+        let r = Reverb::new(self.preset, rate);
+        let tail = if self.cut_at_end { 0 } else { r.tail };
+        Reverb { send: self.send.clamp(0.0, 1.0), tail, ..r }
     }
 }
+
+/// `fDialogReverbAttenuation` of the [Audio] section of the install's
+/// `Fallout_default.ini` [observed: `fDialogReverbAttenuation=0.15`]; nothing documents
+/// its unit or what it does.
+pub const DIALOG_REVERB_ATTENUATION: f32 = 0.15;
+/// The share of a spoken line sent into the reverb: [`DIALOG_REVERB_ATTENUATION`] read
+/// as a SOUN's Reverb Attenuation Control is (0 all of it, 1 nothing), so 0.85
+/// [hypothesis: the name says attenuation, as the SOUN field's does; a fraction, not
+/// decibels].
+pub const VOICE_SEND: f32 = 1.0 - DIALOG_REVERB_ATTENUATION;
 
 /// The share of a sound sent into the reverb by its Reverb Attenuation Control: "When
 /// set to 100, the sound's reverb send is 100% attenuated -- no sound is sent into the
@@ -355,7 +378,15 @@ pub fn for_sound(room: Option<&'static Preset>, settings: &SfxSettings, s: &Soun
         return None;
     }
     let send = send_of(s.reverb_attenuation_percent);
-    room.filter(|_| send > 0.0).map(|preset| RoomSend { preset, send })
+    room.filter(|_| send > 0.0).map(|preset| RoomSend { preset, send, cut_at_end: false })
+}
+
+/// The reverb a spoken line is played through (module notes, "Voices"): the listener's
+/// environment at [`VOICE_SEND`], cut at the line's end; none for a line not said at a
+/// place (`placed` false: the conversation with the player, a 2D line) or when either
+/// switch is off.
+pub fn for_voice(room: Option<&'static Preset>, reverb_on: bool, voice_reverb_on: bool, placed: bool) -> Option<RoomSend> {
+    room.filter(|_| reverb_on && voice_reverb_on && placed).map(|preset| RoomSend { preset, send: VOICE_SEND, cut_at_end: true })
 }
 
 /// The environment of the cell the listener is in (module notes).
@@ -413,13 +444,14 @@ fn follow(mut room: ResMut<RoomReverb>, d: Res<PlayWorld>, loc: Res<Location>, p
     );
 }
 
-fn report(mut exit: MessageReader<AppExit>, room: Res<RoomReverb>, sfx: Option<Res<Sfx>>) {
+fn report(mut exit: MessageReader<AppExit>, room: Res<RoomReverb>, sfx: Option<Res<Sfx>>, voice: Option<Res<crate::voice::VoiceState>>) {
     if exit.read().last().is_some() && room.changes > 0 {
         let heard: Vec<&str> = room.heard.iter().copied().collect();
         let (sounds, kept_out, sends) = sfx.map_or((0, 0, 0.0), |s| (s.reverbed, s.reverb_kept_out, s.reverb_send_sum));
         let mean = if sounds > 0 { sends / sounds as f32 } else { 0.0 };
+        let voices = voice.map_or(0, |v| v.reverbed);
         info!(
-            "reverb summary: {} changes of space, environments {}, {} sounds through a reverb (mean send {mean:.2}), {kept_out} kept out by their reverb attenuation control",
+            "reverb summary: {} changes of space, environments {}, {} sounds through a reverb (mean send {mean:.2}), {kept_out} kept out by their reverb attenuation control, {voices} voice lines through it (cut at their end)",
             room.changes,
             if heard.is_empty() { "none".to_string() } else { heard.join(", ") },
             sounds
@@ -501,7 +533,7 @@ mod tests {
         let p = preset(Some("Stone Corridor")).unwrap();
         let early = (p.reflections_delay * 22050.0).round() as usize;
         let reflected = |send: f32| {
-            let mut r = RoomSend { preset: p, send }.reverb(22050);
+            let mut r = RoomSend { preset: p, send, cut_at_end: false }.reverb(22050);
             let first = r.process(1.0, 1.0);
             let mut out = vec![first];
             while let Some(f) = r.tail() {
@@ -510,10 +542,35 @@ mod tests {
             out[early].0
         };
         // The dry sound is whole; what is reflected scales with the send.
-        let mut r = RoomSend { preset: p, send: 0.2 }.reverb(22050);
+        let mut r = RoomSend { preset: p, send: 0.2, cut_at_end: false }.reverb(22050);
         assert_eq!(r.process(1.0, 1.0), (1.0, 1.0));
         assert!((reflected(0.2) - 0.2 * reflected(1.0)).abs() < 1e-5);
         assert_eq!(reflected(0.0), 0.0);
+    }
+
+    #[test]
+    fn voices_reverb_placed_and_cut_at_their_end() {
+        let p = preset(Some("Stone Corridor"));
+        // Only a line said at a place, with both switches on, in an environment.
+        let send = for_voice(p, true, true, true).unwrap();
+        assert!(send.cut_at_end && (send.send - 0.85).abs() < 1e-6);
+        assert!(for_voice(p, true, true, false).is_none());
+        assert!(for_voice(p, false, true, true).is_none());
+        assert!(for_voice(p, true, false, true).is_none());
+        assert!(for_voice(None, true, true, true).is_none());
+        // The line is reverbed while it lasts and nothing plays after it.
+        let rate = 22050;
+        let mut r = send.reverb(rate);
+        assert_eq!(r.seconds_left(), 0.0);
+        let early = (p.unwrap().reflections_delay * rate as f32).round() as usize;
+        let mut out = vec![r.process(1.0, 1.0)];
+        for _ in 0..early {
+            out.push(r.process(0.0, 0.0));
+        }
+        assert!(out[early].0 > 0.0, "reflected while the line plays");
+        assert_eq!(r.tail(), None);
+        // A world sound's send keeps its tail.
+        assert!(RoomSend::full(p.unwrap()).reverb(rate).seconds_left() > 1.0);
     }
 
     #[test]

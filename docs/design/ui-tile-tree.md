@@ -73,7 +73,9 @@ is the one door:
 - tests pass `MemSource`, files written for the test.
 
 Replaced menu files therefore work without any code: the VFS already prefers the loose
-file. Game strings (`&-sName;`) come from `Source::game_string`. The engine answers from
+file. `Source::read_archived` reads the copy a loose file hides (`fnv_vfs::Vfs::read_archived`,
+the highest archive's), whose names tell a loose replacement's own tiles from the ones it
+kept (`Ui::archived_name_paths`, §6.1, #975). Game strings (`&-sName;`) come from `Source::game_string`. The engine answers from
 `fnv_ui::GameStrings`: the load order's GMSTs (last plugin wins), then the built-in table
 `fnv_ui::strings::BUILT_IN`, since the masters hold only one of the 145 names
 (`sMorphine`). The table holds NVForever's own English labels, written from each

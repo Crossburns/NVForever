@@ -159,6 +159,18 @@ to the player.
   or the package set aside as out of reach as for a locked door. A door asked and passed
   is not asked again by that actor for 10 s. A `Begin OnActivate player` block does not
   run for an NPC and does not hold it [hypothesis].
+- The Strip's packages "through" the gates (observer check 21, 2026-11-01, o19_strip on
+  nvfstrip) [observed]: the gate doors pair across walls of the one Strip worldspace at
+  x about 0 (0016A14D/14E at y 5284/4656, 0016A14F/150 at y -836/-1615). With the player
+  moved to the Embassy's patrol start (south of both gates) for 1.5 game hours, the NCR
+  MP B (VStripNCRMPBREF, placed north at y 8547) kept package 00151E3E, did not move and
+  was never in a loaded cell; he never took VStripMPBPatrolEmb nor came south. With the
+  player moved north he took VStripMPABPatrol38 and patrolled the north section, no gate
+  crossed. VStreetBot03REF stood north already (no crossing to see). The quest variable
+  that picks those patrols (VStreetFluffNPC iPlayerInArea) could not be read: the
+  observer's runtime compiler does not take a quest's Editor ID. So the original moved no
+  MP through a gate in these runs; whether ours would route him through depends on the
+  same variable (open in observer-checks.md item 21).
 - Not saved: after a load the doors are asked again.
 - Open, for a capture: whether the original's NPCs wait at a refusing door, take another
   way or never plan through it; whether a refusal is remembered.

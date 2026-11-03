@@ -32,15 +32,7 @@
   },
   {
    "op": "note",
-   "text": "A second explorer's script starts its own StartConversation as soon as the first ends (headless StartConversation starts at any distance: soft stall of \u00a79); the player walks off from it."
-  },
-  {
-   "op": "wait_talk",
-   "start": true,
-   "label": "explorer 2 stops the player"
-  },
-  {
-   "op": "end_talk"
+   "text": "A second explorer's script calls StartConversation too, but finds no greeting. Only the first explorer stops the player: their greeting (0x0014E9FF, GetIsID nvNelsonLegionaryExplorer) is Say Once, and a Say Once line is not said again by another actor (observer check 31, #1113)."
   },
   {
    "op": "advance_seconds",

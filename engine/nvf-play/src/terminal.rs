@@ -59,7 +59,7 @@ use rand_core::SeedableRng;
 pub const MENU_HACKING: u16 = 1055;
 pub const MENU_TERMINAL: u16 = 1057;
 
-/// After the password, "Please wait while system is accessed." stays this long before
+/// After the password, the wait message (`hacking::words::WAIT`) stays this long before
 /// the menu [design]; after the last wrong word, the log this long before the lockout
 /// screen [design].
 pub const GRANTED_SECONDS: f32 = 2.0;
@@ -124,7 +124,8 @@ pub struct Session {
 
 pub enum Page {
     Hacking(Hacking),
-    LockedOut,
+    /// The lockout screen's two lines, read from the game strings table when it opens.
+    LockedOut([String; 2]),
     Menu(MenuView),
 }
 
@@ -146,6 +147,9 @@ pub struct MenuView {
     pub parents: Vec<(FormId, usize)>,
     /// Indices of the items listed.
     pub items: Vec<usize>,
+    /// Their lines (ITXT, with a script's changes, `fnv_game::terminal::item`), in the
+    /// same order.
+    pub labels: Vec<String>,
     pub selected: usize,
     /// No row is lit until the pointer or a key comes to the list [observed: the owner's
     /// screenshot of a terminal's menu, the pointer beside the screen].
@@ -280,7 +284,9 @@ fn read_words(data: Option<Res<GameData>>, mut words: ResMut<Words>) {
     let text = data.as_deref().and_then(|d| d.read(DICTIONARY));
     match text {
         Some(bytes) => {
-            words.0 = Dictionary::parse(&String::from_utf8_lossy(&bytes));
+            // UTF-8 when it is, else 8-bit text in this run's code page (#1439).
+            let text = std::str::from_utf8(&bytes).map_or_else(|_| fnv_util::text::decode(&bytes), str::to_owned);
+            words.0 = Dictionary::parse(&text);
             info!("terminal: {} words in {DICTIONARY}", words.0.len());
         }
         None => warn!("terminal: {DICTIONARY} not found; terminals cannot be hacked"),
@@ -396,14 +402,28 @@ fn seed(reference: FormId, now: f32) -> u64 {
 /// The listed items of a terminal and the view over them.
 fn menu_view(rt: &mut crate::script::Runtime, reference: FormId, terminal: FormId, top: FormId) -> MenuView {
     let items = rules::items(&mut rt.game, reference, terminal);
+    let labels = labels(rt, terminal, &items);
     let (server, welcome) = rt.game.data.terminals.get(&top).map(|t| (t.server, rt.game.expand_codes(&t.welcome))).unwrap_or_default();
-    MenuView { terminal, parents: Vec::new(), items, selected: 0, hidden: true, result: String::new(), note: None, scroll: 0, server, welcome }
+    MenuView { terminal, parents: Vec::new(), items, labels, selected: 0, hidden: true, result: String::new(), note: None, scroll: 0, server, welcome }
+}
+
+/// The lines of terminal `terminal`'s items `items`.
+fn labels(rt: &crate::script::Runtime, terminal: FormId, items: &[usize]) -> Vec<String> {
+    items.iter().map(|&i| rules::item(&rt.game, terminal, i).map(|it| it.text).unwrap_or_default()).collect()
+}
+
+/// The menu lists `items` of `terminal`, with their lines: every change of the list
+/// goes through here, so the lines drawn are always the list's (#1328 review: Back from
+/// a sub menu left the sub menu's lines).
+fn list(rt: &crate::script::Runtime, m: &mut MenuView, terminal: FormId, items: Vec<usize>) {
+    m.labels = labels(rt, terminal, &items);
+    (m.terminal, m.items) = (terminal, items);
 }
 
 fn log_menu(rt: &crate::script::Runtime, m: &MenuView) {
     let data = rt.game.data;
     let Some(t) = data.terminals.get(&m.terminal) else { return };
-    let names: Vec<String> = m.items.iter().filter_map(|&i| t.items.get(i)).map(|it| format!("{:?}", it.text)).collect();
+    let names: Vec<String> = m.labels.iter().map(|l| format!("{l:?}")).collect();
     info!("terminal: menu of {} ({} of {} items listed): {}", data.name(m.terminal), m.items.len(), t.items.len(), names.join(", "));
 }
 
@@ -459,7 +479,7 @@ fn open(
         Opening::LockedOut => {
             info!("terminal: open {reference} {name}: locked out for good");
             rt.game.open_menu(MENU_HACKING);
-            Page::LockedOut
+            Page::LockedOut(lockout_lines(&rt.game))
         }
         Opening::Refused(r) => {
             stats.refused += 1;
@@ -618,7 +638,7 @@ fn mouse(
                 out.write(TerminalInput::Select);
             }
         }
-        Page::LockedOut => {
+        Page::LockedOut(_) => {
             if buttons.just_pressed(MouseButton::Left) {
                 out.write(TerminalInput::Back);
             }
@@ -705,13 +725,13 @@ fn apply(
                     Outcome::Denied { likeness } => {
                         sound(UiEvent::Refused);
                         stats.guesses += 1;
-                        info!("terminal: >{entered}: Entry denied, {likeness}/{} correct, {} attempts left", p.password().len(), p.attempts);
+                        info!("terminal: >{entered}: wrong word, {likeness} of {} right, {} attempts left", p.password().len(), p.attempts);
                     }
                     Outcome::Granted => {
                         sound(UiEvent::Granted);
                         stats.guesses += 1;
                         stats.hacked += 1;
-                        info!("terminal: >{entered}: Exact match! access granted");
+                        info!("terminal: >{entered}: the password, access granted");
                         rules::hacked(&mut rt.game, reference, true);
                         // Hacking an owned terminal is the crime of picking an owned lock:
                         // karma, and the owner's side that sees it turns hostile
@@ -723,7 +743,7 @@ fn apply(
                         sound(UiEvent::Refused);
                         stats.guesses += 1;
                         stats.locked_out += 1;
-                        info!("terminal: >{entered}: Entry denied, no attempts left: the terminal is locked for good");
+                        info!("terminal: >{entered}: wrong word, no attempts left: the terminal is locked for good");
                         rules::hacked(&mut rt.game, reference, false);
                         h.ended = Some(now);
                     }
@@ -735,13 +755,13 @@ fn apply(
                     Outcome::Replenished => {
                         stats.pairs += 1;
                         stats.refills += 1;
-                        info!("terminal: >{entered}: Allowance replenished ({} attempts)", p.attempts);
+                        info!("terminal: >{entered}: attempts restored ({} attempts)", p.attempts);
                     }
                     Outcome::Error => info!("terminal: >{entered}: Error"),
                     Outcome::Ignored => {}
                 }
             }
-            Page::LockedOut => {
+            Page::LockedOut(_) => {
                 if matches!(cmd, TerminalInput::Back | TerminalInput::Exit | TerminalInput::Select) {
                     leave(&mut next, "locked out");
                     return;
@@ -759,7 +779,8 @@ fn apply(
                             info!("terminal: back from the note to the list");
                         } else if let Some((parent, row)) = m.parents.pop() {
                             let items = with_world(rt, &mut sim, |rt| rules::items(&mut rt.game, reference, parent));
-                            (m.terminal, m.items, m.selected) = (parent, items, row);
+                            list(rt, m, parent, items);
+                            m.selected = row;
                             log_menu(rt, m);
                         } else {
                             leave(&mut next, "back from the top menu");
@@ -811,7 +832,7 @@ fn apply(
                     info!("terminal: its result script: {}", ran.join("; "));
                 }
                 stats.items += 1;
-                let text = rt.game.data.terminals.get(&terminal).and_then(|t| t.items.get(item)).map(|i| i.text.clone()).unwrap_or_default();
+                let text = rules::item(&rt.game, terminal, item).map(|i| i.text).unwrap_or_default();
                 info!(
                     "terminal: chose {text:?} of {}: result {:?}{}{}",
                     rt.game.data.name(terminal),
@@ -828,7 +849,8 @@ fn apply(
                     if let Some((parent, row)) = m.parents.pop() {
                         info!("terminal: ForceTerminalBack: back to {}", rt.game.data.name(parent));
                         let items = with_world(rt, &mut sim, |rt| rules::items(&mut rt.game, reference, parent));
-                        (m.terminal, m.items, m.selected) = (parent, items, row);
+                        list(rt, m, parent, items);
+                        m.selected = row;
                         log_menu(rt, m);
                         continue;
                     }
@@ -843,7 +865,8 @@ fn apply(
                 // [design] The list is read again after every choice: a script may have
                 // changed what its conditions see (the "Force Redraw" flag says so too).
                 let t = m.terminal;
-                m.items = with_world(rt, &mut sim, |rt| rules::items(&mut rt.game, reference, t));
+                let items = with_world(rt, &mut sim, |rt| rules::items(&mut rt.game, reference, t));
+                list(rt, m, t, items);
                 m.selected = m.selected.min(m.items.len().saturating_sub(1));
                 (m.note, m.scroll) = (c.note, 0);
                 if c.submenu.is_some() {
@@ -864,6 +887,13 @@ fn aid_pick(p: &Puzzle, a: AidPick) -> Option<usize> {
         AidPick::Symbol => (0..p.chars.len()).find(|&i| matches!(p.target(i), Target::Char(_)) && !p.chars[i].is_ascii_alphabetic()),
         AidPick::Item(_) => None,
     }
+}
+
+/// The lockout screen's lines: `sHackingLockout3` and `sHackingLockout4`, the names
+/// `menus\hacking_menu.xml` gives them, from the game strings table (the load order's
+/// string settings over NVForever's labels; menu-xml.md §2.4).
+fn lockout_lines(game: &fnv_game::Game<'_>) -> [String; 2] {
+    [fnv_game::ui_loading::game_string(game, "sHackingLockout3"), fnv_game::ui_loading::game_string(game, "sHackingLockout4")]
 }
 
 /// The ended game turns into the menu or the lockout screen.
@@ -887,9 +917,10 @@ fn timers(time: AidTime, mut screen: ResMut<TerminalScreen>, mut sim: ResMut<Sim
         rt.game.open_menu(MENU_TERMINAL);
         s.page = Page::Menu(m);
     } else {
-        info!("terminal: on screen: {} / {}", screen::words::LOCKOUT_1, screen::words::LOCKOUT_2);
+        let lines = lockout_lines(&rt.game);
+        info!("terminal: on screen: {} / {}", lines[0], lines[1]);
         rt.game.open_menu(MENU_HACKING);
-        s.page = Page::LockedOut;
+        s.page = Page::LockedOut(lines);
     }
 }
 
@@ -897,7 +928,7 @@ fn timers(time: AidTime, mut screen: ResMut<TerminalScreen>, mut sim: ResMut<Sim
 fn view_key(s: &Session) -> String {
     match &s.page {
         Page::Hacking(h) => format!("h{}:{}:{}:{}:{}:{:?}:{:?}", h.cursor, h.hidden, h.puzzle.log.len(), h.puzzle.attempts, h.puzzle.used.len(), h.ended.is_some(), h.puzzle.words.iter().filter(|w| w.removed).count()),
-        Page::LockedOut => "lockout".into(),
+        Page::LockedOut(_) => "lockout".into(),
         Page::Menu(m) => format!("m{}:{:?}:{}:{}:{}:{}:{:?}:{}", m.terminal.0, m.items, m.selected, m.hidden, m.scroll, m.result, m.note, m.parents.len()),
     }
 }

@@ -215,8 +215,8 @@ actor.
 |---|---|---|---|
 | Traits | race, sex, class, karma, death item (`INAM`), voice type | `Game::traits_def` (appearance, GetIsSex, GetIsClass, GetIsVoiceType, death items, dialogue), crime alignment, `fnv_actor::resolve` | right in `fnv-game`. Voice files: `fnv_voice::VoiceIndex::voice_of` follows `TPLT` only to an actor and the engine passes the placed base, so a list-templated actor speaks with the record's own `VTCK` (#1051, fixed separately) |
 | Stats | level, attributes, skills, health, speed mult, creature type, combat skill, base scale | `Game::stats_def`, `creature_pace`, `fnv_actor::resolve` | right |
-| Factions | `SNAM` list | `GameData::base_factions_at` | right; NVSE GetBaseNthFaction / GetBaseFactions read the record's own (#1057, needs a probe) |
-| Actor Effect List | `SPLO` abilities | `abilities.rs`, `combat.rs` | right; NVSE GetBaseSpellListSpells follows one step and gives nothing for a list template (#1057) |
+| Factions | `SNAM` list | `GameData::base_factions_at` | right; NVSE GetBaseNumFactions / GetBaseNthFaction / GetBaseNthRank / GetBaseFactions follow an NPC template chain whenever the flag is set (`GameData::base_template_source`, #1057) |
+| Actor Effect List | `SPLO` abilities | `abilities.rs`, `combat.rs` | right; NVSE GetBaseSpellListSpells follows an NPC template chain whenever the flag is set (#1057) |
 | AI Data | aggression, confidence, …, combat style, services, aggro radius | `def_following(template_ai)` | right |
 | AI Packages | `PKID` list | `GameData::base_package_list_at` | right; NVSE GetPackageCount / GetNthPackage / GetBasePackages follow an NPC template chain whenever the flag is set (`GameData::base_template_source`, #1057) |
 | Model/Animation | skeleton, head parts, FaceGen, creature models and animations, No Blood flags, movement flags, impact material, creature impact data set, creature sounds | `fnv_actor::resolve`, `GameData::no_blood`, `movement_def`, `GameData::model_base_at` | was wrong: impact material and impact data set read from the placed base (#1053), creature sounds took the picked creature's own list first (#1054); fixed |
@@ -287,9 +287,11 @@ paths**: trimmed, `/` → `\`, lower case, leading `\` removed, prefixed with `m
     (0x0008D370) [observed; not explained].
   - GetBaseSpellListSpells: an empty array on all five bases tried (none has own SPLO).
   - Set tmpl1 [observed: 2026-10-31, same versions; 7 NPCs, 42 rows; posted on #1057]:
-    GetBaseNumFactions / GetBaseNthFaction / GetBaseNthRank / GetBaseSpellListSpells read
-    the record's own lists on every templated NPC tried, the template an NPC or a list
-    (e.g. VSpawnJackalFemale01NR: 0 factions, 0 spells). Class and race follow Use Traits
+    GetBaseNumFactions / GetBaseNthFaction / GetBaseNthRank / GetBaseSpellListSpells gave
+    the record's own lists, but no NPC tried tells own from template: those with an NPC
+    template (VHDNCRRanger6Veteran, VHDNCRTrooper7aHeavy) carry the same `SNAM` list as
+    it, and those with a list template have none of their own and answer 0 (e.g.
+    VSpawnJackalFemale01NR: 0 factions, 0 spells); set tmpl3 settles it. Class and race follow Use Traits
     through NPC templates; the four whose Traits chain ends at a leveled list read class
     NVDLC04UlyssesClass (LonesomeRoad.esm 0x0100A679) **and race** MarkedMenGhoul
     (0x010083D7), neither their own (0x801 / 0x19) nor a list entry's. NVDLC04Ulysses is
@@ -307,6 +309,32 @@ paths**: trimmed, `/` → `\`, lower case, leading `\` removed, prefixed with `m
     such chains through NPC_ records only and keep the record's own data when the chain
     reaches a leveled list (the original's list answers above match no record)
     [hypothesis for the list case].
+  - Third set tmpl3 [observed: 2026-11-01, same versions; lab L5.ext.tmpl3], on actors
+    whose own list differs from their template's (a load-order scan found 842 for
+    factions, 345 for actor effects):
+    - Factions follow Use Factions through the template: Raider1MeleeAM 0x000295FA (own 3
+      `SNAM`) reads Raider1MeleeAAFTEMPLATE's 5, first its last `SNAM` 0x000448D1;
+      SniperShackRadroach01 0x0001FEC8 (own 1) reads CrRadroach's 2. GetBaseFactions
+      gives the same count. With o5's GoodspringsPowderGangerHM, three actors agree.
+    - GetBaseSpellListSpells follows Use Actor Effect List through the template, in
+      `SPLO` order: CrMisterGutsyEnclave 0x00021EBE (own 1) and Shakes 0x00017A03 (own 1)
+      read their templates' 3 (first 0x0012B88C, 0x0012B88E), FFEU02DeathClaw 0x00031E29
+      (none of its own) CrDeathClaw's 0x0012B892, CrFeralGhoul2B 0x0001CF77 CrFeralGhoul2A's
+      2 (first 0x000617BD).
+    - A reference whose Traits come from a leveled list: LvlRaiderRandomMale 0x0007E40E
+      (own `RNAM` 0x19, `CNAM` 0x801; every NPC its list gives has race 0x0004BF72, class
+      0x0001945C or 0x0001945E) placed with PlaceAtMe. GetRace on the reference reads
+      0x0004BF72 and GetClass 0x0001945C: the actor the list gave it. GetBaseObject on it
+      reads a form made at run time (0xFF001319), whose race is also 0x0004BF72. GetRace on
+      the record itself reads the Lonesome Road leftover again (0x040083D7).
+    - NVForever: the faction and actor-effect getters take the list of
+      `GameData::base_template_source`; GetRace, GetClass and GetNameOfClass on a
+      reference read its Traits source, the leveled pick included (`Game::traits_def`,
+      `Game::traits_class`), and on a base form its Traits template through NPC records
+      (class through an NPC template [hypothesis, as race]). Not copied: the run-time base
+      form (GetBaseObject answers the placed record), and the list case on a base form.
+      The class row differs in the lab only by the pick: the game's roll gave a melee
+      raider, NVForever's seeded pick a gun raider of the same list.
 - From the **Model/Animation** source: skeleton, hair, eyes, head parts, hair colour
   (`HCLR`, first three bytes), FaceGen arrays.
 - From the **Inventory** source: carried items (`CNTO` in record order).
@@ -365,8 +393,11 @@ Rules [hypothesis; owner's report for the vault suit]: an addon whose model is t
 own hand for the actor's sex gives way to another worn item taking its slot itself, as the
 race's hand does (the vault suit shows the Pip-Boy Glove's hand); a worn item whose every
 slot other items' addons take is not drawn (the Pip-Boy Glove gives way to an outfit's
-glove or a power armour's gauntlet). The first-person rig takes the same parts. Smoke:
-`pipboy-glove-vault-suit`, `pipboy-glove-leather`.
+glove or a power armour's gauntlet). The first-person rig takes the same parts
+(`first_person::appearance` filters the resolved list): with the vault suit and a rifle
+drawn, the arms rig draws `lefthandpipboyglove1st.nif` and no bare left hand [observed:
+smoke log and frame, 2026-11-02, #1366]. Smoke: `pipboy-glove-vault-suit`,
+`pipboy-glove-leather`, `pipboy-glove-first-person`.
 
 ### 2.4 Parts
 
@@ -1263,6 +1294,14 @@ only in the walk test and on the player's body. All rules here are engine choice
   turn in 1.5 s, three footfalls]. The clip plays at rate 1 whatever the angle. The AI
   observer captures record each actor's heading per sample (ai-observer.md), so a
   capture of an NPC turning to a new package target could replace this number [open].
+  Measured 2026-11-01 (observer check 13, o24_air and o18_air on the nvfairport runway)
+  [observed]: an NCR trooper set facing away from the player (SetAngle Z 270) and then
+  put on the player with StartCombat turned at 270°/s at first (4.3° a game loop) both
+  standing with a 10mm 400 units off and starting its run with a lead pipe 1,500 units
+  off, then slower as the angle closed: 180 to 150° off in 0.15 s, 150 to 128° in
+  0.12 s, 128 to 98° in 0.27 s (it stepped about 125 units/s meanwhile); a trooper
+  spawned 14° off turned it at 225°/s. So a person's combat turn starts near 270°/s and
+  eases out, faster than ours (120°/s standing) [issue #1352].
 - **Before walking** (`fnv_nav::Walker`): a walker that stands (it did not move in its
   last update: at the start of a path, after waiting at a door, after arriving through a
   teleport door) and whose way lies more than 20° off its heading
@@ -1300,7 +1339,7 @@ only in the walk test and on the player's body. All rules here are engine choice
   (mole rat), 90 (mantis), 75 (sentry bot), 50 (Protectron), 45 (giant ant), 40
   (bighorner), 0 on templated ones [observed, a sample of 12 of FalloutNV.esm's 1,578 records; every CREA carries TNAM, non-zero on 1,033 of them, and on 1,547 of 2,238 over the base game and add-ons]. A
   creature's steady turn rates are TNAM × 1.25, × 3 or × 0.075 degrees per second
-  [observed 2026-10-30, §8.10 "TNAM"]; not used yet. While its heading catches up with the
+  [observed 2026-10-30, §8.10 "TNAM"]; creatures turn at × 1.25 (§8.10). While its heading catches up with the
   way to go the actor slows down: it keeps `0.3 + 0.7 × max(cos off, 0)` of its speed
   (`turn_slowdown`; a right-angle corner costs about half a second). Actors moved by
   the character controller (near the player, `residents.rs`) walk along their heading
@@ -1572,6 +1611,10 @@ stopped and started, as Victor's walk had before #258). Code:
     `creature_pace::npc_speeds`, from the ESM actor audit); against it [observed, one
     actor]: Cook-Cook has Speed Mult 110 and ran 255, the 258 above without it, 284 with
     it (asked in docs/owner-review.md); every other person measured had Speed Mult 100.
+    Measured 2026-11-01 (observer check 13, o18_air run_speedmult100/150) [observed]: an
+    NCR trooper with a lead pipe running 1,500 units at the player held about 305 units/s
+    at SetAV SpeedMult 100 and 457-468 at 150 (two troopers), 1.5 times: a person's run
+    is proportional to its Speed Mult, as ours; Cook-Cook stays the one exception seen.
   - **Built**: `NPC_WALK` 85.3 and `NPC_RUN` 344 are every person's speeds, times its
     Speed Mult (`npc_speeds`); a drawn person's both are also scaled by its body armour's
     share (`person_pace`), the armour
@@ -1584,8 +1627,16 @@ stopped and started, as Victor's walk had before #258). Code:
     (the paladins walked holstered with Gauss rifles at about the heavy armour's pace).
   - **Not built**: the walk with a weapon drawn outside combat (77–78 here, about the
     `1hm`/`h2h` clip or `fMoveBaseSpeed`, which of the two is open); in combat, walking
-    with a weapon drawn was faster (a fiend 105, Cook-Cook 97; not explained); the
-    same rule for the player (not measured).
+    with a weapon drawn was faster (a fiend 105, Cook-Cook 97; not explained).
+  - **The player** (issue #1364) [hypothesis: the people's rule; not measured on the
+    player]: the player's walk and run (86.8 and 344) are multiplied by its current Speed
+    Mult over 100 (SetAV's base, ModAV's and effects' modifiers and damage, as
+    GetActorValue reads it; 0 at the least) and by its body armour's share (1, 0.925,
+    0.85 as above), on top of the crippled legs, the two-handed run, the Modify Run Speed
+    perks and the reload (`Game::move_speed_mult`, nvf-play `StatSpeed`, asked every
+    frame; smoke `player-speedmult`). Whether `setav speedmult` on the player changes
+    its speed in the original, and whether its animations then keep up, is to be checked
+    with the observer (docs/handoff/observer-checks.md).
 - **Alert stance** [observed: the owner, 2026-10-16: "the cazadors scurry along the
   ground when not alert and fly when they are alert/in combat"]: the cazador's folder
   has `h2hforward.kf` (298.15 units/s), `h2hfastforward.kf` (545.54) and `h2hidle.kf`
@@ -1612,7 +1663,8 @@ stopped and started, as Victor's walk had before #258). Code:
   turns faster than 60°/s happened while they moved (over 20 units/s). Rule
   [hypothesis: proportional to scale, fitted on these two kinds; CREA `TNAM`, 720 and
   90 on these records, does not match]: a creature turns at 300°/s × its scale walking
-  and standing (`CREATURE_TURN_RATE`), and turns on the spot before setting off only
+  and standing (`CREATURE_TURN_RATE`). Since issue #915 this is only the fallback for a
+  creature whose TNAM is 0: the rest turn at TNAM × 1.25 ("TNAM" below). A creature turns on the spot before setting off only
   when its way is more than 60° off (`CREATURE_SPOT_TURN_START`, design; people: 20°,
   §8.9). With the people's 120°/s and 20°, a fast cazador stopped to turn at the start
   of nearly every short sandbox walk.
@@ -1648,7 +1700,17 @@ stopped and started, as Victor's walk had before #258). Code:
   standing or moving; what picks × 3 is not known [hypothesis: an attack or movement state
   the fields read here do not show]. The fitted 300°/s × scale above does not follow from
   this; the cazadors' 304°/s and 137°/s plateaus, from headings 0.16 s apart, mix these
-  rates. Not yet used by the engine (issue #915 stays open until the × 3 rule is known).
+  rates.
+
+  Rule (issue #915) [observed, campaign `o4turn` above, for the rates; design, the pick of
+  one]: a creature turns at TNAM × 1.25 degrees per second walking and standing, whatever
+  its scale (`creature_pace::creature_turn_rate`, `TNAM_TURN_MULT`), the rate every
+  creature measured showed on big turns. TNAM is read from the record that supplies the
+  creature's stats (template flag "Stats"; Turning Speed is on the Stats tab [documented:
+  GECK wiki Stats Tab for Creatures]), with SetCreatureTurningSpeed's change
+  (`Game::creature_turning_speed`). With TNAM 0 it turns at the fitted 300°/s × scale
+  above. Not built: × 3 (what picks it is not known, observer check 36) and × 0.075 (aim
+  tracking; the walker makes no such turn).
 - **Walk/run changes** [design]: the gait changes only when a speed smoothed over 0.2 s
   (`Locomotion::gait_speed`) is 15% past the switch point (`GAIT_HYSTERESIS`). In
   NVForever a creature's drawn speed jumped to two or three times its walk for a single
@@ -2072,6 +2134,15 @@ No NPC's own choice takes a weapon flagged Player Only or Not Used In Normal Com
     one was taken because it keeps every other choice as it was unless the weapon fires
     an explosive projectile.] Thrown weapons and mines keep their base damage: grenade
     use is not built, and a grenade as the weapon drawn would not be thrown.
+  - **Not for an Explosives weapon** (2026-11-01, issue #1303): a weapon whose DNAM
+    "Skill" is Explosives (grenade rifles, grenade machine guns, missile launchers, Fat
+    Man) ranks by its base damage alone. [hypothesis: fitted to observer check 1
+    (o13_reequip): given a Grenade Rifle (base 2, Explosives) and 10 40mm grenades,
+    none of Sunny, Easy Pete, Settler 1 and Ringo took it over a Varmint Rifle (18), a
+    .357 (26) or a 9mm (16), while Easy Pete and Ringo took a Hunting Rifle (52) at once
+    [observed]. Cook-Cook's pair is Energy Weapons and keeps its rule. Ours had about 40
+    NPCs draw grenade rifles or launchers.] Why Sunny and Settler 1 kept their Varmint
+    Rifle and .357 over a Hunting Rifle is not known.
   - What it changes (`fnvtool actor weapons`, FalloutNV.esm, 2026-10-20 [observed]):
     42 of 2,703 placed NPCs draw another weapon they carry, each a gun with an explosive
     projectile: Cook-Cook and a Bison Steve Powder Ganger the Incinerator (instead of the

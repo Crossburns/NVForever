@@ -57,11 +57,12 @@ pub fn axis(a: &Args, i: usize) -> Result<Option<usize>, String> {
     })
 }
 
-/// SetReputation's axis argument. Any axis but 0 or 1 fails the call and stops the
-/// script for this run, as a failed call does: `SetReputation <rep> 2 5` and `3 7`
-/// changed nothing and the line after them did not run, while axes 0 and 1 set the value
-/// and the script went on [observed: captures o5_00 and o5_01, 2026-10-31, RepNVNCR;
-/// issue #1127].
+/// The axis argument of the four functions that change a reputation (SetReputation,
+/// AddReputation, RemoveReputation, AddReputationExact). Any axis but 0 or 1 fails the
+/// call and stops the script for this run, as a failed call does: each with axis 2 or 3
+/// changed nothing and the line after it did not run, while axes 0 and 1 changed the
+/// value and the script went on [observed: captures o5_00 and o5_01, 2026-10-31, and
+/// o11_00, 2026-11-01, RepNVNCR; issue #1127; observer check 62].
 pub fn write_axis(g: &mut Game, a: &Args, i: usize) -> Result<usize, String> {
     match axis(a, i)? {
         Some(x) => Ok(x),
@@ -169,7 +170,7 @@ fn bump(g: &Game, size: i32) -> Option<f64> {
 /// the scale [documented: GECK wiki AddReputation; observed: [`change`]].
 pub fn add_reputation(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let r = reputation(g, a)?;
-    let Some(axis) = axis(a, 1)? else { return none() };
+    let axis = write_axis(g, a, 1)?;
     if let Some(p) = bump(g, a.int(2)?) {
         change(g, r, axis, p);
     }
@@ -180,7 +181,7 @@ pub fn add_reputation(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, Strin
 /// [documented: GECK wiki RemoveReputation; observed: [`change`]].
 pub fn remove_reputation(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let r = reputation(g, a)?;
-    let Some(axis) = axis(a, 1)? else { return none() };
+    let axis = write_axis(g, a, 1)?;
     if let Some(p) = bump(g, a.int(2)?) {
         change(g, r, axis, -p);
     }
@@ -192,7 +193,7 @@ pub fn remove_reputation(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, St
 /// captured].
 pub fn add_reputation_exact(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let r = reputation(g, a)?;
-    let Some(axis) = axis(a, 1)? else { return none() };
+    let axis = write_axis(g, a, 1)?;
     let p = a.num(2)?;
     change(g, r, axis, p);
     none()

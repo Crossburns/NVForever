@@ -205,6 +205,14 @@ impl Vm<'_, '_> {
             // [documented: ScancodeToChar, "the single character associated with a
             // DirectX scancode"]; "" for a key that types none [hypothesis].
             "scancodetochar" => XVal::Str(scancode_char(num(0) as i64).map(String::from).unwrap_or_default()),
+            // `array`: the array as a text [documented: ArrayToString, "Returns the
+            // specified array variable as a string"]; the form is PrintVar's (elements in
+            // brackets, a map's as `key: value`) [decision: the page shows no example];
+            // "" for no array [hypothesis].
+            "arraytostring" => match args.first() {
+                Some(XVal::Array(id)) => XVal::Str(self.brief_array(*id)?),
+                _ => XVal::Str(String::new()),
+            },
             _ => return Ok(None),
         }))
     }

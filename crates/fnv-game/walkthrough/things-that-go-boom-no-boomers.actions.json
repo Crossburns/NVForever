@@ -1,0 +1,36 @@
+{
+  "format": "fnv.script.actions/1",
+  "title": "Headless Things That Go Boom (VMS23): Volare! failed before the player meets Crocker, who gives up on the Boomers (VMS23 102)",
+  "given": [
+    {"kind": "quest", "quest": "VMQ01", "running": false, "completed": true, "stage": 100},
+    {"kind": "quest", "quest": "VMQTops", "running": false, "completed": true, "stage": 100},
+    {"kind": "global", "name": "VStoryEventVisitsLucky38", "value": 1},
+    {"kind": "quest", "quest": "VMS15", "running": true, "stage": 40, "done": [10, 20, 30, 40], "objectives": [{"index": 50, "displayed": true, "completed": true}]},
+    {"kind": "quest", "quest": "VMS19", "running": false, "completed": true, "stage": 100},
+    {"kind": "quest", "quest": "VFreeformFreeside", "running": true, "vars": {"KingFavorState": 1}},
+    {"kind": "quest", "quest": "VMS21", "running": true, "stage": 20, "done": [1, 10, 20], "objectives": [{"index": 64, "displayed": true}], "vars": {"iBossesReady": 2}},
+    {"kind": "quest", "quest": "VDialogueHiddenValley", "running": true, "vars": {"LockdownLifted": 1, "CurrentElder": 0}}
+  ],
+  "actions": [
+    {"op": "note", "text": "Path: the NCR chain (ncr.actions.json) to its point named below, then Volare! failed before the player meets Crocker, who gives up on the Boomers (VMS23 102)."},
+    {"op": "note", "text": "Things That Go Boom. The player walks through a Strip gate trigger: VMS23 1 and the messenger is sent. The messenger's walk to the player is AI travel; the messenger's line stands for it."},
+    {"op": "trigger_enter", "trigger": "scripted:0x00117E77"},
+    {"op": "advance_seconds", "seconds": 1},
+    {"op": "get_quest", "quest": "VMS23", "fields": ["running", "stage", "done.1"], "label": "milestone: VMS23 1"},
+    {"op": "say_info", "info": "0x00119094", "speaker": "VMS23Messenger"},
+    {"op": "advance_seconds", "seconds": 1},
+    {"op": "get_quest", "quest": "VMS23", "fields": ["var.bMessageDelivered"], "label": "messenger's note delivered"},
+    {"op": "note", "text": "Volare! fails first: the player kills Jack at Nellis (kill stands in for the fight; his OnDeath sets the fail stage 120, as in fail-volare). Crocker's note line (stage 5) then offers Topic017: the Boomers will not help, and Crocker lets it go (stage 102)."},
+    {"op": "move_player", "to": "NellisJackREF"},
+    {"op": "kill", "actor": "NellisJackREF", "killer": "player"},
+    {"op": "advance_seconds", "seconds": 1},
+    {"op": "get_quest", "quest": "VMS15", "fields": ["stage", "done.120"], "label": "milestone: VMS15 120"},
+    {"op": "move_player", "to": "VAmbassadorCrockerREF"},
+    {"op": "say_info", "info": "0x0011CB62", "speaker": "VAmbassadorCrockerREF"},
+    {"op": "advance_seconds", "seconds": 1},
+    {"op": "get_quest", "quest": "VMS23", "fields": ["stage", "done.5"], "label": "milestone: VMS23 5"},
+    {"op": "say_info", "info": "0x00117E6A", "speaker": "VAmbassadorCrockerREF"},
+    {"op": "advance_seconds", "seconds": 1},
+    {"op": "get_quest", "quest": "VMS23", "fields": ["completed", "stage", "done.102", "var.ToldAboutBoomers"], "label": "final: VMS23 102"}
+  ]
+}

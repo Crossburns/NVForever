@@ -577,7 +577,8 @@ fn locked_doors_that_open_in_place_close_the_way_without_the_key() {
     assert!(matches!(g.find_path(from, to, &PathParams::default()), Err(PathError::Unreachable { .. })));
     // Short of the door is still reachable.
     assert!(g.find_path(from, Place { space: W, pos: [350.0, 50.0, 0.0] }, &PathParams::default()).is_ok());
-    for p in [PathParams { keys: vec![0x4B], ..Default::default() }, PathParams { open_locked: true, ..Default::default() }] {
+    // Its owner may use it without the key (Fallout 3's playroom door, Dad's).
+    for p in [PathParams { keys: vec![0x4B], ..Default::default() }, PathParams { open_locked: true, ..Default::default() }, PathParams { owned_doors: vec![0xD00], ..Default::default() }] {
         let path = g.find_path(from, to, &p).unwrap();
         assert_eq!(path.legs[0].door_stops.len(), 1);
     }
@@ -801,6 +802,30 @@ fn an_enabled_obstacle_cuts_the_navmesh_under_it() {
     assert_eq!(g.sync_obstacles([(0x5B0, false)]), vec![0x5B0]);
     assert_eq!(g.cut_triangles(), 0);
     assert!(g.can_reach(from, to, &PathParams::default()));
+}
+
+/// The obstacle stamp changes with every change of the obstacles or their states and
+/// only then; no two graphs share one once they learnt obstacles (`fnv_ai`'s obstacle
+/// poll is keyed on it).
+#[test]
+fn the_obstacle_stamp_changes_with_the_obstacles_only() {
+    let mut g = graph(&[(grid(1, [0.0, 0.0], 10, 1, 100.0, &[], flat), W)]);
+    assert_eq!(g.obstacles_stamp(), 0, "none learnt");
+    g.set_obstacles(vec![sandbags(0.0, 90.0)], |o| o.initially_enabled);
+    let learnt = g.obstacles_stamp();
+    assert_ne!(learnt, 0);
+    assert!(g.sync_obstacles([(0x5B0, false), (0x999, true)]).is_empty());
+    assert_eq!(g.obstacles_stamp(), learnt, "nothing changed");
+    assert_eq!(g.sync_obstacles([(0x5B0, true)]), vec![0x5B0]);
+    let switched = g.obstacles_stamp();
+    assert_ne!(switched, learnt);
+    assert_eq!(g.sync_obstacles([(0x5B0, false)]), vec![0x5B0]);
+    assert!(g.obstacles_stamp() != switched && g.obstacles_stamp() != learnt, "back to the first states, still a new stamp");
+    let mut other = graph(&[(grid(1, [0.0, 0.0], 10, 1, 100.0, &[], flat), W)]);
+    other.set_obstacles(vec![sandbags(0.0, 90.0)], |o| o.initially_enabled);
+    assert_ne!(other.obstacles_stamp(), g.obstacles_stamp());
+    g.set_obstacles(vec![sandbags(0.0, 90.0)], |o| o.initially_enabled);
+    assert_ne!(g.obstacles_stamp(), other.obstacles_stamp(), "learnt again");
 }
 
 /// An obstacle placed enabled (with an enable parent, not Initially Disabled) stood there

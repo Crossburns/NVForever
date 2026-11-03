@@ -199,6 +199,10 @@ impl Source for UiFiles {
         self.vfs.read(path)?.ok()
     }
 
+    fn read_archived(&self, path: &str) -> Option<Vec<u8>> {
+        self.vfs.read_archived(path)?.ok()
+    }
+
     fn game_string(&self, name: &str) -> Option<String> {
         self.strings.get(name)
     }

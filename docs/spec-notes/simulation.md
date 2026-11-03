@@ -364,7 +364,7 @@ not visible in the data and stays **[hypothesis]** until the in-game captures of
     value replaces the authored one for every reference of the form is [hypothesis: the
     flag is the base form's]. fnv-game's SetQuestObject writes there (it used to keep its
     own map, `FormChanges::quest_items`, now unused).
-  - The player's own drop (`World::player_drop_item`, the inventory menu's drop keys)
+  - The player's own drop (`World::player_drop_item`, the inventory menu's right click)
     refuses a quest item with `SimError::QuestItem` and moves nothing [documented].
   - A **scripted** drop does not: in the game, `player.Drop` from a script removed a quest
     key and a stimpak made a quest item with `SetQuestObject 1` from the player's

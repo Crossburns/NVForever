@@ -462,6 +462,10 @@ pub enum XExpr {
         body: Vec<Stmt>,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         value: Option<Box<XExpr>>,
+        /// Its number in its unit, in the order the compiler met the lambdas: with the
+        /// unit, what makes it the same lambda each time it is made (#1088).
+        #[serde(default)]
+        index: u32,
     },
 }
 

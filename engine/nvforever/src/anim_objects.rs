@@ -129,9 +129,13 @@ pub fn hold(
     let objects = &mut *objects;
     let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
     for (e, rig, idle, held) in &actors {
-        // The idle playing (also while it fades out at its end), not a script's group.
-        let playing = idle.and_then(|i| i.0.cur.as_ref()).filter(|p| p.group.is_none());
-        let want = playing.map(|p| (p.idle, p.serial)).filter(|(idle, _)| objects.by_idle.contains_key(idle));
+        // The idle playing (also while it fades out at its end), not a script's group; else
+        // the one before it while it still shows under the next one's fade-in, so an
+        // idle brought back by the line that asks for it again keeps its objects
+        // (#1355: Doc's mirror, a chair fidget starting as the hand-over ended).
+        let has = |p: &&Playing<Arc<BoundClip>>| p.group.is_none() && objects.by_idle.contains_key(&p.idle);
+        let playing = idle.and_then(|i| i.0.cur.as_ref().filter(has).or(i.0.prev.as_ref().filter(has)));
+        let want = playing.map(|p| (p.idle, p.serial));
         if held.map(|h| h.serial) == want.map(|w| w.1) {
             if let (Some(h), Some(p)) = (held, playing) {
                 let time = clip_time(p);

@@ -63,7 +63,7 @@ impl Game<'_> {
     /// ones [documented: GetFirstRefInCell; observed: nvse-refs, an unloaded house counts
     /// its persistent references only]. Loaded: the player's cell and, outside, the cells
     /// within two squares of it [hypothesis: uGridsToLoad 5].
-    fn ref_walk_list(&self, cell: Option<FormId>, code: i64, depth: i64, taken: bool) -> Vec<FormId> {
+    pub(crate) fn ref_walk_list(&self, cell: Option<FormId>, code: i64, depth: i64, taken: bool) -> Vec<FormId> {
         let here = self.cell_of(FormId::PLAYER_REF);
         let Some(cell) = cell.or(here) else { return Vec::new() };
         let loaded: Vec<FormId> = here.map(|h| self.scan_cells(h, 2)).unwrap_or_default();

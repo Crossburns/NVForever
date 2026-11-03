@@ -1039,6 +1039,18 @@ fn say_once_lines_are_said_once_per_actor() {
     assert_eq!(g.start_dialogue(actor(), None), Ok(FormId(A_LATER)));
 }
 
+/// A Say Once line another actor said is not said again (observer check 31: the Yes Man
+/// mainframe did not repeat the Tops Yes Man's first-meeting greeting; #1113).
+#[test]
+fn say_once_lines_said_by_another_actor_are_not_said_again() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(g.can_say(actor(), Some(FormId(0x14)), FormId(A_FIRST)));
+    g.said.insert((FormId(0x00FF_0001), FormId(A_FIRST)));
+    assert!(!g.can_say(actor(), Some(FormId(0x14)), FormId(A_FIRST)));
+    assert_eq!(g.start_dialogue(actor(), None), Ok(FormId(A_LATER)));
+}
+
 #[test]
 fn added_topics_follow_ups_and_the_topic_list() {
     let f = fixture();
@@ -1410,6 +1422,38 @@ fn a_speech_challenge_gives_its_xp_and_a_skill_line_none() {
     assert_eq!(challenge(4), 0.0);
 }
 
+/// A New Vegas Speech check counts a Speech Success when its pass line is chosen and a
+/// Speech Failure for its fail line (stats 12 and 31), with no XP of its own; a check
+/// of another skill counts neither (#967; misc-stats.md §3).
+#[test]
+fn a_speech_check_counts_a_success_or_a_failure() {
+    use fnv_game::misc_stats::{SPEECH_FAILURES, SPEECH_SUCCESSES};
+    let f = fixture();
+    let run = |speech: f64| {
+        let mut g = at_topic_list(&f);
+        fnv_game::functions::set_actor_value_current(&mut g, FormId::PLAYER_REF, SPEECH as u16, speech).unwrap();
+        pick(&mut g, T_TOP2);
+        listen(&mut g);
+        assert_eq!(g.dialogue_choices().iter().find(|c| c.topic == FormId(T_SKILL)).unwrap().challenge.as_ref().unwrap().skill, Some(SPEECH as u16));
+        let line = pick(&mut g, T_SKILL);
+        (line, g.misc_stat(SPEECH_SUCCESSES), g.misc_stat(SPEECH_FAILURES), g.player.xp)
+    };
+    assert_eq!(run(60.0), (FormId(H_PASS), 1.0, 0.0, 0.0));
+    assert_eq!(run(35.0), (FormId(H_PASS), 1.0, 0.0, 0.0));
+    assert_eq!(run(10.0), (FormId(H_FAIL), 0.0, 1.0, 0.0));
+    // The same pair testing another skill (Barter, 32): nothing counted.
+    let mut f = f;
+    for id in [H_PASS, H_FAIL] {
+        let line = f.data.infos.get_mut(&FormId(id)).unwrap();
+        line.conditions[0].params = vec![ArgValue::Enum(32)];
+    }
+    let mut g = at_topic_list(&f);
+    pick(&mut g, T_TOP2);
+    listen(&mut g);
+    pick(&mut g, T_SKILL);
+    assert_eq!((g.misc_stat(SPEECH_SUCCESSES), g.misc_stat(SPEECH_FAILURES)), (0.0, 0.0));
+}
+
 #[test]
 fn start_conversation_and_the_dialogue_functions() {
     let f = fixture();
@@ -1662,6 +1706,38 @@ fn the_runner_talks_and_prints_a_dialogue_trace() {
     assert_eq!(t["final"]["dialogue"], Json::Null);
     // The same document is not a script actions document.
     assert!(fnv_game::runner::run(&f.data, &f.forms, &f.refs, &input).is_err());
+}
+
+/// The runner's `wait_talk` after a Goodbye greeting (no conversation opens) waits for
+/// the line to end, so its end script has run before the next step (issue #1114: a
+/// following conversation used to cut Carlitos's and Joana's lines); `end_talk` with no
+/// conversation running does nothing.
+#[test]
+fn the_runners_wait_talk_hears_a_goodbye_greeting_out_and_end_talk_after_the_end_does_nothing() {
+    let f = fixture();
+    let input: fnv_game::runner::Input = serde_json::from_value(json!({
+        "format": "fnv.script.actions/1",
+        "actions": [
+            {"op": "set_global", "name": "TestGate", "value": 7},
+            {"op": "talk", "actor": "TalkerREF", "label": "bark"},
+            {"op": "get_global", "name": "TestOut", "label": "begun"},
+            {"op": "wait_talk", "label": "heard"},
+            {"op": "get_global", "name": "TestOut", "label": "after"},
+            {"op": "end_talk"},
+            {"op": "get_global", "name": "TestOut", "label": "still"}
+        ]
+    }))
+    .unwrap();
+    let t = fnv_game::runner::run(&f.data, &f.forms, &f.refs, &input).unwrap();
+    let all = t["observations"].as_array().unwrap();
+    let obs = |label: &str| all.iter().find(|o| o["label"] == label).cloned().unwrap();
+    assert_eq!(obs("bark")["info"], FormId(A_BARK).to_string());
+    assert_eq!(obs("begun")["value"], 3.0);
+    assert_eq!(obs("heard")["state"], "ended");
+    // The end script ran during the wait.
+    assert_eq!(obs("after")["value"], 4.0);
+    assert_eq!(obs("still")["value"], 4.0);
+    assert!(all.iter().all(|o| o.get("errors").is_none()), "{all:?}");
 }
 
 /// The runner's `player_activate` of an actor ends in the default action of talking

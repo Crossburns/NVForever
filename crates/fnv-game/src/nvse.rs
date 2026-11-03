@@ -40,6 +40,21 @@ pub(crate) fn record_float(x: f64) -> f64 {
     }
 }
 
+/// A number a script hands a record setter, made fit for the field it goes to: `None`
+/// for NaN or infinity (nothing is set), else clamped to `lo..=hi`, the field's range
+/// [hypothesis: the game keeps its record fields in range; NVForever never stores a value
+/// a field cannot hold]. Every record setter of the extender batches uses it.
+pub(crate) fn field_number(v: f64, lo: f64, hi: f64) -> Option<f64> {
+    v.is_finite().then(|| v.clamp(lo, hi))
+}
+
+/// The range of an f32 field.
+pub(crate) const F32: (f64, f64) = (-(f32::MAX as f64), f32::MAX as f64);
+/// The range of a u8 field.
+pub(crate) const U8: (f64, f64) = (0.0, 255.0);
+/// The range of a u32 field.
+pub(crate) const U32: (f64, f64) = (0.0, u32::MAX as f64);
+
 /// [`field`] for the sibling files.
 pub(crate) fn record_value(g: &Game, form: FormId, sub: &str, path: &str) -> Option<XVal> {
     field(g, form, sub, path)
@@ -144,6 +159,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
         return Some(r);
     }
     if let Some(v) = crate::script_input::call(&mut g.input, name, args) {
+        // EnableKey frees the key whatever holds it, so DisableKeyEx's mask groups on it
+        // go too; else a later EnableKeyEx would find a stale group and keep the key
+        // disabled [hypothesis: ITR's groups sit on top of DisableKey's one switch].
+        if name == "enablekey" {
+            if let Some(k) = args.first().and_then(|a| a.num().ok()).and_then(|c| u16::try_from(c as i64).ok()) {
+                g.other.itr.key_masks.remove(&k);
+            }
+        }
         return Some(Ok(v));
     }
     let subject = on.or(ctx.self_ref);
@@ -183,13 +206,52 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
     if let Some(r) = crate::nvse_jg2::call(g, ctx, name, subject, args) {
         return Some(r);
     }
+    if let Some(r) = crate::nvse_jg3::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_jg4::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_sup1::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
     if let Some(r) = crate::nvse_jip5::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_jip6::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_jip7::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_pp::call(g, name, subject, args) {
         return Some(r);
     }
     if let Some(r) = crate::nvse_showoff2::call(g, ctx, name, subject, args) {
         return Some(r);
     }
     if let Some(r) = crate::nvse_anh::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_itr1::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_itr2::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_knvse::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_jippp::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_vheyes::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_small::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_one111::call(g, name, subject, args) {
         return Some(r);
     }
     if let Some(r) = crate::nvse_rest::call(g, ctx, name, subject, args) {
@@ -513,14 +575,17 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
         }
         // [documented: GetRace; observed: nvse-forms, Doc Mitchell 0042C3, his RNAM though
         // he has a template (not using Traits); tmpl2 (#1057), PrimmNCRTrooper3 answers its
-        // "Use Traits" template's race] the actor's race record, as the character creator
-        // or AgeRace changed it.
+        // "Use Traits" template's race; tmpl3, a placed reference whose Traits come from a
+        // leveled list answers the race of the actor the list gave it] the actor's race
+        // record, as the character creator or AgeRace changed it.
         "getrace" => {
             // The argument first: `GetRace rF` on a base form [observed: nvse-forms].
             let a = as_form(args.first()).or(subject).unwrap_or(FormId(0));
-            let traits = g.data.base_template_source(crate::functions::base_of(g, a).unwrap_or(a), |d| d.template_traits);
-            let own = (a != FormId::PLAYER_REF && g.extra.get(&a).and_then(|e| e.race).is_none())
-                .then(|| match field(g, traits, "RNAM", "") {
+            // A base form: its Traits template's through NPC records; a chain ending at a
+            // list keeps the record's own (actors.md §2.2).
+            let own = crate::functions::base_of(g, a)
+                .is_none()
+                .then(|| match field(g, g.data.base_template_source(a, |d| d.template_traits), "RNAM", "") {
                     Some(XVal::Ref(r)) if r != 0 => Some(FormId(r)),
                     _ => None,
                 })
@@ -553,8 +618,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
             let n = int_of(args.first(), 0);
             let a = if name == "getbasenumfactions" { item(g, 0) } else { item(g, 1) }.unwrap_or(FormId(0));
             // Counted from the record's last SNAM back [observed: nvse-actors, Sunny's
-            // and Doc's factions].
-            let mut f = g.data.actors.get(&a).map(|d| d.factions.clone()).unwrap_or_default();
+            // and Doc's factions]; the Use Factions template's [observed: o5, tmpl3 (#1057)].
+            let src = g.data.base_template_source(a, |d| d.template_factions);
+            let mut f = g.data.actors.get(&src).map(|d| d.factions.clone()).unwrap_or_default();
             f.reverse();
             let nth = usize::try_from(n).ok().and_then(|n| f.get(n));
             match name {

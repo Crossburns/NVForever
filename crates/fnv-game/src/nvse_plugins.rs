@@ -164,8 +164,14 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             let b = form(args, 1).or(subject).map(|f| base(g, f)).unwrap_or(FormId(0));
             XVal::Num(f64::from(g.world.base_entries(b).unwrap_or_default().iter().filter(|e| e.item == item).map(|e| e.count).sum::<i32>()))
         }
-        // The calling script's plugin; a runtime script has none [observed: plugins1, 0].
-        "getselfmodindex" => zero,
+        // "the mod index of the script that calls the function" [documented:
+        // GetSelfModIndex]: its plugin's place in the load order (`Exec::ext_call` sets
+        // `other.plugin`); a runtime script has none [observed: plugins1, 0]. MCM mods
+        // compare it with MCM's `_ActiveMod` (menu-xml.md §10).
+        "getselfmodindex" => {
+            let p = &g.other.plugin;
+            XVal::Num(if p.is_empty() { 0.0 } else { g.data.load_order.iter().position(|l| l.eq_ignore_ascii_case(p)).map_or(0.0, |i| i as f64) })
+        }
         // The rank the actor has, 0 without [observed: plugins1, the player without
         // Toughness 0].
         "hasperkrank" => {

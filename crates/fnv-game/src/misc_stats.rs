@@ -83,6 +83,7 @@ pub const DOCTOR_BAGS_USED: u16 = 26;
 pub const CHALLENGES_COMPLETED: u16 = 27;
 pub const DISINTEGRATIONS: u16 = 29;
 pub const HAVE_LIMBS_CRIPPLED: u16 = 30;
+pub const SPEECH_FAILURES: u16 = 31;
 pub const ITEMS_CRAFTED: u16 = 32;
 pub const ITEMS_REPAIRED: u16 = 34;
 pub const TOTAL_THINGS_KILLED: u16 = 35;
@@ -95,7 +96,7 @@ pub const BLACKJACK_GAMES_PLAYED: u16 = 41;
 pub const SLOTS_GAMES_PLAYED: u16 = 42;
 
 /// The codes the rules or the engine count (the others only ModPCMiscStat changes).
-pub const COUNTED: [u16; 34] = [
+pub const COUNTED: [u16; 35] = [
     QUESTS_COMPLETED,
     LOCATIONS_DISCOVERED,
     PEOPLE_KILLED,
@@ -120,6 +121,7 @@ pub const COUNTED: [u16; 34] = [
     CHALLENGES_COMPLETED,
     DISINTEGRATIONS,
     HAVE_LIMBS_CRIPPLED,
+    SPEECH_FAILURES,
     ITEMS_CRAFTED,
     ITEMS_REPAIRED,
     TOTAL_THINGS_KILLED,

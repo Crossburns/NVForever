@@ -99,6 +99,13 @@ The ActorValue page's three pools (actor-values.md §1) [documented: ActorValue]
   0 [hypothesis: RadAway's effect is "Restore Rads", Nuka-Cola's "Damage Rads"; the GECK
   wiki's GetRadiationLevel reads the player's rads with GetAV]. The change goes to the
   value's base, where SetActorValue would put it [hypothesis].
+- **God mode** (`tgm`, ToggleGodMode): an effect that damages the player (a negative
+  change to the damage pool, or a need or rads raised) does nothing [hypothesis fitting
+  the original: Beer's and Nuka-Cola's Dehydration +20 / +10, held on `IsHardcore == 1`
+  [observed: FalloutNV.esm], did not raise Dehydration when drunk in Hardcore with tgm on
+  (o7_00, 2026-10-31, #1167), while the Hardcore Stimpak, same condition, worked]. Without
+  god mode the drinks raise it, as the help says "some drinks, such as alcohol and soda,
+  can increase dehydration" (§11).
 - **Value And Parts** ("Restore Health & Conditions", the normal Stimpak and Super
   Stimpak) restores the value by the whole amount and each limb condition by
   `fnv_game::aid::PARTS_LIMB_SHARE` (1/6) of it [design: owner's request 2026-10-23, "a
@@ -146,7 +153,14 @@ Food:      fMagicSurvivalSkillBase + fMagicSurvivalSkillMult × Survival / 100  
   Player's"; an NPC's own skill is used for NPCs].
 - With both flags the two multiply [hypothesis: the page says only that they are "NOT
   mutually exclusive"].
-- A new character (Medicine 15) heals 30 × 1.3 = 39 with a Stimpak.
+- The scaled magnitude is rounded down to a whole number [hypothesis fitting the original:
+  in Hardcore at Medicine 15 the Stimpak's 5 a second healed about 6 a second for 6 s,
+  36 in all, not 6.5 and 39 (observed 2026-10-31, o7_05, observer-checks.md item 9,
+  #1167); the normal Stimpak, 30 at Medicine 17's potency 1.34, restored 40 and with
+  Better Healing 48, not 40.2 and 48.24 (captures pk_better_healing*)]. Before
+  2026-11-01 the product was kept whole.
+- A new character (Medicine 15) heals 30 × 1.3 = 39 with a Stimpak, and 6 × 6 = 36 with
+  the Hardcore one.
 
 ## 5. Usage, addiction and withdrawal
 
@@ -221,6 +235,13 @@ Food:      fMagicSurvivalSkillBase + fMagicSurvivalSkillMult × Survival / 100  
   last 900 hours waited. Each effect runs one ScriptEffectUpdate with the hour's
   seconds, a value changed by the second changes by the seconds of its duration left,
   and an effect whose time is up finishes [hypothesis].
+- An effect with a duration whose conditions fail when it is applied (a Stimpak's
+  Hardcore heal over time used outside Hardcore) is held inactive, as a spell's is
+  (§5.3), and its time runs all the same: it goes when its duration has passed, with no
+  update or finish of its own, and does not take hold later if its conditions come to
+  pass after that (#1438) [hypothesis; before 2026-11-03 an inactive effect's time stood
+  still, so the Stimpak's Hardcore effects stayed listed on STATS EFF for good and would
+  heal whenever Hardcore was turned on].
 - The same item used again while its effect is active extends that effect (one effect,
   one end) [observed: scripts.md §7.6]; a modifier is therefore not doubled by a second
   dose [hypothesis follows from it].
@@ -235,7 +256,7 @@ Food:      fMagicSurvivalSkillBase + fMagicSurvivalSkillMult × Survival / 100  
   <changes>; <value> before → after, …`, `aid: <item>'s effects on the player ended: …`,
   `aid: the player is addicted to …`, and at exit `aid summary: …`.
 - The Pip-Boy's STATS EFF list shows each aid item with active value changes, with the
-  amounts applied (potency included).
+  amounts applied (potency included). Inactive effects (conditions failing) are not listed (#1438).
 - Hardcore mode's Stimpak and RadAway effects are chosen by their conditions (IsHardcore,
   HasPerk); the conditions of the masters' aid effects [observed]: IsHardcore 179,
   HasPerk 147, and a few others (§8).
@@ -365,9 +386,19 @@ Rules (`crates/fnv-game/src/needs.rs`):
   sleep ~2.4/h as the settings do; before, a guess of 12.5]. Seen in the original
   2026-10-31 (save nvfHardcore): Dehydration about 11.8, Hunger 4.7 and Sleep Deprivation
   2.2 an hour at TimeScale 30 [observed; observer check 4].
-- An hour waited raises them by an hour's worth (120 s of play at TimeScale 30); an hour
-  slept does the same for dehydration and hunger and lowers sleep deprivation by 60
-  [documented: the owner's Hardcore table, "~ -60/h Sleep"; before, a guess of 100] (§6).
+- An hour waited raises them by an hour's worth in whole points: the hour's 120 s of play
+  (TimeScale 30) over the rate, rounded down, 12, 4 and 2 [observed: the owner,
+  2026-10-31, Hardcore save from all needs at 0, Pip-Boy values: 3 hours waited gave H2O
+  36, FOD 12, SLP 6, observer-checks.md item 4, #1177; hypothesis: the rounding down].
+  An hour slept does the same for dehydration and hunger; for sleep deprivation it
+  first takes 60 away (never below 0) [documented: the owner's Hardcore table, "~ -60/h
+  Sleep"; before, a guess of 100] and then adds the hour's 2 [observed: 3 hours slept
+  from 0 gave SLP 2, H2O 36, FOD 12; hypothesis: the order, one case] (§6). Hours passed
+  together count hour by hour. A share under one point an hour (a TimeScale above 72
+  for sleep deprivation, 144 for hunger, 360 for dehydration) would round to nothing, so
+  it builds up from hour to hour and gives a point whenever a whole one is reached
+  [design: keeps the long-run rate; `Player::need_carry`]. Before 2026-11-01 the waits added 12, 4.8 and 2.4 an hour
+  and a sleep ended sleep deprivation at 0.
 - The stage effects are the records' [observed: FalloutNV.esm SPEL Dehydration200 …
   SleepDeprivation1000, 2026-10-23]; they agree with the owner's table but for Deadly
   Dehydration (800), whose record has Endurance −3, Agility −2, Perception −2 and no

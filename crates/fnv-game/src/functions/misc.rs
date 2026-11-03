@@ -14,7 +14,13 @@ use rand_core::RngCore;
 pub fn show_message(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let m = a.form(0)?;
     let def = g.data.messages.get(&m).ok_or_else(|| format!("{} is not a message", g.data.name(m)))?;
-    let (text, buttons, is_box) = (def.text.clone(), def.buttons.clone(), def.message_box);
+    // SetMessageFlags' Message Box bit (`nvse_jip6`).
+    let (text, buttons, is_box) = (def.text.clone(), def.buttons.clone(), g.message_flags(m) & 1 != 0);
+    // "A disabled message will never be displayed by the game" [documented:
+    // SetMessageDisabled].
+    if g.message_disabled(m) {
+        return none();
+    }
     // Too few variables for the text: the message does not show [documented: GECK wiki
     // ShowMessage notes]. Button texts take no variables [documented: same notes].
     let vars = message_vars(a);

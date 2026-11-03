@@ -76,10 +76,16 @@ pub fn review_equipment(g: &mut Game, actor: FormId) {
 
 /// `Container.RemoveItem item count [hideMessage]`: the items are destroyed. The
 /// opening's `player.RemoveItem` of the Pip-Boy 3000 and its glove passes 1 [observed:
-/// FalloutNV.esm scripts, decompiled].
+/// FalloutNV.esm scripts, decompiled]. A count of 0 removes nothing and the script goes
+/// on [observed: observer check 44, capture o5_00: `player.RemoveItem` of Stimpaks and
+/// caps with 0 left both counts as they were and the next line ran]; Loyal's reward line
+/// (INFO 0x0010A1BF) passes one when Nellis' arrays are not all fixed (#1113).
 pub fn remove_item(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let from = ctx.subject()?;
     let count = a.int(1)?;
+    if count == 0 {
+        return none();
+    }
     let silent = hide_flag(a, 2);
     for item in items(g, a.form(0)?) {
         let n = g.world.remove_item(from, item, count).map_err(|e| e.to_string())?;

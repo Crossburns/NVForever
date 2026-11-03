@@ -106,18 +106,10 @@ impl Source for Files {
         }
         self.vfs.read(path)?.ok()
     }
-}
 
-/// The archives alone: what a loose file replaced [design]. A path whose only copy the
-/// VFS holds is loose in Data reads nothing (the VFS keeps no archived copy beneath it).
-struct Archived<'a>(&'a Vfs);
-
-impl Source for Archived<'_> {
-    fn read(&self, path: &str) -> Option<Vec<u8>> {
-        if self.0.source_of(path) == Some("loose") {
-            return None;
-        }
-        self.0.read(path)?.ok()
+    /// [design] The archives alone: what an overlay's or Data's loose file replaced.
+    fn read_archived(&self, path: &str) -> Option<Vec<u8>> {
+        self.vfs.read_archived(path)?.ok()
     }
 }
 
@@ -269,7 +261,7 @@ pub fn run(cmd: UiCmd) -> anyhow::Result<Value> {
             let roots = ui.mod_added_tiles(id);
             // The archived file's names, only when a root is a loose file's [design].
             let loose = roots.iter().any(|&r| matches!(ui.tile(r).origin, Origin::File { .. }));
-            let vanilla = loose.then(|| Ui::file_name_paths(&Archived(&files.vfs), &menu)).flatten();
+            let vanilla = loose.then(|| Ui::archived_name_paths(&files, &menu)).flatten();
             let mut total = 0;
             let rows: Vec<Value> = roots
                 .iter()

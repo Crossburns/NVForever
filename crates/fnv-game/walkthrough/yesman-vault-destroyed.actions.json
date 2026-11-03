@@ -316,14 +316,6 @@
       "label": "chip handed over"
     },
     {
-      "op": "note",
-      "text": "The Goodbye line is still being spoken when the conversation reads as over; its end script (chip removed, stage 70) runs when the line ends, about 11.5 s later."
-    },
-    {
-      "op": "advance_seconds",
-      "seconds": 12
-    },
-    {
       "op": "get_quest",
       "quest": "VMQYesMan01",
       "fields": [
@@ -358,27 +350,12 @@
     },
     {
       "op": "note",
-      "text": "Stand-in for the mainframe's greet package: the player talks to the mainframe until it gives the basement line (stage 75). The first greeting is the body's say-once first line again (Say Once per actor; see the findings)."
+      "text": "Stand-in for the mainframe's greet package: the player talks to the mainframe, which gives the basement line (stage 75). It does not repeat the Tops Yes Man's Say Once first line 0x001164F1: a Say Once line is not said again by another actor (observer check 31, #1113)."
     },
     {
       "op": "talk",
       "actor": "0x0016A21E",
       "label": "mainframe greeting 1"
-    },
-    {
-      "op": "wait_talk"
-    },
-    {
-      "op": "end_talk"
-    },
-    {
-      "op": "advance_seconds",
-      "seconds": 1
-    },
-    {
-      "op": "talk",
-      "actor": "0x0016A21E",
-      "label": "mainframe greeting 2"
     },
     {
       "op": "wait_talk"

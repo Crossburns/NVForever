@@ -53,6 +53,7 @@ fn show_resurrections(
     mut ragdolls: ResMut<Ragdolls>,
     mut phys: Option<ResMut<PhysState>>,
     actor_world: Option<Res<ActorWorld>>,
+    sim: Option<Res<nvf_play::sim::SimState>>,
     mut residents: Option<ResMut<crate::residents::Residents>>,
     world: Res<WorldData>,
     mut parts: ResMut<ActorParts>,
@@ -66,6 +67,7 @@ fn show_resurrections(
     let Some(mut script) = script else { return };
     let Some(rt) = script.rt.as_mut() else { return };
     let Some(aw) = actor_world else { return };
+    let mut spawn_stats = crate::actors::ActorStats::default();
     // The rolls of a loaded game: actors resurrected before it was saved.
     if !*synced {
         if let Ok(mut rolls) = aw.rolls.lock() {
@@ -120,12 +122,13 @@ fn show_resurrections(
         // Drawn by its cell: spawned again there, where the game has its reference.
         let hidden = !rt.game.present(res.actor);
         let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
-        let Some(drawn) = respawn(&mut commands, e, parent.parent(), id, (pos, rot), hidden, &aw, &world, &mut ctx, &transforms) else { continue };
+        let Some(drawn) = respawn(&mut commands, e, parent.parent(), id, (pos, rot), hidden, &aw, sim.as_deref().map(|s| &s.world), &world, &mut ctx, &transforms, &mut spawn_stats) else { continue };
         info!("resurrect: {} ({name}) alive again (animate {flag}): its {was} taken away, {} at {at}, rolls {}", res.actor, if drawn { "spawned standing" } else { "could not be drawn" }, res.rolls);
         if drawn {
             waiting.push((id, time.elapsed_secs()));
         }
     }
+    crate::profile::actor_spawns(spawn_stats.equipment_spawns, spawn_stats.record_spawns);
 }
 
 /// Draw again the actor `id` that its cell drew as `root` under `parent`, at the game's
@@ -142,9 +145,11 @@ pub(crate) fn respawn(
     (pos, rot): ([f32; 3], [f32; 3]),
     hidden: bool,
     aw: &ActorWorld,
+    sim: Option<&fnv_sim::World<'_>>,
     world: &WorldData,
     ctx: &mut ActorCtx,
     transforms: &Query<&Transform>,
+    stats: &mut crate::actors::ActorStats,
 ) -> Option<bool> {
     let p = fnv_world::placed::placement(world.lo, world.schema, id)?;
     let base = p.base.and_then(|b| fnv_world::placed::base_object(world.lo, world.schema, b))?;
@@ -152,10 +157,9 @@ pub(crate) fn respawn(
     let m = Mat3::from_cols_array(&fnv_world::transform::ref_rotation(rot)).transpose();
     let rt_affine = to_parent * Affine3A::from_mat3_translation(m * p.scale, Vec3::from_array(pos));
     commands.entity(root).despawn();
-    let mut stats = Default::default();
     Some(match &base.sig {
-        b"NPC_" => crate::actors::spawn(commands, parent, rt_affine, Vec3::from_array(pos), id, base.form_id, aw, ctx, &mut stats, hidden),
-        b"CREA" => crate::actors::spawn_creature(commands, parent, rt_affine, id, base.form_id, aw, ctx, &mut stats, hidden),
+        b"NPC_" => crate::actors::spawn(commands, parent, rt_affine, Vec3::from_array(pos), id, base.form_id, aw, sim, ctx, stats, hidden),
+        b"CREA" => crate::actors::spawn_creature(commands, parent, rt_affine, id, base.form_id, aw, ctx, stats, hidden),
         _ => false,
     })
 }

@@ -60,7 +60,16 @@ It does not replace a lock's or key's line, nor an inaccessible door's.
 Unit tests: `crime::tests::cell_flags_from_raw` (Can't Wait), nvf-play `activate::tests`
 (an inaccessible door, a reference's and an activator's prompt). Smoke: `wait-cant-wait`
 (the Wait menu refused in Gomorrah), `activation-prompt-door` (the prompt of a Goodsprings
-door with XATO). No smoke for §2: the two flagged doors tried (the Prospector Saloon's
-0x00108BC8, the Nipton town hall's 0x00131E6B) were never under the crosshair in ours,
-likely decorative models without collision for the picker [observed, 2026-10-22]; whether
-the original lets the player target them is a capture question.
+door with XATO), `door-behind-wall-face` (below). No smoke for §2: the two flagged doors
+tried (the Prospector Saloon's 0x00108BC8, the town hall's interior 0x00131E6B) were never
+under the crosshair in ours [observed, 2026-10-22]; whether the original lets the player
+target them is a capture question.
+
+**Doors behind a building's face.** Some buildings' collision has a face a few units in
+front of their door: the Nipton town hall's mesh (0x0013D7E4) lies 8.5 units before the
+slab of its outside door (0x00130CFF), so the crosshair ray stopped on the building and the
+door could never be used [observed 2026-11-01, #1339]. When the ray's first hit cannot be
+activated, a door within 16 units behind it is the target (`pick::door_behind`) [design:
+the reach; the original's picking rule is not known]. Only doors are looked for, so items
+behind a wall stay out of reach. This may also be why the 2026-10-22 doors above were never
+targeted; not retried.

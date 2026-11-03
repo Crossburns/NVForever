@@ -713,10 +713,20 @@ Now (`fnv_ai::process`, the residents' `process_levels`):
     ("accessible through teleport doors within player's loaded cell grid", and once
     there "it never seems to go back to Low") count as buffered, every 18 s [design: the
     original's rate is "unknown"; 18 s is what those actors had before].
-  - An actor walking out of the loaded area, or on into another cell while at Mid-High,
-    takes that cell into the buffer [hypothesis: it keeps its surroundings in memory],
-    and a follower (Follow or Accompany package) out of the buffer is kept at Mid-High
-    while its leader is processed at Mid-High or above [design].
+  - An actor walking out of the loaded area into a cell the buffer does not hold goes
+    to **Low**, not Mid-High: Victor, patrolling out to 15,508 units from the player,
+    went from process level 0 straight to 3 and never read 1 [observed:
+    `docs/handoff/observer-jip-audit-2026-10-25.md` §3.1, campaign jip_state_goodsprings,
+    GetActorProcessingLevel; issue #958]. (Until 2026-11-01 such an actor took its cell
+    into the buffer and stayed Mid-High.) This is for a walk out in a worldspace: one
+    going from the loaded area through a door into an interior the buffer does not hold
+    takes that interior into the buffer, since interiors behind the loaded area's doors
+    read Mid-Low (2) in the original [observed: same §3.1; Benny riding the lift into
+    2ETopsPresidentialSuite, smoke `scene-tops-suite`, whose Dialogue package must take
+    over before the player follows]. One already at Mid-High walking on into
+    another cell takes that cell into the buffer [hypothesis: it keeps its surroundings
+    in memory], and a follower (Follow or Accompany package) out of the buffer is kept
+    at Mid-High while its leader is processed at Mid-High or above [design].
   - **Low**, every 120 s: anywhere else ("neither currently loaded nor buffered").
   - **Coming** (2026-10-13, owner's playtest list 4 item 13: Ringo came out of the gas
     station only after the fight): an actor whose rest of path has a corner in a drawn

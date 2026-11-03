@@ -287,6 +287,74 @@ impl PreparedTerrain {
     }
 }
 
+/// What marked the world dirty, so that the next query refreshes the broad phase
+/// (diagnostics only: counted in [`RefreshStats`], never read by the simulation).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirtyBy {
+    /// An actor's hit volume set or moved ([`PhysWorld::set_actor_volume`],
+    /// [`PhysWorld::set_actor_parts`]).
+    HitVolume = 0,
+    /// Bodies or colliders added or removed (terrain, references, characters, gore,
+    /// ragdolls, hit-volume bodies taken out).
+    Bodies = 1,
+    /// A body or collider moved, placed or switched on or off by hand (keyframed
+    /// reference objects, placed characters and bodies).
+    Transform = 2,
+    /// Anything else (a ragdoll's joints cut; bodies added asleep found by a step).
+    Other = 3,
+}
+
+/// Who asked for a broad-phase refresh (diagnostics only: [`RefreshStats`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryConsumer {
+    /// [`PhysWorld::move_character`] (in the engine, the player's controller).
+    Controller = 0,
+    /// The walked actors' planned moves (the engine's `move_npcs`).
+    Npc = 1,
+    /// [`PhysWorld::step`], for bodies added asleep.
+    Step = 2,
+    /// Every other caller of [`PhysWorld::update_queries`] or [`PhysWorld::queries`]:
+    /// rays, shape casts and overlaps from gameplay.
+    Cast = 3,
+}
+
+/// Counts of the broad-phase refreshes ([`PhysWorld::update_queries`]) since the world was
+/// made, for attributing their cost (diagnostics only: cumulative, never read by the
+/// simulation; a reader takes differences between two reads).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RefreshStats {
+    /// Refreshes that did work (the world was dirty).
+    pub refreshes: u64,
+    /// Refreshes by [`QueryConsumer`].
+    pub by_consumer: [u64; 4],
+    /// Refreshes whose only cause since the last refresh or step was [`DirtyBy::HitVolume`],
+    /// by [`QueryConsumer`].
+    pub hitvol_only: [u64; 4],
+    /// Dirty marks by [`DirtyBy`] (every mark, whether or not a refresh followed).
+    pub marks: [u64; 4],
+    /// Refreshes with at least one mark of each [`DirtyBy`] since the last refresh or step.
+    pub refreshes_with: [u64; 4],
+    /// Steps that found the world dirty with no refresh since the marks: the step's own
+    /// collision detection took them.
+    pub step_absorbed: u64,
+    /// Hit-volume capsules written by the hit-volume setters.
+    pub hitvol_colliders: u64,
+    /// Hit-volume capsules the setters actually wrote to rapier.
+    pub hitvol_written: u64,
+    /// Hit-volume capsules the setters left alone, bit-identical to the last write (the
+    /// single capsule's equal-volume return counts one).
+    pub hitvol_skipped: u64,
+    /// Colliders in the world, summed over the refreshes (divide by `refreshes`).
+    pub colliders: u64,
+    /// Bodies added since the last step, summed over the refreshes (re-flagged after
+    /// the detection).
+    pub repair_new: u64,
+    /// Bodies added asleep, summed over the refreshes (put back to sleep).
+    pub repair_sleep: u64,
+    /// Bodies struck since the last step, summed over the refreshes (woken again).
+    pub repair_struck: u64,
+}
+
 pub struct PhysWorld {
     pub params: PhysParams,
     pub(crate) w: PhysicsWorld,
@@ -310,6 +378,11 @@ pub struct PhysWorld {
     shells: HashMap<ColliderHandle, f32>,
     /// Colliders changed since the broad phase was last updated.
     dirty: bool,
+    /// Which [`DirtyBy`] marked it since the last refresh or step (a bit each;
+    /// diagnostics only).
+    dirty_by: u8,
+    /// Diagnostics only ([`PhysWorld::refresh_stats`]).
+    refresh_stats: RefreshStats,
     /// Bodies inserted since the last step (see [`PhysWorld::update_queries`]).
     new_bodies: Vec<RigidBodyHandle>,
     /// Bodies struck ([`PhysWorld::push_ref`], [`PhysWorld::push_dynamic`]) or moved by
@@ -324,6 +397,11 @@ pub struct PhysWorld {
     pub(crate) water: crate::water::Waters,
     /// The body held by the player's grab (`crate::grab`), driven before every step.
     pub(crate) grip: Option<crate::grab::Grip>,
+    /// New actors' hit volumes get colliders of no body (`crate::actors`; on by default).
+    pub(crate) standalone_hit_volumes: bool,
+    /// Standalone hit-volume colliders written since the last refresh or step: (collider,
+    /// actor body, pose on the body), placed by `flush_hit_volumes`.
+    pub(crate) hitvol_pending: Vec<(ColliderHandle, RigidBodyHandle, Pose)>,
 }
 
 impl PhysWorld {
@@ -353,12 +431,16 @@ impl PhysWorld {
             materials: HashMap::new(),
             shells: HashMap::new(),
             dirty: false,
+            dirty_by: 0,
+            refresh_stats: RefreshStats::default(),
             new_bodies: Vec::new(),
             struck: Vec::new(),
             pending_sleep: Vec::new(),
             steps: 0,
             water: Default::default(),
             grip: None,
+            standalone_hit_volumes: true,
+            hitvol_pending: Vec::new(),
         }
     }
 
@@ -376,13 +458,13 @@ impl PhysWorld {
         let c = t.collider.user_data(Owner::Terrain { x: grid.0, y: grid.1 }.encode()).contact_skin(TERRAIN_SHELL * self.k);
         let h = self.w.insert_collider(c, None);
         self.terrain.insert(grid, h);
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Bodies);
     }
 
     pub fn remove_terrain(&mut self, grid: (i32, i32)) -> bool {
         let Some(h) = self.terrain.remove(&grid) else { return false };
         self.w.remove_collider(h);
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Bodies);
         true
     }
 
@@ -432,7 +514,7 @@ impl PhysWorld {
         }
         report.bodies = handles.len();
         if !handles.is_empty() {
-            self.dirty = true;
+            self.mark_dirty(DirtyBy::Bodies);
         }
         report
     }
@@ -509,7 +591,7 @@ impl PhysWorld {
         for b in bodies {
             self.remove_body(b);
         }
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Bodies);
         true
     }
 
@@ -521,7 +603,7 @@ impl PhysWorld {
             }
         }
         self.w.remove_body(b);
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Bodies);
     }
 
     /// Move the keyframed body of collision object `object` (its index in the list given
@@ -552,7 +634,7 @@ impl PhysWorld {
         }
         body.set_position(p, true);
         body.set_next_kinematic_position(p);
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Transform);
         true
     }
 
@@ -577,7 +659,7 @@ impl PhysWorld {
             }
         }
         if n > 0 {
-            self.dirty = true;
+            self.mark_dirty(DirtyBy::Transform);
         }
         n
     }
@@ -649,6 +731,24 @@ impl PhysWorld {
         Some(dv.length() / k)
     }
 
+    /// Set one axis (0 x, 1 y, 2 z) of the velocity of every dynamic body of a reference
+    /// to `speed` game units per second, the other axes kept (the console's SetVel);
+    /// how many bodies it set, 0 when the reference has no dynamic body.
+    pub fn set_ref_velocity(&mut self, form_id: u32, axis: usize, speed: f32) -> usize {
+        let k = self.k;
+        let Some(bodies) = self.refs.get(&form_id) else { return 0 };
+        let mut set = 0;
+        for &b in bodies {
+            let Some(body) = self.w.bodies.get_mut(b).filter(|x| x.is_dynamic()) else { continue };
+            let mut v = body.linvel();
+            v[axis.min(2)] = speed * k;
+            body.set_linvel(v, true);
+            self.struck.push(b);
+            set += 1;
+        }
+        set
+    }
+
     /// The mass of a reference's heaviest dynamic body; `None` without one.
     pub fn ref_mass(&self, form_id: u32) -> Option<f32> {
         self.refs.get(&form_id)?.iter().filter_map(|&b| self.w.bodies.get(b).filter(|x| x.is_dynamic()).map(|x| x.mass())).max_by(f32::total_cmp)
@@ -710,19 +810,34 @@ impl PhysWorld {
     /// the step ([`PhysWorld::update_queries`]).
     pub(crate) fn body_placed(&mut self, h: RigidBodyHandle) {
         self.struck.push(h);
-        self.mark_dirty();
+        self.mark_dirty(DirtyBy::Transform);
     }
 
     /// Advance one fixed step.
     pub fn step(&mut self) {
+        // Standalone hit volumes written since the last refresh, placed as rapier's step
+        // would place attached ones (`crate::actors`).
+        self.flush_hit_volumes();
         if !self.pending_sleep.is_empty() {
             // Find the contacts of bodies added asleep first (`update_queries`).
-            self.dirty = true;
-            self.update_queries();
+            self.mark_dirty(DirtyBy::Other);
+            self.update_queries_for(QueryConsumer::Step);
         }
-        self.drive_grip();
-        self.buoy();
-        self.step_world();
+        // Spans for profiling (the engine's Tracy build shows them as zones) [design].
+        {
+            let _span = tracing::info_span!("phys::grip_buoy").entered();
+            self.drive_grip();
+            self.buoy();
+        }
+        {
+            let _span = tracing::info_span!("phys::rapier_step").entered();
+            self.step_world();
+        }
+        // Diagnostics: marks the step's own detection took, with no refresh between.
+        if self.dirty {
+            self.refresh_stats.step_absorbed += 1;
+        }
+        self.dirty_by = 0;
         self.dirty = false;
         self.new_bodies.clear();
         self.struck.clear();
@@ -736,8 +851,26 @@ impl PhysWorld {
     /// Bring the broad phase up to date after adding or removing bodies, so that queries
     /// see them, without advancing time.
     pub fn update_queries(&mut self) {
+        self.update_queries_for(QueryConsumer::Cast);
+    }
+
+    /// [`PhysWorld::update_queries`], counted for `by` in [`RefreshStats`] (the same work
+    /// whoever asks).
+    pub fn update_queries_for(&mut self, by: QueryConsumer) {
         if self.dirty {
-            self.detect();
+            // Only when there is work: this is called before every query.
+            let _span = tracing::info_span!("phys::query_refresh").entered();
+            self.count_refresh(by);
+            // Standalone hit volumes written since the last refresh (`crate::actors`).
+            self.flush_hit_volumes();
+            {
+                // The collision-only broad- and narrow-phase update.
+                let _span = tracing::info_span!("phys::refresh_detect").entered();
+                self.detect();
+            }
+            // The repairs after it: bodies added since the last step, bodies added asleep,
+            // bodies struck since the last step.
+            let _repair = tracing::info_span!("phys::refresh_repair").entered();
             // rapier 0.36's collision-only pipeline consumes the change flags of bodies
             // inserted since the last step without registering them with the island
             // manager, so they would never move [observed: a dynamic box added, queried
@@ -782,8 +915,47 @@ impl PhysWorld {
         Queries { world: self }
     }
 
-    pub(crate) fn mark_dirty(&mut self) {
+    pub(crate) fn mark_dirty(&mut self, by: DirtyBy) {
         self.dirty = true;
+        self.dirty_by |= 1 << by as u8;
+        self.refresh_stats.marks[by as usize] += 1;
+    }
+
+    /// Diagnostics: a refresh asked for by `by` (before its work; reads only sizes).
+    fn count_refresh(&mut self, by: QueryConsumer) {
+        let s = &mut self.refresh_stats;
+        s.refreshes += 1;
+        s.by_consumer[by as usize] += 1;
+        for (i, n) in s.refreshes_with.iter_mut().enumerate() {
+            if self.dirty_by & (1 << i) != 0 {
+                *n += 1;
+            }
+        }
+        if self.dirty_by == 1 << DirtyBy::HitVolume as u8 {
+            s.hitvol_only[by as usize] += 1;
+        }
+        s.colliders += self.w.colliders.len() as u64;
+        s.repair_new += self.new_bodies.len() as u64;
+        s.repair_sleep += self.pending_sleep.len() as u64;
+        s.repair_struck += self.struck.len() as u64;
+        self.dirty_by = 0;
+    }
+
+    /// Counts of the broad-phase refreshes since the world was made (diagnostics).
+    pub fn refresh_stats(&self) -> RefreshStats {
+        self.refresh_stats
+    }
+
+    /// Diagnostics: `n` hit-volume capsules written ([`RefreshStats::hitvol_colliders`]).
+    pub(crate) fn count_hitvol_colliders(&mut self, n: usize) {
+        self.refresh_stats.hitvol_colliders += n as u64;
+    }
+
+    /// Diagnostics: hit-volume capsules written to rapier and left alone as bit-identical
+    /// ([`RefreshStats::hitvol_written`], [`RefreshStats::hitvol_skipped`]).
+    pub(crate) fn count_hitvol_writes(&mut self, written: u64, skipped: u64) {
+        self.refresh_stats.hitvol_written += written;
+        self.refresh_stats.hitvol_skipped += skipped;
     }
 
     /// Bounding box (game units: min and max corners) of every collider on a fixed body —
@@ -854,12 +1026,16 @@ impl PhysWorld {
             materials: self.materials.clone(),
             shells: self.shells.clone(),
             dirty: self.dirty,
+            dirty_by: self.dirty_by,
+            refresh_stats: self.refresh_stats,
             new_bodies: self.new_bodies.clone(),
             struck: self.struck.clone(),
             pending_sleep: self.pending_sleep.clone(),
             steps: self.steps,
             water: self.water.clone(),
             grip: self.grip.clone(),
+            standalone_hit_volumes: self.standalone_hit_volumes,
+            hitvol_pending: self.hitvol_pending.clone(),
         }
     }
 

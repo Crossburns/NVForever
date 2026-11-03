@@ -7,7 +7,7 @@ use fnv_esm::raw::{write_subrecords, Subrecord};
 use fnv_game::ai::{AiPhase, SandboxPhase};
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::game::{Game, GameConfig};
-use fnv_game::package::{flags, type_flags, PackageCheck};
+use fnv_game::package::{flags, type_flags, LocationKind, PackageCheck};
 use fnv_game::GameData;
 use fnv_nav::graph::DoorLock;
 use fnv_nav::record::{tri_flags, DoorLink, NavMeshRecord, Triangle};
@@ -146,6 +146,7 @@ const P_WITH_PLAYER: u32 = 0x831;
 const P_SHOOT: u32 = 0x832;
 const P_NEAR_OBJECT: u32 = 0x833;
 const P_GUARD_NEAR: u32 = 0x834;
+const P_HUNT: u32 = 0x835;
 // Bases.
 const N_TRAVEL: u32 = 0x840;
 const N_IN: u32 = 0x841;
@@ -168,6 +169,7 @@ const N_LONER: u32 = 0x851;
 const N_SHOOTER: u32 = 0x852;
 const N_SEEKER: u32 = 0x853;
 const N_KEEPER: u32 = 0x854;
+const N_HUNTER: u32 = 0x855;
 // Cells and references.
 const CELL_A: u32 = 0x860;
 const CELL_B: u32 = 0x861;
@@ -207,6 +209,7 @@ const R_SHOOTER: u32 = 0x89D;
 const R_DOG2: u32 = 0x89E;
 const R_SEEKER: u32 = 0x89F;
 const R_KEEPER: u32 = 0x8A0;
+const R_HUNTER: u32 = 0x8A1;
 const DOOR_A: u32 = 0x8D1;
 const DOOR_B: u32 = 0x8D2;
 
@@ -238,6 +241,8 @@ fn plugin_bytes() -> Vec<u8> {
         pack(P_IN_B, "TravelIntoB", 0, TRAVEL, (1, CELL_B, 0), None),
         pack(P_RADIUS, "TravelNearA", 0, TRAVEL, (0, MARK_A, 150), None),
         pack(P_PATROL, "PatrolOnce", 0, PATROL, (0, M1, 0), Some(false)),
+        // Sent after the player: a Travel package near the player's reference.
+        pack(P_HUNT, "HuntThePlayer", 0, TRAVEL, (0, 0x14, 0), None),
         pack(P_LOOP, "PatrolRound", 0, PATROL, (6, 0, 0), Some(true)),
         pack(P_FOLLOW, "FollowSomeone", 0, FOLLOW, (3, 0, 0), None),
         pack(P_HERE, "TravelHere", flags::MUST_COMPLETE, TRAVEL, (2, 0, 0), None),
@@ -295,6 +300,7 @@ fn plugin_bytes() -> Vec<u8> {
         npc(N_SHOOTER, "Shooter", &[P_SHOOT]),
         npc(N_SEEKER, "Seeker", &[P_NEAR_OBJECT]),
         npc(N_KEEPER, "Keeper", &[P_GUARD_NEAR]),
+        npc(N_HUNTER, "Hunter", &[P_HUNT]),
     ]
     .concat();
     // Furniture: a chair (marker flags bit 30) and a bed (bit 31); an idle marker with
@@ -322,6 +328,7 @@ fn plugin_bytes() -> Vec<u8> {
         // from everything the tests walk to).
         placed(b"REFR", DOOR_A, "DoorA", STAT, [-2000.0, -2000.0, 0.0], None),
         placed(b"ACHR", R_TRAVEL, "TravellerRef", N_TRAVEL, START, None),
+        placed(b"ACHR", R_HUNTER, "HunterRef", N_HUNTER, [150.0, 150.0, 0.0], None),
         placed(b"ACHR", R_IN, "LodgerRef", N_IN, START, None),
         placed(b"ACHR", R_RADIUS, "VisitorRef", N_RADIUS, START, None),
         placed(b"ACHR", R_PATROL, "GuardRef", N_PATROL, START, None),
@@ -632,6 +639,65 @@ fn a_place_that_cannot_be_reached_sets_the_package_aside() {
     assert!(matches!(ev[5], AiEvent::Trip { .. }));
     assert!(matches!(ev.last().unwrap(), AiEvent::Arrived { .. }));
     assert_eq!(s.ai.agents[&actor].walker.space, B);
+}
+
+/// The obstacle poll is skipped while nothing that could change an obstacle's presence or
+/// the graph's obstacles happened since the last one (`Ai::obstacles_in_line`), and runs
+/// again after each such change: a script's Disable/Enable, a deletion, any reference
+/// state created, the obstacles learnt again. Whenever it is skipped, polling would have
+/// found every obstacle as the graph has it.
+#[test]
+fn the_obstacle_poll_is_skipped_only_while_nothing_changed() {
+    let f = fixture();
+    let mut s = sim(&f, &[]);
+    let ob = FormId(M3);
+    let sandbag = || fnv_nav::obstacles::Obstacle { reference: M3, space: A, position: [150.0, 150.0, 0.0], rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], scale: 1.0, bounds: ([-40.0, -40.0, 0.0], [40.0, 40.0, 90.0]), initially_enabled: false };
+    s.nav.set_obstacles(vec![sandbag()], |_| false);
+    assert_eq!(s.nav.obstacles.len(), 1);
+    // Skipped means a poll would change nothing.
+    let in_line = |s: &Sim| {
+        let skip = s.ai.obstacles_in_line(&s.game, &s.nav);
+        if skip {
+            assert!(s.nav.obstacles.iter().all(|(&r, o)| o.enabled == s.game.present(FormId(r))), "skipped while out of line");
+        }
+        skip
+    };
+    let changed = |s: &mut Sim| s.ai.apply_obstacles(&s.game, &mut s.nav).map(|(c, _)| c);
+    assert!(!in_line(&s), "never polled");
+    // M3 stands enabled in the game: the first poll brings it in and cuts.
+    assert_eq!(changed(&mut s), Some(vec![M3]));
+    assert!(s.nav.cut_triangles() > 0);
+    assert!(in_line(&s));
+    assert_eq!(changed(&mut s), None);
+    // A script's Disable.
+    s.game.world.set_enabled(ob, false).unwrap();
+    assert!(!in_line(&s));
+    assert_eq!(changed(&mut s), Some(vec![M3]));
+    assert_eq!(s.nav.cut_triangles(), 0);
+    assert!(in_line(&s));
+    // The same flag again changes nothing, and nothing is polled.
+    s.game.world.set_enabled(ob, false).unwrap();
+    assert!(in_line(&s));
+    // Any reference state created: polled again, nothing changed.
+    s.game.world.place(FormId(STAT), Some(FormId(CELL_A)), [0.0; 3], [0.0; 3], 1).unwrap();
+    assert!(!in_line(&s));
+    assert_eq!(changed(&mut s), None);
+    assert!(in_line(&s));
+    // Enabled again, then deleted (MarkForDelete).
+    s.game.world.set_enabled(ob, true).unwrap();
+    assert_eq!(changed(&mut s), Some(vec![M3]));
+    s.game.world.set_deleted(ob, true).unwrap();
+    assert!(!in_line(&s));
+    assert_eq!(changed(&mut s), Some(vec![M3]));
+    assert_eq!(s.nav.cut_triangles(), 0);
+    // The obstacles learnt again (as enabled): the graph's stamp changed, polled again.
+    s.nav.set_obstacles(vec![sandbag()], |_| true);
+    assert!(!in_line(&s));
+    assert_eq!(changed(&mut s), Some(vec![M3]));
+    assert!(in_line(&s));
+    // Another AI has polled nothing yet.
+    let fresh = Ai::new(AiConfig::default());
+    assert!(!fresh.obstacles_in_line(&s.game, &s.nav));
 }
 
 /// A door the game locks (a script's Lock) shuts the way: the actor sets its package
@@ -2265,4 +2331,169 @@ fn object_locations_and_a_guard_remaining_near_its_reference_are_carried_out() {
     assert!(!s.events(R_SEEKER).iter().any(|e| matches!(e, AiEvent::NotCarriedOut { .. })));
     assert!(dist(s.feet(R_KEEPER), MIDDLE_C) <= 121.0, "keeper at {:?}", s.feet(R_KEEPER));
     assert!(dist(s.feet(R_KEEPER), [10950.0, 10050.0, 0.0]) > 400.0);
+}
+
+// ---- arriving behind a loading screen (`fnv_ai::arrive`, issue #1208) ----------------
+
+#[test]
+fn an_arriving_actor_is_put_at_its_packages_place_without_walking() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_TRAVEL]);
+    let actor = FormId(R_TRAVEL);
+    let arr = s.ai.arrive(&mut s.game, &s.nav, actor, &|_| true).expect("put at its place");
+    assert_eq!(arr.package, FormId(P_TRAVEL_B));
+    assert_eq!((arr.from.space, arr.to.space, arr.walks, arr.furniture), (A, B, 1, None));
+    // A walk through a door into another space is not measured.
+    assert_eq!(arr.skipped, 0.0);
+    assert!(dist(s.feet(R_TRAVEL), [5250.0, 5250.0, 50.0]) < 5.0);
+    let a = &s.ai.agents[&actor];
+    assert_eq!(a.activity, Activity::There);
+    assert!(a.walker.follower.is_none());
+    assert_eq!(a.walker.travelled, 0.0, "not walked");
+    // The game knows where it is, and that the package met its goal.
+    assert_eq!(s.game.world.peek(actor).unwrap().cell, Some(FormId(CELL_B)));
+    assert!(s.game.extra[&actor].package_goal_met);
+    assert!(matches!(s.events(R_TRAVEL).last(), Some(AiEvent::Arrived { .. })));
+    // There already: nothing to do again, and the updates after leave it there.
+    assert_eq!(s.ai.arrive(&mut s.game, &s.nav, actor, &|_| true), None);
+    s.run(10.0);
+    assert!(dist(s.feet(R_TRAVEL), [5250.0, 5250.0, 50.0]) < 5.0);
+    assert_eq!(s.ai.agents[&actor].walker.travelled, 0.0);
+}
+
+#[test]
+fn an_arriving_actor_whose_package_gives_it_a_chair_is_on_it() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_TO_CHAIR]);
+    let actor = FormId(R_TO_CHAIR);
+    let arr = s.ai.arrive(&mut s.game, &s.nav, actor, &|_| true).expect("put at its place");
+    assert_eq!(arr.furniture, Some(FormId(CHAIR_C)));
+    let a = &s.ai.agents[&actor];
+    assert_eq!((a.activity, a.using), (Activity::There, Some(FormId(CHAIR_C))));
+    assert_eq!(a.walker.travelled, 0.0);
+    // Still on it after the next updates.
+    s.run(5.0);
+    assert_eq!(s.ai.agents[&actor].using, Some(FormId(CHAIR_C)));
+}
+
+#[test]
+fn an_arriving_sandboxer_is_already_at_what_it_chose() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    let actor = FormId(R_SB_OBJECTS);
+    let arr = s.ai.arrive(&mut s.game, &s.nav, actor, &|_| true).expect("put at what it chose");
+    assert!(arr.walks >= 1, "{arr:?}");
+    let did = doings(&s, R_SB_OBJECTS);
+    assert_eq!(did.len(), 1, "{did:?}");
+    assert!(matches!(did[0], Doing::Sitting(c) if c.0 == CHAIR_C) || matches!(did[0], Doing::AtIdleMarker(m) if m.0 == IDLE_C), "{did:?}");
+    let a = &s.ai.agents[&actor];
+    assert_eq!(a.activity, Activity::There);
+    assert_eq!(a.walker.travelled, 0.0);
+    assert_eq!(a.using, arr.furniture);
+    assert_eq!(a.using.is_some(), matches!(did[0], Doing::Sitting(_)));
+}
+
+#[test]
+fn an_arriving_patrol_that_goes_once_is_at_its_last_point() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_PATROL]);
+    let actor = FormId(R_PATROL);
+    let arr = s.ai.arrive(&mut s.game, &s.nav, actor, &|_| true).expect("put along its patrol");
+    assert_eq!(arr.walks, 3);
+    assert!(dist(arr.to.pos, [50.0, 350.0, 0.0]) < 5.0, "{arr:?}");
+    // Three straight stretches between the points, in one space.
+    assert!(arr.skipped > 800.0, "{arr:?}");
+    let points: Vec<u32> = s.events(R_PATROL).iter().filter_map(|e| match e {
+        AiEvent::Arrived { patrol_point: Some(p), .. } => Some(p.0),
+        _ => None,
+    }).collect();
+    assert_eq!(points, vec![M1, M2, M3]);
+    assert_eq!(s.ai.agents[&actor].activity, Activity::There);
+    assert_eq!(s.ai.agents[&actor].walker.travelled, 0.0);
+    assert!(s.game.extra[&actor].package_goal_met);
+}
+
+#[test]
+fn an_arriving_patrol_that_goes_round_is_at_the_point_it_sets_off_for() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_LOOP]);
+    let actor = FormId(R_LOOP);
+    // The sentry stands next to L3, its nearest point: there, then it walks on in sight.
+    let arr = s.ai.arrive(&mut s.game, &s.nav, actor, &|_| true).expect("put at its first point");
+    assert_eq!(arr.walks, 1);
+    assert!(dist(arr.to.pos, [50.0, 250.0, 0.0]) < 5.0, "{arr:?}");
+    assert_eq!(s.ai.agents[&actor].activity, Activity::Travelling);
+    assert!(!s.game.extra[&actor].package_goal_met);
+}
+
+#[test]
+fn an_actor_whose_walk_starts_away_from_the_player_is_left_to_the_low_process() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_TRAVEL]);
+    let actor = FormId(R_TRAVEL);
+    // In A, walking to B: with only B near the player (the loaded area), it is not put
+    // there, though its walk ends there (the low process brings it to the area's edge).
+    assert_eq!(s.ai.arrive(&mut s.game, &s.nav, actor, &|p| p.space == B), None);
+    assert!(dist(s.feet(R_TRAVEL), START) < 1.0);
+    assert_eq!(s.ai.agents[&actor].walker.travelled, 0.0);
+    // A near too (a room behind a door of the loaded cells): put there.
+    assert!(s.ai.arrive(&mut s.game, &s.nav, actor, &|p| p.space == A || p.space == B).is_some());
+    assert!(dist(s.feet(R_TRAVEL), [5250.0, 5250.0, 50.0]) < 5.0);
+}
+
+/// An actor whose package's place is the player (a hunter, a hit squad) is not put
+/// beside the player on arrival (coordinator review of #1269).
+#[test]
+fn an_actor_sent_after_the_player_is_not_put_beside_the_player() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_HUNTER]);
+    let actor = FormId(R_HUNTER);
+    let def = &s.game.data.package_defs[&FormId(P_HUNT)];
+    assert!(matches!(def.location.map(|l| l.kind), Some(LocationKind::NearReference(Some(p))) if p == FormId::PLAYER_REF));
+    {
+        let p = s.game.world.get(FormId::PLAYER_REF).unwrap();
+        (p.cell, p.pos, p.rot) = (Some(FormId(CELL_B)), [5250.0, 5250.0, 50.0], [0.0; 3]);
+    }
+    assert_eq!(s.ai.arrive(&mut s.game, &s.nav, actor, &|_| true), None);
+    assert!(dist(s.feet(R_HUNTER), [150.0, 150.0, 0.0]) < 1.0, "left where it was");
+    // It does set off after the player, walking.
+    s.run(2.0);
+    assert_eq!(s.ai.agents[&actor].activity, Activity::Travelling);
+    assert!(dist(s.feet(R_HUNTER), [5250.0, 5250.0, 50.0]) > 1000.0);
+}
+
+/// An actor in a combat state, or one a script just put somewhere, stays where it is
+/// on arrival (coordinator review of #1269).
+#[test]
+fn an_actor_in_combat_or_just_moved_by_a_script_is_not_put_anywhere() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_TRAVEL, R_TO_CHAIR]);
+    s.game.start_combat(FormId(R_TRAVEL), FormId(R_TO_CHAIR));
+    assert!(s.game.awareness.state(FormId(R_TRAVEL)).in_combat());
+    assert_eq!(s.ai.arrive(&mut s.game, &s.nav, FormId(R_TRAVEL), &|_| true), None);
+    assert!(dist(s.feet(R_TRAVEL), START) < 1.0);
+    // A script's MoveTo just before: where the script put it wins.
+    s.ai.relocate(&mut s.game, FormId(R_TO_CHAIR));
+    assert_eq!(s.ai.arrive(&mut s.game, &s.nav, FormId(R_TO_CHAIR), &|_| true), None);
+    assert_eq!(s.ai.agents[&FormId(R_TO_CHAIR)].using, None);
+    // Some time on, its package has it again.
+    s.game.time += fnv_ai::arrive::SCRIPT_MOVE_HOLD + 1.0;
+    assert_eq!(s.ai.arrive(&mut s.game, &s.nav, FormId(R_TO_CHAIR), &|_| true).and_then(|a| a.furniture), Some(FormId(CHAIR_C)));
+}
+
+#[test]
+fn rooted_dead_or_restrained_actors_are_not_put_anywhere() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_TRAVEL, R_TO_CHAIR]);
+    s.ai.root(&s.game, FormId(R_TRAVEL));
+    assert_eq!(s.ai.arrive(&mut s.game, &s.nav, FormId(R_TRAVEL), &|_| true), None);
+    s.game.extra.entry(FormId(R_TO_CHAIR)).or_default().restrained = true;
+    assert_eq!(s.ai.arrive(&mut s.game, &s.nav, FormId(R_TO_CHAIR), &|_| true), None);
+    s.game.extra.get_mut(&FormId(R_TO_CHAIR)).unwrap().restrained = false;
+    s.game.extra.get_mut(&FormId(R_TO_CHAIR)).unwrap().dead = true;
+    assert_eq!(s.ai.arrive(&mut s.game, &s.nav, FormId(R_TO_CHAIR), &|_| true), None);
+    for r in [R_TRAVEL, R_TO_CHAIR] {
+        assert_eq!(s.ai.agents[&FormId(r)].walker.travelled, 0.0);
+        assert!(dist(s.feet(r), s.game.world.placed.get(FormId(r)).unwrap().pos) < 1.0);
+    }
 }

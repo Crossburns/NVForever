@@ -129,7 +129,9 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
 - **ITEMS** (`items.rs`): the inventory model (`menu::model`, `Mode::Inventory`), the
   tab choosing the kind of item. Built: the heading (Wg, HP, DT and Caps), the list
   (name, count in brackets, the filled square of what is equipped, the selected row
-  boxed), 9 rows at once (51 a row in a list 468 high).
+  boxed), 9 rows at once (51 a row in a list 468 high). A row (its box) runs from the
+  scroll bar to 5 short of the list's right edge, as the DATA lists' [design: it was the
+  Repair page's 393, which ran over the item's figures; owner's screenshot 2026-11-01].
   - Added 2026-10-23 (owner's playtest list 7, items 5, 6, 15, 20, 33):
     - **HP** is the STATS page's health out of its whole; **DT** the threshold a hit on
       the player meets (worn armour at its condition plus the Damage Threshold actor
@@ -192,8 +194,8 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     - **"Mod X)"** [documented: `IM_ModButton`, 47 under the Repair hint, `sInventoryMod`,
       PC key X; hypothesis: shown for weapons with mod slots (WMI1–3), bright when the
       player carries a mod that fits a free slot, dim otherwise]. X on a bright hint opens
-      the mod menu (2026-10-20, weapon-mods.md §4–§5); elsewhere X still drops an item
-      [design].
+      the mod menu (2026-10-20, weapon-mods.md §4–§5); elsewhere X does nothing, a right
+      click drops (§6) [design: owner 2026-11-02, #1393].
     - The repair hint ("Repair R)" / "Maintain R)") is built (repair.md §5), and the
       repair list takes the pointer (repair.md §5).
   - The mod menu (`item_mod.rs`): weapon-mods.md §5.
@@ -516,8 +518,14 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
 ## 6. Keys and pointer [hypothesis unless marked]
 
 - Tab opens and closes; Esc closes. F1, F2, F3 show STATS, ITEMS, DATA; A/D and
-  Left/Right the tabs [design]. ITEMS: Up/Down (W/S), Page Up/Down, the wheel, Enter or
-  Space to equip, unequip or use, X to drop one, Shift+X the stack [design].
+  Left/Right the tabs [design]. On the controller LT/RT step the pages (round again)
+  and the D-pad's left/right the tabs [design: owner 2026-11-02; controller.md §3]. ITEMS: Up/Down (W/S), Page Up/Down, the wheel, Enter or
+  Space to equip, unequip or use [design]. A right click on a row drops one (a stack asks
+  how many), Shift + right click the stack; it never equips or uses [design: owner
+  2026-11-02, #1393]. X opens the mod menu on a weapon with mod slots and does nothing
+  else (weapon-mods.md §4); the keyboard has no drop key. On the controller X drops one,
+  the original's `IM_DropButton` button (`&xbuttonx;` [documented: inventory_menu.xml]):
+  the PC's X for drop came from mixing up the controller's X with the keyboard's.
 - The pointer is followed onto the model: on the screen, it is passed to the menus as
   a pointer of their own (Bevy's picking, as its `render_ui_to_texture` example does); a
   click on a button on the device shows its page. A tab and a row take clicks; the

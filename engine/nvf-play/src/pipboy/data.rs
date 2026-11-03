@@ -526,6 +526,12 @@ pub fn draw(
 /// Note the order quests are listed in, the markers the player finds, and where the
 /// player was last outdoors.
 impl DataState {
+    /// A tab's selected row and whether Misc shows the challenges, for the scroll sound
+    /// (`super::sounds`).
+    pub fn selection(&self, tab: usize) -> (usize, bool) {
+        (self.sel.get(tab).copied().unwrap_or(0), self.challenges)
+    }
+
     /// The active quest, for a save (`crate::save`).
     pub fn active_quest(&self) -> Option<u32> {
         self.active_quest

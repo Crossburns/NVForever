@@ -71,6 +71,9 @@ pub struct Challenge {
     pub needed: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub have: Option<f64>,
+    /// The actor value code that condition tests (43 Speech for a Speech check).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<u16>,
 }
 
 /// One entry of the list the player chooses from.
@@ -159,6 +162,16 @@ pub mod ended {
     pub const CUT: &str = "cut";
 }
 
+/// Whether a New Vegas Speech check passes: the player's level against the needed
+/// one, when the line's condition tests Speech (`None` for other skills, perks and
+/// lines without the numbers).
+fn speech_check_passed(c: &Challenge) -> Option<bool> {
+    if c.skill != Some(crate::actor_values::SPEECH) {
+        return None;
+    }
+    Some(c.have? >= c.needed?)
+}
+
 /// GetActorValue, GetBaseActorValue, GetPermanentActorValue.
 const ACTOR_VALUE_OPCODES: [u16; 3] = [0x100E, 0x1115, 0x11EF];
 
@@ -205,9 +218,12 @@ impl<'a> Game<'a> {
     }
 
     /// Whether `speaker` can say the line `info` to `listener` now:
-    /// - a Say Once line the speaker has not said, a Say Once a Day line it has not said
-    ///   in the last `fSayOncePerDayInfoTimer` (12) game hours [documented:
-    ///   Category:Dialogue: both are per actor];
+    /// - a Say Once line no actor has said, a Say Once a Day line the speaker has not said
+    ///   in the last `fSayOncePerDayInfoTimer` (12) game hours. The wiki has both per
+    ///   actor [documented: Category:Dialogue], but a Say Once line two actors share was
+    ///   not said again by the second [observed: observer check 31, save nvf31mainframe:
+    ///   the Yes Man mainframe did not repeat 0x001164F1, the Tops Yes Man's first-meeting
+    ///   greeting; hypothesis: one case, and the two may count as one speaker] (#1113);
     /// - the speaker is the line's fixed speaker, if it has one (a reference of that
     ///   base form) [documented: Category:Dialogue: "Speaker" acts like GetIsID], unless
     ///   the line has a GetIsID condition on the subject of its own: then that condition
@@ -237,7 +253,7 @@ impl<'a> Game<'a> {
     pub(crate) fn can_say_as(&mut self, speaker: FormId, listener: Option<FormId>, info: FormId, says: Says) -> bool {
         let data = self.data;
         let Some(def) = data.infos.get(&info) else { return false };
-        if def.say_once && self.said.contains(&(speaker, info)) {
+        if def.say_once && self.said.iter().any(|&(_, i)| i == info) {
             return false;
         }
         // Low / High Intelligence lines: for a dim player, and for one who is not
@@ -432,8 +448,9 @@ impl<'a> Game<'a> {
     }
 
     /// The speaker said the line: Say Once and Say Once a Day remember it per actor
-    /// [documented: Category:Dialogue]. `always` remembers every line (conversations:
-    /// the shading of choices already made).
+    /// [documented: Category:Dialogue]; [`Game::can_say_as`] holds a Say Once line back
+    /// from every actor once any has said it. `always` remembers every line
+    /// (conversations: the shading of choices already made).
     pub(crate) fn mark_said(&mut self, speaker: FormId, info: FormId, always: bool) {
         let Some(def) = self.data.infos.get(&info) else { return };
         if def.say_once || always {
@@ -804,7 +821,8 @@ impl<'a> Game<'a> {
         let mut links = self.links_after(topic, def);
         if !def.choices.is_empty() {
             links.sort_by(|a, b| priority(&b.topic).total_cmp(&priority(&a.topic)));
-            return self.offer(actor, &links);
+            let out = self.offer(actor, &links);
+            return self.itr_menu(actor, out);
         }
         let mut listed: Vec<Link> = data.top_level.iter().map(|&t| Link { topic: t, from: None }).collect();
         let known = self.player.topics.iter().filter(|t| !data.top_level.contains(t)).map(|&t| Link { topic: t, from: None });
@@ -828,7 +846,8 @@ impl<'a> Game<'a> {
                 out.extend(self.offer(actor, &[Link { topic: bye, from: None }]));
             }
         }
-        out
+        // ITR's hide and order rules and custom entries (`crate::nvse_itr2`).
+        self.itr_menu(actor, out)
     }
 
     /// The entries for the topics of `links` the actor has a line for ([`Game::link_line`]),
@@ -858,8 +877,8 @@ impl<'a> Game<'a> {
             let Some(info) = found else { continue };
             let def = &data.infos[&info];
             let challenge = def.challenge_form.map(|form| {
-                let (needed, have) = self.challenge_levels(def);
-                Challenge { form, difficulty: def.challenge_difficulty, needed, have }
+                let (needed, have, skill) = self.challenge_levels(def);
+                Challenge { form, difficulty: def.challenge_difficulty, needed, have, skill }
             });
             let said = self.said.contains(&(actor, info));
             let dumb = dim && data.topic_defs.get(&topic).is_some_and(|t| t.dumb_response.is_some());
@@ -877,17 +896,22 @@ impl<'a> Game<'a> {
         out
     }
 
-    /// The needed and current level of a KNAM line ([`Challenge::needed`]).
-    fn challenge_levels(&mut self, def: &InfoDef) -> (Option<f64>, Option<f64>) {
+    /// The needed and current level of a KNAM line and the actor value its condition
+    /// tests ([`Challenge::needed`], [`Challenge::skill`]).
+    fn challenge_levels(&mut self, def: &InfoDef) -> (Option<f64>, Option<f64>, Option<u16>) {
         let Some(c) = def.conditions.iter().find(|c| c.run_on == RunOn::Target && ACTOR_VALUE_OPCODES.contains(&c.opcode())) else {
-            return (None, None);
+            return (None, None, None);
+        };
+        let skill = match c.params.first() {
+            Some(fnv_script::vm::ArgValue::Enum(av)) => Some(*av),
+            _ => None,
         };
         let needed = match c.rhs {
             Operand::Value(x) => Some(x),
             Operand::Global(g) => g.and_then(|g| self.world.global(FormId(g)).ok()).map(|v| v as f64),
         };
         let have = self.condition_value(c, Some(FormId::PLAYER_REF), "dialogue challenge");
-        (needed, Some(have))
+        (needed, Some(have), skill)
     }
 
     /// The choices offered now (empty while the actor speaks and outside conversations).
@@ -940,6 +964,14 @@ impl<'a> Game<'a> {
             self.count_stat(crate::misc_stats::SPEECH_SUCCESSES, 1.0);
             let x = crate::experience::speech_challenge_xp(self, d);
             crate::experience::award(self, crate::experience::Source::SpeechChallenge, x);
+        } else if let Some(passed) = choice.challenge.as_ref().and_then(speech_check_passed) {
+            // A New Vegas Speech check: the line offered is the pass line when the player
+            // meets the level, the fail line otherwise (dialogue.md §3.3), so choosing it
+            // counts a Speech Success or a Speech Failure [hypothesis: by the names of
+            // stats 12 and 31; whether the original counts these checks, and checks of
+            // other skills and perks, is a capture question, observer-checks.md]. No XP:
+            // the pass lines' result scripts carry RewardXP.
+            self.count_stat(if passed { crate::misc_stats::SPEECH_SUCCESSES } else { crate::misc_stats::SPEECH_FAILURES }, 1.0);
         }
         self.speak(actor, choice.topic, choice.info);
         Ok(choice.info)

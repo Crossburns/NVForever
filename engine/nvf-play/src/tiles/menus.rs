@@ -192,6 +192,8 @@ pub fn hand_built_takes(menu: &str, key: &str) -> bool {
         &["A", "E", "xleft", "xright", "xbuttona", "xbuttonb", "xbuttonlb", "xbuttonrb"]
     } else if menu.eq_ignore_ascii_case(MESSAGE_MENU) {
         &["xup", "xdown", "xbuttona"]
+    } else if menu.eq_ignore_ascii_case(super::wait_menu::SLEEP_WAIT_MENU) {
+        &super::wait_menu::HAND_BUILT_KEYS
     } else {
         &[]
     };

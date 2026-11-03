@@ -1342,6 +1342,116 @@ pub fn setup_sky(
     }
 }
 
+/// How far toward the sun each of the sun's shadow cascades reaches before its casters
+/// are squashed onto its near plane, past the nearest of the view's slice (game units).
+/// Bevy puts a cascade's near plane at the slice's corner nearest the sun, which with the
+/// sun behind the camera lies just in front of the eye: the player's unseen body and a
+/// wall behind it would both land on that plane, and the arms' shadows from beyond the
+/// body (nif_material.wesl `shadow_past_body`) could not tell them apart. Pushed back by
+/// this much the body keeps its true depth [engineering choice: well past the body's
+/// reach behind the eye, about 100 units].
+pub const SUN_REACH_BACK: f32 = 256.0;
+
+/// Move the near plane of a directional light's cascade `extra` units further toward the
+/// light, keeping its far plane: the depth range (reverse Z, near 1, far 0) is stretched
+/// over the longer box. Its projection and view-projection change alike.
+pub fn reach_toward_light(cascade: &mut bevy::light::cascade::Cascade, extra: f32) {
+    // Bevy's projection maps the light-space depth z (0 at the near plane, -range at the
+    // far) to r z + 1 with r = 1 / range; wanted is r' (z - extra) + 1 with
+    // r' = 1 / (range + extra), so NDC depth d becomes s d + 1 - s - r' extra, s = r' / r.
+    let r = cascade.clip_from_cascade.z_axis.z;
+    if r <= 0.0 || extra <= 0.0 {
+        return;
+    }
+    let r_new = 1.0 / (1.0 / r + extra);
+    let s = r_new / r;
+    let remap = Mat4::from_cols(Vec4::X, Vec4::Y, Vec4::new(0.0, 0.0, s, 0.0), Vec4::new(0.0, 0.0, 1.0 - s - r_new * extra, 1.0));
+    cascade.clip_from_cascade = remap * cascade.clip_from_cascade;
+    cascade.clip_from_world = remap * cascade.clip_from_world;
+}
+
+/// Stretch the sun's shadow cascades [`SUN_REACH_BACK`] toward the sun (PostUpdate, after
+/// Bevy builds them each frame and before their frusta and shadow views are made).
+pub fn reach_toward_sun(mut suns: Query<&mut bevy::light::Cascades, With<Sun>>) {
+    for mut cascades in &mut suns {
+        for view in cascades.cascades.values_mut() {
+            for cascade in view.iter_mut() {
+                reach_toward_light(cascade, SUN_REACH_BACK);
+            }
+        }
+    }
+}
+
+/// Drop the sun's casters that cannot shade anything a cascade covers. Seen from the sun,
+/// a caster shades a receiver only if it covers it, and a cascade's receivers all lie in
+/// the slice of the camera's view it was fitted to; Bevy draws everything in the square
+/// around that slice's outline (`bevy_light` `calculate_cascade`), so the square's corners
+/// hold casters for nothing. Kept: whatever comes within [`SLICE_MARGIN_TEXELS`] of the
+/// outline, for the shadow filter's reach.
+#[allow(clippy::type_complexity)]
+pub fn sun_casters_over_slice(
+    mut suns: Query<(&mut bevy::camera::visibility::CascadesVisibleEntities, &bevy::light::Cascades, &CascadeShadowConfig, &GlobalTransform), With<Sun>>,
+    views: Query<(&GlobalTransform, &Projection)>,
+    casters: Query<(&bevy::camera::primitives::Aabb, &GlobalTransform)>,
+) {
+    for (mut visible, cascades, config, light) in &mut suns {
+        let light_from_world = Mat3::from_quat(light.rotation()).transpose();
+        let near_bounds = std::iter::once(config.minimum_distance).chain(config.bounds.iter().map(|b| b * (1.0 - config.overlap_proportion)));
+        let bounds: Vec<(f32, f32)> = near_bounds.zip(config.bounds.iter().copied()).collect();
+        for (view, lists) in visible.entities.iter_mut() {
+            let (Ok((at, projection)), Some(cs)) = (views.get(*view), cascades.cascades.get(view)) else { continue };
+            let world_from_view = at.affine();
+            for ((list, c), (near, far)) in lists.iter_mut().zip(cs).zip(&bounds) {
+                let outline = hull(projection.get_frustum_corners(-near, -far).map(|p| (light_from_world * Vec3::from(world_from_view.transform_point3a(p))).truncate()));
+                let margin = SLICE_MARGIN_TEXELS * c.texel_size;
+                list.entities.retain(|e| {
+                    let Ok((aabb, at)) = casters.get(*e) else { return true };
+                    let place = at.affine();
+                    let centre = (light_from_world * Vec3::from(place.transform_point3a(aabb.center))).truncate();
+                    let m = light_from_world * Mat3::from(place.matrix3);
+                    let half = Vec3::from(aabb.half_extents);
+                    let reach = Vec2::new(m.row(0).abs().dot(half), m.row(1).abs().dot(half));
+                    overlaps(&outline, centre, reach + margin)
+                });
+            }
+        }
+    }
+}
+
+/// How far past a slice's outline a caster still counts, in the cascade's shadow-map
+/// texels [engineering choice: wider than the shadow filter's reach, a few texels].
+const SLICE_MARGIN_TEXELS: f32 = 8.0;
+
+/// The convex hull of `points`, counter-clockwise (monotone chain).
+fn hull<const N: usize>(mut points: [Vec2; N]) -> Vec<Vec2> {
+    points.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    let mut out: Vec<Vec2> = Vec::with_capacity(2 * N);
+    for pass in 0..2 {
+        let start = out.len();
+        for i in 0..N {
+            let p = if pass == 0 { points[i] } else { points[N - 1 - i] };
+            while out.len() >= start + 2 && (out[out.len() - 1] - out[out.len() - 2]).perp_dot(p - out[out.len() - 2]) <= 0.0 {
+                out.pop();
+            }
+            out.push(p);
+        }
+        out.pop();
+    }
+    out
+}
+
+/// Whether the rectangle `centre` ± `reach` overlaps the convex polygon `outline`
+/// (counter-clockwise): separated only along one of the outline's edges (the rectangle's
+/// own axes are the cascade's square, which Bevy has tested already).
+fn overlaps(outline: &[Vec2], centre: Vec2, reach: Vec2) -> bool {
+    (0..outline.len()).all(|i| {
+        let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+        let out = -(b - a).perp();
+        let n = out.normalize_or_zero();
+        n.dot(centre - a) - n.abs().dot(reach) <= 0.0
+    })
+}
+
 /// The sun's shadow cascades, in game units: the first covers the area right around the
 /// camera (a twelfth of `distance`), the last ends at `distance` × `reach`.
 pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> CascadeShadowConfig {
@@ -1353,6 +1463,14 @@ pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> Cascad
         overlap_proportion: 0.2,
     }
     .build()
+}
+
+/// Height of the sun's direction above the horizon (the sine of its elevation; below 0
+/// the directional light is the moon, from the opposite side) and the share of its
+/// strength the light has at that height (it fades out within [`HORIZON_FADE`]; [`update_sky`]).
+pub fn sun_height_and_fade(sky: &SkyState) -> (f32, f32) {
+    let y = (game_to_bevy().rotation * Vec3::from_array(sun_direction(&sky.climate, sky.hour, SUN_SOUTH))).y;
+    (y, (y.abs() / HORIZON_FADE.sin()).min(1.0))
 }
 
 /// Switch the sun's shadows on or off now (the settings page); they reach
@@ -1502,6 +1620,16 @@ pub fn update_night_sky(
     }
 }
 
+/// The dome mesh last coloured and the sky colours it was coloured with.
+type DomeShown = (AssetId<Mesh>, [f32; 10]);
+
+/// Whether the dome mesh `mesh` needs colouring for the sky colours `now`: a new dome (a
+/// worldspace change spawns one whose vertex colours are still the atmosphere's weights,
+/// drawn as a green-to-red sky, #1395) or colours that moved noticeably since `shown`.
+fn dome_needs_colour(shown: Option<DomeShown>, mesh: AssetId<Mesh>, now: [f32; 10]) -> bool {
+    shown.is_none_or(|(was_mesh, was)| was_mesh != mesh || was.iter().zip(now).any(|(a, b)| (a - b).abs() > 1e-3))
+}
+
 /// Colour of an atmosphere vertex at `elevation` (degrees) with sky-upper weight `up_w`
 /// (the vertex colour's blue), linear RGB. Mixed as display (sRGB) values: sky-upper ×
 /// `up_w` plus horizon × `horizon_weight(elevation, twilight)`; below the horizon the
@@ -1602,7 +1730,7 @@ pub fn update_sky(
     mut sun: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>, Without<FlyCam>, Without<SkyDome>, Without<CloudLayer>)>,
     mut materials: ResMut<Assets<SkyMaterial>>,
     mut flashed: Local<bool>,
-    mut dome_shown: Local<Option<[f32; 10]>>,
+    mut dome_shown: Local<Option<DomeShown>>,
     screen: Option<Res<crate::imagespace::ScreenModifiers>>,
 ) {
     let mut cam = cam;
@@ -1699,9 +1827,11 @@ pub fn update_sky(
     // The dome is coloured again only when its colours moved noticeably (as the sky
     // materials above): a changed mesh is sent to the GPU again, every frame before (#897).
     let shown = [upper[0], upper[1], upper[2], lower[0], lower[1], lower[2], horizon[0], horizon[1], horizon[2], twilight];
-    let dome_moved = dome_shown.is_none_or(|was| was.iter().zip(shown).any(|(a, b)| (a - b).abs() > 1e-3));
-    if let (true, Ok((m, weights, _))) = (dome_moved, dome.single()) {
-        *dome_shown = Some(shown);
+    if let Some((m, weights, _)) = dome.single().ok().filter(|(m, _, _)| dome_needs_colour(*dome_shown, m.0.id(), shown)) {
+        if dome_shown.is_none_or(|(was, _)| was != m.0.id()) {
+            info!("sky: a new dome coloured from {}'s sky colours", sky.weather.edid.as_deref().unwrap_or("the weather"));
+        }
+        *dome_shown = Some((m.0.id(), shown));
         if let Some(mut mesh) = meshes.get_mut(&m.0) {
             let cols: Vec<[f32; 4]> = weights
                 .0
@@ -1771,6 +1901,66 @@ pub fn initial_fog() -> DistanceFog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_dome_is_coloured_even_when_the_sky_colours_stay() {
+        // #1395: on a worldspace change the colours were recorded against the old dome in
+        // the frame before the new one spawned; the new one kept its raw weights.
+        let colours = [0.2, 0.4, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 1.0];
+        let (old, new) = (AssetId::<Mesh>::from(bevy::asset::uuid::Uuid::from_u128(1)), AssetId::<Mesh>::from(bevy::asset::uuid::Uuid::from_u128(2)));
+        assert!(dome_needs_colour(None, old, colours));
+        assert!(!dome_needs_colour(Some((old, colours)), old, colours));
+        assert!(dome_needs_colour(Some((old, colours)), new, colours));
+        let mut moved = colours;
+        moved[0] += 0.01;
+        assert!(dome_needs_colour(Some((old, colours)), old, moved));
+    }
+
+    #[test]
+    fn a_caster_counts_only_near_the_slice_outline() {
+        // A diamond with a point inside it; the hull keeps the four corners.
+        let outline = hull([Vec2::new(0.0, -10.0), Vec2::new(10.0, 0.0), Vec2::new(0.0, 10.0), Vec2::new(-10.0, 0.0), Vec2::new(1.0, 1.0)]);
+        assert_eq!(outline.len(), 4);
+        // Inside, and touching an edge.
+        assert!(overlaps(&outline, Vec2::ZERO, Vec2::splat(1.0)));
+        assert!(overlaps(&outline, Vec2::new(6.0, 6.0), Vec2::splat(1.0)));
+        // In the diamond's bounding square but past its edge: Bevy would draw it, nothing
+        // in the slice is under it.
+        assert!(!overlaps(&outline, Vec2::new(8.0, 8.0), Vec2::splat(1.0)));
+        // The same with the margin added to its reach.
+        assert!(overlaps(&outline, Vec2::new(8.0, 8.0), Vec2::splat(1.0 + 5.0)));
+    }
+
+    #[test]
+    fn cascade_reaches_further_toward_the_light() {
+        // A light shining straight down; a box 100 units deep whose near plane is at y = 50.
+        let range = 100.0;
+        let near_y = 50.0;
+        let clip_from_cascade = Mat4::from_cols(Vec4::new(0.01, 0.0, 0.0, 0.0), Vec4::new(0.0, 0.01, 0.0, 0.0), Vec4::new(0.0, 0.0, 1.0 / range, 0.0), Vec4::new(0.0, 0.0, 1.0, 1.0));
+        // Light space: z points up toward the light, origin on the near plane.
+        let cascade_from_world = Mat4::from_cols(Vec4::X, Vec4::new(0.0, 0.0, 1.0, 0.0), Vec4::new(0.0, -1.0, 0.0, 0.0), Vec4::new(0.0, 0.0, -near_y, 1.0));
+        let mut cascade = bevy::light::cascade::Cascade {
+            world_from_cascade: cascade_from_world.inverse(),
+            clip_from_cascade,
+            clip_from_world: clip_from_cascade * cascade_from_world,
+            texel_size: 1.0,
+        };
+        let depth = |c: &bevy::light::cascade::Cascade, y: f32| c.clip_from_world.project_point3(Vec3::new(3.0, y, 4.0)).z;
+        assert!((depth(&cascade, near_y) - 1.0).abs() < 1e-6);
+        assert!(depth(&cascade, near_y - range).abs() < 1e-6);
+        reach_toward_light(&mut cascade, 200.0);
+        // The far plane stays, the near plane moves 200 units toward the light.
+        assert!(depth(&cascade, near_y - range).abs() < 1e-6);
+        assert!((depth(&cascade, near_y + 200.0) - 1.0).abs() < 1e-6);
+        assert!((depth(&cascade, near_y) - 1.0 / 3.0).abs() < 1e-6);
+        // Projection and view-projection agree.
+        let both = cascade.clip_from_cascade * cascade_from_world;
+        assert!(both.abs_diff_eq(cascade.clip_from_world, 1e-6));
+        // Nothing to stretch.
+        let before = cascade.clip_from_world;
+        reach_toward_light(&mut cascade, 0.0);
+        assert_eq!(before, cascade.clip_from_world);
+    }
 
     #[test]
     fn horizon_weight_falls_with_elevation() {

@@ -64,6 +64,7 @@
   {"op": "advance_seconds", "seconds": 4},
   {"op": "get_quest", "quest": "VNellisInfestation", "fields": ["objective.15.completed", "objective.45.displayed"], "label": "milestone: VNellisInfestation power on"},
   {"op": "get_quest", "quest": "VFreeformNellis", "fields": ["var.iGeneratorSwitches"], "label": "generator switches"},
+  {"op": "note", "text": "VFreeformNellis.iInfestation stays 0 on this path, as the data has it: the emitter set it only with the power already on, and the generator door's script wants 15 dead workers where 5 are placed (mq-walkthrough §10 stall 4)."},
   {"op": "note", "text": "Stand-in for the walk back to Raquel."},
   {"op": "move_player", "to": "NellisRaquelREF"},
   {"op": "talk", "actor": "NellisRaquelREF", "label": "raquel report"},

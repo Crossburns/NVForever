@@ -138,6 +138,12 @@ pub struct Loading {
     /// [documented: GECK wiki EnableLoadingMenu, "does not use any loading screens
     /// specific to the current location"].
     pub generic_next: bool,
+    /// The next travel is the player's own trip through a load door or a fast travel,
+    /// not a script moving the player (MoveTo): the actors of the destination are put
+    /// at their package's place behind its screen (nvforever `residents.rs`, issue
+    /// #1208). Set by the door's activation and the fast travel; taken by the residents
+    /// when the `Travel` goes out.
+    pub arriving: bool,
     /// Picture sizes by texture (the image's own data leaves the main world once it is on
     /// the graphics card).
     sizes: HashMap<AssetId<Image>, Vec2>,

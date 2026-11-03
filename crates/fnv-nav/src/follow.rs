@@ -446,9 +446,9 @@ pub struct Air {
 /// [design; owner's playtest 2026-10-11: actors turned half about in a frame or two].
 /// The game's characters turn at the setting `fCharacterDefaultTurningSpeed` [documented:
 /// GECK wiki, Settings list], whose value is not in FalloutNV.esm (a built-in default);
-/// creatures have their own, CREA `TNAM` "Turning Speed" [documented: xEdit], 40 to 100
-/// on the records looked at [observed], degrees per second [hypothesis]; not used yet.
-/// Was 720 degrees per second.
+/// creatures have their own, CREA `TNAM` "Turning Speed" [documented: xEdit], degrees per
+/// second × 1.25 on big turns [observed, actors.md §8.10 "TNAM"], given to their walkers
+/// by the engine (`creature_pace::creature_turn_rate`). Was 720 degrees per second.
 pub const WALK_TURN_RATE: f32 = std::f32::consts::PI;
 
 /// While its heading catches up with the way to go, a walking actor keeps this share of

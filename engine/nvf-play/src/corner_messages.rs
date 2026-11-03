@@ -3,7 +3,8 @@
 //!
 //! - What is shown: messages (MESG) that are not message boxes, with the icon and the
 //!   time their record gives, and the other short lines of `ScriptEffect::Notify`
-//!   (items, default activations) with the default icon (§5). Quests and objectives
+//!   (items, default activations) and the notes the player is given (issue #1163)
+//!   with the default icon (§5). Quests and objectives
 //!   are `crate::quest_messages`'.
 //! - One at a time, in the order they came, each for its record's Display Time [owner's
 //!   rule, 2026-10-11]; [`CornerMessages`] is the queue (pure, tested).
@@ -158,7 +159,19 @@ pub struct CornerMessagesPlugin;
 
 impl Plugin for CornerMessagesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CornerMessages>().add_systems(Update, draw.in_set(crate::PlaySet::Ui));
+        app.init_resource::<CornerMessages>().add_systems(Update, (note_notices, draw).chain().in_set(crate::PlaySet::Ui));
+    }
+}
+
+/// A note given to the player (picked up, taken, added by a script or a terminal) is
+/// named in the corner, with the default icon (`fnv_game::Game::file_note`, issue #1163).
+/// One given behind a menu waits for it to close ([`held`]).
+fn note_notices(mut script: Option<ResMut<crate::script::ScriptState>>, mut corner: ResMut<CornerMessages>) {
+    let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
+    for note in rt.game.take_note_notices() {
+        let text = rt.game.note_notice_text(note);
+        info!("note notice: {text}");
+        corner.push(Note::from(text));
     }
 }
 

@@ -5,7 +5,7 @@ to use a controller depending on a setting under controls", with prompts that fo
 device ("Press E) to open could become Press A) if on an xbox controller") and the base
 game's defaults. Facts about the original are in docs/spec-notes/controls.md §2.1. Code:
 `engine/nvf-play/src/pad.rs` (the controller), `bindings.rs` (the bindings and
-`ControlInput`), `pause.rs` (the Controls tab).
+`ControlInput`), `pause.rs` (the Controls tab), `aim_assist.rs` (§5).
 
 ## 1. One setting picks the device
 
@@ -48,8 +48,40 @@ Start cannot be bound.
 ## 3. Menus and prompts
 
 - Start is Esc (the pause menu) everywhere. In a menu the D-pad is the arrow keys, A
-  Enter, B Esc, LB and RB Page Up and Page Down: the menus read keys, and the controller
-  stands in for them (`pad::menu_keys`), pressing a key only as its button goes down.
+  Enter, B Esc, LB and RB, LT and RT Page Up and Page Down: the menus read keys, and the
+  controller stands in for them (`pad::menu_keys`), pressing a key only as its button
+  goes down.
+- Each menu's own buttons follow the original's menu files (`_xbox_button` of the button
+  tiles [documented: the vanilla menu files]) and press the key NVForever's menu gives
+  that control (`pad::menu_buttons`, keyed by the open menu's MenuMode code); a menu's
+  own button wins over the shared ones above (#1393):
+
+  | Menu | Buttons |
+  |------|---------|
+  | Container | X Take All |
+  | Barter | X Accept |
+  | Pip-Boy (every page) | LT / RT the previous / next page (STATS, ITEMS, DATA, round again); D-pad left / right the tabs [design: owner 2026-11-02] |
+  | Pip-Boy ITEMS | X Drop (`pipboy::items`, not while "How many?" is up), Y Repair, LB Mod |
+  | Pip-Boy STATS | status tab: A Stimpak, Y Doctor's Bag, X Rad-X; General tab: X switch lists |
+  | Pip-Boy DATA | Y Challenges (Notes tab) |
+  | Crafting | X Accept |
+  | Repair services | X Repair All |
+  | Level up, traits | Y Reset, X Continue, B Back |
+  | Tag skills | Y Reset, X Done |
+  | Lockpicking | X Force Lock |
+  | Blackjack | A Hit, Y Double/Deal, RT Split/Raise, LT Switch/Lower, X Surrender/Max Bet, B Stay/Exit |
+  | Roulette | A Place, Y Remove, X Finish, LT Lower, RT Raise, B Exit |
+  | Slot machine | A Spin, RT Raise, LT Lower, Y Payouts, X Max Bet, B Exit |
+  | Tutorial | RT Next, LT Previous |
+
+  On the ITEMS page the triggers are the pages and LB is Mod, so of the shared paging
+  buttons only RB (Page Down) is left there; the D-pad steps the rows both ways.
+  On the STATS status tab X is Rad-X, which only acts on the RAD view; on CND and EFF it
+  does nothing.
+
+  Not followed: the ITEMS page's RB Hotkey (the hotkeys are held digit keys), RadAway's
+  A on the RAD view (not usable from the STATS page), caravan (its menu files are not
+  read yet).
 - The prompt under the crosshair names the Activate control's own key ("E)") or, with a
   controller, its button ("A)") (`Bindings::prompt`). The original shows the button's
   picture there (`&xbuttona;`, `general_button_a.dds`); letters are the first step.
@@ -82,12 +114,46 @@ everything below is [design] (combat is not a parity target). Built in
   fading to none 1400 units (about 20 m) beyond it, `t`: strong `t`, weak `0.6 t`,
   `0.25 + 0.35 t` s; none under `t = 0.05`.
 
-## 5. Not built yet
+## 5. Aim assist
+
+Built in `engine/nvf-play/src/aim_assist.rs` (#1196, #1197). Controller only: with
+Keyboard and Mouse chosen nothing changes, and the mouse never gets either part. All of it
+is [design] (combat is not a parity target): the original's auto aim (`fAutoAim*`) bends
+shots toward a target near the crosshair and leaves the view alone [documented: GECK wiki
+"Auto Aim Settings", owner's export]; NVForever takes its range and on-target area from
+those settings so a mod that changes them changes this too.
+
+- **The target**, shared by both parts: a living actor drawn now, hostile to the player
+  (fighting it, or would attack it: the rule that turns the crosshair red), within
+  `fAutoAimMaxDistance` (1800) of the crosshair, inside a cone around the crosshair whose
+  radius is `fAutoAimScreenPercentage` (10) % of the screen's width at a 75° field of view
+  (about 8.7°) [hypothesis: how the original measures the percentage], and seen: a ray from
+  the crosshair to its aim point meets it first, passing what shots pass (water, triggers,
+  NPCs' walking capsules: a capsule is not the body), so no lock through walls. The nearest to the
+  crosshair by angle wins; the aim point is the middle of its posed torso part, else 80
+  units over its feet.
+- **Slowdown** (#1196): while the crosshair is within 40 units of a target's aim point (as
+  seen from the crosshair), the right stick's turn is scaled by `1 − 0.75 × strength`
+  (45% slower at the default 0.6), eased in and out over 0.1 s. Friction only, no pull.
+- **Lock-on** (#1197): when aiming down the sights begins (LT with the weapon out) and a
+  target is picked, the view turns toward its aim point for 0.3 s, easing in with a time
+  constant of 0.08 s / strength and at most 4 × strength radians a second, following the
+  target as it moves. It lets go at the end, when the target dies or leaves sight, range or
+  1.5 times the cone, when aiming ends, or when the right stick is pushed at least 0.7 of
+  the way against the pull. A new lock needs 0.6 s since the last began.
+- **Not while** the free camera, the weapon wheel, a kill camera, VATS mode, an animation
+  driving the view, furniture holding the player, a script's look lock or a circling or
+  detached camera has the look, without the cursor grabbed, or outside play.
+- **Settings**: the settings page's Controller group, kept in `[Settings]` of
+  NVForever.ini: `aim-assist` (on/off, on), `aim-slowdown` and `aim-lock` (strengths 0 to
+  1, 0.6 each; 0 turns that part off).
+- The log says when a lock starts and how it ends (`aim assist: lock-on to 0x…`).
+
+## 6. Not built yet
 
 - The button pictures from `Interface\Shared\Button\` in place of letters.
-- Each menu's own controller buttons (the original's `<xbuttonx>` etc.: barter X/B,
-  inventory X/Y/LB/RB, lockpick X, the Pip-Boy's tabs on the shoulders and triggers), and
-  hints in menus ("E) Exit", lockpick, Pip-Boy, container) following the device.
+- The rest of the menus' own controller buttons (§3's "not followed"), and hints in menus ("E) Exit", lockpick, Pip-Boy, container)
+  following the device.
 - A pointer moved by a stick for the mouse-only parts of menus (the dialogue list, the
   Pip-Boy map).
 - Several controllers told apart; the first pressed is not singled out.

@@ -30,6 +30,9 @@ pub struct WeatherState {
     pub shown: Option<FormId>,
     /// The weather shown is classified rainy and the change to it is over.
     pub raining: bool,
+    /// The weather shown before the one shown now (ClimateControl's
+    /// GetOutgoingWeather), as the engine told the change.
+    pub outgoing: Option<FormId>,
 }
 
 impl Game<'_> {
@@ -46,6 +49,9 @@ impl Game<'_> {
     /// The sky tells which weather it shows, and whether it is a rainy one fully faded
     /// in.
     pub fn set_shown_weather(&mut self, weather: FormId, raining: bool) {
+        if self.weather.shown.is_some_and(|w| w != weather) {
+            self.weather.outgoing = self.weather.shown;
+        }
         self.weather.shown = Some(weather);
         self.weather.raining = raining;
     }

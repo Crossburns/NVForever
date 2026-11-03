@@ -260,13 +260,13 @@ SetFunctionValue (GetUIString \"HUDMenu/Label/string\")");
 fn mcm_functions_stand_for_start_menu_traits() {
     let f = fixture();
     let mut g = game(&f);
-    // `*:N` counts from zero from the last child (menu-xml.md §3, "name:N / *:N
-    // counting" [observed]): `*:1/*:1` is the second-last child's second-last child, so
-    // the mod's rect and its option stand before their siblings here.
+    // MCM's child and grandchild count from 1 in file order, 0 stopping at the level
+    // above (menu-xml.md §10 [hypothesis, from MCM's files]): `1 1` is the first child's
+    // first child, `0 0` the MCM rect.
     let src = MemSource::default().with(
         "menus\\start.xml",
-        r#"<menu name="StartMenu"> <rect name="MCM">
-           <rect name="Mod"> <rect name="Option"> <_enable> 1 </_enable> <string> off </string> </rect> <rect name="Title"/> </rect>
+        r#"<menu name="StartMenu"> <rect name="MCM"> <_ActiveMod> 7 </_ActiveMod>
+           <rect name="Mod"> <_count> 2 </_count> <rect name="Option"> <_enable> 1 </_enable> <string> off </string> </rect> <rect name="Second"> <_enable> 2 </_enable> </rect> </rect>
            <rect name="Mods"/> </rect> </menu>"#,
     );
     g.ui_tree.load_menu(&src, "menus\\start.xml").unwrap();
@@ -276,8 +276,17 @@ fn mcm_functions_stand_for_start_menu_traits() {
     assert_eq!(n(run(&mut g, "GetUIFloat", &[s("StartMenu/MCM/Mod/Option/_enable")])), 0.0);
     run(&mut g, "SetMCMString", &[XVal::Num(1.0), XVal::Num(1.0), s("string"), s("on")]);
     assert_eq!(run(&mut g, "GetUIString", &[s("StartMenu/MCM/Mod/Option/string")]), s("on"));
-    // A trait that is not there reads 0, where GetUIFloat reads NOT_FOUND.
+    assert_eq!(n(run(&mut g, "GetMCMFloat", &[XVal::Num(1.0), XVal::Num(2.0), s("_enable")])), 2.0);
+    // 0 stops at the level above: the MCM rect's own traits, the first child's own.
+    assert_eq!(n(run(&mut g, "GetMCMFloat", &[XVal::Num(0.0), XVal::Num(0.0), s("_ActiveMod")])), 7.0);
+    assert_eq!(n(run(&mut g, "GetMCMFloat", &[XVal::Num(1.0), XVal::Num(0.0), s("_count")])), 2.0);
+    run(&mut g, "SetMCMFloat", &[XVal::Num(0.0), XVal::Num(0.0), s("_ActiveMod"), XVal::Num(3.0)]);
+    assert_eq!(n(run(&mut g, "GetUIFloat", &[s("StartMenu/MCM/_ActiveMod")])), 3.0);
+    // A trait or place that is not there reads 0, where GetUIFloat reads NOT_FOUND, and
+    // the setters make nothing.
     assert_eq!(n(run(&mut g, "GetMCMFloat", &[XVal::Num(5.0), XVal::Num(5.0), s("_enable")])), 0.0);
+    run(&mut g, "SetMCMFloat", &[XVal::Num(0.0), XVal::Num(0.0), s("_Nope"), XVal::Num(1.0)]);
+    assert_eq!(n(run(&mut g, "GetUIFloat", &[s("StartMenu/MCM/_Nope")])), NOT_FOUND);
 }
 
 // ---- the pointer on tiles (task T8, fnv_game::ui_input, fnv_ui::input) --------------

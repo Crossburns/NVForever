@@ -17,6 +17,9 @@ pub struct CameraRequests {
     /// A SetCameraFOV call not taken yet: the world's and the first-person field of view
     /// in degrees, `None` for the default.
     pub fov: Option<(Option<f32>, Option<f32>)>,
+    /// The last SetCameraFOV's values, kept after the engine took them (Anh's
+    /// GetCameraFOV); `None` for the default.
+    pub fov_set: (Option<f32>, Option<f32>),
     /// ToggleMenus: the HUD, the crosshair and the corner messages are hidden.
     pub menus_hidden: bool,
     /// The fly camera is on, by the ToggleFlyCam calls so far (GetTFC).
@@ -53,6 +56,7 @@ pub fn fov_value(v: Option<f64>) -> Option<f32> {
 pub fn set_camera_fov(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let arg = |i: usize| a.get(i).and_then(|v| v.value()).map(|v| v.num());
     g.ui.camera.fov = Some((fov_value(arg(0)), fov_value(arg(1))));
+    g.ui.camera.fov_set = (fov_value(arg(0)), fov_value(arg(1)));
     none()
 }
 

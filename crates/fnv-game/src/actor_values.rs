@@ -174,11 +174,35 @@ impl<'a> Game<'a> {
         self.stats_def(r).and_then(|d| d.creature_type)
     }
 
+    /// A creature's CREA `TNAM` "Turning Speed" ("How quickly the creature rotates", on
+    /// the Stats tab [documented: GECK wiki Stats Tab for Creatures]), from the definition
+    /// supplying the stats of `r` (placed with `base`), with SetCreatureTurningSpeed's
+    /// change; `None` for NPCs. `base` is given, as a reference a script made is not in
+    /// the world outside `with_world`.
+    pub fn creature_turning_speed(&self, base: FormId, r: FormId) -> Option<f32> {
+        let (id, def) = self.template_source(base, r, |d| d.template_stats)?;
+        if &def.sig != b"CREA" {
+            return None;
+        }
+        crate::nvse::record_value(self, id, "TNAM", "").and_then(|v| v.num().ok()).map(|v| v as f32)
+    }
+
     /// The definition supplying `r`'s traits: race, sex, voice type, class (template
     /// flag "Traits") [documented: GECK wiki Category:NPC, Template Data: each flag stands
     /// for a tab; the Traits tab holds these].
     pub(crate) fn traits_def(&self, r: FormId) -> Option<&'a ActorDef> {
         self.def_following(r, |d| d.template_traits)
+    }
+
+    /// GetClass's class of `f` (docs/spec-notes/actors.md §2.2): a reference's Traits
+    /// source, the actor its leveled list gave it included [observed: tmpl3 (#1057)]; an
+    /// actor base's along its Traits templates through NPC records, the record's own
+    /// when the chain reaches a list [hypothesis, as GetRace].
+    pub(crate) fn traits_class(&self, f: FormId) -> Option<FormId> {
+        match base_of(self, f) {
+            Some(_) => self.traits_def(f).and_then(|d| d.class),
+            None => self.data.actors.get(&self.data.base_template_source(f, |d| d.template_traits)).and_then(|d| d.class),
+        }
     }
 
     /// The definition supplying `r`'s base data: its name and the configuration flags

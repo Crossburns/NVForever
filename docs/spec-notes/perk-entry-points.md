@@ -419,12 +419,17 @@ slot 32 Item Detected Effect `fxSearchAndMark` 0015FF61, a green fill (0, 255, 0
   <ref> (…, while the player aims (a companion perk))`). The counts are logged `perk
   marks: <perk> marks <n> <what> while the player aims` when they change.
 - Spotter: the actors the compass would show red (fighting the player or ready to attack
-  it, `compass.rs`, aware of the player or not), alive and present, within the detection
-  reach (fSneakMaxDistance, x the exterior multiplier outdoors: 2,500 / 5,000 units;
-  `perk_marks.rs`, #1094). In the original [observed 2026-10-31, owner, observer check
-  19]: only while aiming, every hostile actor or creature whether or not in combat with
-  the player, and seemingly every one in render distance, which is farther than ours
-  (#1171).
+  it, `compass.rs`, aware of the player or not), alive and present, as far as actors are
+  drawn (`perk_marks.rs` `ActorDrawDistance`, #1171): every actor of the loaded cells
+  (uGridsToLoad's square round the player's cell, `--radius`, outdoors; the whole cell
+  indoors), or, with the settings page's Actors draw-distance slider below 100%, those
+  within the slider's part of the loaded cells' reach (`draw_distance.rs`). In the
+  original [observed 2026-10-31, owner, observer check 19]: only while aiming, every
+  hostile actor or creature whether or not in combat with the player, and seemingly every
+  one in render distance [hypothesis: its render distance for actors is the loaded cells
+  cut by its actor fade setting; ours has no such fade but the slider]. Before #1171 the
+  reach was the detection reach (fSneakMaxDistance x the exterior multiplier: 2,500 /
+  5,000 units, #1094).
 - Search and Mark: items lying in the loaded cells, placed or dropped at run time
   (`World::created`), within `SEARCH_RANGE` 1500 units [design: "within a short
   distance", the fandom wiki; no setting names it]: ALCH of equip type Chems or Stimpak,

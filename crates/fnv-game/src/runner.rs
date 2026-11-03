@@ -93,9 +93,14 @@ pub enum Given {
         objectives: Vec<GivenObjective>,
         #[serde(default)]
         vars: BTreeMap<String, f64>,
+        /// Reference variables: name → form.
+        #[serde(default)]
+        refs: BTreeMap<String, String>,
     },
     Global { name: String, value: f32 },
     ItemCount { of: String, item: String, count: i32 },
+    /// Items added (or, negative, removed) on top of what the start gives.
+    ItemChange { of: String, item: String, change: i32 },
     Disabled { of: String, disabled: bool },
     /// A reference's object-script variables, dead and disabled state (round 2,
     /// layer5-captures.md §8.2).
@@ -122,6 +127,20 @@ pub enum Given {
     /// A menu open (or not) before action 0 (round 4, layer5-captures.md §10.4): a
     /// message box (1001) of a message the input does not name, or another menu code.
     Menu { menu: u16, open: bool },
+    /// Where a reference stands: an interior cell, or a worldspace (the exterior cell at
+    /// `pos`); rotation in radians (a save's place, `ext queries --save`).
+    Place {
+        #[serde(rename = "ref")]
+        reference: String,
+        cell: String,
+        pos: [f32; 3],
+        #[serde(default)]
+        rot: [f32; 3],
+    },
+    /// The player's tag skills (actor value names or codes), replacing the class's.
+    TagSkills { skills: Vec<String> },
+    /// Skill points the player has spent on a skill.
+    SkillPoints { skill: String, value: f64 },
 }
 
 /// One read of `use_item` (round 3): an actor value of the user (`av.<name>`) or the
@@ -361,10 +380,23 @@ pub enum Action {
         #[serde(default)]
         killer: Option<String>,
     },
-    /// A shot or blow landing on a reference that is not an actor (stand-in for an
-    /// attacker's weapon reaching it, the player's by default): its OnHit and OnHitWith
-    /// blocks run (`Game::hit_object`); observation `ran`: whether a block ran.
-    Hit { target: String, #[serde(default)] attacker: Option<String>, #[serde(default)] weapon: Option<String>, #[serde(default)] label: Option<String> },
+    /// A shot or blow landing on a reference (stand-in for an attacker's weapon reaching
+    /// it, the player's by default). On a reference that is not an actor its OnHit and
+    /// OnHitWith blocks run (`Game::hit_object`); observation `ran`: whether a block ran.
+    /// On an actor it is a hit of `damage` health (0 by default: the blow provokes and
+    /// nothing more), `Game::hit`, and one it lives through may turn on the attacker as
+    /// in play (`provoked`); observations `health`, `died`.
+    Hit {
+        target: String,
+        #[serde(default)]
+        attacker: Option<String>,
+        #[serde(default)]
+        weapon: Option<String>,
+        #[serde(default)]
+        damage: Option<f64>,
+        #[serde(default)]
+        label: Option<String>,
+    },
     /// An actor (the player by default) consumes an ingestible it carries (the engine's
     /// use of an aid item): one is removed and its effects start, effect scripts
     /// included (`Game::consume`); observation `effects`: the effects started.
@@ -422,7 +454,8 @@ pub enum Action {
         #[serde(default)]
         label: Option<String>,
     },
-    /// The player leaves the conversation (`Game::end_dialogue`).
+    /// The player leaves the conversation (`Game::end_dialogue`); nothing when none is
+    /// running.
     EndTalk {},
     // ---- terminals (docs/spec-notes/hacking.md §6) ----
     /// The player picks entry `item` (0-based) of a terminal menu at reference `target`
@@ -799,10 +832,15 @@ fn num_arg(x: f64) -> ArgValue {
 
 fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
     match gv {
-        Given::Quest { quest: name, running, completed, stage, done, not_done, objectives, vars } => {
+        Given::Quest { quest: name, running, completed, stage, done, not_done, objectives, vars, refs } => {
             let q = quest(g, name)?;
             for (k, v) in vars {
                 set_quest_var(g, q, k, *v)?;
+            }
+            for (k, v) in refs {
+                let (key, i) = quest_var(g, q, k)?;
+                let r = resolve(g, v)?;
+                g.store(key, g.data.quests[&q].script, i, Value::Ref(r.0), "runner", false);
             }
             let s = g.quest(q);
             if let Some(r) = running {
@@ -848,6 +886,14 @@ fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
                 g.world.remove_item(of, item, have - count).map_err(|e| e.to_string())?;
             }
         }
+        Given::ItemChange { of, item, change } => {
+            let (of, item) = (resolve(g, of)?, resolve(g, item)?);
+            if *change > 0 {
+                g.world.add_item(of, item, *change).map_err(|e| e.to_string())?;
+            } else if *change < 0 {
+                g.world.remove_item(of, item, -change).map_err(|e| e.to_string())?;
+            }
+        }
         Given::Disabled { of, disabled } => {
             let r = resolve(g, of)?;
             g.world.set_enabled(r, !disabled).map_err(|e| e.to_string())?;
@@ -878,6 +924,36 @@ fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
             let who = resolve(g, of)?;
             let code = av_code(g, av)?;
             set_actor_value_current(g, who, code, *value)?;
+        }
+        Given::Place { reference, cell, pos, rot } => {
+            let r = resolve(g, reference)?;
+            let at = resolve(g, cell)?;
+            // A worldspace stands for its exterior cell at the position; anything else must
+            // be a cell (as `go_to_cell`).
+            let c = match g.world.placed.world_cell_at(at, *pos) {
+                Some(c) => c,
+                None if g.world.placed.by_cell.contains_key(&at) || g.world.placed.world_of(at).is_some() => at,
+                None => return Err(format!("{cell:?} is neither a cell nor a worldspace with a cell at {pos:?}")),
+            };
+            {
+                let p = g.world.get(r).map_err(|e| e.to_string())?;
+                p.cell = Some(c);
+                p.pos = *pos;
+                p.rot = *rot;
+            }
+            g.emit(EventKind::Moved { reference: r, cell: Some(c), pos: *pos });
+            if r == FormId::PLAYER_REF {
+                g.player_entered(Some(c));
+                g.settle_start_weather();
+            }
+        }
+        Given::TagSkills { skills } => {
+            let codes = skills.iter().map(|s| av_code(g, s)).collect::<Result<Vec<_>, _>>()?;
+            g.player.tag_skills = codes.into_iter().collect();
+        }
+        Given::SkillPoints { skill, value } => {
+            let code = av_code(g, skill)?;
+            g.player.skill_points.insert(code, *value);
         }
         Given::Menu { menu, open } => {
             if *open {
@@ -945,7 +1021,7 @@ fn rep_fields(g: &mut Game, r: FormId, fields: &[String], obs: &mut Map<String, 
             }
         }
         if tick_each {
-            g.tick();
+            frame(g);
         }
     }
     if !errors.is_empty() {
@@ -1016,6 +1092,21 @@ fn same_value(got: &Json, want: &Json) -> bool {
     }
 }
 
+/// One frame of the run: the awareness update the engine's detection pass ends with
+/// (`Game::settle_awareness`), with nothing measured, then the game's frame
+/// (`Game::tick`). Headless there is no line of sight, so nobody is detected anew, but
+/// what the update does with what is known happens as in play: a fight whose targets
+/// all died or went ends (Combat to Normal, OnCombatEnd), alarms time out, a target
+/// detected by a hit or StartCombat starts the fight (OnStartCombat). Not while a menu
+/// or a conversation holds the game [hypothesis: the detection pass runs in game time,
+/// as the AI does].
+fn frame(g: &mut Game) {
+    if !g.in_menu() {
+        g.settle_awareness();
+    }
+    g.tick();
+}
+
 /// Run frames until `holds`, checked before each frame, at most `max` frames.
 fn wait_until(g: &mut Game, max: u64, holds: impl Fn(&Game) -> Result<bool, String>) -> Result<bool, String> {
     for k in 0..=max {
@@ -1023,7 +1114,7 @@ fn wait_until(g: &mut Game, max: u64, holds: impl Fn(&Game) -> Result<bool, Stri
             return Ok(true);
         }
         if k < max {
-            g.tick();
+            frame(g);
         }
     }
     Ok(false)
@@ -1042,20 +1133,44 @@ fn waited(g: &Game, st: &RunState, obs: &mut Map<String, Json>, found: bool, sto
 
 /// Run frames until the conversation offers choices or has ended. A menu that is open
 /// (a message box a result script showed) holds the conversation: that is an error here,
-/// the input has to close it.
+/// the input has to close it. A Goodbye greeting said at the player opens no
+/// conversation (`Game::start_dialogue`): the wait goes on until its line has ended and
+/// its end script has run, as the player hears it out (issue #1114).
 fn wait_talk(g: &mut Game, max: u64) -> Result<(), String> {
     for _ in 0..=max {
         match &g.dialogue {
-            None => return Ok(()),
+            None if !greeting_at_player(g) => return Ok(()),
             Some(c) if !c.choices.is_empty() => return Ok(()),
-            Some(_) => {}
+            _ => {}
         }
         if let Some(m) = g.menu {
             return Err(format!("menu {m} is open and holds the conversation"));
         }
-        g.tick();
+        frame(g);
     }
     Err(format!("the actor was still speaking after {max} frames"))
+}
+
+/// Whether a Goodbye greeting is being said at the player outside a conversation
+/// (`Speech::greeting`).
+fn greeting_at_player(g: &Game) -> bool {
+    g.speech.iter().any(|s| s.greeting && s.target == Some(FormId::PLAYER_REF))
+}
+
+/// What the engine's detection pass does with a hit an actor lives through (`nvforever`
+/// detection.rs): the actor may turn on its attacker (`Game::attacked_by`: assault,
+/// friendly fire past the hits a friend forgives) and, when it would attack it, is
+/// alarmed where the attacker stands (`Game::hurt_by`). Headless nothing is measured,
+/// so the actor is taken to see whoever hit it, and the next frame's awareness update
+/// starts the fight (`frame`) [hypothesis: a hit from out of sight leaves it searching
+/// instead, which only the engine's line of sight can tell].
+fn provoked(g: &mut Game, actor: FormId, by: FormId) {
+    g.attacked_by(actor, by);
+    let at = crate::awareness::position(g, by).unwrap_or_default();
+    if g.hurt_by(actor, by, at) {
+        let seen = crate::detection::Detection { value: 100.0, band: crate::detection::Band::Detected, seen: true, ..Default::default() };
+        g.observe_threat(actor, by, &seen, at);
+    }
 }
 
 /// The entry of the offered list an input names.
@@ -1176,7 +1291,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
                 if frames >= *max_frames {
                     return Err(format!("{line:?} still 0 after {max_frames} frames"));
                 }
-                g.tick();
+                frame(g);
                 frames += 1;
             }
             obs.insert("frames".into(), json!(frames));
@@ -1271,7 +1386,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
                 for (k, &i) in ids.iter().enumerate() {
                     series[k].push(g.world.item_count(of, i).map_err(|e| e.to_string())?);
                 }
-                g.tick();
+                frame(g);
             }
             for (name, v) in items.iter().zip(&series) {
                 let (Some(&first), Some(&last)) = (v.first(), v.last()) else { continue };
@@ -1299,14 +1414,14 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             // is read in its last frame, then the menu closes (CloseAllMenus).
             g.menu = Some(CONTAINER_MENU);
             for _ in 1..*frames {
-                g.tick();
+                frame(g);
             }
             let v0 = g.var(key, idx).num();
-            g.tick();
+            frame(g);
             g.menu = None;
             let mut drop = None;
             for _ in 0..*after {
-                g.tick();
+                frame(g);
                 let v = g.var(key, idx).num();
                 if drop.is_none() && v != v0 {
                     drop = Some(v0 - v);
@@ -1523,7 +1638,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             };
             for k in 0..n {
                 if k > 0 {
-                    g.tick();
+                    frame(g);
                 }
                 if code == event::ON_TRIGGER {
                     g.trigger_frame(t);
@@ -1552,7 +1667,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             if modeless {
                 g.open_menu(menus::MESSAGE);
             }
-            g.tick();
+            frame(g);
             if g.menu == Some(menus::MESSAGE) && (modeless || g.boxes.first() == Some(&message)) {
                 g.close_menu();
             }
@@ -1578,7 +1693,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
                         break;
                     }
                     if k < *wait_frames {
-                        g.tick();
+                        frame(g);
                     }
                 }
                 if g.menu == Some(menus::MESSAGE) {
@@ -1597,7 +1712,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             let q = quest(g, qn)?;
             let holds = |g: &Game| field(g, q, f).map(|v| same_value(&v, value));
             wait_until(g, *max_frames, |g| holds(g))?;
-            g.tick();
+            frame(g);
             let found = holds(g)?;
             waited(g, st, &mut obs, found, *stopwatch)?;
         }
@@ -1605,14 +1720,14 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             lab = Some(l.clone());
             let holds = |g: &Game| Ok(g.menu_open(*menu));
             wait_until(g, *max_frames, holds)?;
-            g.tick();
+            frame(g);
             let found = g.menu_open(*menu);
             waited(g, st, &mut obs, found, *stopwatch)?;
         }
         Action::GetMenus { menus: codes, label: l } => {
             for c in codes {
                 obs.insert(format!("menu.{c}"), json!(g.menu_open(*c)));
-                g.tick();
+                frame(g);
             }
             lab = Some(l.clone());
         }
@@ -1622,7 +1737,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
                 let code = av_code(g, name)?;
                 let v = call(g, 0x11CE, None, vec![ArgValue::Enum(code)]).num();
                 obs.insert(format!("tag.{name}"), json!(v != 0.0));
-                g.tick();
+                frame(g);
             }
         }
         Action::MovePlayer { to } => {
@@ -1655,7 +1770,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
                         errors.insert(f.clone(), json!(e));
                     }
                 }
-                g.tick();
+                frame(g);
             }
             if !errors.is_empty() {
                 obs.insert("errors".into(), Json::Object(errors));
@@ -1675,7 +1790,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             obs.insert("destroyed".into(), json!(x.destroyed));
             lab = l.clone();
         }
-        Action::Hit { target, attacker, weapon, label: l } => {
+        Action::Hit { target, attacker, weapon, damage, label: l } => {
             let t = resolve(g, target)?;
             let attacker = match attacker {
                 Some(x) => resolve(g, x)?,
@@ -1686,7 +1801,17 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
                 None => None,
             };
             let info = crate::combat::HitInfo { attacker: Some(attacker), weapon, location: -1, critical: false, limb: None };
-            obs.insert("ran".into(), json!(g.hit_object(t, info)));
+            let actor = matches!(crate::functions::base_of(g, t).and_then(|b| g.data.sig(b)).as_ref(), Some(b"NPC_") | Some(b"CREA"));
+            if actor {
+                let r = g.hit(t, damage.unwrap_or(0.0), info);
+                if !r.died && !g.is_dead(t) {
+                    provoked(g, t, attacker);
+                }
+                obs.insert("health".into(), json!(r.health));
+                obs.insert("died".into(), json!(r.died));
+            } else {
+                obs.insert("ran".into(), json!(g.hit_object(t, info)));
+            }
             lab = l.clone();
         }
         Action::Kill { target, actor, killer } => {
@@ -1758,7 +1883,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
                     break;
                 }
                 if k < *max_frames {
-                    g.tick();
+                    frame(g);
                 }
             }
             obs.insert("found".into(), json!(found));
@@ -1814,7 +1939,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             for _ in 0..*frames {
                 vals.push(actor_value(g, who, code)?);
                 times.push(g.time);
-                g.tick();
+                frame(g);
             }
             let changes = vals.windows(2).filter(|w| w[0] != w[1]).count();
             obs.insert("changes".into(), json!(changes));
@@ -1832,7 +1957,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             for _ in 0..*frames {
                 vals.push(actor_value(g, who, code)?);
                 call(g, 0x1181, Some(who), vec![num_arg(code as f64), num_arg(*damage)]);
-                g.tick();
+                frame(g);
             }
             obs.insert("values".into(), json!(vals));
         }
@@ -1863,7 +1988,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             }
             let mut series: Vec<Vec<f64>> = vec![Vec::new(); reads.len()];
             for _ in 0..*frames {
-                g.tick();
+                frame(g);
                 for (k, r) in reads.iter().enumerate() {
                     series[k].push(jump_value(g, r)?);
                 }
@@ -1909,9 +2034,9 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
             lab = l.clone();
         }
         Action::EndTalk {} => {
-            if !g.end_dialogue() {
-                return Err("no conversation is running".into());
-            }
+            // A conversation that already ended (its last line, a script) leaves
+            // nothing to do (issue #1114).
+            g.end_dialogue();
         }
         Action::Terminal { target, item, menu, label: l } => {
             let r = resolve(g, target)?;
@@ -2183,7 +2308,7 @@ fn run_as(
                                 errors.insert(f.clone(), json!(e));
                             }
                         }
-                        g.tick();
+                        frame(&mut g);
                     }
                     if !errors.is_empty() {
                         o["errors"] = Json::Object(errors);
@@ -2198,7 +2323,7 @@ fn run_as(
                     let start = g.var(key, idx).num();
                     let mut samples = Vec::with_capacity(*frames as usize);
                     for _ in 0..*frames {
-                        g.tick();
+                        frame(&mut g);
                         samples.push(g.var(key, idx).num());
                     }
                     let mut o = json!({"label": label(l, i), "step": i});
@@ -2214,7 +2339,7 @@ fn run_as(
                         let start = g.var(key, idx).num();
                         let mut samples = Vec::with_capacity(*frames as usize);
                         for _ in 0..*frames {
-                            g.tick();
+                            frame(&mut g);
                             samples.push(g.var(key, idx).num());
                         }
                         let mut o = json!({"label": label(l, i), "step": i});
@@ -2261,7 +2386,7 @@ fn run_as(
         }
         for _ in 0..wait {
             let from = g.events.len();
-            g.tick();
+            frame(&mut g);
             scripted_talk(&mut g, from);
         }
         let mut s = json!({"step": i, "frame": start_frame});

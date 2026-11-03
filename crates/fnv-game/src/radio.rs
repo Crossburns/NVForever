@@ -166,6 +166,7 @@ impl Game<'_> {
     pub fn radio_line_begins(&mut self, station: FormId, info: FormId) {
         let data = self.data;
         let Some(def) = data.infos.get(&info) else { return };
+        self.itr_radio_line(station, info, true);
         self.mark_said(station, info, false);
         if let Some(u) = def.begin {
             self.run_result(u, RunCtx { self_ref: Some(station), action_ref: None, quest: def.quest });
@@ -174,6 +175,7 @@ impl Game<'_> {
 
     /// The station finished saying `info`: its end result script runs.
     pub fn radio_line_ends(&mut self, station: FormId, info: FormId) {
+        self.itr_radio_line(station, info, false);
         let data = self.data;
         let Some(def) = data.infos.get(&info) else { return };
         if let Some(u) = def.end {

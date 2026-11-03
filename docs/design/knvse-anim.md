@@ -42,8 +42,9 @@ original game (kNVSE 37) `[observed]`. No kNVSE source is read.
 - **Spelling:** NVForever's paths do not keep the original's spelling, so the game side
   compares paths without regard to case [decision; the original compares exactly].
 
-## 3. Not built yet
+## 3. The second slice (2026-11-01)
 
-GetAnimationAttributes (22 keys observed), Get/SetGlobalAnimTime, the blend functions
-(BlendToAnim, CrossFadeAnims), SetAnimWeight, SetAnimAdditive, the text-key functions,
-CopyAnimationsToForm. They need slice 2's per-actor player.
+GetAnimationAttributes, Get/SetGlobalAnimTime, the blend functions, SetAnimWeight,
+SetAnimAdditive, the text-key functions, CopyAnimationsToForm and the rest are built on
+the game side (`nvse_knvse.rs`, docs/spec-notes/ext-knvse.md). The engine's per-actor
+player does not read their state yet.

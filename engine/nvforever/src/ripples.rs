@@ -50,11 +50,12 @@ struct Sim {
     prev: Vec<f32>,
     c2: f32,
     falloff: f32,
+    at_rest: bool,
 }
 
 impl Sim {
     fn new() -> Sim {
-        Sim { cur: vec![0.0; N * N], prev: vec![0.0; N * N], c2: 0.5, falloff: 0.985 }
+        Sim { cur: vec![0.0; N * N], prev: vec![0.0; N * N], c2: 0.5, falloff: 0.985, at_rest: true }
     }
 
     fn configure(&mut self, p: &RippleParams) {
@@ -63,7 +64,11 @@ impl Sim {
     }
 
     /// h' = (2h − h_prev + c²·∇²h) · falloff, edges held at 0.
-    fn step(&mut self) {
+    /// Returns whether the texture needs updating, including the last step to rest.
+    fn step(&mut self) -> bool {
+        if self.at_rest {
+            return false;
+        }
         let (c2, k) = (self.c2, self.falloff);
         for y in 1..N - 1 {
             for x in 1..N - 1 {
@@ -74,10 +79,27 @@ impl Sim {
             }
         }
         std::mem::swap(&mut self.cur, &mut self.prev);
+        self.settle();
+        true
+    }
+
+    /// [documented: f32::MIN_POSITIVE] Subnormal values can round back to themselves
+    /// under damping. Once BOTH time buffers contain only magnitudes below the
+    /// smallest normal f32 (2^-126), clear them together. Above this cutoff the
+    /// recurrence is unchanged; zeroing cur alone could revive a wave from prev.
+    fn settle(&mut self) {
+        self.at_rest = self.cur.iter().chain(&self.prev).all(|h| h.abs() < f32::MIN_POSITIVE);
+        if self.at_rest {
+            self.cur.fill(0.0);
+            self.prev.fill(0.0);
+        }
     }
 
     /// Move the contents by (−dx, −dy) cells (the grid moved by (dx, dy)).
     fn shift(&mut self, dx: i32, dy: i32) {
+        if self.at_rest {
+            return;
+        }
         for buf in [&mut self.cur, &mut self.prev] {
             let old = std::mem::replace(buf, vec![0.0; N * N]);
             for y in 0..N as i32 {
@@ -92,13 +114,15 @@ impl Sim {
                     }
                 }
             }
+            clear_border(buf);
         }
+        self.settle();
     }
 
     /// Push the surface down by `amount` (cone of `radius` cells) at grid point (x, y),
     /// raising a ring out to twice the radius by the same volume (so rain does not
     /// lower the water on average).
-    fn impulse(&mut self, x: f32, y: f32, radius: f32, amount: f32) {
+    fn impulse(&mut self, x: f32, y: f32, radius: f32, amount: f32) -> bool {
         let r = radius.max(1.0);
         let (x0, x1) = ((x - 2.0 * r).floor().max(1.0) as usize, ((x + 2.0 * r).ceil() as usize).min(N - 2));
         let (y0, y1) = ((y - 2.0 * r).floor().max(1.0) as usize, ((y + 2.0 * r).ceil() as usize).min(N - 2));
@@ -119,10 +143,31 @@ impl Sim {
             if s < 0.0 { down -= s } else { up += s }
         }
         let ring = if up > 0.0 { down / up } else { 0.0 };
+        let mut changed = false;
         for (gx, gy) in cells() {
             let s = shape(dist(gx, gy));
-            self.cur[gy * N + gx] += amount * if s < 0.0 { s } else { s * ring };
+            let h = &mut self.cur[gy * N + gx];
+            let old = *h;
+            *h += amount * if s < 0.0 { s } else { s * ring };
+            changed |= *h != old;
         }
+        if changed {
+            self.at_rest = false;
+        }
+        changed
+    }
+}
+
+/// [design] Zero the one-cell border of a grid buffer. `Sim::step` updates only the
+/// interior and reads the border as the fixed 0 edge, so the border is not simulated: a
+/// value `Sim::shift` moved into it would stay there forever (across every buffer swap),
+/// show as a frozen value at the edge of the texture and keep the grid from coming to rest.
+fn clear_border(buf: &mut [f32]) {
+    buf[..N].fill(0.0);
+    buf[(N - 1) * N..].fill(0.0);
+    for y in 1..N - 1 {
+        buf[y * N] = 0.0;
+        buf[y * N + N - 1] = 0.0;
     }
 }
 
@@ -140,9 +185,66 @@ pub struct Ripples {
     last: Option<(Vec3, f32)>,
     types: HashMap<u32, Option<Water>>,
     configured: Option<u32>,
+    texture_dirty: bool,
 }
 
 impl Ripples {
+    fn new(image: Handle<Image>) -> Self {
+        Self {
+            image,
+            rain: Sim::new(),
+            wake: Sim::new(),
+            origin: IVec2::ZERO,
+            acc: 0.0,
+            drops: 0.0,
+            rng: 0x9E37_79B9_7F4A_7C15,
+            last: None,
+            types: HashMap::new(),
+            configured: None,
+            texture_dirty: false,
+        }
+    }
+
+    fn follow(&mut self, want: IVec2) {
+        let d = want - self.origin;
+        if d == IVec2::ZERO {
+            return;
+        }
+        let was_active = !self.rain.at_rest || !self.wake.at_rest;
+        if d.x.abs() >= N as i32 || d.y.abs() >= N as i32 {
+            self.rain = Sim::new();
+            self.wake = Sim::new();
+            self.configured = None;
+        } else {
+            self.rain.shift(d.x, d.y);
+            self.wake.shift(d.x, d.y);
+        }
+        self.origin = want;
+        // Active waves retain the existing upload timing (the next fixed step).
+        // If moving the grid removed the last wave, no step will dirty it again.
+        self.texture_dirty |= was_active && self.rain.at_rest && self.wake.at_rest;
+    }
+
+    fn step(&mut self) {
+        let rain = self.rain.step();
+        let wake = self.wake.step();
+        self.texture_dirty |= rain || wake;
+    }
+
+    fn upload(&mut self, images: &mut Assets<Image>) -> bool {
+        if !self.texture_dirty {
+            return false;
+        }
+        let Some(mut img) = images.get_mut(&self.image) else { return false };
+        let bytes = img.data.get_or_insert_with(|| vec![0; N * N * 4]);
+        bytes.resize(N * N * 4, 0);
+        for ((a, b), pixel) in self.rain.cur.iter().zip(&self.wake.cur).zip(bytes.as_chunks_mut::<4>().0) {
+            pixel.copy_from_slice(&(a + b).to_le_bytes());
+        }
+        self.texture_dirty = false;
+        true
+    }
+
     /// Shader uniform: game x, y of the grid's corner, units per cell, height scale (0:
     /// no ripples).
     pub fn uniform(&self, active: bool) -> Vec4 {
@@ -175,18 +277,7 @@ fn setup_ripples(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         TextureFormat::R32Float,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
-    commands.insert_resource(Ripples {
-        image: images.add(image),
-        rain: Sim::new(),
-        wake: Sim::new(),
-        origin: IVec2::ZERO,
-        acc: 0.0,
-        drops: 0.0,
-        rng: 0x9E37_79B9_7F4A_7C15,
-        last: None,
-        types: HashMap::new(),
-        configured: None,
-    });
+    commands.insert_resource(Ripples::new(images.add(image)));
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -211,18 +302,7 @@ fn update_ripples(
 
     // Follow the camera.
     let want = IVec2::new((cam_game.x / TEXEL).floor() as i32, (cam_game.y / TEXEL).floor() as i32) - IVec2::splat(N as i32 / 2);
-    let d = want - rp.origin;
-    if d != IVec2::ZERO {
-        if d.x.abs() >= N as i32 || d.y.abs() >= N as i32 {
-            rp.rain = Sim::new();
-            rp.wake = Sim::new();
-            rp.configured = None;
-        } else {
-            rp.rain.shift(d.x, d.y);
-            rp.wake.shift(d.x, d.y);
-        }
-        rp.origin = want;
-    }
+    rp.follow(want);
 
     let params = surface.and_then(|(_, wid)| {
         rp.types.entry(wid).or_insert_with(|| fnv_world::sky::water(world.lo, world.schema, wid)).clone().map(|w| (wid, w))
@@ -250,8 +330,7 @@ fn update_ripples(
                 rp.rain.impulse(x, y, DROP_RADIUS / TEXEL, force);
             }
         }
-        rp.rain.step();
-        rp.wake.step();
+        rp.step();
     }
 
     // A body at the surface: ripples while it moves, a splash when it crosses.
@@ -271,7 +350,10 @@ fn update_ripples(
             }
             if amount > 0.0 {
                 let g = (body.truncate() / TEXEL) - rp.origin.as_vec2();
-                rp.wake.impulse(g.x, g.y, WAKE_RADIUS / TEXEL, amount);
+                let changed = rp.wake.impulse(g.x, g.y, WAKE_RADIUS / TEXEL, amount);
+                // Keep the existing timing: body impulses follow the fixed steps,
+                // and reach the texture this frame only if a fixed step was due.
+                rp.texture_dirty |= changed && stepped;
             }
         }
         rp.last = Some((body, rel));
@@ -279,21 +361,134 @@ fn update_ripples(
         rp.last = None;
     }
 
-    if stepped {
-        if let Some(mut img) = images.get_mut(&rp.image) {
-            let mut bytes = Vec::with_capacity(N * N * 4);
-            for (a, b) in rp.rain.cur.iter().zip(&rp.wake.cur) {
-                bytes.extend_from_slice(&(a + b).to_le_bytes());
-            }
-            img.data = Some(bytes);
-        }
-    }
+    rp.upload(&mut images);
     cache.set_ripples(&mut materials, rp.uniform(streamer.interior.is_none()));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture() -> (Ripples, Assets<Image>) {
+        let mut images = Assets::default();
+        let image = images.add(Image::new(
+            Extent3d { width: N as u32, height: N as u32, depth_or_array_layers: 1 },
+            TextureDimension::D2,
+            vec![0; N * N * 4],
+            TextureFormat::R32Float,
+            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+        ));
+        (Ripples::new(image), images)
+    }
+
+    #[test]
+    fn rest_checks_both_time_buffers() {
+        let mut s = Sim::new();
+        assert!(s.at_rest);
+        assert!(!s.step());
+        s.prev[N + 1] = f32::MIN_POSITIVE;
+        s.settle();
+        assert!(!s.at_rest, "a nonzero previous height can revive the wave");
+        s.prev[N + 1] = f32::MIN_POSITIVE * 0.5;
+        s.cur[N + 2] = -f32::MIN_POSITIVE * 0.5;
+        s.settle();
+        assert!(s.at_rest);
+        assert!(s.cur.iter().chain(&s.prev).all(|&h| h == 0.0));
+    }
+
+    #[test]
+    fn impulse_resumes_each_grid_and_idle_does_not_upload() {
+        let (mut rp, mut images) = fixture();
+        rp.step();
+        assert!(!rp.upload(&mut images));
+        assert!(!rp.rain.impulse(128.0, 128.0, 2.0, 0.0));
+        assert!(!rp.rain.impulse(N as f32 + 20.0, 128.0, 2.0, 0.1));
+        assert!(rp.rain.at_rest);
+        assert!(rp.rain.impulse(128.0, 128.0, 2.0, 0.1));
+        assert!(!rp.rain.at_rest);
+        rp.step();
+        assert!(rp.upload(&mut images));
+        assert!(rp.wake.at_rest);
+        assert!(!rp.upload(&mut images));
+        assert!(rp.wake.impulse(100.0, 100.0, 6.0, 0.1));
+        rp.step();
+        assert!(!rp.wake.at_rest);
+        assert!(rp.upload(&mut images));
+    }
+
+    #[test]
+    fn decay_uploads_one_final_clear_and_reuses_the_buffer() {
+        let (mut rp, mut images) = fixture();
+        let allocation = images.get(&rp.image).unwrap().data.as_ref().unwrap().as_ptr();
+        // Start near the cutoff to test the decay transition without thousands
+        // of steps. Both grids must finish before the texture can stay clear.
+        for s in [&mut rp.rain, &mut rp.wake] {
+            s.c2 = 0.0;
+            s.falloff = 0.5;
+            s.impulse(128.0, 128.0, 2.0, f32::MIN_POSITIVE * 8.0);
+        }
+        rp.wake.falloff = 0.25;
+        rp.step();
+        assert!(rp.upload(&mut images));
+        assert!(images.get(&rp.image).unwrap().data.as_ref().unwrap().iter().any(|&b| b != 0));
+        for _ in 0..64 {
+            rp.step();
+            assert!(rp.upload(&mut images));
+            if rp.rain.at_rest && rp.wake.at_rest {
+                break;
+            }
+        }
+        assert!(rp.rain.at_rest && rp.wake.at_rest);
+        let bytes = images.get(&rp.image).unwrap().data.as_ref().unwrap();
+        assert!(bytes.iter().all(|&b| b == 0));
+        assert_eq!(bytes.as_ptr(), allocation);
+        rp.step();
+        assert!(!rp.upload(&mut images));
+        assert!(!rp.texture_dirty);
+        // The same grids can be woken again after the final clear.
+        rp.rain.impulse(128.0, 128.0, 2.0, 0.1);
+        rp.step();
+        assert!(rp.upload(&mut images));
+    }
+
+    #[test]
+    fn moving_the_grid_clears_stale_texture_even_without_a_step() {
+        for distance in [8, N as i32] {
+            let (mut rp, mut images) = fixture();
+            rp.rain.impulse(2.0, 128.0, 1.0, 0.1);
+            rp.step();
+            assert!(rp.upload(&mut images));
+            rp.follow(IVec2::new(distance, 0));
+            assert!(rp.rain.at_rest && rp.wake.at_rest);
+            assert!(rp.upload(&mut images));
+            assert!(images.get(&rp.image).unwrap().data.as_ref().unwrap().iter().all(|&b| b == 0));
+            rp.follow(IVec2::new(distance + 1, 0));
+            rp.step();
+            assert!(!rp.upload(&mut images));
+        }
+    }
+
+    #[test]
+    fn active_steps_match_the_original_recurrence() {
+        let mut s = Sim::new();
+        s.impulse(128.0, 128.0, DROP_RADIUS / TEXEL, 0.1);
+        s.impulse(100.3, 80.7, WAKE_RADIUS / TEXEL, 0.2);
+        let (mut cur, mut prev) = (s.cur.clone(), s.prev.clone());
+        for _ in 0..60 {
+            for y in 1..N - 1 {
+                for x in 1..N - 1 {
+                    let i = y * N + x;
+                    let h = cur[i];
+                    let lap = cur[i - 1] + cur[i + 1] + cur[i - N] + cur[i + N] - 4.0 * h;
+                    prev[i] = (2.0 * h - prev[i] + s.c2 * lap) * s.falloff;
+                }
+            }
+            std::mem::swap(&mut cur, &mut prev);
+            assert!(s.step());
+            assert_eq!(s.cur, cur);
+            assert_eq!(s.prev, prev);
+        }
+    }
 
     fn sum(s: &Sim) -> f32 {
         s.cur.iter().sum()
@@ -329,8 +524,59 @@ mod tests {
     fn shift_moves_the_contents() {
         let mut s = Sim::new();
         s.cur[10 * N + 10] = 1.0;
+        s.at_rest = false;
         s.shift(3, -2);
         assert_eq!(s.cur[12 * N + 7], 1.0);
         assert_eq!(s.cur.iter().filter(|&&h| h != 0.0).count(), 1);
+    }
+
+    fn border_is_zero(buf: &[f32]) -> bool {
+        (0..N).all(|i| buf[i] == 0.0 && buf[(N - 1) * N + i] == 0.0 && buf[i * N] == 0.0 && buf[i * N + N - 1] == 0.0)
+    }
+
+    #[test]
+    fn shift_keeps_the_border_zero_in_every_direction() {
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1), (3, -2)] {
+            let mut s = Sim::new();
+            for y in 1..N - 1 {
+                for x in 1..N - 1 {
+                    s.cur[y * N + x] = 1.0;
+                    s.prev[y * N + x] = -1.0;
+                }
+            }
+            s.at_rest = false;
+            s.shift(dx, dy);
+            assert!(border_is_zero(&s.cur) && border_is_zero(&s.prev), "shift ({dx}, {dy})");
+            // The interior keeps the moved contents: a cell whose source was interior
+            // still holds it.
+            assert_eq!(s.cur[128 * N + 128], 1.0);
+            assert_eq!(s.prev[128 * N + 128], -1.0);
+            assert!(!s.at_rest);
+        }
+    }
+
+    #[test]
+    fn a_wave_shifted_against_the_edge_still_comes_to_rest() {
+        let (mut rp, mut images) = fixture();
+        // Production damping and wave speed (Sim::new).
+        assert_eq!((rp.rain.c2, rp.rain.falloff), (0.5, 0.985));
+        rp.rain.impulse(2.0, 128.0, 1.0, 0.1);
+        rp.step();
+        assert!(rp.upload(&mut images));
+        // Move the grid two cells: values from x = 2 would land in the border at x = 0.
+        rp.follow(IVec2::new(2, 0));
+        assert!(!rp.rain.at_rest, "interior values remain after the shift");
+        assert!(border_is_zero(&rp.rain.cur) && border_is_zero(&rp.rain.prev));
+        // sqrt(0.985) per step from about 0.1 to below 2^-126 takes about 11 000 steps.
+        let mut steps = 0;
+        while !(rp.rain.at_rest && rp.wake.at_rest) {
+            assert!(steps < 20_000, "the grid never came to rest");
+            rp.step();
+            steps += 1;
+        }
+        assert!(rp.upload(&mut images), "the last step to rest uploads a final clear");
+        assert!(images.get(&rp.image).unwrap().data.as_ref().unwrap().iter().all(|&b| b == 0));
+        rp.step();
+        assert!(!rp.upload(&mut images));
     }
 }

@@ -250,7 +250,10 @@ foremost.
 Runtime: the pass or fail line is simply the line of the topic the actor can say
 (§4); the choice carries the tag (`Challenge`: the form, the difficulty, and the needed
 and current level taken from the line's first GetActorValue-family condition run on
-the target) [hypothesis for where the game takes the two numbers from].
+the target) [hypothesis for where the game takes the two numbers from]. Choosing a
+Speech check's line counts Speech Successes when the player meets the level and Speech
+Failures otherwise; other skills and perks count nothing [hypothesis; misc-stats.md §3,
+observer-checks.md item 70].
 
 ### 3.4 Follow-up lines (TCFU)
 
@@ -397,11 +400,13 @@ the game's seeded generator, and only when more than one line of the pool can be
 said.
 
 A speaker **can say** a line when:
-- it has not said it, for Say Once; not within the last `fSayOncePerDayInfoTimer` game
-  hours (12 when the setting is absent), for Say Once a Day; both per actor
-  [documented: Category:Dialogue]. Say Once was seen to hold across actors instead: the
-  Yes Man mainframe skipped the greeting 0x001164F1 the Tops Yes Man had said
-  [observed 2026-10-31, observer check 31; one case]. The clock is GameDaysPassed × 24 + GameHour
+- no actor has said it, for Say Once; it has not said it within the last
+  `fSayOncePerDayInfoTimer` game hours (12 when the setting is absent), for Say Once a
+  Day. The wiki has both per actor [documented: Category:Dialogue], but Say Once was seen
+  to hold across actors: the Yes Man mainframe skipped the greeting 0x001164F1 the Tops
+  Yes Man had said [observed 2026-10-31, observer check 31; one case, and the two may
+  count as one speaker]. Ours holds a Say Once line back from every actor once any has
+  said it (#1113); Say Once a Day stays per actor. The clock is GameDaysPassed × 24 + GameHour
   [hypothesis];
 - it is the line's fixed speaker, if the line has one [documented: Category:Dialogue] —
   unless the line has its own GetIsID condition on the speaker, which then decides
@@ -848,7 +853,7 @@ up to C and F):
     again while it speaks (cut and restart, or ignored); and whether a Goodbye line of
     a topic named by StartConversation opens the menu.
 13. Say Once across two actors sharing a line (one case answered: not said again,
-    observer check 31); Say Once a Day's clock; Say Once and
+    observer check 31; built, #1113); Say Once a Day's clock; Say Once and
     Say Once a Day counted from the line's start or end.
 14. Response order where numbers and stored order disagree.
 15. Whether SayTo and Say obey Random stacks like menu dialogue.

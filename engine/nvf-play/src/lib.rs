@@ -62,9 +62,11 @@ pub mod hud_breath;
 pub mod hud_limbs;
 pub mod hud_needs;
 pub mod hud_target;
+pub mod aim_assist;
 pub mod knockouts;
 pub mod loading;
 pub mod main_menu;
+pub mod location_markers;
 pub mod lockpick;
 pub mod roulette;
 pub mod slots;
@@ -83,6 +85,7 @@ pub mod music;
 pub mod pad;
 pub mod pause;
 pub mod phys;
+pub mod phys_load;
 pub mod pickpocket;
 pub mod pipboy;
 pub mod player;
@@ -322,7 +325,7 @@ impl Plugin for PlayPlugin {
             .add_plugins((sim::SimPlugin, phys::PhysPlugin, player::PlayerPlugin, activate::ActivatePlugin, menu::MenuPlugin, dropped::DroppedPlugin, moved::MovedPlugin, pause::PausePlugin, wait::WaitPlugin, flashlight::FlashlightPlugin))
             .add_plugins((script::ScriptPlugin, hitvol::HitVolumePlugin, combat::CombatPlugin, sfx::SfxPlugin, music::MusicPlugin, ambient::AmbientPlugin, radio::RadioPlugin, voice::VoicePlugin, holotape::HolotapePlugin, loading::LoadingPlugin, dialogue_look::DialogueLookPlugin, hud::HudPlugin, compass::CompassPlugin))
             .add_plugins((world_sounds::WorldSoundsPlugin, effect_sounds::EffectSoundsPlugin, reticle::ReticlePlugin, xp_meter::XpMeterPlugin, radiation::RadiationPlugin))
-            .add_plugins((ui_sounds::UiSoundsPlugin, pad::PadPlugin, rumble::RumblePlugin, script_input::ScriptInputPlugin))
+            .add_plugins((ui_sounds::UiSoundsPlugin, pad::PadPlugin, rumble::RumblePlugin, script_input::ScriptInputPlugin, aim_assist::AimAssistPlugin))
             .add_plugins((chargen::ChargenPlugin, creator::CreatorPlugin, fade::FadePlugin))
             .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin))
             .add_plugins(perk_marks::PerkMarksPlugin)
@@ -341,6 +344,7 @@ impl Plugin for PlayPlugin {
             .add_plugins((crime::CrimePlugin, reputation::ReputationPlugin, knockouts::KnockoutsPlugin, after_combat::AfterCombatPlugin))
             .add_plugins(console::ConsolePlugin)
             .add_plugins(editor::EditorPlugin)
+            .add_plugins(location_markers::LocationMarkersPlugin)
             .add_plugins(free_cam::FreeCamPlugin)
             .add_plugins(aim_zoom::AimZoomPlugin)
             .add_plugins(save::SavePlugin)
