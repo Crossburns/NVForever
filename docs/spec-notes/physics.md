@@ -690,8 +690,12 @@ decides what the next query refresh costs.
   1.7-2.6 ms a frame, most of it these writes [observed: tracy spans
   `phys::refresh_detect` under `phys::player_move`, 2026-11-03].
 - **Now**: the capsules are colliders of no body, placed with `Collider::set_position`.
-  That flags only `POSITION`, so the leaf is updated in place, or left alone while the
-  capsule stays inside its margin [design: `update.rs:216-223`].
+  That flags only `POSITION`, which takes the capsules off the forced re-parent path
+  (removal, re-insertion as a new leaf, forced full refit). It does not end every
+  re-insertion or refit: a capsule inside its margin leaves the tree untouched, one that
+  leaves it is updated in place or, when only a small batch of leaves moved, re-inserted
+  by SAH descent [design: `update.rs:139`, `:216-223`], and a frame can still take a
+  full refit for other reasons [design: `:288`].
   - Each kinematic body stays as it was, moved as before. The body set, `state_digest`
     and the body counts are unchanged.
   - A write queues `(collider, body, pose on the body)`. `PhysWorld::flush_hit_volumes`
@@ -724,27 +728,41 @@ decides what the next query refresh costs.
   22.56 ms and from 25.48 to 22.57 ms (two route pairs; median gain 2.08 ms).
 - **Exact ties.** A first-hit `ray` or `sweep` with two candidates at the same time of
   impact returns the first in tree-traversal order: parry replaces a result only on a
-  strictly smaller cost [design: parry3d 0.31.1 `partitioning/bvh/bvh_traverse.rs:393`].
+  strictly smaller cost, and it prunes a branch whose bound is not strictly smaller
+  [design: parry3d 0.31.1 `partitioning/bvh/bvh_traverse.rs:406,422` (replacement),
+  `:402,418` (pruning)].
   This happens with a ray starting inside two overlapping capsules (distance 0), with
   coincident actors, or with mirrored capsules. `ray_all` orders by distance, then
   owner, and the owner includes the part [design: `world.rs:1226`]. So two segments of
   one part at the same distance keep traversal order too.
   - The two representations shape the tree differently, so they can pick a different
-    winner among exactly tied hits: another owner or part (combat reads both from the
-    hit), or the other order of same-owner hits in `ray_all`.
+    winner among exactly tied hits: another actor, not only another part (coincident
+    actors: form 0x10 in one, 0x11 in the other; combat reads both actor and part from
+    the hit), or the other order of same-owner hits in `ray_all`. A sweep's witness
+    point and normal belong to the winner, so they differ with it.
   - The winner already depended on the tree's history with attached capsules. An
     attached world that writes an identical pose again picks other winners than one
-    that skips it. This is the same class of non-determinism as before, with a
-    different arbitrary winner.
+    that skips it. So the tie ordering is history-dependent, as it was before;
+    identical histories still give identical answers. The standalone capsules change
+    which arbitrary winner a given history picks.
   - Differential tests in `crates/fnv-phys/tests/synthetic.rs` (`hitvol_diff_*`,
     `hitvol_ties_*`) run the same script on both representations
     [observed: `cargo test -p fnv-phys --test synthetic hitvol`, 2026-11-03]:
-    - 10 scenarios agree to the bit, among them 20 actors × 19 parts over 50 frames with
-      falling boxes and a walking character, and remove/re-add with handle reuse.
-    - 6 scenarios differ only in which exactly tied candidate wins; they are kept
-      `#[ignore]`d with the observed values.
-    - Distances, points, fractions, hit sets, overlaps, aim points, other bodies'
-      trajectories and the character agree in every scenario.
+    - 16 tests: 8 scenarios run twice, once exact (`hitvol_diff_*`, every compared
+      value to the bit) and once relaxed (`hitvol_ties_*`: distances, points of rays,
+      fractions, hit sets, overlaps and the non-query state, not which tied candidate
+      won).
+    - 2 exact tests pass: remove/re-add with handle reuse plus a part-count change, and
+      20 actors × 19 parts over 50 frames with falling boxes and a walking character
+      (the crowd without coincident twins).
+    - 8 relaxed tests pass.
+    - 6 exact tests diverge on exact ties; they are kept `#[ignore]`d with the observed
+      values.
+    - Ray distances and points, sweep fractions, hit sets, overlaps, aim points, other
+      bodies' trajectories and the character's steps matched in every test. Sweep
+      witness points and normals differ where the winner differs (witness z 85.9849
+      for part 0 against 85.729836 for part 7). The relaxed tests do not check that each
+      difference they set aside comes from a tie; that is the recorded diagnosis.
 
 ## 6. Character controller and capture questions
 

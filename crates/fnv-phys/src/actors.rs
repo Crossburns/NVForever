@@ -22,16 +22,20 @@
 //! - by default ([`PhysWorld::set_standalone_hit_volumes`], on unless switched off), new
 //!   actors' capsules are colliders of no body, placed at the pose rapier would give them on
 //!   the body (`body pose * local pose`, worked out at the next refresh or step, where rapier
-//!   works it out for an attached collider), which flags only `POSITION`: the leaf is updated
-//!   in place, or left alone while it stays inside its margin. The body is kept (same bodies,
-//!   same digest). Switched off, the capsules are attached to the body as before.
+//!   works it out for an attached collider), which flags only `POSITION`: no forced
+//!   re-parent. A leaf inside its margin is left alone; one that leaves it is handled as any
+//!   moved collider (updated in place, re-inserted by SAH in a small batch, or covered by a
+//!   full refit; rapier `update.rs:139,288`). The body is kept (same bodies, same digest).
+//!   Switched off, the capsules are attached to the body as before.
 //!
 //! Exact ties (docs/spec-notes/physics.md §5.1): a first-hit `ray`/`sweep` whose two
 //! candidates have the same time of impact (coincident or mirrored capsules) returns the
 //! first in tree-traversal order, and the two representations shape the tree differently,
-//! so they can pick different winners. Which one wins was already history-dependent with
-//! attached capsules; nothing else differs [design: differential tests `hitvol_diff_*` /
-//! `hitvol_ties_*`, `tests/synthetic.rs`].
+//! so they can pick different winners (another actor or part). Which one wins was already
+//! history-dependent with attached capsules. The differential tests (`hitvol_diff_*` /
+//! `hitvol_ties_*`, `tests/synthetic.rs`) saw differences only on exact ties: the winner,
+//! its sweep witness point and normal, and `ray_all` order among equal distances
+//! [observed: `cargo test -p fnv-phys --test synthetic hitvol`, 2026-11-03].
 
 use crate::world::{Owner, PhysWorld};
 use crate::{layers, BodyState};
