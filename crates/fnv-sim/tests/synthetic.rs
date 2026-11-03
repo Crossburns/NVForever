@@ -978,6 +978,127 @@ fn clock_lives_in_the_time_globals() {
     assert_eq!(back.calendar().unwrap(), w.calendar().unwrap());
 }
 
+const GAME_YEAR: u32 = 0x35;
+const GAME_MONTH: u32 = 0x36;
+const GAME_DAY: u32 = 0x37;
+const GAME_HOUR: u32 = 0x38;
+const GAME_DAYS_PASSED: u32 = 0x39;
+const TIME_SCALE: u32 = 0x3A;
+
+/// Frames of `dt` real seconds, as the running game calls the clock; the game days they took.
+fn clock_frames(w: &mut World, dt: f64, frames: u64) -> f64 {
+    let scale = w.global(id(TIME_SCALE)).unwrap() as f64;
+    for _ in 0..frames {
+        w.advance_real_seconds(dt).unwrap();
+    }
+    frames as f64 * dt * scale / 3600.0 / 24.0
+}
+
+fn close_to(value: f32, want: f64, tolerance: f64) -> bool {
+    (value as f64 - want).abs() <= tolerance
+}
+
+/// Two f32 steps of GameDaysPassed just past day 1000 (one is about 6.1e-5 days).
+const PAST_DAY_1000: f64 = 1.3e-4;
+
+#[test]
+fn clock_globals_follow_frames_past_day_1000() {
+    let f = fixture();
+    for (scale, fps) in [(1.0, 60.0), (1.0, 240.0), (30.0, 60.0), (30.0, 240.0)] {
+        let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+        w.set_global(id(TIME_SCALE), scale as f32).unwrap();
+        w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+        w.set_global(id(GAME_HOUR), 0.0).unwrap();
+        // Ten game minutes, 7e-3 days: far more than the tolerance, had it stopped.
+        let frames = (600.0 / scale * fps) as u64;
+        let elapsed = clock_frames(&mut w, 1.0 / fps, frames);
+        let what = format!("TimeScale {scale} at {fps} frames a second");
+        assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1000.0 + elapsed, PAST_DAY_1000), "{what}");
+        assert!(close_to(w.global(id(GAME_HOUR)).unwrap(), elapsed * 24.0, 1e-3), "{what}");
+    }
+}
+
+#[test]
+fn script_writes_to_the_time_globals_win_over_the_running_clock() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    clock_frames(&mut w, 1.0 / 60.0, 600);
+    let (hour, days) = (w.global(id(GAME_HOUR)).unwrap(), w.global(id(GAME_DAYS_PASSED)).unwrap());
+
+    // Set GameDaysPassed: frames go on from there, the hour does not jump.
+    w.set_global(id(GAME_DAYS_PASSED), 2000.0).unwrap();
+    assert_eq!(w.calendar().unwrap().days_passed, 2000.0);
+    let elapsed = clock_frames(&mut w, 1.0 / 60.0, 600);
+    assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), 2000.0 + elapsed, 2.5e-4));
+    assert!(close_to(w.global(id(GAME_HOUR)).unwrap(), hour as f64 + elapsed * 24.0, 1e-3));
+
+    // Set GameHour: the same, and GameDaysPassed does not jump.
+    let days_now = w.global(id(GAME_DAYS_PASSED)).unwrap();
+    w.set_global(id(GAME_HOUR), 3.5).unwrap();
+    let elapsed = clock_frames(&mut w, 1.0 / 60.0, 600);
+    assert!(close_to(w.global(id(GAME_HOUR)).unwrap(), 3.5 + elapsed * 24.0, 1e-3));
+    assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), days_now as f64 + elapsed, 2.5e-4));
+
+    // Backwards as well.
+    w.set_global(id(GAME_DAYS_PASSED), days).unwrap();
+    w.advance_hours(1.0).unwrap();
+    assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), days as f64 + 1.0 / 24.0, 1e-5));
+
+    // GameDay, GameMonth and GameYear live in the globals alone: the next wrap counts on
+    // from what was set.
+    w.set_global(id(GAME_YEAR), 2300.0).unwrap();
+    w.set_global(id(GAME_MONTH), 1.0).unwrap();
+    w.set_global(id(GAME_DAY), 28.0).unwrap();
+    w.set_global(id(GAME_HOUR), 23.0).unwrap();
+    let c = w.advance_hours(2.0).unwrap();
+    assert_eq!((c.year, c.month, c.day, c.hour), (2300.0, 2.0, 1.0, 1.0));
+
+    // TimeScale set: read every frame, and 0 holds the clock.
+    w.set_global(id(TIME_SCALE), 0.0).unwrap();
+    let held = w.calendar().unwrap();
+    clock_frames(&mut w, 1.0 / 60.0, 60);
+    assert_eq!(w.calendar().unwrap(), held);
+    w.set_global(id(TIME_SCALE), 7200.0).unwrap();
+    assert!(close_to(w.advance_real_seconds(0.5).unwrap().hour, 2.0, 1e-5));
+}
+
+#[test]
+fn save_and_load_keep_the_clock() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    let before = clock_frames(&mut w, 1.0 / 60.0, 3600);
+    // The fine clock is not saved: the snapshot holds the globals and nothing new.
+    let snap = w.snapshot();
+    assert!(serde_json::to_value(&snap).unwrap().get("fine_clock").is_none());
+    let mut r = World::restore(&f.forms, &f.refs, &snap).unwrap();
+    assert_eq!(r.calendar().unwrap(), w.calendar().unwrap());
+    // A world loaded with the clock far on goes on from it as the running one does.
+    let after = clock_frames(&mut r, 1.0 / 60.0, 3600);
+    clock_frames(&mut w, 1.0 / 60.0, 3600);
+    let want = 1000.0 + before + after;
+    assert!(close_to(r.global(id(GAME_DAYS_PASSED)).unwrap(), want, PAST_DAY_1000));
+    assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), want, PAST_DAY_1000));
+    let (rh, wh) = (r.global(id(GAME_HOUR)).unwrap(), w.global(id(GAME_HOUR)).unwrap());
+    assert!((rh - wh).abs() < 1e-3, "loaded {rh}, running {wh}");
+}
+
+#[test]
+fn merchants_restock_at_a_midnight_crossed_by_frames_past_day_1000() {
+    // The stopped GameDaysPassed never reached the next midnight (#1377). Day 1001 is a
+    // restock day (7 x 143).
+    let f = fixture();
+    let (p, safe) = (FormId::PLAYER_REF, id(SAFE_REF));
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.unlock(safe).unwrap();
+    w.transfer_all(safe, p).unwrap();
+    w.set_global(id(GAME_DAYS_PASSED), 1000.999).unwrap();
+    // 0.0017 days at TimeScale 30 and 60 frames a second.
+    clock_frames(&mut w, 1.0 / 60.0, 300);
+    assert_eq!(w.peek(safe).unwrap().last_restock, Some(1001.0));
+    assert_eq!(w.item_count(safe, id(CAPS)).unwrap(), 3);
+}
+
 #[test]
 fn condition_and_ownership_travel_with_items() {
     use fnv_sim::inventory::Extra;

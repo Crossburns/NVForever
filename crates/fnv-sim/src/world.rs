@@ -385,6 +385,9 @@ pub struct World<'a> {
     refs: BTreeMap<FormId, RefState>,
     /// Globals set at run time (scripts, the clock); others keep their authored value.
     globals: BTreeMap<FormId, f32>,
+    /// The digits of the time globals their f32 cannot hold; not saved (a load seeds it
+    /// from the globals).
+    fine_clock: clock::FineClock,
     /// Unloaded cells and the GameDaysPassed at which they were unloaded.
     detached_cells: BTreeMap<FormId, f32>,
     /// Quest-item flags set at run time (`set_quest_object`); they replace the record's.
@@ -454,6 +457,7 @@ impl<'a> World<'a> {
             cfg,
             refs: BTreeMap::new(),
             globals: BTreeMap::new(),
+            fine_clock: clock::FineClock::UNSEEDED,
             detached_cells: BTreeMap::new(),
             quest_objects: BTreeMap::new(),
             leveled_added: BTreeMap::new(),
@@ -1509,7 +1513,7 @@ impl<'a> World<'a> {
     /// containers restock at the midnights passed ([`World::restock_merchants`]).
     pub fn advance_hours(&mut self, hours: f64) -> Result<Calendar, SimError> {
         let before = self.calendar()?;
-        let c = before.advance(hours);
+        let c = self.fine_clock.advance(before, hours);
         for (edid, v) in [
             (clock::GAME_YEAR, c.year),
             (clock::GAME_MONTH, c.month),

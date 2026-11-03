@@ -722,6 +722,15 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   GameHour 14.136 for 14), so fractional time is not compared
   (docs/spec-notes/xnvse-capture.md §5).
 - Globals changed at run time are part of the simulation state (`Snapshot.globals`).
+- **Frame-sized time** [design, #1377; not a claim about the original]: the running clock
+  adds a frame's time to f64 copies of GameHour and GameDaysPassed
+  (`fnv_sim::clock::FineClock`) and writes the f32 globals from them, because an f32 sum
+  drops a step under half its own step (GameDaysPassed stopped near day 128 at TimeScale
+  30 and 60 frames a second, and never left 5.0 at TimeScale 1). The globals stay the
+  truth: a stored GameHour or GameDaysPassed other than the one last written (a script, a
+  load) replaces its copy, each on its own. The copies are not saved, and a load seeds them
+  from the globals, so the save format is unchanged and a save loses under one f32 step of
+  time. A stored GameHour stays below 24 until the day wraps.
 
 ## 6. Capturing the oracle (in-game)
 
