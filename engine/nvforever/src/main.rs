@@ -807,15 +807,6 @@ fn main() -> AppExit {
         eprintln!("explore: the free-camera explorer (--explore)");
     }
     let developer_data = args.data.is_some();
-    // The game's folder: `--data`, NVForever.ini or asked for; its files checked (setup.rs).
-    let install = match setup::game_install(args.data.as_deref()) {
-        Ok(g) => g,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return AppExit::error();
-        }
-    };
-    args.data = Some(install.data.clone());
     match setup::text_code_page() {
         Ok(c) => {
             if c != fnv_util::text::CodePage::default() {
@@ -828,6 +819,15 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     }
+    // The game's folder: `--data`, NVForever.ini or asked for; its files checked (setup.rs).
+    let install = match setup::game_install(args.data.as_deref()) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return AppExit::error();
+        }
+    };
+    args.data = Some(install.data.clone());
     // Every `fnv_install::guard_write` from here on refuses writes into this install,
     // also where the writer has none at hand (saves, test aids; #994).
     fnv_install::remember_game(&install);

@@ -68,7 +68,7 @@ assumes and what is still to be checked.
   finds its file [hypothesis: that a localized install's file names use the plugins'
   code page; every vanilla English name is ASCII, the same in all three code pages].
 - **How it is chosen.** `NVF_CODE_PAGE`, else `[Text] CodePage=` in NVForever's own
-  `NVForever.ini` (1252, 1251 or 1250), else Windows-1252 [our choice]. It is not
+  `NVForever.ini` (1252, 1251 or 1250), else Windows-1252 (the English install's, the release this engine targets) [hypothesis]. It is not
   detected from the install yet: which setting of a localized install names its
   language (an INI key such as `sLanguage`, a file of its own) was not looked at, so
   none is read.
