@@ -140,8 +140,9 @@ class CpuLoad:
     came out at 195 % and 390 % of the machine [observed, #1412]). A read that fails keeps
     the last baseline, so the next interval is longer, not lost; so does a read with no
     elapsed time. An interval with an impossible share is left out and counted in
-    `skipped` (its end becomes the new baseline), not turned into a zero load. Each kept sample is (seconds since the launch at its end, game's
-    share, others' share, its elapsed seconds), so the summary can weight it by its time."""
+    `skipped` (its end becomes the new baseline), not turned into a zero load. Each kept
+    sample is (seconds since the launch at its end, game's share, others' share, its
+    elapsed seconds), so the summary can weight it by its time."""
 
     def __init__(self, cores: int, started: float):
         self.cores = max(cores, 1)
