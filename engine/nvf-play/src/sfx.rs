@@ -556,6 +556,9 @@ pub struct Sfx {
     frame: u64,
     /// How long requests waited for their files (the exit report).
     pub waits: Waits,
+    /// The age limit in force ([`MAX_ONE_SHOT_WAIT`]; the tests' real decodes on a busy
+    /// machine would otherwise run into it).
+    one_shot_wait: Duration,
     reported: HashSet<String>,
     pub(crate) rng: SplitMix,
     pub played: u32,
@@ -606,6 +609,7 @@ impl Sfx {
             waiting: Vec::new(),
             frame: 0,
             waits: Waits::default(),
+            one_shot_wait: MAX_ONE_SHOT_WAIT,
             reported: HashSet::new(),
             rng: SplitMix(0x5f37_59df),
             played: 0,
@@ -1212,7 +1216,7 @@ fn start_decided(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, heard: &
     };
     for mut w in decided {
         let waited = frame - w.frame;
-        if wait_limited(w.wanted) && w.asked.elapsed() > MAX_ONE_SHOT_WAIT {
+        if wait_limited(w.wanted) && w.asked.elapsed() > sfx.one_shot_wait {
             sfx.waits.too_late += 1;
             if let Wanted::Script { id, .. } = w.wanted {
                 heard.push((id, Some(0.0)));
@@ -1856,7 +1860,7 @@ mod tests {
         forms.sounds.insert(NO_FILE, record("TestNoFile", None, &[]));
         let mut app = App::new();
         app.insert_resource(data)
-            .insert_resource(Sfx::new(forms))
+            .insert_resource(Sfx { one_shot_wait: Duration::from_secs(3600), ..Sfx::new(forms) })
             .init_resource::<SfxSettings>()
             .init_resource::<ScriptSounds>()
             .init_resource::<Assets<PcmSound>>()
@@ -1923,6 +1927,7 @@ mod tests {
     #[test]
     fn a_one_shot_whose_file_comes_in_too_late_is_dropped_and_loops_are_not() {
         let (mut app, _files) = sound_app();
+        app.world_mut().resource_mut::<Sfx>().one_shot_wait = MAX_ONE_SHOT_WAIT;
         app.world_mut().write_message(PlaySound { sound: BEEP, at: None });
         script_plays(&mut app, &[(1, BEEP), (2, BEEP_LOOP)]);
         app.update();
