@@ -450,6 +450,18 @@ expect = [
 ]
 
 [[scenario]]
+name = "profile-slow-frames"
+source = "docs/design/frame-rate-audit.md §5 (#1421, 2026-11-03): NVF_PLAY_TEST_PROFILE_HITCH_MS sets the threshold of the profile's hitch lines, so the profiling campaign sees what its 20 ms frames hold; at 1 ms every frame is listed"
+areas = ["profiling"]
+paths = ["engine/nvforever/src/profile.rs", "tools/profile/campaign.py"]
+env = { NVF_PLAY_TEST_PROFILE = "2", NVF_PLAY_TEST_PROFILE_HITCH_MS = "1" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { re = 'profile hitch: \d', min = 100, label = "with a 1 ms threshold every frame is listed (100 ms by default: none in a quiet room)" },
+]
+
+[[scenario]]
 name = "render-diagnostics-profile"
 source = "docs/design/frame-rate-audit.md §1 (profiling options together) and issue #1275: NVF_PLAY_TEST_PROFILE enables the profile reporting path and its render diagnostics registration"
 note = "Source-reviewed on pinned Bevy 0.20.1; profile-build startup/output verification passes; broader profiling validation remains"

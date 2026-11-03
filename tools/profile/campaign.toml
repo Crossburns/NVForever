@@ -13,6 +13,9 @@ seconds = 60
 # Seconds after the first frame-time line that are left out (loading, pipelines, spawning).
 warmup = 15
 every = 5
+# Frames this long or longer are listed with their spans (NVF_PLAY_TEST_PROFILE_HITCH_MS): the
+# occasional 20 ms frames of 7 ms scenes. Battles, slower throughout, set their own.
+slow_ms = 16
 size = "1920x1080"
 graphics = "enhanced"
 
@@ -219,18 +222,21 @@ battle = { per_side = 10, third = 0 }
 name = "battle-25"
 group = "combat"
 seconds = 90
+slow_ms = 40
 battle = { per_side = 25, third = 0 }
 
 [[scenario]]
 name = "battle-50"
 group = "combat"
 seconds = 90
+slow_ms = 100
 battle = { per_side = 50, third = 0 }
 
 [[scenario]]
 name = "battle-25-creatures"
 group = "combat"
 seconds = 90
+slow_ms = 40
 battle = { per_side = 25, third = 15 }
 
 # ---------------------------------------------------------------- the player moving

@@ -73,6 +73,18 @@ class Parse(unittest.TestCase):
         self.assertEqual(h["new_pipelines"], 12)
         self.assertEqual(h["t"], 26.0)
         self.assertEqual(self.p["loading_hitches"], 1)
+        # What grew in the slow frame against the mean frame (phys::tick: 2.0 a frame, none here).
+        self.assertEqual(self.p["slow_frame_excess"]["world::spawn_cells"], 120.0)
+        self.assertNotIn("update", self.p["slow_frame_excess"])
+
+    def test_hitches_in_the_warm_up_are_left_out(self):
+        early = [at(36000, "frame time: 40.00 ms mean, 900.0 ms slowest over 100 frames; graphics: enhanced"),
+                 at(36003, "profile hitch: 500.0 ms; spans ms: world::spawn_cells 400.00 (3); pipelines 1 (1 new since the frame before, 0 waiting)")]
+        self.assertEqual(campaign.parse(early, warmup=15)["hitches"], [])
+        # Lines before the first frame-time line (start-up) are not counted either.
+        before = [at(36000, "frame time: 10.00 ms mean, 20.0 ms slowest over 100 frames; graphics: enhanced"),
+                  at(35998, "profile hitch: 500.0 ms; spans ms: world::spawn_cells 400.00 (3)")]
+        self.assertEqual(campaign.parse(before, warmup=15)["hitches"], [])
 
     def test_an_empty_log(self):
         p = campaign.parse([], warmup=15)

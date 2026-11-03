@@ -100,17 +100,30 @@ def parse(lines: list[str], warmup: float) -> dict:
         if FRAME.search(ln):
             start = stamp(ln)
             break
+    def since(t):
+        # Seconds after the first frame-time line; a run that passes midnight wraps once.
+        d = t - start
+        return d + 86400 if d < -43200 else d
+
     def counted(ln):
         t = stamp(ln)
-        return start is not None and t is not None and (t - start) % 86400 >= warmup
+        return start is not None and t is not None and since(t) >= warmup
 
     frames, windows, gpus, hitches, loading_hitches, scenes, samples = [], [], [], [], [], [], []
     vis, transforms, shadows = [], [], ""
+    slow_spans: list[dict[str, float]] = []
     for ln in lines:
         if m := HITCH.search(ln):
-            h = {"ms": float(m.group(2)), "spans": top(items(m.group(3)), 8, WRAPPERS), "t": stamp(ln),
+            if not counted(ln):
+                continue
+            all_spans = items(m.group(3))
+            h = {"ms": float(m.group(2)), "spans": top(all_spans, 8, WRAPPERS), "t": stamp(ln),
                  "new_pipelines": int(m.group(5)) if m.group(5) else None}
-            (loading_hitches if m.group(1) else hitches).append(h)
+            if m.group(1):
+                loading_hitches.append(h)
+            else:
+                hitches.append(h)
+                slow_spans.append(all_spans)
             continue
         if m := SAMPLE.search(ln):
             samples.append({"t": float(m.group(1)), "mean": float(m.group(3)), "worst": float(m.group(4)),
@@ -137,8 +150,11 @@ def parse(lines: list[str], warmup: float) -> dict:
     means = [f[0] for f in frames]
     cpus = [w["cpu"] for w in windows if w["cpu"] is not None]
     hitch_start = start or 0.0
+    # What grows in the slow frames: each span's mean over them against its mean over every frame.
+    slow = mean_dicts(slow_spans)
+    excess = {k: round(v - spans.get(k, 0.0), 2) for k, v in slow.items() if k not in WRAPPERS}
     for h in hitches + loading_hitches:
-        h["t"] = round((h["t"] - hitch_start) % 86400, 1) if h["t"] is not None and start is not None else None
+        h["t"] = round(since(h["t"]), 1) if h["t"] is not None and start is not None else None
     return {
         "periods": len(frames),
         "frame_mean": round(statistics.median(means), 2) if means else None,
@@ -150,6 +166,7 @@ def parse(lines: list[str], warmup: float) -> dict:
         "gpu": dict(top(gpu, 20)),
         "gpu_total": round(sum(gpu.values()), 2) if gpu else None,
         "hitches": sorted(hitches, key=lambda h: -h["ms"]),
+        "slow_frame_excess": dict(top(excess, 8)),
         "loading_hitches": len(loading_hitches),
         "scene": {"meshes": scenes[-1][0], "visible": scenes[-1][1], "moved": scenes[-1][2], "distinct_meshes": scenes[-1][3],
                   "materials": scenes[-1][4]} if scenes else None,
@@ -175,7 +192,7 @@ def report(results: dict) -> list[str]:
            f"{sum(1 for r in runs if r['status'] == 'ok')} ok. Times in ms a frame; spans on other threads add up "
            "beyond the frame.", "",
            "## Scenarios, slowest first", "",
-           "| scenario | group | status | frame | worst period | slowest | hitches | CPU | main | render | window wait | GPU passes | others' CPU |",
+           "| scenario | group | status | frame | worst period | slowest | slow frames | CPU | main | render | window wait | GPU passes | others' CPU |",
            "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in sorted(runs, key=lambda r: -(r["frame_mean"] or 0)):
         s = r["split"]
@@ -204,7 +221,13 @@ def report(results: dict) -> list[str]:
     for k, (v, where) in sorted(gpeak.items(), key=lambda kv: -kv[1][0])[:20]:
         out.append(f"| `{k}` | {v:.2f} | {where} |")
     hs = sorted(((h, r["name"]) for r in runs for h in r["hitches"]), key=lambda x: -x[0]["ms"])
-    out += ["", f"## Hitches (frames of 100 ms or more, after the warm-up): {len(hs)}", ""]
+    out += ["", f"## Slow frames (over each scenario's `slow_ms`, after the warm-up): {len(hs)}", "",
+            "What grows in them, per scenario: each span's mean in its slow frames less its mean over every frame.", ""]
+    for r in sorted(runs, key=lambda r: -len(r["hitches"])):
+        if r["hitches"] and r.get("slow_frame_excess"):
+            ex = ", ".join(f"`{k}` +{v:.1f}" for k, v in r["slow_frame_excess"].items() if v > 0)
+            out.append(f"- **{r['name']}**: {len(r['hitches'])} slow frames; {ex}")
+    out += ["", "The slowest of them:", ""]
     for h, name in hs[:25]:
         spans = ", ".join(f"{k} {v:.0f}" for k, v in h["spans"])
         out.append(f"- **{name}** at {fmt(h['t'])} s: {h['ms']:.0f} ms; {spans}"
@@ -243,6 +266,7 @@ def launch_args(d: dict, sc: dict) -> tuple[list[str], dict[str, str], float]:
     args = list(sc.get("args", [])) + ["--size", d.get("size", "1920x1080"), "--graphics", d.get("graphics", "enhanced"),
                                        "--no-voice", "--log-frame-times", f"{every:g}"]
     aids = {"NVF_PLAY_TEST_PROFILE": f"{every:g}", "NVF_PLAY_TEST_SAMPLE": f"{every:g}",
+            "NVF_PLAY_TEST_PROFILE_HITCH_MS": f"{sc.get('slow_ms', d.get('slow_ms', 100)):g}",
             **{k: str(v) for k, v in sc.get("aids", {}).items()}}
     return args, aids, float(sc.get("seconds", d.get("seconds", 60)))
 
@@ -313,10 +337,22 @@ def main(argv=None) -> int:
     r.add_argument("--no-locks", action="store_true", help="do not take the game locks")
     p = sub.add_parser("report", help="write report.md again from a run's results.json")
     p.add_argument("folder", type=Path)
+    p.add_argument("--reparse", action="store_true", help="parse each scenario's saved log again first")
+    p.add_argument("--campaign", type=Path, default=HERE / "campaign.toml")
     args = ap.parse_args(argv)
     if args.cmd == "run":
         return run(args)
     results = json.loads((args.folder / "results.json").read_text(encoding="utf-8"))
+    if args.reparse:
+        from stress.lib import clean  # noqa: F401  (tools/smoke's, through the stress package's path)
+        d, _ = load(args.campaign)
+        for i, r in enumerate(results["scenarios"]):
+            log = args.folder / f"{r['name']}.log"
+            if log.exists():
+                lines = [clean(x) for x in log.read_text(encoding="utf-8", errors="replace").splitlines()]
+                keep = {k: r[k] for k in ("name", "group", "status", "seconds", "command", "peak_private_mb", "others_cpu") if k in r}
+                results["scenarios"][i] = {**parse(lines, float(d.get("warmup", 15))), **keep}
+        (args.folder / "results.json").write_text(json.dumps(results, indent=1), encoding="utf-8")
     (args.folder / "report.md").write_text("\n".join(report(results)) + "\n", encoding="utf-8")
     return 0
 
