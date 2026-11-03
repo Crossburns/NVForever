@@ -11,20 +11,29 @@ use serde::Serialize;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap};
 
-/// Path searches ([`NavGraph::find_path`]) since the process started, for attributing
+/// Path searches ([`NavGraph::find_path`]) since [`probe::enable`], for attributing
 /// their cost (diagnostics only: never read by the searches; a reader takes differences
-/// between two reads).
+/// between two reads). Nothing is counted until it is enabled.
 pub mod probe {
-    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
+    static ON: AtomicBool = AtomicBool::new(false);
     static SEARCHES: AtomicU64 = AtomicU64::new(0);
     static FOUND: AtomicU64 = AtomicU64::new(0);
 
     pub(crate) fn searched(found: bool) {
+        if !ON.load(Relaxed) {
+            return;
+        }
         SEARCHES.fetch_add(1, Relaxed);
         if found {
             FOUND.fetch_add(1, Relaxed);
         }
+    }
+
+    /// Count from now on (the engine's `NVF_PLAY_TEST_PROFILE_COUNTS`).
+    pub fn enable() {
+        ON.store(true, Relaxed);
     }
 
     /// (searches, searches that found a path) so far.

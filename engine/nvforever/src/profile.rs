@@ -40,8 +40,8 @@
 //! (the broad-phase refreshes, `fnv_phys::RefreshStats`) and
 //! `ai-counts: secs=<s> frames=<n> think=<n> path_searches=<n> …` (the residents' AI work).
 //! Every field is `key=value`; the keys are listed in [`phys_refresh_line`] and
-//! [`ai_counts_line`]. Without the variable nothing is logged and the AI counters here are
-//! not touched.
+//! [`ai_counts_line`]. Without the variable nothing is logged and the AI counters (here,
+//! `fnv_nav::path::probe` and `fnv_ai::apart::probe`) are not touched.
 
 use bevy::log::tracing::field::{Field, Visit};
 use bevy::log::tracing::span::{Attributes, Id};
@@ -280,6 +280,9 @@ impl Plugin for ProfilePlugin {
         }
         if counts_on() {
             info!("test aid NVF_PLAY_TEST_PROFILE_COUNTS: physics refresh and AI counts every {} s", interval().unwrap_or(COUNTS_SECONDS));
+            // The library counters count only from here, like `ai_count`.
+            fnv_nav::path::probe::enable();
+            fnv_ai::apart::probe::enable();
             app.add_systems(Last, report_counts);
         }
         let Some(every) = interval() else { return };

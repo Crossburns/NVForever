@@ -724,8 +724,11 @@ decides what the next query refresh costs.
   in use (`actor hit volumes: standalone colliders` or `... attached to their bodies`).
   The `phys-refresh:` line ends with `hitvol_standalone=<0|1>`.
 - **Measured** [observed: release builds, the same exe run with and without the switch,
-  this project's towns route, 2026-11-03]: settled frame means went from 23.81 to
-  22.56 ms and from 25.48 to 22.57 ms (two route pairs; median gain 2.08 ms).
+  this project's towns route, settled frame means, attached then standalone, counterbalanced
+  order, 2026-11-03]: 23.81 → 22.56 ms (−1.25), 23.69 → 20.95 ms (−2.74) and
+  21.51 → 19.79 ms (−1.72); three route pairs, median paired gain 1.72 ms (range
+  1.25-2.74). The route's baseline itself varies by about 2 ms between launches, so the
+  per-pair difference is the number to read, not either launch's mean.
 - **Exact ties.** A first-hit `ray` or `sweep` with two candidates at the same time of
   impact returns the first in tree-traversal order: parry replaces a result only on a
   strictly smaller cost, and it prunes a branch whose bound is not strictly smaller
@@ -761,8 +764,17 @@ decides what the next query refresh costs.
     - Ray distances and points, sweep fractions, hit sets, overlaps, aim points, other
       bodies' trajectories and the character's steps matched in every test. Sweep
       witness points and normals differ where the winner differs (witness z 85.9849
-      for part 0 against 85.729836 for part 7). The relaxed tests do not check that each
-      difference they set aside comes from a tie; that is the recorded diagnosis.
+      for part 0 against 85.729836 for part 7).
+    - The relaxed tests enforce the diagnosis: every answer they let through that differs
+      to the bit must be shown, in both worlds, to be an exact tie (`tied`). For a ray,
+      each world's winner is among the other world's `ray_all` hits with the same owner,
+      distance and normal. For `ray_all`, the order of distances is the same. For a sweep,
+      each world's winner is touched (the swept shape grown by 0.05 units) where the other
+      world's sweep stopped. `hitvol_tie_check_rejects_what_is_no_tie` checks that the test
+      rejects non-ties. All 400 such differences, in the six relaxed scenarios that
+      have them pass [observed: `cargo test -p fnv-phys --test synthetic hitvol`,
+      2026-11-03].
+    - Canonical tie-break (time of impact, then owner): not done; issue #1459.
 
 ## 6. Character controller and capture questions
 

@@ -1852,17 +1852,90 @@ fn loose_items_float_or_sink_by_material() {
 // Every scenario runs twice: `hitvol_diff_*` compares to the bit (owner, part, normal,
 // point, distance, hit order); `hitvol_ties_*` compares what a tie cannot change (a ray's
 // distance and point, the set of `ray_all` hits, a sweep's fraction, overlaps, aim points,
-// body states, the character). A `hitvol_diff_*` marked `#[ignore]` is a divergence found
-// (the observed values are in its comment), kept as the record, not loosened.
+// body states, the character), and every answer it lets through that differs to the bit
+// must be an exact tie shown in both worlds (`tied`). A `hitvol_diff_*` marked `#[ignore]`
+// is a divergence found (the observed values are in its comment), kept as the record, not
+// loosened.
 
 /// One query answer: what was asked, the answer as printed, every float in it to the bit,
-/// and the part of it no exact tie can change (`loose`).
-#[derive(Debug, PartialEq)]
+/// the part of it no exact tie can change (`loose`), and what shows that a difference
+/// outside `loose` is an exact tie (`tie`, [`tied`]).
+#[derive(Debug)]
 struct Ans {
     q: String,
     shown: String,
     bits: Vec<u32>,
     loose: String,
+    tie: Tie,
+}
+
+/// The evidence [`tied`] reads, asked of the answer's own world.
+#[derive(Debug, Default)]
+enum Tie {
+    /// An answer with no tie in it (loose and exact are the same).
+    #[default]
+    None,
+    /// A first-hit ray, and every hit of the same ray (`ray_all`).
+    Ray(Option<RayHit>, Vec<RayHit>),
+    /// `ray_all`'s hits.
+    RayAll(Vec<RayHit>),
+    /// A sweep, and the owners the swept shape touches (within [`TIE_TOUCH`]) where it
+    /// stopped.
+    Sweep(Option<SweepHit>, Vec<Owner>),
+}
+
+/// How far (game units) a sweep's shape is grown to find what it touches at its stop.
+const TIE_TOUCH: f32 = 0.05;
+
+/// `s` grown by `by` on every side (the probe shapes: spheres, capsules and boxes).
+fn grown(s: &Shape, by: f32) -> Shape {
+    match s {
+        Shape::Sphere { radius } => Shape::Sphere { radius: radius + by },
+        Shape::Capsule { a, b, radius } => Shape::Capsule { a: *a, b: *b, radius: radius + by },
+        Shape::Box { half_extents } => Shape::Box { half_extents: half_extents.map(|h| h + by) },
+        other => panic!("no probe shape: {other:?}"),
+    }
+}
+
+/// Whether a difference between the attached world's answer `x` and the standalone one's
+/// `y` that `loose` lets through is an exact tie, shown in both worlds:
+/// - `ray`: each world's winner is among the other world's `ray_all` hits, with the same
+///   owner, distance and normal to the bit;
+/// - `ray_all`: the hits come in the same order of distances, so only hits at one
+///   distance changed places;
+/// - `sweep`: each world's winner is touched by the swept shape where the other world's
+///   sweep stopped (the same fraction, by `loose`).
+fn tied(x: &Ans, y: &Ans) -> Result<(), String> {
+    let same = |a: &RayHit, b: &RayHit| a.owner == b.owner && a.distance.to_bits() == b.distance.to_bits() && a.normal.map(f32::to_bits) == b.normal.map(f32::to_bits);
+    match (&x.tie, &y.tie) {
+        (Tie::Ray(Some(hx), all_x), Tie::Ray(Some(hy), all_y)) => {
+            if !all_x.iter().any(|h| same(h, hy)) {
+                return Err(format!("the standalone winner is no attached hit at its distance: {hy:?}"));
+            }
+            if !all_y.iter().any(|h| same(h, hx)) {
+                return Err(format!("the attached winner is no standalone hit at its distance: {hx:?}"));
+            }
+            Ok(())
+        }
+        (Tie::RayAll(ax), Tie::RayAll(ay)) => {
+            let d = |hs: &[RayHit]| hs.iter().map(|h| h.distance.to_bits()).collect::<Vec<_>>();
+            if d(ax) == d(ay) {
+                Ok(())
+            } else {
+                Err("hits changed places across distances".into())
+            }
+        }
+        (Tie::Sweep(Some(hx), touch_x), Tie::Sweep(Some(hy), touch_y)) => {
+            if !touch_x.contains(&hy.owner) {
+                return Err(format!("the standalone winner {:?} is not touched at the attached stop {touch_x:?}", hy.owner));
+            }
+            if !touch_y.contains(&hx.owner) {
+                return Err(format!("the attached winner {:?} is not touched at the standalone stop {touch_y:?}", hx.owner));
+            }
+            Ok(())
+        }
+        _ => Err("differs where no tie can be".into()),
+    }
 }
 
 fn ray_bits(h: &RayHit, out: &mut Vec<u32>) {
@@ -1876,14 +1949,15 @@ fn ray_shown(h: &RayHit) -> String {
     format!("{:?} d={:?} n={:?} p={:?}", h.owner, h.distance, h.normal, h.point)
 }
 
-fn ans_ray(q: String, h: Option<RayHit>) -> Ans {
+/// A first-hit ray, with `all`, the same ray's `ray_all` (for [`tied`]).
+fn ans_ray(q: String, h: Option<RayHit>, all: Vec<RayHit>) -> Ans {
     let mut bits = Vec::new();
     if let Some(h) = &h {
         ray_bits(h, &mut bits);
     }
     // Equal distances give the same point; owner and normal follow the tie's winner.
     let loose = format!("{:x?}", h.map(|h| (h.distance.to_bits(), h.point.map(f32::to_bits))));
-    Ans { q, shown: h.as_ref().map_or("miss".into(), ray_shown), bits, loose }
+    Ans { q, shown: h.as_ref().map_or("miss".into(), ray_shown), bits, loose, tie: Tie::Ray(h, all) }
 }
 
 fn ans_ray_all(q: String, hs: Vec<RayHit>) -> Ans {
@@ -1899,10 +1973,11 @@ fn ans_ray_all(q: String, hs: Vec<RayHit>) -> Ans {
         })
         .collect();
     each.sort();
-    Ans { q, shown: format!("[{}]", hs.iter().map(ray_shown).collect::<Vec<_>>().join("; ")), bits, loose: each.join("; ") }
+    Ans { q, shown: format!("[{}]", hs.iter().map(ray_shown).collect::<Vec<_>>().join("; ")), bits, loose: each.join("; "), tie: Tie::RayAll(hs) }
 }
 
-fn ans_sweep(q: String, h: Option<SweepHit>) -> Ans {
+/// A sweep, with `touch`, what its shape touches where it stopped (for [`tied`]).
+fn ans_sweep(q: String, h: Option<SweepHit>, touch: Vec<Owner>) -> Ans {
     let mut bits = Vec::new();
     let shown = match &h {
         Some(h) => {
@@ -1915,13 +1990,13 @@ fn ans_sweep(q: String, h: Option<SweepHit>) -> Ans {
     };
     // The witness point and normal belong to the tie's winner; the fraction does not.
     let loose = format!("{:x?}", h.map(|h| h.fraction.to_bits()));
-    Ans { q, shown, bits, loose }
+    Ans { q, shown, bits, loose, tie: Tie::Sweep(h, touch) }
 }
 
 /// An answer with no tie in it: loose and exact are the same.
 fn ans_plain(q: String, shown: String, bits: Vec<u32>) -> Ans {
     let loose = format!("{shown} {bits:x?}");
-    Ans { q, shown, bits, loose }
+    Ans { q, shown, bits, loose, tie: Tie::None }
 }
 
 fn ans_points(q: String, ps: &[[f32; 3]]) -> Ans {
@@ -1974,11 +2049,18 @@ fn ask(w: &mut PhysWorld, p: &Probe) -> Vec<Ans> {
     let f = Filter::default();
     let q = w.queries();
     for (i, &(o, d)) in p.rays.iter().enumerate() {
-        out.push(ans_ray(format!("ray {i} {o:?}->{d:?}"), q.ray(o, d, 1000.0, &f)));
-        out.push(ans_ray_all(format!("ray_all {i} {o:?}->{d:?}"), q.ray_all(o, d, 1000.0, &f)));
+        let all = q.ray_all(o, d, 1000.0, &f);
+        out.push(ans_ray(format!("ray {i} {o:?}->{d:?}"), q.ray(o, d, 1000.0, &f), all.clone()));
+        out.push(ans_ray_all(format!("ray_all {i} {o:?}->{d:?}"), all));
     }
     for (i, (s, from, m, filter)) in p.sweeps.iter().enumerate() {
-        out.push(ans_sweep(format!("sweep {i} from {:?} by {m:?} no_actors={}", from.translation, filter.no_actors), q.sweep(s, from, *m, filter).unwrap()));
+        let hit = q.sweep(s, from, *m, filter).unwrap();
+        // What the shape touches where it stopped: a tie's other candidate is there too.
+        let touch = hit.map_or(Vec::new(), |h| {
+            let at = Iso { translation: std::array::from_fn(|k| from.translation[k] + m[k] * h.fraction), rotation: from.rotation };
+            q.overlap(&grown(s, TIE_TOUCH), &at, filter).unwrap()
+        });
+        out.push(ans_sweep(format!("sweep {i} from {:?} by {m:?} no_actors={}", from.translation, filter.no_actors), hit, touch));
     }
     for (i, (s, at)) in p.overlaps.iter().enumerate() {
         let o = q.overlap(s, at, &f).unwrap();
@@ -1991,7 +2073,7 @@ fn ask(w: &mut PhysWorld, p: &Probe) -> Vec<Ans> {
 fn differ(x: &Ans, y: &Ans, exact: bool) -> bool {
     assert_eq!(x.q, y.q);
     if exact {
-        x != y
+        (&x.shown, &x.bits) != (&y.shown, &y.bits)
     } else {
         x.loose != y.loose
     }
@@ -2010,6 +2092,31 @@ fn summary(diffs: &[(String, String)], asked: usize) -> String {
     format!("{} of {asked} answers differ, by kind {kinds:?}:\n{}", diffs.len(), diffs.iter().take(40).map(|d| d.1.clone()).collect::<Vec<_>>().join("\n"))
 }
 
+#[test]
+fn hitvol_tie_check_rejects_what_is_no_tie() {
+    let hit = |form_id: u32, part: u8, distance: f32, normal: [f32; 3]| RayHit { owner: Owner::Actor { form_id, layer: 8, part }, distance, point: [distance, 0.0, 0.0], normal, material: None, shell: 0.0 };
+    let ray = |h: RayHit, all: Vec<RayHit>| ans_ray("ray".into(), Some(h), all);
+    let (a, b) = (hit(0x10, 0, 5.0, [-1.0, 0.0, 0.0]), hit(0x11, 0, 5.0, [-1.0, 0.0, 0.0]));
+    // Both candidates in both worlds at one distance: a tie.
+    assert!(tied(&ray(a, vec![a, b]), &ray(b, vec![b, a])).is_ok());
+    // The other world's winner is not a hit here, or not at that distance: no tie.
+    assert!(tied(&ray(a, vec![a]), &ray(b, vec![b, a])).is_err());
+    assert!(tied(&ray(a, vec![a, hit(0x11, 0, 5.5, [-1.0, 0.0, 0.0])]), &ray(b, vec![b, a])).is_err());
+    // Same owner, other normal, and only one such hit: no tie.
+    let c = hit(0x10, 0, 5.0, [0.0, 1.0, 0.0]);
+    assert!(tied(&ray(a, vec![a]), &ray(c, vec![c])).is_err());
+    // `ray_all`: places swapped at one distance is a tie, across distances is not.
+    let far = hit(0x12, 0, 9.0, [-1.0, 0.0, 0.0]);
+    assert!(tied(&ans_ray_all("ray_all".into(), vec![a, b, far]), &ans_ray_all("ray_all".into(), vec![b, a, far])).is_ok());
+    assert!(tied(&ans_ray_all("ray_all".into(), vec![a, far]), &ans_ray_all("ray_all".into(), vec![far, a])).is_err());
+    // A sweep whose other winner is not touched where it stopped: no tie.
+    let sw = |owner: Owner, touch: Vec<Owner>| ans_sweep("sweep".into(), Some(SweepHit { owner, fraction: 0.5, point: [0.0; 3], normal: [1.0, 0.0, 0.0] }), touch);
+    assert!(tied(&sw(a.owner, vec![a.owner, b.owner]), &sw(b.owner, vec![a.owner, b.owner])).is_ok());
+    assert!(tied(&sw(a.owner, vec![a.owner]), &sw(b.owner, vec![a.owner, b.owner])).is_err());
+    // An answer with no tie in it never passes as one.
+    assert!(tied(&ans_plain("aim".into(), "x".into(), vec![1]), &ans_plain("aim".into(), "y".into(), vec![2])).is_err());
+}
+
 /// An attached-capsule world and a standalone-capsule one built alike, and the
 /// differences between their answers so far.
 struct Pair {
@@ -2018,6 +2125,8 @@ struct Pair {
     exact: bool,
     diffs: Vec<(String, String)>,
     asked: usize,
+    /// Relaxed: answers that differed to the bit, each shown to be an exact tie ([`tied`]).
+    ties: usize,
 }
 
 impl Pair {
@@ -2026,7 +2135,7 @@ impl Pair {
         a.set_standalone_hit_volumes(false);
         let mut s = make();
         s.set_standalone_hit_volumes(true);
-        Pair { a, s, exact, diffs: Vec::new(), asked: 0 }
+        Pair { a, s, exact, diffs: Vec::new(), asked: 0, ties: 0 }
     }
 
     fn act(&mut self, f: impl Fn(&mut PhysWorld)) {
@@ -2038,8 +2147,17 @@ impl Pair {
         assert_eq!(a.len(), s.len());
         for (x, y) in a.iter().zip(&s) {
             self.asked += 1;
-            if differ(x, y, self.exact) {
-                self.diffs.push((kind(&x.q).to_string(), format!("{ctx}: {}\n    attached:   {}\n    standalone: {}", x.q, x.shown, y.shown)));
+            let why = if differ(x, y, self.exact) {
+                Some("differs".to_string())
+            } else if !self.exact && differ(x, y, true) {
+                // Relaxed: a difference `loose` lets through must be an exact tie.
+                self.ties += 1;
+                tied(x, y).err().map(|e| format!("not an exact tie: {e}"))
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                self.diffs.push((kind(&x.q).to_string(), format!("{ctx}: {} ({why})\n    attached:   {}\n    standalone: {}", x.q, x.shown, y.shown)));
             }
         }
     }
@@ -2060,7 +2178,7 @@ impl Pair {
     fn finish(self) {
         assert!(self.asked > 0);
         assert!(self.diffs.is_empty(), "{}", summary(&self.diffs, self.asked));
-        println!("{} answers, all equal{}", self.asked, if self.exact { " to the bit" } else { " modulo ties" });
+        println!("{} answers, all equal{}", self.asked, if self.exact { " to the bit".to_string() } else { format!(" modulo {} exact ties, each shown", self.ties) });
     }
 }
 
@@ -2564,7 +2682,7 @@ fn skipped_vs_forced(exact: bool) {
         .collect();
     let probe = tie_probe(0.0, &[0x10, 0x11]);
     let mut diffs = Vec::new();
-    let mut asked = 0;
+    let (mut asked, mut ties) = (0, 0);
     for frame in 0..5 {
         for (i, w) in worlds.iter_mut().enumerate() {
             // Frames 1 and 3: the skipped worlds write the same pose again, the forced ones
@@ -2588,8 +2706,17 @@ fn skipped_vs_forced(exact: bool) {
         for (i, other) in answers.iter().enumerate().skip(1) {
             for (x, y) in answers[0].iter().zip(other) {
                 asked += 1;
-                if differ(x, y, exact) {
-                    diffs.push((format!("{} {}", names[i], kind(&x.q)), format!("frame {frame}: {}\n    attached skipped: {}\n    {}: {}", x.q, x.shown, names[i], y.shown)));
+                let why = if differ(x, y, exact) {
+                    Some("differs".to_string())
+                } else if !exact && differ(x, y, true) {
+                    // Relaxed: a difference `loose` lets through must be an exact tie.
+                    ties += 1;
+                    tied(x, y).err().map(|e| format!("not an exact tie: {e}"))
+                } else {
+                    None
+                };
+                if let Some(why) = why {
+                    diffs.push((format!("{} {}", names[i], kind(&x.q)), format!("frame {frame}: {} ({why})\n    attached skipped: {}\n    {}: {}", x.q, x.shown, names[i], y.shown)));
                 }
             }
         }
@@ -2599,7 +2726,7 @@ fn skipped_vs_forced(exact: bool) {
     let written: Vec<u64> = worlds.iter().map(|w| w.refresh_stats().hitvol_written).collect();
     assert_eq!((written[0], written[1], written[2], written[3]), (12, 12, 36, 36), "{written:?}");
     assert!(diffs.is_empty(), "{}", summary(&diffs, asked));
-    println!("{asked} answers, all equal{}", if exact { " to the bit" } else { " modulo ties" });
+    println!("{asked} answers, all equal{}", if exact { " to the bit".to_string() } else { format!(" modulo {ties} exact ties, each shown") });
 }
 
 // Observed 2026-11-03: 61 of 585 answers differ (ray 46, sweep 15), all of them "attached

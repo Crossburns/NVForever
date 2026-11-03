@@ -89,22 +89,31 @@ pub fn separate(bodies: &[Body], dt: f32) -> (Vec<[f32; 2]>, Vec<bool>) {
     (moves, touched)
 }
 
-/// Separation passes ([`Ai::keep_apart`]) since the process started, for attributing their
+/// Separation passes ([`Ai::keep_apart`]) since [`probe::enable`], for attributing their
 /// cost (diagnostics only: never read by the AI; a reader takes differences between two
-/// reads).
+/// reads). Nothing is counted until it is enabled.
 pub mod probe {
-    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
+    static ON: AtomicBool = AtomicBool::new(false);
     static PASSES: AtomicU64 = AtomicU64::new(0);
     static BODIES: AtomicU64 = AtomicU64::new(0);
     static PAIRS: AtomicU64 = AtomicU64::new(0);
 
     /// A pass over `n` bodies: `separate` looks at every pair of them.
     pub(crate) fn separated(n: usize) {
+        if !ON.load(Relaxed) {
+            return;
+        }
         let n = n as u64;
         PASSES.fetch_add(1, Relaxed);
         BODIES.fetch_add(n, Relaxed);
         PAIRS.fetch_add(n * n.saturating_sub(1) / 2, Relaxed);
+    }
+
+    /// Count from now on (the engine's `NVF_PLAY_TEST_PROFILE_COUNTS`).
+    pub fn enable() {
+        ON.store(true, Relaxed);
     }
 
     /// (passes, bodies, pairs) so far.
