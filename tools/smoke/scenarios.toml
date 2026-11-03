@@ -10467,6 +10467,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "sky-dome-new-worldspace"
+source = "issue #1395 (owner's TTW screenshot 2026-11-02: the Capital Wasteland sky a flat green-to-red gradient): on a worldspace change the sky is spawned again with the dome's vertex colours still the atmosphere's raw weights, and the dome was coloured again only when the sky colours moved, which they had already done against the old dome; at midday they then hold still and the raw weights stay on screen"
+note = "Goodsprings at noon, then cow into FreesideWorld (another worldspace, its own climate) at 12 s: the new dome must be coloured from the weather like the first. The clock runs, but at noon the colours hold still between the day keys"
+areas = ["sky"]
+paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/worldspace.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "2.5", NVF_PLAY_TEST_CONSOLE = "12:cow FreesideWorld -2 -3;12.3:close" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 30
+order = [[
+  { re = 'sky: a new dome coloured from ', label = "the start's dome is coloured" },
+  { re = 'render: worldspace 000DA726 -> [0-9A-F]{8} \(FreesideWorld\)', label = "into Freeside's worldspace" },
+  { re = 'sky: a new dome coloured from ', label = "the new worldspace's dome is coloured too, not left with its raw weights" },
+]]
+
+[[scenario]]
 name = "cloud-scroll-onam"
 source = "ESM full audit 2026-10-24 §3 (docs/spec-notes/world.md §6 \"Cloud scroll\"): each cloud layer scrolls by its weather's WTHR ONAM speed, not a fixed placeholder rate"
 note = "NVWastelandClear is pinned over Goodsprings at noon; its ONAM speeds are 52, 0, 0, 65 [observed]. The scale (1/25,600 texture repeats per second per unit) is a hypothesis awaiting the owner's timed screenshots (owner-review.md); the line checks that the shown weather's own speeds drive the layers"
