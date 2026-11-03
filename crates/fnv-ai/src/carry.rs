@@ -755,10 +755,10 @@ impl Ai {
     /// Whether the graph's obstacles were brought in line with this game's world and
     /// nothing that could change either happened since: the world's presence serial
     /// (`fnv_sim::World::presence_serial`: every write of a reference's `enabled` or
-    /// `deleted`, every state made, created or reset, a new world) and the graph's
-    /// obstacle stamp (`fnv_nav::NavGraph::obstacles_stamp`: obstacles learnt again or
-    /// switched) are the ones seen after the last poll. [`Game::present`] reads nothing
-    /// else, so a poll now would find every obstacle as the graph has it.
+    /// `deleted`, every state made unlike its placement, created or reset, a new world)
+    /// and the graph's obstacle stamp (`fnv_nav::NavGraph::obstacles_stamp`: obstacles
+    /// learnt again or switched) are the ones seen after the last poll. [`Game::present`]
+    /// reads nothing else, so a poll now would find every obstacle as the graph has it.
     pub fn obstacles_in_line(&self, game: &Game, nav: &NavGraph) -> bool {
         self.applied_obstacles == Some((game.world.presence_serial(), nav.obstacles_stamp()))
     }
