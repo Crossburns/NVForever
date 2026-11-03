@@ -36,12 +36,13 @@ pub struct Hidden {
     pub sky: bool,
     pub water: bool,
     pub trees: bool,
+    pub leaves: bool,
 }
 
 pub fn register(app: &mut App) {
     app.init_resource::<Hidden>()
         .add_systems(Update, apply.after(nvf_play::PlaySet::Ui))
-        .add_systems(PostUpdate, (hide_sky, hide_water, hide_trees).before(VisibilitySystems::VisibilityPropagate));
+        .add_systems(PostUpdate, (hide_sky, hide_water, (hide_leaves, hide_trees).chain()).before(VisibilitySystems::VisibilityPropagate));
 }
 
 fn state(off: bool) -> &'static str {
@@ -75,6 +76,11 @@ fn apply(world: &mut World) {
                 let mut h = world.resource_mut::<Hidden>();
                 h.trees = !h.trees;
                 format!("Trees {}", state(h.trees))
+            }
+            Toggle::Leaves => {
+                let mut h = world.resource_mut::<Hidden>();
+                h.leaves = !h.leaves;
+                format!("Tree leaves {}", state(h.leaves))
             }
             Toggle::LodLand => {
                 // As the settings page's distant-land switch (`--no-lod`).
@@ -148,6 +154,13 @@ fn hide_sky(h: Res<Hidden>, mut saved: Local<HashMap<Entity, Visibility>>, q: Qu
 
 fn hide_water(h: Res<Hidden>, mut saved: Local<HashMap<Entity, Visibility>>, q: Query<(Entity, &mut Visibility), With<MeshMaterial3d<WaterMaterial>>>) {
     keep_hidden(h.water, &mut saved, q);
+}
+
+/// The SpeedTrees' leaf cards; distant trees' billboards keep theirs [hypothesis: the
+/// catalogue speaks of SpeedTrees' leaves only]. Run before [`hide_trees`], so leaves shown
+/// again under hidden trees are hidden again in the same frame.
+fn hide_leaves(h: Res<Hidden>, mut saved: Local<HashMap<Entity, Visibility>>, q: Query<(Entity, &mut Visibility), With<MeshMaterial3d<LeafMaterial>>>) {
+    keep_hidden(h.leaves, &mut saved, q);
 }
 
 fn hide_trees(h: Res<Hidden>, mut saved: Local<HashMap<Entity, Visibility>>, q: Query<(Entity, &mut Visibility), TreeParts>) {

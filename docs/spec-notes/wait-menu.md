@@ -424,6 +424,37 @@ flag.
   HUD's and its texts are in the game's fonts [documented: `menus\sleep_wait_menu.xml`:
   system colour `&hudmain;`, the question in font 1, the hours in font 6, the time in
   font 2; the buttons taken as font 2, hypothesis] since 2026-10-16 (playtest list 5 item 51).
+  With `[UI] TileMenus=SleepWaitMenu` (T15b, off by default) the menu is drawn from the
+  game's own file and its textures instead (§12).
+
+## 12. Drawn from the menu file (T15b)
+
+Behind `[UI] TileMenus=SleepWaitMenu` (`engine/nvf-play/src/tiles/
+wait_menu.rs`) the open menu (1012) is drawn from `menus\sleep_wait_menu.xml` and the
+hand-built drawing is not spawned; the menu's rules stay the ones above [design].
+
+- **What the file leaves to the code** [documented: its "Set in code" comments]: the
+  question (`SWM_HowManyText`), the hours line (`SWM_HoursChosen`), the date line
+  (`SWM_CurrentTime`) and the Wait button's word (`SWM_WaitButton`; the file shows the key
+  hint beside it from `_PCButtonText`, so the word is written bare). The Cancel button's
+  word is the file's `&-sCancel;`. The background's opacity is the other T15 menus'.
+- **The slider**: 24 items, one visible, a step of 1 and a jump of 6 [documented]; hour
+  `h` is value `h - 1`. The code writes `_current_value` and pokes `_SetInCode`, as the
+  prefab's comment asks [documented: scrollbar_horiz.xml]. In NVForever's tree an
+  expression starts from 0, so the prefab's own `_current_value` counts the arrows' and
+  page areas' clicks from 0 and cannot follow a value code set [observed: unit test
+  `a_click_counted_by_the_file_is_put_back_to_the_models_value`]; the clicks on the
+  slider's pieces are therefore the hand-built menu's commands (a page area six hours, an
+  arrow one, the marker the hours under the pointer) and the value is written again after
+  them [design]. Whether the original's expression starts from the trait's last value is
+  not known [hypothesis].
+- **Keys**: the file binds W to Wait and E to Cancel [documented: `_PCButton_W`,
+  `_PCButton_E`]. NVForever keeps its own keys (§6: E accepts, X cancels); W, which they
+  do not use, presses Wait through the file [design]. The mouse wheel stays the hand-built
+  menu's.
+- **Not changed**: while the hours pass, the hand-built Wait button is shaded faint; the
+  file's is drawn as the file says (it has no rule for it) [design: not captured].
+- Smoke: `tiles-sleep-wait`.
 
 ## 11. Checks
 

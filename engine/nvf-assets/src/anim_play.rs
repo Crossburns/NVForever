@@ -553,32 +553,36 @@ impl Playing {
         let phase = if self.stop > self.start { (t - self.start) / (self.stop - self.start) } else { 0.0 };
         for (k, (e, track)) in self.tracks.iter().enumerate() {
             let Ok(mut tr) = transforms.get_mut(*e) else { continue };
+            let mut posed = *tr;
             if let Some(v) = track.translation.sample(t) {
-                tr.translation = Vec3::from_array(v);
+                posed.translation = Vec3::from_array(v);
                 if let Some((_, per_cycle)) = self.root_motion.filter(|r| r.0 == k) {
-                    tr.translation -= per_cycle * phase;
+                    posed.translation -= per_cycle * phase;
                 }
             }
             if let Some([w, x, y, z]) = track.rotation_at(t) {
-                tr.rotation = Quat::from_xyzw(x, y, z, w).normalize();
+                posed.rotation = Quat::from_xyzw(x, y, z, w).normalize();
             }
             if let Some([s]) = track.scale.sample(t) {
-                tr.scale = Vec3::splat(s);
+                posed.scale = Vec3::splat(s);
             }
+            tr.set_if_neq(posed);
         }
         let clock = self.time - self.start;
         for (e, track, cycle) in &self.free {
             let Ok(mut tr) = transforms.get_mut(*e) else { continue };
             let t = cycle.time(clock);
+            let mut posed = *tr;
             if let Some(v) = track.translation.sample(t) {
-                tr.translation = Vec3::from_array(v);
+                posed.translation = Vec3::from_array(v);
             }
             if let Some([w, x, y, z]) = track.rotation_at(t) {
-                tr.rotation = Quat::from_xyzw(x, y, z, w).normalize();
+                posed.rotation = Quat::from_xyzw(x, y, z, w).normalize();
             }
             if let Some([s]) = track.scale.sample(t) {
-                tr.scale = Vec3::splat(s);
+                posed.scale = Vec3::splat(s);
             }
+            tr.set_if_neq(posed);
         }
     }
 }
@@ -937,7 +941,7 @@ impl BlendPlayer {
         let n = self.sample(scratch);
         for (i, tr) in scratch.iter() {
             if let Some(Ok(mut t)) = self.nodes.get(*i).map(|e| transforms.get_mut(*e)) {
-                *t = *tr;
+                t.set_if_neq(*tr);
             }
         }
         n
@@ -1015,7 +1019,7 @@ pub fn cycle_time(t: f32, start: f32, stop: f32, cycle: i64) -> f32 {
 pub fn advance(time: Res<Time>, mut state: ResMut<AnimState>, mut transforms: Query<&mut Transform>) {
     for (e, t) in std::mem::take(&mut state.pending) {
         if let Ok(mut tr) = transforms.get_mut(e) {
-            *tr = t;
+            tr.set_if_neq(t);
         }
     }
     let paused = state.paused;
@@ -1043,6 +1047,7 @@ pub fn advance_instances(time: Res<Time>, mut playing: Query<&mut Playing>, mut 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::{RunSystemOnce, SystemState};
     use fnv_nif::anim::{Channel, Key, KeyKind, Keys, Track};
     use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
@@ -1266,6 +1271,144 @@ mod tests {
         let bind = vec![Transform::IDENTITY, Transform::from_xyz(0.0, 0.657, 67.771), Transform::IDENTITY, Transform::from_xyz(5.0, 0.0, 0.0)];
         let ix = |n: &str| ["Bip01", "Bip01 NonAccum", "Other"].iter().position(|x| *x == n).map(|i| i + 1);
         (BlendPlayer::new(nodes, Arc::new(bind)), ix)
+    }
+
+    fn assert_transform(world: &World, node: Entity, expected: Transform, changed: bool) {
+        let tr = world.entity(node).get_ref::<Transform>().unwrap();
+        assert_eq!(*tr, expected);
+        assert_eq!(tr.is_changed(), changed);
+    }
+
+    #[test]
+    fn playing_samples_only_mark_different_transforms_changed() {
+        // Both sequence and free-controller tracks preserve absent channels, and still
+        // sample while paused/held. Repeated values must not dirty the node.
+        for free in [false, true] {
+            let mut world = World::new();
+            let initial = Transform { translation: Vec3::splat(9.0), rotation: Quat::from_rotation_z(FRAC_PI_2), scale: Vec3::new(2.0, 3.0, 4.0) };
+            let nodes: Vec<_> = (0..3).map(|_| world.spawn(initial).id()).collect();
+            let full = Arc::new(TransformTrack {
+                translation: Channel::Static(Some([1.0, 2.0, 3.0])),
+                rotation: Channel::Static(Some([1.0, 0.0, 0.0, 0.0])),
+                euler: None,
+                scale: Channel::Static(Some([2.0])),
+            });
+            let tracks = vec![
+                ("Full", full),
+                ("Partial", track(Channel::Static(Some([4.0, 5.0, 6.0])), Channel::Static(None))),
+                ("Absent", track(Channel::Static(None), Channel::Static(None))),
+            ];
+            let mut c = (*clip(1.0, tracks)).clone();
+            if free {
+                let cycle = OwnCycle { start: 0.0, stop: 1.0, frequency: 1.0, phase: 0.0, cycle_type: 0 };
+                c.free = std::mem::take(&mut c.tracks).into_iter().map(|(n, t)| (n, t, cycle)).collect();
+            }
+            let mut p = Playing::new("", &c, |n| ["Full", "Partial", "Absent"].iter().position(|x| *x == n).map(|i| nodes[i]));
+            let mut state = SystemState::<Query<&mut Transform>>::new(&mut world);
+            let full_pose = Transform { translation: Vec3::new(1.0, 2.0, 3.0), rotation: Quat::IDENTITY, scale: Vec3::splat(2.0) };
+            let partial_pose = Transform { translation: Vec3::new(4.0, 5.0, 6.0), ..initial };
+
+            world.clear_trackers();
+            p.step(0.25, false, &mut state.get_mut(&mut world).unwrap());
+            assert_eq!(p.time, 0.25);
+            assert_transform(&world, nodes[0], full_pose, true);
+            assert_transform(&world, nodes[1], partial_pose, true);
+            assert_transform(&world, nodes[2], initial, false);
+
+            world.clear_trackers();
+            p.held = true;
+            p.step(0.25, p.held, &mut state.get_mut(&mut world).unwrap());
+            assert_eq!(p.time, 0.25);
+            assert_transform(&world, nodes[0], full_pose, false);
+            assert_transform(&world, nodes[1], partial_pose, false);
+            assert_transform(&world, nodes[2], initial, false);
+
+            // A held clip still restores its pose if something else moved a node.
+            *world.get_mut::<Transform>(nodes[0]).unwrap() = initial;
+            world.clear_trackers();
+            p.step(0.25, true, &mut state.get_mut(&mut world).unwrap());
+            assert_transform(&world, nodes[0], full_pose, true);
+        }
+    }
+
+    #[test]
+    fn playing_compares_after_removing_root_motion() {
+        let mut world = World::new();
+        let initial = Transform { rotation: Quat::from_rotation_z(FRAC_PI_2), scale: Vec3::new(2.0, 3.0, 4.0), ..default() };
+        let node = world.spawn(initial).id();
+        let travel = Channel::Keys(Keys { kind: KeyKind::Linear, keys: vec![key3(0.0, [0.0; 3]), key3(1.0, [0.0, 8.0, 0.0])] });
+        let c = clip(1.0, vec![("Bip01", track(travel, Channel::Static(None)))]);
+        let mut p = Playing::new("", &c, |_| Some(node)).in_place(&c, |_| Some(node));
+        assert_eq!(p.root_motion, Some((0, Vec3::new(0.0, 8.0, 0.0))));
+        let mut state = SystemState::<Query<&mut Transform>>::new(&mut world);
+        world.clear_trackers();
+        p.step(0.5, false, &mut state.get_mut(&mut world).unwrap());
+        assert_transform(&world, node, initial, false);
+        world.clear_trackers();
+        p.step(0.0, true, &mut state.get_mut(&mut world).unwrap());
+        assert_transform(&world, node, initial, false);
+
+        world.get_mut::<Transform>(node).unwrap().translation = Vec3::X;
+        world.clear_trackers();
+        p.step(0.0, true, &mut state.get_mut(&mut world).unwrap());
+        assert_transform(&world, node, initial, true);
+    }
+
+    #[test]
+    fn blended_poses_and_released_nodes_only_mark_different_transforms_changed() {
+        let mut world = World::new();
+        let bind = Transform::from_xyz(5.0, 0.0, 0.0);
+        let node = world.spawn(bind).id();
+        let c = clip(1.0, vec![("Other", pose([9.0, 0.0, 0.0]))]);
+        let bound = Arc::new(BoundClip::bind(c, |n| (n == "Other").then_some(0)));
+        let layer = Some(Layer { clip: bound, phase: 0.0, weight: 1.0 });
+        let mut p = BlendPlayer::new(vec![node], Arc::new(vec![bind]));
+        p.layers[0] = layer.clone();
+        let mut scratch = Vec::new();
+        let mut state = SystemState::<Query<&mut Transform>>::new(&mut world);
+        world.clear_trackers();
+        assert_eq!(p.pose(&mut scratch, &mut state.get_mut(&mut world).unwrap()), 1);
+        assert_transform(&world, node, Transform::from_xyz(9.0, 0.0, 0.0), true);
+        world.clear_trackers();
+        assert_eq!(p.pose(&mut scratch, &mut state.get_mut(&mut world).unwrap()), 1);
+        assert_transform(&world, node, Transform::from_xyz(9.0, 0.0, 0.0), false);
+
+        p.layers[0] = None;
+        world.clear_trackers();
+        assert_eq!(p.pose(&mut scratch, &mut state.get_mut(&mut world).unwrap()), 0);
+        assert_eq!(scratch, [(0, bind)]);
+        assert_transform(&world, node, bind, true);
+
+        // Release a node that already has its bind pose: still emitted, never dirtied.
+        p.layers[0] = layer;
+        p.pose(&mut scratch, &mut state.get_mut(&mut world).unwrap());
+        *world.get_mut::<Transform>(node).unwrap() = bind;
+        p.layers[0] = None;
+        world.clear_trackers();
+        assert_eq!(p.pose(&mut scratch, &mut state.get_mut(&mut world).unwrap()), 0);
+        assert_eq!(scratch, [(0, bind)]);
+        assert_transform(&world, node, bind, false);
+    }
+
+    #[test]
+    fn queued_root_resets_only_mark_different_transforms_changed() {
+        let mut world = World::new();
+        let node = world.spawn(Transform::IDENTITY).id();
+        let bind = Transform::from_xyz(0.0, 0.0, 67.0);
+        world.insert_resource(Time::<()>::default());
+        world.insert_resource(AnimState { held: Some((node, bind)), ..default() });
+        world.resource_mut::<AnimState>().stop();
+        world.clear_trackers();
+        world.run_system_once(advance).unwrap();
+        assert_transform(&world, node, bind, true);
+        assert!(world.resource::<AnimState>().pending.is_empty());
+
+        world.resource_mut::<AnimState>().held = Some((node, bind));
+        world.resource_mut::<AnimState>().stop();
+        world.clear_trackers();
+        world.run_system_once(advance).unwrap();
+        assert_transform(&world, node, bind, false);
+        assert!(world.resource::<AnimState>().pending.is_empty());
     }
 
     fn walk_and_idle(ix: &impl Fn(&str) -> Option<usize>) -> (Arc<BoundClip>, Arc<BoundClip>) {

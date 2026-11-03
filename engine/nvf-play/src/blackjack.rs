@@ -318,7 +318,7 @@ fn run_aid(
             AidStep::Seed(s) => aid.seed = Some(s),
             AidStep::Chips(casino, n) => {
                 let Some(rt) = script.as_mut().and_then(|s| s.rt.as_mut()) else { continue };
-                let Some(chip) = rt.game.data.casinos.get(&FormId(casino)).and_then(|c| c.chip) else {
+                let Some(chip) = fnv_game::casino::chip(&rt.game, FormId(casino)) else {
                     warn!("blackjack: {casino:08X} is not a casino with a chip");
                     continue;
                 };
@@ -407,7 +407,7 @@ fn open(
         return;
     };
     let def = rt.game.data.casinos.get(&r.casino).cloned();
-    let chip = def.as_ref().and_then(|d| d.chip);
+    let chip = fnv_game::casino::chip(&rt.game, r.casino);
     let chip_name = chip.and_then(|c| sim.name(c).map(str::to_string)).unwrap_or_else(|| "chip".into());
     let max_winnings = if r.max_winnings > 0 { r.max_winnings } else { def.as_ref().map_or(0, |d| d.max_winnings) };
     let now = time.elapsed_secs();

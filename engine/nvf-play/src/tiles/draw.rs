@@ -840,6 +840,9 @@ pub(crate) struct View<'w, 's> {
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     /// The container, barter or inventory menu, for whether its prompt is open (T15a).
     active: Option<Res<'w, crate::menu::ActiveMenu>>,
+    /// The pause menu and its page, for the Mods page (T11, `super::mods`).
+    paused: Option<Res<'w, crate::pause::Paused>>,
+    page: Option<Res<'w, crate::pause::Page>>,
 }
 
 /// The colours an [`Ink`] node may carry.
@@ -859,6 +862,9 @@ pub(crate) struct Nodes<'w, 's> {
 pub(crate) struct MenusDrawn {
     message: Drawn,
     quantity: Drawn,
+    /// The start menu's mod tiles on the pause menu's Mods page (T11).
+    start: Drawn,
+    sleep_wait: Drawn,
 }
 
 /// The stacking levels of the menus drawn from tiles besides the HUD: their hand-built
@@ -866,6 +872,8 @@ pub(crate) struct MenusDrawn {
 /// container menu's 100, `crate::menu`) [design].
 pub const MESSAGE_Z: i32 = 108;
 pub const QUANTITY_Z: i32 = 101;
+/// T15b: the Wait / Sleep menu's, its hand-built drawing's 105 (`crate::wait`) [design].
+pub const SLEEP_WAIT_Z: i32 = 105;
 
 pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes) {
     let scale = view.windows.single().map_or(1.0, |w| w.height() / 960.0);
@@ -880,6 +888,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
     for (name, on, z, drawn) in [
         (super::menus::MESSAGE_MENU, game.is_some_and(|g| super::menus::message_tiled(switch.message, g)), MESSAGE_Z, &mut others.message),
         (super::menus::QUANTITY_MENU, game.is_some_and(|g| super::menus::quantity_tiled(switch.quantity, g, prompt_open)), QUANTITY_Z, &mut others.quantity),
+        (super::wait_menu::SLEEP_WAIT_MENU, game.is_some_and(|g| super::wait_menu::tiled(switch.sleep_wait, g)), SLEEP_WAIT_Z, &mut others.sleep_wait),
     ] {
         let ui = game.map(|g| &g.ui_tree);
         let menu = ui.filter(|_| on).and_then(|ui| ui.menu(name).map(|m| (ui, m)));
@@ -896,7 +905,43 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
         };
         paint(&mut commands, drawn, pieces, scale, z, heading, ui, &mut kit, &mut nodes);
     }
+    // T11: the Mods page, the start menu's mod tiles over the pause menu.
+    let mods_on = switch.start && view.paused.as_ref().zip(view.page.as_ref()).is_some_and(|(p, page)| crate::pause::mods_open(p, page));
+    mods_page(&mut commands, &script, mods_on, &mut kit, &mut others.start, &mut nodes, scale, heading);
     hud(&mut commands, &script, &view, &mut kit, &mut drawn, &mut nodes, scale, heading);
+}
+
+/// The pause menu's Mods page (T11, `super::mods`): the tiles mods added to `StartMenu`,
+/// drawn as T5 draws the HUD's ([`Select::Mods`]: a loose replacement's own tiles, not the
+/// archived file's), in interface units, at [`super::mods::MODS_Z`]; nothing while `on` is
+/// false.
+#[allow(clippy::too_many_arguments)]
+fn mods_page(commands: &mut Commands, script: &ScriptState, on: bool, kit: &mut FontKit, drawn: &mut Drawn, nodes: &mut Nodes, scale: f32, heading: f32) {
+    let files = script.rt.as_ref().and_then(|rt| rt.game.ui_files.as_deref());
+    let ui = script.rt.as_ref().filter(|rt| rt.game.ui_files.is_some()).map(|rt| &rt.game.ui_tree);
+    let menu = ui.filter(|_| on).and_then(|ui| ui.menu(super::mods::START_MENU).map(|m| (ui, m)));
+    let (pieces, roots) = match menu {
+        Some((ui, menu)) => {
+            let mut stack = ui.mod_added_tiles(menu);
+            while let Some(t) = stack.pop() {
+                let tile = ui.tile(t);
+                if tile.kind == "text" {
+                    kit.load(tile.get("font").map_or(0.0, Value::num));
+                }
+                stack.extend(tile.children.iter().copied());
+            }
+            let measured = |font: f64, text: &str, wrap: Option<f64>| kit.face(font).map_or((0.0, 0.0), |face| measure(&face.font, font_number(font), text, wrap));
+            let vanilla = files.and_then(|files| archived_names(ui, menu, files, &mut drawn.vanilla));
+            pieces(ui, menu, &measured, Select::Mods { vanilla }, true)
+        }
+        None => (Vec::new(), 0),
+    };
+    let counts = (roots, pieces.len());
+    if counts != drawn.counts {
+        info!("tiles: {}: Mods page, {} mod tiles drawn ({} items)", super::mods::START_MENU, counts.0, counts.1);
+        drawn.counts = counts;
+    }
+    paint(commands, drawn, pieces, scale, super::mods::MODS_Z, heading, ui, kit, nodes);
 }
 
 /// The fonts of `pieces`' texts that are not loaded (`loaded` says which are), each once:
@@ -955,7 +1000,7 @@ pub fn whole_pieces(ui: &Ui, menu: TileId, fonts: &mut impl MenuFonts, t15: bool
 /// The archived copy's name paths of the menu file `menu` was read from, when a root of
 /// its mod tiles is a file's (a loose replacement, or a loose prefab it includes): read
 /// once per file path into `kept` [design: #975, as `fnvtool ui mod-tiles`].
-fn archived_names<'a>(ui: &Ui, menu: TileId, files: &dyn fnv_ui::Source, kept: &'a mut Option<(String, Option<HashSet<String>>)>) -> Option<&'a HashSet<String>> {
+pub(super) fn archived_names<'a>(ui: &Ui, menu: TileId, files: &dyn fnv_ui::Source, kept: &'a mut Option<(String, Option<HashSet<String>>)>) -> Option<&'a HashSet<String>> {
     let fnv_ui::Origin::File { path, .. } = &ui.tile(menu).origin else { return None };
     if !ui.mod_added_tiles(menu).iter().any(|&r| matches!(ui.tile(r).origin, fnv_ui::Origin::File { .. })) {
         return None;

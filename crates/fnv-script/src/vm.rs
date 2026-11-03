@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod anh;
+mod itr;
 mod jip;
 mod quat;
 pub use jip::{JIP_NAMES, JIP_VERSION};
@@ -2765,6 +2766,11 @@ impl Vm<'_, '_> {
                 return Ok(v);
             }
         }
+        if origin == "ITR" {
+            if let Some(v) = self.itr_function(&lname, c)? {
+                return Ok(v);
+            }
+        }
         // [documented: the catalogue's parameters (schemas/script/functions.json, from the
         // pages SetUIStringEx, SetUIStringAlt, InjectUIComponent, AttachUIComponent,
         // AddTileFromTemplate)]:
@@ -3111,6 +3117,10 @@ fn out_params(lname: &str) -> Option<&'static [usize]> {
         "getpointraycastpos" => &[5, 6, 7],
         "geteditorposition" => &[0, 1, 2, 3, 4, 5],
         "getstringuidimensions" => &[3, 4, 5],
+        // [documented: GetPlayerCameraRotation, "store the players camera rotation in fx fy
+        // fz"; GetAkimboWeaponsAlt, the left and right weapons into the two variables].
+        "getplayercamerarotation" => &[0, 1, 2],
+        "getakimboweaponsalt" => &[1, 2],
         _ => return None,
     })
 }

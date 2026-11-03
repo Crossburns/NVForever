@@ -174,7 +174,8 @@ fn destination_name(sim: &SimState, index: &fnv_world::WorldIndex, door: FormId,
 }
 
 /// The collision ray under the crosshair (the player's capsule and trigger volumes
-/// ignored), then the render-bounds fallback (`pick`). In first person it is the eye's
+/// ignored), or a door just behind what it hits (`pick::door_behind`), then the
+/// render-bounds fallback (`pick`). In first person it is the eye's
 /// view ray; in third person the camera's, through the crosshair over the shoulder
 /// (`control::Crosshair`; playtest list 4, item 11).
 #[allow(clippy::too_many_arguments)]
@@ -195,6 +196,7 @@ pub(crate) fn find_target(
     // The same ray, far: where PlaceAtReticle puts things (`fnv_game` senses `Reticle`).
     let mut far = None;
     let mut far_ref = None;
+    let mut behind = None;
     let hit = phys.and_then(|mut p| {
         let mut filter = p.player.as_ref().map_or_else(Filter::default, |c| Filter::excluding(c.key()));
         // Trigger volumes do not block the view [hypothesis].
@@ -206,13 +208,25 @@ pub(crate) fn find_target(
             _ => None,
         });
         let h = p.world.queries().ray(eye, dir, REACH, &filter)?;
-        let form_id = match h.owner {
+        let owner = |o: Owner| match o {
             // An actor's hit volume (combat C3) targets the actor.
             Owner::Ref { form_id, .. } | Owner::Actor { form_id, .. } => Some(form_id),
             _ => None,
         };
-        Some(RayHit { form_id, distance: h.distance })
+        let first = owner(h.owner);
+        // The first other reference within DOOR_SLACK behind it (a door set just
+        // behind a building's face, `pick::door_behind`), past the first hit's other faces.
+        let mut from = h.distance;
+        while behind.is_none() && from < h.distance + pick::DOOR_SLACK {
+            let start = [eye[0] + dir[0] * (from + NUDGE), eye[1] + dir[1] * (from + NUDGE), eye[2] + dir[2] * (from + NUDGE)];
+            let Some(b) = p.world.queries().ray(start, dir, h.distance + pick::DOOR_SLACK - from - NUDGE, &filter) else { break };
+            from += NUDGE + b.distance;
+            behind = owner(b.owner).filter(|id| Some(*id) != first).map(|id| RayHit { form_id: Some(id), distance: from });
+        }
+        Some(RayHit { form_id: first, distance: h.distance })
     });
+    // Only a door is looked for behind a face.
+    let behind = behind.filter(|b| b.form_id.and_then(|id| sim.base_of(id)).and_then(|base| sim.forms.get(base)).is_some_and(|f| matches!(f.data, BaseData::Door(_))));
     // Render bounds are in Bevy space; distances are game units in both.
     let (o, d) = (space::to_bevy(eye), space::to_bevy(dir));
     let bounds = visuals.iter().filter(|(_, _, _, v)| v.get()).filter_map(|(r, aabb, gt, _)| {
@@ -259,6 +273,7 @@ pub(crate) fn find_target(
             })
             .clone()
     };
+    let hit = pick::door_behind(hit, behind, |id| describe_once(id).is_some());
     let picked = pick::choose(hit, bounds, REACH, |id| describe_once(id).is_some());
     let chosen = picked.and_then(|p| describe_once(p.form_id).map(|d| (p, d)));
     let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
@@ -287,6 +302,9 @@ pub(crate) fn find_target(
         target.0 = new;
     }
 }
+
+/// How far past a surface the ray behind it starts, game units.
+const NUDGE: f32 = 0.5;
 
 /// Seconds a creature's "has something to say" answer is kept before it is asked again.
 const TALKER_SECONDS: f64 = 2.0;

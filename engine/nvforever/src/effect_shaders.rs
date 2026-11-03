@@ -305,18 +305,26 @@ fn play(
         st.active.insert(k, Active { on, shader: s, since: now, until, persist, fill, edge, covered: HashMap::new(), holes_texture, holed: HashMap::new(), addons: Vec::new() });
     }
 
-    // Cover the meshes drawn for each reference; animate the materials.
+    // [documented: #1323] Ends and starts must run even when no shader remains to draw.
+    if st.active.is_empty() {
+        return;
+    }
+
+    // Cover only the references targeted by active shaders; animate the materials.
     type Drawn<'a> = (Entity, &'a Mesh3d, Option<&'a SkinnedMesh>, &'a MeshMaterial3d<NifMaterial>);
-    let mut by_ref: HashMap<u32, Vec<Drawn<'_>>> = HashMap::new();
+    let mut by_ref: HashMap<u32, Vec<Drawn<'_>>> = st.active.values().map(|a| (a.on, Vec::new())).collect();
     for (e, rv, mesh, skin, mat) in &drawn {
-        by_ref.entry(rv.0).or_default().push((e, mesh, skin, mat));
+        if let Some(list) = by_ref.get_mut(&rv.0) {
+            list.push((e, mesh, skin, mat));
+        }
     }
     // The player: the meshes of its third-person body (`player_body.rs`), which carry no
     // RefVisual; hidden in first person, so are their overlays. Add-on models hanging
     // from its bones are not its own.
-    if let Some(root) = body.as_deref().and_then(|b| b.roots().first().copied()) {
+    if let Some((list, root)) = by_ref.get_mut(&FormId::PLAYER_REF.0).and_then(|list| {
+        body.as_deref().and_then(|b| b.roots().first().copied()).map(|root| (list, root))
+    }) {
         let addon_parts: HashSet<Entity> = st.active.values().flat_map(|a| a.addons.iter().map(|x| x.0)).chain(st.leaving.iter().flat_map(|l| l.models.iter().map(|x| x.0))).flat_map(|h| std::iter::once(h).chain(children.iter_descendants(h))).collect();
-        let list = by_ref.entry(FormId::PLAYER_REF.0).or_default();
         for e in children.iter_descendants(root) {
             if addon_parts.contains(&e) {
                 continue;
@@ -362,7 +370,7 @@ fn play(
         }
         let t = now - a.since;
         // Holes: each mesh drawn with a copy of its material that the holes eat away.
-        if let (Some(h), Some(tex)) = (a.shader.holes.as_ref(), a.holes_texture.as_ref()) {
+        let holes = if let (Some(h), Some(tex)) = (a.shader.holes.as_ref(), a.holes_texture.as_ref()) {
             let value = h.value(t);
             let first = a.holed.is_empty();
             for &(e, _, _, mat) in meshes {
@@ -403,16 +411,12 @@ fn play(
                 );
             }
             for (_, copy) in a.holed.values() {
-                if let Some(mut m) = models.materials.get_mut(copy) {
-                    m.extension.holes.x = value;
-                }
+                animate_material(&mut models.materials, copy, Some(value), None, None);
             }
-            for mat in [&a.fill, &a.edge].into_iter().flatten() {
-                if let Some(mut m) = models.materials.get_mut(mat) {
-                    m.extension.holes.x = value;
-                }
-            }
-        }
+            Some(value)
+        } else {
+            None
+        };
         // Add-on models: put on once the reference is drawn, then grown and faded in.
         if let Some(ad) = a.shader.addons {
             if a.addons.is_empty() && !meshes.is_empty() {
@@ -469,14 +473,36 @@ fn play(
             let (scale, alpha) = ad.look(t, None);
             addon_look(&a.addons, scale, alpha, &mut transforms, &mut fades);
         }
-        if let Some(mut m) = a.fill.as_ref().and_then(|h| models.materials.get_mut(h)) {
-            m.base.base_color.set_alpha(a.shader.fill.alpha(t, a.persist));
+        if let Some(fill) = &a.fill {
             let [u, v] = a.shader.fill_speed;
-            m.base.uv_transform = bevy::math::Affine2::from_translation(Vec2::new((u * t).fract(), (v * t).fract()));
+            let uv = bevy::math::Affine2::from_translation(Vec2::new((u * t).fract(), (v * t).fract()));
+            animate_material(&mut models.materials, fill, holes, Some(a.shader.fill.alpha(t, a.persist)), Some(uv));
         }
-        if let Some(mut m) = a.edge.as_ref().and_then(|h| models.materials.get_mut(h)) {
-            m.base.base_color.set_alpha(a.shader.edge.alpha(t, a.persist));
+        if let Some(edge) = &a.edge {
+            animate_material(&mut models.materials, edge, holes, Some(a.shader.edge.alpha(t, a.persist)), None);
         }
+    }
+}
+
+/// Apply only differing values in one mutable access [documented: Bevy 0.20.1
+/// `AssetMut::deref_mut` / `AssetMutChangeNotifier::drop` marks the asset modified].
+fn animate_material(materials: &mut Assets<NifMaterial>, handle: &Handle<NifMaterial>, holes: Option<f32>, alpha: Option<f32>, uv: Option<bevy::math::Affine2>) {
+    let Some(m) = materials.get(handle) else { return };
+    let holes = holes.filter(|v| m.extension.holes.x != *v);
+    let alpha = alpha.filter(|v| m.base.base_color.alpha() != *v);
+    let uv = uv.filter(|v| m.base.uv_transform != *v);
+    if holes.is_none() && alpha.is_none() && uv.is_none() {
+        return;
+    }
+    let Some(mut m) = materials.get_mut(handle) else { return };
+    if let Some(value) = holes {
+        m.extension.holes.x = value;
+    }
+    if let Some(alpha) = alpha {
+        m.base.base_color.set_alpha(alpha);
+    }
+    if let Some(uv) = uv {
+        m.base.uv_transform = uv;
     }
 }
 
@@ -636,7 +662,77 @@ fn report(mut exit: MessageReader<AppExit>, st: Res<Shaders>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::asset::{AssetApp, AssetPlugin};
+    use bevy::ecs::message::Messages;
+    use bevy::math::Affine2;
     use nvf_assets::nif_material::{Falloff, NO_HOLES};
+
+    fn material_app() -> (App, Handle<NifMaterial>) {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default())).init_asset::<NifMaterial>();
+        let handle = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+        app.update();
+        app.world_mut().resource_mut::<Messages<AssetEvent<NifMaterial>>>().clear();
+        (app, handle)
+    }
+
+    fn material_events(app: &mut App) -> Vec<AssetEvent<NifMaterial>> {
+        app.update();
+        app.world_mut().resource_mut::<Messages<AssetEvent<NifMaterial>>>().drain().collect()
+    }
+
+    #[test]
+    fn equal_material_values_emit_no_modification() {
+        let (mut app, handle) = material_app();
+        for _ in 0..3 {
+            animate_material(&mut app.world_mut().resource_mut::<Assets<NifMaterial>>(), &handle, Some(NO_HOLES.x), Some(1.0), Some(Affine2::IDENTITY));
+            assert!(material_events(&mut app).is_empty());
+        }
+    }
+
+    #[test]
+    fn holes_alpha_and_uv_change_in_one_modification() {
+        let (mut app, handle) = material_app();
+        let uv = Affine2::from_translation(Vec2::new(-0.25, 0.5));
+        animate_material(&mut app.world_mut().resource_mut::<Assets<NifMaterial>>(), &handle, Some(128.0), Some(0.5), Some(uv));
+        assert_eq!(material_events(&mut app), vec![AssetEvent::Modified { id: handle.id() }]);
+        let materials = app.world().resource::<Assets<NifMaterial>>();
+        let m = materials.get(&handle).unwrap();
+        assert_eq!(m.extension.holes, Vec4::new(128.0, 0.0, 0.0, 0.0));
+        assert_eq!(m.base.base_color.alpha(), 0.5);
+        assert_eq!(m.base.uv_transform, uv);
+
+        // A persistent plateau with no further scroll produces no asset event.
+        animate_material(&mut app.world_mut().resource_mut::<Assets<NifMaterial>>(), &handle, Some(128.0), Some(0.5), Some(uv));
+        assert!(material_events(&mut app).is_empty());
+    }
+
+    #[test]
+    fn material_channels_animate_independently_without_an_epsilon() {
+        let (mut app, handle) = material_app();
+        let alpha = f32::from_bits(1.0f32.to_bits() - 1);
+        let uv = Affine2::from_translation(Vec2::new(0.001, -0.001));
+        for (holes, alpha, uv) in [(Some(255.0), None, None), (None, Some(alpha), None), (None, None, Some(uv))] {
+            animate_material(&mut app.world_mut().resource_mut::<Assets<NifMaterial>>(), &handle, holes, alpha, uv);
+            assert_eq!(material_events(&mut app), vec![AssetEvent::Modified { id: handle.id() }]);
+        }
+        let materials = app.world().resource::<Assets<NifMaterial>>();
+        let m = materials.get(&handle).unwrap();
+        assert_eq!(m.extension.holes.x, 255.0);
+        assert_eq!(m.base.base_color.alpha(), alpha);
+        assert_eq!(m.base.uv_transform, uv);
+    }
+
+    #[test]
+    fn absent_material_or_values_emit_no_modification() {
+        let (mut app, handle) = material_app();
+        animate_material(&mut app.world_mut().resource_mut::<Assets<NifMaterial>>(), &handle, None, None, None);
+        assert!(material_events(&mut app).is_empty());
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().remove(&handle);
+        material_events(&mut app);
+        animate_material(&mut app.world_mut().resource_mut::<Assets<NifMaterial>>(), &handle, Some(0.0), Some(0.0), Some(Affine2::IDENTITY));
+        assert!(material_events(&mut app).is_empty());
+    }
 
     #[test]
     fn add_on_places_spread_over_the_bones() {

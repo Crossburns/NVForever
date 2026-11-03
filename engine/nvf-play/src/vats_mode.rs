@@ -61,7 +61,7 @@ use bevy::prelude::*;
 use fnv_combat::rng::SplitMix;
 use fnv_combat::vats::{
     final_chance, miss_point, raw_chance, restored_damage, rolled_hit, throw_miss_point, AttackStyle, HitInputs, HitTuning, MarkQueue, MeleeAction, MeleeLimits, MeleeRun, Volley, VolleyEvent, HELD_WEAPON_TO_HIT,
-    WHOLE_TO_HIT,
+    SIZE_HELD_WEAPON, SIZE_TORSO, WHOLE_TO_HIT,
 };
 use fnv_game::vats::{pick_helper, Helper, HitPerks};
 use fnv_game::actor_values::ACTION_POINTS;
@@ -244,6 +244,8 @@ struct Spot {
     condition: Option<u16>,
     /// The part's base chance to hit, percent (§17.2).
     base: f32,
+    /// The part's size against a torso's, for the range term (§17.2).
+    size: f32,
     /// The player's to-hit perks for this mark, read when it was made (§17.3).
     perks: HitPerks,
     /// Marks made before it on the same actor and part (Concentrated Fire).
@@ -516,7 +518,7 @@ fn forced_roll() -> Option<bool> {
 fn chance_of(spot: &Spot, w: &InHand, eye: [f32; 3], cone: Option<f32>) -> f32 {
     let distance = crate::combat::distance(eye, spot.point);
     let cone = if w.style == AttackStyle::Melee { None } else { Some(cone.unwrap_or(0.0)) };
-    let raw = raw_chance(&HitInputs { base: spot.base, skill: w.skill, distance, cone_deg: cone }, &w.hit);
+    let raw = raw_chance(&HitInputs { base: spot.base, size: spot.size, skill: w.skill, distance, cone_deg: cone }, &w.hit);
     final_chance(raw, |c| spot.perks.apply(c as f64) as f32, spot.perks.concentrated_fire.then_some(spot.earlier), &w.hit)
 }
 
@@ -1031,10 +1033,10 @@ fn mark(
             v.stats.marks += 1;
             // The part's base chance (§17.2): its BPTD To Hit Chance; an actor without
             // parts, or the weapon it holds, our own.
-            let base = match (part, bp.as_ref()) {
-                (Some(WEAPON_PART), _) => HELD_WEAPON_TO_HIT,
-                (_, Some(b)) => b.to_hit_chance as f32,
-                (_, None) => WHOLE_TO_HIT,
+            let (base, size) = match (part, bp.as_ref()) {
+                (Some(WEAPON_PART), _) => (HELD_WEAPON_TO_HIT, SIZE_HELD_WEAPON),
+                (_, Some(b)) => (b.to_hit_chance as f32, fnv_combat::vats::part_size(b.actor_value.as_deref())),
+                (_, None) => (WHOLE_TO_HIT, SIZE_TORSO),
             };
             // The to-hit perks see this mark as the shot (§17.3).
             let shot = v.weapon.as_ref().map(|w| fnv_game::vats::VatsShot {
@@ -1053,7 +1055,7 @@ fn mark(
                 }),
                 _ => (HitPerks::default(), Vec::new()),
             };
-            let mut spot = Spot { point, name, part: part_name, condition, base, perks, earlier, chance: 0.0, landed: None };
+            let mut spot = Spot { point, name, part: part_name, condition, base, size, perks, earlier, chance: 0.0, landed: None };
             if let Some(w) = v.weapon.as_ref() {
                 spot.chance = chance_of(&spot, w, player.eye(), combat.vats_cone);
             }
@@ -1104,7 +1106,7 @@ fn mark_object(v: &mut VatsMode, object: u32, point: [f32; 3], mut script: Optio
                 (Some(shot), Some(rt)) => with_world(rt, sim, |rt| rt.game.vats_hit_perks(shot)),
                 _ => HitPerks::default(),
             };
-            let mut spot = Spot { point, name, part: "object".into(), condition: None, base: WHOLE_TO_HIT, perks, earlier, chance: 0.0, landed: None };
+            let mut spot = Spot { point, name, part: "object".into(), condition: None, base: WHOLE_TO_HIT, size: SIZE_TORSO, perks, earlier, chance: 0.0, landed: None };
             if let Some(w) = v.weapon.as_ref() {
                 spot.chance = chance_of(&spot, w, player.eye(), None);
             }
@@ -1611,23 +1613,27 @@ mod tests {
     }
 
     #[test]
-    fn a_marks_chance_follows_skill_range_and_perks() {
+    fn a_marks_chance_follows_range_and_perks() {
         let w = |style, skill| InHand { id: FormId(1), reach: REACH, style, melee_reach: 75.0, sight_fov: 0.0, skill, hit: HitTuning { spread_mult: 1.1, ..HitTuning::default() } };
-        let torso = Spot { point: [500.0, 0.0, 0.0], base: 60.0, ..Default::default() };
+        let torso = Spot { point: [500.0, 0.0, 0.0], base: 60.0, size: SIZE_TORSO, ..Default::default() };
         let gun = w(AttackStyle::Single, 50.0);
-        let near = chance_of(&torso, &gun, [0.0; 3], Some(1.0));
-        let far = chance_of(&Spot { point: [3000.0, 0.0, 0.0], ..torso.clone() }, &gun, [0.0; 3], Some(1.0));
+        let near = chance_of(&torso, &gun, [0.0; 3], Some(2.0));
+        let far = chance_of(&Spot { point: [3000.0, 0.0, 0.0], ..torso.clone() }, &gun, [0.0; 3], Some(2.0));
         assert!(near > far && far > 0.0, "{near} {far}");
         // Melee ignores the range: the player is put beside the mark.
         let blade = w(AttackStyle::Melee, 50.0);
         assert_eq!(chance_of(&torso, &blade, [0.0; 3], None), chance_of(&Spot { point: [300.0, 0.0, 0.0], ..torso.clone() }, &blade, [0.0; 3], None));
-        // Skill 100 at close range: capped at fVATSMaxChance.
-        assert_eq!(chance_of(&torso, &w(AttackStyle::Single, 100.0), [490.0, 0.0, 0.0], Some(1.0)), 95.0);
+        // A melee mark follows the skill and is not pinned at the cap.
+        let head = Spot { base: 30.0, ..torso.clone() };
+        let (weak, strong) = (chance_of(&head, &w(AttackStyle::Melee, 0.0), [0.0; 3], None), chance_of(&head, &blade, [0.0; 3], None));
+        assert!(weak < strong && strong < 95.0, "{weak} {strong}");
+        // Close by: capped at fVATSMaxChance.
+        assert_eq!(chance_of(&torso, &gun, [490.0, 0.0, 0.0], Some(2.0)), 95.0);
         // Concentrated Fire's bonus counts only with the perk.
         let again = Spot { earlier: 2, ..torso.clone() };
-        assert_eq!(chance_of(&again, &gun, [0.0; 3], Some(1.0)), near);
+        assert_eq!(chance_of(&again, &gun, [0.0; 3], Some(2.0)), near);
         let cf = Spot { perks: HitPerks { ops: Vec::new(), concentrated_fire: true }, ..again };
-        assert!((chance_of(&cf, &gun, [0.0; 3], Some(1.0)) - (near + 10.0)).abs() < 1e-3);
+        assert!((chance_of(&cf, &gun, [0.0; 3], Some(2.0)) - (near + 10.0)).abs() < 1e-3);
     }
 
     #[test]

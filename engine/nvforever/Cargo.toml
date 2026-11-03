@@ -40,6 +40,11 @@ half = "2"
 # (`Device::as_hal`); the versions Bevy already uses (MIT/Apache-2.0).
 wgpu = { version = "30", default-features = false, features = ["vulkan"] }
 ash = { version = "0.38", default-features = false }
+# Only with the `tracy` feature: the Tracy client Bevy's trace_tracy uses, the version Bevy
+# already pins, made to record only while a viewer is connected (`ondemand`: no data piles
+# up in memory) and to listen and announce itself on this machine only (`only-localhost`);
+# frame-rate-audit.md §1. MIT/Apache-2.0; the Tracy C++ client in tracy-client-sys is BSD-3-Clause.
+tracy-client = { version = "0.19", optional = true, default-features = false, features = ["ondemand", "only-localhost"] }
 
 # The first-start dialogs that ask for the game's folder (setup.rs); MIT.
 [target.'cfg(windows)'.dependencies]
@@ -61,3 +66,8 @@ intro-video = ["nvf-play/intro-video"]
 # Bevy's spans for the in-engine span profile (profile.rs, NVF_PLAY_TEST_PROFILE); not for
 # release builds.
 profile = ["bevy/trace"]
+# The same spans sent live to the Tracy profiler (docs/design/frame-rate-audit.md §1: the
+# viewer's version must match the tracy-client in Cargo.lock); not for release builds.
+tracy = ["profile", "bevy/trace_tracy", "dep:tracy-client"]
+# Tracy with every allocation tracked too (slower).
+tracy-memory = ["tracy", "bevy/trace_tracy_memory"]

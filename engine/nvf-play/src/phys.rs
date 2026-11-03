@@ -56,7 +56,7 @@ use fnv_world::transform::{max_diff, ref_angles, ref_rotation};
 use fnv_world::{cell_of, Placement, WorldIndex, CELL_SIZE};
 use nvf_assets::GameData;
 use prepare::{ms_since, Job, ModelCache, Prepared, RefShapes, Source};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -912,6 +912,39 @@ impl PhysState {
         }
     }
 
+    /// A script moved or turned reference `id` (SetPos, SetAngle, Rotate, SetScale, the
+    /// console's too): when its collision is one dynamic body still at the old pose, the
+    /// settle write-back ([`Self::settle_created`], [`Self::settle_placed`]) would copy that
+    /// pose over the move, so the collision is built again at the simulation's pose.
+    /// Found 2026-11-01: a raised bottle read its old height again at
+    /// once [observed: GetPos Z 8396.80 after SetPos Z 8461]. Collision that is not one
+    /// dynamic body is left where it was (not written back, so no move is lost; it
+    /// collides at the old place until its cell loads again) [engineering choice].
+    pub fn repose_ref(&mut self, ctx: &LoadCtx, id: u32) {
+        let single = match self.created.get(&id) {
+            Some(cb) => cb.local.filter(|_| cb.dynamic).map(|l| (l, 1.0)),
+            None => self.placed_dynamic.get(&id).map(|p| (p.local, p.scale)),
+        };
+        let Some((local, scale)) = single else { return };
+        let (Some(b), Some(s)) = (self.world.ref_bodies(id).first().copied(), ctx.sim.world.peek(FormId(id))) else { return };
+        let (pos, rot) = dropped::ref_pose_from_body(&b, &local, scale);
+        let dist = (0..3).map(|i| (pos[i] - s.pos[i]).powi(2)).sum::<f32>().sqrt();
+        if dist <= MOVED_DISTANCE && max_diff(&ref_rotation(s.rot), &rot) <= 1e-3 {
+            return;
+        }
+        self.world.remove_ref(id);
+        let built = if FormId(id).is_dynamic() {
+            self.created.remove(&id);
+            self.add_created(ctx, id)
+        } else {
+            self.placed_dynamic.remove(&id);
+            self.doors.remove(&id);
+            self.drawn.remove(&id);
+            self.add_ref(ctx, id)
+        };
+        info!("collision of 0x{id:08X} built again where a script moved it ({:.1} from its body){}", dist, if built { "" } else { ": none now" });
+    }
+
     /// A created reference (dropped item): collision while it is present and the physics
     /// cell containing it is loaded, none otherwise; tracked in that cell so it unloads
     /// with it.
@@ -1293,6 +1326,7 @@ impl Plugin for PhysPlugin {
             .init_resource::<FrameTimes>()
             .add_systems(Startup, init_phys)
             .add_systems(Last, (frame_times, report).chain())
+            .add_message::<crate::RefRepose>()
             .add_systems(Update, (travel, ref_changed, stream, pose_doors).chain().in_set(PhysSystems).in_set(crate::PlaySet::Physics))
             .add_systems(PostUpdate, trace::trace);
     }
@@ -1361,6 +1395,7 @@ fn world_name(d: &PlayData, world: u32) -> &str {
 /// hang where it was placed until its cell loads again).
 fn ref_changed(
     mut msgs: MessageReader<RefChanged>,
+    mut repose: MessageReader<crate::RefRepose>,
     (broken, mut broken_seen): (Option<Res<Messages<crate::combat::WeaponBroken>>>, Local<bevy::ecs::message::MessageCursor<crate::combat::WeaponBroken>>),
     d: Res<PlayWorld>,
     sim: Res<SimState>,
@@ -1371,12 +1406,16 @@ fn ref_changed(
     if let Some(broken) = broken.as_deref() {
         ids.extend(broken_seen.read(broken).filter_map(|b| b.dropped).map(|r| r.0));
     }
-    if ids.is_empty() {
+    let moved: BTreeSet<u32> = repose.read().map(|m| m.form_id).collect();
+    if ids.is_empty() && moved.is_empty() {
         return;
     }
     let ctx = LoadCtx { d: &d, sim: &sim, data: data.as_deref() };
     for id in ids {
         phys.sync_ref(&ctx, id);
+    }
+    for id in moved {
+        phys.repose_ref(&ctx, id);
     }
 }
 

@@ -206,6 +206,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "reflection-switched-off"
+source = "issue #1380: the water-mirror switch off (--graphics-only no-water-mirror, the settings page's Mirrored water reflections) keeps the water reflection camera off with Lake Mead in view (engine/nvforever/src/reflection.rs update_reflection)"
+note = "reflection-lake's shore and look, the switch off: the log names it and the camera never comes on"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/reflection.rs", "engine/nvforever/src/graphics.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_LOOK = "4:90:-10" }
+args = ["--play", "--pos=56992,37536,2745", "--hour", "12", "--no-voice", "--no-messages", "--graphics-only", "no-water-mirror"]
+run_seconds = 14
+expect = [
+  "no mirrored water",
+  { text = "water reflection: on", count = 0, label = "the camera stays off with the lake in view" },
+]
+
+[[scenario]]
 name = "reflection-hidden-water"
 source = "issue #1059: water the console hides (ToggleWaterSystem) does not switch the water reflection camera on (engine/nvforever/src/reflection.rs update_reflection)"
 note = "reflection-lake's shore, the lake in view from the start (the camera comes on, with #1060 maybe on and off while the world settles); the water hidden from the console: the camera goes off a second later with the lake still in view. That it stays off afterwards is not checked: the expectations cannot say 'no line after this one'"
@@ -379,6 +393,60 @@ expect = [
   "graphics:",
   { re = '\bprofile: \d', max = 0, label = "no profile report when profiling is disabled" },
   { re = '\bframe time: \d', max = 0, label = "no frame-time report when frame-time logging is disabled" },
+  { re = 'physics: [\d.]+ ticks a frame', max = 0, label = "no physics-step report when frame-time logging is disabled" },
+]
+
+[[scenario]]
+name = "frame-telemetry-frames"
+source = "docs/design/frame-telemetry.md sections 1-5 and issue #1276: log checks for a frames-only start and a complete duration-limit summary with nonzero frames and a gameplay p50; does not validate JSONL or plugin registration"
+areas = ["renderer", "graphics", "profiling"]
+paths = ["engine/nvforever/src/frame_telemetry/", "engine/nvforever/build.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_FRAME_TELEMETRY = "18", NVF_PLAY_TEST_FRAME_TELEMETRY_GPU = "0" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 25
+expect = [
+  { re = 'frame telemetry: capturing 18 s to .* \(frames\)', count = 1, label = "one frames-only capture starts" },
+  { re = 'frame telemetry: .* complete \(duration_limit\), [1-9]\d* frames, gameplay p50 \d', count = 1, label = "log reports complete duration stop, nonzero frames and a gameplay p50" },
+  { re = 'frame telemetry: .*render timings', max = 0, label = "no render timings in the telemetry log lines" },
+  { re = 'frame telemetry: .*flush unconfirmed', max = 0, label = "no unconfirmed final flush is reported" },
+]
+
+[[scenario]]
+name = "frame-telemetry-gpu"
+source = "docs/design/frame-telemetry.md sections 1-5 and issue #1276: log checks for a render-timing start and complete duration/byte-limit summary with nonzero GPU observations; does not validate JSONL"
+areas = ["renderer", "graphics", "profiling"]
+paths = ["engine/nvforever/src/frame_telemetry/", "engine/nvforever/build.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_FRAME_TELEMETRY = "18", NVF_PLAY_TEST_FRAME_TELEMETRY_GPU = "1" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 25
+expect = [
+  { re = 'frame telemetry: capturing 18 s to .* \(frames \+ render timings\)', count = 1, label = "one capture with render timings starts" },
+  { re = 'frame telemetry: .* complete \((duration_limit|byte_limit)\), [1-9]\d* frames, gameplay p50 \d.*, gpu observations [1-9]\d*', count = 1, label = "log reports complete limit stop with nonzero frames, a gameplay p50 and GPU observations" },
+  { re = 'frame telemetry: .*flush unconfirmed', max = 0, label = "no unconfirmed final flush is reported" },
+]
+
+[[scenario]]
+name = "frame-telemetry-off"
+source = "docs/design/frame-telemetry.md section 1 and issue #1276: log check for no telemetry output with the aid unset; does not inspect installed systems or plugins"
+areas = ["renderer", "graphics", "profiling"]
+paths = ["engine/nvforever/src/frame_telemetry/", "engine/nvforever/build.rs", "engine/nvforever/src/main.rs"]
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { re = 'frame telemetry:', max = 0, label = "disabled telemetry logs nothing" },
+]
+
+[[scenario]]
+name = "frame-telemetry-bad-aid"
+source = "docs/design/frame-telemetry.md section 1 and issue #1276: invalid capture seconds produce one warning and leave capture off"
+areas = ["renderer", "graphics", "profiling"]
+paths = ["engine/nvforever/src/frame_telemetry/", "engine/nvforever/build.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_FRAME_TELEMETRY = "abc" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { re = 'frame telemetry: disabled: NVF_PLAY_TEST_FRAME_TELEMETRY: expected finite, nonnegative seconds', count = 1, label = "one invalid-aid warning" },
+  { re = 'frame telemetry: capturing', max = 0, label = "invalid aids start no capture" },
 ]
 
 [[scenario]]
@@ -420,6 +488,21 @@ run_seconds = 15
 expect = [
   { re = '\bprofile: \d', min = 1, label = "profile reporting remains enabled" },
   { re = '\bframe time: \d', min = 1, label = "frame-time logging remains enabled" },
+]
+
+[[scenario]]
+name = "physics-load-line"
+source = "docs/design/frame-rate-audit.md (the physics line, zones phys::*) and issue #1383: with --log-frame-times the player's fixed steps are counted and timed, and one physics line is logged each period beside the frame time"
+areas = ["physics", "profiling"]
+paths = ["engine/nvf-play/src/phys_load.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/graphics.rs"]
+# A test aid makes the run unattended, so the player's own NVForever.ini is not read.
+env = { NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "14", "--log-frame-times", "5"]
+run_seconds = 25
+note = "The controller moves range [1, 1000] holds only on the walking path, where the player's controller counts as 1 a tick: a period spent seated or flying (ToggleCollision), or with no ticks, reads 0.0. Do not reuse this check for seated or noclip runs"
+expect = [
+  { re = '\bframe time: \d', min = 1, label = "frame-time logging is enabled" },
+  { re = 'physics: [\d.]+ ticks a frame \(max \d+\) over [1-9]\d* frames, (?P<n>[\d.]+) controller moves a tick \(max \d+\), [\d.]+ blocks, [\d.]+ ms a frame in player::step, [\d.]+ ms a tick', range = [1, 1000], label = "the physics line: at least the player's controller moves each tick" },
 ]
 
 [[scenario]]
@@ -1163,17 +1246,17 @@ forbid = [{ re = '1EFiendViolet.*Lost → Combat', label = "Combat ↔ Lost flic
 
 [[scenario]]
 name = "combat-npc-grenades"
-source = "docs/design/combat-ai.md §20: a gunman carrying grenades throws one now and then at a target it sees, clear of its blast and within the throw's reach, one taken from its inventory each time (npc_grenades.rs)"
-note = "god mode; Violet is given three frag grenades at 14 s and put 1,200 units from the player at 15 s (a frag grenade is thrown from beyond 990: 1.1 x its 900-unit blast)"
+source = "docs/design/combat-ai.md §20: only an actor holding a grenade throws one; a gunman carrying grenades keeps them (observer check 20: the original's Powder Gangers carrying dynamite threw none in 90 s)"
+note = "god mode; Violet is given three frag grenades at 14 s and put 1,200 units from the player at 15 s (within a frag grenade's throw band, 990-1,500), and fights with her gun"
 areas = ["combat"]
 paths = ["engine/nvforever/src/npc_grenades.rs", "engine/nvforever/src/npc_combat.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "14:call:FiendVioletRef:AddItem:WeapGrenadeFrag:3,15:moveto:FiendVioletRef:player:1200:0:0" }
 args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--npc-packages", "FiendVioletRef"]
 run_seconds = 60
 expect = [
-  { re = 'npc combat: .*Violet.* throws WeapGrenadeFrag at the player \((?P<n>\d+) units', range = [990, 1500], label = "Violet throws a frag grenade, clear of its blast" },
-  { re = 'throws WeapGrenadeFrag at .*; (?P<n>\d) left', range = [0, 2], label = "one taken from her three each throw" },
-  { re = 'npc combat style summary: .*; (?P<n>\d+) grenades thrown', range = [1, 3], label = "the summary counts the throws" },
+  { re = 'npc combat: FiendVioletRef \S+ fights the player with \S+ \(gun\)', label = "Violet fights with her gun" },
+  { re = 'npc combat: .*Violet.* throws WeapGrenadeFrag', count = 0, label = "she keeps the grenades she carries" },
+  { re = 'npc combat style summary: .*; (?P<n>\d+) grenades thrown', range = [0, 0], label = "the summary counts no throws" },
 ]
 
 [[scenario]]
@@ -2854,6 +2937,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "player-speedmult"
+source = "issue #1364: the player's speed follows its Speed Mult actor value and its body armour's class, as people's (actors.md §8.10)"
+note = "SetAV SpeedMult 200 at 8 s, 50 at 10 s, 100 at 12 s; metal armour (ArmorMetal 0003307F, heavy: 1 - fMoveHeavyArmorPenalty 0.15) is given and put on at 14 s"
+areas = ["controls"]
+paths = ["engine/nvf-play/src/player.rs", "engine/nvf-play/src/combat.rs", "crates/fnv-game/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav speedmult 200;8.3:close;10:player.setav speedmult 50;10.3:close;12:player.setav speedmult 100;12.3:close;14:player.additem 0003307F 1;14.3:player.equipitem 0003307F;14.6:close" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
+run_seconds = 18
+order = [[
+  { re = 'movement: Speed Mult and body armour make the player move at 200% \(armour 100%\)', label = "SpeedMult 200: twice as fast" },
+  { re = 'movement: Speed Mult and body armour make the player move at 50% \(armour 100%\)', label = "SpeedMult 50: half" },
+  { re = 'movement: Speed Mult and body armour make the player move at 100% \(armour 100%\)', label = "back to 100" },
+  { re = 'movement: Speed Mult and body armour make the player move at 85% \(armour 85%\)', label = "heavy armour on: 85%, as people's" },
+]]
+
+[[scenario]]
 name = "bear-trap"
 source = "CLAUDE.md: after changes to groups' sound keys (activators.md §6–§8): the bear trap"
 areas = ["actor-groups", "object-anims"]
@@ -2972,6 +3071,31 @@ order = [[
   "pipboy: STATS Status",
   "pipboy: down",
 ]]
+expect = [
+  { re = 'player First rig: PipBoy\(\w+\) plays .*pipboy', label = "the first-person Pip-Boy clip loaded (#1330)" },
+]
+forbid = [
+  { text = "the Pip-Boy cannot come up", label = "the first-person Pip-Boy clip missing (#1330)" },
+  { text = "up, but the menus are not on the arm", label = "the arm up with nowhere to show the menus (#1330)" },
+]
+
+[[scenario]]
+name = "pipboy-menu-pause"
+source = "issue #1330: with menu pause on (--menu-pause original) the inventory stops the virtual clock; the Pip-Boy still comes up, on the menus' clock"
+areas = ["pipboy"]
+paths = ["engine/nvf-play/src/pipboy*", "engine/nvf-play/src/pause.rs", "engine/nvforever/src/pipboy_arm.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PIPBOY = "12:open,15:close" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--size", "1280x720", "--menu-pause", "original"]
+run_seconds = 17
+order = [[
+  "pipboy: up, page ITEMS tab Weapons",
+  "menu pause: the picture stands still (--menu-pause original)",
+  "pipboy: raised",
+  "pipboy: down",
+]]
+forbid = [
+  { text = "up, but the menus are not on the arm", label = "the arm up with nowhere to show the menus (#1330)" },
+]
 
 [[scenario]]
 name = "pipboy-list5"
@@ -2986,6 +3110,7 @@ expect = [
   { re = 'pipboy items: .* selected: Info', label = "pipboy items: the selected item's figures" },
   "pipboy sound: UIPipBoyTab",
   "pipboy sound: UIPipBoyMode",
+  { text = "pipboy sound: UIPipBoyScroll", label = "pipboy: the STATS lists click as ITEMS' (General's other list at 18 s, #1340)" },
   "pipboy sound: UIPipBoyStatic",
   { re = 'pipboy stats: .*karma title Drifter', label = "pipboy stats: the karma title of level 1, neutral (Drifter, sKarmicTitleNeutral1)" },
   { re = 'pipboy data: local map outline \d+x\d+ samples 96 apart, [1-9]\d* landed \(exterior\)', label = "pipboy data: the local map's outline made outdoors" },
@@ -3071,8 +3196,27 @@ order = [[
 ]]
 
 [[scenario]]
+name = "terminal-submenu-back"
+source = "[design] #1328 review: Back from a terminal's sub menu lists the parent's own items again, with their lines (MenuView.labels, engine/nvf-play/src/terminal.rs `list`)"
+note = "V21SheldonTerminal (0011E3BF, unlocked) placed as 0011E3C3 in 2EOMichaelAngelo: one item, Sheldon Weintraub's Mail, opening V21SheldonTerminalMail (Messages, Sent Mail) [observed: FalloutNV.esm TERM records]"
+areas = ["terminal"]
+paths = ["crates/fnv-game/src/terminal.rs", "engine/nvf-play/src/terminal*", "engine/nvf-play/src/terminal/**"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TERMINAL = "20:open:0011E3C3,22:item:0,24:back,26:exit" }
+args = ["--cell", "2EOMichaelAngelo", "--play", "--no-voice"]
+run_seconds = 30
+expect = [
+  { text = "menu of V21SheldonTerminal (1 of 1 items listed): \"Sheldon Weintraub's Mail\"", count = 2, label = "the terminal's own line, when opened and again after Back" },
+  { text = 'menu of V21SheldonTerminalMail (2 of 2 items listed): "Messages", "Sent Mail"', count = 1, label = "the sub menu's lines" },
+]
+order = [[
+  'menu of V21SheldonTerminal (1 of 1 items listed)',
+  'menu of V21SheldonTerminalMail (2 of 2 items listed)',
+  'menu of V21SheldonTerminal (1 of 1 items listed)',
+]]
+
+[[scenario]]
 name = "hacking"
-manual = "[design] In hacking.png, compare 10x10 medians on glass right of the dump and below the header, and inside an attempt block, against docs/spec-notes/hacking.md §2: glass R 16-23 / G 38-52 / B 15-32; blocks near (61, 253, 152) and solid (not crossed by the scanlines), without a glare wash. Retain faint texture, dark corners (about 8, 11, 5) and the monitor's top-right streak near (100, 125, 95); use the per-constant tuning recipes in §7 and check text outside the streak stays no higher than (88, 255, 160), that the text has soft edges and the scanlines cross glass and text, and that the header line ENTER PASSWORD NOW sums near the original's green above the glass (§2). In flat mode (no monitor model, so no glare) check its own targets instead: glass middle near (12, 38, 20) and blocks near (54, 252, 150) (screen.rs tests), with the same texture."
+manual = "[design] In hacking.png, compare 10x10 medians on glass right of the dump and below the header, and inside an attempt block, against docs/spec-notes/hacking.md §2: glass R 16-23 / G 38-52 / B 15-32; blocks near (61, 253, 152) and solid (not crossed by the scanlines), without a glare wash. Retain faint texture, dark corners (about 8, 11, 5) and the monitor's top-right streak near (100, 125, 95); use the per-constant tuning recipes in §7 and check text outside the streak stays no higher than (88, 255, 160), that the text has soft edges and the scanlines cross glass and text, and that the password prompt line's green above the glass, per character, is near the original's (§2; the words differ, so compare per character). In flat mode (no monitor model, so no glare) check its own targets instead: glass middle near (12, 38, 20) and blocks near (54, 252, 150) (screen.rs tests), with the same texture."
 source = "CLAUDE.md: after changes to terminals or the hacking game (docs/spec-notes/hacking.md §9): the Easy terminal"
 areas = ["hacking", "terminal"]
 paths = ["crates/fnv-game/src/hacking.rs", "crates/fnv-game/src/terminal.rs", "engine/nvf-play/src/terminal*", "engine/nvf-play/src/terminal/**", "engine/nvforever/src/terminal_view.rs"]
@@ -3082,7 +3226,7 @@ run_seconds = 48
 expect = [
   "hacking, Easy (Science 25): 20 words",
   { re = 'test aid: screenshot .*hacking\.png', label = "the hacking frame is saved for the glass and block comparison" },
-  "Exact match! access granted",
+  "the password, access granted",
   { text = "xp: +30 XP from a hacked terminal", label = "the Easy terminal's iXPRewardHackComputerEasy (experience.md §2)" },
   'menu of DefaultUnlockTermDESK1Easy (1 of 1 items listed): "Disengage Lock"',
   "result script",
@@ -3120,7 +3264,7 @@ run_seconds = 24
 order = [[
   "target 0x0010872F Terminal (Locked (Easy), owned)",
   "hacking, Easy (Science 25)",
-  "Exact match! access granted",
+  "the password, access granted",
   "crime: the player opened the lock of 0x0010872F (hacked), owned by",
   "target 0x0010872F Terminal (Access)",
 ]]
@@ -3224,10 +3368,10 @@ args = ["--cell", "BisonSteve01", "--play", "--no-voice"]
 run_seconds = 54
 order = [[
   "terminal: open 0x000D74D5",
-  "Entry denied, no attempts left: the terminal is locked for good",
+  "wrong word, no attempts left: the terminal is locked for good",
   "terminal: 0x000D74D5 is locked out; Ignore Locked Terminal (Computer Whiz) gives one more try",
   { re = 'terminal: open 0x000D74D5 .*: hacking, Easy', label = "the terminal can be hacked again" },
-  "Entry denied, no attempts left: the terminal is locked for good",
+  "wrong word, no attempts left: the terminal is locked for good",
   { re = 'terminal: open 0x000D74D5 .*: locked out for good', label = "the second lock-out is for good" },
 ]]
 
@@ -4383,10 +4527,10 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIP
 args = ["--cell", "Goodsprings", "--pos=-43200,72000,7000", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 120
 expect = [
-  { re = 'npc combat: .* takes cover (?P<n>\d+) units away', range = [0, 1100], label = "a fighter takes cover within 1,024 units" },
-  { re = 'ai \[.*goes to cover against ', label = "it goes behind the cover" },
-  { re = 'battle summary: .*?(?P<n>\d+) cover taken', range = [1, 1000], label = "cover taken in the battle summary" },
-  { re = 'fight move summary: .* (?P<n>[\d.]+) s of it on the way to new cover', range = [0.1, 100000], label = "fighters going to new cover face their target and strafe there (owner's playtest list 7 item 43)" },
+  { re = 'npc combat: .* takes cover (?P<n>\d+) units away', range = [0, 1100], label = "a fighter takes cover within 1,024 units", known_failing = "#1162: in about 1 run of 3 (h2 of 2026-11-01: 0 cover, battle resolved in 44.5 s, all 73 cover edges near the troopers beyond their reach of the Fiends) the NCR troopers fight the whole battle from 1,800+ units, outside the band they may take cover in, and it ends before they close in; since cover is range-checked before the 16-candidate cap it passed 6 of 9 runs (0 of 3 before)" },
+  { re = 'ai \[.*goes to cover against ', label = "it goes behind the cover", known_failing = "#1162: in about 1 run of 3 (h2 of 2026-11-01: 0 cover, battle resolved in 44.5 s, all 73 cover edges near the troopers beyond their reach of the Fiends) the NCR troopers fight the whole battle from 1,800+ units, outside the band they may take cover in, and it ends before they close in; since cover is range-checked before the 16-candidate cap it passed 6 of 9 runs (0 of 3 before)" },
+  { re = 'battle summary: .*?(?P<n>\d+) cover taken', range = [1, 1000], label = "cover taken in the battle summary", known_failing = "#1162: in about 1 run of 3 (h2 of 2026-11-01: 0 cover, battle resolved in 44.5 s, all 73 cover edges near the troopers beyond their reach of the Fiends) the NCR troopers fight the whole battle from 1,800+ units, outside the band they may take cover in, and it ends before they close in; since cover is range-checked before the 16-candidate cap it passed 6 of 9 runs (0 of 3 before)" },
+  { re = 'fight move summary: .* (?P<n>[\d.]+) s of it on the way to new cover', range = [0.1, 100000], label = "fighters going to new cover face their target and strafe there (owner's playtest list 7 item 43)", known_failing = "#1162: in about 1 run of 3 (h2 of 2026-11-01: 0 cover, battle resolved in 44.5 s, all 73 cover edges near the troopers beyond their reach of the Fiends) the NCR troopers fight the whole battle from 1,800+ units, outside the band they may take cover in, and it ends before they close in; since cover is range-checked before the 16-candidate cap it passed 6 of 9 runs (0 of 3 before)" },
 ]
 
 [[scenario]]
@@ -4840,6 +4984,28 @@ order = [[
   { re = 'npc combat: FiendCookCookRef \S+ has the player in reach \((?P<n>\d+) units, reach 640\)', range = [0, 640], label = "then has the player within his flame's reach" },
   { re = 'npc combat: FiendCookCookRef \S+ opens fire on the player from (?P<n>\d+) units \(reach 640\)', range = [0, 640], label = "then fires, from within his flame's reach" },
   { re = 'attack anims: 000F5704 plays \S*2hhattackspin2?\.kf', label = "with the flamer's attack clip" },
+]]
+
+[[scenario]]
+name = "cook-cook-flamer-hands"
+source = "owner spot check 2026-11-01 (#1309): Cook-Cook held his flamer below his hands while firing, again after PR #322 (animation.md §9.7)"
+note = "as npc-muzzle-flash-flamer, but the two Fiends that stood between the camera and Cook-Cook (0x000F9CE7, 0x000F9CE8) are disabled at 2 s, the player is put 100 units in front of him at 5 s and again half a second before each frame, and the camera is 250 units out, circled 90 degrees to his side. He fires standing, reloads, and crouches at 24 s (SetForceSneak) to fire crouched. Frames cook_flamer_hands_00..03.png (11.5, 21, 28, 32 s) show the hands; the log checks are the 'weapon grip' lines (attack_anims::grip_check): right hand 7.3 units from the Weapon node in the clips, left hand within 4 units of the equip clip's grip on every attack pose [observed: nvf-assets/examples/hand_probe.rs]"
+areas = ["combat", "animation"]
+paths = ["engine/nvforever/src/attack_anims.rs", "engine/nvforever/src/weapons.rs", "engine/nvf-assets/src/anim_play.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "2:call:FiendCookCookRef:EquipItem:WeapFlamer,2:call:0x000F9CE7:Disable,2:call:0x000F9CE8:Disable,3:combat:0x000F5704:player,24:call:FiendCookCookRef:SetForceSneak:1", NVF_PLAY_TEST_FACE = "5:000F5704,11:000F5704,20.5:000F5704,27.5:000F5704,31.5:000F5704", NVF_PLAY_TEST_CONTROL = "6:view,6.2:zoom=250,6.4:orbit=90:10,20.6:release,20.65:zoom=250,20.7:orbit=90:10,27.6:release,27.65:zoom=250,27.7:orbit=90:10,31.6:release,31.65:zoom=250,31.7:orbit=90:10", NVF_PLAY_TEST_SHOTS = "11.5:cook_flamer_hands_00.png,21:cook_flamer_hands_01.png,28:cook_flamer_hands_02.png,32:cook_flamer_hands_03.png" }
+args = ["--cell", "Goodsprings", "--pos=-43200,73000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "000F5704"]
+run_seconds = 34
+expect = [
+  { re = 'npc combat: FiendCookCookRef \S+ fights the player with WeapFlamer \(gun\)', label = "Cook-Cook fights with his flamer" },
+  { re = 'weapon grip: 000F5704 .*: right hand (?P<n>[\d.]+) units from the Weapon node', range = [0, 10], all = true, label = "his right hand stays on the flamer's rear grip while he fires" },
+  { re = 'weapon grip: 000F5704 .* left hand (?P<n>[\d.]+) units from its grip', range = [0, 6], all = true, label = "his left hand stays on the top handle while he fires (the flamer not below his hands)" },
+  { re = 'weapon grip: 000F5704 .*, crouched:', label = "the grip is checked crouched too" },
+  "Screenshot saved to cook_flamer_hands_03.png",
+]
+order = [[
+  { re = 'attack anims: 000F5704 plays \S*2hhattackspin2?\.kf', label = "he fires with the 2hh spin clip" },
+  { re = 'attack anims: 000F5704 plays \S*2hhreload\w*\.kf', label = "then reloads" },
+  { re = 'weapon grip: 000F5704 ', label = "then is checked firing again" },
 ]]
 
 [[scenario]]
@@ -5380,6 +5546,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "door-behind-wall-face"
+source = "#1339 (docs/spec-notes/cells-refs.md §5): the Nipton town hall's collision mesh has a face 8.5 units in front of its door's slab, so the crosshair stopped on the building and the door could not be used; a door within 16 units behind a face that cannot be activated is the target"
+note = "the town hall's outside door (0x00130CFF, a teleport into NiptonTownHallInterior), the player put 100 units south of it facing it; E at 8 s takes the player inside"
+areas = ["activation"]
+paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/activate/pick.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_FACE = "5:00130CFF", NVF_PLAY_TEST_ACTIVATE = "8" }
+args = ["--play", "--pos=-33136,-91118,7000", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'target 0x00130CFF Door \(Open: Town Hall First Floor\) by Collision', label = "the door behind the building's face is targeted" },
+  { re = 'activate 0x00130CFF .*Teleported \{ to_door: 0x00130C7D', label = "E takes the player through it" },
+]
+
+[[scenario]]
 name = "creature-names"
 source = "playtest list 4 items 19-20 (docs/spec-notes/factions.md §7, engine/nvf-play/src/activate.rs): an actor placed from a nameless template actor is named by the actor its template leads to; a hostile creature shows only its name, a dead one Search"
 note = "VERGSGecko2REF 0x00157B3D (base VSpawnTier2GeckoMed, no FULL; template list VEncTier2GeckoMed -> VCrTier2GeckoMed 'Gecko'), Very Aggressive (as its neighbour 0x00157B3E): name only while alive; both killed by the script aid at 16 s; the menu test aid opens the dead one's inventory at 24 s"
@@ -5861,7 +6041,7 @@ expect = [
 
 [[scenario]]
 name = "load-handoff"
-source = "owner 2026-10-16: loading a save while playing keeps the window: the old run's loading screen stays up while a new run loads behind it with its window hidden, then the new window takes over (engine/nvforever/src/handoff.rs)"
+source = "owner 2026-10-16: loading a save while playing keeps the window: the old run's loading screen stays up while a new run starts behind it with its window hidden, then the new window takes over (engine/nvforever/src/handoff.rs); owner 2026-11-01 (#1357): the new window takes over as soon as its own loading screen is up, and the old run ends then instead of holding its game through the whole load"
 areas = ["save"]
 paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/loading.rs", "engine/nvf-play/src/save.rs", "engine/nvf-play/src/pause.rs"]
 # The save waits past the add-on packs' message boxes (each held 0.3 s), which run to about 13 s.
@@ -5869,18 +6049,62 @@ env = { NVFOREVER_HOME = "handoff-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 90
 # The old run ends by handing over, not at run_seconds; the new one by its test aid.
-ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over"
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its world is in"
 expect = [
   { re = 'save: wrote .*handoff-test\.nvfsave', label = "the save is written" },
   { re = 'loading screen up: .* for worldspace 000DA726 ', label = "a loading screen for the save's place comes up" },
   { re = 'load: handing over to a new run with --load .*handoff-test\.nvfsave', count = 1, label = "a new run starts behind it" },
   { re = 'load: .*handoff-test\.nvfsave .*starting at', label = "the new run starts at the saved place" },
   { re = 'load: restored .*handoff-test\.nvfsave: \d+ changed references', label = "the new run restores the save" },
-  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown once the world is in" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown once its loading screen is up (not past the time limit)" },
+  { text = "the new run took over and its world is in; ending it", label = "the new run goes on loading alone and its world comes in" },
   { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends when the new one is up" },
   { re = 'the previous run did not end normally', count = 0, label = "the new run does not take the old one for a crash" },
   { re = 'before the world was in|before it was ready', count = 0, label = "no time limit or failure" },
   { text = "menu pause: the picture runs again", count = 0, label = "the world behind the loading screen stands still while the new run loads (owner 2026-10-23: a load from the main menu played the opening behind it)" },
+]
+order = [[
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window shows" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new window shows" },
+  { re = 'load: restored .*handoff-test\.nvfsave', label = "only then is the save put back (owner 2026-11-01: the old run does not stay through the load)" },
+  { text = "the new run took over and its world is in; ending it", label = "and the world comes in" },
+]]
+
+[[scenario]]
+name = "load-handoff-refused"
+source = "owner 2026-11-01 (#1357): a save that cannot be loaded opens the main menu with a message box saying why (the old run of a load no longer stays to fall back on) (engine/nvforever/src/handoff.rs, engine/nvforever/src/main.rs)"
+areas = ["save"]
+paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/save.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "handoff-refused-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = '20:load C:\Windows\win.ini', NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
+expect = [
+  { re = 'load: handing over to a new run with --load .*win\.ini', count = 1, label = "a new run starts for the load" },
+  { re = 'load: --load .*win\.ini.*; opening the main menu', count = 1, label = "the new run cannot load the file and opens the main menu" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown (not past the time limit)" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends" },
+  { text = "the new run took over and its main menu is in; ending it", label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: --load .*win\.ini', count = 1, label = "the player is told why (the box itself is skipped in unattended runs)" },
+]
+order = [[
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window shows" },
+  { re = 'load: message box .*the save could not be loaded', label = "the box comes once the new window is up" },
+]]
+
+[[scenario]]
+name = "load-bad-save-by-hand"
+source = "owner 2026-11-01 (#1357): a save given with --load that cannot be loaded opens the main menu with a message box saying why, instead of the game ending with an error (engine/nvforever/src/main.rs start_from_save)"
+areas = ["save"]
+paths = ["engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "bad-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--load", 'C:\Windows\win.ini']
+run_seconds = 12
+expect = [
+  { re = 'load: --load .*win\.ini.*; opening the main menu', count = 1, label = "the file is not loaded and the main menu opens instead" },
+  { re = 'main menu: open \(', label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: --load .*win\.ini', count = 1, label = "the player is told why" },
+  { re = '^error: ', count = 0, label = "the game does not stop with an error" },
 ]
 
 [[scenario]]
@@ -6912,6 +7136,35 @@ order = [[
   { re = 'lockpick: the lock turned all the way: practice lock picked open \(Easy lock\)', label = "picked; nothing in the world changes" },
 ]]
 forbid = [{ re = 'lockpick: crime hook', label = "a practice lock is no crime" }]
+
+[[scenario]]
+name = "console-plm-s1st-setvel"
+source = "issue #1046 step 4: plm/clm (location markers), s1st (Show1stPerson), SetVel, tst (Show), prc, tlv (ToggleLeaves), ClearScreenBlood, rbat and scof did nothing; the player is thrown up and pushed along x, a recorded line is saved and run back with bat (docs/design/console.md)"
+areas = ["console"]
+paths = ["crates/fnv-game/src/functions/console.rs", "crates/fnv-game/src/functions/toggles.rs", "crates/fnv-phys/src/world.rs", "engine/nvf-play/src/console.rs", "engine/nvf-play/src/location_markers.rs", "engine/nvforever/src/console_toggles.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVFOREVER_HOME = "console-rbat-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "2.5", NVF_PLAY_TEST_CONSOLE = "12:plm 0 0 0 NVFSpot 3;12.3:tst GameHour;12.6:prc;12.9:s1st;13.2:s1st;13.5:tlv;13.8:tlv;14.1:ClearScreenBlood;14.4:rbat;14.7:tst GameDaysPassed;15:rbat nvf_smoke_rbat;15.3:bat nvf_smoke_rbat;15.6:scof nvf_smoke_scof;15.9:scof;16.2:clm;16.5:player.setvel z 600;16.8:player.setvel x 400;17:close" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 26
+order = [[
+  { re = 'console: Location marker NVFSpot placed', label = "plm" },
+  { re = 'console: GameHour = 12', label = "tst shows a global" },
+  { re = 'console: Persistent references: [1-9]\d*', label = "prc counts" },
+  { re = 'console: First-person model in third person shown', label = "s1st" },
+  { re = 'console: First-person model in third person hidden', label = "s1st again" },
+  { re = 'console: Tree leaves off', label = "tlv" },
+  { re = 'console: Tree leaves on', label = "tlv again" },
+  { re = 'console: Screen blood cleared', label = "ClearScreenBlood" },
+  { re = 'console: Recording console lines', label = "rbat starts" },
+  { re = 'console: 1 lines saved to .*nvf_smoke_rbat\.txt', label = "rbat saves the recorded line" },
+  { re = 'console: Running .*nvf_smoke_rbat\.txt \(1 lines\)', label = "bat runs it back" },
+  { re = 'console: > tst GameDaysPassed', label = "the recorded line runs" },
+  { re = 'console: Console lines are added to .*nvf_smoke_scof\.txt', label = "scof" },
+  { re = 'console: Console lines no longer written to a file', label = "scof off" },
+  { re = 'console: 1 location markers cleared', label = "clm clears the marker of this place" },
+  { re = 'console: SetVel: 0x00000014 up at 600 units/s', label = "SetVel z on the player" },
+  { re = 'console: SetVel: 0x00000014 pushed along X at 400 units/s', label = "SetVel x on the player" },
+  { re = 'player: knocked back at 400 units/s', label = "the push reaches the player's movement" },
+]]
 
 [[scenario]]
 name = "reputation-disguise"
@@ -8061,15 +8314,16 @@ order = [[{ re = 'GetDead on .*>> 1\.00' }, { re = 'resurrect: 0x00104C7D \(GSRi
 [[scenario]]
 name = "grab-corpse"
 source = "docs/spec-notes/grab.md §1 (quests have the player carry corpses with Grab, Z: VMS18CarlyleStClairREF into the dumpster, ProperBurialCorpseref into the grave): Ringo killed in the gas station is picked up with Z by his ragdoll and carried 6 s while the view turns 180°, longer than the 3 s after which a moving ragdoll is held at rest; it is not held at rest while carried, so it is dropped when Z comes up, away from where it lay, and comes to rest"
+note = "#1154: the player stands 80 units south of Ringo (-y), where the back room leaves the half turn free: 135-182 units in 3 runs of 2026-11-01; from the east (+x) the wall or counter stopped the swing at 41-118 units"
 areas = ["grab", "physics", "ragdoll"]
 paths = ["engine/nvf-play/src/grab.rs", "crates/fnv-phys/src/grab.rs", "crates/fnv-phys/src/ragdoll.rs", "engine/nvforever/src/ragdoll.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00104C7D", NVF_PLAY_TEST_CONSOLE = "1:00104C7D.killactor;10:player.moveto 00104C7D 80 0 0;10.5:close", NVF_PLAY_TEST_GRAB = "13:z:6:180:at=00104C7D" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00104C7D", NVF_PLAY_TEST_CONSOLE = "1:00104C7D.killactor;10:player.moveto 00104C7D 0 -80 0;10.5:close", NVF_PLAY_TEST_GRAB = "13:z:6:180:at=00104C7D" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm"]
 run_seconds = 24
 expect = [
   { re = 'grab: picked up corpse .*00104C7D\) by Aid', label = "Z picks up Ringo's corpse" },
   { re = 'grab: carrying .*00104C7D\) at .*, (?P<n>[\d.]+) units from where it is held', range = [0, 40], label = "held where it is wanted" },
-  { re = 'grab: dropped .*00104C7D\) after 6\.\d s \(let go\) at .*, (?P<n>[\d.]+) units from where it was picked up', range = [120, 260], label = "carried the whole 6 s, half way round the player with the view (held ~90 units from the eye: 180 apart), dropped when Z comes up", known_failing = "#1154: the gas station's back room is too small for the swing: the carried body ends 41-118 units from where it was picked up by run (a wall or the counter in the way), not the ~210 a free half turn gives; needs a roomier place or a smaller turn, then this mark goes" },
+  { re = 'grab: dropped .*00104C7D\) after 6\.\d s \(let go\) at .*, (?P<n>[\d.]+) units from where it was picked up', range = [120, 260], label = "carried the whole 6 s, half way round the player with the view (held ~90 units from the eye: 180 apart), dropped when Z comes up" },
   { re = 'grab: .*00104C7D\) came to rest at .*, (?P<n>[\d.]+) units from where it was picked up', range = [100, 300], label = "it rests where it was carried to" },
 ]
 forbid = [{ re = 'grab: .*\(it caught on something\)', label = "never held at rest while carried (it would stay put and catch)" }]
@@ -9900,6 +10154,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "mines-blast-limbs"
+source = "#1338 (docs/spec-notes/crippled-limbs.md §5): a blast damages every limb as well as Health; before, stepping on a mine never crippled the player"
+note = "Not in god mode: the player, at Explosives 20, is put on the frag mine 0x00172DB5 on the bridge north of Primm; its blast (88 after armour) takes half of that off each of six limbs, which cripples the head (a pool of 10 % of 200 Health)"
+areas = ["combat"]
+paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-game/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "4:player.setav explosives 5", NVF_PLAY_TEST_SCRIPT = "6:moveto:player:0x00172DB5:0:0:0" }
+args = ["--play", "--pos=-61200,-52600,6300", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'mines: 0x00000014 sets off mine 0x00172DB5', label = "the player sets the mine off" },
+  { re = 'combat: blast on 0x00000014: [1-9][\d.]* limb damage on [1-9] limbs', label = "its blast damages the player's limbs" },
+  { re = 'combat: the player flinches for [\d.]+ s \(crippled', label = "the crippling blast makes the player flinch (unless it knocks the player down)" },
+  { re = "combat: player's [a-z]+( [a-z]+)? crippled", label = "and cripples one" },
+  { re = 'hud: crippled limbs shown', label = "the HUD shows it" },
+]
+
+[[scenario]]
 name = "actor-jumps"
 source = "docs/spec-notes/actor-jumps.md §3.1: an NPC whose path goes over a navmesh ledge link drops off it in an arc and lands, its body playing the jump loop and the landing"
 note = "Easy Pete (EasyPeteRef) is set off from (-63600, -18250) above the drop down at (-63042, -18384), one of the three ledge links within 25,000 units of Goodsprings, with --npc-ledges (without them the way round is about 2,600 units). An --npc-travel walker flies the arc itself (no physics); the drawn body plays JumpLoop... then JumpLand..."
@@ -11162,6 +11433,286 @@ expect = [
 manual = "on a failure, the chain's notes say what each step stands for; the stalls and their causes are in docs/handoff/mq-walkthrough-2026-10-27.md"
 
 [[scenario]]
+name = "mq-kings-gambit-crocker-killed"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/kings-gambit-crocker-killed.actions.json: Kings' Gambit (VMS29), Crocker killed while the quest runs (VMS29 200)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/kings-gambit-crocker-killed.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/kings-gambit-crocker-killed.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "kings-gambit-crocker-killed, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "kings-gambit-crocker-killed, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "kings-gambit-crocker-killed, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS23 10.stage", equals = 10, label = "kings-gambit-crocker-killed, milestone: VMS23 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS23 10.done.5", equals = true, label = "kings-gambit-crocker-killed, milestone: VMS23 10: done.5 = true" },
+  { json = "observations.?label=milestone: VMS23 10.done.10", equals = true, label = "kings-gambit-crocker-killed, milestone: VMS23 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS23 10.objective.10.displayed", equals = true, label = "kings-gambit-crocker-killed, milestone: VMS23 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS23 100.completed", equals = true, label = "kings-gambit-crocker-killed, milestone: VMS23 100: completed = true" },
+  { json = "observations.?label=milestone: VMS23 100.stage", equals = 100, label = "kings-gambit-crocker-killed, milestone: VMS23 100: stage = 100" },
+  { json = "observations.?label=milestone: VMS23 100.done.100", equals = true, label = "kings-gambit-crocker-killed, milestone: VMS23 100: done.100 = true" },
+  { json = "observations.?label=milestone: VMS29 10.stage", equals = 10, label = "kings-gambit-crocker-killed, milestone: VMS29 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS29 10.done.10", equals = true, label = "kings-gambit-crocker-killed, milestone: VMS29 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS29 10.objective.10.displayed", equals = true, label = "kings-gambit-crocker-killed, milestone: VMS29 10: objective.10.displayed = true" },
+  { json = "observations.?label=final: VMS29 200.stage", equals = 200, label = "kings-gambit-crocker-killed, final: VMS29 200: stage = 200" },
+  { json = "observations.?label=final: VMS29 200.done.200", equals = true, label = "kings-gambit-crocker-killed, final: VMS29 200: done.200 = true" },
+  { json = "steps.*.error", count = 0, label = "kings-gambit-crocker-killed: no step fails" },
+  { json = "given_errors.*", count = 0, label = "kings-gambit-crocker-killed: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
+name = "mq-kings-gambit-energy-weapon"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/kings-gambit-energy-weapon.actions.json: Kings' Gambit (VMS29), Pacer shot with an energy weapon to frame the Van Graffs (VMS29 100)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/kings-gambit-energy-weapon.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/kings-gambit-energy-weapon.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "kings-gambit-energy-weapon, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "kings-gambit-energy-weapon, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "kings-gambit-energy-weapon, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS23 10.stage", equals = 10, label = "kings-gambit-energy-weapon, milestone: VMS23 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS23 10.done.5", equals = true, label = "kings-gambit-energy-weapon, milestone: VMS23 10: done.5 = true" },
+  { json = "observations.?label=milestone: VMS23 10.done.10", equals = true, label = "kings-gambit-energy-weapon, milestone: VMS23 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS23 10.objective.10.displayed", equals = true, label = "kings-gambit-energy-weapon, milestone: VMS23 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS23 100.completed", equals = true, label = "kings-gambit-energy-weapon, milestone: VMS23 100: completed = true" },
+  { json = "observations.?label=milestone: VMS23 100.stage", equals = 100, label = "kings-gambit-energy-weapon, milestone: VMS23 100: stage = 100" },
+  { json = "observations.?label=milestone: VMS23 100.done.100", equals = true, label = "kings-gambit-energy-weapon, milestone: VMS23 100: done.100 = true" },
+  { json = "observations.?label=milestone: VMS29 10.stage", equals = 10, label = "kings-gambit-energy-weapon, milestone: VMS29 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS29 10.done.10", equals = true, label = "kings-gambit-energy-weapon, milestone: VMS29 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS29 10.objective.10.displayed", equals = true, label = "kings-gambit-energy-weapon, milestone: VMS29 10: objective.10.displayed = true" },
+  { json = "observations.?label=final: VMS29 100.stage", equals = 100, label = "kings-gambit-energy-weapon, final: VMS29 100: stage = 100" },
+  { json = "observations.?label=final: VMS29 100.done.100", equals = true, label = "kings-gambit-energy-weapon, final: VMS29 100: done.100 = true" },
+  { json = "observations.?label=final: VMS29 100.objective.20.completed", equals = true, label = "kings-gambit-energy-weapon, final: VMS29 100: objective.20.completed = true" },
+  { json = "steps.*.error", count = 0, label = "kings-gambit-energy-weapon: no step fails" },
+  { json = "given_errors.*", count = 0, label = "kings-gambit-energy-weapon: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
+name = "mq-kings-gambit-hsu-fight"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/kings-gambit-hsu-fight.actions.json: Kings' Gambit (VMS29), the King refuses Hsu's offer and fights (VMS29 20, 121)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/kings-gambit-hsu-fight.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/kings-gambit-hsu-fight.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "kings-gambit-hsu-fight, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS23 10.stage", equals = 10, label = "kings-gambit-hsu-fight, milestone: VMS23 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS23 10.done.5", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS23 10: done.5 = true" },
+  { json = "observations.?label=milestone: VMS23 10.done.10", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS23 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS23 10.objective.10.displayed", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS23 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS23 100.completed", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS23 100: completed = true" },
+  { json = "observations.?label=milestone: VMS23 100.stage", equals = 100, label = "kings-gambit-hsu-fight, milestone: VMS23 100: stage = 100" },
+  { json = "observations.?label=milestone: VMS23 100.done.100", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS23 100: done.100 = true" },
+  { json = "observations.?label=milestone: VMS29 10.stage", equals = 10, label = "kings-gambit-hsu-fight, milestone: VMS29 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS29 10.done.10", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS29 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS29 10.objective.10.displayed", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS29 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS29 20.stage", equals = 20, label = "kings-gambit-hsu-fight, milestone: VMS29 20: stage = 20" },
+  { json = "observations.?label=milestone: VMS29 20.done.20", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS29 20: done.20 = true" },
+  { json = "observations.?label=milestone: VMS29 20.objective.50.displayed", equals = true, label = "kings-gambit-hsu-fight, milestone: VMS29 20: objective.50.displayed = true" },
+  { json = "observations.?label=final: VMS29 121.stage", equals = 121, label = "kings-gambit-hsu-fight, final: VMS29 121: stage = 121" },
+  { json = "observations.?label=final: VMS29 121.done.121", equals = true, label = "kings-gambit-hsu-fight, final: VMS29 121: done.121 = true" },
+  { json = "observations.?label=final: VMS29 121.objective.91.completed", equals = true, label = "kings-gambit-hsu-fight, final: VMS29 121: objective.91.completed = true" },
+  { json = "steps.*.error", count = 0, label = "kings-gambit-hsu-fight: no step fails" },
+  { json = "given_errors.*", count = 0, label = "kings-gambit-hsu-fight: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
+name = "mq-kings-gambit-hsu-peace"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/kings-gambit-hsu-peace.actions.json: Kings' Gambit (VMS29), the King refuses, takes Hsu's offer, Pacer breaks away and dies (VMS29 20, 120)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/kings-gambit-hsu-peace.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/kings-gambit-hsu-peace.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "kings-gambit-hsu-peace, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS23 10.stage", equals = 10, label = "kings-gambit-hsu-peace, milestone: VMS23 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS23 10.done.5", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS23 10: done.5 = true" },
+  { json = "observations.?label=milestone: VMS23 10.done.10", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS23 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS23 10.objective.10.displayed", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS23 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS23 100.completed", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS23 100: completed = true" },
+  { json = "observations.?label=milestone: VMS23 100.stage", equals = 100, label = "kings-gambit-hsu-peace, milestone: VMS23 100: stage = 100" },
+  { json = "observations.?label=milestone: VMS23 100.done.100", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS23 100: done.100 = true" },
+  { json = "observations.?label=milestone: VMS29 10.stage", equals = 10, label = "kings-gambit-hsu-peace, milestone: VMS29 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS29 10.done.10", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS29 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS29 10.objective.10.displayed", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS29 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS29 20.stage", equals = 20, label = "kings-gambit-hsu-peace, milestone: VMS29 20: stage = 20" },
+  { json = "observations.?label=milestone: VMS29 20.done.20", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS29 20: done.20 = true" },
+  { json = "observations.?label=milestone: VMS29 20.objective.50.displayed", equals = true, label = "kings-gambit-hsu-peace, milestone: VMS29 20: objective.50.displayed = true" },
+  { json = "observations.?label=final: VMS29 120.stage", equals = 120, label = "kings-gambit-hsu-peace, final: VMS29 120: stage = 120" },
+  { json = "observations.?label=final: VMS29 120.done.120", equals = true, label = "kings-gambit-hsu-peace, final: VMS29 120: done.120 = true" },
+  { json = "observations.?label=final: VMS29 120.objective.90.completed", equals = true, label = "kings-gambit-hsu-peace, final: VMS29 120: objective.90.completed = true" },
+  { json = "steps.*.error", count = 0, label = "kings-gambit-hsu-peace: no step fails" },
+  { json = "given_errors.*", count = 0, label = "kings-gambit-hsu-peace: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
+name = "mq-kings-gambit-moore"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/kings-gambit-moore.actions.json: Kings' Gambit (VMS29), the King refuses, Moore's squad fights the Kings (VMS29 20, 111)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/kings-gambit-moore.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/kings-gambit-moore.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "kings-gambit-moore, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "kings-gambit-moore, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "kings-gambit-moore, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS23 10.stage", equals = 10, label = "kings-gambit-moore, milestone: VMS23 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS23 10.done.5", equals = true, label = "kings-gambit-moore, milestone: VMS23 10: done.5 = true" },
+  { json = "observations.?label=milestone: VMS23 10.done.10", equals = true, label = "kings-gambit-moore, milestone: VMS23 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS23 10.objective.10.displayed", equals = true, label = "kings-gambit-moore, milestone: VMS23 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS23 100.completed", equals = true, label = "kings-gambit-moore, milestone: VMS23 100: completed = true" },
+  { json = "observations.?label=milestone: VMS23 100.stage", equals = 100, label = "kings-gambit-moore, milestone: VMS23 100: stage = 100" },
+  { json = "observations.?label=milestone: VMS23 100.done.100", equals = true, label = "kings-gambit-moore, milestone: VMS23 100: done.100 = true" },
+  { json = "observations.?label=milestone: VMS29 10.stage", equals = 10, label = "kings-gambit-moore, milestone: VMS29 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS29 10.done.10", equals = true, label = "kings-gambit-moore, milestone: VMS29 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS29 10.objective.10.displayed", equals = true, label = "kings-gambit-moore, milestone: VMS29 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS29 20.stage", equals = 20, label = "kings-gambit-moore, milestone: VMS29 20: stage = 20" },
+  { json = "observations.?label=milestone: VMS29 20.done.20", equals = true, label = "kings-gambit-moore, milestone: VMS29 20: done.20 = true" },
+  { json = "observations.?label=milestone: VMS29 20.objective.50.displayed", equals = true, label = "kings-gambit-moore, milestone: VMS29 20: objective.50.displayed = true" },
+  { json = "observations.?label=final: VMS29 111.stage", equals = 111, label = "kings-gambit-moore, final: VMS29 111: stage = 111" },
+  { json = "observations.?label=final: VMS29 111.done.111", equals = true, label = "kings-gambit-moore, final: VMS29 111: done.111 = true" },
+  { json = "observations.?label=final: VMS29 111.objective.81.completed", equals = true, label = "kings-gambit-moore, final: VMS29 111: objective.81.completed = true" },
+  { json = "steps.*.error", count = 0, label = "kings-gambit-moore: no step fails" },
+  { json = "given_errors.*", count = 0, label = "kings-gambit-moore: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
+name = "mq-kings-gambit-pacer-killed"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/kings-gambit-pacer-killed.actions.json: Kings' Gambit (VMS29), Pacer killed outright, Crocker's reward argument (VMS29 102)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/kings-gambit-pacer-killed.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/kings-gambit-pacer-killed.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "kings-gambit-pacer-killed, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "kings-gambit-pacer-killed, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "kings-gambit-pacer-killed, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS23 10.stage", equals = 10, label = "kings-gambit-pacer-killed, milestone: VMS23 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS23 10.done.5", equals = true, label = "kings-gambit-pacer-killed, milestone: VMS23 10: done.5 = true" },
+  { json = "observations.?label=milestone: VMS23 10.done.10", equals = true, label = "kings-gambit-pacer-killed, milestone: VMS23 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS23 10.objective.10.displayed", equals = true, label = "kings-gambit-pacer-killed, milestone: VMS23 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS23 100.completed", equals = true, label = "kings-gambit-pacer-killed, milestone: VMS23 100: completed = true" },
+  { json = "observations.?label=milestone: VMS23 100.stage", equals = 100, label = "kings-gambit-pacer-killed, milestone: VMS23 100: stage = 100" },
+  { json = "observations.?label=milestone: VMS23 100.done.100", equals = true, label = "kings-gambit-pacer-killed, milestone: VMS23 100: done.100 = true" },
+  { json = "observations.?label=milestone: VMS29 10.stage", equals = 10, label = "kings-gambit-pacer-killed, milestone: VMS29 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS29 10.done.10", equals = true, label = "kings-gambit-pacer-killed, milestone: VMS29 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS29 10.objective.10.displayed", equals = true, label = "kings-gambit-pacer-killed, milestone: VMS29 10: objective.10.displayed = true" },
+  { json = "observations.?label=final: VMS29 102.stage", equals = 102, label = "kings-gambit-pacer-killed, final: VMS29 102: stage = 102" },
+  { json = "observations.?label=final: VMS29 102.done.102", equals = true, label = "kings-gambit-pacer-killed, final: VMS29 102: done.102 = true" },
+  { json = "observations.?label=final: VMS29 102.objective.20.completed", equals = true, label = "kings-gambit-pacer-killed, final: VMS29 102: objective.20.completed = true" },
+  { json = "steps.*.error", count = 0, label = "kings-gambit-pacer-killed: no step fails" },
+  { json = "given_errors.*", count = 0, label = "kings-gambit-pacer-killed: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
+name = "mq-kings-gambit-psycho"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/kings-gambit-psycho.actions.json: Kings' Gambit (VMS29), Pacer's jet spiked with Psycho (VMS29 101)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/kings-gambit-psycho.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/kings-gambit-psycho.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "kings-gambit-psycho, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "kings-gambit-psycho, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "kings-gambit-psycho, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS23 10.stage", equals = 10, label = "kings-gambit-psycho, milestone: VMS23 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS23 10.done.5", equals = true, label = "kings-gambit-psycho, milestone: VMS23 10: done.5 = true" },
+  { json = "observations.?label=milestone: VMS23 10.done.10", equals = true, label = "kings-gambit-psycho, milestone: VMS23 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS23 10.objective.10.displayed", equals = true, label = "kings-gambit-psycho, milestone: VMS23 10: objective.10.displayed = true" },
+  { json = "observations.?label=milestone: VMS23 100.completed", equals = true, label = "kings-gambit-psycho, milestone: VMS23 100: completed = true" },
+  { json = "observations.?label=milestone: VMS23 100.stage", equals = 100, label = "kings-gambit-psycho, milestone: VMS23 100: stage = 100" },
+  { json = "observations.?label=milestone: VMS23 100.done.100", equals = true, label = "kings-gambit-psycho, milestone: VMS23 100: done.100 = true" },
+  { json = "observations.?label=milestone: VMS29 10.stage", equals = 10, label = "kings-gambit-psycho, milestone: VMS29 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS29 10.done.10", equals = true, label = "kings-gambit-psycho, milestone: VMS29 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS29 10.objective.10.displayed", equals = true, label = "kings-gambit-psycho, milestone: VMS29 10: objective.10.displayed = true" },
+  { json = "observations.?label=final: VMS29 101.stage", equals = 101, label = "kings-gambit-psycho, final: VMS29 101: stage = 101" },
+  { json = "observations.?label=final: VMS29 101.done.101", equals = true, label = "kings-gambit-psycho, final: VMS29 101: done.101 = true" },
+  { json = "observations.?label=final: VMS29 101.objective.20.completed", equals = true, label = "kings-gambit-psycho, final: VMS29 101: objective.20.completed = true" },
+  { json = "steps.*.error", count = 0, label = "kings-gambit-psycho: no step fails" },
+  { json = "given_errors.*", count = 0, label = "kings-gambit-psycho: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
+name = "mq-things-that-go-boom-crocker-killed"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/things-that-go-boom-crocker-killed.actions.json: Things That Go Boom (VMS23), Crocker killed while it runs (VMS23 200)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/things-that-go-boom-crocker-killed.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/things-that-go-boom-crocker-killed.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "things-that-go-boom-crocker-killed, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "things-that-go-boom-crocker-killed, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "things-that-go-boom-crocker-killed, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS23 10.stage", equals = 10, label = "things-that-go-boom-crocker-killed, milestone: VMS23 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS23 10.done.5", equals = true, label = "things-that-go-boom-crocker-killed, milestone: VMS23 10: done.5 = true" },
+  { json = "observations.?label=milestone: VMS23 10.done.10", equals = true, label = "things-that-go-boom-crocker-killed, milestone: VMS23 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS23 10.objective.10.displayed", equals = true, label = "things-that-go-boom-crocker-killed, milestone: VMS23 10: objective.10.displayed = true" },
+  { json = "observations.?label=final: VMS23 200.stage", equals = 200, label = "things-that-go-boom-crocker-killed, final: VMS23 200: stage = 200" },
+  { json = "observations.?label=final: VMS23 200.done.200", equals = true, label = "things-that-go-boom-crocker-killed, final: VMS23 200: done.200 = true" },
+  { json = "steps.*.error", count = 0, label = "things-that-go-boom-crocker-killed: no step fails" },
+  { json = "given_errors.*", count = 0, label = "things-that-go-boom-crocker-killed: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
+name = "mq-things-that-go-boom-no-boomers"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/things-that-go-boom-no-boomers.actions.json: Things That Go Boom (VMS23), Volare! failed first: Crocker gives up on the Boomers (VMS23 102)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/things-that-go-boom-no-boomers.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/things-that-go-boom-no-boomers.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "things-that-go-boom-no-boomers, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "things-that-go-boom-no-boomers, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "things-that-go-boom-no-boomers, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS15 120.stage", equals = 120, label = "things-that-go-boom-no-boomers, milestone: VMS15 120: stage = 120" },
+  { json = "observations.?label=milestone: VMS15 120.done.120", equals = true, label = "things-that-go-boom-no-boomers, milestone: VMS15 120: done.120 = true" },
+  { json = "observations.?label=milestone: VMS23 5.stage", equals = 5, label = "things-that-go-boom-no-boomers, milestone: VMS23 5: stage = 5" },
+  { json = "observations.?label=milestone: VMS23 5.done.5", equals = true, label = "things-that-go-boom-no-boomers, milestone: VMS23 5: done.5 = true" },
+  { json = "observations.?label=final: VMS23 102.completed", equals = true, label = "things-that-go-boom-no-boomers, final: VMS23 102: completed = true" },
+  { json = "observations.?label=final: VMS23 102.stage", equals = 102, label = "things-that-go-boom-no-boomers, final: VMS23 102: stage = 102" },
+  { json = "observations.?label=final: VMS23 102.done.102", equals = true, label = "things-that-go-boom-no-boomers, final: VMS23 102: done.102 = true" },
+  { json = "observations.?label=final: VMS23 102.var.ToldAboutBoomers", equals = 1, label = "things-that-go-boom-no-boomers, final: VMS23 102: var.ToldAboutBoomers = 1" },
+  { json = "steps.*.error", count = 0, label = "things-that-go-boom-no-boomers: no step fails" },
+  { json = "given_errors.*", count = 0, label = "things-that-go-boom-no-boomers: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
+name = "mq-things-that-go-boom-wait"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/things-that-go-boom-wait.actions.json: Things That Go Boom (VMS23), Volare! done but the Boomers not yet asked: Crocker waits (VMS23 40)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/things-that-go-boom-wait.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/things-that-go-boom-wait.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS23 1.running", equals = true, label = "things-that-go-boom-wait, milestone: VMS23 1: running = true" },
+  { json = "observations.?label=milestone: VMS23 1.stage", equals = 1, label = "things-that-go-boom-wait, milestone: VMS23 1: stage = 1" },
+  { json = "observations.?label=milestone: VMS23 1.done.1", equals = true, label = "things-that-go-boom-wait, milestone: VMS23 1: done.1 = true" },
+  { json = "observations.?label=milestone: VMS23 10.stage", equals = 10, label = "things-that-go-boom-wait, milestone: VMS23 10: stage = 10" },
+  { json = "observations.?label=milestone: VMS23 10.done.5", equals = true, label = "things-that-go-boom-wait, milestone: VMS23 10: done.5 = true" },
+  { json = "observations.?label=milestone: VMS23 10.done.10", equals = true, label = "things-that-go-boom-wait, milestone: VMS23 10: done.10 = true" },
+  { json = "observations.?label=milestone: VMS23 10.objective.10.displayed", equals = true, label = "things-that-go-boom-wait, milestone: VMS23 10: objective.10.displayed = true" },
+  { json = "observations.?label=final: VMS23 40.stage", equals = 40, label = "things-that-go-boom-wait, final: VMS23 40: stage = 40" },
+  { json = "observations.?label=final: VMS23 40.done.40", equals = true, label = "things-that-go-boom-wait, final: VMS23 40: done.40 = true" },
+  { json = "observations.?label=final: VMS23 40.objective.10.displayed", equals = true, label = "things-that-go-boom-wait, final: VMS23 40: objective.10.displayed = true" },
+  { json = "steps.*.error", count = 0, label = "things-that-go-boom-wait: no step fails" },
+  { json = "given_errors.*", count = 0, label = "things-that-go-boom-wait: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
+
+[[scenario]]
 name = "mq-tops"
 kind = "tool"
 source = "docs/handoff/mq-walkthrough-2026-10-27.md: the headless main-quest walkthrough crates/fnv-game/walkthrough/tops.actions.json, the Strip gate's credit check (2000 caps unlock the north gate) and Ring-a-Ding-Ding to stage 80 (Benny killed in the presidential suite, the Platinum Chip's OnAdd)"
@@ -11239,6 +11790,28 @@ expect = [
   { json = "observations.?label=final: VHDHouseBattle 100.done.100", equals = true, label = "house, final: VHDHouseBattle 100: done.100 = true" },
 ]
 manual = "on a failure, the chain's notes say what each step stands for; the stalls and their causes are in docs/handoff/mq-walkthrough-2026-10-27.md"
+
+[[scenario]]
+name = "mq-why-cant-we-be-friends-lem-gives-up"
+kind = "tool"
+source = "headless walkthrough crates/fnv-game/walkthrough/why-cant-we-be-friends-lem-gives-up.actions.json: Why Can't We Be Friends? (VMS42), the sulfur cave sealed, Lem talked out of the gang (VMS42 50)"
+areas = ["quests", "scripts", "dialogue"]
+paths = ["crates/fnv-game/walkthrough/why-cant-we-be-friends-lem-gives-up.actions.json", "crates/fnv-game/src/runner.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs"]
+commands = [["script", "run", "{data}", "FalloutNV.esm", "--schema", "schemas/fnv", "--actions", "crates/fnv-game/walkthrough/why-cant-we-be-friends-lem-gives-up.actions.json"]]
+expect = [
+  { json = "observations.?label=milestone: VMS42 11.running", equals = true, label = "why-cant-we-be-friends-lem-gives-up, milestone: VMS42 11: running = true" },
+  { json = "observations.?label=milestone: VMS42 11.stage", equals = 11, label = "why-cant-we-be-friends-lem-gives-up, milestone: VMS42 11: stage = 11" },
+  { json = "observations.?label=milestone: VMS42 11.done.11", equals = true, label = "why-cant-we-be-friends-lem-gives-up, milestone: VMS42 11: done.11 = true" },
+  { json = "observations.?label=milestone: VMS42 11.var.LemGoDestroySulfur", equals = 1, label = "why-cant-we-be-friends-lem-gives-up, milestone: VMS42 11: var.LemGoDestroySulfur = 1" },
+  { json = "observations.?label=milestone: VMS42 cave armed.var.microclineArmedCave", equals = 1, label = "why-cant-we-be-friends-lem-gives-up, milestone: VMS42 cave armed: var.microclineArmedCave = 1" },
+  { json = "observations.?label=milestone: VMS42 cave armed.objective.40.displayed", equals = true, label = "why-cant-we-be-friends-lem-gives-up, milestone: VMS42 cave armed: objective.40.displayed = true" },
+  { json = "observations.?label=final: VMS42 50.stage", equals = 50, label = "why-cant-we-be-friends-lem-gives-up, final: VMS42 50: stage = 50" },
+  { json = "observations.?label=final: VMS42 50.done.50", equals = true, label = "why-cant-we-be-friends-lem-gives-up, final: VMS42 50: done.50 = true" },
+  { json = "observations.?label=final: VMS42 50.var.lemQuestComplete", equals = 1, label = "why-cant-we-be-friends-lem-gives-up, final: VMS42 50: var.lemQuestComplete = 1" },
+  { json = "steps.*.error", count = 0, label = "why-cant-we-be-friends-lem-gives-up: no step fails" },
+  { json = "given_errors.*", count = 0, label = "why-cant-we-be-friends-lem-gives-up: no given fails" },
+]
+manual = "on a failure, the chain's notes say what each step stands for; the stalls are in the stage-coverage report (issue #1115, settable stages not walked)"
 
 [[scenario]]
 name = "mq-yesman"
@@ -16946,6 +17519,45 @@ order = [[
 ]]
 
 [[scenario]]
+name = "tiles-sleep-wait"
+source = "[design] ui-tile-tree.md §6.2 step 3 (T15b, docs/handoff/ui-tile-tree-tasks.md): with [UI] TileMenus=SleepWaitMenu the Wait menu is drawn from the game's SleepWaitMenu tiles (menu 1012 builds it; the model writes its three texts, the Wait button's word and the slider's value), the hand-built menu is not spawned, pointer clicks on the slider's right page area move it six hours at a time to 24, a click at 24 keeps it there, the slider drawn after each click's pulse is the model's value (#1307 review), and W (the file's _PCButton_W, which the hand-built menu has no use for) presses Wait"
+note = "the menu opens at 10 s on one hour; at 1280 x 720 the screen is 1706.7 x 960 interface units, SWM_MainRect centred at 423.3, 280, the slider 112.5, 145 in (640 x 64) with its marker 48 wide at value 0, so x 1100 (y 457) is on the page area right of the marker at values 0, 6 and 12 (marker 48 wide, 592/23 apart from x 535.8), x 1165 on it at 18 (to 24) and on the marker at value 23 (the click at 24) (sleep_wait_menu.xml, scrollbar_horiz.xml); the 24 hours then pass in 12 s"
+areas = ["ui", "wait", "menus"]
+paths = [
+  "engine/nvf-play/src/tiles/wait_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/wait.rs", "engine/nvf-play/src/wait/**",
+  "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "SleepWaitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_WAIT = "10:open", NVF_PLAY_TEST_POINTER = "11:1100:457,11.5:1100:457:click,12:1100:457:click,12.5:1100:457:click,13:1165:457:click,13.5:1165:457:click,14:off", NVF_PLAY_TEST_SHOTS = "14.5:tiles_sleep_wait.png", NVF_PLAY_TEST_KEYS = "15.5:w" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--size", "1280x720"]
+run_seconds = 35
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=SleepWaitMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): SleepWaitMenu drawn from tiles', label = "the switch is read from the test aid" },
+  { re = 'ui: built SleepWaitMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', label = "the open menu builds its file" },
+  { re = 'tiles: SleepWaitMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "the menu's tree draws" },
+  { re = 'tiles: SleepWaitMenu drawn from tiles: "[^"]+", "1 hour \([^"]+\)", "[^"]+", button "Wait", slider 0', label = "the model writes the texts, the verb and the slider" },
+  { text = "tiles: SleepWaitMenu Step(6) on its tiles", min = 3, label = "clicks on the right page area page the slider" },
+  { re = 'tiles: SleepWaitMenu (Step\(-?\d+\)|Hours\(\d+\)) on its tiles', count = 5, label = "five clicks on the slider, the last at 24" },
+  { re = 'tiles: SleepWaitMenu drawn from tiles: "[^"]+", "7 hours \([^"]+\)", "[^"]+", button "Wait", slider 6', label = "the slider follows" },
+  { re = 'tiles: SleepWaitMenu drawn from tiles: "[^"]+", "24 hours \([^"]+\)", "[^"]+", button "Wait", slider 23', label = "the slider reaches 24 hours" },
+  { text = "tiles: SleepWaitMenu slider drawn at 6", label = "the slider is drawn at the model's value after the pulse" },
+  { text = "tiles: SleepWaitMenu slider drawn at 23", label = "and at 24 hours, after the click there" },
+  { re = 'tiles: SleepWaitMenu slider drawn at \S+, not the \S+ written', count = 0, label = "the slider never draws the file's own count of the clicks (#1307 review)" },
+  { text = "tiles: SleepWaitMenu Accept on its tiles", count = 1, label = "W presses the file's Wait button" },
+  "wait menu: waiting 24 hour(s)",
+  { re = 'ui: dropped SleepWaitMenu', label = "the closed menu drops its tiles" },
+]
+order = [[
+  "wait menu: open",
+  "tiles: SleepWaitMenu Step(6) on its tiles",
+  "tiles: SleepWaitMenu slider drawn at 23",
+  "tiles: SleepWaitMenu Accept on its tiles",
+  "wait menu: waiting 24 hour(s)",
+  "ui: dropped SleepWaitMenu",
+]]
+
+[[scenario]]
 name = "tiles-quantity"
 source = "[design] ui-tile-tree.md §6.2 step 3 (T15a, docs/handoff/ui-tile-tree-tasks.md): with [UI] TileMenus=QuantityMenu the \"How many?\" prompt over the Pip-Boy is drawn from the game's QuantityMenu tiles (Game::ui_prompt builds it; the model writes the meter's user0 and user2, the file works out the tiled fill and the amount), the hand-built prompt is not spawned, and pointer clicks on the decrease arrow and on OK drop one fewer than the stack"
 note = "the drop aid asks at 21 s for the 20 rounds given (the prompt opens at the whole stack, and `ask` holds it open until answered); the shot at 23 s; at 1280 x 800 the decrease arrow stands at 550-567 x 452-487 and OK ends at x 1085, y 492-543 (QM_Background centred by screen(), QM_MainRect 22, 42 in; quantity_menu.xml)"
@@ -17227,6 +17839,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "pipboy-glove-first-person"
+source = "#1366 (docs/spec-notes/actors.md §2.3): the owner saw the Pip-Boy Glove and the outfit's left hand both drawn in first person with a rifle; the first-person rig takes the parts #1067 chose, so one left hand is drawn there too"
+note = "the player wears the Vault 21 Jumpsuit (VaultSuit21 0x00104184) and draws the Varmint Rifle (0x0007EA24) in first person in Goodsprings; a frame at 8 s (one left hand, the Pip-Boy Glove's)"
+areas = ["actors", "player-body"]
+paths = ["crates/fnv-actor/src/resolve.rs", "crates/fnv-actor/src/first_person.rs"]
+env = { RUST_LOG = "info,nvforever::player_body=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_EQUIP = "00104184,0007EA24", NVF_PLAY_TEST_CONTROL = "4:weapon", NVF_PLAY_TEST_SHOTS = "8:pipboy_glove_first_person.png" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm"]
+run_seconds = 10
+expect = [
+  { re = 'player First rig part armor \S+ \S*lefthandpipboyglove1st\.nif', label = "the arms rig draws the Pip-Boy Glove's first-person hand" },
+  { re = 'player First rig part \S+ \S+ \S*\\(female)?lefthand(1st)?\.nif', count = 0, label = "and no bare left hand beside it" },
+]
+
+[[scenario]]
 name = "pipboy-glove-leather"
 source = "#1067 (docs/spec-notes/actors.md §2.3): an outfit's glove addon (ArmorLeather's ArmorLeatherList: LeatherArmorGloveR, LeatherArmorGloveL) was drawn together with the always-worn Pip-Boy Glove's hand; a worn item whose every slot another item's addons take is now left out"
 note = "the player wears Leather Armor (ArmorLeather 0x00020423) in Goodsprings; third person, the camera turned to the player's front at 6 s, a frame at 7 s (one left hand, the leather glove)"
@@ -17416,4 +18042,41 @@ order = [[
 expect = [
   { text = "MannyVargasREF: put at its package", count = 0, label = "Manny Vargas, in view before the trip, is not moved" },
   { re = 'put at its package.s place on arrival .* units from \([^)]*\) in WastelandNV', count = 0, label = "nobody in Novac's street is put anywhere (residents in the rooms behind its doors may be: they are near and unseen)" },
+]
+
+[[scenario]]
+name = "pause-mods-page"
+source = "issue #976 T11 (engine/nvf-play/src/tiles/mods.rs, pause.rs; docs/handoff/ui-tile-tree-tasks.md T11, ui-tile-tree.md §7): with [UI] TileMenus=StartMenu and a mod's tiles in StartMenu, the pause menu has a Mods entry; its page runs the start menu's MenuMode 1013 blocks each frame, in the played world, and Back closes it"
+note = "needs MCM in Data: its loose menu files (menus/options/start_menu.xml and menus/prefabs/MCM) give StartMenu its mod tiles, and its plugin (The Mod Configuration Menu.esp, loaded with --plugins) has the blocks. MCM's quest sets iInstallCheck to 1 in GameMode at the start and its MenuMode 1013 block sets it to 0, so the variable read before and after the page shows the block ran. MCM's own page stays hidden (its script waits for the original's code-filled pause column); pause_mods.png shows the page"
+areas = ["ui", "menus", "scripts"]
+paths = ["engine/nvf-play/src/tiles/mods.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/tiles/input.rs", "crates/fnv-game/src/game.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "StartMenu", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_PAUSE = "16:28", NVF_PLAY_TEST_PAUSE_MENU = "17:mods,18.5:shot,22:back", NVF_PLAY_TEST_CONSOLE = "10:PrintC \"nvf mcm install check %g\" MCM.iInstallCheck;10.5:close;29:PrintC \"nvf mcm install check %g\" MCM.iInstallCheck;29.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm", "GunRunnersArsenal.esm", "ClassicPack.esm", "MercenaryPack.esm", "TribalPack.esm", "CaravanPack.esm", "The Mod Configuration Menu.esp"]
+run_seconds = 32
+expect = [
+  "tiles: a mod's tiles in StartMenu: the pause menu has a Mods entry",
+  "pause menu: mods page",
+  "scripts: MenuMode 1013 blocks run under the pause menu's Mods page",
+  "pause menu: mods page closed",
+  { re = "scripts: the Mods page closed after [1-9][0-9]* MenuMode frames", label = "the start menu's MenuMode blocks ran each frame of the page" },
+  { text = "nvf mcm install check 1", min = 1, label = "before the page MCM's GameMode block has set iInstallCheck" },
+  { text = "nvf mcm install check 0", min = 1, label = "MCM's MenuMode 1013 block ran under the page, in the played world, and cleared it" },
+]
+order = [["nvf mcm install check 1", "tiles: a mod's tiles in StartMenu", "pause menu: mods page", "scripts: MenuMode 1013 blocks run", "pause menu: mods page closed", "nvf mcm install check 0"]]
+
+[[scenario]]
+name = "script-move-dynamic-clutter"
+source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
+note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"
+areas = ["physics", "console", "scripts"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/dropped.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.placeatme 0010A1F6 1;8.5:ff000000.getpos x;11:ff000000.setpos x -68150;11.5:ff000000.getpos x;13:ff000000.getpos x;13.5:ff000000.getpos z;14:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 17
+expect = [
+  { re = 'console: PlaceAtMe on player >> 0xFF000000', label = "the bottle is placed" },
+  { re = 'collision of dropped 0xFF000000 added: .*\(dynamic\)', label = "its collision is one dynamic body" },
+  { re = 'collision of 0xFF000000 built again where a script moved it', label = "the move rebuilds its collision at the new place" },
+  { re = 'console: GetPos on 0xFF000000 >> -683\d\d\.', count = 1, label = "before the move it lies at the player" },
+  { re = 'console: GetPos on 0xFF000000 >> -6815\d\.', min = 2, label = "the move sticks: x reads the new value half a second and two seconds later (it read the old x again before #1311)" },
 ]

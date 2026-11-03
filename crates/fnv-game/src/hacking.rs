@@ -19,7 +19,7 @@ pub const ROWS: usize = 17;
 pub const ROW_CHARS: usize = 12;
 pub const DUMP_CHARS: usize = COLUMNS * ROWS * ROW_CHARS;
 
-/// Attempts the player starts with [observed: "4 ATTEMPT(S) LEFT", hacking.md §2].
+/// Attempts the player starts with [observed: four on the attempts line, hacking.md §2].
 pub const ATTEMPTS: u8 = 4;
 
 /// The symbols between the words: every character other than a letter on the owner's
@@ -29,9 +29,31 @@ pub const FILLER: &[u8] = b"!\"#$%'()*+,-./:;<=>?@[\\]^_{|}";
 /// The character a removed dud's letters become [hypothesis, hacking.md §5].
 pub const REMOVED: u8 = b'.';
 
-/// Characters of one log line after its `>` [observed: "Please wait while system is
-/// accessed." is shown as "Please wait", "while system", "is accessed.", hacking.md §2].
+/// Characters of one log line after its `>` [observed: the wait message is shown on
+/// three lines of at most 12, broken between words, hacking.md §2].
 pub const LOG_CHARS: usize = 12;
+
+/// The log's words. None is in the plugins or the menu files, so they are NVForever's
+/// own (LEGAL.md, hacking.md §8); only where each appears follows the original.
+pub mod words {
+    /// After the password.
+    pub const GRANTED: &str = "Accepted.";
+    /// After [`GRANTED`], while the terminal's menu comes up.
+    pub const WAIT: &str = "Opening the terminal...";
+    /// After a wrong word.
+    pub const DENIED: &str = "Not accepted";
+    /// When a bracket pair gives the attempts back.
+    pub const REPLENISHED: &str = "Tries restored.";
+    /// When a bracket pair takes a dud out [hypothesis, hacking.md §5].
+    pub const DUD_REMOVED: &str = "Dud removed.";
+    /// A symbol that is neither a word nor a bracket pair [hypothesis, hacking.md §5].
+    pub const ERROR: &str = "Error";
+
+    /// After [`DENIED`]: how many letters of the guess stand where the password has them.
+    pub fn likeness(n: usize, len: usize) -> String {
+        format!("{n} of {len} right")
+    }
+}
 
 /// The game's word list, by length: upper-case words of letters only.
 #[derive(Debug, Clone, Default)]
@@ -178,7 +200,7 @@ pub fn word_count(science: f32, difficulty: Difficulty, s: &Settings) -> u32 {
 }
 
 /// Letters of `guess` that stand in `password` at the same place [observed: LOOTING
-/// against MEETING is "4/7 correct.", the shared "TING", hacking.md §2].
+/// against MEETING shows a likeness of 4 of 7, the shared "TING", hacking.md §2].
 pub fn likeness(guess: &str, password: &str) -> usize {
     guess.bytes().zip(password.bytes()).filter(|(a, b)| a == b).count()
 }
@@ -406,15 +428,15 @@ impl Puzzle {
         match t {
             Target::Word(w) if w == self.password => {
                 self.state = State::Granted;
-                self.say("Exact match!");
-                self.say("Please wait while system is accessed.");
+                self.say(words::GRANTED);
+                self.say(words::WAIT);
                 Outcome::Granted
             }
             Target::Word(w) => {
                 let n = likeness(&self.words[w].text, self.password());
                 self.attempts -= 1;
-                self.say("Entry denied");
-                self.say(&format!("{n}/{} correct.", self.password().len()));
+                self.say(words::DENIED);
+                self.say(&words::likeness(n, self.password().len()));
                 if self.attempts == 0 {
                     self.state = State::LockedOut;
                     Outcome::LockedOut
@@ -429,7 +451,7 @@ impl Puzzle {
                 // the others remove a dud, or give the attempts back once no dud is left.
                 if duds.is_empty() || below(rng, 5) == 0 {
                     self.attempts = ATTEMPTS;
-                    self.say("Allowance replenished.");
+                    self.say(words::REPLENISHED);
                     Outcome::Replenished
                 } else {
                     let w = duds[below(rng, duds.len())];
@@ -437,12 +459,12 @@ impl Puzzle {
                     for i in self.words[w].range() {
                         self.chars[i] = REMOVED;
                     }
-                    self.say("Dud removed.");
+                    self.say(words::DUD_REMOVED);
                     Outcome::DudRemoved
                 }
             }
             Target::Char(_) => {
-                self.say("Error");
+                self.say(words::ERROR);
                 Outcome::Error
             }
         }
@@ -578,9 +600,10 @@ mod tests {
 
     #[test]
     fn log_lines_wrap_as_the_screenshot() {
-        assert_eq!(log_lines("Please wait while system is accessed."), vec![">Please wait", ">while system", ">is accessed."]);
-        assert_eq!(log_lines("4/7 correct."), vec![">4/7 correct."]);
-        assert_eq!(log_lines("Allowance replenished."), vec![">Allowance", ">replenished."]);
+        assert_eq!(log_lines(words::WAIT), vec![">Opening the", ">terminal..."]);
+        assert_eq!(log_lines(&words::likeness(4, 7)), vec![">4 of 7 right"]);
+        assert_eq!(log_lines(words::DENIED), vec![">Not accepted"]);
+        assert_eq!(log_lines(words::REPLENISHED), vec![">Tries", ">restored."]);
     }
 
     #[test]
@@ -661,7 +684,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         assert_eq!(p.choose(14, &mut rng), Outcome::Denied { likeness: 4 });
         assert_eq!(p.attempts, 3);
-        assert_eq!(p.log, vec![">LOOTING", ">Entry denied", ">4/7 correct."]);
+        assert_eq!(p.log, vec![">LOOTING", ">Not accepted", ">4 of 7 right"]);
         // A symbol: an error, no attempt lost.
         assert_eq!(p.choose(0, &mut rng), Outcome::Error);
         assert_eq!(p.attempts, 3);
@@ -674,7 +697,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         assert_eq!(p.choose(30, &mut rng), Outcome::Granted);
         assert_eq!(p.state, State::Granted);
-        assert_eq!(p.log, vec![">MEETING", ">Exact match!", ">Please wait", ">while system", ">is accessed."]);
+        assert_eq!(p.log, vec![">MEETING", ">Accepted.", ">Opening the", ">terminal..."]);
         assert_eq!(p.choose(14, &mut rng), Outcome::Ignored);
     }
 
@@ -711,7 +734,7 @@ mod tests {
                 Outcome::Replenished => {
                     seen_refill = true;
                     assert_eq!(p.attempts, ATTEMPTS);
-                    assert_eq!(&p.log[1..], &[">Allowance".to_string(), ">replenished.".into()]);
+                    assert_eq!(&p.log[1..], &[">Tries".to_string(), ">restored.".into()]);
                 }
                 o => panic!("{o:?}"),
             }

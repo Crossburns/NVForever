@@ -274,6 +274,7 @@ fn a_dropped_modded_weapon_draws_its_mods_model() {
         damage: 0,
         projectile: None,
         explosion_damage: 0.0,
+        skill: None,
         embedded: false,
         non_playable: false,
         not_for_npcs: false,

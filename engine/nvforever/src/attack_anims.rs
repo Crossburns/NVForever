@@ -560,6 +560,7 @@ impl Plugin for AttackAnimsPlugin {
             .init_resource::<AttackClips>()
             .init_resource::<AttackTravel>()
             .add_systems(Update, (start.after(crate::npc_combat::fight).after(crate::use_weapon::shoot), carry.after(crate::locomotion::drive)))
+            .add_systems(PostUpdate, grip_check.after(TransformSystems::Propagate))
             .add_systems(Last, report);
     }
 }
@@ -896,7 +897,7 @@ fn start(
             // The opening clips are named `<stem>reloadxstart.kf` [observed: base archives].
             let opening = a.kind == Move::Reload && name.to_ascii_lowercase().ends_with("start.kf");
             if st.logged.insert(path.to_ascii_lowercase()) {
-                info!("attack anims: {id:08X} plays {path} ({len:.2} s{})", hit_time(&clip).map_or(String::new(), |h| format!(", hit at {h:.2} s")));
+                info!("attack anims: {id:08X} plays {path} ({len:.2} s{}){}", hit_time(&clip).map_or(String::new(), |h| format!(", hit at {h:.2} s")), if new_pose.crouched { ", crouched" } else { "" });
             }
             *st.clips.entry(name).or_default() += 1;
             let repeat = repeat_of(&clip).filter(|_| !a.melee && !reloads);
@@ -1060,6 +1061,36 @@ fn clamp_lunge(mut d: Vec2, room: Option<f32>, k: f32, stopped: &mut bool, last:
     }
     *last = d.y.max(0.0) * k;
     d
+}
+
+/// How often [`grip_check`] logs an actor while it shoots (seconds).
+const GRIP_LOG_EVERY: f32 = 0.5;
+
+/// While a shot's clip plays with the weapon in the hand, every [`GRIP_LOG_EVERY`]
+/// seconds: how far the right hand is from the `Weapon` node, and the left hand from
+/// where the stance's equip clip puts it on the weapon (`weapons::Stance::grip`), as
+/// shown (the propagated transforms). A flamer held below the hands (#1309) or turned in
+/// the hand (#322) moves the left hand off its grip. Reloads move the left hand to the
+/// ammunition and are left out.
+fn grip_check(time: Res<Time>, mut last: Local<HashMap<u32, f32>>, rigs: Query<(&ActorRig, &WeaponHold, &CombatPose)>, nodes: Query<&GlobalTransform>) {
+    let now = time.elapsed_secs();
+    for (rig, hold, pose) in &rigs {
+        let Some(a) = pose.attack.as_ref().filter(|a| !a.reload && !a.melee && a.t > 0.1) else { continue };
+        let st = &hold.stance;
+        let crouched = pose.crouched || hold.crouched;
+        let (Some(grip), Some(&right), Some(&left)) = (st.grip_for(crouched), st.bones.get(&st.drawn), rig.skel.by_name.get(crate::weapons::LEFT_HAND)) else { continue };
+        if !hold.in_hand() || last.get(&rig.reference).is_some_and(|&t| now - t < GRIP_LOG_EVERY) {
+            continue;
+        }
+        let at = |i: usize| rig.nodes.get(i).and_then(|&e| nodes.get(e).ok()).map(|g| g.affine());
+        let (Some(w), Some(r), Some(l)) = (at(st.weapon_node), at(right), at(left)) else { continue };
+        // In the skeleton's units: the actor's scale divided out.
+        let scale = w.matrix3.x_axis.length().max(1e-6);
+        let r_off = w.translation.distance(r.translation) / scale;
+        let l_off = w.inverse().transform_point3a(l.translation).distance(grip.into());
+        last.insert(rig.reference, now);
+        info!("weapon grip: {:08X} {} at {:.2} s{}: right hand {r_off:.1} units from the Weapon node, left hand {l_off:.1} units from its grip", rig.reference, a.clip.clip.name, a.t, if crouched { ", crouched" } else { "" });
+    }
 }
 
 pub fn drawn(hold: Option<&WeaponHold>) -> bool {

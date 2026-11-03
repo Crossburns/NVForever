@@ -45,6 +45,10 @@
 //! and height, 0 to 1), `press` and `release` are its left button; they go the way the
 //! real pointer does (Bevy's UI finds what is under it).
 //! At exit, when the menu was opened at all: "wait summary: …".
+//!
+//! With `[UI] TileMenus=SleepWaitMenu` (T15b) the menu is drawn from the game's
+//! `menus\sleep_wait_menu.xml` (`crate::tiles::wait_menu`): the hand-built drawing below
+//! is not spawned, and its keys and the mouse wheel stay the menu's.
 
 pub mod model;
 
@@ -957,8 +961,18 @@ fn draw(
         Query<(&mut Glyphs, &WaitButton, &PointerState)>,
     )>,
     mut marker: Query<&mut Node, With<Marker>>,
+    (tiles, script): (Option<Res<crate::tiles::vanilla::TileMenus>>, Option<Res<ScriptState>>),
 ) {
     let Some(m) = menu.0.as_ref() else { return };
+    // T15b: with `[UI] TileMenus=SleepWaitMenu` the menu is drawn from its file
+    // (`crate::tiles::wait_menu`); the hand-built one is not spawned, or goes.
+    let tiled = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| crate::tiles::wait_menu::tiled(tiles.as_ref().is_some_and(|t| t.sleep_wait), &rt.game));
+    if tiled {
+        for e in &roots {
+            commands.entity(e).despawn();
+        }
+        return;
+    }
     if roots.is_empty() {
         spawn_menu(&mut commands);
         // Filled in from the next frame on, when the texts exist.

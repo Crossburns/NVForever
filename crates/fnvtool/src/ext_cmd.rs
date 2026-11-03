@@ -90,6 +90,11 @@ pub enum ExtCmd {
         /// start where the oracle's save stands.
         #[arg(long)]
         start_cell: Option<String>,
+        /// Start from the original game's save (`.fos`, only read): its globals, quests,
+        /// the player's SPECIAL, skills, inventory and place (fnv_save::fos). Its place
+        /// replaces `--start-cell`. What it could not carry over is listed under `save`.
+        #[arg(long)]
+        save: Option<PathBuf>,
         /// Also write the run's whole trace (fnv.script.trace) to this file, for debugging
         /// a row.
         #[arg(long)]
@@ -165,7 +170,7 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             doc["runs"] = json!(runs);
             Ok(doc)
         }
-        ExtCmd::Queries { lo, schema, functions, steps, start_cell, trace, ini, config } => {
+        ExtCmd::Queries { lo, schema, functions, steps, start_cell, save, trace, ini, config } => {
             // Mods' files as `script run` sees them: the Data folder (and its archives)
             // read-only, `--config` for Data\Config; nothing is written to disk.
             let vfs = std::sync::Arc::new(fnv_vfs::Vfs::open_for_plugins(&lo.data_dir, &lo.plugins).ok());
@@ -190,7 +195,12 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
             let jtext = std::fs::read_to_string(&steps).with_context(|| steps.display().to_string())?;
             let job: Value = serde_json::from_str(&jtext).with_context(|| steps.display().to_string())?;
-            let (set, input) = query_input(&job, start_cell.as_deref())?;
+            let fos = match &save {
+                Some(p) => Some(fnv_save::fos::Fos::parse(&std::fs::read(p).with_context(|| p.display().to_string())?).with_context(|| p.display().to_string())?),
+                None => None,
+            };
+            let placed = fos.as_ref().and_then(|f| f.player().ok()).is_some_and(|p| p.place.is_some());
+            let (set, mut input) = query_input(&job, if placed { None } else { start_cell.as_deref() })?;
             let ftext = std::fs::read_to_string(&fp).with_context(|| fp.display().to_string())?;
             let fjson: Value = serde_json::from_str(&ftext).with_context(|| fp.display().to_string())?;
             let table = FunctionTable::load(&fp).with_context(|| fp.display().to_string())?;
@@ -203,13 +213,25 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             for p in &ini {
                 data.ini_texts.push(std::fs::read_to_string(p).with_context(|| p.display().to_string())?);
             }
+            let mut save_notes = None;
+            if let Some(fos) = &fos {
+                let (given, notes) = crate::ext_save::save_given(fos, &crate::ext_save::Loaded { data: &data, forms: &forms }, &lo.plugins)?;
+                input["given"] = json!(given);
+                input["new_game"] = json!(true);
+                save_notes = Some(notes);
+            }
             let input: fnv_game::runner::Input = serde_json::from_value(input).context("query actions")?;
             let run = fnv_game::runner::run(&data, &forms, &refs, &input).map_err(anyhow::Error::msg)?;
             if let Some(path) = trace {
                 fnv_install::guard_write(&path, None)?;
                 std::fs::write(&path, serde_json::to_string(&run)?).with_context(|| path.display().to_string())?;
             }
-            Ok(queries_doc(&set, &run))
+            let mut doc = queries_doc(&set, &run);
+            if let Some(mut notes) = save_notes {
+                notes["given_errors"] = run["given_errors"].clone();
+                doc["save"] = notes;
+            }
+            Ok(doc)
         }
         ExtCmd::Units { lo, schema, functions, dump, plugin, all } => {
             let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));

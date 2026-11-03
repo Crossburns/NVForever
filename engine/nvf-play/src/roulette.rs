@@ -306,7 +306,7 @@ fn run_aid(
                 rt.game.roulette_requests.push(rules::RouletteRequest { casino: FormId(c), min_bet: 1, max_bet: 200, max_winnings: 0 });
             }
             AidStep::Chips(n, c) => {
-                let chip = script.as_ref().and_then(|s| s.rt.as_ref()).and_then(|rt| rt.game.data.casinos.get(&FormId(c))).and_then(|d| d.chip);
+                let chip = script.as_ref().and_then(|s| s.rt.as_ref()).and_then(|rt| fnv_game::casino::chip(&rt.game, FormId(c)));
                 match chip {
                     Some(chip) if n > 0 => match sim.world.add_item(FormId::PLAYER_REF, chip, n as i32) {
                         Ok(_) => info!("roulette: the player is given {n} chips {chip} ({} carried)", carried(&sim, chip)),
@@ -366,7 +366,9 @@ fn open(
         return;
     };
     let max = casino::max_winnings(&rt.game, asked.casino, asked.max_winnings);
-    let chips = def.chip.map_or(0, |c| carried(&sim, c));
+    // A script's SetCasinoChip first (`fnv_game::casino::chip`).
+    let def_chip = casino::chip(&rt.game, asked.casino);
+    let chips = def_chip.map_or(0, |c| carried(&sim, c));
     if let Err(why) = casino::opening(&rt.game, asked.casino, chips, max) {
         stats.refused += 1;
         let line = casino::closed_line(why, &def.name);
@@ -376,7 +378,7 @@ fn open(
         }
         return;
     }
-    let Some(chip) = def.chip else { return };
+    let Some(chip) = def_chip else { return };
     stats.opened += 1;
     let table = Table::new(asked.min_bet, asked.max_bet);
     let earnings = rt.game.player.casino_earnings.get(&asked.casino).copied().unwrap_or(0);

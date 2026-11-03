@@ -594,9 +594,13 @@ ratio at or above (confidence threshold + 0.5) × the alarm confidence multiplie
 wiki's example, 3: no game setting of FalloutNV.esm names it) [documented]. An actor that
 **noticed** a hostile (Normal → Alert) alarms them too [design: the owner's "alerting
 their friends when they sense an enemy presence"]. Who hears it: the actors measured in
-that round (drawn, near the player) within `ALARM_RADIUS` (4,096 units, a whole exterior cell [design]; 2,048 until the owner's playtest list 5 item 31) that are
+that round (drawn, near the player) and the other actors of the loaded cells, within
+`ALARM_RADIUS` (9,216 units [design on the original's farthest combat allies, 9,026];
+2,048 until the owner's playtest list 5 item 31, 4,096 until #972), that are
 its own kind (§12.4) or an ally or friend whose Assistance helps it; never against their
-own ally or friend. An alarmed actor gets an alarm at the foe's position (`Cause::Ally`)
+own ally or friend. The alarm names the first of the foe's side to start fighting, not
+the sender's own foe, and a fighter keeps a target while a member of its group detects
+it (docs/spec-notes/combat-groups.md). An alarmed actor gets an alarm at the foe's position (`Cause::Ally`)
 and holds a grudge (`Assist`) when its records would not attack the foe; it goes Alert,
 searches, and fights when it detects the foe. An alarm passed on by an ally is not passed
 on again. This is in addition to §10.3 (an ally that sees a fight joins it). Log:
@@ -739,6 +743,13 @@ is meant to hide a fighter from the fire coming at it, not only from the one it 
   peek point must still see its **own target**: it fires at its target from there, not at
   the gunman it hides from. Low cover hides its crouched eyes from the `from` actor and
   lets it see its target standing.
+- **Range before the candidate cap** (2026-11-01, #1162) [design]: the edges out of that
+  range are dropped before the 16 nearest (`COVER_CANDIDATES`) are taken, as the cap is
+  there to limit the sight rays. Smoke `combat-cover` failed 3 runs of 3 without it: the
+  troopers looked for cover while still 2,000 units or more from the Fiends, and the 16
+  nearest facing edges all lay behind them, 2,000–2,700 units from their targets, beyond
+  their reach of 1,286–1,736 (50 of 51 edges out of range, all beyond reach) [observed:
+  smoke logs of #1292]; the edges in range, nearer the Fiends, were never looked at.
 - **Give-up and peek rules follow it**: the cover is given up when its edge no longer
   faces the `from` actor (log `gives up its cover: … is no longer behind it` names that
   actor) or the edge is beyond its reach from its target (§16). Once the `from` gunman
@@ -1723,9 +1734,25 @@ checked against the original (observer-checks.md item 20):
   (frag, plasma and pulse grenades, dynamite), from the actor's inventory, the lowest
   FormID of those it carries; one used up per throw (rounds of guns still come from
   nowhere, owner 2026-10-17: a grenade is the weapon itself).
-- **Who and when**: a person fighting with a gun (not fleeing), ready to fire on a target
-  it sees; the first throw 4 to 10 s after it is first ready on that target, then one every
-  12 to 25 s, rolled on the grenade rolls' own sequence.
+- **Who** (2026-11-01, issue #1303): only an actor whose held weapon is the grenade. A
+  gunman keeps the grenades it carries [observed: observer check 20, o12_grenades and
+  o13_airport on the airport runway: Powder Gangers carrying 4-10 dynamite threw none in
+  90 s at 426-1,595 units, nor at 76-667 in 24 s; the one that spawned holding its
+  dynamite threw it once at about 1,225 units within a second, then drew a gun and threw
+  no more]. In ours a held weapon always comes before a thrown one (actors.md §9.3) and
+  re-arming passes grenades over, so no NPC throws until drawing a grenade is built.
+- **Frag grenades** (2026-11-01, observer check 20, o18_air and o24_air, god-mode
+  player) [observed]: a trooper holding a frag grenade (6 carried, nothing else) threw
+  from 800 units within a second of combat and again at about 1.8, 5.4, 7.2 and 9.2 s,
+  then held nothing (14.9 s) and fought with a knife; from 1,200 units its throws landed
+  at 0, 1.6, 4.0, 5.7 and 9.3 s. Two holding frags 300 units off threw none: they closed
+  in and struck (2.25 Health a blow) and put the grenade away after 6 s. A 10mm trooper
+  carrying 5 frags threw none in 27 s at 600 units. So a held grenade is thrown every
+  1.6-3.6 s from the start, from 800 units at least (not from 300), against ours' first
+  throw after 4-10 s, one every 12-25 s and nothing within 990 units [issue #1351].
+- **When**: holding it, not fleeing, ready on a target it sees; the first throw 4 to 10 s
+  after it is first ready on that target, then one every 12 to 25 s, rolled on the
+  grenade rolls' own sequence [design; the original's one throw came within a second].
 - **Where**: only at a target beyond 1.1 times the blast's radius (a frag grenade's
   blast radius is 900 units, so beyond 990) and within the throw's reach:
   the low arc's under the projectile's gravity, at most 1,500 units. Held when a comrade
@@ -1737,9 +1764,10 @@ checked against the original (observer-checks.md item 20):
   run from by those it threatens (§17.7).
 - Log: `npc combat: X throws W at T (D units, blast R); N left`, `X keeps its grenade: K
   would be caught …`; summary `N grenades thrown, M kept for a comrade or a bystander`.
-  Smoke `combat-npc-grenades`.
-- Not built: putting the gun away and drawing the grenade, throwing from the clip's
-  release key, grenades for melee fighters and creatures, mines.
+  Smoke `combat-npc-grenades`: Violet, given three frag grenades, fights with her gun and
+  throws none.
+- Not built: drawing a grenade (and back to the gun after the throw, as the original's
+  ganger did), throwing from the clip's release key, grenades for creatures, mines.
 
 ## 21. NPCs use their stimpaks (owner request 2026-10-25)
 
@@ -1894,7 +1922,11 @@ target through every phase of the attack and fired only once turned to it
   that sees its target and does not run from it (a flight away or by a door; a flight to cover keeps
   it) is locked on where that target is drawn this frame. `residents` draws it facing that
   place, turning at the combat turn rate (240° a second standing, 360° walking) and, once
-  within 10° (`LOCK_HOLD`), following it exactly. On its way to cover, a post or a flee
+  within 10° (`LOCK_HOLD`), following it exactly; once held it stays on that target even
+  when the target sweeps more than 10° in one frame (2026-11-01, #1162 [design]: melee
+  Fiends circling troopers 70–340 units away, and long frames, slipped out of the hold and
+  turned back at the turn rate, up to 21 frames past 10° in smoke battle-ncr-fiends
+  [observed: smoke logs of #1292]); a new target is still turned to at the turn rate. On its way to cover, a post or a flee
   spot it strafes or backs away with its target in front. Out of sight it faces the
   target's AI place as before (`Core::aims`).
 - **Why it slipped**: the drawn facing used the target's AI place, which for a charging

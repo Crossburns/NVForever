@@ -51,8 +51,10 @@ blinks every 400 ms.
 
 [observed: the owner's screenshots]
 
-- Header: "ROBCO INDUSTRIES (TM) TERMLINK PROTOCOL", "ENTER PASSWORD NOW", a blank line,
-  "4 ATTEMPT(S) LEFT:" and four blocks. Lines at 1, 32 and 93 under the header's top.
+- Header: the title line, the password prompt line, a blank line, the attempts line
+  (the count, then a label) and four blocks. Lines at 1, 32 and 93 under the header's
+  top. None of the header's words is in the plugins or the menu file (§8); NVForever's
+  are `screen::words::HACK_TITLE`, `HACK_PROMPT` and `attempts(n)`.
 - Rows: an address "0xF650" (four hex digits), a space, 12 characters. Addresses go up
   12 a row; column 2 goes on from column 1 (0xF710, then 0xF71C). The dump is one run of
   408 characters: words run on across rows and from the last row of column 1 into the
@@ -61,16 +63,17 @@ blinks every 400 ms.
   or backquote seen). Words are capitals.
 - 20 words of 7 letters; every dud shares 1 to 5 letters in place with the password
   (MEETING): 3 share 5, 4 share 4, 4 share 3, 5 share 2, 4 share 1.
-- Picking LOOTING logs ">LOOTING", ">Entry denied", ">4/7 correct." and takes a block.
+- Picking LOOTING logs ">LOOTING", then a line saying the entry was refused, then its
+  likeness as 4 of 7, and takes a block.
   Likeness is letters equal at the same place (LOOTING / MEETING: T, I, N, G).
 - The pointer on a bracket pair lights the pair ("{[_}" in "|{[_})": the inner `[` has no
-  `]`), and the prompt shows it; picking it logged ">{[_}", ">Allowance", ">replenished."
+  `]`), and the prompt shows it; picking it logged ">{[_}", then a two-line message that the attempts are back,
   and the four blocks came back. The pair's characters stay in the dump afterwards.
 - The pointer on a word lights the whole word, both parts when it runs on (ME + ETING),
   and the prompt shows the word. With the pointer off the dump, nothing is lit and the
   prompt shows only ">" (and the cursor).
-- The password logs ">MEETING", ">Exact match!", ">Please wait", ">while system", ">is
-  accessed.": log lines are 12 characters after the ">", broken between words.
+- The password logs ">MEETING", a line saying it matched, then a wait message on three
+  lines: log lines are at most 12 characters after the ">", broken between words.
 - One blank row between the newest log line and the prompt.
 - Then the terminal's menu (§6).
 - Final displayed colours on the screen: blocks and lit cells 63, 255, 152;
@@ -114,9 +117,9 @@ it also removes the observed red and blue dip, leaving all three channels consta
 [observed: same hacking JPEG against the branch's `hacking.png` at 1280 × 720,
 2026-11-01; the JPEG's sums divided by 2.25 for its larger pixels] The original's text
 strokes are soft, about 3 pixels across at 1080 with peaks of 200 to 250 green, where
-ours were 2.5 pixels of full green at 720. On the same lines of text ("ENTER PASSWORD
-NOW", "ATTEMPT(S) LEFT:"), the summed green above the glass beside the line was 0.79 and
-0.77 of ours in display values, 0.60 and 0.51 in linear light, with hard-edged text in
+ours were 2.5 pixels of full green at 720. On the same lines of text (the password
+prompt line and the attempts line, §2), the summed green above the glass beside the line
+was 0.79 and 0.77 of ours in display values, 0.60 and 0.51 in linear light, with hard-edged text in
 the block colour. Fine horizontal scanlines cross the glass and the text: 7.8 pixels
 apart at 1080, which is 7.33 units (the dump's rows 29.7 pixels apart for 28 units), 131
 down the texture's 960 units; the blocks' blue dims to about 0.84 at 1080 and 0.82 when
@@ -207,12 +210,12 @@ in the data looks like a word list.
   likeness [observed]. Four attempts [observed]. The last one gone: locked for good
   [the owner; documented: GECK wiki Lock, "if player failed to hack terminal … will still
   be locked out"]; the screen then shows `sHackingLockout3` / `sHackingLockout4`
-  [documented: hacking_menu.xml; their texts are not in the plugins, §8].
+  [documented: hacking_menu.xml; their texts come from the strings table, §8].
 - A bracket pair [the owner; observed]: an opening bracket `( [ { <` and the first matching
   closing bracket later in the same row, with no letter between [hypothesis: the row
   limit and the no-letter rule]. Picked at its opening bracket, once. It removes a dud
   (the dud's letters become dots [hypothesis]) and logs "Dud removed." [hypothesis: the
-  text], or gives the attempts back ("Allowance replenished." [observed]). Which of the
+  text], or gives the attempts back (logged [observed]). Which of the
   two: one pair in five gives the attempts back, and every pair does once no dud is left
   [hypothesis]. A used pair is a lone symbol afterwards.
 - A lone symbol: logged, then ">Error"; no attempt lost [hypothesis].
@@ -335,21 +338,34 @@ after each adjustment:
   Down choose a menu item, Enter or E takes it; Tab or Backspace go back; Esc leaves. The
   pointer lights what it is on and a click enters it. The first key or the pointer shows
   the cursor.
-- Times [design]: 2 s of "Please wait…" before the menu; 1.5 s before the lockout screen.
+- Times [design]: 2 s of the wait message before the menu; 1.5 s before the lockout screen.
 
 ## 8. Words not in the plugins
 
-From the owner's screenshots [observed], and shown as the original has them: "ENTER
-PASSWORD NOW", "N ATTEMPT(S) LEFT:", "Entry denied", "N/L correct.", "Allowance
-replenished.", "Exact match!", "Please wait while system is accessed.".
+The header's password prompt line and attempts line (§2) are not in the masters
+[observed, 2026-11-01]: FalloutNV.esm has no string game setting for them (its only
+hacking or terminal settings are the `iXPRewardHackComputer*` numbers and
+`sTerminalServerText*`), the add-on masters have none either, and `menus\hacking_menu.xml`
+holds no text for them (its prompt and header tiles are filled by the game's code; the
+only names it reads from the strings table are `sHackingLockout3` and `sHackingLockout4`,
+menu-xml.md §2.4). The log's lines (§2: the refusal, the likeness, the attempts coming
+back, the match, the wait) are in the same position. So none of them is quoted here, and
+the strings table has no entry to give them: NVForever writes its own (LEGAL.md),
+in `screen::words` (`HACK_PROMPT`, `attempts(n)`, `HACK_WARNING`) and
+`fnv_game::hacking::words` (the log's lines). Only where each line stands, how long the
+log's lines are and when each appears follow the original [observed].
+
+The lockout screen's two lines are `sHackingLockout3` and `sHackingLockout4`, read from
+the strings table when the screen opens: the load order's string settings, else
+NVForever's labels in `fnv_ui::strings::BUILT_IN` (menu-xml.md §2.4).
 
 NVForever's own wording in place of the original's (owner decision 2026-10-30, LEGAL.md):
 the hacking title and the menu's two header lines, which in the original name the game's
 fictional maker (§2, §6), read "TERMINAL ACCESS PROTOCOL", "TERMINAL OPERATING SYSTEM"
 and "VERSION 1.0". The layout is unchanged.
 
-NVForever's until the original's are seen [hypothesis]: "Dud removed.", "Error", "!!! WARNING: LOCKOUT IMMINENT !!!" (on
-the last attempt), "TERMINAL LOCKED" / "PLEASE CONTACT AN ADMINISTRATOR", the refusals
+Also NVForever's, for lines the original has not been seen showing [hypothesis]: the
+dud removed and error lines of the log, the warning on the last attempt, the refusals
 "You need a Science skill of N to hack this terminal." and "This terminal requires a
 password.", and the prompt word "Access".
 
@@ -358,7 +374,7 @@ password.", and the prompt word "Access".
 `NVF_PLAY_TEST_SCRIPT_MENUS=0.3` and
 `NVF_PLAY_TEST_TERMINAL=30:science:25,31:open:000D74D5,33:wrong,34:brackets,35:symbol,36:wrong,37:right,41:item:0,43:power`:
 `nvforever --data <Data> --cell BisonSteve01 --play --no-voice --run-seconds 48` → "hacking,
-Easy (Science 25): 20 words", the entries, "Exact match! access granted", "menu of
+Easy (Science 25): 20 words", the entries, "the password, access granted", "menu of
 DefaultUnlockTermDESK1Easy (1 of 1 items listed): "Disengage Lock"", its result script
 "terminal view: the monitor drawn", "terminal: the power button pressed" and "terminal
 summary: … 1 hacked …". The lockout: `29:open:000D74D5,30:wrong,30.5:exit,

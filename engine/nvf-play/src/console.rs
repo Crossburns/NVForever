@@ -118,12 +118,63 @@ pub struct Console {
     /// The references the last click's ray passed through, nearest first: the mouse
     /// wheel steps the selection along them ([`step_along`]).
     along: Vec<u32>,
+    /// `rbat`: the statements recorded so far, while it records.
+    recording: Option<Vec<String>>,
+    /// `SetConsoleOuputFile`: the file every console line is added to.
+    out_file: Option<std::path::PathBuf>,
 }
 
 /// Render toggles the console asked for, for the renderer (nvforever) to switch and
 /// report with [`Console::say`].
 #[derive(Resource, Default)]
 pub struct RenderToggles(pub Vec<fnv_game::functions::toggles::Toggle>);
+
+/// `Show1stPerson` (`s1st`): the first-person model is shown in third person too, where
+/// the player's eye is (nvforever's `player_body` reads it).
+#[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShowFirstPerson(pub bool);
+
+/// How long a `SetVel` along the ground carries an actor, seconds: it is a knockback
+/// (`crate::combat::Knockback`) starting at the speed asked and slowing evenly to rest,
+/// since an actor's walking sets its ground speed every step [design].
+pub const SET_VEL_SECS: f32 = 0.5;
+
+/// `SetVel`'s answer: the player's or an actor's character goes up or down at `speed`,
+/// or is pushed along the ground ([`SET_VEL_SECS`]); a loose object's physics bodies take
+/// the speed on that axis.
+pub fn set_vel(id: u32, axis: char, speed: f32, phys: Option<&mut crate::phys::PhysState>, knocks: Option<&mut Messages<crate::combat::Knockback>>) -> String {
+    let who = FormId(id);
+    let Some(p) = phys else { return "SetVel: no physics in this run".into() };
+    let i = match axis {
+        'X' => 0,
+        'Y' => 1,
+        _ => 2,
+    };
+    let ch = if id == FormId::PLAYER_REF.0 { p.player.as_mut() } else { p.npcs.get_mut(&id).map(|n| &mut n.ch) };
+    match ch {
+        Some(ch) if i == 2 => {
+            ch.vertical_speed = speed;
+            ch.grounded = false;
+            format!("SetVel: {who} {} at {speed:.0} units/s", if speed >= 0.0 { "up" } else { "down" })
+        }
+        Some(_) => {
+            let mut dir = [0.0f32; 2];
+            dir[i] = speed.signum();
+            match (speed != 0.0, knocks) {
+                (false, _) => "SetVel: 0 along the ground pushes nothing".into(),
+                (true, None) => "SetVel: no pushes in this run".into(),
+                (true, Some(k)) => {
+                    k.write(crate::combat::Knockback { form_id: id, dir, speed: speed.abs(), secs: SET_VEL_SECS });
+                    format!("SetVel: {who} pushed along {axis} at {speed:.0} units/s, slowing to rest over {SET_VEL_SECS} s")
+                }
+            }
+        }
+        None => match p.world.set_ref_velocity(id, i, speed) {
+            0 => format!("SetVel: {who} has no physics body that moves"),
+            n => format!("SetVel: {who} at {speed:.0} units/s along {axis} ({n} bodies)"),
+        },
+    }
+}
 
 impl Console {
     /// Print a reply line (and log it).
@@ -134,6 +185,14 @@ impl Console {
     fn print(&mut self, line: impl Into<String>) {
         let line = line.into();
         info!("console: {line}");
+        if let Some(path) = &self.out_file {
+            use std::io::Write;
+            let added = std::fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut f| writeln!(f, "{line}"));
+            if let Err(e) = added {
+                warn!("console: {}: {e}; no longer written", path.display());
+                self.out_file = None;
+            }
+        }
         self.lines.push(line);
         if self.lines.len() > SCROLLBACK {
             let extra = self.lines.len() - SCROLLBACK;
@@ -198,6 +257,24 @@ pub fn batch_lines(name: &str, roots: &[std::path::PathBuf]) -> Result<(std::pat
     Ok((path, lines))
 }
 
+/// Most statements `rbat` records [documented: GECK wiki Rbat, "up to 20 console
+/// commands"]; the ones after are not recorded [hypothesis].
+pub const RBAT_MAX: usize = 20;
+
+/// A file `rbat` or `SetConsoleOuputFile` writes: a plain name in NVForever's own folder
+/// (`Documents\My Games\NVForever`), never a path, so nothing is written elsewhere (the
+/// game's folder least of all; the original writes into its own [documented: GECK wiki
+/// SetConsoleOuputFile]); `.txt` added to a name without an extension, as `bat` reads it.
+pub fn own_file(name: &str, home: Option<&std::path::Path>) -> Result<std::path::PathBuf, String> {
+    let name = name.trim().trim_matches('"');
+    if name.is_empty() || name.contains(['/', '\\', ':']) || name.starts_with('.') {
+        return Err(format!("{name:?}: a plain file name, written in NVForever's folder"));
+    }
+    let home = home.ok_or("No NVForever folder to write in")?;
+    let file = if std::path::Path::new(name).extension().is_some() { name.to_string() } else { format!("{name}.txt") };
+    Ok(home.join(file))
+}
+
 /// Whether an aid part starts with `<seconds>:` (else it belongs to the line before).
 fn timed_part(p: &str) -> bool {
     p.split_once(':').is_some_and(|(t, _)| t.trim().parse::<f32>().is_ok())
@@ -249,6 +326,7 @@ impl Plugin for ConsolePlugin {
             .insert_resource(ConsoleAid(aid))
             .init_resource::<SearchIndex>()
             .init_resource::<RenderToggles>()
+            .init_resource::<ShowFirstPerson>()
             .add_systems(Update, (toggle, typing, search_ready, replies, script_lines, click, draw, outline).chain().in_set(PlaySet::Ui))
             .add_systems(OnExit(PlayState::Menu), close_on_exit);
     }
@@ -419,8 +497,54 @@ fn typing(
     while let Some(line) = runs.pop_front() {
         c.print(format!("> {line}"));
         let (head, rest) = line.split_once(char::is_whitespace).map_or((line.as_str(), ""), |(h, r)| (h, r.trim()));
-        match head.to_ascii_lowercase().as_str() {
-            "cls" | "clear" => c.lines.clear(),
+        let lower = head.to_ascii_lowercase();
+        if lower != "rbat" {
+            if let Some(rec) = c.recording.as_mut().filter(|r| r.len() < RBAT_MAX) {
+                rec.push(line.clone());
+            }
+        }
+        match lower.as_str() {
+            "cls" | "clear" | "clr" => c.lines.clear(),
+            // `rbat`: start or cancel recording; `rbat <file>`: the recording written for
+            // `bat` (docs/design/console.md).
+            "rbat" => match (rest.is_empty(), c.recording.take()) {
+                (true, None) => {
+                    c.recording = Some(Vec::new());
+                    c.print(format!("Recording console lines (up to {RBAT_MAX}); rbat <file> saves them, rbat cancels"));
+                }
+                (true, Some(_)) => c.print("Recording cancelled"),
+                (false, None) => c.print("rbat first starts a recording"),
+                (false, Some(rec)) => match own_file(rest, fnv_install::EngineHome::default_root().as_deref()) {
+                    Ok(path) => {
+                        let text: String = rec.iter().map(|l| format!("{l}\n")).collect();
+                        match std::fs::create_dir_all(path.parent().unwrap_or(&path)).and_then(|_| std::fs::write(&path, text)) {
+                            Ok(()) => c.print(format!("{} lines saved to {}", rec.len(), path.display())),
+                            Err(e) => c.print(format!("{}: {e}", path.display())),
+                        }
+                    }
+                    Err(e) => {
+                        c.print(e);
+                        c.recording = Some(rec);
+                    }
+                },
+            },
+            // `SetConsoleOuputFile <file>` (`scof`, the catalogue's spelling): every console
+            // line from now on is added to the file; without a name, no longer.
+            "setconsoleouputfile" | "scof" => {
+                if rest.is_empty() {
+                    c.out_file = None;
+                    c.print("Console lines no longer written to a file");
+                } else {
+                    match own_file(rest, fnv_install::EngineHome::default_root().as_deref()) {
+                        Ok(path) => {
+                            let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
+                            c.print(format!("Console lines are added to {}", path.display()));
+                            c.out_file = Some(path);
+                        }
+                        Err(e) => c.print(e),
+                    }
+                }
+            }
             "help" => {
                 let terms = query_terms(rest);
                 if terms.is_empty() {
@@ -428,8 +552,9 @@ fn typing(
                     c.print("help <text>: records and functions whose name or Editor ID contains it (not case sensitive); \"two words\" for a phrase, several words must all match");
                     c.print("prid <ref>, coc <cell>, cow <world> <x> <y>, coe <x> <y>, tgm, cls, save <name>, load [name], saves, set <var> to <value>. Click something to select it; calls without a reference run on it.");
                     c.print("Quests and info: sq, sqt, movetoqt [n], sqs <quest>, sqv <quest>, sv, caqs, inv, getavinfo <av>, setgs <setting> <value>, cam, qqq, advlevel (level up), poker [casino] (a poker table)");
-                    c.print("Toggles: tcl (collision), tai (actors' AI), tdetect, tgm, tscr (scripts), tg (grass), ts (sky), tws (water), tt (trees), ToggleLODLand, ToggleNavmesh, tlik (head tracking), temo (emotions)");
-                    c.print("bat <file> (console lines from a text file), slpm [1-5] (a practice lock), [ref.]mfg expression|phoneme|modifier <id> <0-100>, mfg reset");
+                    c.print("Toggles: tcl (collision), tai (actors' AI), tdetect, tgm, tscr (scripts), tg (grass), ts (sky), tws (water), tt (trees), tlv (leaves), ToggleLODLand, ToggleNavmesh, tlik (head tracking), temo (emotions)");
+                    c.print("bat <file> (console lines from a text file), rbat [file] (record lines for bat), scof [file] (write the console to a file), slpm [1-5] (a practice lock), [ref.]mfg expression|phoneme|modifier <id> <0-100>, mfg reset");
+                    c.print("plm <x> <y> <z> [name] [0-9] (a marker seen through walls), clm (clear them), s1st (first-person model in third person), [ref.]setvel x|y|z <speed>, tst <global>, prc, tlv (tree leaves), ClearScreenBlood");
                 } else {
                     let funcs = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| matching_functions(&rt.game.data.table, &terms)).unwrap_or_default();
                     if !funcs.is_empty() {
@@ -573,6 +698,13 @@ fn replies(
     ),
     (mut next, mut commands, roots): (ResMut<NextState<PlayState>>, Commands, Query<Entity, With<ConsoleRoot>>),
     (mut noclip, mut render, mut practice): (ResMut<crate::player::NoClip>, ResMut<RenderToggles>, Option<ResMut<crate::lockpick::PracticeLock>>),
+    (mut markers, location, mut phys, mut knocks, mut first): (
+        ResMut<crate::location_markers::LocationMarkers>,
+        Option<Res<crate::Location>>,
+        Option<ResMut<crate::phys::PhysState>>,
+        Option<ResMut<Messages<crate::combat::Knockback>>>,
+        ResMut<ShowFirstPerson>,
+    ),
 ) {
     let Some(mut st) = script else { return };
     if let Some(rt) = st.rt.as_mut() {
@@ -656,6 +788,22 @@ fn replies(
                     }
                     None => c.print("No lockpicking in this run"),
                 },
+                ConsoleRequest::PlaceMarker { pos, name, color } => {
+                    let (world, interior) = location.as_deref().map_or((play.0.world, None), |l| (l.world, l.interior));
+                    markers.0.push(crate::location_markers::LocationMarker { pos, name, color, world, interior });
+                }
+                ConsoleRequest::ClearMarkers => {
+                    let n = markers.clear_here(location.as_deref());
+                    c.print(format!("{n} location markers cleared"));
+                }
+                ConsoleRequest::Show1stPerson => {
+                    first.0 = !first.0;
+                    c.print(format!("First-person model in third person {}", if first.0 { "shown" } else { "hidden" }));
+                }
+                ConsoleRequest::SetVel { on, axis, speed } => {
+                    let line = set_vel(on.0, axis, speed, phys.as_deref_mut(), knocks.as_deref_mut());
+                    c.print(line);
+                }
             }
         }
     }
@@ -1289,6 +1437,22 @@ fn compiled(g: &mut fnv_game::Game, call: &ConsoleCall, on: Option<FormId>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rbat_and_scof_write_plain_names_in_nvforevers_folder_only() {
+        let home = std::path::Path::new("home");
+        assert_eq!(own_file("mine", Some(home)), Ok(home.join("mine.txt")));
+        assert_eq!(own_file("\"log.log\"", Some(home)), Ok(home.join("log.log")));
+        for bad in ["", "..\\up", "a/b", "C:x", ".hidden"] {
+            assert!(own_file(bad, Some(home)).is_err(), "{bad}");
+        }
+        assert!(own_file("mine", None).is_err());
+    }
+
+    #[test]
+    fn set_vel_without_physics_says_so() {
+        assert_eq!(set_vel(0x14, 'Z', 300.0, None, None), "SetVel: no physics in this run");
+    }
 
     #[test]
     fn batch_files_are_found_in_the_first_folder_that_has_them() {

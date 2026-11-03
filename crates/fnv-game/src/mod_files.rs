@@ -13,7 +13,7 @@
 use crate::game::Game;
 use fnv_script::vm::{ArrayKind, XKey, XVal};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// The host's answer for a path in the archives too: 0 none, 1 a loose file, 2 inside an
@@ -79,7 +79,7 @@ pub fn data_dir() -> Option<PathBuf> {
 /// Whether a Data path is a file of the game: in a read root or in an archive.
 pub fn exists(path: &str) -> bool {
     let r = roots();
-    r.read.iter().any(|root| on_disk(root, path).is_file()) || r.lookup.as_ref().is_some_and(|f| f(path) > 0)
+    r.read.iter().any(|root| on_disk(root, path).is_some_and(|p| p.is_file())) || r.lookup.as_ref().is_some_and(|f| f(path) > 0)
 }
 
 fn roots() -> Roots {
@@ -112,11 +112,45 @@ fn cell_text(v: &XVal) -> String {
 
 /// `base` joined with a Data-relative path whose parts are split at `\` or `/`: the
 /// same path on Windows, and a real subfolder (not a name with a backslash in it) on
-/// other systems.
-fn on_disk(base: &std::path::Path, rel: &str) -> PathBuf {
+/// other systems. `None` for a path that could leave `base`: one that starts at a root
+/// (`\x`), names a drive or stream (`C:\x`, any `:`), or has a `.` or `..` part. Every
+/// part must be a plain name (`Component::Normal`), so a script's path stays under the
+/// folder it is meant for (CLAUDE.md charter; PR #1291 review).
+fn on_disk(base: &Path, rel: &str) -> Option<PathBuf> {
+    if rel.starts_with(['\\', '/']) || rel.contains(':') {
+        return None;
+    }
     let mut p = base.to_path_buf();
-    p.extend(rel.split(['\\', '/']).filter(|c| !c.is_empty()));
-    p
+    for part in rel.split(['\\', '/']).filter(|c| !c.is_empty()) {
+        let mut c = Path::new(part).components();
+        match (c.next(), c.next()) {
+            (Some(Component::Normal(_)), None) => p.push(part),
+            _ => return None,
+        }
+    }
+    Some(p)
+}
+
+/// Whether NVForever may write `path`: never inside the game's install or the original
+/// game's user folder (`fnv_install::guard_write`), nor under the game folder the Data
+/// read root stands in (a headless run that did not register the install).
+fn may_write(path: &Path) -> bool {
+    if fnv_install::guard_write(path, None).is_err() {
+        return false;
+    }
+    let game = roots().read.last().and_then(|d| d.parent().map(Path::to_path_buf));
+    !game.is_some_and(|g| path.starts_with(g))
+}
+
+/// Write `text` at `path` (its folders made), when [`may_write`] allows; whether it did.
+fn write_disk(path: &Path, text: &str) -> bool {
+    if !may_write(path) {
+        return false;
+    }
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    std::fs::write(path, text.as_bytes()).is_ok()
 }
 
 /// A Data-relative path with `/` turned to `\` and lower case, for the maps.
@@ -140,47 +174,49 @@ impl ModFiles {
         let r = roots();
         let config = r.config.as_ref().and_then(|c| {
             let lower = rel.to_ascii_lowercase();
-            lower.strip_prefix("config\\").map(|_| on_disk(c, &rel["config\\".len()..]))
+            lower.strip_prefix("config\\").and_then(|_| on_disk(c, &rel["config\\".len()..]))
         });
-        config.into_iter().chain(r.read.iter().map(|root| on_disk(root, &rel))).find_map(|p| std::fs::read(p).ok()).map(|b| b.iter().map(|&c| c as char).collect())
+        on_disk(Path::new(""), &rel)?;
+        config.into_iter().chain(r.read.iter().filter_map(|root| on_disk(root, &rel))).find_map(|p| std::fs::read(p).ok()).map(|b| b.iter().map(|&c| c as char).collect())
     }
 
     /// A file under the game's own folder (JIP's array files): this session's write,
     /// else NVForever's copy (its layer's `GameRoot` folder), else the game folder's.
     fn read_root(&self, rel: &str) -> Option<String> {
+        on_disk(Path::new(""), rel)?;
         let key = format!("<root>\\{}", norm(rel));
         if let Some(t) = self.written.get(&key) {
             return Some(t.clone());
         }
         let rel = rel.replace('/', "\\");
         let r = roots();
-        let mine = r.write.map(|w| on_disk(&w.join(GAME_ROOT), &rel));
-        let game = r.read.last().and_then(|d| d.parent()).map(|d| on_disk(d, &rel));
+        let mine = r.write.and_then(|w| on_disk(&w.join(GAME_ROOT), &rel));
+        let game = r.read.last().and_then(|d| d.parent()).and_then(|d| on_disk(d, &rel));
         mine.into_iter().chain(game).find_map(|p| std::fs::read(p).ok()).map(|b| b.iter().map(|&c| c as char).collect())
     }
 
     /// Write a file of the game's own folder: into NVForever's layer, never the game's
-    /// folder (CLAUDE.md charter; docs/design/install-layout.md).
-    fn write_root(&mut self, rel: &str, text: String) {
-        if let Some(w) = roots().write {
-            let p = on_disk(&w.join(GAME_ROOT), rel);
-            if let Some(d) = p.parent() {
-                let _ = std::fs::create_dir_all(d);
-            }
-            let _ = std::fs::write(&p, text.as_bytes());
-        }
-        self.written.insert(format!("<root>\\{}", norm(rel)), text);
+    /// folder (CLAUDE.md charter; docs/design/install-layout.md). False, and nothing
+    /// kept, for a path [`on_disk`] refuses or a disk path [`may_write`] refuses.
+    fn write_root(&mut self, rel: &str, text: String) -> bool {
+        on_disk(Path::new(""), rel).is_some() && self.write_under(format!("<root>\\{}", norm(rel)), rel, Some(GAME_ROOT), text)
     }
 
-    fn write(&mut self, rel: &str, text: String) {
+    /// Write a Data file into NVForever's layer; false when refused, as `write_root`.
+    pub(crate) fn write(&mut self, rel: &str, text: String) -> bool {
+        on_disk(Path::new(""), rel).is_some() && self.write_under(norm(rel), rel, None, text)
+    }
+
+    fn write_under(&mut self, key: String, rel: &str, sub: Option<&str>, text: String) -> bool {
         if let Some(w) = roots().write {
-            let p = on_disk(&w, rel);
-            if let Some(d) = p.parent() {
-                let _ = std::fs::create_dir_all(d);
+            let base = sub.map_or_else(|| w.clone(), |s| w.join(s));
+            let Some(p) = on_disk(&base, rel) else { return false };
+            if !write_disk(&p, &text) {
+                return false;
             }
-            let _ = std::fs::write(&p, text.as_bytes());
         }
-        self.written.insert(norm(rel), text);
+        self.written.insert(key, text);
+        true
     }
 }
 
@@ -348,8 +384,7 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
                 Some(old) if !old.is_empty() => format!("{old}\n{body}"),
                 _ => body,
             };
-            g.mod_files.write_root(&path, text);
-            XVal::Num(1.0)
+            XVal::Num(if g.mod_files.write_root(&path, text) { 1.0 } else { 0.0 })
         }
         // `path [transpose]`: one line gives a list of its values; more give a list of
         // columns (transposed: of rows); numbers read as numbers; a missing file gives
@@ -380,6 +415,49 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
             };
             let inner: Vec<XVal> = groups.into_iter().map(|c| list(g, c)).collect();
             list(g, inner)
+        }
+        // ---- ppNVSE's line files ----
+        // `path [start] [end]`: the file's lines as strings, from `start` (0 the first) up
+        // to before `end` [documented: pReadFile, "0 5" reads the first five lines;
+        // hypothesis: the end left out], the path under the game's folder as
+        // ReadArrayFromFile's [documented: pWriteFile, "relative to the game's
+        // installation path"]. A missing file gives an empty array [hypothesis].
+        "preadfile" => {
+            let path = text(args, 0).unwrap_or_default();
+            let lines: Vec<String> = g.mod_files.read_root(&path).map(|t| t.lines().map(str::to_string).collect()).unwrap_or_default();
+            let start = num(args, 1, 0.0).max(0.0) as usize;
+            let end = match args.get(2) {
+                Some(XVal::Num(e)) => e.max(0.0) as usize,
+                _ => lines.len(),
+            }
+            .min(lines.len());
+            let entries = lines.into_iter().skip(start).take(end.saturating_sub(start)).enumerate().map(|(i, l)| (XKey::Num(i as f64), XVal::Str(l))).collect();
+            XVal::Array(g.ext.new_array(ArrayKind::List, entries))
+        }
+        // `path array [append]`: one line per element [documented: pWriteFile], into
+        // NVForever's own layer, never the game's folder (`write_root`); pWriteFileAlt's
+        // path is under Data [documented: pWriteFileAlt, "relative to the game's DATA
+        // path"; hypothesis: the calling mod's staging folder is its place in Data]. 1
+        // when written, 0 without a path or an array [documented: pWriteFileAlt].
+        "pwritefile" | "pwritefilealt" => {
+            let path = text(args, 0).unwrap_or_default();
+            let Some(XVal::Array(id)) = args.get(1) else { return Some(Ok(zero)) };
+            if path.trim().is_empty() {
+                return Some(Ok(zero));
+            }
+            let lines: Vec<String> = g.ext.array(*id).map(|a| a.entries.iter().map(|(_, v)| cell_text(v)).collect()).unwrap_or_default();
+            let append = num(args, 2, 0.0) != 0.0;
+            let body = lines.join("\n");
+            let alt = name == "pwritefilealt";
+            let old = if alt { g.mod_files.read(&path) } else { g.mod_files.read_root(&path) };
+            let text = match old.filter(|_| append) {
+                Some(o) if !o.is_empty() => format!("{o}\n{body}"),
+                _ => body,
+            };
+            // A path that would leave NVForever's layer is refused: 0 [decision: PR #1291
+            // review, the charter; the page gives no failure value].
+            let ok = if alt { g.mod_files.write(&path, text) } else { g.mod_files.write_root(&path, text) };
+            XVal::Num(if ok { 1.0 } else { 0.0 })
         }
         // ---- LU: read the file each time; write it at once ----
         "getinifloat" | "getinistring" => {
@@ -567,4 +645,20 @@ fn glob(pat: &str, s: &str) -> bool {
         }
     }
     go(pat.as_bytes(), s.as_bytes())
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::on_disk;
+    use std::path::Path;
+
+    #[test]
+    fn only_plain_names_stay_under_the_base() {
+        let base = Path::new("layer");
+        assert_eq!(on_disk(base, "Config\\x.ini"), Some(base.join("Config").join("x.ini")));
+        assert_eq!(on_disk(base, "Config//x.ini"), Some(base.join("Config").join("x.ini")));
+        for bad in ["..\\..\\x", "../x", "Config\\..\\..\\x", "C:\\x", "C:x", "\\x", "/x", ".\\x", "x:stream", "\\\\server\\share\\x"] {
+            assert_eq!(on_disk(base, bad), None, "{bad}");
+        }
+    }
 }

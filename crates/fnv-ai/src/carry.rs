@@ -582,6 +582,9 @@ pub struct Ai {
     applied_switches: Option<BTreeMap<u32, bool>>,
     /// The world's lock serial last brought into the graph ([`Ai::apply_door_locks`]).
     applied_locks: Option<u64>,
+    /// The graph's locked doors as last brought in ([`Ai::apply_door_locks`]): the ones an
+    /// actor owns are open to its paths ([`Ai::path_params`]).
+    locked_doors: Vec<u32>,
     /// Actors near enough to force-greet the one their Dialogue package names but with a
     /// wall or a closed door between ([`Game::greet_sight`]), logged once until they talk
     /// or the line clears.
@@ -618,7 +621,7 @@ fn hdist(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 impl Ai {
     pub fn new(cfg: AiConfig) -> Ai {
-        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), script_moved: BTreeMap::new(), restored: BTreeMap::new() }
+        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, locked_doors: Vec::new(), unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), script_moved: BTreeMap::new(), restored: BTreeMap::new() }
     }
 
     /// Bring the graph's navmeshes in line with the scripts' switches (EnableNavMesh,
@@ -677,6 +680,8 @@ impl Ai {
             Some((id.0, lock.locked.then_some(fnv_nav::graph::DoorLock { level: lock.level, key: lock.key.map(|k| k.0) })))
         });
         let changes = nav.sync_door_locks(states.collect::<Vec<_>>());
+        self.locked_doors = nav.door_locks.keys().copied().collect();
+        self.locked_doors.sort_unstable();
         if changes.is_empty() {
             return None;
         }
@@ -1751,6 +1756,13 @@ impl Ai {
         if let Ok(s) = game.world.get(actor) {
             params.keys.extend(s.inventory.iter().flat_map(|inv| inv.iter()).map(|(item, _)| item.0));
         }
+        // Locked doors whose own owner it is (its base, or a faction it is in at the rank
+        // asked for; not by the cell's ownership) are open to it as if it carried the key
+        // [hypothesis: Fallout 3's baby stage has Dad
+        // walk out of the playroom through CG01PlayroomDoor, locked Requires Key with no
+        // key and owned by Dad's base (TTW's Fallout3.esm REFR 0602EA4A); without this his
+        // package was out of reach and the scene stopped, owner's TTW run 2026-11-02].
+        params.owned_doors.extend(self.locked_doors.iter().copied().filter(|&d| game.ownership(FormId(d)).is_some_and(|o| !o.from_cell && game.counts_as_owner(actor, &o))));
         // Doors the game has open (opened, or open by default and since touched).
         params.open_doors.extend(game.world.changed().filter(|(_, s)| s.open).map(|(id, _)| id.0));
         // A creature flagged "Can't Open Doors" [documented: GECK wiki

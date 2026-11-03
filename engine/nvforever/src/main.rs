@@ -59,6 +59,7 @@ mod fly;
 mod foot_ik;
 mod fps_counter;
 mod frame_pace;
+mod frame_telemetry;
 mod blit_warm;
 mod handoff;
 mod furniture;
@@ -566,8 +567,8 @@ struct Args {
     #[arg(long)]
     window_maximized: bool,
     /// With --play: a run taking over from one that loads a save or goes back to the main
-    /// menu (handoff.rs): the window stays hidden until the world is in, then this file is
-    /// written for the old run to end.
+    /// menu (handoff.rs): the window stays hidden until its loading screen is up, then
+    /// this file is written for the old run to end.
     #[arg(long, requires = "play", hide = true)]
     handoff: Option<PathBuf>,
     /// With --play: close message boxes that ask nothing (an OK button only, such as the
@@ -848,44 +849,21 @@ fn main() -> AppExit {
     let opened = world::open_plugins(args.data(), &args.plugins);
     args.plugins = opened.plugins.iter().map(|p| p.name.clone()).collect();
     // `--load`: the save's place decides where the world starts (its worldspace before
-    // the world is opened); its body waits for the scripts (nvf_play::save).
-    let loaded = match args.load.as_deref() {
-        Some(name) => match nvf_play::save::SaveConfig::default().path_of(name).and_then(|p| fnv_save::read(&p).map(|f| (p, f)).map_err(|e| e.to_string())) {
-            Ok((path, mut f)) => {
-                // A save made with another load order (nvf_play::save::read_for_load):
-                // the place's FormIDs move to the current one; a place in a plugin no
-                // longer loaded cannot be started in.
-                let remap = fnv_save::PluginRemap::from_names(&f.header.plugins, &args.plugins);
-                if !remap.is_identity() {
-                    let pl = &mut f.header.place;
-                    for id in [&mut pl.world, &mut pl.interior].into_iter().flatten() {
-                        match remap.map(*id) {
-                            Some(n) => *id = n,
-                            None => return fail(format!("--load {name}: the save was made in 0x{id:08X} of {}, which is not loaded now", remap.plugin_of(*id).unwrap_or("a plugin"))),
-                        }
-                    }
-                }
-                let pl = &f.header.place;
-                if let Some(w) = pl.world {
-                    args.world = format!("0x{w:08X}");
-                }
-                args.cell = match pl.interior {
-                    Some(c) => format!("0x{c:08X}"),
-                    None => format!("{},{}", (pl.feet[0] / fnv_world::CELL_SIZE).floor(), (pl.feet[1] / fnv_world::CELL_SIZE).floor()),
-                };
-                args.pos = Some(format!("{},{},{}", pl.feet[0], pl.feet[1], pl.feet[2] + nvf_play::player::EYE_HEIGHT));
-                args.eye_height = 0.0;
-                args.heading = pl.heading_deg;
-                args.pitch = pl.pitch_deg;
-                args.hour = f.header.game_hour;
-                if f.header.weather.is_some() && args.weather.is_none() {
-                    args.start_weather = f.header.weather.clone();
-                }
-                // Before the log is set up: straight to the output.
-                eprintln!("load: {} ({}, level {}, {}): starting at {:?}", path.display(), f.header.player_name, f.header.level, f.header.location, pl);
-                Some(path)
+    // the world is opened); its body waits for the scripts (nvf_play::save). It is read
+    // in full now, remapped to the plugins opened (nvf_play::save::read_for_load): a save
+    // that cannot be loaded opens the main menu instead, and the player is told why once
+    // the window is up [owner 2026-11-01, #1357] (`handoff::LoadFailed`).
+    let mut load_failed = None;
+    let pending = match args.load.clone() {
+        Some(name) => match start_from_save(&name, &opened, &mut args) {
+            Ok(p) => Some(p),
+            Err(why) => {
+                eprintln!("load: {why}; opening the main menu");
+                load_failed = Some(why);
+                args.load = None;
+                args.menu = true;
+                None
             }
-            Err(e) => return fail(format!("--load {name}: {e}")),
         },
         None => None,
     };
@@ -924,18 +902,6 @@ fn main() -> AppExit {
     };
     info!("world index built in {:.2}s", t0.elapsed().as_secs_f64());
 
-    // The save is read in full once the load order is known: a save made with another
-    // one is remapped to it (nvf_play::save::read_for_load).
-    let pending = match &loaded {
-        Some(path) => {
-            let plugins: Vec<fnv_save::PluginEntry> = world.lo.plugins.iter().map(|p| fnv_save::PluginEntry { name: p.name.clone(), size: p.file_size }).collect();
-            match nvf_play::save::read_for_load(path, &plugins) {
-                Ok((_, body, order)) => Some(nvf_play::save::PendingLoad { path: path.clone(), body, order }),
-                Err(e) => return fail(format!("--load: {e}")),
-            }
-        }
-        None => None,
-    };
     // The main menu stands over a new game, held until New Game is chosen.
     if args.menu {
         args.new_game = true;
@@ -1211,6 +1177,30 @@ fn main() -> AppExit {
             })
             // Sound goes through nvf_play::audio_out, which follows the output device.
             .disable::<bevy::audio::AudioPlugin>()
+            // Parts of Bevy the game never uses: sprites and 2D text (their layout,
+            // bounds and picking), world serialization, Bevy's own animation (actors are
+            // posed by nvf_play's clips), the clipboard and the UI widgets (the menus are
+            // bevy_ui nodes with their own controls). Each adds systems that run every
+            // frame (#1381). Kept: the sprite renderer, whose resources bevy_ui_render
+            // reads, and glTF and scenes, as PbrPlugin registers a glTF extension.
+            .disable::<bevy::sprite::SpritePlugin>()
+            .disable::<bevy::world_serialization::WorldSerializationPlugin>()
+            .disable::<bevy::animation::AnimationPlugin>()
+            .disable::<bevy::clipboard::ClipboardPlugin>()
+            .disable::<bevy::ui_widgets::ButtonPlugin>()
+            .disable::<bevy::ui_widgets::CheckboxPlugin>()
+            .disable::<bevy::ui_widgets::TextInputPlugin>()
+            .disable::<bevy::ui_widgets::ListBoxPlugin>()
+            .disable::<bevy::ui_widgets::MenuPlugin>()
+            .disable::<bevy::ui_widgets::DialogPlugin>()
+            .disable::<bevy::ui_widgets::ModalDialogPlugin>()
+            .disable::<bevy::ui_widgets::popover::PopoverPlugin>()
+            .disable::<bevy::ui_widgets::RadioGroupPlugin>()
+            .disable::<bevy::ui_widgets::ScrollAreaPlugin>()
+            .disable::<bevy::ui_widgets::ScrollbarPlugin>()
+            .disable::<bevy::ui_widgets::SliderPlugin>()
+            .disable::<bevy::ui_widgets::TabPlugin>()
+            .disable::<bevy::input_focus::pointer_focus::PointerFocusPlugin>()
             // The console's lines go to the run log too (crash.rs).
             .set(bevy::log::LogPlugin { custom_layer: crash::file_layer, ..default() })
             .set(WindowPlugin {
@@ -1220,7 +1210,7 @@ fn main() -> AppExit {
                     mode: args.window.mode(),
                     resolution: bevy::window::WindowResolution::new(w, h).with_scale_factor_override(1.0),
                     position: args.window_at.map_or(WindowPosition::Automatic, WindowPosition::At),
-                    // Taking over a load: shown once the world is in (handoff.rs).
+                    // Taking over a load: shown once its loading screen is up (handoff.rs).
                     visible: args.handoff.is_none(),
                     // Measuring frame times: not held to the display's refresh.
                     present_mode: if args.log_frame_times.is_some() { bevy::window::PresentMode::AutoNoVsync } else { default() },
@@ -1343,6 +1333,8 @@ fn main() -> AppExit {
     .add_systems(Update, actor_materials::pose.after(locomotion::drive))
     .add_systems(Update, actor_materials::pose_player.after(nvf_play::player::BodySet))
     .add_systems(Update, timelapse.after(sky::update_sky))
+    // The sun's cascades reach behind the player's body (sky::SUN_REACH_BACK).
+    .add_systems(PostUpdate, sky::reach_toward_sun.after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades).before(bevy::light::SimulationLightSystems::UpdateLightFrusta))
     .add_systems(Startup, (crash::report_start, report_archives))
     .add_systems(Last, (crash::note_place, crash::report_exit, stray_commands::report));
     if let Some(probe) = actor_feet::from_env() {
@@ -1439,6 +1431,7 @@ fn main() -> AppExit {
             app.add_plugins(stress_sample::StressSamplePlugin);
             // The span profile (NVF_PLAY_TEST_PROFILE; nothing without it; profile.rs).
             app.add_plugins(profile::ProfilePlugin);
+            app.add_plugins(frame_telemetry::FrameTelemetryPlugin(args.data().to_path_buf()));
             app.insert_resource(death_cam::DeathCam::with_imod(death_imod)).add_plugins(death_cam::DeathCamPlugin);
             // The player knocked down (player_knockdown.rs).
             app.add_plugins(player_knockdown::PlayerKnockdownPlugin);
@@ -1646,6 +1639,10 @@ fn main() -> AppExit {
         settings::register(&mut app);
         console_toggles::register(&mut app);
         app.init_resource::<handoff::Handoff>().add_systems(Update, (handoff::leave, handoff::reveal.after(world::loading_gate)));
+        handoff::add_end_now(&mut app);
+        if let Some(why) = load_failed {
+            app.insert_resource(handoff::LoadFailed(why)).add_systems(Update, handoff::tell_load_failed);
+        }
         if let Some(file) = args.handoff.clone() {
             app.insert_resource(handoff::Hidden::new(file, args.window_maximized));
         }
@@ -1659,6 +1656,45 @@ fn main() -> AppExit {
         });
     }
     app.run()
+}
+
+/// `--load <name>`: read the save in full for the plugins opened and start at its place
+/// (the world, cell, position, view, hour and weather of `args`); why not, when it cannot
+/// be loaded.
+fn start_from_save(name: &str, opened: &world::OpenedPlugins, args: &mut Args) -> Result<nvf_play::save::PendingLoad, String> {
+    let path = nvf_play::save::SaveConfig::default().path_of(name)?;
+    let plugins: Vec<fnv_save::PluginEntry> = opened.plugins.iter().map(|p| fnv_save::PluginEntry { name: p.name.clone(), size: p.file_size }).collect();
+    let (mut header, body, order) = nvf_play::save::read_for_load(&path, &plugins).map_err(|e| format!("--load {name}: {e}"))?;
+    // A save made with another load order: the place's FormIDs move to the current one; a
+    // place in a plugin no longer loaded cannot be started in.
+    if let Some(o) = &order {
+        let pl = &mut header.place;
+        for id in [&mut pl.world, &mut pl.interior].into_iter().flatten() {
+            match o.remap.map(*id) {
+                Some(n) => *id = n,
+                None => return Err(format!("--load {name}: the save was made in 0x{id:08X} of {}, which is not loaded now", o.remap.plugin_of(*id).unwrap_or("a plugin"))),
+            }
+        }
+    }
+    let pl = &header.place;
+    if let Some(w) = pl.world {
+        args.world = format!("0x{w:08X}");
+    }
+    args.cell = match pl.interior {
+        Some(c) => format!("0x{c:08X}"),
+        None => format!("{},{}", (pl.feet[0] / fnv_world::CELL_SIZE).floor(), (pl.feet[1] / fnv_world::CELL_SIZE).floor()),
+    };
+    args.pos = Some(format!("{},{},{}", pl.feet[0], pl.feet[1], pl.feet[2] + nvf_play::player::EYE_HEIGHT));
+    args.eye_height = 0.0;
+    args.heading = pl.heading_deg;
+    args.pitch = pl.pitch_deg;
+    args.hour = header.game_hour;
+    if header.weather.is_some() && args.weather.is_none() {
+        args.start_weather = header.weather.clone();
+    }
+    // Before the log is set up: straight to the output.
+    eprintln!("load: {} ({}, level {}, {}): starting at {:?}", path.display(), header.player_name, header.level, header.location, pl);
+    Ok(nvf_play::save::PendingLoad { path, body, order })
 }
 
 /// The arguments of this run without those a save or the window decide (with their

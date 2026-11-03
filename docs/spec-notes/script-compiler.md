@@ -386,11 +386,20 @@ rules; what NVForever decides where they are open is tagged here.
   30 calls nest; a deeper one is refused [documented: User Defined Function].
 - **Lambdas** (B8): evaluating a lambda gives a value that names it, kept by the game
   with the instance whose variables it shares [documented: Lambda: it reads and changes
-  the parent's variables]; the same lambda of the same instance keeps its name. The
+  the parent's variables]; the same lambda of the same instance keeps its name: the
+  same lambda is the same unit and the same lambda of it, numbered by the compiler,
+  not where its expression happens to be in memory (#1088; a user-defined function
+  runs from a copy of its body). One made again by a maker with no instance (a
+  function or result script) keeps its name and reads the variables of the run that
+  made it last [hypothesis]. The
   values start at 0xFE800000, in a `ref` slot [decision: a FormID that high would need a
   255th plugin]. `Call f args` runs it; the `{params} => expr` form returns its
   expression's value [documented: Lambda]. A lambda made by a result script has fresh
-  variables of its own [hypothesis].
+  variables of its own [hypothesis]. A loaded save's lambdas keep their names, and
+  making one again after the load gives the saved name while the unit's lambda of that
+  number is still the saved code [decision: a save from before the numbering reads
+  every lambda as number 0, and an edited plugin can number other code the same; such
+  a lambda gets a new name and runs the current code].
 
 - **Formats** (C4; docs/spec-notes/ext-format.md): a format string's values are as many
   as its codes [documented]. `%X.Yf`, `%g` (an integer, 1,000,000 and up as `1E+006`),

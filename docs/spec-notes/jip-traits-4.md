@@ -135,8 +135,9 @@ not decode yet.
 - `GetGameDifficulty`, `SetGameDifficulty n` [documented: 0 very easy … 4 very hard]:
   NVForever's difficulty. A number outside 0–4 changes nothing [hypothesis].
 - `GetSessionTime` [documented: "the game's current session duration in seconds"]: the
-  frames run since the game started, menus included [hypothesis: a loaded save does not
-  start a new session].
+  seconds run since the game started, menus included, as each frame's own length added
+  up (the engine's frame time changes every frame, so the frame count times the current
+  one is no clock, #1297) [hypothesis: a loaded save does not start a new session].
 - `GetPCDetectionState` [documented: -1 n/a, 0 hidden, 1 caution, 2 detected, 3 danger]:
   the highest band any actor has the player in (`detection::Detections::highest`): hidden 0,
   noticed 1, detected 2, and 3 when that actor's combat target is the player

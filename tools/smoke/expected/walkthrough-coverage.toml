@@ -16,28 +16,28 @@ completed = 166
 
 [summary.stages]
 total = 1405
-reached = 929
+reached = 941
 settable = 1043
 by_variable = 0
-missing_settable = 114
+missing_settable = 102
 missing_by_variable = 0
 reached_unsettable = 0
 set_calls_quest_by_variable = 0
 
 [summary.scripts]
 total = 3488
-touched = 1192
+touched = 1194
 
 [summary.blocks]
 total = 5690
 # 1635 -> 1634: a Nightkin killed by come-fly-with-me no longer starts combat a frame after
 # its death, so REPCONDavisonSCRIPT's OnStartCombat (run on a corpse) is not counted. #1282's
 # runner did it on c665a84b; main a1dcaa54 (after #1287) reads 1634 and info.run 1638 too.
-run = 1634
+run = 1645
 
 [summary.lines]
 total = 28896
-said = 2461
+said = 2467
 
 [summary.actors]
 with_lines = 704
@@ -45,15 +45,15 @@ touched = 267
 
 [summary.results.info]
 total = 8639
-run = 1638
+run = 1659
 
 [summary.results.package]
 total = 558
-run = 28
+run = 30
 
 [summary.results.stage]
 total = 1040
-run = 820
+run = 830
 
 [summary.results.terminal]
 total = 384

@@ -101,10 +101,11 @@ pub fn drawable(w: &Weapon) -> bool {
 }
 
 /// The damage a weapon is chosen by (actors.md §9.3): its base damage, plus the damage of
-/// the explosion its projectile sets off for a weapon that is not thrown or laid
+/// the explosion its projectile sets off for a weapon that is not thrown or laid nor an
+/// Explosives weapon
 /// (`fnv_sim::forms::weapon_choice_damage`, the rule the simulation equips NPCs by).
 pub fn choice_damage(w: &Weapon) -> f32 {
-    fnv_sim::forms::weapon_choice_damage(w.damage as f32, w.explosion_damage, w.anim_type.as_deref())
+    fnv_sim::forms::weapon_choice_damage(w.damage as f32, w.explosion_damage, w.anim_type.as_deref(), w.skill.as_deref())
 }
 
 /// The weapon an actor draws among its carried items: a weapon held in the hands (melee,
@@ -390,7 +391,7 @@ mod tests {
     use super::*;
 
     fn weapon(model: Option<&str>, anim: &str, damage: i32, embedded: bool) -> Weapon {
-        Weapon { edid: None, model: model.map(str::to_string), anim_type: Some(anim.to_string()), damage, projectile: None, explosion_damage: 0.0, embedded, non_playable: false, not_for_npcs: false, first_person: None, first_person_model: None, mod_models: Default::default(), mod_first_person: [None; 7], mod_first_person_models: Default::default(), held_world_model: None, grip: None, hide_backpack: false }
+        Weapon { edid: None, model: model.map(str::to_string), anim_type: Some(anim.to_string()), damage, projectile: None, explosion_damage: 0.0, skill: None, embedded, non_playable: false, not_for_npcs: false, first_person: None, first_person_model: None, mod_models: Default::default(), mod_first_person: [None; 7], mod_first_person_models: Default::default(), held_world_model: None, grip: None, hide_backpack: false }
     }
 
     #[test]
@@ -444,6 +445,26 @@ mod tests {
         assert_eq!(choose_weapon(&[flamer, inc], &ws), Some(inc));
         // A thrown weapon's explosion does not count: it is not held as the weapon.
         assert_eq!(choose_weapon(&[grenade, bat], &ws), Some(bat));
+    }
+
+    #[test]
+    fn an_explosives_weapon_ranks_by_its_base_damage() {
+        // Observer check 1 (o13_reequip): nobody took a Grenade Rifle (2, its 40mm
+        // grenade's explosion) over a Varmint Rifle (18); a Hunting Rifle (52) was taken.
+        let (gl, varmint, hunting) = (FormId(1), FormId(2), FormId(3));
+        let mut grenade_rifle = weapon(Some("w\\gl.nif"), "Rifle - Ballistic (2 Hand)", 2, false);
+        grenade_rifle.explosion_damage = 75.0;
+        grenade_rifle.skill = Some("Explosives".into());
+        let gun = |d| {
+            let mut w = weapon(Some("w\\r.nif"), "Rifle - Ballistic (2 Hand)", d, false);
+            w.skill = Some("Guns".into());
+            w
+        };
+        let ws = HashMap::from([(gl, grenade_rifle), (varmint, gun(18)), (hunting, gun(52))]);
+        assert_eq!(choose_weapon(&[gl, varmint], &ws), Some(varmint));
+        assert_eq!(choose_weapon(&[varmint, gl, hunting], &ws), Some(hunting));
+        // Alone, it is still drawn.
+        assert_eq!(choose_weapon(&[gl], &ws), Some(gl));
     }
 
     #[test]

@@ -31,6 +31,8 @@ pub enum Toggle {
     Sky,
     Water,
     Trees,
+    /// `tlv`: the SpeedTrees' leaves alone.
+    Leaves,
     LodLand,
     Navmesh,
     /// xNVSE's Con_TFIK (ToggleFootIK): feet placed on the ground, as the settings page
@@ -121,6 +123,12 @@ pub fn toggle_water_system(g: &mut Game, _: &Ctx, _: &Args) -> Result<Value, Str
 
 pub fn toggle_trees(g: &mut Game, _: &Ctx, _: &Args) -> Result<Value, String> {
     ask(g, Toggle::Trees)
+}
+
+/// `ToggleLeaves` (`tlv`): "disables/enables all leaves of speedtrees" [documented: GECK
+/// wiki ToggleLeaves]; the engine hides the leaf cards, trunks and branches stay.
+pub fn toggle_leaves(g: &mut Game, _: &Ctx, _: &Args) -> Result<Value, String> {
+    ask(g, Toggle::Leaves)
 }
 
 pub fn toggle_lod_land(g: &mut Game, _: &Ctx, _: &Args) -> Result<Value, String> {

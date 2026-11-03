@@ -4,6 +4,7 @@
 //! moves between holster bone and hand at the clips' `prn:` keys. Nothing decides when to
 //! draw yet (Layer 6); `--actor-weapons drawn` and the test aid `--actor-weapon-test` do.
 
+use bevy::math::Affine3A;
 use bevy::prelude::*;
 use fnv_actor::weapon::{clip_path, mount_bones, sneak_clip_path, EquipClip, StanceFacts, WeaponAnim};
 use nvf_assets::actor::{bind_clip, ClipSource, PreparedPart, PreparedSkeleton, SpawnedActor};
@@ -45,6 +46,16 @@ pub struct Stance {
     /// Where the equip clip leaves the `Weapon` node: its rest pose while in the hand
     /// ([`WeaponHold::rest`]).
     pub weapon_rest: Option<Transform>,
+    /// The same for the crouched equip clip (`sneak2hhequip.kf`), where the stance has
+    /// one: the crouched clips hold the weapon for that place ([`WeaponHold::rest`]).
+    pub sneak_weapon_rest: Option<Transform>,
+    /// Where the left hand holds the weapon: its place in the `Weapon` node's frame at the
+    /// end of the equip clip, standing and crouched ([`left_grip`]). The attack clips hold it
+    /// there too (`2hh`: within 4 units standing, 0.1 crouched [observed:
+    /// `nvf-assets/examples/hand_probe.rs`]); `attack_anims::grip_check` logs how far the
+    /// shown left hand is from it.
+    pub grip: Option<Vec3>,
+    pub sneak_grip: Option<Vec3>,
     /// The weapon-model nodes the holster clip switches off (`##FlamerGun`,
     /// `##MinigunGun`): the clips show and hide them ([`gun_shown`]).
     pub holstered_off: Vec<String>,
@@ -112,8 +123,24 @@ impl Stance {
         let weapon_only = clips.iter().map(|(c, b)| (*c, Arc::new(weapon_track_only(b, weapon_node)))).collect();
         let sneak_weapon_only = sneak.iter().map(|(c, b)| (*c, Arc::new(weapon_track_only(b, weapon_node)))).collect();
         let weapon_rest = clips.get(&EquipClip::Equip).and_then(|c| track_end(c, weapon_node, skel.locals[weapon_node]));
+        let sneak_weapon_rest = sneak.get(&EquipClip::Equip).and_then(|c| track_end(c, weapon_node, skel.locals[weapon_node])).or(weapon_rest);
+        let line = match (weapon_rest, sneak.contains_key(&EquipClip::Equip).then_some(sneak_weapon_rest).flatten()) {
+            (Some(a), Some(b)) => format!("{line}; weapon rest crouched {:.1} units and {:.0} degrees from standing", a.translation.distance(b.translation), a.rotation.angle_between(b.rotation).to_degrees()),
+            _ => line,
+        };
+        let grip = clips.get(&EquipClip::Equip).and_then(|c| left_grip(skel, c, weapon_node));
+        let sneak_grip = sneak.get(&EquipClip::Equip).and_then(|c| left_grip(skel, c, weapon_node)).or(grip);
         let holstered_off = clips.get(&EquipClip::Holster).map_or_else(Vec::new, |c| holstered_off(&c.clip));
-        Ok((Stance { prefix: prefix.to_string(), clips, weapon_only, facts, holster, drawn, weapon_node, bones, weapon_rest, holstered_off, moves: Arc::new(moves), folder, sneak, sneak_weapon_only, sneak_facts }, line))
+        Ok((Stance { prefix: prefix.to_string(), clips, weapon_only, facts, holster, drawn, weapon_node, bones, weapon_rest, sneak_weapon_rest, grip, sneak_grip, holstered_off, moves: Arc::new(moves), folder, sneak, sneak_weapon_only, sneak_facts }, line))
+    }
+
+    /// The left hand's grip standing or crouched ([`Stance::grip`]).
+    pub fn grip_for(&self, crouched: bool) -> Option<Vec3> {
+        if crouched {
+            self.sneak_grip
+        } else {
+            self.grip
+        }
     }
 
     /// The facts of the draw cycle standing or crouched.
@@ -163,6 +190,27 @@ fn track_end(clip: &BoundClip, node: usize, bind: Transform) -> Option<Transform
         scale: Vec3::splat(t.scale.sample(time).map_or(bind.scale.x, |[s]| s)),
     })
 }
+
+/// Where `clip` leaves the left hand in the frame of node `weapon` at its end, each node
+/// at its track's last key or its bind transform ([`Stance::grip`]).
+fn left_grip(skel: &PreparedSkeleton, clip: &BoundClip, weapon: usize) -> Option<Vec3> {
+    let hand = *skel.by_name.get(LEFT_HAND)?;
+    let world = |mut i: usize| {
+        let mut m = Affine3A::IDENTITY;
+        loop {
+            let t = track_end(clip, i, skel.locals[i]).unwrap_or(skel.locals[i]);
+            m = Affine3A::from_scale_rotation_translation(t.scale, t.rotation, t.translation) * m;
+            match skel.parents[i] {
+                Some(p) => i = p,
+                None => return m,
+            }
+        }
+    };
+    Some(world(weapon).inverse().transform_point3(world(hand).translation.into()))
+}
+
+/// The left hand bone, which holds a two-handed weapon's fore grip.
+pub const LEFT_HAND: &str = "Bip01 L Hand";
 
 /// An armed actor's weapon state (on the actor's root, beside its `Locomotion`).
 #[derive(Component)]
@@ -303,13 +351,17 @@ impl WeaponHold {
     /// the place [observed: animation.md §9.7; hypothesis: the game leaves the node where
     /// the last clip put it]. Back at its bind transform the weapon turned in the hand
     /// and the left hand missed it [observed in NVForever: owner's playtest 2026-10-16,
-    /// Cook-Cook's flamer]. Holstered, the node keeps its bind transform.
+    /// Cook-Cook's flamer]. Crouched, the crouched equip clip's place: the crouched aim
+    /// and attack clips hold the weapon there, and with the standing place a crouched
+    /// Cook-Cook fired with a hand off his flamer [observed in NVForever: #1309].
+    /// Holstered, the node keeps its bind transform.
     fn rest(&self, player: &mut BlendPlayer) {
-        player.set_rest(self.stance.weapon_node, self.stance.weapon_rest.filter(|_| self.in_hand()));
+        let rest = if self.crouched { self.stance.sneak_weapon_rest } else { self.stance.weapon_rest };
+        player.set_rest(self.stance.weapon_node, rest.filter(|_| self.in_hand()));
     }
 
     /// Whether the weapon hangs from the hand now.
-    fn in_hand(&self) -> bool {
+    pub fn in_hand(&self) -> bool {
         let st = &self.stance;
         self.anim.parent(&st.holster, &st.drawn, st.facts_for(self.crouched)) == st.drawn
     }
@@ -528,7 +580,7 @@ mod tests {
             (EquipClip::Unequip, f(0.5, "Bip01 Pelvis")),
         ]);
         let bones = HashMap::from([("Bip01 Pelvis".to_string(), 3), ("Bip01 R Hand".to_string(), 7)]);
-        Arc::new(Stance { prefix: "1hp".into(), clips: BTreeMap::new(), weapon_only: BTreeMap::new(), sneak_facts: facts.clone(), facts, holster: "Bip01 Pelvis".into(), drawn: "Bip01 R Hand".into(), weapon_node: 8, bones, weapon_rest: None, holstered_off: Vec::new(), moves: Arc::default(), folder: r"meshes\characters\_male".into(), sneak: BTreeMap::new(), sneak_weapon_only: BTreeMap::new() })
+        Arc::new(Stance { prefix: "1hp".into(), clips: BTreeMap::new(), weapon_only: BTreeMap::new(), sneak_facts: facts.clone(), facts, holster: "Bip01 Pelvis".into(), drawn: "Bip01 R Hand".into(), weapon_node: 8, bones, weapon_rest: None, sneak_weapon_rest: None, grip: None, sneak_grip: None, holstered_off: Vec::new(), moves: Arc::default(), folder: r"meshes\characters\_male".into(), sneak: BTreeMap::new(), sneak_weapon_only: BTreeMap::new() })
     }
 
     #[test]

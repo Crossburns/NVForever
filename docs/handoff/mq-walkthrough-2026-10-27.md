@@ -616,3 +616,41 @@ CGTutorial 18-24, 62, 72, 92 (a branch of the intro chain); NVDLC01MQ02c 60, MQ0
 20; NVDLC02MS02 27/35/40, MQ03a/b/c 20; NVDLC03 HQBuddySamples 20, SonicEmitterQuest 10,
 ThinkTankQuest 35; NVDLC04 GenericPerkQUEST 30, MQ02 30; VMQNCRFail 2 (#931). The --detail
 report lists them all with their setters.
+
+**Triage of the settable, not walked (2026-11-01, issue #1115, in progress).** On main
+`5fb0b80e` `script cover` counts 114 (`missing_settable`; two were walked since). 32 of them
+are VCG00 5-85, the cut cemetery scene: VCG00ScriptNV's GameMode would step through them
+only from stage 0, but stage 0's own result script plays the intro film and sets 90 at its
+end, so the GameMode never sees stage 0 [observed, decompiled QUST 0x00102037 stage 0 and
+SCPT 0x00102035]. They count as settable (a script names them) but cannot be walked. That
+leaves 82.
+
+**Batch 1 (2026-11-01, issue #1115):** 11 chains, each with its `mq-*` smoke scenario, reach
+12 of the 82 [observed: each chain's run, 0 step and 0 given errors]:
+
+| chain | stages | path |
+|---|---|---|
+| kings-gambit-pacer-killed | VMS29 102 | Pacer killed outright; Crocker refuses a reward (Topic016, 017) |
+| kings-gambit-energy-weapon | VMS29 100 | Pacer shot with a laser rifle (his OnHitWith marks the energy weapon): the Van Graff frame |
+| kings-gambit-psycho | VMS29 101 | the jet on Pacer's table spiked (its box, button 4, needs Psycho carried); Pacer's jet package ends |
+| kings-gambit-moore | VMS29 20, 111 | the King, owed no favour, refuses; Moore's squad gives the ultimatum and fights the Kings |
+| kings-gambit-hsu-peace | VMS29 20, 120 | refused; Hsu's offer, the King agrees, Pacer breaks with him (KingAndPacerArgue) and is killed |
+| kings-gambit-hsu-fight | VMS29 20, 121 | refused; Hsu's offer taken as a challenge, the squad fights |
+| kings-gambit-crocker-killed | VMS29 200 | Crocker killed while the quest runs |
+| things-that-go-boom-wait | VMS23 40 | Volare! done, the Boomers not yet asked: Crocker waits (Topic006, 023) |
+| things-that-go-boom-no-boomers | VMS23 102 | Volare! failed (Jack killed) before the player meets Crocker |
+| things-that-go-boom-crocker-killed | VMS23 200 | Crocker killed while the quest runs |
+| why-cant-we-be-friends-lem-gives-up | VMS42 50 | Lem's job, the sulfur cave's microcline charge armed (Science 40, Explosives 60, three charges), Lem talked out of the gang (Topic179, 197) |
+
+The VMS29 and VMS23 chains fork the NCR chain (ncr.actions.json) before Crocker's ask; the
+VMS42 one goes on from why-cant-we-be-friends-lem. Stand-ins: `kill` for the fights with
+Pacer and Crocker, `hit` with a laser rifle for the shot, `package done` for Pacer's walk to
+his jet and the NCR squad's return, `move_player` for the walks.
+
+**Settable but cannot be reached** [observed, decompiled]:
+- VMS29 110: Crocker's line 0x00120580 needs objective 80 shown, and nothing in the load
+  order shows it (the squad's package shows 81 or 91, Pacer's OnDeath 20 or 90).
+- VMSTopsTalentPool 25, 35, 45: only Tommy's Billy haggle (Topic013, 0x00120005/06) sets
+  them, and its topic TommyToriniBillyBargain (0x00120000) needs BillyRecruited = 2, which
+  nothing sets (Billy's two recruiting lines set 1). Stages 20, 30 and 40, which the
+  haggle's 35 and 45 branches would follow, are set by nothing either.

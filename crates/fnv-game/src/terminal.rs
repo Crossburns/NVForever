@@ -214,6 +214,35 @@ pub fn items(g: &mut Game, reference: FormId, base: FormId) -> Vec<usize> {
     out
 }
 
+/// A script's changes to a menu item for the session (JohnnyGuitar's
+/// Set…TerminalMenuItem…, `crate::nvse_jg3`): each field set replaces the record's.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ItemEdit {
+    pub text: Option<String>,
+    pub result: Option<String>,
+    pub flags: Option<u8>,
+    pub note: Option<Option<FormId>>,
+    pub submenu: Option<Option<FormId>>,
+}
+
+/// Item `item` of terminal `base` as it stands now: the record's, with a script's changes
+/// ([`ItemEdit`]).
+pub fn item(g: &Game, base: FormId, item: usize) -> Option<crate::data::TerminalItem> {
+    let mut it = g.data.terminals.get(&base)?.items.get(item)?.clone();
+    if let Some(e) = g.other.terminal_items.get(&(base, item)) {
+        if let Some(t) = &e.text {
+            it.text = t.clone();
+        }
+        if let Some(r) = &e.result {
+            it.result = r.clone();
+        }
+        it.flags = e.flags.unwrap_or(it.flags);
+        it.note = e.note.unwrap_or(it.note);
+        it.submenu = e.submenu.unwrap_or(it.submenu);
+    }
+    Some(it)
+}
+
 /// What choosing an item showed.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Chosen {
@@ -233,7 +262,7 @@ pub struct Chosen {
 /// note to the player [documented: xEdit flag name].
 pub fn choose(g: &mut Game, reference: FormId, base: FormId, item: usize) -> Option<Chosen> {
     let data = g.data;
-    let it = data.terminals.get(&base)?.items.get(item)?;
+    let it = self::item(g, base, item)?;
     g.terminals.back = false;
     if let Some(u) = it.unit {
         g.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(reference) });
@@ -245,7 +274,7 @@ pub fn choose(g: &mut Game, reference: FormId, base: FormId, item: usize) -> Opt
         }
     }
     let back = std::mem::take(&mut g.terminals.back);
-    Some(Chosen { result: it.result.clone(), submenu: it.submenu, note: it.note, back })
+    Some(Chosen { result: it.result, submenu: it.submenu, note: it.note, back })
 }
 
 /// The server line of the header: "-Server 1-" to "-Server 10-" [documented: xEdit

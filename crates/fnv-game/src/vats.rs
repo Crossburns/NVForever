@@ -187,7 +187,7 @@ impl Game<'_> {
         if extra.is_some_and(|e| e.destroyed) {
             return false;
         }
-        extra.and_then(|e| e.vats_target).unwrap_or_else(|| base_of(self, r).and_then(|b| self.data.destructibles.get(&b)).is_some_and(|d| d.vats_targetable))
+        extra.and_then(|e| e.vats_target).unwrap_or_else(|| base_of(self, r).and_then(|b| self.destruction(b)).is_some_and(|d| d.vats_targetable))
     }
 }
 

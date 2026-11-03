@@ -5,8 +5,10 @@ pub mod input;
 pub mod layout;
 pub mod menus;
 pub mod model;
+pub mod mods;
 pub mod notices;
 pub mod vanilla;
+pub mod wait_menu;
 
 use crate::{script::ScriptState, PlaySet, PlayState};
 use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
@@ -59,12 +61,13 @@ impl MenuFiles<'_, '_> {
 }
 
 /// Whether `screen()` is written in interface units ([`write_screen`]): only while a T15
-/// menu (`MessageMenu`, `QuantityMenu`) is switched on, whose file centres its box by
-/// `screen()`. The default game and the tile HUD alone keep the window's pixels
-/// [design]. The original reports interface units [observed: hud_menus capture
+/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`) or the start menu's Mods page
+/// (T11, `mods`) is switched on, whose files centre their boxes by `screen()` (MCM's `x`
+/// and `y`, menu-xml.md §10). The default game and the tile HUD alone keep the window's
+/// pixels [design]. The original reports interface units [observed: hud_menus capture
 /// 2026-10-31, three window sizes]; applying them unconditionally is a follow-up.
 pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
-    menus.message || menus.quantity
+    menus.message || menus.quantity || menus.sleep_wait || menus.start
 }
 
 /// Write `screen()`'s traits for a window `window_width` x `window_height` (logical
@@ -358,8 +361,10 @@ impl HudTiles<'_> {
 struct MenusWritten {
     message: Option<(menus::BoxShown, Option<usize>)>,
     quantity: Option<(fnv_ui::TileId, menus::Amount)>,
-    /// The text sizes written, the message box's and the prompt's.
-    sizes: [menus::SizesWritten; 2],
+    /// T15b: the Wait / Sleep menu.
+    sleep_wait: Option<wait_menu::Shown>,
+    /// The text sizes written, the message box's, the prompt's and the Wait menu's.
+    sizes: [menus::SizesWritten; 3],
     /// [design] Each fallback reason is warned once per session, including after reopen.
     fallbacks: std::collections::HashSet<String>,
 }
@@ -380,6 +385,9 @@ impl MenusWritten {
 struct MenuTiles<'w, 's> {
     panel: Option<Res<'w, crate::message_menu::MessagePanel>>,
     active: Option<Res<'w, crate::menu::ActiveMenu>>,
+    /// T15b: the Wait / Sleep menu and its words.
+    wait: Option<Res<'w, crate::wait::WaitMenu>>,
+    words: Option<Res<'w, crate::wait::model::Words>>,
     written: Local<'s, MenusWritten>,
 }
 
@@ -393,10 +401,11 @@ impl MenuTiles<'_, '_> {
     /// when what they show changed, and their text tiles' sizes every frame they are drawn
     /// (each measured again only when its string changed), before scripts [design:
     /// ui-tile-tree.md §4.1]. Off, or without the menu files, nothing.
-    fn write(&mut self, game: &mut fnv_game::Game<'_>, switch: vanilla::TileMenus, fonts: &mut draw::FontKit) {
-        if !(switch.message || switch.quantity) || game.ui_files.is_none() {
+    fn write(&mut self, game: &mut fnv_game::Game<'_>, switch: vanilla::TileMenus, fonts: &mut draw::FontKit, calendar: Option<fnv_sim::clock::Calendar>) {
+        if !(switch.message || switch.quantity || switch.sleep_wait) || game.ui_files.is_none() {
             return;
         }
+        self.write_wait(game, switch, fonts, calendar);
         // [design] Reconsider an overflowing box when its view changes: using the final
         // tiled decision here would prevent a later short box from being written.
         let message_open = switch.message && game.menu == Some(fnv_game::game::menus::MESSAGE);
@@ -455,6 +464,36 @@ impl MenuTiles<'_, '_> {
             None => written.quantity = None,
         }
     }
+
+    /// T15b: write the Wait / Sleep menu's traits (`wait_menu::write`) when what it shows
+    /// changed, and its text tiles' sizes every frame it is drawn, before scripts.
+    fn write_wait(&mut self, game: &mut fnv_game::Game<'_>, switch: vanilla::TileMenus, fonts: &mut draw::FontKit, calendar: Option<fnv_sim::clock::Calendar>) {
+        let written = &mut *self.written;
+        let open = switch.sleep_wait && game.menu == Some(crate::script::MENU_SLEEP_WAIT);
+        if open {
+            written.warn_fallback(wait_menu::SLEEP_WAIT_MENU, wait_menu::built(&game.ui_tree));
+        }
+        let model = self.wait.as_ref().and_then(|w| w.0.as_ref());
+        let (Some(model), Some(words), Some(cal), true) = (model, self.words.as_ref(), calendar, open && wait_menu::tiled(true, game)) else {
+            written.sleep_wait = None;
+            return;
+        };
+        let Some(menu) = game.ui_tree.menu(wait_menu::SLEEP_WAIT_MENU) else { return };
+        let now = wait_menu::Shown { menu, view: model.view(words, &cal) };
+        let ui = &mut game.ui_tree;
+        let changed = written.sleep_wait.as_ref() != Some(&now);
+        if changed {
+            wait_menu::write(ui, &now.view);
+            ui.update();
+        }
+        let texts = menus::texts(ui, menu);
+        let size = fonts.menu_measure(&menus::fonts_of(ui, &texts));
+        menus::write_text_sizes_of(ui, &texts, &mut written.sizes[2], &size);
+        if changed {
+            info!("{}", wait_menu::describe(ui));
+            written.sleep_wait = Some(now);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -468,6 +507,8 @@ fn write(
     mut animation: Local<fnv_game::ui_hud::Animation>,
     mut told: Local<[Option<String>; 4]>,
     mut menu_tiles: MenuTiles,
+    mut mods_entry: ResMut<crate::pause::ModsEntry>,
+    mut start_names: Local<mods::KeptNames>,
 ) {
     let Some(rt) = script.rt.as_mut() else { return };
     // T15a: the prompt over the container, barter and inventory menus builds `QuantityMenu`
@@ -475,7 +516,14 @@ fn write(
     // menus build (T3b).
     rt.game.ui_prompt = menu_tiles.quantity().map(|_| fnv_game::game::menus::QUANTITY);
     files.write(&mut rt.game);
-    menu_tiles.write(&mut rt.game, *menus, &mut fonts);
+    // T11: the pause column's Mods entry, while a mod's tiles are in the start menu.
+    let ui_files = rt.game.ui_files.as_deref().map(|f| f as &dyn fnv_ui::Source);
+    let mods_now = crate::pause::ModsEntry(mods::available(*menus, &rt.game.ui_tree, ui_files, &mut start_names));
+    if *mods_entry != mods_now {
+        info!("tiles: {}", if mods_now.0 { "a mod's tiles in StartMenu: the pause menu has a Mods entry" } else { "no Mods entry in the pause menu" });
+        *mods_entry = mods_now;
+    }
+    menu_tiles.write(&mut rt.game, *menus, &mut fonts, hud.sim.world.calendar().ok());
     let shown = hud.shown(&rt.game, &files);
     let mut texts = hud.texts(&mut rt.game, shown);
     if let Some(root) = rt.game.ui_tree.find_tile("HUDMainMenu") {
@@ -532,11 +580,12 @@ fn write(
 /// Works the tree out after the scripts; nothing to do on a frame where nothing changed
 /// it (`fnv_ui::Ui::update`). The scripts' gradual changes step first, on real time
 /// (`fnv_game::ui_gradients`, task T9).
-fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>) {
+fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check: ResMut<input::WaitSliderCheck>) {
     let Some(rt) = script.rt.as_mut() else { return };
     rt.game.ui_gradients.step(&mut rt.game.ui_tree, f64::from(time.delta_secs()));
     if rt.game.ui_files.is_some() {
         rt.game.ui_tree.update();
+        input::check_wait_drawn(&rt.game.ui_tree, &mut wait_check);
         // Once, if something changes the tree's shape every frame (#1061).
         if let Some(line) = rt.game.ui_tree.take_reshape_warning() {
             warn!("{line}");
@@ -617,6 +666,8 @@ mod tests {
         // On: interface units, 960 high, and the converter.
         assert!(interface_screen(vanilla::TileMenus { message: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { quantity: true, ..Default::default() }));
+        assert!(interface_screen(vanilla::TileMenus { start: true, ..Default::default() }));
+        assert!(interface_screen(vanilla::TileMenus { sleep_wait: true, ..Default::default() }));
         write_screen(&mut ui, 1280.0, 720.0, true);
         ui.update();
         assert_eq!(ui.get_float("M/Box/x").map(|x| (x * 100.0).round() / 100.0), Some(803.33));

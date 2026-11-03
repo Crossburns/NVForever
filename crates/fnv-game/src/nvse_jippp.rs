@@ -111,20 +111,8 @@ fn weapon_degradation(g: &Game, weapon: FormId, ammo: Option<FormId>) -> f64 {
     } else {
         g.world.setting_f32("fDamageToWeaponValue").map_or(0.0, f64::from)
     };
-    let effects: Vec<FormId> = ammo
-        .and_then(|a| g.data.record_fields.get(&a))
-        .map(|fields| {
-            fields
-                .iter()
-                .filter(|(s, _)| s == b"RCIL")
-                .filter_map(|(_, v)| match v {
-                    serde_json::Value::Number(x) => x.as_u64().map(|x| FormId(x as u32)),
-                    serde_json::Value::String(s) => s.strip_prefix("0x").and_then(|h| u32::from_str_radix(h, 16).ok()).map(FormId),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    // AddAmmoEffect's and RemoveAmmoEffect's changes first (`crate::nvse_jip7`).
+    let effects: Vec<FormId> = ammo.map(|a| g.ammo_effects(a)).unwrap_or_default();
     for e in effects {
         // AMEF DATA: type 4 Weapon Condition Mod; operation 0 add, 1 multiply, 2 subtract.
         if n(e, "DATA", "type") != Some(4.0) {

@@ -102,6 +102,14 @@ the spec it links to.
     formula's base force). Our reading of the formula, not measured in the original:
     more, less, only on power attacks, and should a block take the push too?
     ([combat-rules, Knockback](spec-notes/combat-rules.md))
+41. **Explosions hit every limb in full (#1338).** A blast that leaves its target alive
+    takes its damage after armour (× the weapon's Limb Dmg Mult) off every limb at once,
+    so nearly any frag mine or grenade cripples most of an NPC's limbs, head included;
+    the player's limbs take half. The original does damage limbs with blasts, but how it
+    shares the damage is not known yet (observer check 74). Until then: keep it, or
+    spread a share (say a sixth) over the limbs? A crippling blast staggers once (no
+    stagger when it knocks the actor down) and a crippled arm disarms.
+    ([crippled-limbs §5](spec-notes/crippled-limbs.md))
 
 ## Tier 2: movement and controls feel
 
@@ -215,6 +223,23 @@ the spec it links to.
    first, and Ready Item draws the new one. The original may draw it. Kept here only so
    it is on record as a difference; if you want a drawn weapon to stay drawn on a swap,
    it is one function (`holster_for_new_weapon`). [weapon-wheel.md §4](design/weapon-wheel.md)
+42. **Cheaper moon shadows (#1369, #1371): a look by eye.** By night the moon's shadows
+   reach 3,000 units in one cascade at 2048² (by day: the settings' cascades and reach,
+   4096² with finer shadows), and while the light is under a tenth of its strength at the
+   horizon there are none. It saves about 2.5 ms on the Strip at 22:00. Not checked by
+   eye: walk the Strip or open desert at night and see whether shadows ending at 3,000
+   units or their softer edges look wrong, and watch sunrise and sunset for a visible pop
+   when shadows switch off or back on at the fade. If they do, the reach can grow or the
+   moon keep the day's cascades. [graphics-enhanced.md §3.2](design/graphics-enhanced.md)
+
+43. **The first-person arms' shadows on themselves cost about 0.75 ms (#1374).** The
+   arms' shade light now draws only what lies by the eye toward the sun, and far
+   shadows (hills, buildings) come from the sun's own map: 15.4 → 12.4 ms at Novac
+   07:00 with finer shadows. What is left is the light's own pass, about 0.75 ms
+   whatever it draws, at 4096² maps; it is what lets the weapon shade the hand and a
+   roof right at the head shade the arms. If you rule it out, the light goes (12.4 →
+   about 11.4 ms there) and the arms take only the sun's shadows from past the body.
+   See [player-body.md §1.6](design/player-body.md).
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 
@@ -352,3 +377,10 @@ a save. In the original game a save is written to `Documents\My Games\FalloutNV\
 which you have not cleared for probes the way you cleared the game install. Not done.
 *Answered 2026-10-26:* yes, one save named `nvfprobe`, removed after the run, the owner's
 own saves untouched.
+
+## Code mods: the script host's language (2026-11-02)
+
+Not a gameplay decision, and not needed before phase M5. The script host (an authoring
+route with no compiler) runs either Lua or GECK/xNVSE-style script compiled by
+NVForever's own compiler. Hooks for ESP scripts are a third option.
+[code-mods](design/code-mods.md) §12.1, §17 item 8.

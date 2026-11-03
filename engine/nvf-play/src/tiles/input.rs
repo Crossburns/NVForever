@@ -5,7 +5,8 @@
 //! - **Which menus take input**: a menu drawn from its file that the player works: since
 //!   T15a the message box and the "How many?" prompt while drawn from tiles
 //!   (`[UI] TileMenus=MessageMenu,QuantityMenu`, `super::menus`), the prompt under the
-//!   box. The HUD (`[UI] TileMenus=HUDMainMenu`) is drawn from tiles but has no pointer in
+//!   box; since T11 the start menu while the pause menu's Mods page is up
+//!   (`[UI] TileMenus=StartMenu`, `super::mods`). The HUD (`[UI] TileMenus=HUDMainMenu`) is drawn from tiles but has no pointer in
 //!   play [hypothesis: the original's HUD takes no clicks]. With none, nothing is fed and
 //!   the frame does no tree work [design: the maintainer's review of #902], unless the test
 //!   aid below makes the HUD take input; but a script's ClickMenuButton or ClickMenuTile
@@ -24,6 +25,10 @@
 //!   once while a script's MenuTapKey and a file's own bindings still act; a highlight a
 //!   ref moved for a hand-built Up or Down is not taken as the box's choice
 //!   (`super::menus::chosen_row`) [design: the T15a review].
+//! - **The Wait / Sleep menu** (T15b, `super::wait_menu`): its Wait and Cancel buttons and
+//!   the slider's arrows and page areas send the hand-built menu's commands
+//!   (`crate::wait::WaitInput`), a press on the marker, held as it drags, sets the hours
+//!   under the pointer; the slider's value is written again after them.
 //! - **Units**: the cursor's logical pixels to interface units, 960 to the view's height,
 //!   as the tile renderer draws (`super::draw`, `crate::interface::u`) [design].
 //! - **Keys**: A to Z as `_PCButton_<letter>` [documented: the vanilla files' letters;
@@ -152,6 +157,16 @@ pub(crate) struct MenuInputs<'w, 's> {
     commands: MessageWriter<'w, crate::menu::MenuInput>,
     /// A press on the prompt's meter, held: the amount follows the pointer.
     dragging: Local<'s, bool>,
+    /// T15b: the Wait / Sleep menu, and its commands.
+    wait: Option<Res<'w, crate::wait::WaitMenu>>,
+    wait_commands: MessageWriter<'w, crate::wait::WaitInput>,
+    /// A press on the Wait menu's slider, held: the hours follow the pointer.
+    wait_dragging: Local<'s, bool>,
+    /// The slider's left edge while it drags (`super::wait_menu::slider_left`), worked out
+    /// at the press.
+    wait_left: Local<'s, Option<f64>>,
+    /// The hours the slider was written for this frame, for [`check_wait_drawn`].
+    wait_check: ResMut<'w, WaitSliderCheck>,
 }
 
 impl MenuInputs<'_, '_> {
@@ -170,13 +185,43 @@ impl MenuInputs<'_, '_> {
         if message_tiled(menus.message, game) {
             out.extend(game.ui_tree.menu(MESSAGE_MENU));
         }
+        if super::wait_menu::tiled(menus.sleep_wait, game) {
+            out.extend(game.ui_tree.menu(super::wait_menu::SLEEP_WAIT_MENU));
+        }
         out
+    }
+
+    /// T15b: act on a click on the Wait / Sleep menu's tiles: the hand-built menu's command
+    /// for the piece (`super::wait_menu::slider_command`), unless a key made it that the
+    /// hand-built menu took this frame. Returns the hours the slider then shows, for its
+    /// value to be written again (`super::wait_menu::write_slider`).
+    fn follow_wait(&mut self, ui: &fnv_ui::Ui, c: &fnv_ui::input::Click, at: Option<(f64, f64)>, held: bool, physical: &[&str]) -> Option<Option<u32>> {
+        use super::wait_menu::{hours_at, slider_command, slider_left, wait_tile, WaitTile, SLEEP_WAIT_MENU};
+        let model = self.wait.as_ref().and_then(|w| w.0.clone())?;
+        let what = wait_tile(ui, c.tile)?;
+        if let fnv_ui::input::By::Key(k) = &c.by {
+            if !super::menus::key_click_acts(SLEEP_WAIT_MENU, k, physical) {
+                return Some(None);
+            }
+        }
+        let mut under = None;
+        if what == WaitTile::Slider {
+            *self.wait_dragging = held && matches!(c.by, fnv_ui::input::By::Pointer);
+            *self.wait_left = slider_left(ui);
+            under = at.zip(*self.wait_left).and_then(|((x, _), left)| hours_at(ui, left, x));
+        }
+        let Some(cmd) = slider_command(what, under) else { return Some(None) };
+        info!("tiles: {SLEEP_WAIT_MENU} {cmd:?} on its tiles");
+        self.wait_commands.write(crate::wait::WaitInput(cmd));
+        let mut next = model.clone();
+        next.apply(cmd);
+        Some(Some(next.marker()))
     }
 
     /// Act on a frame's report (see the module doc): `at` the pointer, `held` the left
     /// button down, `physical` the keys from the keyboard (or a controller standing in for
     /// them) this frame.
-    fn follow(&mut self, ui: &fnv_ui::Ui, report: &fnv_ui::input::Report, at: Option<(f64, f64)>, held: bool, physical: &[&str]) {
+    fn follow(&mut self, ui: &fnv_ui::Ui, report: &fnv_ui::input::Report, at: Option<(f64, f64)>, held: bool, physical: &[&str]) -> Option<u32> {
         use super::menus::{chosen_row, key_click_acts, message_pick, nav_by_hand, quantity_tile, row_button, QuantityTile, QUANTITY_MENU};
         use crate::menu::{model::Command, MenuInput};
         use fnv_ui::input::By;
@@ -190,7 +235,20 @@ impl MenuInputs<'_, '_> {
             *self.dragging = false;
         }
         let mut clicked = false;
+        let mut slider = None;
+        if self.wait.as_ref().is_none_or(|w| w.0.is_none()) || !held {
+            *self.wait_dragging = false;
+        }
+        if !*self.wait_dragging {
+            *self.wait_left = None;
+        }
+        let mut wait_clicked = false;
         for c in report.clicks.iter().filter(|c| ui.is_live(c.tile)) {
+            if let Some(hours) = self.follow_wait(ui, c, at, held, physical) {
+                wait_clicked = true;
+                slider = hours.or(slider);
+                continue;
+            }
             if row_button(ui, c.tile).is_some() {
                 if let Some(i) = message_pick(ui, c, physical) {
                     info!("tiles: {} button {i} picked on its tiles", super::menus::MESSAGE_MENU);
@@ -228,6 +286,39 @@ impl MenuInputs<'_, '_> {
                 self.commands.write(MenuInput(Command::Amount(n)));
             }
         }
+        // T15b: a drag on the Wait menu's slider, the hours under the pointer.
+        let hours = self.wait.as_ref().and_then(|w| w.0.as_ref()).map(|m| m.hours);
+        if let (true, false, Some(now), Some((x, _)), Some(left)) = (*self.wait_dragging, wait_clicked, hours, at, *self.wait_left) {
+            if let Some(h) = super::wait_menu::hours_at(ui, left, x).filter(|&h| h != now) {
+                self.wait_commands.write(crate::wait::WaitInput(crate::wait::model::Command::Hours(h)));
+                slider = Some(h);
+            }
+        }
+        slider
+    }
+}
+
+/// T15b: the hours the Wait menu's slider was written for this frame (`feed`), and the
+/// value last seen drawn.
+#[derive(Resource, Default)]
+pub(crate) struct WaitSliderCheck {
+    wrote: Option<u32>,
+    drawn: Option<f64>,
+}
+
+/// T15b: the slider's value once the tree is worked out after scripts (what is drawn),
+/// logged when it changes, and when it is not the value written this frame for the model's
+/// hours (smoke reads both: the model's value must outlast a click's pulse, #1307 review).
+pub(crate) fn check_wait_drawn(ui: &fnv_ui::Ui, check: &mut WaitSliderCheck) {
+    use super::wait_menu::{slider_shown, slider_value, SLEEP_WAIT_MENU};
+    let Some(h) = check.wrote.take() else { return };
+    let Some(v) = slider_shown(ui) else { return };
+    if check.drawn != Some(v) {
+        info!("tiles: {SLEEP_WAIT_MENU} slider drawn at {}", fnv_ui::Value::Num(v).text());
+        check.drawn = Some(v);
+    }
+    if slider_value(h) != v {
+        info!("tiles: {SLEEP_WAIT_MENU} slider drawn at {}, not the {} written", fnv_ui::Value::Num(v).text(), slider_value(h));
     }
 }
 
@@ -240,7 +331,15 @@ fn amount_under(ui: &fnv_ui::Ui, at: Option<(f64, f64)>, most: i32) -> Option<i3
     Some(crate::menu::model::amount_at(((x - b.left) / b.width) as f32, most))
 }
 
-pub(crate) fn feed(mut script: ResMut<ScriptState>, menus: Res<super::vanilla::TileMenus>, aid: Option<ResMut<PointerAid>>, time: crate::pause::AidTime, devices: Devices, mut inputs: MenuInputs) {
+pub(crate) fn feed(
+    mut script: ResMut<ScriptState>,
+    menus: Res<super::vanilla::TileMenus>,
+    aid: Option<ResMut<PointerAid>>,
+    time: crate::pause::AidTime,
+    devices: Devices,
+    mut inputs: MenuInputs,
+    (paused, page): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>),
+) {
     let Some(rt) = script.rt.as_mut() else { return };
     if rt.game.ui_files.is_none() {
         return;
@@ -275,6 +374,16 @@ pub(crate) fn feed(mut script: ResMut<ScriptState>, menus: Res<super::vanilla::T
         taking.extend(rt.game.ui_tree.menu(super::draw::HUD_MENU));
     }
     taking.extend(inputs.taking(*menus, &rt.game));
+    // T11: the pause menu's Mods page takes the pointer and keys for the start menu's
+    // tiles (`super::mods`).
+    if menus.start && paused.as_ref().zip(page.as_ref()).is_some_and(|(p, pg)| crate::pause::mods_open(p, pg)) {
+        taking.extend(rt.game.ui_tree.menu(super::mods::START_MENU));
+    }
+    let wait_tiled = super::wait_menu::tiled(menus.sleep_wait, &rt.game);
+    inputs.wait_check.wrote = None;
+    if !wait_tiled {
+        inputs.wait_check.drawn = None;
+    }
     if taking.is_empty() {
         // A highlight left from the last menu that took input goes (mouseover back to 0),
         // and the scripts' clicks end and fire their events; otherwise nothing to do
@@ -316,7 +425,7 @@ pub(crate) fn feed(mut script: ResMut<ScriptState>, menus: Res<super::vanilla::T
     }
     let report = fnv_game::ui_input::step(&mut rt.game, &taking, &input, &no_measure);
     let ui = &rt.game.ui_tree;
-    inputs.follow(ui, &report, at, aid_click || devices.mouse.pressed(MouseButton::Left), &physical);
+    let slider = inputs.follow(ui, &report, at, aid_click || devices.mouse.pressed(MouseButton::Left), &physical);
     if let Some((_, to)) = report.over {
         match to.filter(|&t| ui.is_live(t)) {
             Some(t) => {
@@ -336,11 +445,22 @@ pub(crate) fn feed(mut script: ResMut<ScriptState>, menus: Res<super::vanilla::T
     for line in &report.unfollowed {
         info!("tiles: key not followed: {line}");
     }
+    // T15b: the slider's value is the model's again on every frame the menu is tiled, over
+    // the file's own count of the clicks and their pulses' ends (`super::wait_menu`), after
+    // this frame's step and before the tree is worked out after scripts: the hours a command
+    // this frame leads to, else the model's.
+    if wait_tiled {
+        let model = inputs.wait.as_ref().and_then(|w| w.0.as_ref()).map(crate::wait::model::Model::marker);
+        if let Some(h) = slider.or(model) {
+            super::wait_menu::write_slider(&mut rt.game.ui_tree, h);
+            inputs.wait_check.wrote = Some(h);
+        }
+    }
 }
 
 /// Read the test aid at start.
 pub(crate) fn setup(app: &mut App) {
-    app.init_resource::<MessageClick>();
+    app.init_resource::<MessageClick>().init_resource::<WaitSliderCheck>();
     let Ok(v) = std::env::var(AID) else { return };
     match crate::test_aid::timed(&v).and_then(|items| items.into_iter().map(|(s, r)| aid_pointer(r).map(|p| (s, p))).collect::<Result<Vec<_>, _>>()) {
         Ok(due) => {

@@ -7,8 +7,15 @@
 //!   explodes (frag, plasma and pulse grenades, dynamite), from the actor's inventory, one
 //!   used up per throw: unlike guns, which load rounds from nowhere (owner 2026-10-17),
 //!   a grenade thrown is gone, so a fighter carries as many throws as grenades.
-//! - **When**: a gunman (not a melee fighter, not fleeing) that is ready to fire on a
-//!   target it sees, first [`FIRST_AFTER`] seconds into seeing it, then every
+//! - **Who**: only an actor whose held weapon is the grenade. A gunman does not throw the
+//!   grenades it carries [observed: observer check 20, o13_airport 2026-11-01: Powder
+//!   Gangers carrying 4 and 5 dynamite threw none in 90 s at 426-1,595 units; one holding
+//!   its dynamite threw once at about 1,225 units, then drew a gun]. In ours a gun or a
+//!   melee weapon is always held before a thrown one (`fnv_actor::weapon::choose_weapon`)
+//!   and re-arming passes grenades over, so throws come only once drawing a grenade is
+//!   built.
+//! - **When**: holding it, not fleeing, ready on a target it sees, first [`FIRST_AFTER`]
+//!   seconds into seeing it, then every
 //!   [`BETWEEN`] seconds; only at a target beyond [`MIN_BLAST_SHARE`] times the blast's
 //!   radius (it keeps clear of its own blast) and its throw's reach (the low arc's, under
 //!   the projectile's gravity, no farther than [`MAX_THROW`]); held, as an explosive shot

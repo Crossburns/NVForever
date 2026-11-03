@@ -129,7 +129,9 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
 - **ITEMS** (`items.rs`): the inventory model (`menu::model`, `Mode::Inventory`), the
   tab choosing the kind of item. Built: the heading (Wg, HP, DT and Caps), the list
   (name, count in brackets, the filled square of what is equipped, the selected row
-  boxed), 9 rows at once (51 a row in a list 468 high).
+  boxed), 9 rows at once (51 a row in a list 468 high). A row (its box) runs from the
+  scroll bar to 5 short of the list's right edge, as the DATA lists' [design: it was the
+  Repair page's 393, which ran over the item's figures; owner's screenshot 2026-11-01].
   - Added 2026-10-23 (owner's playtest list 7, items 5, 6, 15, 20, 33):
     - **HP** is the STATS page's health out of its whole; **DT** the threshold a hit on
       the player meets (worn armour at its condition plus the Damage Threshold actor

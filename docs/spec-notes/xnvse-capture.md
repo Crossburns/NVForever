@@ -221,6 +221,15 @@ function on a NULL reference") and the step fails without harm.
 
 ## 6. Open points
 
+- **Only the first full script of a job compiles (2026-11-01) [observed].** In
+  o13_diag_forms (plugin version 10, nvftest) the first `query` with its own
+  `Begin Function` (aa_auto_trial's GetParentCell) ran, and each of the seven after it
+  came back "script did not compile", `let rV := rN.GetAV Health` after a BuildRef among
+  them, though the same lines compile as the plugin's own short forms and in the
+  observer's probes. o11_02 and o11_03 failed the same way. The cause in the plugin is
+  not known [hypothesis: a name the runtime compiler gives each script, reused]. Until
+  it is found, read forms with the observer (its `weapon`, `package` ... fields) or write
+  one full script per job.
 - **"cannot create a bitmap" (2026-10-18) [observed].** Every screenshot of od_21 and
   od_22 (from `nvfstrip`) failed with this error, while od_20's Ringo pictures were
   taken in the same run.

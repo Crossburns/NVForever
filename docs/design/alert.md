@@ -50,6 +50,8 @@ Tags as in the spec notes: [documented: source], [observed], [hypothesis], and
   one is detected again; Lost → Normal when every target is hidden or gone and the alarms
   have run out. Combat → Normal when the target list and the alert list are empty
   (targets dead, gone, no longer hostile).
+- Both timers count a target as detected while a member of the actor's combat group in
+  Combat still detects it (#972, docs/spec-notes/combat-groups.md §3) [hypothesis].
 - An event heard while searching puts its owner on the target list, undetected
   [documented].
 - Back in Normal the lists are cleared.

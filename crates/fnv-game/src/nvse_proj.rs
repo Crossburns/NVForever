@@ -36,6 +36,10 @@ pub struct Shot {
     pub impact: Option<(FormId, Option<u32>)>,
     /// Game units flown.
     pub travelled: f32,
+    /// The ammunition it was fired with: the one the shooter's weapon uses when it is the
+    /// weapon fired [hypothesis: the engine does not say which round it fired]
+    /// (GetProjectileRefAmmo, `crate::nvse_one111`).
+    pub ammo: Option<FormId>,
 }
 
 /// This file's session state (not saved: shots do not outlive a save's load).
@@ -52,7 +56,8 @@ impl Game<'_> {
     pub fn projectile_fired(&mut self, proj: FormId, source: FormId, weapon: FormId, damage: f32, at: [f32; 3]) -> Option<FormId> {
         let cell = self.cell_of(source).or_else(|| self.cell_of(FormId::PLAYER_REF));
         let r = self.world.place(proj, cell, at, [0.0; 3], 1).ok()?;
-        self.gaps.projs.shots.insert(r, Shot { source, weapon, damage, speed_mult: 1.0, age: 0.0, travelled: 0.0, left: None, impact: None });
+        let ammo = if crate::functions::items::equipped_weapon(self, source) == Some(weapon) { self.ammo_in_use(source) } else { None };
+        self.gaps.projs.shots.insert(r, Shot { source, weapon, damage, speed_mult: 1.0, age: 0.0, travelled: 0.0, left: None, impact: None, ammo });
         Some(r)
     }
 

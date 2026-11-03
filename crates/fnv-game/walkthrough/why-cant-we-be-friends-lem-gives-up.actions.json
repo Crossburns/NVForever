@@ -1,0 +1,39 @@
+{
+  "format": "fnv.script.actions/1",
+  "title": "Headless Why Can't We Be Friends? (VMS42), Philip Lem's side: the sulfur cave sealed with microcline, Lem talked out of the gang (stage 50)",
+  "given": [
+    {"kind": "actor_value", "of": "player", "av": "Science", "value": 40},
+    {"kind": "actor_value", "of": "player", "av": "Explosives", "value": 60},
+    {"kind": "item_count", "of": "player", "item": "0x001221C1", "count": 3}
+  ],
+  "actions": [
+    {"op": "note", "text": "Path: Philip Lem's job as in why-cant-we-be-friends-lem (stage 11); the player, with Science 40, Explosives 60 and three microcline charges (given), arms the charge in the sulfur cave (its box, button 1: MicroclineArmedCave, objective 40); Lem asks whether the sulfur is sealed (Topic179) and the player tells him he is better off without the gang (Topic197): he gives up (stage 50)."},
+    {"op": "note", "text": "Stand-in for the trip to Vault 19."},
+    {"op": "move_player", "to": "VPhilipLemREF"},
+    {"op": "talk", "actor": "VPhilipLemREF", "label": "lem greeting"},
+    {"op": "choose", "topic": "VMS42VVault19PhilipLemTopic031"},
+    {"op": "choose", "topic": "VMS42VVault19PhilipLemTopic142"},
+    {"op": "wait_talk"},
+    {"op": "end_talk"},
+    {"op": "advance_seconds", "seconds": 1},
+    {"op": "get_quest", "quest": "VMS42", "fields": ["running", "stage", "done.11", "var.LemGoDestroySulfur"], "label": "milestone: VMS42 11"},
+    {"op": "get_item_count", "of": "player", "item": "BlueKeyCard", "label": "blue keycard"},
+    {"op": "note", "text": "Stand-in for the walk into the sulfur cave."},
+    {"op": "move_player", "to": "scripted:0x0014394E"},
+    {"op": "advance_seconds", "seconds": 1},
+    {"op": "player_activate", "target": "scripted:0x0014394E"},
+    {"op": "advance_seconds", "seconds": 0.5},
+    {"op": "press_button", "button": 1},
+    {"op": "advance_seconds", "seconds": 1},
+    {"op": "dismiss_message_boxes", "max": 3, "wait_frames": 60},
+    {"op": "get_quest", "quest": "VMS42", "fields": ["var.microclineArmedCave", "objective.40.displayed"], "label": "milestone: VMS42 cave armed"},
+    {"op": "move_player", "to": "VPhilipLemREF"},
+    {"op": "talk", "actor": "VPhilipLemREF", "label": "lem sulfur sealed"},
+    {"op": "choose", "topic": "VMS42VVault19PhilipLemTopic179", "label": "sulfur sealed"},
+    {"op": "choose", "topic": "VMS42VVault19PhilipLemTopic197", "label": "lem gives up"},
+    {"op": "wait_talk"},
+    {"op": "end_talk"},
+    {"op": "advance_seconds", "seconds": 1},
+    {"op": "get_quest", "quest": "VMS42", "fields": ["stage", "done.50", "var.lemQuestComplete"], "label": "final: VMS42 50"}
+  ]
+}

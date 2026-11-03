@@ -1296,6 +1296,8 @@ struct PlayCtx<'a> {
     index: &'a WorldIndex,
     children: &'a HashMap<FormId, Vec<FormId>>,
     quests: &'a std::collections::BTreeMap<FormId, fnv_game::quest::QuestState>,
+    /// The game, for what scripts changed of a form (SetMessageFlags, SetMessageDisplayTime).
+    game: &'a Game<'static>,
 }
 
 impl PlayCtx<'_> {
@@ -1335,12 +1337,12 @@ impl EffectCtx for PlayCtx<'_> {
     }
 
     fn is_message_box(&self, message: FormId) -> bool {
-        self.data.messages.get(&message).is_some_and(|m| m.message_box)
+        self.data.messages.contains_key(&message) && self.game.message_flags(message) & 1 != 0
     }
 
     fn message_look(&self, message: FormId) -> (Option<String>, Option<f32>) {
         let Some(m) = self.data.messages.get(&message) else { return (None, None) };
-        (m.icon.and_then(|i| self.data.menu_icons.get(&i).cloned()), m.display_seconds.map(|s| s as f32))
+        (m.icon.and_then(|i| self.data.menu_icons.get(&i).cloned()), self.game.message_seconds(message).map(|s| s as f32))
     }
 
     fn skill_look(&self, code: u16) -> (String, Option<String>) {
@@ -1633,6 +1635,16 @@ pub(crate) fn start_world_aids(
     }
 }
 
+/// [`run_scripts`]'s loading screen, keys, menu files, the pause menu's page and the
+/// count of MenuMode frames under its Mods page (`crate::tiles::mods`).
+type ScreenAndMenus<'w, 's> = (
+    ResMut<'w, crate::loading::Loading>,
+    Option<Res<'w, crate::bindings::Bindings>>,
+    crate::tiles::MenuFiles<'w, 's>,
+    Res<'w, crate::pause::Page>,
+    Local<'s, u64>,
+);
+
 /// One frame of scripts, then their effects.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_scripts(
@@ -1645,13 +1657,13 @@ pub(crate) fn run_scripts(
     mut hud: ResMut<ScriptHud>,
     mut corner: ResMut<crate::corner_messages::CornerMessages>,
     mut quest_lines: ResMut<crate::quest_messages::QuestMessages>,
-    (mut changed, mut fades): (MessageWriter<RefChanged>, MessageWriter<crate::fade::RefFade>),
+    (mut changed, mut fades, mut repose): (MessageWriter<RefChanged>, MessageWriter<crate::fade::RefFade>, MessageWriter<crate::RefRepose>),
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
     mut sit: MessageWriter<crate::furniture::UseFurniture>,
     paused: Res<crate::pause::Paused>,
-    (mut screen, bindings, tiles): (ResMut<crate::loading::Loading>, Option<Res<crate::bindings::Bindings>>, crate::tiles::MenuFiles),
+    (mut screen, bindings, tiles, page, mut mods_ticks): ScreenAndMenus,
 ) {
     // Items the player used up in the inventory menu (the menu already removed them),
     // kept until the runtime runs.
@@ -1724,6 +1736,25 @@ pub(crate) fn run_scripts(
     // menu is known, so script time simply stops there [decision]. Nor do they run under
     // a loading screen (`crate::loading`) [observed: loading-screen time does not count,
     // layer5-captures.md §8.3 e].
+    // The exception: the pause menu's Mods page (`crate::tiles::mods`, T11), under which
+    // the start menu's MenuMode blocks run each frame, as under the original's start menu,
+    // so a mod's script fills in its page; nothing else of the frame runs [design].
+    if crate::pause::mods_open(&paused, &page) && !screen.active() {
+        if let Some(rt) = st.rt.as_mut() {
+            rt.game.cfg.frame_seconds = time.delta_secs_f64();
+            // In the played world, as every run of the game's scripts (`with_world`).
+            with_world(rt, &mut sim, |rt| with_ray_caster(&mut phys, || crate::tiles::mods::tick(&mut rt.game)));
+            *mods_ticks += 1;
+            if *mods_ticks == 1 {
+                info!("scripts: MenuMode {} blocks run under the pause menu's Mods page", fnv_game::game::menus::START);
+            }
+        }
+        return;
+    }
+    if *mods_ticks > 0 {
+        info!("scripts: the Mods page closed after {} MenuMode frames", *mods_ticks);
+        *mods_ticks = 0;
+    }
     if paused.0 || screen.active() {
         // Under a loading screen the game is held for everyone, not only for the
         // scripts: the AI (`nvforever` residents: packages, Dialogue packages' force
@@ -1749,6 +1780,8 @@ pub(crate) fn run_scripts(
     let used = std::mem::take(&mut st.used);
     let console = std::mem::take(&mut st.console);
     let mut console_out = Vec::new();
+    // What the console's lines moved (SetPos ...): the tick clears `Game::turned` first.
+    let mut console_turned: BTreeSet<FormId> = BTreeSet::new();
     // A script's menu or box left open by an unattended run: answered with OK / Done.
     let on_screen = st.rt.as_ref().and_then(|rt| {
         let m = rt.game.menu.filter(|&m| is_script_menu(m))?;
@@ -1837,6 +1870,7 @@ pub(crate) fn run_scripts(
                 console_out.push(crate::console::run_call(rt, c));
             }
         });
+        console_turned.extend(rt.game.turned.iter().copied());
         if let Some(i) = rt.activate_pick.take() {
             rt.pick_activate_choice(i);
         }
@@ -1891,8 +1925,12 @@ pub(crate) fn run_scripts(
     // `activate::drawn`), and MoveToMarkerWithFade's fades (`fade`).
     let culled = std::mem::take(&mut rt.game.script_looks.critical_changed);
     let move_fades = std::mem::take(&mut rt.game.script_looks.fades);
-    let ctx = PlayCtx { sim: &sim, data: rt.game.data, index: play.index, children: &rt.children, quests: &rt.game.quests };
+    let ctx = PlayCtx { sim: &sim, data: rt.game.data, index: play.index, children: &rt.children, quests: &rt.game.quests, game: &rt.game };
     let mut effects = script_events::effects(&events, &skip, &ctx);
+    // Objects a script moved, turned or resized: their collision follows (`crate::phys`).
+    for r in rt.game.turned.union(&console_turned) {
+        repose.write(crate::RefRepose { form_id: r.0 });
+    }
     for r in late {
         info!("script: {} disabled after its fade", rt.game.data.name(r));
         effects.push(ScriptEffect::RefChanged(r.0));

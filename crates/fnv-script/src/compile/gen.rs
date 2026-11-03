@@ -109,6 +109,8 @@ pub(super) struct Gen<'a> {
     /// The block-form lambdas taken out of the source: parameter names and their lines
     /// (`__lambda<i>` stands in their place).
     lambdas: Vec<(Vec<String>, Vec<lex::Line>)>,
+    /// The lambdas made so far in this unit (`XExpr::Lambda::index` of the next).
+    pub(super) lambda_seq: u32,
 }
 
 fn put16(b: &mut Vec<u8>, v: u16) {
@@ -185,6 +187,7 @@ impl<'a> Gen<'a> {
             in_paren: false,
             call_line: false,
             lambdas: Vec::new(),
+            lambda_seq: 0,
         }
     }
 
@@ -305,7 +308,14 @@ impl<'a> Gen<'a> {
         self.line = saved.5;
         self.text = saved.6;
         let body = crate::decode::decode(&bytes, self.table).program.top;
-        Some(crate::ir::XExpr::Lambda { params, body, value: None })
+        let index = self.next_lambda();
+        Some(crate::ir::XExpr::Lambda { params, body, value: None, index })
+    }
+
+    /// The number of the next lambda of this unit.
+    pub(super) fn next_lambda(&mut self) -> u32 {
+        self.lambda_seq += 1;
+        self.lambda_seq - 1
     }
 
     /// Brace parameters, each name possibly after a type word (`{float fD, ref rS}`),

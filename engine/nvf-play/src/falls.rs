@@ -200,7 +200,10 @@ fn hurt(
 ) {
     for f in fell.read() {
         let rules = *falls.rules.get_or_insert_with(|| FallRules::from_world(&sim.world));
-        let dmg = rules.damage(f.height);
+        // ITR's SetFallDamageMult: the actor's multiplier, else the global one
+        // (`fnv_game::nvse_itr1`, docs/spec-notes/ext-itr.md §2).
+        let mult = script.as_deref().and_then(|s| s.rt.as_ref()).map_or(1.0, |rt| rt.game.fall_damage_mult(f.actor));
+        let dmg = rules.damage(f.height) * mult as f32;
         if dmg <= 0.0 {
             debug!("falls: {} lands from {:.0} units, no damage (from {:.0})", f.actor, f.height, rules.min);
             continue;

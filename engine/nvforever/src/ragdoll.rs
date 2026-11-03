@@ -256,6 +256,7 @@ fn rig_of<'a>((actor, player): (Option<&'a ActorRig>, Option<&'a PlayerRig>)) ->
 
 /// A dead actor with a ragdoll (on the actor's root, next to its [`ActorRig`]).
 #[derive(Component)]
+#[cfg_attr(test, derive(Default))]
 pub struct Corpse {
     pub data: Arc<Ragdoll>,
     /// Per ragdoll body, its bone's index in the skeleton.

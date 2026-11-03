@@ -655,13 +655,22 @@ fn apply_use(mut use_pipboy: ResMut<UsePipBoy>, sim: Option<ResMut<crate::sim::S
     }
 }
 
-fn advance(time: Res<Time>, mut pip: ResMut<PipBoy>, mut control: ResMut<PlayerControl>) {
+/// The clip runs on the menus' clock ([`crate::pause::AidTime`]): the inventory is a menu,
+/// and under `--menu-pause original` (the setting "menu pause") its opening stops the
+/// virtual clock, which held the Pip-Boy at the bottom until it was closed, when only
+/// the way down played (#1330). Logged: `pipboy: raised`.
+fn advance(time: crate::pause::AidTime, mut pip: ResMut<PipBoy>, mut control: ResMut<PlayerControl>) {
     if !matches!(pip.phase, Phase::Raising | Phase::Lowering) {
         return;
     }
-    if pip.advance(time.delta_secs()) && pip.phase == Phase::Down {
-        if let Some(p) = pip.saved_pov.take() {
-            control.pov = p;
+    if pip.advance(time.delta_secs_f64() as f32) {
+        match pip.phase {
+            Phase::Down => {
+                if let Some(p) = pip.saved_pov.take() {
+                    control.pov = p;
+                }
+            }
+            _ => info!("pipboy: raised"),
         }
     }
 }
@@ -931,6 +940,24 @@ mod tests {
         p.lower();
         assert!(p.advance(1.0));
         assert_eq!((p.phase, p.clip_time), (Phase::Down, 0.0));
+    }
+
+    /// Under `--menu-pause original` the inventory stops the virtual clock: the Pip-Boy
+    /// still comes up, on real time (#1330).
+    #[test]
+    fn the_pipboy_comes_up_while_a_menu_holds_the_picture() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .insert_resource(crate::pause::PlayClock::frozen_frame(0.2))
+            .init_resource::<PlayerControl>()
+            .init_resource::<PipBoy>()
+            .add_systems(Update, advance);
+        app.world_mut().resource_mut::<PipBoy>().raise();
+        // The virtual clock gives no time (its delta is 0); the menus' clock does.
+        app.update();
+        assert_eq!(app.world().resource::<PipBoy>().phase, Phase::Raising);
+        app.update();
+        assert_eq!(app.world().resource::<PipBoy>().phase, Phase::Up);
     }
 
     #[test]

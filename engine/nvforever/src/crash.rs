@@ -53,7 +53,7 @@ static PLACE: Mutex<String> = Mutex::new(String::new());
 
 /// The logs folder in NVForever's home, created; `None` (with the reason) when there is
 /// no home or it may not be written there.
-fn logs_dir(data: &Path) -> Result<PathBuf, String> {
+pub(crate) fn logs_dir(data: &Path) -> Result<PathBuf, String> {
     let root = fnv_install::EngineHome::default_root().ok_or("no NVForever home folder (set NVFOREVER_HOME)")?;
     let dir = fnv_install::EngineHome::new(root).logs();
     let game = fnv_install::GameInstall::open(data).ok();
@@ -64,7 +64,7 @@ fn logs_dir(data: &Path) -> Result<PathBuf, String> {
 
 /// Days since 1970-01-01 to (year, month, day), proleptic Gregorian (H. Hinnant's
 /// `civil_from_days`).
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
@@ -92,7 +92,7 @@ pub const KEEP_REPORTS: usize = 20;
 
 /// The files named `<prefix>…<ext>` to delete so that `keep` remain, given the names in
 /// the folder: they sort by their time stamp, oldest first.
-fn old_files(names: &[String], prefix: &str, ext: &str, keep: usize) -> Vec<String> {
+pub(crate) fn old_files(names: &[String], prefix: &str, ext: &str, keep: usize) -> Vec<String> {
     let mut logs: Vec<&String> = names.iter().filter(|n| n.starts_with(prefix) && n.ends_with(ext)).collect();
     logs.sort();
     let n = logs.len().saturating_sub(keep);

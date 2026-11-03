@@ -105,6 +105,7 @@ use nvf_play::control::PlayerControl;
 use nvf_play::player::Player;
 use nvf_play::script::ScriptState;
 use nvf_play::RefVisual;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -183,10 +184,19 @@ impl<C> IdleSlot<C> {
     /// The idle that shows now asked for again by a script or a dialogue line is not
     /// started over: it plays on, or holds its last pose again (`IdlePlay::again`);
     /// returns false then. (Collections, fidgets and gestures that pick the same idle
-    /// again play it again.)
+    /// again play it again.) That holds too for an ended one that a fidget or a
+    /// collection's idle, started as it ended, now fades in over: it comes back and the
+    /// newcomer goes [design: #1355, the opening's mirror hand-over, where Doc's chair
+    /// fidget started in the step the scripted idle ended and the next line's speaker
+    /// idle, asked for a frame later, handed the mirror over a second time].
     fn start(&mut self, idle: u32, source: IdleSource, owner: Option<FormId>, clip: C, play: IdlePlay) -> bool {
         let asked = matches!(source, IdleSource::Script | IdleSource::Speaker | IdleSource::Listener);
-        if let Some(c) = self.cur.as_mut().filter(|c| asked && idle != 0 && c.idle == idle && c.group.is_none() && !c.play.gone()) {
+        let same = |c: &Playing<C>| idle != 0 && c.idle == idle && c.group.is_none() && !c.play.gone();
+        let picked = |c: &Playing<C>| !matches!(c.source, IdleSource::Script | IdleSource::Speaker | IdleSource::Listener);
+        if asked && self.cur.as_ref().is_some_and(picked) && self.prev.as_ref().is_some_and(same) {
+            self.cur = self.prev.take();
+        }
+        if let Some(c) = self.cur.as_mut().filter(|c| asked && same(c)) {
             c.play.again();
             (c.source, c.owner) = (source, owner);
             return false;
@@ -295,6 +305,24 @@ pub struct IdleHolds {
     /// fades out at once (a looping one too), and they walk once it has gone
     /// [design: owner 2026-10-31].
     pub breaking: HashSet<u32>,
+    /// Written here: those of `held` whose idle carries the body away from the reference
+    /// ([`carries_body`]).
+    pub carried_off: HashSet<u32>,
+}
+
+/// How far (units, across the ground) an idle's `Bip01 NonAccum` must take the body from
+/// the reference for [`carries_body`] [engineering choice: a standing idle's sway stays
+/// within a few units; Dad's walk in the birth scene reaches 144].
+const CARRY_DISTANCE: f32 = 32.0;
+
+/// Whether `clip` moves `Bip01 NonAccum` (where the body hangs from the reference) more
+/// than [`CARRY_DISTANCE`] across the ground at any of a few times through it: a scene
+/// that walks its actor about while the reference stays (Fallout 3's birth scene: Dad's
+/// sections keep him 96, 108 to 128 units forward and aside of his marker [observed:
+/// `cg00dadsection00.kf` .. `02.kf`, fnvtool nif decode]).
+pub fn carries_body(clip: &Clip) -> bool {
+    let Some((_, t)) = clip.tracks.iter().find(|(n, _)| n.eq_ignore_ascii_case("Bip01 NonAccum")) else { return false };
+    (0..=8).any(|k| t.translation.sample(clip.start + clip.length() * k as f32 / 8.0).is_some_and(|v| v[0].hypot(v[1]) > CARRY_DISTANCE))
 }
 
 /// Whether a track drives a leg: the people's `Bip01 L Thigh`, `Bip01 R Calf`,
@@ -368,6 +396,24 @@ pub struct Held {
     pub free: [f32; 3],
     pub heading: f32,
     pub pitch: f32,
+}
+
+impl Held {
+    /// How far (units) the game's placement may lie from `feet` and still be the same.
+    const SAME_PLACE: f32 = 1.0;
+
+    /// Where the player is held now that the game has put them somewhere else while the
+    /// idles held them, `None` when it has not. A script's `MoveTo` lands a frame after
+    /// the idle it starts with: Tale of Two Wastelands' opening starts the birth idle in
+    /// its start room and moves the player into the birth cell in the same script run,
+    /// and the view stayed at the start room's spot in the birth cell, an empty screen
+    /// [observed: owner's TTW run 2026-11-02, the idle at (2036, 1946), the travel to
+    /// (-5276, -7148)].
+    pub fn moved(&self, placed: Option<[f32; 3]>, heading: f32, pitch: f32) -> Option<Held> {
+        let p = placed?;
+        let far = (0..3).any(|i| (p[i] - self.feet[i]).abs() > Self::SAME_PLACE);
+        far.then_some(Held { feet: p, free: p, heading, pitch })
+    }
 }
 
 /// An actor's place in an idle collection.
@@ -525,6 +571,12 @@ pub fn drive(
         None => (residents.as_deref_mut().and_then(|r| r.own_game()), false),
     };
     let Some(game) = game else { return };
+    // A script's menu (a message box, the character menus) holds the game, as the AI's
+    // walks are held (`residents.rs`): the idles may start but stand still until it
+    // closes, so a scene goes on where it was [observed: owner's TTW run 2026-11-02, the
+    // stage that opens the trait menu starts the birth scene's last section, which
+    // played out behind the menu; hypothesis: the original's menu mode stops it].
+    let dt = if game.menu.is_some() { 0.0 } else { dt };
     // Between frames the game being played keeps its world in the simulation
     // (`nvf_play::script::with_world`); conditions are evaluated with it put back.
     let mut with_world = |game: &mut Game<'static>, f: &mut dyn FnMut(&mut Game<'static>)| match sim.as_deref_mut().filter(|_| played) {
@@ -656,10 +708,13 @@ pub fn drive(
     let mut live: Vec<u32> = Vec::new();
     let mut ask: Vec<(u32, FormId, IdleSource)> = Vec::new();
     for (actor, marker) in candidates {
-        let data = game.data;
-        let of_marker = marker.and_then(|m| data.idle_markers.get(&m).filter(|c| !c.idles.is_empty()).map(|c| ((true, m.0), c)));
+        // A script's SetIdleMarkerAnimation(s) first (`fnv_game::nvse_jg4::idle_marker`),
+        // copied out so the game can be changed below; the record's is borrowed.
+        let edited = |m: FormId| game.other.idle_markers.get(&m).map(|c| Cow::Owned(c.clone()));
+        let of_marker = marker
+            .and_then(|m| edited(m).or_else(|| game.data.idle_markers.get(&m).map(Cow::Borrowed)).filter(|c| !c.idles.is_empty()).map(|c| ((true, m.0), c)));
         let quiet = package_of(game, actor).and_then(|p| game.package_def(&p)).is_some_and(|d| d.has(flags::NO_IDLE_ANIMS));
-        let Some((key, collection)) = of_marker.or_else(|| game.package_idles(FormId(actor)).map(|(p, c)| ((false, p.0), c))).filter(|_| !quiet) else { continue };
+        let Some((key, collection)) = of_marker.or_else(|| game.package_idles(FormId(actor)).map(|(p, c)| ((false, p.0), Cow::Borrowed(c)))).filter(|_| !quiet) else { continue };
         live.push(actor);
         let c = st.collections.entry(actor).or_insert_with(|| Collection { key, picker: IdlePicker::default(), next: None, retry: 0.0 });
         if c.key != key {
@@ -675,7 +730,7 @@ pub fn drive(
             let rng = &mut st.rng;
             with_world(game, &mut |game| {
                 for _ in 0..collection.idles.len().max(1) {
-                    c.next = c.picker.next(collection, |n| rng.below(n as u32) as usize).filter(|(idle, _)| game.idle_allowed(FormId(actor), *idle));
+                    c.next = c.picker.next(&collection, |n| rng.below(n as u32) as usize).filter(|(idle, _)| game.idle_allowed(FormId(actor), *idle));
                     if c.next.is_some() {
                         break;
                     }
@@ -986,12 +1041,16 @@ pub fn drive(
     // Advance, and tell the rules what plays.
     let mut now: HashMap<u32, u32> = HashMap::new();
     let mut holding: HashSet<u32> = HashSet::new();
+    let mut carried_off: HashSet<u32> = HashSet::new();
     for (e, v, _, idle, _, _) in &mut actors {
         let Some(mut idle) = idle else { continue };
         idle.0.advance(dt);
         // Held while it shows, its fade-out too (one gone is no longer `cur`).
-        if idle.0.cur.as_ref().is_some_and(|p| p.holds) {
+        if let Some(p) = idle.0.cur.as_ref().filter(|p| p.holds) {
             holding.insert(v.0);
+            if carries_body(&p.clip.clip) {
+                carried_off.insert(v.0);
+            }
         }
         match idle.0.playing() {
             // A script's animation group is not an idle.
@@ -1027,6 +1086,7 @@ pub fn drive(
         info!("idle hold: {} ({a:08X}) may walk again: its idle has gone", game.data.name(FormId(*a)));
     }
     holds.held = holding;
+    holds.carried_off = carried_off;
 }
 
 /// Whether `actor` flees from a fight (`GetCurrentAIProcedure` 16).
@@ -1158,6 +1218,19 @@ mod tests {
         assert!(!s.start(7, IdleSource::Speaker, None, 2, play(3.0, 0.0, Some(1))));
         assert_eq!(weights(&s), [(1, 1.0)]);
         assert_eq!(s.playing().unwrap().play.time(), 3.0);
+        // A fidget started as the scripted idle ended (Doc's chair fidget, #1355): the
+        // line's speaker idle brings the held one back, not a second hand-over.
+        let mut s: IdleSlot<u8> = IdleSlot::default();
+        assert!(s.start(7, IdleSource::Script, None, 1, play(3.0, 0.0, Some(1))));
+        s.advance(3.01);
+        s.check_owner(|_| None);
+        assert!(s.start(9, IdleSource::FurnitureFidget, None, 3, play(16.0, 0.67, Some(1))));
+        s.advance(0.02);
+        assert!(!s.start(7, IdleSource::Speaker, None, 2, play(3.0, 0.0, Some(1))));
+        assert_eq!(weights(&s), [(1, 1.0)]);
+        assert_eq!(s.playing().unwrap().play.time(), 3.0);
+        // Another asked idle over the fidget is a new one, as before.
+        assert!(s.start(8, IdleSource::Speaker, None, 4, play(1.0, 0.0, Some(1))));
         // A collection picking the same idle again plays it again.
         let mut s: IdleSlot<u8> = IdleSlot::default();
         s.start(7, IdleSource::PackageIdles, None, 1, play(3.0, 0.0, Some(1)));
@@ -1171,5 +1244,29 @@ mod tests {
         let mut r = Rng(7);
         assert!((0..200).all(|_| r.below(5) < 5));
         assert_eq!(r.below(0), 0);
+    }
+
+    #[test]
+    fn a_scene_idle_carries_the_body_off_its_reference() {
+        use fnv_nif::anim::{Channel, TransformTrack};
+        let clip = |at: [f32; 3]| Clip {
+            name: String::new(), start: 0.0, stop: 9.97, frequency: 1.0, cycle_type: 0,
+            tracks: vec![("Bip01 NonAccum".into(), Arc::new(TransformTrack { translation: Channel::Static(Some(at)), rotation: Channel::Static(None), euler: None, scale: Channel::Static(None) }))],
+            priorities: vec![13], skipped: 0, accum_root: Some("Bip01".into()), text_keys: Vec::new(), visibility: Vec::new(), emitters: Vec::new(), materials: Vec::new(), free: Vec::new(), free_visibility: Vec::new(), lights: Vec::new(),
+        };
+        // Dad in the birth scene, against a body standing over its reference.
+        assert!(carries_body(&clip([96.0, 110.6, 66.3])));
+        assert!(!carries_body(&clip([0.66, 0.0, 79.1])));
+    }
+
+    #[test]
+    fn held_follows_the_games_move() {
+        // TTW's opening: the birth idle begins in the start room, the move lands after.
+        let h = Held { feet: [2036.0, 1946.0, 7608.7], free: [2036.0, 1946.0, 7608.7], heading: 3.1, pitch: -0.2 };
+        let to = [-5276.0, -7148.0, 7543.2];
+        assert_eq!(h.moved(Some(to), 1.0, 0.1), Some(Held { feet: to, free: to, heading: 1.0, pitch: 0.1 }));
+        // Where it was held (the opening's bed marker), or no placement: stays held there.
+        assert_eq!(h.moved(Some([2036.4, 1946.0, 7608.7]), 1.0, 0.1), None);
+        assert_eq!(h.moved(None, 1.0, 0.1), None);
     }
 }

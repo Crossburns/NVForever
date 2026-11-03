@@ -550,6 +550,19 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   [documented formula]. The masters lack `fCombatDistance`, and its placeholder is now
   150 (a knife, reach 0.5, gets 75 units; a sledgehammer, 0.75, 112) [hypothesis,
   tunable]. A Reach of 0 (the Fists) counts as 1 [hypothesis].
+  Measured 2026-11-01 (campaign o14_reach, `nvfairport` runway, god-mode player standing
+  still, NCR troopers of the leveled list given one weapon each, every game loop) [observed]:
+  the centre-to-centre distance at which a swing starts (GetAnimAction entering 2 or 3;
+  10-16 swings each, median, ignoring a few starts at 230-300 units while still closing)
+  is knife (Reach 0.5) 95, sledgehammer (0.75) 120, super sledge (1.0) 150, bumper sword
+  (1.2) 175, lead pipe (1.25) 180. That fits **about 45 + 107 × Reach** within 5 units.
+  Read as a body gap, the 45 is about the two capsules' radii, which would make
+  `fCombatDistance` about 105-110 rather than 150 [hypothesis: the gap reading; the
+  capsules were not measured]. Creatures' starts (same run, centre to centre, median):
+  gecko 81, cazador (young) 80, night stalker (young) 102, radscorpion 97-129, feral
+  ghoul 135-140, giant mantis 101-163 (drifting out over the fight), bighorner bull 232.
+  Over 12-16 swings and about 13 landed hits each, the troopers' weapons stayed at
+  GetWeaponHealthPerc 99.9 (§17).
 - **Damage.** The melee and unarmed forms of §2, with the target's worn armour. The
   attacker's Melee Weapons and Unarmed skills are derived from Strength and Endurance
   (§8).
@@ -1435,7 +1448,18 @@ Owner's request, 2026-10-11. Code: `fnv_combat::condition`, `fnv_sim::inventory`
     Threshold at 13 through 60 hits, the troopers' and Fiends' likewise [observed: AI
     observer campaign `fight_stats_round`, 2026-10-19, npc-behaviour-compare.md §9]. An
     NPC's weapon does wear (Cook-Cook's Incinerator lost 2.19 health a shot) [observed,
-    same run].
+    same run]. NPC **melee** weapons did not visibly wear: knife (health 150),
+    sledgehammer, super sledge, lead pipe (50) and bumper sword troopers swinging at the
+    god-mode player 12-16 times, about 13 blows landing each, all stayed at
+    GetWeaponHealthPerc 99.9 for the whole session [observed: o14_reach, 2026-11-01,
+    §8]. At 0.2 health a landed blow the lead pipe would have shown 94.8, so in the
+    original an NPC's melee blows on the player wear its weapon by much less than ours'
+    rule, or not at all. Whether god mode on the target stops the wear was not
+    separated. Against a mortal player (o15_round, 2026-11-01, healed by script) the
+    weapons' GetEquippedCurrentHealth 5 did not move at all: lead pipe 49.95 over 10
+    swings, sledgehammer 149.85 over 12, and an NPC 10mm Pistol 79.92 over 42 shots, a
+    Hunting Rifle 299.7 over 15 [observed]. So these NPCs' weapons do not wear from
+    their own attacks; ours wears them (`actor_attacks`) — #1334.
 - **A weapon that is hit** [design: the owner's rule]. An actor holding its weapon
   drawn has a hit volume along the weapon (`hitvol::WEAPON_PART`: one capsule along the
   longest side of the model's bounds, `nvforever::limbs::weapon_segment`).

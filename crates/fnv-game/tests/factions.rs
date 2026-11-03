@@ -428,6 +428,15 @@ fn the_package_list_comes_from_the_same_source() {
     assert!(g.package_list(FormId(MEMBER_REF)).is_empty());
 }
 
+/// Every placed actor of the cell but `keep` stands 50,000 units off: alarms reach the
+/// loaded cells' actors too, not only those measured (`Game::raise_alarms`).
+fn only_near(g: &mut Game, keep: &[u32]) {
+    let all = (LEADER_REF..=NAMELESS_REF).chain(MIXED_REFS);
+    for r in all.filter(|r| !keep.contains(r)) {
+        g.world.get(FormId(r)).unwrap().pos = [50_000.0, 0.0, 0.0];
+    }
+}
+
 /// Put `actor` in Combat against `target`, detected now.
 fn fighting(g: &mut Game, actor: u32, target: u32) {
     let (now, t) = (g.time, Timers::default());
@@ -568,6 +577,7 @@ fn an_actor_that_starts_fighting_alarms_its_allies_near_it() {
     let f = fixture();
     let mut g = game(&f);
     let (own, helper, far, player) = (FormId(OWN_REF), FormId(HELPER_REF), FormId(SPAWN_HIGH_REF), FormId::PLAYER_REF);
+    only_near(&mut g, &[OWN_REF, HELPER_REF, SPAWN_HIGH_REF]);
     assert!(g.attacked_by(own, player));
     fighting(&mut g, OWN_REF, PLAYER);
     let now = g.time;
@@ -584,6 +594,139 @@ fn an_actor_that_starts_fighting_alarms_its_allies_near_it() {
     g.settle_awareness();
     assert_eq!(g.awareness.state(helper), State::Alert);
     assert_eq!(g.raise_alarms(&near), 0);
+}
+
+#[test]
+fn an_alarm_reaches_far_allies_and_those_not_measured() {
+    // #972 (docs/spec-notes/combat-groups.md §1): the helper 6,000 units off, beyond the
+    // old 4,096, hears Own's alarm; so does it when the round did not measure it (not in
+    // `near`), from where the world has it.
+    use fnv_game::awareness::Change;
+    let (own, helper, player) = (FormId(OWN_REF), FormId(HELPER_REF), FormId::PLAYER_REF);
+    for measured in [true, false] {
+        let f = fixture();
+        let mut g = game(&f);
+        only_near(&mut g, &[OWN_REF, HELPER_REF]);
+        g.world.get(helper).unwrap().pos = [6000.0, 0.0, 0.0];
+        assert!(g.attacked_by(own, player));
+        fighting(&mut g, OWN_REF, PLAYER);
+        let now = g.time;
+        g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Combat, time: now, about: Some(player), cause: None, at: Some([500.0, 0.0, 0.0]), value: Some(5.0) });
+        let mut near: std::collections::BTreeMap<FormId, [f32; 3]> = [(own, [0.0; 3]), (player, [500.0, 0.0, 0.0])].into_iter().collect();
+        if measured {
+            near.insert(helper, [6000.0, 0.0, 0.0]);
+        }
+        assert_eq!(g.raise_alarms(&near), 1, "measured: {measured}");
+        assert!(g.awareness.get(helper).is_some_and(|a| a.alarms.iter().any(|x| x.owner == player && x.cause == Cause::Ally)));
+    }
+}
+
+#[test]
+fn a_joiner_is_called_against_the_first_of_the_foes_to_start() {
+    // #972 (combat-groups.md §2): the leader (Raiders) started fighting Own first, the
+    // wolf (Raiders too) later; Own, fighting the wolf, alarms the helper, who is called
+    // against the leader, as the Goodsprings townsfolk all named GSPG03Ref.
+    use fnv_game::awareness::Change;
+    let f = fixture();
+    let mut g = game(&f);
+    let (leader, wolf, own, helper) = (FormId(LEADER_REF), FormId(LIST_REF), FormId(OWN_REF), FormId(HELPER_REF));
+    only_near(&mut g, &[LEADER_REF, LIST_REF, OWN_REF, HELPER_REF]);
+    assert!(g.comrades(leader, wolf));
+    fighting(&mut g, LEADER_REF, OWN_REF);
+    fighting(&mut g, LIST_REF, OWN_REF);
+    g.awareness.tactics.started.insert(leader, 1.0);
+    g.awareness.tactics.started.insert(wolf, 2.0);
+    assert_eq!(g.first_starter(wolf), leader);
+    assert_eq!(g.first_starter(FormId::PLAYER_REF), FormId::PLAYER_REF, "nobody of its side fighting: itself");
+    fighting(&mut g, OWN_REF, LIST_REF);
+    let now = g.time;
+    g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Combat, time: now, about: Some(wolf), cause: None, at: Some([500.0, 0.0, 0.0]), value: Some(5.0) });
+    let near: std::collections::BTreeMap<FormId, [f32; 3]> = [(own, [0.0; 3]), (helper, [1000.0, 0.0, 0.0]), (wolf, [500.0, 0.0, 0.0]), (leader, [800.0, 0.0, 0.0])].into_iter().collect();
+    assert!(!g.would_attack(helper, wolf) && !g.would_attack(helper, leader), "the helper (Rats) is neutral to the Raiders");
+    assert_eq!(g.raise_alarms(&near), 1);
+    let a = g.awareness.get(helper).expect("alarmed");
+    assert!(a.alarms.iter().any(|x| x.owner == leader && x.cause == Cause::Ally && x.at == [800.0, 0.0, 0.0]), "{:?}", a.alarms);
+    assert!(g.would_attack(helper, leader));
+    // The grudge goes against the foe it was called about too: with the starter dead,
+    // the helper can still fight the wolf in front of it.
+    assert!(g.would_attack(helper, wolf), "a grudge against the wolf it was called about");
+    g.extra.entry(leader).or_default().dead = true;
+    assert!(g.would_attack(helper, wolf));
+}
+
+#[test]
+fn a_starter_out_cold_is_passed_over() {
+    // #972 review: a knocked-out (or dead) first starter is not fighting; the next of its
+    // side to start is named, or the foe itself when none is left.
+    use fnv_game::awareness::Change;
+    let f = fixture();
+    let mut g = game(&f);
+    let (leader, wolf, own, helper) = (FormId(LEADER_REF), FormId(LIST_REF), FormId(OWN_REF), FormId(HELPER_REF));
+    only_near(&mut g, &[LEADER_REF, LIST_REF, OWN_REF, HELPER_REF]);
+    fighting(&mut g, LEADER_REF, OWN_REF);
+    fighting(&mut g, LIST_REF, OWN_REF);
+    g.awareness.tactics.started.insert(leader, 1.0);
+    g.awareness.tactics.started.insert(wolf, 2.0);
+    assert_eq!(g.first_starter(wolf), leader);
+    assert!(g.knock_out(leader, fnv_game::unconscious::Cause::Fatigue, Some(own)));
+    assert_eq!(g.first_starter(wolf), wolf, "the leader lies out cold: the wolf is the first still fighting");
+    fighting(&mut g, OWN_REF, LIST_REF);
+    let now = g.time;
+    g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Combat, time: now, about: Some(wolf), cause: None, at: Some([500.0, 0.0, 0.0]), value: Some(5.0) });
+    let near: std::collections::BTreeMap<FormId, [f32; 3]> = [(own, [0.0; 3]), (helper, [1000.0, 0.0, 0.0]), (wolf, [500.0, 0.0, 0.0]), (leader, [800.0, 0.0, 0.0])].into_iter().collect();
+    assert_eq!(g.raise_alarms(&near), 1);
+    let a = g.awareness.get(helper).expect("alarmed");
+    assert!(a.alarms.iter().any(|x| x.owner == wolf && x.at == [500.0, 0.0, 0.0]), "{:?}", a.alarms);
+    assert!(!a.alarms.iter().any(|x| x.owner == leader), "{:?}", a.alarms);
+}
+
+#[test]
+fn a_fighter_keeps_a_target_its_group_still_detects() {
+    // #972 (combat-groups.md §3): Own and the helper (both rats) fight the player; the
+    // helper has not detected it for longer than the lost and forget timers, but Own
+    // still does: the helper stays in Combat, keeps it and learns where Own sees it. When
+    // nobody detects it any more both go Lost after the lost timer.
+    let f = fixture();
+    let mut g = game(&f);
+    let (own, helper, player) = (FormId(OWN_REF), FormId(HELPER_REF), FormId::PLAYER_REF);
+    let t = Timers::default();
+    fighting(&mut g, OWN_REF, PLAYER);
+    fighting(&mut g, HELPER_REF, PLAYER);
+    let hidden = Detection { value: -40.0, band: Band::Hidden, ..Default::default() };
+    g.awareness.actors.get_mut(&helper).unwrap().observe(player, &hidden, [0.0; 3], g.time, &t);
+    let start = g.time;
+    for k in 1..=40 {
+        g.time = start + k as f64 * 0.5;
+        let now = g.time;
+        g.awareness.actors.get_mut(&own).unwrap().observe(player, &Detection { value: 5.0, band: Band::Detected, ..Default::default() }, [k as f32, 0.0, 0.0], now, &t);
+        g.awareness.actors.get_mut(&helper).unwrap().observe(player, &hidden, [0.0; 3], now, &t);
+        g.settle_awareness();
+    }
+    assert!(g.time - start > t.lost.max(t.forget_target));
+    let a = g.awareness.get(helper).expect("still fighting");
+    assert_eq!(a.state, State::Combat);
+    assert_eq!(a.targets.get(&player).map(|x| x.at), Some([40.0, 0.0, 0.0]), "where Own saw it");
+    assert_eq!(a.shared.get(&player), Some(&g.time));
+    // Nobody detects it: Lost together, the lost timer after Own's last sighting.
+    let seen = g.time;
+    let mut lost_at = std::collections::BTreeMap::new();
+    for k in 1..=30 {
+        g.time = seen + k as f64 * 0.5;
+        let now = g.time;
+        for x in [own, helper] {
+            if let Some(a) = g.awareness.actors.get_mut(&x) {
+                a.observe(player, &hidden, [0.0; 3], now, &t);
+            }
+        }
+        g.settle_awareness();
+        for x in [own, helper] {
+            if g.awareness.state(x) == State::Lost {
+                lost_at.entry(x).or_insert(now - seen);
+            }
+        }
+    }
+    assert_eq!(lost_at.get(&own), Some(&t.lost));
+    assert_eq!(lost_at.get(&helper), Some(&t.lost));
 }
 
 #[test]
@@ -759,6 +902,7 @@ fn a_cowardly_ally_stays_out_of_fights() {
     let f = fixture();
     let mut g = game(&f);
     let (own, coward, helper, player) = (FormId(OWN_REF), FormId(COWARD_REF), FormId(HELPER_REF), FormId::PLAYER_REF);
+    only_near(&mut g, &[OWN_REF, COWARD_REF, HELPER_REF]);
     assert!(g.attacked_by(own, player));
     fighting(&mut g, OWN_REF, PLAYER);
     for w in [coward, helper] {

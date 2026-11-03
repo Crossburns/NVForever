@@ -226,6 +226,19 @@ def parse_wiki(path):
     return out
 
 
+def _item_mod_handler(flag):
+    """ppNVSE's OnAttachItemMod / OnDetachItemMod: priority, script, flag, then up to two
+    filters, each a number ("1" the item mod, "2" the object) and a form."""
+    opt = {"optional": True}
+    return [{"name": "priority", "type": "int", "kind": "int"},
+            {"name": "script", "type": "ref", "kind": "reference"},
+            {"name": flag, "type": "bool", "kind": "int", **opt},
+            {"name": "filterIndex1", "type": "string", "kind": "string", **opt},
+            {"name": "filter1", "type": "form", "kind": "form", **opt},
+            {"name": "filterIndex2", "type": "string", "kind": "string", **opt},
+            {"name": "filter2", "type": "form", "kind": "form", **opt}]
+
+
 # Parameters where a page's argument table is missing or short: what the game took
 # [observed: the probe named] or what the page's own example passes [documented].
 PARAM_FIXES = {
@@ -243,6 +256,47 @@ PARAM_FIXES = {
     # [documented: SetMusicTypeDB's example "SetMusicTypeDB DefaultSuccess -100"].
     "SetMusicTypeDB": [{"name": "musicType", "type": "ref", "kind": "reference"},
                        {"name": "dB", "type": "float", "kind": "float"}],
+    # [documented: GetAttachedMod's examples, the weapon then the slot ("1",
+    # "Barrel Device"); the table lists the weapon only].
+    "GetAllAttachedWeaponMods": [{"name": "weapon", "type": "ref", "kind": "reference"},
+                                 {"name": "slot", "type": "string", "kind": "string",
+                                  "optional": True}],
+    # [documented: OnAttachItemMod's example "OnAttachItemMod 1 OnAttachScript 1 "1"
+    # itemMod "2" WeapNV9mmPistol": each filter is its number then its form, and the
+    # removal form "OnAttachItemMod OnAttachScript 0" has two arguments; OnDetachItemMod
+    # the same].
+    "OnAttachItemMod": _item_mod_handler("runOnReconstruct"),
+    "OnDetachItemMod": _item_mod_handler("runOnDeconstruct"),
+    # [documented: the casino pages' examples, "GetCasinoChip GomorrahCasinoData",
+    # "SetCasinoChip GomorrahCasinoData TheTopsChip", "GetCasinoWinnings TheTopsCasinoData",
+    # "SetCasinoWinnings TheTopsCasinoData 5000"; the tables name the casino only or no type].
+    "GetCasinoChip": [{"name": "casino", "type": "form", "kind": "form"}],
+    "SetCasinoChip": [{"name": "casino", "type": "form", "kind": "form"},
+                      {"name": "chip", "type": "form", "kind": "form"}],
+    "GetCasinoWinnings": [{"name": "casino", "type": "form", "kind": "form"}],
+    "SetCasinoWinnings": [{"name": "casino", "type": "form", "kind": "form"},
+                          {"name": "chips", "type": "int", "kind": "int"}],
+    # [documented: AddConditionFormTwo's example "AddConditionFormTwo StealthBoy 0" adds
+    # to Base Effect 0's list; every other FormTwo function (GetConditionFormTwoCount,
+    # DeleteConditionFormTwo, ...) takes `First` after the entity; the table leaves it out].
+    # [documented: ToggleCraftingMessages' example "ToggleCraftingMessages 0 // Disables the
+    # crafting messages"; the table gives the argument a type but no name, which the
+    # compiler does not count].
+    "ToggleCraftingMessages": [{"name": "enable", "type": "int", "kind": "int"}],
+    "AddConditionFormTwo": [{"name": "FormTwoEntity", "type": "ref", "kind": "reference"},
+                            {"name": "First", "type": "int", "kind": "int"},
+                            {"name": "Condition", "type": "int", "kind": "int",
+                             "optional": True}],
+}
+
+# Pages whose template `name` is another function's (copied from a sibling page): the
+# page title is the function's name [documented: each page's title and its example,
+# e.g. "GetConditionFormOneFloat HitReactionIdles 0 1"; the template says
+# GetConditionFormOneInt / SetConditionFormOneInt].
+NAME_FIXES = {
+    "GetConditionFormOneFloat": "GetConditionFormOneFloat",
+    "SetConditionFormOneFloat": "SetConditionFormOneFloat",
+    "SetConditionFormOneForm": "SetConditionFormOneForm",
 }
 
 
@@ -252,6 +306,7 @@ def parse_page(title, text):
         return None
     f = template_fields(body)
     name = (plain(f.get("name", "")) or title).split()[0]
+    name = NAME_FIXES.get(title, name)
     rec = {"name": name, "page": title, "origin": f.get("origin", "").strip() or None}
     if f.get("alias"):
         rec["aliases"] = [a for a in (x.strip() for x in re.split(r"[,/]| or ",

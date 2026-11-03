@@ -393,8 +393,11 @@ Rules [hypothesis; owner's report for the vault suit]: an addon whose model is t
 own hand for the actor's sex gives way to another worn item taking its slot itself, as the
 race's hand does (the vault suit shows the Pip-Boy Glove's hand); a worn item whose every
 slot other items' addons take is not drawn (the Pip-Boy Glove gives way to an outfit's
-glove or a power armour's gauntlet). The first-person rig takes the same parts. Smoke:
-`pipboy-glove-vault-suit`, `pipboy-glove-leather`.
+glove or a power armour's gauntlet). The first-person rig takes the same parts
+(`first_person::appearance` filters the resolved list): with the vault suit and a rifle
+drawn, the arms rig draws `lefthandpipboyglove1st.nif` and no bare left hand [observed:
+smoke log and frame, 2026-11-02, #1366]. Smoke: `pipboy-glove-vault-suit`,
+`pipboy-glove-leather`, `pipboy-glove-first-person`.
 
 ### 2.4 Parts
 
@@ -1291,6 +1294,14 @@ only in the walk test and on the player's body. All rules here are engine choice
   turn in 1.5 s, three footfalls]. The clip plays at rate 1 whatever the angle. The AI
   observer captures record each actor's heading per sample (ai-observer.md), so a
   capture of an NPC turning to a new package target could replace this number [open].
+  Measured 2026-11-01 (observer check 13, o24_air and o18_air on the nvfairport runway)
+  [observed]: an NCR trooper set facing away from the player (SetAngle Z 270) and then
+  put on the player with StartCombat turned at 270°/s at first (4.3° a game loop) both
+  standing with a 10mm 400 units off and starting its run with a lead pipe 1,500 units
+  off, then slower as the angle closed: 180 to 150° off in 0.15 s, 150 to 128° in
+  0.12 s, 128 to 98° in 0.27 s (it stepped about 125 units/s meanwhile); a trooper
+  spawned 14° off turned it at 225°/s. So a person's combat turn starts near 270°/s and
+  eases out, faster than ours (120°/s standing) [issue #1352].
 - **Before walking** (`fnv_nav::Walker`): a walker that stands (it did not move in its
   last update: at the start of a path, after waiting at a door, after arriving through a
   teleport door) and whose way lies more than 20° off its heading
@@ -1600,6 +1611,10 @@ stopped and started, as Victor's walk had before #258). Code:
     `creature_pace::npc_speeds`, from the ESM actor audit); against it [observed, one
     actor]: Cook-Cook has Speed Mult 110 and ran 255, the 258 above without it, 284 with
     it (asked in docs/owner-review.md); every other person measured had Speed Mult 100.
+    Measured 2026-11-01 (observer check 13, o18_air run_speedmult100/150) [observed]: an
+    NCR trooper with a lead pipe running 1,500 units at the player held about 305 units/s
+    at SetAV SpeedMult 100 and 457-468 at 150 (two troopers), 1.5 times: a person's run
+    is proportional to its Speed Mult, as ours; Cook-Cook stays the one exception seen.
   - **Built**: `NPC_WALK` 85.3 and `NPC_RUN` 344 are every person's speeds, times its
     Speed Mult (`npc_speeds`); a drawn person's both are also scaled by its body armour's
     share (`person_pace`), the armour
@@ -1612,8 +1627,16 @@ stopped and started, as Victor's walk had before #258). Code:
     (the paladins walked holstered with Gauss rifles at about the heavy armour's pace).
   - **Not built**: the walk with a weapon drawn outside combat (77–78 here, about the
     `1hm`/`h2h` clip or `fMoveBaseSpeed`, which of the two is open); in combat, walking
-    with a weapon drawn was faster (a fiend 105, Cook-Cook 97; not explained); the
-    same rule for the player (not measured).
+    with a weapon drawn was faster (a fiend 105, Cook-Cook 97; not explained).
+  - **The player** (issue #1364) [hypothesis: the people's rule; not measured on the
+    player]: the player's walk and run (86.8 and 344) are multiplied by its current Speed
+    Mult over 100 (SetAV's base, ModAV's and effects' modifiers and damage, as
+    GetActorValue reads it; 0 at the least) and by its body armour's share (1, 0.925,
+    0.85 as above), on top of the crippled legs, the two-handed run, the Modify Run Speed
+    perks and the reload (`Game::move_speed_mult`, nvf-play `StatSpeed`, asked every
+    frame; smoke `player-speedmult`). Whether `setav speedmult` on the player changes
+    its speed in the original, and whether its animations then keep up, is to be checked
+    with the observer (docs/handoff/observer-checks.md).
 - **Alert stance** [observed: the owner, 2026-10-16: "the cazadors scurry along the
   ground when not alert and fly when they are alert/in combat"]: the cazador's folder
   has `h2hforward.kf` (298.15 units/s), `h2hfastforward.kf` (545.54) and `h2hidle.kf`
@@ -2111,6 +2134,15 @@ No NPC's own choice takes a weapon flagged Player Only or Not Used In Normal Com
     one was taken because it keeps every other choice as it was unless the weapon fires
     an explosive projectile.] Thrown weapons and mines keep their base damage: grenade
     use is not built, and a grenade as the weapon drawn would not be thrown.
+  - **Not for an Explosives weapon** (2026-11-01, issue #1303): a weapon whose DNAM
+    "Skill" is Explosives (grenade rifles, grenade machine guns, missile launchers, Fat
+    Man) ranks by its base damage alone. [hypothesis: fitted to observer check 1
+    (o13_reequip): given a Grenade Rifle (base 2, Explosives) and 10 40mm grenades,
+    none of Sunny, Easy Pete, Settler 1 and Ringo took it over a Varmint Rifle (18), a
+    .357 (26) or a 9mm (16), while Easy Pete and Ringo took a Hunting Rifle (52) at once
+    [observed]. Cook-Cook's pair is Energy Weapons and keeps its rule. Ours had about 40
+    NPCs draw grenade rifles or launchers.] Why Sunny and Settler 1 kept their Varmint
+    Rifle and .357 over a Hunting Rifle is not known.
   - What it changes (`fnvtool actor weapons`, FalloutNV.esm, 2026-10-20 [observed]):
     42 of 2,703 placed NPCs draw another weapon they carry, each a gun with an explosive
     projectile: Cook-Cook and a Bison Steve Powder Ganger the Incinerator (instead of the

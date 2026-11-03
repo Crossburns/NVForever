@@ -570,6 +570,26 @@ tracks that are not transforms) on `Fallout - Meshes.bsa` and `Update.bsa`.
   `--actor-weapons drawn`, kept privately]: the flamer is held forward, the right hand
   on the rear grip and the left on the top handle; before the change it hung turned
   down at his side.
+- The left hand on the weapon, measured with `nvf-assets/examples/hand_probe.rs` (the
+  skeleton posed from the idle, aim and attack clips at weight 1, the `Weapon` node
+  without a rest pose): its place in the `Weapon` node's frame is (27.2, -5.0, -15.7)
+  through `2hhattackspin2.kf`, `2hhattackspin.kf` and `2hhattackloop.kf` standing,
+  (27.1, -5.6, -17.0) through `sneak2hhattackspin2.kf` crouched, and at the end of
+  `2hhequip.kf` (23.7, -6.4, -14.8), of `sneak2hhequip.kf` (27.1, -5.6, -17.0). The
+  right hand is 7.3 units from the node in every attack clip. `2hhreloadb.kf` takes the
+  left hand to (24.0, 3.0, 11.4), off the handle. The crouched equip clip leaves the
+  `2hh` node where the standing one does (0.0 units, 0°); `2hr` 0.3 units and 13°, `2ha`
+  0.8 units and 5° apart [observed: NVForever's stance log].
+- Engine (`nvforever::weapons`, `attack_anims::grip_check`, since 2026-11-01): crouched,
+  the rest pose is the crouched equip clip's end. While a shot's clip plays (not a reload
+  or a blow) the log gives, every 0.5 s, the right hand's distance from the `Weapon` node
+  and the left hand's from its place at the equip clip's end, as drawn. Cook-Cook with
+  the flamer, standing before and after a reload: 7.3 and 3.9 units; crouched: 7.3 and
+  0.0 to 0.7 [observed: smoke `cook-cook-flamer-hands`]. Its frames show the flamer at
+  the hip, the right hand on the rear grip and the left on the top handle, standing and
+  crouched. The pose the owner saw on 2026-11-01 (#1309: the flamer at knee height below
+  his hands) was not seen again in these runs, nor in `npc-muzzle-flash-flamer`'s frames
+  on the same build.
 - The `2hh` holster, draw and put-away clips also carry visibility tracks
   (`NiVisController` with `NiBoolInterpolator`) on parts of the weapon model named
   `##MinigunGun`, `##FlamerGun`, `##GatlingLaserGun` and `##RIL`: off in

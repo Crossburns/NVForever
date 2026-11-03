@@ -278,7 +278,7 @@ impl Gen<'_> {
                     return self.xerr("syntax", "a lambda's {params} without =>");
                 }
                 let value = self.xexpr(p, 2)?;
-                Some(XExpr::Lambda { params, body: Vec::new(), value: Some(Box::new(value)) })
+                Some(XExpr::Lambda { params, body: Vec::new(), value: Some(Box::new(value)), index: self.next_lambda() })
             }
             _ => self.xerr("syntax", format!("unexpected {}", t.text)),
         }

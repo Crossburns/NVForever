@@ -105,6 +105,18 @@ it asks through `Game::console_requests`, which the console carries out. Wording
 | `SaveGame <name>` (`save`), `LoadGame [name]` (`load`) | as the console's own `save` / `load` |
 | `set <var> to <value>` | `set quest.var to 5`, `set ref.var to 5`, `set Global to 5`, or `set var to 5` on the selected reference's script; a number or a form; stored as a script's `set` stores it |
 
+| `PlaceLocationMarker <x> <y> <z> [name] [colour]` (`plm`) | a small box at the point with its name above it, both drawn through walls; without a name the coordinates are the name; colour 0 white, 1-9 others [documented: GECK wiki PlaceLocationMarker]; a box 16 units across, which colours 1-9 are, shown only in the place (interior, or worldspace outdoors) it was placed in, not saved [design] (nvf-play `location_markers`) |
+| `ClearLocationMarkers` (`clm`) | the markers of the current cell go [documented: GECK wiki ClearLocationMarkers]; outdoors every marker of the worldspace [hypothesis] |
+| `Show1stPerson` (`s1st`) | the first-person model shown from the third-person camera too, so both are seen [documented: GECK wiki Show1stPerson]; again: hidden [hypothesis: a switch]; it stands at the player's eye, where first person draws it (nvf-play `console::ShowFirstPerson`, nvforever `player_body`) |
+| `[ref.]SetVel <X\|Y\|Z> <speed>` | the reference's velocity along the axis [documented: GECK wiki SetVel]; game units per second along the world's axes, Z up [hypothesis: no unit given]. The player and actors: Z sets the character's rising or falling speed, X or Y pushes it along the ground at that speed slowing to rest over 0.5 s, as a knockback, since walking sets the ground speed every step [design]; a loose object: that axis of each of its dynamic bodies' velocity (`PhysWorld::set_ref_velocity`); anything else says it has no body that moves |
+| `Show <global>` (`tst`) | a global's value by Editor ID [documented: GECK wiki Show, "special or global variable"]; the special ones (`GameHour`, `GameDaysPassed`, `TimeScale`) are globals of the masters [observed: FalloutNV.esm GLOB] |
+| `PersistentRefCount` (`prc`) | how many persistent references there are [documented: the catalogue's summary]: placed ones flagged persistent or in a persistent group, and the player, those deleted left out; references made while playing are not counted [hypothesis] |
+| `TestRaceSexTerimnal` (the catalogue's spelling) | the race menu, as ShowRaceMenu [documented: the catalogue's summary] |
+| `ClearScreenBlood` | the blood on the screen goes, as ClearScreenSplatter: the scripts' splats and the player's hurts are one layer here (nvf-play `screen_splatter`) [documented: the catalogue's summary] |
+| `clr` | as `cls` [documented: GECK wiki Clr] |
+| `rbat`, `rbat <file>` | starts (or cancels) recording the console's statements, then writes them to the file for `bat`; up to 20 [documented: GECK wiki Rbat]; later ones not kept [hypothesis]. The file is a plain name in NVForever's folder (`Documents\My Games\NVForever`), `.txt` added without an extension; never a path, so nothing is written elsewhere [design] |
+| `SetConsoleOuputFile <file>` (`scof`, the catalogue's spelling) | every console line from then on, typed and printed, is added to the file, appended when it exists [documented: GECK wiki SetConsoleOuputFile]; in NVForever's folder as `rbat`'s, not the game's, where the original writes [design]; `scof` without a name stops it |
+
 | `KillAllActors [killer]` (`killall`) | every actor of the loaded area dies (the cells around the player outdoors, the player's cell indoors), never the player; an essential one is knocked out; the killer given takes the kills [documented: GECK wiki KillAllActors; hypothesis: the dead and the disabled are left alone] |
 
 KillAllActors is a vanilla function the catalogue gives neither an opcode nor the console
@@ -114,7 +126,7 @@ alias among the table's unnumbered functions (`console::lookup_word`).
 Not built: `GetINISetting` / `SetINISetting` (the engine keeps no store of the original's
 INI values; they are constants in the code that uses them: the commands say so), the
 other console-only functions not listed here or in the camera/toggle tables (see "What
-the console does not handle"), several statements on a line.
+the console does not handle").
 
 ## What the console does not handle
 
@@ -125,29 +137,29 @@ the catalogue that nothing handles (not in `functions::registry`, the console re
 or the engine's own words `console::ENGINE_WORDS`: `coc`, `cow`, `coe`, `help`,
 `AdvLevel`, `bat`) and that no
 master script calls are counted by `console::unhandled_unused`. The test
-`registered_names_are_catalogue_console_commands` pins the two numbers: **45** in the
-wiki's "Console Functions" category, **124** others. Implementing one lowers a number
+`registered_names_are_catalogue_console_commands` pins the two numbers: **33** in the
+wiki's "Console Functions" category, **123** others. Implementing one lowers a number
 there; a catalogue update that adds one raises it. Sorted (2026-10-31):
 
-**Console functions players use, to build next** (`cow`, `coe`, `saq`, `rdf`, `rat`,
-`zap`, `slpm`, `bat`, `tfow`, `temo`, `tlik` and `MFG` are built: in the tables above):
-`PlaceLocationMarker` / `ClearLocationMarkers` (`plm` / `clm`), `Show1stPerson`
-(`s1st`), `SetVel`.
+**Console functions players use**: all built (`cow`, `coe`, `saq`, `rdf`, `rat`, `zap`,
+`slpm`, `bat`, `tfow`, `temo`, `tlik`, `MFG`, `plm`, `clm`, `s1st`, `SetVel`; in the
+tables above), and with them `tst`, `prc`, `TestRaceSexTerimnal`, `ClearScreenBlood`,
+`tlv`, `clr`, `rbat` and `scof` (2026-11-01).
 
 **Console functions not applicable to NVForever**, as they inspect or drive the original
 engine's own renderer, scene graph, tools or files, which NVForever does not have:
 `AddOcclusionPlane`, `CalcLowPathToPoint`, `DrawSkeleton`, `DumpModelMap`,
-`OutputLocalMapPictures`, `PersistentRefCount`, `RenderTestCell`, `ShowScenegraph`,
-`TestAllCells`, `TestCode`, `TestRaceSexTerimnal`, `ToggleCellNode`, `ToggleLiteBrite`,
+`OutputLocalMapPictures`, `RenderTestCell`, `ShowScenegraph`,
+`TestAllCells`, `TestCode`, `ToggleCellNode`, `ToggleLiteBrite`,
 `ToggleMaterialGeometry`, `TogglePrimitives`, `ToggleMagicStats`, `Verbose`,
-`SetConsoleOuputFile`, `SetClipDist`, `SetHUDGlowConstants`, `ShowAnim`, `Show`,
+`SetClipDist`, `SetHUDGlowConstants`, `ShowAnim`,
 `ForceGroupStrategy`, `SetCombatActionCost`, `PlayVATSCameras`, `HighlightBodyPart`,
-`DeactivateAllHighlights`, `MovePipboyKnob`, `ClearScreenBlood`, and the console's
-selection words `clr`, `delete`, `depth`, `front`, `iso`, `rbat`, `reload`, `stack`,
+`DeactivateAllHighlights`, `MovePipboyKnob`, and the console's
+menu words `delete`, `depth`, `front`, `iso`, `reload`, `stack`,
 `use`, `usz`, `visible` [hypothesis for each: from its catalogue summary; revisit one
 when a player or a capture campaign asks for it].
 
-**The other 124** are script functions no master calls, many listed by the wiki as
+**The other 123** are script functions no master calls, many listed by the wiki as
 unused in New Vegas (`ModPCSkill`, `SetPCYoung`, …) or as conditions with an opcode
 (`GetGold`, `SameFaction`, `IsSnowing`, …). They matter for mods: a mod that calls one
 brings it into the stub audit's count, which then has to handle or stub it. The full
@@ -173,6 +185,7 @@ starts with the game's toggles on [design].
 | `tg` ToggleGrass | grass, as the settings page's switch (`GrassConfig::enabled`) |
 | `ts` ToggleSky | the sky dome, clouds, stars and moons hidden; the sun's light stays [hypothesis: the catalogue's plain horizon] |
 | `tws` ToggleWaterSystem | water surfaces hidden |
+| `tlv` ToggleLeaves | the SpeedTrees' leaf cards hidden, trunks and branches kept [documented: GECK wiki ToggleLeaves, "all leaves of speedtrees"]; distant trees' billboards keep theirs [hypothesis] |
 | `tt` ToggleTrees | SpeedTrees and their distant billboards hidden [hypothesis: the catalogue says the original stops their animated parts; hiding them is our choice] |
 | ToggleLODLand | distant land, as the settings page's switch and `--no-lod` |
 | ToggleNavmesh | the navmesh drawing (`NavState::show`, the settings page's switch); a run without navmesh says so |
@@ -225,7 +238,7 @@ at that speed while it flies. Log lines: `free camera: on (mode …)`, `free cam
 <n> units from where it left the player (the player moved <m>)`, `camera: field of view
 …`, `ToggleMenus: the HUD is hidden|shown`.
 
-Not built: `Show1stPerson` (`s1st`).
+`Show1stPerson` (`s1st`) is in the console-only table above.
 
 ## Searching records: `help`
 

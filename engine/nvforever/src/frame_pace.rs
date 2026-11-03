@@ -105,9 +105,13 @@ pub struct Refresh {
 
 pub struct FramePacePlugin(pub FramePace);
 
+/// Apply presentation settings and observe the monitor before telemetry snapshots them.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ApplyFramePace;
+
 impl Plugin for FramePacePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(self.0).init_resource::<Refresh>().add_systems(Update, (apply_vsync, watch_refresh).chain()).add_systems(Last, cap_rate);
+        app.insert_resource(self.0).init_resource::<Refresh>().add_systems(Update, (apply_vsync, watch_refresh).chain().in_set(ApplyFramePace)).add_systems(Last, cap_rate);
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render.add_systems(Render, log_present_modes.in_set(RenderSystems::PrepareViews).before(bevy::render::view::prepare_windows));
         }

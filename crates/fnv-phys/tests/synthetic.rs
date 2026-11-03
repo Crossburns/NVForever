@@ -731,6 +731,30 @@ fn a_struck_dynamic_body_moves_and_a_fixed_one_does_not() {
 }
 
 #[test]
+fn set_velocity_sets_one_axis_of_a_dynamic_body() {
+    let mut w = ground();
+    w.add_ref(&at(0x99, [100.0, 100.0, 10.0]), &[object(boxed([5.0, 5.0, 10.0]), Motion::Dynamic)]);
+    w.add_ref(&at(0x9A, [300.0, 100.0, 10.0]), &[object(boxed([5.0, 5.0, 10.0]), Motion::Static)]);
+    for _ in 0..60 {
+        w.step();
+    }
+    // The console's SetVel z 300: up at 300 units per second, x and y kept.
+    let before = w.ref_bodies(0x99)[0];
+    assert_eq!(w.set_ref_velocity(0x99, 2, 300.0), 1);
+    let v = w.ref_bodies(0x99)[0].linvel;
+    assert!((v[2] - 300.0).abs() < 0.5 && (v[0] - before.linvel[0]).abs() < 0.5, "velocity {v:?}");
+    let _ = down(&mut w, 0.0, 0.0);
+    for _ in 0..10 {
+        w.step();
+    }
+    let z = w.ref_bodies(0x99)[0].translation[2];
+    assert!(z > before.translation[2] + 20.0, "thrown up: {} -> {z}", before.translation[2]);
+    // No dynamic body, no reference: nothing set.
+    assert_eq!(w.set_ref_velocity(0x9A, 0, 100.0), 0);
+    assert_eq!(w.set_ref_velocity(0x77, 0, 100.0), 0);
+}
+
+#[test]
 fn a_sleeping_body_struck_then_queried_still_moves() {
     // The engine queries between a shot and the next step, with the broad phase out of
     // date (an actor's hit volume moved, a cell streamed in): the strike must survive it.

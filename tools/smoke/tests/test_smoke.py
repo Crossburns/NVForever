@@ -496,5 +496,29 @@ class StackTests(unittest.TestCase):
             time.sleep(4)  # the orphaned sleeper lets go of the log
 
 
+
+@unittest.skipUnless(os.name == "nt", "Windows process ids")
+class ChildProcessTests(unittest.TestCase):
+    """A load's new run outlives the run the runner started (engine/nvforever/src/handoff.rs):
+    the runner waits for it, and for nothing it did not start."""
+
+    def test_only_the_launchs_own_children(self):
+        from smoke.runner import child_pids, own_times, wait_for_children
+
+        exe = Path(sys.executable).name
+        starter = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(2)'])"
+        p = subprocess.Popen([sys.executable, "-c", starter])
+        p.wait()
+        born = own_times(p)
+        kids = child_pids(p.pid, born, exe)
+        self.assertEqual(len(kids), 1)
+        # Another program's name, or a process made outside the parent's lifetime: not its own.
+        self.assertEqual(child_pids(p.pid, born, "nvforever.exe"), [])
+        self.assertEqual(child_pids(p.pid, (born[0], born[0] + 1), exe), [])
+        t = time.monotonic()
+        self.assertEqual(wait_for_children(p.pid, kids, t + 20), "")
+        self.assertGreater(time.monotonic() - t, 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -332,11 +332,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // ---- ammunition ----
         // AMMO RCIL in record order [observed: gaps2, 10mm JHP hand load 2, the first
         // 00160C45; plain 10mm 0].
-        "getnumammoeffects" => XVal::Num(form(args, 0).map_or(0, |f| g.data.record_all(f, "RCIL").len()) as f64),
+        // AddAmmoEffect's and RemoveAmmoEffect's changes first (`crate::nvse_jip7`).
+        "getnumammoeffects" => XVal::Num(form(args, 0).map_or(0, |f| g.ammo_effects(f).len()) as f64),
         "getnthammoeffect" => {
             let i = num(args, 1, 0.0);
-            let all = form(args, 0).map(|f| g.data.record_all(f, "RCIL")).unwrap_or_default();
-            if i >= 0.0 { json_form(all.get(i as usize).copied()) } else { XVal::Ref(0) }
+            let all = form(args, 0).map(|f| g.ammo_effects(f)).unwrap_or_default();
+            XVal::Ref(if i >= 0.0 { all.get(i as usize).map_or(0, |f| f.0) } else { 0 })
         }
         // AMEF DATA: 0 the type, 1 the operation, 2 the value [observed: gaps2, the DT
         // reduction (DT Mod, Subtract, 2) reads 2 2 2, trait 3 reads 0].
@@ -348,7 +349,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 2 => "value",
                 _ => return Some(Ok(zero)),
             };
-            XVal::Num(json_num(g.data.record_field(f, "DATA", key)))
+            // SetAmmoEffectTraitNumericAlt's change first (`crate::nvse_one111`).
+            match crate::nvse::record_value(g, f, "DATA", key) {
+                Some(XVal::Num(x)) => XVal::Num(x),
+                _ => XVal::Num(json_num(g.data.record_field(f, "DATA", key))),
+            }
         }
         // ---- globals ----
         // LU's take the global by name too [observed: plugins3, `GetGlobalValue
@@ -476,7 +481,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             _ => XVal::Ref(0),
         },
         // DEST stages [observed: gaps3, the 10mm pistol 0].
-        "getdestructiondatanumstages" => XVal::Num(form(args, 0).and_then(|f| g.data.destructibles.get(&f)).map_or(0, |d| d.stages.len()) as f64),
+        "getdestructiondatanumstages" => XVal::Num(form(args, 0).and_then(|f| g.destruction(f)).map_or(0, |d| d.stages.len()) as f64),
         // ---- weapons ----
         // ShowOff's index into DNAM flags1 [observed: gaps4, the 10mm pistol reads 0 on
         // 0–5 and SetWeaponFlag 5 1 reads back 1; hypothesis: flags1's bits].
@@ -810,7 +815,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         "getdestructiondatahealth" => {
             let f = form(args, 0).unwrap_or(FormId(0));
-            XVal::Num(g.gaps.destruction_health.get(&f).copied().or_else(|| g.data.destructibles.get(&f).map(|d| d.health)).unwrap_or(0) as f64)
+            XVal::Num(g.gaps.destruction_health.get(&f).copied().or_else(|| g.destruction(f).map(|d| d.health)).unwrap_or(0) as f64)
         }
         // Returns 0, for the session [observed: gaps8, 75 reads back].
         "setdestructiondatahealth" => {
@@ -1169,15 +1174,17 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getcellimagespace" => json_form(form(args, 0).and_then(|c| g.data.record_field(c, "XCIM", ""))),
         // CLMT WLST [observed: gaps4, the Strip's climate 1 weather, 00161241, global
         // none, past the end 0].
-        "getclimatenumweathertypes" => XVal::Num(form(args, 0).and_then(|c| g.data.record_field(c, "WLST", "")).and_then(Json::as_array).map_or(0, Vec::len) as f64),
+        // ClimateAddWeatherType's and ClimateRemoveWeatherType's changes first
+        // (`crate::nvse_jip7`).
+        "getclimatenumweathertypes" => XVal::Num(form(args, 0).map_or(0, |c| g.climate_weathers(c).len()) as f64),
         "getclimatenthweathertype" | "getclimatenthweatherglobal" | "getclimatenthweatherchance" => {
             let i = num(args, 1, -1.0);
-            let all = form(args, 0).and_then(|c| g.data.record_field(c, "WLST", "")).and_then(Json::as_array);
-            let e = all.and_then(|l| if i >= 0.0 { l.get(i as usize) } else { None });
+            let all = form(args, 0).map(|c| g.climate_weathers(c)).unwrap_or_default();
+            let e = if i >= 0.0 { all.get(i as usize).copied() } else { None };
             match name {
-                "getclimatenthweathertype" => json_form(e.and_then(|e| e.get("weather"))),
-                "getclimatenthweatherglobal" => json_form(e.and_then(|e| e.get("global"))),
-                _ => XVal::Num(json_num(e.and_then(|e| e.get("chance")))),
+                "getclimatenthweathertype" => XVal::Ref(e.map_or(0, |e| e.weather.0)),
+                "getclimatenthweatherglobal" => XVal::Ref(e.and_then(|e| e.global).map_or(0, |f| f.0)),
+                _ => XVal::Num(e.map_or(0, |e| e.chance) as f64),
             }
         }
         // Night outside the climate's sunrise begin to sunset end (TNAM, ten-minute steps)

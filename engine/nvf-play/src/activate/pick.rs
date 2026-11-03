@@ -26,6 +26,23 @@ pub struct RayHit {
     pub distance: f32,
 }
 
+/// How far behind the surface the ray first hits a door may stand and still be the
+/// collision hit, game units. Some buildings' collision has a face a few units in front
+/// of their door: the Nipton town hall's mesh lies 8.5 units before its door's slab
+/// (0x00130CFF), so the door was never targeted (#1339) [observed 2026-11-01; design:
+/// the reach].
+pub const DOOR_SLACK: f32 = 16.0;
+
+/// The collision hit the target is chosen from: the first hit, or a door found within
+/// [`DOOR_SLACK`] behind it when the first hit is not something the player can
+/// activate (`activatable`) and the door is.
+pub fn door_behind(first: Option<RayHit>, behind: Option<RayHit>, mut activatable: impl FnMut(u32) -> bool) -> Option<RayHit> {
+    match (first, behind) {
+        (Some(f), Some(b)) if b.distance <= f.distance + DOOR_SLACK && !f.form_id.is_some_and(&mut activatable) && b.form_id.is_some_and(&mut activatable) => Some(b),
+        (f, _) => f,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
     Collision,
@@ -184,5 +201,20 @@ mod tests {
         let (c, r) = bounding_sphere(&t, Vec3::Y, Vec3::ONE);
         assert_eq!(c, Vec3::new(10.0, 3.0, 0.0));
         assert!((r - 3.0 * 3f32.sqrt()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_door_just_behind_a_wall_face_is_the_hit() {
+        let (wall, door, crate_) = (1, 2, 3);
+        let at = |id: u32, distance: f32| Some(RayHit { form_id: Some(id), distance });
+        let usable = |id: u32| id != wall;
+        // The Nipton town hall: its mesh at 89.2, the door 8.5 behind it.
+        assert_eq!(door_behind(at(wall, 89.2), at(door, 97.7), usable), at(door, 97.7));
+        // Too far behind, or the first hit is usable itself: the first hit stands.
+        assert_eq!(door_behind(at(wall, 50.0), at(door, 50.0 + DOOR_SLACK + 1.0), usable), at(wall, 50.0));
+        assert_eq!(door_behind(at(crate_, 40.0), at(door, 45.0), usable), at(crate_, 40.0));
+        // Ground (no reference) counts as not usable; nothing behind leaves it.
+        assert_eq!(door_behind(Some(RayHit { form_id: None, distance: 30.0 }), at(door, 35.0), usable), at(door, 35.0));
+        assert_eq!(door_behind(at(wall, 89.2), None, usable), at(wall, 89.2));
     }
 }

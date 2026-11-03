@@ -367,6 +367,12 @@ impl Game<'_> {
         if actor == FormId::PLAYER_REF || self.extra.get(&actor).is_some_and(|e| e.dead) {
             return false;
         }
+        // ITR's ForceCrouch and DisableCrouching over every other rule [documented:
+        // ForceCrouch; DisableCrouching, "regardless of what the combat AI, follower
+        // behaviour, or movement packages request"] (`crate::nvse_itr1`).
+        if let Some(c) = self.itr_crouch(actor) {
+            return c;
+        }
         if self.extra.get(&actor).is_some_and(|e| e.force_sneak) {
             return true;
         }

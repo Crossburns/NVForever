@@ -340,6 +340,31 @@ owner to add to its pull request or issue (owner, 2026-10-29).
       4. T8's pointer and keys fed to `StartMenu` while the page is open
          (`tiles/input.rs`: no menu takes input in play yet).
       5. Done when an MCM mod's option changes in game and its INI value is written.
+    - **Built 2026-11-01** (claude/mcm-pause-976-t11, issue #976): steps 1-4 as the
+      plumbing, behind `[UI] TileMenus=StartMenu` (off by default; `nvf-play
+      tiles/mods.rs`, `pause.rs`). With it on and a mod's tiles in `StartMenu`, the column
+      has a Mods entry before Quit (`pause::ModsEntry`; a tile counts as a mod's as T5
+      tells the HUD's apart, so a loose `start_menu.xml` that only reskins the menu gives
+      no entry); its page draws StartMenu's mod tiles over the pause menu (`tiles::draw`,
+      as T5 draws the HUD's: a loose replacement's own tiles, not the archived file's;
+      interface units), feeds them T8's pointer and keys, and each frame runs only the
+      `MenuMode 1013` blocks, in the played world, with `MenuMode 1013` true
+      (`Game::page_tick`: no GameMode block, no game time, no queued events or OnLoad
+      blocks, the open menu left as a block's box or tutorial set it; only on that page:
+      our pause menu still holds every script elsewhere, the first decision above kept
+      narrow) [design]. Esc, Backspace or Back close it. Tests: `tiles::mods` (the
+      entry's rule, a reskin), `pause` (the entries, the page), fnv-game
+      `a_page_tick_runs_only_the_start_menus_blocks_and_keeps_the_open_menu`; smoke
+      `pause-mods-page` (MCM's own 1013 block clears its `iInstallCheck`).
+    - **Blocked: MCM's own page** (step 5). MCM's ESP shows MCM only when
+      `StartMenu/NOGLOW_BRANCH/main_container/childcount` is 8 (the original's pause
+      column, filled in by the game's code; NVForever's column is hand-built and the
+      rule is not documented), places its trigger from that column's x/y/width, and
+      fills its mod list with MCM.dll functions no source describes (SetMCMModList,
+      GetMCMListWidth, SetMCMFloatMass, SetMCMStringMass: `{{Incomplete}}` wiki stubs,
+      not in functions.json). Until a source for those turns up (an observer capture of
+      the start menu's `main_container` traits, the functions' effects on the tree), the
+      Mods page shows only what a mod's own MenuMode script draws.
 8. **T12. The vanilla HUD on tiles**, behind `[UI] TileMenus=HUDMainMenu`. Compare
     with the hud.md screenshots; keep the old HUD the default until the owner agrees.
     - **T12a done** 2026-10-29 (claude/t12-hud-tiles): the switch and the drawing.
@@ -739,3 +764,15 @@ owner to add to its pull request or issue (owner, 2026-10-29).
         prompt open; text sizes per axis; `screen()` gated; `_name_` only after a constant
         with a known number; the drop aid's `ask` holds the prompt; the message scenario
         closes the console.
+    - **T15b, part 1 built** 2026-11-01 (`claude/tile-menus-978`, issue #978): the Wait /
+      Sleep menu from `sleep_wait_menu.xml` behind `[UI] TileMenus=SleepWaitMenu`, in T15a's
+      shape (`tiles/wait_menu.rs`, wait-menu.md §12). The model writes the three texts, the
+      Wait button's bare word, the slider's `_current_value` (with `_SetInCode` poked) and
+      the background's opacity; clicks on the buttons and the slider's pieces are the
+      hand-built menu's commands (`crate::wait::WaitInput`), the slider's value written
+      again after them (the prefab's own value counts clicks from 0 in this tree); the
+      hand-built keys stay, W presses Wait through the file. Interface `screen()` units
+      while it is switched on (`interface_screen`). Tests: `tiles::wait_menu`,
+      `tiles::vanilla` (the switch). Smoke: `tiles-sleep-wait`. **Left for part 2: the
+      tutorial menu**: `tutorial_menu.xml`'s text scrolls inside `TM_text_container`, a
+      `clipwindow` hotrect, and the tile renderer clips nothing yet; that comes first.

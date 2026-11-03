@@ -183,23 +183,21 @@ pub const NOTE_LINES: usize = 16;
 pub const RESULT_GAP: f32 = 30.0;
 pub const RESULT_X: f32 = 34.0;
 
-/// The words on the screens that are not in the plugins (hacking.md §8). Plain phrases
-/// match the owner's screenshots [observed]; the header lines that name the game's
-/// fictional maker are NVForever's own wording, not the original's (LEGAL.md), and so
-/// are the lines the original has not been seen showing [hypothesis].
+/// The words on the screens that are not in the plugins or the menu files (hacking.md
+/// §8). All are NVForever's own (LEGAL.md); only where each line stands follows the
+/// original [observed: the owner's screenshots]. The lockout screen's lines are not
+/// here: they come from the game strings table (`sHackingLockout3`/`sHackingLockout4`).
 pub mod words {
     pub const HACK_TITLE: &str = "TERMINAL ACCESS PROTOCOL";
-    pub const HACK_PROMPT: &str = "ENTER PASSWORD NOW";
-    /// [hypothesis] The warning on the last attempt.
-    pub const HACK_WARNING: &str = "!!! WARNING: LOCKOUT IMMINENT !!!";
-    /// `sHackingLockout3` and `sHackingLockout4` [hypothesis: their texts].
-    pub const LOCKOUT_1: &str = "TERMINAL LOCKED";
-    pub const LOCKOUT_2: &str = "PLEASE CONTACT AN ADMINISTRATOR";
+    /// The header's second line.
+    pub const HACK_PROMPT: &str = "PASSWORD REQUIRED";
+    /// [hypothesis] In place of the prompt on the last attempt.
+    pub const HACK_WARNING: &str = "LAST TRY BEFORE LOCKOUT";
     pub const MENU_TITLE: &str = "TERMINAL OPERATING SYSTEM";
     pub const MENU_COPYRIGHT: &str = "VERSION 1.0";
 
     pub fn attempts(n: u8) -> String {
-        format!("{n} ATTEMPT(S) LEFT:")
+        format!("{n} TRIES REMAINING")
     }
 }
 
@@ -602,7 +600,7 @@ pub fn spawn(commands: &mut Commands, camera: Entity, faces: &Faces, session: &S
         }
         match &session.page {
             Page::Hacking(h) => hacking_page(c, &faces.text, &faces.lit, h, cursor_on),
-            Page::LockedOut => lockout_page(c, &faces.text),
+            Page::LockedOut(lines) => lockout_page(c, &faces.text, lines),
             Page::Menu(m) => menu_page(c, &faces.text, &faces.lit, m, terminals, cursor_on, &mut rows),
         }
         // [design] Over everything on the canvas, under the monitor's glare (§2, §7).
@@ -673,12 +671,12 @@ fn hacking_page(c: &mut ChildSpawnerCommands, face: &Face, lit_face: &Face, h: &
     });
 }
 
-fn lockout_page(c: &mut ChildSpawnerCommands, face: &Face) {
+fn lockout_page(c: &mut ChildSpawnerCommands, face: &Face, lines: &[String; 2]) {
     let bright = bright();
     c.spawn(at(DEPTH.x, DEPTH.y, DEPTH_SIZE.x, DEPTH_SIZE.y)).with_children(|d| {
         // [documented] One line above the middle, one below.
-        centred(d, face, words::LOCKOUT_1, DEPTH_SIZE.x, DEPTH_SIZE.y / 2.0 - LINE, bright);
-        centred(d, face, words::LOCKOUT_2, DEPTH_SIZE.x, DEPTH_SIZE.y / 2.0 + LINE, bright);
+        centred(d, face, &lines[0], DEPTH_SIZE.x, DEPTH_SIZE.y / 2.0 - LINE, bright);
+        centred(d, face, &lines[1], DEPTH_SIZE.x, DEPTH_SIZE.y / 2.0 + LINE, bright);
     });
 }
 
@@ -740,13 +738,12 @@ fn menu_page(c: &mut ChildSpawnerCommands, face: &Face, lit_face: &Face, m: &Men
         }
         None => {
             let first = m.selected.saturating_sub(LIST_ROWS - 1);
-            for (row, &item) in m.items.iter().enumerate().skip(first).take(LIST_ROWS) {
-                let Some(it) = t.items.get(item) else { continue };
+            for (row, label) in m.labels.iter().enumerate().skip(first).take(LIST_ROWS) {
                 let top = y + (row - first) as f32 * LIST_ROW;
                 let lit = row == m.selected && !m.hidden;
                 rows.push((row, Rect::new(MENU_X, top, MENU_X + LIST_WIDTH, top + LIST_ROW)));
                 c.spawn(at(MENU_X, top, LIST_WIDTH, LIST_ROW)).with_children(|b| {
-                    let s = format!("> {}", it.text);
+                    let s = format!("> {label}");
                     let w = face.font.width(&s);
                     if lit {
                         // [documented] A filled box (224 of 255) behind the chosen row.

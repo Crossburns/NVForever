@@ -71,6 +71,84 @@ not zero GPU cost.
 sync off and disables the frame cap settings; match effective presentation settings
 before comparing instrumentation overhead.
 
+### Tracy: the same spans on a live timeline
+
+The span profile above sums spans into log lines; the Tracy profiler shows them on a
+timeline, every thread frame by frame, which is how a single hitch is read rather than
+averaged (#1329).
+
+```
+cd engine
+cargo build --release -p nvforever --features nvforever/tracy    # or nvforever/tracy-memory
+```
+
+- `tracy` is `profile` plus Bevy's `trace_tracy`; `tracy-memory` also records every
+  allocation (slower). Keep the build in its own target folder: it rebuilds Bevy. A
+  default build compiles no Tracy code.
+- [documented: `engine/Cargo.lock`, `tracy-client-sys-0.30.1/tracy/common/TracyVersion.hpp`]
+  Bevy 0.20.1 pins `tracing-tracy` 0.12.0, `tracy-client` 0.19.0 and `tracy-client-sys`
+  0.30.1, which carries the Tracy 0.14.1 client. Use the Tracy 0.14.x viewer
+  (github.com/wolfpld/tracy releases); a viewer of another protocol version refuses the
+  connection. Recheck this file after a Bevy upgrade.
+- [observed 2026-11-01, Goodsprings, `--play`] The game listens on TCP 8086 from start-up;
+  start it, then Connect in the viewer (localhost). `NVF_PLAY_TEST_PROFILE` works beside
+  it, unchanged.
+- [documented: `tracy-client-sys-0.30.1/build.rs`, `tracy/client/TracyProfiler.cpp`,
+  `tracy/common/TracySocket.cpp`] The client is built `ondemand` and `only-localhost`
+  (`engine/nvforever/Cargo.toml`). On demand: nothing is recorded until a viewer
+  connects, so a Tracy build left running without one does not fill memory, and what
+  happened before connecting (start-up, the first cell's load) is not in the capture;
+  connect first, then trigger the scene. Only localhost: the port listens on the loopback
+  address and the viewer-discovery broadcast goes to 127.255.255.255, so nothing is
+  reachable from another machine and no firewall rule is needed; profiling across
+  machines takes a build without it.
+- [hypothesis: Tracy's manual, not checked here] The client also records context switches
+  and samples call stacks only when run as administrator on Windows; the spans need
+  neither. Frame telemetry lists `tracy` among the build features, so its numbers are
+  not mistaken for a plain build's.
+- Tracy sees CPU spans only here; the GPU's passes still want PIX or Nsight Graphics.
+
+### The physics line and the `phys::*` zones
+
+[design: `engine/nvf-play/src/phys_load.rs`, `player.rs` `step` and `move_npcs`,
+`graphics.rs`] `nvf_play::player::step` advances a 1/60 s accumulator
+(`fnv_phys::Stepper::advance`) and runs the fixed steps the frame's time owes, up to 15 a
+frame (`phys::play_params`: a whole 0.25 s frame of the virtual clock is caught up,
+deliberately, so actors near the player cover the ground the clock passes). Its cost is
+therefore about *ticks a frame × ms a tick*, and grows with the previous frame's length:
+a slow frame owes more steps to the next one. With `--log-frame-times <s>` the system
+counts and times itself, and each period logs, beside `frame time:`:
+
+`physics: 2.00 ticks a frame (max 4) over 600 frames, 7.1 controller moves a tick (max 12), 31 blocks, 5.68 ms a frame in player::step, 2.84 ms a tick`
+
+(an example of the format, not a measurement). Frames are those in which the system ran
+while playing; frames with no player character or waiting for a cell to load are not
+counted (`Meter::skip`). Controller moves are the player's (on the walking path) and each
+walked actor's per step; blocks is the mean length of the actor block list
+(`crate::blocking`); the two times are `Instant`-based, the whole system per frame and the
+steps alone per step. Without frame-time logging no `PhysLoad` statistics are kept, no
+`Instant` is read and the line is not logged (the `phys::*` spans are independent of it).
+The two lines do not count the same frames: the physics counts cover the frames of the
+period in which the game was playing (less those skipped above), while the
+`frame time:` mean also counts frames that were not (menus, loading) and, only with
+`--graphics-cycle`, leaves out the first 0.5 s of each period (`graphics.rs`). The logging
+system and `step` are not ordered, so the frame at a period's boundary can land in either
+period. Compare the two as rates, not as one sample.
+
+In a Tracy (or `profile`) build the steps show as zones: `phys::tick` per fixed step,
+holding `phys::blocks` (the block list and the push and clip passes),
+`phys::player_move` (the player's controller move and its landing, fall and push
+follow-up), `phys::npc_plan` (query refresh and the walked actors' planned moves, which
+run on the compute pool from 8 actors: the zone is the calling thread's wait) and
+`phys::npc_apply` (their moves put into the world), and `phys::world_step`, which holds
+`fnv_phys`' own `phys::grip_buoy` and `phys::rapier_step`; `phys::after` is the
+once-a-frame work after the steps (camera interpolation, drawn sinks).
+`phys::query_refresh` is the broad-phase refresh wherever it does work (inside a step or
+before a query). Held by furniture or flying with ToggleCollision the steps still call
+`PhysWorld::step`, so `phys::tick` holds the actors' zones, `phys::grip_buoy`,
+`phys::rapier_step` and perhaps `phys::query_refresh`, but not the walking path's
+`phys::blocks`, `phys::player_move`, `phys::world_step` and `phys::after` wrappers.
+
 ## 2. Item 4: the mantis ootheca
 
 **What happens** [observed: `fnvtool script decompile --form 000EF406`, `esm decode`]:

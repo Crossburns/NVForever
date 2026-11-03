@@ -1,0 +1,213 @@
+{
+ "format": "fnv.capture.steps/1",
+ "name": "pp",
+ "title": "pp, runtime-compiled",
+ "start": "any save (read-only)",
+ "steps": [
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nSetFunctionValue (IsThirdPerson)\nEnd\n",
+   "label": "pp.third",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nSetFunctionValue (GetCurrentSightingNode)\nEnd\n",
+   "label": "pp.sight",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nSetFunctionValue (GetFormIDString (GetStaticForm rObj))\nEnd\n",
+   "label": "pp.static.bat",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nSetFunctionValue (IsFormInstance rObj)\nEnd\n",
+   "label": "pp.isinst.bat",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"434F\"\nSetFunctionValue (HasExtendedMods rObj)\nEnd\n",
+   "label": "pp.hasext.pistol",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"434F\"\nSetFunctionValue (HasExtendedMods rObj 1)\nEnd\n",
+   "label": "pp.hasext.pistol.vanilla",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"434F\"\nlet aList := GetAllAttachedMods rObj\nSetFunctionValue (ar_Size aList)\nEnd\n",
+   "label": "pp.allmods.pistol",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"434F\"\nSetFunctionValue (IsAkimboForm rObj)\nEnd\n",
+   "label": "pp.akimbo.pistol",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"434F\"\nSetFunctionValue (HasAkimboSet rObj rObj)\nEnd\n",
+   "label": "pp.akimboset.pistol",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"434F\"\nSetFunctionValue (GetFormTrait 0 rObj \"MoveNode\")\nEnd\n",
+   "label": "pp.trait.pistol",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"10749E\"\nSetFunctionValue (sv_Length (GetTopicPrompt rObj))\nEnd\n",
+   "label": "pp.prompt",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"105570\"\nSetFunctionValue (sv_Length (GetTopicPrompt rObj))\nEnd\n",
+   "label": "pp.prompt.none",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nGetPlayerCameraRotation fA fB fC\nSetFunctionValue (sv_Construct \"%.0f %.0f %.0f\" (fA - (rP.GetAngle X)) fB (fC - (rP.GetAngle Z)))\nEnd\n",
+   "label": "pp.camrot",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nSetFunctionValue (GetFormIDString (rP.FindWeaponAmmo rObj))\nEnd\n",
+   "label": "pp.ammo.bat",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet aList := pReadFile \"Fallout_default.ini\"\nSetFunctionValue (ar_Size aList)\nEnd\n",
+   "label": "pp.readfile",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet aList := pReadFile \"Fallout_default.ini\" 0 3\nSetFunctionValue (ar_Size aList)\nEnd\n",
+   "label": "pp.readfile.lines",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nSetFunctionValue (sv_Construct \"%g %g %g\" (AX_Exists \"nvfppnone\" rObj) (AX_GetType \"nvfppnone\" 0 rObj) (AX_Size \"nvfppnone\" rObj))\nEnd\n",
+   "label": "pp.ax.none",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nAX_Set 777 \"nvfpp\" 0 rObj\nAX_Set \"Hello\" \"nvfpp\" 1 rObj\nlet aList := ar_List 4 5 6\nAX_Set aList \"nvfpp\" 2 rObj\nSetFunctionValue (AX_Size \"nvfpp\" rObj)\nEnd\n",
+   "label": "pp.ax.set",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nSetFunctionValue (AX_Get \"nvfpp\" 0 rObj)\nEnd\n",
+   "label": "pp.ax.get0",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nlet sText := AX_Get \"nvfpp\" 1 rObj\nSetFunctionValue sText\nEnd\n",
+   "label": "pp.ax.get1",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nlet aList := AX_Get \"nvfpp\" 2 rObj\nSetFunctionValue aList[1]\nEnd\n",
+   "label": "pp.ax.get2",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nSetFunctionValue (sv_Construct \"%g %g %g %g\" (AX_GetType \"nvfpp\" 0 rObj) (AX_GetType \"nvfpp\" 1 rObj) (AX_GetType \"nvfpp\" 2 rObj) (AX_GetType \"nvfpp\" 7 rObj))\nEnd\n",
+   "label": "pp.ax.types",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nSetFunctionValue (sv_Construct \"%g %g\" (AX_Exists \"nvfpp\" rObj) (AX_Exists \"NVFPP\" rObj))\nEnd\n",
+   "label": "pp.ax.exists",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nSetFunctionValue (sv_Construct \"%g %g %g\" (AX_Find \"hello\" \"nvfpp\" 0 rObj) (AX_Find 5 \"nvfpp\" 0 rObj) (AX_Find 5 \"nvfpp\" 1 rObj))\nEnd\n",
+   "label": "pp.ax.find",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nlet fRes := AX_Null \"nvfpp\" 0 rObj\nSetFunctionValue (sv_Construct \"%g %g %g\" fRes (AX_GetType \"nvfpp\" 0 rObj) (AX_Size \"nvfpp\" rObj))\nEnd\n",
+   "label": "pp.ax.null",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nlet fRes := AX_Erase \"nvfpp\" 0 rObj\nSetFunctionValue (sv_Construct \"%g %g %g\" fRes (AX_Size \"nvfpp\" rObj) (AX_GetType \"nvfpp\" 0 rObj))\nEnd\n",
+   "label": "pp.ax.erase",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"421C\"\nlet fA := -1\nlet fRes := AX_Erase \"nvfpp\" fA rObj\nSetFunctionValue (sv_Construct \"%g %g\" fRes (AX_Exists \"nvfpp\" rObj))\nEnd\n",
+   "label": "pp.ax.drop",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"434F\"\nSetFunctionValue (GetEditorID rObj)\nEnd\n",
+   "label": "pp.edid.pistol",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"434F\"\nlet rInst := CreateFormInstance rObj \"nvfpp\"\nAX_Set rInst \"nvfppinst\" 0 rP\nSetFunctionValue (sv_Construct \"%g %z %z\" (IsFormInstance rInst) (GetFormIDString (GetStaticForm rInst)) (GetEditorID rInst))\nEnd\n",
+   "label": "pp.inst",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rInst := AX_Get \"nvfppinst\" 0 rP\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"434F\"\nSetFunctionValue (sv_Construct \"%z %z\" (GetFormIDString (GetWeaponItemMod 1 rInst)) (GetFormIDString (GetWeaponItemMod 1 rObj)))\nEnd\n",
+   "label": "pp.inst.mod",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rInst := AX_Get \"nvfppinst\" 0 rP\nlet rObj := GetFormFromMod \"FalloutNV.esm\" \"129878\"\nlet fRes := AttachMod rInst \"nvfslot\" rObj\nlet fA := HasExtendedMods rInst\nlet aList := GetAllAttachedMods rInst\nlet fB := ar_Size aList\nAttachMod rInst \"nvfslot\"\nlet aList := GetAllAttachedMods rInst\nSetFunctionValue (sv_Construct \"%g %g %g %g %g\" fRes fA fB (HasExtendedMods rInst) (ar_Size aList))\nEnd\n",
+   "label": "pp.attach",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rInst := AX_Get \"nvfppinst\" 0 rP\nlet fRes := AttachMod rInst \"1\"\nlet aList := GetAllAttachedMods rInst\nSetFunctionValue (sv_Construct \"%g %g\" fRes (ar_Size aList))\nEnd\n",
+   "label": "pp.attach.vanilla",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet fA := -1\nSetFunctionValue (AX_Erase \"nvfppinst\" fA rP)\nEnd\n",
+   "label": "pp.inst.drop",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nSetSightingNode \"Bip01 Head\"\nlet sText := GetCurrentSightingNode\nSetSightingNode \"##SightingNode\"\nSetFunctionValue (sv_Construct \"%z %z\" sText (GetCurrentSightingNode))\nEnd\n",
+   "label": "pp.sight.set",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nSetSightingNode \"NVFNodeTwo\"\nSetFunctionValue (GetCurrentSightingNode)\nEnd\n",
+   "label": "pp.sight.set2",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet aList := ar_List \"nvf one\" \"nvf two\"\nSetFunctionValue (pWriteFile \"nvfpp_probe.txt\" aList)\nEnd\n",
+   "label": "pp.file.write",
+   "field": "value"
+  },
+  {
+   "query": "ref rP\nref rObj\nref rOther\nref rInst\nfloat fRes\nfloat fA\nfloat fB\nfloat fC\nstring_var sText\narray_var aList\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet aList := pReadFile \"nvfpp_probe.txt\"\nlet sText := aList[1]\nSetFunctionValue (sv_Construct \"%g %z\" (ar_Size aList) sText)\nEnd\n",
+   "label": "pp.file.read",
+   "field": "value",
+   "text": true
+  }
+ ]
+}

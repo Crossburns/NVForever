@@ -516,8 +516,10 @@ pub struct Fighters {
     poses: HashMap<u32, Pose>,
     /// People locked on their target this frame: they see it and are not running from
     /// it; where its feet are drawn (`residents` turns them to it and holds them on it,
-    /// [`Fighters::lock_on`]).
-    locks: HashMap<u32, V3>,
+    /// [`Fighters::lock_on`]); keyed by the person, with its target.
+    locks: HashMap<u32, (u32, V3)>,
+    /// Last frame's [`Fighters::locks`]: where each locked person was drawn facing.
+    drawn_locks: HashMap<u32, (u32, V3)>,
     stats: Stats,
     rng: u64,
     /// The crouch, block and approach rolls' own sequence (§14), so fights without them
@@ -1168,7 +1170,7 @@ pub(crate) fn fight(
     };
     let f = &mut *fighters;
     f.poses.clear();
-    f.locks.clear();
+    f.drawn_locks = std::mem::take(&mut f.locks);
     if f.stance_rng == 0 {
         f.stance_rng = 0x2545_F491_4F6C_DD1D;
     }
@@ -1659,6 +1661,9 @@ pub(crate) fn fight(
                     if !t.use_cover && person {
                         t.use_cover = next_unit(&mut f.stance_rng) * 100.0 < stance::COVER_BIAS * temper.cover;
                     }
+                    if t.use_cover {
+                        info!("npc combat: {name} will use cover for the next {:.0} s (Take Cover Chance {chance:.0})", tactics::COVER_EVERY);
+                    }
                     if !t.use_cover && t.cover.take().is_some() {
                         info!("npc combat: {name} leaves its cover (no cover for the next {:.0} s)", tactics::COVER_EVERY);
                     }
@@ -2063,9 +2068,30 @@ pub(crate) fn fight(
             let running_off = flight.is_some_and(|fl| !matches!(fl.spot, Some((_, fnv_game::combat_group::FleeBy::Cover))));
             // Who the AI does not run stands as it was put (and fires as it stands, above).
             if person && sees && !running_off && residents.as_deref().is_some_and(|r| r.runs(id)) {
-                f.locks.insert(id, tfeet);
+                f.locks.insert(id, (target.0, tfeet));
+                // Measured against where it was drawn facing (last frame's lock on the same
+                // target, `residents`): this frame's place of a target in contact range
+                // moves several degrees in a frame (a melee Fiend 21 units from a trooper
+                // read 13° off for a 5-unit step) though the body is drawn facing it exactly.
+                // A new target is measured against its own place: the turn to it counts.
+                let off = match f.drawn_locks.get(&id) {
+                    Some((t, at)) if *t == target.0 => facing_off(global, feet, *at),
+                    _ => off,
+                };
                 if fighter.seen_for >= REACTION_SECONDS {
                     f.stats.seen_offs.push(off.to_degrees());
+                    if off.to_degrees() > 10.0 && f.stats.seen_offs.iter().filter(|o| **o > 10.0).count() <= 40 {
+                        info!(
+                            "npc combat facing: {me_name} {:.1}° off {target_name} at {away:.0} units, seen {:.2} s{}{}{}{}{}",
+                            off.to_degrees(),
+                            fighter.seen_for,
+                            if staggering.is_some() { ", staggering" } else { "" },
+                            if idle_holds.is_some() { ", in a no-attacking idle" } else { "" },
+                            if flight.is_some() { ", fleeing to cover" } else { "" },
+                            if urgent.is_some() { ", dodging or running from a grenade" } else { "" },
+                            fighter.tactic.cover.as_ref().map_or(String::new(), |cv| format!(", cover {:?}", cv.phase)),
+                        );
+                    }
                 }
             }
             // Crouching to fire (§14.2): a person with a gun, by the rules of
@@ -2254,9 +2280,11 @@ pub(crate) fn fight(
                         }
                     }
                     let reloading = cycle.reloading();
-                    // Now and then a grenade it carries instead of a shot (`npc_grenades`).
+                    // A grenade, only when the grenade is the weapon it holds: gunmen do not
+                    // throw the grenades they carry (`npc_grenades`, observer check 20).
                     let mut threw = false;
-                    if ready && !fleeing && person {
+                    let holds_grenade = ws.anim_type.as_deref() == Some(crate::npc_grenades::GRENADE_ANIM);
+                    if ready && !fleeing && person && holds_grenade {
                         let due = match f.grenade_at.get(&id) {
                             Some(&(t, at)) if t == target => at,
                             _ => {
@@ -2796,9 +2824,9 @@ fn describe(c: &Combat, arm: &Arm) -> String {
 }
 
 impl Fighters {
-    /// Where the person `reference` is locked on this frame: its target's drawn feet,
-    /// while it sees that target and does not run from it.
-    pub fn lock_on(&self, reference: u32) -> Option<V3> {
+    /// Whom the person `reference` is locked on this frame, and where that target's feet
+    /// are drawn, while it sees that target and does not run from it.
+    pub fn lock_on(&self, reference: u32) -> Option<(u32, V3)> {
         self.locks.get(&reference).copied()
     }
 }

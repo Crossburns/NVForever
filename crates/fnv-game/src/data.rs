@@ -573,6 +573,27 @@ pub struct LeveledActorDef {
 pub struct RegionDef {
     pub world: Option<FormId>,
     pub areas: Vec<Vec<[f32; 2]>>,
+    /// The weather block (RDAT type 3, then RDWT), when the region has one.
+    pub weathers: Option<RegionWeathers>,
+}
+
+/// A region's weather block [documented: xEdit wbRegionDataEntries type 3; schema
+/// `sky.json` REGN RDAT, RDWT]: its RDAT flags (bit 0 override,
+/// `fnv_world::sky::REGION_WEATHER_OVERRIDE`) and priority, and the weathers with their
+/// chances and globals.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RegionWeathers {
+    pub flags: u8,
+    pub priority: u8,
+    pub list: Vec<RegionWeather>,
+}
+
+/// One RDWT entry: a weather, its chance and the global that gates it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegionWeather {
+    pub weather: FormId,
+    pub chance: i32,
+    pub global: Option<FormId>,
 }
 
 impl RegionDef {
@@ -1444,6 +1465,16 @@ struct Read {
 
 const UNIT_SIGS: &[&[u8; 4]] = &[b"SCPT", b"QUST", b"INFO", b"PACK", b"TERM", b"PERK"];
 
+/// Winning records read at a time while [`GameData::build`] takes them in [engineering
+/// choice: a few tens of MB of reads, enough work per slice for every core].
+const READ_SLICE: usize = 16_384;
+
+/// Whether [`read_one`] finds script units in the record: a [`UNIT_SIGS`] type, or a
+/// patrol point's result script (REFR with XPPA).
+fn carries_units(r: &Record) -> bool {
+    UNIT_SIGS.contains(&&r.header.sig) || (&r.header.sig == b"REFR" && r.subrecords().is_ok_and(|subs| subs.iter().any(|s| &s.sig == b"XPPA")))
+}
+
 /// The base form types whose OBND [`GameData::object_bounds`] keeps (GetObjectDimensions).
 const BOUNDS_SIGS: [[u8; 4]; 20] = [
     *b"NPC_", *b"CREA", *b"CONT", *b"ACTI", *b"STAT", *b"MSTT", *b"FURN", *b"DOOR", *b"LIGH", *b"TERM", *b"MISC", *b"WEAP", *b"ARMO", *b"ALCH", *b"AMMO",
@@ -1451,7 +1482,7 @@ const BOUNDS_SIGS: [[u8; 4]; 20] = [
 ];
 
 /// The record types whose fields [`GameData::record_fields`] keeps.
-pub const FIELD_SIGS: [[u8; 4]; 45] = [
+pub const FIELD_SIGS: [[u8; 4]; 47] = [
     *b"PROJ", *b"EXPL", *b"AMMO", *b"WEAP", *b"ARMO", *b"LSCR", *b"NOTE", *b"PERK", *b"MESG", *b"TERM", *b"IMOD", *b"CHAL", *b"BOOK", *b"BPTD", *b"MISC", *b"ALCH", *b"KEYM",
     *b"NPC_", *b"CREA", *b"FACT", *b"RACE", *b"HAIR", *b"EYES", *b"SOUN", *b"WTHR", *b"IMGS", *b"IMAD", *b"AMEF", *b"CLMT", *b"CELL", *b"WRLD", *b"IPDS", *b"IPCT", *b"IDLE", *b"ACTI",
     // JIP batch 4 (`crate::nvse_jip4`).
@@ -1460,6 +1491,8 @@ pub const FIELD_SIGS: [[u8; 4]; 45] = [
     *b"MUSC", *b"CONT", *b"LGTM",
     // JIP batch 5 (`crate::nvse_jip5`).
     *b"LTEX",
+    // JohnnyGuitar batch 3 (`crate::nvse_jg3`).
+    *b"EFSH", *b"MSET",
 ];
 
 /// The winning records of the [`FIELD_SIGS`] types, each decoded by
@@ -1498,7 +1531,10 @@ impl RecordFields {
 
 /// The subrecords kept of an actor record, which are many: what xNVSE's actor-base
 /// getters read.
-const ACTOR_SUBS: [[u8; 4]; 16] = [*b"ACBS", *b"HNAM", *b"LNAM", *b"ENAM", *b"HCLR", *b"NAM6", *b"NAM7", *b"RNAM", *b"PNAM", *b"KFFZ", *b"VTCK", *b"DATA", *b"MODL", *b"TNAM", *b"BNAM", *b"WNAM"];
+///
+/// CSCR (a creature's sounds template) and NIFZ (its model list): JIP batch 6
+/// (`crate::nvse_jip6`). NAM4 (the impact material): JIP batch 7 (`crate::nvse_jip7`).
+const ACTOR_SUBS: [[u8; 4]; 19] = [*b"ACBS", *b"HNAM", *b"LNAM", *b"ENAM", *b"HCLR", *b"NAM6", *b"NAM7", *b"RNAM", *b"PNAM", *b"KFFZ", *b"VTCK", *b"DATA", *b"MODL", *b"TNAM", *b"BNAM", *b"WNAM", *b"CSCR", *b"NIFZ", *b"NAM4"];
 
 /// A record's subrecords decoded by the schema, with each enum as its number (the
 /// decoder names them) so a script getter can return it.
@@ -1618,13 +1654,21 @@ impl GameData {
                 Some((g, d.plugin as usize, lo.records[d.plugin as usize][d.ordinal as usize]))
             })
             .collect();
-        let reads: Vec<(FormId, [u8; 4], Read)> = winners
+        // The records with script units are read first (their units are decoded before the
+        // rest is taken in); every other record is read a slice at a time as the loop below
+        // takes it in. A `Read` is about 3.8 KB and the base game with its add-ons has about
+        // 900 000 winning records: read all at once, they held some 3.3 GB until the build
+        // ended, at every start and in both runs of a load while playing (#1357).
+        let mut winners = winners;
+        winners.sort_by_key(|w| w.0);
+        let mut unit_reads: Vec<(u32, Read)> = winners
             .par_iter()
-            .map(|&(g, pi, r)| (FormId(g), r.header.sig, read_one(lo, schema, &param_types, g, pi, r)))
+            .filter(|w| carries_units(w.2))
+            .map(|&(g, pi, r)| (g, read_one(lo, schema, &param_types, g, pi, r)))
             .collect();
         let mut d = GameData {
             table,
-            param_types,
+            param_types: param_types.clone(),
             load_order: lo.plugins.iter().map(|p| p.name.clone()).collect(),
             plugin_versions: lo.plugins.iter().map(|p| p.header.version).collect(),
             units: Vec::new(),
@@ -1736,11 +1780,9 @@ impl GameData {
         };
         // Decode every unit once.
         let mut all_units: Vec<(FormId, ScriptUnit)> = Vec::new();
-        let mut reads = reads;
-        reads.sort_by_key(|r| r.0);
-        for (id, _, r) in &mut reads {
+        for (id, r) in &mut unit_reads {
             for u in r.units.drain(..) {
-                all_units.push((*id, u));
+                all_units.push((FormId(*id), u));
             }
         }
         let mut compiled: Vec<(FormId, Compiled)> = all_units
@@ -1759,6 +1801,14 @@ impl GameData {
             d.units.push(c);
         }
         let label = |o: UnitOwner| o.label();
+        // In form order, as one list read all at once was.
+        let mut unit_reads: HashMap<u32, Read> = unit_reads.into_iter().collect();
+        let reads = winners.chunks(READ_SLICE).flat_map(|slice| {
+            let read: Vec<Option<Read>> = slice.par_iter().map(|&(g, pi, r)| (!unit_reads.contains_key(&g)).then(|| read_one(lo, schema, &param_types, g, pi, r))).collect();
+            let taken: Vec<(FormId, [u8; 4], Read)> =
+                slice.iter().zip(read).map(|(&(g, _, r), read)| (FormId(g), r.header.sig, read.or_else(|| unit_reads.remove(&g)).unwrap_or_default())).collect();
+            taken
+        });
         for (id, sig, r) in reads {
             d.sigs.insert(id, sig);
             if let Some(e) = r.edid {
@@ -3090,8 +3140,27 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
         }
         b"REGN" => {
             let mut rg = RegionDef::default();
+            let num = |v: Option<&Json>| v.and_then(|x| x.as_f64().or_else(|| x.get("value")?.as_f64())).unwrap_or(0.0);
+            let mut header: Option<&Json> = None;
             for (s, v) in &decoded {
                 match *s {
+                    b"RDAT" => header = v.as_ref(),
+                    // A weather list follows a header of type 3 [documented: xEdit
+                    // wbRegionDataEntries].
+                    b"RDWT" if num(header.and_then(|h| h.get("type"))) == 3.0 => {
+                        let h = header;
+                        let list = v
+                            .as_ref()
+                            .and_then(Json::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|w| {
+                                let form = |k: &str| w.get(k).and_then(hexid).filter(|&x| x != 0).and_then(map).map(FormId);
+                                Some(RegionWeather { weather: form("weather")?, chance: num(w.get("chance")) as i32, global: form("global") })
+                            })
+                            .collect();
+                        rg.weathers = Some(RegionWeathers { flags: num(h.and_then(|h| h.get("flags"))) as u8, priority: num(h.and_then(|h| h.get("priority"))) as u8, list });
+                    }
                     b"WNAM" => rg.world = fid(v),
                     b"RPLI" => rg.areas.push(Vec::new()),
                     b"RPLD" => {
@@ -3378,3 +3447,4 @@ pub(crate) fn field_code(schema: &Schema, sig: &[u8; 4], sub: &[u8; 4], field: O
         _ => None,
     }
 }
+

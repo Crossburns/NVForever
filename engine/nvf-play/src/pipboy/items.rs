@@ -54,12 +54,13 @@ const WG: (f32, f32) = (215.0, 155.0);
 const HP: (f32, f32) = (380.0, 155.0);
 const DT: (f32, f32) = (545.0, 110.0);
 const CAPS: (f32, f32) = (665.0, 190.0);
-/// The list: 15 left of the menus' rectangle, 75 down, 400 × 468; a row 32 in and 393
-/// wide, its name 40 in and 20 down, broken at 300; the equipped square 25 across at
-/// 15, 18.
+/// The list: 15 left of the menus' rectangle, 75 down, 400 × 468; a row 32 in (past the
+/// scroll bar) to 5 short of the list's right edge, as the DATA lists' (the Repair and
+/// Mod pages' 393 is of their 430-wide lists; here it ran over the item's figures), its
+/// name 40 in and 20 down, broken at 300; the equipped square 25 across at 15, 18.
 const LIST: Rect = Rect { min: Vec2::new(-15.0, 75.0), max: Vec2::new(385.0, 543.0) };
 const ROW_X: f32 = 32.0;
-const ROW_W: f32 = 393.0;
+const ROW_W: f32 = 400.0 - ROW_X - 5.0;
 const NAME_X: f32 = 40.0;
 const NAME_Y: f32 = 20.0;
 const WRAP: f32 = 300.0;
@@ -591,6 +592,13 @@ pub fn scroll_part(first: usize, fit: usize, len: usize) -> Option<(f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_selected_row_stops_short_of_the_figures() {
+        // The box ends 5 short of the list's edge, left of the figures and the badge.
+        assert_eq!(LIST.min.x + ROW_X + ROW_W, LIST.max.x - 5.0);
+        assert!(LIST.min.x + ROW_X + ROW_W < INFO.min.x.min(BADGE.min.x));
+    }
 
     #[test]
     fn a_stack_shows_its_count() {

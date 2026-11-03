@@ -26,6 +26,7 @@ fnv-collide = { path = "../fnv-collide" }
 fnv-sim = { path = "../fnv-sim" }
 fnv-script = { path = "../fnv-script" }
 fnv-game = { path = "../fnv-game" }
+fnv-save = { path = "../fnv-save" }
 fnv-actor = { path = "../fnv-actor" }
 fnv-combat = { path = "../fnv-combat" }
 fnv-nav = { path = "../fnv-nav" }

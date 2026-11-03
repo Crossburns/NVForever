@@ -565,6 +565,12 @@ struct Resident {
     /// The heading it is drawn with while it fights, facing its target (`Core::aims`),
     /// until it is back on the walker's.
     aim_heading: Option<f32>,
+    /// The target it was held on last frame ([`LOCK_HOLD`]): it stays on that target
+    /// however far it moves in a frame.
+    lock_held: Option<u32>,
+    /// The heading it is drawn with while an idle holds it in place (`Core::posed`): the
+    /// one it had when the idle began.
+    posed_heading: Option<f32>,
     /// It has been drawn in the loaded area. Going from there through a door into an
     /// interior takes the interior into the cell buffer (`carries_cell`); an actor a
     /// script keeps in a holding cell (Malcolm Holmes in RandomEncounterNPCs) never was,
@@ -575,7 +581,10 @@ struct Resident {
 /// A fighter locked on its target (`npc_combat::Fighters::lock_on`) and turned within
 /// this of it (radians, 10°) follows it exactly: the original's gunmen stayed within about
 /// 1.5° of their target while they fought [observed 2026-10-25, observer campaign
-/// fiend_facing]; a bigger turn (a new target) goes at the turn rate [design].
+/// fiend_facing]; a bigger turn (a new target) goes at the turn rate [design]. Once held,
+/// it stays on that target even when the target sweeps past this in one frame (a melee
+/// Fiend circling a trooper 70 units away, a long frame): smoke battle-ncr-fiends saw up
+/// to 21 frames past 10° while such fighters turned back at the turn rate (#1162).
 const LOCK_HOLD: f32 = 10.0 * std::f32::consts::PI / 180.0;
 
 /// ACBS flag bits 5, "Flies", and 23, "Immobile" [documented: xEdit wbDefinitionsFNV.pas
@@ -699,6 +708,9 @@ struct Core {
     /// Actors an idle holds in place (`idles::IdleHolds`, docs/spec-notes/idles.md §15):
     /// they stand as a staggering actor does while it shows.
     posed: HashSet<u32>,
+    /// Of those, the ones whose idle carries the body away from the reference
+    /// (`idles::IdleHolds::carried_off`): they are drawn facing as they did when it began.
+    carried_off: HashSet<u32>,
     /// Of those, the ones whose AI has somewhere to go: they break out of the idle.
     breaking: HashSet<u32>,
     /// How far their attack clips carry actors this frame (`attack_anims::AttackTravel`,
@@ -813,6 +825,12 @@ pub struct Residents {
     startup: Vec<(bool, String)>,
 }
 
+/// Standalone packages own their simulation; in play mode `SimState` owns it
+/// [design: `drive`]. Shared by drawing and prefetch so neither selects a stale world.
+pub(crate) fn equipment_world<'a, 'w>(private: Option<&'a World<'w>>, shared: Option<&'a World<'w>>) -> Option<&'a World<'w>> {
+    private.or(shared)
+}
+
 fn set_global(g: &mut Game, edid: &str, v: f32) -> Result<(), String> {
     let (id, _) = g.world.forms.global_by_edid(edid).ok_or_else(|| format!("the load order has no {edid} global"))?;
     g.world.set_global(id, v).map_err(|e| e.to_string())
@@ -913,6 +931,7 @@ impl Residents {
             held_now: false,
             staggering: HashSet::new(),
             posed: HashSet::new(),
+            carried_off: HashSet::new(),
             breaking: HashSet::new(),
             travel: HashMap::new(),
             carried: HashMap::new(),
@@ -991,6 +1010,13 @@ impl Residents {
     /// This module's own game state (without `--play`).
     pub fn own_game(&mut self) -> Option<&mut Game<'static>> {
         self.own.as_deref_mut()
+    }
+
+    /// Use the same simulation as `drive` for resident prefetch, including a resident
+    /// also listed among its cell's placed references [design: `read_ahead`].
+    pub fn prefetch_world<'a>(&'a self, reference: u32, shared: Option<&'a World<'static>>) -> Option<&'a World<'static>> {
+        let private = self.core.known.contains(&reference).then(|| self.own.as_deref().map(|g| &g.world)).flatten();
+        equipment_world(private, shared)
     }
 
     pub fn references(&self) -> impl Iterator<Item = u32> + '_ {
@@ -1123,6 +1149,8 @@ impl Core {
             moved: false,
             last_space: None,
             aim_heading: None,
+            lock_held: None,
+            posed_heading: None,
             been_loaded: false,
         });
     }
@@ -2287,14 +2315,14 @@ pub fn drive(
     mut nav: ResMut<NavState>,
     world: Res<WorldData>,
     streamer: Res<Streamer>,
-    actor_world: Option<Res<ActorWorld>>,
+    (actor_world, mut ahead): (Option<Res<ActorWorld>>, ResMut<crate::readahead::ReadAhead>),
     mut parts: ResMut<ActorParts>,
     mut models: ModelCtx,
     root: Query<Entity, With<WorldRoot>>,
     roots: Query<(Entity, &RefVisual, &ChildOf)>,
     mut actors: Query<(&mut Transform, Option<&mut Locomotion>), Without<OnFurniture>>,
     mut doors: ResMut<nvf_play::doors::Doors>,
-    (script, sim, mut phys, mut blocks): PlayState,
+    (script, mut sim, mut phys, mut blocks): PlayState,
     (seated, hours, flinches, fighters, idle_holds): Held,
     (mut door_fades, mut door_sounds, mut travel, mut knocks, trips, screen): Moves,
 ) {
@@ -2344,11 +2372,15 @@ pub fn drive(
         Some(mut h) => {
             h.breaking = std::mem::take(&mut res.core.breaking);
             res.core.posed = h.held.clone();
+            res.core.carried_off = h.carried_off.clone();
         }
-        None => res.core.posed.clear(),
+        None => {
+            res.core.posed.clear();
+            res.core.carried_off.clear();
+        }
     }
     // The game state: this module's, or the game being played (once its data is in).
-    match (res.own.as_deref_mut(), script, sim) {
+    match (res.own.as_deref_mut(), script, sim.as_deref_mut()) {
         (Some(game), _, _) => {
             if all {
                 res.core.take_cells(&world, &streamer, game.world.placed);
@@ -2365,7 +2397,7 @@ pub fn drive(
             let _span = info_span!("ai::think").entered();
             res.core.think(game, true, &nav, &world, &mut doors, None, None, dt, now, 0);
         }
-        (None, Some(mut script), Some(mut sim)) => {
+        (None, Some(mut script), Some(sim)) => {
             let script = &mut *script;
             let Some(rt) = script.rt.as_mut() else {
                 if let (Some(why), false) = (&script.off, res.warned) {
@@ -2381,7 +2413,7 @@ pub fn drive(
             let core = &mut res.core;
             let (phys, blocks) = (phys.as_deref_mut(), blocks.as_deref_mut());
             let (world_ref, streamer_ref) = (&*world, &*streamer);
-            nvf_play::script::with_world(rt, &mut sim, |rt| {
+            nvf_play::script::with_world(rt, sim, |rt| {
                 let mut phys = phys;
                 let span = info_span!("ai::take_moved").entered();
                 core.take_moved(&mut rt.game, all, phys.as_deref_mut());
@@ -2408,6 +2440,8 @@ pub fn drive(
         }
         _ => return,
     }
+    let equipment_world = equipment_world(res.own.as_deref().map(|g| &g.world), sim.as_deref().map(|s| &s.world));
+    let mut spawn_stats = crate::actors::ActorStats::default();
     let core = &mut res.core;
     // Load doors used: the doors' sounds where the listener is, the body left at the door
     // fades out, the one drawn at the other side fades in (`door_fade.rs`).
@@ -2567,6 +2601,10 @@ pub fn drive(
         // from its AI place, and the trooper shooting at it faced 16° off), and once
         // turned to it, it stays on it.
         let lock = fighters.as_deref().and_then(|f| f.lock_on(r.actor.0));
+        let lock_target = lock.map(|(t, _)| t);
+        let held = lock_target.is_some() && r.lock_held == lock_target;
+        let lock = lock.map(|(_, at)| at);
+        r.lock_held = None;
         let heading = match (lock.or_else(|| core.aims.get(&r.actor).copied()), r.aim_heading) {
             (Some(t), from) => {
                 let want = heading_of([t[0] - feet[0], t[1] - feet[1]]);
@@ -2574,7 +2612,11 @@ pub fn drive(
                 // Standing, at the rate the AI turns a fighter (`fnv_ai::alert`), so one
                 // that never moves is drawn as its walker turns.
                 let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE * 2.0 } else { fnv_nav::follow::SPOT_TURN_RATE * fnv_ai::alert::COMBAT_TURN };
-                let h = if lock.is_some() && heading_delta(from, want).abs() <= LOCK_HOLD { want } else { turn_towards(from, want, rate * dt) };
+                let hold = lock.is_some() && (held || heading_delta(from, want).abs() <= LOCK_HOLD);
+                let h = if hold { want } else { turn_towards(from, want, rate * dt) };
+                if hold {
+                    r.lock_held = lock_target;
+                }
                 r.aim_heading = Some(h);
                 h
             }
@@ -2587,6 +2629,24 @@ pub fn drive(
                 r.aim_heading = None;
                 w.heading
             }
+        };
+        // An idle that holds its actor in place and carries the body away from the
+        // reference keeps the body facing as it did when the idle began: the AI turning
+        // the reference to whom it speaks swung the body sideways about it (Dad in Fallout
+        // 3's birth scene, `Bip01 NonAccum` about 144 units forward of his marker)
+        // [observed: owner's TTW run 2026-11-02, Dad turned 27° at his first line;
+        // hypothesis: the original does not turn such an actor]. An idle that leaves the
+        // body over its reference (a dialogue response's) still lets it turn. Let go, it
+        // turns back to the walker's heading as a fighter does.
+        let heading = match (core.carried_off.contains(&r.actor.0), r.posed_heading) {
+            (true, Some(h)) => h,
+            (true, None) => *r.posed_heading.insert(heading),
+            (false, Some(h)) => {
+                r.posed_heading = None;
+                r.aim_heading = Some(h);
+                h
+            }
+            (false, None) => heading,
         };
         let strafe = r.aim_heading.is_some();
         // How a fighter facing its target moves (the fight summary): forward, sideways or
@@ -2602,13 +2662,14 @@ pub fn drive(
             }
         }
         let stage = (&mut r.spawned, &mut r.root);
-        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some() }, stage, (feet, heading), moving, dt) {
+        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), equipment_world, &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some() }, stage, (feet, heading), moving, dt) {
             if r.named {
                 warn!("ai: {} could not be drawn ({e})", r.label);
             }
             r.failed = true;
         }
     }
+    crate::profile::actor_spawns(spawn_stats.equipment_spawns, spawn_stats.record_spawns);
 }
 
 /// The residents' state when the app exits (smoke tests read it).
@@ -2769,6 +2830,39 @@ mod tests {
     use fnv_ai::ProcessLevel;
     use fnv_sim::FormId;
     use std::collections::HashMap;
+
+    #[test]
+    fn private_world_prefetch_matches_resident_spawn_even_with_a_shared_world() {
+        use super::{Clock, Residents};
+        use crate::outfits::tests::{actor_forms, appearance_world, empty_world_data, equipped, game, OTHER};
+        let world = appearance_world();
+        let forms = Box::leak(Box::new(actor_forms(vec![])));
+        let refs = Box::leak(Box::new(fnv_sim::RefTable::default()));
+        let mut private = fnv_sim::World::new(forms, refs, Default::default());
+        let mut shared = fnv_sim::World::new(forms, refs, Default::default());
+        let id = private.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap();
+        assert_eq!(shared.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap(), id);
+        private.get(id).unwrap().inventory = Some(equipped());
+        let outsider = private.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap();
+        assert_eq!(shared.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap(), outsider);
+        private.get(outsider).unwrap().inventory = Some(equipped());
+        let mut residents = Residents::build(&empty_world_data(), &[], Clock { hour: 12.0, days_passed: 1.0, rate: 0.0 }, 100.0, true).unwrap();
+        residents.own = Some(Box::new(game(private)));
+        residents.core.known.insert(id.0);
+        let private = &residents.own.as_ref().unwrap().world;
+        let plan = crate::readahead::actor_plan(&world, residents.prefetch_world(id.0, Some(&shared)), id.0, OTHER.0, false).unwrap();
+        assert_eq!(plan, crate::readahead::actor_plan(&world, Some(private), id.0, OTHER.0, false).unwrap());
+        assert_ne!(plan, crate::readahead::actor_plan(&world, Some(&shared), id.0, OTHER.0, false).unwrap());
+        assert!(plan.parts.iter().any(|p| p.ends_with("modded.nif")));
+        assert!(std::ptr::eq(residents.prefetch_world(id.0, None).unwrap(), private));
+        // Even a reference present in the private simulation is not a resident until
+        // it is in known. The placed-reference prefetch must use the shared world.
+        assert!(std::ptr::eq(residents.prefetch_world(outsider.0, Some(&shared)).unwrap(), &shared));
+        assert!(residents.prefetch_world(outsider.0, None).is_none());
+        residents.own = None;
+        assert!(std::ptr::eq(residents.prefetch_world(id.0, Some(&shared)).unwrap(), &shared));
+        assert!(residents.prefetch_world(id.0, None).is_none());
+    }
 
     /// Out of a house and straight back: the residents seen in the street before are not
     /// moved by the trip back; those not seen for longer than the memory are (coordinator

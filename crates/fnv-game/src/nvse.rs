@@ -40,6 +40,21 @@ pub(crate) fn record_float(x: f64) -> f64 {
     }
 }
 
+/// A number a script hands a record setter, made fit for the field it goes to: `None`
+/// for NaN or infinity (nothing is set), else clamped to `lo..=hi`, the field's range
+/// [hypothesis: the game keeps its record fields in range; NVForever never stores a value
+/// a field cannot hold]. Every record setter of the extender batches uses it.
+pub(crate) fn field_number(v: f64, lo: f64, hi: f64) -> Option<f64> {
+    v.is_finite().then(|| v.clamp(lo, hi))
+}
+
+/// The range of an f32 field.
+pub(crate) const F32: (f64, f64) = (-(f32::MAX as f64), f32::MAX as f64);
+/// The range of a u8 field.
+pub(crate) const U8: (f64, f64) = (0.0, 255.0);
+/// The range of a u32 field.
+pub(crate) const U32: (f64, f64) = (0.0, u32::MAX as f64);
+
 /// [`field`] for the sibling files.
 pub(crate) fn record_value(g: &Game, form: FormId, sub: &str, path: &str) -> Option<XVal> {
     field(g, form, sub, path)
@@ -144,6 +159,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
         return Some(r);
     }
     if let Some(v) = crate::script_input::call(&mut g.input, name, args) {
+        // EnableKey frees the key whatever holds it, so DisableKeyEx's mask groups on it
+        // go too; else a later EnableKeyEx would find a stale group and keep the key
+        // disabled [hypothesis: ITR's groups sit on top of DisableKey's one switch].
+        if name == "enablekey" {
+            if let Some(k) = args.first().and_then(|a| a.num().ok()).and_then(|c| u16::try_from(c as i64).ok()) {
+                g.other.itr.key_masks.remove(&k);
+            }
+        }
         return Some(Ok(v));
     }
     let subject = on.or(ctx.self_ref);
@@ -183,13 +206,37 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
     if let Some(r) = crate::nvse_jg2::call(g, ctx, name, subject, args) {
         return Some(r);
     }
+    if let Some(r) = crate::nvse_jg3::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_jg4::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_sup1::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
     if let Some(r) = crate::nvse_jip5::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_jip6::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_jip7::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_pp::call(g, name, subject, args) {
         return Some(r);
     }
     if let Some(r) = crate::nvse_showoff2::call(g, ctx, name, subject, args) {
         return Some(r);
     }
     if let Some(r) = crate::nvse_anh::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_itr1::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_itr2::call(g, ctx, name, subject, args) {
         return Some(r);
     }
     if let Some(r) = crate::nvse_knvse::call(g, ctx, name, subject, args) {
@@ -202,6 +249,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
         return Some(r);
     }
     if let Some(r) = crate::nvse_small::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_one111::call(g, name, subject, args) {
         return Some(r);
     }
     if let Some(r) = crate::nvse_rest::call(g, ctx, name, subject, args) {

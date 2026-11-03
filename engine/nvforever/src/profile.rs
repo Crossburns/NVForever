@@ -26,6 +26,11 @@
 //! <m> multi-drawn sets, <b> batched bins, <u> unbatched bins; …` per binned phase,
 //! summed over its views: each multi-drawn set is one indirect draw, each other bin one
 //! draw, and the per-view preparing scales with them (graphics-enhanced.md §5.5).
+//!
+//! `profile outfits:` counts successful NPC spawns by appearance source and committed
+//! `follow_inventory` replacements per window, with their total synchronous time in ms.
+//! A replacement counts one actor, even if both its armour and weapon change. Failed
+//! appearance resolutions and unchanged outfits do not count [design].
 
 use bevy::log::tracing::field::{Field, Visit};
 use bevy::log::tracing::span::{Attributes, Id};
@@ -60,6 +65,36 @@ pub fn interval() -> Option<f32> {
 
 /// Time per span key in the current window: (seconds, entries).
 static TOTALS: Mutex<Option<HashMap<String, (f64, u64)>>> = Mutex::new(None);
+
+/// NPC outfit work in this report window. Callers accumulate locally, then add once
+/// per system call; no per-actor locks and no timings when profiling is disabled.
+#[derive(Default)]
+struct Outfits {
+    equipment: usize,
+    record: usize,
+    replacements: usize,
+    replacement_ms: f64,
+}
+
+static OUTFITS: Mutex<Outfits> = Mutex::new(Outfits { equipment: 0, record: 0, replacements: 0, replacement_ms: 0.0 });
+
+pub fn actor_spawns(equipment: usize, record: usize) {
+    if interval().is_none() || equipment + record == 0 {
+        return;
+    }
+    let mut o = OUTFITS.lock().unwrap_or_else(|e| e.into_inner());
+    o.equipment += equipment;
+    o.record += record;
+}
+
+pub fn outfit_replacements(count: usize, ms: f64) {
+    if interval().is_none() || count == 0 {
+        return;
+    }
+    let mut o = OUTFITS.lock().unwrap_or_else(|e| e.into_inner());
+    o.replacements += count;
+    o.replacement_ms += ms;
+}
 
 /// The render world's pipeline cache, as of its last frame: pipelines made, and those
 /// still waiting to compile ([`pipeline_counts`]); a hitch line gives both, so a stall can
@@ -342,6 +377,11 @@ fn report(
         materials.len()
     );
     let per = |n: u64| n as f64 / frames;
+    let o = std::mem::take(&mut *OUTFITS.lock().unwrap_or_else(|e| e.into_inner()));
+    info!(
+        "profile outfits: {} NPCs spawned ({} simulation equipment, {} record fallback); {} follow_inventory replacements ({:.2} ms)",
+        o.equipment + o.record, o.equipment, o.record, o.replacements, o.replacement_ms
+    );
     let c = std::mem::take(&mut *changes);
     info!(
         "profile changes: per frame: meshes {:.1} made {:.1} changed {:.1} dropped ({:.2} MB of vertices), images {:.1} made {:.1} changed {:.1} dropped ({:.2} MB of pixels), materials {:.1} made {:.1} changed {:.1} dropped",

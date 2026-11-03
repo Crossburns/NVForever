@@ -88,9 +88,16 @@ from the reverse-infinite depth (distance = near / depth), the normal from the n
 depths on the side with the smaller step, 12 samples on a 3-turn spiral within 64 game units
 (about 0.9 m; at most 80 pixels on the screen), turned per pixel by a 4 × 4 ordered pattern;
 each sample occludes by its cosine to the normal above 0.12, fading out between half and the
-whole radius. Strength 0.55. The result is blurred over the 4 × 4 pixels of the pattern,
-keeping to pixels within about 5 % of the same distance, and multiplied into the tonemapped
-picture. It fades out between 4,000 and 7,000 units (where the radius is a pixel or two and the
+whole radius. Strength 0.55. Since 2026-11-02 (#1370) this is worked out at half resolution,
+for the top-left pixel of each 2 × 2 block, into a two-channel texture that keeps the pixel's
+distance beside its openness (a quarter of the work; the pattern turns per half-resolution
+texel). The result is blurred over the 4 × 4 texels of the pattern around each pixel, keeping
+to texels within about 5 % of the pixel's own distance (so nothing bleeds across a depth edge),
+and multiplied into the tonemapped picture. Those 4 × 4 texels span about 8 × 8 pixels of the
+picture against 4 × 4 before, so contact shadows are a little softer. A pixel no nearby texel
+shares a distance with (a pole or a grass blade a pixel wide) takes the texel nearest its
+distance. Distances are held to 60,000 units (half floats end at 65,504; the sky dome is at
+175,000 or more, far past the fade). It fades out between 4,000 and 7,000 units (where the radius is a pixel or two and the
 fog takes over). The sky is left alone: the dome is opaque and in the depth prepass, but at
 175,000 units or more, far beyond the fade (corrected 2026-10-12: not depth 0 as first written).
 
@@ -106,6 +113,22 @@ the water surface; the first-person arms take a little occlusion from their own 
 1.3 times, and shadows reach half as far again. Before #254 the arms' shade light copied the
 cascades, so it also got 4096² maps: about 512 MB of shadow maps in all (vanilla: 128 MB).
 Since #254 it has one cascade of its own (256 units); the total has not been measured again.
+
+**By night and at the horizon** (#1369, owner 2026-11-02: cheaper moon shadows;
+`graphics::sun_shadow_quality`): below the horizon the sun's light is the moon's (`sky.rs`),
+and it casts one cascade out to 3,000 units (`MOON_SHADOW_DISTANCE`) in 2048² maps whatever
+this switch says; while the light is under a tenth of its strength in its fade at the
+horizon (`SHADOW_FADED`), no shadow maps are drawn. [observed 2026-11-02, i9-14900K, RTX 4070,
+1920 × 1080, 8x MSAA, enhanced] With the day's 3 cascades at 4096² the moon's shadows cost
+about 2.5 ms on the Strip at 22:00 (9.2 ms against 6.7 ms without sun shadows).
+In interiors the sun is the cell's directional light (XCLL) and the clock stands still, so
+it always casts the day's shadows there. The map size (`DirectionalLightShadowMap`) is one
+setting for every directional light, so the first-person arms' shade light (`player_body.rs`
+`shade_light`, its own 256-unit cascade) also drops to 2048² by night and at the horizon
+[hypothesis, not checked by eye: the arms' cascade is small, so 2048² still gives it
+fine texels].
+The phase is applied again when a new sun is spawned (a worldspace switch) and when
+something else puts cascades on the sun (`sky::set_shadows`, the settings page).
 
 ### 3.3 Bloom (`bloom`)
 
@@ -229,6 +252,18 @@ Las Vegas (`--pos=28500,59000,3500 --heading 200 --pitch -12`, a temporary shade
 far shore's cliffs show in the water as with the planar reflection, without artefacts; that water
 reflects weakly, so the difference is small. It runs only on the water pixels it applies to, so
 its cost was not measured.
+
+### 3.8.1 Mirrored water (`water-mirror`; on in both presets)
+
+The planar reflection itself (reflection.rs): a second camera draws the world mirrored in the
+nearest water plane while that water is on screen. It is on in vanilla too, since the original's
+water reflects the world; `--graphics-only no-water-mirror` or the settings switch turns it off
+(#1380), and water then reflects the sky gradient, and the picture where `water-reflections` is
+on. Cost at Hoover Dam by day, Lake Mead in view, where the CPU sets the frame: 7.6 ms a frame
+with it, 7.1 without [observed 2026-11-02, RTX 4070, 1920x1080, `enhanced`]. The camera keeps
+its own set of the sun's cascades (Bevy's renderer needs them for every view the sun lights);
+emptying their caster lists was tried and saved 0.12 ms of shadow-pass GPU time and nothing of
+the frame, so the reflected world keeps its shadows.
 
 ### 3.9 Shadow filtering (`shadow-filter`; not part of `enhanced`)
 

@@ -65,6 +65,7 @@ pub mod aim_assist;
 pub mod knockouts;
 pub mod loading;
 pub mod main_menu;
+pub mod location_markers;
 pub mod lockpick;
 pub mod roulette;
 pub mod slots;
@@ -83,6 +84,7 @@ pub mod music;
 pub mod pad;
 pub mod pause;
 pub mod phys;
+pub mod phys_load;
 pub mod pickpocket;
 pub mod pipboy;
 pub mod player;
@@ -279,6 +281,14 @@ pub struct RefChanged {
     pub form_id: u32,
 }
 
+/// A script moved or turned a placed or created reference (SetPos, SetAngle, Rotate,
+/// SetScale: `fnv_game::Game::turned`): its collision follows when the settle write-back
+/// would otherwise undo the move (`crate::phys::PhysState::repose_ref`).
+#[derive(Message, Clone, Copy, Debug)]
+pub struct RefRepose {
+    pub form_id: u32,
+}
+
 /// The player used up an item from the inventory (an aid item): the script runtime
 /// uses it (`crate::aid`, `fnv_game::Game::ingest`: its effects, effect scripts
 /// included, with potency, the usage monitor and the addiction roll).
@@ -332,6 +342,7 @@ impl Plugin for PlayPlugin {
             .add_plugins(poker::PokerPlugin)
             .add_plugins((crime::CrimePlugin, reputation::ReputationPlugin, knockouts::KnockoutsPlugin, after_combat::AfterCombatPlugin))
             .add_plugins(console::ConsolePlugin)
+            .add_plugins(location_markers::LocationMarkersPlugin)
             .add_plugins(free_cam::FreeCamPlugin)
             .add_plugins(aim_zoom::AimZoomPlugin)
             .add_plugins(save::SavePlugin)

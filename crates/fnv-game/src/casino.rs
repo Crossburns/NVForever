@@ -112,6 +112,12 @@ pub fn add_earnings(g: &mut Game, casino: FormId, net: i64, max: u32) -> i64 {
     earnings
 }
 
+/// The casino's chip: SetCasinoChip's for the session (`crate::nvse_jg3`), else the
+/// record's (DATA currency).
+pub fn chip(g: &Game, casino: FormId) -> Option<FormId> {
+    g.other.casino_chips.get(&casino).copied().or_else(|| g.data.casinos.get(&casino)?.chip)
+}
+
 /// The max winnings a table plays to: the menu call's, else (0) the casino's own
 /// [hypothesis: every table's script passes 0].
 pub fn max_winnings(g: &Game, casino: FormId, asked: u32) -> u32 {

@@ -8,6 +8,11 @@
 //! - the pointer coming onto a tab of the tab line: `UIMenuFocus`
 //!   (`fx\ui\menu\ui_menu_focus.wav`); the ITEMS list's rows already sound as the inventory
 //!   menu's (`crate::ui_sounds`, `UIPipBoyScroll`, the same file);
+//! - another row selected in a list of STATS (CND/RAD/EFF, S.P.E.C.I.A.L., Skills, Perks,
+//!   General's reputations and statistics) or DATA (Quests, Misc notes and challenges,
+//!   Radio), by key or pointer: `UIPipBoyScroll`, as the ITEMS rows [design: the owner
+//!   asked for the inventory's click on every Pip-Boy list; what the original plays on
+//!   these lists is not captured];
 //! - while the Pip-Boy is up, now and then one of the static crackles: `UIPipBoyStatic`
 //!   (the folder `fx\ui\pipboy\static\`, a file picked at random each time by
 //!   `crate::sfx`), first [`STATIC_FIRST`] after it is up and then every
@@ -17,6 +22,8 @@
 //!
 //! Each is logged ("pipboy sound: …").
 
+use super::data::DataState;
+use super::stats::StatsView;
 use super::{Page, Phase, PipBoy};
 use crate::flashlight::Flashlight;
 use crate::sfx::{PlaySound, Sfx};
@@ -37,6 +44,7 @@ pub struct TabHovered(pub usize);
 #[derive(Default)]
 pub struct Watch {
     shown: Option<(Page, usize)>,
+    picked: Option<Picked>,
     up: bool,
     next_static: Option<f32>,
     light: Option<u32>,
@@ -61,9 +69,42 @@ pub fn changes(before: Option<(Page, usize)>, now: Option<(Page, usize)>) -> Opt
     }
 }
 
+/// What a STATS or DATA list has selected: the page, the tab, and the row with what
+/// else picks a list (STATS: the CND/RAD/EFF button and General's list; DATA: Misc's
+/// challenges).
+pub type Picked = (Page, usize, [usize; 3]);
+
+/// The selection the shown tab's list has now (ITEMS sounds through `crate::ui_sounds`).
+pub fn picked(pip: &PipBoy, stats: Option<&StatsView>, data: Option<&DataState>) -> Option<Picked> {
+    if !pip.open() {
+        return None;
+    }
+    let tab = pip.tab();
+    let rows = match pip.page {
+        Page::Stats => {
+            let v = stats?;
+            [v.status, v.selected.get(tab).copied().unwrap_or(0), v.reputation as usize]
+        }
+        // The maps have no rows.
+        Page::Data if tab >= 2 => {
+            let (row, challenges) = data?.selection(tab);
+            [row, challenges as usize, 0]
+        }
+        _ => return None,
+    };
+    Some((pip.page, tab, rows))
+}
+
+/// The list's selection moved within the same tab.
+pub fn scrolled(before: Option<Picked>, now: Option<Picked>) -> bool {
+    matches!((before, now), (Some((pa, ta, ra)), Some((pb, tb, rb))) if pa == pb && ta == tb && ra != rb)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn play(
     pip: Res<PipBoy>,
+    stats: Option<Res<StatsView>>,
+    data: Option<Res<DataState>>,
     light: Option<Res<Flashlight>>,
     time: Res<Time<Real>>,
     sfx: Option<Res<Sfx>>,
@@ -75,6 +116,11 @@ pub fn play(
     let now = pip.open().then(|| (pip.page, pip.tab()));
     want.extend(changes(w.shown, now));
     w.shown = now;
+    let picked = picked(&pip, stats.as_deref(), data.as_deref());
+    if scrolled(w.picked, picked) {
+        want.push("UIPipBoyScroll");
+    }
+    w.picked = picked;
     for h in hovered.read() {
         if pip.open() && h.0 != pip.tab() {
             want.push("UIMenuFocus");
@@ -139,6 +185,22 @@ mod tests {
         // Coming up and going down are the access sounds' (crate::ui_sounds).
         assert_eq!(changes(None, s(Page::Items, 1)), None);
         assert_eq!(changes(s(Page::Items, 1), None), None);
+    }
+
+    #[test]
+    fn another_row_in_the_same_list_scrolls() {
+        let s = |p, t, r| Some((p, t, [r, 0, 0]));
+        assert!(scrolled(s(Page::Stats, 2, 0), s(Page::Stats, 2, 1)));
+        assert!(scrolled(s(Page::Data, 2, 3), s(Page::Data, 2, 2)));
+        // CND to RAD, General's other list.
+        assert!(scrolled(Some((Page::Stats, 0, [0, 0, 1])), Some((Page::Stats, 0, [1, 0, 1]))));
+        assert!(scrolled(Some((Page::Stats, 4, [0, 3, 1])), Some((Page::Stats, 4, [0, 0, 0]))));
+        assert!(!scrolled(s(Page::Stats, 2, 1), s(Page::Stats, 2, 1)));
+        // Another tab or page sounds the tab or the mode instead; coming up, nothing.
+        assert!(!scrolled(s(Page::Stats, 2, 0), s(Page::Stats, 3, 4)));
+        assert!(!scrolled(s(Page::Stats, 2, 0), s(Page::Data, 2, 4)));
+        assert!(!scrolled(None, s(Page::Stats, 2, 4)));
+        assert!(!scrolled(s(Page::Stats, 2, 4), None));
     }
 
     #[test]

@@ -93,9 +93,14 @@ pub enum Given {
         objectives: Vec<GivenObjective>,
         #[serde(default)]
         vars: BTreeMap<String, f64>,
+        /// Reference variables: name → form.
+        #[serde(default)]
+        refs: BTreeMap<String, String>,
     },
     Global { name: String, value: f32 },
     ItemCount { of: String, item: String, count: i32 },
+    /// Items added (or, negative, removed) on top of what the start gives.
+    ItemChange { of: String, item: String, change: i32 },
     Disabled { of: String, disabled: bool },
     /// A reference's object-script variables, dead and disabled state (round 2,
     /// layer5-captures.md §8.2).
@@ -122,6 +127,20 @@ pub enum Given {
     /// A menu open (or not) before action 0 (round 4, layer5-captures.md §10.4): a
     /// message box (1001) of a message the input does not name, or another menu code.
     Menu { menu: u16, open: bool },
+    /// Where a reference stands: an interior cell, or a worldspace (the exterior cell at
+    /// `pos`); rotation in radians (a save's place, `ext queries --save`).
+    Place {
+        #[serde(rename = "ref")]
+        reference: String,
+        cell: String,
+        pos: [f32; 3],
+        #[serde(default)]
+        rot: [f32; 3],
+    },
+    /// The player's tag skills (actor value names or codes), replacing the class's.
+    TagSkills { skills: Vec<String> },
+    /// Skill points the player has spent on a skill.
+    SkillPoints { skill: String, value: f64 },
 }
 
 /// One read of `use_item` (round 3): an actor value of the user (`av.<name>`) or the
@@ -813,10 +832,15 @@ fn num_arg(x: f64) -> ArgValue {
 
 fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
     match gv {
-        Given::Quest { quest: name, running, completed, stage, done, not_done, objectives, vars } => {
+        Given::Quest { quest: name, running, completed, stage, done, not_done, objectives, vars, refs } => {
             let q = quest(g, name)?;
             for (k, v) in vars {
                 set_quest_var(g, q, k, *v)?;
+            }
+            for (k, v) in refs {
+                let (key, i) = quest_var(g, q, k)?;
+                let r = resolve(g, v)?;
+                g.store(key, g.data.quests[&q].script, i, Value::Ref(r.0), "runner", false);
             }
             let s = g.quest(q);
             if let Some(r) = running {
@@ -862,6 +886,14 @@ fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
                 g.world.remove_item(of, item, have - count).map_err(|e| e.to_string())?;
             }
         }
+        Given::ItemChange { of, item, change } => {
+            let (of, item) = (resolve(g, of)?, resolve(g, item)?);
+            if *change > 0 {
+                g.world.add_item(of, item, *change).map_err(|e| e.to_string())?;
+            } else if *change < 0 {
+                g.world.remove_item(of, item, -change).map_err(|e| e.to_string())?;
+            }
+        }
         Given::Disabled { of, disabled } => {
             let r = resolve(g, of)?;
             g.world.set_enabled(r, !disabled).map_err(|e| e.to_string())?;
@@ -892,6 +924,36 @@ fn apply_given(g: &mut Game, gv: &Given) -> Result<(), String> {
             let who = resolve(g, of)?;
             let code = av_code(g, av)?;
             set_actor_value_current(g, who, code, *value)?;
+        }
+        Given::Place { reference, cell, pos, rot } => {
+            let r = resolve(g, reference)?;
+            let at = resolve(g, cell)?;
+            // A worldspace stands for its exterior cell at the position; anything else must
+            // be a cell (as `go_to_cell`).
+            let c = match g.world.placed.world_cell_at(at, *pos) {
+                Some(c) => c,
+                None if g.world.placed.by_cell.contains_key(&at) || g.world.placed.world_of(at).is_some() => at,
+                None => return Err(format!("{cell:?} is neither a cell nor a worldspace with a cell at {pos:?}")),
+            };
+            {
+                let p = g.world.get(r).map_err(|e| e.to_string())?;
+                p.cell = Some(c);
+                p.pos = *pos;
+                p.rot = *rot;
+            }
+            g.emit(EventKind::Moved { reference: r, cell: Some(c), pos: *pos });
+            if r == FormId::PLAYER_REF {
+                g.player_entered(Some(c));
+                g.settle_start_weather();
+            }
+        }
+        Given::TagSkills { skills } => {
+            let codes = skills.iter().map(|s| av_code(g, s)).collect::<Result<Vec<_>, _>>()?;
+            g.player.tag_skills = codes.into_iter().collect();
+        }
+        Given::SkillPoints { skill, value } => {
+            let code = av_code(g, skill)?;
+            g.player.skill_points.insert(code, *value);
         }
         Given::Menu { menu, open } => {
             if *open {

@@ -248,8 +248,9 @@ fn plugin_bytes() -> Vec<u8> {
                 (1, Some([le16(1), n(1007)].concat()), set(var(b's', 5), ex(&[var(b's', 5), a("1"), a("+")]))),
                 (1, Some([le16(1), n(1056)].concat()), set(var(b's', 6), ex(&[var(b's', 6), a("1"), a("+")]))),
                 (0x15, None, set(var(b's', 7), ex(&[var(b's', 7), a("1"), a("+")]))),
+                (1, Some([le16(1), n(1013)].concat()), set(var(b's', 8), ex(&[var(b's', 8), a("1"), a("+")]))),
             ]),
-            &[(1, "nUsed", 1), (2, "nHit", 1), (3, "nFrames", 1), (4, "nPip", 1), (5, "nLoad", 1), (6, "nVats", 1), (7, "nOnLoad", 1)],
+            &[(1, "nUsed", 1), (2, "nHit", 1), (3, "nFrames", 1), (4, "nPip", 1), (5, "nLoad", 1), (6, "nVats", 1), (7, "nOnLoad", 1), (8, "nStart", 1)],
             &[0x14, QUEST, MESSAGE],
         ),
     ]
@@ -1293,6 +1294,59 @@ fn the_runner_reads_and_writes_reference_variables_and_activates_with_the_flag()
 }
 
 #[test]
+fn the_runner_starts_from_a_saves_place_skills_and_items() {
+    // What `fnvtool ext queries --save` gives (issue #1023). The fixture's player has no
+    // base record, so its skills read 0: the tags are read instead.
+    let f = fixture();
+    let input: fnv_game::runner::Input = serde_json::from_value(json!({
+        "format": "fnv.script.actions/1",
+        "given": [
+            {"kind": "tag_skills", "skills": ["32", "Speech"]},
+            {"kind": "skill_points", "skill": "Barter", "value": 2.0},
+            {"kind": "item_change", "of": "TestNpcREF", "item": "TestWeapon", "change": 3},
+            {"kind": "item_change", "of": "TestNpcREF", "item": "TestWeapon", "change": -1},
+            {"kind": "place", "ref": "player", "cell": "TestCell", "pos": [100.0, 200.0, 300.0], "rot": [0.0, 0.0, 1.309]}
+        ],
+        "actions": [
+            {"op": "get_tag_skills", "skills": ["Barter", "Speech", "Guns"], "label": "tags"},
+            {"op": "get_item_count", "of": "TestNpcREF", "item": "TestWeapon", "label": "items"},
+            {"op": "query", "script": "Begin Function { }
+SetFunctionValue (player.GetPos X)
+End", "label": "x"},
+            {"op": "query", "script": "Begin Function { }
+SetFunctionValue (player.GetAngle Z)
+End", "label": "z"}
+        ]
+    }))
+    .unwrap();
+    let out = fnv_game::runner::run(&f.data, &f.forms, &f.refs, &input).unwrap();
+    assert_eq!(out["given_errors"], json!([]));
+    let obs = out["observations"].as_array().unwrap();
+    let by = |l: &str| obs.iter().find(|o| o["label"] == l).unwrap().clone();
+    assert_eq!((by("tags")["tag.Barter"].clone(), by("tags")["tag.Speech"].clone(), by("tags")["tag.Guns"].clone()), (json!(true), json!(true), json!(false)));
+    assert_eq!(by("items")["count"], 2);
+    assert_eq!(by("x")["value"], 100.0, "{}", by("x"));
+    assert!((by("z")["value"].as_f64().unwrap() - 75.0).abs() < 0.01, "{}", by("z"));
+}
+
+/// A save's place must be a cell, or a worldspace with a cell at the position: the player
+/// is never put in another form (#1325 review).
+#[test]
+fn a_place_that_is_no_cell_is_refused() {
+    let f = fixture();
+    let input: fnv_game::runner::Input = serde_json::from_value(json!({
+        "format": "fnv.script.actions/1",
+        "given": [{"kind": "place", "ref": "player", "cell": "TestWeapon", "pos": [1.0, 2.0, 3.0]}],
+        "actions": []
+    }))
+    .unwrap();
+    let out = fnv_game::runner::run(&f.data, &f.forms, &f.refs, &input).unwrap();
+    let errors = out["given_errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0]["error"].as_str().unwrap().contains("neither a cell nor a worldspace"), "{errors:?}");
+}
+
+#[test]
 fn say_to_says_the_next_unsaid_line_and_runs_its_end_script_when_it_ends() {
     let f = fixture();
     assert_eq!(f.data.topics[&FormId(TOPIC)], vec![FormId(INFO_A), FormId(INFO_B)]);
@@ -1789,6 +1843,30 @@ fn limb_hits_lower_conditions_and_cripple() {
     assert_eq!(r.health, 40.0);
 }
 
+/// An explosion damages every limb it is given at once, crippling those whose pool it
+/// empties; the player's limbs take half; nothing on a dead actor
+/// (docs/spec-notes/crippled-limbs.md §5).
+#[test]
+fn blasts_damage_every_limb() {
+    use fnv_game::combat::{LimbHit, LEFT_MOBILITY, RIGHT_MOBILITY};
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    let npc = FormId(NPC_REF);
+    // Maximum health 55: a head at 10 % has a pool of 5.5, a leg at 25 % one of 13.75.
+    let limb = |condition: u16, health_percent: f64| LimbHit { condition, health_percent, damage: 11.0, points: false };
+    let limbs = [limb(25, 10.0), limb(LEFT_MOBILITY, 25.0), limb(RIGHT_MOBILITY, 25.0)];
+    let hurt = g.blast_limbs(npc, None, &limbs);
+    assert_eq!(hurt, vec![(25, 0.0, true), (LEFT_MOBILITY, 20.0, false), (RIGHT_MOBILITY, 20.0, false)]);
+    assert!(g.is_crippled(npc, 25) && !g.is_crippled(npc, LEFT_MOBILITY));
+    // The player's limbs take fCombatPlayerLimbDamageMult (0.5) of it.
+    let hurt = g.blast_limbs(FormId::PLAYER_REF, None, &limbs[1..2]);
+    assert_eq!(hurt.len(), 1);
+    assert!(hurt[0].1 > 20.0 && hurt[0].1 < 100.0 && !hurt[0].2, "{hurt:?}");
+    g.kill(npc, None);
+    assert!(g.blast_limbs(npc, None, &limbs).is_empty());
+}
+
 /// A fall's leg (docs/spec-notes/physics.md §6.12): limb damage in condition points comes
 /// straight off the condition, without the part's pool or the player's limb multiplier.
 #[test]
@@ -1964,6 +2042,33 @@ fn coded_menu_mode_blocks_run_for_their_menus() {
     g.vats.mode = fnv_game::vats::MODE_OFF;
     g.tick();
     assert_eq!(v(&g, 6), 1.0);
+}
+
+/// The pause menu's Mods page (#976 T11): `Game::page_tick` runs the start menu's
+/// `MenuMode 1013` blocks and nothing else of a frame, and leaves the open menu (a box a
+/// script showed) as it is.
+#[test]
+fn a_page_tick_runs_only_the_start_menus_blocks_and_keeps_the_open_menu() {
+    use fnv_game::game::menus;
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.set_loaded([FormId(CELL)].into_iter().collect());
+    let key = InstKey::Ref { reference: FormId(ACT_REF) };
+    let v = |g: &Game, i: u16| g.var(key, i).num();
+    g.frames(2);
+    assert_eq!(v(&g, 8), 0.0, "no 1013 block in play");
+    let (t, frames) = (g.time, v(&g, 3));
+    g.page_tick(menus::START);
+    g.page_tick(menus::START);
+    assert_eq!((v(&g, 8), v(&g, 3), v(&g, 4), g.time), (2.0, frames, 0.0, t), "only the 1013 block, no game time");
+    assert_eq!(g.menu, None);
+    g.menu = Some(menus::MESSAGE);
+    g.page_tick(menus::START);
+    assert_eq!((g.menu, v(&g, 8)), (Some(menus::MESSAGE), 3.0), "a box stays the open menu");
+    g.menu = None;
+    g.tick();
+    assert_eq!(v(&g, 8), 3.0, "the page's menu ends with its tick");
 }
 
 fn ui_call(g: &mut Game, op: u16, args: &[ArgValue]) {
@@ -2144,6 +2249,9 @@ fn udf_fixture() -> Fixture {
         ),
         // A call on an empty reference behind a classic `&&` (EDEScript's shape, #1112).
         (0x0000_0905u32, "TestEmpty", "scn TestEmpty\nref r\nint n\nBegin Function {n}\n  if n == 1 && r.GetDisabled == 0\n  endif\nEnd\n".to_string()),
+        // Functions that return a lambda (#1088): two in one unit, one in another.
+        (0x0000_0906u32, "TestMaker", "scn TestMaker\nint k\nint w\nBegin Function {w}\n  if w\n    SetFunctionValue ({k} => k + 100)\n  else\n    SetFunctionValue ({k} => k * 2)\n  endif\nEnd\n".to_string()),
+        (0x0000_0907u32, "TestMaker2", "scn TestMaker2\nint k\nBegin Function {}\n  SetFunctionValue ({k} => k - 1)\nEnd\n".to_string()),
     ] {
         // TestFact calls itself: its own name resolves through a seed reference list.
         let c = if edid != "TestAdd" {
@@ -2263,6 +2371,91 @@ fn lambdas_and_the_array_functions_that_take_them() {
     assert_eq!(global_after(&f, src), 2.0);
     let src = "array_var a\narray_var b\narray_var it\nlet a := Ar_List 1, 2, 3\nlet b := Ar_MapTo a, ({it} => *it * 10)\nlet TestGlobal := b[2]";
     assert_eq!(global_after(&f, src), 30.0);
+}
+
+/// A lambda is the same one each time its function makes it, whatever ran in between
+/// and wherever its copy of the body was: one name, and the list of lambdas stays as
+/// long as the lambdas written (#1088). Each lambda of a unit is its own.
+#[test]
+fn a_function_makes_the_same_lambda_every_call() {
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let src = "ref a\nref b\nref c\nref d\nint x\nint n\n\
+        let a := Call TestMaker 0\nlet x := Call TestAdd 1 2\nlet c := Call TestMaker 1\nlet n := Call TestFact 4\n\
+        let d := Call TestMaker2\nlet b := Call TestMaker 0\n\
+        let TestGlobal := 0\n\
+        if eval a == b && a != c && a != d && c != d\n  let TestGlobal := (Call a 5) + (Call c 5) * 1000 + (Call d 5) * 1000000\nendif";
+    for round in 0..50 {
+        g.run_source(src, Default::default()).expect("compiles");
+        assert_eq!(g.world.global(FormId(0x0000_0800)).unwrap(), 4_105_010.0, "round {round}");
+        assert_eq!(g.snapshot().lambdas.len(), 3, "round {round}: one per lambda written");
+    }
+    // After a save and a load the lambdas are made again under their saved names.
+    let snap = g.snapshot();
+    let world = World::new(&f.forms, &f.refs, SimConfig::default());
+    let mut r = Game::restore(&f.data, world, GameConfig::default(), &snap).unwrap();
+    r.run_source(src, Default::default()).expect("compiles");
+    assert_eq!(r.world.global(FormId(0x0000_0800)).unwrap(), 4_105_010.0);
+    assert_eq!(r.snapshot().lambdas, snap.lambdas);
+}
+
+/// A saved lambda is made again under its saved name only while the unit's lambda of
+/// that number is the same code: a save from before the numbering reads every lambda as
+/// number 0, and an edited plugin can give a number other code (#1310 review).
+#[test]
+fn a_loaded_lambda_keeps_its_name_only_for_the_same_code() {
+    let f = udf_fixture();
+    let src = "ref a
+ref b
+ref c
+ref d
+int x
+int n
+        let a := Call TestMaker 0
+let x := Call TestAdd 1 2
+let c := Call TestMaker 1
+let n := Call TestFact 4
+        let d := Call TestMaker2
+let b := Call TestMaker 0
+        let TestGlobal := 0
+        if eval a == b && a != c && a != d && c != d
+  let TestGlobal := (Call a 5) + (Call c 5) * 1000 + (Call d 5) * 1000000
+endif";
+    let number = |l: &mut fnv_script::ir::XExpr, n: u32| {
+        if let fnv_script::ir::XExpr::Lambda { index, .. } = l {
+            *index = n;
+        }
+    };
+    let load_and_run = |snap: &fnv_game::game::GameSnapshot| {
+        let world = World::new(&f.forms, &f.refs, SimConfig::default());
+        let mut r = Game::restore(&f.data, world, GameConfig::default(), snap).unwrap();
+        r.run_source(src, Default::default()).expect("compiles");
+        (r.world.global(FormId(0x0000_0800)).unwrap(), r.snapshot().lambdas.len())
+    };
+
+    // A save from before the numbering: TestMaker's second lambda (k * 2) reads as
+    // number 0, which is k + 100 now.
+    let mut g = game(&f);
+    g.run_source("ref a
+let a := Call TestMaker 0", Default::default()).expect("compiles");
+    let mut old = g.snapshot();
+    assert_eq!(old.lambdas.len(), 1);
+    number(&mut old.lambdas[0].lambda, 0);
+    assert_eq!(load_and_run(&old), (4_105_010.0, 4), "k + 100 runs its own code under a new name");
+
+    // A plugin edited since the save: lambda 0 of TestMaker was k * 2 then.
+    let mut g = game(&f);
+    g.run_source(src, Default::default()).expect("compiles");
+    let mut edited = g.snapshot();
+    // Only TestMaker has a lambda 1.
+    let j = edited.lambdas.iter().position(|l| matches!(l.lambda, fnv_script::ir::XExpr::Lambda { index: 1, .. })).unwrap();
+    let i = edited.lambdas.iter().position(|l| matches!(l.lambda, fnv_script::ir::XExpr::Lambda { index: 0, .. }) && l.unit == edited.lambdas[j].unit).unwrap();
+    edited.lambdas[i].lambda = edited.lambdas[j].lambda.clone();
+    number(&mut edited.lambdas[i].lambda, 0);
+    assert_eq!(load_and_run(&edited), (4_105_010.0, 4), "the current k + 100 runs, not the saved code");
+
+    // The same code keeps its name (a_function_makes_the_same_lambda_every_call).
+    assert_eq!(load_and_run(&g.snapshot()), (4_105_010.0, 3));
 }
 
 #[test]
@@ -3325,4 +3518,43 @@ fn console_tlik_temo_tfow_slpm_and_mfg() {
     run(&mut g, "mfg", &on, &["modifier", "9", "0"]).unwrap();
     assert!(!g.mfg.contains_key(&FormId(NPC_REF)), "nothing left set: no face kept");
     assert_eq!(FaceMfg::default().expression, None);
+}
+
+#[test]
+fn console_plm_clm_s1st_setvel_and_the_small_ones() {
+    use fnv_game::functions::console::{lookup_word, ConsoleCtx, ConsoleRequest};
+    let f = fixture();
+    let mut g = game(&f);
+    let run = |g: &mut Game, word: &str, ctx: &ConsoleCtx, a: &[&str]| {
+        let (_, run) = lookup_word(&g.data.table, word).unwrap_or_else(|| panic!("{word}"));
+        run(g, ctx, &a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    };
+    let none = ConsoleCtx::default();
+    run(&mut g, "plm", &none, &["10", "25", "0", "TestLocation"]).unwrap();
+    run(&mut g, "plm", &none, &["1.5", "-2", "3"]).unwrap();
+    assert!(run(&mut g, "plm", &none, &["1", "2", "3", "x", "10"]).is_err(), "colours 0 to 9");
+    assert!(run(&mut g, "plm", &none, &["1", "2"]).is_err());
+    run(&mut g, "clm", &none, &[]).unwrap();
+    run(&mut g, "s1st", &none, &[]).unwrap();
+    assert!(run(&mut g, "SetVel", &none, &["z", "300"]).is_err(), "nothing selected");
+    let on = ConsoleCtx { on: Some(FormId::PLAYER_REF), ..Default::default() };
+    assert!(run(&mut g, "SetVel", &on, &["w", "300"]).is_err());
+    run(&mut g, "SetVel", &on, &["z", "300"]).unwrap();
+    assert_eq!(
+        g.console_requests,
+        [
+            ConsoleRequest::PlaceMarker { pos: [10.0, 25.0, 0.0], name: "TestLocation".into(), color: 0 },
+            ConsoleRequest::PlaceMarker { pos: [1.5, -2.0, 3.0], name: "2 -2 3".into(), color: 0 },
+            ConsoleRequest::ClearMarkers,
+            ConsoleRequest::Show1stPerson,
+            ConsoleRequest::SetVel { on: FormId::PLAYER_REF, axis: 'Z', speed: 300.0 },
+        ]
+    );
+    assert_eq!(run(&mut g, "tst", &none, &["TestGlobal"]).unwrap(), ["TestGlobal = 5"]);
+    assert!(run(&mut g, "Show", &none, &["NoSuchGlobal"]).is_err());
+    assert!(run(&mut g, "prc", &none, &[]).unwrap()[0].starts_with("Persistent references: "));
+    run(&mut g, "ClearScreenBlood", &none, &[]).unwrap();
+    assert_eq!(g.ui.splatter.clears, 1);
+    run(&mut g, "TestRaceSexTerimnal", &none, &[]).unwrap();
+    assert_eq!(g.race_menu, fnv_game::game::RaceMenu::Creator);
 }

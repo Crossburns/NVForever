@@ -821,7 +821,8 @@ impl<'a> Game<'a> {
         let mut links = self.links_after(topic, def);
         if !def.choices.is_empty() {
             links.sort_by(|a, b| priority(&b.topic).total_cmp(&priority(&a.topic)));
-            return self.offer(actor, &links);
+            let out = self.offer(actor, &links);
+            return self.itr_menu(actor, out);
         }
         let mut listed: Vec<Link> = data.top_level.iter().map(|&t| Link { topic: t, from: None }).collect();
         let known = self.player.topics.iter().filter(|t| !data.top_level.contains(t)).map(|&t| Link { topic: t, from: None });
@@ -845,7 +846,8 @@ impl<'a> Game<'a> {
                 out.extend(self.offer(actor, &[Link { topic: bye, from: None }]));
             }
         }
-        out
+        // ITR's hide and order rules and custom entries (`crate::nvse_itr2`).
+        self.itr_menu(actor, out)
     }
 
     /// The entries for the topics of `links` the actor has a line for ([`Game::link_line`]),

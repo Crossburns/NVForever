@@ -39,6 +39,16 @@ pub enum ConsoleRequest {
     /// The lockpicking menu on a practice lock of that difficulty, no reference's
     /// (`ShowLockPickMenu`).
     Lockpick(crate::lockpick::Level),
+    /// A location marker at `pos` (game units) with its label and colour 0-9
+    /// (`PlaceLocationMarker`).
+    PlaceMarker { pos: [f32; 3], name: String, color: u8 },
+    /// The location markers of the current place go (`ClearLocationMarkers`).
+    ClearMarkers,
+    /// The first-person model shown, or no longer, beside the third-person one
+    /// (`Show1stPerson`).
+    Show1stPerson,
+    /// A reference's velocity along one axis set, in game units per second (`SetVel`).
+    SetVel { on: FormId, axis: char, speed: f32 },
 }
 
 pub type ConsoleImpl = fn(&mut Game, &ConsoleCtx, &[String]) -> Result<Vec<String>, String>;
@@ -72,13 +82,22 @@ pub fn registry() -> &'static [(&'static str, ConsoleImpl)] {
         ("ToggleFogOfWar", toggle_fog_of_war),
         ("ShowLockPickMenu", show_lock_pick_menu),
         ("MFG", modify_face_gen),
+        ("PlaceLocationMarker", place_location_marker),
+        ("ClearLocationMarkers", clear_location_markers),
+        ("Show1stPerson", show_1st_person),
+        ("SetVel", set_vel),
+        ("Show", show_variable),
+        ("PersistentRefCount", persistent_ref_count),
+        ("TestRaceSexTerimnal", test_race_sex_terminal),
+        ("ClearScreenBlood", clear_screen_blood),
     ]
 }
 
 /// Vanilla functions the engine's console handles itself by name, outside both
 /// registries (engine/nvf-play/src/console.rs): `coc`, `cow` and `coe` travel, `help`
-/// searches records, `AdvLevel` levels up, `bat` runs a file's lines.
-pub const ENGINE_WORDS: &[&str] = &["CenterOnCell", "CenterOnWorld", "CenterOnExterior", "Help", "AdvancePCLevel", "bat"];
+/// searches records, `AdvLevel` levels up, `bat` runs a file's lines, `clr` empties the
+/// scrollback, `rbat` records lines for `bat`, `scof` writes the console to a file.
+pub const ENGINE_WORDS: &[&str] = &["CenterOnCell", "CenterOnWorld", "CenterOnExterior", "Help", "AdvancePCLevel", "bat", "clr", "rbat", "SetConsoleOuputFile"];
 
 /// The vanilla functions of the catalogue that nothing handles and no script of the
 /// masters calls (so the stub audit, `fnvtool script stubs`, never counts them): those
@@ -630,6 +649,98 @@ pub fn kill_all_actors(g: &mut Game, _ctx: &ConsoleCtx, a: &[String]) -> Result<
     Ok(vec![format!("KillAllActors >> {killed} killed, {knocked} essential knocked out")])
 }
 
+/// `PlaceLocationMarker x y z [name] [color]` (`plm`): a small debug box at (x, y, z)
+/// with its name above it, drawn through walls; without a name the coordinates are the
+/// name; colour 0 is white, 1 to 9 others [documented: GECK wiki PlaceLocationMarker].
+/// The engine draws it (nvf-play `console::LocationMarkers`); which colours 1-9 are is
+/// ours [design].
+pub fn place_location_marker(g: &mut Game, _ctx: &ConsoleCtx, a: &[String]) -> Result<Vec<String>, String> {
+    const USE: &str = "PlaceLocationMarker <x> <y> <z> [name] [colour 0-9]";
+    let num = |i: usize| a.get(i).and_then(|w| w.parse::<f32>().ok()).ok_or(USE);
+    let pos = [num(0)?, num(1)?, num(2)?];
+    let name = match a.get(3).map(|w| w.trim_matches('"')) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => format!("{:.0} {:.0} {:.0}", pos[0], pos[1], pos[2]),
+    };
+    let color = match a.get(4) {
+        Some(w) => w.parse::<u8>().ok().filter(|c| *c <= 9).ok_or("the colour is 0 (white) to 9")?,
+        None => 0,
+    };
+    g.console_requests.push(ConsoleRequest::PlaceMarker { pos, name: name.clone(), color });
+    Ok(vec![format!("Location marker {name} placed")])
+}
+
+/// `ClearLocationMarkers` (`clm`): the markers placed in the current cell go
+/// [documented: GECK wiki ClearLocationMarkers]. Outdoors, the current cell is the
+/// worldspace: every marker placed outdoors in it goes [hypothesis].
+pub fn clear_location_markers(g: &mut Game, _ctx: &ConsoleCtx, _a: &[String]) -> Result<Vec<String>, String> {
+    g.console_requests.push(ConsoleRequest::ClearMarkers);
+    Ok(Vec::new())
+}
+
+/// `Show1stPerson` (`s1st`): the first-person model shown from the third-person camera
+/// as well, so in third person both are seen [documented: GECK wiki Show1stPerson];
+/// again: hidden as before [hypothesis: a switch, as the other debug views].
+pub fn show_1st_person(g: &mut Game, _ctx: &ConsoleCtx, _a: &[String]) -> Result<Vec<String>, String> {
+    g.console_requests.push(ConsoleRequest::Show1stPerson);
+    Ok(Vec::new())
+}
+
+/// `[ref.]SetVel <X|Y|Z> <speed>`: the reference's velocity along the axis
+/// [documented: GECK wiki SetVel, "Sets Velocity on a reference", axis X, Y or Z]; in game
+/// units per second along the world's axes, Z up [hypothesis: the units are not given].
+/// The engine sets it on the player's movement, or on a loose object's physics body; a
+/// reference with neither says so.
+pub fn set_vel(g: &mut Game, ctx: &ConsoleCtx, a: &[String]) -> Result<Vec<String>, String> {
+    const USE: &str = "[ref.]SetVel <X|Y|Z> <units per second>";
+    let on = ctx.on.ok_or("select a reference first, or ref.SetVel")?;
+    let axis = match a.first().map(|w| w.trim_matches('"').to_ascii_uppercase()) {
+        Some(w) if matches!(w.as_str(), "X" | "Y" | "Z") => w.chars().next().unwrap_or('Z'),
+        _ => return Err(USE.into()),
+    };
+    let speed = a.get(1).and_then(|w| w.parse::<f32>().ok()).ok_or(USE)?;
+    g.console_requests.push(ConsoleRequest::SetVel { on, axis, speed });
+    Ok(Vec::new())
+}
+
+/// `Show <variable>` (`tst`): a global's value, by Editor ID ("prints the value of a
+/// special or global variable" [documented: the catalogue's summary]). The special ones
+/// the catalogue speaks of (GameHour, GameDaysPassed, TimeScale, …) are globals of the
+/// masters [observed: FalloutNV.esm GLOB records].
+pub fn show_variable(g: &mut Game, _ctx: &ConsoleCtx, a: &[String]) -> Result<Vec<String>, String> {
+    let name = a.first().map(|w| w.trim_matches('"')).ok_or("Show <global>")?;
+    let (id, _) = g.world.forms.global_by_edid(name).ok_or_else(|| format!("No global {name}"))?;
+    let v = g.world.global(id).map_err(|e| e.to_string())?;
+    Ok(vec![format!("{name} = {}", shown(Value::Num(f64::from(v)), g))])
+}
+
+/// `PersistentRefCount` (`prc`): how many persistent references there are [documented:
+/// the catalogue's summary]: placed references flagged persistent or stored in a cell's
+/// persistent group, and the player, those removed for good left out; references made
+/// while playing (PlaceAtMe) are not persistent [hypothesis].
+pub fn persistent_ref_count(g: &mut Game, _ctx: &ConsoleCtx, _a: &[String]) -> Result<Vec<String>, String> {
+    let placed = g.world.placed;
+    let n = placed.refs.keys().filter(|&&r| g.persistent(r) && !g.extra.get(&r).is_some_and(|e| e.marked_for_delete)).count();
+    Ok(vec![format!("Persistent references: {}", n + 1)])
+}
+
+/// `TestRaceSexTerimnal` (the catalogue's spelling): the race menu, as ShowRaceMenu
+/// [documented: the catalogue's summary, "equivalent to ShowRaceMenu"].
+pub fn test_race_sex_terminal(g: &mut Game, _ctx: &ConsoleCtx, _a: &[String]) -> Result<Vec<String>, String> {
+    g.race_menu = crate::game::RaceMenu::Creator;
+    g.open_menu(crate::game::menus::RACE);
+    Ok(vec!["The race menu opens".into()])
+}
+
+/// `ClearScreenBlood`: the blood on the screen goes [documented: the catalogue's
+/// summary], as ClearScreenSplatter: the engine draws both kinds of splat, the scripts'
+/// and the player's hurts, in one layer (nvf-play `screen_splatter`).
+pub fn clear_screen_blood(g: &mut Game, _ctx: &ConsoleCtx, _a: &[String]) -> Result<Vec<String>, String> {
+    g.ui.splatter.triggers.clear();
+    g.ui.splatter.clears += 1;
+    Ok(vec!["Screen blood cleared".into()])
+}
+
 /// `CloseAllMenus` (`cam`): every open menu closes, the console too.
 pub fn close_all_menus(g: &mut Game, _ctx: &ConsoleCtx, _a: &[String]) -> Result<Vec<String>, String> {
     g.console_requests.push(ConsoleRequest::CloseMenus);
@@ -859,12 +970,12 @@ mod tests {
         let (console, other) = unhandled_unused(&j);
         eprintln!("unhandled console functions: {console:?}
 unhandled other vanilla functions: {other:?}");
-        assert_eq!((console.len(), other.len()), (45, 124), "docs/design/console.md, What the console does not handle, sorts them");
+        assert_eq!((console.len(), other.len()), (33, 123), "docs/design/console.md, What the console does not handle, sorts them");
         // `killall` reaches KillAllActors by its alias.
         assert_eq!(lookup_word(&t, "killall").map(|r| r.0).as_deref(), Some("KillAllActors"));
         assert_eq!(lookup_word(&t, "cam").map(|r| r.0).as_deref(), Some("CloseAllMenus"));
         // Aliases find them too.
-        for alias in ["sqt", "MoveToQT", "sqs", "sqv", "sv", "caqs", "inv", "getavinfo", "prid", "setgs", "qqq", "cam"] {
+        for alias in ["sqt", "MoveToQT", "sqs", "sqv", "sv", "caqs", "inv", "getavinfo", "prid", "setgs", "qqq", "cam", "plm", "clm", "s1st", "tst", "prc"] {
             let f = t.by_name(alias).and_then(|op| t.get(op)).unwrap_or_else(|| panic!("{alias}"));
             assert!(lookup(&f.name).is_some(), "{alias}");
         }

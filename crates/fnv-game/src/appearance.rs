@@ -59,7 +59,8 @@ impl Game<'_> {
             if let Some(race) = self.player.race {
                 return Some(race);
             }
-        } else if let Some(race) = self.extra.get(&r).and_then(|e| e.race) {
+        } else if let Some(race) = self.itr_race(r).or_else(|| self.extra.get(&r).and_then(|e| e.race)) {
+            // ITR's SetRaceAlt first (`crate::nvse_itr2`), then a script's change.
             return Some(race);
         }
         self.traits_def(r).and_then(|d| d.race)
