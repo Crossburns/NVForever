@@ -1490,6 +1490,7 @@ fn standalone_hit_volumes_answer_as_attached_ones_to_the_bit() {
         shots.push(bits(w.queries().ray([210.0, 0.0, 300.0], [0.0, 0.0, -1.0], 1000.0, &Filter::default())));
         (aims, shots, w.state_digest())
     };
+    #[allow(clippy::type_complexity)]
     let script: Vec<Box<dyn Fn(&mut PhysWorld)>> = vec![
         Box::new(|w| w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &three_parts(0.0))),
         Box::new(|w| w.set_actor_parts(0x10, person([213.5, 1.25, 0.5], false), &three_parts(13.5))),
@@ -2120,7 +2121,7 @@ fn tie_probe(dx: f32, actors: &[u32]) -> Probe {
     }
 }
 
-/// 1. Overlapping parts of one actor (a ray starting inside two capsules) and equidistant
+/// Scenario 1: Overlapping parts of one actor (a ray starting inside two capsules) and equidistant
 /// ones (same part id, and different part ids).
 fn one_actor_ties(exact: bool) {
     let mut p = Pair::new(ground, exact);
@@ -2161,7 +2162,7 @@ fn hitvol_ties_overlapping_and_equidistant_parts_of_one_actor() {
     one_actor_ties(false);
 }
 
-/// 2. Two actors whose capsules coincide exactly.
+/// Scenario 2: Two actors whose capsules coincide exactly.
 fn two_actors_coincide(exact: bool) {
     let mut p = Pair::new(ground, exact);
     p.act(|w| {
@@ -2220,7 +2221,7 @@ fn box_states(w: &PhysWorld) -> Vec<BodyState> {
     (500..506).flat_map(|id| w.ref_bodies(id)).collect()
 }
 
-/// 3. A pending pose flushed straight into `step` (no query between the write and the
+/// Scenario 3: A pending pose flushed straight into `step` (no query between the write and the
 /// step), and two or three writes to one actor before one step.
 fn pending_into_step(exact: bool) {
     let mut p = Pair::new(ground_with_boxes, exact);
@@ -2275,7 +2276,7 @@ fn hitvol_ties_pending_pose_flushed_straight_into_step() {
     pending_into_step(false);
 }
 
-/// 4. A snapshot taken while poses are pending, restored and queried.
+/// Scenario 4: A snapshot taken while poses are pending, restored and queried.
 fn snapshot_pending(exact: bool) {
     let mut p = Pair::new(ground_with_boxes, exact);
     p.act(|w| w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0)));
@@ -2328,7 +2329,7 @@ fn hitvol_ties_snapshot_taken_with_poses_pending() {
     snapshot_pending(false);
 }
 
-/// 5. An actor removed and added again (handles freed and reused) with the same poses, and
+/// Scenario 5: An actor removed and added again (handles freed and reused) with the same poses, and
 /// part-count changes.
 fn removed_readded(exact: bool) {
     let mut p = Pair::new(ground, exact);
@@ -2460,7 +2461,7 @@ fn crowd_probe() -> Probe {
     Probe { rays, sweeps, overlaps, actors: vec![0x100, 0x105, 0x10c, 0x113] }
 }
 
-/// 6. 20 actors of 19 parts each, posed from a seeded generator over 50 frames (every actor
+/// Scenario 6: 20 actors of 19 parts each, posed from a seeded generator over 50 frames (every actor
 /// written each frame before any query), with falling boxes and a walking character; every
 /// third frame the writes go straight into the step. With `twins`, the last two actors copy
 /// the first two exactly (coincident actors in a full tree).
@@ -2531,7 +2532,7 @@ fn hitvol_ties_crowd_with_coincident_twins() {
     crowd(true, false);
 }
 
-/// 7. A's skip: the same pose written twice leaves the world alone. The public API can force
+/// Scenario 7: A's skip: the same pose written twice leaves the world alone. The public API can force
 /// that write: -0.0 for 0.0 in a segment end defeats the bit comparison
 /// [design: crates/fnv-phys/src/actors.rs:108-111] yet hands rapier the very same pose,
 /// since the mid-point (-0.0 + 0.0 = +0.0) and the direction (0.0 - -0.0 = +0.0) are
