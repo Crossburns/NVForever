@@ -99,11 +99,37 @@ triangles, its door stops and the door that ends it.
   counted as stuck all the way and detoured into the motel gate's fence).
   They skip instead of replanning
   (`Unstuck::skip`; owner request 2026-10-17: an NPC stuck navigating is put on the next
-  part of the navmesh it was heading for): `Follower::skip_ahead` moves the actor 160
-  units on along its path (past corners, never past a door stop it has not opened or the
-  end of its leg; the point is on the path, so on the navmesh), and physics puts it down
-  there again; the log says "actor … stuck at …: moved on along its path to …" and the
-  residents' summary counts "moved N stuck actors on". Stuck again where it was put down,
+  part of the navmesh it was heading for): the actor is moved 160 units on along its path
+  (past corners, never past a door stop it has not opened or the end of its leg), and
+  physics puts it down there again; the log says "actor … stuck at …: moved on along its
+  path to …" and the residents' summary counts "moved N stuck actors on". [design, #1501]
+  The 160 units are horizontal length of path from the feet's projection on the stretch
+  being walked (the stretch and not the nearest of them all: a path looping back past the
+  actor is not jumped along), so feet beside the path do not bend the point off it, and
+  any way across to the path comes on top. A point on the path is not yet a place to
+  stand, so the place is checked before anything changes
+  (`Follower::skip_candidates`, then `commit_skip`): the navmesh surface under it, found
+  along the route (`NavGraph::skip_surface`: walked over the surface from the corner
+  before it or, failing that, in the leg's corridor; never inside a ledge link's span; not
+  the nearest floor at that spot, which may be another level); the collision loaded within
+  256 units of it (not all the squares around it: for a place a square off the player's
+  those need not be in, and it would never pass); something walkable to stand on near that height, up to 48 above
+  and 96 below; and room there for the actor's own controller shape, with its ignored
+  layers and without itself, the player and other characters counting, and heavy bodies,
+  but not what it would push aside (`PhysWorld::character_spot`, a look at the place only:
+  no sweep from the feet, or nothing past an obstacle would ever pass). On uneven ground
+  the body may be tried up to a step above the support. It goes to those very feet
+  (`PhysState::place_npc`), not through the wider ground search of a new character.
+  A place refused, the same is tried 120, 80 and 40 units on from the same projection, and
+  0 units for feet more than 16 units off the path, all cut to the door stop or leg's end.
+  All refused, the actor keeps its body, feet and place on the path, the AI is told it
+  moved, and it tries again after another second of no progress (`Unstuck::skip_refused`;
+  these do not count towards the 5 replans). The log says "nowhere to move it on to" for
+  the first and the summary counts "N times nowhere to move one to". After 5 such rounds in
+  a row, about 5 s, it keeps to the navmesh surface for 8 s (`PHYSICS_RETRY`), as an actor
+  with nothing to skip along does (held at a door, no leg left): so no actor stays stuck
+  for good where no place fits, what stood there for a moment is waited out, and it
+  costs an actor those 5 s more than before this check. Stuck again where it was put down,
   before a second's progress, it is moved on again after a second, without the four
   detours that already failed (`Unstuck::after_skip`): a stretch blocked for longer than
   one skip cost 7.4 s per 160 units otherwise (Boone just past his room's door, smoke

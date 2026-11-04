@@ -606,3 +606,39 @@ fn the_pose_of_a_group_not_drawn_is_its_end_or_its_loops_start() {
     assert_eq!(super::group_pose(&anim, Some(&("Other".into(), 0.7)), Some("Forward")), (Some(0), 1.0));
     assert_eq!(super::group_pose(&anim, None, None), (None, 0.0));
 }
+
+#[test]
+fn a_place_near_loaded_collision_only_is_refused_and_a_character_goes_exactly_where_told() {
+    let (d, sim) = (play_data(), sim());
+    let ctx = LoadCtx { d: &d, sim: &sim, data: None };
+    let mut p = PhysState { fake: Some(fake_cell), loader: loader::Loader::manual(), ..Default::default() };
+    let start = centre(0, 0);
+    p.stream(&ctx, start, CELLS_PER_FRAME);
+    // The loader has not delivered: only the cell underfoot is in.
+    assert!(p.ready_at(start));
+    assert!(p.ready_near(start, 256.0), "the middle of a square is far from its neighbours");
+    assert!(!p.ready_near([CELL_SIZE - 10.0, start[1], 50.0], 256.0), "the square next door is not in");
+    assert!(p.add_npc(7, [start[0] + 200.0, start[1] + 200.0, 200.0]));
+    assert_eq!(p.npc_spot(7, [CELL_SIZE - 10.0, start[1], 50.0]), Err(NpcSpotRefused::NotLoaded));
+    assert_eq!(p.npc_spot(8, start), Err(NpcSpotRefused::NotLoaded), "no character");
+    // Everything in: a spot on the sloping terrain, and the character put on it to the unit.
+    p.loader.run_manual(false);
+    for _ in 0..8 {
+        p.stream(&ctx, start, CELLS_PER_FRAME);
+    }
+    assert!(p.ready_near([CELL_SIZE - 10.0, start[1], 50.0], 256.0));
+    let ground = p.terrain_z(start[0] + 200.0, start[1] - 400.0).expect("terrain");
+    let at = [start[0] + 200.0, start[1] - 400.0, ground];
+    let feet = p.npc_spot(7, at).expect("open ground");
+    assert!((feet[2] - ground).abs() < 6.0, "{feet:?} on {ground}");
+    p.npcs.get_mut(&7).unwrap().velocity = [100.0, 0.0];
+    assert!(p.place_npc(7, feet));
+    let b = &p.npcs[&7];
+    assert_eq!((b.ch.feet, b.prev_feet, b.velocity), (feet, feet, [0.0, 0.0]));
+    assert!(!p.place_npc(8, feet));
+    // Too far over the ground for the level asked for.
+    assert_eq!(p.npc_spot(7, [at[0], at[1], ground + 1000.0]), Err(NpcSpotRefused::NoSupport));
+    // The player takes up room.
+    p.place_player(feet, 48.0, 400.0);
+    assert_eq!(p.npc_spot(7, [at[0] + 5.0, at[1], at[2]]), Err(NpcSpotRefused::NoRoom));
+}

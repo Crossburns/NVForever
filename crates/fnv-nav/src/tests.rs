@@ -1058,3 +1058,151 @@ fn obstacles_and_doors_with_broken_placement_do_not_hang() {
         g.set_obstacles(vec![o(s, p)], |o| o.initially_enabled);
     }
 }
+
+/// A narrow L of squares 100 wide round the path (0, 0) to (100, 0) to (100, 300), its
+/// surface rising northwards: squares (0, 0) and (1, 0) along the bottom, (1, 1) to (1, 3)
+/// up the east side, the rest left out as `holes` plus any more given.
+fn narrow_l(more_holes: &[(usize, usize)]) -> NavGraph {
+    let mut holes = vec![(0, 1), (0, 2), (0, 3)];
+    holes.extend_from_slice(more_holes);
+    graph(&[(grid(1, [-50.0, -50.0], 2, 4, 100.0, &holes, |_, y| 0.1 * y), W)])
+}
+
+/// A leg over the points given, as a path planned without its corridor (a shortcut's way
+/// is not in it), for a follower to walk.
+fn leg_of(points: Vec<[f32; 3]>) -> crate::Leg {
+    crate::Leg { space: W, points, corridor: vec![], door: None, door_stops: vec![], hops: vec![] }
+}
+
+fn follower_of(leg: crate::Leg) -> crate::Follower {
+    crate::Follower::new(crate::Path { legs: vec![leg], length: 0.0, expanded: 0, start_snap: 0.0, goal_snap: 0.0 })
+}
+
+const LADDER: [f32; 5] = [160.0, 120.0, 80.0, 40.0, 0.0];
+
+/// #1501: feet off the first stretch of a narrow L, in the corridor's bend. The point it
+/// used to give, straight from the feet to the second corner and on, is not asked for.
+#[test]
+fn a_skip_round_a_narrow_bend_has_the_surface_under_it() {
+    let g = narrow_l(&[]);
+    let leg = leg_of(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, 300.0, 30.0]]);
+    let f = follower_of(leg.clone());
+    let c = f.skip_candidates([60.0, 30.0, 3.0], &LADDER)[0];
+    assert_eq!(c.next, 2);
+    assert!((c.pos[0] - 100.0).abs() < 1e-3 && (c.pos[1] - 120.0).abs() < 1e-3, "{c:?}");
+    let on = g.skip_surface(&leg, &c).expect("on the navmesh");
+    // The surface's height there, not the path's guess at it.
+    assert!((on[2] - 12.0).abs() < 1e-3, "{on:?}");
+    assert!(g.locate(W, on, 1.0).is_some());
+    // What was not on the path is not on the mesh here either: nothing is made up for it.
+    let off = crate::follow::SkipCandidate { pos: [20.0, 120.0, 12.0], ..c };
+    assert_eq!(g.skip_surface(&leg, &off), None);
+}
+
+#[test]
+fn a_skip_over_a_gap_in_the_navmesh_falls_back_to_a_nearer_place() {
+    // No navmesh from y 150 to 250 (one square), where the far places fall.
+    let g = narrow_l(&[(1, 2)]);
+    let leg = leg_of(vec![[100.0, 0.0, 0.0], [100.0, 300.0, 30.0]]);
+    let f = follower_of(leg.clone());
+    let cs = f.skip_candidates([100.0, 40.0, 4.0], &LADDER);
+    assert_eq!(cs.iter().map(|c| c.pos[1]).collect::<Vec<_>>(), vec![200.0, 160.0, 120.0, 80.0]);
+    let surfaces: Vec<_> = cs.iter().map(|c| g.skip_surface(&leg, c).is_some()).collect();
+    assert_eq!(surfaces, vec![false, false, true, true]);
+    assert_eq!(f.next, 1, "nothing committed");
+}
+
+#[test]
+fn a_skip_past_the_gap_is_found_again_by_a_corner_or_the_legs_corridor() {
+    let g = narrow_l(&[(1, 2)]);
+    // The far side of the gap as a corner of the path: its own triangle.
+    let leg = leg_of(vec![[100.0, 0.0, 0.0], [100.0, 280.0, 28.0], [100.0, 300.0, 30.0]]);
+    let f = follower_of(leg.clone());
+    let c = f.skip_candidate([100.0, 200.0, 20.0], 80.0).unwrap();
+    assert_eq!(c.pos[1], 280.0);
+    assert!((g.skip_surface(&leg, &c).unwrap()[2] - 28.0).abs() < 1e-3);
+    // Between two corners, past where the walk over the surface ends: only with the
+    // triangle in the leg's corridor, on the level of the path's height.
+    let leg = leg_of(vec![[100.0, 0.0, 0.0], [100.0, 340.0, 34.0]]);
+    let f = follower_of(leg.clone());
+    let c = f.skip_candidate([100.0, 200.0, 20.0], 80.0).unwrap();
+    assert_eq!(g.skip_surface(&leg, &c), None);
+    let far = g.locate(W, c.pos, 40.0).expect("a triangle there");
+    let mut listed = leg.clone();
+    listed.corridor = vec![far];
+    assert!((g.skip_surface(&listed, &c).unwrap()[2] - 28.0).abs() < 1e-3);
+    let low = crate::follow::SkipCandidate { pos: [c.pos[0], c.pos[1], c.pos[2] + 90.0], ..c };
+    assert_eq!(g.skip_surface(&listed, &low), None, "not that level");
+}
+
+#[test]
+fn a_skip_keeps_to_the_level_of_its_route() {
+    let g = floor_with_deck_above();
+    // On the floor under the deck, between corners and at a corner: not the deck.
+    let leg = leg_of(vec![[50.0, 350.0, 0.0], [350.0, 350.0, 0.0]]);
+    let f = follower_of(leg.clone());
+    let c = f.skip_candidate([50.0, 350.0, 0.0], 160.0).unwrap();
+    assert_eq!(g.skip_surface(&leg, &c).map(|p| p[2]), Some(0.0));
+    // On the deck over it: not the floor.
+    let leg = leg_of(vec![[50.0, 350.0, 200.0], [350.0, 350.0, 200.0]]);
+    let f = follower_of(leg.clone());
+    let c = f.skip_candidate([50.0, 350.0, 200.0], 160.0).unwrap();
+    assert_eq!(g.skip_surface(&leg, &c).map(|p| p[2]), Some(200.0));
+    let end = f.skip_candidate([50.0, 350.0, 200.0], 1000.0).unwrap();
+    assert_eq!(g.skip_surface(&leg, &end), Some([350.0, 350.0, 200.0]));
+}
+
+#[test]
+fn a_skips_height_follows_the_ground_over_a_rise_the_path_cuts_through() {
+    // A hump 200 high between two ends at height 0: the straight path's height is far
+    // under the surface half way.
+    let hump = |x: f32, _: f32| 200.0 - (x - 400.0).abs() * 0.5;
+    let g = graph(&[(grid(1, [0.0, -100.0], 8, 2, 100.0, &[], hump), W)]);
+    let leg = leg_of(vec![[0.0, 0.0, 0.0], [800.0, 0.0, 0.0]]);
+    let f = follower_of(leg.clone());
+    let c = f.skip_candidate([240.0, 0.0, 0.0], 160.0).unwrap();
+    assert_eq!(c.pos, [400.0, 0.0, 0.0]);
+    let on = g.skip_surface(&leg, &c).expect("the surface is walked to");
+    assert!((on[2] - 200.0).abs() < 1e-3, "{on:?}");
+}
+
+#[test]
+fn a_ledge_links_span_has_nothing_to_stand_on_but_its_ends_have() {
+    let mut a = grid(1, [0.0, 0.0], 2, 2, 100.0, &[], flat);
+    let b = grid(2, [200.0, 0.0], 2, 2, 100.0, &[], |_, _| -100.0);
+    let (ea, eb) = (edges_at(&a, 200.0), edges_at(&b, 200.0));
+    for &(at, ae, ..) in &ea {
+        link(&mut a, at, ae, 2, eb[0].0, link_kind::LEDGE_DOWN);
+    }
+    let g = graph(&[(a, W), (b, W)]);
+    let mut leg = leg_of(vec![[50.0, 50.0, 0.0], [190.0, 50.0, 0.0], [260.0, 50.0, -100.0], [350.0, 50.0, -100.0]]);
+    leg.hops = vec![crate::LedgeHop { point: 1, up: false }];
+    let f = follower_of(leg.clone());
+    let cs = f.skip_candidates([150.0, 50.0, 0.0], &[120.0, 80.0, 40.0]);
+    assert_eq!(cs.iter().map(|c| c.pos[0]).collect::<Vec<_>>(), vec![270.0, 230.0, 190.0]);
+    // Past the landing, on the lower floor.
+    assert!((g.skip_surface(&leg, &cs[0]).unwrap()[2] + 100.0).abs() < 1e-3);
+    // In the air over the drop, although a triangle lies under it.
+    assert!(g.locate(W, cs[1].pos, 1000.0).is_some());
+    assert_eq!(g.skip_surface(&leg, &cs[1]), None);
+    // The take-off, which is on the upper floor.
+    assert!(g.skip_surface(&leg, &cs[2]).unwrap()[2].abs() < 1e-3);
+    // The landing itself, with a door stop there as the limit.
+    let mut stopped = leg.clone();
+    stopped.door_stops = vec![crate::DoorStop { door: 9, point: 2 }];
+    let f = follower_of(stopped.clone());
+    let c = f.skip_candidate([150.0, 50.0, 0.0], 160.0).unwrap();
+    assert!(c.at_limit);
+    assert!((g.skip_surface(&stopped, &c).unwrap()[2] + 100.0).abs() < 1e-3);
+}
+
+#[test]
+fn a_skip_onto_a_navmesh_since_disabled_finds_no_surface() {
+    let mut g = narrow_l(&[]);
+    let leg = leg_of(vec![[100.0, 0.0, 0.0], [100.0, 300.0, 30.0]]);
+    let f = follower_of(leg.clone());
+    let c = f.skip_candidate([100.0, 0.0, 0.0], 160.0).unwrap();
+    assert!(g.skip_surface(&leg, &c).is_some());
+    assert!(g.set_enabled(1, false));
+    assert_eq!(g.skip_surface(&leg, &c), None);
+}
