@@ -113,7 +113,7 @@ screen's height):
   list with the open square (second screenshot: Gold Bar, value 9492); the arrow points
   at the player with "9492 Caps".
 - The key hints read "Accept A)", "Exit X)" (barter) and "Take All R)", "Exit E)"
-  (container); the hint stands about 16 after its button's text. Accept is dim with
+  (container; "Take All A)" on the 2026-11 launchtest shot, §8); the hint stands about 16 after its button's text. Accept is dim with
   nothing chosen and bright with a trade.
 - The picture behind darkens the world by about a third at its left edge, with a soft
   edge about 25 wide; the world behind is blurred (second screenshot).
@@ -200,10 +200,9 @@ screen's height):
   waits under it and goes on when it closes [hypothesis: the original returns to the
   conversation].
 
-Not built: the quantity menu, the BarterExit lines merchants say when the menu closes
-(GECK wiki Service Tab), the blur, the mods tile, the
-"Calculate Buy Price" perk entry point, repair at merchants, companions' inventories
-(OpenTeammateContainer).
+Not built: the BarterExit lines merchants say when the menu closes (GECK wiki Service Tab),
+the blur, the mods tile, the "Calculate Buy Price" perk entry point, repair at merchants. The
+menus from their files: §8.
 
 ## 6. Looking at one
 
@@ -284,3 +283,89 @@ keys stay the ones above (the file's bindings act for a script's MenuTapKey and 
 controller's buttons that stand in for no key). Smoke `tiles-quantity`; the drop aid's
 `ask` now holds the prompt open until it is answered.
 
+## 8. The container menu from its file (T15c)
+
+Behind `[UI] TileMenus=ContainerMenu` (`engine/nvf-play/src/tiles/container_menu.rs`,
+`tiles/list.rs`, `tiles/item_card.rs`, issue #1468) the open menu (1008) is drawn from
+`menus\container_menu.xml` and the hand-built drawing gives way to a sheet taking the pointer
+at its stacking level (100). The model, its keys and the wheel stay the hand-built menu's
+(§5). The prompt draws over it, from its file or by hand, and takes the pointer alone
+[documented: `&no_click_past;`]. Smoke: `tiles-container`, `tiles-container-quantity`,
+`container-default-drawing`. Not the default: it is not compared with the original yet.
+
+The original's values [observed: the private `hud_container_*` capture at 1280 x 720, read
+with JIP on a footlocker; interface units; parts a, b, c, e, f; the shots of part a show
+another window and those of b, e, f failed, so these are reads, except where a shot is named]:
+
+- **The rows**: a row is `height` = its text's and 20: 32 and 52 for one line, 67 and 87 for
+  two, 102 and 122 for three. `_y` the sum above it. `_selected` stays 0 on the selected row.
+  `target` 1 on the rows of both lists. Text x 40, y 20, wrap 370, font 2. A row's tile has
+  its item's name, without the count (`GetActiveUIComponentName`); the tree's order is not
+  the list's, `listindex` is.
+- **Both lists have `_enabled` 1** at every read, against the prefab's comment. The list
+  without the selection reads `_highlight_y` -1 and `_selected_height` 0 and shows no
+  highlight; so does a list when the pointer leaves all rows (no selection at the opening
+  either: `sel none`). The highlight box is 1 less than the row high, at the row's `y` after
+  the scroll (a row at `_y` 208 with value 4: -23.11), hudmain at brightness 128, alpha 40
+  (message-menu.md).
+- **The scrollbar**: `_number_of_visible_items` is always 1. A list that fits reads 1 item and
+  the file's `_scroll_delta` 26. Longer ones:
+
+  | rows | total height | list | `_number_of_items` | `_scroll_delta` | `_jump_size` | marker height, `_step_height` |
+  |---|---|---|---|---|---|---|
+  | 15 | 885 | 365 | 10 | 57.78 | 6 | 33.30, 33.30 |
+  | 16 | 937 | 365 | 11 | 57.20 | 6 | 32, 30.10 |
+
+  [hypothesis] That is: the value's range is the rows less those that fit whole from the top
+  (6 here), and `_scroll_delta` what is left over by that range, so a value's move is not a
+  row's. A row's `y` is `_y` less value x `_scroll_delta` (-231.11 at value 4 of 57.78), by
+  the file [documented].
+- **What moves it**: `ClickMenuTile` on the down arrow: +1, kept every frame after; on a page
+  area: 6 up to the end (4 to 9, 8 to 2). The rows move under a resting pointer, and the row
+  now there takes the highlight in the original. `SetInCode` read 0 through those.
+- **The clip**: at y 390 pixels the pointer is on a row, at 399 on nothing: the list's bottom
+  is at 525 units (393.75 pixels). So `clipwindow` crops the pointer too, as the drawing's
+  reading has it (menu-xml.md §3.1.1).
+- **The alpha of containers**: the scrollbar image reads `alpha` 0, its marker 255, and the
+  arrows show [observed: launchtest shot]. `CM_TakeAllButton` and `CM_ExitButton` are images
+  and `CM_Subtitle` a rect with `alpha` 0 from `text_box.xml`, and the words show.
+  `StrengthReqInfo` at the opening is shown at `alpha` 0: its words do not show, and its top
+  line and fading side line do, at about (782, 447) to (912, 470) pixels [observed: launchtest
+  shot]; its value text copies its `alpha`, its lines their own `_line_alpha`. So in this
+  menu an `alpha` is not passed down to children [hypothesis: elsewhere].
+- **The backing**: `CM_Background` `alpha` 193.8 (the file's global is 32), 1144 x 970,
+  brightness 128.
+- **The card** (`CM_ItemData`): `_Value` and `visible` per card; `--` for no weight; DAM's
+  `alpha` reads 0, 8.25, 98, 121.5, 238.75 and 255 between reads of weapons, DPS's title 255,
+  both at one place by the file, so it seems they fade into each other [hypothesis]. STR
+  `alpha` 255 once anything was selected. `AmmoInfo`'s `_Title` the ammunition `name (n/m)` or
+  armour's class, `_Value` empty. `ConditionInfo`'s `user5` the condition, `user6` 1 for
+  weapons, 0 for armour; its `CNDArrows` x 140.5 (114.33 with `user6` 0), y 15, 16 x 20 once
+  selected, y 17, 16 high before. After the pointer leaves all rows the card keeps its last
+  item while the icon and arrow hide.
+- **The picture and the arrow**: `CM_ItemIcon` `filename` the item's, a missing one
+  `missing_image.dds`; `CM_ArrowIcon` `user0` 1 (the left list's row), 2 (the right's), hidden
+  without a selection.
+- **The buttons**: Take All 116 x 47 at -116, 0 of `CM_ButtonRect`, Exit 68 x 47 at -68, 45,
+  hints "A)" and "E)" [observed: launchtest shot, which reads "Take All A)", unlike §3's
+  earlier reading "R)"]. `ClickMenuTile` on Take All takes all and closes, no prompt, no
+  message after. The weight label "Wg   52/200", three spaces.
+
+What the tile path does with these, and where it differs:
+
+- **Follows the file and the capture**: places, rows, counts, scroll, highlight and its fill,
+  bar pieces, backing alpha 193.8, every tile's own alpha, card fields, arrow, icon.
+- **Stays the hand-built menu's on purpose**: a row always selected in a list that has rows
+  (no "no selection" state); the pointer leaving keeps the selection; the wheel moves the
+  selection [owner 2026-10-22, #1192], a list moved under a resting pointer does not take the
+  highlight, hover does not scroll [owner's playtest list 7, item 11]; more than five asks
+  how many [owner 2026-10-15]; Take All closes [owner, list 5 item 60]; DPS a card above DAM,
+  no fade [owner's playtest list 7, item 25]. The keys: physical A focuses the player's list
+  and R takes all, [design: `crate::menu`, tagged there as the owner's screenshot's "R)" and
+  our own keys, no owner decision]; the hint therefore says "R)", the file's A acting only
+  for a script's MenuTapKey.
+- **Not at parity, not known or not built**: the world's blur; DAM/DPS's fade; `CNDArrows`,
+  shown as read but its look not seen; `_wheelmoved` and key reads (part g), filters (part d)
+  not read yet; no shot of the original with a highlight, a selected card or the note. Backing
+  193.8 is the read value through the renderer's blending, which reads lighter than the
+  original's shot until checked [hypothesis].

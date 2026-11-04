@@ -309,6 +309,7 @@ impl MenuInputs<'_, '_> {
         let already = m.focus == side && m.selected[side as usize] == index;
         let holds = self.hold.as_ref().is_some_and(|h| h.held());
         if !row_acted && hover_selects(moved, holds, already) && self.container.row_at(m, side, index).is_some() {
+            info!("tiles: {} Hover({side:?}, {index}) on its tiles", super::container_menu::CONTAINER_MENU);
             self.commands.write(MenuInput(Command::Hover(side, index)));
         }
     }
