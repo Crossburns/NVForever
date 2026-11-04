@@ -2260,8 +2260,31 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
             to[1],
             to[2]
         ),
-        AiEvent::AtPost { post, off, .. } => format!("is at {} ({off:.0} units off)", post.name()),
+        AiEvent::AtPost { post, off, at, feet, .. } => format!(
+            "is at {} ({off:.0} units off): asked for ({:.0}, {:.0}, {:.0}), stands at ({:.0}, {:.0}, {:.0})",
+            post.name(),
+            at[0],
+            at[1],
+            at[2],
+            feet[0],
+            feet[1],
+            feet[2]
+        ),
         AiEvent::NoPost { post } => format!("has no way to {}: closes in instead", post.name()),
+        AiEvent::PostFailed { post, at, feet, off, elapsed, reason, .. } => format!(
+            "gives up {}: {} after {elapsed:.1} s, {off:.0} units from ({:.0}, {:.0}, {:.0}), stands at ({:.0}, {:.0}, {:.0})",
+            post.name(),
+            match reason {
+                fnv_ai::alert::PostFailure::TimedOut => "out of time",
+                fnv_ai::alert::PostFailure::StoppedShort => "its way ended short",
+            },
+            at[0],
+            at[1],
+            at[2],
+            feet[0],
+            feet[1],
+            feet[2]
+        ),
         AiEvent::Flee { from, how, to, away, length } => format!(
             "flees from {} {}: to ({:.0}, {:.0}, {:.0}), {} from it, {length:.0} units to go",
             if *from == FormId::PLAYER_REF { "the player".to_string() } else { n(from) },

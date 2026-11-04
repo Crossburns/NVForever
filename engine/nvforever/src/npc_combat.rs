@@ -485,6 +485,24 @@ struct Bound {
     pause: f32,
 }
 
+impl Approach {
+    /// The post it was given last frame is gone: the AI dropped it (no way there, or its
+    /// walk there ended away from it, §12.1). That ends what it was for.
+    fn post_dropped(&mut self) {
+        match self.posted {
+            Some(PostKind::Guard) => {
+                self.guard = None;
+                self.guarded = true;
+            }
+            Some(_) => {
+                self.bound = None;
+                self.bound_in = stance::BOUND_RETRY;
+            }
+            None => {}
+        }
+    }
+}
+
 /// A fighter's pose this frame, for `attack_anims`.
 #[derive(Debug, Clone, Copy, Default)]
 struct Pose {
@@ -1638,16 +1656,8 @@ pub(crate) fn fight(
                 let name = &me_name;
                 let t = &mut fighter.tactic;
                 let mut want_post: Option<Post> = None;
-                // A post the AI dropped (no way there): not that kind again for a while;
-                // cover it could not reach is not looked at again.
-                if let (Some(k), false) = (t.last_post, g.awareness.tactics.posts.contains_key(&me)) {
-                    t.no_post = Some((k, clock + tactics::NO_POST_SECONDS));
-                    if matches!(k, PostKind::Cover | PostKind::Duck | PostKind::Peek) {
-                        if let Some(cv) = t.cover.take() {
-                            t.bad_cover.push(cv.behind);
-                        }
-                        t.cover_search_in = tactics::COVER_RETRY;
-                    }
+                if !g.awareness.tactics.posts.contains_key(&me) {
+                    t.post_dropped(clock);
                 }
                 let barred = |t: &Tactic, k: PostKind| t.no_post.is_some_and(|(n, until)| n == k && clock < until);
                 // Cover: rolled every 10 s by the style's Take Cover Chance.
@@ -1874,18 +1884,8 @@ pub(crate) fn fight(
             } else if !fleeing && person && matches!(arm, Arm::Melee(_)) {
                 // Closing in on a gunman: guard, bound or charge (§14.4).
                 let ap = &mut fighter.approach;
-                // A post the AI found no way to ends what it was for.
-                if ap.posted.is_some() && !g.awareness.tactics.posts.contains_key(&me) {
-                    match ap.posted {
-                        Some(PostKind::Guard) => {
-                            ap.guard = None;
-                            ap.guarded = true;
-                        }
-                        _ => {
-                            ap.bound = None;
-                            ap.bound_in = stance::BOUND_RETRY;
-                        }
-                    }
+                if !g.awareness.tactics.posts.contains_key(&me) {
+                    ap.post_dropped();
                 }
                 let mut want_post: Option<Post> = None;
                 if let Some(gd) = ap.guard.as_mut() {
@@ -2957,6 +2957,22 @@ fn log_room(phys: Option<&mut PhysState>, name: &str, what: &str, feet: [f32; 3]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dropped_post_ends_the_guard_or_the_bound_it_was_for() {
+        let guarding = Guarding { friend: 1, since: 0.0, patience: 1.0, turn: 0.0, at: [0.0; 3] };
+        let bound = Bound { at: [0.0; 3], arrived: None, pause: 0.0 };
+        let mut ap = Approach { posted: Some(PostKind::Guard), guard: Some(guarding), bound: Some(bound), ..Default::default() };
+        ap.post_dropped();
+        assert!(ap.guard.is_none() && ap.guarded && ap.bound.is_some());
+        let mut ap = Approach { posted: Some(PostKind::Advance), guard: Some(guarding), bound: Some(bound), ..Default::default() };
+        ap.post_dropped();
+        assert!(ap.bound.is_none() && ap.bound_in == stance::BOUND_RETRY && ap.guard.is_some() && !ap.guarded);
+        // It was given none: nothing ends.
+        let mut ap = Approach { guard: Some(guarding), bound: Some(bound), ..Default::default() };
+        ap.post_dropped();
+        assert!(ap.guard.is_some() && ap.bound.is_some() && !ap.guarded && ap.bound_in == 0.0);
+    }
 
     #[test]
     fn embedded_weapon_node_by_name() {

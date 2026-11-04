@@ -518,6 +518,24 @@ facing its target; a post comes before closing in (§5). A post it has no way to
 dropped (`has no way to …: closes in instead`) and the combat AI gives no post of that
 kind for 3 s (`NO_POST_SECONDS`); cover it could not reach is not chosen again [design].
 
+Arriving is measured at the actor's feet [design]. When the way to a post ends, or after
+30 s (`FLEE_WALK_SECONDS`) since it was planned, feet within 64 units horizontally of the
+point the post asks for (`combat_group::POST_ARRIVAL`, the engine's `AT_POST`; a way that
+ends short of a point off the navmesh counts while it is within that) are arrival:
+`AiEvent::AtPost`, with the point and the feet. Farther off, it failed:
+`AiEvent::PostFailed` says why (`TimedOut`, `StoppedShort`), with the point, the feet, the
+distance and the seconds; the post is released and the actor holds or closes in (§5) on
+that same update. `fnv_ai` keeps no failed state and never retries by itself, one walk per
+assignment; the recovery is the engine's, as for a post with no way to it (the 3 s above,
+the cover discarded, a melee fighter's guard or bound ended). This says nothing about what
+the place is good for: 64 units is nearness, not sight or cover. `POST_SLACK` (48 units)
+only decides whether a new request still is the post the way was planned to.
+
+Standing at its post, an actor stays there until its feet are 96 units from the point
+(`POST_RETAINED`, wider than arrival so an actor shoved about near 64 does not flip between
+the states and fill the log); past that it plans the way back, which ends in arrival or in
+the failure above, so it cannot loop on a way that stops short.
+
 ### 12.2 Fleeing [documented: GECK wiki Confidence, Combat Flee]
 
 - **When**: once hurt, every random 0 to fCombatThreatRatioUpdateTime (7.5 s) a fighter

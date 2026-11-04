@@ -37,7 +37,9 @@
 //! - **Posts** (§12.1): a place the combat AI wants a fighter at (cover, a peek out of
 //!   it, a flank, a step aside, a step back; `fnv_game::combat_group::Post`): it goes
 //!   there, running unless it aims down its sights, and stands facing its target. A post
-//!   it has no way to is dropped and it closes in as before.
+//!   it has no way to is dropped and it closes in as before. So is one whose way ends, or
+//!   runs out of time, with the actor still [`POST_ARRIVAL`] or more from it: it holds or
+//!   closes in on that same update, and what comes next is the combat AI's to choose.
 //! - **Shared searches** (§12.5) [documented: GECK wiki Combat Search]: a hostile only
 //!   noticed is searched for midway between the actor and it; the comrades searching for
 //!   the same actor's alarm (`Game::search_party`) each take their own sector of the
@@ -58,7 +60,7 @@ use crate::carry::{Activity, AiEvent};
 use crate::goal;
 use crate::Ai;
 use fnv_game::awareness::{Cause, State};
-use fnv_game::combat_group::{FleeBy, Flight, Post, PostKind};
+use fnv_game::combat_group::{FleeBy, Flight, Post, PostKind, POST_ARRIVAL};
 use fnv_game::game::Game;
 use fnv_nav::{NavGraph, Place, Space};
 use fnv_sim::FormId;
@@ -102,12 +104,26 @@ pub const SEARCH_POINTS: u32 = 3;
 /// A post that moved less than this from where the way to it was planned is kept, game
 /// units [design].
 pub const POST_SLACK: f32 = 48.0;
+/// One that has arrived goes on counting as there until it is this far from the post, game
+/// units; past that it goes back [design: wider than [`POST_ARRIVAL`], so an actor shoved
+/// about at the edge does not go back and forth between the two].
+pub const POST_RETAINED: f32 = 96.0;
 /// A flight or a walk to a post that has not arrived after this long ends where it is
 /// [design].
 pub const FLEE_WALK_SECONDS: f64 = 30.0;
 /// Behind a cover edge a fleeing actor stands this far in from it, game units [design:
 /// about an actor's width].
 pub const COVER_STANDOFF: f32 = 48.0;
+
+/// Why a walk to a post ended away from it ([`AiEvent::PostFailed`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PostFailure {
+    /// [`FLEE_WALK_SECONDS`] passed with the actor still on its way.
+    TimedOut,
+    /// The way ended, or the actor stopped walking it, too far from the post.
+    StoppedShort,
+}
 
 /// Where an actor in a combat state is ([`crate::Agent::search`]).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -417,7 +433,9 @@ impl Ai {
     }
 
     /// Go to the combat AI's `post`, or stand there facing `target` (at `at`). Returns
-    /// false when there is no way to it (the post is dropped).
+    /// false when the post is dropped: there is no way to it, or the walk there ended
+    /// [`POST_ARRIVAL`] or more from it. The caller then holds or closes in; there is no
+    /// retry here, the combat AI sees the post gone and chooses again.
     #[allow(clippy::too_many_arguments)]
     fn post_step(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId, target: FormId, at: [f32; 3], post: Post, dt: f32) -> bool {
         let now = game.time;
@@ -425,13 +443,23 @@ impl Ai {
         let space = a.walker.space;
         match a.search {
             Some(Search::Posted { kind, to, since, .. }) if kind == post.kind && flat(to, post.at) < POST_SLACK => {
-                if a.activity != Activity::Travelling || now - since > FLEE_WALK_SECONDS {
+                let stopped = a.activity != Activity::Travelling;
+                if stopped || now - since > FLEE_WALK_SECONDS {
                     let a = self.agents.get_mut(&actor).expect("listed");
                     a.walker.follower = None;
+                    a.waiting_at = None;
                     a.activity = Activity::There;
                     let feet = a.walker.feet;
+                    let off = flat(feet, post.at);
+                    if off >= POST_ARRIVAL {
+                        a.search = None;
+                        game.awareness.tactics.posts.remove(&actor);
+                        let reason = if stopped { PostFailure::StoppedShort } else { PostFailure::TimedOut };
+                        self.log(game, actor, AiEvent::PostFailed { post: kind, target, at: post.at, feet, off, elapsed: (now - since) as f32, reason });
+                        return false;
+                    }
                     a.search = Some(Search::AtPost { kind, target, at: post.at });
-                    self.log(game, actor, AiEvent::AtPost { post: kind, target, off: flat(feet, post.at) });
+                    self.log(game, actor, AiEvent::AtPost { post: kind, target, off, at: post.at, feet });
                 } else {
                     // Sights raised or lowered on the way change its pace there.
                     let speed = self.post_speed(game, actor, post);
@@ -444,7 +472,8 @@ impl Ai {
                 }
                 return true;
             }
-            Some(Search::AtPost { kind, at: here, .. }) if kind == post.kind && flat(here, post.at) < POST_SLACK => {
+            // Moved off it (shoved, say), it goes back: the way below ends here or fails.
+            Some(Search::AtPost { kind, at: here, .. }) if kind == post.kind && flat(here, post.at) < POST_SLACK && flat(a.walker.feet, post.at) < POST_RETAINED => {
                 self.face(game, actor, Place { space, pos: at }, dt * COMBAT_TURN);
                 return true;
             }

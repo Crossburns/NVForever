@@ -282,10 +282,14 @@ pub enum AiEvent {
     /// In Combat it goes to the post the combat AI chose (`crate::alert`): `to`, `away`
     /// units off, a way of `length` units.
     Post { post: fnv_game::combat_group::PostKind, target: FormId, to: [f32; 3], away: f32, length: f32 },
-    /// It is at its post, `off` units from where the post is.
-    AtPost { post: fnv_game::combat_group::PostKind, target: FormId, off: f32 },
+    /// It is at its post: its feet at `feet`, `off` units from where the post asks for it
+    /// (`at`).
+    AtPost { post: fnv_game::combat_group::PostKind, target: FormId, off: f32, at: [f32; 3], feet: [f32; 3] },
     /// It has no way to its post: it closes in instead.
     NoPost { post: fnv_game::combat_group::PostKind },
+    /// Its walk to its post ended away from it after `elapsed` seconds: its feet at `feet`,
+    /// `off` units from where the post asks for it (`at`). The post is dropped.
+    PostFailed { post: fnv_game::combat_group::PostKind, target: FormId, at: [f32; 3], feet: [f32; 3], off: f32, elapsed: f32, reason: crate::alert::PostFailure },
     /// It flees `from` (`how`): to `to`, `away` units from the one it flees, a way of
     /// `length` units.
     Flee { from: FormId, how: fnv_game::combat_group::FleeBy, to: [f32; 3], away: f32, length: f32 },
