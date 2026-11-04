@@ -2268,11 +2268,14 @@ mod tests {
         let (mut app, _files) = sound_app();
         let on = |on| LoopSound { sound: BEEP, on };
         // On, off, on, off, then on twice, in one frame: each word drops the start
-        // before it; the last one waits.
+        // before it; the last one is left. It waits for its file, or has already started:
+        // `play` reads the loop words before `start_decided`, and the worker may finish
+        // the decode in between (a race, CI on main 2026-11-04).
         app.world_mut().write_message_batch([on(true), on(false), on(true), on(false), on(true), on(true)]);
         app.update();
         assert_eq!(app.world().resource::<Sfx>().waits.cancelled, 3);
-        assert_eq!(app.world().resource::<Sfx>().waiting.len(), 1);
+        let waiting = app.world().resource::<Sfx>().waiting.len();
+        assert_eq!(waiting + count::<Looping>(&mut app), 1, "one start left, waiting or going round");
         // One loop once the file is ready.
         run_until(&mut app, |w| w.resource::<Sfx>().waiting.is_empty());
         assert_eq!(count::<Looping>(&mut app), 1);

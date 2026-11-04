@@ -128,6 +128,27 @@ pub fn background_alpha() -> f64 {
 /// A text's width and height in interface units: font number, string, wrap width.
 pub type Size<'a> = dyn Fn(f64, &str, Option<f64>) -> (f64, f64) + 'a;
 
+/// Which menus `super::draw` drew from their tiles this frame, for the blur of the world
+/// behind them (nvforever's `imagespace::tile_menu_blur`) [design]. Empty by default: with
+/// the menu switches off it stays empty and nothing reads differently. Written whole every
+/// drawing frame from the decision the drawing itself made, so it cannot outlive a closed
+/// menu or a fallback to the hand-built drawing.
+#[derive(bevy::prelude::Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TileMenuBlur {
+    /// `TutorialMenu` is drawn from its tiles.
+    pub tutorial: bool,
+    /// `ContainerMenu` is drawn from its tiles. Not set yet: that menu's tile drawing is not
+    /// in `super::draw` so far, and sets it there beside `tutorial` when it comes.
+    pub container: bool,
+}
+
+impl TileMenuBlur {
+    /// Any menu drawn from its tiles wants the world blurred.
+    pub fn any(self) -> bool {
+        self.tutorial || self.container
+    }
+}
+
 /// Whether the open message box is drawn from `MessageMenu`'s tiles: the switch on, the
 /// menu files read, a message box the open menu and its file built into the tree (the
 /// panels other script menus show in the same box, and a box whose file is missing or did
