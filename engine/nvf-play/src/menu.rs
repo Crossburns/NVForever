@@ -873,15 +873,16 @@ fn draw(
     mut forms: Local<Option<crate::pipboy::stats::read::Forms>>,
     (tiles, mut was_tiled, tile_menu): DrawTiles,
 ) {
-    // T15a: with `[UI] TileMenus=QuantityMenu` the prompt is drawn from its tiles
-    // (`crate::tiles::menus`) once the tree has built its file; drawn again here when that
-    // changes (the frame the prompt opens, before the tree builds it, draws it by hand).
-    let prompt = active.0.as_ref().is_some_and(|m| m.quantity.is_some());
-    let tiled = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| crate::tiles::menus::quantity_tiled(tiles.as_ref().is_some_and(|t| t.quantity), &rt.game, prompt));
     // T15c: with `[UI] TileMenus=ContainerMenu` the menu is drawn from its tiles
     // (`crate::tiles::container_menu`) once the tree has built its file; a sheet takes the
     // pointer here instead (no click past it [documented: `&no_click_past;`]).
     let container_tiled = tile_menu.is_some_and(|t| t.menu.is_some());
+    // T15a: with `[UI] TileMenus=QuantityMenu`, or over a container menu drawn from its tiles,
+    // the prompt is drawn from its tiles (`crate::tiles::menus`) once the tree has built its
+    // file; drawn again here when that changes (the frame the prompt opens, before the tree
+    // builds it, draws it by hand).
+    let prompt = active.0.as_ref().is_some_and(|m| m.quantity.is_some());
+    let tiled = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| crate::tiles::menus::quantity_tiled(tiles.as_ref().is_some_and(|t| t.quantity), &rt.game, prompt, container_tiled));
     if !active.is_changed() && !roots.is_empty() && (tiled, container_tiled) == *was_tiled {
         return;
     }

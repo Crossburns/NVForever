@@ -268,9 +268,12 @@ leaves it open for a screenshot.
 container, barter and inventory menus is drawn from the game's `QuantityMenu` tiles
 (`engine/nvf-play/src/tiles/menus.rs`), the code above not spawned once the tree has the
 file (the frame the prompt opens draws it by hand once; a missing file keeps it hand-built);
-the crafting menu's prompt stays drawn by it. The tree builds the file while the prompt
+the crafting menu's prompt stays drawn by it. With `[UI] TileMenus=ContainerMenu` alone only
+the prompt over a container menu actually drawn from its tiles is (§8) [design]: a container
+menu that fell back to its hand-built drawing, and the barter and inventory menus, keep the
+hand-built prompt. The tree builds the file while the prompt
 shows, whatever the switch (`Game::ui_prompt`, as the open menus build; MenuMode does not
-report it): with the switch off its tiles are readable by scripts but nothing writes or
+report it): with neither switch on its tiles are readable by scripts but nothing writes or
 draws them. The code writes the meter's `user0`
 (the stack) and `user2` (the amount) and the step sizes `user3`/`user4` (1 and 10, ours)
 [documented: the file's comments on them]; the file works out the meter's value, its
@@ -280,7 +283,8 @@ per tick) and the amount's text. The words are the game strings `sHowMany`, `sOK
 when the load order has none). A pointer click on OK, Cancel or an arrow does what the
 keys do; a press on the meter, held as it drags, sets the amount under the pointer; the
 keys stay the ones above (the file's bindings act for a script's MenuTapKey and for the
-controller's buttons that stand in for no key). Smoke `tiles-quantity`; the drop aid's
+controller's buttons that stand in for no key). Smoke `tiles-quantity`,
+`tiles-container-quantity-alone`; the drop aid's
 `ask` now holds the prompt open until it is answered.
 
 ## 8. The container menu from its file (T15c)
@@ -289,9 +293,10 @@ Behind `[UI] TileMenus=ContainerMenu` (`engine/nvf-play/src/tiles/container_menu
 `tiles/list.rs`, `tiles/item_card.rs`, issue #1468) the open menu (1008) is drawn from
 `menus\container_menu.xml` and the hand-built drawing gives way to a sheet taking the pointer
 at its stacking level (100). The model, its keys and the wheel stay the hand-built menu's
-(§5). The prompt draws over it, from its file or by hand, and takes the pointer alone
+(§5). The prompt draws over it from `QuantityMenu`'s file, with no switch of its own, or by
+hand when that file is missing or short of a path (§7) [design], and takes the pointer alone
 [documented: `&no_click_past;`]. Smoke: `tiles-container`, `tiles-container-quantity`,
-`container-default-drawing`. Not the default; what still differs from the original closes this
+`tiles-container-quantity-alone`, `container-default-drawing`. Not the default; what still differs from the original closes this
 section.
 
 The original's values [observed: the private `hud_container_*` capture at 1280 x 720, read
@@ -367,7 +372,10 @@ What the tile path does with these, and where it differs:
 - **The words on the tiles**: the hints come from the strings table, as every key hint of the
   files does: Exit's `sPCMenuHintE` from the file, Take All's `sPCMenuHintR` written in code for
   the key that works; a GMST wins, else `fnv_ui::strings::BUILT_IN`'s label in its bracket form
-  (so not the original's or the hand-built menu's letter and bracket). The cards' titles read
+  (so not the original's or the hand-built menu's letter and bracket). The prompt over the menu
+  reads the same way, from `QuantityMenu`'s file: `sPCMenuHintA` and `sPCMenuHintE` after `sOK`
+  and `sCancel` [design] (the hand-built prompt, kept for the frame it opens and for a fallback,
+  keeps its own letters). The cards' titles read
   settings no plugin defines [observed: menu-xml.md §2.4], so the file would show
   `BUILT_IN`'s labels; those do not fit a card (`ConditionMeter` stands 62 in and a title 5 in
   [documented]; the label of the weight measures 72 units [observed: our shot]). A title that

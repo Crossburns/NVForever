@@ -405,7 +405,7 @@ impl MenuTiles<'_, '_> {
     /// (each measured again only when its string changed), before scripts [design:
     /// ui-tile-tree.md §4.1]. Off, or without the menu files, nothing.
     fn write(&mut self, game: &mut fnv_game::Game<'_>, switch: vanilla::TileMenus, fonts: &mut draw::FontKit, calendar: Option<fnv_sim::clock::Calendar>) {
-        if !(switch.message || switch.quantity || switch.sleep_wait) || game.ui_files.is_none() {
+        if !(switch.message || switch.quantity || switch.sleep_wait || switch.container) || game.ui_files.is_none() {
             return;
         }
         self.write_wait(game, switch, fonts, calendar);
@@ -413,7 +413,13 @@ impl MenuTiles<'_, '_> {
         // tiled decision here would prevent a later short box from being written.
         let message_open = switch.message && game.menu == Some(fnv_game::game::menus::MESSAGE);
         let message = (message_open && menus::message_built(&game.ui_tree).yes()).then(|| game.ui_tree.menu(menus::MESSAGE_MENU)).flatten();
-        let quantity = self.quantity().filter(|_| menus::quantity_tiled(switch.quantity, game, true));
+        // [design] Over a container menu drawn from tiles the prompt is too. This frame's
+        // decision, the one `write_container` takes after this writer: `ContainerTiles::menu`
+        // here would still be last frame's.
+        let shown = self.active.as_ref().and_then(|a| a.0.as_ref());
+        let prompt_open = shown.is_some_and(|m| m.quantity.is_some());
+        let container_tiled = prompt_open && container_menu::tiled(switch.container, game, container_menu::is_container(shown));
+        let quantity = self.quantity().filter(|_| menus::quantity_tiled(switch.quantity, game, true, container_tiled));
         let prompt = quantity.and_then(|q| game.ui_tree.menu(menus::QUANTITY_MENU).map(|m| (m, q)));
         // Which showing the box on screen is (counted up for every box shown, one alike
         // included): its rows are made again for another (`menus::another_box`).
@@ -445,7 +451,7 @@ impl MenuTiles<'_, '_> {
         if message_open {
             written.warn_fallback(menus::MESSAGE_MENU, menus::message_status(ui));
         }
-        if switch.quantity && self.active.as_ref().and_then(|a| a.0.as_ref()).is_some_and(|m| m.quantity.is_some()) {
+        if (switch.quantity || container_tiled) && prompt_open {
             written.warn_fallback(menus::QUANTITY_MENU, menus::quantity_built(ui));
         }
         match prompt {

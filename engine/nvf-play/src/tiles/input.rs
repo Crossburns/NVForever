@@ -4,8 +4,8 @@
 //!
 //! - **Which menus take input**: a menu drawn from its file that the player works: since
 //!   T15a the message box and the "How many?" prompt while drawn from tiles
-//!   (`[UI] TileMenus=MessageMenu,QuantityMenu`, `super::menus`), the prompt under the
-//!   box; since T11 the start menu while the pause menu's Mods page is up
+//!   (`[UI] TileMenus=MessageMenu,QuantityMenu`, or for the prompt a container menu drawn
+//!   from its tiles, `super::menus`), the prompt under the box; since T11 the start menu while the pause menu's Mods page is up
 //!   (`[UI] TileMenus=StartMenu`, `super::mods`). The HUD (`[UI] TileMenus=HUDMainMenu`) is drawn from tiles but has no pointer in
 //!   play [hypothesis: the original's HUD takes no clicks]. With none, nothing is fed and
 //!   the frame does no tree work [design: the maintainer's review of #902], unless the test
@@ -196,7 +196,7 @@ impl MenuInputs<'_, '_> {
         use super::menus::{message_tiled, quantity_tiled, MESSAGE_MENU, QUANTITY_MENU};
         let mut out = Vec::new();
         out.extend(super::container_menu::takes_input(self.container.menu, self.quantity().is_some()));
-        if quantity_tiled(menus.quantity, game, self.quantity().is_some()) {
+        if quantity_tiled(menus.quantity, game, self.quantity().is_some(), self.container.menu.is_some()) {
             out.extend(game.ui_tree.menu(QUANTITY_MENU));
         }
         if message_tiled(menus.message, game) {

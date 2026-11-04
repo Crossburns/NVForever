@@ -1,7 +1,8 @@
 //! T15c: the container menu drawn from `menus\container_menu.xml`, behind
 //! `[UI] TileMenus=ContainerMenu` [design: ui-tile-tree.md §6.2 step 3; notes: barter-menu.md
 //! §8]. Off (the default), none of this runs and the hand-built menu (`crate::menu::look`)
-//! draws.
+//! draws. While it draws, its "How many?" prompt is drawn from `QuantityMenu`'s tiles too,
+//! with no switch of its own (`super::menus::quantity_tiled`).
 //!
 //! - **The rules stay the hand-built menu's** (`crate::menu::model`): what a row is, its
 //!   order, the prompt, Take All and what it closes; every command goes through
