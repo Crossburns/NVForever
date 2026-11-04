@@ -1381,6 +1381,23 @@ mod tests {
     }
 
     #[test]
+    fn a_clip_window_carries_to_the_pieces_only_once_turned_on() {
+        let mut ui = Ui::new();
+        let src = MemSource::default().with(
+            "m.xml",
+            r#"<menu name="M"><hotrect name="W"><x>5</x><y>6</y><width>40</width><height>30</height><clipwindow>&true;</clipwindow>
+                <text name="T"><string>x</string><y>-9</y><width>30</width><height>90</height></text></hotrect></menu>"#,
+        );
+        ui.load_menu(&src, "m.xml").unwrap();
+        ui.update();
+        let menu = ui.menu("M").unwrap();
+        let clip = |ui: &Ui| pieces(ui, menu, &plain, Select::Whole { kept: &[], strip: None }, true).0[0].clip;
+        assert_eq!(clip(&ui), None);
+        fnv_ui::input::mark_clip_windows(&mut ui, menu);
+        assert_eq!(clip(&ui), Some(TileRect { left: 5.0, top: 6.0, width: 40.0, height: 30.0 }));
+    }
+
+    #[test]
     fn a_loose_hud_draws_nothing_of_its_file_without_the_archived_names() {
         let src = MemSource::default().with_loose("hud.xml", r#"<menu name="HUDMainMenu"><rect name="New"><red>9</red><width>4</width><height>4</height></rect></menu>"#);
         let mut ui = Ui::new();

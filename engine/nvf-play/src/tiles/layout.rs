@@ -220,7 +220,8 @@ fn place(tile: &Tile, kind: &Kind, parent: Context, measure: &Measure<'_>) -> Co
 }
 
 fn children_context(tile: &Tile, mut context: Context) -> Context {
-    if tile.get("clips").is_some_and(Value::truthy) {
+    // `clips`, or a `clipwindow` its menu turned on: the same rule as under the pointer.
+    if fnv_ui::input::clips_children(tile) {
         context.clip = Some(context.clip.map_or(context.rect, |clip| clip.intersect(context.rect)));
     }
     context
@@ -386,6 +387,50 @@ mod tests {
         assert_eq!(items[1].rect.width, 200.0);
         assert_eq!(items[3].clip.unwrap().width, 0.0);
         assert_eq!(layout(&ui, items[1].tile, &unmeasured, false), items[1..2]);
+    }
+
+    #[test]
+    fn clipwindow_clips_hotrect_descendants() {
+        let (mut ui, root) = tree(
+            r#"<menu name="M"><hotrect name="W"><x>10</x><y>20</y><width>100</width><height>80</height><clipwindow>&true;</clipwindow>
+            <text name="T"><string>t</string><y>-30</y><width>90</width><height>400</height></text>
+          </hotrect></menu>"#,
+        );
+        // Not turned on: nothing is cropped, as in every menu that did not ask for it.
+        let t = ui.find_tile("M/W/T").unwrap();
+        let of = |ui: &Ui| layout(ui, root, &unmeasured, true).into_iter().find(|i| i.tile == t).unwrap();
+        assert_eq!(of(&ui).clip, None);
+        fnv_ui::input::mark_clip_windows(&mut ui, root);
+        let item = of(&ui);
+        assert_eq!(item.clip, Some(Rect { left: 10.0, top: 20.0, width: 100.0, height: 80.0 }));
+        // The crop moves nothing: the text stands where its own `y` puts it.
+        assert_eq!((item.rect.top, item.rect.height), (-10.0, 400.0));
+    }
+
+    #[test]
+    fn clipwindow_intersects_clips_and_survives_subtree_layout() {
+        let (mut ui, root) = tree(
+            r#"<menu name="M"><rect name="C"><x>10</x><y>10</y><width>50</width><height>50</height><clips>&true;</clips>
+            <hotrect name="W"><x>20</x><y>20</y><width>100</width><height>100</height><clipwindow>1</clipwindow>
+              <image name="I"><width>500</width><height>500</height></image>
+            </hotrect>
+            <hotrect name="Off"><clipwindow>0</clipwindow><image name="J"><width>5</width><height>5</height></image></hotrect>
+            <hotrect name="Apart"><x>500</x><width>9</width><height>9</height><clipwindow>1</clipwindow><image name="K"/></hotrect>
+          </rect></menu>"#,
+        );
+        fnv_ui::input::mark_clip_windows(&mut ui, root);
+        let items = layout(&ui, root, &unmeasured, true);
+        let at = |name: &str| items.iter().find(|i| ui.tile(i.tile).name == name).unwrap();
+        // The window's box less what the outer clip leaves of it.
+        let both = Some(Rect { left: 30.0, top: 30.0, width: 30.0, height: 30.0 });
+        assert_eq!(at("I").clip, both);
+        // A false `clipwindow` adds nothing to the clip above it.
+        assert_eq!(at("J").clip, Some(Rect { left: 10.0, top: 10.0, width: 50.0, height: 50.0 }));
+        // A window outside the clip leaves nothing.
+        assert_eq!(at("K").clip.unwrap().width, 0.0);
+        // Laid out alone, the image still has both ancestors' crop.
+        let i = at("I").tile;
+        assert_eq!(layout(&ui, i, &unmeasured, true)[0].clip, both);
     }
 
     #[test]
