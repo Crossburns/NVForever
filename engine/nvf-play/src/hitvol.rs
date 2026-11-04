@@ -38,9 +38,9 @@
 //! Test aids that only measure (`crate::test_aid`): `NVF_PLAY_TEST_HITVOL_SCAN=1` logs
 //! `hitvol scan:` lines, the walk's counts ([`ScanCounts`]) every [`SCAN_LOG_FRAMES`]
 //! frames and a summary at exit; `NVF_PLAY_TEST_HITVOL_COMPARE=1` walks every `RefVisual`
-//! as well each frame, the walk the mark replaced, and logs what the marked walk misses
-//! and each actor's meshes and volume as they change (`hitvol compare:`, a summary at
-//! exit; what it does not show: [`ScanCompare`]).
+//! as well each frame, the walk the mark replaced ([`compare_walks`], in the schedule only
+//! then), and logs what the marked walk misses and each actor's meshes and volume as they
+//! change (`hitvol compare:`, a summary at exit; what it does not show: [`ScanCompare`]).
 
 use bevy::camera::primitives::Aabb;
 use bevy::ecs::lifecycle::HookContext;
@@ -98,8 +98,9 @@ pub struct ActorBoundsCandidate;
 
 /// Whether `entity` should have the mark now. Only with the simulation: [`crate::PlayPlugin`]
 /// brings it together with [`HitVolumePlugin`], so a run that is not `--play` keeps no
-/// volumes and spends nothing on marks; one that gets it late is marked by
-/// [`reclassify_candidates`] before its next walk.
+/// volumes and spends nothing on marks. One that gets it late is marked by
+/// [`reclassify_candidates`] at the next `First`: if it arrives after `First`, that frame's
+/// walk does not find the meshes that were there before it.
 fn wants_candidate(world: &World, entity: Entity) -> bool {
     world.get_resource::<SimState>().is_some_and(|sim| world.get::<RefVisual>(entity).is_some_and(|r| sim.may_be_actor(r.0)))
 }
@@ -256,14 +257,18 @@ impl Plugin for HitVolumePlugin {
             .init_resource::<ActorParts>()
             .init_resource::<ActorBlocks>()
             .add_systems(First, reclassify_candidates)
-            .add_systems(Update, sync_volumes.after(PhysSystems).in_set(crate::PlaySet::Physics))
             .add_systems(Last, report);
-        // Only when asked for: the systems are not even in the schedule otherwise.
+        // Only when asked for: the aids' systems are not in the schedule otherwise. Without
+        // the comparison, `sync_volumes` looks up that its resource is missing and clones
+        // nothing. Piped, the comparison is one system with the walk, so no sync point can
+        // fall between them and change the meshes it compares [Bevy 0.20 `PipeSystem`].
+        if aid_on("NVF_PLAY_TEST_HITVOL_COMPARE") {
+            app.init_resource::<ScanCompare>().add_systems(Update, sync_volumes.pipe(compare_walks).after(PhysSystems).in_set(crate::PlaySet::Physics));
+        } else {
+            app.add_systems(Update, sync_volumes.after(PhysSystems).in_set(crate::PlaySet::Physics));
+        }
         if aid_on("NVF_PLAY_TEST_HITVOL_SCAN") {
             app.init_resource::<ScanLog>().add_systems(Update, log_scan.after(sync_volumes).in_set(crate::PlaySet::Physics));
-        }
-        if aid_on("NVF_PLAY_TEST_HITVOL_COMPARE") {
-            app.init_resource::<ScanCompare>();
         }
     }
 }
@@ -340,7 +345,6 @@ fn sync_volumes(
     script: Option<Res<crate::script::ScriptState>>,
     posed: Res<ActorParts>,
     parts: Query<BoundsPart, With<ActorBoundsCandidate>>,
-    every_mesh: Query<EveryMesh>,
     mut compare: Option<ResMut<ScanCompare>>,
     mut phys: ResMut<PhysState>,
     mut vols: ResMut<HitVolumes>,
@@ -350,7 +354,7 @@ fn sync_volumes(
     // blocks, living actors and heights below.
     let (mut bounds, mut scan) = gather(parts.iter(), &sim);
     if let Some(c) = compare.as_deref_mut() {
-        c.check_bounds(&bounds, &every_mesh, &sim);
+        c.used.clone_from(&bounds);
     }
     // A corpse with a ragdoll is hit on its ragdoll bodies (`fnv_phys::ragdoll`).
     bounds.retain(|&id, _| sim.present(id) && !phys.world.has_ragdoll(id));
@@ -403,8 +407,15 @@ fn sync_volumes(
     scan.actors = bounds.len();
     vols.scan = scan;
     if let Some(c) = compare.as_deref_mut() {
-        c.check_volumes(&bounds, phys.world.actor_volumes());
+        c.kept = bounds;
     }
+}
+
+/// `NVF_PLAY_TEST_HITVOL_COMPARE`: piped onto [`sync_volumes`], which changes no mesh, so
+/// it sees the meshes that walk saw.
+fn compare_walks(mut compare: ResMut<ScanCompare>, every_mesh: Query<EveryMesh>, sim: Res<SimState>, phys: Res<PhysState>) {
+    compare.check_bounds(&every_mesh, &sim);
+    compare.check_volumes(phys.world.actor_volumes());
 }
 
 /// Frames between `hitvol scan:` lines ([`log_scan`]).
@@ -437,14 +448,28 @@ const COMPARE_TOLD: u64 = 20;
 /// What the comparison reads of each mesh: the walk the mark replaced.
 type EveryMesh = (Entity, BoundsPart, Has<ActorBoundsCandidate>);
 
+/// An actor's meshes in one frame's walk over every `RefVisual`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MeshCounts {
+    shown: usize,
+    all: usize,
+    /// Those that were not its own in the last frame's walk: a mesh is walked once it has
+    /// bounds, so a part put on counts a frame or more after its spawn.
+    new: usize,
+    /// Those that were its own in the last frame's walk and are not now.
+    gone: usize,
+}
+
 /// The marked walk against the walk over every `RefVisual`, over the run
-/// (`NVF_PLAY_TEST_HITVOL_COMPARE`), from inside [`sync_volumes`]: the bounds that call goes
-/// on to use against those of every mesh at that moment, and the volumes it leaves in
-/// physics against the actors it kept.
+/// (`NVF_PLAY_TEST_HITVOL_COMPARE`), by [`compare_walks`]: the bounds [`sync_volumes`] goes
+/// on to use against those of every mesh in the same frame, and the ids that have a volume
+/// in physics against the actors it kept.
 ///
 /// It shows the mark misses no mesh in the frames of this run. It does not show the frame
 /// is as a build without the mark would have it: both walks share [`gather`], so a fault in
-/// the union is in both, and blocks, heights and ray hits are not compared.
+/// the union is in both, and blocks, heights and ray hits are not compared. The volumes are
+/// compared by id alone ([`fnv_phys`]'s `actor_volumes`, the keys of its actors): a stale
+/// place, a wrong size or layer, or wrong part capsules pass.
 #[derive(Resource, Default, Debug)]
 struct ScanCompare {
     frames: u64,
@@ -460,34 +485,44 @@ struct ScanCompare {
     missed: u64,
     /// References whose bounds differ between the walks, over all frames.
     mismatched: u64,
-    /// Frames whose volumes in physics are not those of the actors kept.
-    volumes_wrong: u64,
-    /// This frame's meshes of each actor, from the full walk: those shown and all of them.
-    /// Hidden ones count here because they are in no bounds: the rifle of an actor under
-    /// Weapons Unequipped (`nvforever`'s alert.rs hides its `Weapon` node) comes and goes
-    /// without changing the shown number.
-    meshes: BTreeMap<u32, (usize, usize)>,
-    /// Each actor's meshes, shown and all, and whether it has a volume, as last logged.
+    /// Frames in which the ids with a volume in physics are not those of the actors kept.
+    /// Ids only: see above.
+    volume_ids_wrong: u64,
+    /// This frame's bounds from [`sync_volumes`], before leaving out actors not present or
+    /// with a ragdoll, as the full walk's are.
+    used: Bounds,
+    /// The actors [`sync_volumes`] gave a volume this frame.
+    kept: Bounds,
+    /// This frame's meshes of each actor, from the full walk. Hidden ones count here because
+    /// they are in no bounds: the rifle of an actor under Weapons Unequipped (`nvforever`'s
+    /// alert.rs hides its `Weapon` node) comes and goes without changing the shown number.
+    meshes: BTreeMap<u32, MeshCounts>,
+    /// The actor meshes of the last frame's full walk and their actors.
+    walked: HashMap<Entity, u32>,
+    /// Each actor's meshes, shown and all, and whether physics has a volume for it, as last
+    /// logged.
     shown: BTreeMap<u32, (usize, usize, bool)>,
 }
 
 impl ScanCompare {
     fn told(&self) -> u64 {
-        self.missed + self.mismatched + self.volumes_wrong
+        self.missed + self.mismatched + self.volume_ids_wrong
     }
 
-    /// `used`: the bounds [`sync_volumes`] has just gathered, before leaving out actors
-    /// not present or with a ragdoll, as the full walk's are.
-    fn check_bounds(&mut self, used: &Bounds, every_mesh: &Query<EveryMesh>, sim: &SimState) {
+    /// [`Self::used`] against the walk over every mesh.
+    fn check_bounds(&mut self, every_mesh: &Query<EveryMesh>, sim: &SimState) {
         let (full, full_scan) = gather(every_mesh.iter().map(|(_, part, _)| part), sim);
         let marked = every_mesh.iter().filter(|(_, _, has)| *has).count();
         self.meshes.clear();
+        let mut walked = HashMap::with_capacity(self.walked.len());
         for (e, (r, _, _, vis), has) in every_mesh {
             if sim.is_actor(r.0) {
+                walked.insert(e, r.0);
                 let count = self.meshes.entry(r.0).or_default();
-                count.1 += 1;
+                count.all += 1;
+                count.new += usize::from(self.walked.get(&e) != Some(&r.0));
                 if vis.get() {
-                    count.0 += 1;
+                    count.shown += 1;
                     if !has {
                         if self.told() < COMPARE_TOLD {
                             warn!("hitvol compare: missed entity {e} of reference {:08X}", r.0);
@@ -497,9 +532,15 @@ impl ScanCompare {
                 }
             }
         }
-        let ids: std::collections::BTreeSet<u32> = full.keys().chain(used.keys()).copied().collect();
+        for (_, r) in self.walked.iter().filter(|(e, r)| walked.get(*e) != Some(*r)) {
+            if let Some(count) = self.meshes.get_mut(r) {
+                count.gone += 1;
+            }
+        }
+        self.walked = walked;
+        let ids: std::collections::BTreeSet<u32> = full.keys().chain(self.used.keys()).copied().collect();
         for id in ids {
-            let (a, b) = (full.get(&id), used.get(&id));
+            let (a, b) = (full.get(&id), self.used.get(&id));
             if a != b {
                 if self.told() < COMPARE_TOLD {
                     warn!("hitvol compare: bounds of reference {id:08X} differ: every mesh {a:?}, used {b:?}");
@@ -515,20 +556,22 @@ impl ScanCompare {
         self.left_out = self.left_out.max(full_scan.matched.saturating_sub(marked));
     }
 
-    /// `kept`: the actors [`sync_volumes`] gave a volume. One line per change of an actor's
-    /// meshes or volume: what a smoke scenario can hold one actor to.
-    fn check_volumes(&mut self, kept: &Bounds, volumes: impl Iterator<Item = u32>) {
+    /// `volumes`: the ids with a volume in physics, against [`Self::kept`]. One line per
+    /// change of an actor's meshes or volume, "has a volume" as physics has it, with the
+    /// meshes that came and went in that frame: what a smoke scenario can hold one actor to.
+    fn check_volumes(&mut self, volumes: impl Iterator<Item = u32>) {
         let volumes: std::collections::BTreeSet<u32> = volumes.collect();
-        if !volumes.iter().eq(kept.keys()) {
+        if !volumes.iter().eq(self.kept.keys()) {
             if self.told() < COMPARE_TOLD {
-                warn!("hitvol compare: volumes differ from the actors kept: {volumes:08X?}");
+                warn!("hitvol compare: volume ids differ from the actors kept: {volumes:08X?}");
             }
-            self.volumes_wrong += 1;
+            self.volume_ids_wrong += 1;
         }
-        let now: BTreeMap<u32, (usize, usize, bool)> = self.meshes.iter().map(|(&id, &(shown, all))| (id, (shown, all, kept.contains_key(&id)))).collect();
+        let now: BTreeMap<u32, (usize, usize, bool)> = self.meshes.iter().map(|(&id, c)| (id, (c.shown, c.all, volumes.contains(&id)))).collect();
         for (id, &(shown, all, has)) in &now {
-            if self.shown.get(id) != Some(&(shown, all, has)) {
-                info!("hitvol compare: actor {id:08X} has {shown} of {all} meshes shown and {}", if has { "a volume" } else { "no volume" });
+            let MeshCounts { new, gone, .. } = self.meshes[id];
+            if self.shown.get(id) != Some(&(shown, all, has)) || new + gone > 0 {
+                info!("hitvol compare: actor {id:08X} has {shown} of {all} meshes shown and {}; {new} new, {gone} gone", if has { "a volume" } else { "no volume" });
             }
         }
         for id in self.shown.keys().filter(|id| !now.contains_key(id)) {
@@ -555,8 +598,8 @@ fn report(mut exit: MessageReader<AppExit>, vols: Res<HitVolumes>, blocks: Res<A
     }
     if let Some(c) = compare {
         info!(
-            "hitvol compare summary: frames={} with_actors={} every_mesh_matched_most={} marked_matched_most={} left_out_most={} accepted_most={} missed={} mismatched={} volumes_wrong={}",
-            c.frames, c.frames_with_actors, c.full_matched, c.marked_matched, c.left_out, c.accepted, c.missed, c.mismatched, c.volumes_wrong
+            "hitvol compare summary: frames={} with_actors={} every_mesh_matched_most={} marked_matched_most={} left_out_most={} accepted_most={} missed={} mismatched={} volume_ids_wrong={}",
+            c.frames, c.frames_with_actors, c.full_matched, c.marked_matched, c.left_out, c.accepted, c.missed, c.mismatched, c.volume_ids_wrong
         );
     }
     let ids: Vec<u32> = phys.world.actor_volumes().collect();
@@ -752,7 +795,7 @@ mod tests {
             .init_resource::<ScanLog>()
             .init_resource::<ScanCompare>()
             .add_systems(First, reclassify_candidates)
-            .add_systems(Update, (sync_volumes, log_scan).chain());
+            .add_systems(Update, (sync_volumes.pipe(compare_walks), log_scan).chain());
         app
     }
 
@@ -787,7 +830,7 @@ mod tests {
     fn assert_walks_agree(app: &App) {
         let c = app.world().resource::<ScanCompare>();
         assert!(c.frames > 0);
-        assert_eq!((c.missed, c.mismatched, c.volumes_wrong), (0, 0, 0), "{c:?}");
+        assert_eq!((c.missed, c.mismatched, c.volume_ids_wrong), (0, 0, 0), "{c:?}");
     }
 
     /// Nothing is left of an actor that had a volume.
@@ -1112,15 +1155,50 @@ mod tests {
     }
 
     #[test]
+    fn the_comparison_goes_by_the_ids_physics_has() {
+        let meshes = BTreeMap::from([(ACHR_REF, MeshCounts::default()), (ACRE_REF, MeshCounts::default())]);
+        let mut c = ScanCompare { kept: Bounds::from([(ACHR_REF, ([0.0; 3], [1.0; 3]))]), meshes, ..Default::default() };
+        // Physics has another actor than the one kept: counted, and "has a volume" is physics'.
+        c.check_volumes([ACRE_REF].into_iter());
+        assert_eq!(c.volume_ids_wrong, 1);
+        assert_eq!(c.shown, BTreeMap::from([(ACHR_REF, (0, 0, false)), (ACRE_REF, (0, 0, true))]));
+        c.check_volumes([ACHR_REF].into_iter());
+        assert_eq!(c.volume_ids_wrong, 1);
+        assert_eq!(c.shown, BTreeMap::from([(ACHR_REF, (0, 0, true)), (ACRE_REF, (0, 0, false))]));
+    }
+
+    #[test]
+    fn the_walk_stands_alone_without_the_comparison() {
+        let mut app = App::new();
+        app.insert_resource(sim())
+            .init_resource::<PhysState>()
+            .init_resource::<HitVolumes>()
+            .init_resource::<ActorParts>()
+            .init_resource::<ActorBlocks>()
+            .add_systems(Update, sync_volumes);
+        mesh(&mut app, ACHR_REF, [0.0; 3]);
+        app.update();
+        assert_stands(&app, ACHR_REF);
+    }
+
+    #[test]
     fn the_comparison_follows_each_actors_meshes_and_volume() {
         let shown = |app: &App| app.world().resource::<ScanCompare>().shown.clone();
+        let moved = |app: &App| {
+            let c = app.world().resource::<ScanCompare>().meshes[&ACHR_REF];
+            (c.new, c.gone)
+        };
         let mut app = app(sim());
         let a = mesh(&mut app, ACHR_REF, [0.0; 3]);
         app.update();
         assert_eq!(shown(&app), BTreeMap::from([(ACHR_REF, (1, 1, true))]));
+        assert_eq!(moved(&app), (1, 0));
         let b = mesh(&mut app, ACHR_REF, [0.0, 0.0, 100.0]);
         app.update();
         assert_eq!(shown(&app), BTreeMap::from([(ACHR_REF, (2, 2, true))]));
+        assert_eq!(moved(&app), (1, 0));
+        app.update();
+        assert_eq!(moved(&app), (0, 0));
         // A hidden mesh counts among all of them, in no bounds. Taken away, only that
         // number changes, as a rifle that is hidden leaving the actor.
         let hidden = mesh(&mut app, ACHR_REF, [0.0, 0.0, 900.0]);
@@ -1130,6 +1208,13 @@ mod tests {
         app.world_mut().entity_mut(hidden).despawn();
         app.update();
         assert_eq!(shown(&app), BTreeMap::from([(ACHR_REF, (2, 2, true))]));
+        assert_eq!(moved(&app), (0, 1));
+        // One replaced within a frame: both are counted though the numbers stay.
+        app.world_mut().entity_mut(b).despawn();
+        let b = mesh(&mut app, ACHR_REF, [0.0, 0.0, 100.0]);
+        app.update();
+        assert_eq!(shown(&app), BTreeMap::from([(ACHR_REF, (2, 2, true))]));
+        assert_eq!(moved(&app), (1, 1));
         // Its meshes are shown and accepted, the actor is out of the world.
         app.world_mut().resource_mut::<SimState>().world.set_enabled(FormId(ACHR_REF), false).unwrap();
         app.update();

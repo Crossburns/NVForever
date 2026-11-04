@@ -723,6 +723,23 @@ pub(crate) mod tests {
         drawn.len()
     }
 
+    /// The shapes `actor`'s record has now.
+    fn dressed_shapes(app: &App, actor: Entity) -> Vec<Entity> {
+        app.world().get::<Dressed>(actor).unwrap().parts.iter().flat_map(|(_, shapes)| shapes.iter().copied()).collect()
+    }
+
+    /// `actor`'s shapes not in `before`, each of which must have `reference`'s `RefVisual`
+    /// and the mark: read on the entities themselves, so a shape left without a `RefVisual`
+    /// fails here, where [`drawn_all_marked`]'s query would not find it. How many there are.
+    fn new_shapes_refer_to(app: &App, actor: Entity, reference: u32, before: &[Entity]) -> usize {
+        let new: Vec<Entity> = dressed_shapes(app, actor).into_iter().filter(|e| !before.contains(e)).collect();
+        for &e in &new {
+            assert_eq!(app.world().get::<RefVisual>(e).map(|r| r.0), Some(reference), "{e}");
+            assert!(app.world().get::<ActorBoundsCandidate>(e).is_some(), "{e}");
+        }
+        new.len()
+    }
+
     fn dressed_part<'a>(app: &'a App, actor: Entity, role: &str) -> &'a [Entity] {
         let d = app.world().get::<Dressed>(actor).unwrap();
         d.parts.iter().find(|(key, _)| key.starts_with(&format!("{role}|"))).map_or(&[], |(_, shapes)| shapes.as_slice())
@@ -744,23 +761,28 @@ pub(crate) mod tests {
         let before = drawn_all_marked(&mut app, reference);
         // Armour, hair, a head part and the weapon as spawned (the weapon hides the add-on).
         assert!(before >= 4, "{before}");
+        assert!(new_shapes_refer_to(&app, actor, reference, &[]) >= 3);
         for role in ["armor", "hair", "head_part"] {
             assert!(!dressed_part(&app, actor, role).is_empty(), "no {role} drawn");
         }
         let w = app.world_mut();
         assert_eq!(w.query_filtered::<(), (With<HeldWeapon>, With<ActorBoundsCandidate>)>().iter(w).count(), 1);
         // All taken off: the bare body goes on, hair and head part stay.
+        let spawned = dressed_shapes(&app, actor);
         app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(Inventory::new());
         app.world_mut().run_system_once(follow_inventory).unwrap();
         let on = app.world().resource::<OutfitStats>().parts_on;
         assert!(on > 0);
         assert!(drawn_all_marked(&mut app, reference) > 0);
+        assert!(new_shapes_refer_to(&app, actor, reference, &spawned) > 0);
         // On again: armour replaces the body, the weapon goes back in the hand.
+        let bare = dressed_shapes(&app, actor);
         app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(equipped());
         app.world_mut().run_system_once(follow_inventory).unwrap();
         assert!(app.world().resource::<OutfitStats>().parts_on > on);
         assert_eq!(app.world().resource::<OutfitStats>().weapons_on, 1);
         assert!(drawn_all_marked(&mut app, reference) > 0);
+        assert!(new_shapes_refer_to(&app, actor, reference, &bare) > 0);
         let w = app.world_mut();
         assert_eq!(w.query_filtered::<(), (With<HeldWeapon>, With<ActorBoundsCandidate>)>().iter(w).count(), 1);
     }
@@ -772,10 +794,12 @@ pub(crate) mod tests {
         app.world_mut().entity_mut(actor).insert(Corpse::default());
         assert!(drawn_all_marked(&mut app, reference) > 0);
         // Looted: its armour off, the bare body drawn under it.
+        let dressed = dressed_shapes(&app, actor);
         app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(Inventory::new());
         app.world_mut().run_system_once(follow_inventory).unwrap();
         assert!(app.world().resource::<OutfitStats>().parts_on > 0);
         assert!(drawn_all_marked(&mut app, reference) > 0);
+        assert!(new_shapes_refer_to(&app, actor, reference, &dressed) > 0);
     }
 
     /// A placed reference for these tests: only its id, record type and base matter here.
