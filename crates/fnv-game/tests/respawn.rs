@@ -165,3 +165,32 @@ fn respawning_actors_come_back_when_their_cell_is_entered_after_three_days() {
     g.player_entered(Some(FormId(CELL_A)));
     assert!(g.take_cell_resets().is_empty());
 }
+
+/// Fallout 3's ResetInterior: the cell resets at its next load whenever it was left, and
+/// no dead actor comes back (respawn.rs, module notes).
+#[test]
+fn reset_interior_resets_at_the_next_load_without_bringing_actors_back() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.player_entered(Some(FormId(CELL_A)));
+    assert!(g.kill(reference(RESPAWN_LIVING), Some(FormId::PLAYER_REF)));
+    let ctx = fnv_game::functions::Ctx { unit: "test".into(), opcode: 0x1127, on: None, self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+    g.call_function(&ctx, &[fnv_script::vm::ArgValue::Value(fnv_script::vm::Value::Ref(CELL_A))]);
+    assert!(g.forms.expired_cells.contains(&FormId(CELL_A)));
+    // Staying does not reset it: it is reset when loaded again, an hour later.
+    g.player_entered(Some(FormId(CELL_A)));
+    assert!(g.take_cell_resets().is_empty());
+    g.player_entered(Some(FormId(CELL_B)));
+    g.world.advance_hours(1.0).unwrap();
+    g.player_entered(Some(FormId(CELL_A)));
+    let resets = g.take_cell_resets();
+    assert_eq!(resets.len(), 1);
+    assert!(resets[0].respawned.is_empty(), "a scripted reset brings nobody back");
+    assert!(g.is_dead(reference(RESPAWN_LIVING)));
+    assert!(g.forms.expired_cells.is_empty());
+    // Once only.
+    g.player_entered(Some(FormId(CELL_B)));
+    g.player_entered(Some(FormId(CELL_A)));
+    assert!(g.take_cell_resets().is_empty());
+}

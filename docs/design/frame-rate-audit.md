@@ -368,7 +368,8 @@ What it found, each with its issue:
   ray, about 6,900 pairs for 118 actors. The fixed-step physics of the character
   controller adds +31 ms (#1383, #1404 are spooknik's).
 - **Submitting the frame costs 1.5–3.5 ms of the render thread** almost everywhere
-  (`submit_pending_command_buffers`, `queue_submit`; 23 command buffers a frame) (#1427).
+  (`submit_pending_command_buffers`, `queue_submit`; 23 command buffers a frame) (#1427;
+  broken down below).
 - **Single 8–16 ms stalls** (#1429):
   - a light probe upload on the Lucky 38 floor
   - an instance-buffer write when walking into REPCONN's rooms
@@ -388,3 +389,66 @@ What it found, each with its issue:
 
 The scenario logs are game-derived and stay private, under `target/profile-campaign/` (not
 committed).
+
+### What the submission costs (#1427)
+
+[documented: bevy_core_pipeline 0.20.1 `schedule.rs`, bevy_render 0.20.1
+`renderer/render_context.rs`] In Bevy 0.20 a render system that records GPU work gets its
+own command encoder for each view. `submit_pending_command_buffers` first finishes every
+pending encoder (`finish_command_buffers`, spread over the compute threads, one
+`finish_command_buffer{system=…}` span each) and then submits them all (`queue_submit`).
+With wgpu 29, `CommandEncoder::finish` is where the recorded passes are encoded for
+Vulkan. The span profile now keys each finished encoder by the system that recorded it
+(`finish_command_buffer[light::per_view_shadow_pass<…>]`). The `profile batches:` line now
+also counts the sorted blended draws (`transparent <v> views, <n> sorted draws`).
+
+wgpu-core's own scopes (`Queue::submit`, `CommandEncoder::finish`, `cleanup`,
+`triage_submissions`, `Queue::write_buffer`, `Device::create_bind_group`) are tracing
+spans too. Bevy's default log filter (`wgpu=error`) hides them. To profile them, run with
+`RUST_LOG=info,wgpu=warn,wgpu_core=info,wgpu_hal=warn,naga=warn`. Those spans make the
+frames about 1.5 ms slower, so compare their shares, not frame times.
+
+[observed 2026-11-03, this branch on main 8a83b44e, the `profile` build, i9-14900K, RTX 4070,
+Vulkan, `campaign.py --only goodsprings-noon novac-noon`, means a frame after the warm-up]
+
+| | Goodsprings noon | Novac noon |
+|---|---|---|
+| Frame | 8.9 | 12.2 |
+| `submit_pending_command_buffers` | 2.36 | 2.34 |
+| … finishing the encoders (wall time) | 1.14 | 1.09 |
+| … `queue_submit` | 1.20 | 1.24 |
+
+These are the encoders' finishing times, summed over the threads. They run side by side,
+so the wall time is about the longest one.
+
+| Encoder (system) | Goodsprings | Novac |
+|---|---|---|
+| sun and light shadows (`per_view_shadow_pass`, 4 shadow views) | 1.05 | 1.04 |
+| blended draws (`main_transparent_pass_3d`, about 240 / 200 sorted draws) | 1.02 | 0.90 |
+| depth prepass (`early_prepass`) | 0.70 | 0.68 |
+| opaque pass | 0.69 | 0.68 |
+| GPU culling and indirect parameters (4 compute encoders) | 1.59 | 1.46 or more (one below the list) |
+| Bevy's bloom | 0.37 | below 0.25 |
+| NVForever's passes (eye mask, bright pass, ambient occlusion, sun shafts, bloom and sharpen, grade) | below 0.25 each | below 0.25 each |
+
+What this says:
+
+- **The cost is Bevy's core passes and wgpu's work for each command buffer. The enhanced
+  look's own passes do not add much.** Goodsprings vanilla against enhanced, run one after
+  the other: submit 2.14 against 2.86, finishing 4.19 against 5.38 summed. That batch was
+  slowed by something else on the machine (frames near 17 ms), so only its split is used.
+  The opaque phases are already only 17-22 multi-drawn sets. The shadow encoder covers 4
+  views.
+- **None of NVForever's passes records when it has nothing to do.** Each returns before
+  asking for an encoder (sun off screen, Bright Scale 0, no modifier), or Bevy skips it
+  for a view without its component. Merging passes into fewer encoders would mean
+  changing Bevy's encoder-per-system design: a patched `bevy_render`, not engine code.
+- **Inside `Queue::submit`** (the run with wgpu-core spans, Goodsprings) the largest
+  parts are cleaning up finished submissions, 0.8 ms (`cleanup`, `triage_submissions`,
+  of which `drop command buffer trackers` is 0.4), and `prepare`, 0.4 ms. These scale
+  with the command buffers and the resources each one tracks. The game materials'
+  bindless slabs (`#[bindless(limit(512))]`, nif_material.rs) are among those resources.
+  [hypothesis] Fewer resources tracked per pass would make these cheaper.
+- **Seen on the way:** `Queue::write_buffer` takes 2.2 ms a frame and
+  `Device::create_bind_group` 1.0 ms (Bevy's `prepare_preprocess_bind_groups` makes its
+  bind groups again every frame). Both are on the render thread before the submission.

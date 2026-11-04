@@ -438,6 +438,14 @@ pub struct RefExtra {
     /// reference's (`Game::merchant_container`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub merchant_container: Option<FormId>,
+    /// Wait: the Follow or Accompany package the actor waits in, standing where it is,
+    /// until StopWaiting (`functions::fo3`; the AI's follow step reads [`Game::waits`]).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub waiting: Option<FormId>,
+    /// MatchFaceGeometry: the morphs of the actor's face towards others', in call order
+    /// (`crate::appearance::FaceMatch`; the engine draws the head with them).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub face_matches: Vec<crate::appearance::FaceMatch>,
     /// The special idle the actor plays (IsIdlePlaying): told by whoever animates the
     /// actor ([`Game::set_idle_playing`]); not part of the saved state.
     #[serde(skip)]
@@ -525,6 +533,19 @@ pub struct FormChanges {
     /// SetCellImageSpace: cell → the image space it has instead of its XCIM.
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub cell_image_spaces: BTreeMap<FormId, FormId>,
+    /// SetFactionReaction: faction → other faction → disposition modifier, in place of
+    /// FACT XNAM's (`functions::fo3`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub faction_modifiers: BTreeMap<FormId, BTreeMap<FormId, i64>>,
+    /// ResetInterior: interior cells reset at their next load (`crate::respawn`).
+    #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty", default)]
+    pub expired_cells: std::collections::BTreeSet<FormId>,
+    /// RemapWaterType: water type → the one drawn in its place ([`Game::water_type`]).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub water_remaps: BTreeMap<FormId, FormId>,
+    /// TriggerLODApocalypse has run (Megaton's destruction, `functions::fo3`).
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub lod_apocalypse: bool,
 }
 
 /// A magic effect active on an actor (docs/spec-notes/scripts.md §7.6).
@@ -1108,6 +1129,8 @@ pub struct Game<'a> {
     /// (lower case) to them.
     compiled_files: Vec<&'a Compiled>,
     compiled_paths: std::collections::HashMap<String, u32>,
+    /// JIP's Script Runner: its files and their units (`crate::script_runner`).
+    pub(crate) sr: crate::script_runner::SrState<'a>,
     /// A lambda already made, by its unit, its number in the unit and whose variables it
     /// shares ([`LambdaKey`]).
     lambda_ids: std::collections::HashMap<LambdaKey, u32>,
@@ -1175,6 +1198,8 @@ pub struct Game<'a> {
     pub traits: crate::nvse_traits::TraitState,
     /// kNVSE's animation paths and script-played sequences (`crate::nvse_anim`).
     pub anim_paths: crate::nvse_anim::AnimPaths,
+    /// kNVSE's AnimGroupOverride folders (`crate::nvse_anim_folders`).
+    pub anim_folders: crate::nvse_anim_folders::AnimFolders,
     /// kNVSE's animation clock, weights, text keys and blends (`crate::nvse_knvse`).
     pub knvse: crate::nvse_knvse::KnvseState,
     /// JIP PP LN's runtime node lists and ground requests (`crate::nvse_jippp`).
@@ -1897,6 +1922,8 @@ pub struct Session {
     pp: crate::nvse_pp::PpSession,
     /// ITR's settings that outlast a load (`crate::nvse_itr1::ItrKept`).
     itr_kept: crate::nvse_itr1::ItrKept,
+    /// The Script Runner files RegisterSRScript added (`crate::script_runner`).
+    sr_registered: Vec<String>,
 }
 
 /// An event handler: the event (lower case), the function or lambda, the filters by
@@ -1985,6 +2012,7 @@ impl<'a> Game<'a> {
             lambdas: Vec::new(),
             compiled_files: Vec::new(),
             compiled_paths: std::collections::HashMap::new(),
+            sr: Default::default(),
             lambda_ids: Default::default(),
             handlers: Vec::new(),
             handler_seq: 0,
@@ -2023,6 +2051,7 @@ impl<'a> Game<'a> {
             mod_files: Default::default(),
             traits: Default::default(),
             anim_paths: Default::default(),
+            anim_folders: Default::default(),
             knvse: Default::default(),
             jippp: Default::default(),
             vheyes: Default::default(),
@@ -2531,15 +2560,29 @@ impl<'a> Game<'a> {
     /// ([`GameEnv`]). The compiled unit lives as long as the game data (it is leaked:
     /// one per such line, a debugging aid). Returns the compiler's warnings.
     pub fn run_source(&mut self, src: &str, ctx: RunCtx) -> Result<Vec<String>, String> {
+        let (unit, warnings) = self.compile_statements(src, "console", "CONS")?;
+        self.run_statements(unit, ctx);
+        Ok(warnings)
+    }
+
+    /// `src` compiled as a result script (statements without blocks), its unit leaked so it
+    /// lives as long as the game data, named `plugin` with an owner of record type `sig`;
+    /// with the compiler's warnings. The console's lines and the Script Runner's files
+    /// (`crate::script_runner`).
+    pub(crate) fn compile_statements(&mut self, src: &str, plugin: &str, sig: &str) -> Result<(&'a Compiled, Vec<String>), String> {
         let c = fnv_script::compile::compile(src, &self.data.table, &GameEnv { g: self }, None);
         if let Some(e) = c.errors().next() {
-            return Err(format!("{}: {}", e.kind.replace('_', " "), e.detail));
+            // The console's own line needs no number.
+            return Err(match sig {
+                "CONS" => format!("{}: {}", e.kind.replace('_', " "), e.detail),
+                _ => format!("line {}: {}: {}", e.line, e.kind.replace('_', " "), e.detail),
+            });
         }
         let warnings = c.diags.iter().map(|d| format!("{}: {}", d.kind.replace('_', " "), d.detail)).collect();
         let d = fnv_script::decode(&c.bytes, &self.data.table);
         let unit = fnv_script::ScriptUnit {
-            plugin: "console".into(),
-            owner: fnv_script::UnitOwner::Other { sig: "CONS".into(), form: 0, ordinal: 0 },
+            plugin: plugin.into(),
+            owner: fnv_script::UnitOwner::Other { sig: sig.into(), form: 0, ordinal: 0 },
             kind: fnv_script::ScriptKind::Object,
             header: Default::default(),
             variables: c.variables,
@@ -2549,8 +2592,17 @@ impl<'a> Game<'a> {
             source: Some(src.to_string()),
         };
         let unit: &'a Compiled = Box::leak(Box::new(Compiled { unit, program: d.program, raw: d.report.raw_total() }));
+        Ok((unit, warnings))
+    }
+
+    /// Run a unit of [`Game::compile_statements`] now, with temporary locals; its strings
+    /// and arrays are not freed when it ends (as a result script's). False when it stopped
+    /// on an error (traced as `ScriptError`).
+    pub(crate) fn run_statements(&mut self, unit: &'a Compiled, ctx: RunCtx) -> bool {
+        let errors = self.events.len();
         self.exec(unit, &unit.program.top, Locals::Temp(BTreeMap::new()), ctx);
-        Ok(warnings)
+        let key = unit.key();
+        !self.events[errors..].iter().any(|e| matches!(&e.kind, EventKind::ScriptError { unit, .. } if *unit == key))
     }
 
     /// A whole function script from source, run once as nvf_capture's query step runs one
@@ -2629,6 +2681,13 @@ impl<'a> Game<'a> {
     /// are compiled in one game, and a new text past that is refused [decision: PR #1291
     /// review, memory bounded].
     pub(crate) fn evaluate_string(&mut self, text: &str) -> Result<bool, String> {
+        self.evaluate_on(text, None)
+    }
+
+    /// EvaluateString's test run on a reference (`this` and the functions without a
+    /// reference name it): kNVSE's AnimGroupOverride conditions
+    /// (`crate::nvse_anim_folders`). The compiled texts are EvaluateString's.
+    pub(crate) fn evaluate_on(&mut self, text: &str, on: Option<FormId>) -> Result<bool, String> {
         let id = match self.pp.evaluated.get(text) {
             Some(&id) => id,
             None => {
@@ -2642,7 +2701,8 @@ impl<'a> Game<'a> {
             }
         };
         let id = id.ok_or_else(|| format!("{text:?} does not compile"))?;
-        Ok(self.run_function(&fnv_script::vm::XVal::Ref(id), None, Vec::new(), None, RunCtx::default())?.truthy())
+        let ctx = RunCtx { self_ref: on, ..RunCtx::default() };
+        Ok(self.run_function(&fnv_script::vm::XVal::Ref(id), on.map(|f| Value::Ref(f.0)), Vec::new(), None, ctx)?.truthy())
     }
 
     /// A function script from source text, kept as CompileScript keeps its files; `None`
@@ -2928,7 +2988,8 @@ impl<'a> Game<'a> {
             })
             .collect();
         let pp = self.pp_take_session();
-        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept) }
+        let sr_registered = self.sr.take_registered();
+        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -2939,6 +3000,7 @@ impl<'a> Game<'a> {
         self.handler_seq = s.handler_seq;
         self.pp_put_session(s.pp);
         self.other.itr.kept = s.itr_kept;
+        self.sr.put_registered(s.sr_registered);
     }
 
     /// Run every handler registered for `event` whose filters match, highest priority
@@ -3239,6 +3301,8 @@ impl<'a> Game<'a> {
         self.small_tick();
         self.vheyes_tick();
         self.knvse_tick();
+        // kNVSE's AnimGroupOverride folders: which hold for each actor.
+        self.anim_folders_tick();
         // ppNVSE's CallLoop functions due (`crate::nvse_pp`).
         self.run_pp_loops();
         self.run_box_callback();

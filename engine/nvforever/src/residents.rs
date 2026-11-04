@@ -320,9 +320,19 @@ impl Mover for PhysMover<'_> {
                     (WalkEvent::WaitingForDoor(door), [0.0, 0.0])
                 }
             }
+            // At a door into another space: it stops and turns to the door first.
+            Steer::Door(d) if walker.face_door(&d, feet, dt) => (WalkEvent::Turned, [0.0, 0.0]),
             Steer::Door(d) => {
                 // Through a door into another space: the walker's from here (the
                 // collision there is not the one loaded).
+                match d.door_at {
+                    Some(at) => info!(
+                        "actor {id:08X} goes through load door {:08X} facing it ({:.0} degrees off)",
+                        d.door,
+                        heading_delta(walker.heading, heading_of([at[0] - feet[0], at[1] - feet[1]])).abs().to_degrees()
+                    ),
+                    None => info!("actor {id:08X} goes through load door {:08X} (where the door stands is not known)", d.door),
+                }
                 f.door_used();
                 walker.space = f.space().unwrap_or(walker.space);
                 walker.feet = d.arrival;

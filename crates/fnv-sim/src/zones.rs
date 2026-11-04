@@ -152,9 +152,22 @@ impl World<'_> {
         self.ref_levels.remove(&r);
     }
 
-    /// Whether `cell`'s zone has "Never Resets" (docs/spec-notes/encounter-zones.md §4).
+    /// Whether `cell`'s zone has "Never Resets" (docs/spec-notes/encounter-zones.md §4),
+    /// or a script turned its respawning off ([`World::set_zone_respawns`]).
     pub fn cell_never_resets(&self, cell: FormId) -> bool {
-        self.placed.cell_zone(cell).and_then(|z| self.forms.zones.get(&z)).is_some_and(|d| d.never_resets)
+        let Some(z) = self.placed.cell_zone(cell) else { return false };
+        match self.zone_respawns.get(&z) {
+            Some(&respawns) => !respawns,
+            None => self.forms.zones.get(&z).is_some_and(|d| d.never_resets),
+        }
+    }
+
+    /// `SetZoneRespawns zone flag`: the zone's cells reset (`true`) or never reset, over
+    /// its "Never Resets" flag; kept in the saved state [documented: GECK wiki
+    /// SetZoneRespawns, "turns respawning on or off for an encounter zone", a savebaked
+    /// function].
+    pub fn set_zone_respawns(&mut self, zone: FormId, respawns: bool) {
+        self.zone_respawns.insert(zone, respawns);
     }
 
     /// The level carried items of `r` are rolled at: its fixed level, else the

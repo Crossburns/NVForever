@@ -1154,6 +1154,19 @@ The numbers above stay put so links to them hold; each item here gives its own p
     names the language, so the code page can be detected. Then with `CodePage=1251`:
     menus, dialogue, the Pip-Boy and the HUD show Cyrillic, not `?` or wrong letters.
 
+## Added 2026-11-03 (sounds decoded on worker threads, issue #1428)
+
+82. **Does `PlaySound X; StopSound X` in one frame play anything?** (P3; audio.md §11.5.)
+    NVForever reads a sound's file on a worker, and a StopSound covers the sounds of X
+    asked for before it, also in the same frame, so the pair plays nothing; `StopSound X;
+    PlaySound X` plays X [hypothesis]. In the original (`nvfstrip`, a probe like sound1):
+    one script block that runs `PlaySound` then `StopSound` of a short one-shot never
+    played before in the session (its file not loaded yet) and of one played a moment
+    earlier; the same with the order turned round; then the same with a Loop-flag SOUN
+    (EMTMedicalBeep01). Log `IsSoundPlaying` of it each frame for 10 frames and record
+    the audio. The answer: whether any of it is heard, and IsSoundPlaying's values per
+    frame for each order.
+
 ## Added 2026-11-03 (volume sliders, issue #1450)
 
 79. **How does the original's Music slider turn its music down, and does the main menu
@@ -1166,3 +1179,36 @@ The numbers above stay put so links to them hold; each item here gives its own p
     The same at a place whose music type names a shipped file (Kimble's hail,
     `special\mus_hailchief.mp3`, −5.36 dB; console `PlayMusic` did not start it over the
     cell's music) gives the in-game level against NVForever's.
+## Added 2026-11-03 (JIP Script Runner, issue #1460)
+
+80. **When does each Script Runner prefix run, and in what order?** (P2;
+    ext-script-runner.md §2, §5.) Only `gr_` (game restart) is documented in the wiki
+    export; the introduction page that lists the others is missing from it. With JIP LN
+    installed, files under `Data\NVSE\plugins\scripts\` named `gr_a.txt`, `gr_b.txt`,
+    `gl_x.txt`, `ln_x.txt`, `gn_x.txt`, `gx_x.txt`, each printing its name and
+    GetGameRestarted / GetGameLoaded to the console (or a log file): which run at the main
+    menu, at a new game, at a load from the main menu, at a load from the pause menu, and at
+    quit; the order of `gr_a` and `gr_b` (and with a capital letter in one name); whether
+    `gr_` runs again on a load from the pause menu; and whether `gl_` and `ln_` run before
+    or after a LoadGame/PostLoadGame handler. Also: does a lambda handler a `gr_` file
+    registered still fire after a save is loaded? The answers fix NVForever's moments
+    (`fnv_game::script_runner::Prefix`). The files go in the original game's Data, so the
+    owner places them (sessions don't write into the game folder).
+
+## Added 2026-11-03 (surplus arguments on an extender call line, issue #1470)
+
+81. **Does the extender's compiler drop arguments past those a call line's function takes,
+    and does it read them first?** (P3; ext-script-runner.md §6, `xcall_line` in
+    `crates/fnv-script/src/compile/gen.rs`.) NVForever drops them with a
+    `surplus_arguments` warning, as the vanilla compiler drops them, but still fails the
+    line when a dropped one cannot be read. Since then, a function whose catalogue lists
+    too few parameters loses a real argument with only a warning, where it used to be an
+    error. Unattended, with JohnnyGuitar and JIP LN loaded: `RunScriptSnippet 0` on
+    (a) `SetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC "nvf a") 0 0` (ln_B42Optics.txt
+    does this: four arguments to three parameters), (b) the same with `0 Nobody.GetAV Luck`
+    in place of the last `0`, and (c) `Player.IsAnimPlayingEx 5 0 0 1` printed with
+    `PrintC "%g"` (four arguments where the page lists three; a fourth parameter would show
+    up as a different result from `5 0 0`). Then see which compile (console error or not),
+    whether (a)'s handler prints, and what (c) returns. If (a) is refused, the drop goes
+    and ln_B42Optics.txt is the mod's own error. If (b) compiles, dropped arguments are not
+    read. If (c) differs from `5 0 0`, the catalogue needs the fourth parameter.
