@@ -154,3 +154,118 @@ Bruce Isaac's in the owner's picture and its capitals start one pixel higher; th
 lets through about 0.11 of the light behind it. Sunny Smiles's list shows three choices
 (two lines, one line, two lines) with both arrows and the marker at the top, as in
 Trudy's picture.
+
+## 6. The menu drawn from its file: what code owns
+
+`[UI] TileMenus=DialogMenu` draws the menu from its file, off by default
+(`engine/nvf-play/src/tiles/dialog_menu.rs`, ui-tile-tree.md §6.2 step 3). This section is
+the contract between the file and the code. It says what code has to give the file, in
+NVForever's words, not how the file is laid out: the file itself places the rest, read at
+run time from the player's archives. Everything named below was read with `fnvtool ui tree
+--menu menus\dialog\dialog_menu.xml` and `fnvtool bsa extract` [observed: the vanilla
+files, by fnvtool, 2026-11-04]; **no run of the original was looked at for this section**,
+so what the original's code does with these names is [hypothesis] throughout.
+
+### 6.1 The conversation is the menu's lifetime
+
+`Game::menu` stays empty during a conversation (it holds what stands *over* one); the tree
+builds the menu class while `Game::dialogue` is `Some` (`fnv_game::ui_loading::sync`) and
+drops it after [design]. So readiness follows the conversation, not `Game::menu`.
+
+### 6.2 Inputs from code
+
+Names the file reads and never sets a meaningful value for, or marks as code's:
+
+| Tile | Name | What code gives it [hypothesis unless tagged] |
+|---|---|---|
+| the menu (`io()`) | `_DialogVisible` | the whole menu shown |
+| the menu | `_ShowingText` | the actor's line is up, not the choices |
+| the menu | `_ShowSubtitles` | the subtitles setting; NVForever has none yet, and also clears it for an empty line, so that no band stands behind nothing [design] |
+| `DM_SpeakerNameLabel` | `string` | the speaker |
+| `DM_SpeakerText` | `string` | the line |
+| every text tile | `width`, `height` | measured with the fonts; no expression in the file sets them (`menus::write_text_sizes`, message-menu.md) [design] |
+| `DM_TopicList` | `height` | the rows' height; the file only holds a least height (`_MinListHeight`) [observed: the vanilla files, by fnvtool: its comments call the rest code's] |
+| `DM_TopicList` | `_highlight_y`, `_selected_height` | the selected row's place and height [observed: the vanilla files, by fnvtool: the list box prefab's comments] |
+| `lb_scrollbar` | `_number_of_items`, `_number_of_visible_items` | counted in `_scroll_delta` steps, as the message box's list (message-menu.md §5a) |
+| `lb_scrollbar` | `_current_value`, `_SetInCode` | the scroll, and the signal that code set it [observed: the vanilla files, by fnvtool: the prefab's comments] |
+| a row (`DM_TopicTemplate`, under `DM_TopicList`) | `string`, `listindex`, `height`, `_y`, `_line_alpha` | the label; the choice's number (the file hides a row with a negative one); its text and `_VerticalSpacing`; its place with nothing scrolled; the text's strength |
+
+Names NVForever reads from the file, not code's: `_scroll_delta`, `_VerticalSpacing`,
+`_MinListHeight`. `id`s 0 to 3 on the click area, the name, the line and the list suggest
+the original's code finds them by number; NVForever finds them by path [hypothesis]. The
+click area's `target` follows `_ShowingText`, so a click on it skips only while the actor
+speaks.
+
+The file reads `screen()`'s `cropx` and `cropy`. No other vanilla menu with a tile switch
+does (message, quantity, sleep/wait, tutorial, HUD) [observed: the vanilla files, by
+fnvtool]. While `DialogMenu` is on the code writes them, in interface units: `cropy` is
+`iSafeZoneY`'s 15 [documented: `Fallout_default.ini`, hud.md §3], `cropx` is §3's fitted
+rule [hypothesis]. `dialog_menu.xml` has no hint for Tab, no red, and no fill picture for
+the frame [observed: the vanilla files, by fnvtool]: those three are NVForever's own tiles
+and writes (§6.4).
+
+### 6.3 What stays NVForever's choice, not the file's
+
+Kept from §4, with the rules still in `crate::dialogue`:
+
+- the acting notes stripped, square brackets kept (`dialogue::shown_text`); the speaker or
+  the talking activator's name; no list, brackets or hint during a response; an empty
+  response leaves only the name;
+- the list scrolls by **whole choices** and never shows a part of one [design]: rows outside
+  the window take a `listindex` of -1, so the file's own rule hides them, and the scroll is
+  written as the height of the choices above the first shown. `dialogue_menu::window` decides
+  the window for both views. The file's `_scroll_delta` suits a list that scrolls by rows of
+  a set height, which this one does not [hypothesis: nothing says which the original does];
+- the list's greatest height is §3's fitted [hypothesis], not the file's;
+- a said-before choice is dim: `_line_alpha` 128 [hypothesis: the file gives the row's text
+  a code-set alpha and §3 saw a dim choice as bright as 128 of 255]; the hand-built view
+  says the same with brightness;
+- skip, refused Tab, the keys, the wheel, the pause and an overlying menu act as in §4 and
+  dialogue-play.md §2. The scroll bar's arrows and page areas move the selection, which
+  moves the window, so they keep to choice boundaries; dragging its marker is not built
+  [design: the hand-built bar takes no clicks at all].
+
+Rows stand where the file puts them. §3's lift is **not** applied: the file's window clips
+at the list's own top, so a lifted first row would lose its frame's top line. The hand-built
+view keeps the lift and clips at the brackets. Which is the original's is for a capture.
+
+### 6.4 NVForever's own tiles
+
+Code-made under the menu, named `NVF_…` so nobody takes them for the file's, from templates
+NVForever writes itself (`tiles/dialog_menu.rs`):
+
+- `NVF_GoodbyeHint`: the Tab hint and its dark box, placed from the file's worked-out band
+  and bottom bracket. Its wording and whether it shows come from the same model as the
+  hand-built hint's (`dialogue_menu::GOODBYE_HINT`, `MenuView::goodbye`) [owner, list 5
+  item 62].
+- `NVF_SelectionFill`: the frame's fill. The file's highlight box is a hotrect with an alpha
+  and a brightness, which the tile renderer does not paint (message-menu.md §2); the fill
+  uses §3's look.
+
+The red frame of a short check is a write on the highlight box's four lines and the fill
+(§3's colours). The file names no such colour [observed: the vanilla files, by fnvtool].
+
+### 6.5 Readiness
+
+One decision (`DialogTiles`, worked out after the scripts of each frame) controls the tile
+drawing, the hand-built view and the tile input, so what takes a click is what was on screen
+the frame before [design]. It needs the switch, the menu files, a live conversation, every
+path above, a row template that makes a row with its text, every row made, and text that
+measures. Anything else: the whole hand-built menu, a warning once per reason, the made rows
+unloaded, and the preparation tried again next frame. The Tab hint and the frame's fill
+never stand alone.
+
+### 6.6 Unknown until a capture of the original
+
+Read these in a focused capture (private; identifiers and numbers only, no built-in wording):
+
+- whether the list scrolls by choices or by `_scroll_delta`, and `_current_value` then;
+- the list's `height` at the longest, and whether any maximum is in code;
+- `_highlight_y` and the first row's `y`, against §3's lift;
+- `lb_highlight_box`'s lines' colour on a short check, and what drives it;
+- a said-before row's `_line_alpha` and its text's `brightness`;
+- `DM_TextBackground`'s `alpha` as read while drawn (§3's opacity against the file's value);
+- `screen()`'s `cropx` and `cropy` at two aspect ratios;
+- what a click on the arrows, a page area and the marker do to the selection;
+- `_scroll_delta` and `_number_of_items` with a list that overflows;
+- the band and the name for a line with no text.

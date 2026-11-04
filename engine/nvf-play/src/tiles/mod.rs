@@ -1,5 +1,6 @@
 //! The tile tree beside the drawn menus [design: ui-tile-tree.md §6.2 step 1].
 
+pub mod dialog_menu;
 pub mod draw;
 pub mod input;
 pub mod layout;
