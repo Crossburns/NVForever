@@ -218,7 +218,10 @@ Kept from §4, with the rules still in `crate::dialogue`:
   written as the height of the choices above the first shown. `dialogue_menu::window` decides
   the window for both views. The file's `_scroll_delta` suits a list that scrolls by rows of
   a set height, which this one does not [hypothesis: nothing says which the original does];
-- the list's greatest height is §3's fitted [hypothesis], not the file's;
+- the list's greatest height is §3's fitted number, kept as NVForever's policy for now in
+  `dialogue_menu::window` [design; hypothesis as to the original]. It is not worked out from
+  the file's or the fonts' geometry: the file gives no maximum, and the two views should
+  agree on what fits. A capture that finds the original's rule replaces it for both;
 - a said-before choice is dim: `_line_alpha` 128 [hypothesis: the file gives the row's text
   a code-set alpha and §3 saw a dim choice as bright as 128 of 255]; the hand-built view
   says the same with brightness;
@@ -250,12 +253,27 @@ The red frame of a short check is a write on the highlight box's four lines and 
 ### 6.5 Readiness
 
 One decision (`DialogTiles`, worked out after the scripts of each frame) controls the tile
-drawing, the hand-built view and the tile input, so what takes a click is what was on screen
-the frame before [design]. It needs the switch, the menu files, a live conversation, every
-path above, a row template that makes a row with its text, every row made, and text that
-measures. Anything else: the whole hand-built menu, a warning once per reason, the made rows
-unloaded, and the preparation tried again next frame. The Tab hint and the frame's fill
-never stand alone.
+drawing, the hand-built view and the tile input [design]. It needs the switch, the menu files,
+a live conversation, every path above with the frame's four lines and the bar's controls, a row
+template that makes a row with its text, every row made, text that measures, boxes with a
+worked-out size and something to click. Anything else: the whole hand-built menu, a warning
+once per reason, the made rows unloaded, the safe zone given back, and the preparation tried
+again next frame. The Tab hint and the frame's fill never stand alone.
+
+### 6.5a The order in a frame
+
+- Before the scripts: the model's view is written, each trait only when the model's value for
+  it changed, so scripts read this frame's phase, words and rows, and what a script sets of them
+  stands until the model changes that very thing. A new selection changes none of them.
+- After the scripts: measure, place, decide. Placing runs again when the model, a text's size
+  or an evaluated number it reads moved. These are read one frame late by a script [design].
+- A click on the tiles is made on the tree as it was drawn. The tile input takes nothing on a
+  frame whose hit geometry has moved since the drawing (a new window size): such a press is lost.
+- Every click carries the screen it was made on, a script's the one it was queued on: the
+  conversation, the lines said, the response. A click from an earlier screen does nothing, and
+  neither does a hand-built button's: those carry their screen too.
+- The safe zone on `screen()` is held from the first write to the conversation's end or a
+  fallback, then given back as it was, absent if it was; a script's own value stands.
 
 ### 6.6 Unknown until a capture of the original
 
