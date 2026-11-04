@@ -18316,8 +18316,9 @@ args = ["--play", "--cell", "Goodsprings", "--pos=-69180,-17450,9000", "--headin
 run_seconds = 22
 order = [[
   { re = 'hitvol compare: actor 00157B3D has [1-9]\d* of \d+ meshes shown and a volume' },
-  { re = 'dismember: .* 0x00157B3D: Head exploded \(overkill' },
+  { re = 'combat: Gecko 0x00157B3D killed' },
   { re = 'hitvol compare: actor 00157B3D has [1-9]\d* of \d+ meshes shown and no volume' },
+  { re = 'dismember: .* 0x00157B3D: Head exploded \(overkill' },
   { re = 'ragdoll: actor 00157B3D at rest at ' },
 ]]
 expect = [
