@@ -26,6 +26,10 @@
 //!   page), `reset`, `done`.
 //! - The race menu (1036) is the character creator's (`crate::creator`), NVForever's own
 //!   design (docs/spec-notes/character-creator.md).
+//! - With `[UI] TileMenus=TraitMenu` the trait menu is drawn from its file
+//!   (`crate::tiles::trait_menu`) when that is ready: [`draw_menus`] leaves a sheet in place of
+//!   its own drawing, and the tiles' clicks come here as [`TileAct`]s. The sheet, the keys,
+//!   the sounds and Done stay as above.
 
 pub mod draw;
 pub mod lists;
@@ -113,6 +117,8 @@ pub struct ChargenMenus {
     /// (`crate::tiles::trait_menu`). Not part of [`ListMenu`], so the hand-built drawing is
     /// not spawned again for it.
     navigated: u32,
+    /// [`draw_menus`] last left the menu to its tiles.
+    tiles_draw: bool,
     kit: Option<draw::Kit>,
 }
 
@@ -300,12 +306,17 @@ fn input(
     script: Option<ResMut<ScriptState>>,
     sim: Option<ResMut<SimState>>,
     mut sounds: MessageWriter<UiSound>,
+    mut traits: Option<ResMut<crate::tiles::trait_menu::TraitTiles>>,
 ) {
     use KeyCode::*;
     let typed: Vec<KeyboardInput> = typed.read().cloned().collect();
     let wheel: f32 = wheel.read().map(|w| if w.unit == MouseScrollUnit::Line { w.y } else { w.y / 40.0 }).sum();
     let (Some(mut script), Some(mut sim)) = (script, sim) else { return };
     if st.open.is_none() || st.answered {
+        // Nothing the tiles queued acts on a menu closing.
+        if let Some(t) = traits.as_mut().filter(|t| t.menu.is_some()) {
+            t.drop_acts();
+        }
         return;
     }
     let mut ops: Vec<(Op, &str)> = Vec::new();
@@ -339,7 +350,28 @@ fn input(
             }
         }
         Some(OpenMenu::List(m)) => {
-            let page = m.visible() as i32;
+            // Drawn from its tiles the rows' place and the scroll are the drawing's; while it
+            // takes nothing (the pause menu over it) neither do these.
+            let tiles = traits.as_mut().filter(|t| t.menu.is_some() && m.code == menus::TRAITS);
+            let tiled = tiles.is_some();
+            let page = tiles.as_ref().map_or(m.visible() as i32, |t| t.page_rows());
+            let keys_on = tiles.as_ref().is_none_or(|t| t.takes().is_some());
+            if let Some(t) = tiles.filter(|t| t.takes().is_some()) {
+                if wheel.abs() >= 1.0 {
+                    t.wheel(-f64::from(wheel.round()));
+                }
+                for (k, by) in [(ArrowLeft, -1.0), (ArrowRight, 1.0)] {
+                    if keys.just_pressed(k) {
+                        t.scroll_text(by);
+                    }
+                }
+                for act in t.take_acts(st.generation) {
+                    if act == TileAct::ButtonFocus {
+                        sounds.write(UiSound { menu: list_menu(m.code), event: UiEvent::Focus });
+                    }
+                    ops.extend(tile_ops(m, act));
+                }
+            }
             if m.attributes() {
                 for k in typed.iter().filter(|k| k.state.is_pressed()) {
                     match k.logical_key {
@@ -359,11 +391,11 @@ fn input(
                 ([KeyR, KeyR], Op::Reset),
                 ([KeyA, KeyA], Op::Done),
             ] {
-                if keys.any_just_pressed(k) {
+                if keys_on && keys.any_just_pressed(k) {
                     ops.push((op, "key"));
                 }
             }
-            if wheel.abs() >= 1.0 {
+            if wheel.abs() >= 1.0 && !tiled {
                 ops.push((Op::Scroll(-wheel.round() as i32), "wheel"));
             }
             for (i, r) in &rows {
@@ -597,13 +629,31 @@ fn draw_menus(
     data: Option<Res<GameData>>,
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
+    traits: Option<Res<crate::tiles::trait_menu::TraitTiles>>,
 ) {
+    // The drawing's own decision, this frame's (`crate::tiles::trait_menu::prepare`): the menu
+    // goes the frame its tiles draw, and comes back whole, its sheet as it stands, when they
+    // cannot. Off, this stays false.
+    let tiled = traits.as_ref().is_some_and(|t| t.menu.is_some());
+    if tiled != st.tiles_draw {
+        st.tiles_draw = tiled;
+        st.dirty = true;
+    }
     if !st.dirty {
         return;
     }
     st.dirty = false;
     for e in &roots {
         commands.entity(e).despawn();
+    }
+    if tiled && matches!(st.open, Some(OpenMenu::List(_))) {
+        // No click goes past it [documented: trait_menu.xml, `stackingtype` `&no_click_past;`];
+        // the tile pointer reads the cursor itself.
+        let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
+        commands.spawn((full, GlobalZIndex(crate::interface::TOP_MENU_Z), ChargenRoot)).with_children(|r| {
+            r.spawn(crate::tiles::menus::modal_sheet());
+        });
+        return;
     }
     let (Some(mut script), Some(mut sim)) = (script, sim) else { return };
     let view = match st.open.as_ref() {

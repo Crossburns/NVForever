@@ -757,7 +757,7 @@ fn write_container(
 /// Works the tree out after the scripts; nothing to do on a frame where nothing changed
 /// it (`fnv_ui::Ui::update`). The scripts' gradual changes step first, on real time
 /// (`fnv_game::ui_gradients`, task T9).
-fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check: ResMut<input::WaitSliderCheck>, mut tutorial_check: ResMut<TutorialScrollCheck>, mut container: ResMut<container_menu::ContainerTiles>) {
+fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check: ResMut<input::WaitSliderCheck>, mut tutorial_check: ResMut<TutorialScrollCheck>, mut container: ResMut<container_menu::ContainerTiles>, mut traits: ResMut<trait_menu::TraitTiles>) {
     let Some(rt) = script.rt.as_mut() else { return };
     rt.game.ui_gradients.step(&mut rt.game.ui_tree, f64::from(time.delta_secs()));
     if rt.game.ui_files.is_some() {
@@ -769,6 +769,10 @@ fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check
         if container.menu.is_some() {
             container_menu::mark_tiles(&mut rt.game.ui_tree);
             container.check_drawn(&rt.game.ui_tree, &mut |line| info!("{line}"));
+        }
+        if traits.menu.is_some() {
+            trait_menu::mark_tiles(&mut rt.game.ui_tree);
+            traits.check_drawn(&rt.game.ui_tree, &mut |line| info!("{line}"));
         }
         // Once, if something changes the tree's shape every frame (#1061).
         if let Some(line) = rt.game.ui_tree.take_reshape_warning() {
@@ -794,12 +798,16 @@ impl Plugin for TilesPlugin {
             .init_resource::<TutorialScrollCheck>()
             .init_resource::<container_menu::ContainerTiles>()
             .init_resource::<container_menu::TileWheelTitle>()
+            .init_resource::<trait_menu::TraitTiles>()
+            .insert_resource(trait_menu::aid_from_env())
             .init_resource::<menus::TileMenuBlur>()
             // T15b: after the tutorial menu's keys, in the scripts' chain, before they run.
             .add_systems(Update, write_tutorial.in_set(PlaySet::Scripts).after(crate::tutorial_menu::keys).before(crate::script::run_scripts))
             .add_systems(Update, write.after(PlaySet::Physics).after(crate::compass::place).before(PlaySet::Activation))
             // T15c: the container menu's state for this frame's input.
             .add_systems(Update, write_container.after(write).before(input::feed))
+            // The trait menu's, likewise.
+            .add_systems(Update, trait_menu::write_system.after(write).before(input::feed))
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).after(crate::menu::WheelHoldSet).before(PlaySet::Activation))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))

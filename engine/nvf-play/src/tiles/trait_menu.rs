@@ -287,8 +287,7 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut TraitTiles, write_sizes: &mut 
         let picked = s.selected.filter(|&k| k < heights.len());
         st.list.selected = picked.map(|k| (heights[..k].iter().sum(), heights[k]));
         if st.list.navigated != Some(s.navigated) {
-            // A first frame follows nothing: the list opens at its top.
-            if let (Some(_), Some((top, height))) = (st.list.navigated, st.list.selected) {
+            if let Some((top, height)) = st.list.selected {
                 st.list.value = list::keep_row_shown(st.list.value, top, height, page, step, counts.most());
             }
             st.list.navigated = Some(s.navigated);
@@ -894,54 +893,51 @@ mod tests {
 
     /// [design] A small layout written for these tests, with its own structure, numbers and
     /// expressions; it does not come from the game's files and says nothing about them. It keeps
-    /// the tile and trait names and paths the model and input look up, which are the engine's
-    /// interface ([`built`]), and only the dependencies the tests exercise: a row stands at its
-    /// `_y` less its list's scroll, the text at its bar's value times the bar's step, the
-    /// highlight where the list was told. So these tests say how the model drives the interface
-    /// and give up the real file's geometry, fonts, wrapping and scroll counts, which the smoke
-    /// scenarios `tiles-trait-*` read. With [`size`] a row is 40 high (30 and 10 of spacing), 30
-    /// more for each further line, and the text 30 a line.
+    /// only the tile and trait names the model and input look up, which are the engine's interface
+    /// ([`built`]), and plain literals wherever the arithmetic is not what a test is about. Its one
+    /// dependency: the text stands 3 less its bar's `_moved`, the bar's step times its value. A
+    /// bar's `_own_count` stands for a file's own count of clicks, for the model's writes to beat.
+    /// So these tests say how the model drives the interface and give up the real file's geometry,
+    /// fonts, wrapped rows, rows moving with the scroll, the highlight's and marks' showing, and
+    /// its scroll counts, which the smoke scenarios `tiles-trait-*` read. With [`size`] every row
+    /// is 40 high (one line of 30 and 10 of spacing), and the description 30 a line.
     fn menu_changed(change: impl FnOnce(&str) -> String) -> Ui {
         let bar = |name: &str, extra: &str| {
             format!(
-                r#"<hotrect name="{name}"><target>&true;</target><width>10</width>{extra}
-                  <_step_size>1</_step_size><_jump_size>0</_jump_size><_number_of_visible_items>1</_number_of_visible_items>
-                  <_current_value><copy src="child(scrollbar_vert_down)" trait="clicked"/></_current_value>
+                r#"<hotrect name="{name}"><width>10</width><target>&true;</target>{extra}
+                  <_number_of_visible_items>1</_number_of_visible_items><_jump_size>0</_jump_size><_step_size>1</_step_size>
+                  <_own_count>0</_own_count>
+                  <_current_value><copy src="me()" trait="_own_count"/></_current_value>
                   <image name="scrollbar_vert_up"/><image name="scrollbar_vert_down"/>
-                  <image name="scrollbar_vert_marker"><width>4</width><height>8</height><_step_height>5</_step_height></image>
+                  <image name="scrollbar_vert_marker"><height>8</height><width>4</width><_step_height>5</_step_height></image>
                   <hotrect name="scrollbar_vert_page_up"/><hotrect name="scrollbar_vert_page_down"/></hotrect>"#
             )
         };
         let list_bar = bar("lb_scrollbar", "");
-        let text_bar = bar("TM_DescriptionScrollbar", "<x>200</x><_ScrollDelta>25</_ScrollDelta>");
+        let text_bar = bar("TM_DescriptionScrollbar", r#"<x>200</x><_ScrollDelta>25</_ScrollDelta><_moved><copy src="me()" trait="_ScrollDelta"/><mul src="me()" trait="_current_value"/></_moved>"#);
         let xml = format!(
-            r#"<menu name="TraitMenu"><_CurrPoints>0</_CurrPoints><_MaxPoints>0</_MaxPoints>
-            <_PCButton_R>LUM_ResetButton</_PCButton_R><_PCButton_A>LUM_ContinueButton</_PCButton_A>
+            r#"<menu name="TraitMenu">
             <rect name="NOGLOW_BRANCH"><image name="LUM_Background"><alpha>7</alpha></image>
             <rect name="LUM_MainRect"><x>50</x><y>30</y>
-              <rect name="LUM_HeadlineRect"><text name="LUM_Headline_Title"><string></string></text></rect>
-              <hotrect name="LUM_PerkList"><x>0</x><y>20</y><width>300</width><height>200</height>
-                <_scroll_delta>15</_scroll_delta><_highlight_y>-1</_highlight_y><_selected_height>0</_selected_height>
-                <_offset><copy src="child(lb_scrollbar)" trait="_current_value"/><mul src="me()" trait="_scroll_delta"/></_offset>
-                <hotrect name="lb_highlight_box"><y><copy src="parent()" trait="_highlight_y"/></y><height><copy src="parent()" trait="_selected_height"/></height></hotrect>
+              <rect name="LUM_HeadlineRect"><text name="LUM_Headline_Title"/></rect>
+              <hotrect name="LUM_PerkList"><y>20</y><height>200</height><width>300</width><_scroll_delta>15</_scroll_delta>
+                <hotrect name="lb_highlight_box"/>
                 {list_bar}</hotrect>
               <image name="LUM_SelectionIcon"/>
               <rect name="LUM_SelectionInfoRect"><x>400</x><y>100</y>
-                <hotrect name="TM_DescriptionBox"><y>10</y><width>200</width><height>100</height><clipwindow>&true;</clipwindow>
+                <hotrect name="TM_DescriptionBox"><y>10</y><height>100</height><width>200</width><clipwindow>&true;</clipwindow>
+                  <_text_top><copy>3</copy><sub src="child(TM_DescriptionScrollbar)" trait="_moved"/></_text_top>
                   {text_bar}
-                  <text name="TM_DescriptionText"><string></string><wrapwidth>180</wrapwidth>
-                    <y><copy src="sibling(TM_DescriptionScrollbar)" trait="_current_value"/><mul src="sibling(TM_DescriptionScrollbar)" trait="_ScrollDelta"/><mul>-1</mul><add>3</add></y></text>
+                  <text name="TM_DescriptionText"><wrapwidth>180</wrapwidth><y><add src="parent()" trait="_text_top"/></y></text>
                 </hotrect>
-                <text name="LUM_PointCounter"><string></string></text></rect>
-              <rect name="LUM_ButtonRect"><x>700</x>
-                <hotrect name="LUM_ResetButton"><target>&true;</target><width>50</width><height>20</height></hotrect>
-                <hotrect name="LUM_ContinueButton"><target>&true;</target><y>30</y><width>50</width><height>20</height></hotrect>
+                <text name="LUM_PointCounter"/></rect>
+              <rect name="LUM_ButtonRect"><y>0</y><x>700</x>
+                <hotrect name="LUM_ResetButton"><height>20</height><width>50</width><target>&true;</target></hotrect>
+                <hotrect name="LUM_ContinueButton"><height>20</height><width>50</width><target>&true;</target><y>30</y></hotrect>
               </rect></rect></rect>
-            <template name="LUM_PerkTemplate"><hotrect name="LUM_Perk"><x>10</x><width>280</width><target>&true;</target>
-              <_y>0</_y><_VerticalSpacing>10</_VerticalSpacing><_selected>0</_selected><_TextAlpha>255</_TextAlpha>
-              <y><copy src="me()" trait="_y"/><sub src="parent()" trait="_offset"/></y>
-              <text name="ListItemText"><string><copy src="parent()" trait="string"/></string></text>
-              <image name="LUM_Template_ItemMarker"><visible><copy src="parent()" trait="_selected"/></visible></image>
+            <template name="LUM_PerkTemplate"><hotrect name="LUM_Perk"><width>280</width><x>10</x><target>&true;</target><_VerticalSpacing>10</_VerticalSpacing>
+              <text name="ListItemText"><string>a row</string></text>
+              <image name="LUM_Template_ItemMarker"/>
             </hotrect></template></menu>"#
         );
         let mut ui = Ui::new();
@@ -1209,10 +1205,11 @@ mod tests {
         st.rewrite(&mut ui);
         ui.update();
         assert_eq!(at(&ui, &format!("{TEXT_BAR}/_current_value")), 4.0);
-        ui.set_trait(down, "clicked", Value::Num(1.0));
+        let bar = ui.find_tile(TEXT_BAR).unwrap();
+        ui.set_trait(bar, "_own_count", Value::Num(1.0));
         st.rewrite(&mut ui);
         ui.update();
-        ui.set_trait(down, "clicked", Value::Num(0.0));
+        ui.set_trait(bar, "_own_count", Value::Num(0.0));
         st.rewrite(&mut ui);
         ui.update();
         assert_eq!(at(&ui, &format!("{TEXT_BAR}/_current_value")), 4.0);
