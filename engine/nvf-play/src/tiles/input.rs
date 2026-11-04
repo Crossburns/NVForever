@@ -507,6 +507,10 @@ pub(crate) fn feed(
             }
         }
     }
+    // The dialogue menu's pointer decides on what was drawn (`super::dialog_menu`).
+    if let (Some(_), [_], Some(d)) = (dialog_menu, taking.as_slice(), dialog.as_ref()) {
+        input.resolved = Some(d.hits().to_vec());
+    }
     // A frame's own clicks are for the screen up now; a script's kept theirs when queued.
     rt.game.ui_pointer.stamp = crate::dialogue::stamp_now(&rt.game);
     let report = fnv_game::ui_input::step(&mut rt.game, &taking, &input, &no_measure);

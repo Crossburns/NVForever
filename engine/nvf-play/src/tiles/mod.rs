@@ -720,6 +720,7 @@ impl Plugin for TilesPlugin {
             // scripts read it; then what they left measured and placed, worked out by `update`.
             .add_systems(Update, dialog_menu::publish_system.in_set(PlaySet::Scripts).after(crate::dialogue::input).before(crate::script::run_scripts))
             .add_systems(Update, dialog_menu::write_system.after(PlaySet::Scripts).before(update))
+            .add_systems(Update, dialog_menu::snapshot_system.after(update).before(PlaySet::Ui))
             .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui))
             .add_systems(PostUpdate, vanilla::hide_hand_built.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
     }

@@ -43,7 +43,7 @@ use super::menus::{self, SizesWritten, Tiled};
 use crate::dialogue::{DialogueScreen, ListId, ViewInput};
 use crate::dialogue_menu::{crop_x, hint_shown, window, DialogueMenu, MenuView, CROP_Y, GOODBYE_HINT, SHADE};
 use bevy::prelude::*;
-use fnv_ui::input::{By, Report};
+use fnv_ui::input::{By, HitCandidate, Report};
 use fnv_ui::{MemSource, Origin, TileId, Ui, Value};
 
 /// The menu's name [observed: the vanilla files, by fnvtool ui tree].
@@ -750,25 +750,9 @@ pub struct DialogTiles {
     shown: bool,
     /// The list its rows were written for.
     list: Option<ListId>,
-    /// What hits were worked out on as it was drawn ([`hit_geometry`]).
-    hits: Vec<f64>,
-}
-
-/// Every number that places what a click can hit in the tree as it stands: the screen, the
-/// click area, the list, the rows. The tile input reads the live tree, so a change between the
-/// frame's drawing and the next frame's input would put a click on what was not on screen.
-pub fn hit_geometry(ui: &Ui) -> Vec<f64> {
-    let screen = ui.screen();
-    let mut out = vec![num(ui, screen, "width"), num(ui, screen, "height")];
-    for path in [ROOT, CLICK_AREA, LIST, BAR] {
-        if let Some(t) = ui.find_tile(path) {
-            out.extend(["x", "y", "width", "height"].map(|n| num(ui, t, n)));
-        }
-    }
-    for r in rows(ui) {
-        out.extend(["x", "y", "width", "height", "listindex"].map(|n| num(ui, r, n)));
-    }
-    out
+    /// What can be hit as it was drawn, and `screen()`'s size then ([`snapshot_system`]).
+    hits: Vec<HitCandidate>,
+    hit_screen: (f64, f64),
 }
 
 impl DialogTiles {
@@ -785,21 +769,42 @@ impl DialogTiles {
     /// The menu, when it takes the tile input this frame: drawn last frame, the conversation
     /// still running with nothing over it, and the pause menu not up. A menu over the
     /// conversation keeps the input until it is gone, its closing frame included: `Game::menu`
-    /// goes in that frame's tick, after this. With the tree's hit geometry moved since the
-    /// drawing (a new window size, a shared expression), it takes nothing that frame: a press
-    /// there is on what the tree says and not on what was on screen, and is better lost [design].
+    /// goes in that frame's tick, after this. On a frame whose window has a new size it takes
+    /// nothing: the pointer's units are the new size's and [`DialogTiles::hits`] the old one's,
+    /// and one press there is better lost [design]. Anything else that moves in the tree
+    /// (an animation, a script) changes nothing: the click is on the candidates as drawn.
     pub fn taking(&self, game: &fnv_game::Game<'_>, paused: bool) -> Option<TileId> {
-        self.menu.filter(|_| self.shown && !paused && game.dialogue.is_some() && !crate::dialogue::held(game) && self.hits_hold(&game.ui_tree))
+        let screen = game.ui_tree.screen();
+        let same_size = (num(&game.ui_tree, screen, "width"), num(&game.ui_tree, screen, "height")) == self.hit_screen;
+        self.menu.filter(|_| self.shown && !paused && game.dialogue.is_some() && !crate::dialogue::held(game) && same_size)
     }
 
-    /// The tree still has the hit geometry it was drawn with.
-    pub fn hits_hold(&self, ui: &Ui) -> bool {
-        self.hits == hit_geometry(ui)
+    /// What can be hit, as it was drawn.
+    pub fn hits(&self) -> &[HitCandidate] {
+        &self.hits
+    }
+
+    fn take_hits(&mut self, ui: &Ui) {
+        let Some(menu) = self.menu else { return };
+        self.hits = fnv_ui::input::hit_candidates(ui, menu, &fnv_ui::input::no_measure);
+        let screen = ui.screen();
+        self.hit_screen = (num(ui, screen, "width"), num(ui, screen, "height"));
     }
 
     /// The list the rows were written for.
     pub fn list(&self) -> Option<&ListId> {
         self.list.as_ref()
+    }
+}
+
+/// After `super::update`, the frame's last working out of the tree, animations stepped, and
+/// before the drawing: what can be hit as it is drawn, for the next frame's input.
+pub(crate) fn snapshot_system(script: Res<crate::script::ScriptState>, switch: Res<super::vanilla::TileMenus>, mut state: ResMut<DialogTiles>) {
+    if !switch.dialog || !state.drawn() {
+        return;
+    }
+    if let Some(rt) = script.rt.as_ref() {
+        state.take_hits(&rt.game.ui_tree);
     }
 }
 
@@ -898,7 +903,7 @@ pub(crate) fn write_system(
     let (view, list) = (crate::dialogue::view(game, &sim).filter(|_| !creating), crate::dialogue::list_id(game));
     let (Some(view), Some(list)) = (view, list) else {
         hide(&mut game.ui_tree, written);
-        state.set_if_neq(DialogTiles { menu: Some(menu), shown: false, list: None, hits: Vec::new() });
+        state.set_if_neq(DialogTiles { menu: Some(menu), shown: false, list: None, ..DialogTiles::default() });
         return;
     };
     let ui = &mut game.ui_tree;
@@ -925,10 +930,8 @@ pub(crate) fn write_system(
                 ui.update();
                 info!("{}", describe(ui, &now, first));
             }
-            // As `super::update` leaves it for the drawing: the geometry the next input may use.
-            ui.update();
-            let hits = hit_geometry(ui);
-            state.set_if_neq(DialogTiles { menu: Some(menu), shown: true, list: Some(list), hits });
+            let (hits, hit_screen) = (std::mem::take(&mut state.hits), state.hit_screen);
+            state.set_if_neq(DialogTiles { menu: Some(menu), shown: true, list: Some(list), hits, hit_screen });
         }
         Err(reason) => {
             written.warn(&Tiled::No(reason));
@@ -1108,6 +1111,10 @@ mod tests {
 
     fn pictures_drawn(ui: &Ui, name: &str) -> usize {
         pieces(ui).iter().filter(|p| matches!(&p.look, super::super::draw::Look::Picture { name: n, .. } if n == name)).count()
+    }
+
+    fn ui_mut<'u>(game: &'u mut fnv_game::Game<'_>) -> &'u mut Ui {
+        &mut game.ui_tree
     }
 
     /// A pointer on the screen with this generation.
@@ -1362,34 +1369,39 @@ mod tests {
     }
 
     #[test]
-    fn hits_hold_only_on_the_geometry_that_was_drawn() {
-        let mut ui = menu();
-        let mut written = fresh();
+    fn hits_land_on_what_was_drawn_through_an_animation_and_a_press_on_a_new_size_is_lost() {
+        let mut state_ui = crate::script::ScriptState::over_no_plugins();
+        let game = &mut state_ui.rt.as_mut().unwrap().game;
+        game.ui_tree = menu();
+        game.dialogue = Some(fnv_game::dialogue::Conversation { actor: fnv_sim::FormId(0x14), through: None, line: None, choices: Vec::new(), lines: 1, then: None, ending: false });
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
-        let first = frame_on(&mut ui, &mut written, choosing(labels.clone()), 1, 5, 0);
-        let state = DialogTiles { menu: ui.menu(DIALOG_MENU), shown: true, list: None, hits: hit_geometry(&ui) };
-        assert!(state.hits_hold(&ui));
-        // Nothing that stands still moves it: the pointer's pulse on a row is not geometry.
+        let first = frame_on(&mut game.ui_tree, &mut fresh(), choosing(labels), 1, 5, 0);
+        assert_eq!(first, 1);
+        let mut state = DialogTiles { menu: game.ui_tree.menu(DIALOG_MENU), shown: true, ..DialogTiles::default() };
+        state.take_hits(&game.ui_tree);
+        // The rows shown, the bar's controls and the click area's absence all resolved.
+        let ui = &game.ui_tree;
+        let held = |t: TileId| state.hits().iter().any(|c| c.under == t);
+        assert!(rows(ui)[1..6].iter().all(|&r| held(r)) && !held(rows(ui)[0]) && !held(rows(ui)[6]), "the window's rows");
+        assert!(BAR_CONTROLS.iter().all(|n| held(ui.find_tile(&format!("{BAR}/{n}")).unwrap())), "the bar's controls");
+        // Something animates a row away between the drawing and the input: input goes on,
+        // and on the row where it was drawn.
+        let on_row = rows(ui)[1];
+        ui_mut(game).set_trait(on_row, "y", Value::Num(500.0));
+        game.ui_tree.update();
+        assert!(state.taking(game, false).is_some(), "an animation does not stop input");
+        let menu_tile = game.ui_tree.menu(DIALOG_MENU).unwrap();
         let mut p = pointer(1);
-        let r = step(&mut ui, &mut p, (200.0, 330.0), true);
-        assert_eq!(r.clicks.len(), 1);
-        assert!(state.hits_hold(&ui));
-        // A new window size before the next input: not what was drawn.
-        super::super::write_screen(&mut ui, 1600.0, 720.0, true);
-        ui.update();
-        assert!(!state.hits_hold(&ui), "the screen");
-        // A shared expression or a script moving the list or a row.
-        let mut ui = menu();
-        let first_again = frame_on(&mut ui, &mut written, choosing(labels.clone()), 2, 5, first);
-        assert_eq!(first_again, first);
-        let state = DialogTiles { hits: hit_geometry(&ui), ..state };
-        ui.set_trait(ui.find_tile(LIST).unwrap(), "y", Value::Num(301.0));
-        assert!(!state.hits_hold(&ui), "the list");
-        // The next drawing's geometry is the next input's.
-        let state = DialogTiles { hits: hit_geometry(&ui), ..state };
-        assert!(state.hits_hold(&ui));
-        ui.set_trait(rows(&ui)[2], "y", Value::Num(9.0));
-        assert!(!state.hits_hold(&ui), "a row");
+        let input = Input { at: Some((200.0, 330.0)), press: true, resolved: Some(state.hits().to_vec()), ..Input::default() };
+        let r = p.step(&mut game.ui_tree, &[menu_tile], &input, &no_measure);
+        assert_eq!(r.clicks.first().map(|c| c.tile), Some(on_row));
+        // A new window size before the next input: that frame only, nothing taken.
+        assert!(state.taking(game, true).is_none(), "the pause menu up");
+        super::super::write_screen(&mut game.ui_tree, 1600.0, 720.0, true);
+        game.ui_tree.update();
+        assert!(state.taking(game, false).is_none(), "the new size");
+        state.take_hits(&game.ui_tree);
+        assert!(state.taking(game, false).is_some(), "the next drawing's");
     }
 
     #[test]
@@ -1642,11 +1654,11 @@ mod tests {
             0
         };
         write(&mut ui, &now, &mut written, &mut keep).unwrap();
-        assert!(!written.moved, "the frame it changes is measured first, and places next");
-        write(&mut ui, &now, &mut written, &mut keep).unwrap();
         assert!(written.moved);
         assert_eq!(f(&ui, LIST, "_highlight_y"), 112.0);
         assert_eq!(f(&ui, LIST, "height"), 216.0);
+        write(&mut ui, &now, &mut written, &mut keep).unwrap();
+        assert!(!written.moved, "settled");
     }
 
     #[test]
@@ -1709,9 +1721,9 @@ mod tests {
         assert!(!none.by_tiles() && !none.drawn());
         let mut ui = menu();
         let menu = ui.menu(DIALOG_MENU);
-        let over = DialogTiles { menu, shown: false, list: None, hits: Vec::new() };
+        let over = DialogTiles { menu, shown: false, ..DialogTiles::default() };
         assert!(over.by_tiles() && !over.drawn(), "a menu over it: neither view draws");
-        let up = DialogTiles { menu, shown: true, list: None, hits: Vec::new() };
+        let up = DialogTiles { menu, shown: true, ..DialogTiles::default() };
         assert!(up.by_tiles() && up.drawn());
         // The picture it stands for, as `super::draw` is given it.
         frame_on(&mut ui, &mut fresh(), choosing(vec![row("A.")]), 1, 0, 0);
