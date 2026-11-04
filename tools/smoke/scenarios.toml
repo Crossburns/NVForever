@@ -2842,7 +2842,7 @@ expect = [
 
 [[scenario]]
 name = "dialogue-goodbye-hint"
-note = "Chet in the general store, 1024x768 (4:3: the hint stands in the band under the bottom bracket, not at the side). The talk aid starts the conversation with no steps and holds the choices for 20 s; a real Tab key (NVF_PLAY_TEST_KEYS, through the game's bindings) at 22 s says goodbye, so the aid's own leave never runs. Shots hint_on_*.png while the choices wait. Covers: the hint shown while a Goodbye choice is offered, a real Tab ending the conversation by Goodbye. Does not cover: a Tab refused where no Goodbye is offered (dialogue.rs is unchanged), the switch flipped live (the unit test of the cache key covers it), the setting's saved state. Timing: the conversation starts at 11 s of the world aids' clock and Chet's greeting takes under 11 s, else the Tab at 22 s is refused and the run fails on the aid's leave line (a late start moves the talk and the keys together)"
+note = "Chet in the general store, 1024x768 (4:3: the hint stands in the band under the bottom bracket, not at the side). The talk aid starts the conversation with no steps and holds the choices for 60 s; a real Tab key (NVF_PLAY_TEST_KEYS, through the game's bindings) at 36 s says goodbye, so the aid's own leave never runs. Shots hint_on_*.png while the choices wait. Covers: the hint shown while a Goodbye choice is offered, a real Tab ending the conversation by Goodbye. Does not cover: a Tab refused where no Goodbye is offered (dialogue.rs is unchanged), the switch flipped live (the unit test of the cache key covers it), the setting's saved state. Timing: the conversation starts at 11 s of the world aids' clock and Chet's greeting takes under 11 s, else the Tab at 36 s is refused and the run fails on the aid's leave line (a late start moves the talk and the keys together)"
 source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint (#1517)"
 areas = ["dialogue", "menus"]
 paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
@@ -2858,7 +2858,7 @@ expect = [
 
 [[scenario]]
 name = "dialogue-goodbye-hint-off"
-note = "As dialogue-goodbye-hint with the Goodbye hint switched off first: the pause menu's settings page flips dialogue-goodbye-hint at 3 s (the aids that act on the world, the talk among them, wait for 11 s of the world clock, which never runs ahead of the real one, so the flip comes first on any machine). The hint is held back, the real Tab at 22 s still says goodbye. Shots hint_off_*.png. Does not cover the flip while a conversation is open (unit test of the cache key) or a refused Tab"
+note = "As dialogue-goodbye-hint with the Goodbye hint switched off first: the pause menu's settings page flips dialogue-goodbye-hint at 3 s (the aids that act on the world, the talk among them, wait for 11 s of the world clock, which never runs ahead of the real one, so the flip comes first on any machine). The hint is held back, the real Tab at 36 s still says goodbye. Shots hint_off_*.png. Does not cover the flip while a conversation is open (unit test of the cache key) or a refused Tab"
 source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint switch (#1517)"
 areas = ["dialogue", "menus"]
 paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]

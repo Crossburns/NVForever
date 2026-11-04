@@ -126,7 +126,7 @@ const HINT_IN: f32 = TEXT_IN;
 const STAND_IN_INK: (f32, f32) = (17.0, 0.0);
 
 /// The settings page's "Goodbye hint" switch (key `dialogue-goodbye-hint`): on by
-/// default [owner, list 5 item 62]; off hides the words only, Tab still says goodbye.
+/// default [owner, list 5 item 62]; off hides the words, their backing and the narrow screens' strip; a tall list moves back down, Tab still says goodbye.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GoodbyeHint(pub bool);
 
