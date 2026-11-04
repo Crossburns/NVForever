@@ -455,14 +455,11 @@ pub fn draw(
     c.kit.screen = !device;
     let root = Node { overflow: Overflow::clip(), ..at(0.0, 0.0, CANVAS.x, CANVAS.y) };
     commands.spawn((PipBoyRoot, root, UiTargetCamera(screen.camera), Name::new("Pip-Boy menus"))).with_children(|r| {
+        // The shell every view of a page keeps: the header here, the scanlines over all.
         if !device {
             header(r, &mut c, page);
         }
-        if device && c.image(r, BACKGROUND, at(0.0, 0.0, CANVAS.x, CANVAS.y), amber(BACKGROUND_BRIGHTNESS)).is_none() {
-            r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), BackgroundColor(amber(BACKGROUND_BRIGHTNESS).with_alpha(0.1))));
-        }
-        tab_line(r, &mut c, page, tab);
-        r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), PageBody { page, tab }, Pickable::IGNORE));
+        hand_built_page(r, &mut c, page, tab, device);
         if let Some(lines) = c.kit.scanlines.clone().filter(|_| device) {
             let stretch = SCANLINE_PITCH / c.images.get(&lines).map_or(64.0, |i| i.height() as f32);
             r.spawn((
@@ -473,6 +470,16 @@ pub fn draw(
             ));
         }
     });
+}
+
+/// What a hand-built page has inside the shell: the device's background, the tab line and
+/// the body its module fills.
+fn hand_built_page(r: &mut ChildSpawnerCommands, c: &mut Ctx, page: Page, tab: usize, device: bool) {
+    if device && c.image(r, BACKGROUND, at(0.0, 0.0, CANVAS.x, CANVAS.y), amber(BACKGROUND_BRIGHTNESS)).is_none() {
+        r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), BackgroundColor(amber(BACKGROUND_BRIGHTNESS).with_alpha(0.1))));
+    }
+    tab_line(r, c, page, tab);
+    r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), PageBody { page, tab }, Pickable::IGNORE));
 }
 
 // ---- The screen menu's header (docs/design/screen-menu.md §3.1) ---------------------

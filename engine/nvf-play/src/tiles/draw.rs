@@ -623,6 +623,57 @@ pub(crate) enum Ink {
     Drawn,
 }
 
+/// Where a menu's pieces are painted: the window (every menu until the Pip-Boy's pages), or
+/// an image a camera renders ([`Target::canvas`]). A root node and the pieces' slots belong
+/// to one target, so its fields are part of what a drawing is compared with ([`paint`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Target {
+    /// The camera the pieces are drawn by; none: the window's.
+    pub camera: Option<Entity>,
+    /// The pieces' area in the view's units, from its top left and cut off there; none: the
+    /// whole view.
+    pub canvas: Option<Vec2>,
+    /// Logical pixels to an interface unit (the tiled pictures').
+    pub scale: f32,
+    /// The camera's image's pixels to a logical pixel: 1 in the window. Layout does not
+    /// read it (the units are logical: the camera's target already scales them).
+    pub image_scale: f32,
+    /// The stacking level of the root.
+    pub z: i32,
+}
+
+impl Target {
+    /// In the window, at `scale` logical pixels to an interface unit.
+    pub fn window(scale: f32, z: i32) -> Target {
+        Target { camera: None, canvas: None, scale, image_scale: 1.0, z }
+    }
+
+    /// An image a camera renders: `canvas` is the part of it the pieces lie on. The image
+    /// is as many logical pixels as interface units (`crate::pipboy::TARGET`), so one unit
+    /// is one logical pixel whatever `image_scale` is [design: pipboy.rs, its module notes].
+    pub fn image(camera: Entity, canvas: Vec2, image_scale: f32, z: i32) -> Target {
+        Target { camera: Some(camera), canvas: Some(canvas), scale: 1.0, image_scale, z }
+    }
+
+    /// Whether a root made for `self` serves `other`: the same camera, area and level.
+    fn same_root(&self, other: &Target) -> bool {
+        self.camera == other.camera && self.canvas == other.canvas && self.z == other.z
+    }
+}
+
+/// The root node of a menu's pieces on `target`.
+fn spawn_root(commands: &mut Commands, target: &Target) -> Entity {
+    let node = match target.canvas {
+        Some(c) => Node { overflow: Overflow::clip(), ..at(0.0, 0.0, c.x, c.y) },
+        None => Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+    };
+    let mut root = commands.spawn((TileRoot, node, GlobalZIndex(target.z), Pickable::IGNORE));
+    if let Some(camera) = target.camera {
+        root.insert(UiTargetCamera(camera));
+    }
+    root.id()
+}
+
 /// A piece's nodes: its slot (over the whole view, stacked by the piece's place in the
 /// list), the clip wrapper in it and the piece's own outer node.
 struct Slot {
@@ -651,8 +702,9 @@ fn keys(pieces: &[Piece]) -> Vec<Key> {
 pub(crate) struct Drawn {
     root: Option<Entity>,
     pieces: Vec<Piece>,
-    /// Logical pixels to an interface unit the pieces were set for (the tiled pictures').
-    scale: f32,
+    /// Where the pieces were set out for: the camera, the area and the scale (the tiled
+    /// pictures').
+    target: Option<Target>,
     counts: (usize, usize),
     /// The whole menu's start line is written (T12a).
     told: bool,
@@ -919,7 +971,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
             }
             None => Vec::new(),
         };
-        paint(&mut commands, drawn, pieces, scale, z, heading, ui, &mut kit, &mut nodes);
+        paint(&mut commands, drawn, pieces, Target::window(scale, z), heading, ui, &mut kit, &mut nodes);
     }
     *blur = blur_now;
     // T11: the Mods page, the start menu's mod tiles over the pause menu.
@@ -958,7 +1010,7 @@ fn mods_page(commands: &mut Commands, script: &ScriptState, on: bool, kit: &mut 
         info!("tiles: {}: Mods page, {} mod tiles drawn ({} items)", super::mods::START_MENU, counts.0, counts.1);
         drawn.counts = counts;
     }
-    paint(commands, drawn, pieces, scale, super::mods::MODS_Z, heading, ui, kit, nodes);
+    paint(commands, drawn, pieces, Target::window(scale, super::mods::MODS_Z), heading, ui, kit, nodes);
 }
 
 /// The fonts of `pieces`' texts that are not loaded (`loaded` says which are), each once:
@@ -1077,32 +1129,36 @@ fn hud(commands: &mut Commands, script: &ScriptState, view: &View, kit: &mut Fon
         }
         drawn.counts = counts;
     }
-    paint(commands, drawn, pieces, scale, TILES_Z, heading, ui, kit, nodes);
+    paint(commands, drawn, pieces, Target::window(scale, TILES_Z), heading, ui, kit, nodes);
 }
 
-/// Bring one menu's drawn nodes in line with its `pieces`, at stacking level `z`: nothing
-/// when they and the scale are as last drawn; otherwise each piece's slot kept, moved and
-/// recoloured in place, spawned again or removed ([`change`]).
+/// Bring one menu's drawn nodes in line with its `pieces` on `target`: nothing when they and
+/// the target are as last drawn; otherwise each piece's slot kept, moved and recoloured in
+/// place, spawned again or removed ([`change`]).
 #[allow(clippy::too_many_arguments)]
-fn paint(commands: &mut Commands, drawn: &mut Drawn, pieces: Vec<Piece>, scale: f32, z: i32, heading: f32, ui: Option<&Ui>, kit: &mut FontKit, nodes: &mut Nodes) {
-    if pieces == drawn.pieces && scale == drawn.scale {
+fn paint(commands: &mut Commands, drawn: &mut Drawn, pieces: Vec<Piece>, target: Target, heading: f32, ui: Option<&Ui>, kit: &mut FontKit, nodes: &mut Nodes) {
+    let scale = target.scale;
+    if pieces == drawn.pieces && drawn.target == Some(target) {
         return;
     }
     // Nothing drawn yet and nothing to draw (a menu switched off): no root node either.
     if pieces.is_empty() && drawn.root.is_none() {
-        drawn.scale = scale;
+        drawn.target = Some(target);
         return;
     }
-    let root = *drawn.root.get_or_insert_with(|| {
-        let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
-        commands.spawn((TileRoot, full, GlobalZIndex(z), Pickable::IGNORE)).id()
-    });
+    // Another camera, area or level: the root is made again for it.
+    if drawn.target.is_some_and(|was| !was.same_root(&target)) {
+        if let Some(root) = drawn.root.take() {
+            commands.entity(root).despawn();
+        }
+    }
+    let root = *drawn.root.get_or_insert_with(|| spawn_root(commands, &target));
     // A new size: the tiled pictures are set for the old one, so every piece again.
-    if scale != drawn.scale {
+    if drawn.target != Some(target) {
         commands.entity(root).despawn_related::<Children>();
         drawn.slots.clear();
         drawn.pieces.clear();
-        drawn.scale = scale;
+        drawn.target = Some(target);
     }
     let keys = keys(&pieces);
     let old: HashMap<Key, &Piece> = self::keys(&drawn.pieces).into_iter().zip(&drawn.pieces).collect();
@@ -1276,6 +1332,28 @@ mod tests {
     /// Every character 10 wide, lines 20 high [design].
     fn plain(_: f64, text: &str, _: Option<f64>) -> (f64, f64) {
         (10.0 * text.chars().count() as f64, 20.0)
+    }
+
+    /// [design] A window's target is told by its scale and level alone; an image's by its
+    /// camera, area and scale too, so a drawing kept for one is never kept for another.
+    #[test]
+    fn a_target_is_part_of_what_a_drawing_is_kept_for() {
+        let mut world = World::new();
+        let (a, b) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let canvas = Vec2::new(400.0, 300.0);
+        assert_eq!(Target::window(1.5, 7), Target::window(1.5, 7));
+        assert_ne!(Target::window(1.5, 7), Target::window(2.0, 7));
+        assert!(Target::window(1.5, 7).same_root(&Target::window(2.0, 7)), "a new window size keeps its root");
+        assert!(!Target::window(1.5, 7).same_root(&Target::window(1.5, 8)));
+        let image = Target::image(a, canvas, 1.0, 1);
+        assert!(!image.same_root(&Target::window(1.0, 1)), "the window's root cannot serve a camera");
+        assert!(!image.same_root(&Target::image(b, canvas, 1.0, 1)), "nor another camera's");
+        assert!(!image.same_root(&Target::image(a, Vec2::new(500.0, 300.0), 1.0, 1)), "nor another area's");
+        // A sharper image keeps the root and its units, and is another drawing.
+        let sharper = Target::image(a, canvas, 1.5, 1);
+        assert!(image.same_root(&sharper));
+        assert_ne!(image, sharper);
+        assert_eq!(sharper.scale, 1.0, "layout is not scaled twice: the camera's target does it");
     }
 
     /// [design] The real drawing system over a runtime with the menu files read, the tutorial
