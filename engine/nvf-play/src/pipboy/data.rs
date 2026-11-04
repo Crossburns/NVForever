@@ -32,8 +32,9 @@
 //! - Both maps pan while the left button is held on them and the pointer moves (the
 //!   pointer's own movement, not Bevy's drag: the map's nodes are drawn again as the
 //!   highlight box follows the pointer, which ended a drag at once).
-//! - On a controller the right stick moves the highlight box and the left stick's up and
-//!   down zooms in and out smoothly while held ([`stick_cursor`], [`stick_zoom`]).
+//! - On a controller the right stick moves the highlight box — pushed past an edge it
+//!   pans the map ([`scroll_map`]) — and the left stick's up and down zooms in and out
+//!   smoothly while held ([`stick_cursor`], [`stick_zoom`]).
 //!
 //! Selection: Up/Down (W/S) and the pointer (the row under it is selected and boxed);
 //! the test aid's `key=down|up|use` steps (`crate::menu::MenuInput`) do the same here.
@@ -201,8 +202,9 @@ const ZOOM: (f32, f32) = (1.0, 4.0);
 /// units a second (the window is 855 wide) [design].
 const CURSOR_SPEED: f32 = 600.0;
 /// The controller's left stick zooms a map this fast at a full push, wheel steps a
-/// second (the wheel's 1.25 a step, from 1 to 4 times) [design].
-const ZOOM_STICK_STEPS: f32 = 3.0;
+/// second (the wheel's 1.25 a step, from 1 to 4 times): the full span in about two
+/// seconds [observed: the original, tuned by playtest].
+const ZOOM_STICK_STEPS: f32 = 4.5;
 /// The trace drawn while the radio plays: its greatest height either side of the middle
 /// [observed: the capture, about a third of the panel at its loudest], the waves across
 /// the panel [observed: 8], how fast its envelope runs to the left, panels a second
@@ -823,7 +825,9 @@ fn take_input(st: &mut DataState, tab: usize, l: &Lists, game: &mut Game, input:
         let left = crate::pad::stick(&input.pads, true);
         let dt = input.time.delta_secs();
         if right != Vec2::ZERO {
-            st.cursor[tab] = Some(stick_cursor(st.cursor[tab].unwrap_or(MAP_MID), right, dt));
+            let (cursor, overflow) = stick_cursor(st.cursor[tab].unwrap_or(MAP_MID), right, dt);
+            st.cursor[tab] = Some(cursor);
+            scroll_map(st, tab, game, overflow);
         }
         if left.y != 0.0 {
             st.magnify[tab] = stick_zoom(st.magnify[tab], left.y, dt);
@@ -1131,16 +1135,45 @@ fn in_map(pointer: Option<Vec2>) -> Option<Vec2> {
 }
 
 /// Move the map cursor `at` by the right stick `v` for `dt` seconds, kept in the window;
-/// the stick's up is the screen's up, but the window's y runs down.
-fn stick_cursor(at: Vec2, v: Vec2, dt: f32) -> Vec2 {
-    let p = at + Vec2::new(v.x, -v.y) * (CURSOR_SPEED * dt);
-    Vec2::new(p.x.clamp(0.0, MAP.width()), p.y.clamp(0.0, MAP.height()))
+/// the stick's up is the screen's up, but the window's y runs down. Returns the cursor
+/// and how far it was pushed past an edge (that much pans the map, [`scroll_map`]).
+fn stick_cursor(at: Vec2, v: Vec2, dt: f32) -> (Vec2, Vec2) {
+    let raw = at + Vec2::new(v.x, -v.y) * (CURSOR_SPEED * dt);
+    let cursor = Vec2::new(raw.x.clamp(0.0, MAP.width()), raw.y.clamp(0.0, MAP.height()));
+    (cursor, raw - cursor)
 }
 
 /// Zoom `mag` by the left stick's up and down `y` (up positive, in; down out) for `dt`
 /// seconds, smoothly while held, between [`ZOOM`].
 fn stick_zoom(mag: f32, y: f32, dt: f32) -> f32 {
     (mag * ZOOM_STEP.powf(y * ZOOM_STICK_STEPS * dt)).clamp(ZOOM.0, ZOOM.1)
+}
+
+/// Pan the map's centre by `d` window units: the cursor pushed past an edge moves the
+/// view toward it (the opposite of a drag, which moves the picture by hand).
+fn scroll_map(st: &mut DataState, tab: usize, game: &Game, d: Vec2) {
+    if d == Vec2::ZERO {
+        return;
+    }
+    let mag = st.magnify[tab].max(ZOOM.0);
+    let world_size = if tab == WORLD {
+        map_of(st, game).map_or(Vec2::splat(2048.0), |m| Vec2::from(m.usable)) * mag
+    } else {
+        Vec2::ZERO
+    };
+    let scale = if tab == LOCAL {
+        local_scale(game.location.as_ref().is_some_and(|l| l.interior.is_some()))
+    } else {
+        0.0
+    };
+    let Some(c) = st.centre[tab].as_mut() else { return };
+    if tab == WORLD {
+        c[0] = (c[0] + d.x / world_size.x).clamp(0.0, 1.0);
+        c[1] = (c[1] + d.y / world_size.y).clamp(0.0, 1.0);
+    } else {
+        c[0] += d.x * scale / mag;
+        c[1] -= d.y * scale / mag;
+    }
 }
 
 /// The highlight box: at the pointer while it is over the map, else where it was left
@@ -1943,13 +1976,27 @@ mod tests {
     #[test]
     fn the_right_stick_moves_the_cursor_and_inverts_y() {
         // Right moves right; up moves up (the window's y runs down, so up is negative).
-        assert_eq!(stick_cursor(Vec2::new(300.0, 300.0), Vec2::new(1.0, 0.0), 0.1), Vec2::new(360.0, 300.0));
-        assert_eq!(stick_cursor(Vec2::new(300.0, 300.0), Vec2::new(0.0, 1.0), 0.1), Vec2::new(300.0, 240.0));
+        assert_eq!(stick_cursor(Vec2::new(300.0, 300.0), Vec2::new(1.0, 0.0), 0.1).0, Vec2::new(360.0, 300.0));
+        assert_eq!(stick_cursor(Vec2::new(300.0, 300.0), Vec2::new(0.0, 1.0), 0.1).0, Vec2::new(300.0, 240.0));
         // Kept inside the window at every corner.
-        assert_eq!(stick_cursor(Vec2::new(0.0, 0.0), Vec2::new(-1.0, 1.0), 1.0), Vec2::new(0.0, 0.0));
-        assert_eq!(stick_cursor(Vec2::new(MAP.width(), 0.0), Vec2::new(1.0, 1.0), 1.0), Vec2::new(MAP.width(), 0.0));
-        assert_eq!(stick_cursor(Vec2::new(0.0, MAP.height()), Vec2::new(-1.0, -1.0), 1.0), Vec2::new(0.0, MAP.height()));
-        assert_eq!(stick_cursor(Vec2::new(MAP.width(), MAP.height()), Vec2::new(1.0, -1.0), 1.0), Vec2::new(MAP.width(), MAP.height()));
+        assert_eq!(stick_cursor(Vec2::new(0.0, 0.0), Vec2::new(-1.0, 1.0), 1.0).0, Vec2::new(0.0, 0.0));
+        assert_eq!(stick_cursor(Vec2::new(MAP.width(), 0.0), Vec2::new(1.0, 1.0), 1.0).0, Vec2::new(MAP.width(), 0.0));
+        assert_eq!(stick_cursor(Vec2::new(0.0, MAP.height()), Vec2::new(-1.0, -1.0), 1.0).0, Vec2::new(0.0, MAP.height()));
+        assert_eq!(stick_cursor(Vec2::new(MAP.width(), MAP.height()), Vec2::new(1.0, -1.0), 1.0).0, Vec2::new(MAP.width(), MAP.height()));
+    }
+
+    #[test]
+    fn the_cursor_pushed_past_an_edge_reports_the_overflow() {
+        // Pushed right past the right edge: the overflow is the distance beyond it.
+        let (cursor, overflow) = stick_cursor(Vec2::new(500.0, 250.0), Vec2::new(1.0, 0.0), 1.0);
+        assert_eq!(cursor.x, MAP.width());
+        assert!(overflow.x > 0.0);
+        assert_eq!(overflow.y, 0.0);
+        // Pushed up past the top edge: the overflow is negative (toward the top).
+        let (_, overflow) = stick_cursor(Vec2::new(100.0, 100.0), Vec2::new(0.0, 1.0), 1.0);
+        assert!(overflow.y < 0.0);
+        // Within the window there is no overflow.
+        assert_eq!(stick_cursor(Vec2::new(300.0, 300.0), Vec2::new(1.0, 0.0), 0.1).1, Vec2::ZERO);
     }
 
     #[test]

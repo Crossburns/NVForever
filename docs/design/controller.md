@@ -82,10 +82,10 @@ Start cannot be bound.
   Not followed: the ITEMS page's RB Hotkey (the hotkeys are held digit keys), RadAway's
   A on the RAD view (not usable from the STATS page), caravan (its menu files are not
   read yet).
-- On the Pip-Boy DATA page's maps the right stick moves the cursor (the highlight box)
-  and the left stick's up and down zooms in and out smoothly while held [observed: the
-  original; the speeds are design], built in `pipboy/data.rs` (`stick_cursor`,
-  `stick_zoom`).
+- On the Pip-Boy DATA page's maps the right stick moves the cursor (the highlight box),
+  pushed past an edge it pans the map, and the left stick's up and down zooms in and out
+  smoothly while held [observed: the original; the speeds are design], built in
+  `pipboy/data.rs` (`stick_cursor`, `scroll_map`, `stick_zoom`).
 - The prompt under the crosshair names the Activate control's own key ("E)") or, with a
   controller, its button ("A)") (`Bindings::prompt`). The original shows the button's
   picture there (`&xbuttona;`, `general_button_a.dds`); letters are the first step.
