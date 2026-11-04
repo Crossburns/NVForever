@@ -77,6 +77,8 @@ const LINE: &str = "stats_headline_h2";
 const BACKGROUND: &str = "background_layout";
 /// The tabs, by the numbers `crate::pipboy::PipBoyInput::Tab` uses [observed: their ids 0 to 4].
 const TABS: [&str; 5] = ["stats_tailline_status", "stats_tailline_SPECIAL", "stats_tailline_skills", "stats_tailline_perks", "stats_tailline_general"];
+/// The rect inside a tab that holds its words and box [observed: by fnvtool ui tree].
+const TAB_INNER: &str = "stb_text_box";
 /// A row's spacing where the row's `_VerticalSpacing` reads 0 [hypothesis: pipboy.md §5.1.1].
 const ROW_SPACING: f64 = 20.0;
 
@@ -102,11 +104,13 @@ pub struct Paths {
     /// The file's page background, hidden when the file has one ([`write_model`]).
     pub background: Option<TileId>,
     pub tabs: [TileId; 5],
+    /// Each tab's inner rect, in a file that has one ([`write_tabs`]).
+    pub tab_inners: [Option<TileId>; 5],
 }
 
 impl Paths {
     fn live(&self, ui: &Ui) -> bool {
-        [self.menu, self.list, self.icon, self.desc_rect, self.desc, self.bar, self.title, self.line].into_iter().chain(self.tabs).chain(self.background).all(|t| ui.is_live(t))
+        [self.menu, self.list, self.icon, self.desc_rect, self.desc, self.bar, self.title, self.line].into_iter().chain(self.tabs).chain(self.background).chain(self.tab_inners.into_iter().flatten()).all(|t| ui.is_live(t))
     }
 }
 
@@ -178,6 +182,7 @@ pub fn paths(ui: &Ui, cut: Option<&str>) -> Result<Paths, String> {
         line: get(LINE)?,
         background: get(BACKGROUND).ok(),
         tabs,
+        tab_inners: tabs.map(|t| find_named(ui, t, TAB_INNER)),
     })
 }
 
@@ -367,6 +372,33 @@ fn write_frame(ui: &mut Ui, p: &Paths, device: bool, flat: &mut Option<FlatChang
     }
 }
 
+/// What this slice's layout needs of a tab, as the tree reads it at any size [observed: by
+/// fnvtool ui tree]: the tab's inner rect repeats the tab's own place, and has `alpha` 0 over
+/// shown words and lines. The original stands the tab at its one place [observed: private job
+/// pipboy_special_a], so it does not add the two [hypothesis: the tab has no `locus`, the
+/// inner rect has], and shows the words [hypothesis: as a hotrect's `alpha`,
+/// `super::layout::place`]. `super::layout` reads no `locus` and multiplies a rect's `alpha`
+/// for every menu, so here alone the inner rect's place is put back on every pass, as the file
+/// works it out again when the words change, and what is under it keeps its own `alpha`
+/// ([`super::layout::OWN_ALPHA`]), marked once [design].
+fn write_tabs(ui: &mut Ui, p: &Paths, marked: &mut bool) {
+    for inner in p.tab_inners.into_iter().flatten() {
+        for name in ["x", "y"] {
+            if num(ui, inner, name) != 0.0 {
+                ui.set_trait(inner, name, Value::Num(0.0));
+            }
+        }
+        if !*marked {
+            let mut stack = ui.tile(inner).children.clone();
+            while let Some(t) = stack.pop() {
+                stack.extend(ui.tile(t).children.iter().copied());
+                ui.set_trait(t, layout::OWN_ALPHA, Value::Num(1.0));
+            }
+        }
+    }
+    *marked = true;
+}
+
 /// The places code gives the file to work from: each row's height and `_y`, the list's height,
 /// the box's place and the description's scroll steps.
 #[derive(Clone, Debug, PartialEq)]
@@ -529,6 +561,8 @@ pub(crate) struct Written {
     geometry: Option<Geometry>,
     sizes: SizesWritten,
     flat: Option<FlatChanges>,
+    /// What is under the tabs' inner rects is marked ([`write_tabs`]).
+    tabs_marked: bool,
     /// What the targets were last checked against ([`usable`]).
     regions: Option<Regions>,
     /// What is shown changed since the log last said so.
@@ -611,6 +645,7 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
             }
             ui.update();
         }
+        write_tabs(ui, &p, &mut w.tabs_marked);
         write_frame(ui, &p, device, &mut w.flat);
         ui.update();
         let g = geometry(ui, &p, &w.rows, selected, view.highlight)?;
@@ -1306,6 +1341,36 @@ mod tests {
     fn the_cut_aid_reads_a_name_and_a_time() {
         assert_eq!(parse_cut("stats_icon"), ("stats_icon".to_string(), None));
         assert_eq!(parse_cut(" stats_icon @ 33.5 "), ("stats_icon".to_string(), Some(33.5)));
+    }
+
+    /// [design] A tab as `write_tabs` meets it, in numbers of this test's own: an inner rect
+    /// repeating the tab's place, transparent, over words and a line that are not.
+    #[test]
+    fn a_tabs_inner_rect_neither_moves_it_twice_nor_hides_it() {
+        let tab = r#"<hotrect name="stats_tailline_skills"><target>&true;</target><x>130</x><y>500</y><width>50</width><height>20</height><text name="TabWords"><string>Tab</string></text></hotrect>"#;
+        let nested = r#"<hotrect name="stats_tailline_skills"><x>130</x><y>500</y><width>50</width><height>20</height>
+          <rect name="stb_text_box"><target>&true;</target><x>130</x><y>500</y><width>50</width><height>20</height><alpha>0</alpha>
+            <text name="InnerWords"><alpha>200</alpha><string>Tab</string></text>
+            <rect name="InnerBox"><alpha>0</alpha><image name="InnerLine"><filename>a.dds</filename><width>50</width><height>2</height></image></rect>
+          </rect></hotrect>"#;
+        let (mut ui, mut v, mut t) = (tree_changed(|x| x.replace(tab, nested)), view(), StatsTiles::default());
+        let menu = run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        let p = paths(&ui, None).unwrap();
+        let items = layout::layout(&ui, menu, &|_, _, _| (0.0, 0.0), true);
+        let item = |name: &str| items.iter().find(|i| ui.tile(i.tile).name == name).unwrap();
+        let words = item("InnerWords");
+        assert_eq!((words.rect.left, words.rect.top), (130.0, 500.0), "at the tab's one place");
+        assert_eq!(words.alpha, 200.0, "its own alpha, through the transparent rect");
+        assert_eq!(item("InnerLine").alpha, 255.0);
+        // It takes the pointer there, and not where the two places added would be.
+        let at_tab = fnv_ui::input::hit(&ui, &[menu], (140.0, 505.0), &no_measure).unwrap();
+        assert_eq!(stats_tile(&ui, &p, &t.written.rows, at_tab.tile), Some(StatsTile::Tab(2)));
+        assert!(fnv_ui::input::hit(&ui, &[menu], (270.0, 1005.0), &no_measure).is_none());
+        // The file works the place out again: put back on the next pass.
+        let inner = p.tab_inners[2].unwrap();
+        ui.set_trait(inner, "x", Value::Num(130.0));
+        run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        assert_eq!(num(&ui, inner, "x"), 0.0);
     }
 
     #[test]

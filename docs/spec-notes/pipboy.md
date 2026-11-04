@@ -365,6 +365,8 @@ running at 1280 x 720, the Pip-Boy open on this page; one character, one window 
   what the shared tree holds here (960 / window height).
 - The list stands at x 35.33 and is 325 x 468, so 52 a row. The display stands at x 360.33, 544.67
   wide. The LVL card is at x 270, the XP card at x 690, and the tail line at y 652.
+- The tabs stand at x 84.50, 220.50, 423, 591.50 and 746, y 626, 116, 179, 109, 107 and 133 wide,
+  their parent line at y 652; their `_selected` read 0, 1, 0, 0, 0.
 - The root's `user0` reads 0 on opening, then 1. A click on id 1 sets it by `ClickMenuButton`.
 - The root's `user5` to `user7` read as text. `user8` reads empty on a level 1 character, while the
   LVL card shows on screen. **How `user8` came to be empty is open**: this slice writes the level
@@ -448,6 +450,15 @@ description's value has one owner: the file adds its own arrow clicks and `wheel
 `_current_value`, and the model moves it too. So tile controls become `StatsView::scroll_desc`
 commands, the value is written back after input on every tiled frame, and `wheelmoved` is not
 written [design].
+
+**A tab's inner rect**, `stb_text_box`, repeats the tab's own place and has `alpha` 0, over words and
+lines of their own `alpha` [observed: by fnvtool ui tree; a tab has no `locus`, the rect has]. So the
+two places are not added and the rect's `alpha` is not passed down in the original, going by where
+its tabs stand [hypothesis]. `tiles/layout.rs` and the tile input read no `locus` and multiply a
+rect's `alpha`, for every menu, so unchanged they lost the tab line here, words and box. This slice
+alone puts the rect's place back and marks what is under it `_NVFOwnAlpha` (`write_tabs`) [design];
+whether to read `locus` in general is a separate decision. The selected tab's fill stays undrawn: a
+hotrect, whose `alpha` the file changes there, draws nothing in this renderer [design].
 
 **Ids** [observed: the vanilla files, by fnvtool ui tree, `id`]: `stats_tailline_status` 0,
 `stats_tailline_SPECIAL` 1, `stats_tailline_skills` 2, `stats_tailline_perks` 3,
