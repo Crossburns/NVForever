@@ -271,6 +271,12 @@ impl StatsView {
         self.desc_max
     }
 
+    /// A view with lists this long, for tests of the views over it.
+    #[cfg(test)]
+    pub(crate) fn with_lens(lens: [usize; 5]) -> StatsView {
+        StatsView { lens, ..StatsView::default() }
+    }
+
     /// The limb a Stimpak goes on: the one under the pointer, else the one chosen by key.
     pub fn aimed(&self) -> Option<usize> {
         match self.hover {

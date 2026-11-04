@@ -4,7 +4,8 @@
 //! - **The switch**: `[UI] TileMenus=` in the home's `NVForever.ini`, a comma-separated
 //!   list of menu names, empty by default; `HUDMainMenu`, and since T15a `MessageMenu`
 //!   and `QuantityMenu` (`super::menus`), and since T11 `StartMenu` (the pause menu's
-//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), are acted on. It is
+//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), and `StatsMenu` (the Pip-Boy's
+//!   S.P.E.C.I.A.L. tab, `super::stats_menu`), are acted on. It is
 //!   read once at start, from the INI the settings page uses
 //!   (`crate::settings::SettingsFile`: an unattended run in the player's own home reads
 //!   none). The test aid `NVF_PLAY_TEST_TILE_MENUS=<list>` sets it instead, so a smoke
@@ -490,6 +491,9 @@ mod tests {
         assert_eq!(menus, TileMenus { hud: false, message: true, quantity: true, sleep_wait: true, tutorial: false, start: false, stats: false });
         assert!(other.is_empty());
         assert_eq!(menus.line(), "MessageMenu, QuantityMenu, SleepWaitMenu drawn from tiles");
+        let (stats, other) = TileMenus::parse("statsmenu");
+        assert_eq!((stats, other.is_empty()), (TileMenus { stats: true, ..TileMenus::default() }, true));
+        assert_eq!(stats.line(), "StatsMenu drawn from tiles");
         // T15b: the Wait / Sleep and tutorial menus; a menu not built yet stays a name not
         // acted on.
         let t15b = TileMenus { sleep_wait: true, tutorial: true, ..TileMenus::default() };

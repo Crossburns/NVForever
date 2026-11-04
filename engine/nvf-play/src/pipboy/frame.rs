@@ -434,8 +434,8 @@ pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut
 /// Rebuild the frame (and with it every page's body) when the Pip-Boy's page or tab
 /// changed, or it came up, or a page went over to its tiles or back. A page drawn from its
 /// file (`crate::tiles::stats_menu::StatsTiles::ready`, the one decision) keeps the shell, the
-/// screen menu's header and the device's scanlines, and has none of the hand-built page: its
-/// background, heading and tab line are the tiles', once, under the scanlines.
+/// screen menu's header, the device's background and its scanlines, and has none of the
+/// hand-built page: its heading and tab line are the tiles', once, between those.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut commands: Commands,
@@ -467,12 +467,16 @@ pub fn draw(
     c.kit.screen = !device;
     let root = Node { overflow: Overflow::clip(), ..at(0.0, 0.0, CANVAS.x, CANVAS.y) };
     commands.spawn((PipBoyRoot, root, UiTargetCamera(screen.camera), Name::new("Pip-Boy menus"))).with_children(|r| {
-        // The shell every view of a page keeps: the header here, the scanlines over all.
+        // The shell every view of a page keeps: the header or the background here, the
+        // scanlines over all.
         if !device {
             header(r, &mut c, page);
         }
+        if device && c.image(r, BACKGROUND, at(0.0, 0.0, CANVAS.x, CANVAS.y), amber(BACKGROUND_BRIGHTNESS)).is_none() {
+            r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), BackgroundColor(amber(BACKGROUND_BRIGHTNESS).with_alpha(0.1))));
+        }
         if !tiled {
-            hand_built_page(r, &mut c, page, tab, device);
+            hand_built_page(r, &mut c, page, tab);
         }
         if let Some(lines) = c.kit.scanlines.clone().filter(|_| device) {
             let stretch = SCANLINE_PITCH / c.images.get(&lines).map_or(64.0, |i| i.height() as f32);
@@ -490,12 +494,8 @@ pub fn draw(
     });
 }
 
-/// What a hand-built page has inside the shell: the device's background, the tab line and
-/// the body its module fills.
-fn hand_built_page(r: &mut ChildSpawnerCommands, c: &mut Ctx, page: Page, tab: usize, device: bool) {
-    if device && c.image(r, BACKGROUND, at(0.0, 0.0, CANVAS.x, CANVAS.y), amber(BACKGROUND_BRIGHTNESS)).is_none() {
-        r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), BackgroundColor(amber(BACKGROUND_BRIGHTNESS).with_alpha(0.1))));
-    }
+/// What a hand-built page has inside the shell: the tab line and the body its module fills.
+fn hand_built_page(r: &mut ChildSpawnerCommands, c: &mut Ctx, page: Page, tab: usize) {
     tab_line(r, c, page, tab);
     r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), PageBody { page, tab }, Pickable::IGNORE));
 }

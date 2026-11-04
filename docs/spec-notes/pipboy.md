@@ -347,10 +347,10 @@ is the top left 85 × 92 of `head.dds`) [observed].
 
 ### 5.1.1 STATS: S.P.E.C.I.A.L. from its file: what the code writes
 
-The contract for the first slice of issue #1513 (`[UI] TileMenus=StatsMenu`): what code must
-write into the tree of `menus\main\stats_menu.xml` for page 1 to show. **Every write below is
-proposed until the slice is built**, and a proposed write is our design, not a finding about the
-original. Where runtime expressions place or show something, this note says only "the file works
+The contract for the first slice of issue #1513 (`[UI] TileMenus=StatsMenu`,
+`tiles/stats_menu.rs`): what code writes into the tree of `menus\main\stats_menu.xml` for page 1
+to show. **Every write below is our design**, built but not yet compared with the original or run
+here at the time of writing, and no finding about the original. Where runtime expressions place or show something, this note says only "the file works
 this out at run time"; numbers appear only where they explain an incompatibility. Sources, as
 tagged: the tree by `fnvtool ui tree` (values, tile names, template names); the file and its
 includes by `fnvtool bsa extract`, read privately; and a private copy of those files laid over
@@ -364,7 +364,7 @@ marked, a row's shows its mark.
 **The root** [observed: the vanilla files, by fnvtool bsa extract; the file's comments say
 what each trait holds]:
 
-| Trait | Code writes (proposed) | From [design] |
+| Trait | Code writes | From [design] |
 |---|---|---|
 | `StatsMenu/user0` | the tab, 0 to 4; here 1 | `PipBoy::tab` (`pipboy.rs`), the order of `Page::tabs` |
 | `StatsMenu/user8` | the level, as text | `Snapshot::level` (`stats/model.rs`, filled in `stats/read.rs`) |
@@ -375,15 +375,15 @@ what each trait holds]:
 The numbering is the file's: the level is `user8`. The root's other code traits are Status's and
 stay unwritten here. The root's `_PCButton_*` traits name buttons of Status and General, hidden on
 this page, so they should not fire [hypothesis: menu-xml.md §3.2, the tile "must be shown and a
-target"]. The page's keys stay code's: Up/Down, W/S, Page Up/Down in `stats`, to be taken out of
-its `draw`; A/D and Left/Right in `pipboy::keys` [design].
+target"]. The page's keys stay code's: Up/Down, W/S, Page Up/Down in `stats::prepare`; A/D and
+Left/Right in `pipboy::keys` [design].
 
 **The list**, `stats_special_container`, a `list_box.xml` [observed: by fnvtool bsa extract: the
 prefab's comments give `_highlight_y`, `_selected_height`, `_scroll_delta`, `_num_filtered` and
 the scroll bar's `_number_of_items` to code, and say that with `_number_of_visible_items` set
 code overwrites `height` and `_scroll_delta`]:
 
-| Trait | Code writes (proposed) | From [design] |
+| Trait | Code writes | From [design] |
 |---|---|---|
 | `height` | the file's visible rows times a row's measured height. **Required**: the tree reads it empty, and the list has `clipwindow` on | the rows' `height`, below. Not the hand-built list's height: `list_rect` multiplies by a caller's row height, the hand-built caller's being the font's size + 20 (`Ctx::line_height`), and a tile's text measures its tallest glyph (`tiles::draw::measure`), a different figure |
 | `user0` | true when any row has a mark | any `Row::mark` |
@@ -402,7 +402,7 @@ has the children `ListItemText`, `stats_list_template_number` and `stats_list_te
 [observed: by fnvtool bsa extract]. Seven rows, `SPECIALS` in order: `Snapshot::special`
 (`stats/read.rs`).
 
-| Row trait | Code writes (proposed) | From [design] |
+| Row trait | Code writes | From [design] |
 |---|---|---|
 | `listindex` | 0 to 6 | the row's place |
 | `string` | the name | `Row::name` (AVIF FULL) |
@@ -419,12 +419,12 @@ own hover sound and `pipboy/sounds`' `TabHovered` is ours: one must stay silent 
 
 **The display**, `stats_display_rect`: place and size, the file works this out at run time.
 
-| Tile and trait | Code writes (proposed) | From [design] |
+| Tile and trait | Code writes | From [design] |
 |---|---|---|
 | `stats_icon/filename` | the picture | `Row::icon` (AVIF ICON) |
 | `stats_icon/visible` | true while a row is selected. **Trap**: `stats_icon_separator` copies it and `stats_description_rect` copies that [observed: by fnvtool bsa extract], so a row without a picture must keep it true with an empty `filename`; the hand-built page draws line and text without a picture (`listed`) | `listed` in `stats/mod.rs` |
 | `stats_description/string` | the text | `Row::description` (AVIF DESC) |
-| `stats_description_scrollbar/_number_of_items` | one more than the scroll steps the tile's own text overflows by (font, wrap and window as the tile has them, not the hand-built page's pitch). **Required**: the prefab's value shows the bar on every row [observed: `visible` 1 in the tree and under the overlay]. The +1 is our adaptation, no capture of the original | a bound the tile view supplies to `StatsView`; `desc_max` is private today and computed inside `listed`, so a controlled setter comes first |
+| `stats_description_scrollbar/_number_of_items` | one more than the scroll steps the tile's own text overflows by (font, wrap and window as the tile has them, not the hand-built page's pitch). **Required**: the prefab's value shows the bar on every row [observed: `visible` 1 in the tree and under the overlay]. The +1 is our adaptation, no capture of the original | a bound the tile view supplies through `StatsView::set_desc_bound`, as `listed` does its own |
 | the same tile, `_current_value`, `_SetInCode` | `StatsView::desc`, then a poke of `_SetInCode`, which the prefab asks for when code sets the value | `StatsView::select` zeroes it on a new row |
 
 `stats_icon_badge` stays hidden: what it shows on this page is not known; capture. The
@@ -476,11 +476,11 @@ not written into `screen()`, because other menus share the tree [design].
 | "(+)" and "(-)" (`modified_mark`) | row `user0`, `user2`; list `user0` | yes |
 | A row always selected, boxed only after a key or under the pointer (`StatsView::highlight`, fitted to the owner's screenshots) | `_highlight_y`, `_selected_height`; the display always filled | yes |
 | Screen menu: no title, the line running on from the lead line, the page names as a header [design: the owner, 2026-10-31, `heading_title` and `header` in `frame.rs`] | hide `stats_title`; write `x` and `_length` of `stats_headline_h2` to close the gap; the header stays the shell's, clickable, no tile | yes `[owner 2026-10-31]` |
-| Screen menu: no background, no scanlines (`frame::draw`, screen-menu.md) | hide `background_layout`; the file has no scanline tile, so the device's stay the shell's, over the tiles | yes |
+| The page's background and scanlines, on the device; neither in the screen menu (`frame::draw`, screen-menu.md) | none: `background_layout` stays hidden in both frames, so the tiles are page content only; the file has no scanline tile, so they stay the shell's, with the scanlines over the tiles | yes |
 | Keys, wheel; A/D [design: `pipboy::keys`]; the controller's D-pad [design: owner 2026-11-02] | none: `stats`, `pipboy.rs` | yes `[owner 2026-11-02]` |
 | The words "S.P.E.C.I.A.L." and "STATS" (`Page::tabs`, `Page::title`) | the tab reads `sStatsSpecial` (`fnv_ui::strings::BUILT_IN`'s "SPECIAL" unless a plugin sets it), left alone: code does not overwrite a plugin's or the built-in label | open: a listed difference behind the switch until the maintainer answers the wording question |
 | Tabs, cards, row pitch (`tab_boxes`, `heading`, `card`, `list`) | the file works these out at run time | not a choice; may differ behind the switch. Which is right: not known; capture. The original's comparison at 1280 x 720 lists the differences |
-| The log lines and `NVF_PLAY_TEST_PIPBOY_STATS` | none | yes: the smoke scenarios read them, so the state and keys come out of `draw` before its drawing stops |
+| The log lines and `NVF_PLAY_TEST_PIPBOY_STATS` | none | yes: the smoke scenarios read them; `stats::prepare` keeps them whichever view draws |
 
 **Not known; capture**: the converter and thickness with the Pip-Boy open; a row's name, `id`,
 `_selected`, `height` and `_y`; the list's `height`, `_scroll_delta` and scroll bar count; how a

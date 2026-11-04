@@ -763,6 +763,38 @@ mod tests {
         ui
     }
 
+    /// [design] The gate is global: `StatsMenu` beside the tile HUD changes what the HUD gets,
+    /// the screen's units and whether a hotrect's `alpha` 0 passes to what is under it, and
+    /// beside another menu of the gate it changes nothing more. A synthetic hotrect and image.
+    #[test]
+    fn stats_menu_turns_on_the_one_gate_every_menu_shares() {
+        use vanilla::TileMenus;
+        let hud = TileMenus { hud: true, ..Default::default() };
+        let stats = TileMenus { stats: true, ..Default::default() };
+        let both = TileMenus { hud: true, stats: true, ..Default::default() };
+        assert!(!interface_screen(hud));
+        assert!(interface_screen(stats));
+        assert!(interface_screen(both), "the HUD beside it gets interface units too");
+        let message = TileMenus { message: true, ..Default::default() };
+        assert_eq!(interface_screen(message), interface_screen(TileMenus { stats: true, ..message }), "already on: no further change");
+        let src = MemSource::default().with("m.xml", r#"<menu name="M"><hotrect name="H"><alpha>0</alpha><image name="I"><width>4</width><height>4</height><filename>a.dds</filename></image></hotrect></menu>"#);
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "m.xml").unwrap();
+        ui.update();
+        let drawn = |menus: TileMenus| {
+            let measure = |_: f64, _: &str, _: Option<f64>| (0.0, 0.0);
+            draw::pieces(&ui, menu, &measure, draw::Select::Whole { kept: &[], strip: None }, interface_screen(menus)).0.len()
+        };
+        assert_eq!(drawn(hud), 0, "the tile HUD alone keeps the hotrect's alpha");
+        assert_eq!(drawn(both), 1, "beside StatsMenu the hotrect's alpha 0 passes");
+        // The screen's traits are the window's interface units, never the Pip-Boy's canvas.
+        write_screen(&mut ui, 1280.0, 720.0, interface_screen(both));
+        ui.update();
+        let s = ui.tile(ui.screen());
+        assert_eq!(s.get("height").map(Value::num), Some(960.0));
+        assert_eq!(s.get("resolutionconverter").map(Value::num), Some(960.0 / 720.0));
+    }
+
     #[test]
     fn screen_keeps_the_windows_pixels_unless_a_t15_menu_is_on() {
         // Off (the default game, or the tile HUD alone): the window's size, no converter,
