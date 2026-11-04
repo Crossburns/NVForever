@@ -19,7 +19,8 @@
 //!
 //! What is ours, because the documentation gives no numbers ("various gamesettings and
 //! formulas"): how an object is scored (nearer is better), how fast weights grow back,
-//! how long each behaviour lasts, and that an actor without a bed in its area does not
+//! how long each behaviour lasts, how long an object with no way to it stays out of the
+//! choices (`RETRY_DELAYS`), and that an actor without a bed in its area does not
 //! sleep. Not done: conversations between actors, picking up and eating food (an eating
 //! actor sits down if a seat is free, as an Eat package's does), and the idles an idle
 //! marker lists (the actor goes there and faces its way).
@@ -32,7 +33,7 @@ use fnv_nav::graph::NONE;
 use fnv_nav::{NavGraph, Place};
 use fnv_sim::FormId;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// Reach of a sandbox whose location has no radius of its own, game units [our choice;
 /// the default sandbox packages use 512].
@@ -138,6 +139,21 @@ const FURNITURE: usize = 0;
 const IDLE_MARKER: usize = 1;
 const WANDER: usize = 2;
 
+/// How long an object with no way to it stays out of the choices, seconds of `Game::time`
+/// from each failure, longer with each failure in a row and capped at the last [design:
+/// our balance of how soon an actor notices a restored way against what failed searches
+/// cost; neither the documentation nor the original gives numbers].
+const RETRY_DELAYS: [f64; 5] = [60.0, 120.0, 240.0, 480.0, 600.0];
+
+/// An object there was no way to, the last time the actor tried.
+#[derive(Debug, Clone, Copy)]
+struct FailedObject {
+    /// `Game::time` from which it may be chosen again.
+    retry_at: f64,
+    /// Which of [`RETRY_DELAYS`] its last failure waits.
+    stage: usize,
+}
+
 pub struct Sandbox {
     pub allowed: Allowed,
     centre: Place,
@@ -147,8 +163,10 @@ pub struct Sandbox {
     rng: Rng,
     weights: [f32; 3],
     last_object: Option<FormId>,
-    /// Objects there was no way to.
-    bad: BTreeSet<FormId>,
+    /// Objects there was no way to. An entry stays after its wait is over, to keep its
+    /// stage, until the object's behaviour begins [design]. Not saved: a load starts it
+    /// empty.
+    failed_objects: BTreeMap<FormId, FailedObject>,
     /// The day the sleep and meal times were rolled for.
     day: i32,
     /// Start hour and duration in hours.
@@ -204,7 +222,7 @@ impl Sandbox {
             rng: Rng((actor.0 as u64) << 32 | package.0 as u64),
             weights: [1.0; 3],
             last_object: None,
-            bad: BTreeSet::new(),
+            failed_objects: BTreeMap::new(),
             day: i32::MIN,
             sleep: (0.0, 0.0),
             meals: [(0.0, 0.0); 3],
@@ -294,8 +312,8 @@ impl Sandbox {
     }
 
     /// The objects of the area: references of the centre's cell within the radius, at
-    /// about the actor's height, present, not found unreachable, not given to another
-    /// actor.
+    /// about the actor's height, present, not waiting out a failed way to them, not given
+    /// to another actor.
     fn objects(&self, game: &Game, taken: &BTreeMap<FormId, FormId>, actor: FormId, at: Place) -> Vec<(FormId, [f32; 3], f32)> {
         let refs = game.world.placed;
         let Some(cell) = goal::cell_of_place(refs, &self.centre) else { return Vec::new() };
@@ -303,7 +321,7 @@ impl Sandbox {
             .get(&cell)
             .into_iter()
             .flatten()
-            .filter(|r| !self.bad.contains(r) && taken.get(r).is_none_or(|a| *a == actor))
+            .filter(|r| self.failed_objects.get(r).is_none_or(|f| game.time >= f.retry_at) && taken.get(r).is_none_or(|a| *a == actor))
             .filter_map(|r| {
                 let p = refs.get(*r)?;
                 let near = self.radius.is_infinite() || hdist(p.pos, self.centre.pos) <= self.radius;
@@ -465,6 +483,9 @@ impl Sandbox {
         self.got_up = false;
         self.doing = choice.doing;
         self.last_object = choice.doing.object().or(self.last_object);
+        if let Some(object) = choice.doing.object() {
+            self.failed_objects.remove(&object);
+        }
         // The time a timed behaviour lasts counts from getting there.
         self.until = match choice.until {
             Until::Time(t) if choice.target.is_some() => Until::Time(game.time + (t - self.chosen_at).max(1.0)),
@@ -472,11 +493,15 @@ impl Sandbox {
         };
     }
 
-    /// Nothing came of a choice (no way to its object): stand a little, then choose again.
+    /// Nothing came of a choice (no way to its object): stand a little, then choose again;
+    /// the object waits out its next delay before it can be chosen.
     pub(crate) fn failed(&mut self, game: &Game, choice: &Choice) {
         self.pending = None;
         self.got_up = false;
-        self.bad.extend(choice.doing.object());
+        if let Some(object) = choice.doing.object() {
+            let stage = self.failed_objects.get(&object).map_or(0, |f| (f.stage + 1).min(RETRY_DELAYS.len() - 1));
+            self.failed_objects.insert(object, FailedObject { retry_at: game.time + RETRY_DELAYS[stage], stage });
+        }
         self.doing = Doing::Standing;
         self.until = Until::Time(game.time + 5.0);
     }

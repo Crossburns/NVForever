@@ -442,8 +442,19 @@ still happen elsewhere.
 
 Objects are references of the area's cell, present, at about the actor's height, not
 given to another actor (a seat is kept for an actor from the moment it chooses it), and
-with a way to them. Random numbers are the sandbox's own (seeded by actor and package),
-so runs repeat and the script runtime's are not disturbed.
+not waiting out a failed way to them. Random numbers are the sandbox's own (seeded by
+actor and package), so runs repeat and the script runtime's are not disturbed.
+
+**An object with no way to it** [design; issue #1504; the numbers are ours, neither the
+documentation nor the original gives any]: the actor stands 5 seconds and chooses again,
+and that object stays out of the choices for 60 seconds of `Game::time` from the failure,
+then 120, 240, 480 and from then on 600 for each further failure in a row. The wait ending
+does nothing by itself (no search, no random number, no event): the object is simply among
+the candidates at the sandbox's next choice, so a way that has come back is found, and one
+that has not costs one search per wait (at most nine in the first 3,600 seconds for one
+object). Its record goes only when the behaviour with that object begins; combat
+interrupting the sandbox leaves it alone. The record is not saved: after a load it starts
+empty, at most one more search per failed object per load.
 
 **Also in this step**: a patrol waits out a point's idle time (REFR `XPRD`) before going
 on [documented: Idle Markers, Patrol Data]; the furniture a package gives its actor

@@ -11,7 +11,7 @@ use fnv_game::package::{flags, type_flags, LocationKind, PackageCheck};
 use fnv_game::GameData;
 use fnv_nav::graph::DoorLock;
 use fnv_nav::record::{tri_flags, DoorLink, NavMeshRecord, Triangle};
-use fnv_nav::{NavGraph, Space};
+use fnv_nav::{NavGraph, PathParams, Place, Space};
 use fnv_script::FunctionTable;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::Value as Json;
@@ -448,7 +448,11 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let plugins = vec![Plugin::parse(&plugin_bytes(), "Carry.esm".into()).unwrap()];
+    fixture_of(plugin_bytes())
+}
+
+fn fixture_of(bytes: Vec<u8>) -> Fixture {
+    let plugins = vec![Plugin::parse(&bytes, "Carry.esm".into()).unwrap()];
     let lo = LoadOrder::new(&plugins).unwrap();
     let schema = Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
     let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
@@ -2974,4 +2978,252 @@ fn sandbox_interrupt_preserves_a_valid_chat_approach_and_wait_until_combat() {
         s.game.stop_combat(actor);
         sandbox_resumes(&mut s, who);
     }
+}
+
+// ---- an object with no way to it comes back (#1504) ---------------------------------
+
+const SECOND_CHAIR: u32 = 0x8A2;
+const SECOND_CHAIR_AT: [f32; 3] = [10300.0, 10500.0, 0.0];
+const SANDBOXER_AT: [f32; 3] = [10450.0, 10450.0, 0.0];
+const CHAIR_AT: [f32; 3] = [10700.0, 10500.0, 0.0];
+
+/// One sandboxer whose package leaves on furniture alone, in a cell with a marker and
+/// nothing to use but one chair (or two).
+fn lone_sandboxer(second_chair: bool) -> Fixture {
+    let globs = [
+        glob(0x801, "GameYear", 2281.0),
+        glob(0x802, "GameMonth", 9.0),
+        glob(0x803, "GameDay", 19.0),
+        glob(0x804, "GameHour", 12.0),
+        glob(G_DAYS, "GameDaysPassed", 5.0),
+        glob(0x806, "TimeScale", 30.0),
+    ]
+    .concat();
+    let furniture_only = type_flags::NO_WANDERING | type_flags::NO_EATING | type_flags::NO_SLEEPING | type_flags::NO_IDLE_MARKERS | type_flags::NO_CONVERSATION;
+    let mut refs = [
+        placed(b"REFR", MARK_C, "MarkC", STAT, MIDDLE_C, None),
+        placed(b"REFR", CHAIR_C, "ChairC", CHAIR, CHAIR_AT, None),
+        placed(b"ACHR", R_SB_OBJECTS, "SitterRef", N_SB_OBJECTS, SANDBOXER_AT, None),
+    ]
+    .concat();
+    if second_chair {
+        refs.extend(placed(b"REFR", SECOND_CHAIR, "ChairD", CHAIR, SECOND_CHAIR_AT, None));
+    }
+    let cell = [record(b"CELL", CELL_C, &[sub(b"EDID", z("CellC"))]), group(CELL_C.to_le_bytes(), 6, &group(CELL_C.to_le_bytes(), 9, &refs))].concat();
+    let top = |sig: &[u8; 4], body: &[u8]| group(*sig, 0, body);
+    fixture_of(
+        [
+            tes4(),
+            top(b"GLOB", &globs),
+            top(b"STAT", &record(b"STAT", STAT, &[sub(b"EDID", z("Marker"))])),
+            top(b"FURN", &record(b"FURN", CHAIR, &[sub(b"EDID", z("Chair")), sub(b"MNAM", 0x4000_0001u32.to_le_bytes().to_vec())])),
+            top(b"NPC_", &npc(N_SB_OBJECTS, "Sitter", &[P_SB_OBJECTS])),
+            top(b"PACK", &pack_with(P_SB_OBJECTS, "SandboxFurniture", 0, SANDBOX, furniture_only, (0, MARK_C, 450), None)),
+            top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cell))),
+        ]
+        .concat(),
+    )
+}
+
+/// Cell C as squares of 100 with nothing between them.
+fn islands(origins: &[[f32; 2]]) -> NavGraph {
+    let meshes: Vec<NavMeshRecord> = origins.iter().enumerate().map(|(i, o)| grid(i as u32 + 1, *o, 1, 0.0)).collect();
+    let input: Vec<_> = meshes.iter().map(|m| (m, Some(CELL_C), Some(C))).collect();
+    NavGraph::assemble(&input)
+}
+
+/// The sandboxer's island and the chair's.
+fn chair_cut_off() -> NavGraph {
+    islands(&[[10400.0, 10400.0], [10650.0, 10450.0]])
+}
+
+/// The same cell walkable all over.
+fn way_restored() -> NavGraph {
+    NavGraph::assemble(&[(&grid(3, [10000.0, 10000.0], 10, 0.0), Some(CELL_C), Some(C))])
+}
+
+fn way_to(s: &Sim, to: [f32; 3]) -> bool {
+    let at = |pos| Place { space: C, pos };
+    s.nav.find_path(at(s.feet(R_SB_OBJECTS)), at(to), &PathParams::default()).is_ok()
+}
+
+/// Run `seconds` and say when the sandbox's random numbers moved. In these fixtures the
+/// day never changes and a choice with nothing open draws none, so each time is one object
+/// chosen: a failed search for a way to it unless a walk or a use follows. This needs no
+/// count from the process-wide path probe.
+fn run_noting_choices(s: &mut Sim, seconds: f64) -> Vec<f64> {
+    let actor = FormId(R_SB_OBJECTS);
+    let numbers = |s: &Sim| s.ai.agents[&actor].sandbox.as_ref().map(|sb| sb.schedule().rng);
+    let mut times = Vec::new();
+    for _ in 0..(seconds * 2.0) as usize {
+        let before = numbers(s);
+        s.run(0.5);
+        if numbers(s) != before {
+            times.push(s.game.time);
+        }
+    }
+    times
+}
+
+/// The times the sandboxer was seen to choose to stand.
+fn standing_times(s: &Sim) -> Vec<f64> {
+    s.ai.events.iter().filter(|e| e.actor == FormId(R_SB_OBJECTS) && matches!(e.event, AiEvent::Sandbox { doing: Doing::Standing, .. })).map(|e| e.time).collect()
+}
+
+fn package_events(s: &Sim) -> usize {
+    s.events(R_SB_OBJECTS).iter().filter(|e| matches!(e, AiEvent::Package { .. })).count()
+}
+
+/// The first failed search and its five seconds of standing, through the real updates.
+fn fail_at_the_chair(s: &mut Sim) {
+    s.nav = chair_cut_off();
+    assert!(!way_to(s, CHAIR_AT), "the islands have no way between them");
+    assert_eq!(run_noting_choices(s, 0.5), [0.5], "the first choice is the chair");
+    assert!(s.ai.agents[&FormId(R_SB_OBJECTS)].walker.follower.is_none());
+    assert!(doings(s, R_SB_OBJECTS).is_empty(), "no behaviour began: {:?}", s.events(R_SB_OBJECTS));
+    assert_eq!(run_noting_choices(s, 5.0), [] as [f64; 0], "nothing else is open");
+    assert_eq!(standing_times(s), [5.5], "the failed choice's five seconds, not the ten of nothing open");
+}
+
+#[test]
+fn a_sandbox_goes_back_to_a_failed_object_once_there_is_a_way() {
+    let f = lone_sandboxer(false);
+    assert!(f.data.issues.is_empty(), "{:?}", f.data.issues.to_json());
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    let actor = FormId(R_SB_OBJECTS);
+    let chair = FormId(CHAIR_C);
+    fail_at_the_chair(&mut s);
+    let packages = package_events(&s);
+    assert_eq!(packages, 1);
+
+    // Only the graph changes: the sandbox and its choices are the same ones.
+    s.nav = way_restored();
+    assert!(way_to(&s, CHAIR_AT));
+    // Not yet: the first failure's 60 seconds, and the choice after them, at 65.5.
+    assert_eq!(run_noting_choices(&mut s, 59.5), [] as [f64; 0], "no retry before its time");
+    assert_eq!(s.game.time, 65.0);
+    assert!(doings(&s, R_SB_OBJECTS).iter().all(|d| *d == Doing::Standing), "{:?}", s.events(R_SB_OBJECTS));
+    assert_eq!(run_noting_choices(&mut s, 0.5), [65.5], "tried again at the first choice after the wait");
+    assert_eq!(doings(&s, R_SB_OBJECTS).last(), Some(&Doing::Sitting(chair)));
+    assert_eq!(s.ai.agents[&actor].activity, Activity::Travelling);
+
+    // It walks there and really uses the chair.
+    for _ in 0..120 {
+        if s.ai.agents[&actor].using.is_some() {
+            break;
+        }
+        s.run(0.5);
+    }
+    let a = &s.ai.agents[&actor];
+    assert_eq!(a.using, Some(chair), "{:?}", s.events(R_SB_OBJECTS));
+    assert_eq!(a.activity, Activity::There);
+    assert_eq!(a.sandbox.as_ref().unwrap().doing, Doing::Sitting(chair));
+    assert!(dist(a.walker.feet, CHAIR_AT) < 40.0, "{:?}", a.walker.feet);
+    let sat_down = s.game.time;
+
+    // And sits out its time.
+    for _ in 0..600 {
+        if s.ai.agents[&actor].using.is_none() {
+            break;
+        }
+        s.run(0.5);
+    }
+    assert_eq!(s.ai.agents[&actor].using, None, "the sitting ended");
+    assert!(s.game.time - sat_down > 30.0, "a whole sit: {} to {}", sat_down, s.game.time);
+    let furniture: Vec<Option<FormId>> = s.events(R_SB_OBJECTS).iter().filter_map(|e| match e {
+        AiEvent::Furniture { furniture } => Some(*furniture),
+        _ => None,
+    }).collect();
+    assert_eq!(furniture, [Some(chair), None]);
+    assert_eq!(package_events(&s), packages, "recovery needs no new package");
+}
+
+#[test]
+fn a_sandbox_tries_a_cut_off_object_ever_less_often_and_stands_between() {
+    let f = lone_sandboxer(false);
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    s.nav = chair_cut_off();
+    let tries = run_noting_choices(&mut s, 3600.0);
+    assert!(!way_to(&s, CHAIR_AT));
+    // Each wait (60, 120, 240, 480, then 600) ends at the next look for something to do:
+    // five seconds after the failure, then every ten.
+    assert_eq!(tries, [0.5, 65.5, 190.5, 435.5, 920.5, 1525.5, 2130.5, 2735.5, 3340.5]);
+    let gaps: Vec<f64> = tries.windows(2).map(|w| w[1] - w[0]).collect();
+    assert_eq!(gaps, [65.0, 125.0, 245.0, 485.0, 605.0, 605.0, 605.0, 605.0]);
+    // Between tries it stands, at those same times.
+    let mut standing = Vec::new();
+    for (i, t) in tries.iter().enumerate() {
+        let end = tries.get(i + 1).copied().unwrap_or(s.game.time + 0.5);
+        standing.extend(std::iter::successors(Some(t + 5.0), |at| Some(at + 10.0)).take_while(|at| *at < end));
+    }
+    assert_eq!(standing_times(&s), standing);
+    // Nothing else happened to it.
+    assert!(doings(&s, R_SB_OBJECTS).iter().all(|d| *d == Doing::Standing), "{:?}", s.events(R_SB_OBJECTS));
+    assert!(!s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Furniture { .. })));
+    assert_eq!(s.ai.agents[&FormId(R_SB_OBJECTS)].using, None);
+    assert_eq!(s.feet(R_SB_OBJECTS), SANDBOXER_AT);
+    assert_eq!(package_events(&s), 1);
+}
+
+#[test]
+fn a_failed_objects_waits_start_over_once_it_has_been_used() {
+    let f = lone_sandboxer(true);
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    let actor = FormId(R_SB_OBJECTS);
+    let chairs = [Doing::Sitting(FormId(CHAIR_C)), Doing::Sitting(FormId(SECOND_CHAIR))];
+    let cut_off = || islands(&[[10400.0, 10400.0], [10650.0, 10450.0], [10250.0, 10450.0]]);
+    // Long enough that both chairs have failed several times in a row.
+    s.nav = cut_off();
+    let tries = run_noting_choices(&mut s, 450.0);
+    assert!(tries.len() >= 6, "{tries:?}");
+    assert!(doings(&s, R_SB_OBJECTS).iter().all(|d| *d == Doing::Standing), "{:?}", s.events(R_SB_OBJECTS));
+    // With a way, each is used in turn; stop on the second.
+    s.nav = way_restored();
+    for _ in 0..4000 {
+        s.run(0.5);
+        let used = doings(&s, R_SB_OBJECTS);
+        if chairs.iter().all(|c| used.contains(c)) && s.ai.agents[&actor].using.is_some() {
+            break;
+        }
+    }
+    let first_used = doings(&s, R_SB_OBJECTS).into_iter().find(|d| chairs.contains(d)).unwrap();
+    let sitting_on = s.ai.agents[&actor].sandbox.as_ref().unwrap().doing;
+    assert!(chairs.contains(&sitting_on) && sitting_on != first_used, "{:?}", s.events(R_SB_OBJECTS));
+    assert!(s.ai.agents[&actor].using.is_some());
+    // Cut off again while sitting on the second. The first chair has just been used, so
+    // its first failure from here waits the shortest time, not the stage it had reached.
+    s.nav = cut_off();
+    let tries = run_noting_choices(&mut s, 300.0);
+    assert!(tries.len() >= 2, "{tries:?}");
+    assert_eq!(tries[1] - tries[0], 65.0, "{tries:?}");
+}
+
+#[test]
+fn failed_objects_are_retried_the_same_way_every_time() {
+    let f = lone_sandboxer(false);
+    let outcome = |s: &mut Sim, frames: usize| {
+        let mut feet = Vec::new();
+        for _ in 0..frames {
+            s.run(0.5);
+            feet.push(s.feet(R_SB_OBJECTS));
+        }
+        (serde_json::to_string(&s.ai.events).unwrap(), feet, s.ai.agents[&FormId(R_SB_OBJECTS)].sandbox.as_ref().unwrap().schedule())
+    };
+    let recovering = || {
+        let mut s = sim(&f, &[R_SB_OBJECTS]);
+        fail_at_the_chair(&mut s);
+        s.nav = way_restored();
+        let run = outcome(&mut s, 800);
+        assert!(doings(&s, R_SB_OBJECTS).contains(&Doing::Sitting(FormId(CHAIR_C))));
+        run
+    };
+    let cut_off = || {
+        let mut s = sim(&f, &[R_SB_OBJECTS]);
+        s.nav = chair_cut_off();
+        let run = outcome(&mut s, 2400);
+        assert!(!doings(&s, R_SB_OBJECTS).is_empty());
+        run
+    };
+    assert_eq!(recovering(), recovering());
+    assert_eq!(cut_off(), cut_off());
 }
