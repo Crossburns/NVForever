@@ -450,6 +450,25 @@ fn the_archived_copy_under_a_loose_file_gives_the_names_compared_with() {
 }
 
 #[test]
+fn a_trait_knows_it_holds_a_built_in_label() {
+    let xml = r#"<menu name="M"><rect name="Label"><_T>&-sNvfLabel;</_T></rect><rect name="Plugin"><_T>&-sNvfPlugin;</_T></rect><rect name="Literal"><_T>word</_T></rect><rect name="Mixed"><_T>&-sNvfLabel; more</_T></rect></menu>"#;
+    let mut src = MemSource::default().with("menus/l.xml", xml);
+    src.strings.insert("sNvfLabel".into(), "word".into());
+    src.strings.insert("sNvfPlugin".into(), "word".into());
+    src.built_in_strings.insert("snvflabel".into());
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "menus/l.xml").unwrap();
+    let label = |ui: &Ui, name: &str| ui.built_in_label(ui.find_tile(&format!("M/{name}")).unwrap(), "_T").map(str::to_owned);
+    assert_eq!(label(&ui, "Label").as_deref(), Some("snvflabel"));
+    assert_eq!(label(&ui, "Plugin"), None, "the same words from a plugin");
+    assert_eq!(label(&ui, "Literal"), None, "the same words from a file");
+    assert_eq!(label(&ui, "Mixed"), None);
+    let t = ui.find_tile("M/Label").unwrap();
+    ui.set_trait(t, "_T", Value::Str("word".into()));
+    assert_eq!(label(&ui, "Label"), None, "a script's write");
+}
+
+#[test]
 fn game_strings_resolve_from_the_load_order_then_the_built_in_table() {
     // menu-xml.md §2.4 (T10): `&-sName;` reads the load order's GMST, then the built-in
     // table; a name in neither reads empty. Synthetic names and text only.

@@ -637,8 +637,12 @@ fn write_container(
         }
     }
     let texts = menus::texts(ui, menu);
-    let size = fonts.menu_measure(&menus::fonts_of(ui, &texts));
-    st.settle_shown(ui, &texts, &size);
+    // Each round's fonts as the tree stands then: a computed font follows what was just written.
+    let mut write_sizes = |ui: &mut fnv_ui::Ui, sizes: &mut menus::SizesWritten| {
+        let size = fonts.menu_measure(&menus::fonts_of(ui, &texts));
+        menus::write_text_sizes_of(ui, &texts, sizes, &size)
+    };
+    st.settle_shown(ui, &mut write_sizes);
     if let (true, Some(s)) = (told, st.shown()) {
         // New rows are marked before this frame's input (the clip) too.
         container_menu::mark_tiles(ui);
@@ -688,7 +692,7 @@ impl Plugin for TilesPlugin {
             // T15c: the container menu's state for this frame's input.
             .add_systems(Update, write_container.after(write).before(input::feed))
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
-            .add_systems(Update, input::feed.after(write).before(PlaySet::Activation))
+            .add_systems(Update, input::feed.after(write).after(crate::menu::WheelHoldSet).before(PlaySet::Activation))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
             .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui))
             .add_systems(PostUpdate, vanilla::hide_hand_built.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));

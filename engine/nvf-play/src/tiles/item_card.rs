@@ -6,12 +6,13 @@
 //! - A card shows through its `visible`, its figure through `_Value` ("Set in code" in the
 //!   prefab), its title from the file but for `AmmoInfo`'s, the ammunition or the armour's
 //!   class [observed: `AmmoInfo` title "9mm (13/37)", "Heavy", `_Value` empty].
-//! - The titles' words: a title reading a setting the load order defines stays, as does a mod's
-//!   own. Where it reads NVForever's label for a setting no plugin defines (`fnv_ui::strings`:
-//!   "WEIGHT", "Value", "Condition" ...), the card says what the hand-built figures say
-//!   ([`crate::pipboy::items::card_title`], [`SHORT_TITLES`]): the two drawings of a card agree, and
-//!   the labels do not fit the file's card: `ConditionMeter` stands 62 in, a title 5 in
-//!   [documented], and "WEIGHT" alone measures 72 units [observed: this menu at 1280 x 720].
+//! - The titles' words: a title from a plugin's setting, a mod's file or a script stays, by
+//!   where it came from (`fnv_ui::Ui::built_in_label`), whatever its words. Only a title the
+//!   file left to `fnv_ui::strings::BUILT_IN` ("WEIGHT", "Value", "Condition" ...) takes
+//!   NVForever's own card words ([`crate::pipboy::items::card_title`], [`SHORT_TITLES`], the
+//!   hand-built figures' [design]): the two drawings of a card agree, and the labels do not fit
+//!   the file's card: `ConditionMeter` stands 62 in, a title 5 in [documented], and "WEIGHT"
+//!   alone measures 72 units [observed: this menu at 1280 x 720].
 //! - The condition: `ConditionInfo`'s `user5` 0 to 1, which its meter reads, and `user6` 1 for
 //!   a weapon, 0 for armour [observed], with `CNDArrows` at y 15, 20 high once a card is
 //!   written [observed; what it looks like there is an open observer check].
@@ -35,6 +36,10 @@ pub const CARDS: [&str; 8] = ["DAMInfo", "DamageThresholdInfo", "DPSInfo", "Weig
 pub const EFFECTS: &str = "EffectsInfo";
 /// The condition's arrows under `ConditionInfo`.
 pub const CONDITION_ARROWS: &str = "ConditionInfo/CNDArrows";
+/// The condition's bar under `ConditionInfo`, which `user5` fills.
+pub const CONDITION_METER: &str = "ConditionInfo/ConditionMeter";
+/// A card's words [documented: card_info.xml]: `_Title` and `_Value` show only through them.
+pub const CARD_TEXTS: [&str; 2] = ["CI_TitleText", "CI_ValueText"];
 
 /// By card: the setting its file reads for the title, the word it says (module notes). DPS and
 /// DT are the same in both.
@@ -47,13 +52,13 @@ const SHORT_TITLES: [(&str, &str, &str); 6] = [
     (EFFECTS, "sInventoryEffects", card_title::EFFECTS),
 ];
 
-/// [`SHORT_TITLES`] over the titles that read NVForever's labels. [design] Compared by the text:
-/// a plugin's setting worded exactly as the label is taken for the label.
+/// [`SHORT_TITLES`] over the titles that still hold the setting's built-in label. Once written
+/// the title reads as chosen, so this writes once a menu.
 fn short_titles(ui: &mut Ui, root: &str) {
     for (card, setting, word) in SHORT_TITLES {
-        let path = format!("{root}/{card}/_Title");
-        if ui.get_string(&path).is_some_and(|t| fnv_ui::strings::built_in(setting).is_some_and(|l| l == t.trim())) {
-            set(ui, root, card, "_Title", Value::Str(word.to_string()));
+        let Some(tile) = ui.find_tile(&format!("{root}/{card}")) else { continue };
+        if ui.built_in_label(tile, "_Title").is_some_and(|s| s.eq_ignore_ascii_case(setting)) {
+            ui.set_trait(tile, "_Title", Value::Str(word.to_string()));
         }
     }
 }
@@ -189,26 +194,42 @@ mod tests {
     }
 
     #[test]
-    fn the_labels_of_no_plugin_take_the_figures_words() {
+    fn only_built_in_labels_take_the_card_words() {
+        // The file's titles read settings; `WeightInfo`'s and `ConditionInfo`'s text is the
+        // same "WEIGHT" and "Condition" throughout, only where it came from differs.
         let xml = format!(
-            r#"<menu name="M"><rect name="D"><user1>40</user1>{}{}{}{}{}</rect></menu>"#,
-            card_titled("WeightInfo", "WEIGHT"),
-            card_titled("ValueInfo", "Worth"),
-            card_titled("ConditionInfo", "Condition"),
-            card_titled("StrengthReqInfo", "Strength Req."),
-            card_titled("DPSInfo", "DPS"),
+            r#"<menu name="M"><rect name="D"><user1>40</user1>{}{}{}</rect></menu>"#,
+            card_titled("WeightInfo", "&-sInventoryWeightUpper;"),
+            card_titled("ConditionInfo", "&-sInventoryCondition;"),
+            card_titled("DPSInfo", "&-sInventoryDamagePerSecond;"),
         );
-        let mut ui = Ui::new();
-        ui.load_menu(&MemSource::default().with("m.xml", &xml), "m.xml").unwrap();
-        ui.update();
-        write(&mut ui, ROOT, Some(&pistol()));
-        ui.update();
-        let title = |card: &str| ui.get_string(&format!("{ROOT}/{card}/_Title")).unwrap_or_default();
-        assert_eq!(title("WeightInfo"), "WG");
-        assert_eq!(title("ConditionInfo"), "CND");
-        assert_eq!(title("StrengthReqInfo"), "STR");
-        assert_eq!(title("DPSInfo"), "DPS");
-        assert_eq!(title("ValueInfo"), "Worth", "a setting of the load order wins");
+        let loaded = |built_in: &[&str], xml: &str| {
+            let mut src = MemSource::default().with("m.xml", xml);
+            for (name, text) in [("sInventoryWeightUpper", "WEIGHT"), ("sInventoryCondition", "Condition"), ("sInventoryDamagePerSecond", "DPS")] {
+                src.strings.insert(name.into(), text.into());
+            }
+            src.built_in_strings = built_in.iter().map(|n| n.to_ascii_lowercase()).collect();
+            let mut ui = Ui::new();
+            ui.load_menu(&src, "m.xml").unwrap();
+            ui.update();
+            write(&mut ui, ROOT, Some(&pistol()));
+            ui.update();
+            ui
+        };
+        let title = |ui: &Ui, card: &str| ui.get_string(&format!("{ROOT}/{card}/_Title")).unwrap_or_default();
+        // Built-in fallbacks.
+        let ui = loaded(&["sInventoryWeightUpper", "sInventoryCondition", "sInventoryDamagePerSecond"], &xml);
+        assert_eq!(title(&ui, "WeightInfo"), "WG");
+        assert_eq!(title(&ui, "ConditionInfo"), "CND");
+        assert_eq!(title(&ui, "DPSInfo"), "DPS", "no card word of its own");
+        // A plugin's setting worded as the label: the plugin wins.
+        let ui = loaded(&["sInventoryCondition"], &xml);
+        assert_eq!(title(&ui, "WeightInfo"), "WEIGHT");
+        assert_eq!(title(&ui, "ConditionInfo"), "CND");
+        // A mod's file writing the same words itself.
+        let modded = xml.replace("&-sInventoryWeightUpper;", "WEIGHT");
+        let ui = loaded(&["sInventoryWeightUpper"], &modded);
+        assert_eq!(title(&ui, "WeightInfo"), "WEIGHT");
     }
 
     #[test]

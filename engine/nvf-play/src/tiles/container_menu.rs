@@ -20,7 +20,9 @@
 //! - **Clicks on rows that changed**: a row's tile stands for one key for its whole life
 //!   (`super::list::reconcile`), a key gone unloads its tile, and a click is checked against
 //!   the model's row at that index ([`ContainerTiles::row_at`]); at most one row click acts a
-//!   frame, as the first may change the rows under the next.
+//!   frame, as the first may change the rows under the next. Commands queued before it may
+//!   too (a script's heading click): the row's commands go behind a guard with the menu and
+//!   the key ([`ContainerTiles::guard`]), checked as they apply (`crate::menu::apply_input`).
 //! - **Both lists are enabled** [observed: `_enabled` 1 and 1 at every read, though the
 //!   prefab's comment warns against it]; the list without the focus shows no highlight by
 //!   `_highlight_y` -1 and `_selected_height` 0 [observed]. Its rows take the pointer, so a
@@ -39,9 +41,9 @@
 
 use super::layout::{HOTRECT_FILL, OWN_ALPHA};
 use super::list::{self, Counts, Drag, RowTile, Wanted};
-use super::menus::{SizesWritten, Size, Tiled};
+use super::menus::{SizesWritten, Tiled};
 use crate::menu::look;
-use crate::menu::model::{Category, MenuModel, Mode, Row, Side, Units};
+use crate::menu::model::{Category, MenuModel, Mode, Row, RowGuard, RowKey, Side};
 use crate::pipboy::items::Info;
 use bevy::prelude::Resource;
 use fnv_sim::FormId;
@@ -94,7 +96,10 @@ pub fn built(ui: &Ui) -> Tiled {
             paths.push(format!("{list_path}/{}/{piece}", list::SCROLLBAR));
         }
     }
-    paths.extend(super::item_card::CARDS.iter().chain(&[super::item_card::EFFECTS, super::item_card::CONDITION_ARROWS]).map(|c| format!("{CARD}/{c}")));
+    paths.extend(super::item_card::CARDS.iter().chain(&[super::item_card::EFFECTS, super::item_card::CONDITION_ARROWS, super::item_card::CONDITION_METER]).map(|c| format!("{CARD}/{c}")));
+    for card in super::item_card::CARDS.iter().chain(&[super::item_card::EFFECTS]) {
+        paths.extend(super::item_card::CARD_TEXTS.map(|t| format!("{CARD}/{card}/{t}")));
+    }
     for path in &paths {
         if ui.find_tile(path).is_none() {
             return Tiled::No(format!("{path} missing"));
@@ -131,15 +136,6 @@ pub fn is_container(m: Option<&MenuModel>) -> bool {
     m.is_some_and(|m| matches!(m.mode, Mode::Container(_)))
 }
 
-/// What a row stands for: its units and the reference a corpse's dropped weapon is, and which
-/// of rows alike it is (a tile never changes what it stands for).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RowKey {
-    pub units: Units,
-    pub reference: Option<FormId>,
-    pub nth: u32,
-}
-
 /// A row as shown.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RowShown {
@@ -157,6 +153,9 @@ pub struct ListShown {
     pub category: Category,
     /// The row with the highlight: only in the list with the focus.
     pub selected: Option<usize>,
+    /// The rows the category leaves out [observed: `_num_filtered` 12 of 15 in AID, 15 of 16 in
+    /// AMMO, 0 in ITEMS].
+    pub filtered: usize,
 }
 
 /// One whole state of the model, as the menu shows it: a frame with the same writes nothing
@@ -171,6 +170,8 @@ pub struct Snapshot {
     /// The model's selection was last moved by the pointer: the lists stay where they are
     /// [owner's playtest list 7, item 11].
     pub pointer_pick: bool,
+    /// [`MenuModel::navigated`].
+    pub navigated: u32,
     /// The selected item's figures ([`look::item_figures`]) when there is one.
     pub card: Option<Info>,
     pub icon: Option<String>,
@@ -184,10 +185,9 @@ pub struct Snapshot {
 /// The rows of a listing with their keys.
 pub fn rows_shown(rows: &[Row]) -> Vec<RowShown> {
     let mut out: Vec<RowShown> = Vec::with_capacity(rows.len());
-    for r in rows {
-        let (units, reference) = (r.units(), r.reference);
-        let nth = out.iter().filter(|o| o.key.units == units && o.key.reference == reference).count() as u32;
-        out.push(RowShown { key: RowKey { units, reference, nth }, name: r.name.clone(), text: look::row_text(r), equipped: r.equipped });
+    for (index, r) in rows.iter().enumerate() {
+        let Some(key) = RowKey::at(rows, index) else { continue };
+        out.push(RowShown { key, name: r.name.clone(), text: look::row_text(r), equipped: r.equipped });
     }
     out
 }
@@ -212,6 +212,7 @@ impl Snapshot {
             rows: rows_shown(&m.list(side).rows),
             category: m.category[side as usize],
             selected: (m.focus == side && m.selected_row(side).is_some()).then_some(m.selected[side as usize]),
+            filtered: m.filtered[side as usize],
         };
         let selected = m.selected_row(m.focus);
         Snapshot {
@@ -220,6 +221,7 @@ impl Snapshot {
             weight: weight_label(m),
             focus: m.focus,
             pointer_pick: m.pointer_pick,
+            navigated: m.navigated,
             card: selected.map(|r| look::item_figures(m, r, info)),
             icon: selected.and_then(|r| r.icon.clone()),
             take_all: !m.list(Side::Container).rows.is_empty(),
@@ -239,6 +241,13 @@ struct ListView {
     selected: Option<(f64, f64)>,
     /// The highlighted row the scroll last followed.
     watched: Option<RowKey>,
+    /// Its top and height and the list's height then.
+    geometry: Option<(f64, f64, f64)>,
+    /// [`Snapshot::navigated`] then.
+    navigated: u32,
+    /// The `_scroll_delta` a list that fits keeps: its last overflowing one [observed: 15 of 16
+    /// rows filtered read 57.2], the file's before that (26).
+    kept_delta: Option<f64>,
     category: Category,
     /// The file's `_scroll_delta` before any code wrote it, for a list that fits.
     file_delta: Option<f64>,
@@ -246,7 +255,7 @@ struct ListView {
 
 impl Default for ListView {
     fn default() -> Self {
-        ListView { value: 0.0, counts: Counts { items: 1.0, visible: 1.0, delta: None }, selected: None, watched: None, category: Category::All, file_delta: None }
+        ListView { value: 0.0, counts: Counts { items: 1.0, visible: 1.0, delta: None }, selected: None, watched: None, geometry: None, navigated: 0, kept_delta: None, category: Category::All, file_delta: None }
     }
 }
 
@@ -314,6 +323,7 @@ pub fn write(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles) {
             }
         }
         set(ui, TITLES[i], "string", Value::Str(s.titles[i].clone()));
+        set(ui, LISTS[i], "_num_filtered", Value::Num(s.lists[i].filtered as f64));
     }
     set(ui, WEIGHT, "string", Value::Str(s.weight.clone()));
     // The arrow points the way the item would go [observed: `user0` 1 with the left list's
@@ -333,11 +343,12 @@ pub fn write(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles) {
 /// A tiled frame's sizes and places, after what changed was written (see the module notes):
 /// the tree worked out, the texts measured until no wrap or size moves [design: three rounds,
 /// a title's width to a card's value's wrap], the rows placed, the counts, scroll and highlight
-/// written, the tree worked out again.
-pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles, texts: &[TileId], size: &Size<'_>) {
+/// written, the tree worked out again. `write_sizes` is one measuring round, each on the tree
+/// just worked out, so it finds and loads a font computed from what the model wrote.
+pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles, write_sizes: &mut dyn FnMut(&mut Ui, &mut SizesWritten) -> usize) {
     ui.update();
     for _ in 0..3 {
-        if super::menus::write_text_sizes_of(ui, texts, &mut st.sizes, size) == 0 {
+        if write_sizes(ui, &mut st.sizes) == 0 {
             break;
         }
         ui.update();
@@ -350,7 +361,8 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles, texts: &[TileI
         let counts = list::counts(&heights, page);
         let view = &mut st.views[i];
         let file_delta = *view.file_delta.get_or_insert_with(|| ui.tile(list_tile).get("_scroll_delta").map_or(26.0, Value::num));
-        list::write_counts(ui, list_tile, &counts, file_delta);
+        view.kept_delta = counts.delta.or(view.kept_delta);
+        list::write_counts(ui, list_tile, &counts, view.kept_delta.unwrap_or(file_delta));
         view.counts = counts;
         if view.category != s.lists[i].category {
             view.category = s.lists[i].category;
@@ -358,13 +370,19 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles, texts: &[TileI
         }
         let picked = s.lists[i].selected.filter(|&k| k < heights.len());
         view.selected = picked.map(|k| (heights[..k].iter().sum(), heights[k]));
-        let key = picked.map(|k| s.lists[i].rows[k].key.clone());
-        // The keys' picks bring their row into view, the pointer's do not; once a pick is
-        // followed the bar and the marker move the list freely.
-        if let (true, true, Some((top, height))) = (!s.pointer_pick, view.watched != key, view.selected) {
+        let key = picked.map(|k| s.lists[i].rows[k].key);
+        let geometry = view.selected.map(|(top, height)| (top, height, page));
+        // The keys' picks bring their row into view, the pointer's do not. So does a key's or
+        // the wheel's move that ends on the same row, and a row moved by a refresh or a new
+        // measure (rows above it came or went, a wrap, the list's height); while none of that
+        // happens the bar and the marker move the list freely.
+        let moved = view.watched != key || view.navigated != s.navigated || view.geometry != geometry;
+        if let (true, true, Some((top, height))) = (!s.pointer_pick, moved, view.selected) {
             view.value = list::keep_row_shown(view.value, top, height, page, counts.delta.unwrap_or(file_delta), counts.most());
         }
         view.watched = key;
+        view.geometry = geometry;
+        view.navigated = s.navigated;
         view.value = view.value.clamp(0.0, counts.most());
     }
     st.rewrite(ui);
@@ -373,9 +391,9 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles, texts: &[TileI
 
 impl ContainerTiles {
     /// [`settle`] with the snapshot written last, on every frame the menu is drawn.
-    pub fn settle_shown(&mut self, ui: &mut Ui, texts: &[TileId], size: &Size<'_>) {
+    pub fn settle_shown(&mut self, ui: &mut Ui, write_sizes: &mut dyn FnMut(&mut Ui, &mut SizesWritten) -> usize) {
         if let Some(s) = self.shown.take() {
-            settle(ui, &s, self, texts, size);
+            settle(ui, &s, self, write_sizes);
             self.shown = Some(s);
         }
     }
@@ -443,6 +461,13 @@ impl ContainerTiles {
     fn row_in(&self, side: Side, index: usize, now: &[RowShown]) -> Option<usize> {
         let tile_key = &self.rows[side as usize].get(index)?.key;
         (now.get(index)?.key == *tile_key).then_some(index)
+    }
+
+    /// The guard for commands on `side`'s row `index`: what its tile stands for, in the menu
+    /// `mode`. `selected`: they act on it as the selected row.
+    pub fn guard(&self, mode: Mode, side: Side, index: usize, selected: bool, then: u8) -> Option<RowGuard> {
+        let key = self.rows[side as usize].get(index)?.key;
+        Some(RowGuard { mode, side, index, key, selected, then })
     }
 
     /// The list tile of `side`.
@@ -603,8 +628,8 @@ mod tests {
         let cards: String = ["DamageResistInfo", "DPSInfo", "WeightInfo", "ValueInfo", "ConditionInfo", "AmmoInfo", "EffectsInfo", "StrengthReqInfo", "DAMInfo", "DamageThresholdInfo"]
             .iter()
             .map(|c| {
-                let inner = if *c == "ConditionInfo" { r#"<image name="CNDArrows"><y>17</y></image>"# } else { "" };
-                format!(r#"<rect name="{c}"><_Title>{c}</_Title><_Value></_Value><visible>&false;</visible>{inner}</rect>"#)
+                let inner = if *c == "ConditionInfo" { r#"<rect name="ConditionMeter"></rect><image name="CNDArrows"><y>17</y></image>"# } else { "" };
+                format!(r#"<rect name="{c}"><_Title>{c}</_Title><_Value></_Value><visible>&false;</visible><text name="CI_TitleText"></text><text name="CI_ValueText"></text>{inner}</rect>"#)
             })
             .collect();
         let list = |name: &str, x: f64| {
@@ -679,6 +704,7 @@ mod tests {
             rows: rows.iter().map(|&(i, t)| row(i, t)).collect(),
             category: Category::All,
             selected: (focus == side && selected < rows.len()).then_some(selected),
+            filtered: 0,
         };
         Snapshot {
             lists: [list(right, Side::Container), list(left, Side::Player)],
@@ -686,6 +712,7 @@ mod tests {
             weight: "Wg   52/200".into(),
             focus,
             pointer_pick: false,
+            navigated: 0,
             card: Some(Info { value: Some("30".into()), weight: Some("5.00".into()), ..Info::default() }),
             icon: Some("interface\\icons\\x.dds".into()),
             take_all: !right.is_empty(),
@@ -709,7 +736,7 @@ mod tests {
             write(ui, s, st);
         }
         let texts = super::super::menus::texts(ui, menu);
-        settle(ui, s, st, &texts, &list::lines_size);
+        settle(ui, s, st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| super::super::menus::write_text_sizes_of(ui, &texts, sizes, &list::lines_size));
         mark_tiles(ui);
     }
 
@@ -864,6 +891,14 @@ mod tests {
         assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("scrollbar_vert_page_up")));
         let ui = menu_changed(|xml| xml.replace("name=\"WeightInfo\"", "name=\"Modded\""));
         assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("WeightInfo")));
+        // A card's words and the condition's bar.
+        for piece in ["ConditionMeter", "CI_TitleText", "CI_ValueText"] {
+            let ui = menu_changed(|xml| xml.replace(&format!("name=\"{piece}\""), "name=\"Modded\""));
+            assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains(piece)), "{piece}");
+        }
+        // Each card's, not only the first's.
+        let ui = menu_changed(|xml| xml.replace(r#"<rect name="AmmoInfo"><_Title>AmmoInfo</_Title><_Value></_Value><visible>&false;</visible><text name="CI_TitleText">"#, r#"<rect name="AmmoInfo"><_Title>AmmoInfo</_Title><_Value></_Value><visible>&false;</visible><text name="Modded">"#));
+        assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("AmmoInfo/CI_TitleText")));
         let ui = menu_changed(|xml| xml.replace("name=\"button_text\"", "name=\"Modded\""));
         assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("button_text")));
         let ui = menu_changed(|xml| xml.replace("name=\"ListItemText\"", "name=\"Modded\""));
@@ -872,6 +907,96 @@ mod tests {
         assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("CM_list_template_ItemMarker")));
         let ui = menu_changed(|xml| xml.replace("name=\"CM_list_template\"", "name=\"Modded\""));
         assert_eq!(built(&ui), Tiled::No("CM_list_template missing".into()));
+    }
+
+    /// `rows` one-line rows with `above` others before them, a list 365 high at 52 a row (seven
+    /// fit); the last row selected, by keys, the same key whatever comes above it.
+    fn long_list(above: u32, rows: u32) -> Snapshot {
+        let names: Vec<(u32, String)> = (0..above).map(|i| 1000 + i).chain(1..=rows).map(|i| (i, format!("Row {i}"))).collect();
+        let left: Vec<(u32, &str)> = names.iter().map(|(i, n)| (*i, n.as_str())).collect();
+        snapshot(&left, &[(100, "Mug")], Side::Player, left.len() - 1)
+    }
+
+    #[test]
+    fn the_selected_row_stays_shown_as_the_rows_move_under_it() {
+        let mut ui = menu();
+        let mut st = ContainerTiles::default();
+        let s = long_list(0, 20);
+        frame(&mut ui, &s, &mut st);
+        let shown = st.value(Side::Player);
+        assert!(shown > 0.0, "the keys' row brought into view");
+        // The bar moves the list freely while nothing else changes.
+        st.scroll_to(Side::Player, 0.0);
+        frame(&mut ui, &s, &mut st);
+        assert_eq!(st.value(Side::Player), 0.0);
+        // The same row, moved by rows coming above it: back in view, by keys.
+        frame(&mut ui, &long_list(4, 20), &mut st);
+        assert!(st.value(Side::Player) > 0.0, "the row moved, the selection did not");
+        // With the pointer's pick the list stands still, whatever moves.
+        st.scroll_to(Side::Player, 0.0);
+        let mut pointer = long_list(8, 20);
+        pointer.pointer_pick = true;
+        frame(&mut ui, &pointer, &mut st);
+        assert_eq!(st.value(Side::Player), 0.0, "hover does not scroll");
+    }
+
+    #[test]
+    fn a_key_on_the_same_row_brings_it_back() {
+        let mut ui = menu();
+        let mut st = ContainerTiles::default();
+        let mut s = long_list(0, 20);
+        frame(&mut ui, &s, &mut st);
+        st.scroll_to(Side::Player, 0.0);
+        frame(&mut ui, &s, &mut st);
+        assert_eq!(st.value(Side::Player), 0.0);
+        s.navigated += 1;
+        frame(&mut ui, &s, &mut st);
+        assert!(st.value(Side::Player) > 0.0);
+    }
+
+    #[test]
+    fn a_list_that_comes_to_fit_keeps_its_delta() {
+        let mut ui = menu();
+        let mut st = ContainerTiles::default();
+        let left = "ContainerMenu/NOGLOW_BRANCH/CM_ItemsRect/CM_Items_InventoryList";
+        frame(&mut ui, &snapshot(&[(1, "A")], &[], Side::Player, 0), &mut st);
+        assert_eq!(at(&ui, &format!("{left}/_scroll_delta")), 26.0, "the file's, before any overflow");
+        frame(&mut ui, &long_list(0, 20), &mut st);
+        let long = at(&ui, &format!("{left}/_scroll_delta"));
+        assert!(long != 26.0);
+        // The filter leaves one row: nothing to scroll, the delta as it was, filtered counted.
+        let mut one = snapshot(&[(1, "A")], &[], Side::Player, 0);
+        one.lists[Side::Player as usize].filtered = 19;
+        frame(&mut ui, &one, &mut st);
+        assert_eq!(at(&ui, &format!("{left}/_scroll_delta")), long);
+        assert_eq!(at(&ui, &format!("{left}/lb_scrollbar/_number_of_items")), 1.0);
+        assert_eq!(st.value(Side::Player), 0.0);
+        assert_eq!(at(&ui, &format!("{left}/_num_filtered")), 19.0);
+    }
+
+    #[test]
+    fn each_measuring_round_sees_the_tree_worked_out_and_a_face_late_is_measured_again() {
+        // A computed trait as a mod's computed font would read what the model just wrote.
+        let mut ui = menu_changed(|xml| xml.replace(r#"<text name="CM_ItemsTitle">"#, r#"<text name="CM_ItemsTitle"><_echo><copy src="me()" trait="string"/></_echo>"#));
+        let mut st = ContainerTiles::default();
+        let s = snapshot(&[(1, "A")], &[], Side::Player, 0);
+        let menu = ui.menu(CONTAINER_MENU).unwrap();
+        st.menu = Some(menu);
+        assert!(st.is_new(menu, &s));
+        write(&mut ui, &s, &mut st);
+        let texts = super::super::menus::texts(&ui, menu);
+        let echo = format!("{}/_echo", TITLES[1]);
+        let mut first_round = None;
+        // No face yet: everything measures 0 x 0 and stays unmeasured.
+        settle(&mut ui, &s, &mut st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| {
+            first_round.get_or_insert_with(|| ui.get_string(&echo));
+            super::super::menus::write_text_sizes_of(ui, &texts, sizes, &|_, _, _| (0.0, 0.0))
+        });
+        assert_eq!(first_round.flatten().as_deref(), Some("ITEMS"));
+        // The face has come: the same strings are measured, not taken from a cache of 0 x 0.
+        settle(&mut ui, &s, &mut st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| super::super::menus::write_text_sizes_of(ui, &texts, sizes, &list::lines_size));
+        let row = list::child(&ui, st.rows[Side::Player as usize][0].tile, ROW_TEXT).unwrap();
+        assert!(ui.tile(row).get("height").map_or(0.0, Value::num) > 0.0);
     }
 
     #[test]

@@ -30,9 +30,11 @@
 //!   (`crate::wait::WaitInput`), a press on the marker, held as it drags, sets the hours
 //!   under the pointer; the slider's value is written again after them.
 //! - **The container menu** (T15c, `super::container_menu`): a row the pointer comes onto is
-//!   selected, unless the wheel holds the selection; a click on a row, a heading's arrow,
+//!   selected, unless the wheel holds the selection; a click on a row, a heading or its arrow,
 //!   Take All and Exit send the hand-built menu's commands (`crate::menu::MenuInput`), to
-//!   `apply_input`. The scrollbar's arrows, page areas and marker move the list's view, no
+//!   `apply_input`, a row's behind a guard saying what the row stood for, checked as they apply.
+//!   A click on a heading steps it on [observed: `container__category_heading_click`]. The
+//!   scrollbar's arrows, page areas and marker move the list's view, no
 //!   command of the model's. Under the "How many?" prompt it takes nothing. The wheel stays
 //!   `crate::menu::menu_mouse`'s, told which heading the pointer is over.
 //! - **Units**: the cursor's logical pixels to interface units, 960 to the view's height,
@@ -251,6 +253,7 @@ impl MenuInputs<'_, '_> {
         if m.quantity.is_some() {
             return Some(());
         }
+        let mut guard = None;
         let commands = match what {
             ContainerTile::Row(side, index) => {
                 let at = if *row_acted { None } else { self.container.row_at(m, side, index) };
@@ -260,9 +263,12 @@ impl MenuInputs<'_, '_> {
                 };
                 *row_acted = true;
                 let on_it = m.focus == side && m.selected[side as usize] == index;
-                row_commands(side, index, on_it, inputs.shift)
+                let commands = row_commands(side, index, on_it, inputs.shift);
+                guard = self.container.guard(m.mode, side, index, on_it, commands.len() as u8);
+                commands
             }
             ContainerTile::Arrow(side, by) => vec![Command::Category(side, by)],
+            ContainerTile::Title(side) => vec![Command::Category(side, 1)],
             ContainerTile::TakeAll => vec![Command::TakeAll],
             ContainerTile::Exit => vec![Command::Close],
             ContainerTile::Bar(side, list::BarPiece::Marker) => {
@@ -279,8 +285,11 @@ impl MenuInputs<'_, '_> {
                 }
                 return Some(());
             }
-            ContainerTile::Title(_) | ContainerTile::Other => return Some(()),
+            ContainerTile::Other => return Some(()),
         };
+        if let Some(guard) = guard {
+            self.commands.write(MenuInput(Command::Expect(guard)));
+        }
         for cmd in commands {
             info!("tiles: {CONTAINER_MENU} {cmd:?} on its tiles");
             self.commands.write(MenuInput(cmd));
@@ -310,6 +319,9 @@ impl MenuInputs<'_, '_> {
         let holds = self.hold.as_ref().is_some_and(|h| h.held());
         if !row_acted && hover_selects(moved, holds, already) && self.container.row_at(m, side, index).is_some() {
             info!("tiles: {} Hover({side:?}, {index}) on its tiles", super::container_menu::CONTAINER_MENU);
+            if let Some(guard) = self.container.guard(m.mode, side, index, false, 1) {
+                self.commands.write(MenuInput(Command::Expect(guard)));
+            }
             self.commands.write(MenuInput(Command::Hover(side, index)));
         }
     }

@@ -166,10 +166,18 @@ impl PromptKeys {
     }
 }
 
+/// [`wheel_hold`], first: what reads [`WheelHold`] this frame runs after it, the hand-built
+/// pointer ([`menu_mouse`]) and the tiles' (`crate::tiles::input::feed`), which runs before the
+/// other menu systems: a wheel step and a pointer's move in one frame leave the row alone
+/// [owner 2026-10-22, #1192].
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WheelHoldSet;
+
 pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
+        app.configure_sets(Update, WheelHoldSet.before(MenuSystems)).add_systems(Update, wheel_hold.in_set(WheelHoldSet));
         app.init_resource::<ActiveMenu>()
             .init_resource::<FreshMenu>()
             .init_resource::<PromptKeys>()
@@ -191,7 +199,6 @@ impl Plugin for MenuPlugin {
                     keep_menu_state,
                     sync_cards,
                     publish_menu_picks,
-                    wheel_hold,
                     (quantity_keys, menu_keys, menu_mouse, quantity_mouse, apply_input).chain().run_if(menu_open),
                     draw,
                 )
@@ -732,8 +739,21 @@ fn apply_input(
     mut held: ResMut<PromptKeys>,
 ) {
     let mut script = script.map(|s| s.into_inner());
+    // The commands left of a guard that failed ([`Command::Expect`]).
+    let mut dropping = 0;
     for &MenuInput(cmd) in input.read() {
         let Some(m) = active.0.as_mut() else { return };
+        if let Command::Expect(guard) = cmd {
+            dropping = if m.row_is(&guard) { 0 } else { guard.then };
+            if dropping > 0 {
+                info!("menu: a command on a row that changed before it applied is dropped");
+            }
+            continue;
+        }
+        if dropping > 0 {
+            dropping -= 1;
+            continue;
+        }
         let before = crate::ui_sounds::MenuBefore::of(m);
         let asking = m.quantity.is_some();
         let a = m.apply(&mut sim.world, cmd);
@@ -935,6 +955,21 @@ mod wheel_hold_tests {
         }
         app.world_mut().write_message(CursorMoved { window, position: Vec2::ZERO, delta: Some(Vec2::new(travel, 0.0)) });
         app.update();
+    }
+
+    #[derive(Resource, Default)]
+    struct SeenHeld(bool);
+
+    #[test]
+    fn a_reader_after_the_set_sees_this_frames_wheel() {
+        let mut app = App::new();
+        app.init_resource::<WheelHold>()
+            .init_resource::<SeenHeld>()
+            .add_message::<MouseWheel>()
+            .add_message::<CursorMoved>()
+            .add_systems(Update, (wheel_hold.in_set(WheelHoldSet), (|hold: Res<WheelHold>, mut seen: ResMut<SeenHeld>| seen.0 = hold.held()).after(WheelHoldSet)));
+        step(&mut app, true, 50.0);
+        assert!(app.world().resource::<SeenHeld>().0, "the frame's own wheel step, as the tile hover reads it");
     }
 
     #[test]
