@@ -3227,3 +3227,63 @@ fn failed_objects_are_retried_the_same_way_every_time() {
     assert_eq!(recovering(), recovering());
     assert_eq!(cut_off(), cut_off());
 }
+
+/// Combat takes the sandbox for one update and ends: its next choice comes at the next
+/// update, whatever its timer said.
+fn interrupt_for_one_update(s: &mut Sim) {
+    let at = s.feet(R_SB_OBJECTS);
+    fighting(s, R_SB_OBJECTS, [at[0], at[1] + 100.0, at[2]]);
+    s.run(0.5);
+    sandbox_cancelled(s, R_SB_OBJECTS);
+    s.game.stop_combat(FormId(R_SB_OBJECTS));
+}
+
+/// A way found is not a behaviour begun: a walk given up before it arrives keeps the
+/// object's record, so the next failure goes on from the stage it had reached.
+#[test]
+fn an_approach_given_up_before_arriving_keeps_the_objects_stage() {
+    let f = lone_sandboxer(false);
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    let actor = FormId(R_SB_OBJECTS);
+    // Two failures: the second waits 120 seconds.
+    s.nav = chair_cut_off();
+    assert_eq!(run_noting_choices(&mut s, 130.0), [0.5, 65.5]);
+    // The next try finds a way and sets off.
+    s.nav = way_restored();
+    assert_eq!(run_noting_choices(&mut s, 60.5), [190.5]);
+    assert_eq!(doings(&s, R_SB_OBJECTS).last(), Some(&Doing::Sitting(FormId(CHAIR_C))));
+    assert_eq!(s.ai.agents[&actor].activity, Activity::Travelling);
+    assert!(s.ai.agents[&actor].walker.follower.is_some());
+    // Combat stops it before it arrives, and the way is gone again.
+    interrupt_for_one_update(&mut s);
+    s.nav = chair_cut_off();
+    assert!(!way_to(&s, CHAIR_AT));
+    // The third failure waits the third delay: 240 seconds, and five to the next look.
+    let tries = run_noting_choices(&mut s, 300.0);
+    assert_eq!(tries, [191.5, 436.5], "after the first delay it would be 256.5");
+    assert!(!s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Furniture { .. })), "the chair was never used");
+}
+
+/// `Game::time == retry_at` is the first moment the object can be chosen. The looks of a
+/// standing actor pass the deadline by (55.5, then 65.5, for 60.5), so an interruption
+/// brings a choice onto the updates either side of it.
+#[test]
+fn a_failed_object_can_be_chosen_from_the_moment_its_wait_ends() {
+    let f = lone_sandboxer(false);
+    let choosing_at = |time: f64| {
+        let mut s = sim(&f, &[R_SB_OBJECTS]);
+        fail_at_the_chair(&mut s);
+        s.nav = way_restored();
+        let until_interrupted = time - 1.0 - s.game.time;
+        assert_eq!(run_noting_choices(&mut s, until_interrupted), [] as [f64; 0]);
+        interrupt_for_one_update(&mut s);
+        let tries = run_noting_choices(&mut s, 0.5);
+        let last = s.ai.events.iter().rev().find_map(|e| match e.event {
+            AiEvent::Sandbox { doing, .. } => Some((e.time, doing)),
+            _ => None,
+        });
+        (tries, last)
+    };
+    assert_eq!(choosing_at(60.0), (Vec::new(), Some((60.0, Doing::Standing))), "half a second before the deadline");
+    assert_eq!(choosing_at(60.5), (vec![60.5], Some((60.5, Doing::Sitting(FormId(CHAIR_C))))), "at the deadline");
+}
