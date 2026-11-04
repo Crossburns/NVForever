@@ -95,12 +95,17 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   - `ScrollKnob`, about its local X, its axle: the list's selected row, 2° a row, 30° a
     second. It comes back to the same place at the top of a list [observed: private job
     pipboy_special_device_motion: its ridges to within 0.3 pixels]; the rest is [hypothesis]:
-    the ridges' 17 pixels hide larger moves between shots, and the sign is not resolved. The
-    mouse wheel at the top of the list moved neither. Using the selected row, not the list's
-    scroll, means the pointer on a row turns it too [design].
+    that it follows the selected row and not the list's scroll, which the capture does not
+    separate; the ridges' 17 pixels hide larger moves between shots, and the sign is not
+    resolved. The mouse wheel at the top of the list moved neither. Following the row means
+    the pointer on a row turns it too [design].
   - Absolute `bind × rotation` on the shape's own transform, after the arm is posed; a rebuilt
-    rig's shapes take a bind of their own. Off the arm a control keeps its last place
-    [hypothesis]; the first reading is taken at once. Logged "pipboy: needle settled at …",
+    rig's shapes take a bind of their own. Only rigid shapes of the size of the game's own
+    male and female arm turn: a replacement model can share the names with other pivots,
+    axes or skinning, so others are left still, said once ("pipboy: needle left still: …").
+    Only the arms rig: the third-person model's controls stay still and NPCs' arms are not
+    touched [design]. Off the arm a control finishes travelling to the last reading, then
+    holds [hypothesis]; the first reading is taken at once. Logged "pipboy: needle settled at …",
     "pipboy: tab knob settled at …", "pipboy: scroll wheel settled at …".
 - **The view** is first person while it is up and goes back to what it was [hypothesis].
 - **The world behind** is blurred by `fBlurRadiusPipboy` (3.5) in the image space
@@ -134,7 +139,10 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   file), fitted to those places through a model of the path: image × `SCREEN_TINT` × the
   shapes' vertex colour (0.624 in linear light), plus the glare, through Bevy's
   TonyMcMapface table and an image-space grade fitted to our own readings. It reaches them
-  to about 2 units [fitted, not yet measured in game]:
+  to about 2 units; measured in game, at 1280 × 720, noon in Goodsprings, our frames at
+  those places come within a few units of the capture [observed: the same eight places,
+  2026-11-04]. That is the one case measured: the image-space grade applies to these unlit
+  shapes too, so it establishes neither other hours nor interiors, nor custom colours:
   - The falloff is the background picture's vignette: `pipboy.dds` runs from about 9 at its
     corners to 93 near the top of its middle [observed: the file]. Drawn over a large
     undercoat, as the first fit had it, the vignette was lost. The picture is at brightness

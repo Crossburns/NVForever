@@ -3211,12 +3211,12 @@ manual = "the frame at 13.3 s has the pointer on the STATS button with only the 
 [[scenario]]
 name = "pipboy-controls"
 source = "#1516: the needle follows total rads, the tab knob the page's tab, the scroll wheel the list's row (docs/spec-notes/pipboy.md section 2), as angles in the log"
-note = "rads set while the Pip-Boy is down: the first raise takes 300 at once, the second travels to 900 (108 degrees at 30 a second) on the arm; tabs at 21.5 to 24.5 s; the rows at 25.5 s"
+note = "rads set while the Pip-Boy is down: the first raise takes 300 at once, the second travels to 900 (108 degrees at 30 a second) on the arm; tabs at 28.5 to 31.5 s; the rows at 32.5 s. The first raise is at 18 s, after the add-ons' start-up message boxes: at 12 s the box still open made the menu ignore the request, so 300 was never read"
 areas = ["pipboy"]
 paths = ["engine/nvforever/src/pipboy_controls.rs", "engine/nvforever/src/pipboy_arm.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "10:set_av:player:RadiationRads:300,15:set_av:player:RadiationRads:900", NVF_PLAY_TEST_PIPBOY = "12:open,14:close,17:open,21.5:tab=1,22.5:tab=2,23.5:tab=4,24.5:tab=0,25.5:key=down,26:key=down,27:close", NVF_PLAY_TEST_SHOTS = "13.5:pipboy_needle_300.png,17.8:pipboy_needle_moving.png,21:pipboy_needle_900.png,24:pipboy_knob_tab4.png" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "16:set_av:player:RadiationRads:300,22:set_av:player:RadiationRads:900", NVF_PLAY_TEST_PIPBOY = "18:open,20:close,24:open,28.5:tab=1,29.5:tab=2,30.5:tab=4,31.5:tab=0,32.5:key=down,33:key=down,34:close", NVF_PLAY_TEST_SHOTS = "19.5:pipboy_needle_300.png,24.8:pipboy_needle_moving.png,28:pipboy_needle_900.png,31:pipboy_knob_tab4.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--size", "1280x720"]
-run_seconds = 29
+run_seconds = 36
 order = [[
   "pipboy: needle settled at -36.0 deg for 300 rads",
   "pipboy: needle moving from -36.0 deg to 72.0 deg",
@@ -3228,7 +3228,11 @@ order = [[
   "pipboy: tab knob settled at 78.0 deg (tab 0)",
   { re = 'pipboy: scroll wheel settled at \d+\.\d deg \(row [1-9]', label = "the wheel turned by the row" },
 ]]
-manual = "the needle at about 4 o'clock (300 rads) at 13.5 s, on its way at 17.8 s and about 1 o'clock (900) at 21 s; the knob's fin at the last mark (tab 4) at 24 s; the dial and marks undisturbed, nothing off its pivot"
+forbid = [
+  { text = "menu request ignored", label = "a raise fell on an open menu, so a reading was not taken" },
+  { re = 'pipboy: (needle|tab knob|scroll wheel) left still', label = "the game's own shapes turn" },
+]
+manual = "the needle at about 4 o'clock (300 rads) at 19.5 s, on its way at 24.8 s and about 1 o'clock (900) at 28 s; the knob's fin at the last mark (tab 4) at 31 s; the dial and marks undisturbed, nothing off its pivot"
 
 [[scenario]]
 name = "pipboy-screen-menu"

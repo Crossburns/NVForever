@@ -11,10 +11,20 @@
 //! its own transform turns it, after the arm is posed and before transforms propagate. No
 //! rotation accumulates, and a rebuilt rig's new shapes take a bind of their own.
 //!
-//! Off the arm a control keeps its last place [hypothesis: nothing was captured down]. The
-//! first reading is taken at once, so a loaded game's needle does not sweep up.
+//! Only the shapes this was measured on turn: rigid, and of the size they are in the game's
+//! male and female arm ([`KNOWN`]). A replacement model can share the names with other
+//! pivots, axes or skinning, so any other shape is left as it is, said once for each control
+//! (`pipboy: <control> left still: ...`). Only the arms rig's shapes are tagged
+//! (`player_body.rs`): the third-person model's controls stay still, and NPCs' arms are not
+//! touched.
+//!
+//! Off the arm no reading comes: a control finishes travelling to the last one, then holds
+//! [hypothesis: nothing was captured down]. The first reading is taken at once, so a loaded
+//! game's needle does not sweep up.
 
-use crate::pipboy_arm::PipBoyPart;
+use crate::pipboy_arm::{PartMesh, PipBoyPart};
+use bevy::mesh::skinning::SkinnedMesh;
+use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use fnv_sim::FormId;
 use nvf_play::menu::model::Side;
@@ -55,15 +65,38 @@ const KNOB_DEGREES_PER_TAB: f32 = 26.0;
 /// 4 to 0 swings back at the same speed.]
 const KNOB_SPEED: f32 = 180.0;
 
-/// The wheel turns by the list's row, and is back in the same place at the top of the list
-/// [observed: private job pipboy_special_device_motion: its ridges come back to within 0.3
-/// pixels]. [hypothesis: the ridges' spacing, about 17 pixels, hides larger moves between
-/// shots: about 4 pixels a shot while a list moves is read as 2° a row, and which way it
-/// turns, the front going down with the list, is not resolved. The mouse wheel at the top of
-/// the list moved neither.]
+/// The wheel moves while a long list is moved through by key, and is back in the same place
+/// at the top of the list; the mouse wheel at the top of the list moved neither [observed:
+/// private job pipboy_special_device_motion: its ridges come back to within 0.3 pixels].
+/// [hypothesis: that it follows the selected row, which the capture does not separate from
+/// the list's scroll; the ridges' spacing, about 17 pixels, hides larger moves between shots:
+/// about 4 pixels a shot while a list moves is read as 2° a row; which way it turns, the
+/// front going down with the list, is not resolved.]
 const WHEEL_DEGREES_PER_ROW: f32 = 2.0;
 /// [hypothesis: about the rate of its last move to the top of the list.]
 const WHEEL_SPEED: f32 = 30.0;
+
+/// The shapes these numbers were measured on: their bounds, least and most corner, in
+/// `meshes\\pipboy3000\\pipboyarm.nif` and `pipboyarmfemale.nif` [observed: `fnvtool nif
+/// decode`; the two differ by up to 0.012 at the wheel].
+const KNOWN: [(PipBoyPart, [f32; 3], [f32; 3]); 4] = [
+    (PipBoyPart::Needle, [-0.018, -0.027, 0.022], [0.388, 0.028, 0.022]),
+    (PipBoyPart::Needle, [-0.051, -0.044, 0.0], [0.051, 0.044, 0.052]),
+    (PipBoyPart::TabKnob, [-0.418, -0.492, -0.19], [0.411, 0.404, 0.606]),
+    (PipBoyPart::ScrollKnob, [-0.147, -1.197, -1.201], [0.147, 1.197, 1.201]),
+];
+const KNOWN_WITHIN: f32 = 0.02;
+
+/// Why a tagged shape does not turn; `None` for one this was measured on.
+fn unsupported(part: PipBoyPart, mesh: &Mesh, skinned: bool) -> Option<&'static str> {
+    if skinned {
+        return Some("skinned");
+    }
+    let Some(VertexAttributeValues::Float32x3(points)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { return Some("no positions") };
+    let (lo, hi) = points.iter().fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(lo, hi), p| (lo.min(Vec3::from_array(*p)), hi.max(Vec3::from_array(*p))));
+    let known = KNOWN.iter().any(|(k, a, b)| *k == part && (lo - Vec3::from_array(*a)).abs().max_element() <= KNOWN_WITHIN && (hi - Vec3::from_array(*b)).abs().max_element() <= KNOWN_WITHIN);
+    (!known).then_some("not of the game's own model")
+}
 
 /// Where the needle turns to for `rads`, degrees about its local Z from its bind pose.
 pub fn needle_angle(rads: f64) -> f32 {
@@ -130,11 +163,15 @@ pub struct ControlAngles {
     needle: Turn,
     knob: Turn,
     wheel: Turn,
+    /// The last reading of each, what a control is travelling to.
+    last: Readings,
+    /// A shape of each was said to be left still: needle, knob, wheel.
+    skips_said: [bool; 3],
 }
 
 impl Default for ControlAngles {
     fn default() -> Self {
-        ControlAngles { needle: Turn::at(needle_angle(0.0)), knob: Turn::at(knob_angle(0)), wheel: Turn::at(wheel_angle(0)) }
+        ControlAngles { needle: Turn::at(needle_angle(0.0)), knob: Turn::at(knob_angle(0)), wheel: Turn::at(wheel_angle(0)), last: Readings::default(), skips_said: [false; 3] }
     }
 }
 
@@ -148,14 +185,28 @@ pub struct Readings {
 
 impl ControlAngles {
     fn advance(&mut self, r: Readings, dt: f32) {
+        self.last = Readings { rads: r.rads.or(self.last.rads), tab: r.tab.or(self.last.tab), row: r.row.or(self.last.row) };
         if self.needle.advance(r.rads.map(needle_angle), NEEDLE_SPEED, dt, "needle") {
-            info!("pipboy: needle settled at {:.1} deg for {:.0} rads", self.needle.angle, r.rads.unwrap_or_default());
+            info!("pipboy: needle settled at {:.1} deg for {:.0} rads", self.needle.angle, self.last.rads.unwrap_or_default());
         }
         if self.knob.advance(r.tab.map(knob_angle), KNOB_SPEED, dt, "tab knob") {
-            info!("pipboy: tab knob settled at {:.1} deg (tab {})", self.knob.angle, r.tab.unwrap_or_default());
+            info!("pipboy: tab knob settled at {:.1} deg (tab {})", self.knob.angle, self.last.tab.unwrap_or_default());
         }
         if self.wheel.advance(r.row.map(wheel_angle), WHEEL_SPEED, dt, "scroll wheel") {
-            info!("pipboy: scroll wheel settled at {:.1} deg (row {})", self.wheel.angle, r.row.unwrap_or_default());
+            info!("pipboy: scroll wheel settled at {:.1} deg (row {})", self.wheel.angle, self.last.row.unwrap_or_default());
+        }
+    }
+
+    /// Say once for each control that a shape of it is left still.
+    fn say_skip(&mut self, part: PipBoyPart, why: &str) {
+        let (i, name) = match part {
+            PipBoyPart::Needle => (0, "needle"),
+            PipBoyPart::TabKnob => (1, "tab knob"),
+            _ => (2, "scroll wheel"),
+        };
+        if !self.skips_said[i] {
+            warn!("pipboy: {name} left still: its shape is {why}");
+            self.skips_said[i] = true;
         }
     }
 
@@ -170,9 +221,11 @@ impl ControlAngles {
     }
 }
 
-/// A control's own transform as the rig spawned it.
+/// A control's own transform as the rig spawned it; `None` for a shape left still.
 #[derive(Component, Clone, Copy, Debug)]
-pub struct ControlBind(Transform);
+pub struct ControlBind(Option<Transform>);
+
+type ControlShapes<'w, 's> = Query<'w, 's, (Entity, &'static PipBoyPart, &'static mut Transform, &'static PartMesh, Option<&'static SkinnedMesh>, Option<&'static ControlBind>)>;
 
 /// `bind × rotation`.
 fn posed(bind: &Transform, axis: Vec3, degrees: f32) -> Transform {
@@ -180,18 +233,24 @@ fn posed(bind: &Transform, axis: Vec3, degrees: f32) -> Transform {
 }
 
 /// Move the controls on and pose every control of the rig from its own bind.
-fn pose_controls(commands: &mut Commands, r: Readings, dt: f32, angles: &mut ControlAngles, shapes: &mut Query<(Entity, &PipBoyPart, &mut Transform, Option<&ControlBind>)>) {
+fn pose_controls(commands: &mut Commands, r: Readings, dt: f32, angles: &mut ControlAngles, shapes: &mut ControlShapes) {
     angles.advance(r, dt);
-    for (e, part, mut t, bind) in shapes {
+    for (e, part, mut t, mesh, skin, bind) in shapes {
         let Some((axis, degrees)) = angles.of(*part) else { continue };
         let bind = match bind {
             Some(b) => b.0,
             None => {
                 // First seen: what it has now is the rig's. A rebuilt rig comes this way.
-                commands.entity(e).insert(ControlBind(*t));
-                *t
+                let why = unsupported(*part, &mesh.0, skin.is_some());
+                if let Some(why) = why {
+                    angles.say_skip(*part, why);
+                }
+                let bind = why.is_none().then_some(*t);
+                commands.entity(e).insert(ControlBind(bind));
+                bind
             }
         };
+        let Some(bind) = bind else { continue };
         let want = posed(&bind, axis, degrees);
         if *t != want {
             *t = want;
@@ -232,7 +291,7 @@ pub(crate) fn turn_controls(
     active: Res<ActiveMenu>,
     script: Option<ResMut<ScriptState>>,
     mut angles: ResMut<ControlAngles>,
-    mut shapes: Query<(Entity, &PipBoyPart, &mut Transform, Option<&ControlBind>)>,
+    mut shapes: ControlShapes,
 ) {
     let readings = if pip.on_arm() {
         Readings { rads: rads(script.map(Into::into)), tab: Some(pip.tab()), row: list_row(&pip, stats.as_deref(), data.as_deref(), &active) }
@@ -278,11 +337,13 @@ mod tests {
         // 600 more rads: 108° at its speed.
         a.advance(up(900.0), 1.0);
         assert!((a.needle.angle - (needle_angle(300.0) + NEEDLE_SPEED)).abs() < 1e-3);
-        // Down: it goes on to the last target and stays there, whatever comes.
+        // Down: it finishes travelling to the last reading and holds there, which the log
+        // still gives (not 0 rads).
         for _ in 0..10 {
             a.advance(Readings::default(), 1.0);
         }
         assert_eq!(a.needle.angle, needle_angle(900.0));
+        assert_eq!(a.last.rads, Some(900.0));
         // A drop travels the other way at the same speed, however far.
         a.advance(up(0.0), 1.0);
         assert!((a.needle.angle - (needle_angle(900.0) - NEEDLE_SPEED)).abs() < 1e-3);
@@ -296,11 +357,23 @@ mod tests {
     #[derive(Resource, Default)]
     struct Now(Readings, f32);
 
+    fn box_mesh(lo: [f32; 3], hi: [f32; 3]) -> std::sync::Arc<Mesh> {
+        let mut m = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
+        m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![lo, hi]);
+        std::sync::Arc::new(m)
+    }
+
+    /// The measured shape of a control.
+    fn known(part: PipBoyPart) -> PartMesh {
+        let (_, lo, hi) = KNOWN.iter().find(|(k, ..)| *k == part).unwrap();
+        PartMesh(box_mesh(*lo, *hi))
+    }
+
     fn app() -> App {
         let mut app = App::new();
         app.init_resource::<ControlAngles>().init_resource::<Now>().add_systems(
             Update,
-            |mut commands: Commands, now: Res<Now>, mut angles: ResMut<ControlAngles>, mut shapes: Query<(Entity, &PipBoyPart, &mut Transform, Option<&ControlBind>)>| {
+            |mut commands: Commands, now: Res<Now>, mut angles: ResMut<ControlAngles>, mut shapes: ControlShapes| {
                 pose_controls(&mut commands, now.0, now.1, &mut angles, &mut shapes);
             },
         );
@@ -318,9 +391,9 @@ mod tests {
     #[test]
     fn a_shape_turns_about_its_own_origin_and_axis_absolutely() {
         let mut app = app();
-        let needle = app.world_mut().spawn((PipBoyPart::Needle, bind())).id();
-        let wheel = app.world_mut().spawn((PipBoyPart::ScrollKnob, bind())).id();
-        let other = app.world_mut().spawn((PipBoyPart::Screen, bind())).id();
+        let needle = app.world_mut().spawn((PipBoyPart::Needle, bind(), known(PipBoyPart::Needle))).id();
+        let wheel = app.world_mut().spawn((PipBoyPart::ScrollKnob, bind(), known(PipBoyPart::ScrollKnob))).id();
+        let other = app.world_mut().spawn((PipBoyPart::Screen, bind(), known(PipBoyPart::Needle))).id();
         app.world_mut().resource_mut::<Now>().0 = Readings { rads: Some(500.0), tab: Some(3), row: Some(0) };
         for _ in 0..5 {
             app.update();
@@ -345,19 +418,44 @@ mod tests {
     #[test]
     fn a_rebuilt_rig_takes_its_own_bind_and_the_control_its_place() {
         let mut app = app();
-        let needle = app.world_mut().spawn((PipBoyPart::Needle, bind())).id();
+        let needle = app.world_mut().spawn((PipBoyPart::Needle, bind(), known(PipBoyPart::Needle))).id();
         app.world_mut().resource_mut::<Now>().0 = Readings { rads: Some(1000.0), ..default() };
         app.update();
         app.update();
         // A new rig elsewhere, down: the place kept, on the new bind.
         app.world_mut().despawn(needle);
         let other_bind = Transform::from_xyz(1.0, 2.0, 3.0);
-        let rebuilt = app.world_mut().spawn((PipBoyPart::Needle, other_bind)).id();
+        let rebuilt = app.world_mut().spawn((PipBoyPart::Needle, other_bind, known(PipBoyPart::Needle))).id();
         app.world_mut().resource_mut::<Now>().0 = Readings::default();
         app.update();
         app.update();
         let t = *app.world().get::<Transform>(rebuilt).unwrap();
         assert_eq!(t.translation, other_bind.translation);
         assert!((t.transform_point(Vec3::X) - other_bind.transform_point(Vec3::Y)).length() < 1e-4, "at 1000 rads still");
+    }
+
+    #[test]
+    fn only_the_measured_rigid_shapes_turn() {
+        // Both of the needle's shapes, the knob and the wheel are known, in either arm.
+        for (part, lo, hi) in KNOWN {
+            assert_eq!(unsupported(part, &box_mesh(lo, hi), false), None, "{part:?}");
+        }
+        assert_eq!(unsupported(PipBoyPart::ScrollKnob, &box_mesh([-0.144, -1.202, -1.195], [0.159, 1.202, 1.195]), false), None, "the female arm's");
+        assert_eq!(unsupported(PipBoyPart::TabKnob, &box_mesh([-0.418, -0.492, -0.19], [0.411, 0.404, 0.606]), true), Some("skinned"));
+        // The right size for another control is not enough.
+        assert!(unsupported(PipBoyPart::Needle, &box_mesh([-0.418, -0.492, -0.19], [0.411, 0.404, 0.606]), false).is_some());
+        let mut app = app();
+        let replaced = app.world_mut().spawn((PipBoyPart::Needle, bind(), PartMesh(box_mesh([-2.0; 3], [2.0; 3])))).id();
+        let skinned = app.world_mut().spawn((PipBoyPart::TabKnob, bind(), known(PipBoyPart::TabKnob), SkinnedMesh { inverse_bindposes: Handle::default(), joints: Vec::new() })).id();
+        let also = app.world_mut().spawn((PipBoyPart::Needle, bind(), PartMesh(box_mesh([-3.0; 3], [3.0; 3])))).id();
+        app.world_mut().resource_mut::<Now>().0 = Readings { rads: Some(1000.0), tab: Some(0), row: Some(0) };
+        for _ in 0..3 {
+            app.update();
+        }
+        for e in [replaced, skinned, also] {
+            assert_eq!(*app.world().get::<Transform>(e).unwrap(), bind(), "left as it is");
+            assert!(app.world().get::<ControlBind>(e).unwrap().0.is_none());
+        }
+        assert_eq!(app.world().resource::<ControlAngles>().skips_said, [true, true, false], "said once for each control");
     }
 }

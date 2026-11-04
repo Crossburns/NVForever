@@ -227,6 +227,15 @@ fn wear_materials(on: bool, image: &Handle<Image>, parts: &mut Query<(Entity, &P
         swapped.screen = Some((e, own));
         info!("pipboy: the menus are on the model's screen");
     }
+    // The image replaced while the menus are up takes effect at once.
+    if let Some((e, own)) = swapped.screen.clone() {
+        let menus = copy_of(&mut swapped.menus, &own, Some(image), materials, |source| menus_material(source, image.clone()));
+        if let Ok((_, _, mut m)) = parts.get_mut(e) {
+            if m.0 != menus {
+                m.0 = menus;
+            }
+        }
+    }
     if let (None, Some((e, mut own))) = (&swapped.glare, model_glare) {
         if let Some(original) = field.take_original(e, &own, materials) {
             own = original;
@@ -637,11 +646,20 @@ mod tests {
         let glare_copy = worn(&app, glare_2);
         app.world_mut().insert_resource(On(false, menus_2.clone()));
         app.update();
+        let own_screen_2_again = own_screen_2.clone();
         assert_eq!((worn(&app, screen_2), worn(&app, glare_2)), (own_screen_2, own_glare_2));
         app.world_mut().insert_resource(On(true, menus_2.clone()));
         app.update();
         assert_eq!(worn_material(&app, screen_2).base.base_color_texture.as_ref(), Some(&menus_2));
         assert!(worn(&app, glare_2) == glare_copy);
+        // Replaced while up, no reopening: the shape wears the new image the same frame.
+        app.world_mut().insert_resource(On(true, menus_1.clone()));
+        app.update();
+        assert_eq!(worn_material(&app, screen_2).base.base_color_texture.as_ref(), Some(&menus_1));
+        // Down, it still gets its own back.
+        app.world_mut().insert_resource(On(false, menus_1.clone()));
+        app.update();
+        assert_eq!(worn(&app, screen_2), own_screen_2_again);
     }
 
     #[test]

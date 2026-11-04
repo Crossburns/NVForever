@@ -7,15 +7,15 @@
 //! A static fit to a capture of the original [observed: private job
 //! pipboy_special_device_base: 1280 × 720, noon in Goodsprings, level view, the STATS page,
 //! 11 × 11 pixel means at eight empty places of the screen and on a filled bar]; all its
-//! numbers are in this file. It reaches those places to about 2 units through the model of
-//! the path below. Its shape is in the textures: the falloff to the edges is the
+//! numbers are in this file. Our frames at those places come within a few units of the
+//! capture [observed: in game, 1280 × 720, noon in Goodsprings, 2026-11-04]. Its shape is in the textures: the falloff to the edges is the
 //! background picture's, and the glow across the top and the patch on the right are the
 //! glare's, so the undercoat is left with next to nothing. `ScreenLit:8` has no part in
 //! it: `screen.dds` is black, `Screen_n.dds` flat and its specular colour black [observed:
 //! the files; `fnvtool nif decode`], so it stays hidden. None of this is lit by the world
 //! [design: both shapes are unlit]; how the hour changes the original's screen is not
-//! fitted, here the image-space grade moves it. Flicker, vertical hold and shudder are
-//! not built.
+//! fitted, here the image-space grade moves it, so the noon match establishes neither
+//! other hours nor interiors. Flicker, vertical hold and shudder are not built.
 //!
 //! The path from the image to the frame [design: `pipboy_arm.rs`, `nvf_assets::nif_spawn`
 //! `unlit_vertex_colors`, `imagespace.wesl`]: image × [`SCREEN_TINT`] ×
