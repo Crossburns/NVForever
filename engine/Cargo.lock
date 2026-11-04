@@ -4553,7 +4553,7 @@ dependencies = [
 
 [[package]]
 name = "nvf-assets"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bevy",
  "fnv-dds",
@@ -4564,7 +4564,7 @@ dependencies = [
 
 [[package]]
 name = "nvf-play"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bevy",
  "fnv-actor",
@@ -4597,7 +4597,7 @@ dependencies = [
 
 [[package]]
 name = "nvf-viewer"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bevy",
  "clap",
@@ -4609,7 +4609,7 @@ dependencies = [
 
 [[package]]
 name = "nvforever"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "ash",
  "bevy",
