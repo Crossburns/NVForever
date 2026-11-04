@@ -129,6 +129,67 @@ the view's height, from the top left of a 1024 × 800 rectangle centred on the s
   and is drawn at half brightness [hypothesis: no screenshot shows one; the template's
   `_TextAlpha` allows a fainter row].
 
+### 4.1 The trait menu drawn from its file (`[UI] TileMenus=TraitMenu`)
+
+Off by default; the hand-built menu of §4 stays whole with the switch off and whenever
+this does not hold (`engine/nvf-play/src/tiles/trait_menu.rs`). [observed: the vanilla
+files, by `fnvtool ui tree --menu menus\trait_menu.xml` and the shared pieces it includes,
+read privately; not seen running unless tagged otherwise.]
+
+- **What the program writes.** The file leaves these open to code: the menu's `_CurrPoints`
+  and `_MaxPoints`; `string` of the title (`LUM_Headline_Title`), the description
+  (`TM_DescriptionText`) and the counter (`LUM_PointCounter`); `filename` and `visible` of
+  the picture (`LUM_SelectionIcon`); the rows, made from the template `LUM_PerkTemplate`
+  (row `LUM_Perk`, with `ListItemText` and `LUM_Template_ItemMarker`): `string`, `_selected`,
+  `_TextAlpha`, `listindex`, `_y`, `height`; of the list (`LUM_PerkList`) its `visible`, which
+  its `_enabled` follows and without which rows take no pointer and the highlight stays
+  hidden, `_highlight_y`, `_selected_height`, and of its `lb_scrollbar` the counts and value.
+  The buttons are `LUM_ResetButton` and `LUM_ContinueButton`. The tile ids 0 to 6 and 8 mark
+  what the program addresses [hypothesis].
+- **`_selected` is "taken"**, the mark the row draws; the row chosen is the highlight. Both
+  are shown at once, and they differ [design: the same meanings as §4].
+- **The file has a scroll bar for the description**: `TM_DescriptionScrollbar` in the box
+  `TM_DescriptionBox`, moving `TM_DescriptionText` by its value times its own `_ScrollDelta`.
+  No control of NVForever's is added. What the program writes for it is not in the file:
+  NVForever gives it as many values as it takes the text's end to come into the box
+  [design]; the file's own item count stands until code writes it. It also leaves the page
+  step at nothing, so NVForever pages by the box's height less a step [design]. The bar
+  stands beside the box, outside its width, so that box's window does not crop it
+  (`fnv_ui::input::OUTSIDE_CLIP`) [hypothesis: a window crops what has `clips`; the arrows on
+  the screenshot of §4 stand there].
+- **A short text**: the arrows stay [observed: §4, the screenshot's short text] and the
+  marker does not show [design: none was noted there]. Whether the original writes a count,
+  or leaves the file's, is not known [hypothesis]: a capture read, below.
+- **The list's scroll keeps the file's `_scroll_delta` as its step** and takes as many
+  values as bring the last row's end in [hypothesis: sixteen rows of 52 in a list of 676
+  over the file's step of 26 make seven values, and the file's marker at seven values is 92
+  long, the 69 pixels at 720 lines measured in §4; the container capture's counts,
+  barter-menu.md §8, would give it 161]. The file's own step and page are used
+  (`tiles::list::counts_by_step`). Where the marker stood on that screenshot, not at the
+  top of its track, is not explained.
+- **Backing** [hypothesis]: the file's dark picture at 0.4 alpha (§8's reading of the
+  screenshot) with the world blurred behind it; the whole-screen dark sheet is the
+  hand-built menu's only.
+- **Keys** stay the hand-built menu's (`crate::chargen`), so a press acts once, and R and A
+  through the file's `_PCButton_*` act only for a script's MenuTapKey or a controller not
+  standing in for them. With tiles, Left and Right (the D-pad's too) scroll the description
+  [design: the original's way is not known], and Page Up/Down step by the rows the list
+  shows. The wheel over the description or its bar scrolls the text, elsewhere the list;
+  scrolling never changes the chosen row, nor does the pointer resting on a row that moved
+  under it.
+- **Not known** (reads for a capture of the original, none taken yet): at 1280 x 720 with
+  sixteen rows, the list's `_scroll_delta`, its bar's `_number_of_items`,
+  `_number_of_visible_items`, `_current_value` and the marker's `y` at the top and bottom;
+  the description bar's `_number_of_items`, `_current_value`, `_ScrollDelta`, `_jump_size`,
+  `_show_always`, `visible` with a short text and a long one, and the text's `y` at the
+  end; `LUM_Background`'s `alpha`; `_CurrPoints` and `_MaxPoints` as traits are taken;
+  `_TextAlpha` on a trait that cannot be taken, and whether its row's `_enabled` goes off;
+  `LUM_ContinueButton`'s and `LUM_ResetButton`'s `target`; `stats_icon_badge`; what Reset
+  restores with traits already taken; the world's blur radius behind the menu.
+- **Evidence**: the unit tests (`tiles::trait_menu`) use a small layout written for them,
+  which says nothing of the file's geometry; the smoke scenarios `tiles-trait-*` read the
+  vanilla file.
+
 ## 5. The name menu (1051)
 
 [documented: texteditmenu.xml unless tagged]

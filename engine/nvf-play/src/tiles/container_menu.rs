@@ -1074,7 +1074,7 @@ mod tests {
         assert_ne!(st.rows[1][0].tile, old);
         assert!(ui.is_live(st.rows[1][0].tile));
         // Closed: nothing stays.
-        st.drag = Some(Drag { menu: menu_tile, list: menu_tile, top: 0.0, grab: 0.0 });
+        st.drag = Some(Drag { menu: menu_tile, list: menu_tile, bar: menu_tile, top: 0.0, grab: 0.0 });
         st.scroll_to(Side::Player, 1.0);
         st.warned = true;
         st.close();

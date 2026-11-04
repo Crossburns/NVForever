@@ -19,6 +19,7 @@ use fnv_game::chargen::{self, SpecialSheet, TagSheet, TraitSheet};
 use fnv_game::functions::ui::SpecialMenu;
 use fnv_game::game::menus;
 use fnv_game::Game;
+use fnv_sim::FormId;
 
 // ---- the menu files' numbers [documented: §3, §4] -----------------------------------------
 
@@ -219,6 +220,19 @@ impl ListMenu {
 
     pub fn visible(&self) -> usize {
         shape(self.code, self.attributes()).visible
+    }
+
+    /// The trait sheet, on the trait menu: what the tile drawing reads (`crate::tiles::trait_menu`).
+    pub fn trait_sheet(&self) -> Option<&TraitSheet> {
+        match &self.sheet {
+            Sheet::Traits { now, .. } => Some(now),
+            _ => None,
+        }
+    }
+
+    /// The row of trait `key` in the sheet's own order, if it still has one.
+    pub fn trait_row(&self, key: FormId) -> Option<usize> {
+        self.trait_sheet()?.traits.iter().position(|&t| t == key)
     }
 
     /// Choose row `i` (pointer or keys), scrolling it into the list.
@@ -609,7 +623,6 @@ fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fnv_sim::FormId;
     use std::collections::BTreeSet;
 
     fn traits(n: usize) -> ListMenu {

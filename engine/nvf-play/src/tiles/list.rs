@@ -167,6 +167,19 @@ pub fn keep_row_shown(value: f64, top: f64, height: f64, page: f64, delta: f64, 
     v.clamp(0.0, most.max(0.0))
 }
 
+/// The counts of rows `heights` in a list `page` high when the list keeps the file's own
+/// `_scroll_delta` as its step (`step`): as many positions as it takes to bring the last row's
+/// end in, the whole extent reached. [`counts`] is the container capture's reading and says
+/// nothing of a menu that was not captured; this is a menu's other choice, which keeps
+/// `delta` `None` so [`write_counts`] gives the file's step back [design].
+pub fn counts_by_step(heights: &[f64], page: f64, step: f64) -> Counts {
+    let total: f64 = heights.iter().sum();
+    if total <= page || step <= 0.0 {
+        return Counts { items: 1.0, visible: 1.0, delta: None };
+    }
+    Counts { items: ((total - page) / step - 1e-9).ceil() + 1.0, visible: 1.0, delta: None }
+}
+
 /// Write the counts [`counts`] and the file's `_scroll_delta`, which a list that fits gets
 /// back from `file_delta` (what the tile had when no code had written it).
 pub fn write_counts(ui: &mut Ui, list: TileId, c: &Counts, file_delta: f64) {
@@ -180,9 +193,14 @@ pub fn write_counts(ui: &mut Ui, list: TileId, c: &Counts, file_delta: f64) {
 /// Write the scrollbar's value and poke `_SetInCode` [documented: scrollbar_vert.xml].
 pub fn write_value(ui: &mut Ui, list: TileId, value: f64) {
     if let Some(bar) = child(ui, list, SCROLLBAR) {
-        ui.set_trait(bar, "_current_value", Value::Num(value));
-        ui.set_trait(bar, "_SetInCode", Value::Num(1.0));
+        write_bar_value(ui, bar, value);
     }
+}
+
+/// [`write_value`] on a scrollbar by its own tile: a bar that is no list's `lb_scrollbar`.
+pub fn write_bar_value(ui: &mut Ui, bar: TileId, value: f64) {
+    ui.set_trait(bar, "_current_value", Value::Num(value));
+    ui.set_trait(bar, "_SetInCode", Value::Num(1.0));
 }
 
 /// Write the highlight: `selected` the row's top and height before the scroll, none hiding it
@@ -228,7 +246,11 @@ pub fn bar_piece(ui: &Ui, tile: TileId) -> Option<BarPiece> {
 /// observed: a page click from 4 to the end at 9, then an arrow to 8, a page to 2]. Whole
 /// values, held in the bar's range. The marker drags instead ([`marker_grab`]).
 pub fn after_piece(ui: &Ui, list: TileId, piece: BarPiece, value: f64) -> Option<f64> {
-    let bar = child(ui, list, SCROLLBAR)?;
+    after_piece_on(ui, child(ui, list, SCROLLBAR)?, piece, value)
+}
+
+/// [`after_piece`] on a scrollbar by its own tile.
+pub fn after_piece_on(ui: &Ui, bar: TileId, piece: BarPiece, value: f64) -> Option<f64> {
     let (step, jump) = (num(ui, bar, "_step_size"), num(ui, bar, "_jump_size"));
     let by = match piece {
         BarPiece::Up => -step,
@@ -241,12 +263,14 @@ pub fn after_piece(ui: &Ui, list: TileId, piece: BarPiece, value: f64) -> Option
     Some((value + by).clamp(0.0, most))
 }
 
-/// What a press on a marker holds while it drags: the menu and list it was made in, the
-/// bar's top and how far under the marker's top the pointer took it (interface units).
+/// What a press on a marker holds while it drags: the menu and list it was made in (for a bar
+/// that is no list's, what the menu knows it by), its bar, the bar's top and how far under the
+/// marker's top the pointer took it (interface units).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Drag {
     pub menu: TileId,
     pub list: TileId,
+    pub bar: TileId,
     pub top: f64,
     pub grab: f64,
 }
@@ -259,17 +283,24 @@ pub fn drag_holds(drag: &Drag, now: Option<TileId>, held: bool) -> bool {
 
 /// The [`Drag`] of a press on the marker of `list`, in `menu`.
 pub fn marker_grab(ui: &Ui, menu: TileId, list: TileId, pointer_y: f64) -> Option<Drag> {
-    let bar = child(ui, list, SCROLLBAR)?;
+    marker_grab_on(ui, menu, list, child(ui, list, SCROLLBAR)?, pointer_y)
+}
+
+/// [`marker_grab`] of a scrollbar by its own tile; `owner` is what [`Drag::list`] holds.
+pub fn marker_grab_on(ui: &Ui, menu: TileId, owner: TileId, bar: TileId, pointer_y: f64) -> Option<Drag> {
     let marker = child(ui, bar, MARKER)?;
     let placed = super::layout::layout(ui, marker, &|_, _, _| (0.0, 0.0), true).into_iter().find(|i| i.tile == marker)?.rect;
-    Some(Drag { menu, list, top: placed.top - num(ui, marker, "y"), grab: pointer_y - placed.top })
+    Some(Drag { menu, list: owner, bar, top: placed.top - num(ui, marker, "y"), grab: pointer_y - placed.top })
 }
 
 /// The value for the pointer at `pointer_y` with the marker held: the marker's place over the
 /// file's `_step_height`, whole values [documented: scrollbar_vert.xml's `_drag_value`; design:
 /// the marker's own drag traits are not built, as the wait menu's slider].
 pub fn value_under(ui: &Ui, drag: Drag, pointer_y: f64) -> Option<f64> {
-    let bar = child(ui, drag.list, SCROLLBAR)?;
+    let bar = drag.bar;
+    if !ui.is_live(bar) {
+        return None;
+    }
     let marker = child(ui, bar, MARKER)?;
     let step = num(ui, marker, "_step_height");
     if step <= 0.0 {
@@ -504,6 +535,35 @@ mod tests {
         assert_eq!(value_under(&ui, drag, BAR_TOP + 7.0 + 30.0), Some(3.0));
         ui.set_trait(marker, "_step_height", Value::Num(0.0));
         assert_eq!(value_under(&ui, drag, press), None, "no step, no value");
+    }
+
+    #[test]
+    fn the_file_step_counts_reach_the_last_row() {
+        // Rows of a list that keeps its file's step of 15: 300 over, 20 positions and the first.
+        let c = counts_by_step(&[200.0, 200.0, 200.0], 300.0, 15.0);
+        assert_eq!((c.items, c.visible, c.delta), (21.0, 1.0, None));
+        assert_eq!(c.most() * 15.0, 300.0, "the last row's end comes to the list's end");
+        // A remainder takes one more position, not fewer.
+        assert_eq!(counts_by_step(&[310.0], 300.0, 15.0).items, 2.0);
+        assert_eq!(counts_by_step(&[300.0], 300.0, 15.0).items, 1.0, "it fits");
+        assert_eq!(counts_by_step(&[900.0], 300.0, 0.0).items, 1.0, "no step, no range");
+    }
+
+    #[test]
+    fn a_bar_by_its_own_tile_acts_as_a_lists() {
+        // The test list's bar reached by its handle: the wrappers' results.
+        let (mut ui, list) = menu();
+        write_counts(&mut ui, list, &Counts { items: 10.0, visible: 1.0, delta: Some(30.0) }, OWN_DELTA);
+        ui.update();
+        let bar = child(&ui, list, SCROLLBAR).unwrap();
+        write_bar_value(&mut ui, bar, 2.0);
+        ui.update();
+        assert_eq!(value_shown(&ui, list), Some(2.0));
+        assert_eq!(after_piece_on(&ui, bar, BarPiece::PageDown, 2.0), after_piece(&ui, list, BarPiece::PageDown, 2.0));
+        let menu = ui.menu("M").unwrap();
+        let by_handle = marker_grab_on(&ui, menu, list, bar, 100.0).unwrap();
+        assert_eq!(Some(by_handle), marker_grab(&ui, menu, list, 100.0));
+        assert_eq!(value_under(&ui, by_handle, 100.0), Some(2.0));
     }
 
     #[test]
