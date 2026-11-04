@@ -59,8 +59,9 @@ use std::sync::OnceLock;
 /// The context of one call.
 #[derive(Debug, Clone)]
 pub struct Ctx {
-    /// The running unit's key (for trace events), or a condition's owner label.
-    pub unit: String,
+    /// The running unit's key (for trace events), or a condition's owner label. Shared:
+    /// a script's calls clone its unit's key without copying the text (#1389).
+    pub unit: std::sync::Arc<str>,
     pub opcode: u16,
     /// The explicit calling reference (`Ref.Func`), resolved.
     pub on: Option<FormId>,
