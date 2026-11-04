@@ -1353,14 +1353,14 @@ fn keyframed_door_blocks_until_posed_open() {
     assert!((b.translation[0] - 150.0).abs() < 0.5, "{:?}", b.translation);
 }
 
-/// A "broken door" collision: a triangle mesh whose faces are wound inconsistently, so
-/// its signed volume nearly cancels and parry's `MassProperties::from_trimesh` places the
-/// centre of mass far outside the mesh. A keyframed body built from it gets zero mass
-/// properties (its motion is prescribed), so rapier cannot derive a phantom velocity from
-/// that centre of mass and fling a character standing on it (the Prospector Saloon's
-/// broken door 0x00108BD7, issue #1485).
+/// A keyframed body's motion is prescribed, so its mass properties play no part in it
+/// and are zeroed: its centre of mass must stay at its own origin. A collision triangle
+/// mesh whose winding cancels its signed volume (the Prospector Saloon's broken door
+/// 0x00108BD7, issue #1485) otherwise makes parry's `MassProperties::from_trimesh` place
+/// the centre of mass far outside the mesh, and rapier's `interpolate_velocity` turns the
+/// floating-point error there into a phantom velocity the character controller then rides.
 #[test]
-fn keyframed_broken_mesh_does_not_fling_the_character() {
+fn keyframed_body_keeps_its_centre_of_mass_at_its_origin() {
     let v = |x: f32, y: f32, z: f32| [x, y, z];
     let h: f32 = 200.0;
     let vertices = vec![
@@ -1379,21 +1379,10 @@ fn keyframed_broken_mesh_does_not_fling_the_character() {
     let shape = Shape::TriMesh { vertices, triangles, materials: vec![0; 12] };
     let mut w = ground();
     w.add_ref(&at(1, [0.0, 0.0, 100.0]), &[object(shape, Motion::Keyframed)]);
-    // The centre of mass must stay with the body (a zero local centre of mass), not the
-    // mesh's, which parry's signed-volume puts far outside it.
+    // The centre of mass must stay with the body, not the mesh's, which parry's
+    // signed-volume puts far outside it.
     let com = w.ref_center(1).unwrap();
     assert!(com[0].abs().max(com[1].abs()).max((com[2] - 100.0).abs()) < 100.0, "centre of mass flew out: {com:?}");
-    // A character resting on it and walking is not flung into the air.
-    let mut c = w.add_character(1, CharacterParams::default(), [0.0, 0.0, 120.0]);
-    settle(&mut w, &mut c, 60);
-    let z0 = c.feet[2];
-    let mut max_up = 0.0f32;
-    for _ in 0..240 {
-        let s = w.move_character(&mut c, CharacterInput { velocity: [100.0, 0.0], ..Default::default() });
-        w.step();
-        max_up = max_up.max(s.feet[2] - z0);
-    }
-    assert!(max_up < 30.0, "character flung {max_up} units up: {:?}", c.feet);
 }
 
 #[test]

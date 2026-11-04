@@ -530,7 +530,10 @@ impl PhysWorld {
         // (its "carried by a kinematic body" rule) and is flung along [observed: the
         // Prospector Saloon's broken door 0x00108BD7, issue #1485]. Zero the mass
         // properties of kinematic bodies so the centre of mass stays sane and no such
-        // velocity can be invented.
+        // velocity can be invented. A well-formed keyframed body is unaffected: its centre
+        // of mass is already near the origin, and the controller's `velocity_at_point` is
+        // the same whichever centre of mass it is computed from, so a keyframed door or
+        // platform that does move still carries a character as before.
         let kinematic = self.w.bodies[body].is_kinematic();
         for leaf in leaves {
             let mut c = ColliderBuilder::new(leaf.shape).position(leaf.pose).user_data(owner.encode());
