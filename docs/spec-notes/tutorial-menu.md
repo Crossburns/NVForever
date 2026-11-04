@@ -157,7 +157,7 @@ values in interface units; the message 0x0007235B]:
   [observed: shot 091 of hud_menus, 1280 x 720]. NVForever's layout multiplies alpha down from
   a picture, so the model marks `TM_depth_rect` to take none from above
   (`tiles::layout::OWN_ALPHA`); whether pictures pass alpha on elsewhere is open (observer
-  check 81).
+  check 83).
 - **The backing** is the original's 193.8 [observed], not the hand-built menu's 0.75, which the
   writer used to pass in. The picture is `solid_black.dds`, nearly black with soft edges: its
   alpha falls to 0 over about the outer 18 % of its height and 5 % of its width [documented: the
@@ -192,7 +192,7 @@ values in interface units; the message 0x0007235B]:
   not on the shot]. Previous still keeps its width, so the column keeps its place [observed:
   985.33]. With more pages a button with nowhere to go stops being a target: the file's
   `_line_alpha` dims it and it takes no highlight [documented: text_box.xml; design: the
-  hand-built menu's rule; multi-page is not captured, observer check 82]. `n/N` is NVForever's
+  hand-built menu's rule; multi-page is not captured, observer check 84]. `n/N` is NVForever's
   (§3). Close is read (206, 147, 53) at its brightest on that shot, against the body's
   (255, 182, 66), with its text's alpha 255 and brightness 255 [observed: hud_tutorial_more], so
   font 2's texels [hypothesis].

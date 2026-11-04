@@ -89,6 +89,7 @@ use crate::loading::TravelRequest;
 use crate::{ItemUsed, Location, OpenContainer, PlayData, PlaySet, PlayState, PlayWorld, RefChanged};
 use bevy::prelude::*;
 use fnv_game::game::{event, menus, ActMode};
+use fnv_game::script_runner::Moment;
 use fnv_game::trace::{Event, EventKind};
 use fnv_game::{Game, GameConfig, GameData, InstKey};
 use fnv_script::vm::{ArgValue, Value};
@@ -461,6 +462,18 @@ pub(crate) fn loaded_events(rt: &mut Runtime, sim: &mut SimState, path: &std::pa
         rt.game.dispatch_event("LoadGame", vec![fnv_script::vm::XVal::Str(name)], None);
         rt.game.dispatch_event("PostLoadGame", vec![fnv_script::vm::XVal::Num(1.0)], None);
     });
+}
+
+/// JIP's Script Runner files of a moment (`fnv_game::script_runner`), in the played world;
+/// each file's outcome in the log.
+fn script_runner(rt: &mut Runtime, sim: &mut SimState, m: Moment) {
+    let runs = with_world(rt, sim, |rt| rt.game.run_script_runner(m));
+    for r in runs {
+        match r.result {
+            Ok(()) => info!("script runner: {} ran ({})", r.path, m.name()),
+            Err(e) => warn!("script runner: {} skipped ({}): {e}", r.path, m.name()),
+        }
+    }
 }
 
 /// `[Extenders] CompileSource` of NVForever.ini: which units run from their source text
@@ -1684,12 +1697,19 @@ pub(crate) fn run_scripts(
                 st.loader = None;
                 let mut rt = Runtime::new(data, &mut sim, st.new_game, play.0.packages);
                 rt.start = st.start.clone();
+                let mut restored = false;
                 if let Some(PendingGame(snap, path)) = st.pending_game.take() {
                     match rt.restore_save(&mut sim, *snap) {
                         Ok(changed_refs) => {
                             info!("load: restored {}: {} changed references, {} quests, {} script instances", path.display(), changed_refs.len(), rt.game.quests.len(), rt.game.instances.len());
+                            restored = true;
                             tiles.load(&mut rt.game, &sim.world);
+                            // The Script Runner's files after the save is in place (the
+                            // restore takes the game's state, lambdas included, from the
+                            // save): the game restart's, then the load's after LoadGame.
+                            script_runner(&mut rt, &mut sim, Moment::Restart);
                             loaded_events(&mut rt, &mut sim, &path);
+                            script_runner(&mut rt, &mut sim, Moment::Load);
                             // The frames after a load are the loading screen's for the
                             // scripts, as after travel: their `Begin MenuMode 1007`
                             // blocks run (`game::menus::LOADING`) [hypothesis].
@@ -1704,6 +1724,10 @@ pub(crate) fn run_scripts(
                 }
                 if rt.game.ui_files.is_none() {
                     tiles.load(&mut rt.game, &sim.world);
+                }
+                if !restored {
+                    script_runner(&mut rt, &mut sim, Moment::Restart);
+                    script_runner(&mut rt, &mut sim, Moment::NewGame);
                 }
                 let from_source = data.issues.count("script_compiled_from_source");
                 let failed = data.issues.count("script_source_does_not_compile");

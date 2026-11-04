@@ -536,6 +536,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "hitvol-standalone"
+source = "docs/spec-notes/physics.md §5.1 (issue #1436, PR #1437): actor hit volumes are colliders of no body by default, placed at the next query refresh or step; NVF_PHYS_HITVOL_ATTACHED switches back. The startup line says which is in use and the phys-refresh count line (NVF_PLAY_TEST_PROFILE_COUNTS) carries the setting and the capsules written or skipped"
+areas = ["physics", "profiling", "actors"]
+paths = ["crates/fnv-phys/src/actors.rs", "crates/fnv-phys/src/world.rs", "engine/nvf-play/src/phys.rs", "engine/nvforever/src/profile.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_PROFILE_COUNTS = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "14"]
+run_seconds = 25
+expect = [
+  { re = 'actor hit volumes: standalone colliders', min = 1, label = "hit volumes are standalone colliders by default" },
+  { re = 'actor hit volumes: attached to their bodies', count = 0, label = "and not attached without NVF_PHYS_HITVOL_ATTACHED" },
+  { re = 'phys-refresh: .* hitvol_written=(?P<n>\d+) hitvol_skipped=\d+ hitvol_standalone=1$', range = [1, 100000000], label = "the count line: Goodsprings' drawn people get capsules written, setting 1" },
+  { re = 'ai-counts: .* separation_passes=(?P<n>\d+) ', range = [1, 100000000], label = "the AI count line counts the residents' separation passes (fnv_ai's probe switched on by the aid)" },
+]
+
+[[scenario]]
 name = "shadow-probe"
 source = "engine/nvforever/src/shadow_probe.rs (playtest list 4 item 5, the first-person shadow flicker; found 2026-10-26): the debug probe NVF_PLAY_DEBUG_SHADOWS runs and finds no stretched skin, lost joint, wrong skin slot or moved mesh outside Doc Mitchell's house in first person with a weapon out, the hidden third-person body stays body-sized, and switching view four times leaves no two render views with one key (player_body.rs shade_light)"
 areas = ["renderer", "player-body"]
@@ -838,7 +853,11 @@ areas = ["nav"]
 paths = ["crates/fnv-nav/", "engine/nvforever/src/nav.rs", "engine/nvforever/src/locomotion.rs", "engine/nvf-play/src/doors.rs"]
 args = ["--cell", "Goodsprings", "--npc-travel", "DocMitchellREF=GSChetRef", "--npc-travel", "SunnyRef=EasyPeteRef", "--follow-npc"]
 run_seconds = 105
-expect = ["nav summary: 2 of 2 travellers arrived"]
+expect = [
+  "nav summary: 2 of 2 travellers arrived",
+  { re = 'nav: \w+ used door \w+ into \w+ after [\d.]+s, facing it \(0 degrees off\)', min = 3, label = "travellers stop and face a load door before going through it (#1472)" },
+  { re = 'used door \w+ into \w+ after [\d.]+s, facing it \([1-9]\d* degrees off\)', count = 0, label = "none goes through a load door facing away from it" },
+]
 
 [[scenario]]
 name = "ai-packages"
@@ -7264,7 +7283,7 @@ name = "npc-door-fade"
 source = "playtest list 5 item 3 (engine/nvforever/src/door_fade.rs, nvf-play world_sounds DoorPassed): an NPC going through a load door fades out at it and in at the other side, and the doors' open sounds play where the listener is"
 note = "the ringo-comes-out run: Ringo comes out of the gas station door into the drawn exterior where the player stands"
 areas = ["ai", "doors"]
-paths = ["engine/nvforever/src/door_fade.rs", "engine/nvforever/src/residents.rs", "engine/nvf-play/src/world_sounds.rs"]
+paths = ["engine/nvforever/src/door_fade.rs", "engine/nvforever/src/residents.rs", "engine/nvf-play/src/world_sounds.rs", "crates/fnv-nav/src/follow.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
@@ -14328,10 +14347,10 @@ order = [[
 [[scenario]]
 name = "scene-tops-suite"
 source = "Ring-a-Ding-Ding's suite invitation in play, which the headless walkthrough crates/fnv-game/walkthrough/tops.actions.json stands in (trigger_enter for the lift, the fight as kill); docs/handoff/mq-walkthrough-2026-10-27.md"
-note = "stand-ins: VMQTops is started at 10, the first casino conversation is given as done (VDialogueBenny firsttalk 1) and Benny's Speech invitation line 0x0011984B is said by the aid (its end script: stage 20, the suite key, bennygotopresidential 1, EvaluatePackage). Then by the game's own means: Benny takes BennyGoToPresidentialPACKAGE through the locked lift door 0x0010E1CD (he carries the key) to the stool 0x001110C4 in 2ETopsPresidentialSuite, where VTopsBennyPresidentialTalk (Dialogue, GetInCell the suite) takes over; the player activates the same lift door at 60 s with the key from the line, arrives inside VTopsAmbushTriggerREF (SCPT 0x0006919D completes objective 20), and Benny walks up and greets the player with the suite's private forced greeting 0x00147870. The conversation is left unanswered (unattended run); Speech 60 is not needed as the aid says the line"
+note = "stand-ins: VMQTops is started at 10, the first casino conversation is given as done (VDialogueBenny firsttalk 1) and Benny's Speech invitation line 0x0011984B is said by the aid (its end script: stage 20, the suite key, bennygotopresidential 1, EvaluatePackage). Then by the game's own means: Benny takes BennyGoToPresidentialPACKAGE through the locked lift door 0x0010E1CD (he carries the key) to the stool 0x001110C4 in 2ETopsPresidentialSuite, where VTopsBennyPresidentialTalk (Dialogue, GetInCell the suite, wait location the stool) takes over and he sits on the stool; the player activates the same lift door at 60 s with the key from the line, arrives inside VTopsAmbushTriggerREF (SCPT 0x0006919D completes objective 20), where Benny stays on his stool; at 95 s the player is put by the bar (walk to the next stool but one, 0x001110C2, a stand-in for walking up to him) and Benny greets the player from his seat with the suite's private forced greeting 0x00147870, without getting up (the original: the owner's frame, issue #1474). The conversation is left unanswered (unattended run); Speech 60 is not needed as the aid says the line"
 areas = ["quests", "scripts", "dialogue", "dialogue-packages", "ai", "nav"]
 paths = ["crates/fnv-ai/src/goal.rs", "crates/fnv-ai/src/carry.rs", "crates/fnv-nav/src/doors.rs", "crates/fnv-game/src/dialogue.rs", "engine/nvforever/src/residents.rs", "engine/nvf-play/src/dialogue.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "4:start:VMQTops,5:stage:VMQTops:10,7:var:VDialogueBenny:firsttalk:1,8:info:0x0011984B:BennyREF,60:activate:0x0010E1CD" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "4:start:VMQTops,5:stage:VMQTops:10,7:var:VDialogueBenny:firsttalk:1,8:info:0x0011984B:BennyREF,60:activate:0x0010E1CD,95:walk:0x001110C2" }
 args = ["--cell", "TOPSCasino", "--play", "--npc-packages", "BennyREF", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 130
 order = [[
@@ -14343,11 +14362,19 @@ order = [[
   { text = "test aid: script Activate(\"0x0010E1CD\")", label = "the player follows through the same door" },
   { text = "script: player entered trigger VTopsAmbushTriggerREF", label = "the player steps out of the lift into the trigger" },
   { text = "script: VMQTops objective 20 completed true", label = "whose script completes objective 20 (go to the suite)" },
-  { re = 'BennyREF: starts a conversation with 0x00000014 from \d+ units \(VTopsBennyPresidentialTalk\), line 0x00147870', label = "Benny walks up and greets the player with the suite's greeting" },
+  { text = "test aid: walk to 0x001110C2", label = "the player goes up to the bar" },
+  { re = 'BennyREF: starts a conversation with 0x00000014 from \d+ units \(VTopsBennyPresidentialTalk\), line 0x00147870', label = "Benny greets the player with the suite's greeting once the player is near" },
   { text = "dialogue: conversation with BennyREF started (topic GREETING)", label = "the conversation in the suite starts" },
+], [
+  { text = "BennyREF: package VTopsBennyPresidentialTalk", label = "his Dialogue package" },
+  { text = "BennyREF: is to use furniture 0x001110C4", label = "gives him his stool, the package's wait location" },
+  { text = "furniture: 00101CA0 is on 001110C4", label = "he sits on it" },
+  { text = "test aid: walk to 0x001110C2", label = "before the player comes up to the bar" },
 ]]
 forbid = [
   { re = 'BennyREF: cannot reach', label = "Benny finds no way to the suite" },
+  { re = 'BennyREF: (walks|runs) up to 0x00000014 to talk', label = "Benny gets up and walks over to the player (the original greets from the stool)" },
+  { text = "furniture: 00101CA0 gets off 001110C4", label = "Benny gets off his stool" },
   { re = 'dialogue: BennyREF says \[GREETING\] 0x001194AD', label = "the first-meeting greeting in the suite (the setup lost firsttalk)" },
 ]
 
@@ -18050,7 +18077,7 @@ expect = [
 name = "knvse-anim-replace"
 source = "N5 slice 2 (docs/design/knvse-anim.md): SetActorAnimationPath with a standing-stance file replaces that move in the actor's own copy of its set; taking it back restores the shared set"
 areas = ["scripts", "actors"]
-paths = ["crates/fnv-game/src/nvse_anim.rs", "engine/nvforever/src/anim_paths.rs", "engine/nvforever/src/locomotion.rs"]
+paths = ["crates/fnv-game/src/nvse_anim.rs", "crates/fnv-game/src/nvse_anim_folders.rs", "engine/nvforever/src/anim_paths.rs", "engine/nvforever/src/locomotion.rs"]
 env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:RingoRef.MoveTo player 0 200 0;11:PrintC \"nvf set %g\", (RingoRef.SetActorAnimationPath 0 1 \"characters\\_male\\locomotion\\mtidle.kf\");13:PrintC \"nvf unset %g\", (RingoRef.SetActorAnimationPath 0 0 \"characters\\_male\\locomotion\\mtidle.kf\")" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
 run_seconds = 16
@@ -18375,3 +18402,74 @@ expect = [
   { re = 'ai \[\d\d:\d\d\] GSChetRef: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Chet stands in front of the window" },
   { re = 'dialogue: conversation with GSChetRef started', label = "the dialogue camera frames his head" },
 ]
+
+[[scenario]]
+name = "fo3-functions-console"
+source = "[documented + hypothesis] docs/handoff/ttw-fo3-script-audit-2026-11-02.md §1 (Outcome), functions::fo3: Fallout 3's KillQuestUpdates drops the HUD's waiting quest lines, DisableAllMines disables the player's cell's mines, GetLastPlayerAction reads 0 with nothing done, IsWaiting 0 for an actor never told to wait; TTW's own data is not a smoke data dir, so the console runs them in Goodsprings"
+areas = ["scripts", "console", "ui"]
+paths = ["crates/fnv-game/src/functions/fo3.rs", "engine/nvf-play/src/mines.rs", "engine/nvf-play/src/quest_messages.rs"]
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:KillQuestUpdates;10.5:DisableAllMines;11:PrintC \"nvf fo3 last action %g\", (GetLastPlayerAction);11.5:PrintC \"nvf fo3 waiting %g\", (RingoRef.IsWaiting);12:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 16
+expect = [
+  { re = 'quest messages: \d+ waiting line\(s\) dropped \(KillQuestUpdates\)', label = "KillQuestUpdates reaches the HUD's quest lines" },
+  { re = 'mines: \d+ mine\(s\) of the player.s cell disabled \(DisableAllMines\)', label = "DisableAllMines reaches the engine's mines" },
+  { re = 'script: print "nvf fo3 last action 0(?:\.0+)?"', label = "GetLastPlayerAction reads 0 with nothing done" },
+  { re = 'script: print "nvf fo3 waiting 0(?:\.0+)?"', label = "IsWaiting reads 0 for an actor never told to wait" },
+]
+
+[[scenario]]
+name = "script-runner-tool"
+kind = "tool"
+source = "issue #1460, docs/spec-notes/ext-script-runner.md: JIP's Script Runner files of the fixture home's mods layer compiled and run headless (game restart, new game)"
+areas = ["scripts", "extender"]
+paths = ["crates/fnv-game/src/script_runner.rs", "crates/fnv-game/src/mod_files.rs", "crates/fnvtool/src/ext_cmd.rs", "crates/fnv-script/src/compile/", "tools/smoke/fixtures/script-runner-home/"]
+commands = [["ext", "script-runner", "{data}", "{masters}", "--schema", "schemas/fnv", "--root", "{repo}/tools/smoke/fixtures/script-runner-home/mods", "--run"]]
+expect = [
+  { json = "files", schema = "fnv.ext.script_runner/1", equals = 3, label = "the folder's three files (the registered one is in a subfolder)" },
+  { json = "compiled", schema = "fnv.ext.script_runner/1", equals = 2 },
+  # By index: a `?file=` filter cannot hold the name's dot. The restart's files in the
+  # order of their names.
+  { json = "ran.restart.0.file", schema = "fnv.ext.script_runner/1", equals = "gr_nvfsmoke.txt" },
+  { json = "ran.restart.0.ok", schema = "fnv.ext.script_runner/1", equals = true, label = "the gr_ file ran at the restart" },
+  { json = "ran.restart.1.file", schema = "fnv.ext.script_runner/1", equals = "gr_nvfsmoke_broken.txt" },
+  { json = "ran.restart.1.ok", schema = "fnv.ext.script_runner/1", equals = false, label = "the broken file is skipped" },
+  { json = "ran.restart.#", schema = "fnv.ext.script_runner/1", equals = 2, label = "no other file runs at the restart" },
+  { json = "ran.new_game.0.file", schema = "fnv.ext.script_runner/1", equals = "ln_nvfsmoke.txt" },
+  { json = "ran.new_game.0.ok", schema = "fnv.ext.script_runner/1", equals = true, label = "the ln_ file ran at the new game" },
+]
+
+[[scenario]]
+name = "script-runner-new"
+source = "issue #1460, docs/spec-notes/ext-script-runner.md §2: a run without a save runs the gr_ files, then the gn_/ln_ files; a file that does not compile is skipped with its line; then a save for script-runner-load"
+note = 'The mods layer of the fixture home: gr_nvfsmoke.txt sets the Luck of the player to 3 and registers optional\gl_nvfsmoke_late.txt, ln_nvfsmoke.txt adds 2'
+areas = ["scripts", "extender"]
+paths = ["crates/fnv-game/src/script_runner.rs", "engine/nvf-play/src/script.rs", "tools/smoke/fixtures/script-runner-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-runner-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "9:player.getav luck;10:save nvfsmoke-script-runner;11:close" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+run_seconds = 14
+expect = [
+  { text = "script runner: gr_nvfsmoke.txt ran (game restart)", count = 1 },
+  { re = 'script runner: gr_nvfsmoke_broken\.txt skipped \(game restart\): line 2: ', count = 1, label = "the broken file is skipped with its line" },
+  { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1 },
+  { re = 'console: GetActorValue on player >> 5\.00', label = "Luck 3 from gr_, then 2 more from ln_" },
+]
+order = [["script runner: gr_nvfsmoke.txt ran", "script runner: ln_nvfsmoke.txt ran", "console: GetActorValue on player"]]
+forbid = [{ text = "gl_nvfsmoke_late.txt ran", label = "the registered gl_ file waits for a load" }]
+
+[[scenario]]
+name = "script-runner-load"
+source = "issue #1460, docs/spec-notes/ext-script-runner.md §2-§3: a load runs the gr_ files after the save is in place, then LoadGame, then the gl_/ln_ files, the one gr_ registered included"
+note = "Loads the save script-runner-new wrote in the same home (the runner keeps them in order)"
+areas = ["scripts", "extender", "save"]
+paths = ["crates/fnv-game/src/script_runner.rs", "engine/nvf-play/src/script.rs", "tools/smoke/fixtures/script-runner-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-runner-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "9:player.getav luck;10:close" }
+args = ["--play", "--load", "nvfsmoke-script-runner", "--no-voice"]
+run_seconds = 14
+expect = [
+  { re = 'load: restored .*nvfsmoke-script-runner\.nvfsave', label = "the save is restored" },
+  { text = "script runner: gr_nvfsmoke.txt ran (game restart)", count = 1 },
+  { text = "script runner: ln_nvfsmoke.txt ran (game load)", count = 1 },
+  { text = 'script runner: optional\gl_nvfsmoke_late.txt ran (game load)', count = 1, label = "the file gr_ registered runs at the load" },
+]
+order = [["load: restored", "script runner: gr_nvfsmoke.txt ran", "script runner: ln_nvfsmoke.txt ran (game load)", 'script runner: optional\gl_nvfsmoke_late.txt ran']]

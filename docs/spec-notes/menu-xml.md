@@ -291,7 +291,7 @@ docs/handoff/ui-tile-tree-tasks.md]: `x` `y` `width` `height` `depth` `alpha` `v
   tutorial__scroll_bottom and tutorial__scroll_arrow). [hypothesis] The same for the pointer
   (`fnv_ui::input::clips_children`): `list_box.xml`'s highlight box takes its `clips` from
   its parent's `clipwindow` [documented: the file]; nothing captured says so (observer
-  check 80). It stays apart from scrolling: nothing here moves a tile; a file moves its
+  check 82). It stays apart from scrolling: nothing here moves a tile; a file moves its
   text by the `y` it writes. [documented: the vanilla files] It is true in the book,
   lockpick, map, stats, credits, load, save, trait and tutorial menus and in the prefabs
   `item_listing`, `list_box` and `load_and_save_menus`, so in every menu that includes
