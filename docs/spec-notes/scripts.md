@@ -905,6 +905,28 @@ SetLocationSpecificLoadScreensOnly are kept in `PlayerState` (`young`, `toddler`
 plays by them yet: the child's default hair, the toddler's walk, the refused-activation
 sound and the load screen choice are not built.
 
+The rest of the audit's §1 (2026-11-03, same module, opcodes the same way; Wait 0x10B7
+and IsWaiting 0x106F come with StopWaiting). Two opcodes have no catalogue name and
+none in the GetCommandOpcode capture: 0x1231 is KillQuestUpdates and 0x11F3
+TriggerLODApocalypse, each read by lining its quest stage's source text up with the
+compiled order (CG01 stage 90, MS11 stage 60) [observed]; the catalogue has them as
+`observed-only` entries. What each does, and the evidence, is on its function:
+MatchFaceGeometry morphs an NPC's FaceGen shape coefficients towards another's
+(appearance-changes.md, `appearance.rs`; the engine applies the morphs as it draws the
+head). Wait / StopWaiting / IsWaiting hold an actor in its current Follow or Accompany
+package where it stands (`RefExtra::waiting`, the AI's follow step). SetCellFullName
+renames an interior (the load door prompt reads it). ResetInterior resets an interior at
+its next load without bringing actors back (`crate::respawn`). SetZoneRespawns turns an
+encounter zone's resets on or off over its Never Resets flag (`fnv_sim` zones, saved).
+DisableAllMines disables the live mines of the player's cell (`nvf_play::mines`).
+RemapWaterType draws one water type as another (`nvforever` water.rs). KillQuestUpdates
+drops the HUD's quest lines waiting to show. TriggerScreenBlood is drawn as the screen
+splatter. GetLastPlayerAction answers the player's action now, as IsPlayerActionActive
+reads it. Kept, with nothing built on them yet: SetFactionReaction's disposition
+modifiers (`FormChanges::faction_modifiers`; dispositions do not read faction modifiers),
+TriggerLODApocalypse (`FormChanges::lod_apocalypse`), TriggerHitShader's blur and
+FadeSFX's fade (`UiRequests::hit_shaders`, `sfx_fades`).
+
 ### 7.4 Coverage (`fnvtool script coverage`, 2026-10-09, after rounds 3 and 4)
 
 `implemented` and `stub` are filled per opcode. Over the ten masters (401 opcodes called
