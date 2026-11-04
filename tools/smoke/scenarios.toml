@@ -5276,6 +5276,25 @@ expect = [
 ]
 
 [[scenario]]
+name = "protectron-lasers"
+source = "#1535 (owner's playtest 2026-11-04): protectrons fire their lasers. Their skeleton has no Weapon node, so no 1hp/2hl stance loaded and they fought with their own 2-damage attack; a stance without one is now kept for body weapons (engine/nvforever/src/weapons.rs no_weapon_node), and the lasers fire from the projectile nodes in their body-part models (body_weapons.rs spawn_part_projectile_nodes, place_muzzles)"
+note = "VCrTier0CrProtectron (00167ED5: ProtectronHandLaser1HP NNAM ProjectileNode_RHandLaser in 1hprhandlaser.nif under Bip01 R Forearm; ProtectronHeadLaser2HL ProjectileNode_HeadLaser in 2hlheadlaser.nif) placed at the player and moved 800 units north; see-through-walls so detection in this dim spot (light 14) does not decide whether it fires"
+areas = ["combat", "creatures"]
+paths = ["engine/nvforever/src/body_weapons.rs", "engine/nvforever/src/weapons.rs", "engine/nvforever/src/actors.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SEE_THROUGH_WALLS = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 00167ED5 1;9.3:ff000000.moveto player 0 800 0;9.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 35
+expect = [
+  { text = "protectron 1hp: clips [Holster, Equip, Aim, Unequip]", label = "the hand laser's stance loads without a Weapon node" },
+  { re = 'body weapons: \S+skeleton\.nif FF000000 fights with ProtectronHandLaser1HP, ProtectronHeadLaser2HL', label = "both lasers are its arms" },
+  { text = "body weapons: FF000000 fires ProtectronHandLaser1HP from its node ProjectileNode_RHandLaser", label = "the hand laser fires from its body part's node" },
+  { re = 'npc combat: 0xFF000000 opens fire on the player from (\d+) units', range = [300, 1000], label = "it opens fire from a distance" },
+  { text = "npc combat: 0xFF000000 shots are drawn from its weapon's muzzle", label = "from the laser, not its eyes" },
+  { re = 'npc combat summary: .*; (\d+) shots \((\d+) from a muzzle', range = [5, 100000], label = "it keeps firing (41 on 2026-11-04; 0 before)" },
+  { re = 'attack anims: FF000000 plays \S+1hpattackright\.kf', label = "with its firing clip" },
+]
+
+[[scenario]]
 name = "follower-boone"
 source = "owner's list 2 (H followers): a companion hired by the game's own recruit line follows the player through a door, ignores the player's friendly fire, joins the player's fight and waits when told (docs/design/followers.md)"
 note = "Boone's recruit line INFO 0x0015F30D runs at 3 s (its result script hires him: SetPlayerTeammate, SetIgnoreFriendlyHits, VNPCFollowers.bBooneHired); the player shoots him twice at 24 s (the controls' clock is not moved when the scripts first run late, as the script steps are: on a busy machine the recruit line ran 7.2 s late and Boone, who takes about 9.5 s to walk over, was still 501 units off at 18 s), leaves his room by its door at 26 s, walks off at 32 s; a feral ghoul is put 600 units from the player at 45 s; Boone's Waiting variable is set at 62 s"
