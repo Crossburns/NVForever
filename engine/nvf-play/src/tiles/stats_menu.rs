@@ -1,0 +1,619 @@
+//! The Pip-Boy's S.P.E.C.I.A.L. tab (STATS, tab 1) drawn from `menus\main\stats_menu.xml`,
+//! behind `[UI] TileMenus=StatsMenu` [design: ui-tile-tree.md §6.2 step 3; the contract:
+//! docs/spec-notes/pipboy.md §5.1.1; issue #1513].
+//!
+//! - **The one decision** ([`StatsTiles::ready`]): the switch on, STATS' tab 1 showing, the
+//!   menu files read, the file's tiles there ([`paths`]), the rows made and a usable measured
+//!   layout. Painting (`super::draw`), hand-built suppression (`crate::pipboy::frame::draw`) and
+//!   input read it and nothing else, and [`settle`] publishes it each frame before any of them.
+//!   Eligible to prepare is not ready to display: a pass that fails leaves the whole hand-built
+//!   page, says why once, and is tried again the next frame.
+//! - **What the model writes** ([`page`]): values from `Snapshot` and `StatsView`; this module
+//!   works no figure out again. Places and sizes are the file's, worked out at run time, from
+//!   the text sizes and row heights written here.
+//! - **The other tabs** stay fully hand-built. The menu and its rows persist across tabs and
+//!   reopenings ([`Written`]); a new menu tile (a rebuilt tree) starts over.
+//! - **The order in a frame**: [`write`] after the tile input, before the scripts, so they read
+//!   this frame's model and the scroll outlasts a click's pulse; then `crate::pipboy::stats::prepare`
+//!   (keys, test aid, what is shown) and [`settle`], which writes what they changed, works the
+//!   tree out and decides, before `frame::draw` and `super::draw::draw`. So a tab change or a key
+//!   is drawn in the frame it happens, from one state.
+
+use super::draw::FontKit;
+use super::layout;
+use super::menus::{self, SizesWritten};
+use super::vanilla::TileMenus;
+use crate::pipboy::stats::model::{Row, Snapshot};
+use crate::pipboy::stats::{self, Prepared, StatsView};
+use crate::pipboy::{Frame, Page, PipBoy, CANVAS};
+use crate::script::ScriptState;
+use bevy::ecs::system::SystemParam;
+use bevy::prelude::*;
+use fnv_ui::{TileId, Ui, Value};
+use std::collections::{HashMap, HashSet};
+
+/// The menu's name [documented: stats_menu.xml].
+pub const STATS_MENU: &str = "StatsMenu";
+/// The tab drawn from tiles.
+pub const PAGE: usize = 1;
+/// Test aid: a tile or template of the file to take as missing, so a smoke scenario sees the
+/// fallback of a cut-down file without a changed game file.
+pub const CUT_AID: &str = "NVF_PLAY_TEST_STATS_TILE_CUT";
+
+/// The tiles the model writes and the input reads, by name [observed: the vanilla files,
+/// docs/spec-notes/pipboy.md §5.1.1]. They are looked for by name under the menu, so a file
+/// that nests them otherwise still serves.
+const LIST: &str = "stats_special_container";
+const ROW_TEMPLATE: &str = "stats_list_template";
+const ROW_TEXT: &str = "ListItemText";
+const DISPLAY: &str = "stats_display_rect";
+const ICON: &str = "stats_icon";
+const DESC_RECT: &str = "stats_description_rect";
+const DESC: &str = "stats_description";
+const BAR: &str = "stats_description_scrollbar";
+const TITLE: &str = "stats_title";
+const LINE: &str = "stats_headline_h2";
+const BACKGROUND: &str = "background_layout";
+/// The tabs, by the numbers `crate::pipboy::PipBoyInput::Tab` uses [observed: their ids 0 to 4].
+const TABS: [&str; 5] = ["stats_tailline_status", "stats_tailline_SPECIAL", "stats_tailline_skills", "stats_tailline_perks", "stats_tailline_general"];
+/// A row's spacing where the row's `_VerticalSpacing` reads 0 [hypothesis: pipboy.md §5.1.1].
+const ROW_SPACING: f64 = 20.0;
+
+fn num(ui: &Ui, t: TileId, name: &str) -> f64 {
+    ui.tile(t).get(name).map_or(0.0, Value::num)
+}
+
+fn flag(on: bool) -> Value {
+    Value::Num(f64::from(u8::from(on)))
+}
+
+/// The tiles found, by name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Paths {
+    pub menu: TileId,
+    pub list: TileId,
+    pub icon: TileId,
+    pub desc_rect: TileId,
+    pub desc: TileId,
+    pub bar: TileId,
+    pub title: TileId,
+    pub line: TileId,
+    pub background: TileId,
+    pub tabs: [TileId; 5],
+}
+
+impl Paths {
+    fn live(&self, ui: &Ui) -> bool {
+        [self.menu, self.list, self.icon, self.desc_rect, self.desc, self.bar, self.title, self.line, self.background].into_iter().chain(self.tabs).all(|t| ui.is_live(t))
+    }
+}
+
+/// The first tile named `name` under `root` (or `root`), in file order, case not mattering.
+fn find_named(ui: &Ui, root: TileId, name: &str) -> Option<TileId> {
+    let mut stack = vec![root];
+    while let Some(t) = stack.pop() {
+        let tile = ui.tile(t);
+        if !tile.live {
+            continue;
+        }
+        if tile.name.eq_ignore_ascii_case(name) {
+            return Some(t);
+        }
+        stack.extend(tile.children.iter().rev().copied());
+    }
+    None
+}
+
+/// Whether the row's template can be found from `list` as the tree looks for it: on that tile
+/// or on one above it (`fnv_ui::Ui::add_code_tile_from_template`).
+fn has_template(ui: &Ui, list: TileId) -> bool {
+    let mut at = Some(list);
+    while let Some(t) = at {
+        if ui.tile(t).templates.iter().any(|tp| tp.name.eq_ignore_ascii_case(ROW_TEMPLATE)) {
+            return true;
+        }
+        at = ui.tile(t).parent;
+    }
+    false
+}
+
+/// Every tile the model writes or the input reads, and the row's template; the reason when
+/// one is missing (a missing or cut-down file keeps the hand-built page). `cut`: [`CUT_AID`].
+pub fn paths(ui: &Ui, cut: Option<&str>) -> Result<Paths, String> {
+    let menu = ui.menu(STATS_MENU).ok_or_else(|| format!("{STATS_MENU} is not in the tree"))?;
+    let mut found: HashMap<String, TileId> = HashMap::new();
+    let mut stack = vec![menu];
+    while let Some(t) = stack.pop() {
+        let tile = ui.tile(t);
+        if !tile.live {
+            continue;
+        }
+        found.entry(tile.name.to_ascii_lowercase()).or_insert(t);
+        stack.extend(tile.children.iter().rev().copied());
+    }
+    let cut = cut.map(str::to_ascii_lowercase);
+    if let Some(c) = &cut {
+        found.remove(c);
+    }
+    let get = |name: &str| found.get(&name.to_ascii_lowercase()).copied().ok_or_else(|| format!("{name} missing"));
+    let list = get(LIST)?;
+    get(DISPLAY)?;
+    let mut tabs = [menu; 5];
+    for (t, name) in tabs.iter_mut().zip(TABS) {
+        *t = get(name)?;
+    }
+    if cut.as_deref() == Some(&ROW_TEMPLATE.to_ascii_lowercase()) || !has_template(ui, list) {
+        return Err(format!("{ROW_TEMPLATE} missing"));
+    }
+    Ok(Paths {
+        menu,
+        list,
+        icon: get(ICON)?,
+        desc_rect: get(DESC_RECT)?,
+        desc: get(DESC)?,
+        bar: get(BAR)?,
+        title: get(TITLE)?,
+        line: get(LINE)?,
+        background: get(BACKGROUND)?,
+        tabs,
+    })
+}
+
+/// A row made from the template.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MadeRow {
+    pub tile: TileId,
+    text: TileId,
+    /// The template gives its height (a number or an expression): it is kept.
+    explicit: bool,
+}
+
+/// The rows to `want`, the ones made kept. A failure makes none and leaves none of its own: a
+/// retry cannot double them.
+fn ensure_rows(ui: &mut Ui, p: &Paths, rows: &mut Vec<MadeRow>, want: usize) -> Result<(), String> {
+    if want == 0 {
+        return Err("no rows to show".into());
+    }
+    rows.retain(|r| ui.is_live(r.tile) && ui.is_live(r.text));
+    while rows.len() > want {
+        if let Some(r) = rows.pop() {
+            ui.unload_tile(r.tile);
+        }
+    }
+    if rows.len() == want {
+        return Ok(());
+    }
+    let at = ui.path_of(p.list);
+    let mut made = Vec::new();
+    let undo = |ui: &mut Ui, made: &[TileId]| {
+        for &t in made {
+            ui.unload_tile(t);
+        }
+        ui.update();
+    };
+    while rows.len() + made.len() < want {
+        // The template's includes were spliced in when the file was read (menu-xml.md §2.2),
+        // so no files are needed to make a row.
+        match ui.add_code_tile_from_template(&fnv_ui::MemSource::default(), &at, ROW_TEMPLATE, None) {
+            Some(t) => made.push(t),
+            None => {
+                undo(ui, &made);
+                return Err(format!("{ROW_TEMPLATE} made no row"));
+            }
+        }
+    }
+    ui.update();
+    let mut new = Vec::with_capacity(made.len());
+    for &tile in &made {
+        let Some(text) = find_named(ui, tile, ROW_TEXT) else {
+            undo(ui, &made);
+            return Err(format!("{ROW_TEMPLATE} has no {ROW_TEXT}"));
+        };
+        let row = ui.tile(tile);
+        let computed = row.trait_index("height").is_some_and(|k| row.traits[k].expr.is_some());
+        new.push(MadeRow { tile, text, explicit: computed || num(ui, tile, "height") > 0.0 });
+    }
+    rows.extend(new);
+    Ok(())
+}
+
+fn level_text(snap: &Snapshot) -> String {
+    snap.level.map_or("--".into(), |l| l.to_string())
+}
+
+/// What the model shows, as written last.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Shown {
+    pub rows: Vec<Row>,
+    pub level: String,
+    pub hp: String,
+    pub ap: String,
+    pub xp: String,
+    pub selected: usize,
+    pub device: bool,
+}
+
+impl Shown {
+    pub fn of(snap: &Snapshot, selected: usize, device: bool) -> Shown {
+        Shown {
+            rows: snap.special.clone(),
+            level: level_text(snap),
+            hp: stats::figures(snap.hp),
+            ap: stats::figures(snap.ap),
+            xp: stats::figures(snap.xp),
+            selected,
+            device,
+        }
+    }
+
+    /// Whether this is what `snap` shows, without copying its rows.
+    fn same(&self, snap: &Snapshot, selected: usize, device: bool) -> bool {
+        self.selected == selected
+            && self.device == device
+            && self.rows == snap.special
+            && self.level == level_text(snap)
+            && self.hp == stats::figures(snap.hp)
+            && self.ap == stats::figures(snap.ap)
+            && self.xp == stats::figures(snap.xp)
+    }
+}
+
+/// Write what the page shows ([`Shown`]), each value only when it differs from what this code
+/// wrote last, so what a script set meanwhile stands until the model changes (`Ui::write_changed`).
+pub fn write_model(ui: &mut Ui, p: &Paths, rows: &[MadeRow], s: &Shown) {
+    ui.write_changed(p.menu, "user0", Value::Num(PAGE as f64));
+    for (name, v) in [("user8", &s.level), ("user5", &s.hp), ("user6", &s.ap), ("user7", &s.xp)] {
+        ui.write_changed(p.menu, name, Value::Str(v.clone()));
+    }
+    ui.write_changed(p.list, "user0", flag(s.rows.iter().any(|r| r.mark.is_some())));
+    for (i, (made, row)) in rows.iter().zip(&s.rows).enumerate() {
+        ui.write_changed(made.tile, "listindex", Value::Num(i as f64));
+        ui.write_changed(made.tile, "string", Value::Str(row.name.clone()));
+        // A text value keeps the "--" of a game without scripts (`Value::text`); -1 hides the
+        // number [observed: the template's own value].
+        ui.write_changed(made.tile, "user1", row.value.clone().map_or(Value::Num(-1.0), Value::Str));
+        ui.write_changed(made.tile, "user0", flag(row.mark.is_some()));
+        ui.write_changed(made.tile, "user2", Value::Str(row.mark.unwrap_or_default().to_string()));
+    }
+    // A row without a picture keeps `visible` with an empty `filename`: the line and the text
+    // follow it in the file, and the hand-built page draws them without a picture.
+    let selected = s.rows.get(s.selected);
+    ui.write_changed(p.icon, "filename", Value::Str(selected.and_then(|r| r.icon.clone()).unwrap_or_default()));
+    ui.write_changed(p.icon, "visible", flag(selected.is_some()));
+    ui.write_changed(p.desc, "string", Value::Str(selected.map(|r| r.description.clone()).unwrap_or_default()));
+    // Only a name the reader left unresolved: a replacement's or a script's words stand.
+    if ui.tile(p.title).get("string").is_some_and(|v| v.text().trim_start().starts_with('&')) {
+        ui.set_trait(p.title, "string", Value::Str(Page::Stats.title().to_string()));
+    }
+}
+
+/// What the screen menu changed of the file, to give back on the device.
+#[derive(Clone, Debug, PartialEq)]
+struct FlatChanges {
+    title: Option<Value>,
+    background: Option<Value>,
+    line: Option<(f64, f64)>,
+}
+
+/// The screen menu's layout, the maintainer's [design: the owner, 2026-10-31, `frame::heading_title`,
+/// docs/design/screen-menu.md §2]: no title, no background, the heading's line running on from the
+/// lead line. On the device what it changed goes back.
+fn write_frame(ui: &mut Ui, p: &Paths, device: bool, flat: &mut Option<FlatChanges>) {
+    match (device, flat.take()) {
+        (false, None) => {
+            let title = ui.tile(p.title).get("visible").cloned();
+            let background = ui.tile(p.background).get("visible").cloned();
+            let line = ui.tile(p.line).get("_length").map(Value::num).map(|len| (num(ui, p.line, "x"), len));
+            ui.set_trait(p.title, "visible", flag(false));
+            ui.set_trait(p.background, "visible", flag(false));
+            if let Some((x, len)) = line {
+                let from = f64::from(crate::pipboy::frame::lead_line_end());
+                ui.set_trait(p.line, "x", Value::Num(from));
+                ui.set_trait(p.line, "_length", Value::Num(x + len - from));
+            }
+            *flat = Some(FlatChanges { title, background, line });
+        }
+        (true, Some(was)) => {
+            ui.set_trait(p.title, "visible", was.title.unwrap_or(flag(true)));
+            ui.set_trait(p.background, "visible", was.background.unwrap_or(flag(true)));
+            if let Some((x, len)) = was.line {
+                ui.set_trait(p.line, "x", Value::Num(x));
+                ui.set_trait(p.line, "_length", Value::Num(len));
+            }
+        }
+        (false, Some(was)) => *flat = Some(was),
+        (true, None) => {}
+    }
+}
+
+/// The places code gives the file to work from: each row's height and `_y`, the list's height,
+/// the box's place and the description's scroll steps.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Geometry {
+    pub rows: Vec<(f64, f64)>,
+    pub list: f64,
+    pub highlight: (f64, f64),
+    pub desc_bound: usize,
+}
+
+/// [`Geometry`] from the sizes measured; the reason when no usable layout comes of them. A list
+/// that does not hold its rows has no scrolling here: the hand-built page takes over.
+pub fn geometry(ui: &Ui, p: &Paths, rows: &[MadeRow], selected: usize, highlight: bool) -> Result<Geometry, String> {
+    let mut places = Vec::with_capacity(rows.len());
+    let mut y = 0.0;
+    let mut tallest: f64 = 0.0;
+    for (i, row) in rows.iter().enumerate() {
+        let h = if row.explicit {
+            num(ui, row.tile, "height")
+        } else {
+            let spacing = num(ui, row.tile, "_VerticalSpacing");
+            num(ui, row.text, "height") + if spacing > 0.0 { spacing } else { ROW_SPACING }
+        };
+        if h <= 0.0 {
+            return Err(format!("row {i} has no height"));
+        }
+        places.push((h, y));
+        y += h;
+        tallest = tallest.max(h);
+    }
+    let file = num(ui, p.list, "_number_of_visible_items");
+    let visible = if file > 0.0 { file } else { stats::VISIBLE as f64 };
+    if (rows.len() as f64) > visible {
+        return Err(format!("{} rows and the list shows {visible}", rows.len()));
+    }
+    let window = num(ui, p.desc_rect, "height");
+    if window <= 0.0 {
+        return Err(format!("{DESC_RECT} has no height"));
+    }
+    let desc_bound = ((num(ui, p.desc, "height") - window) / f64::from(stats::DESC_STEP)).ceil().max(0.0) as usize;
+    let box_at = places.get(selected).filter(|_| highlight).map_or((-1.0, 0.0), |&(h, y)| (y, h));
+    Ok(Geometry { rows: places, list: visible * tallest, highlight: box_at, desc_bound })
+}
+
+fn write_geometry(ui: &mut Ui, p: &Paths, rows: &[MadeRow], g: &Geometry) {
+    for (row, &(h, y)) in rows.iter().zip(&g.rows) {
+        if !row.explicit {
+            ui.write_changed(row.tile, "height", Value::Num(h));
+        }
+        ui.write_changed(row.tile, "_y", Value::Num(y));
+    }
+    ui.write_changed(p.list, "height", Value::Num(g.list));
+    ui.write_changed(p.list, "_highlight_y", Value::Num(g.highlight.0));
+    ui.write_changed(p.list, "_selected_height", Value::Num(g.highlight.1));
+    // Hidden at 1 [observed: pipboy.md §5.1.1]; the +1 is our adaptation [design].
+    ui.write_changed(p.bar, "_number_of_items", Value::Num(g.desc_bound as f64 + 1.0));
+}
+
+/// The model's scroll over the file's own count of the clicks, as the prefab asks of code that
+/// sets the value [observed: pipboy.md §5.1.1; design: as `super::tutorial_menu::write_scroll`].
+pub fn write_scroll(ui: &mut Ui, bar: TileId, steps: usize) {
+    ui.set_trait(bar, "_current_value", Value::Num(steps as f64));
+    ui.set_trait(bar, "_SetInCode", Value::Num(1.0));
+}
+
+/// Whether what the file worked out can be drawn: every row's text shown, on the canvas and
+/// inside the list's window, and the description shown. The description's area, for the wheel.
+pub fn usable(ui: &Ui, p: &Paths, rows: &[MadeRow]) -> Result<Rect, String> {
+    let items = layout::layout(ui, p.menu, &|_, _, _| (0.0, 0.0), true);
+    let find = |t: TileId| items.iter().find(|i| i.tile == t && i.visible);
+    for (i, row) in rows.iter().enumerate() {
+        let item = find(row.text).ok_or_else(|| format!("row {i} is not shown"))?;
+        let bottom = item.rect.top + item.rect.height;
+        let in_window = item.clip.is_none_or(|c| bottom <= c.top + c.height + 1.0);
+        if item.rect.height <= 0.0 || item.rect.top < 0.0 || bottom > f64::from(CANVAS.y) || !in_window {
+            return Err(format!("row {i} does not fit"));
+        }
+    }
+    let desc = find(p.desc).ok_or("the description is not shown")?;
+    let area = desc.clip.unwrap_or(desc.rect);
+    Ok(Rect::new(area.left as f32, area.top as f32, (area.left + area.width) as f32, (area.top + area.height) as f32))
+}
+
+/// What [`page`] keeps: the rows, what was last written, and the reasons warned of.
+#[derive(Default)]
+pub(crate) struct Written {
+    menu: Option<TileId>,
+    paths: Option<Paths>,
+    rows: Vec<MadeRow>,
+    shown: Option<Shown>,
+    highlight: bool,
+    geometry: Option<Geometry>,
+    sizes: SizesWritten,
+    flat: Option<FlatChanges>,
+    /// The last usable layout's description area; none: to be looked at again.
+    checked: Option<Rect>,
+    /// What is shown changed since the log last said so.
+    tell: bool,
+    /// The description's scroll and the text's place last logged.
+    drawn: Option<(f64, f64)>,
+    fallbacks: HashSet<String>,
+}
+
+/// The decision every reader shares, and what the page keeps.
+#[derive(Resource, Default)]
+pub struct StatsTiles {
+    /// The menu, while the page is ready to display this frame ([`settle`]).
+    pub ready: Option<TileId>,
+    /// The menu painted by the last drawing (`super::draw`): what the player sees.
+    pub shown: Option<TileId>,
+    /// The description's area on the canvas, while ready.
+    pub desc_area: Option<Rect>,
+    /// [`CUT_AID`].
+    pub cut: Option<String>,
+    written: Written,
+}
+
+/// One pass over the page; the menu when all of it went through. `late`: the pass before the
+/// drawing; the other, before the scripts, does the sizes only for a model that changed.
+/// `sizes` is one round of measuring the given text tiles, with the tree worked out.
+pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: bool, late: bool, tiles: &mut StatsTiles, sizes: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<TileId, String> {
+    let w = &mut tiles.written;
+    let p = match w.paths.filter(|c| c.live(ui) && ui.menu(STATS_MENU) == Some(c.menu)) {
+        Some(p) => p,
+        None => paths(ui, tiles.cut.as_deref())?,
+    };
+    // A new menu tile (the tree built again): its rows, sizes and writes are all to do again.
+    if w.menu != Some(p.menu) {
+        let fallbacks = std::mem::take(&mut w.fallbacks);
+        *w = Written { menu: Some(p.menu), fallbacks, ..Default::default() };
+    }
+    w.paths = Some(p);
+    ensure_rows(ui, &p, &mut w.rows, snap.special.len())?;
+    let selected = view.selected[PAGE];
+    let changed = !w.shown.as_ref().is_some_and(|s| s.same(snap, selected, device)) || w.highlight != view.highlight;
+    if changed {
+        let shown = Shown::of(snap, selected, device);
+        write_model(ui, &p, &w.rows, &shown);
+        write_frame(ui, &p, device, &mut w.flat);
+        w.shown = Some(shown);
+        w.highlight = view.highlight;
+        w.checked = None;
+        w.tell = true;
+    }
+    if changed || late {
+        ui.update();
+        let texts = menus::texts(ui, p.menu);
+        // Three rounds: a size leads to a place and a place to a wrap width [design: as
+        // `super::tutorial_menu::settle`].
+        for _ in 0..3 {
+            if sizes(ui, &texts, &mut w.sizes) == 0 {
+                break;
+            }
+            ui.update();
+        }
+        let g = geometry(ui, &p, &w.rows, selected, view.highlight)?;
+        if view.desc_bound() != g.desc_bound {
+            view.set_desc_bound(g.desc_bound);
+        }
+        if w.geometry.as_ref() != Some(&g) {
+            write_geometry(ui, &p, &w.rows, &g);
+            ui.update();
+            w.geometry = Some(g);
+            w.checked = None;
+            w.tell = true;
+        }
+        // On every drawn frame, so a window injected or enabled later crops too.
+        fnv_ui::input::mark_clip_windows(ui, p.menu);
+    }
+    write_scroll(ui, p.bar, view.desc);
+    if late {
+        ui.update();
+        let area = match w.checked {
+            Some(a) => a,
+            None => {
+                let a = usable(ui, &p, &w.rows)?;
+                w.checked = Some(a);
+                a
+            }
+        };
+        tiles.desc_area = Some(area);
+        let w = &mut tiles.written;
+        if std::mem::take(&mut w.tell) {
+            info!("{}", describe(ui, &p, w));
+        }
+        let now = (num(ui, p.bar, "_current_value"), num(ui, p.desc, "y"));
+        if w.drawn != Some(now) {
+            let (scroll, text_y) = (Value::Num(now.0).text(), Value::Num(now.1).text());
+            info!("tiles: {STATS_MENU} description scroll drawn at {scroll} of {}, text y {text_y}", view.desc_bound());
+            w.drawn = Some(now);
+        }
+    }
+    Ok(p.menu)
+}
+
+/// A line for the log when what the page shows changes (smoke reads these).
+fn describe(ui: &Ui, p: &Paths, w: &Written) -> String {
+    let n = |x: f64| Value::Num(x).text();
+    let (Some(s), Some(g)) = (w.shown.as_ref(), w.geometry.as_ref()) else { return format!("tiles: {STATS_MENU} page written") };
+    let row = s.rows.get(s.selected);
+    format!(
+        "tiles: {STATS_MENU} page from tiles: {} rows, \"{}\" selected, value {}, boxed at {}, list height {}, row height {}, description {} high, scrolls {}, {}",
+        s.rows.len(),
+        row.map_or("", |r| r.name.as_str()),
+        row.and_then(|r| r.value.as_deref()).unwrap_or("none"),
+        n(g.highlight.0),
+        n(g.list),
+        n(g.rows.first().map_or(0.0, |r| r.0)),
+        n(num(ui, p.desc, "height")),
+        g.desc_bound,
+        if s.device { "device" } else { "screen menu" },
+    )
+}
+
+/// What a pass over the page reads.
+#[derive(SystemParam)]
+pub(crate) struct StatsPage<'w> {
+    script: Option<ResMut<'w, ScriptState>>,
+    switch: Option<Res<'w, TileMenus>>,
+    pip: Option<Res<'w, PipBoy>>,
+    prepared: Option<Res<'w, Prepared>>,
+    view: Option<ResMut<'w, StatsView>>,
+    tiles: ResMut<'w, StatsTiles>,
+    fonts: FontKit<'w>,
+}
+
+/// Whether the page is eligible to prepare: the switch on and the tab showing.
+pub fn eligible(switch: TileMenus, pip: &PipBoy) -> bool {
+    switch.stats && pip.shown() && pip.page == Page::Stats && pip.tab() == PAGE
+}
+
+/// A pass; `None` when the page is not eligible (nothing is touched then).
+fn pass(p: &mut StatsPage<'_>, late: bool) -> Option<Result<TileId, String>> {
+    let pip = p.pip.as_deref()?;
+    if !eligible(p.switch.as_deref().copied().unwrap_or_default(), pip) {
+        return None;
+    }
+    let device = pip.frame == Frame::Device;
+    let game = &mut p.script.as_mut()?.rt.as_mut()?.game;
+    game.ui_files.as_ref()?;
+    let Some(snap) = p.prepared.as_deref().and_then(|x| x.snap.as_ref()) else {
+        return late.then(|| Err("nothing to show yet".to_string()));
+    };
+    // What the page does to the view (the bound) is no new look for the hand-built page.
+    let view = p.view.as_mut()?.bypass_change_detection();
+    let fonts = &mut p.fonts;
+    let mut sizes = |ui: &mut Ui, texts: &[TileId], written: &mut SizesWritten| {
+        let size = fonts.menu_measure(&menus::fonts_of(ui, texts));
+        menus::write_text_sizes_of(ui, texts, written, &size)
+    };
+    Some(page(&mut game.ui_tree, snap, view, device, late, &mut p.tiles, &mut sizes))
+}
+
+/// Before the scripts, after the tile input: this frame's model in the tree, and the scroll.
+pub(crate) fn write(mut p: StatsPage) {
+    // A failure here is told by `settle`, which decides.
+    let _ = pass(&mut p, false);
+}
+
+/// Before the drawing, after the model's keys: what they changed, the tree worked out, and the
+/// one decision every reader of this frame shares.
+pub(crate) fn settle(mut p: StatsPage) {
+    let ready = match pass(&mut p, true) {
+        Some(Ok(menu)) => Some(menu),
+        Some(Err(reason)) => {
+            let line = format!("{STATS_MENU} drawn by hand: {reason}");
+            if p.tiles.written.fallbacks.insert(line.clone()) {
+                warn!("{line}");
+            }
+            None
+        }
+        None => None,
+    };
+    if ready.is_none() {
+        // The next time it is written whole; the rows stay.
+        let w = &mut p.tiles.written;
+        w.shown = None;
+        w.geometry = None;
+        w.checked = None;
+        w.drawn = None;
+        p.tiles.desc_area = None;
+    }
+    if p.tiles.ready != ready {
+        p.tiles.ready = ready;
+    }
+}
+
+/// The resource, with the test aid read.
+pub(crate) fn setup(app: &mut App) {
+    app.insert_resource(StatsTiles { cut: std::env::var(CUT_AID).ok(), ..Default::default() });
+}

@@ -262,6 +262,12 @@ pub fn heading(p: &mut ChildSpawnerCommands, c: &mut Ctx, title: &str, cards: &[
     }
 }
 
+/// Where the heading's lead line ends: where the line runs on from in the screen menu, which
+/// has no title ([`heading_title`]).
+pub fn lead_line_end() -> f32 {
+    MAIN.min.x + LEAD_LINE
+}
+
 /// A page's title in its heading (font 4, 70 in, on the heading's line); where the line
 /// goes on after it. In the screen menu the title is left out, the header of page names
 /// standing on the line in its place ([`header`]), and the line runs on from the lead line
@@ -413,7 +419,8 @@ fn on_tab_out(out: On<PointerOut>, nodes: Query<&Clickable>, mut pip: ResMut<Pip
 
 /// Show the hover box of the tab under the pointer (none while the Pip-Boy is down).
 pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut Visibility)>) {
-    if !pip.open() && pip.hover_tab.is_some() {
+    // A page drawn from its tiles has no hand-built tabs for this to be left over from.
+    if (!pip.open() || boxes.is_empty()) && pip.hover_tab.is_some() {
         pip.hover_tab = None;
     }
     for (b, mut v) in &mut boxes {
@@ -425,7 +432,10 @@ pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut
 }
 
 /// Rebuild the frame (and with it every page's body) when the Pip-Boy's page or tab
-/// changed, or it came up.
+/// changed, or it came up, or a page went over to its tiles or back. A page drawn from its
+/// file (`crate::tiles::stats_menu::StatsTiles::ready`, the one decision) keeps the shell, the
+/// screen menu's header and the device's scanlines, and has none of the hand-built page: its
+/// background, heading and tab line are the tiles', once, under the scanlines.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut commands: Commands,
@@ -436,10 +446,12 @@ pub fn draw(
     data: Option<Res<GameData>>,
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
-    mut shown: Local<Option<(Page, usize, Frame)>>,
+    tiles: Option<Res<crate::tiles::stats_menu::StatsTiles>>,
+    mut shown: Local<Option<(Page, usize, Frame, bool)>>,
 ) {
     let Some(screen) = screen else { return };
-    let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame));
+    let tiled = tiles.is_some_and(|t| t.ready.is_some());
+    let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame, tiled));
     if want == *shown && (want.is_none() || !roots.is_empty()) {
         return;
     }
@@ -447,7 +459,7 @@ pub fn draw(
     for e in &roots {
         commands.entity(e).despawn();
     }
-    let Some((page, tab, frame)) = want else { return };
+    let Some((page, tab, frame, tiled)) = want else { return };
     // The screen menu is plain, as the barter menu is: no device background, no
     // scanlines (docs/design/screen-menu.md §2).
     let device = frame == Frame::Device;
@@ -459,15 +471,21 @@ pub fn draw(
         if !device {
             header(r, &mut c, page);
         }
-        hand_built_page(r, &mut c, page, tab, device);
+        if !tiled {
+            hand_built_page(r, &mut c, page, tab, device);
+        }
         if let Some(lines) = c.kit.scanlines.clone().filter(|_| device) {
             let stretch = SCANLINE_PITCH / c.images.get(&lines).map_or(64.0, |i| i.height() as f32);
-            r.spawn((
+            let mut scanlines = r.spawn((
                 at(0.0, 0.0, CANVAS.x, CANVAS.y),
                 ImageNode { image_mode: NodeImageMode::Tiled { tile_x: true, tile_y: true, stretch_value: stretch }, ..ImageNode::new(lines) },
                 ZIndex(10),
                 Pickable::IGNORE,
             ));
+            // Over the tiles' own root, as they are over a hand-built page.
+            if tiled {
+                scanlines.insert(GlobalZIndex(crate::tiles::draw::PIPBOY_TILES_Z + 1));
+            }
         }
     });
 }

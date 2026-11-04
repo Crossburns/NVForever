@@ -903,6 +903,9 @@ pub(crate) struct View<'w, 's> {
     /// The pause menu and its page, for the Mods page (T11, `super::mods`).
     paused: Option<Res<'w, crate::pause::Paused>>,
     page: Option<Res<'w, crate::pause::Page>>,
+    /// The Pip-Boy's image and the S.P.E.C.I.A.L. page's one decision (`super::stats_menu`).
+    screen: Option<Res<'w, crate::pipboy::PipBoyScreen>>,
+    stats: Option<ResMut<'w, super::stats_menu::StatsTiles>>,
 }
 
 /// The colours an [`Ink`] node may carry.
@@ -926,6 +929,8 @@ pub(crate) struct MenusDrawn {
     start: Drawn,
     sleep_wait: Drawn,
     tutorial: Drawn,
+    /// The Pip-Boy's S.P.E.C.I.A.L. page, in the Pip-Boy's image.
+    stats: Drawn,
 }
 
 /// The stacking levels of the menus drawn from tiles besides the HUD: their hand-built
@@ -938,8 +943,12 @@ pub const SLEEP_WAIT_Z: i32 = 105;
 /// T15b: the tutorial menu's, over the other menus as its hand-built drawing is
 /// (`crate::tutorial_menu`) [design].
 pub const TUTORIAL_Z: i32 = 109;
+/// The Pip-Boy's page drawn from tiles, in the Pip-Boy's image: over the shell's root (no
+/// level, 0), whose header it leaves the pointer to, and under the scanlines (one more,
+/// `crate::pipboy::frame::draw`) [design].
+pub const PIPBOY_TILES_Z: i32 = 1;
 
-pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes, mut blur: ResMut<super::menus::TileMenuBlur>) {
+pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes, mut blur: ResMut<super::menus::TileMenuBlur>) {
     let scale = view.windows.single().map_or(1.0, |w| w.height() / 960.0);
     let heading = view.hud.as_ref().map_or(0.0, |h| h.heading);
     // T15a: the message box and the prompt, when switched on and in the tree (their
@@ -974,10 +983,49 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
         paint(&mut commands, drawn, pieces, Target::window(scale, z), heading, ui, &mut kit, &mut nodes);
     }
     *blur = blur_now;
+    stats_page(&mut commands, game, &mut view, &mut kit, &mut others.stats, &mut nodes, heading);
     // T11: the Mods page, the start menu's mod tiles over the pause menu.
     let mods_on = switch.start && view.paused.as_ref().zip(view.page.as_ref()).is_some_and(|(p, page)| crate::pause::mods_open(p, page));
     mods_page(&mut commands, &script, mods_on, &mut kit, &mut others.start, &mut nodes, scale, heading);
     hud(&mut commands, &script, &view, &mut kit, &mut drawn, &mut nodes, scale, heading);
+}
+
+/// The Pip-Boy's S.P.E.C.I.A.L. page, in the Pip-Boy's image, while it is ready
+/// (`super::stats_menu::StatsTiles::ready`, decided before this drawing). What was painted is
+/// published for the next frame's tile input, which acts on what the player saw. Logged when it
+/// changes: how many pieces, and how many of them are the rows' names (smoke reads these).
+fn stats_page(commands: &mut Commands, game: Option<&fnv_game::Game<'_>>, view: &mut View, kit: &mut FontKit, drawn: &mut Drawn, nodes: &mut Nodes, heading: f32) {
+    let Some(target) = view.screen.as_ref().map(|s| Target::image(s.camera, crate::pipboy::CANVAS, s.scale, PIPBOY_TILES_Z)) else { return };
+    let name = super::stats_menu::STATS_MENU;
+    let ui = game.map(|g| &g.ui_tree);
+    let ready = view.stats.as_ref().and_then(|s| s.ready);
+    let menu = ui.zip(ready).filter(|(ui, m)| ui.is_live(*m));
+    let pieces = match menu {
+        Some((ui, menu)) => {
+            if drawn.told_menu != Some(menu) {
+                let (file, code) = origins(ui, menu);
+                info!("tiles: {name} drawn from tiles ({file} file tiles, {code} code tiles)");
+                drawn.told_menu = Some(menu);
+            }
+            let pieces = whole_pieces(ui, menu, kit, true);
+            let names = pieces.iter().filter(|p| matches!(p.look, Look::Text { .. }) && ui.tile(p.tile).name.eq_ignore_ascii_case("ListItemText")).count();
+            let counts = (pieces.len(), names);
+            if counts != drawn.counts {
+                info!("tiles: {name} painted on the Pip-Boy's image: {} pieces, {} row names", counts.0, counts.1);
+                drawn.counts = counts;
+            }
+            pieces
+        }
+        None => {
+            drawn.counts = (0, 0);
+            Vec::new()
+        }
+    };
+    paint(commands, drawn, pieces, target, heading, ui, kit, nodes);
+    let shown = menu.map(|(_, m)| m);
+    if let Some(stats) = view.stats.as_mut().filter(|s| s.shown != shown) {
+        stats.shown = shown;
+    }
 }
 
 /// The pause menu's Mods page (T11, `super::mods`): the tiles mods added to `StartMenu`,

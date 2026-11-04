@@ -133,7 +133,7 @@ const LIST_X: f32 = 35.0;
 const LIST_Y: f32 = 110.0;
 const LIST_WIDTH: [f32; 5] = [0.0, 325.0, 350.0, 420.0, 500.0];
 const LIST_MARKED_WIDTH: [f32; 5] = [0.0, 25.0, 50.0, 0.0, 0.0];
-const VISIBLE: usize = 9;
+pub(crate) const VISIBLE: usize = 9;
 const ROW_SPACING: f32 = 20.0;
 const SCROLLBAR: f32 = 32.0;
 const ITEM_OFFSET: f32 = 20.0;
@@ -156,7 +156,7 @@ const ICON_Y: f32 = -60.0;
 const SEPARATOR: (f32, f32) = (22.0, 319.0);
 const DESC_Y: f32 = 333.0;
 const DESC_HEIGHT: f32 = 175.0;
-const DESC_STEP: f32 = 20.0;
+pub(crate) const DESC_STEP: f32 = 20.0;
 const DESC_TOP: f32 = 5.0;
 const DESC_BAR: (f32, f32) = (35.0, 130.0);
 /// Lines of a paragraph are 35 apart [observed: message-menu.md §3, font 2].
@@ -461,7 +461,7 @@ pub fn prepare(
 /// The log lines of a page that changed (the smoke scenarios read them).
 fn log_page(view: &StatsView, snap: &Snapshot, tab: usize, new: bool, mem: &mut StateMemory) {
     if new {
-        let f = |v: Option<(f64, f64)>| v.map_or("--".to_string(), |(a, b)| format!("{}/{}", model::whole(a), model::whole(b)));
+        let f = figures;
         info!(
             "pipboy stats: LVL {}, HP {}, AP {}, XP {}; {} S.P.E.C.I.A.L., {} skills, {} perks, {} effects, {} reputations, karma title {}{}",
             snap.level.map_or("--".into(), |l| l.to_string()),
@@ -513,7 +513,7 @@ pub fn draw(
     let v = view.bypass_change_detection();
     v.drawn_at = screen.as_ref().and_then(|s| s.pointer);
     commands.entity(body).despawn_children().with_children(|p| {
-        let value = |o: Option<(f64, f64)>| o.map_or("--".to_string(), |(a, b)| format!("{}/{}", model::whole(a), model::whole(b)));
+        let value = figures;
         let cards = [
             Card::new(LVL.0, LVL.1, "LVL", snap.level.map_or("--".into(), |l| l.to_string())),
             Card::new(HP.0, HP.1, "HP", value(snap.hp)),
@@ -528,6 +528,12 @@ pub fn draw(
         }
     });
     *last = Some(snap.clone());
+}
+
+/// A heading card's figures, as every view of the page writes them: current/maximum, "--"
+/// when they are not read.
+pub fn figures(v: Option<(f64, f64)>) -> String {
+    v.map_or("--".to_string(), |(a, b)| format!("{}/{}", model::whole(a), model::whole(b)))
 }
 
 /// One line for the log: what the tab shows selected.

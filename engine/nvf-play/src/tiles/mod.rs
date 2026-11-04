@@ -7,6 +7,7 @@ pub mod menus;
 pub mod model;
 pub mod mods;
 pub mod notices;
+pub mod stats_menu;
 pub mod tutorial_menu;
 pub mod vanilla;
 pub mod wait_menu;
@@ -64,11 +65,16 @@ impl MenuFiles<'_, '_> {
 /// Whether `screen()` is written in interface units ([`write_screen`]): only while a T15
 /// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`) or the start menu's Mods page
 /// (T11, `mods`) is switched on, whose files centre their boxes by `screen()` (MCM's `x`
-/// and `y`, menu-xml.md §10). The default game and the tile HUD alone keep the window's
-/// pixels [design]. The original reports interface units [observed: hud_menus capture
-/// 2026-10-31, three window sizes]; applying them unconditionally is a follow-up.
+/// and `y`, menu-xml.md §10), or `StatsMenu`, whose lines take their thickness from the
+/// converter and whose hotrects' `alpha` 0 this same gate lets pass (pipboy.md §5.1.1). The
+/// default game and the tile HUD alone keep the window's pixels [design]. The gate is one for
+/// the whole tree, not a menu's own: `StatsMenu` beside the tile HUD changes the shared screen
+/// traits and the HUD's hotrect-alpha handling, as any of these does, and beside another of
+/// them changes nothing more. The Pip-Boy's canvas is never written here. The original reports
+/// interface units [observed: hud_menus capture 2026-10-31, three window sizes]; applying them
+/// unconditionally is a follow-up.
 pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
-    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.start
+    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.start || menus.stats
 }
 
 /// Write `screen()`'s traits for a window `window_width` x `window_height` (logical
@@ -704,6 +710,7 @@ impl Plugin for TilesPlugin {
         // hidden after every drawing system, before visibility is passed down [design].
         vanilla::setup(app);
         input::setup(app);
+        stats_menu::setup(app);
         app.init_resource::<draw::TileFonts>()
             .init_resource::<TutorialScrollCheck>()
             .init_resource::<menus::TileMenuBlur>()
@@ -713,7 +720,11 @@ impl Plugin for TilesPlugin {
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).before(PlaySet::Activation))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
-            .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui))
+            // The Pip-Boy's S.P.E.C.I.A.L.: written after the tile input and before the scripts;
+            // again after its keys and decided before the frame and the tile drawing read it.
+            .add_systems(Update, stats_menu::write.after(input::feed).before(PlaySet::Activation))
+            .add_systems(Update, stats_menu::settle.in_set(PlaySet::Ui).after(crate::pipboy::stats::prepare).before(crate::pipboy::frame::draw))
+            .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui).after(crate::pipboy::frame::draw))
             .add_systems(PostUpdate, vanilla::hide_hand_built.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
     }
 }
