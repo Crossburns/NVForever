@@ -135,6 +135,7 @@ use crate::sim::SimState;
 use crate::{space, PlaySet, PlayState, PlayWorld};
 
 mod hit_effects;
+pub mod held_grenade_probe;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
@@ -1409,6 +1410,7 @@ impl Plugin for CombatPlugin {
         );
         app.init_resource::<WeaponAnim>()
             .init_resource::<CombatStats>()
+            .init_resource::<held_grenade_probe::Probe>()
             .init_resource::<ShotVisuals>()
             .add_message::<ShotFired>()
             .add_message::<ImpactFx>()
@@ -3774,6 +3776,8 @@ fn actor_attacks(
     (mut impacts, mut broken, mut knocks): (MessageWriter<ImpactFx>, MessageWriter<WeaponBroken>, MessageWriter<Knockback>),
     (control, anim, player): Guard,
     mut dm: ResMut<crate::dismember::Dismemberment>,
+    mut grenade_probe: ResMut<held_grenade_probe::Probe>,
+    time: Res<Time>,
 ) {
     let c = &mut *c;
     let gravity = phys.world.params.gravity;
@@ -3782,13 +3786,14 @@ fn actor_attacks(
     let player_guard = (c.melee && control.as_deref().is_some_and(|k| k.aiming) && anim.as_deref().is_some_and(|a| a.ready)).then(|| player.as_deref().map(|p| p.look_dir())).flatten().map(|d| [d[0], d[1]]);
     let script_shots = std::mem::take(&mut c.script_shots);
     for (s, scripted) in shots.read().map(|s| (s, false)).chain(script_shots.iter().map(|s| (s, true))) {
+        let probe_request = grenade_probe.request(s, &sim.world);
         // The shooter's own body is never hit: the player's is `PLAYER`, not its FormID (a
         // player's FireWeapon hit the player at the muzzle, 2026-10-27).
         let own = if s.shooter == FormId::PLAYER_REF { PLAYER } else { s.shooter.0 as ActorId };
         let carried = |a: FormId| sim.world.peek(s.shooter).and_then(|st| st.inventory.as_ref()).is_some_and(|i| i.count(a) > 0);
         let ammo = c.forms.ammo_for(s.weapon, carried);
-        let Some(chain) = c.forms.chain(s.weapon, ammo) else { continue };
-        let Some(proj) = chain.projectile else { continue };
+        let Some(chain) = c.forms.chain(s.weapon, ammo) else { grenade_probe.finish_request(probe_request, 0); continue };
+        let Some(proj) = chain.projectile else { grenade_probe.finish_request(probe_request, 0); continue };
         stats.actor_shots += 1;
         let range = c.forms.projectiles.get(&proj).map_or(0.0, |p| p.range);
         let reach = if range > 0.0 { range } else { AIM_REACH };
@@ -3823,6 +3828,7 @@ fn actor_attacks(
         if let Some(m) = c.forms.weapons.get(&s.weapon).filter(|_| mods != 0).and_then(|w| w.modded(mods).projectile_speed_mult) {
             ps.iter_mut().for_each(|p| p.speed_up(m));
         }
+        let probe_created = ps.len();
         for p in ps {
             let rolled = c.rng.next_f32() < tracer_chance || c.tracer_hold.is_some();
             let shown = rolled || DRAW_EVERY_PROJECTILE;
@@ -3830,7 +3836,11 @@ fn actor_attacks(
             let dir = vec::normalize(p.vel);
             c.next_visual += 1;
             c.flying.push(Flying { p, id: c.next_visual, proj, shown, dir, from_muzzle: s.muzzle.is_some(), origin: leaving.origin, seen: leaving.seen, tracer, projectiles_per_shot: chain.projectiles_per_shot, force, by, rref: None, registered: false, speed_mult: 1.0, ended_at: None });
+            if let Some(flying) = c.flying.last() {
+                grenade_probe.accepted(probe_request, s, &flying.p, flying.proj, flying.id);
+            }
         }
+        grenade_probe.finish_request(probe_request, probe_created);
         let wname = c.forms.weapons.get(&s.weapon).and_then(|w| w.edid.as_deref()).unwrap_or("?");
         if scripted {
             // A script's FireWeapon (a rigged shotgun, a turret): worth a line.
@@ -3848,6 +3858,7 @@ fn actor_attacks(
             }
         }
     }
+    grenade_probe.receiver_done(time.elapsed_secs());
     for b in blows.read() {
         // The weapon: its own, else the Fists; a creature's own attack damage in the Fists'
         // place [design: the Fists' other figures stand in for a creature's].

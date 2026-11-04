@@ -340,6 +340,38 @@ enum Arm {
     Creature(f32, f32),
 }
 
+/// Ranged tactics do not imply firearm execution. A held grenade owns no magazine,
+/// reload or queued gun shot, including while its dedicated controller waits [design].
+enum RangedAttack {
+    Firearm { cycle: Cycle, reload_timed: bool },
+    Grenade,
+}
+
+impl RangedAttack {
+    /// Keep a firearm's cycle on a new target, but never carry it into grenade
+    /// execution (a queued WindUp can fire even with the trigger released).
+    fn for_weapon(ws: &WeaponStats, kept: Option<Self>, make_cycle: impl FnOnce() -> Cycle) -> Self {
+        if ws.anim_type.as_deref() == Some(crate::npc_grenades::GRENADE_ANIM) {
+            Self::Grenade
+        } else if let Some(gun @ Self::Firearm { .. }) = kept {
+            gun
+        } else {
+            Self::Firearm { cycle: make_cycle(), reload_timed: false }
+        }
+    }
+
+    fn reloading(&self) -> bool {
+        matches!(self, Self::Firearm { cycle, .. } if cycle.reloading())
+    }
+
+    fn firearm_mut(&mut self) -> Option<(&mut Cycle, &mut bool)> {
+        match self {
+            Self::Firearm { cycle, reload_timed } => Some((cycle, reload_timed)),
+            Self::Grenade => None,
+        }
+    }
+}
+
 /// One actor in a fight.
 struct Fighter {
     target: FormId,
@@ -347,10 +379,7 @@ struct Fighter {
     /// Seconds since it first saw its target in this fight; seconds it has fired at it.
     seen_for: f32,
     firing_for: f32,
-    cycle: Option<Cycle>,
-    /// The cycle reloads by the reload clips in the actor's rig (`AttackTimes::reloads`),
-    /// not the fallback time.
-    reload_timed: bool,
+    ranged: Option<RangedAttack>,
     /// Seconds to its next blow.
     strike_in: f32,
     /// The trigger was pulled last frame (a semi-automatic weapon is let go between
@@ -584,13 +613,13 @@ impl Fighters {
 
     /// Whether a fighting actor reloads (it moves slower then, limping.rs).
     pub fn reloading(&self, actor: u32) -> bool {
-        self.fighters.get(&actor).and_then(|f| f.cycle.as_ref()).is_some_and(|c| c.reloading())
+        self.fighters.get(&actor).and_then(|f| f.ranged.as_ref()).is_some_and(RangedAttack::reloading)
     }
 
     /// Whether a fighting actor reloads or has a blow on its way (it does not start using
     /// a stimpak then, `npc_stimpaks.rs`).
     pub fn busy(&self, actor: u32) -> bool {
-        self.fighters.get(&actor).is_some_and(|f| !f.blows.is_empty() || f.cycle.as_ref().is_some_and(|c| c.reloading()))
+        self.fighters.get(&actor).is_some_and(|f| !f.blows.is_empty() || f.ranged.as_ref().is_some_and(RangedAttack::reloading))
     }
 }
 
@@ -1118,7 +1147,7 @@ pub(crate) fn fight(
     (muzzles, nodes): (Query<(&Muzzle, &GlobalTransform)>, Query<&GlobalTransform>),
     (mut fire, mut strike, mut anims): (MessageWriter<ActorFire>, MessageWriter<ActorStrike>, MessageWriter<PlayAttack>),
     mut times: ResMut<AttackTimes>,
-    (cstats, control): (Option<Res<CombatStats>>, Option<Res<PlayerControl>>),
+    (cstats, control, mut grenade_probe): (Option<Res<CombatStats>>, Option<Res<PlayerControl>>, ResMut<nvf_play::combat::held_grenade_probe::Probe>),
 ) {
     let dt = time.delta_secs();
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
@@ -1334,12 +1363,12 @@ pub(crate) fn fight(
             };
             let fresh = f.fighters.get(&id).is_none_or(|x| x.target != target || x.arm != arm);
             if fresh {
-                // The same gun on a new target keeps its magazine (module notes).
-                let kept = f.fighters.get_mut(&id).filter(|x| x.arm == arm).and_then(|x| x.cycle.take().map(|cy| (cy, x.reload_timed)));
-                let (cycle, reload_timed) = match (&arm, kept) {
-                    (_, Some((cy, timed))) => (Some(cy), timed),
-                    (Arm::Gun(w), None) => (
-                        c.forms.weapons.get(w).map(|ws| {
+                // The same firearm on a new target keeps its magazine; a grenade
+                // has only its own controller, whose deadlines live in grenade_at.
+                let kept = f.fighters.get_mut(&id).filter(|x| x.arm == arm).and_then(|x| x.ranged.take());
+                let ranged = match &arm {
+                    Arm::Gun(w) => c.forms.weapons.get(w).map(|ws| {
+                        RangedAttack::for_weapon(ws, kept, || {
                             let rate = teammate_attack_rate(g, me, Some(*w));
                             if rate != 1.0 {
                                 info!("npc combat: {} {me} fires its {} at x{rate:.2} (the teammate perks)", g.data.name(me), g.data.name(*w));
@@ -1347,10 +1376,9 @@ pub(crate) fn fight(
                             let timing = Timing::of(ws, &ClipTiming::default(), &c.tuning).with_attack_rate(rate);
                             // A body weapon has no magazine to change: it never reloads (§19).
                             Cycle::new(ws, timing, ws.embedded, ws.clip_size.max(1))
-                        }),
-                        false,
-                    ),
-                    _ => (None, false),
+                        })
+                    }),
+                    _ => None,
                 };
                 let name = g.data.name(me);
                 f.stats.fighters.insert(id, name.clone());
@@ -1369,8 +1397,7 @@ pub(crate) fn fight(
                         arm: arm.clone(),
                         seen_for: 0.0,
                         firing_for: 0.0,
-                        cycle,
-                        reload_timed,
+                        ranged,
                         strike_in: 0.0,
                         pulled: false,
                         blows: Vec::new(),
@@ -2266,91 +2293,95 @@ pub(crate) fn fight(
                 g.awareness.aiming.remove(&me);
             }
             f.poses.insert(id, Pose { pitch, weapon: weapons.get(&id).copied(), sights, crouched, blocking: fighter.block.is_some(), distance: away, stop: None, contact: None });
-            match &arm {
-                Arm::Gun(w) => {
-                    let Some(ws) = c.forms.weapons.get(w) else { continue };
-                    let Some(cycle) = fighter.cycle.as_mut() else { continue };
-                    // Its reload takes as long as its reload clips in its rig, once known
-                    // (between reloads, so one under way runs to its end).
-                    if !fighter.reload_timed && matches!(cycle.phase, GunPhase::Ready | GunPhase::Cooldown { .. }) {
-                        if let Some((_, clips)) = times.reloads.get(&id).filter(|r| r.0 == *w) {
-                            let rate = teammate_attack_rate(g, me, Some(*w));
-                            cycle.timing = Timing::of(ws, &ClipTiming { reload_len: clips.reload_len, reload_hit: clips.reload_hit, reload_open_len: clips.reload_open_len, ..ClipTiming::default() }, &c.tuning).with_attack_rate(rate);
-                            fighter.reload_timed = true;
-                        }
-                    }
-                    let reloading = cycle.reloading();
-                    // A grenade, only when the grenade is the weapon it holds: gunmen do not
-                    // throw the grenades they carry (`npc_grenades`, observer check 20).
-                    let mut threw = false;
-                    let holds_grenade = ws.anim_type.as_deref() == Some(crate::npc_grenades::GRENADE_ANIM);
-                    if ready && !fleeing && person && holds_grenade {
-                        let due = match f.grenade_at.get(&id) {
-                            Some(&(t, at)) if t == target => at,
-                            _ => {
-                                let at = clock + crate::npc_grenades::wait(crate::npc_grenades::FIRST_AFTER, next_unit(&mut f.grenade_rng));
-                                f.grenade_at.insert(id, (target, at));
-                                at
-                            }
+            if grenade_probe.actor() == Some(me) {
+                grenade_probe.observe(g, &c.forms, nvf_play::combat::held_grenade_probe::Frame {
+                    clock, dt, actor: me, target, selected: g.held_weapon(me).map(|(w, _)| w), held: weapons.get(&id).copied(),
+                    collision_ready: phys.as_deref().is_some_and(|p| {
+                        let here = match (space, p.space) {
+                            (Some(Space::World(w)), nvf_play::phys::cells::Space::Exterior) => w == p.worldspace,
+                            (Some(Space::Interior(c)), nvf_play::phys::cells::Space::Interior(i)) => c == i,
+                            _ => false,
                         };
-                        let grenade = (clock >= due).then(|| g.world.peek(me).and_then(|s| s.inventory.as_ref()).and_then(|inv| crate::npc_grenades::carried(&c.forms, inv.iter()))).flatten();
-                        let away_feet = vec::len(vec::sub(tfeet, eyes));
-                        if clock >= due {
-                            match grenade {
-                                None => {
-                                    let items: Vec<String> = g.world.peek(me).and_then(|s| s.inventory.as_ref()).map(|i| i.iter().map(|(it, n)| format!("{} {n} ({:?})", g.data.name(it), c.forms.weapons.get(&it).and_then(|w| w.anim_type.clone()))).collect()).unwrap_or_default();
-                                    debug!("npc combat: {me_name} has no grenade to throw: {}", items.join(", "));
-                                    // Nothing to throw: looked for again after a wait.
-                                    let next = clock + crate::npc_grenades::wait(crate::npc_grenades::BETWEEN, next_unit(&mut f.grenade_rng));
-                                    f.grenade_at.insert(id, (target, next));
-                                }
-                                Some(gr) if !crate::npc_grenades::in_band(&gr, away_feet, gravity) => {
-                                    debug!("npc combat: {me_name} keeps its {}: {target_name} is {away_feet:.0} units away (throws between {:.0} and {:.0})", g.data.name(gr.weapon), gr.blast * crate::npc_grenades::MIN_BLAST_SHARE, crate::npc_grenades::reach(&gr, gravity));
-                                    // Looked at again in a second.
-                                    f.grenade_at.insert(id, (target, clock + 1.0));
-                                }
-                                Some(_) => {}
-                            }
-                        }
-                        if let Some(gr) = grenade.filter(|gr| crate::npc_grenades::in_band(gr, away_feet, gravity)) {
-                            // Its blast would catch a comrade or a bystander (§17.6).
+                        here && p.player.is_some() && p.ready_at(feet) && p.ready_at(tfeet)
+                    }),
+                    drawn: hold.is_some_and(|h| h.anim.stage == Stage::Drawn),
+                    ready, person, fleeing, eyes, feet, target_feet: tfeet, gravity,
+                    due: f.grenade_at.get(&id).filter(|(t, _)| *t == target).map(|(_, at)| *at),
+                });
+            }
+            match &arm {
+                Arm::Gun(_) if matches!(fighter.ranged, Some(RangedAttack::Grenade)) => {
+                    use crate::npc_grenades::{self, Decision, ThrowInput};
+                    // This branch owns the whole update: a denied or waiting throw
+                    // cannot fall through to a firearm cycle or its pending shots.
+                    let previous = f.grenade_at.get(&id).copied();
+                    let mut deadline = previous;
+                    let input = ThrowInput { target, clock, ready: ready && !fleeing && person, origin: eyes, target_at: tfeet, gravity };
+                    let decision = npc_grenades::plan(
+                        &mut deadline,
+                        input,
+                        g,
+                        |g| g.world.peek(me).and_then(|s| s.inventory.as_ref()).and_then(|inv| npc_grenades::carried(&c.forms, inv.iter())),
+                        |g, gr| {
                             let spares = style.is_none_or(|s| g.spares_spectators(me, s));
                             let ignores_group = style.is_some_and(|s| s.ignore_damaging_group);
-                            let caught = places
+                            places
                                 .iter()
                                 .filter(|(k, _)| **k != id && **k != target.0)
                                 .filter(|(_, p)| vec::len(vec::sub(p.0, tfeet)) < gr.blast)
                                 .map(|(k, _)| FormId(*k))
-                                .find(|k| !g.would_attack(me, *k) && if g.comrades(me, *k) { !ignores_group } else { spares });
-                            let next = clock + crate::npc_grenades::wait(crate::npc_grenades::BETWEEN, next_unit(&mut f.grenade_rng));
-                            f.grenade_at.insert(id, (target, next));
-                            match caught {
-                                Some(k) => {
-                                    f.stats.grenade_holds += 1;
-                                    info!("npc combat: {me_name} keeps its grenade: {} would be caught in its blast at {target_name} (radius {:.0})", tactics::who(g, k), gr.blast);
-                                }
-                                None => {
-                                    let lobbed = gr.gravity_mult * gravity;
-                                    let aim = fnv_combat::vats::lob_dir(eyes, tfeet, gr.speed, lobbed).unwrap_or_else(|| fnv_combat::vats::lob_far(eyes, tfeet));
-                                    fire.write(ActorFire { shooter: me, weapon: gr.weapon, origin: eyes, aim, cone: GRENADE_CONE, muzzle: None, harmless: false });
-                                    anims.write(PlayAttack { actor: id, weapon: Some(gr.weapon), melee: false, sights: false, kind: Move::Attack, power: None, swing: None });
-                                    let _ = g.world.remove_item(me, gr.weapon, 1);
-                                    let left = g.world.peek(me).and_then(|s| s.inventory.as_ref()).map_or(0, |i| i.count(gr.weapon));
-                                    f.stats.grenades += 1;
-                                    info!("npc combat: {me_name} throws {} at {target_name} ({away_feet:.0} units, blast {:.0}); {left} left", g.data.name(gr.weapon), gr.blast);
-                                    // Its FireExplosive line, on its attack timer (fnv_game::combat_lines).
-                                    g.attack_line(me, Some(target), false, true);
-                                    threw = true;
-                                }
+                                .find(|k| !g.would_attack(me, *k) && if g.comrades(me, *k) { !ignores_group } else { spares })
+                        },
+                        || next_unit(&mut f.grenade_rng),
+                    );
+                    if let Some(deadline) = deadline.filter(|next| Some(*next) != previous) {
+                        f.grenade_at.insert(id, deadline);
+                    }
+                    let away_feet = vec::len(vec::sub(tfeet, eyes));
+                    match decision {
+                        Decision::Waiting => {}
+                        Decision::Empty => debug!("npc combat: {me_name} has no grenade to throw"),
+                        Decision::OutOfBand(gr) => {
+                            debug!("npc combat: {me_name} keeps its {}: {target_name} is {away_feet:.0} units away (throws between {:.0} and {:.0})", g.data.name(gr.weapon), gr.blast * npc_grenades::MIN_BLAST_SHARE, npc_grenades::reach(&gr, gravity));
+                        }
+                        Decision::Held { grenade: gr, by } => {
+                            f.stats.grenade_holds += 1;
+                            info!("npc combat: {me_name} keeps its grenade: {} would be caught in its blast at {target_name} (radius {:.0})", tactics::who(g, by), gr.blast);
+                        }
+                        Decision::Throw(throw) => {
+                            if let Some(throw) = npc_grenades::commit(throw, |weapon| g.world.remove_item(me, weapon, 1)) {
+                                let gr = throw.grenade;
+                                fire.write(ActorFire { shooter: me, weapon: gr.weapon, origin: throw.origin, aim: throw.aim, cone: GRENADE_CONE, muzzle: None, harmless: false });
+                                anims.write(PlayAttack { actor: id, weapon: Some(gr.weapon), melee: false, sights: false, kind: Move::Attack, power: None, swing: None });
+                                let left = g.world.peek(me).and_then(|s| s.inventory.as_ref()).map_or(0, |i| i.count(gr.weapon));
+                                f.stats.grenades += 1;
+                                info!("npc combat: {me_name} throws {} at {target_name} ({away_feet:.0} units, blast {:.0}); {left} left", g.data.name(gr.weapon), gr.blast);
+                                g.attack_line(me, Some(target), false, true);
+                            } else {
+                                debug!("npc combat: {me_name} keeps its grenade: its selected item could not be spent");
                             }
                         }
                     }
-                    fighter.firing_for = if ready && !reloading && !threw { fighter.firing_for + dt } else { 0.0 };
+                }
+                Arm::Gun(w) => {
+                    let Some(ws) = c.forms.weapons.get(w) else { continue };
+                    let Some((cycle, reload_timed)) = fighter.ranged.as_mut().and_then(RangedAttack::firearm_mut) else { continue };
+                    // Its reload takes as long as its reload clips in its rig, once known
+                    // (between reloads, so one under way runs to its end).
+                    if !*reload_timed && matches!(cycle.phase, GunPhase::Ready | GunPhase::Cooldown { .. }) {
+                        if let Some((_, clips)) = times.reloads.get(&id).filter(|r| r.0 == *w) {
+                            let rate = teammate_attack_rate(g, me, Some(*w));
+                            cycle.timing = Timing::of(ws, &ClipTiming { reload_len: clips.reload_len, reload_hit: clips.reload_hit, reload_open_len: clips.reload_open_len, ..ClipTiming::default() }, &c.tuning).with_attack_rate(rate);
+                            *reload_timed = true;
+                        }
+                    }
+                    let reloading = cycle.reloading();
+                    fighter.firing_for = if ready && !reloading { fighter.firing_for + dt } else { 0.0 };
                     // Automatic weapons hold the trigger; others pull it again each time
                     // the cycle is ready and the style's firing delay has passed. Not while
                     // it reloads: a pull would stop a round-by-round reload after a round.
                     fighter.pull_in = (fighter.pull_in - dt).max(0.0);
-                    let mut trigger = ready && !reloading && !threw && (ws.automatic || (!fighter.pulled && fighter.pull_in <= 0.0));
+                    let mut trigger = ready && !reloading && (ws.automatic || (!fighter.pulled && fighter.pull_in <= 0.0));
                     // A wall in the way holds the shot (`combat_tactics` module notes),
                     // looked at as the trigger is pulled, not every frame; the shot goes
                     // at the point the line is clear to.
@@ -2481,7 +2512,7 @@ pub(crate) fn fight(
                                 anims.write(PlayAttack { actor: id, weapon: Some(*w), melee: false, sights: false, kind: Move::Reload, power: None, swing: None });
                                 let how = match rounds {
                                     Some(r) => format!("round by round (opens {:.2} s, {:.2} s a round, closes {:.2} s)", r.open, r.round, r.close),
-                                    None => format!("in {:.2} s{}", reload_secs, if fighter.reload_timed { "" } else { ", the fallback time" }),
+                                    None => format!("in {:.2} s{}", reload_secs, if *reload_timed { "" } else { ", the fallback time" }),
                                 };
                                 info!("npc combat: {} {me} reloads {} {how}", g.data.name(me), ws.edid.as_deref().unwrap_or("?"));
                             }
@@ -2774,6 +2805,11 @@ pub(crate) fn fight(
                 }
             }
         }
+        if let Some(actor) = grenade_probe.actor() {
+            let deadline = f.grenade_at.get(&actor.0).copied();
+            let fighting = g.awareness.get(actor).is_some_and(|a| a.state == State::Combat);
+            grenade_probe.finish_frame(g, clock, deadline, fighting);
+        }
         // Actors no longer fighting: no engage distance, no fighter, no post.
         let gone: Vec<u32> = f.fighters.keys().copied().filter(|id| !still.contains(id)).collect();
         for id in gone {
@@ -2957,6 +2993,62 @@ fn log_room(phys: Option<&mut PhysState>, name: &str, what: &str, feet: [f32; 3]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ranged_cycle(ws: &WeaponStats) -> Cycle {
+        Cycle::new(ws, Timing { interval: 0.1, fire_delay: 0.2, reload: 1.0, spin_up: 0.0, rounds: None, attach: None }, false, 2)
+    }
+
+    #[test]
+    fn held_grenade_execution_discards_even_a_committed_firearm_windup() {
+        let gun = WeaponStats { clip_size: 2, ..Default::default() };
+        let mut cycle = ranged_cycle(&gun);
+        cycle.phase = GunPhase::WindUp { left: 0.1 };
+        // Merely denying the trigger would still emit the shot already in flight.
+        let mut control = cycle.clone();
+        let input = Input { trigger: false, dt: 0.2, carried: 20, ..Default::default() };
+        assert!(control.step(&Default::default(), input).iter().any(|e| matches!(e, Event::Fired { .. })));
+        let grenade = WeaponStats { anim_type: Some(crate::npc_grenades::GRENADE_ANIM.into()), ..Default::default() };
+        let mut execution = RangedAttack::for_weapon(&grenade, Some(RangedAttack::Firearm { cycle, reload_timed: true }), || panic!("a grenade must not construct a gun cycle"));
+        for _ in 0..100 {
+            let events = execution.firearm_mut().map(|(c, _)| c.step(&Default::default(), input)).unwrap_or_default();
+            assert!(events.is_empty(), "no wind-up, refire or reload can survive grenade dispatch");
+            assert!(!execution.reloading());
+        }
+    }
+
+    #[test]
+    fn held_grenade_execution_has_no_firearm_for_initial_or_refire_updates() {
+        let grenade = WeaponStats { anim_type: Some(crate::npc_grenades::GRENADE_ANIM.into()), automatic: true, clip_size: 2, ..Default::default() };
+        let mut execution = RangedAttack::for_weapon(&grenade, None, || panic!("no gun cycle for a held grenade"));
+        for trigger in [false, true, true, false, true] {
+            let events = execution.firearm_mut().map(|(c, _)| c.step(&Default::default(), Input { trigger, reload: true, dt: 30.0, carried: 100 })).unwrap_or_default();
+            assert!(events.is_empty());
+        }
+        // Returning to a firearm starts a real gun cycle, with no stale grenade state.
+        let gun = WeaponStats { clip_size: 2, ..Default::default() };
+        execution = RangedAttack::for_weapon(&gun, Some(execution), || ranged_cycle(&gun));
+        let (cycle, _) = execution.firearm_mut().unwrap();
+        assert!(cycle.step(&Default::default(), Input { trigger: true, dt: 0.3, carried: 20, ..Default::default() }).iter().any(|e| matches!(e, Event::Fired { .. })));
+    }
+
+    #[test]
+    fn firearm_execution_retains_its_cycle_on_target_changes_and_other_throw_types_are_unchanged() {
+        let gun = WeaponStats { clip_size: 2, ..Default::default() };
+        let mut cycle = ranged_cycle(&gun);
+        cycle.magazine = 1;
+        cycle.phase = GunPhase::Reloading { left: 0.5 };
+        let mut execution = RangedAttack::for_weapon(&gun, Some(RangedAttack::Firearm { cycle, reload_timed: true }), || panic!("same firearm keeps its cycle"));
+        assert!(execution.reloading());
+        let (cycle, timed) = execution.firearm_mut().unwrap();
+        assert_eq!(cycle.magazine, 1);
+        assert!(*timed);
+        assert!(cycle.step(&Default::default(), Input { dt: 1.0, carried: 20, ..Default::default() }).iter().any(|e| matches!(e, Event::Reloaded { .. })));
+        // #1498 deliberately does not redefine mines, other throws or launchers.
+        for name in ["Land Mine (1 Hand)", "Mine Drop (1 Hand)", "Thrown (1 Hand)", "Launcher (2 Hand)"] {
+            let ws = WeaponStats { anim_type: Some(name.into()), clip_size: 2, ..Default::default() };
+            assert!(RangedAttack::for_weapon(&ws, None, || ranged_cycle(&ws)).firearm_mut().is_some());
+        }
+    }
 
     #[test]
     fn embedded_weapon_node_by_name() {
