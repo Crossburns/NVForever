@@ -222,6 +222,14 @@ impl FontKit<'_> {
         move |font: f64, text: &str, wrap: Option<f64>| faces.get(&font_number(font)).map_or((0.0, 0.0), |face| measure_written(&face.font, font_number(font), text, wrap))
     }
 
+    /// A picture's own file's size in texels, read once by the one who asks (the tutorial
+    /// menu's symbol, `super::tutorial_menu::write_symbol`).
+    pub(crate) fn picture_size(&mut self, path: &str) -> Option<Vec2> {
+        let bc = bc_supported(self.formats.as_deref());
+        let data = self.data.as_deref();
+        Pictures::load(data).own_sized(path, data, &mut self.images, bc).map(|(_, _, size)| size)
+    }
+
     /// Whether the fonts of `tiles` are all the game's own (read, not stand-ins), loading
     /// them; false without game data or without tiles.
     fn game_fonts(&mut self, ui: &Ui, tiles: &[TileId]) -> bool {
@@ -865,6 +873,7 @@ pub(crate) struct MenusDrawn {
     /// The start menu's mod tiles on the pause menu's Mods page (T11).
     start: Drawn,
     sleep_wait: Drawn,
+    tutorial: Drawn,
 }
 
 /// The stacking levels of the menus drawn from tiles besides the HUD: their hand-built
@@ -874,6 +883,9 @@ pub const MESSAGE_Z: i32 = 108;
 pub const QUANTITY_Z: i32 = 101;
 /// T15b: the Wait / Sleep menu's, its hand-built drawing's 105 (`crate::wait`) [design].
 pub const SLEEP_WAIT_Z: i32 = 105;
+/// T15b: the tutorial menu's, over the other menus as its hand-built drawing is
+/// (`crate::tutorial_menu`) [design].
+pub const TUTORIAL_Z: i32 = 109;
 
 pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes) {
     let scale = view.windows.single().map_or(1.0, |w| w.height() / 960.0);
@@ -889,6 +901,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
         (super::menus::MESSAGE_MENU, game.is_some_and(|g| super::menus::message_tiled(switch.message, g)), MESSAGE_Z, &mut others.message),
         (super::menus::QUANTITY_MENU, game.is_some_and(|g| super::menus::quantity_tiled(switch.quantity, g, prompt_open)), QUANTITY_Z, &mut others.quantity),
         (super::wait_menu::SLEEP_WAIT_MENU, game.is_some_and(|g| super::wait_menu::tiled(switch.sleep_wait, g)), SLEEP_WAIT_Z, &mut others.sleep_wait),
+        (super::tutorial_menu::TUTORIAL_MENU, game.is_some_and(|g| super::tutorial_menu::tiled(switch.tutorial, g)), TUTORIAL_Z, &mut others.tutorial),
     ] {
         let ui = game.map(|g| &g.ui_tree);
         let menu = ui.filter(|_| on).and_then(|ui| ui.menu(name).map(|m| (ui, m)));
@@ -1378,6 +1391,23 @@ mod tests {
         assert_eq!(drawn[3].clip, Some(TileRect { left: 0.0, top: 0.0, width: 40.0, height: 40.0 }));
         assert_eq!(drawn[1].clip, None);
         assert_eq!(drawn[2].look, Look::Text { string: "x".into(), font: 1, wrap: None, alignment: Alignment::Left });
+    }
+
+    #[test]
+    fn a_clip_window_carries_to_the_pieces_only_once_turned_on() {
+        let mut ui = Ui::new();
+        let src = MemSource::default().with(
+            "m.xml",
+            r#"<menu name="M"><hotrect name="W"><x>5</x><y>6</y><width>40</width><height>30</height><clipwindow>&true;</clipwindow>
+                <text name="T"><string>x</string><y>-9</y><width>30</width><height>90</height></text></hotrect></menu>"#,
+        );
+        ui.load_menu(&src, "m.xml").unwrap();
+        ui.update();
+        let menu = ui.menu("M").unwrap();
+        let clip = |ui: &Ui| pieces(ui, menu, &plain, Select::Whole { kept: &[], strip: None }, true).0[0].clip;
+        assert_eq!(clip(&ui), None);
+        fnv_ui::input::mark_clip_windows(&mut ui, menu);
+        assert_eq!(clip(&ui), Some(TileRect { left: 5.0, top: 6.0, width: 40.0, height: 30.0 }));
     }
 
     #[test]

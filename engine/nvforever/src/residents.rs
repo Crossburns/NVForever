@@ -66,6 +66,8 @@ use nvf_play::RefVisual;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::f32::consts::FRAC_PI_4;
 
+mod sandbox_interrupt;
+
 /// Where the function catalogue is when `NVF_PLAY_SCRIPT_FUNCTIONS` is not set (as
 /// `nvf_play::script`).
 const DEFAULT_FUNCTIONS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/script/functions.json");
@@ -644,6 +646,8 @@ pub struct Standing {
 /// Everything but the game state the choice runs in.
 struct Core {
     ai: Ai,
+    /// Opt-in phase-gated #1497 regression aid; absent in ordinary runs.
+    sandbox_interrupt: Option<sandbox_interrupt::Probe>,
     list: Vec<Resident>,
     known: HashSet<u32>,
     /// Cells whose actors were handed over (`all`).
@@ -908,6 +912,7 @@ impl Residents {
         let mut core = Core {
             // Test aid: conversations between NPCs anywhere in the loaded area.
             ai: Ai::new(AiConfig { walk_speed, chats_anywhere: std::env::var("NVF_PLAY_TEST_CHATS_ANYWHERE").is_ok_and(|v| v == "1"), find_buying: std::env::var("NVF_PLAY_TEST_FIND_BUYING").is_ok_and(|v| v == "1"), ..AiConfig::default() }),
+            sandbox_interrupt: sandbox_interrupt::Probe::from_env(refs),
             list: Vec::new(),
             known: HashSet::new(),
             cells_seen: HashSet::new(),
@@ -1794,6 +1799,10 @@ impl Core {
             // goal and walk; path searches are `nav::find_path` inside).
             let _span = info_span!("ai::update_moved").entered();
             self.ai.update_moved(game, &nav.graph, dt, &mut mover);
+        }
+        if let Some(mut probe) = self.sandbox_interrupt.take() {
+            probe.tick(self, game, phys.as_deref());
+            self.sandbox_interrupt = Some(probe);
         }
         // Knockbacks push their actors, and attack clips that travel carry theirs, over
         // their walks.

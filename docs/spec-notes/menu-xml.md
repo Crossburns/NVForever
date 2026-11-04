@@ -285,6 +285,22 @@ docs/handoff/ui-tile-tree-tasks.md]: `x` `y` `width` `height` `depth` `alpha` `v
   child cannot override a hidden parent.
 - [hypothesis] True `clips` crops children to this tile's rectangle. Nested ancestor
   clips intersect; a disjoint intersection is empty. The tile's own box is unchanged.
+- [observed] True `clipwindow` crops a tile's descendants to its rectangle in the
+  drawing: the tutorial menu's scrolled text stops part way through a line at the column's
+  top and bottom edges (private capture hud_tutorial_more, 1280 x 720, shots
+  tutorial__scroll_bottom and tutorial__scroll_arrow). [hypothesis] The same for the pointer
+  (`fnv_ui::input::clips_children`): `list_box.xml`'s highlight box takes its `clips` from
+  its parent's `clipwindow` [documented: the file]; nothing captured says so (observer
+  check 82). It stays apart from scrolling: nothing here moves a tile; a file moves its
+  text by the `y` it writes. [documented: the vanilla files] It is true in the book,
+  lockpick, map, stats, credits, load, save, trait and tutorial menus and in the prefabs
+  `item_listing`, `list_box` and `load_and_save_menus`, so in every menu that includes
+  them, the message box and the start menu among them; not in the HUD's files.
+  [design] Mods' tiles carry it too (MCM's `ModList.xml`), and the default game draws
+  mods' HUD tiles, so it is read only where a menu's model turned it on
+  (`fnv_ui::input::mark_clip_windows`, the private trait `_NVFClipWindow`): today the
+  tutorial menu alone, while drawn from tiles. Off, every menu lays out and takes the
+  pointer as before. Reading it everywhere is a follow-up, with the other menus' checks.
 - [design] `menu` and `hotrect` contribute layout to children but emit no drawing item;
   hotrect input is T8 (§3.2). `rect`, `image`, `text`, `nif`, `radial` and `window` retain
   distinct kinds; producing a layout item does not implement model or radial drawing.
@@ -466,8 +482,8 @@ stands unchanged: every picture stretched, the shared atlas only.
   is read once and kept (`interface::Pictures::locate`); [hypothesis] its atlas textures
   stand in the index's folder, as the shared one's. [design] A picture the named index
   lacks is looked up in the shared index, then as its own file.
-- [design] `clips` as §3.1.2, a clipping node; the HUD's own clip tiles (`compass_icon`)
-  clip their children only.
+- [design] `clips` as §3.1.2, a clipping node, and `clipwindow` where §3.1.1 reads it;
+  the HUD's own clip tiles (`compass_icon`) clip their children only.
 - [hypothesis, T12e] A text's `zoom` scales neither its glyphs nor its laid-out box: the
   Hardcore words read zoom 75 [observed: private job hud_hardcore2 hc0-hc11] and their
   tiles' widths are font 7's at 100 (45 for "H20", as `HitPoints`' "HP" 30) [observed:
@@ -523,7 +539,8 @@ Shiftclicked, Ref, Input, Hotrect, Wheelmoved pages and "Tutorial: Understanding
   made a target goes to the nearest tile above it whose own `target` is true.
 - [hypothesis] Boxes are the layout's (§3.1.1): `x`/`y` added to the parent's top-left,
   `width`/`height`, a text measured when it has no size and moved by its `justify`,
-  `clips` cropping the children; `locus` is not read, as the layout does not.
+  `clips` (or a `clipwindow` turned on, §3.1.1) cropping the children; `locus` is not
+  read, as the layout does not.
 - [documented: tutorial, the higher `depth` is drawn on top] [hypothesis] Where targets
   overlap, the highest summed `depth` takes the pointer, a tie going to the one drawn
   later; a menu opened later is over an earlier one whatever their depths. Observer

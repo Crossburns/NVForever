@@ -246,6 +246,10 @@ the spec it links to.
    roof right at the head shade the arms. If you rule it out, the light goes (12.4 →
    about 11.4 ms there) and the arms take only the sun's shadows from past the body.
    See [player-body.md §1.6](design/player-body.md).
+45. **A second tutorial message: pages or replace.** NVForever keeps each message
+    `ShowTutorialMenu` shows as a page, with a count, Next and Previous, so none goes
+    unread. In the original the second replaces the first, with none of those. Keep the pages,
+    or follow the original? ([tutorial-menu §4](spec-notes/tutorial-menu.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

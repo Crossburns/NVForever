@@ -50,6 +50,9 @@ pub struct TileMenus {
     /// `SleepWaitMenu` (T15b): the Wait / Sleep menu from its file, the hand-built menu
     /// (`crate::wait`) not spawned (`super::wait_menu`).
     pub sleep_wait: bool,
+    /// `TutorialMenu` (T15b): the tutorial menu from its file, the hand-built drawing
+    /// (`crate::tutorial_menu`) not spawned (`super::tutorial_menu`).
+    pub tutorial: bool,
 }
 
 impl TileMenus {
@@ -69,6 +72,8 @@ impl TileMenus {
                 menus.start = true;
             } else if name.eq_ignore_ascii_case(super::wait_menu::SLEEP_WAIT_MENU) {
                 menus.sleep_wait = true;
+            } else if name.eq_ignore_ascii_case(super::tutorial_menu::TUTORIAL_MENU) {
+                menus.tutorial = true;
             } else {
                 other.push(name.to_string());
             }
@@ -105,11 +110,11 @@ pub(crate) fn setup(app: &mut App) {
 
 impl TileMenus {
     /// The menus the switch acts on, in its order.
-    pub const NAMES: [&str; 5] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::mods::START_MENU];
+    pub const NAMES: [&str; 6] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::tutorial_menu::TUTORIAL_MENU, super::mods::START_MENU];
 
     /// The start-up line's end: the menus drawn from tiles, or none.
     pub fn line(&self) -> String {
-        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.start]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
+        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.tutorial, self.start]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
         if on.is_empty() {
             "no menu drawn from tiles".into()
         } else {
@@ -477,11 +482,15 @@ mod tests {
         assert_eq!(TileMenus::default().line(), "no menu drawn from tiles");
         // T15a: the message box and the prompt, each on its own.
         let (menus, other) = TileMenus::parse("messagemenu,QuantityMenu, SleepWaitMenu");
-        assert_eq!(menus, TileMenus { hud: false, message: true, quantity: true, sleep_wait: true, start: false });
+        assert_eq!(menus, TileMenus { hud: false, message: true, quantity: true, sleep_wait: true, tutorial: false, start: false });
         assert!(other.is_empty());
         assert_eq!(menus.line(), "MessageMenu, QuantityMenu, SleepWaitMenu drawn from tiles");
-        // T15b: the Wait / Sleep menu; a menu not built yet stays a name not acted on.
-        assert_eq!(TileMenus::parse("sleepwaitmenu, TutorialMenu"), (TileMenus { sleep_wait: true, ..TileMenus::default() }, vec!["TutorialMenu".to_string()]));
+        // T15b: the Wait / Sleep and tutorial menus; a menu not built yet stays a name not
+        // acted on.
+        let t15b = TileMenus { sleep_wait: true, tutorial: true, ..TileMenus::default() };
+        assert_eq!(TileMenus::parse("sleepwaitmenu, TutorialMenu, InventoryMenu"), (t15b, vec!["InventoryMenu".to_string()]));
+        assert_eq!(t15b.line(), "SleepWaitMenu, TutorialMenu drawn from tiles");
+        assert!(!TileMenus::parse("sleepwaitmenu").0.tutorial, "off unless named");
         assert_eq!(TileMenus::parse("QuantityMenu").0, TileMenus { quantity: true, ..TileMenus::default() });
     }
 
