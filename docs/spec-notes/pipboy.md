@@ -349,14 +349,30 @@ is the top left 85 × 92 of `head.dds`) [observed].
 
 The contract for the first slice of issue #1513 (`[UI] TileMenus=StatsMenu`,
 `tiles/stats_menu.rs`): what code writes into the tree of `menus\main\stats_menu.xml` for page 1
-to show. **Every write below is our design**, built but not yet compared with the original or run
-here at the time of writing, and no finding about the original. Where runtime expressions place or show something, this note says only "the file works
+to show. **Implemented, not verified**: every write below is our design and no finding about the
+original, and no comparison with the original has closed it. Where runtime expressions place or show something, this note says only "the file works
 this out at run time"; numbers appear only where they explain an incompatibility. Sources, as
 tagged: the tree by `fnvtool ui tree` (values, tile names, template names); the file and its
 includes by `fnvtool bsa extract`, read privately; and a private copy of those files laid over
 Data with `--overlay` and read back with `fnvtool ui tree`, called "the overlay". What the overlay
 shows is that authored overlay under **NVForever's evaluator**: it is no reading of the original
 and does not check the evaluator. Nothing here was run in the game. `NOGLOW_BRANCH` is empty.
+
+**What the original was seen to do** [observed: private job pipboy_special_a, the original
+running at 1280 x 720, the Pip-Boy open on this page; one character, one window size]:
+
+- `screen()` is 1706.67 x 960, its converter 1.33 and the line thickness 2.67, which agrees with
+  what the shared tree holds here (960 / window height).
+- The list stands at x 35.33 and is 325 x 468, so 52 a row. The display stands at x 360.33, 544.67
+  wide. The LVL card is at x 270, the XP card at x 690, and the tail line at y 652.
+- The root's `user0` reads 0 on opening, then 1. A click on id 1 sets it by `ClickMenuButton`.
+- The root's `user5` to `user7` read as text. `user8` reads empty on a level 1 character, while the
+  LVL card shows on screen. **How `user8` came to be empty is open**: this slice writes the level
+  there [design], which may not be what the original does.
+- A row's tile carries its AVIF name and id -1, read with `GetActiveUIComponentName` under the
+  pointer. This slice gives its rows both, and knows them itself by actor value [design].
+
+This is what was read, not yet compared with what this slice draws; other sizes are not covered.
 
 Three different `user0`s are in play: the root's picks the page, the list's says a row is
 marked, a row's shows its mark.
@@ -408,13 +424,13 @@ has the children `ListItemText`, `stats_list_template_number` and `stats_list_te
 | `string` | the name | `Row::name` (AVIF FULL) |
 | `user1` | the value as text, or the template's -1 for none | `Row::value` (`model::whole`). "--" without the scripts' game: a text value keeps it (`fnv_ui::Value::text`) though it compares as 0 (`Value::num`), so a numeric write would lose it |
 | `user0`, `user2` | whether the mark shows, and the mark | `Row::mark` (`model::modified_mark`) |
-| `height` | a height the template gives is kept; otherwise the text's measured height + the row's `_VerticalSpacing`, or 20 where that reads 0 [hypothesis: the prefab's comment, and that this list spaces its rows as a container's does; not known here] | the row's text as measured |
+| `height` | a height the template gives is kept; otherwise the text's measured height + the row's `_VerticalSpacing`, or 20 where that reads 0 [hypothesis: the prefab's comment; the 52 a row above agrees at one size, font 2's tallest glyph and 20] | the row's text as measured |
 | `_y` | the height of the rows above | the same |
 
 Everything else about a row, the list and the highlight box: the file works this out at run time.
 The hand-built constants are not transplanted. The template gives a row no `id` and no `xup` or
-`xdown` [observed: by fnvtool ui tree]; how the original tells a row's click is not known, and
-this slice knows a row by the tile it made and its `listindex` [design]. A tab's prefab has its
+`xdown` [observed: by fnvtool ui tree]; the running original's rows have the id and name above, and
+how its code tells a row's click is not known. A tab's prefab has its
 own hover sound and `pipboy/sounds`' `TabHovered` is ours: one must stay silent [design].
 
 **The display**, `stats_display_rect`: place and size, the file works this out at run time.
@@ -436,11 +452,10 @@ written [design].
 **Ids** [observed: the vanilla files, by fnvtool ui tree, `id`]: `stats_tailline_status` 0,
 `stats_tailline_SPECIAL` 1, `stats_tailline_skills` 2, `stats_tailline_perks` 3,
 `stats_tailline_general` 4. Each tab's `_selected` asks whether the root's `user0` equals the same
-number, and nothing in the file writes `user0`, so a click on id n having code set `user0` to n is
-a [hypothesis]. The hand-built `PipBoyInput::Tab(i)` uses the same numbers (`tab_line` in
+number, and nothing in the file writes `user0`: a click on id 1 setting it was seen, above; the same
+for the other ids is a [hypothesis]. The hand-built `PipBoyInput::Tab(i)` uses the same numbers (`tab_line` in
 `frame.rs`). Also `stats_special_container` 6, `stats_icon` 25, `stats_description_rect` 26,
 `stats_icon_badge` 52, `stats_title` 39, the cards 40 to 43; the scroll pieces are all `&generic;`.
-The name a row's tile has in the original is not known; capture.
 
 **The title**: the `string` of `stats_title` is an entity without its closing `;`, which the
 reader keeps as plain text (menu-xml.md §2.4) [observed: the vanilla files, by fnvtool ui tree].
@@ -463,9 +478,9 @@ not written into `screen()`, because other menus share the tree [design].
   changes the shared screen traits and the HUD's hotrect-alpha handling, as the other T15 menus do;
   with another T15 switch already on, adding it changes no gate. This effect is tested and stated,
   not isolated.
-- 960 / window height (`resolution_converter`) is what the shared tree holds. Which converter the
-  original has with the Pip-Boy open: not known; capture. Lines may differ from the hand-built
-  `THICK` of 2 behind the switch.
+- 960 / window height (`resolution_converter`) is what the shared tree holds, and the original
+  reads the same with the Pip-Boy open, above. So lines differ from the hand-built `THICK` of 2
+  behind the switch.
 
 **Hand-built value, tile target, what must stay** [design: values come from `Snapshot` and
 `StatsView`; a writer works no figure out again]:
@@ -479,15 +494,15 @@ not written into `screen()`, because other menus share the tree [design].
 | The page's background and scanlines, on the device; neither in the screen menu (`frame::draw`, screen-menu.md) | none: `background_layout` stays hidden in both frames, so the tiles are page content only; the file has no scanline tile, so they stay the shell's, with the scanlines over the tiles | yes |
 | Keys, wheel; A/D [design: `pipboy::keys`]; the controller's D-pad [design: owner 2026-11-02] | none: `stats`, `pipboy.rs` | yes `[owner 2026-11-02]` |
 | The words "S.P.E.C.I.A.L." and "STATS" (`Page::tabs`, `Page::title`) | the tab reads `sStatsSpecial` (`fnv_ui::strings::BUILT_IN`'s "SPECIAL" unless a plugin sets it), left alone: code does not overwrite a plugin's or the built-in label | open: a listed difference behind the switch until the maintainer answers the wording question |
-| Tabs, cards, row pitch (`tab_boxes`, `heading`, `card`, `list`) | the file works these out at run time | not a choice; may differ behind the switch. Which is right: not known; capture. The original's comparison at 1280 x 720 lists the differences |
+| Tabs, cards, row pitch (`tab_boxes`, `heading`, `card`, `list`) | the file works these out at run time | not a choice; may differ behind the switch. The places read above are the original's; the comparison at 1280 x 720 lists the differences |
 | The log lines and `NVF_PLAY_TEST_PIPBOY_STATS` | none | yes: the smoke scenarios read them; `stats::prepare` keeps them whichever view draws |
 
-**Not known; capture**: the converter and thickness with the Pip-Boy open; a row's name, `id`,
-`_selected`, `height` and `_y`; the list's `height`, `_scroll_delta` and scroll bar count; how a
-tab click reaches `user0`; `stats_icon_badge`; the description scroll bar's count; the cards' and
-tabs' places; whether a tab's words and the title show at all before code writes them. None of
-these stops a first working slice with a complete fallback; they cannot be called verified when
-parity is declared.
+**Not known; capture**: how `user8` came to be empty, and where the LVL card's value then comes
+from; a row's `_selected`; the list's `_scroll_delta` and scroll bar count; `stats_icon_badge`; the
+description scroll bar's count; whether the other tabs' ids act as id 1's does; whether a tab's
+words and the title show at all before code writes them; any of the above at other window sizes.
+None of these stops a first working slice with a complete fallback; they cannot be called verified
+when parity is declared.
 
 ### 5.3 DATA
 
