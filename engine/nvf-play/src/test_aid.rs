@@ -72,6 +72,10 @@
 //!   `mouse-right` / `mouse-middle`, or a notch of the wheel (`wheel-up`, `wheel-down`).
 //!   Unlike `NVF_PLAY_TEST_CONTROL` it tests the key's path, not just what it does.
 //!
+//! - `NVF_PLAY_TEST_MELEE_KNOCKBACK=<target FormID hex>:<x>:<y>:<z>`: one player power blow
+//!   on one actor put that far from the player and left standing, gated on readiness
+//!   ([`melee_knockback`], with nvforever `residents::melee_knockback`).
+//!
 //! The aids that stand in for the keys and the mouse (`NVF_PLAY_TEST_MOVE`,
 //! `NVF_PLAY_TEST_CONTROL`'s presses, `NVF_PLAY_TEST_LOOK`, `NVF_PLAY_TEST_ACTIVATE`) are
 //! held by a script's `DisablePlayerControls` like the keys and the mouse
@@ -114,6 +118,8 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use fnv_sim::FormId;
 use std::path::{Path, PathBuf};
+
+pub mod melee_knockback;
 
 /// How far in front of the reference `NVF_PLAY_TEST_FACE` puts the feet (game units;
 /// inside the activation reach).
@@ -447,6 +453,7 @@ pub(crate) fn setup(app: &mut App) {
             Err(e) => warn!("{name}: {e}"),
         }
     }
+    melee_knockback::setup(app);
     let var = |name: &str| std::env::var(name).ok();
     if let Some(v) = var("NVF_PLAY_TEST_KEYS") {
         match timed(&v).and_then(|items| items.into_iter().map(|(s, r)| real_input(r).map(|k| (s, k))).collect()) {
@@ -622,10 +629,11 @@ fn aim_at_nearest_actor(phys: &PhysState, player: &mut Player, cross: Option<&Cr
     info!("test aid: aiming at actor {id:08X} ({:.0} units away{line})", d2(c).sqrt());
 }
 
-/// Aim at the collision body of a placed object (its first body's centre of mass).
+/// Aim at an actor's aim point (`PhysWorld::actor_aim_point`), else at the collision body
+/// of a placed object (its first body's centre of mass).
 fn aim_at_ref(phys: &PhysState, player: &mut Player, cross: Option<&Crosshair>, id: u32) {
-    let Some(c) = phys.world.ref_center(id) else {
-        warn!("test aid: aimref: {id:08X} has no collision body");
+    let Some(c) = phys.world.actor_aim_point(id).or_else(|| phys.world.ref_center(id)) else {
+        warn!("test aid: aimref: {id:08X} has no hit volume or collision body");
         return;
     };
     let eye = player.eye();

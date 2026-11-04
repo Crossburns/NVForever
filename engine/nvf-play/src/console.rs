@@ -164,7 +164,7 @@ pub fn set_vel(id: u32, axis: char, speed: f32, phys: Option<&mut crate::phys::P
                 (false, _) => "SetVel: 0 along the ground pushes nothing".into(),
                 (true, None) => "SetVel: no pushes in this run".into(),
                 (true, Some(k)) => {
-                    k.write(crate::combat::Knockback { form_id: id, dir, speed: speed.abs(), secs: SET_VEL_SECS });
+                    k.write(crate::combat::Knockback { form_id: id, dir, speed: speed.abs(), secs: SET_VEL_SECS, attacker: 0, blow: 0, power: false });
                     format!("SetVel: {who} pushed along {axis} at {speed:.0} units/s, slowing to rest over {SET_VEL_SECS} s")
                 }
             }

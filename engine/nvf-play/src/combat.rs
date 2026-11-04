@@ -508,6 +508,13 @@ pub struct Knockback {
     pub dir: [f32; 2],
     pub speed: f32,
     pub secs: f32,
+    /// Who struck the blow (a reference's FormID); 0: no blow (`SetVel`).
+    pub attacker: u32,
+    /// The blow's number in this run, from 1 in the order they land; 0: no blow. Ties a
+    /// knockback's log lines to the blow.
+    pub blow: u32,
+    /// The blow was a power attack.
+    pub power: bool,
 }
 
 impl Knockback {
@@ -516,7 +523,12 @@ impl Knockback {
     /// or no force.
     pub fn of(form_id: u32, dir: V3, force: f32, secs: f32) -> Option<Knockback> {
         let len = dir[0].hypot(dir[1]);
-        (len > 1e-3 && force > 0.0 && secs > 0.0).then(|| Knockback { form_id, dir: [dir[0] / len, dir[1] / len], speed: force, secs })
+        (len > 1e-3 && force > 0.0 && secs > 0.0).then(|| Knockback { form_id, dir: [dir[0] / len, dir[1] / len], speed: force, secs, attacker: 0, blow: 0, power: false })
+    }
+
+    /// This knockback comes of blow number `blow` by `attacker`.
+    pub fn by(self, attacker: FormId, blow: u32, power: bool) -> Knockback {
+        Knockback { attacker: attacker.0, blow, power, ..self }
     }
 
     /// How far it pushes in all, game units.
@@ -999,6 +1011,8 @@ pub struct Combat {
     melee: bool,
     /// The melee swings (step C6).
     swings: Melee,
+    /// Blows that have knocked someone back so far ([`Knockback::blow`]).
+    blows: u32,
     /// Explosions to set off this frame (impacts, detonations, destruction stages), with
     /// who set each off.
     boom: Vec<(FormId, V3, Option<Cause>)>,
@@ -1181,6 +1195,18 @@ impl Combat {
 
     /// The figures of the player's weapon `id`: the equipped one's with its mods on
     /// (`WeaponStats::modded`), any other's as the record has them.
+    /// The next blow's number ([`Knockback::blow`]).
+    fn next_blow(&mut self) -> u32 {
+        self.blows += 1;
+        self.blows
+    }
+
+    /// For the melee knockback test aid: whether the player's weapon is melee or the fists,
+    /// and the swing playing, if any: whether it is a power attack.
+    pub(crate) fn melee_swing(&self) -> (bool, Option<bool>) {
+        (self.melee, self.swings.swing.as_ref().map(|s| s.power.is_some()))
+    }
+
     pub fn player_stats(&self, id: FormId) -> Option<WeaponStats> {
         let w = self.forms.weapons.get(&id)?;
         Some(if self.equipped.flatten() == Some(id) && self.mods != 0 { w.modded(self.mods) } else { w.clone() })
@@ -1897,6 +1923,7 @@ fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
         self_ammo: false,
         melee: false,
         swings: Melee::default(),
+        blows: 0,
         boom: Vec::new(),
         debris: Vec::new(),
         cycle: None,
@@ -3613,7 +3640,7 @@ fn melee(
             // A living actor struck is pushed back by the knockback (module notes).
             if r.as_ref().is_some_and(|r| !r.died && !r.immune && !r.knocked_out) {
                 if let Some(k) = Knockback::of(target.0, player.look_dir(), push, c.rules.knockback_time) {
-                    knocks.write(k);
+                    knocks.write(k.by(FormId::PLAYER_REF, c.next_blow(), power.is_some()));
                 }
             }
             if r.as_ref().is_some_and(|r| !r.died && !r.immune) {
@@ -3954,7 +3981,7 @@ fn actor_attacks(
             let agility = actor_av(script.as_deref_mut(), &mut sim, b.target, fnv_game::actor_values::AGILITY).unwrap_or(5.0);
             let force = damage::knockback_force(&c.rules, d.dealt, agility);
             if let Some(k) = Knockback::of(b.target.0, b.dir, force, c.rules.knockback_time) {
-                knocks.write(k);
+                knocks.write(k.by(b.attacker, c.next_blow(), b.anim.is_some()));
             }
         }
         if b.target != FormId::PLAYER_REF {

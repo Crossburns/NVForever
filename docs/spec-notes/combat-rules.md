@@ -602,10 +602,31 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   - **Blocked and 0-damage blows** push too: the formula's force with no damage (about 30,
     15 units) [documented formula; design to apply it to a blocked blow,
     owner-review item 37].
-  - Logged: `knockback: <id> knocked back at <v> units/s for <s> s (<d> units)` and, at
-    its end, `knockback: … pushed back <n> units of <d>, from … to …` (the player:
+  - **A second blow** during a knockback replaces it [design]. The replaced one is logged
+    as interrupted, and the new one is measured from where the feet are then, so a report
+    never divides several blows' travel by the last one's request [design: #1386].
+  - Logged, each line tied to its blow (`<tag>` = `blow=<n> attacker=<id> target=<id>
+    power=<0|1>`; `<n>` counts the blows that knock someone back in this run; `SetVel`'s
+    pushes have blow 0 and attacker 0): `knockback: <tag> knocked back at <v> units/s for
+    <s> s (<d> units)`; at its end, `knockback: <tag> alive=<0|1> moved=<0|1> walked=<0|1>
+    pushed back <n> units of <d> (<p> %), from … to …, frames=<n> secs=<s> travel=<t>
+    steps=<n>`; replaced, `knockback: <tag> interrupted by blow=<n> …` (the player:
     `player: knocked back …`, `player: knockback done: …`); `knockback summary` at exit.
-    Smoke `melee-knockback`.
+  - **What "pushed back" measures** [design: `residents/knock_run.rs`]: the net ground
+    distance between the feet when the blow began and the feet when its time is up. It is
+    not the push alone: a walk or MoveTo moves the feet too, and a death can stop it short.
+    `moved` (a script moved the actor), `walked` (it walked, or an attack clip carried it)
+    and `alive` (0 for dead or out cold) say when something else went into it. `frames`,
+    `secs` and `travel` are what the frames asked for, `steps` the fixed physics steps
+    taken meanwhile, to compare frame rates: the travel is integrated with the frame's
+    time and consumed by later fixed steps, and whether that changes the distance
+    delivered is unmeasured [hypothesis: #1386].
+  - Smoke `melee-knockback` isolates one player power blow
+    (`NVF_PLAY_TEST_MELEE_KNOCKBACK`, nvf-play `test_aid/melee_knockback.rs`, nvforever
+    `residents/melee_knockback.rs`): AI off on the target and the loaded area's actors,
+    then one MoveTo, a blow gated on readiness, and the report tied to that blow. A
+    standing actor has no character until its knockback makes one [design], so "settled"
+    is its feet still on collision with its hit volume there.
 - **Blocking.** `damage::blocked` takes `block` (60 %) off a melee hit taken while
   blocking [design]. Nothing attacks the player yet; NPC melee (Layer 6 AI) will use it.
 - **The body.** A power attack plays `{prefix}attackpower.kf` (`1hmattackpower.kf`,

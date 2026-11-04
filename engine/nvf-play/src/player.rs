@@ -1070,6 +1070,7 @@ fn step(
         }
         let p = &mut *phys;
         let n = p.stepper.advance(&p.world.params, time.delta_secs());
+        p.steps += u64::from(n);
         let body = p.player.as_ref().map(|c| (at, c.params.radius, c.params.height));
         for _ in 0..n {
             let _tick = info_span!("phys::tick").entered();
@@ -1100,6 +1101,7 @@ fn step(
         let p = &mut *phys;
         let dt = p.world.params.dt;
         let n = p.stepper.advance(&p.world.params, time.delta_secs());
+        p.steps += u64::from(n);
         let v = swim_velocity(&intent, player.heading, player.pitch, *speeds);
         intent.jump = false;
         let c = p.player.as_mut().expect("placed");
@@ -1151,6 +1153,7 @@ fn step(
     let p = &mut *phys;
     let dt = p.world.params.dt;
     let n = p.stepper.advance(&p.world.params, time.delta_secs());
+    p.steps += u64::from(n);
     let c = p.player.as_mut().expect("placed");
     // The clip's travel owed, spread over this frame's steps (none: kept for the next).
     let carry = if n > 0 { lunge.owed.map(|o| o / (n as f32 * dt)) } else { [0.0; 2] };
