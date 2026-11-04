@@ -168,6 +168,16 @@ values in interface units; the message 0x0007235B]:
   light it leaves 0.24^(1/2.2) = 0.52, which fits ours, so 0.75 to 0.76 cannot close that gap
   [hypothesis: NVForever's UI blends in linear light, the original in display values]. For
   black, an alpha of 1 - (1 - a)^2.2 would give the same display values; not done.
+- **The world behind the menu** is blurred in the original, the menu itself sharp [observed:
+  shot 017 of hud_tutorial_more, 1280 x 720, private]. So while the menu is drawn from its tiles
+  the world has the image space's blur (image-modifiers.md §5), radius 3 and on and off at once,
+  as behind the wait menu [design: a shot shows that it is blurred, not its radius or timing].
+  It follows the drawing's own decision (`tiles::menus::TileMenuBlur`, written by `tiles::draw`):
+  a first frame still drawn by hand, a fallback and the switch off have none, and the hand-built
+  drawing stays as it was. Over the Pip-Boy the stronger of the two counts, its near depth stays
+  sharp, and the close leaves its blur (smoke `tiles-tutorial`, the shots
+  `tiles_tutorial_over_pipboy` and `_closed`). The world is not dimmed for this and the backing
+  is untouched: the gap the previous points measure is a separate question.
 - **The words after the symbol and the key hints** are `&-sVDSGManual;` and `&-sPCMenuHint*;`
   [documented], which no plugin of the test load order defines: no record in FalloutNV.esm, the nine
   add-ons or the two test plugins [observed: `fnvtool esm decode --edid`]. They read
