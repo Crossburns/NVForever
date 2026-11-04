@@ -926,9 +926,9 @@ mod tests {
               <image name="LUM_SelectionIcon"/>
               <rect name="LUM_SelectionInfoRect"><x>400</x><y>100</y>
                 <hotrect name="TM_DescriptionBox"><y>10</y><height>100</height><width>200</width><clipwindow>&true;</clipwindow>
-                  <_text_top><copy>3</copy><sub src="child(TM_DescriptionScrollbar)" trait="_moved"/></_text_top>
+                  <_moved><add src="child(TM_DescriptionScrollbar)" trait="_moved"/></_moved>
                   {text_bar}
-                  <text name="TM_DescriptionText"><wrapwidth>180</wrapwidth><y><add src="parent()" trait="_text_top"/></y></text>
+                  <text name="TM_DescriptionText"><wrapwidth>180</wrapwidth><y><copy>3</copy><sub src="parent()" trait="_moved"/></y></text>
                 </hotrect>
                 <text name="LUM_PointCounter"/></rect>
               <rect name="LUM_ButtonRect"><y>0</y><x>700</x>
