@@ -390,6 +390,12 @@ fn next_world_serial() -> u64 {
     WORLDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) << 32
 }
 
+/// The time globals [`World::set_global`] has to recognise, as the load order names them.
+struct TimeGlobalIds {
+    hour: Option<FormId>,
+    days_passed: Option<FormId>,
+}
+
 pub struct World<'a> {
     pub forms: &'a FormStore,
     pub placed: &'a RefTable,
@@ -399,6 +405,8 @@ pub struct World<'a> {
     globals: BTreeMap<FormId, f32>,
     /// The digits of the time globals their f32 cannot hold.
     fine_clock: clock::FineClock,
+    /// Resolved once as `set_global` is on the scripts' hot path; `forms` is not replaced after construction [design: nothing assigns `World::forms`].
+    time_global_ids: TimeGlobalIds,
     /// Unloaded cells and the GameDaysPassed at which they were unloaded.
     detached_cells: BTreeMap<FormId, f32>,
     /// Quest-item flags set at run time (`set_quest_object`); they replace the record's.
@@ -471,6 +479,7 @@ impl<'a> World<'a> {
             refs: BTreeMap::new(),
             globals: BTreeMap::new(),
             fine_clock: clock::FineClock::default(),
+            time_global_ids: TimeGlobalIds { hour: forms.by_edid(clock::GAME_HOUR), days_passed: forms.by_edid(clock::GAME_DAYS_PASSED) },
             detached_cells: BTreeMap::new(),
             quest_objects: BTreeMap::new(),
             leveled_added: BTreeMap::new(),
@@ -1505,9 +1514,9 @@ impl<'a> World<'a> {
         }
         self.globals.insert(id, value);
         // A write is the time now, even when it equals what the clock last stored.
-        if self.forms.by_edid(clock::GAME_HOUR) == Some(id) {
+        if self.time_global_ids.hour == Some(id) {
             self.fine_clock.forget_hour();
-        } else if self.forms.by_edid(clock::GAME_DAYS_PASSED) == Some(id) {
+        } else if self.time_global_ids.days_passed == Some(id) {
             self.fine_clock.forget_days_passed();
         }
         Ok(())
