@@ -313,14 +313,15 @@ impl Plugin for TutorialMenuPlugin {
 }
 
 /// Keys, the wheel and clicks of the open tutorial menu (before the frame's scripts run,
-/// `crate::script`): pages, scrolling, Close through `ScriptState::answer`.
+/// `crate::script`): pages, scrolling, Close through `ScriptState::answer`. A press on a
+/// hand-built button always counts: they stand only while they are what is on screen, and
+/// the tile input takes nothing until they have gone (`crate::tiles::input`) [design].
 pub fn keys(
     keys: Res<ButtonInput<KeyCode>>,
     (mut wheel, mut tiles): (MessageReader<MouseWheel>, MessageReader<TutorialInput>),
     clicks: Query<(&PointerState, &TmButton), Changed<PointerState>>,
     mut view: ResMut<TutorialView>,
     mut script: ResMut<ScriptState>,
-    switch: Option<Res<crate::tiles::vanilla::TileMenus>>,
 ) {
     use KeyCode::*;
     let n = pages(&script).len();
@@ -346,8 +347,6 @@ pub fn keys(
     if let Some(h) = hover.filter(|h| *h != view.hover) {
         view.hover = h;
     }
-    let tiled = script.rt.as_ref().is_some_and(|rt| crate::tiles::tutorial_menu::tiled(switch.as_ref().is_some_and(|s| s.tutorial), &rt.game));
-    let clicked = own_click(clicked, tiled);
     if keys.any_just_pressed([KeyA, ArrowRight]) || clicked == Some(TmButton::Next) {
         view.apply(n, Command::Next);
     } else if keys.any_just_pressed([KeyS, ArrowLeft]) || clicked == Some(TmButton::Previous) {
@@ -386,13 +385,6 @@ pub fn keys(
     if by != 0.0 {
         view.apply(n, Command::Scroll(by));
     }
-}
-
-/// The press on a hand-built button that counts. Drawn from tiles there is none: on the first
-/// such frame the buttons of the frame the menu opened still stand until [`draw`] takes them
-/// away, under the file's own, and the tile input has already taken the press [design].
-fn own_click(clicked: Option<TmButton>, tiled: bool) -> Option<TmButton> {
-    clicked.filter(|_| !tiled)
 }
 
 // ---- drawing -------------------------------------------------------------------------------
@@ -554,12 +546,6 @@ fn spawn_page(b: &mut ChildSpawnerCommands, c: &mut Ctx, l: &Layout, p: &Page, w
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_press_on_a_hand_built_button_counts_only_while_they_are_the_menu() {
-        assert_eq!(own_click(Some(TmButton::Next), false), Some(TmButton::Next));
-        assert_eq!(own_click(Some(TmButton::Next), true), None, "the tile input has this press");
-    }
 
     #[test]
     fn the_marks_become_paragraphs() {

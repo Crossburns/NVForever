@@ -2236,6 +2236,52 @@ pub fn asks_nothing(buttons: usize) -> bool {
 }
 
 #[cfg(test)]
+impl ScriptState {
+    /// A runtime over an empty load order, for tests of what works the open menu: nothing
+    /// has run, no menu is open.
+    pub(crate) fn over_no_plugins() -> ScriptState {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+        let lo = fnv_esm::LoadOrder::new(&[]).unwrap();
+        let schema = fnv_esm::Schema::load_dir(root.join("fnv")).unwrap();
+        let functions = root.join("script/functions.json");
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&functions).unwrap()).unwrap();
+        let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(fnv_sim::FormStore::build(&lo, &schema)));
+        let refs: &'static RefTable = Box::leak(Box::new(RefTable::default()));
+        let data: &'static GameData = Box::leak(Box::new(GameData::build(&lo, &schema, FunctionTable::load(&functions).unwrap(), &json, refs)));
+        let game = Game::new(data, World::new(forms, refs, fnv_sim::SimConfig::default()), GameConfig::default());
+        let rt = Runtime {
+            game,
+            player_cell: None,
+            inventory: InvView::default(),
+            created_seen: None,
+            marked: BTreeSet::new(),
+            skip: BTreeSet::new(),
+            closing: None,
+            opening_pending: false,
+            wake_talk: None,
+            start: GameStart::default(),
+            location: None,
+            frozen_frames: 0,
+            triggers: Default::default(),
+            children: HashMap::new(),
+            started: Instant::now(),
+            ticked: false,
+            stats: TickStats::default(),
+            aid: crate::aid::AidStats::default(),
+            activate_again: None,
+            choices_passed: None,
+            activate_pick: None,
+        };
+        ScriptState { loader: None, rt: Some(rt), off: None, trace: None, aids: Vec::new(), aids_started: false, gates: HashMap::new(), auto_close: None, no_messages: false, on_screen: None, walks: Vec::new(), new_game: false, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None }
+    }
+
+    /// The player answered the open menu: it closes after this frame's scripts.
+    pub(crate) fn answered(&self) -> bool {
+        self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
+    }
+}
+
+#[cfg(test)]
 mod no_messages_tests {
     use super::*;
 

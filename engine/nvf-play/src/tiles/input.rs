@@ -33,7 +33,9 @@
 //!   arrows and page areas send the hand-built menu's commands
 //!   (`crate::tutorial_menu::TutorialInput`), a press on the marker, held as it drags, sets
 //!   the scroll under the pointer. It is the only menu taking input while up: no click goes
-//!   past it [documented: `&no_click_past;`]. The wheel stays the hand-built menu's.
+//!   past it [documented: `&no_click_past;`]. The wheel stays the hand-built menu's. On the
+//!   frame it is first built, when the hand-built buttons of the frame before still stand, it
+//!   takes nothing, so a press acts once, on what was on screen [design].
 //! - **Units**: the cursor's logical pixels to interface units, 960 to the view's height,
 //!   as the tile renderer draws (`super::draw`, `crate::interface::u`) [design].
 //! - **Keys**: A to Z as `_PCButton_<letter>` [documented: the vanilla files' letters;
@@ -177,6 +179,8 @@ pub(crate) struct MenuInputs<'w, 's> {
     /// A press on the tutorial menu's scroll marker, held: what
     /// `super::tutorial_menu::marker_grab` worked out at the press.
     tutorial_drag: Local<'s, Option<super::tutorial_menu::Drag>>,
+    /// The tutorial menu's hand-built buttons, while they stand.
+    tutorial_hand_built: Query<'w, 's, (), With<crate::tutorial_menu::TmButton>>,
 }
 
 impl MenuInputs<'_, '_> {
@@ -190,7 +194,11 @@ impl MenuInputs<'_, '_> {
         use super::menus::{message_tiled, quantity_tiled, MESSAGE_MENU, QUANTITY_MENU};
         let mut out = Vec::new();
         if super::tutorial_menu::tiled(menus.tutorial, game) {
-            out.extend(game.ui_tree.menu(super::tutorial_menu::TUTORIAL_MENU));
+            // The buttons of the frame the menu opened are what the player sees until this
+            // frame's drawing: this frame's press is theirs, the file's from the next.
+            if self.tutorial_hand_built.is_empty() {
+                out.extend(game.ui_tree.menu(super::tutorial_menu::TUTORIAL_MENU));
+            }
             return out;
         }
         if quantity_tiled(menus.quantity, game, self.quantity().is_some()) {
@@ -591,6 +599,138 @@ mod tests {
         // RB and LB page the text through the file: the hand-built menu has no use for them.
         assert!(key_click_acts(TUTORIAL_MENU, "xbuttonrb", &["xbuttonrb"]));
         assert!(key_click_acts(TUTORIAL_MENU, "xbuttonlb", &["xbuttonlb"]));
+    }
+
+    /// Over no plugins, the tutorial menu open at three pages, its file not built yet, with
+    /// what the frame's own systems need: the tile input, the hand-built keys and the
+    /// hand-built drawing, in their order in a frame (`crate::script`, `super`).
+    fn tutorial_app() -> App {
+        use crate::tutorial_menu::{keys, TutorialMenuPlugin};
+        let mut state = crate::script::ScriptState::over_no_plugins();
+        let game = &mut state.rt.as_mut().unwrap().game;
+        game.ui_files = Some(Box::new(fnv_ui::MemSource::default()));
+        game.menu = Some(fnv_game::game::menus::TUTORIAL);
+        game.tutorial = vec![fnv_sim::FormId(0x11), fnv_sim::FormId(0x12), fnv_sim::FormId(0x13)];
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<crate::pause::PlayClock>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<MessageClick>()
+            .init_resource::<WaitSliderCheck>()
+            .init_resource::<PointerAid>()
+            .insert_resource(super::super::vanilla::TileMenus { tutorial: true, ..Default::default() })
+            .insert_resource(state)
+            .add_message::<bevy::input::mouse::MouseWheel>()
+            .add_message::<crate::menu::MenuInput>()
+            .add_message::<crate::wait::WaitInput>()
+            .add_plugins(TutorialMenuPlugin)
+            .add_systems(Update, (feed, keys).chain().before(crate::PlaySet::Ui));
+        app
+    }
+
+    /// The file's tiles as a built menu, its Next and Close at their own places, as a mod
+    /// may move them: 1070..1170 x 196..246 and 1070..1170 x 496..546.
+    fn built_tutorial(app: &mut App) {
+        use super::super::tutorial_menu::{tests::{menu_changed, shown}, write};
+        let mut ui = menu_changed(|xml| {
+            let place = |xml: String, name: &str, y: u32| xml.replace(&format!(r#"<hotrect name="{name}">"#), &format!(r#"<hotrect name="{name}"><x>900</x><y>{y}</y><width>100</width><height>50</height>"#));
+            place(place(xml.to_string(), "TM_next_button", 100), "TM_close_button", 400)
+        });
+        let s = shown(&ui, "Title", "Text", 0, 3);
+        write(&mut ui, &s);
+        ui.update();
+        app.world_mut().resource_mut::<crate::script::ScriptState>().rt.as_mut().unwrap().game.ui_tree = ui;
+    }
+
+    /// The pointer goes to `at` and the left button down on the next frame.
+    fn press_at(app: &mut App, (x, y): (f64, f64)) {
+        app.world_mut().resource_mut::<PointerAid>().due.push((0.0, AidPointer::At { x, y, click: true }));
+    }
+
+    /// What the menu did: the page, and whether it was asked to close.
+    fn tutorial_acted(app: &App) -> (usize, bool) {
+        (app.world().resource::<crate::tutorial_menu::TutorialView>().page, app.world().resource::<crate::script::ScriptState>().answered())
+    }
+
+    fn hand_built_buttons(app: &mut App) -> usize {
+        let world = app.world_mut();
+        world.query_filtered::<(), With<crate::tutorial_menu::TmButton>>().iter(world).count()
+    }
+
+    const ON_TILE_NEXT: (f64, f64) = (1100.0, 220.0);
+    const ON_TILE_CLOSE: (f64, f64) = (1100.0, 520.0);
+    const ON_NO_TILE: (f64, f64) = (300.0, 700.0);
+
+    /// A script opens the menu in its tick, so its first frame is drawn by hand; the next
+    /// builds the file, and the press of that frame reached the hand-built button on screen.
+    /// Exactly that button acts, wherever the file's hitboxes are:
+    /// - the tile input acting too turns two pages (three pages, so the end does not hide it);
+    /// - the press given to the tile input alone is lost (no tile there), or does what the
+    ///   tile under it does (Close for the hand-built Next).
+    ///
+    /// After it the buttons have gone and the tiles alone take a press.
+    #[test]
+    fn the_press_of_the_frame_tiles_take_over_acts_once_on_the_button_on_screen() {
+        use crate::tutorial_menu::TmButton;
+        use crate::ui_pointer::PointerState;
+        for (button, under, acted) in [
+            (TmButton::Next, ON_TILE_NEXT, (1, false)),
+            (TmButton::Next, ON_NO_TILE, (1, false)),
+            (TmButton::Next, ON_TILE_CLOSE, (1, false)),
+            (TmButton::Close, ON_NO_TILE, (0, true)),
+            (TmButton::Close, ON_TILE_NEXT, (0, true)),
+        ] {
+            let case = format!("{button:?} on screen, tile pointer at {under:?}");
+            let mut app = tutorial_app();
+            app.update();
+            assert_eq!(hand_built_buttons(&mut app), 3, "{case}: not built yet, drawn by hand");
+            assert_eq!(tutorial_acted(&app), (0, false), "{case}");
+            // The frame the file is built: `tiles::write`, then the press (`ui_pointer`).
+            built_tutorial(&mut app);
+            let world = app.world_mut();
+            for (b, mut state) in world.query::<(&TmButton, &mut PointerState)>().iter_mut(world) {
+                if *b == button {
+                    *state = PointerState::Pressed;
+                }
+            }
+            press_at(&mut app, under);
+            app.update();
+            assert_eq!(tutorial_acted(&app), acted, "{case}");
+            assert_eq!(hand_built_buttons(&mut app), 0, "{case}: gone with this frame's drawing");
+            if acted.1 {
+                continue;
+            }
+            // A frame without a press: nothing left over.
+            app.update();
+            assert_eq!(tutorial_acted(&app), acted, "{case}: nothing acts again");
+            // The tiles own the pointer now, at their own places.
+            press_at(&mut app, ON_NO_TILE);
+            app.update();
+            assert_eq!(tutorial_acted(&app), (1, false), "{case}: where no tile is");
+            press_at(&mut app, ON_TILE_NEXT);
+            app.update();
+            assert_eq!(tutorial_acted(&app), (2, false), "{case}: the file's Next, once");
+            press_at(&mut app, ON_TILE_CLOSE);
+            app.update();
+            assert_eq!(tutorial_acted(&app), (2, true), "{case}: the file's Close");
+        }
+    }
+
+    /// The file built before the frame the menu is first drawn (activation opens it before
+    /// `tiles::write`, or it was built before): no hand-built button ever stands, and the
+    /// first press is the tiles', once.
+    #[test]
+    fn a_menu_built_when_it_opens_has_no_hand_built_buttons() {
+        let mut app = tutorial_app();
+        built_tutorial(&mut app);
+        press_at(&mut app, ON_TILE_NEXT);
+        app.update();
+        assert_eq!(hand_built_buttons(&mut app), 0);
+        assert_eq!(tutorial_acted(&app), (1, false));
+        app.update();
+        assert_eq!(tutorial_acted(&app), (1, false));
     }
 
     #[test]

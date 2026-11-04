@@ -74,8 +74,9 @@ The strings are game settings that are not in the masters (the executable's defa
 - Settled by capture mh1_tutorial (`tools/capture/probes/menu_hooks.toml`): the code 1059.
   Answered by the capture hud_tutorial_more (private, 1280 x 720): a second ShowTutorialMenu
   **replaces** the first. With two messages the title and body are the second's, `TM_page` stays
-  hidden, Next and Previous stay hidden and not targets, and A and S change nothing; one close
-  closes it [observed]. NVForever's pages (§3, §5) differ from that; not changed yet. Still
+  hidden, Next and Previous stay hidden and not targets, `ClickMenuButton` on them returns 1 with
+  the text unchanged (the keys A and S were not tried: the job taps them only when it returns 0);
+  one close closes it [observed]. NVForever's pages (§3, §5) differ from that; not changed yet. Still
   open: which menu was open under
   it in the capture (MenuMode was 1 before the first call, its code not asked), so whether
   the menu under the tutorial answers MenuMode is not settled.
@@ -185,9 +186,12 @@ values in interface units; the message 0x0007235B]:
   (§3). Close is read (206, 147, 53) at its brightest on that shot, against the body's
   (255, 182, 66), with its text's alpha 255 and brightness 255 [observed: hud_tutorial_more], so
   font 2's texels [hypothesis].
-- **One press acts once.** On the first tiled frame the hand-built buttons of the frame the menu
-  opened still stand, and a press can reach them and the tile input together; `keys` takes no
-  press from them while the menu is tiled, so a Next never turns two pages [design]. A click a key makes through the file's `_PCButton_*` or `x…` refs
+- **One press acts once.** A menu a script opens in its tick is drawn by hand that frame and
+  built the next, so on the first tiled frame the hand-built buttons are what is on screen: the
+  frame's press is theirs and the tile input takes nothing until they have gone with that frame's
+  drawing (`tiles::input`), so a Next never turns two pages and a press never falls on a hitbox
+  the file moved elsewhere [design]. A menu already built when it is first drawn has no hand-built
+  buttons. A click a key makes through the file's `_PCButton_*` or `x…` refs
   acts unless the hand-built menu took that key this frame (`tiles::menus::key_click_acts`).
   The triggers needed care: RT and LT stand for this menu's A and S
   (`crate::pad::menu_buttons`), not for the shared Page Up and Page Down, so the tile input asks

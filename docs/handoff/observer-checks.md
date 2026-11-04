@@ -1181,7 +1181,9 @@ The numbers above stay put so links to them hold; each item here gives its own p
     pictures generally.
 82. **The tutorial menu with two pages.** (P3; tutorial-menu.md §4, §5.) Answered (private
     capture hud_tutorial_more, 1280 x 720) [observed]: a second `ShowTutorialMenu` replaces the
-    first, `TM_page` stays hidden, Next and Previous stay hidden and not targets, and A and S
-    change nothing. NVForever's pages differ; owner-review.md item 45 asks which to keep. Close
-    reads alpha 255, so its (206, 147, 53) is not an alpha [observed]; font 2's texels
-    [hypothesis].
+    first, `TM_page` stays hidden, Next and Previous stay hidden and not targets, and
+    `ClickMenuButton` on them returned 1 with the text unchanged. The keys A and S were not
+    tried: the job taps them only when that call returns 0. NVForever's pages differ;
+    owner-review.md item 45 asks which to keep. Close's text reads alpha 255 and brightness 255
+    [observed], which rules out those two traits of its own for its (206, 147, 53), not an
+    opacity from above it or the compositing; font 2's texels [hypothesis].

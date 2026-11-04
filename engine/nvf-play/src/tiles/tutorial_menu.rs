@@ -77,7 +77,8 @@ pub fn built(ui: &Ui) -> Tiled {
 
 /// Whether the open tutorial menu is drawn from its tiles: the switch on, the menu files
 /// read, the menu open and its file built with every model path. Every drawing and input
-/// reader uses this decision [design].
+/// reader uses this decision; the tile input also waits for the hand-built buttons of the
+/// frame before to go (`super::input`) [design].
 pub fn tiled(on: bool, game: &fnv_game::Game<'_>) -> bool {
     on && game.ui_files.is_some() && game.menu == Some(fnv_game::game::menus::TUTORIAL) && built(&game.ui_tree).yes()
 }
@@ -357,7 +358,7 @@ pub fn describe(ui: &Ui, shown: &Shown) -> String {
 pub const HAND_BUILT_KEYS: [&str; 11] = ["A", "S", "E", "xleft", "xright", "xup", "xdown", "xbuttonrt", "xbuttonlt", "xbuttona", "xbuttonb"];
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::menus::{fonts_of, write_text_sizes_of, Size};
     use super::*;
     use crate::tutorial_menu::{SYMBOL_DEAD, SYMBOL_W};
@@ -371,7 +372,7 @@ mod tests {
         menu_changed(str::to_string)
     }
 
-    fn menu_changed(change: impl FnOnce(&str) -> String) -> Ui {
+    pub(crate) fn menu_changed(change: impl FnOnce(&str) -> String) -> Ui {
         let src = MemSource::default().with(
             "tm.xml",
             &change(
@@ -442,7 +443,7 @@ mod tests {
         ui.set_trait(id, "width", Value::Num(width));
     }
 
-    fn shown(ui: &Ui, title: &str, text: &str, at: usize, of: usize) -> Shown {
+    pub(crate) fn shown(ui: &Ui, title: &str, text: &str, at: usize, of: usize) -> Shown {
         Shown { menu: ui.menu(TUTORIAL_MENU).unwrap(), page: Page { message: FormId(0x72358), title: title.into(), text: text.into() }, at, of }
     }
 
@@ -879,6 +880,10 @@ mod tests {
 
     #[test]
     fn a_font_computed_from_what_was_written_is_measured_in_its_own_face() {
+        // The limits of this test: `round` repeats the closure in `super::super::write_tutorial`
+        // (which takes the engine's `FontKit`), so a change to that closure alone would not fail
+        // it; and `size` ignores which face it is given, so it shows each round's fonts are
+        // loaded before they are measured, not that a text gets its own face's metrics.
         // A mod's title: font 6, or 7 with the count shown, which `write` turns on.
         let mut ui = menu_changed(|xml| {
             xml.replace(r#"<text name="TM_title">"#, r#"<text name="TM_title"><font><copy>6</copy><add src="sibling(TM_page)" trait="visible"/></font>"#)
