@@ -37,7 +37,7 @@
 //! - **A menu over the page** takes the frame's input ([`modal_over`]), for all of the frame it
 //!   closes in as well: its key closed it in the scripts, before the page's keys run.
 
-use super::draw::FontKit;
+use super::draw::{FontKit, Look, Piece};
 use super::input::{frame_keys, log_report, Devices};
 use super::layout;
 use super::menus::{self, SizesWritten};
@@ -473,59 +473,58 @@ fn corners(r: &layout::Rect) -> [f64; 4] {
     [r.left, r.top, r.width, r.height]
 }
 
-/// Whether a drawn item shows on the canvas: it has a size, lies on the canvas, and the middle
-/// of it is inside what clips it. Its middle, when it does.
-fn on_canvas(item: &layout::DrawItem) -> Option<(f64, f64)> {
-    let r = item.rect;
+/// Whether a painted piece shows on the canvas: it has a size, lies on the canvas, and the
+/// middle of it is inside what clips it. Its middle, when it does.
+fn on_canvas(piece: &Piece) -> Option<(f64, f64)> {
+    let r = piece.rect;
     let (right, bottom) = (r.left + r.width, r.top + r.height);
     let inside = r.width > 0.0 && r.height > 0.0 && r.left >= 0.0 && r.top >= 0.0 && right <= f64::from(CANVAS.x) && bottom <= f64::from(CANVAS.y);
     let middle = (r.left + r.width / 2.0, r.top + r.height / 2.0);
-    let in_clip = item.clip.is_none_or(|c| c.width > 0.0 && c.height > 0.0 && middle.0 >= c.left && middle.0 <= c.left + c.width && middle.1 >= c.top && middle.1 <= c.top + c.height);
+    let in_clip = piece.clip.is_none_or(|c| c.width > 0.0 && c.height > 0.0 && middle.0 >= c.left && middle.0 <= c.left + c.width && middle.1 >= c.top && middle.1 <= c.top + c.height);
     (inside && in_clip).then_some(middle)
 }
 
-/// Whether what the file worked out can be drawn and used, on every final pass, so what a
-/// script moved or hid since is seen: every row's text and every tab shown, not transparent,
-/// on the canvas and inside its clip, and the description shown. When any of that changed, the
-/// rows and the tabs but the one showing are checked to take the pointer at their middles
-/// (`regions`: [`Regions`]); the tab showing need not, as a click on it does nothing. The
-/// description's area, for the wheel, or the reason for the hand-built page.
-pub fn usable(ui: &Ui, p: &Paths, rows: &[MadeRow], regions: &mut Option<Regions>) -> Result<Rect, String> {
-    let items = layout::layout(ui, p.menu, &|_, _, _| (0.0, 0.0), true);
-    let drawn = |i: &&layout::DrawItem| i.visible && i.alpha > 0.0;
+/// Whether what is about to be painted, `pieces`, can be used, on every final pass, so what a
+/// script moved or hid since is seen: every row's words and every tab's words among the
+/// pieces, on the canvas and inside their clips, and the description's if it has any. When any
+/// of that changed, the rows and the tabs but the one showing are checked to take the pointer
+/// at their middles (`regions`: [`Regions`]); the tab showing need not, as a click on it does
+/// nothing. The description's area, for the wheel, or the reason for the hand-built page.
+pub fn usable(ui: &Ui, p: &Paths, rows: &[MadeRow], pieces: &[Piece], regions: &mut Option<Regions>) -> Result<Option<Rect>, String> {
+    let is_text = |x: &&Piece| matches!(x.look, Look::Text { .. });
     let targets = |t: TileId| fnv_ui::input::shown(ui, t) && fnv_ui::input::targets(ui, t);
     let mut now: Regions = Vec::with_capacity(rows.len() + p.tabs.len() + 1);
     let mut wanted: Vec<(StatsTile, (f64, f64))> = Vec::with_capacity(rows.len() + p.tabs.len());
     for (i, row) in rows.iter().enumerate() {
-        let item = items.iter().find(|x| x.tile == row.text).filter(drawn).ok_or_else(|| format!("row {i} is not shown"))?;
-        let middle = on_canvas(item).ok_or_else(|| format!("row {i} does not fit"))?;
+        let piece = pieces.iter().filter(is_text).find(|x| x.tile == row.text).ok_or_else(|| format!("row {i} is not shown"))?;
+        let middle = on_canvas(piece).ok_or_else(|| format!("row {i} does not fit"))?;
         // Its foot too: the rows are not scrolled here, so none may be cut off.
-        let foot = item.rect.top + item.rect.height;
-        if item.clip.is_some_and(|c| foot > c.top + c.height + 1.0) {
+        let foot = piece.rect.top + piece.rect.height;
+        if piece.clip.is_some_and(|c| foot > c.top + c.height + 1.0) {
             return Err(format!("row {i} does not fit"));
         }
-        now.push((row.tile, corners(&item.rect), item.clip.as_ref().map(corners), targets(row.tile)));
+        now.push((row.tile, corners(&piece.rect), piece.clip.as_ref().map(corners), targets(row.tile)));
         wanted.push((StatsTile::Row(i), middle));
     }
     for (i, &tab) in p.tabs.iter().enumerate() {
-        // A tab is a hotrect, which draws nothing of its own: the largest thing drawn in it.
-        let item = items.iter().filter(drawn).filter(|x| x.rect.width > 0.0 && x.rect.height > 0.0 && inside(ui, x.tile, tab)).max_by(|a, b| (a.rect.width * a.rect.height).total_cmp(&(b.rect.width * b.rect.height)));
-        let item = item.ok_or_else(|| format!("tab {i} is not shown"))?;
-        let middle = on_canvas(item).ok_or_else(|| format!("tab {i} does not fit"))?;
-        now.push((tab, corners(&item.rect), item.clip.as_ref().map(corners), targets(tab)));
+        // A tab is a hotrect, which draws nothing of its own: its words, as they are painted.
+        let piece = pieces.iter().filter(is_text).find(|x| inside(ui, x.tile, tab)).ok_or_else(|| format!("tab {i} is not shown"))?;
+        let middle = on_canvas(piece).ok_or_else(|| format!("tab {i} does not fit"))?;
+        now.push((tab, corners(&piece.rect), piece.clip.as_ref().map(corners), targets(tab)));
         if i != PAGE {
             wanted.push((StatsTile::Tab(i), middle));
         }
     }
-    let desc = items.iter().find(|x| x.tile == p.desc).filter(drawn).ok_or("the description is not shown")?;
-    let area = desc.clip.unwrap_or(desc.rect);
-    // An empty description measures nothing; the scroll moves the text, so only its width is
-    // held to the canvas, and its height only where a window gives it.
     let says = ui.tile(p.desc).get("string").is_some_and(|v| !v.text().is_empty());
-    if says && (area.width <= 0.0 || area.left < 0.0 || area.left + area.width > f64::from(CANVAS.x) || desc.clip.is_some_and(|c| c.height <= 0.0)) {
+    let desc = pieces.iter().filter(is_text).find(|x| x.tile == p.desc);
+    if says && desc.is_none() {
+        return Err("the description is not shown".into());
+    }
+    let area = desc.map(|d| d.clip.unwrap_or(d.rect));
+    if area.is_some_and(|a| a.width <= 0.0 || a.left < 0.0 || a.left + a.width > f64::from(CANVAS.x)) {
         return Err("the description does not fit".into());
     }
-    now.push((p.desc, corners(&area), None, true));
+    now.push((p.desc, area.as_ref().map_or([0.0; 4], corners), None, true));
     if regions.as_ref() != Some(&now) {
         for (what, at) in wanted {
             let hit = fnv_ui::input::hit(ui, &[p.menu], at, &fnv_ui::input::no_measure);
@@ -535,7 +534,7 @@ pub fn usable(ui: &Ui, p: &Paths, rows: &[MadeRow], regions: &mut Option<Regions
         }
         *regions = Some(now);
     }
-    Ok(Rect::new(area.left as f32, area.top as f32, (area.left + area.width) as f32, (area.top + area.height) as f32))
+    Ok(area.map(|a| Rect::new(a.left as f32, a.top as f32, (a.left + a.width) as f32, (a.top + a.height) as f32)))
 }
 
 /// Whether `t` is `of` or under it.
@@ -583,6 +582,9 @@ pub struct StatsTiles {
     pub desc_area: Option<Rect>,
     /// The tab and frame that area was found for.
     pub desc_for: Option<(usize, Frame)>,
+    /// The pieces [`usable`] checked this frame, for the drawing (`super::draw`) to paint: one
+    /// measured layout, so what was checked is what is painted.
+    pub(crate) pieces: Vec<Piece>,
     /// [`CUT_AID`].
     pub cut: Option<String>,
     /// [`CUT_AID`]'s time.
@@ -603,10 +605,27 @@ impl StatsTiles {
     }
 }
 
+/// What a pass needs of the fonts.
+pub(crate) trait PageFonts {
+    /// One round of measuring the given text tiles, with the tree worked out.
+    fn write_sizes(&mut self, ui: &mut Ui, texts: &[TileId], written: &mut SizesWritten) -> usize;
+    /// The menu's pieces, as the drawing paints them.
+    fn set_out(&mut self, ui: &Ui, menu: TileId) -> Vec<Piece>;
+}
+
+impl PageFonts for FontKit<'_> {
+    fn write_sizes(&mut self, ui: &mut Ui, texts: &[TileId], written: &mut SizesWritten) -> usize {
+        let size = self.menu_measure(&menus::fonts_of(ui, texts));
+        menus::write_text_sizes_of(ui, texts, written, &size)
+    }
+    fn set_out(&mut self, ui: &Ui, menu: TileId) -> Vec<Piece> {
+        super::draw::whole_pieces(ui, menu, self, true)
+    }
+}
+
 /// One pass over the page; the menu when all of it went through. `late`: the pass before the
 /// drawing; the other, before the scripts, does the sizes only for a model that changed.
-/// `sizes` is one round of measuring the given text tiles, with the tree worked out.
-pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: bool, late: bool, tiles: &mut StatsTiles, sizes: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<TileId, String> {
+pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: bool, late: bool, tiles: &mut StatsTiles, fonts: &mut dyn PageFonts) -> Result<TileId, String> {
     let w = &mut tiles.written;
     let p = match w.paths.filter(|c| c.live(ui) && ui.menu(STATS_MENU) == Some(c.menu)) {
         Some(p) => p,
@@ -640,7 +659,7 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
         // Three rounds: a size leads to a place and a place to a wrap width [design: as
         // `super::tutorial_menu::settle`].
         for _ in 0..3 {
-            if sizes(ui, &texts, &mut w.sizes) == 0 {
+            if fonts.write_sizes(ui, &texts, &mut w.sizes) == 0 {
                 break;
             }
             ui.update();
@@ -665,8 +684,9 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
     if late {
         ui.update();
         // Every final pass, so readiness is about the tree that is about to be painted.
-        let area = usable(ui, &p, &w.rows, &mut w.regions)?;
-        tiles.desc_area = Some(area);
+        let pieces = fonts.set_out(ui, p.menu);
+        tiles.desc_area = usable(ui, &p, &w.rows, &pieces, &mut w.regions)?;
+        tiles.pieces = pieces;
         let w = &mut tiles.written;
         if std::mem::take(&mut w.tell) {
             info!("{}", describe(ui, &p, w));
@@ -732,12 +752,7 @@ fn pass(p: &mut StatsPage<'_>, late: bool) -> Option<Result<TileId, String>> {
     };
     // What the page does to the view (the bound) is no new look for the hand-built page.
     let view = p.view.as_mut()?.bypass_change_detection();
-    let fonts = &mut p.fonts;
-    let mut sizes = |ui: &mut Ui, texts: &[TileId], written: &mut SizesWritten| {
-        let size = fonts.menu_measure(&menus::fonts_of(ui, texts));
-        menus::write_text_sizes_of(ui, texts, written, &size)
-    };
-    Some(page(&mut game.ui_tree, snap, view, device, late, &mut p.tiles, &mut sizes))
+    Some(page(&mut game.ui_tree, snap, view, device, late, &mut p.tiles, &mut p.fonts))
 }
 
 /// Before the scripts, after the tile input: this frame's model in the tree, and the scroll.
@@ -773,6 +788,7 @@ pub(crate) fn settle(mut p: StatsPage) {
         w.regions = None;
         w.drawn = None;
         p.tiles.desc_area = None;
+        p.tiles.pieces.clear();
     }
     if p.tiles.ready != ready {
         p.tiles.ready = ready;
@@ -1132,13 +1148,24 @@ mod tests {
         StatsView::with_lens([0, 7, 0, 0, 0])
     }
 
-    /// A pass, with a measure of 10 a character and 30 a line, lines parted by `|`.
+    /// A measure of 10 a character and 30 a line, lines parted by `|`.
+    fn measure(_: f64, text: &str, _: Option<f64>) -> (f64, f64) {
+        (10.0 * text.chars().count() as f64, 30.0 * text.split('|').count() as f64)
+    }
+
+    struct TestFonts;
+
+    impl PageFonts for TestFonts {
+        fn write_sizes(&mut self, ui: &mut Ui, texts: &[TileId], written: &mut SizesWritten) -> usize {
+            menus::write_text_sizes_of(ui, texts, written, &measure)
+        }
+        fn set_out(&mut self, ui: &Ui, menu: TileId) -> Vec<Piece> {
+            super::super::draw::pieces(ui, menu, &measure, super::super::draw::Select::Whole { kept: &[], strip: None }, true).0
+        }
+    }
+
     fn run(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: bool, tiles: &mut StatsTiles) -> Result<TileId, String> {
-        let mut sizes = |ui: &mut Ui, texts: &[TileId], w: &mut SizesWritten| {
-            let size = |_: f64, text: &str, _: Option<f64>| (10.0 * text.chars().count() as f64, 30.0 * text.split('|').count() as f64);
-            menus::write_text_sizes_of(ui, texts, w, &size)
-        };
-        page(ui, snap, view, device, true, tiles, &mut sizes)
+        page(ui, snap, view, device, true, tiles, &mut TestFonts)
     }
 
     fn text(ui: &Ui, t: TileId, name: &str) -> String {
@@ -1378,6 +1405,18 @@ mod tests {
         let (mut ui, mut v, mut t) = (tree_changed(|x| x.replace("<x>12</x><y>30</y>", "<x>12</x><y>750</y>")), view(), StatsTiles::default());
         let got = run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err();
         assert!(got.contains("does not fit"), "{got}");
+    }
+
+    /// What was checked is what the drawing gets, and a tab with no words is no tab.
+    #[test]
+    fn the_pieces_checked_are_the_ones_painted() {
+        let (mut ui, mut v, mut t) = (tree(), view(), StatsTiles::default());
+        run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        let row = t.written.rows[2].text;
+        assert!(t.pieces.iter().any(|x| x.tile == row));
+        let empty = |x: &str| x.replace(r#"<x>130</x><y>500</y><width>50</width><height>20</height><text name="TabWords"><string>Tab</string>"#, r#"<x>130</x><y>500</y><width>50</width><height>20</height><text name="TabWords"><string></string>"#);
+        let (mut ui, mut v, mut t) = (tree_changed(empty), view(), StatsTiles::default());
+        assert_eq!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err(), "tab 2 is not shown");
     }
 
     #[test]

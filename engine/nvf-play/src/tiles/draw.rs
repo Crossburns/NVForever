@@ -1001,14 +1001,15 @@ fn stats_page(commands: &mut Commands, game: Option<&fnv_game::Game<'_>>, view: 
     let ui = game.map(|g| &g.ui_tree);
     let ready = view.stats.as_ref().and_then(|s| s.ready);
     let menu = ui.zip(ready).filter(|(ui, m)| ui.is_live(*m));
-    let pieces = match menu {
-        Some((ui, menu)) => {
+    // The one measured layout the decision checked; worked out again next frame.
+    let pieces = match (menu, view.stats.as_mut()) {
+        (Some((ui, menu)), Some(stats)) => {
             if drawn.told_menu != Some(menu) {
                 let (file, code) = origins(ui, menu);
                 info!("tiles: {name} drawn from tiles ({file} file tiles, {code} code tiles)");
                 drawn.told_menu = Some(menu);
             }
-            let pieces = whole_pieces(ui, menu, kit, true);
+            let pieces = std::mem::take(&mut stats.pieces);
             let names = pieces.iter().filter(|p| matches!(p.look, Look::Text { .. }) && ui.tile(p.tile).name.eq_ignore_ascii_case("ListItemText")).count();
             let counts = (pieces.len(), names);
             if counts != drawn.counts {
@@ -1017,7 +1018,7 @@ fn stats_page(commands: &mut Commands, game: Option<&fnv_game::Game<'_>>, view: 
             }
             pieces
         }
-        None => {
+        _ => {
             drawn.counts = (0, 0);
             Vec::new()
         }
