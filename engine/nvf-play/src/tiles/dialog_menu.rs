@@ -273,7 +273,13 @@ impl Placement {
     fn read(ui: &Ui, shown: &Shown) -> Placement {
         let at = |path: &str, name: &str| ui.get_float(&format!("{path}/{name}")).unwrap_or(0.0);
         let mut numbers = vec![at(DIALOG_MENU, "_MinListHeight"), at(LIST, "_scroll_delta"), at(BAND, "x"), at(BOTTOM_BRACKET, "y"), at(HIGHLIGHT, "width"), at(HINT_TEXT, "width"), at(HINT_TEXT, "height")];
-        numbers.extend(rows(ui).iter().map(|&r| num(ui, r, "_VerticalSpacing")));
+        for r in rows(ui) {
+            numbers.push(num(ui, r, "_VerticalSpacing"));
+            // What `place` reads of a row's text: an expression may change it with no measuring.
+            if let Some(t) = child(ui, r, ROW_TEXT) {
+                numbers.extend([num(ui, t, "width"), num(ui, t, "height")]);
+            }
+        }
         Placement { shown: shown.clone(), numbers }
     }
 }
@@ -293,6 +299,9 @@ pub struct Written {
     probed: Option<TileId>,
     /// The reasons warned already: once each, as long as the run lasts.
     warned: std::collections::HashSet<String>,
+    /// Tests stand in for the real file's expressions ([`evaluate`]).
+    #[cfg(test)]
+    stand_in: Option<fn(&mut Ui)>,
     /// This conversation asked for the menu at once; the frames' own lifetime pass goes on
     /// asking (`ui_loading::sync`, which remembers a file it could not read).
     build_asked: bool,
@@ -542,17 +551,29 @@ fn write_scroll(ui: &mut Ui, scroll: f64) {
     set(ui, bar, "_SetInCode", Value::Num(1.0));
 }
 
+/// Work the tree out, what a test's stand-in does for the real file's expressions too.
+fn evaluate(ui: &mut Ui, written: &Written) {
+    ui.update();
+    #[cfg(test)]
+    if let Some(stand_in) = written.stand_in {
+        stand_in(ui);
+        ui.update();
+    }
+    #[cfg(not(test))]
+    let _ = written;
+}
+
 /// The second step of a frame, after the scripts: measure, place and scroll. `round` is one
 /// round of measuring: the fonts as the tree stands then, the sizes of the texts it is given
 /// written, how many were. The places are worked out again when the model, a text's size or
 /// any evaluated number they read moved ([`Placement`]). Returns the first choice shown, for
 /// the model.
 fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<usize, String> {
-    ui.update();
+    evaluate(ui, written);
     let texts = menus::texts(ui, now.menu);
     let measured = round(ui, &texts, &mut written.sizes);
     if measured > 0 {
-        ui.update();
+        evaluate(ui, written);
     }
     check_measured(ui, &now.view)?;
     check_geometry(ui, &now.view)?;
@@ -560,7 +581,7 @@ fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut
     written.moved = measured > 0 || written.placed.as_ref() != Some(&Placement::read(ui, now));
     if written.moved {
         (first, written.scroll) = place(ui, &now.view, now.selected, now.first);
-        ui.update();
+        evaluate(ui, written);
         place_hint(ui, &now.view, now.hint);
         written.placed = Some(Placement::read(ui, &Shown { first, ..now.clone() }));
     }
@@ -923,37 +944,64 @@ mod tests {
     use crate::dialogue_menu::ChoiceRow;
     use fnv_ui::input::{no_measure, Input, Pointer};
 
-    /// [design] A fixture written for these tests: plain numbers and no expressions at all;
-    /// only the tile and trait names the code looks up are the file's. What the real file works
-    /// out from code's writes, [`work_out`] does here in the test's own arithmetic, only as
-    /// far as a test reads it. So these tests give up any proof that the real file's
-    /// expressions agree with the model (where rows land, the bar's rule, the band's and the
-    /// brackets' places): the smoke scenarios `tiles-dialog-*` run against the real file.
-    fn fixture() -> &'static str {
-        r#"<menu name="DialogMenu"><_MinListHeight>70</_MinListHeight>
-<rect name="NOGLOW_BRANCH"><systemcolor>1</systemcolor>
-  <image name="DM_TextBackground"><x>40</x><width>800</width><filename>p.dds</filename></image>
-  <hotrect name="DM_ClickRect"><width>900</width><height>900</height></hotrect>
-  <text name="DM_SpeakerNameLabel"/>
-  <text name="DM_SpeakerText"><wrapwidth>400</wrapwidth></text>
-  <hotrect name="DM_TopicList"><x>100</x><y>300</y><width>700</width><clipwindow>1</clipwindow><_scroll_delta>4</_scroll_delta>
-    <hotrect name="lb_highlight_box"><x>30</x><width>600</width>
-      <image name="top"><width>2</width><filename>l.dds</filename></image><image name="left"><width>2</width><filename>l.dds</filename></image>
-      <image name="bottom"><width>2</width><filename>l.dds</filename></image><image name="right"><width>2</width><filename>l.dds</filename></image>
-    </hotrect>
-    <image name="lb_scrollbar"><width>30</width><height>40</height>
-      <hotrect name="scrollbar_vert_page_up"><width>30</width><height>5</height></hotrect>
-      <hotrect name="scrollbar_vert_page_down"><y>5</y><width>30</width><height>5</height></hotrect>
-      <image name="scrollbar_vert_marker"><y>10</y><width>30</width><height>5</height><filename>m.dds</filename></image>
-      <image name="scrollbar_vert_up"><y>15</y><width>30</width><height>5</height><filename>u.dds</filename></image>
-      <image name="scrollbar_vert_down"><y>20</y><width>30</width><height>5</height><filename>d.dds</filename></image>
-    </image>
-  </hotrect>
-  <rect name="DM_TopBracket"/>
-  <rect name="DM_BottomBracket"><y>640</y></rect>
-</rect>
-<template name="DM_TopicTemplate"><_made>1</_made><hotrect name="DM_Topic"><x>30</x><width>600</width><target>1</target><_VerticalSpacing>12</_VerticalSpacing>
-  <text name="ListItemText"><wrapwidth>200</wrapwidth></text></hotrect></template></menu>"#
+    /// [design] The tree these tests stand on, tile by tile from the paths the code itself looks
+    /// up ([`built`]'s list), each with only the plain numbers some test reads; no expressions,
+    /// and nothing else of any file. What a real file would work out, [`work_out`] does in the
+    /// test's own arithmetic. So these tests give up any proof that the real file agrees with
+    /// the model (where rows land, the bar's rule, the band's and the brackets' places): the
+    /// smoke scenarios `tiles-dialog-*` run against the real file.
+    fn tiles() -> Vec<(String, &'static str, &'static str)> {
+        let plain = |path: &str, kind: &'static str, traits: &'static str| (path.to_string(), kind, traits);
+        let mut out = vec![
+            plain(ROOT, "rect", ""),
+            plain(BAND, "image", "<filename>p.dds</filename><width>800</width><x>40</x>"),
+            plain(CLICK_AREA, "hotrect", "<height>900</height><width>900</width>"),
+            plain(NAME, "text", ""),
+            plain(LINE, "text", "<wrapwidth>400</wrapwidth>"),
+            plain(LIST, "hotrect", "<_scroll_delta>4</_scroll_delta><clipwindow>1</clipwindow><x>100</x><y>300</y><width>700</width>"),
+            plain(HIGHLIGHT, "hotrect", "<width>600</width><x>30</x>"),
+            plain(BAR, "image", "<height>40</height><width>30</width>"),
+            plain(TOP_BRACKET, "rect", ""),
+            plain(BOTTOM_BRACKET, "rect", "<y>640</y>"),
+        ];
+        for bracket in [TOP_BRACKET, BOTTOM_BRACKET] {
+            out.push((format!("{bracket}/End"), "image", "<filename>e.dds</filename>"));
+        }
+        for line in FRAME_LINES {
+            out.push((format!("{HIGHLIGHT}/{line}"), "image", "<filename>l.dds</filename><height>2</height><width>2</width>"));
+        }
+        for (i, control) in BAR_CONTROLS.iter().enumerate() {
+            let traits = ["<filename>u.dds</filename><target>1</target><height>5</height><width>30</width><y>15</y>", "<filename>d.dds</filename><target>1</target><height>5</height><width>30</width><y>20</y>", "<target>1</target><height>5</height><width>30</width>", "<target>1</target><height>5</height><width>30</width><y>5</y>", "<filename>m.dds</filename><target>1</target><height>5</height><width>30</width><y>10</y>"];
+            let kind = if control.contains("page") { "hotrect" } else { "image" };
+            out.push((format!("{BAR}/{control}"), kind, traits[i]));
+        }
+        out
+    }
+
+    /// A row: its spacing and size, a target hotrect with a text.
+    const ROW_XML: &str = r#"<hotrect name="DM_Topic"><_VerticalSpacing>12</_VerticalSpacing><target>1</target><width>600</width><x>30</x><text name="ListItemText"><wrapwidth>200</wrapwidth></text></hotrect>"#;
+
+    /// The tree without the tiles at `skip`, with `row` as its row template, on a 1280 x 720
+    /// window in interface units.
+    fn tree(skip: &[&str], row: &str) -> Ui {
+        let src = MemSource::default().with("d.xml", &format!(r#"<menu name="DialogMenu"><_MinListHeight>70</_MinListHeight><template name="{ROW_TEMPLATE}">{row}</template></menu>"#));
+        let mut ui = Ui::new();
+        ui.load_menu(&src, "d.xml").unwrap();
+        for (path, kind, traits) in tiles() {
+            if skip.contains(&path.as_str()) {
+                continue;
+            }
+            let (parent, name) = path.rsplit_once('/').unwrap();
+            ui.inject_text(&MemSource::default(), parent, &format!(r#"<{kind} name="{name}">{traits}</{kind}>"#));
+        }
+        super::super::write_screen(&mut ui, 1280.0, 720.0, true);
+        ui.update();
+        ui
+    }
+
+    /// What the two steps keep, with [`work_out`] standing in for the real file's expressions.
+    fn fresh() -> Written {
+        Written { stand_in: Some(work_out), ..Written::default() }
     }
 
     /// What the real file would work out from code's writes, in the test's own arithmetic:
@@ -986,18 +1034,9 @@ mod tests {
         }
     }
 
-    fn menu_changed(change: impl FnOnce(&str) -> String) -> Ui {
-        let src = MemSource::default().with("d.xml", &change(fixture()));
-        let mut ui = Ui::new();
-        ui.load_menu(&src, "d.xml").unwrap();
-        super::super::write_screen(&mut ui, 1280.0, 720.0, true);
-        ui.update();
-        ui
-    }
-
     /// Prepared as `write_system` prepares it.
     fn menu() -> Ui {
-        let mut ui = menu_changed(str::to_string);
+        let mut ui = tree(&[], ROW_XML);
         assert_eq!(built(&ui), Tiled::Yes);
         assert!(own_tiles(&mut ui));
         ui
@@ -1013,12 +1052,15 @@ mod tests {
     }
 
     fn round(ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten) -> usize {
-        work_out(ui);
         menus::write_text_sizes_of(ui, texts, sizes, &size)
     }
 
     fn row(label: &str) -> ChoiceRow {
         ChoiceRow { label: label.to_string(), ..Default::default() }
+    }
+
+    fn row_of(label: &str) -> ChoiceRow {
+        row(label)
     }
 
     fn choosing(rows: Vec<ChoiceRow>) -> MenuView {
@@ -1033,8 +1075,7 @@ mod tests {
     /// One frame: written, the tree worked out as `super::super::update` does.
     fn frame(ui: &mut Ui, written: &mut Written, now: &Shown) -> usize {
         let first = write(ui, now, written, &mut round).unwrap();
-        work_out(ui);
-        ui.update();
+        evaluate(ui, written);
         first
     }
 
@@ -1090,7 +1131,7 @@ mod tests {
     #[test]
     fn the_line_is_written_with_its_speaker_and_no_list() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let view = MenuView { speaker: "Nora".into(), line: Some("Stay a while.".into()), choices: Vec::new(), goodbye: false };
         frame_on(&mut ui, &mut written, view, 1, 0, 0);
         assert_eq!(f(&ui, DIALOG_MENU, "_ShowingText"), 1.0);
@@ -1114,7 +1155,7 @@ mod tests {
     #[test]
     fn choices_stand_in_rows_of_their_wrapped_height() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         // Wrap at 200: 25 characters take two lines of 40.
         let view = choosing(vec![row("Short one."), row(&"w".repeat(25)), row("Third.")]);
         frame_on(&mut ui, &mut written, view, 1, 1, 0);
@@ -1139,7 +1180,7 @@ mod tests {
     #[test]
     fn a_short_list_keeps_the_files_least_height() {
         let mut ui = menu();
-        frame_on(&mut ui, &mut Written::default(), choosing(vec![row("One.")]), 1, 0, 0);
+        frame_on(&mut ui, &mut fresh(), choosing(vec![row("One.")]), 1, 0, 0);
         // 52 of row, the file's least 70.
         assert_eq!(f(&ui, LIST, "height"), 70.0);
         assert_eq!(f(&ui, DIALOG_MENU, "_MinListHeight"), 70.0);
@@ -1148,7 +1189,7 @@ mod tests {
     #[test]
     fn an_overflowing_list_scrolls_by_whole_choices() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         // Rows of 52: five fit the most the list grows to (290).
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
         let first = frame_on(&mut ui, &mut written, choosing(labels.clone()), 1, 0, 0);
@@ -1181,7 +1222,7 @@ mod tests {
     #[test]
     fn one_oversized_choice_stands_alone_and_an_empty_list_has_no_rows() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         // Wrap at 200: 150 characters are eight lines, 332 with the spacing, past the most the
         // list grows to.
         let view = choosing(vec![row(&"o".repeat(150)), row("After.")]);
@@ -1202,7 +1243,7 @@ mod tests {
         // [design] The real prefab counts clicks from 0 in this tree (smoke sees it there); here
         // anything else standing in the value will do: the model's goes back every frame.
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
         let now = shown(&ui, choosing(labels), 1, 5, 0);
         let first = frame(&mut ui, &mut written, &now);
@@ -1218,7 +1259,7 @@ mod tests {
     #[test]
     fn a_dim_row_and_a_short_checks_frame_are_painted_so() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let short = ChoiceRow { label: "[Sneak 17/25]  I could.".into(), short: true, ..Default::default() };
         let dim = ChoiceRow { label: "Said before.".into(), darkened: true, ..Default::default() };
         let view = choosing(vec![short, row("Plain."), dim]);
@@ -1245,7 +1286,7 @@ mod tests {
     #[test]
     fn the_hint_shows_while_a_goodbye_is_offered_anchored_to_the_files_geometry() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let mut view = choosing(vec![row("Bye."), row("Stay.")]);
         frame_on(&mut ui, &mut written, view.clone(), 1, 0, 0);
         assert!(!texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
@@ -1266,8 +1307,9 @@ mod tests {
         assert_eq!(f(&ui, HINT, "x"), 400.0 - HINT_GAP - 120.0);
         // Code's own, and not taken for a mod's tile.
         let menu = ui.menu(DIALOG_MENU).unwrap();
-        assert!(ui.mod_added_tiles(menu).is_empty(), "code tiles are not a mod's");
-        assert_eq!(ui.tile(ui.find_tile(HINT).unwrap()).origin, Origin::Code);
+        let hint = ui.find_tile(HINT).unwrap();
+        assert!(!ui.mod_added_tiles(menu).contains(&hint), "code tiles are not a mod's");
+        assert_eq!(ui.tile(hint).origin, Origin::Code);
         // During a line: no hint, whatever the model last said of it.
         let line = MenuView { speaker: "Nora".into(), line: Some("Fine.".into()), choices: Vec::new(), goodbye: false };
         frame_on(&mut ui, &mut written, line, 2, 0, 0);
@@ -1277,7 +1319,7 @@ mod tests {
     #[test]
     fn the_hint_setting_hides_only_the_hint_at_once() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let view = MenuView { goodbye: true, ..choosing(vec![row("Bye.")]) };
         let now = shown(&ui, view, 1, 0, 0);
         frame(&mut ui, &mut written, &now);
@@ -1296,7 +1338,7 @@ mod tests {
         let short = ChoiceRow { label: "[Sneak 17/25]  I could.".into(), short: true, ..Default::default() };
         let dim = ChoiceRow { label: "Said before.".into(), darkened: true, ..Default::default() };
         let view = MenuView { goodbye: true, ..choosing(vec![short, row("Plain."), dim]) };
-        frame_on(&mut ui, &mut Written::default(), view, 1, 0, 0);
+        frame_on(&mut ui, &mut fresh(), view, 1, 0, 0);
         assert_eq!(painted(&ui, &pieces(&ui)), "tiles: DialogMenu painted: band 1, name 1, line 0, rows 3, dim 1, frame 4 red, fill 1, bar 0, brackets 0, hint 1");
     }
 
@@ -1304,7 +1346,7 @@ mod tests {
     fn the_pointer_selects_and_picks_on_the_rows_as_they_are_drawn() {
         let mut ui = menu();
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
-        frame_on(&mut ui, &mut Written::default(), choosing(labels), 1, 5, 0);
+        frame_on(&mut ui, &mut fresh(), choosing(labels), 1, 5, 0);
         let mut p = pointer(1);
         // The list at 300, the window from choice 1: rows of 52, so y 330 is choice 1, y 400
         // choice 2.
@@ -1322,7 +1364,7 @@ mod tests {
     #[test]
     fn hits_hold_only_on_the_geometry_that_was_drawn() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
         let first = frame_on(&mut ui, &mut written, choosing(labels.clone()), 1, 5, 0);
         let state = DialogTiles { menu: ui.menu(DIALOG_MENU), shown: true, list: None, hits: hit_geometry(&ui) };
@@ -1353,7 +1395,7 @@ mod tests {
     #[test]
     fn a_key_the_hand_built_input_took_does_not_act_again() {
         let mut ui = menu();
-        frame_on(&mut ui, &mut Written::default(), choosing(vec![row("A."), row("B.")]), 1, 0, 0);
+        frame_on(&mut ui, &mut fresh(), choosing(vec![row("A."), row("B.")]), 1, 0, 0);
         let bound = rows(&ui)[1];
         for key in ["xbuttona", "E", "S", "xdown"] {
             let click = fnv_ui::input::Click { tile: bound, by: By::Key(key.into()), id: None, stamp: 1 };
@@ -1376,7 +1418,7 @@ mod tests {
     #[test]
     fn a_script_click_is_followed_and_a_stale_one_finds_its_row_gone() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let mut p = pointer(1);
         frame_on(&mut ui, &mut written, choosing(vec![row("A."), row("B.")]), 1, 0, 0);
         let on_b = rows(&ui)[1];
@@ -1397,7 +1439,7 @@ mod tests {
     fn a_skip_queued_on_one_response_does_not_skip_the_next() {
         // The click area lasts from response to response, so nothing else tells them apart.
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let line = |t: &str| MenuView { speaker: "Nora".into(), line: Some(t.into()), choices: Vec::new(), goodbye: false };
         frame_on(&mut ui, &mut written, line("First."), 1, 0, 0);
         let area = ui.find_tile(CLICK_AREA).unwrap();
@@ -1419,7 +1461,7 @@ mod tests {
     #[test]
     fn the_click_area_skips_and_the_bar_steps_by_whole_choices() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
         frame_on(&mut ui, &mut written, line, 1, 0, 0);
         let area = ui.find_tile(CLICK_AREA).unwrap();
@@ -1442,75 +1484,63 @@ mod tests {
     }
 
     #[test]
-    fn cut_down_files_keep_the_whole_hand_built_menu() {
-        for (name, missing) in [("DM_TextBackground", BAND), ("DM_SpeakerText", LINE), ("DM_TopicList", LIST), ("lb_highlight_box", HIGHLIGHT), ("lb_scrollbar", BAR), ("DM_BottomBracket", BOTTOM_BRACKET), ("DM_ClickRect", CLICK_AREA)] {
-            let ui = menu_changed(|xml| xml.replace(&format!(r#"name="{name}""#), r#"name="Modded""#));
-            assert_eq!(built(&ui), Tiled::No(format!("{missing} missing")), "{name}");
+    fn a_tree_lacking_a_piece_keeps_the_whole_hand_built_menu() {
+        let needed: Vec<String> = [BAND, CLICK_AREA, NAME, LINE, LIST, HIGHLIGHT, BAR, TOP_BRACKET, BOTTOM_BRACKET].map(String::from).into_iter().chain(FRAME_LINES.map(|n| format!("{HIGHLIGHT}/{n}"))).chain(BAR_CONTROLS.map(|n| format!("{BAR}/{n}"))).collect();
+        for path in needed {
+            let ui = tree(&[path.as_str()], ROW_XML);
+            assert_eq!(built(&ui), Tiled::No(format!("{path} missing")), "{path}");
         }
-        // The containers kept, a piece of the view lost.
-        for name in FRAME_LINES {
-            let ui = menu_changed(|xml| xml.replace(&format!(r#"name="{name}""#), r#"name="Modded""#));
-            assert_eq!(built(&ui), Tiled::No(format!("{HIGHLIGHT}/{name} missing")), "{name}");
-        }
-        for name in BAR_CONTROLS {
-            let ui = menu_changed(|xml| xml.replace(&format!(r#"name="{name}""#), r#"name="Modded""#));
-            assert_eq!(built(&ui), Tiled::No(format!("{BAR}/{name} missing")), "{name}");
-        }
-        // No menu at all.
         assert_eq!(built(&Ui::new()), Tiled::No(format!("{DIALOG_MENU} missing")));
-        // A template gone, or making a row with no text: nothing written, nothing left.
-        for (change, reason) in [
-            (r#"name="DM_TopicTemplate""#, format!("no row from {ROW_TEMPLATE}")),
-            (r#"name="ListItemText""#, format!("{ROW_TEMPLATE} makes no {ROW_TEXT}")),
-            (r#"name="DM_Topic""#, format!("{ROW_TEMPLATE} makes no {ROW}")),
+        // A template that makes no row, or a row with no text: nothing written, nothing left.
+        for (row, reason) in [
+            (r#"<hotrect name="Other"/>"#, format!("{ROW_TEMPLATE} makes no {ROW}")),
+            (r#"<hotrect name="DM_Topic"><target>1</target></hotrect>"#, format!("{ROW_TEMPLATE} makes no {ROW_TEXT}")),
+            ("", format!("no row from {ROW_TEMPLATE}")),
         ] {
-            let mut ui = menu_changed(|xml| xml.replace(change, r#"name="Other""#));
+            let mut ui = tree(&[], row);
             assert!(own_tiles(&mut ui));
-            let now = shown(&ui, choosing(vec![row("A."), row("B.")]), 1, 0, 0);
-            assert_eq!(write(&mut ui, &now, &mut Written::default(), &mut round), Err(reason), "{change}");
-            assert!(rows(&ui).is_empty(), "{change}");
+            let now = shown(&ui, choosing(vec![row_of("A."), row_of("B.")]), 1, 0, 0);
+            assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(reason), "{row}");
+            assert!(rows(&ui).is_empty(), "{row}");
         }
     }
 
     #[test]
-    fn a_file_with_nothing_to_click_or_no_room_is_not_ready() {
+    fn a_tree_with_nothing_to_click_or_no_room_is_not_ready() {
         let view = choosing(vec![row("A.")]);
-        let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
-        // Boxes with no size, in the file's own traits.
-        for (from, to, reason) in [
-            (r#"<width>800</width>"#, r#"<width>0</width>"#, format!("{BAND} has no width")),
-            (r#"<x>100</x><y>300</y><width>700</width>"#, r#"<x>100</x><y>300</y>"#, format!("{LIST} has no width")),
-            (r#"<x>30</x><width>600</width>
-"#, r#"<x>30</x>
-"#, format!("{HIGHLIGHT} has no width")),
-            (r#"<width>900</width>"#, "", format!("{CLICK_AREA} has no width")),
-            (r#"<height>900</height>"#, "", format!("{CLICK_AREA} has no height")),
-            (r#"<width>600</width><target>1</target>"#, r#"<width>600</width><target>0</target>"#, format!("a {ROW} cannot be clicked")),
-            (r#"<wrapwidth>200</wrapwidth>"#, "", format!("a {ROW} has no room for its text")),
+        // Sizes the tree works out to nothing, or a row that takes no click.
+        for (path, name, reason) in [
+            (BAND, "width", format!("{BAND} has no width")),
+            (LIST, "width", format!("{LIST} has no width")),
+            (HIGHLIGHT, "width", format!("{HIGHLIGHT} has no width")),
+            (CLICK_AREA, "width", format!("{CLICK_AREA} has no width")),
+            (CLICK_AREA, "height", format!("{CLICK_AREA} has no height")),
         ] {
-            let mut ui = menu_changed(|xml| {
-                assert!(xml.contains(from), "{from}");
-                xml.replace(from, to)
-            });
+            let mut ui = menu();
+            ui.set_trait(ui.find_tile(path).unwrap(), name, Value::Num(0.0));
             let now = shown(&ui, view.clone(), 1, 0, 0);
-            assert_eq!(write(&mut ui, &now, &mut Written::default(), &mut round), Err(reason.clone()), "{from}");
+            assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(reason.clone()), "{path} {name}");
         }
-        // The click area a target only with a line up: a file that makes it none is not whole.
+        let mut ui = tree(&[], &ROW_XML.replace("<target>1</target>", "<target>0</target>"));
+        assert!(own_tiles(&mut ui));
+        let now = shown(&ui, view.clone(), 1, 0, 0);
+        assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("a {ROW} cannot be clicked")));
+        let mut ui = tree(&[], &ROW_XML.replace("<wrapwidth>200</wrapwidth>", ""));
+        assert!(own_tiles(&mut ui));
+        let now = shown(&ui, view, 1, 0, 0);
+        assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("a {ROW} has no room for its text")));
+        // The click area a target only with a line up: a tree that makes it none is not whole.
+        let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
         let mut ui = menu();
         let now = shown(&ui, line, 1, 0, 0);
-        let mut no_target = |ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten| {
-            let n = round(ui, texts, sizes);
-            let area = ui.find_tile(CLICK_AREA).unwrap();
-            ui.set_trait(area, "target", Value::Num(0.0));
-            n
-        };
-        assert_eq!(write(&mut ui, &now, &mut Written::default(), &mut no_target), Err(format!("{CLICK_AREA} takes no click while the line is up")));
+        let mut written = Written { stand_in: Some(|ui| { work_out(ui); let area = ui.find_tile(CLICK_AREA).unwrap(); ui.set_trait(area, "target", Value::Num(0.0)); }), ..Written::default() };
+        assert_eq!(write(&mut ui, &now, &mut written, &mut round), Err(format!("{CLICK_AREA} takes no click while the line is up")));
     }
 
     #[test]
     fn text_that_does_not_measure_is_not_ready_and_is_tried_again() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let now = shown(&ui, choosing(vec![row("A."), row("B.")]), 1, 0, 0);
         let mut nothing = |ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten| menus::write_text_sizes_of(ui, texts, sizes, &|_: f64, _: &str, _: Option<f64>| (0.0, 0.0));
         assert_eq!(write(&mut ui, &now, &mut written, &mut nothing), Err(format!("{ROW_TEXT} has no measure")));
@@ -1525,7 +1555,7 @@ mod tests {
     #[test]
     fn scripts_read_what_the_model_says_before_they_run_and_keep_what_they_write() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
         frame_on(&mut ui, &mut written, line, 1, 0, 0);
         // The first step alone, as before a frame's scripts: the new phase, words and rows are
@@ -1565,7 +1595,7 @@ mod tests {
     #[test]
     fn the_places_follow_the_evaluated_numbers_they_read() {
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
         let view = MenuView { goodbye: true, ..choosing(labels) };
         let first = frame_on(&mut ui, &mut written, view.clone(), 1, 5, 0);
@@ -1597,12 +1627,35 @@ mod tests {
     }
 
     #[test]
+    fn a_row_texts_computed_height_alone_moves_the_places() {
+        // [design] Nothing is measured: only the evaluated height differs, as when an expression
+        // of a file works it out.
+        let mut ui = menu();
+        let mut written = fresh();
+        let view = choosing(vec![row("A."), row("B."), row("C.")]);
+        let now = shown(&ui, view, 1, 1, 0);
+        frame(&mut ui, &mut written, &now);
+        assert_eq!(f(&ui, LIST, "_highlight_y"), 52.0);
+        let text = child(&ui, rows(&ui)[0], ROW_TEXT).unwrap();
+        let mut keep = |ui: &mut Ui, _: &[TileId], _: &mut SizesWritten| {
+            ui.set_trait(text, "height", Value::Num(100.0));
+            0
+        };
+        write(&mut ui, &now, &mut written, &mut keep).unwrap();
+        assert!(!written.moved, "the frame it changes is measured first, and places next");
+        write(&mut ui, &now, &mut written, &mut keep).unwrap();
+        assert!(written.moved);
+        assert_eq!(f(&ui, LIST, "_highlight_y"), 112.0);
+        assert_eq!(f(&ui, LIST, "height"), 216.0);
+    }
+
+    #[test]
     fn the_safe_zone_goes_back_as_it_was_on_the_way_out() {
         let crop = |ui: &Ui, n: &str| ui.tile(ui.screen()).get(n).map(Value::num);
         // Absent before: absent after, whichever way out.
         let view = choosing(vec![row("A.")]);
         let mut ui = menu();
-        let mut written = Written::default();
+        let mut written = fresh();
         frame_on(&mut ui, &mut written, view.clone(), 1, 0, 0);
         assert_eq!(crop(&ui, "cropy"), Some(15.0));
         written.forget(Some(&mut ui));
@@ -1640,7 +1693,7 @@ mod tests {
 
     #[test]
     fn a_warning_is_given_once_for_each_reason() {
-        let mut written = Written::default();
+        let mut written = fresh();
         for _ in 0..3 {
             written.warn(&Tiled::No("a".into()));
             written.warn(&Tiled::Yes);
@@ -1661,7 +1714,7 @@ mod tests {
         let up = DialogTiles { menu, shown: true, list: None, hits: Vec::new() };
         assert!(up.by_tiles() && up.drawn());
         // The picture it stands for, as `super::draw` is given it.
-        frame_on(&mut ui, &mut Written::default(), choosing(vec![row("A.")]), 1, 0, 0);
+        frame_on(&mut ui, &mut fresh(), choosing(vec![row("A.")]), 1, 0, 0);
         assert_eq!(pictures_drawn(&ui, "m.dds"), 0, "no bar for a list that fits");
         assert!(!pieces(&ui).is_empty());
         assert_eq!(describe(&ui, &shown(&ui, choosing(vec![row("A.")]), 1, 0, 0), 0), "tiles: DialogMenu drawn from tiles: speaker \"Nora\", 1 choices, showing 1 from 0, selected 0, row heights [52], list y 300 height 70, scroll 0 of 13, bar false, dim 0, frame plain, hint false");
