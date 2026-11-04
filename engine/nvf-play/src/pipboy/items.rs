@@ -169,6 +169,19 @@ pub struct Tile {
     pub meter: Option<f32>,
 }
 
+/// The titles of the figures' cards as this page and the container and barter menus show them
+/// [observed: the owner's ITEMS screenshots, pipboy.md §5]. The menu files' settings for them
+/// have no GMST record and NVForever's labels for those are longer (`fnv_ui::strings::BUILT_IN`):
+/// `crate::tiles::item_card` writes these words over them.
+pub mod card_title {
+    pub const DAM: &str = "DAM";
+    pub const WG: &str = "WG";
+    pub const VAL: &str = "VAL";
+    pub const STR: &str = "STR";
+    pub const CND: &str = "CND";
+    pub const EFFECTS: &str = "EFFECTS";
+}
+
 /// The cards of the figures [documented: item_stats_display.xml: a card is a third of the
 /// rectangle wide and high; damage or DT at the left of the first row, weight and value
 /// 10 apart after it; the Strength requirement over the value; the second row the
@@ -189,10 +202,10 @@ pub fn tiles_in(i: &Info, size: Vec2) -> Vec<Tile> {
     if let Some((title, v)) = &i.first {
         out.push(tile(0.0, 0.0, w, title, v.clone()));
     }
-    out.push(tile(col(1.0), 0.0, w, "WG", i.weight.clone().unwrap_or_else(|| "--".into())));
-    out.push(tile(col(2.0), 0.0, w, "VAL", i.value.clone().unwrap_or_else(|| "--".into())));
+    out.push(tile(col(1.0), 0.0, w, card_title::WG, i.weight.clone().unwrap_or_else(|| "--".into())));
+    out.push(tile(col(2.0), 0.0, w, card_title::VAL, i.value.clone().unwrap_or_else(|| "--".into())));
     if let Some(s) = i.strength {
-        out.push(tile(col(2.0), -h, w, "STR", s.to_string()));
+        out.push(tile(col(2.0), -h, w, card_title::STR, s.to_string()));
     }
     if let Some(d) = &i.dps {
         out.push(tile(0.0, -h, w, "DPS", d.clone()));
@@ -200,7 +213,7 @@ pub fn tiles_in(i: &Info, size: Vec2) -> Vec<Tile> {
     let mut row = 1.0;
     if i.condition.is_some() || i.beside.is_some() {
         if let Some(cnd) = i.condition {
-            out.push(Tile { meter: Some(cnd.clamp(0.0, 1.0)), ..tile(0.0, h, w, "CND", String::new()) });
+            out.push(Tile { meter: Some(cnd.clamp(0.0, 1.0)), ..tile(0.0, h, w, card_title::CND, String::new()) });
         }
         if let Some(b) = &i.beside {
             out.push(tile(col(1.0), h, 2.0 * w + 10.0, b, String::new()));
@@ -208,7 +221,7 @@ pub fn tiles_in(i: &Info, size: Vec2) -> Vec<Tile> {
         row = 2.0;
     }
     if let Some(e) = &i.effects {
-        out.push(tile(0.0, row * h, 3.0 * w + 20.0, "EFFECTS", e.clone()));
+        out.push(tile(0.0, row * h, 3.0 * w + 20.0, card_title::EFFECTS, e.clone()));
     }
     out
 }
@@ -240,7 +253,7 @@ pub fn info_of(r: &Row, combat: Option<&crate::combat::Combat>, sim: &mut SimSta
                 let w = &w;
                 // Binoculars and the like are weapons without damage: no DAM or STR
                 // [hypothesis].
-                i.first = (w.base_damage > 0).then(|| ("DAM", w.base_damage.to_string()));
+                i.first = (w.base_damage > 0).then(|| (card_title::DAM, w.base_damage.to_string()));
                 i.strength = (w.strength_req > 0).then_some(w.strength_req);
                 i.badge = w.skill.as_deref().and_then(skill_badge).map(str::to_string);
                 i.skill_req = i.badge.is_some().then_some(w.skill_req);

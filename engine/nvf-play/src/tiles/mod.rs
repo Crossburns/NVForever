@@ -616,13 +616,16 @@ fn write_container(
     st.menu = menu;
     let Some(menu) = menu else { return };
     // What the model shows is read when it changed: an aid's figures run its conditions.
-    let new = (active.is_changed() || st.needs_snapshot(menu)).then(|| {
+    let due = active.is_changed() || st.needs_snapshot(menu);
+    // The load order's setting over NVForever's label.
+    let hint = if due { fnv_game::ui_loading::game_string(game, container_menu::TAKE_ALL_HINT) } else { String::new() };
+    let new = due.then(|| {
         if forms.is_none() {
             *forms = play.as_ref().map(|p| crate::pipboy::stats::read::Forms::new(p.lo, p.schema));
         }
         let note = crate::menu::note(m, &sim);
         let info = m.selected_row(m.focus).map(|r| crate::pipboy::items::info_of(r, combat.as_deref(), sim.bypass_change_detection(), forms.as_mut(), Some(script.bypass_change_detection())));
-        container_menu::Snapshot::of(m, info.as_ref(), note)
+        container_menu::Snapshot::of(m, info.as_ref(), note, hint)
     });
     let Some(rt) = script.rt.as_mut() else { return };
     let ui = &mut rt.game.ui_tree;

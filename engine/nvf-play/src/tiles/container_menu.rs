@@ -30,9 +30,10 @@
 //!   (`super::layout::HOTRECT_FILL`).
 //! - **Keys** ([`HAND_BUILT_KEYS`]): the hand-built keys stay the keys, so physical A focuses
 //!   the player's list and R takes all, against the file's `_PCButton_A`; a script's MenuTapKey
-//!   still acts through the file. The Take All hint says "R)", so what shows is what works
-//!   [design: crate::menu's keys, which no owner decision set; the file and the original's shot
-//!   say "A)"].
+//!   still acts through the file. The Take All hint reads `sPCMenuHintR` as Exit's reads the
+//!   file's `sPCMenuHintE`, so what shows is what works, both in the words of the strings table
+//!   (`fnv_ui::strings`) [design: crate::menu's keys, which no owner decision set; the file
+//!   names `sPCMenuHintA`].
 //! - **The wheel** stays `crate::menu::menu_mouse`'s: it moves the selection, over a heading
 //!   the category; this module only says which heading the pointer is over ([`TileWheelTitle`]).
 
@@ -70,9 +71,9 @@ const SIDES: [Side; 2] = [Side::Container, Side::Player];
 /// `_background_fill_alpha` of 32 being replaced in the original].
 pub const BACKGROUND_ALPHA: f64 = 193.8;
 
-/// What the hint beside Take All says: the key that does it here (module notes) [design:
-/// NVForever's words, the hand-built menu's].
-const TAKE_ALL_HINT: &str = "R)";
+/// The setting of the hint beside Take All: the key that does it here (module notes) [documented:
+/// menu-xml.md §2.4 lists the setting; `fnv_ui::strings::BUILT_IN` words it as the other keys'].
+pub const TAKE_ALL_HINT: &str = "sPCMenuHintR";
 
 /// [design] Every path the model writes or input reads is part of a successful build, the
 /// buttons' words, which give them their sizes, and the rows' template with the two children
@@ -175,6 +176,8 @@ pub struct Snapshot {
     pub icon: Option<String>,
     /// Take All has something to take.
     pub take_all: bool,
+    /// [`TAKE_ALL_HINT`]'s text.
+    pub take_all_hint: String,
     pub note: Option<String>,
 }
 
@@ -189,16 +192,22 @@ pub fn rows_shown(rows: &[Row]) -> Vec<RowShown> {
     out
 }
 
-/// The weight label [observed: "Wg   52/200", three spaces; the words are the hand-built
-/// menu's (`look::half_figure`)].
+/// The weight label [observed: "Wg   52/200", three spaces; 289.50 carried reads 289, 49.50
+/// reads 49, so whole units cut off; the words are the hand-built menu's
+/// (`look::half_figure`)].
+fn weight_text(weight: f64, capacity: f64) -> String {
+    format!("Wg   {:.0}/{capacity:.0}", weight.floor())
+}
+
 fn weight_label(m: &MenuModel) -> String {
-    m.encumbrance.as_ref().map_or(String::new(), |e| format!("Wg   {:.0}/{:.0}", e.weight, e.capacity))
+    m.encumbrance.as_ref().map_or(String::new(), |e| weight_text(e.weight, e.capacity))
 }
 
 impl Snapshot {
-    /// What `m` shows; `info` the selected row's figures (`crate::pipboy::items::info_of`) and
-    /// `note` the line under the menu (`crate::menu::note`).
-    pub fn of(m: &MenuModel, info: Option<&Info>, note: Option<String>) -> Snapshot {
+    /// What `m` shows; `info` the selected row's figures (`crate::pipboy::items::info_of`),
+    /// `note` the line under the menu (`crate::menu::note`) and `take_all_hint`
+    /// [`TAKE_ALL_HINT`]'s text.
+    pub fn of(m: &MenuModel, info: Option<&Info>, note: Option<String>, take_all_hint: String) -> Snapshot {
         let list = |side: Side| ListShown {
             rows: rows_shown(&m.list(side).rows),
             category: m.category[side as usize],
@@ -214,6 +223,7 @@ impl Snapshot {
             card: selected.map(|r| look::item_figures(m, r, info)),
             icon: selected.and_then(|r| r.icon.clone()),
             take_all: !m.list(Side::Container).rows.is_empty(),
+            take_all_hint,
             note,
         }
     }
@@ -316,7 +326,7 @@ pub fn write(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles) {
     // The file's own one blank without a note [documented].
     set(ui, SUBTITLE, "string", Value::Str(s.note.clone().unwrap_or_else(|| " ".into())));
     set(ui, TAKE_ALL, "target", on(s.take_all));
-    set(ui, TAKE_ALL, "_PCButtonText", Value::Str(TAKE_ALL_HINT.into()));
+    set(ui, TAKE_ALL, "_PCButtonText", Value::Str(s.take_all_hint.clone()));
     set(ui, BACKGROUND, "alpha", Value::Num(BACKGROUND_ALPHA));
 }
 
@@ -679,8 +689,16 @@ mod tests {
             card: Some(Info { value: Some("30".into()), weight: Some("5.00".into()), ..Info::default() }),
             icon: Some("interface\\icons\\x.dds".into()),
             take_all: !right.is_empty(),
+            take_all_hint: "[R]".into(),
             note: None,
         }
+    }
+
+    #[test]
+    fn the_weight_cuts_off_to_whole_units() {
+        assert_eq!(weight_text(52.0, 200.0), "Wg   52/200");
+        assert_eq!(weight_text(49.5, 200.0), "Wg   49/200");
+        assert_eq!(weight_text(289.5, 200.0), "Wg   289/200");
     }
 
     /// A frame as the writer does it: what changed written, then [`settle`].
@@ -733,7 +751,7 @@ mod tests {
         assert_eq!((at(&ui, &format!("{ARROW}/visible")), at(&ui, &format!("{ARROW}/user0"))), (1.0, 1.0));
         assert_eq!(at(&ui, &format!("{ICON}/visible")), 1.0);
         assert_eq!(ui.get_string(&format!("{CARD}/WeightInfo/_Value")).as_deref(), Some("5.00"));
-        assert_eq!(ui.get_string(&format!("{TAKE_ALL}/_PCButtonText")).as_deref(), Some("R)"));
+        assert_eq!(ui.get_string(&format!("{TAKE_ALL}/_PCButtonText")).as_deref(), Some("[R]"));
         assert_eq!(at(&ui, &format!("{BACKGROUND}/alpha")), BACKGROUND_ALPHA);
         assert!(describe(&ui, &s).contains("\"ITEMS\" 2 rows, \"Footlocker\" 1 rows"), "{}", describe(&ui, &s));
     }

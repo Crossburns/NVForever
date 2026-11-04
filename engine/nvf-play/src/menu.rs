@@ -830,6 +830,10 @@ pub(crate) fn note(m: &MenuModel, sim: &SimState) -> Option<String> {
 /// the scripts' game (an aid item's effects, `crate::pipboy::items::info_of`).
 type DrawSources<'w> = (Option<Res<'w, crate::combat::Combat>>, Option<Res<'w, crate::PlayWorld>>, Option<ResMut<'w, crate::script::ScriptState>>);
 
+/// [`draw`]'s view of the tile menus: the switch, what was drawn from tiles last, the container
+/// menu's tile state.
+type DrawTiles<'w, 's> = (Option<Res<'w, crate::tiles::vanilla::TileMenus>>, Local<'s, (bool, bool)>, Option<Res<'w, crate::tiles::container_menu::ContainerTiles>>);
+
 /// Rebuild the container or barter menu's UI when the model changed (the inventory is
 /// the Pip-Boy's).
 #[allow(clippy::too_many_arguments)]
@@ -844,7 +848,7 @@ fn draw(
     mut kit: Local<Option<look::Kit>>,
     (combat, play, mut script): DrawSources,
     mut forms: Local<Option<crate::pipboy::stats::read::Forms>>,
-    (tiles, mut was_tiled, tile_menu): (Option<Res<crate::tiles::vanilla::TileMenus>>, Local<(bool, bool)>, Option<Res<crate::tiles::container_menu::ContainerTiles>>),
+    (tiles, mut was_tiled, tile_menu): DrawTiles,
 ) {
     // T15a: with `[UI] TileMenus=QuantityMenu` the prompt is drawn from its tiles
     // (`crate::tiles::menus`) once the tree has built its file; drawn again here when that

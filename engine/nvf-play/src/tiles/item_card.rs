@@ -6,6 +6,12 @@
 //! - A card shows through its `visible`, its figure through `_Value` ("Set in code" in the
 //!   prefab), its title from the file but for `AmmoInfo`'s, the ammunition or the armour's
 //!   class [observed: `AmmoInfo` title "9mm (13/37)", "Heavy", `_Value` empty].
+//! - The titles' words: a title reading a setting the load order defines stays, as does a mod's
+//!   own. Where it reads NVForever's label for a setting no plugin defines (`fnv_ui::strings`:
+//!   "WEIGHT", "Value", "Condition" ...), the card says what the hand-built figures say
+//!   ([`crate::pipboy::items::card_title`], [`SHORT_TITLES`]): the two drawings of a card agree, and
+//!   the labels do not fit the file's card: `ConditionMeter` stands 62 in, a title 5 in
+//!   [documented], and "WEIGHT" alone measures 72 units [observed: this menu at 1280 x 720].
 //! - The condition: `ConditionInfo`'s `user5` 0 to 1, which its meter reads, and `user6` 1 for
 //!   a weapon, 0 for armour [observed], with `CNDArrows` at y 15, 20 high once a card is
 //!   written [observed; what it looks like there is an open observer check].
@@ -20,7 +26,7 @@
 //! - Nothing selected: every card hidden, but `StrengthReqInfo` as the file has it, shown at
 //!   `alpha` 0 [observed: at the opening of the menu its lines show and no words].
 
-use crate::pipboy::items::Info;
+use crate::pipboy::items::{card_title, Info};
 use fnv_ui::{Ui, Value};
 
 /// The cards this writes, under the prefab's root [documented: item_stats_display.xml].
@@ -29,6 +35,28 @@ pub const CARDS: [&str; 8] = ["DAMInfo", "DamageThresholdInfo", "DPSInfo", "Weig
 pub const EFFECTS: &str = "EffectsInfo";
 /// The condition's arrows under `ConditionInfo`.
 pub const CONDITION_ARROWS: &str = "ConditionInfo/CNDArrows";
+
+/// By card: the setting its file reads for the title, the word it says (module notes). DPS and
+/// DT are the same in both.
+const SHORT_TITLES: [(&str, &str, &str); 6] = [
+    ("DAMInfo", "sInventoryDamage", card_title::DAM),
+    ("WeightInfo", "sInventoryWeightUpper", card_title::WG),
+    ("ValueInfo", "sInventoryValue", card_title::VAL),
+    ("StrengthReqInfo", "sInventoryStrReq", card_title::STR),
+    ("ConditionInfo", "sInventoryCondition", card_title::CND),
+    (EFFECTS, "sInventoryEffects", card_title::EFFECTS),
+];
+
+/// [`SHORT_TITLES`] over the titles that read NVForever's labels. [design] Compared by the text:
+/// a plugin's setting worded exactly as the label is taken for the label.
+fn short_titles(ui: &mut Ui, root: &str) {
+    for (card, setting, word) in SHORT_TITLES {
+        let path = format!("{root}/{card}/_Title");
+        if ui.get_string(&path).is_some_and(|t| fnv_ui::strings::built_in(setting).is_some_and(|l| l == t.trim())) {
+            set(ui, root, card, "_Title", Value::Str(word.to_string()));
+        }
+    }
+}
 
 fn set(ui: &mut Ui, root: &str, card: &str, name: &str, v: Value) {
     if let Some(t) = ui.find_tile(&format!("{root}/{card}")) {
@@ -44,6 +72,7 @@ fn show(ui: &mut Ui, root: &str, card: &str, value: Option<&str>) {
 /// Write what the cards under `root` show of `info`, or the empty state with `None`. Every
 /// card is written, so nothing stays of the item before.
 pub fn write(ui: &mut Ui, root: &str, info: Option<&Info>) {
+    short_titles(ui, root);
     let Some(i) = info else {
         for card in CARDS.into_iter().chain([EFFECTS]) {
             show(ui, root, card, None);
@@ -106,6 +135,10 @@ mod tests {
         format!(r#"<rect name="{name}"><_Title>{name}</_Title><_Value></_Value><visible>&false;</visible>{extra}</rect>"#)
     }
 
+    fn card_titled(name: &str, title: &str) -> String {
+        format!(r#"<rect name="{name}"><_Title>{title}</_Title><_Value></_Value><visible>&false;</visible></rect>"#)
+    }
+
     fn ui() -> Ui {
         let cards: String = [
             card("DAMInfo", "<alpha>0</alpha>"),
@@ -153,6 +186,29 @@ mod tests {
         assert_eq!((at(&ui, "ConditionInfo/CNDArrows/y"), at(&ui, "ConditionInfo/CNDArrows/height")), (15.0, 20.0));
         assert_eq!((at(&ui, "StrengthReqInfo/alpha"), at(&ui, "DAMInfo/alpha")), (255.0, 255.0));
         assert_eq!(at(&ui, "DPSInfo/y"), -40.0);
+    }
+
+    #[test]
+    fn the_labels_of_no_plugin_take_the_figures_words() {
+        let xml = format!(
+            r#"<menu name="M"><rect name="D"><user1>40</user1>{}{}{}{}{}</rect></menu>"#,
+            card_titled("WeightInfo", "WEIGHT"),
+            card_titled("ValueInfo", "Worth"),
+            card_titled("ConditionInfo", "Condition"),
+            card_titled("StrengthReqInfo", "Strength Req."),
+            card_titled("DPSInfo", "DPS"),
+        );
+        let mut ui = Ui::new();
+        ui.load_menu(&MemSource::default().with("m.xml", &xml), "m.xml").unwrap();
+        ui.update();
+        write(&mut ui, ROOT, Some(&pistol()));
+        ui.update();
+        let title = |card: &str| ui.get_string(&format!("{ROOT}/{card}/_Title")).unwrap_or_default();
+        assert_eq!(title("WeightInfo"), "WG");
+        assert_eq!(title("ConditionInfo"), "CND");
+        assert_eq!(title("StrengthReqInfo"), "STR");
+        assert_eq!(title("DPSInfo"), "DPS");
+        assert_eq!(title("ValueInfo"), "Worth", "a setting of the load order wins");
     }
 
     #[test]
