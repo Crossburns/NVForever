@@ -1216,7 +1216,15 @@ impl Runtime {
                             Ok(())
                         }
                         Some(Err(error)) => Err(format!("{func}: {error}")),
-                        None => Err(format!("{func} is not a script function")),
+                        // One the script machine holds itself (MessageBoxEx): a line of script,
+                        // as the console's.
+                        None => match g.run_source(&format!("{func} {}", args.join(" ")), ctx) {
+                            Ok(_) => {
+                                info!("script: test aid calls {func}{}", on.map(|r| format!(" on {}", g.data.name(r))).unwrap_or_default());
+                                Ok(())
+                            }
+                            Err(e) => Err(format!("{func} is not a script function: {e}")),
+                        },
                     };
                 };
                 let mut values = Vec::new();
