@@ -221,6 +221,9 @@ read privately; not seen running unless tagged otherwise.]
 
 - Unit tests: the sheets' rules (`fnv_game::chargen`), the list model, the texts, the
   name box, the test aid (`nvf-play` `chargen`).
+- The trait menu's file, missing or cut down, without touching the game's folder:
+  `NVF_PLAY_TEST_TRAIT_TILES=<s>:missing`, `<s>:cut:<tile name>`; `<s>:long` makes a
+  description long enough to scroll (§4.1, `tiles::trait_menu`).
 - Open a menu without the opening: `NVF_PLAY_TEST_SCRIPT=<s>:menu:<code>`; play it with
   `NVF_PLAY_TEST_CHARGEN=<s>:pick:<row>,<s>:type:<text>,<s>:clear,<s>:reset,<s>:done`;
   set `NVF_PLAY_TEST_SCRIPT_MENUS=off` so the unattended runs' auto-close leaves it open.
@@ -231,8 +234,12 @@ read privately; not seen running unless tagged otherwise.]
 
 ## 8. Not built, or guessed
 
-- The world behind is not blurred (the original blurs it); the dark picture is 0.4 alpha
-  [observed: 33 against 54 brightness inside and just outside it].
+- The world behind is not blurred (the original blurs it), except behind the trait menu
+  drawn from its file (§4.1); the dark picture is 0.4 alpha [observed: 33 against 54
+  brightness inside and just outside it].
+- The hand-built trait menu's description is cropped at its box with no way to scroll it,
+  and the other two pages' can run over what is below [design: read from `lists.rs`, not
+  seen running]; §4.1 reads to the end, the hand-built drawing has its own fix to come.
 - Sounds (list 5 items 41, 42; `nvf_play::ui_sounds`, menus `tag skills` and `traits`):
   the chosen row moving and the pointer onto Reset or Done `UIMenuFocus`, a row taken or
   given back `UIMenuPrevNext`, a row refused `UIMenuCancel`, Reset `UIMenuCancel`, Done
