@@ -18295,6 +18295,48 @@ order = [[
 ]]
 
 [[scenario]]
+name = "tiles-trait-stage-handover"
+source = "chargen.md §4.1, review of #1519's first round: a script putting the tag-skill menu in the tile-drawn trait menu's place: that menu is drawn by hand from the same frame, never a blank frame, and the blur goes with the tiles; then the same back again"
+note = "the shot at 27 must show the hand-built tag-skill menu whole, the one at 33 the tile trait menu with the taken mark"
+areas = ["ui", "menus", "chargen"]
+paths = ["engine/nvf-play/src/tiles/trait_menu.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/chargen.rs", "crates/fnv-game/src/chargen.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TraitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:menu:1084,26:menu:1048,32:menu:1084", NVF_PLAY_TEST_CHARGEN = "23:pick:Kamikaze,28:pick:Guns,28.2:pick:Speech,28.4:pick:Survival,29:done,34:done", NVF_PLAY_TEST_SHOTS = "25:tiles_trait_handover_before.png,26.5:tiles_trait_handover_tags.png,33:tiles_trait_handover_back.png" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 38
+expect = [
+  { re = 'tiles: TraitMenu drawn from tiles \(', count = 2, label = "each trait opening is drawn from tiles" },
+  { text = "TraitMenu drawn by hand", count = 0, label = "and neither fell back" },
+  { text = "chargen: trait menu open", count = 2 },
+  { text = "chargen: tag-skill menu open", count = 1, label = "the menu put in its place opens" },
+  { text = "chargen: done, tag skills: Guns, Speech, Survival", count = 1, label = "and works, by hand" },
+  { text = "tile menu blur: off", min = 2, label = "the blur goes with the tiles each time" },
+]
+order = [["Kamikaze chosen", "chargen: tag-skill menu open", "chargen: done, tag skills: ", { re = 'tiles: TraitMenu drawn from tiles \(', label = "tiles again" }, "chargen: done, traits: "]]
+
+[[scenario]]
+name = "tiles-trait-fallback-reopen"
+source = "chargen.md §4.1, review of #1519's first round: a menu closed after falling back to hand-built, then opened again: it is drawn from a new tree's tiles from the top, nothing of how the last was left in it"
+note = "the aid's pick of the last row leaves the list at its end, 3 of 3; the cut is one tile of the first tree, and a new tree has it"
+areas = ["ui", "menus", "chargen"]
+paths = ["engine/nvf-play/src/tiles/trait_menu.rs", "engine/nvf-play/src/chargen.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TraitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:menu:1084,32:menu:1084", NVF_PLAY_TEST_TRAIT_TILES = "25:cut:TM_DescriptionText", NVF_PLAY_TEST_CHARGEN = "23:pick:Wild Wasteland,27:done,35:done" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 38
+expect = [
+  { text = "chargen: trait menu open", count = 2 },
+  { re = 'ui: built TraitMenu', count = 2, label = "each opening builds its file" },
+  { re = 'TraitMenu drawn by hand: .*TM_DescriptionText missing', count = 1, label = "the first falls back" },
+  { re = 'tiles: TraitMenu drawn from tiles \(', count = 2, label = "each is drawn from tiles" },
+  { text = "chargen: done, traits: Wild Wasteland", count = 2, label = "the sheet carries on" },
+]
+order = [[
+  { re = 'tiles: TraitMenu list scrolled to 3 of 3', label = "the first opening's list at its end" },
+  { re = 'TraitMenu drawn by hand', label = "falls back" },
+  { text = "chargen: done, traits: Wild Wasteland", label = "closed by hand" },
+  { re = 'tiles: TraitMenu list scrolled to 0 of 3, text scrolled to 0 of', label = "the next opens at the top" },
+]]
+
+[[scenario]]
 name = "nvse-engine-events"
 source = "The extender's events that only the running engine raises (docs/handoff/nvse-next-batch.md §6): OnLoad of a placed unscripted item, OnHit/OnHitWith of a hit, OnMagicEffectHit of a stimpak, OnPackageStart, OnCombatEnd; handlers set from the console as one-line lambdas"
 areas = ["scripts", "actors"]

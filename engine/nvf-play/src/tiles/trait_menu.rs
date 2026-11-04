@@ -7,10 +7,15 @@
 //!   module never makes a sheet (the constructors use up what scripts asked for): it reads the
 //!   open menu ([`Snapshot`]), writes the file's "set in code" traits, and says what a click
 //!   stands for ([`TileAct`], queued for `crate::chargen`'s `input` later in the frame).
-//! - **Readiness** ([`prepare`]): the one decision everything reads ([`TraitTiles::menu`]): the
-//!   file built with every path, every row made, and sizes that can be used. Otherwise the
-//!   rows made so far go and the hand-built menu stands, its sheet as it was: nothing reopens,
-//!   and the next frame tries again.
+//! - **Readiness** ([`prepare`], every frame, whatever was written last): the file built with
+//!   every path, every row and its children live, and sizes that can be used. Otherwise the rows
+//!   made so far go and the hand-built menu stands, its sheet as it was: nothing reopens, and the
+//!   next frame tries again, with new rows. What is drawn is one decision ([`drawn`]) for the
+//!   hand-built menu, the tiles and the blur: ready, for this very opening, in this very tree.
+//! - **Three lifetimes**: an opening (`crate::chargen`'s generation) holds the scrolls and the
+//!   highlight, and a fallback does not end it ([`TraitTiles::begin`]); a tree holds the counts
+//!   the file gave before code wrote them ([`FileCounts`]), which a fallback must not take for
+//!   the engine's; a readiness holds the rows.
 //! - **A frame** ([`prepare`], before `super::input::feed`): the tree worked out, what changed
 //!   written, the texts measured, the rows placed, the counts, scrolls and highlight written,
 //!   the tree worked out again, as `super::container_menu`. The scrolls are written again after
@@ -187,8 +192,6 @@ struct ListScroll {
     most: f64,
     /// The highlighted row's top and height before the scroll.
     selected: Option<(f64, f64)>,
-    /// The file's `_scroll_delta` before any code wrote it, for a list that fits.
-    step: Option<f64>,
     /// What a value moves the rows now.
     scale: f64,
     /// The highlight shows: off when the menu opens, and off the rows.
@@ -205,8 +208,22 @@ struct TextScroll {
     most: f64,
     /// The row whose text this is: another starts at the top.
     key: Option<FormId>,
-    /// The bar's own `_number_of_items` before any code wrote it.
-    file_items: Option<f64>,
+}
+
+/// What the file gave a tree before any code wrote it, kept as long as that tree stands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FileCounts {
+    menu: TileId,
+    /// The list's `_scroll_delta`, for a list that fits.
+    list_step: f64,
+    /// The description bar's `_number_of_items`.
+    text_items: f64,
+}
+
+impl FileCounts {
+    fn read(ui: &Ui, menu: TileId) -> FileCounts {
+        FileCounts { menu, list_step: num(ui, LIST, "_scroll_delta"), text_items: num(ui, TEXT_BAR, "_number_of_items") }
+    }
 }
 
 /// The tile menu's state: what the writer, the input and the hand-built menu share.
@@ -216,6 +233,10 @@ pub struct TraitTiles {
     pub menu: Option<TileId>,
     /// Done was pressed, or the pause menu is over it: drawn, taking nothing.
     held: bool,
+    /// The opening the scrolls and the highlight belong to ([`TraitTiles::begin`]).
+    generation: Option<u64>,
+    /// The counts of the tree last prepared.
+    file: Option<FileCounts>,
     rows: Vec<RowTile<FormId>>,
     shown: Option<Snapshot>,
     written_in: Option<TileId>,
@@ -296,7 +317,7 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut TraitTiles, write_sizes: &mut 
     if let Some(list_tile) = ui.find_tile(LIST) {
         let heights = list::measure_rows(ui, &st.rows, ROW_TEXT);
         let page = num(ui, LIST, "height");
-        let step = *st.list.step.get_or_insert_with(|| ui.tile(list_tile).get("_scroll_delta").map_or(0.0, Value::num));
+        let step = st.file.map_or(0.0, |f| f.list_step);
         // The container capture's counts hold here too [observed: 14 rows of 52 in 676, the
         // original's job `trait`: 2 items, `_scroll_delta` 52, the marker 322].
         let counts = list::counts(&heights, page);
@@ -335,7 +356,7 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut TraitTiles, write_sizes: &mut 
         // The text's place with no scroll, whatever the file adds to it.
         let top = num(ui, TEXT, "y") + value * step;
         let visible = ui.tile(bar).get("_number_of_visible_items").map_or(1.0, Value::num);
-        let file_items = *st.text.file_items.get_or_insert_with(|| ui.tile(bar).get("_number_of_items").map_or(visible, Value::num));
+        let file_items = st.file.map_or(visible, |f| f.text_items);
         let most = text_most(top, num(ui, TEXT, "height"), num(ui, TEXT_BOX, "height"), step, (file_items - visible).max(0.0));
         st.text.most = most;
         st.text.value = st.text.value.clamp(0.0, most);
@@ -351,19 +372,54 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut TraitTiles, write_sizes: &mut 
     ui.update();
 }
 
-/// [`Tiled`] for what [`settle`] left: sizes that can be used [design: a menu with no room or no
-/// measure cannot be read, so the hand-built one stays].
-fn usable(ui: &Ui, st: &TraitTiles) -> Tiled {
-    if num(ui, LIST, "height") <= 0.0 || st.list.step.is_none_or(|s| s <= 0.0) {
-        return Tiled::No(format!("{LIST} has no height or scroll step"));
+/// A length that can be used: a number, more than nothing.
+fn room(x: f64) -> bool {
+    x.is_finite() && x > 0.0
+}
+
+/// [`Tiled`] for what [`settle`] left, read from the tree as it stands, every frame: each row and
+/// its children live, room for the list and the text, and text measured [design: a menu with no
+/// room or no measure cannot be read, so the hand-built one stays; a row's spacing alone is no
+/// measure].
+fn usable(ui: &Ui, s: &Snapshot, st: &TraitTiles) -> Tiled {
+    if !room(num(ui, LIST, "height")) || !room(num(ui, LIST, "width")) || !room(st.list.scale) {
+        return Tiled::No(format!("{LIST} has no room or scroll step"));
     }
-    if num(ui, TEXT_BOX, "height") <= 0.0 || num(ui, TEXT_BAR, "_ScrollDelta") <= 0.0 {
-        return Tiled::No(format!("{TEXT_BOX} has no height or scroll step"));
+    if !room(num(ui, TEXT_BOX, "height")) || !room(num(ui, TEXT_BOX, "width")) || !room(num(ui, TEXT_BAR, "_ScrollDelta")) {
+        return Tiled::No(format!("{TEXT_BOX} has no room or scroll step"));
     }
-    if st.rows.iter().any(|r| ui.tile(r.tile).get("height").is_none_or(|h| h.num() <= 0.0)) {
-        return Tiled::No("a row measured no height".into());
+    if st.rows.len() != s.rows.len() {
+        return Tiled::No("a row could not be made".into());
+    }
+    for r in &st.rows {
+        if !ui.is_live(r.tile) || list::child(ui, r.tile, ROW_MARK).is_none() {
+            return Tiled::No(format!("a row lost its tile or {ROW_MARK}"));
+        }
+        let Some(text) = list::child(ui, r.tile, ROW_TEXT) else { return Tiled::No(format!("a row lost its {ROW_TEXT}")) };
+        if !room(ui.tile(text).get("height").map_or(0.0, Value::num)) || !room(ui.tile(r.tile).get("height").map_or(0.0, Value::num)) {
+            return Tiled::No("a row measured no height".into());
+        }
+    }
+    let text = num(ui, TEXT, "height");
+    if !text.is_finite() || (!s.info.is_empty() && text <= 0.0) {
+        return Tiled::No(format!("{TEXT} measured no height"));
     }
     Tiled::Yes
+}
+
+/// [`drawn`]'s decision from what it reads.
+fn drawn_by(st: &TraitTiles, opening: Option<u64>, game_menu: Option<u16>, live: Option<TileId>) -> Option<TileId> {
+    let menu = st.menu?;
+    (opening.is_some() && st.generation == opening && game_menu == Some(codes::TRAITS) && live == Some(menu)).then_some(menu)
+}
+
+/// The menu when it is drawn from its tiles now: ready ([`prepare`], this frame), for the opening
+/// the hand-built side has (`open`, none when the scripts put another menu in its place), the
+/// menu the game has open, in the tree that stands. The hand-built menu, the tiles and the blur
+/// all read this, so a menu in its place never goes undrawn.
+pub fn drawn(st: &TraitTiles, open: Option<crate::chargen::TraitsOpen<'_>>, game: Option<&fnv_game::Game<'_>>) -> Option<TileId> {
+    let game = game.filter(|g| g.ui_files.is_some())?;
+    drawn_by(st, open.map(|o| o.generation), game.menu, game.ui_tree.menu(TRAIT_MENU))
 }
 
 /// One frame's readiness (see the module notes). `new` is what the menu shows now, when it was
@@ -383,14 +439,12 @@ pub fn prepare(ui: &mut Ui, new: Option<Snapshot>, st: &mut TraitTiles, write_si
         st.fail(ui);
         st.written_in = Some(menu);
     }
+    if st.file.is_none_or(|f| f.menu != menu) {
+        // Before this frame's writes. A tree this drawing wrote to keeps what it read first.
+        st.file = Some(FileCounts::read(ui, menu));
+    }
     if let Some(s) = new {
-        if st.shown.as_ref().is_some_and(|was| was.generation != s.generation) {
-            st.list.value = 0.0;
-            st.list.navigated = None;
-            st.list.highlight = false;
-            st.text = TextScroll { file_items: st.text.file_items, ..TextScroll::default() };
-            st.drag = None;
-        }
+        st.begin(s.generation);
         if st.shown.as_ref() != Some(&s) {
             if !write(ui, &s, st) {
                 st.fail(ui);
@@ -405,8 +459,8 @@ pub fn prepare(ui: &mut Ui, new: Option<Snapshot>, st: &mut TraitTiles, write_si
         return Tiled::No("nothing to show yet".into());
     };
     settle(ui, &s, st, write_sizes);
+    let status = usable(ui, &s, st);
     st.shown = Some(s);
-    let status = usable(ui, st);
     if status.yes() {
         st.menu = Some(menu);
     } else {
@@ -416,8 +470,28 @@ pub fn prepare(ui: &mut Ui, new: Option<Snapshot>, st: &mut TraitTiles, write_si
 }
 
 impl TraitTiles {
+    /// A new opening, whatever became of the last: nothing of how it was left shows in this one.
+    /// The same opening goes on through a fallback and back, with its scrolls.
+    pub fn begin(&mut self, generation: u64) {
+        if self.generation != Some(generation) {
+            self.generation = Some(generation);
+            self.list = ListScroll::default();
+            self.text = TextScroll::default();
+            self.drag = None;
+            self.over_text = false;
+            self.acts.clear();
+            self.drawn = None;
+            self.told = false;
+        }
+    }
+
+    /// Whether this drawing is of the opening `generation`.
+    pub fn is_for(&self, generation: u64) -> bool {
+        self.generation == Some(generation)
+    }
+
     /// Nothing of this drawing stays: the rows made go from the tree and the hand-built menu
-    /// draws. A later frame builds them again.
+    /// draws. A later frame builds them again. The opening and the tree go on.
     pub fn fail(&mut self, ui: &mut Ui) {
         for r in std::mem::take(&mut self.rows) {
             if ui.is_live(r.tile) {
@@ -432,8 +506,6 @@ impl TraitTiles {
         self.over_text = false;
         self.acts.clear();
         self.sizes.clear();
-        self.list.step = None;
-        self.text.file_items = None;
         self.drawn = None;
     }
 
@@ -444,7 +516,7 @@ impl TraitTiles {
 
     /// Whether there is anything to close.
     pub fn has_state(&self) -> bool {
-        self.menu.is_some() || self.written_in.is_some() || self.shown.is_some()
+        self.generation.is_some() || self.menu.is_some() || self.written_in.is_some() || self.shown.is_some() || self.file.is_some()
     }
 
     /// The menu while it takes input: drawn, not closing, not under the pause menu.
@@ -472,8 +544,8 @@ impl TraitTiles {
 
     /// Queue an act for `crate::chargen`'s `input`, as of the opening shown.
     fn act(&mut self, act: TileAct) {
-        if let Some(s) = &self.shown {
-            self.acts.push((s.generation, act));
+        if let Some(g) = self.generation {
+            self.acts.push((g, act));
         }
     }
 
@@ -848,6 +920,7 @@ pub(super) fn write_system(
         }
         return;
     };
+    st.begin(open.generation);
     let Some(rt) = script.rt.as_mut() else { return };
     aid.step(&mut rt.game.ui_tree, time.world_secs());
     let status = if aid.missing { Tiled::No("menus\\trait_menu.xml missing".into()) } else { built(&rt.game.ui_tree) };
@@ -955,7 +1028,8 @@ mod tests {
             <template name="LUM_PerkTemplate"><hotrect name="LUM_Perk"><width>280</width><x>10</x><target>&true;</target><_VerticalSpacing>10</_VerticalSpacing>
               <text name="ListItemText"><string>a row</string></text>
               <image name="LUM_Template_ItemMarker"/>
-            </hotrect></template></menu>"#
+            </hotrect></template>
+            <template name="SpareCounter"><text name="LUM_PointCounter"/></template></menu>"#
         );
         let mut ui = Ui::new();
         ui.load_menu(&MemSource::default().with("tm.xml", &change(&xml)), "tm.xml").unwrap();
@@ -1041,6 +1115,141 @@ mod tests {
         assert!(st.menu.is_none(), "the hand-built menu stays");
     }
 
+    /// The counter cut, as a mod might, and made again from the layout's spare.
+    fn cut_counter(ui: &mut Ui) {
+        let counter = ui.find_tile(COUNTER).unwrap();
+        ui.unload_tile(counter);
+    }
+
+    fn restore_counter(ui: &mut Ui) {
+        let info = "TraitMenu/NOGLOW_BRANCH/LUM_MainRect/LUM_SelectionInfoRect";
+        assert!(ui.add_code_tile_from_template(&MemSource::default(), info, "SpareCounter", Some("LUM_PointCounter")).is_some());
+    }
+
+    #[test]
+    fn recovery_comes_back_with_the_files_counts_and_the_openings_scrolls() {
+        let mut ui = menu();
+        let mut st = TraitTiles::default();
+        // A long text raises the description's count past the layout's 3.
+        assert!(frame(&mut ui, &snapshot(10, 0, &lines(10)), &mut st).yes());
+        assert_eq!(at(&ui, &format!("{TEXT_BAR}/_number_of_items")), 10.0);
+        st.scroll_to(Scroll::List, 2.0);
+        // The file loses a tile: the rows go, and the hand-built menu draws.
+        cut_counter(&mut ui);
+        assert!(!frame(&mut ui, &snapshot(10, 0, "short"), &mut st).yes());
+        assert!(st.menu.is_none() && st.rows.is_empty());
+        // It comes back: tiles again, the same opening's scroll, and a short text back at the
+        // file's count, not the 10 the engine wrote.
+        restore_counter(&mut ui);
+        assert_eq!(frame(&mut ui, &snapshot(10, 0, "short"), &mut st), Tiled::Yes);
+        assert!(st.menu.is_some() && st.rows.len() == 10);
+        assert_eq!(st.list.value, 2.0);
+        assert_eq!((st.text.most, at(&ui, &format!("{TEXT_BAR}/_number_of_items"))), (2.0, 3.0));
+    }
+
+    #[test]
+    fn a_new_opening_after_a_fallback_starts_over() {
+        let mut ui = menu();
+        let mut st = TraitTiles::default();
+        let mut s = snapshot(10, 0, &lines(10));
+        assert!(frame(&mut ui, &s, &mut st).yes());
+        s.navigated = 1;
+        s.selected = Some(8);
+        assert!(frame(&mut ui, &s, &mut st).yes());
+        st.scroll_text(4.0);
+        assert!(st.list.highlight && st.list.value > 0.0);
+        cut_counter(&mut ui);
+        assert!(!frame(&mut ui, &s, &mut st).yes());
+        assert!(st.has_state(), "the fallback ended no opening");
+        // The menu opens again, the tree whole.
+        restore_counter(&mut ui);
+        let next = Snapshot { generation: 2, navigated: 1, selected: Some(0), ..snapshot(10, 0, &lines(10)) };
+        assert!(frame(&mut ui, &next, &mut st).yes());
+        assert_eq!((st.list.value, st.text.value, st.list.highlight), (0.0, 0.0, false));
+        assert_eq!(at(&ui, &format!("{LIST}/_highlight_y")), -1.0, "no highlight as it opens");
+        // Closed with the drawing fallen back: closing still clears it.
+        cut_counter(&mut ui);
+        assert!(!frame(&mut ui, &next, &mut st).yes());
+        st.close();
+        assert!(!st.has_state());
+    }
+
+    #[test]
+    fn a_rows_child_going_is_caught_with_the_sheet_unchanged_and_made_again() {
+        for child in [ROW_TEXT, ROW_MARK] {
+            let mut ui = menu();
+            let mut st = TraitTiles::default();
+            let s = snapshot(3, 0, "x");
+            assert!(frame(&mut ui, &s, &mut st).yes());
+            let gone = list::child(&ui, st.rows[1].tile, child).unwrap();
+            ui.unload_tile(gone);
+            // The same snapshot, so nothing is written: readiness reads the tree.
+            assert!(!frame(&mut ui, &s, &mut st).yes(), "{child}");
+            assert!(st.menu.is_none());
+            assert!(frame(&mut ui, &s, &mut st).yes(), "{child}: the next frame makes the rows again");
+            assert_eq!(st.rows.len(), 3);
+        }
+        // A row gone whole.
+        let mut ui = menu();
+        let mut st = TraitTiles::default();
+        let s = snapshot(3, 0, "x");
+        assert!(frame(&mut ui, &s, &mut st).yes());
+        ui.unload_tile(st.rows[0].tile);
+        assert!(!frame(&mut ui, &s, &mut st).yes());
+    }
+
+    #[test]
+    fn no_room_means_the_hand_built_menu() {
+        for (from, to) in [
+            ("<height>200</height><width>300</width>", "<height>0</height><width>300</width>"),
+            ("<height>200</height><width>300</width>", "<height>200</height><width>0</width>"),
+            ("<y>10</y><height>100</height><width>200</width>", "<y>10</y><height>0</height><width>200</width>"),
+            ("<y>10</y><height>100</height><width>200</width>", "<y>10</y><height>100</height><width>0</width>"),
+            ("<_ScrollDelta>25</_ScrollDelta>", "<_ScrollDelta>0</_ScrollDelta>"),
+        ] {
+            let mut ui = menu_changed(|xml| {
+                assert!(xml.contains(from), "{from}");
+                xml.replace(from, to)
+            });
+            let mut st = TraitTiles::default();
+            assert!(!frame(&mut ui, &snapshot(3, 0, "x"), &mut st).yes(), "{to}");
+            assert!(st.menu.is_none() && st.rows.is_empty(), "{to}");
+        }
+        // Nothing measured: a row's spacing alone is no measure, an empty text may be.
+        assert!(!room(f64::NAN) && !room(f64::INFINITY) && !room(0.0) && room(1.0));
+        let mut ui = menu();
+        let mut st = TraitTiles::default();
+        let none = |_: f64, _: &str, _: Option<f64>| (0.0, 0.0);
+        let menu_tile = ui.menu(TRAIT_MENU).unwrap();
+        let mut write_sizes = |ui: &mut Ui, sizes: &mut SizesWritten| {
+            let texts = super::super::menus::texts(ui, menu_tile);
+            write_text_sizes_of(ui, &texts, sizes, &none)
+        };
+        assert!(!prepare(&mut ui, Some(snapshot(3, 0, "x")), &mut st, &mut write_sizes).yes());
+    }
+
+    #[test]
+    fn the_one_decision_follows_the_menu_open_now() {
+        let mut ui = menu();
+        let mut st = TraitTiles::default();
+        assert_eq!(drawn_by(&st, Some(1), Some(codes::TRAITS), None), None, "nothing ready");
+        st.begin(1);
+        assert!(frame(&mut ui, &snapshot(3, 0, "x"), &mut st).yes());
+        let m = ui.menu(TRAIT_MENU);
+        assert_eq!(drawn_by(&st, Some(1), Some(codes::TRAITS), m), m);
+        // Scripts put the tag-skill menu in its place: st.menu still holds this frame's readiness.
+        assert_eq!(drawn_by(&st, None, Some(codes::TAG_SKILLS), m), None, "the hand-built side has moved on");
+        assert_eq!(drawn_by(&st, Some(1), Some(codes::TAG_SKILLS), m), None, "the game has, before that side saw it");
+        assert_eq!(drawn_by(&st, None, Some(codes::TRAITS), m), None, "the sheet is gone");
+        // Another opening of the same menu, or a tree built again, wait for their preparation.
+        assert_eq!(drawn_by(&st, Some(2), Some(codes::TRAITS), m), None);
+        assert_eq!(drawn_by(&st, Some(1), Some(codes::TRAITS), None), None);
+        // Readiness gone.
+        cut_counter(&mut ui);
+        assert!(!frame(&mut ui, &snapshot(3, 0, "x"), &mut st).yes());
+        assert_eq!(drawn_by(&st, Some(1), Some(codes::TRAITS), ui.menu(TRAIT_MENU)), None);
+    }
+
     #[test]
     fn a_cut_file_gives_the_menu_back_and_comes_again_when_whole() {
         let mut ui = menu();
@@ -1057,6 +1266,10 @@ mod tests {
         assert!(rows.iter().all(|&r| !ui.is_live(r)), "the rows made go");
         assert!(st.take_acts(1).is_empty(), "nothing queued acts");
         assert!(st.clicked(&ui, ui.menu(TRAIT_MENU).unwrap()).is_none());
+        restore_counter(&mut ui);
+        assert_eq!(frame(&mut ui, &s, &mut st), Tiled::Yes);
+        assert_eq!(st.takes(), ui.menu(TRAIT_MENU), "whole again, it takes input");
+        assert!(rows.iter().all(|r| !st.rows.iter().any(|now| now.tile == *r)), "with new rows");
     }
 
     #[test]
@@ -1199,7 +1412,7 @@ mod tests {
         let menu = ui.menu(TRAIT_MENU).unwrap();
         let down = ui.find_tile(&format!("{TEXT_BAR}/scrollbar_vert_down")).unwrap();
         let items = super::super::layout::layout(&ui, menu, &|_, _, _| (0.0, 0.0), true);
-        assert_eq!(items.iter().find(|i| i.tile == down).unwrap().clip, None, "the bar stands clear of the window");
+        assert_eq!(items.iter().find(|i| i.tile == down).unwrap().clip, None, "the bar stands clear of its window");
         let text = ui.find_tile(TEXT).unwrap();
         assert!(items.iter().find(|i| i.tile == text).unwrap().clip.is_some(), "the text is cropped");
     }

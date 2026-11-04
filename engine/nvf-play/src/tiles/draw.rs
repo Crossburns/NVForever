@@ -863,6 +863,8 @@ pub(crate) struct View<'w, 's> {
     container: Option<Res<'w, super::container_menu::ContainerTiles>>,
     /// The trait menu, when this frame's writer has it drawn from its tiles.
     traits: Option<Res<'w, super::trait_menu::TraitTiles>>,
+    /// The open character menu, for the same decision as the hand-built trait menu's.
+    chargen: Option<Res<'w, crate::chargen::ChargenMenus>>,
 }
 
 /// The colours an [`Ink`] node may carry.
@@ -924,8 +926,8 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
         (super::wait_menu::SLEEP_WAIT_MENU, game.is_some_and(|g| super::wait_menu::tiled(switch.sleep_wait, g)), SLEEP_WAIT_Z, &mut others.sleep_wait),
         (super::tutorial_menu::TUTORIAL_MENU, game.is_some_and(|g| super::tutorial_menu::tiled(switch.tutorial, g)), TUTORIAL_Z, &mut others.tutorial),
         (super::container_menu::CONTAINER_MENU, container_on, CONTAINER_Z, &mut others.container),
-        // The writer's decision, until the scripts closed the menu (its tree drops next frame).
-        (super::trait_menu::TRAIT_MENU, view.traits.as_ref().is_some_and(|t| t.menu.is_some()) && game.is_some_and(|g| g.menu == Some(fnv_game::game::menus::TRAITS)), TRAIT_Z, &mut others.traits),
+        // One decision with the hand-built menu's and, below, the blur's (`trait_menu::drawn`).
+        (super::trait_menu::TRAIT_MENU, view.traits.as_ref().is_some_and(|t| super::trait_menu::drawn(t, view.chargen.as_ref().and_then(|c| c.traits_open()), game).is_some()), TRAIT_Z, &mut others.traits),
     ] {
         let ui = game.map(|g| &g.ui_tree);
         let menu = ui.filter(|_| on).and_then(|ui| ui.menu(name).map(|m| (ui, m)));

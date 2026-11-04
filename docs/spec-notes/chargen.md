@@ -183,8 +183,8 @@ none.
   mod's, or an aid's) gets the count raised just as far as brings its end into the box, and the
   count goes back for the next row [design: a description must be readable to its end; the
   original is taken to cut it off].
-- The bar stands beside the box, outside its width, so that box's window does not crop it
-  (`fnv_ui::input::OUTSIDE_CLIP`) [hypothesis: a window crops what has `clips`; the capture's
+- The bar stands beside the box, outside its width, so that box's window does not crop it;
+  windows further up still do (`fnv_ui::input::OUTSIDE_CLIP`) [hypothesis: a window crops what has `clips`; the capture's
   shots show the arrows and marker there].
 - **Backing** [observed: the capture]: `LUM_Background` `alpha` 193.80, `brightness` 128, 1144 x
   1070 at 291.33, -45, written here as the container's; the world is blurred behind it by eye on
@@ -205,6 +205,13 @@ none.
   the marks, the counter; what Reset restores with traits taken; `_TextAlpha` and `_enabled` on
   a trait that cannot be taken; a real wheel; the description at value 8; why the capture's list
   lacks two traits.
+- **When it falls back** [design]: every frame the file's paths, each row and its children,
+  the room and the measures are read from the tree. Short of any, the rows go and the
+  hand-built menu draws its sheet as it stands, and the next frame tries again; a tile the
+  model needs coming back brings the tiles back. One opening keeps its scrolls through that; a
+  new opening starts from the top with no highlight; the counts the file gave are kept for as
+  long as its tree stands, so what the engine wrote is not taken for them. A menu the scripts
+  put in this one's place is drawn at once by its own drawing, tiles and blur gone that frame.
 - **Evidence**: the unit tests (`tiles::trait_menu`) use a small layout written for them,
   which says nothing of the file's geometry; the smoke scenarios `tiles-trait-*` read the
   vanilla file.

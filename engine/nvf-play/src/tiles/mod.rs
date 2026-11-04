@@ -811,7 +811,8 @@ impl Plugin for TilesPlugin {
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).after(crate::menu::WheelHoldSet).before(PlaySet::Activation))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
-            .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui))
+            // After the character menus' sync, so the trait menu's decision reads this frame's.
+            .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui).after(crate::chargen::ChargenSet))
             .add_systems(PostUpdate, vanilla::hide_hand_built.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
     }
 }

@@ -352,7 +352,7 @@ fn input(
         Some(OpenMenu::List(m)) => {
             // Drawn from its tiles the rows' place and the scroll are the drawing's; while it
             // takes nothing (the pause menu over it) neither do these.
-            let tiles = traits.as_mut().filter(|t| t.menu.is_some() && m.code == menus::TRAITS);
+            let tiles = traits.as_mut().filter(|t| t.menu.is_some() && m.code == menus::TRAITS && t.is_for(st.generation));
             let tiled = tiles.is_some();
             let page = tiles.as_ref().map_or(m.visible() as i32, |t| t.page_rows());
             let keys_on = tiles.as_ref().is_none_or(|t| t.takes().is_some());
@@ -634,10 +634,11 @@ fn draw_menus(
     formats: Option<Res<CompressedImageFormatSupport>>,
     traits: Option<Res<crate::tiles::trait_menu::TraitTiles>>,
 ) {
-    // The drawing's own decision, this frame's (`crate::tiles::trait_menu::prepare`): the menu
+    // The drawing's own decision, this frame's (`crate::tiles::trait_menu::drawn`): the menu
     // goes the frame its tiles draw, and comes back whole, its sheet as it stands, when they
-    // cannot. Off, this stays false.
-    let tiled = traits.as_ref().is_some_and(|t| t.menu.is_some());
+    // cannot, and a menu the scripts put in its place is drawn at once. Off, this stays false.
+    let game = script.as_ref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+    let tiled = traits.as_ref().is_some_and(|t| crate::tiles::trait_menu::drawn(t, st.traits_open(), game).is_some());
     if tiled != st.tiles_draw {
         st.tiles_draw = tiled;
         st.dirty = true;
@@ -649,7 +650,7 @@ fn draw_menus(
     for e in &roots {
         commands.entity(e).despawn();
     }
-    if tiled && matches!(st.open, Some(OpenMenu::List(_))) {
+    if tiled {
         // No click goes past it [documented: trait_menu.xml, `stackingtype` `&no_click_past;`];
         // the tile pointer reads the cursor itself.
         let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
