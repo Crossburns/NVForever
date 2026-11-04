@@ -36,6 +36,10 @@
 //!   past it [documented: `&no_click_past;`]. The wheel stays the hand-built menu's. On the
 //!   frame it is first built, when the hand-built buttons of the frame before still stand, it
 //!   takes nothing, so a press acts once, on what was on screen [design].
+//! - **The dialogue menu** (`super::dialog_menu`): while drawn from its tiles with nothing over
+//!   it and no pause menu; what it asks goes to `crate::dialogue::input` through
+//!   `crate::dialogue::ViewInput`, the same commands as the keys. It takes the input as drawn
+//!   the frame before, so a click is on what was on screen.
 //! - **Units**: the cursor's logical pixels to interface units, 960 to the view's height,
 //!   as the tile renderer draws (`super::draw`, `crate::interface::u`) [design].
 //! - **Keys**: A to Z as `_PCButton_<letter>` [documented: the vanilla files' letters;
@@ -405,10 +409,14 @@ pub(crate) fn feed(
     devices: Devices,
     mut inputs: MenuInputs,
     (paused, page): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>),
+    (dialog, mut view_input): (Option<Res<super::dialog_menu::DialogTiles>>, Option<ResMut<crate::dialogue::ViewInput>>),
 ) {
     let Some(rt) = script.rt.as_mut() else { return };
     if rt.game.ui_files.is_none() {
         return;
+    }
+    if let Some(v) = view_input.as_deref_mut() {
+        *v = Default::default();
     }
     // The test aid's pointer, moved on its clock.
     let mut aid_click = false;
@@ -439,6 +447,9 @@ pub(crate) fn feed(
     if aid_at.is_some() && menus.hud {
         taking.extend(rt.game.ui_tree.menu(super::draw::HUD_MENU));
     }
+    // The dialogue menu, under anything over the conversation (it does not take with one up).
+    let dialog_menu = dialog.as_ref().and_then(|d| d.taking(&rt.game, paused.as_ref().is_some_and(|p| p.0)));
+    taking.extend(dialog_menu);
     taking.extend(inputs.taking(*menus, &rt.game));
     // T11: the pause menu's Mods page takes the pointer and keys for the start menu's
     // tiles (`super::mods`).
@@ -500,6 +511,9 @@ pub(crate) fn feed(
     let report = fnv_game::ui_input::step(&mut rt.game, &taking, &input, &no_measure);
     let ui = &rt.game.ui_tree;
     let slider = inputs.follow(ui, &report, at, held, &physical, tutorial);
+    if let (Some(menu), Some(v)) = (dialog_menu, view_input.as_deref_mut()) {
+        super::dialog_menu::follow(ui, &report, &physical, menu, dialog.as_ref().and_then(|d| d.list()), v);
+    }
     if let Some((_, to)) = report.over {
         match to.filter(|&t| ui.is_live(t)) {
             Some(t) => {

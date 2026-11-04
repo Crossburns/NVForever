@@ -24,14 +24,22 @@
 //!   a template that makes no row with its text, or a text that does not measure gives the
 //!   whole hand-built menu: the rows made are unloaded, the reason warned once, and the
 //!   preparation tried again next frame, as a font or a file may come.
+//! - **The input** ([`follow`]): the tile input feeds the menu while it is drawn, nothing over
+//!   it and no pause menu ([`DialogTiles::taking`]), and a pointer's or a script's click comes
+//!   back as `crate::dialogue::ViewInput`: a row picks its choice, the pointer coming onto a
+//!   row selects it, the click area and the line skip, the scroll bar's arrows and page areas
+//!   step the selection. The keys and the wheel stay `crate::dialogue`'s. Each is held to
+//!   the list it was read on, and a real press while the actor speaks skips once whichever way
+//!   it arrives.
 //! - **NVForever's own tiles**: `NVF_GoodbyeHint` and `NVF_SelectionFill`, from templates
 //!   written here (`dialogue-menu.md` §6.4). The hint reads its wording and whether it shows
 //!   from the same model as the hand-built one.
 
 use super::menus::{self, SizesWritten, Tiled};
-use crate::dialogue::{DialogueScreen, ListId};
+use crate::dialogue::{DialogueScreen, ListId, ViewInput};
 use crate::dialogue_menu::{crop_x, window, DialogueMenu, MenuView, CROP_Y, GOODBYE_HINT, SHADE};
 use bevy::prelude::*;
+use fnv_ui::input::{By, Report};
 use fnv_ui::{MemSource, Origin, TileId, Ui, Value};
 
 /// The menu's name [observed: the vanilla files, by fnvtool ui tree].
@@ -415,6 +423,87 @@ pub fn describe(ui: &Ui, now: &Shown, first: usize) -> String {
     )
 }
 
+/// The keys `crate::dialogue::input` acts on itself, by the tile input's names: W, S and the
+/// arrows (a step), E and the controller's A (Activate). Any other key a file binds is the
+/// file's (`super::menus::key_click_acts`).
+pub const HAND_BUILT_KEYS: [&str; 6] = ["W", "S", "E", "xup", "xdown", "xbuttona"];
+
+/// What the menu's tiles stand for, by name [observed: the vanilla files, by fnvtool ui tree].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogTile {
+    /// A row shown, the choice's number.
+    Choice(usize),
+    /// The click area or the line.
+    Skip,
+    /// A scroll bar's arrow or page area: choices to move the selection by. A page is the
+    /// choices shown, so a step always lands on a choice [design].
+    Step(i32),
+}
+
+/// What `tile` stands for, by its name or a parent's. A row hidden (out of the window) is
+/// nothing, and neither is the scroll bar's marker: dragging it is not built [design].
+pub fn dialog_tile(ui: &Ui, tile: TileId) -> Option<DialogTile> {
+    let page = || rows(ui).iter().filter(|&&r| num(ui, r, "listindex") >= 0.0).count().max(1) as i32;
+    let mut at = Some(tile);
+    while let Some(t) = at {
+        let tile = ui.tile(t);
+        match tile.name.to_ascii_lowercase().as_str() {
+            "dm_topic" if tile.origin == Origin::Code => {
+                let i = num(ui, t, "listindex");
+                return (i >= 0.0).then_some(DialogTile::Choice(i as usize));
+            }
+            "dm_clickrect" | "dm_speakertext" => return Some(DialogTile::Skip),
+            "scrollbar_vert_up" => return Some(DialogTile::Step(-1)),
+            "scrollbar_vert_down" => return Some(DialogTile::Step(1)),
+            "scrollbar_vert_page_up" => return Some(DialogTile::Step(-page())),
+            "scrollbar_vert_page_down" => return Some(DialogTile::Step(page())),
+            "scrollbar_vert_marker" => return None,
+            _ => {}
+        }
+        at = tile.parent;
+    }
+    None
+}
+
+/// Turn a frame's report on the menu's tiles into what the view asks of the conversation:
+/// see the module notes. `physical`: the keys from the keyboard (or a controller standing in
+/// for them) this frame; `list`: what the rows were written for.
+pub fn follow(ui: &Ui, report: &Report, physical: &[&str], menu: TileId, list: Option<&ListId>, asked: &mut ViewInput) {
+    asked.list = list.cloned();
+    let mine = |t: TileId| ui.is_live(t) && ui.root_of(t) == menu;
+    // A highlight a file's ref moved for a hand-built Up or Down is not the pointer's: the
+    // selection moves once, by the key.
+    let by_key = physical.iter().any(|k| k.eq_ignore_ascii_case("xup") || k.eq_ignore_ascii_case("xdown"));
+    if let (false, Some((_, Some(to)))) = (by_key, report.over) {
+        if let Some(DialogTile::Choice(i)) = Some(to).filter(|&t| mine(t)).and_then(|t| dialog_tile(ui, t)) {
+            asked.hover = Some(i);
+        }
+    }
+    for c in report.clicks.iter().filter(|c| mine(c.tile)) {
+        if let By::Key(k) = &c.by {
+            if !menus::key_click_acts(DIALOG_MENU, k, physical) {
+                continue;
+            }
+        }
+        match dialog_tile(ui, c.tile) {
+            // The first in a frame, as one act a frame is what `crate::dialogue` takes.
+            Some(DialogTile::Choice(i)) if asked.pick.is_none() => {
+                info!("tiles: {DIALOG_MENU} choice {i} picked on its tiles");
+                asked.pick = Some(i);
+            }
+            Some(DialogTile::Skip) if !asked.skip => {
+                info!("tiles: {DIALOG_MENU} line skipped on its tiles");
+                asked.skip = true;
+            }
+            Some(DialogTile::Step(n)) => {
+                info!("tiles: {DIALOG_MENU} selection stepped {n} on its tiles");
+                asked.step += n;
+            }
+            _ => {}
+        }
+    }
+}
+
 /// What decides how the menu is drawn this frame, worked out once by [`write_system`] after
 /// the scripts, for the tile drawing, the hand-built menu and the next frame's tile input
 /// alike: they cannot disagree, and what takes a click is what was on screen.
@@ -438,6 +527,19 @@ impl DialogTiles {
     /// The tile renderer draws the menu.
     pub fn drawn(&self) -> bool {
         self.menu.is_some() && self.shown
+    }
+
+    /// The menu, when it takes the tile input this frame: drawn last frame, the conversation
+    /// still running with nothing over it, and the pause menu not up. A menu over the
+    /// conversation keeps the input until it is gone, its closing frame included: `Game::menu`
+    /// goes in that frame's tick, after this.
+    pub fn taking(&self, game: &fnv_game::Game<'_>, paused: bool) -> Option<TileId> {
+        self.menu.filter(|_| self.shown && !paused && game.dialogue.is_some() && !crate::dialogue::held(game))
+    }
+
+    /// The list the rows were written for.
+    pub fn list(&self) -> Option<&ListId> {
+        self.list.as_ref()
     }
 }
 
