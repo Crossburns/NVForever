@@ -202,8 +202,8 @@ const ZOOM: (f32, f32) = (1.0, 4.0);
 /// units a second (the window is 855 wide) [design].
 const CURSOR_SPEED: f32 = 600.0;
 /// The controller's left stick zooms a map this fast at a full push, wheel steps a
-/// second (the wheel's 1.25 a step, from 1 to 4 times): the full span in about two
-/// seconds [observed: the original, tuned by playtest].
+/// second (the wheel's 1.25 a step, from 1 to 4 times) [design: tuned by playtest to
+/// match the original's zoom feel, observed].
 const ZOOM_STICK_STEPS: f32 = 4.5;
 /// The trace drawn while the radio plays: its greatest height either side of the middle
 /// [observed: the capture, about a third of the panel at its loudest], the waves across
@@ -516,7 +516,12 @@ pub fn draw(
         opened(st, &game);
     }
     let lists = lists(st, &game);
-    let pointer = screen.as_ref().and_then(|s| s.pointer);
+    // With Controller chosen the controls answer the controller only (pad.rs): the mouse
+    // pointer is ignored so it cannot take the highlight box back from the stick.
+    let pointer = screen
+        .as_ref()
+        .and_then(|s| s.pointer)
+        .filter(|_| !input.bindings.as_ref().is_some_and(|b| b.device == InputDevice::Controller));
     take_input(st, tab, &lists, &mut game, &mut input, pointer);
     if tab == NOTES && lists.challenges.is_none() {
         mark_read(st, &lists, &mut game);
@@ -817,7 +822,7 @@ fn take_input(st: &mut DataState, tab: usize, l: &Lists, game: &mut Game, input:
             }
         }
     }
-    // The controller's sticks drive the maps (docs/design/controller.md §6): the right
+    // The controller's sticks drive the maps (docs/design/controller.md §3): the right
     // stick moves the highlight box, the left stick's up and down zooms in and out
     // smoothly while held [observed: the original].
     if input.bindings.as_ref().is_some_and(|b| b.device == InputDevice::Controller) && (tab == LOCAL || tab == WORLD) {
@@ -1997,6 +2002,20 @@ mod tests {
         assert!(overflow.y < 0.0);
         // Within the window there is no overflow.
         assert_eq!(stick_cursor(Vec2::new(300.0, 300.0), Vec2::new(1.0, 0.0), 0.1).1, Vec2::ZERO);
+    }
+
+    #[test]
+    fn the_highlight_box_keeps_the_stick_cursor_with_no_pointer() {
+        // With no pointer (the controller is in use), the highlight box stays where the
+        // stick put it instead of falling back to the window's middle or the mouse.
+        let mut st = DataState::default();
+        let at = Vec2::new(120.0, 90.0);
+        st.cursor[WORLD] = Some(at);
+        let mut marks: Vec<MapMark> = Vec::new();
+        let names: Vec<String> = Vec::new();
+        let (cursor, _, _) = place_cursor(&mut st, WORLD, None, &mut marks, &names);
+        assert_eq!(cursor, at);
+        assert_eq!(st.cursor[WORLD], Some(at));
     }
 
     #[test]

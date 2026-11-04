@@ -160,4 +160,6 @@ those settings so a mod that changes them changes this too.
   following the device.
 - A pointer moved by a stick for the mouse-only parts of menus still left: the dialogue
   list (the Pip-Boy map's stick cursor and zoom are built, §3).
+- Fast travel from the World Map on a controller: the original's A on a marker; the map
+  asks to travel only on a mouse click (`pipboy/data.rs`).
 - Several controllers told apart; the first pressed is not singled out.
