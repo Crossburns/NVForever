@@ -1250,6 +1250,8 @@ pub struct Game<'a> {
     pub ui_menus: fnv_ui::MenuIndex,
     /// Menu lifetime's once-only warnings, reset with the tree [design].
     pub ui_lifetime: crate::ui_loading::MenuLifetime,
+    /// Conversations started in this run (`crate::dialogue::conversation_stamp`).
+    pub dialogue_serial: u32,
     /// Where InjectUIXML and the menus' includes read files: the engine's archives and
     /// loose files. `None` headless: InjectUIXML then fails, InjectUIComponent works
     /// without includes.
@@ -2065,6 +2067,7 @@ impl<'a> Game<'a> {
             ui_tree: fnv_ui::Ui::new(),
             ui_menus: fnv_ui::MenuIndex::default(),
             ui_lifetime: crate::ui_loading::MenuLifetime::default(),
+            dialogue_serial: 0,
             ui_files: None,
             page_menu: None,
             ui_hud_pending: None,

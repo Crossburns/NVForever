@@ -328,6 +328,10 @@ pub struct Click {
     /// on any target, as the Clicked page says, and the id is what the menu's code reads].
     pub id: Option<f64>,
     pub by: By,
+    /// [`Pointer::stamp`] when the click was made, a script's when it was queued: what its
+    /// maker says the screen stood for then, so a click reported later can be told from one
+    /// on what has replaced it [design].
+    pub stamp: u64,
 }
 
 /// One frame's input for the menus that take it.
@@ -373,6 +377,8 @@ pub struct Pointer {
     pulsed: Vec<TileId>,
     /// The scripts' clicks since the last step.
     queued: Vec<Click>,
+    /// Copied to each click as it is made: the engine's to set ([`Click::stamp`]).
+    pub stamp: u64,
 }
 
 impl Pointer {
@@ -453,7 +459,7 @@ impl Pointer {
         if !self.pulsed.contains(&t) {
             self.pulsed.push(t);
         }
-        Click { tile: t, id: ui.tile(t).get("id").map(Value::num), by }
+        Click { tile: t, id: ui.tile(t).get("id").map(Value::num), by, stamp: self.stamp }
     }
 
     fn end_pulses(&mut self, ui: &mut Ui) {
@@ -747,7 +753,7 @@ mod tests {
         let mut p = Pointer::default();
         p.step(&mut ui, &[menu], &at(120.0, 115.0), &no_measure);
         let r = p.step(&mut ui, &[menu], &Input { press: true, ..at(120.0, 115.0) }, &no_measure);
-        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Pointer }]);
+        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Pointer, stamp: 0 }]);
         assert_eq!(ui.get_float("TestMenu/Main/OkButton/clicked"), Some(1.0));
         ui.update();
         assert_eq!(ui.get_float("TestMenu/Main/OkButton/_times"), Some(1.0));
@@ -778,7 +784,7 @@ mod tests {
         let cancel = id(&ui, "TestMenu/Main/CancelButton");
         let mut p = Pointer::default();
         let r = p.step(&mut ui, &[menu], &Input { keys: vec!["e".into()], ..Input::default() }, &no_measure);
-        assert_eq!(r.clicks, [Click { tile: cancel, id: Some(2.0), by: By::Key("e".into()) }]);
+        assert_eq!(r.clicks, [Click { tile: cancel, id: Some(2.0), by: By::Key("e".into()), stamp: 0 }]);
         assert_eq!(ui.get_float("TestMenu/Main/CancelButton/clicked"), Some(1.0));
         // A hidden button takes no key; a key no trait names does nothing.
         let r = p.step(&mut ui, &[menu], &Input { keys: vec!["H".into(), "Q".into()], ..Input::default() }, &no_measure);
@@ -788,7 +794,7 @@ mod tests {
         // write it [observed: menu-xml.md §3.2], answers an S press.
         let ok = id(&ui, "TestMenu/Main/OkButton");
         let r = p.step(&mut ui, &[menu], &Input { keys: vec!["S".into()], ..Input::default() }, &no_measure);
-        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Key("S".into()) }]);
+        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Key("S".into()), stamp: 0 }]);
     }
 
     #[test]
@@ -799,7 +805,7 @@ mod tests {
         let mut p = Pointer::default();
         // The menu's xbuttona clicks OkButton through its ref.
         let r = p.step(&mut ui, &[menu], &Input { pads: vec!["xbuttona".into()], ..Input::default() }, &no_measure);
-        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Key("xbuttona".into()) }]);
+        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Key("xbuttona".into()), stamp: 0 }]);
         // A ref to no tile, and one to a trait not followed, are reported.
         let r = p.step(&mut ui, &[menu], &Input { pads: vec!["xbuttonb".into(), "xbuttonx".into()], ..Input::default() }, &no_measure);
         assert!(r.clicks.is_empty());
@@ -831,13 +837,13 @@ mod tests {
         p.step(&mut ui, &[menu], &at(220.0, 140.0), &no_measure);
         assert_eq!(p.over, Some(cancel));
         // Cancel's own xbuttona names HiddenButton, which is hidden: the menu's (OkButton).
-        assert_eq!(a(&mut p, &mut ui), [Click { tile: ok, id: Some(1.0), by: key.clone() }]);
+        assert_eq!(a(&mut p, &mut ui), [Click { tile: ok, id: Some(1.0), by: key.clone(), stamp: 0 }]);
         // Shown, it takes the key: the highlighted tile's ref comes first.
         assert!(ui.set_float("TestMenu/Main/HiddenButton/visible", 1.0));
-        assert_eq!(a(&mut p, &mut ui), [Click { tile: hidden, id: Some(3.0), by: key.clone() }]);
+        assert_eq!(a(&mut p, &mut ui), [Click { tile: hidden, id: Some(3.0), by: key.clone(), stamp: 0 }]);
         // Disabled (`target` 0): the menu's again.
         assert!(ui.set_float("TestMenu/Main/HiddenButton/target", 0.0));
-        assert_eq!(a(&mut p, &mut ui), [Click { tile: ok, id: Some(1.0), by: key }]);
+        assert_eq!(a(&mut p, &mut ui), [Click { tile: ok, id: Some(1.0), by: key, stamp: 0 }]);
     }
 
     #[test]
@@ -858,7 +864,7 @@ mod tests {
         let r = p.step(&mut ui, &[menu], &press, &no_measure);
         assert_eq!(r.over, Some((Some(cancel), Some(ok))));
         assert_eq!(ui.get_float("TestMenu/Main/CancelButton/mouseover"), Some(0.0));
-        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Pointer }]);
+        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Pointer, stamp: 0 }]);
         // Shown again and moved to by the key, then no longer a target: the same.
         ui.set_trait(cancel, "visible", Value::Num(1.0));
         p.step(&mut ui, &[menu], &down, &no_measure);
@@ -866,7 +872,7 @@ mod tests {
         assert!(ui.set_float("TestMenu/Main/CancelButton/target", 0.0));
         let r = p.step(&mut ui, &[menu], &press, &no_measure);
         assert_eq!(p.over, Some(ok));
-        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Pointer }]);
+        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Pointer, stamp: 0 }]);
     }
 
     #[test]
@@ -881,7 +887,7 @@ mod tests {
         p.script_click(&mut ui, ok);
         assert_eq!(ui.get_float("TestMenu/Main/OkButton/clicked"), Some(1.0));
         let r = p.step(&mut ui, &[menu], &Input::default(), &no_measure);
-        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Script }]);
+        assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Script, stamp: 0 }]);
         assert_eq!(ui.get_float("TestMenu/Main/OkButton/clicked"), Some(0.0));
     }
 
@@ -914,5 +920,20 @@ mod tests {
         assert!(hit(&ui, &[menu], (86.0, 5.0), &measure).is_some());
         assert!(hit(&ui, &[menu], (116.0, 5.0), &measure).is_none());
         assert!(hit(&ui, &[menu], (86.0, 5.0), &no_measure).is_none());
+    }
+
+    #[test]
+    fn a_click_keeps_the_stamp_of_when_it_was_made() {
+        let src = MemSource::default().with("m.xml", r#"<menu name="M"><hotrect name="B"><target>1</target><width>9</width><height>9</height></hotrect></menu>"#);
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "m.xml").unwrap();
+        ui.update();
+        let b = ui.find_tile("M/B").unwrap();
+        let mut p = Pointer { stamp: 5, ..Pointer::default() };
+        p.script_click(&mut ui, b);
+        // The screen moved on before the step reports the queued click.
+        p.stamp = 6;
+        let r = p.step(&mut ui, &[menu], &Input { at: Some((1.0, 1.0)), press: true, ..Input::default() }, &no_measure);
+        assert_eq!(r.clicks.iter().map(|c| c.stamp).collect::<Vec<_>>(), [5, 6], "queued, then the frame's own");
     }
 }

@@ -519,29 +519,42 @@ enum Act {
     BreakOff,
 }
 
-/// Which list of choices a view's input was for: the conversation's actor, the lines said
-/// so far and the topics offered (none while a line is being said). A conversation that goes
-/// on, or another one, has another [`ListId`] [design].
+/// Which screen of the conversation a view's input was for: its actor, its generation
+/// (`fnv_game::dialogue::conversation_stamp`: the conversation, the lines said, the response)
+/// and the topics offered (none while a line is being said). A conversation that goes on, a
+/// next response, or the same actor's next conversation has another [`ListId`] [design].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListId {
     actor: FormId,
-    lines: u32,
+    stamp: u64,
     topics: Vec<FormId>,
+}
+
+impl ListId {
+    /// The generation, as input queued on this screen is stamped with.
+    pub fn stamp(&self) -> u64 {
+        self.stamp
+    }
 }
 
 #[cfg(test)]
 impl ListId {
     /// A list for a test.
-    pub(crate) fn for_test(lines: u32, topics: &[u32]) -> ListId {
-        ListId { actor: FormId(0x10), lines, topics: topics.iter().map(|&t| FormId(t)).collect() }
+    pub(crate) fn for_test(stamp: u32, topics: &[u32]) -> ListId {
+        ListId { actor: FormId(0x10), stamp: u64::from(stamp), topics: topics.iter().map(|&t| FormId(t)).collect() }
     }
+}
+
+/// The running conversation's generation, 0 without one.
+pub fn stamp_now(g: &Game) -> u64 {
+    fnv_game::dialogue::conversation_stamp(g.dialogue_serial, g.dialogue.as_ref())
 }
 
 /// The running conversation's [`ListId`].
 pub fn list_id(g: &Game) -> Option<ListId> {
     let c = g.dialogue.as_ref()?;
     let topics = if c.line.is_some() { Vec::new() } else { c.choices.iter().map(|ch| ch.topic).collect() };
-    Some(ListId { actor: c.actor, lines: c.lines, topics })
+    Some(ListId { actor: c.actor, stamp: stamp_now(g), topics })
 }
 
 /// What a view of the menu asks of the conversation this frame, for [`input`] to turn into
@@ -743,7 +756,10 @@ fn input(
         }
         return;
     }
-    let mut asked = asked.for_list(list_id(&rt.game).as_ref());
+    let list_now = list_id(&rt.game);
+    let mut asked = asked.for_list(list_now.as_ref());
+    // What the view asked is held to its list; the hand-built buttons carry theirs below.
+    let by_tiles = asked.list.is_some();
     let offered = offers(&rt.game, &conv.choices);
     let chosen_for = |since: Option<f32>, limit: f32| since.is_some_and(|t| now - t >= limit);
 
@@ -816,15 +832,16 @@ fn input(
             }
         } else if speaking.is_some() {
             if confirm || controls.mouse.just_pressed(MouseButton::Left) || asked.skip {
-                act = Some((Act::Skip, "key or click"));
+                act = Some((Act::Skip, if asked.skip { "tile click" } else { "key or click" }));
             }
         } else if choosing {
             let len = conv.choices.len();
             let digits = [Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9];
             let pads = [Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8, Numpad9];
             let wheel = scroll.delta.y;
-            // The hand-built buttons ask as the tiles do.
-            for (i, b) in &clicks {
+            // The hand-built buttons ask as the tiles do, for the list they were spawned or last
+            // brought up to date for.
+            for (i, b) in clicks.iter().filter(|(_, b)| b.1 == list_now) {
                 match i {
                     PointerState::Pressed => asked.pick = Some(b.0),
                     PointerState::Hovered => asked.hover = Some(b.0),
@@ -837,7 +854,7 @@ fn input(
             if let Some(i) = (0..9).find(|&i| keys.just_pressed(digits[i]) || keys.just_pressed(pads[i])).filter(|&i| i < len) {
                 act = Some((Act::Choose(i), "number key"));
             } else if let Some(i) = clicked.filter(|&i| i < len) {
-                act = Some((Act::Choose(i), "click"));
+                act = Some((Act::Choose(i), if by_tiles { "tile click" } else { "click" }));
             } else if confirm {
                 act = Some((Act::Choose(selected), "Enter"));
             } else if keys.just_pressed(Tab) {
@@ -866,7 +883,7 @@ fn input(
             (Some(e), Act::Leave { .. }) => info!("dialogue: Tab refused: {e}"),
             (Some(e), _) => warn!("dialogue: {op} by {by}: {e}"),
             (None, Act::BreakOff) => info!("dialogue: the conversation is broken off ({by})"),
-            (None, _) => debug!("dialogue: {op} {index:?} by {by}"),
+            (None, _) => info!("dialogue: {op} {index:?} by {by}"),
         }
         notes.push(serde_json::json!({"kind": "talk_input", "op": op, "index": index, "by": by, "error": error}));
     }
@@ -913,9 +930,10 @@ fn sync_state(
 
 // ---- drawing ----------------------------------------------------------------------------
 
-/// A clickable choice (its index in the offered list), drawn by `crate::dialogue_menu`.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct ChoiceButton(pub usize);
+/// A clickable choice, drawn by `crate::dialogue_menu`: its index in the offered list and the
+/// list it stands for on screen.
+#[derive(Component, Clone, Debug)]
+pub struct ChoiceButton(pub usize, pub Option<ListId>);
 
 /// Hand the menu what it shows and the selection.
 fn draw(script: Option<Res<ScriptState>>, sim: Res<SimState>, screen: Res<DialogueScreen>, mut menu: ResMut<DialogueMenu>) {
@@ -925,6 +943,10 @@ fn draw(script: Option<Res<ScriptState>>, sim: Res<SimState>, screen: Res<Dialog
     }
     if menu.selected != screen.selected {
         menu.selected = screen.selected;
+    }
+    let list = script.as_ref().and_then(|s| s.rt.as_ref()).and_then(|rt| list_id(&rt.game));
+    if menu.list != list {
+        menu.list = list;
     }
 }
 

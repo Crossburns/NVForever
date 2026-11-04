@@ -28,9 +28,9 @@
 //!   it and no pause menu ([`DialogTiles::taking`]), and a pointer's or a script's click comes
 //!   back as `crate::dialogue::ViewInput`: a row picks its choice, the pointer coming onto a
 //!   row selects it, the click area and the line skip, the scroll bar's arrows and page areas
-//!   step the selection. The keys and the wheel stay `crate::dialogue`'s. Each is held to
-//!   the list it was read on, and a real press while the actor speaks skips once whichever way
-//!   it arrives.
+//!   step the selection. The keys and the wheel stay `crate::dialogue`'s. A click is held to
+//!   the screen it was made on, a script's to the one it was queued on (`Click::stamp`), and a
+//!   real press while the actor speaks skips once whichever way it arrives.
 //! - **NVForever's own tiles**: `NVF_GoodbyeHint` and `NVF_SelectionFill`, from templates
 //!   written here (`dialogue-menu.md` §6.4). The hint reads its wording and whether it shows
 //!   from the same model as the hand-built one.
@@ -492,6 +492,11 @@ pub fn follow(ui: &Ui, report: &Report, physical: &[&str], menu: TileId, list: O
         }
     }
     for c in report.clicks.iter().filter(|c| mine(c.tile)) {
+        // Stamped when it was made: a click queued on a screen that has gone acts on nothing.
+        if list.is_none_or(|l| l.stamp() != c.stamp) {
+            info!("tiles: {DIALOG_MENU} click from an earlier screen ignored: {}", ui.path_of(c.tile));
+            continue;
+        }
         if let By::Key(k) = &c.by {
             if !menus::key_click_acts(DIALOG_MENU, k, physical) {
                 continue;
@@ -790,6 +795,13 @@ mod tests {
         pieces(ui).iter().filter(|p| matches!(&p.look, super::super::draw::Look::Picture { name: n, .. } if n == name)).count()
     }
 
+    /// A pointer on the screen with this generation.
+    fn pointer(stamp: u64) -> Pointer {
+        let mut p = Pointer::default();
+        p.stamp = stamp;
+        p
+    }
+
     fn step(ui: &mut Ui, pointer: &mut Pointer, at: (f64, f64), press: bool) -> Report {
         let menu = ui.menu(DIALOG_MENU).unwrap();
         pointer.step(ui, &[menu], &Input { at: Some(at), press, ..Input::default() }, &no_measure)
@@ -993,7 +1005,7 @@ mod tests {
         let mut ui = menu();
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
         frame_on(&mut ui, &mut Written::default(), choosing(labels), 1, 5, 0);
-        let mut p = Pointer::default();
+        let mut p = pointer(1);
         // The list at 300, the window from choice 1: rows of 52, so y 330 is choice 1, y 400
         // choice 2.
         let r = step(&mut ui, &mut p, (200.0, 330.0), false);
@@ -1013,7 +1025,7 @@ mod tests {
         frame_on(&mut ui, &mut Written::default(), choosing(vec![row("A."), row("B.")]), 1, 0, 0);
         let bound = rows(&ui)[1];
         for key in ["xbuttona", "E", "S", "xdown"] {
-            let click = fnv_ui::input::Click { tile: bound, by: By::Key(key.into()), id: None };
+            let click = fnv_ui::input::Click { tile: bound, by: By::Key(key.into()), id: None, stamp: 1 };
             let r = Report { clicks: vec![click.clone()], ..Report::default() };
             assert_eq!(asked(&ui, &r, &[key], 1).pick, None, "{key} by hand");
             // A script's MenuTapKey is not physical: the file's own binding.
@@ -1025,7 +1037,7 @@ mod tests {
         assert_eq!(asked(&ui, &r, &[], 1).hover, Some(1));
         // A press on a row and a queued click on another: the first in the frame.
         let first = rows(&ui)[0];
-        let click = |tile| fnv_ui::input::Click { tile, by: By::Pointer, id: None };
+        let click = |tile| fnv_ui::input::Click { tile, by: By::Pointer, id: None, stamp: 1 };
         let r = Report { clicks: vec![click(first), click(bound)], ..Report::default() };
         assert_eq!(asked(&ui, &r, &[], 1).pick, Some(0));
     }
@@ -1034,7 +1046,7 @@ mod tests {
     fn a_script_click_is_followed_and_a_stale_one_finds_its_row_gone() {
         let mut ui = menu();
         let mut written = Written::default();
-        let mut p = Pointer::default();
+        let mut p = pointer(1);
         frame_on(&mut ui, &mut written, choosing(vec![row("A."), row("B.")]), 1, 0, 0);
         let on_b = rows(&ui)[1];
         p.script_click(&mut ui, on_b);
@@ -1043,10 +1055,34 @@ mod tests {
         // Queued, then the conversation went on: the rows of the new list are other tiles.
         let stale = rows(&ui)[1];
         p.script_click(&mut ui, stale);
+        p.stamp = 2;
         frame_on(&mut ui, &mut written, choosing(vec![row("C."), row("D.")]), 2, 0, 0);
         assert!(!ui.is_live(stale), "the old list's row went with it");
         let r = step(&mut ui, &mut p, (0.0, 0.0), false);
         assert_eq!(asked(&ui, &r, &[], 2).pick, None);
+    }
+
+    #[test]
+    fn a_skip_queued_on_one_response_does_not_skip_the_next() {
+        // The click area lasts from response to response, so nothing else tells them apart.
+        let mut ui = menu();
+        let mut written = Written::default();
+        let line = |t: &str| MenuView { speaker: "Nora".into(), line: Some(t.into()), choices: Vec::new(), goodbye: false };
+        frame_on(&mut ui, &mut written, line("First."), 1, 0, 0);
+        let area = ui.find_tile(CLICK_AREA).unwrap();
+        let mut p = pointer(1);
+        p.script_click(&mut ui, area);
+        // The response ends by itself before the click is reported. The same goes for the same
+        // actor's next conversation, whose stamp also differs.
+        p.stamp = 2;
+        frame_on(&mut ui, &mut written, line("Second."), 2, 0, 0);
+        let r = step(&mut ui, &mut p, (1000.0, 1000.0), false);
+        assert_eq!(r.clicks.len(), 1);
+        assert!(!asked(&ui, &r, &[], 2).skip, "from an earlier screen");
+        // On the screen it was made on, it skips.
+        p.script_click(&mut ui, area);
+        let r = step(&mut ui, &mut p, (1000.0, 1000.0), false);
+        assert!(asked(&ui, &r, &[], 2).skip);
     }
 
     #[test]
@@ -1057,7 +1093,7 @@ mod tests {
         frame_on(&mut ui, &mut written, line, 1, 0, 0);
         let area = ui.find_tile(CLICK_AREA).unwrap();
         assert_eq!(dialog_tile(&ui, area), Some(DialogTile::Skip));
-        let click = fnv_ui::input::Click { tile: area, by: By::Pointer, id: None };
+        let click = fnv_ui::input::Click { tile: area, by: By::Pointer, id: None, stamp: 1 };
         let r = Report { clicks: vec![click.clone(), click], ..Report::default() };
         assert!(asked(&ui, &r, &[], 1).skip, "twice in a frame is one skip");
         // An overflowing list: a page is the choices shown.

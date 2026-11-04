@@ -17,7 +17,7 @@
 //! - The menu is rebuilt when what it shows changes; the pointer chooses the choice it
 //!   is on (`crate::dialogue` reads the clicks).
 
-use crate::dialogue::ChoiceButton;
+use crate::dialogue::{ChoiceButton, ListId};
 use crate::interface::{amber, at, bc_supported, face, plain_font, set_line, Face, Picture, Pictures};
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
@@ -134,6 +134,8 @@ pub struct DialogueMenu {
     pub view: Option<MenuView>,
     pub selected: usize,
     pub(crate) first: usize,
+    /// The screen of the conversation this stands for, which its buttons carry.
+    pub list: Option<ListId>,
 }
 
 // ---- layout --------------------------------------------------------------------------
@@ -380,7 +382,7 @@ fn image(p: Option<&Picture>, color: Color) -> Option<ImageNode> {
     p.map(|(image, rect)| ImageNode { rect: *rect, color, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) })
 }
 
-fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize) {
+fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize, on_screen: Option<&ListId>) {
     let screen = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     let bright = amber(255.0);
     commands.spawn((MenuRoot, screen, GlobalZIndex(90))).with_children(|s| {
@@ -434,7 +436,7 @@ fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, s
             for c in &list.choices {
                 let [x, y, cw, ch] = c.area;
                 let row = &view.choices[c.index];
-                w.spawn((Button, ChoiceButton(c.index), at(x, y - clip_top, cw, ch))).with_children(|r| {
+                w.spawn((Button, ChoiceButton(c.index, on_screen.cloned()), at(x, y - clip_top, cw, ch))).with_children(|r| {
                     // [documented: the list's highlight box] One unit short of the row; a
                     // faint fill and a line around it, red for a check the player falls
                     // short of [observed].
@@ -474,6 +476,7 @@ fn draw(
     mut shown: Local<Option<(MenuView, usize, u32)>>,
     creator: Option<Res<crate::creator::CreatorMenu>>,
     tiles: Option<Res<crate::tiles::dialog_menu::DialogTiles>>,
+    mut buttons: Query<&mut ChoiceButton>,
 ) {
     // Drawn from its file: all of the menu, none of it here (`crate::tiles::dialog_menu`).
     if tiles.is_some_and(|t| t.by_tiles()) {
@@ -507,13 +510,19 @@ fn draw(
             if l.hint.is_some() && shown.as_ref().is_none_or(|s| !s.0.goodbye) {
                 info!("dialogue menu: {GOODBYE_HINT} shown at the left of the choices");
             }
-            spawn_menu(&mut commands, view, &l, kit, selected);
+            spawn_menu(&mut commands, view, &l, kit, selected, menu.list.as_ref());
         }
         *shown = key;
         return;
     }
     for (frame, mut v) in &mut frames {
         v.set_if_neq(if frame.0 == selected { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    // The same words for the next screen (no rebuild): what stands is that screen's now.
+    for mut b in &mut buttons {
+        if b.1 != menu.list {
+            b.1.clone_from(&menu.list);
+        }
     }
 }
 

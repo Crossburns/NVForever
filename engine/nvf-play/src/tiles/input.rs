@@ -508,6 +508,8 @@ pub(crate) fn feed(
             }
         }
     }
+    // A frame's own clicks are for the screen up now; a script's kept theirs when queued.
+    rt.game.ui_pointer.stamp = crate::dialogue::stamp_now(&rt.game);
     let report = fnv_game::ui_input::step(&mut rt.game, &taking, &input, &no_measure);
     let ui = &rt.game.ui_tree;
     let slider = inputs.follow(ui, &report, at, held, &physical, tutorial);

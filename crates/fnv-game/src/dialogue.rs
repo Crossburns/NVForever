@@ -131,6 +131,16 @@ pub struct Conversation {
     pub ending: bool,
 }
 
+/// Which screen of which conversation is up, as one number, for input queued on it: the
+/// conversation (`serial`, counted up for each started), the lines said so far, and the
+/// response being said, with choices or nothing being said as 0 [design: a stale click must
+/// not act on what replaced its screen, dialogue-menu.md §6.5]. 0 without a conversation.
+pub fn conversation_stamp(serial: u32, c: Option<&Conversation>) -> u64 {
+    let Some(c) = c else { return 0 };
+    let response = c.line.as_ref().map_or(0, |l| (l.response as u64 & 0xF_FFFF) + 1);
+    (u64::from(serial) << 40) | ((u64::from(c.lines) & 0xF_FFFF) << 20) | response | (1 << 63)
+}
+
 /// Whether a line may be said in a conversation between two actors: only Conversation
 /// lines (INFO DATA type Conversation, the Conversation tab), never the Topics tab's
 /// lines, which are said to the player [owner ruling 2026-10-11: "the dialogue between
@@ -585,6 +595,7 @@ impl<'a> Game<'a> {
             self.say_line(actor, listener, topic, info, LineKind::Greeting);
             return Ok(info);
         }
+        self.dialogue_serial = self.dialogue_serial.wrapping_add(1);
         self.dialogue = Some(Conversation { actor, through, line: None, choices: Vec::new(), lines: 0, then: None, ending: false });
         self.extra.entry(actor).or_default().talked_to_pc = true;
         self.emit(EventKind::DialogueStarted { actor, topic });
@@ -1248,6 +1259,24 @@ impl ListKey {
 
 #[cfg(test)]
 mod list_order_tests {
+    #[test]
+    fn the_conversation_stamp_tells_screens_apart() {
+        use super::{conversation_stamp, Conversation, Line};
+        use fnv_sim::FormId;
+        let line = |response| Line { topic: FormId(1), info: FormId(2), response, remaining: 1.0 };
+        let talk = |l: Option<Line>, lines| Conversation { actor: FormId(3), through: None, line: l, choices: Vec::new(), lines, then: None, ending: false };
+        assert_eq!(conversation_stamp(7, None), 0);
+        let first = conversation_stamp(7, Some(&talk(Some(line(0)), 1)));
+        assert_ne!(first, 0);
+        assert_eq!(first, conversation_stamp(7, Some(&talk(Some(line(0)), 1))));
+        // The next response of the line; the choices after it; the next line; the same actor's
+        // next conversation at the same place.
+        assert_ne!(first, conversation_stamp(7, Some(&talk(Some(line(1)), 1))));
+        assert_ne!(first, conversation_stamp(7, Some(&talk(None, 1))));
+        assert_ne!(first, conversation_stamp(7, Some(&talk(Some(line(0)), 2))));
+        assert_ne!(first, conversation_stamp(8, Some(&talk(Some(line(0)), 1))));
+    }
+
     use super::ListKey;
 
     #[test]
