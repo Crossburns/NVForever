@@ -1018,7 +1018,7 @@ mod tests {
     }
 
     #[test]
-    fn each_measuring_round_sees_the_tree_worked_out_and_a_face_late_is_measured_again() {
+    fn each_measuring_round_sees_the_tree_worked_out_and_a_zero_measure_is_kept() {
         // A computed trait as a mod's computed font would read what the model just wrote.
         let mut ui = menu_changed(|xml| xml.replace(r#"<text name="CM_ItemsTitle">"#, r#"<text name="CM_ItemsTitle"><_echo><copy src="me()" trait="string"/></_echo>"#));
         let mut st = ContainerTiles::default();
@@ -1030,16 +1030,33 @@ mod tests {
         let texts = super::super::menus::texts(&ui, menu);
         let echo = format!("{}/_echo", TITLES[1]);
         let mut first_round = None;
-        // No face yet: everything measures 0 x 0 and stays unmeasured.
+        // Everything measures 0 x 0: written and kept, as any other measure.
+        let asked = std::cell::Cell::new(0);
+        let nothing = |_: f64, _: &str, _: Option<f64>| {
+            asked.set(asked.get() + 1);
+            (0.0, 0.0)
+        };
         settle(&mut ui, &s, &mut st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| {
             first_round.get_or_insert_with(|| ui.get_string(&echo));
-            super::super::menus::write_text_sizes_of(ui, &texts, sizes, &|_, _, _| (0.0, 0.0))
+            super::super::menus::write_text_sizes_of(ui, &texts, sizes, &nothing)
         });
         assert_eq!(first_round.flatten().as_deref(), Some("ITEMS"));
-        // The face has come: the same strings are measured, not taken from a cache of 0 x 0.
-        settle(&mut ui, &s, &mut st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| super::super::menus::write_text_sizes_of(ui, &texts, sizes, &list::lines_size));
+        let first = asked.get();
+        assert!(first > 0);
         let row = list::child(&ui, st.rows[Side::Player as usize][0].tile, ROW_TEXT).unwrap();
-        assert!(ui.tile(row).get("height").map_or(0.0, Value::num) > 0.0);
+        assert_eq!(ui.tile(row).get("height").map(Value::num), Some(0.0));
+        assert!(st.sizes.contains_key(&row));
+        // The same string, font and wrap are not measured again.
+        settle(&mut ui, &s, &mut st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| super::super::menus::write_text_sizes_of(ui, &texts, sizes, &nothing));
+        assert_eq!(asked.get(), first);
+        settle(&mut ui, &s, &mut st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| super::super::menus::write_text_sizes_of(ui, &texts, sizes, &list::lines_size));
+        assert_eq!(ui.tile(row).get("height").map(Value::num), Some(0.0), "not taken from another measure");
+        // Another string is.
+        let s = snapshot(&[(1, "B")], &[], Side::Player, 0);
+        assert!(st.is_new(menu, &s));
+        write(&mut ui, &s, &mut st);
+        settle(&mut ui, &s, &mut st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| super::super::menus::write_text_sizes_of(ui, &texts, sizes, &list::lines_size));
+        assert_eq!(ui.tile(row).get("height").map(Value::num), Some(30.0));
     }
 
     #[test]
