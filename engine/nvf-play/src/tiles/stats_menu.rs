@@ -177,43 +177,57 @@ pub fn paths(ui: &Ui, cut: Option<&str>) -> Result<Paths, String> {
     })
 }
 
-/// A row made from the template.
+/// A row made from the template, known by its actor value: it keeps that place in the list
+/// whatever else is taken away or made again. Its tile has the name the original's has, the
+/// value's AVIF name [observed: private job pipboy_special_a, `GetActiveUIComponentName` under
+/// the pointer]; scripts read that name, this code never looks a row up by it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MadeRow {
+    pub av: u16,
     pub tile: TileId,
     text: TileId,
     /// The template gives its height (a number or an expression): it is kept.
     explicit: bool,
 }
 
-/// The rows to `want`, the ones made kept. A failure makes none and leaves none of its own: a
-/// retry cannot double them.
-fn ensure_rows(ui: &mut Ui, p: &Paths, rows: &mut Vec<MadeRow>, want: usize) -> Result<(), String> {
-    if want == 0 {
+/// The rows `wanted`, by actor value and name, in that order; the ones whole kept. A row
+/// unwanted, renamed or missing its text is unloaded whole, so no root is left without its
+/// parts. A failure makes none and leaves none of its own: a retry cannot double them.
+/// Returns whether anything was unloaded or made: what was written of the rows is then out of
+/// date, and with it what was measured and checked.
+fn ensure_rows(ui: &mut Ui, p: &Paths, rows: &mut Vec<MadeRow>, wanted: &[(u16, &str)]) -> Result<bool, String> {
+    if wanted.is_empty() {
         return Err("no rows to show".into());
     }
-    rows.retain(|r| ui.is_live(r.tile) && ui.is_live(r.text));
-    while rows.len() > want {
-        if let Some(r) = rows.pop() {
-            ui.unload_tile(r.tile);
+    let mut changed = false;
+    rows.retain(|r| {
+        let whole = ui.is_live(r.tile) && ui.is_live(r.text);
+        let keep = whole && wanted.iter().any(|&(av, name)| av == r.av && ui.tile(r.tile).name == name);
+        if !keep {
+            if ui.is_live(r.tile) {
+                ui.unload_tile(r.tile);
+            }
+            changed = true;
         }
-    }
-    if rows.len() == want {
-        return Ok(());
+        keep
+    });
+    let missing: Vec<(u16, &str)> = wanted.iter().copied().filter(|&(av, _)| !rows.iter().any(|r| r.av == av)).collect();
+    if missing.is_empty() {
+        return Ok(changed);
     }
     let at = ui.path_of(p.list);
-    let mut made = Vec::new();
-    let undo = |ui: &mut Ui, made: &[TileId]| {
-        for &t in made {
+    let mut made: Vec<(u16, TileId)> = Vec::with_capacity(missing.len());
+    let undo = |ui: &mut Ui, made: &[(u16, TileId)]| {
+        for &(_, t) in made {
             ui.unload_tile(t);
         }
         ui.update();
     };
-    while rows.len() + made.len() < want {
+    for &(av, name) in &missing {
         // The template's includes were spliced in when the file was read (menu-xml.md §2.2),
         // so no files are needed to make a row.
-        match ui.add_code_tile_from_template(&fnv_ui::MemSource::default(), &at, ROW_TEMPLATE, None) {
-            Some(t) => made.push(t),
+        match ui.add_code_tile_from_template(&fnv_ui::MemSource::default(), &at, ROW_TEMPLATE, Some(name)) {
+            Some(t) => made.push((av, t)),
             None => {
                 undo(ui, &made);
                 return Err(format!("{ROW_TEMPLATE} made no row"));
@@ -222,17 +236,18 @@ fn ensure_rows(ui: &mut Ui, p: &Paths, rows: &mut Vec<MadeRow>, want: usize) -> 
     }
     ui.update();
     let mut new = Vec::with_capacity(made.len());
-    for &tile in &made {
+    for &(av, tile) in &made {
         let Some(text) = find_named(ui, tile, ROW_TEXT) else {
             undo(ui, &made);
             return Err(format!("{ROW_TEMPLATE} has no {ROW_TEXT}"));
         };
         let row = ui.tile(tile);
         let computed = row.trait_index("height").is_some_and(|k| row.traits[k].expr.is_some());
-        new.push(MadeRow { tile, text, explicit: computed || num(ui, tile, "height") > 0.0 });
+        new.push(MadeRow { av, tile, text, explicit: computed || num(ui, tile, "height") > 0.0 });
     }
     rows.extend(new);
-    Ok(())
+    rows.sort_by_key(|r| r.av);
+    Ok(true)
 }
 
 fn level_text(snap: &Snapshot) -> String {
@@ -289,6 +304,8 @@ pub fn write_model(ui: &mut Ui, p: &Paths, rows: &[MadeRow], s: &Shown) {
     ui.write_changed(p.list, "user0", flag(s.rows.iter().any(|r| r.mark.is_some())));
     for (i, (made, row)) in rows.iter().zip(&s.rows).enumerate() {
         ui.write_changed(made.tile, "listindex", Value::Num(i as f64));
+        // [observed: private job pipboy_special_a]
+        ui.write_changed(made.tile, "id", Value::Num(-1.0));
         ui.write_changed(made.tile, "string", Value::Str(row.name.clone()));
         // A text value keeps the "--" of a game without scripts (`Value::text`); -1 hides the
         // number [observed: the template's own value].
@@ -483,7 +500,13 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
         *w = Written { menu: Some(p.menu), fallbacks, ..Default::default() };
     }
     w.paths = Some(p);
-    ensure_rows(ui, &p, &mut w.rows, snap.special.len())?;
+    let wanted: Vec<(u16, &str)> = fnv_game::actor_values::SPECIALS.zip(snap.special.iter().map(|r| r.name.as_str())).collect();
+    if ensure_rows(ui, &p, &mut w.rows, &wanted)? {
+        // Rows made or gone: nothing written, measured or checked for the last set holds.
+        w.shown = None;
+        w.geometry = None;
+        w.checked = None;
+    }
     let selected = view.selected[PAGE];
     let changed = !w.shown.as_ref().is_some_and(|s| s.same(snap, selected, device)) || w.highlight != view.highlight;
     if changed {
@@ -974,6 +997,8 @@ mod tests {
         let made = t.written.rows.clone();
         assert_eq!((made.len(), live_children(&ui, p.list)), (7, 7));
         assert_eq!(text(&ui, made[2].tile, "string"), "Stat 2");
+        assert_eq!(ui.tile(made[2].tile).name, "Stat 2", "a row's tile has its name");
+        assert_eq!(num(&ui, made[2].tile, "id"), -1.0);
         assert_eq!(text(&ui, made[2].tile, "user1"), "3");
         assert_eq!(num(&ui, made[2].tile, "listindex"), 2.0);
         assert_eq!(num(&ui, made[2].tile, "height"), ROW);
@@ -1072,6 +1097,45 @@ mod tests {
         let p = paths(&again, None).unwrap();
         assert_eq!(live_children(&again, p.list), 7);
         assert!(t.written.rows.iter().all(|r| again.is_live(r.tile)));
+    }
+
+    /// A middle row taken away: the others keep their tiles and places, and the new one has
+    /// that place and everything written to it.
+    #[test]
+    fn a_row_taken_away_is_made_again_in_its_own_place() {
+        let (mut ui, mut v, mut t) = (tree(), view(), StatsTiles::default());
+        run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        let before = t.written.rows.clone();
+        ui.unload_tile(before[3].tile);
+        ui.update();
+        run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        let after = t.written.rows.clone();
+        assert_eq!(after.len(), 7);
+        for i in [0, 1, 2, 4, 5, 6] {
+            assert_eq!(after[i], before[i], "row {i} stays itself");
+        }
+        assert_ne!(after[3].tile, before[3].tile);
+        assert_eq!(after[3].av, before[3].av);
+        assert_eq!(text(&ui, after[3].tile, "string"), "Stat 3");
+        assert_eq!(text(&ui, after[3].tile, "user1"), "4");
+        assert_eq!(num(&ui, after[3].tile, "listindex"), 3.0);
+        assert_eq!(num(&ui, after[3].tile, "height"), ROW);
+        assert_eq!(num(&ui, after[3].tile, "_y"), 3.0 * ROW);
+    }
+
+    /// A row that lost its text is unloaded whole, leaving no root without its parts.
+    #[test]
+    fn a_row_without_its_text_is_made_again_whole() {
+        let (mut ui, mut v, mut t) = (tree(), view(), StatsTiles::default());
+        run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        let before = t.written.rows.clone();
+        ui.unload_tile(before[2].text);
+        ui.update();
+        run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        let list = paths(&ui, None).unwrap().list;
+        assert_eq!(live_children(&ui, list), 7);
+        assert!(!ui.is_live(before[2].tile));
+        assert!(ui.is_live(t.written.rows[2].text));
     }
 
     /// Whatever a pass finds wrong, the reason, no row left and none doubled on the retry.
