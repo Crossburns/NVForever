@@ -18766,22 +18766,22 @@ expect = [
 [[scenario]]
 name = "tiles-dialog-pointer"
 source = "[design] docs/spec-notes/dialogue-menu.md §6.3, §6.6: the pointer on a row selects it, a press picks it, accepted once as a tile click through the conversation's own command, and the bar's arrow scrolls one step"
-note = "the aid holds off with a delay longer than the run, so only the pointer picks. At 1280 x 720 the screen is 1706.7 wide; the list is centred on y 744 and its rows run from x 365, so x 853, y 744 stands on a row (dialogue-menu.md §2-§3). The bar's down arrow is at x 349, y 861: the list's bottom less 8 from round 1's describe line, list y 619 height 250, and its click was logged there. The dim expectation needs the chosen topic offered again: data, not checked in advance"
+note = "the aid holds off with a delay longer than the run, so only the pointer picks. At 1280 x 720 the screen is 1706.7 wide; the list is centred on y 744 and its rows run from x 365, so x 853, y 744 stands on a row (dialogue-menu.md §2-§3). The bar's down arrow is at x 349, y 861: the list's bottom less 8 from the describe line, list y 619 height 250, and its click was logged there. One step of 56 brings choice 3 (rows 96, 58, 96, 58) to 194-252 in the list, so y 840 is on it: fnvtool dialogue talk says that choice's list comes back with it darkened, about 12 s later, and the second arrow click shows it in the window, as the list starts at its top"
 areas = ["ui", "dialogue"]
 paths = [
   "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
   "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
   "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
 ]
-env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_POINTER = "25:853:744,27:349:861:click,29:853:744:click,31:off" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_POINTER = "25:853:744,27:349:861:click,29:853:840:click,31:off,47:349:861:click,48:off" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
 run_seconds = 60
 expect = [
   { re = 'tiles: pointer over DialogMenu/.*DM_Topic', label = "the pointer finds a row" },
-  { re = 'tiles: clicked DialogMenu/.*DM_Topic', count = 1, label = "the press hits the row's tile" },
-  { re = 'tiles: DialogMenu list scrolled 1 on its tiles', count = 1, label = "the bar's arrow scrolls one step" },
+  { re = 'tiles: clicked DialogMenu/.*/DM_Topic \(', count = 1, label = "the press hits the row's tile" },
+  { re = 'tiles: DialogMenu list scrolled 1 on its tiles', count = 2, label = "the bar's arrow scrolls one step, each list" },
   { re = 'tiles: DialogMenu choice \d+ picked on its tiles', count = 1, label = "the row picks its choice, once" },
-  { re = 'dialogue: choose Some\(\d+\) by tile click', count = 1, label = "accepted once, as a tile click" },
+  { re = 'dialogue: choose Some\(3\) by tile click', count = 1, label = "the choice under the point, accepted once, as a tile click" },
   { re = 'dialogue: choose Some\(\d+\) by (click|test aid|number key|Enter)', count = 0, label = "by nothing else" },
   { re = 'tiles: DialogMenu painted: .* dim [1-9]\d*, ', label = "the list again, a dim row painted" },
 ]
@@ -18789,6 +18789,7 @@ order = [[
   { re = 'tiles: DialogMenu choice \d+ picked on its tiles' },
   { re = 'dialogue: choose Some\(\d+\) by tile click' },
   { re = 'tiles: DialogMenu painted: band 1, name 1, line 1' },
+  { re = 'tiles: DialogMenu painted: .* dim [1-9]\d*, ' },
 ]]
 
 [[scenario]]
