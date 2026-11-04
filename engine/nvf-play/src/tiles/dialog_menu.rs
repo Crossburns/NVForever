@@ -218,10 +218,85 @@ fn check_measured(ui: &Ui, view: &MenuView) -> Result<(), String> {
     Ok(())
 }
 
-/// Make NVForever's own tiles once the menu is built: their templates, then one of each.
+/// [design] What the view is not whole without, once laid out: what the renderer would paint
+/// and what the pointer could reach, each read from the renderer's and the input's own
+/// selection, so a tile of a kind or with content they do not take counts as missing. The name,
+/// and the band and the line while there is a line; the band, brackets, frame, a text and a
+/// reachable region for each row shown, and the scroll bar's pieces when it is called for.
+fn check_drawn(ui: &Ui, view: &MenuView, menu: TileId) -> Result<(), String> {
+    use super::draw::{pieces, Select};
+    let drawn = pieces(ui, menu, &|_: f64, _: &str, _: Option<f64>| (0.0, 0.0), Select::Whole { kept: &[], strip: None }, true).0;
+    let paints = |path: &str| {
+        let Some(wanted) = ui.find_tile(path) else { return false };
+        drawn.iter().any(|p| {
+            let mut at = Some(p.tile);
+            while let Some(t) = at {
+                if t == wanted {
+                    return true;
+                }
+                at = ui.tile(t).parent;
+            }
+            false
+        })
+    };
+    let need = |path: &str| if paints(path) { Ok(()) } else { Err(format!("{path} draws nothing")) };
+    let hits = fnv_ui::input::hit_candidates(ui, menu, &fnv_ui::input::no_measure);
+    let reached = |t: TileId| hits.iter().any(|c| c.under == t && c.region().width > 0.0 && c.region().height > 0.0);
+    if !view.speaker.trim().is_empty() {
+        need(NAME)?;
+    }
+    if view.choices.is_empty() {
+        if !view.line.as_deref().map_or("", str::trim).is_empty() {
+            need(BAND)?;
+            need(LINE)?;
+        }
+        if !ui.find_tile(CLICK_AREA).is_some_and(reached) {
+            return Err(format!("{CLICK_AREA} has no region to click"));
+        }
+        return Ok(());
+    }
+    need(BAND)?;
+    need(TOP_BRACKET)?;
+    need(BOTTOM_BRACKET)?;
+    for line in FRAME_LINES {
+        need(&format!("{HIGHLIGHT}/{line}"))?;
+    }
+    for (row, choice) in rows(ui).into_iter().zip(&view.choices) {
+        if num(ui, row, "listindex") < 0.0 {
+            continue;
+        }
+        if !reached(row) {
+            return Err(format!("a {ROW} has no region to click"));
+        }
+        if !choice.label.trim().is_empty() && !child(ui, row, ROW_TEXT).is_some_and(|t| drawn.iter().any(|p| p.tile == t)) {
+            return Err(format!("a {ROW_TEXT} draws nothing"));
+        }
+    }
+    let bar = ui.find_tile(BAR).map_or((0.0, 0.0), |b| (num(ui, b, "_number_of_items"), num(ui, b, "_number_of_visible_items")));
+    if bar.0 > bar.1 {
+        for control in ["scrollbar_vert_up", "scrollbar_vert_down", "scrollbar_vert_marker"] {
+            need(&format!("{BAR}/{control}"))?;
+        }
+        for control in ["scrollbar_vert_up", "scrollbar_vert_down"] {
+            if !ui.find_tile(&format!("{BAR}/{control}")).is_some_and(reached) {
+                return Err(format!("{BAR}/{control} has no region to click"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Make NVForever's own tiles once the menu is built: their templates, then one of each. And
+/// the scroll bar's pictures their own alpha: the bar is a picture tile with an alpha of 0,
+/// which would pass its 0 down to them, though the owner's pictures show them (§3)
+/// [hypothesis: how the original keeps them from it is not known; design: the mark
+/// `super::layout::OWN_ALPHA`, as the tutorial menu's].
 fn own_tiles(ui: &mut Ui) -> bool {
     let src = MemSource::default();
     let Some(menu) = ui.menu(DIALOG_MENU) else { return false };
+    for control in ["scrollbar_vert_up", "scrollbar_vert_down", "scrollbar_vert_marker"] {
+        set_at(ui, &format!("{BAR}/{control}"), super::layout::OWN_ALPHA, Value::Num(1.0));
+    }
     if !ui.tile(menu).templates.iter().any(|t| t.name.eq_ignore_ascii_case(HINT_TEMPLATE)) && !ui.inject_text(&src, DIALOG_MENU, OWN_TEMPLATES) {
         return false;
     }
@@ -598,6 +673,10 @@ fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut
     }
     write_scroll(ui, written.scroll);
     fnv_ui::input::mark_clip_windows(ui, now.menu);
+    if written.moved {
+        evaluate(ui, written);
+        check_drawn(ui, &now.view, now.menu)?;
+    }
     Ok(first)
 }
 
@@ -1035,7 +1114,7 @@ mod tests {
             plain(LINE, "text", "<wrapwidth>400</wrapwidth>"),
             plain(LIST, "hotrect", "<_scroll_delta>4</_scroll_delta><clipwindow>1</clipwindow><x>100</x><y>300</y><width>700</width>"),
             plain(HIGHLIGHT, "hotrect", "<width>600</width><x>30</x>"),
-            plain(BAR, "image", "<height>40</height><width>30</width>"),
+            plain(BAR, "image", "<alpha>0</alpha><height>40</height><width>30</width>"),
             plain(TOP_BRACKET, "rect", ""),
             plain(BOTTOM_BRACKET, "rect", "<y>640</y>"),
         ];
@@ -1277,6 +1356,7 @@ mod tests {
         assert_eq!(index(&ui), [0, 1, 2, 3, 4, -1, -1, -1], "hidden whole by the file's rule");
         assert_eq!(f(&ui, LIST, "height"), 260.0);
         assert_eq!(f(&ui, BAR, "visible"), 1.0);
+        assert_eq!(pictures_drawn(&ui, "m.dds"), 1, "a marker though the bar itself has no alpha");
         assert_eq!(f(&ui, BAR, "_current_value"), 0.0);
         // Counted in the file's own steps of 4.
         assert_eq!((f(&ui, BAR, "_number_of_items"), f(&ui, BAR, "_number_of_visible_items")), (104.0, 65.0));
@@ -1619,6 +1699,44 @@ mod tests {
         let now = shown(&ui, line, 1, 0, 0);
         let mut written = Written { stand_in: Some(|ui| { work_out(ui); let area = ui.find_tile(CLICK_AREA).unwrap(); ui.set_trait(area, "target", Value::Num(0.0)); }), ..Written::default() };
         assert_eq!(write(&mut ui, &now, &mut written, &mut round), Err(format!("{CLICK_AREA} takes no click while the line is up")));
+    }
+
+    #[test]
+    fn a_tree_without_what_it_has_to_draw_or_reach_is_not_ready() {
+        let many = choosing((0..8).map(|i| row(&format!("Choice {i}."))).collect());
+        let frame_top = format!("{HIGHLIGHT}/top");
+        let bracket = format!("{TOP_BRACKET}/End");
+        let (marker, up) = (format!("{BAR}/scrollbar_vert_marker"), format!("{BAR}/scrollbar_vert_up"));
+        // The tiles named, their pictures gone.
+        for (path, reason) in [
+            (BAND, format!("{BAND} draws nothing")),
+            (frame_top.as_str(), format!("{frame_top} draws nothing")),
+            (bracket.as_str(), format!("{TOP_BRACKET} draws nothing")),
+            (marker.as_str(), format!("{marker} draws nothing")),
+            (up.as_str(), format!("{up} draws nothing")),
+        ] {
+            let mut ui = menu();
+            ui.set_trait(ui.find_tile(path).unwrap(), "filename", Value::Str(String::new()));
+            let now = shown(&ui, many.clone(), 1, 0, 0);
+            assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(reason.clone()), "{path}");
+        }
+        // A control that takes no click.
+        let mut ui = menu();
+        ui.set_trait(ui.find_tile(&up).unwrap(), "target", Value::Num(0.0));
+        let now = shown(&ui, many.clone(), 1, 0, 0);
+        assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("{up} has no region to click")));
+        // A row of a kind the pointer does not take, for all its target and size.
+        let mut ui = tree(&[], &ROW_XML.replace("hotrect", "rect"));
+        assert!(own_tiles(&mut ui));
+        let now = shown(&ui, choosing(vec![row("A.")]), 1, 0, 0);
+        assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("a {ROW} has no region to click")));
+        // The line a tile that paints no text.
+        let mut ui = tree(&[LINE], ROW_XML);
+        ui.inject_text(&MemSource::default(), ROOT, r#"<image name="DM_SpeakerText"><height>40</height></image>"#);
+        assert!(own_tiles(&mut ui));
+        let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
+        let now = shown(&ui, line, 1, 0, 0);
+        assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("{LINE} draws nothing")));
     }
 
     #[test]

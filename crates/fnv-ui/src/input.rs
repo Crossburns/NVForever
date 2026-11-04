@@ -243,6 +243,11 @@ pub struct HitCandidate {
 }
 
 impl HitCandidate {
+    /// What of it the pointer can reach, its clip taken off.
+    pub fn region(&self) -> Area {
+        self.clip.map_or(self.area, |c| c.intersect(self.area))
+    }
+
     fn under_point(&self, at: (f64, f64)) -> bool {
         self.area.contains(at) && self.clip.is_none_or(|c| c.contains(at))
     }
