@@ -921,7 +921,11 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
                     info!("tiles: {name} drawn from tiles ({file} file tiles, {code} code tiles)");
                     drawn.told_menu = Some(menu);
                 }
-                whole_pieces(ui, menu, &mut kit, super::interface_screen(switch))
+                let pieces = whole_pieces(ui, menu, &mut kit, super::interface_screen(switch));
+                if name == super::dialog_menu::DIALOG_MENU && pieces != drawn.pieces {
+                    info!("{}", super::dialog_menu::painted(ui, &pieces));
+                }
+                pieces
             }
             None => Vec::new(),
         };

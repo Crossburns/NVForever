@@ -41,7 +41,7 @@
 
 use super::menus::{self, SizesWritten, Tiled};
 use crate::dialogue::{DialogueScreen, ListId, ViewInput};
-use crate::dialogue_menu::{crop_x, window, DialogueMenu, MenuView, CROP_Y, GOODBYE_HINT, SHADE};
+use crate::dialogue_menu::{crop_x, hint_shown, window, DialogueMenu, MenuView, CROP_Y, GOODBYE_HINT, SHADE};
 use bevy::prelude::*;
 use fnv_ui::input::{By, Report};
 use fnv_ui::{MemSource, Origin, TileId, Ui, Value};
@@ -237,6 +237,9 @@ pub struct Shown {
     pub first: usize,
     /// `screen()`'s width and height.
     pub screen: (f64, f64),
+    /// The player's setting for the Tab hint ([`hint_shown`]): changing it places the hint at
+    /// once, as it is part of what [`Placement`] compares.
+    pub hint: bool,
 }
 
 /// What the model last wrote into the tree, to write only what changes of it.
@@ -250,6 +253,8 @@ struct Published {
 /// `screen()`'s `cropx` and `cropy` while this menu holds them: what they were (absent too) and
 /// what it wrote, so they go back on every way out unless a script has changed them since.
 struct CropKept {
+    /// Whose: a tree built again after a load has its own.
+    screen: TileId,
     before: [Option<Value>; 2],
     wrote: [Option<f64>; 2],
 }
@@ -334,7 +339,10 @@ impl Written {
 fn hold_crop(ui: &mut Ui, written: &mut Written) {
     let screen = ui.screen();
     let want = [f64::from(crop_x(num(ui, screen, "width") as f32)), f64::from(CROP_Y)];
-    let kept = written.crop.get_or_insert_with(|| CropKept { before: CROPS.map(|n| ui.tile(screen).get(n).cloned()), wrote: [None, None] });
+    if written.crop.as_ref().is_some_and(|k| k.screen != screen) {
+        written.crop = None;
+    }
+    let kept = written.crop.get_or_insert_with(|| CropKept { screen, before: CROPS.map(|n| ui.tile(screen).get(n).cloned()), wrote: [None, None] });
     for (i, name) in CROPS.into_iter().enumerate() {
         if kept.wrote[i].is_none_or(|w| num(ui, screen, name) == w) {
             ui.set_trait(screen, name, Value::Num(want[i]));
@@ -348,6 +356,9 @@ fn hold_crop(ui: &mut Ui, written: &mut Written) {
 fn release_crop(ui: &mut Ui, written: &mut Written) {
     let Some(kept) = written.crop.take() else { return };
     let screen = ui.screen();
+    if kept.screen != screen {
+        return;
+    }
     for (i, name) in CROPS.into_iter().enumerate() {
         if kept.wrote[i].is_some_and(|w| num(ui, screen, name) == w) {
             match &kept.before[i] {
@@ -505,9 +516,9 @@ fn place(ui: &mut Ui, view: &MenuView, selected: usize, first: usize) -> (usize,
 /// Place the Tab hint from the band and the bottom bracket as the file worked them out, left
 /// of the band where the screen has room, else at the safe zone's edge. Shown while a Goodbye
 /// choice is offered [design: dialogue-menu.md §6.4].
-fn place_hint(ui: &mut Ui, view: &MenuView) {
+fn place_hint(ui: &mut Ui, view: &MenuView, setting: bool) {
     let Some(hint) = ui.find_tile(HINT) else { return };
-    let show = view.goodbye && !view.choices.is_empty();
+    let show = hint_shown(view, setting);
     set(ui, hint, "visible", Value::Num(f64::from(u8::from(show))));
     let (Some(text), Some(pad), Some(band), Some(bottom), true) = (ui.find_tile(HINT_TEXT), ui.find_tile(HINT_BOX), ui.get_float(&format!("{BAND}/x")), ui.get_float(&format!("{BOTTOM_BRACKET}/y")), show) else { return };
     let (width, height) = (num(ui, text, "width"), num(ui, text, "height"));
@@ -550,7 +561,7 @@ fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut
     if written.moved {
         (first, written.scroll) = place(ui, &now.view, now.selected, now.first);
         ui.update();
-        place_hint(ui, &now.view);
+        place_hint(ui, &now.view, now.hint);
         written.placed = Some(Placement::read(ui, &Shown { first, ..now.clone() }));
     }
     write_scroll(ui, written.scroll);
@@ -682,6 +693,28 @@ pub fn follow(ui: &Ui, report: &Report, physical: &[&str], menu: TileId, list: O
             _ => {}
         }
     }
+}
+
+/// A line for the log when what the tile renderer was given changes (smoke reads these): what
+/// it paints, from its own pieces, not from the tree's or the model's values.
+pub fn painted(ui: &Ui, pieces: &[super::draw::Piece]) -> String {
+    let named = |n: &str| pieces.iter().filter(|p| ui.tile(p.tile).name.eq_ignore_ascii_case(n)).count();
+    let any = |names: &[&str]| names.iter().map(|n| named(n)).sum::<usize>();
+    let dim = pieces.iter().filter(|p| ui.tile(p.tile).name.eq_ignore_ascii_case(ROW_TEXT) && p.colour[3] < 0.6).count();
+    let red = pieces.iter().any(|p| FRAME_LINES.iter().any(|n| ui.tile(p.tile).name.eq_ignore_ascii_case(n)) && ui.tile(p.tile).get("systemcolor").is_some_and(|c| c.num() == 0.0));
+    format!(
+        "tiles: {DIALOG_MENU} painted: band {}, name {}, line {}, rows {}, dim {dim}, frame {} {}, fill {}, bar {}, brackets {}, hint {}",
+        named("DM_TextBackground"),
+        named("DM_SpeakerNameLabel"),
+        named("DM_SpeakerText"),
+        named(ROW_TEXT),
+        any(&FRAME_LINES),
+        if red { "red" } else { "plain" },
+        named("NVF_SelectionFill"),
+        any(&BAR_CONTROLS),
+        any(&["MainLine", "LeftVert", "RightVert"]),
+        named("NVF_GoodbyeHintText"),
+    )
 }
 
 /// What decides how the menu is drawn this frame, worked out once by [`write_system`] after
@@ -855,6 +888,8 @@ pub(crate) fn write_system(
         selected: screen.as_ref().map_or(0, |s| s.selected()),
         first: model.as_ref().map_or(0, |m| m.first),
         screen: (num(ui, ui.screen(), "width"), num(ui, ui.screen(), "height")),
+        // The hint's setting: #1517 reads its resource here.
+        hint: true,
     };
     let mut round = |ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten| {
         let size = fonts.menu_measure(&menus::fonts_of(ui, texts));
@@ -992,7 +1027,7 @@ mod tests {
 
     fn shown(ui: &Ui, view: MenuView, lines: u32, selected: usize, first: usize) -> Shown {
         let topics: Vec<u32> = (0..view.choices.len() as u32).map(|i| 0x100 + i).collect();
-        Shown { menu: ui.menu(DIALOG_MENU).unwrap(), list: ListId::for_test(lines, &topics), view, selected, first, screen: (1706.0, 960.0) }
+        Shown { menu: ui.menu(DIALOG_MENU).unwrap(), list: ListId::for_test(lines, &topics), view, selected, first, screen: (1706.0, 960.0), hint: true }
     }
 
     /// One frame: written, the tree worked out as `super::super::update` does.
@@ -1237,6 +1272,32 @@ mod tests {
         let line = MenuView { speaker: "Nora".into(), line: Some("Fine.".into()), choices: Vec::new(), goodbye: false };
         frame_on(&mut ui, &mut written, line, 2, 0, 0);
         assert!(!texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
+    }
+
+    #[test]
+    fn the_hint_setting_hides_only_the_hint_at_once() {
+        let mut ui = menu();
+        let mut written = Written::default();
+        let view = MenuView { goodbye: true, ..choosing(vec![row("Bye.")]) };
+        let now = shown(&ui, view, 1, 0, 0);
+        frame(&mut ui, &mut written, &now);
+        assert!(texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
+        frame(&mut ui, &mut written, &Shown { hint: false, ..now.clone() });
+        assert!(written.moved, "the setting is in the cache's key");
+        assert!(!texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
+        assert!(texts_drawn(&ui).iter().any(|(s, _)| s == "Bye."), "the list stays");
+        frame(&mut ui, &mut written, &now);
+        assert!(texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
+    }
+
+    #[test]
+    fn what_is_painted_is_told_from_the_renderers_pieces() {
+        let mut ui = menu();
+        let short = ChoiceRow { label: "[Sneak 17/25]  I could.".into(), short: true, ..Default::default() };
+        let dim = ChoiceRow { label: "Said before.".into(), darkened: true, ..Default::default() };
+        let view = MenuView { goodbye: true, ..choosing(vec![short, row("Plain."), dim]) };
+        frame_on(&mut ui, &mut Written::default(), view, 1, 0, 0);
+        assert_eq!(painted(&ui, &pieces(&ui)), "tiles: DialogMenu painted: band 1, name 1, line 0, rows 3, dim 1, frame 4 red, fill 1, bar 0, brackets 0, hint 1");
     }
 
     #[test]
@@ -1564,10 +1625,17 @@ mod tests {
         // A script's own value since stands, then and on the way out.
         frame_on(&mut ui, &mut written, view.clone(), 5, 0, 0);
         ui.set_trait(screen, "cropy", Value::Num(3.0));
-        frame_on(&mut ui, &mut written, view, 5, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 5, 0, 0);
         assert_eq!(crop(&ui, "cropy"), Some(3.0));
         written.forget(Some(&mut ui));
         assert_eq!(crop(&ui, "cropy"), Some(3.0));
+        // A tree built again has its own screen, and the zone is held on it.
+        let (mut old, mut again) = (menu(), menu());
+        frame_on(&mut old, &mut written, view.clone(), 6, 0, 0);
+        frame_on(&mut again, &mut written, view, 6, 0, 0);
+        assert_eq!(crop(&again, "cropy"), Some(15.0));
+        written.forget(Some(&mut again));
+        assert_eq!(crop(&again, "cropy"), None);
     }
 
     #[test]

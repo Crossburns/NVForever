@@ -106,6 +106,12 @@ pub const GOODBYE_HINT: &str = "TAB) Goodbye";
 const HINT_GAP: f32 = 20.0;
 const HINT_PAD: f32 = 10.0;
 
+/// Whether the Tab hint stands on `view`, for both views: `setting` is the player's switch for
+/// it (#1517), and a Goodbye choice has to be offered [owner, list 5 item 62].
+pub fn hint_shown(view: &MenuView, setting: bool) -> bool {
+    setting && view.goodbye && !view.choices.is_empty()
+}
+
 /// A choice as the menu shows it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ChoiceRow {
@@ -302,7 +308,7 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, body: 
     out.band = Some([band_x, top_line - LIST_BAND_UP, BAND_WIDTH, bottom_line - top_line + LIST_BAND_UP + LIST_BAND_DOWN]);
     out.list = Some(ListPlace { area: [list_x, top, LIST_WIDTH, height], top_line, bottom_line, bracket_x: list_x + BRACKET_IN, bracket_width: LIST_WIDTH, choices, scroll });
     out.first = first;
-    if view.goodbye {
+    if hint_shown(view, true) {
         let line = body.lines(GOODBYE_HINT, None).remove(0);
         // Left of the band where the screen has room, else at the safe zone's edge.
         let x = (band_x - HINT_GAP - line.width).max(crop_x(width) + HINT_PAD);
