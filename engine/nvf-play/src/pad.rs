@@ -300,6 +300,13 @@ pub(crate) fn menu_key(button: GamepadButton) -> Option<KeyCode> {
     ALWAYS.iter().chain(IN_MENUS.iter()).find(|(b, _)| *b == button).map(|(_, k)| *k)
 }
 
+/// [`menu_key`] in the menu `at`: what its own buttons stand for there first, as
+/// [`menu_keys`] has them ([`menu_buttons`]; the tutorial menu's triggers are its A and S, not
+/// Page Up and Page Down).
+pub(crate) fn menu_key_at(button: GamepadButton, at: MenuAt) -> Option<KeyCode> {
+    menu_buttons(at).iter().find(|(b, _)| *b == button).map(|(_, k)| *k).or_else(|| menu_key(button))
+}
+
 /// Whether `button` went down this frame on a controller that works the controls: for a
 /// menu's own controller buttons beyond the keys [`menu_keys`] stands in for (the ITEMS
 /// page's X drop, `crate::pipboy::items`).

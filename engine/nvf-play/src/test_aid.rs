@@ -68,7 +68,8 @@
 //!   mouse button at each time and lets it go after the hold (default: the next frame),
 //!   through Bevy's input state, so the game's bindings (`crate::bindings`) are what
 //!   read it: `ctrl` (left Ctrl), `shift`, `space`, `tab`, `esc`, `enter`, a letter or
-//!   digit (`e`, `2`), `f1`..`f12`, or `mouse-left` / `mouse-right` / `mouse-middle`.
+//!   digit (`e`, `2`), `f1`..`f12`, an arrow (`up`, `down`, `left`, `right`), `mouse-left` /
+//!   `mouse-right` / `mouse-middle`, or a notch of the wheel (`wheel-up`, `wheel-down`).
 //!   Unlike `NVF_PLAY_TEST_CONTROL` it tests the key's path, not just what it does.
 //!
 //! The aids that stand in for the keys and the mouse (`NVF_PLAY_TEST_MOVE`,
@@ -248,6 +249,8 @@ fn press(rest: &str) -> Result<Press, String> {
 pub enum RealInput {
     Key(KeyCode),
     Mouse(MouseButton),
+    /// A notch of the wheel: up is positive.
+    Wheel(f32),
 }
 
 /// `<key>[:<hold seconds>]` of `NVF_PLAY_TEST_KEYS`.
@@ -276,6 +279,12 @@ pub fn real_input(rest: &str) -> Result<(RealInput, f32), String> {
         "tab" => RealInput::Key(KeyCode::Tab),
         "esc" => RealInput::Key(KeyCode::Escape),
         "enter" => RealInput::Key(KeyCode::Enter),
+        "up" => RealInput::Key(KeyCode::ArrowUp),
+        "down" => RealInput::Key(KeyCode::ArrowDown),
+        "left" => RealInput::Key(KeyCode::ArrowLeft),
+        "right" => RealInput::Key(KeyCode::ArrowRight),
+        "wheel-up" => RealInput::Wheel(1.0),
+        "wheel-down" => RealInput::Wheel(-1.0),
         "mouse-left" => RealInput::Mouse(MouseButton::Left),
         "mouse-right" => RealInput::Mouse(MouseButton::Right),
         "mouse-middle" => RealInput::Mouse(MouseButton::Middle),
@@ -297,7 +306,7 @@ pub(crate) struct RealPresses {
 }
 
 /// Press and let go the `NVF_PLAY_TEST_KEYS` inputs, right after Bevy read the real ones.
-pub(crate) fn real_presses(time: crate::pause::AidTime, mut p: ResMut<RealPresses>, mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>) {
+pub(crate) fn real_presses(time: crate::pause::AidTime, mut p: ResMut<RealPresses>, mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>, mut wheel: MessageWriter<bevy::input::mouse::MouseWheel>) {
     let Some(now) = time.world_secs() else { return };
     let p = &mut *p;
     p.down.retain(|&(input, until)| {
@@ -307,6 +316,7 @@ pub(crate) fn real_presses(time: crate::pause::AidTime, mut p: ResMut<RealPresse
         match input {
             RealInput::Key(k) => keys.release(k),
             RealInput::Mouse(m) => mouse.release(m),
+            RealInput::Wheel(_) => {}
         }
         info!("test aid: real input {input:?} let go");
         false
@@ -315,6 +325,9 @@ pub(crate) fn real_presses(time: crate::pause::AidTime, mut p: ResMut<RealPresse
         match input {
             RealInput::Key(k) => keys.press(k),
             RealInput::Mouse(m) => mouse.press(m),
+            RealInput::Wheel(y) => {
+                wheel.write(bevy::input::mouse::MouseWheel { unit: bevy::input::mouse::MouseScrollUnit::Line, x: 0.0, y, window: Entity::PLACEHOLDER, phase: bevy::input::touch::TouchPhase::Moved });
+            }
         }
         info!("test aid: real input {input:?} pressed");
         // At least one frame down.
@@ -730,6 +743,15 @@ fn goto_and_look(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_key_aid_names_arrows_and_wheel_notches() {
+        assert_eq!(real_input("down"), Ok((RealInput::Key(KeyCode::ArrowDown), 0.0)));
+        assert_eq!(real_input("left:0.5"), Ok((RealInput::Key(KeyCode::ArrowLeft), 0.5)));
+        assert_eq!(real_input("wheel-down"), Ok((RealInput::Wheel(-1.0), 0.0)));
+        assert_eq!(real_input("wheel-up"), Ok((RealInput::Wheel(1.0), 0.0)));
+        assert_eq!(real_input("e"), Ok((RealInput::Key(KeyCode::KeyE), 0.0)));
+    }
 
     #[test]
     fn parses_and_fires_once() {

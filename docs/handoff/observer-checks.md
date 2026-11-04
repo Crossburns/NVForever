@@ -1212,3 +1212,24 @@ The numbers above stay put so links to them hold; each item here gives its own p
     whether (a)'s handler prints, and what (c) returns. If (a) is refused, the drop goes
     and ln_B42Optics.txt is the mod's own error. If (b) compiles, dropped arguments are not
     read. If (c) differs from `5 0 0`, the catalogue needs the fourth parameter.
+
+## Added 2026-11-04 (the tutorial menu from its file, issue #978)
+
+82. **What does `clipwindow` do?** (P3; menu-xml.md §3.1.1.) Answered in part (private
+    capture hud_tutorial_more, 1280 x 720) [observed]: in the drawing it is a rectangular
+    crop of the descendants, a scrolled line stopping part way at the column's top and bottom
+    edges. Still open: whether a click below the column's edge reaches a tile inside it (a
+    list's row scrolled out, in a menu with `list_box.xml`).
+83. **Does a picture's `alpha` reach the tiles inside it?** (P3; tutorial-menu.md §5.) The
+    tutorial menu's content under its background of alpha 193.8 reads full strength, so
+    NVForever marks that one tile; other tiles still multiply through a picture. A menu or
+    a test tile with a text inside a half-alpha picture answers whether this holds for
+    pictures generally.
+84. **The tutorial menu with two pages.** (P3; tutorial-menu.md §4, §5.) Answered (private
+    capture hud_tutorial_more, 1280 x 720) [observed]: a second `ShowTutorialMenu` replaces the
+    first, `TM_page` stays hidden, Next and Previous stay hidden and not targets, and
+    `ClickMenuButton` on them returned 1 with the text unchanged. The keys A and S were not
+    tried: the job taps them only when that call returns 0. NVForever's pages differ;
+    owner-review.md item 45 asks which to keep. Close's text reads alpha 255 and brightness 255
+    [observed], which rules out those two traits of its own for its (206, 147, 53), not an
+    opacity from above it or the compositing; font 2's texels [hypothesis].
