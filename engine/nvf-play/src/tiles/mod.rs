@@ -63,13 +63,13 @@ impl MenuFiles<'_, '_> {
 }
 
 /// Whether `screen()` is written in interface units ([`write_screen`]): only while a T15
-/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`) or the start menu's Mods page
+/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`, `DialogMenu`) or the start menu's Mods page
 /// (T11, `mods`) is switched on, whose files centre their boxes by `screen()` (MCM's `x`
 /// and `y`, menu-xml.md §10). The default game and the tile HUD alone keep the window's
 /// pixels [design]. The original reports interface units [observed: hud_menus capture
 /// 2026-10-31, three window sizes]; applying them unconditionally is a follow-up.
 pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
-    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.start
+    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.start || menus.dialog
 }
 
 /// Write `screen()`'s traits for a window `window_width` x `window_height` (logical
@@ -708,12 +708,16 @@ impl Plugin for TilesPlugin {
         app.init_resource::<draw::TileFonts>()
             .init_resource::<TutorialScrollCheck>()
             .init_resource::<menus::TileMenuBlur>()
+            .init_resource::<dialog_menu::DialogTiles>()
             // T15b: after the tutorial menu's keys, in the scripts' chain, before they run.
             .add_systems(Update, write_tutorial.in_set(PlaySet::Scripts).after(crate::tutorial_menu::keys).before(crate::script::run_scripts))
             .add_systems(Update, write.after(PlaySet::Physics).after(crate::compass::place).before(PlaySet::Activation))
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).before(PlaySet::Activation))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
+            // The dialogue menu, from the conversation as the frame's scripts left it, as the
+            // hand-built menu reads it, and worked out by `update` (`dialog_menu`).
+            .add_systems(Update, dialog_menu::write_system.after(PlaySet::Scripts).before(update))
             .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui))
             .add_systems(PostUpdate, vanilla::hide_hand_built.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
     }
@@ -772,6 +776,7 @@ mod tests {
         assert!(interface_screen(vanilla::TileMenus { start: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { sleep_wait: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { tutorial: true, ..Default::default() }));
+        assert!(interface_screen(vanilla::TileMenus { dialog: true, ..Default::default() }));
         write_screen(&mut ui, 1280.0, 720.0, true);
         ui.update();
         assert_eq!(ui.get_float("M/Box/x").map(|x| (x * 100.0).round() / 100.0), Some(803.33));

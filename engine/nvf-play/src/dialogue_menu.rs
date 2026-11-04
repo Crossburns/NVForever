@@ -473,7 +473,16 @@ fn draw(
     mut kit: Local<Option<Kit>>,
     mut shown: Local<Option<(MenuView, usize, u32)>>,
     creator: Option<Res<crate::creator::CreatorMenu>>,
+    tiles: Option<Res<crate::tiles::dialog_menu::DialogTiles>>,
 ) {
+    // Drawn from its file: all of the menu, none of it here (`crate::tiles::dialog_menu`).
+    if tiles.is_some_and(|t| t.by_tiles()) {
+        for e in &roots {
+            commands.entity(e).despawn();
+        }
+        *shown = None;
+        return;
+    }
     let width = windows.single().map_or(960.0 * 16.0 / 9.0, |w| 960.0 * w.width() / w.height().max(1.0));
     let selected = menu.selected;
     let kit = kit.get_or_insert_with(|| load_kit(data.as_deref(), &mut images, bc_supported(formats.as_deref())));
