@@ -696,6 +696,25 @@ pub struct DialogTiles {
     shown: bool,
     /// The list its rows were written for.
     list: Option<ListId>,
+    /// What hits were worked out on as it was drawn ([`hit_geometry`]).
+    hits: Vec<f64>,
+}
+
+/// Every number that places what a click can hit in the tree as it stands: the screen, the
+/// click area, the list, the rows. The tile input reads the live tree, so a change between the
+/// frame's drawing and the next frame's input would put a click on what was not on screen.
+pub fn hit_geometry(ui: &Ui) -> Vec<f64> {
+    let screen = ui.screen();
+    let mut out = vec![num(ui, screen, "width"), num(ui, screen, "height")];
+    for path in [ROOT, CLICK_AREA, LIST, BAR] {
+        if let Some(t) = ui.find_tile(path) {
+            out.extend(["x", "y", "width", "height"].map(|n| num(ui, t, n)));
+        }
+    }
+    for r in rows(ui) {
+        out.extend(["x", "y", "width", "height", "listindex"].map(|n| num(ui, r, n)));
+    }
+    out
 }
 
 impl DialogTiles {
@@ -712,9 +731,16 @@ impl DialogTiles {
     /// The menu, when it takes the tile input this frame: drawn last frame, the conversation
     /// still running with nothing over it, and the pause menu not up. A menu over the
     /// conversation keeps the input until it is gone, its closing frame included: `Game::menu`
-    /// goes in that frame's tick, after this.
+    /// goes in that frame's tick, after this. With the tree's hit geometry moved since the
+    /// drawing (a new window size, a shared expression), it takes nothing that frame: a press
+    /// there is on what the tree says and not on what was on screen, and is better lost [design].
     pub fn taking(&self, game: &fnv_game::Game<'_>, paused: bool) -> Option<TileId> {
-        self.menu.filter(|_| self.shown && !paused && game.dialogue.is_some() && !crate::dialogue::held(game))
+        self.menu.filter(|_| self.shown && !paused && game.dialogue.is_some() && !crate::dialogue::held(game) && self.hits_hold(&game.ui_tree))
+    }
+
+    /// The tree still has the hit geometry it was drawn with.
+    pub fn hits_hold(&self, ui: &Ui) -> bool {
+        self.hits == hit_geometry(ui)
     }
 
     /// The list the rows were written for.
@@ -818,7 +844,7 @@ pub(crate) fn write_system(
     let (view, list) = (crate::dialogue::view(game, &sim).filter(|_| !creating), crate::dialogue::list_id(game));
     let (Some(view), Some(list)) = (view, list) else {
         hide(&mut game.ui_tree, written);
-        state.set_if_neq(DialogTiles { menu: Some(menu), shown: false, list: None });
+        state.set_if_neq(DialogTiles { menu: Some(menu), shown: false, list: None, hits: Vec::new() });
         return;
     };
     let ui = &mut game.ui_tree;
@@ -843,7 +869,10 @@ pub(crate) fn write_system(
                 ui.update();
                 info!("{}", describe(ui, &now, first));
             }
-            state.set_if_neq(DialogTiles { menu: Some(menu), shown: true, list: Some(list) });
+            // As `super::update` leaves it for the drawing: the geometry the next input may use.
+            ui.update();
+            let hits = hit_geometry(ui);
+            state.set_if_neq(DialogTiles { menu: Some(menu), shown: true, list: Some(list), hits });
         }
         Err(reason) => {
             written.warn(&Tiled::No(reason));
@@ -1230,6 +1259,37 @@ mod tests {
     }
 
     #[test]
+    fn hits_hold_only_on_the_geometry_that_was_drawn() {
+        let mut ui = menu();
+        let mut written = Written::default();
+        let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
+        let first = frame_on(&mut ui, &mut written, choosing(labels.clone()), 1, 5, 0);
+        let state = DialogTiles { menu: ui.menu(DIALOG_MENU), shown: true, list: None, hits: hit_geometry(&ui) };
+        assert!(state.hits_hold(&ui));
+        // Nothing that stands still moves it: the pointer's pulse on a row is not geometry.
+        let mut p = pointer(1);
+        let r = step(&mut ui, &mut p, (200.0, 330.0), true);
+        assert_eq!(r.clicks.len(), 1);
+        assert!(state.hits_hold(&ui));
+        // A new window size before the next input: not what was drawn.
+        super::super::write_screen(&mut ui, 1600.0, 720.0, true);
+        ui.update();
+        assert!(!state.hits_hold(&ui), "the screen");
+        // A shared expression or a script moving the list or a row.
+        let mut ui = menu();
+        let first_again = frame_on(&mut ui, &mut written, choosing(labels.clone()), 2, 5, first);
+        assert_eq!(first_again, first);
+        let state = DialogTiles { hits: hit_geometry(&ui), ..state };
+        ui.set_trait(ui.find_tile(LIST).unwrap(), "y", Value::Num(301.0));
+        assert!(!state.hits_hold(&ui), "the list");
+        // The next drawing's geometry is the next input's.
+        let state = DialogTiles { hits: hit_geometry(&ui), ..state };
+        assert!(state.hits_hold(&ui));
+        ui.set_trait(rows(&ui)[2], "y", Value::Num(9.0));
+        assert!(!state.hits_hold(&ui), "a row");
+    }
+
+    #[test]
     fn a_key_the_hand_built_input_took_does_not_act_again() {
         let mut ui = menu();
         frame_on(&mut ui, &mut Written::default(), choosing(vec![row("A."), row("B.")]), 1, 0, 0);
@@ -1528,9 +1588,9 @@ mod tests {
         assert!(!none.by_tiles() && !none.drawn());
         let mut ui = menu();
         let menu = ui.menu(DIALOG_MENU);
-        let over = DialogTiles { menu, shown: false, list: None };
+        let over = DialogTiles { menu, shown: false, list: None, hits: Vec::new() };
         assert!(over.by_tiles() && !over.drawn(), "a menu over it: neither view draws");
-        let up = DialogTiles { menu, shown: true, list: None };
+        let up = DialogTiles { menu, shown: true, list: None, hits: Vec::new() };
         assert!(up.by_tiles() && up.drawn());
         // The picture it stands for, as `super::draw` is given it.
         frame_on(&mut ui, &mut Written::default(), choosing(vec![row("A.")]), 1, 0, 0);
