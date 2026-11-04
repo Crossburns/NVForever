@@ -390,6 +390,7 @@ pub(crate) mod tests {
     use fnv_actor::records::{Armor, Npc, Race, RacePart, Weapon};
     use fnv_sim::forms::{ActorBase, BaseData, BaseForm, Entry};
     use fnv_sim::inventory::{Extra, Inventory};
+    use nvf_play::hitvol::ActorBoundsCandidate;
     use bevy::ecs::system::RunSystemOnce;
 
     const ARMOUR: FormId = FormId(1);
@@ -594,7 +595,7 @@ pub(crate) mod tests {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let dir = TestFiles(std::env::temp_dir().join(format!("nvf-spawn-equipment-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))));
         std::fs::create_dir_all(dir.0.join("meshes")).unwrap();
-        for name in ["skeleton", "armour", "bare", "pack", "weapon", "modded"] {
+        for name in ["skeleton", "armour", "bare", "pack", "weapon", "modded", "hair", "headpart"] {
             let shape = (name != "skeleton").then_some(name);
             std::fs::write(dir.0.join("meshes").join(format!("{name}.nif")), model_nif(shape)).unwrap();
         }
@@ -625,9 +626,17 @@ pub(crate) mod tests {
     }
 
     fn spawn_fixture(dead: bool) -> (App, Entity, TestFiles) {
+        spawn_fixture_as(dead, |_| {})
+    }
+
+    /// [`spawn_fixture`] with a change to the actor forms first. The simulation is there
+    /// while the actor spawns, as in a game: the hit-volume marks are told from it.
+    fn spawn_fixture_as(dead: bool, change: impl FnOnce(&mut ActorWorld)) -> (App, Entity, TestFiles) {
         let (mut app, dir) = asset_fixture();
-        let forms = Box::leak(Box::new(actor_forms(vec![])));
-        let refs = Box::leak(Box::new(fnv_sim::RefTable::default()));
+        change(&mut app.world_mut().resource_mut::<ActorWorld>());
+        let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(actor_forms(vec![])));
+        let refs: &'static fnv_sim::RefTable = Box::leak(Box::default());
+        app.insert_resource(SimState { forms, refs, world: fnv_sim::World::new(forms, refs, Default::default()) });
         let mut game = game(fnv_sim::World::new(forms, refs, Default::default()));
         let id = game.world.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap();
         game.world.get(id).unwrap().inventory = Some(equipped());
@@ -702,6 +711,152 @@ pub(crate) mod tests {
         let w = app.world_mut();
         assert_eq!(w.query::<&HeldWeapon>().iter(w).count(), 0);
         assert_eq!(w.resource::<OutfitStats>().weapons_on, 0);
+    }
+
+    /// The drawn shapes of `reference`, each of which must have the hit-volume mark (#1388:
+    /// the marked walk is only as good as this); how many there are.
+    fn drawn_all_marked(app: &mut App, reference: u32) -> usize {
+        let w = app.world_mut();
+        let mut q = w.query_filtered::<(Entity, &RefVisual, Has<ActorBoundsCandidate>), With<Mesh3d>>();
+        let drawn: Vec<(Entity, bool)> = q.iter(w).filter(|(_, r, _)| r.0 == reference).map(|(e, _, has)| (e, has)).collect();
+        assert!(drawn.iter().all(|&(_, has)| has), "{reference:08X}: {drawn:?}");
+        drawn.len()
+    }
+
+    /// The shapes `actor`'s record has now.
+    fn dressed_shapes(app: &App, actor: Entity) -> Vec<Entity> {
+        app.world().get::<Dressed>(actor).unwrap().parts.iter().flat_map(|(_, shapes)| shapes.iter().copied()).collect()
+    }
+
+    /// `actor`'s shapes not in `before`, each of which must have `reference`'s `RefVisual`
+    /// and the mark: read on the entities themselves, so a shape left without a `RefVisual`
+    /// fails here, where [`drawn_all_marked`]'s query would not find it. How many there are.
+    fn new_shapes_refer_to(app: &App, actor: Entity, reference: u32, before: &[Entity]) -> usize {
+        let new: Vec<Entity> = dressed_shapes(app, actor).into_iter().filter(|e| !before.contains(e)).collect();
+        for &e in &new {
+            assert_eq!(app.world().get::<RefVisual>(e).map(|r| r.0), Some(reference), "{e}");
+            assert!(app.world().get::<ActorBoundsCandidate>(e).is_some(), "{e}");
+        }
+        new.len()
+    }
+
+    fn dressed_part<'a>(app: &'a App, actor: Entity, role: &str) -> &'a [Entity] {
+        let d = app.world().get::<Dressed>(actor).unwrap();
+        d.parts.iter().find(|(key, _)| key.starts_with(&format!("{role}|"))).map_or(&[], |(_, shapes)| shapes.as_slice())
+    }
+
+    #[test]
+    fn an_npcs_parts_and_their_replacements_have_the_hit_volume_mark() {
+        const HAIR: FormId = FormId(6);
+        const HEAD_PART: FormId = FormId(7);
+        let (mut app, actor, _files) = spawn_fixture_as(false, |world| {
+            use fnv_actor::records::{Hair, HeadPart};
+            world.actors.hairs.insert(HAIR, Hair { model: Some("hair.nif".into()), texture: None, edid: None, name: None, choosable: Default::default() });
+            world.actors.head_parts.insert(HEAD_PART, HeadPart { model: Some("headpart.nif".into()), extra: vec![], edid: None, name: None, playable: false });
+            let npc = world.actors.npcs.get_mut(&OTHER).unwrap();
+            npc.hair = Some(HAIR);
+            npc.head_parts = vec![HEAD_PART];
+        });
+        let reference = app.world().get::<ActorRig>(actor).unwrap().reference;
+        let before = drawn_all_marked(&mut app, reference);
+        // Armour, hair, a head part and the weapon as spawned (the weapon hides the add-on).
+        assert!(before >= 4, "{before}");
+        assert!(new_shapes_refer_to(&app, actor, reference, &[]) >= 3);
+        for role in ["armor", "hair", "head_part"] {
+            assert!(!dressed_part(&app, actor, role).is_empty(), "no {role} drawn");
+        }
+        let w = app.world_mut();
+        assert_eq!(w.query_filtered::<(), (With<HeldWeapon>, With<ActorBoundsCandidate>)>().iter(w).count(), 1);
+        // All taken off: the bare body goes on, hair and head part stay.
+        let spawned = dressed_shapes(&app, actor);
+        app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(Inventory::new());
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        let on = app.world().resource::<OutfitStats>().parts_on;
+        assert!(on > 0);
+        assert!(drawn_all_marked(&mut app, reference) > 0);
+        assert!(new_shapes_refer_to(&app, actor, reference, &spawned) > 0);
+        // On again: armour replaces the body, the weapon goes back in the hand.
+        let bare = dressed_shapes(&app, actor);
+        app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(equipped());
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        assert!(app.world().resource::<OutfitStats>().parts_on > on);
+        assert_eq!(app.world().resource::<OutfitStats>().weapons_on, 1);
+        assert!(drawn_all_marked(&mut app, reference) > 0);
+        assert!(new_shapes_refer_to(&app, actor, reference, &bare) > 0);
+        let w = app.world_mut();
+        assert_eq!(w.query_filtered::<(), (With<HeldWeapon>, With<ActorBoundsCandidate>)>().iter(w).count(), 1);
+    }
+
+    #[test]
+    fn a_corpses_parts_keep_the_hit_volume_mark_as_it_is_looted() {
+        let (mut app, actor, _files) = spawn_fixture(true);
+        let reference = app.world().get::<ActorRig>(actor).unwrap().reference;
+        app.world_mut().entity_mut(actor).insert(Corpse::default());
+        assert!(drawn_all_marked(&mut app, reference) > 0);
+        // Looted: its armour off, the bare body drawn under it.
+        let dressed = dressed_shapes(&app, actor);
+        app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(Inventory::new());
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        assert!(app.world().resource::<OutfitStats>().parts_on > 0);
+        assert!(drawn_all_marked(&mut app, reference) > 0);
+        assert!(new_shapes_refer_to(&app, actor, reference, &dressed) > 0);
+    }
+
+    /// A placed reference for these tests: only its id, record type and base matter here.
+    fn placed_ref(id: u32, sig: [u8; 4]) -> fnv_sim::refs::PlacedRef {
+        fnv_sim::refs::PlacedRef {
+            id: FormId(id), sig, edid: None, base: OTHER, cell: None, stored_in: None, plugin: 0, flags: 0,
+            in_persistent_group: false, pos: [0.0; 3], rot: [0.0; 3], scale: None, count: None, ammo: None,
+            health: None, owner: None, lock: None, teleport: None, enable_parent: None, linked: None,
+            patrol_idle: None, patrol_topic: None, merchant_container: None, marker_reputation: None,
+            open_by_default: false, primitive: None, activate_parents: Vec::new(), parent_activate_only: false,
+            prompt: None, radiation: None, radius: None, encounter_zone: None, level_modifier: None,
+        }
+    }
+
+    #[test]
+    fn placed_actors_and_creatures_are_marked_and_other_references_are_not() {
+        use fnv_actor::records::Creature;
+        const CRITTER: FormId = FormId(8);
+        const NPC_REF: u32 = 0x2000;
+        const ACRE_REF: u32 = 0x2001;
+        const NOT_ACTOR: u32 = 0x2002;
+        const NOT_CREATURE: u32 = 0x2003;
+        let (mut app, _files) = asset_fixture();
+        {
+            let mut world = app.world_mut().resource_mut::<ActorWorld>();
+            // No clips: only what is drawn matters here.
+            world.pose = crate::actors::ActorPose::Bind;
+            world.actors.creatures.insert(CRITTER, Creature {
+                id: CRITTER, edid: None, template: None, template_flags: 0, skeleton: Some("skeleton.nif".into()),
+                models: vec!["bare.nif".into(), "pack.nif".into()], anims: vec![], base_scale: None, kind: None,
+            });
+        }
+        let mut refs = fnv_sim::RefTable::default();
+        for (id, sig) in [(NPC_REF, *b"ACHR"), (ACRE_REF, *b"ACRE"), (NOT_ACTOR, *b"REFR"), (NOT_CREATURE, *b"REFR")] {
+            refs.refs.insert(FormId(id), placed_ref(id, sig));
+        }
+        let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(actor_forms(vec![])));
+        let refs: &'static fnv_sim::RefTable = Box::leak(Box::new(refs));
+        app.insert_resource(SimState { forms, refs, world: fnv_sim::World::new(forms, refs, Default::default()) });
+        let parent = app.world_mut().spawn_empty().id();
+        app.world_mut().run_system_once(move |mut commands: Commands, world: Res<ActorWorld>, mut parts: ResMut<ActorParts>, mut models: ModelCtx| {
+            let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
+            let mut stats = ActorStats::default();
+            let at = bevy::math::Affine3A::IDENTITY;
+            assert!(crate::actors::spawn(&mut commands, parent, at, Vec3::ZERO, NPC_REF, OTHER.0, &world, None, &mut ctx, &mut stats, false));
+            assert!(crate::actors::spawn_creature(&mut commands, parent, at, ACRE_REF, CRITTER.0, &world, &mut ctx, &mut stats, false));
+            // The same producers given references that are no actors.
+            assert!(crate::actors::spawn(&mut commands, parent, at, Vec3::ZERO, NOT_ACTOR, OTHER.0, &world, None, &mut ctx, &mut stats, false));
+            assert!(crate::actors::spawn_creature(&mut commands, parent, at, NOT_CREATURE, CRITTER.0, &world, &mut ctx, &mut stats, false));
+        }).unwrap();
+        assert!(drawn_all_marked(&mut app, NPC_REF) > 0);
+        // A creature's body parts are attached rigidly here (no skin in these models).
+        assert_eq!(drawn_all_marked(&mut app, ACRE_REF), 2);
+        let w = app.world_mut();
+        let mut q = w.query::<(&RefVisual, Has<ActorBoundsCandidate>)>();
+        let others: Vec<bool> = q.iter(w).filter(|(r, _)| r.0 == NOT_ACTOR || r.0 == NOT_CREATURE).map(|(_, has)| has).collect();
+        assert!(!others.is_empty() && others.iter().all(|has| !has), "{others:?}");
     }
 
     #[test]

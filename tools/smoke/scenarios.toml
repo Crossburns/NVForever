@@ -790,6 +790,8 @@ expect = [
   { re = 'sfx: WPN10mmSMGFire2D: (?P<n>\d+) started', range = [20, 40], label = "every shot of the 3 s burst starts its sound" },
   { re = 'sfx: WPN10mmSMGFire2D: .* (?P<n>\d+) refused at the voice limit', range = [0, 0], label = "none of the burst's shots is refused (#1098: some were)" },
   { re = 'not started at the voice limit, at most (?P<n>\d+) one-shots at once', range = [1, 64], label = "the voices stay within the limit" },
+  { re = 'sfx files: (?P<n>\d+) sounds began in the frame they were asked for, \d+ later while their file was read', range = [10, 100000], label = "#1428: the exit report's sfx files line, with at least 10 sounds of the run beginning to play in the frame they were asked for (their file already decoded; it does not check how late the others were)" },
+  { re = 'sfx files: \d+ sounds began in the frame they were asked for, \d+ later while their file was read \(\d+ more than one frame later, at most (?P<n>\d+) frames\)', range = [0, 3], label = "#1428: no sound of the run began more than 3 frames after it was asked for (start delays growing)" },
 ]
 
 [[scenario]]
@@ -3672,6 +3674,20 @@ expect = [
   { re = 'new game: (?P<n>\d+) placed actors start dead \(Base Health 0\)', range = [800, 1000], label = "new game: about 889 placed actors start dead" },
   { re = 'ragdolls: .* (?P<n>\d+) laid in the pose their reference stores', range = [9, 1000], label = "ragdolls: the village's nine corpses or more in their stored pose" },
   { re = 'ragdolls: .* \(0 stored poses did not fit\)' },
+]
+
+[[scenario]]
+name = "death-pose-held"
+source = "issue #1391 (engine/nvf-assets/src/anim_play.rs BlendPlayer::pose_held, engine/nvforever/src/locomotion.rs): a corpse holding a finished death clip is not sampled every frame"
+note = "the player stands in square (-17, 7), its physics squares reach x -18 (engine/nvf-play/src/phys/cells.rs RADIUS), and nothing moves them there; ten of the tribal village's corpses (TCFiend0?DEAD, TCGreatKhan0?DEAD, male skeleton, 0x001578F7 among them) lie in square (-19, 7), two squares off: drawn (--radius 2), dead from the start, on ground not loaded, so their ragdolls should not start and, predicted from that, they hold the end of a death pose for the rest of the run (docs/spec-notes/dead-on-spawn.md §3; ragdoll.rs start); the checks below read sums over all dead actors, not these ten, so they do not show it per corpse"
+areas = ["combat", "deaths", "animation"]
+paths = ["engine/nvf-assets/src/anim_play.rs", "engine/nvforever/src/locomotion.rs", "engine/nvforever/src/deaths.rs", "engine/nvforever/src/ragdoll.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1" }
+args = ["--play", "--pos=-67584,30720,10300", "--heading", "270", "--hour", "12", "--no-voice"]
+run_seconds = 40
+expect = [
+  { re = "death poses: \\d+ actor frames held without sampling \\((?P<n>\\d+) at the clip's end\\)", range = [100, 1000000000], label = "death poses: at least 100 actor frames in all held at the clip's end without sampling (a sum over all dead actors; says nothing of which)" },
+  { re = "death poses: .*\\), (?P<n>\\d+) more at the clip's end sampled", range = [1, 1000000000], label = "death poses: at least one actor frame in all sampled at the clip's end (a sum; not one per corpse)" },
 ]
 
 [[scenario]]
@@ -18278,6 +18294,137 @@ run_seconds = 16
 expect = [
   { re = 'ai \[\d\d:\d\d\] GSChetRef: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Chet stands in front of the window" },
   { re = 'dialogue: conversation with GSChetRef started', label = "the dialogue camera frames his head" },
+]
+
+[[scenario]]
+name = "hitvol-marked-created-actor"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "the placeatme-fights run: Goodsprings' placed actors, and a cazador a script creates that must get a volume after it is created. The steps match any dynamic id, as an expectation cannot carry an id from one line to the next: the count of creation lines says the cazador is the only actor creation logged in the run, and the second step asks for a dynamic actor with meshes shown and a volume. That it is the cazador rests on no other dynamic actor getting past the residents' creation log (residents.rs `take_created`, which goes over the non-deleted dynamic references of actor bases)"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "8:player.setav health 5000;8.5:close", NVF_PLAY_TEST_SCRIPT = "10:call:player:PlaceAtMe:NVCrCazador:1" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 40
+order = [[
+  { re = 'ai \[[^\]]*\] NVCrCazador 0xFF[0-9A-F]{6}: created by a script \(PlaceAtMe\)' },
+  { re = 'hitvol compare: actor FF[0-9A-F]{6} has [1-9]\d* of \d+ meshes shown and a volume' },
+]]
+expect = [
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (created actor)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (created actor)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (created actor)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (created actor)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (created actor)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (created actor)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (created actor)" },
+  "hitvol scan summary: ",
+  { re = 'ai \[[^\]]*\] .*: created by a script \(PlaceAtMe\)', count = 1, label = "the cazador is the only actor creation logged in the run (created actor)" },
+]
+
+[[scenario]]
+name = "hitvol-marked-equipment"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "the npc-equip-drawn run: Sunny's armour and rifle are replaced. The armour's line must say it put parts on, the armor among them, and a line before the rifle comes off must count new meshes of hers: nothing else of hers changes then, and a mesh counts once it has bounds and her RefVisual. Then meshes go with the rifle and come with it again, each with meshes shown and a volume. New and gone are counted, not the net change, because the old and new armour can fall in one frame, as the order of follow_inventory and sync_volumes is not fixed. Her package has Weapons Unequipped by then (alert.rs hides the Weapon node), so the rifle's meshes are hidden and only the number of all her meshes moves. Which part a new mesh is the log does not say: the outfits tests read the replacement entities themselves"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_FACE = "5:00104E85", NVF_PLAY_TEST_SCRIPT = "3:moveto:player:SunnyRef:0:-160:0,8:call:SunnyRef:AddItem:0x000EF1CB:1,9:call:SunnyRef:EquipItem:0x000EF1CB,12:call:SunnyRef:UnequipItem:0x0007EA24,14:call:SunnyRef:EquipItem:0x0007EA24", NVF_PLAY_TEST_SHOTS = "7,11,13,16" }
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 20
+order = [[
+  { re = 'outfit: actor 00104E85: armour 0x00020423 taken off, 0x000EF1CB put on; [1-9]\d* part\(s\) put on \(.*\barmor\b' },
+  { re = 'hitvol compare: actor 00104E85 has [1-9]\d* of \d+ meshes shown and a volume; [1-9]\d* new, ' },
+  "outfit: actor 00104E85: weapon 0x0007EA24 no longer held",
+  { re = 'hitvol compare: actor 00104E85 has [1-9]\d* of \d+ meshes shown and a volume; \d+ new, [1-9]\d* gone' },
+  "outfit: actor 00104E85: weapon 0x0007EA24 now held",
+  { re = 'hitvol compare: actor 00104E85 has [1-9]\d* of \d+ meshes shown and a volume; [1-9]\d* new, ' },
+]]
+expect = [
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (equipment)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (equipment)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (equipment)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (equipment)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (equipment)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (equipment)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (equipment)" },
+  "hitvol scan summary: ",
+]
+
+[[scenario]]
+name = "hitvol-marked-corpse-parts"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "the dismember-geckos run: gecko 2 has a volume, then its head explodes, its meshes stay accepted and its ragdoll takes over from the volume and is told at rest later (that it exists and was stepped, not that it behaves); gore has no RefVisual"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "4:moveto:VERGSGecko4REF:player:150:250:0", NVF_PLAY_TEST_HIT = "8:VERGSGecko2REF:500:WeapSniperRifle:limb=PerceptionCondition,10:VERGSGecko3REF:200:WeapNVMachete:limb=PerceptionCondition,10.5:VERGSGecko3REF:40:WeapNVMachete:limb=PerceptionCondition,11:VERGSGecko3REF:40:WeapNVMachete:limb=PerceptionCondition,11.5:VERGSGecko3REF:40:WeapNVMachete:limb=PerceptionCondition,12:VERGSGecko3REF:40:WeapNVMachete:limb=LeftAttackCondition,12.5:VERGSGecko3REF:40:WeapNVMachete:limb=LeftAttackCondition,13:VERGSGecko3REF:40:WeapNVMachete:limb=LeftAttackCondition,13.5:VERGSGecko3REF:40:WeapNVMachete:limb=LeftAttackCondition", NVF_PLAY_TEST_CONSOLE = "15:VERGSGecko4REF.KillActor player 1;15.5:close", NVF_PLAY_TEST_LOOK = "5:0:-20", NVF_PLAY_TEST_SHOTS = "7:geckos_before.png,9:geckos_head.png,14.5:geckos_severed.png,17:geckos_after.png" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-69180,-17450,9000", "--heading", "0", "--hour", "12", "--no-voice"]
+run_seconds = 22
+order = [[
+  { re = 'hitvol compare: actor 00157B3D has [1-9]\d* of \d+ meshes shown and a volume' },
+  { re = 'combat: Gecko 0x00157B3D killed' },
+  { re = 'hitvol compare: actor 00157B3D has [1-9]\d* of \d+ meshes shown and no volume' },
+  { re = 'dismember: .* 0x00157B3D: Head exploded \(overkill' },
+  { re = 'ragdoll: actor 00157B3D at rest at ' },
+]]
+expect = [
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (corpses)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (corpses)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (corpses)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (corpses)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (corpses)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (corpses)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (corpses)" },
+  "hitvol scan summary: ",
+]
+
+[[scenario]]
+name = "hitvol-marked-door-fade-in"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "the npc-door-fade run: the player waits outside; Ringo (0x00104C7D) comes through the door into the drawn exterior and must get a volume there"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
+run_seconds = 60
+order = [[
+  { re = 'world sounds: an actor passed load door \w+, sound ' },
+  { re = 'hitvol compare: actor 00104C7D has [1-9]\d* of \d+ meshes shown and a volume' },
+]]
+expect = [
+  { re = 'door fade summary: \d+ actors faded out at a door, (?P<n>\d+) faded in', range = [1, 1000], label = "an NPC faded in at the other side of a door" },
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (door fade in)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (door fade in)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (door fade in)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (door fade in)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (door fade in)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (door fade in)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (door fade in)" },
+  "hitvol scan summary: ",
+]
+
+[[scenario]]
+name = "hitvol-marked-door-fade-out"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "as the npc-door-fade run, with the player staying inside the gas station, so that Ringo's drawn body fades out at the door: its root loses its RefVisual, its meshes keep theirs until it is gone, and he has no meshes left after that"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
+run_seconds = 60
+order = [[
+  { re = 'hitvol compare: actor 00104C7D has [1-9]\d* of \d+ meshes shown and a volume' },
+  { re = 'world sounds: an actor passed load door \w+, sound ' },
+  { re = 'hitvol compare: actor 00104C7D has 0 of 0 meshes shown and no volume' },
+]]
+expect = [
+  { re = 'door fade summary: (?P<n>\d+) actors faded out at a door', range = [1, 1000], label = "an NPC faded out at a door" },
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (door fade out)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (door fade out)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (door fade out)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (door fade out)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (door fade out)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (door fade out)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (door fade out)" },
+  "hitvol scan summary: ",
 ]
 
 [[scenario]]

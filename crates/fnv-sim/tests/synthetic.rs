@@ -918,11 +918,17 @@ fn presence_serial_moves_with_every_presence_change() {
     // Reads leave it.
     w.is_enabled(id(GRANDCHILD)).unwrap();
     assert_eq!(w.presence_serial(), last);
-    // A state made (its own flag now read from it).
+    // A placed reference's state starts with the flags presence read from its placement
+    // (KEY_REF is Initially Disabled): made, it leaves the serial.
+    assert!(!w.is_enabled(id(KEY_REF)).unwrap());
     w.get(id(KEY_REF)).unwrap();
-    moved(&w, &mut last, "materialising");
+    assert_eq!(w.presence_serial(), last, "materialising a state as placed");
     w.get(id(KEY_REF)).unwrap();
     assert_eq!(w.presence_serial(), last, "an existing state");
+    // The player is not placed: its state makes it present.
+    assert!(w.peek(p).is_none() && w.is_enabled(p).is_err());
+    w.get(p).unwrap();
+    moved(&w, &mut last, "materialising the player");
     // Enabling a parent changes its children: the serial says so.
     w.set_enabled(id(KEY_REF), true).unwrap();
     moved(&w, &mut last, "set_enabled");
@@ -934,7 +940,7 @@ fn presence_serial_moves_with_every_presence_change() {
     moved(&w, &mut last, "set_deleted back");
     // An item picked up by activation.
     w.get(id(CHILD_SAME)).unwrap();
-    moved(&w, &mut last, "materialising the child");
+    assert_eq!(w.presence_serial(), last, "materialising the child as placed");
     assert!(matches!(w.activate(p, id(CHILD_SAME)).unwrap().outcome, Outcome::PickedUp { .. }));
     moved(&w, &mut last, "a pick-up");
     // Created references: placed and dropped.
@@ -956,6 +962,29 @@ fn presence_serial_moves_with_every_presence_change() {
     assert_ne!(other.presence_serial(), w.presence_serial());
     let restored = World::restore(&f.forms, &f.refs, &w.snapshot()).unwrap();
     assert_ne!(restored.presence_serial(), w.presence_serial());
+}
+
+/// Making a placed reference's state (`World::get`) does not move the presence serial,
+/// as presence reads the same flags from the placement before; a change of a flag on
+/// that state does: on a reference placed enabled, one placed Initially Disabled and
+/// one under an enable parent.
+#[test]
+fn presence_serial_stands_still_for_a_state_made_as_placed() {
+    let mut f = fixture();
+    f.refs.merchant_containers.clear();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    for r in [id(SAFE_REF), id(KEY_REF), id(CHILD_SAME)] {
+        let before = w.presence_serial();
+        let was = w.is_enabled(r).unwrap();
+        let own = w.get(r).unwrap().enabled;
+        assert_eq!(w.presence_serial(), before, "{r:?} made as placed");
+        assert_eq!(w.is_enabled(r).unwrap(), was, "{r:?} reads as before");
+        w.set_enabled(r, !own).unwrap();
+        assert_ne!(w.presence_serial(), before, "{r:?} switched");
+        let before = w.presence_serial();
+        w.set_deleted(r, true).unwrap();
+        assert_ne!(w.presence_serial(), before, "{r:?} deleted");
+    }
 }
 
 #[test]
