@@ -68,6 +68,11 @@ pub enum PipBoyPart {
     Glare,
     Glow(Page),
     Button(Page),
+    /// The rad meter's needle (`RadNeedle:0`, `:1`), the tab knob and the scroll wheel
+    /// (`pipboy_controls.rs`).
+    Needle,
+    TabKnob,
+    ScrollKnob,
 }
 
 /// The part a shape of the Pip-Boy model is, by its name.
@@ -86,6 +91,9 @@ pub fn part(name: &str) -> Option<PipBoyPart> {
         "statsglow:0" => Some(PipBoyPart::Glow(Page::Stats)),
         "itemsglow:0" => Some(PipBoyPart::Glow(Page::Items)),
         "dataglow:0" => Some(PipBoyPart::Glow(Page::Data)),
+        _ if n.starts_with("radneedle:") => Some(PipBoyPart::Needle),
+        _ if n.starts_with("tabknob:") => Some(PipBoyPart::TabKnob),
+        _ if n.starts_with("scrollknob:") => Some(PipBoyPart::ScrollKnob),
         _ => n.strip_prefix("pipboybutton").and_then(|r| page(r.get(..2)?)).map(PipBoyPart::Button),
     }
 }
@@ -100,7 +108,8 @@ pub struct PipBoyArmPlugin;
 
 impl Plugin for PipBoyArmPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (follow_pointer, show_screen).chain().after(nvf_play::player::BodySet).before(nvf_play::PlaySet::Ui));
+        app.init_resource::<crate::pipboy_controls::ControlAngles>()
+            .add_systems(Update, (follow_pointer, show_screen, crate::pipboy_controls::turn_controls).chain().after(nvf_play::player::BodySet).before(nvf_play::PlaySet::Ui));
     }
 }
 
@@ -484,6 +493,11 @@ mod tests {
         assert_eq!(part("PipBoyButton03:0"), Some(PipBoyPart::Button(Page::Data)));
         assert_eq!(part("ScreenLit:8"), Some(PipBoyPart::ScreenLit));
         assert_eq!(part("glare:0"), Some(PipBoyPart::Glare));
+        assert_eq!(part("RadNeedle:0"), Some(PipBoyPart::Needle));
+        assert_eq!(part("RadNeedle:1"), Some(PipBoyPart::Needle));
+        assert_eq!(part("TabKnob:0"), Some(PipBoyPart::TabKnob));
+        assert_eq!(part("ScrollKnob:0"), Some(PipBoyPart::ScrollKnob));
+        assert_eq!(part("RadNeedle"), None);
         assert_eq!(part("PipBoyArm:0"), None);
     }
 

@@ -75,6 +75,33 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   down, all three glow (owner, 2026-10-10). The pointer on a button lights nothing: a
   player comparing the two reports that the original's buttons do not light under it
   (#1516; not observed again here).
+- **The needle and knobs** (nvforever `pipboy_controls.rs`, all the numbers there). Each
+  shape turns about its own origin, its node's in the model [observed: `fnvtool nif decode`;
+  the model has no controllers on them and `pipboy.kf` does not name them]:
+  - `RadNeedle` (two shapes), about its local Z, out of the dial: total rads, not the rate,
+    linear, 18° per 100, the bind pose at 500: 0 straight down, 500 to the right, 1000 straight
+    up [observed: private job pipboy_special_device_motion: shots at 0 to 990 within a few
+    degrees; 58 rads with a rate of 9 reads 58]. It moves slowly, the same speed for a long
+    way as a short one: about 0.6° a game loop, a drop of 690 rads still on its way two
+    seconds on [observed]; the capture has neither a fine clock nor the loops' rate, so 30° a
+    second is [hypothesis], within about 20 to 40. No start-up delay can be told from the
+    shots' own stalls. Held at the dial's ends above 1000 [hypothesis].
+  - `TabKnob`, about its shape's local Z, its shaft: the page's tab, not the page (tab 0 of
+    STATS, ITEMS and DATA look the same, and the wrap comes back), five detents at the dial's
+    marks: a constant step of 26° with the bind pose at tab 3 lands within 2° of the shots
+    [observed: private job pipboy_special_device_motion; the step fitted]. A step is over in
+    about 8 game loops [observed]; 180° a second, and the wrap swinging back at that speed,
+    are [hypothesis].
+  - `ScrollKnob`, about its local X, its axle: the list's selected row, 2° a row, 30° a
+    second. It comes back to the same place at the top of a list [observed: private job
+    pipboy_special_device_motion: its ridges to within 0.3 pixels]; the rest is [hypothesis]:
+    the ridges' 17 pixels hide larger moves between shots, and the sign is not resolved. The
+    mouse wheel at the top of the list moved neither. Using the selected row, not the list's
+    scroll, means the pointer on a row turns it too [design].
+  - Absolute `bind × rotation` on the shape's own transform, after the arm is posed; a rebuilt
+    rig's shapes take a bind of their own. Off the arm a control keeps its last place
+    [hypothesis]; the first reading is taken at once. Logged "pipboy: needle settled at …",
+    "pipboy: tab knob settled at …", "pipboy: scroll wheel settled at …".
 - **The view** is first person while it is up and goes back to what it was [hypothesis].
 - **The world behind** is blurred by `fBlurRadiusPipboy` (3.5) in the image space
   modifiers' blur units [hypothesis: the same units], eased with the clip; what is
@@ -619,6 +646,9 @@ fourth row, and a click on a row equips what it selects.
 - Whether the original holds the clip at `Hit` (the measurements say the screen faces
   the eye there).
 - The keys of the PC game for the pages and tabs.
+- The needle's and knobs' speeds in time (the capture counts game loops at no known rate),
+  the wheel's step and sign, whether the mouse wheel turns it off the top of a list, how the
+  knob swings back at the wrap, and whether anything moves down (§2).
 - The glass: the static treatment (§3) is fitted at noon, level view, one page. Whether
   the original's screen moves with the hour, the pose and the page beyond what the grade
   does here is not fitted.
