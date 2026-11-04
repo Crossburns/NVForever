@@ -18715,7 +18715,7 @@ expect = [
   { re = 'ui: built DialogMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', label = "the conversation builds the menu" },
   { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', label = "the renderer takes the menu, with NVForever's own code tiles" },
   { re = 'tiles: DialogMenu painted: band 1, name 1, line 1, rows 0, dim 0, frame 0 plain, fill 0, bar 0, brackets 0, hint 0', label = "pieces of a line: band, name, line, nothing of the list" },
-  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]\d*, dim \d+, frame 4 (plain|red), fill 1, bar \d+, brackets 6, hint 1', label = "pieces of the list: band, name, rows, the frame's four lines and fill, the brackets, the hint" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]\d*, dim \d+, frame 0 plain, fill 0, bar 3, brackets 6, hint 1', label = "pieces of the list at open: band, name, rows in the window, nothing framed [observed: the original's], the bar's arrows and marker, the brackets, the hint" },
   { text = "dialogue menu: TAB) Goodbye shown", count = 0, label = "the hand-built menu's hint line is never logged" },
   { re = 'DialogMenu drawn by hand', count = 0, label = "the whole file was ready" },
   { re = 'ui: dropped DialogMenu', label = "the conversation's end drops the tree" },
@@ -18744,8 +18744,8 @@ expect = [
 
 [[scenario]]
 name = "tiles-dialog-scroll"
-source = "[design] docs/spec-notes/dialogue-menu.md §6.3: a list of wrapped and one-line choices that overflows is painted with the bar and moves by whole choices as the selection moves"
-note = "the aid holds off with a delay longer than the run; the keys go down the list and back; the heights differ when a row wraps; the window moves when the selection leaves it"
+source = "[observed: capture of the original, dialogue-menu.md §6.6] a list of wrapped and one-line choices that overflows is painted with the bar; the first Down frames the first choice, and the list then scrolls in steps as little as shows the framed row whole"
+note = "the aid holds off with a delay longer than the run; the keys go down the list and back; the heights differ when a row wraps; at 1280 x 720 Sunny Smiles's six rows are 96, 58, 96, 58, 58, 58 and the list 250 high at 619 (round 1's logs)"
 areas = ["ui", "dialogue"]
 paths = [
   "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
@@ -18757,15 +18757,16 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 45
 expect = [
   { re = 'tiles: DialogMenu drawn from tiles: .* row heights \[(\d+), (?:\d+, )*(?!\1\b)\d+', label = "rows of different heights: one wrapped" },
-  { re = 'tiles: DialogMenu painted: .* rows [1-5], dim \d+, frame 4 (plain|red), fill 1, bar 3, ', label = "fewer rows painted than offered, with the bar's arrows and marker" },
-  { re = 'tiles: DialogMenu drawn from tiles: .* showing \d+ from 0, .* scroll 0 of \d.*, bar true', label = "more than fit, at the top" },
-  { re = 'tiles: DialogMenu drawn from tiles: .* showing \d+ from [1-9]\d*, .* scroll [1-9].*, bar true', label = "the window moved by whole choices" },
+  { re = 'tiles: DialogMenu painted: .* rows [1-5], dim \d+, frame 4 (plain|red), fill 1, bar 3, ', label = "rows in the window painted, framed, with the bar's arrows and marker" },
+  { re = 'tiles: DialogMenu drawn from tiles: .* selected none, .* scroll 0 of [1-9]\d*, bar true', label = "more than fit, at the top, nothing framed" },
+  { re = 'tiles: DialogMenu drawn from tiles: .* selected 0, .* scroll 0 of [1-9]', label = "the first Down frames the first choice" },
+  { re = 'tiles: DialogMenu drawn from tiles: .* selected [1-5], .* scroll [1-9]\d* of [1-9]\d*, bar true', label = "the list scrolled in steps to the framed row" },
 ]
 
 [[scenario]]
 name = "tiles-dialog-pointer"
-source = "[design] docs/spec-notes/dialogue-menu.md §6.3: the pointer on a row selects it, a press picks it, accepted once as a tile click through the conversation's own command, and the bar's arrow steps the selection"
-note = "the aid holds off with a delay longer than the run, so only the pointer picks. At 1280 x 720 the screen is 1706.7 wide; the list is centred on y 744 and its rows run from x 365, so x 853, y 744 stands on a row (dialogue-menu.md §2-§3). The bar's down arrow is at x 349; its y is the list's bottom less 8, read from the describe line's list y and height. The dim expectation needs the chosen topic offered again: data, not checked in advance"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.3, §6.6: the pointer on a row selects it, a press picks it, accepted once as a tile click through the conversation's own command, and the bar's arrow scrolls one step"
+note = "the aid holds off with a delay longer than the run, so only the pointer picks. At 1280 x 720 the screen is 1706.7 wide; the list is centred on y 744 and its rows run from x 365, so x 853, y 744 stands on a row (dialogue-menu.md §2-§3). The bar's down arrow is at x 349, y 861: the list's bottom less 8 from round 1's describe line, list y 619 height 250, and its click was logged there. The dim expectation needs the chosen topic offered again: data, not checked in advance"
 areas = ["ui", "dialogue"]
 paths = [
   "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
@@ -18778,7 +18779,7 @@ run_seconds = 60
 expect = [
   { re = 'tiles: pointer over DialogMenu/.*DM_Topic', label = "the pointer finds a row" },
   { re = 'tiles: clicked DialogMenu/.*DM_Topic', count = 1, label = "the press hits the row's tile" },
-  { re = 'tiles: DialogMenu selection stepped 1 on its tiles', count = 1, label = "the bar's arrow steps one choice" },
+  { re = 'tiles: DialogMenu list scrolled 1 on its tiles', count = 1, label = "the bar's arrow scrolls one step" },
   { re = 'tiles: DialogMenu choice \d+ picked on its tiles', count = 1, label = "the row picks its choice, once" },
   { re = 'dialogue: choose Some\(\d+\) by tile click', count = 1, label = "accepted once, as a tile click" },
   { re = 'dialogue: choose Some\(\d+\) by (click|test aid|number key|Enter)', count = 0, label = "by nothing else" },

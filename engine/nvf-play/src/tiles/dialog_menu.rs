@@ -22,11 +22,12 @@
 //!   builds the menu there at the latest, so its first frame is the tiles' too. Placement
 //!   ([`place`]) reads the file's evaluated numbers, so they are part of what makes it run
 //!   again ([`Placement`]).
-//! - **The window**: choices scroll whole (`crate::dialogue_menu::window`, shared with the
-//!   hand-built menu). Rows outside it take `listindex` -1, which hides them by the file's own
-//!   rule, and the scroll is the height of the rows above the first shown, counted in the
-//!   file's `_scroll_delta`. The prefab's own value counts clicks from 0 in this tree, as the
-//!   wait and tutorial menus' do, so it is written on every frame.
+//! - **The scroll** ([`place`]) follows the original [observed: capture of the original, private job dialogue, 1280 x 720,
+//!   `dialogue-menu.md` §6.6]: rows are cut at the list's window and scroll in `_scroll_delta`
+//!   steps, moved by the bar's arrows and page areas and, for a choice the keys move to, by as
+//!   little as shows it whole. The hand-built menu keeps its whole-choice window. The prefab's
+//!   own value counts clicks from 0 in this tree, as the wait and tutorial menus' do, so the
+//!   model's is written on every frame.
 //! - **Readiness** ([`DialogTiles`], `dialogue-menu.md` §6.5): one decision for the tile
 //!   drawing, the hand-built menu and the tile input. A file missing, cut down or restructured,
 //!   a template that makes no row with its text, or a text that does not measure gives the
@@ -35,8 +36,8 @@
 //! - **The input** ([`follow`]): the tile input feeds the menu while it is drawn, nothing over
 //!   it and no pause menu ([`DialogTiles::taking`]), and a pointer's or a script's click comes
 //!   back as `crate::dialogue::ViewInput`: a row picks its choice, the pointer coming onto a
-//!   row selects it, the click area and the line skip, the scroll bar's arrows and page areas
-//!   step the selection. The keys and the wheel stay `crate::dialogue`'s. A click is held to
+//!   row selects it, the click area and the line skip; the scroll bar's arrows and page areas
+//!   scroll, which is the view's own. The keys and the wheel stay `crate::dialogue`'s. A click is held to
 //!   the screen it was made on, a script's to the one it was queued on (`Click::stamp`), and a
 //!   real press while the actor speaks skips once whichever way it arrives.
 //! - **NVForever's own tiles**: `NVF_GoodbyeHint` and `NVF_SelectionFill`, from templates
@@ -45,7 +46,7 @@
 
 use super::menus::{self, SizesWritten, Tiled};
 use crate::dialogue::{DialogueScreen, ListId, ViewInput};
-use crate::dialogue_menu::{crop_x, hint_shown, window, DialogueMenu, MenuView, CROP_Y, GOODBYE_HINT, SHADE};
+use crate::dialogue_menu::{hint_shown, MenuView, GOODBYE_HINT};
 use bevy::prelude::*;
 use fnv_ui::input::{By, HitCandidate, Report};
 use fnv_ui::{MemSource, Origin, TileId, Ui, Value};
@@ -88,11 +89,25 @@ const OWN_TEMPLATES: &str = r#"<template name="NVF_SelectionFillTemplate"><rect 
 const HINT_GAP: f64 = 20.0;
 const HINT_PAD: f64 = 10.0;
 
-/// A said-before choice's text, as bright as 128 of 255 [hypothesis: fitted to the owner's
-/// pictures, dialogue-menu.md §3; the original's own write is not known].
+/// A said-before row's `_line_alpha`, and so its text's alpha, the text's brightness staying
+/// 255 [observed: capture of the original, private job dialogue, 1280 x 720, one row].
 const DIM_ALPHA: f64 = 128.0;
-/// The frame's look [hypothesis: fitted to one picture, dialogue-menu.md §3; design: as the
-/// hand-built frame]: on a short check its line reads (100, 18, 16) after the file's line
+/// The band's alpha, read while drawn; the file writes less [observed: capture of the original, private job dialogue, 1280 x 720].
+const BAND_ALPHA: f64 = 193.8;
+/// `screen()`'s `cropx` and `cropy` [observed: capture of the original, private job dialogue, 1280 x 720: 15 by arithmetic from the
+/// name's place at one aspect, not a read of `screen()`; hypothesis: the same at other aspects].
+const CROP: f64 = 15.0;
+/// One step of the scroll: 56, on a list of 12 rows of 58 and one of 96 [observed: capture of the original, private job dialogue, 1280 x 720; hypothesis: the same
+/// for other lists; what the original works it out from is not known]. A script's own value is read.
+const SCROLL_DELTA: f64 = 56.0;
+/// The rows the list shows, whose heights make its height: three, or the file's least height
+/// if more [observed: capture of the original, private job dialogue, 1280 x 720: 174 = 58 + 58 + 58 although a fourth of 96 would make 270;
+/// hypothesis: the owner's Trudy picture agrees, 96 + 96 + 58 = 250 (dialogue-menu.md §3), and a
+/// greatest height of 250 would agree with both too: a list of many short rows would tell].
+const SHOWN_ROWS: usize = 3;
+/// The frame's look on a check the player falls short of [hypothesis: fitted to one picture,
+/// dialogue-menu.md §3; design: as the hand-built frame; the capture holds the lines of plain
+/// rows only, (200, 143, 52) on its shots]: on a short check its line reads (100, 18, 16) after the file's line
 /// brightness of 200 of 255; its fill.
 const SHORT_LINE: [f64; 3] = [127.5, 22.95, 20.4];
 const SHORT_FILL: [f64; 3] = [62.0, 0.0, 0.0];
@@ -258,11 +273,17 @@ fn check_drawn(ui: &Ui, view: &MenuView, menu: TileId) -> Result<(), String> {
     need(BAND)?;
     need(TOP_BRACKET)?;
     need(BOTTOM_BRACKET)?;
-    for line in FRAME_LINES {
-        need(&format!("{HIGHLIGHT}/{line}"))?;
+    let framed = ui.find_tile(LIST).map_or((-1.0, 0.0), |l| (num(ui, l, "_highlight_y"), num(ui, l, "_selected_height")));
+    let list_height = ui.get_float(&format!("{LIST}/height")).unwrap_or(0.0);
+    if framed.1 > 0.0 && framed.0 + framed.1 > 0.0 && framed.0 < list_height {
+        for line in FRAME_LINES {
+            need(&format!("{HIGHLIGHT}/{line}"))?;
+        }
     }
     for (row, choice) in rows(ui).into_iter().zip(&view.choices) {
-        if num(ui, row, "listindex") < 0.0 {
+        // Rows out of the list's window are not on screen to be drawn or reached.
+        let at = num(ui, row, "y");
+        if at + num(ui, row, "height") <= 0.0 || at >= list_height {
             continue;
         }
         if !reached(row) {
@@ -312,8 +333,9 @@ pub struct Shown {
     pub list: ListId,
     pub view: MenuView,
     pub selected: usize,
-    /// The model's first choice shown (`DialogueMenu::first`).
-    pub first: usize,
+    /// `DialogueScreen::framed` and `DialogueScreen::keyed`.
+    pub framed: bool,
+    pub keyed: u64,
     /// `screen()`'s width and height.
     pub screen: (f64, f64),
     /// The player's setting for the Tab hint ([`hint_shown`]): changing it places the hint at
@@ -367,6 +389,17 @@ impl Placement {
 #[derive(Resource, Clone, Default)]
 pub struct SharedWritten(std::sync::Arc<std::sync::Mutex<Written>>);
 
+impl SharedWritten {
+    /// Steps the bar asks for, placed after the frame's scripts.
+    pub fn scroll(&self, steps: i32) {
+        if steps != 0 {
+            if let Ok(mut written) = self.0.lock() {
+                written.scroll_asked += steps;
+            }
+        }
+    }
+}
+
 /// What the steps of a frame keep between them and between frames.
 #[derive(Default)]
 pub struct Written {
@@ -378,8 +411,12 @@ pub struct Written {
     /// [`Written::placed`] changed in the last [`write`]: worth a line in the log.
     moved: bool,
     sizes: SizesWritten,
-    /// The scroll, in the file's steps, written again every frame.
+    /// The scroll, in steps of `_scroll_delta`, written again every frame.
     scroll: f64,
+    /// Steps the bar's arrows and page areas asked for since the last placing ([`follow`]).
+    scroll_asked: i32,
+    /// `DialogueScreen::keyed` at the last placing.
+    keyed_seen: u64,
     crop: Option<CropKept>,
     /// The menu whose row template was tried.
     probed: Option<TileId>,
@@ -433,7 +470,7 @@ impl Written {
 /// stands.
 fn hold_crop(ui: &mut Ui, written: &mut Written) {
     let screen = ui.screen();
-    let want = [f64::from(crop_x(num(ui, screen, "width") as f32)), f64::from(CROP_Y)];
+    let want = [CROP, CROP];
     if written.crop.as_ref().is_some_and(|k| k.screen != screen) {
         written.crop = None;
     }
@@ -497,7 +534,8 @@ pub fn publish(ui: &mut Ui, view: &MenuView, list: &ListId, written: &mut Writte
         set_at(ui, LINE, "string", Value::Str(view.line.as_deref().map_or("", str::trim).to_string()));
     }
     if before.is_none() {
-        set_at(ui, BAND, "alpha", Value::Num(f64::from(SHADE) * 255.0));
+        set_at(ui, BAND, "alpha", Value::Num(BAND_ALPHA));
+        set_at(ui, LIST, "_scroll_delta", Value::Num(SCROLL_DELTA));
         set_at(ui, HINT_TEXT, "string", Value::Str(GOODBYE_HINT.to_string()));
     }
     hold_crop(ui, written);
@@ -563,49 +601,65 @@ fn write_frame_colour(ui: &mut Ui, short: bool) {
     set(ui, fill, "alpha", Value::Num(if short { SHORT_FILL_ALPHA } else { FILL_ALPHA }));
 }
 
-/// Set the rows out, one under the other from their measured texts, show the whole choices
-/// [`window`] fits, the frame on the selected one and the list's height. Returns the first
-/// choice shown and the scroll in the file's steps.
-fn place(ui: &mut Ui, view: &MenuView, selected: usize, first: usize) -> (usize, f64) {
-    let (Some(menu), Some(list), Some(bar)) = (ui.menu(DIALOG_MENU), ui.find_tile(LIST), ui.find_tile(BAR)) else { return (0, 0.0) };
+/// The scroll, in steps, that shows the row from `top` to `bottom` whole in a list `height`
+/// high, moving as little as it can from `scroll`, within `most` [observed: capture of the original, private job dialogue, 1280 x 720: on Down
+/// 0, 2, 3 … 10 and on Up 10, 8, 7 … 0 over the rows' heights, the frame staying on them].
+pub fn scroll_to_show(scroll: f64, top: f64, bottom: f64, height: f64, delta: f64, most: f64) -> f64 {
+    let mut at = scroll;
+    if bottom - at * delta > height {
+        at = ((bottom - height) / delta).ceil();
+    }
+    if top - at * delta < 0.0 {
+        at = (top / delta).floor();
+    }
+    at.clamp(0.0, most)
+}
+
+/// Set the rows out, one under the other from their measured texts; the list's height from
+/// the first [`SHOWN_ROWS`] and the file's least; the scroll, `steps` from where it stands and
+/// to the selected row when `follow` asks; the frame on the selected row, or none (`selected`
+/// `None`). The bar counts as the original's [observed: capture of the original, private job dialogue, 1280 x 720: items 11, visible 1 for 10 steps]. Returns the scroll.
+fn place(ui: &mut Ui, view: &MenuView, selected: Option<usize>, scroll: f64, steps: i32, follow: bool) -> f64 {
+    let (Some(menu), Some(list), Some(bar)) = (ui.menu(DIALOG_MENU), ui.find_tile(LIST), ui.find_tile(BAR)) else { return 0.0 };
     let made = rows(ui);
     if made.is_empty() {
         set(ui, list, "_highlight_y", Value::Num(-1.0));
         set(ui, list, "_selected_height", Value::Num(0.0));
         set(ui, bar, "_number_of_items", Value::Num(1.0));
         set(ui, bar, "_number_of_visible_items", Value::Num(1.0));
-        return (0, 0.0);
+        return 0.0;
     }
     let delta = num(ui, list, "_scroll_delta").max(1.0);
     let heights: Vec<f64> = made.iter().map(|&r| child(ui, r, ROW_TEXT).map_or(0.0, |t| num(ui, t, "height")) + num(ui, r, "_VerticalSpacing")).collect();
-    let sizes: Vec<f32> = heights.iter().map(|&h| h as f32).collect();
-    let (first, end) = window(first, selected, &sizes);
-    let selected = selected.min(made.len() - 1);
     let mut y = 0.0;
     let mut tops = Vec::with_capacity(made.len());
     for (i, (&row, &height)) in made.iter().zip(&heights).enumerate() {
         tops.push(y);
         set(ui, row, "height", Value::Num(height));
         set(ui, row, "_y", Value::Num(y));
-        set(ui, row, "listindex", Value::Num(if (first..end).contains(&i) { i as f64 } else { -1.0 }));
+        set(ui, row, "listindex", Value::Num(i as f64));
         y += height;
     }
     let total = y;
-    let offset = tops[first];
-    let shown: f64 = heights[first..end].iter().sum();
-    let height = shown.max(num(ui, menu, "_MinListHeight"));
+    let height = heights.iter().take(SHOWN_ROWS).sum::<f64>().max(num(ui, menu, "_MinListHeight"));
+    let most = ((total - height) / delta).ceil().max(0.0);
+    let selected = selected.map(|s| s.min(made.len() - 1));
+    let mut at = (scroll + f64::from(steps)).clamp(0.0, most);
+    if let (true, Some(s)) = (follow, selected) {
+        at = scroll_to_show(at, tops[s], tops[s] + heights[s], height, delta, most);
+    }
     set(ui, list, "height", Value::Num(height));
-    set(ui, list, "_highlight_y", Value::Num(tops[selected] - offset));
-    set(ui, list, "_selected_height", Value::Num(heights[selected]));
-    set(ui, bar, "_number_of_items", Value::Num(total / delta));
-    set(ui, bar, "_number_of_visible_items", Value::Num(height / delta));
-    write_frame_colour(ui, view.choices.get(selected).is_some_and(|c| c.short));
-    if let (Some(fill), Some(highlight)) = (ui.find_tile(FILL), ui.find_tile(HIGHLIGHT)) {
+    set(ui, list, "_highlight_y", Value::Num(selected.map_or(-1.0, |s| tops[s] - at * delta)));
+    set(ui, list, "_selected_height", Value::Num(selected.map_or(0.0, |s| heights[s])));
+    set(ui, bar, "_number_of_items", Value::Num(most + 1.0));
+    set(ui, bar, "_number_of_visible_items", Value::Num(1.0));
+    write_frame_colour(ui, selected.and_then(|s| view.choices.get(s)).is_some_and(|c| c.short));
+    if let (Some(fill), Some(highlight), Some(s)) = (ui.find_tile(FILL), ui.find_tile(HIGHLIGHT), selected) {
         let wide = num(ui, highlight, "width");
         set(ui, fill, "width", Value::Num(wide));
-        set(ui, fill, "height", Value::Num(heights[selected] - 1.0));
+        set(ui, fill, "height", Value::Num(heights[s] - 1.0));
     }
-    (first, offset / delta)
+    at
 }
 
 /// Place the Tab hint from the band and the bottom bracket as the file worked them out, left
@@ -617,14 +671,13 @@ fn place_hint(ui: &mut Ui, view: &MenuView, setting: bool) {
     set(ui, hint, "visible", Value::Num(f64::from(u8::from(show))));
     let (Some(text), Some(pad), Some(band), Some(bottom), true) = (ui.find_tile(HINT_TEXT), ui.find_tile(HINT_BOX), ui.get_float(&format!("{BAND}/x")), ui.get_float(&format!("{BOTTOM_BRACKET}/y")), show) else { return };
     let (width, height) = (num(ui, text, "width"), num(ui, text, "height"));
-    let screen = num(ui, ui.screen(), "width");
-    set(ui, hint, "x", Value::Num((band - HINT_GAP - width).max(f64::from(crop_x(screen as f32)) + HINT_PAD)));
+    set(ui, hint, "x", Value::Num((band - HINT_GAP - width).max(CROP + HINT_PAD)));
     set(ui, hint, "y", Value::Num(bottom - height / 2.0));
     set(ui, pad, "x", Value::Num(-HINT_PAD));
     set(ui, pad, "y", Value::Num(-HINT_PAD / 2.0));
     set(ui, pad, "width", Value::Num(width + 2.0 * HINT_PAD));
     set(ui, pad, "height", Value::Num(height + HINT_PAD));
-    set(ui, pad, "alpha", Value::Num(f64::from(SHADE) * 255.0));
+    set(ui, pad, "alpha", Value::Num(BAND_ALPHA));
 }
 
 /// The scroll, on every frame the menu is tiled: the prefab counts clicks from 0 in this
@@ -652,9 +705,8 @@ fn evaluate(ui: &mut Ui, written: &Written) {
 /// The second step of a frame, after the scripts: measure, place and scroll. `round` is one
 /// round of measuring: the fonts as the tree stands then, the sizes of the texts it is given
 /// written, how many were. The places are worked out again when the model, a text's size or
-/// any evaluated number they read moved ([`Placement`]). Returns the first choice shown, for
-/// the model.
-fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<usize, String> {
+/// any evaluated number they read moved ([`Placement`]).
+fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<(), String> {
     evaluate(ui, written);
     let texts = menus::texts(ui, now.menu);
     let measured = round(ui, &texts, &mut written.sizes);
@@ -663,13 +715,19 @@ fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut
     }
     check_measured(ui, &now.view)?;
     check_geometry(ui, &now.view)?;
-    let mut first = now.first;
-    written.moved = measured > 0 || written.placed.as_ref() != Some(&Placement::read(ui, now));
+    let steps = std::mem::take(&mut written.scroll_asked);
+    let follow = written.keyed_seen != now.keyed;
+    written.keyed_seen = now.keyed;
+    written.moved = measured > 0 || steps != 0 || follow || written.placed.as_ref() != Some(&Placement::read(ui, now));
     if written.moved {
-        (first, written.scroll) = place(ui, &now.view, now.selected, now.first);
+        // A new list starts at its top.
+        if written.placed.as_ref().is_none_or(|p| p.shown.list != now.list || p.shown.menu != now.menu) {
+            written.scroll = 0.0;
+        }
+        written.scroll = place(ui, &now.view, now.framed.then_some(now.selected), written.scroll, steps, follow);
         evaluate(ui, written);
         place_hint(ui, &now.view, now.hint);
-        written.placed = Some(Placement::read(ui, &Shown { first, ..now.clone() }));
+        written.placed = Some(Placement::read(ui, now));
     }
     write_scroll(ui, written.scroll);
     fnv_ui::input::mark_clip_windows(ui, now.menu);
@@ -677,12 +735,12 @@ fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut
         evaluate(ui, written);
         check_drawn(ui, &now.view, now.menu)?;
     }
-    Ok(first)
+    Ok(())
 }
 
 /// A frame of the menu shown, with what the first step does (a conversation that started in
 /// the scripts has had none), then [`settle`].
-pub fn write(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<usize, String> {
+pub fn write(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<(), String> {
     if let Tiled::No(reason) = prepare(ui, written) {
         return Err(reason);
     }
@@ -692,7 +750,7 @@ pub fn write(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn Fn
 
 /// A line for the log when what the menu shows changes (smoke reads these): the view as the
 /// tree worked it out. Call after [`write`].
-pub fn describe(ui: &Ui, now: &Shown, first: usize) -> String {
+pub fn describe(ui: &Ui, now: &Shown) -> String {
     let n = |x: f64| Value::Num(x).text();
     let f = |path: &str, name: &str| ui.get_float(&format!("{path}/{name}")).unwrap_or(-1.0);
     if now.view.choices.is_empty() {
@@ -701,19 +759,18 @@ pub fn describe(ui: &Ui, now: &Shown, first: usize) -> String {
     }
     let made = rows(ui);
     let heights: Vec<String> = made.iter().map(|&r| n(num(ui, r, "height"))).collect();
-    let shown = made.iter().filter(|&&r| num(ui, r, "listindex") >= 0.0).count();
     let dim = made.iter().filter(|&&r| num(ui, r, "_line_alpha") == DIM_ALPHA).count();
-    let short = now.view.choices.get(now.selected).is_some_and(|c| c.short);
+    let short = now.framed && now.view.choices.get(now.selected).is_some_and(|c| c.short);
+    let selected = if now.framed { now.selected.to_string() } else { "none".into() };
     format!(
-        "tiles: {DIALOG_MENU} drawn from tiles: speaker {:?}, {} choices, showing {shown} from {first}, selected {}, row heights [{}], list y {} height {}, scroll {} of {}, bar {}, dim {dim}, frame {}, hint {}",
+        "tiles: {DIALOG_MENU} drawn from tiles: speaker {:?}, {} choices, selected {selected}, row heights [{}], list y {} height {}, scroll {} of {}, bar {}, dim {dim}, frame {}, hint {}",
         now.view.speaker,
         made.len(),
-        now.selected,
         heights.join(", "),
         n(f(LIST, "y")),
         n(f(LIST, "height")),
         n(f(BAR, "_current_value")),
-        n(f(BAR, "_number_of_items")),
+        n(f(BAR, "_number_of_items") - 1.0),
         f(BAR, "visible") != 0.0,
         if short { "red" } else { "plain" },
         f(HINT, "visible") != 0.0,
@@ -732,15 +789,16 @@ pub enum DialogTile {
     Choice(usize),
     /// The click area or the line.
     Skip,
-    /// A scroll bar's arrow or page area: choices to move the selection by. A page is the
-    /// choices shown, so a step always lands on a choice [design].
-    Step(i32),
+    /// A scroll bar's arrow or page area: steps to scroll by, the list's selection staying
+    /// [observed: capture of the original, private job dialogue, 1280 x 720: cv moved by 1 for an arrow, by 3 for a page of 174 / 56, and `_highlight_y` went
+    /// with it]. The marker's drag is not built.
+    Scroll(i32),
 }
 
 /// What `tile` stands for, by its name or a parent's. A row hidden (out of the window) is
 /// nothing, and neither is the scroll bar's marker: dragging it is not built [design].
 pub fn dialog_tile(ui: &Ui, tile: TileId) -> Option<DialogTile> {
-    let page = || rows(ui).iter().filter(|&&r| num(ui, r, "listindex") >= 0.0).count().max(1) as i32;
+    let page = || ui.find_tile(BAR).map_or(1.0, |b| num(ui, b, "_jump_size")).max(1.0) as i32;
     let mut at = Some(tile);
     while let Some(t) = at {
         let tile = ui.tile(t);
@@ -750,10 +808,10 @@ pub fn dialog_tile(ui: &Ui, tile: TileId) -> Option<DialogTile> {
                 return (i >= 0.0).then_some(DialogTile::Choice(i as usize));
             }
             "dm_clickrect" | "dm_speakertext" => return Some(DialogTile::Skip),
-            "scrollbar_vert_up" => return Some(DialogTile::Step(-1)),
-            "scrollbar_vert_down" => return Some(DialogTile::Step(1)),
-            "scrollbar_vert_page_up" => return Some(DialogTile::Step(-page())),
-            "scrollbar_vert_page_down" => return Some(DialogTile::Step(page())),
+            "scrollbar_vert_up" => return Some(DialogTile::Scroll(-1)),
+            "scrollbar_vert_down" => return Some(DialogTile::Scroll(1)),
+            "scrollbar_vert_page_up" => return Some(DialogTile::Scroll(-page())),
+            "scrollbar_vert_page_down" => return Some(DialogTile::Scroll(page())),
             "scrollbar_vert_marker" => return None,
             _ => {}
         }
@@ -764,8 +822,9 @@ pub fn dialog_tile(ui: &Ui, tile: TileId) -> Option<DialogTile> {
 
 /// Turn a frame's report on the menu's tiles into what the view asks of the conversation:
 /// see the module notes. `physical`: the keys from the keyboard (or a controller standing in
-/// for them) this frame; `list`: what the rows were written for.
-pub fn follow(ui: &Ui, report: &Report, physical: &[&str], menu: TileId, list: Option<&ListId>, asked: &mut ViewInput) {
+/// for them) this frame; `list`: what the rows were written for; `scroll_asked`: the view's own,
+/// the bar's steps ([`Written::scroll_asked`]).
+pub fn follow(ui: &Ui, report: &Report, physical: &[&str], menu: TileId, list: Option<&ListId>, asked: &mut ViewInput, scroll_asked: &mut i32) {
     asked.list = list.cloned();
     let mine = |t: TileId| ui.is_live(t) && ui.root_of(t) == menu;
     // A highlight a file's ref moved for a hand-built Up or Down is not the pointer's: the
@@ -797,9 +856,9 @@ pub fn follow(ui: &Ui, report: &Report, physical: &[&str], menu: TileId, list: O
                 info!("tiles: {DIALOG_MENU} line skipped on its tiles");
                 asked.skip = true;
             }
-            Some(DialogTile::Step(n)) => {
-                info!("tiles: {DIALOG_MENU} selection stepped {n} on its tiles");
-                asked.step += n;
+            Some(DialogTile::Scroll(n)) => {
+                info!("tiles: {DIALOG_MENU} list scrolled {n} on its tiles");
+                *scroll_asked += n;
             }
             _ => {}
         }
@@ -807,18 +866,21 @@ pub fn follow(ui: &Ui, report: &Report, physical: &[&str], menu: TileId, list: O
 }
 
 /// A line for the log when what the tile renderer was given changes (smoke reads these): what
-/// it paints, from its own pieces, not from the tree's or the model's values.
+/// it paints, from its own pieces, not from the tree's or the model's values; a row's text only
+/// when it stands in the list's window.
 pub fn painted(ui: &Ui, pieces: &[super::draw::Piece]) -> String {
+    let in_view = |p: &super::draw::Piece| p.clip.is_none_or(|c| p.rect.top < c.top + c.height && p.rect.top + p.rect.height > c.top);
     let named = |n: &str| pieces.iter().filter(|p| ui.tile(p.tile).name.eq_ignore_ascii_case(n)).count();
     let any = |names: &[&str]| names.iter().map(|n| named(n)).sum::<usize>();
-    let dim = pieces.iter().filter(|p| ui.tile(p.tile).name.eq_ignore_ascii_case(ROW_TEXT) && p.colour[3] < 0.6).count();
+    let row_text = |p: &&super::draw::Piece| ui.tile(p.tile).name.eq_ignore_ascii_case(ROW_TEXT) && in_view(p);
+    let dim = pieces.iter().filter(row_text).filter(|p| p.colour[3] < 0.6).count();
     let red = pieces.iter().any(|p| FRAME_LINES.iter().any(|n| ui.tile(p.tile).name.eq_ignore_ascii_case(n)) && ui.tile(p.tile).get("systemcolor").is_some_and(|c| c.num() == 0.0));
     format!(
         "tiles: {DIALOG_MENU} painted: band {}, name {}, line {}, rows {}, dim {dim}, frame {} {}, fill {}, bar {}, brackets {}, hint {}",
         named("DM_TextBackground"),
         named("DM_SpeakerNameLabel"),
         named("DM_SpeakerText"),
-        named(ROW_TEXT),
+        pieces.iter().filter(row_text).count(),
         any(&FRAME_LINES),
         if red { "red" } else { "plain" },
         named("NVF_SelectionFill"),
@@ -1018,7 +1080,7 @@ pub(crate) fn write_system(
     files: super::MenuFiles,
     sim: Res<crate::sim::SimState>,
     mut fonts: super::draw::FontKit,
-    (screen, mut model): (Option<Res<DialogueScreen>>, Option<ResMut<DialogueMenu>>),
+    screen: Option<Res<DialogueScreen>>,
     creator: Option<Res<crate::creator::CreatorMenu>>,
     mut state: ResMut<DialogTiles>,
     shared: Res<SharedWritten>,
@@ -1063,7 +1125,8 @@ pub(crate) fn write_system(
         list: list.clone(),
         view,
         selected: screen.as_ref().map_or(0, |s| s.selected()),
-        first: model.as_ref().map_or(0, |m| m.first),
+        framed: screen.as_ref().is_some_and(|s| s.framed()),
+        keyed: screen.as_ref().map_or(0, |s| s.keyed()),
         screen: (num(ui, ui.screen(), "width"), num(ui, ui.screen(), "height")),
         // The hint's setting: #1517 reads its resource here.
         hint: true,
@@ -1073,13 +1136,10 @@ pub(crate) fn write_system(
         menus::write_text_sizes_of(ui, texts, sizes, &size)
     };
     match write(ui, &now, written, &mut round) {
-        Ok(first) => {
-            if let Some(m) = model.as_mut().filter(|m| m.first != first) {
-                m.first = first;
-            }
+        Ok(()) => {
             if written.moved {
                 ui.update();
-                info!("{}", describe(ui, &now, first));
+                info!("{}", describe(ui, &now));
             }
             let (hits, hit_screen) = (std::mem::take(&mut state.hits), state.hit_screen);
             state.set_if_neq(DialogTiles { menu: Some(menu), shown: true, list: Some(list), hits, hit_screen });
@@ -1179,7 +1239,10 @@ mod tests {
             let (at, tall) = (num(ui, list, "_highlight_y"), num(ui, list, "_selected_height"));
             set(ui, h, "y", Value::Num(at));
             set(ui, h, "height", Value::Num(tall));
+            set(ui, h, "visible", Value::Num(f64::from(u8::from(at + tall >= 0.0))));
         }
+        let page = (num(ui, list, "height") / num(ui, list, "_scroll_delta")).floor();
+        set(ui, bar, "_jump_size", Value::Num(page));
         let many = num(ui, bar, "_number_of_items") > num(ui, bar, "_number_of_visible_items");
         set(ui, bar, "visible", Value::Num(f64::from(u8::from(many))));
         if let (Some(area), Some(menu)) = (ui.find_tile(CLICK_AREA), ui.menu(DIALOG_MENU)) {
@@ -1221,21 +1284,21 @@ mod tests {
         MenuView { speaker: "Nora".into(), line: None, choices: rows, goodbye: false }
     }
 
-    fn shown(ui: &Ui, view: MenuView, lines: u32, selected: usize, first: usize) -> Shown {
+    /// With the selection framed; `keyed` as if the keys moved it there.
+    fn shown(ui: &Ui, view: MenuView, lines: u32, selected: usize) -> Shown {
         let topics: Vec<u32> = (0..view.choices.len() as u32).map(|i| 0x100 + i).collect();
-        Shown { menu: ui.menu(DIALOG_MENU).unwrap(), list: ListId::for_test(lines, &topics), view, selected, first, screen: (1706.0, 960.0), hint: true }
+        Shown { menu: ui.menu(DIALOG_MENU).unwrap(), list: ListId::for_test(lines, &topics), view, selected, framed: true, keyed: selected as u64, screen: (1706.0, 960.0), hint: true }
     }
 
     /// One frame: written, the tree worked out as `super::super::update` does.
-    fn frame(ui: &mut Ui, written: &mut Written, now: &Shown) -> usize {
-        let first = write(ui, now, written, &mut round).unwrap();
+    fn frame(ui: &mut Ui, written: &mut Written, now: &Shown) {
+        write(ui, now, written, &mut round).unwrap();
         evaluate(ui, written);
-        first
     }
 
-    fn frame_on(ui: &mut Ui, written: &mut Written, view: MenuView, lines: u32, selected: usize, first: usize) -> usize {
-        let now = shown(ui, view, lines, selected, first);
-        frame(ui, written, &now)
+    fn frame_on(ui: &mut Ui, written: &mut Written, view: MenuView, lines: u32, selected: usize) {
+        let now = shown(ui, view, lines, selected);
+        frame(ui, written, &now);
     }
 
     fn f(ui: &Ui, path: &str, name: &str) -> f64 {
@@ -1282,7 +1345,7 @@ mod tests {
 
     fn asked(ui: &Ui, report: &Report, physical: &[&str], lines: u32) -> ViewInput {
         let mut asked = ViewInput::default();
-        follow(ui, report, physical, ui.menu(DIALOG_MENU).unwrap(), Some(&ListId::for_test(lines, &[])), &mut asked);
+        follow(ui, report, physical, ui.menu(DIALOG_MENU).unwrap(), Some(&ListId::for_test(lines, &[])), &mut asked, &mut 0);
         asked
     }
 
@@ -1291,7 +1354,7 @@ mod tests {
         let mut ui = menu();
         let mut written = fresh();
         let view = MenuView { speaker: "Nora".into(), line: Some("Stay a while.".into()), choices: Vec::new(), goodbye: false };
-        frame_on(&mut ui, &mut written, view, 1, 0, 0);
+        frame_on(&mut ui, &mut written, view, 1, 0);
         assert_eq!(f(&ui, DIALOG_MENU, "_ShowingText"), 1.0);
         assert_eq!(f(&ui, DIALOG_MENU, "_ShowSubtitles"), 1.0);
         assert_eq!(f(&ui, DIALOG_MENU, "_DialogVisible"), 1.0);
@@ -1302,10 +1365,10 @@ mod tests {
         assert_eq!(f(&ui, HINT, "visible"), 0.0);
         // The safe zone the file reads.
         assert_eq!(num(&ui, ui.screen(), "cropy"), 15.0);
-        assert!((num(&ui, ui.screen(), "cropx") - 11.25).abs() < 1e-3);
+        assert_eq!(num(&ui, ui.screen(), "cropx"), 15.0);
         // A response with no text: the name alone, no band behind nothing.
         let view = MenuView { speaker: "Nora".into(), line: None, choices: Vec::new(), goodbye: false };
-        frame_on(&mut ui, &mut written, view, 2, 0, 0);
+        frame_on(&mut ui, &mut written, view, 2, 0);
         assert_eq!(f(&ui, DIALOG_MENU, "_ShowSubtitles"), 0.0);
         assert_eq!(texts_drawn(&ui).iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>(), ["Nora"]);
     }
@@ -1316,7 +1379,7 @@ mod tests {
         let mut written = fresh();
         // Wrap at 200: 25 characters take two lines of 40.
         let view = choosing(vec![row("Short one."), row(&"w".repeat(25)), row("Third.")]);
-        frame_on(&mut ui, &mut written, view, 1, 1, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 1);
         let made = rows(&ui);
         assert_eq!(made.len(), 3);
         let g = |t: TileId, n: &str| ui.tile(t).get(n).map_or(-1.0, Value::num);
@@ -1330,88 +1393,137 @@ mod tests {
         // A list that wraps otherwise after a script's change: the row is measured and moved.
         ui.set_trait(made[0], "string", Value::Str("x".repeat(25)));
         ui.update();
-        frame_on(&mut ui, &mut written, choosing(vec![row("Short one."), row(&"w".repeat(25)), row("Third.")]), 1, 1, 0);
+        frame_on(&mut ui, &mut written, view, 1, 1);
         assert_eq!(ui.tile(made[0]).get("height").map(Value::num), Some(92.0));
         assert_eq!(ui.tile(made[1]).get("_y").map(Value::num), Some(92.0));
     }
 
     #[test]
+    fn a_list_opens_with_nothing_framed() {
+        let mut ui = menu();
+        let mut written = fresh();
+        let now = Shown { framed: false, keyed: 0, ..shown(&ui, choosing(vec![row("A."), row("B."), row("C.")]), 1, 0) };
+        frame(&mut ui, &mut written, &now);
+        assert_eq!((f(&ui, LIST, "_highlight_y"), f(&ui, LIST, "_selected_height")), (-1.0, 0.0));
+        assert!(painted(&ui, &pieces(&ui)).contains("frame 0 plain, fill 0"), "{}", painted(&ui, &pieces(&ui)));
+        assert!(describe(&ui, &now).contains("selected none"));
+        // The first press frames the first choice.
+        let keyed = Shown { framed: true, keyed: 1, ..now };
+        frame(&mut ui, &mut written, &keyed);
+        assert_eq!((f(&ui, LIST, "_highlight_y"), f(&ui, LIST, "_selected_height")), (0.0, 52.0));
+        assert!(painted(&ui, &pieces(&ui)).contains("frame 4 plain, fill 1"));
+    }
+
+    #[test]
     fn a_short_list_keeps_the_files_least_height() {
         let mut ui = menu();
-        frame_on(&mut ui, &mut fresh(), choosing(vec![row("One.")]), 1, 0, 0);
+        frame_on(&mut ui, &mut fresh(), choosing(vec![row("One.")]), 1, 0);
         // 52 of row, the file's least 70.
         assert_eq!(f(&ui, LIST, "height"), 70.0);
         assert_eq!(f(&ui, DIALOG_MENU, "_MinListHeight"), 70.0);
     }
 
-    #[test]
-    fn an_overflowing_list_scrolls_by_whole_choices() {
-        let mut ui = menu();
-        let mut written = fresh();
-        // Rows of 52: five fit the most the list grows to (290).
-        let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
-        let first = frame_on(&mut ui, &mut written, choosing(labels.clone()), 1, 0, 0);
-        assert_eq!(first, 0);
-        let index = |ui: &Ui| rows(ui).iter().map(|&r| num(ui, r, "listindex") as i32).collect::<Vec<_>>();
-        assert_eq!(index(&ui), [0, 1, 2, 3, 4, -1, -1, -1], "hidden whole by the file's rule");
-        assert_eq!(f(&ui, LIST, "height"), 260.0);
-        assert_eq!(f(&ui, BAR, "visible"), 1.0);
-        assert_eq!(pictures_drawn(&ui, "m.dds"), 1, "a marker though the bar itself has no alpha");
-        assert_eq!(f(&ui, BAR, "_current_value"), 0.0);
-        // Counted in the file's own steps of 4.
-        assert_eq!((f(&ui, BAR, "_number_of_items"), f(&ui, BAR, "_number_of_visible_items")), (104.0, 65.0));
-        let drawn = texts_drawn(&ui);
-        assert!(drawn.iter().any(|(s, _)| s == "Choice 4.") && !drawn.iter().any(|(s, _)| s == "Choice 5."), "{drawn:?}");
-        // Down past the last shown: the window moves one choice, a whole row's height.
-        let first = frame_on(&mut ui, &mut written, choosing(labels.clone()), 1, 5, first);
-        assert_eq!(first, 1);
-        assert_eq!(index(&ui), [-1, 1, 2, 3, 4, 5, -1, -1]);
-        assert_eq!(f(&ui, BAR, "_current_value"), 13.0);
-        assert_eq!(ui.tile(rows(&ui)[1]).get("y").map(Value::num), Some(0.0), "the first shown stands at the list's top");
-        assert_eq!(f(&ui, LIST, "_highlight_y"), 208.0);
-        // The end, and back up.
-        let first = frame_on(&mut ui, &mut written, choosing(labels.clone()), 1, 7, first);
-        assert_eq!(first, 3);
-        assert_eq!(f(&ui, BAR, "_current_value") + f(&ui, BAR, "_number_of_visible_items"), f(&ui, BAR, "_number_of_items"), "the bar at its end");
-        let first = frame_on(&mut ui, &mut written, choosing(labels), 1, 2, first);
-        assert_eq!(first, 2);
-        assert_eq!(f(&ui, LIST, "_highlight_y"), 0.0);
+    /// One list as the capture had it: 12 rows, the fourth of two lines; the keys down and up.
+    fn the_captured_list() -> (Ui, Written, MenuView) {
+        // [observed: the capture's heights, 58 and 96, and its numbers below. The labels and this
+        // tree are the test's own.]
+        let mut ui = tree(&[], &ROW_XML.replace("<_VerticalSpacing>12</_VerticalSpacing>", "<_VerticalSpacing>20</_VerticalSpacing>"));
+        assert!(own_tiles(&mut ui));
+        let mut labels: Vec<ChoiceRow> = (0..12).map(|i| row(&format!("Choice {i}."))).collect();
+        labels[3].label = "w".repeat(25);
+        (ui, fresh(), choosing(labels))
+    }
+
+    fn round_of_38(ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten) -> usize {
+        menus::write_text_sizes_of(ui, texts, sizes, &|_: f64, text: &str, wrap: Option<f64>| {
+            let width = text.chars().count() as f64 * 10.0;
+            (width.min(wrap.unwrap_or(width)), (width / wrap.unwrap_or(width).max(1.0)).ceil().max(1.0) * 38.0)
+        })
     }
 
     #[test]
-    fn one_oversized_choice_stands_alone_and_an_empty_list_has_no_rows() {
+    fn the_scroll_goes_as_the_captured_lists_did() {
+        let (mut ui, mut written, view) = the_captured_list();
+        let mut go = |ui: &mut Ui, selected: usize, keyed: u64| {
+            let now = Shown { keyed, ..shown(ui, view.clone(), 1, selected) };
+            write(ui, &now, &mut written, &mut round_of_38).unwrap();
+            evaluate(ui, &written);
+            (f(ui, LIST, "_highlight_y"), f(ui, BAR, "_current_value"))
+        };
+        // Down through all twelve, as the capture's `_highlight_y` and `_current_value` went.
+        let down = [(0.0, 0.0), (58.0, 0.0), (116.0, 0.0), (62.0, 2.0), (102.0, 3.0), (104.0, 4.0), (106.0, 5.0), (108.0, 6.0), (110.0, 7.0), (112.0, 8.0), (114.0, 9.0), (116.0, 10.0)];
+        for (i, want) in down.iter().enumerate() {
+            assert_eq!(go(&mut ui, i, i as u64 + 1), *want, "row {i} going down");
+        }
+        assert_eq!((f(&ui, LIST, "y") , f(&ui, LIST, "height")), (300.0, 174.0), "the list's height stays");
+        assert_eq!((f(&ui, BAR, "_number_of_items"), f(&ui, BAR, "_number_of_visible_items")), (11.0, 1.0));
+        assert_eq!(f(&ui, BAR, "visible"), 1.0);
+        // Back up: the scroll holds until the row leaves the top.
+        let up = [(10, 10.0), (9, 10.0), (8, 8.0), (7, 7.0), (6, 6.0), (5, 5.0), (4, 4.0), (3, 3.0), (2, 2.0), (1, 1.0), (0, 0.0)];
+        for (k, (row, scroll)) in up.iter().enumerate() {
+            assert_eq!(go(&mut ui, *row, 100 + k as u64).1, *scroll, "row {row} going up");
+        }
+    }
+
+    #[test]
+    fn the_bars_steps_scroll_and_leave_the_frame_on_its_row() {
+        let (mut ui, mut written, view) = the_captured_list();
+        let now = Shown { keyed: 0, ..shown(&ui, view, 1, 0) };
+        let go = |ui: &mut Ui, written: &mut Written, steps: i32| {
+            written.scroll_asked += steps;
+            write(ui, &now, written, &mut round_of_38).unwrap();
+            evaluate(ui, written);
+            (f(ui, BAR, "_current_value"), f(ui, LIST, "_highlight_y"))
+        };
+        assert_eq!(go(&mut ui, &mut written, 0), (0.0, 0.0));
+        // Arrow, page, arrow, page back: the capture's 3, 6, 5, 2 from 2, with the frame on the
+        // first row carried off with it.
+        assert_eq!(go(&mut ui, &mut written, 3), (3.0, -168.0));
+        assert_eq!(go(&mut ui, &mut written, 3), (6.0, -336.0));
+        assert_eq!(go(&mut ui, &mut written, -1), (5.0, -280.0));
+        assert_eq!(go(&mut ui, &mut written, -3), (2.0, -112.0));
+        assert_eq!(f(&ui, HIGHLIGHT, "visible"), 0.0, "off the top, no frame");
+        // The ends hold.
+        assert_eq!(go(&mut ui, &mut written, -9).0, 0.0);
+        assert_eq!(go(&mut ui, &mut written, 99).0, 10.0);
+        // A page is what the tree's bar says.
+        assert_eq!(dialog_tile(&ui, ui.find_tile(&format!("{BAR}/scrollbar_vert_page_down")).unwrap()), Some(DialogTile::Scroll(3)));
+        assert_eq!(pictures_drawn(&ui, "m.dds"), 1, "a marker though the bar itself has no alpha");
+        // Rows out of the window are not on screen, part of one is.
+        let drawn = painted(&ui, &pieces(&ui));
+        assert!(drawn.contains("rows 3,") || drawn.contains("rows 4,"), "{drawn}");
+    }
+
+    #[test]
+    fn one_oversized_choice_makes_its_own_height_and_an_empty_list_has_no_rows() {
         let mut ui = menu();
         let mut written = fresh();
-        // Wrap at 200: 150 characters are eight lines, 332 with the spacing, past the most the
-        // list grows to.
+        // Wrap at 200: 150 characters are eight lines, 332 with the spacing.
         let view = choosing(vec![row(&"o".repeat(150)), row("After.")]);
-        let first = frame_on(&mut ui, &mut written, view, 1, 0, 0);
-        assert_eq!(first, 0);
-        let index = rows(&ui).iter().map(|&r| num(&ui, r, "listindex") as i32).collect::<Vec<_>>();
-        assert_eq!(index, [0, -1], "no part of the next");
-        assert_eq!(f(&ui, LIST, "height"), 332.0, "the window is what it holds, past the most");
+        frame_on(&mut ui, &mut written, view, 1, 0);
+        assert_eq!(f(&ui, LIST, "height"), 384.0);
         // The list gone: its rows too.
         let view = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
-        frame_on(&mut ui, &mut written, view, 2, 0, 0);
+        frame_on(&mut ui, &mut written, view, 2, 0);
         assert!(rows(&ui).is_empty());
         assert_eq!(f(&ui, LIST, "_selected_height"), 0.0);
     }
 
     #[test]
     fn the_scroll_is_written_again_over_what_the_file_worked_out() {
-        // [design] The real prefab counts clicks from 0 in this tree (smoke sees it there); here
-        // anything else standing in the value will do: the model's goes back every frame.
-        let mut ui = menu();
-        let mut written = fresh();
-        let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
-        let now = shown(&ui, choosing(labels), 1, 5, 0);
-        let first = frame(&mut ui, &mut written, &now);
-        let now = Shown { first, ..now };
-        assert_eq!(f(&ui, BAR, "_current_value"), 13.0);
-        let bar = ui.find_tile(BAR).unwrap();
-        ui.set_trait(bar, "_current_value", Value::Num(1.0));
-        frame(&mut ui, &mut written, &now);
-        assert_eq!(f(&ui, BAR, "_current_value"), 13.0);
+        // [design] The real prefab counts clicks from 0 in this tree; here anything else standing
+        // in the value will do: the model's goes back every frame.
+        let (mut ui, mut written, view) = the_captured_list();
+        let now = shown(&ui, view, 1, 5);
+        let go = |ui: &mut Ui, written: &mut Written| {
+            write(ui, &now, written, &mut round_of_38).unwrap();
+            evaluate(ui, written);
+        };
+        go(&mut ui, &mut written);
+        assert_eq!(f(&ui, BAR, "_current_value"), 4.0);
+        ui.set_trait(ui.find_tile(BAR).unwrap(), "_current_value", Value::Num(1.0));
+        go(&mut ui, &mut written);
+        assert_eq!(f(&ui, BAR, "_current_value"), 4.0);
         assert_eq!(f(&ui, BAR, "_SetInCode"), 1.0);
     }
 
@@ -1422,7 +1534,7 @@ mod tests {
         let short = ChoiceRow { label: "[Sneak 17/25]  I could.".into(), short: true, ..Default::default() };
         let dim = ChoiceRow { label: "Said before.".into(), darkened: true, ..Default::default() };
         let view = choosing(vec![short, row("Plain."), dim]);
-        frame_on(&mut ui, &mut written, view.clone(), 1, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 0);
         let alpha = |ui: &Ui, s: &str| texts_drawn(ui).iter().find(|(t, _)| t == s).unwrap().1;
         assert!((alpha(&ui, "Said before.") - 128.0 / 255.0).abs() < 1e-4);
         assert_eq!(alpha(&ui, "Plain."), 1.0);
@@ -1435,7 +1547,7 @@ mod tests {
         let fill = pieces(&ui).into_iter().find(|p| matches!(p.look, super::super::draw::Look::Box)).expect("the fill");
         assert!((fill.colour[0] * 255.0 - 62.0).abs() < 0.5 && (fill.colour[3] * 255.0 - 82.0).abs() < 0.5, "{:?}", fill.colour);
         // Off the check the frame goes back to the interface's colour.
-        frame_on(&mut ui, &mut written, view, 1, 1, 0);
+        frame_on(&mut ui, &mut written, view, 1, 1);
         let [r, g, b, _] = lines(&ui)[0].colour;
         assert!(g > 0.2 && (r, g, b) != (0.5, 0.09, 0.08), "the HUD's colour: {r} {g} {b}");
         let fill = pieces(&ui).into_iter().find(|p| matches!(p.look, super::super::draw::Look::Box)).unwrap();
@@ -1447,22 +1559,21 @@ mod tests {
         let mut ui = menu();
         let mut written = fresh();
         let mut view = choosing(vec![row("Bye."), row("Stay.")]);
-        frame_on(&mut ui, &mut written, view.clone(), 1, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 0);
         assert!(!texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
         assert_eq!(pictures_drawn(&ui, "Interface\\Shared\\Background\\solid_black.dds"), 0);
         view.goodbye = true;
-        frame_on(&mut ui, &mut written, view.clone(), 1, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 0);
         assert!(texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
         assert_eq!(pictures_drawn(&ui, "Interface\\Shared\\Background\\solid_black.dds"), 1);
         // Left of the band where it has room? This band is at 40, so the safe zone's edge; and
         // level with the bottom bracket, less half a line.
-        let screen = num(&ui, ui.screen(), "width");
-        assert!((f(&ui, HINT, "x") - (f64::from(crop_x(screen as f32)) + HINT_PAD)).abs() < 1e-3);
+        assert_eq!(f(&ui, HINT, "x"), CROP + HINT_PAD);
         assert_eq!(f(&ui, HINT, "y"), 620.0);
         // A wider gap: right end of the text 20 left of the band.
         ui.set_trait(ui.find_tile(BAND).unwrap(), "x", Value::Num(400.0));
         let moved = MenuView { speaker: "Nora again".into(), ..view };
-        frame_on(&mut ui, &mut written, moved, 1, 0, 0);
+        frame_on(&mut ui, &mut written, moved, 1, 0);
         assert_eq!(f(&ui, HINT, "x"), 400.0 - HINT_GAP - 120.0);
         // Code's own, and not taken for a mod's tile.
         let menu = ui.menu(DIALOG_MENU).unwrap();
@@ -1471,7 +1582,7 @@ mod tests {
         assert_eq!(ui.tile(hint).origin, Origin::Code);
         // During a line: no hint, whatever the model last said of it.
         let line = MenuView { speaker: "Nora".into(), line: Some("Fine.".into()), choices: Vec::new(), goodbye: false };
-        frame_on(&mut ui, &mut written, line, 2, 0, 0);
+        frame_on(&mut ui, &mut written, line, 2, 0);
         assert!(!texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
     }
 
@@ -1480,7 +1591,7 @@ mod tests {
         let mut ui = menu();
         let mut written = fresh();
         let view = MenuView { goodbye: true, ..choosing(vec![row("Bye.")]) };
-        let now = shown(&ui, view, 1, 0, 0);
+        let now = shown(&ui, view, 1, 0);
         frame(&mut ui, &mut written, &now);
         assert!(texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
         frame(&mut ui, &mut written, &Shown { hint: false, ..now.clone() });
@@ -1497,7 +1608,7 @@ mod tests {
         let short = ChoiceRow { label: "[Sneak 17/25]  I could.".into(), short: true, ..Default::default() };
         let dim = ChoiceRow { label: "Said before.".into(), darkened: true, ..Default::default() };
         let view = MenuView { goodbye: true, ..choosing(vec![short, row("Plain."), dim]) };
-        frame_on(&mut ui, &mut fresh(), view, 1, 0, 0);
+        frame_on(&mut ui, &mut fresh(), view, 1, 0);
         assert_eq!(painted(&ui, &pieces(&ui)), "tiles: DialogMenu painted: band 1, name 1, line 0, rows 3, dim 1, frame 4 red, fill 1, bar 0, brackets 0, hint 1");
     }
 
@@ -1505,19 +1616,17 @@ mod tests {
     fn the_pointer_selects_and_picks_on_the_rows_as_they_are_drawn() {
         let mut ui = menu();
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
-        frame_on(&mut ui, &mut fresh(), choosing(labels), 1, 5, 0);
+        frame_on(&mut ui, &mut fresh(), choosing(labels), 1, 0);
         let mut p = pointer(1);
-        // The list at 300, the window from choice 1: rows of 52, so y 330 is choice 1, y 400
-        // choice 2.
+        // The list at 300: rows of 52, so y 330 is choice 0, y 370 choice 1.
         let r = step(&mut ui, &mut p, (200.0, 330.0), false);
-        assert_eq!(asked(&ui, &r, &[], 1).hover, Some(1));
-        let r = step(&mut ui, &mut p, (200.0, 400.0), true);
+        assert_eq!(asked(&ui, &r, &[], 1).hover, Some(0));
+        let r = step(&mut ui, &mut p, (200.0, 370.0), true);
         let a = asked(&ui, &r, &[], 1);
-        assert_eq!((a.hover, a.pick), (Some(2), Some(2)));
-        // Under the list's clip: no row (a hidden one takes nothing either).
-        let r = step(&mut ui, &mut p, (200.0, 1000.0), true);
-        let a = asked(&ui, &r, &[], 1);
-        assert_eq!(a.pick, None, "{a:?}");
+        assert_eq!((a.hover, a.pick), (Some(1), Some(1)));
+        // Under the list's clip: a row laid out there takes nothing.
+        let r = step(&mut ui, &mut p, (200.0, 460.0), true);
+        assert_eq!(asked(&ui, &r, &[], 1).pick, None);
     }
 
     #[test]
@@ -1527,18 +1636,17 @@ mod tests {
         game.ui_tree = menu();
         game.dialogue = Some(fnv_game::dialogue::Conversation { actor: fnv_sim::FormId(0x14), through: None, line: None, choices: Vec::new(), lines: 1, then: None, ending: false });
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
-        let first = frame_on(&mut game.ui_tree, &mut fresh(), choosing(labels), 1, 5, 0);
-        assert_eq!(first, 1);
+        frame_on(&mut game.ui_tree, &mut fresh(), choosing(labels), 1, 0);
         let mut state = DialogTiles { menu: game.ui_tree.menu(DIALOG_MENU), shown: true, ..DialogTiles::default() };
         state.take_hits(&game.ui_tree);
-        // The rows shown, the bar's controls and the click area's absence all resolved.
+        // The rows and the bar's controls, resolved.
         let ui = &game.ui_tree;
         let held = |t: TileId| state.hits().iter().any(|c| c.under == t);
-        assert!(rows(ui)[1..6].iter().all(|&r| held(r)) && !held(rows(ui)[0]) && !held(rows(ui)[6]), "the window's rows");
+        assert!(rows(ui).iter().all(|&r| held(r)), "every row; the clip tells which can be reached");
         assert!(BAR_CONTROLS.iter().all(|n| held(ui.find_tile(&format!("{BAR}/{n}")).unwrap())), "the bar's controls");
         // Something animates a row away between the drawing and the input: input goes on,
         // and on the row where it was drawn.
-        let on_row = rows(ui)[1];
+        let on_row = rows(ui)[0];
         ui_mut(game).set_trait(on_row, "y", Value::Num(500.0));
         game.ui_tree.update();
         assert!(state.taking(game, false).is_some(), "an animation does not stop input");
@@ -1559,7 +1667,7 @@ mod tests {
     #[test]
     fn a_key_the_hand_built_input_took_does_not_act_again() {
         let mut ui = menu();
-        frame_on(&mut ui, &mut fresh(), choosing(vec![row("A."), row("B.")]), 1, 0, 0);
+        frame_on(&mut ui, &mut fresh(), choosing(vec![row("A."), row("B.")]), 1, 0);
         let bound = rows(&ui)[1];
         for key in ["xbuttona", "E", "S", "xdown"] {
             let click = fnv_ui::input::Click { tile: bound, by: By::Key(key.into()), id: None, stamp: 1 };
@@ -1584,7 +1692,7 @@ mod tests {
         let mut ui = menu();
         let mut written = fresh();
         let mut p = pointer(1);
-        frame_on(&mut ui, &mut written, choosing(vec![row("A."), row("B.")]), 1, 0, 0);
+        frame_on(&mut ui, &mut written, choosing(vec![row("A."), row("B.")]), 1, 0);
         let on_b = rows(&ui)[1];
         p.script_click(&mut ui, on_b);
         let r = step(&mut ui, &mut p, (0.0, 0.0), false);
@@ -1593,7 +1701,7 @@ mod tests {
         let stale = rows(&ui)[1];
         p.script_click(&mut ui, stale);
         p.stamp = 2;
-        frame_on(&mut ui, &mut written, choosing(vec![row("C."), row("D.")]), 2, 0, 0);
+        frame_on(&mut ui, &mut written, choosing(vec![row("C."), row("D.")]), 2, 0);
         assert!(!ui.is_live(stale), "the old list's row went with it");
         let r = step(&mut ui, &mut p, (0.0, 0.0), false);
         assert_eq!(asked(&ui, &r, &[], 2).pick, None);
@@ -1605,14 +1713,14 @@ mod tests {
         let mut ui = menu();
         let mut written = fresh();
         let line = |t: &str| MenuView { speaker: "Nora".into(), line: Some(t.into()), choices: Vec::new(), goodbye: false };
-        frame_on(&mut ui, &mut written, line("First."), 1, 0, 0);
+        frame_on(&mut ui, &mut written, line("First."), 1, 0);
         let area = ui.find_tile(CLICK_AREA).unwrap();
         let mut p = pointer(1);
         p.script_click(&mut ui, area);
         // The response ends by itself before the click is reported. The same goes for the same
         // actor's next conversation, whose stamp also differs.
         p.stamp = 2;
-        frame_on(&mut ui, &mut written, line("Second."), 2, 0, 0);
+        frame_on(&mut ui, &mut written, line("Second."), 2, 0);
         let r = step(&mut ui, &mut p, (1000.0, 1000.0), false);
         assert_eq!(r.clicks.len(), 1);
         assert!(!asked(&ui, &r, &[], 2).skip, "from an earlier screen");
@@ -1623,28 +1731,33 @@ mod tests {
     }
 
     #[test]
-    fn the_click_area_skips_and_the_bar_steps_by_whole_choices() {
+    fn the_click_area_skips_and_the_bar_asks_for_steps() {
         let mut ui = menu();
         let mut written = fresh();
         let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
-        frame_on(&mut ui, &mut written, line, 1, 0, 0);
+        frame_on(&mut ui, &mut written, line, 1, 0);
         let area = ui.find_tile(CLICK_AREA).unwrap();
         assert_eq!(dialog_tile(&ui, area), Some(DialogTile::Skip));
         let click = fnv_ui::input::Click { tile: area, by: By::Pointer, id: None, stamp: 1 };
         let r = Report { clicks: vec![click.clone(), click], ..Report::default() };
         assert!(asked(&ui, &r, &[], 1).skip, "twice in a frame is one skip");
-        // An overflowing list: a page is the choices shown.
+        // An overflowing list: the arrows and pages ask, the marker does nothing yet.
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
-        frame_on(&mut ui, &mut written, choosing(labels), 2, 0, 0);
+        frame_on(&mut ui, &mut written, choosing(labels), 2, 0);
         let piece = |ui: &Ui, n: &str| dialog_tile(ui, ui.find_tile(&format!("{BAR}/{n}")).unwrap());
-        assert_eq!(piece(&ui, "scrollbar_vert_up"), Some(DialogTile::Step(-1)));
-        assert_eq!(piece(&ui, "scrollbar_vert_down"), Some(DialogTile::Step(1)));
-        assert_eq!(piece(&ui, "scrollbar_vert_page_up"), Some(DialogTile::Step(-5)));
-        assert_eq!(piece(&ui, "scrollbar_vert_page_down"), Some(DialogTile::Step(5)));
+        assert_eq!(piece(&ui, "scrollbar_vert_up"), Some(DialogTile::Scroll(-1)));
+        assert_eq!(piece(&ui, "scrollbar_vert_down"), Some(DialogTile::Scroll(1)));
+        assert_eq!(piece(&ui, "scrollbar_vert_page_up"), Some(DialogTile::Scroll(-2)));
+        assert_eq!(piece(&ui, "scrollbar_vert_page_down"), Some(DialogTile::Scroll(2)));
         assert_eq!(piece(&ui, "scrollbar_vert_marker"), None);
-        // Hidden rows take nothing, even from a script.
-        assert_eq!(dialog_tile(&ui, rows(&ui)[7]), None);
         assert_eq!(dialog_tile(&ui, rows(&ui)[1]), Some(DialogTile::Choice(1)));
+        // A click on the arrow asks once, for this screen.
+        let down = ui.find_tile(&format!("{BAR}/scrollbar_vert_down")).unwrap();
+        let click = fnv_ui::input::Click { tile: down, by: By::Pointer, id: None, stamp: 2 };
+        let r = Report { clicks: vec![click], ..Report::default() };
+        let mut steps = 0;
+        follow(&ui, &r, &[], ui.menu(DIALOG_MENU).unwrap(), Some(&ListId::for_test(2, &[])), &mut ViewInput::default(), &mut steps);
+        assert_eq!(steps, 1);
     }
 
     #[test]
@@ -1663,7 +1776,7 @@ mod tests {
         ] {
             let mut ui = tree(&[], row);
             assert!(own_tiles(&mut ui));
-            let now = shown(&ui, choosing(vec![row_of("A."), row_of("B.")]), 1, 0, 0);
+            let now = shown(&ui, choosing(vec![row_of("A."), row_of("B.")]), 1, 0);
             assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(reason), "{row}");
             assert!(rows(&ui).is_empty(), "{row}");
         }
@@ -1682,21 +1795,21 @@ mod tests {
         ] {
             let mut ui = menu();
             ui.set_trait(ui.find_tile(path).unwrap(), name, Value::Num(0.0));
-            let now = shown(&ui, view.clone(), 1, 0, 0);
+            let now = shown(&ui, view.clone(), 1, 0);
             assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(reason.clone()), "{path} {name}");
         }
         let mut ui = tree(&[], &ROW_XML.replace("<target>1</target>", "<target>0</target>"));
         assert!(own_tiles(&mut ui));
-        let now = shown(&ui, view.clone(), 1, 0, 0);
+        let now = shown(&ui, view.clone(), 1, 0);
         assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("a {ROW} cannot be clicked")));
         let mut ui = tree(&[], &ROW_XML.replace("<wrapwidth>200</wrapwidth>", ""));
         assert!(own_tiles(&mut ui));
-        let now = shown(&ui, view, 1, 0, 0);
+        let now = shown(&ui, view, 1, 0);
         assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("a {ROW} has no room for its text")));
         // The click area a target only with a line up: a tree that makes it none is not whole.
         let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
         let mut ui = menu();
-        let now = shown(&ui, line, 1, 0, 0);
+        let now = shown(&ui, line, 1, 0);
         let mut written = Written { stand_in: Some(|ui| { work_out(ui); let area = ui.find_tile(CLICK_AREA).unwrap(); ui.set_trait(area, "target", Value::Num(0.0)); }), ..Written::default() };
         assert_eq!(write(&mut ui, &now, &mut written, &mut round), Err(format!("{CLICK_AREA} takes no click while the line is up")));
     }
@@ -1717,25 +1830,25 @@ mod tests {
         ] {
             let mut ui = menu();
             ui.set_trait(ui.find_tile(path).unwrap(), "filename", Value::Str(String::new()));
-            let now = shown(&ui, many.clone(), 1, 0, 0);
+            let now = shown(&ui, many.clone(), 1, 0);
             assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(reason.clone()), "{path}");
         }
         // A control that takes no click.
         let mut ui = menu();
         ui.set_trait(ui.find_tile(&up).unwrap(), "target", Value::Num(0.0));
-        let now = shown(&ui, many.clone(), 1, 0, 0);
+        let now = shown(&ui, many.clone(), 1, 0);
         assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("{up} has no region to click")));
         // A row of a kind the pointer does not take, for all its target and size.
         let mut ui = tree(&[], &ROW_XML.replace("hotrect", "rect"));
         assert!(own_tiles(&mut ui));
-        let now = shown(&ui, choosing(vec![row("A.")]), 1, 0, 0);
+        let now = shown(&ui, choosing(vec![row("A.")]), 1, 0);
         assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("a {ROW} has no region to click")));
         // The line a tile that paints no text.
         let mut ui = tree(&[LINE], ROW_XML);
         ui.inject_text(&MemSource::default(), ROOT, r#"<image name="DM_SpeakerText"><height>40</height></image>"#);
         assert!(own_tiles(&mut ui));
         let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
-        let now = shown(&ui, line, 1, 0, 0);
+        let now = shown(&ui, line, 1, 0);
         assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("{LINE} draws nothing")));
     }
 
@@ -1743,14 +1856,14 @@ mod tests {
     fn text_that_does_not_measure_is_not_ready_and_is_tried_again() {
         let mut ui = menu();
         let mut written = fresh();
-        let now = shown(&ui, choosing(vec![row("A."), row("B.")]), 1, 0, 0);
+        let now = shown(&ui, choosing(vec![row("A."), row("B.")]), 1, 0);
         let mut nothing = |ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten| menus::write_text_sizes_of(ui, texts, sizes, &|_: f64, _: &str, _: Option<f64>| (0.0, 0.0));
         assert_eq!(write(&mut ui, &now, &mut written, &mut nothing), Err(format!("{ROW_TEXT} has no measure")));
         // As `write_system` cleans up.
         written.fall_back(&mut ui);
         assert!(rows(&ui).is_empty());
         // The font came: next frame is whole.
-        assert_eq!(write(&mut ui, &now, &mut written, &mut round), Ok(0));
+        assert_eq!(write(&mut ui, &now, &mut written, &mut round), Ok(()));
         assert_eq!(rows(&ui).len(), 2);
     }
 
@@ -1759,7 +1872,7 @@ mod tests {
         let mut ui = menu();
         let mut written = fresh();
         let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
-        frame_on(&mut ui, &mut written, line, 1, 0, 0);
+        frame_on(&mut ui, &mut written, line, 1, 0);
         // The first step alone, as before a frame's scripts: the new phase, words and rows are
         // there to be read though nothing is measured or placed yet.
         let view = choosing(vec![row("A."), row("B.")]);
@@ -1769,7 +1882,7 @@ mod tests {
         assert_eq!(rows(&ui).len(), 2);
         assert_eq!(ui.tile(rows(&ui)[1]).get("string").map(Value::text).as_deref(), Some("B."));
         assert_eq!(ui.get_string(&format!("{LINE}/string")).as_deref(), Some(""));
-        frame_on(&mut ui, &mut written, view.clone(), 2, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 2, 0);
         // A script writes a label, an alpha and a flag.
         let r = rows(&ui)[0];
         ui.set_trait(r, "string", Value::Str("Mine.".into()));
@@ -1778,7 +1891,7 @@ mod tests {
         ui.set_trait(menu_tile, "_ShowSubtitles", Value::Num(0.0));
         // The selection moves, in both steps: none of it is written over.
         publish(&mut ui, &view, &list, &mut written).unwrap();
-        frame_on(&mut ui, &mut written, view.clone(), 2, 1, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 2, 1);
         assert_eq!(ui.tile(r).get("string").map(Value::text).as_deref(), Some("Mine."));
         assert_eq!(num(&ui, r, "_line_alpha"), 77.0);
         assert_eq!(f(&ui, DIALOG_MENU, "_ShowSubtitles"), 0.0);
@@ -1786,11 +1899,11 @@ mod tests {
         // Until the model changes that very thing.
         let mut changed = view.clone();
         changed.choices[0].label = "Theirs.".into();
-        frame_on(&mut ui, &mut written, changed, 2, 1, 0);
+        frame_on(&mut ui, &mut written, changed, 2, 1);
         assert_eq!(ui.tile(r).get("string").map(Value::text).as_deref(), Some("Theirs."));
         assert_eq!(num(&ui, r, "_line_alpha"), 77.0, "that alpha still");
         // A new screen writes all of it again.
-        frame_on(&mut ui, &mut written, choosing(vec![row("C.")]), 3, 0, 0);
+        frame_on(&mut ui, &mut written, choosing(vec![row("C.")]), 3, 0);
         assert_eq!(num(&ui, rows(&ui)[0], "_line_alpha"), 255.0);
     }
 
@@ -1830,31 +1943,32 @@ mod tests {
         let mut written = fresh();
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
         let view = MenuView { goodbye: true, ..choosing(labels) };
-        let first = frame_on(&mut ui, &mut written, view.clone(), 1, 5, 0);
-        assert_eq!(f(&ui, BAR, "_current_value"), 13.0);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5);
+        // Rows of 52, three shown: the row to 312 shows at 140 under its 156: 3 steps of 56.
+        assert_eq!(f(&ui, BAR, "_current_value"), 3.0);
         // A settled frame places nothing again.
-        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5);
         assert!(!written.moved);
-        // The file's scroll step, its least height, a row's spacing, the bracket and the band
-        // change with nothing else: each moves what reads it.
+        // The scroll step, the least height, a row's spacing, the bracket and the band change
+        // with nothing else: each moves what reads it.
         let (list, menu_tile) = (ui.find_tile(LIST).unwrap(), ui.menu(DIALOG_MENU).unwrap());
-        ui.set_trait(list, "_scroll_delta", Value::Num(2.0));
-        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        ui.set_trait(list, "_scroll_delta", Value::Num(100.0));
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5);
         assert!(written.moved);
-        assert_eq!(f(&ui, BAR, "_current_value"), 26.0);
+        assert_eq!(f(&ui, BAR, "_number_of_items"), 4.0);
         ui.set_trait(menu_tile, "_MinListHeight", Value::Num(400.0));
-        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5);
         assert_eq!(f(&ui, LIST, "height"), 400.0);
         for r in rows(&ui) {
             ui.set_trait(r, "_VerticalSpacing", Value::Num(20.0));
         }
-        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5);
         assert_eq!(ui.tile(rows(&ui)[0]).get("height").map(Value::num), Some(60.0));
         ui.set_trait(ui.find_tile(BOTTOM_BRACKET).unwrap(), "y", Value::Num(700.0));
-        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5);
         assert_eq!(f(&ui, HINT, "y"), 680.0);
         ui.set_trait(ui.find_tile(BAND).unwrap(), "x", Value::Num(500.0));
-        frame_on(&mut ui, &mut written, view, 1, 5, first);
+        frame_on(&mut ui, &mut written, view, 1, 5);
         assert_eq!(f(&ui, HINT, "x"), 500.0 - HINT_GAP - 120.0);
     }
 
@@ -1865,7 +1979,7 @@ mod tests {
         let mut ui = menu();
         let mut written = fresh();
         let view = choosing(vec![row("A."), row("B."), row("C.")]);
-        let now = shown(&ui, view, 1, 1, 0);
+        let now = shown(&ui, view, 1, 1);
         frame(&mut ui, &mut written, &now);
         assert_eq!(f(&ui, LIST, "_highlight_y"), 52.0);
         let text = child(&ui, rows(&ui)[0], ROW_TEXT).unwrap();
@@ -1888,36 +2002,36 @@ mod tests {
         let view = choosing(vec![row("A.")]);
         let mut ui = menu();
         let mut written = fresh();
-        frame_on(&mut ui, &mut written, view.clone(), 1, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 0);
         assert_eq!(crop(&ui, "cropy"), Some(15.0));
         written.forget(Some(&mut ui));
         assert_eq!((crop(&ui, "cropx"), crop(&ui, "cropy")), (None, None), "the conversation over");
-        frame_on(&mut ui, &mut written, view.clone(), 2, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 2, 0);
         written.fall_back(&mut ui);
         assert_eq!((crop(&ui, "cropx"), crop(&ui, "cropy")), (None, None), "a fallback");
         // Held through a menu over the conversation.
-        frame_on(&mut ui, &mut written, view.clone(), 3, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 3, 0);
         hide(&mut ui, &mut written);
         assert_eq!(crop(&ui, "cropy"), Some(15.0));
         written.forget(Some(&mut ui));
         // Set before: that value after.
         let screen = ui.screen();
         ui.set_trait(screen, "cropx", Value::Num(7.0));
-        frame_on(&mut ui, &mut written, view.clone(), 4, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 4, 0);
         assert_ne!(crop(&ui, "cropx"), Some(7.0));
         written.forget(Some(&mut ui));
         assert_eq!((crop(&ui, "cropx"), crop(&ui, "cropy")), (Some(7.0), None));
         // A script's own value since stands, then and on the way out.
-        frame_on(&mut ui, &mut written, view.clone(), 5, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 5, 0);
         ui.set_trait(screen, "cropy", Value::Num(3.0));
-        frame_on(&mut ui, &mut written, view.clone(), 5, 0, 0);
+        frame_on(&mut ui, &mut written, view.clone(), 5, 0);
         assert_eq!(crop(&ui, "cropy"), Some(3.0));
         written.forget(Some(&mut ui));
         assert_eq!(crop(&ui, "cropy"), Some(3.0));
         // A tree built again has its own screen, and the zone is held on it.
         let (mut old, mut again) = (menu(), menu());
-        frame_on(&mut old, &mut written, view.clone(), 6, 0, 0);
-        frame_on(&mut again, &mut written, view, 6, 0, 0);
+        frame_on(&mut old, &mut written, view.clone(), 6, 0);
+        frame_on(&mut again, &mut written, view, 6, 0);
         assert_eq!(crop(&again, "cropy"), Some(15.0));
         written.forget(Some(&mut again));
         assert_eq!(crop(&again, "cropy"), None);
@@ -1946,9 +2060,9 @@ mod tests {
         let up = DialogTiles { menu, shown: true, ..DialogTiles::default() };
         assert!(up.by_tiles() && up.drawn());
         // The picture it stands for, as `super::draw` is given it.
-        frame_on(&mut ui, &mut fresh(), choosing(vec![row("A.")]), 1, 0, 0);
+        frame_on(&mut ui, &mut fresh(), choosing(vec![row("A.")]), 1, 0);
         assert_eq!(pictures_drawn(&ui, "m.dds"), 0, "no bar for a list that fits");
         assert!(!pieces(&ui).is_empty());
-        assert_eq!(describe(&ui, &shown(&ui, choosing(vec![row("A.")]), 1, 0, 0), 0), "tiles: DialogMenu drawn from tiles: speaker \"Nora\", 1 choices, showing 1 from 0, selected 0, row heights [52], list y 300 height 70, scroll 0 of 13, bar false, dim 0, frame plain, hint false");
+        assert_eq!(describe(&ui, &shown(&ui, choosing(vec![row("A.")]), 1, 0)), "tiles: DialogMenu drawn from tiles: speaker \"Nora\", 1 choices, selected 0, row heights [52], list y 300 height 70, scroll 0 of 0, bar false, dim 0, frame plain, hint false");
     }
 }

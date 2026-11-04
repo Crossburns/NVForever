@@ -408,7 +408,7 @@ pub(crate) fn feed(
     time: crate::pause::AidTime,
     devices: Devices,
     mut inputs: MenuInputs,
-    (paused, page, dialog, mut view_input): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>, Option<Res<super::dialog_menu::DialogTiles>>, Option<ResMut<crate::dialogue::ViewInput>>),
+    (paused, page, dialog, mut view_input, shared): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>, Option<Res<super::dialog_menu::DialogTiles>>, Option<ResMut<crate::dialogue::ViewInput>>, Option<Res<super::dialog_menu::SharedWritten>>),
 ) {
     let Some(rt) = script.rt.as_mut() else { return };
     if rt.game.ui_files.is_none() {
@@ -517,7 +517,11 @@ pub(crate) fn feed(
     let ui = &rt.game.ui_tree;
     let slider = inputs.follow(ui, &report, at, held, &physical, tutorial);
     if let (Some(menu), Some(v)) = (dialog_menu, view_input.as_deref_mut()) {
-        super::dialog_menu::follow(ui, &report, &physical, menu, dialog.as_ref().and_then(|d| d.list()), v);
+        let mut steps = 0;
+        super::dialog_menu::follow(ui, &report, &physical, menu, dialog.as_ref().and_then(|d| d.list()), v, &mut steps);
+        if let Some(shared) = shared.as_ref() {
+            shared.scroll(steps);
+        }
     }
     if let Some((_, to)) = report.over {
         match to.filter(|&t| ui.is_live(t)) {

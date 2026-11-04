@@ -470,6 +470,10 @@ impl TalkAid {
 pub struct DialogueScreen {
     /// The selected choice.
     selected: usize,
+    /// See [`DialogueScreen::framed`].
+    framed: bool,
+    /// See [`DialogueScreen::keyed`].
+    keyed: u64,
     /// The offered list the selection belongs to: the actor and the lines said so far.
     list: Option<(FormId, u32)>,
     aid: TalkAid,
@@ -501,13 +505,24 @@ impl DialogueScreen {
         self.selected
     }
 
+    /// Something chose on this list: the tile view frames nothing until then.
+    pub(crate) fn framed(&self) -> bool {
+        self.framed
+    }
+
+    /// How many times the keys have moved the selection: the tile view scrolls to the choice
+    /// they moved it to, and not to a choice the pointer came onto.
+    pub(crate) fn keyed(&self) -> u64 {
+        self.keyed
+    }
+
     fn conversation_over(&mut self) {
         if let Some(d) = self.aid.driver.take() {
             if !d.steps.is_empty() {
                 warn!("test aid NVF_PLAY_TEST_TALK: the conversation ended with {} steps unused: {:?}", d.steps.len(), d.steps);
             }
         }
-        (self.selected, self.list) = (0, None);
+        (self.selected, self.list, self.framed) = (0, None, false);
         (self.talk_since, self.choosing_since, self.speaking) = (None, None, None);
     }
 }
@@ -576,8 +591,6 @@ pub struct ViewInput {
     pub hover: Option<usize>,
     /// This choice was clicked.
     pub pick: Option<usize>,
-    /// Move the selection by this many choices (a scroll bar's arrow, its page areas).
-    pub step: i32,
     /// A click meant to skip the line being said.
     pub skip: bool,
 }
@@ -603,9 +616,6 @@ impl ViewInput {
         }
         if down {
             s = (s + 1).min(last);
-        }
-        if self.step != 0 {
-            s = (s as i64 + i64::from(self.step)).clamp(0, last as i64) as usize;
         }
         match self.hover {
             Some(h) => h.min(last),
@@ -745,7 +755,7 @@ pub(crate) fn input(
     let choosing = speaking.is_none() && !conv.choices.is_empty();
     let key = (conv.actor, conv.lines);
     if sc.list != Some(key) {
-        (sc.list, sc.selected) = (Some(key), 0);
+        (sc.list, sc.selected, sc.framed) = (Some(key), 0, false);
     }
     sc.talk_since.get_or_insert(now);
     match speaking {
@@ -857,7 +867,15 @@ pub(crate) fn input(
                     PointerState::None => {}
                 }
             }
-            let selected = asked.selection(sc.selected, len, keys.any_just_pressed([ArrowUp, KeyW]) || wheel > 0.0, keys.any_just_pressed([ArrowDown, KeyS]) || wheel < 0.0);
+            let (up, down) = (keys.any_just_pressed([ArrowUp, KeyW]) || wheel > 0.0, keys.any_just_pressed([ArrowDown, KeyS]) || wheel < 0.0);
+            // The list drawn from its file opens with nothing framed and the first press frames
+            // the first choice [observed: capture of the original, private job dialogue, 1280 x 720: `_highlight_y` -1,
+            // then 0, 58, 116 on Down]. The hand-built menu's first choice stands framed at open.
+            let first_press = by_tiles && !sc.framed;
+            let moved_by_key = up || down;
+            let selected = asked.selection(sc.selected, len, up && !first_press, down && !first_press);
+            sc.framed |= moved_by_key || asked.hover.is_some();
+            sc.keyed += u64::from(moved_by_key);
             let clicked = asked.pick;
             sc.selected = selected;
             if let Some(i) = (0..9).find(|&i| keys.just_pressed(digits[i]) || keys.just_pressed(pads[i])).filter(|&i| i < len) {
@@ -1078,11 +1096,6 @@ mod tests {
         assert_eq!(none.selection(0, 4, true, false), 0, "the first stays the first");
         // A list that got shorter since.
         assert_eq!(none.selection(7, 4, false, false), 3);
-        // The step keeps to the list, whatever its size.
-        let step = |n| ViewInput { step: n, ..default() };
-        assert_eq!(step(2).selection(1, 4, false, false), 3);
-        assert_eq!(step(9).selection(1, 4, false, false), 3);
-        assert_eq!(step(-9).selection(1, 4, false, false), 0);
         // The pointer has the last word, inside the list.
         let hover = |h| ViewInput { hover: Some(h), ..default() };
         assert_eq!(hover(2).selection(0, 4, false, true), 2);

@@ -201,8 +201,7 @@ speaks.
 The file reads `screen()`'s `cropx` and `cropy`. No other vanilla menu with a tile switch
 does (message, quantity, sleep/wait, tutorial, HUD) [observed: the vanilla files, by
 fnvtool]. While `DialogMenu` is on the code writes them, in interface units: `cropy` is
-`iSafeZoneY`'s 15 [documented: `Fallout_default.ini`, hud.md §3], `cropx` is §3's fitted
-rule [hypothesis]. `dialog_menu.xml` has no hint for Tab, no red, and no fill picture for
+`iSafeZoneY`'s 15 [documented: `Fallout_default.ini`, hud.md §3], and `cropx` 15 too (§6.6). `dialog_menu.xml` has no hint for Tab, no red, and no fill picture for
 the frame [observed: the vanilla files, by fnvtool]: those three are NVForever's own tiles
 and writes (§6.4).
 
@@ -213,26 +212,18 @@ Kept from §4, with the rules still in `crate::dialogue`:
 - the acting notes stripped, square brackets kept (`dialogue::shown_text`); the speaker or
   the talking activator's name; no list, brackets or hint during a response; an empty
   response leaves only the name;
-- the list scrolls by **whole choices** and never shows a part of one [design]: rows outside
-  the window take a `listindex` of -1, so the file's own rule hides them, and the scroll is
-  written as the height of the choices above the first shown. `dialogue_menu::window` decides
-  the window for both views. The file's `_scroll_delta` suits a list that scrolls by rows of
-  a set height, which this one does not [hypothesis: nothing says which the original does];
-- the list's greatest height is §3's fitted number, kept as NVForever's policy for now in
-  `dialogue_menu::window` [design; hypothesis as to the original]. It is not worked out from
-  the file's or the fonts' geometry: the file gives no maximum, and the two views should
-  agree on what fits. A capture that finds the original's rule replaces it for both;
-- a said-before choice is dim: `_line_alpha` 128 [hypothesis: the file gives the row's text
-  a code-set alpha and §3 saw a dim choice as bright as 128 of 255]; the hand-built view
-  says the same with brightness;
+- the list drawn from the file scrolls as the capture of the original did (§6.6), which is not
+  §4's whole choices: rows are cut at the list's window, and the scroll goes in `_scroll_delta`
+  steps. Whole-choice scrolling was NVForever's own [design], no maintainer's choice, and stays
+  the hand-built menu's with the switch off;
+- the list's height is its first three rows' or its least height [hypothesis: §6.6];
+- a said-before choice is dim: `_line_alpha` 128 (§6.6);
 - skip, refused Tab, the keys, the wheel, the pause and an overlying menu act as in §4 and
-  dialogue-play.md §2. The scroll bar's arrows and page areas move the selection, which
-  moves the window, so they keep to choice boundaries; dragging its marker is not built
-  [design: the hand-built bar takes no clicks at all].
+  dialogue-play.md §2. The scroll bar's arrows and page areas scroll (§6.6); dragging its
+  marker is not built [design: the hand-built bar takes no clicks at all].
 
-Rows stand where the file puts them. §3's lift is **not** applied: the file's window clips
-at the list's own top, so a lifted first row would lose its frame's top line. The hand-built
-view keeps the lift and clips at the brackets. Which is the original's is for a capture.
+Rows stand where the file puts them, §3's lift **not** applied (§6.6). The hand-built view keeps
+the lift and clips at the brackets.
 
 ### 6.4 NVForever's own tiles
 
@@ -286,17 +277,41 @@ again next frame. The Tab hint and the frame's fill never stand alone.
 - The safe zone on `screen()` is held from the first write to the conversation's end or a
   fallback, then given back as it was, absent if it was; a script's own value stands.
 
-### 6.6 Unknown until a capture of the original
+### 6.6 What a capture of the original read, and what it did not
 
-Read these in a focused capture (private; identifiers and numbers only, no built-in wording):
+[observed: the original, private job dialogue, 1280 x 720, one conversation of 12 rows; numbers
+and pixels only, in interface units, kept private]. These replace the fitted values above in the
+view drawn from the file; the hand-built menu is unchanged.
 
-- whether the list scrolls by choices or by `_scroll_delta`, and `_current_value` then;
-- the list's `height` at the longest, and whether any maximum is in code;
-- `_highlight_y` and the first row's `y`, against §3's lift;
-- `lb_highlight_box`'s lines' colour on a short check, and what drives it;
-- a said-before row's `_line_alpha` and its text's `brightness`;
-- `DM_TextBackground`'s `alpha` as read while drawn (§3's opacity against the file's value);
-- `screen()`'s `cropx` and `cropy` at two aspect ratios;
-- what a click on the arrows, a page area and the marker do to the selection;
-- `_scroll_delta` and `_number_of_items` with a list that overflows;
-- the band and the name for a line with no text.
+- Band and name: the band x 313.33, y 661 while the line is up, 1080 x 156, alpha 193.8, brightness
+  128 (y 607, 264 high over the choices); the line x 373.33, y 706, wrap width 960; the name at
+  1626.67, 200. From those places `cropx` and `cropy` are 15 by arithmetic, not by a read.
+- The list: x 333.33, y 657, 1010 wide, height 174 over 12 rows, `_MinListHeight` 110 (110 with
+  few or no rows). `_scroll_delta` 56; the bar's items 11, visible 1. Rows 58 high, 96 for two
+  lines, `y` their running sum, the first at 0: no lift.
+- At open `_highlight_y` -1, `_selected_height` 0, the box hidden. The first Down frames the
+  first row, then the next: `_highlight_y` 0, 58, 116. A pointer on a row does the same.
+- The keys scroll as little as shows the framed row whole, in steps: going down `_current_value` 0,
+  2, 3 … 10 with `_highlight_y` 62, 102, 104 … 116; going up 10, 8, 7 … 0. The list's height holds.
+- The bar's arrows moved `_current_value` by 1 and its page areas by 3, the value in
+  `_jump_size`'s place; `_highlight_y` went with it, off the top to -336: the view scrolled and
+  the framed row stayed. One arrow reading went from 1 to 3 across two reads: 1 is the step
+  [hypothesis: the burst around it shows 2 to 3].
+- A said-before row: `_line_alpha` 128, its text's alpha 128, brightness 255. Frame lines of a plain
+  row: amber at brightness 200, (200, 143, 52) on the shots; the box alpha 40.
+- `_current_value` 0 again on the list after a choice.
+
+Not read, and still [hypothesis] or open:
+
+- what fixes the list's height beyond these rows: the first three (agrees with §3's Trudy) or a
+  greatest height of 250 (agrees too): a list of many short rows would tell; §3's 290 was a list in
+  another font and does not fit this one;
+- what `_scroll_delta` is worked out from, on another list; `cropx` and `cropy` at another aspect;
+- the frame on a check the player falls short of: no shot holds that row framed, and no plain read
+  of it hovered, so red stays §3's one picture;
+- a mouse wheel: the capture's wheel step moved nothing, which may be the aid's; a write to
+  `wheelmoved` did. The wheel stays `crate::dialogue`'s;
+- which of its methods advanced a response or took a choice beyond the fact: the reads say the
+  choices came up after a button step, and Enter took a choice where a named and a mouse try did
+  not; nothing here changes `crate::dialogue`'s keys on them;
+- the band and the name for a line with no text; dragging the marker.

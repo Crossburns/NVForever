@@ -31,7 +31,7 @@ use nvf_assets::GameData;
 /// The dark band's width, centred on the screen.
 const BAND_WIDTH: f32 = 1080.0;
 /// The safe zone at each edge [documented: Fallout_default.ini `iSafeZoneY`, hud.md §3].
-pub(crate) const CROP_Y: f32 = 15.0;
+const CROP_Y: f32 = 15.0;
 /// The line and the list are centred on this part of the height inside the safe zone,
 /// and kept this far above its bottom.
 const CENTRE: f32 = 0.8;
@@ -93,7 +93,7 @@ const TRACK_TOP: f32 = 60.0;
 const TRACK_BOTTOM: f32 = 52.0;
 const MARKER: f32 = 40.0;
 /// How dark the band makes what is behind it.
-pub(crate) const SHADE: f32 = 0.87;
+const SHADE: f32 = 0.87;
 /// Between a check's tag and the line.
 pub const TAG_GAP: &str = "  ";
 
@@ -134,12 +134,12 @@ pub struct MenuView {
 }
 
 /// The menu to draw (set by `crate::dialogue`), its selected choice and the first choice
-/// shown: the model's, moved by [`window`] by whichever view draws the menu.
+/// shown ([`window`]).
 #[derive(Resource, Default)]
 pub struct DialogueMenu {
     pub view: Option<MenuView>,
     pub selected: usize,
-    pub(crate) first: usize,
+    first: usize,
     /// The screen of the conversation this stands for, which its buttons carry.
     pub list: Option<ListId>,
 }
@@ -252,7 +252,7 @@ fn choice_heights(lines: &[Vec<Line>]) -> Vec<f32> {
 
 /// The safe zone at the sides: as the height's in a 4:3 screen, narrower in units on a
 /// wider one [hypothesis, §3].
-pub(crate) fn crop_x(width: f32) -> f32 {
+fn crop_x(width: f32) -> f32 {
     CROP_Y * 1280.0 / width
 }
 
