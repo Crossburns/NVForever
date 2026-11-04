@@ -529,6 +529,14 @@ pub struct ListId {
     topics: Vec<FormId>,
 }
 
+#[cfg(test)]
+impl ListId {
+    /// A list for a test.
+    pub(crate) fn for_test(lines: u32, topics: &[u32]) -> ListId {
+        ListId { actor: FormId(0x10), lines, topics: topics.iter().map(|&t| FormId(t)).collect() }
+    }
+}
+
 /// The running conversation's [`ListId`].
 pub fn list_id(g: &Game) -> Option<ListId> {
     let c = g.dialogue.as_ref()?;
@@ -1012,7 +1020,7 @@ mod tests {
     }
 
     fn list(lines: u32, topics: &[u32]) -> ListId {
-        ListId { actor: FormId(0x10), lines, topics: topics.iter().map(|&t| FormId(t)).collect() }
+        ListId::for_test(lines, topics)
     }
 
     #[test]
