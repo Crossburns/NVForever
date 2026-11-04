@@ -9,11 +9,15 @@
 //!   spawned. Off (the default), none of this runs.
 //! - **The rules stay in `crate::dialogue`**: it says what the menu shows (`dialogue::view`)
 //!   and which choice is selected. This module only writes that into the tree ([`write`]).
-//! - **When**: after the frame's scripts, where the hand-built menu reads the conversation
-//!   too, so a line that starts in the frame a choice is made is drawn in that frame; the tree
-//!   is then worked out once (`super::update`) and drawn. The tile input of the next frame
-//!   reads the tree as it was drawn: a click is on what the player saw [design]. A conversation
-//!   that starts this frame builds the menu here, so its first frame is the tiles' too.
+//! - **When**: in two steps a frame, so scripts read what the model says and keep what they
+//!   write. [`publish_system`], after the frame's input and before its scripts, writes what the
+//!   model shows, each trait only when the model's value for it changed: a script's change to a
+//!   label, an alpha or a flag stands until the model changes that very thing, and a new
+//!   selection changes none of them. [`write_system`], after the scripts, picks up what they
+//!   changed of the conversation, measures, places and decides readiness, and `super::update`
+//!   works the tree out to be drawn. A conversation that starts this frame builds the menu
+//!   there, so its first frame is the tiles' too. Placement ([`place`]) reads the file's
+//!   evaluated numbers, so they are part of what makes it run again ([`Placement`]).
 //! - **The window**: choices scroll whole (`crate::dialogue_menu::window`, shared with the
 //!   hand-built menu). Rows outside it take `listindex` -1, which hides them by the file's own
 //!   rule, and the scroll is the height of the rows above the first shown, counted in the
@@ -193,19 +197,57 @@ pub struct Shown {
     pub list: ListId,
     pub view: MenuView,
     pub selected: usize,
-    /// The model's first choice shown (`DialogueMenu::first`), after [`write`] the window's.
+    /// The model's first choice shown (`DialogueMenu::first`).
     pub first: usize,
     /// `screen()`'s width and height.
     pub screen: (f64, f64),
 }
 
-/// What [`write`] keeps between frames.
-#[derive(Default)]
+/// What the model last wrote into the tree, to write only what changes of it.
+struct Published {
+    menu: TileId,
+    list: ListId,
+    view: MenuView,
+    visible: bool,
+}
+
+/// `screen()`'s `cropx` and `cropy` while this menu holds them: what they were (absent too) and
+/// what it wrote, so they go back on every way out unless a script has changed them since.
+struct CropKept {
+    before: [Option<Value>; 2],
+    wrote: [Option<f64>; 2],
+}
+
+const CROPS: [&str; 2] = ["cropx", "cropy"];
+
+/// What the last placement was worked out from: the model and every evaluated number of the
+/// file's it reads. Another one places the rows again [design].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placement {
+    shown: Shown,
+    numbers: Vec<f64>,
+}
+
+impl Placement {
+    fn read(ui: &Ui, shown: &Shown) -> Placement {
+        let at = |path: &str, name: &str| ui.get_float(&format!("{path}/{name}")).unwrap_or(0.0);
+        let mut numbers = vec![at(DIALOG_MENU, "_MinListHeight"), at(LIST, "_scroll_delta"), at(BAND, "x"), at(BOTTOM_BRACKET, "y"), at(HIGHLIGHT, "width"), at(HINT_TEXT, "width"), at(HINT_TEXT, "height")];
+        numbers.extend(rows(ui).iter().map(|&r| num(ui, r, "_VerticalSpacing")));
+        Placement { shown: shown.clone(), numbers }
+    }
+}
+
+/// What the two steps of a frame keep between them and between frames.
+#[derive(Resource, Default)]
 pub struct Written {
-    shown: Option<Shown>,
+    published: Option<Published>,
+    placed: Option<Placement>,
+    /// [`Written::placed`] changed in the last [`write`]: worth a line in the log.
+    moved: bool,
     sizes: SizesWritten,
     /// The scroll, in the file's steps, written again every frame.
     scroll: f64,
+    crop: Option<CropKept>,
     /// The menu whose row template was tried.
     probed: Option<TileId>,
     /// The reasons warned already: once each, as long as the run lasts.
@@ -225,35 +267,98 @@ impl Written {
         }
     }
 
-    fn forget(&mut self) {
-        self.shown = None;
+    /// The menu stays hand-built for now: nothing of the preparation is left behind, and the
+    /// next frame prepares it afresh.
+    fn fall_back(&mut self, ui: &mut Ui) {
+        clean(ui);
+        release_crop(ui, self);
+        self.published = None;
+        self.placed = None;
         self.sizes.clear();
         self.scroll = 0.0;
+    }
+
+    /// No conversation any more (no tree at all when `ui` is `None`).
+    fn forget(&mut self, ui: Option<&mut Ui>) {
+        match ui {
+            Some(ui) => self.fall_back(ui),
+            None => {
+                self.published = None;
+                self.placed = None;
+                self.crop = None;
+            }
+        }
         self.build_asked = false;
     }
 }
 
-/// Write the speaker, the line, one row per choice, the phase and NVForever's own tiles'
-/// words: what the file leaves to code (`dialogue-menu.md` §6.2). `fresh`: another list than
-/// the last written: its rows are made again, so a click still queued on the last list's rows
-/// (a script's ClickMenuTile, reported at the next input step) finds its tile gone.
-fn write_view(ui: &mut Ui, view: &MenuView, fresh: bool) -> Result<(), String> {
-    let menu = ui.menu(DIALOG_MENU).ok_or_else(|| format!("{DIALOG_MENU} missing"))?;
-    let line = view.line.as_deref().map_or("", str::trim);
-    let speaking = view.choices.is_empty();
-    let flag = |on: bool| Value::Num(f64::from(u8::from(on)));
-    set(ui, menu, "_DialogVisible", flag(true));
-    set(ui, menu, "_ShowingText", flag(speaking));
-    // No subtitles setting yet: on, but for a line with no text, which leaves the name alone.
-    set(ui, menu, "_ShowSubtitles", flag(!speaking || !line.is_empty()));
-    set_at(ui, NAME, "string", Value::Str(view.speaker.trim().to_string()));
-    set_at(ui, LINE, "string", Value::Str(line.to_string()));
-    set_at(ui, BAND, "alpha", Value::Num(f64::from(SHADE) * 255.0));
-    set_at(ui, HINT_TEXT, "string", Value::Str(GOODBYE_HINT.to_string()));
-    let screen_width = num(ui, ui.screen(), "width");
+/// Hold `screen()`'s `cropx` and `cropy` at the safe zone for this menu, which reads them
+/// (`dialogue-menu.md` §6.2). The first time keeps what they were; a script's own value since
+/// stands.
+fn hold_crop(ui: &mut Ui, written: &mut Written) {
     let screen = ui.screen();
-    set(ui, screen, "cropx", Value::Num(f64::from(crop_x(screen_width as f32))));
-    set(ui, screen, "cropy", Value::Num(f64::from(CROP_Y)));
+    let want = [f64::from(crop_x(num(ui, screen, "width") as f32)), f64::from(CROP_Y)];
+    let kept = written.crop.get_or_insert_with(|| CropKept { before: CROPS.map(|n| ui.tile(screen).get(n).cloned()), wrote: [None, None] });
+    for (i, name) in CROPS.into_iter().enumerate() {
+        if kept.wrote[i].is_none_or(|w| num(ui, screen, name) == w) {
+            ui.set_trait(screen, name, Value::Num(want[i]));
+            kept.wrote[i] = Some(want[i]);
+        }
+    }
+}
+
+/// Give `screen()`'s `cropx` and `cropy` back as they were, absent if they were, unless a script
+/// has changed them since this menu wrote them.
+fn release_crop(ui: &mut Ui, written: &mut Written) {
+    let Some(kept) = written.crop.take() else { return };
+    let screen = ui.screen();
+    for (i, name) in CROPS.into_iter().enumerate() {
+        if kept.wrote[i].is_some_and(|w| num(ui, screen, name) == w) {
+            match &kept.before[i] {
+                Some(v) => ui.set_trait(screen, name, v.clone()),
+                None => {
+                    ui.remove_trait(screen, name);
+                }
+            }
+        }
+    }
+}
+
+/// Write what the file leaves to code of the model's view (`dialogue-menu.md` §6.2): the
+/// speaker, the line, the phase, one row per choice. Each only when the model's value for it
+/// changed since it was last written, so what a script set stands until then ([`Published`]).
+/// Another list than the last's has its rows made again, so a click still queued on the last
+/// list's rows finds its tile gone.
+pub fn publish(ui: &mut Ui, view: &MenuView, list: &ListId, written: &mut Written) -> Result<(), String> {
+    let menu = ui.menu(DIALOG_MENU).ok_or_else(|| format!("{DIALOG_MENU} missing"))?;
+    let was = written.published.take().filter(|p| p.menu == menu);
+    let fresh = was.as_ref().is_none_or(|p| p.list != *list);
+    let before = was.as_ref().map(|p| &p.view);
+    let flag = |on: bool| Value::Num(f64::from(u8::from(on)));
+    // No subtitles setting yet: on, but for a line with no text, which leaves the name alone.
+    let phase = |v: &MenuView| (v.choices.is_empty(), !v.choices.is_empty() || !v.line.as_deref().map_or("", str::trim).is_empty());
+    let (speaking, subtitles) = phase(view);
+    let was_phase = before.map(phase);
+    if !was.as_ref().is_some_and(|p| p.visible) {
+        set(ui, menu, "_DialogVisible", flag(true));
+    }
+    if was_phase.map(|p| p.0) != Some(speaking) {
+        set(ui, menu, "_ShowingText", flag(speaking));
+    }
+    if was_phase.map(|p| p.1) != Some(subtitles) {
+        set(ui, menu, "_ShowSubtitles", flag(subtitles));
+    }
+    if before.is_none_or(|v| v.speaker != view.speaker) {
+        set_at(ui, NAME, "string", Value::Str(view.speaker.trim().to_string()));
+    }
+    if before.is_none_or(|v| v.line != view.line) {
+        set_at(ui, LINE, "string", Value::Str(view.line.as_deref().map_or("", str::trim).to_string()));
+    }
+    if before.is_none() {
+        set_at(ui, BAND, "alpha", Value::Num(f64::from(SHADE) * 255.0));
+        set_at(ui, HINT_TEXT, "string", Value::Str(GOODBYE_HINT.to_string()));
+    }
+    hold_crop(ui, written);
     let mut made = rows(ui);
     if fresh {
         made.drain(..).for_each(|t| ui.unload_tile(t));
@@ -271,11 +376,29 @@ fn write_view(ui: &mut Ui, view: &MenuView, fresh: bool) -> Result<(), String> {
         }
     }
     for (i, (&row, choice)) in made.iter().zip(&view.choices).enumerate() {
-        set(ui, row, "string", Value::Str(choice.label.trim().to_string()));
-        set(ui, row, "listindex", Value::Num(i as f64));
-        set(ui, row, "_line_alpha", Value::Num(if choice.darkened { DIM_ALPHA } else { 255.0 }));
+        let old = before.filter(|_| !fresh).and_then(|v| v.choices.get(i));
+        if old.is_none() {
+            // After this the window's ([`place`]).
+            set(ui, row, "listindex", Value::Num(i as f64));
+        }
+        if old.is_none_or(|c| c.label != choice.label) {
+            set(ui, row, "string", Value::Str(choice.label.trim().to_string()));
+        }
+        if old.is_none_or(|c| c.darkened != choice.darkened) {
+            set(ui, row, "_line_alpha", Value::Num(if choice.darkened { DIM_ALPHA } else { 255.0 }));
+        }
     }
+    written.published = Some(Published { menu, list: list.clone(), view: view.clone(), visible: true });
+    ui.update();
     Ok(())
+}
+
+/// The menu is held hidden: a menu over the conversation, or the character creator.
+fn hide(ui: &mut Ui, written: &mut Written) {
+    set_at(ui, DIALOG_MENU, "_DialogVisible", Value::Num(0.0));
+    if let Some(p) = written.published.as_mut() {
+        p.visible = false;
+    }
 }
 
 /// The frame's colours: red on a check the player falls short of, the file's colour otherwise.
@@ -372,37 +495,40 @@ fn write_scroll(ui: &mut Ui, scroll: f64) {
     set(ui, bar, "_SetInCode", Value::Num(1.0));
 }
 
-/// One frame of the menu shown, `round` being one round of measuring: the fonts as the tree
-/// stands then, the sizes of the texts it is given written, how many were. The view when it
-/// changed, the texts' sizes every frame, and the places when either moved. Returns the first
-/// choice shown, for the model.
-pub fn write(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<usize, String> {
-    let changed = written.shown.as_ref() != Some(now);
-    if changed {
-        if written.probed != Some(now.menu) {
-            if let Tiled::No(reason) = template_makes_a_row(ui) {
-                return Err(reason);
-            }
-            written.probed = Some(now.menu);
-        }
-        let same_list = written.shown.as_ref().is_some_and(|s| s.menu == now.menu && s.list == now.list);
-        write_view(ui, &now.view, !same_list)?;
-        ui.update();
-    }
+/// The second step of a frame, after the scripts: measure, place and scroll. `round` is one
+/// round of measuring: the fonts as the tree stands then, the sizes of the texts it is given
+/// written, how many were. The places are worked out again when the model, a text's size or
+/// any evaluated number they read moved ([`Placement`]). Returns the first choice shown, for
+/// the model.
+fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<usize, String> {
+    ui.update();
     let texts = menus::texts(ui, now.menu);
     let measured = round(ui, &texts, &mut written.sizes);
-    let mut first = now.first;
-    if changed || measured > 0 {
+    if measured > 0 {
         ui.update();
-        check_measured(ui, &now.view)?;
+    }
+    check_measured(ui, &now.view)?;
+    let mut first = now.first;
+    written.moved = measured > 0 || written.placed.as_ref() != Some(&Placement::read(ui, now));
+    if written.moved {
         (first, written.scroll) = place(ui, &now.view, now.selected, now.first);
         ui.update();
         place_hint(ui, &now.view);
+        written.placed = Some(Placement::read(ui, &Shown { first, ..now.clone() }));
     }
     write_scroll(ui, written.scroll);
     fnv_ui::input::mark_clip_windows(ui, now.menu);
-    written.shown = Some(Shown { first, ..now.clone() });
     Ok(first)
+}
+
+/// A frame of the menu shown, with what the first step does (a conversation that started in
+/// the scripts has had none), then [`settle`].
+pub fn write(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<usize, String> {
+    if let Tiled::No(reason) = prepare(ui, written) {
+        return Err(reason);
+    }
+    publish(ui, &now.view, &now.list, written)?;
+    settle(ui, now, written, round)
 }
 
 /// A line for the log when what the menu shows changes (smoke reads these): the view as the
@@ -560,8 +686,60 @@ impl DialogTiles {
     }
 }
 
-/// Worked out after the frame's scripts: the switch, a conversation, its menu built, and what
-/// the model shows written into it ([`write`]); [`DialogTiles`] says the result.
+/// The menu in the tree and ready to be written: its paths, NVForever's own tiles, its row
+/// template.
+fn prepare(ui: &mut Ui, written: &mut Written) -> Tiled {
+    let status = built(ui);
+    if !status.yes() {
+        return status;
+    }
+    if !own_tiles(ui) {
+        return Tiled::No("NVForever's own tiles were not made".into());
+    }
+    let Some(menu) = ui.menu(DIALOG_MENU) else { return Tiled::No(format!("{DIALOG_MENU} missing")) };
+    if written.probed != Some(menu) {
+        let status = template_makes_a_row(ui);
+        if !status.yes() {
+            return status;
+        }
+        written.probed = Some(menu);
+    }
+    Tiled::Yes
+}
+
+/// A conversation that started this frame: its menu now, so no frame is drawn by hand.
+fn ask_for_menu(game: &mut fnv_game::Game<'_>, files: &super::MenuFiles, written: &mut Written) {
+    if game.ui_tree.menu(DIALOG_MENU).is_none() && !written.build_asked {
+        written.build_asked = true;
+        files.write(game);
+        game.ui_tree.update();
+    }
+}
+
+/// The first step of a frame, before its scripts: see the module notes. Nothing is decided
+/// here; [`write_system`] says what came of it.
+pub(crate) fn publish_system(mut script: ResMut<crate::script::ScriptState>, switch: Res<super::vanilla::TileMenus>, files: super::MenuFiles, sim: Res<crate::sim::SimState>, creator: Option<Res<crate::creator::CreatorMenu>>, mut written: ResMut<Written>) {
+    if !switch.dialog {
+        return;
+    }
+    let Some(game) = script.rt.as_mut().map(|rt| &mut rt.game).filter(|g| g.dialogue.is_some() && g.ui_files.is_some()) else { return };
+    ask_for_menu(game, &files, &mut written);
+    if !prepare(&mut game.ui_tree, &mut written).yes() {
+        return;
+    }
+    let creating = creator.is_some_and(|c| c.is_open());
+    match (crate::dialogue::view(game, &sim).filter(|_| !creating), crate::dialogue::list_id(game)) {
+        (Some(view), Some(list)) => {
+            if publish(&mut game.ui_tree, &view, &list, &mut written).is_err() {
+                written.published = None;
+            }
+        }
+        _ => hide(&mut game.ui_tree, &mut written),
+    }
+}
+
+/// The second step, after the scripts: the switch, a conversation, its menu ready and what the
+/// model shows measured and placed ([`write`]); [`DialogTiles`] says the result.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_system(
     mut script: ResMut<crate::script::ScriptState>,
@@ -572,41 +750,37 @@ pub(crate) fn write_system(
     (screen, mut model): (Option<Res<DialogueScreen>>, Option<ResMut<DialogueMenu>>),
     creator: Option<Res<crate::creator::CreatorMenu>>,
     mut state: ResMut<DialogTiles>,
-    mut written: Local<Written>,
+    mut written: ResMut<Written>,
 ) {
     if !switch.dialog {
         return;
     }
-    let game = script.rt.as_mut().map(|rt| &mut rt.game).filter(|g| g.dialogue.is_some() && g.ui_files.is_some());
-    let Some(game) = game else {
-        written.forget();
+    let written = &mut *written;
+    let Some(rt) = script.rt.as_mut() else {
+        written.forget(None);
         state.set_if_neq(DialogTiles::default());
         return;
     };
-    // A conversation that started this frame: its menu now, so no frame is drawn by hand.
-    if game.ui_tree.menu(DIALOG_MENU).is_none() && !written.build_asked {
-        written.build_asked = true;
-        files.write(game);
-        game.ui_tree.update();
+    let game = &mut rt.game;
+    if game.dialogue.is_none() || game.ui_files.is_none() {
+        written.forget(Some(&mut game.ui_tree));
+        state.set_if_neq(DialogTiles::default());
+        return;
     }
+    ask_for_menu(game, &files, written);
     // One reason for the whole menu to stay hand-built, or none.
-    let status = match built(&game.ui_tree) {
-        Tiled::Yes if !own_tiles(&mut game.ui_tree) => Tiled::No("NVForever's own tiles were not made".into()),
-        status => status,
-    };
+    let status = prepare(&mut game.ui_tree, written);
     let menu = game.ui_tree.menu(DIALOG_MENU);
     let (Some(menu), Tiled::Yes) = (menu, status.clone()) else {
         written.warn(&status);
-        clean(&mut game.ui_tree);
-        written.shown = None;
+        written.fall_back(&mut game.ui_tree);
         state.set_if_neq(DialogTiles::default());
         return;
     };
     let creating = creator.is_some_and(|c| c.is_open());
     let (view, list) = (crate::dialogue::view(game, &sim).filter(|_| !creating), crate::dialogue::list_id(game));
     let (Some(view), Some(list)) = (view, list) else {
-        set_at(&mut game.ui_tree, DIALOG_MENU, "_DialogVisible", Value::Num(0.0));
-        written.shown = None;
+        hide(&mut game.ui_tree, written);
         state.set_if_neq(DialogTiles { menu: Some(menu), shown: false, list: None });
         return;
     };
@@ -619,25 +793,24 @@ pub(crate) fn write_system(
         first: model.as_ref().map_or(0, |m| m.first),
         screen: (num(ui, ui.screen(), "width"), num(ui, ui.screen(), "height")),
     };
-    let changed = written.shown.as_ref() != Some(&now);
     let mut round = |ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten| {
         let size = fonts.menu_measure(&menus::fonts_of(ui, texts));
         menus::write_text_sizes_of(ui, texts, sizes, &size)
     };
-    match write(ui, &now, &mut written, &mut round) {
+    match write(ui, &now, written, &mut round) {
         Ok(first) => {
             if let Some(m) = model.as_mut().filter(|m| m.first != first) {
                 m.first = first;
             }
-            if changed {
+            if written.moved {
+                ui.update();
                 info!("{}", describe(ui, &now, first));
             }
             state.set_if_neq(DialogTiles { menu: Some(menu), shown: true, list: Some(list) });
         }
         Err(reason) => {
             written.warn(&Tiled::No(reason));
-            written.shown = None;
-            clean(ui);
+            written.fall_back(ui);
             state.set_if_neq(DialogTiles::default());
         }
     }
@@ -1140,13 +1313,120 @@ mod tests {
         let mut nothing = |ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten| menus::write_text_sizes_of(ui, texts, sizes, &|_: f64, _: &str, _: Option<f64>| (0.0, 0.0));
         assert_eq!(write(&mut ui, &now, &mut written, &mut nothing), Err(format!("{ROW_TEXT} has no measure")));
         // As `write_system` cleans up.
-        clean(&mut ui);
-        written.shown = None;
-        written.sizes.clear();
+        written.fall_back(&mut ui);
         assert!(rows(&ui).is_empty());
         // The font came: next frame is whole.
         assert_eq!(write(&mut ui, &now, &mut written, &mut round), Ok(0));
         assert_eq!(rows(&ui).len(), 2);
+    }
+
+    #[test]
+    fn scripts_read_what_the_model_says_before_they_run_and_keep_what_they_write() {
+        let mut ui = menu();
+        let mut written = Written::default();
+        let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
+        frame_on(&mut ui, &mut written, line, 1, 0, 0);
+        // The first step alone, as before a frame's scripts: the new phase, words and rows are
+        // there to be read though nothing is measured or placed yet.
+        let view = choosing(vec![row("A."), row("B.")]);
+        let list = ListId::for_test(2, &[0x100, 0x101]);
+        publish(&mut ui, &view, &list, &mut written).unwrap();
+        assert_eq!(f(&ui, DIALOG_MENU, "_ShowingText"), 0.0);
+        assert_eq!(rows(&ui).len(), 2);
+        assert_eq!(ui.tile(rows(&ui)[1]).get("string").map(Value::text).as_deref(), Some("B."));
+        assert_eq!(ui.get_string(&format!("{LINE}/string")).as_deref(), Some(""));
+        frame_on(&mut ui, &mut written, view.clone(), 2, 0, 0);
+        // A script writes a label, an alpha and a flag.
+        let r = rows(&ui)[0];
+        ui.set_trait(r, "string", Value::Str("Mine.".into()));
+        ui.set_trait(r, "_line_alpha", Value::Num(77.0));
+        let menu_tile = ui.menu(DIALOG_MENU).unwrap();
+        ui.set_trait(menu_tile, "_ShowSubtitles", Value::Num(0.0));
+        // The selection moves, in both steps: none of it is written over.
+        publish(&mut ui, &view, &list, &mut written).unwrap();
+        frame_on(&mut ui, &mut written, view.clone(), 2, 1, 0);
+        assert_eq!(ui.tile(r).get("string").map(Value::text).as_deref(), Some("Mine."));
+        assert_eq!(num(&ui, r, "_line_alpha"), 77.0);
+        assert_eq!(f(&ui, DIALOG_MENU, "_ShowSubtitles"), 0.0);
+        assert_eq!(f(&ui, LIST, "_highlight_y"), 52.0, "the selection itself did move");
+        // Until the model changes that very thing.
+        let mut changed = view.clone();
+        changed.choices[0].label = "Theirs.".into();
+        frame_on(&mut ui, &mut written, changed, 2, 1, 0);
+        assert_eq!(ui.tile(r).get("string").map(Value::text).as_deref(), Some("Theirs."));
+        assert_eq!(num(&ui, r, "_line_alpha"), 77.0, "that alpha still");
+        // A new screen writes all of it again.
+        frame_on(&mut ui, &mut written, choosing(vec![row("C.")]), 3, 0, 0);
+        assert_eq!(num(&ui, rows(&ui)[0], "_line_alpha"), 255.0);
+    }
+
+    #[test]
+    fn the_places_follow_the_evaluated_numbers_they_read() {
+        let mut ui = menu();
+        let mut written = Written::default();
+        let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
+        let view = MenuView { goodbye: true, ..choosing(labels) };
+        let first = frame_on(&mut ui, &mut written, view.clone(), 1, 5, 0);
+        assert_eq!(f(&ui, BAR, "_current_value"), 13.0);
+        // A settled frame places nothing again.
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        assert!(!written.moved);
+        // The file's scroll step, its least height, a row's spacing, the bracket and the band
+        // change with nothing else: each moves what reads it.
+        let (list, menu_tile) = (ui.find_tile(LIST).unwrap(), ui.menu(DIALOG_MENU).unwrap());
+        ui.set_trait(list, "_scroll_delta", Value::Num(2.0));
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        assert!(written.moved);
+        assert_eq!(f(&ui, BAR, "_current_value"), 26.0);
+        ui.set_trait(menu_tile, "_MinListHeight", Value::Num(400.0));
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        assert_eq!(f(&ui, LIST, "height"), 400.0);
+        for r in rows(&ui) {
+            ui.set_trait(r, "_VerticalSpacing", Value::Num(20.0));
+        }
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        assert_eq!(ui.tile(rows(&ui)[0]).get("height").map(Value::num), Some(60.0));
+        ui.set_trait(ui.find_tile(BOTTOM_BRACKET).unwrap(), "y", Value::Num(700.0));
+        frame_on(&mut ui, &mut written, view.clone(), 1, 5, first);
+        assert_eq!(f(&ui, HINT, "y"), 680.0);
+        ui.set_trait(ui.find_tile(BAND).unwrap(), "x", Value::Num(500.0));
+        frame_on(&mut ui, &mut written, view, 1, 5, first);
+        assert_eq!(f(&ui, HINT, "x"), 500.0 - HINT_GAP - 120.0);
+    }
+
+    #[test]
+    fn the_safe_zone_goes_back_as_it_was_on_the_way_out() {
+        let crop = |ui: &Ui, n: &str| ui.tile(ui.screen()).get(n).map(Value::num);
+        // Absent before: absent after, whichever way out.
+        let view = choosing(vec![row("A.")]);
+        let mut ui = menu();
+        let mut written = Written::default();
+        frame_on(&mut ui, &mut written, view.clone(), 1, 0, 0);
+        assert_eq!(crop(&ui, "cropy"), Some(15.0));
+        written.forget(Some(&mut ui));
+        assert_eq!((crop(&ui, "cropx"), crop(&ui, "cropy")), (None, None), "the conversation over");
+        frame_on(&mut ui, &mut written, view.clone(), 2, 0, 0);
+        written.fall_back(&mut ui);
+        assert_eq!((crop(&ui, "cropx"), crop(&ui, "cropy")), (None, None), "a fallback");
+        // Held through a menu over the conversation.
+        frame_on(&mut ui, &mut written, view.clone(), 3, 0, 0);
+        hide(&mut ui, &mut written);
+        assert_eq!(crop(&ui, "cropy"), Some(15.0));
+        written.forget(Some(&mut ui));
+        // Set before: that value after.
+        let screen = ui.screen();
+        ui.set_trait(screen, "cropx", Value::Num(7.0));
+        frame_on(&mut ui, &mut written, view.clone(), 4, 0, 0);
+        assert_ne!(crop(&ui, "cropx"), Some(7.0));
+        written.forget(Some(&mut ui));
+        assert_eq!((crop(&ui, "cropx"), crop(&ui, "cropy")), (Some(7.0), None));
+        // A script's own value since stands, then and on the way out.
+        frame_on(&mut ui, &mut written, view.clone(), 5, 0, 0);
+        ui.set_trait(screen, "cropy", Value::Num(3.0));
+        frame_on(&mut ui, &mut written, view, 5, 0, 0);
+        assert_eq!(crop(&ui, "cropy"), Some(3.0));
+        written.forget(Some(&mut ui));
+        assert_eq!(crop(&ui, "cropy"), Some(3.0));
     }
 
     #[test]

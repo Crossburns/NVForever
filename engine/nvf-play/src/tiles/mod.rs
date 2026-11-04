@@ -709,14 +709,16 @@ impl Plugin for TilesPlugin {
             .init_resource::<TutorialScrollCheck>()
             .init_resource::<menus::TileMenuBlur>()
             .init_resource::<dialog_menu::DialogTiles>()
+            .init_resource::<dialog_menu::Written>()
             // T15b: after the tutorial menu's keys, in the scripts' chain, before they run.
             .add_systems(Update, write_tutorial.in_set(PlaySet::Scripts).after(crate::tutorial_menu::keys).before(crate::script::run_scripts))
             .add_systems(Update, write.after(PlaySet::Physics).after(crate::compass::place).before(PlaySet::Activation))
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).before(PlaySet::Activation))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
-            // The dialogue menu, from the conversation as the frame's scripts left it, as the
-            // hand-built menu reads it, and worked out by `update` (`dialog_menu`).
+            // The dialogue menu in two steps (`dialog_menu`): what the model says, before the
+            // scripts read it; then what they left measured and placed, worked out by `update`.
+            .add_systems(Update, dialog_menu::publish_system.in_set(PlaySet::Scripts).after(crate::dialogue::input).before(crate::script::run_scripts))
             .add_systems(Update, dialog_menu::write_system.after(PlaySet::Scripts).before(update))
             .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui))
             .add_systems(PostUpdate, vanilla::hide_hand_built.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));

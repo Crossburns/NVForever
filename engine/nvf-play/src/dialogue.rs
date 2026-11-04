@@ -659,7 +659,7 @@ pub fn held(g: &Game) -> bool {
 
 /// The test aid's due steps and the player's keys and clicks, as actions on the runtime.
 #[allow(clippy::too_many_arguments)]
-fn input(
+pub(crate) fn input(
     keys: Res<ButtonInput<KeyCode>>,
     controls: ControlInput,
     scroll: Res<AccumulatedMouseScroll>,
