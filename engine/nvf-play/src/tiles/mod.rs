@@ -624,14 +624,14 @@ fn write_tutorial(
         check.drawn = None;
         return;
     }
-    let pages = crate::tutorial_menu::pages_of(game);
+    let pages = crate::tutorial_menu::pages_with(game, tutorial_menu::body_text);
     let (Some(menu), false) = (game.ui_tree.menu(tutorial_menu::TUTORIAL_MENU), pages.is_empty()) else { return };
     let at = view.page.min(pages.len() - 1);
     let now = tutorial_menu::Shown { menu, page: pages[at].clone(), at, of: pages.len() };
     let changed = written.shown.as_ref() != Some(&now);
     let ui = &mut game.ui_tree;
     if changed {
-        tutorial_menu::write(ui, &now, crate::tutorial_menu::backing_alpha());
+        tutorial_menu::write(ui, &now);
         let file = tutorial_menu::symbol_file(ui);
         let texels = *written.symbol.get_or_insert_with(|| file.and_then(|f| fonts.picture_size(&f)).map(|s| f64::from(s.x)));
         tutorial_menu::write_symbol(ui, texels);
@@ -651,13 +651,13 @@ fn write_tutorial(
 /// (smoke reads both: the model's value must outlast a click's pulse, as the wait menu's).
 /// Its `clipwindow`s are turned on here, after the scripts and before the drawing.
 fn check_tutorial_drawn(ui: &mut fnv_ui::Ui, check: &mut TutorialScrollCheck) {
-    use tutorial_menu::{scroll_bound, scroll_shown, text_y, TUTORIAL_MENU};
+    use tutorial_menu::{marker_y, scroll_bound, scroll_shown, text_y, TUTORIAL_MENU};
     let Some(wrote) = check.wrote.take() else { return };
     tutorial_menu::mark_windows(ui);
     let (Some(v), Some(y)) = (scroll_shown(ui), text_y(ui)) else { return };
     let n = |x: f64| Value::Num(x).text();
     if check.drawn != Some((v, y)) {
-        info!("tiles: {TUTORIAL_MENU} scroll drawn at {} of {}, text y {}", n(v), n(scroll_bound(ui)), n(y));
+        info!("tiles: {TUTORIAL_MENU} scroll drawn at {} of {}, text y {}, marker y {}", n(v), n(scroll_bound(ui)), n(y), n(marker_y(ui).unwrap_or(-1.0)));
         check.drawn = Some((v, y));
     }
     if wrote != v {

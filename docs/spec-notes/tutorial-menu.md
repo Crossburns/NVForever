@@ -72,8 +72,11 @@ The strings are game settings that are not in the masters (the executable's defa
 ## 4. Open
 
 - Settled by capture mh1_tutorial (`tools/capture/probes/menu_hooks.toml`): the code 1059.
-  Still open: the words, and whether a second message is a second page or replaces the
-  first (the capture shows only that it stays one menu, 1059); which menu was open under
+  Answered by the capture hud_tutorial_more (private, 1280 x 720): a second ShowTutorialMenu
+  **replaces** the first. With two messages the title and body are the second's, `TM_page` stays
+  hidden, Next and Previous stay hidden and not targets, and A and S change nothing; one close
+  closes it [observed]. NVForever's pages (§3, §5) differ from that; not changed yet. Still
+  open: which menu was open under
   it in the capture (MenuMode was 1 before the first call, its code not asked), so whether
   the menu under the tutorial answers MenuMode is not settled.
 
@@ -102,6 +105,15 @@ values in interface units; the message 0x0007235B]:
   and the count; the body has no string at all. So the model writes the tiles' own traits:
   `string`, and `visible` and `target` on the count and the buttons [design; what the
   original's code writes is not known].
+- **The body's lines**: the text is the message's with its line breaks kept, tags gone, each
+  line trimmed and runs of empty lines as one (`tiles::tutorial_menu::body_text`). 0x0007235B has
+  paragraphs apart by a double break and a list by single breaks; the original shows each item
+  on its own line and the double breaks as one empty line, 20 lines [observed: the 1280 x 720
+  shot, launchtest tutorial]. `<p>` is an empty line [hypothesis: the hand-built menu's reading,
+  no shot of 0x00072358 yet]. The hand-built `plain_text` (§3) joins single breaks, so that list
+  runs together there; it is left as it is, for the maintainer to decide [design]. In the tile
+  path that join gave 532 high and 122 to scroll, and the break gives 625 and 215 [observed: the
+  log before; the original's reading].
 - **Sizes**: the body's height is the measured one, font 1's 36 + (lines - 1) x 31 [observed:
   625 = 36 + 19 x 31, 811 = 36 + 25 x 31]. The file carries it on: `_text_height`, and the
   scrollbar's items are that plus its step of 30 [documented; observed: 655, 841]; its visible
@@ -121,6 +133,16 @@ values in interface units; the message 0x0007235B]:
   size, the marker the value under the pointer with the prefab's `_step_height` [documented;
   design: the marker's own drag traits are not built]. The wheel and the keys stay hand-built;
   the file's `wheelmoved` stays 0.
+- **The marker** is the prefab's own: `y` is the value x `_step_height`, (424 - 32) / 215 = 1.82,
+  so 54.70 at 30, 218.79 at 120 and 392 at the bound, the track's end less the marker's 32
+  [documented: scrollbar_vert.xml; observed: the same numbers, hud_tutorial_more]. With the old
+  range it stood where the formula says too: at 30 of 122 its middle at 285 pixels, 380 units,
+  against 268 + 30 x 392 / 122 + 16 [observed: tiles_tutorial_bottom and the log's line]. That shot
+  was at 30, not at 120: the click before it had gone up.
+- **The page areas** lie above and below the marker, so one place is either, by the value and the
+  range: y 600 on the screen is page up at 120 of 122 and page down at 120 of 215 [documented;
+  observed: the log's `Scroll(-410.0)` with the old range]. In the original a page from 120
+  reaches 215, `_jump_size` 410 [observed: hud_tutorial_more].
 - **Clipping and scrolling are apart.** The file moves the text: `TM_text`'s `y` is
   `_text_y`, 21 less the value [documented]. `clipwindow` on `TM_text_container` crops it
   (menu-xml.md §3.1.1) [hypothesis: a rectangular crop, nothing captured says more]; the model
@@ -132,8 +154,23 @@ values in interface units; the message 0x0007235B]:
   [observed: shot 091 of hud_menus, 1280 x 720]. NVForever's layout multiplies alpha down from
   a picture, so the model marks `TM_depth_rect` to take none from above
   (`tiles::layout::OWN_ALPHA`); whether pictures pass alpha on elsewhere is open (observer
-  check 81). The backing keeps the hand-built menu's 0.75 (191.25 of 255) [design], 1 % from
-  the original's.
+  check 81).
+- **The backing** is the original's 193.8 [observed], not the hand-built menu's 0.75, which the
+  writer used to pass in. The picture is `solid_black.dds`, nearly black with soft edges: its
+  alpha falls to 0 over about the outer 18 % of its height and 5 % of its width [documented: the
+  texture's alpha channel, Fallout - Textures2.bsa], so the box has no sharp edge and its lines
+  stand inside the fade. Across the left side, x 126 to 176 on a 1280 x 720 shot, the original goes
+  from 80 to 23, 41 to 12 and 51 to 18, about 0.3; NVForever at 0.75 from 69 to 37 and 100 to 40, 0.4 to
+  0.55 [observed; different worlds behind, so rough]. 0.76 in display values leaves 0.24; in linear
+  light it leaves 0.24^(1/2.2) = 0.52, which fits ours, so 0.75 to 0.76 cannot close that gap
+  [hypothesis: NVForever's UI blends in linear light, the original in display values]. For
+  black, an alpha of 1 - (1 - a)^2.2 would give the same display values; not done.
+- **The words after the symbol and the key hints** are `&-sVDSGManual;` and `&-sPCMenuHint*;`
+  [documented], which no plugin of the test load order defines: no record in FalloutNV.esm, the nine
+  add-ons or the two test plugins [observed: `fnvtool esm decode --edid`]. They read
+  NVForever's own labels (`fnv_ui::strings::BUILT_IN`, menu-xml.md §2.4; LEGAL.md), and no code
+  writes those tiles. The original shows other words, from outside the data files, not
+  transcribed (`_PCButtonText` reads them there [observed: hud_tutorial_more]).
 - **The symbol**: `width` is `filewidth` less 36 and the words after it follow, so the file
   alone reads -36 until the code writes `filewidth` [documented]. The picture is 128 x 64
   [documented: the texture's header, Fallout - Textures2.bsa]; it is read from the name the file gives, once.

@@ -58,6 +58,11 @@ const PREVIOUS_TEXT: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_r
 const CLOSE_TEXT: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_close_button/button_text";
 const SYMBOL: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_VDSG_symbol";
 
+/// The background's `alpha` (0 to 255): what the original's `_background_fill_alpha` reads
+/// while the file's `alpha` copies it, although globals.xml writes 32 [observed: b2_tutorial,
+/// menus-findings; 255 x 0.76]. Not the hand-built menu's `crate::interface::MENU_BACKING`.
+pub const BACKING_ALPHA: f64 = 193.8;
+
 /// [design] Every fixed path the model writes or input reads is part of a successful build,
 /// and the buttons' words, which give them and the column their sizes; a file a mod
 /// restructured keeps the hand-built menu.
@@ -93,8 +98,27 @@ fn set(ui: &mut Ui, path: &str, name: &str, v: Value) {
     }
 }
 
-/// Write what `TutorialMenu` shows of `shown`, with the background at `alpha` (0 to 255):
-/// see the module notes.
+/// The body's text from the message's: every line break the message has stays, tags go
+/// (`crate::tutorial_menu::marks_to_breaks`), each line is trimmed, and runs of empty lines
+/// count as one, with none at either end [observed: the original shows the single breaks of
+/// 0x0007235B's list on lines of their own, and the double ones as one empty line: 625 = 36 +
+/// 19 x 31; hypothesis: `<p>` as an empty line, as the hand-built menu].
+/// The hand-built [`crate::tutorial_menu::plain_text`] joins the single breaks instead.
+pub fn body_text(message: &str) -> String {
+    let marked = crate::tutorial_menu::marks_to_breaks(message);
+    let mut lines: Vec<&str> = Vec::new();
+    for line in marked.split('\n').map(str::trim) {
+        if !line.is_empty() || lines.last().is_some_and(|l| !l.is_empty()) {
+            lines.push(line);
+        }
+    }
+    if lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
+/// Write what `TutorialMenu` shows of `shown`: see the module notes.
 ///
 /// - The title and the body: the message's name and text. A message with neither shows
 ///   empty strings (`crate::tutorial_menu::pages`).
@@ -105,7 +129,7 @@ fn set(ui: &mut Ui, path: &str, name: &str, v: Value) {
 ///   shows neither], and with more a button with nowhere to go not a target, which the
 ///   file's `_line_alpha` dims and takes the highlight from [documented: text_box.xml;
 ///   design: the hand-built menu's rule].
-pub fn write(ui: &mut Ui, shown: &Shown, alpha: f64) {
+pub fn write(ui: &mut Ui, shown: &Shown) {
     if !built(ui).yes() {
         return;
     }
@@ -120,7 +144,7 @@ pub fn write(ui: &mut Ui, shown: &Shown, alpha: f64) {
     set(ui, PREVIOUS, "visible", on(many));
     set(ui, NEXT, "target", on(at + 1 < *of));
     set(ui, PREVIOUS, "target", on(*at > 0));
-    set(ui, BACKGROUND, "alpha", Value::Num(alpha));
+    set(ui, BACKGROUND, "alpha", Value::Num(BACKING_ALPHA));
     set(ui, DEPTH, super::layout::OWN_ALPHA, Value::Num(1.0));
 }
 
@@ -191,6 +215,11 @@ pub fn scroll_shown(ui: &Ui) -> Option<f64> {
 /// The body's `y` in its column, as worked out from the scroll by the file (`_text_y`).
 pub fn text_y(ui: &Ui) -> Option<f64> {
     ui.get_float(&format!("{TEXT}/y"))
+}
+
+/// The marker's `y` in the scrollbar, as worked out from the scroll by the file.
+pub fn marker_y(ui: &Ui) -> Option<f64> {
+    ui.get_float(&format!("{MARKER}/y"))
 }
 
 /// What the menu's tiles stand for, by name [documented: tutorial_menu.xml,
@@ -357,11 +386,25 @@ mod tests {
         <add><copy src="child(scrollbar_vert_down)" trait="clicked"/><sub src="child(scrollbar_vert_up)" trait="clicked"/><mul src="me()" trait="_step_size"/></add>
         <min><copy src="me()" trait="_number_of_items"/><sub src="me()" trait="_number_of_visible_items"/></min><max>0</max>
       </_current_value>
-      <hotrect name="scrollbar_vert_page_up"/><hotrect name="scrollbar_vert_page_down"/>
-      <image name="scrollbar_vert_marker"><height>32</height>
-        <y><copy src="parent()" trait="_current_value"/><mul src="me()" trait="_step_height"/></y>
+      <hotrect name="scrollbar_vert_page_up"><height><copy src="sibling(scrollbar_vert_marker)" trait="y"/></height></hotrect>
+      <hotrect name="scrollbar_vert_page_down">
+        <y><copy src="sibling(scrollbar_vert_marker)" trait="y"/><add src="sibling(scrollbar_vert_marker)" trait="height"/></y>
+        <height><copy src="parent()" trait="height"/><sub src="sibling(scrollbar_vert_marker)" trait="height"/><sub src="sibling(scrollbar_vert_marker)" trait="y"/></height>
+      </hotrect>
+      <image name="scrollbar_vert_marker">
+        <height><copy src="parent()" trait="height"/><div src="me()" trait="_number_not_visible"/><max>32</max></height>
+        <y><copy>0</copy>
+          <add><copy src="me()" trait="dragy"/><sub src="me()" trait="dragoffsety"/><onlyif><copy src="me()" trait="_drag_flag"/><eq>0</eq></onlyif></add>
+          <add><copy src="parent()" trait="_current_value"/><mul src="me()" trait="_step_height"/><onlyifnot><copy src="me()" trait="_drag_flag"/><eq>0</eq></onlyifnot></add>
+          <max>0</max><min><copy src="parent()" trait="height"/><sub src="me()" trait="height"/></min></y>
+        <dragstarty>-1</dragstarty>
+        <_drag_flag>
+          <add><copy>1</copy><onlyif><copy src="sibling(scrollbar_vert_down)" trait="clicked"/><add src="parent()" trait="_SetInCode"/><gt>0</gt></onlyif></add>
+          <mul><copy>1</copy><onlyif><copy src="me()" trait="dragstarty"/><lt>0</lt></onlyif></mul>
+        </_drag_flag>
+        <_number_not_visible><copy src="parent()" trait="_number_of_items"/><sub src="parent()" trait="_number_of_visible_items"/><add>1</add></_number_not_visible>
         <_step_height><copy src="parent()" trait="height"/><sub src="me()" trait="height"/>
-          <div><copy src="parent()" trait="_number_of_items"/><sub src="parent()" trait="_number_of_visible_items"/></div></_step_height>
+          <div><copy src="me()" trait="_number_not_visible"/><sub>1</sub></div></_step_height>
       </image>
       <image name="scrollbar_vert_up"/><image name="scrollbar_vert_down"/>
     </hotrect>
@@ -420,7 +463,7 @@ mod tests {
     /// A page's change as `super::super::write_tutorial` does it: `write`, the symbol, then
     /// [`settle`], and what `update` does after the scripts.
     fn frame(ui: &mut Ui, s: &Shown, view: &mut TutorialView) {
-        write(ui, s, 191.25);
+        write(ui, s);
         write_symbol(ui, Some(128.0));
         unchanged_frame(ui, &mut SizesWritten::default(), &size, view);
     }
@@ -456,7 +499,7 @@ mod tests {
         // The first page of two: Next is a target, Previous not (the file dims it).
         assert_eq!(ui.get_float(&format!("{NEXT}/target")), Some(1.0));
         assert_eq!(ui.get_float(&format!("{PREVIOUS}/target")), Some(0.0));
-        assert_eq!(ui.get_float(&format!("{BACKGROUND}/alpha")), Some(191.25));
+        assert_eq!(ui.get_float(&format!("{BACKGROUND}/alpha")), Some(193.8), "the original's value, not the hand-built 0.75");
         let s = shown(&ui, "Second", &words(3), 1, 2);
         frame(&mut ui, &s, &mut view);
         assert_eq!(ui.get_string(&format!("{COUNT}/string")).unwrap(), "2/2");
@@ -556,7 +599,7 @@ mod tests {
         let mut view = TutorialView::default();
         let mut sizes = SizesWritten::default();
         let s = shown(&ui, "Long", &words(180), 0, 1);
-        write(&mut ui, &s, 191.25);
+        write(&mut ui, &s);
         unchanged_frame(&mut ui, &mut sizes, &wrapped, &mut view);
         assert_eq!((ui.get_float(&format!("{TEXT}/height")), scroll_bound(&ui)), (Some(625.0), 215.0));
         assert!(!view.apply(1, Command::Scroll(500.0)));
@@ -679,7 +722,7 @@ mod tests {
         // [observed] Under a background of alpha 193.8 the text and lines read full strength.
         assert_eq!((of(title).alpha, of(text).alpha), (255.0, 255.0));
         let bg = ui.find_tile(BACKGROUND).unwrap();
-        assert!((of(bg).alpha - 191.25).abs() < 1e-9);
+        assert!((of(bg).alpha - BACKING_ALPHA).abs() < 1e-9);
     }
 
     #[test]
@@ -723,6 +766,87 @@ mod tests {
     }
 
     #[test]
+    fn the_body_keeps_the_messages_line_breaks() {
+        // The shape of 0x0007235B: paragraphs apart by an empty line, a list by single breaks.
+        assert_eq!(body_text("a b\r\n\r\nc:\r\n\r\n* d\r\n* e\r\n\r\nf"), "a b\n\nc:\n\n* d\n* e\n\nf");
+        // The shape of 0x00072358: `<div>` at the start, `<p>` on a line of its own between.
+        assert_eq!(body_text("<div>\r\na\r\n<p>\r\nb\r\n<p>\r\nc"), "a\n\nb\n\nc");
+        assert_eq!(body_text("a<br>b </div>"), "a\n\nb");
+        assert_eq!(body_text(" a \n\n\n\n b \r\n\r\n"), "a\n\nb");
+        assert_eq!(body_text("a < b"), "a < b");
+        assert_eq!(body_text(""), "");
+        // The hand-built drawing's text is left as it was.
+        assert_eq!(crate::tutorial_menu::plain_text("* d\r\n* e\r\n\r\nf"), "* d * e\n\nf");
+    }
+
+    /// The text's height line by line: nine words to a line, an empty line one line.
+    fn by_lines(_: f64, text: &str, wrap: Option<f64>) -> (f64, f64) {
+        let n: usize = text.split('\n').map(|l| l.split_whitespace().count().div_ceil(9).max(1)).sum();
+        (wrap.unwrap_or(900.0), lines(n))
+    }
+
+    #[test]
+    fn single_breaks_make_the_observed_height_and_range() {
+        // [observed] The original's 625 high, 20 lines: 5, an empty one, 1, an empty one, 5 of
+        // the list, an empty one, 3, an empty one, 2. Joined, the list takes 2 and leaves 532.
+        let message = format!("{}\r\n\r\nh\r\n\r\n* a\r\n* b\r\n* c\r\n* d\r\n* e\r\n\r\n{}\r\n\r\n{}", words(45), words(27), words(18));
+        assert_eq!(by_lines(0.0, &crate::tutorial_menu::plain_text(&message), None).1, 532.0);
+        let mut ui = menu();
+        let mut view = TutorialView::default();
+        let s = shown(&ui, "Long", &body_text(&message), 0, 1);
+        write(&mut ui, &s);
+        unchanged_frame(&mut ui, &mut SizesWritten::default(), &by_lines, &mut view);
+        assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(625.0));
+        assert_eq!(ui.get_float(&format!("{BAR}/_number_of_items")), Some(655.0));
+        assert_eq!(scroll_bound(&ui), 215.0);
+    }
+
+    /// The menu with `lines_of_text` lines scrolled to `value`.
+    fn scrolled(lines_of_text: usize, value: f64) -> Ui {
+        let mut ui = menu();
+        let mut view = TutorialView::default();
+        let s = shown(&ui, "Long", &words(lines_of_text), 0, 1);
+        frame(&mut ui, &s, &mut view);
+        write_scroll(&mut ui, value);
+        ui.update();
+        ui
+    }
+
+    #[test]
+    fn the_marker_stands_by_the_files_formula() {
+        // scrollbar_vert.xml with the capture's numbers: a track 424 high, a marker 32 high
+        // (424 / 216, at least 32), so a step of 392 / 215 = 1.82 [observed: 54.70 at 30].
+        let marker = |ui: &Ui| (marker_y(ui).unwrap(), ui.get_float(&format!("{MARKER}/height")).unwrap());
+        assert_eq!(marker(&scrolled(20, 0.0)), (0.0, 32.0), "at the top of the track");
+        let (y, height) = marker(&scrolled(20, 215.0));
+        assert_eq!(y + height, 424.0, "at the bound, at the bottom of the track");
+        let (y, _) = marker(&scrolled(20, 30.0));
+        assert!((y - 54.70).abs() < 0.005, "{y}");
+        // A 532 high text at 30 of 122, as tiles_tutorial_bottom was before the body kept its
+        // lines [observed: the marker's middle at 285 pixels, 380 units]: the bar's top 268,
+        // 30 x 392 / 122, half the marker.
+        let (y, height) = marker(&scrolled(17, 30.0));
+        assert!((268.0 + y + height / 2.0 - 380.39).abs() < 0.01, "{y}");
+    }
+
+    #[test]
+    fn the_page_areas_lie_either_side_of_the_marker() {
+        // tiles-tutorial's click at y 600 on the screen, 332 under the bar's top 268.
+        let area = |ui: &Ui, path: &str| {
+            let top = ui.get_float(&format!("{path}/y")).unwrap_or(0.0);
+            (top, top + ui.get_float(&format!("{path}/height")).unwrap())
+        };
+        let under = |(top, bottom): (f64, f64)| (top..bottom).contains(&332.0);
+        // The range the original has: at 120 of 215 the marker stands above the click.
+        let ui = scrolled(20, 120.0);
+        assert!(under(area(&ui, PAGE_DOWN)) && !under(area(&ui, PAGE_UP)));
+        assert_eq!(area(&ui, PAGE_DOWN).1, 424.0);
+        // 532 high, 120 of 122: the marker stands near the bottom, the same click is above it.
+        let ui = scrolled(17, 120.0);
+        assert!(under(area(&ui, PAGE_UP)) && !under(area(&ui, PAGE_DOWN)));
+    }
+
+    #[test]
     fn missing_required_paths_fall_back() {
         for (name, missing) in [
             ("TM_title", TITLE),
@@ -744,7 +868,7 @@ mod tests {
             let mut ui = menu_changed(|xml| xml.replace(&format!("name=\"{name}\""), "name=\"Modded\""));
             assert_eq!(built(&ui), Tiled::No(format!("{missing} missing")));
             let s = shown(&ui, "T", "x", 0, 1);
-            write(&mut ui, &s, 200.0);
+            write(&mut ui, &s);
             assert_eq!(ui.get_float(&format!("{BACKGROUND}/alpha")), Some(32.0), "nothing written");
         }
         // Each button's words on their own.

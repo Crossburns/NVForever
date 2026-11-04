@@ -113,12 +113,6 @@ const SHADE: f32 = crate::interface::MENU_BACKING;
 /// The picture's width when its file cannot be read.
 pub(crate) const SYMBOL_W: f32 = 64.0;
 
-/// The background's `alpha` (0 to 255) when the menu is drawn from its file: this menu's
-/// [`SHADE`], the choice above [design]; the original reads 193.8 [observed: b2_tutorial].
-pub(crate) fn backing_alpha() -> f64 {
-    f64::from(SHADE) * 255.0
-}
-
 /// A button of the menu.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TmButton {
@@ -140,22 +134,7 @@ pub struct Page {
 /// reads HelpHealingLimbs' `<div>` and `<p>`, the only marks the tutorial messages
 /// carry, observed in the masters].
 pub fn plain_text(s: &str) -> String {
-    let mut out = String::new();
-    let mut rest = s;
-    while let Some(i) = rest.find('<') {
-        out.push_str(&rest[..i]);
-        let Some(j) = rest[i..].find('>') else {
-            out.push_str(&rest[i..]);
-            rest = "";
-            break;
-        };
-        let tag = rest[i + 1..i + j].trim().trim_start_matches('/').to_ascii_lowercase();
-        if tag == "p" || tag.starts_with("p ") || tag.starts_with("br") {
-            out.push_str("\n\n");
-        }
-        rest = &rest[i + j + 1..];
-    }
-    out.push_str(rest);
+    let out = marks_to_breaks(s);
     let mut paragraphs: Vec<String> = Vec::new();
     let mut current = String::new();
     for line in out.replace('\r', "").split('\n') {
@@ -177,14 +156,41 @@ pub fn plain_text(s: &str) -> String {
     paragraphs.join("\n\n")
 }
 
+/// The message's text with its tags gone: `<p>` and `<br>` as an empty line, the others as
+/// nothing; a `<` that opens no tag stays. Its line breaks are left as they are.
+pub(crate) fn marks_to_breaks(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find('<') {
+        out.push_str(&rest[..i]);
+        let Some(j) = rest[i..].find('>') else {
+            out.push_str(&rest[i..]);
+            rest = "";
+            break;
+        };
+        let tag = rest[i + 1..i + j].trim().trim_start_matches('/').to_ascii_lowercase();
+        if tag == "p" || tag.starts_with("p ") || tag.starts_with("br") {
+            out.push_str("\n\n");
+        }
+        rest = &rest[i + j + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The pages of the open tutorial menu, none when it is not the open menu.
 pub fn pages(script: &ScriptState) -> Vec<Page> {
     let Some(rt) = script.rt.as_ref().filter(|rt| rt.game.menu == Some(menus::TUTORIAL)) else { return Vec::new() };
     pages_of(&rt.game)
 }
 
-/// The pages of the tutorial menu of `g`.
+/// The pages of the tutorial menu of `g`, as the hand-built drawing shows them.
 pub(crate) fn pages_of(g: &fnv_game::Game<'_>) -> Vec<Page> {
+    pages_with(g, plain_text)
+}
+
+/// The pages of the tutorial menu of `g`, each message's text read through `text`.
+pub(crate) fn pages_with(g: &fnv_game::Game<'_>, text: fn(&str) -> String) -> Vec<Page> {
     g.tutorial
         .iter()
         .map(|&m| {
@@ -192,7 +198,7 @@ pub(crate) fn pages_of(g: &fnv_game::Game<'_>) -> Vec<Page> {
             Page {
                 message: m,
                 title: def.and_then(|d| d.title.clone()).unwrap_or_default(),
-                text: plain_text(def.and_then(|d| d.text.as_deref()).unwrap_or_default()),
+                text: text(def.and_then(|d| d.text.as_deref()).unwrap_or_default()),
             }
         })
         .collect()
