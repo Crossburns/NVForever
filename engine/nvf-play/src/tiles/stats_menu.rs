@@ -464,53 +464,43 @@ pub fn write_scroll(ui: &mut Ui, bar: TileId, steps: usize) {
     ui.set_trait(bar, "_SetInCode", Value::Num(1.0));
 }
 
-/// What the targets were last checked against: each region's tile, rectangle and clip, and
-/// whether it is shown and a target. The pointer's check is run again when this changes.
-type Regions = Vec<(TileId, [f64; 4], Option<[f64; 4]>, bool)>;
-
-/// A rectangle's left, top, width and height.
-fn corners(r: &layout::Rect) -> [f64; 4] {
-    [r.left, r.top, r.width, r.height]
+/// Whether a rectangle has a size and lies wholly on the canvas.
+fn wholly_on_canvas(r: &layout::Rect) -> bool {
+    r.width > 0.0 && r.height > 0.0 && r.left >= 0.0 && r.top >= 0.0 && r.left + r.width <= f64::from(CANVAS.x) && r.top + r.height <= f64::from(CANVAS.y)
 }
 
-/// Whether a painted piece shows on the canvas: it has a size, lies on the canvas, and the
-/// middle of it is inside what clips it. Its middle, when it does.
-fn on_canvas(piece: &Piece) -> Option<(f64, f64)> {
+/// Whether a painted piece shows whole: on the canvas, and inside what clips it (a unit's slack
+/// for rounding). Its middle, when it does.
+fn shows_whole(piece: &Piece) -> Option<(f64, f64)> {
     let r = piece.rect;
-    let (right, bottom) = (r.left + r.width, r.top + r.height);
-    let inside = r.width > 0.0 && r.height > 0.0 && r.left >= 0.0 && r.top >= 0.0 && right <= f64::from(CANVAS.x) && bottom <= f64::from(CANVAS.y);
-    let middle = (r.left + r.width / 2.0, r.top + r.height / 2.0);
-    let in_clip = piece.clip.is_none_or(|c| c.width > 0.0 && c.height > 0.0 && middle.0 >= c.left && middle.0 <= c.left + c.width && middle.1 >= c.top && middle.1 <= c.top + c.height);
-    (inside && in_clip).then_some(middle)
+    let in_clip = piece.clip.is_none_or(|c| r.left >= c.left - 1.0 && r.top >= c.top - 1.0 && r.left + r.width <= c.left + c.width + 1.0 && r.top + r.height <= c.top + c.height + 1.0);
+    (wholly_on_canvas(&r) && in_clip).then_some((r.left + r.width / 2.0, r.top + r.height / 2.0))
+}
+
+/// The window the description is read through: what clips it, else its parent's place and
+/// height at its own width (the scroll moves the text itself, not the window).
+fn description_window(ui: &Ui, p: &Paths, desc: &Piece) -> layout::Rect {
+    desc.clip.unwrap_or(layout::Rect { left: desc.rect.left, top: desc.rect.top - num(ui, p.desc, "y"), width: desc.rect.width, height: num(ui, p.desc_rect, "height") })
 }
 
 /// Whether what is about to be painted, `pieces`, can be used, on every final pass, so what a
-/// script moved or hid since is seen: every row's words and every tab's words among the
-/// pieces, on the canvas and inside their clips, and the description's if it has any. When any
-/// of that changed, the rows and the tabs but the one showing are checked to take the pointer
-/// at their middles (`regions`: [`Regions`]); the tab showing need not, as a click on it does
-/// nothing. The description's area, for the wheel, or the reason for the hand-built page.
-pub fn usable(ui: &Ui, p: &Paths, rows: &[MadeRow], pieces: &[Piece], regions: &mut Option<Regions>) -> Result<Option<Rect>, String> {
+/// script did since is seen: every row's words and every tab's words among the pieces, whole on
+/// the canvas and inside their clips, the description's window on the canvas if it has words,
+/// and the rows and the tabs but the one showing taking the pointer at their middles, whatever
+/// else came to lie over them; the tab showing need not, as a click on it does nothing. The
+/// description's area, for the wheel, or the reason for the hand-built page.
+pub fn usable(ui: &Ui, p: &Paths, rows: &[MadeRow], pieces: &[Piece]) -> Result<Option<Rect>, String> {
     let is_text = |x: &&Piece| matches!(x.look, Look::Text { .. });
-    let targets = |t: TileId| fnv_ui::input::shown(ui, t) && fnv_ui::input::targets(ui, t);
-    let mut now: Regions = Vec::with_capacity(rows.len() + p.tabs.len() + 1);
     let mut wanted: Vec<(StatsTile, (f64, f64))> = Vec::with_capacity(rows.len() + p.tabs.len());
     for (i, row) in rows.iter().enumerate() {
         let piece = pieces.iter().filter(is_text).find(|x| x.tile == row.text).ok_or_else(|| format!("row {i} is not shown"))?;
-        let middle = on_canvas(piece).ok_or_else(|| format!("row {i} does not fit"))?;
-        // Its foot too: the rows are not scrolled here, so none may be cut off.
-        let foot = piece.rect.top + piece.rect.height;
-        if piece.clip.is_some_and(|c| foot > c.top + c.height + 1.0) {
-            return Err(format!("row {i} does not fit"));
-        }
-        now.push((row.tile, corners(&piece.rect), piece.clip.as_ref().map(corners), targets(row.tile)));
+        let middle = shows_whole(piece).ok_or_else(|| format!("row {i} does not fit"))?;
         wanted.push((StatsTile::Row(i), middle));
     }
     for (i, &tab) in p.tabs.iter().enumerate() {
         // A tab is a hotrect, which draws nothing of its own: its words, as they are painted.
         let piece = pieces.iter().filter(is_text).find(|x| inside(ui, x.tile, tab)).ok_or_else(|| format!("tab {i} is not shown"))?;
-        let middle = on_canvas(piece).ok_or_else(|| format!("tab {i} does not fit"))?;
-        now.push((tab, corners(&piece.rect), piece.clip.as_ref().map(corners), targets(tab)));
+        let middle = shows_whole(piece).ok_or_else(|| format!("tab {i} does not fit"))?;
         if i != PAGE {
             wanted.push((StatsTile::Tab(i), middle));
         }
@@ -520,19 +510,15 @@ pub fn usable(ui: &Ui, p: &Paths, rows: &[MadeRow], pieces: &[Piece], regions: &
     if says && desc.is_none() {
         return Err("the description is not shown".into());
     }
-    let area = desc.map(|d| d.clip.unwrap_or(d.rect));
-    if area.is_some_and(|a| a.width <= 0.0 || a.left < 0.0 || a.left + a.width > f64::from(CANVAS.x)) {
+    let area = desc.map(|d| description_window(ui, p, d));
+    if area.is_some_and(|a| !wholly_on_canvas(&a)) {
         return Err("the description does not fit".into());
     }
-    now.push((p.desc, area.as_ref().map_or([0.0; 4], corners), None, true));
-    if regions.as_ref() != Some(&now) {
-        for (what, at) in wanted {
-            let hit = fnv_ui::input::hit(ui, &[p.menu], at, &fnv_ui::input::no_measure);
-            if hit.and_then(|h| stats_tile(ui, p, rows, h.tile)) != Some(what) {
-                return Err(format!("{what:?} does not take the pointer"));
-            }
+    for (what, at) in wanted {
+        let hit = fnv_ui::input::hit(ui, &[p.menu], at, &fnv_ui::input::no_measure);
+        if hit.and_then(|h| stats_tile(ui, p, rows, h.tile)) != Some(what) {
+            return Err(format!("{what:?} does not take the pointer"));
         }
-        *regions = Some(now);
     }
     Ok(area.map(|a| Rect::new(a.left as f32, a.top as f32, (a.left + a.width) as f32, (a.top + a.height) as f32)))
 }
@@ -562,8 +548,6 @@ pub(crate) struct Written {
     flat: Option<FlatChanges>,
     /// What is under the tabs' inner rects is marked ([`write_tabs`]).
     tabs_marked: bool,
-    /// What the targets were last checked against ([`usable`]).
-    regions: Option<Regions>,
     /// What is shown changed since the log last said so.
     tell: bool,
     /// The description's scroll, the text's place and the bound last logged.
@@ -642,7 +626,6 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
         // Rows made or gone: nothing written, measured or checked for the last set holds.
         w.shown = None;
         w.geometry = None;
-        w.regions = None;
     }
     let selected = view.selected[PAGE];
     let changed = !w.shown.as_ref().is_some_and(|s| s.same(snap, selected, device)) || w.highlight != view.highlight;
@@ -685,7 +668,7 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
         ui.update();
         // Every final pass, so readiness is about the tree that is about to be painted.
         let pieces = fonts.set_out(ui, p.menu);
-        tiles.desc_area = usable(ui, &p, &w.rows, &pieces, &mut w.regions)?;
+        tiles.desc_area = usable(ui, &p, &w.rows, &pieces)?;
         tiles.pieces = pieces;
         let w = &mut tiles.written;
         if std::mem::take(&mut w.tell) {
@@ -785,7 +768,6 @@ pub(crate) fn settle(mut p: StatsPage) {
         let w = &mut p.tiles.written;
         w.shown = None;
         w.geometry = None;
-        w.regions = None;
         w.drawn = None;
         p.tiles.desc_area = None;
         p.tiles.pieces.clear();
@@ -1435,6 +1417,39 @@ mod tests {
         // The tab showing need not take the pointer: a click on it does nothing.
         let (mut ui, mut v, mut t) = (tree_changed(|x| x.replace(r#"<hotrect name="stats_tailline_SPECIAL"><target>&true;</target>"#, r#"<hotrect name="stats_tailline_SPECIAL"><target>0</target>"#)), view(), StatsTiles::default());
         assert!(run(&mut ui, &snap(), &mut v, true, &mut t).is_ok());
+    }
+
+    /// A target that comes to lie over the rows takes every click from them: seen at once.
+    #[test]
+    fn a_target_over_the_rows_refuses_the_page_until_it_goes() {
+        let cover = |x: &str| x.replace(r#"<image name="background_layout"/>"#, r#"<image name="background_layout"/><hotrect name="Cover"><x>12</x><y>30</y><width>200</width><height>300</height><depth>5</depth><target>0</target></hotrect>"#);
+        let (mut ui, mut v, mut t) = (tree_changed(cover), view(), StatsTiles::default());
+        let menu = run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        let over = find_named(&ui, menu, "Cover").unwrap();
+        ui.set_trait(over, "target", Value::Num(1.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err().contains("Row(0)"));
+        ui.set_trait(over, "target", Value::Num(0.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).is_ok());
+    }
+
+    /// The description's window off the canvas, and a row's words partly outside the list's
+    /// window: neither reads, so neither passes.
+    #[test]
+    fn what_cannot_be_read_whole_is_no_usable_layout() {
+        let (mut ui, mut v, mut t) = (tree(), view(), StatsTiles::default());
+        run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        let p = paths(&ui, None).unwrap();
+        ui.set_trait(p.desc_rect, "y", Value::Num(2000.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err().contains("description does not fit"));
+        ui.set_trait(p.desc_rect, "y", Value::Num(100.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).is_ok());
+        ui.set_trait(p.list, "width", Value::Num(15.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err().contains("row 0 does not fit"));
     }
 
     /// With nothing in the model changed, what a script does to the tree is seen on the next
