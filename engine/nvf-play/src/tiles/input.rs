@@ -630,13 +630,14 @@ mod tests {
         app
     }
 
-    /// The file's tiles as a built menu, its Next and Close at their own places, as a mod
-    /// may move them: 1070..1170 x 196..246 and 1070..1170 x 496..546.
+    /// The test layout (`super::super::tutorial_menu::tests`, synthetic) as a built menu, its
+    /// Next and Close at their own places, as a mod may move them: 1070..1170 x 196..246 and
+    /// 1070..1170 x 496..546, under its background at 50, 40.
     fn built_tutorial(app: &mut App) {
         use super::super::tutorial_menu::{tests::{menu_changed, shown}, write};
         let mut ui = menu_changed(|xml| {
-            let place = |xml: String, name: &str, y: u32| xml.replace(&format!(r#"<hotrect name="{name}">"#), &format!(r#"<hotrect name="{name}"><x>900</x><y>{y}</y><width>100</width><height>50</height>"#));
-            place(place(xml.to_string(), "TM_next_button", 100), "TM_close_button", 400)
+            let place = |xml: String, name: &str, y: u32| xml.replace(&format!(r#"<hotrect name="{name}">"#), &format!(r#"<hotrect name="{name}"><x>1020</x><y>{y}</y><width>100</width><height>50</height>"#));
+            place(place(xml.to_string(), "TM_next_button", 156), "TM_close_button", 456)
         });
         let s = shown(&ui, "Title", "Text", 0, 3);
         write(&mut ui, &s);

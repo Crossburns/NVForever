@@ -315,7 +315,10 @@ impl Plugin for TutorialMenuPlugin {
 /// Keys, the wheel and clicks of the open tutorial menu (before the frame's scripts run,
 /// `crate::script`): pages, scrolling, Close through `ScriptState::answer`. A press on a
 /// hand-built button always counts: they stand only while they are what is on screen, and
-/// the tile input takes nothing until they have gone (`crate::tiles::input`) [design].
+/// the tile input takes nothing until they have gone (`crate::tiles::input`) [design]. A key
+/// or a hand-built button that asks for a turn wins the frame's turn, even at an end of the
+/// pages: a tile's Next or Previous that frame is dropped, its Close and scroll still act
+/// [design].
 pub fn keys(
     keys: Res<ButtonInput<KeyCode>>,
     (mut wheel, mut tiles): (MessageReader<MouseWheel>, MessageReader<TutorialInput>),
@@ -347,10 +350,13 @@ pub fn keys(
     if let Some(h) = hover.filter(|h| *h != view.hover) {
         view.hover = h;
     }
+    let mut turned = false;
     if keys.any_just_pressed([KeyA, ArrowRight]) || clicked == Some(TmButton::Next) {
         view.apply(n, Command::Next);
+        turned = true;
     } else if keys.any_just_pressed([KeyS, ArrowLeft]) || clicked == Some(TmButton::Previous) {
         view.apply(n, Command::Previous);
+        turned = true;
     } else if keys.any_just_pressed([KeyE, Escape, Enter, NumpadEnter]) || clicked == Some(TmButton::Close) {
         let how = if clicked.is_some() { "click" } else { "key" };
         if script.answer(None, how) {
@@ -361,6 +367,9 @@ pub fn keys(
     }
     // What the tiles asked this frame (`crate::tiles::input`), each once.
     for TutorialInput(command) in tiles.read().copied() {
+        if turned && matches!(command, Command::Next | Command::Previous) {
+            continue;
+        }
         if view.apply(n, command) {
             if script.answer(None, "click") {
                 info!("tutorial menu: closed (click)");
@@ -591,6 +600,68 @@ mod tests {
         v.set_scroll_bound(40.0);
         assert_eq!(v.scroll, 40.0, "a smaller range holds the scroll in it");
         assert!(v.apply(2, Command::Close));
+    }
+
+    /// One frame of [`keys`] with three pages open at `from`, a range of 100: what the frame
+    /// pressed and what the tiles asked. The page, the scroll and whether the menu was answered.
+    fn one_frame(from: usize, key: Option<KeyCode>, button: Option<TmButton>, tiles: &[Command]) -> (usize, f32, bool) {
+        let mut state = ScriptState::over_no_plugins();
+        let game = &mut state.rt.as_mut().unwrap().game;
+        game.menu = Some(menus::TUTORIAL);
+        game.tutorial = vec![FormId(0x11), FormId(0x12), FormId(0x13)];
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<TutorialView>()
+            .insert_resource(state)
+            .add_message::<MouseWheel>()
+            .add_message::<TutorialInput>()
+            .add_systems(Update, keys);
+        let mut view = app.world_mut().resource_mut::<TutorialView>();
+        view.page = from;
+        view.set_scroll_bound(100.0);
+        if let Some(key) = key {
+            app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
+        }
+        if let Some(button) = button {
+            app.world_mut().spawn((button, PointerState::Pressed));
+        }
+        for &command in tiles {
+            app.world_mut().write_message(TutorialInput(command));
+        }
+        app.update();
+        let view = app.world().resource::<TutorialView>();
+        (view.page, view.scroll, app.world().resource::<ScriptState>().answered())
+    }
+
+    #[test]
+    fn a_turn_by_key_or_hand_built_button_takes_the_frames_tile_turns() {
+        use Command::{Next, Previous};
+        use KeyCode::{KeyA, KeyS};
+        let page = |from, key, button, tiles: &[Command]| one_frame(from, key, button, tiles).0;
+        // The same way: one page, not two.
+        assert_eq!(page(0, Some(KeyA), None, &[Next]), 1);
+        assert_eq!(page(2, Some(KeyS), None, &[Previous]), 1);
+        assert_eq!(page(0, None, Some(TmButton::Next), &[Next]), 1);
+        assert_eq!(page(2, None, Some(TmButton::Previous), &[Previous]), 1);
+        // Opposite ways: the key's, not back where it started.
+        assert_eq!(page(1, Some(KeyA), None, &[Previous]), 2);
+        assert_eq!(page(1, Some(KeyS), None, &[Next]), 0);
+        assert_eq!(page(1, None, Some(TmButton::Next), &[Previous]), 2);
+        // At an end the key turns nothing and still wins.
+        assert_eq!(page(2, Some(KeyA), None, &[Previous]), 2);
+        assert_eq!(page(0, Some(KeyS), None, &[Next]), 0);
+        // With no such key or button the tiles' turns act, each once.
+        assert_eq!(page(0, None, None, &[Next]), 1);
+        assert_eq!(page(2, None, None, &[Previous]), 1);
+        assert_eq!(page(0, None, None, &[Next, Next]), 2);
+    }
+
+    #[test]
+    fn a_turn_by_key_leaves_the_tiles_close_and_scroll() {
+        use KeyCode::KeyA;
+        assert_eq!(one_frame(0, Some(KeyA), None, &[Command::Scroll(40.0)]), (1, 40.0, false));
+        assert_eq!(one_frame(0, Some(KeyA), None, &[Command::Next, Command::ScrollTo(60.0)]), (1, 60.0, false));
+        assert_eq!(one_frame(0, Some(KeyA), None, &[Command::Previous, Command::Close]), (1, 0.0, true));
     }
 
     #[test]

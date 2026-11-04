@@ -120,8 +120,8 @@ values in interface units; the message 0x0007235B]:
   scrollbar's items are that plus its step of 30 [documented; observed: 655, 841]; its visible
   items the column's height, its jump the height less a step [documented]. Every text is
   measured by the renderer's fonts, worked out and measured again until the body stands at its
-  final wrap width, each round's fonts loaded as the tree then stands; a text measured with no
-  face is not kept, so it is measured again [design]. That width follows Previous's place, 985.33 = 1284.33 - 127 - 108 - 64
+  final wrap width, each round's fonts loaded as the tree then stands, so each has a face (the
+  game's or a stand-in) and every measure is kept, 0 x 0 too [design]. That width follows Previous's place, 985.33 = 1284.33 - 127 - 108 - 64
   [observed], and that place its word's width.
 - **The scroll's range** is the file's, items less visible items and at least 0: 215 here, and
   the last step is what is left of the range, not a whole step [documented: scrollbar_vert.xml,
@@ -160,7 +160,7 @@ values in interface units; the message 0x0007235B]:
   check 83).
 - **The backing** is the original's 193.8 [observed], not the hand-built menu's 0.75, which the
   writer used to pass in. The picture is `solid_black.dds`, nearly black with soft edges: its
-  alpha falls to 0 over about the outer 18 % of its height and 5 % of its width [documented: the
+  alpha falls to 0 over about the outer 18 % of its height and 5 % of its width [observed: the
   texture's alpha channel, Fallout - Textures2.bsa], so the box has no sharp edge and its lines
   stand inside the fade. Across the left side, x 126 to 176 on a 1280 x 720 shot, the original goes
   from 80 to 23, 41 to 12 and 51 to 18, about 0.3; NVForever at 0.75 from 69 to 37 and 100 to 40, 0.4 to
@@ -186,7 +186,7 @@ values in interface units; the message 0x0007235B]:
   transcribed (`_PCButtonText` reads them there [observed: hud_tutorial_more]).
 - **The symbol**: `width` is `filewidth` less 36 and the words after it follow, so the file
   alone reads -36 until the code writes `filewidth` [documented]. The picture is 128 x 64
-  [documented: the texture's header, Fallout - Textures2.bsa]; it is read from the name the file gives, once.
+  [observed: the texture's header, Fallout - Textures2.bsa]; it is read from the name the file gives, once.
 - **The buttons**: with one page neither Next nor Previous shows [observed: the same shot], and
   the count is hidden with `TM_fill_line` in its place by the file's rule [documented; observed:
   not on the shot]. Previous still keeps its width, so the column keeps its place [observed:
@@ -207,7 +207,9 @@ values in interface units; the message 0x0007235B]:
   (`crate::pad::menu_buttons`), not for the shared Page Up and Page Down, so the tile input asks
   `pad::menu_key_at` for them, or RT would turn the page by hand and again by the file's
   `xbuttonrt`. RB and LB, which the hand-built menu does not read, page the text through the
-  file. A script's MenuTapKey and ClickMenuButton act through the file.
+  file. A script's MenuTapKey and ClickMenuButton act through the file. A key or hand-built
+  button that asks for a turn wins the frame's turn, even at an end of the pages: a tile's Next
+  or Previous that same frame is dropped, its Close and scroll still act [design].
 - **The order in a frame**: the tile input's commands reach the hand-built `keys` the same
   frame; then the page, its sizes, its range and the scroll are written together, before the
   scripts, so a key or a click never draws a new page at an old scroll. A window resize

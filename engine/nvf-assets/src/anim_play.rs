@@ -823,6 +823,29 @@ pub struct BlendPlayer {
     /// Nodes with a rest pose of their own in place of the bind transform
     /// ([`Self::set_rest`]).
     rest: Vec<(usize, Transform)>,
+    /// How many times [`Self::set_rest`] changed a rest pose.
+    rest_changes: u32,
+    /// What the last pose was made from, when [`Self::pose_held`] made it.
+    posed_from: Option<PosedFrom>,
+}
+
+/// What a [`BlendPlayer`]'s pose is made from, besides its bind transforms.
+#[derive(Debug, Clone)]
+struct PosedFrom {
+    layers: [Option<Layer>; MAX_LAYERS],
+    rest_changes: u32,
+}
+
+/// Whether layers and rest poses as they stand now give the pose made from `from`: the
+/// same clips (the same `Arc`, whatever their contents) at exactly the same phases and
+/// weights in the same slots. Without a pose made yet they do not.
+fn pose_stands(from: Option<&PosedFrom>, layers: &[Option<Layer>; MAX_LAYERS], rest_changes: u32) -> bool {
+    let same = |a: &Option<Layer>, b: &Option<Layer>| match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => Arc::ptr_eq(&a.clip, &b.clip) && a.phase.to_bits() == b.phase.to_bits() && a.weight.to_bits() == b.weight.to_bits(),
+        _ => false,
+    };
+    from.is_some_and(|f| f.rest_changes == rest_changes && f.layers.iter().zip(layers).all(|(a, b)| same(a, b)))
 }
 
 impl BlendPlayer {
@@ -837,6 +860,8 @@ impl BlendPlayer {
             posed: Vec::with_capacity(n),
             driven: vec![false; n],
             rest: Vec::new(),
+            rest_changes: 0,
+            posed_from: None,
         }
     }
 
@@ -844,6 +869,9 @@ impl BlendPlayer {
     /// transform again): what it takes where no clip drives it, and what fills the weight
     /// the clips that drive it leave.
     pub fn set_rest(&mut self, i: usize, pose: Option<Transform>) {
+        if self.rest.iter().find(|(n, _)| *n == i).map(|(_, p)| *p) != pose {
+            self.rest_changes = self.rest_changes.wrapping_add(1);
+        }
         self.rest.retain(|(n, _)| *n != i);
         if let Some(p) = pose {
             self.rest.push((i, p));
@@ -871,6 +899,7 @@ impl BlendPlayer {
     /// of tracks sampled. `out` is cleared first.
     pub fn sample(&mut self, out: &mut Vec<(usize, Transform)>) -> usize {
         out.clear();
+        self.posed_from = None;
         let mut sampled = 0;
         let layers = std::mem::take(&mut self.layers);
         // A weight or phase that is not a finite number (a clip of no length divided by)
@@ -945,6 +974,36 @@ impl BlendPlayer {
             }
         }
         n
+    }
+
+    /// [`Self::pose`] for a pose that may stand as it is (a finished death clip): nothing
+    /// is sampled while the last pose made here still holds, and `None` says so; otherwise
+    /// the number of tracks sampled.
+    ///
+    /// The pose is a function of the layers, the rest poses and the bind transforms alone,
+    /// so with the same layers and rest poses [`Self::pose`] would write the values the
+    /// last call wrote. It would also put back any other system's write to those nodes
+    /// (foot IK easing out on a corpse, the lips giving a turned head back), so a node
+    /// written since the calling system last ran is sampled for too: every frame ends with
+    /// the bones [`Self::pose`] would have left. The nodes checked are those it would
+    /// write; the caller's own writes do not count as changes on its next run.
+    pub fn pose_held(&mut self, scratch: &mut Vec<(usize, Transform)>, transforms: &mut Query<&mut Transform>) -> Option<usize> {
+        if pose_stands(self.posed_from.as_ref(), &self.layers, self.rest_changes) && !self.nodes_written(transforms) {
+            return None;
+        }
+        let n = self.pose(scratch, transforms);
+        self.posed_from = Some(PosedFrom { layers: self.layers.clone(), rest_changes: self.rest_changes });
+        Some(n)
+    }
+
+    /// Forget the pose [`Self::pose_held`] made: its next call samples.
+    pub fn forget_pose(&mut self) {
+        self.posed_from = None;
+    }
+
+    /// Whether a node posed last time was written since the calling system last ran.
+    fn nodes_written(&self, transforms: &mut Query<&mut Transform>) -> bool {
+        self.posed.iter().any(|&i| self.nodes.get(i).is_some_and(|&e| transforms.get_mut(e).is_ok_and(|t| t.is_changed())))
     }
 }
 
@@ -1271,6 +1330,187 @@ mod tests {
         let bind = vec![Transform::IDENTITY, Transform::from_xyz(0.0, 0.657, 67.771), Transform::IDENTITY, Transform::from_xyz(5.0, 0.0, 0.0)];
         let ix = |n: &str| ["Bip01", "Bip01 NonAccum", "Other"].iter().position(|x| *x == n).map(|i| i + 1);
         (BlendPlayer::new(nodes, Arc::new(bind)), ix)
+    }
+
+    /// A clip with one track, on node 0 of the player in the `pose_held` tests.
+    fn on_node_0(x: f32) -> Arc<BoundClip> {
+        let c = clip(1.0, vec![("Other", pose([x, 0.0, 0.0]))]);
+        Arc::new(BoundClip::bind(c, |n| (n == "Other").then_some(0)))
+    }
+
+    #[test]
+    fn a_pose_stands_only_while_what_makes_it_does() {
+        let (a, b) = (on_node_0(1.0), on_node_0(1.0));
+        let mut layers: [Option<Layer>; MAX_LAYERS] = Default::default();
+        layers[0] = Some(Layer { clip: a, phase: 0.999, weight: 1.0 });
+        let from = PosedFrom { layers: layers.clone(), rest_changes: 3 };
+        assert!(pose_stands(Some(&from), &layers, 3));
+        // Nothing posed yet (a new player, a pose made some other way).
+        assert!(!pose_stands(None, &layers, 3));
+        // A rest pose changed.
+        assert!(!pose_stands(Some(&from), &layers, 4));
+        let with = |f: &dyn Fn(&mut [Option<Layer>; MAX_LAYERS])| {
+            let mut l = layers.clone();
+            f(&mut l);
+            pose_stands(Some(&from), &l, 3)
+        };
+        // The same clip in a new slot array stands.
+        assert!(with(&|_| {}));
+        // Another phase (the frame a clip reaches its end), another weight.
+        assert!(!with(&|l| l[0].as_mut().unwrap().phase = 0.998));
+        assert!(!with(&|l| l[0].as_mut().unwrap().weight = 0.5));
+        // Another clip, even one with the same contents.
+        assert!(!with(&|l| l[0].as_mut().unwrap().clip = b.clone()));
+        // A weapon layer come or gone, or moved to another slot.
+        assert!(!with(&|l| l[2] = Some(Layer { clip: b.clone(), phase: 0.0, weight: 1.0 })));
+        assert!(!with(&|l| l[0] = None));
+        assert!(!with(&|l| l.swap(0, 1)));
+    }
+
+    #[test]
+    fn a_held_pose_is_sampled_only_when_something_changed() {
+        let mut world = World::new();
+        let bind = Transform::from_xyz(5.0, 0.0, 0.0);
+        let node = world.spawn(bind).id();
+        let posed = Transform::from_xyz(9.0, 0.0, 0.0);
+        let clip_a = on_node_0(9.0);
+        let at = |phase: f32| Some(Layer { clip: clip_a.clone(), phase, weight: 1.0 });
+        let mut p = BlendPlayer::new(vec![node], Arc::new(vec![bind]));
+        let mut scratch = Vec::new();
+        let mut state = SystemState::<Query<&mut Transform>>::new(&mut world);
+        macro_rules! held {
+            ($p:expr) => {{
+                world.clear_trackers();
+                $p.pose_held(&mut scratch, &mut state.get_mut(&mut world).unwrap())
+            }};
+        }
+
+        // Playing: a new phase is a new pose; the same phase (time stopped) stands.
+        p.layers[0] = at(0.5);
+        assert_eq!(held!(p), Some(1));
+        assert_transform(&world, node, posed, true);
+        assert_eq!(held!(p), None);
+        assert_transform(&world, node, posed, false);
+        // The frame the clip first reaches its end samples, the ones after do not.
+        p.layers[0] = at(0.999);
+        assert_eq!(held!(p), Some(1));
+        assert_eq!(held!(p), None);
+        assert_eq!(held!(p), None);
+        assert_transform(&world, node, posed, false);
+
+        // A weapon layer comes and goes.
+        p.layers[2] = Some(Layer { clip: on_node_0(9.0), phase: 0.0, weight: 1.0 });
+        assert_eq!(held!(p), Some(2));
+        assert_eq!(held!(p), None);
+        p.layers[2] = None;
+        assert_eq!(held!(p), Some(1));
+        assert_eq!(held!(p), None);
+
+        // Another writer: the very next call puts the pose back, as `pose` would have,
+        // and it stands again after that (its own write does not count).
+        world.clear_trackers();
+        *world.get_mut::<Transform>(node).unwrap() = bind;
+        assert_eq!(held!(p), Some(1));
+        assert_transform(&world, node, posed, true);
+        assert_eq!(held!(p), None);
+        assert_transform(&world, node, posed, false);
+        // Written with what it already holds: a pose, which changes nothing.
+        world.clear_trackers();
+        *world.get_mut::<Transform>(node).unwrap() = posed;
+        assert_eq!(held!(p), Some(1));
+        assert_eq!(held!(p), None);
+
+        // A pose made the ordinary way (the actor up again) is not trusted.
+        world.clear_trackers();
+        p.pose(&mut scratch, &mut state.get_mut(&mut world).unwrap());
+        assert_eq!(held!(p), Some(1));
+        assert_eq!(held!(p), None);
+        // Nor after being told to forget (a ragdoll had the bones).
+        p.forget_pose();
+        assert_eq!(held!(p), Some(1));
+        assert_eq!(held!(p), None);
+
+        // Another clip: its pose at once.
+        p.layers[0] = Some(Layer { clip: on_node_0(7.0), phase: 0.999, weight: 1.0 });
+        assert_eq!(held!(p), Some(1));
+        assert_transform(&world, node, Transform::from_xyz(7.0, 0.0, 0.0), true);
+
+        // A new player on the same bones (the actor attached again) has made no pose.
+        let mut fresh = BlendPlayer::new(vec![node], Arc::new(vec![bind]));
+        fresh.layers = p.layers.clone();
+        assert_eq!(held!(fresh), Some(1));
+        assert_eq!(held!(fresh), None);
+    }
+
+    #[test]
+    fn a_held_pose_takes_a_changed_rest_pose_at_once() {
+        // Node 0 is keyed by the clip; node 1 no clip keys, so its rest pose is its pose.
+        let mut world = World::new();
+        let keyed = world.spawn(Transform::IDENTITY).id();
+        let bind = Transform::from_xyz(5.0, 0.0, 0.0);
+        let unkeyed = world.spawn(bind).id();
+        let rest = Transform::from_xyz(1.0, 2.0, 3.0);
+        let mut p = BlendPlayer::new(vec![keyed, unkeyed], Arc::new(vec![Transform::IDENTITY, bind]));
+        p.layers[0] = Some(Layer { clip: on_node_0(9.0), phase: 0.999, weight: 1.0 });
+        let mut scratch = Vec::new();
+        let mut state = SystemState::<Query<&mut Transform>>::new(&mut world);
+        macro_rules! held {
+            () => {{
+                world.clear_trackers();
+                p.pose_held(&mut scratch, &mut state.get_mut(&mut world).unwrap())
+            }};
+        }
+        assert_eq!(held!(), Some(1));
+        assert_eq!(held!(), None);
+        assert_transform(&world, unkeyed, bind, false);
+
+        // Set again as it was: nothing.
+        p.set_rest(1, None);
+        assert_eq!(held!(), None);
+        // Changed: on the bone at once, and it holds there.
+        p.set_rest(1, Some(rest));
+        assert_eq!(held!(), Some(1));
+        assert_transform(&world, unkeyed, rest, true);
+        p.set_rest(1, Some(rest));
+        assert_eq!(held!(), None);
+        assert_transform(&world, unkeyed, rest, false);
+        // That bone is one the pose writes: another writer's change is put back.
+        world.clear_trackers();
+        *world.get_mut::<Transform>(unkeyed).unwrap() = bind;
+        assert_eq!(held!(), Some(1));
+        assert_transform(&world, unkeyed, rest, true);
+        assert_eq!(held!(), None);
+        // Taken away: back to its bind transform at once.
+        p.set_rest(1, None);
+        assert_eq!(held!(), Some(1));
+        assert_transform(&world, unkeyed, bind, true);
+        assert_eq!(held!(), None);
+        assert_transform(&world, unkeyed, bind, false);
+    }
+
+    #[test]
+    fn a_held_pose_leaves_a_node_the_clips_stopped_driving_alone() {
+        // `pose` gives such a node its bind transform once and no longer writes it: the
+        // check looks at what `pose` would write, so a later write to it stays in both.
+        let mut world = World::new();
+        let bind = Transform::from_xyz(5.0, 0.0, 0.0);
+        let node = world.spawn(bind).id();
+        let mut p = BlendPlayer::new(vec![node], Arc::new(vec![bind]));
+        let mut scratch = Vec::new();
+        let mut state = SystemState::<Query<&mut Transform>>::new(&mut world);
+        p.layers[0] = Some(Layer { clip: on_node_0(9.0), phase: 0.5, weight: 1.0 });
+        world.clear_trackers();
+        assert_eq!(p.pose_held(&mut scratch, &mut state.get_mut(&mut world).unwrap()), Some(1));
+        p.layers[0] = None;
+        world.clear_trackers();
+        assert_eq!(p.pose_held(&mut scratch, &mut state.get_mut(&mut world).unwrap()), Some(0));
+        assert_eq!(*world.get::<Transform>(node).unwrap(), bind);
+        world.clear_trackers();
+        let moved = Transform::from_xyz(1.0, 2.0, 3.0);
+        *world.get_mut::<Transform>(node).unwrap() = moved;
+        world.clear_trackers();
+        assert_eq!(p.pose_held(&mut scratch, &mut state.get_mut(&mut world).unwrap()), None);
+        assert_eq!(*world.get::<Transform>(node).unwrap(), moved);
     }
 
     fn assert_transform(world: &World, node: Entity, expected: Transform, changed: bool) {

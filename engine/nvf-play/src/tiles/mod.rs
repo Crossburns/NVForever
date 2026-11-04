@@ -424,8 +424,13 @@ impl MenuTiles<'_, '_> {
                 let was = written.message.as_ref();
                 let another = menus::another_box(was.map(|(b, _)| b), &now);
                 if another || was.is_some_and(|(_, s)| *s != selected) {
+                    {
+                        let size = fonts.menu_measure(&menus::fonts(ui, menu));
+                        menus::write_message(ui, view, selected, another, &size);
+                    }
+                    // The fonts again: the rows are new and the tree was worked out, and a
+                    // measure is kept, so a font not loaded yet would stay at 0 x 0.
                     let size = fonts.menu_measure(&menus::fonts(ui, menu));
-                    menus::write_message(ui, view, selected, another, &size);
                     menus::write_text_sizes(ui, menu, &mut written.sizes[0], &size);
                     if another && menus::message_status(ui).yes() {
                         info!("{}", menus::describe_message(ui, view));
