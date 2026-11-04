@@ -61,6 +61,7 @@ const BAR: &str = "DialogMenu/NOGLOW_BRANCH/DM_TopicList/lb_scrollbar";
 const TOP_BRACKET: &str = "DialogMenu/NOGLOW_BRANCH/DM_TopBracket";
 const BOTTOM_BRACKET: &str = "DialogMenu/NOGLOW_BRANCH/DM_BottomBracket";
 const FRAME_LINES: [&str; 4] = ["top", "left", "bottom", "right"];
+const BAR_CONTROLS: [&str; 5] = ["scrollbar_vert_up", "scrollbar_vert_down", "scrollbar_vert_page_up", "scrollbar_vert_page_down", "scrollbar_vert_marker"];
 const ROW_TEMPLATE: &str = "DM_TopicTemplate";
 const ROW: &str = "DM_Topic";
 const ROW_TEXT: &str = "ListItemText";
@@ -119,15 +120,50 @@ pub fn rows(ui: &Ui) -> Vec<TileId> {
     ui.tile(list).children.iter().copied().filter(|&c| ui.is_live(c) && ui.tile(c).origin == Origin::Code && ui.tile(c).name.eq_ignore_ascii_case(ROW)).collect()
 }
 
-/// [design] Every fixed path the model writes or the input reads is part of a successful
-/// build; a file a mod restructured keeps the hand-built menu.
+/// [design] Every fixed path the model writes or the input reads, and the pieces the view is
+/// not whole without (the frame's four lines, the scroll bar's controls), is part of a
+/// successful build; a file a mod restructured keeps the hand-built menu.
 pub fn built(ui: &Ui) -> Tiled {
     for path in [DIALOG_MENU, ROOT, BAND, CLICK_AREA, NAME, LINE, LIST, HIGHLIGHT, BAR, TOP_BRACKET, BOTTOM_BRACKET] {
         if ui.find_tile(path).is_none() {
             return Tiled::No(format!("{path} missing"));
         }
     }
+    for (under, names) in [(HIGHLIGHT, &FRAME_LINES[..]), (BAR, &BAR_CONTROLS[..])] {
+        for name in names {
+            if ui.find_tile(&format!("{under}/{name}")).is_none() {
+                return Tiled::No(format!("{under}/{name} missing"));
+            }
+        }
+    }
     Tiled::Yes
+}
+
+/// [design] What a preparation has to have worked out for the view to be usable and its
+/// tiles hit: the file evaluated to boxes with a size, and what is to be clicked a target.
+/// The file's values, read after the model's writes, so a mod's change to them counts.
+fn check_geometry(ui: &Ui, view: &MenuView) -> Result<(), String> {
+    for (path, name) in [(BAND, "width"), (LIST, "width"), (HIGHLIGHT, "width"), (CLICK_AREA, "width"), (CLICK_AREA, "height")] {
+        if ui.get_float(&format!("{path}/{name}")).is_none_or(|v| v <= 0.0) {
+            return Err(format!("{path} has no {name}"));
+        }
+    }
+    let target = |t: TileId| ui.tile(t).get("target").is_some_and(Value::truthy);
+    if view.choices.is_empty() {
+        if !ui.find_tile(CLICK_AREA).is_some_and(target) {
+            return Err(format!("{CLICK_AREA} takes no click while the line is up"));
+        }
+        return Ok(());
+    }
+    for row in rows(ui) {
+        if num(ui, row, "width") <= 0.0 || !target(row) {
+            return Err(format!("a {ROW} cannot be clicked"));
+        }
+        if child(ui, row, ROW_TEXT).is_none_or(|t| num(ui, t, "wrapwidth") <= 0.0) {
+            return Err(format!("a {ROW} has no room for its text"));
+        }
+    }
+    Ok(())
 }
 
 /// [design] What the file's template makes: a row with its text, under the list. Made once
@@ -508,6 +544,7 @@ fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut
         ui.update();
     }
     check_measured(ui, &now.view)?;
+    check_geometry(ui, &now.view)?;
     let mut first = now.first;
     written.moved = measured > 0 || written.placed.as_ref() != Some(&Placement::read(ui, now));
     if written.moved {
@@ -1289,6 +1326,15 @@ mod tests {
             let ui = menu_changed(|xml| xml.replace(&format!(r#"name="{name}""#), r#"name="Modded""#));
             assert_eq!(built(&ui), Tiled::No(format!("{missing} missing")), "{name}");
         }
+        // The containers kept, a piece of the view lost.
+        for name in FRAME_LINES {
+            let ui = menu_changed(|xml| xml.replace(&format!(r#"name="{name}""#), r#"name="Modded""#));
+            assert_eq!(built(&ui), Tiled::No(format!("{HIGHLIGHT}/{name} missing")), "{name}");
+        }
+        for name in BAR_CONTROLS {
+            let ui = menu_changed(|xml| xml.replace(&format!(r#"name="{name}""#), r#"name="Modded""#));
+            assert_eq!(built(&ui), Tiled::No(format!("{BAR}/{name} missing")), "{name}");
+        }
         // No menu at all.
         assert_eq!(built(&Ui::new()), Tiled::No(format!("{DIALOG_MENU} missing")));
         // A template gone, or making a row with no text: nothing written, nothing left.
@@ -1303,6 +1349,41 @@ mod tests {
             assert_eq!(write(&mut ui, &now, &mut Written::default(), &mut round), Err(reason), "{change}");
             assert!(rows(&ui).is_empty(), "{change}");
         }
+    }
+
+    #[test]
+    fn a_file_with_nothing_to_click_or_no_room_is_not_ready() {
+        let view = choosing(vec![row("A.")]);
+        let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
+        // Boxes with no size, in the file's own traits.
+        for (from, to, reason) in [
+            (r#"<width>800</width>"#, r#"<width>0</width>"#, format!("{BAND} has no width")),
+            (r#"<x>100</x><y>300</y><width>700</width>"#, r#"<x>100</x><y>300</y>"#, format!("{LIST} has no width")),
+            (r#"<x>30</x><width>600</width>
+"#, r#"<x>30</x>
+"#, format!("{HIGHLIGHT} has no width")),
+            (r#"<width>900</width>"#, "", format!("{CLICK_AREA} has no width")),
+            (r#"<height>900</height>"#, "", format!("{CLICK_AREA} has no height")),
+            (r#"<width>600</width><target>1</target>"#, r#"<width>600</width><target>0</target>"#, format!("a {ROW} cannot be clicked")),
+            (r#"<wrapwidth>200</wrapwidth>"#, "", format!("a {ROW} has no room for its text")),
+        ] {
+            let mut ui = menu_changed(|xml| {
+                assert!(xml.contains(from), "{from}");
+                xml.replace(from, to)
+            });
+            let now = shown(&ui, view.clone(), 1, 0, 0);
+            assert_eq!(write(&mut ui, &now, &mut Written::default(), &mut round), Err(reason.clone()), "{from}");
+        }
+        // The click area a target only with a line up: a file that makes it none is not whole.
+        let mut ui = menu();
+        let now = shown(&ui, line, 1, 0, 0);
+        let mut no_target = |ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten| {
+            let n = round(ui, texts, sizes);
+            let area = ui.find_tile(CLICK_AREA).unwrap();
+            ui.set_trait(area, "target", Value::Num(0.0));
+            n
+        };
+        assert_eq!(write(&mut ui, &now, &mut Written::default(), &mut no_target), Err(format!("{CLICK_AREA} takes no click while the line is up")));
     }
 
     #[test]
