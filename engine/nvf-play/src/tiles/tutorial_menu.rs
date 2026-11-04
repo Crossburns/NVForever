@@ -365,74 +365,66 @@ pub(crate) mod tests {
     use fnv_sim::FormId;
     use fnv_ui::MemSource;
 
-    /// [design] A menu in the vanilla file's shape: its names and the expressions the model
-    /// relies on (the sizes, the text's place, the scrollbar's range and marker), cut down
-    /// to what these tests read, at the observed screen 1706.67 x 960.
+    /// [design] A small layout written for these tests, with its own structure, numbers and
+    /// expressions; it does not come from the game's files and says nothing about them. It keeps
+    /// the tile names and paths the model and the input look up, which are the engine's interface
+    /// ([`built`]), and only the dependencies the tests exercise. The real layout's numbers are
+    /// checked by the smoke scenario `tiles-tutorial`.
     fn menu() -> Ui {
         menu_changed(str::to_string)
     }
+
+    /// The test screen's width: the column is this less 300, 900 wide.
+    const SCREEN_WIDTH: f64 = 1200.0;
+    /// The body's top in its column before any scroll.
+    const TEXT_TOP: f64 = 7.0;
+    /// The items the scrollbar shows at once.
+    const VISIBLE: f64 = 200.0;
+    /// The scrollbar's top on the screen: the background's 40 and its own 60.
+    const BAR_TOP: f64 = 100.0;
 
     pub(crate) fn menu_changed(change: impl FnOnce(&str) -> String) -> Ui {
         let src = MemSource::default().with(
             "tm.xml",
             &change(
                 r#"<menu name="TutorialMenu"><rect name="NOGLOW_BRANCH">
-  <image name="TM_Background"><x>170</x><y>96</y><width>1365</width><height>768</height><alpha>32</alpha>
+  <image name="TM_Background"><x>50</x><y>40</y><width>1100</width><height>600</height><alpha>20</alpha>
    <rect name="TM_depth_rect">
-    <text name="TM_title"><string>Title Text</string></text>
-    <text name="TM_page"><string>??/??</string></text>
-    <image name="TM_fill_line"><visible><not src="sibling(TM_page)" trait="visible"/></visible></image>
-    <hotrect name="TM_scrollbar"><y>172</y><width>32</width><height>424</height><alpha>0</alpha><target>&true;</target>
-      <_step_size>30</_step_size>
-      <_number_of_items><copy src="sibling(TM_text_container)" trait="_text_height"/><add src="me()" trait="_step_size"/></_number_of_items>
-      <_number_of_visible_items><copy src="sibling(TM_text_container)" trait="height"/></_number_of_visible_items>
-      <_jump_size><copy src="sibling(TM_text_container)" trait="height"/><sub src="me()" trait="_step_size"/></_jump_size>
-      <_current_value>
-        <add><copy src="child(scrollbar_vert_down)" trait="clicked"/><sub src="child(scrollbar_vert_up)" trait="clicked"/><mul src="me()" trait="_step_size"/></add>
-        <min><copy src="me()" trait="_number_of_items"/><sub src="me()" trait="_number_of_visible_items"/></min><max>0</max>
-      </_current_value>
-      <hotrect name="scrollbar_vert_page_up"><height><copy src="sibling(scrollbar_vert_marker)" trait="y"/></height></hotrect>
-      <hotrect name="scrollbar_vert_page_down">
-        <y><copy src="sibling(scrollbar_vert_marker)" trait="y"/><add src="sibling(scrollbar_vert_marker)" trait="height"/></y>
-        <height><copy src="parent()" trait="height"/><sub src="sibling(scrollbar_vert_marker)" trait="height"/><sub src="sibling(scrollbar_vert_marker)" trait="y"/></height>
-      </hotrect>
-      <image name="scrollbar_vert_marker">
-        <height><copy src="parent()" trait="height"/><div src="me()" trait="_number_not_visible"/><max>32</max></height>
-        <y><copy>0</copy>
-          <add><copy src="me()" trait="dragy"/><sub src="me()" trait="dragoffsety"/><onlyif><copy src="me()" trait="_drag_flag"/><eq>0</eq></onlyif></add>
-          <add><copy src="parent()" trait="_current_value"/><mul src="me()" trait="_step_height"/><onlyifnot><copy src="me()" trait="_drag_flag"/><eq>0</eq></onlyifnot></add>
-          <max>0</max><min><copy src="parent()" trait="height"/><sub src="me()" trait="height"/></min></y>
-        <dragstarty>-1</dragstarty>
-        <_drag_flag>
-          <add><copy>1</copy><onlyif><copy src="sibling(scrollbar_vert_down)" trait="clicked"/><add src="parent()" trait="_SetInCode"/><gt>0</gt></onlyif></add>
-          <mul><copy>1</copy><onlyif><copy src="me()" trait="dragstarty"/><lt>0</lt></onlyif></mul>
-        </_drag_flag>
-        <_number_not_visible><copy src="parent()" trait="_number_of_items"/><sub src="parent()" trait="_number_of_visible_items"/><add>1</add></_number_not_visible>
-        <_step_height><copy src="parent()" trait="height"/><sub src="me()" trait="height"/>
-          <div><copy src="me()" trait="_number_not_visible"/><sub>1</sub></div></_step_height>
+    <text name="TM_title"><string>Heading</string></text>
+    <text name="TM_page"><string>0/0</string></text>
+    <image name="CountWatcher"><_count_on><copy src="sibling(TM_page)" trait="visible"/></_count_on></image>
+    <hotrect name="TM_scrollbar"><x>10</x><y>60</y><width>20</width><height>300</height><alpha>0</alpha><target>&true;</target>
+      <_step_size>40</_step_size>
+      <_jump_size>150</_jump_size>
+      <_number_of_visible_items>200</_number_of_visible_items>
+      <_number_of_items><copy src="sibling(TM_text_container)" trait="_text_height"/></_number_of_items>
+      <_current_value><copy src="child(scrollbar_vert_down)" trait="clicked"/></_current_value>
+      <hotrect name="scrollbar_vert_page_up"><target>&true;</target><width>20</width><height>100</height></hotrect>
+      <hotrect name="scrollbar_vert_page_down"><target>&true;</target><y>120</y><width>20</width><height>180</height></hotrect>
+      <image name="scrollbar_vert_marker"><target>&true;</target><width>20</width><height>20</height>
+        <_step_height>2.5</_step_height>
+        <y><copy src="parent()" trait="_current_value"/><mul src="me()" trait="_step_height"/></y>
       </image>
       <image name="scrollbar_vert_up"/><image name="scrollbar_vert_down"/>
     </hotrect>
-    <hotrect name="TM_text_container"><alpha>0</alpha><clipwindow>&true;</clipwindow><x>108</x><y>172</y><height>440</height>
-      <width><copy src="sibling(TM_prev_button)" trait="x"/><sub src="me()" trait="x"/><sub>64</sub></width>
+    <hotrect name="TM_text_container"><x>40</x><y>60</y><height>200</height><alpha>0</alpha><clipwindow>&true;</clipwindow>
+      <width><copy src="screen()" trait="width"/><sub>300</sub></width>
       <_text_height><copy src="child(TM_text)" trait="height"/></_text_height>
-      <_text_y><copy>0</copy><sub src="sibling(TM_scrollbar)" trait="_current_value"/><add>21</add></_text_y>
-      <text name="TM_text"><wrapwidth><copy src="parent()" trait="width"/><sub>5</sub></wrapwidth><x>5</x>
-        <y><copy src="parent()" trait="_text_y"/></y></text>
+      <_shift><copy src="sibling(TM_scrollbar)" trait="_current_value"/><mul>-1</mul></_shift>
+      <text name="TM_text"><wrapwidth><copy src="parent()" trait="width"/></wrapwidth>
+        <y><copy src="parent()" trait="_shift"/><add>7</add></y></text>
     </hotrect>
     <hotrect name="TM_next_button"><target>&true;</target><text name="button_text"/></hotrect>
-    <hotrect name="TM_prev_button"><target>&true;</target><text name="button_text"/>
-      <x><copy src="screen()" trait="width"/><mul>0.8</mul><sub>208</sub></x></hotrect>
+    <hotrect name="TM_prev_button"><target>&true;</target><text name="button_text"/></hotrect>
     <hotrect name="TM_close_button"><target>&true;</target><text name="button_text"/></hotrect>
-    <image name="TM_VDSG_symbol"><filename>loading\symbol.dds</filename>
-      <width><copy src="me()" trait="filewidth"/><sub src="me()" trait="_dead_space"/></width><_dead_space>36</_dead_space></image>
+    <image name="TM_VDSG_symbol"><filename>test\emblem.dds</filename>
+      <width><copy src="me()" trait="filewidth"/><add>3</add></width></image>
    </rect></image></rect></menu>"#,
             ),
         );
         let mut ui = Ui::new();
         ui.load_menu(&src, "tm.xml").unwrap();
-        // Previous at 1157: 0.8 of the screen less 208.
-        screen(&mut ui, 1706.25);
+        screen(&mut ui, SCREEN_WIDTH);
         ui.update();
         ui
     }
@@ -487,6 +479,9 @@ pub(crate) mod tests {
         settle(ui, sizes, &mut |ui, sizes| write_text_sizes_of(ui, texts, sizes, measure), view);
     }
 
+    /// What the fixture's watcher tile read of the count's `visible`.
+    const COUNT_WATCHED: &str = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/CountWatcher/_count_on";
+
     fn words(n: usize) -> String {
         vec!["w"; n].join(" ")
     }
@@ -502,11 +497,10 @@ pub(crate) mod tests {
         assert_eq!(string(TEXT), "w w w");
         assert_eq!(string(COUNT), "1/2");
         assert_eq!(ui.get_float(&format!("{COUNT}/visible")), Some(1.0));
-        // The file's line in the count's place gives way to it, read through a trait the
-        // file does not have until the model writes it.
-        let fill = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_fill_line/visible";
-        assert_eq!(ui.get_float(fill), Some(0.0));
-        // The first page of two: Next is a target, Previous not (the file dims it).
+        // A tile reading the count's `visible`, a trait the layout does not have until the model
+        // writes it, follows the write.
+        assert_eq!(ui.get_float(COUNT_WATCHED), Some(1.0));
+        // The first page of two: Next is a target, Previous not.
         assert_eq!(ui.get_float(&format!("{NEXT}/target")), Some(1.0));
         assert_eq!(ui.get_float(&format!("{PREVIOUS}/target")), Some(0.0));
         assert_eq!(ui.get_float(&format!("{BACKGROUND}/alpha")), Some(193.8), "the original's value, not the hand-built 0.75");
@@ -525,9 +519,7 @@ pub(crate) mod tests {
         let s = shown(&ui, "Only", &words(3), 0, 1);
         frame(&mut ui, &s, &mut view);
         assert_eq!(ui.get_float(&format!("{COUNT}/visible")), Some(0.0));
-        // The file's own line takes the count's place.
-        let fill = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect/TM_fill_line/visible";
-        assert_eq!(ui.get_float(fill), Some(1.0));
+        assert_eq!(ui.get_float(COUNT_WATCHED), Some(0.0));
         // Next and Previous are not shown: the original's one-page help has neither.
         assert_eq!(ui.get_float(&format!("{NEXT}/visible")), Some(0.0));
         assert_eq!(ui.get_float(&format!("{PREVIOUS}/visible")), Some(0.0));
@@ -536,18 +528,18 @@ pub(crate) mod tests {
 
     #[test]
     fn measured_text_sets_scroll_extent() {
-        // [observed] The capture's numbers: a text 625 high (20 lines of font 1) in a column
-        // 440 high: 655 items, 215 to scroll. The column's width follows Previous's place.
+        // A text of 20 lines, 625 high, carried on to the scrollbar's items, of which 200 show.
+        // The body wraps at the column's width, which follows the screen.
         let mut ui = menu();
         let mut view = TutorialView::default();
         let s = shown(&ui, "Long", &words(20), 0, 1);
         frame(&mut ui, &s, &mut view);
         assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(625.0));
         assert_eq!(ui.get_float(&format!("{COLUMN}/_text_height")), Some(625.0));
-        assert_eq!(ui.get_float(&format!("{BAR}/_number_of_items")), Some(655.0));
-        assert_eq!(scroll_bound(&ui), 215.0);
-        assert_eq!(ui.get_float(&format!("{TEXT}/wrapwidth")), Some(1157.0 - 108.0 - 64.0 - 5.0));
-        // A short text does not scroll; the file's scrollbar has nothing to do.
+        assert_eq!(ui.get_float(&format!("{BAR}/_number_of_items")), Some(625.0));
+        assert_eq!(scroll_bound(&ui), 625.0 - VISIBLE);
+        assert_eq!(ui.get_float(&format!("{TEXT}/wrapwidth")), Some(SCREEN_WIDTH - 300.0));
+        // A short text does not scroll.
         let s = shown(&ui, "Short", &words(3), 0, 1);
         frame(&mut ui, &s, &mut view);
         assert_eq!(scroll_bound(&ui), 0.0);
@@ -571,16 +563,16 @@ pub(crate) mod tests {
         let s = shown(&ui, "Long", &words(20), 0, 1);
         frame(&mut ui, &s, &mut view);
         assert_eq!(pulse(&mut ui, false, 120.0), 120.0);
-        assert_eq!(text_y(&ui), Some(21.0 - 120.0), "the file moves the text by the value");
+        assert_eq!(text_y(&ui), Some(TEXT_TOP - 120.0), "the layout moves the text by the value");
         assert_eq!(pulse(&mut ui, true, 150.0), 150.0, "the click's frame");
         assert_eq!(pulse(&mut ui, false, 150.0), 150.0, "the pulse's end");
         assert_eq!(pulse(&mut ui, false, 150.0), 150.0, "a frame later");
-        assert_eq!(text_y(&ui), Some(21.0 - 150.0));
-        // The file's own count, left alone, would be nothing like it.
+        assert_eq!(text_y(&ui), Some(TEXT_TOP - 150.0));
+        // The expression competing for the value, left alone, would be nothing like it.
         let down = ui.find_tile(&format!("{BAR}/scrollbar_vert_down")).unwrap();
         ui.set_trait(down, "clicked", Value::Num(1.0));
         ui.update();
-        assert_eq!(scroll_shown(&ui), Some(30.0), "the file's count from 0");
+        assert_eq!(scroll_shown(&ui), Some(1.0), "the layout's own expression, no model write");
     }
 
     #[test]
@@ -591,50 +583,57 @@ pub(crate) mod tests {
         let long = shown(&ui, "Long", &words(20), 0, 2);
         frame(&mut ui, &long, &mut view);
         assert!(!view.apply(2, Command::Scroll(500.0)));
-        assert_eq!(view.scroll, 215.0, "the file's bound, not a whole number of steps");
+        assert_eq!(view.scroll, 425.0, "the layout's bound, not a whole number of steps");
         frame(&mut ui, &long, &mut view);
-        assert_eq!(text_y(&ui), Some(21.0 - 215.0));
+        assert_eq!(text_y(&ui), Some(TEXT_TOP - 425.0));
         // A turn starts the next page at its top, whatever its length.
         assert!(!view.apply(2, Command::Next));
         assert_eq!((view.page, view.scroll), (1, 0.0));
         let short = shown(&ui, "Short", &words(3), 1, 2);
         frame(&mut ui, &short, &mut view);
-        assert_eq!(text_y(&ui), Some(21.0));
+        assert_eq!(text_y(&ui), Some(TEXT_TOP));
     }
 
     #[test]
     fn a_resize_with_the_page_the_same_settles_in_its_own_frame() {
-        // 180 words 100 wide. Previous at 1157: wrap 980, nine a line, 20 lines, 625 high.
+        // 180 words 100 wide. The column 900 wide: nine a line, 20 lines, 625 high.
         let mut ui = menu();
         let mut view = TutorialView::default();
         let mut sizes = SizesWritten::default();
         let s = shown(&ui, "Long", &words(180), 0, 1);
         write(&mut ui, &s);
         unchanged_frame(&mut ui, &mut sizes, &wrapped, &mut view);
-        assert_eq!((ui.get_float(&format!("{TEXT}/height")), scroll_bound(&ui)), (Some(625.0), 215.0));
+        assert_eq!((ui.get_float(&format!("{TEXT}/height")), scroll_bound(&ui)), (Some(625.0), 425.0));
         assert!(!view.apply(1, Command::Scroll(500.0)));
         unchanged_frame(&mut ui, &mut sizes, &wrapped, &mut view);
-        assert_eq!(text_y(&ui), Some(21.0 - 215.0));
-        // Narrower: Previous at 957, wrap 780, seven a line, 26 lines, 811 high. One frame, the
-        // model not written again: the body, the range and the scroll are all of the new size
-        // as the frame's writes end, before the tree is worked out after the scripts.
-        screen(&mut ui, 1456.25);
+        assert_eq!(text_y(&ui), Some(TEXT_TOP - 425.0));
+        // Narrower: the column 700, seven a line, 26 lines, 811 high. One frame, the model not
+        // written again: the body, the range and the scroll are all of the new size as the
+        // frame's writes end, before the tree is worked out after the scripts.
+        screen(&mut ui, 1000.0);
         let texts = super::super::menus::texts(&ui, ui.menu(TUTORIAL_MENU).unwrap());
         settled(&mut ui, &texts, &mut sizes, &wrapped, &mut view);
-        assert_eq!(ui.get_float(&format!("{TEXT}/wrapwidth")), Some(780.0));
+        assert_eq!(ui.get_float(&format!("{TEXT}/wrapwidth")), Some(700.0));
         assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(811.0));
-        assert_eq!(scroll_bound(&ui), 401.0);
-        assert_eq!(view.scroll, 215.0, "still in the wider range");
+        assert_eq!(scroll_bound(&ui), 611.0);
+        assert_eq!(view.scroll, 425.0, "still in the wider range");
         ui.update();
         assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(811.0), "nothing moves after the scripts");
-        assert_eq!(text_y(&ui), Some(21.0 - 215.0));
-        // Wider: wrap 1980, 19 a line, 10 lines, 315 high: no range left, the scroll held to it.
-        screen(&mut ui, 2956.25);
+        assert_eq!(text_y(&ui), Some(TEXT_TOP - 425.0));
+        // Wider: the column 1900, 19 a line, 10 lines, 315 high: less range, the scroll held to it.
+        screen(&mut ui, 2200.0);
         settled(&mut ui, &texts, &mut sizes, &wrapped, &mut view);
         assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(315.0));
+        assert_eq!((scroll_bound(&ui), view.scroll), (115.0, 115.0));
+        ui.update();
+        assert_eq!(text_y(&ui), Some(TEXT_TOP - 115.0));
+        // Wider still: the column 5900, 59 a line, 4 lines, 129 high: no range left.
+        screen(&mut ui, 6200.0);
+        settled(&mut ui, &texts, &mut sizes, &wrapped, &mut view);
+        assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(129.0));
         assert_eq!((scroll_bound(&ui), view.scroll), (0.0, 0.0));
         ui.update();
-        assert_eq!(text_y(&ui), Some(21.0));
+        assert_eq!(text_y(&ui), Some(TEXT_TOP));
     }
 
     #[test]
@@ -651,7 +650,7 @@ pub(crate) mod tests {
         let column = ui.find_tile(COLUMN).unwrap();
         ui.set_trait(column, "clipwindow", Value::Num(1.0));
         unchanged_frame(&mut ui, &mut SizesWritten::default(), &size, &mut view);
-        assert_eq!(clip(&ui, text).map(|c| c.height), Some(440.0));
+        assert_eq!(clip(&ui, text).map(|c| c.height), Some(200.0));
         // Injected with the page the same, by a mod's script.
         let src = MemSource::default();
         let depth = "TutorialMenu/NOGLOW_BRANCH/TM_Background/TM_depth_rect";
@@ -685,7 +684,7 @@ pub(crate) mod tests {
         let mut view = TutorialView::default();
         let s = shown(&ui, "Long", &words(20), 0, 1);
         frame(&mut ui, &s, &mut view);
-        let drag = marker_grab(&ui, 278.0).unwrap();
+        let drag = marker_grab(&ui, BAR_TOP + 10.0).unwrap();
         let menu = ui.menu(TUTORIAL_MENU);
         assert!(drag_holds(&drag, menu, true));
         assert!(!drag_holds(&drag, menu, false), "the press let go");
@@ -703,14 +702,14 @@ pub(crate) mod tests {
     fn the_symbols_width_comes_from_its_picture() {
         let mut ui = menu();
         let width = format!("{SYMBOL}/width");
-        assert_eq!(ui.get_float(&width), Some(-36.0), "the file alone, before the code writes");
-        assert_eq!(symbol_file(&ui).as_deref(), Some("loading\\symbol.dds"));
+        assert_eq!(ui.get_float(&width), Some(3.0), "the layout alone, before the code writes");
+        assert_eq!(symbol_file(&ui).as_deref(), Some("test\\emblem.dds"));
         write_symbol(&mut ui, Some(128.0));
         ui.update();
-        assert_eq!(ui.get_float(&width), Some(92.0));
+        assert_eq!(ui.get_float(&width), Some(131.0));
         write_symbol(&mut ui, None);
         ui.update();
-        assert_eq!(ui.get_float(&width), Some(f64::from(SYMBOL_W + SYMBOL_DEAD) - 36.0));
+        assert_eq!(ui.get_float(&width), Some(f64::from(SYMBOL_W + SYMBOL_DEAD) + 3.0));
     }
 
     #[test]
@@ -724,10 +723,10 @@ pub(crate) mod tests {
         frame(&mut ui, &s, &mut view);
         let items = super::super::layout::layout(&ui, menu, &size, true);
         let of = |t| items.iter().find(|i| i.tile == t).unwrap();
-        // The column's box on the screen: the background's 170, 96 and its own 108, 172.
+        // The column's box on the screen: the background's 50, 40 and its own 40, 60.
         let clip = of(text).clip.unwrap();
-        assert_eq!((clip.left, clip.top, clip.height), (278.0, 268.0, 440.0));
-        assert_eq!((of(text).rect.top, of(text).rect.height), (268.0 + 21.0, 625.0));
+        assert_eq!((clip.left, clip.top, clip.height), (90.0, 100.0, 200.0));
+        assert_eq!((of(text).rect.top, of(text).rect.height), (100.0 + TEXT_TOP, 625.0));
         assert_eq!(of(title).clip, None);
         // [observed] Under a background of alpha 193.8 the text and lines read full strength.
         assert_eq!((of(title).alpha, of(text).alpha), (255.0, 255.0));
@@ -745,34 +744,50 @@ pub(crate) mod tests {
         assert_eq!(tutorial_tile(&ui, tile(MARKER)), Some(TutorialTile::Marker));
         assert_eq!(tutorial_tile(&ui, tile(TITLE)), None);
         let cmd = |p: &str| tile_command(&ui, tutorial_tile(&ui, tile(&format!("{BAR}/{p}"))).unwrap());
-        assert_eq!(cmd("scrollbar_vert_down"), Some(Command::Scroll(30.0)));
-        assert_eq!(cmd("scrollbar_vert_up"), Some(Command::Scroll(-30.0)));
-        assert_eq!(cmd("scrollbar_vert_page_down"), Some(Command::Scroll(410.0)));
-        assert_eq!(cmd("scrollbar_vert_page_up"), Some(Command::Scroll(-410.0)));
+        assert_eq!(cmd("scrollbar_vert_down"), Some(Command::Scroll(40.0)));
+        assert_eq!(cmd("scrollbar_vert_up"), Some(Command::Scroll(-40.0)));
+        assert_eq!(cmd("scrollbar_vert_page_down"), Some(Command::Scroll(150.0)));
+        assert_eq!(cmd("scrollbar_vert_page_up"), Some(Command::Scroll(-150.0)));
         assert_eq!(tile_command(&ui, TutorialTile::Marker), None);
         assert_eq!(tile_command(&ui, TutorialTile::Close), Some(Command::Close));
     }
 
+    /// The fixture with the marker's step height `step`.
+    fn with_step_height(step: &str) -> Ui {
+        menu_changed(|xml| xml.replace("<_step_height>2.5</_step_height>", &format!("<_step_height>{step}</_step_height>")))
+    }
+
     #[test]
-    fn the_marker_drags_by_the_files_step_height() {
+    fn the_marker_drags_by_its_step_height() {
         let mut ui = menu();
         let mut view = TutorialView::default();
         let s = shown(&ui, "Long", &words(20), 0, 1);
         frame(&mut ui, &s, &mut view);
-        // The bar's top on the screen: the background's 96 and its own 172; a step of
-        // (424 - 32) / 215 units, the marker taken 10 under its top at value 0.
-        let grab = marker_grab(&ui, 278.0).unwrap();
-        assert_eq!((grab.top, grab.grab), (268.0, 10.0));
-        let step = 392.0 / 215.0;
-        assert_eq!(scroll_under(&ui, grab, 278.0), Some(0.0));
-        assert_eq!(scroll_under(&ui, grab, 278.0 + 100.5 * step), Some(100.0));
-        assert_eq!(scroll_under(&ui, grab, 5000.0), Some(215.0), "held to the bound");
+        // The marker taken 10 under its top at value 0.
+        let grab = marker_grab(&ui, BAR_TOP + 10.0).unwrap();
+        assert_eq!((grab.top, grab.grab), (BAR_TOP, 10.0));
+        assert_eq!(scroll_under(&ui, grab, BAR_TOP + 10.0), Some(0.0));
+        assert_eq!(scroll_under(&ui, grab, BAR_TOP + 10.0 + 100.5 * 2.5), Some(100.0), "whole values");
+        assert_eq!(scroll_under(&ui, grab, 5000.0), Some(425.0), "held to the bound");
         assert_eq!(scroll_under(&ui, grab, 0.0), Some(0.0));
-        // Taken lower down, the marker does not jump to the pointer.
-        write_scroll(&mut ui, 100.0);
-        ui.update();
-        let grab = marker_grab(&ui, 268.0 + 100.0 * step + 5.0).unwrap();
-        assert_eq!(scroll_under(&ui, grab, 268.0 + 100.0 * step + 5.0), Some(100.0));
+        // Another step height: it is read from the marker, not assumed.
+        let mut other = with_step_height("4");
+        let s = shown(&other, "Long", &words(20), 0, 1);
+        frame(&mut other, &s, &mut TutorialView::default());
+        let grab = marker_grab(&other, BAR_TOP + 10.0).unwrap();
+        assert_eq!(scroll_under(&other, grab, BAR_TOP + 10.0 + 50.5 * 4.0), Some(50.0));
+        // Taken lower down, the marker does not jump to the pointer and gives its own value
+        // back, also at a step that has no exact binary value.
+        let mut inexact = with_step_height("1.7");
+        let s = shown(&inexact, "Long", &words(20), 0, 1);
+        frame(&mut inexact, &s, &mut TutorialView::default());
+        for value in [1.0, 30.0, 100.0, 215.0, 333.0] {
+            write_scroll(&mut inexact, value);
+            inexact.update();
+            let at = BAR_TOP + marker_y(&inexact).unwrap() + 5.0;
+            let grab = marker_grab(&inexact, at).unwrap();
+            assert_eq!(scroll_under(&inexact, grab, at), Some(value));
+        }
     }
 
     #[test]
@@ -796,7 +811,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn single_breaks_make_the_observed_height_and_range() {
+    fn single_breaks_make_the_observed_height() {
         // [observed] The original's 625 high, 20 lines: 5, an empty one, 1, an empty one, 5 of
         // the list, an empty one, 3, an empty one, 2. Joined, the list takes 2 and leaves 532.
         let message = format!("{}\r\n\r\nh\r\n\r\n* a\r\n* b\r\n* c\r\n* d\r\n* e\r\n\r\n{}\r\n\r\n{}", words(45), words(27), words(18));
@@ -807,8 +822,6 @@ pub(crate) mod tests {
         write(&mut ui, &s);
         unchanged_frame(&mut ui, &mut SizesWritten::default(), &by_lines, &mut view);
         assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(625.0));
-        assert_eq!(ui.get_float(&format!("{BAR}/_number_of_items")), Some(655.0));
-        assert_eq!(scroll_bound(&ui), 215.0);
     }
 
     /// The menu with `lines_of_text` lines scrolled to `value`.
@@ -822,38 +835,44 @@ pub(crate) mod tests {
         ui
     }
 
+    /// The model's write is the value read back and asks the layout to place the marker by the
+    /// value, and a layout's marker follows it by the step height it holds. The real layout's
+    /// marker numbers are the smoke scenario `tiles-tutorial`'s.
     #[test]
-    fn the_marker_stands_by_the_files_formula() {
-        // scrollbar_vert.xml with the capture's numbers: a track 424 high, a marker 32 high
-        // (424 / 216, at least 32), so a step of 392 / 215 = 1.82 [observed: 54.70 at 30].
-        let marker = |ui: &Ui| (marker_y(ui).unwrap(), ui.get_float(&format!("{MARKER}/height")).unwrap());
-        assert_eq!(marker(&scrolled(20, 0.0)), (0.0, 32.0), "at the top of the track");
-        let (y, height) = marker(&scrolled(20, 215.0));
-        assert_eq!(y + height, 424.0, "at the bound, at the bottom of the track");
-        let (y, _) = marker(&scrolled(20, 30.0));
-        assert!((y - 54.70).abs() < 0.005, "{y}");
-        // A 532 high text at 30 of 122, as tiles_tutorial_bottom was before the body kept its
-        // lines [observed: the marker's middle at 285 pixels, 380 units]: the bar's top 268,
-        // 30 x 392 / 122, half the marker.
-        let (y, height) = marker(&scrolled(17, 30.0));
-        assert!((268.0 + y + height / 2.0 - 380.39).abs() < 0.01, "{y}");
+    fn the_models_scroll_is_read_back_and_a_marker_follows_it() {
+        let ui = scrolled(20, 40.0);
+        assert_eq!(scroll_shown(&ui), Some(40.0));
+        assert_eq!(ui.get_float(&format!("{BAR}/_SetInCode")), Some(1.0));
+        assert_eq!(marker_y(&ui), Some(100.0), "40 x 2.5");
+        let mut other = with_step_height("4");
+        write_scroll(&mut other, 40.0);
+        other.update();
+        assert_eq!(marker_y(&other), Some(160.0), "40 x 4");
     }
 
+    /// A click either side of the marker reaches the page area there and its command, and one on
+    /// the marker drags. The areas here stand still; how the real layout's move with the marker
+    /// is the smoke scenario `tiles-tutorial`'s.
     #[test]
-    fn the_page_areas_lie_either_side_of_the_marker() {
-        // tiles-tutorial's click at y 600 on the screen, 332 under the bar's top 268.
-        let area = |ui: &Ui, path: &str| {
-            let top = ui.get_float(&format!("{path}/y")).unwrap_or(0.0);
-            (top, top + ui.get_float(&format!("{path}/height")).unwrap())
+    fn a_click_either_side_of_the_marker_is_that_sides_page_command() {
+        // The scrollbar on the screen: x 60 to 80. Its areas: y 100 to 200 and y 220 to 400.
+        let on = |ui: &Ui, y: f64| {
+            let menu = ui.menu(TUTORIAL_MENU).unwrap();
+            let hit = fnv_ui::input::hit(ui, &[menu], (70.0, y), &size)?;
+            clicked(ui, hit.tile, Some(menu))
         };
-        let under = |(top, bottom): (f64, f64)| (top..bottom).contains(&332.0);
-        // The range the original has: at 120 of 215 the marker stands above the click.
-        let ui = scrolled(20, 120.0);
-        assert!(under(area(&ui, PAGE_DOWN)) && !under(area(&ui, PAGE_UP)));
-        assert_eq!(area(&ui, PAGE_DOWN).1, 424.0);
-        // 532 high, 120 of 122: the marker stands near the bottom, the same click is above it.
-        let ui = scrolled(17, 120.0);
-        assert!(under(area(&ui, PAGE_UP)) && !under(area(&ui, PAGE_DOWN)));
+        // The marker at 100 under the bar's top: y 200 to 220, between the areas.
+        let ui = scrolled(20, 40.0);
+        assert_eq!(on(&ui, 150.0), Some(TutorialTile::PageUp));
+        assert_eq!(on(&ui, 210.0), Some(TutorialTile::Marker));
+        assert_eq!(on(&ui, 300.0), Some(TutorialTile::PageDown));
+        assert_eq!(tile_command(&ui, TutorialTile::PageUp), Some(Command::Scroll(-150.0)));
+        assert_eq!(tile_command(&ui, TutorialTile::PageDown), Some(Command::Scroll(150.0)));
+        assert_eq!(tile_command(&ui, TutorialTile::Marker), None);
+        // The marker moved to y 300 to 320: drawn over the lower area, it takes the click there.
+        let ui = scrolled(20, 80.0);
+        assert_eq!(on(&ui, 310.0), Some(TutorialTile::Marker));
+        assert_eq!(on(&ui, 330.0), Some(TutorialTile::PageDown));
     }
 
     /// A renderer's faces: a font not loaded measures nothing, as `FontKit::menu_measure`.
@@ -951,7 +970,7 @@ pub(crate) mod tests {
             assert_eq!(built(&ui), Tiled::No(format!("{missing} missing")));
             let s = shown(&ui, "T", "x", 0, 1);
             write(&mut ui, &s);
-            assert_eq!(ui.get_float(&format!("{BACKGROUND}/alpha")), Some(32.0), "nothing written");
+            assert_eq!(ui.get_float(&format!("{BACKGROUND}/alpha")), Some(20.0), "nothing written");
         }
         // Each button's words on their own.
         for (button, missing) in [("TM_prev_button", PREVIOUS_TEXT), ("TM_close_button", CLOSE_TEXT)] {
