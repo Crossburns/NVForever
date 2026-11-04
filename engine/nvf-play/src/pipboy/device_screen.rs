@@ -4,16 +4,24 @@
 //! under the pages, the scanlines over them, and the coefficients the body's material
 //! (nvforever `pipboy_arm.rs`) puts the image and the glare on the model with.
 //!
-//! A provisional static fit. Every coefficient here is
-//! [hypothesis: fitted to the two measurements in pipboy.md §3], the empty screen and the
-//! solid amber, unless it says otherwise; a capture of the original's screen is to refine
-//! them, and they are all in this file so that its numbers can replace them. Flicker,
-//! vertical hold and shudder are not built.
+//! A static fit to a capture of the original [observed: private job
+//! pipboy_special_device_base: 1280 × 720, noon in Goodsprings, level view, the STATS page,
+//! 11 × 11 pixel means at eight empty places of the screen and on a filled bar]; all its
+//! numbers are in this file. It reaches those places to about 2 units through the model of
+//! the path below. Its shape is in the textures: the falloff to the edges is the
+//! background picture's, and the glow across the top and the patch on the right are the
+//! glare's, so the undercoat is left with next to nothing. `ScreenLit:8` has no part in
+//! it: `screen.dds` is black, `Screen_n.dds` flat and its specular colour black [observed:
+//! the files; `fnvtool nif decode`], so it stays hidden. None of this is lit by the world
+//! [design: both shapes are unlit]; how the hour changes the original's screen is not
+//! fitted, here the image-space grade moves it. Flicker, vertical hold and shudder are
+//! not built.
 //!
 //! The path from the image to the frame [design: `pipboy_arm.rs`, `nvf_assets::nif_spawn`
 //! `unlit_vertex_colors`, `imagespace.wesl`]: image × [`SCREEN_TINT`] ×
 //! [`SHAPE_VERTEX_COLOUR`], plus the glare's texel × [`GLARE_LINEAR_SCALE`] ×
 //! [`SHAPE_VERTEX_COLOUR`], through the world camera's tone mapping and image-space grade.
+//!
 //! The Pip-Boy's colour reaches the picture here ([`apply_colour`]), not through
 //! `ui_colour::recolour`, which leaves every [`ScreenFxNode`] alone: the picture's tint is
 //! raised and divided by its alpha, so it is no brightness of the colour for that to find,
@@ -22,15 +30,15 @@
 //! The screen menu (`Frame::Screen`) has none of this: no undercoat, no background, no
 //! scanlines, no glass (docs/design/screen-menu.md §2).
 //!
-//! Tuning on the `pipboy` shot, 1280 × 720, noon in Goodsprings, 10 × 10 medians,
-//! remeasuring after each change, in this order:
-//! - [`EMPTY_SCENE`], on the empty middle away from ink and patch: scale a channel by
-//!   linear(target) / linear(measured).
-//! - [`GLARE_LINEAR_SCALE`], on the top right patch: scale a channel by (linear(target) −
-//!   linear(empty)) / (linear(measured) − linear(empty)).
-//! - [`SCANLINE_DEPTH`], on a solid bar's rows: scale by the target dip over the measured
-//!   dip, as parts of the bright row's display value.
-//! - [`SCREEN_TINT`] stays unless the solid amber has moved from (220, 180, 64).
+//! Tuning on the `pipboy` shot, 1280 × 720, noon in Goodsprings, 11 × 11 means, remeasuring
+//! after each change, in this order:
+//! - [`SCREEN_TINT`], on a filled bar: scale a channel by the light of the target over the
+//!   light of the reading (undo the tone map and grade; near linear in the middle tones).
+//! - [`BACKGROUND_BRIGHTNESS`], at the empty far edges and beside the figure.
+//! - [`GLARE_LINEAR_SCALE`], at the top middle, above the figure: scale a channel by
+//!   (linear(target) − linear(beside)) / (linear(reading) − linear(beside)).
+//! - [`UNDERCOAT_LIGHT`], last, only if the far edges stay wrong. [`SCANLINE_DEPTH`] matches
+//!   the capture (an empty column's green 21 to 28.5): leave it.
 
 use super::frame::{scanline_column, Ctx, Kit};
 use super::{Frame, PipBoy, PipBoyScreen, CANVAS};
@@ -40,47 +48,38 @@ use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
 use nvf_assets::GameData;
 
-/// What the screen multiplies the menus' picture by (linear): so that their brightest
-/// amber comes out as the original's on a 1280 × 720 frame at noon in Goodsprings
-/// [observed: fitted; the owner's ITEMS screenshot's solid CND bar is about (220, 180,
-/// 64), and with this the menus' brightest text is (221, 179, 59); unscaled it was
-/// (237, 167, 53), the view's tone mapping squeezing the brightest values].
-pub const SCREEN_TINT: [f32; 3] = [0.83, 1.17, 1.27];
+/// What the screen multiplies the menus' picture by (linear), the view's tone map and grade
+/// after it: so that a filled bar comes out as the original's (176.8, 132.9, 47.2) where
+/// (0.83, 1.17, 1.27) gave (208.7, 167.2, 44.6) [observed: private job
+/// pipboy_special_device_base]. An older reading of another scene, (220, 180, 64), gave
+/// that first tint.
+pub const SCREEN_TINT: [f32; 3] = [0.51, 0.648, 1.389];
 
 /// The vertex colour both the screen's and the glare's shapes carry, in linear light: 0.81
 /// in `pipboyarm.nif` [observed: `fnvtool nif decode`], taken as a display value on an
 /// unlit shape (`nif_spawn::unlit_vertex_colors`).
 pub const SHAPE_VERTEX_COLOUR: f32 = 0.624;
 
-/// The light in the view (before tone mapping and grade) that comes out as the empty
-/// screen's (31, 27, 15) [hypothesis: fitted to the two measurements in pipboy.md §3:
-/// Bevy's TonyMcMapface table and an image-space grade fitted to our own three readings,
-/// (237, 167, 53), (221, 179, 59) and (15, 9, 0), all within about 2 units; through the same
-/// model the amber with this floor under it stays (220, 180, 63)]. Noon in Goodsprings:
-/// the grade changes with the place and the hour.
-pub const EMPTY_SCENE: [f32; 3] = [0.00909, 0.00774, 0.0043];
+/// What the undercoat adds to the view (linear, before tone map and grade), next to nothing:
+/// the far edges of the screen are almost black in the original, (7.4, 5.7, 2.0) on the left
+/// [observed: private job pipboy_special_device_base; fitted with the two below].
+pub const UNDERCOAT_LIGHT: [f32; 3] = [0.00047, 0.00055, 0.00054];
 
-/// The glare's linear scale on `ScreenGlare.dds` [hypothesis: fitted to the two
-/// measurements in pipboy.md §3, which do not tell glare from undercoat: strong enough for
-/// the faint lighter patch at the top right of the owner's screenshots, about 10 units
-/// over the empty screen, while the amber moves by under one]. The terminal's
+/// The glare's linear scale on `ScreenGlare.dds`, its colour warmer than the texture's
+/// [observed: private job pipboy_special_device_base; fitted: the top middle above the
+/// figure, (78.6, 76.9, 49.3), with the patch to the right]. The terminal's
 /// `GLARE_LINEAR_SCALE` is measured for its own glass and is not this.
-pub const GLARE_LINEAR_SCALE: [f32; 3] = [0.25, 0.25, 0.25];
+pub const GLARE_LINEAR_SCALE: [f32; 3] = [1.87, 1.07, 0.57];
 
-/// The glare texture's median texel in linear light [observed: `ScreenGlare.dds`, 512 ×
-/// 512 DXT1, alpha 1 throughout, read 2026-11-04]: what the sheet adds away from its
-/// streak, taken off the undercoat.
-const GLARE_MEDIAN_TEXEL: [f32; 3] = [0.00243, 0.00368, 0.00304];
-
-/// The background picture, at brightness 90 over the whole canvas [documented: the menu
-/// files, as `frame.rs`]; its centre texel is (76, 77, 76), alpha 1 [observed: the file,
-/// hacking.md §7].
+/// The background picture over the whole canvas. Its vignette is the screen's falloff. The
+/// menu files give it brightness 90 [documented: as `frame.rs`]; it takes 129 to match
+/// beside the figure and at the edges with the dimmer [`SCREEN_TINT`] [observed: private job
+/// pipboy_special_device_base; fitted].
 const BACKGROUND: &str = "Interface\\Shared\\Background\\pipboy.dds";
-const BACKGROUND_BRIGHTNESS: f32 = 90.0;
-const BACKGROUND_MIDDLE: f32 = 76.0 / 255.0;
-/// How much of the undercoat the picture covers. What it adds stays as at brightness 90
-/// over black, so its light and its vignette are as they were; the undercoat shows through
-/// [design: the terminal's way, `terminal::screen::BACKGROUND_ALPHA`; the value is its].
+pub const BACKGROUND_BRIGHTNESS: f32 = 129.0;
+/// How much of the undercoat the picture covers. What it adds stays what it would over
+/// black, its vignette whole; the undercoat shows through [design: the terminal's way,
+/// `terminal::screen::BACKGROUND_ALPHA`; the value is its].
 const BACKGROUND_ALPHA: f32 = 0.4;
 
 /// The scanlines: the band of `pipboyscanlines.dds`, again every 9.5 of the canvas, dimming
@@ -99,22 +98,11 @@ fn background_light(rgb: [u8; 3]) -> Vec3 {
     Vec3::from_array(rgb.map(|c| linear(f32::from(c) / 255.0 * BACKGROUND_BRIGHTNESS / 255.0)))
 }
 
-/// What the glare adds to the view away from its streak.
-fn glare_floor() -> Vec3 {
-    Vec3::from_array(GLARE_MEDIAN_TEXEL) * Vec3::from_array(GLARE_LINEAR_SCALE) * SHAPE_VERTEX_COLOUR
-}
-
-/// What the image must average over the empty middle of the screen, before scanlines.
-fn glass_target() -> Vec3 {
-    (Vec3::from_array(EMPTY_SCENE) - glare_floor()) / (Vec3::from_array(SCREEN_TINT) * SHAPE_VERTEX_COLOUR)
-}
-
-/// [design] Solve target = picture × alpha + undercoat × (1 − alpha) in the middle, at the
-/// default amber: the undercoat is the glass, which does not follow the interface's colour
-/// [hypothesis]. Before the scanlines' lift.
+/// The undercoat before the scanlines' lift: [`UNDERCOAT_LIGHT`], back through the material's
+/// product and from under the picture. The glass, which does not follow the interface's
+/// colour [hypothesis].
 fn glass_undercoat() -> Vec3 {
-    let picture = background_light(AMBER_RGB) * linear(BACKGROUND_MIDDLE);
-    ((glass_target() - picture) / (1.0 - BACKGROUND_ALPHA)).max(Vec3::ZERO)
+    Vec3::from_array(UNDERCOAT_LIGHT) / (Vec3::from_array(SCREEN_TINT) * SHAPE_VERTEX_COLOUR) / (1.0 - BACKGROUND_ALPHA)
 }
 
 /// The undercoat, the screen camera's clear colour on the device: raised by what the
@@ -334,33 +322,36 @@ mod tests {
     #[test]
     fn the_empty_screen_averages_the_fit_through_every_layer() {
         // The same bytes and mean as `bake`, then the layers as `draw` and `camera_on` lay
-        // them, and the material's product and the glare's floor (`pipboy_arm.rs`).
+        // them, and the material's product (`pipboy_arm.rs`): the picture's light, its
+        // vignette whole, and the undercoat's, with the scanlines' mean given back.
         let column = baked_column(&band_at_depth(&band(), SCANLINE_DEPTH), CANVAS.y as usize, SCANLINE_PITCH);
         let (rgba, kept) = scanline_pixels(&column);
         assert!(kept > 0.7 && kept < 1.0, "{kept}");
-        let mut sum = Vec3::ZERO;
-        for p in rgba.as_chunks::<4>().0 {
-            let c = image_row(BACKGROUND_MIDDLE, None, p[3], kept);
-            sum += Vec3::new(c.red, c.green, c.blue);
+        let tint_shape = Vec3::from_array(SCREEN_TINT) * SHAPE_VERTEX_COLOUR;
+        for texel in [0.05, 0.3, 0.39] {
+            let mut sum = Vec3::ZERO;
+            for p in rgba.as_chunks::<4>().0 {
+                let c = image_row(texel, None, p[3], kept);
+                sum += Vec3::new(c.red, c.green, c.blue);
+            }
+            let scene = sum / column.len() as f32 * tint_shape;
+            let want = background_light(AMBER_RGB) * linear(texel) * tint_shape + Vec3::from_array(UNDERCOAT_LIGHT);
+            assert!((scene - want).abs().max_element() < 2e-5, "{scene} {want}");
         }
-        let image = sum / column.len() as f32;
-        let scene = image * Vec3::from_array(SCREEN_TINT) * SHAPE_VERTEX_COLOUR + glare_floor();
-        let want = Vec3::from_array(EMPTY_SCENE);
-        assert!((scene - want).abs().max_element() < 2e-5, "{scene} {want}");
-        // The undercoat stays a colour of its own: nothing is clipped away in the solve.
+        // The picture carries the falloff: at its dark edge the undercoat is no more than
+        // comparable, in its bright middle it is a small part.
         assert!(glass_undercoat().min_element() > 0.0, "{}", glass_undercoat());
+        let middle = background_light(AMBER_RGB) * linear(76.0 / 255.0) * tint_shape;
+        assert!(Vec3::from_array(UNDERCOAT_LIGHT).x < 0.2 * middle.x, "{middle}");
     }
 
     #[test]
     fn opaque_amber_keeps_its_value_on_the_bright_rows() {
         // The band's white rows take nothing from the ink, and the undercoat is behind it.
         let amber = crate::interface::tint(AMBER_RGB, 255.0);
-        let c = image_row(BACKGROUND_MIDDLE, Some(amber), 0, 0.8);
+        let c = image_row(0.3, Some(amber), 0, 0.8);
         let a = amber.to_linear();
         assert!((c.red - a.red).abs() < 1e-5 && (c.green - a.green).abs() < 1e-5 && (c.blue - a.blue).abs() < 1e-5);
-        // The glare's floor is small beside it (so the amber moves by under a unit).
-        let scene = Vec3::new(a.red, a.green, a.blue) * Vec3::from_array(SCREEN_TINT) * SHAPE_VERTEX_COLOUR;
-        assert!(glare_floor().x < 0.01 * scene.x && glare_floor().y < 0.01 * scene.y && glare_floor().z < 0.05 * scene.z);
     }
 
     /// Whichever colour the test says, not the global one other tests may be setting.

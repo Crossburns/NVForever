@@ -92,33 +92,39 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   left of a 1280 × 960 image. So the screen shows the canvas to about 964 across and 731
   down. NVForever draws the menus into such an image (interface lengths are its pixels)
   and puts it on the screen as it is.
-- **Colour** [observed: fitted]: the solid amber of the CND bar on the screenshot is
-  about (220, 180, 64); unlit and unscaled our brightest text came out (237, 167, 53)
-  through the view's tone mapping; multiplied by (0.83, 1.17, 1.27) it is
-  (221, 179, 59). `fBrightenPipboy` is not applied as such.
-- **The glass** [observed: the screenshots]: only a faint lighter patch at the top right
-  over the menus, and an empty screen of about (31, 27, 15). Through the engine's
-  display-value add (nif.md §6) the glare lay over them as a pale grey-blue haze, so it was
-  hidden, and the empty screen was (15, 9, 0).
+- **Colour** [observed: private job pipboy_special_device_base]: a filled bar in the
+  original at noon in Goodsprings, level view, is about (177, 133, 47). `SCREEN_TINT`
+  (0.51, 0.648, 1.389) is fitted to it from (0.83, 1.17, 1.27), which gave (209, 167, 45).
+  An older reading of another scene, about (220, 180, 64), gave that first tint.
+  `fBrightenPipboy` is not applied as such.
+- **The glass** [observed: private job pipboy_special_device_base, 11 × 11 means at 1280 ×
+  720]: at eight empty places the original runs from (7, 6, 2) at the far left edge, (15,
+  11, 3) at the far right and about (20, 15, 4) beside the figure on the left, to (30, 25,
+  11) lower right and (79, 77, 49) at the top middle above the figure: a strong falloff to
+  the edges, warm, and brighter across the top. Through the engine's display-value add
+  (nif.md §6) the glare lay over the menus as a pale grey-blue haze, so it was hidden.
 - **The static treatment** (nvf-play `pipboy/device_screen.rs`, all its numbers in that
-  file; a provisional fit that a capture of the original will refine, §8)
-  [hypothesis: fitted to the two measurements above]:
-  - `ScreenLit:8` stays hidden; there is no evidence yet for what it adds. `glare:0` is
-    drawn over the menus on a copy of its material, unlit, added in linear light as the
-    terminal's glare is (hacking.md §7), at a linear scale of 0.25 on the texture. The
-    copy keeps the shape's squeezed first-person depth, which Bevy's plain additive
-    material would not, and the sheet's soft intersection is off. The scale is not
-    determined by the two measurements, which cannot tell glare from undercoat: it is
-    chosen for a patch about 10 units over the empty screen.
-  - A dark undercoat, the screen camera's clear colour, solved so that the empty middle
-    comes out (31, 27, 15) through the whole path: image × `SCREEN_TINT` × the shapes'
-    vertex colour (0.624 in linear light), plus the glare, through the tone map and the
-    image-space grade. That path was modelled from Bevy's TonyMcMapface table and a grade
-    fitted to our three readings ((237, 167, 53), (221, 179, 59), (15, 9, 0), within about
-    2 units); it predicts the solid amber stays about (220, 180, 63). The grade belongs to
-    noon in Goodsprings: elsewhere the screen moves with it.
-  - The background picture covers the undercoat at alpha 0.4 and adds what it added at
-    brightness 90 over black [documented: inventory_menu.xml, the brightness].
+  file), fitted to those places through a model of the path: image × `SCREEN_TINT` × the
+  shapes' vertex colour (0.624 in linear light), plus the glare, through Bevy's
+  TonyMcMapface table and an image-space grade fitted to our own readings. It reaches them
+  to about 2 units [fitted, not yet measured in game]:
+  - The falloff is the background picture's vignette: `pipboy.dds` runs from about 9 at its
+    corners to 93 near the top of its middle [observed: the file]. Drawn over a large
+    undercoat, as the first fit had it, the vignette was lost. The picture is at brightness
+    129 (the menu file's 90 at the first tint [documented: inventory_menu.xml]), covering
+    the undercoat at alpha 0.4 and adding what it would over black.
+  - The undercoat, the screen camera's clear colour, is next to nothing: (0.00047, 0.00055,
+    0.00054) of light in the view.
+  - The glow across the top and the patch on the right are `glare:0`'s: its texture's
+    brightest band and patch lie there [observed: the file]. It is drawn over the menus on a
+    copy of its material, unlit, added in linear light as the terminal's glare is (hacking.md
+    §7), at a linear scale of (1.87, 1.07, 0.57) on the texture, warmer than the texture.
+    The copy keeps the shape's squeezed first-person depth, which Bevy's plain additive
+    material would not, and the sheet's soft intersection is off.
+  - `ScreenLit:8` stays hidden: `screen.dds` is black, `Screen_n.dds` is flat and its
+    specular colour black [observed: the files; `fnvtool nif decode`], so it carries no
+    falloff. Both shapes used are unlit, so nothing here is lit by the world [design]; how
+    the hour changes the original's screen is not in the fit, and here the grade moves it.
   - One baked column of scanlines over the canvas, a value per row (no tiling): the band
     of `pipboyscanlines.dds`, rescaled to dim display values by 15% at its dark end, every
     9.5 of the canvas. The undercoat and the picture are raised by what the lines take
@@ -613,9 +619,9 @@ fourth row, and a click on a row equips what it selects.
 - Whether the original holds the clip at `Hit` (the measurements say the screen faces
   the eye there).
 - The keys of the PC game for the pages and tabs.
-- The glass: the static treatment's numbers (§3) are fitted to two measurements. A
-  capture should give the centre, corners and streak of the empty screen, foreground in
-  and out of the streak, scanline peak, trough and phase, other poses, pages and lighting.
+- The glass: the static treatment (§3) is fitted at noon, level view, one page. Whether
+  the original's screen moves with the hour, the pose and the page beyond what the grade
+  does here is not fitted.
 - `fDefault1stPersonFOV=55` for the arms outside the Pip-Boy.
 - What `fBlurIntensityPipboy`, `fScanlineScalePipboy` and `fBrightenPipboy` scale.
 - The mouse pointer: the screenshots show an amber arrow (`interface\icons\misc\

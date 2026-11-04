@@ -25,11 +25,10 @@
 //!   units in front of it with `ScreenGlare.dds` [observed: their properties and
 //!   vertices], is drawn on a copy of its material that adds in linear light
 //!   ([`glare_material`]). Through the engine's display-value add it lay over the menus as
-//!   a pale grey-blue haze the owner's screenshots do not have [observed]; those show a
-//!   faint lighter patch at the top right and an empty screen of about (31, 27, 15), so
-//!   the original draws the glare far more weakly [hypothesis]. The fit's numbers are in
-//!   `nvf_play::pipboy::device_screen`, provisional until a capture. The materials are
-//!   copies: the shapes' own come back when the Pip-Boy is down.
+//!   a pale grey-blue haze [observed]; in the original it is a warm glow across the top
+//!   and a patch on the right [observed: private job pipboy_special_device_base]. The
+//!   fit's numbers are in `nvf_play::pipboy::device_screen`. The materials are copies: the
+//!   shapes' own come back when the Pip-Boy is down.
 //! - While the Pip-Boy is up only the page's button glows [observed: the owner's
 //!   screenshots: the button of the page shown is bright, the other two dimmer]; the
 //!   pointer lights none (a player's comparison with the original, #1516). Down, all
