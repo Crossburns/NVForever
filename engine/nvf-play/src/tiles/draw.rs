@@ -993,7 +993,8 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: V
 /// The Pip-Boy's S.P.E.C.I.A.L. page, in the Pip-Boy's image, while it is ready
 /// (`super::stats_menu::StatsTiles::ready`, decided before this drawing). What was painted is
 /// published for the next frame's tile input, which acts on what the player saw. Logged when it
-/// changes: how many pieces, and how many of them are the rows' names (smoke reads these).
+/// changes: how many pieces go to the painter, and how many of them are the rows' names. That
+/// is structure, before painting: it says nothing of the pixels, which only shots can.
 fn stats_page(commands: &mut Commands, game: Option<&fnv_game::Game<'_>>, view: &mut View, kit: &mut FontKit, drawn: &mut Drawn, nodes: &mut Nodes, heading: f32) {
     let Some(target) = view.screen.as_ref().map(|s| Target::image(s.camera, crate::pipboy::CANVAS, s.scale, PIPBOY_TILES_Z)) else { return };
     let name = super::stats_menu::STATS_MENU;
@@ -1011,7 +1012,7 @@ fn stats_page(commands: &mut Commands, game: Option<&fnv_game::Game<'_>>, view: 
             let names = pieces.iter().filter(|p| matches!(p.look, Look::Text { .. }) && ui.tile(p.tile).name.eq_ignore_ascii_case("ListItemText")).count();
             let counts = (pieces.len(), names);
             if counts != drawn.counts {
-                info!("tiles: {name} painted on the Pip-Boy's image: {} pieces, {} row names", counts.0, counts.1);
+                info!("tiles: {name} set out for the Pip-Boy's image: {} pieces, {} row names", counts.0, counts.1);
                 drawn.counts = counts;
             }
             pieces

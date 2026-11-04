@@ -348,6 +348,8 @@ pub struct StateMemory {
     logged: String,
     /// The tab and frame the page last showed, while it shows.
     page: Option<(usize, super::Frame)>,
+    /// The test aid's `longdesc`.
+    long: bool,
 }
 
 /// What [`prepare`] leaves for the views of the page, the hand-built [`draw`] and the tiles'
@@ -400,6 +402,7 @@ pub fn prepare(
     let aid = mem.aid.get_or_insert_with(|| std::env::var("NVF_PLAY_TEST_PIPBOY_STATS").map(|v| parse_aid(&v)).unwrap_or_default());
     // A world aid (`crate::pause::WorldAidClock`).
     let now = input.time.world_secs();
+    let mut long = false;
     while let Some(now) = now.filter(|&now| aid.first().is_some_and(|a| a.0 <= now)) {
         let (_, s) = aid.remove(0);
         info!("test aid: pipboy stats {s:?} at {now:.1} s");
@@ -411,9 +414,11 @@ pub fn prepare(
             (AidStep::Use(hint), _) => {
                 input.asks.write(UseHint { hint, limb: if hint == model::STIMPAK { view.limb } else { None } });
             }
+            (AidStep::LongDesc, _) => long = true,
             _ => change(&mut view, |v| apply_aid(v, tab, s)),
         }
     }
+    mem.long |= long;
     // With the page drawn from its tiles a menu over it owns the keys and the wheel for all of
     // the frame it closes in (`crate::tiles::stats_menu::StatsTiles::modal`).
     let tiles = input.tiles.as_deref();
@@ -452,7 +457,12 @@ pub fn prepare(
     };
     let forms = mem.forms.get_or_insert_with(|| read::Forms::new(play.lo, play.schema));
     let script = src.script.as_mut().map(|s| s.bypass_change_detection());
-    let snap = read::snapshot(forms, src.sim.bypass_change_detection(), script);
+    let mut snap = read::snapshot(forms, src.sim.bypass_change_detection(), script);
+    if mem.long {
+        for row in &mut snap.special {
+            row.description = long_description();
+        }
+    }
     // Keep the selection within the lists.
     let lens = [0, snap.special.len(), snap.skills.len(), snap.perks.len(), snap.rows(4, view.reputation).len()];
     if view.lens != lens {
@@ -1133,7 +1143,8 @@ pub fn use_hints(
 /// have something to show, `perk=<FormID hex>` (the player gains a rank of it, as
 /// AddPerk) and `fame=<FormID hex>=<points>` (fame with a reputation); on CND
 /// `limb=<0-5>` chooses a limb (`model::LIMB_NAMES`), `limb=none` the whole body, and
-/// `use=stimpak` or `use=bag` uses the hint's item as its key does.
+/// `use=stimpak` or `use=bag` uses the hint's item as its key does; `longdesc` gives every
+/// S.P.E.C.I.A.L. row a description long enough to scroll, in words of the aid's own.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AidStep {
     Sub(usize),
@@ -1145,6 +1156,12 @@ pub enum AidStep {
     Fame(u32, f64),
     Limb(Option<usize>),
     Use(usize),
+    LongDesc,
+}
+
+/// The test aid's `longdesc`: twelve lines of its own words.
+fn long_description() -> String {
+    (1..=12).map(|i| format!("Test line {i}.")).collect::<Vec<_>>().join("\n")
 }
 
 fn parse_aid(v: &str) -> Vec<(f32, AidStep)> {
@@ -1156,6 +1173,7 @@ fn parse_aid(v: &str) -> Vec<(f32, AidStep)> {
                 "down" => Some(AidStep::Down),
                 "up" => Some(AidStep::Up),
                 "mode" => Some(AidStep::Mode),
+                "longdesc" => Some(AidStep::LongDesc),
                 "desc=down" => Some(AidStep::Desc(1)),
                 "desc=up" => Some(AidStep::Desc(-1)),
                 "limb=none" => Some(AidStep::Limb(None)),
@@ -1188,7 +1206,7 @@ fn apply_aid(view: &mut StatsView, tab: usize, s: AidStep) {
         AidStep::Mode => view.switch(),
         AidStep::Desc(by) => view.scroll_desc(by),
         AidStep::Limb(l) => view.limb = l,
-        AidStep::Perk(_) | AidStep::Fame(..) | AidStep::Use(_) => {}
+        AidStep::Perk(_) | AidStep::Fame(..) | AidStep::Use(_) | AidStep::LongDesc => {}
     }
 }
 
@@ -1203,6 +1221,8 @@ mod tests {
             s,
             vec![(2.0, AidStep::Perk(0x44CB1)), (2.5, AidStep::Fame(0x104C22, 4.0)), (3.0, AidStep::Sub(1)), (4.0, AidStep::Down), (5.0, AidStep::Desc(1)), (9.0, AidStep::Mode)]
         );
+        assert_eq!(parse_aid("7:longdesc"), vec![(7.0, AidStep::LongDesc)]);
+        assert_eq!(long_description().lines().count(), 12);
         let s = parse_aid("1:limb=2,2:use=stimpak,3:limb=none,4:use=bag,5:limb=6");
         assert_eq!(s, vec![(1.0, AidStep::Limb(Some(2))), (2.0, AidStep::Use(0)), (3.0, AidStep::Limb(None)), (4.0, AidStep::Use(1))]);
     }

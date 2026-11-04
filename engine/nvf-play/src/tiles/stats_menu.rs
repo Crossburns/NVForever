@@ -57,7 +57,8 @@ pub const STATS_MENU: &str = "StatsMenu";
 /// The tab drawn from tiles.
 pub const PAGE: usize = 1;
 /// Test aid: a tile or template of the file to take as missing, so a smoke scenario sees the
-/// fallback of a cut-down file without a changed game file.
+/// fallback of a cut-down file without a changed game file: `<name>`, or `<name>@<seconds>` to
+/// stop at that time, for the page's recovery.
 pub const CUT_AID: &str = "NVF_PLAY_TEST_STATS_TILE_CUT";
 
 /// The tiles the model writes and the input reads, by name [observed: the vanilla files,
@@ -532,8 +533,8 @@ pub(crate) struct Written {
     regions: Option<Regions>,
     /// What is shown changed since the log last said so.
     tell: bool,
-    /// The description's scroll and the text's place last logged.
-    drawn: Option<(f64, f64)>,
+    /// The description's scroll, the text's place and the bound last logged.
+    drawn: Option<(f64, f64, usize)>,
     fallbacks: HashSet<String>,
 }
 
@@ -550,6 +551,8 @@ pub struct StatsTiles {
     pub desc_for: Option<(usize, Frame)>,
     /// [`CUT_AID`].
     pub cut: Option<String>,
+    /// [`CUT_AID`]'s time.
+    pub cut_until: Option<f32>,
     /// A menu over the page when this frame began ([`modal_over`]): set before the scripts,
     /// so it holds through the frame that menu closes in.
     pub modal: bool,
@@ -633,7 +636,7 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
         if std::mem::take(&mut w.tell) {
             info!("{}", describe(ui, &p, w));
         }
-        let now = (num(ui, p.bar, "_current_value"), num(ui, p.desc, "y"));
+        let now = (num(ui, p.bar, "_current_value"), num(ui, p.desc, "y"), view.desc_bound());
         if w.drawn != Some(now) {
             let (scroll, text_y) = (Value::Num(now.0).text(), Value::Num(now.1).text());
             info!("tiles: {STATS_MENU} description scroll drawn at {scroll} of {}, text y {text_y}", view.desc_bound());
@@ -672,6 +675,7 @@ pub(crate) struct StatsPage<'w> {
     view: Option<ResMut<'w, StatsView>>,
     tiles: ResMut<'w, StatsTiles>,
     fonts: FontKit<'w>,
+    time: crate::pause::AidTime<'w>,
 }
 
 /// Whether the page is eligible to prepare: the switch on and the tab showing.
@@ -710,6 +714,11 @@ pub(crate) fn write(mut p: StatsPage) {
 /// Before the drawing, after the model's keys: what they changed, the tree worked out, and the
 /// one decision every reader of this frame shares.
 pub(crate) fn settle(mut p: StatsPage) {
+    if p.tiles.cut_until.is_some_and(|until| p.time.elapsed_secs() >= until) {
+        info!("test aid: {CUT_AID} over");
+        p.tiles.cut = None;
+        p.tiles.cut_until = None;
+    }
     let ready = match pass(&mut p, true) {
         Some(Ok(menu)) => Some(menu),
         Some(Err(reason)) => {
@@ -1000,7 +1009,19 @@ pub(crate) fn feed(
 
 /// The resource, with the test aid read.
 pub(crate) fn setup(app: &mut App) {
-    app.insert_resource(StatsTiles { cut: std::env::var(CUT_AID).ok(), ..Default::default() });
+    let (cut, cut_until) = std::env::var(CUT_AID).ok().map_or((None, None), |v| {
+        let (name, until) = parse_cut(&v);
+        (Some(name), until)
+    });
+    app.insert_resource(StatsTiles { cut, cut_until, ..Default::default() });
+}
+
+/// [`CUT_AID`]'s value: the name and the time it stops at.
+fn parse_cut(v: &str) -> (String, Option<f32>) {
+    match v.split_once('@') {
+        Some((name, until)) => (name.trim().to_string(), until.trim().parse().ok()),
+        None => (v.trim().to_string(), None),
+    }
 }
 
 #[cfg(test)]
@@ -1279,6 +1300,12 @@ mod tests {
         assert_eq!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err(), format!("{ICON} missing"));
         t.cut = None;
         assert!(run(&mut ui, &snap(), &mut v, true, &mut t).is_ok(), "a failed pass is tried again");
+    }
+
+    #[test]
+    fn the_cut_aid_reads_a_name_and_a_time() {
+        assert_eq!(parse_cut("stats_icon"), ("stats_icon".to_string(), None));
+        assert_eq!(parse_cut(" stats_icon @ 33.5 "), ("stats_icon".to_string(), Some(33.5)));
     }
 
     #[test]
