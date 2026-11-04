@@ -364,7 +364,8 @@ pub fn drive(
         }
         match ev {
             WalkEvent::UsedDoor(d) => {
-                info!("nav: {} used door {:08X} into {} after {elapsed:.1}s", tr.label, d.door, space_name(&world, tr.walker.space));
+                let facing = tr.walker.door_off.map_or(String::new(), |o| format!(", facing it ({:.0} degrees off)", o.to_degrees()));
+                info!("nav: {} used door {:08X} into {} after {elapsed:.1}s{facing}", tr.label, d.door, space_name(&world, tr.walker.space));
             }
             WalkEvent::Arrived => {
                 tr.arrived = Some(elapsed);
