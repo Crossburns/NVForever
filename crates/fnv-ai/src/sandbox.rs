@@ -165,6 +165,8 @@ pub struct Sandbox {
     /// It got up from furniture for its last choice, which has not begun yet
     /// ([`Sandbox::phase`]).
     pub(crate) got_up: bool,
+    /// Another behaviour took control; cancellation runs once until the next choice.
+    interrupted: bool,
 }
 
 /// A sandbox's day as a save keeps it ([`crate::progress`]): where its random numbers
@@ -211,6 +213,7 @@ impl Sandbox {
             until: Until::Time(f64::NEG_INFINITY),
             pending: None,
             got_up: false,
+            interrupted: false,
             chosen_at: 0.0,
         };
         s.roll(game);
@@ -267,6 +270,23 @@ impl Sandbox {
         }
     }
 
+    /// Give up the current choice when another behaviour takes control [design].
+    /// The next package update chooses afresh, retaining the day, random sequence and
+    /// object-selection history. This is neither an arrival nor a failed route.
+    /// Returns true only on the first interruption, so the caller can relinquish the
+    /// sandbox's movement without clearing the interrupting behaviour's later walks.
+    pub(crate) fn interrupt(&mut self) -> bool {
+        if self.interrupted {
+            return false;
+        }
+        self.interrupted = true;
+        self.pending = None;
+        self.got_up = false;
+        self.doing = Doing::Standing;
+        self.until = Until::Time(f64::NEG_INFINITY);
+        true
+    }
+
     /// Hours left of a window that started at `start` and lasts `hours`, at `hour`.
     fn left(start: f32, hours: f32, hour: f32) -> Option<f32> {
         let since = (hour - start).rem_euclid(24.0);
@@ -321,6 +341,7 @@ impl Sandbox {
 
     /// Choose what to do next, standing at `at`.
     pub fn next(&mut self, game: &Game, nav: &NavGraph, taken: &BTreeMap<FormId, FormId>, actor: FormId, at: Place) -> Choice {
+        self.interrupted = false;
         self.roll(game);
         self.chosen_at = game.time;
         let cal = game.world.calendar().ok();
