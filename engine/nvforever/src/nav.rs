@@ -364,7 +364,8 @@ pub fn drive(
         }
         match ev {
             WalkEvent::UsedDoor(d) => {
-                info!("nav: {} used door {:08X} into {} after {elapsed:.1}s", tr.label, d.door, space_name(&world, tr.walker.space));
+                let facing = tr.walker.door_off.map_or(String::new(), |o| format!(", facing it ({:.0} degrees off)", o.to_degrees()));
+                info!("nav: {} used door {:08X} into {} after {elapsed:.1}s{facing}", tr.label, d.door, space_name(&world, tr.walker.space));
             }
             WalkEvent::Arrived => {
                 tr.arrived = Some(elapsed);
@@ -466,9 +467,14 @@ pub(crate) fn show_actor(
         // Drawn once its parts are read, on a worker thread, rather than reading them in
         // the frame it comes into view (`readahead::ready_to_draw`) [engineering choice: it
         // appears a few frames later, out at the edge of the loaded cells].
-        if !crate::readahead::ready_to_draw(aw, sim, &mut ctx, ahead, reference, base, creature) {
+        let ready_span = info_span!("ai::ready_to_draw").entered();
+        let ready = crate::readahead::ready_to_draw(aw, sim, &mut ctx, ahead, reference, base, creature);
+        drop(ready_span);
+        if !ready {
             return Ok(());
         }
+        crate::profile::ai_count(crate::profile::AiCount::Spawns, 1);
+        let spawn_span = info_span!("ai::spawn_actor").entered();
         let drawn = crate::readahead::clocked(|| {
             if creature {
                 crate::actors::spawn_creature(commands, world_root, rt, reference, base, aw, &mut ctx, stats, false)
@@ -476,6 +482,7 @@ pub(crate) fn show_actor(
                 crate::actors::spawn(commands, world_root, rt, at, reference, base, aw, sim, &mut ctx, stats, false)
             }
         });
+        drop(spawn_span);
         if !drawn {
             return Err("not drawn");
         }
@@ -484,6 +491,8 @@ pub(crate) fn show_actor(
     // The actor's root: the entity of its reference placed directly under the world
     // root (spawned last frame; its parts sit below it).
     if root.is_none() {
+        crate::profile::ai_count(crate::profile::AiCount::RootScans, 1);
+        let _span = info_span!("ai::find_root").entered();
         *root = roots.iter().find(|(_, v, p)| v.0 == reference && p.parent() == world_root).map(|(e, _, _)| e);
     }
     let Some(e) = *root else { return Ok(()) };

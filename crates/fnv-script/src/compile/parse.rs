@@ -116,9 +116,19 @@ pub struct Statement {
     pub kw: Kw,
     /// The line's text without its comment.
     pub text: String,
+    /// The variables the line declares inline ([`inline_decls`]), taken out of `kw`.
+    pub decls: Vec<(DeclType, String)>,
 }
 
 impl Kw {
+    /// The extender tokens of a `let`, `if eval`, `elseif eval`, `while` or `foreach` line.
+    fn xtoks_mut(&mut self) -> Option<&mut Vec<XTok>> {
+        match self {
+            Kw::Let(t) | Kw::IfEval(t) | Kw::ElseIfEval(t) | Kw::While(t) | Kw::ForEach(t) => Some(t),
+            _ => None,
+        }
+    }
+
     /// The statement is the extender's grammar (the unit is then compiled with its rules,
     /// script-compiler.md §8).
     pub fn extended(&self) -> bool {
@@ -145,8 +155,9 @@ pub fn statement(l: &Line) -> Result<Statement, ParseError> {
     let rest = toks[1..].to_vec();
     let err = |msg: &str| ParseError { line: l.no, msg: msg.to_string() };
     if head.kind == Kind::Word {
-        if let Some(kw) = extender(l) {
-            return Ok(Statement { line: l.no, kw, text: l.text.clone() });
+        if let Some(mut kw) = extender(l) {
+            let decls = kw.xtoks_mut().map(inline_decls).unwrap_or_default();
+            return Ok(Statement { line: l.no, kw, text: l.text.clone(), decls });
         }
     }
     let kw = if head.kind != Kind::Word {
@@ -185,7 +196,43 @@ pub fn statement(l: &Line) -> Result<Statement, ParseError> {
             },
         }
     };
-    Ok(Statement { line: l.no, kw, text: l.text.clone() })
+    // A call's inline expressions may declare (`Fn (float f)`); the code generator reads
+    // the line again and drops the type word there.
+    let decls = match &kw {
+        Kw::Call(_) if toks.iter().any(|t| t.kind == Kind::Open) => inline_decls(&mut xtokens(&l.text)),
+        _ => Vec::new(),
+    };
+    Ok(Statement { line: l.no, kw, text: l.text.clone(), decls })
+}
+
+/// The inline declarations of an extender line, taken out of its tokens: a type word right
+/// before a name that is assigned (`=`, `:=`) or iterated (`<-`) declares it there
+/// [documented: Inline variable declaration, `let int i := 10`, `foreach array_var it <-
+/// arr`, `if eval ref r = GetCrosshairRef && IsReference r`; observed: the ext-compile
+/// README, inline `int` declarations with `let` compiled]. An inline expression is an
+/// NVSE expression, so it declares too (`SetUIFloatAlt "…" (int i = GetPCDetectionState)`)
+/// [documented: Inline variable declaration, "NVSE expressions can now declare variables";
+/// Inline Expression], and so does a type and a name alone in parentheses, where a
+/// function writes its result into the variable (`GetNifRotAlt "Node" (float fX) (float
+/// fY) (float fZ)`) [hypothesis: the owner's mods' Script Runner files are written so,
+/// #1470; the pages show only `=`, `:=` and `<-`]. A lambda's typed parameters
+/// (`{int a, ref b} =>`) are followed by `,` or `}`, so they stay.
+pub fn inline_decls(x: &mut Vec<XTok>) -> Vec<(DeclType, String)> {
+    let mut decls = Vec::new();
+    let mut i = 0;
+    while i + 2 < x.len() {
+        let assigned = x[i + 2].kind == XKind::Op && [":=", "=", "<-"].contains(&x[i + 2].text.as_str())
+            || i > 0 && x[i - 1].kind == XKind::Open && x[i + 2].kind == XKind::Close;
+        match DeclType::from_word(&x[i].text.to_ascii_lowercase()) {
+            Some(ty) if x[i].kind == XKind::Word && x[i + 1].kind == XKind::Word && assigned => {
+                decls.push((ty, x[i + 1].text.clone()));
+                x.remove(i);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    decls
 }
 
 #[cfg(test)]

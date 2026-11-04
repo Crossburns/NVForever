@@ -734,6 +734,22 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             (0x11FD, "ClearNoActivationSound", Impl(fo3::clear_no_activation_sound)),
             (0x1200, "SetLocationSpecificLoadScreensOnly", Impl(fo3::set_location_specific_load_screens_only)),
             (0x1230, "SetLastExtDoorActivated", Impl(fo3::set_last_ext_door_activated)),
+            (0x11DF, "MatchFaceGeometry", Impl(fo3::match_face_geometry)),
+            (0x10B7, "Wait", Impl(fo3::wait)),
+            (0x10B8, "StopWaiting", Impl(fo3::stop_waiting)),
+            (0x106F, "IsWaiting", Impl(fo3::is_waiting)),
+            (0x10A8, "SetFactionReaction", Impl(fo3::set_faction_reaction)),
+            (0x111B, "SetCellFullName", Impl(fo3::set_cell_full_name)),
+            (0x1127, "ResetInterior", Impl(fo3::reset_interior)),
+            (0x11EA, "SetZoneRespawns", Impl(fo3::set_zone_respawns)),
+            (0x122F, "DisableAllMines", Impl(fo3::disable_all_mines)),
+            (0x1237, "RemapWaterType", Impl(fo3::remap_water_type)),
+            (0x11F3, "TriggerLODApocalypse", Impl(fo3::trigger_lod_apocalypse)),
+            (0x1144, "TriggerHitShader", Impl(fo3::trigger_hit_shader)),
+            (0x1205, "TriggerScreenBlood", Impl(fo3::trigger_screen_blood)),
+            (0x1227, "FadeSFX", Impl(fo3::fade_sfx)),
+            (0x1231, "KillQuestUpdates", Impl(fo3::kill_quest_updates)),
+            (0x116F, "GetLastPlayerAction", Impl(fo3::get_last_player_action)),
         ]
     };
     REGISTRY

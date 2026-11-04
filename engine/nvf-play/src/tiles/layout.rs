@@ -7,7 +7,7 @@ use fnv_ui::{Tile, TileId, Ui, Value};
 /// nests all its content under its background picture [documented: the file]; under that
 /// picture at alpha 193.8 the text and lines read full strength (255, 182, 66) at 1280 x 720
 /// [observed: shot 091 of hud_menus]. Whether pictures pass alpha on elsewhere is not known
-/// (observer check 81) [hypothesis]. It drops every alpha from above, an ancestor's fade too.
+/// (observer check 83) [hypothesis]. It drops every alpha from above, an ancestor's fade too.
 /// [design] An engine-written mark, in no game file, written by a menu's model so nothing else
 /// changes: an ordinary trait to the tree, so generic trait dumps list it and a file naming
 /// it would be read too.
