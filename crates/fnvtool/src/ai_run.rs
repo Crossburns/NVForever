@@ -12,6 +12,7 @@ use fnv_sim::{clock, FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub struct RunArgs {
     pub actors: Vec<String>,
@@ -27,6 +28,22 @@ pub struct RunArgs {
     pub step: f64,
     pub timescale: f64,
     pub samples: Vec<PathBuf>,
+    /// What the assets say about who can use which furniture; `None`: the assets could
+    /// not be opened, and every actor stays eligible for everything.
+    pub furniture_facts: Option<Arc<fnv_actor::furniture_facts::AssetFacts>>,
+}
+
+/// The facts for [`RunArgs::furniture_facts`], from the archives of the load order and
+/// the NIF schema beside `--schema`: the same as the game builds.
+pub fn furniture_facts(lo: &LoadOrder, schema: &Schema, w: &crate::WorldArgs) -> Option<Arc<fnv_actor::furniture_facts::AssetFacts>> {
+    let vfs = fnv_vfs::Vfs::open_for_plugins(&w.lo.data_dir, &w.lo.plugins).ok()?;
+    let nif = fnv_nif::Schema::load_dir(&w.schema.parent()?.join("nif")).ok()?;
+    let mut issues = fnv_sim::extract::Issues::default();
+    let bases = fnv_actor::furniture::furniture(lo, schema, &mut issues);
+    let tree = fnv_actor::furniture::UseIdles::build(&fnv_actor::idle::Idles::build(lo, schema), lo);
+    let paths = vfs.paths(|p| p.ends_with(".kf") || p.ends_with(".nif"));
+    let read = |p: &str| vfs.read(p)?.ok();
+    Some(Arc::new(fnv_actor::furniture_facts::AssetFacts::build(paths.iter().map(String::as_str), &tree, &bases, read, &nif)))
 }
 
 fn name(data: &GameData, refs: &RefTable, id: FormId) -> String {
@@ -79,9 +96,13 @@ struct Sim<'a> {
 }
 
 impl<'a> Sim<'a> {
-    fn new(data: &'a GameData, forms: &'a FormStore, refs: &'a RefTable, step: f64, timescale: f64) -> Sim<'a> {
-        let cfg = GameConfig { frame_seconds: step, package_interval: Some(10.0), ..GameConfig::default() };
-        Sim { game: Game::new(data, World::new(forms, refs, SimConfig::default()), cfg), ai: Ai::new(AiConfig::default()), step, timescale }
+    fn new(data: &'a GameData, forms: &'a FormStore, refs: &'a RefTable, args: &RunArgs) -> Sim<'a> {
+        let cfg = GameConfig { frame_seconds: args.step, package_interval: Some(10.0), ..GameConfig::default() };
+        let mut ai = Ai::new(AiConfig::default());
+        if let Some(facts) = &args.furniture_facts {
+            ai.set_furniture_facts(facts.clone());
+        }
+        Sim { game: Game::new(data, World::new(forms, refs, SimConfig::default()), cfg), ai, step: args.step, timescale: args.timescale }
     }
 
     /// Advance by `game_hours`: the game's tick (the periodic package choice), the
@@ -145,6 +166,24 @@ fn events_json(data: &GameData, refs: &RefTable, ai: &Ai, actor: FormId, cap: us
     (out, counts)
 }
 
+/// What an actor did with furniture over the whole run, whatever the cap on its events:
+/// how many times it started on each piece, how many pieces it was refused by reason, and
+/// whether its assets could not be resolved.
+fn furniture_json(data: &GameData, refs: &RefTable, ai: &Ai, actor: FormId) -> Value {
+    let mut starts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut excluded: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut unknown = false;
+    for e in ai.events.iter().filter(|e| e.actor == actor) {
+        match e.event {
+            fnv_ai::AiEvent::Furniture { furniture: Some(f) } => *starts.entry(name(data, refs, f)).or_default() += 1,
+            fnv_ai::AiEvent::FurnitureEligibility { decision: "excluded", reason, .. } => *excluded.entry(reason).or_default() += 1,
+            fnv_ai::AiEvent::FurnitureEligibility { .. } => unknown = true,
+            _ => {}
+        }
+    }
+    json!({"starts": starts, "excluded_pieces": excluded, "unknown": unknown})
+}
+
 fn e_space(e: &fnv_ai::AiEvent) -> Option<Space> {
     match e {
         fnv_ai::AiEvent::Trip { space, .. } => Some(*space),
@@ -173,7 +212,7 @@ pub fn run(lo: &LoadOrder, schema: &Schema, data: &GameData, refs: &RefTable, ar
     if !args.samples.is_empty() {
         return compare(&Loaded { lo, data, forms: &forms, refs, nav: &nav }, args, &actors, &forced, &quest_vars);
     }
-    let mut sim = Sim::new(data, &forms, refs, args.step, args.timescale);
+    let mut sim = Sim::new(data, &forms, refs, args);
     force(&mut sim.game, &forced);
     set_quest_vars(&mut sim.game, &quest_vars);
     if let Some(h) = args.start_hour {
@@ -210,6 +249,7 @@ pub fn run(lo: &LoadOrder, schema: &Schema, data: &GameData, refs: &RefTable, ar
                 "reference": a.to_string(),
                 "travelled": sim.ai.agents[&a].walker.travelled,
                 "event_counts": counts,
+                "furniture": furniture_json(data, refs, &sim.ai, a),
                 "hourly": hourly.get(&a),
                 "events": events,
             })
@@ -221,6 +261,10 @@ pub fn run(lo: &LoadOrder, schema: &Schema, data: &GameData, refs: &RefTable, ar
         "start": {"hour": start.hour, "days_passed": start.days_passed},
         "hours": args.hours, "step_seconds": args.step, "timescale": args.timescale,
         "nav": {"triangles": nav.tris.len(), "navmeshes": nav.meshes.len()},
+        "furniture_facts": args.furniture_facts.as_ref().map(|f| {
+            let (bases, models_read, folders) = f.summary();
+            json!({"bases": bases, "bases_with_markers_read": models_read, "skeleton_folders_with_clips": folders})
+        }),
         "actors": out,
     }))
 }
@@ -265,7 +309,7 @@ fn compare(w: &Loaded, args: &RunArgs, actors: &[FormId], forced: &[(FormId, For
     })?;
     let mut files = Vec::new();
     for (fi, by_actor) in &seen {
-        let mut sim = Sim::new(data, forms, refs, args.step, args.timescale);
+        let mut sim = Sim::new(data, forms, refs, args);
         let Some(first) = by_actor.values().filter_map(|v| v.first()).min_by(|a, b| a.days.total_cmp(&b.days)) else { continue };
         set_global(&mut sim.game, clock::GAME_HOUR, first.hour)?;
         set_global(&mut sim.game, clock::GAME_DAYS_PASSED, first.days)?;

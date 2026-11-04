@@ -382,6 +382,11 @@ impl UseIdles {
         self.nodes.is_empty()
     }
 
+    /// Every clip this part of the tree names, as VFS paths.
+    pub fn clips(&self) -> impl Iterator<Item = &str> {
+        self.nodes.iter().filter_map(|n| n.clip.as_deref())
+    }
+
     /// The clip for a user: siblings are tried in their stored order and the first whose
     /// conditions hold is entered; inside it the same again; an idle that names a clip
     /// and has no passing child with one is the answer; a passing idle that leads to no

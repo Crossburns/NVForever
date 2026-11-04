@@ -167,7 +167,8 @@ pub fn run(cmd: AiCmd) -> anyhow::Result<Value> {
             })
         }
         AiCmd::Run { w, functions, actor, start_hour, hours, step, timescale, samples, force, quest_var } => with_data(&w, functions, |lo, schema, data, refs, _| {
-            let args = crate::ai_run::RunArgs { actors: actor, force, quest_vars: quest_var, start_hour, hours, step, timescale, samples };
+            let furniture_facts = crate::ai_run::furniture_facts(lo, schema, &w);
+            let args = crate::ai_run::RunArgs { actors: actor, force, quest_vars: quest_var, start_hour, hours, step, timescale, samples, furniture_facts };
             crate::ai_run::run(lo, schema, data, refs, &args, &|n| crate::ai_packages::find_form(data, refs, n))
         }),
         AiCmd::Reach { w, functions } => with_data(&w, functions, |lo, schema, data, refs, _| crate::ai_run::reach(lo, schema, data, refs)),

@@ -1065,6 +1065,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "nipton-mongrels-no-cross"
+source = "issue #1522: a sandboxing creature does not choose furniture it has no clips for, and nobody chooses a cross by themselves (fnv_ai::furniture, fnv_actor::furniture_facts; docs/spec-notes/furniture.md §9)"
+note = "Both Nipton mongrels sandbox within reach of the free cross 00139FD6, whose victim starts disabled. The eligibility lines show the choice was made and the cross refused; a random run that never looks at it would not print them"
+areas = ["ai", "furniture"]
+paths = ["crates/fnv-ai/src/furniture.rs", "crates/fnv-ai/src/sandbox.rs", "crates/fnv-actor/src/furniture_facts.rs", "engine/nvforever/src/furniture.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1" }
+args = ["--play", "--world", "WastelandNV", "--pos=-33449,-92450,6860", "--heading", "0", "--pitch", "5", "--hour", "12", "--npc-packages", "0016B483,0016B484", "--no-voice", "--no-messages"]
+run_seconds = 62
+expect = [
+  { re = 'ai furniture eligibility: actor=0016B483 furniture=00139FD6 decision=excluded reason=casual-marker-10', label = "the first mongrel does not choose the cross" },
+  { re = 'ai furniture eligibility: actor=0016B484 furniture=00139FD6 decision=excluded reason=casual-marker-10', label = "nor does the second" },
+  { re = 'furniture: 0016B48[34] (goes to|is back on|is on) 00139FD6', count = 0, label = "no mongrel gets on it" },
+]
+
+[[scenario]]
 name = "patrol-point-furniture"
 source = "owner's playtest list 7 item 30: a patrol point that is furniture is used for its idle time (fnv_ai arrived)"
 note = "Gomorrah: a courtesan (0011A2FB, template vGOMVarProstitutes) patrols to her linked DanceMarker03 (0011A2F8, 800 s of idle time)"

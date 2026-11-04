@@ -235,7 +235,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
 /// leveled base reads the actor drawn for the reference, and a template with Use
 /// Model/Animation the template's [documented: actors.md §2.2, the Model/Animation group;
 /// hypothesis: the skeleton is in that group].
-pub(crate) fn skeleton_model(g: &Game, f: FormId) -> String {
+pub fn skeleton_model(g: &Game, f: FormId) -> String {
     let base = crate::functions::base_of(g, f).unwrap_or(f);
     let b = g.template_source(base, f, |d| d.template_model).map_or(base, |(s, _)| s);
     g.data.record_field(b, "MODL", "").and_then(serde_json::Value::as_str).unwrap_or_default().to_string()

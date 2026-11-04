@@ -539,7 +539,7 @@ impl Ai {
             let _ = game.activate(actor, object, ActMode::Default);
             game.extra.entry(actor).or_default().used_item = Some(base);
             Act::Harvests
-        } else if &sig == b"FURN" {
+        } else if &sig == b"FURN" && self.furniture.fits_assigned(game, actor, object) {
             self.set_using(game, actor, Some(object));
             Act::Uses
         } else {
@@ -621,7 +621,7 @@ impl Ai {
             }
         };
         *self.errand_mut(actor) = Some(Errand::UseAt { thing });
-        if let Some(f) = thing.filter(|r| game.data.furniture.contains_key(&fnv_game::functions::base_of(game, *r).unwrap_or(FormId(0)))) {
+        if let Some(f) = thing.filter(|r| game.data.furniture.contains_key(&fnv_game::functions::base_of(game, *r).unwrap_or(FormId(0))) && self.furniture.fits_assigned(game, actor, *r)) {
             // Kept for it from now [as `crate::sandbox`'s furniture].
             self.reserve(actor, f);
         }
@@ -643,7 +643,7 @@ impl Ai {
     fn use_it(&mut self, game: &mut Game, actor: FormId, package: FormId, thing: Option<FormId>) {
         if let Some(t) = thing {
             let base = fnv_game::functions::base_of(game, t);
-            if base.is_some_and(|b| game.data.furniture.contains_key(&b)) {
+            if base.is_some_and(|b| game.data.furniture.contains_key(&b)) && self.furniture.fits_assigned(game, actor, t) {
                 self.set_using(game, actor, Some(t));
             } else {
                 let h = game.world.peek(t).map(|s| s.rot[2]).or_else(|| game.world.placed.get(t).map(|p| p.rot[2]));

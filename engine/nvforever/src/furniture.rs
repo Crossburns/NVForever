@@ -45,6 +45,7 @@ use crate::nav::NavState;
 use crate::world::WorldData;
 use bevy::prelude::*;
 use fnv_actor::furniture::{self as furn, state, BodyAt, ClipEnds, EntryPoint, Frame, Furniture, Marker, Phase, Use, UseEvent, UseFrames, UseIdles, User};
+use fnv_actor::furniture_facts::{missing_body_nodes, AssetFacts};
 use fnv_actor::idle::Idles;
 use fnv_actor::locomotion::yaw_of;
 use fnv_sim::FormId;
@@ -98,6 +99,8 @@ struct Plan {
     base: u32,
     entry: EntryPoint,
     get_on: Arc<Clip>,
+    /// Its VFS path.
+    get_on_path: String,
     /// The loop on the furniture, when the IDLE tree names one.
     stay: Option<Arc<Clip>>,
     frames: UseFrames,
@@ -235,6 +238,17 @@ impl Furnishings {
         m
     }
 
+    /// What the assets say about who can use which furniture, for the AI's choices
+    /// (`fnv_ai::furniture`). Reads every furniture model once.
+    pub fn asset_facts(&mut self, data: &GameData) -> AssetFacts {
+        let t0 = std::time::Instant::now();
+        let paths = data.vfs.paths(|p| p.ends_with(".kf") || p.ends_with(".nif"));
+        let facts = AssetFacts::build(paths.iter().map(String::as_str), &self.tree, self.bases.values(), |p| data.read(p), &data.schema);
+        let (bases, read, folders) = facts.summary();
+        self.startup.push(format!("furniture: eligibility facts: {bases} bases, markers read of {read}, {folders} skeleton folders with clips, in {:.2}s", t0.elapsed().as_secs_f64()));
+        facts
+    }
+
     fn user(plan_entry: &EntryPoint, furniture: u32, base: u32, who: Who, state: u8) -> User {
         User {
             state,
@@ -283,7 +297,7 @@ impl Furnishings {
         let loop_yaw = stay.as_ref().map_or(standing_yaw, |c| clip_body(c, c.start).yaw);
         let frames = UseFrames::new(&entry, &ends, loop_yaw);
         let travel = Vec3::from_array(ends.stop.bip01) - Vec3::from_array(ends.start.bip01);
-        Ok(Plan { furniture, base, entry, get_on, stay, frames, travel: Vec3::new(travel.x, travel.y, 0.0), standing_yaw })
+        Ok(Plan { furniture, base, entry, get_on, get_on_path: on.clip, stay, frames, travel: Vec3::new(travel.x, travel.y, 0.0), standing_yaw })
     }
 
     /// The clip that gets `who` off again.
@@ -519,6 +533,13 @@ pub fn drive_actors(
         let female = actor_world.as_deref().and_then(|w| w.actors.npcs.get(&FormId(rig.base))).is_some_and(|n| n.female);
         let who = Who { reference: rig.reference, base: rig.base, female };
         let plan = f.plan(&world, &mut ctx, sit.furniture, at.to_array(), who, &|func, p| game_value(&script, func, p)).and_then(|p| {
+            // A clip that does not fit is refused here rather than posed wrongly: anything
+            // that gets past the AI's choice (`fnv_ai::furniture`), and `--npc-sit`.
+            let tracks = p.get_on.tracks.iter().map(|(n, _)| n.as_str());
+            let missing = missing_body_nodes(&rig.skeleton, &p.get_on_path, tracks, |n| rig.skel.by_name.contains_key(n));
+            if let Some(first) = missing.first() {
+                return Err(format!("clip {} does not fit skeleton {}: {} body tracks have no node, first {first}", p.get_on_path, rig.skeleton, missing.len()));
+            }
             let d = Vec3::from_array(p.entry.pos).distance(at);
             if d > APPROACH_MAX && !sit.at_once { Err(format!("{d:.0} units from its entry point")) } else { Ok((p, d)) }
         });

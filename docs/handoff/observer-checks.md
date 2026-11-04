@@ -1233,3 +1233,14 @@ The numbers above stay put so links to them hold; each item here gives its own p
     owner-review.md item 45 asks which to keep. Close's text reads alpha 255 and brightness 255
     [observed], which rules out those two traits of its own for its (206, 147, 53), not an
     opacity from above it or the compositing; font 2's texels [hypothesis].
+
+## Added 2026-11-05 (creatures and furniture, issue #1522)
+
+85. **Does a sandboxing creature near free furniture ever use it?** (P2; furniture.md §9.)
+    NVForever keeps a creature off furniture when its skeleton's folder has no clips for
+    it, and every actor off a cross unless a package names or links to it [design]. Open.
+    Start with the Nipton mongrels (`0016B483`, `0016B484`, `DefaultSandboxEditorLocation1024`,
+    a free cross `00139FD6` about 900 units away) and a super mutant near its
+    `SuperMutantBed`, then a person sandboxing near an empty cross. Watch `GetSitting` and
+    `GetSleeping` of the actor over a game day, or more. If a creature does use furniture,
+    say which, on what, and with which clip: the rule in §9 changes.

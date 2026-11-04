@@ -24,6 +24,7 @@
 //! actor sits down if a seat is free, as an Eat package's does), and the idles an idle
 //! marker lists (the actor goes there and faces its way).
 
+use crate::furniture::Eligibility;
 use crate::goal::{self, Goal};
 use fnv_game::ai::SandboxPhase;
 use fnv_game::game::Game;
@@ -340,7 +341,7 @@ impl Sandbox {
     }
 
     /// Choose what to do next, standing at `at`.
-    pub fn next(&mut self, game: &Game, nav: &NavGraph, taken: &BTreeMap<FormId, FormId>, actor: FormId, at: Place) -> Choice {
+    pub fn next(&mut self, game: &Game, nav: &NavGraph, taken: &BTreeMap<FormId, FormId>, actor: FormId, at: Place, eligibility: &mut Eligibility) -> Choice {
         self.interrupted = false;
         self.roll(game);
         self.chosen_at = game.time;
@@ -349,7 +350,9 @@ impl Sandbox {
         let data = game.data;
         let refs = game.world.placed;
         let objects = self.objects(game, taken, actor, at);
-        let flags = |r: FormId| refs.get(r).and_then(|p| data.furniture.get(&p.base)).copied();
+        // Of the seats and beds only: the idle markers are in the same list.
+        let excluded = eligibility.excluded_casual(game, actor, objects.iter().map(|o| o.0));
+        let flags = |r: FormId| refs.get(r).filter(|_| !excluded.contains(&r)).and_then(|p| data.furniture.get(&p.base)).copied();
         let nearest = |want: u32| {
             objects.iter().filter(|o| flags(o.0).is_some_and(|f| f & want != 0)).min_by(|a, b| hdist(a.1, at.pos).total_cmp(&hdist(b.1, at.pos))).copied()
         };

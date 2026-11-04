@@ -209,7 +209,8 @@ in the engine: §7.
    third-person body's eye, the body not drawn [design]. On a bed the view lies down
    with the body (§7) [engineering choice].
 7. **MNAM bits 30 and 31** against the editor's own labels.
-8. **Marker ID 10** (one model) and the six furniture bases without markers.
+8. **Marker ID 10** (one model) and the six furniture bases without markers. Whether
+   creatures use furniture at all: §9.
 9. **How sitting ends for the player** and what the prompt says (the crosshair shows
    "Activate" here). Here: a movement control, activating the furniture again, or
    Activate with nothing under the crosshair [design].
@@ -439,3 +440,70 @@ minimum–maximum, replay delays 0 unless given:
   when nothing else plays), and whether a fidget plays out before getting off (here:
   it fades out at once).
 - Work spots (ID 22) need a way onto them before their idles can play.
+
+## 9. Who may use which furniture (issue #1522) [design]
+
+Every sandboxing actor chose any seat or bed in its area, whatever its skeleton: a Nipton
+mongrel climbed a Legion cross, with a human clip bound to its skeleton [observed: the
+game's log, issue #1522]. What follows is NVForever's policy, an interim one. **Whether
+creatures ever use furniture in the original is an open question**
+(docs/handoff/observer-checks.md, issue #1522), and nothing here is evidence of how the
+original decides.
+
+Two rules, applied before a choice or a reservation (`fnv_ai::furniture`):
+
+| Rule | Applies to | Not to |
+|---|---|---|
+| **Compatibility**: the actor's skeleton has clips for it | a sandbox's beds, meal seats and seats; a Sleep or Eat package's search; what a package names or links to; a patrol point; a Find or Use Item At object | idle markers, PlayIdle, the player |
+| **No cross by choice**: no enabled marker of ID 10 (§2) | a sandbox's beds, meal seats and seats; a Sleep or Eat package's search | what a package names or links to, so the crucified stay on theirs |
+
+Marker IDs come from the model, as the flags that enable them by index (§1): the record's
+flags alone do not tell a cross from a chair. No species list, FormID or editor ID comes
+into it.
+
+**What "has clips" means** (`fnv_actor::furniture_facts`): an actor's clips are the ones
+under the folder of its skeleton. The answer is one of three:
+
+- *Supported*: the furniture part of the IDLE tree (§3) names a clip under that folder (so
+  people: all of its clips are under `characters\_male\idleanims` [observed: the load order
+  of the base game and its DLCs, 2026-11-04]), or a `.kf` there has a word for the piece in
+  its file name (`chair`, `stool` or `bench` for a seat, `bed` for a bed).
+- *Unsupported*: the skeleton is found and its folder has neither.
+- *Unknown*: the actor's `MODL` resolves to no skeleton file, the piece is not furniture or
+  a run has no assets. An actor stays eligible: without the facts (the tests, a run whose
+  assets do not open) everything behaves as it did before this rule.
+
+A file list lacking a name is a weak proof, which is why the rule is interim. `sit` and
+`sleep` are not words for it: a dog's `specialidle_sit.kf` and a radscorpion's
+`specialidle_sleep.kf` are idles on the ground whose IDLE records ask nothing about
+furniture [observed: the records]. So super mutants come out Unsupported, though the
+game has a `SuperMutantBed` and `creatures\smspinebreaker\idleanims` has
+`specialidle_sitcycle.kf` and `specialidle_sleepcycle.kf`, which no IDLE record names as its
+file [observed: the catalogue of `fnvtool actor anims`]. If the observer check finds a
+creature on furniture in the original, this rule changes.
+
+A creature that comes out Supported on the strength of a file name still gets what the
+tree picks, a human clip, and the engine's guard below refuses that when its body lacks a
+node of the clip: nothing picks the creature's own clip yet. Two folders have chair clips:
+`dlc05\creatures\alien`, three placed references in FalloutNV.esm, and
+`dlc04\creatures\hillfolk2and3`, which has no skeleton file and so stays Unknown [observed:
+`fnvtool actor anims`, `actor creatures --all`, 2026-11-04]. The guard's own case is the
+dog: a human chair clip drives `Bip01 L Finger1` and its kin, which a dog's skeleton does
+not have [observed: both files decoded].
+
+**The engine's guard** (`drive_actors`, `fnv_actor::furniture_facts::missing_body_nodes`):
+a getting-on clip from another actor's folder is refused when one of its body tracks
+(`Bip01`, `Bip01 …`) has no node in the actor's skeleton, before the furniture is taken or
+anything is bound. Log: `furniture: <actor> cannot use <furniture>: clip … does not fit
+skeleton …`. A folder alone is no proof, and no share of matching names is used. What
+happens to the AI's state after a refusal is not decided here (issue #1506). `--npc-sit`
+goes through the guard.
+
+**Reporting.** The AI's event `furniture_eligibility` is written once per actor and piece
+when a piece was excluded, and once per actor when nothing is known. The game logs
+`ai furniture eligibility: actor=<ref> furniture=<ref> decision=excluded|unknown
+reason=casual-marker-10|no-clips-for-skeleton|assets-not-resolved`. `fnvtool ai run`
+gives the same events, and for each actor `furniture`: its `starts` per piece and its
+`excluded_pieces` per reason over the whole run (not capped as `events` is), and
+`unknown`. The facts are read once for a run, the models in parallel; the game logs
+`furniture: eligibility facts: …` with the time this took.
