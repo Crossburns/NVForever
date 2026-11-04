@@ -722,7 +722,7 @@ impl Plugin for TilesPlugin {
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
             // The Pip-Boy's S.P.E.C.I.A.L.: written after the tile input and before the scripts;
             // again after its keys and decided before the frame and the tile drawing read it.
-            .add_systems(Update, stats_menu::feed.after(input::feed).before(PlaySet::Activation))
+            .add_systems(Update, stats_menu::feed.after(input::feed).after(crate::pipboy::PointerSet).before(PlaySet::Activation))
             .add_systems(Update, stats_menu::write.after(stats_menu::feed).before(PlaySet::Activation))
             .add_systems(Update, stats_menu::settle.in_set(PlaySet::Ui).after(crate::pipboy::stats::prepare).before(crate::pipboy::frame::draw))
             .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui).after(crate::pipboy::frame::draw))

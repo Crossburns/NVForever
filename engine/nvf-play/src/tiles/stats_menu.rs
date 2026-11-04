@@ -22,8 +22,11 @@
 //!   is drawn in the frame it happens, from one state.
 //! - **Input** ([`feed`], before the scripts): the pointer is the Pip-Boy's own, in canvas units
 //!   (`crate::pipboy::PipBoyScreen::pointer`: the device's ray or the flat image's crop), acting
-//!   on the page painted last frame, what the player saw. A row under the pointer selects and
-//!   boxes as the hand-built list does, not one drawn under a pointer that has not moved; a
+//!   on the page painted last frame, what the player saw, with the pointer found this frame
+//!   (`crate::pipboy::PointerSet`). A row under the pointer selects and boxes as the hand-built
+//!   list does, not one drawn under a pointer that has not moved; that is the tile under the
+//!   pointer itself, not the highlight, which a file's `xup` or `xdown` can move. Such a move
+//!   selects only for a key the hand-built keys did not also act on ([`keyed_row`]). A
 //!   click on a row selects it; a tab sends `PipBoyInput::Tab`; the description's arrows, page
 //!   areas and marker become `StatsView` commands. The value is the model's: written back after
 //!   input, and the wheel stays `crate::pipboy::stats::prepare`'s, so nothing acts twice. The
@@ -543,6 +546,8 @@ pub struct StatsTiles {
     pub shown: Option<TileId>,
     /// The description's area on the canvas, while ready.
     pub desc_area: Option<Rect>,
+    /// The tab and frame that area was found for.
+    pub desc_for: Option<(usize, Frame)>,
     /// [`CUT_AID`].
     pub cut: Option<String>,
     /// A menu over the page when this frame began ([`modal_over`]): set before the scripts,
@@ -551,6 +556,14 @@ pub struct StatsTiles {
     /// Another menu took this frame's tile input (`super::input::feed`).
     pub others: bool,
     written: Written,
+}
+
+impl StatsTiles {
+    /// The description's area, only when it belongs to the tab and frame shown now: the tab can
+    /// change after the last decision and before the next.
+    pub fn desc_area_for(&self, tab: usize, frame: Frame) -> Option<Rect> {
+        self.desc_area.filter(|_| self.ready.is_some() && self.desc_for == Some((tab, frame)))
+    }
 }
 
 /// One pass over the page; the menu when all of it went through. `late`: the pass before the
@@ -720,6 +733,7 @@ pub(crate) fn settle(mut p: StatsPage) {
     if p.tiles.ready != ready {
         p.tiles.ready = ready;
     }
+    p.tiles.desc_for = ready.and(p.pip.as_deref()).map(|pip| (PAGE, pip.frame));
 }
 
 /// The keys the hand-built page acts on itself (`crate::pipboy::stats::keys`,
@@ -825,24 +839,52 @@ pub(crate) struct Feed {
     /// The row the pointer last selected, while it stays on it.
     acted: Option<usize>,
     drag: Option<MarkerDrag>,
+    /// Where the pointer was last frame, and the tile under it then.
+    last_at: Option<(f64, f64)>,
+    under: Option<TileId>,
 }
 
-/// The pointer's row in `over`: what the view does with it ([`Feed::acted`]). `settled`: the
-/// pointer has moved since the page came up.
-fn follow_hover(view: &mut StatsView, acted: &mut Option<usize>, over: Option<usize>, settled: bool) {
-    match over {
+/// What the row under the pointer does to the view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoverAct {
+    Select(usize),
+    BoxOff,
+}
+
+/// The row under the pointer, `under`, against the one it last selected ([`Feed::acted`]).
+/// `settled`: the pointer has moved since the page came up.
+fn follow_hover(acted: &mut Option<usize>, under: Option<usize>, settled: bool) -> Option<HoverAct> {
+    match under {
         Some(i) if settled && *acted != Some(i) => {
-            view.select(PAGE, i);
-            view.highlight = true;
             *acted = Some(i);
+            Some(HoverAct::Select(i))
         }
-        Some(_) => {}
-        None => {
-            if acted.take().is_some() {
-                view.highlight = false;
-            }
-        }
+        Some(_) => None,
+        None => acted.take().map(|_| HoverAct::BoxOff),
     }
+}
+
+/// The row a file's own key binding moved the highlight onto in this step: not the pointer's
+/// doing (`under`, the tile under it), and not a press the hand-built keys act on as well, or
+/// the page would step twice.
+fn keyed_row(ui: &Ui, p: &Paths, rows: &[MadeRow], report: &fnv_ui::input::Report, under: Option<TileId>, physical: &[&str]) -> Option<usize> {
+    if physical.iter().any(|k| menus::hand_built_takes(STATS_MENU, k)) {
+        return None;
+    }
+    let (_, to) = report.over?;
+    match stats_tile(ui, p, rows, to.filter(|&t| Some(t) != under)?)? {
+        StatsTile::Row(i) => Some(i),
+        _ => None,
+    }
+}
+
+/// What the page's tile input reads of the Pip-Boy.
+#[derive(SystemParam)]
+pub(crate) struct FeedPip<'w> {
+    pip: Res<'w, PipBoy>,
+    screen: Option<Res<'w, PipBoyScreen>>,
+    aid: Res<'w, PipBoyAid>,
+    paused: Option<Res<'w, crate::pause::Paused>>,
 }
 
 /// The page's tile input, on a frame it takes it ([`takes`]): see the module notes.
@@ -850,13 +892,14 @@ fn follow_hover(view: &mut StatsView, acted: &mut Option<usize>, over: Option<us
 pub(crate) fn feed(
     mut script: ResMut<ScriptState>,
     switch: Res<TileMenus>,
-    (pip, screen, aid, paused): (Res<PipBoy>, Option<Res<PipBoyScreen>>, Res<PipBoyAid>, Option<Res<crate::pause::Paused>>),
+    from: FeedPip,
     mut tiles: ResMut<StatsTiles>,
     devices: Devices,
     view: Option<ResMut<StatsView>>,
     (mut tabs, mut hovered): (MessageWriter<PipBoyInput>, MessageWriter<TabHovered>),
     mut state: Local<Feed>,
 ) {
+    let FeedPip { pip, screen, aid, paused } = from;
     let Some(rt) = script.rt.as_mut() else { return };
     let game = &mut rt.game;
     let modal = eligible(*switch, &pip) && pip.open() && modal_over(game.menu);
@@ -890,8 +933,13 @@ pub(crate) fn feed(
     let pad_menu = crate::pad::MenuAt { code: Some(fnv_game::game::menus::STATS), tab: PAGE };
     let physical = frame_keys(&mut input, &devices, game, pad_menu);
     let report = fnv_game::ui_input::step(game, &[menu], &input, &fnv_ui::input::no_measure);
-    let over = game.ui_pointer.over;
     let ui = &game.ui_tree;
+    // What is under the pointer itself, whatever a key moved the highlight to; looked for again
+    // only when the pointer moved or the step's own look changed something.
+    if report.over.is_some() || at != state.last_at {
+        state.under = at.and_then(|at| fnv_ui::input::hit(ui, &[menu], at, &fnv_ui::input::no_measure)).map(|h| h.tile);
+        state.last_at = at;
+    }
     log_report(ui, &report);
     let rows = &tiles.written.rows;
     let what = |t: TileId| stats_tile(ui, &p, rows, t);
@@ -900,10 +948,20 @@ pub(crate) fn feed(
             hovered.write(TabHovered(i));
         }
     }
-    let over_row = over.and_then(what).and_then(|w| if let StatsTile::Row(i) = w { Some(i) } else { None });
+    let under = state.under;
+    let under_row = under.and_then(what).and_then(|w| if let StatsTile::Row(i) = w { Some(i) } else { None });
     // Only a real change touches the view, which the page's other readers watch.
-    if over_row != state.acted && (settled || over_row.is_none()) {
-        follow_hover(&mut view, &mut state.acted, over_row, settled);
+    match follow_hover(&mut state.acted, under_row, settled) {
+        Some(HoverAct::Select(i)) => {
+            view.select(PAGE, i);
+            view.highlight = true;
+        }
+        Some(HoverAct::BoxOff) => view.highlight = false,
+        None => {}
+    }
+    if let Some(i) = keyed_row(ui, &p, rows, &report, under, &physical) {
+        view.select(PAGE, i);
+        view.highlight = true;
     }
     if !held {
         state.drag = None;
@@ -948,7 +1006,6 @@ pub(crate) fn setup(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipboy::stats::Spot;
     use fnv_ui::input::{no_measure, By, Input, Pointer};
     use fnv_ui::MemSource;
 
@@ -1373,25 +1430,69 @@ mod tests {
 
     #[test]
     fn the_pointer_selects_as_the_hand_built_list_does() {
-        let mut v = view();
         let mut acted = None;
         // A row under a pointer that has not moved keeps the selection.
-        follow_hover(&mut v, &mut acted, Some(4), false);
-        assert_eq!((v.selected[PAGE], v.highlight, acted), (0, false, None));
-        // Moved onto it: selected and boxed.
-        follow_hover(&mut v, &mut acted, Some(4), true);
-        assert_eq!((v.selected[PAGE], v.highlight, acted), (4, true, Some(4)));
-        // A key moves the selection with the pointer still on the row: it stays where the key put it.
-        v.step(PAGE, 1);
-        follow_hover(&mut v, &mut acted, Some(4), true);
-        assert_eq!(v.selected[PAGE], 5);
-        // Off the rows: no box, the selection kept. The hand-built rule, and a key's box stays.
-        follow_hover(&mut v, &mut acted, None, true);
-        assert_eq!((v.selected[PAGE], v.highlight), (5, false));
-        v.step(PAGE, -1);
-        follow_hover(&mut v, &mut acted, None, true);
-        assert!(v.highlight, "no row was left, so the key's box holds");
-        assert_eq!(v.hover, None::<Spot>);
+        assert_eq!(follow_hover(&mut acted, Some(4), false), None);
+        assert_eq!(acted, None);
+        // Moved onto it: selected and boxed, once.
+        assert_eq!(follow_hover(&mut acted, Some(4), true), Some(HoverAct::Select(4)));
+        assert_eq!(follow_hover(&mut acted, Some(4), true), None, "a key's step while it stays there is not undone");
+        // Off the rows: no box, once, so a key's box after that holds.
+        assert_eq!(follow_hover(&mut acted, None, true), Some(HoverAct::BoxOff));
+        assert_eq!(follow_hover(&mut acted, None, true), None);
+    }
+
+    /// A menu whose own `xdown` moves the highlight to a row. A physical Down is the hand-built
+    /// key's, which steps the list: the moved highlight must not select as well, on that frame
+    /// or while it is held there. A script's tap has no hand-built step, so it selects.
+    #[test]
+    fn a_files_navigation_acts_once() {
+        let change = |x: &str| x.replace(r#"<menu name="StatsMenu">"#, r#"<menu name="StatsMenu"><xdown><ref src="Row3" trait="mouseover"/></xdown>"#);
+        let (mut ui, mut v, mut t) = (tree_changed(change), view(), StatsTiles::default());
+        let mut s = snap();
+        s.special[3].name = "Row3".into();
+        let menu = run(&mut ui, &s, &mut v, true, &mut t).unwrap();
+        let p = paths(&ui, None).unwrap();
+        let rows = t.written.rows.clone();
+        let spot = (50.0, 30.0 + 1.5 * ROW);
+        let under = fnv_ui::input::hit(&ui, &[menu], spot, &no_measure).map(|h| h.tile);
+        assert_eq!(under, Some(rows[1].tile));
+        let mut pointer = Pointer::default();
+        let mut step = |ui: &mut Ui, pads: &[&str]| pointer.step(ui, &[menu], &Input { at: Some(spot), pads: pads.iter().map(|k| k.to_string()).collect(), ..Default::default() }, &no_measure);
+        // The pointer alone moves onto its own row: no key's doing.
+        let r = step(&mut ui, &[]);
+        assert_eq!(keyed_row(&ui, &p, &rows, &r, under, &[]), None);
+        // A physical Down: the highlight moves to the file's row, and nothing selects it.
+        let r = step(&mut ui, &["xdown"]);
+        assert_eq!(r.over.and_then(|o| o.1), Some(rows[3].tile), "the fixture's reference moved it");
+        assert_eq!(keyed_row(&ui, &p, &rows, &r, under, &["xdown"]), None);
+        // Held there, the hover still reads the row under the pointer, not the highlight.
+        let r = step(&mut ui, &[]);
+        assert_eq!(r.over, None);
+        let mut acted = Some(1);
+        assert_eq!(follow_hover(&mut acted, Some(1), true), None);
+        // The same move by a script's tap selects, once.
+        let (mut ui, mut v, mut t) = (tree_changed(change), view(), StatsTiles::default());
+        let menu = run(&mut ui, &s, &mut v, true, &mut t).unwrap();
+        let rows = t.written.rows.clone();
+        let p = paths(&ui, None).unwrap();
+        let under = fnv_ui::input::hit(&ui, &[menu], spot, &no_measure).map(|h| h.tile);
+        let mut pointer = Pointer::default();
+        pointer.step(&mut ui, &[menu], &Input { at: Some(spot), ..Default::default() }, &no_measure);
+        let r = pointer.step(&mut ui, &[menu], &Input { at: Some(spot), pads: vec!["xdown".into()], ..Default::default() }, &no_measure);
+        assert_eq!(keyed_row(&ui, &p, &rows, &r, under, &[]), Some(3));
+    }
+
+    #[test]
+    fn the_description_area_belongs_to_the_tab_and_frame_it_was_found_for() {
+        let ui = tree();
+        let area = Rect::new(1.0, 2.0, 3.0, 4.0);
+        let t = StatsTiles { ready: ui.menu(STATS_MENU), desc_area: Some(area), desc_for: Some((PAGE, Frame::Device)), ..Default::default() };
+        assert_eq!(t.desc_area_for(PAGE, Frame::Device), Some(area));
+        assert_eq!(t.desc_area_for(2, Frame::Device), None, "the tab changed this frame");
+        assert_eq!(t.desc_area_for(PAGE, Frame::Screen), None, "the frame changed this frame");
+        let not_ready = StatsTiles { ready: None, ..t };
+        assert_eq!(not_ready.desc_area_for(PAGE, Frame::Device), None);
     }
 
     #[test]

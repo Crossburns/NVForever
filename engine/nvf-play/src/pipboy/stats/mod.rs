@@ -433,8 +433,9 @@ pub fn prepare(
         let whole = mem.wheel.trunc();
         if whole != 0.0 {
             mem.wheel -= whole;
-            // The tiles' description is where the file put it.
-            let area = tiles.and_then(|t| t.ready.and(t.desc_area)).or_else(|| desc_rect(tab));
+            // The tiles' description is where the file put it, for the page they drew; a tab
+            // or frame changed this frame has the hand-built place until they say otherwise.
+            let area = tiles.and_then(|t| t.desc_area_for(tab, pip.frame)).or_else(|| desc_rect(tab));
             if pointer.is_some_and(|p| area.is_some_and(|r| r.contains(p))) {
                 change(&mut view, |v| v.scroll_desc(-whole as i32));
             } else if tab > 0 {

@@ -451,6 +451,16 @@ pub(super) fn log_report(ui: &fnv_ui::Ui, report: &fnv_ui::input::Report) {
     }
 }
 
+/// What else says who takes the frame's input: the pause menu and its page, and the Pip-Boy's
+/// page drawn from tiles (`super::stats_menu`).
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct Others<'w> {
+    paused: Option<Res<'w, crate::pause::Paused>>,
+    page: Option<Res<'w, crate::pause::Page>>,
+    stats: Option<ResMut<'w, super::stats_menu::StatsTiles>>,
+    pip: Option<Res<'w, crate::pipboy::PipBoy>>,
+}
+
 pub(crate) fn feed(
     mut script: ResMut<ScriptState>,
     menus: Res<super::vanilla::TileMenus>,
@@ -458,8 +468,9 @@ pub(crate) fn feed(
     time: crate::pause::AidTime,
     devices: Devices,
     mut inputs: MenuInputs,
-    (paused, page, mut stats, pip): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>, Option<ResMut<super::stats_menu::StatsTiles>>, Option<Res<crate::pipboy::PipBoy>>),
+    others: Others,
 ) {
+    let Others { paused, page, mut stats, pip } = others;
     let Some(rt) = script.rt.as_mut() else { return };
     if rt.game.ui_files.is_none() {
         return;

@@ -107,6 +107,13 @@ const SHADE: f32 = 0.98;
 /// The pointer on the Pip-Boy's screen, for Bevy's picking.
 pub const PIPBOY_POINTER: PointerId = PointerId::Custom(Uuid::from_u128(0x6e76_665f_7069_7062_6f79_5f70_6f69_6e74));
 
+/// Where the pointer on the screen is found for the frame ([`PipBoyScreen::pointer`]): after
+/// the body is posed and before the tile input (`crate::tiles::stats_menu::feed`), which takes
+/// this frame's button with it, so a move and a press in one frame act at the new place. The
+/// device's system is nvforever's `pipboy_arm`; the flat image's is here.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PointerSet;
+
 /// The three pages, in the order of the device's buttons.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
 pub enum Page {
@@ -443,6 +450,8 @@ impl Plugin for PipBoyPlugin {
                     .chain()
                     .in_set(PlaySet::Ui),
             )
+            .configure_sets(Update, PointerSet.after(crate::player::BodySet).before(PlaySet::Activation))
+            .add_systems(Update, flat_pointer.in_set(PointerSet))
             .add_systems(First, drive_pointer.in_set(PickingSystems::Input));
         test_aid::setup(app);
         crate::settings::add_setting(
@@ -818,19 +827,46 @@ fn flat_screen(
             }
         }
         (true, Some((_, computed, at, _))) => {
-            if let Some(AidTarget::Canvas(p)) = aid.target {
-                screen.pointer = Some(p);
-                return;
-            }
-            let cursor = windows.single().ok().and_then(|w| w.physical_cursor_position());
-            let size = computed.size();
-            screen.pointer = cursor.and_then(|c| {
-                let local = c - (at.translation - size / 2.0);
-                let p = local / size * SCREEN_CROP;
-                (p.x >= 0.0 && p.y >= 0.0 && p.x < SCREEN_CROP.x && p.y < SCREEN_CROP.y).then_some(p)
-            });
+            screen.pointer = flat_point(&aid, &windows, computed, at);
         }
         (false, None) => {}
+    }
+}
+
+/// Where a cursor in physical pixels lies on the canvas shown in a node of `size` around
+/// `centre`, if on it.
+pub fn crop_point(cursor: Vec2, centre: Vec2, size: Vec2) -> Option<Vec2> {
+    let p = (cursor - (centre - size / 2.0)) / size * SCREEN_CROP;
+    (p.x >= 0.0 && p.y >= 0.0 && p.x < SCREEN_CROP.x && p.y < SCREEN_CROP.y).then_some(p)
+}
+
+/// The pointer on the flat image: the test aid's point, else the window's cursor.
+fn flat_point(aid: &PipBoyAid, windows: &Query<&Window, With<PrimaryWindow>>, computed: &ComputedNode, at: &UiGlobalTransform) -> Option<Vec2> {
+    if let Some(AidTarget::Canvas(p)) = aid.target {
+        return Some(p);
+    }
+    let cursor = windows.single().ok().and_then(|w| w.physical_cursor_position())?;
+    crop_point(cursor, at.translation, computed.size())
+}
+
+/// The flat image's pointer for this frame's tile input ([`PointerSet`]), from the cursor now
+/// and the image's place as last laid out. [`flat_screen`] sets the same value later in the
+/// frame, for the frame it makes the image in.
+fn flat_pointer(
+    pip: Res<PipBoy>,
+    screen: Option<ResMut<PipBoyScreen>>,
+    flat: Query<(&ComputedNode, &UiGlobalTransform), With<FlatScreen>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    aid: Res<PipBoyAid>,
+) {
+    let Some(mut screen) = screen else { return };
+    if pip.phase != Phase::Up || (pip.frame != Frame::Screen && screen.on_model) {
+        return;
+    }
+    let Some((computed, at)) = flat.iter().next() else { return };
+    let now = flat_point(&aid, &windows, computed, at);
+    if screen.pointer != now {
+        screen.pointer = now;
     }
 }
 
@@ -914,6 +950,17 @@ pub fn on_click(click: On<PointerClick>, nodes: Query<&Clickable>, mut out: Mess
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cursor_is_found_on_the_flat_image_by_its_crop() {
+        // An image twice the crop's size, its middle at 1000, 800.
+        let size = SCREEN_CROP * 2.0;
+        let centre = Vec2::new(1000.0, 800.0);
+        assert_eq!(crop_point(centre, centre, size), Some(SCREEN_CROP / 2.0));
+        assert_eq!(crop_point(centre - size / 2.0, centre, size), Some(Vec2::ZERO));
+        assert_eq!(crop_point(centre - size / 2.0 - Vec2::X, centre, size), None);
+        assert_eq!(crop_point(centre + size / 2.0, centre, size), None);
+    }
 
     #[test]
     fn each_page_has_its_menu_code() {
