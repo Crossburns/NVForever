@@ -454,14 +454,17 @@ description's value has one owner: the file adds its own arrow clicks and `wheel
 commands, the value is written back after input on every tiled frame, and `wheelmoved` is not
 written [design].
 
-**A tab's inner rect**, `stb_text_box`, repeats the tab's own place and has `alpha` 0, over words and
-lines of their own `alpha` [observed: by fnvtool ui tree; a tab has no `locus`, the rect has]. So the
-two places are not added and the rect's `alpha` is not passed down in the original, going by where
-its tabs stand [hypothesis]. `tiles/layout.rs` and the tile input read no `locus` and multiply a
-rect's `alpha`, for every menu, so unchanged they lost the tab line here, words and box. This slice
-alone puts the rect's place back and marks what is under it `_NVFOwnAlpha` (`write_tabs`) [design];
-whether to read `locus` in general is a separate decision. The selected tab's fill stays undrawn: a
-hotrect, whose `alpha` the file changes there, draws nothing in this renderer [design].
+**A tab's inner rect**, `stb_text_box`, repeats the tab's own place, the tab's being read from it,
+and has `alpha` 0 over words and lines of their own `alpha` [observed: by fnvtool ui tree; a tab has
+no `locus`, the rect has]. So the two places are not added and the rect's `alpha` is not passed down
+in the original, going by where its tabs stand [hypothesis]. `tiles/layout.rs` and the tile input
+read no `locus` and multiply a rect's `alpha`, for every menu, so unchanged they lost the tab line
+here, words and box. Writing either place collapses the other, standing every tab at the line's
+start [observed: fnvtool's tree with a test write]. So this slice alone writes marks, the file's
+places untouched: the tab gives its children no place (`_NVFNoOrigin`), and what is under the rect
+keeps its own `alpha` (`_NVFOwnAlpha`) (`write_tabs`) [design]. Whether to read `locus` in general is
+a separate decision. The selected tab's fill stays undrawn: a hotrect, whose `alpha` the file
+changes there, draws nothing in this renderer [design].
 
 **Ids** [observed: the vanilla files, by fnvtool ui tree, `id`]: `stats_tailline_status` 0,
 `stats_tailline_SPECIAL` 1, `stats_tailline_skills` 2, `stats_tailline_perks` 3,

@@ -109,6 +109,13 @@ fn flag(ui: &Ui, t: TileId, name: &str) -> bool {
     ui.tile(t).get(name).is_some_and(Value::truthy)
 }
 
+/// The private trait of a tile whose children do not stand from its place but from where it
+/// stands itself [hypothesis: the file's tabs have no `locus`, their inner rect repeats the
+/// tab's place, and the original stands them at that one place, pipboy.md §5.1.1]. An
+/// engine-written mark, in no game file, written by a menu's model, so nothing else changes;
+/// the layout (`nvf-play`'s `tiles::layout`) reads it too, so the pointer finds what is drawn.
+pub const NO_ORIGIN: &str = "_NVFNoOrigin";
+
 /// The private trait that turns a tile's `clipwindow` on ([`mark_clip_windows`]) [design].
 /// An engine-written mark, in no game file: an ordinary trait to the tree, so generic trait
 /// dumps list it and a file naming it would be read too.
@@ -252,6 +259,10 @@ fn candidates(ui: &Ui, menu: TileId, at: (f64, f64), measure: &Measure<'_>, out:
         below.forced |= own && tile.kind == "hotrect";
         if clips_children(tile) {
             below.clip = Some(below.clip.map_or(here.area, |c| c.intersect(here.area)));
+        }
+        if flag(ui, id, NO_ORIGIN) {
+            below.area.left = parent.area.left;
+            below.area.top = parent.area.top;
         }
         let mut children = tile.children.clone();
         children.sort_by(|&a, &b| num(ui, a, "depth", 0.0).total_cmp(&num(ui, b, "depth", 0.0)));
@@ -793,6 +804,28 @@ mod tests {
         let ok = id(&ui, "TestMenu/Main/OkButton");
         let r = p.step(&mut ui, &[menu], &Input { keys: vec!["S".into()], ..Input::default() }, &no_measure);
         assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Key("S".into()) }]);
+    }
+
+    /// A marked tile's children stand from where it stands, not from its place.
+    #[test]
+    fn a_tile_marked_no_origin_gives_its_children_no_place() {
+        let src = crate::MemSource::default().with(
+            "n.xml",
+            r#"<menu name="N"><rect name="Line"><x>11</x><y>23</y>
+              <hotrect name="Tab"><target>&true;</target><x>101</x><y>53</y><width>30</width><height>10</height>
+                <image name="Inner"><x>101</x><y>53</y><width>30</width><height>10</height></image></hotrect></rect></menu>"#,
+        );
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "n.xml").unwrap();
+        ui.update();
+        let under = |ui: &Ui, at| hit(ui, &[menu], at, &no_measure).map(|h| ui.tile(h.under).name.clone());
+        // Unmarked, the child stands from the tab, twice over.
+        assert_eq!(under(&ui, (218.0, 134.0)).as_deref(), Some("Inner"));
+        let tab = ui.find_tile("N/Line/Tab").unwrap();
+        ui.set_trait(tab, NO_ORIGIN, Value::Num(1.0));
+        ui.update();
+        assert_eq!(under(&ui, (218.0, 134.0)), None);
+        assert_eq!(under(&ui, (117.0, 81.0)).as_deref(), Some("Inner"), "at the tab's one place");
     }
 
     #[test]

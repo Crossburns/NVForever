@@ -372,31 +372,29 @@ fn write_frame(ui: &mut Ui, p: &Paths, device: bool, flat: &mut Option<FlatChang
     }
 }
 
-/// What this slice's layout needs of a tab, as the tree reads it at any size [observed: by
-/// fnvtool ui tree]: the tab's inner rect repeats the tab's own place, and has `alpha` 0 over
-/// shown words and lines. The original stands the tab at its one place [observed: private job
-/// pipboy_special_a], so it does not add the two [hypothesis: the tab has no `locus`, the
-/// inner rect has], and shows the words [hypothesis: as a hotrect's `alpha`,
-/// `super::layout::place`]. `super::layout` reads no `locus` and multiplies a rect's `alpha`
-/// for every menu, so here alone the inner rect's place is put back on every pass, as the file
-/// works it out again when the words change, and what is under it keeps its own `alpha`
-/// ([`super::layout::OWN_ALPHA`]), marked once [design].
+/// What this slice's layout needs of a tab, as the tree reads it [observed: by fnvtool ui
+/// tree]: the tab has no `locus`, its inner rect has; the tab's place is read from the inner
+/// rect's, so the two repeat each other, and writing either collapses the other; and the
+/// inner rect has `alpha` 0 over shown words and lines. The original stands the tab at its one
+/// place [observed: private job pipboy_special_a] and shows the words, so it does not add the
+/// two places [hypothesis] nor pass the rect's `alpha` down [hypothesis]. `super::layout` and the
+/// tile input read no `locus` and multiply a rect's `alpha` for every menu, so here alone,
+/// once, marks say so: the tab gives its children no place ([`fnv_ui::input::NO_ORIGIN`]), and
+/// what is under the rect keeps its own `alpha` ([`super::layout::OWN_ALPHA`]). The file's
+/// places are not touched [design].
 fn write_tabs(ui: &mut Ui, p: &Paths, marked: &mut bool) {
-    for inner in p.tab_inners.into_iter().flatten() {
-        for name in ["x", "y"] {
-            if num(ui, inner, name) != 0.0 {
-                ui.set_trait(inner, name, Value::Num(0.0));
-            }
-        }
-        if !*marked {
-            let mut stack = ui.tile(inner).children.clone();
-            while let Some(t) = stack.pop() {
-                stack.extend(ui.tile(t).children.iter().copied());
-                ui.set_trait(t, layout::OWN_ALPHA, Value::Num(1.0));
-            }
+    if std::mem::replace(marked, true) {
+        return;
+    }
+    for (tab, inner) in p.tabs.into_iter().zip(p.tab_inners) {
+        let Some(inner) = inner else { continue };
+        ui.set_trait(tab, fnv_ui::input::NO_ORIGIN, Value::Num(1.0));
+        let mut stack = ui.tile(inner).children.clone();
+        while let Some(t) = stack.pop() {
+            stack.extend(ui.tile(t).children.iter().copied());
+            ui.set_trait(t, layout::OWN_ALPHA, Value::Num(1.0));
         }
     }
-    *marked = true;
 }
 
 /// The places code gives the file to work from: each row's height and `_y`, the list's height,
@@ -1375,11 +1373,11 @@ mod tests {
         let at_tab = fnv_ui::input::hit(&ui, &[menu], (140.0, 505.0), &no_measure).unwrap();
         assert_eq!(stats_tile(&ui, &p, &t.written.rows, at_tab.tile), Some(StatsTile::Tab(2)));
         assert!(fnv_ui::input::hit(&ui, &[menu], (270.0, 1005.0), &no_measure).is_none());
-        // The file works the place out again: put back on the next pass.
+        // The file's places stand: the tab's place may be read from the rect's, as it is
+        // in the game's file, where writing either would stand every tab at the line's start.
         let inner = p.tab_inners[2].unwrap();
-        ui.set_trait(inner, "x", Value::Num(130.0));
-        run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
-        assert_eq!(num(&ui, inner, "x"), 0.0);
+        assert_eq!((num(&ui, p.tabs[2], "x"), num(&ui, inner, "x")), (130.0, 130.0));
+        assert_eq!((num(&ui, p.tabs[2], "y"), num(&ui, inner, "y")), (500.0, 500.0));
     }
 
     #[test]
