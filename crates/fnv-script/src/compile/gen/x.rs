@@ -25,6 +25,7 @@
 
 use super::{Gen, Val};
 use crate::compile::lex::{XKind, XTok};
+use crate::compile::parse::DeclType;
 use crate::ir::{FuncId, RefIndex, VarRef, VarSlot, XAssign, XCall, XExpr, XOp, XUnary};
 use crate::table::ParamEnc;
 
@@ -240,6 +241,14 @@ impl Gen<'_> {
             XKind::Num => Some(XExpr::Num { value: t.text.parse().unwrap_or(0.0), text: t.text.clone() }),
             XKind::Str => Some(XExpr::Str { s: t.text.clone() }),
             XKind::Open => {
+                // `(float f)` or `(int i = …)`: the type word of a variable declared there
+                // ([`crate::compile::parse::inline_decls`]) is dropped.
+                if p.peek().is_some_and(|w| w.kind == XKind::Word && DeclType::from_word(&w.text).is_some())
+                    && p.peek2().is_some_and(|n| n.kind == XKind::Word && self.var(&n.text).is_some())
+                    && p.t.get(p.i + 2).is_some_and(|a| a.kind == XKind::Close || a.is(XKind::Op, "=") || a.is(XKind::Op, ":="))
+                {
+                    p.next();
+                }
                 let was = std::mem::replace(&mut self.in_args, false);
                 let was_paren = std::mem::replace(&mut self.in_paren, true);
                 let e = self.xexpr(p, 0);
@@ -310,8 +319,12 @@ impl Gen<'_> {
         // A format string takes up to 20 values [documented: String Formatting]; the
         // catalogue marks them as a parameter named or typed "Formatting"/"formatable".
         // SetNameEx takes format values too, though its page shows none [observed:
-        // nvse-fifth, `SetNameEx "Gun %g" 5 rObj` compiles and names it "Gun 5"].
-        } else if u.name.eq_ignore_ascii_case("setnameex")
+        // nvse-fifth, `SetNameEx "Gun %g" 5 rObj` compiles and names it "Gun 5"]; the
+        // path setters' pages call their string a "formatable string" and list no
+        // values, and the base form follows them (`SetModelPathEx "a.nif%z…%z" s … s
+        // rVodka`, 20 values) [documented: SetModelPathEx, Bugs; SetIconPathEx;
+        // SetBipedModelPathEx; SetBipedIconPathEx; SetNthFactionRankNameEx].
+        } else if FORMAT_EX.iter().any(|n| u.name.eq_ignore_ascii_case(n))
             || u.params.iter().any(|p| {
             p.name.starts_with("...")
                 || p.name.to_ascii_lowercase().contains("format")
@@ -319,7 +332,10 @@ impl Gen<'_> {
         }) {
             None
         } else {
-            Some(named)
+            // A parameter typed `arg(up to 15)` (DispatchEventAlt, the Call… family) or
+            // `variable(up to 14)` stands for that many [documented: their pages' types].
+            let repeats: usize = u.params.iter().filter_map(|p| up_to(p.wiki_type.as_deref()?)).map(|n| n.saturating_sub(1)).sum();
+            Some(named + repeats)
         };
         Some(XFn { func: FuncId::Name(u.name.clone()), params, opcode: None, aware: u.aware })
     }
@@ -493,6 +509,29 @@ impl Gen<'_> {
         Some(args)
     }
 
+    /// Arguments left after a call line's call has all it takes, parsed as operands and
+    /// dropped: their count, or `None` when what is left is not a run of arguments.
+    pub(in crate::compile) fn surplus_args(&mut self, p: &mut P<'_>) -> Option<usize> {
+        let mut n = 0;
+        while !p.done() {
+            if p.peek().is_some_and(|t| t.kind == XKind::Comma) {
+                p.next();
+            }
+            let minus = p.peek().is_some_and(|t| t.is(XKind::Op, "-") && t.sign);
+            if !starts_operand(p.peek()) && !minus {
+                return None;
+            }
+            let was = std::mem::replace(&mut self.in_args, true);
+            let was_any = std::mem::replace(&mut self.in_arg_any, true);
+            let a = self.xexpr(p, ARG);
+            self.in_args = was;
+            self.in_arg_any = was_any;
+            a?;
+            n += 1;
+        }
+        Some(n)
+    }
+
     /// One argument. A name in a parameter that takes an enumeration, an axis or a string
     /// is that, when nothing follows it but the next argument.
     fn xarg(&mut self, p: &mut P<'_>, enc: &ParamEnc, min: u8) -> Option<XExpr> {
@@ -528,5 +567,26 @@ fn val_expr(v: Val) -> XExpr {
         Val::Global(r) => XExpr::Var { var: VarRef { on: None, var: VarSlot::Global { global: RefIndex(r) } }, form: false },
         Val::Remote { on, index, letter } => XExpr::Var { var: VarRef { on: Some(RefIndex(on)), var: VarSlot::Local { index, letter } }, form: false },
         Val::Ref(r) => XExpr::Ref { r: RefIndex(r) },
+    }
+}
+
+/// Functions whose string takes format values the catalogue does not list (the VM's
+/// `…Ex` setters, vm.rs).
+const FORMAT_EX: [&str; 6] = ["SetNameEx", "SetNthFactionRankNameEx", "SetModelPathEx", "SetIconPathEx", "SetBipedModelPathEx", "SetBipedIconPathEx"];
+
+/// The count of a catalogue type `…(up to N)`: `arg(up to 15)` is 15.
+fn up_to(wiki_type: &str) -> Option<usize> {
+    let t = wiki_type.to_ascii_lowercase();
+    let n = t.split_once("(up to ")?.1.strip_suffix(')')?;
+    n.trim().parse().ok()
+}
+
+#[cfg(test)]
+mod up_to_tests {
+    #[test]
+    fn repeated_parameters() {
+        assert_eq!(super::up_to("arg(up to 15)"), Some(15));
+        assert_eq!(super::up_to("variable(up to 14)"), Some(14));
+        assert_eq!(super::up_to("string"), None);
     }
 }
