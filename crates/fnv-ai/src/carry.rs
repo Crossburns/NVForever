@@ -192,6 +192,9 @@ pub enum AiEvent {
     Arrived { package: FormId, seconds: f64, travelled: f32, patrol_point: Option<FormId> },
     /// No way to the package's location: the package is set aside.
     Unreachable { package: FormId, why: String },
+    /// Its feet at `at` do not fit its goal's height and no new path helped: its walk ends
+    /// as if they did (`fnv_nav::Walker::off_path`).
+    HeightWaived { at: [f32; 3] },
     NotCarriedOut { package: FormId, why: &'static str },
     /// The actor uses this furniture now (`None`: it leaves the furniture it used).
     Furniture { furniture: Option<FormId> },
@@ -2214,10 +2217,12 @@ impl Ai {
         }
         let a = self.agents.get_mut(&actor).expect("listed");
         a.face_to = None;
+        let waivers = a.walker.height_waivers;
         let ev = match mover.walk(actor, &mut a.walker, nav, dt) {
             Some(ev) => ev,
             None => a.walker.update_with(nav, dt, &mut |door| mover.open(actor, door)),
         };
+        let waived = a.walker.height_waivers != waivers;
         a.waiting_at = match ev {
             WalkEvent::WaitingForDoor(d) => Some(d),
             _ => None,
@@ -2228,6 +2233,9 @@ impl Ai {
         // An actor that cannot be put there (a reference the world does not know) is
         // left where the game has it.
         let _ = game.set_actor_place(actor, cell, feet.pos, heading);
+        if waived {
+            self.log(game, actor, AiEvent::HeightWaived { at: feet.pos });
+        }
         if let WalkEvent::UsedDoor(d) = ev {
             self.log(game, actor, AiEvent::Door { door: FormId(d.door), to_door: FormId(d.to_door) });
         }
@@ -2254,6 +2262,7 @@ impl Ai {
     pub(crate) fn arrived(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
         let a = self.agents.get_mut(&actor).expect("listed");
         a.walker.follower = None;
+        a.walker.trip = None;
         // The end of the way to a conversation partner: `crate::social` starts the
         // conversation.
         if a.chat.is_some() {

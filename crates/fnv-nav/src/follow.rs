@@ -28,6 +28,9 @@ pub enum Steer {
     OpenDoor { door: u32, at: [f32; 3] },
     /// At the end of the path.
     Arrived,
+    /// At the end of the path seen from above, but not at its height (on another floor,
+    /// say): not there ([`goal_height_fits`]). What to do about it: [`Walker::off_path`].
+    OffPath,
 }
 
 /// Where along a path an actor is.
@@ -55,8 +58,32 @@ pub struct Follower {
 /// to the edge before it jumps [design].
 pub const TAKE_OFF_RADIUS: f32 = 2.0;
 
+/// How far above or below the end of its path feet right at it may be and still be there,
+/// game units [design: an engineering number, not measured safe; a stair step fits it, a
+/// storey does not].
+pub const GOAL_HEIGHT_MARGIN: f32 = 40.0;
+/// What the margin grows by per unit of horizontal distance from the end of the path: the
+/// tangent of 60 degrees, so that feet on a slope up to that steep fit [design].
+pub const GOAL_HEIGHT_SLOPE: f32 = 1.732_050_8;
+/// New paths a [`Walker`] plans in a trip for feet that do not fit its goal's height,
+/// before the height is waived [design].
+pub const HEIGHT_REPLANS: u8 = 2;
+/// A new path starting further than this above or below the feet is no way on from where
+/// the actor stands; the height is waived instead, game units [design: provisional].
+pub const REPLAN_START_HEIGHT: f32 = 64.0;
+/// A destination this close to the one asked for before is the same trip, game units
+/// [design: a Follow package asks for about the same place every half second].
+pub const SAME_TRIP: f32 = 256.0;
+
 fn hdist(a: [f32; 3], b: [f32; 3]) -> f32 {
     (a[0] - b[0]).hypot(a[1] - b[1])
+}
+
+/// Whether feet are at a height that fits the end of a path `goal` (a point on the
+/// navmesh: the path's own end, where the destination was snapped to) [design,
+/// docs/design/navmesh.md §4.1].
+pub fn goal_height_fits(feet: [f32; 3], goal: [f32; 3]) -> bool {
+    (feet[2] - goal[2]).abs() <= GOAL_HEIGHT_MARGIN + hdist(feet, goal) * GOAL_HEIGHT_SLOPE
 }
 
 impl Follower {
@@ -116,6 +143,7 @@ impl Follower {
         if self.next >= pts.len() {
             return match leg.door {
                 Some(d) => Steer::Door(d),
+                None if self.leg + 1 == self.path.legs.len() && !self.fits_goal(feet) => Steer::OffPath,
                 None => Steer::Arrived,
             };
         }
@@ -220,6 +248,11 @@ impl Follower {
     pub fn destination(&self) -> Option<Place> {
         let l = self.path.legs.last()?;
         Some(Place { space: l.space, pos: *l.points.last()? })
+    }
+
+    /// Whether `feet` are at a height that fits the path's destination.
+    pub fn fits_goal(&self, feet: [f32; 3]) -> bool {
+        self.destination().is_none_or(|g| goal_height_fits(feet, g.pos))
     }
 }
 
@@ -433,6 +466,25 @@ pub struct Walker {
     /// How far its heading was off the door (radians) when it last went through a load
     /// door whose place is known: 0 once it has turned to it ([`Walker::face_door`]).
     pub door_off: Option<f32>,
+    /// The trip [`Walker::go_to`] last set off on; over at the arrival.
+    #[serde(skip)]
+    pub trip: Option<Trip>,
+    /// Goal heights waived so far ([`Walker::off_path`]).
+    #[serde(skip)]
+    pub height_waivers: u32,
+}
+
+/// Where a [`Walker`] was last asked to go: the place as asked for, not where the path
+/// was snapped to, and what recovering from a height that does not fit has used up. Held
+/// here and not on the [`Follower`], which each new path replaces.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Trip {
+    pub to: Place,
+    pub params: PathParams,
+    /// New paths planned in this trip ([`HEIGHT_REPLANS`]).
+    pub replans: u8,
+    /// The height is no longer asked for: the walk ends as if it fitted.
+    pub waived: bool,
 }
 
 /// How far from a ledge link's take-off point the feet may be for the flight to leave
@@ -533,6 +585,8 @@ impl Walker {
             flights: 0,
             landings: 0,
             door_off: None,
+            trip: None,
+            height_waivers: 0,
         }
     }
 
@@ -573,7 +627,36 @@ impl Walker {
     pub fn go_to(&mut self, nav: &NavGraph, to: Place, params: &PathParams) -> Result<&Path, PathError> {
         let path = nav.find_path(Place { space: self.space, pos: self.feet }, to, params)?;
         self.follower = Some(Follower::new(path));
+        let same = self.trip.as_ref().filter(|t| t.to.space == to.space && (0..3).map(|i| (t.to.pos[i] - to.pos[i]).powi(2)).sum::<f32>() <= SAME_TRIP * SAME_TRIP);
+        let (replans, waived) = same.map_or((0, false), |t| (t.replans, t.waived));
+        self.trip = Some(Trip { to, params: params.clone(), replans, waived });
         Ok(&self.follower.as_ref().expect("just set").path)
+    }
+
+    /// `old` said [`Steer::OffPath`] with the feet at `feet`: the follower of a new path
+    /// from there to the place asked for, or `None` when the height is waived and the
+    /// walk ends as if it fitted (no tries left, no such path, a path starting too far
+    /// above or below the feet, or a follower no [`Walker::go_to`] gave). Never fails the
+    /// walk: a package or a sandbox sees an arrival [design, docs/design/navmesh.md §4.1].
+    pub fn off_path(&mut self, nav: &NavGraph, feet: [f32; 3], old: &Follower) -> Option<Follower> {
+        let from = Place { space: self.space, pos: feet };
+        if let Some(t) = self.trip.as_mut() {
+            if t.waived {
+                return None;
+            }
+            if t.replans < HEIGHT_REPLANS {
+                t.replans += 1;
+                let starts_here = |p: &Path| p.legs.first().and_then(|l| l.points.first()).is_some_and(|s| (s[2] - feet[2]).abs() <= REPLAN_START_HEIGHT);
+                if let Some(path) = nav.find_path(from, t.to, &t.params).ok().filter(starts_here) {
+                    let mut f = Follower::new(path);
+                    f.goal_radius = old.goal_radius;
+                    return Some(f);
+                }
+            }
+            t.waived = true;
+        }
+        self.height_waivers += 1;
+        None
     }
 
     /// Move for `dt` seconds, passing doors that open in place as if they were open.
@@ -592,11 +675,13 @@ impl Walker {
         // Keep the path unless it ended (an idle update with the path not finished keeps it).
         let keep = match ev {
             WalkEvent::Arrived => false,
-            WalkEvent::Idle => f.steer(self.feet) != Steer::Arrived,
+            // `advance` ends a walk at Steer::OffPath only with the height waived.
+            WalkEvent::Idle => !matches!(f.steer(self.feet), Steer::Arrived | Steer::OffPath),
             WalkEvent::Moved | WalkEvent::Turned | WalkEvent::UsedDoor(_) | WalkEvent::WaitingForDoor(_) => true,
         };
         if !keep {
             self.turning = false;
+            self.trip = None;
         }
         if keep {
             self.follower = Some(f);
@@ -631,7 +716,8 @@ impl Walker {
         // A step may pass several close corners.
         for _ in 0..8 {
             match f.steer(self.feet) {
-                Steer::Arrived => return if moved { WalkEvent::Arrived } else { WalkEvent::Idle },
+                Steer::OffPath if let Some(new) = self.off_path(nav, self.feet, f) => *f = new,
+                Steer::Arrived | Steer::OffPath => return if moved { WalkEvent::Arrived } else { WalkEvent::Idle },
                 Steer::OpenDoor { door, .. } => {
                     if open(door) {
                         f.door_opened();

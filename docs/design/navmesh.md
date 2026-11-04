@@ -122,6 +122,65 @@ triangles, its door stops and the door that ends it.
   the door fully open, standing meanwhile (`WalkEvent::WaitingForDoor`); `update` passes
   doors as if open.
 
+### 4.1 A goal's height (#1500)
+
+Everything in this section is [design]: an engine choice with no claim about the original
+game, tried on synthetic navmeshes only.
+
+**What is checked.** One thing: the end of a walk. At the last point of the last leg (an
+ordinary goal, not a load door) `Follower::steer` answers `Steer::Arrived` only when
+`|feet.z - goal.z| <= 40 + horizontal distance * tan(60 degrees)`; otherwise
+`Steer::OffPath`. The goal point is the path's own end, the destination snapped onto the
+navmesh (`search_path`, `legs_of`). 40 is an engineering number, not measured safe: a stair
+step fits it and a storey does not, but stairs, actors pushed sideways on a slope and
+collision that lies apart from the navmesh have no established combined bound. The physics
+residents ask the same of the feet before `LAST_STRETCH` hands an actor to the walker, which
+would otherwise end the walk on the navmesh under the feet or, where there is none, lift it
+towards the goal's height.
+
+**What happens then.** `Walker::off_path` plans a new path from the feet to the place last
+asked for, at most twice in a trip (`HEIGHT_REPLANS`). After that, or when no path is found,
+or when the new path starts more than 64 units above or below the feet (provisional), the
+height is waived: the walk ends as it would have without this check, with an
+`AiEvent::HeightWaived` and its own line in the residents' log. A failure here never sets a
+package aside and never makes a sandbox choose again: both see an arrival, so a script's
+Travel package does not strand.
+
+The count and the waiver are on the `Walker` (`Walker::trip`), since each path a package asks
+for makes a new `Follower`. A trip is a place asked for: `go_to` compares the new request with
+the last one, as requested (not snapped), and one more than 256 units away (or in another
+space) starts a new trip; so does an arrival. There are no cooldowns or progress resets: the
+two tries are the bound. A target that keeps moving less than 256 units between requests stays
+one trip, so a waiver lasts until it arrives.
+
+**In the air and in the water.** A resident's body is judged only when grounded and not
+swimming. Otherwise each frame goes as it would without this check: the arrival or the
+hand-over happens at once, so a body that never lands cannot be held up by it. An actor falling
+through its goal's column still arrives in the air, as before. There is no settling state.
+
+**What is left out, and why.** An earlier attempt at more was dropped: each review of it found
+new ways to leave an actor worse off than before. So:
+
+- Corners, passed corners, ledge take-offs and hops, door stops, load-door endpoints and
+  `door_ahead` stay horizontal. An actor on the wrong floor can still consume a corner from
+  below, and open or use a door above it. This branch does not address the wrong-floor door
+  use the issue asks about.
+- After a waiver a wrong-floor arrival is still possible, as it was before; with feet within
+  the tolerance it is not even noticed. The issue's "does not report arrival" holds until the
+  tries run out, not always.
+- Rules at package level that end a walk by proximity (`crates/fnv-ai/src/carry.rs`: a
+  place's radius in `Ai::within` and a Follow package's catching up, each of which allows 256
+  units of height) are separate policy and untouched.
+- `fnvtool nav walk` ends at `Steer::OffPath` as at `Steer::Arrived`: it does not validate what
+  the residents do, and its result says nothing about this section.
+
+**The walker on the navmesh.** Its feet are the navmesh's height after each step, so at a goal
+they fit, and it behaves as before (no new searches, no change to random numbers or door
+events). Not always: feet off the navmesh and already inside the goal's radius, with no step
+taken (an actor placed in the air, a door's arrival point right at the goal); and a triangle
+picked by `tri_near` on another level, as it searches by horizontal position within two rings.
+Those plan new paths and, if none helps, end as before.
+
 ## 5. Tests and tools
 
 - Unit tests (`crates/fnv-nav/src/tests.rs`, synthetic navmeshes): internal edges and

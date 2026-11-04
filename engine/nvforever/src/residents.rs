@@ -257,7 +257,7 @@ impl Mover for PhysMover<'_> {
         open_door(self.doors, door)
     }
 
-    fn walk(&mut self, actor: FormId, walker: &mut Walker, _nav: &NavGraph, dt: f32) -> Option<WalkEvent> {
+    fn walk(&mut self, actor: FormId, walker: &mut Walker, nav: &NavGraph, dt: f32) -> Option<WalkEvent> {
         let id = actor.0;
         if self.held.contains(&id) {
             // Its body stops too: the character keeps the last velocity it was given, and
@@ -291,6 +291,10 @@ impl Mover for PhysMover<'_> {
             self.unstuck.insert(id, u);
         }
         let feet = phys.npcs[&id].ch.feet;
+        // A goal's height is judged on the ground only: in the air or in the water every
+        // frame below goes as if it fitted, so a body that never lands is not held up by
+        // it (docs/design/navmesh.md §4.1).
+        let judged = phys.npcs[&id].ch.grounded && !phys.npcs[&id].ch.swimming;
         let mut f = walker.follower.take()?;
         // Back to the walker: where physics left the actor, on the same path.
         let give_up = |phys: &mut PhysState, walker: &mut Walker, f| {
@@ -306,7 +310,12 @@ impl Mover for PhysMover<'_> {
             return None;
         }
         let (event, velocity) = match f.steer(feet) {
-            Steer::Arrived => {
+            // Not at the goal's height: a new path from here, if it has one left.
+            Steer::OffPath if let Some(new) = judged.then(|| walker.off_path(nav, feet, &f)).flatten() => {
+                f = new;
+                (WalkEvent::Moved, [0.0, 0.0])
+            }
+            Steer::Arrived | Steer::OffPath => {
                 phys.remove_npc(id);
                 walker.travelled += (feet[0] - walker.feet[0]).hypot(feet[1] - walker.feet[1]);
                 walker.feet = feet;
@@ -349,11 +358,22 @@ impl Mover for PhysMover<'_> {
             // fighter's: its posts (cover, a peek point, a flank) are places to stand, and
             // the walker, which keeps to the navmesh and not the collision, left it half
             // inside walls by its cover (owner's screenshot 2026-10-23) [design].
+            // On a mismatch the walker would end the walk on the navmesh under the feet, or
+            // where there is none lift it towards the goal's height: a new path from here
+            // first, as above.
             Steer::Walk { remaining, .. } if remaining < LAST_STRETCH && f.leg + 1 == f.path.legs.len() && !self.fighting.contains_key(&actor) => {
-                self.skip_until.insert(id, self.now + 4.0);
-                walker.feet = feet;
-                give_up(phys, walker, f);
-                return None;
+                match (judged && !f.fits_goal(feet)).then(|| walker.off_path(nav, feet, &f)).flatten() {
+                    Some(new) => {
+                        f = new;
+                        (WalkEvent::Moved, [0.0, 0.0])
+                    }
+                    None => {
+                        self.skip_until.insert(id, self.now + 4.0);
+                        walker.feet = feet;
+                        give_up(phys, walker, f);
+                        return None;
+                    }
+                }
             }
             // Standing and facing away from the way to go: it turns on the spot first, as
             // the walker does (not counted as being stuck).
@@ -1991,6 +2011,7 @@ impl Core {
                 _ if r.named || game.is_teammate(e.actor) => info!("{line}"),
                 AiEvent::Trip { .. }
                 | AiEvent::Unreachable { .. }
+                | AiEvent::HeightWaived { .. }
                 | AiEvent::DoorRefused { .. }
                 | AiEvent::Resumed { .. }
                 | AiEvent::Approach { .. }
@@ -2155,6 +2176,7 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         AiEvent::Resumed { package, .. } => format!("goes on with {}, its sandbox day as saved", n(package)),
         AiEvent::Arrived { seconds, travelled, .. } => format!("arrived after {seconds:.1}s, {travelled:.0} units"),
         AiEvent::Unreachable { package, why } => format!("cannot reach the place of {}: {why}", n(package)),
+        AiEvent::HeightWaived { at } => format!("ends its walk off its goal's height, at ({:.0}, {:.0}, {:.0}): no new path helped", at[0], at[1], at[2]),
         AiEvent::NotCarriedOut { package, why } => format!("stays: {} is {why}, not carried out yet", n(package)),
         AiEvent::Furniture { furniture: Some(f) } => format!("is to use furniture {f}"),
         AiEvent::Furniture { furniture: None } => "leaves its furniture".into(),

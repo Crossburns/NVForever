@@ -2975,3 +2975,161 @@ fn sandbox_interrupt_preserves_a_valid_chat_approach_and_wait_until_combat() {
         sandbox_resumes(&mut s, who);
     }
 }
+
+// ---- feet that do not fit the goal's height (#1500; docs/design/navmesh.md §4.1) ----------
+
+/// A strip of quads through `sections` (a left and a right point each, walking along it):
+/// one navmesh whatever lies under what.
+fn strip(form_id: u32, sections: &[([f32; 3], [f32; 3])]) -> NavMeshRecord {
+    let vertices = sections.iter().flat_map(|(l, r)| [*l, *r]).collect();
+    let n = sections.len() - 1;
+    let mut triangles = Vec::new();
+    for k in 0..n {
+        let (a, b, c, d) = ((2 * k) as u16, (2 * k + 1) as u16, (2 * k + 3) as u16, (2 * k + 2) as u16);
+        let tri = |t: usize| t as i16;
+        triangles.push(Triangle { v: [a, b, c], edges: [if k > 0 { tri(2 * k - 1) } else { -1 }, -1, tri(2 * k + 1)], flags: 0, cover: 0 });
+        triangles.push(Triangle { v: [a, c, d], edges: [tri(2 * k), if k + 1 < n { tri(2 * k + 2) } else { -1 }, -1], flags: 0, cover: 0 });
+    }
+    NavMeshRecord { form_id, vertices, triangles, ..Default::default() }
+}
+
+/// Cell A with MarkA (350, 350, 0) on a deck, a floor 200 under the deck, and (`joined`) a
+/// ramp and a landing between them.
+fn deck_over_a_floor(joined: bool) -> NavGraph {
+    let deck = [([800.0, 300.0, 0.0], [800.0, 400.0, 0.0]), ([0.0, 300.0, 0.0], [0.0, 400.0, 0.0])];
+    let floor = [([0.0, 400.0, -200.0], [0.0, 0.0, -200.0]), ([400.0, 400.0, -200.0], [400.0, 0.0, -200.0])];
+    let m = if joined {
+        // Along the floor to the east, up the ramp, round the landing and back west.
+        let mut s = floor.to_vec();
+        s.extend([([800.0, 100.0, 0.0], [800.0, 0.0, 0.0]), ([800.0, 200.0, 0.0], [900.0, 100.0, 0.0]), ([800.0, 300.0, 0.0], [900.0, 400.0, 0.0])]);
+        s.extend([([700.0, 300.0, 0.0], [700.0, 400.0, 0.0]), deck[1]]);
+        vec![strip(1, &s)]
+    } else {
+        vec![strip(1, &floor), strip(2, &deck)]
+    };
+    let input: Vec<_> = m.iter().map(|m| (m, Some(CELL_A), Some(A))).collect();
+    NavGraph::assemble(&input)
+}
+
+/// A caller's character movement that fell: at its first walk the actor's feet are 200
+/// under the end of its path, and the walker takes it from there (as `PhysMover` hands an
+/// actor over).
+struct FallsUnderGoal(bool);
+
+impl fnv_ai::Mover for FallsUnderGoal {
+    fn walk(&mut self, _actor: FormId, walker: &mut fnv_nav::Walker, _nav: &NavGraph, _dt: f32) -> Option<fnv_nav::WalkEvent> {
+        if !self.0 {
+            let goal = walker.follower.as_ref().and_then(|f| f.destination()).expect("on a walk").pos;
+            walker.feet = [goal[0], goal[1], goal[2] - 200.0];
+            walker.tri = fnv_nav::graph::NONE;
+            self.0 = true;
+        }
+        None
+    }
+}
+
+const UNDER_MARK_A: [f32; 3] = [350.0, 350.0, -200.0];
+
+/// `R_RUN` on its way along the deck to MarkA, over the floor; its package a script's if
+/// `script`.
+fn on_the_deck<'a>(f: &'a Fixture, joined: bool, script: bool) -> Sim<'a> {
+    let mut s = sim(f, &[R_RUN]);
+    s.nav = deck_over_a_floor(joined);
+    if script {
+        s.game.extra.entry(FormId(R_RUN)).or_default().script_package = Some(FormId(P_RUN));
+    }
+    s.ai.agents.get_mut(&FormId(R_RUN)).unwrap().walker.feet = [650.0, 350.0, 0.0];
+    s.run(0.5);
+    assert_eq!(s.ai.agents[&FormId(R_RUN)].activity, Activity::Travelling);
+    s
+}
+
+#[test]
+fn an_actor_fallen_under_its_goal_walks_back_by_the_ramp_from_where_it_stands() {
+    let f = fixture();
+    let mut s = on_the_deck(&f, true, false);
+    let actor = FormId(R_RUN);
+    s.game.tick();
+    s.ai.update_moved(&mut s.game, &s.nav, 0.5, &mut FallsUnderGoal(false));
+    // Not there; on a new way, from the floor.
+    assert_eq!(s.ai.agents[&actor].activity, Activity::Travelling);
+    assert!(!s.events(R_RUN).iter().any(|e| matches!(e, AiEvent::Arrived { .. })), "{:?}", s.events(R_RUN));
+    assert_eq!(s.ai.agents[&actor].walker.trip.as_ref().unwrap().replans, 1);
+    assert!(s.ai.agents[&actor].walker.follower.as_ref().unwrap().path.length > 1000.0);
+    assert!((s.feet(R_RUN)[2] + 200.0).abs() < 1.0, "{:?}", s.feet(R_RUN));
+    let (mut furthest, mut before) = (0.0f32, s.feet(R_RUN));
+    for _ in 0..200 {
+        s.run(0.5);
+        let now = s.feet(R_RUN);
+        furthest = furthest.max(now[0]);
+        // No teleport: no faster than it runs, no steeper than the ramp.
+        assert!(dist(now, before) <= 200.5, "{before:?} to {now:?}");
+        assert!((now[2] - before[2]).abs() <= 0.5 * dist(now, before) + 1.0, "{before:?} to {now:?}");
+        before = now;
+        if s.ai.agents[&actor].activity != Activity::Travelling {
+            break;
+        }
+    }
+    assert!(furthest > 700.0, "not by the ramp: {furthest}");
+    let ev = s.events(R_RUN);
+    assert!(matches!(ev.last().unwrap(), AiEvent::Arrived { .. }), "{ev:?}");
+    assert!(!ev.iter().any(|e| matches!(e, AiEvent::HeightWaived { .. })), "{ev:?}");
+    assert!(s.feet(R_RUN)[2].abs() < 1.0, "{:?}", s.feet(R_RUN));
+}
+
+#[test]
+fn a_script_travel_package_whose_new_way_fails_still_arrives() {
+    let f = fixture();
+    for script in [false, true] {
+        let mut s = on_the_deck(&f, false, script);
+        let actor = FormId(R_RUN);
+        s.game.tick();
+        s.ai.update_moved(&mut s.game, &s.nav, 0.5, &mut FallsUnderGoal(false));
+        s.run(0.5);
+        let ev = s.events(R_RUN);
+        assert_eq!(ev.iter().filter(|e| matches!(e, AiEvent::HeightWaived { at } if *at == UNDER_MARK_A)).count(), 1, "{ev:?}");
+        assert!(matches!(ev.last().unwrap(), AiEvent::Arrived { package, .. } if package.0 == P_RUN), "{ev:?}");
+        assert!(!ev.iter().any(|e| matches!(e, AiEvent::Unreachable { .. })), "{ev:?}");
+        assert_eq!(s.ai.agents[&actor].activity, Activity::There);
+        assert_eq!(s.feet(R_RUN), UNDER_MARK_A, "no teleport");
+        assert!(s.game.extra[&actor].package_goal_met);
+    }
+}
+
+#[test]
+fn a_sandbox_choice_whose_new_way_fails_still_completes() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    let actor = FormId(R_SB_OBJECTS);
+    for _ in 0..40 {
+        s.run(0.5);
+        if s.ai.agents[&actor].sandbox.is_some() && s.ai.agents[&actor].activity == Activity::Travelling {
+            break;
+        }
+    }
+    assert_eq!(s.ai.agents[&actor].activity, Activity::Travelling, "on a sandbox's walk");
+    s.game.tick();
+    s.ai.update_moved(&mut s.game, &s.nav, 0.5, &mut FallsUnderGoal(false));
+    let a = &s.ai.agents[&actor];
+    assert_eq!(a.activity, Activity::There);
+    assert!(a.sandbox.is_some(), "still in its sandbox");
+    let ev = s.events(R_SB_OBJECTS);
+    assert!(ev.iter().any(|e| matches!(e, AiEvent::HeightWaived { .. })), "{ev:?}");
+    assert!(!ev.iter().any(|e| matches!(e, AiEvent::Unreachable { .. })), "{ev:?}");
+    // What it chose has begun; had the walk failed it would stand and choose again.
+    assert_ne!(a.sandbox.as_ref().unwrap().phase(), SandboxPhase::Standing);
+}
+
+#[test]
+fn walks_on_the_navmesh_plan_no_new_path_and_waive_no_height() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_TRAVEL, R_RUN, R_PATROL, R_LOOP, R_RADIUS, R_SB_ALL, R_SB_OBJECTS, R_TO_CHAIR, R_SEEKER]);
+    for _ in 0..120 {
+        s.run(1.0);
+        for (id, a) in &s.ai.agents {
+            assert_eq!(a.walker.trip.as_ref().map_or(0, |t| t.replans), 0, "{id:?}");
+        }
+    }
+    let waived: Vec<_> = s.ai.events.iter().filter(|e| matches!(e.event, AiEvent::HeightWaived { .. })).map(|e| &e.event).collect();
+    assert!(waived.is_empty(), "{waived:?}");
+}
