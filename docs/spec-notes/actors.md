@@ -1241,8 +1241,8 @@ Owner's machine, 2026-10-09, release build [observed].
   `drive` last ran (it would have been put back, so it is). A pose of the layers alone is
   the same bones, so a frame ends with what sampling would have left. On a corpse the other
   writers are foot IK easing out and the lips giving a turned head back. A held actor is not
-  counted as posed, and its time is left out of the `actor animation` line's µs per actor
-  (not its ms per frame); the `death poses` line counts the frames held (of them, at the
+  counted as posed, and most of its time is left out of the `actor animation` line's µs per
+  actor, approximately (not its ms per frame); the `death poses` line counts the frames held (of them, at the
   clip's end), those sampled at the clip's end and the tracks sampled on the dead. What it
   saves in frame time is unmeasured.
 
