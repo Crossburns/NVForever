@@ -29,9 +29,16 @@
 //! - A cell whose encounter zone has "Never Resets" is not reset: no actor comes back and
 //!   no container refills (docs/spec-notes/encounter-zones.md §4).
 //! - A recreated actor's leveled level is fixed again (`crate::zones`).
+//! - **ResetInterior cell** (Fallout 3's; The Pitt and Fallout 3 call it) marks an
+//!   interior cell expired; it is reset at its next load, whenever the player left it,
+//!   and that reset does not bring dead actors back [documented: GECK wiki ResetInterior,
+//!   catalogue notes "only flags the cell as expired", "the cell has to be loaded in
+//!   order to get cleaned up", "does NOT resurrect Actors"]: its respawning containers go
+//!   back to their authored contents and its scripted references run OnReset
+//!   [hypothesis: the rest of a reset, as a timed one; an encounter zone's "Never
+//!   Resets" does not stop it]. Kept in `FormChanges::expired_cells` (saved) until then.
 //! - Not done: removing the bodies of killed actors that do not respawn
-//!   ("Quest Item: Dead body isn't removed when the cell regenerates", Category:NPC);
-//!   ResetInterior.
+//!   ("Quest Item: Dead body isn't removed when the cell regenerates", Category:NPC).
 
 use crate::functions::base_of;
 use crate::game::Game;
@@ -68,19 +75,25 @@ impl Game<'_> {
     /// `cell` comes into the loaded area: reset it when it has been away long enough
     /// (module notes). The reset, if any, is also kept for [`Game::take_cell_resets`].
     pub(crate) fn cell_entered(&mut self, cell: FormId) -> Option<CellReset> {
+        let expired = self.forms.expired_cells.remove(&cell);
         let since = self.world.detached_since(cell);
         let now = self.world.calendar().ok().map(|c| c.days_passed);
         let containers = self.world.attach_cell(cell).unwrap_or_default();
-        let hours_away = (now? as f64 - since? as f64) * 24.0;
-        // The same slack as `World::attach_cell` (GameDaysPassed is an f32).
-        if hours_away + 1e-3 < self.world.respawn_hours() as f64 {
-            return None;
-        }
-        // An encounter zone with "Never Resets" is never reset (docs/spec-notes/
-        // encounter-zones.md §4).
-        if self.world.cell_never_resets(cell) {
-            return None;
-        }
+        let away = now.zip(since).map(|(n, s)| (n as f64 - s as f64) * 24.0);
+        // The same slack as `World::attach_cell` (GameDaysPassed is an f32). An encounter
+        // zone with "Never Resets" is never reset (docs/spec-notes/encounter-zones.md §4).
+        let timed = away.filter(|h| h + 1e-3 >= self.world.respawn_hours() as f64 && !self.world.cell_never_resets(cell));
+        let Some(hours_away) = timed else {
+            if !expired {
+                return None;
+            }
+            // ResetInterior's reset: no actor comes back (module notes). `attach_cell`
+            // reset nothing, its delay not having run out.
+            let containers = self.world.reset_containers(cell);
+            let reset = CellReset { cell, hours_away: away.unwrap_or(0.0), respawned: Vec::new(), containers };
+            self.cell_resets.push(reset.clone());
+            return Some(reset);
+        };
         let placed = self.world.placed;
         let dead: Vec<FormId> = placed
             .by_cell

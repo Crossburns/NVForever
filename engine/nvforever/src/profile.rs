@@ -15,7 +15,8 @@
 //! when the variable is set.
 //!
 //! A frame of 100 ms or more ([`HITCH_MS`], real time from one frame's report to the
-//! next) also logs `profile hitch: <ms> ms; spans ms: <span> <ms> (<entries>), …`: the
+//! next; `NVF_PLAY_TEST_PROFILE_HITCH_MS=<ms>` sets another threshold, to see what the
+//! occasional 20 ms frames hold) also logs `profile hitch: <ms> ms; spans ms: <span> <ms> (<entries>), …`: the
 //! spans that ended in it, over every thread, so a single stall is not lost in a window's
 //! means.
 //!
@@ -25,12 +26,23 @@
 //! transform changed. And from the render world `profile batches: <phase> <v> views,
 //! <m> multi-drawn sets, <b> batched bins, <u> unbatched bins; …` per binned phase,
 //! summed over its views: each multi-drawn set is one indirect draw, each other bin one
-//! draw, and the per-view preparing scales with them (graphics-enhanced.md §5.5).
+//! draw, and the per-view preparing scales with them (graphics-enhanced.md §5.5); then
+//! `transparent <v> views, <n> sorted draws`, the blended draws, one each.
 //!
 //! `profile outfits:` counts successful NPC spawns by appearance source and committed
 //! `follow_inventory` replacements per window, with their total synchronous time in ms.
 //! A replacement counts one actor, even if both its armour and weapon change. Failed
 //! appearance resolutions and unchanged outfits do not count [design].
+//!
+//! `NVF_PLAY_TEST_PROFILE_COUNTS=1` (a measuring aid of its own, with or without the
+//! span profile): every window (`NVF_PLAY_TEST_PROFILE`'s seconds when that is set, else
+//! [`COUNTS_SECONDS`]) two lines of counts, for attributing what the spans time:
+//! `phys-refresh: secs=<s> frames=<n> refreshes=<n> by_consumer=player:<n>/npc:<n>/step:<n>/cast:<n> …`
+//! (the broad-phase refreshes, `fnv_phys::RefreshStats`) and
+//! `ai-counts: secs=<s> frames=<n> think=<n> path_searches=<n> …` (the residents' AI work).
+//! Every field is `key=value`; the keys are listed in [`phys_refresh_line`] and
+//! [`ai_counts_line`]. Without the variable nothing is logged and the AI counters (here,
+//! `fnv_nav::path::probe` and `fnv_ai::apart::probe`) are not touched.
 
 use bevy::log::tracing::field::{Field, Visit};
 use bevy::log::tracing::span::{Attributes, Id};
@@ -44,6 +56,7 @@ use bevy::core_pipeline::prepass::{AlphaMask3dPrepass, Opaque3dPrepass};
 use bevy::prelude::*;
 use bevy::render::render_phase::ViewBinnedRenderPhases;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -54,6 +67,14 @@ const LISTED: usize = 40;
 /// logs its own spans (`profile hitch:`), which a window's means would hide.
 const HITCH_MS: f64 = 100.0;
 
+/// The hitch threshold: [`HITCH_MS`] or `NVF_PLAY_TEST_PROFILE_HITCH_MS`.
+fn hitch_ms() -> f64 {
+    static MS: OnceLock<f64> = OnceLock::new();
+    *MS.get_or_init(|| {
+        std::env::var("NVF_PLAY_TEST_PROFILE_HITCH_MS").ok().and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| *v > 0.0).unwrap_or(HITCH_MS)
+    })
+}
+
 /// Spans listed in a hitch's line.
 const LISTED_HITCH: usize = 25;
 
@@ -61,6 +82,66 @@ const LISTED_HITCH: usize = 25;
 pub fn interval() -> Option<f32> {
     static EVERY: OnceLock<Option<f32>> = OnceLock::new();
     *EVERY.get_or_init(|| std::env::var("NVF_PLAY_TEST_PROFILE").ok().and_then(|v| v.trim().parse::<f32>().ok()).filter(|s| *s > 0.0))
+}
+
+/// The counts' window in seconds when the span profile does not give one.
+pub const COUNTS_SECONDS: f32 = 5.0;
+
+/// Whether `NVF_PLAY_TEST_PROFILE_COUNTS` asks for the count lines.
+pub fn counts_on() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("NVF_PLAY_TEST_PROFILE_COUNTS").is_ok_and(|v| !v.trim().is_empty() && v.trim() != "0"))
+}
+
+/// The residents' AI work counted for `ai-counts:` (cumulative; diagnostics only).
+#[derive(Clone, Copy)]
+pub enum AiCount {
+    /// `Core::think` calls.
+    Think,
+    /// Residents `Core::process_levels` classified.
+    Classified,
+    /// Residents whose remaining path it scanned for the loaded area (the `Coming` test).
+    ComingScans,
+    /// Path points that scan tested.
+    PathPointsTested,
+    /// Process levels it changed.
+    LevelChanges,
+    /// `switch_navmeshes` calls (each polls the three below once).
+    NavPolls,
+    /// Navmesh switches in the game's list at each poll, summed.
+    SwitchesPolled,
+    /// Polls whose navmesh switches changed the graph.
+    SwitchesChanged,
+    /// Polls that saw a lock serial other than the last poll's.
+    LockSerialChanges,
+    /// Polls whose door locks changed the graph.
+    LocksChanged,
+    /// Nav obstacles visited at each poll, summed.
+    ObstaclesPolled,
+    /// Polls whose obstacles changed the graph.
+    ObstaclesChanged,
+    /// Actors `show_actor` asked to be drawn that were ready (spawn calls).
+    Spawns,
+    /// Scans of every reference root for an actor's root (`show_actor`).
+    RootScans,
+}
+
+const AI_COUNTS: usize = AiCount::RootScans as usize + 1;
+static AI: [AtomicU64; AI_COUNTS] = [const { AtomicU64::new(0) }; AI_COUNTS];
+
+/// Count `n` of `c` (nothing without `NVF_PLAY_TEST_PROFILE_COUNTS`).
+pub fn ai_count(c: AiCount, n: usize) {
+    if counts_on() {
+        AI[c as usize].fetch_add(n as u64, Relaxed);
+    }
+}
+
+/// The door-lock serial a navigation poll saw: counts a change from the last poll's.
+pub fn ai_lock_serial(serial: u64) {
+    static LAST: AtomicU64 = AtomicU64::new(u64::MAX);
+    if counts_on() && LAST.swap(serial, Relaxed) != serial {
+        AI[AiCount::LockSerialChanges as usize].fetch_add(1, Relaxed);
+    }
 }
 
 /// Time per span key in the current window: (seconds, entries).
@@ -114,38 +195,59 @@ pub fn layer() -> Option<BoxedLayer> {
 
 struct SpanTimes;
 
-/// A span's key (its name, with the `name` field of Bevy's system spans) and when it was
-/// last entered.
+/// A span's key (its name, with the `name` field of Bevy's system spans, or the `system`
+/// field of the render app's `finish_command_buffer` spans: which render system recorded the
+/// encoder being finished) and when it was last entered.
 struct Timing {
     key: String,
     entered: Option<Instant>,
 }
 
-/// Reads the `name` field of a span.
-struct NameField(Option<String>);
+/// Reads the `name` and `system` fields of a span.
+#[derive(Default)]
+struct NameField {
+    name: Option<String>,
+    system: Option<String>,
+}
+
+impl NameField {
+    fn slot(&mut self, field: &Field) -> Option<&mut Option<String>> {
+        match field.name() {
+            "name" => Some(&mut self.name),
+            "system" => Some(&mut self.system),
+            _ => None,
+        }
+    }
+}
 
 impl Visit for NameField {
     fn record_str(&mut self, field: &Field, value: &str) {
-        if field.name() == "name" {
-            self.0 = Some(value.to_string());
+        if let Some(slot) = self.slot(field) {
+            *slot = Some(value.to_string());
         }
     }
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "name" && self.0.is_none() {
-            self.0 = Some(format!("{value:?}").trim_matches('"').to_string());
+        if let Some(slot) = self.slot(field).filter(|s| s.is_none()) {
+            *slot = Some(format!("{value:?}").trim_matches('"').to_string());
         }
+    }
+}
+
+/// The key a span's time is summed under: a system span by its system's short name, a
+/// span with a `system` field (`finish_command_buffer`) by its own name and that system's.
+fn span_key(base: &str, fields: NameField) -> String {
+    match fields {
+        NameField { name: Some(n), .. } => short_name(&n),
+        NameField { system: Some(s), .. } => format!("{base}[{}]", short_name(&s)),
+        _ => base.to_string(),
     }
 }
 
 impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for SpanTimes {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        let mut name = NameField(None);
-        attrs.record(&mut name);
-        let base = attrs.metadata().name();
-        let key = match name.0 {
-            Some(n) => short_name(&n),
-            None => base.to_string(),
-        };
+        let mut fields = NameField::default();
+        attrs.record(&mut fields);
+        let key = span_key(attrs.metadata().name(), fields);
         if let Some(span) = ctx.span(id) {
             span.extensions_mut().insert(Timing { key, entered: None });
         }
@@ -198,6 +300,13 @@ impl Plugin for ProfilePlugin {
             info!("test aid NVF_PLAY_TEST_ACTOR_NO_SHADOWS: actors cast no shadows");
             app.add_systems(Last, actors_cast_no_shadows);
         }
+        if counts_on() {
+            info!("test aid NVF_PLAY_TEST_PROFILE_COUNTS: physics refresh and AI counts every {} s", interval().unwrap_or(COUNTS_SECONDS));
+            // The library counters count only from here, like `ai_count`.
+            fnv_nav::path::probe::enable();
+            fnv_ai::apart::probe::enable();
+            app.add_systems(Last, report_counts);
+        }
         let Some(every) = interval() else { return };
         info!("test aid NVF_PLAY_TEST_PROFILE: a span profile every {every} s");
         // GPU time per render pass (timestamp queries, Vulkan and DX12): `profile gpu:`.
@@ -205,7 +314,7 @@ impl Plugin for ProfilePlugin {
         app.insert_resource(ProfileWindow { every, ..default() }).init_resource::<AssetChanges>().add_systems(Last, (count_asset_changes, report).chain());
         if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
             render.add_systems(bevy::render::Render, pipeline_counts.in_set(bevy::render::RenderSystems::Render));
-            render.add_systems(bevy::render::Render, (move |mut last: Local<Option<Instant>>, shadow: Res<ViewBinnedRenderPhases<bevy::pbr::Shadow>>, opaque: Res<ViewBinnedRenderPhases<Opaque3d>>, mask: Res<ViewBinnedRenderPhases<AlphaMask3d>>, prepass: Res<ViewBinnedRenderPhases<Opaque3dPrepass>>, mask_prepass: Res<ViewBinnedRenderPhases<AlphaMask3dPrepass>>| {
+            render.add_systems(bevy::render::Render, (move |mut last: Local<Option<Instant>>, shadow: Res<ViewBinnedRenderPhases<bevy::pbr::Shadow>>, opaque: Res<ViewBinnedRenderPhases<Opaque3d>>, mask: Res<ViewBinnedRenderPhases<AlphaMask3d>>, prepass: Res<ViewBinnedRenderPhases<Opaque3dPrepass>>, mask_prepass: Res<ViewBinnedRenderPhases<AlphaMask3dPrepass>>, transparent: Res<bevy::render::render_phase::ViewSortedRenderPhases<bevy::core_pipeline::core_3d::Transparent3d>>| {
                 // The render world has no clock of its own: real time.
                 let now = Instant::now();
                 let at = *last.get_or_insert(now);
@@ -214,12 +323,14 @@ impl Plugin for ProfilePlugin {
                 }
                 *last = Some(now);
                 info!(
-                    "profile batches: {}; {}; {}; {}; {}",
+                    "profile batches: {}; {}; {}; {}; {}; transparent {} views, {} sorted draws",
                     batches("shadow", &shadow),
                     batches("opaque", &opaque),
                     batches("alpha-mask", &mask),
                     batches("opaque prepass", &prepass),
-                    batches("alpha-mask prepass", &mask_prepass)
+                    batches("alpha-mask prepass", &mask_prepass),
+                    transparent.len(),
+                    transparent.values().map(|p| p.items.len()).sum::<usize>()
                 );
             })
             .in_set(bevy::render::RenderSystems::Render));
@@ -368,7 +479,7 @@ fn report(
     let frame = FRAME.lock().unwrap_or_else(|e| e.into_inner()).take().unwrap_or_default();
     if let Some(at) = last.replace(now) {
         let ms = now.duration_since(at).as_secs_f64() * 1000.0;
-        if ms >= HITCH_MS {
+        if ms >= hitch_ms() {
             let line = format!(
                 "{}; pipelines {pipelines} ({new_pipelines} new since the frame before, {} waiting)",
                 hitch_line(ms, &frame),
@@ -487,6 +598,107 @@ fn report(
     *w = ProfileWindow { every: w.every, cpu_at: cpu, ..default() };
 }
 
+/// The counts at the start of a window (`report_counts`).
+#[derive(Default)]
+struct CountsWindow {
+    since: f32,
+    frames: u32,
+    phys: fnv_phys::RefreshStats,
+    nav: (u64, u64),
+    apart: (u64, u64, u64),
+    ai: [u64; AI_COUNTS],
+}
+
+/// `NVF_PLAY_TEST_PROFILE_COUNTS`: the `phys-refresh:` and `ai-counts:` lines, each the
+/// differences of cumulative counts over the window. Reads the physics state only (no
+/// change detection is set off).
+fn report_counts(time: Res<Time<Real>>, phys: Option<Res<nvf_play::phys::PhysState>>, mut w: Local<CountsWindow>) {
+    w.since += time.delta_secs();
+    w.frames += 1;
+    if w.since < interval().unwrap_or(COUNTS_SECONDS) {
+        return;
+    }
+    let (secs, frames) = (w.since, w.frames);
+    if let Some(p) = phys {
+        let now = p.world.refresh_stats();
+        // A new world starts its counts again.
+        let before = if now.refreshes < w.phys.refreshes || now.marks.iter().zip(&w.phys.marks).any(|(a, b)| a < b) { fnv_phys::RefreshStats::default() } else { w.phys };
+        info!("{}", phys_refresh_line(secs, frames, &now, &before, p.world.standalone_hit_volumes()));
+        w.phys = now;
+    }
+    let nav = fnv_nav::path::probe::searches();
+    let apart = fnv_ai::apart::probe::separations();
+    let ai: [u64; AI_COUNTS] = std::array::from_fn(|i| AI[i].load(Relaxed));
+    info!("{}", ai_counts_line(secs, frames, (nav.0 - w.nav.0, nav.1 - w.nav.1), (apart.0 - w.apart.0, apart.1 - w.apart.1, apart.2 - w.apart.2), &std::array::from_fn(|i| ai[i] - w.ai[i])));
+    *w = CountsWindow { phys: w.phys, nav, apart, ai, ..default() };
+}
+
+/// `phys-refresh: secs=<s> frames=<n> refreshes=<n> by_consumer=player:<n>/npc:<n>/step:<n>/cast:<n>
+/// hitvol_only=player:<n>/npc:<n>/step:<n>/cast:<n> dirty_hitvol=<n> dirty_bodies=<n>
+/// dirty_transform=<n> dirty_other=<n> with_hitvol=<n> with_bodies=<n> with_transform=<n>
+/// with_other=<n> step_absorbed=<n> hitvol_colliders=<n> colliders_mean=<x>
+/// repair_new=<n> repair_sleep=<n> repair_struck=<n> hitvol_written=<n> hitvol_skipped=<n>
+/// hitvol_standalone=<0|1>`, the counts of `now` less `before`; `hitvol_standalone` is the
+/// world's setting (1 unless `nvf_play::phys::HITVOL_ATTACHED_VAR`), not a count.
+fn phys_refresh_line(secs: f32, frames: u32, now: &fnv_phys::RefreshStats, before: &fnv_phys::RefreshStats, standalone: bool) -> String {
+    let d = |a: u64, b: u64| a.saturating_sub(b);
+    let by = |a: &[u64; 4], b: &[u64; 4]| format!("player:{}/npc:{}/step:{}/cast:{}", d(a[0], b[0]), d(a[1], b[1]), d(a[2], b[2]), d(a[3], b[3]));
+    let refreshes = d(now.refreshes, before.refreshes);
+    let colliders = d(now.colliders, before.colliders) as f64 / refreshes.max(1) as f64;
+    format!(
+        "phys-refresh: secs={secs:.1} frames={frames} refreshes={refreshes} by_consumer={} hitvol_only={} dirty_hitvol={} dirty_bodies={} dirty_transform={} dirty_other={} with_hitvol={} with_bodies={} with_transform={} with_other={} step_absorbed={} hitvol_colliders={} colliders_mean={colliders:.0} repair_new={} repair_sleep={} repair_struck={} hitvol_written={} hitvol_skipped={} hitvol_standalone={}",
+        by(&now.by_consumer, &before.by_consumer),
+        by(&now.hitvol_only, &before.hitvol_only),
+        d(now.marks[0], before.marks[0]),
+        d(now.marks[1], before.marks[1]),
+        d(now.marks[2], before.marks[2]),
+        d(now.marks[3], before.marks[3]),
+        d(now.refreshes_with[0], before.refreshes_with[0]),
+        d(now.refreshes_with[1], before.refreshes_with[1]),
+        d(now.refreshes_with[2], before.refreshes_with[2]),
+        d(now.refreshes_with[3], before.refreshes_with[3]),
+        d(now.step_absorbed, before.step_absorbed),
+        d(now.hitvol_colliders, before.hitvol_colliders),
+        d(now.repair_new, before.repair_new),
+        d(now.repair_sleep, before.repair_sleep),
+        d(now.repair_struck, before.repair_struck),
+        d(now.hitvol_written, before.hitvol_written),
+        d(now.hitvol_skipped, before.hitvol_skipped),
+        u8::from(standalone),
+    )
+}
+
+/// `ai-counts: secs=<s> frames=<n> think=<n> path_searches=<n> path_hits=<n>
+/// separation_passes=<n> separation_bodies=<n> separation_pairs=<n> classified=<n>
+/// coming_scans=<n> path_points_tested=<n> level_changes=<n> nav_polls=<n>
+/// switches_polled=<n> switches_changed=<n> lock_serial_changes=<n> locks_changed=<n>
+/// obstacles_polled=<n> obstacles_changed=<n> spawns=<n> root_scans=<n>`.
+fn ai_counts_line(secs: f32, frames: u32, nav: (u64, u64), apart: (u64, u64, u64), ai: &[u64; AI_COUNTS]) -> String {
+    let c = |k: AiCount| ai[k as usize];
+    format!(
+        "ai-counts: secs={secs:.1} frames={frames} think={} path_searches={} path_hits={} separation_passes={} separation_bodies={} separation_pairs={} classified={} coming_scans={} path_points_tested={} level_changes={} nav_polls={} switches_polled={} switches_changed={} lock_serial_changes={} locks_changed={} obstacles_polled={} obstacles_changed={} spawns={} root_scans={}",
+        c(AiCount::Think),
+        nav.0,
+        nav.1,
+        apart.0,
+        apart.1,
+        apart.2,
+        c(AiCount::Classified),
+        c(AiCount::ComingScans),
+        c(AiCount::PathPointsTested),
+        c(AiCount::LevelChanges),
+        c(AiCount::NavPolls),
+        c(AiCount::SwitchesPolled),
+        c(AiCount::SwitchesChanged),
+        c(AiCount::LockSerialChanges),
+        c(AiCount::LocksChanged),
+        c(AiCount::ObstaclesPolled),
+        c(AiCount::ObstaclesChanged),
+        c(AiCount::Spawns),
+        c(AiCount::RootScans),
+    )
+}
+
 /// The line for a window.
 fn line(secs: f32, frames: u32, frame_secs: f32, totals: &HashMap<String, (f64, u64)>, per: f64) -> String {
     let mut spans: Vec<(&String, &(f64, u64))> = totals.iter().collect();
@@ -543,6 +755,14 @@ mod tests {
     }
 
     #[test]
+    fn finished_encoders_are_keyed_by_the_system_that_recorded_them() {
+        let f = |name: Option<&str>, system: Option<&str>| NameField { name: name.map(Into::into), system: system.map(Into::into) };
+        assert_eq!(span_key("system", f(Some("nvforever::residents::drive"), None)), "residents::drive");
+        assert_eq!(span_key("finish_command_buffer", f(None, Some("bevy_pbr::ssao::ssao"))), "finish_command_buffer[ssao::ssao]");
+        assert_eq!(span_key("queue_submit", f(None, None)), "queue_submit");
+    }
+
+    #[test]
     fn a_line_lists_the_costliest_first_per_frame() {
         let mut t = HashMap::new();
         t.insert("a".to_string(), (0.010, 10));
@@ -550,6 +770,21 @@ mod tests {
         let l = line(1.0, 10, 1.0, &t, 10.0);
         assert!(l.contains("per frame ms: b 10.00, a 1.00"), "{l}");
         assert!(line(1.0, 0, 0.0, &HashMap::new(), 1.0).contains("no spans seen"));
+    }
+
+    #[test]
+    fn count_lines_are_key_value_pairs_after_their_prefix() {
+        let mut now = fnv_phys::RefreshStats { refreshes: 7, colliders: 70, ..Default::default() };
+        now.by_consumer = [4, 2, 0, 1];
+        let l = phys_refresh_line(5.0, 300, &now, &fnv_phys::RefreshStats::default(), true);
+        assert!(l.starts_with("phys-refresh: secs=5.0 frames=300 refreshes=7 by_consumer=player:4/npc:2/step:0/cast:1 "), "{l}");
+        assert!(l.contains(" colliders_mean=10 "), "{l}");
+        assert!(l.ends_with(" hitvol_written=0 hitvol_skipped=0 hitvol_standalone=1"), "{l}");
+        let a = ai_counts_line(5.0, 300, (3, 2), (1, 4, 6), &[0; AI_COUNTS]);
+        assert!(a.starts_with("ai-counts: secs=5.0 frames=300 think=0 path_searches=3 path_hits=2 separation_passes=1 separation_bodies=4 separation_pairs=6 "), "{a}");
+        for l in [&l, &a] {
+            assert!(l.split_once(": ").unwrap().1.split(' ').all(|kv| kv.split_once('=').is_some_and(|(k, v)| !k.is_empty() && !v.is_empty())), "{l}");
+        }
     }
 
     #[test]

@@ -302,6 +302,10 @@ pub struct Snapshot {
     /// Encounter zones entered and their levels (`crate::zones`); absent when none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub zone_levels: BTreeMap<FormId, u16>,
+    /// Encounter zones whose respawning a script turned on or off (SetZoneRespawns,
+    /// `crate::zones`); absent when none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub zone_respawns: BTreeMap<FormId, bool>,
     /// The level fixed for each reference whose cell was loaded (`crate::zones`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ref_levels: BTreeMap<FormId, crate::zones::LevelAt>,
@@ -420,6 +424,8 @@ pub struct World<'a> {
     power_armor_training: bool,
     /// Encounter zones entered and their levels (`crate::zones`).
     pub(crate) zone_levels: BTreeMap<FormId, u16>,
+    /// SetZoneRespawns: zone → whether it respawns, over its "Never Resets" flag.
+    pub(crate) zone_respawns: BTreeMap<FormId, bool>,
     /// The leveled-list level fixed per reference (`crate::zones`).
     pub(crate) ref_levels: BTreeMap<FormId, crate::zones::LevelAt>,
     /// Death items owed to dead actors not read yet, rolled into the inventory when it is
@@ -435,12 +441,19 @@ pub struct World<'a> {
     /// saved: every world made (a new or a restored one) starts from a number no other
     /// world of this process used, so a reader sees the change of world as a change.
     lock_serial: u64,
+    /// Counts the changes that can change [`World::is_enabled`] or a reference's
+    /// `deleted` flag ([`World::presence_serial`]): a reference's state made, put in or
+    /// taken out of `refs`, and every write of `enabled` or `deleted`. Not saved; every
+    /// world starts from a number no other world of this process used, as
+    /// `lock_serial`.
+    presence_serial: u64,
     next_dynamic: u32,
     rng: ChaCha8Rng,
 }
 
 impl<'a> World<'a> {
     pub fn new(forms: &'a FormStore, placed: &'a RefTable, cfg: SimConfig) -> World<'a> {
+        let serial = next_world_serial();
         World {
             forms,
             placed,
@@ -459,10 +472,12 @@ impl<'a> World<'a> {
             setting_changes: BTreeMap::new(),
             power_armor_training: false,
             zone_levels: BTreeMap::new(),
+            zone_respawns: BTreeMap::new(),
             ref_levels: BTreeMap::new(),
             death_items: BTreeMap::new(),
             deleted_created: BTreeMap::new(),
-            lock_serial: next_world_serial(),
+            lock_serial: serial,
+            presence_serial: serial,
             next_dynamic: FormId::FIRST_DYNAMIC.0,
             rng: ChaCha8Rng::seed_from_u64(cfg.seed),
         }
@@ -520,6 +535,7 @@ impl<'a> World<'a> {
             }
             let s = self.initial(id)?;
             self.refs.insert(id, s);
+            self.presence_serial += 1;
         }
         Ok(self.refs.get_mut(&id).expect("inserted above"))
     }
@@ -1130,6 +1146,7 @@ impl<'a> World<'a> {
             };
             let id = FormId(self.next_dynamic);
             self.next_dynamic += 1;
+            self.presence_serial += 1;
             self.refs.insert(
                 id,
                 RefState {
@@ -1567,6 +1584,13 @@ impl<'a> World<'a> {
         if self.cell_never_resets(cell) {
             return Ok(Vec::new());
         }
+        Ok(self.reset_containers(cell))
+    }
+
+    /// The containers of `cell` whose base has the Respawns flag go back to their
+    /// authored state now, as [`World::attach_cell`] does after the respawn delay (a
+    /// script's ResetInterior). Returns the containers reset.
+    pub fn reset_containers(&mut self, cell: FormId) -> Vec<FormId> {
         let forms = self.forms;
         let respawns = |base: FormId| matches!(forms.get(base).map(|b| &b.data), Some(BaseData::Container(c)) if c.respawns);
         let reset: Vec<FormId> = self
@@ -1580,14 +1604,31 @@ impl<'a> World<'a> {
             .collect();
         for id in &reset {
             self.refs.remove(id);
+            self.presence_serial += 1;
             // Made anew: its level is fixed again when the cell is entered.
             self.ref_levels.remove(id);
         }
-        Ok(reset)
+        reset
     }
 
     pub fn set_enabled(&mut self, id: FormId, enabled: bool) -> Result<(), SimError> {
-        self.get(id)?.enabled = enabled;
+        let s = self.get(id)?;
+        if s.enabled != enabled {
+            s.enabled = enabled;
+            self.presence_serial += 1;
+        }
+        Ok(())
+    }
+
+    /// Mark a reference removed from the world (`deleted`: picked up, MarkForDelete, a
+    /// shot that is over), or not. Every writer of `deleted` outside this file goes
+    /// through here, so [`World::presence_serial`] sees it.
+    pub fn set_deleted(&mut self, id: FormId, deleted: bool) -> Result<(), SimError> {
+        let s = self.get(id)?;
+        if s.deleted != deleted {
+            s.deleted = deleted;
+            self.presence_serial += 1;
+        }
         Ok(())
     }
 
@@ -1620,6 +1661,21 @@ impl<'a> World<'a> {
         self.lock_serial
     }
 
+    /// Goes up with every change that can change whether a reference is present
+    /// (`fnv_game::Game::present`: not `deleted`, and [`World::is_enabled`] with its
+    /// enable parents): a state made ([`World::get`]), created ([`World::place`], drops),
+    /// reset ([`World::attach_cell`]), and every write of `enabled` ([`World::set_enabled`])
+    /// or `deleted` ([`World::set_deleted`], activation's pick-ups). A reader that saw the
+    /// same number of the same world reads the same presence for every reference. A new
+    /// or restored world starts from a number no other world of this process used.
+    ///
+    /// The fields are public through [`World::get`]'s `&mut RefState`: a writer of
+    /// `enabled` or `deleted` that does not go through these functions must bump this
+    /// itself (none does; fork-notes/cpu-frame-cost/frame-budget/ai-split-2026-11-03.md).
+    pub fn presence_serial(&self) -> u64 {
+        self.presence_serial
+    }
+
     /// The access state of a door or container lock, as the in-game `GetLocked` reports
     /// it: 0 not locked, 1 locked. [documented: GECK wiki `GetLocked`, which also lists 2
     /// "locked out" for an impossible level or a broken lock; observed in game,
@@ -1650,6 +1706,7 @@ impl<'a> World<'a> {
         let outfitted = self.equip_default(base, &mut inventory);
         let id = FormId(self.next_dynamic);
         self.next_dynamic += 1;
+        self.presence_serial += 1;
         self.refs.insert(
             id,
             RefState {
@@ -1807,10 +1864,9 @@ impl<'a> World<'a> {
             if let Some((a, n)) = ammo {
                 self.inventory(actor)?.add(a, n);
             }
-            let s = self.get(target)?;
-            s.deleted = true;
+            self.set_deleted(target, true)?;
             if scripted {
-                s.count = count;
+                self.get(target)?.count = count;
             }
             return Ok(done(Outcome::PickedUp { item: t.base, count, owner: t.extra.owner }, None));
         }
@@ -1886,8 +1942,8 @@ impl<'a> World<'a> {
             // item [hypothesis].
             BaseData::Projectile { item: Some(item), .. } => {
                 let owner = self.placed.get(target).and_then(|p| p.owner);
+                self.set_deleted(target, true)?;
                 let s = self.get(target)?;
-                s.deleted = true;
                 let (cell, pos, rot, owner) = (s.cell, s.pos, s.rot, s.extra.owner.or(owner).filter(|&o| o != FormId::PLAYER_REF));
                 let placed = self.place(*item, cell, pos, rot, 1)?;
                 self.get(placed)?.extra.owner = owner;
@@ -1925,6 +1981,7 @@ impl<'a> World<'a> {
             quest_objects: self.quest_objects.clone(),
             leveled_added: self.leveled_added.clone(),
             zone_levels: self.zone_levels.clone(),
+            zone_respawns: self.zone_respawns.clone(),
             ref_levels: self.ref_levels.iter().filter(|(id, _)| kept(id)).map(|(&k, &v)| (k, v)).collect(),
             death_items: self.death_items.iter().filter(|(id, _)| kept(id)).map(|(&k, &v)| (k, v)).collect(),
             // The same `kept` set as the references: a pruned one keeps no source.
@@ -1967,6 +2024,7 @@ impl<'a> World<'a> {
         w.quest_objects = s.quest_objects.clone();
         w.leveled_added = s.leveled_added.clone();
         w.zone_levels = s.zone_levels.clone();
+        w.zone_respawns = s.zone_respawns.clone();
         w.ref_levels = s.ref_levels.clone();
         w.death_items = s.death_items.clone();
         w.deleted_created = s.deleted_created.clone();

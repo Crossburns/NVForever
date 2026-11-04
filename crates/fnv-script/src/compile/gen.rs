@@ -54,6 +54,27 @@ struct FnInfo {
     block: bool,
 }
 
+/// Where a line opens a block lambda, `(begin function`, spaces allowed after the `(` and
+/// between the words (`CallWhen ( begin function {}`) [hypothesis: spaces between tokens
+/// do not matter, as elsewhere in the grammar; Bullet Belt Framework's ln_ file is written
+/// so, #1470; documented: Lambda shows `(begin function`]: the `(`'s offset and the
+/// length up to the end of `function`.
+fn lambda_open(low: &str) -> Option<(usize, usize)> {
+    let mut from = 0;
+    while let Some(k) = low[from..].find('(') {
+        let at = from + k;
+        let rest = low[at + 1..].trim_start();
+        if let Some(r) = rest.strip_prefix("begin") {
+            let r2 = r.trim_start();
+            if r2.len() < r.len() && r2.starts_with("function") {
+                return Some((at, low.len() - r2.len() + "function".len() - at));
+            }
+        }
+        from = at + 1;
+    }
+    None
+}
+
 /// An open `If` chain: where its last marker's skip count goes, and that marker's
 /// statement index.
 struct Chain {
@@ -212,16 +233,10 @@ impl<'a> Gen<'a> {
         // (six shipped units declare inside a block, scripts.md §2.6).
         self.extended = stmts.iter().any(|s| {
             s.kw.extended()
+                || !s.decls.is_empty()
                 || matches!(&s.kw, Kw::Call(t) if self.function(&t[0]).is_none() && self.xfunction_name(&t[0].text))
         });
-        for s in &stmts {
-            if let Kw::Decl { ty, names, .. } = &s.kw {
-                self.line = s.line;
-                for n in names {
-                    self.declare(n, *ty);
-                }
-            }
-        }
+        self.declare_all(&stmts);
         for s in &stmts {
             self.line = s.line;
             self.text = s.text.clone();
@@ -238,8 +253,8 @@ impl<'a> Gen<'a> {
         let mut open: Vec<(lex::Line, String, Vec<String>, Vec<lex::Line>)> = Vec::new();
         for l in lines {
             let low = l.text.to_ascii_lowercase();
-            if let Some(at) = low.find("(begin function") {
-                let after = &l.text[at + "(begin function".len()..];
+            if let Some((at, len)) = lambda_open(&low) {
+                let after = &l.text[at + len..];
                 let names = after.split(['{', '}', ',', ' ']).filter(|w| !w.is_empty()).map(str::to_string).collect();
                 let names: Vec<String> = names;
                 open.push((l.clone(), l.text[..at].to_string(), names, Vec::new()));
@@ -292,13 +307,20 @@ impl<'a> Gen<'a> {
         let saved = (std::mem::take(&mut self.out), self.stmts, std::mem::take(&mut self.chains), self.block.take(), self.loops, self.line, self.text.clone());
         self.stmts = 0;
         self.loops = 0;
+        let mut stmts = Vec::new();
         for l in &lines {
-            self.line = l.no;
-            self.text = l.text.clone();
             match parse::statement(l) {
-                Ok(s) => self.statement(&s.kw),
+                Ok(s) => stmts.push(s),
                 Err(e) => self.diags.push(Diag { line: e.line, kind: "syntax", error: true, detail: e.msg }),
             }
+        }
+        // The body's declarations first, as the unit's (`unit`): its variables are the
+        // maker's [documented: Lambda].
+        self.declare_all(&stmts);
+        for s in &stmts {
+            self.line = s.line;
+            self.text = s.text.clone();
+            self.statement(&s.kw);
         }
         let bytes = std::mem::replace(&mut self.out, saved.0);
         self.stmts = saved.1;
@@ -310,6 +332,22 @@ impl<'a> Gen<'a> {
         let body = crate::decode::decode(&bytes, self.table).program.top;
         let index = self.next_lambda();
         Some(crate::ir::XExpr::Lambda { params, body, value: None, index })
+    }
+
+    /// The variables a run of statements declares: `int a`, `int a = 1` and the inline
+    /// declarations of extender lines ([`parse::inline_decls`]).
+    fn declare_all(&mut self, stmts: &[parse::Statement]) {
+        for s in stmts {
+            self.line = s.line;
+            if let Kw::Decl { ty, names, .. } = &s.kw {
+                for n in names {
+                    self.declare(n, *ty);
+                }
+            }
+            for (ty, n) in &s.decls {
+                self.declare(n, *ty);
+            }
+        }
     }
 
     /// The number of the next lambda of this unit.
@@ -587,7 +625,7 @@ impl<'a> Gen<'a> {
                 b.push(c as u8);
             }
             ParamEnc::String => {
-                let s = fnv_util::cp1252::encode(&t.text).unwrap_or_else(|| t.text.bytes().collect());
+                let s = fnv_util::text::encode(&t.text).unwrap_or_else(|| t.text.bytes().collect());
                 put16(b, s.len() as u16);
                 b.extend_from_slice(&s);
             }
@@ -821,6 +859,38 @@ impl<'a> Gen<'a> {
             return None;
         }
         Some(e)
+    }
+
+    /// A call line as one extended expression. Arguments past those the function takes
+    /// are dropped with a warning, as the vanilla compiler drops them (§3 rule 1 of
+    /// script-compiler.md) [hypothesis: the extender's call lines do the same; the owner's
+    /// mods pass `SetJohnnyOnRenderUpdateEventHandler 1 (begin function {} … end) 0 0`,
+    /// four arguments to three parameters, ln_B42Optics.txt, #1470].
+    fn xcall_line(&mut self, toks: &[lex::XTok]) -> Option<crate::ir::XExpr> {
+        let mut p = x::P::new(toks);
+        let e = self.xexpr(&mut p, 0)?;
+        if p.done() {
+            return Some(e);
+        }
+        let rest = p.rest();
+        if matches!(e, crate::ir::XExpr::Call { .. }) {
+            // The dropped arguments leave nothing behind: what reading them registered
+            // (reference list entries and their spellings, a lambda's number and the
+            // variables its body declares) and what it reported is put back. One that
+            // cannot be read at all (`Mistyped.Fn`) still fails the line: an argument is
+            // dropped only when it is one [hypothesis, observer-checks.md "Surplus
+            // arguments on an extender call line"].
+            let saved = (self.refs.clone(), self.claims.clone(), self.vars.clone(), self.ref_vars.clone(), self.lambda_seq, self.diags.len());
+            let n = self.surplus_args(&mut p);
+            (self.refs, self.claims, self.vars, self.ref_vars, self.lambda_seq) = (saved.0, saved.1, saved.2, saved.3, saved.4);
+            self.diags.truncate(saved.5);
+            if let Some(n) = n {
+                self.diag("surplus_arguments", false, format!("{n} dropped: {rest}"));
+                return Some(e);
+            }
+        }
+        self.diag("syntax", true, format!("unexpected {rest}"));
+        None
     }
 
     fn marker_bytes(&mut self, opcode: u16, cond: Option<Vec<u8>>) {
@@ -1063,7 +1133,7 @@ impl<'a> Gen<'a> {
                 // whole line is an extended expression run for what it does.
                 let x = lex::xtokens(&self.text);
                 self.call_line = true;
-                let e = self.xwhole(&x);
+                let e = self.xcall_line(&x);
                 self.call_line = false;
                 let Some(e) = e else { return };
                 if !matches!(e, crate::ir::XExpr::Call { .. }) {

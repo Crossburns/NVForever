@@ -315,6 +315,55 @@ fn doors_join_spaces_into_legs() {
 }
 
 #[test]
+fn a_walker_stops_and_faces_a_load_door_before_going_through() {
+    use crate::follow::{heading_delta, heading_of};
+    let inside = Space::Interior(0x77);
+    let mut a = grid(1, [0.0, 0.0], 4, 4, 100.0, &[], flat);
+    let b = grid(2, [5000.0, 5000.0], 3, 3, 100.0, &[], |_, _| 50.0);
+    let ta = (0..a.triangles.len())
+        .find(|&t| a.triangles[t].v.map(|i| a.vertices[i as usize]).iter().all(|p| p[0] >= 300.0 && p[1] >= 300.0))
+        .unwrap();
+    a.door_links.push(DoorLink { door: 0xD1, triangle: ta as u16 });
+    a.triangles[ta].flags |= tri_flags::DOOR;
+    let meshes = [(a, W), (b, inside)];
+    let input: Vec<_> = meshes.iter().map(|(m, s)| (m, Some(0), Some(*s))).collect();
+    let mut g = NavGraph::assemble(&input);
+    g.join_doors(&input, |door| (door == 0xD1).then_some((0xD2, [5050.0, 5030.0, 50.0], 0.5, inside)));
+    // The door stands due north of where the path ends; the walk comes up from the
+    // south-west, at about 45 degrees to it.
+    let door = [360.0, 700.0, 0.0];
+    g.place_doors(|d| (d == 0xD1).then_some(door));
+
+    let mut w = Walker::new(W, [50.0, 50.0, 0.0], 0.0, 100.0);
+    w.go_to(&g, Place { space: inside, pos: [5250.0, 5250.0, 50.0] }, &PathParams::default()).unwrap();
+    let (mut turns_at_door, mut stood_at) = (0, None);
+    for _ in 0..2000 {
+        let (feet, heading) = (w.feet, w.heading);
+        match w.update(&g, 0.05) {
+            WalkEvent::Moved => turns_at_door = 0,
+            WalkEvent::Turned => {
+                // Turning on the spot: the feet stay put.
+                assert_eq!(w.feet, feet);
+                turns_at_door += 1;
+                stood_at = Some(feet);
+            }
+            WalkEvent::UsedDoor(d) => {
+                assert_eq!(d.door_at, Some(door));
+                assert!(turns_at_door > 0, "went through without stopping to turn");
+                assert_eq!(stood_at, Some(feet));
+                let want = heading_of([door[0] - feet[0], door[1] - feet[1]]);
+                assert!(heading_delta(heading, want).abs() < 1e-3, "faced {heading}, door at {want}");
+                assert!(w.door_off.is_some_and(|o| o < 1e-3));
+                assert_eq!(w.space, inside);
+                return;
+            }
+            e => panic!("unexpected {e:?}"),
+        }
+    }
+    panic!("never reached the door");
+}
+
+#[test]
 fn routes_chain_interiors_and_worldspaces_and_respect_locks() {
     use crate::graph::DoorLock;
     // Worldspace W -> interior A -> interior B -> worldspace V, each its own navmesh far
@@ -802,6 +851,30 @@ fn an_enabled_obstacle_cuts_the_navmesh_under_it() {
     assert_eq!(g.sync_obstacles([(0x5B0, false)]), vec![0x5B0]);
     assert_eq!(g.cut_triangles(), 0);
     assert!(g.can_reach(from, to, &PathParams::default()));
+}
+
+/// The obstacle stamp changes with every change of the obstacles or their states and
+/// only then; no two graphs share one once they learnt obstacles (`fnv_ai`'s obstacle
+/// poll is keyed on it).
+#[test]
+fn the_obstacle_stamp_changes_with_the_obstacles_only() {
+    let mut g = graph(&[(grid(1, [0.0, 0.0], 10, 1, 100.0, &[], flat), W)]);
+    assert_eq!(g.obstacles_stamp(), 0, "none learnt");
+    g.set_obstacles(vec![sandbags(0.0, 90.0)], |o| o.initially_enabled);
+    let learnt = g.obstacles_stamp();
+    assert_ne!(learnt, 0);
+    assert!(g.sync_obstacles([(0x5B0, false), (0x999, true)]).is_empty());
+    assert_eq!(g.obstacles_stamp(), learnt, "nothing changed");
+    assert_eq!(g.sync_obstacles([(0x5B0, true)]), vec![0x5B0]);
+    let switched = g.obstacles_stamp();
+    assert_ne!(switched, learnt);
+    assert_eq!(g.sync_obstacles([(0x5B0, false)]), vec![0x5B0]);
+    assert!(g.obstacles_stamp() != switched && g.obstacles_stamp() != learnt, "back to the first states, still a new stamp");
+    let mut other = graph(&[(grid(1, [0.0, 0.0], 10, 1, 100.0, &[], flat), W)]);
+    other.set_obstacles(vec![sandbags(0.0, 90.0)], |o| o.initially_enabled);
+    assert_ne!(other.obstacles_stamp(), g.obstacles_stamp());
+    g.set_obstacles(vec![sandbags(0.0, 90.0)], |o| o.initially_enabled);
+    assert_ne!(g.obstacles_stamp(), other.obstacles_stamp(), "learnt again");
 }
 
 /// An obstacle placed enabled (with an enable parent, not Initially Disabled) stood there

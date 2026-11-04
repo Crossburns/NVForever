@@ -302,9 +302,11 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         }
         // `from to`: the forms' animation overrides (SetActorAnimationPath's and
         // SetWeaponAnimationPath's) copied, both views [documented: CopyAnimationsToForm;
-        // hypothesis: added to the target's own].
+        // hypothesis: added to the target's own]; the AnimGroupOverride folders' entries
+        // too, with their conditions (`crate::nvse_anim_folders`).
         "copyanimationstoform" => {
             let (Some(from), Some(to)) = (form(args, 0), form(args, 1)) else { return Some(Ok(zero)) };
+            g.copy_folder_entries(from, to);
             for map in [&mut g.anim_paths.actor, &mut g.anim_paths.weapon] {
                 for first in [false, true] {
                     let Some(src) = map.get(&(from, first)).cloned() else { continue };

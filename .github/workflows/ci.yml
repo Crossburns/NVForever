@@ -48,6 +48,14 @@ jobs:
             echo "Docs-only pull request: skipping the build."
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
+      # Two release target dirs (root and engine) fill the runner's disk: the build
+      # failed with "No space left on device" (#1477). Drop preinstalled SDKs we never use.
+      - name: Free disk space
+        if: steps.changes.outputs.code == 'true'
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: dtolnay/rust-toolchain@stable
         if: steps.changes.outputs.code == 'true'
         with:
@@ -93,6 +101,9 @@ jobs:
       - name: Stress-tool self-tests
         if: steps.changes.outputs.code == 'true'
         run: python -m unittest discover -s tools/stress/tests -v
+      - name: Profile-campaign self-tests
+        if: steps.changes.outputs.code == 'true'
+        run: python -m unittest discover -s tools/profile/tests -v
 
       - name: Engine tests
         if: steps.changes.outputs.code == 'true'

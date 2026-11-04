@@ -582,6 +582,9 @@ pub struct Ai {
     applied_switches: Option<BTreeMap<u32, bool>>,
     /// The world's lock serial last brought into the graph ([`Ai::apply_door_locks`]).
     applied_locks: Option<u64>,
+    /// The world's presence serial and the graph's obstacle stamp after the obstacles
+    /// were last brought into the graph ([`Ai::obstacles_in_line`]).
+    applied_obstacles: Option<(u64, u64)>,
     /// The graph's locked doors as last brought in ([`Ai::apply_door_locks`]): the ones an
     /// actor owns are open to its paths ([`Ai::path_params`]).
     locked_doors: Vec<u32>,
@@ -621,7 +624,7 @@ fn hdist(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 impl Ai {
     pub fn new(cfg: AiConfig) -> Ai {
-        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, locked_doors: Vec::new(), unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), script_moved: BTreeMap::new(), restored: BTreeMap::new() }
+        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, applied_obstacles: None, locked_doors: Vec::new(), unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), script_moved: BTreeMap::new(), restored: BTreeMap::new() }
     }
 
     /// Bring the graph's navmeshes in line with the scripts' switches (EnableNavMesh,
@@ -715,12 +718,21 @@ impl Ai {
     /// triangle takes up its package afresh from where it stands, as for a navmesh
     /// switched off ([`Ai::apply_navmesh_switches`]). Returns the obstacles that changed
     /// and the actors sent to plan again, `None` when none changed.
+    ///
+    /// Nothing is polled while [`Ai::obstacles_in_line`] holds: then every obstacle's
+    /// state in the graph is the game's already, and the poll would change nothing.
     pub fn apply_obstacles(&mut self, game: &Game, nav: &mut NavGraph) -> Option<(Vec<u32>, Vec<FormId>)> {
         if nav.obstacles.is_empty() {
             return None;
         }
+        if self.obstacles_in_line(game, nav) {
+            // A missed writer of the presence serial would show here in debug builds.
+            debug_assert!(nav.obstacles.iter().all(|(&r, o)| o.enabled == game.present(FormId(r))), "obstacle cache out of line with the game");
+            return None;
+        }
         let states: Vec<(u32, bool)> = nav.obstacles.keys().map(|&r| (r, game.present(FormId(r)))).collect();
         let changed = nav.sync_obstacles(states);
+        self.applied_obstacles = Some((game.world.presence_serial(), nav.obstacles_stamp()));
         if changed.is_empty() {
             return None;
         }
@@ -738,6 +750,17 @@ impl Ai {
             }
         }
         Some((changed, blocked))
+    }
+
+    /// Whether the graph's obstacles were brought in line with this game's world and
+    /// nothing that could change either happened since: the world's presence serial
+    /// (`fnv_sim::World::presence_serial`: every write of a reference's `enabled` or
+    /// `deleted`, every state made, created or reset, a new world) and the graph's
+    /// obstacle stamp (`fnv_nav::NavGraph::obstacles_stamp`: obstacles learnt again or
+    /// switched) are the ones seen after the last poll. [`Game::present`] reads nothing
+    /// else, so a poll now would find every obstacle as the graph has it.
+    pub fn obstacles_in_line(&self, game: &Game, nav: &NavGraph) -> bool {
+        self.applied_obstacles == Some((game.world.presence_serial(), nav.obstacles_stamp()))
     }
 
     /// Give `actor` speeds of its own; its walker turns at its own rate from now on.
@@ -1260,6 +1283,14 @@ impl Ai {
     /// - within the activate distance it "will engage in conversation with the target (or
     ///   dialogue, if the target is the player)".
     ///
+    /// An actor seated at a wait location that is furniture stays on it: it does not
+    /// go up to the target in any case, and talks from its seat once the target is
+    /// within the activate distance [observed: the owner's frame of Benny in the
+    /// Tops' presidential suite (VTopsBennyPresidentialTalk: wait location the bar
+    /// stool 0x001110C4, no trigger location, so case 3) greeting the player from his
+    /// stool, never getting up; hypothesis: that every seated waiter does so,
+    /// docs/spec-notes/packages.md §3].
+    ///
     /// The wait location's radius is not wandered in; the target is not made to stand
     /// still or to walk to the trigger location ("Do Not Control Target Movement" off).
     fn talk_step(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId, dt: f32) {
@@ -1267,6 +1298,8 @@ impl Ai {
         let (Some(package), Some(Goal::Talk(talk)), Some(phase)) = (a.package, a.goal.clone(), a.talk) else { return };
         let feet = Place { space: a.walker.space, pos: a.walker.feet };
         let travelling = a.activity == Activity::Travelling;
+        // Seated at a wait location that is furniture (`settle`).
+        let seated = a.using.is_some();
         let target = goal::place_of_ref(game, talk.target).filter(|_| game.present(talk.target) && !game.extra.get(&talk.target).is_some_and(|e| e.dead));
         match phase {
             Talking::ToWait | Talking::Done => return,
@@ -1278,8 +1311,9 @@ impl Ai {
                 if game.dialogue.as_ref().is_some_and(|c| c.actor == actor) || greets(game, actor) {
                     // It turns to the one it talks to [documented: unless No
                     // Headtracking, speaker and target are "forced to look at each
-                    // other by the package"; how fast is our choice].
-                    if let (Some(t), false) = (target.filter(|t| t.space == feet.space), talk.no_headtracking) {
+                    // other by the package"; how fast is our choice]. Seated, only its
+                    // head turns (the engine's), as in `update_held`.
+                    if let (Some(t), false, false) = (target.filter(|t| t.space == feet.space), talk.no_headtracking, seated) {
                         self.face(game, actor, t, dt);
                     }
                 } else {
@@ -1309,7 +1343,7 @@ impl Ai {
                 let on_the_spot = talk.trigger != goal::Trigger::None && talk.wait_radius == 0.0;
                 if near && (triggered || on_the_spot) {
                     self.talk_start(game, actor, package, &talk, away);
-                } else if triggered {
+                } else if triggered && !seated {
                     self.approach(game, nav, actor, package, &talk, target, true);
                 }
             }
@@ -1382,6 +1416,15 @@ impl Ai {
         let (Some(package), Some(Goal::Follow(mut f))) = (a.package, a.goal.clone()) else { return };
         let feet = Place { space: a.walker.space, pos: a.walker.feet };
         let travelling = a.activity == Activity::Travelling;
+        // Told to wait (Fallout 3's Wait, `fnv_game::functions::fo3`): it stands where it
+        // is until StopWaiting, then follows again.
+        if game.waits(actor) {
+            if travelling {
+                let a = self.agents.get_mut(&actor).expect("listed");
+                (a.walker.follower, a.activity, a.following) = (None, Activity::There, None);
+            }
+            return;
+        }
         let leader = goal::place_of_ref(game, f.target).filter(|_| game.present(f.target) && !game.extra.get(&f.target).is_some_and(|e| e.dead));
         // In a column: the one ahead is followed instead, nearer than the package says.
         // It runs when the leader is far, so that the line keeps together.
@@ -1923,6 +1966,7 @@ impl Ai {
                     let a = self.agents.get_mut(&actor).expect("listed");
                     a.talk = Some(Talking::Waiting);
                     a.activity = Activity::There;
+                    self.settle(game, actor);
                 }
             },
             // `follow_step` sets off after the target when it is away.
@@ -2229,13 +2273,15 @@ impl Ai {
             self.sandbox_begin(game, actor, choice, travelled.max(1.0));
             return;
         }
-        // A Dialogue package: at the wait location the wait begins; at the end of the
-        // way to its target `talk_step` looks at where the target is now.
+        // A Dialogue package: at the wait location the wait begins (on it, when it is
+        // furniture: `settle`); at the end of the way to its target `talk_step` looks at
+        // where the target is now.
         if let Some(phase) = a.talk {
             a.activity = Activity::There;
             if phase == Talking::ToWait {
                 a.talk = Some(Talking::Waiting);
                 self.log(game, actor, AiEvent::Arrived { package, seconds, travelled, patrol_point: None });
+                self.settle(game, actor);
             }
             return;
         }
