@@ -18283,15 +18283,15 @@ expect = [
 [[scenario]]
 name = "hitvol-marked-created-actor"
 source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
-note = "the placeatme-fights run: Goodsprings' placed actors, and a cazador a script creates that must get a volume after it is created. Both steps name FF000000, the first dynamic id (FormId::FIRST_DYNAMIC) and the cazador's as no other script creates first: an expectation cannot carry an id from one line to the next"
+note = "the placeatme-fights run: Goodsprings' placed actors, and a cazador a script creates that must get a volume after it is created. The steps match any dynamic id, as an expectation cannot carry an id from one line to the next: the count of creation lines says the cazador is the only actor creation logged in the run, and the second step asks for a dynamic actor with meshes shown and a volume. That it is the cazador rests on no other dynamic actor getting past the residents' creation log (residents.rs `take_created`, which goes over the non-deleted dynamic references of actor bases)"
 areas = ["combat", "actors"]
 paths = ["engine/nvf-play/src/hitvol.rs"]
 env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "8:player.setav health 5000;8.5:close", NVF_PLAY_TEST_SCRIPT = "10:call:player:PlaceAtMe:NVCrCazador:1" }
 args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 40
 order = [[
-  { re = 'ai \[[^\]]*\] NVCrCazador 0xFF000000: created by a script \(PlaceAtMe\)' },
-  { re = 'hitvol compare: actor FF000000 has [1-9]\d* of \d+ meshes shown and a volume' },
+  { re = 'ai \[[^\]]*\] NVCrCazador 0xFF[0-9A-F]{6}: created by a script \(PlaceAtMe\)' },
+  { re = 'hitvol compare: actor FF[0-9A-F]{6} has [1-9]\d* of \d+ meshes shown and a volume' },
 ]]
 expect = [
   { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (created actor)" },
@@ -18302,6 +18302,7 @@ expect = [
   { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (created actor)" },
   { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (created actor)" },
   "hitvol scan summary: ",
+  { re = 'ai \[[^\]]*\] .*: created by a script \(PlaceAtMe\)', count = 1, label = "the cazador is the only actor creation logged in the run (created actor)" },
 ]
 
 [[scenario]]
