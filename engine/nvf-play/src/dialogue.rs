@@ -330,13 +330,22 @@ pub(crate) fn challenge_name(data: &GameData, form: FormId) -> String {
 /// What the menu shows, in whichever view draws it.
 pub(crate) fn view(g: &Game, sim: &SimState) -> Option<MenuView> {
     let c = g.dialogue.as_ref()?;
+    view_named(g, speaker_name(g, sim, speaker_form(c)))
+}
+
+/// Who the menu names: through a talking activator the activator ("Intercom", not Chris
+/// Haversam: owner screenshot 2026-10-22 of the REPCONN intercom).
+pub(crate) fn speaker_form(c: &fnv_game::dialogue::Conversation) -> FormId {
+    c.through.unwrap_or(c.actor)
+}
+
+/// [`view`] with the speaker's name given.
+pub(crate) fn view_named(g: &Game, speaker: String) -> Option<MenuView> {
+    let c = g.dialogue.as_ref()?;
     // A message box or menu over the conversation takes the input: the menu goes.
     if held(g) {
         return None;
     }
-    // Through a talking activator the menu names the activator ("Intercom", not Chris
-    // Haversam: owner screenshot 2026-10-22 of the REPCONN intercom).
-    let speaker = speaker_name(g, sim, c.through.unwrap_or(c.actor));
     if c.line.is_some() || c.choices.is_empty() {
         return Some(MenuView { speaker, line: response_text(g), choices: Vec::new(), goodbye: false });
     }

@@ -1904,3 +1904,46 @@ fn known_topics_newest_first() {
     let old: KnownTopics = serde_json::from_value(json!([FormId(1).to_string(), FormId(2).to_string(), FormId(3).to_string()])).unwrap();
     assert_eq!(ids(&old), vec![1, 2, 3]);
 }
+
+#[test]
+fn a_view_of_the_conversation_hears_before_its_result_scripts_run() {
+    use std::sync::{Arc, Mutex};
+    type Heard = Arc<Mutex<Vec<(f32, Option<u32>, usize)>>>;
+    fn listen_in(g: &mut Game) -> Heard {
+        let heard: Heard = Default::default();
+        let ears = heard.clone();
+        g.ui_dialogue_hook = Some(Box::new(move |g| {
+            let c = g.dialogue.as_ref().unwrap();
+            ears.lock().unwrap().push((out(g), c.line.as_ref().map(|l| l.info.0), c.choices.len()));
+        }));
+        heard
+    }
+    let f = fixture();
+    // At the conversation's start: the first line's begin script sets TestOut to 1, and the
+    // conversation and its line are up before it runs.
+    let mut g = game(&f);
+    let heard = listen_in(&mut g);
+    assert_eq!(g.start_dialogue(actor(), None), Ok(FormId(A_FIRST)));
+    assert_eq!(out(&g), 1.0);
+    assert_eq!(heard.lock().unwrap()[0], (0.0, Some(A_FIRST), 0));
+    // The next response; before the end script (it sets 2); the choices offered after it.
+    listen(&mut g);
+    let list = heard.lock().unwrap().clone();
+    assert_eq!(list[1], (1.0, Some(A_FIRST), 0), "{list:?}");
+    assert!(list.iter().any(|h| h.0 == 1.0 && h.2 == 0), "{list:?}");
+    assert_eq!(*list.last().unwrap(), (2.0, None, offered(&g).len()), "{list:?}");
+    // At a choice: E_NOW runs its result script as it starts; the runtime's choose reaches the
+    // hook with the new line up and the choices gone, before the script's value is there.
+    let mut g = at_topic_list(&f);
+    let before = out(&g);
+    let heard = listen_in(&mut g);
+    let said = pick(&mut g, T_TOP2);
+    assert_eq!(said, FormId(E_NOW));
+    assert_ne!(out(&g), before);
+    assert_eq!(heard.lock().unwrap()[0], (before, Some(E_NOW), 0));
+    // No conversation: nothing to tell.
+    let mut g = game(&f);
+    let heard = listen_in(&mut g);
+    g.dialogue_transition();
+    assert!(heard.lock().unwrap().is_empty());
+}

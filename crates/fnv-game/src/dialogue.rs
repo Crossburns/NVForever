@@ -645,6 +645,8 @@ impl<'a> Game<'a> {
     fn run_line_result(&mut self, actor: FormId, def: &InfoDef, end: bool) {
         let data = self.data;
         if let Some(u) = if end { def.end } else { def.begin } {
+            // A result script runs right inside the transition: what it reads is up by then.
+            self.dialogue_transition();
             self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(actor) });
             self.run_result(u, RunCtx { self_ref: Some(actor), action_ref: None, quest: def.quest });
         }
@@ -682,8 +684,25 @@ impl<'a> Game<'a> {
                 }
             }
         }
+        let moved = self.dialogue.as_ref().and_then(|c| c.line.as_ref()).is_some_and(|l| l.response != line.response);
         if let Some(c) = self.dialogue.as_mut() {
             c.line = Some(line);
+        }
+        if moved {
+            self.dialogue_transition();
+        }
+    }
+
+    /// Tell [`Game::ui_dialogue_hook`] of a conversation that has moved on: the line or
+    /// response begun or over, the choices offered. In the middle of the runtime's own work, as
+    /// a script that runs next is to read what is up already.
+    pub fn dialogue_transition(&mut self) {
+        if self.dialogue.is_none() {
+            return;
+        }
+        if let Some(mut hook) = self.ui_dialogue_hook.take() {
+            hook(self);
+            self.ui_dialogue_hook = Some(hook);
         }
     }
 
@@ -754,6 +773,7 @@ impl<'a> Game<'a> {
         if let Some(c) = self.dialogue.as_mut() {
             c.choices = choices;
         }
+        self.dialogue_transition();
     }
 
     /// `StartConversation player` while the player's conversation runs: inside the end

@@ -9,15 +9,19 @@
 //!   spawned. Off (the default), none of this runs.
 //! - **The rules stay in `crate::dialogue`**: it says what the menu shows (`dialogue::view`)
 //!   and which choice is selected. This module only writes that into the tree ([`write`]).
-//! - **When**: in two steps a frame, so scripts read what the model says and keep what they
-//!   write. [`publish_system`], after the frame's input and before its scripts, writes what the
-//!   model shows, each trait only when the model's value for it changed: a script's change to a
-//!   label, an alpha or a flag stands until the model changes that very thing, and a new
-//!   selection changes none of them. [`write_system`], after the scripts, picks up what they
-//!   changed of the conversation, measures, places and decides readiness, and `super::update`
-//!   works the tree out to be drawn. A conversation that starts this frame builds the menu
-//!   there, so its first frame is the tiles' too. Placement ([`place`]) reads the file's
-//!   evaluated numbers, so they are part of what makes it run again ([`Placement`]).
+//! - **When**: so scripts read what the model says and keep what they write, the model's view
+//!   is written at each transition of the conversation, as it happens, inside the runtime's
+//!   own work: before a result script of the line runs, when a response moves on and when
+//!   choices are offered (`Game::ui_dialogue_hook`, [`boundary`]), which covers a conversation
+//!   started or a choice made anywhere, a script's included. A frame's [`publish_system`] does
+//!   the same before its scripts, for what the model changes outside a transition. Each trait is
+//!   written only when the model's value for it changed: a script's change to a label, an alpha
+//!   or a flag stands until the model changes that very thing, and a new selection changes none
+//!   of them. [`write_system`], after the scripts, measures, places and decides readiness, and
+//!   `super::update` works the tree out to be drawn. A conversation that starts this frame
+//!   builds the menu there at the latest, so its first frame is the tiles' too. Placement
+//!   ([`place`]) reads the file's evaluated numbers, so they are part of what makes it run
+//!   again ([`Placement`]).
 //! - **The window**: choices scroll whole (`crate::dialogue_menu::window`, shared with the
 //!   hand-built menu). Rows outside it take `listindex` -1, which hides them by the file's own
 //!   rule, and the scroll is the height of the rows above the first shown, counted in the
@@ -284,9 +288,16 @@ impl Placement {
     }
 }
 
-/// What the two steps of a frame keep between them and between frames.
-#[derive(Resource, Default)]
+/// [`Written`], shared with the transition hook the runtime holds.
+#[derive(Resource, Clone, Default)]
+pub struct SharedWritten(std::sync::Arc<std::sync::Mutex<Written>>);
+
+/// What the steps of a frame keep between them and between frames.
+#[derive(Default)]
 pub struct Written {
+    /// The speaker's name as last worked out with the world at hand, for a transition with
+    /// none ([`boundary`]).
+    speaker: Option<(fnv_sim::FormId, String)>,
     published: Option<Published>,
     placed: Option<Placement>,
     /// [`Written::placed`] changed in the last [`write`]: worth a line in the log.
@@ -838,19 +849,78 @@ fn ask_for_menu(game: &mut fnv_game::Game<'_>, files: &super::MenuFiles, written
     }
 }
 
-/// The first step of a frame, before its scripts: see the module notes. Nothing is decided
-/// here; [`write_system`] says what came of it.
-pub(crate) fn publish_system(mut script: ResMut<crate::script::ScriptState>, switch: Res<super::vanilla::TileMenus>, files: super::MenuFiles, sim: Res<crate::sim::SimState>, creator: Option<Res<crate::creator::CreatorMenu>>, mut written: ResMut<Written>) {
+/// What the hook does at a transition of the conversation (see the module notes), with no
+/// world at hand: the name comes from the last frame's for the same speaker, else from the
+/// runtime's, which the frame's own steps put right before anything is drawn. The menu is built
+/// here for a conversation just started. Nothing is decided here.
+pub(crate) fn boundary(game: &mut fnv_game::Game<'_>, written: &mut Written) {
+    let Some(who) = game.dialogue.as_ref().map(crate::dialogue::speaker_form) else { return };
+    if game.ui_files.is_none() {
+        return;
+    }
+    if game.ui_tree.menu(DIALOG_MENU).is_none() && !written.build_asked {
+        written.build_asked = true;
+        // Scripts run: the pause and main menus are not up.
+        let report = fnv_game::ui_loading::sync(game, false, false);
+        report.changes.iter().for_each(|line| info!("ui: {line}"));
+        report.warnings.iter().for_each(|line| warn!("ui: {line}"));
+        game.ui_tree.update();
+    }
+    if !prepare(&mut game.ui_tree, written).yes() {
+        return;
+    }
+    let speaker = written.speaker.as_ref().filter(|(form, _)| *form == who).map_or_else(|| game.data.name(who), |(_, name)| name.clone());
+    match (crate::dialogue::view_named(game, speaker), crate::dialogue::list_id(game)) {
+        (Some(view), Some(list)) => {
+            if publish(&mut game.ui_tree, &view, &list, written).is_err() {
+                written.published = None;
+            }
+        }
+        _ => hide(&mut game.ui_tree, written),
+    }
+}
+
+/// With the switch on, the runtime tells [`boundary`] of its transitions. Before anything of the
+/// frame can start a conversation.
+pub(crate) fn install_hook(mut script: ResMut<crate::script::ScriptState>, switch: Res<super::vanilla::TileMenus>, shared: Res<SharedWritten>) {
+    if !switch.dialog {
+        return;
+    }
+    let Some(rt) = script.rt.as_mut().filter(|rt| rt.game.ui_dialogue_hook.is_none()) else { return };
+    let shared = shared.0.clone();
+    rt.game.ui_dialogue_hook = Some(Box::new(move |g| {
+        if let Ok(mut written) = shared.lock() {
+            boundary(g, &mut written);
+        }
+    }));
+}
+
+/// Remember the speaker's name, worked out with the world at hand, for [`boundary`].
+fn keep_speaker(game: &fnv_game::Game<'_>, view: Option<&MenuView>, written: &mut Written) {
+    if let (Some(view), Some(c)) = (view, game.dialogue.as_ref()) {
+        let who = crate::dialogue::speaker_form(c);
+        if written.speaker.as_ref().is_none_or(|(form, name)| *form != who || *name != view.speaker) {
+            written.speaker = Some((who, view.speaker.clone()));
+        }
+    }
+}
+
+/// A frame's own first step, before its scripts: see the module notes. Nothing is decided here;
+/// [`write_system`] says what came of it.
+pub(crate) fn publish_system(mut script: ResMut<crate::script::ScriptState>, switch: Res<super::vanilla::TileMenus>, files: super::MenuFiles, sim: Res<crate::sim::SimState>, creator: Option<Res<crate::creator::CreatorMenu>>, shared: Res<SharedWritten>) {
     if !switch.dialog {
         return;
     }
     let Some(game) = script.rt.as_mut().map(|rt| &mut rt.game).filter(|g| g.dialogue.is_some() && g.ui_files.is_some()) else { return };
+    let Ok(mut written) = shared.0.lock() else { return };
     ask_for_menu(game, &files, &mut written);
     if !prepare(&mut game.ui_tree, &mut written).yes() {
         return;
     }
     let creating = creator.is_some_and(|c| c.is_open());
-    match (crate::dialogue::view(game, &sim).filter(|_| !creating), crate::dialogue::list_id(game)) {
+    let view = crate::dialogue::view(game, &sim).filter(|_| !creating);
+    keep_speaker(game, view.as_ref(), &mut written);
+    match (view, crate::dialogue::list_id(game)) {
         (Some(view), Some(list)) => {
             if publish(&mut game.ui_tree, &view, &list, &mut written).is_err() {
                 written.published = None;
@@ -872,11 +942,12 @@ pub(crate) fn write_system(
     (screen, mut model): (Option<Res<DialogueScreen>>, Option<ResMut<DialogueMenu>>),
     creator: Option<Res<crate::creator::CreatorMenu>>,
     mut state: ResMut<DialogTiles>,
-    mut written: ResMut<Written>,
+    shared: Res<SharedWritten>,
 ) {
     if !switch.dialog {
         return;
     }
+    let Ok(mut written) = shared.0.lock() else { return };
     let written = &mut *written;
     let Some(rt) = script.rt.as_mut() else {
         written.forget(None);
@@ -901,6 +972,7 @@ pub(crate) fn write_system(
     };
     let creating = creator.is_some_and(|c| c.is_open());
     let (view, list) = (crate::dialogue::view(game, &sim).filter(|_| !creating), crate::dialogue::list_id(game));
+    keep_speaker(game, view.as_ref(), written);
     let (Some(view), Some(list)) = (view, list) else {
         hide(&mut game.ui_tree, written);
         state.set_if_neq(DialogTiles { menu: Some(menu), shown: false, list: None, ..DialogTiles::default() });
@@ -1602,6 +1674,36 @@ mod tests {
         // A new screen writes all of it again.
         frame_on(&mut ui, &mut written, choosing(vec![row("C.")]), 3, 0, 0);
         assert_eq!(num(&ui, rows(&ui)[0], "_line_alpha"), 255.0);
+    }
+
+    #[test]
+    fn a_transition_publishes_through_the_runtimes_hook_and_a_scripts_writes_stand_after_it() {
+        use fnv_game::dialogue::Conversation;
+        let mut state = crate::script::ScriptState::over_no_plugins();
+        let game = &mut state.rt.as_mut().unwrap().game;
+        game.ui_files = Some(Box::new(MemSource::default()));
+        game.ui_tree = menu();
+        let shared = SharedWritten::default();
+        shared.0.lock().unwrap().speaker = Some((fnv_sim::FormId(0x14), "Nora".into()));
+        let ears = shared.0.clone();
+        game.ui_dialogue_hook = Some(Box::new(move |g| boundary(g, &mut ears.lock().unwrap())));
+        // The conversation started, a line up with no text, a transition: the tree has it.
+        game.dialogue = Some(Conversation { actor: fnv_sim::FormId(0x14), through: None, line: None, choices: Vec::new(), lines: 1, then: None, ending: false });
+        game.dialogue_transition();
+        assert_eq!(f(&game.ui_tree, DIALOG_MENU, "_ShowingText"), 1.0);
+        assert_eq!(f(&game.ui_tree, DIALOG_MENU, "_DialogVisible"), 1.0);
+        assert_eq!(game.ui_tree.get_string(&format!("{NAME}/string")).as_deref(), Some("Nora"));
+        assert!(game.ui_dialogue_hook.is_some(), "kept for the next");
+        // A script in that very line writes to the new phase: the same screen's next
+        // transition, and the frame's own step, leave it.
+        let menu_tile = game.ui_tree.menu(DIALOG_MENU).unwrap();
+        game.ui_tree.set_trait(menu_tile, "_ShowingText", Value::Num(7.0));
+        game.dialogue_transition();
+        assert_eq!(f(&game.ui_tree, DIALOG_MENU, "_ShowingText"), 7.0);
+        // A menu over the conversation: hidden, not published.
+        game.menu = Some(fnv_game::game::menus::MESSAGE);
+        game.dialogue_transition();
+        assert_eq!(f(&game.ui_tree, DIALOG_MENU, "_DialogVisible"), 0.0);
     }
 
     #[test]
