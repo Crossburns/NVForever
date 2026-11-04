@@ -125,7 +125,9 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     away on average, as the terminal's are; the ink is not, its bright rows keeping their
     value.
   - One owner around the shared image: the layers are not part of the pages' tree, so
-    any painter of the pages gets them, once. Not in the screen menu (no background, no
+    any painter of the pages gets them, once. The owner retints the picture itself when
+    the Pip-Boy colour changes, and the generic recolouring leaves its nodes alone; the
+    undercoat is the glass and keeps its colour [hypothesis]. Not in the screen menu (no background, no
     scanlines, no glass, docs/design/screen-menu.md §2). The device's image shown flat
     because the model is missing keeps the layers and has no glare.
 - **Scanlines** [observed]: `pipboyscanlines.dds` is 64 × 64 DXT1, one soft dark band

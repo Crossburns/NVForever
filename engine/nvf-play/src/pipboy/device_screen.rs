@@ -14,6 +14,11 @@
 //! `unlit_vertex_colors`, `imagespace.wesl`]: image × [`SCREEN_TINT`] ×
 //! [`SHAPE_VERTEX_COLOUR`], plus the glare's texel × [`GLARE_LINEAR_SCALE`] ×
 //! [`SHAPE_VERTEX_COLOUR`], through the world camera's tone mapping and image-space grade.
+//! The Pip-Boy's colour reaches the picture here ([`apply_colour`]), not through
+//! `ui_colour::recolour`, which leaves every [`ScreenFxNode`] alone: the picture's tint is
+//! raised and divided by its alpha, so it is no brightness of the colour for that to find,
+//! and the undercoat is the glass, which keeps its colour.
+//!
 //! The screen menu (`Frame::Screen`) has none of this: no undercoat, no background, no
 //! scanlines, no glass (docs/design/screen-menu.md §2).
 //!
@@ -29,7 +34,7 @@
 
 use super::frame::{scanline_column, Ctx, Kit};
 use super::{Frame, PipBoy, PipBoyScreen, CANVAS};
-use crate::interface::{at, AMBER_RGB};
+use crate::interface::{at, pipboy_rgb, tint, AMBER_RGB};
 use crate::terminal::screen::{lifted, scanline_column as baked_column, scanline_pixels};
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
@@ -143,11 +148,13 @@ pub struct ScreenFx {
     /// How much of the light the scanlines keep on average, in linear light (1 without).
     pub kept: f32,
     baked: bool,
+    /// The Pip-Boy colour the picture is tinted for.
+    rgb: [u8; 3],
 }
 
 impl Default for ScreenFx {
     fn default() -> Self {
-        ScreenFx { scanlines: None, kept: 1.0, baked: false }
+        ScreenFx { scanlines: None, kept: 1.0, baked: false, rgb: AMBER_RGB }
     }
 }
 
@@ -176,6 +183,37 @@ impl ScreenFx {
 #[derive(Component)]
 pub struct ScreenFxLayer;
 
+/// Any node of the treatment: `ui_colour::recolour` leaves it alone (module docs).
+#[derive(Component, Default)]
+pub struct ScreenFxNode;
+
+/// The node under the pages that shows the background: the picture, or a faint fill
+/// without it.
+#[derive(Component)]
+pub struct ScreenFxPicture;
+
+/// The faint fill where the picture is missing.
+fn missing_picture_fill(rgb: [u8; 3]) -> Color {
+    tint(rgb, BACKGROUND_BRIGHTNESS).with_alpha(0.1)
+}
+
+/// The picture's node recoloured for `rgb`, when that is not the colour it has.
+fn apply_colour(fx: &mut ScreenFx, rgb: [u8; 3], pictures: &mut Query<(Option<&mut ImageNode>, Option<&mut BackgroundColor>), With<ScreenFxPicture>>) {
+    if fx.rgb == rgb {
+        return;
+    }
+    fx.rgb = rgb;
+    for (image, fill) in pictures {
+        if let Some(mut image) = image {
+            image.color = picture_tint(rgb, fx.kept);
+        }
+        if let Some(mut fill) = fill {
+            fill.0 = missing_picture_fill(rgb);
+        }
+    }
+    info!("pipboy: the screen's picture recoloured to {rgb:?}");
+}
+
 /// Under every page and over every page, in the image's own stack.
 const UNDER_PAGES: GlobalZIndex = GlobalZIndex(-1);
 const OVER_PAGES: GlobalZIndex = GlobalZIndex(10);
@@ -193,6 +231,7 @@ pub fn draw(
     pip: Res<PipBoy>,
     screen: Option<Res<PipBoyScreen>>,
     layers: Query<Entity, With<ScreenFxLayer>>,
+    mut pictures: Query<(Option<&mut ImageNode>, Option<&mut BackgroundColor>), With<ScreenFxPicture>>,
     mut fx: ResMut<ScreenFx>,
     mut kit: ResMut<Kit>,
     data: Option<Res<GameData>>,
@@ -202,6 +241,9 @@ pub fn draw(
     let Some(screen) = screen else { return };
     let want = wanted(&pip);
     if want == !layers.is_empty() {
+        if want {
+            apply_colour(&mut fx, pipboy_rgb(), &mut pictures);
+        }
         return;
     }
     if !want {
@@ -213,16 +255,21 @@ pub fn draw(
     }
     let mut c = Ctx::new(&mut kit, data.as_deref(), &mut images, formats.as_deref());
     fx.bake(c.data, &mut *c.images);
-    let (rgb, kept) = (crate::interface::pipboy_rgb(), fx.kept);
+    let (rgb, kept) = (pipboy_rgb(), fx.kept);
+    fx.rgb = rgb;
     let whole = || at(0.0, 0.0, CANVAS.x, CANVAS.y);
-    commands.spawn((ScreenFxLayer, whole(), UiTargetCamera(screen.camera), UNDER_PAGES, Pickable::IGNORE, Name::new("Pip-Boy screen background"))).with_children(|r| {
-        if c.image(r, BACKGROUND, whole(), picture_tint(rgb, kept)).is_none() {
-            r.spawn((whole(), BackgroundColor(crate::interface::pipboy_amber(BACKGROUND_BRIGHTNESS).with_alpha(0.1))));
-        }
+    let picture = c.picture(BACKGROUND);
+    commands.spawn((ScreenFxLayer, ScreenFxNode, whole(), UiTargetCamera(screen.camera), UNDER_PAGES, Pickable::IGNORE, Name::new("Pip-Boy screen background"))).with_children(|r| {
+        let node = (ScreenFxPicture, ScreenFxNode, whole(), Pickable::IGNORE);
+        match picture {
+            Some((image, rect)) => r.spawn((node, ImageNode { rect, color: picture_tint(rgb, kept), image_mode: NodeImageMode::Stretch, ..ImageNode::new(image) })),
+            None => r.spawn((node, BackgroundColor(missing_picture_fill(rgb)))),
+        };
     });
     if let Some(lines) = fx.scanlines.clone() {
         commands.spawn((
             ScreenFxLayer,
+            ScreenFxNode,
             whole(),
             ImageNode { image_mode: NodeImageMode::Stretch, ..ImageNode::new(lines) },
             UiTargetCamera(screen.camera),
@@ -314,6 +361,38 @@ mod tests {
         // The glare's floor is small beside it (so the amber moves by under a unit).
         let scene = Vec3::new(a.red, a.green, a.blue) * Vec3::from_array(SCREEN_TINT) * SHAPE_VERTEX_COLOUR;
         assert!(glare_floor().x < 0.01 * scene.x && glare_floor().y < 0.01 * scene.y && glare_floor().z < 0.05 * scene.z);
+    }
+
+    /// Whichever colour the test says, not the global one other tests may be setting.
+    #[derive(Resource)]
+    struct Rgb([u8; 3]);
+
+    #[test]
+    fn a_new_pipboy_colour_retints_the_picture_and_leaves_the_undercoat() {
+        let green = [26, 255, 128];
+        let kept = 0.8;
+        let mut app = App::new();
+        app.insert_resource(Rgb(AMBER_RGB)).insert_resource(ScreenFx { kept, ..default() }).add_systems(
+            Update,
+            |rgb: Res<Rgb>, mut fx: ResMut<ScreenFx>, mut pictures: Query<(Option<&mut ImageNode>, Option<&mut BackgroundColor>), With<ScreenFxPicture>>| {
+                apply_colour(&mut fx, rgb.0, &mut pictures);
+            },
+        );
+        let image = app.world_mut().spawn((ScreenFxPicture, ImageNode { color: picture_tint(AMBER_RGB, kept), ..default() })).id();
+        let fill = app.world_mut().spawn((ScreenFxPicture, BackgroundColor(missing_picture_fill(AMBER_RGB)))).id();
+        let under = undercoat(kept);
+        // The same colour touches nothing.
+        app.update();
+        assert_eq!(app.world().get::<ImageNode>(image).unwrap().color, picture_tint(AMBER_RGB, kept));
+        // Another: the lifted tint for it, with its alpha, and the faint fill.
+        app.world_mut().insert_resource(Rgb(green));
+        app.update();
+        let c = app.world().get::<ImageNode>(image).unwrap().color;
+        assert_eq!(c, picture_tint(green, kept));
+        assert_ne!(c, picture_tint(AMBER_RGB, kept));
+        assert_eq!(c.alpha(), BACKGROUND_ALPHA);
+        assert_eq!(app.world().get::<BackgroundColor>(fill).unwrap().0, missing_picture_fill(green));
+        assert_eq!(undercoat(kept), under, "the glass keeps its colour");
     }
 
     fn app(frame: Frame) -> App {

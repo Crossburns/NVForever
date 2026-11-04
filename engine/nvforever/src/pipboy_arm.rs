@@ -110,12 +110,32 @@ impl Plugin for PipBoyArmPlugin {
 pub(crate) struct Swapped {
     screen: Option<(Entity, Handle<NifMaterial>)>,
     glare: Option<(Entity, Handle<NifMaterial>)>,
-    menus: Option<Handle<NifMaterial>>,
-    glass: Option<Handle<NifMaterial>>,
+    menus: Option<Copied>,
+    glass: Option<Copied>,
     /// The menus' missing place was logged for this raise.
     warned: bool,
     /// The buttons last logged as lit.
     lit: Option<String>,
+}
+
+/// A material copied from a shape's own, and what it was made from: a rig rebuilt on other
+/// materials (another texture, other settings) gets a copy of its own, not the first rig's.
+struct Copied {
+    source: Handle<NifMaterial>,
+    image: Option<Handle<Image>>,
+    worn: Handle<NifMaterial>,
+}
+
+/// The copy of `source` (and `image`) in `cache`, made when it is of anything else. A copy
+/// no shape wears any more goes with its last handle.
+fn copy_of(cache: &mut Option<Copied>, source: &Handle<NifMaterial>, image: Option<&Handle<Image>>, materials: &mut Assets<NifMaterial>, make: impl FnOnce(&NifMaterial) -> NifMaterial) -> Handle<NifMaterial> {
+    if let Some(c) = cache.as_ref().filter(|c| c.source == *source && c.image.as_ref() == image) {
+        return c.worn.clone();
+    }
+    let copy = make(&materials.get(source).cloned().unwrap_or_default());
+    let worn = materials.add(copy);
+    *cache = Some(Copied { source: source.clone(), image: image.cloned(), worn: worn.clone() });
+    worn
 }
 
 /// Whether the glow of `page`'s button shows: the page's alone while the Pip-Boy shows on
@@ -164,8 +184,8 @@ fn menus_material(own: &NifMaterial, image: Handle<Image>) -> NifMaterial {
 }
 
 /// Put the copies on the screen and the glare while the menus are on the model (`on`), and
-/// give the shapes their own materials back otherwise, or when the rig was rebuilt. The
-/// copies are made once, and no shared source material is touched.
+/// give the shapes their own materials back otherwise, or when the rig was rebuilt. A copy
+/// is made once for each source, and no shared source material is touched.
 fn wear_materials(on: bool, image: &Handle<Image>, parts: &mut Query<(Entity, &PipBoyPart, &mut MeshMaterial3d<NifMaterial>)>, field: &mut StealthField, materials: &mut Assets<NifMaterial>, swapped: &mut Swapped) {
     let find = |parts: &Query<(Entity, &PipBoyPart, &mut MeshMaterial3d<NifMaterial>)>, part: PipBoyPart| parts.iter().find(|(_, p, _)| **p == part).map(|(e, _, m)| (e, m.0.clone()));
     let model_screen = find(parts, PipBoyPart::Screen);
@@ -192,12 +212,9 @@ fn wear_materials(on: bool, image: &Handle<Image>, parts: &mut Query<(Entity, &P
             own = original;
             info!("pipboy: the menus are on the screen drawn plain under the Stealth Boy");
         }
-        let menus = swapped.menus.get_or_insert_with(|| {
-            let m = menus_material(&materials.get(&own).cloned().unwrap_or_default(), image.clone());
-            materials.add(m)
-        });
+        let menus = copy_of(&mut swapped.menus, &own, Some(image), materials, |source| menus_material(source, image.clone()));
         if let Ok((_, _, mut m)) = parts.get_mut(e) {
-            m.0 = menus.clone();
+            m.0 = menus;
         }
         swapped.screen = Some((e, own));
         info!("pipboy: the menus are on the model's screen");
@@ -207,12 +224,9 @@ fn wear_materials(on: bool, image: &Handle<Image>, parts: &mut Query<(Entity, &P
             own = original;
             info!("pipboy: the glare is drawn plain under the Stealth Boy");
         }
-        let glass = swapped.glass.get_or_insert_with(|| {
-            let m = glare_material(&materials.get(&own).cloned().unwrap_or_default());
-            materials.add(m)
-        });
+        let glass = copy_of(&mut swapped.glass, &own, None, materials, glare_material);
         if let Ok((_, _, mut m)) = parts.get_mut(e) {
-            m.0 = glass.clone();
+            m.0 = glass;
         }
         swapped.glare = Some((e, own));
         info!("pipboy: the glare is over the menus");
@@ -256,11 +270,7 @@ pub(crate) fn show_screen(
     let mut lit: [bool; 3] = default();
     for (e, p, _) in &parts {
         let shown = match *p {
-            PipBoyPart::Glow(page) => {
-                let on = glow_lit(&pip, page);
-                lit[page.index()] |= on;
-                on
-            }
+            PipBoyPart::Glow(page) => glow_lit(&pip, page),
             PipBoyPart::ScreenLit => !screen.on_model,
             _ => continue,
         };
@@ -269,10 +279,13 @@ pub(crate) fn show_screen(
             if *v != want {
                 *v = want;
             }
+            if let (PipBoyPart::Glow(page), true) = (*p, *v != Visibility::Hidden) {
+                lit[page.index()] = true;
+            }
         }
     }
-    // Said on each change, so a log can tell which glows are drawn. Nothing while no rig
-    // holds a glow.
+    // Said on each change, from the glows' visibility as set here (what is drawn from it is
+    // for a shot to show). Nothing while no glow is on.
     if lit.contains(&true) {
         let names = Page::ALL.into_iter().filter(|p| lit[p.index()]).map(|p| p.title()).collect::<Vec<_>>().join(", ");
         if swapped.lit.as_deref() != Some(names.as_str()) {
@@ -527,16 +540,17 @@ mod tests {
         assert!(!own.extension.add_linear && own.base.base_color == Color::WHITE);
     }
 
-    /// `On` says the menus are on the model, as `show_screen` would.
+    /// `On` says the menus are on the model, as `show_screen` would, and the image they are
+    /// drawn into.
     #[derive(Resource)]
-    struct On(bool);
+    struct On(bool, Handle<Image>);
 
     fn material_app() -> App {
         let mut app = App::new();
-        app.init_resource::<StealthField>().init_resource::<Assets<NifMaterial>>().insert_resource(On(false)).add_systems(
+        app.init_resource::<StealthField>().init_resource::<Assets<NifMaterial>>().insert_resource(On(false, Handle::default())).add_systems(
             Update,
             |on: Res<On>, mut parts: Query<(Entity, &PipBoyPart, &mut MeshMaterial3d<NifMaterial>)>, mut field: ResMut<StealthField>, mut materials: ResMut<Assets<NifMaterial>>, mut swapped: Local<Swapped>| {
-                wear_materials(on.0, &Handle::default(), &mut parts, &mut field, &mut materials, &mut swapped);
+                wear_materials(on.0, &on.1, &mut parts, &mut field, &mut materials, &mut swapped);
             },
         );
         app
@@ -544,9 +558,13 @@ mod tests {
 
     /// The screen and the glare of a rig, on materials of their own.
     fn rig(app: &mut App) -> ((Entity, Handle<NifMaterial>), (Entity, Handle<NifMaterial>)) {
+        rig_on(app, surface(Color::BLACK), surface(Color::WHITE))
+    }
+
+    fn rig_on(app: &mut App, screen: NifMaterial, glare: NifMaterial) -> ((Entity, Handle<NifMaterial>), (Entity, Handle<NifMaterial>)) {
         let world = app.world_mut();
         let mut materials = world.resource_mut::<Assets<NifMaterial>>();
-        let (s, g) = (materials.add(surface(Color::BLACK)), materials.add(surface(Color::WHITE)));
+        let (s, g) = (materials.add(screen), materials.add(glare));
         let screen = world.spawn((PipBoyPart::Screen, MeshMaterial3d(s.clone()))).id();
         let glare = world.spawn((PipBoyPart::Glare, MeshMaterial3d(g.clone()))).id();
         ((screen, s), (glare, g))
@@ -560,6 +578,59 @@ mod tests {
         app.world().resource::<Assets<NifMaterial>>().get(&worn(app, e)).is_some_and(|m| m.extension.add_linear)
     }
 
+    fn worn_material(app: &App, e: Entity) -> NifMaterial {
+        app.world().resource::<Assets<NifMaterial>>().get(&worn(app, e)).unwrap().clone()
+    }
+
+    #[test]
+    fn a_rig_on_other_materials_gets_copies_of_its_own() {
+        let mut app = material_app();
+        app.init_resource::<Assets<Image>>();
+        let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+        let [t1, t2, menus_1, menus_2] = [(); 4].map(|_| images.add(Image::default()));
+        // Two rigs whose materials differ in the texture and in settings a copy keeps.
+        let on = |texture: &Handle<Image>, double_sided: bool, decal: bool| {
+            let mut m = surface(Color::WHITE);
+            m.base.base_color_texture = Some(texture.clone());
+            m.base.double_sided = double_sided;
+            m.extension.decal = decal;
+            m
+        };
+        let ((screen_1, _), (glare_1, _)) = rig_on(&mut app, on(&t1, false, false), on(&t1, false, false));
+        app.world_mut().insert_resource(On(true, menus_1.clone()));
+        app.update();
+        let (first_screen, first_glare) = (worn(&app, screen_1), worn(&app, glare_1));
+        assert_eq!(worn_material(&app, glare_1).base.base_color_texture.as_ref(), Some(&t1));
+        // Down and up on the same sources and image: the same copies.
+        app.world_mut().insert_resource(On(false, menus_1.clone()));
+        app.update();
+        app.world_mut().insert_resource(On(true, menus_1.clone()));
+        app.update();
+        assert!(worn(&app, screen_1) == first_screen && worn(&app, glare_1) == first_glare, "one copy for each source");
+        // The rig rebuilt on other materials, while up: nothing of the first rig's.
+        let ((screen_2, own_screen_2), (glare_2, own_glare_2)) = rig_on(&mut app, on(&t2, true, false), on(&t2, true, true));
+        app.world_mut().despawn(screen_1);
+        app.world_mut().despawn(glare_1);
+        app.update();
+        let glare = worn_material(&app, glare_2);
+        assert!(worn(&app, glare_2) != first_glare);
+        assert_eq!(glare.base.base_color_texture.as_ref(), Some(&t2));
+        assert!(glare.base.double_sided && glare.extension.decal && glare.extension.add_linear);
+        let screen = worn_material(&app, screen_2);
+        assert!(worn(&app, screen_2) != first_screen);
+        assert!(screen.base.double_sided, "from the new rig's own");
+        assert_eq!(screen.base.base_color_texture.as_ref(), Some(&menus_1));
+        // Another image on the same source: another screen copy, the glare's as it was.
+        let glare_copy = worn(&app, glare_2);
+        app.world_mut().insert_resource(On(false, menus_2.clone()));
+        app.update();
+        assert_eq!((worn(&app, screen_2), worn(&app, glare_2)), (own_screen_2, own_glare_2));
+        app.world_mut().insert_resource(On(true, menus_2.clone()));
+        app.update();
+        assert_eq!(worn_material(&app, screen_2).base.base_color_texture.as_ref(), Some(&menus_2));
+        assert!(worn(&app, glare_2) == glare_copy);
+    }
+
     #[test]
     fn the_shapes_get_their_own_materials_back_down_and_the_new_rig_gets_the_copies() {
         let mut app = material_app();
@@ -567,7 +638,7 @@ mod tests {
         app.update();
         assert_eq!((worn(&app, screen), worn(&app, glare)), (own_screen.clone(), own_glare.clone()), "down: their own");
         // Up: copies, the sources as they were.
-        app.world_mut().insert_resource(On(true));
+        app.world_mut().insert_resource(On(true, Handle::default()));
         app.update();
         assert!(worn(&app, screen) != own_screen);
         assert!(glare_worn(&app, glare));
@@ -581,7 +652,7 @@ mod tests {
         app.update();
         assert!(glare_worn(&app, glare_2));
         assert!(worn(&app, screen_2) != own_screen_2);
-        app.world_mut().insert_resource(On(false));
+        app.world_mut().insert_resource(On(false, Handle::default()));
         app.update();
         assert_eq!((worn(&app, screen_2), worn(&app, glare_2)), (own_screen_2, own_glare_2));
     }
@@ -598,7 +669,7 @@ mod tests {
         app.world_mut().despawn(glare);
         let own_screen = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(surface(Color::BLACK));
         let screen = app.world_mut().spawn((PipBoyPart::Screen, MeshMaterial3d(own_screen.clone()))).id();
-        app.world_mut().insert_resource(On(true));
+        app.world_mut().insert_resource(On(true, Handle::default()));
         app.update();
         assert!(worn(&app, screen) != own_screen);
     }
@@ -613,14 +684,14 @@ mod tests {
         let copy = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(copy);
         app.world_mut().get_mut::<MeshMaterial3d<NifMaterial>>(glare).unwrap().0 = copy.clone();
         app.world_mut().resource_mut::<StealthField>().keep_original(glare, own_glare.clone());
-        app.world_mut().insert_resource(On(true));
+        app.world_mut().insert_resource(On(true, Handle::default()));
         app.update();
         let materials = app.world().resource::<Assets<NifMaterial>>();
         let on = materials.get(&worn(&app, glare)).unwrap();
         assert!(on.extension.add_linear && !on.extension.refract, "plain, not refracting");
         assert!(materials.get(&copy).is_none(), "the see-through copy is dropped");
         // Down: the real one for the field to make see-through again.
-        app.world_mut().insert_resource(On(false));
+        app.world_mut().insert_resource(On(false, Handle::default()));
         app.update();
         assert_eq!(worn(&app, glare), own_glare);
     }

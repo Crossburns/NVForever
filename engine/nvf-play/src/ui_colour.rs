@@ -14,7 +14,8 @@
 //! brightness, the Pip-Boy's screens (under `crate::pipboy::PipBoyRoot`) by its own
 //! colour, everything else by the HUD's. What is drawn later takes the new colour from
 //! `amber` and `pipboy_amber`. The mouse pointer keeps the amber it was made in
-//! (`crate::cursor`).
+//! (`crate::cursor`). The Pip-Boy device's background follows its colour by its own owner,
+//! whose nodes are left alone here (`crate::pipboy::device_screen`).
 
 use crate::interface::{hud_rgb, pipboy_rgb, set_hud_rgb, set_pipboy_rgb, AMBER_RGB};
 use crate::settings::{add_choice_list, add_setting, ChoiceList, Setting, Slider};
@@ -145,7 +146,7 @@ fn recolour(
     mut drawn: ResMut<Drawn>,
     roots: Query<Entity, With<crate::pipboy::PipBoyRoot>>,
     children: Query<&Children>,
-    mut nodes: Query<(Entity, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&mut BackgroundColor>, Option<&mut BorderColor>), Or<(With<TextColor>, With<ImageNode>, With<BackgroundColor>, With<BorderColor>)>>,
+    mut nodes: Query<(Entity, Option<&mut TextColor>, Option<&mut ImageNode>, Option<&mut BackgroundColor>, Option<&mut BorderColor>), (Or<(With<TextColor>, With<ImageNode>, With<BackgroundColor>, With<BorderColor>)>, Without<crate::pipboy::device_screen::ScreenFxNode>)>,
 ) {
     let now = Drawn { hud: hud_rgb(), pipboy: pipboy_rgb() };
     if now.hud == drawn.hud && now.pipboy == drawn.pipboy {
@@ -224,6 +225,22 @@ mod tests {
             assert_eq!((v * 255.0).round() as u8, x, "{x} on a step");
             assert_eq!(shown(v), x.to_string());
         }
+    }
+
+    #[test]
+    fn the_device_screens_nodes_are_left_to_their_owner() {
+        use crate::pipboy::device_screen::ScreenFxNode;
+        // A colour no other test sets, so a change is seen whatever the global colours are.
+        let old = [10, 20, 30];
+        let full = crate::interface::tint(old, 255.0);
+        let mut app = App::new();
+        app.insert_resource(Drawn { hud: old, pipboy: old }).add_systems(Update, recolour);
+        let hud = app.world_mut().spawn(BackgroundColor(full)).id();
+        let fx = app.world_mut().spawn((ScreenFxNode, BackgroundColor(full), ImageNode { color: full, ..default() })).id();
+        app.update();
+        assert_ne!(app.world().get::<BackgroundColor>(hud).unwrap().0, full, "the HUD's takes the new colour");
+        assert_eq!(app.world().get::<BackgroundColor>(fx).unwrap().0, full);
+        assert_eq!(app.world().get::<ImageNode>(fx).unwrap().color, full);
     }
 
     #[test]
