@@ -17991,6 +17991,7 @@ source = "[design] ui-tile-tree.md §6.2 step 3, barter-menu.md §8 (T15c, issue
 note = "positions at 1280 x 720 (screen 1706.67 x 960; CM_MainRect at 341.33, 80): left rows x 378-803, row n at y 160 + 52 n; right rows from x 938; left bar x 346-378, its arrows at y 160-176 and 509-525, the marker 6 wide at x 358-364, its area y 176-509; the left heading's left arrow at 391-408, y 90-125; Take All x 1259-1375, y 670-717; Exit x 1307-1375, y 715-762. the 20 rounds given join the start inventory's 50, so the first row reads '10mm Round (70)', and the prompt asks at 70; the box holds the mug alone until the stack goes in. The marker is 32 high with 22 items, 14.33 a value from y 176: at value 5 (after the bar's clicks) y 247.67-279.67, so the press at y 264 takes it, 136 down leaves it at value 14. Card shots: the selection walks 40mm Grenade, 9mm Pistol, Armored Vault 13 Jumpsuit, Binoculars, Bleak Venom at 22.2 s to 23 s. The aid's pointer moves no real cursor, so the wheel's hold stays on after 25 s (crate::menu::WheelHold) and no later row is hovered"
 areas = ["ui", "menu", "items"]
 paths = [
+  "engine/nvforever/src/imagespace.rs",
   "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/item_card.rs",
   "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
   "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
@@ -18062,6 +18063,11 @@ order = [[
   "menu: close",
   "tiles: ContainerMenu Close on its tiles",
   "menu: close",
+], [
+  "tile menu blur: ContainerMenu radius 3",
+  "tile menu blur: off",
+  "tile menu blur: ContainerMenu radius 3",
+  "tile menu blur: off",
 ]]
 
 [[scenario]]
@@ -18128,7 +18134,7 @@ name = "container-default-drawing"
 source = "barter-menu.md §5 and §8: without the switch the container menu is the hand-built drawing: nothing of the tile menu is written or drawn, and its keys act as before; the same views as tiles-container, for the pictures beside it"
 note = "the same give and times as tiles-container, by keys alone (the aid's pointer is the tiles'); the 20 rounds given join the start inventory's 50"
 areas = ["ui", "menu", "items"]
-paths = ["engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/pad.rs"]
+paths = ["engine/nvforever/src/imagespace.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/pad.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20,000E9C3B,0008F21A,0003307F,00015169:2,00022102,000E3778,00020423,00034045,0008C214,0008ED0B,0001519E", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_KEYS = "12:f10,14:a,16:enter,17.5:e,18:enter,18.5:a,20:d,22:a,22.2:down,22.4:down,22.6:down,22.8:down,23:down,23.2:down,23.4:down,23.6:down,25:wheel-down,25.5:wheel-up,33:r,35:f10,36.5:e", NVF_PLAY_TEST_SHOTS = "13:default_container_open.png,15:default_container_row.png,17:default_container_prompt.png,21:default_container_right.png,22.5:default_container_card_weapon.png,22.7:default_container_card_armour.png,23.1:default_container_card_aid.png,24:default_container_scrolled.png,27.5:default_container_paged.png,36:default_container_reopened.png" }
 args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 40
