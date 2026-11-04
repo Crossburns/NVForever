@@ -194,8 +194,8 @@ pub fn modal_sheet() -> impl bevy::prelude::Bundle {
 /// them (`super::input`): the prompt's A, E, Left, Right (`crate::menu`'s prompt keys) and
 /// the controller buttons that stand in for its Enter, Esc, Page Up and Page Down
 /// (`crate::pad::menu_key`); the box's Up, Down and the controller's A for its Enter
-/// (`crate::script_hud::menu_keys`); the Wait and container menus' their own lists. Any other
-/// key a file binds is left to the file.
+/// (`crate::script_hud::menu_keys`); the Wait, tutorial and container menus' their own lists.
+/// Any other key a file binds is left to the file.
 pub fn hand_built_takes(menu: &str, key: &str) -> bool {
     let keys: &[&str] = if menu.eq_ignore_ascii_case(QUANTITY_MENU) {
         &["A", "E", "xleft", "xright", "xbuttona", "xbuttonb", "xbuttonlb", "xbuttonrb"]
@@ -203,6 +203,8 @@ pub fn hand_built_takes(menu: &str, key: &str) -> bool {
         &["xup", "xdown", "xbuttona"]
     } else if menu.eq_ignore_ascii_case(super::wait_menu::SLEEP_WAIT_MENU) {
         &super::wait_menu::HAND_BUILT_KEYS
+    } else if menu.eq_ignore_ascii_case(super::tutorial_menu::TUTORIAL_MENU) {
+        &super::tutorial_menu::HAND_BUILT_KEYS
     } else if menu.eq_ignore_ascii_case(super::container_menu::CONTAINER_MENU) {
         &super::container_menu::HAND_BUILT_KEYS
     } else {

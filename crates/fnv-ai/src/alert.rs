@@ -175,6 +175,9 @@ impl Ai {
             }
             return false;
         }
+        // Relinquish the sandbox before any combat movement (or an early return
+        // without a target). Repeated updates keep the new combat walk intact.
+        self.interrupt_sandbox(game, actor);
         // Off furniture first: the engine gets it up, and its walk waits until it has.
         if self.agents[&actor].using.is_some() {
             self.set_using(game, actor, None);
@@ -319,10 +322,8 @@ impl Ai {
         }
         if a.search != Some(Search::Warning { target }) {
             let away = goal::dist(a.walker.feet, at.pos);
+            self.interrupt_sandbox(game, actor);
             let a = self.agents.get_mut(&actor).expect("listed");
-            if let Some(s) = a.sandbox.as_mut() {
-                s.pending = None;
-            }
             a.wait_until = None;
             a.walker.follower = None;
             a.activity = Activity::There;
@@ -342,10 +343,6 @@ impl Ai {
         let speed = self.alert_speeds(actor).walk;
         let now = game.time;
         let a = self.agents.get_mut(&actor).expect("listed");
-        // A sandbox's own walk is given up; it chooses again after the search.
-        if let Some(s) = a.sandbox.as_mut() {
-            s.pending = None;
-        }
         a.wait_until = None;
         let space = a.walker.space;
         let from = a.walker.feet;
@@ -509,15 +506,14 @@ impl Ai {
 
     /// Choose a flee spot away from `threat` and set off there, running (module notes).
     pub(crate) fn flee_from(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId, from: FormId, threat: [f32; 3]) {
+        // Spectators also enter here while Normal, outside alert_step's takeover.
+        self.interrupt_sandbox(game, actor);
         let params = self.path_params(game, actor);
         let gs = game.group_settings();
         let now = game.time;
         let speed = self.alert_speeds(actor).run * game.awareness.pace_of(actor);
         let a = self.agents.get_mut(&actor).expect("listed");
         let (space, feet) = (a.walker.space, a.walker.feet);
-        if let Some(s) = a.sandbox.as_mut() {
-            s.pending = None;
-        }
         a.wait_until = None;
         a.walker.speed = speed;
         let mut tries: Vec<(Place, FleeBy)> = Vec::new();

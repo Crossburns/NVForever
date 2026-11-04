@@ -110,6 +110,8 @@ fn flag(ui: &Ui, t: TileId, name: &str) -> bool {
 }
 
 /// The private trait that turns a tile's `clipwindow` on ([`mark_clip_windows`]) [design].
+/// An engine-written mark, in no game file: an ordinary trait to the tree, so generic trait
+/// dumps list it and a file naming it would be read too.
 pub const CLIP_WINDOW_ON: &str = "_NVFClipWindow";
 
 /// Whether a tile crops its children to its own box, in the drawing (`nvf_play::tiles::layout`)

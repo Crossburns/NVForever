@@ -222,6 +222,14 @@ impl FontKit<'_> {
         move |font: f64, text: &str, wrap: Option<f64>| faces.get(&font_number(font)).map_or((0.0, 0.0), |face| measure_written(&face.font, font_number(font), text, wrap))
     }
 
+    /// A picture's own file's size in texels, read once by the one who asks (the tutorial
+    /// menu's symbol, `super::tutorial_menu::write_symbol`).
+    pub(crate) fn picture_size(&mut self, path: &str) -> Option<Vec2> {
+        let bc = bc_supported(self.formats.as_deref());
+        let data = self.data.as_deref();
+        Pictures::load(data).own_sized(path, data, &mut self.images, bc).map(|(_, _, size)| size)
+    }
+
     /// Whether the fonts of `tiles` are all the game's own (read, not stand-ins), loading
     /// them; false without game data or without tiles.
     fn game_fonts(&mut self, ui: &Ui, tiles: &[TileId]) -> bool {
@@ -875,6 +883,7 @@ pub(crate) struct MenusDrawn {
     /// The start menu's mod tiles on the pause menu's Mods page (T11).
     start: Drawn,
     sleep_wait: Drawn,
+    tutorial: Drawn,
     container: Drawn,
 }
 
@@ -885,6 +894,9 @@ pub const MESSAGE_Z: i32 = 108;
 pub const QUANTITY_Z: i32 = 101;
 /// T15b: the Wait / Sleep menu's, its hand-built drawing's 105 (`crate::wait`) [design].
 pub const SLEEP_WAIT_Z: i32 = 105;
+/// T15b: the tutorial menu's, over the other menus as its hand-built drawing is
+/// (`crate::tutorial_menu`) [design].
+pub const TUTORIAL_Z: i32 = 109;
 /// T15c: the container menu's, its hand-built drawing's 100 (`crate::menu`), under its prompt
 /// [design].
 pub const CONTAINER_Z: i32 = 100;
@@ -904,6 +916,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
         (super::menus::MESSAGE_MENU, game.is_some_and(|g| super::menus::message_tiled(switch.message, g)), MESSAGE_Z, &mut others.message),
         (super::menus::QUANTITY_MENU, game.is_some_and(|g| super::menus::quantity_tiled(switch.quantity, g, prompt_open, container_on)), QUANTITY_Z, &mut others.quantity),
         (super::wait_menu::SLEEP_WAIT_MENU, game.is_some_and(|g| super::wait_menu::tiled(switch.sleep_wait, g)), SLEEP_WAIT_Z, &mut others.sleep_wait),
+        (super::tutorial_menu::TUTORIAL_MENU, game.is_some_and(|g| super::tutorial_menu::tiled(switch.tutorial, g)), TUTORIAL_Z, &mut others.tutorial),
         (super::container_menu::CONTAINER_MENU, container_on, CONTAINER_Z, &mut others.container),
     ] {
         let ui = game.map(|g| &g.ui_tree);

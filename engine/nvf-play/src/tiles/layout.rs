@@ -3,15 +3,18 @@
 
 use fnv_ui::{Tile, TileId, Ui, Value};
 
-/// The private trait of a tile that takes no `alpha` from the tiles above it. [observed] In
-/// the original's container menu the `StrengthReqInfo` card reads `alpha` 0 and its top line
-/// and side line still show at full strength (launchtest shot, 1280 x 720; barter-menu.md §8),
-/// the scrollbar image reads `alpha` 0 with its arrows shown, and the text buttons, an image
-/// and a rect at `alpha` 0, show their words. Whether this holds outside that menu is not
-/// known (barter-menu.md §8) [hypothesis]. It drops every alpha from above, an ancestor's
-/// fade too. [design] An engine-written mark, in no game file, written by a menu's model so
-/// nothing else changes: an ordinary trait to the tree, so generic trait dumps list it and a
-/// file naming it would be read too.
+/// The private trait of a tile that takes no `alpha` from the tiles above it. `tutorial_menu.xml`
+/// nests all its content under its background picture [documented: the file]; under that
+/// picture at alpha 193.8 the text and lines read full strength (255, 182, 66) at 1280 x 720
+/// [observed: shot 091 of hud_menus]. [observed] In the original's container menu the
+/// `StrengthReqInfo` card reads `alpha` 0 and its top line and side line still show at full
+/// strength (launchtest shot, 1280 x 720; barter-menu.md §8), the scrollbar image reads `alpha` 0
+/// with its arrows shown, and the text buttons, an image and a rect at `alpha` 0, show their
+/// words. Whether pictures pass alpha on elsewhere, or this holds outside these two menus, is
+/// not known (observer check 83; barter-menu.md §8) [hypothesis]. It drops every alpha from
+/// above, an ancestor's fade too. [design] An engine-written mark, in no game file, written by
+/// a menu's model so nothing else changes: an ordinary trait to the tree, so generic trait dumps
+/// list it and a file naming it would be read too.
 pub const OWN_ALPHA: &str = "_NVFOwnAlpha";
 
 /// The private trait of a hotrect that draws its own box filled at its `alpha` and
