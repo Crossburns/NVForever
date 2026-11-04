@@ -1167,7 +1167,7 @@ fn play(
     // for their file are dropped (all asked for in earlier frames), and so are this
     // frame's asked for before the stop (`PlaySound X; StopSound X`); one asked for after
     // it (`StopSound X; PlaySound X`, a higher id) plays [engineering choice; hypothesis:
-    // the original's order in one frame is not known, audio.md §11.5, observer check 81].
+    // the original's order in one frame is not known, audio.md §11.5, observer check 82].
     let stops = std::mem::take(&mut ss.stops);
     for &(s, _) in &stops {
         for (e, p) in &scripted {

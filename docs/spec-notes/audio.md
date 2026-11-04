@@ -446,7 +446,7 @@ original] (`fnv-game/src/nvse_sound.rs` `SoundState::stop`, `nvf-play/src/sfx.rs
 
 - `PlaySound X; StopSound X` in one frame plays nothing: the stop covers the sounds of X
   asked for before it, also in the same frame. `StopSound X; PlaySound X` plays X.
-  Observer check 81.
+  Observer check 82.
 - A looping script sound (a SOUN with the Loop flag) whose file cannot be played is over
   at once: IsSoundPlaying reads 0 for it, as for a one-shot with no file.
 - `LoopSound` on then off for one SOUN in one frame leaves nothing playing (the off drops
