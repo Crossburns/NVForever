@@ -3269,6 +3269,23 @@ order = [[
 ]]
 
 [[scenario]]
+name = "terminal-scripted-activate"
+source = "#1532: Lucky38MrHouseTerminal's OnActivate (SCPT 0x001746C1) ends in a bare Activate: a script's default activation of a terminal opens its screen for the player, after Terminal01.NIF's Open sequence (keyboard, then screen); leaving plays Close"
+note = "Lucky38MrHouseTerminalREF (0014B0A7, base Lucky38MrHouseTerminal 0014B08E: Hard, locked, model Terminals/Terminal01.NIF with Idle/Open/Close) [observed: FalloutNV.esm]; Science 80 so the script's first branch (Science 75, not locked for good) runs Activate and the hacking game opens"
+areas = ["terminal"]
+paths = ["engine/nvf-play/src/terminal.rs", "engine/nvf-play/src/script_events.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav science 80", NVF_PLAY_TEST_SCRIPT = "9:moveto:player:Lucky38MrHouseTerminalREF,14:activate:Lucky38MrHouseTerminalREF", NVF_PLAY_TEST_TERMINAL = "17:exit" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 20
+expect = [
+  { text = "script: terminal 0014B0A7 opens (a script's Activate)", label = "the script's Activate opens the terminal" },
+  { text = "terminal 0x0014B0A7 plays Open before its screen", label = "the keyboard and screen come out first" },
+  { re = 'terminal: open 0x0014B0A7 \S+: hacking, Hard', label = "then the screen: the hacking game (Hard, locked)" },
+  { text = "terminal 0x0014B0A7 closes", label = "leaving plays Close" },
+]
+order = [["terminal 0x0014B0A7 plays Open before its screen", "terminal: open 0x0014B0A7", "terminal 0x0014B0A7 closes"]]
+
+[[scenario]]
 name = "hacking"
 manual = "[design] In hacking.png, compare 10x10 medians on glass right of the dump and below the header, and inside an attempt block, against docs/spec-notes/hacking.md §2: glass R 16-23 / G 38-52 / B 15-32; blocks near (61, 253, 152) and solid (not crossed by the scanlines), without a glare wash. Retain faint texture, dark corners (about 8, 11, 5) and the monitor's top-right streak near (100, 125, 95); use the per-constant tuning recipes in §7 and check text outside the streak stays no higher than (88, 255, 160), that the text has soft edges and the scanlines cross glass and text, and that the password prompt line's green above the glass, per character, is near the original's (§2; the words differ, so compare per character). In flat mode (no monitor model, so no glare) check its own targets instead: glass middle near (12, 38, 20) and blocks near (54, 252, 150) (screen.rs tests), with the same texture."
 source = "CLAUDE.md: after changes to terminals or the hacking game (docs/spec-notes/hacking.md §9): the Easy terminal"
