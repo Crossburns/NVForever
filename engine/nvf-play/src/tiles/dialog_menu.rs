@@ -256,7 +256,16 @@ fn check_drawn(ui: &Ui, view: &MenuView, menu: TileId) -> Result<(), String> {
     };
     let need = |path: &str| if paints(path) { Ok(()) } else { Err(format!("{path} draws nothing")) };
     let hits = fnv_ui::input::hit_candidates(ui, menu, &fnv_ui::input::no_measure);
-    let reached = |t: TileId| hits.iter().any(|c| c.under == t && c.region().width > 0.0 && c.region().height > 0.0);
+    let region = |t: TileId| hits.iter().find(|c| c.under == t && c.region().width > 0.0 && c.region().height > 0.0).map(|c| c.region());
+    let reached = |t: TileId| region(t).is_some();
+    // The middle of its region goes to it, or to what stands for the same: no other target
+    // over it takes the click.
+    let wins = |t: TileId| {
+        region(t).is_some_and(|r| {
+            let winner = fnv_ui::input::top_hit(ui, &hits, (r.left + r.width / 2.0, r.top + r.height / 2.0));
+            winner.is_some_and(|h| dialog_tile(ui, h.tile).is_some() && dialog_tile(ui, h.tile) == dialog_tile(ui, t))
+        })
+    };
     if !view.speaker.trim().is_empty() {
         need(NAME)?;
     }
@@ -267,6 +276,9 @@ fn check_drawn(ui: &Ui, view: &MenuView, menu: TileId) -> Result<(), String> {
         }
         if !ui.find_tile(CLICK_AREA).is_some_and(reached) {
             return Err(format!("{CLICK_AREA} has no region to click"));
+        }
+        if !ui.find_tile(CLICK_AREA).is_some_and(wins) {
+            return Err(format!("{CLICK_AREA} is covered by another target"));
         }
         return Ok(());
     }
@@ -289,6 +301,9 @@ fn check_drawn(ui: &Ui, view: &MenuView, menu: TileId) -> Result<(), String> {
         if !reached(row) {
             return Err(format!("a {ROW} has no region to click"));
         }
+        if !wins(row) {
+            return Err(format!("a {ROW} is covered by another target"));
+        }
         if !choice.label.trim().is_empty() && !child(ui, row, ROW_TEXT).is_some_and(|t| drawn.iter().any(|p| p.tile == t)) {
             return Err(format!("a {ROW_TEXT} draws nothing"));
         }
@@ -301,6 +316,9 @@ fn check_drawn(ui: &Ui, view: &MenuView, menu: TileId) -> Result<(), String> {
         for control in ["scrollbar_vert_up", "scrollbar_vert_down"] {
             if !ui.find_tile(&format!("{BAR}/{control}")).is_some_and(reached) {
                 return Err(format!("{BAR}/{control} has no region to click"));
+            }
+            if !ui.find_tile(&format!("{BAR}/{control}")).is_some_and(wins) {
+                return Err(format!("{BAR}/{control} is covered by another target"));
             }
         }
     }
@@ -949,14 +967,35 @@ impl DialogTiles {
     }
 }
 
+/// The tree as it is to be drawn: still whole ([`check_drawn`], whatever changed it since it was
+/// placed: a script, a gradient), and then what can be hit, for the next frame's input. Otherwise
+/// the whole hand-built menu, from this very frame's drawing.
+fn finish_frame(ui: &mut Ui, state: &mut DialogTiles, written: &mut Written) {
+    if !state.drawn() {
+        return;
+    }
+    let checked = match (state.menu, written.published.as_ref()) {
+        (Some(menu), Some(p)) => check_drawn(ui, &p.view, menu),
+        _ => Ok(()),
+    };
+    match checked {
+        Ok(()) => state.take_hits(ui),
+        Err(reason) => {
+            written.warn(&Tiled::No(reason));
+            written.fall_back(ui);
+            *state = DialogTiles::default();
+        }
+    }
+}
+
 /// After `super::update`, the frame's last working out of the tree, animations stepped, and
-/// before the drawing: what can be hit as it is drawn, for the next frame's input.
-pub(crate) fn snapshot_system(script: Res<crate::script::ScriptState>, switch: Res<super::vanilla::TileMenus>, mut state: ResMut<DialogTiles>) {
+/// before the drawing: [`finish_frame`].
+pub(crate) fn snapshot_system(mut script: ResMut<crate::script::ScriptState>, switch: Res<super::vanilla::TileMenus>, mut state: ResMut<DialogTiles>, shared: Res<SharedWritten>) {
     if !switch.dialog || !state.drawn() {
         return;
     }
-    if let Some(rt) = script.rt.as_ref() {
-        state.take_hits(&rt.game.ui_tree);
+    if let (Some(rt), Ok(mut written)) = (script.rt.as_mut(), shared.0.lock()) {
+        finish_frame(&mut rt.game.ui_tree, &mut state, &mut written);
     }
 }
 
@@ -1850,6 +1889,39 @@ mod tests {
         let line = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
         let now = shown(&ui, line, 1, 0);
         assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("{LINE} draws nothing")));
+    }
+
+    #[test]
+    fn what_changes_after_placing_is_checked_as_the_frame_is_drawn() {
+        let mut ui = menu();
+        let mut written = fresh();
+        let now = shown(&ui, choosing(vec![row("A."), row("B.")]), 1, 0);
+        frame(&mut ui, &mut written, &now);
+        let mut state = DialogTiles { menu: ui.menu(DIALOG_MENU), shown: true, list: Some(now.list.clone()), ..DialogTiles::default() };
+        finish_frame(&mut ui, &mut state, &mut written);
+        assert!(state.drawn() && !state.hits().is_empty(), "whole");
+        // A picture goes, nothing placed anew: the frame's check finds it, all of the view goes.
+        let bracket = ui.find_tile(&format!("{TOP_BRACKET}/End")).unwrap();
+        ui.set_trait(bracket, "filename", Value::Str(String::new()));
+        ui.update();
+        finish_frame(&mut ui, &mut state, &mut written);
+        assert!(!state.by_tiles(), "the hand-built menu from this frame");
+        assert!(rows(&ui).is_empty(), "nothing left behind");
+        assert_eq!(num(&ui, ui.screen(), "cropy"), 0.0, "the safe zone given back");
+        assert!(written.warned.contains(&format!("{TOP_BRACKET} draws nothing")));
+    }
+
+    #[test]
+    fn a_target_over_a_row_takes_its_clicks_and_the_view_falls_back() {
+        let mut ui = menu();
+        ui.inject_text(&MemSource::default(), ROOT, r#"<hotrect name="Cover"><target>1</target><depth>9</depth><x>100</x><y>300</y><width>700</width><height>300</height></hotrect>"#);
+        let now = shown(&ui, choosing(vec![row("A."), row("B.")]), 1, 0);
+        assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Err(format!("a {ROW} is covered by another target")));
+        // Off to one side it covers nothing that matters.
+        let mut ui = menu();
+        ui.inject_text(&MemSource::default(), ROOT, r#"<hotrect name="Cover"><target>1</target><depth>9</depth><x>1000</x><y>0</y><width>50</width><height>50</height></hotrect>"#);
+        let now = shown(&ui, choosing(vec![row("A."), row("B.")]), 1, 0);
+        assert_eq!(write(&mut ui, &now, &mut fresh(), &mut round), Ok(()));
     }
 
     #[test]

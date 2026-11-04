@@ -254,7 +254,7 @@ impl HitCandidate {
 }
 
 /// The tile a list of one menu's candidates has on top at `at`.
-fn top_hit(ui: &Ui, candidates: &[HitCandidate], at: (f64, f64)) -> Option<Hit> {
+pub fn top_hit(ui: &Ui, candidates: &[HitCandidate], at: (f64, f64)) -> Option<Hit> {
     let top = candidates.iter().filter(|c| c.under_point(at) && ui.is_live(c.under)).max_by(|a, b| a.depth.total_cmp(&b.depth).then(a.order.cmp(&b.order)))?;
     top.event.filter(|&t| ui.is_live(t)).map(|tile| Hit { under: top.under, tile })
 }

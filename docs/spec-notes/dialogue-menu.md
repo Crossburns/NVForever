@@ -251,16 +251,17 @@ One decision (`DialogTiles`, worked out after the scripts of each frame) control
 drawing, the hand-built view and the tile input [design]. It needs the switch, the menu files,
 a live conversation, every path above with the frame's four lines and the bar's controls, a row
 template that makes a row with its text, every row made, text that measures, boxes with a
-worked-out size and something to click; and, each time the view is placed, what it has to show
-as the renderer selects it and regions the pointer can reach as the input selects them. Anything
-else: the whole hand-built menu, a warning
+worked-out size and something to click; and, on every frame as it is to be drawn, what it has
+to show as the renderer selects it and regions whose middle the input gives to them, no other
+target taking the click. Anything else: the whole hand-built menu, a warning
 once per reason, the made rows unloaded, the safe zone given back, and the preparation tried
 again next frame. The Tab hint and the frame's fill never stand alone.
 
 ### 6.5a The order in a frame
 
-- At each transition of the conversation, inside the runtime's own work, before a result script
-  of the line runs (`Game::ui_dialogue_hook`), and again before the frame's scripts: the model's
+- At each transition of the conversation, inside the runtime's own work, when a line goes up,
+  whether a script of it runs or not (`Game::ui_dialogue_hook`), and again before the frame's
+  scripts: the model's
   view is written, each trait only when the model's value for it changed, so a script reads the
   phase, words and rows of the screen it runs in, and what it sets of them stands until the
   model changes that very thing. A new selection changes none of them. With no world at hand a
