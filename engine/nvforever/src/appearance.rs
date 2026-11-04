@@ -14,6 +14,10 @@
 //!   the race's first starting face for the new sex (`nvf_play::creator::preset_look`)
 //!   and is kept as the player's look (`fnv_game::chargen::apply_look`).
 //!
+//! - **MatchFaceGeometry** (Fallout 3's): the NPC's face morphs are kept for the
+//!   resolver too (`ActorWorld::faces`, [`face_morphs`]) and it is drawn anew as for a
+//!   race change; the resolver morphs the face as it draws it.
+//!
 //! One log line per change (`appearance: …`; the smoke tests `agerace-sexchange-npc` and
 //! `sexchange-player-reset` read them).
 
@@ -47,6 +51,25 @@ fn change_of(g: &Game, actor: FormId) -> Change {
         return Change { race: g.player.race, female: g.player.female };
     }
     g.extra.get(&actor).map_or_else(Change::default, |e| Change { race: e.race, female: e.female })
+}
+
+/// The face morphs `actor` has in the game now, for the resolver: a source's base from
+/// its placement (the player's base for the player).
+pub(crate) fn face_morphs(g: &Game, actor: FormId) -> Vec<crate::actors::FaceMorph> {
+    let Some(e) = g.extra.get(&actor) else { return Vec::new() };
+    let base = |r: FormId| if r == FormId::PLAYER_REF { Some(FormId::PLAYER_BASE) } else { g.world.placed.get(r).map(|p| p.base) };
+    e.face_matches
+        .iter()
+        .filter_map(|m| {
+            let source_base = base(m.source)?.0;
+            Some(crate::actors::FaceMorph { source_base, source_ref: m.source.0, percent: m.percent, fggs: m.fggs.clone(), fgga: m.fgga.clone() })
+        })
+        .collect()
+}
+
+/// Every actor's face morphs the game holds now, for the resolver.
+fn all_faces(g: &Game) -> std::collections::HashMap<u32, Vec<crate::actors::FaceMorph>> {
+    g.extra.iter().filter(|(_, e)| !e.face_matches.is_empty()).map(|(r, _)| (r.0, face_morphs(g, *r))).collect()
 }
 
 /// Frames between rebuilds of `ActorWorld::changes` from the game [design: cheap, and
@@ -88,6 +111,12 @@ fn show_changes(
                 *changes = now;
             }
         }
+        let faces = all_faces(&rt.game);
+        if let Ok(mut f) = aw.faces.lock() {
+            if *f != faces {
+                *f = faces;
+            }
+        }
     }
     for c in rt.game.take_appearance_changes() {
         let id = c.actor.0;
@@ -114,6 +143,14 @@ fn show_changes(
                 changes.remove(&id);
             } else {
                 changes.insert(id, change);
+            }
+        }
+        let morphs = face_morphs(g, c.actor);
+        if let Ok(mut faces) = aw.faces.lock() {
+            if morphs.is_empty() {
+                faces.remove(&id);
+            } else {
+                faces.insert(id, morphs);
             }
         }
         if c.actor == FormId::PLAYER_REF {

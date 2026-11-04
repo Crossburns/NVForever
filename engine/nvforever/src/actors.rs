@@ -87,10 +87,25 @@ pub struct ActorWorld {
     /// The race and sex scripts gave a reference (AgeRace, SexChange;
     /// `fnv_game::appearance`, told by `appearance.rs`): drawn in place of the record's.
     pub changes: Mutex<HashMap<u32, fnv_actor::Change>>,
+    /// The face morphs scripts gave a reference (MatchFaceGeometry; `fnv_game::
+    /// appearance`, told by `appearance.rs`): applied to its face as it is drawn.
+    pub faces: Mutex<HashMap<u32, Vec<FaceMorph>>>,
     /// The level each placed actor reads its leveled lists at in the game
     /// (`fnv_game::Game::leveled_at`, told by `zones.rs`); absent: the display level 1
     /// (docs/spec-notes/encounter-zones.md §5).
     pub levels: Mutex<HashMap<u32, fnv_sim::zones::LevelAt>>,
+}
+
+/// A MatchFaceGeometry call as the resolver applies it ([`ActorWorld::faces`]): the
+/// source's shape coefficients when the game kept them, else its base and reference to
+/// draw them from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FaceMorph {
+    pub source_base: u32,
+    pub source_ref: u32,
+    pub percent: f32,
+    pub fggs: Vec<f32>,
+    pub fgga: Vec<f32>,
 }
 
 type ClipSets = HashMap<(String, Body, &'static str), Option<Arc<ClipSet>>>;
@@ -124,6 +139,7 @@ impl ActorWorld {
             anims: Anims::default(),
             rolls: Mutex::new(HashMap::new()),
             changes: Mutex::new(HashMap::new()),
+            faces: Mutex::new(HashMap::new()),
             levels: Mutex::new(HashMap::new()),
         }
     }
@@ -160,7 +176,36 @@ impl ActorWorld {
     /// creator) in place of the record's.
     pub fn resolve_as(&self, base: u32, reference: u32, wearing: Option<&[FormId]>, look: Option<&fnv_actor::Look>) -> Result<Appearance, String> {
         let change = self.change(reference);
-        Resolver { actors: &self.actors, forms: &self.forms }.resolve_changed_at(FormId(base), self.seed(reference), wearing, look, change, self.level(reference)).map_err(|e| e.to_string())
+        let mut app = Resolver { actors: &self.actors, forms: &self.forms }.resolve_changed_at(FormId(base), self.seed(reference), wearing, look, change, self.level(reference)).map_err(|e| e.to_string())?;
+        let morphs = self.faces.lock().ok().and_then(|f| f.get(&reference).cloned());
+        for m in morphs.unwrap_or_default() {
+            self.morph_face(&mut app, &m);
+        }
+        Ok(app)
+    }
+
+    /// One MatchFaceGeometry morph on a drawn face (`fnv_game::appearance`): its shape
+    /// coefficients move towards the source's, the ones kept with the call or else the
+    /// source's own as drawn without its morphs [design]. A source with no face leaves
+    /// it as it is.
+    fn morph_face(&self, app: &mut Appearance, m: &FaceMorph) {
+        let wide = |v: &[f32]| v.iter().map(|&x| f64::from(x)).collect::<Vec<f64>>();
+        let source = if m.fggs.is_empty() && m.fgga.is_empty() {
+            let r = FormId(m.source_ref);
+            let at = Resolver { actors: &self.actors, forms: &self.forms }.resolve_changed_at(FormId(m.source_base), self.seed(m.source_ref), None, None, self.change(m.source_ref), self.level(m.source_ref));
+            match at.ok().and_then(|a| a.facegen) {
+                Some(f) => (f.fggs, f.fgga),
+                None => {
+                    warn!("appearance: MatchFaceGeometry source {r} has no face to match");
+                    return;
+                }
+            }
+        } else {
+            (wide(&m.fggs), wide(&m.fgga))
+        };
+        let face = app.facegen.get_or_insert_with(Default::default);
+        face.fggs = fnv_game::appearance::blend_coefficients(&face.fggs, &source.0, f64::from(m.percent));
+        face.fgga = fnv_game::appearance::blend_coefficients(&face.fgga, &source.1, f64::from(m.percent));
     }
 
     pub fn resolve_creature(&self, base: u32, reference: u32) -> Result<CreatureAppearance, String> {

@@ -8,7 +8,7 @@ is NVForever's choice. Sources: the function catalogue (`schemas/script/function
 the GECK wiki's AgeRace, SexChange, SetLevel and SetPCCanUsePowerArmor pages as
 summarised there), xEdit's record definitions (`schemas/fnv`).
 
-Code: `fnv_game::appearance` (AgeRace, SexChange), `fnv_game::functions::actor::set_level`,
+Code: `fnv_game::appearance` (AgeRace, SexChange, MatchFaceGeometry), `fnv_game::functions::actor::set_level`,
 `fnv_sim::World::set_power_armor_training` and `World::equip`, `fnv_game::functions::
 player::refuse_power_armor`; the engine's `appearance.rs` (drawing anew), `player_body.rs`,
 `nvf_play::creator::preset_look`, `fnv_actor::Resolver::resolve_changed`. Tests:
@@ -87,3 +87,24 @@ So the NPC cases below are built for mods and the console; the quests need the p
   "You lack the specialized training needed to move in Power Armor.") [observed]; shown
   when the Pip-Boy or a script's EquipItem tries [hypothesis], as a box that waits for the
   Pip-Boy to close (`Game::show_box`); the menu's log line says why too.
+
+## 5. MatchFaceGeometry (Fallout 3's)
+
+- **Who calls it** [observed: Tale of Two Wastelands 3.4's masters, decompiled privately]:
+  Fallout3.esm's Vault101ExitScript (SCPT 0x0605CF93) and CG04 stage 65 (QUST 0x0001F388)
+  on Dad, after `MatchRace player`, with a global as the percentage
+  (`MatchFaceGeometry player CGMatchFace`). The New Vegas masters never call it.
+- **What it does** [documented: GECK wiki MatchFaceGeometry]: the calling actor's face
+  geometry moves `percent` (0–100) of the way from its current face to the source's;
+  100 is the same face; the face texture is not changed.
+- **How** [hypothesis]: the geometry is the FaceGen shape coefficients, symmetric (FGGS,
+  50) and asymmetric (FGGA, 30) [documented: xEdit wbFaceGen]; each coefficient moves in
+  a straight line, a coefficient one face lacks counting as 0
+  (`fnv_game::appearance::blend_coefficients`). Calls on one actor apply in order.
+- **Kept** [design]: on an NPC each call is kept on the reference (`RefExtra::
+  face_matches`, saved) with the source's coefficients when the game holds them (the
+  player's, from the character creator), so the face matched is the one the source had
+  then; another source's are read from its record when the NPC is drawn. The engine
+  keeps the morphs for the resolver (`ActorWorld::faces`) and draws the NPC anew, as for
+  a race change (§2). On the player the creator's look itself changes, which needs a
+  source face the game holds; otherwise the call is refused.

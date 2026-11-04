@@ -42,7 +42,15 @@ original game (kNVSE 37) `[observed]`. No kNVSE source is read.
 - **Spelling:** NVForever's paths do not keep the original's spelling, so the game side
   compares paths without regard to case [decision; the original compares exactly].
 
-## 3. The second slice (2026-11-01)
+## 3. The folders (2026-11-03, #1461)
+
+kNVSE's AnimGroupOverride folders (`meshes\AnimGroupOverride`, JSON files naming a form,
+a folder of KF files and a condition) are read by `fnv_game::nvse_anim_folders`
+(docs/spec-notes/knvse-anim-folders.md). Each drawn actor's holding entries give files
+that come before SetActorAnimationPath's in `Game::anim_overrides`, which the engine's
+slice 2 plays; CopyAnimationsToForm copies the entries too.
+
+## 4. The second slice (2026-11-01)
 
 GetAnimationAttributes, Get/SetGlobalAnimTime, the blend functions, SetAnimWeight,
 SetAnimAdditive, the text-key functions, CopyAnimationsToForm and the rest are built on
