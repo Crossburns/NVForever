@@ -853,7 +853,11 @@ areas = ["nav"]
 paths = ["crates/fnv-nav/", "engine/nvforever/src/nav.rs", "engine/nvforever/src/locomotion.rs", "engine/nvf-play/src/doors.rs"]
 args = ["--cell", "Goodsprings", "--npc-travel", "DocMitchellREF=GSChetRef", "--npc-travel", "SunnyRef=EasyPeteRef", "--follow-npc"]
 run_seconds = 105
-expect = ["nav summary: 2 of 2 travellers arrived"]
+expect = [
+  "nav summary: 2 of 2 travellers arrived",
+  { re = 'nav: \w+ used door \w+ into \w+ after [\d.]+s, facing it \(0 degrees off\)', min = 3, label = "travellers stop and face a load door before going through it (#1472)" },
+  { re = 'used door \w+ into \w+ after [\d.]+s, facing it \([1-9]\d* degrees off\)', count = 0, label = "none goes through a load door facing away from it" },
+]
 
 [[scenario]]
 name = "ai-packages"
@@ -7279,7 +7283,7 @@ name = "npc-door-fade"
 source = "playtest list 5 item 3 (engine/nvforever/src/door_fade.rs, nvf-play world_sounds DoorPassed): an NPC going through a load door fades out at it and in at the other side, and the doors' open sounds play where the listener is"
 note = "the ringo-comes-out run: Ringo comes out of the gas station door into the drawn exterior where the player stands"
 areas = ["ai", "doors"]
-paths = ["engine/nvforever/src/door_fade.rs", "engine/nvforever/src/residents.rs", "engine/nvf-play/src/world_sounds.rs"]
+paths = ["engine/nvforever/src/door_fade.rs", "engine/nvforever/src/residents.rs", "engine/nvf-play/src/world_sounds.rs", "crates/fnv-nav/src/follow.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
 run_seconds = 60
