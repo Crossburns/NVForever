@@ -18202,11 +18202,12 @@ name = "tiles-trait-pointer-done"
 source = "[design] chargen.md §4.1: with [UI] TileMenus=TraitMenu Done acts once by the pointer, a script's click on the file's tiles acts as the pointer's, the stages go on after it, and a menu opened again starts over"
 note = "positions as tiles-trait-menu; Done x 1277-1355, y 192-243 [observed: its place -78, 52 in the original's job trait]. A script's ClickMenuButton on id 5 is Reset, on id 6 Done; it goes through the script aid, as the console aid waits for the menu to close"
 areas = ["ui", "menus", "chargen"]
-paths = ["engine/nvf-play/src/tiles/trait_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/chargen.rs", "crates/fnv-ui/src/input.rs", "crates/fnv-game/src/functions/ui.rs"]
+paths = ["engine/nvf-play/src/tiles/trait_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/chargen.rs", "engine/nvf-play/src/script.rs", "crates/fnv-ui/src/input.rs", "crates/fnv-game/src/functions/ui.rs", "crates/fnv-game/src/ui_functions.rs"]
 env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TraitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:menu:1084,25:call:-:ClickMenuButton:\"TraitMenu#5\",32:menu:1084", NVF_PLAY_TEST_CHARGEN = "23:pick:Kamikaze,34:pick:Small Frame", NVF_PLAY_TEST_POINTER = "27:1320:215,28:1320:215:click,36:1320:215,37:1320:215:click,38:off" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 42
 expect = [
+  { re = 'script: test aid calls ClickMenuButton = Num\(1\.0\)', count = 1, label = "the aid reaches the extender's function, which clicked" },
   { text = "by a script", min = 1, label = "the script's click on the file's tile" },
   { text = "tiles: TraitMenu Reset on its tiles", count = 1, label = "it stands for Reset" },
   { text = "chargen: reset", count = 1, label = "and acts once" },
