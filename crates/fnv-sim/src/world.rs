@@ -442,8 +442,9 @@ pub struct World<'a> {
     /// world of this process used, so a reader sees the change of world as a change.
     lock_serial: u64,
     /// Counts the changes that can change [`World::is_enabled`] or a reference's
-    /// `deleted` flag ([`World::presence_serial`]): a reference's state made, put in or
-    /// taken out of `refs`, and every write of `enabled` or `deleted`. Not saved; every
+    /// `deleted` flag ([`World::presence_serial`]): a reference's state made with flags
+    /// other than its placement's, put in or taken out of `refs`, and every write of
+    /// `enabled` or `deleted`. Not saved; every
     /// world starts from a number no other world of this process used, as
     /// `lock_serial`.
     presence_serial: u64,
@@ -534,8 +535,16 @@ impl<'a> World<'a> {
                 return Err(SimError::Deleted(id));
             }
             let s = self.initial(id)?;
+            // Until it has a state, a placed reference's presence is read from its
+            // placement (`is_enabled`: enabled unless Initially Disabled; not deleted). A
+            // state that starts with those values changes nothing a reader of presence
+            // sees, so it leaves the serial; any other (the player, which is not placed)
+            // moves it.
+            let as_placed = self.placed.get(id).is_some_and(|p| s.enabled == !p.initially_disabled() && !s.deleted);
             self.refs.insert(id, s);
-            self.presence_serial += 1;
+            if !as_placed {
+                self.presence_serial += 1;
+            }
         }
         Ok(self.refs.get_mut(&id).expect("inserted above"))
     }
@@ -1663,15 +1672,18 @@ impl<'a> World<'a> {
 
     /// Goes up with every change that can change whether a reference is present
     /// (`fnv_game::Game::present`: not `deleted`, and [`World::is_enabled`] with its
-    /// enable parents): a state made ([`World::get`]), created ([`World::place`], drops),
-    /// reset ([`World::attach_cell`]), and every write of `enabled` ([`World::set_enabled`])
-    /// or `deleted` ([`World::set_deleted`], activation's pick-ups). A reader that saw the
-    /// same number of the same world reads the same presence for every reference. A new
-    /// or restored world starts from a number no other world of this process used.
+    /// enable parents): a state made ([`World::get`]) whose flags differ from what the
+    /// placement gave before (the player's; a placed reference's state starts as placed
+    /// and leaves it), created ([`World::place`], drops), reset ([`World::attach_cell`]),
+    /// and every write of `enabled` ([`World::set_enabled`]) or `deleted`
+    /// ([`World::set_deleted`], activation's pick-ups). A reader that saw the same number
+    /// of the same world reads the same presence for every reference. A new or restored
+    /// world starts from a number no other world of this process used.
     ///
     /// The fields are public through [`World::get`]'s `&mut RefState`: a writer of
     /// `enabled` or `deleted` that does not go through these functions must bump this
-    /// itself (none does; fork-notes/cpu-frame-cost/frame-budget/ai-split-2026-11-03.md).
+    /// itself (none does: the writers are listed in docs/spec-notes/navmesh.md §4c;
+    /// issue #1430).
     pub fn presence_serial(&self) -> u64 {
         self.presence_serial
     }
