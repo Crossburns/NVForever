@@ -185,6 +185,10 @@ pub(crate) struct MenuInputs<'w, 's> {
     tutorial_drag: Local<'s, Option<super::tutorial_menu::Drag>>,
     /// The tutorial menu's hand-built buttons, while they stand.
     tutorial_hand_built: Query<'w, 's, (), With<crate::tutorial_menu::TmButton>>,
+    /// The dialogue menu's one decision, what it asks of the conversation, and its scroll.
+    dialog: Option<Res<'w, super::dialog_menu::DialogTiles>>,
+    view_input: Option<ResMut<'w, crate::dialogue::ViewInput>>,
+    dialog_written: Option<Res<'w, super::dialog_menu::SharedWritten>>,
 }
 
 impl MenuInputs<'_, '_> {
@@ -408,13 +412,13 @@ pub(crate) fn feed(
     time: crate::pause::AidTime,
     devices: Devices,
     mut inputs: MenuInputs,
-    (paused, page, dialog, mut view_input, shared): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>, Option<Res<super::dialog_menu::DialogTiles>>, Option<ResMut<crate::dialogue::ViewInput>>, Option<Res<super::dialog_menu::SharedWritten>>),
+    (paused, page): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>),
 ) {
     let Some(rt) = script.rt.as_mut() else { return };
     if rt.game.ui_files.is_none() {
         return;
     }
-    if let Some(v) = view_input.as_deref_mut() {
+    if let Some(v) = inputs.view_input.as_deref_mut() {
         *v = Default::default();
     }
     // The test aid's pointer, moved on its clock.
@@ -447,7 +451,7 @@ pub(crate) fn feed(
         taking.extend(rt.game.ui_tree.menu(super::draw::HUD_MENU));
     }
     // The dialogue menu, under anything over the conversation (it does not take with one up).
-    let dialog_menu = dialog.as_ref().and_then(|d| d.taking(&rt.game, paused.as_ref().is_some_and(|p| p.0)));
+    let dialog_menu = inputs.dialog.as_ref().and_then(|d| d.taking(&rt.game, paused.as_ref().is_some_and(|p| p.0)));
     taking.extend(dialog_menu);
     taking.extend(inputs.taking(*menus, &rt.game));
     // T11: the pause menu's Mods page takes the pointer and keys for the start menu's
@@ -508,7 +512,7 @@ pub(crate) fn feed(
         }
     }
     // The dialogue menu's pointer decides on what was drawn (`super::dialog_menu`).
-    if let (Some(_), [_], Some(d)) = (dialog_menu, taking.as_slice(), dialog.as_ref()) {
+    if let (Some(_), [_], Some(d)) = (dialog_menu, taking.as_slice(), inputs.dialog.as_ref()) {
         input.resolved = Some(d.hits().to_vec());
     }
     // A frame's own clicks are for the screen up now; a script's kept theirs when queued.
@@ -516,10 +520,10 @@ pub(crate) fn feed(
     let report = fnv_game::ui_input::step(&mut rt.game, &taking, &input, &no_measure);
     let ui = &rt.game.ui_tree;
     let slider = inputs.follow(ui, &report, at, held, &physical, tutorial);
-    if let (Some(menu), Some(v)) = (dialog_menu, view_input.as_deref_mut()) {
+    if let (Some(menu), Some(v)) = (dialog_menu, inputs.view_input.as_deref_mut()) {
         let mut steps = 0;
-        super::dialog_menu::follow(ui, &report, &physical, menu, dialog.as_ref().and_then(|d| d.list()), v, &mut steps);
-        if let Some(shared) = shared.as_ref() {
+        super::dialog_menu::follow(ui, &report, &physical, menu, inputs.dialog.as_ref().and_then(|d| d.list()), v, &mut steps);
+        if let Some(shared) = inputs.dialog_written.as_ref() {
             shared.scroll(steps);
         }
     }
