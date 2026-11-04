@@ -865,8 +865,9 @@ pub struct ActorAnimCost {
     pub held_frames: u64,
     /// The part of `held_frames` at the end of the clip.
     pub finished_held_frames: u64,
-    /// Time spent on the frames of `held_frames` (part of `total`), so that `total` less
-    /// this is the time of the `actor_frames`.
+    /// Time spent on the frames of `held_frames` (part of `total`), measured around the pose
+    /// check only. `total` less this is approximately the time of the `actor_frames`: the
+    /// loop's own overhead on held actors stays in it.
     pub held_time: std::time::Duration,
     /// Frames in which a dead actor at the end of its death clip was sampled all the same
     /// (the first frame there, or something changed), summed over actors.
@@ -913,6 +914,9 @@ pub fn drive(
                 player.forget_pose();
                 continue;
             };
+            // Approximate: this starts after the query's iteration and the clip clone, and
+            // the pose check ends before `cost` is updated, so those stay in `total` less
+            // `held_time`, which the per actor figure divides by sampled actor frames only.
             let dead_t0 = std::time::Instant::now();
             let len = clip.clip.length().max(1e-3);
             d.t = (d.t + dt).min(len);

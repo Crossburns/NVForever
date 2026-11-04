@@ -1620,6 +1620,9 @@ fn main() -> AppExit {
                 if c.actor_frames == 0 {
                     info!("actor animation: no actors posed");
                 } else {
+                    // The us per actor figure is approximate: `total` less `held_time` still holds
+                    // the loop's cost on held actors, divided by sampled actor frames only, so
+                    // many held corpses can raise it.
                     info!(
                     "actor animation: up to {} actors posed at once, {:.3} ms per frame on average, {:.2} us per actor and frame, {:.2} clips per actor and frame ({:.1}% of actor frames with more than one clip), {:.1} tracks per actor and frame",
                     c.peak,
