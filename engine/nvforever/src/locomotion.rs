@@ -858,6 +858,22 @@ pub struct ActorAnimCost {
     /// showing: drawn on its idle, or under a clip that keys its legs over the walk (a
     /// creature's whole-body blow), summed over actors (issue #1073: the slide).
     pub clipless_frames: u64,
+    /// Frames in which a dead actor's death pose stood as it was and nothing was sampled
+    /// for it (`BlendPlayer::pose_held`), summed over actors: at the clip's end, or part
+    /// way through it with time stopped. Such an actor is not counted as posed in
+    /// `actor_frames` and `peak`.
+    pub held_frames: u64,
+    /// The part of `held_frames` at the end of the clip.
+    pub finished_held_frames: u64,
+    /// Time spent on the frames of `held_frames` (part of `total`), measured around the pose
+    /// check only. `total` less this is approximately the time of the `actor_frames`: the
+    /// loop's own overhead on held actors stays in it.
+    pub held_time: std::time::Duration,
+    /// Frames in which a dead actor at the end of its death clip was sampled all the same
+    /// (the first frame there, or something changed), summed over actors.
+    pub finished_sampled_frames: u64,
+    /// The part of `tracks` sampled on dead actors.
+    pub dead_tracks: u64,
     /// Frames in which a creature's blow showed on its head and neck only, over its run.
     pub head_blow_frames: u64,
     pub peak: usize,
@@ -892,18 +908,41 @@ pub fn drive(
     let mut n = 0;
     for (mut lo, mut player, weapon, dying, flinch, seated, idle, pose, creature, name, talk) in &mut actors {
         if let Some(mut d) = dying {
-            // Dead: the death pose to its end and held; without one the pose stays.
-            let Some(clip) = d.clip.clone() else { continue };
+            // Dead: the death pose to its end and held; without one the pose stays (and
+            // whoever has the bones now, a ragdoll, has written them).
+            let Some(clip) = d.clip.clone() else {
+                player.forget_pose();
+                continue;
+            };
+            // Approximate: this starts after the query's iteration and the clip clone, and
+            // the pose check ends before `cost` is updated, so those stay in `total` less
+            // `held_time`, which the per actor figure divides by sampled actor frames only.
+            let dead_t0 = std::time::Instant::now();
             let len = clip.clip.length().max(1e-3);
             d.t = (d.t + dt).min(len);
+            let phase = (d.t / len).min(0.999);
+            let finished = phase >= 0.999;
             player.layers = Default::default();
-            player.layers[0] = Some(Layer { clip, phase: (d.t / len).min(0.999), weight: 1.0 });
+            player.layers[0] = Some(Layer { clip, phase, weight: 1.0 });
             // A weapon still on the body stays where its stance hung it.
             if let Some(w) = weapon.as_deref() {
                 w.weapon_layers(&mut player);
             }
-            cost.tracks += player.pose(&mut scratch, &mut transforms) as u64;
-            n += 1;
+            // The layers stay on the player for those who read them (`actor_materials`,
+            // `anim_sounds`); the bones are sampled only if that makes a different pose.
+            match player.pose_held(&mut scratch, &mut transforms) {
+                None => {
+                    cost.held_frames += 1;
+                    cost.finished_held_frames += u64::from(finished);
+                    cost.held_time += dead_t0.elapsed();
+                }
+                Some(tracks) => {
+                    cost.tracks += tracks as u64;
+                    cost.dead_tracks += tracks as u64;
+                    cost.finished_sampled_frames += u64::from(finished);
+                    n += 1;
+                }
+            }
             continue;
         }
         if let Some((clip, phase)) = seated.and_then(|s| s.pose.clone()) {
@@ -1355,6 +1394,127 @@ mod tests {
         lo.step(0.15);
         assert_eq!(lo.blend.cur.mv, Move::Forward);
         assert!(lo.prev_set.is_none(), "the idle fading out now is the standing set's");
+    }
+
+    /// A corpse with `clip` on the one bone it has (bind transform: the identity); `drive`
+    /// as a system that keeps its state from run to run, as in the schedule.
+    fn corpse(clip: &Arc<BoundClip>) -> (World, bevy::ecs::system::SystemId, Entity, Entity) {
+        let mut world = World::new();
+        world.insert_resource(Time::<()>::default());
+        world.init_resource::<ActorAnimCost>();
+        let bone = world.spawn(Transform::IDENTITY).id();
+        let player = BlendPlayer::new(vec![bone], Arc::new(vec![Transform::IDENTITY]));
+        let actor = world.spawn((Locomotion::new(set(), 0.0), player, Dying { clip: Some(clip.clone()), t: 0.0 })).id();
+        let id = world.register_system(drive);
+        (world, id, actor, bone)
+    }
+
+    /// A clip one second long with one track, on the corpse's bone.
+    fn death_clip(x: f32) -> Arc<BoundClip> {
+        use fnv_nif::anim::{Channel, TransformTrack};
+        let track = Arc::new(TransformTrack { translation: Channel::Static(Some([x, 0.0, 0.0])), rotation: Channel::Static(None), euler: None, scale: Channel::Static(None) });
+        let clip = nvf_assets::anim_play::Clip {
+            name: String::new(), start: 0.0, stop: 1.0, frequency: 1.0, cycle_type: 0, tracks: Vec::new(), priorities: Vec::new(), skipped: 0, accum_root: None, text_keys: Vec::new(), visibility: Vec::new(), emitters: Vec::new(), materials: Vec::new(), free: Vec::new(), free_visibility: Vec::new(), lights: Vec::new(),
+        };
+        Arc::new(BoundClip { clip: Arc::new(clip), tracks: vec![(0, track, 30)], root: None, root_track: None, carried: None })
+    }
+
+    /// One frame of `secs`: (tracks sampled so far, frames held so far, frames at the
+    /// clip's end and sampled so far, tracks sampled on the dead so far).
+    fn frame(world: &mut World, id: bevy::ecs::system::SystemId, secs: f32) -> (u64, u64, u64, u64) {
+        world.resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f32(secs));
+        world.run_system(id).unwrap();
+        let c = world.resource::<ActorAnimCost>();
+        (c.tracks, c.held_frames, c.finished_sampled_frames, c.dead_tracks)
+    }
+
+    #[test]
+    fn a_finished_death_pose_is_not_sampled_again() {
+        let clip = death_clip(9.0);
+        let (mut world, id, _, bone) = corpse(&clip);
+        let posed = Transform::from_xyz(9.0, 0.0, 0.0);
+        // Playing: a pose a frame; the frame it reaches its end, the last.
+        assert_eq!(frame(&mut world, id, 0.4), (1, 0, 0, 1));
+        assert_eq!(frame(&mut world, id, 0.4), (2, 0, 0, 2));
+        assert_eq!(frame(&mut world, id, 0.4), (3, 0, 1, 3));
+        assert_eq!(*world.get::<Transform>(bone).unwrap(), posed);
+        // Held: nothing sampled, the bone as it was, and not counted as posed.
+        let posed_frames = world.resource::<ActorAnimCost>().actor_frames;
+        for held in 1..=3 {
+            assert_eq!(frame(&mut world, id, 0.1), (3, held, 1, 3));
+            assert_eq!(*world.get::<Transform>(bone).unwrap(), posed);
+        }
+        let c = world.resource::<ActorAnimCost>();
+        assert_eq!(c.actor_frames, posed_frames);
+        assert_eq!(c.finished_held_frames, 3);
+        assert_eq!(c.frames, 6);
+    }
+
+    #[test]
+    fn a_pose_held_part_way_through_its_clip_is_not_counted_as_finished() {
+        let clip = death_clip(9.0);
+        let (mut world, id, ..) = corpse(&clip);
+        assert_eq!(frame(&mut world, id, 0.4), (1, 0, 0, 1));
+        // Time stopped: the same phase, nothing sampled, and the clip not at its end.
+        assert_eq!(frame(&mut world, id, 0.0), (1, 1, 0, 1));
+        assert_eq!(world.resource::<ActorAnimCost>().finished_held_frames, 0);
+        // Time on: it plays on.
+        assert_eq!(frame(&mut world, id, 0.2), (2, 1, 0, 2));
+    }
+
+    #[test]
+    fn a_finished_death_pose_gives_way_at_once() {
+        let clip = death_clip(9.0);
+        let (mut world, id, actor, bone) = corpse(&clip);
+        let posed = Transform::from_xyz(9.0, 0.0, 0.0);
+        let moved = Transform::from_xyz(1.0, 2.0, 3.0);
+        assert_eq!(frame(&mut world, id, 2.0), (1, 0, 1, 1));
+        assert_eq!(frame(&mut world, id, 0.1), (1, 1, 1, 1));
+
+        // Another system wrote the bone (foot IK easing out): put back the next frame, as
+        // before, then held again.
+        world.clear_trackers();
+        *world.get_mut::<Transform>(bone).unwrap() = moved;
+        assert_eq!(frame(&mut world, id, 0.1), (2, 1, 2, 2));
+        assert_eq!(*world.get::<Transform>(bone).unwrap(), posed);
+        assert_eq!(frame(&mut world, id, 0.1), (2, 2, 2, 2));
+
+        // A new clip on the actor (a get-up): sampled from its first frame.
+        let other = death_clip(7.0);
+        world.entity_mut(actor).insert(Dying { clip: Some(other), t: 0.0 });
+        assert_eq!(frame(&mut world, id, 0.1).0, 3);
+        assert_eq!(*world.get::<Transform>(bone).unwrap(), Transform::from_xyz(7.0, 0.0, 0.0));
+
+        // A ragdoll takes over: no clip, no pose, and what it writes stays.
+        let (tracks, held, ..) = frame(&mut world, id, 0.1);
+        assert_eq!(tracks, 4);
+        world.get_mut::<Dying>(actor).unwrap().clip = None;
+        world.clear_trackers();
+        *world.get_mut::<Transform>(bone).unwrap() = moved;
+        assert_eq!(frame(&mut world, id, 0.1).0, tracks);
+        assert_eq!(frame(&mut world, id, 0.1).1, held);
+        assert_eq!(*world.get::<Transform>(bone).unwrap(), moved);
+        // The death pose back with the very clip it held (no system does this today; the
+        // memory must not outlive the ragdoll): sampled, long after that write.
+        world.entity_mut(actor).insert(Dying { clip: Some(clip.clone()), t: 1.0 });
+        assert_eq!(frame(&mut world, id, 0.1).0, tracks + 1);
+        assert_eq!(*world.get::<Transform>(bone).unwrap(), posed);
+        assert_eq!(frame(&mut world, id, 0.1).0, tracks + 1);
+
+        // Resurrected or reset by its cell: alive, on clips with nothing for this bone,
+        // which goes back to its bind transform.
+        world.entity_mut(actor).remove::<Dying>();
+        assert_eq!(frame(&mut world, id, 0.1).0, tracks + 1);
+        assert_eq!(*world.get::<Transform>(bone).unwrap(), Transform::IDENTITY);
+        // Dead again on the same clip: its pose, not what it held before.
+        world.entity_mut(actor).insert(Dying { clip: Some(clip.clone()), t: 1.0 });
+        assert_eq!(frame(&mut world, id, 0.1).0, tracks + 2);
+        assert_eq!(*world.get::<Transform>(bone).unwrap(), posed);
+
+        // Drawn again (a new player on the bones, a cell reloaded): sampled too.
+        world.entity_mut(actor).insert(BlendPlayer::new(vec![bone], Arc::new(vec![Transform::IDENTITY])));
+        assert_eq!(frame(&mut world, id, 0.1).0, tracks + 3);
+        assert_eq!(frame(&mut world, id, 0.1).0, tracks + 3);
     }
 
     fn set() -> Arc<ClipSet> {

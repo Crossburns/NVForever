@@ -240,7 +240,8 @@ impl Plugin for ImageSpacePlugin {
         bevy::asset::embedded_asset!(app, "imagespace_blur.wesl");
         app.init_resource::<ScreenModifiers>()
             .add_plugins(FullscreenMaterialPlugin::<ImageSpaceGrade>::default())
-            .add_systems(Update, update_grade.after(crate::sky::update_sky))
+            // A modifier's sounds: before sfx plays them.
+            .add_systems(Update, update_grade.after(crate::sky::update_sky).before(nvf_play::sfx::SfxSet))
             .add_systems(PostUpdate, update_motion.after(bevy::transform::TransformSystems::Propagate).after(bevy::camera::CameraUpdateSystems));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
