@@ -404,6 +404,7 @@ impl Plugin for PipBoyPlugin {
             .init_resource::<UsePipBoy>()
             .init_resource::<PipBoyAid>()
             .init_resource::<frame::Kit>()
+            .init_resource::<stats::Prepared>()
             .init_resource::<repair::PipRepair>()
             .add_message::<repair::RepairInput>()
             .init_resource::<item_mod::PipItemMod>()
@@ -431,6 +432,7 @@ impl Plugin for PipBoyPlugin {
                     advance,
                     camera_on,
                     (image_scale, flat_screen),
+                    stats::prepare,
                     frame::draw,
                     (stats::draw, items::draw, data::draw),
                     data::wave_moves,

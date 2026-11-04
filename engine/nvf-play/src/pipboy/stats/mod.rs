@@ -31,8 +31,10 @@
 //!   pointer selects the row it moves onto (as the list boxes do), clicks the buttons and
 //!   the scroll arrows.
 //!
-//! The page is drawn again whenever what it shows changes ([`model::Snapshot`]) or the
-//! view does ([`StatsView`]).
+//! The page's model runs in [`prepare`], before any view: the keys, the wheel, the test aid,
+//! the log lines and what is shown. [`draw`] fills the hand-built page from what it left,
+//! again whenever what it shows changes ([`model::Snapshot`]) or the view does
+//! ([`StatsView`]).
 
 pub mod model;
 pub mod read;
@@ -257,6 +259,18 @@ impl StatsView {
         self.desc = (self.desc as i32 + by).clamp(0, self.desc_max as i32) as usize;
     }
 
+    /// How far the description scrolls, as the view that draws it measured it: each view
+    /// gives its own bound (its font, wrap and window), and the scroll stays within it.
+    pub fn set_desc_bound(&mut self, most: usize) {
+        self.desc_max = most;
+        self.desc = self.desc.min(most);
+    }
+
+    /// The furthest the description scrolls ([`StatsView::set_desc_bound`]).
+    pub fn desc_bound(&self) -> usize {
+        self.desc_max
+    }
+
     /// The limb a Stimpak goes on: the one under the pointer, else the one chosen by key.
     pub fn aimed(&self) -> Option<usize> {
         match self.hover {
@@ -317,40 +331,57 @@ pub struct Input<'w, 's> {
     asks: MessageWriter<'w, UseHint>,
 }
 
-/// What the page keeps between frames.
+/// What [`prepare`] keeps between frames.
 #[derive(Default)]
-pub struct Memory {
+pub struct StateMemory {
     forms: Option<read::Forms>,
     last: Option<Snapshot>,
     wheel: f32,
     aid: Option<Vec<(f32, AidStep)>>,
     logged: String,
+    /// The tab and frame the page last showed, while it shows.
+    page: Option<(usize, super::Frame)>,
 }
 
-/// Fill the STATS page's body when it is new or what it shows changed; take its keys.
+/// What [`prepare`] leaves for the views of the page, the hand-built [`draw`] and the tiles'
+/// (`crate::tiles::stats_menu`): what the page shows this frame, while STATS is up.
+#[derive(Resource, Debug, Default)]
+pub struct Prepared {
+    pub snap: Option<Snapshot>,
+    /// The page opened, or its tab or frame changed, this frame.
+    pub new: bool,
+}
+
+/// The page's model, whichever view draws it: the opening's and a tab change's resets, the
+/// test aid, the keys and the wheel, what is shown, the selection kept within the lists, and
+/// the log lines. Runs before the views, every frame the page shows.
 #[allow(clippy::too_many_arguments)]
-pub fn draw(
+pub fn prepare(
     mut commands: Commands,
     pip: Res<PipBoy>,
-    bodies: Query<(Entity, &PageBody)>,
-    added: Query<(), Added<PageBody>>,
     view: Option<ResMut<StatsView>>,
     screen: Option<Res<PipBoyScreen>>,
     mut input: Input,
     mut src: Sources,
-    mut d: Drawing,
-    mut mem: Local<Memory>,
+    mut prepared: ResMut<Prepared>,
+    mut mem: Local<StateMemory>,
 ) {
     let Some(mut view) = view else {
         commands.init_resource::<StatsView>();
         return;
     };
-    let Some((body, b)) = bodies.iter().find(|(_, b)| b.page == Page::Stats) else {
+    if !pip.shown() || pip.page != Page::Stats {
         input.wheel.clear();
+        mem.page = None;
+        prepared.snap = None;
+        prepared.new = false;
         return;
-    };
-    let tab = b.tab;
-    let new = added.get(body).is_ok();
+    }
+    let tab = pip.tab();
+    let page = Some((tab, pip.frame));
+    let new = mem.page != page;
+    mem.page = page;
+    prepared.new = new;
     if new {
         change(&mut view, |v| {
             v.highlight = false;
@@ -376,7 +407,7 @@ pub fn draw(
             _ => change(&mut view, |v| apply_aid(v, tab, s)),
         }
     }
-    if pip.open() && pip.page == Page::Stats {
+    if pip.open() {
         let mut ask = None;
         change(&mut view, |v| ask = keys(&input.keys, v, tab));
         if let Some(a) = ask {
@@ -402,7 +433,10 @@ pub fn draw(
         input.wheel.clear();
     }
     // What is shown.
-    let Some(play) = src.play.as_ref() else { return };
+    let Some(play) = src.play.as_ref() else {
+        prepared.snap = None;
+        return;
+    };
     let forms = mem.forms.get_or_insert_with(|| read::Forms::new(play.lo, play.schema));
     let script = src.script.as_mut().map(|s| s.bypass_change_detection());
     let snap = read::snapshot(forms, src.sim.bypass_change_detection(), script);
@@ -417,9 +451,15 @@ pub fn draw(
             }
         });
     }
-    if !new && !view.is_changed() && mem.last.as_ref() == Some(&snap) {
-        return;
+    if new || view.is_changed() || mem.last.as_ref() != Some(&snap) {
+        log_page(&view, &snap, tab, new, &mut mem);
+        mem.last = Some(snap.clone());
     }
+    prepared.snap = Some(snap);
+}
+
+/// The log lines of a page that changed (the smoke scenarios read them).
+fn log_page(view: &StatsView, snap: &Snapshot, tab: usize, new: bool, mem: &mut StateMemory) {
     if new {
         let f = |v: Option<(f64, f64)>| v.map_or("--".to_string(), |(a, b)| format!("{}/{}", model::whole(a), model::whole(b)));
         info!(
@@ -442,10 +482,32 @@ pub fn draw(
         let bars: Vec<String> = model::LIMB_NAMES.iter().zip(snap.limbs).map(|(n, c)| format!("{n} {:.0}%", c * 100.0)).collect();
         info!("pipboy stats: CND bars {}", bars.join(", "));
     }
-    let says = describe(&view, &snap, tab);
+    let says = describe(view, snap, tab);
     if says != mem.logged {
         info!("pipboy stats: {says}");
         mem.logged = says;
+    }
+}
+
+/// Fill the STATS page's body when it is new or what it shows changed ([`prepare`]).
+#[allow(clippy::too_many_arguments)]
+pub fn draw(
+    mut commands: Commands,
+    bodies: Query<(Entity, &PageBody)>,
+    added: Query<(), Added<PageBody>>,
+    view: Option<ResMut<StatsView>>,
+    screen: Option<Res<PipBoyScreen>>,
+    prepared: Res<Prepared>,
+    mut d: Drawing,
+    mut last: Local<Option<Snapshot>>,
+) {
+    let Some(mut view) = view else { return };
+    let Some((body, b)) = bodies.iter().find(|(_, b)| b.page == Page::Stats) else { return };
+    let Some(snap) = prepared.snap.as_ref() else { return };
+    let tab = b.tab;
+    let new = added.get(body).is_ok();
+    if !new && !view.is_changed() && last.as_ref() == Some(snap) {
+        return;
     }
     let mut c = Ctx::new(&mut d.kit, d.data.as_deref(), &mut d.images, d.formats.as_deref());
     let v = view.bypass_change_detection();
@@ -460,12 +522,12 @@ pub fn draw(
         ];
         frame::heading(p, &mut c, Page::Stats.title(), &cards);
         match tab {
-            0 => status(p, &mut c, v, &snap),
-            4 => general(p, &mut c, v, &snap),
-            t => listed(p, &mut c, v, &snap, t),
+            0 => status(p, &mut c, v, snap),
+            4 => general(p, &mut c, v, snap),
+            t => listed(p, &mut c, v, snap, t),
         }
     });
-    mem.last = Some(snap);
+    *last = Some(snap.clone());
 }
 
 /// One line for the log: what the tab shows selected.
@@ -894,8 +956,7 @@ fn listed(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &mut StatsView, s: &Snap
         // (175) fit without a scroll bar on the owner's S.P.E.C.I.A.L. screenshot].
         let lines = c.lines(2, &row.description, Some(dr.width())).len();
         let text_h = PITCH * lines as f32;
-        v.desc_max = ((text_h - DESC_HEIGHT) / DESC_STEP).ceil().max(0.0) as usize;
-        v.desc = v.desc.min(v.desc_max);
+        v.set_desc_bound(((text_h - DESC_HEIGHT) / DESC_STEP).ceil().max(0.0) as usize);
         let scrolled = v.desc as f32 * DESC_STEP;
         p.spawn((Node { overflow: Overflow::clip(), ..at(dr.min.x, dr.min.y, dr.width(), dr.height()) }, Pickable::IGNORE)).with_children(|q| {
             c.paragraph(q, 2, &row.description, 0.0, DESC_TOP - scrolled, dr.width(), PITCH, bright());
@@ -1141,6 +1202,18 @@ mod tests {
         v.choose_limb(4);
         assert_eq!(v.aimed(), None);
         assert_eq!(hint_pressed(&v, 2), None);
+    }
+
+    #[test]
+    fn each_view_gives_the_description_its_bound_and_the_scroll_stays_within() {
+        let mut v = StatsView::default();
+        v.set_desc_bound(3);
+        v.scroll_desc(9);
+        assert_eq!((v.desc, v.desc_bound()), (3, 3));
+        v.set_desc_bound(1);
+        assert_eq!(v.desc, 1, "a shorter text pulls the scroll back");
+        v.scroll_desc(-5);
+        assert_eq!(v.desc, 0);
     }
 
     #[test]
