@@ -408,8 +408,7 @@ pub(crate) fn feed(
     time: crate::pause::AidTime,
     devices: Devices,
     mut inputs: MenuInputs,
-    (paused, page): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>),
-    (dialog, mut view_input): (Option<Res<super::dialog_menu::DialogTiles>>, Option<ResMut<crate::dialogue::ViewInput>>),
+    (paused, page, dialog, mut view_input): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>, Option<Res<super::dialog_menu::DialogTiles>>, Option<ResMut<crate::dialogue::ViewInput>>),
 ) {
     let Some(rt) = script.rt.as_mut() else { return };
     if rt.game.ui_files.is_none() {
