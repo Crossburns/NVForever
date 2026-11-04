@@ -183,7 +183,7 @@ pub fn settle(ui: &mut Ui, sizes: &mut SizesWritten, write_sizes: &mut dyn FnMut
 
 /// The VDSG symbol's picture's width, which its `width` and the words after it are worked
 /// out from: `filewidth` less the file's `_dead_space` [documented: tutorial_menu.xml;
-/// documented: its header, 128 x 64, Fallout - Textures2.bsa]. `texels` is what the file
+/// observed: its header, 128 x 64, Fallout - Textures2.bsa]. `texels` is what the file
 /// holds; without it, the hand-built menu's stand-in (`crate::tutorial_menu::SYMBOL_W` and
 /// the dead space) [design].
 pub fn write_symbol(ui: &mut Ui, texels: Option<f64>) {
@@ -928,23 +928,28 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_measure_without_its_face_is_not_kept() {
+    fn a_zero_measure_is_kept_as_any_other() {
         let mut ui = menu();
         let texts = super::super::menus::texts(&ui, ui.menu(TUTORIAL_MENU).unwrap());
-        let title = ui.find_tile(TITLE).unwrap();
         let height = format!("{TITLE}/height");
         let mut sizes = SizesWritten::default();
-        let mut faces = Faces::default();
-        write_text_sizes_of(&mut ui, &texts, &mut sizes, &|f, t, w| faces.measure(f, t, w));
+        let asked = std::cell::Cell::new(0);
+        let nothing = |_: f64, _: &str, _: Option<f64>| {
+            asked.set(asked.get() + 1);
+            (0.0, 0.0)
+        };
+        assert!(write_text_sizes_of(&mut ui, &texts, &mut sizes, &nothing) > 0);
         assert_eq!(ui.get_float(&height), Some(0.0));
-        assert!(!sizes.contains_key(&title));
-        // The face loaded later: the same string, font and wrap are measured again.
-        faces.load(&fonts_of(&ui, &texts));
-        assert!(write_text_sizes_of(&mut ui, &texts, &mut sizes, &|f, t, w| faces.measure(f, t, w)) > 0);
-        assert_eq!(ui.get_float(&height), Some(lines(2)));
-        assert!(sizes.contains_key(&title));
-        // Kept now, as any other measure.
-        assert_eq!(write_text_sizes_of(&mut ui, &texts, &mut sizes, &|f, t, w| faces.measure(f, t, w)), 0);
+        assert!(sizes.contains_key(&ui.find_tile(TITLE).unwrap()));
+        let first = asked.get();
+        assert!(first > 0);
+        // The same string, font and wrap are not measured again.
+        assert_eq!(write_text_sizes_of(&mut ui, &texts, &mut sizes, &nothing), 0);
+        assert_eq!(asked.get(), first);
+        // Another string is.
+        ui.set_string(&format!("{TITLE}/string"), "Other");
+        assert_eq!(write_text_sizes_of(&mut ui, &texts, &mut sizes, &size), 1);
+        assert_eq!(ui.get_float(&height), Some(lines(1)));
     }
 
     #[test]
