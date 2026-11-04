@@ -29,8 +29,9 @@
 //!   more weakly than NVForever does [hypothesis; open, docs/owner-review.md]. The
 //!   screen's own material and the glass come back when the Pip-Boy is down.
 //! - While the Pip-Boy is up only the page's button glows [observed: the owner's
-//!   screenshots: the button of the page shown is bright, the other two dimmer], and the
-//!   one the pointer is on [design]; down, all three glow, as before (owner, 2026-10-10).
+//!   screenshots: the button of the page shown is bright, the other two dimmer]; the
+//!   pointer lights none (a player's comparison with the original, #1516). Down, all
+//!   three glow, as before (owner, 2026-10-10).
 //! - Under a Stealth Boy (`stealth_field.rs`) the screen's own material is the field's
 //!   see-through copy; the menus are built from the screen's real material instead, and
 //!   the field leaves the screen alone while they are on it, so the menus stay readable
@@ -100,8 +101,7 @@ pub struct PipBoyArmPlugin;
 
 impl Plugin for PipBoyArmPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Hovered>()
-            .add_systems(Update, (follow_pointer, show_screen).chain().after(nvf_play::player::BodySet).before(nvf_play::PlaySet::Ui));
+        app.add_systems(Update, (follow_pointer, show_screen).chain().after(nvf_play::player::BodySet).before(nvf_play::PlaySet::Ui));
     }
 }
 
@@ -112,6 +112,14 @@ pub(crate) struct Swapped {
     menus: Option<Handle<NifMaterial>>,
     /// The menus' missing place was logged for this raise.
     warned: bool,
+    /// The buttons last logged as lit.
+    lit: Option<String>,
+}
+
+/// Whether the glow of `page`'s button shows: the page's alone while the Pip-Boy shows on
+/// the arm, all three otherwise (module docs).
+pub(crate) fn glow_lit(pip: &PipBoy, page: Page) -> bool {
+    !pip.on_arm() || page == pip.page
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -124,7 +132,6 @@ pub(crate) fn show_screen(
     mut visibility: Query<&mut Visibility>,
     mut materials: ResMut<Assets<NifMaterial>>,
     mut swapped: Local<Swapped>,
-    hovered: Res<Hovered>,
 ) {
     let Some(mut screen) = screen else { return };
     let shown = pip.on_arm() && body.first_person_drawn();
@@ -186,11 +193,15 @@ pub(crate) fn show_screen(
             info!("pipboy: the menus are on the model's screen");
         }
     }
-    // The glows: the page's alone while the Pip-Boy shows, all three otherwise. The
-    // glass is not drawn while the menus are on the screen.
+    // The glows and the glass (not drawn while the menus are on the screen).
+    let mut lit: [bool; 3] = default();
     for (e, p, _) in &parts {
         let shown = match *p {
-            PipBoyPart::Glow(page) => !pip.on_arm() || page == pip.page || hovered.0 == Some(page),
+            PipBoyPart::Glow(page) => {
+                let on = glow_lit(&pip, page);
+                lit[page.index()] |= on;
+                on
+            }
             PipBoyPart::Glass => !screen.on_model,
             _ => continue,
         };
@@ -199,6 +210,15 @@ pub(crate) fn show_screen(
             if *v != want {
                 *v = want;
             }
+        }
+    }
+    // Said on each change, so a log can tell which glows are drawn. Nothing while no rig
+    // holds a glow.
+    if lit.contains(&true) {
+        let names = Page::ALL.into_iter().filter(|p| lit[p.index()]).map(|p| p.title()).collect::<Vec<_>>().join(", ");
+        if swapped.lit.as_deref() != Some(names.as_str()) {
+            info!("pipboy: buttons lit: {names}");
+            swapped.lit = Some(names);
         }
     }
 }
@@ -304,10 +324,10 @@ impl Posed {
 }
 
 /// Follow the window's pointer onto the model: where it lies on the screen goes to the
-/// menus (`PipBoyScreen::pointer`); a click on a button shows its page, and the pointer
-/// on a button lights it ([`Hovered`]). The shapes are posed as the arm's bones hold
-/// them this frame. The test aid's target (`PipBoyAid`) stands in for the window's
-/// pointer.
+/// menus (`PipBoyScreen::pointer`); a click on a button shows its page. The pointer on a
+/// button does nothing else: the button's light follows the page shown. The shapes are
+/// posed as the arm's bones hold them this frame. The test aid's target (`PipBoyAid`)
+/// stands in for the window's pointer.
 #[allow(clippy::too_many_arguments)]
 fn follow_pointer(
     pip: Res<PipBoy>,
@@ -319,11 +339,11 @@ fn follow_pointer(
     binds: Res<Assets<SkinnedMeshInverseBindposes>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut aid: ResMut<PipBoyAid>,
-    mut hovered: ResMut<Hovered>,
+    mut aid_over: Local<Option<Page>>,
     mut out: MessageWriter<PipBoyInput>,
 ) {
     let Some(mut screen) = screen else { return };
-    hovered.0 = None;
+    let was_over = aid_over.take();
     if !screen.on_model {
         return;
     }
@@ -362,7 +382,13 @@ fn follow_pointer(
     match hit {
         Some((_, PipBoyPart::Screen, uv)) => screen.pointer = canvas_point(uv),
         Some((_, PipBoyPart::Button(page), _)) => {
-            hovered.0 = Some(page);
+            if aid.target.is_some() {
+                // What the hover-only smoke step needs said: the pointer did reach it.
+                if was_over != Some(page) {
+                    info!("test aid: the pointer on the {} button", page.title());
+                }
+                *aid_over = Some(page);
+            }
             if clicked {
                 info!("pipboy: the {} button pressed", page.title());
                 out.write(PipBoyInput::Page(page));
@@ -374,11 +400,6 @@ fn follow_pointer(
         _ => {}
     }
 }
-
-/// The page whose button the pointer is on: its glow is lit as the page shown's is
-/// [design: the original's buttons are not known to light under the pointer].
-#[derive(Resource, Default)]
-pub struct Hovered(pub Option<Page>);
 
 #[cfg(test)]
 mod tests {
@@ -423,5 +444,87 @@ mod tests {
         let p = canvas_point(Vec2::new(0.4, 0.4)).unwrap();
         assert!((p - CANVAS / 2.0).length() < 1e-3);
         assert_eq!(canvas_point(Vec2::new(0.81, 0.1)), None);
+    }
+
+    /// A square 2 x 2 facing +Z about its origin, uv 0..1.
+    fn square() -> Arc<Mesh> {
+        let mut m = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
+        m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]]);
+        m.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+        m.insert_indices(bevy::mesh::Indices::U16(vec![0, 1, 2, 0, 2, 3]));
+        Arc::new(m)
+    }
+
+    /// The pointer systems as the game chains them, then the menus' taking of the input
+    /// (`PlaySet::Ui`, after them), over a camera, three buttons and their glows.
+    fn pointer_app() -> (App, [Entity; 3]) {
+        let mut app = App::new();
+        app.init_resource::<PipBoy>()
+            .init_resource::<PipBoyAid>()
+            .init_resource::<PlayerBody>()
+            .init_resource::<StealthField>()
+            .init_resource::<Assets<NifMaterial>>()
+            .init_resource::<Assets<SkinnedMeshInverseBindposes>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .add_message::<PipBoyInput>()
+            .insert_resource(PipBoyScreen { image: Handle::default(), camera: Entity::PLACEHOLDER, on_model: true, pointer: None, scale: 1.0 })
+            .add_systems(
+                Update,
+                (follow_pointer, show_screen, |mut input: MessageReader<PipBoyInput>, mut pip: ResMut<PipBoy>| {
+                    for &i in input.read() {
+                        pip.apply(i);
+                    }
+                })
+                    .chain(),
+            );
+        let world = app.world_mut();
+        world.spawn((Window::default(), PrimaryWindow));
+        let mut camera = Camera::default();
+        camera.computed.clip_from_view = bevy::camera::CameraProjection::get_clip_from_view(&PerspectiveProjection::default());
+        camera.computed.target_info = Some(bevy::camera::RenderTargetInfo { physical_size: UVec2::new(1280, 960), scale_factor: 1.0 });
+        world.spawn((camera, GlobalTransform::IDENTITY, PlayerCamera));
+        let mesh = square();
+        let glows = Page::ALL.map(|page| {
+            let x = page.index() as f32 * 3.0 - 3.0;
+            world.spawn((PipBoyPart::Button(page), PartMesh(mesh.clone()), GlobalTransform::from_translation(Vec3::new(x, 0.0, -10.0))));
+            world.spawn((PipBoyPart::Glow(page), MeshMaterial3d::<NifMaterial>::default(), Visibility::Inherited)).id()
+        });
+        world.resource_mut::<PipBoy>().page = Page::Items;
+        world.resource_mut::<PipBoy>().phase = nvf_play::pipboy::Phase::Up;
+        (app, glows)
+    }
+
+    /// A frame; the arms are not built here, so the screen is said to be on the model.
+    fn frame(app: &mut App) {
+        app.world_mut().resource_mut::<PipBoyScreen>().on_model = true;
+        app.update();
+    }
+
+    fn lit(app: &App, glows: [Entity; 3]) -> [bool; 3] {
+        glows.map(|g| *app.world().get::<Visibility>(g).unwrap() != Visibility::Hidden)
+    }
+
+    #[test]
+    fn the_pointer_lights_no_button_a_click_shows_its_page_and_down_all_glow() {
+        let (mut app, glows) = pointer_app();
+        frame(&mut app);
+        assert_eq!(lit(&app, glows), [false, true, false], "only the page shown");
+        // The pointer on another page's button: neither the page nor the lights change.
+        app.world_mut().resource_mut::<PipBoyAid>().target = Some(AidTarget::Button(Page::Stats));
+        for _ in 0..3 {
+            frame(&mut app);
+        }
+        assert_eq!(app.world().resource::<PipBoy>().page, Page::Items);
+        assert_eq!(lit(&app, glows), [false, true, false], "hovering lights nothing");
+        // A click on it shows its page, whose button lights the frame after.
+        app.world_mut().resource_mut::<PipBoyAid>().click = 3;
+        frame(&mut app);
+        assert_eq!(app.world().resource::<PipBoy>().page, Page::Stats);
+        frame(&mut app);
+        assert_eq!(lit(&app, glows), [true, false, false], "the page clicked");
+        // Down: all three.
+        app.world_mut().resource_mut::<PipBoy>().phase = nvf_play::pipboy::Phase::Down;
+        frame(&mut app);
+        assert_eq!(lit(&app, glows), [true, true, true], "down, all glow");
     }
 }

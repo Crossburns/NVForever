@@ -3176,14 +3176,22 @@ name = "pipboy-pointer"
 source = "CLAUDE.md: after changes to the Pip-Boy's pointer (pipboy_arm.rs follow_pointer, pipboy::drive_pointer), click on the model's screen"
 areas = ["pipboy"]
 paths = ["engine/nvforever/src/pipboy_arm.rs", "engine/nvf-play/src/pipboy*"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PIPBOY = "12:open,14:click=320:650,16:click=stats,18:click=600:650" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PIPBOY = "12:open,13:point=stats,13.5:point=off,14:click=320:650,16:click=stats,18:click=600:650", NVF_PLAY_TEST_SHOTS = "13.3:pipboy_hover.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--size", "1280x720"]
 run_seconds = 21
 expect = [
   "pipboy: ITEMS Apparel",
   "pipboy: the STATS button pressed",
   "pipboy: STATS Perks",
+  { text = "pipboy: buttons lit: STATS", count = 1, label = "STATS lit once, so not while only the pointer was on its button (#1516)" },
 ]
+order = [[
+  "pipboy: buttons lit: ITEMS",
+  "test aid: the pointer on the STATS button",
+  "pipboy: the STATS button pressed",
+  "pipboy: buttons lit: STATS",
+]]
+manual = "the frame at 13.3 s has the pointer on the STATS button with only the ITEMS button lit"
 
 [[scenario]]
 name = "pipboy-screen-menu"

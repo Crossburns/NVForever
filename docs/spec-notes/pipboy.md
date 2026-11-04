@@ -71,7 +71,9 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   the same place, `screen.dds` with a normal map) and `glare:0` (`ScreenGlare.dds`, added
   over it, unlit). Also `RadNeedle`, `TabKnob`, `ScrollKnob`, `PipboyLightEffect`.
 - **The page's button** glows alone while the Pip-Boy is up [observed: the screenshots];
-  down, all three glow (owner, 2026-10-10).
+  down, all three glow (owner, 2026-10-10). The pointer on a button lights nothing: a
+  player comparing the two reports that the original's buttons do not light under it
+  (#1516; not observed again here).
 - **The view** is first person while it is up and goes back to what it was [hypothesis].
 - **The world behind** is blurred by `fBlurRadiusPipboy` (3.5) in the image space
   modifiers' blur units [hypothesis: the same units], eased with the clip; what is
@@ -534,7 +536,8 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
   the screen's and the buttons' meshes (nvforever `pipboy_arm.rs`, `Posed`) [design].
   Until 2026-10-11 Bevy's mesh ray cast was used, which sees neither the skinning nor a
   mesh kept on the GPU only, so no click on the model did anything (the owner's
-  playtest). The button under the pointer glows as the page shown's does [design].
+  playtest). The pointer on a button does not light it (§2); a click still shows its
+  page. `show_screen` logs "pipboy: buttons lit: <pages>" on each change.
 
 ## 6.1 Sounds [observed: the SOUN records, FalloutNV.esm; the owner's list 5]
 
@@ -555,7 +558,8 @@ logged "pipboy sound: <EditorID>" (the focus sound at debug level).
 `page=stats|items|data`, `tab=<0-4>`, `key=down|up|use|drop`, and for the pointer
 `point=<x>:<y>` (the pointer on that canvas point, through the model's screen),
 `point=off`, `click=<x>:<y>` and `click=stats|items|data` (a click on the device's
-button; logged "pipboy: the STATS button pressed"); screenshots with
+button; logged "pipboy: the STATS button pressed"), `point=stats|items|data` (the pointer
+on that button, no click; logged "test aid: the pointer on the STATS button"); screenshots with
 `NVF_PLAY_TEST_SHOTS`. A new game's add-on message boxes come first: answer them with
 `NVF_PLAY_TEST_SCRIPT_MENUS=0.05` and open after about 12 s:
 
