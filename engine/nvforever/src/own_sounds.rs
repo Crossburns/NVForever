@@ -173,7 +173,8 @@ pub struct OwnSoundsPlugin;
 
 impl Plugin for OwnSoundsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<OwnSounds>().add_systems(Update, (addons, projectiles, idles)).add_systems(Last, report);
+        // Before sfx and the ambient play what they send (nvf_play::sfx::SfxSet).
+        app.init_resource::<OwnSounds>().add_systems(Update, (addons, projectiles, idles).before(nvf_play::sfx::SfxSet)).add_systems(Last, report);
     }
 }
 

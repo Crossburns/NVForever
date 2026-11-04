@@ -109,7 +109,7 @@ impl Plugin for DismemberPlugin {
         app.init_resource::<Gore>()
             .add_systems(
                 Update,
-                (apply_skins, cut_ragdolls, throw_gore.before(crate::shot_fx::ShotFxSet), throw_object_debris, move_pieces.after(nvf_play::PlaySet::Physics))
+                (apply_skins, cut_ragdolls, throw_gore.before(crate::shot_fx::ShotFxSet).before(nvf_play::sfx::SfxSet), throw_object_debris, move_pieces.after(nvf_play::PlaySet::Physics))
                     .after(nvf_play::PlaySet::Activation)
                     .run_if(resource_exists::<Combat>)
                     .run_if(resource_exists::<PhysState>),

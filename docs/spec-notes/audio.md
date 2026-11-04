@@ -139,6 +139,26 @@ environment: §14.6.
 
 - Music and loops are decoded while they play (rodio with symphonia: MP3, Ogg Vorbis,
   WAV); the three files of a set are mixed in one source so they cannot drift apart.
+- Sound effects are decoded whole, on a worker thread the first time a file is asked
+  for; the request starts once the file is ready (`nvf-play/src/sfx.rs`, #1428)
+  [engineering choice; what the original does with a sound not yet in memory is not
+  known]. A game event's one-shot (a shot, a footstep, an impact) whose file comes in
+  more than 150 ms after it joined the waiting list is dropped, not started, so it is
+  not heard long after its moment; loops and scripts' sounds start however late
+  (`MAX_ONE_SHOT_WAIT`) [engineering choice]. A folder's file is picked from an index
+  of the folders listed on a worker at the start; a request before it is in waits for
+  it. A Play At Random marker whose file is still being read skips that roll: the
+  sound is not played when the file arrives, the marker plays on a later roll. The
+  exit line `sfx files: …` counts the
+  sounds that began in the frame they were asked for, those that waited, those decided
+  silent and the rolls skipped; at its end, the one-shots dropped as too late.
+- A second chance late in each frame (`late_start`, `PostUpdate`, before the audio
+  output takes up new players) starts the requests whose file finished decoding since
+  the frame's requests were played, as they would have started then, so a file decoded
+  a few milliseconds late can still start in the frame it was asked for [engineering
+  choice]. The exit line adds how many it started, how many of those in their own frame
+  and, for those only, the longest time in milliseconds from joining the waiting list to
+  the start: not the delay from the request until the sound is heard.
 - Log: `music: in marker …`, `music: <set> day|night started, layers …`,
   `music: <set> layers …`, `music: <set> fades out`, `music: battle begins …`,
   `music: battle over …`, `music: intro|outro of …`, `music: a script plays …`,
@@ -417,6 +437,20 @@ engine plays them. Without SystemSound a sound asked for in a menu waits for the
 [documented: it "may be queued and not played until returning to GameMode"]. Seen
 [observed]: a DLC start-up script's `PlaySound` (0x03016173). `PlayMusic` queues a music
 type for music.rs (`Game::music_requests`, traced `music_asked`; §13).
+
+Since a sound's file is read on a worker (§7, #1428), a script's sound can still be
+waiting for its file when the script acts on it again. What the original does in these
+cases is not known; NVForever does this [engineering choice; hypothesis for the
+original] (`fnv-game/src/nvse_sound.rs` `SoundState::stop`, `nvf-play/src/sfx.rs`
+`play` and `begin`):
+
+- `PlaySound X; StopSound X` in one frame plays nothing: the stop covers the sounds of X
+  asked for before it, also in the same frame. `StopSound X; PlaySound X` plays X.
+  Observer check 82.
+- A looping script sound (a SOUN with the Loop flag) whose file cannot be played is over
+  at once: IsSoundPlaying reads 0 for it, as for a one-shot with no file.
+- `LoopSound` on then off for one SOUN in one frame leaves nothing playing (the off drops
+  the start still waiting for its file).
 
 ### 11.6 Checks and what is left
 
