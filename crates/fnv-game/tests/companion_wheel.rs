@@ -368,3 +368,33 @@ fn a_following_teammate_sneaks_with_the_player_and_says_so() {
     g.extra.entry(c).or_default().current_package = None;
     assert!(!g.sneaks(c));
 }
+
+/// Fallout 3's Wait, StopWaiting and IsWaiting (`functions::fo3`): only the actor's
+/// current Follow package can be waited in.
+#[test]
+fn wait_and_stop_waiting_hold_a_follow_package() {
+    let f = fixture();
+    let mut g = game(&f);
+    let c = companion();
+    let call = |g: &mut Game, op: u16, args: &[fnv_script::vm::ArgValue]| {
+        let ctx = fnv_game::functions::Ctx { unit: "test".into(), opcode: op, on: Some(c), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+        g.call_function(&ctx, args).num()
+    };
+    let follow = [fnv_script::vm::ArgValue::Value(fnv_script::vm::Value::Ref(FOLLOW))];
+    let (wait, stop, is_waiting) = (0x10B7, 0x10B8, 0x106F);
+    // Not its current package: nothing happens.
+    g.extra.entry(c).or_default().current_package = Some(FormId(QUEST));
+    call(&mut g, wait, &follow);
+    assert!(!g.waits(c));
+    g.extra.entry(c).or_default().current_package = Some(FormId(FOLLOW));
+    call(&mut g, wait, &follow);
+    assert!(g.waits(c));
+    assert_eq!(call(&mut g, is_waiting, &[]), 1.0);
+    call(&mut g, stop, &follow);
+    assert!(!g.waits(c));
+    assert_eq!(call(&mut g, is_waiting, &[]), 0.0);
+    // A wait ends with its package.
+    call(&mut g, wait, &follow);
+    g.extra.entry(c).or_default().current_package = None;
+    assert!(!g.waits(c));
+}

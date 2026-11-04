@@ -1328,7 +1328,7 @@ fn move_npcs(
     dt: f32,
 ) {
     let plan_span = info_span!("phys::npc_plan").entered();
-    world.update_queries();
+    world.update_queries_for(fnv_phys::QueryConsumer::Npc);
     let reader = &*world;
     let mut moving: Vec<(u32, &mut crate::phys::NpcBody, [f32; 2])> = npcs.iter_mut().zip(walking).map(|((&id, b), v)| (id, b, v)).collect();
     let plan = |b: &mut crate::phys::NpcBody, v: [f32; 2]| {
