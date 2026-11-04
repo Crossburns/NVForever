@@ -352,6 +352,9 @@ pub struct Input {
 pub struct Report {
     /// The highlight moved: (from, to).
     pub over: Option<(Option<TileId>, Option<TileId>)>,
+    /// A key's `<ref … trait="mouseover"/>` moved it, not the pointer, wherever it went: back
+    /// onto the tile under the pointer too.
+    pub over_by_key: bool,
     /// Every click since the last step: the scripts' (ClickMenuButton, ClickMenuTile)
     /// first, then this frame's.
     pub clicks: Vec<Click>,
@@ -538,6 +541,7 @@ impl Pointer {
             } else if trait_name.eq_ignore_ascii_case(MOUSEOVER) {
                 self.highlight(ui, Some(t), report);
                 self.keyed = true;
+                report.over_by_key = report.over.is_some();
                 return;
             }
             report.unfollowed.push(format!("{name}: ref to {trait_name} not followed"));
@@ -809,6 +813,7 @@ mod tests {
         p.step(&mut ui, &[menu], &at(120.0, 115.0), &no_measure);
         let r = p.step(&mut ui, &[menu], &Input { pads: vec!["xdown".into()], ..at(120.0, 115.0) }, &no_measure);
         assert_eq!(r.over, Some((Some(ok), Some(cancel))));
+        assert!(r.over_by_key);
         assert_eq!(ui.get_float("TestMenu/Main/CancelButton/mouseover"), Some(1.0));
         assert_eq!(p.step(&mut ui, &[menu], &at(120.0, 115.0), &no_measure).over, None);
         assert_eq!(p.over, Some(cancel));

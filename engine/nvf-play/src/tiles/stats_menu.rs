@@ -908,15 +908,15 @@ fn follow_hover(acted: &mut Option<usize>, under: Option<usize>, settled: bool) 
     }
 }
 
-/// The row a file's own key binding moved the highlight onto in this step: not the pointer's
-/// doing (`under`, the tile under it), and not a press the hand-built keys act on as well, or
-/// the page would step twice.
-fn keyed_row(ui: &Ui, p: &Paths, rows: &[MadeRow], report: &fnv_ui::input::Report, under: Option<TileId>, physical: &[&str]) -> Option<usize> {
-    if physical.iter().any(|k| menus::hand_built_takes(STATS_MENU, k)) {
+/// The row a file's own key binding moved the highlight onto in this step, wherever it went,
+/// the row under the pointer too: the step says what moved it. Not for a press the hand-built
+/// keys act on as well, or the page would step twice.
+fn keyed_row(ui: &Ui, p: &Paths, rows: &[MadeRow], report: &fnv_ui::input::Report, physical: &[&str]) -> Option<usize> {
+    if !report.over_by_key || physical.iter().any(|k| menus::hand_built_takes(STATS_MENU, k)) {
         return None;
     }
     let (_, to) = report.over?;
-    match stats_tile(ui, p, rows, to.filter(|&t| Some(t) != under)?)? {
+    match stats_tile(ui, p, rows, to?)? {
         StatsTile::Row(i) => Some(i),
         _ => None,
     }
@@ -1003,7 +1003,7 @@ pub(crate) fn feed(
         Some(HoverAct::BoxOff) => view.highlight = false,
         None => {}
     }
-    if let Some(i) = keyed_row(ui, &p, rows, &report, under, &physical) {
+    if let Some(i) = keyed_row(ui, &p, rows, &report, &physical) {
         view.select(PAGE, i);
         view.highlight = true;
     }
@@ -1534,45 +1534,44 @@ mod tests {
         assert_eq!(follow_hover(&mut acted, None, true), None);
     }
 
-    /// A menu whose own `xdown` moves the highlight to a row. A physical Down is the hand-built
-    /// key's, which steps the list: the moved highlight must not select as well, on that frame
-    /// or while it is held there. A script's tap has no hand-built step, so it selects.
+    /// A menu whose own `xdown` moves the highlight to a row and `xup` back to another. A
+    /// physical press is the hand-built key's, which steps the list: the moved highlight must
+    /// not select as well, on that frame or while it is held there. A script's tap has no
+    /// hand-built step, so it selects, the row under a stationary pointer too.
     #[test]
     fn a_files_navigation_acts_once() {
-        let change = |x: &str| x.replace(r#"<menu name="StatsMenu">"#, r#"<menu name="StatsMenu"><xdown><ref src="Row3" trait="mouseover"/></xdown>"#);
-        let (mut ui, mut v, mut t) = (tree_changed(change), view(), StatsTiles::default());
+        let change = |x: &str| x.replace(r#"<menu name="StatsMenu">"#, r#"<menu name="StatsMenu"><xdown><ref src="Row3" trait="mouseover"/></xdown><xup><ref src="Row1" trait="mouseover"/></xup>"#);
         let mut s = snap();
+        s.special[1].name = "Row1".into();
         s.special[3].name = "Row3".into();
+        let spot = (50.0, 30.0 + 1.5 * ROW);
+        let (mut ui, mut v, mut t) = (tree_changed(change), view(), StatsTiles::default());
         let menu = run(&mut ui, &s, &mut v, true, &mut t).unwrap();
         let p = paths(&ui, None).unwrap();
         let rows = t.written.rows.clone();
-        let spot = (50.0, 30.0 + 1.5 * ROW);
-        let under = fnv_ui::input::hit(&ui, &[menu], spot, &no_measure).map(|h| h.tile);
-        assert_eq!(under, Some(rows[1].tile));
         let mut pointer = Pointer::default();
         let mut step = |ui: &mut Ui, pads: &[&str]| pointer.step(ui, &[menu], &Input { at: Some(spot), pads: pads.iter().map(|k| k.to_string()).collect(), ..Default::default() }, &no_measure);
         // The pointer alone moves onto its own row: no key's doing.
         let r = step(&mut ui, &[]);
-        assert_eq!(keyed_row(&ui, &p, &rows, &r, under, &[]), None);
+        assert_eq!(r.over.and_then(|o| o.1), Some(rows[1].tile));
+        assert_eq!(keyed_row(&ui, &p, &rows, &r, &[]), None);
         // A physical Down: the highlight moves to the file's row, and nothing selects it.
         let r = step(&mut ui, &["xdown"]);
         assert_eq!(r.over.and_then(|o| o.1), Some(rows[3].tile), "the fixture's reference moved it");
-        assert_eq!(keyed_row(&ui, &p, &rows, &r, under, &["xdown"]), None);
-        // Held there, the hover still reads the row under the pointer, not the highlight.
+        assert_eq!(keyed_row(&ui, &p, &rows, &r, &["xdown"]), None);
+        // Held there, nothing further; the hover reads the row under the pointer.
         let r = step(&mut ui, &[]);
         assert_eq!(r.over, None);
         let mut acted = Some(1);
         assert_eq!(follow_hover(&mut acted, Some(1), true), None);
-        // The same move by a script's tap selects, once.
-        let (mut ui, mut v, mut t) = (tree_changed(change), view(), StatsTiles::default());
-        let menu = run(&mut ui, &s, &mut v, true, &mut t).unwrap();
-        let rows = t.written.rows.clone();
-        let p = paths(&ui, None).unwrap();
-        let under = fnv_ui::input::hit(&ui, &[menu], spot, &no_measure).map(|h| h.tile);
-        let mut pointer = Pointer::default();
-        pointer.step(&mut ui, &[menu], &Input { at: Some(spot), ..Default::default() }, &no_measure);
-        let r = pointer.step(&mut ui, &[menu], &Input { at: Some(spot), pads: vec!["xdown".into()], ..Default::default() }, &no_measure);
-        assert_eq!(keyed_row(&ui, &p, &rows, &r, under, &[]), Some(3));
+        // A script's tap back onto the row under the stationary pointer selects it, though
+        // the hover has nothing new to say.
+        let r = step(&mut ui, &["xup"]);
+        assert_eq!(r.over.and_then(|o| o.1), Some(rows[1].tile));
+        assert_eq!(keyed_row(&ui, &p, &rows, &r, &[]), Some(1));
+        // And a tap away selects where it went.
+        let r = step(&mut ui, &["xdown"]);
+        assert_eq!(keyed_row(&ui, &p, &rows, &r, &[]), Some(3));
     }
 
     #[test]
