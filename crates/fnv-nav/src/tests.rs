@@ -1113,7 +1113,7 @@ fn a_skip_over_a_gap_in_the_navmesh_falls_back_to_a_nearer_place() {
 }
 
 #[test]
-fn a_skip_past_the_gap_is_found_again_by_a_corner_or_the_legs_corridor() {
+fn a_skip_past_a_gap_is_found_by_the_corners_past_it() {
     let g = narrow_l(&[(1, 2)]);
     // The far side of the gap as a corner of the path: its own triangle.
     let leg = leg_of(vec![[100.0, 0.0, 0.0], [100.0, 280.0, 28.0], [100.0, 300.0, 30.0]]);
@@ -1121,18 +1121,71 @@ fn a_skip_past_the_gap_is_found_again_by_a_corner_or_the_legs_corridor() {
     let c = f.skip_candidate([100.0, 200.0, 20.0], 80.0).unwrap();
     assert_eq!(c.pos[1], 280.0);
     assert!((g.skip_surface(&leg, &c).unwrap()[2] - 28.0).abs() < 1e-3);
-    // Between two corners, past where the walk over the surface ends: only with the
-    // triangle in the leg's corridor, on the level of the path's height.
+    // Between two corners, the walk from the one before it cut off: from the one after
+    // it, whatever the height the path gives there.
     let leg = leg_of(vec![[100.0, 0.0, 0.0], [100.0, 340.0, 34.0]]);
     let f = follower_of(leg.clone());
     let c = f.skip_candidate([100.0, 200.0, 20.0], 80.0).unwrap();
-    assert_eq!(g.skip_surface(&leg, &c), None);
-    let far = g.locate(W, c.pos, 40.0).expect("a triangle there");
-    let mut listed = leg.clone();
-    listed.corridor = vec![far];
-    assert!((g.skip_surface(&listed, &c).unwrap()[2] - 28.0).abs() < 1e-3);
-    let low = crate::follow::SkipCandidate { pos: [c.pos[0], c.pos[1], c.pos[2] + 90.0], ..c };
-    assert_eq!(g.skip_surface(&listed, &low), None, "not that level");
+    assert!((g.skip_surface(&leg, &c).unwrap()[2] - 28.0).abs() < 1e-3);
+    let off = crate::follow::SkipCandidate { pos: [c.pos[0], c.pos[1], c.pos[2] + 90.0], ..c };
+    assert!((g.skip_surface(&leg, &off).unwrap()[2] - 28.0).abs() < 1e-3);
+}
+
+/// #1501, review: what the actor is stuck at can be what cuts the navmesh behind the place.
+/// An obstacle came up on the straight stretch since it was planned: the triangles under it
+/// are gone, the place past them is on a triangle the corridor does not list, and it is
+/// the one to go to.
+#[test]
+fn a_skip_past_an_obstacle_that_cut_the_navmesh_since_the_plan_has_a_surface() {
+    let mut g = graph(&[(grid(1, [0.0, 0.0], 10, 1, 100.0, &[], flat), W)]);
+    let (start, end) = ([50.0, 50.0, 0.0], [950.0, 50.0, 0.0]);
+    let mut leg = leg_of(vec![start, end]);
+    leg.corridor = vec![g.locate(W, start, 1.0).unwrap()];
+    let f = follower_of(leg.clone());
+    let cs = f.skip_candidates([440.0, 50.0, 0.0], &[170.0, 60.0]);
+    assert_eq!(cs.iter().map(|c| c.pos[0]).collect::<Vec<_>>(), vec![610.0, 500.0]);
+    let past = g.locate(W, cs[0].pos, 1.0).unwrap();
+    assert!(!leg.corridor.contains(&past));
+    assert!(g.skip_surface(&leg, &cs[0]).is_some());
+    g.set_obstacles(vec![sandbags(0.0, 90.0)], |o| o.initially_enabled);
+    g.sync_obstacles([(0x5B0, true)]);
+    assert!(g.cut_triangles() >= 2);
+    // No way along the path from the corner before it, past the obstacle.
+    let from = g.locate(W, start, 1.0).unwrap();
+    assert_eq!(g.walkable_line(W, from, start, cs[0].pos, 0.0, &PathParams::default()), None);
+    assert_eq!(g.skip_surface(&leg, &cs[0]), Some([cs[0].pos[0], cs[0].pos[1], 0.0]));
+    // Under the obstacle itself there is no floor.
+    assert_eq!(g.skip_surface(&leg, &cs[1]), None);
+}
+
+/// With both walks cut off: a triangle under the place, on the path's level.
+#[test]
+fn a_skip_onto_an_island_between_two_gaps_keeps_to_the_paths_height() {
+    let z = |_: f32, y: f32| 0.1 * y;
+    let g = graph(&[(grid(1, [50.0, 0.0], 1, 7, 100.0, &[(0, 1), (0, 5)], z), W)]);
+    let leg = leg_of(vec![[100.0, 50.0, 5.0], [100.0, 650.0, 65.0]]);
+    let f = follower_of(leg.clone());
+    let c = f.skip_candidate([100.0, 140.0, 14.0], 160.0).unwrap();
+    assert_eq!(c.pos[1], 300.0);
+    assert!((g.skip_surface(&leg, &c).unwrap()[2] - 30.0).abs() < 1e-3);
+    for off in [90.0, -90.0] {
+        let far = crate::follow::SkipCandidate { pos: [c.pos[0], c.pos[1], c.pos[2] + off], ..c };
+        assert_eq!(g.skip_surface(&leg, &far), None, "not within the level gap");
+    }
+}
+
+/// With no corner to walk from, of two floors stacked and not linked: the nearer in height,
+/// and within the limit.
+#[test]
+fn a_skip_with_nothing_to_walk_from_keeps_to_the_nearer_of_stacked_floors() {
+    let lower = grid(1, [0.0, 0.0], 2, 1, 100.0, &[], flat);
+    let upper = grid(2, [0.0, 0.0], 2, 1, 100.0, &[], |_, _| 100.0);
+    let g = graph(&[(lower, W), (upper, W)]);
+    let leg = leg_of(vec![[-500.0, 50.0, 0.0], [700.0, 50.0, 0.0]]);
+    let at = |z: f32| crate::follow::SkipCandidate { pos: [100.0, 50.0, z], next: 1, along: 0.0, at_limit: false };
+    assert_eq!(g.skip_surface(&leg, &at(90.0)).map(|p| p[2]), Some(100.0));
+    assert_eq!(g.skip_surface(&leg, &at(10.0)).map(|p| p[2]), Some(0.0));
+    assert_eq!(g.skip_surface(&leg, &at(50.0)), None, "neither within the level gap");
 }
 
 #[test]

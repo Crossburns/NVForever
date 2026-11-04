@@ -2935,3 +2935,43 @@ fn a_steep_hill_it_can_walk_has_ground_and_room_and_a_body_in_the_hill_has_none(
     assert!((feet[2] - z).abs() <= c.params.step_height + TERRAIN_SHELL + 1.0, "{feet:?} on {z}");
     assert_eq!(w.queries().character_overlap(&c, [x, y, z - 40.0]), vec![Owner::Terrain { x: 0, y: 0 }]);
 }
+
+/// Put down over a light crate with no room to get out of the way (against a wall): the
+/// body is accepted, as it is over any clutter it would push aside, so this has to come
+/// out sanely. Nothing flies off or goes through the wall, and it walks away.
+#[test]
+fn a_character_put_over_light_clutter_pinned_against_a_wall_walks_on() {
+    let mut w = ground();
+    let mut c = spot_character(&mut w);
+    let wall_face = SPOT[0] + 26.0;
+    w.add_ref(&at(60, [wall_face + 10.0, SPOT[1], 100.0]), &[object(boxed([10.0, 200.0, 100.0]), Motion::Static)]);
+    let mut crate_ = object(boxed([10.0, 10.0, 10.0]), Motion::Dynamic);
+    crate_.mass = 20.0;
+    w.add_ref(&at(61, [SPOT[0] + 15.0, SPOT[1], 10.0 + TERRAIN_SHELL]), &[crate_]);
+    for _ in 0..120 {
+        w.step();
+    }
+    let rest = w.ref_bodies(61)[0];
+    assert!(rest.translation[0] + 10.0 <= wall_face + 0.5, "{rest:?}");
+    let feet = w.character_spot(&c, SPOT).unwrap();
+    assert!((feet[2] - TERRAIN_SHELL).abs() < 1e-3, "{feet:?}");
+    // It does overlap the crate.
+    let capsule = Shape::Capsule { a: [0.0, 0.0, 22.0], b: [0.0, 0.0, 106.9], radius: 22.0 };
+    let pose = Iso { translation: feet, ..Iso::IDENTITY };
+    assert!(w.queries().overlap(&capsule, &pose, &Filter::excluding(c.key())).unwrap().iter().any(|o| matches!(o, Owner::Ref { form_id: 61, .. })));
+    w.place_character(&mut c, feet);
+    for _ in 0..240 {
+        w.move_character(&mut c, CharacterInput::default());
+        w.step();
+        let b = w.ref_bodies(61)[0];
+        assert!(b.translation.iter().chain(&b.linvel).chain(&c.feet).all(|v| v.is_finite()), "{b:?} {:?}", c.feet);
+        assert!(b.linvel.iter().all(|v| v.abs() < 2000.0), "flung: {b:?}");
+        assert!(b.translation[0] + 10.0 < wall_face + 5.0 && b.translation[2] > 0.0, "through something: {b:?}");
+        assert!((c.feet[0] - feet[0]).abs() < 30.0 && (c.feet[1] - feet[1]).abs() < 30.0 && (c.feet[2] - feet[2]).abs() < 40.0, "{:?} from {feet:?}", c.feet);
+    }
+    // Along the wall, the way a path past it would go.
+    let from = c.feet;
+    walk(&mut w, &mut c, [0.0, 150.0], 120);
+    assert!(c.feet[1] - from[1] > 50.0, "{:?} from {from:?}", c.feet);
+    assert!((c.feet[2] - from[2]).abs() < 40.0, "{:?} from {from:?}", c.feet);
+}

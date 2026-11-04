@@ -316,19 +316,24 @@ impl Follower {
 
 impl NavGraph {
     /// The navmesh surface under a [`SkipCandidate`] of `leg`: the place with the height
-    /// of the triangle under it. `None` when the path cannot say what is under it.
+    /// of the triangle under it. `None` when the path says nothing is under it.
     ///
-    /// Looked for along the route and not as the nearest floor (a floor above or below
-    /// the route is not the one it was heading for): a corner of the path on the triangle
-    /// under it; a place between two corners by walking the surface from the corner before
-    /// it, then, should that walk not get there (lines along a vertex or an edge can miss
-    /// the crossing), on a triangle of the leg's corridor. Not the corridor alone: the
-    /// shortcut pass straightens a path over triangles the corridor does not list
-    /// ([`NavGraph::walkable_line`]). Inside a ledge link's span there is nothing to stand
-    /// on. No clearance from the outline is asked of it: the plan gave the path what room
-    /// there was, and the body's room is the collision's to say. The actor's own limits
-    /// (keys, water, slopes) are not checked again either, as [`Path`] does not keep
-    /// them: the route was planned with them, this only follows it [design].
+    /// On the route's own level, in this order [design]. A corner of the path: the
+    /// triangle under it nearest its height. A place between two corners: walking the
+    /// surface to it from the corner before it, else from the corner after it (a walk
+    /// follows the ground over a rise that the straight height between corners cuts
+    /// through; the one after because what cut the navmesh behind the place, an obstacle
+    /// or a navmesh switched off since the path was planned, is often what the actor is
+    /// stuck at, and the place past it is what recovery is for). Both walks cut off, any
+    /// usable triangle under it, the one nearest the path's height there and within
+    /// [`LEVEL_GAP`] of it: a nearest floor, as far as the two ends of a walk leave no
+    /// better guide, and no floor at all rather than one of another level. The leg's
+    /// corridor is not asked: the shortcut pass straightens a path over triangles it does
+    /// not list ([`NavGraph::walkable_line`]). Inside a ledge link's span there is nothing
+    /// to stand on. No clearance from the outline is asked: the plan gave the path what
+    /// room there was, and the body's room is the collision's to say. The actor's own
+    /// limits (keys, water, slopes) are not checked again either, as [`Path`] does not
+    /// keep them: the route was planned with them, this only follows it.
     pub fn skip_surface(&self, leg: &Leg, c: &SkipCandidate) -> Option<[f32; 3]> {
         let pos = c.pos;
         if !pos.iter().all(|v| v.is_finite()) {
@@ -337,7 +342,8 @@ impl NavGraph {
         let pts = &leg.points;
         let same = |p: Option<&[f32; 3]>| p.is_some_and(|q| (0..3).all(|i| (q[i] - pos[i]).abs() <= 1e-3));
         let before = c.next.checked_sub(1).and_then(|i| pts.get(i));
-        let corner = same(before) || same(pts.get(c.next));
+        let after = pts.get(c.next);
+        let corner = same(before) || same(after);
         if !corner && leg.hops.iter().any(|h| h.point + 1 == c.next) {
             return None;
         }
@@ -347,15 +353,12 @@ impl NavGraph {
         }
         // The route's own limits are behind it; the walk only asks where it leads.
         let route = PathParams { open_locked: true, ..PathParams::default() };
-        let walked = before.and_then(|&a| {
+        let walk = |from: Option<&[f32; 3]>| {
+            let &a = from?;
             let start = self.locate(leg.space, a, LEVEL_GAP)?;
             self.trace_line(leg.space, start, a, pos, 0.0, &route)
-        });
-        let listed = || {
-            let of_leg = leg.corridor.iter().copied().filter(|&t| (t as usize) < self.tris.len() && self.usable(t) && self.contains_xy(t, pos[0], pos[1]));
-            of_leg.map(|t| ((self.height_on(t, pos[0], pos[1]) - pos[2]).abs(), t)).filter(|&(dz, _)| dz <= LEVEL_GAP).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, t)| t)
         };
-        walked.or_else(listed).map(on)
+        walk(before).or_else(|| walk(after)).or_else(|| self.locate(leg.space, pos, LEVEL_GAP)).map(on)
     }
 }
 
@@ -408,8 +411,7 @@ pub struct Unstuck {
     pub detours: usize,
     /// Replans (or skips) advised.
     pub replans: usize,
-    /// An [`Advice::Skip`] was given ([`Unstuck::after_skip`] for the stuck rule of the
-    /// actor put down where it was moved on to).
+    /// An [`Advice::Skip`] was given and not refused ([`Unstuck::skip_refused`]).
     pub skipped: bool,
 }
 
