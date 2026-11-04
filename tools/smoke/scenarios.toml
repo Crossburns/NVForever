@@ -2841,6 +2841,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "dialogue-goodbye-hint"
+note = "Chet is talked to twice in the general store, each time left by Tab (the aid's leave step). Between them the pause menu's settings page turns the Goodbye hint (dialogue-goodbye-hint, #1517) off: the first conversation shows the hint, the second holds it back and Tab still leaves. Not run before this branch; the times (conversation 2 at 36 s) leave the first conversation 13 s or more to end"
+source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint and its setting (#1517)"
+areas = ["dialogue", "menus"]
+paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=leave;36:GSChetRef=leave", NVF_PLAY_TEST_PAUSE = "24:30", NVF_PLAY_TEST_SETTINGS = "25:page,26:dialogue-goodbye-hint" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages"]
+run_seconds = 52
+expect = [
+  { text = "dialogue menu: TAB) Goodbye shown at the left of the choices", count = 1, label = "the hint while the first conversation offers a Goodbye choice, with the switch on (the default)" },
+  { text = "settings: dialogue-goodbye-hint off", label = "the settings page turned the Goodbye hint off" },
+  { text = "dialogue menu: TAB) Goodbye hidden by the Goodbye hint setting", count = 1, label = "the second conversation offers Goodbye and the hint is held back" },
+  { re = 'dialogue: conversation with GSChetRef ended \((goodbye|left)', count = 2, label = "Tab (the leave step) left both conversations, the hint shown or not" },
+]
+
+[[scenario]]
 name = "bighorner"
 source = "CLAUDE.md: after changes to creatures' sounds, jump and landing, wading, objects' own sounds, casings or panning (audio.md §14): jump and shoot a bighorner in its pen"
 areas = ["creature-sounds", "audio"]
