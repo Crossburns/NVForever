@@ -18063,6 +18063,11 @@ order = [[
   "menu: close",
   "tiles: ContainerMenu Close on its tiles",
   "menu: close",
+], [
+  "tile menu blur: ContainerMenu radius 3",
+  "tile menu blur: off",
+  "tile menu blur: ContainerMenu radius 3",
+  "tile menu blur: off",
 ]]
 
 [[scenario]]
