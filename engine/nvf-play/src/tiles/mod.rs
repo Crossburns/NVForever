@@ -6,14 +6,32 @@
 //! `shown`, `texts`, `animation`, and then either `widths` (the HUD's writes kept back, the
 //! default game) or `hud_write`, `text_widths`, `corners`, `notices`, `breath`. Inside
 //! those: `menu_drop`, `menu_build`, `menu_update` in `sync` (`fnv_game::ui_loading`),
-//! `subtitles` in `shown`, `prompt` in `texts`, `font_load` wherever a face is first read.
-//! `tiles::write` less the top-level parts is what no part names.
+//! `subtitles` in `shown`, `prompt` in `texts`, `font_load` wherever a face is first made.
+//! Entries say what was tried, not what came of it: `menu_build` is entered for a menu with
+//! no file and for a load that fails, and `font_load` for a face that ends as the stand-in.
+//! Parts nest, so don't add a part to its parent. `tiles::write` less the top-level parts
+//! is what no part names plus the spans' own cost and, with the counts on, their line.
 //!
-//! `NVF_PLAY_TEST_TILE_COUNTS=1` (a test aid of its own, in any build): a line a frame,
-//! `tile counts: writes=<n> changed=<n> speech=<n> faces=<n> measured=<n> deferred=<bool>`:
-//! the trait writes this system made and how many changed a value, the lines being said
-//! (each is timed again for `subtitles`), the fonts read so far, the HUD texts measured,
-//! and whether the HUD's writes were kept back.
+//! The spans are in every build, with no profile collector too [design]. `LogPlugin` keeps
+//! its default `INFO` (unless `RUST_LOG` says otherwise), so they are enabled: 8 a frame on
+//! the default game's path, up to 12 when the HUD is written, and `menu_drop`, `menu_build`,
+//! `menu_update` and `font_load` only on the frames doing that work. Each takes a slot in
+//! `tracing_subscriber`'s `Registry`, a push and a pop on the thread's span stack, a look
+//! at `EnvFilter`'s span map on entering and leaving, and the fmt layers' `on_new_span`,
+//! which keep an empty `FormattedFields` in the span's extensions (Bevy's fmt layer and
+//! `engine/nvforever/src/crash.rs` `file_layer`). They print nothing themselves, but a log
+//! line made inside one now names it. How long all this takes has not been measured.
+//!
+//! `NVF_PLAY_TEST_TILE_COUNTS=1` (a test aid of its own, in any build; time without it, its
+//! line lies outside the parts): a line a frame, `tile counts: writes=<n> changed=<n>
+//! speech=<n> faces=<n> measure_candidates=<n> deferred=<bool>`: the trait writes this
+//! system made and how many changed a value, `game.speech`'s lines (those `subtitles` goes
+//! over; a line not heard stops at its first test), the faces made so far (the game's fonts
+//! and stand-ins alike), the HUD text tiles a width could be measured for on a frame that
+//! writes the HUD (no count of measures: no game font means none, a tile without a string
+//! is passed over; 0 when deferred, the measuring waits), and whether the HUD's writes were
+//! kept back. Off, one cached flag a frame is read here and the tree's two counters advance
+//! anyway ([`fnv_ui::Ui::trait_write_counts`]).
 
 pub mod draw;
 pub mod input;
@@ -636,17 +654,17 @@ fn counts_on() -> bool {
 }
 
 /// The frame's counts line, from the tree's trait counts when the frame began (`None`
-/// without the test aid: nothing is counted or logged).
+/// without the test aid: nothing is read or logged here).
 fn tell_counts(before: Option<(u64, u64)>, game: &fnv_game::Game<'_>, fonts: &draw::FontKit, deferred: bool) {
     let Some((writes, changes)) = before else { return };
     let (writes_now, changes_now) = game.ui_tree.trait_write_counts();
-    let measured = if deferred || game.ui_files.is_none() { 0 } else { fnv_game::ui_hud::measured_texts(&game.ui_tree).len() };
+    let candidates = if deferred || game.ui_files.is_none() { 0 } else { fnv_game::ui_hud::measured_texts(&game.ui_tree).len() };
     info!(
-        "tile counts: writes={} changed={} speech={} faces={} measured={measured} deferred={deferred}",
+        "tile counts: writes={} changed={} speech={} faces={} measure_candidates={candidates} deferred={deferred}",
         writes_now - writes,
         changes_now - changes,
         game.speech.len(),
-        fonts.faces_read(),
+        fonts.faces_made(),
     );
 }
 

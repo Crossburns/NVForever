@@ -122,6 +122,7 @@ pub fn sync(game: &mut Game<'_>, paused: bool, main_menu: bool) -> LifetimeRepor
             continue;
         }
         let name = menu_class_name(code).map_or_else(|| format!("menu {code}"), str::to_owned);
+        // An attempt: entered too for a menu with no file and a load that fails.
         let span = tracing::info_span!("tiles::write::menu_build").entered();
         let result = match game.ui_menus.code_path(code) {
             Some(path) => game.ui_tree.load_menu(files, path).map(|root| (path, root)),

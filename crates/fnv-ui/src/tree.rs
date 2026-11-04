@@ -304,7 +304,9 @@ pub struct Ui {
     /// engine's every frame, leave the tree clean].
     dirty: bool,
     /// Trait writes from outside so far, and those that changed the value
-    /// ([`Ui::trait_write_counts`]).
+    /// ([`Ui::trait_write_counts`]). Not behind the test aid: an integer added to in
+    /// `set_at`, as `gen` is beside them, with no lock, allocation or output; a gate would
+    /// read a flag in the same place.
     trait_writes: u64,
     trait_changes: u64,
     /// How many live mod-added tiles (an `Injected`, `Template` or loose file origin, or
