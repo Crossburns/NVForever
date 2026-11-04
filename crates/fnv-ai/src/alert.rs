@@ -447,10 +447,14 @@ impl Ai {
                 if stopped || now - since > FLEE_WALK_SECONDS {
                     let a = self.agents.get_mut(&actor).expect("listed");
                     a.walker.follower = None;
-                    a.waiting_at = None;
                     a.activity = Activity::There;
                     let feet = a.walker.feet;
                     let off = flat(feet, post.at);
+                    // A door it was waiting at stays shut for all it knows: it did not pass.
+                    if let Some(door) = a.waiting_at.take() {
+                        self.log(game, actor, AiEvent::DoorWaitCancelled { door: FormId(door) });
+                    }
+                    let a = self.agents.get_mut(&actor).expect("listed");
                     if off >= POST_ARRIVAL {
                         a.search = None;
                         game.awareness.tactics.posts.remove(&actor);

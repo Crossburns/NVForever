@@ -525,16 +525,26 @@ ends short of a point off the navmesh counts while it is within that) are arriva
 `AiEvent::AtPost`, with the point and the feet. Farther off, it failed:
 `AiEvent::PostFailed` says why (`TimedOut`, `StoppedShort`), with the point, the feet, the
 distance and the seconds; the post is released and the actor holds or closes in (§5) on
-that same update. `fnv_ai` keeps no failed state and never retries by itself, one walk per
-assignment; the recovery is the engine's, as for a post with no way to it (the 3 s above,
-the cover discarded, a melee fighter's guard or bound ended). This says nothing about what
-the place is good for: 64 units is nearness, not sight or cover. `POST_SLACK` (48 units)
-only decides whether a new request still is the post the way was planned to.
+that same update. `fnv_ai` keeps no failed state and makes no automatic retry after
+release; the recovery is the engine's, as for a post with no way to it (the 3 s above, the
+cover discarded, a melee fighter's guard or bound ended). A later try at the place is a new
+request from the combat AI. This says nothing about what the place is good for: 64 units
+is nearness, not sight or cover. A door wait given up with the walk is told as that
+(`AiEvent::DoorWaitCancelled`), not as a passage. The failure is logged for every fighter
+(`post failed: <post> (timed out|stopped short) after …`).
 
-Standing at its post, an actor stays there until its feet are 96 units from the point
-(`POST_RETAINED`, wider than arrival so an actor shoved about near 64 does not flip between
-the states and fill the log); past that it plans the way back, which ends in arrival or in
-the failure above, so it cannot loop on a way that stops short.
+The point is the one asked for now, not the one the way was planned to or the place the
+way ends: the engine's tactics measure to it too (`AT_POST`), so arrival here means the same
+to them. `POST_SLACK` (48 units) only decides whether a new request still is the post the
+way was planned to, so a request moved within it plus a way that ended short of the first
+request can add up past 64 and fail a way walked to its end.
+
+A separate case is a walk within one assignment. Standing at its post, an actor stays there
+until its feet are 96 units from the point (`POST_RETAINED`, wider than arrival so an actor
+shoved about near 64 does not flip between the states and fill the log). Past that it plans
+the way back to the same post: not a retry after release, as the post was never released.
+That walk has its own 30 s and ends in arrival or in the failure above, so it cannot loop on
+a way that stops short.
 
 ### 12.2 Fleeing [documented: GECK wiki Confidence, Combat Flee]
 

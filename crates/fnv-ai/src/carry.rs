@@ -188,6 +188,8 @@ pub enum AiEvent {
     /// The script of the next door on the way did not let the actor through
     /// (`fnv_game::npc_doors`): it plans again without that door.
     DoorRefused { door: FormId },
+    /// Its walk was given up while it waited for `door` to open: it did not go through.
+    DoorWaitCancelled { door: FormId },
     /// The walk ended at the package's place, after `seconds` and `travelled` units.
     Arrived { package: FormId, seconds: f64, travelled: f32, patrol_point: Option<FormId> },
     /// No way to the package's location: the package is set aside.

@@ -1711,6 +1711,33 @@ fn fight_on(s: &mut Sim, seconds: f64, mover: &mut dyn fnv_ai::Mover) {
     }
 }
 
+/// Update by update until the first failure; on its way until then. Returns on the very
+/// update that fails, so what is checked next is that update's doing.
+fn fight_until_post_fails(s: &mut Sim, mover: &mut dyn fnv_ai::Mover) {
+    for _ in 0..80 {
+        fight_on(s, 0.5, mover);
+        if post_counts(s).2 > 0 {
+            return;
+        }
+        assert!(matches!(search(s), Some(fnv_ai::alert::Search::Posted { .. })), "{:?}", search(s));
+        assert!(has_post(s));
+    }
+    panic!("no failure: {:?}", s.events(R_SB_NOTHING));
+}
+
+/// Takes the actors over and has them wait for a door that does not open.
+struct AtShutDoor;
+impl fnv_ai::Mover for AtShutDoor {
+    fn walk(&mut self, _: FormId, _: &mut fnv_nav::Walker, _: &NavGraph, _: f32) -> Option<fnv_nav::WalkEvent> {
+        Some(fnv_nav::WalkEvent::WaitingForDoor(DOOR_A))
+    }
+}
+
+/// The door waits given up.
+fn door_waits_cancelled(s: &Sim) -> Vec<u32> {
+    s.events(R_SB_NOTHING).iter().filter_map(|e| if let AiEvent::DoorWaitCancelled { door } = e { Some(door.0) } else { None }).collect()
+}
+
 /// How many walks to a post were planned, how many arrived, how many failed.
 fn post_counts(s: &Sim) -> (usize, usize, usize) {
     let ev = s.events(R_SB_NOTHING);
@@ -1772,15 +1799,18 @@ fn a_fighter_that_gets_nowhere_fails_its_post_at_the_deadline_and_fights_on() {
     let post = [10200.0, 10600.0, 0.0];
     let mut s = fighter_with_post(&f, 2000.0, post, PostKind::Flank);
     let start = s.feet(R_SB_NOTHING);
+    // It has its back to its target, and gets no chance to turn on its way.
+    let to = [POST_TARGET[0] - start[0], POST_TARGET[1] - start[1]];
+    let towards = |heading: f32| {
+        let d = fnv_nav::follow::dir_of(heading);
+        (d[0] * to[0] + d[1] * to[1]) / to[0].hypot(to[1])
+    };
+    s.ai.agents.get_mut(&FormId(R_SB_NOTHING)).unwrap().walker.heading = fnv_nav::follow::heading_of([-to[0], -to[1]]);
     // Until the deadline it is on its way; on the update that passes it, it holds.
-    for _ in 0..80 {
-        fight_on(&mut s, 0.5, &mut NoProgress);
-        if post_counts(&s).2 > 0 {
-            break;
-        }
-        assert!(matches!(search(&s), Some(fnv_ai::alert::Search::Posted { .. })), "{:?}", search(&s));
-        assert!(has_post(&s));
-    }
+    fight_until_post_fails(&mut s, &mut NoProgress);
+    // On the update that failed it turned, as far as a turn goes in that update.
+    let h = s.ai.agents[&FormId(R_SB_NOTHING)].walker.heading;
+    assert!(towards(h) > 0.4, "{h} {}", towards(h));
     assert_eq!(post_counts(&s), (1, 0, 1), "{:?}", s.events(R_SB_NOTHING));
     let (at, feet, off, elapsed, reason) = the_failure(&s);
     assert_eq!(reason, fnv_ai::alert::PostFailure::TimedOut);
@@ -1795,11 +1825,10 @@ fn a_fighter_that_gets_nowhere_fails_its_post_at_the_deadline_and_fights_on() {
     assert_eq!(a.activity, Activity::There);
     assert_eq!(search(&s), holding());
     assert!(s.events(R_SB_NOTHING).iter().any(|e| matches!(e, AiEvent::Hold { target, .. } if *target == FormId::PLAYER_REF)));
-    // It turns to its target.
-    fight_on(&mut s, 2.0, &mut NoProgress);
-    let (heading, to) = (s.ai.agents[&FormId(R_SB_NOTHING)].walker.heading, [POST_TARGET[0] - start[0], POST_TARGET[1] - start[1]]);
-    let d = fnv_nav::follow::dir_of(heading);
-    assert!((d[0] * to[0] + d[1] * to[1]) / to[0].hypot(to[1]) > 0.99, "{heading}");
+    assert!(door_waits_cancelled(&s).is_empty(), "it was not waiting at a door");
+    // The next one finishes the turn.
+    fight_on(&mut s, 0.5, &mut NoProgress);
+    assert!(towards(s.ai.agents[&FormId(R_SB_NOTHING)].walker.heading) > 0.99);
     // Past another deadline: no retry, the next try is the combat AI's.
     fight_on(&mut s, 35.0, &mut NoProgress);
     assert_eq!(post_counts(&s), (1, 0, 1));
@@ -1812,19 +1841,93 @@ fn a_fighter_whose_post_failed_beyond_its_distance_closes_in() {
     use fnv_game::combat_group::PostKind;
     let f = fixture();
     let mut s = fighter_with_post(&f, 100.0, [10200.0, 10600.0, 0.0], PostKind::Cover);
-    fight_on(&mut s, 33.0, &mut NoProgress);
+    let start = s.feet(R_SB_NOTHING);
+    fight_until_post_fails(&mut s, &mut NoProgress);
     assert_eq!(post_counts(&s), (1, 0, 1), "{:?}", s.events(R_SB_NOTHING));
     assert!(!has_post(&s));
-    // The walk it set off on instead is its own, not the abandoned one.
+    // On the update that failed it set off: a walk of its own, not the abandoned one.
     let a = &s.ai.agents[&FormId(R_SB_NOTHING)];
     assert!(a.walker.follower.is_some());
     assert_eq!(a.activity, Activity::Travelling);
     assert!(matches!(search(&s), Some(fnv_ai::alert::Search::Closing { target, .. }) if target == FormId::PLAYER_REF), "{:?}", search(&s));
-    assert!(s.events(R_SB_NOTHING).iter().any(|e| matches!(e, AiEvent::Close { .. })));
-    // Moving again, it gets there; still no second try at the post.
+    let ev = s.events(R_SB_NOTHING);
+    let failed = ev.iter().position(|e| matches!(e, AiEvent::PostFailed { .. })).unwrap();
+    assert!(matches!(ev.last(), Some(AiEvent::Close { .. })) && failed + 1 == ev.len() - 1, "{ev:?}");
+    // Able to move, its first step goes towards the target and it turns that way.
+    fight_on(&mut s, 0.5, &mut OnFoot);
+    let feet = s.feet(R_SB_NOTHING);
+    assert!(dist(feet, POST_TARGET) < dist(start, POST_TARGET), "{feet:?}");
+    let (d, to) = (fnv_nav::follow::dir_of(s.ai.agents[&FormId(R_SB_NOTHING)].walker.heading), [POST_TARGET[0] - feet[0], POST_TARGET[1] - feet[1]]);
+    assert!((d[0] * to[0] + d[1] * to[1]) / to[0].hypot(to[1]) > 0.9, "{d:?}");
+    // It gets there; still no second try at the post.
     fight_on(&mut s, 5.0, &mut OnFoot);
     assert!(dist(s.feet(R_SB_NOTHING), POST_TARGET) < 150.0, "{:?}", s.feet(R_SB_NOTHING));
     assert_eq!(post_counts(&s), (1, 0, 1));
+}
+
+#[test]
+fn a_door_wait_given_up_with_the_walk_is_not_a_passage() {
+    use fnv_game::combat_group::PostKind;
+    let f = fixture();
+    let actor = FormId(R_SB_NOTHING);
+    // Failing, far from the post.
+    let mut s = fighter_with_post(&f, 2000.0, [10200.0, 10600.0, 0.0], PostKind::Flank);
+    fight_on(&mut s, 1.0, &mut AtShutDoor);
+    assert_eq!(s.ai.agents[&actor].waiting_at, Some(DOOR_A));
+    assert!(door_waits_cancelled(&s).is_empty());
+    fight_until_post_fails(&mut s, &mut AtShutDoor);
+    assert_eq!(s.ai.agents[&actor].waiting_at, None);
+    assert_eq!(door_waits_cancelled(&s), vec![DOOR_A]);
+    assert_eq!(search(&s), holding());
+    fight_on(&mut s, 5.0, &mut AtShutDoor);
+    assert_eq!(door_waits_cancelled(&s), vec![DOOR_A], "told once");
+    // Arriving by the deadline, near the post: the walk is over all the same.
+    let mut s = fighter_with_post(&f, 2000.0, [10513.0, 10450.0, 0.0], PostKind::Shift);
+    fight_on(&mut s, 33.0, &mut AtShutDoor);
+    assert_eq!(post_counts(&s), (1, 1, 0));
+    assert_eq!(s.ai.agents[&actor].waiting_at, None);
+    assert_eq!(door_waits_cancelled(&s), vec![DOOR_A]);
+    // The door opening and the walk going on is not one.
+    let mut s = fighter_with_post(&f, 2000.0, [10200.0, 10600.0, 0.0], PostKind::Flank);
+    fight_on(&mut s, 1.0, &mut AtShutDoor);
+    assert_eq!(s.ai.agents[&actor].waiting_at, Some(DOOR_A));
+    fight_on(&mut s, 3.0, &mut OnFoot);
+    assert_eq!(post_counts(&s), (1, 1, 0));
+    assert_eq!(s.ai.agents[&actor].waiting_at, None);
+    assert!(door_waits_cancelled(&s).is_empty());
+}
+
+#[test]
+fn arrival_is_measured_to_the_post_asked_for_now_not_the_one_planned() {
+    // The first request snaps 20 units to the navmesh's edge, where the way ends. A request
+    // moved within the slack keeps that way, and the feet are measured to the new point:
+    // the policy (combat-ai.md §12.1) even when the slack and the snap add up past arrival.
+    use fnv_game::combat_group::PostKind;
+    let f = fixture();
+    let first = [11020.0, 10500.0, 0.0];
+    let run = |moved_to: [f32; 3]| {
+        let mut s = fighter_with_post(&f, 2000.0, first, PostKind::Flank);
+        fight_on(&mut s, 0.5, &mut OnFoot);
+        ask_post(&mut s, moved_to, PostKind::Flank);
+        fight_on(&mut s, 3.0, &mut OnFoot);
+        s
+    };
+    // Not moved, and moved 40: 20 and 60 off.
+    for (x, off) in [(11020.0, 20.0), (11060.0, 60.0)] {
+        let s = run([x, 10500.0, 0.0]);
+        assert_eq!(post_counts(&s), (1, 1, 0), "{:?}", s.events(R_SB_NOTHING));
+        assert!((dist(s.feet(R_SB_NOTHING), [x, 10500.0, 0.0]) - off).abs() < 2.0);
+    }
+    // Moved 47: the way the same, but 67 off. It finished its way and still failed.
+    let moved = [11067.0, 10500.0, 0.0];
+    let s = run(moved);
+    assert_eq!(post_counts(&s), (1, 0, 1), "{:?}", s.events(R_SB_NOTHING));
+    let (at, feet, off, _, reason) = the_failure(&s);
+    assert_eq!(reason, fnv_ai::alert::PostFailure::StoppedShort);
+    assert_eq!(at, moved);
+    assert!(off >= 64.0 && off < 70.0, "{off}");
+    assert!(dist(feet, first) < 64.0, "near the first request: {feet:?}");
+    assert!(!has_post(&s));
 }
 
 #[test]
