@@ -235,7 +235,7 @@ fn place(tile: &Tile, kind: &Kind, parent: Context, measure: &Measure<'_>) -> Co
             _ => parent.alpha * number(tile, "alpha", 255.0).clamp(0.0, 255.0) / 255.0,
         },
         visible: parent.visible && tile.get("visible").is_none_or(Value::truthy),
-        clip: parent.clip,
+        clip: parent.clip.filter(|_| !tile.get(fnv_ui::input::OUTSIDE_CLIP).is_some_and(Value::truthy)),
         t15: parent.t15,
     }
 }

@@ -10,6 +10,7 @@ pub mod menus;
 pub mod model;
 pub mod mods;
 pub mod notices;
+pub mod trait_menu;
 pub mod tutorial_menu;
 pub mod vanilla;
 pub mod wait_menu;
@@ -65,13 +66,13 @@ impl MenuFiles<'_, '_> {
 }
 
 /// Whether `screen()` is written in interface units ([`write_screen`]): only while a T15
-/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`, `ContainerMenu`) or the start menu's Mods page
+/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`, `ContainerMenu`, `TraitMenu`) or the start menu's Mods page
 /// (T11, `mods`) is switched on, whose files centre their boxes by `screen()` (MCM's `x`
 /// and `y`, menu-xml.md §10). The default game and the tile HUD alone keep the window's
 /// pixels [design]. The original reports interface units [observed: hud_menus capture
 /// 2026-10-31, three window sizes]; applying them unconditionally is a follow-up.
 pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
-    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.container || menus.start
+    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.container || menus.traits || menus.start
 }
 
 /// Write `screen()`'s traits for a window `window_width` x `window_height` (logical
@@ -861,6 +862,7 @@ mod tests {
         assert!(interface_screen(vanilla::TileMenus { sleep_wait: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { tutorial: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { container: true, ..Default::default() }));
+        assert!(interface_screen(vanilla::TileMenus { traits: true, ..Default::default() }));
         write_screen(&mut ui, 1280.0, 720.0, true);
         ui.update();
         assert_eq!(ui.get_float("M/Box/x").map(|x| (x * 100.0).round() / 100.0), Some(803.33));

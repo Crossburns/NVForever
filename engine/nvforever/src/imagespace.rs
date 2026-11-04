@@ -652,7 +652,7 @@ fn update_grade(
 
 /// What [`tile_menu_blur`] tells of a state: this contribution, not the screen's whole blur.
 fn tile_menu_blur_text(now: TileMenuBlur) -> String {
-    let names: Vec<&str> = [(now.tutorial, nvf_play::tiles::tutorial_menu::TUTORIAL_MENU), (now.container, "ContainerMenu")].into_iter().filter(|m| m.0).map(|m| m.1).collect();
+    let names: Vec<&str> = [(now.tutorial, nvf_play::tiles::tutorial_menu::TUTORIAL_MENU), (now.container, "ContainerMenu"), (now.traits, nvf_play::tiles::trait_menu::TRAIT_MENU)].into_iter().filter(|m| m.0).map(|m| m.1).collect();
     if names.is_empty() {
         "off".to_string()
     } else {

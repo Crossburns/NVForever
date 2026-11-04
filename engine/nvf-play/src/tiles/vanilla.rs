@@ -59,6 +59,9 @@ pub struct TileMenus {
     /// (`crate::menu::look`) not spawned (`super::container_menu`), and its prompt from
     /// `QuantityMenu`'s while it is so drawn (`super::menus::quantity_tiled`).
     pub container: bool,
+    /// `TraitMenu`: the trait menu from its file, the hand-built one (`crate::chargen::lists`)
+    /// not spawned (`super::trait_menu`).
+    pub traits: bool,
 }
 
 impl TileMenus {
@@ -82,6 +85,8 @@ impl TileMenus {
                 menus.tutorial = true;
             } else if name.eq_ignore_ascii_case(super::container_menu::CONTAINER_MENU) {
                 menus.container = true;
+            } else if name.eq_ignore_ascii_case(super::trait_menu::TRAIT_MENU) {
+                menus.traits = true;
             } else {
                 other.push(name.to_string());
             }
@@ -118,12 +123,12 @@ pub(crate) fn setup(app: &mut App) {
 
 impl TileMenus {
     /// The menus the switch acts on, in its order.
-    pub const NAMES: [&str; 7] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::tutorial_menu::TUTORIAL_MENU, super::container_menu::CONTAINER_MENU, super::mods::START_MENU];
+    pub const NAMES: [&str; 8] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::tutorial_menu::TUTORIAL_MENU, super::container_menu::CONTAINER_MENU, super::trait_menu::TRAIT_MENU, super::mods::START_MENU];
 
     /// The start-up line's end: the menus drawn from tiles, or none, and that the container's
     /// prompt follows it when its own switch is off (`super::menus::quantity_tiled`).
     pub fn line(&self) -> String {
-        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.tutorial, self.container, self.start]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
+        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.tutorial, self.container, self.traits, self.start]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
         if on.is_empty() {
             "no menu drawn from tiles".into()
         } else if self.container && !self.quantity {
@@ -493,7 +498,7 @@ mod tests {
         assert_eq!(TileMenus::default().line(), "no menu drawn from tiles");
         // T15a: the message box and the prompt, each on its own.
         let (menus, other) = TileMenus::parse("messagemenu,QuantityMenu, SleepWaitMenu");
-        assert_eq!(menus, TileMenus { hud: false, message: true, quantity: true, sleep_wait: true, tutorial: false, container: false, start: false });
+        assert_eq!(menus, TileMenus { hud: false, message: true, quantity: true, sleep_wait: true, tutorial: false, container: false, traits: false, start: false });
         assert!(other.is_empty());
         assert_eq!(menus.line(), "MessageMenu, QuantityMenu, SleepWaitMenu drawn from tiles");
         // T15b: the Wait / Sleep and tutorial menus; a menu not built yet stays a name not
@@ -510,6 +515,10 @@ mod tests {
         let both = (TileMenus { container: true, quantity: true, ..TileMenus::default() }, vec!["BarterMenu".to_string()]);
         assert_eq!(TileMenus::parse("ContainerMenu,QuantityMenu,BarterMenu"), both);
         assert_eq!(both.0.line(), "QuantityMenu, ContainerMenu drawn from tiles");
+        // The trait menu; CharGenMenu, its neighbour, not built yet.
+        let traits = TileMenus { traits: true, ..TileMenus::default() };
+        assert_eq!(TileMenus::parse("traitmenu, CharGenMenu"), (traits, vec!["CharGenMenu".to_string()]));
+        assert_eq!(traits.line(), "TraitMenu drawn from tiles");
     }
 
     #[test]

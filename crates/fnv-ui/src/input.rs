@@ -114,6 +114,14 @@ fn flag(ui: &Ui, t: TileId, name: &str) -> bool {
 /// dumps list it and a file naming it would be read too.
 pub const CLIP_WINDOW_ON: &str = "_NVFClipWindow";
 
+/// The private trait of a tile the windows above it do not crop, in the drawing and under the
+/// pointer alike [design: an engine-written mark, in no game file, written by a menu's model; so
+/// nothing else changes]. [hypothesis] A `clipwindow` crops only what has a true `clips`: the
+/// trait menu's description bar stands beside its window with none, its text in it with one, and
+/// the bar's arrows show on the owner's screenshot (chargen.md §4). `clips_children` crops all
+/// below it, which the other menus' lists rely on, so a menu marks the exception.
+pub const OUTSIDE_CLIP: &str = "_NVFOutsideClip";
+
 /// Whether a tile crops its children to its own box, in the drawing (`nvf_play::tiles::layout`)
 /// and under the pointer ([`hit`]) alike: a true `clips` [hypothesis: menu-xml.md §3.1.1], or
 /// a true `clipwindow` in a menu whose model turned it on ([`mark_clip_windows`]).
@@ -216,7 +224,7 @@ fn place(ui: &Ui, t: TileId, parent: Place, measure: &Measure<'_>) -> Place {
     Place {
         area,
         depth: parent.depth + num(ui, t, "depth", 0.0),
-        clip: parent.clip,
+        clip: parent.clip.filter(|_| !flag(ui, t, OUTSIDE_CLIP)),
         forced: parent.forced,
     }
 }
@@ -594,6 +602,27 @@ mod tests {
     <rect name="Cover"> <target> &true; </target> <x> 0 </x> <y> 0 </y> <width> 800 </width> <height> 600 </height> <depth> 99 </depth> </rect>
   </rect>
 </menu>"#;
+
+    #[test]
+    fn a_tile_marked_outside_a_window_is_hit_there() {
+        let src = MemSource::default().with(
+            "w.xml",
+            r#"<menu name="W"><hotrect name="Box"><width>100</width><height>100</height><clips>&true;</clips>
+              <image name="Beside"><target>&true;</target><x>100</x><width>20</width><height>20</height></image>
+              <image name="In"><target>&true;</target><width>20</width><height>20</height></image>
+            </hotrect></menu>"#,
+        );
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "w.xml").unwrap();
+        ui.update();
+        assert!(hit(&ui, &[menu], (110.0, 10.0), &no_measure).is_none(), "cropped by the window");
+        let beside = ui.find_tile("W/Box/Beside").unwrap();
+        ui.set_trait(beside, OUTSIDE_CLIP, Value::Num(1.0));
+        ui.update();
+        assert_eq!(hit(&ui, &[menu], (110.0, 10.0), &no_measure).map(|h| h.tile), Some(beside));
+        let inside = ui.find_tile("W/Box/In").unwrap();
+        assert_eq!(hit(&ui, &[menu], (10.0, 10.0), &no_measure).map(|h| h.tile), Some(inside));
+    }
 
     fn tree() -> (Ui, TileId) {
         let src = MemSource::default().with("menus\\test.xml", MENU);
