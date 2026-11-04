@@ -563,7 +563,9 @@ pub fn fonts_of(ui: &Ui, texts: &[TileId]) -> Vec<f64> {
 /// message box's list and text places read]. An axis the file (or a mod) works out with an
 /// expression is left to it and the other axis still written; a tile measured from the
 /// same string, font and wrap is not measured again (`last`, as
-/// `super::notices::write_widths`). Returns how many tiles were written.
+/// `super::notices::write_widths`). A text that is measured and comes back 0 x 0 had no face
+/// loaded (`super::draw::FontKit::menu_measure`): it is written but not kept, so the next
+/// round measures it again. Returns how many tiles were written.
 pub fn write_text_sizes(ui: &mut Ui, menu: TileId, last: &mut SizesWritten, size: &Size<'_>) -> usize {
     let tiles = texts(ui, menu);
     write_text_sizes_of(ui, &tiles, last, size)
@@ -595,14 +597,19 @@ pub fn write_text_sizes_of(ui: &mut Ui, tiles: &[TileId], last: &mut SizesWritte
         // The box's empty title is measured (one space wide, one line high: it keeps its
         // room) [observed: hud_menus capture 2026-10-31, 14 x 38]; another empty text
         // (the files', a mod's) measures nothing, as before [design: not captured].
-        let measured = if string.is_empty() && Some(t) != title { (0.0, 0.0) } else { size(font, &string, wrap) };
+        let measures = !string.is_empty() || Some(t) == title;
+        let measured = if measures { size(font, &string, wrap) } else { (0.0, 0.0) };
         if own_width {
             ui.set_trait(t, "width", Value::Num(measured.0));
         }
         if own_height {
             ui.set_trait(t, "height", Value::Num(measured.1));
         }
-        last.insert(t, Measured { string, font, wrap, size: measured });
+        if measures && measured == (0.0, 0.0) {
+            last.remove(&t);
+        } else {
+            last.insert(t, Measured { string, font, wrap, size: measured });
+        }
         written += 1;
     }
     written

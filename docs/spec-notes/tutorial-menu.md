@@ -119,7 +119,8 @@ values in interface units; the message 0x0007235B]:
   scrollbar's items are that plus its step of 30 [documented; observed: 655, 841]; its visible
   items the column's height, its jump the height less a step [documented]. Every text is
   measured by the renderer's fonts, worked out and measured again until the body stands at its
-  final wrap width: that width follows Previous's place, 985.33 = 1284.33 - 127 - 108 - 64
+  final wrap width, each round's fonts loaded as the tree then stands; a text measured with no
+  face is not kept, so it is measured again [design]. That width follows Previous's place, 985.33 = 1284.33 - 127 - 108 - 64
   [observed], and that place its word's width.
 - **The scroll's range** is the file's, items less visible items and at least 0: 215 here, and
   the last step is what is left of the range, not a whole step [documented: scrollbar_vert.xml,
@@ -145,7 +146,8 @@ values in interface units; the message 0x0007235B]:
   reaches 215, `_jump_size` 410 [observed: hud_tutorial_more].
 - **Clipping and scrolling are apart.** The file moves the text: `TM_text`'s `y` is
   `_text_y`, 21 less the value [documented]. `clipwindow` on `TM_text_container` crops it
-  (menu-xml.md §3.1.1) [hypothesis: a rectangular crop, nothing captured says more]; the model
+  (menu-xml.md §3.1.1) [observed: a line stops part way at the column's top and bottom edges,
+  shots tutorial__scroll_bottom and tutorial__scroll_arrow, hud_tutorial_more]; the model
   turns the reading on for this menu alone, every frame after the scripts and before the
   drawing, so a window injected or enabled later crops at once. `_NVFClipWindow` and
   `_NVFOwnAlpha` are engine-written marks, ordinary traits to the tree.
@@ -181,8 +183,11 @@ values in interface units; the message 0x0007235B]:
   `_line_alpha` dims it and it takes no highlight [documented: text_box.xml; design: the
   hand-built menu's rule; multi-page is not captured, observer check 82]. `n/N` is NVForever's
   (§3). Close is read (206, 147, 53) at its brightest on that shot, against the body's
-  (255, 182, 66) [observed]; font 2's texels or an alpha, not settled.
-- **One press acts once.** A click a key makes through the file's `_PCButton_*` or `x…` refs
+  (255, 182, 66), with its text's alpha 255 and brightness 255 [observed: hud_tutorial_more], so
+  font 2's texels [hypothesis].
+- **One press acts once.** On the first tiled frame the hand-built buttons of the frame the menu
+  opened still stand, and a press can reach them and the tile input together; `keys` takes no
+  press from them while the menu is tiled, so a Next never turns two pages [design]. A click a key makes through the file's `_PCButton_*` or `x…` refs
   acts unless the hand-built menu took that key this frame (`tiles::menus::key_click_acts`).
   The triggers needed care: RT and LT stand for this menu's A and S
   (`crate::pad::menu_buttons`), not for the shared Page Up and Page Down, so the tile input asks

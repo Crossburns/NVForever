@@ -285,10 +285,12 @@ docs/handoff/ui-tile-tree-tasks.md]: `x` `y` `width` `height` `depth` `alpha` `v
   child cannot override a hidden parent.
 - [hypothesis] True `clips` crops children to this tile's rectangle. Nested ancestor
   clips intersect; a disjoint intersection is empty. The tile's own box is unchanged.
-- [hypothesis] True `clipwindow` is the same rectangular crop, for the layout and the
-  pointer alike (`fnv_ui::input::clips_children`): `list_box.xml`'s highlight box takes
-  its `clips` from its parent's `clipwindow`, and `tutorial_menu.xml`'s text moves inside
-  a `clipwindow` hotrect [documented: the files]; no capture or page says more (observer
+- [observed] True `clipwindow` crops a tile's descendants to its rectangle in the
+  drawing: the tutorial menu's scrolled text stops part way through a line at the column's
+  top and bottom edges (private capture hud_tutorial_more, 1280 x 720, shots
+  tutorial__scroll_bottom and tutorial__scroll_arrow). [hypothesis] The same for the pointer
+  (`fnv_ui::input::clips_children`): `list_box.xml`'s highlight box takes its `clips` from
+  its parent's `clipwindow` [documented: the file]; nothing captured says so (observer
   check 80). It stays apart from scrolling: nothing here moves a tile; a file moves its
   text by the `y` it writes. [documented: the vanilla files] It is true in the book,
   lockpick, map, stats, credits, load, save, trait and tutorial menus and in the prefabs

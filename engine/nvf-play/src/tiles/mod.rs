@@ -637,8 +637,12 @@ fn write_tutorial(
         tutorial_menu::write_symbol(ui, texels);
     }
     let texts = menus::texts(ui, menu);
-    let size = fonts.menu_measure(&menus::fonts_of(ui, &texts));
-    let scroll = tutorial_menu::settle(ui, &texts, &mut written.sizes, &size, &mut view);
+    // Each round's fonts as the tree stands then: a computed font follows what was just written.
+    let mut write_sizes = |ui: &mut fnv_ui::Ui, sizes: &mut menus::SizesWritten| {
+        let size = fonts.menu_measure(&menus::fonts_of(ui, &texts));
+        menus::write_text_sizes_of(ui, &texts, sizes, &size)
+    };
+    let scroll = tutorial_menu::settle(ui, &mut written.sizes, &mut write_sizes, &mut view);
     if changed {
         info!("{}", tutorial_menu::describe(ui, &now));
         written.shown = Some(now);

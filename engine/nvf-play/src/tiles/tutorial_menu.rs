@@ -29,7 +29,7 @@
 //!   frame's own `run_scripts` reaches the tree the next frame (tutorial-menu.md §5).
 
 use super::layout::Rect;
-use super::menus::{SizesWritten, Size, Tiled};
+use super::menus::{SizesWritten, Tiled};
 use crate::tutorial_menu::{Command, Page, TutorialView};
 use fnv_ui::{TileId, Ui, Value};
 
@@ -163,10 +163,13 @@ pub fn mark_windows(ui: &mut Ui) {
 /// column's width to the wrap width, so worked out again until the body is measured at its
 /// final width [design: three rounds are the buttons, the column and the body]. Only then the
 /// range is read and the scroll, held in it, written. Returns the scroll written.
-pub fn settle(ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten, size: &Size<'_>, view: &mut TutorialView) -> f64 {
+///
+/// `write_sizes` is one round of measuring, called with the tree worked out: it finds its
+/// fonts then, so a font computed from what was just written has its face loaded.
+pub fn settle(ui: &mut Ui, sizes: &mut SizesWritten, write_sizes: &mut dyn FnMut(&mut Ui, &mut SizesWritten) -> usize, view: &mut TutorialView) -> f64 {
     ui.update();
     for _ in 0..3 {
-        if super::menus::write_text_sizes_of(ui, texts, sizes, size) == 0 {
+        if write_sizes(ui, sizes) == 0 {
             break;
         }
         ui.update();
@@ -355,6 +358,7 @@ pub const HAND_BUILT_KEYS: [&str; 11] = ["A", "S", "E", "xleft", "xright", "xup"
 
 #[cfg(test)]
 mod tests {
+    use super::super::menus::{fonts_of, write_text_sizes_of, Size};
     use super::*;
     use crate::tutorial_menu::{SYMBOL_DEAD, SYMBOL_W};
     use fnv_sim::FormId;
@@ -472,9 +476,14 @@ mod tests {
     fn unchanged_frame(ui: &mut Ui, sizes: &mut SizesWritten, measure: &Size<'_>, view: &mut TutorialView) {
         let menu = ui.menu(TUTORIAL_MENU).unwrap();
         let texts = super::super::menus::texts(ui, menu);
-        settle(ui, &texts, sizes, measure, view);
+        settled(ui, &texts, sizes, measure, view);
         ui.update();
         mark_windows(ui);
+    }
+
+    /// [`settle`] with a measure whose fonts are all there.
+    fn settled(ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten, measure: &Size<'_>, view: &mut TutorialView) {
+        settle(ui, sizes, &mut |ui, sizes| write_text_sizes_of(ui, texts, sizes, measure), view);
     }
 
     fn words(n: usize) -> String {
@@ -610,7 +619,7 @@ mod tests {
         // as the frame's writes end, before the tree is worked out after the scripts.
         screen(&mut ui, 1456.25);
         let texts = super::super::menus::texts(&ui, ui.menu(TUTORIAL_MENU).unwrap());
-        settle(&mut ui, &texts, &mut sizes, &wrapped, &mut view);
+        settled(&mut ui, &texts, &mut sizes, &wrapped, &mut view);
         assert_eq!(ui.get_float(&format!("{TEXT}/wrapwidth")), Some(780.0));
         assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(811.0));
         assert_eq!(scroll_bound(&ui), 401.0);
@@ -620,7 +629,7 @@ mod tests {
         assert_eq!(text_y(&ui), Some(21.0 - 215.0));
         // Wider: wrap 1980, 19 a line, 10 lines, 315 high: no range left, the scroll held to it.
         screen(&mut ui, 2956.25);
-        settle(&mut ui, &texts, &mut sizes, &wrapped, &mut view);
+        settled(&mut ui, &texts, &mut sizes, &wrapped, &mut view);
         assert_eq!(ui.get_float(&format!("{TEXT}/height")), Some(315.0));
         assert_eq!((scroll_bound(&ui), view.scroll), (0.0, 0.0));
         ui.update();
@@ -844,6 +853,74 @@ mod tests {
         // 532 high, 120 of 122: the marker stands near the bottom, the same click is above it.
         let ui = scrolled(17, 120.0);
         assert!(under(area(&ui, PAGE_UP)) && !under(area(&ui, PAGE_DOWN)));
+    }
+
+    /// A renderer's faces: a font not loaded measures nothing, as `FontKit::menu_measure`.
+    #[derive(Default)]
+    struct Faces(Vec<f64>);
+
+    impl Faces {
+        fn load(&mut self, fonts: &[f64]) {
+            for &f in fonts {
+                if !self.0.contains(&f) {
+                    self.0.push(f);
+                }
+            }
+        }
+
+        fn measure(&self, font: f64, text: &str, wrap: Option<f64>) -> (f64, f64) {
+            if self.0.contains(&font) {
+                size(font, text, wrap)
+            } else {
+                (0.0, 0.0)
+            }
+        }
+    }
+
+    #[test]
+    fn a_font_computed_from_what_was_written_is_measured_in_its_own_face() {
+        // A mod's title: font 6, or 7 with the count shown, which `write` turns on.
+        let mut ui = menu_changed(|xml| {
+            xml.replace(r#"<text name="TM_title">"#, r#"<text name="TM_title"><font><copy>6</copy><add src="sibling(TM_page)" trait="visible"/></font>"#)
+        });
+        let mut view = TutorialView::default();
+        let mut sizes = SizesWritten::default();
+        let mut faces = Faces::default();
+        let texts = super::super::menus::texts(&ui, ui.menu(TUTORIAL_MENU).unwrap());
+        let (font, height) = (format!("{TITLE}/font"), format!("{TITLE}/height"));
+        let one = shown(&ui, "Title", &words(3), 0, 1);
+        write(&mut ui, &one);
+        let mut round = |ui: &mut Ui, sizes: &mut SizesWritten| {
+            faces.load(&fonts_of(ui, &texts));
+            write_text_sizes_of(ui, &texts, sizes, &|f, t, w| faces.measure(f, t, w))
+        };
+        settle(&mut ui, &mut sizes, &mut round, &mut view);
+        assert_eq!((ui.get_float(&font), ui.get_float(&height)), (Some(6.0), Some(lines(1))));
+        let two = shown(&ui, "Title", &words(3), 0, 2);
+        write(&mut ui, &two);
+        assert_eq!(ui.get_float(&font), Some(6.0), "not worked out yet: looking now would miss font 7");
+        settle(&mut ui, &mut sizes, &mut round, &mut view);
+        assert_eq!((ui.get_float(&font), ui.get_float(&height)), (Some(7.0), Some(lines(1))));
+    }
+
+    #[test]
+    fn a_measure_without_its_face_is_not_kept() {
+        let mut ui = menu();
+        let texts = super::super::menus::texts(&ui, ui.menu(TUTORIAL_MENU).unwrap());
+        let title = ui.find_tile(TITLE).unwrap();
+        let height = format!("{TITLE}/height");
+        let mut sizes = SizesWritten::default();
+        let mut faces = Faces::default();
+        write_text_sizes_of(&mut ui, &texts, &mut sizes, &|f, t, w| faces.measure(f, t, w));
+        assert_eq!(ui.get_float(&height), Some(0.0));
+        assert!(!sizes.contains_key(&title));
+        // The face loaded later: the same string, font and wrap are measured again.
+        faces.load(&fonts_of(&ui, &texts));
+        assert!(write_text_sizes_of(&mut ui, &texts, &mut sizes, &|f, t, w| faces.measure(f, t, w)) > 0);
+        assert_eq!(ui.get_float(&height), Some(lines(2)));
+        assert!(sizes.contains_key(&title));
+        // Kept now, as any other measure.
+        assert_eq!(write_text_sizes_of(&mut ui, &texts, &mut sizes, &|f, t, w| faces.measure(f, t, w)), 0);
     }
 
     #[test]

@@ -1169,20 +1169,19 @@ The numbers above stay put so links to them hold; each item here gives its own p
 
 ## Added 2026-11-04 (the tutorial menu from its file, issue #978)
 
-80. **What does `clipwindow` do?** (P3; menu-xml.md §3.1.1.) NVForever reads it as a
-    rectangular crop of a tile's children, the same as `clips`, for the pictures and the
-    pointer, in the tutorial menu only so far. In the original, with a long help scrolled
-    half way: whether a line stops exactly at the column's top and bottom edges (440 units
-    high at 1280 x 720) or a line is hidden whole; and whether a click below the column's
-    edge reaches a tile inside it (a list's row scrolled out, in a menu with `list_box.xml`).
+80. **What does `clipwindow` do?** (P3; menu-xml.md §3.1.1.) Answered in part (private
+    capture hud_tutorial_more, 1280 x 720) [observed]: in the drawing it is a rectangular
+    crop of the descendants, a scrolled line stopping part way at the column's top and bottom
+    edges. Still open: whether a click below the column's edge reaches a tile inside it (a
+    list's row scrolled out, in a menu with `list_box.xml`).
 81. **Does a picture's `alpha` reach the tiles inside it?** (P3; tutorial-menu.md §5.) The
     tutorial menu's content under its background of alpha 193.8 reads full strength, so
     NVForever marks that one tile; other tiles still multiply through a picture. A menu or
     a test tile with a text inside a half-alpha picture answers whether this holds for
     pictures generally.
-82. **The tutorial menu with two pages.** (P3; tutorial-menu.md §3, §4, §5.) Two
-    `ShowTutorialMenu` of different messages while it is open: whether the second is a page
-    or replaces the first; what `TM_page` then shows and whether it is visible; whether Next
-    and Previous appear, and how one with nowhere to go looks (dimmed, hidden). Only the
-    one-page help is captured: count hidden, no Next or Previous. Also whether Close's
-    (206, 147, 53) is its font or an alpha.
+82. **The tutorial menu with two pages.** (P3; tutorial-menu.md §4, §5.) Answered (private
+    capture hud_tutorial_more, 1280 x 720) [observed]: a second `ShowTutorialMenu` replaces the
+    first, `TM_page` stays hidden, Next and Previous stay hidden and not targets, and A and S
+    change nothing. NVForever's pages differ; owner-review.md item 45 asks which to keep. Close
+    reads alpha 255, so its (206, 147, 53) is not an alpha [observed]; font 2's texels
+    [hypothesis].
