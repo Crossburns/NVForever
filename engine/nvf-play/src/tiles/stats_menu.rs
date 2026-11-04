@@ -1348,7 +1348,7 @@ mod tests {
     #[test]
     fn a_tabs_inner_rect_neither_moves_it_twice_nor_hides_it() {
         let tab = r#"<hotrect name="stats_tailline_skills"><target>&true;</target><x>130</x><y>500</y><width>50</width><height>20</height><text name="TabWords"><string>Tab</string></text></hotrect>"#;
-        let nested = r#"<hotrect name="stats_tailline_skills"><x>130</x><y>500</y><width>50</width><height>20</height>
+        let nested = r#"<hotrect name="stats_tailline_skills"><target>&true;</target><x>130</x><y>500</y><width>50</width><height>20</height>
           <rect name="stb_text_box"><target>&true;</target><x>130</x><y>500</y><width>50</width><height>20</height><alpha>0</alpha>
             <text name="InnerWords"><alpha>200</alpha><string>Tab</string></text>
             <rect name="InnerBox"><alpha>0</alpha><image name="InnerLine"><filename>a.dds</filename><width>50</width><height>2</height></image></rect>
