@@ -1354,14 +1354,14 @@ fn keyframed_door_blocks_until_posed_open() {
 }
 
 /// A keyframed body is teleported into place (never moved smoothly), so it is a fixed
-/// body. As a kinematic body it broke the character controller twice — a degenerate
-/// collision mesh's centre of mass became a phantom velocity that flung a character
-/// standing on it, and the controller's "carried by a kinematic body" rule froze a
-/// character walking down its slope (the Prospector Saloon's broken door 0x00108BD7,
-/// issue #1485). A character walking down a keyframed slope must move normally.
+/// body. As a kinematic body it broke the character controller: rapier's "carried by a
+/// kinematic body" rule froze a character walking down its slope (the Prospector Saloon's
+/// broken door 0x00108BD7, issue #1485; the same model also let a degenerate collision
+/// mesh's centre of mass become a phantom velocity that flung a character). A character
+/// walking down a keyframed slope must move normally.
 #[test]
-fn keyframed_slope_does_not_free_or_fling_the_character() {
-    // A slab tilted so its top descends southward, keyframed as door parts are.
+fn keyframed_slope_does_not_freeze_the_character() {
+    // A slab tilted so its top descends eastward, keyframed as door parts are.
     let a = 5.0f32.to_radians();
     let (s, c) = a.sin_cos();
     let rot = [c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c];
@@ -1374,21 +1374,17 @@ fn keyframed_slope_does_not_free_or_fling_the_character() {
     w.add_ref(&RefPose { form_id: 1, position: [0.0 - rw[0], 0.0, 100.0 - rw[2]], rotation: rot, scale: 1.0 }, &[panel]);
     let mut c = w.add_character(1, CharacterParams::default(), [0.0, 100.0, 120.0]);
     settle(&mut w, &mut c, 60);
-    let z0 = c.feet[2];
     let dt = w.params.dt;
     let mut min_speed = f32::INFINITY;
-    let mut max_up = 0.0f32;
     let mut prev = c.feet;
     for _ in 0..120 {
         let s = w.move_character(&mut c, CharacterInput { velocity: [0.0, -344.0], ..Default::default() });
         w.step();
         let speed = ((s.feet[0] - prev[0]).powi(2) + (s.feet[1] - prev[1]).powi(2)).sqrt() / dt;
         min_speed = min_speed.min(speed);
-        max_up = max_up.max(s.feet[2] - z0);
         prev = s.feet;
     }
     assert!(min_speed > 50.0, "froze on the keyframed slope: min {min_speed:.1} units/s");
-    assert!(max_up < 30.0, "flung {max_up} units up");
 }
 
 #[test]

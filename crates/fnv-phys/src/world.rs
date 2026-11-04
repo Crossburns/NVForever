@@ -256,8 +256,7 @@ impl PreparedRef {
     /// Add its dynamic bodies asleep: they stay where they were put, whatever is (or is
     /// not) under them, until something wakes them — a body moving against them, a push
     /// ([`PhysWorld::push_ref`], [`PhysWorld::push_dynamic`]) or a body they touch being
-    /// removed. Its keyframed bodies are added asleep too, until they are first moved.
-    /// For clutter placed in a cell (physics.md §4.3.1).
+    /// removed. For clutter placed in a cell (physics.md §4.3.1).
     pub fn asleep(mut self) -> PreparedRef {
         self.asleep = true;
         self
@@ -475,11 +474,10 @@ impl PhysWorld {
 
     /// Add the collision objects of a placed reference: one body per object, placed at
     /// `pose ∘ node_transform ∘ body_transform`, with the reference's uniform scale baked
-    /// into the shapes. Static objects become fixed bodies, keyframed ones
-    /// kinematic, dynamic ones dynamic with the object's mass, friction and restitution
-    /// (physics.md §4). Replaces an earlier add of the same reference's bodies; its placed
-    /// water ([`PhysWorld::add_placed_water`]) is kept, so the two can be added in either
-    /// order.
+    /// into the shapes. Static and keyframed objects become fixed bodies, dynamic ones
+    /// dynamic with the object's mass, friction and restitution (physics.md §4). Replaces an
+    /// earlier add of the same reference's bodies; its placed water
+    /// ([`PhysWorld::add_placed_water`]) is kept, so the two can be added in either order.
     pub fn add_ref(&mut self, pose: &RefPose, objects: &[CollisionObject]) -> AddReport {
         self.insert_ref(PreparedRef::build(self.k, pose, objects))
     }
@@ -495,12 +493,11 @@ impl PhysWorld {
         for o in p.objects {
             let owner = Owner::Ref { form_id: p.form_id, object: o.index, layer: o.layer };
             // Keyframed bodies are teleported into place (`pose_ref_object` sets the
-            // position and the next position together), never moved smoothly, so a fixed
-            // body is the right model. A kinematic body made rapier derive a phantom
-            // velocity from a degenerate collision mesh's centre of mass and fling a
-            // character standing on it, and its "carried by a kinematic body" rule froze a
-            // character walking down the slope [observed: the Prospector Saloon's broken
-            // door 0x00108BD7, issue #1485].
+            // position), never moved smoothly, so a fixed body is the right model. A
+            // kinematic body made rapier derive a phantom velocity from a degenerate
+            // collision mesh's centre of mass and fling a character standing on it, and its
+            // "carried by a kinematic body" rule froze a character walking down the slope
+            // [observed: the Prospector Saloon's broken door 0x00108BD7, issue #1485].
             let builder = match o.motion {
                 Motion::Static | Motion::Keyframed => RigidBodyBuilder::fixed(),
                 Motion::Dynamic => RigidBodyBuilder::dynamic().sleeping(p.asleep),
@@ -968,8 +965,8 @@ impl PhysWorld {
     }
 
     /// Bounding box (game units: min and max corners) of every collider on a fixed body —
-    /// terrain and references' static collision, not characters or dynamic bodies; `None`
-    /// when there are none.
+    /// terrain and references' static and keyframed collision, not characters or dynamic
+    /// bodies; `None` when there are none.
     pub fn fixed_bounds(&self) -> Option<([f32; 3], [f32; 3])> {
         let mut out: Option<([f32; 3], [f32; 3])> = None;
         for (_, c) in self.w.colliders.iter() {
