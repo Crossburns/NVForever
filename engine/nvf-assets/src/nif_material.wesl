@@ -499,8 +499,10 @@ fn nif_fragment(
         // faded only by the view-angle falloff.
         let add_a = select(out.color.a, falloff, surface.add_whole > 0.5);
         let fogged = main_pass_post_lighting_processing(pbr_input, vec4(out.color.rgb, 1.0));
-        let behind = textureSampleLevel(view_transmission_texture, view_transmission_sampler, frag_coord_to_uv(in.position.xy), 0.0).rgb;
-        out.color = vec4(add_display(fogged.rgb, add_a, behind), 0.0);
+        @if(!ADD_LINEAR) let behind = textureSampleLevel(view_transmission_texture, view_transmission_sampler, frag_coord_to_uv(in.position.xy), 0.0).rgb;
+        @if(!ADD_LINEAR) out.color = vec4(add_display(fogged.rgb, add_a, behind), 0.0);
+        // NifSurface::add_linear: the colour added as it is, in linear light.
+        @if(ADD_LINEAR) out.color = vec4(fogged.rgb * saturate(add_a), 0.0);
     } else {
         out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     }

@@ -308,6 +308,10 @@ pub struct NifSurface {
     /// drawn with its depth squeezed in front of the world (module notes, "First-person
     /// depth").
     pub first_person: bool,
+    /// An additive shape that adds its colour in linear light, not by [`add_display`]: the
+    /// Pip-Boy's glare over the menus (nvforever `pipboy_arm.rs`), which has to stay on the
+    /// arms' squeezed depth, so Bevy's own unlit additive material cannot draw it [design].
+    pub add_linear: bool,
     /// Holes (module notes, "Holes"): x the value in alpha units (0–255) at and above
     /// which the holes texture's alpha leaves a hole, negative for none; y the width of
     /// the edge band below it; z, w unused.
@@ -413,6 +417,7 @@ impl Default for NifSurface {
             shade_light: false,
             depth_write: false,
             first_person: false,
+            add_linear: false,
             holes: NO_HOLES,
             holes_edge: Vec4::ONE,
             soft: Vec4::ZERO,
@@ -433,6 +438,7 @@ pub struct NifSurfaceKey {
     pub facegen: bool,
     pub depth_write: bool,
     pub first_person: bool,
+    pub add_linear: bool,
 }
 
 impl From<&NifSurface> for NifSurfaceKey {
@@ -445,6 +451,7 @@ impl From<&NifSurface> for NifSurfaceKey {
             facegen: surface.facegen_offset.is_some(),
             depth_write: surface.depth_write,
             first_person: surface.first_person,
+            add_linear: surface.add_linear,
         }
     }
 }
@@ -479,6 +486,11 @@ impl MaterialExtension for NifSurface {
         if key.bind_group_data.facegen && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("FACEGEN_TINT".into());
+            }
+        }
+        if key.bind_group_data.add_linear && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("ADD_LINEAR".into());
             }
         }
         if key.bind_group_data.refract {
@@ -865,25 +877,25 @@ mod tests {
         // Only the decal, refraction, hard-edge, shade-light and FaceGen switches select the pipeline; the falloff and the
         // alpha cut are uniforms.
         let mut surface = NifSurface::default();
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: false, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: false, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false });
         assert_eq!(surface.alpha_cut, 0.0);
         surface.falloff = Vec4::new(0.9, 0.2, 1.0, 0.0);
         surface.alpha_cut = 0.5;
         assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey::from(&NifSurface::default()));
         surface.decal = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false });
         surface.hard_edges = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: false, facegen: false, depth_write: false, first_person: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false });
         surface.shade_light = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false });
         // The refraction strength is a uniform; whether the shape refracts is the pipeline's.
         surface.refraction = 0.1;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false });
         surface.refract = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false });
         // A FaceGen offset selects the tinting shader.
         surface.facegen_offset = Some(Handle::default());
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: true, depth_write: false, first_person: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: true, depth_write: false, first_person: false, add_linear: false });
     }
 
     /// First-person depth (module notes): the squeeze keeps the near plane at 1, puts the
@@ -900,6 +912,10 @@ mod tests {
         // Two units apart at 60 units still differ by many steps of an f32 near 1.
         assert!(first_person_squeeze(z(60.0)) - first_person_squeeze(z(62.0)) > 100.0 * f32::EPSILON);
         assert!(include_str!("first_person_depth.wesl").contains("const FIRST_PERSON_DEPTH_SHARE: f32 = 0.015625;"));
+        // The linear add is a pipeline of its own, on the shader's own switch.
+        assert!(NifSurfaceKey::from(&NifSurface { add_linear: true, ..default() }).add_linear);
+        assert!(!NifSurfaceKey::from(&NifSurface::default()).add_linear);
+        assert!(include_str!("nif_material.wesl").contains("@if(ADD_LINEAR)"));
         assert_eq!(FIRST_PERSON_DEPTH_SHARE, 0.015625);
     }
 
