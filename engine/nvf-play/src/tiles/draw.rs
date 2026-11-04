@@ -851,6 +851,8 @@ pub(crate) struct View<'w, 's> {
     /// The pause menu and its page, for the Mods page (T11, `super::mods`).
     paused: Option<Res<'w, crate::pause::Paused>>,
     page: Option<Res<'w, crate::pause::Page>>,
+    /// T15c: the container menu, when this frame's writer has it drawn from its tiles.
+    container: Option<Res<'w, super::container_menu::ContainerTiles>>,
 }
 
 /// The colours an [`Ink`] node may carry.
@@ -873,6 +875,7 @@ pub(crate) struct MenusDrawn {
     /// The start menu's mod tiles on the pause menu's Mods page (T11).
     start: Drawn,
     sleep_wait: Drawn,
+    container: Drawn,
 }
 
 /// The stacking levels of the menus drawn from tiles besides the HUD: their hand-built
@@ -882,6 +885,9 @@ pub const MESSAGE_Z: i32 = 108;
 pub const QUANTITY_Z: i32 = 101;
 /// T15b: the Wait / Sleep menu's, its hand-built drawing's 105 (`crate::wait`) [design].
 pub const SLEEP_WAIT_Z: i32 = 105;
+/// T15c: the container menu's, its hand-built drawing's 100 (`crate::menu`), under its prompt
+/// [design].
+pub const CONTAINER_Z: i32 = 100;
 
 pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes) {
     let scale = view.windows.single().map_or(1.0, |w| w.height() / 960.0);
@@ -893,10 +899,12 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
     let others = &mut *others;
     // The prompt drawn only while open: its tree drops at the next frame's sync.
     let prompt_open = view.active.as_ref().and_then(|a| a.0.as_ref()).is_some_and(|m| m.quantity.is_some());
+    let container_on = view.container.as_ref().is_some_and(|c| c.menu.is_some());
     for (name, on, z, drawn) in [
         (super::menus::MESSAGE_MENU, game.is_some_and(|g| super::menus::message_tiled(switch.message, g)), MESSAGE_Z, &mut others.message),
         (super::menus::QUANTITY_MENU, game.is_some_and(|g| super::menus::quantity_tiled(switch.quantity, g, prompt_open)), QUANTITY_Z, &mut others.quantity),
         (super::wait_menu::SLEEP_WAIT_MENU, game.is_some_and(|g| super::wait_menu::tiled(switch.sleep_wait, g)), SLEEP_WAIT_Z, &mut others.sleep_wait),
+        (super::container_menu::CONTAINER_MENU, container_on, CONTAINER_Z, &mut others.container),
     ] {
         let ui = game.map(|g| &g.ui_tree);
         let menu = ui.filter(|_| on).and_then(|ui| ui.menu(name).map(|m| (ui, m)));

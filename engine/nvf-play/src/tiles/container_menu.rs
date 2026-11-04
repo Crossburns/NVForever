@@ -1,0 +1,923 @@
+//! T15c: the container menu drawn from `menus\container_menu.xml`, behind
+//! `[UI] TileMenus=ContainerMenu` [design: ui-tile-tree.md §6.2 step 3; notes: barter-menu.md
+//! §8]. Off (the default), none of this runs and the hand-built menu (`crate::menu::look`)
+//! draws.
+//!
+//! - **The rules stay the hand-built menu's** (`crate::menu::model`): what a row is, its
+//!   order, the prompt, Take All and what it closes; every command goes through
+//!   `crate::menu::MenuInput` to `apply_input`, with its sounds, theft and events. This
+//!   module is the view: it writes the model's state as the file's "set in code" traits and
+//!   says what a click on a tile stands for. Only the lists' scroll is its own, which the
+//!   model never had in units (it kept a first row for the hand-built drawing).
+//! - **A frame** ([`settle`], before `super::input::feed`): the tree worked out first (a new
+//!   window size leads to places), what changed written ([`write`]), the texts measured, the
+//!   rows placed, the counts, scroll and highlight written, the tree worked out again. So
+//!   the tree is one whole state of the model as the frame's input sees it. `apply_input`
+//!   runs later in the frame (`PlaySet::Ui`): a command's result reaches the tree on the next
+//!   frame, and the frame's drawing shows the state it was clicked on. After the input's step
+//!   the scroll and highlight are written again ([`ContainerTiles::rewrite`]): the file's
+//!   value counts clicks from 0, and each pulse's end would bring that back.
+//! - **Clicks on rows that changed**: a row's tile stands for one key for its whole life
+//!   (`super::list::reconcile`), a key gone unloads its tile, and a click is checked against
+//!   the model's row at that index ([`ContainerTiles::row_at`]); at most one row click acts a
+//!   frame, as the first may change the rows under the next.
+//! - **Both lists are enabled** [observed: `_enabled` 1 and 1 at every read, though the
+//!   prefab's comment warns against it]; the list without the focus shows no highlight by
+//!   `_highlight_y` -1 and `_selected_height` 0 [observed]. Its rows take the pointer, so a
+//!   row of either list can gain the focus.
+//! - **Alpha**: every tile of the menu takes only its own alpha ([`mark_tiles`],
+//!   `super::layout::OWN_ALPHA`) [observed: barter-menu.md §8]. The highlight's fill is drawn
+//!   (`super::layout::HOTRECT_FILL`).
+//! - **Keys** ([`HAND_BUILT_KEYS`]): the hand-built keys stay the keys, so physical A focuses
+//!   the player's list and R takes all, against the file's `_PCButton_A`; a script's MenuTapKey
+//!   still acts through the file. The Take All hint says "R)", so what shows is what works
+//!   [design: crate::menu's keys, which no owner decision set; the file and the original's shot
+//!   say "A)"].
+//! - **The wheel** stays `crate::menu::menu_mouse`'s: it moves the selection, over a heading
+//!   the category; this module only says which heading the pointer is over ([`TileWheelTitle`]).
+
+use super::layout::{HOTRECT_FILL, OWN_ALPHA};
+use super::list::{self, Counts, Drag, RowTile, Wanted};
+use super::menus::{SizesWritten, Size, Tiled};
+use crate::menu::look;
+use crate::menu::model::{Category, MenuModel, Mode, Row, Side, Units};
+use crate::pipboy::items::Info;
+use bevy::prelude::Resource;
+use fnv_sim::FormId;
+use fnv_ui::{TileId, Ui, Value};
+
+/// The menu's name [documented: container_menu.xml].
+pub const CONTAINER_MENU: &str = "ContainerMenu";
+
+const BACKGROUND: &str = "ContainerMenu/NOGLOW_BRANCH/CM_Background";
+const SUBTITLE: &str = "ContainerMenu/NOGLOW_BRANCH/CM_Subtitle";
+const WEIGHT: &str = "ContainerMenu/NOGLOW_BRANCH/CM_ItemsRect/CM_Items_CapsLabel";
+const ARROW: &str = "ContainerMenu/NOGLOW_BRANCH/CM_ArrowIcon";
+const ICON: &str = "ContainerMenu/NOGLOW_BRANCH/CM_ItemIcon";
+const CARD: &str = "ContainerMenu/NOGLOW_BRANCH/CM_ItemData";
+const TAKE_ALL: &str = "ContainerMenu/NOGLOW_BRANCH/CM_ButtonRect/CM_TakeAllButton";
+const EXIT: &str = "ContainerMenu/NOGLOW_BRANCH/CM_ButtonRect/CM_ExitButton";
+const TEMPLATE: &str = "CM_list_template";
+const ROW: &str = "CM_list_template_container";
+const ROW_TEXT: &str = "ListItemText";
+const ROW_MARK: &str = "CM_list_template_ItemMarker";
+/// By [`Side`]: the container's at the right, the player's at the left.
+const LISTS: [&str; 2] = ["ContainerMenu/NOGLOW_BRANCH/CM_ContainerRect/CM_Container_InventoryList", "ContainerMenu/NOGLOW_BRANCH/CM_ItemsRect/CM_Items_InventoryList"];
+const TITLES: [&str; 2] = ["ContainerMenu/NOGLOW_BRANCH/CM_ContainerRect/CM_ContainerTitle", "ContainerMenu/NOGLOW_BRANCH/CM_ItemsRect/CM_ItemsTitle"];
+const SIDES: [Side; 2] = [Side::Container, Side::Player];
+
+/// The backing's opacity [observed: `CM_Background`'s `alpha` 193.8 at 1280 x 720, the file's
+/// `_background_fill_alpha` of 32 being replaced in the original].
+pub const BACKGROUND_ALPHA: f64 = 193.8;
+
+/// What the hint beside Take All says: the key that does it here (module notes) [design:
+/// NVForever's words, the hand-built menu's].
+const TAKE_ALL_HINT: &str = "R)";
+
+/// [design] Every path the model writes or input reads is part of a successful build, the
+/// buttons' words, which give them their sizes, and the rows' template with the two children
+/// written; a file a mod restructured keeps the hand-built menu whole. Worked out once a frame
+/// ([`ContainerTiles::menu`]).
+pub fn built(ui: &Ui) -> Tiled {
+    let mut paths: Vec<String> = [CONTAINER_MENU, BACKGROUND, SUBTITLE, WEIGHT, ARROW, ICON, CARD, TAKE_ALL, EXIT].iter().map(|s| (*s).to_string()).collect();
+    paths.extend([TAKE_ALL, EXIT].map(|b| format!("{b}/button_text")));
+    paths.extend(TITLES.iter().map(|s| (*s).to_string()));
+    for side in ["CM_ContainerRect/CM_Container", "CM_ItemsRect/CM_Items"] {
+        for arrow in ["LeftFilterArrow", "RightFilterArrow"] {
+            paths.push(format!("ContainerMenu/NOGLOW_BRANCH/{side}_{arrow}"));
+        }
+    }
+    for list_path in LISTS {
+        paths.push(format!("{list_path}/{}", list::HIGHLIGHT));
+        for piece in [list::MARKER, list::UP, list::DOWN, list::PAGE_UP, list::PAGE_DOWN] {
+            paths.push(format!("{list_path}/{}/{piece}", list::SCROLLBAR));
+        }
+    }
+    paths.extend(super::item_card::CARDS.iter().chain(&[super::item_card::EFFECTS, super::item_card::CONDITION_ARROWS]).map(|c| format!("{CARD}/{c}")));
+    for path in &paths {
+        if ui.find_tile(path).is_none() {
+            return Tiled::No(format!("{path} missing"));
+        }
+    }
+    let Some(menu) = ui.find_tile(CONTAINER_MENU) else { return Tiled::No(format!("{CONTAINER_MENU} missing")) };
+    let Some(template) = ui.tile(menu).templates.iter().find(|t| t.name.eq_ignore_ascii_case(TEMPLATE)) else {
+        return Tiled::No(format!("{TEMPLATE} missing"));
+    };
+    let row = template.body.iter().find_map(|n| match n {
+        fnv_ui::xml::Node::Element(e) if e.attr("name").is_some_and(|n| n.eq_ignore_ascii_case(ROW)) => Some(e),
+        _ => None,
+    });
+    let Some(row) = row else { return Tiled::No(format!("{TEMPLATE}/{ROW} missing")) };
+    for (kind, name) in [("text", ROW_TEXT), ("image", ROW_MARK)] {
+        if !row.elements().any(|e| e.is(kind) && e.attr("name").is_some_and(|n| n.eq_ignore_ascii_case(name))) {
+            return Tiled::No(format!("{TEMPLATE}/{ROW}/{name} missing"));
+        }
+    }
+    Tiled::Yes
+}
+
+/// Whether the open container menu is drawn from its tiles: the switch on, the menu files read,
+/// a container's menu open (`open`: `crate::menu::ActiveMenu`'s mode; the barter menu keeps its
+/// drawing), the top menu 1008 (a box a script shows over it builds its own file) and the file
+/// built with every path. Every drawing and input reader uses this decision [design], as this
+/// frame's writer left it ([`ContainerTiles::menu`]).
+pub fn tiled(on: bool, game: &fnv_game::Game<'_>, open: bool) -> bool {
+    on && open && game.ui_files.is_some() && game.menu == Some(crate::script::MENU_CONTAINER) && built(&game.ui_tree).yes()
+}
+
+/// Whether `m` is a menu this file draws.
+pub fn is_container(m: Option<&MenuModel>) -> bool {
+    m.is_some_and(|m| matches!(m.mode, Mode::Container(_)))
+}
+
+/// What a row stands for: its units and the reference a corpse's dropped weapon is, and which
+/// of rows alike it is (a tile never changes what it stands for).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RowKey {
+    pub units: Units,
+    pub reference: Option<FormId>,
+    pub nth: u32,
+}
+
+/// A row as shown.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RowShown {
+    pub key: RowKey,
+    /// [observed: the tile's name, the item's without the count].
+    pub name: String,
+    pub text: String,
+    pub equipped: bool,
+}
+
+/// A list as shown.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ListShown {
+    pub rows: Vec<RowShown>,
+    pub category: Category,
+    /// The row with the highlight: only in the list with the focus.
+    pub selected: Option<usize>,
+}
+
+/// One whole state of the model, as the menu shows it: a frame with the same writes nothing
+/// but sizes and scroll. A plain snapshot, so tests need no world.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Snapshot {
+    /// By [`Side`].
+    pub lists: [ListShown; 2],
+    pub titles: [String; 2],
+    pub weight: String,
+    pub focus: Side,
+    /// The model's selection was last moved by the pointer: the lists stay where they are
+    /// [owner's playtest list 7, item 11].
+    pub pointer_pick: bool,
+    /// The selected item's figures ([`look::item_figures`]) when there is one.
+    pub card: Option<Info>,
+    pub icon: Option<String>,
+    /// Take All has something to take.
+    pub take_all: bool,
+    pub note: Option<String>,
+}
+
+/// The rows of a listing with their keys.
+pub fn rows_shown(rows: &[Row]) -> Vec<RowShown> {
+    let mut out: Vec<RowShown> = Vec::with_capacity(rows.len());
+    for r in rows {
+        let (units, reference) = (r.units(), r.reference);
+        let nth = out.iter().filter(|o| o.key.units == units && o.key.reference == reference).count() as u32;
+        out.push(RowShown { key: RowKey { units, reference, nth }, name: r.name.clone(), text: look::row_text(r), equipped: r.equipped });
+    }
+    out
+}
+
+/// The weight label [observed: "Wg   52/200", three spaces; the words are the hand-built
+/// menu's (`look::half_figure`)].
+fn weight_label(m: &MenuModel) -> String {
+    m.encumbrance.as_ref().map_or(String::new(), |e| format!("Wg   {:.0}/{:.0}", e.weight, e.capacity))
+}
+
+impl Snapshot {
+    /// What `m` shows; `info` the selected row's figures (`crate::pipboy::items::info_of`) and
+    /// `note` the line under the menu (`crate::menu::note`).
+    pub fn of(m: &MenuModel, info: Option<&Info>, note: Option<String>) -> Snapshot {
+        let list = |side: Side| ListShown {
+            rows: rows_shown(&m.list(side).rows),
+            category: m.category[side as usize],
+            selected: (m.focus == side && m.selected_row(side).is_some()).then_some(m.selected[side as usize]),
+        };
+        let selected = m.selected_row(m.focus);
+        Snapshot {
+            lists: [list(Side::Container), list(Side::Player)],
+            titles: [look::half_title(m, Side::Container), look::half_title(m, Side::Player)],
+            weight: weight_label(m),
+            focus: m.focus,
+            pointer_pick: m.pointer_pick,
+            card: selected.map(|r| look::item_figures(m, r, info)),
+            icon: selected.and_then(|r| r.icon.clone()),
+            take_all: !m.list(Side::Container).rows.is_empty(),
+            note,
+        }
+    }
+}
+
+/// A list's view: where it is scrolled, and what the last frame worked out.
+#[derive(Clone, Debug, PartialEq)]
+struct ListView {
+    /// The scrollbar's value, whole.
+    value: f64,
+    counts: Counts,
+    /// The highlighted row's top and height before the scroll.
+    selected: Option<(f64, f64)>,
+    /// The highlighted row the scroll last followed.
+    watched: Option<RowKey>,
+    category: Category,
+    /// The file's `_scroll_delta` before any code wrote it, for a list that fits.
+    file_delta: Option<f64>,
+}
+
+impl Default for ListView {
+    fn default() -> Self {
+        ListView { value: 0.0, counts: Counts { items: 1.0, visible: 1.0, delta: None }, selected: None, watched: None, category: Category::All, file_delta: None }
+    }
+}
+
+/// The tile menu's state: what input and the writer share.
+#[derive(Resource, Default)]
+pub struct ContainerTiles {
+    /// The menu while it is drawn from tiles ([`tiled`], this frame's writer).
+    pub menu: Option<TileId>,
+    rows: [Vec<RowTile<RowKey>>; 2],
+    views: [ListView; 2],
+    shown: Option<Snapshot>,
+    written_in: Option<TileId>,
+    pub sizes: SizesWritten,
+    /// A press on a marker, held.
+    pub drag: Option<Drag>,
+    /// The scroll last logged as drawn.
+    drawn: [Option<f64>; 2],
+    /// [design] The fallback's reason is warned once per session.
+    pub warned: bool,
+}
+
+/// The heading the pointer is over, for the hand-built wheel (`crate::menu::menu_mouse`), which
+/// steps its category there [design: owner request #1192].
+#[derive(Resource, Default)]
+pub struct TileWheelTitle(pub Option<Side>);
+
+/// What a click on the menu's tiles stands for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContainerTile {
+    Row(Side, usize),
+    Arrow(Side, i32),
+    Title(Side),
+    TakeAll,
+    Exit,
+    Bar(Side, list::BarPiece),
+    /// Another tile of the menu: nothing to do.
+    Other,
+}
+
+fn set(ui: &mut Ui, path: &str, name: &str, v: Value) {
+    if let Some(t) = ui.find_tile(path) {
+        ui.set_trait(t, name, v);
+    }
+}
+
+fn on(b: bool) -> Value {
+    Value::Num(f64::from(u8::from(b)))
+}
+
+/// Write what `ContainerMenu` shows of `s`: the rows, the headings, the weight, the item's
+/// picture and figures, the arrow, the line under the menu, Take All's state and hint, and the
+/// backing. A list's places are [`settle`]'s, once the texts are measured.
+pub fn write(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles) {
+    for side in SIDES {
+        let i = side as usize;
+        let wanted: Vec<Wanted<'_, RowKey>> = s.lists[i].rows.iter().map(|r| Wanted { key: &r.key, name: &r.name }).collect();
+        list::reconcile(ui, LISTS[i], TEMPLATE, &mut st.rows[i], &wanted);
+        for (row, shown) in st.rows[i].iter().zip(&s.lists[i].rows) {
+            if let Some(t) = list::child(ui, row.tile, ROW_TEXT) {
+                ui.set_trait(t, "string", Value::Str(shown.text.clone()));
+                ui.set_trait(t, "alpha", Value::Num(255.0));
+            }
+            if let Some(t) = list::child(ui, row.tile, ROW_MARK) {
+                ui.set_trait(t, "visible", on(shown.equipped));
+            }
+        }
+        set(ui, TITLES[i], "string", Value::Str(s.titles[i].clone()));
+    }
+    set(ui, WEIGHT, "string", Value::Str(s.weight.clone()));
+    // The arrow points the way the item would go [observed: `user0` 1 with the left list's
+    // row selected, 2 with the right's, not shown with none].
+    set(ui, ARROW, "visible", on(s.card.is_some()));
+    set(ui, ARROW, "user0", Value::Num(if s.focus == Side::Player { 1.0 } else { 2.0 }));
+    set(ui, ICON, "visible", on(s.card.is_some() && s.icon.is_some()));
+    set(ui, ICON, "filename", Value::Str(s.icon.clone().unwrap_or_default()));
+    super::item_card::write(ui, CARD, s.card.as_ref());
+    // The file's own one blank without a note [documented].
+    set(ui, SUBTITLE, "string", Value::Str(s.note.clone().unwrap_or_else(|| " ".into())));
+    set(ui, TAKE_ALL, "target", on(s.take_all));
+    set(ui, TAKE_ALL, "_PCButtonText", Value::Str(TAKE_ALL_HINT.into()));
+    set(ui, BACKGROUND, "alpha", Value::Num(BACKGROUND_ALPHA));
+}
+
+/// A tiled frame's sizes and places, after what changed was written (see the module notes):
+/// the tree worked out, the texts measured until no wrap or size moves [design: three rounds,
+/// a title's width to a card's value's wrap], the rows placed, the counts, scroll and highlight
+/// written, the tree worked out again.
+pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles, texts: &[TileId], size: &Size<'_>) {
+    ui.update();
+    for _ in 0..3 {
+        if super::menus::write_text_sizes_of(ui, texts, &mut st.sizes, size) == 0 {
+            break;
+        }
+        ui.update();
+    }
+    for side in SIDES {
+        let i = side as usize;
+        let Some(list_tile) = ui.find_tile(LISTS[i]) else { continue };
+        let heights = list::measure_rows(ui, &st.rows[i], ROW_TEXT);
+        let page = ui.tile(list_tile).get("height").map_or(0.0, Value::num);
+        let counts = list::counts(&heights, page);
+        let view = &mut st.views[i];
+        let file_delta = *view.file_delta.get_or_insert_with(|| ui.tile(list_tile).get("_scroll_delta").map_or(26.0, Value::num));
+        list::write_counts(ui, list_tile, &counts, file_delta);
+        view.counts = counts;
+        if view.category != s.lists[i].category {
+            view.category = s.lists[i].category;
+            view.value = 0.0;
+        }
+        let picked = s.lists[i].selected.filter(|&k| k < heights.len());
+        view.selected = picked.map(|k| (heights[..k].iter().sum(), heights[k]));
+        let key = picked.map(|k| s.lists[i].rows[k].key.clone());
+        // The keys' picks bring their row into view, the pointer's do not; once a pick is
+        // followed the bar and the marker move the list freely.
+        if let (true, true, Some((top, height))) = (!s.pointer_pick, view.watched != key, view.selected) {
+            view.value = list::keep_row_shown(view.value, top, height, page, counts.delta.unwrap_or(file_delta), counts.most());
+        }
+        view.watched = key;
+        view.value = view.value.clamp(0.0, counts.most());
+    }
+    st.rewrite(ui);
+    ui.update();
+}
+
+impl ContainerTiles {
+    /// [`settle`] with the snapshot written last, on every frame the menu is drawn.
+    pub fn settle_shown(&mut self, ui: &mut Ui, texts: &[TileId], size: &Size<'_>) {
+        if let Some(s) = self.shown.take() {
+            settle(ui, &s, self, texts, size);
+            self.shown = Some(s);
+        }
+    }
+
+    /// The scroll and the highlight written from the view: after [`settle`]'s places, and
+    /// after the input's step and its clicks ([`super::input::feed`]).
+    pub fn rewrite(&self, ui: &mut Ui) {
+        for side in SIDES {
+            let i = side as usize;
+            let Some(list_tile) = ui.find_tile(LISTS[i]) else { continue };
+            list::write_value(ui, list_tile, self.views[i].value);
+            list::write_highlight(ui, list_tile, self.views[i].selected, self.views[i].value);
+        }
+    }
+
+    /// The tile a click on `tile` stands for, while the menu is drawn from its tiles
+    /// ([`Self::menu`]). None otherwise: off or in the fallback a script's queued click on the
+    /// file's tile acts on nothing.
+    pub fn clicked(&self, ui: &Ui, tile: TileId) -> Option<ContainerTile> {
+        let menu = self.menu?;
+        if !ui.is_live(tile) || ui.root_of(tile) != menu {
+            return None;
+        }
+        Some(self.stands_for(ui, tile))
+    }
+
+    fn stands_for(&self, ui: &Ui, tile: TileId) -> ContainerTile {
+        let mut piece = None;
+        let mut at = Some(tile);
+        while let Some(t) = at {
+            for side in SIDES {
+                if let Some(index) = self.rows[side as usize].iter().position(|r| r.tile == t) {
+                    return ContainerTile::Row(side, index);
+                }
+            }
+            if piece.is_none() {
+                piece = list::bar_piece(ui, t);
+            }
+            let name = ui.tile(t).name.to_ascii_lowercase();
+            match name.as_str() {
+                "cm_takeallbutton" => return ContainerTile::TakeAll,
+                "cm_exitbutton" => return ContainerTile::Exit,
+                "cm_items_leftfilterarrow" => return ContainerTile::Arrow(Side::Player, -1),
+                "cm_items_rightfilterarrow" => return ContainerTile::Arrow(Side::Player, 1),
+                "cm_container_leftfilterarrow" => return ContainerTile::Arrow(Side::Container, -1),
+                "cm_container_rightfilterarrow" => return ContainerTile::Arrow(Side::Container, 1),
+                "cm_itemstitle" => return ContainerTile::Title(Side::Player),
+                "cm_containertitle" => return ContainerTile::Title(Side::Container),
+                "cm_items_inventorylist" => return piece.map_or(ContainerTile::Other, |p| ContainerTile::Bar(Side::Player, p)),
+                "cm_container_inventorylist" => return piece.map_or(ContainerTile::Other, |p| ContainerTile::Bar(Side::Container, p)),
+                _ => {}
+            }
+            at = ui.tile(t).parent;
+        }
+        ContainerTile::Other
+    }
+
+    /// The index of `side`'s row at `index` when the row the tree shows is still the model's
+    /// row there; a tile whose row moved or left the list acts on nothing.
+    pub fn row_at(&self, m: &MenuModel, side: Side, index: usize) -> Option<usize> {
+        self.row_in(side, index, &rows_shown(&m.list(side).rows))
+    }
+
+    /// [`Self::row_at`] over the rows `now`.
+    fn row_in(&self, side: Side, index: usize, now: &[RowShown]) -> Option<usize> {
+        let tile_key = &self.rows[side as usize].get(index)?.key;
+        (now.get(index)?.key == *tile_key).then_some(index)
+    }
+
+    /// The list tile of `side`.
+    pub fn list_tile(ui: &Ui, side: Side) -> Option<TileId> {
+        ui.find_tile(LISTS[side as usize])
+    }
+
+    /// A list's scroll now.
+    pub fn value(&self, side: Side) -> f64 {
+        self.views[side as usize].value
+    }
+
+    /// Set a list's scroll, held in its bar's range (the bar's pieces, the marker's drag): the
+    /// view's own, no command of the model's. Returns whether it moved.
+    pub fn scroll_to(&mut self, side: Side, value: f64) -> bool {
+        let view = &mut self.views[side as usize];
+        let value = value.clamp(0.0, view.counts.most());
+        let moved = value != view.value;
+        view.value = value;
+        moved
+    }
+
+    /// Whether what `s` shows differs from what was written in `menu`, and if so that it is now.
+    pub fn is_new(&mut self, menu: TileId, s: &Snapshot) -> bool {
+        if self.written_in != Some(menu) {
+            self.written_in = Some(menu);
+            self.shown = None;
+        }
+        if self.shown.as_ref() == Some(s) {
+            return false;
+        }
+        self.shown = Some(s.clone());
+        true
+    }
+
+    /// The snapshot written last.
+    pub fn shown(&self) -> Option<&Snapshot> {
+        self.shown.as_ref()
+    }
+
+    /// Whether a new snapshot is needed whatever changed in the model: none yet in `menu`.
+    pub fn needs_snapshot(&self, menu: TileId) -> bool {
+        self.written_in != Some(menu) || self.shown.is_none()
+    }
+
+    /// The menu closed: nothing of it stays for the next (the warning does).
+    pub fn close(&mut self) {
+        *self = ContainerTiles { warned: self.warned, ..Default::default() };
+    }
+
+    /// Logged when the scroll drawn changes, and when it is not the value written (smoke reads
+    /// both): the view's value must outlast a click's pulse, as the wait menu's slider.
+    pub fn check_drawn(&mut self, ui: &Ui, log: &mut dyn FnMut(String)) {
+        for side in SIDES {
+            let i = side as usize;
+            let Some(list_tile) = ui.find_tile(LISTS[i]) else { continue };
+            let Some(v) = list::value_shown(ui, list_tile) else { continue };
+            let n = |x: f64| Value::Num(x).text();
+            let name = side_name(side);
+            if self.drawn[i] != Some(v) {
+                log(format!("tiles: {CONTAINER_MENU} {name} list scrolled to {} of {}", n(v), n(self.views[i].counts.most())));
+                self.drawn[i] = Some(v);
+            }
+            if v != self.views[i].value {
+                log(format!("tiles: {CONTAINER_MENU} {name} list drawn at {}, not the {} written", n(v), n(self.views[i].value)));
+            }
+        }
+    }
+}
+
+fn side_name(side: Side) -> &'static str {
+    match side {
+        Side::Container => "container",
+        Side::Player => "player",
+    }
+}
+
+/// The mark and clip writes that follow what is in the tree, after the scripts and before
+/// the drawing: a tile injected or a window enabled at any time is covered from that frame on.
+/// A walk of the menu's tiles, writing only what is not there yet.
+pub fn mark_tiles(ui: &mut Ui) {
+    let Some(menu) = ui.menu(CONTAINER_MENU) else { return };
+    fnv_ui::input::mark_clip_windows(ui, menu);
+    let mut stack = vec![menu];
+    while let Some(t) = stack.pop() {
+        if !ui.is_live(t) {
+            continue;
+        }
+        let tile = ui.tile(t);
+        stack.extend(tile.children.iter().copied());
+        if !tile.get(OWN_ALPHA).is_some_and(Value::truthy) {
+            ui.set_trait(t, OWN_ALPHA, Value::Num(1.0));
+        }
+    }
+    for list_path in LISTS {
+        set(ui, &format!("{list_path}/{}", list::HIGHLIGHT), HOTRECT_FILL, Value::Num(1.0));
+    }
+}
+
+/// The keys the hand-built menu acts on itself (`crate::menu::menu_keys`), by the tile input's
+/// names: W, S, A and D, E, R and the arrows, and the controller buttons standing in there:
+/// A, B, the shoulders and triggers, the D-pad's as the arrows, Start, X for R
+/// (`crate::pad::menu_buttons`). The file binds A to Take All and E to Exit [documented:
+/// `_PCButton_A`, `_PCButton_E`]: both stay the hand-built keys (module notes), a script's
+/// MenuTapKey acting through the file.
+pub const HAND_BUILT_KEYS: [&str; 18] = ["A", "D", "W", "S", "E", "R", "xup", "xdown", "xleft", "xright", "xbuttona", "xbuttonb", "xbuttonx", "xbuttonlb", "xbuttonrb", "xbuttonlt", "xbuttonrt", "xbuttonstart"];
+
+/// Whether the menu takes the pointer and keys this frame: drawn from its tiles and no prompt
+/// over it, hand-built or from tiles (no click goes past the prompt [documented:
+/// quantity_menu.xml, `&no_click_past;`]).
+pub fn takes_input(menu: Option<TileId>, prompt: bool) -> Option<TileId> {
+    menu.filter(|_| !prompt)
+}
+
+/// Whether the pointer's coming onto a row selects it: it moved there this frame, the wheel
+/// does not hold the selection (`crate::menu::WheelHold`) and it is not selected already: so a
+/// list moved under a resting pointer leaves the choice alone [owner 2026-10-22].
+pub fn hover_selects(moved: bool, wheel_holds: bool, already: bool) -> bool {
+    moved && !wheel_holds && !already
+}
+
+/// The commands a pointer click on a row sends, as the hand-built menu's (`menu_mouse`): the
+/// row selected and shift, the stack; another row, it selected and acted on; the row selected,
+/// its action.
+pub fn row_commands(side: Side, index: usize, on_it: bool, shift: bool) -> Vec<crate::menu::model::Command> {
+    use crate::menu::model::Command;
+    match (on_it, shift) {
+        (true, true) => vec![Command::Stack],
+        (false, _) => vec![Command::Hover(side, index), if shift { Command::Stack } else { Command::One }],
+        (true, false) => vec![Command::Select(side, index)],
+    }
+}
+
+/// A line for the log when what the menu shows changes (smoke reads these).
+pub fn describe(ui: &Ui, s: &Snapshot) -> String {
+    let [container, player] = &s.lists;
+    let selected = s.lists[s.focus as usize].selected.and_then(|k| s.lists[s.focus as usize].rows.get(k)).map_or("none", |r| r.text.as_str());
+    let figures = super::item_card::describe(ui, CARD);
+    format!(
+        "tiles: {CONTAINER_MENU} drawn from tiles: \"{}\" {} rows, \"{}\" {} rows, \"{}\", {} selected \"{selected}\", figures: {figures}",
+        s.titles[Side::Player as usize],
+        player.rows.len(),
+        s.titles[Side::Container as usize],
+        container.rows.len(),
+        s.weight,
+        side_name(s.focus),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fnv_ui::MemSource;
+
+    /// [design] A menu in the vanilla file's shape (its names and the expressions the model
+    /// relies on), cut down to what these tests read, 960 high.
+    fn menu_changed(change: impl FnOnce(&str) -> String) -> Ui {
+        let cards: String = ["DamageResistInfo", "DPSInfo", "WeightInfo", "ValueInfo", "ConditionInfo", "AmmoInfo", "EffectsInfo", "StrengthReqInfo", "DAMInfo", "DamageThresholdInfo"]
+            .iter()
+            .map(|c| {
+                let inner = if *c == "ConditionInfo" { r#"<image name="CNDArrows"><y>17</y></image>"# } else { "" };
+                format!(r#"<rect name="{c}"><_Title>{c}</_Title><_Value></_Value><visible>&false;</visible>{inner}</rect>"#)
+            })
+            .collect();
+        let list = |name: &str, x: f64| {
+            format!(
+                r#"<hotrect name="{name}"><x>{x}</x><y>60</y><width>462</width><height>365</height><alpha>0</alpha><clipwindow>&true;</clipwindow><target>&false;</target>
+                <_enabled>&true;</_enabled><_scroll_delta>26</_scroll_delta><_highlight_y>-1</_highlight_y><_selected_height>0</_selected_height>
+                <hotrect name="lb_highlight_box"><alpha>40</alpha><y><copy src="parent()" trait="_highlight_y"/></y><x>32</x><width>425</width><height><copy src="parent()" trait="_selected_height"/><sub>1</sub></height><target>&false;</target></hotrect>
+                <image name="lb_scrollbar"><alpha>0</alpha><target>&true;</target><x>0</x><y>16</y><width>32</width><height>333</height>
+                  <_step_size>1</_step_size><_SetInCode></_SetInCode><_number_of_items>1</_number_of_items><_number_of_visible_items>1</_number_of_visible_items>
+                  <_jump_size><copy src="parent()" trait="height"/><div src="parent()" trait="_scroll_delta"/><floor>0</floor></_jump_size>
+                  <_current_value><add><copy src="child(scrollbar_vert_down)" trait="clicked"/><sub src="child(scrollbar_vert_up)" trait="clicked"/></add>
+                    <min><copy src="me()" trait="_number_of_items"/><sub src="me()" trait="_number_of_visible_items"/></min><max>0</max></_current_value>
+                  <hotrect name="scrollbar_vert_page_up"><target>&true;</target></hotrect><hotrect name="scrollbar_vert_page_down"><target>&true;</target></hotrect>
+                  <image name="scrollbar_vert_marker"><target>&true;</target><height>32</height><width>6</width><x>12</x>
+                    <_step_height><copy src="parent()" trait="height"/><sub src="me()" trait="height"/><div>10</div></_step_height>
+                    <y><copy src="parent()" trait="_current_value"/><mul src="me()" trait="_step_height"/></y></image>
+                  <image name="scrollbar_vert_up"><target>&true;</target></image><image name="scrollbar_vert_down"><target>&true;</target></image>
+                </image></hotrect>"#
+            )
+        };
+        let side = |rect: &str, prefix: &str, title: &str, x: f64, list_name: &str, inner: &str| {
+            format!(
+                r#"<rect name="{rect}"><x>{x}</x><y>100</y>
+                <image name="{prefix}_LeftFilterArrow"><target>&true;</target><width>17</width><height>35</height></image>
+                <text name="{title}"><target>&true;</target><string></string><x>50</x><y>-12</y></text>
+                <image name="{prefix}_RightFilterArrow"><target>&true;</target><width>17</width><height>35</height></image>
+                {inner}{}</rect>"#,
+                list(list_name, -15.0)
+            )
+        };
+        let items = side("CM_ItemsRect", "CM_Items", "CM_ItemsTitle", 100.0, "CM_Items_InventoryList", r#"<text name="CM_Items_CapsLabel"><string></string></text>"#);
+        let container = side("CM_ContainerRect", "CM_Container", "CM_ContainerTitle", 700.0, "CM_Container_InventoryList", "");
+        let xml = format!(
+            r#"<menu name="ContainerMenu"><_PCButton_A>CM_TakeAllButton</_PCButton_A><_PCButton_E>CM_ExitButton</_PCButton_E>
+            <rect name="NOGLOW_BRANCH">
+            <image name="CM_Background"><alpha>32</alpha></image>
+            <rect name="CM_Subtitle"><string> </string></rect>
+            {items}{container}
+            <image name="CM_ArrowIcon"><visible>&false;</visible><user0></user0></image>
+            <rect name="CM_ButtonRect">
+              <image name="CM_TakeAllButton"><target>&true;</target><alpha>0</alpha><_PCButtonText>A)</_PCButtonText><text name="button_text"><string>Take All</string></text></image>
+              <image name="CM_ExitButton"><target>&true;</target><alpha>0</alpha><text name="button_text"><string>Exit</string></text></image>
+            </rect>
+            <image name="CM_ItemIcon"><visible>&false;</visible></image>
+            <rect name="CM_ItemData"><user1>40</user1>{cards}</rect>
+            </rect>
+            <template name="CM_list_template"><hotrect name="CM_list_template_container"><id>20</id><height>0</height><width>425</width><x>32</x><_y></_y>
+              <y><copy src="me()" trait="_y"/><sub><copy src="sibling(lb_scrollbar)" trait="_current_value"/><mul src="parent()" trait="_scroll_delta"/></sub></y>
+              <_VerticalSpacing>20</_VerticalSpacing><clips>&true;</clips><alpha>0</alpha>
+              <target><copy src="parent()" trait="_enabled"/></target>
+              <visible><copy src="me()" trait="listindex"/><gte>0</gte></visible>
+              <text name="ListItemText"><wrapwidth>370</wrapwidth><x>40</x><y>20</y><string></string></text>
+              <image name="CM_list_template_ItemMarker"><visible>&false;</visible></image>
+            </hotrect></template></menu>"#
+        );
+        let mut ui = Ui::new();
+        ui.load_menu(&MemSource::default().with("cm.xml", &change(&xml)), "cm.xml").unwrap();
+        ui.update();
+        ui
+    }
+
+    fn menu() -> Ui {
+        menu_changed(str::to_string)
+    }
+
+    fn row(item: u32, text: &str) -> RowShown {
+        RowShown { key: RowKey { units: (FormId(item), None, 0), reference: None, nth: 0 }, name: format!("Item {item}"), text: text.into(), equipped: false }
+    }
+
+    fn snapshot(left: &[(u32, &str)], right: &[(u32, &str)], focus: Side, selected: usize) -> Snapshot {
+        let list = |rows: &[(u32, &str)], side: Side| ListShown {
+            rows: rows.iter().map(|&(i, t)| row(i, t)).collect(),
+            category: Category::All,
+            selected: (focus == side && selected < rows.len()).then_some(selected),
+        };
+        Snapshot {
+            lists: [list(right, Side::Container), list(left, Side::Player)],
+            titles: ["Footlocker".into(), "ITEMS".into()],
+            weight: "Wg   52/200".into(),
+            focus,
+            pointer_pick: false,
+            card: Some(Info { value: Some("30".into()), weight: Some("5.00".into()), ..Info::default() }),
+            icon: Some("interface\\icons\\x.dds".into()),
+            take_all: !right.is_empty(),
+            note: None,
+        }
+    }
+
+    /// A frame as the writer does it: what changed written, then [`settle`].
+    fn frame(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles) {
+        let menu = ui.menu(CONTAINER_MENU).unwrap();
+        st.menu = Some(menu);
+        if st.is_new(menu, s) {
+            write(ui, s, st);
+        }
+        let texts = super::super::menus::texts(ui, menu);
+        settle(ui, s, st, &texts, &list::lines_size);
+        mark_tiles(ui);
+    }
+
+    fn at(ui: &Ui, path: &str) -> f64 {
+        ui.get_float(path).unwrap_or(-999.0)
+    }
+
+    fn twenty() -> Vec<(u32, String)> {
+        (1..=20).map(|i| (i, format!("Row {i}"))).collect()
+    }
+
+    fn refs(v: &[(u32, String)]) -> Vec<(u32, &str)> {
+        v.iter().map(|(i, s)| (*i, s.as_str())).collect()
+    }
+
+    #[test]
+    fn writes_both_lists_and_unit_figures() {
+        let (mut ui, mut st) = (menu(), ContainerTiles::default());
+        let s = snapshot(&[(1, "9mm Pistol"), (2, "Long|name")], &[(3, "Bottle Cap (25)")], Side::Player, 1);
+        frame(&mut ui, &s, &mut st);
+        let left = LISTS[Side::Player as usize];
+        let right = LISTS[Side::Container as usize];
+        // The rows, named after their items, the second two lines high; both places the file's.
+        let rows = &st.rows[Side::Player as usize];
+        assert_eq!((rows.len(), st.rows[Side::Container as usize].len()), (2, 1));
+        assert_eq!(ui.tile(rows[1].tile).name, "Item 2");
+        assert_eq!(ui.tile(rows[1].tile).get("height").map(Value::num), Some(87.0));
+        assert_eq!(ui.tile(rows[1].tile).get("_y").map(Value::num), Some(52.0));
+        assert_eq!(ui.get_string(&format!("{}/{ROW_TEXT}/string", ui.path_of(rows[0].tile))).as_deref(), Some("9mm Pistol"));
+        // The highlight only in the list with the focus [observed].
+        assert_eq!((at(&ui, &format!("{left}/_highlight_y")), at(&ui, &format!("{left}/_selected_height"))), (52.0, 87.0));
+        assert_eq!((at(&ui, &format!("{right}/_highlight_y")), at(&ui, &format!("{right}/_selected_height"))), (-1.0, 0.0));
+        // Fits: one item, the file's delta.
+        assert_eq!(at(&ui, &format!("{left}/lb_scrollbar/_number_of_items")), 1.0);
+        assert_eq!(at(&ui, &format!("{left}/_scroll_delta")), 26.0);
+        // The strings, the arrow, the picture, the figures.
+        assert_eq!(ui.get_string(&format!("{}/string", TITLES[0])).as_deref(), Some("Footlocker"));
+        assert_eq!(ui.get_string(&format!("{WEIGHT}/string")).as_deref(), Some("Wg   52/200"));
+        assert_eq!((at(&ui, &format!("{ARROW}/visible")), at(&ui, &format!("{ARROW}/user0"))), (1.0, 1.0));
+        assert_eq!(at(&ui, &format!("{ICON}/visible")), 1.0);
+        assert_eq!(ui.get_string(&format!("{CARD}/WeightInfo/_Value")).as_deref(), Some("5.00"));
+        assert_eq!(ui.get_string(&format!("{TAKE_ALL}/_PCButtonText")).as_deref(), Some("R)"));
+        assert_eq!(at(&ui, &format!("{BACKGROUND}/alpha")), BACKGROUND_ALPHA);
+        assert!(describe(&ui, &s).contains("\"ITEMS\" 2 rows, \"Footlocker\" 1 rows"), "{}", describe(&ui, &s));
+    }
+
+    #[test]
+    fn alpha_is_each_tiles_own_and_the_highlight_fills() {
+        let (mut ui, mut st) = (menu(), ContainerTiles::default());
+        frame(&mut ui, &snapshot(&[(1, "One")], &[(2, "Two")], Side::Player, 0), &mut st);
+        let menu = ui.menu(CONTAINER_MENU).unwrap();
+        let items = super::super::layout::layout(&ui, menu, &list::lines_size, true);
+        let alpha = |path: &str| items.iter().find(|i| i.tile == ui.find_tile(path).unwrap()).unwrap().alpha;
+        assert_eq!(alpha(&format!("{TAKE_ALL}/button_text")), 255.0, "under an image at alpha 0");
+        assert_eq!(alpha(&format!("{}/lb_scrollbar/scrollbar_vert_marker", LISTS[1])), 255.0);
+        assert_eq!(alpha(&format!("{}/lb_highlight_box", LISTS[1])), 40.0, "the fill's own");
+        assert_eq!(alpha(BACKGROUND), BACKGROUND_ALPHA, "0-255 here; `draw::pieces` divides by 255");
+    }
+
+    #[test]
+    fn the_keys_pick_scrolls_the_pointers_does_not() {
+        let (mut ui, mut st) = (menu(), ContainerTiles::default());
+        let rows = twenty();
+        let rows = refs(&rows);
+        let left = LISTS[1];
+        frame(&mut ui, &snapshot(&rows, &[], Side::Player, 0), &mut st);
+        // 20 rows of 52 in 365: 7 whole, 13 positions after the first.
+        assert_eq!(at(&ui, &format!("{left}/lb_scrollbar/_number_of_items")), 14.0);
+        let delta = at(&ui, &format!("{left}/_scroll_delta"));
+        assert!((delta - 675.0 / 13.0).abs() < 1e-9, "{delta}");
+        // A key's pick of the row under the fold.
+        frame(&mut ui, &snapshot(&rows, &[], Side::Player, 7), &mut st);
+        assert_eq!(st.value(Side::Player), 1.0, "moved as little as shows it whole");
+        // The pointer's pick of the partial row stays put, with the highlight on its place.
+        let mut pointed = snapshot(&rows, &[], Side::Player, 8);
+        pointed.pointer_pick = true;
+        frame(&mut ui, &pointed, &mut st);
+        assert_eq!(st.value(Side::Player), 1.0);
+        assert!((at(&ui, &format!("{left}/_highlight_y")) - (8.0 * 52.0 - delta)).abs() < 1e-9);
+        // The bar moves the list; a frame with the same pick does not bring it back.
+        assert!(st.scroll_to(Side::Player, 5.0));
+        frame(&mut ui, &pointed, &mut st);
+        assert_eq!(st.value(Side::Player), 5.0);
+        let keyed = snapshot(&rows, &[], Side::Player, 8);
+        frame(&mut ui, &keyed, &mut st);
+        frame(&mut ui, &keyed, &mut st);
+        assert_eq!(st.value(Side::Player), 5.0, "the row was seen with the pointer's pick");
+        assert!(st.scroll_to(Side::Player, 13.0));
+        assert!(!st.scroll_to(Side::Player, 99.0), "held at the end");
+        // A shorter list, the same view: held in its range.
+        frame(&mut ui, &snapshot(&rows[..3], &[], Side::Player, 0), &mut st);
+        assert_eq!(st.value(Side::Player), 0.0);
+        assert_eq!(list::value_shown(&ui, ui.find_tile(left).unwrap()), Some(0.0));
+    }
+
+    #[test]
+    fn another_category_starts_at_the_top() {
+        let (mut ui, mut st) = (menu(), ContainerTiles::default());
+        let rows = twenty();
+        let rows = refs(&rows);
+        let mut s = snapshot(&rows, &[], Side::Player, 0);
+        s.pointer_pick = true;
+        frame(&mut ui, &s, &mut st);
+        st.scroll_to(Side::Player, 6.0);
+        s.lists[Side::Player as usize].category = Category::Aid;
+        frame(&mut ui, &s, &mut st);
+        assert_eq!(st.value(Side::Player), 0.0);
+    }
+
+    #[test]
+    fn inactive_column_can_gain_focus() {
+        let (mut ui, mut st) = (menu(), ContainerTiles::default());
+        frame(&mut ui, &snapshot(&[(1, "One")], &[(2, "Two")], Side::Player, 0), &mut st);
+        let menu = ui.menu(CONTAINER_MENU).unwrap();
+        // The right list's first row, its list without the focus: x 700 - 15 + 32, y 100 + 60.
+        let hit = fnv_ui::input::hit(&ui, &[menu], (800.0, 180.0), &fnv_ui::input::no_measure).unwrap();
+        assert_eq!(st.clicked(&ui, hit.tile), Some(ContainerTile::Row(Side::Container, 0)));
+        assert_eq!(row_commands(Side::Container, 0, false, false), vec![crate::menu::model::Command::Hover(Side::Container, 0), crate::menu::model::Command::One]);
+        // Past the list's clip nothing takes the pointer [observed: check 80].
+        assert!(fnv_ui::input::hit(&ui, &[menu], (800.0, 530.0), &fnv_ui::input::no_measure).is_none_or(|h| st.clicked(&ui, h.tile) == Some(ContainerTile::Other)));
+    }
+
+    #[test]
+    fn clicks_by_tile() {
+        let (mut ui, mut st) = (menu(), ContainerTiles::default());
+        frame(&mut ui, &snapshot(&[(1, "One")], &[(2, "Two")], Side::Player, 0), &mut st);
+        let of = |ui: &Ui, st: &ContainerTiles, path: &str| st.clicked(ui, ui.find_tile(path).unwrap());
+        assert_eq!(of(&ui, &st, &format!("{TAKE_ALL}/button_text")), Some(ContainerTile::TakeAll));
+        assert_eq!(of(&ui, &st, EXIT), Some(ContainerTile::Exit));
+        assert_eq!(of(&ui, &st, "ContainerMenu/NOGLOW_BRANCH/CM_ItemsRect/CM_Items_RightFilterArrow"), Some(ContainerTile::Arrow(Side::Player, 1)));
+        assert_eq!(of(&ui, &st, TITLES[0]), Some(ContainerTile::Title(Side::Container)));
+        assert_eq!(of(&ui, &st, &format!("{}/lb_scrollbar/scrollbar_vert_page_down", LISTS[1])), Some(ContainerTile::Bar(Side::Player, list::BarPiece::PageDown)));
+        assert_eq!(of(&ui, &st, &format!("{}/lb_scrollbar", LISTS[1])), Some(ContainerTile::Other));
+        // Not tiled: a queued click acts on nothing.
+        st.menu = None;
+        assert_eq!(of(&ui, &st, EXIT), None);
+    }
+
+    #[test]
+    fn missing_template_child_falls_back() {
+        assert_eq!(built(&menu()), Tiled::Yes);
+        for (name, missing) in [
+            ("CM_ExitButton", EXIT),
+            ("CM_Items_CapsLabel", WEIGHT),
+            ("CM_ArrowIcon", ARROW),
+            ("CM_ItemsTitle", TITLES[1]),
+        ] {
+            let ui = menu_changed(|xml| xml.replace(&format!("name=\"{name}\""), "name=\"Modded\""));
+            assert_eq!(built(&ui), Tiled::No(format!("{missing} missing")));
+        }
+        let ui = menu_changed(|xml| xml.replace("name=\"scrollbar_vert_page_up\"", "name=\"Modded\""));
+        assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("scrollbar_vert_page_up")));
+        let ui = menu_changed(|xml| xml.replace("name=\"WeightInfo\"", "name=\"Modded\""));
+        assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("WeightInfo")));
+        let ui = menu_changed(|xml| xml.replace("name=\"button_text\"", "name=\"Modded\""));
+        assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("button_text")));
+        let ui = menu_changed(|xml| xml.replace("name=\"ListItemText\"", "name=\"Modded\""));
+        assert_eq!(built(&ui), Tiled::No("CM_list_template/CM_list_template_container/ListItemText missing".into()));
+        let ui = menu_changed(|xml| xml.replace("name=\"CM_list_template_ItemMarker\"", "name=\"Modded\""));
+        assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("CM_list_template_ItemMarker")));
+        let ui = menu_changed(|xml| xml.replace("name=\"CM_list_template\"", "name=\"Modded\""));
+        assert_eq!(built(&ui), Tiled::No("CM_list_template missing".into()));
+    }
+
+    #[test]
+    fn reopen_discards_old_rows() {
+        let (mut ui, mut st) = (menu(), ContainerTiles::default());
+        let s = snapshot(&[(1, "One")], &[(2, "Two")], Side::Player, 0);
+        frame(&mut ui, &s, &mut st);
+        let old = st.rows[1][0].tile;
+        // The menu built again (a box over it dropped it): the same snapshot is written anew.
+        let menu_tile = ui.menu(CONTAINER_MENU).unwrap();
+        ui.unload_tile(menu_tile);
+        let mut ui = menu();
+        frame(&mut ui, &s, &mut st);
+        assert_eq!(st.rows[1].len(), 1);
+        assert_ne!(st.rows[1][0].tile, old);
+        assert!(ui.is_live(st.rows[1][0].tile));
+        // Closed: nothing stays.
+        st.drag = Some(Drag { menu: menu_tile, list: menu_tile, top: 0.0, grab: 0.0 });
+        st.scroll_to(Side::Player, 1.0);
+        st.warned = true;
+        st.close();
+        assert!(st.menu.is_none() && st.drag.is_none() && st.shown().is_none() && st.rows[1].is_empty());
+        assert!(st.warned, "the warning is once a session");
+    }
+
+    #[test]
+    fn stationary_pointer_does_not_undo_wheel() {
+        // A list moved under a resting pointer: its new row does not take the selection.
+        assert!(!hover_selects(false, false, false));
+        // A held wheel, the pointer jittering.
+        assert!(!hover_selects(true, true, false));
+        // The pointer travels onto another row.
+        assert!(hover_selects(true, false, false));
+        assert!(!hover_selects(true, false, true), "already selected");
+    }
+
+    #[test]
+    fn quantity_blocks_container_input() {
+        let (ui, _) = (menu(), ());
+        let m = ui.menu(CONTAINER_MENU);
+        assert_eq!(takes_input(m, false), m);
+        assert_eq!(takes_input(m, true), None);
+        assert_eq!(takes_input(None, false), None);
+    }
+
+    #[test]
+    fn physical_a_focuses_without_taking_all() {
+        use super::super::menus::key_click_acts;
+        // The file binds A and E: from the keyboard they are the hand-built keys, a script's
+        // MenuTapKey (not physical) acts through the file.
+        assert!(!key_click_acts(CONTAINER_MENU, "A", &["A"]));
+        assert!(key_click_acts(CONTAINER_MENU, "A", &[]));
+        assert!(!key_click_acts(CONTAINER_MENU, "E", &["E"]));
+        assert!(key_click_acts(CONTAINER_MENU, "E", &[]));
+    }
+
+    #[test]
+    fn a_row_moved_in_the_model_acts_on_nothing() {
+        let (mut ui, mut st) = (menu(), ContainerTiles::default());
+        frame(&mut ui, &snapshot(&[(1, "One"), (2, "Two")], &[], Side::Player, 0), &mut st);
+        let now = |items: &[u32]| -> Vec<RowShown> { items.iter().map(|&i| row(i, "x")).collect() };
+        assert_eq!(st.row_in(Side::Player, 1, &now(&[1, 2])), Some(1), "as the tree shows it");
+        assert_eq!(st.row_in(Side::Player, 1, &now(&[1, 3])), None, "another item there");
+        assert_eq!(st.row_in(Side::Player, 1, &now(&[1])), None, "the list shorter");
+        assert_eq!(st.row_in(Side::Container, 0, &now(&[1])), None, "no such tile");
+    }
+}

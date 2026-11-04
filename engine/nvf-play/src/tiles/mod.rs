@@ -1,5 +1,6 @@
 //! The tile tree beside the drawn menus [design: ui-tile-tree.md §6.2 step 1].
 
+pub mod container_menu;
 pub mod draw;
 pub mod input;
 pub mod item_card;
@@ -63,13 +64,13 @@ impl MenuFiles<'_, '_> {
 }
 
 /// Whether `screen()` is written in interface units ([`write_screen`]): only while a T15
-/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`) or the start menu's Mods page
+/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `ContainerMenu`) or the start menu's Mods page
 /// (T11, `mods`) is switched on, whose files centre their boxes by `screen()` (MCM's `x`
 /// and `y`, menu-xml.md §10). The default game and the tile HUD alone keep the window's
 /// pixels [design]. The original reports interface units [observed: hud_menus capture
 /// 2026-10-31, three window sizes]; applying them unconditionally is a follow-up.
 pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
-    menus.message || menus.quantity || menus.sleep_wait || menus.start
+    menus.message || menus.quantity || menus.sleep_wait || menus.container || menus.start
 }
 
 /// Write `screen()`'s traits for a window `window_width` x `window_height` (logical
@@ -579,15 +580,84 @@ fn write(
     }
 }
 
+/// T15c: write the container menu's traits before the input's step (`input::feed`): a new
+/// snapshot of the model when it changed, then its sizes, places, scroll and highlight every
+/// frame it is drawn (`container_menu::settle`), so the input and the drawing see one state.
+#[allow(clippy::too_many_arguments)]
+fn write_container(
+    mut script: ResMut<ScriptState>,
+    switch: Res<vanilla::TileMenus>,
+    active: Res<crate::menu::ActiveMenu>,
+    mut sim: ResMut<crate::sim::SimState>,
+    (combat, play): (Option<Res<crate::combat::Combat>>, Option<Res<crate::PlayWorld>>),
+    mut forms: Local<Option<crate::pipboy::stats::read::Forms>>,
+    mut fonts: draw::FontKit,
+    mut st: ResMut<container_menu::ContainerTiles>,
+) {
+    if !switch.container {
+        return;
+    }
+    let model = active.0.as_ref().filter(|_| container_menu::is_container(active.0.as_ref()));
+    let Some(rt) = script.rt.as_ref() else { return };
+    let game = &rt.game;
+    if model.is_some() && game.ui_files.is_some() && game.menu == Some(crate::script::MENU_CONTAINER) && !st.warned {
+        if let menus::Tiled::No(reason) = container_menu::built(&game.ui_tree) {
+            warn!("{} drawn by hand: {reason}", container_menu::CONTAINER_MENU);
+            st.warned = true;
+        }
+    }
+    let Some(m) = model else {
+        if st.menu.is_some() || st.shown().is_some() {
+            st.close();
+        }
+        return;
+    };
+    let menu = if container_menu::tiled(true, game, true) { game.ui_tree.menu(container_menu::CONTAINER_MENU) } else { None };
+    st.menu = menu;
+    let Some(menu) = menu else { return };
+    // What the model shows is read when it changed: an aid's figures run its conditions.
+    let new = (active.is_changed() || st.needs_snapshot(menu)).then(|| {
+        if forms.is_none() {
+            *forms = play.as_ref().map(|p| crate::pipboy::stats::read::Forms::new(p.lo, p.schema));
+        }
+        let note = crate::menu::note(m, &sim);
+        let info = m.selected_row(m.focus).map(|r| crate::pipboy::items::info_of(r, combat.as_deref(), sim.bypass_change_detection(), forms.as_mut(), Some(script.bypass_change_detection())));
+        container_menu::Snapshot::of(m, info.as_ref(), note)
+    });
+    let Some(rt) = script.rt.as_mut() else { return };
+    let ui = &mut rt.game.ui_tree;
+    let mut told = false;
+    if let Some(s) = new {
+        if st.is_new(menu, &s) {
+            container_menu::write(ui, &s, &mut st);
+            told = true;
+        }
+    }
+    let texts = menus::texts(ui, menu);
+    let size = fonts.menu_measure(&menus::fonts_of(ui, &texts));
+    st.settle_shown(ui, &texts, &size);
+    if let (true, Some(s)) = (told, st.shown()) {
+        // New rows are marked before this frame's input (the clip) too.
+        container_menu::mark_tiles(ui);
+        info!("{}", container_menu::describe(ui, s));
+    }
+}
+
 /// Works the tree out after the scripts; nothing to do on a frame where nothing changed
 /// it (`fnv_ui::Ui::update`). The scripts' gradual changes step first, on real time
 /// (`fnv_game::ui_gradients`, task T9).
-fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check: ResMut<input::WaitSliderCheck>) {
+fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check: ResMut<input::WaitSliderCheck>, mut container: ResMut<container_menu::ContainerTiles>) {
     let Some(rt) = script.rt.as_mut() else { return };
     rt.game.ui_gradients.step(&mut rt.game.ui_tree, f64::from(time.delta_secs()));
     if rt.game.ui_files.is_some() {
         rt.game.ui_tree.update();
         input::check_wait_drawn(&rt.game.ui_tree, &mut wait_check);
+        // T15c: the marks after the scripts (a tile injected this frame is covered), and the
+        // scroll drawn.
+        if container.menu.is_some() {
+            container_menu::mark_tiles(&mut rt.game.ui_tree);
+            container.check_drawn(&rt.game.ui_tree, &mut |line| info!("{line}"));
+        }
         // Once, if something changes the tree's shape every frame (#1061).
         if let Some(line) = rt.game.ui_tree.take_reshape_warning() {
             warn!("{line}");
@@ -609,7 +679,11 @@ impl Plugin for TilesPlugin {
         vanilla::setup(app);
         input::setup(app);
         app.init_resource::<draw::TileFonts>()
+            .init_resource::<container_menu::ContainerTiles>()
+            .init_resource::<container_menu::TileWheelTitle>()
             .add_systems(Update, write.after(PlaySet::Physics).after(crate::compass::place).before(PlaySet::Activation))
+            // T15c: the container menu's state for this frame's input.
+            .add_systems(Update, write_container.after(write).before(input::feed))
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).before(PlaySet::Activation))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
@@ -670,6 +744,7 @@ mod tests {
         assert!(interface_screen(vanilla::TileMenus { quantity: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { start: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { sleep_wait: true, ..Default::default() }));
+        assert!(interface_screen(vanilla::TileMenus { container: true, ..Default::default() }));
         write_screen(&mut ui, 1280.0, 720.0, true);
         ui.update();
         assert_eq!(ui.get_float("M/Box/x").map(|x| (x * 100.0).round() / 100.0), Some(803.33));
