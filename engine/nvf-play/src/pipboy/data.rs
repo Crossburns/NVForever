@@ -32,6 +32,8 @@
 //! - Both maps pan while the left button is held on them and the pointer moves (the
 //!   pointer's own movement, not Bevy's drag: the map's nodes are drawn again as the
 //!   highlight box follows the pointer, which ended a drag at once).
+//! - On a controller the right stick moves the highlight box and the left stick's up and
+//!   down zooms in and out smoothly while held ([`stick_cursor`], [`stick_zoom`]).
 //!
 //! Selection: Up/Down (W/S) and the pointer (the row under it is selected and boxed);
 //! the test aid's `key=down|up|use` steps (`crate::menu::MenuInput`) do the same here.
@@ -53,6 +55,7 @@ use crate::player::Player;
 use crate::radio::{Radio, RadioPlaces};
 use crate::script::ScriptState;
 use crate::sim::SimState;
+use crate::bindings::{Bindings, InputDevice};
 use crate::{Location, PlayWorld};
 use bevy::ecs::system::SystemParam;
 use bevy::image::CompressedImageFormatSupport;
@@ -194,6 +197,12 @@ const LOCAL_CELLS: (i32, i32) = (3, 2);
 /// Each wheel step zooms a map by this factor, between 1 and 4 times [design].
 const ZOOM_STEP: f32 = 1.25;
 const ZOOM: (f32, f32) = (1.0, 4.0);
+/// The controller's right stick moves the map cursor this fast at a full push, canvas
+/// units a second (the window is 855 wide) [design].
+const CURSOR_SPEED: f32 = 600.0;
+/// The controller's left stick zooms a map this fast at a full push, wheel steps a
+/// second (the wheel's 1.25 a step, from 1 to 4 times) [design].
+const ZOOM_STICK_STEPS: f32 = 3.0;
 /// The trace drawn while the radio plays: its greatest height either side of the middle
 /// [observed: the capture, about a third of the panel at its loudest], the waves across
 /// the panel [observed: 8], how fast its envelope runs to the left, panels a second
@@ -448,6 +457,8 @@ pub struct Input<'w, 's> {
     aid: ResMut<'w, PipBoyAid>,
     ask: MessageWriter<'w, FastTravelAsk>,
     go: MessageWriter<'w, FastTravelGo>,
+    pads: Query<'w, 's, &'static Gamepad>,
+    bindings: Option<Res<'w, Bindings>>,
 }
 
 /// The page's drawing tools.
@@ -804,6 +815,20 @@ fn take_input(st: &mut DataState, tab: usize, l: &Lists, game: &mut Game, input:
             }
         }
     }
+    // The controller's sticks drive the maps (docs/design/controller.md §6): the right
+    // stick moves the highlight box, the left stick's up and down zooms in and out
+    // smoothly while held [observed: the original].
+    if input.bindings.as_ref().is_some_and(|b| b.device == InputDevice::Controller) && (tab == LOCAL || tab == WORLD) {
+        let right = crate::pad::stick(&input.pads, false);
+        let left = crate::pad::stick(&input.pads, true);
+        let dt = input.time.delta_secs();
+        if right != Vec2::ZERO {
+            st.cursor[tab] = Some(stick_cursor(st.cursor[tab].unwrap_or(MAP_MID), right, dt));
+        }
+        if left.y != 0.0 {
+            st.magnify[tab] = stick_zoom(st.magnify[tab], left.y, dt);
+        }
+    }
     for a in std::mem::take(&mut st.acts) {
         match a {
             Act::Hover(t, i) if t == tab && i < len => {
@@ -1103,6 +1128,19 @@ fn player_at(st: &DataState, game: &Game, world: u32) -> Option<([f32; 3], f32)>
 fn in_map(pointer: Option<Vec2>) -> Option<Vec2> {
     let p = pointer? - MAIN.min - MAP.min;
     (p.x >= 0.0 && p.y >= 0.0 && p.x < MAP.width() && p.y < MAP.height()).then_some(p)
+}
+
+/// Move the map cursor `at` by the right stick `v` for `dt` seconds, kept in the window;
+/// the stick's up is the screen's up, but the window's y runs down.
+fn stick_cursor(at: Vec2, v: Vec2, dt: f32) -> Vec2 {
+    let p = at + Vec2::new(v.x, -v.y) * (CURSOR_SPEED * dt);
+    Vec2::new(p.x.clamp(0.0, MAP.width()), p.y.clamp(0.0, MAP.height()))
+}
+
+/// Zoom `mag` by the left stick's up and down `y` (up positive, in; down out) for `dt`
+/// seconds, smoothly while held, between [`ZOOM`].
+fn stick_zoom(mag: f32, y: f32, dt: f32) -> f32 {
+    (mag * ZOOM_STEP.powf(y * ZOOM_STICK_STEPS * dt)).clamp(ZOOM.0, ZOOM.1)
 }
 
 /// The highlight box: at the pointer while it is over the map, else where it was left
@@ -1900,5 +1938,26 @@ mod tests {
         assert_eq!(remaining(309), "00:30:9 remaining");
         assert_eq!(remaining(0), "00:00:0 remaining");
         assert_eq!(remaining(754), "01:15:4 remaining");
+    }
+
+    #[test]
+    fn the_right_stick_moves_the_cursor_and_inverts_y() {
+        // Right moves right; up moves up (the window's y runs down, so up is negative).
+        assert_eq!(stick_cursor(Vec2::new(300.0, 300.0), Vec2::new(1.0, 0.0), 0.1), Vec2::new(360.0, 300.0));
+        assert_eq!(stick_cursor(Vec2::new(300.0, 300.0), Vec2::new(0.0, 1.0), 0.1), Vec2::new(300.0, 240.0));
+        // Kept inside the window at every corner.
+        assert_eq!(stick_cursor(Vec2::new(0.0, 0.0), Vec2::new(-1.0, 1.0), 1.0), Vec2::new(0.0, 0.0));
+        assert_eq!(stick_cursor(Vec2::new(MAP.width(), 0.0), Vec2::new(1.0, 1.0), 1.0), Vec2::new(MAP.width(), 0.0));
+        assert_eq!(stick_cursor(Vec2::new(0.0, MAP.height()), Vec2::new(-1.0, -1.0), 1.0), Vec2::new(0.0, MAP.height()));
+        assert_eq!(stick_cursor(Vec2::new(MAP.width(), MAP.height()), Vec2::new(1.0, -1.0), 1.0), Vec2::new(MAP.width(), MAP.height()));
+    }
+
+    #[test]
+    fn the_left_stick_zooms_in_up_and_out_down() {
+        assert!(stick_zoom(1.0, 1.0, 1.0) > 1.0);
+        assert!(stick_zoom(4.0, -1.0, 1.0) < 4.0);
+        assert_eq!(stick_zoom(1.0, 0.0, 1.0), 1.0);
+        assert_eq!(stick_zoom(4.0, 1.0, 100.0), ZOOM.1);
+        assert_eq!(stick_zoom(1.0, -1.0, 100.0), ZOOM.0);
     }
 }
