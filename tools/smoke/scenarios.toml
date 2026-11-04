@@ -2832,7 +2832,7 @@ expect = [
   "barter opened: UIMenuMode",
   "container take all: UIItemTakeAll",
   "inventory item used: NPCHumanUsingStimpak",
-  { text = "dialogue menu: TAB) Goodbye shown at the left of the choices", label = "the Goodbye hint while Chet offers a Goodbye choice (list 5 item 62)" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", label = "the Goodbye hint while Chet offers a Goodbye choice (list 5 item 62)" },
   { text = "wait slider moved: UIMenuPrevNext", known_failing = "main 2026-10-15 (since crime in play, #242, 2026-10-12): the menu aid's Take All from Chet's cash register at 44 s is a theft Chet sees, so he turns on the player and the wait menu at 61 s is refused (You cannot wait when enemies are nearby.), as it should be; the slider is never moved. The slider sound is checked in wait-residents instead" },
   "settings switch flipped: UIMenuPrevNext",
   { re = 'ui sounds summary:.*\b24 played', known_failing = "claude/smoke-regressions 2026-10-12: 23 played with every step done (the start-up boxes no longer swallow the menu aid's inventory pass); one UIPipBoyScroll short of the 24 of 2026-10-11: since the Pip-Boy ITEMS page (#213) the menu aid's inventory pass lists the Weapons tab, whose first row is the weapon it puts on and is already selected, so no selection move is heard (before: the Vault 13 jumpsuit, further down one list). Not a sound the engine loses. Main 2026-10-15: 20 played, the refused wait menu's three (UIMenuMode, UIMenuPrevNext, UIMenuOK, all heard in wait-residents) on top; see the wait slider line" },
@@ -2842,18 +2842,35 @@ expect = [
 
 [[scenario]]
 name = "dialogue-goodbye-hint"
-note = "Chet is talked to twice in the general store, each time left by Tab (the aid's leave step). Between them the pause menu's settings page turns the Goodbye hint (dialogue-goodbye-hint, #1517) off: the first conversation shows the hint, the second holds it back and Tab still leaves. Run at 1024x768 (4:3), where the hint stands inside the band under the bottom bracket, so the shots (hint_on_*.png during the first conversation, hint_off_*.png during the second, each at three times as Chet's greeting is not timed) show the narrow-screen place. Not run before this branch; the times leave the first conversation 19 s or more to end"
-source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint and its setting (#1517)"
+note = "Chet in the general store, 1024x768 (4:3: the hint stands in the band under the bottom bracket, not at the side). The talk aid starts the conversation with no steps and holds the choices for 20 s; a real Tab key (NVF_PLAY_TEST_KEYS, through the game's bindings) at 22 s says goodbye, so the aid's own leave never runs. Shots hint_on_*.png while the choices wait. Covers: the hint shown while a Goodbye choice is offered, a real Tab ending the conversation by Goodbye. Does not cover: a Tab refused where no Goodbye is offered (dialogue.rs is unchanged), the switch flipped live (the unit test of the cache key covers it), the setting's saved state. Timing: the conversation starts at 11 s of the world aids' clock and Chet's greeting takes under 11 s, else the Tab at 22 s is refused and the run fails on the aid's leave line (a late start moves the talk and the keys together)"
+source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint (#1517)"
 areas = ["dialogue", "menus"]
 paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=leave;42:GSChetRef=leave", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_PAUSE = "30:36", NVF_PLAY_TEST_SETTINGS = "31:page,32:dialogue-goodbye-hint", NVF_PLAY_TEST_SHOTS = "14:hint_on_14.png,17:hint_on_17.png,20:hint_on_20.png,45:hint_off_45.png,48:hint_off_48.png,51:hint_off_51.png" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "20", NVF_PLAY_TEST_KEYS = "22:tab", NVF_PLAY_TEST_SHOTS = "16:hint_on_16.png,19:hint_on_19.png,21:hint_on_21.png" }
 args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1024x768"]
-run_seconds = 58
+run_seconds = 40
 expect = [
-  { text = "dialogue menu: TAB) Goodbye shown at the left of the choices", count = 1, label = "the hint while the first conversation offers a Goodbye choice, with the switch on (the default)" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 1, label = "the hint, the switch on by default, while Chet offers a Goodbye choice" },
+  { text = "dialogue menu: [Tab] Goodbye hidden by the Goodbye hint setting", max = 0, label = "no hidden line with the switch on" },
+  { re = 'dialogue: conversation with GSChetRef ended \(goodbye,', count = 1, label = "the conversation ended by its Goodbye line (not by being left or broken off)" },
+  { text = "test aid NVF_PLAY_TEST_TALK: no steps left: leaving the conversation", max = 0, label = "the aid did not leave: the real Tab did" },
+]
+
+[[scenario]]
+name = "dialogue-goodbye-hint-off"
+note = "As dialogue-goodbye-hint with the Goodbye hint switched off first: the pause menu's settings page flips dialogue-goodbye-hint at 3 s (the aids that act on the world, the talk among them, wait for 11 s of the world clock, which never runs ahead of the real one, so the flip comes first on any machine). The hint is held back, the real Tab at 22 s still says goodbye. Shots hint_off_*.png. Does not cover the flip while a conversation is open (unit test of the cache key) or a refused Tab"
+source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint switch (#1517)"
+areas = ["dialogue", "menus"]
+paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:page,3:dialogue-goodbye-hint", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "20", NVF_PLAY_TEST_KEYS = "22:tab", NVF_PLAY_TEST_SHOTS = "16:hint_off_16.png,19:hint_off_19.png,21:hint_off_21.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1024x768"]
+run_seconds = 40
+expect = [
   { text = "settings: dialogue-goodbye-hint off", label = "the settings page turned the Goodbye hint off" },
-  { text = "dialogue menu: TAB) Goodbye hidden by the Goodbye hint setting", count = 1, label = "the second conversation offers Goodbye and the hint is held back" },
-  { re = 'dialogue: conversation with GSChetRef ended \((goodbye|left)', count = 2, label = "Tab (the leave step) left both conversations, the hint shown or not" },
+  { text = "dialogue menu: [Tab] Goodbye hidden by the Goodbye hint setting", count = 1, label = "Chet offers Goodbye and the hint is held back" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", max = 0, label = "the hint is not shown" },
+  { re = 'dialogue: conversation with GSChetRef ended \(goodbye,', count = 1, label = "a real Tab still says goodbye with the hint hidden" },
+  { text = "test aid NVF_PLAY_TEST_TALK: no steps left: leaving the conversation", max = 0, label = "the aid did not leave: the real Tab did" },
 ]
 
 [[scenario]]
