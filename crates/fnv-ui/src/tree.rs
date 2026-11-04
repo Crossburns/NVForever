@@ -960,12 +960,22 @@ impl Ui {
         let Some(k) = self.tile(tile).trait_index(name) else { return false };
         // Whoever read it last works its value out afresh: with no source newer than its own
         // last working out, `update` would keep what it had. Other traits written from outside
-        // keep theirs.
+        // keep theirs. The kept sources name traits by index, and those after it move down one:
+        // a second removal before the next update must find the right readers too.
+        let k32 = k as u32;
         for t in self.tiles.iter_mut().filter(|t| t.live) {
             for tr in &mut t.traits {
-                if tr.sources.iter().any(|&(s, j)| s == tile && j as usize == k) {
+                let mut read = false;
+                for source in tr.sources.iter_mut().filter(|s| s.0 == tile) {
+                    read |= source.1 == k32;
+                    if source.1 > k32 {
+                        source.1 -= 1;
+                    }
+                }
+                if read {
                     tr.evaluated = 0;
                 }
+                tr.sources.retain(|&(s, j)| !(read && s == tile && j == k32));
             }
         }
         // `tile_mut` marks the tree's shape changed: the sources kept by index are read again.

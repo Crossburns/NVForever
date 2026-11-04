@@ -865,3 +865,43 @@ fn a_trait_taken_off_a_tile_reads_as_never_set() {
     ui.update();
     assert_eq!(ui.get_float("M/R/_read"), Some(5.0));
 }
+
+#[test]
+fn traits_taken_off_one_after_another_each_tell_their_own_readers() {
+    // Three traits on one tile and a reader of each, all worked out; the first two go with no
+    // update between. Each reader of a gone trait reads nothing again; the third keeps reading
+    // its trait, which moved down two places, and hears of its next change.
+    let src = MemSource::default().with(
+        "m.xml",
+        r#"<menu name="M"><rect name="R">
+          <_a><copy>1</copy><add src="screen()" trait="one"/></_a>
+          <_b><copy>2</copy><add src="screen()" trait="two"/></_b>
+          <_c><copy>3</copy><add src="screen()" trait="three"/></_c></rect></menu>"#,
+    );
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "m.xml").unwrap();
+    let screen = ui.screen();
+    for (name, v) in [("one", 10.0), ("two", 20.0), ("three", 30.0)] {
+        ui.set_trait(screen, name, Value::Num(v));
+    }
+    ui.update();
+    let read = |ui: &Ui| ["_a", "_b", "_c"].map(|n| ui.get_float(&format!("M/R/{n}")).unwrap());
+    assert_eq!(read(&ui), [11.0, 22.0, 33.0]);
+    assert!(ui.remove_trait(screen, "one"));
+    assert!(ui.remove_trait(screen, "two"));
+    ui.update();
+    assert_eq!(read(&ui), [1.0, 2.0, 33.0]);
+    ui.set_trait(screen, "three", Value::Num(40.0));
+    ui.update();
+    assert_eq!(read(&ui), [1.0, 2.0, 43.0]);
+    // Back again, in the other order of going.
+    ui.set_trait(screen, "one", Value::Num(5.0));
+    ui.set_trait(screen, "two", Value::Num(6.0));
+    ui.update();
+    assert_eq!(read(&ui), [6.0, 8.0, 43.0]);
+    assert!(ui.remove_trait(screen, "two"));
+    assert!(ui.remove_trait(screen, "one"));
+    assert!(ui.remove_trait(screen, "three"));
+    ui.update();
+    assert_eq!(read(&ui), [1.0, 2.0, 3.0]);
+}
