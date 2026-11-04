@@ -17830,15 +17830,16 @@ order = [[
 
 [[scenario]]
 name = "tiles-tutorial"
-source = "[design] ui-tile-tree.md §6.2 step 3 (T15b part 2, docs/handoff/ui-tile-tree-tasks.md, tutorial-menu.md §5): with [UI] TileMenus=TutorialMenu the tutorial menu is drawn from the game's TutorialMenu tiles (menu 1059 builds it; the model writes the page's strings, the count, the buttons' state and the scroll), the hand-built drawing is not spawned, a message whose text overflows its column scrolls by key, wheel, arrow and page area to its bound, a second message is a page with bounded Next and Previous by key and pointer, E and a click on Close close it, it opens again, and over the Pip-Boy its close gives the Pip-Boy back"
-note = "NVF_PLAY_TEST_SCRIPT_MENUS is off so the test aid's auto-close hides nothing. 0x0007235B overflows in the original at this size (text 625 high, 215 to scroll, hud_menus capture), 0x00072358 is the short HelpHealingLimbs. All aids on one clock (NVF_PLAY_AIDS_FROM_SCRIPTS 0) as the tile pointer keeps the time since the start, so the first step stands well after a late script start. At 1280 x 720 the screen is 1706.7 x 960 interface units, TM_Background at 170.7, 96 (tutorial_menu.xml): the scrollbar's x 204 to 236, its top 268 and bottom 692, the down arrow 692 to 708, so (220, 700) is the arrow and (220, 600) the page area under the marker at value 120 (marker 32 high at 268 + value x 392/215, 54.70 at 30 and 392 at the bound as the original reads, hud_tutorial_more; 625 and 215 need the message's single line breaks kept, tiles::tutorial_menu::body_text); the buttons' right side 1455, Next y 268 to 320, Previous 320 to 372, Close 656 to 708. Compare the shots with tutorial-default-drawing's at the same times: tiles_tutorial_top and _bottom are the top and bottom of the scroll, tiles_tutorial_two_pages the first of two pages, tiles_tutorial_page2 the second"
+source = "[design] ui-tile-tree.md §6.2 step 3 (T15b part 2, docs/handoff/ui-tile-tree-tasks.md, tutorial-menu.md §5): with [UI] TileMenus=TutorialMenu the tutorial menu is drawn from the game's TutorialMenu tiles (menu 1059 builds it; the model writes the page's strings, the count, the buttons' state and the scroll), the hand-built drawing is not spawned, a message whose text overflows its column scrolls by key, wheel, arrow and page area to its bound, a second message is a page with bounded Next and Previous by key and pointer, E and a click on Close close it, it opens again, and over the Pip-Boy its close gives the Pip-Boy back; the world is blurred from the first frame drawn from tiles to the close (radius 3, tutorial-menu.md §5, image-modifiers.md §5), over the Pip-Boy the stronger of the two, and its close leaves the Pip-Boy's own blur"
+note = "NVF_PLAY_TEST_SCRIPT_MENUS is off so the test aid's auto-close hides nothing. 0x0007235B overflows in the original at this size (text 625 high, 215 to scroll, hud_menus capture), 0x00072358 is the short HelpHealingLimbs. All aids on one clock (NVF_PLAY_AIDS_FROM_SCRIPTS 0) as the tile pointer keeps the time since the start, so the first step stands well after a late script start. At 1280 x 720 the screen is 1706.7 x 960 interface units, TM_Background at 170.7, 96 (tutorial_menu.xml): the scrollbar's x 204 to 236, its top 268 and bottom 692, the down arrow 692 to 708, so (220, 700) is the arrow and (220, 600) the page area under the marker at value 120 (marker 32 high at 268 + value x 392/215, 54.70 at 30 and 392 at the bound as the original reads, hud_tutorial_more; 625 and 215 need the message's single line breaks kept, tiles::tutorial_menu::body_text); the buttons' right side 1455, Next y 268 to 320, Previous 320 to 372, Close 656 to 708. Compare the shots with tutorial-default-drawing's at the same times: tiles_tutorial_top and _bottom are the top and bottom of the scroll, tiles_tutorial_two_pages the first of two pages, tiles_tutorial_page2 the second, tiles_tutorial_over_pipboy the menu over the Pip-Boy and tiles_tutorial_over_pipboy_closed the Pip-Boy with its own blur after the close"
 areas = ["ui", "menus", "scripts"]
 paths = [
   "engine/nvf-play/src/tiles/tutorial_menu.rs", "engine/nvf-play/src/tutorial_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
   "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/pad.rs",
   "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+  "engine/nvforever/src/imagespace.rs", "engine/nvforever/src/imagespace.wesl", "engine/nvforever/src/imagespace_blur.wesl",
 ]
-env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TutorialMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:call:-:ShowTutorialMenu:0x0007235B,28:call:-:ShowTutorialMenu:0x00072358,36:call:-:ShowTutorialMenu:0x00072358,41:call:-:ShowTutorialMenu:0x00072358", NVF_PLAY_TEST_KEYS = "22:down,22.5:down,23:wheel-down,27:up,27.5:wheel-up,30:a,30.5:a,31.5:s,32:s,34:e,42:e", NVF_PLAY_TEST_POINTER = "23.5:220:700,24:220:700:click,24.5:220:600,25:220:600:click,25.5:220:700:click,26:off,32.2:1420:294,32.5:1420:294:click,33:1420:346,33.2:1420:346:click,33.5:off,37.5:1420:680,38:1420:680:click,38.5:off", NVF_PLAY_TEST_PIPBOY = "40:open,43:page=stats,44:close", NVF_PLAY_TEST_SHOTS = "21.5:tiles_tutorial_top.png,26.5:tiles_tutorial_bottom.png,29:tiles_tutorial_two_pages.png,31:tiles_tutorial_page2.png,37:tiles_tutorial_short.png,41.5:tiles_tutorial_over_pipboy.png" }
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TutorialMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:call:-:ShowTutorialMenu:0x0007235B,28:call:-:ShowTutorialMenu:0x00072358,36:call:-:ShowTutorialMenu:0x00072358,41:call:-:ShowTutorialMenu:0x00072358", NVF_PLAY_TEST_KEYS = "22:down,22.5:down,23:wheel-down,27:up,27.5:wheel-up,30:a,30.5:a,31.5:s,32:s,34:e,42:e", NVF_PLAY_TEST_POINTER = "23.5:220:700,24:220:700:click,24.5:220:600,25:220:600:click,25.5:220:700:click,26:off,32.2:1420:294,32.5:1420:294:click,33:1420:346,33.2:1420:346:click,33.5:off,37.5:1420:680,38:1420:680:click,38.5:off", NVF_PLAY_TEST_PIPBOY = "40:open,43:page=stats,44:close", NVF_PLAY_TEST_SHOTS = "21.5:tiles_tutorial_top.png,26.5:tiles_tutorial_bottom.png,29:tiles_tutorial_two_pages.png,31:tiles_tutorial_page2.png,37:tiles_tutorial_short.png,41.5:tiles_tutorial_over_pipboy.png,42.5:tiles_tutorial_over_pipboy_closed.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
 run_seconds = 48
 expect = [
@@ -17873,6 +17874,9 @@ expect = [
   { text = "tutorial menu: closed (click)", count = 1, label = "a click closes it" },
   { re = 'test aid: closed menu 1059 after', count = 0, label = "no test aid closed it" },
   { re = 'ui: dropped TutorialMenu', min = 3, label = "the closed menu drops its tiles" },
+  { text = "tile menu blur: TutorialMenu radius 3", count = 3, label = "the world blurred once for each of the three openings" },
+  { text = "tile menu blur: off", count = 3, label = "and clear again at each close" },
+  { text = "tile menu blur: the screen's own blur 3.5 stays", count = 1, label = "tiles_tutorial_over_pipboy: the close leaves the Pip-Boy's own blur, and only that close leaves one" },
 ]
 order = [[
   "script: test aid calls ShowTutorialMenu",
@@ -17894,6 +17898,26 @@ order = [[
   { re = 'tiles: TutorialMenu drawn from tiles: page 2/2 ' },
   { re = 'tiles: TutorialMenu scroll drawn at 0 of \d+(\.\d+)?, text y 21\b', label = "A's turn starts the page at its top, before any reopening" },
   "tutorial menu: closed (key)",
+], [
+  "script: test aid calls ShowTutorialMenu",
+  { text = "tiles: TutorialMenu drawn from tiles (", label = "the first frame drawn from tiles" },
+  { text = "tile menu blur: TutorialMenu radius 3", label = "the blur starts with it, not with the opening" },
+  "tutorial menu: closed (key)",
+  "tile menu blur: off",
+  "script: test aid calls ShowTutorialMenu",
+  { text = "tile menu blur: TutorialMenu radius 3", label = "reopened" },
+  "tutorial menu: closed (click)",
+  "tile menu blur: off",
+], [
+  { text = "pipboy: up", label = "tiles_tutorial_over_pipboy: the Pip-Boy up first" },
+  "script: test aid calls ShowTutorialMenu",
+  "tile menu blur: TutorialMenu radius 3",
+  "test aid: screenshot …tiles_tutorial_over_pipboy.png",
+  "tutorial menu: closed (key)",
+  "tile menu blur: off",
+  { text = "tile menu blur: the screen's own blur 3.5 stays", label = "what was behind the menu shows: fBlurRadiusPipboy, the clip held" },
+  "test aid: screenshot …tiles_tutorial_over_pipboy_closed.png",
+  "pipboy: down",
 ]]
 
 [[scenario]]
@@ -17901,12 +17925,13 @@ name = "tutorial-default-drawing"
 source = "docs/spec-notes/tutorial-menu.md §3 and §5: without the switch the tutorial menu is the hand-built drawing: no tile of it is drawn or written, and its keys, wheel, page bounds and close work as before the commands were shared with the tile menu; the shots are the default drawing to compare with tiles-tutorial's"
 note = "the same messages and times as tiles-tutorial, by keys alone, ten steps being past the hand-built scroll's end for 0x0007235B at this size"
 areas = ["ui", "menus", "scripts"]
-paths = ["engine/nvf-play/src/tutorial_menu.rs", "engine/nvf-play/src/tiles/tutorial_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "crates/fnv-ui/src/input.rs"]
+paths = ["engine/nvf-play/src/tutorial_menu.rs", "engine/nvf-play/src/tiles/tutorial_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/menus.rs", "crates/fnv-ui/src/input.rs", "engine/nvforever/src/imagespace.rs", "engine/nvforever/src/imagespace.wesl", "engine/nvforever/src/imagespace_blur.wesl"]
 env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:call:-:ShowTutorialMenu:0x0007235B,28:call:-:ShowTutorialMenu:0x00072358", NVF_PLAY_TEST_KEYS = "22:down,22.25:down,22.5:down,22.75:down,23:down,23.25:down,23.5:down,23.75:down,24:wheel-down,24.25:wheel-down,27:up,27.5:wheel-up,30:a,30.5:a,31.5:s,32:s,34:e", NVF_PLAY_TEST_SHOTS = "21.5:tutorial_default_top.png,26.5:tutorial_default_bottom.png,29:tutorial_default_two_pages.png,31:tutorial_default_page2.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
 run_seconds = 38
 expect = [
   { re = 'tiles: TutorialMenu', count = 0, label = "nothing of the tile menu runs without its switch" },
+  { text = "tile menu blur:", count = 0, label = "and no blur is asked for: the hand-built menu's world stays as it was" },
   { text = 'tutorial menu: page 2/2 "Healing Limbs"', count = 1, label = "A turns once; the A at the last page does nothing" },
   { text = "tutorial menu: page 1/2", count = 2, label = "the second message's arrival and S; the S at the first page does nothing" },
   { text = "tutorial menu: closed (key)", count = 1, label = "E closes it" },
@@ -17979,6 +18004,8 @@ expect = [
   { re = 'tiles: \[UI\] TileMenus=ContainerMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): ContainerMenu drawn from tiles; its QuantityMenu prompt follows', label = "the switch is read from the test aid, and says the prompt follows" },
   { re = 'ui: built ContainerMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', min = 2, label = "the open menu builds its file, and again when opened again" },
   { re = 'tiles: ContainerMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', label = "the menu's tree draws, with its rows" },
+  { text = "tile menu blur: ContainerMenu radius 3", min = 1, label = "the world blurs behind the menu drawn from its tiles" },
+  { text = "tile menu blur: off", min = 1, label = "and clears when it closes" },
   { re = 'tiles: ContainerMenu drawn from tiles: "ITEMS" \d+ rows, "[^"]+" \d+ rows, "Wg   \d+/\d+", player selected "10mm Round \(70\)", figures: .*WG', label = "the pointer's row: the model's rows, headings, weight and unit figures" },
   { text = "tiles: ContainerMenu Hover(Player, 0) on its tiles", count = 1, label = "the pointer onto a row selects it, once; a resting pointer over changed rows does not" },
   { text = "tiles: ContainerMenu Hover(Container, 0) on its tiles", count = 1, label = "a row of the list without the focus takes the pointer" },
@@ -18108,6 +18135,7 @@ run_seconds = 40
 expect = [
   { re = 'tiles: ContainerMenu', count = 0, label = "nothing of the tile menu runs without its switch" },
   { re = 'tiles: QuantityMenu', count = 0, label = "nor is the prompt drawn from its tiles" },
+  { text = "tile menu blur:", count = 0, label = "and no tile menu's blur" },
   { re = 'how many\? \(70 of 70\)', count = 2, label = "a stack of more than five asks" },
   { text = "menu: AmountOk: Stored 10mm Round x70", count = 1, label = "Cancel moved nothing, Ok moved the stack" },
   { text = "menu: TakeAll: Took everything (71 items)", count = 1, label = "the 70 and the mug come back" },

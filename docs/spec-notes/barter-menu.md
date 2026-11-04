@@ -412,8 +412,9 @@ What the tile path does with these, and where it differs:
   STR lines 781-913 x 447-470 agree. A bar shows only on a list that overflows, on either side, in
   both.
 - **Still different, and why**:
-  - The world's blur (not built). Against it the backing reads darker here; the world differs
-    between the shots too, so 193.8 stands unchecked.
+  - The backing reads darker here against the world; the world differs between the shots too,
+    so 193.8 stands unchecked. The world now blurs behind the menu (image-modifiers.md, issue
+    #1484); these shots were taken before it did.
   - The picture and the fading side lines are brighter here, in both our drawings, one
     picture peaking at red 227 against 197 [observed]. 197 / 254 through the
     sRGB curve is 227 / 254, so the picture's mid-tones may be read as linear [hypothesis]; a

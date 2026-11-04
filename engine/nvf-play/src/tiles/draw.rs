@@ -901,7 +901,7 @@ pub const TUTORIAL_Z: i32 = 109;
 /// [design].
 pub const CONTAINER_Z: i32 = 100;
 
-pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes) {
+pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes, mut blur: ResMut<super::menus::TileMenuBlur>) {
     let scale = view.windows.single().map_or(1.0, |w| w.height() / 960.0);
     let heading = view.hud.as_ref().map_or(0.0, |h| h.heading);
     // T15a: the message box and the prompt, when switched on and in the tree (their
@@ -912,6 +912,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
     // The prompt drawn only while open: its tree drops at the next frame's sync.
     let prompt_open = view.active.as_ref().and_then(|a| a.0.as_ref()).is_some_and(|m| m.quantity.is_some());
     let container_on = view.container.as_ref().is_some_and(|c| c.menu.is_some());
+    let mut blur_now = super::menus::TileMenuBlur::default();
     for (name, on, z, drawn) in [
         (super::menus::MESSAGE_MENU, game.is_some_and(|g| super::menus::message_tiled(switch.message, g)), MESSAGE_Z, &mut others.message),
         (super::menus::QUANTITY_MENU, game.is_some_and(|g| super::menus::quantity_tiled(switch.quantity, g, prompt_open, container_on)), QUANTITY_Z, &mut others.quantity),
@@ -921,6 +922,9 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
     ] {
         let ui = game.map(|g| &g.ui_tree);
         let menu = ui.filter(|_| on).and_then(|ui| ui.menu(name).map(|m| (ui, m)));
+        // The blur behind the menu follows this very decision, not the switch or the menu's id.
+        blur_now.tutorial |= name == super::tutorial_menu::TUTORIAL_MENU && menu.is_some();
+        blur_now.container |= name == super::container_menu::CONTAINER_MENU && menu.is_some();
         let pieces = match menu {
             Some((ui, menu)) => {
                 if drawn.told_menu != Some(menu) {
@@ -934,6 +938,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
         };
         paint(&mut commands, drawn, pieces, scale, z, heading, ui, &mut kit, &mut nodes);
     }
+    *blur = blur_now;
     // T11: the Mods page, the start menu's mod tiles over the pause menu.
     let mods_on = switch.start && view.paused.as_ref().zip(view.page.as_ref()).is_some_and(|(p, page)| crate::pause::mods_open(p, page));
     mods_page(&mut commands, &script, mods_on, &mut kit, &mut others.start, &mut nodes, scale, heading);
@@ -1288,6 +1293,91 @@ mod tests {
     /// Every character 10 wide, lines 20 high [design].
     fn plain(_: f64, text: &str, _: Option<f64>) -> (f64, f64) {
         (10.0 * text.chars().count() as f64, 20.0)
+    }
+
+    /// [design] The real drawing system over a runtime with the menu files read, the tutorial
+    /// menu's switch `on`, nothing open.
+    fn tutorial_drawing(on: bool) -> App {
+        let mut state = ScriptState::over_no_plugins();
+        state.rt.as_mut().unwrap().game.ui_files = Some(Box::new(MemSource::default()));
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .init_resource::<TileFonts>()
+            .init_resource::<super::super::menus::TileMenuBlur>()
+            .insert_resource(TileMenus { tutorial: on, ..Default::default() })
+            .insert_resource(state)
+            .add_systems(Update, draw);
+        app
+    }
+
+    fn with_game(app: &mut App, change: impl FnOnce(&mut fnv_game::Game<'_>)) {
+        change(&mut app.world_mut().resource_mut::<ScriptState>().rt.as_mut().unwrap().game);
+    }
+
+    /// The frame's drawing: what it published for the blur of this menu; the other flag is
+    /// not this menu's to set.
+    fn tutorial_blur_after_frame(app: &mut App) -> bool {
+        // A stale value must not survive into the frame: the drawing writes it whole.
+        app.world_mut().resource_mut::<super::super::menus::TileMenuBlur>().container = true;
+        app.update();
+        let blur = *app.world().resource::<super::super::menus::TileMenuBlur>();
+        assert!(!blur.container);
+        blur.tutorial
+    }
+
+    fn open_tutorial(game: &mut fnv_game::Game<'_>) {
+        game.menu = Some(fnv_game::game::menus::TUTORIAL);
+    }
+
+    fn built_tutorial() -> Ui {
+        super::super::tutorial_menu::tests::menu_changed(str::to_string)
+    }
+
+    /// The first frame of an opened menu draws by hand and the next from the file (the tree
+    /// is built at the next frame's sync): the blur starts with the tiles, stops in the frame
+    /// the menu closes, and comes back with a reopening.
+    #[test]
+    fn the_tile_menu_blur_follows_the_tile_drawing_through_open_close_and_reopen() {
+        let mut app = tutorial_drawing(true);
+        assert!(!tutorial_blur_after_frame(&mut app), "nothing open");
+        with_game(&mut app, open_tutorial);
+        assert!(!tutorial_blur_after_frame(&mut app), "open, not built yet: drawn by hand");
+        with_game(&mut app, |g| g.ui_tree = built_tutorial());
+        assert!(tutorial_blur_after_frame(&mut app), "the first frame drawn from tiles");
+        assert!(tutorial_blur_after_frame(&mut app), "and every one after");
+        with_game(&mut app, |g| g.menu = None);
+        assert!(!tutorial_blur_after_frame(&mut app), "closed, its tree not dropped yet");
+        with_game(&mut app, |g| g.ui_tree = Ui::new());
+        assert!(!tutorial_blur_after_frame(&mut app), "the tree dropped");
+        with_game(&mut app, open_tutorial);
+        assert!(!tutorial_blur_after_frame(&mut app), "open again, drawn by hand");
+        with_game(&mut app, |g| g.ui_tree = built_tutorial());
+        assert!(tutorial_blur_after_frame(&mut app), "reopened, drawn from tiles");
+    }
+
+    /// Whatever keeps the hand-built drawing keeps the world sharp: a file without a path the
+    /// model needs, no menu files, no runtime, the switch off.
+    #[test]
+    fn the_tile_menu_blur_stays_off_while_the_menu_is_drawn_by_hand() {
+        let mut app = tutorial_drawing(true);
+        with_game(&mut app, open_tutorial);
+        with_game(&mut app, |g| g.ui_tree = super::super::tutorial_menu::tests::menu_changed(|xml| xml.replace(r#"name="TM_scrollbar""#, r#"name="Modded""#)));
+        assert!(!tutorial_blur_after_frame(&mut app), "a file a mod restructured");
+
+        with_game(&mut app, |g| g.ui_tree = built_tutorial());
+        assert!(tutorial_blur_after_frame(&mut app), "the whole file");
+        with_game(&mut app, |g| g.ui_files = None);
+        assert!(!tutorial_blur_after_frame(&mut app), "the menu files gone");
+
+        with_game(&mut app, |g| g.ui_files = Some(Box::new(MemSource::default())));
+        assert!(tutorial_blur_after_frame(&mut app), "the menu files back");
+        app.world_mut().resource_mut::<ScriptState>().rt = None;
+        assert!(!tutorial_blur_after_frame(&mut app), "the runtime gone");
+
+        let mut off = tutorial_drawing(false);
+        with_game(&mut off, open_tutorial);
+        with_game(&mut off, |g| g.ui_tree = built_tutorial());
+        assert!(!tutorial_blur_after_frame(&mut off), "the switch off, the file there");
     }
 
     fn hud() -> (Ui, MemSource) {
