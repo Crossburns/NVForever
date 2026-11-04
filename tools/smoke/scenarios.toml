@@ -2846,9 +2846,9 @@ note = "Chet in the general store, 1024x768 (4:3: the hint stands in the band un
 source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint (#1517)"
 areas = ["dialogue", "menus"]
 paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "20", NVF_PLAY_TEST_KEYS = "22:tab", NVF_PLAY_TEST_SHOTS = "16:hint_on_16.png,19:hint_on_19.png,21:hint_on_21.png" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "60", NVF_PLAY_TEST_KEYS = "36:tab", NVF_PLAY_TEST_SHOTS = "30:hint_on_30.png,33:hint_on_33.png" }
 args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1024x768"]
-run_seconds = 40
+run_seconds = 48
 expect = [
   { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 1, label = "the hint, the switch on by default, while Chet offers a Goodbye choice" },
   { text = "dialogue menu: [Tab] Goodbye hidden by the Goodbye hint setting", max = 0, label = "no hidden line with the switch on" },
@@ -2862,9 +2862,9 @@ note = "As dialogue-goodbye-hint with the Goodbye hint switched off first: the p
 source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint switch (#1517)"
 areas = ["dialogue", "menus"]
 paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:page,3:dialogue-goodbye-hint", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "20", NVF_PLAY_TEST_KEYS = "22:tab", NVF_PLAY_TEST_SHOTS = "16:hint_off_16.png,19:hint_off_19.png,21:hint_off_21.png" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:page,3:dialogue-goodbye-hint", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "60", NVF_PLAY_TEST_KEYS = "36:tab", NVF_PLAY_TEST_SHOTS = "30:hint_off_30.png,33:hint_off_33.png" }
 args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1024x768"]
-run_seconds = 40
+run_seconds = 48
 expect = [
   { text = "settings: dialogue-goodbye-hint off", label = "the settings page turned the Goodbye hint off" },
   { text = "dialogue menu: [Tab] Goodbye hidden by the Goodbye hint setting", count = 1, label = "Chet offers Goodbye and the hint is held back" },
