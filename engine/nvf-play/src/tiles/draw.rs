@@ -553,6 +553,8 @@ pub fn pieces(ui: &Ui, menu: TileId, measure: &layout::Measure<'_>, select: Sele
         let tile = ui.tile(item.tile);
         let look = match &item.kind {
             Kind::Rect if ["red", "green", "blue"].iter().any(|n| tile.get(n).is_some()) => Look::Box,
+            // A hotrect a model marked (`layout::HOTRECT_FILL`): its box filled.
+            Kind::Hotrect => Look::Box,
             Kind::Image(image) if !image.filename.trim().is_empty() => {
                 let strip = matches!(select, Select::Whole { strip: Some(s), .. } if s == item.tile);
                 let fit = match () {
@@ -586,7 +588,13 @@ pub fn pieces(ui: &Ui, menu: TileId, measure: &layout::Measure<'_>, select: Sele
         // interface's `amber(brightness)`]; clamped to 0..=255 [design].
         let b = (c.brightness.clamp(0.0, 255.0) / 255.0) as f32;
         let [r, g, bl] = base_colour(ui, item.tile, own).map(|x| x * b);
-        let alpha = (item.alpha / 255.0).clamp(0.0, 1.0) as f32;
+        let mut alpha = (item.alpha / 255.0).clamp(0.0, 1.0) as f32;
+        // A faint fill reads as the hand-built highlights' does, whose alpha is put through
+        // the same curve (`crate::menu::look`, `crate::message_menu`) [design: not compared
+        // with a shot of the original, none shows a highlight yet].
+        if matches!(item.kind, Kind::Hotrect) {
+            alpha = alpha.powf(2.2);
+        }
         out.push(Piece { tile: item.tile, look, rect: item.rect, clip: item.clip, colour: [r, g, bl, alpha], depth: item.depth });
         if let Some(r) = root {
             drawn_roots.insert(r);
@@ -1317,6 +1325,27 @@ mod tests {
         let before = fonts.0.len();
         assert_eq!(whole_pieces(&ui, menu, &mut fonts, true), drawn);
         assert_eq!(fonts.0.len(), before);
+    }
+
+    #[test]
+    fn highlight_fill_is_drawn() {
+        let src = MemSource::default().with(
+            "h.xml",
+            r#"<menu name="M"><rect name="R"><systemcolor>1</systemcolor>
+              <hotrect name="H"><alpha>40</alpha><brightness>128</brightness><width>100</width><height>50</height></hotrect></rect></menu>"#,
+        );
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "h.xml").unwrap();
+        ui.update();
+        let select = || Select::Whole { kept: &[], strip: None };
+        assert!(pieces(&ui, menu, &plain, select(), true).0.is_empty(), "unmarked, a hotrect draws nothing");
+        let h = ui.find_tile("M/R/H").unwrap();
+        ui.set_trait(h, layout::HOTRECT_FILL, Value::Num(1.0));
+        ui.set_trait(h, layout::OWN_ALPHA, Value::Num(1.0));
+        let (drawn, _) = pieces(&ui, menu, &plain, select(), true);
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].look, Look::Box);
+        assert!((drawn[0].colour[3] - (40.0f32 / 255.0).powf(2.2)).abs() < 1e-6, "the hand-built fill's curve");
     }
 
     #[test]
