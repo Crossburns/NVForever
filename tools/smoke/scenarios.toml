@@ -18700,16 +18700,16 @@ order = [["load: restored", "script runner: gr_nvfsmoke.txt ran", "script runner
 [[scenario]]
 name = "tiles-dialog-on"
 source = "[design] docs/spec-notes/dialogue-menu.md §6 (issue #1518): with [UI] TileMenus=DialogMenu the renderer is given the band, name and line, then the band, name, rows, frame, brackets and hint, from the game's DialogMenu tiles; the hand-built menu says nothing of its hint; the tree drops with the conversation"
-note = "dialogue-menu.md §5: Sunny Smiles offers six choices of one and two lines. tiles_dialog_line.png the greeting, tiles_dialog_choices.png the list and the hint"
+note = "dialogue-menu.md §5: Sunny Smiles offers six choices of one and two lines. tiles_dialog_line.png the greeting; tiles_dialog_choices.png the list and the hint: the greeting takes about 5 s from 8 s and the aid leaves 15 s after the list, and the order below ties the shot to the list on the log"
 areas = ["ui", "dialogue"]
 paths = [
   "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
   "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
   "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
 ]
-env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "12", NVF_PLAY_TEST_SHOTS = "9:tiles_dialog_line.png,26:tiles_dialog_choices.png" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "15", NVF_PLAY_TEST_SHOTS = "9:tiles_dialog_line.png,20:tiles_dialog_choices.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
-run_seconds = 45
+run_seconds = 55
 expect = [
   { re = 'tiles: \[UI\] TileMenus=DialogMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): DialogMenu drawn from tiles', label = "the switch is read from the test aid" },
   { re = 'ui: built DialogMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', label = "the conversation builds the menu" },
@@ -18722,7 +18722,10 @@ expect = [
 ]
 order = [[
   { re = 'tiles: DialogMenu painted: band 1, name 1, line 1' },
+  "test aid: screenshot tiles_dialog_line.png",
   { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]' },
+  "test aid: screenshot tiles_dialog_choices.png",
+  { re = 'dialogue: choose Some\(\d+\) by test aid' },
   "ui: dropped DialogMenu",
 ]]
 
@@ -18838,19 +18841,19 @@ expect = [
 [[scenario]]
 name = "tiles-dialog-overlay"
 source = "[design] docs/spec-notes/dialogue-menu.md §6.3: a two-button message box over the conversation keeps the input through its closing frame: Enter answers it and a press in that second is not also a choice; a later press on the list is accepted"
-note = "two buttons, as --no-messages closes a box that asks nothing. NVF_PLAY_TEST_SCRIPT_MENUS is far later than Enter. The key and the pointer fire on the first frame at or after 28 s on the aids' clocks, so the same frame is what is meant, not proved by the log; the delay keeps the aid from choosing"
-areas = ["ui", "dialogue", "console"]
+note = "the script aid opens the box, as the console does not open during a conversation; two buttons, as --no-messages closes a box that asks nothing. NVF_PLAY_TEST_SCRIPT_MENUS is far later than Enter. The key and the pointer fire on the first frame at or after 28 s on the aids' clocks, so the same frame is what is meant, not proved by the log; the delay keeps the aid from choosing"
+areas = ["ui", "dialogue"]
 paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/script_hud.rs"]
-env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "30", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_CONSOLE = "25:MessageBoxEx \"nvf over|Yes|No\";25.3:close", NVF_PLAY_TEST_KEYS = "28:enter", NVF_PLAY_TEST_POINTER = "26:853:744:click,27:853:744,28:853:744:click,29:off,32:853:744:click,33:off" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "30", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_SCRIPT = "25:call:-:MessageBoxEx:\"nvf over|Yes|No\"", NVF_PLAY_TEST_KEYS = "28:enter", NVF_PLAY_TEST_POINTER = "26:853:744:click,27:853:744,28:853:744:click,29:off,32:853:744:click,33:off" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
 run_seconds = 45
 expect = [
-  { re = 'console: MessageBoxEx "nvf over\|Yes\|No" >> ran', label = "the box opens over the conversation" },
+  { re = 'script: test aid calls MessageBoxEx', label = "the box opens over the conversation" },
   { re = 'dialogue: choose Some\(\d+\) by tile click', count = 1, label = "of the three presses only the one after the box closed" },
   { re = 'dialogue: choose Some\(\d+\) by (Enter|click)', count = 0, label = "Enter answered the box, not the list" },
 ]
 order = [[
-  { re = 'console: MessageBoxEx "nvf over\|Yes\|No" >> ran' },
+  { re = 'script: test aid calls MessageBoxEx' },
   { re = 'script: menu 1001 .*answered' },
   { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]' },
   { re = 'dialogue: choose Some\(\d+\) by tile click' },
@@ -18879,13 +18882,14 @@ expect = [
 [[scenario]]
 name = "tiles-dialog-cut-down"
 source = "[design] docs/spec-notes/dialogue-menu.md §6.5: a tree that lacks a tile the model needs gives the hand-built menu, a warning once, and a later conversation that builds the whole file is drawn from it again"
-note = "the console unloads the line's tile from the built menu at 24 s, standing in for a mod's cut-down file: a smoke run has no such mod folder. A file missing altogether or a template lacking a piece is the unit tests'"
-areas = ["ui", "dialogue", "console"]
+note = "the script aid unloads the line's tile from the built menu at 24 s, as the console does not open during a conversation, standing in for a mod's cut-down file: a smoke run has no such mod folder. A file missing altogether or a template lacking a piece is the unit tests'"
+areas = ["ui", "dialogue"]
 paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/tiles/draw.rs"]
-env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave;55:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "22", NVF_PLAY_TEST_CONSOLE = "24:UnloadUIComponent \"DialogMenu/NOGLOW_BRANCH/DM_SpeakerText\";24.3:close", NVF_PLAY_TEST_SHOTS = "26:tiles_dialog_by_hand.png" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave;55:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "22", NVF_PLAY_TEST_SCRIPT = "24:call:-:UnloadUIComponent:\"DialogMenu/NOGLOW_BRANCH/DM_SpeakerText\"", NVF_PLAY_TEST_SHOTS = "26:tiles_dialog_by_hand.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
 run_seconds = 85
 expect = [
+  { re = 'script: test aid calls UnloadUIComponent', label = "the tile goes" },
   { text = "DialogMenu drawn by hand: DialogMenu/NOGLOW_BRANCH/DM_SpeakerText missing", count = 1, label = "said once" },
   { text = "dialogue menu: TAB) Goodbye shown", min = 1, label = "the hand-built menu takes over" },
   { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', min = 2, label = "before it, and in the next conversation from a new tree" },
