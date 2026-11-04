@@ -521,8 +521,22 @@ impl PhysWorld {
 
     fn attach(&mut self, body: RigidBodyHandle, owner: Owner, o: &Material, leaves: Vec<Leaf>, shell: f32) -> usize {
         let n = leaves.len();
+        // A kinematic body's mass properties do not drive its motion (its position is
+        // prescribed each step), but rapier still derives its velocity from its centre of
+        // mass (`interpolate_velocity`). A collision triangle mesh whose winding cancels
+        // its signed volume makes parry's `MassProperties::from_trimesh` place the centre
+        // of mass far outside the mesh, and `interpolate_velocity` turns the floating-point
+        // error there into a real phantom velocity that the character controller then rides
+        // (its "carried by a kinematic body" rule) and is flung along [observed: the
+        // Prospector Saloon's broken door 0x00108BD7, issue #1485]. Zero the mass
+        // properties of kinematic bodies so the centre of mass stays sane and no such
+        // velocity can be invented.
+        let kinematic = self.w.bodies[body].is_kinematic();
         for leaf in leaves {
             let mut c = ColliderBuilder::new(leaf.shape).position(leaf.pose).user_data(owner.encode());
+            if kinematic {
+                c = c.mass_properties(MassProperties::new(Vector::ZERO, 0.0, Vector::ZERO));
+            }
             if o.friction.is_finite() && o.friction >= 0.0 {
                 c = c.friction(o.friction);
             }
