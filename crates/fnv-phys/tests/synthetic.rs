@@ -258,7 +258,7 @@ fn clutter_on_the_terrain_shell_falls_asleep() {
 }
 
 #[test]
-fn fixed_bounds_cover_static_collision_only() {
+fn fixed_bounds_cover_static_and_keyframed_collision_only() {
     let mut w = PhysWorld::new(PhysParams::default());
     assert_eq!(w.fixed_bounds(), None);
     w.add_ref(&at(1, [100.0, 0.0, 500.0]), &[object(boxed([50.0, 20.0, 10.0]), Motion::Static)]);
@@ -1730,9 +1730,9 @@ fn clutter_added_asleep_on_a_shelf_it_overlaps_stays_asleep() {
 
 #[test]
 fn clutter_asleep_on_a_keyframed_lid_stays_asleep() {
-    // A container's keyframed lid added with the cell (asleep), a bottle overlapping it.
+    // A container's keyframed lid (a fixed body), a bottle overlapping it.
     let mut w = ground();
-    let lid = PreparedRef::new(&w.params, &at(0x9C, [100.0, 100.0, 290.0]), &[object(boxed([50.0, 50.0, 10.0]), Motion::Keyframed)]).asleep();
+    let lid = PreparedRef::new(&w.params, &at(0x9C, [100.0, 100.0, 290.0]), &[object(boxed([50.0, 50.0, 10.0]), Motion::Keyframed)]);
     w.insert_ref(lid);
     add_asleep(&mut w, 0x99, [100.0, 100.0, 304.0], [5.0, 5.0, 5.0]);
     for _ in 0..120 {
