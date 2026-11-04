@@ -69,21 +69,22 @@ const HINT: &str = "DialogMenu/NOGLOW_BRANCH/NVF_GoodbyeHint";
 const HINT_BOX: &str = "DialogMenu/NOGLOW_BRANCH/NVF_GoodbyeHint/NVF_GoodbyeHintBox";
 const HINT_TEXT: &str = "DialogMenu/NOGLOW_BRANCH/NVF_GoodbyeHint/NVF_GoodbyeHintText";
 const OWN_TEMPLATES: &str = r#"<template name="NVF_SelectionFillTemplate"><rect name="NVF_SelectionFill">
-  <width><copy src="parent()" trait="width"/></width><height><copy src="parent()" trait="height"/></height>
   <red>0</red><green>0</green><blue>0</blue></rect></template>
 <template name="NVF_GoodbyeHintTemplate"><rect name="NVF_GoodbyeHint"><depth>3</depth><visible>0</visible>
   <image name="NVF_GoodbyeHintBox"><filename>Interface\Shared\Background\solid_black.dds</filename><zoom>-1</zoom></image>
-  <text name="NVF_GoodbyeHintText"><depth>1</depth><font>6</font></text></rect></template>"#;
+  <text name="NVF_GoodbyeHintText"><font>6</font><depth>1</depth></text></rect></template>"#;
 
 /// The hint's right end stands this far left of the band and its dark box reaches this far
 /// round the text [design: owner list 5 item 62, as the hand-built hint].
 const HINT_GAP: f64 = 20.0;
 const HINT_PAD: f64 = 10.0;
 
-/// A said-before choice's text: as bright as 128 of 255 [observed: dialogue-menu.md §3].
+/// A said-before choice's text, as bright as 128 of 255 [hypothesis: fitted to the owner's
+/// pictures, dialogue-menu.md §3; the original's own write is not known].
 const DIM_ALPHA: f64 = 128.0;
-/// The frame's look, §3's [observed: dialogue-menu.md §3]: on a short check its line reads
-/// (100, 18, 16) after the file's line brightness of 200 of 255; its fill.
+/// The frame's look [hypothesis: fitted to one picture, dialogue-menu.md §3; design: as the
+/// hand-built frame]: on a short check its line reads (100, 18, 16) after the file's line
+/// brightness of 200 of 255; its fill.
 const SHORT_LINE: [f64; 3] = [127.5, 22.95, 20.4];
 const SHORT_FILL: [f64; 3] = [62.0, 0.0, 0.0];
 const SHORT_FILL_ALPHA: f64 = 82.0;
@@ -334,6 +335,11 @@ fn place(ui: &mut Ui, view: &MenuView, selected: usize, first: usize) -> (usize,
     set(ui, bar, "_number_of_items", Value::Num(total / delta));
     set(ui, bar, "_number_of_visible_items", Value::Num(height / delta));
     write_frame_colour(ui, view.choices.get(selected).is_some_and(|c| c.short));
+    if let (Some(fill), Some(highlight)) = (ui.find_tile(FILL), ui.find_tile(HIGHLIGHT)) {
+        let wide = num(ui, highlight, "width");
+        set(ui, fill, "width", Value::Num(wide));
+        set(ui, fill, "height", Value::Num(heights[selected] - 1.0));
+    }
     (first, offset / delta)
 }
 
@@ -638,52 +644,73 @@ mod tests {
     use crate::dialogue_menu::ChoiceRow;
     use fnv_ui::input::{no_measure, Input, Pointer};
 
-    /// [design] A fixture written for these tests: only the tile and trait names the code looks
-    /// up are the file's; the structure, numbers and expressions are this test's own (no menu
-    /// file's). So nothing here proves the real file's expressions work with the model: the
-    /// smoke scenarios `tiles-dialog-*` do, on the player's archives.
+    /// [design] A fixture written for these tests: plain numbers and no expressions at all;
+    /// only the tile and trait names the code looks up are the file's. What the real file works
+    /// out from code's writes, [`work_out`] does here in the test's own arithmetic, only as
+    /// far as a test reads it. So these tests give up any proof that the real file's
+    /// expressions agree with the model (where rows land, the bar's rule, the band's and the
+    /// brackets' places): the smoke scenarios `tiles-dialog-*` run against the real file.
     fn fixture() -> &'static str {
         r#"<menu name="DialogMenu"><_MinListHeight>70</_MinListHeight>
 <rect name="NOGLOW_BRANCH"><systemcolor>1</systemcolor>
-  <image name="DM_TextBackground"><filename>p.dds</filename><x>40</x><y>400</y><width>800</width><height>100</height></image>
-  <hotrect name="DM_ClickRect"><target><copy>0</copy><or src="io()" trait="_ShowingText"/></target><width>900</width><height>900</height></hotrect>
-  <text name="DM_SpeakerNameLabel"><font>7</font><x>500</x><y>10</y></text>
-  <text name="DM_SpeakerText"><font>6</font><wrapwidth>400</wrapwidth><x>60</x><y>410</y></text>
-  <hotrect name="DM_TopicList"><x>100</x><y>300</y><width>700</width><height>50</height><alpha>0</alpha><clipwindow>1</clipwindow><_scroll_delta>4</_scroll_delta>
-    <hotrect name="lb_highlight_box"><width>600</width><x>30</x>
-      <y><copy src="parent()" trait="_highlight_y"/></y><height><copy src="parent()" trait="_selected_height"/></height>
-      <image name="top"><filename>l.dds</filename><width>600</width><height>2</height></image>
-      <image name="left"><filename>l.dds</filename><width>2</width><height>9</height></image>
-      <image name="bottom"><filename>l.dds</filename><width>600</width><height>2</height></image>
-      <image name="right"><filename>l.dds</filename><width>2</width><height>9</height></image>
+  <image name="DM_TextBackground"><x>40</x><width>800</width><filename>p.dds</filename></image>
+  <hotrect name="DM_ClickRect"><width>900</width><height>900</height></hotrect>
+  <text name="DM_SpeakerNameLabel"/>
+  <text name="DM_SpeakerText"><wrapwidth>400</wrapwidth></text>
+  <hotrect name="DM_TopicList"><x>100</x><y>300</y><width>700</width><clipwindow>1</clipwindow><_scroll_delta>4</_scroll_delta>
+    <hotrect name="lb_highlight_box"><x>30</x><width>600</width>
+      <image name="top"><width>2</width><filename>l.dds</filename></image><image name="left"><width>2</width><filename>l.dds</filename></image>
+      <image name="bottom"><width>2</width><filename>l.dds</filename></image><image name="right"><width>2</width><filename>l.dds</filename></image>
     </hotrect>
     <image name="lb_scrollbar"><width>30</width><height>40</height>
-      <visible><copy src="me()" trait="_number_of_visible_items"/><lt src="me()" trait="_number_of_items"/></visible>
-      <_current_value><copy>0</copy><add src="child(scrollbar_vert_down)" trait="clicked"/></_current_value>
-      <hotrect name="scrollbar_vert_page_up"><target>1</target><width>30</width><height>5</height></hotrect>
-      <hotrect name="scrollbar_vert_page_down"><target>1</target><y>5</y><width>30</width><height>5</height></hotrect>
-      <image name="scrollbar_vert_marker"><filename>m.dds</filename><target>1</target><y>10</y><width>30</width><height>5</height></image>
-      <image name="scrollbar_vert_up"><filename>u.dds</filename><target>1</target><y>15</y><width>30</width><height>5</height></image>
-      <image name="scrollbar_vert_down"><filename>d.dds</filename><target>1</target><y>20</y><width>30</width><height>5</height></image>
+      <hotrect name="scrollbar_vert_page_up"><width>30</width><height>5</height></hotrect>
+      <hotrect name="scrollbar_vert_page_down"><y>5</y><width>30</width><height>5</height></hotrect>
+      <image name="scrollbar_vert_marker"><y>10</y><width>30</width><height>5</height><filename>m.dds</filename></image>
+      <image name="scrollbar_vert_up"><y>15</y><width>30</width><height>5</height><filename>u.dds</filename></image>
+      <image name="scrollbar_vert_down"><y>20</y><width>30</width><height>5</height><filename>d.dds</filename></image>
     </image>
   </hotrect>
-  <rect name="DM_TopBracket"><y>280</y></rect>
-  <rect name="DM_BottomBracket"><y><copy src="sibling(DM_TopicList)" trait="height"/><add>310</add></y></rect>
+  <rect name="DM_TopBracket"/>
+  <rect name="DM_BottomBracket"><y>640</y></rect>
 </rect>
-<template name="DM_TopicTemplate"><hotrect name="DM_Topic"><x>30</x><width>600</width><target>1</target><clips>1</clips><_VerticalSpacing>12</_VerticalSpacing>
-  <_words><copy src="me()" trait="string"/></_words>
-  <y><copy src="me()" trait="_y"/><sub><copy src="sibling(lb_scrollbar)" trait="_current_value"/><mul src="parent()" trait="_scroll_delta"/></sub></y>
-  <visible><copy src="me()" trait="listindex"/><add>1</add><gt>0</gt></visible>
-  <text name="ListItemText"><font>6</font><wrapwidth>200</wrapwidth><string><copy src="parent()" trait="_words"/></string>
-    <alpha><copy src="parent()" trait="_line_alpha"/><mul>1</mul></alpha></text>
-</hotrect></template></menu>"#
+<template name="DM_TopicTemplate"><_made>1</_made><hotrect name="DM_Topic"><x>30</x><width>600</width><target>1</target><_VerticalSpacing>12</_VerticalSpacing>
+  <text name="ListItemText"><wrapwidth>200</wrapwidth></text></hotrect></template></menu>"#
+    }
+
+    /// What the real file would work out from code's writes, in the test's own arithmetic:
+    /// see [`fixture`].
+    fn work_out(ui: &mut Ui) {
+        let (Some(list), Some(bar)) = (ui.find_tile(LIST), ui.find_tile(BAR)) else { return };
+        let scrolled = num(ui, bar, "_current_value") * num(ui, list, "_scroll_delta");
+        for r in rows(ui) {
+            let shown = num(ui, r, "listindex") >= 0.0;
+            let place = num(ui, r, "_y") - scrolled;
+            set(ui, r, "y", Value::Num(place));
+            set(ui, r, "visible", Value::Num(f64::from(u8::from(shown))));
+            if let Some(text) = child(ui, r, ROW_TEXT) {
+                let words = ui.tile(r).get("string").map_or_else(String::new, Value::text);
+                let strength = num(ui, r, "_line_alpha");
+                set(ui, text, "string", Value::Str(words));
+                set(ui, text, "alpha", Value::Num(strength));
+            }
+        }
+        if let Some(h) = ui.find_tile(HIGHLIGHT) {
+            let (at, tall) = (num(ui, list, "_highlight_y"), num(ui, list, "_selected_height"));
+            set(ui, h, "y", Value::Num(at));
+            set(ui, h, "height", Value::Num(tall));
+        }
+        let many = num(ui, bar, "_number_of_items") > num(ui, bar, "_number_of_visible_items");
+        set(ui, bar, "visible", Value::Num(f64::from(u8::from(many))));
+        if let (Some(area), Some(menu)) = (ui.find_tile(CLICK_AREA), ui.menu(DIALOG_MENU)) {
+            let line_up = num(ui, menu, "_ShowingText");
+            set(ui, area, "target", Value::Num(line_up));
+        }
     }
 
     fn menu_changed(change: impl FnOnce(&str) -> String) -> Ui {
         let src = MemSource::default().with("d.xml", &change(fixture()));
         let mut ui = Ui::new();
         ui.load_menu(&src, "d.xml").unwrap();
-        ui.update();
         super::super::write_screen(&mut ui, 1280.0, 720.0, true);
         ui.update();
         ui
@@ -707,6 +734,7 @@ mod tests {
     }
 
     fn round(ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten) -> usize {
+        work_out(ui);
         menus::write_text_sizes_of(ui, texts, sizes, &size)
     }
 
@@ -726,6 +754,7 @@ mod tests {
     /// One frame: written, the tree worked out as `super::super::update` does.
     fn frame(ui: &mut Ui, written: &mut Written, now: &Shown) -> usize {
         let first = write(ui, now, written, &mut round).unwrap();
+        work_out(ui);
         ui.update();
         first
     }
@@ -883,8 +912,9 @@ mod tests {
     }
 
     #[test]
-    fn the_scroll_outlasts_a_click_counted_by_the_file() {
-        // [design] The fixture's value counts clicks from 0; the model's is written every frame.
+    fn the_scroll_is_written_again_over_what_the_file_worked_out() {
+        // [design] The real prefab counts clicks from 0 in this tree (smoke sees it there); here
+        // anything else standing in the value will do: the model's goes back every frame.
         let mut ui = menu();
         let mut written = Written::default();
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
@@ -892,13 +922,11 @@ mod tests {
         let first = frame(&mut ui, &mut written, &now);
         let now = Shown { first, ..now };
         assert_eq!(f(&ui, BAR, "_current_value"), 13.0);
-        let down = ui.find_tile(&format!("{BAR}/scrollbar_vert_down")).unwrap();
-        ui.set_trait(down, "clicked", Value::Num(1.0));
+        let bar = ui.find_tile(BAR).unwrap();
+        ui.set_trait(bar, "_current_value", Value::Num(1.0));
         frame(&mut ui, &mut written, &now);
-        assert_eq!(f(&ui, BAR, "_current_value"), 13.0, "the click's frame");
-        ui.set_trait(down, "clicked", Value::Num(0.0));
-        frame(&mut ui, &mut written, &now);
-        assert_eq!(f(&ui, BAR, "_current_value"), 13.0, "the pulse's end");
+        assert_eq!(f(&ui, BAR, "_current_value"), 13.0);
+        assert_eq!(f(&ui, BAR, "_SetInCode"), 1.0);
     }
 
     #[test]
@@ -941,10 +969,10 @@ mod tests {
         assert!(texts_drawn(&ui).iter().any(|(s, _)| s == GOODBYE_HINT));
         assert_eq!(pictures_drawn(&ui, "Interface\\Shared\\Background\\solid_black.dds"), 1);
         // Left of the band where it has room? This band is at 40, so the safe zone's edge; and
-        // level with the bottom bracket: the list's 104 and the fixture's 310, less half a line.
+        // level with the bottom bracket, less half a line.
         let screen = num(&ui, ui.screen(), "width");
         assert!((f(&ui, HINT, "x") - (f64::from(crop_x(screen as f32)) + HINT_PAD)).abs() < 1e-3);
-        assert_eq!(f(&ui, HINT, "y"), f(&ui, BOTTOM_BRACKET, "y") - 20.0);
+        assert_eq!(f(&ui, HINT, "y"), 620.0);
         // A wider gap: right end of the text 20 left of the band.
         ui.set_trait(ui.find_tile(BAND).unwrap(), "x", Value::Num(400.0));
         let moved = MenuView { speaker: "Nora again".into(), ..view };
