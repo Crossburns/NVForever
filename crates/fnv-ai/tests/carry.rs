@@ -1925,7 +1925,7 @@ fn arrival_is_measured_to_the_post_asked_for_now_not_the_one_planned() {
     let (at, feet, off, _, reason) = the_failure(&s);
     assert_eq!(reason, fnv_ai::alert::PostFailure::StoppedShort);
     assert_eq!(at, moved);
-    assert!(off >= 64.0 && off < 70.0, "{off}");
+    assert!((64.0..70.0).contains(&off), "{off}");
     assert!(dist(feet, first) < 64.0, "near the first request: {feet:?}");
     assert!(!has_post(&s));
 }
