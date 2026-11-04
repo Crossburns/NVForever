@@ -13,10 +13,10 @@
 //! put back when the effect ends. Detection does not read this: it reads the Chameleon
 //! value itself (`fnv_game::detection`).
 //!
-//! The Pip-Boy's screen is the one exception: while the menus are on it
-//! (`pipboy_arm.rs`) it is drawn plain, so the menus can be read and used; the rest of
-//! the arm and the Pip-Boy stay see-through, and the screen refracts again once the
-//! Pip-Boy is down (owner, 2026-10-23) [design].
+//! The Pip-Boy's screen and its glare are the one exception: while the menus are on it
+//! (`pipboy_arm.rs`) they are drawn plain, so the menus can be read and used; the rest of
+//! the arm and the Pip-Boy stay see-through, and both refract again once the Pip-Boy is
+//! down (owner, 2026-10-23) [design].
 //!
 //! Log lines: `stealth field: on (Chameleon 75): <n> meshes see-through (refracting,
 //! strength 0.030)` and `stealth field: off`.
@@ -70,6 +70,12 @@ impl StealthField {
         materials.remove(current);
         Some(original)
     }
+
+    /// As the field does when it makes `e` see-through, for a test of what takes it back.
+    #[cfg(test)]
+    pub(crate) fn keep_original(&mut self, e: Entity, original: Handle<NifMaterial>) {
+        self.originals.insert(e, original);
+    }
 }
 
 /// The see-through copy of a material: refracting, keeping the outline of its cut.
@@ -104,7 +110,7 @@ pub(crate) fn apply(
         let menus_on_screen = pip_screen.is_some_and(|s| s.on_model);
         for root in body.roots() {
             for e in children.iter_descendants(root) {
-                if field.originals.contains_key(&e) || (menus_on_screen && matches!(parts.get(e), Ok(PipBoyPart::Screen))) {
+                if field.originals.contains_key(&e) || (menus_on_screen && matches!(parts.get(e), Ok(PipBoyPart::Screen | PipBoyPart::Glare))) {
                     continue;
                 }
                 let Ok(mut handle) = meshes.get_mut(e) else { continue };

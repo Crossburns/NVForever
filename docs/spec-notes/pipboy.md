@@ -69,7 +69,8 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   `PipBoyButton01`–`03` at the glows `StatsGlow`, `ItemsGlow`, `DataGlow` (STATS, ITEMS,
   DATA from the elbow out); the glass: `ScreenLit:8` (a lit, glossy copy of the screen in
   the same place, `screen.dds` with a normal map) and `glare:0` (`ScreenGlare.dds`, added
-  over it, unlit). Also `RadNeedle`, `TabKnob`, `ScrollKnob`, `PipboyLightEffect`.
+  over it, unlit, 0.47 units in front of the screen; NiAlphaProperty flags 4109, blend on,
+  SRC_ALPHA / ONE; both shapes vertex colour 0.81; `fnvtool nif decode`). Also `RadNeedle`, `TabKnob`, `ScrollKnob`, `PipboyLightEffect`.
 - **The page's button** glows alone while the Pip-Boy is up [observed: the screenshots];
   down, all three glow (owner, 2026-10-10). The pointer on a button lights nothing: a
   player comparing the two reports that the original's buttons do not light under it
@@ -95,17 +96,45 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   about (220, 180, 64); unlit and unscaled our brightest text came out (237, 167, 53)
   through the view's tone mapping; multiplied by (0.83, 1.17, 1.27) it is
   (221, 179, 59). `fBrightenPipboy` is not applied as such.
-- **The glass** is not drawn while the menus are on the screen: drawn, the glare lay
-  over them as a pale grey-blue haze. The screenshots show only a faint lighter patch at
-  the top right, and an empty screen of about (31, 27, 15) where ours is (15, 9, 0)
-  [observed]: the original draws the glare far more weakly [hypothesis; open, §8].
+- **The glass** [observed: the screenshots]: only a faint lighter patch at the top right
+  over the menus, and an empty screen of about (31, 27, 15). Through the engine's
+  display-value add (nif.md §6) the glare lay over them as a pale grey-blue haze, so it was
+  hidden, and the empty screen was (15, 9, 0).
+- **The static treatment** (nvf-play `pipboy/device_screen.rs`, all its numbers in that
+  file; a provisional fit that a capture of the original will refine, §8)
+  [hypothesis: fitted to the two measurements above]:
+  - `ScreenLit:8` stays hidden; there is no evidence yet for what it adds. `glare:0` is
+    drawn over the menus on a copy of its material, unlit, added in linear light as the
+    terminal's glare is (hacking.md §7), at a linear scale of 0.25 on the texture. The
+    copy keeps the shape's squeezed first-person depth, which Bevy's plain additive
+    material would not, and the sheet's soft intersection is off. The scale is not
+    determined by the two measurements, which cannot tell glare from undercoat: it is
+    chosen for a patch about 10 units over the empty screen.
+  - A dark undercoat, the screen camera's clear colour, solved so that the empty middle
+    comes out (31, 27, 15) through the whole path: image × `SCREEN_TINT` × the shapes'
+    vertex colour (0.624 in linear light), plus the glare, through the tone map and the
+    image-space grade. That path was modelled from Bevy's TonyMcMapface table and a grade
+    fitted to our three readings ((237, 167, 53), (221, 179, 59), (15, 9, 0), within about
+    2 units); it predicts the solid amber stays about (220, 180, 63). The grade belongs to
+    noon in Goodsprings: elsewhere the screen moves with it.
+  - The background picture covers the undercoat at alpha 0.4 and adds what it added at
+    brightness 90 over black [documented: inventory_menu.xml, the brightness].
+  - One baked column of scanlines over the canvas, a value per row (no tiling): the band
+    of `pipboyscanlines.dds`, rescaled to dim display values by 15% at its dark end, every
+    9.5 of the canvas. The undercoat and the picture are raised by what the lines take
+    away on average, as the terminal's are; the ink is not, its bright rows keeping their
+    value.
+  - One owner around the shared image: the layers are not part of the pages' tree, so
+    any painter of the pages gets them, once. Not in the screen menu (no background, no
+    scanlines, no glass, docs/design/screen-menu.md §2). The device's image shown flat
+    because the model is missing keeps the layers and has no glare.
 - **Scanlines** [observed]: `pipboyscanlines.dds` is 64 × 64 DXT1, one soft dark band
   (white at the top to about 0.8 at the bottom). On the screenshot the solid bar's rows
-  are bright and dim by about 15% every 6 pixels, which is 9.5 of the canvas. NVForever
-  tiles the band over the menus at that pitch, darkening by its shortfall from white
-  [hypothesis]. Flicker, vertical hold and shudder (the INI's transitions) are not built.
+  are bright and dim by about 15% every 6 pixels, which is 9.5 of the canvas. Flicker,
+  vertical hold and shudder (the INI's transitions) are not built.
 - **Background**: `Interface\Shared\Background\pipboy.dds` over the whole canvas at
-  brightness 90 [documented: inventory_menu.xml].
+  brightness 90 [documented: inventory_menu.xml]; `ScreenGlare.dds` and this picture are
+  512 × 512 DXT1, alpha 1 throughout [observed].
 
 ## 4. What every page shares [documented unless marked]
 
@@ -568,7 +597,8 @@ NVF_PLAY_TEST_SCRIPT_MENUS=0.05 NVF_PLAY_TEST_PIPBOY="12:open,15:page=stats,17:c
 ```
 
 Expect "pipboy: up, page ITEMS tab Weapons", "pipboy: the menus are on the model's
-screen", "pipboy: STATS Status", "pipboy: down". Compare at 1280 × 720 with the owner's
+screen", "pipboy: the glare is over the menus", "pipboy: screen treatment on (…)",
+"pipboy: STATS Status", "pipboy: down". Compare at 1280 × 720 with the owner's
 pictures.
 
 The mouse (2026-10-11): `NVF_PLAY_TEST_PIPBOY="12:open,14:click=320:650,16:click=stats,18:click=600:650"`
@@ -581,7 +611,9 @@ fourth row, and a click on a row equips what it selects.
 - Whether the original holds the clip at `Hit` (the measurements say the screen faces
   the eye there).
 - The keys of the PC game for the pages and tabs.
-- The glare: how strongly the original draws it.
+- The glass: the static treatment's numbers (§3) are fitted to two measurements. A
+  capture should give the centre, corners and streak of the empty screen, foreground in
+  and out of the streak, scanline peak, trough and phase, other poses, pages and lighting.
 - `fDefault1stPersonFOV=55` for the arms outside the Pip-Boy.
 - What `fBlurIntensityPipboy`, `fScanlineScalePipboy` and `fBrightenPipboy` scale.
 - The mouse pointer: the screenshots show an amber arrow (`interface\icons\misc\

@@ -17,25 +17,28 @@
 //!   canvas up to about 964 across and 731 down, and the image the menus are drawn into
 //!   (`nvf_play::pipboy::TARGET`) is laid out the same way.
 //! - The screen with the menus is drawn unlit, as a lit display [hypothesis], in the
-//!   original's amber ([`SCREEN_TINT`], fitted). The game's `fBrightenPipboy=1.3`
+//!   original's amber (`SCREEN_TINT`, fitted). The game's `fBrightenPipboy=1.3`
 //!   [documented: `Fallout_default.ini` `[InterfaceFX]`] is not applied as such: what it
 //!   brightens is not known, and the fit already matches the screenshot.
-//! - The model's glass is not drawn while the menus are on the screen: `ScreenLit:8`, a
-//!   lit and glossy copy of the screen in the same place, and `glare:0`, a sheet added
-//!   over it with `ScreenGlare.dds` [observed: their properties]. Drawn, the glare lay
-//!   over the menus as a pale grey-blue haze the owner's screenshots do not have
-//!   [observed]; those show a faint lighter patch at the top right and an empty screen
-//!   of about (31, 27, 15) where ours is (15, 9, 0), so the original draws the glare far
-//!   more weakly than NVForever does [hypothesis; open, docs/owner-review.md]. The
-//!   screen's own material and the glass come back when the Pip-Boy is down.
+//! - The model's glass while the menus are on the screen: `ScreenLit:8`, a lit and glossy
+//!   copy of the screen in the same place, stays hidden; `glare:0`, a sheet added 0.47
+//!   units in front of it with `ScreenGlare.dds` [observed: their properties and
+//!   vertices], is drawn on a copy of its material that adds in linear light
+//!   ([`glare_material`]). Through the engine's display-value add it lay over the menus as
+//!   a pale grey-blue haze the owner's screenshots do not have [observed]; those show a
+//!   faint lighter patch at the top right and an empty screen of about (31, 27, 15), so
+//!   the original draws the glare far more weakly [hypothesis]. The fit's numbers are in
+//!   `nvf_play::pipboy::device_screen`, provisional until a capture. The materials are
+//!   copies: the shapes' own come back when the Pip-Boy is down.
 //! - While the Pip-Boy is up only the page's button glows [observed: the owner's
 //!   screenshots: the button of the page shown is bright, the other two dimmer]; the
 //!   pointer lights none (a player's comparison with the original, #1516). Down, all
 //!   three glow, as before (owner, 2026-10-10).
-//! - Under a Stealth Boy (`stealth_field.rs`) the screen's own material is the field's
-//!   see-through copy; the menus are built from the screen's real material instead, and
-//!   the field leaves the screen alone while they are on it, so the menus stay readable
-//!   (owner, 2026-10-23). They used to inherit the refraction and the screen was blank.
+//! - Under a Stealth Boy (`stealth_field.rs`) the screen's and the glare's own materials
+//!   are the field's see-through copies; the menus and the glare are built from the real
+//!   ones instead, and the field leaves both alone while the menus are on the screen, so
+//!   the menus stay readable (owner, 2026-10-23). They used to inherit the refraction and
+//!   the screen was blank.
 //! - The pointer is followed onto the shapes as the arm's bones pose them, from CPU
 //!   copies of their meshes ([`PartMesh`], [`Posed`]): the drawn meshes are kept on the
 //!   GPU only and are skinned, so Bevy's mesh ray casts found nothing and clicks on the
@@ -47,7 +50,8 @@ use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use nvf_assets::nif_material::NifMaterial;
+use nvf_assets::nif_material::{Falloff, NifMaterial};
+use nvf_play::pipboy::device_screen::{GLARE_LINEAR_SCALE, SCREEN_TINT};
 use nvf_play::pipboy::{AidTarget, Page, PipBoy, PipBoyAid, PipBoyInput, PipBoyScreen, CANVAS, TARGET};
 use nvf_play::PlayerCamera;
 use std::sync::Arc;
@@ -55,19 +59,14 @@ use std::sync::Arc;
 /// The part of the screen's texture the canvas fills [observed, module docs].
 pub const UV_EXTENT: f32 = 0.8;
 
-/// What the screen multiplies the menus' picture by (linear): so that their brightest
-/// amber comes out as the original's on a 1280 × 720 frame at noon in Goodsprings
-/// [observed: fitted; the owner's ITEMS screenshot's solid CND bar is about (220, 180,
-/// 64), and with this the menus' brightest text is (221, 179, 59); unscaled it was
-/// (237, 167, 53), the view's tone mapping squeezing the brightest values].
-const SCREEN_TINT: [f32; 3] = [0.83, 1.17, 1.27];
-
 /// A part of the Pip-Boy model the menus use.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PipBoyPart {
     Screen,
-    /// The screen's glass (`ScreenLit:8`, `glare:0`).
-    Glass,
+    /// The lit copy of the screen (`ScreenLit:8`), hidden while the menus are on it.
+    ScreenLit,
+    /// The glare sheet (`glare:0`), drawn over the menus ([`glare_material`]).
+    Glare,
     Glow(Page),
     Button(Page),
 }
@@ -83,7 +82,8 @@ pub fn part(name: &str) -> Option<PipBoyPart> {
     };
     match n.as_str() {
         "pipboyscreen:0" => Some(PipBoyPart::Screen),
-        "screenlit:8" | "glare:0" => Some(PipBoyPart::Glass),
+        "screenlit:8" => Some(PipBoyPart::ScreenLit),
+        "glare:0" => Some(PipBoyPart::Glare),
         "statsglow:0" => Some(PipBoyPart::Glow(Page::Stats)),
         "itemsglow:0" => Some(PipBoyPart::Glow(Page::Items)),
         "dataglow:0" => Some(PipBoyPart::Glow(Page::Data)),
@@ -105,11 +105,13 @@ impl Plugin for PipBoyArmPlugin {
     }
 }
 
-/// The screen's own material while the menus are on it.
+/// The shapes' own materials while the menus are on the screen, and the copies worn then.
 #[derive(Default)]
 pub(crate) struct Swapped {
     screen: Option<(Entity, Handle<NifMaterial>)>,
+    glare: Option<(Entity, Handle<NifMaterial>)>,
     menus: Option<Handle<NifMaterial>>,
+    glass: Option<Handle<NifMaterial>>,
     /// The menus' missing place was logged for this raise.
     warned: bool,
     /// The buttons last logged as lit.
@@ -120,6 +122,101 @@ pub(crate) struct Swapped {
 /// the arm, all three otherwise (module docs).
 pub(crate) fn glow_lit(pip: &PipBoy, page: Page) -> bool {
     !pip.on_arm() || page == pip.page
+}
+
+/// The glare's material while the menus are on the screen, from the shape's own: its
+/// texture × [`GLARE_LINEAR_SCALE`] × its vertex colour, unlit, added in linear light as the
+/// terminal's glare is (`terminal_view.rs`) [design]. Not on Bevy's own additive material as
+/// there: the arms' depth is squeezed in front of the world (`NifSurface::first_person`),
+/// and a plain material's fragments would all fall behind the screen. Faded by nothing: the
+/// sheet lies 0.47 units off the screen, and its soft intersection would thin it.
+fn glare_material(own: &NifMaterial) -> NifMaterial {
+    let mut m = own.clone();
+    let [r, g, b] = GLARE_LINEAR_SCALE;
+    m.base.base_color = Color::linear_rgb(r, g, b);
+    m.base.emissive = LinearRgba::BLACK;
+    m.base.emissive_texture = None;
+    m.base.normal_map_texture = None;
+    m.base.unlit = true;
+    m.base.alpha_mode = AlphaMode::Add;
+    m.base.fog_enabled = false;
+    m.extension.add_linear = true;
+    m.extension.add_whole = 0.0;
+    m.extension.alpha_cut = 0.0;
+    m.extension.falloff = Falloff::NONE.params;
+    m.extension.soft = Vec4::ZERO;
+    m
+}
+
+/// The screen's material with the menus' image on it, from the shape's own.
+fn menus_material(own: &NifMaterial, image: Handle<Image>) -> NifMaterial {
+    let mut m = own.clone();
+    let scale = (CANVAS / TARGET.as_vec2()) / UV_EXTENT;
+    let [r, g, b] = SCREEN_TINT;
+    m.base.base_color = Color::LinearRgba(LinearRgba::rgb(r, g, b));
+    m.base.base_color_texture = Some(image);
+    m.base.emissive_texture = None;
+    m.base.normal_map_texture = None;
+    m.base.unlit = true;
+    m.base.alpha_mode = AlphaMode::Opaque;
+    m.base.uv_transform = bevy::math::Affine2::from_scale(scale);
+    m
+}
+
+/// Put the copies on the screen and the glare while the menus are on the model (`on`), and
+/// give the shapes their own materials back otherwise, or when the rig was rebuilt. The
+/// copies are made once, and no shared source material is touched.
+fn wear_materials(on: bool, image: &Handle<Image>, parts: &mut Query<(Entity, &PipBoyPart, &mut MeshMaterial3d<NifMaterial>)>, field: &mut StealthField, materials: &mut Assets<NifMaterial>, swapped: &mut Swapped) {
+    let find = |parts: &Query<(Entity, &PipBoyPart, &mut MeshMaterial3d<NifMaterial>)>, part: PipBoyPart| parts.iter().find(|(_, p, _)| **p == part).map(|(e, _, m)| (e, m.0.clone()));
+    let model_screen = find(parts, PipBoyPart::Screen);
+    let model_glare = find(parts, PipBoyPart::Glare);
+    for (slot, now) in [(&mut swapped.screen, model_screen.as_ref()), (&mut swapped.glare, model_glare.as_ref())] {
+        if let Some((e, own)) = slot.clone() {
+            if !on || now.is_none_or(|(s, _)| *s != e) {
+                // Set at once, not by command: the Stealth Boy's field runs next and must
+                // see the shape's own material to make it see-through again.
+                if let Ok((_, _, mut m)) = parts.get_mut(e) {
+                    m.0 = own;
+                }
+                *slot = None;
+            }
+        }
+    }
+    if !on {
+        return;
+    }
+    if let (None, Some((e, mut own))) = (&swapped.screen, model_screen) {
+        // Under a Stealth Boy the screen wears the field's see-through copy: take the real
+        // material back, so neither the menus nor the screen afterwards refract.
+        if let Some(original) = field.take_original(e, &own, materials) {
+            own = original;
+            info!("pipboy: the menus are on the screen drawn plain under the Stealth Boy");
+        }
+        let menus = swapped.menus.get_or_insert_with(|| {
+            let m = menus_material(&materials.get(&own).cloned().unwrap_or_default(), image.clone());
+            materials.add(m)
+        });
+        if let Ok((_, _, mut m)) = parts.get_mut(e) {
+            m.0 = menus.clone();
+        }
+        swapped.screen = Some((e, own));
+        info!("pipboy: the menus are on the model's screen");
+    }
+    if let (None, Some((e, mut own))) = (&swapped.glare, model_glare) {
+        if let Some(original) = field.take_original(e, &own, materials) {
+            own = original;
+            info!("pipboy: the glare is drawn plain under the Stealth Boy");
+        }
+        let glass = swapped.glass.get_or_insert_with(|| {
+            let m = glare_material(&materials.get(&own).cloned().unwrap_or_default());
+            materials.add(m)
+        });
+        if let Ok((_, _, mut m)) = parts.get_mut(e) {
+            m.0 = glass.clone();
+        }
+        swapped.glare = Some((e, own));
+        info!("pipboy: the glare is over the menus");
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -135,19 +232,9 @@ pub(crate) fn show_screen(
 ) {
     let Some(mut screen) = screen else { return };
     let shown = pip.on_arm() && body.first_person_drawn();
-    let model_screen = parts.iter().find(|(_, p, _)| **p == PipBoyPart::Screen).map(|(e, _, m)| (e, m.0.clone()));
-    // Give back the screen's own material when the menus leave it (or the rig was rebuilt).
-    if let Some((e, own)) = swapped.screen.clone() {
-        if !shown || model_screen.as_ref().is_none_or(|(s, _)| *s != e) {
-            // Set at once, not by command: the Stealth Boy's field runs next and must see
-            // the screen's own material to make it see-through again.
-            if let Ok((_, _, mut m)) = parts.get_mut(e) {
-                m.0 = own;
-            }
-            swapped.screen = None;
-        }
-    }
-    screen.on_model = shown && model_screen.is_some();
+    let model_has_screen = parts.iter().any(|(_, p, _)| *p == PipBoyPart::Screen);
+    screen.on_model = shown && model_has_screen;
+    wear_materials(screen.on_model, &screen.image, &mut parts, &mut field, &mut materials, &mut swapped);
     // Said once each time the Pip-Boy comes up when the menus have nowhere to show, so a
     // player's log says why the arm came up blank or not at all (#1330).
     if !pip.on_arm() {
@@ -155,7 +242,7 @@ pub(crate) fn show_screen(
     } else if !swapped.warned && pip.clip_time >= nvf_play::pipboy::HOLD_SECONDS {
         let why = if !body.first_person_drawn() {
             Some("the first-person arms are not drawn")
-        } else if model_screen.is_none() {
+        } else if !model_has_screen {
             Some("the arm's model has no screen shape (pipboyscreen:0)")
         } else {
             None
@@ -165,35 +252,7 @@ pub(crate) fn show_screen(
             swapped.warned = true;
         }
     }
-    if let (true, Some((e, mut own))) = (shown, model_screen) {
-        if swapped.screen.is_none() {
-            // Under a Stealth Boy the screen wears the field's see-through copy: take the
-            // real material back, so neither the menus nor the screen afterwards refract.
-            if let Some(original) = field.take_original(e, &own, &mut materials) {
-                own = original;
-                info!("pipboy: the menus are on the screen drawn plain under the Stealth Boy");
-            }
-            let menus = swapped.menus.get_or_insert_with(|| {
-                let mut m = materials.get(&own).cloned().unwrap_or_default();
-                let scale = (CANVAS / TARGET.as_vec2()) / UV_EXTENT;
-                let [r, g, b] = SCREEN_TINT;
-                m.base.base_color = Color::LinearRgba(LinearRgba::rgb(r, g, b));
-                m.base.base_color_texture = Some(screen.image.clone());
-                m.base.emissive_texture = None;
-                m.base.normal_map_texture = None;
-                m.base.unlit = true;
-                m.base.alpha_mode = AlphaMode::Opaque;
-                m.base.uv_transform = bevy::math::Affine2::from_scale(scale);
-                materials.add(m)
-            });
-            if let Ok((_, _, mut m)) = parts.get_mut(e) {
-                m.0 = menus.clone();
-            }
-            swapped.screen = Some((e, own));
-            info!("pipboy: the menus are on the model's screen");
-        }
-    }
-    // The glows and the glass (not drawn while the menus are on the screen).
+    // The glows and the lit copy of the screen (hidden while the menus are on it).
     let mut lit: [bool; 3] = default();
     for (e, p, _) in &parts {
         let shown = match *p {
@@ -202,7 +261,7 @@ pub(crate) fn show_screen(
                 lit[page.index()] |= on;
                 on
             }
-            PipBoyPart::Glass => !screen.on_model,
+            PipBoyPart::ScreenLit => !screen.on_model,
             _ => continue,
         };
         let want = if shown { Visibility::Inherited } else { Visibility::Hidden };
@@ -411,8 +470,8 @@ mod tests {
         assert_eq!(part("ItemsGlow:0"), Some(PipBoyPart::Glow(Page::Items)));
         assert_eq!(part("PipBoyButton01:1"), Some(PipBoyPart::Button(Page::Stats)));
         assert_eq!(part("PipBoyButton03:0"), Some(PipBoyPart::Button(Page::Data)));
-        assert_eq!(part("ScreenLit:8"), Some(PipBoyPart::Glass));
-        assert_eq!(part("glare:0"), Some(PipBoyPart::Glass));
+        assert_eq!(part("ScreenLit:8"), Some(PipBoyPart::ScreenLit));
+        assert_eq!(part("glare:0"), Some(PipBoyPart::Glare));
         assert_eq!(part("PipBoyArm:0"), None);
     }
 
@@ -444,6 +503,126 @@ mod tests {
         let p = canvas_point(Vec2::new(0.4, 0.4)).unwrap();
         assert!((p - CANVAS / 2.0).length() < 1e-3);
         assert_eq!(canvas_point(Vec2::new(0.81, 0.1)), None);
+    }
+
+    fn surface(colour: Color) -> NifMaterial {
+        let mut m = nvf_assets::nif_material::nif_material(StandardMaterial { base_color: colour, alpha_mode: AlphaMode::Add, ..default() });
+        m.extension.first_person = true;
+        m.extension.soft = Vec4::new(1.5, 0.0, 0.0, 0.0);
+        m
+    }
+
+    #[test]
+    fn the_glare_adds_in_linear_light_on_the_arms_depth_keeping_its_texture() {
+        let mut own = surface(Color::WHITE);
+        own.base.base_color_texture = Some(Handle::default());
+        let m = glare_material(&own);
+        assert!(m.extension.add_linear && m.base.unlit && m.base.alpha_mode == AlphaMode::Add);
+        assert!(m.extension.first_person, "on the arms' squeezed depth");
+        assert_eq!(m.extension.soft, Vec4::ZERO, "not thinned by the screen just behind it");
+        assert!(m.base.base_color_texture.is_some());
+        let [r, g, b] = GLARE_LINEAR_SCALE;
+        assert_eq!(m.base.base_color.to_linear(), LinearRgba::rgb(r, g, b));
+        // The source is a copy away, and keeps the engine's add.
+        assert!(!own.extension.add_linear && own.base.base_color == Color::WHITE);
+    }
+
+    /// `On` says the menus are on the model, as `show_screen` would.
+    #[derive(Resource)]
+    struct On(bool);
+
+    fn material_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<StealthField>().init_resource::<Assets<NifMaterial>>().insert_resource(On(false)).add_systems(
+            Update,
+            |on: Res<On>, mut parts: Query<(Entity, &PipBoyPart, &mut MeshMaterial3d<NifMaterial>)>, mut field: ResMut<StealthField>, mut materials: ResMut<Assets<NifMaterial>>, mut swapped: Local<Swapped>| {
+                wear_materials(on.0, &Handle::default(), &mut parts, &mut field, &mut materials, &mut swapped);
+            },
+        );
+        app
+    }
+
+    /// The screen and the glare of a rig, on materials of their own.
+    fn rig(app: &mut App) -> ((Entity, Handle<NifMaterial>), (Entity, Handle<NifMaterial>)) {
+        let world = app.world_mut();
+        let mut materials = world.resource_mut::<Assets<NifMaterial>>();
+        let (s, g) = (materials.add(surface(Color::BLACK)), materials.add(surface(Color::WHITE)));
+        let screen = world.spawn((PipBoyPart::Screen, MeshMaterial3d(s.clone()))).id();
+        let glare = world.spawn((PipBoyPart::Glare, MeshMaterial3d(g.clone()))).id();
+        ((screen, s), (glare, g))
+    }
+
+    fn worn(app: &App, e: Entity) -> Handle<NifMaterial> {
+        app.world().get::<MeshMaterial3d<NifMaterial>>(e).unwrap().0.clone()
+    }
+
+    fn glare_worn(app: &App, e: Entity) -> bool {
+        app.world().resource::<Assets<NifMaterial>>().get(&worn(app, e)).is_some_and(|m| m.extension.add_linear)
+    }
+
+    #[test]
+    fn the_shapes_get_their_own_materials_back_down_and_the_new_rig_gets_the_copies() {
+        let mut app = material_app();
+        let ((screen, own_screen), (glare, own_glare)) = rig(&mut app);
+        app.update();
+        assert_eq!((worn(&app, screen), worn(&app, glare)), (own_screen.clone(), own_glare.clone()), "down: their own");
+        // Up: copies, the sources as they were.
+        app.world_mut().insert_resource(On(true));
+        app.update();
+        assert!(worn(&app, screen) != own_screen);
+        assert!(glare_worn(&app, glare));
+        let materials = app.world().resource::<Assets<NifMaterial>>();
+        assert!(!materials.get(&own_glare).unwrap().extension.add_linear);
+        assert_eq!(materials.get(&own_glare).unwrap().base.base_color, Color::WHITE);
+        // The rig rebuilt while up: the new shapes wear them, and down they get their own.
+        let ((screen_2, own_screen_2), (glare_2, own_glare_2)) = rig(&mut app);
+        app.world_mut().despawn(screen);
+        app.world_mut().despawn(glare);
+        app.update();
+        assert!(glare_worn(&app, glare_2));
+        assert!(worn(&app, screen_2) != own_screen_2);
+        app.world_mut().insert_resource(On(false));
+        app.update();
+        assert_eq!((worn(&app, screen_2), worn(&app, glare_2)), (own_screen_2, own_glare_2));
+    }
+
+    #[test]
+    fn a_rig_without_a_glare_or_a_screen_is_left_alone() {
+        let mut app = material_app();
+        let own = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(surface(Color::WHITE));
+        let glare = app.world_mut().spawn((PipBoyPart::Glare, MeshMaterial3d(own.clone()))).id();
+        // No screen: `show_screen` says the menus are not on the model.
+        app.update();
+        assert_eq!(worn(&app, glare), own);
+        // A screen and no glare: the menus alone.
+        app.world_mut().despawn(glare);
+        let own_screen = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(surface(Color::BLACK));
+        let screen = app.world_mut().spawn((PipBoyPart::Screen, MeshMaterial3d(own_screen.clone()))).id();
+        app.world_mut().insert_resource(On(true));
+        app.update();
+        assert!(worn(&app, screen) != own_screen);
+    }
+
+    #[test]
+    fn under_the_stealth_field_the_glare_is_built_from_the_real_material() {
+        let mut app = material_app();
+        let ((_, _), (glare, own_glare)) = rig(&mut app);
+        // The field's see-through copy on the glare, with the shape's own kept by the field.
+        let mut copy = surface(Color::WHITE);
+        copy.extension.refract = true;
+        let copy = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(copy);
+        app.world_mut().get_mut::<MeshMaterial3d<NifMaterial>>(glare).unwrap().0 = copy.clone();
+        app.world_mut().resource_mut::<StealthField>().keep_original(glare, own_glare.clone());
+        app.world_mut().insert_resource(On(true));
+        app.update();
+        let materials = app.world().resource::<Assets<NifMaterial>>();
+        let on = materials.get(&worn(&app, glare)).unwrap();
+        assert!(on.extension.add_linear && !on.extension.refract, "plain, not refracting");
+        assert!(materials.get(&copy).is_none(), "the see-through copy is dropped");
+        // Down: the real one for the field to make see-through again.
+        app.world_mut().insert_resource(On(false));
+        app.update();
+        assert_eq!(worn(&app, glare), own_glare);
     }
 
     /// A square 2 x 2 facing +Z about its origin, uv 0..1.

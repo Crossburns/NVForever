@@ -3115,14 +3115,23 @@ manual = "add --no-npc-packages to see 'the body turns' by speech_look.rs itself
 name = "pipboy"
 source = "CLAUDE.md: after Pip-Boy changes (docs/spec-notes/pipboy.md §7)"
 areas = ["pipboy"]
-paths = ["engine/nvf-play/src/pipboy*", "engine/nvforever/src/pipboy_arm.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PIPBOY = "12:open,15:page=stats,17:close" }
+paths = ["engine/nvf-play/src/pipboy*", "engine/nvforever/src/pipboy_arm.rs", "engine/nvf-assets/src/nif_material*"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PIPBOY = "12:open,15:page=stats,17:close", NVF_PLAY_TEST_SHOTS = "14:pipboy_items.png,16.5:pipboy_stats.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--size", "1280x720"]
 run_seconds = 19
 order = [[
   "pipboy: up, page ITEMS tab Weapons",
   "pipboy: the menus are on the model's screen",
   "pipboy: STATS Status",
+  "pipboy: down",
+], [
+  "pipboy: up, page ITEMS tab Weapons",
+  "pipboy: the glare is over the menus",
+  "pipboy: down",
+  "pipboy: screen treatment off",
+], [
+  "pipboy: up, page ITEMS tab Weapons",
+  { re = 'pipboy: screen treatment on \(scanlines baked, keeping 0\.\d+ of the light', label = "the undercoat, the picture and one baked column of scanlines (#1516)" },
   "pipboy: down",
 ]]
 expect = [
@@ -3204,6 +3213,7 @@ run_seconds = 27
 note = "the console's equipitem at 10.5 s, with Use Pip-Boy off, is taken off again (the setting holds, as for a loaded save or Doc Mitchell's script); 1920x1080 so the image is made larger; the click at 16 s is on the STATS tab line's fourth tab (Perks) through the flat image; 00015038 is the Pip-Boy 3000, 00025B83 the Pip-Boy Glove (FalloutNV.esm)"
 expect = [
   { text = "pipboy: Use Pip-Boy off: took off 0x00015038", count = 2, label = "off takes the Pip-Boy off, and again after a script equips it" },
+  { text = "pipboy: screen treatment on", count = 1, label = "the device's screen treatment once, on the device, not in the screen menu (#1516)" },
 ]
 order = [[
   "pipboy: Use Pip-Boy off: took off 0x00015038",
@@ -3218,6 +3228,9 @@ order = [[
   "pipboy: Use Pip-Boy on: put on 0x00015038",
   "pipboy: frame Device",
   "pipboy: the menus are on the model's screen",
+], [
+  "pipboy: frame Device",
+  "pipboy: the glare is over the menus",
 ]]
 
 [[scenario]]
@@ -3235,7 +3248,11 @@ order = [[
   "pipboy: STATS Status",
   "pipboy: down",
 ]]
-forbid = [{ text = "pipboy: the menus are on the model's screen", label = "the arm raised with no Pip-Boy worn" }]
+forbid = [
+  { text = "pipboy: the menus are on the model's screen", label = "the arm raised with no Pip-Boy worn" },
+  { text = "pipboy: screen treatment on", label = "the screen menu has no background or scanlines" },
+  { text = "pipboy: the glare is over the menus", label = "the screen menu has no glass" },
+]
 
 [[scenario]]
 name = "pipboy-holotape"
@@ -4391,12 +4408,13 @@ name = "stealth-boy-pipboy"
 source = "owner 2026-10-23: under a Stealth Boy the Pip-Boy's screen was see-through too, so the menus could not be used; the screen is drawn plain while the menus are on it, the arm stays see-through"
 note = "first person; the Stealth Boy used at 8 s (the drop aid turns ITEMS to its Aid tab to reach it, and the Pip-Boy keeps that tab, #1256); the Pip-Boy up on ITEMS at 18 s, after the add-ons' start-up message boxes (frame at 20 s), down at 21 s, up again at 23 s (the screen had turned see-through again), down at 25 s"
 areas = ["aid", "pipboy"]
-paths = ["engine/nvforever/src/stealth_field.rs", "engine/nvforever/src/pipboy_arm.rs"]
+paths = ["engine/nvforever/src/stealth_field.rs", "engine/nvforever/src/pipboy_arm.rs", "engine/nvf-play/src/pipboy/device_screen.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GIVE = "00043E94:1", NVF_PLAY_TEST_DROP = "8:00043E94:use", NVF_PLAY_TEST_PIPBOY = "18:open,21:close,23:open,25:close", NVF_PLAY_TEST_SHOTS = "20:stealth_pipboy.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--size", "1280x720"]
 run_seconds = 27
 expect = [
   { text = "pipboy: the menus are on the screen drawn plain under the Stealth Boy", count = 2, label = "each time the Pip-Boy comes up, the menus are drawn plain" },
+  { text = "pipboy: the glare is drawn plain under the Stealth Boy", count = 2, label = "each time the Pip-Boy comes up, the glare is drawn plain" },
 ]
 order = [[
   { re = 'stealth field: on \(Chameleon 75\): [1-9]\d* meshes see-through' },
@@ -4405,7 +4423,7 @@ order = [[
   "pipboy: the menus are on the model's screen",
   "pipboy: down",
 ]]
-manual = "the frame at 20 s shows the ITEMS page clearly on the screen while the arm around it refracts"
+manual = "the frame at 20 s shows the ITEMS page clearly on the screen, under the faint glare, while the arm around it refracts"
 
 [[scenario]]
 name = "no-messages"

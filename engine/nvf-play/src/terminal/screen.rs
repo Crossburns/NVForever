@@ -483,7 +483,7 @@ fn scanline_image(data: &GameData, images: &mut Assets<Image>) -> Option<(Handle
 }
 
 /// [design] Quantize the overlay first, then measure the light those actual bytes keep.
-fn scanline_pixels(column: &[f32]) -> (Vec<u8>, f32) {
+pub(crate) fn scanline_pixels(column: &[f32]) -> (Vec<u8>, f32) {
     let alpha: Vec<u8> = column.iter().map(|&k| ((1.0 - k).clamp(0.0, 1.0) * 255.0).round() as u8).collect();
     let kept = alpha.iter().map(|&a| 1.0 - a as f32 / 255.0).sum::<f32>() / alpha.len() as f32;
     let rgba = alpha.iter().flat_map(|&a| [0, 0, 0, a]).collect();
