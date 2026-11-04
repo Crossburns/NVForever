@@ -428,22 +428,90 @@ pub fn write_scroll(ui: &mut Ui, bar: TileId, steps: usize) {
     ui.set_trait(bar, "_SetInCode", Value::Num(1.0));
 }
 
-/// Whether what the file worked out can be drawn: every row's text shown, on the canvas and
-/// inside the list's window, and the description shown. The description's area, for the wheel.
-pub fn usable(ui: &Ui, p: &Paths, rows: &[MadeRow]) -> Result<Rect, String> {
+/// What the targets were last checked against: each region's tile, rectangle and clip, and
+/// whether it is shown and a target. The pointer's check is run again when this changes.
+type Regions = Vec<(TileId, [f64; 4], Option<[f64; 4]>, bool)>;
+
+/// A rectangle's left, top, width and height.
+fn corners(r: &layout::Rect) -> [f64; 4] {
+    [r.left, r.top, r.width, r.height]
+}
+
+/// Whether a drawn item shows on the canvas: it has a size, lies on the canvas, and the middle
+/// of it is inside what clips it. Its middle, when it does.
+fn on_canvas(item: &layout::DrawItem) -> Option<(f64, f64)> {
+    let r = item.rect;
+    let (right, bottom) = (r.left + r.width, r.top + r.height);
+    let inside = r.width > 0.0 && r.height > 0.0 && r.left >= 0.0 && r.top >= 0.0 && right <= f64::from(CANVAS.x) && bottom <= f64::from(CANVAS.y);
+    let middle = (r.left + r.width / 2.0, r.top + r.height / 2.0);
+    let in_clip = item.clip.is_none_or(|c| c.width > 0.0 && c.height > 0.0 && middle.0 >= c.left && middle.0 <= c.left + c.width && middle.1 >= c.top && middle.1 <= c.top + c.height);
+    (inside && in_clip).then_some(middle)
+}
+
+/// Whether what the file worked out can be drawn and used, on every final pass, so what a
+/// script moved or hid since is seen: every row's text and every tab shown, not transparent,
+/// on the canvas and inside its clip, and the description shown. When any of that changed, the
+/// rows and the tabs but the one showing are checked to take the pointer at their middles
+/// (`regions`: [`Regions`]); the tab showing need not, as a click on it does nothing. The
+/// description's area, for the wheel, or the reason for the hand-built page.
+pub fn usable(ui: &Ui, p: &Paths, rows: &[MadeRow], regions: &mut Option<Regions>) -> Result<Rect, String> {
     let items = layout::layout(ui, p.menu, &|_, _, _| (0.0, 0.0), true);
-    let find = |t: TileId| items.iter().find(|i| i.tile == t && i.visible);
+    let drawn = |i: &&layout::DrawItem| i.visible && i.alpha > 0.0;
+    let targets = |t: TileId| fnv_ui::input::shown(ui, t) && fnv_ui::input::targets(ui, t);
+    let mut now: Regions = Vec::with_capacity(rows.len() + p.tabs.len() + 1);
+    let mut wanted: Vec<(StatsTile, (f64, f64))> = Vec::with_capacity(rows.len() + p.tabs.len());
     for (i, row) in rows.iter().enumerate() {
-        let item = find(row.text).ok_or_else(|| format!("row {i} is not shown"))?;
-        let bottom = item.rect.top + item.rect.height;
-        let in_window = item.clip.is_none_or(|c| bottom <= c.top + c.height + 1.0);
-        if item.rect.height <= 0.0 || item.rect.top < 0.0 || bottom > f64::from(CANVAS.y) || !in_window {
+        let item = items.iter().find(|x| x.tile == row.text).filter(drawn).ok_or_else(|| format!("row {i} is not shown"))?;
+        let middle = on_canvas(item).ok_or_else(|| format!("row {i} does not fit"))?;
+        // Its foot too: the rows are not scrolled here, so none may be cut off.
+        let foot = item.rect.top + item.rect.height;
+        if item.clip.is_some_and(|c| foot > c.top + c.height + 1.0) {
             return Err(format!("row {i} does not fit"));
         }
+        now.push((row.tile, corners(&item.rect), item.clip.as_ref().map(corners), targets(row.tile)));
+        wanted.push((StatsTile::Row(i), middle));
     }
-    let desc = find(p.desc).ok_or("the description is not shown")?;
+    for (i, &tab) in p.tabs.iter().enumerate() {
+        // A tab is a hotrect, which draws nothing of its own: the largest thing drawn in it.
+        let item = items.iter().filter(drawn).filter(|x| x.rect.width > 0.0 && x.rect.height > 0.0 && inside(ui, x.tile, tab)).max_by(|a, b| (a.rect.width * a.rect.height).total_cmp(&(b.rect.width * b.rect.height)));
+        let item = item.ok_or_else(|| format!("tab {i} is not shown"))?;
+        let middle = on_canvas(item).ok_or_else(|| format!("tab {i} does not fit"))?;
+        now.push((tab, corners(&item.rect), item.clip.as_ref().map(corners), targets(tab)));
+        if i != PAGE {
+            wanted.push((StatsTile::Tab(i), middle));
+        }
+    }
+    let desc = items.iter().find(|x| x.tile == p.desc).filter(drawn).ok_or("the description is not shown")?;
     let area = desc.clip.unwrap_or(desc.rect);
+    // An empty description measures nothing; the scroll moves the text, so only its width is
+    // held to the canvas, and its height only where a window gives it.
+    let says = ui.tile(p.desc).get("string").is_some_and(|v| !v.text().is_empty());
+    if says && (area.width <= 0.0 || area.left < 0.0 || area.left + area.width > f64::from(CANVAS.x) || desc.clip.is_some_and(|c| c.height <= 0.0)) {
+        return Err("the description does not fit".into());
+    }
+    now.push((p.desc, corners(&area), None, true));
+    if regions.as_ref() != Some(&now) {
+        for (what, at) in wanted {
+            let hit = fnv_ui::input::hit(ui, &[p.menu], at, &fnv_ui::input::no_measure);
+            if hit.and_then(|h| stats_tile(ui, p, rows, h.tile)) != Some(what) {
+                return Err(format!("{what:?} does not take the pointer"));
+            }
+        }
+        *regions = Some(now);
+    }
     Ok(Rect::new(area.left as f32, area.top as f32, (area.left + area.width) as f32, (area.top + area.height) as f32))
+}
+
+/// Whether `t` is `of` or under it.
+fn inside(ui: &Ui, t: TileId, of: TileId) -> bool {
+    let mut at = Some(t);
+    while let Some(x) = at {
+        if x == of {
+            return true;
+        }
+        at = ui.tile(x).parent;
+    }
+    false
 }
 
 /// What [`page`] keeps: the rows, what was last written, and the reasons warned of.
@@ -457,8 +525,8 @@ pub(crate) struct Written {
     geometry: Option<Geometry>,
     sizes: SizesWritten,
     flat: Option<FlatChanges>,
-    /// The last usable layout's description area; none: to be looked at again.
-    checked: Option<Rect>,
+    /// What the targets were last checked against ([`usable`]).
+    regions: Option<Regions>,
     /// What is shown changed since the log last said so.
     tell: bool,
     /// The description's scroll and the text's place last logged.
@@ -505,7 +573,7 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
         // Rows made or gone: nothing written, measured or checked for the last set holds.
         w.shown = None;
         w.geometry = None;
-        w.checked = None;
+        w.regions = None;
     }
     let selected = view.selected[PAGE];
     let changed = !w.shown.as_ref().is_some_and(|s| s.same(snap, selected, device)) || w.highlight != view.highlight;
@@ -514,7 +582,6 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
         write_model(ui, &p, &w.rows, &shown);
         w.shown = Some(shown);
         w.highlight = view.highlight;
-        w.checked = None;
         w.tell = true;
     }
     if changed || late {
@@ -538,7 +605,6 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
             write_geometry(ui, &p, &w.rows, &g);
             ui.update();
             w.geometry = Some(g);
-            w.checked = None;
             w.tell = true;
         }
         // On every drawn frame, so a window injected or enabled later crops too.
@@ -547,14 +613,8 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
     write_scroll(ui, p.bar, view.desc);
     if late {
         ui.update();
-        let area = match w.checked {
-            Some(a) => a,
-            None => {
-                let a = usable(ui, &p, &w.rows)?;
-                w.checked = Some(a);
-                a
-            }
-        };
+        // Every final pass, so readiness is about the tree that is about to be painted.
+        let area = usable(ui, &p, &w.rows, &mut w.regions)?;
         tiles.desc_area = Some(area);
         let w = &mut tiles.written;
         if std::mem::take(&mut w.tell) {
@@ -653,7 +713,7 @@ pub(crate) fn settle(mut p: StatsPage) {
         let w = &mut p.tiles.written;
         w.shown = None;
         w.geometry = None;
-        w.checked = None;
+        w.regions = None;
         w.drawn = None;
         p.tiles.desc_area = None;
     }
@@ -895,14 +955,15 @@ mod tests {
     /// [design] A small layout written for these tests, with its own structure and numbers and
     /// plain literals; it does not come from the game's files and says nothing about them. It
     /// keeps the tile and template names the model and the input look up, which are the engine's
-    /// interface ([`paths`]). Its one expression is a stand-in for a file's own count of clicks,
-    /// read from a test tile. So these tests do not cover the file's own places, how its
-    /// expressions read what is written (a row's text from its `string`, its `y` from `_y`, the
-    /// text's `y` and the marker's from the value), or whether a name is where the file has it:
+    /// interface ([`paths`]). Its only expressions are a row's place from what the model wrote
+    /// and a stand-in for a file's own count of clicks, read from a test tile. So these tests do
+    /// not cover the file's own places, how its expressions read what is written (a row's text
+    /// from its `string`, the text's `y` and the marker's from the value), or whether a name is where the file has it:
     /// the smoke scenarios `tiles-stats-special*` check those on the real file.
     const FIXTURE: &str = r#"<menu name="StatsMenu"><rect name="Branch">
       <template name="stats_list_template"><hotrect name="TestRow"><target>&true;</target><x>8</x><width>90</width>
         <_VerticalSpacing>6</_VerticalSpacing>
+        <y><add src="me()" trait="_y"/></y>
         <text name="ListItemText"><string>Row</string></text>
       </hotrect></template>
       <image name="background_layout"/>
@@ -924,11 +985,11 @@ mod tests {
           </hotrect>
         </hotrect>
       </rect>
-      <hotrect name="stats_tailline_status"><target>&true;</target><x>10</x><y>500</y><width>50</width><height>20</height></hotrect>
-      <hotrect name="stats_tailline_SPECIAL"><target>&true;</target><x>70</x><y>500</y><width>50</width><height>20</height></hotrect>
-      <hotrect name="stats_tailline_skills"><target>&true;</target><x>130</x><y>500</y><width>50</width><height>20</height></hotrect>
-      <hotrect name="stats_tailline_perks"><target>&true;</target><x>190</x><y>500</y><width>50</width><height>20</height></hotrect>
-      <hotrect name="stats_tailline_general"><target>&true;</target><x>250</x><y>500</y><width>50</width><height>20</height></hotrect>
+      <hotrect name="stats_tailline_status"><target>&true;</target><x>10</x><y>500</y><width>50</width><height>20</height><text name="TabWords"><string>Tab</string></text></hotrect>
+      <hotrect name="stats_tailline_SPECIAL"><target>&true;</target><x>70</x><y>500</y><width>50</width><height>20</height><text name="TabWords"><string>Tab</string></text></hotrect>
+      <hotrect name="stats_tailline_skills"><target>&true;</target><x>130</x><y>500</y><width>50</width><height>20</height><text name="TabWords"><string>Tab</string></text></hotrect>
+      <hotrect name="stats_tailline_perks"><target>&true;</target><x>190</x><y>500</y><width>50</width><height>20</height><text name="TabWords"><string>Tab</string></text></hotrect>
+      <hotrect name="stats_tailline_general"><target>&true;</target><x>250</x><y>500</y><width>50</width><height>20</height><text name="TabWords"><string>Tab</string></text></hotrect>
     </rect></menu>"#;
 
     /// Each row's height in the fixture: its text's 30 and its own spacing of 6.
@@ -969,15 +1030,6 @@ mod tests {
 
     fn text(ui: &Ui, t: TileId, name: &str) -> String {
         ui.tile(t).get(name).map(|v| v.text().to_string()).unwrap_or_default()
-    }
-
-    /// The rows where the model's `_y` says, which the real file works out for itself.
-    fn place_rows(ui: &mut Ui, rows: &[MadeRow]) {
-        for r in rows {
-            let y = num(ui, r.tile, "_y");
-            ui.set_trait(r.tile, "y", Value::Num(y));
-        }
-        ui.update();
     }
 
     fn live_children(ui: &Ui, t: TileId) -> usize {
@@ -1180,6 +1232,57 @@ mod tests {
     }
 
     #[test]
+    fn a_page_off_the_canvas_or_unseen_or_untargeted_is_no_usable_layout() {
+        for (change, reason) in [
+            (("<x>12</x><y>30</y>", "<x>1020</x><y>30</y>"), "row 0 does not fit"),
+            (("<x>70</x><y>500</y>", "<x>1020</x><y>500</y>"), "tab 1 does not fit"),
+            ((r#"<rect name="Branch">"#, r#"<rect name="Branch"><alpha>0</alpha>"#), "row 0 is not shown"),
+            ((r#"<hotrect name="TestRow"><target>&true;</target>"#, r#"<hotrect name="TestRow"><target>0</target>"#), "Row(0) does not take the pointer"),
+            ((r#"<hotrect name="stats_tailline_skills"><target>&true;</target>"#, r#"<hotrect name="stats_tailline_skills"><target>0</target>"#), "Tab(2) does not take the pointer"),
+        ] {
+            let (mut ui, mut v, mut t) = (tree_changed(|x| x.replace(change.0, change.1)), view(), StatsTiles::default());
+            let got = run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err();
+            assert!(got.contains(reason), "{reason}: {got}");
+        }
+        // The tab showing need not take the pointer: a click on it does nothing.
+        let (mut ui, mut v, mut t) = (tree_changed(|x| x.replace(r#"<hotrect name="stats_tailline_SPECIAL"><target>&true;</target>"#, r#"<hotrect name="stats_tailline_SPECIAL"><target>0</target>"#)), view(), StatsTiles::default());
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).is_ok());
+    }
+
+    /// With nothing in the model changed, what a script does to the tree is seen on the next
+    /// final pass, and the page comes back when it is put right.
+    #[test]
+    fn what_a_script_moves_or_hides_is_seen_with_the_model_unchanged() {
+        let (mut ui, mut v, mut t) = (tree(), view(), StatsTiles::default());
+        run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
+        let p = paths(&ui, None).unwrap();
+        let area = t.desc_area;
+        ui.set_trait(p.list, "x", Value::Num(1020.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err().contains("does not fit"));
+        ui.set_trait(p.list, "x", Value::Num(12.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).is_ok());
+        // The row's target off: the same places, and the pointer's check runs again.
+        let row = t.written.rows[1].tile;
+        ui.set_trait(row, "target", Value::Num(0.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err().contains("Row(1)"));
+        ui.set_trait(row, "target", Value::Num(1.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).is_ok());
+        // The description hidden; then moved, and the wheel's area goes with it.
+        ui.set_trait(p.desc, "visible", Value::Num(0.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err().contains("description"));
+        ui.set_trait(p.desc, "visible", Value::Num(1.0));
+        ui.set_trait(p.desc, "x", Value::Num(40.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).is_ok());
+        assert_ne!(t.desc_area, area);
+    }
+
+    #[test]
     fn the_screen_menu_has_no_title_or_background_and_gives_them_back() {
         let (mut ui, mut v, mut t) = (tree(), view(), StatsTiles::default());
         run(&mut ui, &snap(), &mut v, false, &mut t).unwrap();
@@ -1230,7 +1333,6 @@ mod tests {
         let menu = run(&mut ui, &snap(), &mut v, true, &mut t).unwrap();
         let p = paths(&ui, None).unwrap();
         let rows = t.written.rows.clone();
-        place_rows(&mut ui, &rows);
         let mut pointer = Pointer::default();
         // Row 2: the list's 12 + 8 across, its 30 + two rows down.
         let r = at(&mut ui, &mut pointer, menu, 50.0, 30.0 + 2.5 * ROW, true);
