@@ -5345,6 +5345,27 @@ forbid = [
 ]
 
 [[scenario]]
+name = "follower-melee-closes-in"
+source = "#1534 (owner's playtest 2026-11-04): a melee companion goes after its target. Every follower's Follow package sets Continue During Combat [observed: FollowersVeronicaFollowPlayerDEFAULT]; a teammate on a Follow package fights as any other actor and follows again after the fight (fnv_game::awareness continues_during_combat). Before, Veronica stood by the player and only struck what came to her"
+note = "Veronica (VeronicaREF) hired at the 188 Trading Post by her hire lines (INFO 0x001467AC, which sets her Brotherhood warning baseline, then 0x00147789, which hires her); a feral ghoul (0x000CE9E7, as follower-boone) put 900 units from the player at 16 s; the player walks off at 26 s"
+areas = ["followers", "combat"]
+paths = ["crates/fnv-game/src/awareness.rs", "crates/fnv-ai/src/alert.rs", "crates/fnv-game/src/followers.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:moveto:player:VeronicaREF:0:150:0,4:info:0x001467AC:VeronicaREF,5:info:0x00147789:VeronicaREF,16:moveto:0x000CE9E7:player:0:900:0", NVF_PLAY_TEST_GOTO = "26:32400:31600:5520" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 45
+expect = [
+  { re = 'VeronicaREF: package FollowersVeronicaFollowPlayerDEFAULT', label = "hired: her Follow package" },
+  { re = 'npc combat: VeronicaREF \S+ fights 0x000CE9E7 with WeapPowerFistVeronica \(melee\)', label = "she fights the ghoul with her power fist" },
+  { re = 'VeronicaREF: runs at 0x000CE9E7, (\d+) units away', range = [400, 5000], label = "she leaves the player to close on it (stood still before #1534)" },
+  { re = 'npc combat: VeronicaREF \S+ swings at LvlFeralGhoul 0x000CE9E7', label = "and swings at it" },
+  { re = 'VeronicaREF: (runs|walks) after ', label = "after the fight she follows the player again" },
+]
+order = [["npc combat: VeronicaREF", "VeronicaREF: runs at 0x000CE9E7", "VeronicaREF: runs after"]]
+forbid = [
+  { re = 'npc combat: VeronicaREF \S+ fights the player', label = "Veronica fights the player" },
+]
+
+[[scenario]]
 name = "companion-melee-weapon"
 source = "status.md Followers row (queue item 6): a companion set to melee takes up its carried melee weapon instead of fighting with its fists (docs/spec-notes/companion-wheel.md §4, crates/fnv-game/src/style_weapon.rs)"
 note = "Written 2026-10-20 by the q6 session. Boone (0x00096BCE) is hired by his recruit line at 3 s (as follower-boone); at 8 s the console gives him a Machete (WeapNVMachete 0x000CE569) and sets his combat style to FollowersCombatStyleMelee (0x00033DE3, Melee Only), as the wheel's Melee command does; a feral ghoul (0x000CE9E7, as follower-boone) is put 400 units from the player at 14 s, so Boone fights it"
