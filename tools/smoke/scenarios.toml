@@ -35,6 +35,7 @@ untimed = [
   "NVF_PLAY_TEST_MENU", "NVF_PLAY_TEST_BARTER", "NVF_PLAY_TEST_BARTER_DELAY", "NVF_PLAY_TEST_NO_SPREAD",
   "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
   "NVF_PLAY_AIDS_FROM_SCRIPTS",
+  "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
 ]
 
 # Test aids whose value is a list of timed items (`<seconds>:<what>`), joined with sep.
@@ -9841,6 +9842,75 @@ expect = [
   { re = 'DisableNavmesh: not built', count = 0, label = "DisableNavmesh is no stub" },
   { re = 'EnableNavMesh: not built', count = 0, label = "EnableNavMesh is no stub" },
 ]
+
+[[scenario]]
+name = "sandbox-combat-recovery"
+source = "docs/design/alert.md §5: sandbox interruption cancels the abandoned activity and reservations; #1497"
+note = "The phase-gated resident aid waits for rendered Chet to have a real ToObject follower, calls StartCombat, observes production combat movement, calls StopCombat, and requires a fresh completed sandbox activity under the same package. A timeout or package replacement fails setup/recovery. No AI state is repaired by the aid."
+areas = ["ai", "combat"]
+paths = ["crates/fnv-ai/src/alert.rs", "crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/sandbox.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/residents/sandbox_interrupt.rs"]
+args = ["--cell", "GSGeneralStore", "--play", "--npc-packages", "GSChetRef", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SANDBOX_INTERRUPT = "GSChetRef:pending:player:stop" }
+run_seconds = 220
+expect = [
+  { re = 'sandbox interruption: precondition .*phase=Some\(ToObject\).*activity=Some\(Travelling\) follower=true', count = 1, label = "a real pending object walk before combat" },
+  { re = 'sandbox interruption: PASS .*mode=Stop', count = 1, label = "a new activity completed after StopCombat" },
+  { re = 'sandbox interruption: (FAIL|invalid)', count = 0, label = "setup and recovery remained valid" },
+]
+order = [[
+  'sandbox interruption: precondition',
+  'sandbox interruption: StartCombat',
+  'sandbox interruption: combat takeover',
+  'sandbox interruption: StopCombat',
+  'sandbox interruption: recovered',
+  'sandbox interruption: PASS',
+]]
+
+[[scenario]]
+name = "sandbox-combat-recovery-control"
+source = "docs/design/alert.md §5: #1497 uninterrupted scene control"
+note = "The same phase-gated pending walk, same actor, package and scene as sandbox-combat-recovery, without combat. Requires the originally selected object activity to complete, not merely a path-choice event or a replacement choice."
+areas = ["ai"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/sandbox.rs", "engine/nvforever/src/residents/sandbox_interrupt.rs"]
+args = ["--cell", "GSGeneralStore", "--play", "--npc-packages", "GSChetRef", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SANDBOX_INTERRUPT = "GSChetRef:pending:player:control" }
+run_seconds = 190
+expect = [
+  { re = 'sandbox interruption: precondition .*phase=Some\(ToObject\).*activity=Some\(Travelling\) follower=true', count = 1, label = "matched pending walk control" },
+  { re = 'sandbox interruption: PASS .*mode=Control', count = 1, label = "uninterrupted object activity completes" },
+  { re = 'sandbox interruption: (FAIL|invalid|StartCombat|StopCombat)', count = 0, label = "control has no combat intervention" },
+]
+order = [[
+  'sandbox interruption: precondition',
+  'sandbox interruption: control continues without combat',
+  'sandbox interruption: recovered',
+  'sandbox interruption: PASS',
+]]
+
+[[scenario]]
+name = "sandbox-combat-seated-recovery"
+source = "docs/design/alert.md §5: #1497 active sandbox furniture interruption"
+note = "Wait for actual furniture state 3 and matching sandbox intent; StartCombat, actual movement takeover and complete physical release, then StopCombat and a new completed sandbox activity."
+areas = ["ai", "combat", "furniture"]
+paths = ["crates/fnv-ai/src/alert.rs", "crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/sandbox.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/residents/sandbox_interrupt.rs"]
+args = ["--cell", "GSGeneralStore", "--play", "--npc-packages", "GSChetRef", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SANDBOX_INTERRUPT = "GSChetRef:seated:player:stop" }
+run_seconds = 220
+expect = [
+  { re = 'sandbox interruption: precondition .*state: 3.*on_furniture=true', count = 1, label = "actor physically seated before interruption" },
+  { re = 'sandbox interruption: furniture released .*physical=None on_furniture=false', count = 1, label = "furniture exit completed before combat ends" },
+  { re = 'sandbox interruption: PASS .*mode=Stop', count = 1, label = "fresh activity completed after getting up" },
+  { re = 'sandbox interruption: (FAIL|invalid)', count = 0, label = "setup and recovery remained valid" },
+]
+order = [[
+  'sandbox interruption: precondition',
+  'sandbox interruption: StartCombat',
+  'sandbox interruption: combat takeover',
+  'sandbox interruption: furniture released',
+  'sandbox interruption: StopCombat',
+  'sandbox interruption: recovered',
+  'sandbox interruption: PASS',
+]]
 
 [[scenario]]
 name = "ai-procedure-codes"

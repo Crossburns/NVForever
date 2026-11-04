@@ -1844,6 +1844,23 @@ impl Ai {
         false
     }
 
+    /// Combat, a warning or flight takes the sandbox's movement and object intent
+    /// away [design]. The sandbox chooses afresh when its package next runs, without
+    /// losing its schedule or treating the interrupted object as unreachable.
+    pub(crate) fn interrupt_sandbox(&mut self, game: &Game, actor: FormId) {
+        let a = self.agents.get_mut(&actor).expect("listed");
+        if !a.sandbox.as_mut().is_some_and(Sandbox::interrupt) {
+            return;
+        }
+        a.walker.follower = None;
+        a.activity = Activity::There;
+        a.face_to = None;
+        self.set_using(game, actor, None);
+        // A pending choice or a Look-held seat can reserve furniture without using
+        // it. set_using(None) alone does not release those reservations.
+        self.taken.retain(|_, user| *user != actor);
+    }
+
     /// A sandboxing actor whose behaviour is over chooses the next one and sets off.
     pub(crate) fn sandbox_step(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
         let a = self.agents.get_mut(&actor).expect("listed");

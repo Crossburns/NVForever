@@ -2497,3 +2497,481 @@ fn rooted_dead_or_restrained_actors_are_not_put_anywhere() {
         assert!(dist(s.feet(r), s.game.world.placed.get(FormId(r)).unwrap().pos) < 1.0);
     }
 }
+
+// ---- interrupted sandbox activities (#1497) ----------------------------------------
+
+/// Reach a real choice through production AI, not by filling in its private pending
+/// state. A travelling choice is identified by the last choice event and its follower;
+/// the previous activity can still be in `doing` until the destination is reached.
+fn sandbox_until(s: &mut Sim, actor: u32, doing: Doing, travelling: bool) {
+    for _ in 0..1200 {
+        s.run(0.5);
+        let a = &s.ai.agents[&FormId(actor)];
+        let chosen = doings(s, actor).last().copied() == Some(doing);
+        if chosen && if travelling {
+            a.activity == Activity::Travelling && a.walker.follower.is_some()
+        } else {
+            a.activity == Activity::There && a.walker.follower.is_none()
+                && a.sandbox.as_ref().is_some_and(|sb| sb.doing == doing)
+        } {
+            return;
+        }
+    }
+    panic!("{actor:08X} never reached {doing:?}, travelling={travelling}; {:?}", s.events(actor));
+}
+
+fn sandbox_cancelled(s: &Sim, actor: u32) {
+    let a = &s.ai.agents[&FormId(actor)];
+    let sb = a.sandbox.as_ref().expect("the sandbox day is retained");
+    assert_eq!(sb.phase(), SandboxPhase::Standing, "no abandoned object/exit phase");
+    assert_eq!(sb.doing, Doing::Standing, "no active furniture or marker action in combat");
+    assert!(sb.due(&s.game), "resumption must not wait out the abandoned action's timer");
+    assert_eq!(a.using, None);
+    assert_eq!(a.face_to, None, "the old idle marker cannot turn the fighter");
+}
+
+fn sandbox_resumes(s: &mut Sim, actor: u32) {
+    let before = doings(s, actor).len();
+    let packages = s.events(actor).iter().filter(|e| matches!(e, AiEvent::Package { .. })).count();
+    assert_eq!(s.game.awareness.state(FormId(actor)), State::Normal);
+    s.run(1.0);
+    assert!(doings(s, actor).len() > before, "a new choice after recovery: {:?}", s.events(actor));
+    assert!(s.ai.agents[&FormId(actor)].search.is_none());
+    assert_eq!(s.events(actor).iter().filter(|e| matches!(e, AiEvent::Package { .. })).count(), packages,
+        "recovery must not rely on a package replacement");
+    let chosen = doings(s, actor)[before];
+    for _ in 0..40 {
+        let a = &s.ai.agents[&FormId(actor)];
+        let sb = a.sandbox.as_ref().unwrap();
+        if a.activity == Activity::There && a.walker.follower.is_none() && sb.doing == chosen
+            && !matches!(sb.phase(), SandboxPhase::ToObject | SandboxPhase::GotUp) {
+            assert_eq!(a.using, chosen.furniture(), "the chosen furniture is actually in use");
+            let object = match chosen {
+                Doing::AtIdleMarker(marker) => Some(marker),
+                _ => chosen.furniture(),
+            };
+            if let Some(object) = object {
+                let place = s.game.world.placed.get(object).expect("fixture object");
+                assert!(dist(a.walker.feet, place.pos) < 40.0,
+                    "the new activity begins at {object}, not at the combat destination: {:?}", a.walker.feet);
+            }
+            return;
+        }
+        s.run(0.5);
+    }
+    panic!("the recovered choice {chosen:?} never began at its destination: {:?}", s.events(actor));
+}
+
+#[test]
+fn sandbox_interrupt_pending_chair_holding_resumes_after_stop_combat() {
+    let f = fixture();
+    let mut control = sim(&f, &[R_SB_OBJECTS]);
+    sandbox_until(&mut control, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), true);
+    let initial = control.feet(R_SB_OBJECTS);
+    let before = doings(&control, R_SB_OBJECTS).len();
+    control.run(300.0);
+    assert!(doings(&control, R_SB_OBJECTS).len() > before, "the uninterrupted control progresses");
+
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), true);
+    assert_eq!(s.feet(R_SB_OBJECTS), initial);
+    let actor = FormId(R_SB_OBJECTS);
+    let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+    fighting(&mut s, R_SB_OBJECTS, [initial[0], initial[1] + 100.0, initial[2]]);
+    s.run(0.5);
+    assert!(s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Hold { .. })));
+    sandbox_cancelled(&s, R_SB_OBJECTS);
+    s.run(5.0);
+    assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved,
+        "combat updates must preserve the day, energy and random sequence");
+    s.game.stop_combat(actor);
+    sandbox_resumes(&mut s, R_SB_OBJECTS);
+    let before = doings(&s, R_SB_OBJECTS).len();
+    s.run(300.0);
+    assert!(doings(&s, R_SB_OBJECTS).len() > before, "recovery continues beyond its first choice");
+}
+
+#[test]
+fn sandbox_interrupt_pending_marker_closing_resumes_after_target_death() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    sandbox_until(&mut s, R_SB_OBJECTS, Doing::AtIdleMarker(FormId(IDLE_C)), true);
+    let actor = FormId(R_SB_OBJECTS);
+    let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+    let at = s.feet(R_SB_OBJECTS);
+    fighting(&mut s, R_SB_OBJECTS, [10100.0, 10900.0, 0.0]);
+    s.game.awareness.engage.insert(actor, (50.0, 100.0));
+    s.run(0.5);
+    assert!(s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Close { .. })));
+    sandbox_cancelled(&s, R_SB_OBJECTS);
+    assert!(s.ai.agents[&actor].walker.follower.is_some(), "the combat route replaces the sandbox route");
+    s.run(0.5);
+    assert!(dist(s.feet(R_SB_OBJECTS), at) > 20.0, "repeated combat updates keep the combat walk alive");
+    assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved);
+    // The real target-death path, not a hand-assigned awareness state or StopCombat.
+    assert!(s.game.kill(FormId::PLAYER_REF, Some(actor)));
+    s.game.settle_awareness();
+    sandbox_resumes(&mut s, R_SB_OBJECTS);
+}
+
+#[test]
+fn sandbox_interrupt_combat_without_a_remaining_target_stops_the_old_walk() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), true);
+    let actor = FormId(R_SB_OBJECTS);
+    let at = s.feet(R_SB_OBJECTS);
+    fighting(&mut s, R_SB_OBJECTS, [at[0], at[1] + 100.0, at[2]]);
+    // A target can disappear between measurement and the next awareness settlement.
+    s.game.awareness.actors.get_mut(&actor).unwrap().forget(FormId::PLAYER_REF);
+    assert_eq!(s.game.awareness.state(actor), State::Combat);
+    s.run(0.5);
+    sandbox_cancelled(&s, R_SB_OBJECTS);
+    assert_eq!(s.feet(R_SB_OBJECTS), at);
+    assert!(s.ai.agents[&actor].walker.follower.is_none());
+    s.game.settle_awareness();
+    sandbox_resumes(&mut s, R_SB_OBJECTS);
+}
+
+#[test]
+fn sandbox_interrupt_active_chair_marker_sleep_and_meal_are_cancelled() {
+    let f = fixture();
+    for (actor, doing) in [
+        (R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C))),
+        (R_SB_OBJECTS, Doing::AtIdleMarker(FormId(IDLE_C))),
+        (R_SB_ALL, Doing::Sleeping(FormId(BED_C))),
+        (R_SB_ALL, Doing::Eating(Some(FormId(CHAIR_C)))),
+    ] {
+        let mut s = sim(&f, &[actor]);
+        if matches!(doing, Doing::Sleeping(_)) {
+            s.game.world.set_global(FormId(G_HOUR), 2.0).unwrap();
+        } else if matches!(doing, Doing::Eating(_)) {
+            s.run(0.5);
+            let lunch = s.ai.agents[&FormId(actor)].sandbox.as_ref().unwrap().times().1[1].0 + 0.1;
+            s.game.world.set_global(FormId(G_HOUR), lunch).unwrap();
+        }
+        sandbox_until(&mut s, actor, doing, false);
+        let me = FormId(actor);
+        assert!(!s.ai.agents[&me].sandbox.as_ref().unwrap().due(&s.game), "interrupt an active timer: {doing:?}");
+        let saved = s.ai.agents[&me].sandbox.as_ref().unwrap().schedule();
+        let start = s.ai.events.len();
+        let at = s.feet(actor);
+        fighting(&mut s, actor, [at[0], at[1] + 100.0, at[2]]);
+        s.run(0.5);
+        sandbox_cancelled(&s, actor);
+        s.run(2.0);
+        assert_eq!(s.ai.agents[&me].sandbox.as_ref().unwrap().schedule(), saved, "{doing:?}");
+        let releases = s.ai.events[start..].iter().filter(|e| e.actor == me && matches!(e.event, AiEvent::Furniture { furniture: None })).count();
+        assert_eq!(releases, usize::from(doing.furniture().is_some()), "release an occupied seat once: {doing:?}");
+        s.game.stop_combat(me);
+        sandbox_resumes(&mut s, actor);
+    }
+}
+
+#[test]
+fn sandbox_interrupt_releases_pending_and_active_chair_reservations() {
+    let f = fixture();
+    for travelling in [true, false] {
+        let mut s = sim(&f, &[R_SB_OBJECTS]);
+        sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), travelling);
+        let at = s.feet(R_SB_OBJECTS);
+        fighting(&mut s, R_SB_OBJECTS, [at[0], at[1] + 100.0, at[2]]);
+        s.run(0.5);
+        // Furniture availability is tested by another real sandbox choosing it.
+        s.ai.add(&s.game, FormId(R_SB_OBJECTS_2)).unwrap();
+        sandbox_until(&mut s, R_SB_OBJECTS_2, Doing::Sitting(FormId(CHAIR_C)), false);
+        assert_eq!(s.ai.agents[&FormId(R_SB_OBJECTS_2)].using, Some(FormId(CHAIR_C)));
+        assert_eq!(s.ai.agents[&FormId(R_SB_OBJECTS)].using, None);
+    }
+}
+
+#[test]
+fn sandbox_interrupt_releases_a_chair_held_by_a_script_look() {
+    use fnv_game::functions::senses::Look;
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    let actor = FormId(R_SB_OBJECTS);
+    s.game.senses.looks.insert(actor, Look { target: FormId(R_SLEEP_C), rotate_body: true });
+    sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), false);
+    assert_eq!(s.ai.agents[&actor].using, None, "Look holds the seat without actual furniture use");
+    let at = s.feet(R_SB_OBJECTS);
+    fighting(&mut s, R_SB_OBJECTS, [at[0], at[1] + 100.0, at[2]]);
+    s.run(0.5);
+    sandbox_cancelled(&s, R_SB_OBJECTS);
+    s.game.senses.looks.remove(&actor);
+    s.ai.social(&mut s.game, &s.nav, 0.5);
+    assert_eq!(s.ai.agents[&actor].using, None, "StopLook must not resurrect the combat-cancelled chair");
+    s.ai.add(&s.game, FormId(R_SB_OBJECTS_2)).unwrap();
+    sandbox_until(&mut s, R_SB_OBJECTS_2, Doing::Sitting(FormId(CHAIR_C)), false);
+}
+
+#[test]
+fn sandbox_interrupt_post_flee_and_search_do_not_complete_the_old_choice() {
+    use fnv_game::combat_group::{Flight, GroupSettings, Post, PostKind};
+    let f = fixture();
+    for mode in ["post", "flee", "search"] {
+        let mut s = sim(&f, &[R_SB_OBJECTS]);
+        sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), true);
+        let actor = FormId(R_SB_OBJECTS);
+        let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+        let threat = [10500.0, 10100.0, 0.0];
+        if mode == "search" {
+            alert(&mut s, R_SB_OBJECTS, threat);
+        } else {
+            fighting(&mut s, R_SB_OBJECTS, threat);
+            if mode == "post" {
+                s.game.awareness.engage.insert(actor, (2000.0, 2500.0));
+                s.game.awareness.tactics.posts.insert(actor, Post { at: [10200.0, 10600.0, 0.0], kind: PostKind::Flank, run: true });
+            } else {
+                s.game.awareness.tactics.settings = Some(GroupSettings { flee_normal: 300.0, ..GroupSettings::default() });
+                s.game.awareness.tactics.flights.insert(actor, Flight { from: FormId::PLAYER_REF, from_at: threat, since: s.game.time, spot: None, arrived: None });
+            }
+        }
+        let before = doings(&s, R_SB_OBJECTS).len();
+        s.run(0.5);
+        sandbox_cancelled(&s, R_SB_OBJECTS);
+        s.run(8.0);
+        assert_eq!(doings(&s, R_SB_OBJECTS).len(), before, "{mode}: movement belongs to the interruption");
+        assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved);
+        assert_eq!(s.ai.agents[&actor].using, None, "{mode}: cannot sit at the combat destination");
+        assert!(s.events(R_SB_OBJECTS).iter().any(|e| match mode {
+            "post" => matches!(e, AiEvent::AtPost { .. }),
+            "flee" => matches!(e, AiEvent::FleeArrived { .. }),
+            _ => matches!(e, AiEvent::SearchLook { .. }),
+        }), "{mode}: the replacement route completes: {:?}", s.events(R_SB_OBJECTS));
+        s.game.stop_combat(actor);
+        sandbox_resumes(&mut s, R_SB_OBJECTS);
+    }
+}
+
+#[test]
+fn sandbox_interrupt_rearming_keeps_its_fetch_and_then_resumes() {
+    let f = with_arms(fixture());
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), true);
+    let actor = FormId(R_SB_OBJECTS);
+    let at = s.feet(R_SB_OBJECTS);
+    let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+    lay(&mut s, PISTOL, [at[0] - 250.0, at[1], 0.0]);
+    lay(&mut s, ROUNDS, [at[0] - 120.0, at[1] + 60.0, 0.0]);
+    fighting(&mut s, R_SB_OBJECTS, [at[0], at[1] + 300.0, 0.0]);
+    s.run(0.5);
+    assert!(s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Fetch { .. })));
+    sandbox_cancelled(&s, R_SB_OBJECTS);
+    s.run(10.0);
+    assert_eq!(s.game.held_weapon(actor).map(|w| w.0), Some(FormId(PISTOL)), "combat updates do not cancel the fetch");
+    assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved);
+    s.game.stop_combat(actor);
+    sandbox_resumes(&mut s, R_SB_OBJECTS);
+}
+
+#[test]
+fn sandbox_interrupt_warning_cancels_a_walk_but_preserves_an_active_seat() {
+    let f = fixture();
+    for travelling in [true, false] {
+        let mut s = sim(&f, &[R_SB_OBJECTS]);
+        sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), travelling);
+        let actor = FormId(R_SB_OBJECTS);
+        let at = s.feet(R_SB_OBJECTS);
+        let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+        let player = s.game.world.get(FormId::PLAYER_REF).unwrap();
+        (player.cell, player.pos) = (Some(FormId(CELL_C)), [at[0] + 100.0, at[1], at[2]]);
+        s.game.provocations.aggro_inside.insert(actor);
+        s.run(1.0);
+        assert_eq!(s.game.awareness.state(actor), State::Normal);
+        if travelling {
+            assert!(s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Warn { .. })));
+            sandbox_cancelled(&s, R_SB_OBJECTS);
+            s.game.provocations.aggro_inside.clear();
+            sandbox_resumes(&mut s, R_SB_OBJECTS);
+        } else {
+            assert_eq!(s.ai.agents[&actor].using, Some(FormId(CHAIR_C)));
+            assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved);
+            assert!(!s.ai.agents[&actor].sandbox.as_ref().unwrap().due(&s.game));
+            assert!(!s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Warn { .. })));
+        }
+    }
+}
+
+#[test]
+fn sandbox_interrupt_continue_during_combat_preserves_pending_and_active_actions() {
+    let mut f = fixture();
+    f.data.package_defs.get_mut(&FormId(P_SB_OBJECTS)).unwrap().flags |= flags::CONTINUE_DURING_COMBAT;
+    for travelling in [true, false] {
+        let mut s = sim(&f, &[R_SB_OBJECTS]);
+        sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), travelling);
+        let actor = FormId(R_SB_OBJECTS);
+        let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+        let before = doings(&s, R_SB_OBJECTS).len();
+        let at = s.feet(R_SB_OBJECTS);
+        fighting(&mut s, R_SB_OBJECTS, [at[0], at[1] + 100.0, at[2]]);
+        s.run(10.0);
+        assert_eq!(s.ai.agents[&actor].using, Some(FormId(CHAIR_C)));
+        assert_eq!(doings(&s, R_SB_OBJECTS).len(), before, "finish the original choice without restarting it");
+        assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved);
+        assert!(!s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Hold { .. } | AiEvent::Close { .. })));
+    }
+}
+
+#[test]
+fn sandbox_interrupt_does_not_reset_valid_standing_between_choices() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_NOTHING]);
+    sandbox_until(&mut s, R_SB_NOTHING, Doing::Standing, false);
+    let actor = FormId(R_SB_NOTHING);
+    let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+    let before = doings(&s, R_SB_NOTHING).len();
+    assert!(!s.ai.agents[&actor].sandbox.as_ref().unwrap().due(&s.game));
+    s.run(1.0);
+    assert_eq!(doings(&s, R_SB_NOTHING).len(), before, "no follower is valid while standing");
+    assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved);
+    assert_eq!(s.ai.agents[&actor].walker.travelled, 0.0);
+}
+
+#[test]
+fn sandbox_interrupt_normal_spectator_flee_cancels_the_active_seat() {
+    use fnv_game::combat_group::GroupSettings;
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), false);
+    let actor = FormId(R_SB_OBJECTS);
+    let at = s.feet(R_SB_OBJECTS);
+    let player_at = [at[0] - 100.0, at[1], at[2]];
+    let player = s.game.world.get(FormId::PLAYER_REF).unwrap();
+    (player.cell, player.pos) = (Some(FormId(CELL_C)), player_at);
+    s.game.awareness.tactics.settings = Some(GroupSettings { flee_normal: 200.0, ..GroupSettings::default() });
+    // The non-resident loner fights the player; the sandboxer stays a neutral observer.
+    fighting(&mut s, R_LONER, player_at);
+    let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+    s.ai.social(&mut s.game, &s.nav, 0.5);
+    assert!(s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::SpectatorFlee { .. })), "{:?}", s.events(R_SB_OBJECTS));
+    assert_eq!(s.game.awareness.state(actor), State::Normal, "this takeover bypasses combat alert_step");
+    sandbox_cancelled(&s, R_SB_OBJECTS);
+    // End the fight after the actual flee arrival. Waiting a fixed five seconds hits
+    // the deliberate re-flee timer while the player is still close to this small room.
+    for _ in 0..8 {
+        s.run(0.5);
+        if matches!(s.ai.agents[&actor].search, Some(fnv_ai::alert::Search::Fled { .. })) {
+            break;
+        }
+    }
+    assert!(matches!(s.ai.agents[&actor].search, Some(fnv_ai::alert::Search::Fled { .. })), "the replacement flee route arrives");
+    assert!(s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::FleeArrived { .. })));
+    assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved);
+    s.game.stop_combat(FormId(R_LONER));
+    sandbox_resumes(&mut s, R_SB_OBJECTS);
+}
+
+#[test]
+fn sandbox_interrupt_streaming_out_and_back_does_not_restore_the_abandoned_choice() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), true);
+    let actor = FormId(R_SB_OBJECTS);
+    let at = s.feet(R_SB_OBJECTS);
+    fighting(&mut s, R_SB_OBJECTS, [at[0], at[1] + 100.0, at[2]]);
+    s.run(0.5);
+    sandbox_cancelled(&s, R_SB_OBJECTS);
+    let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+    assert!(s.ai.set_high(&s.game, actor, false));
+    s.run(1.0);
+    s.game.stop_combat(actor);
+    assert!(s.ai.set_high(&s.game, actor, true));
+    assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved);
+    sandbox_resumes(&mut s, R_SB_OBJECTS);
+}
+
+#[test]
+fn sandbox_interrupt_a_package_changed_during_combat_resumes_its_new_activity() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), true);
+    let actor = FormId(R_SB_OBJECTS);
+    let at = s.feet(R_SB_OBJECTS);
+    fighting(&mut s, R_SB_OBJECTS, [at[0], at[1] + 100.0, at[2]]);
+    s.run(0.5);
+    sandbox_cancelled(&s, R_SB_OBJECTS);
+    s.game.extra.entry(actor).or_default().script_package = Some(FormId(P_SB_WANDER));
+    assert_eq!(s.game.evaluate_package(actor), Some(FormId(P_SB_WANDER)));
+    s.run(0.5);
+    assert!(s.events(R_SB_OBJECTS).iter().any(|e| matches!(e, AiEvent::Package { package: Some(p) } if *p == FormId(P_SB_WANDER))));
+    s.game.stop_combat(actor);
+    let before = doings(&s, R_SB_OBJECTS).len();
+    s.run(1.0);
+    let choices = doings(&s, R_SB_OBJECTS);
+    assert!(choices.len() > before);
+    assert!(choices[before..].iter().all(|d| *d == Doing::Wandering), "new package, not the abandoned chair: {choices:?}");
+    assert_eq!(s.ai.agents[&actor].using, None);
+    s.ai.add(&s.game, FormId(R_SB_OBJECTS_2)).unwrap();
+    sandbox_until(&mut s, R_SB_OBJECTS_2, Doing::Sitting(FormId(CHAIR_C)), false);
+}
+
+#[test]
+fn sandbox_interrupt_recovery_can_be_interrupted_and_recovered_again() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    sandbox_until(&mut s, R_SB_OBJECTS, Doing::Sitting(FormId(CHAIR_C)), true);
+    let actor = FormId(R_SB_OBJECTS);
+    for round in 0..2 {
+        let at = s.feet(R_SB_OBJECTS);
+        let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
+        fighting(&mut s, R_SB_OBJECTS, [at[0], at[1] + 100.0, at[2]]);
+        s.run(0.5);
+        sandbox_cancelled(&s, R_SB_OBJECTS);
+        assert_eq!(s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule(), saved, "round {round}");
+        s.game.stop_combat(actor);
+        sandbox_resumes(&mut s, R_SB_OBJECTS);
+        assert!(matches!(s.ai.agents[&actor].sandbox.as_ref().unwrap().doing,
+            Doing::Sitting(_) | Doing::AtIdleMarker(_)), "round {round} completed a real new object choice");
+    }
+    assert_eq!(s.events(R_SB_OBJECTS).iter().filter(|e| matches!(e, AiEvent::Package { .. })).count(), 1,
+        "both interruptions recover within the same sandbox instance");
+}
+
+#[test]
+fn sandbox_interrupt_preserves_a_valid_chat_approach_and_wait_until_combat() {
+    use fnv_ai::Chat;
+    let mut f = fixture();
+    f.data.package_defs.get_mut(&FormId(P_SB_NOTHING)).unwrap().type_flags &= !type_flags::NO_CONVERSATION;
+    for interrupt_starter in [false, true] {
+        let mut s = sim(&f, &[R_SB_OBJECTS, R_SB_NOTHING]);
+        sandbox_until(&mut s, R_SB_OBJECTS, Doing::AtIdleMarker(FormId(IDLE_C)), false);
+        let (starter, partner) = (FormId(R_SB_NOTHING), FormId(R_SB_OBJECTS));
+        let waiting_at = s.feet(R_SB_OBJECTS);
+        // The same public conversation-boundary setup as the existing walk-up test,
+        // now with both sides present. Speech selection belongs to the dialogue tests.
+        let a = s.ai.agents.get_mut(&starter).unwrap();
+        a.walker.go_to(&s.nav, fnv_nav::path::Place { space: C, pos: waiting_at }, &fnv_nav::path::PathParams::default()).unwrap();
+        a.activity = Activity::Travelling;
+        a.chat = Some(Chat::Going { partner, since: s.game.time });
+        s.ai.agents.get_mut(&partner).unwrap().chat = Some(Chat::Waiting { starter });
+        let saved = s.ai.progress();
+        let before = s.feet(R_SB_NOTHING);
+        s.run(0.5);
+        s.ai.social(&mut s.game, &s.nav, 0.5);
+        assert!(matches!(s.ai.agents[&starter].chat, Some(Chat::Going { partner: p, .. }) if p == partner));
+        assert_eq!(s.ai.agents[&partner].chat, Some(Chat::Waiting { starter }));
+        assert!(s.ai.agents[&starter].walker.follower.is_some(), "a legitimate approach keeps its follower");
+        assert!(dist(s.feet(R_SB_NOTHING), waiting_at) <= dist(before, waiting_at));
+        assert!(s.ai.holds_for_chat(partner));
+        assert_eq!(s.feet(R_SB_OBJECTS), waiting_at, "the partner waits at its current activity");
+        assert_eq!(s.ai.progress(), saved, "neither legitimate chat state restarts its sandbox");
+
+        let who = if interrupt_starter { R_SB_NOTHING } else { R_SB_OBJECTS };
+        let actor = FormId(who);
+        let at = s.feet(who);
+        fighting(&mut s, who, [at[0], at[1] + 100.0, at[2]]);
+        s.run(0.5);
+        sandbox_cancelled(&s, who);
+        assert!(s.events(who).iter().any(|e| matches!(e, AiEvent::Hold { .. })));
+        // Normal social updates resolve the abandoned approach; the test never clears
+        // either actor's chat field as part of recovery.
+        for _ in 0..8 {
+            s.ai.social(&mut s.game, &s.nav, 0.5);
+            s.run(0.5);
+        }
+        assert!(s.ai.agents[&actor].chat.is_none(), "the interrupted chat has ended");
+        s.game.stop_combat(actor);
+        sandbox_resumes(&mut s, who);
+    }
+}
