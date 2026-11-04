@@ -114,6 +114,25 @@ pub const PIPBOY_POINTER: PointerId = PointerId::Custom(Uuid::from_u128(0x6e76_6
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PointerSet;
 
+/// Which system finds the pointer this frame ([`pointer_source`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerSource {
+    Device,
+    Flat,
+}
+
+/// One producer of [`PipBoyScreen::pointer`] for the frame, from the frame in use and whether
+/// the model shows the image: the device only while both say so. The two can disagree for a
+/// moment (`follow_frame` changes the frame before the body gives the model's screen up), and
+/// the flat image then has it, so the two systems can never overwrite each other.
+pub fn pointer_source(frame: Frame, on_model: bool) -> PointerSource {
+    if frame == Frame::Device && on_model {
+        PointerSource::Device
+    } else {
+        PointerSource::Flat
+    }
+}
+
 /// The three pages, in the order of the device's buttons.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
 pub enum Page {
@@ -397,7 +416,7 @@ pub struct PipBoyRoot;
 
 /// The flat image in the window (no model screen).
 #[derive(Component)]
-struct FlatScreen;
+pub struct FlatScreen;
 
 /// The screen menu's black shade over the window, which holds the header and the image.
 #[derive(Component)]
@@ -782,24 +801,22 @@ fn image_scale(pip: Res<PipBoy>, screen: Option<ResMut<PipBoyScreen>>, windows: 
 
 /// Where nothing shows the model's screen, and always in the screen menu, the image is
 /// drawn flat in the middle of the window over the world blacked out, under the header's
-/// strip (docs/design/screen-menu.md §3); the pointer on it is found here.
+/// strip (docs/design/screen-menu.md §3); [`flat_pointer`] finds the pointer on it.
 fn flat_screen(
     mut commands: Commands,
     pip: Res<PipBoy>,
-    screen: Option<ResMut<PipBoyScreen>>,
-    flat: Query<(Entity, &ComputedNode, &UiGlobalTransform, &FlatCrop), With<FlatScreen>>,
+    screen: Option<Res<PipBoyScreen>>,
+    flat: Query<&FlatCrop, With<FlatScreen>>,
     shades: Query<Entity, With<ScreenShade>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    aid: Res<PipBoyAid>,
 ) {
-    let Some(mut screen) = screen else { return };
+    let Some(screen) = screen else { return };
     // Only once the arm is all the way up: the body takes the screen a frame or more after
     // the Pip-Boy starts up (later still from third person, the first-person body not yet
     // drawn), and the flat image flashed in the middle of the window until it did (the
     // owner's playtest list 5, item 2).
     let want = pip.phase == Phase::Up && (pip.frame == Frame::Screen || !screen.on_model);
     // A change of the image's scale needs the image node's crop made again.
-    let stale = flat.iter().next().is_some_and(|(_, _, _, crop)| crop.0 != screen.scale);
+    let stale = flat.iter().next().is_some_and(|crop| crop.0 != screen.scale);
     match (want && !stale, flat.iter().next()) {
         (true, None) => {
             for e in &shades {
@@ -826,10 +843,7 @@ fn flat_screen(
                 commands.entity(e).despawn();
             }
         }
-        (true, Some((_, computed, at, _))) => {
-            screen.pointer = flat_point(&aid, &windows, computed, at);
-        }
-        (false, None) => {}
+        (true, Some(_)) | (false, None) => {}
     }
 }
 
@@ -850,9 +864,9 @@ fn flat_point(aid: &PipBoyAid, windows: &Query<&Window, With<PrimaryWindow>>, co
 }
 
 /// The flat image's pointer for this frame's tile input ([`PointerSet`]), from the cursor now
-/// and the image's place as last laid out. [`flat_screen`] sets the same value later in the
-/// frame, for the frame it makes the image in.
-fn flat_pointer(
+/// and the image's place as last laid out; none until the image stands. Nothing while the
+/// device has the pointer ([`pointer_source`]).
+pub fn flat_pointer(
     pip: Res<PipBoy>,
     screen: Option<ResMut<PipBoyScreen>>,
     flat: Query<(&ComputedNode, &UiGlobalTransform), With<FlatScreen>>,
@@ -860,11 +874,10 @@ fn flat_pointer(
     aid: Res<PipBoyAid>,
 ) {
     let Some(mut screen) = screen else { return };
-    if pip.phase != Phase::Up || (pip.frame != Frame::Screen && screen.on_model) {
+    if pointer_source(pip.frame, screen.on_model) != PointerSource::Flat {
         return;
     }
-    let Some((computed, at)) = flat.iter().next() else { return };
-    let now = flat_point(&aid, &windows, computed, at);
+    let now = flat.iter().next().filter(|_| pip.phase == Phase::Up).and_then(|(computed, at)| flat_point(&aid, &windows, computed, at));
     if screen.pointer != now {
         screen.pointer = now;
     }
@@ -950,6 +963,14 @@ pub fn on_click(click: On<PointerClick>, nodes: Query<&Clickable>, mut out: Mess
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_system_finds_the_pointer_whatever_the_frame_and_the_model_say() {
+        assert_eq!(pointer_source(Frame::Device, true), PointerSource::Device);
+        assert_eq!(pointer_source(Frame::Device, false), PointerSource::Flat, "nothing shows the model's screen");
+        assert_eq!(pointer_source(Frame::Screen, true), PointerSource::Flat, "the frame changed, the body has not let go yet");
+        assert_eq!(pointer_source(Frame::Screen, false), PointerSource::Flat);
+    }
 
     #[test]
     fn a_cursor_is_found_on_the_flat_image_by_its_crop() {

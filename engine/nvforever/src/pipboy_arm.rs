@@ -101,7 +101,7 @@ pub struct PipBoyArmPlugin;
 impl Plugin for PipBoyArmPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Hovered>()
-            .add_systems(Update, (follow_pointer.in_set(nvf_play::pipboy::PointerSet), show_screen.after(follow_pointer).after(nvf_play::player::BodySet).before(nvf_play::PlaySet::Ui)));
+            .add_systems(Update, (follow_pointer.in_set(nvf_play::pipboy::PointerSet).before(nvf_play::pipboy::flat_pointer), show_screen.after(follow_pointer).after(nvf_play::player::BodySet).before(nvf_play::PlaySet::Ui)));
     }
 }
 
@@ -324,7 +324,8 @@ fn follow_pointer(
 ) {
     let Some(mut screen) = screen else { return };
     hovered.0 = None;
-    if !screen.on_model {
+    // The flat image has the pointer otherwise: never both (`pipboy::pointer_source`).
+    if nvf_play::pipboy::pointer_source(pip.frame, screen.on_model) != nvf_play::pipboy::PointerSource::Device {
         return;
     }
     screen.pointer = None;
