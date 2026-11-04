@@ -247,6 +247,10 @@ NVForever writes itself (`tiles/dialog_menu.rs`):
   and a brightness, which the tile renderer does not paint (message-menu.md §2); the fill
   uses §3's look.
 
+The scroll bar's pictures are marked to keep their own alpha: the bar above them is a picture
+tile with an alpha of 0, and the tile renderer passes a picture's alpha to its children
+[hypothesis: §3's pictures show them; how the original does is for a capture].
+
 The red frame of a short check is a write on the highlight box's four lines and the fill
 (§3's colours). The file names no such colour [observed: the vanilla files, by fnvtool].
 
@@ -256,19 +260,26 @@ One decision (`DialogTiles`, worked out after the scripts of each frame) control
 drawing, the hand-built view and the tile input [design]. It needs the switch, the menu files,
 a live conversation, every path above with the frame's four lines and the bar's controls, a row
 template that makes a row with its text, every row made, text that measures, boxes with a
-worked-out size and something to click. Anything else: the whole hand-built menu, a warning
+worked-out size and something to click; and, each time the view is placed, what it has to show
+as the renderer selects it and regions the pointer can reach as the input selects them. Anything
+else: the whole hand-built menu, a warning
 once per reason, the made rows unloaded, the safe zone given back, and the preparation tried
 again next frame. The Tab hint and the frame's fill never stand alone.
 
 ### 6.5a The order in a frame
 
-- Before the scripts: the model's view is written, each trait only when the model's value for
-  it changed, so scripts read this frame's phase, words and rows, and what a script sets of them
-  stands until the model changes that very thing. A new selection changes none of them.
+- At each transition of the conversation, inside the runtime's own work, before a result script
+  of the line runs (`Game::ui_dialogue_hook`), and again before the frame's scripts: the model's
+  view is written, each trait only when the model's value for it changed, so a script reads the
+  phase, words and rows of the screen it runs in, and what it sets of them stands until the
+  model changes that very thing. A new selection changes none of them. With no world at hand a
+  new speaker's name can be the runtime's until the frame's own step puts it right.
 - After the scripts: measure, place, decide. Placing runs again when the model, a text's size
   or an evaluated number it reads moved. These are read one frame late by a script [design].
-- A click on the tiles is made on the tree as it was drawn. The tile input takes nothing on a
-  frame whose hit geometry has moved since the drawing (a new window size): such a press is lost.
+- A click on the tiles is decided on what was drawn: every tile that can be hit, with its place,
+  clip, depth and target, taken after the frame's last working out of the tree, animations stepped.
+  An animation goes on under it and does not stop input. On a frame with a new window size the
+  tile input takes nothing: that one press is lost.
 - Every click carries the screen it was made on, a script's the one it was queued on: the
   conversation, the lines said, the response. A click from an earlier screen does nothing, and
   neither does a hand-built button's: those carry their screen too.
