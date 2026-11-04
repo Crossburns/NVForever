@@ -30,6 +30,10 @@
 //! body jumped 75 units to the side before walking off (owner's playtest list 5 item 40)
 //! [hypothesis: the game plays every exit from where the body sits].
 //!
+//! A refused actor is told why: [`SitRefused`], which the resident's seat acts on once
+//! (`residents.rs`; the rules, `fnv_actor::furniture_retry`). Identical refusals in a row
+//! are logged once.
+//!
 //! Fidgets while on furniture (state 3 of the IDLE tree) are `idles.rs`'s: they play over
 //! the loop and fade out when getting off starts (furniture.md §8).
 //!
@@ -45,6 +49,7 @@ use crate::nav::NavState;
 use crate::world::WorldData;
 use bevy::prelude::*;
 use fnv_actor::furniture::{self as furn, state, BodyAt, ClipEnds, EntryPoint, Frame, Furniture, Marker, Phase, Use, UseEvent, UseFrames, UseIdles, User};
+use fnv_actor::furniture_retry::{worth_logging, Refusal};
 use fnv_actor::idle::Idles;
 use fnv_actor::locomotion::yaw_of;
 use fnv_sim::FormId;
@@ -84,6 +89,34 @@ pub struct SitOn {
 #[derive(Component, Debug, Clone, Copy)]
 pub struct GetUp;
 
+/// The last [`SitOn`] was refused. On the actor's root until a use starts or its owner
+/// wants something else, so that the same refusal again is not logged again.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct SitRefused {
+    pub furniture: u32,
+    pub refusal: Refusal,
+    /// Not acted on yet: its owner clears this, so each refusal is acted on once.
+    pub unread: bool,
+}
+
+/// Why a use cannot begin: the kind, which decides what happens next, and the words for
+/// the log and the player's message.
+#[derive(Debug, Clone)]
+struct PlanError {
+    refusal: Refusal,
+    detail: String,
+}
+
+impl std::fmt::Display for PlanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+fn refused(refusal: Refusal, detail: impl Into<String>) -> PlanError {
+    PlanError { refusal, detail: detail.into() }
+}
+
 /// Who uses the furniture, as the IDLE conditions need it.
 #[derive(Debug, Clone, Copy)]
 struct Who {
@@ -121,7 +154,9 @@ struct Order {
 pub struct Stats {
     pub sat: u32,
     pub stood: u32,
+    /// Refusals logged; `repeated` were the same as the one before and were not.
     pub failed: u32,
+    pub repeated: u32,
     pub player_sat: u32,
     pub player_stood: u32,
 }
@@ -254,14 +289,15 @@ impl Furnishings {
 
     /// Decide how `who`, standing at `from` (game space), uses `furniture`. `game`
     /// answers the idle conditions that are about the game's state ([`game_value`]).
-    fn plan(&mut self, world: &WorldData, ctx: &mut ActorCtx, furniture: u32, from: [f32; 3], who: Who, game: furn::World) -> Result<Plan, String> {
-        let placed = fnv_world::placed::placement(world.lo, world.schema, furniture).ok_or("no such reference")?;
-        let base = placed.base.ok_or("no base")?;
-        let record = self.bases.get(&base).ok_or("not furniture")?.clone();
-        let model = record.model.clone().ok_or("the furniture has no model")?;
+    fn plan(&mut self, world: &WorldData, ctx: &mut ActorCtx, furniture: u32, from: [f32; 3], who: Who, game: furn::World) -> Result<Plan, PlanError> {
+        let missing = |what: &str| refused(Refusal::MissingContent, what);
+        let placed = fnv_world::placed::placement(world.lo, world.schema, furniture).ok_or_else(|| missing("no such reference"))?;
+        let base = placed.base.ok_or_else(|| missing("no base"))?;
+        let record = self.bases.get(&base).ok_or_else(|| missing("not furniture"))?.clone();
+        let model = record.model.clone().ok_or_else(|| missing("the furniture has no model"))?;
         let markers = self.markers(&ctx.models.data, &model);
         if markers.is_empty() {
-            return Err(format!("{model} has no furniture markers"));
+            return Err(missing(&format!("{model} has no furniture markers")));
         }
         let points = furn::entry_points(&markers, placed.position, placed.rotation[2], placed.scale);
         // One user per reference, except where every marker is a seat of its own
@@ -270,13 +306,20 @@ impl Furnishings {
         // Its own earlier use does not count (an actor drawn again).
         let taken: Vec<(usize, u32)> = self.users.get(&furniture).into_iter().flatten().copied().filter(|(_, u)| *u != who.reference).collect();
         if !seats && !taken.is_empty() {
-            return Err("in use".into());
+            return Err(refused(Refusal::Busy, "in use"));
         }
-        let entry = furn::nearest_entry(&points, from, |p| record.marker_enabled(p.index) && !taken.iter().any(|(i, _)| *i == p.index))
-            .ok_or("no free entry point")?;
+        let is_taken = |p: &EntryPoint| taken.iter().any(|(i, _)| *i == p.index);
+        let entry = furn::nearest_entry(&points, from, |p| record.marker_enabled(p.index) && !is_taken(p)).ok_or_else(|| {
+            // Someone may yet leave an enabled entry point; none enabled stays so.
+            if points.iter().any(|p| record.marker_enabled(p.index) && is_taken(p)) {
+                refused(Refusal::Busy, "no free entry point")
+            } else {
+                refused(Refusal::NoEnabledEntry, "no enabled entry point")
+            }
+        })?;
         let pick = |tree: &UseIdles, s: u8| tree.pick_in(&Self::user(&entry, furniture, base, who, s), game);
-        let on = pick(&self.tree, state::GETTING_ON).ok_or_else(|| format!("no clip for getting onto marker {}", entry.marker_id))?;
-        let get_on = ctx.clip(&on.clip).ok_or_else(|| format!("{} does not load", on.clip))?;
+        let on = pick(&self.tree, state::GETTING_ON).ok_or_else(|| refused(Refusal::NoClip, format!("no clip for getting onto marker {}", entry.marker_id)))?;
+        let get_on = ctx.clip(&on.clip).ok_or_else(|| missing(&format!("{} does not load", on.clip)))?;
         let stay = pick(&self.tree, state::LOOP).and_then(|p| ctx.clip(&p.clip));
         let ends = clip_ends(&get_on);
         let standing_yaw = ends.start.yaw;
@@ -499,7 +542,7 @@ pub fn drive_actors(
     actor_world: Option<Res<ActorWorld>>,
     mut parts: ResMut<ActorParts>,
     mut models: ModelCtx,
-    mut starting: Query<(Entity, &ActorRig, &mut Transform, &GlobalTransform, &SitOn), Without<OnFurniture>>,
+    mut starting: Query<(Entity, &ActorRig, &mut Transform, &GlobalTransform, &SitOn, Option<&SitRefused>), Without<OnFurniture>>,
     mut using: Query<Seated>,
     mut script: Option<ResMut<ScriptState>>,
     mut nav: Option<ResMut<NavState>>,
@@ -514,13 +557,13 @@ pub fn drive_actors(
         tell_scripts(&mut script, user, None);
     }
     let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
-    for (e, rig, mut t, global, sit) in &mut starting {
+    for (e, rig, mut t, global, sit, before) in &mut starting {
         let at = to_game(global.translation());
         let female = actor_world.as_deref().and_then(|w| w.actors.npcs.get(&FormId(rig.base))).is_some_and(|n| n.female);
         let who = Who { reference: rig.reference, base: rig.base, female };
         let plan = f.plan(&world, &mut ctx, sit.furniture, at.to_array(), who, &|func, p| game_value(&script, func, p)).and_then(|p| {
             let d = Vec3::from_array(p.entry.pos).distance(at);
-            if d > APPROACH_MAX && !sit.at_once { Err(format!("{d:.0} units from its entry point")) } else { Ok((p, d)) }
+            if d > APPROACH_MAX && !sit.at_once { Err(refused(Refusal::TooFar, format!("{d:.0} units from its entry point"))) } else { Ok((p, d)) }
         });
         match plan {
             Ok((plan, d)) => {
@@ -551,7 +594,7 @@ pub fn drive_actors(
                     (Stage::Approach(Approach::new(from, Frame { pos: plan.entry.pos, heading: plan.entry.heading })), None)
                 };
                 // Its body is the furniture's now: a conversation turns only its head.
-                commands.entity(e).insert(crate::dialogue_look::BodyHeld).insert(OnFurniture {
+                commands.entity(e).remove::<SitRefused>().insert(crate::dialogue_look::BodyHeld).insert(OnFurniture {
                     plan,
                     who,
                     stage,
@@ -565,9 +608,13 @@ pub fn drive_actors(
                 });
             }
             Err(why) => {
-                warn!("furniture: {:08X} cannot use {:08X}: {why}", rig.reference, sit.furniture);
-                f.stats.failed += 1;
-                commands.entity(e).remove::<(SitOn, GetUp)>();
+                if worth_logging(before.map(|b| (b.furniture, b.refusal)), sit.furniture, why.refusal) {
+                    warn!("furniture: {:08X} cannot use {:08X}: {why}", rig.reference, sit.furniture);
+                    f.stats.failed += 1;
+                } else {
+                    f.stats.repeated += 1;
+                }
+                commands.entity(e).remove::<(SitOn, GetUp)>().insert(SitRefused { furniture: sit.furniture, refusal: why.refusal, unread: true });
             }
         }
     }
@@ -908,6 +955,9 @@ pub fn report(mut exit: MessageReader<AppExit>, f: Res<Furnishings>) {
         s.player_sat,
         s.player_stood
     );
+    if s.failed + s.repeated > 0 {
+        info!("furniture refusals: {} logged, {} identical repeats not logged", s.failed, s.repeated);
+    }
 }
 
 #[cfg(test)]

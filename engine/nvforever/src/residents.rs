@@ -47,11 +47,12 @@
 //! listener is drawn (owner's playtest list 5 item 3).
 
 use crate::actors::ActorWorld;
-use crate::furniture::{GetUp, LeaveNow, OnFurniture, SitOn};
+use crate::furniture::{GetUp, LeaveNow, OnFurniture, SitOn, SitRefused};
 use crate::locomotion::Locomotion;
 use crate::nav::{self, Lead, NavState};
 use crate::world::{CellKey, Streamer, WorldData, WorldRoot};
 use bevy::prelude::*;
+use fnv_actor::furniture_retry as retry;
 use fnv_ai::{Activity, Ai, AiConfig, AiEvent, Doing, Mover};
 use fnv_game::game::{Game, GameConfig};
 use fnv_game::GameData;
@@ -519,7 +520,7 @@ impl StopRun {
 }
 
 /// A resident and the furniture its package gives it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum Seat {
     #[default]
     None,
@@ -530,6 +531,33 @@ enum Seat {
     Ordered(u32, bool),
     /// Told to get up; the walk waits.
     GettingUp(u32),
+    /// Refused because it is occupied: asks again after a wait, these seconds so far
+    /// ([`retry::waiting`]). It stands free meanwhile: no hold on its movement.
+    Waiting(u32, f32),
+    /// Refused for a reason waiting does not change: no order until something has changed
+    /// ([`retry::unavailable`]). It stands free too.
+    Unavailable(u32),
+}
+
+impl Seat {
+    /// The furniture this is about.
+    fn furniture(self) -> Option<u32> {
+        match self {
+            Seat::None => None,
+            Seat::Wanted(f, _) | Seat::Ordered(f, _) | Seat::GettingUp(f) | Seat::Waiting(f, _) | Seat::Unavailable(f) => Some(f),
+        }
+    }
+
+    /// The seat after a decision about a refused request.
+    fn after(decision: retry::Decision) -> Seat {
+        match decision {
+            retry::Decision::Wait { target, waited } => Seat::Waiting(target, waited),
+            retry::Decision::Unavailable { target } => Seat::Unavailable(target),
+            // Through `Wanted`, which gives the order; it never got on, so not at once.
+            retry::Decision::Reissue { target } => Seat::Wanted(target, false),
+            retry::Decision::Cancel => Seat::None,
+        }
+    }
 }
 
 struct Resident {
@@ -559,6 +587,9 @@ struct Resident {
     seat: Seat,
     /// The furniture `fnv_ai` has the actor use now.
     wants: Option<u32>,
+    /// Nothing holds it from being told to sit again after a refusal: its AI runs, it is
+    /// awake and alive, and no conversation, stagger or idle holds it.
+    may_ask_again: bool,
     /// Standing where its package has it, with nothing else to do: its package's idles
     /// may play (`idles.rs`). Inside: the base of the idle marker it stands at.
     stand: Option<Option<FormId>>,
@@ -1155,6 +1186,7 @@ impl Core {
             drawn_feet: pos,
             standing_frames: StopRun::default(),
             seat: Seat::None,
+            may_ask_again: false,
             stand: None,
             last_drawn: None,
             wants: None,
@@ -1446,7 +1478,7 @@ impl Core {
                 // sight (the Goodsprings settler's bar stool in the Prospector Saloon).
                 let a = &self.ai.agents[&r.actor];
                 // Its seat not yet taken up (`Seat::Wanted`: it was never drawn there).
-                let unseated = matches!(r.seat, Seat::None | Seat::Wanted(..));
+                let unseated = matches!(r.seat, Seat::None | Seat::Wanted(..) | Seat::Waiting(..) | Seat::Unavailable(_));
                 if let (Some(f), Activity::There, true) = (a.using, a.activity, unseated) {
                     r.wants = Some(f.0);
                     r.seat = Seat::Wanted(f.0, true);
@@ -2069,6 +2101,7 @@ impl Core {
             }
             // The furniture it is to use, once it stands there.
             r.wants = agent.using.filter(|_| agent.activity == Activity::There).map(|f| f.0);
+            r.may_ask_again = !held.contains(&r.actor.0) && !game.ai_off(r.actor) && !game.extra.get(&r.actor).is_some_and(|e| e.dead || e.out_cold());
             let still = agent.activity != Activity::Travelling && agent.walker.follower.is_none() && agent.using.is_none() && agent.talk.is_none();
             r.stand = still.then(|| match agent.sandbox.as_ref().map(|s| s.doing) {
                 Some(Doing::AtIdleMarker(m)) => game.world.placed.get(m).map(|p| p.base),
@@ -2378,6 +2411,7 @@ type Held<'w, 's> = (
     Query<'w, 's, (&'static RefVisual, &'static crate::locomotion::Flinch)>,
     Option<Res<'w, crate::npc_combat::Fighters>>,
     Option<ResMut<'w, crate::idles::IdleHolds>>,
+    Query<'w, 's, &'static mut SitRefused>,
 );
 
 /// Run the package choice and the walks, log what happens, keep the visuals in step.
@@ -2397,7 +2431,7 @@ pub fn drive(
     mut actors: Query<(&mut Transform, Option<&mut Locomotion>), Without<OnFurniture>>,
     mut doors: ResMut<nvf_play::doors::Doors>,
     (script, mut sim, mut phys, mut blocks): PlayState,
-    (seated, hours, flinches, fighters, idle_holds): Held,
+    (seated, hours, flinches, fighters, idle_holds, mut refusals): Held,
     (mut door_fades, mut door_sounds, mut travel, mut knocks, trips, screen): Moves,
 ) {
     // Hours passed in the Wait menu since the last frame (`--play` only: without it
@@ -2553,7 +2587,7 @@ pub fn drive(
         // has it elsewhere: it is off its furniture at once (the AI has walked or put it
         // on already).
         let moved = std::mem::take(&mut r.moved);
-        if let (true, Seat::Wanted(f, _) | Seat::Ordered(f, _) | Seat::GettingUp(f)) = (waited > 0 || moved, r.seat) {
+        if let (true, Some(f)) = (waited > 0 || moved, r.seat.furniture()) {
             if wants != Some(f) {
                 r.seat = Seat::None;
                 match entity {
@@ -2571,8 +2605,24 @@ pub fn drive(
                 }
             }
         }
+        // The furniture's answer to the last order, acted on once. Only an answer says it
+        // was refused: being without `OnFurniture` does not.
+        if let Some(mut refused) = entity.and_then(|e| refusals.get_mut(e).ok()).filter(|x| x.unread) {
+            refused.unread = false;
+            if matches!(r.seat, Seat::Ordered(f, _) if f == refused.furniture && wants == Some(f)) && !on {
+                r.seat = Seat::after(retry::on_refusal(refused.furniture, refused.refusal));
+            }
+        }
+        let frame = retry::Now {
+            wants,
+            eligible: entity.is_some() && r.present && !core.held_now && r.may_ask_again,
+            seconds: dt,
+            changed: waited > 0 || moved,
+        };
         r.seat = match (r.seat, entity) {
             (Seat::None, _) => wants.map_or(Seat::None, |f| Seat::Wanted(f, false)),
+            (Seat::Waiting(f, so_far), _) => Seat::after(retry::waiting(f, so_far, &frame)),
+            (Seat::Unavailable(f), _) => Seat::after(retry::unavailable(f, &frame)),
             (Seat::Wanted(f, at_once), Some(e)) if wants == Some(f) => {
                 commands.entity(e).insert(SitOn { furniture: f, stay: None, at_once });
                 core.seats[0] += 1;
@@ -2588,7 +2638,7 @@ pub fn drive(
                     core.seats[1] += 1;
                     Seat::GettingUp(f)
                 } else {
-                    // Never got on (or the furniture module refused): nothing to undo.
+                    // Never got on: nothing to undo.
                     commands.entity(e).remove::<SitOn>();
                     Seat::None
                 }
@@ -2608,6 +2658,10 @@ pub fn drive(
             }
             (s, _) => s,
         };
+        // A refusal of another request is over.
+        if let Some(e) = entity.filter(|e| refusals.get(*e).is_ok_and(|x| r.seat.furniture() != Some(x.furniture))) {
+            commands.entity(e).remove::<SitRefused>();
+        }
         let Some(agent) = core.ai.agents.get(&r.actor) else { continue };
         let w = &agent.walker;
         let visible = r.present && drawn(&world, &streamer, w.space, w.feet);
