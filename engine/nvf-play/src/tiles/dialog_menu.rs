@@ -19,6 +19,11 @@
 //!   rule, and the scroll is the height of the rows above the first shown, counted in the
 //!   file's `_scroll_delta`. The prefab's own value counts clicks from 0 in this tree, as the
 //!   wait and tutorial menus' do, so it is written on every frame.
+//! - **Readiness** ([`DialogTiles`], `dialogue-menu.md` §6.5): one decision for the tile
+//!   drawing, the hand-built menu and the tile input. A file missing, cut down or restructured,
+//!   a template that makes no row with its text, or a text that does not measure gives the
+//!   whole hand-built menu: the rows made are unloaded, the reason warned once, and the
+//!   preparation tried again next frame, as a font or a file may come.
 //! - **NVForever's own tiles**: `NVF_GoodbyeHint` and `NVF_SelectionFill`, from templates
 //!   written here (`dialogue-menu.md` §6.4). The hint reads its wording and whether it shows
 //!   from the same model as the hand-built one.
@@ -112,6 +117,54 @@ pub fn built(ui: &Ui) -> Tiled {
     Tiled::Yes
 }
 
+/// [design] What the file's template makes: a row with its text, under the list. Made once
+/// and unloaded again, when the tile list has none yet, as a speaking phase has no rows and
+/// the first choices should find no surprise.
+fn template_makes_a_row(ui: &mut Ui) -> Tiled {
+    if !rows(ui).is_empty() {
+        return Tiled::Yes;
+    }
+    let Some(row) = ui.add_code_tile_from_template(&MemSource::default(), LIST, ROW_TEMPLATE, None) else {
+        return Tiled::No(format!("no row from {ROW_TEMPLATE}"));
+    };
+    let has_text = child(ui, row, ROW_TEXT).is_some();
+    let name_fits = ui.tile(row).name.eq_ignore_ascii_case(ROW);
+    ui.unload_tile(row);
+    if !name_fits {
+        Tiled::No(format!("{ROW_TEMPLATE} makes no {ROW}"))
+    } else if !has_text {
+        Tiled::No(format!("{ROW_TEMPLATE} makes no {ROW_TEXT}"))
+    } else {
+        Tiled::Yes
+    }
+}
+
+/// Unload the rows made, after a preparation that could not finish.
+fn clean(ui: &mut Ui) {
+    for row in rows(ui) {
+        ui.unload_tile(row);
+    }
+}
+
+/// [design] A preparation is finished only with every text it has to place measured.
+fn check_measured(ui: &Ui, view: &MenuView) -> Result<(), String> {
+    let line = view.line.as_deref().map_or("", str::trim);
+    if view.choices.is_empty() && !line.is_empty() && ui.find_tile(LINE).is_none_or(|t| num(ui, t, "height") <= 0.0) {
+        return Err(format!("{LINE} has no measure"));
+    }
+    let made = rows(ui);
+    if made.len() != view.choices.len() {
+        return Err(format!("{} rows for {} choices", made.len(), view.choices.len()));
+    }
+    for (&row, choice) in made.iter().zip(&view.choices) {
+        let text = child(ui, row, ROW_TEXT).ok_or_else(|| format!("a {ROW} has no {ROW_TEXT}"))?;
+        if !choice.label.trim().is_empty() && num(ui, text, "height") <= 0.0 {
+            return Err(format!("{ROW_TEXT} has no measure"));
+        }
+    }
+    Ok(())
+}
+
 /// Make NVForever's own tiles once the menu is built: their templates, then one of each.
 fn own_tiles(ui: &mut Ui) -> bool {
     let src = MemSource::default();
@@ -144,12 +197,23 @@ pub struct Written {
     sizes: SizesWritten,
     /// The scroll, in the file's steps, written again every frame.
     scroll: f64,
+    /// The reasons warned already: once each, as long as the run lasts.
+    warned: std::collections::HashSet<String>,
     /// This conversation asked for the menu at once; the frames' own lifetime pass goes on
     /// asking (`ui_loading::sync`, which remembers a file it could not read).
     build_asked: bool,
 }
 
 impl Written {
+    /// Warn of a reason the menu stays hand-built, once in the run ([`Written::warned`]).
+    fn warn(&mut self, status: &Tiled) {
+        if let Tiled::No(reason) = status {
+            if self.warned.insert(reason.clone()) {
+                warn!("{DIALOG_MENU} drawn by hand: {reason}");
+            }
+        }
+    }
+
     fn forget(&mut self) {
         self.shown = None;
         self.sizes.clear();
@@ -299,6 +363,9 @@ fn write_scroll(ui: &mut Ui, scroll: f64) {
 pub fn write(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut(&mut Ui, &[TileId], &mut SizesWritten) -> usize) -> Result<usize, String> {
     let changed = written.shown.as_ref() != Some(now);
     if changed {
+        if let Tiled::No(reason) = template_makes_a_row(ui) {
+            return Err(reason);
+        }
         let same_list = written.shown.as_ref().is_some_and(|s| s.menu == now.menu && s.list == now.list);
         write_view(ui, &now.view, !same_list)?;
         ui.update();
@@ -308,6 +375,7 @@ pub fn write(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn Fn
     let mut first = now.first;
     if changed || measured > 0 {
         ui.update();
+        check_measured(ui, &now.view)?;
         (first, written.scroll) = place(ui, &now.view, now.selected, now.first);
         ui.update();
         place_hint(ui, &now.view);
@@ -402,9 +470,16 @@ pub(crate) fn write_system(
         files.write(game);
         game.ui_tree.update();
     }
-    let ui_ready = game.ui_tree.menu(DIALOG_MENU).filter(|_| built(&game.ui_tree).yes() && own_tiles(&mut game.ui_tree));
-    let Some(menu) = ui_ready else {
-        written.forget();
+    // One reason for the whole menu to stay hand-built, or none.
+    let status = match built(&game.ui_tree) {
+        Tiled::Yes if !own_tiles(&mut game.ui_tree) => Tiled::No("NVForever's own tiles were not made".into()),
+        status => status,
+    };
+    let menu = game.ui_tree.menu(DIALOG_MENU);
+    let (Some(menu), Tiled::Yes) = (menu, status.clone()) else {
+        written.warn(&status);
+        clean(&mut game.ui_tree);
+        written.shown = None;
         state.set_if_neq(DialogTiles::default());
         return;
     };
@@ -441,7 +516,9 @@ pub(crate) fn write_system(
             state.set_if_neq(DialogTiles { menu: Some(menu), shown: true, list: Some(list) });
         }
         Err(reason) => {
-            warn!("{DIALOG_MENU} drawn by hand: {reason}");
+            written.warn(&Tiled::No(reason));
+            written.shown = None;
+            clean(ui);
             state.set_if_neq(DialogTiles::default());
         }
     }
