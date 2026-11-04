@@ -77,7 +77,7 @@ pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
 /// ([`screen_size`]) and `resolutionconverter` ([`resolution_converter`]); otherwise the
 /// window's size, as fnvtool's `--screen`, and no converter, as before T15a [design:
 /// menu-xml.md §4.2, `screen()` row]. `cropx` and `cropy` stay unset until their units are
-/// known [design]. The HUD's places are worked out from the shape alone
+/// known, but while the dialogue menu's file reads them (`dialog_menu`) [design]. The HUD's places are worked out from the shape alone
 /// (`fnv_game::ui_hud::write`), so they are the same either way.
 pub fn write_screen(ui: &mut fnv_ui::Ui, window_width: f32, window_height: f32, interface_units: bool) {
     let id = ui.screen();

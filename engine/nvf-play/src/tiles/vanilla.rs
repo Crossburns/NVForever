@@ -4,7 +4,8 @@
 //! - **The switch**: `[UI] TileMenus=` in the home's `NVForever.ini`, a comma-separated
 //!   list of menu names, empty by default; `HUDMainMenu`, and since T15a `MessageMenu`
 //!   and `QuantityMenu` (`super::menus`), and since T11 `StartMenu` (the pause menu's
-//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), are acted on. It is
+//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), and `DialogMenu`
+//!   (`super::dialog_menu`) are acted on. It is
 //!   read once at start, from the INI the settings page uses
 //!   (`crate::settings::SettingsFile`: an unattended run in the player's own home reads
 //!   none). The test aid `NVF_PLAY_TEST_TILE_MENUS=<list>` sets it instead, so a smoke

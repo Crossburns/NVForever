@@ -142,6 +142,8 @@ Not built: the subtitles setting (the line is always shown), the click and focus
 (the file names none for a row), dragging the marker or clicking the arrows, the
 player's own font and colour settings.
 
+That is the default drawing. Drawn from the file instead, behind a switch: §6.
+
 ## 5. Looking at it
 
 `NVF_PLAY_TEST_TALK="8:EasyPeteRef="` with `NVF_PLAY_TEST_TALK_DELAY=60` and

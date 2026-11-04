@@ -297,7 +297,8 @@ at the same view size). That is the work of each migration task, not guessed up 
    current code does: compared against the same screenshots as the current spec notes.
    - Each menu has a switch, `NVForever.ini` `[UI] TileMenus=`, a list of menu names.
      The old drawing stays the default until the owner agrees a menu has moved.
-     `HUDMainMenu` (T12), `MessageMenu` and `QuantityMenu` (T15a) are acted on.
+     `HUDMainMenu` (T12), `MessageMenu` and `QuantityMenu` (T15a) are acted on, and
+     `DialogMenu` (its contract and fallback: spec-notes/dialogue-menu.md §6).
    - The game rules stay where they are (`menu::model`, `pipboy::items`,
      `wait::model`, …). Only the view changes: the model writes `io()` traits and
      template rows, input comes back as clicked tiles.
