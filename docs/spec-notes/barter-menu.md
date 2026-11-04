@@ -369,10 +369,21 @@ What the tile path does with these, and where it differs:
   (so not the original's or the hand-built menu's letter and bracket). The cards' titles read
   settings no plugin defines [observed: menu-xml.md §2.4], so the file would show
   `BUILT_IN`'s labels; those do not fit a card (`ConditionMeter` stands 62 in and a title 5 in
-  [documented]; the label of the weight measures 72 units [observed: our shot]). Where a title
-  still reads that label the card says the words of the hand-built figures (`card_title` in
-  `pipboy/items.rs`, from pipboy.md §5's [observed: the owner's screenshots], also in §1's pictures), so
-  the two drawings agree; a GMST's or a mod's own title stays. `BUILT_IN` itself is not changed.
+  [documented]; the label of the weight measures 72 units [observed: our shot]). A title that
+  holds such a fallback by where it came from (`Ui::built_in_label`) takes NVForever's own card
+  words, those of the hand-built figures (`card_title` in `pipboy/items.rs`; pipboy.md §5 records
+  them as seen on the owner's screenshots, which menu-xml.md §2.4's rule for labels would not
+  allow for a new label; they are the hand-built menu's, not new), so the two drawings agree. A plugin's setting, a mod's
+  file or a script keeps its title even in the very same words. `BUILT_IN` itself is not changed.
+- **Heading, filter**: a click on a heading steps its category on, as its right arrow
+  [observed: `container__category_heading_click`, 2 to 3]. `_num_filtered` is written, the rows
+  the category leaves out [observed: 10 of 15, 12 of 15, 15 of 16]; the original keeps those
+  rows' tiles at `listindex` -1 with stale `y`s and this menu unloads them [design], so a mod
+  looking for a filtered row's tile finds none. A list that comes to fit keeps its last
+  `_scroll_delta` [observed: 57.2 with 15 of 16 filtered]; 26 only before it ever overflowed.
+- **The scroll follows** the selected row on a key's or the wheel's move (also one ending on the
+  same row) and when the row's place or the list's height changes under a key's pick; never on a
+  pointer's pick [owner's playtest list 7, item 11], and the bar and marker stay free otherwise.
 - **The weight** cuts off to whole units [observed: 289.50 reads "Wg   289/200", 49.50 "Wg
   49/200"]; the hand-built label rounds (`look::half_figure`), left as it is.
 - **Against the original's shots** [observed: pixels at 1280 x 720, the file's numbers drawn;

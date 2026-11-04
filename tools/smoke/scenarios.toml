@@ -17776,7 +17776,7 @@ paths = [
   "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/pad.rs",
   "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
 ]
-env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20,000E9C3B,0008F21A,0003307F,00015169:2,00022102,000E3778,00020423,00034045,0008C214,0008ED0B,0001519E", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_KEYS = "12:f10,17.5:e,18.5:a,20:a,20.5:d,22:a,22.2:down,22.4:down,22.6:down,22.8:down,23:down,23.2:down,23.4:down,23.6:down,25:wheel-down,25.5:wheel-up,30:mouse-left:1.2,32:wheel-down,35:f10", NVF_PLAY_TEST_POINTER = "14:600:186,16:600:186:click,18:600:186:click,19.5:1150:186,26:362:517:click,26.5:362:168:click,27:362:480:click,28:362:178:click,29.8:361:264,30.5:361:400,31.5:400:108:click,33:1320:690,33.2:1320:690:click,36.5:1340:738,36.7:1340:738:click,37:off", NVF_PLAY_TEST_SHOTS = "13:tiles_container_open.png,15:tiles_container_row.png,17:tiles_container_prompt.png,21:tiles_container_right.png,22.5:tiles_container_card_weapon.png,22.7:tiles_container_card_armour.png,23.1:tiles_container_card_aid.png,24:tiles_container_scrolled.png,27.5:tiles_container_paged.png,36:tiles_container_reopened.png" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20,000E9C3B,0008F21A,0003307F,00015169:2,00022102,000E3778,00020423,00034045,0008C214,0008ED0B,0001519E", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_KEYS = "12:f10,17.5:e,18.5:a,20:a,20.5:d,22:a,22.2:down,22.4:down,22.6:down,22.8:down,23:down,23.2:down,23.4:down,23.6:down,25:wheel-down,25.5:wheel-up,30:mouse-left:1.2,32:wheel-down,35:f10", NVF_PLAY_TEST_POINTER = "14:600:186,16:600:186:click,18:600:186:click,19.5:1150:186,26:362:517:click,26.5:362:168:click,27:362:480:click,28:362:178:click,29.8:361:264,30.5:361:400,31.5:400:108:click,32.5:450:100:click,33:1320:690,33.2:1320:690:click,36.5:1340:738,36.7:1340:738:click,37:off", NVF_PLAY_TEST_SHOTS = "13:tiles_container_open.png,15:tiles_container_row.png,17:tiles_container_prompt.png,21:tiles_container_right.png,22.5:tiles_container_card_weapon.png,22.7:tiles_container_card_armour.png,23.1:tiles_container_card_aid.png,24:tiles_container_scrolled.png,27.5:tiles_container_paged.png,36:tiles_container_reopened.png" }
 args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 40
 expect = [
@@ -17788,7 +17788,11 @@ expect = [
   { text = "tiles: ContainerMenu Hover(Container, 0) on its tiles", count = 1, label = "a row of the list without the focus takes the pointer" },
   { text = "tiles: ContainerMenu Select(Player, 0) on its tiles", count = 2, label = "a click on the selected row acts on it" },
   { re = 'how many\? \(70 of 70\)', count = 2, label = "a stack of more than five asks, at the whole stack" },
-  { re = 'menu: AmountOk: ', count = 1, label = "Cancel moved nothing, Ok moved the stack" },
+  { text = "menu: AmountOk: Stored 10mm Round x70", count = 1, label = "Cancel moved nothing, Ok moved the stack" },
+  { re = 'drawn from tiles: "ITEMS" 28 rows, "Metal Box" 2 rows, .*player selected "20 Gauge Round', label = "the lists read the world after: a row less on the left, one more on the right" },
+  { re = 'drawn from tiles: "ITEMS" 28 rows, "Metal Box" 2 rows, .*container selected "10mm Round \(70\)"', label = "the box holds all 70" },
+  { re = 'drawn from tiles: "ITEMS" 30 rows, "Metal Box" 0 rows', label = "Take All left the box empty and the player both rows" },
+  { text = "tiles: ContainerMenu Category(Player, 1) on its tiles", count = 1, label = "a click on the heading steps it on" },
   { text = "tiles: ContainerMenu TakeAll on its tiles", count = 1, label = "only the pointer takes all: physical A focuses the player's list" },
   { re = 'tiles: ContainerMenu player list scrolled to [1-9]', min = 3, label = "keys, arrows and the marker move the left list" },
   { text = "tiles: ContainerMenu Down on its tiles", count = 1, label = "the bar's down arrow" },
@@ -17809,7 +17813,9 @@ order = [[
   "tiles: ContainerMenu Hover(Player, 0) on its tiles",
   "tiles: ContainerMenu Select(Player, 0) on its tiles",
   { re = 'how many\? \(70 of 70\)', label = "the prompt" },
-  { re = 'menu: AmountOk: ', label = "the stack moved" },
+  { re = 'drawn from tiles: "ITEMS" 29 rows, "Metal Box" 1 rows', label = "Cancel left the lists" },
+  { re = 'menu: AmountOk: Stored 10mm Round x70', label = "the stack moved" },
+  { re = 'drawn from tiles: "ITEMS" 28 rows, "Metal Box" 2 rows', label = "the lists after it" },
   "tiles: ContainerMenu Hover(Container, 0) on its tiles",
   { re = 'tiles: ContainerMenu player list scrolled to [1-9]', label = "the keys bring the row into view" },
   "tiles: ContainerMenu Down on its tiles",
@@ -17841,7 +17847,8 @@ expect = [
   { text = "tiles: ContainerMenu Hover(Player, 1) on its tiles", count = 0, label = "nor the pointer" },
   { text = "tiles: QuantityMenu AmountStep(-1) on its tiles", count = 1, label = "the decrease arrow" },
   { text = "tiles: QuantityMenu AmountOk on its tiles", count = 1, label = "OK" },
-  { re = 'menu: AmountOk: ', count = 1, label = "the amount moves" },
+  { text = "menu: AmountOk: Stored 10mm Round x69", count = 1, label = "the amount moves" },
+  { re = 'drawn from tiles: .*"Metal Box" 2 rows, .*player selected "10mm Round \(1\)"', label = "one stays with the player, the rest in the box" },
 ]
 order = [[
   "tiles: ContainerMenu Select(Player, 0) on its tiles",
@@ -17861,7 +17868,8 @@ run_seconds = 40
 expect = [
   { re = 'tiles: ContainerMenu', count = 0, label = "nothing of the tile menu runs without its switch" },
   { re = 'how many\? \(70 of 70\)', count = 2, label = "a stack of more than five asks" },
-  { re = 'menu: AmountOk: ', count = 1, label = "Cancel moved nothing, Ok moved the stack" },
+  { text = "menu: AmountOk: Stored 10mm Round x70", count = 1, label = "Cancel moved nothing, Ok moved the stack" },
+  { text = "menu: TakeAll: Took everything (71 items)", count = 1, label = "the 70 and the mug come back" },
   { text = "menu: close", count = 2, label = "R takes all and closes; E closes" },
 ]
 order = [["F10: nearest container", { re = 'menu: AmountOk: ', label = "the stack moved" }, "menu: close", "menu: close"]]
