@@ -288,6 +288,14 @@ pub struct Snapshot {
     /// Globals whose value differs from the plugins (absent in older snapshots).
     #[serde(default)]
     pub globals: BTreeMap<FormId, f32>,
+    /// GameHour and GameDaysPassed at the clock's own precision, as decimal strings like
+    /// `rng_word_pos`; absent in older snapshots, which go on from the globals
+    /// ([`clock::FineClock`]). An editor that changes one of those globals in a snapshot
+    /// must clear its field here: a same-value write cannot be seen from the values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock_hour: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock_days_passed: Option<String>,
     /// Unloaded cells: GameDaysPassed when each was detached (absent in older snapshots).
     #[serde(default)]
     pub detached_cells: BTreeMap<FormId, f32>,
@@ -382,6 +390,12 @@ fn next_world_serial() -> u64 {
     WORLDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) << 32
 }
 
+/// The time globals [`World::set_global`] has to recognise, as the load order names them.
+struct TimeGlobalIds {
+    hour: Option<FormId>,
+    days_passed: Option<FormId>,
+}
+
 pub struct World<'a> {
     pub forms: &'a FormStore,
     pub placed: &'a RefTable,
@@ -389,6 +403,10 @@ pub struct World<'a> {
     refs: BTreeMap<FormId, RefState>,
     /// Globals set at run time (scripts, the clock); others keep their authored value.
     globals: BTreeMap<FormId, f32>,
+    /// The digits of the time globals their f32 cannot hold.
+    fine_clock: clock::FineClock,
+    /// Resolved once as `set_global` is on the scripts' hot path; `forms` is not replaced after construction [design: nothing assigns `World::forms`].
+    time_global_ids: TimeGlobalIds,
     /// Unloaded cells and the GameDaysPassed at which they were unloaded.
     detached_cells: BTreeMap<FormId, f32>,
     /// Quest-item flags set at run time (`set_quest_object`); they replace the record's.
@@ -461,6 +479,8 @@ impl<'a> World<'a> {
             cfg,
             refs: BTreeMap::new(),
             globals: BTreeMap::new(),
+            fine_clock: clock::FineClock::default(),
+            time_global_ids: TimeGlobalIds { hour: forms.by_edid(clock::GAME_HOUR), days_passed: forms.by_edid(clock::GAME_DAYS_PASSED) },
             detached_cells: BTreeMap::new(),
             quest_objects: BTreeMap::new(),
             leveled_added: BTreeMap::new(),
@@ -1502,6 +1522,12 @@ impl<'a> World<'a> {
             return Err(SimError::UnknownForm(id));
         }
         self.globals.insert(id, value);
+        // A write is the time now, even when it equals what the clock last stored.
+        if self.time_global_ids.hour == Some(id) {
+            self.fine_clock.forget_hour();
+        } else if self.time_global_ids.days_passed == Some(id) {
+            self.fine_clock.forget_days_passed();
+        }
         Ok(())
     }
 
@@ -1525,7 +1551,23 @@ impl<'a> World<'a> {
     /// containers restock at the midnights passed ([`World::restock_merchants`]).
     pub fn advance_hours(&mut self, hours: f64) -> Result<Calendar, SimError> {
         let before = self.calendar()?;
-        let c = before.advance(hours);
+        let c = self.fine_clock.advance(before, hours);
+        self.store_calendar(before, c)?;
+        Ok(c)
+    }
+
+    /// Move game time forward to `hour` (the next day's when it has passed today), landing
+    /// on it; the game hours that passed, 0 when the clock shows that hour already.
+    pub fn advance_to_hour(&mut self, hour: f64) -> Result<f64, SimError> {
+        let before = self.calendar()?;
+        let (c, hours) = self.fine_clock.advance_to_hour(before, hour);
+        if hours > 0.0 {
+            self.store_calendar(before, c)?;
+        }
+        Ok(hours)
+    }
+
+    fn store_calendar(&mut self, before: Calendar, c: Calendar) -> Result<(), SimError> {
         for (edid, v) in [
             (clock::GAME_YEAR, c.year),
             (clock::GAME_MONTH, c.month),
@@ -1536,8 +1578,7 @@ impl<'a> World<'a> {
             let (id, _) = self.time_global(edid)?;
             self.globals.insert(id, v);
         }
-        self.restock_merchants(before.days_passed as f64, c.days_passed as f64)?;
-        Ok(c)
+        self.restock_merchants(before.days_passed as f64, c.days_passed as f64)
     }
 
     /// The TimeScale global (game seconds per real second), if the plugins define it.
@@ -1982,6 +2023,7 @@ impl<'a> World<'a> {
         let mut deleted_created = self.deleted_created.clone();
         deleted_created.extend(self.created().filter(|(id, s)| gone(id, s)).map(|(id, s)| (id, s.base)));
         let kept = |id: &FormId| !deleted_created.contains_key(id);
+        let (clock_hour, clock_days_passed) = self.fine_clock.saved();
         Snapshot {
             format: SNAPSHOT_FORMAT.into(),
             config: self.cfg,
@@ -1989,6 +2031,8 @@ impl<'a> World<'a> {
             next_dynamic: self.next_dynamic,
             refs: self.refs.iter().filter(|(id, s)| !gone(id, s)).map(|(&k, v)| (k, v.clone())).collect(),
             globals: self.globals.clone(),
+            clock_hour,
+            clock_days_passed,
             detached_cells: self.detached_cells.clone(),
             quest_objects: self.quest_objects.clone(),
             leveled_added: self.leveled_added.clone(),
@@ -2032,6 +2076,9 @@ impl<'a> World<'a> {
         w.next_dynamic = s.next_dynamic;
         w.refs = s.refs.clone();
         w.globals = s.globals.clone();
+        if let Ok(stored) = w.calendar() {
+            w.fine_clock = clock::FineClock::restored(s.clock_hour.as_deref(), s.clock_days_passed.as_deref(), &stored);
+        }
         w.detached_cells = s.detached_cells.clone();
         w.quest_objects = s.quest_objects.clone();
         w.leveled_added = s.leveled_added.clone();

@@ -83,7 +83,8 @@ references) takes about 0.8 s [observed, release build].
 A reference nothing has touched has no runtime entry; the first access derives it from
 the placement data (initial inventory: carried items with leveled lists resolved; lock;
 enabled flag). A `Snapshot` (`fnv.sim.state/1`) holds exactly the materialised
-references, the RNG position and the next created FormID, so it is the set of changes
+references, the RNG position, the next created FormID and the clock's digits the f32 time
+globals cannot hold (simulation.md §5), so it is the set of changes
 against the plugins and independent of the original savegame format (savegame
 compatibility is Layer 7). Restoring a snapshot and continuing gives the same result as
 an uninterrupted run (tested).
