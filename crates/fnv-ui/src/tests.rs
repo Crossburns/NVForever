@@ -847,3 +847,21 @@ fn a_trait_name_ending_in_an_underscore_after_a_constant_reads_its_number() {
     // is absent, so the copy reads the default value (0, as a string "0").
     assert_eq!(ui.get_string("Flags/Unknown/filename").as_deref(), Some("0"));
 }
+
+#[test]
+fn a_trait_taken_off_a_tile_reads_as_never_set() {
+    let src = MemSource::default().with("m.xml", r#"<menu name="M"><rect name="R"><_read><copy>5</copy><add src="screen()" trait="cropy"/></_read></rect></menu>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "m.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("M/R/_read"), Some(5.0));
+    let screen = ui.screen();
+    assert!(!ui.remove_trait(screen, "cropy"), "nothing to take");
+    ui.set_trait(screen, "cropy", Value::Num(15.0));
+    ui.update();
+    assert_eq!(ui.get_float("M/R/_read"), Some(20.0));
+    assert!(ui.remove_trait(screen, "cropy"));
+    assert!(ui.tile(screen).get("cropy").is_none());
+    ui.update();
+    assert_eq!(ui.get_float("M/R/_read"), Some(5.0));
+}

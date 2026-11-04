@@ -949,6 +949,32 @@ impl Ui {
         tr.seen = 0;
     }
 
+    /// Takes a trait off a tile, as if it had never had it (an engine's own write undone
+    /// [design]): what reads it reads nothing again. False when the tile has none.
+    #[track_caller]
+    pub fn remove_trait(&mut self, tile: TileId, name: &str) -> bool {
+        self.entered("remove_trait");
+        if !self.is_live(tile) {
+            return false;
+        }
+        let Some(k) = self.tile(tile).trait_index(name) else { return false };
+        // Whoever read it last works its value out afresh: with no source newer than its own
+        // last working out, `update` would keep what it had. Other traits written from outside
+        // keep theirs.
+        for t in self.tiles.iter_mut().filter(|t| t.live) {
+            for tr in &mut t.traits {
+                if tr.sources.iter().any(|&(s, j)| s == tile && j as usize == k) {
+                    tr.evaluated = 0;
+                }
+            }
+        }
+        // `tile_mut` marks the tree's shape changed: the sources kept by index are read again.
+        self.tile_mut(tile).traits.remove(k);
+        self.gen += 1;
+        self.dirty = true;
+        true
+    }
+
     /// Whether a path names a live menu, tile or trait (`IsComponentLoaded`).
     pub fn is_loaded(&self, path: &str) -> bool {
         self.find_tile(path).is_some() || self.find_trait(path).is_some()
