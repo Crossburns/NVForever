@@ -57,6 +57,18 @@ pub struct UiRequests {
     /// EnableLoadingMenu 1 this frame ([`enable_loading_menu`]): the engine takes it
     /// after the frame's scripts (`nvf_play::script`).
     pub loading_menu: bool,
+    /// TriggerHitShader calls not taken yet: each one's strength (`super::fo3`). Nothing
+    /// draws them yet.
+    pub hit_shaders: Vec<f32>,
+    /// FadeSFX calls not taken yet: each one's seconds (`super::fo3`). Nothing plays by
+    /// them yet.
+    pub sfx_fades: Vec<f32>,
+    /// DisableAllMines calls so far: the engine disables the mines of the player's cell
+    /// on each new count (`nvf_play::mines`).
+    pub mines_disabled: u64,
+    /// KillQuestUpdates calls so far: the HUD drops the quest lines it has not shown yet
+    /// on each new count (`nvf_play::quest_messages`).
+    pub quest_updates_killed: u64,
 }
 
 /// A film a script asked for (`PlayBink`), for the engine's film player

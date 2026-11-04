@@ -142,6 +142,9 @@ pub struct DoorEdge {
     pub arrival_heading: f32,
     /// The triangle of the arrival.
     pub to: u32,
+    /// Where the door reference itself stands, when known ([`NavGraph::place_doors`]):
+    /// an actor turns to it before going through (`Walker::face_door`).
+    pub door_at: Option<[f32; 3]>,
 }
 
 /// Counts of what the graph could and could not resolve while building.
@@ -291,6 +294,7 @@ impl NavGraph {
             let space = ix.refs.get(&to_door).and_then(|r| space_of(Some(r.cell)))?;
             Some((to_door, arrival, heading, space))
         });
+        g.place_doors(|d| fnv_world::placed::placement(lo, schema, d).map(|p| p.position));
         let doors: Vec<u32> = g.doors.values().flatten().map(|d| d.door).collect();
         for d in doors {
             if let Some(l) = door_lock(lo, schema, d) {
@@ -500,7 +504,7 @@ impl NavGraph {
                     .copied()
                     .filter(|&t| self.space_of_tri(t) == Some(space))
                     .or_else(|| self.locate(space, arrival, 256.0))?;
-                Some(DoorEdge { door, to_door, arrival, arrival_heading: heading, to })
+                Some(DoorEdge { door, to_door, arrival, arrival_heading: heading, to, door_at: None })
             });
             match edge {
                 Some(e) => doors.push((from, e)),
@@ -514,6 +518,14 @@ impl NavGraph {
             self.doors.entry(from).or_default().push(e);
         }
         self.compute_areas();
+    }
+
+    /// Record where each joined door's reference stands (`position` of a door reference),
+    /// for actors to face it before they use it.
+    pub fn place_doors(&mut self, position: impl Fn(u32) -> Option<[f32; 3]>) {
+        for e in self.doors.values_mut().flatten() {
+            e.door_at = position(e.door);
+        }
     }
 
     /// Set (or clear) a door's lock: the game calls this when a door is unlocked or
