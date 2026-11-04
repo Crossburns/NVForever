@@ -281,7 +281,8 @@ Code: `engine/nvforever/src/furniture.rs` (actors and the player), `nvf_play::fu
     it waits, then gets one fresh `SitOn`, walking up to it, if it still wants that
     furniture. The wait is `BUSY_RETRY_SECONDS`, 5 s of active play in which it could be
     told to sit (drawn, AI on, alive and awake, no conversation or idle holding it, no
-    menu, conversation or loading screen): an engineering number, not a measurement.
+    menu, conversation or loading screen): an engineering number, not a measurement. The
+    order goes out in the frame the wait ends, which is one where it could be told.
   - **Anything else** (no enabled entry point, content missing, no clip, a clip that
     cannot play on its skeleton, too far from the entry point): no retry while the
     request stays the same. A script's MoveTo or hours passing (Wait menu) give one fresh
@@ -290,14 +291,18 @@ Code: `engine/nvforever/src/furniture.rs` (actors and the player), `nvf_play::fu
     The state stays while its visual is away; nothing is ordered without one. It is not
     saved.
   - The first refusal is logged and a changed one, not the same again (`furniture
-    refusals: N logged, M identical repeats not logged` at the end of the run).
+    refusals: N logged, M identical repeats not logged` at the end of the run); what was
+    logged is kept on its visual, so a visual drawn anew logs it again.
   - **What this covers**: furniture the renderer finds occupied (by the test aid's actor,
     the player, or a resident that got there first). **What it leaves open**: two residents
     wanting one seat mostly part earlier, in the AI's own reservation (`fnv_ai`, `taken`):
     the second gets no furniture and no `SitOn`, so nothing here happens for it, and it
     does not reconsider while its activity lasts. A resident blocked for good also keeps
     its AI reservation until its AI's intent changes.
-  Smoke: `resident-furniture-refusal-retry`, `resident-furniture-refusal-control`.
+  The 5 s spacing and the eligible frame are proved by the unit tests of
+  `crates/fnv-actor/src/furniture_retry.rs`. Smoke `resident-furniture-refusal-retry` shows
+  the recovery in the running engine; its range of repeats catches excess retries and does
+  not prove the spacing. Its control: `resident-furniture-refusal-control`.
 - **`--npc-sit ACTOR=FURNITURE[:SECONDS]`** sends a travelling NPC (docs/design/navmesh.md
   §5) to a furniture reference (hex FormID) and gives it a `SitOn` on arrival. The trip
   ends at the enabled entry point nearest the actor's placed position (trip target

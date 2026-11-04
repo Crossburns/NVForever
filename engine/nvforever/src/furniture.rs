@@ -529,6 +529,9 @@ pub fn seat_orders(mut commands: Commands, mut f: ResMut<Furnishings>, nav: Opti
 #[derive(Component)]
 pub struct LeaveNow;
 
+/// What [`drive_actors`] reads and writes of an actor about to begin a use.
+type Starting = (Entity, &'static ActorRig, &'static mut Transform, &'static GlobalTransform, &'static SitOn, Option<&'static SitRefused>);
+
 /// What [`drive_actors`] reads and writes of an actor on furniture.
 type Seated = (Entity, &'static ActorRig, &'static mut Transform, &'static mut OnFurniture, Option<&'static mut Locomotion>, Has<GetUp>, Has<LeaveNow>);
 
@@ -542,7 +545,7 @@ pub fn drive_actors(
     actor_world: Option<Res<ActorWorld>>,
     mut parts: ResMut<ActorParts>,
     mut models: ModelCtx,
-    mut starting: Query<(Entity, &ActorRig, &mut Transform, &GlobalTransform, &SitOn, Option<&SitRefused>), Without<OnFurniture>>,
+    mut starting: Query<Starting, Without<OnFurniture>>,
     mut using: Query<Seated>,
     mut script: Option<ResMut<ScriptState>>,
     mut nav: Option<ResMut<NavState>>,

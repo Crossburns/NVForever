@@ -47,7 +47,9 @@ pub enum Decision {
     Wait { target: u32, waited: f32 },
     /// No order for this request, however long it stays the same.
     Unavailable { target: u32 },
-    /// One fresh order, walking up to it (not put on at once: it never got on).
+    /// One fresh order, walking up to it (not put on at once: it never got on). From
+    /// [`waiting`] it was decided on an eligible frame, so the order belongs to that frame;
+    /// from [`unavailable`] it goes out when the actor is next drawn.
     Reissue { target: u32 },
     /// It no longer wants this furniture: nothing is left to do about it.
     Cancel,
@@ -204,6 +206,18 @@ mod tests {
         // A frame of no time (the game's clock stopped) does not bring it nearer either.
         let stopped = Now { seconds: 0.0, ..now(Some(CHAIR), true) };
         assert_eq!(waiting(CHAIR, 4.9, &stopped), Decision::Wait { target: CHAIR, waited: 4.9 });
+    }
+
+    #[test]
+    fn an_order_falls_due_only_on_an_eligible_frame() {
+        // The frame that would end the wait is not eligible (its AI just went off, a
+        // conversation began): no order, and the next eligible frame gives it.
+        let d = waiting(CHAIR, BUSY_RETRY_SECONDS - FRAME, &now(Some(CHAIR), false));
+        assert_eq!(d, Decision::Wait { target: CHAIR, waited: BUSY_RETRY_SECONDS - FRAME });
+        assert_eq!(step(d, &now(Some(CHAIR), true)), Decision::Reissue { target: CHAIR });
+        // However far past its time: a wait is never left by a frame that is not eligible.
+        let late = waiting(CHAIR, 2.0 * BUSY_RETRY_SECONDS, &now(Some(CHAIR), false));
+        assert_eq!(late, Decision::Wait { target: CHAIR, waited: 2.0 * BUSY_RETRY_SECONDS });
     }
 
     #[test]

@@ -1601,9 +1601,12 @@ expect = ["furniture summary: 1 of 1 actors sat down, 1 got up again"]
 # The issue's 180 s run, shortened: its stay of 90 s left 81 s after the release to watch;
 # here a stay of 60 s and 30 s or more of the wait are enough. The time ranges are
 # acceptance targets [design: a retry is due within 5 s of active play], not measurements.
+# The range of repeats catches excess retries only: it does not prove their spacing (retries
+# every 3 s would pass). The 5 s spacing is proved by the unit tests of
+# crates/fnv-actor/src/furniture_retry.rs.
 [[scenario]]
 name = "resident-furniture-refusal-retry"
-source = "issue #1506, docs/spec-notes/furniture.md §7: the test aid's settler is on Easy Pete's chair when his AI resumes; refused (in use), he waits, asks again at most every 5 s (logged once) and sits soon after the settler got off"
+source = "issue #1506, docs/spec-notes/furniture.md §7: the test aid's settler is on Easy Pete's chair when his AI resumes; refused (in use), he waits, asks again (logged once) and sits soon after the settler got off"
 areas = ["ai", "residents", "furniture"]
 paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-actor/src/furniture_retry.rs"]
 args = ["--cell", "Goodsprings", "--play", "--hour", "15", "--size", "1280x720", "--no-voice", "--no-messages", "--npc-packages", "EasyPeteRef", "--npc-sit", "GoodspringsSettler01Ref@00106349=0010634A:60"]
@@ -1621,7 +1624,7 @@ order = [[
 expect = [
   { text = "furniture: 00104C80 cannot use 0010634A: in use", count = 1, label = "the refusal is logged once" },
   { text = "furniture: 00104C80 goes to 0010634A", count = 1, label = "the use begins once, after the release" },
-  { re = 'furniture refusals: 1 logged, (?P<n>\d+) identical repeats', range = [3, 20], label = "he asked again every few seconds, not every frame" },
+  { re = 'furniture refusals: 1 logged, (?P<n>\d+) identical repeats', range = [3, 20], label = "he asked again, without excess retries (spacing: unit tests)" },
   { gap = ["furniture: 00104F03 got off 0010634A", "furniture: 00104C80 goes to 0010634A"], range = [0, 10], label = "asks again soon after the release" },
   { gap = ["furniture: 00104F03 got off 0010634A", "furniture: 00104C80 is on 0010634A"], range = [0, 20], label = "on the chair soon after the release" },
   { text = "script: test aid calls GetSitting on EasyPeteRef = 0", min = 2, label = "standing while the chair is taken" },

@@ -553,7 +553,9 @@ impl Seat {
         match decision {
             retry::Decision::Wait { target, waited } => Seat::Waiting(target, waited),
             retry::Decision::Unavailable { target } => Seat::Unavailable(target),
-            // Through `Wanted`, which gives the order; it never got on, so not at once.
+            // Through `Wanted`, which gives the order when it is drawn and asks nothing else
+            // (a wait that is over gives its order itself: `drive`). Not at once: it never
+            // got on.
             retry::Decision::Reissue { target } => Seat::Wanted(target, false),
             retry::Decision::Cancel => Seat::None,
         }
@@ -2621,7 +2623,16 @@ pub fn drive(
         };
         r.seat = match (r.seat, entity) {
             (Seat::None, _) => wants.map_or(Seat::None, |f| Seat::Wanted(f, false)),
-            (Seat::Waiting(f, so_far), _) => Seat::after(retry::waiting(f, so_far, &frame)),
+            // The order goes out in the frame that found it eligible, not through `Wanted`:
+            // by the next frame its AI may be off, or it may be held or out cold.
+            (Seat::Waiting(f, so_far), _) => match (retry::waiting(f, so_far, &frame), entity) {
+                (retry::Decision::Reissue { target }, Some(e)) => {
+                    commands.entity(e).insert(SitOn { furniture: target, stay: None, at_once: false });
+                    core.seats[0] += 1;
+                    Seat::Ordered(target, false)
+                }
+                (decision, _) => Seat::after(decision),
+            },
             (Seat::Unavailable(f), _) => Seat::after(retry::unavailable(f, &frame)),
             (Seat::Wanted(f, at_once), Some(e)) if wants == Some(f) => {
                 commands.entity(e).insert(SitOn { furniture: f, stay: None, at_once });
