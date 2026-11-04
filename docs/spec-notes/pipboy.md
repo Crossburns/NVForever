@@ -356,21 +356,24 @@ tagged: the tree by `fnvtool ui tree` (values, tile names, template names); the 
 includes by `fnvtool bsa extract`, read privately; and a private copy of those files laid over
 Data with `--overlay` and read back with `fnvtool ui tree`, called "the overlay". What the overlay
 shows is that authored overlay under **NVForever's evaluator**: it is no reading of the original
-and does not check the evaluator. Nothing here was run in the game. `NOGLOW_BRANCH` is empty.
+and does not check the evaluator. `NOGLOW_BRANCH` is empty.
 
 **What the original was seen to do** [observed: private job pipboy_special_a, the original
 running at 1280 x 720, the Pip-Boy open on this page; one character, one window size]:
 
-- `screen()` is 1706.67 x 960, its converter 1.33 and the line thickness 2.67, which agrees with
-  what the shared tree holds here (960 / window height).
-- The list stands at x 35.33 and is 325 x 468, so 52 a row. The display stands at x 360.33, 544.67
+- `screen()` is 1706.67 x 960, its converter 1.33 and the line thickness 2.67, which agrees at this
+  one size with what the shared tree holds here (960 / window height). One size does not establish
+  that rule in general; hud_menus' three sizes [observed: `tiles::resolution_converter`] are the HUD's.
+- The list stands at x 35.33 and is 325 x 468. A row of 52 is derived from that height and nine
+  visible rows [design: the arithmetic; one resolution], not read. The display stands at x 360.33, 544.67
   wide. The LVL card is at x 270, the XP card at x 690, and the tail line at y 652.
 - The tabs stand at x 84.50, 220.50, 423, 591.50 and 746, y 626, 116, 179, 109, 107 and 133 wide,
   their parent line at y 652; their `_selected` read 0, 1, 0, 0, 0.
 - The root's `user0` reads 0 on opening, then 1. A click on id 1 sets it by `ClickMenuButton`.
 - The root's `user5` to `user7` read as text. `user8` reads empty on a level 1 character, while the
-  LVL card shows on screen. **How `user8` came to be empty is open**: this slice writes the level
-  there [design], which may not be what the original does.
+  LVL card shows on screen. **How `user8` came to be empty is open**. This slice's write of the
+  model's level there is an explicit provisional choice behind the switch [design], so the card
+  shows the level; it is not blanked to imitate that read. Parity on it stays open.
 - A row's tile carries its AVIF name and id -1, read with `GetActiveUIComponentName` under the
   pointer. This slice gives its rows both, and knows them itself by actor value [design].
 
@@ -426,7 +429,7 @@ has the children `ListItemText`, `stats_list_template_number` and `stats_list_te
 | `string` | the name | `Row::name` (AVIF FULL) |
 | `user1` | the value as text, or the template's -1 for none | `Row::value` (`model::whole`). "--" without the scripts' game: a text value keeps it (`fnv_ui::Value::text`) though it compares as 0 (`Value::num`), so a numeric write would lose it |
 | `user0`, `user2` | whether the mark shows, and the mark | `Row::mark` (`model::modified_mark`) |
-| `height` | a height the template gives is kept; otherwise the text's measured height + the row's `_VerticalSpacing`, or 20 where that reads 0 [hypothesis: the prefab's comment; the 52 a row above agrees at one size, font 2's tallest glyph and 20] | the row's text as measured |
+| `height` | a height the template gives is kept; otherwise the text's measured height + the row's `_VerticalSpacing`, or 20 where that reads 0 [hypothesis: the prefab's comment; the derived 52 above agrees at one size] | the row's text as measured |
 | `_y` | the height of the rows above | the same |
 
 Everything else about a row, the list and the highlight box: the file works this out at run time.
