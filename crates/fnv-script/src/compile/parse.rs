@@ -196,20 +196,33 @@ pub fn statement(l: &Line) -> Result<Statement, ParseError> {
             },
         }
     };
-    Ok(Statement { line: l.no, kw, text: l.text.clone(), decls: Vec::new() })
+    // A call's inline expressions may declare (`Fn (float f)`); the code generator reads
+    // the line again and drops the type word there.
+    let decls = match &kw {
+        Kw::Call(_) if toks.iter().any(|t| t.kind == Kind::Open) => inline_decls(&mut xtokens(&l.text)),
+        _ => Vec::new(),
+    };
+    Ok(Statement { line: l.no, kw, text: l.text.clone(), decls })
 }
 
 /// The inline declarations of an extender line, taken out of its tokens: a type word right
 /// before a name that is assigned (`=`, `:=`) or iterated (`<-`) declares it there
 /// [documented: Inline variable declaration, `let int i := 10`, `foreach array_var it <-
 /// arr`, `if eval ref r = GetCrosshairRef && IsReference r`; observed: the ext-compile
-/// README, inline `int` declarations with `let` compiled]. A lambda's typed parameters
+/// README, inline `int` declarations with `let` compiled]. An inline expression is an
+/// NVSE expression, so it declares too (`SetUIFloatAlt "…" (int i = GetPCDetectionState)`)
+/// [documented: Inline variable declaration, "NVSE expressions can now declare variables";
+/// Inline Expression], and so does a type and a name alone in parentheses, where a
+/// function writes its result into the variable (`GetNifRotAlt "Node" (float fX) (float
+/// fY) (float fZ)`) [hypothesis: the owner's mods' Script Runner files are written so,
+/// #1470; the pages show only `=`, `:=` and `<-`]. A lambda's typed parameters
 /// (`{int a, ref b} =>`) are followed by `,` or `}`, so they stay.
 pub fn inline_decls(x: &mut Vec<XTok>) -> Vec<(DeclType, String)> {
     let mut decls = Vec::new();
     let mut i = 0;
     while i + 2 < x.len() {
-        let assigned = x[i + 2].kind == XKind::Op && [":=", "=", "<-"].contains(&x[i + 2].text.as_str());
+        let assigned = x[i + 2].kind == XKind::Op && [":=", "=", "<-"].contains(&x[i + 2].text.as_str())
+            || i > 0 && x[i - 1].kind == XKind::Open && x[i + 2].kind == XKind::Close;
         match DeclType::from_word(&x[i].text.to_ascii_lowercase()) {
             Some(ty) if x[i].kind == XKind::Word && x[i + 1].kind == XKind::Word && assigned => {
                 decls.push((ty, x[i + 1].text.clone()));
