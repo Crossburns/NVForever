@@ -101,7 +101,7 @@ pub struct PipBoyArmPlugin;
 impl Plugin for PipBoyArmPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Hovered>()
-            .add_systems(Update, (follow_pointer, show_screen).chain().in_set(nvf_play::pipboy::PointerSet));
+            .add_systems(Update, (follow_pointer.in_set(nvf_play::pipboy::PointerSet), show_screen.after(follow_pointer).after(nvf_play::player::BodySet).before(nvf_play::PlaySet::Ui)));
     }
 }
 
