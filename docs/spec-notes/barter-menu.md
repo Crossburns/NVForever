@@ -291,11 +291,11 @@ Behind `[UI] TileMenus=ContainerMenu` (`engine/nvf-play/src/tiles/container_menu
 at its stacking level (100). The model, its keys and the wheel stay the hand-built menu's
 (§5). The prompt draws over it, from its file or by hand, and takes the pointer alone
 [documented: `&no_click_past;`]. Smoke: `tiles-container`, `tiles-container-quantity`,
-`container-default-drawing`. Not the default: it is not compared with the original yet.
+`container-default-drawing`. Not the default; what still differs from the original closes this
+section.
 
 The original's values [observed: the private `hud_container_*` capture at 1280 x 720, read
-with JIP on a footlocker; interface units; parts a, b, c, e, f; the shots of part a show
-another window and those of b, e, f failed, so these are reads, except where a shot is named]:
+with JIP on a footlocker; interface units; parts a to g, with their shots in the latest run]:
 
 - **The rows**: a row is `height` = its text's and 20: 32 and 52 for one line, 67 and 87 for
   two, 102 and 122 for three. `_y` the sum above it. `_selected` stays 0 on the selected row.
@@ -362,10 +362,47 @@ What the tile path does with these, and where it differs:
   how many [owner 2026-10-15]; Take All closes [owner, list 5 item 60]; DPS a card above DAM,
   no fade [owner's playtest list 7, item 25]. The keys: physical A focuses the player's list
   and R takes all, [design: `crate::menu`, tagged there as the owner's screenshot's "R)" and
-  our own keys, no owner decision]; the hint therefore says "R)", the file's A acting only
-  for a script's MenuTapKey.
-- **Not at parity, not known or not built**: the world's blur; DAM/DPS's fade; `CNDArrows`,
-  shown as read but its look not seen; `_wheelmoved` and key reads (part g), filters (part d)
-  not read yet; no shot of the original with a highlight, a selected card or the note. Backing
-  193.8 is the read value through the renderer's blending, which reads lighter than the
-  original's shot until checked [hypothesis].
+  our own keys, no owner decision]; the file's A acts only for a script's MenuTapKey.
+- **The words on the tiles**: the hints come from the strings table, as every key hint of the
+  files does: Exit's `sPCMenuHintE` from the file, Take All's `sPCMenuHintR` written in code for
+  the key that works; a GMST wins, else `fnv_ui::strings::BUILT_IN`'s label in its bracket form
+  (so not the original's or the hand-built menu's letter and bracket). The cards' titles read
+  settings no plugin defines [observed: menu-xml.md §2.4], so the file would show
+  `BUILT_IN`'s labels; those do not fit a card (`ConditionMeter` stands 62 in and a title 5 in
+  [documented]; the label of the weight measures 72 units [observed: our shot]). Where a title
+  still reads that label the card says the words of the hand-built figures (`card_title` in
+  `pipboy/items.rs`, from pipboy.md §5's [observed: the owner's screenshots], also in §1's pictures), so
+  the two drawings agree; a GMST's or a mod's own title stays. `BUILT_IN` itself is not changed.
+- **The weight** cuts off to whole units [observed: 289.50 reads "Wg   289/200", 49.50 "Wg
+  49/200"]; the hand-built label rounds (`look::half_figure`), left as it is.
+- **Against the original's shots** [observed: pixels at 1280 x 720, the file's numbers drawn;
+  bounding boxes of the amber above a threshold, the same item's card on both sides]: the card's
+  lines 641-774 and 781-914 at y 476 against 642-774 and 782-914 at y 477; the picture
+  307-426 x 482-571 against 309-426 x 483-571 (`CM_ItemIcon`, 256 square at &scale;, 22 and 472
+  from the half: places and size agree); the arrow 626-669 x 192-287 pointing left, 632-674 x
+  191-284 right; Take All's words 953-1052 x 512-532 in both; the headings and the weight within
+  1 pixel; text colour (198, 141, 49) against (198, 142, 51); list rows, the wrapped row's 66
+  pixels, the clip at the list's foot and the highlight box 704-1024 agree. The empty container's
+  STR lines 781-913 x 447-470 agree. A bar shows only on a list that overflows, on either side, in
+  both.
+- **Still different, and why**:
+  - The world's blur (not built). Against it the backing reads darker here; the world differs
+    between the shots too, so 193.8 stands unchecked.
+  - The picture and the fading side lines are brighter here, in both our drawings, one
+    picture peaking at red 227 against 197 [observed]. 197 / 254 through the
+    sRGB curve is 227 / 254, so the picture's mid-tones may be read as linear [hypothesis]; a
+    matter of the shared texture path, for every interface picture, not of this menu.
+  - The opening shows a selected row, its highlight, arrow, picture and card; the original shows
+    none until the pointer is on a row (`sel none`, `_highlight_y` -1), and hides them again when
+    it leaves. This menu keeps a row selected (above); the keys act on it. A question for the
+    owner, not changed here.
+  - Take All on an empty list is dimmed, its `target` 0; the original's words stay at full
+    brightness and the click closes the menu (`container__empty_takeall`). Empty Take All not
+    closing is the hand-built menu's rule (§5), and the dim says so.
+  - DPS a card above DAM, no fade [owner]; the original's DPS stands in DAM's place, as the shots
+    show.
+  - Words: the hints, as above.
+  - DAM/DPS's fade, `_wheelmoved` and the marker's own drag traits are not built. The tile path's
+    `ConditionMeter` and `CNDArrows` follow the numbers read (meter 104.67 wide, image the
+    condition's part, arrows x 140.5 or 114.33, y 15, 16 x 20) and are not yet compared by eye:
+    `tiles-container`'s `card_*` shots hold them (a weapon, armour, an aid item).
