@@ -480,8 +480,13 @@ impl Game<'_> {
     }
 
     fn set_change(&mut self, id: u32, c: ValueChange) {
-        if let Some(e) = self.effects.iter_mut().find(|e| e.id == id) {
-            e.change = Some(c);
+        self.set_change_at(id, None, c);
+    }
+
+    /// [`Game::set_change`] with the effect's position, if known (checked by id).
+    fn set_change_at(&mut self, id: u32, hint: Option<usize>, c: ValueChange) {
+        if let Some(i) = crate::game::effect_index(&self.effects, id, hint) {
+            self.effects[i].change = Some(c);
         }
     }
 
@@ -552,21 +557,25 @@ impl Game<'_> {
 
     /// One frame of an effect that changes a value by the second: the share of the
     /// seconds from `before` to its elapsed time that lie inside its duration.
-    pub(crate) fn tick_change(&mut self, id: u32, before: f64) {
-        let Some((target, mut c)) = self.change_of(id) else { return };
+    /// `hint` is the effect's position, if known (checked by id): one lookup serves the
+    /// whole tick (#1389); the change is written back by id again, as changing the value
+    /// can run scripts that move the effect.
+    pub(crate) fn tick_change_at(&mut self, id: u32, hint: Option<usize>, before: f64) {
+        let Some(i) = crate::game::effect_index(&self.effects, id, hint) else { return };
+        let e = &self.effects[i];
+        let Some(mut c) = e.change else { return };
         if c.kind != ChangeKind::PerSecond {
             return;
         }
-        let Some(e) = self.effects.iter().find(|e| e.id == id) else { return };
         let seconds = e.elapsed.min(e.duration) - before.min(e.duration);
         if seconds <= 0.0 {
             return;
         }
-        let caster = e.caster;
+        let (target, caster) = (e.target, e.caster);
         let amount = c.amount * seconds;
         self.change_value(target, c.code, amount, c.parts, c.limb, caster);
         c.applied += amount;
-        self.set_change(id, c);
+        self.set_change_at(id, Some(i), c);
     }
 
     /// Addictions are held back while their chem is active, and come back when it ends.

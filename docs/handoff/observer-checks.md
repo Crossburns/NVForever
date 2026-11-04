@@ -1154,6 +1154,19 @@ The numbers above stay put so links to them hold; each item here gives its own p
     names the language, so the code page can be detected. Then with `CodePage=1251`:
     menus, dialogue, the Pip-Boy and the HUD show Cyrillic, not `?` or wrong letters.
 
+## Added 2026-11-03 (sounds decoded on worker threads, issue #1428)
+
+82. **Does `PlaySound X; StopSound X` in one frame play anything?** (P3; audio.md §11.5.)
+    NVForever reads a sound's file on a worker, and a StopSound covers the sounds of X
+    asked for before it, also in the same frame, so the pair plays nothing; `StopSound X;
+    PlaySound X` plays X [hypothesis]. In the original (`nvfstrip`, a probe like sound1):
+    one script block that runs `PlaySound` then `StopSound` of a short one-shot never
+    played before in the session (its file not loaded yet) and of one played a moment
+    earlier; the same with the order turned round; then the same with a Loop-flag SOUN
+    (EMTMedicalBeep01). Log `IsSoundPlaying` of it each frame for 10 frames and record
+    the audio. The answer: whether any of it is heard, and IsSoundPlaying's values per
+    frame for each order.
+
 ## Added 2026-11-03 (volume sliders, issue #1450)
 
 79. **How does the original's Music slider turn its music down, and does the main menu
@@ -1199,3 +1212,24 @@ The numbers above stay put so links to them hold; each item here gives its own p
     whether (a)'s handler prints, and what (c) returns. If (a) is refused, the drop goes
     and ln_B42Optics.txt is the mod's own error. If (b) compiles, dropped arguments are not
     read. If (c) differs from `5 0 0`, the catalogue needs the fourth parameter.
+
+## Added 2026-11-04 (the tutorial menu from its file, issue #978)
+
+82. **What does `clipwindow` do?** (P3; menu-xml.md §3.1.1.) Answered in part (private
+    capture hud_tutorial_more, 1280 x 720) [observed]: in the drawing it is a rectangular
+    crop of the descendants, a scrolled line stopping part way at the column's top and bottom
+    edges. Still open: whether a click below the column's edge reaches a tile inside it (a
+    list's row scrolled out, in a menu with `list_box.xml`).
+83. **Does a picture's `alpha` reach the tiles inside it?** (P3; tutorial-menu.md §5.) The
+    tutorial menu's content under its background of alpha 193.8 reads full strength, so
+    NVForever marks that one tile; other tiles still multiply through a picture. A menu or
+    a test tile with a text inside a half-alpha picture answers whether this holds for
+    pictures generally.
+84. **The tutorial menu with two pages.** (P3; tutorial-menu.md §4, §5.) Answered (private
+    capture hud_tutorial_more, 1280 x 720) [observed]: a second `ShowTutorialMenu` replaces the
+    first, `TM_page` stays hidden, Next and Previous stay hidden and not targets, and
+    `ClickMenuButton` on them returned 1 with the text unchanged. The keys A and S were not
+    tried: the job taps them only when that call returns 0. NVForever's pages differ;
+    owner-review.md item 45 asks which to keep. Close's text reads alpha 255 and brightness 255
+    [observed], which rules out those two traits of its own for its (206, 147, 53), not an
+    opacity from above it or the compositing; font 2's texels [hypothesis].

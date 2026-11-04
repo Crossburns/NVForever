@@ -196,6 +196,15 @@ fn match_pc_below_minimum_takes_the_players_level_and_never_resets_is_read() {
     assert_eq!(g.world.zone_level(FormId(SAFE_ZONE)), Some(3));
     assert!(g.world.cell_never_resets(FormId(SAFE_CELL)));
     assert!(!g.world.cell_never_resets(FormId(ZONE_CELL)));
+    // Fallout 3's SetZoneRespawns turns it either way, and a snapshot keeps it.
+    let set = |g: &mut Game, zone: u32, flag: f64| call(g, 0x11EA, 0x14, &[ArgValue::Value(Value::Ref(zone)), ArgValue::Value(Value::Num(flag))]);
+    set(&mut g, SAFE_ZONE, 1.0);
+    set(&mut g, ZONE, 0.0);
+    assert!(!g.world.cell_never_resets(FormId(SAFE_CELL)));
+    assert!(g.world.cell_never_resets(FormId(ZONE_CELL)));
+    let s = g.snapshot();
+    let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
+    assert!(world.cell_never_resets(FormId(ZONE_CELL)) && !world.cell_never_resets(FormId(SAFE_CELL)));
 }
 
 #[test]

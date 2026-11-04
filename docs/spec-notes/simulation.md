@@ -722,6 +722,21 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   GameHour 14.136 for 14), so fractional time is not compared
   (docs/spec-notes/xnvse-capture.md §5).
 - Globals changed at run time are part of the simulation state (`Snapshot.globals`).
+- **Frame-sized time** [design, #1377; not a claim about the original]: the running clock
+  adds a frame's time to f64 copies of GameHour and GameDaysPassed
+  (`fnv_sim::clock::FineClock`) and writes the f32 globals from them, because an f32 sum
+  drops a step under half its own step (GameDaysPassed stopped near day 128 at TimeScale
+  30 and 60 frames a second, and never left 5.0 at TimeScale 1). The globals stay the
+  truth, each of the two on its own: a write to one drops its copy even when the value is
+  the same (`World::set_global`, which script assignment, SetGlobalValue and the console's
+  `set` use), and a stored value other than the one last written replaces it. The copies
+  are saved beside the globals as optional fields (`Snapshot::clock_hour`,
+  `clock_days_passed`; `SNAPSHOT_FORMAT` is unchanged), so a restored run goes on exactly as
+  the uninterrupted one; an older save, a copy that no longer rounds to its global, or an
+  hour copy of 24 or more seeds from the global. A stored GameHour stays below 24 until the day wraps. Commands
+  that name an hour (SetGameHour) land on it (`World::advance_to_hour`) rather than adding
+  time computed from the rounded global, which would stop short of midnight. A GameHour
+  that is no number counts as hour 0 at the next advance.
 
 ## 6. Capturing the oracle (in-game)
 

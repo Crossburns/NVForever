@@ -33,6 +33,7 @@ const MISC: u32 = 0x840;
 const WEAP: u32 = 0x841;
 const FLST: u32 = 0x842;
 const NOTE: u32 = 0x843;
+const MESG: u32 = 0x844;
 const MGEF: u32 = 0x850;
 const EFFECT_SCRIPT: u32 = 0x851;
 const ALCH: u32 = 0x852;
@@ -119,6 +120,7 @@ fn plugin_bytes() -> Vec<u8> {
     let weap_data = [10i32.to_le_bytes().to_vec(), 100i32.to_le_bytes().to_vec(), f32b(2.0), 5i16.to_le_bytes().to_vec(), vec![6]].concat();
     let weap = record(b"WEAP", 0, WEAP, &[sub(b"EDID", z("Gun")), sub(b"DATA", weap_data), sub(b"REPL", FLST.to_le_bytes().to_vec())]);
     let note = record(b"NOTE", 0, NOTE, &[sub(b"EDID", z("TestHolotape")), sub(b"FULL", z("Test Holotape"))]);
+    let mesg = record(b"MESG", 0, MESG, &[sub(b"EDID", z("CellNameMsg")), sub(b"FULL", z("Renamed Cell")), sub(b"DESC", z("unused"))]);
     let flst = record(b"FLST", 0, FLST, &[sub(b"EDID", z("GunList")), sub(b"LNAM", WEAP.to_le_bytes().to_vec())]);
     // The base effect: archetype 1 (Script), its script 0x851 (scripts.md §7.6).
     let mgef_data = [u32s(&[0]), f32b(0.0), u32s(&[EFFECT_SCRIPT]), vec![0xFF; 8], vec![0; 4], vec![0; 4], f32b(1.0), vec![0; 24], vec![0; 8], u32s(&[1]), vec![0xFF; 4]].concat();
@@ -208,6 +210,7 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"WEAP", &weap),
         top(b"FLST", &flst),
         top(b"NOTE", &note),
+        top(b"MESG", &mesg),
         top(b"MGEF", &mgef),
         top(b"SCPT", &scpt),
         top(b"ALCH", &alch),
@@ -2098,4 +2101,73 @@ fn fallout_3_functions() {
     // SetLastExtDoorActivated is what GetPCLastExteriorDoor reads.
     call(&mut g, 0x1230, None, &[r(ACTI_REF)]);
     assert_eq!(g.gaps.jip3.last_exterior_door, Some(FormId(ACTI_REF)));
+}
+
+/// The rest of the functions only Fallout 3's scripts call (the TTW audit of 2026-11-02
+/// §1, after #1455): cells, water, factions, the screen and sound requests and
+/// MatchFaceGeometry.
+#[test]
+fn fallout_3_functions_cells_screen_and_faces() {
+    let f = fixture();
+    let mut g = game(&f);
+    let failed = |g: &mut Game, op: u16, args: &[ArgValue]| {
+        let ctx = Ctx { unit: "test".into(), opcode: op, on: None, self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+        let before = g.events.len();
+        g.call_function(&ctx, args);
+        g.events[before..].iter().any(|e| matches!(e.kind, EventKind::CallFailed { .. }))
+    };
+    // SetCellFullName: an interior is renamed by the message's title; not an exterior.
+    call(&mut g, 0x111B, None, &[r(CELL), r(MESG)]);
+    assert_eq!(g.script_name(FormId(CELL)), Some("Renamed Cell"));
+    assert!(failed(&mut g, 0x111B, &[r(EXT_CELL), r(MESG)]));
+    assert_eq!(g.script_name(FormId(EXT_CELL)), None);
+    // ResetInterior: kept for the next load; not an exterior.
+    call(&mut g, 0x1127, None, &[r(CELL)]);
+    assert!(g.forms.expired_cells.contains(&FormId(CELL)));
+    assert!(failed(&mut g, 0x1127, &[r(EXT_CELL)]));
+    // SetFactionReaction: the disposition modifier, not the combat reaction.
+    call(&mut g, 0x10A8, None, &[r(F1), r(F2), n(100.0)]);
+    assert_eq!(g.forms.faction_modifiers[&FormId(F1)][&FormId(F2)], 100);
+    assert_eq!(call(&mut g, 0x119B, None, &[r(F1), r(F2)]), 1.0, "XNAM's combat reaction stays");
+    // RemapWaterType, and back.
+    call(&mut g, 0x1237, None, &[r(0x700), r(0x701)]);
+    assert_eq!(g.water_type(FormId(0x700)), FormId(0x701));
+    assert_eq!(g.water_type(FormId(0x702)), FormId(0x702));
+    call(&mut g, 0x1237, None, &[r(0x700), r(0x700)]);
+    assert_eq!(g.water_type(FormId(0x700)), FormId(0x700));
+    // TriggerLODApocalypse, KillQuestUpdates, DisableAllMines.
+    call(&mut g, 0x11F3, None, &[]);
+    call(&mut g, 0x1231, None, &[]);
+    call(&mut g, 0x122F, None, &[]);
+    assert!(g.forms.lod_apocalypse);
+    assert_eq!((g.ui.quest_updates_killed, g.ui.mines_disabled), (1, 1));
+    // TriggerHitShader (strength 1 without one), FadeSFX, TriggerScreenBlood.
+    call(&mut g, 0x1144, None, &[]);
+    call(&mut g, 0x1144, None, &[n(4.0)]);
+    call(&mut g, 0x1227, None, &[n(4.0)]);
+    call(&mut g, 0x1205, None, &[n(10.0)]);
+    assert_eq!(g.ui.hit_shaders, [1.0, 4.0]);
+    assert_eq!(g.ui.sfx_fades, [4.0]);
+    assert_eq!(g.ui.splatter.triggers.iter().map(|t| t.count).collect::<Vec<_>>(), [10]);
+    // GetLastPlayerAction: nothing done.
+    assert_eq!(call(&mut g, 0x116F, None, &[]), 0.0);
+    // MatchFaceGeometry: the player's face is kept with the call; the actor is drawn anew.
+    g.take_appearance_changes();
+    let look = fnv_game::chargen::Look { race: FormId(RACE_CHILD), female: false, hair: None, hair_color: None, eyes: None, head_parts: vec![], fggs: vec![2.0; 50], fgga: vec![1.0; 30], fgts: vec![0.0; 50] };
+    g.player.look = Some(look);
+    call(&mut g, 0x11DF, Some(ADULT_REF), &[r(PLAYER), n(50.0)]);
+    let m = &g.extra[&FormId(ADULT_REF)].face_matches;
+    assert_eq!((m.len(), m[0].source, m[0].percent, m[0].fggs.len(), m[0].fgga[0]), (1, FormId(PLAYER), 50.0, 50, 1.0));
+    assert!(g.take_appearance_changes().iter().any(|c| c.actor == FormId(ADULT_REF)));
+    // An NPC source's face is the engine's to read from its record.
+    call(&mut g, 0x11DF, Some(ADULT_REF), &[r(CHILD_REF), n(150.0)]);
+    let m = &g.extra[&FormId(ADULT_REF)].face_matches[1];
+    assert!(m.fggs.is_empty() && m.percent == 100.0);
+    // On the player: only towards a face the game holds.
+    let before = g.player.look.as_ref().unwrap().fggs.clone();
+    let ctx = Ctx { unit: "test".into(), opcode: 0x11DF, on: Some(FormId(PLAYER)), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+    g.call_function(&ctx, &[r(CHILD_REF), n(50.0)]);
+    assert_eq!(g.player.look.as_ref().unwrap().fggs, before);
+    // The blend: halfway, a missing coefficient counting as 0.
+    assert_eq!(fnv_game::appearance::blend_coefficients(&[0.0, 2.0], &[2.0], 50.0), [1.0, 1.0]);
 }

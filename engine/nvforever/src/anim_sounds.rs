@@ -798,11 +798,11 @@ impl Plugin for AnimSoundsPlugin {
         app.init_resource::<AnimSounds>()
             .add_systems(
                 Update,
-                (player_keys.after(BodySet), actor_keys.after(crate::locomotion::drive), actor_jumps, door_sounds.after(nvf_play::doors::DoorSystems), creature_hits).chain(),
+                (player_keys.after(BodySet), actor_keys.after(crate::locomotion::drive), actor_jumps, door_sounds.after(nvf_play::doors::DoorSystems), creature_hits).chain().before(nvf_play::sfx::SfxSet),
             )
             .add_systems(
                 Update,
-                object_sounds.after(crate::object_anims::drive).run_if(|m: Option<Res<crate::object_anims::ObjectAnims>>| m.is_some()),
+                object_sounds.after(crate::object_anims::drive).before(nvf_play::sfx::SfxSet).run_if(|m: Option<Res<crate::object_anims::ObjectAnims>>| m.is_some()),
             )
             .add_systems(Last, report);
     }

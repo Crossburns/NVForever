@@ -268,6 +268,13 @@ pub(crate) fn find_target(
                         (name, actor_action(rt.as_deref_mut(), &mut sim, id, &mut talkers))
                     }
                     Action::Access => (n, terminal_action(rt.as_deref_mut(), &mut sim, id)),
+                    // An interior a script renamed (Fallout 3's SetCellFullName,
+                    // `fnv_game::functions::fo3`) is offered by its new name.
+                    Action::Travel { to } => {
+                        let cell = sim.refs.get(FormId(id)).and_then(|p| p.teleport).and_then(|tp| sim.refs.get(tp.door)?.cell);
+                        let renamed = rt.as_deref().zip(cell).and_then(|(rt, c)| rt.game.script_name(c));
+                        (n, Action::Travel { to: renamed.map(str::to_string).or(to) })
+                    }
                     a => (n, a),
                 })
             })

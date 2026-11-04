@@ -755,10 +755,10 @@ impl Ai {
     /// Whether the graph's obstacles were brought in line with this game's world and
     /// nothing that could change either happened since: the world's presence serial
     /// (`fnv_sim::World::presence_serial`: every write of a reference's `enabled` or
-    /// `deleted`, every state made, created or reset, a new world) and the graph's
-    /// obstacle stamp (`fnv_nav::NavGraph::obstacles_stamp`: obstacles learnt again or
-    /// switched) are the ones seen after the last poll. [`Game::present`] reads nothing
-    /// else, so a poll now would find every obstacle as the graph has it.
+    /// `deleted`, every state made unlike its placement, created or reset, a new world)
+    /// and the graph's obstacle stamp (`fnv_nav::NavGraph::obstacles_stamp`: obstacles
+    /// learnt again or switched) are the ones seen after the last poll. [`Game::present`]
+    /// reads nothing else, so a poll now would find every obstacle as the graph has it.
     pub fn obstacles_in_line(&self, game: &Game, nav: &NavGraph) -> bool {
         self.applied_obstacles == Some((game.world.presence_serial(), nav.obstacles_stamp()))
     }
@@ -1416,6 +1416,15 @@ impl Ai {
         let (Some(package), Some(Goal::Follow(mut f))) = (a.package, a.goal.clone()) else { return };
         let feet = Place { space: a.walker.space, pos: a.walker.feet };
         let travelling = a.activity == Activity::Travelling;
+        // Told to wait (Fallout 3's Wait, `fnv_game::functions::fo3`): it stands where it
+        // is until StopWaiting, then follows again.
+        if game.waits(actor) {
+            if travelling {
+                let a = self.agents.get_mut(&actor).expect("listed");
+                (a.walker.follower, a.activity, a.following) = (None, Activity::There, None);
+            }
+            return;
+        }
         let leader = goal::place_of_ref(game, f.target).filter(|_| game.present(f.target) && !game.extra.get(&f.target).is_some_and(|e| e.dead));
         // In a column: the one ahead is followed instead, nearer than the package says.
         // It runs when the leader is far, so that the line keeps together.
@@ -1833,6 +1842,23 @@ impl Ai {
         a.waiting_at = None;
         self.log(game, actor, AiEvent::DoorRefused { door: FormId(door) });
         false
+    }
+
+    /// Combat, a warning or flight takes the sandbox's movement and object intent
+    /// away [design]. The sandbox chooses afresh when its package next runs, without
+    /// losing its schedule or treating the interrupted object as unreachable.
+    pub(crate) fn interrupt_sandbox(&mut self, game: &Game, actor: FormId) {
+        let a = self.agents.get_mut(&actor).expect("listed");
+        if !a.sandbox.as_mut().is_some_and(Sandbox::interrupt) {
+            return;
+        }
+        a.walker.follower = None;
+        a.activity = Activity::There;
+        a.face_to = None;
+        self.set_using(game, actor, None);
+        // A pending choice or a Look-held seat can reserve furniture without using
+        // it. set_using(None) alone does not release those reservations.
+        self.taken.retain(|_, user| *user != actor);
     }
 
     /// A sandboxing actor whose behaviour is over chooses the next one and sets off.

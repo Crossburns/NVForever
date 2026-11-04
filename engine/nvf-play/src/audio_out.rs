@@ -499,7 +499,7 @@ impl Plugin for AudioOutPlugin {
 }
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct AudioOutSystems;
+pub(crate) struct AudioOutSystems;
 
 /// A `PlaybackMode::Despawn` sound: despawned when it ends (Bevy's marker is crate-private).
 #[derive(Component)]
