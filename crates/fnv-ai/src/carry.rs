@@ -1416,6 +1416,15 @@ impl Ai {
         let (Some(package), Some(Goal::Follow(mut f))) = (a.package, a.goal.clone()) else { return };
         let feet = Place { space: a.walker.space, pos: a.walker.feet };
         let travelling = a.activity == Activity::Travelling;
+        // Told to wait (Fallout 3's Wait, `fnv_game::functions::fo3`): it stands where it
+        // is until StopWaiting, then follows again.
+        if game.waits(actor) {
+            if travelling {
+                let a = self.agents.get_mut(&actor).expect("listed");
+                (a.walker.follower, a.activity, a.following) = (None, Activity::There, None);
+            }
+            return;
+        }
         let leader = goal::place_of_ref(game, f.target).filter(|_| game.present(f.target) && !game.extra.get(&f.target).is_some_and(|e| e.dead));
         // In a column: the one ahead is followed instead, nearer than the package says.
         // It runs when the leader is far, so that the line keeps together.

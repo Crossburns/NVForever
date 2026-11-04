@@ -153,3 +153,25 @@ source]: it changes an NPC's FaceGen geometry, and the engine has no per-referen
 yet), the two opcodes above, and SetCellFullName, TriggerHitShader, ResetInterior,
 FadeSFX, SetFactionReaction, SetZoneRespawns, DisableAllMines, StopWaiting,
 TriggerScreenBlood, RemapWaterType, GetLastPlayerAction.
+
+The rest of §1, built later the same day (the same module; opcodes from the capture, the
+two unnamed ones added to the catalogue as `observed-only` entries; scripts.md §7.3):
+
+- **Built**: MatchFaceGeometry (a per-reference morph of the FaceGen shape coefficients,
+  kept with the player's face at the call; the engine's resolver applies it as it draws
+  the head), Wait / StopWaiting / IsWaiting (Wait 0x10B7 is not in the table above: the
+  catalogue had no opcode for it, so the audit could not count it; Fallout 3's INFO
+  0x0609DF01 calls it), SetCellFullName (the load door prompt shows the new name),
+  ResetInterior (`crate::respawn`: reset at the next load, no actor back), SetZoneRespawns,
+  DisableAllMines, RemapWaterType, KillQuestUpdates (0x1231), TriggerScreenBlood (drawn
+  as the screen splatter), GetLastPlayerAction.
+- **Kept as state only**: SetFactionReaction (disposition modifiers are not read by
+  dispositions yet), TriggerLODApocalypse (0x11F3; no LOD change is built),
+  TriggerHitShader, FadeSFX (requests nothing draws or plays yet).
+- **Open**: The Pitt asks `GetLastPlayerAction == 3` when the player shoots (ThePitt.esm
+  SCPT 0x08001076); no capture has seen 3, so it never matches: a capture of
+  GetLastPlayerAction while firing would settle it. Which way DisableAllMines takes a
+  mine (disabled, as built, or disarmed into a loose item) is a hypothesis.
+
+With these §1 is done (ShowSPECIALBookMenuParams was already built, `ui::
+show_special_book_menu`).
