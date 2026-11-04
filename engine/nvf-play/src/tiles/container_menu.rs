@@ -630,67 +630,61 @@ mod tests {
     use fnv_sim::FormId;
     use fnv_ui::MemSource;
 
-    /// [design] A menu in the vanilla file's shape (its names and the expressions the model
-    /// relies on), cut down to what these tests read, 960 high.
+    /// A list's height in [`menu`], which holds eight rows of 40 whole.
+    const PAGE: f64 = 340.0;
+    /// The `_scroll_delta` in [`menu`] until code writes it.
+    const OWN_DELTA: f64 = 15.0;
+
+    /// [design] A small layout written for these tests, with its own structure, numbers and
+    /// expressions; it does not come from the game's files and says nothing about them. It keeps
+    /// the tile names and paths the model and the input look up, which are the engine's interface
+    /// ([`built`]), the trait holders the card writes to, and only the dependencies the tests
+    /// exercise: a row stands at its `_y` less its list's `_offset`, and the highlight at what the
+    /// list was told. With [`list::lines_size`] a row is 40 high, 30 more for each further line.
+    /// The real layout's numbers are checked by the smoke scenarios `tiles-container` and
+    /// `tiles-container-quantity`.
     fn menu_changed(change: impl FnOnce(&str) -> String) -> Ui {
         let cards: String = ["DamageResistInfo", "DPSInfo", "WeightInfo", "ValueInfo", "ConditionInfo", "AmmoInfo", "EffectsInfo", "StrengthReqInfo", "DAMInfo", "DamageThresholdInfo"]
             .iter()
             .map(|c| {
-                let inner = if *c == "ConditionInfo" { r#"<rect name="ConditionMeter"><image name="MeterImage"></image></rect><image name="CNDArrows"><y>17</y></image>"# } else { "" };
+                let inner = if *c == "ConditionInfo" { r#"<rect name="ConditionMeter"><image name="MeterImage"></image></rect><image name="CNDArrows"></image>"# } else { "" };
                 format!(r#"<rect name="{c}"><_Title>{c}</_Title><_Value></_Value><visible>&false;</visible><text name="CI_TitleText"></text><text name="CI_ValueText"></text>{inner}</rect>"#)
             })
             .collect();
-        let list = |name: &str, x: f64| {
+        // One side of the menu, its names all from `prefix`: at x, 50 down; its list 10 in and 20
+        // down from there. A list's clip is what a row is cut by; the pieces of its bar are names.
+        let side = |prefix: &str, x: u32, extra: &str| {
             format!(
-                r#"<hotrect name="{name}"><x>{x}</x><y>60</y><width>462</width><height>365</height><alpha>0</alpha><clipwindow>&true;</clipwindow><target>&false;</target>
-                <_enabled>&true;</_enabled><_scroll_delta>26</_scroll_delta><_highlight_y>-1</_highlight_y><_selected_height>0</_selected_height>
-                <hotrect name="lb_highlight_box"><alpha>40</alpha><y><copy src="parent()" trait="_highlight_y"/></y><x>32</x><width>425</width><height><copy src="parent()" trait="_selected_height"/><sub>1</sub></height><target>&false;</target></hotrect>
-                <image name="lb_scrollbar"><alpha>0</alpha><target>&true;</target><x>0</x><y>16</y><width>32</width><height>333</height>
-                  <_step_size>1</_step_size><_SetInCode></_SetInCode><_number_of_items>1</_number_of_items><_number_of_visible_items>1</_number_of_visible_items>
-                  <_jump_size><copy src="parent()" trait="height"/><div src="parent()" trait="_scroll_delta"/><floor>0</floor></_jump_size>
-                  <_current_value><add><copy src="child(scrollbar_vert_down)" trait="clicked"/><sub src="child(scrollbar_vert_up)" trait="clicked"/></add>
-                    <min><copy src="me()" trait="_number_of_items"/><sub src="me()" trait="_number_of_visible_items"/></min><max>0</max></_current_value>
-                  <hotrect name="scrollbar_vert_page_up"><target>&true;</target></hotrect><hotrect name="scrollbar_vert_page_down"><target>&true;</target></hotrect>
-                  <image name="scrollbar_vert_marker"><target>&true;</target><height>32</height><width>6</width><x>12</x>
-                    <_step_height><copy src="parent()" trait="height"/><sub src="me()" trait="height"/><div>10</div></_step_height>
-                    <y><copy src="parent()" trait="_current_value"/><mul src="me()" trait="_step_height"/></y></image>
-                  <image name="scrollbar_vert_up"><target>&true;</target></image><image name="scrollbar_vert_down"><target>&true;</target></image>
-                </image></hotrect>"#
+                r#"<rect name="{prefix}Rect"><x>{x}</x><y>50</y>
+                <image name="{prefix}_LeftFilterArrow"/><text name="{prefix}Title"><string></string></text><image name="{prefix}_RightFilterArrow"/>{extra}
+                <hotrect name="{prefix}_InventoryList"><x>10</x><y>20</y><width>240</width><height>340</height><clipwindow>&true;</clipwindow>
+                  <_scroll_delta>15</_scroll_delta><_highlight_y>-1</_highlight_y><_selected_height>0</_selected_height>
+                  <_offset><copy src="child(lb_scrollbar)" trait="_current_value"/><mul src="me()" trait="_scroll_delta"/></_offset>
+                  <hotrect name="lb_highlight_box"><alpha>60</alpha><width>200</width>
+                    <y><copy src="parent()" trait="_highlight_y"/></y><height><copy src="parent()" trait="_selected_height"/></height></hotrect>
+                  <image name="lb_scrollbar"><alpha>0</alpha><_current_value>0</_current_value>
+                    <image name="scrollbar_vert_marker"/><image name="scrollbar_vert_up"/><image name="scrollbar_vert_down"/>
+                    <hotrect name="scrollbar_vert_page_up"/><hotrect name="scrollbar_vert_page_down"/>
+                  </image></hotrect></rect>"#
             )
         };
-        let side = |rect: &str, prefix: &str, title: &str, x: f64, list_name: &str, inner: &str| {
-            format!(
-                r#"<rect name="{rect}"><x>{x}</x><y>100</y>
-                <image name="{prefix}_LeftFilterArrow"><target>&true;</target><width>17</width><height>35</height></image>
-                <text name="{title}"><target>&true;</target><string></string><x>50</x><y>-12</y></text>
-                <image name="{prefix}_RightFilterArrow"><target>&true;</target><width>17</width><height>35</height></image>
-                {inner}{}</rect>"#,
-                list(list_name, -15.0)
-            )
-        };
-        let items = side("CM_ItemsRect", "CM_Items", "CM_ItemsTitle", 100.0, "CM_Items_InventoryList", r#"<text name="CM_Items_CapsLabel"><string></string></text>"#);
-        let container = side("CM_ContainerRect", "CM_Container", "CM_ContainerTitle", 700.0, "CM_Container_InventoryList", "");
+        let items = side("CM_Items", 100, r#"<text name="CM_Items_CapsLabel"></text>"#);
+        let container = side("CM_Container", 500, "");
         let xml = format!(
-            r#"<menu name="ContainerMenu"><_PCButton_A>CM_TakeAllButton</_PCButton_A><_PCButton_E>CM_ExitButton</_PCButton_E>
-            <rect name="NOGLOW_BRANCH">
-            <image name="CM_Background"><alpha>32</alpha></image>
-            <rect name="CM_Subtitle"><string> </string></rect>
+            r#"<menu name="ContainerMenu"><rect name="NOGLOW_BRANCH">
+            <image name="CM_Background"><alpha>10</alpha></image><rect name="CM_Subtitle"/>
             {items}{container}
-            <image name="CM_ArrowIcon"><visible>&false;</visible><user0></user0></image>
+            <image name="CM_ArrowIcon"/><image name="CM_ItemIcon"/>
             <rect name="CM_ButtonRect">
-              <image name="CM_TakeAllButton"><target>&true;</target><alpha>0</alpha><_PCButtonText>A)</_PCButtonText><text name="button_text"><string>Take All</string></text></image>
-              <image name="CM_ExitButton"><target>&true;</target><alpha>0</alpha><text name="button_text"><string>Exit</string></text></image>
+              <image name="CM_TakeAllButton"><alpha>0</alpha><text name="button_text"><string>Go</string></text></image>
+              <image name="CM_ExitButton"><alpha>0</alpha><text name="button_text"><string>Stop</string></text></image>
             </rect>
-            <image name="CM_ItemIcon"><visible>&false;</visible></image>
-            <rect name="CM_ItemData"><user1>40</user1>{cards}</rect>
+            <rect name="CM_ItemData"><user1>30</user1>{cards}</rect>
             </rect>
-            <template name="CM_list_template"><hotrect name="CM_list_template_container"><id>20</id><height>0</height><width>425</width><x>32</x><_y></_y>
-              <y><copy src="me()" trait="_y"/><sub><copy src="sibling(lb_scrollbar)" trait="_current_value"/><mul src="parent()" trait="_scroll_delta"/></sub></y>
-              <_VerticalSpacing>20</_VerticalSpacing><clips>&true;</clips><alpha>0</alpha>
-              <target><copy src="parent()" trait="_enabled"/></target>
-              <visible><copy src="me()" trait="listindex"/><gte>0</gte></visible>
-              <text name="ListItemText"><wrapwidth>370</wrapwidth><x>40</x><y>20</y><string></string></text>
-              <image name="CM_list_template_ItemMarker"><visible>&false;</visible></image>
+            <template name="CM_list_template"><hotrect name="CM_list_template_container"><x>30</x><width>200</width><target>&true;</target>
+              <_y>0</_y><_VerticalSpacing>10</_VerticalSpacing>
+              <y><copy src="me()" trait="_y"/><sub src="parent()" trait="_offset"/></y>
+              <text name="ListItemText"></text><image name="CM_list_template_ItemMarker"/>
             </hotrect></template></menu>"#
         );
         let mut ui = Ui::new();
@@ -781,19 +775,19 @@ mod tests {
         frame(&mut ui, &s, &mut st);
         let left = LISTS[Side::Player as usize];
         let right = LISTS[Side::Container as usize];
-        // The rows, named after their items, the second two lines high; both places the file's.
+        // The rows, named after their items, the second two lines high; both places the model's.
         let rows = &st.rows[Side::Player as usize];
         assert_eq!((rows.len(), st.rows[Side::Container as usize].len()), (2, 1));
         assert_eq!(ui.tile(rows[1].tile).name, "Item 2");
-        assert_eq!(ui.tile(rows[1].tile).get("height").map(Value::num), Some(87.0));
-        assert_eq!(ui.tile(rows[1].tile).get("_y").map(Value::num), Some(52.0));
+        assert_eq!(ui.tile(rows[1].tile).get("height").map(Value::num), Some(70.0));
+        assert_eq!(ui.tile(rows[1].tile).get("_y").map(Value::num), Some(40.0));
         assert_eq!(ui.get_string(&format!("{}/{ROW_TEXT}/string", ui.path_of(rows[0].tile))).as_deref(), Some("9mm Pistol"));
         // The highlight only in the list with the focus [observed].
-        assert_eq!((at(&ui, &format!("{left}/_highlight_y")), at(&ui, &format!("{left}/_selected_height"))), (52.0, 87.0));
+        assert_eq!((at(&ui, &format!("{left}/_highlight_y")), at(&ui, &format!("{left}/_selected_height"))), (40.0, 70.0));
         assert_eq!((at(&ui, &format!("{right}/_highlight_y")), at(&ui, &format!("{right}/_selected_height"))), (-1.0, 0.0));
-        // Fits: one item, the file's delta.
+        // Fits: one item, the delta the layout holds.
         assert_eq!(at(&ui, &format!("{left}/lb_scrollbar/_number_of_items")), 1.0);
-        assert_eq!(at(&ui, &format!("{left}/_scroll_delta")), 26.0);
+        assert_eq!(at(&ui, &format!("{left}/_scroll_delta")), OWN_DELTA);
         // The strings, the arrow, the picture, the figures.
         assert_eq!(ui.get_string(&format!("{}/string", TITLES[0])).as_deref(), Some("Footlocker"));
         assert_eq!(ui.get_string(&format!("{WEIGHT}/string")).as_deref(), Some("Wg   52/200"));
@@ -814,7 +808,7 @@ mod tests {
         let alpha = |path: &str| items.iter().find(|i| i.tile == ui.find_tile(path).unwrap()).unwrap().alpha;
         assert_eq!(alpha(&format!("{TAKE_ALL}/button_text")), 255.0, "under an image at alpha 0");
         assert_eq!(alpha(&format!("{}/lb_scrollbar/scrollbar_vert_marker", LISTS[1])), 255.0);
-        assert_eq!(alpha(&format!("{}/lb_highlight_box", LISTS[1])), 40.0, "the fill's own");
+        assert_eq!(alpha(&format!("{}/lb_highlight_box", LISTS[1])), 60.0, "the fill's own");
         assert_eq!(alpha(BACKGROUND), BACKGROUND_ALPHA, "0-255 here; `draw::pieces` divides by 255");
     }
 
@@ -825,28 +819,28 @@ mod tests {
         let rows = refs(&rows);
         let left = LISTS[1];
         frame(&mut ui, &snapshot(&rows, &[], Side::Player, 0), &mut st);
-        // 20 rows of 52 in 365: 7 whole, 13 positions after the first.
-        assert_eq!(at(&ui, &format!("{left}/lb_scrollbar/_number_of_items")), 14.0);
+        // 20 rows of 40 in 340: 8 whole, 12 positions after the first.
+        assert_eq!(at(&ui, &format!("{left}/lb_scrollbar/_number_of_items")), 13.0);
         let delta = at(&ui, &format!("{left}/_scroll_delta"));
-        assert!((delta - 675.0 / 13.0).abs() < 1e-9, "{delta}");
+        assert!((delta - (800.0 - PAGE) / 12.0).abs() < 1e-9, "{delta}");
         // A key's pick of the row under the fold.
-        frame(&mut ui, &snapshot(&rows, &[], Side::Player, 7), &mut st);
+        frame(&mut ui, &snapshot(&rows, &[], Side::Player, 8), &mut st);
         assert_eq!(st.value(Side::Player), 1.0, "moved as little as shows it whole");
         // The pointer's pick of the partial row stays put, with the highlight on its place.
-        let mut pointed = snapshot(&rows, &[], Side::Player, 8);
+        let mut pointed = snapshot(&rows, &[], Side::Player, 9);
         pointed.pointer_pick = true;
         frame(&mut ui, &pointed, &mut st);
         assert_eq!(st.value(Side::Player), 1.0);
-        assert!((at(&ui, &format!("{left}/_highlight_y")) - (8.0 * 52.0 - delta)).abs() < 1e-9);
+        assert!((at(&ui, &format!("{left}/_highlight_y")) - (9.0 * 40.0 - delta)).abs() < 1e-9);
         // The bar moves the list; a frame with the same pick does not bring it back.
         assert!(st.scroll_to(Side::Player, 5.0));
         frame(&mut ui, &pointed, &mut st);
         assert_eq!(st.value(Side::Player), 5.0);
-        let keyed = snapshot(&rows, &[], Side::Player, 8);
+        let keyed = snapshot(&rows, &[], Side::Player, 9);
         frame(&mut ui, &keyed, &mut st);
         frame(&mut ui, &keyed, &mut st);
         assert_eq!(st.value(Side::Player), 5.0, "the row was seen with the pointer's pick");
-        assert!(st.scroll_to(Side::Player, 13.0));
+        assert!(st.scroll_to(Side::Player, 12.0));
         assert!(!st.scroll_to(Side::Player, 99.0), "held at the end");
         // A shorter list, the same view: held in its range.
         frame(&mut ui, &snapshot(&rows[..3], &[], Side::Player, 0), &mut st);
@@ -871,14 +865,23 @@ mod tests {
     #[test]
     fn inactive_column_can_gain_focus() {
         let (mut ui, mut st) = (menu(), ContainerTiles::default());
-        frame(&mut ui, &snapshot(&[(1, "One")], &[(2, "Two")], Side::Player, 0), &mut st);
+        let rows = twenty();
+        let rows = refs(&rows);
+        let s = snapshot(&[(1, "One")], &rows, Side::Player, 0);
+        frame(&mut ui, &s, &mut st);
         let menu = ui.menu(CONTAINER_MENU).unwrap();
-        // The right list's first row, its list without the focus: x 700 - 15 + 32, y 100 + 60.
-        let hit = fnv_ui::input::hit(&ui, &[menu], (800.0, 180.0), &fnv_ui::input::no_measure).unwrap();
-        assert_eq!(st.clicked(&ui, hit.tile), Some(ContainerTile::Row(Side::Container, 0)));
+        let under = |ui: &Ui, st: &ContainerTiles, at: (f64, f64)| fnv_ui::input::hit(ui, &[menu], at, &fnv_ui::input::no_measure).and_then(|h| st.clicked(ui, h.tile));
+        // The right list's first row, its list without the focus: x 500 + 10 + 30, y 50 + 20.
+        assert_eq!(under(&ui, &st, (600.0, 90.0)), Some(ContainerTile::Row(Side::Container, 0)));
         assert_eq!(row_commands(Side::Container, 0, false, false), vec![crate::menu::model::Command::Hover(Side::Container, 0), crate::menu::model::Command::One]);
-        // Past the list's clip nothing takes the pointer [observed: check 80].
-        assert!(fnv_ui::input::hit(&ui, &[menu], (800.0, 530.0), &fnv_ui::input::no_measure).is_none_or(|h| st.clicked(&ui, h.tile) == Some(ContainerTile::Other)));
+        // The list moved: its rows follow, 2 x (800 - 340) / 12 = 76.67 up; the third is there now.
+        assert!(st.scroll_to(Side::Container, 2.0));
+        frame(&mut ui, &s, &mut st);
+        assert_eq!(under(&ui, &st, (600.0, 90.0)), Some(ContainerTile::Row(Side::Container, 2)));
+        // Past the list's clip (its bottom at y 410) nothing takes the pointer, though rows stand
+        // there: twenty rows reach far below it [observed: check 80].
+        let past = under(&ui, &st, (600.0, 420.0));
+        assert!(past.is_none_or(|t| t == ContainerTile::Other), "{past:?}");
     }
 
     #[test]
@@ -931,7 +934,7 @@ mod tests {
         assert_eq!(built(&ui), Tiled::No("CM_list_template missing".into()));
     }
 
-    /// `rows` one-line rows with `above` others before them, a list 365 high at 52 a row (seven
+    /// `rows` one-line rows with `above` others before them, a list 340 high at 40 a row (eight
     /// fit); the last row selected, by keys, the same key whatever comes above it.
     fn long_list(above: u32, rows: u32) -> Snapshot {
         let names: Vec<(u32, String)> = (0..above).map(|i| 1000 + i).chain(1..=rows).map(|i| (i, format!("Row {i}"))).collect();
@@ -979,7 +982,7 @@ mod tests {
     fn a_wrap_below_the_selected_row_keeps_it_shown() {
         // Twenty rows 10 high in a list 70 high, the last 70 high and then 10: the row and the
         // list stand still, what a value moves does not.
-        let mut ui = menu_changed(|xml| xml.replace("<height>365</height>", "<height>70</height>").replace("<_VerticalSpacing>20</_VerticalSpacing>", "<_VerticalSpacing>0</_VerticalSpacing>"));
+        let mut ui = menu_changed(|xml| xml.replace("<height>340</height>", "<height>70</height>").replace("<_VerticalSpacing>10</_VerticalSpacing>", "<_VerticalSpacing>0</_VerticalSpacing>"));
         let mut st = ContainerTiles::default();
         let size = |_: f64, text: &str, _: Option<f64>| (100.0, if text == "Tall" { 70.0 } else { 10.0 });
         let rows = |last: &'static str| -> Vec<(u32, &'static str)> { (1..=20).map(|i| (i, if i == 20 { last } else { "Short" })).collect() };
@@ -1000,10 +1003,10 @@ mod tests {
         let mut st = ContainerTiles::default();
         let left = "ContainerMenu/NOGLOW_BRANCH/CM_ItemsRect/CM_Items_InventoryList";
         frame(&mut ui, &snapshot(&[(1, "A")], &[], Side::Player, 0), &mut st);
-        assert_eq!(at(&ui, &format!("{left}/_scroll_delta")), 26.0, "the file's, before any overflow");
+        assert_eq!(at(&ui, &format!("{left}/_scroll_delta")), OWN_DELTA, "the layout's, before any overflow");
         frame(&mut ui, &long_list(0, 20), &mut st);
         let long = at(&ui, &format!("{left}/_scroll_delta"));
-        assert!(long != 26.0);
+        assert!(long != OWN_DELTA);
         // The filter leaves one row: nothing to scroll, the delta as it was, filtered counted.
         let mut one = snapshot(&[(1, "A")], &[], Side::Player, 0);
         one.lists[Side::Player as usize].filtered = 19;

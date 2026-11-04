@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn scrollbar_children_are_visible() {
-        // The prefab's shape: an image at alpha 0 over its pieces, the marker's alpha copied.
+        // [design] A scrollbar as an image at alpha 0 over its pieces, the marker's alpha copied.
         let xml = r#"<menu name="M"><hotrect name="L"><alpha>0</alpha>
             <image name="lb_scrollbar"><alpha>0</alpha><_marker_alpha>255</_marker_alpha>
               <image name="scrollbar_vert_marker"><filename>m.dds</filename><alpha><copy src="parent()" trait="_marker_alpha"/></alpha></image>

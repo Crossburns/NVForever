@@ -284,7 +284,7 @@ pub fn value_under(ui: &Ui, drag: Drag, pointer_y: f64) -> Option<f64> {
 #[cfg(test)]
 pub(super) fn lines_size(_: f64, text: &str, wrap: Option<f64>) -> (f64, f64) {
     let n = text.split('|').count();
-    (wrap.unwrap_or(100.0).min(100.0), 32.0 + 35.0 * (n as f64 - 1.0))
+    (wrap.unwrap_or(100.0).min(100.0), 30.0 * n as f64)
 }
 
 #[cfg(test)]
@@ -293,26 +293,34 @@ mod tests {
     use fnv_ui::MemSource;
 
     const LIST: &str = "M/R/L";
-    const XML: &str = r#"<menu name="M"><rect name="R"><x>100</x><y>100</y><hotrect name="L"><width>462</width><height>365</height>
-      <_scroll_delta>26</_scroll_delta><_highlight_y>-1</_highlight_y><_selected_height>0</_selected_height><clipwindow>&true;</clipwindow>
-      <hotrect name="lb_highlight_box"><y><copy src="parent()" trait="_highlight_y"/></y></hotrect>
-      <image name="lb_scrollbar"><_height><copy src="parent()" trait="height"/></_height>
-        <_step_size>1</_step_size><_SetInCode></_SetInCode>
-        <_number_of_items>1</_number_of_items><_number_of_visible_items>1</_number_of_visible_items>
-        <_jump_size><copy src="parent()" trait="height"/><div src="parent()" trait="_scroll_delta"/><floor>0</floor></_jump_size>
-        <_current_value>
-          <add><copy src="child(scrollbar_vert_down)" trait="clicked"/><sub src="child(scrollbar_vert_up)" trait="clicked"/></add>
-          <min><copy src="me()" trait="_number_of_items"/><sub src="me()" trait="_number_of_visible_items"/></min><max>0</max>
-        </_current_value>
-        <y>16</y><height>333</height>
-        <image name="scrollbar_vert_marker"><height>32</height>
-          <_step_height><copy src="parent()" trait="height"/><sub src="me()" trait="height"/><div>10</div></_step_height>
-          <y><copy src="parent()" trait="_current_value"/><mul src="me()" trait="_step_height"/></y></image>
-        <image name="scrollbar_vert_up"/><image name="scrollbar_vert_down"/>
-      </image></hotrect></rect>
-      <template name="T"><hotrect name="Row"><height>0</height><_y></_y><_VerticalSpacing>20</_VerticalSpacing>
-        <y><copy src="me()" trait="_y"/><sub><copy src="sibling(lb_scrollbar)" trait="_current_value"/><mul src="parent()" trait="_scroll_delta"/></sub></y>
-        <text name="ListItemText"><string></string></text></hotrect></template>
+    /// The `_scroll_delta` the layout holds until code writes it.
+    const OWN_DELTA: f64 = 15.0;
+    /// The marker's `_step_height` in the layout.
+    const STEP: f64 = 25.0;
+    /// The scrollbar's top on the screen: the panel's 20 and its own 8.
+    const BAR_TOP: f64 = 28.0;
+    /// The `_jump_size` in the layout.
+    const JUMP: f64 = 3.0;
+
+    /// [design] A small list written for these tests, with its own structure, numbers and
+    /// expressions; it does not come from the game's files and says nothing about them. It keeps
+    /// the tile and trait names this module looks up, which are the engine's interface, and only
+    /// the dependencies the tests exercise: a row stands at its `_y` less the list's `_offset`, a
+    /// marker at its value's step, and `_current_value` follows the down arrow's `clicked` so that
+    /// the model's writes have something to beat. The real layout's numbers are checked by the
+    /// smoke scenario `tiles-container`.
+    const XML: &str = r#"<menu name="M"><rect name="R"><x>40</x><y>20</y>
+      <hotrect name="L"><width>240</width><height>300</height><_scroll_delta>15</_scroll_delta>
+        <_offset><copy src="child(lb_scrollbar)" trait="_current_value"/><mul src="me()" trait="_scroll_delta"/></_offset>
+        <image name="lb_scrollbar"><y>8</y><_step_size>1</_step_size><_jump_size>3</_jump_size>
+          <_current_value><copy src="child(scrollbar_vert_down)" trait="clicked"/></_current_value>
+          <image name="scrollbar_vert_down"/>
+          <image name="scrollbar_vert_marker"><width>6</width><height>20</height><_step_height>25</_step_height>
+            <y><copy src="me()" trait="_step_height"/><mul src="parent()" trait="_current_value"/></y></image>
+        </image></hotrect></rect>
+      <template name="T"><hotrect name="Row"><_y>0</_y><_VerticalSpacing>10</_VerticalSpacing>
+        <y><copy src="me()" trait="_y"/><sub src="parent()" trait="_offset"/></y>
+        <text name="ListItemText"/></hotrect></template>
     </menu>"#;
 
     fn menu() -> (Ui, TileId) {
@@ -366,7 +374,8 @@ mod tests {
 
     #[test]
     fn wrapped_rows_define_scroll_extent() {
-        // The original's left list: 15 rows, three of two lines... 885 high, value 4 at -231.11.
+        // [observed: the container capture, barter-menu.md §8] The original's left list: 15 rows,
+        // three of two lines... 885 high, value 4 at -231.11, and a right list of 16.
         let h: Vec<f64> = [52, 52, 52, 52, 87, 52, 52, 52, 52, 52, 52, 87, 87, 52, 52].iter().map(|&x| f64::from(x)).collect();
         let c = counts(&h, 365.0);
         assert_eq!((c.items, c.visible), (10.0, 1.0));
@@ -385,20 +394,27 @@ mod tests {
             ui.set_trait(t, "height", Value::Num(lines_size(2.0, s, None).1));
         }
         let heights = measure_rows(&mut ui, &rows, "ListItemText");
-        assert_eq!(heights, [52.0, 87.0, 52.0]);
+        assert_eq!(heights, [40.0, 70.0, 40.0]);
         ui.update();
-        assert_eq!(ui.tile(rows[2].tile).get("_y").map(Value::num), Some(139.0));
+        assert_eq!(ui.tile(rows[2].tile).get("_y").map(Value::num), Some(110.0));
+        // A list 100 high: one row whole, two positions after the first, each (150 - 100) / 2.
         let c = counts(&heights, 100.0);
-        write_counts(&mut ui, list, &c, 26.0);
+        assert_eq!((c.items, c.delta), (3.0, Some(25.0)));
+        write_counts(&mut ui, list, &c, OWN_DELTA);
+        // Nothing here moves a row: what is drawn follows the value and the delta written.
+        let shown = |ui: &Ui, row: TileId| ui.tile(row).get("y").map(Value::num);
         write_value(&mut ui, list, 1.0);
         ui.update();
-        // The file moves the row: 139 less one delta of (191 - 100) / 2.
-        assert_eq!(ui.tile(rows[2].tile).get("y").map(Value::num), Some(139.0 - 45.5));
+        assert_eq!(shown(&ui, rows[0].tile), Some(-25.0));
+        assert_eq!(shown(&ui, rows[2].tile), Some(85.0));
+        write_value(&mut ui, list, 2.0);
+        ui.update();
+        assert_eq!(shown(&ui, rows[2].tile), Some(60.0));
     }
 
     #[test]
     fn a_template_height_is_kept() {
-        let xml = XML.replace("<height>0</height><_y>", "<height>40</height><_y>");
+        let xml = XML.replace("<_y>0</_y>", "<height>40</height><_y>0</_y>");
         let mut ui = Ui::new();
         ui.load_menu(&MemSource::default().with("m.xml", &xml), "m.xml").unwrap();
         ui.update();
@@ -413,21 +429,23 @@ mod tests {
         // Selected by the pointer, a partial bottom row stays where it is: the view moves only
         // through this call, which the model's pointer pick does not make; called for a key's
         // pick it shows the row whole.
-        let v = keep_row_shown(0.0, 347.0, 52.0, 365.0, 57.78, 9.0);
+        let v = keep_row_shown(0.0, 280.0, 40.0, 300.0, 30.0, 9.0);
         assert_eq!(v, 1.0, "a key's pick: moved as little as shows it whole");
-        assert_eq!(keep_row_shown(4.0, 0.0, 52.0, 365.0, 57.78, 9.0), 0.0, "up to a row above");
-        assert_eq!(keep_row_shown(2.0, 208.0, 87.0, 365.0, 57.78, 9.0), 2.0, "already whole: no move");
-        assert_eq!(keep_row_shown(0.0, 10.0, 900.0, 365.0, 10.0, 90.0), 1.0, "too tall: its top");
+        assert_eq!(keep_row_shown(4.0, 0.0, 40.0, 300.0, 30.0, 9.0), 0.0, "up to a row above");
+        assert_eq!(keep_row_shown(2.0, 160.0, 70.0, 300.0, 30.0, 9.0), 2.0, "already whole: no move");
+        assert_eq!(keep_row_shown(0.0, 10.0, 900.0, 300.0, 10.0, 90.0), 1.0, "too tall: its top");
     }
 
     #[test]
     fn scroll_survives_pulse_release() {
         // A value written after the click's pulse and on its end stays the model's, though the
-        // file's own sum counts from 0.
+        // layout's `_current_value` follows the arrow's `clicked`.
         let (mut ui, list) = menu();
-        write_counts(&mut ui, list, &Counts { items: 10.0, visible: 1.0, delta: Some(57.0) }, 26.0);
+        write_counts(&mut ui, list, &Counts { items: 10.0, visible: 1.0, delta: Some(57.0) }, OWN_DELTA);
         write_value(&mut ui, list, 5.0);
         ui.update();
+        assert_eq!(value_shown(&ui, list), Some(5.0), "read back");
+        assert_eq!(ui.get_float(&format!("{LIST}/lb_scrollbar/_SetInCode")), Some(1.0), "poked");
         let down = ui.find_tile(&format!("{LIST}/lb_scrollbar/scrollbar_vert_down")).unwrap();
         ui.set_trait(down, "clicked", Value::Num(1.0));
         write_value(&mut ui, list, 6.0);
@@ -439,20 +457,26 @@ mod tests {
         assert_eq!(value_shown(&ui, list), Some(6.0), "the pulse's end");
         ui.update();
         assert_eq!(value_shown(&ui, list), Some(6.0), "a frame later");
+        // What the writes beat: with no write the layout's own expression takes the value.
+        ui.set_trait(down, "clicked", Value::Num(1.0));
+        ui.update();
+        assert_eq!(value_shown(&ui, list), Some(1.0), "the layout's own, no model write");
     }
 
     #[test]
     fn drag_clamps_at_both_ends() {
         let (mut ui, list) = menu();
-        write_counts(&mut ui, list, &Counts { items: 11.0, visible: 1.0, delta: Some(57.0) }, 26.0);
+        write_counts(&mut ui, list, &Counts { items: 11.0, visible: 1.0, delta: Some(57.0) }, OWN_DELTA);
         write_value(&mut ui, list, 0.0);
         ui.update();
         let menu = ui.menu("M").unwrap();
-        // The bar's top at 100 + 16, the marker's at its top; a press 5 under it.
-        let drag = marker_grab(&ui, menu, list, 121.0).unwrap();
-        assert_eq!((drag.top, drag.grab), (116.0, 5.0));
-        assert_eq!(value_under(&ui, drag, 121.0), Some(0.0), "where it stands");
-        assert_eq!(value_under(&ui, drag, 121.0 + 3.0 * 30.1), Some(3.0));
+        // The marker at the bar's top; a press 5 under it.
+        let press = BAR_TOP + 5.0;
+        let drag = marker_grab(&ui, menu, list, press).unwrap();
+        assert_eq!((drag.top, drag.grab), (BAR_TOP, 5.0));
+        assert_eq!(value_under(&ui, drag, press), Some(0.0), "where it stands");
+        assert_eq!(value_under(&ui, drag, press + 3.0 * STEP), Some(3.0));
+        assert_eq!(value_under(&ui, drag, press + 2.9 * STEP), Some(2.0), "whole values, floored");
         assert_eq!(value_under(&ui, drag, -500.0), Some(0.0));
         assert_eq!(value_under(&ui, drag, 5000.0), Some(10.0));
         // A menu closed or built again ends it.
@@ -462,26 +486,54 @@ mod tests {
     }
 
     #[test]
+    fn a_press_on_a_moved_marker_keeps_its_grab_and_reads_the_step_height() {
+        let (mut ui, list) = menu();
+        write_counts(&mut ui, list, &Counts { items: 11.0, visible: 1.0, delta: Some(57.0) }, OWN_DELTA);
+        write_value(&mut ui, list, 4.0);
+        ui.update();
+        let menu = ui.menu("M").unwrap();
+        // The marker four steps down, a press 7 under its top: the bar's top is still the top.
+        let press = BAR_TOP + 4.0 * STEP + 7.0;
+        let drag = marker_grab(&ui, menu, list, press).unwrap();
+        assert_eq!((drag.top, drag.grab), (BAR_TOP, 7.0));
+        assert_eq!(value_under(&ui, drag, press), Some(4.0), "where it stands");
+        assert_eq!(value_under(&ui, drag, press + STEP), Some(5.0));
+        // The step height is read from the marker, whatever it holds.
+        let marker = ui.find_tile(&format!("{LIST}/lb_scrollbar/scrollbar_vert_marker")).unwrap();
+        ui.set_trait(marker, "_step_height", Value::Num(10.0));
+        assert_eq!(value_under(&ui, drag, BAR_TOP + 7.0 + 30.0), Some(3.0));
+        ui.set_trait(marker, "_step_height", Value::Num(0.0));
+        assert_eq!(value_under(&ui, drag, press), None, "no step, no value");
+    }
+
+    #[test]
     fn empty_and_filtered_lists_clamp() {
-        let c = counts(&[], 365.0);
+        let c = counts(&[], 300.0);
         assert_eq!((c.items, c.most(), c.delta), (1.0, 0.0, None));
         let (mut ui, list) = menu();
-        write_counts(&mut ui, list, &c, 26.0);
-        assert_eq!(ui.tile(list).get("_scroll_delta").map(Value::num), Some(26.0), "the file's own again");
-        assert_eq!(keep_row_shown(9.0, 0.0, 52.0, 365.0, 26.0, c.most()), 0.0);
+        write_counts(&mut ui, list, &c, OWN_DELTA);
+        assert_eq!(ui.tile(list).get("_scroll_delta").map(Value::num), Some(OWN_DELTA), "the layout's own again");
+        assert_eq!(keep_row_shown(9.0, 0.0, 40.0, 300.0, OWN_DELTA, c.most()), 0.0);
         write_highlight(&mut ui, list, None, 0.0);
         ui.update();
         assert_eq!(ui.tile(list).get("_highlight_y").map(Value::num), Some(-1.0));
         assert_eq!(ui.tile(list).get("_selected_height").map(Value::num), Some(0.0));
         // Pieces hold the value in the range.
-        write_counts(&mut ui, list, &Counts { items: 10.0, visible: 1.0, delta: Some(58.0) }, 26.0);
+        write_counts(&mut ui, list, &Counts { items: 10.0, visible: 1.0, delta: Some(58.0) }, OWN_DELTA);
         ui.update();
-        assert_eq!(after_piece(&ui, list, BarPiece::PageDown, 4.0), Some(9.0), "6 a page, held at the end");
+        assert_eq!(after_piece(&ui, list, BarPiece::PageDown, 4.0), Some(4.0 + JUMP), "a page");
+        assert_eq!(after_piece(&ui, list, BarPiece::PageDown, 8.0), Some(9.0), "a page, held at the end");
         assert_eq!(after_piece(&ui, list, BarPiece::Up, 9.0), Some(8.0));
-        assert_eq!(after_piece(&ui, list, BarPiece::PageUp, 8.0), Some(2.0));
+        assert_eq!(after_piece(&ui, list, BarPiece::Down, 9.0), Some(9.0), "an arrow, held at the end");
+        assert_eq!(after_piece(&ui, list, BarPiece::PageUp, 8.0), Some(8.0 - JUMP));
+        assert_eq!(after_piece(&ui, list, BarPiece::PageUp, 1.0), Some(0.0), "a page, held at the start");
         assert_eq!(after_piece(&ui, list, BarPiece::Marker, 8.0), None);
+        // The page's size is read from the bar, whatever it holds.
+        let bar = child(&ui, list, SCROLLBAR).unwrap();
+        ui.set_trait(bar, "_jump_size", Value::Num(2.0));
+        assert_eq!(after_piece(&ui, list, BarPiece::PageDown, 4.0), Some(6.0));
         // The highlight follows the scroll.
-        write_highlight(&mut ui, list, Some((208.0, 87.0)), 4.0);
-        assert_eq!(ui.tile(list).get("_highlight_y").map(Value::num), Some(208.0 - 232.0));
+        write_highlight(&mut ui, list, Some((200.0, 70.0)), 4.0);
+        assert_eq!(ui.tile(list).get("_highlight_y").map(Value::num), Some(200.0 - 232.0));
     }
 }
