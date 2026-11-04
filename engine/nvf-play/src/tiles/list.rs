@@ -127,8 +127,11 @@ impl Counts {
 
 /// The counts of rows `heights` in a list `page` high [observed: three lists of the container
 /// capture, 15 rows 885 high: 10 items, delta 57.78; 16 rows 937 high: 11, 57.20, twice;
-/// lists that fit: 1 item and the file's 26; design: a value's rows are the ones whole from
-/// the top, as those numbers read].
+/// lists that fit: 1 item; design: a value's rows are the ones whole from the top, as those
+/// numbers read]. A list that fits has no delta of its own here: the capture read the file's 26
+/// on a right list with nothing filtered and 57.2 on one with 15 of 16 rows filtered [observed];
+/// that every list keeps its last delta so is [hypothesis] from that one case (the caller's
+/// `file_delta`, [`write_counts`]).
 pub fn counts(heights: &[f64], page: f64) -> Counts {
     let total: f64 = heights.iter().sum();
     if total <= page {

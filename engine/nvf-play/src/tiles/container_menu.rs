@@ -46,7 +46,6 @@ use crate::menu::look;
 use crate::menu::model::{Category, MenuModel, Mode, Row, RowGuard, RowKey, Side};
 use crate::pipboy::items::Info;
 use bevy::prelude::Resource;
-use fnv_sim::FormId;
 use fnv_ui::{TileId, Ui, Value};
 
 /// The menu's name [documented: container_menu.xml].
@@ -78,8 +77,8 @@ pub const BACKGROUND_ALPHA: f64 = 193.8;
 pub const TAKE_ALL_HINT: &str = "sPCMenuHintR";
 
 /// [design] Every path the model writes or input reads is part of a successful build, the
-/// buttons' words, which give them their sizes, and the rows' template with the two children
-/// written; a file a mod restructured keeps the hand-built menu whole. Worked out once a frame
+/// buttons' words, which give them their sizes, the condition meter's drawable image, and the
+/// rows' template with the two children written; a file a mod restructured keeps the hand-built menu whole. Worked out once a frame
 /// ([`ContainerTiles::menu`]).
 pub fn built(ui: &Ui) -> Tiled {
     let mut paths: Vec<String> = [CONTAINER_MENU, BACKGROUND, SUBTITLE, WEIGHT, ARROW, ICON, CARD, TAKE_ALL, EXIT].iter().map(|s| (*s).to_string()).collect();
@@ -96,7 +95,7 @@ pub fn built(ui: &Ui) -> Tiled {
             paths.push(format!("{list_path}/{}/{piece}", list::SCROLLBAR));
         }
     }
-    paths.extend(super::item_card::CARDS.iter().chain(&[super::item_card::EFFECTS, super::item_card::CONDITION_ARROWS, super::item_card::CONDITION_METER]).map(|c| format!("{CARD}/{c}")));
+    paths.extend(super::item_card::CARDS.iter().chain(&[super::item_card::EFFECTS, super::item_card::CONDITION_ARROWS, super::item_card::CONDITION_METER, super::item_card::CONDITION_METER_IMAGE]).map(|c| format!("{CARD}/{c}")));
     for card in super::item_card::CARDS.iter().chain(&[super::item_card::EFFECTS]) {
         paths.extend(super::item_card::CARD_TEXTS.map(|t| format!("{CARD}/{card}/{t}")));
     }
@@ -170,6 +169,9 @@ pub struct Snapshot {
     /// The model's selection was last moved by the pointer: the lists stay where they are
     /// [owner's playtest list 7, item 11].
     pub pointer_pick: bool,
+    /// The "How many?" prompt is open. Nothing here draws it; it is a change of what the menu
+    /// shows, so the log reads the lists again once the prompt has closed [design].
+    pub asking: bool,
     /// [`MenuModel::navigated`].
     pub navigated: u32,
     /// The selected item's figures ([`look::item_figures`]) when there is one.
@@ -221,6 +223,7 @@ impl Snapshot {
             weight: weight_label(m),
             focus: m.focus,
             pointer_pick: m.pointer_pick,
+            asking: m.quantity.is_some(),
             navigated: m.navigated,
             card: selected.map(|r| look::item_figures(m, r, info)),
             icon: selected.and_then(|r| r.icon.clone()),
@@ -241,12 +244,13 @@ struct ListView {
     selected: Option<(f64, f64)>,
     /// The highlighted row the scroll last followed.
     watched: Option<RowKey>,
-    /// Its top and height and the list's height then.
-    geometry: Option<(f64, f64, f64)>,
+    /// Its top and height, the list's height, the scroll's scale and its highest value then.
+    geometry: Option<(f64, f64, f64, f64, f64)>,
     /// [`Snapshot::navigated`] then.
     navigated: u32,
-    /// The `_scroll_delta` a list that fits keeps: its last overflowing one [observed: 15 of 16
-    /// rows filtered read 57.2], the file's before that (26).
+    /// The `_scroll_delta` a list that fits keeps: its last overflowing one, the file's before
+    /// that (26) [observed once: 15 of 16 rows filtered read 57.2; hypothesis: that every list
+    /// keeps it so].
     kept_delta: Option<f64>,
     category: Category,
     /// The file's `_scroll_delta` before any code wrote it, for a list that fits.
@@ -371,14 +375,16 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles, write_sizes: &
         let picked = s.lists[i].selected.filter(|&k| k < heights.len());
         view.selected = picked.map(|k| (heights[..k].iter().sum(), heights[k]));
         let key = picked.map(|k| s.lists[i].rows[k].key);
-        let geometry = view.selected.map(|(top, height)| (top, height, page));
+        let scale = counts.delta.unwrap_or(file_delta);
+        let geometry = view.selected.map(|(top, height)| (top, height, page, scale, counts.most()));
         // The keys' picks bring their row into view, the pointer's do not. So does a key's or
         // the wheel's move that ends on the same row, and a row moved by a refresh or a new
-        // measure (rows above it came or went, a wrap, the list's height); while none of that
-        // happens the bar and the marker move the list freely.
+        // measure (rows above it came or went, a wrap, the list's height, or a wrap below it,
+        // which changes what a value moves); while none of that happens the bar and the marker
+        // move the list freely.
         let moved = view.watched != key || view.navigated != s.navigated || view.geometry != geometry;
         if let (true, true, Some((top, height))) = (!s.pointer_pick, moved, view.selected) {
-            view.value = list::keep_row_shown(view.value, top, height, page, counts.delta.unwrap_or(file_delta), counts.most());
+            view.value = list::keep_row_shown(view.value, top, height, page, scale, counts.most());
         }
         view.watched = key;
         view.geometry = geometry;
@@ -620,6 +626,7 @@ pub fn describe(ui: &Ui, s: &Snapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fnv_sim::FormId;
     use fnv_ui::MemSource;
 
     /// [design] A menu in the vanilla file's shape (its names and the expressions the model
@@ -628,7 +635,7 @@ mod tests {
         let cards: String = ["DamageResistInfo", "DPSInfo", "WeightInfo", "ValueInfo", "ConditionInfo", "AmmoInfo", "EffectsInfo", "StrengthReqInfo", "DAMInfo", "DamageThresholdInfo"]
             .iter()
             .map(|c| {
-                let inner = if *c == "ConditionInfo" { r#"<rect name="ConditionMeter"></rect><image name="CNDArrows"><y>17</y></image>"# } else { "" };
+                let inner = if *c == "ConditionInfo" { r#"<rect name="ConditionMeter"><image name="MeterImage"></image></rect><image name="CNDArrows"><y>17</y></image>"# } else { "" };
                 format!(r#"<rect name="{c}"><_Title>{c}</_Title><_Value></_Value><visible>&false;</visible><text name="CI_TitleText"></text><text name="CI_ValueText"></text>{inner}</rect>"#)
             })
             .collect();
@@ -712,6 +719,7 @@ mod tests {
             weight: "Wg   52/200".into(),
             focus,
             pointer_pick: false,
+            asking: false,
             navigated: 0,
             card: Some(Info { value: Some("30".into()), weight: Some("5.00".into()), ..Info::default() }),
             icon: Some("interface\\icons\\x.dds".into()),
@@ -730,18 +738,31 @@ mod tests {
 
     /// A frame as the writer does it: what changed written, then [`settle`].
     fn frame(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles) {
+        frame_sized(ui, s, st, &list::lines_size);
+    }
+
+    /// [`frame`] with the texts measured by `size`.
+    fn frame_sized(ui: &mut Ui, s: &Snapshot, st: &mut ContainerTiles, size: &super::super::menus::Size<'_>) {
         let menu = ui.menu(CONTAINER_MENU).unwrap();
         st.menu = Some(menu);
         if st.is_new(menu, s) {
             write(ui, s, st);
         }
         let texts = super::super::menus::texts(ui, menu);
-        settle(ui, s, st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| super::super::menus::write_text_sizes_of(ui, &texts, sizes, &list::lines_size));
+        settle(ui, s, st, &mut |ui: &mut Ui, sizes: &mut SizesWritten| super::super::menus::write_text_sizes_of(ui, &texts, sizes, size));
         mark_tiles(ui);
     }
 
     fn at(ui: &Ui, path: &str) -> f64 {
         ui.get_float(path).unwrap_or(-999.0)
+    }
+
+    /// The highlighted row stands whole in its list, by what the tree holds.
+    #[track_caller]
+    fn assert_selected_shown(ui: &Ui, side: Side) {
+        let list = LISTS[side as usize];
+        let (y, height, page) = (at(ui, &format!("{list}/_highlight_y")), at(ui, &format!("{list}/_selected_height")), at(ui, &format!("{list}/height")));
+        assert!(height > 0.0 && y >= -1e-6 && y + height <= page + 1e-6, "the row at y {y}, {height} high, in a list {page} high");
     }
 
     fn twenty() -> Vec<(u32, String)> {
@@ -892,7 +913,7 @@ mod tests {
         let ui = menu_changed(|xml| xml.replace("name=\"WeightInfo\"", "name=\"Modded\""));
         assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains("WeightInfo")));
         // A card's words and the condition's bar.
-        for piece in ["ConditionMeter", "CI_TitleText", "CI_ValueText"] {
+        for piece in ["ConditionMeter", "MeterImage", "CI_TitleText", "CI_ValueText"] {
             let ui = menu_changed(|xml| xml.replace(&format!("name=\"{piece}\""), "name=\"Modded\""));
             assert!(matches!(built(&ui), Tiled::No(reason) if reason.contains(piece)), "{piece}");
         }
@@ -923,15 +944,14 @@ mod tests {
         let mut st = ContainerTiles::default();
         let s = long_list(0, 20);
         frame(&mut ui, &s, &mut st);
-        let shown = st.value(Side::Player);
-        assert!(shown > 0.0, "the keys' row brought into view");
+        assert_selected_shown(&ui, Side::Player);
         // The bar moves the list freely while nothing else changes.
         st.scroll_to(Side::Player, 0.0);
         frame(&mut ui, &s, &mut st);
         assert_eq!(st.value(Side::Player), 0.0);
         // The same row, moved by rows coming above it: back in view, by keys.
         frame(&mut ui, &long_list(4, 20), &mut st);
-        assert!(st.value(Side::Player) > 0.0, "the row moved, the selection did not");
+        assert_selected_shown(&ui, Side::Player);
         // With the pointer's pick the list stands still, whatever moves.
         st.scroll_to(Side::Player, 0.0);
         let mut pointer = long_list(8, 20);
@@ -951,7 +971,26 @@ mod tests {
         assert_eq!(st.value(Side::Player), 0.0);
         s.navigated += 1;
         frame(&mut ui, &s, &mut st);
-        assert!(st.value(Side::Player) > 0.0);
+        assert_selected_shown(&ui, Side::Player);
+    }
+
+    #[test]
+    fn a_wrap_below_the_selected_row_keeps_it_shown() {
+        // Twenty rows 10 high in a list 70 high, the last 70 high and then 10: the row and the
+        // list stand still, what a value moves does not.
+        let mut ui = menu_changed(|xml| xml.replace("<height>365</height>", "<height>70</height>").replace("<_VerticalSpacing>20</_VerticalSpacing>", "<_VerticalSpacing>0</_VerticalSpacing>"));
+        let mut st = ContainerTiles::default();
+        let size = |_: f64, text: &str, _: Option<f64>| (100.0, if text == "Tall" { 70.0 } else { 10.0 });
+        let rows = |last: &'static str| -> Vec<(u32, &'static str)> { (1..=20).map(|i| (i, if i == 20 { last } else { "Short" })).collect() };
+        let left = LISTS[Side::Player as usize];
+        frame_sized(&mut ui, &snapshot(&rows("Tall"), &[], Side::Player, 10), &mut st, &size);
+        assert!((at(&ui, &format!("{left}/_scroll_delta")) - 190.0 / 13.0).abs() < 1e-9);
+        assert_eq!(st.value(Side::Player), 3.0);
+        assert_selected_shown(&ui, Side::Player);
+        frame_sized(&mut ui, &snapshot(&rows("Short"), &[], Side::Player, 10), &mut st, &size);
+        assert_eq!(at(&ui, &format!("{left}/_scroll_delta")), 10.0);
+        assert_eq!(st.value(Side::Player), 4.0, "the scale fell: value 3 would leave the row at y 70");
+        assert_selected_shown(&ui, Side::Player);
     }
 
     #[test]

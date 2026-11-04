@@ -172,7 +172,8 @@ pub struct Tile {
 /// The titles of the figures' cards as this page and the container and barter menus show them
 /// [observed: the owner's ITEMS screenshots, pipboy.md §5]. Where a menu file's title reads
 /// `fnv_ui::strings::BUILT_IN`'s label and no plugin's setting, `crate::tiles::item_card` writes
-/// these, NVForever's own card words, over it; a plugin's or a mod's title stays.
+/// these over it; a plugin's or a mod's title stays. Whether these words may stay is an open
+/// question for the maintainer (barter-menu.md, "The words on the tiles").
 pub mod card_title {
     pub const DAM: &str = "DAM";
     pub const WG: &str = "WG";

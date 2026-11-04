@@ -8,9 +8,10 @@
 //!   class [observed: `AmmoInfo` title "9mm (13/37)", "Heavy", `_Value` empty].
 //! - The titles' words: a title from a plugin's setting, a mod's file or a script stays, by
 //!   where it came from (`fnv_ui::Ui::built_in_label`), whatever its words. Only a title the
-//!   file left to `fnv_ui::strings::BUILT_IN` ("WEIGHT", "Value", "Condition" ...) takes
-//!   NVForever's own card words ([`crate::pipboy::items::card_title`], [`SHORT_TITLES`], the
-//!   hand-built figures' [design]): the two drawings of a card agree, and the labels do not fit
+//!   file left to `fnv_ui::strings::BUILT_IN` ("WEIGHT", "Value", "Condition" ...) takes the
+//!   hand-built figures' card words ([`crate::pipboy::items::card_title`], [`SHORT_TITLES`]
+//!   [design]; whether those words may stay is open, barter-menu.md, "The words on the tiles"):
+//!   the two drawings of a card agree, and the labels do not fit
 //!   the file's card: `ConditionMeter` stands 62 in, a title 5 in [documented], and "WEIGHT"
 //!   alone measures 72 units [observed: this menu at 1280 x 720].
 //! - The condition: `ConditionInfo`'s `user5` 0 to 1, which its meter reads, and `user6` 1 for
@@ -38,6 +39,8 @@ pub const EFFECTS: &str = "EffectsInfo";
 pub const CONDITION_ARROWS: &str = "ConditionInfo/CNDArrows";
 /// The condition's bar under `ConditionInfo`, which `user5` fills.
 pub const CONDITION_METER: &str = "ConditionInfo/ConditionMeter";
+/// What draws the meter's fill [documented: prefabs/meter.xml, which the card includes].
+pub const CONDITION_METER_IMAGE: &str = "ConditionInfo/ConditionMeter/MeterImage";
 /// A card's words [documented: card_info.xml]: `_Title` and `_Value` show only through them.
 pub const CARD_TEXTS: [&str; 2] = ["CI_TitleText", "CI_ValueText"];
 

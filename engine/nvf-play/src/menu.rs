@@ -761,6 +761,9 @@ fn apply_input(
         if let (false, Some(q)) = (asking, m.quantity) {
             info!("menu: {cmd:?}: how many? ({} of {})", q.amount, q.max);
         }
+        if asking && m.quantity.is_none() && matches!(cmd, Command::AmountCancel | Command::Close) {
+            info!("menu: {cmd:?}: prompt closed");
+        }
         // What the command did, for its sound (`crate::ui_sounds`).
         if let Some(event) = crate::ui_sounds::menu_event(cmd, &before, m, &a) {
             sounds.write(crate::ui_sounds::UiSound { menu: crate::ui_sounds::UiMenu::of(m.mode), event });

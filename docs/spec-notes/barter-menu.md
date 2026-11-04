@@ -308,8 +308,9 @@ with JIP on a footlocker; interface units; parts a to g, with their shots in the
   either: `sel none`). The highlight box is 1 less than the row high, at the row's `y` after
   the scroll (a row at `_y` 208 with value 4: -23.11), hudmain at brightness 128, alpha 40
   (message-menu.md).
-- **The scrollbar**: `_number_of_visible_items` is always 1. A list that fits reads 1 item and
-  the file's `_scroll_delta` 26. Longer ones:
+- **The scrollbar**: `_number_of_visible_items` is always 1. A list that fits reads 1 item; a
+  right list with nothing filtered read the file's `_scroll_delta` 26, one with 15 of 16 rows
+  filtered 57.2 (below, "Heading, filter"). Longer ones:
 
   | rows | total height | list | `_number_of_items` | `_scroll_delta` | `_jump_size` | marker height, `_step_height` |
   |---|---|---|---|---|---|---|
@@ -370,19 +371,25 @@ What the tile path does with these, and where it differs:
   settings no plugin defines [observed: menu-xml.md §2.4], so the file would show
   `BUILT_IN`'s labels; those do not fit a card (`ConditionMeter` stands 62 in and a title 5 in
   [documented]; the label of the weight measures 72 units [observed: our shot]). A title that
-  holds such a fallback by where it came from (`Ui::built_in_label`) takes NVForever's own card
-  words, those of the hand-built figures (`card_title` in `pipboy/items.rs`; pipboy.md §5 records
-  them as seen on the owner's screenshots, which menu-xml.md §2.4's rule for labels would not
-  allow for a new label; they are the hand-built menu's, not new), so the two drawings agree. A plugin's setting, a mod's
-  file or a script keeps its title even in the very same words. `BUILT_IN` itself is not changed.
+  holds such a fallback by where it came from (`Ui::built_in_label`) takes the hand-built figures'
+  card words (`card_title` in `pipboy/items.rs`), so the two drawings agree. A plugin's setting, a
+  mod's file or a script keeps its title even in the very same words. `BUILT_IN` itself is not
+  changed.
+  **Open question for the maintainer: how these words may be derived.** pipboy.md §5 records them
+  as seen on the owner's screenshots, and the rule for labels (menu-xml.md, "The rule for the
+  text") does not allow a label looked up from a screenshot and has no exception for words already
+  in use. The hand-built menu having them does not answer this. Until the maintainer decides, the
+  words stay as they are, here and in the hand-built figures.
 - **Heading, filter**: a click on a heading steps its category on, as its right arrow
   [observed: `container__category_heading_click`, 2 to 3]. `_num_filtered` is written, the rows
   the category leaves out [observed: 10 of 15, 12 of 15, 15 of 16]; the original keeps those
   rows' tiles at `listindex` -1 with stale `y`s and this menu unloads them [design], so a mod
   looking for a filtered row's tile finds none. A list that comes to fit keeps its last
-  `_scroll_delta` [observed: 57.2 with 15 of 16 filtered]; 26 only before it ever overflowed.
+  `_scroll_delta`, and has 26 only before it ever overflowed: [observed] once, 57.2 with 15 of 16
+  filtered; [hypothesis] for every list, from that one case.
 - **The scroll follows** the selected row on a key's or the wheel's move (also one ending on the
-  same row) and when the row's place or the list's height changes under a key's pick; never on a
+  same row) and when the row's place, the list's height or the scroll's scale (a wrap below the
+  row) changes under a key's pick; never on a
   pointer's pick [owner's playtest list 7, item 11], and the bar and marker stay free otherwise.
 - **The weight** cuts off to whole units [observed: 289.50 reads "Wg   289/200", 49.50 "Wg
   49/200"]; the hand-built label rounds (`look::half_figure`), left as it is.
