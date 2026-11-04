@@ -851,8 +851,8 @@ pub(crate) mod tests {
     }
 
     /// A click either side of the marker reaches the page area there and its command, and one on
-    /// the marker drags. The areas here stand still; how the real layout's move with the marker
-    /// is the smoke scenario `tiles-tutorial`'s.
+    /// the marker drags. The areas here stand still, and no test checks how the real layout's
+    /// move with the marker: `tiles-tutorial` checks the marker's places and one page-down click.
     #[test]
     fn a_click_either_side_of_the_marker_is_that_sides_page_command() {
         // The scrollbar on the screen: x 60 to 80. Its areas: y 100 to 200 and y 220 to 400.
