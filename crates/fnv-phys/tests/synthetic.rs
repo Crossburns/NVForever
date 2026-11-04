@@ -1353,36 +1353,42 @@ fn keyframed_door_blocks_until_posed_open() {
     assert!((b.translation[0] - 150.0).abs() < 0.5, "{:?}", b.translation);
 }
 
-/// A keyframed body's motion is prescribed, so its mass properties play no part in it
-/// and are zeroed: its centre of mass must stay at its own origin. A collision triangle
-/// mesh whose winding cancels its signed volume (the Prospector Saloon's broken door
-/// 0x00108BD7, issue #1485) otherwise makes parry's `MassProperties::from_trimesh` place
-/// the centre of mass far outside the mesh, and rapier's `interpolate_velocity` turns the
-/// floating-point error there into a phantom velocity the character controller then rides.
+/// A keyframed body is teleported into place (never moved smoothly), so it is a fixed
+/// body. As a kinematic body it broke the character controller twice — a degenerate
+/// collision mesh's centre of mass became a phantom velocity that flung a character
+/// standing on it, and the controller's "carried by a kinematic body" rule froze a
+/// character walking down its slope (the Prospector Saloon's broken door 0x00108BD7,
+/// issue #1485). A character walking down a keyframed slope must move normally.
 #[test]
-fn keyframed_body_keeps_its_centre_of_mass_at_its_origin() {
-    let v = |x: f32, y: f32, z: f32| [x, y, z];
-    let h: f32 = 200.0;
-    let vertices = vec![
-        v(-h, -h, -5.0), v(h, -h, -5.0), v(h, h, -5.0), v(-h, h, -5.0),
-        v(-h, -h, 5.0), v(h, -h, 5.0), v(h * 0.99, h, 5.0), v(-h, h, 5.0),
-    ];
-    // Half the faces wound backwards: the signed volume nearly cancels.
-    let triangles = vec![
-        [0, 2, 1], [0, 3, 2],
-        [4, 6, 5], [4, 7, 6],
-        [0, 1, 5], [0, 5, 4],
-        [2, 7, 3], [2, 6, 7],
-        [0, 4, 7], [0, 7, 3],
-        [1, 6, 2], [1, 5, 6],
-    ];
-    let shape = Shape::TriMesh { vertices, triangles, materials: vec![0; 12] };
+fn keyframed_slope_does_not_free_or_fling_the_character() {
+    // A slab tilted so its top descends southward, keyframed as door parts are.
+    let a = 5.0f32.to_radians();
+    let (s, c) = a.sin_cos();
+    let rot = [c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c];
+    let half = [200.0, 200.0, 5.0];
+    let west = [-half[0], 0.0, half[2]];
+    let rw = [rot[0] * west[0] + rot[2] * west[2], 0.0, rot[6] * west[0] + rot[8] * west[2]];
+    let mut panel = object(boxed(half), Motion::Keyframed);
+    panel.shell = 0.7;
     let mut w = ground();
-    w.add_ref(&at(1, [0.0, 0.0, 100.0]), &[object(shape, Motion::Keyframed)]);
-    // The centre of mass must stay with the body, not the mesh's, which parry's
-    // signed-volume puts far outside it.
-    let com = w.ref_center(1).unwrap();
-    assert!(com[0].abs().max(com[1].abs()).max((com[2] - 100.0).abs()) < 100.0, "centre of mass flew out: {com:?}");
+    w.add_ref(&RefPose { form_id: 1, position: [0.0 - rw[0], 0.0, 100.0 - rw[2]], rotation: rot, scale: 1.0 }, &[panel]);
+    let mut c = w.add_character(1, CharacterParams::default(), [0.0, 100.0, 120.0]);
+    settle(&mut w, &mut c, 60);
+    let z0 = c.feet[2];
+    let dt = w.params.dt;
+    let mut min_speed = f32::INFINITY;
+    let mut max_up = 0.0f32;
+    let mut prev = c.feet;
+    for _ in 0..120 {
+        let s = w.move_character(&mut c, CharacterInput { velocity: [0.0, -344.0], ..Default::default() });
+        w.step();
+        let speed = ((s.feet[0] - prev[0]).powi(2) + (s.feet[1] - prev[1]).powi(2)).sqrt() / dt;
+        min_speed = min_speed.min(speed);
+        max_up = max_up.max(s.feet[2] - z0);
+        prev = s.feet;
+    }
+    assert!(min_speed > 50.0, "froze on the keyframed slope: min {min_speed:.1} units/s");
+    assert!(max_up < 30.0, "flung {max_up} units up");
 }
 
 #[test]
