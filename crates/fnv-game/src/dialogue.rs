@@ -626,6 +626,8 @@ impl<'a> Game<'a> {
             c.choices.clear();
             c.lines += 1;
         }
+        // The line is up, whether or not a script of it runs: whoever started it reads it next.
+        self.dialogue_transition();
         self.emit_response(actor, def, info, 0);
         self.run_line_result(actor, def, false);
         if def.has(info_flag::RUN_IMMEDIATELY) {
@@ -645,8 +647,11 @@ impl<'a> Game<'a> {
     fn run_line_result(&mut self, actor: FormId, def: &InfoDef, end: bool) {
         let data = self.data;
         if let Some(u) = if end { def.end } else { def.begin } {
-            // A result script runs right inside the transition: what it reads is up by then.
-            self.dialogue_transition();
+            // An end script runs as the line goes: what it reads is up by then. A begin script
+            // comes right after the line's own transition.
+            if end {
+                self.dialogue_transition();
+            }
             self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(actor) });
             self.run_result(u, RunCtx { self_ref: Some(actor), action_ref: None, quest: def.quest });
         }

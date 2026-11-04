@@ -1941,6 +1941,12 @@ fn a_view_of_the_conversation_hears_before_its_result_scripts_run() {
     assert_eq!(said, FormId(E_NOW));
     assert_ne!(out(&g), before);
     assert_eq!(heard.lock().unwrap()[0], (before, Some(E_NOW), 0));
+    // A line with no result script: told all the same, before the call that started it returns.
+    let mut g = game(&f);
+    g.said.insert((actor(), FormId(A_FIRST)));
+    let heard = listen_in(&mut g);
+    assert_eq!(g.start_dialogue(actor(), None), Ok(FormId(A_LATER)));
+    assert_eq!(heard.lock().unwrap().first().copied(), Some((0.0, Some(A_LATER), 0)));
     // No conversation: nothing to tell.
     let mut g = game(&f);
     let heard = listen_in(&mut g);
