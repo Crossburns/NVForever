@@ -466,9 +466,11 @@ pub fn pipboy_open(pip: Res<PipBoy>) -> bool {
 }
 
 /// Whether the Pip-Boy's keys are its own: not while the tutorial menu is open over it
-/// (`crate::tutorial_menu`, whose A, S and E are Next, Previous and Close).
-fn takes_keys(script: Option<Res<crate::script::ScriptState>>) -> bool {
-    !script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.menu == Some(menus::TUTORIAL))
+/// (`crate::tutorial_menu`, whose A, S and E are Next, Previous and Close), and with the
+/// page drawn from its tiles not in the frame a menu over it closes either: that key was the
+/// menu's (`crate::tiles::stats_menu::StatsTiles::modal`).
+fn takes_keys(script: Option<Res<crate::script::ScriptState>>, tiles: Option<Res<crate::tiles::stats_menu::StatsTiles>>) -> bool {
+    !script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.menu == Some(menus::TUTORIAL)) && !tiles.is_some_and(|t| t.modal)
 }
 
 /// The menu code the Pip-Boy shows (`MenuMode`): its page's, or the repair list's or the

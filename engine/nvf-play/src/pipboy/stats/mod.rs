@@ -329,6 +329,7 @@ pub struct Input<'w, 's> {
     wheel: MessageReader<'w, 's, MouseWheel>,
     time: crate::pause::AidTime<'w>,
     asks: MessageWriter<'w, UseHint>,
+    tiles: Option<Res<'w, crate::tiles::stats_menu::StatsTiles>>,
 }
 
 /// What [`prepare`] keeps between frames.
@@ -407,7 +408,10 @@ pub fn prepare(
             _ => change(&mut view, |v| apply_aid(v, tab, s)),
         }
     }
-    if pip.open() {
+    // With the page drawn from its tiles a menu over it owns the keys and the wheel for all of
+    // the frame it closes in (`crate::tiles::stats_menu::StatsTiles::modal`).
+    let tiles = input.tiles.as_deref();
+    if pip.open() && !tiles.is_some_and(|t| t.modal) {
         let mut ask = None;
         change(&mut view, |v| ask = keys(&input.keys, v, tab));
         if let Some(a) = ask {
@@ -423,7 +427,9 @@ pub fn prepare(
         let whole = mem.wheel.trunc();
         if whole != 0.0 {
             mem.wheel -= whole;
-            if pointer.is_some_and(|p| desc_rect(tab).is_some_and(|r| r.contains(p))) {
+            // The tiles' description is where the file put it.
+            let area = tiles.and_then(|t| t.ready.and(t.desc_area)).or_else(|| desc_rect(tab));
+            if pointer.is_some_and(|p| area.is_some_and(|r| r.contains(p))) {
                 change(&mut view, |v| v.scroll_desc(-whole as i32));
             } else if tab > 0 {
                 change(&mut view, |v| v.scroll(tab, -whole as i32));

@@ -18,14 +18,29 @@
 //!   (keys, test aid, what is shown) and [`settle`], which writes what they changed, works the
 //!   tree out and decides, before `frame::draw` and `super::draw::draw`. So a tab change or a key
 //!   is drawn in the frame it happens, from one state.
+//! - **Input** ([`feed`], before the scripts): the pointer is the Pip-Boy's own, in canvas units
+//!   (`crate::pipboy::PipBoyScreen::pointer`: the device's ray or the flat image's crop), acting
+//!   on the page painted last frame, what the player saw. A row under the pointer selects and
+//!   boxes as the hand-built list does, not one drawn under a pointer that has not moved; a
+//!   click on a row selects it; a tab sends `PipBoyInput::Tab`; the description's arrows, page
+//!   areas and marker become `StatsView` commands. The value is the model's: written back after
+//!   input, and the wheel stays `crate::pipboy::stats::prepare`'s, so nothing acts twice. The
+//!   keys stay the hand-built ones ([`HAND_BUILT_KEYS`]): a file's binding for one does not act
+//!   for a physical press, a script's click does. The screen menu's header stays hand-built, and
+//!   no tile lies under it to take its click; nor do the file's hover sounds play here, so a
+//!   tab's is `TabHovered`, once.
+//! - **A menu over the page** takes the frame's input ([`modal_over`]), for all of the frame it
+//!   closes in as well: its key closed it in the scripts, before the page's keys run.
 
 use super::draw::FontKit;
+use super::input::{frame_keys, log_report, Devices};
 use super::layout;
 use super::menus::{self, SizesWritten};
 use super::vanilla::TileMenus;
 use crate::pipboy::stats::model::{Row, Snapshot};
 use crate::pipboy::stats::{self, Prepared, StatsView};
-use crate::pipboy::{Frame, Page, PipBoy, CANVAS};
+use crate::pipboy::sounds::TabHovered;
+use crate::pipboy::{Frame, Page, PipBoy, PipBoyAid, PipBoyInput, PipBoyScreen, CANVAS};
 use crate::script::ScriptState;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -297,23 +312,12 @@ struct FlatChanges {
 
 /// The screen menu's layout, the maintainer's [design: the owner, 2026-10-31, `frame::heading_title`,
 /// docs/design/screen-menu.md §2]: no title, no background, the heading's line running on from the
-/// lead line. On the device what it changed goes back.
+/// lead line. On the device what it changed goes back. Called with the texts measured, as the
+/// file may place the line by the title's width: what the file works out again for the line is
+/// put right here, on every pass.
 fn write_frame(ui: &mut Ui, p: &Paths, device: bool, flat: &mut Option<FlatChanges>) {
-    match (device, flat.take()) {
-        (false, None) => {
-            let title = ui.tile(p.title).get("visible").cloned();
-            let background = ui.tile(p.background).get("visible").cloned();
-            let line = ui.tile(p.line).get("_length").map(Value::num).map(|len| (num(ui, p.line, "x"), len));
-            ui.set_trait(p.title, "visible", flag(false));
-            ui.set_trait(p.background, "visible", flag(false));
-            if let Some((x, len)) = line {
-                let from = f64::from(crate::pipboy::frame::lead_line_end());
-                ui.set_trait(p.line, "x", Value::Num(from));
-                ui.set_trait(p.line, "_length", Value::Num(x + len - from));
-            }
-            *flat = Some(FlatChanges { title, background, line });
-        }
-        (true, Some(was)) => {
+    if device {
+        if let Some(was) = flat.take() {
             ui.set_trait(p.title, "visible", was.title.unwrap_or(flag(true)));
             ui.set_trait(p.background, "visible", was.background.unwrap_or(flag(true)));
             if let Some((x, len)) = was.line {
@@ -321,8 +325,22 @@ fn write_frame(ui: &mut Ui, p: &Paths, device: bool, flat: &mut Option<FlatChang
                 ui.set_trait(p.line, "_length", Value::Num(len));
             }
         }
-        (false, Some(was)) => *flat = Some(was),
-        (true, None) => {}
+        return;
+    }
+    if flat.is_none() {
+        let title = ui.tile(p.title).get("visible").cloned();
+        let background = ui.tile(p.background).get("visible").cloned();
+        let line = ui.tile(p.line).get("_length").map(Value::num).map(|len| (num(ui, p.line, "x"), len));
+        ui.set_trait(p.title, "visible", flag(false));
+        ui.set_trait(p.background, "visible", flag(false));
+        *flat = Some(FlatChanges { title, background, line });
+    }
+    if let Some((x, len)) = flat.as_ref().and_then(|f| f.line) {
+        let from = f64::from(crate::pipboy::frame::lead_line_end());
+        if num(ui, p.line, "x") != from {
+            ui.set_trait(p.line, "x", Value::Num(from));
+            ui.set_trait(p.line, "_length", Value::Num(x + len - from));
+        }
     }
 }
 
@@ -440,6 +458,11 @@ pub struct StatsTiles {
     pub desc_area: Option<Rect>,
     /// [`CUT_AID`].
     pub cut: Option<String>,
+    /// A menu over the page when this frame began ([`modal_over`]): set before the scripts,
+    /// so it holds through the frame that menu closes in.
+    pub modal: bool,
+    /// Another menu took this frame's tile input (`super::input::feed`).
+    pub others: bool,
     written: Written,
 }
 
@@ -464,7 +487,6 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
     if changed {
         let shown = Shown::of(snap, selected, device);
         write_model(ui, &p, &w.rows, &shown);
-        write_frame(ui, &p, device, &mut w.flat);
         w.shown = Some(shown);
         w.highlight = view.highlight;
         w.checked = None;
@@ -481,6 +503,8 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, device: b
             }
             ui.update();
         }
+        write_frame(ui, &p, device, &mut w.flat);
+        ui.update();
         let g = geometry(ui, &p, &w.rows, selected, view.highlight)?;
         if view.desc_bound() != g.desc_bound {
             view.set_desc_bound(g.desc_bound);
@@ -610,6 +634,224 @@ pub(crate) fn settle(mut p: StatsPage) {
     }
     if p.tiles.ready != ready {
         p.tiles.ready = ready;
+    }
+}
+
+/// The keys the hand-built page acts on itself (`crate::pipboy::stats::keys`,
+/// `crate::pipboy::keys`), by the tile input's names, and the controller's triggers standing in
+/// for its pages' keys (`crate::pad::menu_buttons`).
+pub const HAND_BUILT_KEYS: [&str; 10] = ["W", "S", "A", "D", "xup", "xdown", "xleft", "xright", "xbuttonlt", "xbuttonrt"];
+
+/// Whether the open menu is one over the Pip-Boy's pages and not one of them.
+pub fn modal_over(open: Option<u16>) -> bool {
+    use fnv_game::game::menus;
+    open.is_some_and(|code| !menus::answers(menus::PIPBOY, code))
+}
+
+/// The menu, when the page takes this frame's tile input: painted last frame, and the page up,
+/// with nothing over it. Every reader of the frame's input decides by this.
+pub fn takes(tiles: &StatsTiles, switch: TileMenus, pip: &PipBoy, game: &fnv_game::Game<'_>, paused: bool) -> Option<TileId> {
+    if !pip.open() || !eligible(switch, pip) || paused || modal_over(game.menu) {
+        return None;
+    }
+    tiles.shown.filter(|&m| game.ui_files.is_some() && game.ui_tree.is_live(m))
+}
+
+/// What a tile of the page stands for, by the tile or a parent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatsTile {
+    Row(usize),
+    Tab(usize),
+    StepUp,
+    StepDown,
+    PageUp,
+    PageDown,
+    Marker,
+}
+
+/// What `tile` stands for: a row the page made, a tab, or a piece of the description's scroll
+/// bar [documented: scrollbar_vert.xml's names].
+pub fn stats_tile(ui: &Ui, p: &Paths, rows: &[MadeRow], tile: TileId) -> Option<StatsTile> {
+    let mut at = Some(tile);
+    let mut in_bar = false;
+    while let Some(t) = at {
+        in_bar |= t == p.bar;
+        at = ui.tile(t).parent;
+    }
+    let mut at = Some(tile);
+    while let Some(t) = at {
+        if let Some(i) = rows.iter().position(|r| r.tile == t) {
+            return Some(StatsTile::Row(i));
+        }
+        if let Some(i) = p.tabs.iter().position(|&x| x == t) {
+            return Some(StatsTile::Tab(i));
+        }
+        if in_bar {
+            match ui.tile(t).name.to_ascii_lowercase().as_str() {
+                "scrollbar_vert_up" => return Some(StatsTile::StepUp),
+                "scrollbar_vert_down" => return Some(StatsTile::StepDown),
+                "scrollbar_vert_page_up" => return Some(StatsTile::PageUp),
+                "scrollbar_vert_page_down" => return Some(StatsTile::PageDown),
+                "scrollbar_vert_marker" => return Some(StatsTile::Marker),
+                _ => {}
+            }
+        }
+        at = ui.tile(t).parent;
+    }
+    None
+}
+
+/// The scroll steps of a page area's click: the window's less a step, at least one [design].
+pub fn page_steps(ui: &Ui, p: &Paths) -> i32 {
+    ((num(ui, p.desc_rect, "height") / f64::from(stats::DESC_STEP)).floor() as i32 - 1).max(1)
+}
+
+/// A press on the description's marker, held: the bar's top and how far under the marker's top
+/// the pointer took it (canvas units).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MarkerDrag {
+    marker: TileId,
+    top: f64,
+    grab: f64,
+}
+
+/// The [`MarkerDrag`] of a press on the marker; worked out once a press, as the tutorial's.
+pub fn marker_grab(ui: &Ui, p: &Paths, pointer_y: f64) -> Option<MarkerDrag> {
+    let marker = find_named(ui, p.bar, "scrollbar_vert_marker")?;
+    let placed = layout::layout(ui, p.menu, &|_, _, _| (0.0, 0.0), true).into_iter().find(|i| i.tile == marker)?.rect;
+    Some(MarkerDrag { marker, top: placed.top - num(ui, marker, "y"), grab: pointer_y - placed.top })
+}
+
+/// The scroll steps with the marker held at `pointer_y`, by the file's `_step_height`
+/// [documented: scrollbar_vert.xml], within `most`.
+pub fn steps_under(ui: &Ui, drag: MarkerDrag, pointer_y: f64, most: usize) -> Option<usize> {
+    let step = num(ui, drag.marker, "_step_height");
+    (step > 0.0).then(|| ((pointer_y - drag.grab - drag.top) / step + 1e-9).floor().clamp(0.0, most as f64) as usize)
+}
+
+/// What [`feed`] keeps between frames.
+#[derive(Default)]
+pub(crate) struct Feed {
+    /// The page took input last frame, in this frame of the Pip-Boy.
+    taking: Option<Frame>,
+    /// The pointer when the page came up, until it moves: a row under it does not take the
+    /// selection, as the hand-built list's rule.
+    drawn_at: Option<Vec2>,
+    /// The row the pointer last selected, while it stays on it.
+    acted: Option<usize>,
+    drag: Option<MarkerDrag>,
+}
+
+/// The pointer's row in `over`: what the view does with it ([`Feed::acted`]). `settled`: the
+/// pointer has moved since the page came up.
+fn follow_hover(view: &mut StatsView, acted: &mut Option<usize>, over: Option<usize>, settled: bool) {
+    match over {
+        Some(i) if settled && *acted != Some(i) => {
+            view.select(PAGE, i);
+            view.highlight = true;
+            *acted = Some(i);
+        }
+        Some(_) => {}
+        None => {
+            if acted.take().is_some() {
+                view.highlight = false;
+            }
+        }
+    }
+}
+
+/// The page's tile input, on a frame it takes it ([`takes`]): see the module notes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn feed(
+    mut script: ResMut<ScriptState>,
+    switch: Res<TileMenus>,
+    (pip, screen, aid, paused): (Res<PipBoy>, Option<Res<PipBoyScreen>>, Res<PipBoyAid>, Option<Res<crate::pause::Paused>>),
+    mut tiles: ResMut<StatsTiles>,
+    devices: Devices,
+    view: Option<ResMut<StatsView>>,
+    (mut tabs, mut hovered): (MessageWriter<PipBoyInput>, MessageWriter<TabHovered>),
+    mut state: Local<Feed>,
+) {
+    let Some(rt) = script.rt.as_mut() else { return };
+    let game = &mut rt.game;
+    let modal = eligible(*switch, &pip) && pip.open() && modal_over(game.menu);
+    if tiles.modal != modal {
+        tiles.modal = modal;
+    }
+    let is_paused = paused.as_ref().is_some_and(|p| p.0);
+    let menu = takes(&tiles, *switch, &pip, game, is_paused).filter(|_| !tiles.others);
+    let (Some(menu), Some(p), Some(mut view)) = (menu, tiles.written.paths.filter(|p| Some(p.menu) == tiles.shown), view) else {
+        *state = Feed::default();
+        return;
+    };
+    let pointer = screen.as_ref().and_then(|s| s.pointer);
+    if state.taking != Some(pip.frame) {
+        *state = Feed { taking: Some(pip.frame), drawn_at: pointer, ..Default::default() };
+    }
+    if pointer != state.drawn_at {
+        state.drawn_at = None;
+    }
+    let settled = state.drawn_at.is_none() || pointer.is_none();
+    // The test aid's click (`crate::pipboy::drive_pointer`): 1 is its press's frame.
+    let aid_press = aid.click == 1 && !aid.right;
+    let held = aid_press || devices.mouse.pressed(MouseButton::Left);
+    let at = pointer.map(|p| (f64::from(p.x), f64::from(p.y)));
+    let mut input = fnv_ui::input::Input {
+        at,
+        press: aid_press || devices.mouse.just_pressed(MouseButton::Left),
+        shift: devices.keys.pressed(KeyCode::ShiftLeft) || devices.keys.pressed(KeyCode::ShiftRight),
+        ..Default::default()
+    };
+    let pad_menu = crate::pad::MenuAt { code: Some(fnv_game::game::menus::STATS), tab: PAGE };
+    let physical = frame_keys(&mut input, &devices, game, pad_menu);
+    let report = fnv_game::ui_input::step(game, &[menu], &input, &fnv_ui::input::no_measure);
+    let over = game.ui_pointer.over;
+    let ui = &game.ui_tree;
+    log_report(ui, &report);
+    let rows = &tiles.written.rows;
+    let what = |t: TileId| stats_tile(ui, &p, rows, t);
+    if let Some((_, Some(to))) = report.over {
+        if let Some(StatsTile::Tab(i)) = what(to) {
+            hovered.write(TabHovered(i));
+        }
+    }
+    let over_row = over.and_then(what).and_then(|w| if let StatsTile::Row(i) = w { Some(i) } else { None });
+    // Only a real change touches the view, which the page's other readers watch.
+    if over_row != state.acted && (settled || over_row.is_none()) {
+        follow_hover(&mut view, &mut state.acted, over_row, settled);
+    }
+    if !held {
+        state.drag = None;
+    }
+    let mut pressed_marker = false;
+    for c in report.clicks.iter().filter(|c| ui.is_live(c.tile)) {
+        if let fnv_ui::input::By::Key(k) = &c.by {
+            if !menus::key_click_acts(STATS_MENU, k, &physical) {
+                continue;
+            }
+        }
+        let Some(tile) = what(c.tile) else { continue };
+        info!("tiles: {STATS_MENU} {tile:?} on its tiles");
+        match tile {
+            StatsTile::Row(i) => view.select(PAGE, i),
+            StatsTile::Tab(i) => {
+                tabs.write(PipBoyInput::Tab(i));
+            }
+            StatsTile::StepUp => view.scroll_desc(-1),
+            StatsTile::StepDown => view.scroll_desc(1),
+            StatsTile::PageUp => view.scroll_desc(-page_steps(ui, &p)),
+            StatsTile::PageDown => view.scroll_desc(page_steps(ui, &p)),
+            StatsTile::Marker => {
+                pressed_marker = true;
+                state.drag = at.filter(|_| held && matches!(c.by, fnv_ui::input::By::Pointer)).and_then(|(_, y)| marker_grab(ui, &p, y));
+            }
+        }
+    }
+    // A drag: the scroll under the pointer while the press holds.
+    if let (false, Some(drag), Some((_, y))) = (pressed_marker, state.drag, at) {
+        if let Some(steps) = steps_under(ui, drag, y, view.desc_bound()).filter(|&s| s != view.desc) {
+            view.desc = steps;
+        }
     }
 }
 
