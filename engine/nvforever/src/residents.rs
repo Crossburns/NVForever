@@ -589,8 +589,8 @@ struct Resident {
     seat: Seat,
     /// The furniture `fnv_ai` has the actor use now.
     wants: Option<u32>,
-    /// Nothing holds it from being told to sit again after a refusal: its AI runs, it is
-    /// awake and alive, and no conversation, stagger or idle holds it.
+    /// Waiting after a refusal, with nothing to hold it from being told to sit again: its
+    /// AI runs, it is awake and alive, and no conversation, stagger or idle holds it.
     may_ask_again: bool,
     /// Standing where its package has it, with nothing else to do: its package's idles
     /// may play (`idles.rs`). Inside: the base of the idle marker it stands at.
@@ -1094,6 +1094,11 @@ impl Residents {
         r.seat = Seat::None;
         true
     }
+}
+
+/// A conversation or a greeting holds `actor` where it stands (`Core::think`).
+fn held_by_talk(game: &Game, ai: &Ai, actor: FormId) -> bool {
+    (game.in_actor_conversation(actor) && !game.conversation_moves(actor)) || ai.holds_for_chat(actor) || game.greets_player(actor)
 }
 
 impl Core {
@@ -1738,9 +1743,7 @@ impl Core {
             .iter()
             .filter(|r| {
                 matches!(r.seat, Seat::Ordered(..) | Seat::GettingUp(_))
-                    || (game.in_actor_conversation(r.actor) && !game.conversation_moves(r.actor))
-                    || self.ai.holds_for_chat(r.actor)
-                    || game.greets_player(r.actor)
+                    || held_by_talk(game, &self.ai, r.actor)
                     || self.staggering.contains(&r.actor.0)
             })
             .map(|r| r.actor.0)
@@ -2103,7 +2106,8 @@ impl Core {
             }
             // The furniture it is to use, once it stands there.
             r.wants = agent.using.filter(|_| agent.activity == Activity::There).map(|f| f.0);
-            r.may_ask_again = !held.contains(&r.actor.0) && !game.ai_off(r.actor) && !game.extra.get(&r.actor).is_some_and(|e| e.dead || e.out_cold());
+            // `held` dates from before this frame's `social`: a talk begun since counts too.
+            r.may_ask_again = matches!(r.seat, Seat::Waiting(..)) && !held.contains(&r.actor.0) && !held_by_talk(game, &self.ai, r.actor) && !game.ai_off(r.actor) && !game.extra.get(&r.actor).is_some_and(|e| e.dead || e.out_cold());
             let still = agent.activity != Activity::Travelling && agent.walker.follower.is_none() && agent.using.is_none() && agent.talk.is_none();
             r.stand = still.then(|| match agent.sandbox.as_ref().map(|s| s.doing) {
                 Some(Doing::AtIdleMarker(m)) => game.world.placed.get(m).map(|p| p.base),
