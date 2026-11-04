@@ -135,7 +135,7 @@ fn mark(
                     }
                 }
                 // Items dropped or placed at run time (`World::created`).
-                let created: Vec<(FormId, FormId, Option<FormId>, [f32; 3])> = g.world.created().filter(|(_, s)| !s.deleted && s.enabled).map(|(r, s)| (r, s.base, s.cell, s.pos)).collect();
+                let created: Vec<(FormId, FormId, Option<FormId>, [f32; 3])> = g.world.created().filter(|(_, s)| !s.deleted() && s.enabled()).map(|(r, s)| (r, s.base, s.cell, s.pos)).collect();
                 for (r, base, cell, at) in created {
                     if searched(g.data, base) && cell.is_some_and(|c| g.loaded_cells.contains(&c)) && dist(at) <= SEARCH_RANGE {
                         out.push((r, shader, "Search and Mark"));

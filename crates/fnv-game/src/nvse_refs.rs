@@ -19,7 +19,7 @@ impl Game<'_> {
         out.extend(self.world.changed().filter(|(_, s)| s.cell == Some(cell)).map(|(r, _)| r));
         out.sort();
         out.dedup();
-        out.retain(|&r| self.cell_of(r) == Some(cell) && (taken || !self.world.peek(r).is_some_and(|s| s.deleted)));
+        out.retain(|&r| self.cell_of(r) == Some(cell) && (taken || !self.world.peek(r).is_some_and(|s| s.deleted())));
         out
     }
 

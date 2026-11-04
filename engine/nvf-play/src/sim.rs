@@ -115,7 +115,7 @@ impl SimState {
     /// Whether a placed reference is in the world now (not taken or deleted, enabled).
     pub fn present(&self, form_id: u32) -> bool {
         let id = FormId(form_id);
-        !self.world.peek(id).is_some_and(|s| s.deleted) && self.world.is_enabled(id).unwrap_or(true)
+        !self.world.peek(id).is_some_and(|s| s.deleted()) && self.world.is_enabled(id).unwrap_or(true)
     }
 }
 

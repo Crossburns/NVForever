@@ -1267,7 +1267,7 @@ impl Core {
         let found: Vec<FormId> = game
             .world
             .changed()
-            .filter(|(id, s)| *id < FormId::FIRST_DYNAMIC && !s.deleted && !self.known.contains(&id.0) && is_actor(refs, *id))
+            .filter(|(id, s)| *id < FormId::FIRST_DYNAMIC && !s.deleted() && !self.known.contains(&id.0) && is_actor(refs, *id))
             .filter(|(id, s)| s.cell.is_some_and(|c| game.loaded_cells.contains(&c)) && s.cell != refs.get(*id).and_then(|p| p.cell))
             .map(|(id, _)| id)
             .collect();
