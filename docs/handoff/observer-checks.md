@@ -1154,6 +1154,19 @@ The numbers above stay put so links to them hold; each item here gives its own p
     names the language, so the code page can be detected. Then with `CodePage=1251`:
     menus, dialogue, the Pip-Boy and the HUD show Cyrillic, not `?` or wrong letters.
 
+## Added 2026-11-03 (sounds decoded on worker threads, issue #1428)
+
+82. **Does `PlaySound X; StopSound X` in one frame play anything?** (P3; audio.md §11.5.)
+    NVForever reads a sound's file on a worker, and a StopSound covers the sounds of X
+    asked for before it, also in the same frame, so the pair plays nothing; `StopSound X;
+    PlaySound X` plays X [hypothesis]. In the original (`nvfstrip`, a probe like sound1):
+    one script block that runs `PlaySound` then `StopSound` of a short one-shot never
+    played before in the session (its file not loaded yet) and of one played a moment
+    earlier; the same with the order turned round; then the same with a Loop-flag SOUN
+    (EMTMedicalBeep01). Log `IsSoundPlaying` of it each frame for 10 frames and record
+    the audio. The answer: whether any of it is heard, and IsSoundPlaying's values per
+    frame for each order.
+
 ## Added 2026-11-03 (volume sliders, issue #1450)
 
 79. **How does the original's Music slider turn its music down, and does the main menu
