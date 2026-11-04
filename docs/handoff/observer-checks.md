@@ -1237,10 +1237,20 @@ The numbers above stay put so links to them hold; each item here gives its own p
 ## Added 2026-11-05 (creatures and furniture, issue #1522)
 
 85. **Does a sandboxing creature near free furniture ever use it?** (P2; furniture.md §9.)
-    NVForever keeps a creature off furniture when its skeleton's folder has no clips for
-    it, and every actor off a cross unless a package names or links to it [design]. Open.
-    Start with the Nipton mongrels (`0016B483`, `0016B484`, `DefaultSandboxEditorLocation1024`,
-    a free cross `00139FD6` about 900 units away) and a super mutant near its
-    `SuperMutantBed`, then a person sandboxing near an empty cross. Watch `GetSitting` and
-    `GetSleeping` of the actor over a game day, or more. If a creature does use furniture,
-    say which, on what, and with which clip: the rule in §9 changes.
+    Answered in part, minutes of watching and not days [observed, 2026-11-04, the original
+    over Moonlight]: no creature read as on furniture in any of these.
+    - Super mutants `001744C1` to `C4` among `SuperMutantBed` and `FloorSitMarker`: 534 s,
+      hours 12 and 23; `DefaultSandboxEditorLocation512` for at least the first, and `C4` was
+      under Sandbox in 0 of 111 samples.
+    - Colmillo and GibsonDog01 under `Sandbox256` the whole time: 358 s, within 98 to 168
+      units of `OldLadyGibsonChair`, probably free at hour 20 [hypothesis]. People in the
+      loaded area did read as on furniture, so the reads fire.
+    - Three rats near `Outhouse0000`: 355 s, partly in combat, so weak.
+    - Neil: 533 s, never under a sandbox package, so weak.
+
+    **Pending**: the Nipton mongrels (`0016B483`, `0016B484`,
+    `DefaultSandboxEditorLocation1024`, a free cross `00139FD6` about 900 units away), not
+    watched yet: the session crashes; and a person sandboxing near an empty cross. NVForever
+    keeps a creature off furniture the tree gives it no clip for, and leaves crosses out of a
+    sandbox's choices [design]. If a creature does use furniture, say which, on what, and
+    with which clip: the rule in §9 changes.

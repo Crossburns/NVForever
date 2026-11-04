@@ -13,6 +13,8 @@ use fnv_game::GameData;
 use fnv_nav::record::{NavMeshRecord, Triangle};
 use fnv_nav::{NavGraph, Space};
 use fnv_script::FunctionTable;
+use fnv_sim::furniture_facts::{ActorKind, Fit, FurnitureFacts};
+use std::sync::Arc;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::Value as Json;
 
@@ -108,6 +110,7 @@ const P_FLEE_NOTHING: u32 = 0x828;
 const P_FIND_NONE: u32 = 0x829;
 const P_HUNT: u32 = 0x82A;
 const P_BUY: u32 = 0x82B;
+const P_USE_NAMED: u32 = 0x82C;
 // Bases.
 const N_LEADER: u32 = 0x840;
 const N_GUEST: u32 = 0x841;
@@ -124,6 +127,7 @@ const N_HUNTER: u32 = 0x84B;
 const N_POACHER: u32 = 0x84C;
 const N_BUYER: u32 = 0x84D;
 const N_VENDOR: u32 = 0x84E;
+const N_SITTER_NAMED: u32 = 0x84F;
 // Cell and references.
 const CELL: u32 = 0x860;
 const MARK_FAR: u32 = 0x870;
@@ -131,6 +135,9 @@ const MARK_TRAP: u32 = 0x871;
 const MARK_WAIT: u32 = 0x872;
 const MARK_HOME: u32 = 0x873;
 const R_CHAIR: u32 = 0x874;
+const R_CHAIR_FAR: u32 = 0x8E0;
+const R_SITTER_NAMED: u32 = 0x8E1;
+const CHAIR_2: u32 = 0x8E2;
 const R_BOTTLE: u32 = 0x875;
 const R_OWNED: u32 = 0x876;
 const R_LEADER: u32 = 0x880;
@@ -173,6 +180,7 @@ fn plugin_bytes() -> Vec<u8> {
         pack(P_STEAL, "StealMeat", 0, FIND, type_flags::ALLOW_STEALING, Some((2, 0, 1500)), None, Some((1, MEAT, 1)), None),
         // Sit on furniture near the chair.
         pack(P_USE, "UseChair", 0, USE_ITEM_AT, 0, Some((0, R_CHAIR, 0)), None, Some((2, 11, 0)), None),
+        pack(P_USE_NAMED, "UseThatChair", 0, USE_ITEM_AT, 0, Some((0, R_CHAIR, 0)), None, Some((0, R_CHAIR, 0)), None),
         // Wait at the wait marker, hidden, for the guest to come within 300 of the trap.
         pack(P_AMBUSH, "AmbushGuest", 0, AMBUSH, type_flags::HIDE_WHILE_AMBUSHING, Some((0, MARK_WAIT, 64)), Some((0, MARK_TRAP, 300)), Some((0, R_GUEST, 0)), None),
         // Keep 600 from the guest; run home from it; flee nothing.
@@ -196,6 +204,7 @@ fn plugin_bytes() -> Vec<u8> {
         npc(N_HONEST, "Honest", &[P_FIND_OWNED]),
         npc(N_THIEF, "Thief", &[P_STEAL]),
         npc(N_SITTER, "Sitter", &[P_USE]),
+        npc(N_SITTER_NAMED, "NamedSitter", &[P_USE_NAMED]),
         npc(N_AMBUSHER, "Ambusher", &[P_AMBUSH]),
         npc(N_COWARD, "Coward", &[P_FLEE]),
         npc(N_HOMEBODY, "Homebody", &[P_FLEE_HOME]),
@@ -207,7 +216,11 @@ fn plugin_bytes() -> Vec<u8> {
         record(b"NPC_", N_VENDOR, &[sub(b"EDID", z("Vendor")), sub(b"AIDT", [&[0u8; 8][..], &(1u32 << 10).to_le_bytes(), &[0u8; 8]].concat())]),
     ]
     .concat();
-    let furn = record(b"FURN", CHAIR, &[sub(b"EDID", z("Chair")), sub(b"MNAM", 0x4000_0001u32.to_le_bytes().to_vec())]);
+    let furn = [
+        record(b"FURN", CHAIR, &[sub(b"EDID", z("Chair")), sub(b"MNAM", 0x4000_0001u32.to_le_bytes().to_vec())]),
+        record(b"FURN", CHAIR_2, &[sub(b"EDID", z("SecondChair")), sub(b"MNAM", 0x4000_0001u32.to_le_bytes().to_vec())]),
+    ]
+    .concat();
     let misc = [
         record(b"MISC", BOTTLE, &[sub(b"EDID", z("Bottle")), sub(b"DATA", [1i32.to_le_bytes(), 0.5f32.to_le_bytes()].concat())]),
         record(b"MISC", MEAT, &[sub(b"EDID", z("Meat")), sub(b"DATA", [1i32.to_le_bytes(), 0.5f32.to_le_bytes()].concat())]),
@@ -235,6 +248,7 @@ fn plugin_bytes() -> Vec<u8> {
         placed(b"REFR", MARK_WAIT, "MarkWait", STAT, [1500.0, 1700.0, 0.0], None),
         placed(b"REFR", MARK_HOME, "MarkHome", STAT, [150.0, 1850.0, 0.0], None),
         placed(b"REFR", R_CHAIR, "ChairRef", CHAIR, [1000.0, 1000.0, 0.0], None),
+        placed(b"REFR", R_CHAIR_FAR, "FarChairRef", CHAIR_2, [1100.0, 1000.0, 0.0], None),
         placed(b"REFR", R_BOTTLE, "BottleRef", BOTTLE, [600.0, 600.0, 0.0], None),
         placed(b"REFR", R_OWNED, "OwnedMeatRef", MEAT, [700.0, 300.0, 0.0], Some(N_GUEST)),
         placed(b"ACHR", R_LEADER, "LeaderRef", N_LEADER, [250.0, 150.0, 0.0], None),
@@ -243,6 +257,7 @@ fn plugin_bytes() -> Vec<u8> {
         placed(b"ACHR", R_HONEST, "HonestRef", N_HONEST, [300.0, 300.0, 0.0], None),
         placed(b"ACHR", R_THIEF, "ThiefRef", N_THIEF, [300.0, 300.0, 0.0], None),
         placed(b"ACHR", R_SITTER, "SitterRef", N_SITTER, [600.0, 1000.0, 0.0], None),
+        placed(b"ACHR", R_SITTER_NAMED, "NamedSitterRef", N_SITTER_NAMED, [600.0, 1040.0, 0.0], None),
         placed(b"ACHR", R_AMBUSHER, "AmbusherRef", N_AMBUSHER, [1500.0, 1200.0, 0.0], None),
         placed(b"ACHR", R_COWARD, "CowardRef", N_COWARD, [450.0, 150.0, 0.0], None),
         placed(b"ACHR", R_HOMEBODY, "HomebodyRef", N_HOMEBODY, [450.0, 250.0, 0.0], None),
@@ -577,4 +592,50 @@ fn a_flee_package_with_a_location_runs_there_and_one_with_no_threat_stands() {
     assert!(s.events(R_CALM).iter().any(|e| matches!(e, AiEvent::FleeSafe { from: None, .. })), "{:?}", s.events(R_CALM));
     assert!(s.goal_met(R_CALM));
     assert_eq!(s.ai.agents[&FormId(R_CALM)].activity, Activity::There);
+}
+
+// ---- furniture eligibility (issue #1522) --------------------------------------------
+
+/// The actors of these tests fit the second chair's base only.
+struct OnlyTheFarChair;
+
+impl FurnitureFacts for OnlyTheFarChair {
+    fn marker_ids(&self, _: FormId) -> Option<&[u8]> {
+        None
+    }
+    fn fit(&self, _: ActorKind, _: &str, base: FormId) -> Fit {
+        if base.0 == CHAIR_2 { Fit::Supported } else { Fit::Unsupported }
+    }
+}
+
+#[test]
+fn use_item_at_looks_past_the_furniture_it_has_no_clips_for() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SITTER]);
+    s.ai.set_furniture_facts(Arc::new(OnlyTheFarChair));
+    s.run(15.0);
+    let actor = FormId(R_SITTER);
+    assert_eq!(s.ai.agents[&actor].using, Some(FormId(R_CHAIR_FAR)));
+    assert!(s.events(R_SITTER).iter().any(|e| matches!(e, AiEvent::UsesAt { thing: Some(t), .. } if t.0 == R_CHAIR_FAR)));
+    assert!(s.goal_met(R_SITTER));
+}
+
+/// Named furniture it has no clips for: nothing kept, nothing faced, nothing used, and its
+/// goal met as when there is nothing to use. The refusal is on record.
+#[test]
+fn use_item_at_a_named_chair_it_has_no_clips_for_uses_nothing() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_SITTER_NAMED]);
+    s.ai.set_furniture_facts(Arc::new(OnlyTheFarChair));
+    s.run(15.0);
+    let actor = FormId(R_SITTER_NAMED);
+    assert_eq!(s.ai.agents[&actor].using, None);
+    assert_eq!(s.ai.furniture_of(actor), None);
+    assert!(s.events(R_SITTER_NAMED).iter().any(|e| matches!(e, AiEvent::UsesAt { thing: None, .. })), "{:?}", s.events(R_SITTER_NAMED));
+    assert!(s.events(R_SITTER_NAMED).iter().any(|e| matches!(e, AiEvent::FurnitureEligibility { furniture, decision: "excluded", .. } if furniture.0 == R_CHAIR)));
+    assert!(s.goal_met(R_SITTER_NAMED));
+    // Without facts it sits, as before.
+    let mut s = sim(&f, &[R_SITTER_NAMED]);
+    s.run(15.0);
+    assert_eq!(s.ai.agents[&actor].using, Some(FormId(R_CHAIR)));
 }

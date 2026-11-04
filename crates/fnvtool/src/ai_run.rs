@@ -41,7 +41,7 @@ pub fn furniture_facts(lo: &LoadOrder, schema: &Schema, w: &crate::WorldArgs) ->
     let mut issues = fnv_sim::extract::Issues::default();
     let bases = fnv_actor::furniture::furniture(lo, schema, &mut issues);
     let tree = fnv_actor::furniture::UseIdles::build(&fnv_actor::idle::Idles::build(lo, schema), lo);
-    let paths = vfs.paths(|p| p.ends_with(".kf") || p.ends_with(".nif"));
+    let paths = vfs.paths(|p| p.ends_with(".nif"));
     let read = |p: &str| vfs.read(p)?.ok();
     Some(Arc::new(fnv_actor::furniture_facts::AssetFacts::build(paths.iter().map(String::as_str), &tree, &bases, read, &nif)))
 }
@@ -168,8 +168,9 @@ fn events_json(data: &GameData, refs: &RefTable, ai: &Ai, actor: FormId, cap: us
 
 /// What an actor did with furniture over the whole run, whatever the cap on its events:
 /// how many times it started on each piece, how many pieces it was refused by reason, and
-/// whether its assets could not be resolved.
-fn furniture_json(data: &GameData, refs: &RefTable, ai: &Ai, actor: FormId) -> Value {
+/// whether nothing was known of it: `unknown` true when the facts had no answer for it,
+/// null when the run has no facts (`furniture_facts` null), so nothing was asked.
+fn furniture_json(data: &GameData, refs: &RefTable, ai: &Ai, actor: FormId, facts: bool) -> Value {
     let mut starts: BTreeMap<String, u64> = BTreeMap::new();
     let mut excluded: BTreeMap<&str, u64> = BTreeMap::new();
     let mut unknown = false;
@@ -181,7 +182,7 @@ fn furniture_json(data: &GameData, refs: &RefTable, ai: &Ai, actor: FormId) -> V
             _ => {}
         }
     }
-    json!({"starts": starts, "excluded_pieces": excluded, "unknown": unknown})
+    json!({"starts": starts, "excluded_pieces": excluded, "unknown": if facts { json!(unknown) } else { Value::Null }})
 }
 
 fn e_space(e: &fnv_ai::AiEvent) -> Option<Space> {
@@ -249,7 +250,7 @@ pub fn run(lo: &LoadOrder, schema: &Schema, data: &GameData, refs: &RefTable, ar
                 "reference": a.to_string(),
                 "travelled": sim.ai.agents[&a].walker.travelled,
                 "event_counts": counts,
-                "furniture": furniture_json(data, refs, &sim.ai, a),
+                "furniture": furniture_json(data, refs, &sim.ai, a, args.furniture_facts.is_some()),
                 "hourly": hourly.get(&a),
                 "events": events,
             })
@@ -263,7 +264,7 @@ pub fn run(lo: &LoadOrder, schema: &Schema, data: &GameData, refs: &RefTable, ar
         "nav": {"triangles": nav.tris.len(), "navmeshes": nav.meshes.len()},
         "furniture_facts": args.furniture_facts.as_ref().map(|f| {
             let (bases, models_read, folders) = f.summary();
-            json!({"bases": bases, "bases_with_markers_read": models_read, "skeleton_folders_with_clips": folders})
+            json!({"bases": bases, "bases_with_markers_read": models_read, "skeleton_folders_of_tree_clips": folders})
         }),
         "actors": out,
     }))

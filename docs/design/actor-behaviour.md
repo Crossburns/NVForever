@@ -375,11 +375,14 @@ given to another. Smoke tests: Easy Pete sits in his porch chair, gets up at 12:
 walks into the saloon and sits at his booth; at 22:04 he gets up, walks home and lies
 down on his bed (`SpecialIdle_BedLeft_Enter`, `DynamicIdle_Sleep`); flying across the
 map with `all`, other actors sit down where their packages send them.
-Sandboxing actors choose seats, beds and idle markers themselves (§5.5). Furniture an
-actor's skeleton has no clips for is not given to it, by a package or by its own choice,
-and a cross (marker ID 10) only by a package that names or links to it, before anything is
-chosen or kept; the engine refuses a clip that does not fit before binding it [design,
-interim: furniture.md §9, issue #1522; what the original does is an open observer check].
+Sandboxing actors choose seats, beds and idle markers themselves (§5.5). A creature the
+IDLE tree gives no clip of its own for a piece does not get it, by a package or by its own
+choice; a person is never ruled out for that. A sandbox and a Sleep or Eat package's search
+leave crosses (marker ID 10) out for anyone; a package that names or links to one, a patrol
+point, a Find and a Use Item At do not. All this before anything is chosen or kept, and the
+engine refuses a getting-on or loop clip that does not fit before binding it, and plays no
+exit clip that does not [design, interim: furniture.md §9, issue #1522; a few minutes'
+watch of the original found no creature on furniture, observer-checks.md item 85].
 Not done:
 an actor that arrives while not drawn sits down only when it is next drawn (it walks
 the last steps then, instead of being found seated); `fnvtool ai run` (headless) has no

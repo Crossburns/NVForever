@@ -281,11 +281,15 @@ impl Cond {
 /// holds when any of the run does [documented: GECK wiki condition rules as summarised in
 /// docs/spec-notes/quests-dialogue.md §3]. An "Or" on the last condition joins nothing.
 fn all_hold(conds: &[Cond], user: &User, world: World) -> bool {
+    runs_hold(conds, |c| c.holds(user, world))
+}
+
+fn runs_hold(conds: &[Cond], holds: impl Fn(&Cond) -> bool) -> bool {
     let mut i = 0;
     while i < conds.len() {
         let mut any = false;
         loop {
-            any |= conds[i].holds(user, world);
+            any |= holds(&conds[i]);
             i += 1;
             if !conds[i - 1].or || i == conds.len() {
                 break;
@@ -385,6 +389,42 @@ impl UseIdles {
     /// Every clip this part of the tree names, as VFS paths.
     pub fn clips(&self) -> impl Iterator<Item = &str> {
         self.nodes.iter().filter_map(|n| n.clip.as_deref())
+    }
+
+    /// Every clip the tree can give for getting onto a marker ID of a furniture base,
+    /// whoever gets on and whatever the game's state: only the conditions about the piece
+    /// and the phase are asked, the others may hold.
+    pub fn clips_for_getting_on(&self, marker_id: u8, base: FormId) -> Vec<&str> {
+        let user = User {
+            state: state::GETTING_ON,
+            marker_id,
+            furniture_ref: FormId(0),
+            furniture_base: base,
+            actor_base: FormId(0),
+            first_person: false,
+            female: false,
+            child: false,
+            alerted: false,
+            attacked: false,
+            random_percent: 0,
+        };
+        let mut out = Vec::new();
+        for &r in &self.roots {
+            self.gather(r, &user, &mut out);
+        }
+        out
+    }
+
+    fn gather<'a>(&'a self, n: usize, user: &User, out: &mut Vec<&'a str>) {
+        let node = &self.nodes[n];
+        let about_the_piece = |c: &Cond| matches!(c.function, func::GET_SITTING | func::GET_SLEEPING | func::GET_FURNITURE_MARKER_ID | func::IS_CURRENT_FURNITURE_OBJ);
+        if !runs_hold(&node.conds, |c| !about_the_piece(c) || c.holds(user, &|_, _| None)) {
+            return;
+        }
+        out.extend(node.clip.as_deref());
+        for &c in &node.children {
+            self.gather(c, user, out);
+        }
     }
 
     /// The clip for a user: siblings are tried in their stored order and the first whose
@@ -680,6 +720,29 @@ mod tests {
 
     /// A tree shaped like the game's chair idles: fast exits before the plain ones, a
     /// group that passes but leads nowhere, and a marker test on each clip.
+    /// Own structure, for this test: two markers and a furniture of its own under the
+    /// phase, the clips of another phase and of beds, and a clip behind a condition about
+    /// who gets on, which may hold.
+    #[test]
+    fn the_clips_the_tree_can_give_are_asked_of_the_piece_and_the_phase_only() {
+        let obj = |id: u32| Cond { param1: Some(FormId(id)), ..cond(func::IS_CURRENT_FURNITURE_OBJ, 0, 1.0) };
+        let nodes = vec![
+            node(1, Some("on_eleven"), vec![cond(func::GET_FURNITURE_MARKER_ID, 0, 11.0)], vec![]),
+            node(2, Some("on_eleven_a_woman"), vec![cond(func::GET_FURNITURE_MARKER_ID, 0, 11.0), cond(func::GET_IS_SEX, 0, 1.0)], vec![]),
+            node(3, Some("on_nine_hundred"), vec![obj(0x900)], vec![]),
+            node(4, None, vec![cond(func::GET_SITTING, 0, 2.0)], vec![0, 1, 2]),
+            node(5, Some("off_eleven"), vec![cond(func::GET_SITTING, 0, 4.0), cond(func::GET_FURNITURE_MARKER_ID, 0, 11.0)], vec![]),
+            node(6, Some("on_a_bed"), vec![cond(func::GET_SLEEPING, 0, 2.0)], vec![]),
+            node(7, None, vec![], vec![3, 4, 5]),
+        ];
+        let t = UseIdles { nodes, roots: vec![6] };
+        let base = FormId(0x901);
+        assert_eq!(t.clips_for_getting_on(11, base), ["on_eleven", "on_eleven_a_woman"]);
+        assert!(t.clips_for_getting_on(14, base).is_empty());
+        assert_eq!(t.clips_for_getting_on(14, FormId(0x900)), ["on_nine_hundred"]);
+        assert_eq!(t.clips_for_getting_on(1, base), ["on_a_bed"]);
+    }
+
     fn tree() -> UseIdles {
         let nodes = vec![
             node(1, Some("left_enter"), vec![cond(func::GET_FURNITURE_MARKER_ID, 0, 11.0)], vec![]),

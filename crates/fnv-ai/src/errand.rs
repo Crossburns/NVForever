@@ -613,15 +613,18 @@ impl Ai {
         let free = |r: &FormId| !taken.contains(r);
         let sit = |game: &Game, r: FormId| fnv_game::functions::base_of(game, r).and_then(|b| game.data.furniture.get(&b)).is_some_and(|f| f & furniture::SIT != 0);
         let thing = match u.wanted {
-            Wanted::Reference(r) => Some(r),
+            // Furniture it has no clips for is nothing to use: it goes to the package's
+            // place and its goal is met, as when a search finds nothing (`crate::furniture`).
+            Wanted::Reference(r) => Some(r).filter(|r| self.furniture.fits_assigned(game, actor, *r)),
             Wanted::Nothing => None,
             w => {
                 let area = Area { centre: Some(centre), radius: u.area.radius };
-                self.objects(game, actor, w, &area, centre, false, true, false, feet).into_iter().map(|x| x.1).filter(free).find(|r| !u.sit_down || sit(game, *r))
+                let found = self.objects(game, actor, w, &area, centre, false, true, false, feet);
+                found.into_iter().map(|x| x.1).filter(free).filter(|r| !u.sit_down || sit(game, *r)).find(|r| self.furniture.fits_assigned(game, actor, *r))
             }
         };
         *self.errand_mut(actor) = Some(Errand::UseAt { thing });
-        if let Some(f) = thing.filter(|r| game.data.furniture.contains_key(&fnv_game::functions::base_of(game, *r).unwrap_or(FormId(0))) && self.furniture.fits_assigned(game, actor, *r)) {
+        if let Some(f) = thing.filter(|r| game.data.furniture.contains_key(&fnv_game::functions::base_of(game, *r).unwrap_or(FormId(0)))) {
             // Kept for it from now [as `crate::sandbox`'s furniture].
             self.reserve(actor, f);
         }
@@ -643,7 +646,7 @@ impl Ai {
     fn use_it(&mut self, game: &mut Game, actor: FormId, package: FormId, thing: Option<FormId>) {
         if let Some(t) = thing {
             let base = fnv_game::functions::base_of(game, t);
-            if base.is_some_and(|b| game.data.furniture.contains_key(&b)) && self.furniture.fits_assigned(game, actor, t) {
+            if base.is_some_and(|b| game.data.furniture.contains_key(&b)) {
                 self.set_using(game, actor, Some(t));
             } else {
                 let h = game.world.peek(t).map(|s| s.rot[2]).or_else(|| game.world.placed.get(t).map(|p| p.rot[2]));

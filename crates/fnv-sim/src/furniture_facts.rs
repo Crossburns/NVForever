@@ -9,10 +9,21 @@ use crate::FormId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fit {
     Supported,
-    /// The skeleton is known and the assets show nothing to use this furniture with.
+    /// A creature whose skeleton is known, and the tree gives it nothing to use this
+    /// furniture with. Never said of a person.
     Unsupported,
     /// The skeleton or the assets could not be read: not evidence of missing clips.
     Unknown,
+}
+
+/// What the actor asking is. `Person`: its base is an `NPC_`, whatever its template.
+/// `Creature`: a `CREA`, or a template or leveled list that comes to one. `Unresolved`:
+/// neither could be found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorKind {
+    Person,
+    Creature,
+    Unresolved,
 }
 
 /// Facts that do not change during a run. Answers are looked up, never read from files
@@ -22,7 +33,7 @@ pub trait FurnitureFacts: Send + Sync {
     /// `None`: not known (no model, or it could not be read).
     fn marker_ids(&self, furniture_base: FormId) -> Option<&[u8]>;
 
-    /// Whether the skeleton `skeleton` (an actor's `MODL`, as written) fits a furniture
-    /// base. An empty `skeleton` has not been resolved.
-    fn fit(&self, skeleton: &str, furniture_base: FormId) -> Fit;
+    /// Whether an actor of this kind on the skeleton `skeleton` (its `MODL`, as written)
+    /// fits a furniture base. An empty `skeleton` has not been resolved.
+    fn fit(&self, kind: ActorKind, skeleton: &str, furniture_base: FormId) -> Fit;
 }

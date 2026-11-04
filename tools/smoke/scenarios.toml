@@ -1067,7 +1067,7 @@ expect = [
 [[scenario]]
 name = "nipton-mongrels-no-cross"
 source = "issue #1522: a sandboxing creature does not choose furniture it has no clips for, and nobody chooses a cross by themselves (fnv_ai::furniture, fnv_actor::furniture_facts; docs/spec-notes/furniture.md §9)"
-note = "Both Nipton mongrels sandbox within reach of the free cross 00139FD6, whose victim starts disabled. The eligibility lines show the choice was made and the cross refused; a random run that never looks at it would not print them"
+note = "Both Nipton mongrels sandbox within reach of the free cross 00139FD6, whose victim starts disabled. The eligibility lines show the cross was looked at and refused, whichever way the run's random choices went; they and the absence of a use in this window are what this proves, not that a dog would have chosen it"
 areas = ["ai", "furniture"]
 paths = ["crates/fnv-ai/src/furniture.rs", "crates/fnv-ai/src/sandbox.rs", "crates/fnv-actor/src/furniture_facts.rs", "engine/nvforever/src/furniture.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1" }

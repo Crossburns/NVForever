@@ -761,7 +761,7 @@ state after every game hour (space, position, package, activity) and the events
 (package, trip with its doors and length, door, arrived, already there, unreachable,
 not carried out). Each actor's `furniture` (`starts` per piece, `excluded_pieces` per
 reason, `unknown`) covers the whole run, whatever the cap on `events`; `furniture_facts`
-is null when the assets did not open (furniture.md §9). `--force` gives an actor a package
+is null when the assets did not open, and `unknown` with it (furniture.md §9). `--force` gives an actor a package
 as AddScriptPackage would. With
 `--samples` each actor starts where a capture first saw it, at the capture's hour, and
 is compared at every sample (`files[].actors[]`: samples, same package, same cell, the
