@@ -18146,14 +18146,14 @@ order = [["F10: nearest container", { re = 'menu: AmountOk: ', label = "the stac
 [[scenario]]
 name = "tiles-trait-menu"
 source = "[design] ui-tile-tree.md §6.2 step 3, chargen.md §4.1, issue #1519: with [UI] TileMenus=TraitMenu the trait menu is drawn from trait_menu.xml; rows come from the template, the limit, an untakeable trait, giving back, Reset and Done go through the hand-built menu's sheet, the list and the description scroll on their own, the description reaches its end, and sounds fire once"
-note = "positions at 1280 x 720 (screen 1706.67 x 960; LUM_MainRect at 341.33, 80), worked out from the file's values and not yet confirmed on a run: rows x 358-791, row n at y 140 + 52 n; the list's bar x 326-358, its down arrow y 800-816, its marker from y 156; the description's box x 806-1333, y 485-760, its bar x 1333-1365, its down arrow y 678-694; Reset about x 1275-1355, y 140-191. Perception 10 makes Four Eyes (Req: PER < 10) untakeable. With sixteen rows (Old World Blues in the load order): 832 over 676 by the file's step of 26, six to scroll. The long aid reads the description three times over so that its scroll has an end. All aids on one clock (NVF_PLAY_AIDS_FROM_SCRIPTS 0), as the tile pointer keeps the time since the start"
+note = "positions at 1280 x 720 (screen 1706.67 x 960; LUM_MainRect at 341.33, 80), worked out from the file's values and not yet confirmed on a run: rows x 358-791, row n at y 140 + 52 n; the list's bar x 326-358, its down arrow y 800-816, its marker from y 156; the description's box x 806-1333, y 485-760, its bar x 1333-1365, its down arrow y 678-694; Reset x 1267-1355, y 140-192 [observed: its place -88, 0 in the original's job trait]. Perception 10 makes Four Eyes (Req: PER < 10) untakeable. With sixteen rows (Old World Blues in the load order): 832 over 676, 3 to scroll by 52 (the formula; the original's capture read 14 rows, 1 by 52). The description's bar keeps the file's 9 items until a text needs more. The aid's pick of the last row leaves the list at its end, so the pointer's rows are 3 on: y 166 is row 3, y 270 row 5 (Good Natured), and y 600 on the bar is above the marker, a page up, then below it, a page down. The long aid reads the description twice over so that its scroll goes past the file's count and has an end, within the keys' 30 steps. All aids on one clock (NVF_PLAY_AIDS_FROM_SCRIPTS 0), as the tile pointer keeps the time since the start"
 areas = ["ui", "menus", "chargen"]
 paths = [
   "engine/nvf-play/src/tiles/trait_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
   "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/chargen.rs", "engine/nvf-play/src/chargen/lists.rs", "engine/nvf-play/src/pad.rs",
   "crates/fnv-game/src/chargen.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
 ]
-env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TraitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_CONSOLE = "18:player.setav perception 10", NVF_PLAY_TEST_SCRIPT = "20:menu:1084", NVF_PLAY_TEST_TRAIT_TILES = "30:long", NVF_PLAY_TEST_CHARGEN = "23:pick:Four Eyes,24:pick:Kamikaze,25:pick:Small Frame,26:pick:Wild Wasteland,27:pick:Kamikaze,28:reset,29:pick:Small Frame", NVF_PLAY_TEST_POINTER = "32:600:166,33:600:218:click,34:342:808:click,35:342:600:click,36:1349:686:click,37:1320:165,37.5:1320:165:click,38:1000:600,38.5:off", NVF_PLAY_TEST_KEYS = "38.2:wheel-down,39:down,40:right,40.2:right,40.4:right,40.6:right,40.8:right,41:right,41.2:right,41.4:right,41.6:right,41.8:right,42:right,42.2:right,42.4:right,42.6:right,42.8:right,43:right,43.2:right,43.4:right,43.6:right,43.8:right,44:right,44.2:right,44.4:right,44.6:right,44.8:right,45:right,45.2:right,45.4:right,45.6:right,45.8:right,48:down,50:r,52:a", NVF_PLAY_TEST_SHOTS = "22:tiles_trait_open.png,25.5:tiles_trait_taken.png,31:tiles_trait_long.png,47:tiles_trait_end.png" }
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TraitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_CONSOLE = "18:player.setav perception 10", NVF_PLAY_TEST_SCRIPT = "20:menu:1084", NVF_PLAY_TEST_TRAIT_TILES = "30:long", NVF_PLAY_TEST_CHARGEN = "23:pick:Four Eyes,24:pick:Kamikaze,25:pick:Small Frame,26:pick:Wild Wasteland,27:pick:Kamikaze,28:reset,29:pick:Small Frame", NVF_PLAY_TEST_POINTER = "32:600:166,33:600:270:click,34:342:808:click,35:342:600:click,35.5:342:600:click,36:1349:686:click,37:1320:165,37.5:1320:165:click,38:1000:600,38.5:off", NVF_PLAY_TEST_KEYS = "38.2:wheel-down,39:down,40:right,40.2:right,40.4:right,40.6:right,40.8:right,41:right,41.2:right,41.4:right,41.6:right,41.8:right,42:right,42.2:right,42.4:right,42.6:right,42.8:right,43:right,43.2:right,43.4:right,43.6:right,43.8:right,44:right,44.2:right,44.4:right,44.6:right,44.8:right,45:right,45.2:right,45.4:right,45.6:right,45.8:right,48:down,50:r,52:a", NVF_PLAY_TEST_SHOTS = "22:tiles_trait_open.png,25.5:tiles_trait_taken.png,31:tiles_trait_long.png,47:tiles_trait_end.png" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 56
 expect = [
@@ -18165,7 +18165,7 @@ expect = [
   { text = "tile menu blur: off", min = 1, label = "and clears when it closes" },
   { text = "chargen: trait menu open", count = 1, label = "the sheet is made once" },
   { re = 'tiles: TraitMenu drawn from tiles: "[^"]*" 16 rows, 0 of 2 taken, selected "[^"]+", counter "2 TRAITS LEFT", text height \d+', label = "the rows, the limit and the counter, from the sheet" },
-  { re = 'tiles: TraitMenu drawn from tiles: .* list scrolls to 6 by 26', label = "sixteen rows over the file's list, by its own step" },
+  { re = 'tiles: TraitMenu drawn from tiles: .* list scrolls to 3 by 52', label = "sixteen rows over the file's list: whole rows, as the original's 14 read 1 by 52" },
   { text = "Four Eyes refused", count = 1, label = "a trait the player cannot take" },
   { text = "Wild Wasteland refused", count = 1, label = "a third trait is refused" },
   { text = "Kamikaze given back", count = 1, label = "a taken trait goes back" },
@@ -18174,11 +18174,13 @@ expect = [
   { re = 'tiles: TraitMenu row \S+ clicked on its tiles', count = 1, label = "a click on a row" },
   { text = "tiles: TraitMenu Reset on its tiles", count = 1, label = "Reset by the pointer; the key does not act through the file too" },
   { text = "tiles: TraitMenu List Down on its tiles", count = 1, label = "the list's down arrow" },
-  { text = "tiles: TraitMenu List PageDown on its tiles", count = 1, label = "the list's page area" },
+  { text = "tiles: TraitMenu List PageUp on its tiles", count = 1, label = "the list's page area above the marker" },
+  { text = "tiles: TraitMenu List PageDown on its tiles", count = 1, label = "the list's page area below it" },
   { text = "tiles: TraitMenu Text Down on its tiles", count = 1, label = "the description's down arrow" },
   { re = 'tiles: TraitMenu list scrolled to \d+ of \d+, text scrolled to 2 of [1-9]', label = "the wheel over the description moves the text, not the list" },
   { re = 'tiles: TraitMenu list scrolled to \d+ of \d+, text scrolled to ([1-9]\d*) of \1, its end at (?P<n>-?[\d.]+) in a box 275 high', range = [0, 275], label = "the description read to its end: the last line in the box" },
   { re = 'tiles: TraitMenu (list|text) drawn at \S+, not the \S+ written', count = 0, label = "the scrolls never draw the file's own count of the clicks" },
+  { re = 'tiles: TraitMenu drawn from tiles: "[^"]*" 16 rows, .*text scrolls to 8,', label = "a description that fits keeps the file's count, 8 to scroll" },
   { text = "ui sounds: traits row or button picked: UIMenuPrevNext", min = 4, label = "taken and given back" },
   { text = "ui sounds: traits accepted: UIMenuOK", count = 1, label = "Done's sound, once" },
   { text = "tiles: TraitMenu Done on its tiles", count = 0, label = "the key A acts by the hand-built handler, not the file's too" },
@@ -18198,10 +18200,10 @@ order = [[
 [[scenario]]
 name = "tiles-trait-pointer-done"
 source = "[design] chargen.md §4.1: with [UI] TileMenus=TraitMenu Done acts once by the pointer, a script's click on the file's tiles acts as the pointer's, the stages go on after it, and a menu opened again starts over"
-note = "positions as tiles-trait-menu; Done about x 1290-1355, y 191-242. A script's ClickMenuButton on id 5 is Reset, on id 6 Done"
+note = "positions as tiles-trait-menu; Done x 1277-1355, y 192-243 [observed: its place -78, 52 in the original's job trait]. A script's ClickMenuButton on id 5 is Reset, on id 6 Done; it goes through the script aid, as the console aid waits for the menu to close"
 areas = ["ui", "menus", "chargen"]
 paths = ["engine/nvf-play/src/tiles/trait_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/chargen.rs", "crates/fnv-ui/src/input.rs", "crates/fnv-game/src/functions/ui.rs"]
-env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TraitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:menu:1084,32:menu:1084", NVF_PLAY_TEST_CHARGEN = "23:pick:Kamikaze,34:pick:Small Frame", NVF_PLAY_TEST_CONSOLE = "25:ClickMenuButton \"TraitMenu#5\"", NVF_PLAY_TEST_POINTER = "27:1320:215,28:1320:215:click,36:1320:215,37:1320:215:click,38:off" }
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TraitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:menu:1084,25:call:-:ClickMenuButton:\"TraitMenu#5\",32:menu:1084", NVF_PLAY_TEST_CHARGEN = "23:pick:Kamikaze,34:pick:Small Frame", NVF_PLAY_TEST_POINTER = "27:1320:215,28:1320:215:click,36:1320:215,37:1320:215:click,38:off" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 42
 expect = [

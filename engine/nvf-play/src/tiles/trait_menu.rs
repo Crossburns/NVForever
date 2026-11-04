@@ -21,6 +21,10 @@
 //! - **Scrolls**: the list's and the description's are this module's own, no change of the
 //!   sheet. The keys' choice brings its row into view (`navigated`), the pointer's does not,
 //!   and a bar or the wheel leaves the choice alone. Another row starts its text at the top.
+//! - **The chosen row and the highlight are apart**: the menu opens with row 0's picture and text
+//!   and no highlight, and the pointer leaving the rows takes the highlight away and leaves the
+//!   text [observed: the original's job `trait`, 1280 x 720, chargen.md §4.1]. The sheet's choice
+//!   stands all the while, as the hand-built menu's.
 
 use super::layout::{HOTRECT_FILL, OWN_ALPHA};
 use super::list::{self, BarPiece, Drag, RowTile, Wanted};
@@ -53,10 +57,11 @@ const ROW: &str = "LUM_Perk";
 const ROW_TEXT: &str = "ListItemText";
 const ROW_MARK: &str = "LUM_Template_ItemMarker";
 
-/// The dark picture's opacity: 0.4 [observed: chargen.md §8, 33 against 54 brightness inside
-/// and just outside it on the owner's screenshot; hypothesis: that it is this picture's `alpha`,
-/// which the file leaves "set in code" through the shared fill].
-pub const BACKGROUND_ALPHA: f64 = 102.0;
+/// The dark picture's opacity [observed: `LUM_Background` `alpha` 193.80, the original's job
+/// `trait`, 1280 x 720; the file's `alpha` copies the shared fill, as the container's].
+pub const BACKGROUND_ALPHA: f64 = 193.8;
+/// A row's `id` [observed: the active component reads 10 on each row, the original's job `trait`].
+const ROW_ID: f64 = 10.0;
 /// A trait that cannot be taken: half strength, as the hand-built row [hypothesis: chargen.md §4;
 /// the row's `_TextAlpha` allows it, no screenshot shows one].
 const FAINT_ALPHA: f64 = 128.0;
@@ -182,8 +187,12 @@ struct ListScroll {
     most: f64,
     /// The highlighted row's top and height before the scroll.
     selected: Option<(f64, f64)>,
-    /// The file's `_scroll_delta` before any code wrote it: the step.
+    /// The file's `_scroll_delta` before any code wrote it, for a list that fits.
     step: Option<f64>,
+    /// What a value moves the rows now.
+    scale: f64,
+    /// The highlight shows: off when the menu opens, and off the rows.
+    highlight: bool,
     /// [`Snapshot::navigated`] the view last followed.
     navigated: Option<u32>,
     /// The rows standing whole in the list from its top, for the keys' page.
@@ -196,6 +205,8 @@ struct TextScroll {
     most: f64,
     /// The row whose text this is: another starts at the top.
     key: Option<FormId>,
+    /// The bar's own `_number_of_items` before any code wrote it.
+    file_items: Option<f64>,
 }
 
 /// The tile menu's state: what the writer, the input and the hand-built menu share.
@@ -228,7 +239,7 @@ pub struct TraitTiles {
 /// Write what the menu shows of `s`: the rows, the strings, the picture and the backing. The
 /// places are [`settle`]'s, once the texts are measured. False when a row could not be made.
 pub fn write(ui: &mut Ui, s: &Snapshot, st: &mut TraitTiles) -> bool {
-    let wanted: Vec<Wanted<'_, FormId>> = s.rows.iter().map(|r| Wanted { key: &r.key, name: &r.name }).collect();
+    let wanted: Vec<Wanted<'_, FormId>> = s.rows.iter().map(|r| Wanted { key: &r.key, name: ROW }).collect();
     if !list::reconcile(ui, LIST, TEMPLATE, &mut st.rows, &wanted) {
         return false;
     }
@@ -236,6 +247,7 @@ pub fn write(ui: &mut Ui, s: &Snapshot, st: &mut TraitTiles) -> bool {
         if list::child(ui, row.tile, ROW_TEXT).is_none() || list::child(ui, row.tile, ROW_MARK).is_none() {
             return false;
         }
+        ui.set_trait(row.tile, "id", Value::Num(ROW_ID));
         ui.set_trait(row.tile, "string", Value::Str(shown.name.clone()));
         ui.set_trait(row.tile, "_selected", flag(shown.taken));
         ui.set_trait(row.tile, "_TextAlpha", Value::Num(if shown.faint { FAINT_ALPHA } else { 255.0 }));
@@ -255,14 +267,18 @@ pub fn write(ui: &mut Ui, s: &Snapshot, st: &mut TraitTiles) -> bool {
     true
 }
 
-/// How far a text whose top stands at `top` at value 0 scrolls to bring its end into a box
-/// `page` high, a value moving it `step`: whole values, the end reached.
-pub fn text_most(top: f64, height: f64, page: f64, step: f64) -> f64 {
+/// How far a text whose top stands at `top` at value 0 scrolls, a value moving it `step`, in a
+/// box `page` high: as far as its bar's own count goes (`file_most`), which does not follow the
+/// text [observed: 9 items on every row read, the text 207 to 277 high, the original's job
+/// `trait`], and further only for a text that count would leave cut off [design: nothing in
+/// the original is known to end the scroll sooner or reach further, and a description must be
+/// readable to its end].
+pub fn text_most(top: f64, height: f64, page: f64, step: f64, file_most: f64) -> f64 {
     let over = top + height - page;
     if over <= 0.0 || step <= 0.0 {
-        0.0
+        file_most
     } else {
-        (over / step - 1e-9).ceil()
+        file_most.max((over / step - 1e-9).ceil())
     }
 }
 
@@ -281,14 +297,20 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut TraitTiles, write_sizes: &mut 
         let heights = list::measure_rows(ui, &st.rows, ROW_TEXT);
         let page = num(ui, LIST, "height");
         let step = *st.list.step.get_or_insert_with(|| ui.tile(list_tile).get("_scroll_delta").map_or(0.0, Value::num));
-        let counts = list::counts_by_step(&heights, page, step);
+        // The container capture's counts hold here too [observed: 14 rows of 52 in 676, the
+        // original's job `trait`: 2 items, `_scroll_delta` 52, the marker 322].
+        let counts = list::counts(&heights, page);
         list::write_counts(ui, list_tile, &counts, step);
+        let scale = counts.delta.unwrap_or(step);
+        st.list.scale = scale;
         st.list.most = counts.most();
         let picked = s.selected.filter(|&k| k < heights.len());
         st.list.selected = picked.map(|k| (heights[..k].iter().sum(), heights[k]));
         if st.list.navigated != Some(s.navigated) {
+            // A first frame shows no highlight; the keys' choice does.
+            st.list.highlight |= st.list.navigated.is_some();
             if let Some((top, height)) = st.list.selected {
-                st.list.value = list::keep_row_shown(st.list.value, top, height, page, step, counts.most());
+                st.list.value = list::keep_row_shown(st.list.value, top, height, page, scale, counts.most());
             }
             st.list.navigated = Some(s.navigated);
         }
@@ -312,14 +334,18 @@ pub fn settle(ui: &mut Ui, s: &Snapshot, st: &mut TraitTiles, write_sizes: &mut 
         let value = num(ui, TEXT_BAR, "_current_value");
         // The text's place with no scroll, whatever the file adds to it.
         let top = num(ui, TEXT, "y") + value * step;
-        let most = text_most(top, num(ui, TEXT, "height"), num(ui, TEXT_BOX, "height"), step);
+        let visible = ui.tile(bar).get("_number_of_visible_items").map_or(1.0, Value::num);
+        let file_items = *st.text.file_items.get_or_insert_with(|| ui.tile(bar).get("_number_of_items").map_or(visible, Value::num));
+        let most = text_most(top, num(ui, TEXT, "height"), num(ui, TEXT_BOX, "height"), step, (file_items - visible).max(0.0));
         st.text.most = most;
         st.text.value = st.text.value.clamp(0.0, most);
-        let visible = ui.tile(bar).get("_number_of_visible_items").map_or(1.0, Value::num);
-        ui.set_trait(bar, "_number_of_items", Value::Num(most + visible));
-        // The arrows stay with a short text [observed: chargen.md §4], with no marker [design].
-        ui.set_trait(bar, "_show_always", flag(true));
-        set(ui, &format!("{TEXT_BAR}/{}", list::MARKER), "visible", flag(most > 0.0));
+        // Left at the file's count unless the text needs more: its marker and arrows stay as the
+        // file has them on every row [observed].
+        if most + visible != file_items {
+            ui.set_trait(bar, "_number_of_items", Value::Num(most + visible));
+        } else if ui.tile(bar).get("_number_of_items").is_none_or(|n| n.num() != file_items) {
+            ui.set_trait(bar, "_number_of_items", Value::Num(file_items));
+        }
     }
     st.rewrite(ui);
     ui.update();
@@ -361,7 +387,8 @@ pub fn prepare(ui: &mut Ui, new: Option<Snapshot>, st: &mut TraitTiles, write_si
         if st.shown.as_ref().is_some_and(|was| was.generation != s.generation) {
             st.list.value = 0.0;
             st.list.navigated = None;
-            st.text = TextScroll::default();
+            st.list.highlight = false;
+            st.text = TextScroll { file_items: st.text.file_items, ..TextScroll::default() };
             st.drag = None;
         }
         if st.shown.as_ref() != Some(&s) {
@@ -406,6 +433,7 @@ impl TraitTiles {
         self.acts.clear();
         self.sizes.clear();
         self.list.step = None;
+        self.text.file_items = None;
         self.drawn = None;
     }
 
@@ -435,7 +463,7 @@ impl TraitTiles {
     pub fn rewrite(&self, ui: &mut Ui) {
         if let Some(l) = ui.find_tile(LIST) {
             list::write_value(ui, l, self.list.value);
-            list::write_highlight(ui, l, self.list.selected, self.list.value);
+            list::write_highlight(ui, l, self.list.selected.filter(|_| self.list.highlight), self.list.value);
         }
         if let Some(bar) = ui.find_tile(TEXT_BAR) {
             list::write_bar_value(ui, bar, self.text.value);
@@ -553,21 +581,6 @@ impl TraitTiles {
     }
 }
 
-/// A page of the description, in its bar's values: the file's `_jump_size`, which it leaves at
-/// nothing; else the box less a step, so a line stays [design].
-fn text_page(ui: &Ui) -> f64 {
-    let jump = num(ui, TEXT_BAR, "_jump_size");
-    if jump > 0.0 {
-        return jump;
-    }
-    let step = num(ui, TEXT_BAR, "_ScrollDelta");
-    if step > 0.0 {
-        ((num(ui, TEXT_BOX, "height") / step).floor() - 1.0).max(1.0)
-    } else {
-        1.0
-    }
-}
-
 /// Act on a frame's click (see the module notes). `None` when the click is not for this menu,
 /// so the other menus' rules see it. `physical` as `super::menus::key_click_acts`.
 pub fn follow_click(st: &mut TraitTiles, ui: &Ui, c: &fnv_ui::input::Click, at: Option<(f64, f64)>, held: bool, physical: &[&str]) -> Option<()> {
@@ -599,12 +612,8 @@ pub fn follow_click(st: &mut TraitTiles, ui: &Ui, c: &fnv_ui::input::Click, at: 
         TraitTile::Bar(which, piece) => {
             let (_, bar) = bar_of(ui, which)?;
             let value = st.value(which);
-            let next = if which == Scroll::Text && matches!(piece, BarPiece::PageUp | BarPiece::PageDown) {
-                Some(value + if piece == BarPiece::PageUp { -text_page(ui) } else { text_page(ui) })
-            } else {
-                list::after_piece_on(ui, bar, piece, value)
-            };
-            if let Some(v) = next {
+            // The description's page areas do nothing: the file's `_jump_size` is 0 [observed].
+            if let Some(v) = list::after_piece_on(ui, bar, piece, value) {
                 info!("tiles: {TRAIT_MENU} {which:?} {piece:?} on its tiles");
                 st.scroll_to(which, v);
             }
@@ -655,10 +664,18 @@ pub fn follow_pointer(st: &mut TraitTiles, ui: &Ui, report: &fnv_ui::input::Repo
             st.scroll_to(which, v);
         }
     }
-    let Some((_, Some(to))) = report.over else { return };
-    match st.clicked(ui, to) {
-        Some(TraitTile::Row(key)) if moved && !st.is_selected(key) => {
+    let Some((_, to)) = report.over else { return };
+    // Off the rows the highlight goes and the text stays [observed: `_highlight_y` -1 and 0
+    // high, the original's job `trait`].
+    let what = to.and_then(|to| st.clicked(ui, to));
+    if !matches!(what, Some(TraitTile::Row(_))) {
+        st.list.highlight = false;
+    }
+    match what {
+        Some(TraitTile::Row(key)) if st.is_selected(key) => st.list.highlight = true,
+        Some(TraitTile::Row(key)) if moved => {
             info!("tiles: {TRAIT_MENU} row {key} chosen by the pointer on its tiles");
+            st.list.highlight = true;
             st.act(TileAct::Hover(key));
         }
         Some(TraitTile::Reset | TraitTile::Done) => st.act(TileAct::ButtonFocus),
@@ -709,15 +726,15 @@ pub fn describe(ui: &Ui, s: &Snapshot, st: &TraitTiles) -> String {
         n(num(ui, TEXT_BOX, "height")),
         n(st.text.most),
         n(st.list.most),
-        n(st.list.step.unwrap_or(0.0)),
+        n(st.list.scale),
     )
 }
 
 /// The test aid `NVF_PLAY_TEST_TRAIT_TILES=<seconds>:<step>[,…]`, on the world aids' clock
 /// (`crate::pause::AidTime`): `missing` (the file reads as not there, from then on), `cut:<tile
 /// name>` (the first tile of that name goes from the tree when the menu is built, a file cut
-/// down, or one a mod changed while it shows) and `long` (the description reads three times
-/// over, so its scroll has an end to reach). Nothing is written to the game's files.
+/// down, or one a mod changed while it shows) and `long` (the description reads twice over,
+/// past the bar's own count on most rows, so its scroll has an end to reach). Nothing is written to the game's files.
 #[derive(Resource, Default)]
 pub struct TraitTileAid {
     due: Vec<(f32, AidStep)>,
@@ -850,7 +867,7 @@ pub(super) fn write_system(
         let made = view.as_ref().zip(sheet).map(|(v, sheet)| {
             let mut s = Snapshot::of(v, sheet, open.generation, open.navigated);
             if aid.long {
-                s.info = [s.info.as_str(); 3].join("\n\n");
+                s.info = [s.info.as_str(); 2].join("\n\n");
             }
             s
         });
@@ -905,7 +922,7 @@ mod tests {
         let bar = |name: &str, extra: &str| {
             format!(
                 r#"<hotrect name="{name}"><width>10</width><target>&true;</target>{extra}
-                  <_number_of_visible_items>1</_number_of_visible_items><_jump_size>0</_jump_size><_step_size>1</_step_size>
+                  <_number_of_visible_items>1</_number_of_visible_items><_jump_size>0</_jump_size><_step_size>1</_step_size><_number_of_items>3</_number_of_items>
                   <_own_count>0</_own_count>
                   <_current_value><copy src="me()" trait="_own_count"/></_current_value>
                   <image name="scrollbar_vert_up"/><image name="scrollbar_vert_down"/>
@@ -1053,6 +1070,12 @@ mod tests {
         let row = |ui: &Ui, i: usize, name: &str| ui.tile(st.rows[i].tile).get(name).map_or(-1.0, Value::num);
         assert_eq!((row(&ui, 0, "_selected"), row(&ui, 1, "_selected")), (1.0, 0.0), "taken, not chosen");
         assert_eq!((row(&ui, 2, "_TextAlpha"), row(&ui, 0, "_TextAlpha")), (FAINT_ALPHA, 255.0));
+        assert_eq!(at(&ui, &format!("{LIST}/_highlight_y")), -1.0, "no highlight as the menu opens");
+        assert_eq!(ui.get_string(&format!("{TEXT}/string")).as_deref(), Some("x"), "though the text shows");
+        assert_eq!(ui.tile(st.rows[0].tile).name, ROW);
+        assert_eq!(ui.tile(st.rows[0].tile).get("id").map(Value::num), Some(ROW_ID));
+        st.list.highlight = true;
+        assert!(frame(&mut ui, &s, &mut st).yes());
         assert_eq!(at(&ui, &format!("{LIST}/_highlight_y")), 40.0, "the chosen row, the second");
         assert_eq!(at(&ui, &format!("{LIST}/_selected_height")), 40.0);
         assert_eq!(at(&ui, &format!("{TRAIT_MENU}/_MaxPoints")), 2.0);
@@ -1069,10 +1092,11 @@ mod tests {
     fn the_keys_reveal_their_row_and_the_bar_is_left_where_it_was_put() {
         let mut ui = menu();
         let mut st = TraitTiles::default();
-        // Ten rows of 40 in a list of 200, the file's step 15: 200 over, 14 values.
+        // Ten rows of 40 in a list of 200: five whole, five positions after the first, 40 each.
         let mut s = snapshot(10, 0, "x");
         assert!(frame(&mut ui, &s, &mut st).yes());
-        assert_eq!(st.list.most, 14.0);
+        assert_eq!(st.list.most, 5.0);
+        assert_eq!(st.list.scale, 40.0);
         assert_eq!(st.page_rows(), 5);
         // The pointer chooses a row out of view: nothing moves.
         s.selected = Some(8);
@@ -1081,7 +1105,7 @@ mod tests {
         // The keys choose: it comes into view, whole.
         s.navigated = 1;
         assert!(frame(&mut ui, &s, &mut st).yes());
-        assert_eq!(st.list.value, 11.0, "(320 + 40 - 200) / 15, up");
+        assert_eq!(st.list.value, 4.0, "(320 + 40 - 200) / 40, up");
         let (y, h) = (at(&ui, &format!("{LIST}/_highlight_y")), at(&ui, &format!("{LIST}/_selected_height")));
         assert!(y >= 0.0 && y + h <= 200.0, "{y} {h}");
         // The bar moves the list and the next frame leaves it there.
@@ -1118,16 +1142,53 @@ mod tests {
     }
 
     #[test]
-    fn a_short_description_keeps_the_arrows_and_no_marker() {
+    fn a_short_description_keeps_the_files_count_and_a_longer_one_goes_past_it() {
         let mut ui = menu();
         let mut st = TraitTiles::default();
         assert!(frame(&mut ui, &snapshot(3, 0, &lines(2)), &mut st).yes());
-        assert_eq!(st.text.most, 0.0);
-        assert_eq!(at(&ui, &format!("{TEXT_BAR}/_number_of_items")), 1.0);
-        assert_eq!(at(&ui, &format!("{TEXT_BAR}/_show_always")), 1.0);
-        assert_eq!(at(&ui, &format!("{TEXT_BAR}/scrollbar_vert_marker/visible")), 0.0);
+        assert_eq!(st.text.most, 2.0, "the layout's 3 items, whatever the text");
+        assert_eq!(at(&ui, &format!("{TEXT_BAR}/_number_of_items")), 3.0);
         assert!(frame(&mut ui, &snapshot(3, 0, &lines(10)), &mut st).yes());
-        assert_eq!(at(&ui, &format!("{TEXT_BAR}/scrollbar_vert_marker/visible")), 1.0);
+        assert_eq!(at(&ui, &format!("{TEXT_BAR}/_number_of_items")), 10.0);
+        assert!(frame(&mut ui, &snapshot(3, 0, &lines(2)), &mut st).yes());
+        assert_eq!(at(&ui, &format!("{TEXT_BAR}/_number_of_items")), 3.0, "and back");
+    }
+
+    #[test]
+    fn off_the_rows_the_highlight_goes_and_the_text_stays() {
+        use fnv_ui::input::Report;
+        let mut ui = menu();
+        let mut st = TraitTiles::default();
+        let mut s = snapshot(3, 0, "x");
+        assert!(frame(&mut ui, &s, &mut st).yes());
+        assert!(!st.list.highlight, "none as the menu opens");
+        let (first, second, reset) = (st.rows[0].tile, st.rows[1].tile, ui.find_tile(RESET).unwrap());
+        let onto = |to| Report { over: Some((None, to)), ..Report::default() };
+        // Onto the chosen row: no act, the highlight shows.
+        follow_pointer(&mut st, &ui, &onto(Some(first)), None, true);
+        assert!(st.list.highlight && st.take_acts(1).is_empty());
+        // Onto another: chosen, once.
+        follow_pointer(&mut st, &ui, &onto(Some(second)), None, true);
+        assert_eq!(st.take_acts(1), [TileAct::Hover(st.rows[1].key)]);
+        // A row moved under a resting pointer chooses nothing.
+        follow_pointer(&mut st, &ui, &onto(Some(second)), None, false);
+        assert!(st.take_acts(1).is_empty());
+        // Onto a button, and off everything: the highlight goes.
+        follow_pointer(&mut st, &ui, &onto(Some(reset)), None, true);
+        assert!(!st.list.highlight);
+        assert_eq!(st.take_acts(1), [TileAct::ButtonFocus]);
+        st.list.highlight = true;
+        follow_pointer(&mut st, &ui, &onto(None), None, true);
+        assert!(!st.list.highlight);
+        assert!(frame(&mut ui, &s, &mut st).yes());
+        assert_eq!(at(&ui, &format!("{LIST}/_highlight_y")), -1.0);
+        assert_eq!(at(&ui, &format!("{LIST}/_selected_height")), 0.0);
+        assert_eq!(ui.get_string(&format!("{TEXT}/string")).as_deref(), Some("x"));
+        // The keys bring it back.
+        s.navigated = 1;
+        assert!(frame(&mut ui, &s, &mut st).yes());
+        assert!(st.list.highlight);
+        assert_eq!(at(&ui, &format!("{LIST}/_highlight_y")), 0.0);
     }
 
     #[test]
@@ -1197,9 +1258,11 @@ mod tests {
         let down = piece(&ui, TEXT_BAR, list::DOWN);
         assert!(follow_click(&mut st, &ui, &click(down, By::Pointer), None, false, &[]).is_some());
         assert_eq!((st.list.value, st.text.value), (1.0, 1.0));
-        // The file's page step is nothing here: the box less a step, three values.
+        // The layout's page step is nothing: its page area moves nothing.
         let page = piece(&ui, TEXT_BAR, list::PAGE_DOWN);
         assert!(follow_click(&mut st, &ui, &click(page, By::Pointer), None, false, &[]).is_some());
+        assert_eq!(st.text.value, 1.0);
+        st.scroll_text(3.0);
         assert_eq!(st.text.value, 4.0);
         // A value written after the click's pulse stays the view's.
         st.rewrite(&mut ui);
@@ -1254,10 +1317,13 @@ mod tests {
 
     #[test]
     fn text_most_reaches_the_end() {
-        assert_eq!(text_most(3.0, 300.0, 100.0, 25.0), 9.0);
-        assert_eq!(text_most(0.0, 100.0, 100.0, 25.0), 0.0);
-        assert_eq!(text_most(0.0, 101.0, 100.0, 25.0), 1.0);
-        assert_eq!(text_most(0.0, 900.0, 100.0, 0.0), 0.0, "no step, no range");
+        assert_eq!(text_most(3.0, 300.0, 100.0, 25.0, 0.0), 9.0);
+        assert_eq!(text_most(0.0, 100.0, 100.0, 25.0, 0.0), 0.0);
+        assert_eq!(text_most(0.0, 101.0, 100.0, 25.0, 0.0), 1.0);
+        assert_eq!(text_most(0.0, 900.0, 100.0, 0.0, 2.0), 2.0, "no step: the bar's own");
+        assert_eq!(text_most(0.0, 90.0, 100.0, 25.0, 4.0), 4.0, "a text that fits: the bar's own");
+        assert_eq!(text_most(0.0, 150.0, 100.0, 25.0, 4.0), 4.0, "its own reaches the end");
+        assert_eq!(text_most(0.0, 300.0, 100.0, 25.0, 4.0), 8.0, "past its own only to the end");
     }
 
     #[test]

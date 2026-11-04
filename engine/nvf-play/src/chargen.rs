@@ -360,6 +360,9 @@ fn input(
                 if wheel.abs() >= 1.0 {
                     t.wheel(-f64::from(wheel.round()));
                 }
+                // NVForever's addition [design]: the keyboard and controller route to the end
+                // of a long description. They move nothing in the original [observed: its job
+                // `trait`, chargen.md §4.1].
                 for (k, by) in [(ArrowLeft, -1.0), (ArrowRight, 1.0)] {
                     if keys.just_pressed(k) {
                         t.scroll_text(by);

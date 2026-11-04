@@ -885,12 +885,13 @@ mod tests {
 
     #[test]
     fn the_tile_menu_blur_lines() {
-        let tutorial = TileMenuBlur { tutorial: true, container: false };
-        let container = TileMenuBlur { tutorial: false, container: true };
+        let tutorial = TileMenuBlur { tutorial: true, ..Default::default() };
+        let container = TileMenuBlur { container: true, ..Default::default() };
         assert_eq!(tile_menu_blur_text(TileMenuBlur::default()), "off");
         assert_eq!(tile_menu_blur_text(tutorial), "TutorialMenu radius 3");
         assert_eq!(tile_menu_blur_text(container), "ContainerMenu radius 3");
-        assert_eq!(tile_menu_blur_text(TileMenuBlur { tutorial: true, container: true }), "TutorialMenu, ContainerMenu radius 3");
+        assert_eq!(tile_menu_blur_text(TileMenuBlur { tutorial: true, container: true, ..Default::default() }), "TutorialMenu, ContainerMenu radius 3");
+        assert_eq!(tile_menu_blur_text(TileMenuBlur { traits: true, ..Default::default() }), "TraitMenu radius 3");
     }
 
     #[test]

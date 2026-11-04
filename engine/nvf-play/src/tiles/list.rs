@@ -167,19 +167,6 @@ pub fn keep_row_shown(value: f64, top: f64, height: f64, page: f64, delta: f64, 
     v.clamp(0.0, most.max(0.0))
 }
 
-/// The counts of rows `heights` in a list `page` high when the list keeps the file's own
-/// `_scroll_delta` as its step (`step`): as many positions as it takes to bring the last row's
-/// end in, the whole extent reached. [`counts`] is the container capture's reading and says
-/// nothing of a menu that was not captured; this is a menu's other choice, which keeps
-/// `delta` `None` so [`write_counts`] gives the file's step back [design].
-pub fn counts_by_step(heights: &[f64], page: f64, step: f64) -> Counts {
-    let total: f64 = heights.iter().sum();
-    if total <= page || step <= 0.0 {
-        return Counts { items: 1.0, visible: 1.0, delta: None };
-    }
-    Counts { items: ((total - page) / step - 1e-9).ceil() + 1.0, visible: 1.0, delta: None }
-}
-
 /// Write the counts [`counts`] and the file's `_scroll_delta`, which a list that fits gets
 /// back from `file_delta` (what the tile had when no code had written it).
 pub fn write_counts(ui: &mut Ui, list: TileId, c: &Counts, file_delta: f64) {
@@ -535,18 +522,6 @@ mod tests {
         assert_eq!(value_under(&ui, drag, BAR_TOP + 7.0 + 30.0), Some(3.0));
         ui.set_trait(marker, "_step_height", Value::Num(0.0));
         assert_eq!(value_under(&ui, drag, press), None, "no step, no value");
-    }
-
-    #[test]
-    fn the_file_step_counts_reach_the_last_row() {
-        // Rows of a list that keeps its file's step of 15: 300 over, 20 positions and the first.
-        let c = counts_by_step(&[200.0, 200.0, 200.0], 300.0, 15.0);
-        assert_eq!((c.items, c.visible, c.delta), (21.0, 1.0, None));
-        assert_eq!(c.most() * 15.0, 300.0, "the last row's end comes to the list's end");
-        // A remainder takes one more position, not fewer.
-        assert_eq!(counts_by_step(&[310.0], 300.0, 15.0).items, 2.0);
-        assert_eq!(counts_by_step(&[300.0], 300.0, 15.0).items, 1.0, "it fits");
-        assert_eq!(counts_by_step(&[900.0], 300.0, 0.0).items, 1.0, "no step, no range");
     }
 
     #[test]
