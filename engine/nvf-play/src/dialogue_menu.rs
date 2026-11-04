@@ -12,7 +12,7 @@
 //!   scroll bar at the left when not all of them fit.
 //! - The actor's name stands at the top right throughout.
 //! - While a Goodbye choice is offered, "TAB) Goodbye" stands at the left of the band,
-//!   level with the bottom bracket, in the band's own text (owner, list 5 item 62; the
+//!   level with the bottom bracket, in the band's own text on a backing in its shade (owner, list 5 item 62; the
 //!   interface file has no such hint [observed: dialog_menu.xml]): Tab picks that choice
 //!   (`crate::dialogue`). The settings page's "Goodbye hint" switch ([`GoodbyeHint`])
 //!   hides only the words; Tab works as before.
@@ -103,8 +103,16 @@ pub const TAG_GAP: &str = "  ";
 
 /// The hint shown while a Goodbye choice is offered.
 pub const GOODBYE_HINT: &str = "TAB) Goodbye";
-/// The hint's right end stands this far left of the band's edge [design].
-const HINT_GAP: f32 = 10.0;
+/// The hint's backing (the band's shade, flush against the band's left edge) reaches this
+/// far left of the words and this far above and below their letters; the words' right end
+/// stands as far from the band [design].
+const HINT_PAD_X: f32 = 10.0;
+const HINT_PAD_Y: f32 = 8.0;
+/// Where the screen has no room at the side, the band grows this much under the bottom
+/// bracket and the hint stands in that strip, this far in from the band's edge (as the
+/// line of text starts) [design].
+const HINT_ROW: f32 = 20.0;
+const HINT_IN: f32 = TEXT_IN;
 /// How tall font 6's capital letters stand (the line is [`LINE`] high and its letters stand
 /// [`TEXT_BASE`] under its top); the hint's letters are centred on the bottom bracket's
 /// line, or in the strip of band under it, by this [design].
@@ -199,6 +207,8 @@ pub struct Layout {
     pub list: Option<ListPlace>,
     /// "TAB) Goodbye", while a Goodbye choice is offered and the switch is on.
     pub hint: Option<Placed>,
+    /// Its backing in the band's shade, when it stands at the band's side.
+    pub hint_back: Option<Area>,
     /// The first choice shown.
     pub first: usize,
 }
@@ -210,9 +220,9 @@ fn text_height(lines: usize) -> f32 {
 
 /// Where a block `height` high starts: centred on the centring line, but not lower than
 /// the room the safe zone leaves under it.
-fn centred(height: f32) -> f32 {
+fn centred(height: f32, extra: f32) -> f32 {
     let inside = 960.0 - 2.0 * CROP_Y;
-    (inside * CENTRE - height / 2.0).min(inside - height - BOTTOM_ROOM)
+    (inside * CENTRE - height / 2.0).min(inside - height - BOTTOM_ROOM - extra)
 }
 
 /// The first choice shown so that `selected` is among the shown ones, moving as little
@@ -263,19 +273,29 @@ fn crop_x(width: f32) -> f32 {
     CROP_Y * 1280.0 / width
 }
 
-/// Where "TAB) Goodbye" stands, its letters on `base`: left of the band, its right end
-/// [`HINT_GAP`] from the band's edge and level with the bottom bracket's line, where the
-/// safe zone leaves room for it; else inside the band, in the strip under the bottom
-/// bracket, from the bracket's left end. Neither place is over the choices or the scroll
-/// bar, which end at the bracket's line [design].
-fn hint_place(line: Line, width: f32, band_x: f32, bottom_line: f32) -> Placed {
-    let outside = band_x - HINT_GAP - line.width;
-    if outside >= crop_x(width) {
-        return Placed { x: outside, base: bottom_line + (THICK + HINT_CAP) / 2.0, line };
+/// Whether "TAB) Goodbye", `words` wide, stands left of the band with its backing inside
+/// the safe zone.
+fn hint_at_side(words: f32, width: f32, band_x: f32) -> bool {
+    band_x - HINT_PAD_X - words - HINT_PAD_X >= crop_x(width)
+}
+
+/// Where "TAB) Goodbye" stands, its letters on `base`, and its backing. At the band's side:
+/// the words' right end [`HINT_PAD_X`] from the band's edge, their letters centred on the
+/// bottom bracket's line, on a backing flush against the band. Else (a 4:3 screen) inside
+/// the band, in the strip [`HINT_ROW`] taller than the band's own under the bottom bracket,
+/// [`HINT_IN`] from the band's left edge (kept inside the safe zone), its letters centred
+/// in the strip: clear of the bracket's corner, under the choices and the scroll bar
+/// [design].
+fn hint_place(line: Line, width: f32, band_x: f32, bottom_line: f32) -> (Placed, Option<Area>) {
+    if hint_at_side(line.width, width, band_x) {
+        let x = band_x - HINT_PAD_X - line.width;
+        let base = bottom_line + (THICK + HINT_CAP) / 2.0;
+        let back = [x - HINT_PAD_X, base - HINT_CAP - HINT_PAD_Y, line.width + 2.0 * HINT_PAD_X, HINT_CAP + 2.0 * HINT_PAD_Y];
+        return (Placed { x, base, line }, Some(back));
     }
-    // A text wider than the list keeps inside the band's right end instead.
-    let x = (band_x + LIST_IN + BRACKET_IN).min(band_x + BAND_WIDTH - LIST_IN - line.width).max(band_x);
-    Placed { x, base: bottom_line + (THICK + LIST_BAND_DOWN + HINT_CAP) / 2.0, line }
+    let right = band_x + BAND_WIDTH - HINT_IN - line.width;
+    let x = (band_x + HINT_IN).min(right).max(crop_x(width));
+    (Placed { x, base: bottom_line + (THICK + LIST_BAND_DOWN + HINT_ROW + HINT_CAP) / 2.0, line }, None)
 }
 
 /// `hint`: whether the "Goodbye hint" switch is on.
@@ -286,12 +306,12 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, hint: 
         let right = width - 2.0 * crop_x(width) - NAME_RIGHT;
         Placed { x: right - line.width, base: 2.0 * CROP_Y + NAME_TOP + NAME_BASE, line }
     });
-    let mut out = Layout { name, band: None, text: Vec::new(), list: None, hint: None, first: 0 };
+    let mut out = Layout { name, band: None, text: Vec::new(), list: None, hint: None, hint_back: None, first: 0 };
     if view.choices.is_empty() {
         let Some(text) = view.line.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { return out };
         let lines = body.lines(text, Some(BAND_WIDTH - 2.0 * TEXT_IN));
         let height = text_height(lines.len());
-        let top = centred(height);
+        let top = centred(height, 0.0);
         out.band = Some([band_x, top - TEXT_BAND_UP, BAND_WIDTH, height + TEXT_BAND_MORE]);
         out.text = lines.into_iter().enumerate().map(|(i, line)| Placed { line, x: band_x + TEXT_IN, base: top + TEXT_BASE + LINE * i as f32 }).collect();
         return out;
@@ -303,7 +323,10 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, hint: 
     let heights = choice_heights(&lines);
     let (first, end) = window(first, selected, &heights);
     let height = heights[first..end].iter().sum::<f32>().max(MIN_LIST);
-    let top = centred(height);
+    // The hint's own words, and the room under the band they need where they stand in it.
+    let hint_line = (view.goodbye && hint).then(|| body.lines(GOODBYE_HINT, None).remove(0));
+    let room = hint_line.as_ref().map_or(0.0, |l| if hint_at_side(l.width, width, band_x) { 0.0 } else { HINT_ROW });
+    let top = centred(height, room);
     let mut y = top - LIFT;
     let mut choices = Vec::new();
     for (i, ls) in lines.iter().enumerate().take(end).skip(first) {
@@ -328,12 +351,12 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, hint: 
     });
     let top_line = top - BRACKET_ABOVE;
     let bottom_line = bottom + BRACKET_BELOW;
-    out.band = Some([band_x, top_line - LIST_BAND_UP, BAND_WIDTH, bottom_line - top_line + LIST_BAND_UP + LIST_BAND_DOWN]);
+    out.band = Some([band_x, top_line - LIST_BAND_UP, BAND_WIDTH, bottom_line - top_line + LIST_BAND_UP + LIST_BAND_DOWN + room]);
     out.list = Some(ListPlace { area: [list_x, top, LIST_WIDTH, height], top_line, bottom_line, bracket_x: list_x + BRACKET_IN, bracket_width: LIST_WIDTH, choices, scroll });
     out.first = first;
-    if view.goodbye && hint {
-        let line = body.lines(GOODBYE_HINT, None).remove(0);
-        out.hint = Some(hint_place(line, width, band_x, bottom_line));
+    if let Some(line) = hint_line {
+        let (placed, back) = hint_place(line, width, band_x, bottom_line);
+        (out.hint, out.hint_back) = (Some(placed), back);
     }
     out
 }
@@ -432,6 +455,13 @@ fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, s
         }
         if let Some(n) = &l.name {
             set_line(s, &kit.name, &n.line, n.x, n.base, bright);
+        }
+        if let Some([x, y, w, h]) = l.hint_back {
+            let shade = Color::srgba(0.0, 0.0, 0.0, SHADE);
+            match image(kit.band.as_ref(), shade) {
+                Some(i) => s.spawn((at(x, y, w, h), i)),
+                None => s.spawn((at(x, y, w, h), BackgroundColor(shade))),
+            };
         }
         if let Some(hint) = &l.hint {
             set_line(s, &kit.body, &hint.line, hint.x, hint.base, bright);
@@ -584,51 +614,68 @@ mod tests {
         a[0] < b[0] + b[2] && b[0] < a[2] && a[1] < b[1] + b[3] && b[1] < a[3]
     }
 
+    fn goodbye(labels: &[&str]) -> MenuView {
+        MenuView { goodbye: true, ..choices(labels) }
+    }
+
     #[test]
-    fn the_goodbye_hint_stands_left_of_the_band() {
+    fn the_goodbye_hint_stands_left_of_the_band_on_a_backing() {
         let mut v = choices(&["What happened here?", "Goodbye."]);
         assert!(lay(&v, 1707.0, true).hint.is_none(), "no hint without a Goodbye choice");
         v.goodbye = true;
         let l = lay(&v, 1707.0, true);
         let hint = l.hint.expect("the hint");
-        let (band, list) = (l.band.unwrap(), l.list.unwrap());
+        let (band, list, back) = (l.band.unwrap(), l.list.unwrap(), l.hint_back.expect("its backing"));
         assert!(hint.line.width > 0.0);
-        // Its right end is HINT_GAP left of the band, the letters centred on the bottom
+        // The words end HINT_PAD_X from the band, their letters centred on the bottom
         // bracket's line.
-        assert!((hint.x + hint.line.width - (band[0] - HINT_GAP)).abs() < 0.01);
-        let middle = hint.base - HINT_CAP / 2.0;
-        assert!((middle - (list.bottom_line + THICK / 2.0)).abs() < 0.01);
-        // And inside the safe zone.
-        assert!(hint.x >= crop_x(1707.0));
+        assert!((hint.x + hint.line.width - (band[0] - HINT_PAD_X)).abs() < 0.01);
+        assert!((hint.base - HINT_CAP / 2.0 - (list.bottom_line + THICK / 2.0)).abs() < 0.01);
+        // The backing is flush against the band, reaches HINT_PAD_X and HINT_PAD_Y round the
+        // letters, and stays inside the safe zone.
+        assert!((back[0] + back[2] - band[0]).abs() < 0.01);
+        let b = hint_box(&hint);
+        assert!((b[0] - back[0] - HINT_PAD_X).abs() < 0.01 && (b[1] - back[1] - HINT_PAD_Y).abs() < 0.01);
+        assert!((back[1] + back[3] - b[3] - HINT_PAD_Y).abs() < 0.01);
+        assert!(back[0] >= crop_x(1707.0));
+        // The band is the height it is without the hint.
+        assert_eq!(l.band, lay(&v, 1707.0, false).band);
     }
 
     #[test]
-    fn the_goodbye_hint_moves_into_the_band_when_the_side_is_too_narrow() {
-        let mut v = choices(&["One", "Two", "Goodbye."]);
-        v.goodbye = true;
-        // A 4:3 screen: the band's left edge is 100 from the screen's, the words 200 wide.
-        let l = lay(&v, 1280.0, true);
-        let hint = l.hint.expect("the hint");
-        let (band, list) = (l.band.unwrap(), l.list.unwrap());
-        // In the strip of band under the bottom bracket, from the bracket's left end.
-        assert!((hint.x - list.bracket_x).abs() < 0.01);
-        let [_, top, _, bottom] = hint_box(&hint);
-        assert!(top > list.bottom_line + THICK && bottom < band[1] + band[3]);
-        assert!(hint.x >= band[0] && hint.x + hint.line.width <= band[0] + band[2]);
+    fn the_goodbye_hint_moves_into_the_band_on_a_4_3_screen_clear_of_the_bracket() {
+        let v = goodbye(&["One", "Two", "Goodbye."]);
+        // 1280 units wide is 4:3 (1024x768 too); 1200 is 5:4. The band's left edge is 100
+        // and 60 from the screen's, the words 200 wide: no room at the side.
+        for width in [1280.0, 1200.0, 1100.0] {
+            let l = lay(&v, width, true);
+            let hint = l.hint.expect("the hint");
+            let (band, list) = (l.band.unwrap(), l.list.unwrap());
+            assert!(l.hint_back.is_none(), "width {width}: no backing inside the band");
+            let [left, top, right, bottom] = hint_box(&hint);
+            // In the strip the band grows under the bottom bracket, HINT_IN from its left edge
+            // (or the safe zone), well clear of the bracket's line and corner.
+            assert!((left - (band[0] + HINT_IN).max(crop_x(width))).abs() < 0.01, "width {width}");
+            assert!(top - (list.bottom_line + THICK) >= 10.0, "width {width}: clear of the bracket");
+            assert!(bottom <= band[1] + band[3] - 10.0, "width {width}: inside the band's bottom");
+            assert!(bottom <= 960.0 - CROP_Y, "width {width}: inside the safe zone");
+            assert!(left >= crop_x(width) && right <= width - crop_x(width), "width {width}: inside the safe zone");
+            assert_eq!(band[3], lay(&v, width, false).band.unwrap()[3] + HINT_ROW, "width {width}: the band grew for it");
+        }
     }
 
     #[test]
     fn the_goodbye_hint_never_covers_a_choice_or_the_scroll_bar() {
-        // Six long choices scroll; a 4:3 screen, wider ones and the selection at both ends.
+        // Six long choices scroll (the list at its tallest); 5:4, 4:3, wider screens, the
+        // selection at both ends.
         let long = "Tell me everything you know about the people who attacked the town last night";
-        let mut v = choices(&[long, long, long, long, long, "Goodbye."]);
-        v.goodbye = true;
-        for width in [1280.0, 1440.0, 1707.0, 2560.0] {
+        let v = goodbye(&[long, long, long, long, long, "Goodbye."]);
+        for width in [1200.0, 1280.0, 1440.0, 1707.0, 2560.0] {
             for selected in [0, 5] {
                 let l = layout(&v, 0, selected, width, true, &font(34.0), &font(36.0));
                 let hint = l.hint.expect("the hint");
                 let b = hint_box(&hint);
-                let list = l.list.unwrap();
+                let (band, list) = (l.band.unwrap(), l.list.unwrap());
                 assert!(list.scroll.is_some());
                 for c in &list.choices {
                     assert!(!meets(b, c.area), "width {width}: over choice {}", c.index);
@@ -637,22 +684,27 @@ mod tests {
                 for a in [bar.up, bar.down, bar.marker] {
                     assert!(!meets(b, a), "width {width}: over the scroll bar");
                 }
-                assert!(hint.x >= crop_x(width), "width {width}: inside the safe zone");
+                if let Some(back) = l.hint_back {
+                    assert!(!meets(b, band) && back[0] >= crop_x(width), "width {width}: the side's backing is outside the band");
+                }
+                assert!(b[0] >= crop_x(width) && b[2] <= width - crop_x(width), "width {width}: inside the safe zone");
+                assert!(band[1] + band[3] <= 960.0 - CROP_Y, "width {width}: the band ends inside the safe zone");
             }
         }
     }
 
     #[test]
     fn the_goodbye_hint_switch_hides_only_the_words() {
-        let mut v = choices(&["What happened here?", "Goodbye."]);
-        v.goodbye = true;
-        for width in [1280.0, 1707.0] {
-            let on = lay(&v, width, true);
-            let off = lay(&v, width, false);
-            assert!(on.hint.is_some() && off.hint.is_none());
-            // Everything else is where it was.
-            assert_eq!((on.band, on.list, on.name), (off.band, off.list, off.name));
-        }
+        let v = goodbye(&["What happened here?", "Goodbye."]);
+        // At the side nothing else moves.
+        let (on, off) = (lay(&v, 1707.0, true), lay(&v, 1707.0, false));
+        assert!(on.hint.is_some() && on.hint_back.is_some());
+        assert!(off.hint.is_none() && off.hint_back.is_none());
+        assert_eq!((on.band, on.list, on.name), (off.band, off.list, off.name));
+        // Inside the band, the room made for the words goes with them; the list and name stay.
+        let (on, off) = (lay(&v, 1280.0, true), lay(&v, 1280.0, false));
+        assert!(on.hint.is_some() && off.hint.is_none());
+        assert_eq!((on.list, on.name), (off.list, off.name));
     }
 
     #[test]

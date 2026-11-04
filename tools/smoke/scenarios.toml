@@ -2842,13 +2842,13 @@ expect = [
 
 [[scenario]]
 name = "dialogue-goodbye-hint"
-note = "Chet is talked to twice in the general store, each time left by Tab (the aid's leave step). Between them the pause menu's settings page turns the Goodbye hint (dialogue-goodbye-hint, #1517) off: the first conversation shows the hint, the second holds it back and Tab still leaves. Not run before this branch; the times (conversation 2 at 36 s) leave the first conversation 13 s or more to end"
+note = "Chet is talked to twice in the general store, each time left by Tab (the aid's leave step). Between them the pause menu's settings page turns the Goodbye hint (dialogue-goodbye-hint, #1517) off: the first conversation shows the hint, the second holds it back and Tab still leaves. Run at 1024x768 (4:3), where the hint stands inside the band under the bottom bracket, so the shots (hint_on_*.png during the first conversation, hint_off_*.png during the second, each at three times as Chet's greeting is not timed) show the narrow-screen place. Not run before this branch; the times leave the first conversation 19 s or more to end"
 source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint and its setting (#1517)"
 areas = ["dialogue", "menus"]
 paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=leave;36:GSChetRef=leave", NVF_PLAY_TEST_PAUSE = "24:30", NVF_PLAY_TEST_SETTINGS = "25:page,26:dialogue-goodbye-hint" }
-args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages"]
-run_seconds = 52
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=leave;42:GSChetRef=leave", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_PAUSE = "30:36", NVF_PLAY_TEST_SETTINGS = "31:page,32:dialogue-goodbye-hint", NVF_PLAY_TEST_SHOTS = "14:hint_on_14.png,17:hint_on_17.png,20:hint_on_20.png,45:hint_off_45.png,48:hint_off_48.png,51:hint_off_51.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1024x768"]
+run_seconds = 58
 expect = [
   { text = "dialogue menu: TAB) Goodbye shown at the left of the choices", count = 1, label = "the hint while the first conversation offers a Goodbye choice, with the switch on (the default)" },
   { text = "settings: dialogue-goodbye-hint off", label = "the settings page turned the Goodbye hint off" },

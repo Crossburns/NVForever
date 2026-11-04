@@ -129,16 +129,21 @@ From these, all [hypothesis] fitted to the pictures:
   The subtitles and radio subtitles are shown the same way (corner-messages.md §8); the
   log's `dialogue:` lines keep the record's text.
 - The list scrolls by whole choices to keep the selected one in sight [design].
-- While a Goodbye choice is offered, "TAB) Goodbye" (font 6, the band's own text, drawn
-  with no box of its own) stands left of the band: its right end 10 units from the band's
-  edge, its letters centred on the bottom bracket's line [owner, list 5 item 62: the words,
-  the left of the dialogue box, shown by default; design: the place, the style; dialog_menu.xml
-  has no such hint, observed]. Where the safe zone leaves no room for it at the side (a 4:3
-  screen), it stands inside the band, in the strip under the bottom bracket, from the
-  bracket's left end; that is under the choices and the scroll bar, never over them [design].
-  Tab picks that choice (dialogue-play.md §2).
+- While a Goodbye choice is offered, "TAB) Goodbye" (font 6, the band's own text) stands
+  left of the band [owner, list 5 item 62: the words, the left of the dialogue box, shown
+  by default; design: the rest; dialog_menu.xml has no such hint, observed]. Where the safe
+  zone leaves room (a 16:9 screen), its letters are centred on the bottom bracket's line,
+  its right end 10 units from the band's edge, on a backing in the band's shade (0.87)
+  that reaches 10 units left of the words and 8 above and below the letters and is flush
+  against the band's edge, so the two read as one shape [design]. Where it does not (4:3 and 5:4, 1280 and 1200 units wide), the
+  band grows 20 units under its bottom bracket and the words stand in that strip, 60 units
+  in from the band's left edge (as the line of text starts) and centred in the strip: 15
+  units clear of the bracket's line and corner, under the choices and the scroll bar, inside
+  the safe zone, with no backing of their own; a list that would put the band past the safe
+  zone's bottom is set up as much as it needs [design]. Tab picks that choice
+  (dialogue-play.md §2).
 - The settings page's Gameplay group has a "Goodbye hint" switch (key `dialogue-goodbye-hint`,
-  on by default): off hides the words only, and Tab says goodbye as before [design]. The menu
+  on by default): off hides the words and their backing, and the strip made for them at 4:3, only; Tab says goodbye as before [design]. The menu
   is drawn again at once when it is flipped; the log says `TAB) Goodbye shown at the left of
   the choices` or `… hidden by the Goodbye hint setting` when the hint changes.
 - The keys are dialogue-play.md §2's; the old on-screen key hint and the "You cannot
