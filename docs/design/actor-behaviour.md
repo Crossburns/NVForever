@@ -456,9 +456,10 @@ object's consecutive failures in one retained sandbox; competing behaviours mean
 with that object begins; a walk to the object begun is not enough, and combat interrupting
 the sandbox leaves the record alone. The record is not saved: a load discards deadlines and
 stages and restarts the backoff, as a new sandbox does. An object at the cap with the full
-600 seconds left to wait gets up to four more searches in that time (at most at about 0.5,
-65.5, 190.5 and 435.5 seconds after the load), for each failed object at each load; a
-shorter wait left means fewer. No test loads a game here; this is from the delays.
+600 seconds left to wait gets up to four more searches in that time, for each failed object at each load (in the
+retry tests' timing, about 0.5, 65.5, 190.5 and 435.5 seconds after it; other behaviours can
+move those); a shorter wait left may mean fewer. No test loads a game here; this is from the
+delays.
 
 **Also in this step**: a patrol waits out a point's idle time (REFR `XPRD`) before going
 on [documented: Idle Markers, Patrol Data]; the furniture a package gives its actor
