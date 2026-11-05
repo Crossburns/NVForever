@@ -5786,6 +5786,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "snow-globe-taken-particles"
+source = "#1596 (engine/nvforever/src/particles.rs): a taken snow globe's snow went on falling where it stood; a placed model's own live particles go at once when it is no longer drawn"
+note = "The Strip snow globe in Vault 21 (SnowglobeTheStrip 0x001690EC); the player starts able to take it, looking at it, and E at 10 s takes it"
+areas = ["particles", "activation"]
+paths = ["engine/nvforever/src/particles.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NEAR = "001690EC", NVF_PLAY_TEST_ACTIVATE = "10" }
+args = ["--cell", "2EOVault21", "--play", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'activate 0x001690EC ', label = "E takes the snow globe" },
+  { re = 'particles: 001690EC is not drawn any more: its \d+ live particles go', count = 1, label = "its snow goes with it" },
+]
+order = [["activate 0x001690EC ", "particles: 001690EC is not drawn any more"]]
+
+[[scenario]]
 name = "door-behind-wall-face"
 source = "#1339 (docs/spec-notes/cells-refs.md §5): the Nipton town hall's collision mesh has a face 8.5 units in front of its door's slab, so the crosshair stopped on the building and the door could not be used; a door within 16 units behind a face that cannot be activated is the target"
 note = "the town hall's outside door (0x00130CFF, a teleport into NiptonTownHallInterior), the player put 100 units south of it facing it; E at 8 s takes the player inside"
