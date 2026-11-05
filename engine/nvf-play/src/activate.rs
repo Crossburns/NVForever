@@ -108,13 +108,14 @@ impl HudMessage {
 // ---- targeting -------------------------------------------------------------------
 
 /// Name and action of a reference the player can activate now: present in the
-/// simulation and of an activatable type. Activators, furniture and doors need a display
-/// name (FULL) [hypothesis: unnamed activators are trigger volumes and markers the player
-/// is not meant to use; not captured. Doors, #1598: the 8 nameless DOOR bases of
-/// FalloutNV.esm are NVInvisibleDoorNPCOnly, VHDTowerHatchNoUse, OffDoorHidden01 (Mick &
-/// Ralph's), CG04SecretDoor, FortArenaGate, REPCONHatch2 and two never placed, observed;
-/// cells-refs.md §2]; placed leveled items and explosives with no weapon to give are not
-/// offered.
+/// simulation and of an activatable type. Activators and furniture need a display name
+/// (FULL) [hypothesis: unnamed activators are trigger volumes and markers the player is
+/// not meant to use; not captured]. So does a door, unless its reference has a teleport
+/// destination (XTEL) or an Activation Prompt (XATO): a nameless door with neither gives
+/// no prompt [hypothesis: #1598, Mick & Ralph's OffDoorHidden01; a nameless door the
+/// player may need to go through, a travel door or one given a prompt, stays offered so
+/// no quest is blocked; cells-refs.md §2]. Placed leveled items and explosives with no
+/// weapon to give are not offered.
 pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> Option<(String, Action)> {
     if !sim.present(form_id) {
         return None;
@@ -146,8 +147,15 @@ pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> 
         // A door flagged Inaccessible (REFR header bit 8 [documented: GECK wiki
         // GetFormFlag]) leads nowhere the player may go (cells-refs.md §2).
         BaseData::Door(_) if placed.is_some_and(|p| p.flags & fnv_sim::refs::INACCESSIBLE != 0) => Action::Inaccessible,
-        // A door without a name is not for the player (above): no prompt.
-        BaseData::Door(_) if base.name.as_deref().is_none_or(|n| n.trim().is_empty()) => return None,
+        // A door without a name, leading nowhere and given no Activation Prompt, is not
+        // for the player (above): no prompt.
+        BaseData::Door(_)
+            if base.name.as_deref().is_none_or(|n| n.trim().is_empty())
+                && placed.is_none_or(|p| p.teleport.is_none() && p.prompt.is_none())
+                && base.prompt.is_none() =>
+        {
+            return None
+        }
         BaseData::Door(_) => locked(match placed.and_then(|p| p.teleport) {
             Some(tp) => Action::Travel { to: destination_name(sim, index, tp.door, tp.pos) },
             None if state.is_some_and(|s| s.open) => Action::Close,
