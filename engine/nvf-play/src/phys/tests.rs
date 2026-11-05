@@ -751,3 +751,33 @@ fn a_place_near_loaded_collision_only_is_refused_and_a_character_goes_exactly_wh
     p.place_player(feet, 48.0, 400.0);
     assert_eq!(p.npc_spot(7, [at[0] + 5.0, at[1], at[2]]), Err(NpcSpotRefused::NoRoom));
 }
+
+#[test]
+fn several_dynamic_bodies_join_into_one_with_their_shapes_in_place() {
+    let at = |x: f32| Iso { translation: [x, 0.0, 0.0], rotation: Iso::IDENTITY.rotation };
+    let body = |x: f32, motion: Motion| CollisionObject {
+        node: Some(format!("Bone{x}")),
+        node_block: 0,
+        node_transform: at(x),
+        body_transform: at(1.0),
+        motion,
+        layer: 4,
+        mass: 2.0,
+        friction: 0.3,
+        restitution: 0.8,
+        shape: Arc::new(Shape::Sphere { radius: 3.0 }),
+        shell: x / 10.0,
+        material: None,
+    };
+    let j = one_dynamic_body(&[body(0.0, Motion::Dynamic), body(10.0, Motion::Dynamic)]).unwrap();
+    assert_eq!(j.node_transform.translation, [1.0, 0.0, 0.0]);
+    assert_eq!(j.body_transform, Iso::IDENTITY);
+    assert_eq!((j.mass, j.shell, j.layer), (4.0, 1.0, 4));
+    let Shape::Compound { children } = &*j.shape else { panic!("{:?}", j.shape) };
+    // The second body's shape sits 10 units along from the first's, as in the file.
+    assert_eq!(children.iter().map(|(p, _)| p.translation[0]).collect::<Vec<_>>(), vec![0.0, 10.0]);
+    // One body, or a static or keyframed one among them: left as they are.
+    assert!(one_dynamic_body(&[body(0.0, Motion::Dynamic)]).is_none());
+    assert!(one_dynamic_body(&[body(0.0, Motion::Dynamic), body(10.0, Motion::Keyframed)]).is_none());
+    assert!(one_dynamic_body(&[body(0.0, Motion::Static), body(10.0, Motion::Dynamic)]).is_none());
+}

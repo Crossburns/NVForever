@@ -85,6 +85,24 @@ in its archives use high bytes; which setting names the language.
 The texture of `monofonto_large` is 256 x 256, 16 bits a texel with 4 of them alpha
 [observed]; the letters are in the alpha, the colour is a light grey.
 
+All eight font textures of `Fallout - Textures2.bsa` are A4R4G4B4 with one level, no
+smaller ones: 256 x 256 for `monofonto_large`, `glow_monofonto_medium` and
+`fixedsys_comp_uniform_width`, 512 x 512 for the other five [observed: `fnvtool dds
+list`, 2026-11-05]. NVForever draws a font from its texture's largest level only, so a
+texture that brings smaller levels (a localized or modded one) cannot blend a glyph with
+its neighbours [design, #1439].
+
+**Which files.** Font n is read from the file `sFontFile_n` of `[Fonts]` names in the
+install's `Fallout_default.ini` (in the game's folder; the per-user copy in `My
+Games\FalloutNV` is never read, install-layout.md), else from the English install's
+file for n [documented: Fallout_default.ini `[Fonts]`; hypothesis: a localized install
+names its own files there, not checked]. The start's log names each font read from a
+file of its own.
+
+**Without the font.** When a font file or its texture cannot be read, the text is drawn
+with Bevy's font, its characters read back from their codes in the run's code page
+(`fnv_font::Line::text`), not as Latin-1 [design, #1439].
+
 ## 3. Setting text
 
 - A character takes its room before, its width and its room after; the next starts

@@ -1371,9 +1371,17 @@ impl Combat {
     }
 
     /// The player aims down a gun's sights now: a gun with sights in hand and Block held
-    /// (IsPlayerActionActive 9).
+    /// (IsPlayerActionActive 9, GetPCUsingIronSights), not while a reload or a jam holds
+    /// the sights down ([`sights_held_down`]).
     pub fn player_sights_up(&self, anim: &WeaponAnim, aiming: bool) -> bool {
-        anim.ready && aiming && self.sight_fov().is_some()
+        anim.ready && aiming && !self.player_sights_held_down() && self.sight_fov().is_some()
+    }
+
+    /// The gun's firing cycle holds the sights down now: it reloads or clears a jam
+    /// ([`sights_held_down`]). The aim zoom and the sight pose ease out meanwhile
+    /// (`crate::aim_zoom`) and come back once the cycle is through, if Block is still held.
+    pub fn player_sights_held_down(&self) -> bool {
+        !self.melee && self.cycle.as_ref().is_some_and(|c| sights_held_down(&c.phase))
     }
 
     /// The player's melee swing is playing (VATS mode waits for it, vats-mode.md §16.2).
@@ -1392,6 +1400,14 @@ impl Combat {
     pub fn vats_part(&self, parts: &ActorParts, actor: u32, part: Option<u8>) -> Option<BodyPart> {
         body_part(self, parts, actor as ActorId, part)
     }
+}
+
+/// A firing cycle in this phase holds the sights down: a reload (every step of a
+/// round-by-round one too) or a jam plays its clip with the gun off the eye, so the player
+/// comes out of the sights (and a scope) as it starts (the owner's report, #1642)
+/// [design: the clip's timing is unchanged; the sights ease out as it begins].
+pub fn sights_held_down(phase: &Phase) -> bool {
+    matches!(phase, Phase::Reloading { .. } | Phase::ReloadOpen { .. } | Phase::ReloadRound { .. } | Phase::ReloadClose { .. } | Phase::Jammed { .. })
 }
 
 /// The weapon in hand for VATS mode ([`Combat::vats_weapon`]).
@@ -4799,6 +4815,23 @@ fn sound_edid(sfx: Option<&Sfx>, sound: FormId) -> String {
 mod tests {
     use super::*;
     use crate::phys::NpcBody;
+
+    #[test]
+    fn a_reload_or_a_jam_holds_the_sights_down() {
+        for p in [
+            Phase::Reloading { left: 1.0 },
+            Phase::ReloadOpen { left: 0.3, stop: false },
+            Phase::ReloadRound { left: 0.5, stop: false, taken: 1 },
+            Phase::ReloadClose { left: 0.4, taken: 2 },
+            Phase::Jammed { left: 1.2 },
+        ] {
+            assert!(sights_held_down(&p), "{p:?}");
+        }
+        // Firing and waiting keep them up.
+        for p in [Phase::Ready, Phase::SpinUp { left: 0.2 }, Phase::WindUp { left: 0.1 }, Phase::Cooldown { left: 0.3 }] {
+            assert!(!sights_held_down(&p), "{p:?}");
+        }
+    }
 
     #[test]
     fn a_knockback_pushes_half_its_force_over_its_time() {
