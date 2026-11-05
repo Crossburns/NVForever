@@ -79,6 +79,17 @@ on screen).
    GetDead; design: the rest]. KillActor on an essential actor knocks it out too
    [documented: KillActor notes]. It says its KOed line [design: the topic's text names
    fatigue only].
+   **DamageActorValue** on Health that leaves an actor at 0 or less: a non-essential NPC
+   dies [observed: observer-checks.md check 22, run o21_air, two super mutants hurt by
+   DamageAV 300 died]; an essential actor is knocked out as by KillActor, and the player
+   dies [hypothesis: observer-checks.md check 86]. Health stays where the damage left it,
+   with no floor of 1, and an essential actor still gets up at half its maximum [design].
+   The death has no killer: no XP, karma, murder or challenge, and OnDeath's killer is 0
+   [hypothesis]. A ghost, a child or an Invulnerable creature does not die of it, as of a
+   hit [hypothesis], nor a player in god mode [design]. While a hit is being applied the
+   hit decides: an OnHit script's DamageAV (the gloves' `DamageAV Health 10`, §1) leaves
+   the death to the hit, which credits its attacker [design]. ModActorValue,
+   ForceActorValue and SetActorValue that bring Health to 0 kill nobody [design].
 3. **Fatigue at zero**: whenever an actor's Fatigue is lowered (DamageAV, a fatigue
    effect) and its current Fatigue is 0 or less, it is knocked out (cause fatigue) and
    says its KOed line [documented: §1 Stats Tab and KOed].

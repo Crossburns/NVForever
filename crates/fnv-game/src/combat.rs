@@ -462,6 +462,31 @@ impl Game<'_> {
         }
     }
 
+    /// A script lowered `r`'s Health (DamageActorValue): at 0 or less it dies, an essential
+    /// actor is knocked out [observed for an NPC's death: observer-checks.md check 22;
+    /// hypothesis: the rest, unconscious.md §2.2]. Nobody is credited, so no XP, karma or
+    /// challenge. A god-mode player stands [design]. During a hit on `r` the hit decides,
+    /// so that a kill finished by an OnHit script is still the attacker's (the boxing
+    /// gloves' `DamageAV Health 10`, unconscious.md §1).
+    pub(crate) fn health_lowered(&mut self, r: FormId) {
+        if self.is_dead(r) || self.is_immune(r) || self.hits_running.contains(&r) {
+            return;
+        }
+        let player = r == FormId::PLAYER_REF;
+        // Only actors have a Health to run out of.
+        if (player && self.toggles.god_mode) || (!player && self.stats_def(r).is_none()) {
+            return;
+        }
+        if !actor::actor_value(self, r, HEALTH).is_ok_and(|v| v <= 0.0) {
+            return;
+        }
+        if self.is_essential(r) && !player {
+            self.knock_out(r, crate::unconscious::Cause::Essential, None);
+        } else {
+            self.kill(r, None);
+        }
+    }
+
     /// Apply `damage` health damage to `target` (see the module notes).
     pub fn hit(&mut self, target: FormId, damage: f64, mut info: HitInfo) -> HitResult {
         // The difficulty scales the player's hits and the hits on the player, limb damage
@@ -485,6 +510,7 @@ impl Game<'_> {
         // SetOnHitEventHandler; observed: jip-hits, Health in the handler is the value
         // before the hit] (jip-hit-info.md).
         let fatal = before - dealt <= floor;
+        self.hits_running.push(target);
         let flags = (u16::from(info.critical) << 1) | (u16::from(fatal) << 2);
         let limb_damage = info.limb.map_or(0.0, |l| l.damage);
         let rec = crate::jip_events::JipHit { attacker: info.attacker, weapon: info.weapon, health_damage: dealt, limb_damage, location: info.location, flags };
@@ -518,6 +544,7 @@ impl Game<'_> {
             self.item_event(a, w, event::ON_HIT, Some(Value::Ref(target.0)));
         }
         let health = actor::actor_value(self, target, HEALTH).unwrap_or(before - dealt);
+        self.hits_running.pop();
         let mut out = HitResult { dealt, health, max_health, ..HitResult::default() };
         if let Some(l) = info.limb {
             let (condition, crippled) = self.hit_limb(target, l, max_health);

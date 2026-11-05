@@ -6,6 +6,7 @@ mod common;
 
 use common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
+use fnv_game::combat::HitInfo;
 use fnv_game::game::{event, Game, GameConfig, InstKey};
 use fnv_game::GameData;
 use fnv_script::FunctionTable;
@@ -19,16 +20,22 @@ const BURNING: u32 = 0x860;
 const DOOR_SCRIPT: u32 = 0x901;
 const TRAP_SCRIPT: u32 = 0x902;
 const NPC_SCRIPT: u32 = 0x903;
+const HURT_SCRIPT: u32 = 0x904;
 const DOOR: u32 = 0x700;
 const TRAP: u32 = 0x710;
 const NPC: u32 = 0x720;
+const HURT_NPC: u32 = 0x721;
 const ITEM: u32 = 0x730;
 const BOX: u32 = 0x740;
 const DOOR_REF: u32 = 0x300;
 const BOX_REF: u32 = 0x302;
 const TRAP_REF: u32 = 0x301;
 const NPC_REF: u32 = 0x320;
+const DAMAGED_REF: u32 = 0x321;
+const HIT_REF: u32 = 0x322;
 const KILL_ACTOR: u16 = 0x108B;
+const DAMAGE_ACTOR_VALUE: u16 = 0x1181;
+const HEALTH: u16 = 16;
 
 fn r(i: u16) -> Vec<u8> {
     [vec![b'r'], le16(i)].concat()
@@ -42,6 +49,11 @@ fn bump(i: u16) -> Vec<u8> {
 /// A function call statement with no parameters.
 fn call0(op: u16) -> Vec<u8> {
     st(op, &le16(0))
+}
+
+/// `DamageAV Health 9999`.
+fn damage_health() -> Vec<u8> {
+    st(DAMAGE_ACTOR_VALUE, &[le16(2), le16(HEALTH), vec![b'n'], 9999i32.to_le_bytes().to_vec()].concat())
 }
 
 /// A block with one form parameter (the unit's reference `i`).
@@ -92,6 +104,26 @@ fn plugin_bytes() -> Vec<u8> {
             ]
             .concat(),
         ),
+        // nDamaged (1), nSeen (2): as the NPC's, by damage; OnHit does the same damage.
+        record(
+            b"SCPT",
+            0,
+            HURT_SCRIPT,
+            &[
+                vec![sub(b"EDID", z("HurtScript"))],
+                unit(
+                    0,
+                    &script(&[
+                        (event::ON_ACTIVATE, None, [damage_health(), set(var(b's', 1), ex(&[a("1")]))].concat()),
+                        (event::ON_DEATH, None, set(var(b's', 2), ex(&[var(b's', 1)]))),
+                        (event::ON_HIT, None, damage_health()),
+                    ]),
+                    &[(1, "nDamaged", 1), (2, "nSeen", 1)],
+                    &[],
+                ),
+            ]
+            .concat(),
+        ),
     ]
     .concat();
     let door = record(b"DOOR", 0, DOOR, &[sub(b"EDID", z("TestDoor")), sub(b"SCRI", DOOR_SCRIPT.to_le_bytes().to_vec())]);
@@ -110,10 +142,21 @@ fn plugin_bytes() -> Vec<u8> {
             sub(b"SCRI", NPC_SCRIPT.to_le_bytes().to_vec()),
         ],
     );
+    let hurt_npc = record(
+        b"NPC_",
+        0,
+        HURT_NPC,
+        &[
+            sub(b"EDID", z("TestHurtNpc")),
+            sub(b"ACBS", [&0u32.to_le_bytes()[..], &[0; 4], &4u16.to_le_bytes(), &[0; 6], &0f32.to_le_bytes(), &[0; 4]].concat()),
+            sub(b"DATA", [&100i32.to_le_bytes()[..], &[5, 5, 5, 5, 5, 5, 5]].concat()),
+            sub(b"SCRI", HURT_SCRIPT.to_le_bytes().to_vec()),
+        ],
+    );
     let mut ench = vec![sub(b"EDID", z("Burning")), sub(b"ENIT", [u32s(&[2, 0, 0]), vec![0; 4]].concat())];
     ench.extend([sub(b"EFID", BURN_FX.to_le_bytes().to_vec()), sub(b"EFIT", [u32s(&[1, 0, 5, 1]), 16i32.to_le_bytes().to_vec()].concat())]);
     let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", z("TestCell"))]);
-    let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &[placed(b"REFR", DOOR_REF, DOOR), placed(b"REFR", TRAP_REF, TRAP), placed(b"REFR", BOX_REF, BOX), placed(b"ACHR", NPC_REF, NPC)].concat()));
+    let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &[placed(b"REFR", DOOR_REF, DOOR), placed(b"REFR", TRAP_REF, TRAP), placed(b"REFR", BOX_REF, BOX), placed(b"ACHR", NPC_REF, NPC), placed(b"ACHR", DAMAGED_REF, HURT_NPC), placed(b"ACHR", HIT_REF, HURT_NPC)].concat()));
     [
         tes4(),
         top(b"MGEF", &[mgef(BURN_FX, "Burn"), mgef(OTHER_FX, "Other")].concat()),
@@ -123,7 +166,7 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"ACTI", &trap),
         top(b"CONT", &cont),
         top(b"DOOR", &door),
-        top(b"NPC_", &npc),
+        top(b"NPC_", &[npc, hurt_npc].concat()),
         top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
     ]
     .concat()
@@ -250,4 +293,27 @@ fn on_death_of_a_kill_actor_waits_for_the_killing_script_to_finish() {
     assert!(g.is_dead(FormId(NPC_REF)));
     assert_eq!(count(&g, NPC_REF, 4), 1.0);
     assert_eq!(count(&g, NPC_REF, 5), 1.0, "OnDeath ran before the rest of the killing block");
+}
+
+#[test]
+fn on_death_of_a_damage_actor_value_waits_for_the_damaging_script_to_finish() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(g.ref_event(FormId(DAMAGED_REF), event::ON_ACTIVATE, None, None));
+    assert!(g.is_dead(FormId(DAMAGED_REF)));
+    assert_eq!(count(&g, DAMAGED_REF, 1), 1.0);
+    assert_eq!(count(&g, DAMAGED_REF, 2), 1.0, "OnDeath ran before the rest of the damaging block");
+}
+
+#[test]
+fn a_kill_finished_by_an_on_hit_script_is_the_attackers() {
+    // The boxing gloves' script does `DamageAV Health 10` in its OnHit block: the hit that
+    // ran the block is what killed.
+    let f = fixture();
+    let mut g = game(&f);
+    let info = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 0, critical: false, limb: None };
+    let r = g.hit(FormId(HIT_REF), 1.0, info);
+    assert!(r.died, "{r:?}");
+    assert!(r.xp > 0.0, "{r:?}");
+    assert_eq!(g.extra[&FormId(HIT_REF)].killer, Some(FormId::PLAYER_REF));
 }

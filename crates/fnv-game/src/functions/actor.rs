@@ -374,6 +374,8 @@ pub fn damage_actor_value(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, St
     // SetOnHealthDamageEventHandler; observed: ev.amount -1, ev.source.type].
     if code == crate::actor_values::HEALTH && amount > 0.0 {
         g.jip_event("healthdamage", Some(r), vec![fnv_script::vm::XVal::Num(-amount), fnv_script::vm::XVal::Ref(0)]);
+        // Out of health: dead, or knocked out (docs/spec-notes/unconscious.md §2.2).
+        g.health_lowered(r);
     }
     // Out of fatigue: knocked out (docs/spec-notes/unconscious.md §2.3).
     if code == crate::actor_values::FATIGUE {

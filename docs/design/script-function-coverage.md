@@ -345,7 +345,7 @@ Calls / cond.: the catalogue's script calls and condition uses over the ten mast
 | CompleteAllObjectives | 0x11AD | 105 / 0 | match | - | - |  |
 | CompleteQuest | 0x1071 | 124 / 0 | match | - | - |  |
 | CreateDetectionEvent | 0x1068 | 1 / 0 | match | - | - |  |
-| DamageActorValue | 0x1181 | 138 / 0 | match | - | - |  |
+| DamageActorValue | 0x1181 | 138 / 0 | match | - | - | Health at 0 or less kills or knocks out, with no killer (unconscious.md §2.2) |
 | DamageObject | 0x116C | 89 / 0 | match | - | - |  |
 | DetonatePlacedExplosives | 0x124D | 1 / 0 | match | - | - |  |
 | Disable | 0x1022 | 3336 / 0 | match | - | - | FadeOut 1 fades the reference out over 2 s, kept enabled meanwhile (GetDisabled 0 about 2 s [observed: capture disable_fade_long]); children pop out [documented]. |

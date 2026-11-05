@@ -1244,3 +1244,13 @@ The numbers above stay put so links to them hold; each item here gives its own p
     household and library clutter lists. A capture: `player.additem 000199BB 1`, then open the
     Pip-Boy's Misc page and a container holding one. Is it absent, a blank row, or shown by
     another name?
+
+## Added 2026-11-05 (DamageActorValue past zero, issue #1568)
+
+86. **What does DamageAV past zero do to the player, an essential actor and the kill's
+    credit?** (P3; unconscious.md §2.2.) Check 22 saw two super mutants die of DamageAV 300
+    [observed]; the rest is [hypothesis]. In the original, each in its own run: `player.damageav
+    health 9999` (does the player die?); on an essential NPC, `damageav health 9999` (knocked
+    out, or dead, or standing at a negative Health, and GetDead); on a plain NPC beside the
+    player, the same, then the player's XP and karma (is the kill anyone's?). Also: does
+    Health stay negative or stop at 0? The answer: the logs.
