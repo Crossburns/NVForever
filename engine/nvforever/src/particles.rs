@@ -32,6 +32,9 @@
 //!   born (`Particle::frame`).
 //! - **Placed models** emit their own systems and their add-on nodes' from a holder at
 //!   the reference (`world::spawn_emitters`: Gomorrah's roof fires), not while hidden;
+//!   a placed model's own live particles go at once when it is hidden or gone (a taken
+//!   snow globe, #1596; log `particles: <ref> is not drawn any more: its <n> live
+//!   particles go`);
 //!   a placed model's own systems are that reference's own, and a master system serves
 //!   the add-on nodes nearest the camera first (particles.md §7). References a script
 //!   enables (`nvf_play::script_draw`) emit too.
@@ -424,6 +427,8 @@ pub struct Particles {
     /// Placed references with an emitter, and those whose emitters gave birth.
     placed_seen: HashSet<u32>,
     placed_emitted: HashSet<u32>,
+    /// The placed reference of each placed model's emitter, for the log.
+    instance_refs: HashMap<Entity, u32>,
     /// Most placed model instances live at once.
     most_instances: usize,
     rng: SplitMix,
@@ -459,6 +464,7 @@ impl Default for Particles {
             tally: HashMap::new(),
             placed_seen: HashSet::new(),
             placed_emitted: HashSet::new(),
+            instance_refs: HashMap::new(),
             most_instances: 0,
             rng: SplitMix(0x2545_f491),
             born: 0,
@@ -628,8 +634,10 @@ fn emit(
         live.served = 0;
     }
     let mut sources: Vec<EmitSource> = Vec::new();
-    // Placed model instances whose emitter still exists (hidden or not).
+    // Placed model instances whose emitter still exists (hidden or not), and those of
+    // them hidden this frame.
     let mut present: HashSet<Entity> = HashSet::new();
+    let mut hidden_now: HashSet<Entity> = HashSet::new();
     // A hidden emitter (a disabled placed fire, `world::spawn_emitters`) keeps its time
     // but makes nothing. Not in its first frame, before its visibility was worked out:
     // a muzzle flash lives one frame [design].
@@ -649,6 +657,7 @@ fn emit(
         if let Some(r) = em.placed {
             p.placed_seen.insert(r);
             present.insert(e);
+            p.instance_refs.insert(e, r);
         }
         // Drawn with its own nodes: the sequence playing on it and the span of its time
         // since last frame; a sequence just begun counts from its start, unless it was
@@ -670,6 +679,9 @@ fn emit(
             em.clock = now;
             Drive { rig: e, playing: span, began }
         });
+        if em.placed.is_some() && hidden(em.age, v) {
+            hidden_now.insert(e);
+        }
         // A held model whose clips switch nothing on costs nothing.
         let idle = em.driven.as_ref().is_some_and(HashMap::is_empty);
         if !hidden(em.age, v) && !idle {
@@ -817,14 +829,22 @@ fn emit(
             }
         }
     }
-    // A placed model's systems go once its emitter is gone (its cell unloaded, a script
-    // disabled it) and their last particles have died.
-    let gone: Vec<Key> = p
-        .systems
-        .iter()
-        .filter(|(k, live)| k.instance.is_some_and(|e| !present.contains(&e)) && live.as_ref().is_none_or(|l| l.iter().all(|s| s.particles.is_empty())))
-        .map(|(k, _)| k.clone())
-        .collect();
+    // A placed model's own particles go at once when it is no longer drawn: its emitter
+    // hidden (a script disabled it, the item was taken) or gone (its cell unloaded, the
+    // reference's model taken down) [design, #1596: a taken snow globe's snow went on
+    // falling where it stood]. Its systems go with an emitter that is gone.
+    for (k, live) in p.systems.iter_mut() {
+        let Some(e) = k.instance.filter(|e| hidden_now.contains(e) || !present.contains(e)) else { continue };
+        let n: usize = live.iter().flatten().map(|s| s.particles.len()).sum();
+        if n > 0 {
+            info!("particles: {:08X} is not drawn any more: its {n} live particles go", p.instance_refs.get(&e).copied().unwrap_or(0));
+            for s in live.iter_mut().flatten() {
+                s.particles.clear();
+            }
+        }
+    }
+    let gone: Vec<Key> = p.systems.keys().filter(|k| k.instance.is_some_and(|e| !present.contains(&e))).cloned().collect();
+    p.instance_refs.retain(|e, _| present.contains(e));
     for k in gone {
         for live in p.systems.remove(&k).flatten().unwrap_or_default() {
             commands.entity(live.entity).try_despawn();
