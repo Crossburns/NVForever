@@ -27,7 +27,10 @@
 //! stopped, the player is told in a message box (not in unattended runs) and the log line
 //! carries it. A new run that fails later, behind its own screen, is on its own: its crash
 //! report is the player's. Closing this window while it waits ends the new run too. A new
-//! run still hidden after [`SHOW_AFTER_SECS`] shows itself anyway.
+//! run still hidden after [`SHOW_AFTER_SECS`] shows itself anyway. A run whose restore fails
+//! after the save was read (`nvf_play::save::LoadRefused`) has no game to go on with: it
+//! hands over like the return to the main menu, and gives the new run the reason
+//! (`--load-refused`) for its message box.
 //!
 //! The new run gets this run's arguments but none of its test aids (`NVF_PLAY_TEST_*`:
 //! a console line that loads would load again in every new run), except test aid
@@ -140,8 +143,10 @@ enum Leaving {
     HandedOver,
 }
 
+/// What this run is doing, and why the load it was started for was refused
+/// (`nvf_play::save::LoadRefused`), for the new run.
 #[derive(Resource, Default)]
-pub struct Handoff(Leaving);
+pub struct Handoff(Leaving, Option<String>);
 
 /// The new run's arguments: this run's without those the save or the window decide
 /// (`keep`), and what to open.
@@ -209,7 +214,7 @@ fn ready_file() -> PathBuf {
 /// A save not yet on disk (its thumbnail, its writer thread) is waited for.
 #[allow(clippy::too_many_arguments)]
 pub fn leave(
-    (mut asked, mut to_menu): (MessageReader<LoadRequest>, MessageReader<nvf_play::pause::MainMenuRequest>),
+    (mut asked, mut to_menu, mut refused): (MessageReader<LoadRequest>, MessageReader<nvf_play::pause::MainMenuRequest>, MessageReader<nvf_play::save::LoadRefused>),
     writes: Res<SaveWrites>,
     mut handoff: ResMut<Handoff>,
     (mut cover, mut uncover, mut exit): (MessageWriter<CoverRequest>, MessageWriter<Uncover>, MessageWriter<AppExit>),
@@ -218,7 +223,10 @@ pub fn leave(
     mut winit: ResMut<WinitSettings>,
     _main_thread: NonSendMarker,
 ) {
-    let request = asked.read().last().cloned().map(Some).or(to_menu.read().last().map(|_| None));
+    let handoff = &mut *handoff;
+    let why = refused.read().last().map(|r| r.0.clone());
+    let request = asked.read().last().cloned().map(Some).or(to_menu.read().last().map(|_| None)).or(why.is_some().then_some(None));
+    handoff.1 = why.or(handoff.1.take());
     let h = &mut handoff.0;
     if let Some(r) = request {
         match h {
@@ -239,7 +247,8 @@ pub fn leave(
             let file = ready_file();
             let _ = std::fs::remove_file(&file);
             let keep = crate::restart_args(&crate::command_line());
-            let args = new_run_args(&keep, r.as_ref(), window.single().ok().map(|(e, w)| placement(w, e)), &file);
+            let mut args = new_run_args(&keep, r.as_ref(), window.single().ok().map(|(e, w)| placement(w, e)), &file);
+            args.extend(handoff.1.iter().map(|why| format!("--load-refused={why}")));
             let started = std::env::current_exe()
                 .map_err(|e| format!("cannot find this program to start it again: {e}"))
                 .and_then(|exe| {

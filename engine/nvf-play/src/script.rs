@@ -281,7 +281,8 @@ pub struct Runtime {
     /// box that was in front.
     closing: Option<(u16, Option<FormId>)>,
     /// The game in place is a save's, not a new game's: its clock is the save's (the
-    /// residents leave it alone, `Core::prepare` in `nvforever::residents`).
+    /// residents leave it alone, `Core::prepare` in `nvforever::residents`). A restore that
+    /// fails installs no runtime ([`run_scripts`]), so `false` is always a new game.
     pub restored_from_save: bool,
     /// `--new-game`: the opening starts on the first frame scripts run.
     opening_pending: bool,
@@ -1702,7 +1703,7 @@ pub(crate) fn run_scripts(
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
-    (mut sit, mut terminals): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>),
+    (mut sit, mut terminals, mut refused): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>, MessageWriter<crate::save::LoadRefused>),
     paused: Res<crate::pause::Paused>,
     (mut screen, bindings, tiles, page, mut mods_ticks): ScreenAndMenus,
 ) {
@@ -1727,7 +1728,9 @@ pub(crate) fn run_scripts(
                 rt.start = st.start.clone();
                 let mut restored = false;
                 if let Some(PendingGame(snap, path)) = st.pending_game.take() {
-                    match rt.restore_save(&mut sim, *snap) {
+                    // Test aid: `save::read_for_load` lets no save through that fails here.
+                    let restore = if std::env::var_os("NVF_PLAY_TEST_LOAD_FAILS_LATE").is_some() { Err("test aid NVF_PLAY_TEST_LOAD_FAILS_LATE".to_string()) } else { rt.restore_save(&mut sim, *snap) };
+                    match restore {
                         Ok(changed_refs) => {
                             info!("load: restored {}: {} changed references, {} quests, {} script instances", path.display(), changed_refs.len(), rt.game.quests.len(), rt.game.instances.len());
                             restored = true;
@@ -1747,7 +1750,15 @@ pub(crate) fn run_scripts(
                                 changed.write(RefChanged { form_id: id.0 });
                             }
                         }
-                        Err(e) => warn!("load: {}: {e}; the game goes on from the plugins", path.display()),
+                        Err(e) => {
+                            // No game goes on: without a runtime no script runs, the engine
+                            // part is not put back, nothing can be saved and the loading
+                            // screen stays up until the next run has the main menu.
+                            let why = format!("{}: {e}", path.display());
+                            warn!("load: {why}; starting again on the main menu");
+                            refused.write(crate::save::LoadRefused(why));
+                            return;
+                        }
                     }
                 }
                 if rt.game.ui_files.is_none() {
@@ -2388,6 +2399,17 @@ mod restore_tests {
         assert!(rt.game.script_looks.fade_moves.is_empty(), "nothing is left to make it again");
         // What a script reads in its turn.
         with_world(&mut rt, &mut sim, |rt| assert_eq!(rt.game.world.peek(ACTOR).unwrap().pos, there));
+    }
+
+    /// #1590: a refused restore touches neither world.
+    #[test]
+    fn a_refused_restore_leaves_the_played_world_as_it_was() {
+        let (mut rt, mut sim, mut s) = in_fade();
+        s.format = "fnv.game.state/2".into();
+        let e = rt.restore_save(&mut sim, s).unwrap_err();
+        assert!(e.contains("unsupported snapshot format"), "{e}");
+        assert!(sim.world.peek(ACTOR).is_none() && sim.world.peek(MARKER).is_none());
+        assert!(!rt.restored_from_save);
     }
 }
 

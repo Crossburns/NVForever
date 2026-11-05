@@ -1780,6 +1780,18 @@ pub struct GameSnapshot {
 }
 
 impl GameSnapshot {
+    /// Whether [`Game::restore`] and `World::restore` can take this snapshot: a load asks
+    /// before it starts anything from the save (docs/design/save-load.md §6).
+    pub fn check(&self) -> Result<(), String> {
+        if self.format != SNAPSHOT_FORMAT {
+            return Err(format!("unsupported snapshot format {:?}", self.format));
+        }
+        self.sim.check()?;
+        crate::coop::checked(self.coop.clone()).map_err(|e| e.to_string())?;
+        self.rng_word_pos.parse::<u128>().map_err(|_| format!("bad rng_word_pos {:?}", self.rng_word_pos))?;
+        Ok(())
+    }
+
     /// After a save made with another load order was remapped (`fnv_save::remap_json`,
     /// docs/design/save-load.md §4.1): drop what stands on forms of plugins no longer
     /// loaded (`gone`), where a field and not a key names them. References whose base form
@@ -5080,9 +5092,7 @@ impl<'a> Game<'a> {
     }
 
     pub fn restore(data: &'a GameData, world: World<'a>, cfg: GameConfig, s: &GameSnapshot) -> Result<Game<'a>, String> {
-        if s.format != SNAPSHOT_FORMAT {
-            return Err(format!("unsupported snapshot format {:?}", s.format));
-        }
+        s.check()?;
         let mut g = Game::new(data, world, cfg);
         g.ext = s.ext.clone();
         for l in &s.lambdas {

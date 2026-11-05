@@ -1960,7 +1960,7 @@ mod tests {
         assert_eq!(rolls_following_the_restored_game(25.0), 0);
         // On the plugins' day it counts the days between as hours passed (#1607).
         assert_eq!(rolls_following_the_restored_game(5.0), 1);
-        // Ahead of the game, as after a restore that failed: a step back, no roll.
+        // Ahead of the game: a step back, no roll.
         assert_eq!(rolls_following_the_restored_game(30.0), 0);
     }
 

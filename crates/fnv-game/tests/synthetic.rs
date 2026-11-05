@@ -776,6 +776,38 @@ fn coop_players_round_trip_apart_from_the_player() {
     assert!(Game::restore(&f.data, world, g.cfg, &twice).is_err());
 }
 
+/// What a load asks before it starts anything from a save says what the restores would
+/// say (#1590): a good snapshot passes, and each refusal is the restores' own.
+#[test]
+fn a_snapshot_says_whether_the_restores_take_it() {
+    use fnv_game::coop::CoopPlayer;
+    use fnv_game::game::GameSnapshot;
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.world.get(FormId::PLAYER_REF).unwrap();
+    let p2 = CoopPlayer::copy_of_player(&g, 2).unwrap();
+    let good = g.snapshot();
+    let restores = |s: &GameSnapshot| World::restore(&f.forms, &f.refs, &s.sim).and_then(|w| Game::restore(&f.data, w, g.cfg, s).map(|_| ()));
+    assert_eq!(good.check(), Ok(()));
+    assert_eq!(restores(&good), Ok(()));
+    let bad: [(&str, Box<dyn Fn(&mut GameSnapshot)>); 6] = [
+        ("unsupported snapshot format \"fnv.game.state/2\"", Box::new(|s| s.format = "fnv.game.state/2".into())),
+        ("unsupported snapshot format \"fnv.sim.state/2\"", Box::new(|s| s.sim.format = "fnv.sim.state/2".into())),
+        ("bad rng_word_pos \"x\"", Box::new(|s| s.rng_word_pos = "x".into())),
+        ("bad rng_word_pos \"y\"", Box::new(|s| s.sim.rng_word_pos = "y".into())),
+        ("given twice", Box::new(|s| s.coop = vec![p2.clone(), p2.clone()])),
+        ("slots are", Box::new(|s| s.coop = vec![CoopPlayer { slot: 1, ..p2.clone() }])),
+    ];
+    for (why, change) in bad {
+        let mut s = good.clone();
+        change(&mut s);
+        let e = s.check().unwrap_err();
+        assert!(e.contains(why), "{why}: {e}");
+        assert_eq!(restores(&s), Err(e));
+    }
+}
+
 #[test]
 fn a_save_made_with_another_load_order_drops_the_missing_plugins_forms() {
     // docs/design/save-load.md §4.1. The save was made with [Test.esm, Extra.esm] and is
