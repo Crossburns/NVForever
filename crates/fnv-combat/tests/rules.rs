@@ -224,6 +224,36 @@ fn knockdown_knockback_explosion_falloff() {
     assert_eq!(damage::explosion_damage(&t, 100.0, 400.0, 401.0), 0.0);
 }
 
+fn ops(point: u8, op: damage::PerkOp) -> damage::EntryOps {
+    damage::EntryOps(vec![(point, op, "Perk".into())])
+}
+
+#[test]
+fn a_blast_passes_the_damage_and_dt_entry_points() {
+    use damage::entry::{CALCULATE_WEAPON_DAMAGE, MODIFY_DAMAGE_THRESHOLD_ATTACKER, MODIFY_DAMAGE_THRESHOLD_DEFENDER};
+    use damage::PerkOp::{Add, Mul, Set};
+    let (r, t) = (Rules::defaults(), CombatTuning::default());
+    let blast = |dt, dr, a: &dyn damage::PerkHooks, d: &dyn damage::PerkHooks| damage::blast_hit(&r, &t, 100.0, dt, dr, a, d);
+    let demolition = ops(CALCULATE_WEAPON_DAMAGE, Mul(1.2));
+    let deck = ops(MODIFY_DAMAGE_THRESHOLD_DEFENDER, Add(25.0));
+    // Without perks: DT off the damage, then DR.
+    let plain = blast(10.0, 20.0, &NoPerks, &NoPerks);
+    assert!(close(plain.modified, 100.0) && close(plain.dt, 10.0) && close(plain.dealt, 72.0), "{plain:?}");
+    assert!(close(blast(0.0, 0.0, &NoPerks, &NoPerks).dealt, 100.0));
+    // The damage perk comes before the defender's DT: 100 x 1.2 - 25.
+    let both = blast(0.0, 0.0, &demolition, &deck);
+    assert!(close(both.base, 100.0) && close(both.modified, 120.0) && close(both.dt, 25.0) && close(both.dealt, 95.0), "{both:?}");
+    // The attacker's entry takes DT off, never below 0.
+    let surgeon = ops(MODIFY_DAMAGE_THRESHOLD_ATTACKER, Set(10.0));
+    assert!(close(blast(25.0, 0.0, &surgeon, &NoPerks).dealt, 85.0));
+    assert!(close(blast(4.0, 0.0, &surgeon, &NoPerks).dt, 0.0));
+    // The DT floor holds with a perk's DT; DR scales what is left, under its cap.
+    let floor = blast(0.0, 0.0, &NoPerks, &ops(MODIFY_DAMAGE_THRESHOLD_DEFENDER, Add(500.0)));
+    assert!(close(floor.dealt, 100.0 * t.dt_floor), "{floor:?}");
+    let capped = blast(0.0, 500.0, &NoPerks, &NoPerks);
+    assert!(close(capped.dr, r.max_armor_rating) && close(capped.dealt, 100.0 * (1.0 - r.max_armor_rating / 100.0)), "{capped:?}");
+}
+
 #[test]
 fn hit_reactions_on_crippling_and_crippled_parts() {
     let t = CombatTuning { stagger_cooldown: 3.0, ..CombatTuning::default() };
