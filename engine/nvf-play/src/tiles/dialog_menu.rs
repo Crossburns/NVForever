@@ -1821,7 +1821,7 @@ mod tests {
         let mut state_ui = crate::script::ScriptState::over_no_plugins();
         let game = &mut state_ui.rt.as_mut().unwrap().game;
         game.ui_tree = menu();
-        game.dialogue = Some(fnv_game::dialogue::Conversation { actor: fnv_sim::FormId(0x14), through: None, line: None, choices: Vec::new(), lines: 1, then: None, ending: false });
+        game.dialogue = Some(fnv_game::dialogue::Conversation { actor: fnv_sim::FormId(0x14), through: None, line: None, choices: Vec::new(), topic_list: false, lines: 1, then: None, ending: false });
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
         frame_on(&mut game.ui_tree, &mut fresh(), choosing(labels), 1, 0);
         let mut state = DialogTiles { menu: game.ui_tree.menu(DIALOG_MENU), shown: true, ..DialogTiles::default() };
@@ -2140,7 +2140,7 @@ mod tests {
         let ears = shared.0.clone();
         game.ui_dialogue_hook = Some(Box::new(move |g| boundary(g, &mut ears.lock().unwrap())));
         // The conversation started, a line up with no text, a transition: the tree has it.
-        game.dialogue = Some(Conversation { actor: fnv_sim::FormId(0x14), through: None, line: None, choices: Vec::new(), lines: 1, then: None, ending: false });
+        game.dialogue = Some(Conversation { actor: fnv_sim::FormId(0x14), through: None, line: None, choices: Vec::new(), topic_list: false, lines: 1, then: None, ending: false });
         game.dialogue_transition();
         assert_eq!(f(&game.ui_tree, DIALOG_MENU, "_ShowingText"), 1.0);
         assert_eq!(f(&game.ui_tree, DIALOG_MENU, "_DialogVisible"), 1.0);

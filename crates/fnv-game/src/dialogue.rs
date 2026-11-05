@@ -118,6 +118,11 @@ pub struct Conversation {
     pub line: Option<Line>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<Choice>,
+    /// The choices are the topic list (the line had no choices of its own), not a line's
+    /// own choices: the player may leave it even when no Goodbye is offered, as at
+    /// Julie Farkas's, whose top level has none in the data (#1595; the engine's Tab).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub topic_list: bool,
     /// Lines said so far.
     #[serde(default)]
     pub lines: u32,
@@ -596,7 +601,7 @@ impl<'a> Game<'a> {
             return Ok(info);
         }
         self.dialogue_serial = self.dialogue_serial.wrapping_add(1);
-        self.dialogue = Some(Conversation { actor, through, line: None, choices: Vec::new(), lines: 0, then: None, ending: false });
+        self.dialogue = Some(Conversation { actor, through, line: None, choices: Vec::new(), topic_list: false, lines: 0, then: None, ending: false });
         self.extra.entry(actor).or_default().talked_to_pc = true;
         self.emit(EventKind::DialogueStarted { actor, topic });
         self.speak(actor, topic, info);
@@ -777,6 +782,7 @@ impl<'a> Game<'a> {
         self.emit(EventKind::ChoicesOffered { actor, choices: choices.clone() });
         if let Some(c) = self.dialogue.as_mut() {
             c.choices = choices;
+            c.topic_list = def.choices.is_empty();
         }
         self.dialogue_transition();
     }
@@ -1289,7 +1295,7 @@ mod list_order_tests {
         use super::{conversation_stamp, Conversation, Line};
         use fnv_sim::FormId;
         let line = |response| Line { topic: FormId(1), info: FormId(2), response, remaining: 1.0 };
-        let talk = |l: Option<Line>, lines| Conversation { actor: FormId(3), through: None, line: l, choices: Vec::new(), lines, then: None, ending: false };
+        let talk = |l: Option<Line>, lines| Conversation { actor: FormId(3), through: None, line: l, choices: Vec::new(), topic_list: false, lines, then: None, ending: false };
         assert_eq!(conversation_stamp(7, None), 0);
         let first = conversation_stamp(7, Some(&talk(Some(line(0)), 1)));
         assert_ne!(first, 0);

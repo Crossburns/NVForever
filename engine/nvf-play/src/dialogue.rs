@@ -44,8 +44,10 @@
 //!   choice the actor has answered before is dimmed (`Choice::darkened`); a skill or perk
 //!   line carries its tag, and the frame of one the player falls short of is red.
 //! - **Leaving.** Tab says goodbye: it picks the offered Goodbye choice, so the actor
-//!   says its goodbye line and the conversation ends as the data ends it. Without such a
-//!   choice Tab is refused (a forced conversation; a log line says so).
+//!   says its goodbye line and the conversation ends as the data ends it. At a topic list
+//!   (the top level) without one, Tab leaves it and a log line names the actor (#1595:
+//!   Julie Farkas's top level has no Goodbye in the data) [design]. At a line's own
+//!   choices without one Tab is refused (a forced conversation; a log line says so).
 //! - **The views.** The rules are here; a view only shows them and asks. The hand-built
 //!   menu's buttons and the menu drawn from its file (`crate::tiles::dialog_menu`) both come
 //!   back through [`ViewInput`]: hover, pick, a step and skip, held to the list they were for
@@ -359,7 +361,8 @@ pub(crate) fn view_named(g: &Game, speaker: String) -> Option<MenuView> {
             ChoiceRow { label: row_label(g.choice_text(ch), &fallback, tag), darkened: ch.darkened, short }
         })
         .collect();
-    let goodbye = c.choices.iter().any(|ch| ch.goodbye);
+    // The hint stands where Tab leaves: a Goodbye choice, or a topic list (`resolve`).
+    let goodbye = c.topic_list || c.choices.iter().any(|ch| ch.goodbye);
     Some(MenuView { speaker, line: None, choices, goodbye })
 }
 
@@ -541,6 +544,23 @@ enum Act {
     /// Tab: the Goodbye choice; `force`: break off when none is offered.
     Leave { force: bool },
     BreakOff,
+    /// Tab at a topic list that offers no Goodbye: the conversation ends there (no line is
+    /// being said, so nothing is cut).
+    LeaveTopicList,
+}
+
+/// What Tab (`Act::Leave`) does: the offered Goodbye choice (`goodbye`, its index); at a
+/// topic list without one (`topic_list`), leave it, so no top level traps the player
+/// [design, #1595: Julie Farkas's top level has no Goodbye in the data; observer check 12
+/// asks whether the original's Tab leaves any topic list]; else, forced, break off, or be
+/// refused (a line's own choices without a Goodbye: a forced conversation).
+fn resolve(act: Act, goodbye: Option<usize>, topic_list: bool) -> Act {
+    match (act, goodbye) {
+        (Act::Leave { .. }, Some(i)) => Act::Choose(i),
+        (Act::Leave { .. }, None) if topic_list => Act::LeaveTopicList,
+        (Act::Leave { force: true }, None) => Act::BreakOff,
+        (a, _) => a,
+    }
 }
 
 /// Which screen of the conversation a view's input was for: its actor, its generation
@@ -891,18 +911,17 @@ pub(crate) fn input(
     }
 
     if let Some((act, by)) = act {
-        // Tab is the Goodbye choice when one is offered.
         let goodbye = offered.iter().position(|o| o.goodbye);
-        let act = match (act, goodbye) {
-            (Act::Leave { .. }, Some(i)) => Act::Choose(i),
-            (Act::Leave { force: true }, None) => Act::BreakOff,
-            (a, _) => a,
-        };
+        let act = resolve(act, goodbye, conv.topic_list);
+        if act == Act::LeaveTopicList {
+            info!("dialogue: {by} leaves {}'s topic list, which offers no Goodbye (#1595: the data's or a condition's gap)", conv.actor);
+        }
         let (op, index, error) = with_world(rt, &mut sim, |rt| {
             rt.player_action(|g| match act {
                 Act::Choose(i) => ("choose", Some(i), g.choose(i).err()),
                 Act::Skip => ("skip", None, (!g.skip_response()).then(|| "nothing to skip".to_string())),
                 Act::BreakOff => ("break_off", None, (!g.end_dialogue()).then(|| "no conversation".to_string())),
+                Act::LeaveTopicList => ("leave", None, (!g.end_dialogue()).then(|| "no conversation".to_string())),
                 Act::Leave { .. } => ("leave", None, Some("this conversation offers no goodbye".to_string())),
             })
         });
@@ -980,6 +999,21 @@ fn draw(script: Option<Res<ScriptState>>, sim: Res<SimState>, screen: Res<Dialog
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tab_leaves_a_topic_list_without_goodbye() {
+        let tab = Act::Leave { force: false };
+        // A Goodbye choice offered: Tab picks it, at the top level or not.
+        assert_eq!(resolve(tab, Some(2), true), Act::Choose(2));
+        assert_eq!(resolve(tab, Some(0), false), Act::Choose(0));
+        // #1595: Julie Farkas's top level offers none; Tab still leaves it.
+        assert_eq!(resolve(tab, None, true), Act::LeaveTopicList);
+        // A line's own choices without one: a forced conversation, Tab is refused...
+        assert_eq!(resolve(tab, None, false), tab);
+        // ...unless forced (the aids), which break off.
+        assert_eq!(resolve(Act::Leave { force: true }, None, false), Act::BreakOff);
+        assert_eq!(resolve(Act::Choose(1), None, true), Act::Choose(1), "other acts pass through");
+    }
 
     #[test]
     fn talk_scripts_parse() {

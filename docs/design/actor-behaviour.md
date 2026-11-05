@@ -447,8 +447,24 @@ still happen elsewhere.
 
 Objects are references of the area's cell, present, at about the actor's height, not
 given to another actor (a seat is kept for an actor from the moment it chooses it), and
-with a way to them. Random numbers are the sandbox's own (seeded by actor and package),
-so runs repeat and the script runtime's are not disturbed.
+not waiting out a failed way to them. Random numbers are the sandbox's own (seeded by
+actor and package), so runs repeat and the script runtime's are not disturbed.
+
+**An object with no way to it** [design; issue #1504; the numbers are ours, neither the
+documentation nor the original gives any]: the actor stands 5 seconds and chooses again,
+and that object stays out of the choices for 60 seconds of `Game::time` from the failure,
+then 120, 240, 480 and from then on 600 for each further failure in a row. The wait ending
+does nothing by itself (no search, no random number, no event): the object is simply among
+the candidates at the sandbox's next choice, so a way that has come back is found, and one
+that has not costs one search per wait (at most nine in the first 3,600 seconds, for one
+object's consecutive failures in one retained sandbox; competing behaviours mean fewer). Its record goes only when the behaviour
+with that object begins; a walk to the object begun is not enough, and combat interrupting
+the sandbox leaves the record alone. The record is not saved: a load discards deadlines and
+stages and restarts the backoff, as a new sandbox does. An object at the cap with the full
+600 seconds left to wait gets up to four more searches in that time, for each failed object at each load (in the
+retry tests' timing, about 0.5, 65.5, 190.5 and 435.5 seconds after it; other behaviours can
+move those); a shorter wait left may mean fewer. No test loads a game here; this is from the
+delays.
 
 **Also in this step**: a patrol waits out a point's idle time (REFR `XPRD`) before going
 on [documented: Idle Markers, Patrol Data]; the furniture a package gives its actor

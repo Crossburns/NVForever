@@ -67,8 +67,14 @@ fists (the default draws it holstered).
   and in sight (detection.md), after a reaction time of 0.6 s from first seeing it in
   this fight, with its weapon drawn (alerted actors draw it, alert.md §5).
 - **Guns** keep their own `fnv_combat::attack::Cycle`, as the player's: the weapon's fire
-  rate, magazine and reload. The trigger is held for automatic weapons and pulled again
-  for each shot of the others.
+  rate, magazine and reload. An automatic weapon's trigger is held for a burst and let
+  go for a pause (`fnv_combat::burst`, issue #1448) [design: the original's rule is not
+  known]: a burst is the V.A.T.S. burst's rounds (0.4 s of the fire rate, 3 to 8), the
+  pause 0.5–1.5 s with each end scaled by the combat style's Semi-Auto Firing Delay Mult
+  (min, max); a burst cut short (sight lost, a wall, a reload) starts afresh without a
+  pause. Embedded weapons (Securitrons, sentry bots) burst too. The trigger is pulled
+  again for each shot of the others. Log: `npc combat: <name> fires a burst of N rounds
+  at <target>, then lets go for S s`.
 - **Reloads** (owner 2026-10-17: NPCs never reloaded in test runs): an empty magazine is
   reloaded at once, fired at or not, with the weapon's reload clips (the player's:
   `1hpreloada.kf`; round by round the opening clip `1hpreloadxstart.kf`, then
