@@ -57,11 +57,12 @@ use nvf_assets::GameData;
 /// What the screen multiplies the menus' picture by (linear), the view's tone map after it, with
 /// red stopped at a ceiling and the scene's grade left off (`nif_material.wesl`,
 /// `PIPBOY_SCREEN`; `imagespace.wesl`, `SCREEN_MARK`). Fitted so a
-/// filled bar comes out as the original's about (206, 163, 57), with green and blue dipping
-/// on the scanlines and red almost flat, 201 to 211; the original reads the same indoors and
-/// at dusk [observed: playtest shots of the original at 1920 x 1080, 2026-11-05]. The earlier
+/// filled bar comes out near the original's about (206, 163, 57), with green and blue dipping
+/// on the scanlines and red almost flat, 201 to 211, and the ink's mid tones at its yellower
+/// hue, green about 0.74 of red and blue about 0.3; the original reads the same indoors and at
+/// dusk [observed: playtest shots of the original at 1920 x 1080, 2026-11-05]. The earlier
 /// (0.51, 0.648, 1.389) was fitted to the dimmer private job pipboy_special_device_base.
-pub const SCREEN_TINT: [f32; 3] = [2.1, 1.85, 1.9];
+pub const SCREEN_TINT: [f32; 3] = [1.8, 1.9, 2.1];
 
 /// The vertex colour both the screen's and the glare's shapes carry, in linear light: 0.81
 /// in `pipboyarm.nif` [observed: `fnvtool nif decode`], taken as a display value on an
@@ -77,7 +78,7 @@ pub const UNDERCOAT_LIGHT: [f32; 3] = [0.00047, 0.00055, 0.00054];
 /// to the top middle above the figure, about (86, 76, 50) [observed: playtest shots of the
 /// original at 1920 x 1080, 2026-11-05]. The terminal's `GLARE_LINEAR_SCALE` is measured for
 /// its own glass and is not this.
-pub const GLARE_LINEAR_SCALE: [f32; 3] = [1.95, 1.3, 0.9];
+pub const GLARE_LINEAR_SCALE: [f32; 3] = [3.2, 1.4, 0.75];
 
 /// The background picture over the whole canvas. Its vignette is the screen's falloff. The
 /// menu files give it brightness 90 [documented: as `frame.rs`]; it takes 120 to match beside
@@ -101,10 +102,12 @@ const SCANLINES: &str = "textures\\pipboy3000\\pipboyscanlines.dds";
 pub const SCANLINE_PITCH: f32 = 9.5;
 /// The dip at the dark end: 16 to 22% between the brightest and the darkest rows of an
 /// empty stretch of the original's screen at 1920 × 1080, indoors and at dusk alike, over a
-/// 9-pixel period, and 21% in green on a filled bar [observed: playtest shots of the original,
-/// 2026-11-05]. Through the view's tone map a dip of 24% here gives that 21% on a bar and about
-/// 29% on the dim empty screen; the earlier 15% was the ITEMS screenshot's reading.
-pub const SCANLINE_DEPTH: f32 = 0.24;
+/// 9-pixel period [observed: playtest shots of the original, 2026-11-05]. It gives about 22% on
+/// the empty screen here, and about 18% in green on a filled bar, where the original has 21%;
+/// the empty screen is the larger part of the view, and 24% here measured 27% on it against
+/// the original's 19% [observed: this engine's shots, 2026-11-05; the choice is design]. The
+/// earlier 15% was the ITEMS screenshot's reading.
+pub const SCANLINE_DEPTH: f32 = 0.20;
 
 /// The beam (module docs). Seconds between sweeps: edges at the same place 5 s apart [observed:
 /// private job pipboy_special_device_motion, frames with a whole-second clock; playtest
@@ -120,10 +123,10 @@ pub const BEAM_HEIGHT: f32 = 224.0;
 pub const BEAM_EDGE: f32 = 24.0;
 /// How strongly it covers the image at its peak, fitted to that +14 [hypothesis: fitted on the
 /// playtest shots of the original at 1920 x 1080, where the same step reads 13 to 14].
-pub const BEAM_ALPHA: f32 = 0.0115;
+pub const BEAM_ALPHA: f32 = 0.016;
 /// How far its colour is lightened from the Pip-Boy's towards white: what it adds on the
 /// original's screen is about (1, 0.58, 0.17) in linear light [observed: the same frames].
-const BEAM_LIGHTEN: f32 = 0.3;
+const BEAM_LIGHTEN: f32 = 0.2;
 
 /// Where the beam's top edge is at `phase` seconds into its period: from a band's height
 /// above the canvas to the canvas's foot, in [`BEAM_TRAVEL`]; `None` while it is hidden.

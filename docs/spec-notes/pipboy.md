@@ -154,17 +154,22 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
 - **The original's screen in playtest shots** [observed: 1920 × 1080 shots of the original,
   2026-11-05]: a filled bar reads about (206, 163, 57) indoors and (201, 161, 54) at dusk, the
   same screen in both. Across a scanline red stays almost flat (201 to 211) while green runs
-  145 to 183 and blue 48 to 66, so the stripes read yellow and orange, not grey. These shots
-  are brighter than the private job's above; the numbers below are fitted to them.
+  145 to 183 and blue 48 to 66, so the stripes read yellow and orange, not grey. Below the
+  bars the ink is yellower than amber's own ratio: green about 0.74 of red and blue about 0.3
+  at every mid brightness. The empty screen is about (35, 27, 15) beside the figure and (22,
+  17, 7) at the left, the glare at the top about (80, 73, 50). These shots are brighter than the
+  private job's above; the numbers below are fitted to them.
 - **The static treatment** (nvf-play `pipboy/device_screen.rs`, all its numbers in that
   file): image × `SCREEN_TINT` × the shapes' vertex colour (0.624 in linear light), plus the
   glare, with red stopped at a ceiling, through Bevy's TonyMcMapface table. The scene's
   image-space grade leaves the screen alone: the shape marks its pixels in alpha
   (`NifSurface::pipboy_screen`, `imagespace.wesl` `SCREEN_MARK`), because the grade at noon
   brightens by 1.3 and the original's screen does not follow it; the fade and VATS still cover
-  it [design]. In this engine at 1920 × 1080 a filled bar reads (204, 160, 59) indoors, red
-  204 to 205, green 143 to 185, blue 52 to 68, and (193, 151, 55) at noon in Goodsprings
-  [observed: this engine's shots, 2026-11-05]. Custom colours and other hours are not measured.
+  it [design]. In this engine at 1920 × 1080 a filled bar reads (207, 169, 64) indoors, red
+  206 to 208, green 154 to 189, blue 58 to 73, and (200, 163, 62) at noon in Goodsprings; the ink
+  has green at 0.73 and blue at 0.28 of red at mid brightness, the empty screen is (35, 28, 13)
+  beside the figure and (25, 19, 8) at the left, the glare (79, 72, 49) [observed: this engine's
+  shots, 2026-11-05]. Custom colours and other hours are not measured.
   The ceiling is [hypothesis] for how the original comes by its flat red; it is fitted, and
   the original's own path is not established:
   - The falloff is the background picture's vignette: `pipboy.dds` runs from about 9 at its
@@ -178,7 +183,7 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   - The glow across the top and the patch on the right are `glare:0`'s: its texture's
     brightest band and patch lie there [observed: the file]. It is drawn over the menus on a
     copy of its material, unlit, added in linear light as the terminal's glare is (hacking.md
-    §7), at a linear scale of (1.95, 1.3, 0.9) on the texture, warmer than the texture.
+    §7), at a linear scale of (3.2, 1.4, 0.75) on the texture, warmer than the texture.
     The copy keeps the shape's squeezed first-person depth, which Bevy's plain additive
     material would not, and the sheet's soft intersection is off.
   - `ScreenLit:8` stays hidden: `screen.dds` is black, `Screen_n.dds` is flat and its
@@ -186,8 +191,9 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     falloff. Both shapes used are unlit, so nothing here is lit by the world [design]; the
     hour does not move it here, the grade being left off.
   - One baked column of scanlines over the canvas, a value per row (no tiling): the band
-    of `pipboyscanlines.dds`, rescaled to dim display values by 24% at its dark end, every
-    9.5 of the canvas (through the tone map, about 21% in green on a filled bar). The undercoat and the picture are raised by what the lines take
+    of `pipboyscanlines.dds`, rescaled to dim display values by 20% at its dark end, every
+    9.5 of the canvas: about 22% on the empty screen (the original 16 to 22%) and about 18% in
+    green on a filled bar (the original 21%). The undercoat and the picture are raised by what the lines take
     away on average, as the terminal's are; the ink is not, its bright rows keeping their
     value.
   - One owner around the shared image: the layers are not part of the pages' tree, so
@@ -209,7 +215,7 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   of 13 to 14. Frames go by at about 7 rows a frame, and at least 190 rows went by within one
   clock second, so the time is [hypothesis] within about 1 to 2 s. NVForever draws one column
   (`device_screen.rs`): 224 canvas units high with an edge of 24, the Pip-Boy's colour lightened
-  0.3 towards white at a fitted alpha of 0.0115 at the peak, over the pages and under the
+  0.2 towards white at a fitted alpha of 0.016 at the peak, over the pages and under the
   scanlines, 1.3 s from above the top edge to off the foot on the real clock, hidden between
   sweeps and held with the pause menu. Not in the screen menu.
 - **Background**: `Interface\Shared\Background\pipboy.dds` over the whole canvas at
