@@ -6354,6 +6354,25 @@ order = [[
 ]]
 
 [[scenario]]
+name = "pause-quit-to-main-menu"
+source = "issue #1593: the pause menu's Quit, then Main Menu, goes back to the main menu (a new run opened with --menu takes the window over) instead of closing the game"
+areas = ["save", "menus"]
+paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "quit-menu-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "20:80", NVF_PLAY_TEST_PAUSE_MENU = "21:quit,21.5:up,22:up,22.5:pick", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
+expect = [
+  { text = "pause menu: quit to the main menu", count = 1, label = "Main Menu is picked in the quit question" },
+  { re = 'pause menu: quit$', count = 0, label = "Exit Game is not picked" },
+  { text = "load: handing over to a new run with --menu", count = 1, label = "a new run starts for the main menu" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown (not past the time limit)" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new one is up" },
+  { text = "the new run took over and its main menu is in; ending it", label = "the main menu is open" },
+  { re = 'before it was ready', count = 0, label = "the new run does not stop at its start" },
+]
+
+[[scenario]]
 name = "load-handoff-refused"
 source = "owner 2026-11-01 (#1357): a save that cannot be loaded opens the main menu with a message box saying why (the old run of a load no longer stays to fall back on) (engine/nvforever/src/handoff.rs, engine/nvforever/src/main.rs)"
 areas = ["save"]
