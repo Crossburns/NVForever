@@ -81,7 +81,7 @@ on screen).
    fatigue only].
    **DamageActorValue** on Health that leaves an actor at 0 or less: a non-essential NPC
    dies, an essential actor is knocked out as by KillActor, and the player dies
-   [hypothesis: observer-checks.md check 86 asks]. The only sighting is check 22: two super
+   [hypothesis: observer-checks.md check 88 asks]. The only sighting is check 22: two super
    mutants hurt by DamageAV 300 died [observed, run o21_air: not isolated from the NCR
    troopers firing in the scene, no GetDead read, their Health not known to be below 300].
    Health stays where the damage left it, with no floor of 1, and an essential actor still

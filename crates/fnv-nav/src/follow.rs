@@ -7,7 +7,7 @@
 
 use crate::graph::{DoorEdge, NavGraph, Space, NONE};
 use crate::jump::Flight;
-use crate::path::{LedgeHop, Path, PathError, PathParams, Place};
+use crate::path::{Leg, LedgeHop, Path, PathError, PathParams, Place, LEVEL_GAP};
 use serde::Serialize;
 
 /// What to do next.
@@ -52,6 +52,33 @@ pub struct Follower {
     /// Held at that stop ([`Steer::OpenDoor`] given) until [`Follower::door_opened`]:
     /// a door pushing the actor about while it opens does not send it walking again.
     pub holding: bool,
+}
+
+/// A place a stuck actor could be moved on to along its path ([`Follower::skip_candidates`]):
+/// nothing has changed until [`Follower::commit_skip`], which the caller does once the
+/// place is found good ([`NavGraph::skip_surface`], then its collision).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct SkipCandidate {
+    /// On the path; its height is the path's between two corners, a hint and not the
+    /// surface's.
+    pub pos: [f32; 3],
+    /// The corner to walk to from there ([`Follower::next`] once committed).
+    pub next: usize,
+    /// Horizontal length of path from the feet's projection on the path.
+    pub along: f32,
+    /// At the leg's next door stop or its end, as far as a skip goes.
+    pub at_limit: bool,
+}
+
+/// Where a skip measures from: the feet's projection on the stretch being walked.
+struct SkipFrom {
+    projection: [f32; 3],
+    /// The corner the stretch ends at.
+    corner: usize,
+    /// The last point a skip may reach: the next door stop, or the leg's end.
+    limit: usize,
+    /// Horizontal distance of the feet from the projection.
+    off: f32,
 }
 
 /// A ledge's take-off counts as reached within this horizontal distance: the actor goes
@@ -183,36 +210,100 @@ impl Follower {
         self.next = self.next.max(s.point + 1);
     }
 
-    /// Move on along the path `ahead` horizontal units from `feet` (via the corner being
-    /// walked to, then the next ones), as far as the leg's next door stop or its end at
-    /// most, and return that point (on the path, so on the navmesh; its height is the
-    /// path's between two corners). Corners passed on the way count as reached. `None`
-    /// while held at a door stop, or with no leg left. For a stuck actor, the failsafe
-    /// that puts it past what blocks it ([`Advice::Skip`]).
+    /// Move on along the path `ahead` horizontal units from the projection of `feet` on
+    /// the stretch being walked, as far as the leg's next door stop or its end at most,
+    /// and return that point. Corners passed on the way count as reached. `None` while
+    /// held at a door stop, with a door stop behind the corner being walked to (steering
+    /// holds there), with no leg left or with numbers that are not finite.
+    /// [`Follower::skip_candidate`] and [`Follower::commit_skip`] in one step, with no
+    /// check of the place: the engine's stuck actors go through
+    /// [`Follower::skip_candidates`] ([`Advice::Skip`]).
     pub fn skip_ahead(&mut self, feet: [f32; 3], ahead: f32) -> Option<[f32; 3]> {
-        if self.holding {
+        let c = self.skip_candidate(feet, ahead)?;
+        self.commit_skip(&c);
+        Some(c.pos)
+    }
+
+    /// The place [`Follower::skip_ahead`] would move on to, changing nothing.
+    pub fn skip_candidate(&self, feet: [f32; 3], ahead: f32) -> Option<SkipCandidate> {
+        if !ahead.is_finite() {
+            return None;
+        }
+        Some(self.skip_along(&self.skip_from(feet)?, ahead.max(0.0)))
+    }
+
+    /// The places at each of `distances` along the path from the projection of `feet`, in
+    /// that order, cut to the leg's next door stop or its end and without repeats. No
+    /// distance on from the projection counts only for feet off the path by more than
+    /// [`Follower::arrive_radius`] (or at the limit, where steering then holds, uses the
+    /// door or arrives): anywhere else it would put the actor down where it stands. Empty
+    /// for what makes [`Follower::skip_ahead`] `None`. Changes nothing.
+    pub fn skip_candidates(&self, feet: [f32; 3], distances: &[f32]) -> Vec<SkipCandidate> {
+        let Some(from) = self.skip_from(feet) else { return Vec::new() };
+        let mut out: Vec<SkipCandidate> = Vec::with_capacity(distances.len());
+        for &d in distances.iter().filter(|d| d.is_finite()) {
+            let c = self.skip_along(&from, d.max(0.0));
+            let here = c.along <= 0.0 && !c.at_limit && from.off <= self.arrive_radius;
+            if !here && out.iter().all(|o| (o.along - c.along).abs() > 1e-3) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// Go on from a candidate found good: corners it passed count as reached.
+    pub fn commit_skip(&mut self, c: &SkipCandidate) {
+        self.next = self.next.max(c.next);
+    }
+
+    fn skip_from(&self, feet: [f32; 3]) -> Option<SkipFrom> {
+        if self.holding || !feet.iter().all(|v| v.is_finite()) {
             return None;
         }
         let leg = self.path.legs.get(self.leg)?;
         let pts = &leg.points;
         let last = pts.len().checked_sub(1)?;
-        let limit = leg.door_stops.get(self.stop).map_or(last, |s| s.point.min(last));
-        let mut from = feet;
+        let stop = leg.door_stops.get(self.stop);
+        if stop.is_some_and(|s| s.point < self.next) {
+            return None;
+        }
+        let limit = stop.map_or(last, |s| s.point.min(last));
+        let corner = self.next.max(1);
+        if !pts[corner.min(limit + 1) - 1..=limit].iter().flatten().all(|v| v.is_finite()) {
+            return None;
+        }
+        // Past the limit (the corners used up, or a path of one point): only the limit.
+        if corner > limit {
+            return Some(SkipFrom { projection: pts[limit], corner, limit, off: hdist(feet, pts[limit]) });
+        }
+        // Onto the stretch being walked and not the nearest of them all: a path that
+        // comes back past the actor would otherwise have it jump along the loop.
+        let (a, b) = (pts[corner - 1], pts[corner]);
+        let (sx, sy) = (b[0] - a[0], b[1] - a[1]);
+        let len2 = sx * sx + sy * sy;
+        let t = if len2 > 1e-6 { (((feet[0] - a[0]) * sx + (feet[1] - a[1]) * sy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        let projection = [a[0] + sx * t, a[1] + sy * t, a[2] + (b[2] - a[2]) * t];
+        Some(SkipFrom { projection, corner, limit, off: hdist(feet, projection) })
+    }
+
+    /// `ahead` horizontal units on from `from`. Only for a [`SkipFrom`] of this follower,
+    /// so the leg is there.
+    fn skip_along(&self, from: &SkipFrom, ahead: f32) -> SkipCandidate {
+        let pts = &self.path.legs[self.leg].points;
+        let mut at = from.projection;
         let mut left = ahead;
-        for (i, &q) in pts.iter().enumerate().take(limit + 1).skip(self.next) {
-            let seg = hdist(from, q);
+        for (i, &q) in pts.iter().enumerate().take(from.limit + 1).skip(from.corner) {
+            let seg = hdist(at, q);
             if left < seg {
                 let t = left / seg;
-                self.next = i;
-                return Some([from[0] + (q[0] - from[0]) * t, from[1] + (q[1] - from[1]) * t, from[2] + (q[2] - from[2]) * t]);
+                return SkipCandidate { pos: [at[0] + (q[0] - at[0]) * t, at[1] + (q[1] - at[1]) * t, at[2] + (q[2] - at[2]) * t], next: i, along: ahead, at_limit: false };
             }
             left -= seg;
-            from = q;
+            at = q;
         }
         // At the door stop or the leg's end: steering from there holds, uses the door or
         // arrives.
-        self.next = self.next.max(limit);
-        Some(pts[limit])
+        SkipCandidate { pos: pts[from.limit], next: self.next.max(from.limit), along: ahead - left, at_limit: true }
     }
 
     /// Whether the rest of the path (the leg being walked and those after it) crosses a
@@ -253,6 +344,55 @@ impl Follower {
     /// Whether `feet` are at a height that fits the path's destination.
     pub fn fits_goal(&self, feet: [f32; 3]) -> bool {
         self.destination().is_none_or(|g| goal_height_fits(feet, g.pos))
+    }
+}
+
+impl NavGraph {
+    /// The navmesh surface under a [`SkipCandidate`] of `leg`: the place with the height
+    /// of the triangle under it. `None` when the path says nothing is under it.
+    ///
+    /// Looked for from the route, in this order [design]. A corner of the path: the
+    /// triangle under it nearest its height. A place between two corners: walking the
+    /// surface to it from the corner before it, else from the corner after it (a walk
+    /// follows the ground over a rise that the straight height between corners cuts
+    /// through; the one after because what cut the navmesh behind the place, an obstacle
+    /// or a navmesh switched off since the path was planned, is often what the actor is
+    /// stuck at, and the place past it is what recovery is for). Both walks cut off, any
+    /// usable triangle under it, the one nearest the path's height there and within
+    /// [`LEVEL_GAP`] of it: a nearest floor, as the two ends of a walk leave no better
+    /// guide. That limits the distance from the path's straight height and does not say
+    /// the floor is the route's: another level within the limit can be taken, and nothing
+    /// refuses it later. The leg's corridor is not asked: the shortcut pass straightens a path over triangles it does
+    /// not list ([`NavGraph::walkable_line`]). Inside a ledge link's span there is nothing
+    /// to stand on. No clearance from the outline is asked: the plan gave the path what
+    /// room there was, and the body's room is the collision's to say. The actor's own
+    /// limits (keys, water, slopes) are not checked again either, as [`Path`] does not
+    /// keep them: the route was planned with them, this only follows it.
+    pub fn skip_surface(&self, leg: &Leg, c: &SkipCandidate) -> Option<[f32; 3]> {
+        let pos = c.pos;
+        if !pos.iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        let pts = &leg.points;
+        let same = |p: Option<&[f32; 3]>| p.is_some_and(|q| (0..3).all(|i| (q[i] - pos[i]).abs() <= 1e-3));
+        let before = c.next.checked_sub(1).and_then(|i| pts.get(i));
+        let after = pts.get(c.next);
+        let corner = same(before) || same(after);
+        if !corner && leg.hops.iter().any(|h| h.point + 1 == c.next) {
+            return None;
+        }
+        let on = |t: u32| [pos[0], pos[1], self.height_on(t, pos[0], pos[1])];
+        if corner {
+            return self.locate(leg.space, pos, LEVEL_GAP).map(on);
+        }
+        // The route's own limits are behind it; the walk only asks where it leads.
+        let route = PathParams { open_locked: true, ..PathParams::default() };
+        let walk = |from: Option<&[f32; 3]>| {
+            let &a = from?;
+            let start = self.locate(leg.space, a, LEVEL_GAP)?;
+            self.trace_line(leg.space, start, a, pos, 0.0, &route)
+        };
+        walk(before).or_else(|| walk(after)).or_else(|| self.locate(leg.space, pos, LEVEL_GAP)).map(on)
     }
 }
 
@@ -305,8 +445,7 @@ pub struct Unstuck {
     pub detours: usize,
     /// Replans (or skips) advised.
     pub replans: usize,
-    /// An [`Advice::Skip`] was given ([`Unstuck::after_skip`] for the stuck rule of the
-    /// actor put down where it was moved on to).
+    /// An [`Advice::Skip`] was given and not refused ([`Unstuck::skip_refused`]).
     pub skipped: bool,
 }
 
@@ -331,6 +470,16 @@ impl Unstuck {
     /// longer than one skip (Boone just past his room's door, follower-boone smoke,
     /// 2026-10-17) cost 7.4 s per 160 units].
     pub fn after_skip(&mut self) {
+        self.tried = DETOURS.len();
+    }
+
+    /// The [`Advice::Skip`] just given found nowhere to put the actor, which stays where
+    /// it is: stuck after another second, it is advised to skip again, without the detours
+    /// that failed already. A refused skip does not count towards
+    /// [`Unstuck::max_replans`], so refusals never end in [`Advice::GiveUp`] [design].
+    pub fn skip_refused(&mut self) {
+        self.replans = self.replans.saturating_sub(1);
+        self.skipped = false;
         self.tried = DETOURS.len();
     }
 
@@ -986,6 +1135,174 @@ mod tests {
         assert!(matches!(f.steer(to), Steer::OpenDoor { door: 7, .. }));
         // Held at the stop: no skipping through the door.
         assert_eq!(f.skip_ahead(to, 160.0), None);
+    }
+
+    /// The reproduction of #1501: feet beside a straight path.
+    #[test]
+    fn skip_ahead_from_feet_off_the_path_stays_on_it() {
+        let line = || path(vec![[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0]]);
+        assert_eq!(Follower::new(line()).skip_ahead([0.0, 0.0, 0.0], 160.0), Some([160.0, 0.0, 0.0]));
+        assert_eq!(Follower::new(line()).skip_ahead([0.0, 100.0, 0.0], 160.0), Some([160.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn skip_ahead_goes_round_a_corner_from_the_projection() {
+        let mut f = Follower::new(path(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, 300.0, 0.0]]));
+        // 40 units to the corner from (60, 0), then 120 up the next stretch.
+        assert_eq!(f.skip_ahead([60.0, 30.0, 0.0], 160.0), Some([100.0, 120.0, 0.0]));
+        assert_eq!(f.next, 2);
+    }
+
+    #[test]
+    fn a_path_that_comes_back_is_not_jumped_along() {
+        // A loop passing back 20 units from the start: projected on the nearest stretch of
+        // them all, these feet would be 900 units along.
+        let mut f = Follower::new(path(vec![[0.0, 0.0, 0.0], [200.0, 0.0, 0.0], [200.0, 200.0, 0.0], [0.0, 200.0, 0.0], [0.0, 20.0, 0.0], [300.0, 20.0, 0.0]]));
+        assert_eq!(f.skip_ahead([10.0, 18.0, 0.0], 160.0), Some([170.0, 0.0, 0.0]));
+        assert_eq!(f.next, 1);
+    }
+
+    #[test]
+    fn skip_candidates_change_nothing_until_committed() {
+        let f = Follower::new(path(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, 300.0, 0.0]]));
+        let before = f.clone();
+        let cs = f.skip_candidates([60.0, 30.0, 0.0], &[160.0, 120.0, 80.0, 40.0, 0.0]);
+        assert_eq!(f, before);
+        let want = [[100.0, 120.0], [100.0, 80.0], [100.0, 40.0], [100.0, 0.0], [60.0, 0.0]];
+        assert_eq!(cs.len(), want.len());
+        for (c, w) in cs.iter().zip(want) {
+            assert!(hdist(c.pos, [w[0], w[1], 0.0]) < 1e-3, "{c:?} {w:?}");
+        }
+        assert_eq!(cs.iter().map(|c| c.next).collect::<Vec<_>>(), vec![2, 2, 2, 2, 1]);
+        // Refused: as it was. Accepted: the corners it passed count as reached.
+        let mut g = f.clone();
+        g.commit_skip(&cs[4]);
+        assert_eq!(g, before);
+        g.commit_skip(&cs[0]);
+        assert_eq!(g.next, 2);
+        // The same as moving on in one step.
+        let mut h = f.clone();
+        assert_eq!(h.skip_ahead([60.0, 30.0, 0.0], 160.0), Some(cs[0].pos));
+        assert_eq!(h, g);
+    }
+
+    #[test]
+    fn no_distance_on_counts_only_for_feet_off_the_path() {
+        let f = Follower::new(path(vec![[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0]]));
+        let ladder = [40.0, 0.0];
+        assert_eq!(f.skip_candidates([100.0, 5.0, 0.0], &ladder).len(), 1, "as good as on the path");
+        assert_eq!(f.skip_candidates([100.0, 16.0, 0.0], &ladder).len(), 1, "within the arrival radius");
+        let off = f.skip_candidates([100.0, 40.0, 0.0], &ladder);
+        assert_eq!(off.len(), 2);
+        assert_eq!(off[1].pos, [100.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn skip_candidates_stop_at_a_door_stop_or_the_legs_end_once() {
+        let ladder = [160.0, 120.0, 80.0, 40.0, 0.0];
+        // 60 units to the stop: the far places are all the stop, and it is not repeated.
+        let mut p = path(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [400.0, 0.0, 0.0]]);
+        p.legs[0].door_stops = vec![crate::path::DoorStop { door: 7, point: 1 }];
+        let f = Follower::new(p);
+        let cs = f.skip_candidates([40.0, 0.0, 0.0], &ladder);
+        assert_eq!(cs.iter().map(|c| c.pos[0]).collect::<Vec<_>>(), vec![100.0, 80.0]);
+        assert!(cs[0].at_limit && !cs[1].at_limit);
+        assert_eq!(cs[0].along, 60.0);
+        let mut g = f.clone();
+        g.commit_skip(&cs[0]);
+        assert!(matches!(g.steer(cs[0].pos), Steer::OpenDoor { door: 7, .. }));
+        // At the end of a leg with a load door after it, the next leg is not touched.
+        let mut p = path(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]);
+        let again = p.legs[0].clone();
+        p.legs.push(again);
+        let f = Follower::new(p);
+        let cs = f.skip_candidates([95.0, 0.0, 0.0], &ladder);
+        assert_eq!(cs.iter().map(|c| c.pos[0]).collect::<Vec<_>>(), vec![100.0]);
+        assert_eq!((cs[0].next, f.leg), (1, 0));
+        // Standing at the limit with no way on: still offered, steering then ends the walk.
+        let f = Follower::new(path(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]));
+        let cs = f.skip_candidates([100.0, 0.0, 0.0], &ladder);
+        assert_eq!(cs.iter().map(|c| c.pos).collect::<Vec<_>>(), vec![[100.0, 0.0, 0.0]]);
+    }
+
+    #[test]
+    fn nothing_to_skip_along_answers_without_trouble() {
+        let ladder = [160.0, 0.0];
+        // No points at all, no leg left.
+        let f = Follower::new(path(vec![]));
+        assert_eq!(f.skip_candidate([0.0; 3], 160.0), None);
+        assert!(f.skip_candidates([0.0; 3], &ladder).is_empty());
+        let mut f = Follower::new(path(vec![[0.0; 3], [100.0, 0.0, 0.0]]));
+        f.leg = 1;
+        assert_eq!(f.skip_candidate([0.0; 3], 160.0), None);
+        // A path of one point, and corners used up: that point, with the cursor kept.
+        let mut f = Follower::new(path(vec![[5.0, 6.0, 7.0]]));
+        assert_eq!(f.skip_ahead([0.0; 3], 160.0), Some([5.0, 6.0, 7.0]));
+        assert_eq!(f.next, 1);
+        let mut f = Follower::new(path(vec![[0.0; 3], [100.0, 0.0, 0.0]]));
+        f.next = 2;
+        assert_eq!(f.skip_ahead([90.0, 0.0, 0.0], 160.0), Some([100.0, 0.0, 0.0]));
+        assert_eq!(f.next, 2);
+        // Points on the same spot: no division by nothing, and on past them.
+        let mut f = Follower::new(path(vec![[0.0; 3], [0.0; 3], [0.0; 3], [300.0, 0.0, 0.0]]));
+        let to = f.skip_ahead([0.0, 50.0, 0.0], 160.0).unwrap();
+        assert!(hdist(to, [160.0, 0.0, 0.0]) < 1e-3, "{to:?}");
+        assert_eq!(f.next, 3);
+        let mut f = Follower::new(path(vec![[0.0; 3], [0.0; 3]]));
+        assert_eq!(f.skip_ahead([0.0, 50.0, 0.0], 160.0), Some([0.0; 3]));
+        // Numbers that are not finite.
+        let f = Follower::new(path(vec![[0.0; 3], [100.0, 0.0, 0.0]]));
+        assert_eq!(f.skip_candidate([f32::NAN, 0.0, 0.0], 160.0), None);
+        assert_eq!(f.skip_candidate([0.0, f32::INFINITY, 0.0], 160.0), None);
+        assert_eq!(f.skip_candidate([0.0; 3], f32::NAN), None);
+        assert_eq!(f.skip_candidate([0.0; 3], f32::INFINITY), None);
+        assert_eq!(f.skip_candidates([0.0; 3], &[f32::NAN, 40.0]).len(), 1);
+        let f = Follower::new(path(vec![[0.0; 3], [f32::NAN, 0.0, 0.0]]));
+        assert_eq!(f.skip_candidate([0.0; 3], 160.0), None);
+        // Backwards is not on.
+        let f = Follower::new(path(vec![[0.0; 3], [100.0, 0.0, 0.0]]));
+        assert_eq!(f.skip_candidate([50.0, 0.0, 0.0], -30.0).map(|c| c.pos), Some([50.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn a_door_stop_not_opened_is_never_skipped_past() {
+        // Held there, or with it behind the corner walked to (steering holds): no place.
+        let mut p = path(vec![[0.0, 0.0, 0.0], [50.0, 0.0, 0.0], [400.0, 0.0, 0.0]]);
+        p.legs[0].door_stops = vec![crate::path::DoorStop { door: 7, point: 1 }];
+        let mut f = Follower::new(p);
+        f.next = 2;
+        assert_eq!(f.skip_candidate([60.0, 0.0, 0.0], 160.0), None);
+        // Opened: on through it.
+        f.holding = true;
+        f.door_opened();
+        assert_eq!(f.skip_ahead([60.0, 0.0, 0.0], 160.0), Some([220.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn a_refused_skip_is_advised_again_after_a_second_whatever_the_number_of_them() {
+        let mut u = Unstuck::new(100.0);
+        u.skip = true;
+        let dt = 0.05;
+        let seconds_to_skip = |u: &mut Unstuck| {
+            for i in 1..400 {
+                match u.advise_moved([0.0, 0.0, 0.0], [1.0, 0.0], dt) {
+                    Advice::Skip => return i as f32 * dt,
+                    Advice::GiveUp => panic!("gave up"),
+                    _ => {}
+                }
+            }
+            panic!("no skip in 20 s");
+        };
+        // The four detours and their seconds first, as ever.
+        assert!(seconds_to_skip(&mut u) > 5.0);
+        assert!(u.skipped);
+        // More refusals than `max_replans` allows skips.
+        for _ in 0..20 {
+            u.skip_refused();
+            assert_eq!((u.skipped, u.replans), (false, 0));
+            let t = seconds_to_skip(&mut u);
+            assert!((0.95..1.2).contains(&t), "{t}");
+        }
     }
 
     #[test]

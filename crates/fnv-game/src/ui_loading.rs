@@ -109,6 +109,7 @@ pub fn sync(game: &mut Game<'_>, paused: bool, main_menu: bool) -> LifetimeRepor
         }
         if let Some(code) = class_code(&game.ui_tree, root) {
             if !open.contains(&code) {
+                let _span = tracing::info_span!("tiles::write::menu_drop").entered();
                 game.ui_tree.unload_tile(root);
                 report.changes.push(format!("dropped {}", menu_class_name(code).unwrap()));
             }
@@ -121,10 +122,13 @@ pub fn sync(game: &mut Game<'_>, paused: bool, main_menu: bool) -> LifetimeRepor
             continue;
         }
         let name = menu_class_name(code).map_or_else(|| format!("menu {code}"), str::to_owned);
+        // An attempt: entered too for a menu with no file and a load that fails.
+        let span = tracing::info_span!("tiles::write::menu_build").entered();
         let result = match game.ui_menus.code_path(code) {
             Some(path) => game.ui_tree.load_menu(files, path).map(|root| (path, root)),
             None => Err(format!("{name}: no file with matching menu class")),
         };
+        drop(span);
         match result {
             Ok((path, root)) => {
                 let mut count = 0;
@@ -143,6 +147,7 @@ pub fn sync(game: &mut Game<'_>, paused: bool, main_menu: bool) -> LifetimeRepor
     }
     // New menus' expressions must be readable by this frame's scripts [design: §4.1].
     if !report.changes.is_empty() {
+        let _span = tracing::info_span!("tiles::write::menu_update").entered();
         game.ui_tree.update();
     }
     for warning in &game.ui_tree.warnings[warning_start..] {
