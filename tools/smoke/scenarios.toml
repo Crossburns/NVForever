@@ -19180,3 +19180,19 @@ expect = [
   { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1, label = "the ln_ file runs once the new game begins" },
 ]
 order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]
+
+[[scenario]]
+name = "language-choice"
+source = "#1443: the settings page's Language row lists the languages found in the lang folders (NVF_LANG_DIR here, a made-up one), takes one at once and draws the page again; a broken language file is skipped with a warning"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/language.rs", "crates/fnv-util/src/words.rs", "engine/nvf-play/src/pause.rs", "tools/smoke/fixtures/lang/xx.toml"]
+env = { NVF_LANG_DIR = "{repo}/tools/smoke/fixtures/lang", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:language=Smoke Language,13:language=English" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = ["warning: language file skipped: ", "broken.toml"]
+order = [[
+  "language: xx",
+  "settings: language Smoke Language",
+  "language: en",
+  "settings: language English",
+]]
