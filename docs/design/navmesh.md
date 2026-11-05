@@ -124,9 +124,10 @@ triangles, its door stops and the door that ends it.
   no sweep from the feet, or nothing past an obstacle would ever pass). On uneven ground
   the body may be tried up to a step above the support. It goes to those very feet
   (`PhysState::place_npc`), not through the wider ground search of a new character.
-  Those feet can be outside the goal's height tolerance of #1500 (40 units, where the
-  support can be 96 below or 48 above the navmesh, plus the step): near the goal, its
-  goal check answers that with at most two replans, then arrival.
+  The support can be 96 below or 48 above the navmesh, plus the step. When combined with #1500
+  (not part of this change), such feet near the goal can be outside its height check, which has a
+  40-unit base margin: that check answers with at most two replans, then arrival, which does
+  not guarantee the right floor.
   A place refused, the same is tried 120, 80 and 40 units on from the same projection, and
   0 units for feet more than 16 units off the path, all cut to the door stop or leg's end.
   All refused, the actor keeps its body, feet and place on the path, the AI is told it
