@@ -175,3 +175,73 @@ mod tests {
         assert!(!actor_ref(None, Some(*b"MISC")) && !actor_ref(None, Some(*b"CONT")) && !actor_ref(None, None));
     }
 }
+
+/// A simulation made by hand for tests: forms and references in memory, no game data.
+#[cfg(test)]
+pub(crate) mod test_world {
+    use super::*;
+    use fnv_sim::forms::{ActorBase, BaseData, BaseForm, Door};
+    use fnv_sim::refs::PlacedRef;
+
+    fn base(id: u32, data: BaseData) -> BaseForm {
+        BaseForm { id: FormId(id), sig: *b"MISC", edid: Some(format!("Edid{id:X}")), name: None, script: None, prompt: None, voice_filter: false, data }
+    }
+
+    pub(crate) fn door_base(id: u32) -> BaseForm {
+        base(id, BaseData::Door(Door { automatic: false, minimal_use: false }))
+    }
+
+    /// A plain reference of `base` nowhere in particular.
+    pub(crate) fn placed(id: u32, base: u32) -> PlacedRef {
+        PlacedRef {
+            id: FormId(id),
+            sig: *b"REFR",
+            edid: None,
+            base: FormId(base),
+            cell: None,
+            stored_in: None,
+            plugin: 0,
+            flags: 0,
+            in_persistent_group: false,
+            pos: [0.0; 3],
+            rot: [0.0; 3],
+            scale: None,
+            count: None,
+            ammo: None,
+            health: None,
+            owner: None,
+            lock: None,
+            teleport: None,
+            enable_parent: None,
+            linked: None,
+            patrol_idle: None,
+            patrol_topic: None,
+            merchant_container: None,
+            marker_reputation: None,
+            open_by_default: false,
+            primitive: None,
+            activate_parents: Vec::new(),
+            parent_activate_only: false,
+            prompt: None,
+            radiation: None,
+            radius: None,
+            encounter_zone: None,
+            level_modifier: None,
+        }
+    }
+
+    /// These bases (and the player's) and references.
+    pub(crate) fn sim(bases: Vec<BaseForm>, placed: Vec<PlacedRef>) -> SimState {
+        let mut forms = FormStore::default();
+        for b in bases.into_iter().chain([base(FormId::PLAYER_BASE.0, BaseData::Actor(ActorBase { entries: Vec::new(), attributes: None }))]) {
+            forms.bases.insert(b.id, b);
+        }
+        let mut refs = RefTable::default();
+        for r in placed {
+            refs.refs.insert(r.id, r);
+        }
+        let forms: &'static FormStore = Box::leak(Box::new(forms));
+        let refs: &'static RefTable = Box::leak(Box::new(refs));
+        SimState { forms, refs, world: World::new(forms, refs, SimConfig::default()) }
+    }
+}

@@ -6365,6 +6365,31 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-door-write"
+source = "#1611: Doc Mitchell's inner door 0x001062AC opened by the player and saved open; save-door-load reads it back, so run them together"
+areas = ["save", "doors"]
+paths = ["engine/nvf-play/src/doors.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "engine/nvforever/src/doors.rs"]
+env = { NVFOREVER_HOME = "save-door-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "14:activate:0x001062AC", NVF_PLAY_TEST_CONSOLE = "19:001062AC.getopenstate;save smoke-door;20:close" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 24
+order = [[{ re = 'door 0x001062AC opening', label = "the player opens the door" }, { re = 'console: GetOpenState on 0x001062AC >> 1\.00', label = "it reads open" }, { re = 'save: wrote .*smoke-door\.nvfsave', label = "the save is written" }]]
+
+[[scenario]]
+name = "save-door-load"
+source = "#1611: a door saved open stands open from the load on, without its opening; closing it afterwards still moves it"
+note = "The close comes late in the run, a second before it ends, so that nobody opening the door again after it can fail the count of opening lines"
+areas = ["save", "doors"]
+paths = ["engine/nvf-play/src/doors.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "engine/nvforever/src/doors.rs"]
+env = { NVFOREVER_HOME = "save-door-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "12:001062AC.getopenstate;15:001062AC.setopenstate 0;16:close" }
+args = ["--play", "--load", "smoke-door", "--no-voice"]
+run_seconds = 18
+order = [[{ re = 'load: restored .*smoke-door\.nvfsave', label = "the save is restored" }, { re = 'console: GetOpenState on 0x001062AC >> 1\.00', label = "the door reads open" }, { re = 'door 0x001062AC closing', label = "a real close after the load still moves it" }]]
+expect = [
+  { re = 'door 0x001062AC opening', count = 0, label = "the load does not open it again" },
+  { re = 'door 0x001062AC closing', count = 1, label = "one close, the console's" },
+]
+
+[[scenario]]
 name = "save-load-order"
 source = "no-owner queue item 29 (2026-10-21; docs/design/save-load.md §4.1): a save made with one load order loads into another: FormIDs move to their plugin's place now, what came from plugins no longer loaded is dropped and the player told; run after save-write, whose save it loads"
 note = "save-write runs with the ten masters; this run loads its save with three of them, Gun Runners' Arsenal moved before Dead Money (index 05 -> 01, Dead Money 01 -> 02), the add-ons Honest Hearts, Old World Blues, Lonesome Road and the four packs gone. The base game's changes come back as in save-load"

@@ -1696,7 +1696,7 @@ pub(crate) fn run_scripts(
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
-    (mut sit, mut terminals): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>),
+    (mut sit, mut terminals, mut doors): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>, Option<ResMut<crate::doors::Doors>>),
     paused: Res<crate::pause::Paused>,
     (mut screen, bindings, tiles, page, mut mods_ticks): ScreenAndMenus,
 ) {
@@ -1725,6 +1725,9 @@ pub(crate) fn run_scripts(
                         Ok(changed_refs) => {
                             info!("load: restored {}: {} changed references, {} quests, {} script instances", path.display(), changed_refs.len(), rt.game.quests.len(), rt.game.instances.len());
                             restored = true;
+                            if let Some(doors) = doors.as_deref_mut() {
+                                doors.rest_as_restored(&sim);
+                            }
                             tiles.load(&mut rt.game, &sim.world);
                             // The Script Runner's files after the save is in place (the
                             // restore takes the game's state, lambdas included, from the
