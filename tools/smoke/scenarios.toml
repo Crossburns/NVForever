@@ -36,6 +36,7 @@ untimed = [
   "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
   "NVF_PLAY_AIDS_FROM_SCRIPTS", "NVF_PLAY_TEST_HELD_GRENADE",
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
+  "NVF_PLAY_TEST_MELEE_KNOCKBACK",
 ]
 
 # Test aids whose value is a list of timed items (`<seconds>:<what>`), joined with sep.
@@ -18408,17 +18409,40 @@ expect = [
 ]
 [[scenario]]
 name = "melee-knockback"
-source = "#1070 (docs/spec-notes/combat-rules.md, Knockback): a melee blow pushes the living actor it hits back through its character, by the Melee Knockback Formula's force (a speed falling to rest over fKnockbackTime)"
-note = "the combat-block-break NCR trooper 0x000F36F5 (no weapon drawn, --actor-weapons none) put 90 units north of the god-mode player at 6 s and 9 s, not set on the player; 0.8 s later the player, fists drawn, turns to it and holds Use 1.5 s (a power attack); each blow that lands pushes it back"
+source = "#1070 (docs/spec-notes/combat-rules.md, Knockback): a melee blow pushes the living actor it hits back through its character, by the Melee Knockback Formula's force (a speed falling to rest over fKnockbackTime); #1386: one player power blow, isolated and tied to its report"
+note = "NVF_PLAY_TEST_MELEE_KNOCKBACK: the NCR trooper 0x000F36F5 (--actor-weapons none) gets its AI off and then one MoveTo 90 units north of the god-mode player on the open ground melee-knockback-player uses; the actors of the loaded area keep their AI off; once the target stands ready the player, fists drawn, aims at it and holds Use until the power swing starts, then lets go, with no retry. The seconds are a deadline, not a firing delay. A failed setup or a report not tied to this blow fails the run, as a push out of range does. The range rests on 20 runs of 2026-11-05 at 30 to about 60 frames a second, 98-102 % (docs/spec-notes/combat-rules.md, Knockback); higher rates and irregular frames were not tried."
 areas = ["combat", "melee"]
-paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/residents.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "6:moveto:0x000F36F5:player:0:90:0,9:moveto:0x000F36F5:player:0:90:0", NVF_PLAY_TEST_CONTROL = "3:weapon,6.8:aimnpc,6.9:fire,8.4:fire,9.8:aimnpc,9.9:fire,11.4:fire" }
-args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--actor-weapons", "none", "--plugins", "FalloutNV.esm"]
-run_seconds = 15
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/test_aid.rs", "engine/nvf-play/src/test_aid/melee_knockback.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/residents/knock_run.rs", "engine/nvforever/src/residents/melee_knockback.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_MELEE_KNOCKBACK = "000F36F5:0:90:0" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages", "--actor-weapons", "none", "--plugins", "FalloutNV.esm"]
+run_seconds = 30
 expect = [
-  { re = 'knockback: 000F36F5 knocked back at \d+ units/s for 1[.]00 s', label = "the blow's knockback starts on the trooper" },
-  { re = 'knockback: .*000F36F5 pushed back \d+ units of \d+ \((\d+) %\)', range = [60, 140], label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, not set on anyone yet)" },
+  { re = 'melee knockback aid: ready target=000F36F5', count = 1, label = "the target stands ready for the blow, once" },
+  { re = 'combat: \S+ power attack hits 0x000F36F5 on ', count = 1, label = "one player power attack hits the target" },
+  { re = 'combat: .*\b(hits|strikes)\b.*0x000F36F5\b', count = 1, label = "nothing else hits the target" },
+  { re = 'combat: \S+( power attack)? hits 0x[0-9A-F]{8} on ', count = 1, label = "the player's melee hits one actor, once" },
+  { re = 'knockback trace: blow=\d+ target=000F36F5 dt=', min = 2, label = "each frame of the push is traced" },
+  { re = 'melee knockback aid: blow=\d+ landed target=000F36F5', count = 1, label = "that blow's knockback is the target's first and only" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 knocked back at \d+ units/s for 1[.]00 s', count = 1, label = "the player's power blow starts the knockback" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 power=[01] knocked back at', count = 1, label = "no other knockback starts on the target" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(]', count = 1, label = "that knockback ends on a living target no script moved and no walk or clip carried" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*pushed back', count = 1, label = "no other knockback ends on the target" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(](?P<n>\d+(?:[.]\d+)?) %[)] along=-?[\d.]+ lateral=[\d.]+ push=along,', range = [60, 140], all = true, label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, its AI off)" },
   { re = 'knockback summary: ([1-9]\d*) knockbacks on actors', label = "knockbacks in the summary" },
+]
+order = [[
+  'melee knockback aid: AI off on the target 000F36F5',
+  'melee knockback aid: the one MoveTo of 000F36F5',
+  'melee knockback aid: ready target=000F36F5',
+  'melee knockback aid: the power swing started, Use let go',
+  { re = 'combat: \S+ power attack hits 0x000F36F5 on ' },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 knocked back at' },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 .*pushed back' },
+]]
+forbid = [
+  { text = "melee knockback aid: FAIL", label = "the aid's setup or its one blow went wrong" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*interrupted by', label = "a second blow replaced the knockback" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*push=(reversed|sideways)', label = "the push went another way than the blow asked" },
 ]
 
 [[scenario]]

@@ -66,6 +66,8 @@ use nvf_play::RefVisual;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::f32::consts::FRAC_PI_4;
 
+mod knock_run;
+pub(crate) mod melee_knockback;
 mod sandbox_interrupt;
 
 /// Where the function catalogue is when `NVF_PLAY_SCRIPT_FUNCTIONS` is not set (as
@@ -759,9 +761,14 @@ struct Core {
     /// Updates in which an attack carried an actor; times it could not be (no
     /// character); for the summary.
     carries: [usize; 2],
-    /// Melee blows' knockbacks pushing actors (`nvf_play::combat::Knockback`): each with
-    /// its seconds left and where the actor's feet were when it began ([`Core::knock`]).
-    knocks: HashMap<u32, (nvf_play::combat::Knockback, f32, [f32; 3])>,
+    /// Melee blows' knockbacks pushing actors (`nvf_play::combat::Knockback`), each with
+    /// where the actor's feet were when it began ([`Core::knock`]).
+    knocks: HashMap<u32, knock_run::KnockRun>,
+    /// Knockbacks whose time was up when a new blow replaced them, with the feet then: told
+    /// as finished by the next [`Core::knock`], which has the game state to say so.
+    knocks_over: Vec<(knock_run::KnockRun, [f32; 3])>,
+    /// Log each frame of a knockback (only with the melee knockback aid).
+    knock_trace: bool,
     /// This frame's knockback travel (game x, y), kept apart from the attack clips'
     /// [`Core::travel`]: a hit reaction ends a clip's carry but not a knockback.
     knock_travel: HashMap<u32, [f32; 2]>,
@@ -973,6 +980,8 @@ impl Residents {
             carry_broken: HashSet::new(),
             carries: [0; 2],
             knocks: HashMap::new(),
+            knocks_over: Vec::new(),
+            knock_trace: std::env::var_os(nvf_play::MeleeKnockbackAid::ENV).is_some(),
             knock_travel: HashMap::new(),
             on_furniture: HashSet::new(),
             knocked: (0, 0.0),
@@ -1245,6 +1254,9 @@ impl Core {
         for (id, ours) in self.ai.moved_by_scripts(game) {
             if !is_actor(refs, id) {
                 continue;
+            }
+            if let Some(run) = self.knocks.get_mut(&id.0) {
+                run.moved = true;
             }
             let place = game.world.peek(id).map(|s| (s.cell, s.pos));
             let cell = place.and_then(|p| p.0).map_or_else(|| "no cell".to_string(), |c| game.data.name(c));
@@ -1573,48 +1585,57 @@ impl Core {
     /// Melee blows' knockbacks (docs/spec-notes/combat-rules.md, "Knockback"): each
     /// pushes its actor over this frame by its falling speed, through the same character
     /// as an attack clip's travel ([`Core::carry`]), so walls and actors stop it. Logged
-    /// when it ends: how far the actor got of the distance asked.
+    /// when it ends: how far the actor got of the distance asked ([`knock_run`]).
     fn knock(&mut self, game: &Game, phys: Option<&PhysState>, dt: f32) {
+        // Alive here is alive and conscious: anything else stops its character.
+        let alive = |id: u32| !game.extra.get(&FormId(id)).is_some_and(|e| e.dead || e.out_cold());
+        let steps = phys.map_or(0, |p| p.world.steps());
+        for (run, to) in std::mem::take(&mut self.knocks_over) {
+            info!("{}", run.report(to, alive(run.k.form_id), steps));
+        }
         let mut over = Vec::new();
-        for (&id, (k, left, from)) in self.knocks.iter_mut() {
-            let feet = phys.and_then(|p| p.npcs.get(&id)).map(|b| b.ch.feet).or_else(|| self.ai.agents.get(&FormId(id)).map(|a| a.walker.feet)).unwrap_or(*from);
-            if *left <= 0.0 {
-                over.push((id, k.distance(), *from, feet));
+        for (&id, run) in self.knocks.iter_mut() {
+            let agent = self.ai.agents.get(&FormId(id));
+            let feet = phys.and_then(|p| p.npcs.get(&id)).map(|b| b.ch.feet).or_else(|| agent.map(|a| a.walker.feet)).unwrap_or(run.from);
+            if run.over() {
+                if self.knock_trace {
+                    info!("{}", run.trace_line(feet, 0.0, 0.0, steps));
+                }
+                over.push((id, feet));
                 continue;
             }
-            let d = k.step(*left, dt);
-            *left -= dt;
+            let walked = agent.is_some_and(|a| a.walker.moving) || self.travel.contains_key(&id);
+            let d = run.advance(dt, walked);
+            if self.knock_trace {
+                info!("{}", run.trace_line(feet, dt, d, steps));
+            }
             let t = self.knock_travel.entry(id).or_default();
-            t[0] += k.dir[0] * d;
-            t[1] += k.dir[1] * d;
+            t[0] += run.k.dir[0] * d;
+            t[1] += run.k.dir[1] * d;
         }
-        for (id, asked, from, to) in over {
-            self.knocks.remove(&id);
-            info!(
-                "knockback: {} {id:08X} pushed back {:.0} units of {asked:.0} ({:.0} %), from ({:.0}, {:.0}, {:.0}) to ({:.0}, {:.0}, {:.0})",
-                game.data.name(FormId(id)),
-                (to[0] - from[0]).hypot(to[1] - from[1]),
-                (to[0] - from[0]).hypot(to[1] - from[1]) / asked.max(1e-3) * 100.0,
-                from[0],
-                from[1],
-                from[2],
-                to[0],
-                to[1],
-                to[2]
-            );
+        for (id, to) in over {
+            let Some(run) = self.knocks.remove(&id) else { continue };
+            info!("{}", run.report(to, alive(id), steps));
         }
     }
 
-    /// A melee blow's knockback on `k.form_id` begins (one still going is replaced
-    /// [design]); not for the player (`nvf_play::player::Lunge::knock`) nor an actor
-    /// that is not a resident.
-    fn begin_knock(&mut self, k: nvf_play::combat::Knockback) {
+    /// A melee blow's knockback on `k.form_id` begins, measured from where the actor's
+    /// feet are now (one still going is replaced [design], and told as interrupted: its
+    /// travel is not this blow's; one whose time was up is told as finished); not for the player
+    /// (`nvf_play::player::Lunge::knock`) nor an actor that is not a resident.
+    fn begin_knock(&mut self, k: nvf_play::combat::Knockback, phys: Option<&PhysState>) {
         let Some(a) = self.ai.agents.get(&FormId(k.form_id)) else { return };
-        let from = self.knocks.get(&k.form_id).map_or(a.walker.feet, |(_, _, f)| *f);
-        self.knocks.insert(k.form_id, (k, k.secs, from));
+        let feet = phys.and_then(|p| p.npcs.get(&k.form_id)).map_or(a.walker.feet, |b| b.ch.feet);
+        if let Some(old) = knock_run::begin(&mut self.knocks, k, feet, phys.map_or(0, |p| p.world.steps())) {
+            if old.over() {
+                self.knocks_over.push((old, feet));
+            } else {
+                info!("{}", old.interrupted(&k, feet));
+            }
+        }
         self.knocked.0 += 1;
         self.knocked.1 += k.distance();
-        info!("knockback: {:08X} knocked back at {:.0} units/s for {:.2} s ({:.0} units)", k.form_id, k.speed, k.secs, k.distance());
+        info!("knockback: {} knocked back at {:.0} units/s for {:.2} s ({:.3} units)", knock_run::KnockRun::tag(&k), k.speed, k.secs, k.distance());
     }
 
     /// Attack clips that travel carry their actors (docs/spec-notes/actors.md §8.13):
@@ -2460,7 +2481,7 @@ pub fn drive(
     }
     // Melee blows' knockbacks on actors (`nvf_play::combat`).
     for k in knocks.iter_mut().flat_map(|k| k.read()).filter(|k| k.form_id != FormId::PLAYER_REF.0) {
-        res.core.begin_knock(*k);
+        res.core.begin_knock(*k, phys.as_deref());
     }
     // Who an idle holds in place (`idles.rs`, from the frame before) stands too.
     // and those of them with somewhere to go (the last update's) are told to break out.
