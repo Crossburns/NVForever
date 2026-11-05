@@ -188,10 +188,15 @@ pub enum AiEvent {
     /// The script of the next door on the way did not let the actor through
     /// (`fnv_game::npc_doors`): it plans again without that door.
     DoorRefused { door: FormId },
+    /// Its walk was given up while it waited for `door` to open: it did not go through.
+    DoorWaitCancelled { door: FormId },
     /// The walk ended at the package's place, after `seconds` and `travelled` units.
     Arrived { package: FormId, seconds: f64, travelled: f32, patrol_point: Option<FormId> },
     /// No way to the package's location: the package is set aside.
     Unreachable { package: FormId, why: String },
+    /// Its feet at `at` do not fit its goal's height and no new path helped: its walk ends
+    /// as if they did (`fnv_nav::Walker::off_path`).
+    HeightWaived { at: [f32; 3] },
     NotCarriedOut { package: FormId, why: &'static str },
     /// The actor uses this furniture now (`None`: it leaves the furniture it used).
     Furniture { furniture: Option<FormId> },
@@ -282,10 +287,14 @@ pub enum AiEvent {
     /// In Combat it goes to the post the combat AI chose (`crate::alert`): `to`, `away`
     /// units off, a way of `length` units.
     Post { post: fnv_game::combat_group::PostKind, target: FormId, to: [f32; 3], away: f32, length: f32 },
-    /// It is at its post, `off` units from where the post is.
-    AtPost { post: fnv_game::combat_group::PostKind, target: FormId, off: f32 },
+    /// It is at its post: its feet at `feet`, `off` units from where the post asks for it
+    /// (`at`).
+    AtPost { post: fnv_game::combat_group::PostKind, target: FormId, off: f32, at: [f32; 3], feet: [f32; 3] },
     /// It has no way to its post: it closes in instead.
     NoPost { post: fnv_game::combat_group::PostKind },
+    /// Its walk to its post ended away from it after `elapsed` seconds: its feet at `feet`,
+    /// `off` units from where the post asks for it (`at`). The post is dropped.
+    PostFailed { post: fnv_game::combat_group::PostKind, target: FormId, at: [f32; 3], feet: [f32; 3], off: f32, elapsed: f32, reason: crate::alert::PostFailure },
     /// It flees `from` (`how`): to `to`, `away` units from the one it flees, a way of
     /// `length` units.
     Flee { from: FormId, how: fnv_game::combat_group::FleeBy, to: [f32; 3], away: f32, length: f32 },
@@ -1253,11 +1262,15 @@ impl Ai {
     /// walker's heading]. The heading is the walker's, and the game's, so it stays
     /// after the conversation until a package turns the actor. Not turned: an actor on
     /// furniture (its head turns, the engine's), a dead one, one in another space, one
-    /// whose Dialogue package says No Headtracking.
+    /// whose Dialogue package says No Headtracking, and a rooted one ([`Ai::root`]: an
+    /// Immobile creature such as Mr. House's screen, which "prevents movement"
+    /// [documented: GECK wiki Animation Tab]; the owner saw the screen turn 180 degrees
+    /// to the player where the original's stays still [observed: playtest 2026-11-04,
+    /// issue #1543]).
     pub fn update_held(&mut self, game: &mut Game, dt: f32) {
         let Some(actor) = game.dialogue.as_ref().map(|c| c.actor) else { return };
         let Some(a) = self.agents.get(&actor) else { return };
-        if a.using.is_some() || game.extra.get(&actor).is_some_and(|e| e.dead) {
+        if a.using.is_some() || a.rooted || game.extra.get(&actor).is_some_and(|e| e.dead) {
             return;
         }
         if let (Some(Goal::Talk(talk)), Some(Talking::Speaking)) = (&a.goal, a.talk) {
@@ -1316,8 +1329,9 @@ impl Ai {
                     // It turns to the one it talks to [documented: unless No
                     // Headtracking, speaker and target are "forced to look at each
                     // other by the package"; how fast is our choice]. Seated, only its
-                    // head turns (the engine's), as in `update_held`.
-                    if let (Some(t), false, false) = (target.filter(|t| t.space == feet.space), talk.no_headtracking, seated) {
+                    // head turns (the engine's); rooted, nothing: as in `update_held`.
+                    let rooted = self.agents[&actor].rooted;
+                    if let (Some(t), false, false, false) = (target.filter(|t| t.space == feet.space), talk.no_headtracking, seated, rooted) {
                         self.face(game, actor, t, dt);
                     }
                 } else {
@@ -2244,10 +2258,12 @@ impl Ai {
         }
         let a = self.agents.get_mut(&actor).expect("listed");
         a.face_to = None;
+        let waivers = a.walker.height_waivers;
         let ev = match mover.walk(actor, &mut a.walker, nav, dt) {
             Some(ev) => ev,
             None => a.walker.update_with(nav, dt, &mut |door| mover.open(actor, door)),
         };
+        let waived = a.walker.height_waivers != waivers;
         a.waiting_at = match ev {
             WalkEvent::WaitingForDoor(d) => Some(d),
             _ => None,
@@ -2258,6 +2274,9 @@ impl Ai {
         // An actor that cannot be put there (a reference the world does not know) is
         // left where the game has it.
         let _ = game.set_actor_place(actor, cell, feet.pos, heading);
+        if waived {
+            self.log(game, actor, AiEvent::HeightWaived { at: feet.pos });
+        }
         if let WalkEvent::UsedDoor(d) = ev {
             self.log(game, actor, AiEvent::Door { door: FormId(d.door), to_door: FormId(d.to_door) });
         }

@@ -599,7 +599,7 @@ pub fn spawn(
     commands.entity(spawned.root).insert((
         Name::new(format!("Actor {reference:08X} {}", a.edid.as_deref().unwrap_or(""))),
         RefVisual(reference),
-        ActorRig { reference, base, body: base, skeleton: a.skeleton.clone(), skel: skel.clone(), nodes: spawned.nodes.clone() },
+        ActorRig { reference, base, body: base, skeleton: a.skeleton.clone(), skel: skel.clone(), nodes: spawned.nodes.clone(), base_scale: 1.0 },
         // What it wears and holds follows its inventory (`outfits.rs`).
         crate::outfits::Dressed::new(world, &a, &part_index, &spawned),
     ));
@@ -716,7 +716,7 @@ pub fn spawn_creature(
     commands.entity(spawned.root).insert((
         Name::new(format!("Creature {reference:08X} {}", c.edid.as_deref().unwrap_or(""))),
         RefVisual(reference),
-        ActorRig { reference, base, body: c.body.0, skeleton: c.skeleton.clone(), skel: skel.clone(), nodes: spawned.nodes.clone() },
+        ActorRig { reference, base, body: c.body.0, skeleton: c.skeleton.clone(), skel: skel.clone(), nodes: spawned.nodes.clone(), base_scale: c.base_scale as f32 },
     ));
     for e in &spawned.drawn {
         commands.entity(*e).insert(RefVisual(reference));

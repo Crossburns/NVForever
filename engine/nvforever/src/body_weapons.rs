@@ -22,7 +22,10 @@
 //! - **Switching** ([`switch`], the rule: `fnv_combat::body_weapon`): while it fights,
 //!   every [`body_weapon::SWITCH_SECONDS`] at most it takes up the arm the rule chooses
 //!   for its target's distance; the new arm's equip clip plays and it attacks once that
-//!   is drawn. Its first choice in a fight is made at once (the arm drawn before the fight
+//!   is drawn. A gun whose projectile explodes suits no target within its blast (the
+//!   rule's `Arm::blast`, `npc_combat` holding fire there), unless the creature's combat
+//!   style has Ignore Damaging Self: a sentry bot keeps its minigun inside its missile
+//!   launcher's 1000 units (#1621). Its first choice in a fight is made at once (the arm drawn before the fight
 //!   was chosen for [`FIRST_DISTANCE`]), so a Mister Handy that fights at its target's
 //!   feet takes up its saw rather than stepping back with its flamer; and a creature with
 //!   a melee arm ([`BodyMelee`]) does not step back from a target too near
@@ -43,7 +46,7 @@ use crate::actors::ActorWorld;
 use crate::creature_stance::{CreatureClips, CreatureStance, NoStance, StanceAttach};
 use crate::limbs::ActorRig;
 use crate::locomotion::Dying;
-use crate::npc_combat::{is_gun, Fighters};
+use crate::npc_combat::{gun_reach_of, is_gun, Fighters};
 use crate::outfits::CreatureArms;
 use crate::weapons::{Muzzle, Stance, WeaponHold, WeaponMode};
 use bevy::prelude::*;
@@ -98,12 +101,12 @@ const MUZZLE_TRIES: u16 = 120;
 fn place_muzzles(
     mut commands: Commands,
     combat: Option<Res<Combat>>,
-    mut armed: Query<(Entity, &BodyWeapon, Option<&mut BodyMuzzle>)>,
+    mut armed: Query<(Entity, &BodyWeapon, &ActorRig, Option<&mut BodyMuzzle>)>,
     children: Query<&Children>,
     names: Query<&Name>,
 ) {
     let Some(combat) = combat else { return };
-    for (e, bw, mut bm) in &mut armed {
+    for (e, bw, rig, mut bm) in &mut armed {
         if let Some(m) = bm.as_deref_mut() {
             if m.weapon == bw.weapon && (m.node.is_some() || m.tries >= MUZZLE_TRIES) {
                 continue;
@@ -115,7 +118,7 @@ fn place_muzzles(
                 (m.weapon, m.tries) = (bw.weapon, 0);
             }
         }
-        let Some(node) = combat.forms.weapons.get(&bw.weapon).filter(|w| w.embedded).and_then(|w| w.embedded_node.as_deref()) else {
+        let Some(node) = combat.forms.weapons.get(&bw.weapon).and_then(|w| stand_in_node(w, &rig.skel.names)) else {
             commands.entity(e).insert(BodyMuzzle { weapon: bw.weapon, node: None, tries: MUZZLE_TRIES });
             continue;
         };
@@ -134,6 +137,15 @@ fn place_muzzles(
             }
         }
     }
+}
+
+/// The node body weapon `w` fires from (WEAP NNAM) when [`place_muzzles`] is to give it
+/// a [`Muzzle`]: only one not in the creature's skeleton (`names`), i.e. a body part's
+/// stand-in ([`spawn_part_projectile_nodes`]). A node of the skeleton (the sentry bot's
+/// `ProjectileNode_RGatling`) is `npc_combat`'s embedded weapon's node, drawn from there.
+fn stand_in_node<'a>(w: &'a fnv_combat::data::WeaponStats, names: &[Option<String>]) -> Option<&'a str> {
+    let node = w.embedded_node.as_deref().filter(|_| w.embedded)?;
+    crate::npc_combat::embedded_node_index(names, node).is_none().then_some(node)
 }
 
 /// Named stand-ins for the projectile nodes of a creature's body-part model `part`
@@ -199,6 +211,9 @@ struct BodyArm {
     stance: Option<Arc<Stance>>,
     /// The limb-condition actor value that disables it at 0.
     limb: Option<u16>,
+    /// Its projectile's explosion radius (0: none); the rule's `blast` unless the
+    /// creature's combat style ignores damaging itself.
+    blast: f32,
     rule: Arm,
 }
 
@@ -283,7 +298,8 @@ fn attach(
             };
             let dps = body_weapon::damage_per_second(ws.base_damage, ws.projectile_count, ws.attack_shots_per_sec, ws.fire_rate);
             let name = ws.edid.clone().unwrap_or_else(|| item.to_string());
-            arms.push(BodyArm { weapon: Some(item), name, stance: Some(stance), limb: ws.embedded_limb, rule: Arm { melee: !gun, min_range: ws.min_range, max_range: ws.max_range, dps, usable: true } });
+            let blast = if gun { gun_reach_of(&combat, item, ws, 1.0).blast } else { 0.0 };
+            arms.push(BodyArm { weapon: Some(item), name, stance: Some(stance), limb: ws.embedded_limb, blast, rule: Arm { melee: !gun, min_range: ws.min_range, max_range: ws.max_range, blast, dps, usable: true } });
         }
         commands.entity(e).insert(BodyChecked);
         if arms.is_empty() {
@@ -295,7 +311,7 @@ fn attach(
             !ctx.models.data.vfs.paths(|p| p.starts_with(&pre) && p.ends_with(".kf")).is_empty()
         });
         if has_own {
-            arms.push(BodyArm { weapon: None, name: "its own attack".into(), stance: None, limb: None, rule: Arm { melee: true, min_range: 0.0, max_range: 0.0, dps: 0.0, usable: true } });
+            arms.push(BodyArm { weapon: None, name: "its own attack".into(), stance: None, limb: None, blast: 0.0, rule: Arm { melee: true, min_range: 0.0, max_range: 0.0, blast: 0.0, dps: 0.0, usable: true } });
         }
         let rules: Vec<Arm> = arms.iter().map(|a| a.rule).collect();
         let first = body_weapon::choose(&rules, FIRST_DISTANCE, None).unwrap_or(0);
@@ -358,11 +374,15 @@ fn switch(
         if body.since.is_some_and(|t| now - t < body_weapon::SWITCH_SECONDS) {
             continue;
         }
-        // Arms on a crippled limb are left out.
+        // Arms on a crippled limb are left out; a blast counts unless its combat style
+        // ignores damaging itself.
         let limbs: Vec<Option<u16>> = body.arms.iter().map(|a| a.limb).collect();
-        let usable: Vec<bool> = match script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
-            Some(rt) => with_world(rt, &mut sim, |rt| limbs.iter().map(|l| l.is_none_or(|code| !rt.game.is_crippled(FormId(id), code))).collect()),
-            None => vec![true; limbs.len()],
+        let (usable, ignores_self): (Vec<bool>, bool) = match script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
+            Some(rt) => with_world(rt, &mut sim, |rt| {
+                let usable = limbs.iter().map(|l| l.is_none_or(|code| !rt.game.is_crippled(FormId(id), code))).collect();
+                (usable, rt.game.combat_style(FormId(id)).is_some_and(|s| s.ignore_damaging_self))
+            }),
+            None => (vec![true; limbs.len()], false),
         };
         for (a, u) in body.arms.iter_mut().zip(usable) {
             if a.rule.usable && !u {
@@ -370,6 +390,7 @@ fn switch(
                 info!("body weapons: {id:08X} can no longer use {} (its limb is crippled)", a.name);
             }
             a.rule.usable = u;
+            a.rule.blast = if ignores_self { 0.0 } else { a.blast };
         }
         let rules: Vec<Arm> = body.arms.iter().map(|a| a.rule).collect();
         let to = body_weapon::choose(&rules, d, body.current);
@@ -413,6 +434,21 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<BodyStats>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_body_parts_stand_in_gets_a_muzzle() {
+        use fnv_combat::data::WeaponStats;
+        let names = vec![Some("Bip01".to_string()), Some("ProjectileNode_RGatling".to_string()), None];
+        let gun = |node: &str| WeaponStats { embedded: true, embedded_node: Some(node.into()), ..Default::default() };
+        // The sentry bot's gatling: its NNAM node is in its skeleton (any case).
+        assert_eq!(stand_in_node(&gun("ProjectileNode_RGatling"), &names), None);
+        assert_eq!(stand_in_node(&gun("projectilenode_rgatling"), &names), None);
+        // The protectron's hand laser: its node is in a body part, not the skeleton.
+        assert_eq!(stand_in_node(&gun("ProjectileNode_RHandLaser"), &names), Some("ProjectileNode_RHandLaser"));
+        // Not an embedded weapon, or no node: nothing.
+        assert_eq!(stand_in_node(&WeaponStats { embedded: false, ..gun("ProjectileNode_RHandLaser") }, &names), None);
+        assert_eq!(stand_in_node(&WeaponStats { embedded: true, ..Default::default() }, &names), None);
+    }
 
     #[test]
     fn a_skeletons_folder() {

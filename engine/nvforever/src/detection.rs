@@ -331,8 +331,6 @@ fn unseen() -> bool {
     *UNSEEN.get_or_init(|| std::env::var("NVF_PLAY_TEST_UNSEEN").is_ok_and(|v| v == "1"))
 }
 
-/// Whether the collision world lets `from` see `to` (also the combat AI's cover test,
-/// `combat_tactics`).
 /// An actor's eyes, game space: `eye` above its feet (its origin), but for a body that is
 /// drawn clear of its origin and ends below that eye height (its hit volume starts more
 /// than [`LIFTED`] above the origin), halfway up that body. A ceiling turret's eyes were
@@ -353,6 +351,8 @@ pub(crate) fn eyes_of(phys: Option<&PhysState>, id: u32, feet: [f32; 3], eye: f3
 /// [design: the ceiling turret's starts 47 up; feet and a crouch start at 0].
 const LIFTED: f32 = 16.0;
 
+/// Whether the collision world lets `from` see `to` (also the combat AI's cover test,
+/// `combat_tactics`).
 pub(crate) fn clear_sight(phys: Option<&mut PhysState>, from: [f32; 3], to: [f32; 3]) -> bool {
     let Some(phys) = phys else { return true };
     let filters = SightFilters::of(phys);
@@ -1311,5 +1311,29 @@ mod tests {
         let dim = ([0.0, 0.0, 0.0], 200.0, 0.2);
         assert!((light_at(None, &[dim], [100.0, 0.0, 0.0], true) - 65.0).abs() < 1e-4);
         assert!((light_at(None, &[dim], [300.0, 0.0, 0.0], true) - 50.0).abs() < 1e-6);
+    }
+
+    /// People keep main's eye height, standing or crouched, at any scale: their hit
+    /// volume starts at their feet, so `eyes_of` gives feet + eye, as before #1537. Only a
+    /// body drawn clear of its origin and ending below its eyes (a ceiling turret) has
+    /// its eyes on it.
+    #[test]
+    fn eyes_of_keeps_people_at_their_eye_height_and_puts_a_turrets_on_its_body() {
+        let main = |feet: [f32; 3], eye: f32| [feet[0], feet[1], feet[2] + eye];
+        let mut phys = PhysState::default();
+        let feet = [100.0, -50.0, 20.0];
+        let crouch = EYE_HEIGHT * crate::combat_stance::CROUCH_EYE;
+        // Standing (128 tall), crouched (80 tall, below the 112 eye height), crouched
+        // with bounds a little off the ground (an animation's feet), and scaled up.
+        for (id, lo, height, eye) in [(1, 0.0, 128.0, EYE_HEIGHT), (2, 0.0, 80.0, EYE_HEIGHT), (3, 0.0, 80.0, crouch), (4, 6.0, 74.0, EYE_HEIGHT), (5, 0.0, 154.0, EYE_HEIGHT * 1.2)] {
+            phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet: [feet[0] + 3.0, feet[1], feet[2] + lo], radius: 20.0, height, dead: false });
+            assert_eq!(eyes_of(Some(&phys), id, feet, eye), main(feet, eye), "actor {id}");
+        }
+        // No volume, or no physics: as on main.
+        assert_eq!(eyes_of(Some(&phys), 99, feet, EYE_HEIGHT), main(feet, EYE_HEIGHT));
+        assert_eq!(eyes_of(None, 1, feet, EYE_HEIGHT), main(feet, EYE_HEIGHT));
+        // The ceiling turret: body 47-93 over its origin [observed, #1537], eyes halfway up.
+        phys.world.set_actor_volume(6, fnv_phys::HitVolume { feet: [0.0, 0.0, 7807.0], radius: 20.0, height: 46.0, dead: false });
+        assert_eq!(eyes_of(Some(&phys), 6, [0.0, 0.0, 7760.0], EYE_HEIGHT), [0.0, 0.0, 7830.0]);
     }
 }
