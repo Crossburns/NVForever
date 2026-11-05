@@ -87,6 +87,18 @@ const P_PING: u32 = 0xF5A;
 const P_PONG: u32 = 0xF5B;
 const P_RPING: u32 = 0xF5C;
 const P_RPONG: u32 = 0xF5D;
+// Between actors: a line links to a topic whose line has a follow-up stored under the first
+// topic, and the follow-up links back. In QA (no repeated topics) and in QREP (repeats allowed).
+const T_HIST_A: u32 = 0x960;
+const T_HIST_B: u32 = 0x961;
+const T_RHIST_A: u32 = 0x962;
+const T_RHIST_B: u32 = 0x963;
+const H_A: u32 = 0xF62;
+const H_FOLLOW: u32 = 0xF63;
+const H_B: u32 = 0xF64;
+const H_RA: u32 = 0xF65;
+const H_RFOLLOW: u32 = 0xF66;
+const H_RB: u32 = 0xF67;
 // Follow-up lines stored under a topic of their own (dialogue.md §3.4).
 const T_FU_LEAD: u32 = 0x95D;
 const T_FU: u32 = 0x95E;
@@ -611,6 +623,32 @@ fn plugin_bytes() -> Vec<u8> {
         topic(T_PONG, "TestPong", "TestPong", topic_type::CONVERSATION, 0, 50.0, vec![L { id: P_PONG, quest: QA, ty: CONV, responses: one("Pong"), choices: vec![T_PING], ..L::default() }]),
         topic(T_RPING, "TestRPing", "TestRPing", topic_type::CONVERSATION, 0, 50.0, vec![L { id: P_RPING, quest: QREP, ty: CONV, responses: one("Ping"), choices: vec![T_RPONG], ..L::default() }]),
         topic(T_RPONG, "TestRPong", "TestRPong", topic_type::CONVERSATION, 0, 50.0, vec![L { id: P_RPONG, quest: QREP, ty: CONV, responses: one("Pong"), choices: vec![T_RPING], ..L::default() }]),
+        topic(
+            T_HIST_A,
+            "TestHistA",
+            "TestHistA",
+            topic_type::CONVERSATION,
+            0,
+            50.0,
+            vec![
+                L { id: H_A, quest: QA, ty: CONV, responses: one("Start"), choices: vec![T_HIST_B], ..L::default() },
+                L { id: H_FOLLOW, quest: QA, ty: CONV, responses: one("Follow-up"), choices: vec![T_HIST_B], ..L::default() },
+            ],
+        ),
+        topic(T_HIST_B, "TestHistB", "TestHistB", topic_type::CONVERSATION, 0, 50.0, vec![L { id: H_B, quest: QA, ty: CONV, responses: one("Linked"), follow: vec![H_FOLLOW], ..L::default() }]),
+        topic(
+            T_RHIST_A,
+            "TestRHistA",
+            "TestRHistA",
+            topic_type::CONVERSATION,
+            0,
+            50.0,
+            vec![
+                L { id: H_RA, quest: QREP, ty: CONV, responses: one("Start"), choices: vec![T_RHIST_B], ..L::default() },
+                L { id: H_RFOLLOW, quest: QREP, ty: CONV, responses: one("Follow-up"), choices: vec![T_RHIST_B], ..L::default() },
+            ],
+        ),
+        topic(T_RHIST_B, "TestRHistB", "TestRHistB", topic_type::CONVERSATION, 0, 50.0, vec![L { id: H_RB, quest: QREP, ty: CONV, responses: one("Linked"), follow: vec![H_RFOLLOW], ..L::default() }]),
         topic(
             T_HANDOFF,
             "TestHandoff",
@@ -1905,6 +1943,32 @@ fn a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats() {
         g.tick();
     }
     assert!(lines(&g) >= 4, "the repeating quest's ping-pong goes on: {} lines", lines(&g));
+}
+
+/// Issue #1592: a follow-up keeps the conversation's topics, so a link after it back to a
+/// topic already used is passed over unless the quest allows repeats. The follow-up itself
+/// is stored under a topic already used and is said all the same (dialogue.md §5.1).
+#[test]
+fn a_follow_up_between_actors_keeps_the_topics_of_the_conversation() {
+    let f = fixture();
+    let r = |id: u32| ArgValue::Value(Value::Ref(id));
+    let lines = |g: &Game| g.events.iter().filter_map(|e| if let EventKind::LineStarted { info, .. } = e.kind { Some(info.0) } else { None }).collect::<Vec<_>>();
+    let mut g = game(&f);
+    call(&mut g, 0x1056, NPC1_REF, &[r(NPC2_REF), r(T_HIST_A)]);
+    for _ in 0..20_000 {
+        if g.speech.is_empty() {
+            break;
+        }
+        g.tick();
+    }
+    assert_eq!(lines(&g), vec![H_A, H_B, H_FOLLOW], "the link back to the linked line's topic is passed over");
+    assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::ActorConversationEnded { reason: "no_links", lines: 3, .. })));
+    let mut g = game(&f);
+    call(&mut g, 0x1056, NPC1_REF, &[r(NPC2_REF), r(T_RHIST_A)]);
+    for _ in 0..2_000 {
+        g.tick();
+    }
+    assert_eq!(lines(&g).get(..4), Some(&[H_RA, H_RB, H_RFOLLOW, H_RB][..]), "the repeating quest's chain goes back: {:X?}", lines(&g));
 }
 
 /// Playing a Voice note runs its line's result scripts: the begin script as it starts,

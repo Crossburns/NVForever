@@ -629,10 +629,13 @@ Joe Cobb and Trudy (below).
   Allow Repeated Conversation Topics]. The next line's linked topics leave out one the
   conversation has used already unless the candidate line's quest has the flag (QUST DATA
   bit 2; 118 quests in the masters [observed]). Choices that name an INFO directly
-  (follow-ups) are not filtered. Radio programmes are not filtered either: their quests
+  (follow-ups) are not filtered, but they carry the conversation's used topics on to the
+  lines after them, their own topic added [design: `Game::next_conversation_line`, #1592].
+  Radio programmes are not filtered either: their quests
   set the flag, as the wiki asks for radio stations [documented: Creating Radio
-  Stations]. Test: `dialogue.rs`
-  `a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats`.
+  Stations]. Tests: `dialogue.rs`
+  `a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats`,
+  `a_follow_up_between_actors_keeps_the_topics_of_the_conversation`.
 - **The next line** (`Game::next_conversation_line`), when a line has ended and its end
   result has run: a Goodbye line ends the conversation [documented]; so does either
   side being gone [hypothesis]. Otherwise the line's next speaker says the next line:

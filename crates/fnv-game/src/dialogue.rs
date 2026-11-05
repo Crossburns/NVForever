@@ -1171,18 +1171,22 @@ impl<'a> Game<'a> {
             _ => &[(listener, speaker)],
         };
         let next = LineKind::Conversation(lines + 1);
+        // "If this box is unchecked, conversations will never use the same topic twice
+        // (in the same conversation)" [documented: GECK wiki Quest Data Tab, Allow
+        // Repeated Conversation Topics]: a topic used already is passed over unless the
+        // line's quest allows it. A follow-up is named outright, so it is not passed over,
+        // but it carries the history on.
+        let earlier: Vec<FormId> = said.earlier_topics.iter().copied().chain(std::iter::once(said.topic)).collect();
         for &(who, to) in turns {
             if let Some(&f) = def.follow_ups.iter().find(|&&f| data.infos.get(&f).is_some_and(between_actors) && self.can_say(who, Some(to), f)) {
                 let topic = data.infos.get(&f).and_then(|d| d.topic).unwrap_or(FormId(0));
                 self.say_line(who, Some(to), topic, f, next);
                 self.set_line_look(who, said.look);
+                if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == who && s.info == f) {
+                    s.earlier_topics = earlier;
+                }
                 return;
             }
-            // "If this box is unchecked, conversations will never use the same topic twice
-            // (in the same conversation)" [documented: GECK wiki Quest Data Tab, Allow
-            // Repeated Conversation Topics]: a topic used already is passed over unless
-            // the line's quest allows it.
-            let earlier: Vec<FormId> = said.earlier_topics.iter().copied().chain(std::iter::once(said.topic)).collect();
             let mut linked: Vec<(FormId, FormId)> = Vec::new();
             for link in self.links_after(said.topic, def) {
                 if let Some(i) = self.link_line_where(who, Some(to), link, between_actors, Says::Actor) {
