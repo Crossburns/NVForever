@@ -22,12 +22,15 @@
 //!   builds the menu there at the latest, so its first frame is the tiles' too. Placement
 //!   ([`place`]) reads the file's evaluated numbers, so they are part of what makes it run
 //!   again ([`Placement`]).
-//! - **The scroll** ([`place`]) follows the original [observed: capture of the original, private job dialogue, 1280 x 720,
-//!   `dialogue-menu.md` §6.6]: rows are cut at the list's window and scroll in `_scroll_delta`
-//!   steps, moved by the bar's arrows and page areas and, for a choice the keys move to, by as
-//!   little as shows it whole. The hand-built menu keeps its whole-choice window. The prefab's
-//!   own value counts clicks from 0 in this tree, as the wait and tutorial menus' do, so the
-//!   model's is written on every frame.
+//! - **The scroll** ([`place`]) goes by whole rows, as the hand-built menu's [owner choice
+//!   2026-11-05: whole rows, as the hand-built menu; the original's 56-unit steps and mid-glyph
+//!   clipping, observed in the capture, read as a jump; `dialogue-menu.md` §6.3, §6.6]: the
+//!   scroll is the first row shown whole at the window's top, moved a row by the bar's arrows,
+//!   by the rows that fit by its page areas and, for a choice the keys move to, by as few rows as
+//!   show it whole. Only the window's foot can cut a row. The file still moves the rows by
+//!   `_current_value × _scroll_delta`: code writes a delta of 1 and the first row's place as the
+//!   value. The prefab's own value counts clicks from 0 in this tree, as the wait and tutorial
+//!   menus' do, so the model's is written on every frame.
 //! - **Readiness** ([`DialogTiles`], `dialogue-menu.md` §6.5): one decision for the tile
 //!   drawing, the hand-built menu and the tile input. A file missing, cut down or restructured,
 //!   a template that makes no row with its text, or a text that does not measure gives the
@@ -97,9 +100,14 @@ const BAND_ALPHA: f64 = 193.8;
 /// `screen()`'s `cropx` and `cropy` [observed: capture of the original, private job dialogue, 1280 x 720: 15 by arithmetic from the
 /// name's place at one aspect, not a read of `screen()`; hypothesis: the same at other aspects].
 const CROP: f64 = 15.0;
-/// One step of the scroll: 56, on a list of 12 rows of 58 and one of 96 [observed: capture of the original, private job dialogue, 1280 x 720; hypothesis: the same
-/// for other lists; what the original works it out from is not known]. A script's own value is read.
-const SCROLL_DELTA: f64 = 56.0;
+/// The `_scroll_delta` code writes at open: 1, so the bar's value is the rows' offset in
+/// interface units and the scroll can stop on any row's top [design: owner choice 2026-11-05,
+/// whole rows]. The original wrote 56 on a list of 12 rows of 58 and one of 96 [observed:
+/// capture of the original, private job dialogue, 1280 x 720, `dialogue-menu.md` §6.6]. A
+/// script's own value is read: the value and the bar's counts are written in its units.
+const SCROLL_DELTA: f64 = 1.0;
+/// Slack in comparing interface units, which measured heights carry as fractions [design].
+const EPS: f64 = 1e-6;
 /// The rows the list shows, whose heights make its height: three, or the file's least height
 /// if more [observed: capture of the original, private job dialogue, 1280 x 720: 174 = 58 + 58 + 58 although a fourth of 96 would make 270;
 /// hypothesis: the owner's Trudy picture agrees, 96 + 96 + 58 = 250 (dialogue-menu.md §3), and a
@@ -408,7 +416,7 @@ impl Placement {
 pub struct SharedWritten(std::sync::Arc<std::sync::Mutex<Written>>);
 
 impl SharedWritten {
-    /// Steps the bar asks for, placed after the frame's scripts.
+    /// Rows the bar asks to scroll by, placed after the frame's scripts.
     pub fn scroll(&self, steps: i32) {
         if steps != 0 {
             if let Ok(mut written) = self.0.lock() {
@@ -429,9 +437,10 @@ pub struct Written {
     /// [`Written::placed`] changed in the last [`write`]: worth a line in the log.
     moved: bool,
     sizes: SizesWritten,
-    /// The scroll, in steps of `_scroll_delta`, written again every frame.
-    scroll: f64,
-    /// Steps the bar's arrows and page areas asked for since the last placing ([`follow`]).
+    /// The scroll by rows, written again every frame.
+    scroll: RowScroll,
+    /// Rows the bar's arrows and page areas asked to scroll by since the last placing
+    /// ([`follow`]).
     scroll_asked: i32,
     /// `DialogueScreen::keyed` at the last placing.
     keyed_seen: u64,
@@ -466,7 +475,7 @@ impl Written {
         self.published = None;
         self.placed = None;
         self.sizes.clear();
-        self.scroll = 0.0;
+        self.scroll = RowScroll::default();
     }
 
     /// No conversation any more (no tree at all when `ui` is `None`).
@@ -619,35 +628,69 @@ fn write_frame_colour(ui: &mut Ui, short: bool) {
     set(ui, fill, "alpha", Value::Num(if short { SHORT_FILL_ALPHA } else { FILL_ALPHA }));
 }
 
-/// The scroll, in steps, that shows the row from `top` to `bottom` whole in a list `height`
-/// high, moving as little as it can from `scroll`, within `most` [observed: capture of the original, private job dialogue, 1280 x 720: on Down
-/// 0, 2, 3 … 10 and on Up 10, 8, 7 … 0 over the rows' heights, the frame staying on them].
-pub fn scroll_to_show(scroll: f64, top: f64, bottom: f64, height: f64, delta: f64, most: f64) -> f64 {
-    let mut at = scroll;
-    if bottom - at * delta > height {
-        at = ((bottom - height) / delta).ceil();
+/// The scroll by rows [design: owner choice 2026-11-05, whole rows, as the hand-built menu;
+/// `dialogue-menu.md` §6.3]: what [`place`] worked out and [`write_scroll`] writes on every
+/// frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RowScroll {
+    /// The first row shown whole at the window's top.
+    pub first: usize,
+    /// The bar's `_current_value`: that row's place, in `_scroll_delta`s.
+    pub value: f64,
+    /// The bar's `_jump_size`: the whole rows that fit in the window from `first`, at least 1.
+    pub jump: f64,
+}
+
+/// The last first row: the least row from which the rows left fit in a window `height` high,
+/// so the list never shows room at its foot it could fill with rows; the last row when even it
+/// does not fit [design].
+pub fn last_first(tops: &[f64], heights: &[f64], height: f64) -> usize {
+    let total = tops.last().zip(heights.last()).map_or(0.0, |(t, h)| t + h);
+    tops.iter().position(|&t| total - t <= height + EPS).unwrap_or(tops.len().saturating_sub(1))
+}
+
+/// The whole rows that fit in a window `height` high from row `first`, at least 1 [design].
+pub fn rows_fitting(first: usize, tops: &[f64], heights: &[f64], height: f64) -> usize {
+    let Some(&top) = tops.get(first) else { return 1 };
+    (first..tops.len()).take_while(|&i| tops[i] + heights[i] - top <= height + EPS).count().max(1)
+}
+
+/// The first row that shows row `s` whole in a window `height` high, moving as few rows as it
+/// can from `first`, within `most` [design: owner choice 2026-11-05, whole rows]: a row above
+/// the window comes to its top; a row whose foot is below it raises the first row until it
+/// fits, or comes to the top itself when it is taller than the window.
+pub fn scroll_to_show(first: usize, s: usize, tops: &[f64], heights: &[f64], height: f64, most: usize) -> usize {
+    let mut at = first;
+    if s < at {
+        at = s;
+    } else {
+        while at < s && tops[s] + heights[s] - tops[at] > height + EPS {
+            at += 1;
+        }
     }
-    if top - at * delta < 0.0 {
-        at = (top / delta).floor();
-    }
-    at.clamp(0.0, most)
+    at.min(most)
 }
 
 /// Set the rows out, one under the other from their measured texts; the list's height from
-/// the first [`SHOWN_ROWS`] and the file's least; the scroll, `steps` from where it stands and
-/// to the selected row when `follow` asks; the frame on the selected row, or none (`selected`
-/// `None`). The bar counts as the original's [observed: capture of the original, private job dialogue, 1280 x 720: items 11, visible 1 for 10 steps]. Returns the scroll.
-fn place(ui: &mut Ui, view: &MenuView, selected: Option<usize>, scroll: f64, steps: i32, follow: bool) -> f64 {
-    let (Some(menu), Some(list), Some(bar)) = (ui.menu(DIALOG_MENU), ui.find_tile(LIST), ui.find_tile(BAR)) else { return 0.0 };
+/// the first [`SHOWN_ROWS`] and the file's least; the scroll, `steps` rows from where it stands
+/// and to the selected row when `follow` asks; the frame on the selected row, or none
+/// (`selected` `None`). The bar counts in `_scroll_delta`s: its items the last first row's
+/// place and 1, visible 1, so the prefab's range (items less visible) is the farthest the
+/// value goes and the marker reaches the track's end with the last row [design; the bar's
+/// counting as the original's, observed: capture of the original, private job dialogue,
+/// 1280 x 720: items 11, visible 1 for 10 steps]. Returns the scroll.
+fn place(ui: &mut Ui, view: &MenuView, selected: Option<usize>, first: usize, steps: i32, follow: bool) -> RowScroll {
+    let (Some(menu), Some(list), Some(bar)) = (ui.menu(DIALOG_MENU), ui.find_tile(LIST), ui.find_tile(BAR)) else { return RowScroll::default() };
     let made = rows(ui);
     if made.is_empty() {
         set(ui, list, "_highlight_y", Value::Num(-1.0));
         set(ui, list, "_selected_height", Value::Num(0.0));
         set(ui, bar, "_number_of_items", Value::Num(1.0));
         set(ui, bar, "_number_of_visible_items", Value::Num(1.0));
-        return 0.0;
+        return RowScroll { jump: 1.0, ..RowScroll::default() };
     }
-    let delta = num(ui, list, "_scroll_delta").max(1.0);
+    let delta = num(ui, list, "_scroll_delta");
+    let delta = if delta > 0.0 { delta } else { SCROLL_DELTA };
     let heights: Vec<f64> = made.iter().map(|&r| child(ui, r, ROW_TEXT).map_or(0.0, |t| num(ui, t, "height")) + num(ui, r, "_VerticalSpacing")).collect();
     let mut y = 0.0;
     let mut tops = Vec::with_capacity(made.len());
@@ -658,18 +701,17 @@ fn place(ui: &mut Ui, view: &MenuView, selected: Option<usize>, scroll: f64, ste
         set(ui, row, "listindex", Value::Num(i as f64));
         y += height;
     }
-    let total = y;
     let height = heights.iter().take(SHOWN_ROWS).sum::<f64>().max(num(ui, menu, "_MinListHeight"));
-    let most = ((total - height) / delta).ceil().max(0.0);
+    let most = last_first(&tops, &heights, height);
     let selected = selected.map(|s| s.min(made.len() - 1));
-    let mut at = (scroll + f64::from(steps)).clamp(0.0, most);
+    let mut at = (first as i64 + i64::from(steps)).clamp(0, most as i64) as usize;
     if let (true, Some(s)) = (follow, selected) {
-        at = scroll_to_show(at, tops[s], tops[s] + heights[s], height, delta, most);
+        at = scroll_to_show(at, s, &tops, &heights, height, most);
     }
     set(ui, list, "height", Value::Num(height));
-    set(ui, list, "_highlight_y", Value::Num(selected.map_or(-1.0, |s| tops[s] - at * delta)));
+    set(ui, list, "_highlight_y", Value::Num(selected.map_or(-1.0, |s| tops[s] - tops[at])));
     set(ui, list, "_selected_height", Value::Num(selected.map_or(0.0, |s| heights[s])));
-    set(ui, bar, "_number_of_items", Value::Num(most + 1.0));
+    set(ui, bar, "_number_of_items", Value::Num(tops[most] / delta + 1.0));
     set(ui, bar, "_number_of_visible_items", Value::Num(1.0));
     write_frame_colour(ui, selected.and_then(|s| view.choices.get(s)).is_some_and(|c| c.short));
     if let (Some(fill), Some(highlight), Some(s)) = (ui.find_tile(FILL), ui.find_tile(HIGHLIGHT), selected) {
@@ -677,7 +719,7 @@ fn place(ui: &mut Ui, view: &MenuView, selected: Option<usize>, scroll: f64, ste
         set(ui, fill, "width", Value::Num(wide));
         set(ui, fill, "height", Value::Num(heights[s] - 1.0));
     }
-    at
+    RowScroll { first: at, value: tops[at] / delta, jump: rows_fitting(at, &tops, &heights, height) as f64 }
 }
 
 /// Place the Tab hint from the band and the bottom bracket as the file worked them out, left
@@ -701,10 +743,12 @@ fn place_hint(ui: &mut Ui, view: &MenuView, setting: bool) {
 /// The scroll, on every frame the menu is tiled: the prefab counts clicks from 0 in this
 /// tree, so its value and the rows it moves would drift from the model's otherwise, and pokes
 /// `_SetInCode`, as the prefab asks of code that sets the value [observed: the vanilla files,
-/// by fnvtool: its comment].
-fn write_scroll(ui: &mut Ui, scroll: f64) {
+/// by fnvtool: its comment]. The page, `_jump_size`, is the whole rows that fit from the first
+/// row, so it changes as the list scrolls [design].
+fn write_scroll(ui: &mut Ui, scroll: &RowScroll) {
     let Some(bar) = ui.find_tile(BAR) else { return };
-    set(ui, bar, "_current_value", Value::Num(scroll));
+    set(ui, bar, "_current_value", Value::Num(scroll.value));
+    set(ui, bar, "_jump_size", Value::Num(scroll.jump.max(1.0)));
     set(ui, bar, "_SetInCode", Value::Num(1.0));
 }
 
@@ -740,14 +784,14 @@ fn settle(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn FnMut
     if written.moved {
         // A new list starts at its top.
         if written.placed.as_ref().is_none_or(|p| p.shown.list != now.list || p.shown.menu != now.menu) {
-            written.scroll = 0.0;
+            written.scroll = RowScroll::default();
         }
-        written.scroll = place(ui, &now.view, now.framed.then_some(now.selected), written.scroll, steps, follow);
+        written.scroll = place(ui, &now.view, now.framed.then_some(now.selected), written.scroll.first, steps, follow);
         evaluate(ui, written);
         place_hint(ui, &now.view, now.hint);
         written.placed = Some(Placement::read(ui, now));
     }
-    write_scroll(ui, written.scroll);
+    write_scroll(ui, &written.scroll);
     fnv_ui::input::mark_clip_windows(ui, now.menu);
     if written.moved {
         evaluate(ui, written);
@@ -766,8 +810,21 @@ pub fn write(ui: &mut Ui, now: &Shown, written: &mut Written, round: &mut dyn Fn
     settle(ui, now, written, round)
 }
 
+/// The scroll as the tree holds it, by rows: the first row shown (the last whose place is at or
+/// above the bar's value times `_scroll_delta`) and the last first row ([`last_first`]) from the
+/// rows' places and heights and the list's height.
+fn scroll_rows(ui: &Ui, made: &[TileId]) -> (usize, usize) {
+    let tops: Vec<f64> = made.iter().map(|&r| num(ui, r, "_y")).collect();
+    let heights: Vec<f64> = made.iter().map(|&r| num(ui, r, "height")).collect();
+    let (list, bar) = (ui.find_tile(LIST), ui.find_tile(BAR));
+    let offset = bar.map_or(0.0, |b| num(ui, b, "_current_value")) * list.map_or(SCROLL_DELTA, |l| num(ui, l, "_scroll_delta"));
+    let first = tops.iter().rposition(|&t| t <= offset + EPS).unwrap_or(0);
+    (first, last_first(&tops, &heights, list.map_or(0.0, |l| num(ui, l, "height"))))
+}
+
 /// A line for the log when what the menu shows changes (smoke reads these): the view as the
-/// tree worked it out. Call after [`write`].
+/// tree worked it out, the scroll as `scroll <first row> of <last first row>`. Call after
+/// [`write`].
 pub fn describe(ui: &Ui, now: &Shown) -> String {
     let n = |x: f64| Value::Num(x).text();
     let f = |path: &str, name: &str| ui.get_float(&format!("{path}/{name}")).unwrap_or(-1.0);
@@ -777,6 +834,7 @@ pub fn describe(ui: &Ui, now: &Shown) -> String {
     }
     let made = rows(ui);
     let heights: Vec<String> = made.iter().map(|&r| n(num(ui, r, "height"))).collect();
+    let (first, most) = scroll_rows(ui, &made);
     let dim = made.iter().filter(|&&r| num(ui, r, "_line_alpha") == DIM_ALPHA).count();
     let short = now.framed && now.view.choices.get(now.selected).is_some_and(|c| c.short);
     let selected = if now.framed { now.selected.to_string() } else { "none".into() };
@@ -787,8 +845,8 @@ pub fn describe(ui: &Ui, now: &Shown) -> String {
         heights.join(", "),
         n(f(LIST, "y")),
         n(f(LIST, "height")),
-        n(f(BAR, "_current_value")),
-        n(f(BAR, "_number_of_items") - 1.0),
+        first,
+        most,
         f(BAR, "visible") != 0.0,
         if short { "red" } else { "plain" },
         f(HINT, "visible") != 0.0,
@@ -807,9 +865,11 @@ pub enum DialogTile {
     Choice(usize),
     /// The click area or the line.
     Skip,
-    /// A scroll bar's arrow or page area: steps to scroll by, the list's selection staying
-    /// [observed: capture of the original, private job dialogue, 1280 x 720: cv moved by 1 for an arrow, by 3 for a page of 174 / 56, and `_highlight_y` went
-    /// with it]. The marker's drag is not built.
+    /// A scroll bar's arrow or page area: rows to scroll by, an arrow one, a page the bar's
+    /// `_jump_size` (the whole rows that fit), the list's selection staying [design: owner
+    /// choice 2026-11-05, whole rows; the original's arrow moved its value by 1 and a page by 3
+    /// of its 56-unit steps, and `_highlight_y` went with it, observed: capture of the
+    /// original, private job dialogue, 1280 x 720]. The marker's drag is not built.
     Scroll(i32),
 }
 
@@ -841,7 +901,7 @@ pub fn dialog_tile(ui: &Ui, tile: TileId) -> Option<DialogTile> {
 /// Turn a frame's report on the menu's tiles into what the view asks of the conversation:
 /// see the module notes. `physical`: the keys from the keyboard (or a controller standing in
 /// for them) this frame; `list`: what the rows were written for; `scroll_asked`: the view's own,
-/// the bar's steps ([`Written::scroll_asked`]).
+/// the rows the bar asks for ([`Written::scroll_asked`]).
 pub fn follow(ui: &Ui, report: &Report, physical: &[&str], menu: TileId, list: Option<&ListId>, asked: &mut ViewInput, scroll_asked: &mut i32) {
     asked.list = list.cloned();
     let mine = |t: TileId| ui.is_live(t) && ui.root_of(t) == menu;
@@ -1280,8 +1340,7 @@ mod tests {
             set(ui, h, "height", Value::Num(tall));
             set(ui, h, "visible", Value::Num(f64::from(u8::from(at + tall >= 0.0))));
         }
-        let page = (num(ui, list, "height") / num(ui, list, "_scroll_delta")).floor();
-        set(ui, bar, "_jump_size", Value::Num(page));
+        // `_jump_size` is code's, written on every frame ([`write_scroll`]).
         let many = num(ui, bar, "_number_of_items") > num(ui, bar, "_number_of_visible_items");
         set(ui, bar, "visible", Value::Num(f64::from(u8::from(many))));
         if let (Some(area), Some(menu)) = (ui.find_tile(CLICK_AREA), ui.menu(DIALOG_MENU)) {
@@ -1462,10 +1521,99 @@ mod tests {
         assert_eq!(f(&ui, DIALOG_MENU, "_MinListHeight"), 70.0);
     }
 
-    /// One list as the capture had it: 12 rows, the fourth of two lines; the keys down and up.
+    /// Six rows, the first and third of two lines: 96, 58, 96, 58, 58, 58 high, as
+    /// `tiles-dialog-scroll`'s list at 1280 x 720; the list 250 high, its first three rows.
+    /// [design: the heights from the smoke scenario's note; the labels and this tree are the
+    /// test's own.]
+    fn six_rows() -> (Ui, Written, MenuView) {
+        let mut ui = tree(&[], &ROW_XML.replace("<_VerticalSpacing>12</_VerticalSpacing>", "<_VerticalSpacing>20</_VerticalSpacing>"));
+        assert!(own_tiles(&mut ui));
+        let mut labels: Vec<ChoiceRow> = (0..6).map(|i| row(&format!("Choice {i}."))).collect();
+        labels[0].label = "a".repeat(25);
+        labels[2].label = "b".repeat(25);
+        (ui, fresh(), choosing(labels))
+    }
+
+    #[test]
+    fn the_list_scrolls_by_whole_rows_to_the_framed_row() {
+        // [design: owner choice 2026-11-05, whole rows] The first row shown is always whole: the
+        // value is its place, the frame stands at the selected row's place less it.
+        let (mut ui, mut written, view) = six_rows();
+        let mut go = |ui: &mut Ui, selected: usize, keyed: u64| {
+            let now = Shown { keyed, ..shown(ui, view.clone(), 1, selected) };
+            write(ui, &now, &mut written, &mut round_of_38).unwrap();
+            evaluate(ui, &written);
+            let line = describe(ui, &now);
+            let at = line.find("scroll ").unwrap() + "scroll ".len();
+            let first: usize = line[at..].split(' ').next().unwrap().parse().unwrap();
+            (first, f(ui, BAR, "_current_value"), f(ui, LIST, "_highlight_y"), f(ui, BAR, "_jump_size"))
+        };
+        assert_eq!(go(&mut ui, 0, 1), (0, 0.0, 0.0, 3.0));
+        let made = rows(&ui);
+        let heights: Vec<f64> = made.iter().map(|&r| num(&ui, r, "height")).collect();
+        assert_eq!(heights, [96.0, 58.0, 96.0, 58.0, 58.0, 58.0]);
+        assert_eq!(f(&ui, LIST, "height"), 250.0);
+        assert_eq!(f(&ui, LIST, "_scroll_delta"), 1.0, "code's delta: the value is in units");
+        // The last first row is 3: rows 3 to 5 fit (174), rows 2 to 5 do not (270). The bar
+        // counts to its place, 250, so the marker's range ends with it.
+        assert_eq!((f(&ui, BAR, "_number_of_items"), f(&ui, BAR, "_number_of_visible_items")), (251.0, 1.0));
+        assert_eq!(f(&ui, BAR, "visible"), 1.0);
+        // Down: the first row rises only as far as shows the framed row whole.
+        let down = [(1, (0, 0.0, 96.0, 3.0)), (2, (0, 0.0, 154.0, 3.0)), (3, (1, 96.0, 154.0, 3.0)), (4, (2, 154.0, 154.0, 3.0)), (5, (3, 250.0, 116.0, 3.0))];
+        for (k, (selected, want)) in down.into_iter().enumerate() {
+            assert_eq!(go(&mut ui, selected, 2 + k as u64), want, "row {selected} going down");
+        }
+        let now = Shown { keyed: 6, ..shown(&ui, view.clone(), 1, 5) };
+        assert!(describe(&ui, &now).contains(", scroll 3 of 3, bar true"), "{}", describe(&ui, &now));
+        // Up: the scroll holds while the framed row shows, then the row comes to the top.
+        let up = [(4, (3, 250.0, 58.0, 3.0)), (3, (3, 250.0, 0.0, 3.0)), (2, (2, 154.0, 0.0, 3.0)), (1, (1, 96.0, 0.0, 3.0)), (0, (0, 0.0, 0.0, 3.0))];
+        for (k, (selected, want)) in up.into_iter().enumerate() {
+            assert_eq!(go(&mut ui, selected, 100 + k as u64), want, "row {selected} going up");
+        }
+        assert_eq!(f(&ui, LIST, "height"), 250.0, "the list's height stays");
+    }
+
+    #[test]
+    fn a_list_that_fits_does_not_scroll() {
+        let (mut ui, mut written, _) = six_rows();
+        let view = choosing(vec![row("One."), row(&"c".repeat(25)), row("Three.")]);
+        for (k, selected) in [0, 1, 2, 1].into_iter().enumerate() {
+            let now = Shown { keyed: k as u64 + 1, ..shown(&ui, view.clone(), 1, selected) };
+            write(&mut ui, &now, &mut written, &mut round_of_38).unwrap();
+            evaluate(&mut ui, &written);
+            assert!(describe(&ui, &now).contains(", scroll 0 of 0, bar false"), "{}", describe(&ui, &now));
+        }
+        assert_eq!(f(&ui, BAR, "_current_value"), 0.0);
+        assert_eq!((f(&ui, BAR, "_number_of_items"), f(&ui, BAR, "_number_of_visible_items")), (1.0, 1.0));
+        assert_eq!(f(&ui, BAR, "visible"), 0.0);
+        // Asked to scroll, it holds.
+        written.scroll_asked += 2;
+        let now = Shown { keyed: 4, ..shown(&ui, view, 1, 1) };
+        write(&mut ui, &now, &mut written, &mut round_of_38).unwrap();
+        assert_eq!(f(&ui, BAR, "_current_value"), 0.0);
+    }
+
+    #[test]
+    fn the_last_first_row_leaves_the_rest_in_the_window() {
+        let (tops, heights) = ([0.0, 96.0, 154.0, 250.0, 308.0, 366.0], [96.0, 58.0, 96.0, 58.0, 58.0, 58.0]);
+        assert_eq!(last_first(&tops, &heights, 250.0), 3);
+        assert_eq!(last_first(&tops, &heights, 270.0), 2, "exactly the rest from row 2");
+        assert_eq!(last_first(&tops, &heights, 500.0), 0);
+        // A last row taller than the window: it comes to the top, its foot cut.
+        assert_eq!(last_first(&[0.0, 50.0], &[50.0, 300.0], 100.0), 1);
+        assert_eq!(scroll_to_show(0, 1, &[0.0, 50.0], &[50.0, 300.0], 100.0, 1), 1);
+        assert_eq!(rows_fitting(0, &tops, &heights, 250.0), 3);
+        assert_eq!(rows_fitting(1, &tops, &heights, 100.0), 1);
+        assert_eq!(rows_fitting(0, &tops, &heights, 50.0), 1, "at least one, though none fits whole");
+        assert_eq!(scroll_to_show(3, 1, &tops, &heights, 250.0, 3), 1, "a row above comes to the top");
+        assert_eq!(scroll_to_show(0, 5, &tops, &heights, 250.0, 3), 3);
+        assert_eq!(scroll_to_show(0, 2, &tops, &heights, 250.0, 3), 0, "a row ending at the window's foot shows");
+    }
+
+    /// One list as the capture had it: 12 rows, the fourth of two lines.
     fn the_captured_list() -> (Ui, Written, MenuView) {
-        // [observed: the capture's heights, 58 and 96, and its numbers below. The labels and this
-        // tree are the test's own.]
+        // [observed: the capture's heights, 58 and 96. The labels and this tree are the test's
+        // own.]
         let mut ui = tree(&[], &ROW_XML.replace("<_VerticalSpacing>12</_VerticalSpacing>", "<_VerticalSpacing>20</_VerticalSpacing>"));
         assert!(own_tiles(&mut ui));
         let mut labels: Vec<ChoiceRow> = (0..12).map(|i| row(&format!("Choice {i}."))).collect();
@@ -1481,71 +1629,48 @@ mod tests {
     }
 
     #[test]
-    fn the_scroll_goes_as_the_captured_lists_did() {
-        let (mut ui, mut written, view) = the_captured_list();
-        let mut go = |ui: &mut Ui, selected: usize, keyed: u64| {
-            let now = Shown { keyed, ..shown(ui, view.clone(), 1, selected) };
-            write(ui, &now, &mut written, &mut round_of_38).unwrap();
-            evaluate(ui, &written);
-            (f(ui, LIST, "_highlight_y"), f(ui, BAR, "_current_value"))
-        };
-        // Down through all twelve, as the capture's `_highlight_y` and `_current_value` went.
-        let down = [(0.0, 0.0), (58.0, 0.0), (116.0, 0.0), (62.0, 2.0), (102.0, 3.0), (104.0, 4.0), (106.0, 5.0), (108.0, 6.0), (110.0, 7.0), (112.0, 8.0), (114.0, 9.0), (116.0, 10.0)];
-        for (i, want) in down.iter().enumerate() {
-            assert_eq!(go(&mut ui, i, i as u64 + 1), *want, "row {i} going down");
-        }
-        assert_eq!((f(&ui, LIST, "y") , f(&ui, LIST, "height")), (300.0, 174.0), "the list's height stays");
-        assert_eq!((f(&ui, BAR, "_number_of_items"), f(&ui, BAR, "_number_of_visible_items")), (11.0, 1.0));
-        assert_eq!(f(&ui, BAR, "visible"), 1.0);
-        // Back up: the scroll holds until the row leaves the top.
-        let up = [(10, 10.0), (9, 10.0), (8, 8.0), (7, 7.0), (6, 6.0), (5, 5.0), (4, 4.0), (3, 3.0), (2, 2.0), (1, 1.0), (0, 0.0)];
-        for (k, (row, scroll)) in up.iter().enumerate() {
-            assert_eq!(go(&mut ui, *row, 100 + k as u64).1, *scroll, "row {row} going up");
-        }
-    }
-
-    #[test]
-    fn the_bars_steps_scroll_and_leave_the_frame_on_its_row() {
+    fn the_bars_arrows_and_pages_scroll_by_rows_and_leave_the_frame_on_its_row() {
+        // Rows of 58, the fourth 96 (places 0, 58, 116, 174, 270, 328 … 676); the list 174 high.
         let (mut ui, mut written, view) = the_captured_list();
         let now = Shown { keyed: 0, ..shown(&ui, view, 1, 0) };
+        let bar_piece = |ui: &Ui, n: &str| match dialog_tile(ui, ui.find_tile(&format!("{BAR}/{n}")).unwrap()) {
+            Some(DialogTile::Scroll(steps)) => steps,
+            other => panic!("{n}: {other:?}"),
+        };
         let go = |ui: &mut Ui, written: &mut Written, steps: i32| {
             written.scroll_asked += steps;
             write(ui, &now, written, &mut round_of_38).unwrap();
             evaluate(ui, written);
-            (f(ui, BAR, "_current_value"), f(ui, LIST, "_highlight_y"))
+            (f(ui, BAR, "_current_value"), f(ui, LIST, "_highlight_y"), f(ui, BAR, "_jump_size"))
         };
-        assert_eq!(go(&mut ui, &mut written, 0), (0.0, 0.0));
-        // Arrow, page, arrow, page back: the capture's 3, 6, 5, 2 from 2, with the frame on the
-        // first row carried off with it.
-        assert_eq!(go(&mut ui, &mut written, 3), (3.0, -168.0));
-        assert_eq!(go(&mut ui, &mut written, 3), (6.0, -336.0));
-        assert_eq!(go(&mut ui, &mut written, -1), (5.0, -280.0));
-        assert_eq!(go(&mut ui, &mut written, -3), (2.0, -112.0));
+        assert_eq!(go(&mut ui, &mut written, 0), (0.0, 0.0, 3.0));
+        // The last first row is 9 (560): rows 9 to 11 fill the window.
+        assert_eq!(f(&ui, BAR, "_number_of_items"), 561.0);
+        // An arrow: a row, the frame on the first row carried off with it; from row 1 two whole
+        // rows fit (58 and 96), so a page is two.
+        let down = bar_piece(&ui, "scrollbar_vert_down");
+        assert_eq!(down, 1);
+        assert_eq!(go(&mut ui, &mut written, down), (58.0, -58.0, 2.0));
+        let page = bar_piece(&ui, "scrollbar_vert_page_down");
+        assert_eq!(page, 2);
+        assert_eq!(go(&mut ui, &mut written, page), (174.0, -174.0, 2.0));
         assert_eq!(f(&ui, HIGHLIGHT, "visible"), 0.0, "off the top, no frame");
-        // The ends hold.
+        let page = bar_piece(&ui, "scrollbar_vert_page_down");
+        assert_eq!(go(&mut ui, &mut written, page), (328.0, -328.0, 3.0));
+        let up = bar_piece(&ui, "scrollbar_vert_up");
+        assert_eq!(up, -1);
+        assert_eq!(go(&mut ui, &mut written, up), (270.0, -270.0, 3.0));
+        let page = bar_piece(&ui, "scrollbar_vert_page_up");
+        assert_eq!(page, -3);
+        assert_eq!(go(&mut ui, &mut written, page), (58.0, -58.0, 2.0));
+        // The ends hold: the top, and the last first row.
         assert_eq!(go(&mut ui, &mut written, -9).0, 0.0);
-        assert_eq!(go(&mut ui, &mut written, 99).0, 10.0);
-        // A page is what the tree's bar says.
-        assert_eq!(dialog_tile(&ui, ui.find_tile(&format!("{BAR}/scrollbar_vert_page_down")).unwrap()), Some(DialogTile::Scroll(3)));
+        assert_eq!(go(&mut ui, &mut written, 99), (560.0, -560.0, 3.0));
+        assert!(describe(&ui, &now).contains(", scroll 9 of 9, "), "{}", describe(&ui, &now));
         assert_eq!(pictures_drawn(&ui, "m.dds"), 1, "a marker though the bar itself has no alpha");
-        // Rows out of the window are not on screen, part of one is.
+        // The window shows the last three rows whole and nothing of the row above.
         let drawn = painted(&ui, &pieces(&ui));
-        assert!(drawn.contains("rows 3,") || drawn.contains("rows 4,"), "{drawn}");
-    }
-
-    #[test]
-    fn one_oversized_choice_makes_its_own_height_and_an_empty_list_has_no_rows() {
-        let mut ui = menu();
-        let mut written = fresh();
-        // Wrap at 200: 150 characters are eight lines, 332 with the spacing.
-        let view = choosing(vec![row(&"o".repeat(150)), row("After.")]);
-        frame_on(&mut ui, &mut written, view, 1, 0);
-        assert_eq!(f(&ui, LIST, "height"), 384.0);
-        // The list gone: its rows too.
-        let view = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
-        frame_on(&mut ui, &mut written, view, 2, 0);
-        assert!(rows(&ui).is_empty());
-        assert_eq!(f(&ui, LIST, "_selected_height"), 0.0);
+        assert!(drawn.contains("rows 3,"), "{drawn}");
     }
 
     #[test]
@@ -1559,10 +1684,13 @@ mod tests {
             evaluate(ui, written);
         };
         go(&mut ui, &mut written);
-        assert_eq!(f(&ui, BAR, "_current_value"), 4.0);
+        // Row 5 (328 to 386) whole in 174: the first row at 212 or below, row 4 at 270.
+        assert_eq!(f(&ui, BAR, "_current_value"), 270.0);
         ui.set_trait(ui.find_tile(BAR).unwrap(), "_current_value", Value::Num(1.0));
+        ui.set_trait(ui.find_tile(BAR).unwrap(), "_jump_size", Value::Num(9.0));
         go(&mut ui, &mut written);
-        assert_eq!(f(&ui, BAR, "_current_value"), 4.0);
+        assert_eq!(f(&ui, BAR, "_current_value"), 270.0);
+        assert_eq!(f(&ui, BAR, "_jump_size"), 3.0);
         assert_eq!(f(&ui, BAR, "_SetInCode"), 1.0);
     }
 
@@ -1786,8 +1914,9 @@ mod tests {
         let piece = |ui: &Ui, n: &str| dialog_tile(ui, ui.find_tile(&format!("{BAR}/{n}")).unwrap());
         assert_eq!(piece(&ui, "scrollbar_vert_up"), Some(DialogTile::Scroll(-1)));
         assert_eq!(piece(&ui, "scrollbar_vert_down"), Some(DialogTile::Scroll(1)));
-        assert_eq!(piece(&ui, "scrollbar_vert_page_up"), Some(DialogTile::Scroll(-2)));
-        assert_eq!(piece(&ui, "scrollbar_vert_page_down"), Some(DialogTile::Scroll(2)));
+        // A page is the whole rows that fit: three of 52 in 156.
+        assert_eq!(piece(&ui, "scrollbar_vert_page_up"), Some(DialogTile::Scroll(-3)));
+        assert_eq!(piece(&ui, "scrollbar_vert_page_down"), Some(DialogTile::Scroll(3)));
         assert_eq!(piece(&ui, "scrollbar_vert_marker"), None);
         assert_eq!(dialog_tile(&ui, rows(&ui)[1]), Some(DialogTile::Choice(1)));
         // A click on the arrow asks once, for this screen.
@@ -2016,8 +2145,8 @@ mod tests {
         let labels: Vec<ChoiceRow> = (0..8).map(|i| row(&format!("Choice {i}."))).collect();
         let view = MenuView { goodbye: true, ..choosing(labels) };
         frame_on(&mut ui, &mut written, view.clone(), 1, 5);
-        // Rows of 52, three shown: the row to 312 shows at 140 under its 156: 3 steps of 56.
-        assert_eq!(f(&ui, BAR, "_current_value"), 3.0);
+        // Rows of 52, three shown (156): the row to 312 shows whole from row 3, at 156.
+        assert_eq!(f(&ui, BAR, "_current_value"), 156.0);
         // A settled frame places nothing again.
         frame_on(&mut ui, &mut written, view.clone(), 1, 5);
         assert!(!written.moved);
@@ -2027,7 +2156,11 @@ mod tests {
         ui.set_trait(list, "_scroll_delta", Value::Num(100.0));
         frame_on(&mut ui, &mut written, view.clone(), 1, 5);
         assert!(written.moved);
-        assert_eq!(f(&ui, BAR, "_number_of_items"), 4.0);
+        // A script's delta: the value and the bar's counts in its units, the rows where they were
+        // (the last first row 5, at 260).
+        assert!((f(&ui, BAR, "_number_of_items") - 3.6).abs() < 1e-9, "{}", f(&ui, BAR, "_number_of_items"));
+        assert!((f(&ui, BAR, "_current_value") - 1.56).abs() < 1e-9);
+        assert!(describe(&ui, &shown(&ui, view.clone(), 1, 5)).contains(", scroll 3 of 5, "));
         ui.set_trait(menu_tile, "_MinListHeight", Value::Num(400.0));
         frame_on(&mut ui, &mut written, view.clone(), 1, 5);
         assert_eq!(f(&ui, LIST, "height"), 400.0);

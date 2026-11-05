@@ -188,12 +188,14 @@ Names the file reads and never sets a meaningful value for, or marks as code's:
 | every text tile | `width`, `height` | measured with the fonts; no expression in the file sets them (`menus::write_text_sizes`, message-menu.md) [design] |
 | `DM_TopicList` | `height` | the rows' height; the file only holds a least height (`_MinListHeight`) [observed: the vanilla files, by fnvtool: its comments call the rest code's] |
 | `DM_TopicList` | `_highlight_y`, `_selected_height` | the selected row's place and height [observed: the vanilla files, by fnvtool: the list box prefab's comments] |
-| `lb_scrollbar` | `_number_of_items`, `_number_of_visible_items` | counted in `_scroll_delta` steps, as the message box's list (message-menu.md §5a) |
-| `lb_scrollbar` | `_current_value`, `_SetInCode` | the scroll, and the signal that code set it [observed: the vanilla files, by fnvtool: the prefab's comments] |
+| `lb_scrollbar` | `_number_of_items`, `_number_of_visible_items` | counted in `_scroll_delta`s, as the message box's list (message-menu.md §5a): code writes a delta of 1 at open, so items are the last first row's place (§6.3) and 1, visible 1 [design] |
+| `lb_scrollbar` | `_current_value`, `_SetInCode` | the scroll, and the signal that code set it [observed: the vanilla files, by fnvtool: the prefab's comments]; the value is the first row's place (§6.3) |
+| `lb_scrollbar` | `_jump_size` | the page: the whole rows that fit in the window from the first row, at least 1, written on every frame [design] |
 | a row (`DM_TopicTemplate`, under `DM_TopicList`) | `string`, `listindex`, `height`, `_y`, `_line_alpha` | the label; the choice's number (the file hides a row with a negative one); its text and `_VerticalSpacing`; its place with nothing scrolled; the text's strength |
 
-Names NVForever reads from the file, not code's: `_scroll_delta`, `_VerticalSpacing`,
-`_MinListHeight`. `id`s 0 to 3 on the click area, the name, the line and the list suggest
+Names NVForever reads from the file, not code's: `_VerticalSpacing`, `_MinListHeight`, and
+`_scroll_delta` after code's write at open (a script's own value is read: the bar's value and
+counts are written in its units). `id`s 0 to 3 on the click area, the name, the line and the list suggest
 the original's code finds them by number; NVForever finds them by path [hypothesis]. The
 click area's `target` follows `_ShowingText`, so a click on it skips only while the actor
 speaks.
@@ -212,14 +214,30 @@ Kept from §4, with the rules still in `crate::dialogue`:
 - the acting notes stripped, square brackets kept (`dialogue::shown_text`); the speaker or
   the talking activator's name; no list, brackets or hint during a response; an empty
   response leaves only the name;
-- the list drawn from the file scrolls as the capture of the original did (§6.6), which is not
-  §4's whole choices: rows are cut at the list's window, and the scroll goes in `_scroll_delta`
-  steps. Whole-choice scrolling was NVForever's own [design], no maintainer's choice, and stays
-  the hand-built menu's with the switch off;
+- the list drawn from the file scrolls by whole rows, as §4's hand-built list [owner choice
+  2026-11-05: whole rows, as the hand-built menu; the original's 56-unit steps and mid-glyph
+  clipping, observed in the capture, read as a jump]. The original's steps are kept in §6.6 as
+  what the capture read, not what NVForever does. The scroll is the first row shown whole at
+  the window's top: the rows move by its place (code writes `_scroll_delta` 1 and that place as
+  the bar's `_current_value`, so the file's own `_current_value × _scroll_delta` moves them).
+  The keys and the wheel move the selection, and the first row moves as few rows as show the
+  selected one whole: down, it rises until the row's foot is in the window; up, a row above the
+  window comes to its top. The bar's arrows move a row, its page areas the whole rows that fit
+  from the first (`_jump_size`). The last first row is the least row from which the rest fit in
+  the window: the scroll stops as soon as the last row shows whole, and goes no further to
+  leave room under it. The bar counts to that row's place (items that place and 1, visible 1):
+  the marker's `y` is the value times `_step_height`, the track over items less visible
+  [documented: scrollbar_vert.xml, as tutorial-menu.md §5 reads it], so the marker reaches the
+  track's end with the last first row [design]. Counting to the rows' total less the window
+  would put the value past the prefab's range whenever the last first row's place is more;
+- **only the window's foot can cut a row**: the top row is always whole, but the window keeps
+  the height rule below (the first three rows or the least height, as the capture read the
+  original, §6.6), which keeps the band's size; from a first row other than the first, the rows
+  below seldom add up to that height, and the last one shown is cut at the foot [design];
 - the list's height is its first three rows' or its least height [hypothesis: §6.6];
 - a said-before choice is dim: `_line_alpha` 128 (§6.6);
 - skip, refused Tab, the keys, the wheel, the pause and an overlying menu act as in §4 and
-  dialogue-play.md §2. The scroll bar's arrows and page areas scroll (§6.6); dragging its
+  dialogue-play.md §2. The scroll bar's arrows and page areas scroll (above); dragging its
   marker is not built [design: the hand-built bar takes no clicks at all].
 
 Rows stand where the file puts them, §3's lift **not** applied (§6.6). The hand-built view keeps
@@ -294,6 +312,8 @@ view drawn from the file; the hand-built menu is unchanged.
   first row, then the next: `_highlight_y` 0, 58, 116. A pointer on a row does the same.
 - The keys scroll as little as shows the framed row whole, in steps: going down `_current_value` 0,
   2, 3 … 10 with `_highlight_y` 62, 102, 104 … 116; going up 10, 8, 7 … 0. The list's height holds.
+  The top row is then cut part way, mid-glyph. NVForever scrolls by whole rows instead (§6.3,
+  owner choice 2026-11-05); these steps are what the capture read.
 - The bar's arrows moved `_current_value` by 1 and its page areas by 3, the value in
   `_jump_size`'s place; `_highlight_y` went with it, off the top to -336: the view scrolled and
   the framed row stayed. One arrow reading went from 1 to 3 across two reads: 1 is the step
