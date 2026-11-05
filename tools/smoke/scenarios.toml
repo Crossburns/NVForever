@@ -3311,7 +3311,7 @@ order = [[
   { re = 'pipboy: screen treatment on \(scanlines baked, keeping 0\.\d+ of the light', label = "the undercoat, the picture and one baked column of scanlines (#1516)" },
   "pipboy: down",
 ]]
-manual = "the shots at 14 and 16.5 s, STATS for the numbers (pipboy.md section 3): a filled bar about (177, 133, 47), far edges about (7, 6, 2) and (15, 11, 3), beside the figure about (20, 15, 4) to (30, 25, 11), top middle about (79, 77, 49), scanlines as they were, no haze over the menus"
+manual = "the shots at 14 and 16.5 s, STATS for the numbers (pipboy.md section 3, at noon): a filled bar about (200, 163, 62), left of the figure about (26, 20, 9), beside it on the right about (36, 29, 14), top middle about (80, 72, 49), stripes yellow and orange with red almost flat, no haze over the menus"
 expect = [
   { re = 'player First rig: PipBoy\(\w+\) plays .*pipboy', label = "the first-person Pip-Boy clip loaded (#1330)" },
 ]

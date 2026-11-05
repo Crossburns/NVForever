@@ -50,7 +50,7 @@ reuses, unchanged:
 | Behind the menu | the world, through the device's glass | the whole screen blacked out evenly, 0.98, square to its edges (§3.3) |
 | Page choice | three buttons on the device (`PipBoyInput::Page` from the body's hit test) | a header on the heading's line, in place of the page's title (§3.1) |
 | Size | the device's screen, about half the view [observed: the owner's screenshots] | the header and the canvas 92% of the view's height, centred (§3.3) |
-| Background picture | `Interface\Shared\Background\pipboy.dds`, 90 in the menu file and a fitted 129 here (`device_screen.rs`, pipboy.md §3), scanlines over it | neither: the shade shows through, as behind the barter menu; scanlines off [design: they belong to the device's glass] |
+| Background picture | `Interface\Shared\Background\pipboy.dds`, 90 in the menu file and a fitted 120 here (`device_screen.rs`, pipboy.md §3), scanlines over it | neither: the shade shows through, as behind the barter menu; scanlines off [design: they belong to the device's glass] |
 | Raise/lower sounds | the Pip-Boy's own (`pipboy/sounds.rs`) | the sounds the container and barter menus play on opening and closing (`ui_sounds.rs`); tab, page and hover sounds unchanged |
 
 The colour stays the interface's (`pipboy_amber`, or whatever HUD colour the player set), so

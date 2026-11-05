@@ -4,18 +4,17 @@
 //! under the pages, the scanlines over them, and the coefficients the body's material
 //! (nvforever `pipboy_arm.rs`) puts the image and the glare on the model with.
 //!
-//! A static fit to a capture of the original [observed: private job
-//! pipboy_special_device_base: 1280 × 720, noon in Goodsprings, level view, the STATS page,
-//! 11 × 11 pixel means at eight empty places of the screen and on a filled bar]; all its
-//! numbers are in this file. Our frames at those places come within a few units of the
-//! capture [observed: in game, 1280 × 720, noon in Goodsprings, 2026-11-04]. Its shape is in the textures: the falloff to the edges is the
-//! background picture's, and the glow across the top and the patch on the right are the
-//! glare's, so the undercoat is left with next to nothing. `ScreenLit:8` has no part in
-//! it: `screen.dds` is black, `Screen_n.dds` flat and its specular colour black [observed:
-//! the files; `fnvtool nif decode`], so it stays hidden. None of this is lit by the world
-//! [design: both shapes are unlit]; how the hour changes the original's screen is not
-//! fitted, here the image-space grade moves it, so the noon match establishes neither
-//! other hours nor interiors. Flicker, vertical hold and shudder are not built.
+//! A static fit, all its numbers in this file. Its shape comes from a capture of the original
+//! [observed: private job pipboy_special_device_base: 1280 × 720, noon in Goodsprings, level
+//! view, the STATS page, 11 × 11 pixel means at eight empty places of the screen and on a filled
+//! bar]: the falloff to the edges is the background picture's, and the glow across the top and
+//! the patch on the right are the glare's, so the undercoat is left with next to nothing. Its
+//! levels and tone are fitted to playtest shots of the original at 1920 × 1080, brighter than
+//! that capture [observed: 2026-11-05, pipboy.md §3]. `ScreenLit:8` has no part in it:
+//! `screen.dds` is black, `Screen_n.dds` flat and its specular colour black [observed: the
+//! files; `fnvtool nif decode`], so it stays hidden. None of this is lit by the world [design:
+//! both shapes are unlit]. Other hours and custom colours are not measured. Flicker, vertical
+//! hold and shudder are not built.
 //!
 //! One moving layer: the beam ([`ScreenFxBeam`], [`sweep`]), a wave of light that travels down
 //! the screen every [`BEAM_PERIOD`] seconds: a hard leading edge at its foot and a long fade
@@ -36,15 +35,13 @@
 //! The screen menu (`Frame::Screen`) has none of this: no undercoat, no background, no
 //! scanlines, no glass (docs/design/screen-menu.md §2).
 //!
-//! Tuning on the `pipboy` shot, 1280 × 720, noon in Goodsprings, 11 × 11 means, remeasuring
-//! after each change, in this order:
-//! - [`SCREEN_TINT`], on a filled bar: scale a channel by the light of the target over the
-//!   light of the reading (undo the tone map and grade; near linear in the middle tones).
-//! - [`BACKGROUND_BRIGHTNESS`], at the empty far edges and beside the figure.
-//! - [`GLARE_LINEAR_SCALE`], at the top middle, above the figure: scale a channel by
-//!   (linear(target) − linear(beside)) / (linear(reading) − linear(beside)).
-//! - [`UNDERCOAT_LIGHT`], last, only if the far edges stay wrong. [`SCANLINE_DEPTH`] matches
-//!   the capture (an empty column's green 21 to 28.5): leave it.
+//! Tuning on a STATS shot at 1920 × 1080, indoors, the per-pixel median of a few shots so the
+//! beam drops out, remeasuring after each change, in this order:
+//! - [`SCREEN_TINT`], on a filled bar and on mid-tone ink: scale a channel by the light of the
+//!   target over the light of the reading (undo the tone map; near linear in the middle tones).
+//! - [`BACKGROUND_BRIGHTNESS`] and [`BACKGROUND_RED`], on the empty screen beside the figure.
+//! - [`GLARE_LINEAR_SCALE`], at the top middle, above the figure.
+//! - [`UNDERCOAT_LIGHT`], last, only if the far edges stay wrong.
 
 use super::frame::{scanline_column, Ctx, Kit};
 use super::{Frame, PipBoy, PipBoyScreen, CANVAS};

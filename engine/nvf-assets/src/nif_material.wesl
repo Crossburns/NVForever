@@ -506,15 +506,17 @@ fn nif_fragment(
     } else {
         out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     }
+    // NifSurface::pipboy_screen: linear red's ceiling, fitted so a bar's red stays near the
+    // original's 206 (nvf-play pipboy/device_screen.rs). Before the post-lighting step, which
+    // tone maps here when the view has no HDR (the Glow setting off).
+    @if(PIPBOY_SCREEN) out.color.r = min(out.color.r, 0.67);
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY && !BLEND_PREMULTIPLIED_ALPHA) out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY) let blend_mode = pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS;
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY) if blend_mode == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND && (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) != 0u {
         out.color = vec4(out.color.rgb * blend_colour_scale(out.color.a), out.color.a);
     }
-    // NifSurface::pipboy_screen: linear red's ceiling, before the view's tone map, fitted so a
-    // bar's red stays near the original's 206 (nvf-play pipboy/device_screen.rs); and the
-    // mark that keeps these pixels out of the image-space grade (imagespace.wesl SCREEN_MARK).
-    @if(PIPBOY_SCREEN) out.color.r = min(out.color.r, 0.67);
+    // NifSurface::pipboy_screen: the mark that keeps these pixels out of the image-space grade
+    // (imagespace.wesl SCREEN_MARK).
     @if(PIPBOY_SCREEN) out.color.a = 0.25;
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY && SOFT_EDGES) out.color.a = edge;
     return out;

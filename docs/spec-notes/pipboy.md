@@ -141,10 +141,11 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   down. NVForever draws the menus into such an image (interface lengths are its pixels)
   and puts it on the screen as it is.
 - **Colour** [observed: private job pipboy_special_device_base]: a filled bar in the
-  original at noon in Goodsprings, level view, is about (177, 133, 47). `SCREEN_TINT`
-  (0.51, 0.648, 1.389) is fitted to it from (0.83, 1.17, 1.27), which gave (209, 167, 45).
-  An older reading of another scene, about (220, 180, 64), gave that first tint.
-  `fBrightenPipboy` is not applied as such.
+  original at noon in Goodsprings, level view, is about (177, 133, 47), dimmer than the
+  playtest shots below, about (206, 163, 57) indoors and (201, 161, 54) at dusk. Whether the
+  hour or the capture's own settings make the difference is not established. `SCREEN_TINT`
+  is fitted to the playtest shots (the static treatment below). `fBrightenPipboy` is not
+  applied as such.
 - **The glass** [observed: private job pipboy_special_device_base, 11 × 11 means at 1280 ×
   720]: at eight empty places the original runs from (7, 6, 2) at the far left edge, (15,
   11, 3) at the far right and about (20, 15, 4) beside the figure on the left, to (30, 25,

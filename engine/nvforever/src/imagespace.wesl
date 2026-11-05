@@ -54,9 +54,11 @@ const VATS_SOFT: f32 = 0.02;
 const VATS_VIGNETTE: f32 = 0.35;
 
 // The alpha the Pip-Boy's screen writes (nvf_assets NifSurface::pipboy_screen): those pixels
-// skip the scene's grade. The original's screen reads the same indoors and at noon, where the
-// world's grade brightens by 1.3 [observed: playtest shots of the original, 2026-11-05,
-// docs/spec-notes/pipboy.md §3]. Screen effects (VATS, the fade) still cover it.
+// skip the scene's grade. The original's screen reads about the same indoors and at dusk
+// [observed: playtest shots of the original, 2026-11-05, docs/spec-notes/pipboy.md §3], where
+// this engine's grade would move it: clear weather at noon brightens by 1.3 [observed: this
+// engine's log, `sky:`]. That it stays out at every hour is [hypothesis]. Screen effects (VATS,
+// the fade) still cover it.
 const SCREEN_MARK: f32 = 0.25;
 
 fn to_srgb(c: vec3<f32>) -> vec3<f32> {

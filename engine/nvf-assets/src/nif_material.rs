@@ -887,7 +887,7 @@ mod tests {
         let lod = decal_bias(DepthBiasState { constant: -50, ..default() });
         assert_eq!(lod.constant, DECAL_BIAS - 50);
         assert_eq!(raster_bias(decal.constant), decal.constant);
-        // Only the decal, refraction, hard-edge, shade-light and FaceGen switches select the pipeline; the falloff and the
+        // Only the switches in `NifSurfaceKey` select the pipeline; the falloff and the
         // alpha cut are uniforms.
         let mut surface = NifSurface::default();
         assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: false, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
