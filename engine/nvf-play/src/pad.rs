@@ -248,9 +248,9 @@ pub fn menu_buttons(at: MenuAt) -> &'static [(GamepadButton, KeyCode)] {
         fnv_game::slots::MENU_CODE => &[(South, KeyW), (RightTrigger2, KeyE), (LeftTrigger2, KeyQ), (North, KeyF), (West, KeyS), (East, KeyR)],
         // tutorial_menu.xml: Next RT, Previous LT.
         menus::TUTORIAL => &[(RightTrigger2, KeyA), (LeftTrigger2, KeyS)],
-        // A conversation (dialogue_menu.xml, 1009): B (East) leaves as Tab does (the
-        // Goodbye choice, or the topic list's end). While the actor speaks Tab does
-        // nothing, so B matches the original there too (#1657).
+        // A conversation (1009): B (East) leaves as Tab does (the Goodbye choice, or the
+        // topic list's end). While the actor speaks Tab does nothing, so B does nothing
+        // there too, matching the original [observed: play, issue #1657].
         menus::DIALOGUE => &[(East, Tab)],
         _ => &[],
     }
@@ -383,6 +383,8 @@ mod tests {
         // that opens the pause menu (#1657).
         assert!(menu_buttons(at).contains(&(East, KeyCode::Tab)));
         assert_eq!(menu_key_at(East, at), Some(KeyCode::Tab));
+        // Outside a conversation East is still the shared Esc.
+        assert_eq!(menu_key(East), Some(KeyCode::Escape));
     }
 
     #[test]
