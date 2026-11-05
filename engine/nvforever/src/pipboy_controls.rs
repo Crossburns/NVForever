@@ -2,14 +2,15 @@
 //! `RadNeedle` follows the player's total rads, `TabKnob` the page's tab, and `ScrollKnob`
 //! the list's row. All the numbers are here, so a closer capture can replace them.
 //!
-//! Each shape turns about its own origin, which is its node's in `pipboyarm.nif` (the
-//! vertices lie around it) [observed: `fnvtool nif decode`]: the needle (its two shapes)
-//! about its local Z, out of the dial; the tab knob about its shape's local Z, its shaft; the
-//! wheel about its local X, its axle. The model's X runs right across the device in the
-//! view and its Y up [observed: where the nodes are against the shots]. The shapes are
-//! rigid, each a child of the bone it is attached to, so an absolute `bind × rotation` on
-//! its own transform turns it, after the arm is posed and before transforms propagate. No
-//! rotation accumulates, and a rebuilt rig's new shapes take a bind of their own.
+//! The needle (its two shapes) turns about its local Z through its origin, out of the dial,
+//! and the wheel about its local X through its origin, its axle: their vertices lie around
+//! their origins [observed: `fnvtool nif decode`]. The tab knob turns about a shaft fitted in
+//! the game ([`KNOB_AXIS`] through [`KNOB_PIVOT`]): its origin and local Z are not its shaft.
+//! The model's X runs right across the device in the view and its Y up [observed: where the
+//! nodes are against the shots]. The shapes are rigid, each a child of the bone it is
+//! attached to, so an absolute `bind × rotation` on its own transform turns it, after the arm
+//! is posed and before transforms propagate. No rotation accumulates, and a rebuilt rig's new
+//! shapes take a bind of their own.
 //!
 //! Only the shapes this was measured on turn: rigid, and of the size they are in the game's
 //! male and female arm ([`KNOWN`]). A replacement model can share the names with other
@@ -66,17 +67,19 @@ const NEEDLE_SPEED: f32 = 30.0;
 /// pipboy_special_device_motion; the step fitted].
 const KNOB_BIND_TAB: i32 = 3;
 const KNOB_DEGREES_PER_TAB: f32 = 26.0;
-/// The knob's shaft in its shape's own frame, and a point on it. The shape's local Z is not
-/// the shaft: a turn about it swung the knob's body on its plate by about 18 pixels at 1280 ×
-/// 720 while the original's stays within 4 [observed: shots of this engine against the
-/// private job pipboy_special_device_motion, 2026-11-05]. The mesh is a tapered cylinder
-/// about local Z whose top cap is slanted: the cap's normal is 15° from Z, leaning towards
-/// −Y [observed: `fnvtool nif decode`, the cap's vertices], and the original's cap stays
-/// identical at every tab, so the shaft is the cap's normal, not the body's axis. Fitted in
-/// the game with the debug aid `NVF_PLAY_DEBUG_KNOB_AXIS` (module docs): 20° towards −Y
-/// (compass 264°) through the body's centre keeps the body within about 2 pixels of still at
-/// every tab [observed: the same shots; hypothesis: the last 5° of tilt, which the shots
-/// cannot separate from the cap's own 15°].
+/// The knob's shaft in its shape's own frame, and a point on it. The shape's local Z through
+/// its origin is not the shaft: turned about it, the knob's body slid on its plate between
+/// the tabs, by 17 to 20 pixels at 1280 × 720 scale by the body's dark-pixel centroid, while
+/// the original's body stays within 4 by the same measure and its top cap looks the same at
+/// every tab [observed: shots of this engine at 1920 × 1080 against the private job
+/// pipboy_special_device_motion, 2026-11-05]. Of the mesh: a tapered cylinder about local Z
+/// (its body's circle fits within 0.02 of the origin) with a top cap slanted 15° towards −Y
+/// [observed: `fnvtool nif decode`, the body's and the cap's vertices]. The shaft used is a
+/// [hypothesis] supported by fitting in the game with the debug aid `NVF_PLAY_DEBUG_KNOB_AXIS`
+/// (module docs): 20° towards −Y (compass 264°) through the body's centre gives 5.7 pixels by
+/// that measure and a body that looks still, the cap's own 15° gives 8, local Z 20. Why the
+/// shaft is not the body's axis (a slanted cap that the original keeps still, or a shaft the
+/// modeller leaned) is not established.
 const KNOB_AXIS: [f32; 3] = [-0.0334, -0.3404, 0.9397];
 const KNOB_PIVOT: [f32; 3] = [-0.0077, -0.0596, 0.0];
 /// Degrees added to the knob's turn, and the sense of the turn (+1 or -1), so the fin is at
@@ -170,8 +173,11 @@ impl KnobGeometry {
         };
         let axis = vec(parts.next()?)?.try_normalize()?;
         let pivot = vec(parts.next()?)?;
-        let zero = parts.next().map(|z| z.trim().parse().ok()).unwrap_or(Some(KNOB_ZERO))?;
-        let sense = parts.next().map(|z| z.trim().parse().ok()).unwrap_or(Some(KNOB_SENSE))?;
+        let zero: f32 = parts.next().map(|z| z.trim().parse().ok()).unwrap_or(Some(KNOB_ZERO))?;
+        let sense: f32 = parts.next().map(|z| z.trim().parse().ok()).unwrap_or(Some(KNOB_SENSE))?;
+        if parts.next().is_some() || !pivot.is_finite() || !zero.is_finite() || !sense.is_finite() || sense == 0.0 {
+            return None;
+        }
         Some(KnobGeometry { axis, pivot, zero, sense })
     }
 
@@ -564,6 +570,9 @@ mod tests {
         assert_eq!(KnobGeometry::parse("0,0;1,2,3"), None);
         assert_eq!(KnobGeometry::parse("0,0,0;1,2,3"), None, "no axis");
         assert_eq!(KnobGeometry::parse("1,0,0;1,2,3;x"), None);
+        assert_eq!(KnobGeometry::parse("1,0,0;1,2,3;0;0"), None, "a sense of 0 turns nothing");
+        assert_eq!(KnobGeometry::parse("1,0,0;1,2,3;inf"), None, "not finite");
+        assert_eq!(KnobGeometry::parse("1,0,0;1,2,3;0;1;extra"), None, "a field too many");
     }
 
     #[test]
@@ -586,7 +595,8 @@ mod tests {
         }
         assert!(seen.windows(2).all(|w| (w[0] - w[1]).abs() > 1e-4), "it moves every frame");
         assert!(seen.iter().any(|&q| q > 0.3) && seen.iter().any(|&q| q < -0.3), "both ways");
-        let mut a = ControlAngles::default();
+        // The knob's own geometry, whatever the debug aid in the environment says.
+        let mut a = ControlAngles { knob_geometry: KnobGeometry { axis: Vec3::from_array(KNOB_AXIS).normalize(), pivot: Vec3::from_array(KNOB_PIVOT), zero: KNOB_ZERO, sense: KNOB_SENSE }, ..default() };
         a.advance(Readings { rads: Some(500.0), tab: Some(0), row: Some(0) }, 0.1);
         assert_eq!(a.needle.angle, 0.0, "the travel angle is the reading's");
         assert_eq!(a.up_for, Some(0.1));

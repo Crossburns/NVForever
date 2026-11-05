@@ -75,9 +75,10 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   down, all three glow (owner, 2026-10-10). The pointer on a button lights nothing: a
   player comparing the two reports that the original's buttons do not light under it
   (#1516; not observed again here).
-- **The needle and knobs** (nvforever `pipboy_controls.rs`, all the numbers there). Each
-  shape turns about its own origin, its node's in the model [observed: `fnvtool nif decode`;
-  the model has no controllers on them and `pipboy.kf` does not name them]:
+- **The needle and knobs** (nvforever `pipboy_controls.rs`, all the numbers there). The
+  needle and the wheel turn about their own origins, their nodes' in the model, the knob about
+  a shaft fitted in the game [observed: `fnvtool nif decode` for the origins; the model has no
+  controllers on them and `pipboy.kf` does not name them]:
   - `RadNeedle` (two shapes), about its local Z, out of the dial: total rads, not the rate,
     linear, 18° per 100, the bind pose at 500: 0 straight down, 500 to the right, 1000 straight
     up [observed: private job pipboy_special_device_motion: shots at 0 to 990 within a few
@@ -89,14 +90,17 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     up it quivers a little about where it rests, a small quick shiver [observed: owner's
     playtest 2026-11-05, against the original]; two sines of unrelated rates, about 2° in all
     at 7 and 12 a second, are [hypothesis]. The travel and the log are without the quiver.
-  - `TabKnob`, about its shaft, which is not its shape's local Z: the mesh is a tapered
-    cylinder about Z whose top cap is slanted 15° towards −Y [observed: `fnvtool nif decode`],
-    and the original's cap stays identical at every tab while a turn about Z swung the body
-    on its plate by about 18 pixels at 1280 × 720 [observed: this engine's shots against the
-    private job's, 2026-11-05]; the shaft used is 20° towards −Y through the body's centre
-    (`pipboy_controls.rs` `KNOB_AXIS`, `KNOB_PIVOT`), which keeps the body within about 2
-    pixels of still [observed: the same shots; hypothesis: the last 5° of tilt]. The turn
-    itself: the page's tab, not the page (tab 0 of
+  - `TabKnob`, about a shaft that is not its shape's local Z through its origin: turned about
+    that, the body slid on its plate between the tabs, 17 to 20 pixels at 1280 × 720 scale by
+    its dark-pixel centroid, while the original's stays within 4 by the same measure and its
+    top cap looks the same at every tab [observed: this engine's shots at 1920 × 1080 against
+    the private job's, 2026-11-05]. The mesh is a tapered cylinder about local Z (the body's
+    circle within 0.02 of the origin) with a top cap slanted 15° towards −Y [observed:
+    `fnvtool nif decode`]. The shaft used, 20° towards −Y through the body's centre
+    (`pipboy_controls.rs` `KNOB_AXIS`, `KNOB_PIVOT`), is a [hypothesis] fitted in the game: 5.7
+    pixels by that measure and a body that looks still (the cap's 15°: 8; local Z: 20); why
+    it is not the body's axis is not established. The turn itself: the page's tab, not the
+    page (tab 0 of
     STATS, ITEMS and DATA look the same, and the wrap comes back), five detents at the dial's
     marks: a constant step of 26° with the bind pose at tab 3 lands within 2° of the shots
     [observed: private job pipboy_special_device_motion; the step fitted]. A step is over in

@@ -109,7 +109,7 @@ pub const BEAM_ALPHA: f32 = 0.12;
 /// Where the beam's top edge is at `phase` seconds into its period: from a band's height
 /// above the canvas to the canvas's foot, in [`BEAM_TRAVEL`]; `None` while it is hidden.
 pub fn beam_top(phase: f32) -> Option<f32> {
-    (phase >= 0.0 && phase < BEAM_TRAVEL).then(|| -BEAM_HEIGHT + (CANVAS.y + BEAM_HEIGHT) * phase / BEAM_TRAVEL)
+    (0.0..BEAM_TRAVEL).contains(&phase).then(|| -BEAM_HEIGHT + (CANVAS.y + BEAM_HEIGHT) * phase / BEAM_TRAVEL)
 }
 
 /// The beam's column: white, its alpha a raised cosine of [`BEAM_ALPHA`] at the middle.
@@ -350,8 +350,10 @@ pub fn draw(
 }
 
 /// Move the beam: shown and travelling for [`BEAM_TRAVEL`] of every [`BEAM_PERIOD`] on the
-/// real clock, hidden the rest; held still with the pause menu. Logged once each time the
-/// treatment comes on, on the first sweep.
+/// real clock, hidden the rest. Under the pause menu the band stands where it is; the clock
+/// runs on, so on resume it jumps to where the clock says (or hides): a wall-clock effect
+/// held in the picture, not a phase kept across the pause [design]. Logged once each time
+/// the treatment comes on, on the first sweep.
 pub fn sweep(time: Res<Time<Real>>, paused: Res<crate::pause::Paused>, mut fx: ResMut<ScreenFx>, mut beams: Query<(&mut Node, &mut Visibility), With<ScreenFxBeam>>) {
     if paused.0 {
         return;
@@ -537,7 +539,9 @@ mod tests {
         assert_eq!(first.len(), 2, "the background and the beam; no scanlines without the game's data");
         let world = app.world_mut();
         let beams: Vec<(Visibility, GlobalZIndex)> = world.query_filtered::<(&Visibility, &GlobalZIndex), With<ScreenFxBeam>>().iter(world).map(|(v, z)| (*v, *z)).collect();
-        assert_eq!(beams, vec![(Visibility::Hidden, BEAM)], "the beam waits hidden, between the pages and the scanlines");
+        assert_eq!(beams, vec![(Visibility::Hidden, BEAM)], "the beam waits hidden");
+        let z = beams[0].1 .0;
+        assert!(0 < z && z < OVER_PAGES.0, "over the pages (0), under the scanlines: {z}");
         // A change of page redraws the page, not the treatment, and only one page root is left.
         app.world_mut().resource_mut::<PipBoy>().page = Page::Stats;
         app.update();
