@@ -47,11 +47,12 @@
 //! listener is drawn (owner's playtest list 5 item 3).
 
 use crate::actors::ActorWorld;
-use crate::furniture::{GetUp, LeaveNow, OnFurniture, SitOn};
+use crate::furniture::{GetUp, LeaveNow, OnFurniture, SitOn, SitRefused};
 use crate::locomotion::Locomotion;
 use crate::nav::{self, Lead, NavState};
 use crate::world::{CellKey, Streamer, WorldData, WorldRoot};
 use bevy::prelude::*;
+use fnv_actor::furniture_retry as retry;
 use fnv_ai::{Activity, Ai, AiConfig, AiEvent, Doing, Mover};
 use fnv_game::game::{Game, GameConfig};
 use fnv_game::GameData;
@@ -66,6 +67,8 @@ use nvf_play::RefVisual;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::f32::consts::FRAC_PI_4;
 
+mod knock_run;
+pub(crate) mod melee_knockback;
 mod sandbox_interrupt;
 
 /// Where the function catalogue is when `NVF_PLAY_SCRIPT_FUNCTIONS` is not set (as
@@ -372,6 +375,10 @@ impl Mover for PhysMover<'_> {
             return None;
         }
         let feet = phys.npcs[&id].ch.feet;
+        // A goal's height is judged on the ground only: in the air or in the water every
+        // frame below goes as if it fitted, so a body that never lands is not held up by
+        // it (docs/design/navmesh.md §4.1).
+        let judged = phys.npcs[&id].ch.grounded && !phys.npcs[&id].ch.swimming;
         let mut f = walker.follower.take()?;
         // Back to the walker: where physics left the actor, on the same path.
         let give_up = |phys: &mut PhysState, walker: &mut Walker, f| {
@@ -387,7 +394,12 @@ impl Mover for PhysMover<'_> {
             return None;
         }
         let (event, velocity) = match f.steer(feet) {
-            Steer::Arrived => {
+            // Not at the goal's height: a new path from here, if it has one left.
+            Steer::OffPath if let Some(new) = judged.then(|| walker.off_path(nav, feet, &f)).flatten() => {
+                f = new;
+                (WalkEvent::Moved, [0.0, 0.0])
+            }
+            Steer::Arrived | Steer::OffPath => {
                 phys.remove_npc(id);
                 walker.travelled += (feet[0] - walker.feet[0]).hypot(feet[1] - walker.feet[1]);
                 walker.feet = feet;
@@ -430,11 +442,22 @@ impl Mover for PhysMover<'_> {
             // fighter's: its posts (cover, a peek point, a flank) are places to stand, and
             // the walker, which keeps to the navmesh and not the collision, left it half
             // inside walls by its cover (owner's screenshot 2026-10-23) [design].
+            // On a mismatch the walker would end the walk on the navmesh under the feet, or
+            // where there is none lift it towards the goal's height: a new path from here
+            // first, as above.
             Steer::Walk { remaining, .. } if remaining < LAST_STRETCH && f.leg + 1 == f.path.legs.len() && !self.fighting.contains_key(&actor) => {
-                self.skip_until.insert(id, self.now + 4.0);
-                walker.feet = feet;
-                give_up(phys, walker, f);
-                return None;
+                match (judged && !f.fits_goal(feet)).then(|| walker.off_path(nav, feet, &f)).flatten() {
+                    Some(new) => {
+                        f = new;
+                        (WalkEvent::Moved, [0.0, 0.0])
+                    }
+                    None => {
+                        self.skip_until.insert(id, self.now + 4.0);
+                        walker.feet = feet;
+                        give_up(phys, walker, f);
+                        return None;
+                    }
+                }
             }
             // Standing and facing away from the way to go: it turns on the spot first, as
             // the walker does (not counted as being stuck).
@@ -636,7 +659,7 @@ impl StopRun {
 }
 
 /// A resident and the furniture its package gives it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum Seat {
     #[default]
     None,
@@ -647,6 +670,35 @@ enum Seat {
     Ordered(u32, bool),
     /// Told to get up; the walk waits.
     GettingUp(u32),
+    /// Refused because it is occupied: asks again after a wait, these seconds so far
+    /// ([`retry::waiting`]). It stands free meanwhile: no hold on its movement.
+    Waiting(u32, f32),
+    /// Refused for a reason waiting does not change: no order until something has changed
+    /// ([`retry::unavailable`]). It stands free too.
+    Unavailable(u32),
+}
+
+impl Seat {
+    /// The furniture this is about.
+    fn furniture(self) -> Option<u32> {
+        match self {
+            Seat::None => None,
+            Seat::Wanted(f, _) | Seat::Ordered(f, _) | Seat::GettingUp(f) | Seat::Waiting(f, _) | Seat::Unavailable(f) => Some(f),
+        }
+    }
+
+    /// The seat after a decision about a refused request.
+    fn after(decision: retry::Decision) -> Seat {
+        match decision {
+            retry::Decision::Wait { target, waited } => Seat::Waiting(target, waited),
+            retry::Decision::Unavailable { target } => Seat::Unavailable(target),
+            // Through `Wanted`, which gives the order when it is drawn and asks nothing else
+            // (a wait that is over gives its order itself: `drive`). Not at once: it never
+            // got on.
+            retry::Decision::Reissue { target } => Seat::Wanted(target, false),
+            retry::Decision::Cancel => Seat::None,
+        }
+    }
 }
 
 struct Resident {
@@ -676,6 +728,9 @@ struct Resident {
     seat: Seat,
     /// The furniture `fnv_ai` has the actor use now.
     wants: Option<u32>,
+    /// Waiting after a refusal, with nothing to hold it from being told to sit again: its
+    /// AI runs, it is awake and alive, and no conversation, stagger or idle holds it.
+    may_ask_again: bool,
     /// Standing where its package has it, with nothing else to do: its package's idles
     /// may play (`idles.rs`). Inside: the base of the idle marker it stands at.
     stand: Option<Option<FormId>>,
@@ -857,9 +912,14 @@ struct Core {
     /// Updates in which an attack carried an actor; times it could not be (no
     /// character); for the summary.
     carries: [usize; 2],
-    /// Melee blows' knockbacks pushing actors (`nvf_play::combat::Knockback`): each with
-    /// its seconds left and where the actor's feet were when it began ([`Core::knock`]).
-    knocks: HashMap<u32, (nvf_play::combat::Knockback, f32, [f32; 3])>,
+    /// Melee blows' knockbacks pushing actors (`nvf_play::combat::Knockback`), each with
+    /// where the actor's feet were when it began ([`Core::knock`]).
+    knocks: HashMap<u32, knock_run::KnockRun>,
+    /// Knockbacks whose time was up when a new blow replaced them, with the feet then: told
+    /// as finished by the next [`Core::knock`], which has the game state to say so.
+    knocks_over: Vec<(knock_run::KnockRun, [f32; 3])>,
+    /// Log each frame of a knockback (only with the melee knockback aid).
+    knock_trace: bool,
     /// This frame's knockback travel (game x, y), kept apart from the attack clips'
     /// [`Core::travel`]: a hit reaction ends a clip's carry but not a knockback.
     knock_travel: HashMap<u32, [f32; 2]>,
@@ -1072,6 +1132,8 @@ impl Residents {
             carry_broken: HashSet::new(),
             carries: [0; 2],
             knocks: HashMap::new(),
+            knocks_over: Vec::new(),
+            knock_trace: std::env::var_os(nvf_play::MeleeKnockbackAid::ENV).is_some(),
             knock_travel: HashMap::new(),
             on_furniture: HashSet::new(),
             knocked: (0, 0.0),
@@ -1182,6 +1244,11 @@ impl Residents {
     }
 }
 
+/// A conversation or a greeting holds `actor` where it stands (`Core::think`).
+fn held_by_talk(game: &Game, ai: &Ai, actor: FormId) -> bool {
+    (game.in_actor_conversation(actor) && !game.conversation_moves(actor)) || ai.holds_for_chat(actor) || game.greets_player(actor)
+}
+
 impl Core {
     /// Look up who of the listed creatures cannot walk ([`cannot_walk`], or flagged
     /// Immobile), before they are handed to the AI.
@@ -1274,6 +1341,7 @@ impl Core {
             drawn_feet: pos,
             standing_frames: StopRun::default(),
             seat: Seat::None,
+            may_ask_again: false,
             stand: None,
             last_drawn: None,
             wants: None,
@@ -1345,6 +1413,9 @@ impl Core {
             if !is_actor(refs, id) {
                 continue;
             }
+            if let Some(run) = self.knocks.get_mut(&id.0) {
+                run.moved = true;
+            }
             let place = game.world.peek(id).map(|s| (s.cell, s.pos));
             let cell = place.and_then(|p| p.0).map_or_else(|| "no cell".to_string(), |c| game.data.name(c));
             let pos = place.map_or([0.0; 3], |p| p.1);
@@ -1387,7 +1458,7 @@ impl Core {
         let found: Vec<FormId> = game
             .world
             .changed()
-            .filter(|(id, s)| *id < FormId::FIRST_DYNAMIC && !s.deleted && !self.known.contains(&id.0) && is_actor(refs, *id))
+            .filter(|(id, s)| *id < FormId::FIRST_DYNAMIC && !s.deleted() && !self.known.contains(&id.0) && is_actor(refs, *id))
             .filter(|(id, s)| s.cell.is_some_and(|c| game.loaded_cells.contains(&c)) && s.cell != refs.get(*id).and_then(|p| p.cell))
             .map(|(id, _)| id)
             .collect();
@@ -1566,7 +1637,7 @@ impl Core {
                 // sight (the Goodsprings settler's bar stool in the Prospector Saloon).
                 let a = &self.ai.agents[&r.actor];
                 // Its seat not yet taken up (`Seat::Wanted`: it was never drawn there).
-                let unseated = matches!(r.seat, Seat::None | Seat::Wanted(..));
+                let unseated = matches!(r.seat, Seat::None | Seat::Wanted(..) | Seat::Waiting(..) | Seat::Unavailable(_));
                 if let (Some(f), Activity::There, true) = (a.using, a.activity, unseated) {
                     r.wants = Some(f.0);
                     r.seat = Seat::Wanted(f.0, true);
@@ -1674,48 +1745,57 @@ impl Core {
     /// Melee blows' knockbacks (docs/spec-notes/combat-rules.md, "Knockback"): each
     /// pushes its actor over this frame by its falling speed, through the same character
     /// as an attack clip's travel ([`Core::carry`]), so walls and actors stop it. Logged
-    /// when it ends: how far the actor got of the distance asked.
+    /// when it ends: how far the actor got of the distance asked ([`knock_run`]).
     fn knock(&mut self, game: &Game, phys: Option<&PhysState>, dt: f32) {
+        // Alive here is alive and conscious: anything else stops its character.
+        let alive = |id: u32| !game.extra.get(&FormId(id)).is_some_and(|e| e.dead || e.out_cold());
+        let steps = phys.map_or(0, |p| p.world.steps());
+        for (run, to) in std::mem::take(&mut self.knocks_over) {
+            info!("{}", run.report(to, alive(run.k.form_id), steps));
+        }
         let mut over = Vec::new();
-        for (&id, (k, left, from)) in self.knocks.iter_mut() {
-            let feet = phys.and_then(|p| p.npcs.get(&id)).map(|b| b.ch.feet).or_else(|| self.ai.agents.get(&FormId(id)).map(|a| a.walker.feet)).unwrap_or(*from);
-            if *left <= 0.0 {
-                over.push((id, k.distance(), *from, feet));
+        for (&id, run) in self.knocks.iter_mut() {
+            let agent = self.ai.agents.get(&FormId(id));
+            let feet = phys.and_then(|p| p.npcs.get(&id)).map(|b| b.ch.feet).or_else(|| agent.map(|a| a.walker.feet)).unwrap_or(run.from);
+            if run.over() {
+                if self.knock_trace {
+                    info!("{}", run.trace_line(feet, 0.0, 0.0, steps));
+                }
+                over.push((id, feet));
                 continue;
             }
-            let d = k.step(*left, dt);
-            *left -= dt;
+            let walked = agent.is_some_and(|a| a.walker.moving) || self.travel.contains_key(&id);
+            let d = run.advance(dt, walked);
+            if self.knock_trace {
+                info!("{}", run.trace_line(feet, dt, d, steps));
+            }
             let t = self.knock_travel.entry(id).or_default();
-            t[0] += k.dir[0] * d;
-            t[1] += k.dir[1] * d;
+            t[0] += run.k.dir[0] * d;
+            t[1] += run.k.dir[1] * d;
         }
-        for (id, asked, from, to) in over {
-            self.knocks.remove(&id);
-            info!(
-                "knockback: {} {id:08X} pushed back {:.0} units of {asked:.0} ({:.0} %), from ({:.0}, {:.0}, {:.0}) to ({:.0}, {:.0}, {:.0})",
-                game.data.name(FormId(id)),
-                (to[0] - from[0]).hypot(to[1] - from[1]),
-                (to[0] - from[0]).hypot(to[1] - from[1]) / asked.max(1e-3) * 100.0,
-                from[0],
-                from[1],
-                from[2],
-                to[0],
-                to[1],
-                to[2]
-            );
+        for (id, to) in over {
+            let Some(run) = self.knocks.remove(&id) else { continue };
+            info!("{}", run.report(to, alive(id), steps));
         }
     }
 
-    /// A melee blow's knockback on `k.form_id` begins (one still going is replaced
-    /// [design]); not for the player (`nvf_play::player::Lunge::knock`) nor an actor
-    /// that is not a resident.
-    fn begin_knock(&mut self, k: nvf_play::combat::Knockback) {
+    /// A melee blow's knockback on `k.form_id` begins, measured from where the actor's
+    /// feet are now (one still going is replaced [design], and told as interrupted: its
+    /// travel is not this blow's; one whose time was up is told as finished); not for the player
+    /// (`nvf_play::player::Lunge::knock`) nor an actor that is not a resident.
+    fn begin_knock(&mut self, k: nvf_play::combat::Knockback, phys: Option<&PhysState>) {
         let Some(a) = self.ai.agents.get(&FormId(k.form_id)) else { return };
-        let from = self.knocks.get(&k.form_id).map_or(a.walker.feet, |(_, _, f)| *f);
-        self.knocks.insert(k.form_id, (k, k.secs, from));
+        let feet = phys.and_then(|p| p.npcs.get(&k.form_id)).map_or(a.walker.feet, |b| b.ch.feet);
+        if let Some(old) = knock_run::begin(&mut self.knocks, k, feet, phys.map_or(0, |p| p.world.steps())) {
+            if old.over() {
+                self.knocks_over.push((old, feet));
+            } else {
+                info!("{}", old.interrupted(&k, feet));
+            }
+        }
         self.knocked.0 += 1;
         self.knocked.1 += k.distance();
-        info!("knockback: {:08X} knocked back at {:.0} units/s for {:.2} s ({:.0} units)", k.form_id, k.speed, k.secs, k.distance());
+        info!("knockback: {} knocked back at {:.0} units/s for {:.2} s ({:.3} units)", knock_run::KnockRun::tag(&k), k.speed, k.secs, k.distance());
     }
 
     /// Attack clips that travel carry their actors (docs/spec-notes/actors.md §8.13):
@@ -1825,9 +1905,7 @@ impl Core {
             .iter()
             .filter(|r| {
                 matches!(r.seat, Seat::Ordered(..) | Seat::GettingUp(_))
-                    || (game.in_actor_conversation(r.actor) && !game.conversation_moves(r.actor))
-                    || self.ai.holds_for_chat(r.actor)
-                    || game.greets_player(r.actor)
+                    || held_by_talk(game, &self.ai, r.actor)
                     || self.staggering.contains(&r.actor.0)
             })
             .map(|r| r.actor.0)
@@ -2106,7 +2184,11 @@ impl Core {
                 }
                 _ => {}
             }
-            let Some(r) = self.list.iter().find(|r| r.actor == e.actor) else { continue };
+            let Some(r) = self.list.iter_mut().find(|r| r.actor == e.actor) else { continue };
+            // Told before `note`, which takes a wait that ended unannounced for a passage.
+            if matches!(e.event, AiEvent::DoorWaitCancelled { .. }) {
+                r.waiting = None;
+            }
             // Named residents in full; the crowd of `all` only when it sets off or fails.
             let line = format!("ai [{hour}] {}: {}", r.label, describe(game.data, world, &e.event));
             match e.event {
@@ -2114,7 +2196,9 @@ impl Core {
                 _ if r.named || game.is_teammate(e.actor) => info!("{line}"),
                 AiEvent::Trip { .. }
                 | AiEvent::Unreachable { .. }
+                | AiEvent::HeightWaived { .. }
                 | AiEvent::DoorRefused { .. }
+                | AiEvent::DoorWaitCancelled { .. }
                 | AiEvent::Resumed { .. }
                 | AiEvent::Approach { .. }
                 | AiEvent::Follow { .. }
@@ -2142,6 +2226,7 @@ impl Core {
                 | AiEvent::Pace { .. }
                 | AiEvent::Post { .. }
                 | AiEvent::NoPost { .. }
+                | AiEvent::PostFailed { .. }
                 | AiEvent::Flee { .. }
                 | AiEvent::FleeArrived { .. }
                 | AiEvent::Cornered { .. }
@@ -2192,6 +2277,8 @@ impl Core {
             }
             // The furniture it is to use, once it stands there.
             r.wants = agent.using.filter(|_| agent.activity == Activity::There).map(|f| f.0);
+            // `held` dates from before this frame's `social`: a talk begun since counts too.
+            r.may_ask_again = matches!(r.seat, Seat::Waiting(..)) && !held.contains(&r.actor.0) && !held_by_talk(game, &self.ai, r.actor) && !game.ai_off(r.actor) && !game.extra.get(&r.actor).is_some_and(|e| e.dead || e.out_cold());
             let still = agent.activity != Activity::Travelling && agent.walker.follower.is_none() && agent.using.is_none() && agent.talk.is_none();
             r.stand = still.then(|| match agent.sandbox.as_ref().map(|s| s.doing) {
                 Some(Doing::AtIdleMarker(m)) => game.world.placed.get(m).map(|p| p.base),
@@ -2274,10 +2361,12 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         AiEvent::PushedBack { package, away } => format!("was pushed {away:.0} units from the place of {}: goes back", n(package)),
         AiEvent::Door { door, .. } => format!("used door {door}"),
         AiEvent::DoorRefused { door } => format!("was not let through door {door} by its script: plans again"),
+        AiEvent::DoorWaitCancelled { door } => format!("stops waiting at door {door}: its walk was given up"),
         AiEvent::Resumed { package, patrol_point: Some(p), .. } => format!("goes on with {} at patrol point {} (from the save)", n(package), n(p)),
         AiEvent::Resumed { package, .. } => format!("goes on with {}, its sandbox day as saved", n(package)),
         AiEvent::Arrived { seconds, travelled, .. } => format!("arrived after {seconds:.1}s, {travelled:.0} units"),
         AiEvent::Unreachable { package, why } => format!("cannot reach the place of {}: {why}", n(package)),
+        AiEvent::HeightWaived { at } => format!("ends its walk off its goal's height, at ({:.0}, {:.0}, {:.0}): no new path helped", at[0], at[1], at[2]),
         AiEvent::NotCarriedOut { package, why } => format!("stays: {} is {why}, not carried out yet", n(package)),
         AiEvent::Furniture { furniture: Some(f) } => format!("is to use furniture {f}"),
         AiEvent::Furniture { furniture: None } => "leaves its furniture".into(),
@@ -2383,8 +2472,31 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
             to[1],
             to[2]
         ),
-        AiEvent::AtPost { post, off, .. } => format!("is at {} ({off:.0} units off)", post.name()),
+        AiEvent::AtPost { post, off, at, feet, .. } => format!(
+            "is at {} ({off:.0} units off): asked for ({:.0}, {:.0}, {:.0}), stands at ({:.0}, {:.0}, {:.0})",
+            post.name(),
+            at[0],
+            at[1],
+            at[2],
+            feet[0],
+            feet[1],
+            feet[2]
+        ),
         AiEvent::NoPost { post } => format!("has no way to {}: closes in instead", post.name()),
+        AiEvent::PostFailed { post, at, feet, off, elapsed, reason, .. } => format!(
+            "post failed: {} ({}) after {elapsed:.1} s, {off:.0} units from ({:.0}, {:.0}, {:.0}), stands at ({:.0}, {:.0}, {:.0})",
+            post.name(),
+            match reason {
+                fnv_ai::alert::PostFailure::TimedOut => "timed out",
+                fnv_ai::alert::PostFailure::StoppedShort => "stopped short",
+            },
+            at[0],
+            at[1],
+            at[2],
+            feet[0],
+            feet[1],
+            feet[2]
+        ),
         AiEvent::Flee { from, how, to, away, length } => format!(
             "flees from {} {}: to ({:.0}, {:.0}, {:.0}), {} from it, {length:.0} units to go",
             if *from == FormId::PLAYER_REF { "the player".to_string() } else { n(from) },
@@ -2501,6 +2613,7 @@ type Held<'w, 's> = (
     Query<'w, 's, (&'static RefVisual, &'static crate::locomotion::Flinch)>,
     Option<Res<'w, crate::npc_combat::Fighters>>,
     Option<ResMut<'w, crate::idles::IdleHolds>>,
+    Query<'w, 's, &'static mut SitRefused>,
 );
 
 /// Run the package choice and the walks, log what happens, keep the visuals in step.
@@ -2520,7 +2633,7 @@ pub fn drive(
     mut actors: Query<(&mut Transform, Option<&mut Locomotion>), Without<OnFurniture>>,
     mut doors: ResMut<nvf_play::doors::Doors>,
     (script, mut sim, mut phys, mut blocks): PlayState,
-    (seated, hours, flinches, fighters, idle_holds): Held,
+    (seated, hours, flinches, fighters, idle_holds, mut refusals): Held,
     (mut door_fades, mut door_sounds, mut travel, mut knocks, trips, screen): Moves,
 ) {
     // Hours passed in the Wait menu since the last frame (`--play` only: without it
@@ -2561,7 +2674,7 @@ pub fn drive(
     }
     // Melee blows' knockbacks on actors (`nvf_play::combat`).
     for k in knocks.iter_mut().flat_map(|k| k.read()).filter(|k| k.form_id != FormId::PLAYER_REF.0) {
-        res.core.begin_knock(*k);
+        res.core.begin_knock(*k, phys.as_deref());
     }
     // Who an idle holds in place (`idles.rs`, from the frame before) stands too.
     // and those of them with somewhere to go (the last update's) are told to break out.
@@ -2676,7 +2789,7 @@ pub fn drive(
         // has it elsewhere: it is off its furniture at once (the AI has walked or put it
         // on already).
         let moved = std::mem::take(&mut r.moved);
-        if let (true, Seat::Wanted(f, _) | Seat::Ordered(f, _) | Seat::GettingUp(f)) = (waited > 0 || moved, r.seat) {
+        if let (true, Some(f)) = (waited > 0 || moved, r.seat.furniture()) {
             if wants != Some(f) {
                 r.seat = Seat::None;
                 match entity {
@@ -2694,8 +2807,33 @@ pub fn drive(
                 }
             }
         }
+        // The furniture's answer to the last order, acted on once. Only an answer says it
+        // was refused: being without `OnFurniture` does not.
+        if let Some(mut refused) = entity.and_then(|e| refusals.get_mut(e).ok()).filter(|x| x.unread) {
+            refused.unread = false;
+            if matches!(r.seat, Seat::Ordered(f, _) if f == refused.furniture && wants == Some(f)) && !on {
+                r.seat = Seat::after(retry::on_refusal(refused.furniture, refused.refusal));
+            }
+        }
+        let frame = retry::Now {
+            wants,
+            eligible: entity.is_some() && r.present && !core.held_now && r.may_ask_again,
+            seconds: dt,
+            changed: waited > 0 || moved,
+        };
         r.seat = match (r.seat, entity) {
             (Seat::None, _) => wants.map_or(Seat::None, |f| Seat::Wanted(f, false)),
+            // The order goes out in the frame that found it eligible, not through `Wanted`:
+            // by the next frame its AI may be off, or it may be held or out cold.
+            (Seat::Waiting(f, so_far), _) => match (retry::waiting(f, so_far, &frame), entity) {
+                (retry::Decision::Reissue { target }, Some(e)) => {
+                    commands.entity(e).insert(SitOn { furniture: target, stay: None, at_once: false });
+                    core.seats[0] += 1;
+                    Seat::Ordered(target, false)
+                }
+                (decision, _) => Seat::after(decision),
+            },
+            (Seat::Unavailable(f), _) => Seat::after(retry::unavailable(f, &frame)),
             (Seat::Wanted(f, at_once), Some(e)) if wants == Some(f) => {
                 commands.entity(e).insert(SitOn { furniture: f, stay: None, at_once });
                 core.seats[0] += 1;
@@ -2711,7 +2849,7 @@ pub fn drive(
                     core.seats[1] += 1;
                     Seat::GettingUp(f)
                 } else {
-                    // Never got on (or the furniture module refused): nothing to undo.
+                    // Never got on: nothing to undo.
                     commands.entity(e).remove::<SitOn>();
                     Seat::None
                 }
@@ -2731,6 +2869,10 @@ pub fn drive(
             }
             (s, _) => s,
         };
+        // A refusal of another request is over.
+        if let Some(e) = entity.filter(|e| refusals.get(*e).is_ok_and(|x| r.seat.furniture() != Some(x.furniture))) {
+            commands.entity(e).remove::<SitRefused>();
+        }
         let Some(agent) = core.ai.agents.get(&r.actor) else { continue };
         let w = &agent.walker;
         let visible = r.present && drawn(&world, &streamer, w.space, w.feet);

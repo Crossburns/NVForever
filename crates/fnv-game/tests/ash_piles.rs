@@ -151,7 +151,7 @@ fn attach_ash_pile_places_one_linked_pile() {
     assert_eq!(g.misc_stat(fnv_game::misc_stats::DISINTEGRATIONS), 1.0);
     // Brought back to life, the actor's pile goes.
     g.resurrect(RAIDER_REF, false);
-    assert!(g.world.peek(pile).unwrap().deleted);
+    assert!(g.world.peek(pile).unwrap().deleted());
     assert_eq!(g.extra[&RAIDER_REF].ash_pile, None);
 }
 
