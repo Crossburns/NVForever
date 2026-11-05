@@ -4532,6 +4532,28 @@ expect = [
 ]
 
 [[scenario]]
+name = "aid-addiction-held"
+source = "issue #1580 (docs/spec-notes/aid-items.md §5.3): Buffout withdrawal while its condition fails, a Buffout taken and worn off in a three-hour wait, the condition passing again, then Fixer. Strength at each step: 5, 4, 5, 7, 5, 4, 5"
+areas = ["aid", "wait"]
+paths = ["crates/fnv-game/src/aid.rs", "crates/fnv-game/src/abilities.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.getav strength;player.addspell WithdrawalBuffout;14.4:close;17:player.getav strength;player.setav IgnoreCrippledLimbs 1;17.4:close;20:player.getav strength;player.additem Buffout 1;player.equipitem Buffout;20.4:close;23:player.getav strength;23.4:close;36:player.getav strength;player.setav IgnoreCrippledLimbs 0;36.4:close;39:player.getav strength;player.additem NVFixer 1;player.equipitem NVFixer;39.4:close;42:player.getav strength;player.isspelltarget WithdrawalBuffout;42.4:close", NVF_PLAY_TEST_WAIT = "25:open,26:hours=3,27:accept" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--hour", "10", "--no-voice"]
+run_seconds = 46
+expect = [
+  { re = 'console: GetActorValue on player >> ', count = 7, label = "Strength is read at every step" },
+]
+order = [[
+  { text = "console: GetActorValue on player >> 5.00", label = "Strength 5 at the start" },
+  { text = "console: GetActorValue on player >> 4.00", label = "Strength 4 addicted" },
+  { text = "console: GetActorValue on player >> 5.00", label = "Strength 5 with the withdrawal held" },
+  { text = "console: GetActorValue on player >> 7.00", label = "Strength 7 on Buffout" },
+  { text = "console: GetActorValue on player >> 5.00", label = "Strength 5 with Buffout over and the withdrawal still held" },
+  { text = "console: GetActorValue on player >> 4.00", label = "Strength 4 with the withdrawal applied once" },
+  { text = "console: GetActorValue on player >> 5.00", label = "Strength 5 after Fixer" },
+  { text = "console: IsSpellTarget on player >> 0.00", label = "no addiction left" },
+]]
+
+[[scenario]]
 name = "aid-hardcore"
 source = "aid leftovers (docs/spec-notes/aid-items.md §11): Hardcore needs, their stage effects, water lowering dehydration and a sleep lowering sleep deprivation"
 areas = ["aid", "wait", "hardcore"]
