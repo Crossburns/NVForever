@@ -1253,6 +1253,24 @@ impl Queries<'_> {
         }))
     }
 
+    /// What would keep `c` from standing with its feet at `feet`, sorted: whatever its
+    /// shape (the controller's own, not a capsule's stand-in) overlaps there, but for what
+    /// the controller passes through or pushes aside (its own body, its ignored layers,
+    /// dynamic bodies up to [`crate::character::PUSH_MAX_MASS`]). Other characters count.
+    pub fn character_overlap(&self, c: &crate::character::Character, feet: [f32; 3]) -> Vec<Owner> {
+        let k = self.world.k;
+        let pose = Pose::from_translation((vec3(feet) + Vector::Z * (c.params.height / 2.0)) * k);
+        let filter = Filter { exclude: vec![c.key()], exclude_layers: c.ignore_layers, ..Default::default() };
+        let w = &self.world.w;
+        let blocks = |co: &Collider| co.parent().and_then(|b| w.bodies.get(b)).is_none_or(|b| !b.is_dynamic() || b.mass() > crate::character::PUSH_MAX_MASS);
+        let mut out: Vec<Owner> = self.with_filter(&filter, |f| {
+            w.intersect_shape(pose, c.shape.as_ref(), f).filter(|(_, co)| blocks(co)).filter_map(|(_, co)| Owner::decode(co.user_data)).collect()
+        });
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// Every entity whose collision overlaps a convex `shape` placed at `at`, sorted.
     pub fn overlap(&self, shape: &Shape, at: &Iso, filter: &Filter) -> Result<Vec<Owner>, ConvertError> {
         let (pose, shape) = probe(shape, at, self.world.k)?;

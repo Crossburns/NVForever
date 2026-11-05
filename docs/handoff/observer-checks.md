@@ -1244,3 +1244,27 @@ The numbers above stay put so links to them hold; each item here gives its own p
     household and library clutter lists. A capture: `player.additem 000199BB 1`, then open the
     Pip-Boy's Misc page and a container holding one. Is it absent, a blank row, or shown by
     another name?
+
+## Added 2026-11-05 (creatures and furniture, issue #1522)
+
+86. **Does a sandboxing creature near free furniture ever use it?** (P2; furniture.md §9.)
+    Answered in part, minutes of watching and not days [observed, 2026-11-04 and 05, the
+    original over Moonlight]: no creature read as on furniture in any of these.
+    - Super mutants `001744C1` to `C4` among `SuperMutantBed` and `FloorSitMarker`: 534 s,
+      hours 12 and 23; `DefaultSandboxEditorLocation512` for at least the first, and `C4` was
+      under Sandbox in 0 of 111 samples.
+    - Colmillo and GibsonDog01 under `Sandbox256` the whole time: 358 s, within 98 to 168
+      units of `OldLadyGibsonChair`, probably free at hour 20 [hypothesis]. People in the
+      loaded area did read as on furniture, so the reads fire.
+    - Three rats near `Outhouse0000`: 355 s, partly in combat, so weak.
+    - Neil: 533 s, never under a sandbox package, so weak.
+    - The Nipton mongrels `0016B483` and `0016B484` under `DefaultSandboxEditorLocation1024`:
+      596 s, hours 12 to 15 and 18 to 20, no combat, one of them 226 units from the free cross
+      `00139FD6` for most of it. The cross's record carries XIBS (Ignored By Sandbox) [documented:
+      `fnvtool` over the record], so this no may be the flag and not the creature; the dogs and mutants above, whose furniture has no XIBS,
+      carry the question.
+
+    **Pending**: a person sandboxing near an empty cross. NVForever
+    keeps a creature off furniture the tree gives it no clip for, and leaves crosses out of a
+    sandbox's choices [design]. If a creature does use furniture, say which, on what, and
+    with which clip: the rule in §9 changes.
