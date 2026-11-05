@@ -4680,6 +4680,28 @@ expect = [
 forbid = [{ re = 'the player died', label = "the player dies" }]
 
 [[scenario]]
+name = "crime-steal-infamy"
+source = "issue #1570: the crime-steal set-up; goods owned by an NPC name its base form, and the seen theft adds 2 infamy with the reputation of that base's faction (docs/spec-notes/reputation.md §3)"
+note = "GSChet is in GoodspringsFaction, whose reputation is RepNVGoodsprings; infamy is read at 17 s, before the theft at 20 s, and at 26 s"
+areas = ["crime", "karma"]
+paths = ["crates/fnv-game/src/functions/reputation.rs", "crates/fnv-game/tests/crime.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOTO = "14:-400:540:560", NVF_PLAY_TEST_SCRIPT = "20:activate:0x00106D34", NVF_PLAY_TEST_CONSOLE = "17:getreputation RepNVGoodsprings 0;17.4:close;26:getreputation RepNVGoodsprings 0;GSChetRef.getinfaction GoodspringsFaction;26.4:close" }
+args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 32
+order = [[
+  { re = 'console: GetReputation >> 0\.00', label = "no infamy before the theft" },
+  { re = 'crime: the player took .* \(0x00106D34\) x1, owned by someone else', label = "the carton is taken" },
+  { re = 'crime: karma -5 for stealing', label = "the theft costs karma" },
+  { re = 'crime: theft against GSChet .*turned on the player: \[GSChetRef 0x00104C79\]', label = "Chet sees the theft and turns" },
+  { re = 'crime: infamy with Goodsprings 0 -> 2$', label = "the seen theft adds 2 infamy" },
+  { re = 'console: GetReputation >> 2\.00', label = "infamy reads 2 after the theft" },
+]]
+expect = [
+  { re = 'console: GetInFaction on GSChetRef >> 1\.00', label = "Chet is in Goodsprings' faction" },
+  { re = 'crime summary: 1 thefts \(1 seen\)', label = "crime summary: one theft, seen" },
+]
+
+[[scenario]]
 name = "karma-fiend"
 source = "owner's playtest list 2 (2026-10-12): killing an evil actor; since #1131 an Evil NPC holding −500 in its own record gives +100, as the original's NorthVegasFiendCF and GoodspringsPowderGangerHM (capture o6_02, docs/spec-notes/crime-karma.md §4.1), and no murder"
 note = "beside Violet's camp (as music-battle); the script test aid kills Violet as the player at 14 s (Game::kill with the player as the killer): shooting her was not repeatable at the run's frame rate (a hunting rifle's shots were dropped, the 10mm pistol does 8 a hit against her DT)"
