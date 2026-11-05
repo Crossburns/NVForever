@@ -132,6 +132,23 @@ impl SkipRefusals {
     }
 }
 
+/// That actor `id` has a character, made at `feet` if it had none; false when none could
+/// be. Every character the residents make is made here: a new body is a new blocked
+/// episode, so what the actor's last one found stuck and refused goes with it (a stuck rule
+/// starts afresh at its next walk). A body made to coast or be carried is walked on later
+/// without passing through here again.
+fn ensure_body(phys: &mut PhysState, unstuck: &mut HashMap<u32, Unstuck>, refusals: &mut SkipRefusals, id: u32, feet: [f32; 3]) -> bool {
+    if phys.npcs.contains_key(&id) {
+        return true;
+    }
+    if !phys.add_npc(id, feet) {
+        return false;
+    }
+    unstuck.remove(&id);
+    refusals.forget(id);
+    true
+}
+
 /// The first place of [`SKIP_LADDER`] that actor `id` at `feet` can be put down at, and its
 /// feet there; else how many were refused for having no navmesh surface, no collision
 /// loaded, nothing to stand on and no room. Changes nothing.
@@ -351,12 +368,8 @@ impl Mover for PhysMover<'_> {
             phys.remove_npc(id);
             return None;
         }
-        if !phys.npcs.contains_key(&id) {
-            if !phys.add_npc(id, walker.feet) {
-                return None;
-            }
-            self.unstuck.insert(id, unstuck(walker.speed));
-            self.refusals.forget(id);
+        if !ensure_body(phys, self.unstuck, self.refusals, id, walker.feet) {
+            return None;
         }
         let feet = phys.npcs[&id].ch.feet;
         let mut f = walker.follower.take()?;
@@ -540,7 +553,7 @@ impl Mover for PhysMover<'_> {
             phys.remove_npc(id);
             return false;
         }
-        if !phys.npcs.contains_key(&id) && !phys.add_npc(id, walker.feet) {
+        if !ensure_body(phys, self.unstuck, self.refusals, id, walker.feet) {
             return false;
         }
         let feet = phys.npcs[&id].ch.feet;
@@ -1781,7 +1794,7 @@ impl Core {
         }
         for (id, by) in travel {
             let carried = self.ai.agents.get(&FormId(id)).filter(|_| !game.extra.get(&FormId(id)).is_some_and(|e| e.dead || e.restrained || e.out_cold())).is_some_and(|a| {
-                in_loaded_space(&a.walker, phys) && phys.ready_at(a.walker.feet) && (phys.npcs.contains_key(&id) || phys.add_npc(id, a.walker.feet))
+                in_loaded_space(&a.walker, phys) && phys.ready_at(a.walker.feet) && ensure_body(phys, &mut self.unstuck, &mut self.skip_refusals, id, a.walker.feet)
             });
             let Some(b) = phys.npcs.get_mut(&id).filter(|_| carried && dt > 0.0) else {
                 self.carries[1] += 1;

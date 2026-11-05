@@ -318,7 +318,7 @@ impl NavGraph {
     /// The navmesh surface under a [`SkipCandidate`] of `leg`: the place with the height
     /// of the triangle under it. `None` when the path says nothing is under it.
     ///
-    /// On the route's own level, in this order [design]. A corner of the path: the
+    /// Looked for from the route, in this order [design]. A corner of the path: the
     /// triangle under it nearest its height. A place between two corners: walking the
     /// surface to it from the corner before it, else from the corner after it (a walk
     /// follows the ground over a rise that the straight height between corners cuts
@@ -326,9 +326,10 @@ impl NavGraph {
     /// or a navmesh switched off since the path was planned, is often what the actor is
     /// stuck at, and the place past it is what recovery is for). Both walks cut off, any
     /// usable triangle under it, the one nearest the path's height there and within
-    /// [`LEVEL_GAP`] of it: a nearest floor, as far as the two ends of a walk leave no
-    /// better guide, and no floor at all rather than one of another level. The leg's
-    /// corridor is not asked: the shortcut pass straightens a path over triangles it does
+    /// [`LEVEL_GAP`] of it: a nearest floor, as the two ends of a walk leave no better
+    /// guide. That limits the distance from the path's straight height and does not say
+    /// the floor is the route's: another level within the limit can be taken, and nothing
+    /// refuses it later. The leg's corridor is not asked: the shortcut pass straightens a path over triangles it does
     /// not list ([`NavGraph::walkable_line`]). Inside a ledge link's span there is nothing
     /// to stand on. No clearance from the outline is asked: the plan gave the path what
     /// room there was, and the body's room is the collision's to say. The actor's own
