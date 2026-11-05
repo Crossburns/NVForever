@@ -16,10 +16,8 @@ are known by name only; no memory layout of the original is used (extender-compa
   ar_Null or 0, as the original does before a placed actor's 3D exists [observed: 5
   frames after PlaceAtMe].
 - **Engine side (`nvforever` nif_mirror.rs):** a reference's root is its actor rig, else
-  the topmost entity drawing it [design]; a model baked into shapes under its cell has
-  no node tree, so its root is one shape and its tree is empty, while a model drawn as a
-  rig of its own (a door, an idle) tells its nodes; actors' skeleton node names come from
-  the rig (their entities carry no `Name`). Each frame the queued changes are applied; a set
+  the topmost entity drawing it; actors' skeleton node names come from the rig (their
+  entities carry no `Name`). Each frame the queued changes are applied; a set
   translation, rotation or scale is held over the animation, frame after frame [observed:
   set-then-read stays exact on an animated bone]; the trees of the watched references are
   told back, depth first, a repeated name shown as `name:0`, `name:1` … [observed:
