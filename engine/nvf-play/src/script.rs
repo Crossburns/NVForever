@@ -670,6 +670,10 @@ impl Runtime {
         let session = self.game.take_session();
         self.game = Game::restore(data, World::new(sim.forms, sim.refs, world.config()), cfg, &s)?;
         self.game.put_session(session);
+        // The engine's seat is not saved, so a load stands the player up
+        // (docs/design/save-load.md §3.4); the saved furniture use goes with it, or
+        // GetSitting and its kin go on reading the seat (#1573).
+        self.game.set_furniture_use(FormId::PLAYER_REF, None);
         // The world's session edits (game settings, leveled lists, base containers changed
         // by script) last for the run, not in the save (`fnv_sim::world::WorldSession`).
         // Empty here as the game's session is: a load while playing starts a new run

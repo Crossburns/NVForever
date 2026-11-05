@@ -6368,6 +6368,32 @@ expect = [
 ]
 
 [[scenario]]
+name = "seated-save-write"
+source = "issue #1573: after loading a save made while seated the player stands and GetSitting reads 0; the first half: sit (Goodsprings bench 0010634A), GetSitting reads 3, save (seated-save-load reads this save, so run them together)"
+areas = ["save", "furniture"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-game/src/functions/furniture.rs"]
+env = { NVFOREVER_HOME = "seated-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "14:activate:0x0010634A", NVF_PLAY_TEST_CONSOLE = "19:player.getsitting;save seated;20:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'console: GetSitting on player >> 3\.00', label = "seated before the save" },
+  { re = 'save: wrote .*seated\.nvfsave', label = "the save is written" },
+]
+
+[[scenario]]
+name = "seated-save-load"
+source = "issue #1573: the second half: --load the save seated-save-write made; the player stands, and GetSitting reads 0"
+areas = ["save", "furniture"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-game/src/functions/furniture.rs"]
+env = { NVFOREVER_HOME = "seated-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "12:player.getsitting;13:close" }
+args = ["--play", "--load", "seated", "--no-voice"]
+run_seconds = 16
+expect = [
+  { re = 'load: restored .*seated\.nvfsave', label = "the save is restored" },
+  { re = 'console: GetSitting on player >> 0\.00', label = "standing after the load" },
+]
+
+[[scenario]]
 name = "save-load-order"
 source = "no-owner queue item 29 (2026-10-21; docs/design/save-load.md §4.1): a save made with one load order loads into another: FormIDs move to their plugin's place now, what came from plugins no longer loaded is dropped and the player told; run after save-write, whose save it loads"
 note = "save-write runs with the ten masters; this run loads its save with three of them, Gun Runners' Arsenal moved before Dead Money (index 05 -> 01, Dead Money 01 -> 02), the add-ons Honest Hearts, Old World Blues, Lonesome Road and the four packs gone. The base game's changes come back as in save-load"
