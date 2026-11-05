@@ -385,10 +385,13 @@ fn a_hit_finished_by_its_on_hit_script_is_the_killing_hit() {
 fn a_hit_finished_by_its_script_effect_is_the_killing_hit() {
     let f = fixture();
     let mut g = game(&f);
-    g.apply_hit_effect(FormId(HIT_REF), FormId(HURTING), Some(FormId::PLAYER_REF));
-    let r = g.hit(FormId(HIT_REF), 1.0, HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 3, critical: false, limb: None });
+    // NPC_REF has no OnHit block, so only the effect can take its Health.
+    g.apply_hit_effect(FormId(NPC_REF), FormId(HURTING), Some(FormId::PLAYER_REF));
+    assert!(fnv_game::functions::actor_value(&mut g, FormId(NPC_REF), HEALTH).unwrap() <= 0.0, "the effect took it");
+    assert!(!g.is_dead(FormId(NPC_REF)), "the hit that follows decides");
+    let r = g.hit(FormId(NPC_REF), 1.0, HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 3, critical: false, limb: None });
     assert!(r.died, "{r:?}");
-    assert_eq!(ask(&mut g, HIT_REF, GET_KILLING_BLOW_LIMB), 3.0);
+    assert_eq!(ask(&mut g, NPC_REF, GET_KILLING_BLOW_LIMB), 3.0);
 }
 
 #[test]
