@@ -1678,6 +1678,11 @@ pub struct GameSnapshot {
     pub said: BTreeSet<(FormId, FormId)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub said_day: BTreeMap<FormId, BTreeMap<FormId, f64>>,
+    /// `said_day` counts hours as GameDaysPassed × 24. Absent in older saves, whose hours
+    /// added GameHour as well: one such number fits many times of day, so it cannot be
+    /// converted and a load drops those holds (Say Once history stays).
+    #[serde(default)]
+    pub said_day_days_clock: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialogue: Option<crate::dialogue::Conversation>,
     pub frame: u64,
@@ -5042,6 +5047,7 @@ impl<'a> Game<'a> {
             speech: self.speech.clone(),
             said: self.said.clone(),
             said_day: self.said_day.clone(),
+            said_day_days_clock: true,
             dialogue: self.dialogue.clone(),
             frame: self.frame,
             time: self.time,
@@ -5116,7 +5122,9 @@ impl<'a> Game<'a> {
         g.align_queued();
         g.speech = s.speech.clone();
         g.said = s.said.clone();
-        g.said_day = s.said_day.clone();
+        if s.said_day_days_clock {
+            g.said_day = s.said_day.clone();
+        }
         g.dialogue = s.dialogue.clone();
         g.frame = s.frame;
         g.time = s.time;

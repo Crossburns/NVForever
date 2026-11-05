@@ -406,8 +406,10 @@ A speaker **can say** a line when:
   to hold across actors: the Yes Man mainframe skipped the greeting 0x001164F1 the Tops
   Yes Man had said [observed 2026-10-31, observer check 31; one case, and the two may
   count as one speaker]. Ours holds a Say Once line back from every actor once any has
-  said it (#1113); Say Once a Day stays per actor. The clock is GameDaysPassed × 24 + GameHour
-  [hypothesis];
+  said it (#1113); Say Once a Day stays per actor. The clock is GameDaysPassed × 24
+  [design: `Game::game_hours`], which moves one per game hour as GameDaysPassed already
+  grows by the fraction of the day (simulation.md §5b); that the timer runs on game time
+  at all is [hypothesis];
 - it is the line's fixed speaker, if the line has one [documented: Category:Dialogue] —
   unless the line has its own GetIsID condition on the speaker, which then decides
   [observed 2026-10-31: the Lucky 38 elevator Victor said 0x00165102, whose fixed

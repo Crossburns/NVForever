@@ -211,11 +211,11 @@ fn is_own_id_condition(c: &crate::cond::Condition) -> bool {
 impl<'a> Game<'a> {
     // ---- which line ---------------------------------------------------------------
 
-    /// The game clock in hours (GameDaysPassed × 24 + GameHour), for Say Once a Day
-    /// [hypothesis: the timer runs on game time].
+    /// The game clock in hours, for Say Once a Day: GameDaysPassed × 24, as GameDaysPassed
+    /// already grows by the fraction of the day [design: simulation.md §5b; hypothesis: the
+    /// timer runs on game time]. Saved in `said_day`: `GameSnapshot::said_day_days_clock`.
     fn game_hours(&self) -> f64 {
-        let global = |name: &str| self.world.forms.global_by_edid(name).and_then(|(id, _)| self.world.global(id).ok()).unwrap_or(0.0) as f64;
-        global(clock::GAME_DAYS_PASSED) * 24.0 + global(clock::GAME_HOUR)
+        self.world.forms.global_by_edid(clock::GAME_DAYS_PASSED).and_then(|(id, _)| self.world.global(id).ok()).unwrap_or(0.0) as f64 * 24.0
     }
 
     fn say_once_a_day_hours(&self) -> f64 {

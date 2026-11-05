@@ -1215,6 +1215,26 @@ expect = [
 ]
 
 [[scenario]]
+name = "c1-clock-globals"
+source = "issue #1579: the two globals the Say Once a Day clock could read, before and after a six-hour wait. A clock-input guard, not a regression test of the fix: this passes before the fix too, and no line is said twice here; crates/fnv-game/tests/dialogue.rs proves the fix"
+note = "GameDaysPassed must move by 6/24 and GameHour by 6, so that GameDaysPassed × 24 moves one per game hour. The 105 Say Once a Day lines of FalloutNV.esm sit behind quest state or far from the test starts"
+areas = ["dialogue", "wait"]
+paths = ["crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/game.rs", "crates/fnv-sim/src/clock.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:getglobalvalue GameDaysPassed;getglobalvalue GameHour;15:close;30:getglobalvalue GameDaysPassed;getglobalvalue GameHour;31:close", NVF_PLAY_TEST_WAIT = "17:open,18:hours=6,19:accept" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--hour", "10", "--no-voice"]
+run_seconds = 35
+expect = [
+  { re = 'console: GetGlobalValue >> ', count = 4, label = "both globals are read twice" },
+]
+order = [[
+  { re = 'console: GetGlobalValue >> 5\.0\d$', label = "GameDaysPassed about 5 before the wait" },
+  { re = 'console: GetGlobalValue >> 10\.\d\d$', label = "GameHour about 10 before the wait" },
+  { text = "wait: hour 6 of 6 passed", label = "the six-hour wait" },
+  { re = 'console: GetGlobalValue >> 5\.2\d$', label = "GameDaysPassed about 5.25 after the wait" },
+  { re = 'console: GetGlobalValue >> 16\.\d\d$', label = "GameHour about 16 after the wait" },
+]]
+
+[[scenario]]
 name = "wait-residents"
 source = "CLAUDE.md: after changes to the Wait and Sleep menu or the people during a wait, the wait with residents"
 areas = ["wait", "residents"]

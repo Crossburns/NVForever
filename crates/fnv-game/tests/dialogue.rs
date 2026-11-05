@@ -264,6 +264,9 @@ fn plugin_bytes() -> Vec<u8> {
         glob(G_GATE, "TestGate", 0.0),
         glob(0x802, "GameHour", 8.0),
         glob(G_DAYS, "GameDaysPassed", 0.0),
+        glob(0x806, "GameYear", 2281.0),
+        glob(0x807, "GameMonth", 9.0),
+        glob(0x808, "GameDay", 18.0),
         glob(G_TICKS, "TestTicks", 0.0),
         glob(G_MENU_TICKS, "TestMenuTicks", 0.0),
     ]
@@ -1383,6 +1386,109 @@ fn say_once_a_day_lines_come_back_after_the_timer() {
     assert!(offered(&g).contains(&T_TOP));
     // Another actor's count is its own.
     assert!(g.said_day[&actor()].contains_key(&FormId(E_DAY)));
+}
+
+/// At the topic list, `hours` game hours after the fixture's 08:00, the actor says the Say
+/// Once a Day line.
+fn daily_line_said_after(f: &Fixture, hours: f64) -> Game<'_> {
+    let mut g = at_topic_list(f);
+    g.world.advance_hours(hours).unwrap();
+    assert!(daily_line_free(&mut g));
+    assert_eq!(pick(&mut g, T_TOP), FormId(E_DAY));
+    listen(&mut g);
+    g
+}
+
+fn daily_line_free(g: &mut Game) -> bool {
+    g.can_say(actor(), Some(FormId::PLAYER_REF), FormId(E_DAY))
+}
+
+fn game_hour(g: &Game) -> f32 {
+    g.world.global(FormId(0x802)).unwrap()
+}
+
+/// Issue #1579: every hour through the clock counts once, whatever the time of day. On a
+/// clock adding GameHour to GameDaysPassed × 24, the line came back at 16:00.
+#[test]
+fn a_daily_line_said_in_the_morning_is_held_twelve_hours_of_the_clock() {
+    let f = fixture();
+    let mut g = daily_line_said_after(&f, 2.0);
+    assert!((game_hour(&g) - 10.0).abs() < 0.01);
+    g.world.advance_hours(6.0).unwrap();
+    assert!((game_hour(&g) - 16.0).abs() < 0.01);
+    assert!(!daily_line_free(&mut g), "six hours on");
+    g.world.advance_hours(5.99).unwrap();
+    assert!(!daily_line_free(&mut g), "just under twelve hours on");
+    g.world.advance_hours(0.02).unwrap();
+    assert!((game_hour(&g) - 22.01).abs() < 0.01);
+    assert!(daily_line_free(&mut g), "just over twelve hours on");
+}
+
+/// Issue #1579: midnight takes nothing off the clock. On a clock adding GameHour, the line
+/// said at 23:00 was held until 17:00.
+#[test]
+fn a_daily_line_said_before_midnight_is_held_twelve_hours_of_the_clock() {
+    let f = fixture();
+    let mut g = daily_line_said_after(&f, 15.0);
+    assert!((game_hour(&g) - 23.0).abs() < 0.01);
+    g.world.advance_hours(2.0).unwrap();
+    assert!((game_hour(&g) - 1.0).abs() < 0.01);
+    assert!(!daily_line_free(&mut g), "two hours on, past midnight");
+    g.world.advance_hours(9.99).unwrap();
+    assert!(!daily_line_free(&mut g), "just under twelve hours on");
+    g.world.advance_hours(0.02).unwrap();
+    assert!((game_hour(&g) - 11.01).abs() < 0.01);
+    assert!(daily_line_free(&mut g), "just over twelve hours on");
+    // The topic list says the same.
+    pick(&mut g, T_TOP2);
+    listen(&mut g);
+    assert!(offered(&g).contains(&T_TOP));
+}
+
+#[test]
+fn a_save_keeps_a_daily_line_held_on_the_same_clock() {
+    let f = fixture();
+    let mut g = daily_line_said_after(&f, 2.0);
+    g.world.advance_hours(6.0).unwrap();
+    let snap = g.snapshot();
+    assert!(snap.said_day_days_clock);
+    let back: GameSnapshot = serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+    assert_eq!(back, snap);
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert_eq!(h.said_day, g.said_day);
+    assert!(!daily_line_free(&mut h));
+    h.world.advance_hours(5.99).unwrap();
+    assert!(!daily_line_free(&mut h), "just under twelve hours from when it was said");
+    h.world.advance_hours(0.02).unwrap();
+    assert!(daily_line_free(&mut h));
+}
+
+/// A save from before #1579 holds hours of the old clock, which cannot be converted: its
+/// Say Once a Day holds end at the load, once, and its Say Once history stays.
+#[test]
+fn a_save_of_the_old_clock_drops_daily_holds_and_keeps_say_once() {
+    let f = fixture();
+    let g = daily_line_said_after(&f, 2.0);
+    let text = serde_json::to_string(&g.snapshot()).unwrap();
+    let older = text.replacen("\"said_day_days_clock\":true,", "", 1);
+    assert_ne!(older, text);
+    let back: GameSnapshot = serde_json::from_str(&older).unwrap();
+    assert!(!back.said_day_days_clock && !back.said_day.is_empty());
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert!(h.said_day.is_empty());
+    assert!(!h.said.is_empty());
+    assert_eq!(h.said, g.said);
+    assert!(daily_line_free(&mut h));
+    // Said again after the load, it is held on the new clock, and a save says so.
+    pick(&mut h, T_TOP2);
+    listen(&mut h);
+    assert_eq!(pick(&mut h, T_TOP), FormId(E_DAY));
+    listen(&mut h);
+    assert!(!daily_line_free(&mut h));
+    let next = h.snapshot();
+    assert!(next.said_day_days_clock && !next.said_day.is_empty());
 }
 
 #[test]
