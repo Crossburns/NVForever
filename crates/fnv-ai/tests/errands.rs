@@ -111,6 +111,7 @@ const P_FIND_NONE: u32 = 0x829;
 const P_HUNT: u32 = 0x82A;
 const P_BUY: u32 = 0x82B;
 const P_USE_NAMED: u32 = 0x82C;
+const P_FIND_CHAIR: u32 = 0x82D;
 // Bases.
 const N_LEADER: u32 = 0x840;
 const N_GUEST: u32 = 0x841;
@@ -137,6 +138,8 @@ const MARK_HOME: u32 = 0x873;
 const R_CHAIR: u32 = 0x874;
 const R_CHAIR_FAR: u32 = 0x8E0;
 const R_SITTER_NAMED: u32 = 0x8E1;
+const R_CHAIR_FINDER: u32 = 0x8E3;
+const N_CHAIR_FINDER: u32 = 0x8E4;
 const CHAIR_2: u32 = 0x8E2;
 const R_BOTTLE: u32 = 0x875;
 const R_OWNED: u32 = 0x876;
@@ -181,6 +184,8 @@ fn plugin_bytes() -> Vec<u8> {
         // Sit on furniture near the chair.
         pack(P_USE, "UseChair", 0, USE_ITEM_AT, 0, Some((0, R_CHAIR, 0)), None, Some((2, 11, 0)), None),
         pack(P_USE_NAMED, "UseThatChair", 0, USE_ITEM_AT, 0, Some((0, R_CHAIR, 0)), None, Some((0, R_CHAIR, 0)), None),
+        // Find one piece of furniture within 1500 of where it stands.
+        pack(P_FIND_CHAIR, "FindAChair", 0, FIND, 0, Some((2, 0, 1500)), None, Some((2, 11, 1)), None),
         // Wait at the wait marker, hidden, for the guest to come within 300 of the trap.
         pack(P_AMBUSH, "AmbushGuest", 0, AMBUSH, type_flags::HIDE_WHILE_AMBUSHING, Some((0, MARK_WAIT, 64)), Some((0, MARK_TRAP, 300)), Some((0, R_GUEST, 0)), None),
         // Keep 600 from the guest; run home from it; flee nothing.
@@ -205,6 +210,7 @@ fn plugin_bytes() -> Vec<u8> {
         npc(N_THIEF, "Thief", &[P_STEAL]),
         npc(N_SITTER, "Sitter", &[P_USE]),
         npc(N_SITTER_NAMED, "NamedSitter", &[P_USE_NAMED]),
+        npc(N_CHAIR_FINDER, "ChairFinder", &[P_FIND_CHAIR]),
         npc(N_AMBUSHER, "Ambusher", &[P_AMBUSH]),
         npc(N_COWARD, "Coward", &[P_FLEE]),
         npc(N_HOMEBODY, "Homebody", &[P_FLEE_HOME]),
@@ -258,6 +264,7 @@ fn plugin_bytes() -> Vec<u8> {
         placed(b"ACHR", R_THIEF, "ThiefRef", N_THIEF, [300.0, 300.0, 0.0], None),
         placed(b"ACHR", R_SITTER, "SitterRef", N_SITTER, [600.0, 1000.0, 0.0], None),
         placed(b"ACHR", R_SITTER_NAMED, "NamedSitterRef", N_SITTER_NAMED, [600.0, 1040.0, 0.0], None),
+        placed(b"ACHR", R_CHAIR_FINDER, "ChairFinderRef", N_CHAIR_FINDER, [600.0, 960.0, 0.0], None),
         placed(b"ACHR", R_AMBUSHER, "AmbusherRef", N_AMBUSHER, [1500.0, 1200.0, 0.0], None),
         placed(b"ACHR", R_COWARD, "CowardRef", N_COWARD, [450.0, 150.0, 0.0], None),
         placed(b"ACHR", R_HOMEBODY, "HomebodyRef", N_HOMEBODY, [450.0, 250.0, 0.0], None),
@@ -638,4 +645,49 @@ fn use_item_at_a_named_chair_it_has_no_clips_for_uses_nothing() {
     let mut s = sim(&f, &[R_SITTER_NAMED]);
     s.run(15.0);
     assert_eq!(s.ai.agents[&actor].using, Some(FormId(R_CHAIR)));
+}
+
+/// Find: a chair it has no clips for is passed over before a way is planned, and does not
+/// use up the count: the one it is asked for is the farther chair.
+#[test]
+fn find_looks_past_the_furniture_it_has_no_clips_for_and_does_not_count_it() {
+    let f = fixture();
+    let actor = FormId(R_CHAIR_FINDER);
+    let found_things = |s: &Sim| -> Vec<(u32, Act)> {
+        s.events(R_CHAIR_FINDER).iter().filter_map(|e| match e {
+            AiEvent::Found { object, act, .. } => Some((object.0, *act)),
+            _ => None,
+        }).collect()
+    };
+    let mut s = sim(&f, &[R_CHAIR_FINDER]);
+    s.ai.set_furniture_facts(Arc::new(OnlyTheFarChair));
+    s.run(15.0);
+    assert!(!s.events(R_CHAIR_FINDER).iter().any(|e| matches!(e, AiEvent::FindGoes { object, .. } if object.0 == R_CHAIR)));
+    assert_eq!(found_things(&s), [(R_CHAIR_FAR, Act::Uses)]);
+    assert_eq!(s.ai.agents[&actor].using, Some(FormId(R_CHAIR_FAR)));
+    assert!(matches!(s.ai.agents[&actor].errand, Some(Errand::Find { found: 1, .. })));
+    assert!(s.goal_met(R_CHAIR_FINDER));
+    // Nothing fits: nothing found, nothing kept, the count untouched.
+    let mut s = sim(&f, &[R_CHAIR_FINDER]);
+    s.ai.set_furniture_facts(Arc::new(NoChair));
+    s.run(15.0);
+    assert!(found_things(&s).is_empty());
+    assert_eq!(s.ai.agents[&actor].using, None);
+    assert_eq!(s.ai.furniture_of(actor), None);
+    assert!(s.events(R_CHAIR_FINDER).iter().any(|e| matches!(e, AiEvent::NothingFound { found: 0, .. })));
+    // Without facts, the nearest, as before.
+    let mut s = sim(&f, &[R_CHAIR_FINDER]);
+    s.run(15.0);
+    assert_eq!(found_things(&s), [(R_CHAIR, Act::Uses)]);
+}
+
+struct NoChair;
+
+impl FurnitureFacts for NoChair {
+    fn marker_ids(&self, _: FormId) -> Option<&[u8]> {
+        None
+    }
+    fn fit(&self, _: ActorKind, _: &str, _: FormId) -> Fit {
+        Fit::Unsupported
+    }
 }

@@ -659,8 +659,9 @@ pub fn drive_actors(
                         }
                     }
                     if usage.leave_wanted && usage.leave() {
-                        // An exit clip that does not fit is not played: the actor is off at
-                        // once, back at the entry point, by the way of a seat with no exit.
+                        // An exit clip that does not fit is not played: the actor is off on
+                        // the next update, at the entry point, by the way of a seat with no
+                        // exit clip.
                         let clip = f.get_off(&mut ctx, &on.plan, on.who, &|func, p| game_value(&script, func, p)).and_then(|(path, c)| match misfit(rig, &path, &c) {
                             Some(why) => {
                                 warn!("furniture: {:08X} gets off {:08X} without a clip: {why}", on.who.reference, on.plan.furniture);

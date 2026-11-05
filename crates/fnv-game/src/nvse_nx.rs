@@ -241,15 +241,13 @@ pub fn skeleton_model(g: &Game, f: FormId) -> String {
     g.data.record_field(b, "MODL", "").and_then(serde_json::Value::as_str).unwrap_or_default().to_string()
 }
 
-/// Whether the actor of a reference is a creature: `Some(false)` when its base is an
-/// `NPC_`, whatever its template; else by the record its Model/Animation comes from (a
-/// creature's template, a leveled list's pick). `None`: it comes to no actor record.
+/// Whether the actor of a reference is a creature, by its own record: its base, or the
+/// pick of a leveled base. Templates are not followed: a person on a creature's
+/// Model/Animation stays a person, and a creature on a person's stays a creature; the
+/// skeleton they have is [`skeleton_model`]'s. `None`: it comes to no actor record.
 pub fn is_creature(g: &Game, f: FormId) -> Option<bool> {
     let base = crate::functions::base_of(g, f).unwrap_or(f);
-    if g.data.actors.get(&base).is_some_and(|d| &d.sig == b"NPC_") {
-        return Some(false);
-    }
-    g.template_source(base, f, |d| d.template_model).map(|(_, d)| &d.sig == b"CREA")
+    g.template_source(base, f, |_| false).map(|(_, d)| &d.sig == b"CREA")
 }
 
 fn skeleton_of(g: &Game, actor: Option<FormId>) -> String {

@@ -455,8 +455,16 @@ says how the original decides, only that a watch of it found no creature on furn
   was probably free [hypothesis]. Weaker: three rats by an outhouse, partly in combat, and
   Neil, never under a sandbox package. People in the loaded area did read as on furniture,
   so the reads fire. The Nipton mongrels have not been watched yet.
+- [observed: headless simulation only, 2026-11-05] `fnvtool ai run` over 129 placed creatures
+  of WastelandNV for 24 game hours: on main 24 creatures with 232 furniture events; with this
+  rule none, 31 creatures with pieces excluded, none unknown. One worldspace, one day, 129
+  references, an authored game with no quest started, and nothing drawn: it shows what the
+  rule does here, not what the original does.
 
-Two rules, applied before a choice or a reservation (`fnv_ai::furniture`):
+Two rules, applied before a choice or a reservation (`fnv_ai::furniture`). A search looks
+past what does not fit, so a near piece does not hide a farther one and a Find does not count
+it. Named furniture that does not fit is nothing to use: the actor goes to the package's place
+and stands, or a Find or a Use Item At ends with nothing used, and its goal is met.
 
 | Rule | Applies to | Not to |
 |---|---|---|
@@ -468,8 +476,9 @@ flags alone do not tell a cross from a chair. No species list, FormID or editor 
 into it.
 
 **Compatibility** (`fnv_actor::furniture_facts`) has three answers. What the actor is comes
-from its records: a person has an `NPC_` base, whatever its template; a creature has a
-`CREA`, or a template or leveled list that comes to one (`fnv_game::nvse_nx::is_creature`).
+from its own record, a leveled base's pick if its base is a list: `NPC_` is a person and `CREA`
+a creature, whatever template its model comes from (`fnv_game::nvse_nx::is_creature`). Its
+skeleton is the one that template gives.
 
 | | Skeleton found, tree gives a clip from its folder | Skeleton found, no such clip | Skeleton not found, or the actor or the model not read |
 |---|---|---|---|
@@ -478,7 +487,13 @@ from its records: a person has an `NPC_` base, whatever its template; a creature
 
 - A clip the tree can give is one it reaches for a marker the base enables, in the phase of
   getting on, asking only the conditions about the piece and the phase
-  (`UseIdles::clips_for_getting_on`).
+  (`UseIdles::clips_for_getting_on`). This over-approximates: it counts every sibling where
+  playback takes the first that passes, and every marker the base enables where playback
+  takes the nearest. So a creature could come out Supported and still be given a human clip;
+  the guard below then refuses that clip, which is a safe failure. No shipped creature is in
+  this case today, as no creature's clip is in the tree.
+- A skeleton counts as found when its file is in the VFS: it is not read, so a corrupt skeleton
+  would read as Unsupported for a creature. Not a case seen.
 - All of the tree's furniture clips are under `characters\_male\idleanims` [observed: the
   base game and its DLCs, 2026-11-04], so today every creature whose skeleton is found comes
   out Unsupported and every person on `characters\_male` Supported.
@@ -508,11 +523,20 @@ dog's skeleton does not have [observed: both files decoded].
   bound. Log: `furniture: <actor> cannot use <furniture>: clip … does not fit skeleton …`.
   What happens to the AI's state after that is not decided here (issue #1506). `--npc-sit`
   goes through this.
-- A getting-off clip is checked when it is chosen. One that does not fit is not played: the
-  actor is off at once, back at the entry point and the furniture free, the way of a seat
+- A getting-off clip is checked when it is chosen. One that does not fit is not played: on the
+  next update the actor is off, at the entry point and the furniture free, the way of a seat
   with no exit clip. Log: `furniture: <actor> gets off <furniture> without a clip: …`. It
   may look abrupt; it is not refused, as nothing else would release the piece.
 - The player's clips are not checked.
+
+**A risk this rule takes.** A script waiting for `GetSitting` or `GetSleeping` on a creature
+could stall if that creature's furniture is refused [hypothesis]. No shipped case was found:
+of the 27 compiled scripts of the base game and its DLCs that call either function, none is
+on a creature's record, and those that name a reference name the player or a placed NPC
+[observed: `fnvtool script decompile` and the CREA records, 2026-11-05]. Two are not settled
+that way: `Vault112ResidentScript`, which asks of itself and is on no NPC or creature record, and `NPCVendorFollowPlayerTriggerScript`,
+which asks of a linked actor held in a variable. Conditions on dialogue, packages and quest
+stages were not searched.
 
 **Reporting.** The AI's event `furniture_eligibility` is written once per actor and piece
 when a piece was excluded, and once per actor, with reason `no-evidence`, when an answer was

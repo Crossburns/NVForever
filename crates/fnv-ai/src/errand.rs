@@ -449,7 +449,13 @@ impl Ai {
         if found >= f.count {
             return;
         }
-        let objects: Vec<(f32, FormId)> = self.objects(game, actor, f.wanted, &f.area, centre, f.kill, f.steal, f.buy || self.cfg.find_buying, feet).into_iter().filter(|(_, r)| !given_up.contains(r)).collect();
+        let objects: Vec<(f32, FormId)> = self.objects(game, actor, f.wanted, &f.area, centre, f.kill, f.steal, f.buy || self.cfg.find_buying, feet)
+            .into_iter()
+            .filter(|(_, r)| !given_up.contains(r))
+            // Furniture it has no clips for is not what it looks for: passed over before
+            // a way is planned, it counts for nothing (`crate::furniture`).
+            .filter(|(_, r)| self.furniture.fits_assigned(game, actor, *r))
+            .collect();
         let mut given_up = given_up;
         for (_, object) in objects.into_iter().take(TRIES) {
             let Some(to) = goal::place_of_ref(game, object) else { continue };
@@ -539,7 +545,7 @@ impl Ai {
             let _ = game.activate(actor, object, ActMode::Default);
             game.extra.entry(actor).or_default().used_item = Some(base);
             Act::Harvests
-        } else if &sig == b"FURN" && self.furniture.fits_assigned(game, actor, object) {
+        } else if &sig == b"FURN" {
             self.set_using(game, actor, Some(object));
             Act::Uses
         } else {

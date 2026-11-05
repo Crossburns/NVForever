@@ -231,6 +231,8 @@ const R_EATER_CHAIRS: u32 = 0x8EB;
 const R_EATER_CROSS: u32 = 0x8EC;
 const R_HOUND_MAN: u32 = 0x8ED;
 const R_HOUND_COPY: u32 = 0x8EE;
+const R_LEVELED_MAN: u32 = 0x8EF;
+const R_MAN_HOUND: u32 = 0x8A2;
 const CHAIR_2: u32 = 0x8C0;
 const CROSS: u32 = 0x8C1;
 const P_SB_D: u32 = 0x8C2;
@@ -243,6 +245,10 @@ const N_HOUND_LINKED: u32 = 0x8C8;
 const N_EATER: u32 = 0x8C9;
 const N_HOUND_MAN: u32 = 0x8CA;
 const N_HOUND_COPY: u32 = 0x8CB;
+const N_LEVELED_MAN: u32 = 0x8CC;
+const N_MODELLED: u32 = 0x8CD;
+const N_MAN_HOUND: u32 = 0x8CE;
+const PERSON_MODEL: &str = r"Characters\_Male\Skeleton.nif";
 const HOUND_MODEL: &str = r"Creatures\Hound\Skeleton.nif";
 
 const TRAVEL: u8 = 6;
@@ -350,8 +356,14 @@ fn plugin_bytes() -> Vec<u8> {
         let acbs = [&0u32.to_le_bytes()[..], &[0; 18], &0x40u16.to_le_bytes()].concat();
         record(sig, id, &[sub(b"EDID", z(edid)), sub(b"ACBS", acbs), sub(b"TPLT", template.to_le_bytes().to_vec()), sub(b"MODL", z("marker_placeholder.nif")), sub(b"PKID", P_SB_D.to_le_bytes().to_vec())])
     };
-    let npcs = [npcs, by_template(b"NPC_", N_HOUND_MAN, "HoundMan", N_HOUND)].concat();
-    let creatures = [hound(N_HOUND, "Hound", P_SB_D), hound(N_HOUND_LINKED, "LinkedHound", P_TO_LINKED), by_template(b"CREA", N_HOUND_COPY, "HoundCopy", N_HOUND)].concat();
+    let npcs = [npcs, by_template(b"NPC_", N_HOUND_MAN, "HoundMan", N_HOUND), record(b"NPC_", N_MODELLED, &[sub(b"EDID", z("Modelled")), sub(b"MODL", z(PERSON_MODEL))])].concat();
+    // A leveled list that picks the person on a creature's model.
+    let lists = record(
+        b"LVLN",
+        N_LEVELED_MAN,
+        &[sub(b"EDID", z("LeveledMan")), sub(b"LVLD", vec![0]), sub(b"LVLF", vec![0]), sub(b"LVLO", [1i16.to_le_bytes().to_vec(), vec![0; 2], N_HOUND_MAN.to_le_bytes().to_vec(), 1i16.to_le_bytes().to_vec(), vec![0; 2]].concat())],
+    );
+    let creatures = [hound(N_HOUND, "Hound", P_SB_D), hound(N_HOUND_LINKED, "LinkedHound", P_TO_LINKED), by_template(b"CREA", N_HOUND_COPY, "HoundCopy", N_HOUND), by_template(b"CREA", N_MAN_HOUND, "CreatureOnAPersonsModel", N_MODELLED)].concat();
     // Furniture: a chair (marker flags bit 30) and a bed (bit 31); an idle marker with
     // two idles, ten seconds apart.
     let furn = [
@@ -431,6 +443,8 @@ fn plugin_bytes() -> Vec<u8> {
         placed(b"ACHR", R_PERSON_D, "PersonInDRef", N_PERSON_D, [20520.0, 20480.0, 0.0], None),
         placed(b"ACHR", R_HOUND_MAN, "HoundManRef", N_HOUND_MAN, [20540.0, 20520.0, 0.0], None),
         placed(b"ACRE", R_HOUND_COPY, "HoundCopyRef", N_HOUND_COPY, [20460.0, 20520.0, 0.0], None),
+        placed(b"ACHR", R_LEVELED_MAN, "LeveledManRef", N_LEVELED_MAN, [20440.0, 20460.0, 0.0], None),
+        placed(b"ACRE", R_MAN_HOUND, "ManHoundRef", N_MAN_HOUND, [20560.0, 20460.0, 0.0], None),
         placed(b"ACHR", R_VICTIM, "VictimRef", N_VICTIM, [20900.0, 20100.0, 0.0], Some(CROSS_LINK)),
         placed(b"ACRE", R_HOUND_LINKED, "LinkedHoundRef", N_HOUND_LINKED, [20900.0, 20150.0, 0.0], Some(CROSS_LINK)),
         placed(b"ACHR", R_EATER_CHAIRS, "ChairEaterRef", N_EATER, [20700.0, 20560.0, 0.0], None),
@@ -447,6 +461,7 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"IDLM", &idlm),
         top(b"NPC_", &npcs),
         top(b"CREA", &creatures),
+        top(b"LVLN", &lists),
         top(b"PACK", &packs),
         top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cells))),
     ]
@@ -3303,4 +3318,37 @@ fn people_are_never_ruled_out_by_what_a_folder_lacks() {
         assert!(told.iter().all(|e| e.2 != "no-clips-for-skeleton"), "{told:?}");
         assert_eq!(told.iter().filter(|e| e.1 == "unknown").count(), 1, "{told:?}");
     }
+}
+
+/// What an actor is comes from its own record, a leveled base's pick included; only its
+/// skeleton comes from the template. Both ways round: the leveled person on a creature's
+/// model must not be ruled out as a creature, the creature on a person's model must not
+/// pass as a person.
+#[test]
+fn what_an_actor_is_comes_from_its_own_record_and_its_skeleton_from_its_template() {
+    use fnv_game::nvse_nx::{is_creature, skeleton_model};
+    let f = fixture();
+    let s = sim(&f, &[]);
+    for (actor, creature, skeleton) in [
+        (R_LEVELED_MAN, false, HOUND_MODEL),
+        (R_HOUND_MAN, false, HOUND_MODEL),
+        (R_MAN_HOUND, true, PERSON_MODEL),
+        (R_HOUND_COPY, true, HOUND_MODEL),
+        (R_HOUND, true, HOUND_MODEL),
+    ] {
+        assert_eq!(is_creature(&s.game, FormId(actor)), Some(creature), "{actor:X}");
+        assert_eq!(skeleton_model(&s.game, FormId(actor)), skeleton, "{actor:X}");
+    }
+    // And by the rule: the person gets the bed, the creature gets nothing.
+    let mut s = sim(&f, &[R_LEVELED_MAN, R_MAN_HOUND]);
+    s.ai.set_furniture_facts(facts(|kind, skeleton, _| match kind {
+        ActorKind::Person if skeleton == HOUND_MODEL => Fit::Unknown,
+        ActorKind::Creature if skeleton == PERSON_MODEL => Fit::Unsupported,
+        _ => panic!("{kind:?} {skeleton}"),
+    }));
+    set_clock(&mut s, 2.0, 5.0);
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_LEVELED_MAN)].using, Some(FormId(BED_D)));
+    assert_eq!(s.ai.agents[&FormId(R_MAN_HOUND)].using, None);
+    assert_eq!(s.ai.furniture_of(FormId(R_MAN_HOUND)), None);
 }

@@ -16,9 +16,9 @@ pub enum Fit {
     Unknown,
 }
 
-/// What the actor asking is. `Person`: its base is an `NPC_`, whatever its template.
-/// `Creature`: a `CREA`, or a template or leveled list that comes to one. `Unresolved`:
-/// neither could be found.
+/// What the actor asking is, by its own record (its base, or a leveled base's pick),
+/// whatever template its model comes from. `Person`: an `NPC_`. `Creature`: a `CREA`.
+/// `Unresolved`: neither could be found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActorKind {
     Person,
