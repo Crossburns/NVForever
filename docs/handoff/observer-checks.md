@@ -1247,10 +1247,13 @@ The numbers above stay put so links to them hold; each item here gives its own p
       loaded area did read as on furniture, so the reads fire.
     - Three rats near `Outhouse0000`: 355 s, partly in combat, so weak.
     - Neil: 533 s, never under a sandbox package, so weak.
+    - The Nipton mongrels `0016B483` and `0016B484` under `DefaultSandboxEditorLocation1024`:
+      596 s, hours 12 to 15 and 18 to 20, no combat, one of them 226 units from the free cross
+      `00139FD6` for most of it. The cross carries XIBS (Ignored By Sandbox), so this no may be
+      the flag and not the creature; the dogs and mutants above, whose furniture has no XIBS,
+      carry the question.
 
-    **Pending**: the Nipton mongrels (`0016B483`, `0016B484`,
-    `DefaultSandboxEditorLocation1024`, a free cross `00139FD6` about 900 units away), not
-    watched yet: the session crashes; and a person sandboxing near an empty cross. NVForever
+    **Pending**: a person sandboxing near an empty cross. NVForever
     keeps a creature off furniture the tree gives it no clip for, and leaves crosses out of a
     sandbox's choices [design]. If a creature does use furniture, say which, on what, and
     with which clip: the rule in §9 changes.

@@ -448,14 +448,17 @@ mongrel climbed a Legion cross, with a human clip bound to its skeleton [observe
 game's log, issue #1522]. What follows is NVForever's policy, an interim one. Nothing here
 says how the original decides, only that a watch of it found no creature on furniture:
 
-- [observed, 2026-11-04, the original, minutes of watching and not days; item 85 of
+- [observed, 2026-11-04 and 05, the original, minutes of watching and not days; item 85 of
   docs/handoff/observer-checks.md] no creature read as on furniture: four super mutants
-  among `SuperMutantBed` and `FloorSitMarker` for 534 s at hours 12 and 23; Colmillo and
+  among `SuperMutantBed` and `FloorSitMarker` for 534 s at hours 12 and 23 (one of them never
+  under a sandbox package while sampled); Colmillo and
   GibsonDog01 under `Sandbox256` for 358 s, 98 to 168 units from `OldLadyGibsonChair`, which
   was probably free [hypothesis]. Weaker: three rats by an outhouse, partly in combat, and
   Neil, never under a sandbox package. People in the loaded area did read as on furniture,
-  so the reads fire. The Nipton mongrels have not been watched yet.
-- [observed: headless simulation only, 2026-11-05] `fnvtool ai run` over 129 placed creatures
+  so the reads fire. The Nipton mongrels, 596 s by a free cross carrying XIBS: not on it either,
+  which may be the flag.
+- [observed: headless simulation only, 2026-11-05, at the last code commit of this rule]
+  `fnvtool ai run` over 129 placed creatures
   of WastelandNV for 24 game hours: on main 24 creatures with 232 furniture events; with this
   rule none, 31 creatures with pieces excluded, none unknown. One worldspace, one day, 129
   references, an authored game with no quest started, and nothing drawn: it shows what the
@@ -490,7 +493,9 @@ skeleton is the one that template gives.
   (`UseIdles::clips_for_getting_on`). This over-approximates: it counts every sibling where
   playback takes the first that passes, and every marker the base enables where playback
   takes the nearest. So a creature could come out Supported and still be given a human clip;
-  the guard below then refuses that clip, which is a safe failure. No shipped creature is in
+  the guard below then refuses a clip whose body tracks have no node on the skeleton (matching
+  names pass), and a refusal does not repair the AI's state: a safe failure, not correct
+  behaviour. No shipped creature is in
   this case today, as no creature's clip is in the tree.
 - A skeleton counts as found when its file is in the VFS: it is not read, so a corrupt skeleton
   would read as Unsupported for a creature. Not a case seen.
