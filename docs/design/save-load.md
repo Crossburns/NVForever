@@ -286,16 +286,22 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   The body is
   `nvf.save.body/1` = game snapshot + engine snapshot.
 - **Loading**: `nvforever --load <name|path>` reads the header first (its worldspace,
-  cell, position, heading, pitch, hour and weather start the world there; the weather is
+  cell, position, heading, pitch, hour, day and weather start the world there; the weather is
   kept while the weather system lists it there, not pinned as `--weather` pins it,
   spec-notes/world.md §6), then the body
   once the load order is known (remapped if it differs, §4.1); the script runtime restores the
   game and the simulation as it is made, before its first frame, and sends `RefChanged`
   for every reference the save changed so the drawn world follows; the engine part is put
   back next. The game's clock stays the save's: the residents' start clock goes only into
-  a new game, so `--day` does nothing with `--load` [design: `residents::Core::prepare`;
-  smoke `save-days-write`, `save-days-load`]. Loading while playing (console `load`, F9, the pause and main menus) starts
-  NVForever again with the same arguments and `--load` (those the save decides left out),
+  a new game, so `--day` never changes a loaded game's GameDaysPassed [design:
+  `residents::Core::prepare`; smoke `save-days-write`, `save-days-load`]. The sky starts on
+  the header's `game_days_passed`, over `--day`, so its weather rolls see no hours pass at
+  the load. A save made before the header held the day leaves the sky on `--day` or the
+  plugins' day; it jumps to the game's day about a second into play, up to 24 volatility
+  rolls at once, which can replace the weather kept from the save [design:
+  `SkyState::follow_climate`]. Under `--time-scale` or `--still-sky` the sky of such a save
+  stays on that day for the run. Loading while playing (console `load`, F9, the pause and
+  main menus) starts NVForever again with the same arguments and `--load` (those the save decides left out),
   so a save always lands in a world built fresh from the plugins and nothing of the run
   before carries over.
 - **The change of run is hidden** (`engine/nvforever/src/handoff.rs`) [design, owner

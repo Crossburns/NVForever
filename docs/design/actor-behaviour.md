@@ -359,7 +359,7 @@ Step 4c, first part (2026-10-10):
   in a 50-second run); an hour set with the `[` `]` keys becomes the game's.
   `--still-sky` keeps the old behaviour; `--time-scale` keeps the sky's own clock.
   With the residents running, GameDaysPassed starts at `--day` (the plugins' value
-  without it) in a new game; a loaded save keeps the hour and day it has
+  without it), in whole days, in a new game; a loaded save keeps the hour and day it has
   (`residents::Core::prepare`) [design].
 
 **Furniture** (2026-10-10, with `furniture.rs` from main; `residents::choose_seat`): an

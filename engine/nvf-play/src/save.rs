@@ -762,6 +762,7 @@ fn header(world: &World, kind: SaveKind, game: &fnv_game::game::GameSnapshot, en
     h.play_seconds = game.time;
     if let Ok(c) = sim.world.calendar() {
         (h.game_year, h.game_month, h.game_day, h.game_hour) = (c.year as u32, c.month as u32, c.day as u32, c.hour);
+        h.game_days_passed = Some(c.days_passed);
     }
     h.player_name = game.player.name.clone().unwrap_or_else(|| "Courier".into());
     if let Some(rt) = world.resource::<ScriptState>().rt.as_ref() {

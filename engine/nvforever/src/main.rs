@@ -272,8 +272,9 @@ struct Args {
     /// Generated terrain: mesh vertex step in landscape grid vertices (1, 2, 4, 8, 16 or 32).
     #[arg(long, default_value_t = 2)]
     lodgen_step: usize,
-    /// Game days passed at the start of a new game (default: the GameDaysPassed global);
-    /// a loaded save keeps its own.
+    /// Game days passed at the start of a new game, whole days (default: the GameDaysPassed
+    /// global). A loaded save keeps its own game day; only the sky of a save made before
+    /// saves held the day starts on this, until it follows the game.
     #[arg(long)]
     day: Option<f32>,
     /// Do not apply the image-space grade (the worldspace's image space and the weather's
@@ -552,8 +553,8 @@ struct Args {
     new_game: bool,
     /// With --play: load a save (a name in NVForever's saves folder, or a path to a
     /// .nvfsave): start at its place and put its state back (nvf_play::save,
-    /// docs/design/save-load.md); --cell, --pos, --heading, --pitch, --hour, --weather and
-    /// --world are taken from the save.
+    /// docs/design/save-load.md); --cell, --pos, --heading, --pitch, --hour, --day, --weather
+    /// and --world are taken from the save.
     #[arg(long, requires = "play", conflicts_with = "new_game")]
     load: Option<String>,
     /// With --play: open on the main menu (nvf_play::main_menu): Continue, New Game, Load
@@ -1723,6 +1724,7 @@ fn start_from_save(name: &str, opened: &world::OpenedPlugins, args: &mut Args) -
     args.heading = pl.heading_deg;
     args.pitch = pl.pitch_deg;
     args.hour = header.game_hour;
+    args.day = header.game_days_passed.or(args.day);
     if header.weather.is_some() && args.weather.is_none() {
         args.start_weather = header.weather.clone();
     }

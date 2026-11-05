@@ -2008,13 +2008,16 @@ impl Core {
         }
         self.prepared = true;
         game.cfg.package_interval = Some(PACKAGE_INTERVAL);
-        if restored {
-            return;
-        }
-        for (edid, v) in [(clock::GAME_HOUR, self.clock.hour.rem_euclid(24.0)), (clock::GAME_DAYS_PASSED, self.clock.days_passed)] {
-            if let Err(e) = set_global(game, edid, v) {
-                warn!("ai: {e}");
+        if !restored {
+            for (edid, v) in [(clock::GAME_HOUR, self.clock.hour.rem_euclid(24.0)), (clock::GAME_DAYS_PASSED, self.clock.days_passed)] {
+                if let Err(e) = set_global(game, edid, v) {
+                    warn!("ai: {e}");
+                }
             }
+        }
+        if let Ok(c) = game.world.calendar() {
+            let whose = if restored { "the save's" } else { "the start clock's" };
+            info!("ai: the game's clock is {whose}: GameHour {:.3}, GameDaysPassed {:.3}", c.hour, c.days_passed);
         }
     }
 
