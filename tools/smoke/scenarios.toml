@@ -6758,6 +6758,24 @@ expect = [
 order = [["pipboy repair: open", "pipboy repair: stays open", "pipboy repair: closed"]]
 
 [[scenario]]
+name = "pipboy-repair-full"
+source = "#1591 (engine/nvf-play/src/pipboy/repair.rs, docs/spec-notes/repair.md §5): the pipboy-repair set-up with the two 10mm Pistols given by plain AddItem (99.9 %, which the vendor counts as full): the hint is dim, R refuses and no pistol is scrapped (unit tests an_item_shown_as_full_is_not_repaired, an_item_shown_as_full_is_not_a_part)"
+areas = ["repair", "pipboy"]
+paths = ["engine/nvf-play/src/pipboy/repair.rs", "crates/fnv-game/src/repair.rs"]
+env = { NVFOREVER_HOME = "pipboy-repair-full-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:call:player:AddItem:Weap10mmPistol:1,9.5:call:player:AddItem:Weap10mmPistol:1", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=items,13.5:tab=0,15:repair=open,16:repair=down,18:repair=use,20:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 23
+expect = [
+  { text = "pipboy items: 10mm Pistol Maintain R) (dim)", label = "the pistol's hint is dim: at AddItem's 99.9 % it counts as full" },
+  { re = 'pipboy repair: 10mm Pistol at \d+%: nothing to repair it with \(full condition\)', label = "R refuses it as full" },
+]
+forbid = [
+  { text = "pipboy repair: open", label = "the repair list opening on an item that counts as full" },
+  { re = 'pipboy repair: 10mm Pistol \d+% with 10mm Pistol', label = "a pistol scrapped to raise the other from 99.9 %" },
+  { re = 'pipboy items: 10mm Pistol Maintain R\)(?! \(dim)', label = "the hint bright on an item that counts as full" },
+]
+
+[[scenario]]
 name = "perk-jury-rigging"
 source = "perk audit 2026-10-23 §3.7, owner 2026-10-24: Jury Rigging repairs an item with a roughly similar one (docs/spec-notes/perk-entry-points.md §9)"
 note = "pipboy-repair's setup with a Cowboy Repeater at 40 % and a Trail Carbine at 30 % (both Guns, Rifle - Ballistic (2 Hand); neither is on the other's repair list) and the perk JuryRigging at 10 s: the player's starting items removed at 11 s (RemoveAllItems; at 8 s the starting kit was not given yet: the Weapons tab lists ammo and other gear before the repeater by name, a first run selected 10mm Rounds); R on the Cowboy Repeater, the first row, lists the Trail Carbine as its part; using it repairs the repeater"
