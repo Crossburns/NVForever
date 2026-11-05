@@ -6368,6 +6368,34 @@ expect = [
 ]
 
 [[scenario]]
+name = "ammo-type-save-write"
+source = "issue #1574: the ammo type swapped into the weapon comes back on load; the first half: 10mm Pistol (0000434F) with 10mm (00004241) and 10mm JHP (0013E43B): it loads 10mm, Ammo Swap to JHP, save (ammo-type-save-load reads this save, so run them together)"
+areas = ["save", "combat"]
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "ammo-type-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:40,0013E43B:40", NVF_PLAY_TEST_CONTROL = "14:weapon,17:swap", NVF_PLAY_TEST_CONSOLE = "22:save ammo-type;23:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 26
+expect = [
+  { re = 'combat: ammo swapped to ', label = "the swap loads the other type" },
+  { re = 'save: wrote .*ammo-type\.nvfsave', label = "the save is written" },
+]
+order = [["combat: ammo swapped to ", "save: wrote"]]
+
+[[scenario]]
+name = "ammo-type-save-load"
+source = "issue #1574: the second half: --load the save ammo-type-save-write made; the weapon comes back with the swapped type, and the first swap goes back to the plain round"
+areas = ["save", "combat"]
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "ammo-type-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONTROL = "12:weapon,16:swap" }
+args = ["--play", "--load", "ammo-type", "--no-voice"]
+run_seconds = 19
+expect = [
+  { re = 'load: engine state of .*ammo-type\.nvfsave put back', label = "the engine state is put back" },
+  { re = 'combat: weapon \S+ \(0x0000434F\), ammo Ammo10mmHollowPoint,', label = "the weapon comes back with the swapped type" },
+  { re = 'combat: ammo swapped to Ammo10mm(?!HollowPoint)', label = "the first swap after the load goes to the plain round" },
+]
+
+[[scenario]]
 name = "save-load-order"
 source = "no-owner queue item 29 (2026-10-21; docs/design/save-load.md §4.1): a save made with one load order loads into another: FormIDs move to their plugin's place now, what came from plugins no longer loaded is dropped and the player told; run after save-write, whose save it loads"
 note = "save-write runs with the ten masters; this run loads its save with three of them, Gun Runners' Arsenal moved before Dead Money (index 05 -> 01, Dead Money 01 -> 02), the add-ons Honest Hearts, Old World Blues, Lonesome Road and the four packs gone. The base game's changes come back as in save-load"
