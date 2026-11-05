@@ -656,6 +656,18 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     pose (and, outdoors, the grid cell containing it) is written back to the reference, so
     reloads and snapshots find it at rest. `fnvtool sim run` applies no physics to created
     references, so scripted traces keep a drop at the drop point, as the capture did.
+  - **Models with several dynamic bodies** (issue #1604). Clothing and armour draw their
+    MOD2 ground object when dropped (`BaseObject::world_model_path`). Those `GO.NIF`
+    models are two or four dynamic bodies, joined by limited hinges, with the mesh skinned
+    to them [observed: `fnvtool collide ragdoll`, `armor\vaultsuit\m\go.nif` Bone01 and
+    Bone02; 2026-11-05 drops of the Pre-War Spring Outfit, Leather Armor, Merc Charmer
+    Outfit and Vault 21 Jumpsuit made 2, 2, 4 and 2 bodies]. Only a single body's pose is
+    written back, so the drawn item hung at the drop point while its bodies fell. Now a
+    created reference whose model's bodies are all dynamic gets one body that holds every
+    shape at its place in the file (`phys::one_dynamic_body`). The item falls and comes
+    to rest in its folded pose, like any other drop [design: the hinge is not simulated;
+    whether the original lets the cloth flop is not captured]. Models where any body is
+    static or keyframed keep their bodies as they are.
   - **Capture for the owner** (not run: other sessions are using the game; about 2 min,
     the last part needs a person). From `nvfdoc`, outside the front door, tgm:
     (1) `player.Drop` a stimpak, find the new reference with the `GetFirstRef 201 0 0`
