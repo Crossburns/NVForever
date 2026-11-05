@@ -445,12 +445,23 @@ fn autosaves(
     }
 }
 
+/// Why saving is refused from the player's death on (#1572).
+const DEAD: &str = "the player is dead";
+
+/// The player is dead (the death camera has the view until a load).
+fn player_dead(world: &World) -> bool {
+    world.get_resource::<ScriptState>().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.is_dead(fnv_sim::FormId::PLAYER_REF))
+}
+
 /// Why saving is not allowed now, if it is not.
 fn not_now(world: &World) -> Option<String> {
     let st = world.get_resource::<ScriptState>()?;
     let Some(rt) = st.rt.as_ref() else { return Some("the scripts are not running yet".into()) };
     if world.resource::<crate::loading::Loading>().active() {
         return Some("a loading screen is up".into());
+    }
+    if player_dead(world) {
+        return Some(DEAD.into());
     }
     if rt.game.dialogue.is_some() {
         return Some("in a conversation".into());
@@ -478,10 +489,14 @@ fn write_saves(world: &mut World) {
     }
     if let Some(why) = not_now(world) {
         // Autosaves and the system save wait for their moment (one of each); a save asked
-        // for by hand says why not.
+        // for by hand says why not. A dead player's game is never saved: what waits is
+        // dropped, so it is not written over the save loaded next.
         let mut q = world.resource_mut::<SaveQueue>();
         let (waits, asked): (Vec<_>, Vec<_>) = std::mem::take(&mut q.0).into_iter().partition(|r| matches!(r.kind, SaveKind::Auto | SaveKind::System));
-        for r in waits {
+        if why == DEAD && !waits.is_empty() {
+            info!("save: {} waiting autosave(s) dropped: {why}", waits.len());
+        }
+        for r in waits.into_iter().filter(|_| why != DEAD) {
             if !q.0.iter().any(|k| k.kind == r.kind) {
                 q.0.push(r);
             }

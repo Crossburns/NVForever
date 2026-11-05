@@ -6322,6 +6322,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-refused-when-dead"
+source = "issue #1572: every way of saving is refused from the player's death on (docs/design/save-load.md)"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs"]
+note = "player.kill at 14 s; the QuickSave key at 15.5 s and 17 s (the second while the screen is going black) and a console save at 19 s are all refused, and nothing is written. NVFOREVER_HOME keeps the run off the real quicksave."
+env = { NVFOREVER_HOME = "save-dead-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.kill;14.3:close;19:save dead-save;19.5:close", NVF_PLAY_TEST_KEYS = "15.5:f5,17:f5" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'combat: the player died', label = "the player dies" },
+  { text = "save: QuickSave key", min = 2, label = "both F5 presses reach the save code" },
+  { text = "save: not now: the player is dead", min = 3, label = "both quicksaves and the console save are refused" },
+  { re = 'save: wrote ', count = 0, label = "nothing is written" },
+]
+order = [["combat: the player died", "save: QuickSave key", "save: not now: the player is dead"]]
+
+[[scenario]]
 name = "save-ai-write"
 source = "docs/design/save-load.md §3.3, §5 item 4: the residents' package progress (patrol points, sandbox days) goes into a save; save-ai-load reads it, so run them together"
 areas = ["save", "ai"]
