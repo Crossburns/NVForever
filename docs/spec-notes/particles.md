@@ -581,22 +581,40 @@ v\FuseSparks.dds`), below the node
 - Not built: NPCs' held weapons (`weapons.rs`) emit nothing; placed dynamite still sparks
   lying in the world (§7.5).
 
-### 7.7 A placed reference's scale sizes its spray (issue #1547, 2026-11-05)
+### 7.7 The Ultra-Luxe fountain: the system node's scale, gravity decay, drag range (issue #1547, 2026-11-05)
 
-- The Ultra-Luxe fountain on the Strip is two STAT references placed at **scale 0.5**:
-  ULFountain (0x00165AD1, `architecture\strip\ul_fountainnew.nif`) and ULFountainFX
-  (0x0016566E, `architecture\strip\ul_fountainnewfx.nif`), both at (1176, -222, 1012) in
-  TheStripWorldNew [observed: `fnvtool world refs`]. The owner saw its water drawn far
-  too large and not coming out of the spout (playtest 2026-11-04).
-- Until now an emitter's place in the world gave a newborn particle only its start point
-  and the axis of its cone. The emitter volume's size, the particle's radius, its speed and
-  the gravity pulling it were the file's numbers, whatever the scale. At 0.5 the spray was
-  twice the size of the half-size basin and threw twice as far.
-- **Now** [hypothesis: the spray scales with the reference, as its model does]: the
-  emitter frame's scale (the mean length of its axes, `particles::frame_scale`) multiplies
-  the offset in the emitter's volume, the particle's radius and its speed when it is born.
-  It also multiplies the gravity a particle feels, so its path is the file's path at that
-  scale. Drag (a share of the speed) is unchanged. Bombs and colliders already sit in the
-  emitter's frame. Mesh emitters take their start points from the scaled frame, as before.
-- To compare with the original: observer-checks.md item 87 (the fountain, same spot, same
-  hour).
+- **The file** [observed: `fnvtool world refs`, `fnvtool nif decode`]. The fountain on the
+  Strip is two STAT references placed at **scale 0.5**: ULFountain (0x00165AD1) and
+  ULFountainFX (0x0016566E, `architecture\strip\ul_fountainnewfx.nif`), at
+  (1176, -222, 1012) in TheStripWorldNew. The FX file has one system, SuperSpray01.
+  - The system's **node** is at scale **0.184**. It is world-space, with a box emitter of
+    size 0 on the node `SuperSpray01-Emitter` at file height 511.7.
+  - The emitter: speed 2,250 (variation 45), radius 2,200 (variation 660), life 9.5 s.
+    The particles grow from 0.35 of their size over 6.67 s.
+  - Two planar gravity modifiers, axis +z of their objects, strength 225:
+    - on `Gravity02`, turned so that +z points almost straight down, no decay;
+    - on `Gravity01`, turned so that +z points mostly along file +x, decay 0.001, its
+      strength keyed 215–350 over the 26.7 s Idle cycle.
+  - One z-axis drag of 6 % with range 200 and range falloff 300, on `Drag01` at file
+    height 1,008. Its active keys come from the Idle sequence.
+- **What was wrong** (the owner's frames and video of the original, 2026-11-04 and 05,
+  private): ours drew a cloud many times too large that rose and blew off to one side. In
+  the original, the mist rises along the jet, gathers around its top half and falls back
+  around it.
+- **Now** [hypothesis, fitted to the owner's video; observer-checks.md item 87]:
+  - The **system node's scale** (its own times its parents', `ParticleSystemDef::
+    system_scale`) multiplies the emitter's radius and speed and the gravity's
+    strength. They are numbers in that node's units.
+  - The **reference's scale** (the emitter frame's, `particles::frame_scale`) multiplies
+    the speed and the gravity too, so the spray's path is the file's at the reference's
+    size. It leaves the drops' radius alone, as §3 already guessed for Gomorrah's fires.
+  - A gravity's **decay** weakens it as e^(-decay·d), with d the distance from its object
+    in the system's units. Gravity01's sideways pull then dies away near the jet.
+  - A drag's **range**: in full within `range` of its object, fading to nothing at
+    `range_falloff`, none beyond. A range at the float maximum (the usual value, e.g. the
+    grenade smoke's drags) means everywhere. Distances are in the model file's units.
+    The fountain's drag then catches the rising mist at the top of the jet.
+  - Which units decay and range use, and whether the reference's scale should size the
+    drops, were chosen as the combination that looks most like the video. Four were
+    tried; with system units for the drag or the reference's scale on the radius, the
+    mist floated above the jet or off to its side.
