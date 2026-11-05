@@ -150,10 +150,59 @@ docs/spec-notes/crime-karma.md); the player's reputation does not.
   nothing had happened: no search, no stand [hypothesis: the flag's name; no source
   describes it. 399 of the 4,163 packages set it, among them sniper posts, "stand in
   place" and "flee the scene" packages, observed 2026-10-11]. Its state, weapon and barks
-  are as for any other actor.
+  are as for any other actor. Not for a teammate of the player on a Follow package:
+  every follower's Follow package sets the flag, and in the original a melee companion
+  goes after its targets [observed: the owner's playtest 2026-11-04, #1534], so such a
+  teammate fights as any other actor and follows again after the fight.
 - Back in Normal the actor goes back to its package's place, as after a random
   conversation. Actors not run on their packages stand where they are and only turn
   their heads.
+
+### Sandbox interruption [design]
+
+A combat state that takes control cancels the sandbox's current choice before
+holding, closing, searching, fetching a weapon or going to a combat post. Warnings
+that stop a standing actor and spectator flight use the same cancellation. A package
+with Continue During Combat keeps its sandbox; a warning still leaves an actor on
+furniture alone.
+
+Cancellation releases the abandoned walk, marker heading and furniture intent,
+including a reserved chair not yet reached or held pending a script's StopLook.
+The engine's existing furniture exit still finishes before physical walking resumes.
+The canceled active behaviour and its deadline end too: an actor off its bed must
+not remain logically asleep until the old sleep window ends. Repeated combat updates
+leave the interrupting behaviour's own movement intact.
+
+On return to the package, the sandbox chooses again from the actor's current place.
+This applies both to StopCombat and to the last enemy dying, which can return directly
+to Normal without a search. Its day schedule, random sequence and selection history
+are retained; interruption neither blacklists the target nor records a pending
+choice as completed. Failed-object retry policy, immediate object reuse, furniture
+refusal feedback and activity durations are unchanged. This is an internal ownership
+invariant, not a measured claim about the original game's resumption timing.
+
+### 5.1 Rendered interruption check
+
+[design] The opt-in resident aid
+`NVF_PLAY_TEST_SANDBOX_INTERRUPT=actor:pending|seated:target:stop|control`
+accepts placed editor IDs or hexadecimal form IDs, with `player` for the target.
+`control` requires `pending`. Use god mode when the target is the player.
+The aid waits for a drawn actor with loaded physics and either a real pending
+object follower or matching sandbox intent and physical furniture state 3. It calls
+the public StartCombat and StopCombat operations; it does not alter the sandbox,
+its reservations, movement, or package selection.
+
+The treatment must stay in Combat against that target, using Holding, Closing or
+combat-post movement. Search/flee transitions, a package restart or a changed package
+invalidate the run. Seated mode requires the furniture exit to finish before
+StopCombat. Recovery requires a fresh choice followed by its completed active phase,
+without a follower; furniture must physically reach state 3. The uninterrupted
+control must finish its original selected object, not a replacement choice. Setup,
+combat and recovery have bounded timeouts; only an explicit ordered PASS counts.
+
+Smoke scenarios `sandbox-combat-recovery`, `sandbox-combat-recovery-control` and
+`sandbox-combat-seated-recovery` use Chet's noon sandbox in GSGeneralStore at 1280×720.
+These test the engine's state handoff, not original-game timing or sandbox parity.
 
 ## 6. What scripts see
 

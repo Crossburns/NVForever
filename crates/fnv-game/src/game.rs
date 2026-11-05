@@ -2591,7 +2591,7 @@ impl<'a> Game<'a> {
             bytes: c.bytes,
             source: Some(src.to_string()),
         };
-        let unit: &'a Compiled = Box::leak(Box::new(Compiled { unit, program: d.program, raw: d.report.raw_total() }));
+        let unit: &'a Compiled = Box::leak(Box::new(Compiled::new(unit, d.program, d.report.raw_total())));
         Ok((unit, warnings))
     }
 
@@ -2631,7 +2631,7 @@ impl<'a> Game<'a> {
             source: Some(src.to_string()),
         };
         // Leaked as the console's lines are: a lambda the query makes may outlive it.
-        let unit: &'a Compiled = Box::leak(Box::new(Compiled { unit, program: d.program, raw: d.report.raw_total() }));
+        let unit: &'a Compiled = Box::leak(Box::new(Compiled::new(unit, d.program, d.report.raw_total())));
         let block = unit.program.blocks.iter().find(|b| b.event == fnv_script::ir::FUNCTION_BLOCK).ok_or("the script has no Function block")?;
         let data = self.data;
         let opts = self.opts();
@@ -2731,7 +2731,7 @@ impl<'a> Game<'a> {
             bytes: c.bytes,
             source: Some(src),
         };
-        let unit: &'a Compiled = Box::leak(Box::new(Compiled { unit, program: d.program, raw: d.report.raw_total() }));
+        let unit: &'a Compiled = Box::leak(Box::new(Compiled::new(unit, d.program, d.report.raw_total())));
         let id = COMPILED_BASE + self.compiled_files.len() as u32;
         self.compiled_files.push(unit);
         Some(id)
@@ -4028,7 +4028,7 @@ impl<'a> Game<'a> {
         let death = self.data.by_edid("Death");
         for s in self.speech.iter_mut().filter(|s| only.is_none_or(|o| o == s.speaker)) {
             s.remaining -= dt;
-            let here = self.world.peek(s.speaker).is_none_or(|w| !w.deleted) && self.world.is_enabled(s.speaker).unwrap_or(false);
+            let here = self.world.peek(s.speaker).is_none_or(|w| !w.deleted()) && self.world.is_enabled(s.speaker).unwrap_or(false);
             // A Goodbye greeting at the player whose speaker is drawn into a fight ends at
             // once as if said to the end (`Game::cut_line`, `Game::greets_player`) [owner
             // statement 2026-10-27: "skip to the end of the line as if she finished
@@ -4116,7 +4116,7 @@ impl<'a> Game<'a> {
     /// `fnv_sim::World::presence_serial` (the AI's obstacle poll relies on that,
     /// `fnv_ai::Ai::obstacles_in_line`): keep it so, or key that poll on the new input.
     pub fn present(&self, r: FormId) -> bool {
-        self.world.peek(r).is_none_or(|s| !s.deleted) && self.world.is_enabled(r).unwrap_or(false)
+        self.world.peek(r).is_none_or(|s| !s.deleted()) && self.world.is_enabled(r).unwrap_or(false)
     }
 
     /// Whether a reference's critical stage culls it (GooEnd, DisintegrateEnd): the
@@ -4140,7 +4140,7 @@ impl<'a> Game<'a> {
         }
         out.extend(self.moved.iter().copied());
         out.into_iter()
-            .filter(|&r| self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c)) && self.world.peek(r).is_none_or(|s| !s.deleted))
+            .filter(|&r| self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c)) && self.world.peek(r).is_none_or(|s| !s.deleted()))
             .collect()
     }
 
@@ -4196,7 +4196,7 @@ impl<'a> Game<'a> {
         for c in new {
             let refs = self.data.scripted_by_cell.get(&c).cloned().unwrap_or_default();
             for &r in &refs {
-                if self.world.peek(r).is_none_or(|s| !s.deleted) {
+                if self.world.peek(r).is_none_or(|s| !s.deleted()) {
                     self.ref_event(r, event::ON_LOAD, None, None);
                 }
             }
@@ -4663,7 +4663,14 @@ impl<'a> Game<'a> {
 
     /// Run an effect's script block (if its script has one) on the effect's target.
     fn effect_event(&mut self, id: u32, ev: u16, elapsed: f64) {
-        let Some(e) = self.effects.iter().find(|x| x.id == id) else { return };
+        self.effect_event_at(id, None, ev, elapsed);
+    }
+
+    /// [`Game::effect_event`] with the effect's position, if known (`hint`, checked by id:
+    /// [`effect_index`]).
+    fn effect_event_at(&mut self, id: u32, hint: Option<usize>, ev: u16, elapsed: f64) {
+        let Some(i) = effect_index(&self.effects, id, hint) else { return };
+        let e = &self.effects[i];
         let (Some(script), target, caster) = (e.script, e.target, e.caster) else { return };
         if !self.data.script(script).is_some_and(|u| u.has_block(ev)) {
             return;
@@ -4747,13 +4754,20 @@ impl<'a> Game<'a> {
             }
         }
         let ids: Vec<u32> = self.effects.iter().filter(|e| !e.inactive).map(|e| e.id).collect();
+        // Each effect is looked up once (#1389): the ids are in list order, so the next one
+        // is searched from where the last one was; its position then goes to the value
+        // change and the script, which check it by id, as a callback (a dispel, a cast)
+        // may have moved it.
+        let mut cursor = 0;
         for id in ids {
-            let Some(e) = self.effects.iter_mut().find(|x| x.id == id) else { continue };
+            let Some(i) = effect_from(&self.effects, id, cursor) else { continue };
+            cursor = i;
+            let e = &mut self.effects[i];
             let before = e.elapsed;
             e.elapsed += dt;
             let done = !e.permanent && e.elapsed + 1e-9 >= e.duration;
-            self.tick_change(id, before);
-            self.effect_event(id, event::SCRIPT_EFFECT_UPDATE, dt);
+            self.tick_change_at(id, Some(i), before);
+            self.effect_event_at(id, Some(i), event::SCRIPT_EFFECT_UPDATE, dt);
             if done {
                 self.finish_effect(id, true);
             }
@@ -4900,7 +4914,7 @@ impl<'a> Game<'a> {
 
     pub(crate) fn condition_value(&mut self, c: &Condition, on: Option<FormId>, label: &str) -> f64 {
         let ctx = Ctx {
-            unit: label.to_string(),
+            unit: label.into(),
             opcode: c.opcode(),
             on,
             self_ref: on,
@@ -4946,10 +4960,10 @@ impl<'a> Game<'a> {
             }
             None => {
                 *self.unhandled.entry(ctx.opcode).or_default() += 1;
-                if self.unhandled_seen.insert((ctx.opcode, ctx.unit.clone())) {
+                if self.unhandled_seen.insert((ctx.opcode, ctx.unit.to_string())) {
                     let n = name();
                     tracing::debug!(opcode = ctx.opcode, name = %n, unit = %ctx.unit, "unhandled script function");
-                    self.emit(EventKind::Unhandled { opcode: format!("0x{:04X}", ctx.opcode), name: n, unit: ctx.unit.clone() });
+                    self.emit(EventKind::Unhandled { opcode: format!("0x{:04X}", ctx.opcode), name: n, unit: ctx.unit.to_string() });
                 }
                 Value::ZERO
             }
@@ -4965,12 +4979,12 @@ impl<'a> Game<'a> {
             Ok(v) => {
                 // Read wrong without failing: the call went on with a default.
                 for u in unread {
-                    if self.arg_unread_seen.insert((ctx.opcode, ctx.unit.clone(), u.param)) {
+                    if self.arg_unread_seen.insert((ctx.opcode, ctx.unit.to_string(), u.param)) {
                         let n = name();
                         self.emit(EventKind::ArgUnread {
                             opcode: format!("0x{:04X}", ctx.opcode),
                             name: n,
-                            unit: ctx.unit.clone(),
+                            unit: ctx.unit.to_string(),
                             param: u.param,
                             got: u.got.into(),
                             wanted: u.wanted.into(),
@@ -4981,7 +4995,7 @@ impl<'a> Game<'a> {
             }
             Err(e) => {
                 let n = name();
-                self.emit(EventKind::CallFailed { opcode: format!("0x{:04X}", ctx.opcode), name: n, unit: ctx.unit.clone(), error: e });
+                self.emit(EventKind::CallFailed { opcode: format!("0x{:04X}", ctx.opcode), name: n, unit: ctx.unit.to_string(), error: e });
                 Value::ZERO
             }
         }
@@ -4995,10 +5009,10 @@ impl<'a> Game<'a> {
         let args: Vec<serde_json::Value> = args.iter().map(|a| arg_json(data, a)).collect();
         let on = ctx.on.or(ctx.self_ref);
         let sig = format!("{on:?}{args:?}");
-        if !self.stubs_seen.insert((ctx.opcode, ctx.unit.clone(), sig)) {
+        if !self.stubs_seen.insert((ctx.opcode, ctx.unit.to_string(), sig)) {
             return;
         }
-        self.emit(EventKind::Stub { opcode: format!("0x{:04X}", ctx.opcode), name, unit: ctx.unit.clone(), on, args });
+        self.emit(EventKind::Stub { opcode: format!("0x{:04X}", ctx.opcode), name, unit: ctx.unit.to_string(), on, args });
     }
 
     // ---- snapshots -----------------------------------------------------------------
@@ -5191,6 +5205,31 @@ pub fn arg_json(data: &GameData, a: &ArgValue) -> serde_json::Value {
     }
 }
 
+/// The position of effect `id` in `effects`: `hint` when the effect there has that id,
+/// else the first with it. Effect ids are unique [design: each is taken from
+/// `Game::next_effect`, which only grows, in `Game::apply_magic_item_with`, and a save
+/// keeps the counter], so a checked hint is the effect a search finds (#1389).
+///
+/// Known limits, where ids could repeat and a hint could pick a later copy than a search
+/// from the start: a save whose `next_effect` is at or below an id it lists (a hand-edited
+/// or broken save; the next cast reuses the id), a save that lists one id twice, and the
+/// `u32` counter wrapping after 2^32 effects. Nothing guards against them; with a
+/// repeated id, the searches before #1389 found its first copy and a hint may find another.
+pub(crate) fn effect_index(effects: &[ActiveEffect], id: u32, hint: Option<usize>) -> Option<usize> {
+    match hint {
+        Some(i) if effects.get(i).is_some_and(|e| e.id == id) => Some(i),
+        _ => effects.iter().position(|e| e.id == id),
+    }
+}
+
+/// The position of effect `id`, searched from `from` on, then before it (a callback
+/// removed effects ahead of it); with unique ids ([`effect_index`]) the same effect a
+/// search from the start finds.
+fn effect_from(effects: &[ActiveEffect], id: u32, from: usize) -> Option<usize> {
+    let from = from.min(effects.len());
+    effects[from..].iter().position(|e| e.id == id).map(|i| from + i).or_else(|| effects[..from].iter().position(|e| e.id == id))
+}
+
 /// The host the VM runs against for one script run.
 struct Exec<'g, 'a> {
     game: &'g mut Game<'a>,
@@ -5357,7 +5396,8 @@ impl Host for Exec<'_, '_> {
             None => None,
         };
         let ctx = Ctx {
-            unit: self.unit.key(),
+            // The unit's key, built once for the unit (#1389).
+            unit: std::sync::Arc::clone(self.unit.shared_key()),
             opcode,
             on,
             self_ref: self.ctx.self_ref,
@@ -5616,5 +5656,48 @@ impl Host for Exec<'_, '_> {
         let key = self.unit.key();
         let seen = if restarted { &mut self.game.restarted_seen } else { &mut self.game.loaded_seen };
         seen.insert(key)
+    }
+}
+
+#[cfg(test)]
+mod effect_lookup_tests {
+    use super::*;
+
+    fn fx(id: u32) -> ActiveEffect {
+        ActiveEffect {
+            id,
+            target: FormId::PLAYER_REF,
+            source: FormId(0x800),
+            effect: FormId(0x801),
+            index: 0,
+            magnitude: 0,
+            duration: 1.0,
+            elapsed: 0.0,
+            permanent: false,
+            caster: None,
+            script: None,
+            change: None,
+            usage: 0.0,
+            worn: None,
+            inactive: false,
+        }
+    }
+
+    /// Every hint and every starting point finds what the search from the start (the
+    /// lookup before #1389) finds, present or missing, stale hints and ends included.
+    #[test]
+    fn a_checked_hint_or_cursor_finds_the_effect_a_search_finds() {
+        let list: Vec<ActiveEffect> = [3, 5, 8, 9, 12].into_iter().map(fx).collect();
+        let search = |id: u32| list.iter().position(|e| e.id == id);
+        for id in [1, 3, 5, 8, 9, 12, 13] {
+            for hint in [None, Some(0), Some(1), Some(2), Some(3), Some(4), Some(5), Some(99)] {
+                assert_eq!(effect_index(&list, id, hint), search(id), "id {id} hint {hint:?}");
+            }
+            for from in 0..=7 {
+                assert_eq!(effect_from(&list, id, from), search(id), "id {id} from {from}");
+            }
+        }
+        assert_eq!(effect_index(&[], 3, Some(0)), None);
+        assert_eq!(effect_from(&[], 3, 2), None);
     }
 }

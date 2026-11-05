@@ -282,6 +282,12 @@ pub struct Runtime {
     closing: Option<(u16, Option<FormId>)>,
     /// `--new-game`: the opening starts on the first frame scripts run.
     opening_pending: bool,
+    /// A run without a save: the Script Runner's new-game files (`gn_`, `ln_`) run on the
+    /// first frame scripts run, when the new game begins, not when the runtime is made:
+    /// behind the main menu no game has begun yet, and Continue or Load there starts
+    /// another run that never runs them (#1548) [hypothesis: the original runs them when
+    /// a new game starts, docs/spec-notes/ext-script-runner.md §2].
+    new_game_files: bool,
     /// An actor the player woke by talking to it, and when (`Game::time`): the
     /// conversation starts once it is off its bed ([`Runtime::talk_when_awake`]).
     wake_talk: Option<(FormId, f64)>,
@@ -468,6 +474,11 @@ pub(crate) fn loaded_events(rt: &mut Runtime, sim: &mut SimState, path: &std::pa
 /// each file's outcome in the log.
 fn script_runner(rt: &mut Runtime, sim: &mut SimState, m: Moment) {
     let runs = with_world(rt, sim, |rt| rt.game.run_script_runner(m));
+    log_script_runner(runs, m);
+}
+
+/// Each Script Runner file's outcome in the log.
+fn log_script_runner(runs: Vec<fnv_game::script_runner::SrRun>, m: Moment) {
     for r in runs {
         match r.result {
             Ok(()) => info!("script runner: {} ran ({})", r.path, m.name()),
@@ -615,6 +626,7 @@ impl Runtime {
             skip: BTreeSet::new(),
             closing: None,
             opening_pending: new_game,
+            new_game_files: false,
             wake_talk: None,
             start: GameStart::default(),
             location: None,
@@ -668,6 +680,7 @@ impl Runtime {
         sim.world = world;
         sim.world.set_inventory_sources(inventory_sources(data, sim, &self.game));
         self.opening_pending = false;
+        self.new_game_files = false;
         self.player_cell = None;
         with_world(self, sim, |rt| rt.snapshot_inventory());
         Ok(changed)
@@ -1398,6 +1411,10 @@ impl EffectCtx for PlayCtx<'_> {
     fn is_furniture(&self, r: FormId) -> bool {
         self.sim.base_of(r.0).and_then(|b| self.sim.forms.get(b)).is_some_and(|b| matches!(b.data, fnv_sim::forms::BaseData::Furniture))
     }
+
+    fn is_terminal(&self, r: FormId) -> bool {
+        self.sim.base_of(r.0).and_then(|b| self.sim.forms.get(b)).is_some_and(|b| &b.sig == b"TERM")
+    }
 }
 
 /// The response texts (NAM1) of a dialogue line, in order.
@@ -1674,7 +1691,7 @@ pub(crate) fn run_scripts(
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
-    mut sit: MessageWriter<crate::furniture::UseFurniture>,
+    (mut sit, mut terminals): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>),
     paused: Res<crate::pause::Paused>,
     (mut screen, bindings, tiles, page, mut mods_ticks): ScreenAndMenus,
 ) {
@@ -1727,7 +1744,8 @@ pub(crate) fn run_scripts(
                 }
                 if !restored {
                     script_runner(&mut rt, &mut sim, Moment::Restart);
-                    script_runner(&mut rt, &mut sim, Moment::NewGame);
+                    // The new game's files wait for its first frame (`new_game_files`).
+                    rt.new_game_files = true;
                 }
                 let from_source = data.issues.count("script_compiled_from_source");
                 let failed = data.issues.count("script_source_does_not_compile");
@@ -1868,6 +1886,9 @@ pub(crate) fn run_scripts(
             info!("script: the player used {item}: {} effect(s) started", r.effects.len());
         }
         rt.follow_player();
+        if std::mem::take(&mut rt.new_game_files) {
+            log_script_runner(rt.game.run_script_runner(Moment::NewGame), Moment::NewGame);
+        }
         if std::mem::take(&mut rt.opening_pending) {
             rt.start_opening();
         }
@@ -2064,6 +2085,10 @@ pub(crate) fn run_scripts(
                 info!("script: the player uses furniture {reference:08X} (a script's Activate)");
                 sit.write(crate::furniture::UseFurniture { reference });
             }
+            ScriptEffect::OpenTerminal(reference) => {
+                info!("script: terminal {reference:08X} opens (a script's Activate)");
+                terminals.write(crate::terminal::OpenTerminal { reference });
+            }
         }
     }
 }
@@ -2257,6 +2282,53 @@ fn write_final(mut exit: MessageReader<AppExit>, mut script: ResMut<ScriptState>
 /// MessageBoxEx box has no form to count from, and until 2026-10-31 counted 0 and closed.
 pub fn asks_nothing(buttons: usize) -> bool {
     buttons <= 1
+}
+
+#[cfg(test)]
+impl ScriptState {
+    /// A runtime over an empty load order, for tests of what works the open menu: nothing
+    /// has run, no menu is open.
+    pub(crate) fn over_no_plugins() -> ScriptState {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+        let lo = fnv_esm::LoadOrder::new(&[]).unwrap();
+        let schema = fnv_esm::Schema::load_dir(root.join("fnv")).unwrap();
+        let functions = root.join("script/functions.json");
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&functions).unwrap()).unwrap();
+        let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(fnv_sim::FormStore::build(&lo, &schema)));
+        let refs: &'static RefTable = Box::leak(Box::new(RefTable::default()));
+        let data: &'static GameData = Box::leak(Box::new(GameData::build(&lo, &schema, FunctionTable::load(&functions).unwrap(), &json, refs)));
+        let game = Game::new(data, World::new(forms, refs, fnv_sim::SimConfig::default()), GameConfig::default());
+        let rt = Runtime {
+            game,
+            player_cell: None,
+            inventory: InvView::default(),
+            created_seen: None,
+            marked: BTreeSet::new(),
+            skip: BTreeSet::new(),
+            closing: None,
+            opening_pending: false,
+            new_game_files: false,
+            wake_talk: None,
+            start: GameStart::default(),
+            location: None,
+            frozen_frames: 0,
+            triggers: Default::default(),
+            children: HashMap::new(),
+            started: Instant::now(),
+            ticked: false,
+            stats: TickStats::default(),
+            aid: crate::aid::AidStats::default(),
+            activate_again: None,
+            choices_passed: None,
+            activate_pick: None,
+        };
+        ScriptState { loader: None, rt: Some(rt), off: None, trace: None, aids: Vec::new(), aids_started: false, gates: HashMap::new(), auto_close: None, no_messages: false, on_screen: None, walks: Vec::new(), new_game: false, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None }
+    }
+
+    /// The player answered the open menu: it closes after this frame's scripts.
+    pub(crate) fn answered(&self) -> bool {
+        self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
+    }
 }
 
 #[cfg(test)]

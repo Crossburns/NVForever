@@ -1070,6 +1070,7 @@ fn main() -> AppExit {
             Err(e) => return fail(e),
         }
     };
+    let lod_origin = lod::grid_origin(&game, &world);
     let actor_world = (!args.no_actors).then(|| {
         let t0 = std::time::Instant::now();
         let mut a = actors::ActorWorld::build(world.lo, world.schema);
@@ -1265,7 +1266,7 @@ fn main() -> AppExit {
     .insert_resource(sky_state)
     .insert_resource(screen_modifiers)
     .insert_resource(fly::AutoFly(args.auto_fly))
-    .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen))
+    .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
     .init_resource::<TerrainCache>()
     .init_resource::<imposters::Imposters>()
@@ -1549,6 +1550,7 @@ fn main() -> AppExit {
             app.insert_resource(r)
                 .add_systems(Startup, residents::log_startup)
                 .add_systems(Update, residents::drive.after(world::stream).after(readahead::read_ahead).after(nvf_play::PlaySet::Scripts).before(nav::drive))
+                .add_systems(Update, residents::melee_knockback::arrange.after(residents::drive).run_if(resource_exists::<nvf_play::MeleeKnockbackAid>))
                 .add_systems(Last, residents::report);
             // Patrols and sandboxes go on after a load where the save had them.
             if play.is_some() {
@@ -1620,11 +1622,14 @@ fn main() -> AppExit {
                 if c.actor_frames == 0 {
                     info!("actor animation: no actors posed");
                 } else {
+                    // The us per actor figure is approximate: `total` less `held_time` still holds
+                    // the loop's cost on held actors, divided by sampled actor frames only, so
+                    // many held corpses can raise it.
                     info!(
                     "actor animation: up to {} actors posed at once, {:.3} ms per frame on average, {:.2} us per actor and frame, {:.2} clips per actor and frame ({:.1}% of actor frames with more than one clip), {:.1} tracks per actor and frame",
                     c.peak,
                     c.total.as_secs_f64() * 1e3 / f64::from(c.frames.max(1)),
-                    c.total.as_secs_f64() * 1e6 / c.actor_frames.max(1) as f64,
+                    c.total.saturating_sub(c.held_time).as_secs_f64() * 1e6 / c.actor_frames.max(1) as f64,
                     c.layer_frames as f64 / c.actor_frames.max(1) as f64,
                     100.0 * c.blend_frames as f64 / c.actor_frames.max(1) as f64,
                     c.tracks as f64 / c.actor_frames as f64
@@ -1632,6 +1637,18 @@ fn main() -> AppExit {
                     info!("actor turns: {} actor frames playing a turn-on-the-spot clip", c.turn_frames);
                     info!("actor idle under movement: {} actor frames with the idle laid under another clip", c.under_frames);
                     info!("actor moves without a clip: {} actor frames moving with no movement clip showing; {} actor frames of a creature's blow on its head and neck over its run", c.clipless_frames, c.head_blow_frames);
+                }
+                if c.held_frames + c.dead_tracks > 0 {
+                    info!(
+                        "death poses: {} actor frames held without sampling ({} at the clip's end), {} more at the clip's end sampled ({:.2} finished poses per frame), {} tracks sampled on dead actors ({:.1} per frame), {:.2} us per held pose (in the actor animation line's ms, not its per actor figures)",
+                        c.held_frames,
+                        c.finished_held_frames,
+                        c.finished_sampled_frames,
+                        (c.finished_held_frames + c.finished_sampled_frames) as f64 / f64::from(c.frames.max(1)),
+                        c.dead_tracks,
+                        c.dead_tracks as f64 / f64::from(c.frames.max(1)),
+                        c.held_time.as_secs_f64() * 1e6 / c.held_frames.max(1) as f64
+                    );
                 }
                 if let Some(a) = actors {
                     let fg = a.facegen.lock().expect("facegen cache");

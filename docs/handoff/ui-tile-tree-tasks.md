@@ -773,6 +773,18 @@ owner to add to its pull request or issue (owner, 2026-10-29).
       again after them (the prefab's own value counts clicks from 0 in this tree); the
       hand-built keys stay, W presses Wait through the file. Interface `screen()` units
       while it is switched on (`interface_screen`). Tests: `tiles::wait_menu`,
-      `tiles::vanilla` (the switch). Smoke: `tiles-sleep-wait`. **Left for part 2: the
-      tutorial menu**: `tutorial_menu.xml`'s text scrolls inside `TM_text_container`, a
-      `clipwindow` hotrect, and the tile renderer clips nothing yet; that comes first.
+      `tiles::vanilla` (the switch). Smoke: `tiles-sleep-wait`.
+    - **T15b, part 2 built** 2026-11-04 (`tutorial-menu-978`, issue #978): the tutorial menu
+      from `tutorial_menu.xml` behind `[UI] TileMenus=TutorialMenu`, in the same shape
+      (`tiles/tutorial_menu.rs`, tutorial-menu.md §5). Its text scrolls inside
+      `TM_text_container`, a `clipwindow` hotrect. The tile renderer already clipped (`clips`,
+      a clipping node, and the pointer's hit test); `clipwindow` is a new source of the same
+      clip context in both [hypothesis on its meaning], read only where a menu's model turned
+      it on (`fnv_ui::input::mark_clip_windows`), as mods' HUD tiles and the list prefabs carry
+      it too; reading it everywhere is left to the other menus' tasks. The layout moves
+      nothing: the file moves the text by the scrollbar's value. The model writes the page's
+      strings, the count's and buttons' state, the symbol's `filewidth`, the background's
+      opacity and the scroll every tiled frame; the sizes and range are the file's from the
+      measured text; clicks are the hand-built menu's commands
+      (`crate::tutorial_menu::TutorialInput`). Tests: `tiles::tutorial_menu`, `tiles::input`,
+      `tiles::layout`, `fnv_ui::input`. Smoke: `tiles-tutorial`, `tutorial-default-drawing`.

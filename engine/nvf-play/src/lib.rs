@@ -115,6 +115,7 @@ pub mod tutorial_menu;
 pub mod ui_pointer;
 pub mod credits;
 mod test_aid;
+pub use test_aid::melee_knockback::MeleeKnockbackAid;
 pub use test_aid::{drives_run, MEASURING_AIDS};
 pub mod sfx;
 pub mod sneak_gauges;
@@ -212,7 +213,11 @@ pub struct PlayerCamera;
 /// references, by [`dropped`] for references the simulation created (dropped items), so
 /// the game can hide what the simulation removed and the crosshair can find items by
 /// their render bounds.
+///
+/// Immutable: giving an entity another reference means inserting a new `RefVisual`, so
+/// its hooks see every change and keep [`hitvol::ActorBoundsCandidate`] right.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[component(immutable, on_insert = hitvol::ref_visual_inserted, on_remove = hitvol::ref_visual_removed)]
 pub struct RefVisual(pub u32);
 
 /// Put by nvforever on the entity of every render cell it streams in (its transform is

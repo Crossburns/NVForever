@@ -34,7 +34,9 @@ untimed = [
   "NVF_PLAY_TEST_SCRIPT_MENUS", "NVF_PLAY_TEST_GIVE", "NVF_PLAY_TEST_EQUIP", "NVF_PLAY_TEST_NEAR",
   "NVF_PLAY_TEST_MENU", "NVF_PLAY_TEST_BARTER", "NVF_PLAY_TEST_BARTER_DELAY", "NVF_PLAY_TEST_NO_SPREAD",
   "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
-  "NVF_PLAY_AIDS_FROM_SCRIPTS",
+  "NVF_PLAY_AIDS_FROM_SCRIPTS", "NVF_PLAY_TEST_HELD_GRENADE",
+  "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
+  "NVF_PLAY_TEST_MELEE_KNOCKBACK",
 ]
 
 # Test aids whose value is a list of timed items (`<seconds>:<what>`), joined with sep.
@@ -156,6 +158,18 @@ expect = [
   { re = 'memory budget: RAM \d+ MB .*GPU budget 512 MB \(test aid; the device.s \d+ MB, VK_EXT_memory_budget, device-local heaps; this process uses \d+ MB', label = "the GPU budget read, then capped by the test aid" },
   "caches keep unused models and textures 30 s, at most 128 per cache",
   { re = 'memory budget: near a budget, caches pressed \(GPU: this process uses \d+ of 512 MB', label = "the flight's use of the device-local heaps near the 512 MB budget presses the caches" },
+]
+
+[[scenario]]
+name = "lod-grid-origin-freeside"
+source = "#1533: Freeside's LOD files sit on a grid from the south-west cell of lodsettings/freesideworld.dlodsettings (-10, -8), not on multiples of 4; aligned there, its object blocks (the Strip towers' stand-ins Lucky38WL, Gamorrah01WL, TheTopsWL, UltraLuxHotelWL in block x-6.y-8) and its game terrain chunks are found and drawn (0 of each on main before the fix)"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/lod.rs", "engine/nvforever/src/worldspace.rs"]
+args = ["--world", "FreesideWorld", "--pos=-6000,-8800,2600", "--heading", "205", "--hour", "13"]
+run_seconds = 25
+expect = [
+  { re = 'distant LOD at the end: .* blocks (\d+) trees', range = [3, 100000], label = "Freeside's object blocks are found and drawn (6 on 2026-11-04; 0 before)" },
+  { re = 'distant LOD at the end: LOD chunks (\d+) ', range = [5, 100000], label = "and its game terrain chunks (23 on 2026-11-04; 0 before)" },
 ]
 
 [[scenario]]
@@ -1296,6 +1310,38 @@ expect = [
 forbid = [{ re = '1EFiendViolet.*Lost → Combat', label = "Combat ↔ Lost flicker" }]
 
 [[scenario]]
+name = "combat-held-grenade-lifecycle"
+source = "docs/design/combat-ai.md §20: held grenades use their throw deadline, low lob and finite carried inventory"
+note = "stationary live combat fixture (--no-npc-packages), not a navigation or vanilla timing test; ordinary script calls replace Violet's inventory with two dynamite grenades; the player moves 900 units from stationary Violet; the probe requires actual held/drawn/ready and legal range, observes both projectile requests and accepted flight, then 30 seconds after depletion"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_grenades.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/held_grenade_probe.rs"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HELD_GRENADE = "000F570B:000BA0F3:held", NVF_PLAY_TEST_SCRIPT = "12:moveto:player:FiendVioletRef:900:0:0,16:call:FiendVioletRef:RemoveAllItems,16:call:FiendVioletRef:AddItem:WeapNVDynamite:2,16:call:FiendVioletRef:EquipItem:WeapNVDynamite,16:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--no-npc-packages"]
+run_seconds = 125
+expect = [
+  { re = 'held grenade probe: armed mode=held', label = "actual drawn grenade is ready in its legal throw band" },
+  { re = 'held grenade probe: accepted request=', count = 2, label = "two actual accepted grenade projectiles" },
+  { re = 'held grenade probe: depleted .*accepted=2 count=0', label = "two throws consume two items" },
+  { re = 'held grenade probe: PASS mode=held requests=2 accepted=2 gun_projectiles=0 count=0', label = "receiver confirms full lifecycle and 30 seconds of no extra emission" },
+]
+forbid = [{ re = 'held grenade probe: FAIL', label = "setup, timing, inventory, combat and projectile validation" }]
+
+[[scenario]]
+name = "combat-gun-with-spare-grenades"
+source = "docs/design/combat-ai.md §20: a gunman keeps grenades carried as spares"
+note = "ordinary moving live control with NPC packages enabled only for Violet; the player moves 1,200 units from Violet at 12 seconds, then two spare dynamite grenades and the combat request follow at 12.5 seconds; accepted gun projectiles and unchanged grenade count throughout a 35 second observation window; no vanilla cadence claim"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_grenades.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/held_grenade_probe.rs"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HELD_GRENADE = "000F570B:000BA0F3:carried", NVF_PLAY_TEST_SCRIPT = "12:moveto:player:FiendVioletRef:1200:0:0,12.5:call:FiendVioletRef:AddItem:WeapNVDynamite:2,12.5:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FiendVioletRef"]
+run_seconds = 125
+expect = [
+  { re = 'held grenade probe: armed mode=carried', label = "actual drawn gun is ready with two spare grenades" },
+  { re = 'held grenade probe: PASS mode=carried .*count=2', label = "accepted gunfire leaves both grenades carried" },
+]
+forbid = [{ re = 'held grenade probe: FAIL', label = "setup, combat, inventory and accepted gunfire validation" }]
+
+[[scenario]]
 name = "combat-npc-grenades"
 source = "docs/design/combat-ai.md §20: only an actor holding a grenade throws one; a gunman carrying grenades keeps them (observer check 20: the original's Powder Gangers carrying dynamite threw none in 90 s)"
 note = "god mode; Violet is given three frag grenades at 14 s and put 1,200 units from the player at 15 s (within a frag grenade's throw band, 990-1,500), and fights with her gun"
@@ -1596,6 +1642,62 @@ paths = ["engine/nvforever/src/furniture.rs", "engine/nvf-play/src/furniture.rs"
 args = ["--cell", "Goodsprings", "--npc-sit", "EasyPeteRef=0010634A:8", "--follow-npc"]
 run_seconds = 45
 expect = ["furniture summary: 1 of 1 actors sat down, 1 got up again"]
+
+# The issue's 180 s run, shortened: its stay of 90 s left 81 s after the release to watch;
+# here a stay of 60 s and 30 s or more of the wait are enough. The time ranges are
+# acceptance targets [design: a retry is due within 5 s of active play], not measurements.
+# The range of repeats catches excess retries only: it does not prove their spacing (retries
+# every 3 s would pass). The 5 s spacing is proved by the unit tests of
+# crates/fnv-actor/src/furniture_retry.rs.
+[[scenario]]
+name = "resident-furniture-refusal-retry"
+source = "issue #1506, docs/spec-notes/furniture.md §7: the test aid's settler is on Easy Pete's chair when his AI resumes; refused (in use), he waits, asks again (logged once) and sits soon after the settler got off"
+areas = ["ai", "residents", "furniture"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-actor/src/furniture_retry.rs"]
+args = ["--cell", "Goodsprings", "--play", "--hour", "15", "--size", "1280x720", "--no-voice", "--no-messages", "--npc-packages", "EasyPeteRef", "--npc-sit", "GoodspringsSettler01Ref@00106349=0010634A:60"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_NEAR = "00106349", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "0:call:EasyPeteRef:SetActorsAI:0,25:call:GoodspringsSettler01Ref:GetSitting,26:call:EasyPeteRef:SetActorsAI:1,45:call:GoodspringsSettler01Ref:GetSitting,45.1:call:EasyPeteRef:GetSitting,60:call:GoodspringsSettler01Ref:GetSitting,60.1:call:EasyPeteRef:GetSitting,60.2:call:EasyPeteRef:GetCurrentAIPackage,60.3:call:EasyPeteRef:GetCurrentAIProcedure,95:call:GoodspringsSettler01Ref:GetSitting,95.1:call:EasyPeteRef:GetSitting,105:call:GoodspringsSettler01Ref:GetSitting,105.1:call:EasyPeteRef:GetSitting,105.2:call:EasyPeteRef:GetCurrentAIPackage,105.3:call:EasyPeteRef:GetCurrentAIProcedure,115:call:GoodspringsSettler01Ref:GetSitting,115.1:call:EasyPeteRef:GetSitting" }
+run_seconds = 125
+order = [[
+  "script: test aid calls GetSitting on GoodspringsSettler01Ref = 3",
+  'test aid: script Call("EasyPeteRef", "SetActorsAI", ["1"])',
+  "furniture: 00104C80 cannot use 0010634A: in use",
+  "furniture: 00104F03 got off 0010634A",
+  "furniture: 00104C80 goes to 0010634A",
+  "furniture: 00104C80 is on 0010634A",
+  "script: test aid calls GetSitting on EasyPeteRef = 3",
+]]
+expect = [
+  { text = "furniture: 00104C80 cannot use 0010634A: in use", count = 1, label = "the refusal is logged once" },
+  { text = "furniture: 00104C80 goes to 0010634A", count = 1, label = "the use begins once, after the release" },
+  { re = 'furniture refusals: 1 logged, (?P<n>\d+) identical repeats', range = [3, 20], label = "he asked again, without excess retries (spacing: unit tests)" },
+  { gap = ["furniture: 00104F03 got off 0010634A", "furniture: 00104C80 goes to 0010634A"], range = [0, 10], label = "asks again soon after the release" },
+  { gap = ["furniture: 00104F03 got off 0010634A", "furniture: 00104C80 is on 0010634A"], range = [0, 20], label = "on the chair soon after the release" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 0", min = 2, label = "standing while the chair is taken" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 3", min = 2, label = "sitting afterwards" },
+]
+
+# The same run without the settler: nothing refuses, he sits at his first order.
+[[scenario]]
+name = "resident-furniture-refusal-control"
+source = "issue #1506: the control of resident-furniture-refusal-retry, without the occupant"
+areas = ["ai", "residents", "furniture"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-actor/src/furniture_retry.rs"]
+args = ["--cell", "Goodsprings", "--play", "--hour", "15", "--size", "1280x720", "--no-voice", "--no-messages", "--npc-packages", "EasyPeteRef"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_NEAR = "00106349", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "0:call:EasyPeteRef:SetActorsAI:0,25:call:GoodspringsSettler01Ref:GetSitting,26:call:EasyPeteRef:SetActorsAI:1,45:call:GoodspringsSettler01Ref:GetSitting,45.1:call:EasyPeteRef:GetSitting,60:call:GoodspringsSettler01Ref:GetSitting,60.1:call:EasyPeteRef:GetSitting,60.2:call:EasyPeteRef:GetCurrentAIPackage,60.3:call:EasyPeteRef:GetCurrentAIProcedure,95:call:GoodspringsSettler01Ref:GetSitting,95.1:call:EasyPeteRef:GetSitting,105:call:GoodspringsSettler01Ref:GetSitting,105.1:call:EasyPeteRef:GetSitting,105.2:call:EasyPeteRef:GetCurrentAIPackage,105.3:call:EasyPeteRef:GetCurrentAIProcedure,115:call:GoodspringsSettler01Ref:GetSitting,115.1:call:EasyPeteRef:GetSitting" }
+run_seconds = 125
+order = [[
+  'test aid: script Call("EasyPeteRef", "SetActorsAI", ["1"])',
+  "furniture: 00104C80 goes to 0010634A",
+  "furniture: 00104C80 is on 0010634A",
+  "script: test aid calls GetSitting on EasyPeteRef = 3",
+]]
+expect = [
+  { text = "furniture: 00104C80 cannot use", count = 0, label = "no refusal" },
+  { text = "furniture refusals:", count = 0, label = "no refusal in the summary" },
+  { text = "furniture: 00104C80 goes to 0010634A", count = 1, label = "one order is enough" },
+  { gap = ['test aid: script Call("EasyPeteRef", "SetActorsAI", ["1"])', "furniture: 00104C80 is on 0010634A"], range = [0, 20], label = "seated soon after his AI resumes" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 3", min = 5, label = "sitting at every probe" },
+]
 
 # ------------------------------------------------------------------ texture swaps
 
@@ -3268,6 +3370,23 @@ order = [[
 ]]
 
 [[scenario]]
+name = "terminal-scripted-activate"
+source = "#1532: Lucky38MrHouseTerminal's OnActivate (SCPT 0x001746C1) ends in a bare Activate: a script's default activation of a terminal opens its screen for the player, after Terminal01.NIF's Open sequence (keyboard, then screen); leaving plays Close"
+note = "Lucky38MrHouseTerminalREF (0014B0A7, base Lucky38MrHouseTerminal 0014B08E: Hard, locked, model Terminals/Terminal01.NIF with Idle/Open/Close) [observed: FalloutNV.esm]; Science 80 so the script's first branch (Science 75, not locked for good) runs Activate and the hacking game opens"
+areas = ["terminal"]
+paths = ["engine/nvf-play/src/terminal.rs", "engine/nvf-play/src/script_events.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav science 80", NVF_PLAY_TEST_SCRIPT = "9:moveto:player:Lucky38MrHouseTerminalREF,14:activate:Lucky38MrHouseTerminalREF", NVF_PLAY_TEST_TERMINAL = "17:exit" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 20
+expect = [
+  { text = "script: terminal 0014B0A7 opens (a script's Activate)", label = "the script's Activate opens the terminal" },
+  { text = "terminal 0x0014B0A7 plays Open before its screen", label = "the keyboard and screen come out first" },
+  { re = 'terminal: open 0x0014B0A7 \S+: hacking, Hard', label = "then the screen: the hacking game (Hard, locked)" },
+  { text = "terminal 0x0014B0A7 closes", label = "leaving plays Close" },
+]
+order = [["terminal 0x0014B0A7 plays Open before its screen", "terminal: open 0x0014B0A7", "terminal 0x0014B0A7 closes"]]
+
+[[scenario]]
 name = "hacking"
 manual = "[design] In hacking.png, compare 10x10 medians on glass right of the dump and below the header, and inside an attempt block, against docs/spec-notes/hacking.md §2: glass R 16-23 / G 38-52 / B 15-32; blocks near (61, 253, 152) and solid (not crossed by the scanlines), without a glare wash. Retain faint texture, dark corners (about 8, 11, 5) and the monitor's top-right streak near (100, 125, 95); use the per-constant tuning recipes in §7 and check text outside the streak stays no higher than (88, 255, 160), that the text has soft edges and the scanlines cross glass and text, and that the password prompt line's green above the glass, per character, is near the original's (§2; the words differ, so compare per character). In flat mode (no monitor model, so no glare) check its own targets instead: glass middle near (12, 38, 20) and blocks near (54, 252, 150) (screen.rs tests), with the same texture."
 source = "CLAUDE.md: after changes to terminals or the hacking game (docs/spec-notes/hacking.md §9): the Easy terminal"
@@ -3674,6 +3793,20 @@ expect = [
   { re = 'new game: (?P<n>\d+) placed actors start dead \(Base Health 0\)', range = [800, 1000], label = "new game: about 889 placed actors start dead" },
   { re = 'ragdolls: .* (?P<n>\d+) laid in the pose their reference stores', range = [9, 1000], label = "ragdolls: the village's nine corpses or more in their stored pose" },
   { re = 'ragdolls: .* \(0 stored poses did not fit\)' },
+]
+
+[[scenario]]
+name = "death-pose-held"
+source = "issue #1391 (engine/nvf-assets/src/anim_play.rs BlendPlayer::pose_held, engine/nvforever/src/locomotion.rs): a corpse holding a finished death clip is not sampled every frame"
+note = "the player stands in square (-17, 7), its physics squares reach x -18 (engine/nvf-play/src/phys/cells.rs RADIUS), and nothing moves them there; ten of the tribal village's corpses (TCFiend0?DEAD, TCGreatKhan0?DEAD, male skeleton, 0x001578F7 among them) lie in square (-19, 7), two squares off: drawn (--radius 2), dead from the start, on ground not loaded, so their ragdolls should not start and, predicted from that, they hold the end of a death pose for the rest of the run (docs/spec-notes/dead-on-spawn.md §3; ragdoll.rs start); the checks below read sums over all dead actors, not these ten, so they do not show it per corpse"
+areas = ["combat", "deaths", "animation"]
+paths = ["engine/nvf-assets/src/anim_play.rs", "engine/nvforever/src/locomotion.rs", "engine/nvforever/src/deaths.rs", "engine/nvforever/src/ragdoll.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1" }
+args = ["--play", "--pos=-67584,30720,10300", "--heading", "270", "--hour", "12", "--no-voice"]
+run_seconds = 40
+expect = [
+  { re = "death poses: \\d+ actor frames held without sampling \\((?P<n>\\d+) at the clip's end\\)", range = [100, 1000000000], label = "death poses: at least 100 actor frames in all held at the clip's end without sampling (a sum over all dead actors; says nothing of which)" },
+  { re = "death poses: .*\\), (?P<n>\\d+) more at the clip's end sampled", range = [1, 1000000000], label = "death poses: at least one actor frame in all sampled at the clip's end (a sum; not one per corpse)" },
 ]
 
 [[scenario]]
@@ -5261,6 +5394,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "robot-hit-volumes"
+source = "#1536 (owner's playtest 2026-11-04): robots' hit capsules were a human's share of their size, far thinner than their bodies; a part's capsule is now at least as thick as the widest ragdoll shape on its bones (engine/nvforever/src/limbs.rs BoneRadii, nvf-play hitvol part_capsules)"
+note = "VCrTier0CrProtectron (00167ED5) and VCrTier0CrMisterGutsy (00167ED2) placed by the player. Ragdoll widths [observed: their skeleton.nif bodies]: protectron Bip01 Spine 18.0 (share 13.1), Mister Gutsy's body 21.2 (share 14.6); the capsules come from the debug line of nvf_play::hitvol"
+areas = ["combat", "creatures"]
+paths = ["engine/nvforever/src/limbs.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { RUST_LOG = "info,nvf_play::hitvol=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 00167ED5 1;9.1:player.placeatme 00167ED2 1;9.3:tdetect;9.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 14
+expect = [
+  { re = 'actor FF000000: \d+ part capsules \(size \d+.*radius: 17\.99', label = "the protectron's torso capsule is its ragdoll's 18 units (13.1 before)" },
+  { re = 'actor FF000001: \d+ part capsules \(size \d+.*radius: 21\.2', label = "Mister Gutsy's body capsule is its ragdoll's 21.2 units (14.6 before)" },
+]
+
+[[scenario]]
 name = "follower-boone"
 source = "owner's list 2 (H followers): a companion hired by the game's own recruit line follows the player through a door, ignores the player's friendly fire, joins the player's fight and waits when told (docs/design/followers.md)"
 note = "Boone's recruit line INFO 0x0015F30D runs at 3 s (its result script hires him: SetPlayerTeammate, SetIgnoreFriendlyHits, VNPCFollowers.bBooneHired); the player shoots him twice at 24 s (the controls' clock is not moved when the scripts first run late, as the script steps are: on a busy machine the recruit line ran 7.2 s late and Boone, who takes about 9.5 s to walk over, was still 501 units off at 18 s), leaves his room by its door at 26 s, walks off at 32 s; a feral ghoul is put 600 units from the player at 45 s; Boone's Waiting variable is set at 62 s"
@@ -5327,6 +5474,27 @@ forbid = [
   { re = 'companion wheel: \S+ \(.*\): failed', label = "a command failed" },
   { re = 'companion wheel: .*has no line of', label = "a command had no line to say" },
   { re = 'npc combat: CraigBooneREF \S+ fights the player', label = "Boone fights the player" },
+]
+
+[[scenario]]
+name = "follower-melee-closes-in"
+source = "#1534 (owner's playtest 2026-11-04): a melee companion goes after its target. Every follower's Follow package sets Continue During Combat [observed: FollowersVeronicaFollowPlayerDEFAULT]; a teammate on a Follow package fights as any other actor and follows again after the fight (fnv_game::awareness continues_during_combat). Before, Veronica stood by the player and only struck what came to her"
+note = "Veronica (VeronicaREF) hired at the 188 Trading Post by her hire lines (INFO 0x001467AC, which sets her Brotherhood warning baseline, then 0x00147789, which hires her); a feral ghoul (0x000CE9E7, as follower-boone) put 900 units from the player at 16 s; the player walks off at 26 s"
+areas = ["followers", "combat"]
+paths = ["crates/fnv-game/src/awareness.rs", "crates/fnv-ai/src/alert.rs", "crates/fnv-game/src/followers.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:moveto:player:VeronicaREF:0:150:0,4:info:0x001467AC:VeronicaREF,5:info:0x00147789:VeronicaREF,16:moveto:0x000CE9E7:player:0:900:0", NVF_PLAY_TEST_GOTO = "26:32400:31600:5520" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 45
+expect = [
+  { re = 'VeronicaREF: package FollowersVeronicaFollowPlayerDEFAULT', label = "hired: her Follow package" },
+  { re = 'npc combat: VeronicaREF \S+ fights 0x000CE9E7 with WeapPowerFistVeronica \(melee\)', label = "she fights the ghoul with her power fist" },
+  { re = 'VeronicaREF: runs at 0x000CE9E7, (\d+) units away', range = [400, 5000], label = "she leaves the player to close on it (stood still before #1534)" },
+  { re = 'npc combat: VeronicaREF \S+ swings at LvlFeralGhoul 0x000CE9E7', label = "and swings at it" },
+  { re = 'VeronicaREF: (runs|walks) after ', label = "after the fight she follows the player again" },
+]
+order = [["npc combat: VeronicaREF", "VeronicaREF: runs at 0x000CE9E7", "VeronicaREF: runs after"]]
+forbid = [
+  { re = 'npc combat: VeronicaREF \S+ fights the player', label = "Veronica fights the player" },
 ]
 
 [[scenario]]
@@ -9827,6 +9995,75 @@ expect = [
   { re = 'DisableNavmesh: not built', count = 0, label = "DisableNavmesh is no stub" },
   { re = 'EnableNavMesh: not built', count = 0, label = "EnableNavMesh is no stub" },
 ]
+
+[[scenario]]
+name = "sandbox-combat-recovery"
+source = "docs/design/alert.md §5: sandbox interruption cancels the abandoned activity and reservations; #1497"
+note = "The phase-gated resident aid waits for rendered Chet to have a real ToObject follower, calls StartCombat, observes production combat movement, calls StopCombat, and requires a fresh completed sandbox activity under the same package. A timeout or package replacement fails setup/recovery. No AI state is repaired by the aid."
+areas = ["ai", "combat"]
+paths = ["crates/fnv-ai/src/alert.rs", "crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/sandbox.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/residents/sandbox_interrupt.rs"]
+args = ["--cell", "GSGeneralStore", "--play", "--npc-packages", "GSChetRef", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SANDBOX_INTERRUPT = "GSChetRef:pending:player:stop" }
+run_seconds = 220
+expect = [
+  { re = 'sandbox interruption: precondition .*phase=Some\(ToObject\).*activity=Some\(Travelling\) follower=true', count = 1, label = "a real pending object walk before combat" },
+  { re = 'sandbox interruption: PASS .*mode=Stop', count = 1, label = "a new activity completed after StopCombat" },
+  { re = 'sandbox interruption: (FAIL|invalid)', count = 0, label = "setup and recovery remained valid" },
+]
+order = [[
+  'sandbox interruption: precondition',
+  'sandbox interruption: StartCombat',
+  'sandbox interruption: combat takeover',
+  'sandbox interruption: StopCombat',
+  'sandbox interruption: recovered',
+  'sandbox interruption: PASS',
+]]
+
+[[scenario]]
+name = "sandbox-combat-recovery-control"
+source = "docs/design/alert.md §5: #1497 uninterrupted scene control"
+note = "The same phase-gated pending walk, same actor, package and scene as sandbox-combat-recovery, without combat. Requires the originally selected object activity to complete, not merely a path-choice event or a replacement choice."
+areas = ["ai"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/sandbox.rs", "engine/nvforever/src/residents/sandbox_interrupt.rs"]
+args = ["--cell", "GSGeneralStore", "--play", "--npc-packages", "GSChetRef", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SANDBOX_INTERRUPT = "GSChetRef:pending:player:control" }
+run_seconds = 190
+expect = [
+  { re = 'sandbox interruption: precondition .*phase=Some\(ToObject\).*activity=Some\(Travelling\) follower=true', count = 1, label = "matched pending walk control" },
+  { re = 'sandbox interruption: PASS .*mode=Control', count = 1, label = "uninterrupted object activity completes" },
+  { re = 'sandbox interruption: (FAIL|invalid|StartCombat|StopCombat)', count = 0, label = "control has no combat intervention" },
+]
+order = [[
+  'sandbox interruption: precondition',
+  'sandbox interruption: control continues without combat',
+  'sandbox interruption: recovered',
+  'sandbox interruption: PASS',
+]]
+
+[[scenario]]
+name = "sandbox-combat-seated-recovery"
+source = "docs/design/alert.md §5: #1497 active sandbox furniture interruption"
+note = "Wait for actual furniture state 3 and matching sandbox intent; StartCombat, actual movement takeover and complete physical release, then StopCombat and a new completed sandbox activity."
+areas = ["ai", "combat", "furniture"]
+paths = ["crates/fnv-ai/src/alert.rs", "crates/fnv-ai/src/carry.rs", "crates/fnv-ai/src/sandbox.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/residents/sandbox_interrupt.rs"]
+args = ["--cell", "GSGeneralStore", "--play", "--npc-packages", "GSChetRef", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SANDBOX_INTERRUPT = "GSChetRef:seated:player:stop" }
+run_seconds = 220
+expect = [
+  { re = 'sandbox interruption: precondition .*state: 3.*on_furniture=true', count = 1, label = "actor physically seated before interruption" },
+  { re = 'sandbox interruption: furniture released .*physical=None on_furniture=false', count = 1, label = "furniture exit completed before combat ends" },
+  { re = 'sandbox interruption: PASS .*mode=Stop', count = 1, label = "fresh activity completed after getting up" },
+  { re = 'sandbox interruption: (FAIL|invalid)', count = 0, label = "setup and recovery remained valid" },
+]
+order = [[
+  'sandbox interruption: precondition',
+  'sandbox interruption: StartCombat',
+  'sandbox interruption: combat takeover',
+  'sandbox interruption: furniture released',
+  'sandbox interruption: StopCombat',
+  'sandbox interruption: recovered',
+  'sandbox interruption: PASS',
+]]
 
 [[scenario]]
 name = "ai-procedure-codes"
@@ -17745,6 +17982,129 @@ order = [[
 ]]
 
 [[scenario]]
+name = "tiles-tutorial"
+source = "[design] ui-tile-tree.md §6.2 step 3 (T15b part 2, docs/handoff/ui-tile-tree-tasks.md, tutorial-menu.md §5): with [UI] TileMenus=TutorialMenu the tutorial menu is drawn from the game's TutorialMenu tiles (menu 1059 builds it; the model writes the page's strings, the count, the buttons' state and the scroll), the hand-built drawing is not spawned, a message whose text overflows its column scrolls by key, wheel, arrow and page area to its bound, a second message is a page with bounded Next and Previous by key and pointer, E and a click on Close close it, it opens again, and over the Pip-Boy its close gives the Pip-Boy back; the world is blurred from the first frame drawn from tiles to the close (radius 3, tutorial-menu.md §5, image-modifiers.md §5), over the Pip-Boy the stronger of the two, and its close leaves the Pip-Boy's own blur"
+note = "NVF_PLAY_TEST_SCRIPT_MENUS is off so the test aid's auto-close hides nothing. 0x0007235B overflows in the original at this size (text 625 high, 215 to scroll, hud_menus capture), 0x00072358 is the short HelpHealingLimbs. All aids on one clock (NVF_PLAY_AIDS_FROM_SCRIPTS 0) as the tile pointer keeps the time since the start, so the first step stands well after a late script start. At 1280 x 720 the screen is 1706.7 x 960 interface units, TM_Background at 170.7, 96 (tutorial_menu.xml): the scrollbar's x 204 to 236, its top 268 and bottom 692, the down arrow 692 to 708, so (220, 700) is the arrow and (220, 600) the page area under the marker at value 120 (marker 32 high at 268 + value x 392/215, 54.70 at 30 and 392 at the bound as the original reads, hud_tutorial_more; 625 and 215 need the message's single line breaks kept, tiles::tutorial_menu::body_text); the buttons' right side 1455, Next y 268 to 320, Previous 320 to 372, Close 656 to 708. Compare the shots with tutorial-default-drawing's at the same times: tiles_tutorial_top and _bottom are the top and bottom of the scroll, tiles_tutorial_two_pages the first of two pages, tiles_tutorial_page2 the second, tiles_tutorial_over_pipboy the menu over the Pip-Boy and tiles_tutorial_over_pipboy_closed the Pip-Boy with its own blur after the close"
+areas = ["ui", "menus", "scripts"]
+paths = [
+  "engine/nvf-play/src/tiles/tutorial_menu.rs", "engine/nvf-play/src/tutorial_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/pad.rs",
+  "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+  "engine/nvforever/src/imagespace.rs", "engine/nvforever/src/imagespace.wesl", "engine/nvforever/src/imagespace_blur.wesl",
+]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "TutorialMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:call:-:ShowTutorialMenu:0x0007235B,28:call:-:ShowTutorialMenu:0x00072358,36:call:-:ShowTutorialMenu:0x00072358,41:call:-:ShowTutorialMenu:0x00072358", NVF_PLAY_TEST_KEYS = "22:down,22.5:down,23:wheel-down,27:up,27.5:wheel-up,30:a,30.5:a,31.5:s,32:s,34:e,42:e", NVF_PLAY_TEST_POINTER = "23.5:220:700,24:220:700:click,24.5:220:600,25:220:600:click,25.5:220:700:click,26:off,32.2:1420:294,32.5:1420:294:click,33:1420:346,33.2:1420:346:click,33.5:off,37.5:1420:680,38:1420:680:click,38.5:off", NVF_PLAY_TEST_PIPBOY = "40:open,43:page=stats,44:close", NVF_PLAY_TEST_SHOTS = "21.5:tiles_tutorial_top.png,26.5:tiles_tutorial_bottom.png,29:tiles_tutorial_two_pages.png,31:tiles_tutorial_page2.png,37:tiles_tutorial_short.png,41.5:tiles_tutorial_over_pipboy.png,42.5:tiles_tutorial_over_pipboy_closed.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 48
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=TutorialMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): TutorialMenu drawn from tiles', label = "the switch is read from the test aid" },
+  { re = 'ui: built TutorialMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', min = 3, label = "each opening builds its file" },
+  { re = 'tiles: TutorialMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', min = 3, label = "the menu's tree draws" },
+  { text = "TutorialMenu drawn by hand", count = 0, label = "the file has every path the model needs" },
+  { re = 'tiles: TutorialMenu drawn from tiles: page 1/1 "[^"]+", count hidden, text height \d+, column 440 high, scroll to [1-9]', label = "the first message overflows its column" },
+  { re = 'tiles: TutorialMenu drawn from tiles: page 1/1 "[^"]+", count hidden, text height 625, column 440 high, scroll to 215\b', label = "the message's own line breaks: 20 lines and the range of the original (625 = 36 + 19 x 31, 625 + 30 - 440)" },
+  { re = 'tiles: TutorialMenu scroll drawn at 0 of [1-9]\d*(\.\d+)?, text y 21\b', label = "it opens at the top" },
+  { re = 'tiles: TutorialMenu scroll drawn at 0 of 215, text y 21, marker y 0\b', label = "the marker at the top of its track" },
+  { re = 'tiles: TutorialMenu scroll drawn at 30 of 215, text y -9, marker y 54\.\d+', label = "the marker a step on, as the original's 54.70 at 30" },
+  { re = 'tiles: TutorialMenu scroll drawn at 30 of \d+(\.\d+)?, text y -9\b', label = "Down scrolls one step, the text moved by the file" },
+  { re = 'tiles: TutorialMenu scroll drawn at 60 of \d+(\.\d+)?, text y -39\b', label = "a second Down" },
+  { re = 'tiles: TutorialMenu scroll drawn at 90 of \d+(\.\d+)?, text y -69\b', label = "the wheel" },
+  { re = 'tiles: TutorialMenu scroll drawn at 120 of \d+(\.\d+)?, text y -99\b', label = "a click on the down arrow" },
+  { re = 'tiles: TutorialMenu scroll drawn at (\d+(?:\.\d+)?) of \1, text y -', label = "the page area scrolls to the bound" },
+  { re = 'tiles: TutorialMenu scroll drawn at 215 of 215, text y -194, marker y 392\b', label = "at the bound the marker reaches the bottom of its track (424 - 32)" },
+  { text = "tiles: TutorialMenu Scroll(30.0) on its tiles", count = 2, label = "the two clicks on the down arrow, the keys not acting twice" },
+  { text = "tiles: TutorialMenu Scroll(410.0) on its tiles", count = 1, label = "a click on the page area: the column's height less a step" },
+  { re = 'tiles: TutorialMenu scroll drawn at \S+, not the \S+ written', count = 0, label = "the scroll never draws the file's own count of the clicks" },
+  { re = 'tiles: TutorialMenu drawn from tiles: page 1/2 "[^"]+", count 1/2', label = "a second message is a page, and the count shows" },
+  { re = 'tiles: TutorialMenu drawn from tiles: page 2/2 "[^"]+", count 2/2', label = "the next page" },
+  { re = 'tutorial menu: page 1/2 "(?!Healing Limbs)[^"]+"', label = "two distinct messages: the first" },
+  { text = 'tutorial menu: page 2/2 "Healing Limbs"', count = 2, label = "and the second, by A and by the pointer; the A at the last page does nothing" },
+  { text = "tutorial menu: page 1/2", count = 3, label = "a page shown three times: the second message's arrival, S and the pointer; the S at the first page does nothing" },
+  { re = 'tiles: TutorialMenu scroll drawn at 0 of \d+(\.\d+)?, text y 21\b', min = 3, label = "a turned page starts at its top" },
+  { text = "tiles: TutorialMenu Next on its tiles", count = 1, label = "a click on Next, the keys not acting twice" },
+  { text = "tiles: TutorialMenu Previous on its tiles", count = 1, label = "a click on Previous" },
+  { text = "tiles: TutorialMenu Close on its tiles", count = 1, label = "a click on Close" },
+  { text = "tutorial menu: closed (key)", count = 2, label = "E closes it, once a press" },
+  { text = "tutorial menu: closed (click)", count = 1, label = "a click closes it" },
+  { re = 'test aid: closed menu 1059 after', count = 0, label = "no test aid closed it" },
+  { re = 'ui: dropped TutorialMenu', min = 3, label = "the closed menu drops its tiles" },
+  { text = "tile menu blur: TutorialMenu radius 3", count = 3, label = "the world blurred once for each of the three openings" },
+  { text = "tile menu blur: off", count = 3, label = "and clear again at each close" },
+  { text = "tile menu blur: the screen's own blur 3.5 stays", count = 1, label = "tiles_tutorial_over_pipboy: the close leaves the Pip-Boy's own blur, and only that close leaves one" },
+]
+order = [[
+  "script: test aid calls ShowTutorialMenu",
+  "tiles: TutorialMenu Scroll(410.0) on its tiles",
+  "script: test aid calls ShowTutorialMenu",
+  'tutorial menu: page 2/2 "Healing Limbs"',
+  "tutorial menu: closed (key)",
+  "ui: dropped TutorialMenu",
+  "script: test aid calls ShowTutorialMenu",
+  "tiles: TutorialMenu Close on its tiles",
+  "tutorial menu: closed (click)",
+  "pipboy: up",
+  "script: test aid calls ShowTutorialMenu",
+  "tutorial menu: closed (key)",
+  "pipboy: menu code 1003",
+  "pipboy: down",
+], [
+  { re = 'tiles: TutorialMenu scroll drawn at (\d+(?:\.\d+)?) of \1, text y -', label = "at the first page's bottom" },
+  { re = 'tiles: TutorialMenu drawn from tiles: page 2/2 ' },
+  { re = 'tiles: TutorialMenu scroll drawn at 0 of \d+(\.\d+)?, text y 21\b', label = "A's turn starts the page at its top, before any reopening" },
+  "tutorial menu: closed (key)",
+], [
+  "script: test aid calls ShowTutorialMenu",
+  { text = "tiles: TutorialMenu drawn from tiles (", label = "the first frame drawn from tiles" },
+  { text = "tile menu blur: TutorialMenu radius 3", label = "the blur starts with it, not with the opening" },
+  "tutorial menu: closed (key)",
+  "tile menu blur: off",
+  "script: test aid calls ShowTutorialMenu",
+  { text = "tile menu blur: TutorialMenu radius 3", label = "reopened" },
+  "tutorial menu: closed (click)",
+  "tile menu blur: off",
+], [
+  { text = "pipboy: up", label = "tiles_tutorial_over_pipboy: the Pip-Boy up first" },
+  "script: test aid calls ShowTutorialMenu",
+  "tile menu blur: TutorialMenu radius 3",
+  "test aid: screenshot …tiles_tutorial_over_pipboy.png",
+  "tutorial menu: closed (key)",
+  "tile menu blur: off",
+  { text = "tile menu blur: the screen's own blur 3.5 stays", label = "what was behind the menu shows: fBlurRadiusPipboy, the clip held" },
+  "test aid: screenshot …tiles_tutorial_over_pipboy_closed.png",
+  "pipboy: down",
+]]
+
+[[scenario]]
+name = "tutorial-default-drawing"
+source = "docs/spec-notes/tutorial-menu.md §3 and §5: without the switch the tutorial menu is the hand-built drawing: no tile of it is drawn or written, and its keys, wheel, page bounds and close work as before the commands were shared with the tile menu; the shots are the default drawing to compare with tiles-tutorial's"
+note = "the same messages and times as tiles-tutorial, by keys alone, ten steps being past the hand-built scroll's end for 0x0007235B at this size"
+areas = ["ui", "menus", "scripts"]
+paths = ["engine/nvf-play/src/tutorial_menu.rs", "engine/nvf-play/src/tiles/tutorial_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/menus.rs", "crates/fnv-ui/src/input.rs", "engine/nvforever/src/imagespace.rs", "engine/nvforever/src/imagespace.wesl", "engine/nvforever/src/imagespace_blur.wesl"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "20:call:-:ShowTutorialMenu:0x0007235B,28:call:-:ShowTutorialMenu:0x00072358", NVF_PLAY_TEST_KEYS = "22:down,22.25:down,22.5:down,22.75:down,23:down,23.25:down,23.5:down,23.75:down,24:wheel-down,24.25:wheel-down,27:up,27.5:wheel-up,30:a,30.5:a,31.5:s,32:s,34:e", NVF_PLAY_TEST_SHOTS = "21.5:tutorial_default_top.png,26.5:tutorial_default_bottom.png,29:tutorial_default_two_pages.png,31:tutorial_default_page2.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 38
+expect = [
+  { re = 'tiles: TutorialMenu', count = 0, label = "nothing of the tile menu runs without its switch" },
+  { text = "tile menu blur:", count = 0, label = "and no blur is asked for: the hand-built menu's world stays as it was" },
+  { text = 'tutorial menu: page 2/2 "Healing Limbs"', count = 1, label = "A turns once; the A at the last page does nothing" },
+  { text = "tutorial menu: page 1/2", count = 2, label = "the second message's arrival and S; the S at the first page does nothing" },
+  { text = "tutorial menu: closed (key)", count = 1, label = "E closes it" },
+  { re = 'tutorial menu: scroll 30 of [1-9]', count = 1, label = "Down moves one step, once a press, the commands shared with the tile menu" },
+  { re = 'tutorial menu: scroll (\d+) of \1$', label = "the hand-built range's end reached by keys and wheel alone (ten steps are past it)" },
+]
+order = [[
+  "script: test aid calls ShowTutorialMenu",
+  'tutorial menu: page 1/1',
+  'tutorial menu: scroll 30 of',
+  { re = 'tutorial menu: scroll (\d+) of \1$', label = "at its end" },
+  { re = 'tutorial menu: scroll [1-9]\d* of', label = "Up, back from the end" },
+  { re = 'tutorial menu: scroll [1-9]\d* of', label = "the wheel, back again" },
+  "script: test aid calls ShowTutorialMenu",
+  'tutorial menu: page 2/2 "Healing Limbs"',
+  { re = 'tutorial menu: scroll 0 of \d+', label = "A's turn starts the page at its top" },
+  "tutorial menu: closed (key)",
+]]
+
+[[scenario]]
 name = "tiles-quantity"
 source = "[design] ui-tile-tree.md §6.2 step 3 (T15a, docs/handoff/ui-tile-tree-tasks.md): with [UI] TileMenus=QuantityMenu the \"How many?\" prompt over the Pip-Boy is drawn from the game's QuantityMenu tiles (Game::ui_prompt builds it; the model writes the meter's user0 and user2, the file works out the tiled fill and the amount), the hand-built prompt is not spawned, and pointer clicks on the decrease arrow and on OK drop one fewer than the stack"
 note = "the drop aid asks at 21 s for the 20 rounds given (the prompt opens at the whole stack, and `ask` holds it open until answered); the shot at 23 s; at 1280 x 800 the decrease arrow stands at 550-567 x 452-487 and OK ends at x 1085, y 492-543 (QM_Background centred by screen(), QM_MainRect 22, 42 in; quantity_menu.xml)"
@@ -18134,17 +18494,40 @@ expect = [
 ]
 [[scenario]]
 name = "melee-knockback"
-source = "#1070 (docs/spec-notes/combat-rules.md, Knockback): a melee blow pushes the living actor it hits back through its character, by the Melee Knockback Formula's force (a speed falling to rest over fKnockbackTime)"
-note = "the combat-block-break NCR trooper 0x000F36F5 (no weapon drawn, --actor-weapons none) put 90 units north of the god-mode player at 6 s and 9 s, not set on the player; 0.8 s later the player, fists drawn, turns to it and holds Use 1.5 s (a power attack); each blow that lands pushes it back"
+source = "#1070 (docs/spec-notes/combat-rules.md, Knockback): a melee blow pushes the living actor it hits back through its character, by the Melee Knockback Formula's force (a speed falling to rest over fKnockbackTime); #1386: one player power blow, isolated and tied to its report"
+note = "NVF_PLAY_TEST_MELEE_KNOCKBACK: the NCR trooper 0x000F36F5 (--actor-weapons none) gets its AI off and then one MoveTo 90 units north of the god-mode player on the open ground melee-knockback-player uses; the actors of the loaded area keep their AI off; once the target stands ready the player, fists drawn, aims at it and holds Use until the power swing starts, then lets go, with no retry. The seconds are a deadline, not a firing delay. A failed setup or a report not tied to this blow fails the run, as a push out of range does. The range rests on 20 runs of 2026-11-05 at 30 to about 60 frames a second, 98-102 % (docs/spec-notes/combat-rules.md, Knockback); higher rates and irregular frames were not tried."
 areas = ["combat", "melee"]
-paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/residents.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "6:moveto:0x000F36F5:player:0:90:0,9:moveto:0x000F36F5:player:0:90:0", NVF_PLAY_TEST_CONTROL = "3:weapon,6.8:aimnpc,6.9:fire,8.4:fire,9.8:aimnpc,9.9:fire,11.4:fire" }
-args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--actor-weapons", "none", "--plugins", "FalloutNV.esm"]
-run_seconds = 15
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/test_aid.rs", "engine/nvf-play/src/test_aid/melee_knockback.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/residents/knock_run.rs", "engine/nvforever/src/residents/melee_knockback.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_MELEE_KNOCKBACK = "000F36F5:0:90:0" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages", "--actor-weapons", "none", "--plugins", "FalloutNV.esm"]
+run_seconds = 30
 expect = [
-  { re = 'knockback: 000F36F5 knocked back at \d+ units/s for 1[.]00 s', label = "the blow's knockback starts on the trooper" },
-  { re = 'knockback: .*000F36F5 pushed back \d+ units of \d+ \((\d+) %\)', range = [60, 140], label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, not set on anyone yet)" },
+  { re = 'melee knockback aid: ready target=000F36F5', count = 1, label = "the target stands ready for the blow, once" },
+  { re = 'combat: \S+ power attack hits 0x000F36F5 on ', count = 1, label = "one player power attack hits the target" },
+  { re = 'combat: .*\b(hits|strikes)\b.*0x000F36F5\b', count = 1, label = "nothing else hits the target" },
+  { re = 'combat: \S+( power attack)? hits 0x[0-9A-F]{8} on ', count = 1, label = "the player's melee hits one actor, once" },
+  { re = 'knockback trace: blow=\d+ target=000F36F5 dt=', min = 2, label = "each frame of the push is traced" },
+  { re = 'melee knockback aid: blow=\d+ landed target=000F36F5', count = 1, label = "that blow's knockback is the target's first and only" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 knocked back at \d+ units/s for 1[.]00 s', count = 1, label = "the player's power blow starts the knockback" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 power=[01] knocked back at', count = 1, label = "no other knockback starts on the target" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(]', count = 1, label = "that knockback ends on a living target no script moved and no walk or clip carried" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*pushed back', count = 1, label = "no other knockback ends on the target" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(](?P<n>\d+(?:[.]\d+)?) %[)] along=-?[\d.]+ lateral=[\d.]+ push=along,', range = [60, 140], all = true, label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, its AI off)" },
   { re = 'knockback summary: ([1-9]\d*) knockbacks on actors', label = "knockbacks in the summary" },
+]
+order = [[
+  'melee knockback aid: AI off on the target 000F36F5',
+  'melee knockback aid: the one MoveTo of 000F36F5',
+  'melee knockback aid: ready target=000F36F5',
+  'melee knockback aid: the power swing started, Use let go',
+  { re = 'combat: \S+ power attack hits 0x000F36F5 on ' },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 knocked back at' },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 .*pushed back' },
+]]
+forbid = [
+  { text = "melee knockback aid: FAIL", label = "the aid's setup or its one blow went wrong" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*interrupted by', label = "a second blow replaced the knockback" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*push=(reversed|sideways)', label = "the push went another way than the blow asked" },
 ]
 
 [[scenario]]
@@ -18283,6 +18666,137 @@ expect = [
 ]
 
 [[scenario]]
+name = "hitvol-marked-created-actor"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "the placeatme-fights run: Goodsprings' placed actors, and a cazador a script creates that must get a volume after it is created. The steps match any dynamic id, as an expectation cannot carry an id from one line to the next: the count of creation lines says the cazador is the only actor creation logged in the run, and the second step asks for a dynamic actor with meshes shown and a volume. That it is the cazador rests on no other dynamic actor getting past the residents' creation log (residents.rs `take_created`, which goes over the non-deleted dynamic references of actor bases)"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "8:player.setav health 5000;8.5:close", NVF_PLAY_TEST_SCRIPT = "10:call:player:PlaceAtMe:NVCrCazador:1" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 40
+order = [[
+  { re = 'ai \[[^\]]*\] NVCrCazador 0xFF[0-9A-F]{6}: created by a script \(PlaceAtMe\)' },
+  { re = 'hitvol compare: actor FF[0-9A-F]{6} has [1-9]\d* of \d+ meshes shown and a volume' },
+]]
+expect = [
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (created actor)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (created actor)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (created actor)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (created actor)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (created actor)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (created actor)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (created actor)" },
+  "hitvol scan summary: ",
+  { re = 'ai \[[^\]]*\] .*: created by a script \(PlaceAtMe\)', count = 1, label = "the cazador is the only actor creation logged in the run (created actor)" },
+]
+
+[[scenario]]
+name = "hitvol-marked-equipment"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "the npc-equip-drawn run: Sunny's armour and rifle are replaced. The armour's line must say it put parts on, the armor among them, and a line before the rifle comes off must count new meshes of hers: nothing else of hers changes then, and a mesh counts once it has bounds and her RefVisual. Then meshes go with the rifle and come with it again, each with meshes shown and a volume. New and gone are counted, not the net change, because the old and new armour can fall in one frame, as the order of follow_inventory and sync_volumes is not fixed. Her package has Weapons Unequipped by then (alert.rs hides the Weapon node), so the rifle's meshes are hidden and only the number of all her meshes moves. Which part a new mesh is the log does not say: the outfits tests read the replacement entities themselves"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_FACE = "5:00104E85", NVF_PLAY_TEST_SCRIPT = "3:moveto:player:SunnyRef:0:-160:0,8:call:SunnyRef:AddItem:0x000EF1CB:1,9:call:SunnyRef:EquipItem:0x000EF1CB,12:call:SunnyRef:UnequipItem:0x0007EA24,14:call:SunnyRef:EquipItem:0x0007EA24", NVF_PLAY_TEST_SHOTS = "7,11,13,16" }
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 20
+order = [[
+  { re = 'outfit: actor 00104E85: armour 0x00020423 taken off, 0x000EF1CB put on; [1-9]\d* part\(s\) put on \(.*\barmor\b' },
+  { re = 'hitvol compare: actor 00104E85 has [1-9]\d* of \d+ meshes shown and a volume; [1-9]\d* new, ' },
+  "outfit: actor 00104E85: weapon 0x0007EA24 no longer held",
+  { re = 'hitvol compare: actor 00104E85 has [1-9]\d* of \d+ meshes shown and a volume; \d+ new, [1-9]\d* gone' },
+  "outfit: actor 00104E85: weapon 0x0007EA24 now held",
+  { re = 'hitvol compare: actor 00104E85 has [1-9]\d* of \d+ meshes shown and a volume; [1-9]\d* new, ' },
+]]
+expect = [
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (equipment)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (equipment)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (equipment)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (equipment)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (equipment)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (equipment)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (equipment)" },
+  "hitvol scan summary: ",
+]
+
+[[scenario]]
+name = "hitvol-marked-corpse-parts"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "the dismember-geckos run: gecko 2 has a volume, then its head explodes, its meshes stay accepted and its ragdoll takes over from the volume and is told at rest later (that it exists and was stepped, not that it behaves); gore has no RefVisual"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "4:moveto:VERGSGecko4REF:player:150:250:0", NVF_PLAY_TEST_HIT = "8:VERGSGecko2REF:500:WeapSniperRifle:limb=PerceptionCondition,10:VERGSGecko3REF:200:WeapNVMachete:limb=PerceptionCondition,10.5:VERGSGecko3REF:40:WeapNVMachete:limb=PerceptionCondition,11:VERGSGecko3REF:40:WeapNVMachete:limb=PerceptionCondition,11.5:VERGSGecko3REF:40:WeapNVMachete:limb=PerceptionCondition,12:VERGSGecko3REF:40:WeapNVMachete:limb=LeftAttackCondition,12.5:VERGSGecko3REF:40:WeapNVMachete:limb=LeftAttackCondition,13:VERGSGecko3REF:40:WeapNVMachete:limb=LeftAttackCondition,13.5:VERGSGecko3REF:40:WeapNVMachete:limb=LeftAttackCondition", NVF_PLAY_TEST_CONSOLE = "15:VERGSGecko4REF.KillActor player 1;15.5:close", NVF_PLAY_TEST_LOOK = "5:0:-20", NVF_PLAY_TEST_SHOTS = "7:geckos_before.png,9:geckos_head.png,14.5:geckos_severed.png,17:geckos_after.png" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-69180,-17450,9000", "--heading", "0", "--hour", "12", "--no-voice"]
+run_seconds = 22
+order = [[
+  { re = 'hitvol compare: actor 00157B3D has [1-9]\d* of \d+ meshes shown and a volume' },
+  { re = 'combat: Gecko 0x00157B3D killed' },
+  { re = 'hitvol compare: actor 00157B3D has [1-9]\d* of \d+ meshes shown and no volume' },
+  { re = 'dismember: .* 0x00157B3D: Head exploded \(overkill' },
+  { re = 'ragdoll: actor 00157B3D at rest at ' },
+]]
+expect = [
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (corpses)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (corpses)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (corpses)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (corpses)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (corpses)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (corpses)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (corpses)" },
+  "hitvol scan summary: ",
+]
+
+[[scenario]]
+name = "hitvol-marked-door-fade-in"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "the npc-door-fade run: the player waits outside; Ringo (0x00104C7D) comes through the door into the drawn exterior and must get a volume there"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
+run_seconds = 60
+order = [[
+  { re = 'world sounds: an actor passed load door \w+, sound ' },
+  { re = 'hitvol compare: actor 00104C7D has [1-9]\d* of \d+ meshes shown and a volume' },
+]]
+expect = [
+  { re = 'door fade summary: \d+ actors faded out at a door, (?P<n>\d+) faded in', range = [1, 1000], label = "an NPC faded in at the other side of a door" },
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (door fade in)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (door fade in)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (door fade in)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (door fade in)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (door fade in)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (door fade in)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (door fade in)" },
+  "hitvol scan summary: ",
+]
+
+[[scenario]]
+name = "hitvol-marked-door-fade-out"
+source = "issue #1388 (engine/nvf-play/src/hitvol.rs, module notes): the bounds walk only the meshes with the ActorBoundsCandidate mark; the comparison aid walks every RefVisual as well, each frame, and must find no actor mesh or bounds the marked walk does not; each actor named here must have a volume from its meshes after its change"
+note = "as the npc-door-fade run, with the player staying inside the gas station, so that Ringo's drawn body fades out at the door: its root loses its RefVisual, its meshes keep theirs until it is gone, and he has no meshes left after that"
+areas = ["combat", "actors"]
+paths = ["engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_HITVOL_COMPARE = "1", NVF_PLAY_TEST_HITVOL_SCAN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "15:info:0x00105D09", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "10", "--npc-packages", "all,RingoRef"]
+run_seconds = 60
+order = [[
+  { re = 'hitvol compare: actor 00104C7D has [1-9]\d* of \d+ meshes shown and a volume' },
+  { re = 'world sounds: an actor passed load door \w+, sound ' },
+  { re = 'hitvol compare: actor 00104C7D has 0 of 0 meshes shown and no volume' },
+]]
+expect = [
+  { re = 'door fade summary: (?P<n>\d+) actors faded out at a door', range = [1, 1000], label = "an NPC faded out at a door" },
+  { re = 'hitvol compare summary: frames=(?P<n>\d+)', range = [60, 100000000], label = "the comparison ran through the run (door fade out)" },
+  { re = 'hitvol compare summary: .* with_actors=(?P<n>\d+)', range = [60, 100000000], label = "with actors drawn (door fade out)" },
+  { re = 'hitvol compare summary: .* left_out_most=(?P<n>\d+)', range = [1, 100000000], label = "the mark spares the walk meshes that are no actors' (door fade out)" },
+  { re = 'hitvol compare summary: .* accepted_most=(?P<n>\d+)', range = [1, 100000000], label = "actor meshes were accepted (door fade out)" },
+  { re = 'hitvol compare summary: .* missed=0 mismatched=0 volume_ids_wrong=0', label = "the marked walk finds every actor mesh, the bounds used are those of every mesh, the ids with a volume those of the actors kept (door fade out)" },
+  { re = 'hitvol compare: (missed entity|bounds of reference|volume ids differ)', count = 0, label = "nothing named as missed (door fade out)" },
+  { re = 'hitvol scan: matched=\d+ visible=\d+ accepted=(?P<n>\d+) actors=\d+', range = [1, 100000000], label = "the walk's counts are logged, with actor meshes among them (door fade out)" },
+  "hitvol scan summary: ",
+]
+
+[[scenario]]
 name = "fo3-functions-console"
 source = "[documented + hypothesis] docs/handoff/ttw-fo3-script-audit-2026-11-02.md §1 (Outcome), functions::fo3: Fallout 3's KillQuestUpdates drops the HUD's waiting quest lines, DisableAllMines disables the player's cell's mines, GetLastPlayerAction reads 0 with nothing done, IsWaiting 0 for an actor never told to wait; TTW's own data is not a smoke data dir, so the console runs them in Goodsprings"
 areas = ["scripts", "console", "ui"]
@@ -18352,3 +18866,18 @@ expect = [
   { text = 'script runner: optional\gl_nvfsmoke_late.txt ran (game load)', count = 1, label = "the file gr_ registered runs at the load" },
 ]
 order = [["load: restored", "script runner: gr_nvfsmoke.txt ran", "script runner: ln_nvfsmoke.txt ran (game load)", 'script runner: optional\gl_nvfsmoke_late.txt ran']]
+
+[[scenario]]
+name = "script-runner-menu"
+source = "issue #1548, docs/spec-notes/ext-script-runner.md §2: behind the main menu only the gr_ files run; the new game's ln_ files wait for New Game"
+areas = ["scripts", "extender", "main-menu"]
+paths = ["crates/fnv-game/src/script_runner.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/main_menu.rs", "tools/smoke/fixtures/script-runner-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-runner-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MAIN_MENU = "6:new", NVF_PLAY_TEST_INTRO_SKIP = "7" }
+args = ["--play", "--menu", "--no-voice"]
+run_seconds = 14
+expect = [
+  { text = "script runner: gr_nvfsmoke.txt ran (game restart)", count = 1 },
+  "main menu: New Game",
+  { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1, label = "the ln_ file runs once the new game begins" },
+]
+order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]

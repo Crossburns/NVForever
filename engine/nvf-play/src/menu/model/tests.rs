@@ -881,7 +881,7 @@ fn a_weapon_dropped_beside_its_holder_is_one_item_in_the_menu_and_the_world() {
     select(&mut m, Side::Container, "Varmint Rifle");
     let a = m.apply(&mut w, Command::One);
     assert_eq!(a.picked, vec![r]);
-    assert!(w.peek(r).unwrap().deleted);
+    assert!(w.peek(r).unwrap().deleted());
     assert_eq!((count(&mut w, BOX_REF, RIFLE), count(&mut w, 0x14, RIFLE)), (0, 1));
     assert!(!names(m.list(Side::Container)).contains(&("Varmint Rifle", 1)));
     // The other way: picked up from the ground, it is no longer listed.

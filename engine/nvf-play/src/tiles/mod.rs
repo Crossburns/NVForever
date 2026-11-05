@@ -40,6 +40,7 @@ pub mod menus;
 pub mod model;
 pub mod mods;
 pub mod notices;
+pub mod tutorial_menu;
 pub mod vanilla;
 pub mod wait_menu;
 
@@ -94,13 +95,13 @@ impl MenuFiles<'_, '_> {
 }
 
 /// Whether `screen()` is written in interface units ([`write_screen`]): only while a T15
-/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`) or the start menu's Mods page
+/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`) or the start menu's Mods page
 /// (T11, `mods`) is switched on, whose files centre their boxes by `screen()` (MCM's `x`
 /// and `y`, menu-xml.md §10). The default game and the tile HUD alone keep the window's
 /// pixels [design]. The original reports interface units [observed: hud_menus capture
 /// 2026-10-31, three window sizes]; applying them unconditionally is a follow-up.
 pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
-    menus.message || menus.quantity || menus.sleep_wait || menus.start
+    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.start
 }
 
 /// Write `screen()`'s traits for a window `window_width` x `window_height` (logical
@@ -462,8 +463,13 @@ impl MenuTiles<'_, '_> {
                 let was = written.message.as_ref();
                 let another = menus::another_box(was.map(|(b, _)| b), &now);
                 if another || was.is_some_and(|(_, s)| *s != selected) {
+                    {
+                        let size = fonts.menu_measure(&menus::fonts(ui, menu));
+                        menus::write_message(ui, view, selected, another, &size);
+                    }
+                    // The fonts again: the rows are new and the tree was worked out, and a
+                    // measure is kept, so a font not loaded yet would stay at 0 x 0.
                     let size = fonts.menu_measure(&menus::fonts(ui, menu));
-                    menus::write_message(ui, view, selected, another, &size);
                     menus::write_text_sizes(ui, menu, &mut written.sizes[0], &size);
                     if another && menus::message_status(ui).yes() {
                         info!("{}", menus::describe_message(ui, view));
@@ -668,15 +674,107 @@ fn tell_counts(before: Option<(u64, u64)>, game: &fnv_game::Game<'_>, fonts: &dr
     );
 }
 
+/// T15b: what the tutorial menu drawn from tiles was last written from.
+#[derive(Default)]
+struct TutorialWritten {
+    shown: Option<tutorial_menu::Shown>,
+    sizes: menus::SizesWritten,
+    /// The symbol's picture's width, read once.
+    symbol: Option<Option<f64>>,
+    /// [design] The fallback's reason is warned once per session.
+    warned: bool,
+}
+
+/// T15b: the scroll written for the tutorial menu this frame, and what was last seen drawn.
+#[derive(Resource, Default)]
+struct TutorialScrollCheck {
+    wrote: Option<f64>,
+    drawn: Option<(f64, f64)>,
+}
+
+/// T15b: write the tutorial menu's traits after its keys and clicks were applied
+/// (`crate::tutorial_menu::keys`), before the scripts: the page when it changed, then its
+/// sizes, range and scroll every frame it is drawn (`tutorial_menu::settle`), so the frame's
+/// page and scroll reach the tree together (`tutorial_menu`).
+fn write_tutorial(
+    mut script: ResMut<ScriptState>,
+    switch: Res<vanilla::TileMenus>,
+    mut view: ResMut<crate::tutorial_menu::TutorialView>,
+    mut fonts: draw::FontKit,
+    mut written: Local<TutorialWritten>,
+    mut check: ResMut<TutorialScrollCheck>,
+) {
+    check.wrote = None;
+    if !switch.tutorial {
+        return;
+    }
+    let Some(rt) = script.rt.as_mut() else { return };
+    let game = &mut rt.game;
+    let open = game.ui_files.is_some() && game.menu == Some(fnv_game::game::menus::TUTORIAL);
+    if let (true, false, menus::Tiled::No(reason)) = (open, written.warned, tutorial_menu::built(&game.ui_tree)) {
+        warn!("{} drawn by hand: {reason}", tutorial_menu::TUTORIAL_MENU);
+        written.warned = true;
+    }
+    if !tutorial_menu::tiled(true, game) {
+        written.shown = None;
+        check.drawn = None;
+        return;
+    }
+    let pages = crate::tutorial_menu::pages_with(game, tutorial_menu::body_text);
+    let (Some(menu), false) = (game.ui_tree.menu(tutorial_menu::TUTORIAL_MENU), pages.is_empty()) else { return };
+    let at = view.page.min(pages.len() - 1);
+    let now = tutorial_menu::Shown { menu, page: pages[at].clone(), at, of: pages.len() };
+    let changed = written.shown.as_ref() != Some(&now);
+    let ui = &mut game.ui_tree;
+    if changed {
+        tutorial_menu::write(ui, &now);
+        let file = tutorial_menu::symbol_file(ui);
+        let texels = *written.symbol.get_or_insert_with(|| file.and_then(|f| fonts.picture_size(&f)).map(|s| f64::from(s.x)));
+        tutorial_menu::write_symbol(ui, texels);
+    }
+    let texts = menus::texts(ui, menu);
+    // Each round's fonts as the tree stands then: a computed font follows what was just written.
+    let mut write_sizes = |ui: &mut fnv_ui::Ui, sizes: &mut menus::SizesWritten| {
+        let size = fonts.menu_measure(&menus::fonts_of(ui, &texts));
+        menus::write_text_sizes_of(ui, &texts, sizes, &size)
+    };
+    let scroll = tutorial_menu::settle(ui, &mut written.sizes, &mut write_sizes, &mut view);
+    if changed {
+        info!("{}", tutorial_menu::describe(ui, &now));
+        written.shown = Some(now);
+    }
+    check.wrote = Some(scroll);
+}
+
+/// T15b: the scroll and the body's place once the tree is worked out after scripts (what is
+/// drawn), logged when they change, and when the scroll is not the value written this frame
+/// (smoke reads both: the model's value must outlast a click's pulse, as the wait menu's).
+/// Its `clipwindow`s are turned on here, after the scripts and before the drawing.
+fn check_tutorial_drawn(ui: &mut fnv_ui::Ui, check: &mut TutorialScrollCheck) {
+    use tutorial_menu::{marker_y, scroll_bound, scroll_shown, text_y, TUTORIAL_MENU};
+    let Some(wrote) = check.wrote.take() else { return };
+    tutorial_menu::mark_windows(ui);
+    let (Some(v), Some(y)) = (scroll_shown(ui), text_y(ui)) else { return };
+    let n = |x: f64| Value::Num(x).text();
+    if check.drawn != Some((v, y)) {
+        info!("tiles: {TUTORIAL_MENU} scroll drawn at {} of {}, text y {}, marker y {}", n(v), n(scroll_bound(ui)), n(y), n(marker_y(ui).unwrap_or(-1.0)));
+        check.drawn = Some((v, y));
+    }
+    if wrote != v {
+        info!("tiles: {TUTORIAL_MENU} scroll drawn at {}, not the {} written", n(v), n(wrote));
+    }
+}
+
 /// Works the tree out after the scripts; nothing to do on a frame where nothing changed
 /// it (`fnv_ui::Ui::update`). The scripts' gradual changes step first, on real time
 /// (`fnv_game::ui_gradients`, task T9).
-fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check: ResMut<input::WaitSliderCheck>) {
+fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check: ResMut<input::WaitSliderCheck>, mut tutorial_check: ResMut<TutorialScrollCheck>) {
     let Some(rt) = script.rt.as_mut() else { return };
     rt.game.ui_gradients.step(&mut rt.game.ui_tree, f64::from(time.delta_secs()));
     if rt.game.ui_files.is_some() {
         rt.game.ui_tree.update();
         input::check_wait_drawn(&rt.game.ui_tree, &mut wait_check);
+        check_tutorial_drawn(&mut rt.game.ui_tree, &mut tutorial_check);
         // Once, if something changes the tree's shape every frame (#1061).
         if let Some(line) = rt.game.ui_tree.take_reshape_warning() {
             warn!("{line}");
@@ -698,6 +796,10 @@ impl Plugin for TilesPlugin {
         vanilla::setup(app);
         input::setup(app);
         app.init_resource::<draw::TileFonts>()
+            .init_resource::<TutorialScrollCheck>()
+            .init_resource::<menus::TileMenuBlur>()
+            // T15b: after the tutorial menu's keys, in the scripts' chain, before they run.
+            .add_systems(Update, write_tutorial.in_set(PlaySet::Scripts).after(crate::tutorial_menu::keys).before(crate::script::run_scripts))
             .add_systems(Update, write.after(PlaySet::Physics).after(crate::compass::place).before(PlaySet::Activation))
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).before(PlaySet::Activation))
@@ -759,6 +861,7 @@ mod tests {
         assert!(interface_screen(vanilla::TileMenus { quantity: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { start: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { sleep_wait: true, ..Default::default() }));
+        assert!(interface_screen(vanilla::TileMenus { tutorial: true, ..Default::default() }));
         write_screen(&mut ui, 1280.0, 720.0, true);
         ui.update();
         assert_eq!(ui.get_float("M/Box/x").map(|x| (x * 100.0).round() / 100.0), Some(803.33));

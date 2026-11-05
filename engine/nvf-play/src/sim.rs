@@ -56,6 +56,19 @@ impl SimState {
         actor_ref(placed, created)
     }
 
+    /// Whether a reference could pass [`SimState::is_actor`] now or later, whatever the
+    /// simulation does: a placed ACHR or ACRE (a placed reference's record type never
+    /// changes) or any id without a placement that is dynamic (a created reference's base
+    /// is read from the world, and the id may be given to another base). Everything
+    /// `is_actor` accepts passes this; the reverse is not so, it is no substitute for it.
+    pub fn may_be_actor(&self, form_id: u32) -> bool {
+        let id = FormId(form_id);
+        match self.refs.get(id) {
+            Some(p) => actor_ref(Some(p.sig), None),
+            None => id.is_dynamic(),
+        }
+    }
+
     /// Display name of a base form (FULL), else its Editor ID.
     pub fn name(&self, base: FormId) -> Option<&str> {
         let b = self.forms.get(base)?;
@@ -102,7 +115,7 @@ impl SimState {
     /// Whether a placed reference is in the world now (not taken or deleted, enabled).
     pub fn present(&self, form_id: u32) -> bool {
         let id = FormId(form_id);
-        !self.world.peek(id).is_some_and(|s| s.deleted) && self.world.is_enabled(id).unwrap_or(true)
+        !self.world.peek(id).is_some_and(|s| s.deleted()) && self.world.is_enabled(id).unwrap_or(true)
     }
 }
 
