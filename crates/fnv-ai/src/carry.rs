@@ -1258,11 +1258,15 @@ impl Ai {
     /// walker's heading]. The heading is the walker's, and the game's, so it stays
     /// after the conversation until a package turns the actor. Not turned: an actor on
     /// furniture (its head turns, the engine's), a dead one, one in another space, one
-    /// whose Dialogue package says No Headtracking.
+    /// whose Dialogue package says No Headtracking, and a rooted one ([`Ai::root`]: an
+    /// Immobile creature such as Mr. House's screen, which "prevents movement"
+    /// [documented: GECK wiki Animation Tab]; the owner saw the screen turn 180 degrees
+    /// to the player where the original's stays still [observed: playtest 2026-11-04,
+    /// issue #1543]).
     pub fn update_held(&mut self, game: &mut Game, dt: f32) {
         let Some(actor) = game.dialogue.as_ref().map(|c| c.actor) else { return };
         let Some(a) = self.agents.get(&actor) else { return };
-        if a.using.is_some() || game.extra.get(&actor).is_some_and(|e| e.dead) {
+        if a.using.is_some() || a.rooted || game.extra.get(&actor).is_some_and(|e| e.dead) {
             return;
         }
         if let (Some(Goal::Talk(talk)), Some(Talking::Speaking)) = (&a.goal, a.talk) {
@@ -1321,8 +1325,9 @@ impl Ai {
                     // It turns to the one it talks to [documented: unless No
                     // Headtracking, speaker and target are "forced to look at each
                     // other by the package"; how fast is our choice]. Seated, only its
-                    // head turns (the engine's), as in `update_held`.
-                    if let (Some(t), false, false) = (target.filter(|t| t.space == feet.space), talk.no_headtracking, seated) {
+                    // head turns (the engine's); rooted, nothing: as in `update_held`.
+                    let rooted = self.agents[&actor].rooted;
+                    if let (Some(t), false, false, false) = (target.filter(|t| t.space == feet.space), talk.no_headtracking, seated, rooted) {
                         self.face(game, actor, t, dt);
                     }
                 } else {
