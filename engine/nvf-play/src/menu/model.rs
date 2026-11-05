@@ -258,7 +258,7 @@ pub fn listing(world: &mut World<'_>, holder: FormId) -> Result<Listing, SimErro
     // The holder's perks (Pack Rat, Heavyweight) in the total (perk-entry-points.md §7).
     let rules = world.weight_rules(holder);
     let s = world.get(holder)?;
-    if s.deleted {
+    if s.deleted() {
         return Err(SimError::Deleted(holder));
     }
     let inv = s.inventory.as_ref().ok_or(SimError::NoInventory(holder))?;
@@ -1397,7 +1397,7 @@ pub fn nearest_container(
     candidates
         .filter_map(|p| {
             let (base, at, gone) = match world.peek(p.id) {
-                Some(s) => (s.base, s.pos, s.deleted),
+                Some(s) => (s.base, s.pos, s.deleted()),
                 None => (p.base, p.pos, false),
             };
             let is_container = matches!(forms.get(base).map(|b| &b.data), Some(BaseData::Container(_)));

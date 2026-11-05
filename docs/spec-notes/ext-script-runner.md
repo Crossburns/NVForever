@@ -48,7 +48,11 @@ game restart comes again after every load, as GetGameRestarted does
 (docs/design/save-load.md). With a save: the save is restored, then the `gr_` files run,
 then the LoadGame and PostLoadGame events, then the `gl_` and `ln_` files. Without one:
 the `gr_` files, then the `gn_` and `ln_` files. Both come after the menus' tile tree is
-built, so a file can set UI traits [decision]. The restart's files run after the restore
+built, so a file can set UI traits [decision]. Without a save the `gn_` and `ln_` files
+wait for the first frame the scripts run, when the new game begins: the world behind the
+main menu is a new game held, and Continue or Load there starts another run, so running
+them behind the menu ran them for a game that never began (#1548) [decision; in the
+original no game exists behind its main menu, hypothesis]. The restart's files run after the restore
 because a restore takes the game's state, lambdas included, from the save: run before it,
 what a gr_ file made (handlers with lambdas) would be lost [decision; in the original the
 main menu comes before the load, hypothesis].

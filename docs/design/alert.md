@@ -150,7 +150,10 @@ docs/spec-notes/crime-karma.md); the player's reputation does not.
   nothing had happened: no search, no stand [hypothesis: the flag's name; no source
   describes it. 399 of the 4,163 packages set it, among them sniper posts, "stand in
   place" and "flee the scene" packages, observed 2026-10-11]. Its state, weapon and barks
-  are as for any other actor.
+  are as for any other actor. Not for a teammate of the player on a Follow package:
+  every follower's Follow package sets the flag, and in the original a melee companion
+  goes after its targets [observed: the owner's playtest 2026-11-04, #1534], so such a
+  teammate fights as any other actor and follows again after the fight.
 - Back in Normal the actor goes back to its package's place, as after a random
   conversation. Actors not run on their packages stand where they are and only turn
   their heads.

@@ -188,10 +188,15 @@ pub enum AiEvent {
     /// The script of the next door on the way did not let the actor through
     /// (`fnv_game::npc_doors`): it plans again without that door.
     DoorRefused { door: FormId },
+    /// Its walk was given up while it waited for `door` to open: it did not go through.
+    DoorWaitCancelled { door: FormId },
     /// The walk ended at the package's place, after `seconds` and `travelled` units.
     Arrived { package: FormId, seconds: f64, travelled: f32, patrol_point: Option<FormId> },
     /// No way to the package's location: the package is set aside.
     Unreachable { package: FormId, why: String },
+    /// Its feet at `at` do not fit its goal's height and no new path helped: its walk ends
+    /// as if they did (`fnv_nav::Walker::off_path`).
+    HeightWaived { at: [f32; 3] },
     NotCarriedOut { package: FormId, why: &'static str },
     /// The actor uses this furniture now (`None`: it leaves the furniture it used).
     Furniture { furniture: Option<FormId> },
@@ -285,10 +290,14 @@ pub enum AiEvent {
     /// In Combat it goes to the post the combat AI chose (`crate::alert`): `to`, `away`
     /// units off, a way of `length` units.
     Post { post: fnv_game::combat_group::PostKind, target: FormId, to: [f32; 3], away: f32, length: f32 },
-    /// It is at its post, `off` units from where the post is.
-    AtPost { post: fnv_game::combat_group::PostKind, target: FormId, off: f32 },
+    /// It is at its post: its feet at `feet`, `off` units from where the post asks for it
+    /// (`at`).
+    AtPost { post: fnv_game::combat_group::PostKind, target: FormId, off: f32, at: [f32; 3], feet: [f32; 3] },
     /// It has no way to its post: it closes in instead.
     NoPost { post: fnv_game::combat_group::PostKind },
+    /// Its walk to its post ended away from it after `elapsed` seconds: its feet at `feet`,
+    /// `off` units from where the post asks for it (`at`). The post is dropped.
+    PostFailed { post: fnv_game::combat_group::PostKind, target: FormId, at: [f32; 3], feet: [f32; 3], off: f32, elapsed: f32, reason: crate::alert::PostFailure },
     /// It flees `from` (`how`): to `to`, `away` units from the one it flees, a way of
     /// `length` units.
     Flee { from: FormId, how: fnv_game::combat_group::FleeBy, to: [f32; 3], away: f32, length: f32 },
@@ -2239,10 +2248,12 @@ impl Ai {
         }
         let a = self.agents.get_mut(&actor).expect("listed");
         a.face_to = None;
+        let waivers = a.walker.height_waivers;
         let ev = match mover.walk(actor, &mut a.walker, nav, dt) {
             Some(ev) => ev,
             None => a.walker.update_with(nav, dt, &mut |door| mover.open(actor, door)),
         };
+        let waived = a.walker.height_waivers != waivers;
         a.waiting_at = match ev {
             WalkEvent::WaitingForDoor(d) => Some(d),
             _ => None,
@@ -2253,6 +2264,9 @@ impl Ai {
         // An actor that cannot be put there (a reference the world does not know) is
         // left where the game has it.
         let _ = game.set_actor_place(actor, cell, feet.pos, heading);
+        if waived {
+            self.log(game, actor, AiEvent::HeightWaived { at: feet.pos });
+        }
         if let WalkEvent::UsedDoor(d) = ev {
             self.log(game, actor, AiEvent::Door { door: FormId(d.door), to_door: FormId(d.to_door) });
         }

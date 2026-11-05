@@ -26,6 +26,15 @@
 //! sub menu to its parent, else out of the terminal; Esc leaves at once. [hypothesis: the
 //! original's PC keys beyond Tab are not captured]
 //!
+//! A terminal whose model has "Open" and "Close" sequences (the wall terminal
+//! `Terminals\Terminal01.NIF`: the keyboard slides out, then the screen; its "Open" is
+//! 0.5 s with the key `Sound: OBJComputerTerminalForward` [observed: `fnvtool nif
+//! decode`]) is drawn and timed as an animated container (`crate::container_anim`): a
+//! request to open it first plays "Open", the screen comes up when it has ended, and
+//! "Close" plays when the screen is left or the terminal refuses [observed: the owner,
+//! #1532, the original plays the opening before its menu; hypothesis: the close as the
+//! open]. Log: `terminal 0x… plays Open before its screen`, `terminal 0x… closes`.
+//!
 //! Test aid `NVF_PLAY_TEST_TERMINAL=<seconds>:<step>[,…]`: `open:<reference>` opens a
 //! terminal as if the player had activated it, `science:<n>` makes the player's Science
 //! that for terminals, `wrong` enters a word that is not the password, `right` the
@@ -67,6 +76,51 @@ pub const LOCKED_SECONDS: f32 = 1.5;
 
 /// The game's word list [observed: `Fallout - Misc.bsa`].
 pub const DICTIONARY: &str = "menus\\falloutdict.txt";
+
+/// The longest the screen waits for a terminal's "Open" sequence (seconds) [design:
+/// the wall terminal's is 0.5 s].
+const OPEN_WAIT: f32 = 2.0;
+
+/// The animated terminal playing "Open" before its screen.
+#[derive(Resource, Default, Debug)]
+pub struct TerminalOpening {
+    /// Playing "Open": (reference, seconds waited).
+    pending: Option<(u32, f32)>,
+    /// Its "Open" ended (or was waited for long enough): the next request for it opens
+    /// the screen without holding again.
+    ready: Option<u32>,
+}
+
+impl TerminalOpening {
+    /// Called with a request to open `reference`: true when it is held while its model
+    /// plays "Open" (a terminal not drawn, or without the sequences, is not held).
+    fn hold(&mut self, doors: Option<&mut crate::doors::Doors>, reference: u32) -> bool {
+        if self.ready.take() == Some(reference) {
+            return false;
+        }
+        let Some(d) = doors.filter(|d| d.is_open(reference) == Some(false)) else { return false };
+        d.set_open(reference, true);
+        if self.pending.is_none_or(|(r, _)| r != reference) {
+            info!("terminal 0x{reference:08X} plays Open before its screen");
+            self.pending = Some((reference, 0.0));
+        }
+        true
+    }
+
+    /// Advance by `dt`: the reference whose screen is now to be asked for again.
+    fn advance(&mut self, doors: Option<&crate::doors::Doors>, dt: f32) -> Option<u32> {
+        let (r, waited) = self.pending.as_mut()?;
+        *waited += dt;
+        let r = *r;
+        let opened = doors.is_none_or(|d| d.is_open(r) != Some(false));
+        if !opened && *waited <= OPEN_WAIT {
+            return None;
+        }
+        self.pending = None;
+        self.ready = Some(r);
+        Some(r)
+    }
+}
 
 /// Open the terminal reference (a placed TERM) for the player.
 #[derive(Message, Clone, Copy, Debug)]
@@ -264,13 +318,14 @@ impl Plugin for TerminalPlugin {
             .init_resource::<TerminalPointer>()
             .init_resource::<PowerAid>()
             .init_resource::<MenuRows>()
+            .init_resource::<TerminalOpening>()
             .insert_resource(TerminalAid { steps, science: None })
             .add_message::<OpenTerminal>()
             .add_message::<TerminalInput>()
             .add_systems(Startup, (read_words, setup_image))
             .add_systems(
                 Update,
-                (run_aid, open, backdrop, (keys, mouse, apply, timers).chain().run_if(in_state(PlayState::Menu)), draw)
+                (run_aid, follow_open, open, backdrop, (keys, mouse, apply, timers).chain().run_if(in_state(PlayState::Menu)), draw)
                     .chain()
                     .after(crate::menu::open_menus)
                     .in_set(PlaySet::Ui),
@@ -441,6 +496,7 @@ fn open(
     time: AidTime,
     mut stats: ResMut<TerminalStats>,
     mut corner: Option<ResMut<crate::corner_messages::CornerMessages>>,
+    (mut doors, mut opening_anim): (Option<ResMut<crate::doors::Doors>>, ResMut<TerminalOpening>),
 ) {
     let Some(asked) = requests.read().last().copied() else { return };
     if *state.get() != PlayState::Playing || screen.0.is_some() || paused.0 {
@@ -458,6 +514,10 @@ fn open(
     };
     if !rt.game.data.terminals.contains_key(&base) {
         warn!("terminal: {reference} (base {base}) is not a terminal");
+        return;
+    }
+    // An animated terminal plays "Open" first; `follow_open` asks again once it has.
+    if opening_anim.hold(doors.as_deref_mut(), asked.reference) {
         return;
     }
     let now = time.elapsed_secs();
@@ -493,6 +553,7 @@ fn open(
             if let Some(c) = corner.as_deref_mut() {
                 c.push(line.into());
             }
+            close_model(doors.as_deref_mut(), asked.reference);
             return;
         }
         Opening::Hack { difficulty, words: n } => {
@@ -973,8 +1034,10 @@ fn close(
     roots: Query<Entity, With<screen::ScreenRoot>>,
     backdrops: Query<Entity, With<screen::Backdrop>>,
     script: Option<ResMut<ScriptState>>,
+    doors: Option<ResMut<crate::doors::Doors>>,
 ) {
-    if screen.0.take().is_some() {
+    if let Some(s) = screen.0.take() {
+        close_model(doors.map(|d| d.into_inner()), s.reference.0);
         if let Some(rt) = script.and_then(|s| s.into_inner().rt.as_mut()) {
             if matches!(rt.game.menu, Some(MENU_HACKING | MENU_TERMINAL)) {
                 rt.game.close_menu();
@@ -983,6 +1046,56 @@ fn close(
     }
     for e in roots.iter().chain(&backdrops) {
         commands.entity(e).despawn();
+    }
+}
+
+/// Ask for the screen again once an animated terminal's "Open" has ended (or waited too
+/// long).
+fn follow_open(time: Res<Time>, mut opening: ResMut<TerminalOpening>, doors: Option<Res<crate::doors::Doors>>, mut open: MessageWriter<OpenTerminal>) {
+    if let Some(reference) = opening.advance(doors.as_deref(), time.delta_secs()) {
+        open.write(OpenTerminal { reference });
+    }
+}
+
+/// Play an animated terminal's "Close" (nothing for one without the sequences).
+fn close_model(doors: Option<&mut crate::doors::Doors>, reference: u32) {
+    if doors.is_some_and(|d| d.set_open(reference, false)) {
+        info!("terminal 0x{reference:08X} closes");
+    }
+}
+
+#[cfg(test)]
+mod opening_tests {
+    use super::*;
+    use crate::doors::{DoorTiming, Doors};
+
+    #[test]
+    fn an_animated_terminal_is_held_until_its_open_has_played() {
+        let mut doors = Doors::default();
+        let keys = vec![(0.0, "start".to_string()), (0.00001, "Sound: OBJComputerTerminalForward".to_string()), (0.5, "end".to_string())];
+        doors.register(5, false, DoorTiming::new((0.0, 0.5, &keys), (0.0, 0.67, &keys)));
+        let mut op = TerminalOpening::default();
+        // Not drawn: opens at once.
+        assert!(!op.hold(Some(&mut doors), 6));
+        assert!(!op.hold(None, 5));
+        assert!(op.hold(Some(&mut doors), 5));
+        assert!(op.hold(Some(&mut doors), 5), "asked again while it opens: still held");
+        assert_eq!(op.advance(Some(&doors), 0.1), None);
+        doors.advance(0.55);
+        assert_eq!(op.advance(Some(&doors), 0.45), Some(5));
+        assert_eq!(op.advance(Some(&doors), 0.1), None, "asked for once");
+        assert!(!op.hold(Some(&mut doors), 5), "open: the screen comes up");
+    }
+
+    #[test]
+    fn a_terminal_that_never_opens_is_not_waited_for_forever() {
+        let mut doors = Doors::default();
+        let keys = vec![(0.0, "start".to_string()), (60.0, "end".to_string())];
+        doors.register(5, false, DoorTiming::new((0.0, 60.0, &keys), (0.0, 1.0, &keys)));
+        let mut op = TerminalOpening::default();
+        assert!(op.hold(Some(&mut doors), 5));
+        assert_eq!(op.advance(Some(&doors), OPEN_WAIT + 0.1), Some(5));
+        assert!(!op.hold(Some(&mut doors), 5), "the request after the wait is not held again");
     }
 }
 

@@ -250,6 +250,13 @@ the spec it links to.
     `ShowTutorialMenu` shows as a page, with a count, Next and Previous, so none goes
     unread. In the original the second replaces the first, with none of those. Keep the pages,
     or follow the original? ([tutorial-menu §4](spec-notes/tutorial-menu.md))
+46. **Nobody picks a cross on their own (#1522).** Sandboxes and Sleep or Eat searches leave
+    the crucifix (marker 10) out for everyone, people as well as creatures. A package that
+    names a cross or links to one still works, so the crucified stay on theirs. This is
+    [design]: whether a person in the original sandboxes onto an empty cross is still
+    unanswered ([observer check 85](handoff/observer-checks.md)). If you want people choosing
+    crosses again, the exclusion can apply to creatures alone.
+    ([furniture.md §9](spec-notes/furniture.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

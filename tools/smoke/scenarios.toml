@@ -34,8 +34,9 @@ untimed = [
   "NVF_PLAY_TEST_SCRIPT_MENUS", "NVF_PLAY_TEST_GIVE", "NVF_PLAY_TEST_EQUIP", "NVF_PLAY_TEST_NEAR",
   "NVF_PLAY_TEST_MENU", "NVF_PLAY_TEST_BARTER", "NVF_PLAY_TEST_BARTER_DELAY", "NVF_PLAY_TEST_NO_SPREAD",
   "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
-  "NVF_PLAY_AIDS_FROM_SCRIPTS",
+  "NVF_PLAY_AIDS_FROM_SCRIPTS", "NVF_PLAY_TEST_HELD_GRENADE",
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
+  "NVF_PLAY_TEST_MELEE_KNOCKBACK",
 ]
 
 # Test aids whose value is a list of timed items (`<seconds>:<what>`), joined with sep.
@@ -157,6 +158,18 @@ expect = [
   { re = 'memory budget: RAM \d+ MB .*GPU budget 512 MB \(test aid; the device.s \d+ MB, VK_EXT_memory_budget, device-local heaps; this process uses \d+ MB', label = "the GPU budget read, then capped by the test aid" },
   "caches keep unused models and textures 30 s, at most 128 per cache",
   { re = 'memory budget: near a budget, caches pressed \(GPU: this process uses \d+ of 512 MB', label = "the flight's use of the device-local heaps near the 512 MB budget presses the caches" },
+]
+
+[[scenario]]
+name = "lod-grid-origin-freeside"
+source = "#1533: Freeside's LOD files sit on a grid from the south-west cell of lodsettings/freesideworld.dlodsettings (-10, -8), not on multiples of 4; aligned there, its object blocks (the Strip towers' stand-ins Lucky38WL, Gamorrah01WL, TheTopsWL, UltraLuxHotelWL in block x-6.y-8) and its game terrain chunks are found and drawn (0 of each on main before the fix)"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/lod.rs", "engine/nvforever/src/worldspace.rs"]
+args = ["--world", "FreesideWorld", "--pos=-6000,-8800,2600", "--heading", "205", "--hour", "13"]
+run_seconds = 25
+expect = [
+  { re = 'distant LOD at the end: .* blocks (\d+) trees', range = [3, 100000], label = "Freeside's object blocks are found and drawn (6 on 2026-11-04; 0 before)" },
+  { re = 'distant LOD at the end: LOD chunks (\d+) ', range = [5, 100000], label = "and its game terrain chunks (23 on 2026-11-04; 0 before)" },
 ]
 
 [[scenario]]
@@ -1312,6 +1325,38 @@ expect = [
 forbid = [{ re = '1EFiendViolet.*Lost → Combat', label = "Combat ↔ Lost flicker" }]
 
 [[scenario]]
+name = "combat-held-grenade-lifecycle"
+source = "docs/design/combat-ai.md §20: held grenades use their throw deadline, low lob and finite carried inventory"
+note = "stationary live combat fixture (--no-npc-packages), not a navigation or vanilla timing test; ordinary script calls replace Violet's inventory with two dynamite grenades; the player moves 900 units from stationary Violet; the probe requires actual held/drawn/ready and legal range, observes both projectile requests and accepted flight, then 30 seconds after depletion"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_grenades.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/held_grenade_probe.rs"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HELD_GRENADE = "000F570B:000BA0F3:held", NVF_PLAY_TEST_SCRIPT = "12:moveto:player:FiendVioletRef:900:0:0,16:call:FiendVioletRef:RemoveAllItems,16:call:FiendVioletRef:AddItem:WeapNVDynamite:2,16:call:FiendVioletRef:EquipItem:WeapNVDynamite,16:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--no-npc-packages"]
+run_seconds = 125
+expect = [
+  { re = 'held grenade probe: armed mode=held', label = "actual drawn grenade is ready in its legal throw band" },
+  { re = 'held grenade probe: accepted request=', count = 2, label = "two actual accepted grenade projectiles" },
+  { re = 'held grenade probe: depleted .*accepted=2 count=0', label = "two throws consume two items" },
+  { re = 'held grenade probe: PASS mode=held requests=2 accepted=2 gun_projectiles=0 count=0', label = "receiver confirms full lifecycle and 30 seconds of no extra emission" },
+]
+forbid = [{ re = 'held grenade probe: FAIL', label = "setup, timing, inventory, combat and projectile validation" }]
+
+[[scenario]]
+name = "combat-gun-with-spare-grenades"
+source = "docs/design/combat-ai.md §20: a gunman keeps grenades carried as spares"
+note = "ordinary moving live control with NPC packages enabled only for Violet; the player moves 1,200 units from Violet at 12 seconds, then two spare dynamite grenades and the combat request follow at 12.5 seconds; accepted gun projectiles and unchanged grenade count throughout a 35 second observation window; no vanilla cadence claim"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_grenades.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/held_grenade_probe.rs"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HELD_GRENADE = "000F570B:000BA0F3:carried", NVF_PLAY_TEST_SCRIPT = "12:moveto:player:FiendVioletRef:1200:0:0,12.5:call:FiendVioletRef:AddItem:WeapNVDynamite:2,12.5:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FiendVioletRef"]
+run_seconds = 125
+expect = [
+  { re = 'held grenade probe: armed mode=carried', label = "actual drawn gun is ready with two spare grenades" },
+  { re = 'held grenade probe: PASS mode=carried .*count=2', label = "accepted gunfire leaves both grenades carried" },
+]
+forbid = [{ re = 'held grenade probe: FAIL', label = "setup, combat, inventory and accepted gunfire validation" }]
+
+[[scenario]]
 name = "combat-npc-grenades"
 source = "docs/design/combat-ai.md §20: only an actor holding a grenade throws one; a gunman carrying grenades keeps them (observer check 20: the original's Powder Gangers carrying dynamite threw none in 90 s)"
 note = "god mode; Violet is given three frag grenades at 14 s and put 1,200 units from the player at 15 s (within a frag grenade's throw band, 990-1,500), and fights with her gun"
@@ -1612,6 +1657,62 @@ paths = ["engine/nvforever/src/furniture.rs", "engine/nvf-play/src/furniture.rs"
 args = ["--cell", "Goodsprings", "--npc-sit", "EasyPeteRef=0010634A:8", "--follow-npc"]
 run_seconds = 45
 expect = ["furniture summary: 1 of 1 actors sat down, 1 got up again"]
+
+# The issue's 180 s run, shortened: its stay of 90 s left 81 s after the release to watch;
+# here a stay of 60 s and 30 s or more of the wait are enough. The time ranges are
+# acceptance targets [design: a retry is due within 5 s of active play], not measurements.
+# The range of repeats catches excess retries only: it does not prove their spacing (retries
+# every 3 s would pass). The 5 s spacing is proved by the unit tests of
+# crates/fnv-actor/src/furniture_retry.rs.
+[[scenario]]
+name = "resident-furniture-refusal-retry"
+source = "issue #1506, docs/spec-notes/furniture.md §7: the test aid's settler is on Easy Pete's chair when his AI resumes; refused (in use), he waits, asks again (logged once) and sits soon after the settler got off"
+areas = ["ai", "residents", "furniture"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-actor/src/furniture_retry.rs"]
+args = ["--cell", "Goodsprings", "--play", "--hour", "15", "--size", "1280x720", "--no-voice", "--no-messages", "--npc-packages", "EasyPeteRef", "--npc-sit", "GoodspringsSettler01Ref@00106349=0010634A:60"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_NEAR = "00106349", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "0:call:EasyPeteRef:SetActorsAI:0,25:call:GoodspringsSettler01Ref:GetSitting,26:call:EasyPeteRef:SetActorsAI:1,45:call:GoodspringsSettler01Ref:GetSitting,45.1:call:EasyPeteRef:GetSitting,60:call:GoodspringsSettler01Ref:GetSitting,60.1:call:EasyPeteRef:GetSitting,60.2:call:EasyPeteRef:GetCurrentAIPackage,60.3:call:EasyPeteRef:GetCurrentAIProcedure,95:call:GoodspringsSettler01Ref:GetSitting,95.1:call:EasyPeteRef:GetSitting,105:call:GoodspringsSettler01Ref:GetSitting,105.1:call:EasyPeteRef:GetSitting,105.2:call:EasyPeteRef:GetCurrentAIPackage,105.3:call:EasyPeteRef:GetCurrentAIProcedure,115:call:GoodspringsSettler01Ref:GetSitting,115.1:call:EasyPeteRef:GetSitting" }
+run_seconds = 125
+order = [[
+  "script: test aid calls GetSitting on GoodspringsSettler01Ref = 3",
+  'test aid: script Call("EasyPeteRef", "SetActorsAI", ["1"])',
+  "furniture: 00104C80 cannot use 0010634A: in use",
+  "furniture: 00104F03 got off 0010634A",
+  "furniture: 00104C80 goes to 0010634A",
+  "furniture: 00104C80 is on 0010634A",
+  "script: test aid calls GetSitting on EasyPeteRef = 3",
+]]
+expect = [
+  { text = "furniture: 00104C80 cannot use 0010634A: in use", count = 1, label = "the refusal is logged once" },
+  { text = "furniture: 00104C80 goes to 0010634A", count = 1, label = "the use begins once, after the release" },
+  { re = 'furniture refusals: 1 logged, (?P<n>\d+) identical repeats', range = [3, 20], label = "he asked again, without excess retries (spacing: unit tests)" },
+  { gap = ["furniture: 00104F03 got off 0010634A", "furniture: 00104C80 goes to 0010634A"], range = [0, 10], label = "asks again soon after the release" },
+  { gap = ["furniture: 00104F03 got off 0010634A", "furniture: 00104C80 is on 0010634A"], range = [0, 20], label = "on the chair soon after the release" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 0", min = 2, label = "standing while the chair is taken" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 3", min = 2, label = "sitting afterwards" },
+]
+
+# The same run without the settler: nothing refuses, he sits at his first order.
+[[scenario]]
+name = "resident-furniture-refusal-control"
+source = "issue #1506: the control of resident-furniture-refusal-retry, without the occupant"
+areas = ["ai", "residents", "furniture"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-actor/src/furniture_retry.rs"]
+args = ["--cell", "Goodsprings", "--play", "--hour", "15", "--size", "1280x720", "--no-voice", "--no-messages", "--npc-packages", "EasyPeteRef"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_NEAR = "00106349", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "0:call:EasyPeteRef:SetActorsAI:0,25:call:GoodspringsSettler01Ref:GetSitting,26:call:EasyPeteRef:SetActorsAI:1,45:call:GoodspringsSettler01Ref:GetSitting,45.1:call:EasyPeteRef:GetSitting,60:call:GoodspringsSettler01Ref:GetSitting,60.1:call:EasyPeteRef:GetSitting,60.2:call:EasyPeteRef:GetCurrentAIPackage,60.3:call:EasyPeteRef:GetCurrentAIProcedure,95:call:GoodspringsSettler01Ref:GetSitting,95.1:call:EasyPeteRef:GetSitting,105:call:GoodspringsSettler01Ref:GetSitting,105.1:call:EasyPeteRef:GetSitting,105.2:call:EasyPeteRef:GetCurrentAIPackage,105.3:call:EasyPeteRef:GetCurrentAIProcedure,115:call:GoodspringsSettler01Ref:GetSitting,115.1:call:EasyPeteRef:GetSitting" }
+run_seconds = 125
+order = [[
+  'test aid: script Call("EasyPeteRef", "SetActorsAI", ["1"])',
+  "furniture: 00104C80 goes to 0010634A",
+  "furniture: 00104C80 is on 0010634A",
+  "script: test aid calls GetSitting on EasyPeteRef = 3",
+]]
+expect = [
+  { text = "furniture: 00104C80 cannot use", count = 0, label = "no refusal" },
+  { text = "furniture refusals:", count = 0, label = "no refusal in the summary" },
+  { text = "furniture: 00104C80 goes to 0010634A", count = 1, label = "one order is enough" },
+  { gap = ['test aid: script Call("EasyPeteRef", "SetActorsAI", ["1"])', "furniture: 00104C80 is on 0010634A"], range = [0, 20], label = "seated soon after his AI resumes" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 3", min = 5, label = "sitting at every probe" },
+]
 
 # ------------------------------------------------------------------ texture swaps
 
@@ -3282,6 +3383,23 @@ order = [[
   'menu of V21SheldonTerminalMail (2 of 2 items listed)',
   'menu of V21SheldonTerminal (1 of 1 items listed)',
 ]]
+
+[[scenario]]
+name = "terminal-scripted-activate"
+source = "#1532: Lucky38MrHouseTerminal's OnActivate (SCPT 0x001746C1) ends in a bare Activate: a script's default activation of a terminal opens its screen for the player, after Terminal01.NIF's Open sequence (keyboard, then screen); leaving plays Close"
+note = "Lucky38MrHouseTerminalREF (0014B0A7, base Lucky38MrHouseTerminal 0014B08E: Hard, locked, model Terminals/Terminal01.NIF with Idle/Open/Close) [observed: FalloutNV.esm]; Science 80 so the script's first branch (Science 75, not locked for good) runs Activate and the hacking game opens"
+areas = ["terminal"]
+paths = ["engine/nvf-play/src/terminal.rs", "engine/nvf-play/src/script_events.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav science 80", NVF_PLAY_TEST_SCRIPT = "9:moveto:player:Lucky38MrHouseTerminalREF,14:activate:Lucky38MrHouseTerminalREF", NVF_PLAY_TEST_TERMINAL = "17:exit" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 20
+expect = [
+  { text = "script: terminal 0014B0A7 opens (a script's Activate)", label = "the script's Activate opens the terminal" },
+  { text = "terminal 0x0014B0A7 plays Open before its screen", label = "the keyboard and screen come out first" },
+  { re = 'terminal: open 0x0014B0A7 \S+: hacking, Hard', label = "then the screen: the hacking game (Hard, locked)" },
+  { text = "terminal 0x0014B0A7 closes", label = "leaving plays Close" },
+]
+order = [["terminal 0x0014B0A7 plays Open before its screen", "terminal: open 0x0014B0A7", "terminal 0x0014B0A7 closes"]]
 
 [[scenario]]
 name = "hacking"
@@ -5291,6 +5409,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "robot-hit-volumes"
+source = "#1536 (owner's playtest 2026-11-04): robots' hit capsules were a human's share of their size, far thinner than their bodies; a part's capsule is now at least as thick as the widest ragdoll shape on its bones (engine/nvforever/src/limbs.rs BoneRadii, nvf-play hitvol part_capsules)"
+note = "VCrTier0CrProtectron (00167ED5) and VCrTier0CrMisterGutsy (00167ED2) placed by the player. Ragdoll widths [observed: their skeleton.nif bodies]: protectron Bip01 Spine 18.0 (share 13.1), Mister Gutsy's body 21.2 (share 14.6); the capsules come from the debug line of nvf_play::hitvol"
+areas = ["combat", "creatures"]
+paths = ["engine/nvforever/src/limbs.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { RUST_LOG = "info,nvf_play::hitvol=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 00167ED5 1;9.1:player.placeatme 00167ED2 1;9.3:tdetect;9.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 14
+expect = [
+  { re = 'actor FF000000: \d+ part capsules \(size \d+.*radius: 17\.99', label = "the protectron's torso capsule is its ragdoll's 18 units (13.1 before)" },
+  { re = 'actor FF000001: \d+ part capsules \(size \d+.*radius: 21\.2', label = "Mister Gutsy's body capsule is its ragdoll's 21.2 units (14.6 before)" },
+]
+
+[[scenario]]
 name = "follower-boone"
 source = "owner's list 2 (H followers): a companion hired by the game's own recruit line follows the player through a door, ignores the player's friendly fire, joins the player's fight and waits when told (docs/design/followers.md)"
 note = "Boone's recruit line INFO 0x0015F30D runs at 3 s (its result script hires him: SetPlayerTeammate, SetIgnoreFriendlyHits, VNPCFollowers.bBooneHired); the player shoots him twice at 24 s (the controls' clock is not moved when the scripts first run late, as the script steps are: on a busy machine the recruit line ran 7.2 s late and Boone, who takes about 9.5 s to walk over, was still 501 units off at 18 s), leaves his room by its door at 26 s, walks off at 32 s; a feral ghoul is put 600 units from the player at 45 s; Boone's Waiting variable is set at 62 s"
@@ -5357,6 +5489,27 @@ forbid = [
   { re = 'companion wheel: \S+ \(.*\): failed', label = "a command failed" },
   { re = 'companion wheel: .*has no line of', label = "a command had no line to say" },
   { re = 'npc combat: CraigBooneREF \S+ fights the player', label = "Boone fights the player" },
+]
+
+[[scenario]]
+name = "follower-melee-closes-in"
+source = "#1534 (owner's playtest 2026-11-04): a melee companion goes after its target. Every follower's Follow package sets Continue During Combat [observed: FollowersVeronicaFollowPlayerDEFAULT]; a teammate on a Follow package fights as any other actor and follows again after the fight (fnv_game::awareness continues_during_combat). Before, Veronica stood by the player and only struck what came to her"
+note = "Veronica (VeronicaREF) hired at the 188 Trading Post by her hire lines (INFO 0x001467AC, which sets her Brotherhood warning baseline, then 0x00147789, which hires her); a feral ghoul (0x000CE9E7, as follower-boone) put 900 units from the player at 16 s; the player walks off at 26 s"
+areas = ["followers", "combat"]
+paths = ["crates/fnv-game/src/awareness.rs", "crates/fnv-ai/src/alert.rs", "crates/fnv-game/src/followers.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:moveto:player:VeronicaREF:0:150:0,4:info:0x001467AC:VeronicaREF,5:info:0x00147789:VeronicaREF,16:moveto:0x000CE9E7:player:0:900:0", NVF_PLAY_TEST_GOTO = "26:32400:31600:5520" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 45
+expect = [
+  { re = 'VeronicaREF: package FollowersVeronicaFollowPlayerDEFAULT', label = "hired: her Follow package" },
+  { re = 'npc combat: VeronicaREF \S+ fights 0x000CE9E7 with WeapPowerFistVeronica \(melee\)', label = "she fights the ghoul with her power fist" },
+  { re = 'VeronicaREF: runs at 0x000CE9E7, (\d+) units away', range = [400, 5000], label = "she leaves the player to close on it (stood still before #1534)" },
+  { re = 'npc combat: VeronicaREF \S+ swings at LvlFeralGhoul 0x000CE9E7', label = "and swings at it" },
+  { re = 'VeronicaREF: (runs|walks) after ', label = "after the fight she follows the player again" },
+]
+order = [["npc combat: VeronicaREF", "VeronicaREF: runs at 0x000CE9E7", "VeronicaREF: runs after"]]
+forbid = [
+  { re = 'npc combat: VeronicaREF \S+ fights the player', label = "Veronica fights the player" },
 ]
 
 [[scenario]]
@@ -18356,17 +18509,40 @@ expect = [
 ]
 [[scenario]]
 name = "melee-knockback"
-source = "#1070 (docs/spec-notes/combat-rules.md, Knockback): a melee blow pushes the living actor it hits back through its character, by the Melee Knockback Formula's force (a speed falling to rest over fKnockbackTime)"
-note = "the combat-block-break NCR trooper 0x000F36F5 (no weapon drawn, --actor-weapons none) put 90 units north of the god-mode player at 6 s and 9 s, not set on the player; 0.8 s later the player, fists drawn, turns to it and holds Use 1.5 s (a power attack); each blow that lands pushes it back"
+source = "#1070 (docs/spec-notes/combat-rules.md, Knockback): a melee blow pushes the living actor it hits back through its character, by the Melee Knockback Formula's force (a speed falling to rest over fKnockbackTime); #1386: one player power blow, isolated and tied to its report"
+note = "NVF_PLAY_TEST_MELEE_KNOCKBACK: the NCR trooper 0x000F36F5 (--actor-weapons none) gets its AI off and then one MoveTo 90 units north of the god-mode player on the open ground melee-knockback-player uses; the actors of the loaded area keep their AI off; once the target stands ready the player, fists drawn, aims at it and holds Use until the power swing starts, then lets go, with no retry. The seconds are a deadline, not a firing delay. A failed setup or a report not tied to this blow fails the run, as a push out of range does. The range rests on 20 runs of 2026-11-05 at 30 to about 60 frames a second, 98-102 % (docs/spec-notes/combat-rules.md, Knockback); higher rates and irregular frames were not tried."
 areas = ["combat", "melee"]
-paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/residents.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "6:moveto:0x000F36F5:player:0:90:0,9:moveto:0x000F36F5:player:0:90:0", NVF_PLAY_TEST_CONTROL = "3:weapon,6.8:aimnpc,6.9:fire,8.4:fire,9.8:aimnpc,9.9:fire,11.4:fire" }
-args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--actor-weapons", "none", "--plugins", "FalloutNV.esm"]
-run_seconds = 15
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/test_aid.rs", "engine/nvf-play/src/test_aid/melee_knockback.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/residents/knock_run.rs", "engine/nvforever/src/residents/melee_knockback.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_MELEE_KNOCKBACK = "000F36F5:0:90:0" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages", "--actor-weapons", "none", "--plugins", "FalloutNV.esm"]
+run_seconds = 30
 expect = [
-  { re = 'knockback: 000F36F5 knocked back at \d+ units/s for 1[.]00 s', label = "the blow's knockback starts on the trooper" },
-  { re = 'knockback: .*000F36F5 pushed back \d+ units of \d+ \((\d+) %\)', range = [60, 140], label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, not set on anyone yet)" },
+  { re = 'melee knockback aid: ready target=000F36F5', count = 1, label = "the target stands ready for the blow, once" },
+  { re = 'combat: \S+ power attack hits 0x000F36F5 on ', count = 1, label = "one player power attack hits the target" },
+  { re = 'combat: .*\b(hits|strikes)\b.*0x000F36F5\b', count = 1, label = "nothing else hits the target" },
+  { re = 'combat: \S+( power attack)? hits 0x[0-9A-F]{8} on ', count = 1, label = "the player's melee hits one actor, once" },
+  { re = 'knockback trace: blow=\d+ target=000F36F5 dt=', min = 2, label = "each frame of the push is traced" },
+  { re = 'melee knockback aid: blow=\d+ landed target=000F36F5', count = 1, label = "that blow's knockback is the target's first and only" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 knocked back at \d+ units/s for 1[.]00 s', count = 1, label = "the player's power blow starts the knockback" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 power=[01] knocked back at', count = 1, label = "no other knockback starts on the target" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(]', count = 1, label = "that knockback ends on a living target no script moved and no walk or clip carried" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*pushed back', count = 1, label = "no other knockback ends on the target" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(](?P<n>\d+(?:[.]\d+)?) %[)] along=-?[\d.]+ lateral=[\d.]+ push=along,', range = [60, 140], all = true, label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, its AI off)" },
   { re = 'knockback summary: ([1-9]\d*) knockbacks on actors', label = "knockbacks in the summary" },
+]
+order = [[
+  'melee knockback aid: AI off on the target 000F36F5',
+  'melee knockback aid: the one MoveTo of 000F36F5',
+  'melee knockback aid: ready target=000F36F5',
+  'melee knockback aid: the power swing started, Use let go',
+  { re = 'combat: \S+ power attack hits 0x000F36F5 on ' },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 knocked back at' },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 .*pushed back' },
+]]
+forbid = [
+  { text = "melee knockback aid: FAIL", label = "the aid's setup or its one blow went wrong" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*interrupted by', label = "a second blow replaced the knockback" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*push=(reversed|sideways)', label = "the push went another way than the blow asked" },
 ]
 
 [[scenario]]
@@ -18705,3 +18881,18 @@ expect = [
   { text = 'script runner: optional\gl_nvfsmoke_late.txt ran (game load)', count = 1, label = "the file gr_ registered runs at the load" },
 ]
 order = [["load: restored", "script runner: gr_nvfsmoke.txt ran", "script runner: ln_nvfsmoke.txt ran (game load)", 'script runner: optional\gl_nvfsmoke_late.txt ran']]
+
+[[scenario]]
+name = "script-runner-menu"
+source = "issue #1548, docs/spec-notes/ext-script-runner.md §2: behind the main menu only the gr_ files run; the new game's ln_ files wait for New Game"
+areas = ["scripts", "extender", "main-menu"]
+paths = ["crates/fnv-game/src/script_runner.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/main_menu.rs", "tools/smoke/fixtures/script-runner-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-runner-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MAIN_MENU = "6:new", NVF_PLAY_TEST_INTRO_SKIP = "7" }
+args = ["--play", "--menu", "--no-voice"]
+run_seconds = 14
+expect = [
+  { text = "script runner: gr_nvfsmoke.txt ran (game restart)", count = 1 },
+  "main menu: New Game",
+  { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1, label = "the ln_ file runs once the new game begins" },
+]
+order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]

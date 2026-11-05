@@ -394,7 +394,7 @@ impl Game<'_> {
     /// (or owned by the actor), a body dead and still carrying the item, a container
     /// unlocked and holding it.
     pub fn leg_open(&self, actor: FormId, leg: &Leg) -> bool {
-        let Some(s) = self.world.peek(leg.from).filter(|s| s.enabled && !s.deleted) else { return false };
+        let Some(s) = self.world.peek(leg.from).filter(|s| s.enabled() && !s.deleted()) else { return false };
         match leg.take {
             Take::Ground => s.base == leg.item,
             Take::FromBody => self.extra.get(&leg.from).is_some_and(|e| e.dead) && self.carries_any(leg.from, &[leg.item]),
