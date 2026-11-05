@@ -743,7 +743,11 @@ fn engine_snapshot(world: &World) -> EngineSnapshot {
     }
     e.flashlight = world.get_resource::<crate::flashlight::Flashlight>().is_some_and(|f| f.on);
     e.magazine = world.get_resource::<crate::combat::Combat>().and_then(|c| c.magazine_for_save());
-    e.active_quest = world.get_resource::<crate::pipboy::data::DataState>().and_then(|d| d.active_quest());
+    let game = world.get_resource::<ScriptState>().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+    e.active_quest = match world.get_resource::<crate::pipboy::data::DataState>() {
+        Some(d) => d.active_quest(game),
+        None => game.and_then(|g| g.ui.active_quest).map(|q| q.0),
+    };
     e.coop = world.get_resource::<CoopEngineState>().map(|c| c.0.clone()).unwrap_or_default();
     let hooks = world.resource::<SaveHooks>().0.clone();
     for h in hooks {
