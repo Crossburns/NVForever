@@ -354,14 +354,16 @@ fn a_kill_finished_by_a_hits_script_effect_is_the_attackers() {
     // The engine applies a hit's effects just before its damage (`hit_actor`).
     let f = fixture();
     let mut g = game(&f);
-    let applied = g.apply_hit_effect(FormId(HIT_REF), FormId(HURTING), Some(FormId::PLAYER_REF));
+    // NPC_REF has no OnHit block, so only the effect can take its Health.
+    let applied = g.apply_hit_effect(FormId(NPC_REF), FormId(HURTING), Some(FormId::PLAYER_REF));
     assert_eq!(applied.len(), 1);
-    assert!(!g.is_dead(FormId(HIT_REF)), "the hit that follows decides");
+    assert!(fnv_game::functions::actor_value(&mut g, FormId(NPC_REF), HEALTH).unwrap() <= 0.0, "the effect took it");
+    assert!(!g.is_dead(FormId(NPC_REF)), "the hit that follows decides");
     let info = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 0, critical: false, limb: None };
-    let r = g.hit(FormId(HIT_REF), 1.0, info);
+    let r = g.hit(FormId(NPC_REF), 1.0, info);
     assert!(r.died, "{r:?}");
     assert!(r.xp > 0.0, "{r:?}");
-    assert_eq!(g.extra[&FormId(HIT_REF)].killer, Some(FormId::PLAYER_REF));
+    assert_eq!(g.extra[&FormId(NPC_REF)].killer, Some(FormId::PLAYER_REF));
 }
 
 fn ask(g: &mut Game, on: u32, opcode: u16) -> f64 {
