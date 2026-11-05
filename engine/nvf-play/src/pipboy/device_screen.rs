@@ -19,7 +19,7 @@
 //!
 //! One moving layer: the beam ([`ScreenFxBeam`], [`sweep`]), a soft brighter band that
 //! travels down the screen every [`BEAM_PERIOD`] seconds in [`BEAM_TRAVEL`] and is hidden
-//! between sweeps [observed: owner's playtest 2026-11-05, against the original: "an electron
+//! between sweeps [observed: playtest 2026-11-05, against the original: "an electron
 //! beam / scan line effect that goes down it every 5 seconds", a brighter band taking about a
 //! second; its height and brightness are [hypothesis]]. It lies over the pages and under the
 //! scanlines, in the Pip-Boy's colour lightened towards white at a low alpha (a UI node adds
@@ -130,7 +130,7 @@ pub fn parse_tint(text: &str) -> Option<[f32; 3]> {
     Some([v[0], v[1], v[2]])
 }
 
-/// The beam (module docs): seconds between sweeps [observed: owner's playtest 2026-11-05],
+/// The beam (module docs): seconds between sweeps [observed: playtest 2026-11-05],
 /// seconds a sweep takes from above the top edge to below the bottom, its height in canvas
 /// units (an eighth of the canvas) and its alpha at the middle of its raised-cosine profile
 /// [hypothesis, the three].

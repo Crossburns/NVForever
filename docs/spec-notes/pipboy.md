@@ -76,9 +76,9 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   player comparing the two reports that the original's buttons do not light under it
   (#1516; not observed again here).
 - **The needle and knobs** (nvforever `pipboy_controls.rs`, all the numbers there). The
-  needle and the wheel turn about their own origins, their nodes' in the model, the knob about
-  a shaft fitted in the game [observed: `fnvtool nif decode` for the origins; the model has no
-  controllers on them and `pipboy.kf` does not name them]:
+  needle, the wheel and the knob turn through their own origins, their nodes' in the model
+  [observed: `fnvtool nif decode`; the model has no controllers on them and `pipboy.kf` does
+  not name them]:
   - `RadNeedle` (two shapes), about its local Z, out of the dial: total rads, not the rate,
     linear, 18° per 100, the bind pose at 500: 0 straight down, 500 to the right, 1000 straight
     up [observed: private job pipboy_special_device_motion: shots at 0 to 990 within a few
@@ -87,24 +87,24 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     seconds on [observed]; the capture has neither a fine clock nor the loops' rate, so 30° a
     second is [hypothesis], within about 20 to 40. No start-up delay can be told from the
     shots' own stalls. Held at the dial's ends above 1000 [hypothesis]. While the Pip-Boy is
-    up it quivers a little about where it rests, a small quick shiver [observed: owner's
-    playtest 2026-11-05, against the original]; two sines of unrelated rates, about 2° in all
-    at 7 and 12 a second, are [hypothesis]. The travel and the log are without the quiver.
-  - `TabKnob`, about a shaft that is not its shape's local Z through its origin: turned about
-    that, the body slid on its plate between the tabs, 17 to 20 pixels at 1280 × 720 scale by
-    its dark-pixel centroid, while the original's stays within 4 by the same measure and its
-    top cap looks the same at every tab [observed: this engine's shots at 1920 × 1080 against
-    the private job's, 2026-11-05]. The mesh is a tapered cylinder about local Z (the body's
-    circle within 0.02 of the origin) with a top cap slanted 15° towards −Y [observed:
-    `fnvtool nif decode`]. The shaft used, 20° towards −Y through the body's centre
-    (`pipboy_controls.rs` `KNOB_AXIS`, `KNOB_PIVOT`), is a [hypothesis] fitted in the game: 5.7
-    pixels by that measure and a body that looks still (the cap's 15°: 8; local Z: 20); why
-    it is not the body's axis is not established. The turn itself: the page's tab, not the
-    page (tab 0 of
-    STATS, ITEMS and DATA look the same, and the wrap comes back), five detents at the dial's
-    marks: a constant step of 26° with the bind pose at tab 3 lands within 2° of the shots
-    [observed: private job pipboy_special_device_motion; the step fitted]. A step is over in
-    about 8 game loops [observed]; 180° a second, and the wrap swinging back at that speed,
+    up it quivers a little about where it rests, a small shiver [observed: playtest 2026-11-05,
+    against the original]; two sines of unrelated rates, about 2° in all at 3.7 and 6 a second,
+    are [hypothesis], judged by eye. The travel and the log are without the quiver.
+  - `TabKnob`, about the Z of its node `TabKnob`, through the origin. In that frame the knob is
+    straight: its base lies flat at height 0 (within 0.02), its two fins are 180° apart and the
+    dial's disc is centred on the origin, and the plate's faces around it are within 2° of
+    square to that Z [observed: `fnvtool nif decode` of both arms, the plate's faces and UVs
+    onto `PipBoyArm01.dds`, 2026-11-05]. The shape's own local Z leans 28° off that shaft
+    (the shaft in the shape's frame: `pipboy_controls.rs` `KNOB_SHAFT`). The turn itself: the
+    page's tab, not the page (tab 0 of STATS, ITEMS and DATA look the same, and the wrap comes
+    back), five detents at the dial's five marks. Seen down the shaft, clockwise from the
+    node's Y, the marks lie at 33°, 64°, 94°, 123°, 156° on the male arm and 35°, 67°, 97°,
+    125°, 155° on the female, the pointing fin at 100° on both [observed: the same decode].
+    A constant 30° a tab, tab 0 turned 65° and tab 4 −55° from the bind pose, puts the fin
+    within 3° of every mark on either arm; that the step is constant is [hypothesis]. Side by side at all
+    five tabs the fin and body sit where the original's do [observed: this engine's shots at
+    1920 x 1080 against the private job pipboy_special_device_motion, 2026-11-05]. A step is
+    over in about 8 game loops [observed]; 180° a second, and the wrap swinging back at that speed,
     are [hypothesis].
   - `ScrollKnob`, about its local X, its axle: the list's selected row, one ridge a row (the
     wheel has 26 ridges, its outermost vertices every 13.85° [observed: `fnvtool nif decode`]),
@@ -113,7 +113,7 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     that it follows the selected row and not the list's scroll, which the capture does not
     separate; the ridges' 17 pixels hide whole ridges moved between shots, so the step is not
     in the capture (a first reading of 2° a row was far too little against the original,
-    owner's playtest 2026-11-05), and the sign is not resolved. The mouse wheel at the top of
+    playtest 2026-11-05), and the sign is not resolved. The mouse wheel at the top of
     the list moved neither. Following the row means the pointer on a row turns it too [design].
   - Absolute `bind × rotation` on the shape's own transform, after the arm is posed; a rebuilt
     rig's shapes take a bind of their own. Only rigid shapes of the size of the game's own
@@ -191,7 +191,7 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   (white at the top to about 0.8 at the bottom). On the screenshot the solid bar's rows
   are bright and dim by about 15% every 6 pixels, which is 9.5 of the canvas. Flicker,
   vertical hold and shudder (the INI's transitions) are not built.
-- **The beam** [observed: owner's playtest 2026-11-05, against the original]: a brighter
+- **The beam** [observed: playtest 2026-11-05, against the original]: a brighter
   band sweeps down the screen every 5 seconds, taking about a second. NVForever draws one
   band an eighth of the canvas high, a raised cosine of alpha 0.12 at its middle in the
   Pip-Boy's colour lightened half way to white, over the pages and under the scanlines,
