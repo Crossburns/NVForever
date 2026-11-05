@@ -96,7 +96,13 @@ From these, all [hypothesis] fitted to the pictures:
   letters agree on it); the cause is not known. NVForever draws them so and cuts the
   rows at the brackets' lines.
 - The list grows to 290 at most (Veronica's list) and then shows as many whole choices
-  as fit (Trudy's 250 with a hidden fourth); the file gives no maximum.
+  as fit (Trudy's 250 with a hidden fourth); the file gives no maximum. That height, the
+  whole choices that fit from the top, is the list's at every scroll of it: a later window
+  shows as many whole choices as fit the same room and leaves the rest of it empty, so the
+  band neither grows nor moves as the selection goes down [owner's playtest 2026-11-05: with
+  Sunny Smiles's six choices (96, 58, 96, 58, 58, 58) the band grew from 250 to 270 and
+  shifted when the selection scrolled onto the wrapped third choice, as four whole choices
+  from the second fit 290; design: whole choices only, none cut at the foot].
 - The safe zone at the sides is 15 at 4:3 and narrower in units on a wider screen:
   15 x 1280 / the width in units (11.25 at 16:9, which puts Bruce's name within 2 units
   of the picture; 15 would put it 7 too far left).
