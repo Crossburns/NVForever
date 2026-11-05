@@ -115,10 +115,12 @@ pub mod tutorial_menu;
 pub mod ui_pointer;
 pub mod credits;
 mod test_aid;
+pub use test_aid::melee_knockback::MeleeKnockbackAid;
 pub use test_aid::{drives_run, MEASURING_AIDS};
 pub mod sfx;
 pub mod sneak_gauges;
 pub mod ui_colour;
+pub mod language;
 pub mod ui_sounds;
 pub mod stress;
 pub mod vats_mode;
@@ -370,7 +372,7 @@ impl Plugin for PlayPlugin {
             .add_plugins(grab::GrabPlugin)
             .add_plugins(difficulty::DifficultyPlugin)
             .add_plugins(hardcore::HardcorePlugin)
-            .add_plugins(ui_colour::UiColourPlugin);
+            .add_plugins((ui_colour::UiColourPlugin, language::LanguagePlugin));
         test_aid::setup(app);
         stress::setup(app);
         settings::setup(app);

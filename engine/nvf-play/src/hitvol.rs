@@ -14,7 +14,10 @@
 //! ([`ActorParts`]: for each part of its BPTD, the segments along the part's bones), the
 //! actor gets one capsule per segment instead (`PhysWorld::set_actor_parts`), so a hit
 //! says which part it struck. A capsule's radius is a share of the actor's size (the
-//! largest side of its bounds) by kind of limb ([`limb_radius`], [design]). Each part's
+//! largest side of its bounds) by kind of limb ([`limb_radius`], [design]), or the widest
+//! of the skeleton's own ragdoll shapes on the part's bones where that is wider
+//! ([`PartSegment::radius`]: a robot's body, [observed: Mister Gutsy 21.2 against 14.6],
+//! #1536; a human's shapes are all thinner than the shares). Each part's
 //! chain of segments is pulled in by that radius at its two ends, so the capsule's caps
 //! end at the part's end joints instead of reaching into the next part (the torso's top
 //! cap would otherwise cover the lower head) [design]. The torso's lower end (the pelvis)
@@ -169,6 +172,9 @@ pub struct PartSegment {
     pub limb: Limb,
     pub a: [f32; 3],
     pub b: [f32; 3],
+    /// The widest of the skeleton's own collision shapes on the part's bones (its
+    /// ragdoll bodies), game units: the capsule is at least this thick ([`part_capsules`]).
+    pub radius: Option<f32>,
 }
 
 /// The part number of the weapon an actor holds drawn: one segment along the weapon,
@@ -225,7 +231,11 @@ pub fn part_capsules(segments: &[PartSegment], size: f32) -> Vec<PartCapsule> {
         // have side branches, `nvforever` limbs).
         let part = segments[i].part;
         let j = (i + 1..segments.len()).find(|&n| segments[n].part != part || segments[n].a != segments[n - 1].b).unwrap_or(segments.len());
-        let radius = limb_radius(segments[i].limb, size);
+        // At least as thick as the skeleton's own shapes on the part's bones: a robot's
+        // body is far wider than a human's share of its size (Mister Gutsy's body capsule
+        // 21 units against 14.6, a protectron's 18 against 13; #1536), while a human's
+        // shapes are all thinner than the shares, which stay.
+        let radius = limb_radius(segments[i].limb, size).max(segments[i].radius.unwrap_or(0.0));
         for (k, s) in segments[i..j].iter().enumerate() {
             let (mut a, mut b) = (Vec3::from(s.a), Vec3::from(s.b));
             let d = b - a;
@@ -678,7 +688,7 @@ mod tests {
 
     #[test]
     fn part_chains_end_at_their_joints() {
-        let seg = |part, limb, a: [f32; 3], b: [f32; 3]| PartSegment { part, limb, a, b };
+        let seg = |part, limb, a: [f32; 3], b: [f32; 3]| PartSegment { part, limb, a, b, radius: None };
         // A torso of two segments from z 70 to 110 (radius 12.8 at size 128), a head of one
         // from 112 to 128 (radius 8.32).
         let segs = [seg(1, Limb::Torso, [0.0, 0.0, 70.0], [0.0, 0.0, 90.0]), seg(1, Limb::Torso, [0.0, 0.0, 90.0], [0.0, 0.0, 110.0]), seg(0, Limb::Head, [0.0, 0.0, 112.0], [0.0, 0.0, 128.0])];
@@ -696,7 +706,7 @@ mod tests {
 
     #[test]
     fn a_side_branch_is_a_chain_of_its_own() {
-        let seg = |a: [f32; 3], b: [f32; 3]| PartSegment { part: 0, limb: Limb::Torso, a, b };
+        let seg = |a: [f32; 3], b: [f32; 3]| PartSegment { part: 0, limb: Limb::Torso, a, b, radius: None };
         // A body along the abdomen and a leg branching from its start.
         let segs = [seg([0.0, 0.0, 100.0], [0.0, -20.0, 100.0]), seg([0.0, -20.0, 100.0], [0.0, -40.0, 100.0]), seg([0.0, 0.0, 100.0], [0.0, 0.0, 70.0])];
         let caps = part_capsules(&segs, 100.0);
@@ -705,6 +715,18 @@ mod tests {
         assert!((caps[1].b[1] + 40.0 - r).abs() < 1e-3, "{caps:?}");
         assert!((caps[2].b[2] - 70.0 - r).abs() < 1e-3, "{caps:?}");
         assert_eq!(caps[2].a, [0.0, 0.0, 100.0]);
+    }
+
+    #[test]
+    fn a_wider_ragdoll_shape_thickens_the_capsule_and_a_thinner_one_does_not() {
+        // Mister Gutsy's body: its ragdoll capsule 21.2 against the share's 14.6 at size
+        // 146; a human's arm shape (1.9) leaves the share.
+        let seg = |limb, radius| PartSegment { part: 0, limb, a: [0.0, 0.0, 60.0], b: [0.0, 0.0, 100.0], radius };
+        let wide = part_capsules(&[seg(Limb::Torso, Some(21.2))], 146.0);
+        assert!((wide[0].radius - 21.2).abs() < 1e-4, "{wide:?}");
+        let thin = part_capsules(&[seg(Limb::Arm, Some(1.9))], 128.0);
+        assert!((thin[0].radius - limb_radius(Limb::Arm, 128.0)).abs() < 1e-4, "{thin:?}");
+        assert_eq!(part_capsules(&[seg(Limb::Arm, None)], 128.0)[0].radius, thin[0].radius);
     }
 
     // The mark on meshes (#1388): which entities have it, and that the marked walk finds

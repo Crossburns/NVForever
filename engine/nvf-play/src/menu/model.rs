@@ -26,6 +26,13 @@
 //! rifle and "Magical Companion Ammo" do not show in his]. Take All leaves them in the
 //! container [hypothesis: hidden items stay where they are].
 //!
+//! Items whose record has no name (no FULL, or a blank one) are not listed in any
+//! inventory, the player's included ([`shown`]), so a row never reads as an Editor ID
+//! (#1603: the vanilla book leveled list SublistBooks100 holds the nameless
+//! DONOTUSEBookGeneric07 0x000199BB, which household and library clutter lists hand out)
+//! [hypothesis: mods use nameless items as hidden tokens because the original's menus
+//! leave them out; observer check in docs/handoff/observer-checks.md].
+//!
 //! Quest items (`World::is_quest_item`: the record's "Quest Item" header flag, or a
 //! script's SetQuestObject) are listed and marked; dropping one is refused by the
 //! simulation and the status line says so [documented: GECK wiki Category:Items, the
@@ -203,6 +210,14 @@ pub fn modded_name(name: String, mods: u8) -> String {
     }
 }
 
+/// Whether a menu lists `item` in an inventory, the player's (`players`) or another
+/// holder's: a playable item by `Item::listed`, and one with a name (module notes). A form
+/// the store does not know is listed, by its FormID.
+pub fn shown(forms: &FormStore, item: FormId, players: bool) -> bool {
+    let Some(b) = forms.get(item) else { return true };
+    b.name.as_deref().is_some_and(|n| !n.trim().is_empty()) && forms.item(item).is_none_or(|i| i.listed(players))
+}
+
 /// Display name of a form: its FULL name, else its Editor ID, else its FormID.
 pub fn display_name(forms: &FormStore, id: FormId) -> String {
     match forms.get(id) {
@@ -258,7 +273,7 @@ pub fn listing(world: &mut World<'_>, holder: FormId) -> Result<Listing, SimErro
     // The holder's perks (Pack Rat, Heavyweight) in the total (perk-entry-points.md §7).
     let rules = world.weight_rules(holder);
     let s = world.get(holder)?;
-    if s.deleted {
+    if s.deleted() {
         return Err(SimError::Deleted(holder));
     }
     let inv = s.inventory.as_ref().ok_or(SimError::NoInventory(holder))?;
@@ -267,7 +282,7 @@ pub fn listing(world: &mut World<'_>, holder: FormId) -> Result<Listing, SimErro
     let mut hidden = 0;
     for (item, extra, count) in inv.groups() {
         let it = forms.item(item);
-        if it.is_some_and(|i| !i.listed(holder == PLAYER)) {
+        if !shown(forms, item, holder == PLAYER) {
             hidden += 1;
             continue;
         }
@@ -316,7 +331,7 @@ fn add_dropped_beside(world: &World<'_>, holder: FormId, l: &mut Listing) {
     for r in world.dropped_beside(holder) {
         let Some(s) = world.peek(r) else { continue };
         let it = forms.item(s.base);
-        if it.is_some_and(|i| !i.listed(false)) {
+        if !shown(forms, s.base, false) {
             continue;
         }
         let kind = it.map(|i| i.kind);
@@ -1243,7 +1258,7 @@ impl MenuModel {
         match (self.mode, cmd) {
             (Mode::Container(_), Command::TakeAll) if self.steal.is_some() => Ok("Take items one at a time to steal them".into()),
             (Mode::Container(c), Command::TakeAll) => {
-                // The listed stacks only: non-playable items stay hidden in the container.
+                // The listed stacks only: non-playable and nameless items stay hidden in the container.
                 let mut moved = Vec::new();
                 for r in &self.lists[Side::Container as usize].rows {
                     let n = match r.reference {
@@ -1454,7 +1469,7 @@ pub fn nearest_container(
     candidates
         .filter_map(|p| {
             let (base, at, gone) = match world.peek(p.id) {
-                Some(s) => (s.base, s.pos, s.deleted),
+                Some(s) => (s.base, s.pos, s.deleted()),
                 None => (p.base, p.pos, false),
             };
             let is_container = matches!(forms.get(base).map(|b| &b.data), Some(BaseData::Container(_)));

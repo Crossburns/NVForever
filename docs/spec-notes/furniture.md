@@ -209,7 +209,8 @@ in the engine: §7.
    third-person body's eye, the body not drawn [design]. On a bed the view lies down
    with the body (§7) [engineering choice].
 7. **MNAM bits 30 and 31** against the editor's own labels.
-8. **Marker ID 10** (one model) and the six furniture bases without markers.
+8. **Marker ID 10** (one model) and the six furniture bases without markers. Whether
+   creatures use furniture at all: §9.
 9. **How sitting ends for the player** and what the prompt says (the crosshair shows
    "Activate" here). Here: a movement control, activating the furniture again, or
    Activate with nothing under the crosshair [design].
@@ -272,6 +273,37 @@ Code: `engine/nvforever/src/furniture.rs` (actors and the player), `nvf_play::fu
   0x0010618E activated at 14 s and ProspectorSaloonDoor at 24 s; `--cell Goodsprings
   --play --hour 11.9` with Pete on 0010634A, the saloon entered, two hours waited inside
   and the saloon left].
+- **A refused resident** [design, #1506; an NVForever choice, not checked against the
+  original game]. `Furnishings::plan` says why it refuses (`furniture_retry::Refusal`);
+  the words stay those of the log and the player's message. `drive_actors` takes the
+  `SitOn` away and puts a `SitRefused` on the actor, naming the furniture and the reason,
+  which the resident acts on once (`residents.rs`, `Seat`):
+  - **Occupied** (`in use`, or `no free entry point` while someone is on an enabled one):
+    it waits, then gets one fresh `SitOn`, walking up to it, if it still wants that
+    furniture. The wait is `BUSY_RETRY_SECONDS`, 5 s of active play in which it could be
+    told to sit (drawn, AI on, alive and awake, no conversation or idle holding it, no
+    menu, conversation or loading screen): an engineering number, not a measurement. The
+    order goes out in the frame the wait ends, which is one where it could be told.
+  - **Anything else** (no enabled entry point, content missing, no clip, a clip that
+    cannot play on its skeleton, too far from the entry point): no retry while the
+    request stays the same. A script's MoveTo or hours passing (Wait menu) give one fresh
+    `SitOn`, as a trip to its place does; so does wanting other furniture and coming back.
+  - Waiting or blocked, it stands free: no hold on its movement as while it is told to sit.
+    The state stays while its visual is away; nothing is ordered without one. It is not
+    saved.
+  - The first refusal is logged and a changed one, not the same again (`furniture
+    refusals: N logged, M identical repeats not logged` at the end of the run); what was
+    logged is kept on its visual, so a visual drawn anew logs it again.
+  - **What this covers**: furniture the renderer finds occupied (by the test aid's actor,
+    the player, or a resident that got there first). **What it leaves open**: two residents
+    wanting one seat mostly part earlier, in the AI's own reservation (`fnv_ai`, `taken`):
+    the second gets no furniture and no `SitOn`, so nothing here happens for it, and it
+    does not reconsider while its activity lasts. A resident blocked for good also keeps
+    its AI reservation until its AI's intent changes.
+  The 5 s spacing and the eligible frame are proved by the unit tests of
+  `crates/fnv-actor/src/furniture_retry.rs`. Smoke `resident-furniture-refusal-retry` shows
+  the recovery in the running engine; its range of repeats catches excess retries and does
+  not prove the spacing. Its control: `resident-furniture-refusal-control`.
 - **`--npc-sit ACTOR=FURNITURE[:SECONDS]`** sends a travelling NPC (docs/design/navmesh.md
   §5) to a furniture reference (hex FormID) and gives it a `SitOn` on arrival. The trip
   ends at the enabled entry point nearest the actor's placed position (trip target
@@ -439,3 +471,114 @@ minimum–maximum, replay delays 0 unless given:
   when nothing else plays), and whether a fidget plays out before getting off (here:
   it fades out at once).
 - Work spots (ID 22) need a way onto them before their idles can play.
+
+## 9. Who may use which furniture (issue #1522) [design]
+
+Every sandboxing actor chose any seat or bed in its area, whatever its skeleton: a Nipton
+mongrel climbed a Legion cross, with a human clip bound to its skeleton [observed: the
+game's log, issue #1522]. What follows is NVForever's policy, an interim one. Nothing here
+says how the original decides, only that a watch of it found no creature on furniture:
+
+- [observed, 2026-11-04 and 05, the original, minutes of watching and not days; item 86 of
+  docs/handoff/observer-checks.md] no creature read as on furniture: four super mutants
+  among `SuperMutantBed` and `FloorSitMarker` for 534 s at hours 12 and 23 (one of them never
+  under a sandbox package while sampled); Colmillo and
+  GibsonDog01 under `Sandbox256` for 358 s, 98 to 168 units from `OldLadyGibsonChair`, which
+  was probably free [hypothesis]. Weaker: three rats by an outhouse, partly in combat, and
+  Neil, never under a sandbox package. People in the loaded area did read as on furniture,
+  so the reads fire. The Nipton mongrels, 596 s by a free cross: not on it either. That cross's
+  record carries XIBS [documented: `fnvtool` over the record], so that no may be the flag.
+- [observed: headless simulation only, 2026-11-05, at the last code commit of this rule]
+  `fnvtool ai run` over 129 placed creatures
+  of WastelandNV for 24 game hours: on main 24 creatures with 232 furniture events; with this
+  rule none, 31 creatures with pieces excluded, none unknown. One worldspace, one day, 129
+  references, an authored game with no quest started, and nothing drawn: it shows what the
+  rule does here, not what the original does.
+
+Two rules, applied before a choice or a reservation (`fnv_ai::furniture`). A search looks
+past what does not fit, so a near piece does not hide a farther one and a Find does not count
+it. Named furniture that does not fit is nothing to use: the actor goes to the package's place
+and stands, or a Find or a Use Item At ends with nothing used, and its goal is met.
+
+| Rule | Applies to | Not to |
+|---|---|---|
+| **Compatibility**: not a creature with no clip for it | a sandbox's beds, meal seats and seats; a Sleep or Eat package's search; what a package names or links to; a patrol point; what a Find or a Use Item At looks for or names | idle markers, PlayIdle, the player |
+| **No cross by choice**: no enabled marker of ID 10 (§2) | a sandbox's beds, meal seats and seats; a Sleep or Eat package's search | what a package names or links to, so the crucified stay on theirs; a patrol point; what a Find or a Use Item At looks for or names, which is what its package asks for |
+
+Marker IDs come from the model, by the flags that enable them by index (§1): the record's
+flags alone do not tell a cross from a chair. No species list, FormID or editor ID comes
+into it.
+
+**Compatibility** (`fnv_actor::furniture_facts`) has three answers. What the actor is comes
+from its own record, a leveled base's pick if its base is a list: `NPC_` is a person and `CREA`
+a creature, whatever template its model comes from (`fnv_game::nvse_nx::is_creature`). Its
+skeleton is the one that template gives.
+
+| | Skeleton found, tree gives a clip from its folder | Skeleton found, no such clip | Skeleton not found, or the actor or the model not read |
+|---|---|---|---|
+| Creature | *Supported* | *Unsupported* | *Unknown* |
+| Person | *Supported* (any clip of the tree under the folder) | *Unknown*, never Unsupported | *Unknown* |
+
+- A clip the tree can give is one it reaches for a marker the base enables, in the phase of
+  getting on, asking only the conditions about the piece and the phase
+  (`UseIdles::clips_for_getting_on`). This over-approximates: it counts every sibling where
+  playback takes the first that passes, and every marker the base enables where playback
+  takes the nearest. So a creature could come out Supported and still be given a human clip;
+  the guard below then refuses a clip whose body tracks have no node on the skeleton (matching
+  names pass), and a refusal does not repair the AI's state: a safe failure, not correct
+  behaviour. No shipped creature is in
+  this case today, as no creature's clip is in the tree.
+- A skeleton counts as found when its file is in the VFS: it is not read, so a corrupt skeleton
+  would read as Unsupported for a creature. Not a case seen.
+- All of the tree's furniture clips are under `characters\_male\idleanims` [observed: the
+  base game and its DLCs, 2026-11-04], so today every creature whose skeleton is found comes
+  out Unsupported and every person on `characters\_male` Supported.
+- A person is never ruled out by a folder: their clips may be shared, and people off every
+  chair would be the worst mistake this rule could make. What the tree does with a
+  particular piece stays the engine's, as it was.
+- Unknown stays eligible, and without facts (the tests, a run whose assets do not open)
+  everything behaves as before this rule.
+
+**File names prove nothing.** A creature's own files do not make it Supported, because
+nothing plays a clip the tree does not reach. So these come out Unsupported, and that is the
+interim rule, not a finding about them: the aliens (`dlc05\creatures\alien`, three placed
+references, with `specialidle_enterchair.kf`) and the super mutants
+(`creatures\smspinebreaker\idleanims`, with `specialidle_sitcycle.kf` and
+`specialidle_sleepcycle.kf`), though the game has a `SuperMutantBed` [observed: the
+catalogue of `fnvtool actor anims`, whose IDLE records name none of these files under
+furniture conditions]. If a creature is seen on furniture in the original, the rule changes,
+starting with how it reaches its clip.
+
+**The engine's guards** (`drive_actors`, `fnv_actor::furniture_facts::missing_body_nodes`):
+a clip from another actor's folder does not fit when one of its body tracks (`Bip01`,
+`Bip01 …`) has no node in the actor's skeleton. A folder alone is no proof, and no share of
+matching names is used. A human chair clip drives `Bip01 L Finger1` and its kin, which a
+dog's skeleton does not have [observed: both files decoded].
+
+- The getting-on clip and the loop are checked before the furniture is taken or anything is
+  bound. Log: `furniture: <actor> cannot use <furniture>: clip … does not fit skeleton …`.
+  What happens to the AI's state after that is not decided here (issue #1506). `--npc-sit`
+  goes through this.
+- A getting-off clip is checked when it is chosen. One that does not fit is not played: on the
+  next update the actor is off, at the entry point and the furniture free, the way of a seat
+  with no exit clip. Log: `furniture: <actor> gets off <furniture> without a clip: …`. It
+  may look abrupt; it is not refused, as nothing else would release the piece.
+- The player's clips are not checked.
+
+**A risk this rule takes.** A script waiting for `GetSitting` or `GetSleeping` on a creature
+could stall if that creature's furniture is refused [hypothesis]. No shipped case was found:
+of the 27 compiled scripts of the base game and its DLCs that call either function, none is
+on a creature's record, and those that name a reference name the player or a placed NPC
+[observed: `fnvtool script decompile` and the CREA records, 2026-11-05]. Two are not settled
+that way: `Vault112ResidentScript`, which asks of itself and is on no NPC or creature record, and `NPCVendorFollowPlayerTriggerScript`,
+which asks of a linked actor held in a variable. Conditions on dialogue, packages and quest
+stages were not searched.
+
+**Reporting.** The AI's event `furniture_eligibility` is written once per actor and piece
+when a piece was excluded, and once per actor, with reason `no-evidence`, when an answer was
+Unknown. The game logs `ai furniture eligibility: actor=<ref> furniture=<ref>
+decision=excluded|unknown reason=casual-marker-10|no-clips-for-skeleton|no-evidence`.
+`fnvtool ai run` gives the same events, and for each actor `furniture`: its `starts` per
+piece and its `excluded_pieces` per reason over the whole run (not capped as `events` is),
+and `unknown`, null when the run has no facts. The facts are read once for a run, the models
+in parallel; the game logs `furniture: eligibility facts: …` with the time this took.

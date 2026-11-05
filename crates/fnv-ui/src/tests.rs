@@ -866,3 +866,16 @@ fn a_trait_name_ending_in_an_underscore_after_a_constant_reads_its_number() {
     // is absent, so the copy reads the default value (0, as a string "0").
     assert_eq!(ui.get_string("Flags/Unknown/filename").as_deref(), Some("0"));
 }
+
+#[test]
+fn trait_write_counts_tell_a_write_from_a_change() {
+    // [design] Measuring what a frame writes (the engine's NVF_PLAY_TEST_TILE_COUNTS):
+    // writing the same value again counts as a write only.
+    let mut ui = Ui::new();
+    let screen = ui.screen();
+    let (writes, changes) = ui.trait_write_counts();
+    ui.set_trait(screen, "width", Value::Num(1280.0));
+    ui.set_trait(screen, "width", Value::Num(1280.0));
+    ui.set_trait(screen, "width", Value::Num(1920.0));
+    assert_eq!(ui.trait_write_counts(), (writes + 3, changes + 2));
+}

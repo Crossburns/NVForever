@@ -235,10 +235,19 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
 /// leveled base reads the actor drawn for the reference, and a template with Use
 /// Model/Animation the template's [documented: actors.md §2.2, the Model/Animation group;
 /// hypothesis: the skeleton is in that group].
-pub(crate) fn skeleton_model(g: &Game, f: FormId) -> String {
+pub fn skeleton_model(g: &Game, f: FormId) -> String {
     let base = crate::functions::base_of(g, f).unwrap_or(f);
     let b = g.template_source(base, f, |d| d.template_model).map_or(base, |(s, _)| s);
     g.data.record_field(b, "MODL", "").and_then(serde_json::Value::as_str).unwrap_or_default().to_string()
+}
+
+/// Whether the actor of a reference is a creature, by its own record: its base, or the
+/// pick of a leveled base. Templates are not followed: a person on a creature's
+/// Model/Animation stays a person, and a creature on a person's stays a creature; the
+/// skeleton they have is [`skeleton_model`]'s. `None`: it comes to no actor record.
+pub fn is_creature(g: &Game, f: FormId) -> Option<bool> {
+    let base = crate::functions::base_of(g, f).unwrap_or(f);
+    g.template_source(base, f, |_| false).map(|(_, d)| &d.sig == b"CREA")
 }
 
 fn skeleton_of(g: &Game, actor: Option<FormId>) -> String {

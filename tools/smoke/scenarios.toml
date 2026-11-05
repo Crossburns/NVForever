@@ -34,8 +34,9 @@ untimed = [
   "NVF_PLAY_TEST_SCRIPT_MENUS", "NVF_PLAY_TEST_GIVE", "NVF_PLAY_TEST_EQUIP", "NVF_PLAY_TEST_NEAR",
   "NVF_PLAY_TEST_MENU", "NVF_PLAY_TEST_BARTER", "NVF_PLAY_TEST_BARTER_DELAY", "NVF_PLAY_TEST_NO_SPREAD",
   "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
-  "NVF_PLAY_AIDS_FROM_SCRIPTS",
+  "NVF_PLAY_AIDS_FROM_SCRIPTS", "NVF_PLAY_TEST_HELD_GRENADE",
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
+  "NVF_PLAY_TEST_MELEE_KNOCKBACK",
 ]
 
 # Test aids whose value is a list of timed items (`<seconds>:<what>`), joined with sep.
@@ -157,6 +158,18 @@ expect = [
   { re = 'memory budget: RAM \d+ MB .*GPU budget 512 MB \(test aid; the device.s \d+ MB, VK_EXT_memory_budget, device-local heaps; this process uses \d+ MB', label = "the GPU budget read, then capped by the test aid" },
   "caches keep unused models and textures 30 s, at most 128 per cache",
   { re = 'memory budget: near a budget, caches pressed \(GPU: this process uses \d+ of 512 MB', label = "the flight's use of the device-local heaps near the 512 MB budget presses the caches" },
+]
+
+[[scenario]]
+name = "lod-grid-origin-freeside"
+source = "#1533: Freeside's LOD files sit on a grid from the south-west cell of lodsettings/freesideworld.dlodsettings (-10, -8), not on multiples of 4; aligned there, its object blocks (the Strip towers' stand-ins Lucky38WL, Gamorrah01WL, TheTopsWL, UltraLuxHotelWL in block x-6.y-8) and its game terrain chunks are found and drawn (0 of each on main before the fix)"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/lod.rs", "engine/nvforever/src/worldspace.rs"]
+args = ["--world", "FreesideWorld", "--pos=-6000,-8800,2600", "--heading", "205", "--hour", "13"]
+run_seconds = 25
+expect = [
+  { re = 'distant LOD at the end: .* blocks (\d+) trees', range = [3, 100000], label = "Freeside's object blocks are found and drawn (6 on 2026-11-04; 0 before)" },
+  { re = 'distant LOD at the end: LOD chunks (\d+) ', range = [5, 100000], label = "and its game terrain chunks (23 on 2026-11-04; 0 before)" },
 ]
 
 [[scenario]]
@@ -473,7 +486,7 @@ name = "profile-slow-frames"
 source = "docs/design/frame-rate-audit.md §5 (#1421, 2026-11-03): NVF_PLAY_TEST_PROFILE_HITCH_MS sets the threshold of the profile's hitch lines, so the profiling campaign sees what its 20 ms frames hold; at 1 ms every frame is listed"
 areas = ["profiling"]
 paths = ["engine/nvforever/src/profile.rs", "tools/profile/campaign.py"]
-env = { NVF_PLAY_TEST_PROFILE = "2", NVF_PLAY_TEST_PROFILE_HITCH_MS = "1" }
+env = { NVF_PLAY_TEST_UNATTENDED = "1", NVF_PLAY_TEST_PROFILE = "2", NVF_PLAY_TEST_PROFILE_HITCH_MS = "1" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 15
 expect = [
@@ -1065,6 +1078,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "nipton-mongrels-no-cross"
+source = "issue #1522: a sandboxing creature does not choose furniture it has no clips for, and nobody chooses a cross by themselves (fnv_ai::furniture, fnv_actor::furniture_facts; docs/spec-notes/furniture.md §9)"
+note = "Both Nipton mongrels sandbox within reach of the free cross 00139FD6, whose victim starts disabled. The eligibility lines show the cross was looked at and refused, whichever way the run's random choices went; they and the absence of a use in this window are what this proves, not that a dog would have chosen it"
+areas = ["ai", "furniture"]
+paths = ["crates/fnv-ai/src/furniture.rs", "crates/fnv-ai/src/sandbox.rs", "crates/fnv-actor/src/furniture_facts.rs", "engine/nvforever/src/furniture.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1" }
+args = ["--play", "--world", "WastelandNV", "--pos=-33449,-92450,6860", "--heading", "0", "--pitch", "5", "--hour", "12", "--npc-packages", "0016B483,0016B484", "--no-voice", "--no-messages"]
+run_seconds = 62
+expect = [
+  { re = 'ai furniture eligibility: actor=0016B483 furniture=00139FD6 decision=excluded reason=casual-marker-10', label = "the first mongrel does not choose the cross" },
+  { re = 'ai furniture eligibility: actor=0016B484 furniture=00139FD6 decision=excluded reason=casual-marker-10', label = "nor does the second" },
+  { re = 'furniture: 0016B48[34] (goes to|is back on|is on) 00139FD6', count = 0, label = "no mongrel gets on it" },
+]
+
+[[scenario]]
 name = "patrol-point-furniture"
 source = "owner's playtest list 7 item 30: a patrol point that is furniture is used for its idle time (fnv_ai arrived)"
 note = "Gomorrah: a courtesan (0011A2FB, template vGOMVarProstitutes) patrols to her linked DanceMarker03 (0011A2F8, 800 s of idle time)"
@@ -1295,6 +1323,38 @@ expect = [
   "alert summary: 1 actors became Alert",
 ]
 forbid = [{ re = '1EFiendViolet.*Lost → Combat', label = "Combat ↔ Lost flicker" }]
+
+[[scenario]]
+name = "combat-held-grenade-lifecycle"
+source = "docs/design/combat-ai.md §20: held grenades use their throw deadline, low lob and finite carried inventory"
+note = "stationary live combat fixture (--no-npc-packages), not a navigation or vanilla timing test; ordinary script calls replace Violet's inventory with two dynamite grenades; the player moves 900 units from stationary Violet; the probe requires actual held/drawn/ready and legal range, observes both projectile requests and accepted flight, then 30 seconds after depletion"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_grenades.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/held_grenade_probe.rs"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HELD_GRENADE = "000F570B:000BA0F3:held", NVF_PLAY_TEST_SCRIPT = "12:moveto:player:FiendVioletRef:900:0:0,16:call:FiendVioletRef:RemoveAllItems,16:call:FiendVioletRef:AddItem:WeapNVDynamite:2,16:call:FiendVioletRef:EquipItem:WeapNVDynamite,16:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--no-npc-packages"]
+run_seconds = 125
+expect = [
+  { re = 'held grenade probe: armed mode=held', label = "actual drawn grenade is ready in its legal throw band" },
+  { re = 'held grenade probe: accepted request=', count = 2, label = "two actual accepted grenade projectiles" },
+  { re = 'held grenade probe: depleted .*accepted=2 count=0', label = "two throws consume two items" },
+  { re = 'held grenade probe: PASS mode=held requests=2 accepted=2 gun_projectiles=0 count=0', label = "receiver confirms full lifecycle and 30 seconds of no extra emission" },
+]
+forbid = [{ re = 'held grenade probe: FAIL', label = "setup, timing, inventory, combat and projectile validation" }]
+
+[[scenario]]
+name = "combat-gun-with-spare-grenades"
+source = "docs/design/combat-ai.md §20: a gunman keeps grenades carried as spares"
+note = "ordinary moving live control with NPC packages enabled only for Violet; the player moves 1,200 units from Violet at 12 seconds, then two spare dynamite grenades and the combat request follow at 12.5 seconds; accepted gun projectiles and unchanged grenade count throughout a 35 second observation window; no vanilla cadence claim"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_grenades.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/held_grenade_probe.rs"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HELD_GRENADE = "000F570B:000BA0F3:carried", NVF_PLAY_TEST_SCRIPT = "12:moveto:player:FiendVioletRef:1200:0:0,12.5:call:FiendVioletRef:AddItem:WeapNVDynamite:2,12.5:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FiendVioletRef"]
+run_seconds = 125
+expect = [
+  { re = 'held grenade probe: armed mode=carried', label = "actual drawn gun is ready with two spare grenades" },
+  { re = 'held grenade probe: PASS mode=carried .*count=2', label = "accepted gunfire leaves both grenades carried" },
+]
+forbid = [{ re = 'held grenade probe: FAIL', label = "setup, combat, inventory and accepted gunfire validation" }]
 
 [[scenario]]
 name = "combat-npc-grenades"
@@ -1597,6 +1657,62 @@ paths = ["engine/nvforever/src/furniture.rs", "engine/nvf-play/src/furniture.rs"
 args = ["--cell", "Goodsprings", "--npc-sit", "EasyPeteRef=0010634A:8", "--follow-npc"]
 run_seconds = 45
 expect = ["furniture summary: 1 of 1 actors sat down, 1 got up again"]
+
+# The issue's 180 s run, shortened: its stay of 90 s left 81 s after the release to watch;
+# here a stay of 60 s and 30 s or more of the wait are enough. The time ranges are
+# acceptance targets [design: a retry is due within 5 s of active play], not measurements.
+# The range of repeats catches excess retries only: it does not prove their spacing (retries
+# every 3 s would pass). The 5 s spacing is proved by the unit tests of
+# crates/fnv-actor/src/furniture_retry.rs.
+[[scenario]]
+name = "resident-furniture-refusal-retry"
+source = "issue #1506, docs/spec-notes/furniture.md §7: the test aid's settler is on Easy Pete's chair when his AI resumes; refused (in use), he waits, asks again (logged once) and sits soon after the settler got off"
+areas = ["ai", "residents", "furniture"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-actor/src/furniture_retry.rs"]
+args = ["--cell", "Goodsprings", "--play", "--hour", "15", "--size", "1280x720", "--no-voice", "--no-messages", "--npc-packages", "EasyPeteRef", "--npc-sit", "GoodspringsSettler01Ref@00106349=0010634A:60"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_NEAR = "00106349", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "0:call:EasyPeteRef:SetActorsAI:0,25:call:GoodspringsSettler01Ref:GetSitting,26:call:EasyPeteRef:SetActorsAI:1,45:call:GoodspringsSettler01Ref:GetSitting,45.1:call:EasyPeteRef:GetSitting,60:call:GoodspringsSettler01Ref:GetSitting,60.1:call:EasyPeteRef:GetSitting,60.2:call:EasyPeteRef:GetCurrentAIPackage,60.3:call:EasyPeteRef:GetCurrentAIProcedure,95:call:GoodspringsSettler01Ref:GetSitting,95.1:call:EasyPeteRef:GetSitting,105:call:GoodspringsSettler01Ref:GetSitting,105.1:call:EasyPeteRef:GetSitting,105.2:call:EasyPeteRef:GetCurrentAIPackage,105.3:call:EasyPeteRef:GetCurrentAIProcedure,115:call:GoodspringsSettler01Ref:GetSitting,115.1:call:EasyPeteRef:GetSitting" }
+run_seconds = 125
+order = [[
+  "script: test aid calls GetSitting on GoodspringsSettler01Ref = 3",
+  'test aid: script Call("EasyPeteRef", "SetActorsAI", ["1"])',
+  "furniture: 00104C80 cannot use 0010634A: in use",
+  "furniture: 00104F03 got off 0010634A",
+  "furniture: 00104C80 goes to 0010634A",
+  "furniture: 00104C80 is on 0010634A",
+  "script: test aid calls GetSitting on EasyPeteRef = 3",
+]]
+expect = [
+  { text = "furniture: 00104C80 cannot use 0010634A: in use", count = 1, label = "the refusal is logged once" },
+  { text = "furniture: 00104C80 goes to 0010634A", count = 1, label = "the use begins once, after the release" },
+  { re = 'furniture refusals: 1 logged, (?P<n>\d+) identical repeats', range = [3, 20], label = "he asked again, without excess retries (spacing: unit tests)" },
+  { gap = ["furniture: 00104F03 got off 0010634A", "furniture: 00104C80 goes to 0010634A"], range = [0, 10], label = "asks again soon after the release" },
+  { gap = ["furniture: 00104F03 got off 0010634A", "furniture: 00104C80 is on 0010634A"], range = [0, 20], label = "on the chair soon after the release" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 0", min = 2, label = "standing while the chair is taken" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 3", min = 2, label = "sitting afterwards" },
+]
+
+# The same run without the settler: nothing refuses, he sits at his first order.
+[[scenario]]
+name = "resident-furniture-refusal-control"
+source = "issue #1506: the control of resident-furniture-refusal-retry, without the occupant"
+areas = ["ai", "residents", "furniture"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-actor/src/furniture_retry.rs"]
+args = ["--cell", "Goodsprings", "--play", "--hour", "15", "--size", "1280x720", "--no-voice", "--no-messages", "--npc-packages", "EasyPeteRef"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_NEAR = "00106349", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "0:call:EasyPeteRef:SetActorsAI:0,25:call:GoodspringsSettler01Ref:GetSitting,26:call:EasyPeteRef:SetActorsAI:1,45:call:GoodspringsSettler01Ref:GetSitting,45.1:call:EasyPeteRef:GetSitting,60:call:GoodspringsSettler01Ref:GetSitting,60.1:call:EasyPeteRef:GetSitting,60.2:call:EasyPeteRef:GetCurrentAIPackage,60.3:call:EasyPeteRef:GetCurrentAIProcedure,95:call:GoodspringsSettler01Ref:GetSitting,95.1:call:EasyPeteRef:GetSitting,105:call:GoodspringsSettler01Ref:GetSitting,105.1:call:EasyPeteRef:GetSitting,105.2:call:EasyPeteRef:GetCurrentAIPackage,105.3:call:EasyPeteRef:GetCurrentAIProcedure,115:call:GoodspringsSettler01Ref:GetSitting,115.1:call:EasyPeteRef:GetSitting" }
+run_seconds = 125
+order = [[
+  'test aid: script Call("EasyPeteRef", "SetActorsAI", ["1"])',
+  "furniture: 00104C80 goes to 0010634A",
+  "furniture: 00104C80 is on 0010634A",
+  "script: test aid calls GetSitting on EasyPeteRef = 3",
+]]
+expect = [
+  { text = "furniture: 00104C80 cannot use", count = 0, label = "no refusal" },
+  { text = "furniture refusals:", count = 0, label = "no refusal in the summary" },
+  { text = "furniture: 00104C80 goes to 0010634A", count = 1, label = "one order is enough" },
+  { gap = ['test aid: script Call("EasyPeteRef", "SetActorsAI", ["1"])', "furniture: 00104C80 is on 0010634A"], range = [0, 20], label = "seated soon after his AI resumes" },
+  { text = "script: test aid calls GetSitting on EasyPeteRef = 3", min = 5, label = "sitting at every probe" },
+]
 
 # ------------------------------------------------------------------ texture swaps
 
@@ -2028,6 +2144,20 @@ expect = [
   { re = 'talk gesture: GSChetRef listens .* by DialogueIdles > TalkToPlayer > DialogTalking > .*Listen', label = "a listen clip while the player chooses" },
   { re = 'talk gesture summary: (?P<n>\d+) gestures picked while talking', range = [3, 20], label = "talk gestures counted" },
   { re = 'idle summary: .* 0 by dialogue lines\)', label = "gestures are not counted as dialogue lines' idles (Chet's broom idle after the talk may be)" },
+]
+
+[[scenario]]
+name = "talk-julie-topic-list-leave"
+source = "#1595 (docs/design/dialogue-play.md §2): Julie Farkas's top level offers no Goodbye in the data; Tab (the aid's leave) leaves a topic list without one instead of trapping the player"
+note = "the player beside Julie Farkas (VFSJulieFarkasREF 0x00115C5F) in the Old Mormon Fort at noon; the aid talks at 10 s and leaves at her topic list"
+areas = ["dialogue"]
+paths = ["engine/nvf-play/src/dialogue.rs", "crates/fnv-game/src/dialogue.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_TALK = "10:VFSJulieFarkasREF=leave", NVF_PLAY_TEST_TALK_DELAY = "3" }
+args = ["--play", "--world", "FreesideFortWorld", "--pos=7915,2120,1000", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = "dialogue: test aid .*leaves 0x00115C5F's topic list, which offers no Goodbye", count = 1, label = "the aid's leave at her top level ends the conversation" },
+  { re = 'dialogue: Tab refused', count = 0, label = "Tab is not refused at her topic list" },
 ]
 
 [[scenario]]
@@ -2621,12 +2751,26 @@ name = "creature-embedded-muzzle"
 source = "ESM audit 2026-10-24 gap 14 (nvforever npc_combat.rs, weapon-data-fields.md §7): a creature's embedded weapon shoots from the node its WEAP NNAM names (a sentry bot's ProjectileNode_RGatling)"
 note = "a sentry bot (CrSentryBotMGHard 0x000E585E) placed at the player in Goodsprings at 3 s (the first created reference, 0xFF000000), put 600 units away and set on the player; god mode"
 areas = ["combat"]
-paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/data.rs"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/data.rs", "engine/nvforever/src/body_weapons.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:CrSentryBotMGHard:1,5:moveto:0xFF000000:player:0:600:0,6:combat:0xFF000000:player" }
 args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 30
 expect = [
   { re = "npc combat: .* opens fire on .*, shooting from its embedded weapon's node ProjectileNode_RGatling", label = "the sentry bot's gun shoots from its node" },
+]
+
+[[scenario]]
+name = "npc-burst-fire"
+source = "#1448: an NPC's automatic weapon fires in bursts with pauses between them (fnv_combat::burst, docs/design/combat-ai.md), embedded weapons too; before, Securitrons held the trigger nonstop"
+note = "a sentry bot (CrSentryBotMGHard 0x000E585E, an automatic embedded gun) created at 3 s (the first created reference, 0xFF000000) at a Joshua tree about 580 units from the player (TreeJoshBNV 0x00122CCA) and set on the player; god mode. The coyotes (VERGSCoyote1-6REF) are disabled so it fights the player alone, on its minigun. The earlier setup race (created on the player, it took up its missile launcher inside the blast and kept it) was #1621, fixed by #1622 (body weapons: a gun suits no target within its own blast)"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/burst.rs", "crates/fnv-combat/src/vats.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "2:call:VERGSCoyote1REF:Disable,2.1:call:VERGSCoyote2REF:Disable,2.2:call:VERGSCoyote3REF:Disable,2.3:call:VERGSCoyote4REF:Disable,2.4:call:VERGSCoyote5REF:Disable,2.5:call:VERGSCoyote6REF:Disable,3:call:0x00122CCA:PlaceAtMe:CrSentryBotMGHard:1,6:combat:0xFF000000:player" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'npc combat: .* fires a burst of (?P<n>\d+) rounds at .*, then lets go for', range = [3, 8], all = true, label = "every burst is 3 to 8 rounds" },
+  { re = 'npc combat: .* fires a burst of \d+ rounds at .*, then lets go for', min = 2, label = "and bursts again after a pause" },
 ]
 
 [[scenario]]
@@ -2832,12 +2976,45 @@ expect = [
   "barter opened: UIMenuMode",
   "container take all: UIItemTakeAll",
   "inventory item used: NPCHumanUsingStimpak",
-  { text = "dialogue menu: TAB) Goodbye shown at the left of the choices", label = "the Goodbye hint while Chet offers a Goodbye choice (list 5 item 62)" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", label = "the Goodbye hint while Chet offers a Goodbye choice (list 5 item 62)" },
   { text = "wait slider moved: UIMenuPrevNext", known_failing = "main 2026-10-15 (since crime in play, #242, 2026-10-12): the menu aid's Take All from Chet's cash register at 44 s is a theft Chet sees, so he turns on the player and the wait menu at 61 s is refused (You cannot wait when enemies are nearby.), as it should be; the slider is never moved. The slider sound is checked in wait-residents instead" },
   "settings switch flipped: UIMenuPrevNext",
   { re = 'ui sounds summary:.*\b24 played', known_failing = "claude/smoke-regressions 2026-10-12: 23 played with every step done (the start-up boxes no longer swallow the menu aid's inventory pass); one UIPipBoyScroll short of the 24 of 2026-10-11: since the Pip-Boy ITEMS page (#213) the menu aid's inventory pass lists the Weapons tab, whose first row is the weapon it puts on and is already selected, so no selection move is heard (before: the Vault 13 jumpsuit, further down one list). Not a sound the engine loses. Main 2026-10-15: 20 played, the refused wait menu's three (UIMenuMode, UIMenuPrevNext, UIMenuOK, all heard in wait-residents) on top; see the wait slider line" },
   { re = 'ui sounds summary:.*\b0 sounds not found' },
   { re = "ui sounds summary:.*(?P<n>\\d+) items' own sounds held back for Take All", range = [1, 1e9], label = "one or more items' own sounds held back for Take All" },
+]
+
+[[scenario]]
+name = "dialogue-goodbye-hint"
+note = "Chet in the general store, 1024x768 (4:3: the hint stands in the band under the bottom bracket, not at the side). The talk aid starts the conversation with no steps and holds the choices for 60 s; a real Tab key (NVF_PLAY_TEST_KEYS, through the game's bindings) at 36 s says goodbye, so the aid's own leave never runs. Shots hint_on_*.png while the choices wait. Covers: the hint shown while a Goodbye choice is offered, a real Tab ending the conversation by Goodbye. Does not cover: a Tab refused where no Goodbye is offered (dialogue.rs is unchanged), the switch flipped live (the unit test of the cache key covers it), the setting's saved state. Timing: the conversation starts at 11 s of the world aids' clock and Chet's greeting takes under 11 s, else the Tab at 36 s is refused and the run fails on the aid's leave line (a late start moves the talk and the keys together)"
+source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint (#1517)"
+areas = ["dialogue", "menus"]
+paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "60", NVF_PLAY_TEST_KEYS = "36:tab", NVF_PLAY_TEST_SHOTS = "30:hint_on_30.png,33:hint_on_33.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1024x768"]
+run_seconds = 48
+expect = [
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 1, label = "the hint, the switch on by default, while Chet offers a Goodbye choice" },
+  { text = "dialogue menu: [Tab] Goodbye hidden by the Goodbye hint setting", max = 0, label = "no hidden line with the switch on" },
+  { re = 'dialogue: conversation with GSChetRef ended \(goodbye,', count = 1, label = "the conversation ended by its Goodbye line (not by being left or broken off)" },
+  { text = "test aid NVF_PLAY_TEST_TALK: no steps left: leaving the conversation", max = 0, label = "the aid did not leave: the real Tab did" },
+]
+
+[[scenario]]
+name = "dialogue-goodbye-hint-off"
+note = "As dialogue-goodbye-hint with the Goodbye hint switched off first: the pause menu's settings page flips dialogue-goodbye-hint at 3 s (the aids that act on the world, the talk among them, wait for 11 s of the world clock, which never runs ahead of the real one, so the flip comes first on any machine). The hint is held back, the real Tab at 36 s still says goodbye. Shots hint_off_*.png. Does not cover the flip while a conversation is open (unit test of the cache key) or a refused Tab"
+source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint switch (#1517)"
+areas = ["dialogue", "menus"]
+paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:page,3:dialogue-goodbye-hint", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "60", NVF_PLAY_TEST_KEYS = "36:tab", NVF_PLAY_TEST_SHOTS = "30:hint_off_30.png,33:hint_off_33.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1024x768"]
+run_seconds = 48
+expect = [
+  { text = "settings: dialogue-goodbye-hint off", label = "the settings page turned the Goodbye hint off" },
+  { text = "dialogue menu: [Tab] Goodbye hidden by the Goodbye hint setting", count = 1, label = "Chet offers Goodbye and the hint is held back" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", max = 0, label = "the hint is not shown" },
+  { re = 'dialogue: conversation with GSChetRef ended \(goodbye,', count = 1, label = "a real Tab still says goodbye with the hint hidden" },
+  { text = "test aid NVF_PLAY_TEST_TALK: no steps left: leaving the conversation", max = 0, label = "the aid did not leave: the real Tab did" },
 ]
 
 [[scenario]]
@@ -3267,6 +3444,23 @@ order = [[
   'menu of V21SheldonTerminalMail (2 of 2 items listed)',
   'menu of V21SheldonTerminal (1 of 1 items listed)',
 ]]
+
+[[scenario]]
+name = "terminal-scripted-activate"
+source = "#1532: Lucky38MrHouseTerminal's OnActivate (SCPT 0x001746C1) ends in a bare Activate: a script's default activation of a terminal opens its screen for the player, after Terminal01.NIF's Open sequence (keyboard, then screen); leaving plays Close"
+note = "Lucky38MrHouseTerminalREF (0014B0A7, base Lucky38MrHouseTerminal 0014B08E: Hard, locked, model Terminals/Terminal01.NIF with Idle/Open/Close) [observed: FalloutNV.esm]; Science 80 so the script's first branch (Science 75, not locked for good) runs Activate and the hacking game opens"
+areas = ["terminal"]
+paths = ["engine/nvf-play/src/terminal.rs", "engine/nvf-play/src/script_events.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav science 80", NVF_PLAY_TEST_SCRIPT = "9:moveto:player:Lucky38MrHouseTerminalREF,14:activate:Lucky38MrHouseTerminalREF", NVF_PLAY_TEST_TERMINAL = "17:exit" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 20
+expect = [
+  { text = "script: terminal 0014B0A7 opens (a script's Activate)", label = "the script's Activate opens the terminal" },
+  { text = "terminal 0x0014B0A7 plays Open before its screen", label = "the keyboard and screen come out first" },
+  { re = 'terminal: open 0x0014B0A7 \S+: hacking, Hard', label = "then the screen: the hacking game (Hard, locked)" },
+  { text = "terminal 0x0014B0A7 closes", label = "leaving plays Close" },
+]
+order = [["terminal 0x0014B0A7 plays Open before its screen", "terminal: open 0x0014B0A7", "terminal 0x0014B0A7 closes"]]
 
 [[scenario]]
 name = "hacking"
@@ -3920,6 +4114,21 @@ expect = [
   { re = 'ultraluxsignglow\.nif: 0 material and 1 transform track', label = "the Ultra-Luxe sign glow's own transform controller" },
   { re = 'nv_thetops-casino04\.nif: [1-9]\d* material and', label = "The Tops sign's own material controllers" },
 ]
+
+[[scenario]]
+name = "snow-globe-taken-particles"
+source = "#1596 (engine/nvforever/src/particles.rs): a taken snow globe's snow went on falling where it stood; a placed model's own live particles go at once when it is no longer drawn"
+note = "The Strip snow globe in Vault 21 (SnowglobeTheStrip 0x001690EC); the player starts able to take it, looking at it, and E at 10 s takes it"
+areas = ["particles", "activation"]
+paths = ["engine/nvforever/src/particles.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NEAR = "001690EC", NVF_PLAY_TEST_ACTIVATE = "10" }
+args = ["--cell", "2EOVault21", "--play", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'activate 0x001690EC ', label = "E takes the snow globe" },
+  { re = 'particles: 001690EC is not drawn any more: its \d+ live particles go', count = 1, label = "its snow goes with it" },
+]
+order = [["activate 0x001690EC ", "particles: 001690EC is not drawn any more"]]
 
 [[scenario]]
 name = "gomorrah-roof-fire"
@@ -5276,6 +5485,55 @@ expect = [
 ]
 
 [[scenario]]
+name = "protectron-lasers"
+source = "#1535 (owner's playtest 2026-11-04): protectrons fire their lasers. Their skeleton has no Weapon node, so no 1hp/2hl stance loaded and they fought with their own 2-damage attack; a stance without one is now kept for body weapons (engine/nvforever/src/weapons.rs no_weapon_node), and the lasers fire from the projectile nodes in their body-part models (body_weapons.rs spawn_part_projectile_nodes, place_muzzles)"
+note = "VCrTier0CrProtectron (00167ED5: ProtectronHandLaser1HP NNAM ProjectileNode_RHandLaser in 1hprhandlaser.nif under Bip01 R Forearm; ProtectronHeadLaser2HL ProjectileNode_HeadLaser in 2hlheadlaser.nif) placed at the player and moved 800 units north 1.5 s later (moved in the frame it was made, the drawn actor did not follow: a setup race); see-through-walls so detection in this dim spot (light 14) does not decide whether it fires"
+areas = ["combat", "creatures"]
+paths = ["engine/nvforever/src/body_weapons.rs", "engine/nvforever/src/weapons.rs", "engine/nvforever/src/actors.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SEE_THROUGH_WALLS = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 00167ED5 1;10.5:ff000000.moveto player 0 800 0;10.7:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 36
+expect = [
+  { text = "protectron 1hp: clips [Holster, Equip, Aim, Unequip]", label = "the hand laser's stance loads without a Weapon node" },
+  { re = 'body weapons: \S+skeleton\.nif FF000000 fights with ProtectronHandLaser1HP, ProtectronHeadLaser2HL', label = "both lasers are its arms" },
+  { text = "body weapons: FF000000 fires ProtectronHandLaser1HP from its node ProjectileNode_RHandLaser", label = "the hand laser fires from its body part's node" },
+  { re = 'npc combat: 0xFF000000 opens fire on the player from (\d+) units', range = [300, 1000], label = "it opens fire from a distance" },
+  { text = "npc combat: 0xFF000000 shots are drawn from its weapon's muzzle", label = "from the laser, not its eyes" },
+  { re = 'npc combat summary: .*; (\d+) shots \((\d+) from a muzzle', range = [5, 100000], label = "it keeps firing (41 on 2026-11-04; 0 before)" },
+  { re = 'attack anims: FF000000 plays \S+1hpattackright\.kf', label = "with its firing clip" },
+]
+
+[[scenario]]
+name = "helios-ceiling-turrets"
+source = "#1537 (owner's playtest 2026-11-04): HELIOS One's ceiling turrets turn to the player and fire. Three causes: no 2hr stance (no Weapon node, fixed with #1554's no_weapon_node), eyes 112 units over the origin (above the turret's own top and past the ceiling: detection.rs eyes_of now keeps eyes within the body), and a rooted (Immobile) actor never turned (fnv-ai carry.rs rooted_turn)"
+note = "HELIOSOneTower: VHeliosTurret2REF (0x00099DB8, LvlTurretCeiling2048Robot → CrTurretCeiling01, minisentryturret skeleton, TurretGunCeiling01) at (-1792, 1024, 7760) with two more; the player put on the floor below, about 400 units off"
+areas = ["combat", "creatures"]
+paths = ["crates/fnv-ai/src/carry.rs", "engine/nvforever/src/detection.rs", "engine/nvforever/src/body_weapons.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05" }
+args = ["--cell", "HELIOSOneTower", "--play", "--pos=-1651,678,7600", "--heading", "337", "--no-voice"]
+run_seconds = 25
+expect = [
+  { re = 'body weapons: \S+skeleton\.nif 00099DB8 fights with TurretGunCeiling01', label = "the turret's gun is its arm (no Weapon node: #1554)" },
+  { re = 'detection: LvlTurretCeiling2048Robot 00099DB8 → the player: \S+ → detected \(.*in sight', label = "it sees the player below once turned (out of sight before: eyes past the ceiling, then out of its view)" },
+  { re = 'npc combat: VHeliosTurret2REF 0x00099DB8 opens fire on the player', label = "it fires" },
+  { re = 'npc combat summary: .*; (\d+) shots \((\d+) from a muzzle', range = [10, 1000000], label = "the turrets keep firing (834 shots on 2026-11-05, with a protectron; 0 from turrets before)" },
+]
+
+[[scenario]]
+name = "robot-hit-volumes"
+source = "#1536 (owner's playtest 2026-11-04): robots' hit capsules were a human's share of their size, far thinner than their bodies; a part's capsule is now at least as thick as the widest ragdoll shape on its bones (engine/nvforever/src/limbs.rs BoneRadii, nvf-play hitvol part_capsules)"
+note = "VCrTier0CrProtectron (00167ED5) and VCrTier0CrMisterGutsy (00167ED2) placed by the player. Ragdoll widths [observed: their skeleton.nif bodies]: protectron Bip01 Spine 18.0 (share 13.1), Mister Gutsy's body 21.2 (share 14.6); the capsules come from the debug line of nvf_play::hitvol"
+areas = ["combat", "creatures"]
+paths = ["engine/nvforever/src/limbs.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { RUST_LOG = "info,nvf_play::hitvol=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 00167ED5 1;9.1:player.placeatme 00167ED2 1;9.3:tdetect;9.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 14
+expect = [
+  { re = 'actor FF000000: \d+ part capsules \(size \d+.*radius: 17\.99', label = "the protectron's torso capsule is its ragdoll's 18 units (13.1 before)" },
+  { re = 'actor FF000001: \d+ part capsules \(size \d+.*radius: 21\.2', label = "Mister Gutsy's body capsule is its ragdoll's 21.2 units (14.6 before)" },
+]
+
+[[scenario]]
 name = "follower-boone"
 source = "owner's list 2 (H followers): a companion hired by the game's own recruit line follows the player through a door, ignores the player's friendly fire, joins the player's fight and waits when told (docs/design/followers.md)"
 note = "Boone's recruit line INFO 0x0015F30D runs at 3 s (its result script hires him: SetPlayerTeammate, SetIgnoreFriendlyHits, VNPCFollowers.bBooneHired); the player shoots him twice at 24 s (the controls' clock is not moved when the scripts first run late, as the script steps are: on a busy machine the recruit line ran 7.2 s late and Boone, who takes about 9.5 s to walk over, was still 501 units off at 18 s), leaves his room by its door at 26 s, walks off at 32 s; a feral ghoul is put 600 units from the player at 45 s; Boone's Waiting variable is set at 62 s"
@@ -5342,6 +5600,27 @@ forbid = [
   { re = 'companion wheel: \S+ \(.*\): failed', label = "a command failed" },
   { re = 'companion wheel: .*has no line of', label = "a command had no line to say" },
   { re = 'npc combat: CraigBooneREF \S+ fights the player', label = "Boone fights the player" },
+]
+
+[[scenario]]
+name = "follower-melee-closes-in"
+source = "#1534 (owner's playtest 2026-11-04): a melee companion goes after its target. Every follower's Follow package sets Continue During Combat [observed: FollowersVeronicaFollowPlayerDEFAULT]; a teammate on a Follow package fights as any other actor and follows again after the fight (fnv_game::awareness continues_during_combat). Before, Veronica stood by the player and only struck what came to her"
+note = "Veronica (VeronicaREF) hired at the 188 Trading Post by her hire lines (INFO 0x001467AC, which sets her Brotherhood warning baseline, then 0x00147789, which hires her); a feral ghoul (0x000CE9E7, as follower-boone) put 900 units from the player at 16 s; the player walks off at 26 s"
+areas = ["followers", "combat"]
+paths = ["crates/fnv-game/src/awareness.rs", "crates/fnv-ai/src/alert.rs", "crates/fnv-game/src/followers.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:moveto:player:VeronicaREF:0:150:0,4:info:0x001467AC:VeronicaREF,5:info:0x00147789:VeronicaREF,16:moveto:0x000CE9E7:player:0:900:0", NVF_PLAY_TEST_GOTO = "26:32400:31600:5520" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 45
+expect = [
+  { re = 'VeronicaREF: package FollowersVeronicaFollowPlayerDEFAULT', label = "hired: her Follow package" },
+  { re = 'npc combat: VeronicaREF \S+ fights 0x000CE9E7 with WeapPowerFistVeronica \(melee\)', label = "she fights the ghoul with her power fist" },
+  { re = 'VeronicaREF: runs at 0x000CE9E7, (\d+) units away', range = [400, 5000], label = "she leaves the player to close on it (stood still before #1534)" },
+  { re = 'npc combat: VeronicaREF \S+ swings at LvlFeralGhoul 0x000CE9E7', label = "and swings at it" },
+  { re = 'VeronicaREF: (runs|walks) after ', label = "after the fight she follows the player again" },
+]
+order = [["npc combat: VeronicaREF", "VeronicaREF: runs at 0x000CE9E7", "VeronicaREF: runs after"]]
+forbid = [
+  { re = 'npc combat: VeronicaREF \S+ fights the player', label = "Veronica fights the player" },
 ]
 
 [[scenario]]
@@ -5611,6 +5890,19 @@ args = ["--play", "--pos=-58185,-5600,8300", "--hour", "12", "--no-voice", "--no
 run_seconds = 12
 expect = [
   { re = 'reticle: prompt "Enter Goodsprings Cave"', label = "the door's prompt reads its XATO" },
+]
+
+[[scenario]]
+name = "vendortron-through-glass"
+source = "#1602 (docs/spec-notes/cells-refs.md §5): the Gun Runners' kiosk is one body on collision layer 27 Invisible Wall, which took the crosshair, so the Vendortron inside it could not be talked to; the activation ray passes invisible walls"
+note = "VendortronRef 0x000F2EAA in the kiosk (nv_gunrun_kiosk.nif 0x00100616); the player put 120 units in front of it facing it; E at 8 s talks to it"
+areas = ["activation", "dialogue"]
+paths = ["engine/nvf-play/src/activate.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_FACE = "5:000F2EAA", NVF_PLAY_TEST_ACTIVATE = "8" }
+args = ["--play", "--pos=-11064,98317,4420", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'target 0x000F2EAA .*by Collision', label = "the Vendortron behind the kiosk's invisible wall is targeted" },
 ]
 
 [[scenario]]
@@ -5992,6 +6284,26 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-after-answered-box"
+source = "#1649 (a user's report): after a mod's MessageBoxEx warning was answered, every save was refused for the rest of the session with \"a script's menu or message box is open\": the answered box stayed in the game's message box until its script read the button, which a fire-and-forget box never does"
+note = "the console's MessageBoxEx box is answered by NVF_PLAY_TEST_SCRIPT_MENUS after 1 s and nothing reads its button, as with the mods' start-up warnings; the console's save comes after"
+areas = ["save", "scripts"]
+paths = ["engine/nvf-play/src/save.rs", "crates/fnv-game/src/functions/misc.rs"]
+env = { NVFOREVER_HOME = "save-box-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "20:MessageBoxEx \"nvf answered box|Ok\";20.3:close;24:save nvf-after-box;25:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 27
+expect = [
+  { re = 'script: menu 1001 .*answered', label = "the box is answered" },
+  { re = 'save: wrote .*nvf-after-box\.nvfsave \(manual, ', label = "the save after the answered box is written" },
+  { re = 'save: not now', count = 0, label = "no save is refused" },
+]
+order = [[
+  { re = 'console: MessageBoxEx "nvf answered box\|Ok" >> ran' },
+  { re = 'script: menu 1001 .*answered' },
+  { re = 'save: wrote .*nvf-after-box\.nvfsave' },
+]]
+
+[[scenario]]
 name = "save-load"
 source = "owner 2026-10-15: save and load (docs/design/save-load.md): the second half of the round trip: --load the save save-write made and find its changes"
 areas = ["save"]
@@ -6008,6 +6320,23 @@ expect = [
   { re = 'console: GetActorValue on player >> 9\.00', label = "the player's Luck came back" },
   { re = 'console: GetPos on player >> -683\d\d\.', label = "the player stands where the save was made" },
 ]
+
+[[scenario]]
+name = "save-refused-when-dead"
+source = "issue #1572: every way of saving is refused from the player's death on (docs/design/save-load.md)"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs"]
+note = "player.kill at 14 s; the QuickSave key at 15.5 s and 17 s (the second while the screen is going black) and a console save at 19 s are all refused, and nothing is written. NVFOREVER_HOME keeps the run off the real quicksave."
+env = { NVFOREVER_HOME = "save-dead-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.kill;14.3:close;19:save dead-save;19.5:close", NVF_PLAY_TEST_KEYS = "15.5:f5,17:f5" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'combat: the player died', label = "the player dies" },
+  { text = "save: QuickSave key", min = 2, label = "both F5 presses reach the save code" },
+  { text = "save: not now: the player is dead", min = 3, label = "both quicksaves and the console save are refused" },
+  { re = 'save: wrote ', count = 0, label = "nothing is written" },
+]
+order = [["combat: the player died", "save: QuickSave key", "save: not now: the player is dead"]]
 
 [[scenario]]
 name = "save-ai-write"
@@ -6166,6 +6495,25 @@ order = [[
   { re = 'load: restored .*handoff-test\.nvfsave', label = "only then is the save put back (owner 2026-11-01: the old run does not stay through the load)" },
   { text = "the new run took over and its world is in; ending it", label = "and the world comes in" },
 ]]
+
+[[scenario]]
+name = "pause-quit-to-main-menu"
+source = "issue #1593: the pause menu's Quit, then Main Menu, goes back to the main menu (a new run opened with --menu takes the window over) instead of closing the game"
+areas = ["save", "menus"]
+paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "quit-menu-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "20:80", NVF_PLAY_TEST_PAUSE_MENU = "21:quit,21.5:up,22:up,22.5:pick", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
+expect = [
+  { text = "pause menu: quit to the main menu", count = 1, label = "Main Menu is picked in the quit question" },
+  { re = 'pause menu: quit$', count = 0, label = "Exit Game is not picked" },
+  { text = "load: handing over to a new run with --menu", count = 1, label = "a new run starts for the main menu" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown (not past the time limit)" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new one is up" },
+  { text = "the new run took over and its main menu is in; ending it", label = "the main menu is open" },
+  { re = 'before it was ready', count = 0, label = "the new run does not stop at its start" },
+]
 
 [[scenario]]
 name = "load-handoff-refused"
@@ -8020,6 +8368,23 @@ expect = [
   { re = 'player weapon model \(First person\): a sighting node: aimed with the down-the-sights clips', label = "the pistol still plays its down-the-sights clips" },
   { re = 'crosshair: hidden down the true iron sights', label = "no crosshair down the sights" },
   { re = 'crosshair: shown again', label = "the crosshair is back after aiming" },
+]
+
+[[scenario]]
+name = "aim-reload-lowers-sights"
+source = "owner's report #1642: a reload or a jam while aiming down the sights plays with the sights still up; they should come down for it and go back up after while Block is held (engine/nvf-play/src/combat.rs sights_held_down, aim_zoom.rs)"
+note = "the 10mm pistol (0000434F) drawn at 9 s, Block held from 12 s to 19 s, one shot at 12.5 s, a reload at 14 s (no god mode: it keeps the magazine full, so there would be nothing to reload)"
+areas = ["combat", "camera"]
+paths = ["engine/nvf-play/src/aim_zoom.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/iron_sights.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_CONTROL = "9:weapon,12:aim,12.5:fire,12.6:fire,14:reload,19:aim" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12"]
+run_seconds = 23
+expect = [
+  { re = 'aim zoom: \S+ \(\S+\) sight FOV', label = "aiming zooms in" },
+  { re = 'aim zoom: back to the unzoomed view', label = "the reload zooms back out with Block still held" },
+  { re = 'combat: reloaded \d+', label = "the reload finishes" },
+  { re = 'aim zoom: \S+ \(\S+\) sight FOV', label = "after the reload the sights come back up on their own" },
+  { re = 'aim zoom: back to the unzoomed view', label = "letting go of Block zooms out at the end" },
 ]
 
 [[scenario]]
@@ -10263,6 +10628,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "equip-swap-unequip-first"
+source = "issue #1616: swapping apparel from the inventory runs the old item's OnUnequip before the new item's OnEquip (docs/spec-notes/ext-events.md)"
+note = "The player puts on a Powder Gang outfit (ArmorNVPGSimple 000A4731, script PowderGangOutfitWarningScript SCPT 00134B71) at 14 s, then a Great Khan outfit (ArmorNVGKSimple 000E674C, KhanFactionOutfitWarningScript SCPT 00134B70) in its place at 19 s, through the test aid's plain equip (the inventory menu's path)"
+areas = ["scripts"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_events.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GIVE = "000A4731:1,000E674C:1", NVF_PLAY_TEST_CONTROL = "14:equip=000A4731,19:equip=000E674C" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'script: OnEquip of FalloutNV\.esm\|SCPT 0x00134B71 ran on Some\(0x00000014\)', label = "the Powder Gang outfit's OnEquip runs" },
+  { re = 'script: OnUnequip of FalloutNV\.esm\|SCPT 0x00134B71 ran on Some\(0x00000014\)', label = "the swap runs its OnUnequip" },
+  { re = 'script: OnEquip of FalloutNV\.esm\|SCPT 0x00134B70 ran on Some\(0x00000014\)', label = "the Khan outfit's OnEquip runs" },
+]
+order = [["test aid: the player equips 0x000E674C", "script: OnUnequip of FalloutNV.esm|SCPT 0x00134B71", "script: OnEquip of FalloutNV.esm|SCPT 0x00134B70"]]
+
+[[scenario]]
 name = "move-to-marker-fade"
 source = "script-function audit 2026-10-19: MoveToMarkerWithFade fades the object out, moves it, then fades it back in [documented: GECK wiki MoveToMarkerWithFade]; the fade-out wait is the Disable 1 hold (fnv_game FADE_OUT_HOLD) [hypothesis: capture asked]"
 note = "in Goodsprings, Easy Pete is brought 300 units north of the player at 14 s; at 16 s the console moves him with MoveToMarkerWithFade 600 units north of the player: he fades out where he stands (2 s), is moved, then fades in"
@@ -11084,6 +11465,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "trigger-primitive-hidden"
+source = "issue #1599 (docs/spec-notes/level-design.md §4.1): a reference with a primitive (XPRM) is a trigger volume; it is not drawn and not offered under the crosshair, even where the activator it was copied from has a model and a name"
+note = "Sloan: QJSnufflesCrippleTrigger 0x00140C37, a box primitive whose activator names a vault control panel and \"Poor Snuffles\", 195 units above Snuffles. The player stands 90 units south of it, within reach, and looks up at it; its OnLoad (Snuffles' crippled leg) still runs"
+areas = ["renderer", "physics"]
+paths = ["crates/fnv-world/src/placed.rs", "crates/fnv-phys/src/placed.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/script_draw.rs", "engine/nvf-play/src/activate.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_GOTO = "3:-29745:7055:6500", NVF_PLAY_TEST_LOOK = "4:0:25,6:0:35,8:0:45,10:0:55", NVF_PLAY_TEST_SHOTS = "7:trigger_primitive.png" }
+args = ["--world", "WastelandNV", "--pos=-29745,7055,6500", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 12
+expect = [
+  { text = 'script: OnLoad of FalloutNV.esm|SCPT 0x00140C33 ran on Some(0x00140C37)', label = "the trigger is still there for its script" },
+  { text = 'limping: QJSnufflesRef 0x000E5E50 limps on a crippled leg', label = "the OnLoad crippled Snuffles" },
+  { re = 'target 0x00140C37', count = 0, label = "the trigger is never under the crosshair" },
+]
+
+[[scenario]]
 name = "rooms-repconn"
 source = "playtest list 7 item 47 (docs/design/frame-rate-audit.md §3; docs/spec-notes/level-design.md §3.1): the REPCONN test site's facility floor draws only the rooms seen through portals"
 note = "RocketLabMid has 17 room markers and 31 portals. From the start (room 0008D44A) 11 rooms and the unbounded space are in view and about 1,200 meshes are hidden; pictures with and without the culling were the same (frame-rate-audit.md §3). Unseen, so the ghouls stay where they are"
@@ -11135,6 +11531,25 @@ expect = [
   { re = 'npc combat summary: .*?(?P<n>\d+) shots \((?P<m>\d+) from a muzzle', label = "shots from the weapons' nodes" },
 ]
 forbid = [{ re = 'attack anims summary: .*without a clip: .*mistergutsy', label = "no attack of Mister Handy's or Gutsy's without a clip" }]
+
+[[scenario]]
+name = "body-weapons-sentry-blast"
+source = "#1621: a creature's body gun suits no target within its own blast (fnv_combat::body_weapon, docs/design/combat-ai.md §19); before, a Hardened Sentry Bot took up its missile launcher at 3 and 420 units, held fire within its 1000-unit blast and never took up its minigun again"
+note = "a sentry bot (CrSentryBotMGHard: SentryBotMinigun2HR, SentryBotMissileLauncher2HL, both Min Range 500) created at a Joshua tree about 580 units from the player in Goodsprings at 3 s (TreeJoshBNV 0x00122CCA at (-60789, 5043); the first created reference, 0xFF000000) and set on the player at 6 s, brought 300 units from the player at 15 s (nearer than both its guns' Min Range 500, where the launcher used to win), the nearby coyotes (VERGSCoyote1-6REF) disabled first so it fights the player alone; god mode. Its fight stays within the blast (1000 units), so it keeps its minigun throughout. Created at the player (PlaceAtMe player with a distance: the distance is not used), it stepped back and closed in by turns at 250-330 units and lost sight of the player, and fired first after 26 s (2026-11-05)"
+areas = ["combat", "creatures"]
+paths = ["engine/nvforever/src/body_weapons.rs", "crates/fnv-combat/src/body_weapon.rs", "engine/nvforever/src/npc_combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "2:call:VERGSCoyote1REF:Disable,2.1:call:VERGSCoyote2REF:Disable,2.2:call:VERGSCoyote3REF:Disable,2.3:call:VERGSCoyote4REF:Disable,2.4:call:VERGSCoyote5REF:Disable,2.5:call:VERGSCoyote6REF:Disable,3:call:0x00122CCA:PlaceAtMe:CrSentryBotMGHard:1,6:combat:0xFF000000:player,15:moveto:0xFF000000:player:0:300:0,15.5:combat:0xFF000000:player" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'body weapons: \S+ \S+ fights with .*SentryBotMissileLauncher2HL.*; first SentryBotMinigun2HR', label = "the sentry bot's arms, the minigun first" },
+  { re = 'npc combat: .* opens fire on .* from (?P<n>\d+) units', range = [0, 1000], label = "it opens fire within the launcher's blast" },
+  { re = 'npc combat summary: .*?(?P<n>\d+) shots', range = [20, 100000], label = "it keeps firing" },
+]
+forbid = [
+  { re = 'body weapons: \S+ switches from \S+ to SentryBotMissileLauncher2HL', label = "no launcher inside its blast" },
+  { re = "holds fire: .* is within its weapon's blast", label = "no shot held for its own blast" },
+]
 
 [[scenario]]
 name = "ghost-tumbleweed"
@@ -18699,17 +19114,40 @@ expect = [
 ]
 [[scenario]]
 name = "melee-knockback"
-source = "#1070 (docs/spec-notes/combat-rules.md, Knockback): a melee blow pushes the living actor it hits back through its character, by the Melee Knockback Formula's force (a speed falling to rest over fKnockbackTime)"
-note = "the combat-block-break NCR trooper 0x000F36F5 (no weapon drawn, --actor-weapons none) put 90 units north of the god-mode player at 6 s and 9 s, not set on the player; 0.8 s later the player, fists drawn, turns to it and holds Use 1.5 s (a power attack); each blow that lands pushes it back"
+source = "#1070 (docs/spec-notes/combat-rules.md, Knockback): a melee blow pushes the living actor it hits back through its character, by the Melee Knockback Formula's force (a speed falling to rest over fKnockbackTime); #1386: one player power blow, isolated and tied to its report"
+note = "NVF_PLAY_TEST_MELEE_KNOCKBACK: the NCR trooper 0x000F36F5 (--actor-weapons none) gets its AI off and then one MoveTo 90 units north of the god-mode player on the open ground melee-knockback-player uses; the actors of the loaded area keep their AI off; once the target stands ready the player, fists drawn, aims at it and holds Use until the power swing starts, then lets go, with no retry. The seconds are a deadline, not a firing delay. A failed setup or a report not tied to this blow fails the run, as a push out of range does. The range rests on 20 runs of 2026-11-05 at 30 to about 60 frames a second, 98-102 % (docs/spec-notes/combat-rules.md, Knockback); higher rates and irregular frames were not tried."
 areas = ["combat", "melee"]
-paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/residents.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "6:moveto:0x000F36F5:player:0:90:0,9:moveto:0x000F36F5:player:0:90:0", NVF_PLAY_TEST_CONTROL = "3:weapon,6.8:aimnpc,6.9:fire,8.4:fire,9.8:aimnpc,9.9:fire,11.4:fire" }
-args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--actor-weapons", "none", "--plugins", "FalloutNV.esm"]
-run_seconds = 15
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/test_aid.rs", "engine/nvf-play/src/test_aid/melee_knockback.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/residents/knock_run.rs", "engine/nvforever/src/residents/melee_knockback.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_MELEE_KNOCKBACK = "000F36F5:0:90:0" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages", "--actor-weapons", "none", "--plugins", "FalloutNV.esm"]
+run_seconds = 30
 expect = [
-  { re = 'knockback: 000F36F5 knocked back at \d+ units/s for 1[.]00 s', label = "the blow's knockback starts on the trooper" },
-  { re = 'knockback: .*000F36F5 pushed back \d+ units of \d+ \((\d+) %\)', range = [60, 140], label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, not set on anyone yet)" },
+  { re = 'melee knockback aid: ready target=000F36F5', count = 1, label = "the target stands ready for the blow, once" },
+  { re = 'combat: \S+ power attack hits 0x000F36F5 on ', count = 1, label = "one player power attack hits the target" },
+  { re = 'combat: .*\b(hits|strikes)\b.*0x000F36F5\b', count = 1, label = "nothing else hits the target" },
+  { re = 'combat: \S+( power attack)? hits 0x[0-9A-F]{8} on ', count = 1, label = "the player's melee hits one actor, once" },
+  { re = 'knockback trace: blow=\d+ target=000F36F5 dt=', min = 2, label = "each frame of the push is traced" },
+  { re = 'melee knockback aid: blow=\d+ landed target=000F36F5', count = 1, label = "that blow's knockback is the target's first and only" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 knocked back at \d+ units/s for 1[.]00 s', count = 1, label = "the player's power blow starts the knockback" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 power=[01] knocked back at', count = 1, label = "no other knockback starts on the target" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(]', count = 1, label = "that knockback ends on a living target no script moved and no walk or clip carried" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*pushed back', count = 1, label = "no other knockback ends on the target" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(](?P<n>\d+(?:[.]\d+)?) %[)] along=-?[\d.]+ lateral=[\d.]+ push=along,', range = [60, 140], all = true, label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, its AI off)" },
   { re = 'knockback summary: ([1-9]\d*) knockbacks on actors', label = "knockbacks in the summary" },
+]
+order = [[
+  'melee knockback aid: AI off on the target 000F36F5',
+  'melee knockback aid: the one MoveTo of 000F36F5',
+  'melee knockback aid: ready target=000F36F5',
+  'melee knockback aid: the power swing started, Use let go',
+  { re = 'combat: \S+ power attack hits 0x000F36F5 on ' },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 knocked back at' },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 .*pushed back' },
+]]
+forbid = [
+  { text = "melee knockback aid: FAIL", label = "the aid's setup or its one blow went wrong" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*interrupted by', label = "a second blow replaced the knockback" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*push=(reversed|sideways)', label = "the push went another way than the blow asked" },
 ]
 
 [[scenario]]
@@ -18815,6 +19253,22 @@ expect = [
   { text = "nvf mcm install check 0", min = 1, label = "MCM's MenuMode 1013 block ran under the page, in the played world, and cleared it" },
 ]
 order = [["nvf mcm install check 1", "tiles: a mod's tiles in StartMenu", "pause menu: mods page", "scripts: MenuMode 1013 blocks run", "pause menu: mods page closed", "nvf mcm install check 0"]]
+
+[[scenario]]
+name = "dropped-clothes-fall"
+source = "issue #1604: clothing dropped from the inventory hung in the air: its folded ground model (armour MOD2, GO.NIF) is 2-4 dynamic bodies on hinges, and the drawn item follows one body only. Created references whose model's bodies are all dynamic now get one body (engine/nvf-play/src/phys.rs one_dynamic_body; simulation.md §5)"
+note = "Goodsprings, by the player: the Pre-War Spring Outfit, Leather Armor, Merc Charmer Outfit and Vault 21 Jumpsuit dropped from 8 s to 11 s from chest height, then the 10mm pistol at 12 s as a control; the ground is about 85 units below the drop point"
+areas = ["physics", "items"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvf-play/src/dropped.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "000340D0:1,00020423:1,00034122:1,00104184:1,0000434F:1", NVF_PLAY_TEST_DROP = "8:000340D0,9:00020423,10:00034122,11:00104184,12:0000434F" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'dropped reference 0xFF00000[0-3] drawn: meshes.armor.\S+.go\.nif', count = 4, label = "each piece of clothing draws its folded ground model" },
+  { re = 'collision of dropped 0xFF00000[0-3] added: meshes.armor.\S+.go\.nif, 1 bodies \(dynamic\).*: the model.s [24] dynamic bodies joined into one', count = 4, label = "their bodies are joined into one" },
+  { re = 'dropped 0xFF00000[0-3] came to rest at', count = 4, label = "each piece of clothing comes to rest" },
+  { re = 'dropped 0xFF00000[0-4] came to rest at .*, (?P<n>[\d.]+) below where its collision was added', range = [60, 120], all = true, label = "on the ground, about 85 units below the drop point, as the pistol" },
+]
 
 [[scenario]]
 name = "script-move-dynamic-clutter"
@@ -19048,3 +19502,34 @@ expect = [
   { text = 'script runner: optional\gl_nvfsmoke_late.txt ran (game load)', count = 1, label = "the file gr_ registered runs at the load" },
 ]
 order = [["load: restored", "script runner: gr_nvfsmoke.txt ran", "script runner: ln_nvfsmoke.txt ran (game load)", 'script runner: optional\gl_nvfsmoke_late.txt ran']]
+
+[[scenario]]
+name = "script-runner-menu"
+source = "issue #1548, docs/spec-notes/ext-script-runner.md §2: behind the main menu only the gr_ files run; the new game's ln_ files wait for New Game"
+areas = ["scripts", "extender", "main-menu"]
+paths = ["crates/fnv-game/src/script_runner.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/main_menu.rs", "tools/smoke/fixtures/script-runner-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-runner-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MAIN_MENU = "6:new", NVF_PLAY_TEST_INTRO_SKIP = "7" }
+args = ["--play", "--menu", "--no-voice"]
+run_seconds = 14
+expect = [
+  { text = "script runner: gr_nvfsmoke.txt ran (game restart)", count = 1 },
+  "main menu: New Game",
+  { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1, label = "the ln_ file runs once the new game begins" },
+]
+order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]
+
+[[scenario]]
+name = "language-choice"
+source = "#1443: the settings page's Language row lists the languages found in the lang folders (NVF_LANG_DIR here, a made-up one), takes one at once and draws the page again; a broken language file is skipped with a warning"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/language.rs", "crates/fnv-util/src/words.rs", "engine/nvf-play/src/pause.rs", "tools/smoke/fixtures/lang/xx.toml"]
+env = { NVF_LANG_DIR = "{repo}/tools/smoke/fixtures/lang", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:language=Smoke Language,13:language=English" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = ["warning: language file skipped: ", "broken.toml"]
+order = [[
+  "language: xx",
+  "settings: language Smoke Language",
+  "language: en",
+  "settings: language English",
+]]

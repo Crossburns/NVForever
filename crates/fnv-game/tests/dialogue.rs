@@ -965,6 +965,21 @@ fn a_lines_choices_are_offered_and_nothing_else_and_a_topic_without_a_line_is_hi
     assert!(g.choose(0).is_err());
 }
 
+/// The engine lets Tab leave a topic list even without a Goodbye (#1595); a line's own
+/// choices are no topic list.
+#[test]
+fn the_conversation_says_whether_its_choices_are_the_topic_list() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    assert_eq!(offered(&g), vec![T_ASK, T_BYE], "the first greeting's own choices");
+    assert!(!g.dialogue.as_ref().unwrap().topic_list);
+    let g = at_topic_list(&f);
+    assert!(!g.dialogue_choices().is_empty());
+    assert!(g.dialogue.as_ref().unwrap().topic_list, "a line without choices of its own offers the topic list");
+}
+
 /// A choice listed for a dim player shows its topic's Dumb Response (`Game::player_dim`,
 /// checked against the master in dialogue_data.rs); the fixture's player has no record,
 /// so it is not dim.

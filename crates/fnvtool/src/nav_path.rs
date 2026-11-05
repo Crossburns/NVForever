@@ -633,7 +633,10 @@ pub fn walk_cmd(lo: &LoadOrder, schema: &Schema, ends: &Ends, opts: &PathOpts, w
         let lw = leg_world.as_mut().expect("built");
         let ch = c.as_mut().expect("placed");
         match follower.steer(feet) {
-            Steer::Arrived => {
+            // This walk test does not judge the goal's height: it ends as it always did,
+            // and so does not check what the game's residents do about it
+            // (docs/design/navmesh.md §4.1).
+            Steer::Arrived | Steer::OffPath => {
                 outcome = "arrived";
                 break;
             }
