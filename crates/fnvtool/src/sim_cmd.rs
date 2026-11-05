@@ -653,7 +653,7 @@ impl Settle for PhysSettle<'_> {
         // The simulation decides for references it knows; the plugins' rule otherwise.
         let in_world = |pl: &fnv_world::placed::Placement| -> Result<(), &'static str> {
             let id = FormId(pl.form_id);
-            if pl.deleted() || w.peek(id).is_some_and(|s| s.deleted) {
+            if pl.deleted() || w.peek(id).is_some_and(|s| s.deleted()) {
                 return Err("deleted");
             }
             match w.is_enabled(id) {

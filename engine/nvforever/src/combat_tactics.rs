@@ -81,7 +81,7 @@ pub const TAKEN_RADIUS: f32 = 96.0;
 /// Cover edges looked at per search, nearest first [design: rays are not free].
 pub const COVER_CANDIDATES: usize = 16;
 /// A fighter counts as at its post within this distance, game units [design].
-pub const AT_POST: f32 = 64.0;
+pub const AT_POST: f32 = fnv_game::combat_group::POST_ARRIVAL;
 /// Flank places turn this much more for each fighter of the group, degrees [design].
 pub const FLANK_STEP_DEG: f32 = 35.0;
 /// Flank places are looked at again this often, seconds [design].
@@ -220,6 +220,22 @@ pub struct Tactic {
     /// to ([`LINE_CLEAR_FOR`]); a wall that stops its shot ([`Wall`]).
     pub shot_line: Option<(u32, f32, [f32; 3])>,
     pub wall: Option<Wall>,
+}
+
+impl Tactic {
+    /// The post it was given last frame is gone: the AI dropped it (no way there, or its
+    /// walk there ended away from it, docs/design/combat-ai.md §12.1). Not that kind again
+    /// for a while; cover it could not reach is not looked at again.
+    pub fn post_dropped(&mut self, clock: f32) {
+        let Some(kind) = self.last_post else { return };
+        self.no_post = Some((kind, clock + NO_POST_SECONDS));
+        if matches!(kind, PostKind::Cover | PostKind::Duck | PostKind::Peek) {
+            if let Some(cv) = self.cover.take() {
+                self.bad_cover.push(cv.behind);
+            }
+            self.cover_search_in = COVER_RETRY;
+        }
+    }
 }
 
 /// A name for logs: the reference's name (its Editor ID or FULL), else its base form's
@@ -758,6 +774,36 @@ mod tests {
         };
         phys.world.add_ref(&fnv_phys::RefPose { form_id: 0x10, position: at, rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], scale: 1.0 }, &[o]);
         phys
+    }
+
+    fn cover_at(behind: [f32; 3]) -> Cover {
+        let edge = CoverEdge { tri: 0, a: behind, b: behind, mid: behind, out: [1.0, 0.0] };
+        Cover { behind, peek: behind, edge, phase: Phase::Going, low: false, from: 1, room: [0.0, 0.0] }
+    }
+
+    #[test]
+    fn a_dropped_post_bars_its_kind_for_a_while() {
+        // Nothing given last frame: nothing was dropped.
+        let mut t = Tactic::default();
+        t.post_dropped(5.0);
+        assert_eq!(t.no_post, None);
+        // A flank: barred for NO_POST_SECONDS; its cover, if any, is not its concern.
+        let mut t = Tactic { last_post: Some(PostKind::Flank), cover: Some(cover_at([1.0, 2.0, 3.0])), ..Default::default() };
+        t.post_dropped(5.0);
+        assert_eq!(t.no_post, Some((PostKind::Flank, 5.0 + NO_POST_SECONDS)));
+        assert!(t.cover.is_some() && t.bad_cover.is_empty());
+    }
+
+    #[test]
+    fn a_dropped_cover_post_gives_up_that_cover() {
+        for kind in [PostKind::Cover, PostKind::Duck, PostKind::Peek] {
+            let mut t = Tactic { last_post: Some(kind), cover: Some(cover_at([1.0, 2.0, 3.0])), ..Default::default() };
+            t.post_dropped(5.0);
+            assert_eq!(t.no_post, Some((kind, 5.0 + NO_POST_SECONDS)));
+            assert_eq!(t.cover, None);
+            assert_eq!(t.bad_cover, vec![[1.0, 2.0, 3.0]]);
+            assert_eq!(t.cover_search_in, COVER_RETRY);
+        }
     }
 
     #[test]

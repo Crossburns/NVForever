@@ -115,6 +115,7 @@ pub mod tutorial_menu;
 pub mod ui_pointer;
 pub mod credits;
 mod test_aid;
+pub use test_aid::melee_knockback::MeleeKnockbackAid;
 pub use test_aid::{drives_run, MEASURING_AIDS};
 pub mod sfx;
 pub mod sneak_gauges;
