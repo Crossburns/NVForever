@@ -126,8 +126,8 @@ triangles, its door stops and the door that ends it.
   (`PhysState::place_npc`), not through the wider ground search of a new character.
   The support can be 96 below or 48 above the navmesh, plus the step. When combined with #1500
   (not part of this change), such feet near the goal can be outside its height check, which has a
-  40-unit base margin: that check answers with at most two replans, then arrival, which does
-  not guarantee the right floor.
+  40-unit base margin: when that check applies (the body grounded), it answers with at most two
+  replans per uninterrupted walk, then arrival, which does not guarantee the right floor.
   A place refused, the same is tried 120, 80 and 40 units on from the same projection, and
   0 units for feet more than 16 units off the path, all cut to the door stop or leg's end.
   All refused, the actor keeps its body, feet and place on the path, the AI is told it
