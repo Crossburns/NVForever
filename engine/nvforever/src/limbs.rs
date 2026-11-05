@@ -79,13 +79,16 @@ pub struct LimbRig {
     /// the top of the skull in the end node's own frame when the chain stops short of it:
     /// [`skull_tip`]).
     pub chains: Vec<(u8, Limb, Vec<Entity>, Option<Vec3>)>,
+    /// Per chain, the widest ragdoll shape on its bones in the skeleton's units
+    /// ([`BoneRadii`]); `None` without one.
+    pub radii: Vec<Option<f32>>,
 }
 
 pub struct LimbsPlugin;
 
 impl Plugin for LimbsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (rig_limbs, crate::weapons::drop_broken).run_if(resource_exists::<Combat>)).add_systems(
+        app.init_resource::<BoneRadii>().add_systems(Update, (rig_limbs, crate::weapons::drop_broken).run_if(resource_exists::<Combat>)).add_systems(
             PostUpdate,
             publish_limbs.after(bevy::transform::TransformSystems::Propagate).run_if(resource_exists::<ActorParts>),
         );
@@ -269,9 +272,10 @@ pub fn weapon_segment(shapes: &[ShapeBox]) -> Option<(Vec3, Vec3)> {
 }
 
 /// Match spawned actors' skeletons to their body part data, once.
-fn rig_limbs(mut commands: Commands, combat: Res<Combat>, rigs: Query<(Entity, &ActorRig), Without<LimbRig>>) {
+fn rig_limbs(mut commands: Commands, combat: Res<Combat>, data: Option<Res<nvf_assets::GameData>>, mut radii: ResMut<BoneRadii>, rigs: Query<(Entity, &ActorRig), Without<LimbRig>>) {
     for (e, rig) in &rigs {
-        let mut limb = LimbRig { data: FormId(0), chains: Vec::new() };
+        let mut limb = LimbRig { data: FormId(0), chains: Vec::new(), radii: Vec::new() };
+        let widths = data.as_deref().map(|d| radii.of(d, &rig.skeleton));
         // A body part data FormID that is missing or not a BPTD (a broken mod): no limbs.
         let found = combat.forms.body_parts_for(FormId(rig.body), &rig.skeleton).and_then(|d| match combat.forms.body_parts.get(&d) {
             Some(b) => Some((d, b)),
@@ -294,11 +298,65 @@ fn rig_limbs(mut commands: Commands, combat: Res<Combat>, rigs: Query<(Entity, &
                     .flatten()
                     .zip(chain.last().and_then(|&e| rig.skel.bind_world.get(e)))
                     .map(|(t, end)| end.inverse().transform_point3(t));
+                let width = widths.as_ref().and_then(|w| chain.iter().filter_map(|&i| rig.skel.names.get(i).cloned().flatten()).filter_map(|n| w.get(&n.to_ascii_lowercase()).copied()).reduce(f32::max));
                 limb.chains.push((k as u8, kind, ents, tip));
+                limb.radii.push(width);
             }
             debug!("actor {:08X}: body parts {data} on {} chains", rig.reference, limb.chains.len());
         }
         commands.entity(e).insert(limb);
+    }
+}
+
+/// The widest ragdoll shape on each bone of a skeleton (lower-case bone name → game
+/// units), read once per skeleton from its ragdoll bodies (`fnv_collide::ragdoll`): a
+/// capsule's or sphere's radius, a box's middle half-extent [design: the box's second
+/// side, so a flat plate does not count as its length]. A file that breaks the reader
+/// has none.
+#[derive(Resource, Default)]
+pub struct BoneRadii(HashMap<String, Arc<HashMap<String, f32>>>);
+
+impl BoneRadii {
+    fn of(&mut self, data: &nvf_assets::GameData, skeleton: &str) -> Arc<HashMap<String, f32>> {
+        let key = fnv_vfs::normalize(skeleton);
+        self.0
+            .entry(key.clone())
+            .or_insert_with(|| {
+                let read = data.read(&key).and_then(|bytes| {
+                    nvf_assets::guard::guarded(|| {
+                        let file = fnv_nif::NifFile::parse(&bytes, Some(&data.schema)).map_err(|e| e.to_string())?;
+                        let dec = fnv_nif::scene::Decoded::new(&file, &bytes, &data.schema);
+                        Ok(fnv_collide::ragdoll::ragdoll(&file, &dec))
+                    })
+                    .ok()
+                });
+                let mut out = HashMap::new();
+                for b in read.map(|r| r.bodies).unwrap_or_default() {
+                    let Some(bone) = b.object.node.as_deref() else { continue };
+                    if let Some(w) = shape_width(&b.object.shape) {
+                        let e = out.entry(bone.to_ascii_lowercase()).or_insert(0.0f32);
+                        *e = e.max(w);
+                    }
+                }
+                debug!("limbs: {key}: ragdoll widths {out:?}");
+                Arc::new(out)
+            })
+            .clone()
+    }
+}
+
+/// A shape's width for [`BoneRadii`].
+fn shape_width(s: &fnv_collide::shape::Shape) -> Option<f32> {
+    use fnv_collide::shape::Shape;
+    match s {
+        Shape::Capsule { radius, .. } | Shape::Sphere { radius } => Some(*radius),
+        Shape::Box { half_extents } => {
+            let mut h = *half_extents;
+            h.sort_by(f32::total_cmp);
+            Some(h[1])
+        }
+        Shape::Compound { children } => children.iter().filter_map(|(_, c)| shape_width(c)).reduce(f32::max),
+        _ => None,
     }
 }
 
@@ -320,7 +378,10 @@ fn publish_limbs(
             continue;
         }
         let mut posed = PosedParts { data: limb.data, segments: Vec::new(), weapon: None };
-        for (part, kind, chain, tip) in &limb.chains {
+        for (n, (part, kind, chain, tip)) in limb.chains.iter().enumerate() {
+            // The ragdoll shape's width at the actor's scale (its bone's).
+            let scale = chain.first().and_then(|&e| nodes.get(e).ok()).map_or(1.0, |g| g.affine().matrix3.x_axis.length());
+            let radius = limb.radii.get(n).copied().flatten().map(|r| r * scale);
             let mut pts: Vec<[f32; 3]> = chain.iter().filter_map(|&e| nodes.get(e).ok()).map(|g| nvf_play::space::to_game(g.translation())).collect();
             // A head that stops at the base of the skull ends at its crown instead.
             if let (Some(tip), Some(end)) = (tip, chain.last().and_then(|&e| nodes.get(e).ok())) {
@@ -330,13 +391,13 @@ fn publish_limbs(
             }
             match pts.len() {
                 0 => {}
-                1 => posed.segments.push(PartSegment { part: *part, limb: *kind, a: pts[0], b: pts[0] }),
-                _ => posed.segments.extend(pts.windows(2).map(|w| PartSegment { part: *part, limb: *kind, a: w[0], b: w[1] })),
+                1 => posed.segments.push(PartSegment { part: *part, limb: *kind, a: pts[0], b: pts[0], radius }),
+                _ => posed.segments.extend(pts.windows(2).map(|w| PartSegment { part: *part, limb: *kind, a: w[0], b: w[1], radius })),
             }
         }
         if let Some((weapon, shapes)) = weapons.get(&rig.reference).filter(|_| hold.is_some_and(|h| h.drawn)) {
             if let Some((a, b)) = weapon_segment(shapes) {
-                posed.segments.push(PartSegment { part: WEAPON_PART, limb: Limb::Other, a: nvf_play::space::to_game(a), b: nvf_play::space::to_game(b) });
+                posed.segments.push(PartSegment { part: WEAPON_PART, limb: Limb::Other, radius: None, a: nvf_play::space::to_game(a), b: nvf_play::space::to_game(b) });
                 posed.weapon = Some(*weapon);
             }
         }
@@ -459,7 +520,7 @@ mod tests {
         assert!((126.5..129.0).contains(&tip.z) && tip.y > 0.4, "{tip}");
         // The capsule (a 128-unit actor) now holds the face and the crown, not only the
         // neck: it once shrank to a ball at z 110.
-        let seg = nvf_play::hitvol::PartSegment { part: 0, limb: Limb::Head, a: bind[3].to_array(), b: tip.to_array() };
+        let seg = nvf_play::hitvol::PartSegment { part: 0, limb: Limb::Head, radius: None, a: bind[3].to_array(), b: tip.to_array() };
         let cap = nvf_play::hitvol::part_capsules(&[seg], 128.0)[0];
         let inside = |p: Vec3| {
             let (a, b) = (Vec3::from(cap.a), Vec3::from(cap.b));

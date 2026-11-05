@@ -5276,6 +5276,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "robot-hit-volumes"
+source = "#1536 (owner's playtest 2026-11-04): robots' hit capsules were a human's share of their size, far thinner than their bodies; a part's capsule is now at least as thick as the widest ragdoll shape on its bones (engine/nvforever/src/limbs.rs BoneRadii, nvf-play hitvol part_capsules)"
+note = "VCrTier0CrProtectron (00167ED5) and VCrTier0CrMisterGutsy (00167ED2) placed by the player. Ragdoll widths [observed: their skeleton.nif bodies]: protectron Bip01 Spine 18.0 (share 13.1), Mister Gutsy's body 21.2 (share 14.6); the capsules come from the debug line of nvf_play::hitvol"
+areas = ["combat", "creatures"]
+paths = ["engine/nvforever/src/limbs.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { RUST_LOG = "info,nvf_play::hitvol=debug", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 00167ED5 1;9.1:player.placeatme 00167ED2 1;9.3:tdetect;9.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 14
+expect = [
+  { re = 'actor FF000000: \d+ part capsules \(size 1[23]\d.*radius: 17\.99', label = "the protectron's torso capsule is its ragdoll's 18 units (13.1 before)" },
+  { re = 'actor FF000001: \d+ part capsules \(size 14\d.*radius: 21\.2', label = "Mister Gutsy's body capsule is its ragdoll's 21.2 units (14.6 before)" },
+]
+
+[[scenario]]
 name = "follower-boone"
 source = "owner's list 2 (H followers): a companion hired by the game's own recruit line follows the player through a door, ignores the player's friendly fire, joins the player's fight and waits when told (docs/design/followers.md)"
 note = "Boone's recruit line INFO 0x0015F30D runs at 3 s (its result script hires him: SetPlayerTeammate, SetIgnoreFriendlyHits, VNPCFollowers.bBooneHired); the player shoots him twice at 24 s (the controls' clock is not moved when the scripts first run late, as the script steps are: on a busy machine the recruit line ran 7.2 s late and Boone, who takes about 9.5 s to walk over, was still 501 units off at 18 s), leaves his room by its door at 26 s, walks off at 32 s; a feral ghoul is put 600 units from the player at 45 s; Boone's Waiting variable is set at 62 s"
