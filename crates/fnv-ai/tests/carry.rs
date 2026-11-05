@@ -2237,6 +2237,32 @@ fn a_rooted_actor_stays_where_it_is() {
     assert!(!s.ai.stands(&s.game, FormId(R_TRAVEL)));
 }
 
+/// A rooted actor in combat (an Immobile ceiling turret, #1537) stays where it is but
+/// turns in place to its combat target; out of combat it keeps its heading. In dialogue
+/// it still does not turn (#1543, `talk.rs` a_rooted_actor_talked_to_does_not_turn).
+#[test]
+fn a_rooted_actor_in_combat_turns_to_its_target_in_place() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_TRAVEL, R_TO_CHAIR]);
+    let start = s.feet(R_TRAVEL);
+    s.ai.root(&s.game, FormId(R_TRAVEL));
+    let target = s.game.world.placed.get(FormId(R_TO_CHAIR)).unwrap().pos;
+    let want = fnv_nav::follow::heading_of([target[0] - start[0], target[1] - start[1]]);
+    let off = |h: f32| (h - want + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+    // Not in combat: it does not turn.
+    s.ai.agents.get_mut(&FormId(R_TRAVEL)).unwrap().walker.heading = want + 2.0;
+    s.run(2.0);
+    assert!((off(s.ai.agents[&FormId(R_TRAVEL)].walker.heading) - 2.0).abs() < 1e-4);
+    // In combat: it turns to its target, where it stands.
+    s.game.start_combat(FormId(R_TRAVEL), FormId(R_TO_CHAIR));
+    assert!(s.game.awareness.state(FormId(R_TRAVEL)).in_combat());
+    s.run(5.0);
+    let heading = s.ai.agents[&FormId(R_TRAVEL)].walker.heading;
+    assert!(off(heading).abs() < 0.05, "{heading} against {want}");
+    assert_eq!(s.feet(R_TRAVEL), start);
+    assert_eq!(s.ai.agents[&FormId(R_TRAVEL)].activity, Activity::None);
+}
+
 // ---- process levels (fnv_ai::process) -------------------------------------------------
 
 #[test]
