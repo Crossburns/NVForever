@@ -31,6 +31,29 @@ Tags as in `nif.md`. Observations cover all 26,907 `.dds` files in the owner's a
 Names follow the Direct3D 9 format names for those masks [documented: MS "Map Direct3D 9
 Formats to Direct3D 10"]. Masks are little-endian: an A8R8G8B8 pixel is stored B, G, R, A.
 
+### 2.1 Layouts read beyond the base game's (#1439)
+
+No file of the base game uses these; a mod's or a localized install's textures may (a
+font texture in one of them was otherwise drawn with a stand-in font). Flags and masks
+as [documented: MS DDS, `DDS_PIXELFORMAT`: `DDPF_RGB` 0x40, `DDPF_ALPHAPIXELS` 0x1,
+`DDPF_LUMINANCE` 0x20000; "Using Texture Formats", the masks of each Direct3D 9 format]:
+
+| Flags | Bits and masks (R, G, B, A) | Name |
+|---|---|---|
+| 0x40 | 32: 0x00FF0000, 0x0000FF00, 0x000000FF, - | X8R8G8B8 |
+| 0x41 | 32: 0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000 | A8B8G8R8 |
+| 0x40 | 32: 0x000000FF, 0x0000FF00, 0x00FF0000, - | X8B8G8R8 |
+| 0x40 | 16: 0xF800, 0x07E0, 0x001F, - | R5G6B5 |
+| 0x41 | 16: 0x7C00, 0x03E0, 0x001F, 0x8000 | A1R5G5B5 |
+| 0x40 | 16: 0x7C00, 0x03E0, 0x001F, - | X1R5G5B5 |
+| 0x20000 | 8: luminance 0xFF | L8 |
+| 0x20001 | 16: luminance 0xFF, alpha 0xFF00 | A8L8 |
+
+A layout without alpha reads as opaque; luminance is copied to all three colours
+[documented: MS "Map Direct3D 9 Formats to Direct3D 10"]. Alpha-only `DDPF_ALPHA`
+(A8) is not read: Direct3D samples it with black colour, so what it would look like
+in the game is not known.
+
 ## 3. Sizes [observed: exact for all 26,907 files]
 
 - Width and height are powers of two in every file.

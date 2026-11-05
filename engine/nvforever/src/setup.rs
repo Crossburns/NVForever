@@ -96,6 +96,24 @@ pub fn text_code_page() -> Result<fnv_util::text::CodePage, String> {
     fnv_util::text::chosen(ini.as_deref())
 }
 
+/// Draw the fonts the install's `Fallout_default.ini` names in `[Fonts]` (`sFontFile_N`),
+/// not always the English install's files (#1439). The file is in the game's own folder,
+/// read-only input; the per-user `My Games\FalloutNV` copy is never read
+/// (docs/design/install-layout.md). A localized install pointing these at its own files is
+/// [hypothesis: no localized install looked at, observer check 77].
+pub fn install_fonts(game: &GameInstall) {
+    let Some(text) = fnv_install::child_ci(&game.root, "Fallout_default.ini").and_then(|p| std::fs::read(p).ok()) else {
+        return;
+    };
+    let fonts = nvf_play::interface::fonts_in_ini(&fnv_util::text::code_page().decode(&text));
+    for (n, (own, default)) in fonts.iter().zip(nvf_play::interface::FONT_FILES).enumerate() {
+        if let Some(own) = own.as_deref().filter(|own| !own.eq_ignore_ascii_case(default)) {
+            eprintln!("setup: font {} read from {own} (the install's Fallout_default.ini)", n + 1);
+        }
+    }
+    nvf_play::interface::set_font_files(fonts);
+}
+
 #[cfg(windows)]
 const INTRO: &str = "Welcome to NVForever.\n\n\
     NVForever runs on your own copy of Fallout: New Vegas and only reads its files; it never \
