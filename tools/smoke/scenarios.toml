@@ -2132,6 +2132,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "talk-julie-topic-list-leave"
+source = "#1595 (docs/design/dialogue-play.md §2): Julie Farkas's top level offers no Goodbye in the data; Tab (the aid's leave) leaves a topic list without one instead of trapping the player"
+note = "the player beside Julie Farkas (VFSJulieFarkasREF 0x00115C5F) in the Old Mormon Fort at noon; the aid talks at 10 s and leaves at her topic list"
+areas = ["dialogue"]
+paths = ["engine/nvf-play/src/dialogue.rs", "crates/fnv-game/src/dialogue.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_TALK = "10:VFSJulieFarkasREF=leave", NVF_PLAY_TEST_TALK_DELAY = "3" }
+args = ["--play", "--world", "FreesideFortWorld", "--pos=7915,2120,1000", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = "dialogue: test aid .*leaves 0x00115C5F's topic list, which offers no Goodbye", count = 1, label = "the aid's leave at her top level ends the conversation" },
+  { re = 'dialogue: Tab refused', count = 0, label = "Tab is not refused at her topic list" },
+]
+
+[[scenario]]
 name = "intercom-goodbye-line"
 source = "docs/spec-notes/talking-activators.md §2 (fnv_game::talking_activators): a Goodbye greeting through a talking activator opens a conversation that the line ends [owner statement 2026-10-22]; owner playtest 2026-10-22, Come Fly With Me: Chris Haversam's \"I'm letting you in\" from the REPCONN intercom was never heard, the next try said \"Stop messing around with the intercom\" and the door stayed locked"
 note = "The first activation is the Say Once \"Hey! Over here!\" conversation (left); the second sets the intercom's UsingUpstairsIntercom and Chris (upstairs, in RocketLabTop) says the Goodbye greeting through it in a conversation; its end script unlocks the door beside it, which the third activation then opens. intercom_goodbye.png is the dialogue screen while the line is said"

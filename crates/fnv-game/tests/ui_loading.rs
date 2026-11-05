@@ -169,7 +169,7 @@ fn underlying_menu_and_dialogue_stay_open() {
     load_lifetime(&mut g);
     g.menu = Some(menus::MESSAGE);
     g.menu_under = Some(menus::BARTER);
-    g.dialogue = Some(Conversation { actor: fnv_sim::FormId::PLAYER_REF, through: None, line: None, choices: Vec::new(), lines: 0, then: None, ending: false });
+    g.dialogue = Some(Conversation { actor: fnv_sim::FormId::PLAYER_REF, through: None, line: None, choices: Vec::new(), topic_list: false, lines: 0, then: None, ending: false });
     assert_eq!(ui_loading::sync(&mut g, false, false).changes.len(), 3);
     g.menu = None;
     assert_eq!(ui_loading::sync(&mut g, false, false).changes, ["dropped MessageMenu"]);
