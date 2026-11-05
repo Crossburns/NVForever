@@ -20,7 +20,10 @@
 //! at `EnvFilter`'s span map on entering and leaving, and the fmt layers' `on_new_span`,
 //! which keep an empty `FormattedFields` in the span's extensions (Bevy's fmt layer and
 //! `engine/nvforever/src/crash.rs` `file_layer`). They print nothing themselves, but a log
-//! line made inside one now names it. How long all this takes has not been measured.
+//! line made inside one now names it. One span's create, enter, exit and close took about
+//! 440 ns in a scratch benchmark under the same kind of subscriber stack, which estimates
+//! 3.5 to 5.3 µs at 8 to 12 a frame; frame times of whole runs could not resolve a cost at
+//! that size [observed 2026-11-04, #1511].
 //!
 //! `NVF_PLAY_TEST_TILE_COUNTS=1` (a test aid of its own, in any build; time without it, its
 //! line lies outside the parts): a line a frame, `tile counts: writes=<n> changed=<n>

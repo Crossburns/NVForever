@@ -99,7 +99,9 @@
 //! cursor is not grabbed, so the desktop's mouse neither leaves the user nor turns the
 //! view (as with `--auto-walk`). Not the aids that only measure ([`MEASURING_AIDS`]:
 //! `NVF_PLAY_TEST_SAMPLE`, `NVF_PLAY_TEST_PROFILE`, `NVF_PLAY_TEST_PROFILE_COUNTS`,
-//! `NVF_PLAY_TEST_HITVOL_SCAN`, `NVF_PLAY_TEST_HITVOL_COMPARE`): with them alone the run is played by
+//! `NVF_PLAY_TEST_PROFILE_HITCH_MS`, `NVF_PLAY_TEST_PROFILE_HITCH_SPANS`,
+//! `NVF_PLAY_TEST_TILE_COUNTS`, `NVF_PLAY_TEST_HITVOL_SCAN`,
+//! `NVF_PLAY_TEST_HITVOL_COMPARE`): with them alone the run is played by
 //! hand as usual and only logs its frame times, and a load's new run keeps them
 //! (nvforever handoff.rs) [owner 2026-10-27: hitch logging for a session played from MO2].
 //!
@@ -376,9 +378,21 @@ fn take_due<T: Clone>(due: &mut Vec<(f32, T)>, now: f32) -> Vec<T> {
 }
 
 /// The test aids that only log what the run costs or does (nvforever stress_sample.rs and
-/// profile.rs, [`crate::hitvol`]): they leave the run attended, and a load's new run keeps
-/// them.
-pub const MEASURING_AIDS: [&str; 5] = ["NVF_PLAY_TEST_SAMPLE", "NVF_PLAY_TEST_PROFILE", "NVF_PLAY_TEST_PROFILE_COUNTS", "NVF_PLAY_TEST_HITVOL_SCAN", "NVF_PLAY_TEST_HITVOL_COMPARE"];
+/// profile.rs, [`crate::tiles`], [`crate::hitvol`]): they leave the run attended, and a
+/// load's new run keeps them. A run that only measures and must not wait for anyone also
+/// sets `NVF_PLAY_TEST_UNATTENDED`, which does nothing but drive the run: `drives_run` looks
+/// at the name alone, so any value counts, and a load's new run drops it like any driving
+/// aid (`profile-slow-frames`).
+pub const MEASURING_AIDS: [&str; 8] = [
+    "NVF_PLAY_TEST_SAMPLE",
+    "NVF_PLAY_TEST_PROFILE",
+    "NVF_PLAY_TEST_PROFILE_COUNTS",
+    "NVF_PLAY_TEST_PROFILE_HITCH_MS",
+    "NVF_PLAY_TEST_PROFILE_HITCH_SPANS",
+    "NVF_PLAY_TEST_TILE_COUNTS",
+    "NVF_PLAY_TEST_HITVOL_SCAN",
+    "NVF_PLAY_TEST_HITVOL_COMPARE",
+];
 
 /// Whether this environment variable is a test aid that drives the run (any
 /// `NVF_PLAY_TEST_*` but the [`MEASURING_AIDS`]).
@@ -783,6 +797,10 @@ mod tests {
     fn measuring_aids_leave_the_run_attended() {
         assert!(!drives_run("NVF_PLAY_TEST_SAMPLE"));
         assert!(!drives_run("NVF_PLAY_TEST_PROFILE"));
+        assert!(!drives_run("NVF_PLAY_TEST_PROFILE_HITCH_MS"));
+        assert!(!drives_run("NVF_PLAY_TEST_PROFILE_HITCH_SPANS"));
+        assert!(!drives_run("NVF_PLAY_TEST_TILE_COUNTS"));
+        assert!(drives_run("NVF_PLAY_TEST_UNATTENDED"));
         assert!(drives_run("NVF_PLAY_TEST_GOD"));
         assert!(drives_run("NVF_PLAY_TEST_SAMPLE_X"), "only the exact names measure");
         assert!(!drives_run("NVF_PLAY_DEBUG_GIVE"));
