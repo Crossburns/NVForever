@@ -6390,6 +6390,36 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-theft-write"
+source = "#1608: the crime-steal theft (Chet's carton of cigarettes), karma -5, saved; save-theft-load reads it back, so run them together"
+areas = ["save", "crime", "karma"]
+paths = ["engine/nvf-play/src/crime.rs", "engine/nvf-play/src/world_sounds.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/lib.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-theft-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOTO = "14:-400:540:560", NVF_PLAY_TEST_SCRIPT = "20:activate:0x00106D34", NVF_PLAY_TEST_CONSOLE = "24:player.getav karma;save smoke-theft;25:close" }
+args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 29
+order = [[{ re = 'crime: the player took .* \(0x00106D34\) x1, owned by someone else', label = "the carton taken is theft" }, { re = 'crime: karma -5 for stealing', label = "karma -5 for it" }, { re = 'console: GetActorValue on player >> -5\.00', label = "the karma before the save" }, { re = 'save: wrote .*smoke-theft\.nvfsave', label = "the save is written" }]]
+expect = [
+  { re = 'world sounds: 00106D34 .*picked up', count = 1, label = "the pick-up is heard once" },
+]
+
+[[scenario]]
+name = "save-theft-load"
+source = "#1608: a load judges nothing: karma stays as saved, no theft or pick-up sound for what the save holds as picked up"
+areas = ["save", "crime", "karma"]
+paths = ["engine/nvf-play/src/crime.rs", "engine/nvf-play/src/world_sounds.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/lib.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-theft-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.getav karma;15:close" }
+args = ["--play", "--load", "smoke-theft", "--no-voice"]
+run_seconds = 19
+order = [[{ re = 'load: restored .*smoke-theft\.nvfsave', label = "the save is restored" }, { re = 'console: GetActorValue on player >> -5\.00', label = "the karma as saved" }]]
+expect = [
+  { re = 'crime: the player took', count = 0, label = "no pick-up judged again" },
+  { re = 'crime: karma ', count = 0, label = "no karma change" },
+  { re = 'crime: theft against', count = 0, label = "no theft counted" },
+  { re = 'world sounds: 00106D34 .*picked up', count = 0, label = "no pick-up sound" },
+  { re = 'crime summary: 0 thefts', label = "the run's summary: no thefts" },
+]
+
+[[scenario]]
 name = "save-load-order"
 source = "no-owner queue item 29 (2026-10-21; docs/design/save-load.md §4.1): a save made with one load order loads into another: FormIDs move to their plugin's place now, what came from plugins no longer loaded is dropped and the player told; run after save-write, whose save it loads"
 note = "save-write runs with the ten masters; this run loads its save with three of them, Gun Runners' Arsenal moved before Dead Money (index 05 -> 01, Dead Money 01 -> 02), the add-ons Honest Hearts, Old World Blues, Lonesome Road and the four packs gone. The base game's changes come back as in save-load"

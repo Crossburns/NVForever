@@ -180,11 +180,15 @@ mod tests {
 #[cfg(test)]
 pub(crate) mod test_world {
     use super::*;
-    use fnv_sim::forms::{ActorBase, BaseData, BaseForm, Door};
+    use fnv_sim::forms::{ActorBase, BaseData, BaseForm, Door, Item, ItemKind};
     use fnv_sim::refs::PlacedRef;
 
     fn base(id: u32, data: BaseData) -> BaseForm {
         BaseForm { id: FormId(id), sig: *b"MISC", edid: Some(format!("Edid{id:X}")), name: None, script: None, prompt: None, voice_filter: false, data }
+    }
+
+    pub(crate) fn item_base(id: u32) -> BaseForm {
+        base(id, BaseData::Item(Item { kind: ItemKind::Aid, value: Some(1), money: None, weight: Some(0.5), slots: None, projectile: None, health: None, non_playable: false, cant_drop: false, armor_class: Default::default(), power_armor: false, armor_dr: None, armor_dt: None, weapon_damage: None, weight_mods: [0.0; 3], drawable: false, not_for_npcs: false, thrown: false, quest_item: false, icon: None, placed_count: None, teaches: None, cant_be_taken: false, modulates_voice: false, weapon_traits: None }))
     }
 
     pub(crate) fn door_base(id: u32) -> BaseForm {

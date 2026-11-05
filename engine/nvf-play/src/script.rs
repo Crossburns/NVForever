@@ -1741,7 +1741,7 @@ pub(crate) fn run_scripts(
                             rt.frozen_frames = 2;
                             // The drawn world follows the restored simulation.
                             for id in changed_refs {
-                                changed.write(RefChanged { form_id: id.0 });
+                                changed.write(RefChanged { form_id: id.0, restored: true });
                             }
                         }
                         Err(e) => warn!("load: {}: {e}; the game goes on from the plugins", path.display()),
@@ -2038,7 +2038,7 @@ pub(crate) fn run_scripts(
         match e {
             ScriptEffect::RefChanged(id) => {
                 if sent.insert(id) {
-                    changed.write(RefChanged { form_id: id });
+                    changed.write(RefChanged::new(id));
                 }
             }
             ScriptEffect::Fade { form_id, fade_in } => {
