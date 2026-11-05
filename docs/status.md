@@ -119,7 +119,7 @@ compared with independent readers and in-game captures) and the smoke runner
 | Profiling option compatibility | Done | #1275: profile reporting (`NVF_PLAY_TEST_PROFILE`) and frame-time logging (`--log-frame-times`) share one guarded render diagnostics registration, so they can be used together; smoke scenarios `render-diagnostics-*` | [frame-rate-audit](design/frame-rate-audit.md#profiling-options-together) |
 | Crash reports | Done | A panic writes `Documents\My Games\NVForever\logs\crash-*.txt` with a backtrace; release builds carry line tables for file:line (`engine/Cargo.toml`) | `engine/nvforever/src/crash.rs` |
 | CI | Done | Linux job on pushes to main and on every pull request (#89, #272); a guard against game data in pull requests; PR template with a clean-room checklist; issue forms (bug, crash, differs from the original, build/tool, feature, #273) | `.github/workflows/ci.yml`, `game-data-guard.yml` |
-| Releases | Done, first version | Tag-triggered workflow builds Windows and Linux archives with launchers (`nvforever.cmd`/`.sh`) and the schemas; v0.1.0 pre-release 2026-10-13 (#270), then v0.2.0 (#418), v0.3.0 (#449), v0.4.0 (#573), v0.5.0 (2026-10-28) and the v0.5.1 hotfix (2026-10-29, the night stutter, #897) | `.github/workflows/release.yml`, `tools/release/` |
+| Releases | Done, first version | Tag-triggered workflow builds Windows and Linux archives with launchers (`nvforever.cmd`/`.sh`) and the schemas; v0.1.0 pre-release 2026-10-13 (#270), then v0.2.0 (#418), v0.3.0 (#449), v0.4.0 (#573), v0.5.0 (2026-10-28), the v0.5.1 hotfix (2026-10-29, the night stutter, #897) and v0.6.0 (2026-11-04, the first with script extender support) | `.github/workflows/release.yml`, `tools/release/` |
 
 ## 9. Open items needing the owner
 

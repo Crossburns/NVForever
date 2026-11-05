@@ -52,7 +52,8 @@ pub struct RefCollision {
 /// `tally` is called once for each outcome, with the names of the `refs.counts` of
 /// `fnv.phys.cell/1` (physics.md §7): `no_base`, `collision_primitive`, `bad_primitive`,
 /// `actor`, `no_model`, `speedtree`, `awaiting_collision`, `model_without_collision`,
-/// `model_unreadable`, `open_door_moving_parts` (an open-by-default door whose keyframed
+/// `model_unreadable`, `primitive_model` (a primitive whose base names a model: the
+/// model is left out, level-design.md §4.1), `open_door_moving_parts` (an open-by-default door whose keyframed
 /// parts were left out), `water_volume` (a model with water volumes; then not also
 /// `model_without_collision`).
 pub fn ref_collision(
@@ -120,6 +121,9 @@ pub fn ref_collision_with(
     match options.model.map_or_else(|| base.world_model_path(), fnv_world::placed::archive_path) {
         None if out.objects.is_empty() => tally("no_model"),
         None => {}
+        // A trigger copied from an activator with a model keeps the model in its record;
+        // the game shows and collides with only the primitive (level-design.md §4.1).
+        Some(_) if !pl.draws_base_model() => tally("primitive_model"),
         Some(m) if m.ends_with(".spt") => tally("speedtree"),
         Some(m) => match models {
             None => tally("awaiting_collision"),

@@ -72,6 +72,11 @@
 //!   `mouse-right` / `mouse-middle`, or a notch of the wheel (`wheel-up`, `wheel-down`).
 //!   Unlike `NVF_PLAY_TEST_CONTROL` it tests the key's path, not just what it does.
 //!
+//! - `NVF_PLAY_TEST_MELEE_KNOCKBACK=<target FormID hex>:<x>:<y>:<z>`: one player power blow
+//!   on one actor put `x`, `y` from the player and `z` over the ground there (it may start
+//!   far away and unloaded) and left standing, gated on readiness
+//!   ([`melee_knockback`], with nvforever `residents::melee_knockback`).
+//!
 //! The aids that stand in for the keys and the mouse (`NVF_PLAY_TEST_MOVE`,
 //! `NVF_PLAY_TEST_CONTROL`'s presses, `NVF_PLAY_TEST_LOOK`, `NVF_PLAY_TEST_ACTIVATE`) are
 //! held by a script's `DisablePlayerControls` like the keys and the mouse
@@ -94,7 +99,9 @@
 //! cursor is not grabbed, so the desktop's mouse neither leaves the user nor turns the
 //! view (as with `--auto-walk`). Not the aids that only measure ([`MEASURING_AIDS`]:
 //! `NVF_PLAY_TEST_SAMPLE`, `NVF_PLAY_TEST_PROFILE`, `NVF_PLAY_TEST_PROFILE_COUNTS`,
-//! `NVF_PLAY_TEST_HITVOL_SCAN`, `NVF_PLAY_TEST_HITVOL_COMPARE`): with them alone the run is played by
+//! `NVF_PLAY_TEST_PROFILE_HITCH_MS`, `NVF_PLAY_TEST_PROFILE_HITCH_SPANS`,
+//! `NVF_PLAY_TEST_TILE_COUNTS`, `NVF_PLAY_TEST_HITVOL_SCAN`,
+//! `NVF_PLAY_TEST_HITVOL_COMPARE`): with them alone the run is played by
 //! hand as usual and only logs its frame times, and a load's new run keeps them
 //! (nvforever handoff.rs) [owner 2026-10-27: hitch logging for a session played from MO2].
 //!
@@ -114,6 +121,8 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use fnv_sim::FormId;
 use std::path::{Path, PathBuf};
+
+pub mod melee_knockback;
 
 /// How far in front of the reference `NVF_PLAY_TEST_FACE` puts the feet (game units;
 /// inside the activation reach).
@@ -369,9 +378,21 @@ fn take_due<T: Clone>(due: &mut Vec<(f32, T)>, now: f32) -> Vec<T> {
 }
 
 /// The test aids that only log what the run costs or does (nvforever stress_sample.rs and
-/// profile.rs, [`crate::hitvol`]): they leave the run attended, and a load's new run keeps
-/// them.
-pub const MEASURING_AIDS: [&str; 5] = ["NVF_PLAY_TEST_SAMPLE", "NVF_PLAY_TEST_PROFILE", "NVF_PLAY_TEST_PROFILE_COUNTS", "NVF_PLAY_TEST_HITVOL_SCAN", "NVF_PLAY_TEST_HITVOL_COMPARE"];
+/// profile.rs, [`crate::tiles`], [`crate::hitvol`]): they leave the run attended, and a
+/// load's new run keeps them. A run that only measures and must not wait for anyone also
+/// sets `NVF_PLAY_TEST_UNATTENDED`, which does nothing but drive the run: `drives_run` looks
+/// at the name alone, so any value counts, and a load's new run drops it like any driving
+/// aid (`profile-slow-frames`).
+pub const MEASURING_AIDS: [&str; 8] = [
+    "NVF_PLAY_TEST_SAMPLE",
+    "NVF_PLAY_TEST_PROFILE",
+    "NVF_PLAY_TEST_PROFILE_COUNTS",
+    "NVF_PLAY_TEST_PROFILE_HITCH_MS",
+    "NVF_PLAY_TEST_PROFILE_HITCH_SPANS",
+    "NVF_PLAY_TEST_TILE_COUNTS",
+    "NVF_PLAY_TEST_HITVOL_SCAN",
+    "NVF_PLAY_TEST_HITVOL_COMPARE",
+];
 
 /// Whether this environment variable is a test aid that drives the run (any
 /// `NVF_PLAY_TEST_*` but the [`MEASURING_AIDS`]).
@@ -447,6 +468,7 @@ pub(crate) fn setup(app: &mut App) {
             Err(e) => warn!("{name}: {e}"),
         }
     }
+    melee_knockback::setup(app);
     let var = |name: &str| std::env::var(name).ok();
     if let Some(v) = var("NVF_PLAY_TEST_KEYS") {
         match timed(&v).and_then(|items| items.into_iter().map(|(s, r)| real_input(r).map(|k| (s, k))).collect()) {
@@ -622,10 +644,11 @@ fn aim_at_nearest_actor(phys: &PhysState, player: &mut Player, cross: Option<&Cr
     info!("test aid: aiming at actor {id:08X} ({:.0} units away{line})", d2(c).sqrt());
 }
 
-/// Aim at the collision body of a placed object (its first body's centre of mass).
+/// Aim at an actor's aim point (`PhysWorld::actor_aim_point`), else at the collision body
+/// of a placed object (its first body's centre of mass).
 fn aim_at_ref(phys: &PhysState, player: &mut Player, cross: Option<&Crosshair>, id: u32) {
-    let Some(c) = phys.world.ref_center(id) else {
-        warn!("test aid: aimref: {id:08X} has no collision body");
+    let Some(c) = phys.world.actor_aim_point(id).or_else(|| phys.world.ref_center(id)) else {
+        warn!("test aid: aimref: {id:08X} has no hit volume or collision body");
         return;
     };
     let eye = player.eye();
@@ -774,6 +797,10 @@ mod tests {
     fn measuring_aids_leave_the_run_attended() {
         assert!(!drives_run("NVF_PLAY_TEST_SAMPLE"));
         assert!(!drives_run("NVF_PLAY_TEST_PROFILE"));
+        assert!(!drives_run("NVF_PLAY_TEST_PROFILE_HITCH_MS"));
+        assert!(!drives_run("NVF_PLAY_TEST_PROFILE_HITCH_SPANS"));
+        assert!(!drives_run("NVF_PLAY_TEST_TILE_COUNTS"));
+        assert!(drives_run("NVF_PLAY_TEST_UNATTENDED"));
         assert!(drives_run("NVF_PLAY_TEST_GOD"));
         assert!(drives_run("NVF_PLAY_TEST_SAMPLE_X"), "only the exact names measure");
         assert!(!drives_run("NVF_PLAY_DEBUG_GIVE"));

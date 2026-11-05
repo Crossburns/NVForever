@@ -718,8 +718,18 @@ impl Game<'_> {
     /// packages, observed 2026-10-11]. Such an actor keeps carrying its package out
     /// instead of searching or holding its ground (`fnv_ai`); its state, weapon and barks
     /// are as for any other actor.
+    ///
+    /// Not for a teammate of the player on a Follow package: it fights as any other
+    /// actor does (closes in, its combat style's radius holding it) and follows again
+    /// once the fight is over. Every follower's Follow package sets the flag [observed:
+    /// FollowersVeronicaFollowPlayerDEFAULT, FollowersBooneFollowPlayerDEFAULT], and in
+    /// the original a melee companion goes after its targets [observed: the owner's
+    /// playtest 2026-11-04, #1534]; read as "follow on", Veronica only struck enemies
+    /// that came to the player.
     pub fn continues_during_combat(&mut self, actor: FormId) -> bool {
-        self.current_package(actor).and_then(|p| self.package_def(&p)).is_some_and(|d| d.has(flags::CONTINUE_DURING_COMBAT))
+        let Some(p) = self.current_package(actor) else { return false };
+        let Some((on, follow)) = self.package_def(&p).map(|d| (d.has(flags::CONTINUE_DURING_COMBAT), d.ty == crate::package::PackageType::Follow)) else { return false };
+        on && !(follow && self.is_teammate(actor))
     }
 
     /// The engine measured `target` from `detector` at `at` (game space): when the

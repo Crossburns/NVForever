@@ -91,7 +91,7 @@ is unknown; to be checked by standing a probe on a steep square in-game, §6].
 | Collision object | Body | Tag |
 |---|---|---|
 | `Motion::Static` | fixed | [hypothesis] |
-| `Motion::Keyframed` | kinematic, position-driven | [hypothesis] |
+| `Motion::Keyframed` | fixed (posed by teleport, never moved smoothly) | [hypothesis] |
 | `Motion::Dynamic` | dynamic; collider densities scaled so the body mass equals `mass` (volume-derived mass kept when `mass` ≤ 0) | [hypothesis] |
 
 Friction and restitution are passed to rapier unchanged [hypothesis: Havok's coefficients
@@ -573,9 +573,8 @@ GSGeneralStore --play`, 2026-10-11], 53 of the 67 dynamic references there moved
 object stays where it was placed, inactive, until something disturbs it — the books in the
 display case, and a resting dropped item not woken by `SetPos` (§4.3, `pc_drop_fall`)]:
 
-- Placed references' dynamic bodies are added **asleep** (`PreparedRef::asleep`), and so
-  are their keyframed bodies (a container's lid would otherwise keep what stands on it
-  awake). rapier wakes both sides of every contact that starts, so a body added asleep
+- Placed references' dynamic bodies are added **asleep** (`PreparedRef::asleep`).
+  rapier wakes both sides of every contact that starts, so a body added asleep
   woke as soon as its first contacts were found; `PhysWorld` finds the contacts of bodies
   added asleep before the next step and puts them back to sleep (`update_queries`). They
   wake when a body moves against them (the player, an actor, another item falling), when
@@ -2443,7 +2442,8 @@ gains `water_volume` for references whose model holds one); probes report `swimm
 `initially_disabled`, `disabled_by_parent` (enabled itself but disabled at the start by
 its enable-parent chain, §4), `no_base`, `actor` (placed NPCs and creatures, which get no
 collision here, §4), `no_model`, `collision_primitive` (CollisionMarker
-primitives added), `bad_primitive`, `speedtree`, `model_without_collision`,
+primitives added), `bad_primitive`, `primitive_model` (a primitive, a trigger, whose
+base names a model: the model is left out, level-design.md §4.1), `speedtree`, `model_without_collision`,
 `model_unreadable`, `awaiting_collision` (meshes not loaded), `with_collision`
 (references added to the world), `colliders` (their collider count) and `object_errors`.
 `by_base_type` counts references with a readable base by its record type.

@@ -417,7 +417,7 @@ fn blur(a: &mut [f32], w: usize, h: usize, sigma: f32, reach: usize) {
 /// ([`soften`]) and bent ([`display_blend`]) for the ink over the glass, and again for the
 /// dark text over a lit cell; the two share one layout.
 fn soft_faces(path: &str, data: &GameData, images: &mut Assets<Image>) -> Option<(Face, Face)> {
-    let font = Font::parse(&data.read(path)?).ok()?;
+    let font = Font::parse(&data.read(&crate::interface::font_file(path))?).ok()?;
     let bytes = data.read(&font.texture_path())?;
     let dds = fnv_dds::Dds::parse(&bytes).ok()?;
     let (w, h) = (dds.header.width, dds.header.height);

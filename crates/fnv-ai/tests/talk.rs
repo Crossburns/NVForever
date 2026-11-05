@@ -644,6 +644,26 @@ fn an_actor_talked_to_turns_to_the_player_and_keeps_facing_the_player() {
     assert_eq!(s.agent(R_GREET).walker.heading, heading);
 }
 
+/// A rooted actor (an Immobile creature such as Mr. House's screen, `Ai::root`) talked
+/// to does not turn: its heading stays as placed for the whole conversation (issue
+/// #1543).
+#[test]
+fn a_rooted_actor_talked_to_does_not_turn() {
+    let f = fixture();
+    let mut s = sim(&f, R_GREET, CORNER);
+    s.run(0.5);
+    s.ai.root(&s.game, FormId(R_GREET));
+    let before = s.agent(R_GREET).walker.heading;
+    let rot = s.game.world.peek(FormId(R_GREET)).map(|r| r.rot);
+    s.game.start_dialogue(FormId(R_GREET), None).unwrap();
+    for _ in 0..20 {
+        s.ai.update_held(&mut s.game, 0.25);
+    }
+    assert_eq!(s.agent(R_GREET).walker.heading, before);
+    assert_eq!(s.game.world.peek(FormId(R_GREET)).map(|r| r.rot), rot);
+    assert_eq!(s.agent(R_GREET).walker.feet, GREETER);
+}
+
 /// A script's Look with `rotateBody` 1 turns the whole body of an actor the AI runs to
 /// its target, at the walker's own turn rate, and keeps it there; StopLook ends it and
 /// the body keeps its heading. Without the flag only the head turns (the engine's): the

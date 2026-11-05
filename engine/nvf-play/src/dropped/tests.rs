@@ -5,7 +5,6 @@ use super::*;
 use crate::phys::{CreatedBody, PhysState};
 use fnv_collide::{CollisionObject, Motion, Shape};
 use fnv_phys::{PhysParams, PhysWorld, RefPose};
-use fnv_sim::inventory::Extra;
 use fnv_sim::world::{Snapshot, SNAPSHOT_FORMAT};
 use fnv_sim::{FormStore, RefTable, SimConfig, World};
 use fnv_world::transform::{axis, max_diff, ref_angles};
@@ -30,26 +29,27 @@ fn index() -> WorldIndex {
     ix
 }
 
+/// A state in no World, read from its saved form: its flags are private to `fnv-sim`.
 fn state(cell: Option<u32>, pos: [f32; 3]) -> RefState {
-    RefState {
-        base: FormId(0x100),
-        cell: cell.map(FormId),
-        pos,
-        rot: [0.0; 3],
-        enabled: true,
-        deleted: false,
-        count: 1,
-        inventory: None,
-        lock: None,
-        open: false,
-        extra: Extra::default(),
-        actor_values: Default::default(),
-        last_restock: None,
-        outfitted: false,
-        scale: None,
-        equip_locks: Default::default(),
-        dropped_by: None,
-    }
+    serde_json::from_value(serde_json::json!({
+        "base": FormId(0x100),
+        "cell": cell.map(FormId),
+        "pos": pos,
+        "rot": [0.0, 0.0, 0.0],
+        "enabled": true,
+        "deleted": false,
+        "count": 1,
+        "open": false,
+    }))
+    .expect("a whole saved state")
+}
+
+/// `s` with other flags, through its saved form as [`state`].
+fn with_flags(s: &RefState, enabled: bool, deleted: bool) -> RefState {
+    let mut saved = serde_json::to_value(s).expect("a state saves");
+    saved["enabled"] = enabled.into();
+    saved["deleted"] = deleted.into();
+    serde_json::from_value(saved).expect("a whole saved state")
 }
 
 #[test]
@@ -93,13 +93,11 @@ fn a_drop_becomes_a_spawn_and_a_take_a_despawn() {
     s.rot = [0.1, 0.0, 0.0];
     assert_eq!(plan(&created(&s), &drawn, loaded), Plan { moved: vec![DROPPED], ..Default::default() });
     // Taken back: no longer wanted.
-    s.deleted = true;
-    assert!(created(&s).is_empty());
-    assert_eq!(plan(&created(&s), &drawn, loaded), Plan { despawn: vec![DROPPED], ..Default::default() });
+    let taken = with_flags(&s, true, true);
+    assert!(created(&taken).is_empty());
+    assert_eq!(plan(&created(&taken), &drawn, loaded), Plan { despawn: vec![DROPPED], ..Default::default() });
     // A disabled one is not drawn either.
-    s.deleted = false;
-    s.enabled = false;
-    assert!(created(&s).is_empty());
+    assert!(created(&with_flags(&s, false, false)).is_empty());
 }
 
 #[test]

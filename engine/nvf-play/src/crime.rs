@@ -95,7 +95,7 @@ fn report_deeds(
         let item = matches!(sim.forms.get(s.base).map(|b| &b.data), Some(BaseData::Item(_)));
         // Gone into the player's inventory, not removed by a script.
         let carried = sim.world.peek(FormId::PLAYER_REF).and_then(|p| p.inventory.as_ref()).is_some_and(|inv| inv.count(s.base) > 0);
-        if item && s.deleted && carried && stats.picked.insert(id) {
+        if item && s.deleted() && carried && stats.picked.insert(id) {
             items.push((FormId(id), s.base, s.count.max(1)));
         }
     }

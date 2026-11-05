@@ -4,6 +4,9 @@
 //!   `encoding_rs`
 //! - SHA-256 for corpus fingerprints, via `sha2`
 //! - `Cursor`, a bounds-checked little-endian byte reader
+//! - [`words`]: translations of NVForever's own words (#1443)
+
+pub mod words;
 
 pub mod cp1252 {
     use encoding_rs::WINDOWS_1252;
