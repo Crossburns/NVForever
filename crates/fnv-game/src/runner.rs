@@ -1135,11 +1135,13 @@ fn waited(g: &Game, st: &RunState, obs: &mut Map<String, Json>, found: bool, sto
 /// (a message box a result script showed) holds the conversation: that is an error here,
 /// the input has to close it. A Goodbye greeting said at the player opens no
 /// conversation (`Game::start_dialogue`): the wait goes on until its line has ended and
-/// its end script has run, as the player hears it out (issue #1114).
+/// its end script has run, as the player hears it out (issue #1114). The same for a
+/// chosen Goodbye line, which closes its conversation at once and is said on as a
+/// farewell (`Game::choose`, `Speech::farewell`).
 fn wait_talk(g: &mut Game, max: u64) -> Result<(), String> {
     for _ in 0..=max {
         match &g.dialogue {
-            None if !greeting_at_player(g) => return Ok(()),
+            None if !goodbye_at_player(g) => return Ok(()),
             Some(c) if !c.choices.is_empty() => return Ok(()),
             _ => {}
         }
@@ -1151,10 +1153,10 @@ fn wait_talk(g: &mut Game, max: u64) -> Result<(), String> {
     Err(format!("the actor was still speaking after {max} frames"))
 }
 
-/// Whether a Goodbye greeting is being said at the player outside a conversation
-/// (`Speech::greeting`).
-fn greeting_at_player(g: &Game) -> bool {
-    g.speech.iter().any(|s| s.greeting && s.target == Some(FormId::PLAYER_REF))
+/// Whether a Goodbye line is being said at the player outside a conversation: a greeting
+/// or a farewell (`Speech::goodbye_at_player`).
+fn goodbye_at_player(g: &Game) -> bool {
+    g.speech.iter().any(|s| s.goodbye_at_player())
 }
 
 /// What the engine's detection pass does with a hit an actor lives through (`nvforever`
