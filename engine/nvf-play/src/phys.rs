@@ -1201,7 +1201,9 @@ impl PhysState {
             self.world.set_ref_keyframed_solid(id, false);
         }
         self.reposes += 1;
-        debug!("collision of 0x{id:08X} built again where a script moved it ({dist:.1} from its body){}", if built { "" } else { ": none now" });
+        // At info: the smoke scenario `script-move-dynamic-clutter` reads this line, and
+        // rebuilds are few now (a held-back move waits for the reference to rest).
+        info!("collision of 0x{id:08X} built again where a script moved it ({dist:.1} from its body){}", if built { "" } else { ": none now" });
     }
 
     /// Test aid: every destruction model, by FormID (made-up cells have no index for
