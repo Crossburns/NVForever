@@ -207,6 +207,12 @@ pub(crate) fn find_target(
             Owner::Ref { form_id, .. } | Owner::Actor { form_id, .. } => Some(form_id),
             _ => None,
         });
+        // Invisible walls do not take the crosshair: what stands behind one is activated
+        // (#1602: the Gun Runners' kiosk, nv_gunrun_kiosk.nif, is one body on layer 27
+        // Invisible Wall, the Vendortron inside it) [hypothesis: by the layer's name, as
+        // sight (nvforever detection.rs) and blast cover (combat.rs) pass it too]. The far
+        // ray above (PlaceAtReticle) keeps stopping at them.
+        filter.exclude_layers.insert(layers::INVISIBLE_WALL);
         let h = p.world.queries().ray(eye, dir, REACH, &filter)?;
         let owner = |o: Owner| match o {
             // An actor's hit volume (combat C3) targets the actor.
