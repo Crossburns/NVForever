@@ -232,23 +232,37 @@ fn centred(height: f32, extra: f32) -> f32 {
     (inside * CENTRE - height / 2.0).min(inside - height - BOTTOM_ROOM - extra)
 }
 
+/// One past the last of the whole choices from `from` that fit in `room`, at least one.
+fn fitting(from: usize, heights: &[f32], room: f32) -> usize {
+    let mut sum = 0.0;
+    let mut end = from;
+    while end < heights.len() && (end == from || sum + heights[end] <= room) {
+        sum += heights[end];
+        end += 1;
+    }
+    end
+}
+
+/// The room the list gives its choices: the whole choices that fit from the top in
+/// [`MAX_LIST`], at least one. The same at every scroll of the list, so the band keeps its
+/// height and place as the selection goes down it; the room a later window leaves under
+/// its last whole choice stays empty [owner's playtest 2026-11-05: the band grew and moved
+/// when the selection scrolled onto a wrapped choice, as the choices from the new first one
+/// packed differently; design: whole choices only, no choice cut at the foot].
+pub fn list_room(heights: &[f32]) -> f32 {
+    heights[..fitting(0, heights, MAX_LIST)].iter().sum()
+}
+
 /// The first choice shown so that `selected` is among the shown ones, moving as little
-/// as possible: as many whole choices as fit [`MAX_LIST`], at least one.
+/// as possible: as many whole choices as fit the list's room ([`list_room`]), at least one.
 pub fn window(first: usize, selected: usize, heights: &[f32]) -> (usize, usize) {
     let n = heights.len();
     if n == 0 {
         return (0, 0);
     }
     let selected = selected.min(n - 1);
-    let fits = |from: usize| {
-        let mut sum = 0.0;
-        let mut end = from;
-        while end < n && (end == from || sum + heights[end] <= MAX_LIST) {
-            sum += heights[end];
-            end += 1;
-        }
-        end
-    };
+    let room = list_room(heights);
+    let fits = |from: usize| fitting(from, heights, room);
     let mut first = first.min(selected);
     while fits(first) <= selected {
         first += 1;
@@ -352,7 +366,7 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, hint: 
     let lines = choice_lines(view, body);
     let heights = choice_heights(&lines);
     let (first, end) = window(first, selected, &heights);
-    let height = heights[first..end].iter().sum::<f32>().max(MIN_LIST);
+    let height = list_room(&heights).max(MIN_LIST);
     // The hint's own words, and the room under the band they need where they stand in it.
     let hint_line = (view.goodbye && hint).then(|| body.lines(GOODBYE_HINT, None).remove(0));
     let ink = hint_line.as_ref().map_or(STAND_IN_INK, |l| glyph_ink(l, body));
@@ -892,5 +906,35 @@ mod tests {
         // One very long choice is shown alone.
         assert_eq!(window(0, 0, &[400.0, 58.0]), (0, 1));
         assert_eq!(window(0, 0, &[]), (0, 0));
+    }
+
+    #[test]
+    fn the_list_keeps_its_height_as_the_selection_scrolls() {
+        // Sunny Smiles's six choices at 1280 x 720: two of two lines among them. The room
+        // is the first three (250); from the second choice only three fit it again, not the
+        // four that 290 would take, so the band neither grows nor moves.
+        let h = [96.0, 58.0, 96.0, 58.0, 58.0, 58.0];
+        assert_eq!(list_room(&h), 250.0);
+        assert_eq!(window(0, 2, &h), (0, 3));
+        assert_eq!(window(0, 3, &h), (1, 4));
+        assert_eq!(window(1, 4, &h), (2, 5));
+        assert_eq!(window(2, 5, &h), (3, 6));
+        // Back up: the window moves only when the selection leaves it.
+        assert_eq!(window(3, 3, &h), (3, 6));
+        assert_eq!(window(3, 2, &h), (2, 5));
+        // In the layout the list and the band are the same at both scrolls.
+        let two = "abcde ".repeat(12);
+        let v = choices(&[&two, "Do you know the robot?", &two, "Short.", "Short.", "Goodbye."]);
+        let a = layout(&v, 0, 1, 1280.0, &font(34.0), &font(36.0));
+        let b = layout(&v, 0, 3, 1280.0, &font(34.0), &font(36.0));
+        let (la, lb) = (a.list.unwrap(), b.list.unwrap());
+        assert_eq!(la.area, lb.area);
+        assert_eq!(a.band, b.band);
+        assert_eq!((la.choices.len(), lb.choices.len()), (3, 3));
+        assert_eq!((la.choices[0].index, lb.choices[0].index), (0, 1));
+        // The room under the last whole choice stays empty: the third choice shown from the
+        // second ends 38 above the list's foot.
+        let last = &lb.choices[2];
+        assert!((la.area[1] + la.area[3]) - (last.area[1] + last.area[3]) > 30.0);
     }
 }

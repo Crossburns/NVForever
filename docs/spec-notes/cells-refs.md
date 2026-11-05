@@ -73,3 +73,11 @@ activated, a door within 16 units behind it is the target (`pick::door_behind`) 
 the reach; the original's picking rule is not known]. Only doors are looked for, so items
 behind a wall stay out of reach. This may also be why the 2026-10-22 doors above were never
 targeted; not retried.
+
+**Invisible walls do not take the crosshair.** The activation ray passes collision on
+layer 27, Invisible Wall, as it passes trigger volumes; what stands behind such a wall is
+the target. The Gun Runners' kiosk (`nv_gunrun_kiosk.nif`, one static body on layer 27,
+306 vertices) stood between the crosshair and the Vendortron inside it (GunRunnerProtectron,
+VendortronRef 0x000F2EAA), so it could not be talked to [observed: fnvtool collide objects,
+#1602]. [hypothesis: by the layer's name; sight and blast cover pass the layer too.] Shots
+and the player still stop at it, and PlaceAtReticle's far ray stops at it.

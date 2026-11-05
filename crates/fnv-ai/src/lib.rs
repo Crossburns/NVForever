@@ -6,6 +6,7 @@
 //! - [`alert`]: actors in a combat state search, or stand facing their target
 //! - [`arrive`]: actors put at their package's place as the player arrives (a fast
 //!   travel, a load door)
+//! - [`furniture`]: which furniture an actor may be given
 //! - [`goal`]: where a package sends its actor
 //! - [`carry`]: the actors the AI moves: reachability, the walk, arrival
 //! - [`errand`]: Escort, Find, Use Item At, Ambush and Flee Not Combat packages
@@ -21,6 +22,7 @@ pub mod apart;
 pub mod arrive;
 pub mod carry;
 pub mod errand;
+pub mod furniture;
 pub mod goal;
 pub mod process;
 pub mod rearm;

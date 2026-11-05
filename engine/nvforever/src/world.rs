@@ -626,7 +626,7 @@ fn cell_models(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], hide: &[String]
     let mut out = Vec::new();
     for &r in refs {
         let Some(p) = placement(lo, schema, r) else { continue };
-        if p.imposter || !enabled(lo, schema, &p, 0) {
+        if p.imposter || !p.draws_base_model() || !enabled(lo, schema, &p, 0) {
             continue;
         }
         let Some(base) = p.base.and_then(|b| base_object(lo, schema, b)) else { continue };
@@ -972,6 +972,13 @@ fn spawn_ref(
         stats.refs_imposters += 1;
         return;
     }
+    // A primitive (a trigger volume, room bounds, a portal) is seen only in the editor,
+    // even where its activator was copied from one with a model (level-design.md §4.1).
+    if !p.draws_base_model() {
+        stats.refs_skipped_type += 1;
+        *stats.skipped_types.entry("primitive".into()).or_default() += 1;
+        return;
+    }
     if manage_actors && p.base.and_then(|b| base_object(world.lo, world.schema, b)).is_some_and(|b| matches!(&b.sig, b"NPC_" | b"CREA")) {
         return;
     }
@@ -1128,8 +1135,9 @@ pub fn spawn_model(
     // A door that opens in place (no XTEL) and has Open/Close sequences: posed from
     // its state in `nvf_play::doors` (doors.rs). Teleport doors stay static. A container
     // whose model has them (a locker, a safe) is drawn and timed the same way
-    // (`nvf_play::container_anim`).
-    let door = model.rig.as_ref().filter(|rig| rig.door.is_some() && ((&base.sig == b"DOOR" && !p.teleport) || &base.sig == b"CONT"));
+    // (`nvf_play::container_anim`), and so is a terminal whose keyboard and screen come
+    // out (`nvf_play::terminal`, #1532).
+    let door = model.rig.as_ref().filter(|rig| rig.door.is_some() && ((&base.sig == b"DOOR" && !p.teleport) || &base.sig == b"CONT" || &base.sig == b"TERM"));
     // An activator with Open/Close or an idle (a radio, a jukebox): its on and off
     // looks follow its state (activators.rs).
     let activator = model.rig.as_ref().filter(|rig| (rig.door.is_some() || rig.idle.is_some()) && &base.sig == b"ACTI");

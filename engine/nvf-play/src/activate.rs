@@ -110,7 +110,8 @@ impl HudMessage {
 /// Name and action of a reference the player can activate now: present in the
 /// simulation and of an activatable type. Activators and furniture need a display name
 /// (FULL) [hypothesis: unnamed activators are trigger volumes and markers the player is
-/// not meant to use; not captured]; placed leveled items and explosives with no weapon
+/// not meant to use; not captured], and a primitive is never offered (level-design.md
+/// §4.1); placed leveled items and explosives with no weapon
 /// to give are not offered.
 pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> Option<(String, Action)> {
     if !sim.present(form_id) {
@@ -121,6 +122,11 @@ pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> 
     let name = sim.name(base.id)?.to_string();
     let state = sim.world.peek(id);
     let placed = sim.refs.get(id);
+    // A primitive (XPRM) is a trigger volume or marker, not an object to use, whatever
+    // name its activator has (docs/spec-notes/level-design.md §4.1).
+    if placed.is_some_and(|p| p.primitive.is_some()) {
+        return None;
+    }
     // A reference with lock data starts locked, a leveled lock at the reference's level
     // [hypothesis, as fnv_sim::World does: `World::lock_of`].
     let lock = sim.world.lock_of(id).filter(|l| l.locked).map(|l| (l.level, l.key));
@@ -207,6 +213,12 @@ pub(crate) fn find_target(
             Owner::Ref { form_id, .. } | Owner::Actor { form_id, .. } => Some(form_id),
             _ => None,
         });
+        // Invisible walls do not take the crosshair: what stands behind one is activated
+        // (#1602: the Gun Runners' kiosk, nv_gunrun_kiosk.nif, is one body on layer 27
+        // Invisible Wall, the Vendortron inside it) [hypothesis: by the layer's name, as
+        // sight (nvforever detection.rs) and blast cover (combat.rs) pass it too]. The far
+        // ray above (PlaceAtReticle) keeps stopping at them.
+        filter.exclude_layers.insert(layers::INVISIBLE_WALL);
         let h = p.world.queries().ray(eye, dir, REACH, &filter)?;
         let owner = |o: Owner| match o {
             // An actor's hit volume (combat C3) targets the actor.
@@ -406,7 +418,7 @@ pub(crate) fn holds_nothing(game: Option<&fnv_game::Game>, sim: &mut SimState, f
         _ => return false,
     };
     let forms = sim.forms;
-    let unlisted = |item: FormId| forms.item(item).is_some_and(|i| !i.listed(false));
+    let unlisted = |item: FormId| !crate::menu::model::shown(forms, item, false);
     let Ok(s) = sim.world.get(holder) else { return false };
     if !s.inventory.as_ref().is_none_or(|inv| inv.iter().all(|(item, _)| unlisted(item))) {
         return false;

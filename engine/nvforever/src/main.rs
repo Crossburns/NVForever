@@ -1070,6 +1070,7 @@ fn main() -> AppExit {
             Err(e) => return fail(e),
         }
     };
+    let lod_origin = lod::grid_origin(&game, &world);
     let actor_world = (!args.no_actors).then(|| {
         let t0 = std::time::Instant::now();
         let mut a = actors::ActorWorld::build(world.lo, world.schema);
@@ -1120,7 +1121,7 @@ fn main() -> AppExit {
     if let Some(p) = play.as_mut() {
         p.packages = !npc_packages.is_empty();
     }
-    let residents = if npc_packages.is_empty() {
+    let mut residents = if npc_packages.is_empty() {
         None
     } else {
         // Game hours per second: the sky's rate when it runs, else the NPCs' own.
@@ -1138,8 +1139,11 @@ fn main() -> AppExit {
     let mut trips = args.npc_travel.clone();
     let furnishings = if args.play || !args.npc_sit.is_empty() || residents.is_some() {
         match furniture::Furnishings::build(&world, &game, &args.npc_sit, trips.len()) {
-            Ok((f, sit_trips)) => {
+            Ok((mut f, sit_trips)) => {
                 trips.extend(sit_trips);
+                if let Some(r) = residents.as_mut() {
+                    r.set_furniture_facts(std::sync::Arc::new(f.asset_facts(&game)));
+                }
                 Some(f)
             }
             Err(e) => return fail(e),
@@ -1265,7 +1269,7 @@ fn main() -> AppExit {
     .insert_resource(sky_state)
     .insert_resource(screen_modifiers)
     .insert_resource(fly::AutoFly(args.auto_fly))
-    .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen))
+    .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
     .init_resource::<TerrainCache>()
     .init_resource::<imposters::Imposters>()
@@ -1549,6 +1553,7 @@ fn main() -> AppExit {
             app.insert_resource(r)
                 .add_systems(Startup, residents::log_startup)
                 .add_systems(Update, residents::drive.after(world::stream).after(readahead::read_ahead).after(nvf_play::PlaySet::Scripts).before(nav::drive))
+                .add_systems(Update, residents::melee_knockback::arrange.after(residents::drive).run_if(resource_exists::<nvf_play::MeleeKnockbackAid>))
                 .add_systems(Last, residents::report);
             // Patrols and sandboxes go on after a load where the save had them.
             if play.is_some() {

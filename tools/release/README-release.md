@@ -54,7 +54,10 @@ built-in schema defaults point at the build machine's checkout.
 - **Without a mod manager:** put the mod in the game's `Data` folder and turn its plugin on
   in `Documents\My Games\NVForever\plugins.txt` with a `*` in front of its line; the order
   of the lines is the load order.
-- NVSE plugins (`.dll`) do not run in NVForever; mods that need NVSE may not work yet.
+- Script extenders (xNVSE, JIP LN, JohnnyGuitar and several smaller ones) are built into
+  NVForever: their script functions run without the plugin `.dll` files, which are never
+  loaded. A mod that needs a plugin's engine patches, or a function not built yet, may not
+  work.
 
 What works and what is not started yet: `docs/status.md` in the repository. Licence:
 GPL-3.0-or-later (`LICENSE`); legal notes in `LEGAL.md`; the third-party packages the

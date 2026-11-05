@@ -12,8 +12,8 @@
 //!   Gangers carrying 4 and 5 dynamite threw none in 90 s at 426-1,595 units; one holding
 //!   its dynamite threw once at about 1,225 units, then drew a gun]. In ours a gun or a
 //!   melee weapon is always held before a thrown one (`fnv_actor::weapon::choose_weapon`)
-//!   and re-arming passes grenades over, so throws come only once drawing a grenade is
-//!   built.
+//!   and re-arming passes grenades over, so it draws a grenade only when no preferred
+//!   held weapon is available.
 //! - **When**: holding it, not fleeing, ready on a target it sees, first [`FIRST_AFTER`]
 //!   seconds into seeing it, then every
 //!   [`BETWEEN`] seconds; only at a target beyond [`MIN_BLAST_SHARE`] times the blast's
@@ -23,8 +23,8 @@
 //! - **How**: from its eyes on the low arc that lands on the target's feet (as VATS
 //!   mode's throws, `fnv_combat::vats::lob_dir`), the grenade's throw clip played, its
 //!   FireExplosive line tried (`fnv_game::combat_lines`), the shot's own explosion and
-//!   the others' running from it as for the player's grenades (§17.7). The gun stays in
-//!   its hand meanwhile [design: no weapon swap for one throw].
+//!   the others' running from it as for the player's grenades (§17.7). No firearm cycle
+//!   runs while it holds a grenade, even while a throw waits or is denied [design].
 
 use fnv_combat::data::CombatForms;
 use fnv_sim::FormId;
@@ -88,9 +88,256 @@ pub fn wait(range: (f32, f32), u: f32) -> f32 {
     range.0 + (range.1 - range.0) * u.clamp(0.0, 1.0)
 }
 
+/// The inputs shared by every decision of a held-grenade controller. `ready` includes
+/// the person's sight, draw, reaction and attack holds, and excludes fleeing.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ThrowInput {
+    pub target: FormId,
+    pub clock: f32,
+    pub ready: bool,
+    pub origin: [f32; 3],
+    pub target_at: [f32; 3],
+    pub gravity: f32,
+}
+
+/// A prepared throw; it becomes an emission only after [`commit`] spends its item.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Throw {
+    pub grenade: Grenade,
+    pub origin: [f32; 3],
+    pub aim: [f32; 3],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Decision {
+    Waiting,
+    Empty,
+    OutOfBand(Grenade),
+    Held { grenade: Grenade, by: FormId },
+    Throw(Throw),
+}
+
+/// Advance only the grenade controller, retaining the established target deadlines
+/// and retry policy [design]. Selection and protection checks run only when needed;
+/// neither a waiting nor a denied throw has any emission or inventory side effect.
+pub(crate) fn plan<C>(
+    deadline: &mut Option<(FormId, f32)>,
+    input: ThrowInput,
+    context: &mut C,
+    select: impl FnOnce(&mut C) -> Option<Grenade>,
+    protected: impl FnOnce(&mut C, &Grenade) -> Option<FormId>,
+    mut random: impl FnMut() -> f32,
+) -> Decision {
+    if !input.ready {
+        return Decision::Waiting;
+    }
+    let due = match *deadline {
+        Some((target, at)) if target == input.target => at,
+        _ => {
+            let at = input.clock + wait(FIRST_AFTER, random());
+            *deadline = Some((input.target, at));
+            at
+        }
+    };
+    if input.clock < due {
+        return Decision::Waiting;
+    }
+    let Some(grenade) = select(context) else {
+        *deadline = Some((input.target, input.clock + wait(BETWEEN, random())));
+        return Decision::Empty;
+    };
+    let distance = fnv_combat::vec::len(fnv_combat::vec::sub(input.target_at, input.origin));
+    if !in_band(&grenade, distance, input.gravity) {
+        *deadline = Some((input.target, input.clock + 1.0));
+        return Decision::OutOfBand(grenade);
+    }
+    let caught = protected(context, &grenade);
+    *deadline = Some((input.target, input.clock + wait(BETWEEN, random())));
+    if let Some(by) = caught {
+        return Decision::Held { grenade, by };
+    }
+    let gravity = grenade.gravity_mult * input.gravity;
+    let aim = fnv_combat::vats::lob_dir(input.origin, input.target_at, grenade.speed, gravity).unwrap_or_else(|| fnv_combat::vats::lob_far(input.origin, input.target_at));
+    Decision::Throw(Throw { grenade, origin: input.origin, aim })
+}
+
+/// Commit exactly one selected item before the caller publishes a shot, animation,
+/// success count or bark. A stale inventory or a failed removal cannot emit a throw.
+pub(crate) fn commit<E>(throw: Throw, consume: impl FnOnce(FormId) -> Result<i32, E>) -> Option<Throw> {
+    matches!(consume(throw.grenade.weapon), Ok(1)).then_some(throw)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fnv_combat::data::{ExplosionStats, ProjectileStats, WeaponStats};
+    use fnv_sim::inventory::Inventory;
+
+    fn input(clock: f32) -> ThrowInput {
+        ThrowInput { target: FormId(9), clock, ready: true, origin: [0.0, 0.0, 64.0], target_at: [1000.0, 0.0, 0.0], gravity: 686.0 }
+    }
+
+    fn forms() -> CombatForms {
+        let mut forms = CombatForms::default();
+        for (id, speed, blast) in [(1, 1000.0, 256.0), (2, 1200.0, 300.0)] {
+            forms.weapons.insert(FormId(id), WeaponStats { anim_type: Some(GRENADE_ANIM.into()), projectile: Some(FormId(id + 10)), projectile_count: 1, ..Default::default() });
+            forms.projectiles.insert(FormId(id + 10), ProjectileStats { kind: Some("Lobber".into()), speed, gravity: 1.0, flags: vec!["Explosion".into()], explosion: Some(FormId(id + 20)), ..Default::default() });
+            forms.explosions.insert(FormId(id + 20), ExplosionStats { radius: blast, ..Default::default() });
+        }
+        forms
+    }
+
+    #[test]
+    fn held_grenade_deadline_starts_only_when_ready_and_is_not_rearmed_each_frame() {
+        let mut deadline = None;
+        assert_eq!(plan(&mut deadline, ThrowInput { ready: false, ..input(5.0) }, &mut (), |_| panic!("not ready"), |_, _| panic!("not ready"), || panic!("not ready")), Decision::Waiting);
+        assert_eq!(deadline, None);
+        assert_eq!(plan(&mut deadline, input(10.0), &mut (), |_| panic!("before first deadline"), |_, _| panic!("before first deadline"), || 0.5), Decision::Waiting);
+        assert_eq!(deadline, Some((FormId(9), 17.0)));
+        for clock in [10.0, 11.0, 16.999] {
+            assert_eq!(plan(&mut deadline, input(clock), &mut (), |_| panic!("before deadline"), |_, _| panic!("before deadline"), || panic!("must not reroll")), Decision::Waiting);
+            assert_eq!(deadline, Some((FormId(9), 17.0)));
+        }
+        assert!(matches!(plan(&mut deadline, input(17.0), &mut (), |_| Some(frag()), |_, _| None, || 0.0), Decision::Throw(_)));
+        assert_eq!(deadline, Some((FormId(9), 29.0)));
+        // A new target rolls its first wait; a temporary hold does not erase a wait.
+        assert_eq!(plan(&mut deadline, ThrowInput { target: FormId(8), ..input(20.0) }, &mut (), |_| panic!("new target wait"), |_, _| None, || 1.0), Decision::Waiting);
+        assert_eq!(deadline, Some((FormId(8), 30.0)));
+        assert_eq!(plan(&mut deadline, ThrowInput { ready: false, ..input(40.0) }, &mut (), |_| panic!("held"), |_, _| None, || panic!("held")), Decision::Waiting);
+        assert_eq!(deadline, Some((FormId(8), 30.0)));
+    }
+
+    #[test]
+    fn held_grenade_denials_keep_their_existing_retry_delays() {
+        let mut deadline = Some((FormId(9), 1.0));
+        assert_eq!(plan(&mut deadline, input(1.0), &mut (), |_| None, |_, _| panic!("no item"), || 1.0), Decision::Empty);
+        assert_eq!(deadline, Some((FormId(9), 26.0)));
+        for target_at in [[100.0, 0.0, 0.0], [2000.0, 0.0, 0.0]] {
+            deadline = Some((FormId(9), 1.0));
+            assert_eq!(plan(&mut deadline, ThrowInput { target_at, ..input(1.0) }, &mut (), |_| Some(frag()), |_, _| panic!("out of band"), || panic!("range retry has no roll")), Decision::OutOfBand(frag()));
+            assert_eq!(deadline, Some((FormId(9), 2.0)));
+        }
+        deadline = Some((FormId(9), 1.0));
+        assert_eq!(plan(&mut deadline, input(1.0), &mut (), |_| Some(frag()), |_, _| Some(FormId(7)), || 0.0), Decision::Held { grenade: frag(), by: FormId(7) });
+        assert_eq!(deadline, Some((FormId(9), 13.0)));
+    }
+
+    #[test]
+    fn held_grenade_callbacks_borrow_one_context_only_when_needed() {
+        let mut calls = Vec::new();
+        let mut deadline = None;
+        for (clock, ready) in [(0.0, false), (0.0, true), (3.0, true)] {
+            assert_eq!(plan(
+                &mut deadline, ThrowInput { ready, ..input(clock) }, &mut calls,
+                |calls| { calls.push("select"); Some(frag()) },
+                |calls, _| { calls.push("protect"); None },
+                || 0.0,
+            ), Decision::Waiting);
+            assert!(calls.is_empty());
+        }
+        assert!(matches!(plan(
+            &mut deadline, input(4.0), &mut calls,
+            |calls| { calls.push("select"); Some(frag()) },
+            |calls, _| { assert_eq!(calls.as_slice(), ["select"]); calls.push("protect"); None },
+            || 0.0,
+        ), Decision::Throw(_)));
+        assert_eq!(calls, ["select", "protect"]);
+        for grenade in [None, Some(frag())] {
+            calls.clear();
+            deadline = Some((FormId(9), 0.0));
+            let decision = plan(
+                &mut deadline, ThrowInput { target_at: [100.0, 0.0, 0.0], ..input(1.0) }, &mut calls,
+                |calls| { calls.push("select"); grenade },
+                |calls, _| { calls.push("protect"); None },
+                || 0.0,
+            );
+            assert_eq!(decision, grenade.map_or(Decision::Empty, Decision::OutOfBand));
+            assert_eq!(calls, ["select"]);
+        }
+    }
+
+    #[test]
+    fn held_grenade_commit_rejects_zero_and_failed_consumption() {
+        let mut deadline = Some((FormId(9), 0.0));
+        let Decision::Throw(throw) = plan(&mut deadline, input(1.0), &mut (), |_| Some(frag()), |_, _| None, || 0.0) else { panic!("valid throw") };
+        assert_eq!(commit(throw, |_| Ok::<_, ()>(0)), None);
+        assert_eq!(commit(throw, |_| Err::<i32, _>("inventory unavailable")), None);
+        let accepted = commit(throw, |weapon| {
+            assert_eq!(weapon, frag().weapon);
+            Ok::<_, ()>(1)
+        });
+        assert_eq!(accepted, Some(throw));
+    }
+
+    #[test]
+    fn held_grenade_selection_keeps_lowest_id_and_rejects_bad_or_empty_items() {
+        let mut forms = forms();
+        let low = FormId(1);
+        let high = FormId(2);
+        // Holding high enables grenade execution, but selection deliberately remains
+        // lowest FormID among carried grenades (the existing §20 policy).
+        assert_eq!(carried(&forms, [(high, 2), (low, 1)].into_iter()).unwrap().weapon, low);
+        assert_eq!(carried(&forms, [(low, 0), (high, 2)].into_iter()).unwrap().weapon, high);
+        forms.projectiles.remove(&FormId(11));
+        assert_eq!(carried(&forms, [(low, 2), (high, 2)].into_iter()).unwrap().weapon, high);
+        for anim in ["Land Mine (1 Hand)", "Mine Drop (1 Hand)", "Thrown (1 Hand)", "Launcher (2 Hand)"] {
+            forms.weapons.get_mut(&high).unwrap().anim_type = Some(anim.into());
+            assert_eq!(carried(&forms, [(high, 2)].into_iter()), None);
+        }
+    }
+
+    #[test]
+    fn held_grenade_two_items_make_two_lobbed_projectiles_then_stay_empty() {
+        let forms = forms();
+        let mut inventory = Inventory::new();
+        inventory.add(FormId(1), 2);
+        let mut deadline = None;
+        let mut fired = Vec::new();
+        // Run the production controller and consumption boundary on ordinary
+        // inventory, then the receiver's projectile constructor with zero spread.
+        for clock in 0..80 {
+            let decision = plan(&mut deadline, input(clock as f32), &mut inventory, |inventory| carried(&forms, inventory.iter()), |_, _| None, || 0.0);
+            if let Decision::Throw(throw) = decision {
+                let before = inventory.count(throw.grenade.weapon);
+                let throw = commit(throw, |weapon| Ok::<_, ()>(inventory.remove(weapon, 1))).unwrap();
+                assert_eq!(inventory.count(throw.grenade.weapon), before - 1);
+                let chain = forms.chain(throw.grenade.weapon, None).unwrap();
+                let projectiles = fnv_combat::shot::fire(&forms, &chain, throw.origin, throw.aim, 0.0, None, input(0.0).gravity, &Default::default(), &mut || 0.5);
+                assert_eq!(projectiles.len(), 1);
+                let p = &projectiles[0];
+                assert_eq!(p.gravity, throw.grenade.gravity_mult * input(0.0).gravity);
+                assert!(p.vel[2] > 0.0, "throw has an upward ballistic arc, not direct aim at the lower feet");
+                assert!((fnv_combat::vec::len(p.vel) - throw.grenade.speed).abs() < 0.01);
+                let expected = fnv_combat::vats::lob_dir(throw.origin, input(0.0).target_at, throw.grenade.speed, throw.grenade.gravity_mult * input(0.0).gravity).unwrap();
+                for (actual, want) in p.vel.into_iter().zip(expected) {
+                    assert!((actual - want * throw.grenade.speed).abs() < 0.01);
+                }
+                fired.push((clock, throw.grenade.weapon));
+            }
+        }
+        assert_eq!(fired, [(4, FormId(1)), (16, FormId(1))]);
+        assert_eq!(inventory.count(FormId(1)), 0);
+    }
+
+    #[test]
+    fn held_grenade_mixed_inventory_uses_one_selected_identity_for_throw_and_consumption() {
+        let forms = forms();
+        let mut inventory = Inventory::new();
+        inventory.add(FormId(1), 1);
+        inventory.add(FormId(2), 2);
+        let mut deadline = Some((FormId(9), 0.0));
+        let Decision::Throw(throw) = plan(&mut deadline, input(1.0), &mut inventory, |inventory| carried(&forms, inventory.iter()), |_, _| None, || 0.0) else { panic!("valid throw") };
+        let throw = commit(throw, |weapon| Ok::<_, ()>(inventory.remove(weapon, 1))).unwrap();
+        assert_eq!(throw.grenade.weapon, FormId(1));
+        assert_eq!(throw.grenade.speed, 1000.0);
+        assert_eq!(throw.grenade.blast, 256.0);
+        assert_eq!(inventory.count(FormId(1)), 0);
+        assert_eq!(inventory.count(FormId(2)), 2);
+        let chain = forms.chain(throw.grenade.weapon, None).unwrap();
+        assert_eq!(chain.projectile, Some(FormId(11)));
+        assert_eq!(chain.explosion, Some(FormId(21)));
+        assert_eq!(carried(&forms, inventory.iter()).unwrap().weapon, FormId(2));
+    }
 
     fn frag() -> Grenade {
         Grenade { weapon: FormId(0x4330), speed: 1000.0, gravity_mult: 1.0, blast: 256.0 }

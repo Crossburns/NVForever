@@ -68,6 +68,7 @@ fn fake_cell(job: &Job) -> Prepared {
             teleport: false,
             emittance: None,
             imposter: false,
+            primitive: false,
         };
         // As `prepare::cell` does: at the simulation's pose when it holds another.
         let pose = job.pose_of(pl.form_id);
@@ -93,11 +94,22 @@ fn fake_cell(job: &Job) -> Prepared {
         teleport: false,
         emittance: None,
         imposter: false,
+        primitive: false,
     };
     let water = vec![CollisionObject { layer: fnv_phys::layers::WATER, ..object(100.0, Motion::Static) }];
     refs.push(Entry { form_id: pond.form_id, placement: Some(pond), shapes: Some(RefShapes { tallies: vec!["water_volume"], water, prepared: None, dynamic_local: None, door: None, animated: None, drawn: None, model: None }) });
     let terrain = Some(PreparedTerrain::new(&params, (gx, gy), &heights));
     Prepared { cell: job.cell, heights: Some(heights), terrain, refs, times: LoadTimes::default() }
+}
+
+/// [`fake_cell`] with its second box keyframed (as a swing trap's held bodies).
+fn fake_cell_keyframed(job: &Job) -> Prepared {
+    let mut c = fake_cell(job);
+    let e = &mut c.refs[1];
+    let pl = e.placement.as_ref().expect("placed");
+    let prepared = PreparedRef::new(&PhysParams::default(), &RefPose::from_placement(pl), &[object(50.0, Motion::Keyframed)]);
+    e.shapes.as_mut().expect("shapes").prepared = Some(prepared);
+    c
 }
 
 fn state(manual: bool) -> PhysState {
@@ -322,6 +334,7 @@ fn bridge_cell(job: &Job) -> Prepared {
             teleport: false,
             emittance: None,
             imposter: false,
+            primitive: false,
         };
         let obj = CollisionObject { shape: Shape::Box { half_extents: [600.0, 600.0, 20.0] }.into(), ..object(0.0, Motion::Static) };
         let prepared = PreparedRef::new(&PhysParams::default(), &RefPose::from_placement(&pl), &[obj]);
@@ -367,8 +380,13 @@ fn indoors_the_one_cell_is_all_a_start_waits_for() {
 
 /// The dynamic crate of cell (0, 0) as a placed reference the simulation knows.
 fn sim_with_crate() -> (SimState, u32, [f32; 3]) {
-    let id = 0x0100_0000 + (100 << 12) + (100 << 4) + 5;
+    let id = fake_ref(0, 0, 5);
     let pos = [300.0 + 5.0 * 600.0, 1500.0 + 900.0, 400.0];
+    (sim_with_placed(id, pos, [0.0, 0.0, 2.0]), id, pos)
+}
+
+/// A simulation that places made-up reference `id` ([`fake_cell`]) at `pos`, turned `rot`.
+fn sim_with_placed(id: u32, pos: [f32; 3], rot: [f32; 3]) -> SimState {
     let mut table = RefTable::default();
     table.refs.insert(
         FormId(id),
@@ -383,7 +401,7 @@ fn sim_with_crate() -> (SimState, u32, [f32; 3]) {
             flags: 0,
             in_persistent_group: false,
             pos,
-            rot: [0.0, 0.0, 2.0],
+            rot,
             scale: None,
             count: None,
             ammo: None,
@@ -410,7 +428,7 @@ fn sim_with_crate() -> (SimState, u32, [f32; 3]) {
     );
     let forms: &'static FormStore = Box::leak(Box::default());
     let refs: &'static RefTable = Box::leak(Box::new(table));
-    (SimState { forms, refs, world: World::new(forms, refs, SimConfig::default()) }, id, pos)
+    SimState { forms, refs, world: World::new(forms, refs, SimConfig::default()) }
 }
 
 #[test]
@@ -444,6 +462,96 @@ fn placed_clutter_moved_by_physics_is_written_back_and_reloads_there() {
     }
     assert!(fnv_world::transform::max_diff(&b.rotation, &fnv_world::transform::ref_rotation(rot)) < 1e-4);
     assert!(!p.placed_dynamic[&id].moved, "a fresh start from where it rests");
+}
+
+/// A script's move of a reference whose collision physics never moves (a fixed box, as
+/// a STAT's) builds it again at the simulation's pose, not left at the old one (issue
+/// #1466); a repose where it already stands builds nothing.
+#[test]
+fn a_script_moved_fixed_reference_collides_at_its_new_pose() {
+    let d = play_data();
+    let id = fake_ref(0, 0, 1);
+    let placed = [300.0 + 600.0, 1500.0 + 900.0, 60.0];
+    let mut sim = sim_with_placed(id, placed, [0.0, 0.0, 0.4]);
+    let mut p = state(true);
+    p.load(&LoadCtx { d: &d, sim: &sim, data: None }, PhysCell::Exterior(0, 0));
+    assert!(p.has_collision(id) && !p.placed_dynamic.contains_key(&id), "fixed collision, not one dynamic body");
+    let built = p.refs_built;
+    // Told of a move it has not made: nothing built.
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id, 0.0);
+    assert_eq!(p.refs_built, built);
+    // SetPos and SetAngle.
+    let (to, angles) = ([placed[0] + 400.0, placed[1] - 200.0, placed[2] + 30.0], [0.0, 0.0, 1.2]);
+    {
+        let s = sim.world.get(FormId(id)).expect("placed");
+        s.pos = to;
+        s.rot = angles;
+    }
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id, 0.0);
+    assert_eq!(p.refs_built, built + 1, "built again");
+    let bodies = p.world.ref_bodies(id);
+    assert_eq!(bodies.len(), 1);
+    for i in 0..3 {
+        assert!((bodies[0].translation[i] - to[i]).abs() < 1e-2, "{:?} against {to:?}", bodies[0]);
+    }
+    assert!(fnv_world::transform::max_diff(&bodies[0].rotation, &fnv_world::transform::ref_rotation(angles)) < 1e-4);
+    // Where it was built now: nothing more.
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id, 0.0);
+    assert_eq!(p.refs_built, built + 1);
+}
+
+/// A script that turns a fixed reference a little every frame (Rotate, 10 degrees a
+/// second at 60 frames a second) does not build its collision again every frame: only
+/// when it strays [`super::REPOSE_NOW_ANGLE`] from its build, and once when it rests.
+#[test]
+fn a_reference_turned_every_frame_is_built_again_a_bounded_number_of_times() {
+    let d = play_data();
+    let id = fake_ref(0, 0, 1);
+    let placed = [300.0 + 600.0, 1500.0 + 900.0, 60.0];
+    let mut sim = sim_with_placed(id, placed, [0.0, 0.0, 0.4]);
+    let mut p = state(true);
+    p.load(&LoadCtx { d: &d, sim: &sim, data: None }, PhysCell::Exterior(0, 0));
+    assert!(p.has_collision(id) && !p.placed_dynamic.contains_key(&id));
+    let (dt, frames) = (1.0 / 60.0, 180);
+    let step = 10f32.to_radians() * dt as f32;
+    for f in 1..=frames {
+        sim.world.get(FormId(id)).expect("placed").rot[2] += step;
+        let now = f as f64 * dt;
+        let ctx = LoadCtx { d: &d, sim: &sim, data: None };
+        p.repose_ref(&ctx, id, now);
+        p.flush_reposes(&ctx, now);
+    }
+    // 30 degrees in 3 s: twice past 15 degrees from the last build, at most.
+    assert!(p.reposes <= 2, "built again {} times in {frames} frames", p.reposes);
+    assert!(p.repose_waiting(id), "the last turn waits for it to rest");
+    // It rests: built once more, where the script left it.
+    let rest = frames as f64 * dt + super::REPOSE_SETTLE;
+    let before = p.reposes;
+    p.flush_reposes(&LoadCtx { d: &d, sim: &sim, data: None }, rest);
+    assert_eq!(p.reposes, before + 1);
+    assert!(!p.repose_waiting(id));
+    let rot = fnv_world::transform::ref_rotation([0.0, 0.0, 0.4 + step * frames as f32]);
+    assert!(fnv_world::transform::max_diff(&p.world.ref_bodies(id)[0].rotation, &rot) < 1e-3);
+    p.flush_reposes(&LoadCtx { d: &d, sim: &sim, data: None }, rest + 1.0);
+    assert_eq!(p.reposes, before + 1, "nothing more once built where it rests");
+}
+
+/// Keyframed collision switched off (a swing trap's held bodies after let-go) stays off
+/// when a script's move builds it again.
+#[test]
+fn a_switched_off_collision_stays_off_when_built_again() {
+    let d = play_data();
+    let id = fake_ref(0, 0, 1);
+    let placed = [300.0 + 600.0, 1500.0 + 900.0, 60.0];
+    let mut sim = sim_with_placed(id, placed, [0.0, 0.0, 0.4]);
+    let mut p = PhysState { fake: Some(fake_cell_keyframed), ..state(true) };
+    p.load(&LoadCtx { d: &d, sim: &sim, data: None }, PhysCell::Exterior(0, 0));
+    assert_eq!(p.world.set_ref_keyframed_solid(id, false), 1, "its keyframed box switched off");
+    sim.world.get(FormId(id)).expect("placed").pos[0] += 400.0;
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id, 0.0);
+    assert_eq!(p.reposes, 1);
+    assert_eq!(p.world.set_ref_keyframed_solid(id, false), 0, "still off after the build");
+    assert_eq!(p.world.set_ref_keyframed_solid(id, true), 1, "and there to switch on again");
 }
 
 /// A STAT's dynamic bodies are fixed (the saloon's motorcycles, playtest list 5 item 59);
@@ -542,6 +650,7 @@ fn gate_cell(job: &Job) -> Prepared {
             teleport: false,
             emittance: None,
             imposter: false,
+            primitive: false,
         };
         let obj = CollisionObject { node: Some("Panel".into()), node_block: 1, shape: Shape::Box { half_extents: [50.0, 10.0, 100.0] }.into(), ..object(0.0, Motion::Keyframed) };
         let prepared = PreparedRef::new(&PhysParams::default(), &RefPose::from_placement(&pl), &[obj]);
@@ -605,4 +714,40 @@ fn the_pose_of_a_group_not_drawn_is_its_end_or_its_loops_start() {
     // What is drawn but not in the collision's model: the last group asked.
     assert_eq!(super::group_pose(&anim, Some(&("Other".into(), 0.7)), Some("Forward")), (Some(0), 1.0));
     assert_eq!(super::group_pose(&anim, None, None), (None, 0.0));
+}
+
+#[test]
+fn a_place_near_loaded_collision_only_is_refused_and_a_character_goes_exactly_where_told() {
+    let (d, sim) = (play_data(), sim());
+    let ctx = LoadCtx { d: &d, sim: &sim, data: None };
+    let mut p = PhysState { fake: Some(fake_cell), loader: loader::Loader::manual(), ..Default::default() };
+    let start = centre(0, 0);
+    p.stream(&ctx, start, CELLS_PER_FRAME);
+    // The loader has not delivered: only the cell underfoot is in.
+    assert!(p.ready_at(start));
+    assert!(p.ready_near(start, 256.0), "the middle of a square is far from its neighbours");
+    assert!(!p.ready_near([CELL_SIZE - 10.0, start[1], 50.0], 256.0), "the square next door is not in");
+    assert!(p.add_npc(7, [start[0] + 200.0, start[1] + 200.0, 200.0]));
+    assert_eq!(p.npc_spot(7, [CELL_SIZE - 10.0, start[1], 50.0]), Err(NpcSpotRefused::NotLoaded));
+    assert_eq!(p.npc_spot(8, start), Err(NpcSpotRefused::NotLoaded), "no character");
+    // Everything in: a spot on the sloping terrain, and the character put on it to the unit.
+    p.loader.run_manual(false);
+    for _ in 0..8 {
+        p.stream(&ctx, start, CELLS_PER_FRAME);
+    }
+    assert!(p.ready_near([CELL_SIZE - 10.0, start[1], 50.0], 256.0));
+    let ground = p.terrain_z(start[0] + 200.0, start[1] - 400.0).expect("terrain");
+    let at = [start[0] + 200.0, start[1] - 400.0, ground];
+    let feet = p.npc_spot(7, at).expect("open ground");
+    assert!((feet[2] - ground).abs() < 6.0, "{feet:?} on {ground}");
+    p.npcs.get_mut(&7).unwrap().velocity = [100.0, 0.0];
+    assert!(p.place_npc(7, feet));
+    let b = &p.npcs[&7];
+    assert_eq!((b.ch.feet, b.prev_feet, b.velocity), (feet, feet, [0.0, 0.0]));
+    assert!(!p.place_npc(8, feet));
+    // Too far over the ground for the level asked for.
+    assert_eq!(p.npc_spot(7, [at[0], at[1], ground + 1000.0]), Err(NpcSpotRefused::NoSupport));
+    // The player takes up room.
+    p.place_player(feet, 48.0, 400.0);
+    assert_eq!(p.npc_spot(7, [at[0] + 5.0, at[1], at[2]]), Err(NpcSpotRefused::NoRoom));
 }
