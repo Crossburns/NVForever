@@ -89,7 +89,14 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     up it quivers a little about where it rests, a small quick shiver [observed: owner's
     playtest 2026-11-05, against the original]; two sines of unrelated rates, about 2° in all
     at 7 and 12 a second, are [hypothesis]. The travel and the log are without the quiver.
-  - `TabKnob`, about its shape's local Z, its shaft: the page's tab, not the page (tab 0 of
+  - `TabKnob`, about its shaft, which is not its shape's local Z: the mesh is a tapered
+    cylinder about Z whose top cap is slanted 15° towards −Y [observed: `fnvtool nif decode`],
+    and the original's cap stays identical at every tab while a turn about Z swung the body
+    on its plate by about 18 pixels at 1280 × 720 [observed: this engine's shots against the
+    private job's, 2026-11-05]; the shaft used is 20° towards −Y through the body's centre
+    (`pipboy_controls.rs` `KNOB_AXIS`, `KNOB_PIVOT`), which keeps the body within about 2
+    pixels of still [observed: the same shots; hypothesis: the last 5° of tilt]. The turn
+    itself: the page's tab, not the page (tab 0 of
     STATS, ITEMS and DATA look the same, and the wrap comes back), five detents at the dial's
     marks: a constant step of 26° with the bind pose at tab 3 lands within 2° of the shots
     [observed: private job pipboy_special_device_motion; the step fitted]. A step is over in

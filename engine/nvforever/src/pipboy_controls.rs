@@ -22,6 +22,11 @@
 //! [hypothesis: nothing was captured down]. The first reading is taken at once, so a loaded
 //! game's needle does not sweep up. While the Pip-Boy is up the needle quivers a little about
 //! where it rests ([`NEEDLE_QUIVER`]); the travel and the log are without the quiver.
+//!
+//! The knob turns about its shaft ([`KNOB_AXIS`] through [`KNOB_PIVOT`], in its shape's frame),
+//! not about its shape's origin, which is off the shaft. Debug aid (a development tool, not
+//! for play): `NVF_PLAY_DEBUG_KNOB_AXIS=ax,ay,az;px,py,pz[;zero[;sense]]` tries another shaft,
+//! zero and sense ([`KnobGeometry`]).
 
 use crate::pipboy_arm::{PartMesh, PipBoyPart};
 use bevy::mesh::skinning::SkinnedMesh;
@@ -61,6 +66,23 @@ const NEEDLE_SPEED: f32 = 30.0;
 /// pipboy_special_device_motion; the step fitted].
 const KNOB_BIND_TAB: i32 = 3;
 const KNOB_DEGREES_PER_TAB: f32 = 26.0;
+/// The knob's shaft in its shape's own frame, and a point on it. The shape's local Z is not
+/// the shaft: a turn about it swung the knob's body on its plate by about 18 pixels at 1280 ×
+/// 720 while the original's stays within 4 [observed: shots of this engine against the
+/// private job pipboy_special_device_motion, 2026-11-05]. The mesh is a tapered cylinder
+/// about local Z whose top cap is slanted: the cap's normal is 15° from Z, leaning towards
+/// −Y [observed: `fnvtool nif decode`, the cap's vertices], and the original's cap stays
+/// identical at every tab, so the shaft is the cap's normal, not the body's axis. Fitted in
+/// the game with the debug aid `NVF_PLAY_DEBUG_KNOB_AXIS` (module docs): 20° towards −Y
+/// (compass 264°) through the body's centre keeps the body within about 2 pixels of still at
+/// every tab [observed: the same shots; hypothesis: the last 5° of tilt, which the shots
+/// cannot separate from the cap's own 15°].
+const KNOB_AXIS: [f32; 3] = [-0.0334, -0.3404, 0.9397];
+const KNOB_PIVOT: [f32; 3] = [-0.0077, -0.0596, 0.0];
+/// Degrees added to the knob's turn, and the sense of the turn (+1 or -1), so the fin is at
+/// the dial's marks: 72° clockwise from up at tab 0 and 26° a tab on [observed: the capture].
+const KNOB_ZERO: f32 = 0.0;
+const KNOB_SENSE: f32 = 1.0;
 /// Degrees a second. [observed: private job pipboy_special_device_motion: a step is over
 /// within about 8 game loops; hypothesis: the rate of those loops, and that the wrap from tab
 /// 4 to 0 swings back at the same speed.]
@@ -121,6 +143,55 @@ pub fn knob_angle(tab: usize) -> f32 {
     (KNOB_BIND_TAB - tab as i32) as f32 * KNOB_DEGREES_PER_TAB
 }
 
+/// The knob's axis, pivot, zero and sense: the constants, or the debug aid's
+/// `NVF_PLAY_DEBUG_KNOB_AXIS=ax,ay,az;px,py,pz[;zero[;sense]]` (a development tool for
+/// trying candidates in the game; unset in play).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KnobGeometry {
+    pub axis: Vec3,
+    pub pivot: Vec3,
+    pub zero: f32,
+    pub sense: f32,
+}
+
+impl Default for KnobGeometry {
+    fn default() -> Self {
+        KnobGeometry { axis: Vec3::from_array(KNOB_AXIS).normalize(), pivot: Vec3::from_array(KNOB_PIVOT), zero: KNOB_ZERO, sense: KNOB_SENSE }
+    }
+}
+
+impl KnobGeometry {
+    /// Parse the aid's value; `None` for a malformed one.
+    pub fn parse(s: &str) -> Option<KnobGeometry> {
+        let mut parts = s.split(';');
+        let vec = |p: &str| -> Option<Vec3> {
+            let v: Vec<f32> = p.split(',').map(|x| x.trim().parse().ok()).collect::<Option<_>>()?;
+            (v.len() == 3).then(|| Vec3::new(v[0], v[1], v[2]))
+        };
+        let axis = vec(parts.next()?)?.try_normalize()?;
+        let pivot = vec(parts.next()?)?;
+        let zero = parts.next().map(|z| z.trim().parse().ok()).unwrap_or(Some(KNOB_ZERO))?;
+        let sense = parts.next().map(|z| z.trim().parse().ok()).unwrap_or(Some(KNOB_SENSE))?;
+        Some(KnobGeometry { axis, pivot, zero, sense })
+    }
+
+    fn from_env() -> KnobGeometry {
+        match std::env::var("NVF_PLAY_DEBUG_KNOB_AXIS") {
+            Ok(v) => match KnobGeometry::parse(&v) {
+                Some(k) => {
+                    warn!("debug aid NVF_PLAY_DEBUG_KNOB_AXIS: tab knob axis {:?}, pivot {:?}, zero {} deg, sense {}", k.axis, k.pivot, k.zero, k.sense);
+                    k
+                }
+                None => {
+                    warn!("NVF_PLAY_DEBUG_KNOB_AXIS: cannot read {v:?}; the knob's own geometry is used");
+                    KnobGeometry::default()
+                }
+            },
+            Err(_) => KnobGeometry::default(),
+        }
+    }
+}
+
 /// Where the wheel turns to for row `row`, degrees about its axle from its bind pose.
 pub fn wheel_angle(row: usize) -> f32 {
     row as f32 * WHEEL_DEGREES_PER_ROW
@@ -137,7 +208,8 @@ pub fn needle_quiver(seconds: f32) -> f32 {
 }
 
 /// The most the quiver takes the needle from where it rests.
-pub fn needle_quiver_most() -> f32 {
+#[cfg(test)]
+fn needle_quiver_most() -> f32 {
     NEEDLE_QUIVER.iter().map(|(d, _)| d).sum()
 }
 
@@ -195,12 +267,21 @@ pub struct ControlAngles {
     up_for: Option<f32>,
     /// The needle quivers ([`NEEDLE_QUIVER`]); tests of the travel turn it off.
     pub quiver: bool,
+    /// The knob's shaft ([`KnobGeometry`]).
+    pub knob_geometry: KnobGeometry,
 }
 
 impl Default for ControlAngles {
     fn default() -> Self {
-        ControlAngles { needle: Turn::at(needle_angle(0.0)), knob: Turn::at(knob_angle(0)), wheel: Turn::at(wheel_angle(0)), last: Readings::default(), skips_said: [false; 3], up_for: None, quiver: true }
+        ControlAngles { needle: Turn::at(needle_angle(0.0)), knob: Turn::at(knob_angle(0)), wheel: Turn::at(wheel_angle(0)), last: Readings::default(), skips_said: [false; 3], up_for: None, quiver: true, knob_geometry: KnobGeometry::from_env() }
     }
+}
+
+/// A control's axis and a point on it, in the shape's own frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shaft {
+    pub axis: Vec3,
+    pub pivot: Vec3,
 }
 
 /// What the game says the controls should show this frame; `None` keeps a control's place.
@@ -240,13 +321,17 @@ impl ControlAngles {
         }
     }
 
-    /// The axis (in the shape's own space) and degrees of a part, if it is a control: the
-    /// needle with its quiver while the Pip-Boy is up.
-    fn of(&self, part: PipBoyPart) -> Option<(Vec3, f32)> {
+    /// The shaft (in the shape's own space) and degrees of a part, if it is a control: the
+    /// needle with its quiver while the Pip-Boy is up; the knob with its zero and sense.
+    fn of(&self, part: PipBoyPart) -> Option<(Shaft, f32)> {
+        let origin = |axis| Shaft { axis, pivot: Vec3::ZERO };
         match part {
-            PipBoyPart::Needle => Some((Vec3::Z, self.needle.angle + self.up_for.filter(|_| self.quiver).map_or(0.0, needle_quiver))),
-            PipBoyPart::TabKnob => Some((Vec3::Z, self.knob.angle)),
-            PipBoyPart::ScrollKnob => Some((Vec3::X, self.wheel.angle)),
+            PipBoyPart::Needle => Some((origin(Vec3::Z), self.needle.angle + self.up_for.filter(|_| self.quiver).map_or(0.0, needle_quiver))),
+            PipBoyPart::TabKnob => {
+                let k = self.knob_geometry;
+                Some((Shaft { axis: k.axis, pivot: k.pivot }, k.sense * self.knob.angle + k.zero))
+            }
+            PipBoyPart::ScrollKnob => Some((origin(Vec3::X), self.wheel.angle)),
             _ => None,
         }
     }
@@ -258,16 +343,18 @@ pub struct ControlBind(Option<Transform>);
 
 type ControlShapes<'w, 's> = Query<'w, 's, (Entity, &'static PipBoyPart, &'static mut Transform, &'static PartMesh, Option<&'static SkinnedMesh>, Option<&'static ControlBind>)>;
 
-/// `bind × rotation`.
-fn posed(bind: &Transform, axis: Vec3, degrees: f32) -> Transform {
-    bind.mul_transform(Transform::from_rotation(Quat::from_axis_angle(axis, degrees.to_radians())))
+/// `bind × rotation` about the shaft: the turn about `axis` through `pivot`, in the shape's
+/// own frame (`T(pivot) × R × T(−pivot)`); a pivot at the origin is a plain rotation.
+fn posed(bind: &Transform, shaft: Shaft, degrees: f32) -> Transform {
+    let r = Quat::from_axis_angle(shaft.axis, degrees.to_radians());
+    bind.mul_transform(Transform { translation: shaft.pivot - r * shaft.pivot, rotation: r, scale: Vec3::ONE })
 }
 
 /// Move the controls on and pose every control of the rig from its own bind.
 fn pose_controls(commands: &mut Commands, r: Readings, dt: f32, angles: &mut ControlAngles, shapes: &mut ControlShapes) {
     angles.advance(r, dt);
     for (e, part, mut t, mesh, skin, bind) in shapes {
-        let Some((axis, degrees)) = angles.of(*part) else { continue };
+        let Some((shaft, degrees)) = angles.of(*part) else { continue };
         let bind = match bind {
             Some(b) => b.0,
             None => {
@@ -277,12 +364,23 @@ fn pose_controls(commands: &mut Commands, r: Readings, dt: f32, angles: &mut Con
                     angles.say_skip(*part, why);
                 }
                 let bind = why.is_none().then_some(*t);
+                if bind.is_some() {
+                    let (x, y, z) = t.rotation.to_euler(EulerRot::XYZ);
+                    let bounds = match mesh.0.attribute(Mesh::ATTRIBUTE_POSITION) {
+                        Some(VertexAttributeValues::Float32x3(p)) => {
+                            let (lo, hi) = p.iter().fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(lo, hi), v| (lo.min(Vec3::from_array(*v)), hi.max(Vec3::from_array(*v))));
+                            format!("{} vertices, bounds {lo:?} to {hi:?}, first {:?}", p.len(), p.first())
+                        }
+                        _ => "no positions".to_string(),
+                    };
+                    info!("pipboy: {part:?} bound at {:?}, rotation XYZ ({:.1}, {:.1}, {:.1}) deg, scale {:?}; mesh {bounds}", t.translation, x.to_degrees(), y.to_degrees(), z.to_degrees(), t.scale);
+                }
                 commands.entity(e).insert(ControlBind(bind));
                 bind
             }
         };
         let Some(bind) = bind else { continue };
-        let want = posed(&bind, axis, degrees);
+        let want = posed(&bind, shaft, degrees);
         if *t != want {
             *t = want;
         }
@@ -444,6 +542,28 @@ mod tests {
         assert!((tip(&app, wheel, Vec3::Y) - bind().transform_point(Vec3::NEG_Y)).length() < 1e-4);
         assert!((tip(&app, wheel, Vec3::X) - bind().transform_point(Vec3::X)).length() < 1e-4);
         assert_eq!(*app.world().get::<Transform>(other).unwrap(), bind(), "not a control");
+    }
+
+    #[test]
+    fn a_turn_about_a_shaft_off_the_origin_keeps_the_shaft_where_it_is() {
+        let shaft = Shaft { axis: Vec3::Y, pivot: Vec3::new(0.3, 0.0, 0.1) };
+        let b = bind();
+        let t = posed(&b, shaft, 90.0);
+        // Two points of the shaft stay; a point off it goes round it.
+        for p in [shaft.pivot, shaft.pivot + Vec3::Y] {
+            assert!((t.transform_point(p) - b.transform_point(p)).length() < 1e-5, "{p}");
+        }
+        let off = shaft.pivot + Vec3::X;
+        assert!((t.transform_point(off) - b.transform_point(shaft.pivot - Vec3::Z)).length() < 1e-5, "90° about Y takes X to −Z");
+        assert_eq!(posed(&b, Shaft { axis: Vec3::Z, pivot: Vec3::ZERO }, 0.0), b);
+        // The aid's value.
+        let k = KnobGeometry::parse("0,0,1;0.1,0.2,0.3").unwrap();
+        assert_eq!((k.axis, k.pivot, k.zero, k.sense), (Vec3::Z, Vec3::new(0.1, 0.2, 0.3), KNOB_ZERO, KNOB_SENSE));
+        let k = KnobGeometry::parse(" 0, 2, 0 ; 0,0,0 ; -12.5 ; -1").unwrap();
+        assert_eq!((k.axis, k.zero, k.sense), (Vec3::Y, -12.5, -1.0));
+        assert_eq!(KnobGeometry::parse("0,0;1,2,3"), None);
+        assert_eq!(KnobGeometry::parse("0,0,0;1,2,3"), None, "no axis");
+        assert_eq!(KnobGeometry::parse("1,0,0;1,2,3;x"), None);
     }
 
     #[test]
