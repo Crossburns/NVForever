@@ -115,10 +115,10 @@ impl GameStart {
 
 /// The start's warning when `sCharGenQuest` names no quest the load order can start
 /// (issue #1394): the player is then left at the New Vegas opening, easy to mistake for
-/// the INI line being ignored. A mod's start quest (Tale of Two Wastelands' `001FFFF8`)
-/// is not a quest until its plugin is enabled in NVForever's own `plugins.txt`; NVForever
-/// reads only its own `NVForever.ini`, never the original's `Fallout.ini`
-/// (docs/design/install-layout.md).
+/// the INI line being ignored. A mod's start quest (Tale of Two Wastelands' `001FFFF8`) is
+/// not a quest until its plugin is enabled in NVForever's own `plugins.txt`
+/// [observed: `fnvtool esm decode`, FalloutNV.esm has no `001FFFF8`]; NVForever reads only
+/// its own `NVForever.ini`, never the original's `Fallout.ini` (docs/design/install-layout.md).
 pub fn not_a_quest(value: &str, resolved: FormId) -> String {
     format!(
         "{value} ({resolved}) is not a quest in the load order; New Game starts nothing and \

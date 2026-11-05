@@ -17,10 +17,10 @@ The home is beside the original game's own `My Games\FalloutNV` (owner request
 gigabytes and Documents is often synced (OneDrive).
 
 Never touched at all: the original game's user folder
-`%USERPROFILE%\Documents\My Games\FalloutNV` (its `Fallout.ini`, `FalloutPrefs.ini` and
-saves) and its plugin list `%LOCALAPPDATA%\FalloutNV\plugins.txt` [observed: there, not in
-`My Games`, on the owner's PC]. NVForever keeps its own settings, saves and load order, so
-playing either game never changes the other.
+`%USERPROFILE%\Documents\My Games\FalloutNV` (its `Fallout.ini`, `FalloutPrefs.ini`,
+`FalloutCustom.ini` and saves) and its plugin list `%LOCALAPPDATA%\FalloutNV\plugins.txt`
+[observed: there, not in `My Games`, on the owner's PC]. NVForever keeps its own settings,
+saves and load order, so playing either game never changes the other.
 
 The one exception: a start from Mod Organizer 2 reads that `plugins.txt` path, where MO2's
 hook shows the program its profile's list instead of the game's file (next section).
