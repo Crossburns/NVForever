@@ -238,6 +238,8 @@ pub(crate) mod test_world {
     pub(crate) fn sim(bases: Vec<BaseForm>, placed: Vec<PlacedRef>) -> SimState {
         let mut forms = FormStore::default();
         for b in bases.into_iter().chain([base(FormId::PLAYER_BASE.0, BaseData::Actor(ActorBase { entries: Vec::new(), attributes: None }))]) {
+            // `World::place` knows a form by its signature.
+            forms.sigs.insert(b.id, b.sig);
             forms.bases.insert(b.id, b);
         }
         let mut refs = RefTable::default();
