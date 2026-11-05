@@ -487,6 +487,21 @@ fn data_reads_quest_stages_conditions_and_units() {
     assert_eq!(d.messages[&FormId(MESSAGE)].buttons, vec!["Yes", "No"]);
 }
 
+/// An answered box its script never reads stays in `message_box` but no longer waits
+/// (#1649: saving was refused for a whole session after a mod's start-up warning box).
+#[test]
+fn an_answered_box_no_longer_waits_though_its_button_is_unread() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert!(g.message_box.as_ref().is_some_and(|b| b.waiting()));
+    g.press_button(0).unwrap();
+    let b = g.message_box.as_ref().expect("kept for its script's GetButtonPressed");
+    assert_eq!(b.pressed, Some(0));
+    assert!(!b.waiting());
+}
+
 #[test]
 fn hand_activation_runs_on_activate_instead_of_the_default() {
     let f = fixture();

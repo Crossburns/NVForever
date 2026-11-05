@@ -787,11 +787,14 @@ impl Runtime {
             debug!("script: {n} x {item} reached the player's inventory outside scripts");
             g.item_event(FormId::PLAYER_REF, *item, event::ON_ADD, player);
         }
-        for item in &changes.equipped {
-            g.equip_events(FormId::PLAYER_REF, *item, false);
-        }
+        // What was taken off before what was put on, as the other equip paths do
+        // (docs/spec-notes/ext-events.md; #1616): on a swap the old item's OnUnequip
+        // must not undo what the new item's OnEquip has set.
         for item in &changes.unequipped {
             g.item_event(FormId::PLAYER_REF, *item, event::ON_UNEQUIP, player);
+        }
+        for item in &changes.equipped {
+            g.equip_events(FormId::PLAYER_REF, *item, false);
         }
         for (item, _) in changes.removed.iter().filter(|(i, _)| dropped.contains(i)) {
             g.item_event(FormId::PLAYER_REF, *item, event::ON_DROP, player);

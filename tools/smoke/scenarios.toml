@@ -6284,6 +6284,26 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-after-answered-box"
+source = "#1649 (a user's report): after a mod's MessageBoxEx warning was answered, every save was refused for the rest of the session with \"a script's menu or message box is open\": the answered box stayed in the game's message box until its script read the button, which a fire-and-forget box never does"
+note = "the console's MessageBoxEx box is answered by NVF_PLAY_TEST_SCRIPT_MENUS after 1 s and nothing reads its button, as with the mods' start-up warnings; the console's save comes after"
+areas = ["save", "scripts"]
+paths = ["engine/nvf-play/src/save.rs", "crates/fnv-game/src/functions/misc.rs"]
+env = { NVFOREVER_HOME = "save-box-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "20:MessageBoxEx \"nvf answered box|Ok\";20.3:close;24:save nvf-after-box;25:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 27
+expect = [
+  { re = 'script: menu 1001 .*answered', label = "the box is answered" },
+  { re = 'save: wrote .*nvf-after-box\.nvfsave \(manual, ', label = "the save after the answered box is written" },
+  { re = 'save: not now', count = 0, label = "no save is refused" },
+]
+order = [[
+  { re = 'console: MessageBoxEx "nvf answered box\|Ok" >> ran' },
+  { re = 'script: menu 1001 .*answered' },
+  { re = 'save: wrote .*nvf-after-box\.nvfsave' },
+]]
+
+[[scenario]]
 name = "save-load"
 source = "owner 2026-10-15: save and load (docs/design/save-load.md): the second half of the round trip: --load the save save-write made and find its changes"
 areas = ["save"]
@@ -6300,6 +6320,23 @@ expect = [
   { re = 'console: GetActorValue on player >> 9\.00', label = "the player's Luck came back" },
   { re = 'console: GetPos on player >> -683\d\d\.', label = "the player stands where the save was made" },
 ]
+
+[[scenario]]
+name = "save-refused-when-dead"
+source = "issue #1572: every way of saving is refused from the player's death on (docs/design/save-load.md)"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs"]
+note = "player.kill at 14 s; the QuickSave key at 15.5 s and 17 s (the second while the screen is going black) and a console save at 19 s are all refused, and nothing is written. NVFOREVER_HOME keeps the run off the real quicksave."
+env = { NVFOREVER_HOME = "save-dead-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.kill;14.3:close;19:save dead-save;19.5:close", NVF_PLAY_TEST_KEYS = "15.5:f5,17:f5" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'combat: the player died', label = "the player dies" },
+  { text = "save: QuickSave key", min = 2, label = "both F5 presses reach the save code" },
+  { text = "save: not now: the player is dead", min = 3, label = "both quicksaves and the console save are refused" },
+  { re = 'save: wrote ', count = 0, label = "nothing is written" },
+]
+order = [["combat: the player died", "save: QuickSave key", "save: not now: the player is dead"]]
 
 [[scenario]]
 name = "save-ai-write"
@@ -8523,6 +8560,23 @@ expect = [
   { re = 'player weapon model \(First person\): a sighting node: aimed with the down-the-sights clips', label = "the pistol still plays its down-the-sights clips" },
   { re = 'crosshair: hidden down the true iron sights', label = "no crosshair down the sights" },
   { re = 'crosshair: shown again', label = "the crosshair is back after aiming" },
+]
+
+[[scenario]]
+name = "aim-reload-lowers-sights"
+source = "owner's report #1642: a reload or a jam while aiming down the sights plays with the sights still up; they should come down for it and go back up after while Block is held (engine/nvf-play/src/combat.rs sights_held_down, aim_zoom.rs)"
+note = "the 10mm pistol (0000434F) drawn at 9 s, Block held from 12 s to 19 s, one shot at 12.5 s, a reload at 14 s (no god mode: it keeps the magazine full, so there would be nothing to reload)"
+areas = ["combat", "camera"]
+paths = ["engine/nvf-play/src/aim_zoom.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/iron_sights.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_CONTROL = "9:weapon,12:aim,12.5:fire,12.6:fire,14:reload,19:aim" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12"]
+run_seconds = 23
+expect = [
+  { re = 'aim zoom: \S+ \(\S+\) sight FOV', label = "aiming zooms in" },
+  { re = 'aim zoom: back to the unzoomed view', label = "the reload zooms back out with Block still held" },
+  { re = 'combat: reloaded \d+', label = "the reload finishes" },
+  { re = 'aim zoom: \S+ \(\S+\) sight FOV', label = "after the reload the sights come back up on their own" },
+  { re = 'aim zoom: back to the unzoomed view', label = "letting go of Block zooms out at the end" },
 ]
 
 [[scenario]]
@@ -10764,6 +10818,22 @@ expect = [
   { text = "menu: One: 9mm Pistol can't be equipped", label = "locked off: the inventory cannot put it on" },
   { text = "menu: One: Unequipped 9mm Pistol", label = "a plain EquipItem freed it" },
 ]
+
+[[scenario]]
+name = "equip-swap-unequip-first"
+source = "issue #1616: swapping apparel from the inventory runs the old item's OnUnequip before the new item's OnEquip (docs/spec-notes/ext-events.md)"
+note = "The player puts on a Powder Gang outfit (ArmorNVPGSimple 000A4731, script PowderGangOutfitWarningScript SCPT 00134B71) at 14 s, then a Great Khan outfit (ArmorNVGKSimple 000E674C, KhanFactionOutfitWarningScript SCPT 00134B70) in its place at 19 s, through the test aid's plain equip (the inventory menu's path)"
+areas = ["scripts"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_events.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GIVE = "000A4731:1,000E674C:1", NVF_PLAY_TEST_CONTROL = "14:equip=000A4731,19:equip=000E674C" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'script: OnEquip of FalloutNV\.esm\|SCPT 0x00134B71 ran on Some\(0x00000014\)', label = "the Powder Gang outfit's OnEquip runs" },
+  { re = 'script: OnUnequip of FalloutNV\.esm\|SCPT 0x00134B71 ran on Some\(0x00000014\)', label = "the swap runs its OnUnequip" },
+  { re = 'script: OnEquip of FalloutNV\.esm\|SCPT 0x00134B70 ran on Some\(0x00000014\)', label = "the Khan outfit's OnEquip runs" },
+]
+order = [["test aid: the player equips 0x000E674C", "script: OnUnequip of FalloutNV.esm|SCPT 0x00134B71", "script: OnEquip of FalloutNV.esm|SCPT 0x00134B70"]]
 
 [[scenario]]
 name = "move-to-marker-fade"
@@ -19019,6 +19089,22 @@ expect = [
 order = [["nvf mcm install check 1", "tiles: a mod's tiles in StartMenu", "pause menu: mods page", "scripts: MenuMode 1013 blocks run", "pause menu: mods page closed", "nvf mcm install check 0"]]
 
 [[scenario]]
+name = "dropped-clothes-fall"
+source = "issue #1604: clothing dropped from the inventory hung in the air: its folded ground model (armour MOD2, GO.NIF) is 2-4 dynamic bodies on hinges, and the drawn item follows one body only. Created references whose model's bodies are all dynamic now get one body (engine/nvf-play/src/phys.rs one_dynamic_body; simulation.md §5)"
+note = "Goodsprings, by the player: the Pre-War Spring Outfit, Leather Armor, Merc Charmer Outfit and Vault 21 Jumpsuit dropped from 8 s to 11 s from chest height, then the 10mm pistol at 12 s as a control; the ground is about 85 units below the drop point"
+areas = ["physics", "items"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvf-play/src/dropped.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "000340D0:1,00020423:1,00034122:1,00104184:1,0000434F:1", NVF_PLAY_TEST_DROP = "8:000340D0,9:00020423,10:00034122,11:00104184,12:0000434F" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'dropped reference 0xFF00000[0-3] drawn: meshes.armor.\S+.go\.nif', count = 4, label = "each piece of clothing draws its folded ground model" },
+  { re = 'collision of dropped 0xFF00000[0-3] added: meshes.armor.\S+.go\.nif, 1 bodies \(dynamic\).*: the model.s [24] dynamic bodies joined into one', count = 4, label = "their bodies are joined into one" },
+  { re = 'dropped 0xFF00000[0-3] came to rest at', count = 4, label = "each piece of clothing comes to rest" },
+  { re = 'dropped 0xFF00000[0-4] came to rest at .*, (?P<n>[\d.]+) below where its collision was added', range = [60, 120], all = true, label = "on the ground, about 85 units below the drop point, as the pistol" },
+]
+
+[[scenario]]
 name = "script-move-dynamic-clutter"
 source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
 note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"
@@ -19265,3 +19351,19 @@ expect = [
   { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1, label = "the ln_ file runs once the new game begins" },
 ]
 order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]
+
+[[scenario]]
+name = "language-choice"
+source = "#1443: the settings page's Language row lists the languages found in the lang folders (NVF_LANG_DIR here, a made-up one), takes one at once and draws the page again; a broken language file is skipped with a warning"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/language.rs", "crates/fnv-util/src/words.rs", "engine/nvf-play/src/pause.rs", "tools/smoke/fixtures/lang/xx.toml"]
+env = { NVF_LANG_DIR = "{repo}/tools/smoke/fixtures/lang", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:language=Smoke Language,13:language=English" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = ["warning: language file skipped: ", "broken.toml"]
+order = [[
+  "language: xx",
+  "settings: language Smoke Language",
+  "language: en",
+  "settings: language English",
+]]
