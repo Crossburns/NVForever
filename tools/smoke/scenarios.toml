@@ -11290,6 +11290,25 @@ expect = [
 forbid = [{ re = 'attack anims summary: .*without a clip: .*mistergutsy', label = "no attack of Mister Handy's or Gutsy's without a clip" }]
 
 [[scenario]]
+name = "body-weapons-sentry-blast"
+source = "#1621: a creature's body gun suits no target within its own blast (fnv_combat::body_weapon, docs/design/combat-ai.md §19); before, a Hardened Sentry Bot took up its missile launcher at 3 and 420 units, held fire within its 1000-unit blast and never took up its minigun again"
+note = "a sentry bot (CrSentryBotMGHard: SentryBotMinigun2HR, SentryBotMissileLauncher2HL, both Min Range 500) created 500 units from the player in Goodsprings at 3 s (the first created reference, 0xFF000000) and set on the player at 4 s, the nearby coyotes (VERGSCoyote1-6REF) disabled first so it fights the player alone; god mode. Its fight stays within the blast (1000 units), so it keeps its minigun throughout"
+areas = ["combat", "creatures"]
+paths = ["engine/nvforever/src/body_weapons.rs", "crates/fnv-combat/src/body_weapon.rs", "engine/nvforever/src/npc_combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "2:call:VERGSCoyote1REF:Disable,2.1:call:VERGSCoyote2REF:Disable,2.2:call:VERGSCoyote3REF:Disable,2.3:call:VERGSCoyote4REF:Disable,2.4:call:VERGSCoyote5REF:Disable,2.5:call:VERGSCoyote6REF:Disable,3:call:player:PlaceAtMe:CrSentryBotMGHard:1:500:0,4:combat:0xFF000000:player" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'body weapons: \S+ \S+ fights with .*SentryBotMissileLauncher2HL.*; first SentryBotMinigun2HR', label = "the sentry bot's arms, the minigun first" },
+  { re = 'npc combat: .* opens fire on .* from (?P<n>\d+) units', range = [0, 1000], label = "it opens fire within the launcher's blast" },
+  { re = 'npc combat summary: .*?(?P<n>\d+) shots', range = [20, 100000], label = "it keeps firing" },
+]
+forbid = [
+  { re = 'body weapons: \S+ switches from \S+ to SentryBotMissileLauncher2HL', label = "no launcher inside its blast" },
+  { re = "holds fire: .* is within its weapon's blast", label = "no shot held for its own blast" },
+]
+
+[[scenario]]
 name = "ghost-tumbleweed"
 source = "ESM full audit gap 1 (docs/spec-notes/actor-flags.md §3): a creature flagged Is Ghost (CREA ACBS bit 29, a tumbleweed) lets shots pass through it, as SetGhost 1 does (GECK wiki SetGhost: Projectiles pass through them)"
 note = "a tumbleweed (NVCRTumbleweed) placed at the player (GOD) at 3 s; the player shoots at it with a 10mm pistol"

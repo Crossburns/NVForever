@@ -10,13 +10,20 @@
 //! further away than this value" [documented: GECK wiki Weapons].
 //!
 //! - A melee arm is for a target within [`CLOSE`].
-//! - A gun suits a target between its Min Range and its Max Range (0: no limit).
+//! - A gun suits a target between its Min Range and its Max Range (0: no limit), and
+//!   beyond its own explosion's radius ([`Arm::blast`]): `npc_combat` holds fire at a
+//!   target within its blast, so a launcher taken up there would never fire [design;
+//!   before, a Hardened Sentry Bot took up its missile launcher at 3 and 420 units, held
+//!   fire within its 1000-unit blast and never took up its minigun again, observed
+//!   2026-11-05, #1621]. A fresh choice wants the target beyond the blast by
+//!   [`KEEP_SLACK`]; the arm in use is kept down to the blast itself, never within it.
 //! - The arm in use is kept while the target stays within its band widened by
 //!   [`KEEP_SLACK`], so a target on the edge does not make it switch back and forth.
 //! - Otherwise: a melee arm when one suits; else the gun that suits with the most damage
 //!   per second; else, the target beyond every gun's reach, the gun that reaches furthest
 //!   (it closes in with it); else, the target nearer than every gun's Min Range, the
-//!   melee arm if there is one, else the gun with the smallest Min Range.
+//!   melee arm if there is one, else the gun with the smallest Min Range (its blast
+//!   counted as one).
 //! - An arm that cannot be used (its limb crippled to 0, the caller's rule) is left out;
 //!   with none left there is no choice.
 
@@ -28,6 +35,10 @@ pub struct Arm {
     /// WEAP DNAM Min Range and Max Range, units (0: no limit); unused for melee.
     pub min_range: f32,
     pub max_range: f32,
+    /// Its projectile's explosion radius, units: it suits no target nearer (module
+    /// notes); 0 without one, or when its combat style has Ignore Damaging Self (as
+    /// `npc_combat`'s blast hold has it).
+    pub blast: f32,
     /// Damage per second ([`damage_per_second`]), to rank guns that both suit.
     pub dps: f32,
     pub usable: bool,
@@ -63,8 +74,20 @@ pub fn suits(a: &Arm, d: f32, slack: f32) -> bool {
     if a.melee {
         d <= CLOSE * (1.0 + slack)
     } else {
-        d >= a.min_range * (1.0 - slack) && (a.max_range <= 0.0 || d <= a.max_range * (1.0 + slack))
+        d >= a.min_range * (1.0 - slack) && d >= blast_floor(a, slack) && (a.max_range <= 0.0 || d <= a.max_range * (1.0 + slack))
     }
+}
+
+/// The nearest target a gun's blast lets it suit: the radius widened outward by
+/// [`KEEP_SLACK`] less `slack`, so a fresh choice (no slack) wants the target clear of
+/// the blast and the arm in use keeps to the radius itself (module notes).
+fn blast_floor(a: &Arm, slack: f32) -> f32 {
+    a.blast * (1.0 + (KEEP_SLACK - slack).max(0.0))
+}
+
+/// The nearest a gun suits: its Min Range or its blast, the further.
+fn nearest(a: &Arm) -> f32 {
+    a.min_range.max(blast_floor(a, 0.0))
 }
 
 /// The arm (index into `arms`) to fight a target `d` units away with, `current` the one
@@ -91,7 +114,7 @@ pub fn choose(arms: &[Arm], d: f32, current: Option<usize>) -> Option<usize> {
     if beyond_all && !guns.is_empty() {
         return by(&reach, &mut guns.iter().copied());
     }
-    melee.or_else(|| by(&|a| -a.min_range, &mut guns.iter().copied()))
+    melee.or_else(|| by(&|a| -nearest(a), &mut guns.iter().copied()))
 }
 
 #[cfg(test)]
@@ -99,10 +122,10 @@ mod tests {
     use super::*;
 
     fn gun(min: f32, max: f32, dps: f32) -> Arm {
-        Arm { melee: false, min_range: min, max_range: max, dps, usable: true }
+        Arm { melee: false, min_range: min, max_range: max, blast: 0.0, dps, usable: true }
     }
     fn blade() -> Arm {
-        Arm { melee: true, min_range: 0.0, max_range: 0.0, dps: 0.0, usable: true }
+        Arm { melee: true, min_range: 0.0, max_range: 0.0, blast: 0.0, dps: 0.0, usable: true }
     }
 
     /// Mister Handy (CrMisterHandy): MisterHandyBuzzsaw (melee) and MisterHandyFlamer2HL
@@ -156,6 +179,45 @@ mod tests {
         let h = handy();
         assert_eq!(choose(&h, 215.0, Some(0)), Some(0));
         assert_eq!(choose(&h, 230.0, Some(0)), Some(1));
+    }
+
+    /// Hardened Sentry Bot (CrSentryBotMGHard): SentryBotMinigun2HR (500 to 2000, 9
+    /// damage at 15 a second) and SentryBotMissileLauncher2HL (500 to 2000, 20 damage at
+    /// 1.58 a second; MissileExplosion radius 1000) [observed: FalloutNV.esm, `fnvtool
+    /// combat weapon`].
+    fn sentry() -> Vec<Arm> {
+        let mut launcher = gun(500.0, 2000.0, damage_per_second(20, 1, 1.578_947_4, 1.0));
+        launcher.blast = 1000.0;
+        vec![gun(500.0, 2000.0, damage_per_second(9, 1, 15.0, 15.0)), launcher]
+    }
+
+    #[test]
+    fn a_sentry_bot_keeps_its_minigun_inside_its_launchers_blast() {
+        let a = sentry();
+        // Nearer than both Min Ranges: the minigun's 500 is nearer than the blast.
+        for d in [3.0, 300.0, 420.0, 561.0, 900.0, 1100.0] {
+            assert_eq!(choose(&a, d, None), Some(0), "at {d}");
+            assert_eq!(choose(&a, d, Some(0)), Some(0), "kept at {d}");
+            // The launcher in use is given up within its blast (kept beyond it).
+            assert_eq!(choose(&a, d, Some(1)), if d < 1000.0 { Some(0) } else { Some(1) }, "launcher at {d}");
+        }
+        // Without the minigun: the launcher only beyond its blast, kept down to it.
+        let mut a = sentry();
+        a[0].usable = false;
+        assert_eq!(choose(&a, 1200.0, None), Some(1));
+        assert_eq!(choose(&a, 1050.0, Some(1)), Some(1));
+        assert!(!suits(&a[1], 990.0, KEEP_SLACK));
+        assert!(!suits(&a[1], 1100.0, 0.0));
+        // Its only gun: taken up anyway (`npc_combat` keeps clear of the blast).
+        assert_eq!(choose(&a, 400.0, None), Some(1));
+    }
+
+    #[test]
+    fn a_blast_ignored_by_the_style_does_not_bar_the_launcher() {
+        let mut a = sentry();
+        a[1].blast = 0.0;
+        a[1].dps = 500.0;
+        assert_eq!(choose(&a, 600.0, None), Some(1));
     }
 
     #[test]

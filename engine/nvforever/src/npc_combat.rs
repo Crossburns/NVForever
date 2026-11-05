@@ -1079,7 +1079,7 @@ impl GunReach {
 
 /// A gun's [`GunReach`] from its data: the projectile its default ammo fires (as
 /// [`is_gun`] reads it) and that projectile's explosion.
-fn gun_reach_of(c: &Combat, id: FormId, ws: &WeaponStats, range_mult: f32) -> GunReach {
+pub(crate) fn gun_reach_of(c: &Combat, id: FormId, ws: &WeaponStats, range_mult: f32) -> GunReach {
     let chain = c.forms.chain(id, None);
     let projectile = chain.as_ref().and_then(|ch| ch.projectile).and_then(|p| c.forms.projectiles.get(&p));
     let blast = chain.as_ref().and_then(|ch| ch.explosion).and_then(|e| c.forms.explosions.get(&e)).map_or(0.0, |e| e.radius);
