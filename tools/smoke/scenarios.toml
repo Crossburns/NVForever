@@ -18927,6 +18927,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "i2-setpos-console"
+source = "issue #1618: a reference moved from the console kept its collision's new place but was drawn at its old one: the tick clears Game::turned before the drawing reads it. The drawing followers now also read RefRepose (engine/nvf-play/src/moved.rs, script_draw.rs)"
+note = "The Goodsprings Mojave Express box (0x0015F22D), seen from 250 units away, raised 150 units with a console SetPos at 21 s. The log lines show only that the simulation moved it, which they showed before the fix too: a PASS here does not show the box moved. Compare by eye, in target/smoke: i2_before.png (19.5 s) and i2_after.png (26 s), same view; the box must stand about 150 units higher in i2_after.png"
+areas = ["console", "scripts", "rendering"]
+paths = ["engine/nvf-play/src/moved.rs", "engine/nvf-play/src/script_draw.rs", "engine/nvf-play/src/script.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.moveto 0015F22D 0 -250 0;15:close;21:0015F22D.getpos z;0015F22D.setpos z 8537;0015F22D.getpos z;22:close", NVF_PLAY_TEST_LOOK = "17:0:-8", NVF_PLAY_TEST_SHOTS = "19.5:i2_before.png,26:i2_after.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--heading", "0", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'console: SetPos on vMEGoodSpringsRef >> 0\.00', label = "SetPos ran" },
+  { re = 'console: GetPos on vMEGoodSpringsRef >> 8537\.00', label = "GetPos reads the raised height (the frames must show it: see the note)" },
+]
+manual = "compare i2_before.png with i2_after.png in target/smoke: the box must stand about 150 units higher in the second; no log line proves it"
+
+[[scenario]]
 name = "script-move-dynamic-clutter"
 source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
 note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"

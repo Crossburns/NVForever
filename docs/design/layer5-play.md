@@ -187,8 +187,7 @@ have no trace event; after each frame's scripts the runtime's seven flags
 the inventory key obey them from the next frame (docs/spec-notes/controls.md §5). A
 change is a log line and a `controls` line in the script trace.
 
-Not applied (open, §7): `moved` of other references, `SetPos` / `SetAngle`, `SetOpenState`
-on a drawn door, sound and the other Layer 6 stubs (of the image-space functions, the
+Not applied (open, §7): `SetOpenState` on a drawn door, sound and the other Layer 6 stubs (of the image-space functions, the
 screen splatter and `SetCellImageSpace`).
 
 **References enabled at run time** that render streaming skipped (it draws only what is
@@ -468,8 +467,15 @@ with identical observations with and without voice lengths.
     boxes (§6.2).
   - Bevy's virtual clock caps a frame at 0.25 s, so a very slow frame loses real time
     for scripts as for everything else.
-- Other references a script moves keep their drawn place and collision (visuals of
-  placed references are nvforever's; only `script_draw.rs`'s own follow the simulation).
+- A reference a script moves, turns or resizes is drawn where the simulation holds it
+  (`moved.rs` for render streaming's entities, `script_draw.rs` for its own) from
+  `Game::turned`, which holds only what the tick's own scripts moved by then, and from
+  `RefRepose`, which also names what was in `turned` when `script::run_scripts` copied it
+  just after the console's lines [design]. The console's move is the case this was made
+  for (smoke `i2-setpos-console`, a pair of frames to compare by eye). Not audited for the
+  drawing: OnActivate by hand, terminal and dialogue result scripts, moves made under the
+  menu and loading early returns, the calls the tick runs before it clears `turned`
+  (extender main loop and delayed calls), and a move into another cell.
 - Voice (§6.4): sounds are not placed in space, do not pause with menus, and the
   dialogue the test aids stand in for is not heard (it waits for the dialogue screen,
   docs/design/dialogue.md D4).

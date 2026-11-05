@@ -286,9 +286,11 @@ pub struct RefChanged {
     pub form_id: u32,
 }
 
-/// A script moved or turned a placed or created reference (SetPos, SetAngle, Rotate,
-/// SetScale: `fnv_game::Game::turned`): its collision follows when the settle write-back
-/// would otherwise undo the move (`crate::phys::PhysState::repose_ref`).
+/// A script or the console moved or turned a placed or created reference (SetPos, SetAngle,
+/// Rotate, SetScale: `fnv_game::Game::turned`, and what it held before the tick cleared it):
+/// its collision follows when the settle write-back would otherwise undo the move
+/// (`crate::phys::PhysState::repose_ref`), and its drawn model follows (`crate::moved`,
+/// `crate::script_draw`).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct RefRepose {
     pub form_id: u32,

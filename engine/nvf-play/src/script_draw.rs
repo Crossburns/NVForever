@@ -152,11 +152,12 @@ fn pose(sim: &SimState, p: &Placement) -> Affine3A {
 type Cells<'w, 's> = Query<'w, 's, (Entity, &'static RenderCell, &'static Transform), Without<ScriptDrawnRoot>>;
 
 /// Move the roots of the references physics moved this frame
-/// (`PhysState::settle_placed`), or a script's Rotate turned or SetScale resized
-/// (`Game::turned`), to the simulation's pose and scale.
-fn follow(sim: Res<SimState>, phys: Res<PhysState>, script: Res<ScriptState>, state: Res<ScriptDrawn>, cells: Cells, mut roots: Query<&mut Transform, With<ScriptDrawnRoot>>) {
+/// (`PhysState::settle_placed`), a script's Rotate turned or SetScale resized
+/// (`Game::turned`), or the console moved (`crate::RefRepose`, which still names what the
+/// tick cleared from `turned`), to the simulation's pose and scale.
+fn follow(sim: Res<SimState>, phys: Res<PhysState>, script: Res<ScriptState>, mut repose: MessageReader<crate::RefRepose>, state: Res<ScriptDrawn>, cells: Cells, mut roots: Query<&mut Transform, With<ScriptDrawnRoot>>) {
     let turned = script.rt.iter().flat_map(|rt| rt.game.turned.iter().map(|r| r.0));
-    for id in phys.moved_now.iter().copied().chain(turned) {
+    for id in phys.moved_now.iter().copied().chain(turned).chain(repose.read().map(|m| m.form_id)) {
         let Some(&(root, cell_e)) = state.drawn.get(&id) else { continue };
         let (Ok((_, _, cell)), Ok(mut t), Some(p)) = (cells.get(cell_e), roots.get_mut(root), sim.refs.get(FormId(id))) else { continue };
         let (pos, rot) = sim.moved_pose(id).unwrap_or((p.pos, p.rot));
@@ -278,6 +279,38 @@ pub(crate) mod tests {
         let schema: &'static Schema = Box::leak(Box::new(Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap()));
         let index: &'static WorldIndex = Box::leak(Box::default());
         PlayWorld(crate::PlayData { lo, schema, index, world: 0x3C, interior: None, eye: [0.0; 3], heading_deg: 0.0, pitch_deg: 0.0, auto_walk: 0.0, start_at_cell_spot: false, packages: false })
+    }
+
+    /// Issue #1618: what the console moved reaches a root drawn here through `RefRepose`
+    /// alone (the tick has cleared `Game::turned` by then, and physics moved nothing).
+    #[test]
+    fn a_console_move_moves_the_root_and_stays() {
+        use crate::sim::placed_ref;
+        use fnv_sim::refs::PlacedRef;
+        const CARD: u32 = 0x301;
+        let at = [4100.0, 10.0, 20.0];
+        let origin = Vec3::new(4096.0, 0.0, 0.0);
+        let sim = SimState::over_placed([PlacedRef { pos: at, ..placed_ref(CARD) }]);
+        let mut app = App::new();
+        app.add_message::<crate::RefRepose>().insert_resource(sim).insert_resource(PhysState::default()).insert_resource(ScriptState::over_no_plugins()).init_resource::<ScriptDrawn>().add_systems(Update, follow);
+        let cell = app.world_mut().spawn((RenderCell::Interior(0x200), Transform::from_translation(origin))).id();
+        let drawn = Transform::from_translation(Vec3::from_array(at) - origin);
+        let root = app.world_mut().spawn((ScriptDrawnRoot(CARD), drawn, ChildOf(cell))).id();
+        app.world_mut().resource_mut::<ScriptDrawn>().drawn.insert(CARD, (root, cell));
+        // As `SetPos z 170` from the console: the simulation holds the new height.
+        app.world_mut().resource_mut::<SimState>().world.get(FormId(CARD)).unwrap().pos[2] = 170.0;
+        let z = |app: &App| app.world().get::<Transform>(root).unwrap().translation.z;
+        app.update();
+        assert!((z(&app) - 20.0).abs() < 1e-3, "nothing named it: no sweep of the scene");
+        app.world_mut().write_message(crate::RefRepose { form_id: CARD });
+        app.update();
+        assert!((z(&app) - 170.0).abs() < 1e-3);
+        // The same again on a later frame, and when it is named again.
+        app.update();
+        assert!((z(&app) - 170.0).abs() < 1e-3);
+        app.world_mut().write_message(crate::RefRepose { form_id: CARD });
+        app.update();
+        assert!((z(&app) - 170.0).abs() < 1e-3);
     }
 
     /// Issue #1620, as world.rs's `enabled` is tested: under an enable parent a reference's
