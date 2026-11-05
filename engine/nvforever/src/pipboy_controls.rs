@@ -20,7 +20,8 @@
 //!
 //! Off the arm no reading comes: a control finishes travelling to the last one, then holds
 //! [hypothesis: nothing was captured down]. The first reading is taken at once, so a loaded
-//! game's needle does not sweep up.
+//! game's needle does not sweep up. While the Pip-Boy is up the needle quivers a little about
+//! where it rests ([`NEEDLE_QUIVER`]); the travel and the log are without the quiver.
 
 use crate::pipboy_arm::{PartMesh, PipBoyPart};
 use bevy::mesh::skinning::SkinnedMesh;
@@ -69,12 +70,24 @@ const KNOB_SPEED: f32 = 180.0;
 /// at the top of the list; the mouse wheel at the top of the list moved neither [observed:
 /// private job pipboy_special_device_motion: its ridges come back to within 0.3 pixels].
 /// [hypothesis: that it follows the selected row, which the capture does not separate from
-/// the list's scroll; the ridges' spacing, about 17 pixels, hides larger moves between shots:
-/// about 4 pixels a shot while a list moves is read as 2° a row; which way it turns, the
-/// front going down with the list, is not resolved.]
-const WHEEL_DEGREES_PER_ROW: f32 = 2.0;
-/// [hypothesis: about the rate of its last move to the top of the list.]
-const WHEEL_SPEED: f32 = 30.0;
+/// the list's scroll; the ridges' spacing, about 17 pixels, hides whole ridges moved between
+/// shots, so the capture does not give the step; which way it turns, the front going down
+/// with the list, is not resolved.] The wheel has 26 ridges: its outermost vertices come
+/// every 13.85° about its axle [observed: `fnvtool nif decode`, `ScrollKnob:0`]. One ridge a
+/// row [hypothesis; the first reading of the capture, 2° a row, was judged far too little
+/// against the original, owner's playtest 2026-11-05].
+const WHEEL_RIDGES: f32 = 26.0;
+const WHEEL_DEGREES_PER_ROW: f32 = 360.0 / WHEEL_RIDGES;
+/// Degrees a second: a row's ridge in about the time a key repeat takes, so a held key keeps
+/// the wheel turning rather than lagging [hypothesis].
+const WHEEL_SPEED: f32 = 200.0;
+
+/// The needle quivers about where it rests while the Pip-Boy is up: a small, quick shiver
+/// [observed: owner's playtest 2026-11-05, against the original: "an idle bounce of sorts",
+/// a small quick quiver]. Two sines of unrelated rates, degrees and hertz, so it does not
+/// visibly repeat; the amounts and rates are [hypothesis], to be judged by eye. It is shown
+/// only: the logged angles and the travel are without it.
+const NEEDLE_QUIVER: [(f32, f32); 2] = [(1.2, 7.3), (0.8, 11.9)];
 
 /// The shapes these numbers were measured on: their bounds, least and most corner, in
 /// `meshes\\pipboy3000\\pipboyarm.nif` and `pipboyarmfemale.nif` [observed: `fnvtool nif
@@ -116,6 +129,16 @@ pub fn wheel_angle(row: usize) -> f32 {
 /// A step of a control towards `target` at `speed` degrees a second, never past it.
 fn towards(angle: f32, target: f32, speed: f32, dt: f32) -> f32 {
     angle + (target - angle).clamp(-speed * dt, speed * dt)
+}
+
+/// The needle's quiver at `seconds` on the arm, degrees from where it rests ([`NEEDLE_QUIVER`]).
+pub fn needle_quiver(seconds: f32) -> f32 {
+    NEEDLE_QUIVER.iter().map(|(degrees, hertz)| degrees * (std::f32::consts::TAU * hertz * seconds).sin()).sum()
+}
+
+/// The most the quiver takes the needle from where it rests.
+pub fn needle_quiver_most() -> f32 {
+    NEEDLE_QUIVER.iter().map(|(d, _)| d).sum()
 }
 
 /// A control's place and where it is going.
@@ -167,11 +190,16 @@ pub struct ControlAngles {
     last: Readings,
     /// A shape of each was said to be left still: needle, knob, wheel.
     skips_said: [bool; 3],
+    /// Seconds the Pip-Boy has been up on the arm, the quiver's clock; `None` while it is
+    /// down, when the needle rests.
+    up_for: Option<f32>,
+    /// The needle quivers ([`NEEDLE_QUIVER`]); tests of the travel turn it off.
+    pub quiver: bool,
 }
 
 impl Default for ControlAngles {
     fn default() -> Self {
-        ControlAngles { needle: Turn::at(needle_angle(0.0)), knob: Turn::at(knob_angle(0)), wheel: Turn::at(wheel_angle(0)), last: Readings::default(), skips_said: [false; 3] }
+        ControlAngles { needle: Turn::at(needle_angle(0.0)), knob: Turn::at(knob_angle(0)), wheel: Turn::at(wheel_angle(0)), last: Readings::default(), skips_said: [false; 3], up_for: None, quiver: true }
     }
 }
 
@@ -185,6 +213,8 @@ pub struct Readings {
 
 impl ControlAngles {
     fn advance(&mut self, r: Readings, dt: f32) {
+        // A tab comes with every reading on the arm; none comes down.
+        self.up_for = r.tab.map(|_| self.up_for.unwrap_or(0.0) + dt);
         self.last = Readings { rads: r.rads.or(self.last.rads), tab: r.tab.or(self.last.tab), row: r.row.or(self.last.row) };
         if self.needle.advance(r.rads.map(needle_angle), NEEDLE_SPEED, dt, "needle") {
             info!("pipboy: needle settled at {:.1} deg for {:.0} rads", self.needle.angle, self.last.rads.unwrap_or_default());
@@ -210,10 +240,11 @@ impl ControlAngles {
         }
     }
 
-    /// The axis (in the shape's own space) and degrees of a part, if it is a control.
+    /// The axis (in the shape's own space) and degrees of a part, if it is a control: the
+    /// needle with its quiver while the Pip-Boy is up.
     fn of(&self, part: PipBoyPart) -> Option<(Vec3, f32)> {
         match part {
-            PipBoyPart::Needle => Some((Vec3::Z, self.needle.angle)),
+            PipBoyPart::Needle => Some((Vec3::Z, self.needle.angle + self.up_for.filter(|_| self.quiver).map_or(0.0, needle_quiver))),
             PipBoyPart::TabKnob => Some((Vec3::Z, self.knob.angle)),
             PipBoyPart::ScrollKnob => Some((Vec3::X, self.wheel.angle)),
             _ => None,
@@ -371,7 +402,7 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new();
-        app.init_resource::<ControlAngles>().init_resource::<Now>().add_systems(
+        app.insert_resource(ControlAngles { quiver: false, ..default() }).init_resource::<Now>().add_systems(
             Update,
             |mut commands: Commands, now: Res<Now>, mut angles: ResMut<ControlAngles>, mut shapes: ControlShapes| {
                 pose_controls(&mut commands, now.0, now.1, &mut angles, &mut shapes);
@@ -400,7 +431,7 @@ mod tests {
         }
         // At the bind's own value, nothing has moved, however many frames.
         assert_eq!(*app.world().get::<Transform>(needle).unwrap(), bind());
-        app.world_mut().resource_mut::<Now>().0 = Readings { rads: Some(1000.0), tab: Some(3), row: Some(45) };
+        app.world_mut().resource_mut::<Now>().0 = Readings { rads: Some(1000.0), tab: Some(3), row: Some(13) };
         app.world_mut().resource_mut::<Now>().1 = 100.0;
         for _ in 0..5 {
             app.update();
@@ -409,10 +440,46 @@ mod tests {
         let want = bind().transform_point(Vec3::Y);
         assert!((tip(&app, needle, Vec3::X) - want).length() < 1e-4);
         assert_eq!(app.world().get::<Transform>(needle).unwrap().translation, bind().translation, "about its origin");
-        // The wheel about X: 90° takes its Y to its Z, the axle staying.
-        assert!((tip(&app, wheel, Vec3::Y) - bind().transform_point(Vec3::Z)).length() < 1e-4);
+        // The wheel about X: 13 rows are half its 26 ridges, 180°: its Y to −Y, the axle staying.
+        assert!((tip(&app, wheel, Vec3::Y) - bind().transform_point(Vec3::NEG_Y)).length() < 1e-4);
         assert!((tip(&app, wheel, Vec3::X) - bind().transform_point(Vec3::X)).length() < 1e-4);
         assert_eq!(*app.world().get::<Transform>(other).unwrap(), bind(), "not a control");
+    }
+
+    #[test]
+    fn the_wheel_turns_a_ridge_a_row() {
+        assert!((wheel_angle(26) - 360.0).abs() < 1e-4, "26 ridges round");
+        assert!((wheel_angle(1) - 13.846).abs() < 1e-2);
+    }
+
+    #[test]
+    fn the_needle_quivers_a_little_on_the_arm_and_rests_down() {
+        // Within its amount, never still from one frame to the next, and nothing in the
+        // travel angle or the log's numbers.
+        let most = needle_quiver_most();
+        assert!(most > 0.5 && most < 5.0, "{most}");
+        let mut seen = Vec::new();
+        for i in 0..60 {
+            let q = needle_quiver(i as f32 / 60.0);
+            assert!(q.abs() <= most + 1e-4);
+            seen.push(q);
+        }
+        assert!(seen.windows(2).all(|w| (w[0] - w[1]).abs() > 1e-4), "it moves every frame");
+        assert!(seen.iter().any(|&q| q > 0.3) && seen.iter().any(|&q| q < -0.3), "both ways");
+        let mut a = ControlAngles::default();
+        a.advance(Readings { rads: Some(500.0), tab: Some(0), row: Some(0) }, 0.1);
+        assert_eq!(a.needle.angle, 0.0, "the travel angle is the reading's");
+        assert_eq!(a.up_for, Some(0.1));
+        let shown = a.of(PipBoyPart::Needle).unwrap().1;
+        assert!((shown - needle_quiver(0.1)).abs() < 1e-5 && shown != 0.0);
+        assert_eq!(a.of(PipBoyPart::TabKnob).unwrap().1, knob_angle(0), "the knob does not quiver");
+        // Down: no reading, the clock is dropped and the needle rests on its angle.
+        a.advance(Readings::default(), 0.1);
+        assert_eq!(a.up_for, None);
+        assert_eq!(a.of(PipBoyPart::Needle).unwrap().1, 0.0);
+        // Up again, the clock starts afresh.
+        a.advance(Readings { rads: Some(500.0), tab: Some(0), row: Some(0) }, 0.05);
+        assert_eq!(a.up_for, Some(0.05));
     }
 
     #[test]

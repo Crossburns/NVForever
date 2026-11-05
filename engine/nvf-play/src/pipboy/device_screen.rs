@@ -17,6 +17,14 @@
 //! fitted, here the image-space grade moves it, so the noon match establishes neither
 //! other hours nor interiors. Flicker, vertical hold and shudder are not built.
 //!
+//! One moving layer: the beam ([`ScreenFxBeam`], [`sweep`]), a soft brighter band that
+//! travels down the screen every [`BEAM_PERIOD`] seconds in [`BEAM_TRAVEL`] and is hidden
+//! between sweeps [observed: owner's playtest 2026-11-05, against the original: "an electron
+//! beam / scan line effect that goes down it every 5 seconds", a brighter band taking about a
+//! second; its height and brightness are [hypothesis]]. It lies over the pages and under the
+//! scanlines, in the Pip-Boy's colour lightened towards white at a low alpha (a UI node adds
+//! nothing; a light tint over the amber reads as a brighter band).
+//!
 //! The path from the image to the frame [design: `pipboy_arm.rs`, `nvf_assets::nif_spawn`
 //! `unlit_vertex_colors`, `imagespace.wesl`]: image × [`SCREEN_TINT`] ×
 //! [`SHAPE_VERTEX_COLOUR`], plus the glare's texel × [`GLARE_LINEAR_SCALE`] ×
@@ -89,6 +97,37 @@ const SCANLINES: &str = "textures\\pipboy3000\\pipboyscanlines.dds";
 pub const SCANLINE_PITCH: f32 = 9.5;
 pub const SCANLINE_DEPTH: f32 = 0.15;
 
+/// The beam (module docs): seconds between sweeps [observed: owner's playtest 2026-11-05],
+/// seconds a sweep takes from above the top edge to below the bottom, its height in canvas
+/// units (an eighth of the canvas) and its alpha at the middle of its raised-cosine profile
+/// [hypothesis, the three].
+pub const BEAM_PERIOD: f32 = 5.0;
+pub const BEAM_TRAVEL: f32 = 1.0;
+pub const BEAM_HEIGHT: f32 = 96.0;
+pub const BEAM_ALPHA: f32 = 0.12;
+
+/// Where the beam's top edge is at `phase` seconds into its period: from a band's height
+/// above the canvas to the canvas's foot, in [`BEAM_TRAVEL`]; `None` while it is hidden.
+pub fn beam_top(phase: f32) -> Option<f32> {
+    (phase >= 0.0 && phase < BEAM_TRAVEL).then(|| -BEAM_HEIGHT + (CANVAS.y + BEAM_HEIGHT) * phase / BEAM_TRAVEL)
+}
+
+/// The beam's column: white, its alpha a raised cosine of [`BEAM_ALPHA`] at the middle.
+fn beam_pixels() -> Vec<u8> {
+    let rows = BEAM_HEIGHT as usize;
+    (0..rows)
+        .flat_map(|y| {
+            let w = 0.5 - 0.5 * (std::f32::consts::TAU * (y as f32 + 0.5) / rows as f32).cos();
+            [255, 255, 255, (BEAM_ALPHA * w * 255.0).round() as u8]
+        })
+        .collect()
+}
+
+/// The beam's colour for the Pip-Boy colour `rgb`: lightened half way to white.
+fn beam_tint(rgb: [u8; 3]) -> Color {
+    Color::srgb_u8(128 + rgb[0] / 2, 128 + rgb[1] / 2, 128 + rgb[2] / 2)
+}
+
 fn linear(v: f32) -> f32 {
     Color::srgb(v, 0.0, 0.0).to_linear().red
 }
@@ -133,35 +172,47 @@ pub fn band_at_depth(band: &[f32], depth: f32) -> Vec<f32> {
 #[derive(Resource)]
 pub struct ScreenFx {
     scanlines: Option<Handle<Image>>,
+    /// The beam's column ([`beam_pixels`]).
+    beam: Option<Handle<Image>>,
     /// How much of the light the scanlines keep on average, in linear light (1 without).
     pub kept: f32,
     baked: bool,
     /// The Pip-Boy colour the picture is tinted for.
     rgb: [u8; 3],
+    /// The beam's first sweep since the treatment came on was logged.
+    swept: bool,
 }
 
 impl Default for ScreenFx {
     fn default() -> Self {
-        ScreenFx { scanlines: None, kept: 1.0, baked: false, rgb: AMBER_RGB }
+        ScreenFx { scanlines: None, beam: None, kept: 1.0, baked: false, rgb: AMBER_RGB, swept: false }
     }
+}
+
+/// A one-column picture of `rgba` rows, read with linear filtering, for a layer stretched
+/// over the canvas.
+fn column_image(rgba: Vec<u8>, what: &str) -> Option<Image> {
+    let format = bevy::render::render_resource::TextureFormat::Rgba8Unorm;
+    let mut image = nvf_assets::texture::checked_image(1, (rgba.len() / 4) as u32, 1, format, rgba).map_err(|e| warn!("pipboy: {what}: {e}")).ok()?;
+    image.asset_usage = bevy::asset::RenderAssetUsages::default();
+    image.sampler = bevy::image::ImageSampler::linear();
+    Some(image)
 }
 
 impl ScreenFx {
     /// One baked column over the whole canvas, a value per row, as the terminal's: no tile
     /// per line, whose fractional pitch rounded to whole rows. A broken file gives no
-    /// scanlines, not a GPU error.
+    /// scanlines, not a GPU error. The beam's column needs no file.
     fn bake(&mut self, data: Option<&GameData>, images: &mut Assets<Image>) {
         if self.baked {
             return;
         }
         self.baked = true;
+        self.beam = column_image(beam_pixels(), "beam").map(|i| images.add(i));
         let Some(band) = data.and_then(|d| d.read(SCANLINES)).and_then(|b| scanline_column(&b)).filter(|b| !b.is_empty()) else { return };
         let column = baked_column(&band_at_depth(&band, SCANLINE_DEPTH), CANVAS.y as usize, SCANLINE_PITCH);
         let (rgba, kept) = scanline_pixels(&column);
-        let format = bevy::render::render_resource::TextureFormat::Rgba8Unorm;
-        let Ok(mut image) = nvf_assets::texture::checked_image(1, column.len() as u32, 1, format, rgba).map_err(|e| warn!("pipboy: {SCANLINES}: {e}")) else { return };
-        image.asset_usage = bevy::asset::RenderAssetUsages::default();
-        image.sampler = bevy::image::ImageSampler::linear();
+        let Some(image) = column_image(rgba, SCANLINES) else { return };
         self.scanlines = Some(images.add(image));
         self.kept = kept;
     }
@@ -180,13 +231,20 @@ pub struct ScreenFxNode;
 #[derive(Component)]
 pub struct ScreenFxPicture;
 
+/// The beam's node (module docs), moved by [`sweep`].
+#[derive(Component)]
+pub struct ScreenFxBeam;
+
 /// The faint fill where the picture is missing.
 fn missing_picture_fill(rgb: [u8; 3]) -> Color {
     tint(rgb, BACKGROUND_BRIGHTNESS).with_alpha(0.1)
 }
 
-/// The picture's node recoloured for `rgb`, when that is not the colour it has.
-fn apply_colour(fx: &mut ScreenFx, rgb: [u8; 3], pictures: &mut Query<(Option<&mut ImageNode>, Option<&mut BackgroundColor>), With<ScreenFxPicture>>) {
+type Pictures<'w, 's> = Query<'w, 's, (Option<&'static mut ImageNode>, Option<&'static mut BackgroundColor>), With<ScreenFxPicture>>;
+type Beams<'w, 's> = Query<'w, 's, &'static mut ImageNode, (With<ScreenFxBeam>, Without<ScreenFxPicture>)>;
+
+/// The picture's and the beam's nodes recoloured for `rgb`, when that is not the colour they have.
+fn apply_colour(fx: &mut ScreenFx, rgb: [u8; 3], pictures: &mut Pictures, beams: &mut Beams) {
     if fx.rgb == rgb {
         return;
     }
@@ -199,12 +257,17 @@ fn apply_colour(fx: &mut ScreenFx, rgb: [u8; 3], pictures: &mut Query<(Option<&m
             fill.0 = missing_picture_fill(rgb);
         }
     }
+    for mut beam in beams {
+        beam.color = beam_tint(rgb);
+    }
     info!("pipboy: the screen's picture recoloured to {rgb:?}");
 }
 
-/// Under every page and over every page, in the image's own stack.
+/// Under every page and over every page, in the image's own stack; the beam between the
+/// pages and the scanlines.
 const UNDER_PAGES: GlobalZIndex = GlobalZIndex(-1);
 const OVER_PAGES: GlobalZIndex = GlobalZIndex(10);
+const BEAM: GlobalZIndex = GlobalZIndex(9);
 
 /// The treatment shows with the device's frame, not in the screen menu.
 pub fn wanted(pip: &PipBoy) -> bool {
@@ -219,7 +282,8 @@ pub fn draw(
     pip: Res<PipBoy>,
     screen: Option<Res<PipBoyScreen>>,
     layers: Query<Entity, With<ScreenFxLayer>>,
-    mut pictures: Query<(Option<&mut ImageNode>, Option<&mut BackgroundColor>), With<ScreenFxPicture>>,
+    mut pictures: Pictures,
+    mut beams: Beams,
     mut fx: ResMut<ScreenFx>,
     mut kit: ResMut<Kit>,
     data: Option<Res<GameData>>,
@@ -230,7 +294,7 @@ pub fn draw(
     let want = wanted(&pip);
     if want == !layers.is_empty() {
         if want {
-            apply_colour(&mut fx, pipboy_rgb(), &mut pictures);
+            apply_colour(&mut fx, pipboy_rgb(), &mut pictures, &mut beams);
         }
         return;
     }
@@ -266,8 +330,46 @@ pub fn draw(
             Name::new("Pip-Boy screen scanlines"),
         ));
     }
+    if let Some(beam) = fx.beam.clone() {
+        commands.spawn((
+            ScreenFxLayer,
+            ScreenFxNode,
+            ScreenFxBeam,
+            at(0.0, -BEAM_HEIGHT, CANVAS.x, BEAM_HEIGHT),
+            Visibility::Hidden,
+            ImageNode { color: beam_tint(rgb), image_mode: NodeImageMode::Stretch, ..ImageNode::new(beam) },
+            UiTargetCamera(screen.camera),
+            BEAM,
+            Pickable::IGNORE,
+            Name::new("Pip-Boy screen beam"),
+        ));
+    }
+    fx.swept = false;
     let shown = undercoat(kept).to_srgba().to_u8_array();
     info!("pipboy: screen treatment on (scanlines {}, keeping {kept:.2} of the light; undercoat ({}, {}, {}))", if fx.scanlines.is_some() { "baked" } else { "none" }, shown[0], shown[1], shown[2]);
+}
+
+/// Move the beam: shown and travelling for [`BEAM_TRAVEL`] of every [`BEAM_PERIOD`] on the
+/// real clock, hidden the rest; held still with the pause menu. Logged once each time the
+/// treatment comes on, on the first sweep.
+pub fn sweep(time: Res<Time<Real>>, paused: Res<crate::pause::Paused>, mut fx: ResMut<ScreenFx>, mut beams: Query<(&mut Node, &mut Visibility), With<ScreenFxBeam>>) {
+    if paused.0 {
+        return;
+    }
+    let phase = time.elapsed_secs() % BEAM_PERIOD;
+    for (mut node, mut visibility) in &mut beams {
+        match beam_top(phase) {
+            Some(top) => {
+                node.top = crate::interface::u(top);
+                *visibility = Visibility::Inherited;
+                if !fx.swept {
+                    fx.swept = true;
+                    info!("pipboy: the beam sweeps the screen ({BEAM_TRAVEL} s, every {BEAM_PERIOD} s)");
+                }
+            }
+            None => *visibility = Visibility::Hidden,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -363,19 +465,17 @@ mod tests {
         let green = [26, 255, 128];
         let kept = 0.8;
         let mut app = App::new();
-        app.insert_resource(Rgb(AMBER_RGB)).insert_resource(ScreenFx { kept, ..default() }).add_systems(
-            Update,
-            |rgb: Res<Rgb>, mut fx: ResMut<ScreenFx>, mut pictures: Query<(Option<&mut ImageNode>, Option<&mut BackgroundColor>), With<ScreenFxPicture>>| {
-                apply_colour(&mut fx, rgb.0, &mut pictures);
-            },
-        );
+        app.insert_resource(Rgb(AMBER_RGB)).insert_resource(ScreenFx { kept, ..default() }).add_systems(Update, |rgb: Res<Rgb>, mut fx: ResMut<ScreenFx>, mut pictures: Pictures, mut beams: Beams| {
+            apply_colour(&mut fx, rgb.0, &mut pictures, &mut beams);
+        });
         let image = app.world_mut().spawn((ScreenFxPicture, ImageNode { color: picture_tint(AMBER_RGB, kept), ..default() })).id();
         let fill = app.world_mut().spawn((ScreenFxPicture, BackgroundColor(missing_picture_fill(AMBER_RGB)))).id();
+        let beam = app.world_mut().spawn((ScreenFxBeam, ImageNode { color: beam_tint(AMBER_RGB), ..default() })).id();
         let under = undercoat(kept);
         // The same colour touches nothing.
         app.update();
         assert_eq!(app.world().get::<ImageNode>(image).unwrap().color, picture_tint(AMBER_RGB, kept));
-        // Another: the lifted tint for it, with its alpha, and the faint fill.
+        // Another: the lifted tint for it, with its alpha, the faint fill, and the beam's lighter colour.
         app.world_mut().insert_resource(Rgb(green));
         app.update();
         let c = app.world().get::<ImageNode>(image).unwrap().color;
@@ -383,7 +483,31 @@ mod tests {
         assert_ne!(c, picture_tint(AMBER_RGB, kept));
         assert_eq!(c.alpha(), BACKGROUND_ALPHA);
         assert_eq!(app.world().get::<BackgroundColor>(fill).unwrap().0, missing_picture_fill(green));
+        assert_eq!(app.world().get::<ImageNode>(beam).unwrap().color, beam_tint(green));
         assert_eq!(undercoat(kept), under, "the glass keeps its colour");
+    }
+
+    #[test]
+    fn the_beam_sweeps_the_canvas_in_its_time_and_hides_between() {
+        assert_eq!(beam_top(0.0), Some(-BEAM_HEIGHT), "starts above the top edge");
+        let mid = beam_top(BEAM_TRAVEL / 2.0).unwrap();
+        assert!((mid - (CANVAS.y - BEAM_HEIGHT) / 2.0).abs() < 1e-3, "{mid}: its middle at the canvas's middle half way");
+        let last = beam_top(BEAM_TRAVEL - 1e-4).unwrap();
+        assert!(last > CANVAS.y - 1.0 && last <= CANVAS.y, "{last}: off the foot at the end");
+        assert_eq!(beam_top(BEAM_TRAVEL), None);
+        assert_eq!(beam_top(BEAM_PERIOD - 0.1), None);
+        // Its column: a raised cosine, nothing at the edges, the most in the middle.
+        let px = beam_pixels();
+        assert_eq!(px.len(), BEAM_HEIGHT as usize * 4);
+        let alpha: Vec<u8> = px.chunks(4).map(|p| p[3]).collect();
+        assert_eq!((alpha[0], alpha[alpha.len() - 1]), (0, 0));
+        let peak = *alpha.iter().max().unwrap();
+        assert_eq!(peak, (BEAM_ALPHA * 255.0).round() as u8);
+        assert_eq!(alpha[alpha.len() / 2], peak);
+        assert!(px.chunks(4).all(|p| p[..3] == [255, 255, 255]), "white, the tint on the node");
+        // Lighter than the colour itself, in each channel.
+        let t = beam_tint(AMBER_RGB).to_srgba();
+        assert!(t.red > 0.99 && t.green > f32::from(AMBER_RGB[1]) / 255.0 && t.blue > f32::from(AMBER_RGB[2]) / 255.0);
     }
 
     fn app(frame: Frame) -> App {
@@ -410,7 +534,10 @@ mod tests {
         let mut app = app(Frame::Device);
         app.update();
         let first = layers(&mut app);
-        assert_eq!(first.len(), 1, "the background; no scanlines without the game's data");
+        assert_eq!(first.len(), 2, "the background and the beam; no scanlines without the game's data");
+        let world = app.world_mut();
+        let beams: Vec<(Visibility, GlobalZIndex)> = world.query_filtered::<(&Visibility, &GlobalZIndex), With<ScreenFxBeam>>().iter(world).map(|(v, z)| (*v, *z)).collect();
+        assert_eq!(beams, vec![(Visibility::Hidden, BEAM)], "the beam waits hidden, between the pages and the scanlines");
         // A change of page redraws the page, not the treatment, and only one page root is left.
         app.world_mut().resource_mut::<PipBoy>().page = Page::Stats;
         app.update();
@@ -427,7 +554,7 @@ mod tests {
         app.world_mut().resource_mut::<PipBoy>().phase = Phase::Up;
         app.update();
         app.update();
-        assert_eq!(layers(&mut app).len(), 1);
+        assert_eq!(layers(&mut app).len(), 2);
     }
 
     #[test]

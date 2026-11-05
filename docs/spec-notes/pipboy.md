@@ -85,20 +85,25 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     way as a short one: about 0.6° a game loop, a drop of 690 rads still on its way two
     seconds on [observed]; the capture has neither a fine clock nor the loops' rate, so 30° a
     second is [hypothesis], within about 20 to 40. No start-up delay can be told from the
-    shots' own stalls. Held at the dial's ends above 1000 [hypothesis].
+    shots' own stalls. Held at the dial's ends above 1000 [hypothesis]. While the Pip-Boy is
+    up it quivers a little about where it rests, a small quick shiver [observed: owner's
+    playtest 2026-11-05, against the original]; two sines of unrelated rates, about 2° in all
+    at 7 and 12 a second, are [hypothesis]. The travel and the log are without the quiver.
   - `TabKnob`, about its shape's local Z, its shaft: the page's tab, not the page (tab 0 of
     STATS, ITEMS and DATA look the same, and the wrap comes back), five detents at the dial's
     marks: a constant step of 26° with the bind pose at tab 3 lands within 2° of the shots
     [observed: private job pipboy_special_device_motion; the step fitted]. A step is over in
     about 8 game loops [observed]; 180° a second, and the wrap swinging back at that speed,
     are [hypothesis].
-  - `ScrollKnob`, about its local X, its axle: the list's selected row, 2° a row, 30° a
-    second. It comes back to the same place at the top of a list [observed: private job
+  - `ScrollKnob`, about its local X, its axle: the list's selected row, one ridge a row (the
+    wheel has 26 ridges, its outermost vertices every 13.85° [observed: `fnvtool nif decode`]),
+    200° a second. It comes back to the same place at the top of a list [observed: private job
     pipboy_special_device_motion: its ridges to within 0.3 pixels]; the rest is [hypothesis]:
     that it follows the selected row and not the list's scroll, which the capture does not
-    separate; the ridges' 17 pixels hide larger moves between shots, and the sign is not
-    resolved. The mouse wheel at the top of the list moved neither. Following the row means
-    the pointer on a row turns it too [design].
+    separate; the ridges' 17 pixels hide whole ridges moved between shots, so the step is not
+    in the capture (a first reading of 2° a row was far too little against the original,
+    owner's playtest 2026-11-05), and the sign is not resolved. The mouse wheel at the top of
+    the list moved neither. Following the row means the pointer on a row turns it too [design].
   - Absolute `bind × rotation` on the shape's own transform, after the arm is posed; a rebuilt
     rig's shapes take a bind of their own. Only rigid shapes of the size of the game's own
     male and female arm turn: a replacement model can share the names with other pivots,
@@ -175,6 +180,13 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   (white at the top to about 0.8 at the bottom). On the screenshot the solid bar's rows
   are bright and dim by about 15% every 6 pixels, which is 9.5 of the canvas. Flicker,
   vertical hold and shudder (the INI's transitions) are not built.
+- **The beam** [observed: owner's playtest 2026-11-05, against the original]: a brighter
+  band sweeps down the screen every 5 seconds, taking about a second. NVForever draws one
+  band an eighth of the canvas high, a raised cosine of alpha 0.12 at its middle in the
+  Pip-Boy's colour lightened half way to white, over the pages and under the scanlines,
+  from above the top edge to the foot in 1 s on the real clock, hidden between sweeps and
+  held with the pause menu; the height, brightness and travel time are [hypothesis]
+  (`device_screen.rs`). Not in the screen menu.
 - **Background**: `Interface\Shared\Background\pipboy.dds` over the whole canvas at
   brightness 90 [documented: inventory_menu.xml]; `ScreenGlare.dds` and this picture are
   512 × 512 DXT1, alpha 1 throughout [observed].

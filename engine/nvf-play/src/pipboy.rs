@@ -434,7 +434,7 @@ impl Plugin for PipBoyPlugin {
                     camera_on,
                     (image_scale, flat_screen),
                     frame::draw,
-                    device_screen::draw,
+                    (device_screen::draw, device_screen::sweep).chain(),
                     (stats::draw, items::draw, data::draw),
                     data::wave_moves,
                     stats::use_hints,
