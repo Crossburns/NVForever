@@ -17,13 +17,10 @@
 //! fitted, here the image-space grade moves it, so the noon match establishes neither
 //! other hours nor interiors. Flicker, vertical hold and shudder are not built.
 //!
-//! One moving layer: the beam ([`ScreenFxBeam`], [`sweep`]), a soft brighter band that
-//! travels down the screen every [`BEAM_PERIOD`] seconds in [`BEAM_TRAVEL`] and is hidden
-//! between sweeps [observed: playtest 2026-11-05, against the original: "an electron
-//! beam / scan line effect that goes down it every 5 seconds", a brighter band taking about a
-//! second; its height and brightness are [hypothesis]]. It lies over the pages and under the
-//! scanlines, in the Pip-Boy's colour lightened towards white at a low alpha (a UI node adds
-//! nothing; a light tint over the amber reads as a brighter band).
+//! One moving layer: the beam ([`ScreenFxBeam`], [`sweep`]), a wave of light that travels down
+//! the screen every [`BEAM_PERIOD`] seconds: a hard leading edge at its foot and a long fade
+//! behind it [observed: private job pipboy_special_device_motion; playtest 2026-11-05]. It lies
+//! over the pages and under the scanlines, so the lines cross it. Between sweeps it is hidden.
 //!
 //! The path from the image to the frame [design: `pipboy_arm.rs`, `nvf_assets::nif_spawn`
 //! `unlit_vertex_colors`, `imagespace.wesl`]: image × [`SCREEN_TINT`] ×
@@ -88,6 +85,10 @@ pub const GLARE_LINEAR_SCALE: [f32; 3] = [1.95, 1.3, 0.9];
 /// 2026-11-05; fitted].
 const BACKGROUND: &str = "Interface\\Shared\\Background\\pipboy.dds";
 pub const BACKGROUND_BRIGHTNESS: f32 = 120.0;
+/// The picture's red, in linear light: the original's empty screen is less red than amber at
+/// this brightness, about (21, 17, 7) against (26, 18, 8) [observed: playtest shots of the
+/// original at 1920 x 1080, 2026-11-05; fitted].
+const BACKGROUND_RED: f32 = 0.7;
 /// How much of the undercoat the picture covers. What it adds stays what it would over
 /// black, its vignette whole; the undercoat shows through [design: the terminal's way,
 /// `terminal::screen::BACKGROUND_ALPHA`; the value is its].
@@ -105,14 +106,24 @@ pub const SCANLINE_PITCH: f32 = 9.5;
 /// 29% on the dim empty screen; the earlier 15% was the ITEMS screenshot's reading.
 pub const SCANLINE_DEPTH: f32 = 0.24;
 
-/// The beam (module docs): seconds between sweeps [observed: playtest 2026-11-05],
-/// seconds a sweep takes from above the top edge to below the bottom, its height in canvas
-/// units (an eighth of the canvas) and its alpha at the middle of its raised-cosine profile
-/// [hypothesis, the three].
+/// The beam (module docs). Seconds between sweeps: edges at the same place 5 s apart [observed:
+/// private job pipboy_special_device_motion, frames with a whole-second clock; playtest
+/// 2026-11-05]. Seconds from just above the top edge to off the foot: at least 190 of 720 rows
+/// went by within one clock second, so this is [hypothesis] within about 1 to 2.
 pub const BEAM_PERIOD: f32 = 5.0;
-pub const BEAM_TRAVEL: f32 = 1.0;
-pub const BEAM_HEIGHT: f32 = 96.0;
-pub const BEAM_ALPHA: f32 = 0.045;
+pub const BEAM_TRAVEL: f32 = 1.3;
+/// Its height in canvas units, a quarter of the screen and a little, and its leading edge's.
+/// On the private job's frames the light rises about straight over 95 rows of the 720, to a
+/// peak of about +14 in display red on the dim screen, and drops within about 12 rows, the
+/// measure's own smoothing included [observed: the same frames against their own without it].
+pub const BEAM_HEIGHT: f32 = 224.0;
+pub const BEAM_EDGE: f32 = 24.0;
+/// How strongly it covers the image at its peak, fitted to that +14 [hypothesis: fitted on the
+/// playtest shots of the original at 1920 x 1080, where the same step reads 13 to 14].
+pub const BEAM_ALPHA: f32 = 0.0115;
+/// How far its colour is lightened from the Pip-Boy's towards white: what it adds on the
+/// original's screen is about (1, 0.58, 0.17) in linear light [observed: the same frames].
+const BEAM_LIGHTEN: f32 = 0.3;
 
 /// Where the beam's top edge is at `phase` seconds into its period: from a band's height
 /// above the canvas to the canvas's foot, in [`BEAM_TRAVEL`]; `None` while it is hidden.
@@ -120,20 +131,28 @@ pub fn beam_top(phase: f32) -> Option<f32> {
     (0.0..BEAM_TRAVEL).contains(&phase).then(|| -BEAM_HEIGHT + (CANVAS.y + BEAM_HEIGHT) * phase / BEAM_TRAVEL)
 }
 
-/// The beam's column: white, its alpha a raised cosine of [`BEAM_ALPHA`] at the middle.
+/// The beam's column, white, with the wave's shape in its alpha from the top down: a straight
+/// rise to the peak, then the leading edge. The strength is on the node's colour, so a faint
+/// beam keeps a full range of alpha here.
 fn beam_pixels() -> Vec<u8> {
     let rows = BEAM_HEIGHT as usize;
+    let edge = BEAM_EDGE as usize;
     (0..rows)
         .flat_map(|y| {
-            let w = 0.5 - 0.5 * (std::f32::consts::TAU * (y as f32 + 0.5) / rows as f32).cos();
-            [255, 255, 255, (BEAM_ALPHA * w * 255.0).round() as u8]
+            let w = if y + edge < rows {
+                (y as f32 + 0.5) / (rows - edge) as f32
+            } else {
+                0.5 + 0.5 * (std::f32::consts::PI * ((y + edge - rows) as f32 + 0.5) / edge as f32).cos()
+            };
+            [255, 255, 255, (w * 255.0).round() as u8]
         })
         .collect()
 }
 
-/// The beam's colour for the Pip-Boy colour `rgb`: lightened half way to white.
+/// The beam's colour for the Pip-Boy colour `rgb`, its strength in the alpha.
 fn beam_tint(rgb: [u8; 3]) -> Color {
-    Color::srgb_u8(128 + rgb[0] / 2, 128 + rgb[1] / 2, 128 + rgb[2] / 2)
+    let lighter = rgb.map(|c| f32::from(c) / 255.0).map(|c| c + (1.0 - c) * BEAM_LIGHTEN);
+    Color::srgba(lighter[0], lighter[1], lighter[2], BEAM_ALPHA)
 }
 
 fn linear(v: f32) -> f32 {
@@ -142,7 +161,7 @@ fn linear(v: f32) -> f32 {
 
 /// The background picture's colour over black: amber at its brightness, in linear light.
 fn background_light(rgb: [u8; 3]) -> Vec3 {
-    Vec3::from_array(rgb.map(|c| linear(f32::from(c) / 255.0 * BACKGROUND_BRIGHTNESS / 255.0)))
+    Vec3::from_array(rgb.map(|c| linear(f32::from(c) / 255.0 * BACKGROUND_BRIGHTNESS / 255.0))) * Vec3::new(BACKGROUND_RED, 1.0, 1.0)
 }
 
 /// The undercoat before the scanlines' lift: [`UNDERCOAT_LIGHT`], back through the material's
@@ -506,18 +525,27 @@ mod tests {
         assert!(last > CANVAS.y - 1.0 && last <= CANVAS.y, "{last}: off the foot at the end");
         assert_eq!(beam_top(BEAM_TRAVEL), None);
         assert_eq!(beam_top(BEAM_PERIOD - 0.1), None);
-        // Its column: a raised cosine, nothing at the edges, the most in the middle.
+        // Its column: nothing at the top, a straight rise, a full range at the peak, and the
+        // leading edge at the foot, much steeper.
         let px = beam_pixels();
         assert_eq!(px.len(), BEAM_HEIGHT as usize * 4);
         let alpha: Vec<u8> = px.chunks(4).map(|p| p[3]).collect();
-        assert_eq!((alpha[0], alpha[alpha.len() - 1]), (0, 0));
-        let peak = *alpha.iter().max().unwrap();
-        assert_eq!(peak, (BEAM_ALPHA * 255.0).round() as u8);
-        assert_eq!(alpha[alpha.len() / 2], peak);
+        let n = alpha.len();
+        let edge = BEAM_EDGE as usize;
+        assert!(alpha[0] < 3 && alpha[n - 1] < 3, "{} {}", alpha[0], alpha[n - 1]);
+        assert_eq!(*alpha.iter().max().unwrap(), 255);
+        let half = (n - edge) / 2;
+        assert!(alpha[half].abs_diff(128) < 3, "half way up the rise: {}", alpha[half]);
+        assert!(alpha[..n - edge].windows(2).all(|w| w[0] <= w[1]), "the rise only rises");
+        assert!(alpha[n - edge..].windows(2).all(|w| w[0] >= w[1]), "the edge only falls");
+        let rise = 255.0 / (n - edge) as f32;
+        assert!(255.0 / edge as f32 > 5.0 * rise, "the leading edge is the hard side");
         assert!(px.chunks(4).all(|p| p[..3] == [255, 255, 255]), "white, the tint on the node");
-        // Lighter than the colour itself, in each channel.
+        // Its colour: amber lightened a little, its strength in the alpha.
         let t = beam_tint(AMBER_RGB).to_srgba();
         assert!(t.red > 0.99 && t.green > f32::from(AMBER_RGB[1]) / 255.0 && t.blue > f32::from(AMBER_RGB[2]) / 255.0);
+        assert!(t.green < 0.85 && t.blue < 0.55, "not near white: {t:?}");
+        assert_eq!(t.alpha, BEAM_ALPHA);
     }
 
     fn app(frame: Frame) -> App {

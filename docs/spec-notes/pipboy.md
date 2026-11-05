@@ -170,7 +170,8 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   - The falloff is the background picture's vignette: `pipboy.dds` runs from about 9 at its
     corners to 93 near the top of its middle [observed: the file]. Drawn over a large
     undercoat, as the first fit had it, the vignette was lost. The picture is at brightness
-    120 (the menu file's 90 at the first tint [documented: inventory_menu.xml]), covering
+    120 (the menu file's 90 at the first tint [documented: inventory_menu.xml]), its red in
+    linear light at 0.7 of amber's as the original's empty screen is less red, covering
     the undercoat at alpha 0.4 and adding what it would over black.
   - The undercoat, the screen camera's clear colour, is next to nothing: (0.00047, 0.00055,
     0.00054) of light in the view.
@@ -199,13 +200,18 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   (white at the top to about 0.8 at the bottom). On the screenshot the solid bar's rows
   are bright and dim by about 15% every 6 pixels, which is 9.5 of the canvas. Flicker,
   vertical hold and shudder (the INI's transitions) are not built.
-- **The beam** [observed: playtest 2026-11-05, against the original]: a brighter
-  band sweeps down the screen every 5 seconds, taking about a second. NVForever draws one
-  band an eighth of the canvas high, a raised cosine of alpha 0.045 at its middle in the
-  Pip-Boy's colour lightened half way to white, over the pages and under the scanlines,
-  from above the top edge to the foot in 1 s on the real clock, hidden between sweeps and
-  held with the pause menu; the height, brightness and travel time are [hypothesis]
-  (`device_screen.rs`). Not in the screen menu.
+- **The beam**: a wave of light travels down the screen, its leading edge hard at the foot and
+  a long fade behind it [observed: private job pipboy_special_device_motion, the same empty
+  stretch of the screen frame by frame; playtest 2026-11-05]. Edges at the same place come 5 s
+  apart. On those frames the light rises about straight over 95 rows of the 720 to about +14
+  in display red, then drops within about 12 rows, the measure's smoothing included; it adds
+  about (1, 0.58, 0.17) in linear light. The playtest shots of the original show the same step
+  of 13 to 14. Frames go by at about 7 rows a frame, and at least 190 rows went by within one
+  clock second, so the time is [hypothesis] within about 1 to 2 s. NVForever draws one column
+  (`device_screen.rs`): 224 canvas units high with an edge of 24, the Pip-Boy's colour lightened
+  0.3 towards white at a fitted alpha of 0.0115 at the peak, over the pages and under the
+  scanlines, 1.3 s from above the top edge to off the foot on the real clock, hidden between
+  sweeps and held with the pause menu. Not in the screen menu.
 - **Background**: `Interface\Shared\Background\pipboy.dds` over the whole canvas at
   brightness 90 [documented: inventory_menu.xml]; `ScreenGlare.dds` and this picture are
   512 × 512 DXT1, alpha 1 throughout [observed].
