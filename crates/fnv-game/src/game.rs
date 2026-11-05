@@ -884,6 +884,14 @@ impl MessageBox {
         }
         Ok(())
     }
+
+    /// Whether the box still waits for the player's click. An answered box stays in
+    /// [`Game::message_box`] until its script reads the button, which a fire-and-forget
+    /// box (a mod's MessageBoxEx warning at start) never does: it is off the screen all
+    /// the same, and must not count as open (saving was refused for a whole session, #1649).
+    pub fn waiting(&self) -> bool {
+        self.pressed.is_none()
+    }
 }
 
 /// Menu codes (`MenuMode <code>`) of the menus scripts open [observed: each code was
