@@ -88,7 +88,7 @@ pub fn switch(
             }
         }
     };
-    *lod = LodState::new(&world, crate::lod_settings(&args), !args.no_lod, gen);
+    *lod = LodState::new(&world, crate::lod_settings(&args), !args.no_lod, gen).with_origin(crate::lod::grid_origin(&game, &world));
 
     water.clear(&mut commands);
 }

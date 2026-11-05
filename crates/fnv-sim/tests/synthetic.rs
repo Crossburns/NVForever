@@ -976,7 +976,7 @@ fn presence_serial_stands_still_for_a_state_made_as_placed() {
     for r in [id(SAFE_REF), id(KEY_REF), id(CHILD_SAME)] {
         let before = w.presence_serial();
         let was = w.is_enabled(r).unwrap();
-        let own = w.get(r).unwrap().enabled;
+        let own = w.get(r).unwrap().enabled();
         assert_eq!(w.presence_serial(), before, "{r:?} made as placed");
         assert_eq!(w.is_enabled(r).unwrap(), was, "{r:?} reads as before");
         w.set_enabled(r, !own).unwrap();
@@ -1815,7 +1815,7 @@ fn created_lists_drops_taken_ones_included() {
     let a = w.drop_item(p, id(STIMPAK), 1).unwrap()[0];
     let b = w.drop_item(p, id(STIMPAK), 1).unwrap()[0];
     w.activate(p, a).unwrap();
-    let listed: Vec<(FormId, bool)> = w.created().map(|(id, s)| (id, s.deleted)).collect();
+    let listed: Vec<(FormId, bool)> = w.created().map(|(id, s)| (id, s.deleted())).collect();
     assert_eq!(listed, vec![(a, true), (b, false)]);
     // The player (materialised, below the created range) is not listed.
     assert!(w.peek(p).is_some());
@@ -2177,7 +2177,7 @@ fn deleted_created_references_are_pruned_from_saves() {
     let holder = id(SAFE_REF);
     w.get(held).unwrap().dropped_by = Some(holder);
     assert!(matches!(w.activate(p, held).unwrap().outcome, Outcome::PickedUp { .. }));
-    assert!(w.peek(held).unwrap().deleted);
+    assert!(w.peek(held).unwrap().deleted());
     let lying = w.place(id(CAPS), cell, [0.0; 3], [0.0; 3], 5).unwrap();
     w.get(lying).unwrap().dropped_by = Some(holder);
     let snap: fnv_sim::Snapshot = serde_json::from_str(&serde_json::to_string(&w.snapshot()).unwrap()).unwrap();
@@ -2200,7 +2200,7 @@ fn deleted_created_references_are_pruned_from_saves() {
     old.deleted_created.clear();
     old.refs.insert(held, w.peek(held).unwrap().clone());
     let mut again = World::restore(&f.forms, &f.refs, &old).unwrap();
-    assert!(again.get(held).unwrap().deleted);
+    assert!(again.get(held).unwrap().deleted());
     assert!(!again.snapshot().refs.contains_key(&held));
 
     // Size after N drops and pick-ups: the whole entries the save used to keep against
@@ -2335,4 +2335,22 @@ fn a_later_plugin_moves_and_deletes_references_into_one_cell_each() {
     assert!(cells_of(CHAIR_REF).is_empty(), "{:?}", cells_of(CHAIR_REF));
     // Untouched references stay where the master put them.
     assert_eq!(cells_of(SAFE_REF), vec![(id(CELL_A), 1)]);
+}
+
+/// A reference state's saved form with its flags: fixed text, as saves hold it. Making the
+/// flags private (issue #1464) kept their names, their place and that both must be there.
+#[test]
+fn ref_state_json_contract() {
+    use fnv_sim::world::RefState;
+    let text = |flags: &str| format!(r#"{{"base":"0x00000100","cell":null,"pos":[1.0,2.0,3.0],"rot":[0.0,0.0,0.5],{flags}"count":1,"open":false}}"#);
+    for (enabled, deleted) in [(true, false), (false, true), (true, true), (false, false)] {
+        let saved = text(&format!(r#""enabled":{enabled},"deleted":{deleted},"#));
+        let state: RefState = serde_json::from_str(&saved).unwrap();
+        assert_eq!((state.enabled(), state.deleted()), (enabled, deleted), "{saved}");
+        assert_eq!(serde_json::to_string(&state).unwrap(), saved, "the same fields in the same order");
+    }
+    for (flags, missing) in [(r#""deleted":false,"#, "enabled"), (r#""enabled":true,"#, "deleted")] {
+        let error = serde_json::from_str::<RefState>(&text(flags)).unwrap_err().to_string();
+        assert!(error.contains(&format!("missing field `{missing}`")), "{error}");
+    }
 }

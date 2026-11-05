@@ -148,7 +148,7 @@ pub(crate) fn tick(
     }
 
     // The live mines of the loaded cells.
-    let created: Vec<FormId> = sim.world.created().filter(|(id, r)| !r.deleted && kinds.contains(&r.base) && phys.created.contains_key(&id.0)).map(|(id, _)| id).collect();
+    let created: Vec<FormId> = sim.world.created().filter(|(id, r)| !r.deleted() && kinds.contains(&r.base) && phys.created.contains_key(&id.0)).map(|(id, _)| id).collect();
     let mut live: HashMap<FormId, V3> = HashMap::new();
     for id in m.placed.iter().copied().filter(|id| phys.ref_cell.contains_key(&id.0)).chain(created) {
         if !sim.present(id.0) {
@@ -184,7 +184,7 @@ pub(crate) fn tick(
             continue;
         }
         m.burning.remove(&id);
-        if sim.world.peek(id).is_some_and(|r| r.deleted) {
+        if sim.world.peek(id).is_some_and(|r| r.deleted()) {
             let sound = sim.base_of(id.0).and_then(|b| sfx.as_deref()?.forms.projectiles.get(&b)?.sound_disable);
             if let Some(sound) = sound {
                 sounds.write(PlaySound { sound, at: Some(pos) });
