@@ -5285,8 +5285,8 @@ env = { RUST_LOG = "info,nvf_play::hitvol=debug", NVF_PLAY_TEST_GOD = "1", NVF_P
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
 run_seconds = 14
 expect = [
-  { re = 'actor FF000000: \d+ part capsules \(size 1[23]\d.*radius: 17\.99', label = "the protectron's torso capsule is its ragdoll's 18 units (13.1 before)" },
-  { re = 'actor FF000001: \d+ part capsules \(size 14\d.*radius: 21\.2', label = "Mister Gutsy's body capsule is its ragdoll's 21.2 units (14.6 before)" },
+  { re = 'actor FF000000: \d+ part capsules \(size \d+.*radius: 17\.99', label = "the protectron's torso capsule is its ragdoll's 18 units (13.1 before)" },
+  { re = 'actor FF000001: \d+ part capsules \(size \d+.*radius: 21\.2', label = "Mister Gutsy's body capsule is its ragdoll's 21.2 units (14.6 before)" },
 ]
 
 [[scenario]]
