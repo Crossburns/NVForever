@@ -83,8 +83,10 @@ const KNOB_DEGREES_PER_TAB: f32 = 26.0;
 const KNOB_AXIS: [f32; 3] = [-0.0334, -0.3404, 0.9397];
 const KNOB_PIVOT: [f32; 3] = [-0.0077, -0.0596, 0.0];
 /// Degrees added to the knob's turn, and the sense of the turn (+1 or -1), so the fin is at
-/// the dial's marks: 72° clockwise from up at tab 0 and 26° a tab on [observed: the capture].
-const KNOB_ZERO: f32 = 0.0;
+/// the dial's marks: 26° a tab on, clockwise [observed: the capture]; the zero puts the fin at
+/// tab 4 (General) where the owner's 1920 × 1080 screenshot of the original has it, −61°
+/// from the model's rest, picked from a sheet of candidates [observed: owner, 2026-11-05].
+const KNOB_ZERO: f32 = -35.0;
 const KNOB_SENSE: f32 = 1.0;
 /// Degrees a second. [observed: private job pipboy_special_device_motion: a step is over
 /// within about 8 game loops; hypothesis: the rate of those loops, and that the wrap from tab

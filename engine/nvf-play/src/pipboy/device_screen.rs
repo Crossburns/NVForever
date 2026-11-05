@@ -95,7 +95,40 @@ const BACKGROUND_ALPHA: f32 = 0.4;
 /// bar's rows on the owner's ITEMS screenshot].
 const SCANLINES: &str = "textures\\pipboy3000\\pipboyscanlines.dds";
 pub const SCANLINE_PITCH: f32 = 9.5;
-pub const SCANLINE_DEPTH: f32 = 0.15;
+/// The dip at the dark end: 16 to 22% between the brightest and the darkest rows of an
+/// empty stretch of the original's screen at 1920 × 1080, indoors and at dusk alike, over a
+/// 9-pixel period [observed: owner's shots 2026-11-05]; the earlier 15% was the ITEMS
+/// screenshot's reading.
+pub const SCANLINE_DEPTH: f32 = 0.20;
+
+/// The screen's tint for this run: [`SCREEN_TINT`], or `NVF_PLAY_DEBUG_SCREEN_TINT=r,g,b`
+/// (the same linear scales), a development aid for fitting the tint against the original's
+/// screenshots in the game without a rebuild. Read once and logged.
+pub fn screen_tint() -> [f32; 3] {
+    static TINT: std::sync::OnceLock<[f32; 3]> = std::sync::OnceLock::new();
+    *TINT.get_or_init(|| match std::env::var("NVF_PLAY_DEBUG_SCREEN_TINT") {
+        Ok(text) => match parse_tint(&text) {
+            Some(t) => {
+                info!("debug aid NVF_PLAY_DEBUG_SCREEN_TINT: screen tint ({:.3}, {:.3}, {:.3}) instead of ({:.3}, {:.3}, {:.3})", t[0], t[1], t[2], SCREEN_TINT[0], SCREEN_TINT[1], SCREEN_TINT[2]);
+                t
+            }
+            None => {
+                warn!("debug aid NVF_PLAY_DEBUG_SCREEN_TINT: {text:?} is not r,g,b (three finite scales above 0); the fitted tint stays");
+                SCREEN_TINT
+            }
+        },
+        Err(_) => SCREEN_TINT,
+    })
+}
+
+/// `r,g,b`: three finite scales above zero.
+pub fn parse_tint(text: &str) -> Option<[f32; 3]> {
+    let v: Vec<f32> = text.split(',').map(|x| x.trim().parse::<f32>().ok()).collect::<Option<Vec<_>>>()?;
+    if v.len() != 3 || v.iter().any(|x| !x.is_finite() || *x <= 0.0) {
+        return None;
+    }
+    Some([v[0], v[1], v[2]])
+}
 
 /// The beam (module docs): seconds between sweeps [observed: owner's playtest 2026-11-05],
 /// seconds a sweep takes from above the top edge to below the bottom, its height in canvas
@@ -141,7 +174,7 @@ fn background_light(rgb: [u8; 3]) -> Vec3 {
 /// product and from under the picture. The glass, which does not follow the interface's
 /// colour [hypothesis].
 fn glass_undercoat() -> Vec3 {
-    Vec3::from_array(UNDERCOAT_LIGHT) / (Vec3::from_array(SCREEN_TINT) * SHAPE_VERTEX_COLOUR) / (1.0 - BACKGROUND_ALPHA)
+    Vec3::from_array(UNDERCOAT_LIGHT) / (Vec3::from_array(screen_tint()) * SHAPE_VERTEX_COLOUR) / (1.0 - BACKGROUND_ALPHA)
 }
 
 /// The undercoat, the screen camera's clear colour on the device: raised by what the
@@ -570,5 +603,13 @@ mod tests {
         assert!(!wanted(&PipBoy { frame: Frame::Screen, phase: Phase::Up, ..default() }));
         assert!(!wanted(&PipBoy { frame: Frame::Device, phase: Phase::Down, ..default() }));
         assert!(wanted(&PipBoy { frame: Frame::Device, phase: Phase::Raising, ..default() }));
+    }
+
+    #[test]
+    fn the_screen_tint_aid_takes_three_scales() {
+        assert_eq!(parse_tint("0.5, 0.648,1.389"), Some([0.5, 0.648, 1.389]));
+        for bad in ["", "1,2", "1,2,3,4", "1,0,2", "1,-1,2", "a,b,c", "inf,1,1"] {
+            assert_eq!(parse_tint(bad), None, "{bad:?}");
+        }
     }
 }
