@@ -553,6 +553,13 @@ impl<'a> World<'a> {
         self.cfg.hardcore = on;
     }
 
+    /// The player's level changed (`fnv_game::Game::sync_player_level`): AddItem, PlaceAtMe
+    /// and references with no fixed level roll at it from now on. Kept here because
+    /// inventories and locks are made on any read, where no caller can pass it in.
+    pub fn set_player_level(&mut self, level: u16) {
+        self.cfg.player_level = level.max(1);
+    }
+
     /// Whether the player may wear power armour (ARMO BMDT "Power Armor"): without it
     /// [`World::equip`] refuses such armour on the player with
     /// [`SimError::NoPowerArmorTraining`] [documented: GECK wiki SetPCCanUsePowerArmor,

@@ -170,8 +170,8 @@ impl World<'_> {
         self.zone_respawns.insert(zone, respawns);
     }
 
-    /// The level carried items of `r` are rolled at: its fixed level, else the
-    /// configured player level.
+    /// The level carried items and the lock of `r` are read at: its fixed level, else the
+    /// player's level now ([`World::set_player_level`]), not its zone's.
     pub(crate) fn item_level(&self, r: FormId) -> u16 {
         self.ref_levels.get(&r).map_or(self.config().player_level, |l| l.level)
     }

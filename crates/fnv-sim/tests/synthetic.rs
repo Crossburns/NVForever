@@ -725,6 +725,59 @@ fn a_leveled_entrys_coed_gives_items_at_its_condition() {
     assert_eq!(inv.groups().find(|g| g.0 == id(STIMPAK)).unwrap().1.condition, None);
 }
 
+/// `World::set_player_level`: what AddItem, PlaceAtMe and a reference with no fixed level
+/// roll at from then on; a snapshot keeps it. LL_LOOT: level 1 stimpaks, level 5 caps.
+#[test]
+fn the_players_level_moves_the_rolls_and_a_snapshot_keeps_it() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    let p = FormId::PLAYER_REF;
+    assert_eq!(w.add_item(p, id(LL_LOOT), 1).unwrap(), vec![(id(STIMPAK), 2)]);
+    w.set_player_level(5);
+    assert_eq!(w.config().player_level, 5);
+    assert_eq!(w.add_item(p, id(LL_LOOT), 1).unwrap(), vec![(id(CAPS), 10)]);
+    // SAFE holds 3 caps and LL_LOOT: created and placed alike, the list gives the caps.
+    let made = w.place(id(SAFE), None, [0.0; 3], [0.0; 3], 1).unwrap();
+    for safe in [made, id(SAFE_REF)] {
+        assert_eq!(w.item_count(safe, id(CAPS)).unwrap(), 13);
+        assert_eq!(w.item_count(safe, id(STIMPAK)).unwrap(), 0);
+    }
+    let snap: fnv_sim::Snapshot = serde_json::from_str(&serde_json::to_string(&w.snapshot()).unwrap()).unwrap();
+    let mut back = World::restore(&f.forms, &f.refs, &snap).unwrap();
+    assert_eq!(back.config().player_level, 5);
+    assert_eq!(back.add_item(p, id(LL_LOOT), 1).unwrap(), vec![(id(CAPS), 10)]);
+    // Never below 1.
+    back.set_player_level(0);
+    assert_eq!(back.config().player_level, 1);
+}
+
+/// A leveled lock on a door (doors never get a fixed level) reads the player's level until
+/// the door's state is made, then keeps what it was.
+#[test]
+fn a_leveled_door_lock_follows_the_players_level_until_its_state_is_made() {
+    const LEVELED_DOOR: u32 = 0x400;
+    const ROOM: u32 = 0x401;
+    let xloc_leveled = sub(b"XLOC", cat(&[&[25, 0, 0, 0], &0u32.to_le_bytes(), &[4, 0, 0, 0]]));
+    let door = record(b"DOOR", 0, DOOR, &[sub(b"EDID", z("TestDoor")), sub(b"FNAM", vec![0])]);
+    let cell = cat(&[
+        &record(b"CELL", 0, ROOM, &[sub(b"EDID", z("Room")), sub(b"DATA", vec![1])]),
+        &group(ROOM.to_le_bytes(), 6, &group(ROOM.to_le_bytes(), 9, &refr(LEVELED_DOOR, 0, DOOR, [0.0; 3], vec![xloc_leveled]))),
+    ]);
+    let bytes = cat(&[&tes4(), &top(b"DOOR", &door), &top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cell)))]);
+    let plugins = vec![Plugin::parse(&bytes, "Door.esm".into()).unwrap()];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    let s = schema();
+    let (forms, refs) = (FormStore::build(&lo, &s), RefTable::build(&lo, &s));
+    let mut w = World::new(&forms, &refs, SimConfig::default());
+    let door = id(LEVELED_DOOR);
+    assert_eq!(w.lock_of(door).unwrap().level, 25);
+    w.set_player_level(11);
+    assert_eq!(w.lock_of(door).unwrap().level, 50);
+    w.get(door).unwrap();
+    w.set_player_level(21);
+    assert_eq!(w.lock_of(door).unwrap().level, 50);
+}
+
 #[test]
 fn entries_added_to_a_leveled_list_count_and_persist() {
     use fnv_sim::forms::LeveledEntry;

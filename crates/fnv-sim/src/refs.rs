@@ -56,9 +56,9 @@ pub const LEVELED_LOCK_STEP: u8 = 25;
 pub const LEVELED_LOCK_MAX: u8 = 100;
 
 impl Lock {
-    /// The lock's level for a reference of level `level` (its encounter zone's level, else
-    /// the player's: `World::item_level`): the authored level, raised for a leveled lock by
-    /// [`LEVELED_LOCK_STEP`] for every [`LEVELED_LOCK_LEVELS_PER_STEP`] levels past the
+    /// The lock's level for a reference of level `level` (the one fixed when its cell
+    /// loaded, else the player's: `World::item_level`): the authored level, raised for a
+    /// leveled lock by [`LEVELED_LOCK_STEP`] for every [`LEVELED_LOCK_LEVELS_PER_STEP`] levels past the
     /// first, up to [`LEVELED_LOCK_MAX`]; a lock that needs a key (above Very Hard) and a
     /// lock not leveled keep theirs [hypothesis, see the constants].
     pub fn level_at(&self, level: u16) -> u8 {

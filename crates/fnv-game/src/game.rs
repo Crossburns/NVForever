@@ -3292,6 +3292,7 @@ impl<'a> Game<'a> {
     pub fn tick(&mut self) {
         self.frame += 1;
         self.temp_refs.clear();
+        self.sync_player_level();
         // JIP's SetGameMainLoopCallback functions due this frame (task J6), then xNVSE's
         // delayed calls.
         self.run_main_loop();

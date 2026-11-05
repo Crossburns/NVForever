@@ -70,9 +70,17 @@ actors, `resolve_changed_at`), `engine/nvforever/src/zones.rs` (the engine's cop
   multiplier, `Game::actor_level`) is not used for its items].
 - A cell reset (`fnv_game::respawn`) fixes the level of the actors it brings back again,
   at the player's level then (a zone's level does not change); refilled containers too.
-- Not changed: references made at run time (PlaceAtMe, PlaceLeveledActorAtMe) read at
-  the configured player level as before; scripts' AddItem of a leveled list reads the
-  configured player level. The static viewer (no `--play`) keeps the display level 1.
+- Scripts' AddItem of a leveled list reads the player's current level [observed:
+  simulation.md §4, `L4.sim.leveled.basic`], and so do the carried items of references
+  made at run time (PlaceAtMe, PlaceLeveledActorAtMe) [hypothesis: simulation.md §6].
+- A reference with no fixed level also reads the player's level at that moment, not its
+  zone's (`World::item_level`) [design]: a door's lock (only actors and containers get a
+  fixed level), and the carried items of an actor or container read before its cell
+  loads, a merchant chest's restocks included. What the game does for these is not seen
+  [hypothesis].
+- The world keeps the level in its configuration: `Game::sync_player_level` writes it on
+  SetLevel, on a level-up, on every tick and on a load [design]. The static viewer (no
+  `--play`) keeps the display level 1.
 
 ## 4. Never Resets
 

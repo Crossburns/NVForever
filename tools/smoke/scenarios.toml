@@ -18994,3 +18994,23 @@ expect = [
   { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1, label = "the ln_ file runs once the new game begins" },
 ]
 order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]
+
+[[scenario]]
+name = "leveled-additem-player-level"
+source = "#1567: AddItem of VendorAmmoGunsHigh (0x0017B5F6, level-16 entries Tier4 and Tier5 only from level 16) right after SetLevel 20 adds nothing from Tier3 (10mm, .22LR, 20 gauge) and gives Tier4 or Tier5 rounds (.308, 5mm, .45-70, 12.7mm)"
+note = "Counts in the order asked: 10mm stays at the start's 50, .22LR at 0, 20 gauge at the start's 40 [observed: repro run f1-leveled-additem-l20, before the AddItem]; at level 1 they grew to 734, 570 and 166. Then at least one of the higher tiers is above 0 (40 rolls)"
+areas = ["sim", "scripts"]
+paths = ["crates/fnv-sim/src/world.rs", "crates/fnv-sim/src/zones.rs", "crates/fnv-game/src/zones.rs", "crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/levelup.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.setlevel 20;player.getlevel;player.additem VendorAmmoGunsHigh 40;14.5:player.getitemcount 00004241;player.getitemcount 0007EA27;player.getitemcount 000E86F2;player.getitemcount 0006B53C;player.getitemcount 0006B53D;player.getitemcount 00121133;player.getitemcount 001429CF;15:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 20
+expect = [
+  { re = 'console: GetLevel on player >> 20\.00', label = "the player is level 20" },
+]
+order = [[
+  { re = 'console: AddItem on player >> ', label = "AddItem ran" },
+  { re = 'console: GetItemCount on player >> 50\.00', label = "no 10mm from the list" },
+  { re = 'console: GetItemCount on player >> 0\.00', label = "no .22LR from the list" },
+  { re = 'console: GetItemCount on player >> 40\.00', label = "no 20 gauge from the list" },
+  { re = 'console: GetItemCount on player >> [1-9]', label = "the higher tiers gave rounds" },
+]]

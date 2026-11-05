@@ -438,7 +438,8 @@ consistent with three independent rolls), all-levels vs highest eligible level
 (`VFactionSquadStimpaks`: always 1 stimpak at player level 10, always 3 at level 30, in
 game and candidate), Use All (`VendorChestStimpaksBoomer`), a uniform pick of 18
 (`ClutterHouseholdJunkNV`). Console `AddItem` with a leveled list resolves it against
-the player's level [observed, same captures].
+the player's level [observed, same captures]; `World::add_item` reads it from the world's
+configuration, which follows the game's player (encounter-zones.md) [design].
 
 Also **consistent with the game** for backlog B8 [observed in game, 2026-10-08,
 `L4.sim.leveled.b8`, `parity-lab/inputs/layer4/leveled_b8.cases.json`: 300 `AddItem`
@@ -509,8 +510,10 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   will be the leveled value (same as locks)"]; by how much is not documented. As built
   (`fnv_sim::refs::Lock::level_at`, `World::lock_of`): one step of 25 for every 10
   levels past the first, up to Very Hard (100), never Requires Key [hypothesis,
-  owner-review.md], from the reference's level (its encounter zone's, else the
-  player's) when its state is first made, as leveled lists are (encounter-zones.md);
+  owner-review.md], from the level fixed for the reference when its cell loaded
+  (containers), else the player's level, not its zone's (doors, which get no fixed level;
+  encounter-zones.md) [design]. A door's lock follows the player's level until the
+  door's state is first made and keeps that level from then on [design];
   GetLockLevel, the crosshair's lock line and the lockpick game then read that level.
   The nav graph's door locks keep the authored level (it only asks locked or not).
 - **XTEL** (door FormID, position, rotation, flag) makes a door a teleport [documented:

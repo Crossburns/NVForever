@@ -682,7 +682,12 @@ impl Runtime {
         self.opening_pending = false;
         self.new_game_files = false;
         self.player_cell = None;
-        with_world(self, sim, |rt| rt.snapshot_inventory());
+        with_world(self, sim, |rt| {
+            // Before the Script Runner's files and the LoadGame events, which run ahead of
+            // the first tick, and for saves written while the world's level stayed 1.
+            rt.game.sync_player_level();
+            rt.snapshot_inventory();
+        });
         Ok(changed)
     }
 
@@ -2328,6 +2333,24 @@ impl ScriptState {
     /// The player answered the open menu: it closes after this frame's scripts.
     pub(crate) fn answered(&self) -> bool {
         self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+
+    #[test]
+    fn a_save_with_the_old_world_level_reads_the_players_level_before_any_tick() {
+        let mut state = ScriptState::over_no_plugins();
+        let rt = state.rt.as_mut().unwrap();
+        let (forms, refs) = (rt.game.world.forms, rt.game.world.placed);
+        let mut sim = SimState { forms, refs, world: World::new(forms, refs, fnv_sim::SimConfig::default()) };
+        rt.game.player.level = Some(20);
+        let save = rt.game.snapshot();
+        assert_eq!(save.sim.config.player_level, 1);
+        rt.restore_save(&mut sim, save).unwrap();
+        assert_eq!(sim.world.config().player_level, 20);
     }
 }
 
