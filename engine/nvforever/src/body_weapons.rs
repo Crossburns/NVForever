@@ -98,12 +98,12 @@ const MUZZLE_TRIES: u16 = 120;
 fn place_muzzles(
     mut commands: Commands,
     combat: Option<Res<Combat>>,
-    mut armed: Query<(Entity, &BodyWeapon, Option<&mut BodyMuzzle>)>,
+    mut armed: Query<(Entity, &BodyWeapon, &ActorRig, Option<&mut BodyMuzzle>)>,
     children: Query<&Children>,
     names: Query<&Name>,
 ) {
     let Some(combat) = combat else { return };
-    for (e, bw, mut bm) in &mut armed {
+    for (e, bw, rig, mut bm) in &mut armed {
         if let Some(m) = bm.as_deref_mut() {
             if m.weapon == bw.weapon && (m.node.is_some() || m.tries >= MUZZLE_TRIES) {
                 continue;
@@ -115,7 +115,7 @@ fn place_muzzles(
                 (m.weapon, m.tries) = (bw.weapon, 0);
             }
         }
-        let Some(node) = combat.forms.weapons.get(&bw.weapon).filter(|w| w.embedded).and_then(|w| w.embedded_node.as_deref()) else {
+        let Some(node) = combat.forms.weapons.get(&bw.weapon).and_then(|w| stand_in_node(w, &rig.skel.names)) else {
             commands.entity(e).insert(BodyMuzzle { weapon: bw.weapon, node: None, tries: MUZZLE_TRIES });
             continue;
         };
@@ -134,6 +134,15 @@ fn place_muzzles(
             }
         }
     }
+}
+
+/// The node body weapon `w` fires from (WEAP NNAM) when [`place_muzzles`] is to give it
+/// a [`Muzzle`]: only one not in the creature's skeleton (`names`), i.e. a body part's
+/// stand-in ([`spawn_part_projectile_nodes`]). A node of the skeleton (the sentry bot's
+/// `ProjectileNode_RGatling`) is `npc_combat`'s embedded weapon's node, drawn from there.
+fn stand_in_node<'a>(w: &'a fnv_combat::data::WeaponStats, names: &[Option<String>]) -> Option<&'a str> {
+    let node = w.embedded_node.as_deref().filter(|_| w.embedded)?;
+    crate::npc_combat::embedded_node_index(names, node).is_none().then_some(node)
 }
 
 /// Named stand-ins for the projectile nodes of a creature's body-part model `part`
@@ -413,6 +422,21 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<BodyStats>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_body_parts_stand_in_gets_a_muzzle() {
+        use fnv_combat::data::WeaponStats;
+        let names = vec![Some("Bip01".to_string()), Some("ProjectileNode_RGatling".to_string()), None];
+        let gun = |node: &str| WeaponStats { embedded: true, embedded_node: Some(node.into()), ..Default::default() };
+        // The sentry bot's gatling: its NNAM node is in its skeleton (any case).
+        assert_eq!(stand_in_node(&gun("ProjectileNode_RGatling"), &names), None);
+        assert_eq!(stand_in_node(&gun("projectilenode_rgatling"), &names), None);
+        // The protectron's hand laser: its node is in a body part, not the skeleton.
+        assert_eq!(stand_in_node(&gun("ProjectileNode_RHandLaser"), &names), Some("ProjectileNode_RHandLaser"));
+        // Not an embedded weapon, or no node: nothing.
+        assert_eq!(stand_in_node(&WeaponStats { embedded: false, ..gun("ProjectileNode_RHandLaser") }, &names), None);
+        assert_eq!(stand_in_node(&WeaponStats { embedded: true, ..Default::default() }, &names), None);
+    }
 
     #[test]
     fn a_skeletons_folder() {

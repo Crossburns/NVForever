@@ -143,7 +143,7 @@ impl Stance {
             _ => line,
         };
         let grip = clips.get(&EquipClip::Equip).filter(|_| real).and_then(|c| left_grip(skel, c, weapon_node));
-        let sneak_grip = sneak.get(&EquipClip::Equip).and_then(|c| left_grip(skel, c, weapon_node)).or(grip);
+        let sneak_grip = sneak.get(&EquipClip::Equip).filter(|_| real).and_then(|c| left_grip(skel, c, weapon_node)).or(grip);
         let holstered_off = clips.get(&EquipClip::Holster).map_or_else(Vec::new, |c| holstered_off(&c.clip));
         let line = if no_weapon_node { format!("{line}; no Weapon node: for body weapons only") } else { line };
         Ok((Stance { prefix: prefix.to_string(), clips, weapon_only, facts, holster, drawn, weapon_node, no_weapon_node, bones, weapon_rest, sneak_weapon_rest, grip, sneak_grip, holstered_off, moves: Arc::new(moves), folder, sneak, sneak_weapon_only, sneak_facts }, line))

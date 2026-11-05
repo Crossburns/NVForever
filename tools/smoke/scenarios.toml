@@ -2722,7 +2722,7 @@ name = "creature-embedded-muzzle"
 source = "ESM audit 2026-10-24 gap 14 (nvforever npc_combat.rs, weapon-data-fields.md §7): a creature's embedded weapon shoots from the node its WEAP NNAM names (a sentry bot's ProjectileNode_RGatling)"
 note = "a sentry bot (CrSentryBotMGHard 0x000E585E) placed at the player in Goodsprings at 3 s (the first created reference, 0xFF000000), put 600 units away and set on the player; god mode"
 areas = ["combat"]
-paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/data.rs"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/data.rs", "engine/nvforever/src/body_weapons.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:CrSentryBotMGHard:1,5:moveto:0xFF000000:player:0:600:0,6:combat:0xFF000000:player" }
 args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 30
