@@ -2,10 +2,16 @@
 //! beyond the loaded cells (docs/spec-notes/world.md §7, docs/design/layer3.md).
 //!
 //! Observed layout: `meshes\landscape\lod\<world>\<world>.level<L>.x<X>.y<Y>.nif` for
-//! L = 4, 8, 16, 32 covers the L × L cells from (X, Y) (X, Y multiples of L), its root
+//! L = 4, 8, 16, 32 covers the L × L cells from (X, Y), its root
 //! node translated to the chunk's south-west corner, with its own 256 × 256 diffuse and
 //! normal textures at every level; object LOD blocks exist at level 4 only
-//! (`...\blocks\<world>.level4.x<X>.y<Y>.nif`). Near the camera, chunks generated from
+//! (`...\blocks\<world>.level4.x<X>.y<Y>.nif`). X and Y are the world's LOD origin
+//! plus multiples of L: the south-west cell its `lodsettings\<world>.dlodsettings` names
+//! ([`grid_origin`]). WastelandNV's is (-64, -64), a multiple of every level; Freeside's
+//! is (-10, -8), so its files are x-10, x-6, x-2, x2 … [observed: the archives' file
+//! names and the settings files; #1533: aligned to multiples of 4 there, no block or game
+//! chunk was found, and from Freeside the Strip's towers showed only their lights].
+//! Near the camera, chunks generated from
 //! the LAND records (`lodgen.rs`, docs/design/generated-lod.md) replace the game's
 //! level-4 terrain chunks once baked or read from NVForever's cache.
 //!
@@ -128,7 +134,7 @@ pub fn square_distance(p: Vec2, (x, y): Grid, n: i32) -> f32 {
 
 /// The terrain chunks to draw for a camera at `p` (module docs): leaves of a quadtree
 /// over the coarsest level, none of them overlapping, nearest level 4.
-pub fn select_chunks(p: Vec2, s: &LodSettings) -> Vec<Chunk> {
+pub fn select_chunks(p: Vec2, s: &LodSettings, origin: Grid) -> Vec<Chunk> {
     let top = LEVELS[LEVELS.len() - 1];
     let mut out = Vec::new();
     if s.far <= 0.0 {
@@ -136,9 +142,8 @@ pub fn select_chunks(p: Vec2, s: &LodSettings) -> Vec<Chunk> {
     }
     let r = (s.far / CELL_SIZE).ceil() as i32 + top;
     let (cx, cy) = cell_of(p.x, p.y);
-    let lo = |c: i32| (c - r).div_euclid(top) * top;
-    for x in (lo(cx)..=cx + r).step_by(top as usize) {
-        for y in (lo(cy)..=cy + r).step_by(top as usize) {
+    for x in (align(cx - r, origin.0, top)..=cx + r).step_by(top as usize) {
+        for y in (align(cy - r, origin.1, top)..=cy + r).step_by(top as usize) {
             visit(p, s, (top, x, y), &mut out);
         }
     }
@@ -158,6 +163,25 @@ fn visit(p: Vec2, s: &LodSettings, (l, x, y): Chunk, out: &mut Vec<Chunk>) {
     } else {
         out.push((l, x, y));
     }
+}
+
+/// The first cell of the level-`l` chunk holding cell `c`, on a grid starting at `o`.
+fn align(c: i32, o: i32, l: i32) -> i32 {
+    o + (c - o).div_euclid(l) * l
+}
+
+/// The world's LOD grid origin: the south-west cell of `lodsettings\<world>.dlodsettings`
+/// (bytes 12–15, two i16 [observed: WastelandNV -64, -64; FreesideWorld -10, -8;
+/// FreesideNorthWorld -9, -7; world.md §7]); (0, 0) without the file.
+pub fn grid_origin(game: &nvf_assets::GameData, world: &WorldData) -> Grid {
+    let name = world.index.worldspaces.get(&world.world).and_then(|w| w.edid.clone()).unwrap_or_default().to_ascii_lowercase();
+    game.read(&format!("lodsettings\\{name}.dlodsettings")).as_deref().and_then(settings_origin).unwrap_or((0, 0))
+}
+
+/// The south-west cell a `.dlodsettings` file names.
+fn settings_origin(b: &[u8]) -> Option<Grid> {
+    let i = |k: usize| b.get(k..k + 2).map(|s| i16::from_le_bytes([s[0], s[1]]) as i32);
+    Some((i(12)?, i(14)?))
 }
 
 /// Skirt depth for a chunk of level `l` (game units) [chosen: deep enough to cover the
@@ -218,6 +242,8 @@ pub struct LodState {
     pub radius: i32,
     pub enabled: bool,
     world_name: String,
+    /// The south-west cell of the world's LOD grid ([`grid_origin`]).
+    origin: Grid,
     /// The camera's cell the drawn chunks were chosen for.
     centre: Option<Grid>,
     /// Terrain chunks and object-block squares chosen for `centre`.
@@ -363,6 +389,7 @@ impl LodState {
             radius: (settings.far / (LEVEL as f32 * CELL_SIZE)).ceil().max(0.0) as i32,
             enabled,
             world_name: name,
+            origin: (0, 0),
             centre: None,
             chosen: Vec::new(),
             squares: Vec::new(),
@@ -381,6 +408,12 @@ impl LodState {
             terrain_rebuilds: 0,
             block_stats: BlockStats::default(),
         }
+    }
+
+    /// The world's LOD grid starts at `origin` ([`grid_origin`]).
+    pub fn with_origin(mut self, origin: Grid) -> LodState {
+        self.origin = origin;
+        self
     }
 
     /// Generated chunks still baking (0 when generation is off).
@@ -432,9 +465,10 @@ fn inside(p: Vec3, full: &HashSet<Grid>) -> bool {
     (x0..=x1).all(|x| (y0..=y1).all(|y| full.contains(&(x, y))))
 }
 
-/// The level-4 square holding a cell and the cell's bit in the square masks.
-fn chunk_bit(c: Grid) -> (Grid, u16) {
-    let ch = (c.0.div_euclid(LEVEL) * LEVEL, c.1.div_euclid(LEVEL) * LEVEL);
+/// The level-4 square holding a cell (on the grid from `o`) and the cell's bit in the
+/// square masks.
+fn chunk_bit(c: Grid, o: Grid) -> (Grid, u16) {
+    let ch = (align(c.0, o.0, LEVEL), align(c.1, o.1, LEVEL));
     (ch, 1 << ((c.1 - ch.1) * LEVEL + (c.0 - ch.0)))
 }
 
@@ -559,18 +593,20 @@ pub fn update_lod(
     let update_started = std::time::Instant::now();
     let g = bevy_to_game(cam.translation());
     let c = cell_of(g.x, g.y);
-    let centre_chunk = (c.0.div_euclid(LEVEL), c.1.div_euclid(LEVEL));
+    // Square indices on the world's LOD grid (`origin`).
+    let o = lod.origin;
+    let centre_chunk = ((c.0 - o.0).div_euclid(LEVEL), (c.1 - o.1).div_euclid(LEVEL));
     poll_generated(&mut lod, &mut models);
     let gen_radius = lod.gen.as_ref().map_or(-1, |g| g.radius);
-    let near_gen = move |&(x, y): &Grid| (x.div_euclid(LEVEL) - centre_chunk.0).abs().max((y.div_euclid(LEVEL) - centre_chunk.1).abs()) <= gen_radius;
+    let near_gen = move |&(x, y): &Grid| ((x - o.0).div_euclid(LEVEL) - centre_chunk.0).abs().max(((y - o.1).div_euclid(LEVEL) - centre_chunk.1).abs()) <= gen_radius;
     if lod.centre != Some(c) {
         lod.centre = Some(c);
         let p = g.truncate();
         let s = lod.settings;
-        lod.chosen = select_chunks(p, &s);
+        lod.chosen = select_chunks(p, &s, o);
         let r = lod.radius + 1;
         lod.squares = (-r..=r)
-            .flat_map(|dx| (-r..=r).map(move |dy| ((centre_chunk.0 + dx) * LEVEL, (centre_chunk.1 + dy) * LEVEL)))
+            .flat_map(|dx| (-r..=r).map(move |dy| (o.0 + (centre_chunk.0 + dx) * LEVEL, o.1 + (centre_chunk.1 + dy) * LEVEL)))
             .filter(|&sq| square_distance(p, sq, LEVEL) < s.far)
             .collect();
         // Nearest first, so squares put off by the rebuild budget are the far ones.
@@ -606,7 +642,7 @@ pub fn update_lod(
     let full: HashSet<Grid> = streamer.loaded.keys().filter(|c| !streamer.fades.contains_key(c)).copied().collect();
     let mut masks: HashMap<Grid, (u16, u16)> = HashMap::new();
     for c in streamer.loaded.keys() {
-        let (ch, bit) = chunk_bit(*c);
+        let (ch, bit) = chunk_bit(*c, o);
         let m = masks.entry(ch).or_default();
         m.1 |= bit;
         if full.contains(c) {
@@ -986,14 +1022,20 @@ fn gather(values: &VertexAttributeValues, used: &[usize]) -> VertexAttributeValu
 /// Queue bakes for the generated chunks `want` (level-4 squares chosen near the camera),
 /// nearest first; forget waiting ones no longer wanted (but near) and ready ones far behind.
 fn schedule_generated(lod: &mut LodState, centre_chunk: Grid, want: &[Grid]) {
+    let o = lod.origin;
     let Some(gen) = lod.gen.as_mut() else { return };
     let gr = gen.radius;
-    let dist = |&(x, y): &Grid| (x.div_euclid(LEVEL) - centre_chunk.0).abs().max((y.div_euclid(LEVEL) - centre_chunk.1).abs());
+    let index = move |(x, y): Grid| ((x - o.0).div_euclid(LEVEL), (y - o.1).div_euclid(LEVEL));
+    let dist = |&ch: &Grid| {
+        let (x, y) = index(ch);
+        (x - centre_chunk.0).abs().max((y - centre_chunk.1).abs())
+    };
     gen.ready.retain(|ch, _| dist(ch) <= gr + 2);
     let mut order: Vec<(i32, Grid)> = want
         .iter()
         .map(|&ch| {
-            let (dx, dy) = (ch.0.div_euclid(LEVEL) - centre_chunk.0, ch.1.div_euclid(LEVEL) - centre_chunk.1);
+            let (x, y) = index(ch);
+            let (dx, dy) = (x - centre_chunk.0, y - centre_chunk.1);
             (dx * dx + dy * dy, ch)
         })
         .collect();
@@ -1095,7 +1137,9 @@ mod tests {
 
     #[test]
     fn chunk_cells() {
-        assert_eq!(chunk_bit((5, -1)), ((4, -4), 1 << (3 * 4 + 1)));
+        assert_eq!(chunk_bit((5, -1), (0, 0)), ((4, -4), 1 << (3 * 4 + 1)));
+        // Freeside's grid starts at (-10, -8): cell (-3, -6) is in square (-6, -8).
+        assert_eq!(chunk_bit((-3, -6), (-10, -8)), ((-6, -8), 1 << (2 * 4 + 3)));
         assert_eq!(chunk_cell((4, -4), 13), (5, -1));
         assert!(in_chunk((5, -1), (4, 4, -4)));
         assert!(in_chunk((-32, 31), (32, -32, 0)));
@@ -1129,7 +1173,7 @@ mod tests {
     fn chunk_choice() {
         let s = LodSettings::default();
         for p in [Vec2::new(-69_500.0, 2_500.0), Vec2::new(0.0, 0.0), Vec2::new(55_500.0, 37_536.0), Vec2::new(-1.0, -1.0)] {
-            let chosen = select_chunks(p, &s);
+            let chosen = select_chunks(p, &s, (0, 0));
             let mut cells: HashMap<Grid, Chunk> = HashMap::new();
             for &ch in &chosen {
                 let (l, x, y) = ch;
@@ -1163,17 +1207,36 @@ mod tests {
             }
             assert!(!chosen.iter().any(|c| c.0 == 32), "level 32 at {p}");
             // Level 32 beyond its split distance when `far` reaches it.
-            assert!(select_chunks(p, &LodSettings { far: 400_000.0, ..s }).iter().any(|c| c.0 == 32));
+            assert!(select_chunks(p, &LodSettings { far: 400_000.0, ..s }, (0, 0)).iter().any(|c| c.0 == 32));
         }
         // Level 16 where a level-16 chunk lies between its split distance and `far`.
-        assert!(select_chunks(Vec2::new(20_000.0, 20_000.0), &s).iter().any(|c| c.0 == 16));
+        assert!(select_chunks(Vec2::new(20_000.0, 20_000.0), &s, (0, 0)).iter().any(|c| c.0 == 16));
         // Coarser chunks stay outside their split distance.
         let p = Vec2::new(0.0, 0.0);
-        for (l, x, y) in select_chunks(p, &s) {
+        for (l, x, y) in select_chunks(p, &s, (0, 0)) {
             let d = square_distance(p, (x, y), l);
             assert!(l == 4 || d >= s.near.max(s.split * l as f32 * CELL_SIZE), "({l}, {x}, {y}) at {d}");
         }
-        assert!(select_chunks(p, &LodSettings { far: 0.0, ..s }).is_empty());
+        assert!(select_chunks(p, &LodSettings { far: 0.0, ..s }, (0, 0)).is_empty());
+    }
+
+    #[test]
+    fn chunks_follow_the_worlds_lod_origin() {
+        // Freeside: south-west cell (-10, -8) [observed: freesideworld.dlodsettings,
+        // whose files are level4.x-10 … x6, y-8 … y12].
+        let b = [4, 0, 0, 0, 8, 0, 0, 0, 32, 0, 0, 0, 0xF6, 0xFF, 0xF8, 0xFF, 7, 0, 12, 0, 4, 0, 0, 0];
+        assert_eq!(settings_origin(&b), Some((-10, -8)));
+        assert_eq!(settings_origin(&b[..13]), None);
+        let s = LodSettings::default();
+        let o = (-10, -8);
+        let chosen = select_chunks(Vec2::new(-6500.0, -10500.0), &s, o);
+        assert!(!chosen.is_empty());
+        for &(l, x, y) in &chosen {
+            assert_eq!(((x - o.0).rem_euclid(l), (y - o.1).rem_euclid(l)), (0, 0), "({l}, {x}, {y}) off the grid");
+        }
+        assert!(chosen.contains(&(4, -2, -4)), "the camera's own square, freesideworld.level4.x-2.y-4");
+        assert_eq!((align(-3, -10, 4), align(-6, -8, 4)), (-6, -8));
+        assert_eq!((align(-11, -10, 4), align(0, 0, 32)), (-14, 0));
     }
 
     #[test]
@@ -1228,7 +1291,7 @@ mod tests {
         assert_eq!(parts.iter().filter(|p| p.is_some()).count(), 2);
         // Cell (0, 1) is bit 1 * 4 + 0, cell (1, 2) bit 2 * 4 + 1 (`chunk_bit`).
         assert_eq!((segment_cell(1), segment_cell(6)), (4, 9));
-        assert_eq!(chunk_bit((0, 1)).1, 1 << segment_cell(1));
+        assert_eq!(chunk_bit((0, 1), (0, 0)).1, 1 << segment_cell(1));
         let object = parts[4].as_ref().unwrap();
         assert_eq!((object.count_vertices(), object.indices().unwrap().len()), (4, 6));
         assert_eq!(parts[9].as_ref().unwrap().count_vertices(), 3);

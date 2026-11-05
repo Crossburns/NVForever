@@ -47,6 +47,7 @@ use bevy::prelude::*;
 use crate::ui_pointer::PointerState;
 use fnv_font::{Font, Line};
 use fnv_game::game::menus;
+use fnv_game::trace::EventKind;
 use fnv_sim::FormId;
 use nvf_assets::GameData;
 use std::collections::HashMap;
@@ -56,6 +57,10 @@ pub struct ScriptHud {
     /// The text and buttons each message was last shown with (the trace's
     /// `message_shown`), for the box queue, which holds only FormIDs.
     shown: HashMap<u32, BoxMessage>,
+    /// The form-less boxes (MessageBox, MessageBoxEx: FormId 0) relayed, oldest first, the
+    /// last [`FORMLESS_KEPT`]: the queue holds no text for them and they share one FormId,
+    /// so each queued one is told by its place ([`formless_front`]).
+    formless: Vec<BoxMessage>,
     /// The response texts (NAM1) of the dialogue lines said, by INFO.
     lines: HashMap<u32, Vec<String>>,
     /// The message box on screen (as last drawn).
@@ -70,15 +75,39 @@ impl ScriptHud {
     pub fn message_box(&mut self, b: BoxMessage) {
         // One log line: the text's CR LF line ends (MESG DESC) would split it.
         info!("message box shown: {} {:?}", b.text.replace("\r\n", "\n").replace(['\r', '\n'], " / "), b.shown().iter().map(|(_, t)| *t).collect::<Vec<_>>());
-        self.shown.insert(b.message, b);
+        if b.message == 0 {
+            self.formless.push(b);
+            let extra = self.formless.len().saturating_sub(FORMLESS_KEPT);
+            self.formless.drain(..extra);
+        } else {
+            self.shown.insert(b.message, b);
+        }
     }
 
-    /// The text of a message box as shown, else as the message record has it.
+    /// The text of the front message box (`message` is `Game::boxes[0]`) as shown, else as
+    /// the message record has it.
     pub fn box_view(&self, message: FormId, script: &ScriptState) -> BoxMessage {
         if let Some(b) = self.shown.get(&message.0) {
             return b.clone();
         }
-        let def = script.rt.as_ref().and_then(|rt| rt.game.data.messages.get(&message));
+        let rt = script.rt.as_ref();
+        // A form-less box: its words from the relayed ones, or from the runtime's events
+        // not relayed yet. Those reach this HUD in a script frame, and a box can open
+        // before one: a Script Runner file's box under the main menu, where scripts run
+        // no frame (#1548).
+        if let (0, Some(rt)) = (message.0, rt) {
+            let in_queue = rt.game.boxes.iter().filter(|m| m.0 == 0).count();
+            let pending = rt.game.events.iter().filter_map(|e| match &e.kind {
+                EventKind::MessageShown { message: FormId(0), text, buttons, hidden } if !buttons.is_empty() => {
+                    Some(BoxMessage { message: 0, text: text.clone().unwrap_or_default(), buttons: buttons.clone(), hidden: hidden.clone() })
+                }
+                _ => None,
+            });
+            if let Some(b) = formless_front(&self.formless, pending, in_queue) {
+                return b;
+            }
+        }
+        let def = rt.and_then(|rt| rt.game.data.messages.get(&message));
         BoxMessage {
             message: message.0,
             text: def.and_then(|d| d.text.clone()).unwrap_or_else(|| format!("(message {message})")),
@@ -99,6 +128,20 @@ impl ScriptHud {
     pub fn remember_line(&mut self, info: FormId, responses: Vec<String>) {
         self.lines.insert(info.0, responses);
     }
+}
+
+/// How many relayed form-less boxes [`ScriptHud`] keeps: more than ever wait at once.
+const FORMLESS_KEPT: usize = 32;
+
+/// The front one of the `in_queue` form-less boxes waiting in `Game::boxes`, from every
+/// form-less box shown, oldest first (the relayed ones, then the events not relayed yet).
+/// The queue is first in, first out, so the boxes waiting are the last `in_queue` shown and
+/// the front one is the first of those [design]. `None` when fewer were seen than wait (a
+/// save's boxes: their words are not saved).
+fn formless_front(relayed: &[BoxMessage], pending: impl Iterator<Item = BoxMessage>, in_queue: usize) -> Option<BoxMessage> {
+    let all: Vec<BoxMessage> = relayed.iter().cloned().chain(pending).collect();
+    let i = all.len().checked_sub(in_queue.max(1))?;
+    all.into_iter().nth(i)
 }
 
 /// A character-creation menu's name for the placeholder panel.
@@ -415,5 +458,29 @@ mod tests {
         assert_eq!((l[1].1, l[1].2), (145.0, 38.0));
         // A second speaker's text starts a line of its own.
         assert_eq!((l[2].0.width, l[2].1, l[2].2), (51.0, 374.5, 76.0));
+    }
+
+    fn text_box(text: &str) -> BoxMessage {
+        BoxMessage { message: 0, text: text.into(), buttons: vec!["OK".into()], hidden: Vec::new() }
+    }
+
+    #[test]
+    fn a_formless_box_not_relayed_yet_shows_its_own_words() {
+        // Two boxes of Script Runner files under the main menu: no script frame has
+        // relayed either (#1548). The front is the first; once it is answered, the second.
+        let pending = || [text_box("first"), text_box("second")].into_iter();
+        assert_eq!(formless_front(&[], pending(), 2).unwrap().text, "first");
+        assert_eq!(formless_front(&[], pending(), 1).unwrap().text, "second");
+    }
+
+    #[test]
+    fn formless_boxes_relayed_in_one_frame_keep_their_order() {
+        // Relayed boxes, an answered one first, then one still in the events.
+        let relayed = [text_box("answered"), text_box("a"), text_box("b")];
+        let pending = || std::iter::once(text_box("c"));
+        assert_eq!(formless_front(&relayed, pending(), 3).unwrap().text, "a");
+        assert_eq!(formless_front(&relayed, std::iter::empty(), 2).unwrap().text, "a");
+        // More waiting than were seen (a save's boxes): not known.
+        assert!(formless_front(&relayed, pending(), 5).is_none());
     }
 }

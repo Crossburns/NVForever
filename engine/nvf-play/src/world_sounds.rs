@@ -523,7 +523,7 @@ fn objects(
             continue;
         }
         let (base, pos) = (s.base, s.pos);
-        if s.deleted {
+        if s.deleted() {
             // Taken from a container menu (a corpse's dropped weapon, `menu::model::Row::
             // reference`): the menu's own take sound below plays instead.
             if in_container && s.dropped_by.is_some() {

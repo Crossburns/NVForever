@@ -371,7 +371,12 @@ actor that has arrived uses furniture when its package gives it some:
   furniture is available"; the distance is our choice].
 It is told to sit once it is drawn (`SitOn`); when its package changes it is told to get
 up (`GetUp`) and its walk waits until it is off. Furniture one resident was given is not
-given to another. Smoke tests: Easy Pete sits in his porch chair, gets up at 12:03,
+given to another. Told to sit and refused, it does not stay told [design, #1506;
+furniture.md §7]: for occupied furniture it stands free and asks again every 5 s of active
+play (an engineering number, no claim about the original) while it still wants it; for
+any other reason it does not ask again until something has changed. This covers furniture
+the renderer finds occupied; two residents contending in the AI's reservation are not
+covered (the loser gets no order, and no new choice while its activity lasts). Smoke tests: Easy Pete sits in his porch chair, gets up at 12:03,
 walks into the saloon and sits at his booth; at 22:04 he gets up, walks home and lies
 down on his bed (`SpecialIdle_BedLeft_Enter`, `DynamicIdle_Sleep`); flying across the
 map with `all`, other actors sit down where their packages send them.

@@ -822,6 +822,6 @@ pub(crate) fn cells_around(game: &Game, centre: Place, radius: f32) -> Vec<FormI
         }
     }
     let mut out: Vec<FormId> = cells.iter().flat_map(|c| refs.by_cell.get(c).into_iter().flatten().copied()).collect();
-    out.extend(game.world.created().filter(|(_, s)| s.cell.is_some_and(|c| cells.contains(&c)) && !s.deleted).map(|(id, _)| id));
+    out.extend(game.world.created().filter(|(_, s)| s.cell.is_some_and(|c| cells.contains(&c)) && !s.deleted()).map(|(id, _)| id));
     out
 }
