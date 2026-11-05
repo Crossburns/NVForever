@@ -195,9 +195,11 @@ pub fn monitor_names(world: &World) -> Vec<String> {
     names
 }
 
-/// The chosen monitor: the saved choice, else the primary monitor.
+/// The chosen monitor: the saved choice while it is still attached, else the primary.
 pub fn monitor_chosen(world: &World) -> String {
-    world.resource::<MonitorChoice>().0.clone().unwrap_or_else(|| MONITOR_NONE.to_string())
+    let c = world.resource::<MonitorChoice>();
+    let m = world.resource::<MonitorModes>();
+    c.0.clone().filter(|name| m.monitors.iter().any(|(n, _)| n == name)).unwrap_or_else(|| MONITOR_NONE.to_string())
 }
 
 /// Choose a monitor by name; "Primary monitor" clears the choice, any other name must be
@@ -355,5 +357,10 @@ mod tests {
         assert_eq!(monitor_chosen(&world), "Primary monitor");
         // A monitor that is not attached now is refused.
         assert!(!monitor_pick(&mut world, "DP-1"));
+        // A saved monitor that is then unplugged reads as the primary (the effective
+        // selection, matching borderless_selection's fallback).
+        assert!(monitor_pick(&mut world, "HDMI-A-1"));
+        world.resource_mut::<MonitorModes>().monitors.clear();
+        assert_eq!(monitor_chosen(&world), "Primary monitor");
     }
 }
