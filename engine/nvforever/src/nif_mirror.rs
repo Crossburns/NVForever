@@ -36,16 +36,18 @@ struct Held {
     scale: Option<f32>,
 }
 
-type Visuals<'w, 's> = Query<'w, 's, (Entity, &'static RefVisual, Option<&'static ChildOf>), crate::lights::NotLightSource>;
+type Visuals<'w, 's> = Query<'w, 's, (Entity, &'static RefVisual), crate::lights::NotLightSource>;
 
 type NodeQuery<'w, 's> = Query<'w, 's, (Option<&'static Name>, &'static mut Transform, Option<&'static Children>, Has<NifHidden>)>;
 
-/// The root entity of a reference's drawing.
-fn root_of(r: u32, actors: &Query<(Entity, &ActorRig)>, visuals: &Visuals) -> Option<Entity> {
+/// The root entity of a reference's drawing: its actor rig, else the topmost entity with
+/// its `RefVisual`. Every ancestor counts, not only the parent: a rig's plain nodes have no
+/// `RefVisual`, so neither a shape under one nor a root under its cell is told by the parent.
+fn root_of(r: u32, actors: &Query<(Entity, &ActorRig)>, visuals: &Visuals, parents: &Query<&ChildOf>) -> Option<Entity> {
     if let Some((e, _)) = actors.iter().find(|(_, a)| a.reference == r) {
         return Some(e);
     }
-    visuals.iter().filter(|(_, v, _)| v.0 == r).find(|(_, _, p)| p.is_none_or(|p| visuals.get(p.parent()).is_ok_and(|(_, v, _)| v.0 != r))).map(|(e, _, _)| e)
+    visuals.iter().filter(|(_, v)| v.0 == r).map(|(e, _)| e).find(|&e| !parents.iter_ancestors(e).any(|a| visuals.get(a).is_ok_and(|(_, v)| v.0 == r)))
 }
 
 /// The node entities under `root`, depth first, with their parent's index.
@@ -101,7 +103,7 @@ fn mirror(
         let r = match &edit {
             SceneEdit::Translation { r, .. } | SceneEdit::Rotation { r, .. } | SceneEdit::Scale { r, .. } | SceneEdit::Flags { r, .. } | SceneEdit::Rename { r, .. } | SceneEdit::Remove { r, .. } | SceneEdit::Insert { r, .. } | SceneEdit::Attach { r, .. } => *r,
         };
-        let Some(root) = root_of(r.0, &actors, &visuals) else { continue };
+        let Some(root) = root_of(r.0, &actors, &visuals, &parents) else { continue };
         let rig = rig_names(r.0, &actors);
         match edit {
             // A transform a script sets holds over the animation, frame after frame
@@ -154,7 +156,7 @@ fn mirror(
     // The held transforms, over this frame's pose.
     let keys: Vec<(u32, String)> = held.keys().cloned().collect();
     for (r, node) in keys {
-        let Some(root) = root_of(r, &actors, &visuals) else { continue };
+        let Some(root) = root_of(r, &actors, &visuals, &parents) else { continue };
         let rig = rig_names(r, &actors);
         let h = held[&(r, node.clone())];
         if let Some(mut t) = find(root, &node, &nodes, &rig).and_then(|e| nodes.get_mut(e).ok()) {
@@ -172,7 +174,7 @@ fn mirror(
     // The trees of the references scripts asked about.
     let watched: Vec<FormId> = scene.watched().collect();
     for r in watched {
-        let Some(root) = root_of(r.0, &actors, &visuals) else {
+        let Some(root) = root_of(r.0, &actors, &visuals, &parents) else {
             if logged.insert(r.0) {
                 info!("nif mirror: {:08X} watched, not drawn", r.0);
             }
@@ -214,14 +216,38 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
 
+    const R: u32 = 0x301;
+
+    fn root_in(world: &mut World) -> Option<Entity> {
+        world.run_system_once(|actors: Query<(Entity, &ActorRig)>, visuals: Visuals, parents: Query<&ChildOf>| root_of(R, &actors, &visuals, &parents)).unwrap()
+    }
+
     #[test]
     fn a_light_source_is_not_a_references_root() {
-        const R: u32 = 0x301;
         let mut world = World::new();
         let cell = world.spawn(Visibility::Inherited).id();
         world.spawn((PointLight::default(), RefVisual(R), ChildOf(cell)));
         let root = world.spawn((Transform::IDENTITY, RefVisual(R), ChildOf(cell))).id();
-        let found = world.run_system_once(|actors: Query<(Entity, &ActorRig)>, visuals: Visuals| root_of(R, &actors, &visuals)).unwrap();
-        assert_eq!(found, Some(root));
+        assert_eq!(root_in(&mut world), Some(root));
+    }
+
+    #[test]
+    fn a_shape_under_a_plain_node_is_not_its_rigs_root() {
+        let mut world = World::new();
+        let cell = world.spawn(Visibility::Inherited).id();
+        let root = world.spawn_empty().id();
+        let node = world.spawn((Transform::IDENTITY, ChildOf(root))).id();
+        world.spawn((Transform::IDENTITY, RefVisual(R), ChildOf(node)));
+        // The root's components last, so that a query meets the shape first.
+        world.entity_mut(root).insert((Name::new("Scene Root"), Transform::IDENTITY, RefVisual(R), ChildOf(cell)));
+        assert_eq!(root_in(&mut world), Some(root));
+    }
+
+    #[test]
+    fn a_reference_not_drawn_has_no_root() {
+        let mut world = World::new();
+        let cell = world.spawn(Visibility::Inherited).id();
+        world.spawn((Transform::IDENTITY, RefVisual(R + 1), ChildOf(cell)));
+        assert_eq!(root_in(&mut world), None);
     }
 }
