@@ -19084,8 +19084,8 @@ args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 18
 expect = ["warning: language file skipped: ", "broken.toml"]
 order = [[
-  "settings: language Smoke Language",
   "language: xx",
-  "settings: language English",
+  "settings: language Smoke Language",
   "language: en",
+  "settings: language English",
 ]]
