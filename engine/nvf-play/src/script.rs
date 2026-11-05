@@ -282,6 +282,12 @@ pub struct Runtime {
     closing: Option<(u16, Option<FormId>)>,
     /// `--new-game`: the opening starts on the first frame scripts run.
     opening_pending: bool,
+    /// A run without a save: the Script Runner's new-game files (`gn_`, `ln_`) run on the
+    /// first frame scripts run, when the new game begins, not when the runtime is made:
+    /// behind the main menu no game has begun yet, and Continue or Load there starts
+    /// another run that never runs them (#1548) [hypothesis: the original runs them when
+    /// a new game starts, docs/spec-notes/ext-script-runner.md §2].
+    new_game_files: bool,
     /// An actor the player woke by talking to it, and when (`Game::time`): the
     /// conversation starts once it is off its bed ([`Runtime::talk_when_awake`]).
     wake_talk: Option<(FormId, f64)>,
@@ -468,6 +474,11 @@ pub(crate) fn loaded_events(rt: &mut Runtime, sim: &mut SimState, path: &std::pa
 /// each file's outcome in the log.
 fn script_runner(rt: &mut Runtime, sim: &mut SimState, m: Moment) {
     let runs = with_world(rt, sim, |rt| rt.game.run_script_runner(m));
+    log_script_runner(runs, m);
+}
+
+/// Each Script Runner file's outcome in the log.
+fn log_script_runner(runs: Vec<fnv_game::script_runner::SrRun>, m: Moment) {
     for r in runs {
         match r.result {
             Ok(()) => info!("script runner: {} ran ({})", r.path, m.name()),
@@ -615,6 +626,7 @@ impl Runtime {
             skip: BTreeSet::new(),
             closing: None,
             opening_pending: new_game,
+            new_game_files: false,
             wake_talk: None,
             start: GameStart::default(),
             location: None,
@@ -668,6 +680,7 @@ impl Runtime {
         sim.world = world;
         sim.world.set_inventory_sources(inventory_sources(data, sim, &self.game));
         self.opening_pending = false;
+        self.new_game_files = false;
         self.player_cell = None;
         with_world(self, sim, |rt| rt.snapshot_inventory());
         Ok(changed)
@@ -1398,6 +1411,10 @@ impl EffectCtx for PlayCtx<'_> {
     fn is_furniture(&self, r: FormId) -> bool {
         self.sim.base_of(r.0).and_then(|b| self.sim.forms.get(b)).is_some_and(|b| matches!(b.data, fnv_sim::forms::BaseData::Furniture))
     }
+
+    fn is_terminal(&self, r: FormId) -> bool {
+        self.sim.base_of(r.0).and_then(|b| self.sim.forms.get(b)).is_some_and(|b| &b.sig == b"TERM")
+    }
 }
 
 /// The response texts (NAM1) of a dialogue line, in order.
@@ -1674,7 +1691,7 @@ pub(crate) fn run_scripts(
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
-    mut sit: MessageWriter<crate::furniture::UseFurniture>,
+    (mut sit, mut terminals): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>),
     paused: Res<crate::pause::Paused>,
     (mut screen, bindings, tiles, page, mut mods_ticks): ScreenAndMenus,
 ) {
@@ -1727,7 +1744,8 @@ pub(crate) fn run_scripts(
                 }
                 if !restored {
                     script_runner(&mut rt, &mut sim, Moment::Restart);
-                    script_runner(&mut rt, &mut sim, Moment::NewGame);
+                    // The new game's files wait for its first frame (`new_game_files`).
+                    rt.new_game_files = true;
                 }
                 let from_source = data.issues.count("script_compiled_from_source");
                 let failed = data.issues.count("script_source_does_not_compile");
@@ -1868,6 +1886,9 @@ pub(crate) fn run_scripts(
             info!("script: the player used {item}: {} effect(s) started", r.effects.len());
         }
         rt.follow_player();
+        if std::mem::take(&mut rt.new_game_files) {
+            log_script_runner(rt.game.run_script_runner(Moment::NewGame), Moment::NewGame);
+        }
         if std::mem::take(&mut rt.opening_pending) {
             rt.start_opening();
         }
@@ -2064,6 +2085,10 @@ pub(crate) fn run_scripts(
             ScriptEffect::UseFurniture(reference) => {
                 info!("script: the player uses furniture {reference:08X} (a script's Activate)");
                 sit.write(crate::furniture::UseFurniture { reference });
+            }
+            ScriptEffect::OpenTerminal(reference) => {
+                info!("script: terminal {reference:08X} opens (a script's Activate)");
+                terminals.write(crate::terminal::OpenTerminal { reference });
             }
         }
     }
@@ -2283,6 +2308,7 @@ impl ScriptState {
             skip: BTreeSet::new(),
             closing: None,
             opening_pending: false,
+            new_game_files: false,
             wake_talk: None,
             start: GameStart::default(),
             location: None,

@@ -863,7 +863,7 @@ fn play(
             };
             let t = template(&places, &sfx, base, None);
             let d = distance(s.pos, eye);
-            if !here || !s.enabled || d >= t.max_distance {
+            if !here || !s.enabled() || d >= t.max_distance {
                 continue;
             }
             if radio.npc_heard.insert(actor.0) {

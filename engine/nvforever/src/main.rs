@@ -1070,6 +1070,7 @@ fn main() -> AppExit {
             Err(e) => return fail(e),
         }
     };
+    let lod_origin = lod::grid_origin(&game, &world);
     let actor_world = (!args.no_actors).then(|| {
         let t0 = std::time::Instant::now();
         let mut a = actors::ActorWorld::build(world.lo, world.schema);
@@ -1265,7 +1266,7 @@ fn main() -> AppExit {
     .insert_resource(sky_state)
     .insert_resource(screen_modifiers)
     .insert_resource(fly::AutoFly(args.auto_fly))
-    .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen))
+    .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
     .init_resource::<TerrainCache>()
     .init_resource::<imposters::Imposters>()
@@ -1549,6 +1550,7 @@ fn main() -> AppExit {
             app.insert_resource(r)
                 .add_systems(Startup, residents::log_startup)
                 .add_systems(Update, residents::drive.after(world::stream).after(readahead::read_ahead).after(nvf_play::PlaySet::Scripts).before(nav::drive))
+                .add_systems(Update, residents::melee_knockback::arrange.after(residents::drive).run_if(resource_exists::<nvf_play::MeleeKnockbackAid>))
                 .add_systems(Last, residents::report);
             // Patrols and sandboxes go on after a load where the save had them.
             if play.is_some() {
