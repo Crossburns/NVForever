@@ -187,6 +187,12 @@ different), letters only: 4 letters 555, 5: 765, 6: 770, 7: 785, 8: 613, 9: 434,
 owner's screenshots is in it. [hypothesis] The game draws its words from it; nothing else
 in the data looks like a word list.
 
+[design, #1443] NVForever takes a word of letters of any script (a localized list's
+words, read in the install's code page, are not ASCII), upper-cased letter by letter,
+and lays out, counts and scores words by characters, not bytes. Whether a localized
+install has a word list of its own is not known [hypothesis: not looked at]. The log's
+words (§8) are NVForever's own and are shown in the chosen language (`lang/README.md`).
+
 ## 4. How many words, how long
 
 - **Count** [documented: GECK wiki "Hacking Word Count"]: `(1 - (Science - lock) / (100 -
