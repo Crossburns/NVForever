@@ -668,18 +668,24 @@ impl Runtime {
             }
         }
         let world = World::restore(sim.forms, sim.refs, &s.sim)?;
-        let changed: Vec<FormId> = s.sim.refs.keys().copied().collect();
+        // Moves the save caught during their fade are made as the game restores: those
+        // references are redrawn too, changed by the save or not.
+        let changed: Vec<FormId> = s.sim.refs.keys().chain(s.fade_moves.keys()).copied().collect::<BTreeSet<_>>().into_iter().collect();
         let data = self.game.data;
         let cfg = self.game.cfg;
         let session = self.game.take_session();
-        self.game = Game::restore(data, World::new(sim.forms, sim.refs, world.config()), cfg, &s)?;
+        // The game restores on the played world, so that what it does there stays (the
+        // moves above), and hands it back for `sim`; it keeps a stand-in between turns
+        // (`with_world`).
+        let stand_in = World::new(sim.forms, sim.refs, world.config());
+        self.game = Game::restore(data, world, cfg, &s)?;
         self.game.put_session(session);
+        let mut world = std::mem::replace(&mut self.game.world, stand_in);
         // The world's session edits (game settings, leveled lists, base containers changed
         // by script) last for the run, not in the save (`fnv_sim::world::WorldSession`).
         // Empty here as the game's session is: a load while playing starts a new run
         // (`crate::save` module notes), where GetGameRestarted is true again and scripts
         // make their session edits anew; kept for a restore within a run.
-        let mut world = world;
         world.put_session(sim.world.take_session());
         sim.world = world;
         sim.world.set_inventory_sources(inventory_sources(data, sim, &self.game));
@@ -2334,6 +2340,54 @@ impl ScriptState {
     /// The player answered the open menu: it closes after this frame's scripts.
     pub(crate) fn answered(&self) -> bool {
         self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::activate::tests::placed;
+
+    const ACTOR: FormId = FormId(0x100);
+    const MARKER: FormId = FormId(0x200);
+    const MARKER_CELL: FormId = FormId(0x301);
+    const SAVED_AT: [f32; 3] = [100.0, 200.0, 300.0];
+
+    /// A runtime and a played world over two placed references: an actor no save changed
+    /// and a marker. The snapshot: the marker moved by the save, so a world without the
+    /// save's changes sends the actor to the wrong place, and the actor in its fade.
+    fn in_fade() -> (Runtime, SimState, fnv_game::game::GameSnapshot) {
+        let mut rt = ScriptState::over_no_plugins().rt.unwrap();
+        let mut refs = RefTable::default();
+        refs.refs.insert(ACTOR, placed(ACTOR.0, 0x300, 0x302));
+        refs.refs.insert(MARKER, placed(MARKER.0, 0x300, MARKER_CELL.0));
+        let refs: &'static RefTable = Box::leak(Box::new(refs));
+        let forms = rt.game.world.forms;
+        let plugins = || World::new(forms, refs, fnv_sim::SimConfig::default());
+        let mut sim = SimState { forms, refs, world: plugins() };
+        let mut s = with_world(&mut rt, &mut sim, |rt| {
+            rt.game.world.get(MARKER).unwrap().pos = SAVED_AT;
+            rt.game.snapshot()
+        });
+        s.fade_moves.insert(ACTOR, fnv_game::functions::misc::FadeMove { marker: MARKER, offset: [1.0, 0.0, 0.0], at: s.time + 1.0 });
+        sim.world = plugins();
+        (rt, sim, s)
+    }
+
+    /// #1589: the move a save caught during its fade is on the played world from the
+    /// restore, before any tick, and is redrawn though the save did not change the actor.
+    #[test]
+    fn a_fade_move_in_a_save_is_made_on_the_played_world() {
+        let (mut rt, mut sim, s) = in_fade();
+        let changed = rt.restore_save(&mut sim, s).unwrap();
+        assert_eq!(changed, [ACTOR, MARKER], "the actor once, with what the save changed");
+        let there = [SAVED_AT[0] + 1.0, SAVED_AT[1], SAVED_AT[2]];
+        let moved = sim.world.peek(ACTOR).expect("on the played world");
+        assert_eq!((moved.pos, moved.cell), (there, Some(MARKER_CELL)));
+        assert!(rt.game.world.peek(ACTOR).is_none(), "the game holds its stand-in between turns");
+        assert!(rt.game.script_looks.fade_moves.is_empty(), "nothing is left to make it again");
+        // What a script reads in its turn.
+        with_world(&mut rt, &mut sim, |rt| assert_eq!(rt.game.world.peek(ACTOR).unwrap().pos, there));
     }
 }
 

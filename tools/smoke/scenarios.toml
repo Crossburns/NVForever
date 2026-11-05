@@ -6365,6 +6365,35 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-fade-move-write"
+source = "#1589: Easy Pete is sent to the Mojave Express box with MoveToMarkerWithFade and the game is saved in the same console line, inside the fade; save-fade-move-load reads where he ends up, so run them together"
+note = "No NPC packages, so he stays where the move puts him for the read after the load"
+areas = ["save"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/refs.rs", "engine/nvf-play/src/script.rs"]
+env = { NVFOREVER_HOME = "save-fade-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:EasyPeteRef.movetomarkerwithfade 0015F22D;save smoke-fade;15:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-npc-packages"]
+run_seconds = 19
+order = [[{ re = 'save: wrote .*smoke-fade\.nvfsave \(manual', label = "the save is written" }, { text = "script: EasyPeteRef fades in after its move for MoveToMarkerWithFade", label = "the move comes after it: the save caught the fade" }]]
+expect = [
+  { re = 'console: MoveToMarkerWithFade on EasyPeteRef >> 0\.00', label = "the move is asked for" },
+  { re = 'save: wrote .*smoke-fade\.nvfsave \(manual', label = "the save is written" },
+]
+
+[[scenario]]
+name = "save-fade-move-load"
+source = "#1589: a MoveToMarkerWithFade caught by a save is made on load, on the world that is played: he reads at the box (vMEGoodSpringsRef, -69594.8, 3438.5), not in the saloon"
+areas = ["save"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/refs.rs", "engine/nvf-play/src/script.rs"]
+env = { NVFOREVER_HOME = "save-fade-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "12:EasyPeteRef.getpos x;EasyPeteRef.getpos y;13:close" }
+args = ["--play", "--load", "smoke-fade", "--no-voice", "--no-npc-packages"]
+run_seconds = 17
+expect = [
+  { re = 'load: restored .*smoke-fade\.nvfsave', label = "the save is restored" },
+  { re = 'console: GetPos on EasyPeteRef >> -69594\.80', label = "x: at the box" },
+  { re = 'console: GetPos on EasyPeteRef >> 3438\.50', label = "y: at the box" },
+]
+
+[[scenario]]
 name = "save-load-order"
 source = "no-owner queue item 29 (2026-10-21; docs/design/save-load.md §4.1): a save made with one load order loads into another: FormIDs move to their plugin's place now, what came from plugins no longer loaded is dropped and the player told; run after save-write, whose save it loads"
 note = "save-write runs with the ten masters; this run loads its save with three of them, Gun Runners' Arsenal moved before Dead Money (index 05 -> 01, Dead Money 01 -> 02), the add-ons Honest Hearts, Old World Blues, Lonesome Road and the four packs gone. The base game's changes come back as in save-load"
