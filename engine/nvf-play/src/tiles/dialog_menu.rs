@@ -45,11 +45,11 @@
 //!   real press while the actor speaks skips once whichever way it arrives.
 //! - **NVForever's own tiles**: `NVF_GoodbyeHint` and `NVF_SelectionFill`, from templates
 //!   written here (`dialogue-menu.md` §6.4). The hint reads its wording and whether it shows
-//!   from the same model as the hand-built one.
+//!   from the same model and the same "Goodbye hint" switch as the hand-built one.
 
 use super::menus::{self, SizesWritten, Tiled};
 use crate::dialogue::{DialogueScreen, ListId, ViewInput};
-use crate::dialogue_menu::{hint_shown, MenuView, GOODBYE_HINT};
+use crate::dialogue_menu::{hint_shown, GoodbyeHint, MenuView, GOODBYE_HINT};
 use bevy::prelude::*;
 use fnv_ui::input::{By, HitCandidate, Report};
 use fnv_ui::{MemSource, Origin, TileId, Ui, Value};
@@ -88,7 +88,7 @@ const OWN_TEMPLATES: &str = r#"<template name="NVF_SelectionFillTemplate"><rect 
   <text name="NVF_GoodbyeHintText"><font>6</font><depth>1</depth></text></rect></template>"#;
 
 /// The hint's right end stands this far left of the band and its dark box reaches this far
-/// round the text [design: owner list 5 item 62, as the hand-built hint].
+/// round the text [design: owner list 5 item 62, as the hand-built hint stood before #1525].
 const HINT_GAP: f64 = 20.0;
 const HINT_PAD: f64 = 10.0;
 
@@ -420,7 +420,7 @@ impl SharedWritten {
     pub fn scroll(&self, steps: i32) {
         if steps != 0 {
             if let Ok(mut written) = self.0.lock() {
-                written.scroll_asked += steps;
+                written.scroll_asked = written.scroll_asked.saturating_add(steps);
             }
         }
     }
@@ -936,7 +936,7 @@ pub fn follow(ui: &Ui, report: &Report, physical: &[&str], menu: TileId, list: O
             }
             Some(DialogTile::Scroll(n)) => {
                 info!("tiles: {DIALOG_MENU} list scrolled {n} on its tiles");
-                *scroll_asked += n;
+                *scroll_asked = scroll_asked.saturating_add(n);
             }
             _ => {}
         }
@@ -1183,6 +1183,7 @@ pub(crate) fn write_system(
     creator: Option<Res<crate::creator::CreatorMenu>>,
     mut state: ResMut<DialogTiles>,
     shared: Res<SharedWritten>,
+    hint: Res<GoodbyeHint>,
 ) {
     if !switch.dialog {
         return;
@@ -1227,8 +1228,7 @@ pub(crate) fn write_system(
         framed: screen.as_ref().is_some_and(|s| s.framed()),
         keyed: screen.as_ref().map_or(0, |s| s.keyed()),
         screen: (num(ui, ui.screen(), "width"), num(ui, ui.screen(), "height")),
-        // The hint's setting: #1517 reads its resource here.
-        hint: true,
+        hint: hint.0,
     };
     let mut round = |ui: &mut Ui, texts: &[TileId], sizes: &mut SizesWritten| {
         let size = fonts.menu_measure(&menus::fonts_of(ui, texts));

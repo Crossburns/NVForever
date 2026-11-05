@@ -138,16 +138,24 @@ pub fn sampler() -> ImageSampler {
 /// textures the device cannot sample.
 pub fn dds_image(bytes: &[u8], srgb: bool, bc_supported: bool) -> Result<Image, String> {
     // A panic while decoding is this texture's failure, not the game's (guard.rs).
-    crate::guard::guarded(|| dds_image_unguarded(bytes, srgb, bc_supported))
+    crate::guard::guarded(|| dds_image_unguarded(bytes, srgb, bc_supported, false))
 }
 
-fn dds_image_unguarded(bytes: &[u8], srgb: bool, bc_supported: bool) -> Result<Image, String> {
+/// [`dds_image`] with the largest level only, its smaller ones left out: for a sheet of
+/// pictures cut out by rectangles (a font's glyphs), where a smaller level blends each
+/// picture with its neighbours. The base game's font textures have one level
+/// [observed: fonts.md §2]; a localized or modded one may have more (#1439).
+pub fn dds_image_top(bytes: &[u8], srgb: bool, bc_supported: bool) -> Result<Image, String> {
+    crate::guard::guarded(|| dds_image_unguarded(bytes, srgb, bc_supported, true))
+}
+
+fn dds_image_unguarded(bytes: &[u8], srgb: bool, bc_supported: bool, top_only: bool) -> Result<Image, String> {
     let dds = Dds::parse(bytes).map_err(|e| e.to_string())?;
     if dds.header.is_cubemap() {
         return Err("cube map (not used by the viewer)".into());
     }
     let (w, h) = (dds.header.width, dds.header.height);
-    let levels = &dds.levels[0];
+    let levels = if top_only { &dds.levels[0][..1] } else { &dds.levels[0][..] };
     let (format, data) = match dds.format {
         Format::Dxt1 | Format::Dxt3 | Format::Dxt5 => {
             if !bc_supported {

@@ -2976,12 +2976,45 @@ expect = [
   "barter opened: UIMenuMode",
   "container take all: UIItemTakeAll",
   "inventory item used: NPCHumanUsingStimpak",
-  { text = "dialogue menu: TAB) Goodbye shown at the left of the choices", label = "the Goodbye hint while Chet offers a Goodbye choice (list 5 item 62)" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", label = "the Goodbye hint while Chet offers a Goodbye choice (list 5 item 62)" },
   { text = "wait slider moved: UIMenuPrevNext", known_failing = "main 2026-10-15 (since crime in play, #242, 2026-10-12): the menu aid's Take All from Chet's cash register at 44 s is a theft Chet sees, so he turns on the player and the wait menu at 61 s is refused (You cannot wait when enemies are nearby.), as it should be; the slider is never moved. The slider sound is checked in wait-residents instead" },
   "settings switch flipped: UIMenuPrevNext",
   { re = 'ui sounds summary:.*\b24 played', known_failing = "claude/smoke-regressions 2026-10-12: 23 played with every step done (the start-up boxes no longer swallow the menu aid's inventory pass); one UIPipBoyScroll short of the 24 of 2026-10-11: since the Pip-Boy ITEMS page (#213) the menu aid's inventory pass lists the Weapons tab, whose first row is the weapon it puts on and is already selected, so no selection move is heard (before: the Vault 13 jumpsuit, further down one list). Not a sound the engine loses. Main 2026-10-15: 20 played, the refused wait menu's three (UIMenuMode, UIMenuPrevNext, UIMenuOK, all heard in wait-residents) on top; see the wait slider line" },
   { re = 'ui sounds summary:.*\b0 sounds not found' },
   { re = "ui sounds summary:.*(?P<n>\\d+) items' own sounds held back for Take All", range = [1, 1e9], label = "one or more items' own sounds held back for Take All" },
+]
+
+[[scenario]]
+name = "dialogue-goodbye-hint"
+note = "Chet in the general store, 1024x768 (4:3: the hint stands in the band under the bottom bracket, not at the side). The talk aid starts the conversation with no steps and holds the choices for 60 s; a real Tab key (NVF_PLAY_TEST_KEYS, through the game's bindings) at 36 s says goodbye, so the aid's own leave never runs. Shots hint_on_*.png while the choices wait. Covers: the hint shown while a Goodbye choice is offered, a real Tab ending the conversation by Goodbye. Does not cover: a Tab refused where no Goodbye is offered (dialogue.rs is unchanged), the switch flipped live (the unit test of the cache key covers it), the setting's saved state. Timing: the conversation starts at 11 s of the world aids' clock and Chet's greeting takes under 11 s, else the Tab at 36 s is refused and the run fails on the aid's leave line (a late start moves the talk and the keys together)"
+source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint (#1517)"
+areas = ["dialogue", "menus"]
+paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "60", NVF_PLAY_TEST_KEYS = "36:tab", NVF_PLAY_TEST_SHOTS = "30:hint_on_30.png,33:hint_on_33.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1024x768"]
+run_seconds = 48
+expect = [
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 1, label = "the hint, the switch on by default, while Chet offers a Goodbye choice" },
+  { text = "dialogue menu: [Tab] Goodbye hidden by the Goodbye hint setting", max = 0, label = "no hidden line with the switch on" },
+  { re = 'dialogue: conversation with GSChetRef ended \(goodbye,', count = 1, label = "the conversation ended by its Goodbye line (not by being left or broken off)" },
+  { text = "test aid NVF_PLAY_TEST_TALK: no steps left: leaving the conversation", max = 0, label = "the aid did not leave: the real Tab did" },
+]
+
+[[scenario]]
+name = "dialogue-goodbye-hint-off"
+note = "As dialogue-goodbye-hint with the Goodbye hint switched off first: the pause menu's settings page flips dialogue-goodbye-hint at 3 s (the aids that act on the world, the talk among them, wait for 11 s of the world clock, which never runs ahead of the real one, so the flip comes first on any machine). The hint is held back, the real Tab at 36 s still says goodbye. Shots hint_off_*.png. Does not cover the flip while a conversation is open (unit test of the cache key) or a refused Tab"
+source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint switch (#1517)"
+areas = ["dialogue", "menus"]
+paths = ["engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:page,3:dialogue-goodbye-hint", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "60", NVF_PLAY_TEST_KEYS = "36:tab", NVF_PLAY_TEST_SHOTS = "30:hint_off_30.png,33:hint_off_33.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1024x768"]
+run_seconds = 48
+expect = [
+  { text = "settings: dialogue-goodbye-hint off", label = "the settings page turned the Goodbye hint off" },
+  { text = "dialogue menu: [Tab] Goodbye hidden by the Goodbye hint setting", count = 1, label = "Chet offers Goodbye and the hint is held back" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", max = 0, label = "the hint is not shown" },
+  { re = 'dialogue: conversation with GSChetRef ended \(goodbye,', count = 1, label = "a real Tab still says goodbye with the hint hidden" },
+  { text = "test aid NVF_PLAY_TEST_TALK: no steps left: leaving the conversation", max = 0, label = "the aid did not leave: the real Tab did" },
 ]
 
 [[scenario]]
@@ -6251,6 +6284,26 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-after-answered-box"
+source = "#1649 (a user's report): after a mod's MessageBoxEx warning was answered, every save was refused for the rest of the session with \"a script's menu or message box is open\": the answered box stayed in the game's message box until its script read the button, which a fire-and-forget box never does"
+note = "the console's MessageBoxEx box is answered by NVF_PLAY_TEST_SCRIPT_MENUS after 1 s and nothing reads its button, as with the mods' start-up warnings; the console's save comes after"
+areas = ["save", "scripts"]
+paths = ["engine/nvf-play/src/save.rs", "crates/fnv-game/src/functions/misc.rs"]
+env = { NVFOREVER_HOME = "save-box-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "20:MessageBoxEx \"nvf answered box|Ok\";20.3:close;24:save nvf-after-box;25:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 27
+expect = [
+  { re = 'script: menu 1001 .*answered', label = "the box is answered" },
+  { re = 'save: wrote .*nvf-after-box\.nvfsave \(manual, ', label = "the save after the answered box is written" },
+  { re = 'save: not now', count = 0, label = "no save is refused" },
+]
+order = [[
+  { re = 'console: MessageBoxEx "nvf answered box\|Ok" >> ran' },
+  { re = 'script: menu 1001 .*answered' },
+  { re = 'save: wrote .*nvf-after-box\.nvfsave' },
+]]
+
+[[scenario]]
 name = "save-load"
 source = "owner 2026-10-15: save and load (docs/design/save-load.md): the second half of the round trip: --load the save save-write made and find its changes"
 areas = ["save"]
@@ -6267,6 +6320,23 @@ expect = [
   { re = 'console: GetActorValue on player >> 9\.00', label = "the player's Luck came back" },
   { re = 'console: GetPos on player >> -683\d\d\.', label = "the player stands where the save was made" },
 ]
+
+[[scenario]]
+name = "save-refused-when-dead"
+source = "issue #1572: every way of saving is refused from the player's death on (docs/design/save-load.md)"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs"]
+note = "player.kill at 14 s; the QuickSave key at 15.5 s and 17 s (the second while the screen is going black) and a console save at 19 s are all refused, and nothing is written. NVFOREVER_HOME keeps the run off the real quicksave."
+env = { NVFOREVER_HOME = "save-dead-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.kill;14.3:close;19:save dead-save;19.5:close", NVF_PLAY_TEST_KEYS = "15.5:f5,17:f5" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'combat: the player died', label = "the player dies" },
+  { text = "save: QuickSave key", min = 2, label = "both F5 presses reach the save code" },
+  { text = "save: not now: the player is dead", min = 3, label = "both quicksaves and the console save are refused" },
+  { re = 'save: wrote ', count = 0, label = "nothing is written" },
+]
+order = [["combat: the player died", "save: QuickSave key", "save: not now: the player is dead"]]
 
 [[scenario]]
 name = "save-ai-write"
@@ -8298,6 +8368,23 @@ expect = [
   { re = 'player weapon model \(First person\): a sighting node: aimed with the down-the-sights clips', label = "the pistol still plays its down-the-sights clips" },
   { re = 'crosshair: hidden down the true iron sights', label = "no crosshair down the sights" },
   { re = 'crosshair: shown again', label = "the crosshair is back after aiming" },
+]
+
+[[scenario]]
+name = "aim-reload-lowers-sights"
+source = "owner's report #1642: a reload or a jam while aiming down the sights plays with the sights still up; they should come down for it and go back up after while Block is held (engine/nvf-play/src/combat.rs sights_held_down, aim_zoom.rs)"
+note = "the 10mm pistol (0000434F) drawn at 9 s, Block held from 12 s to 19 s, one shot at 12.5 s, a reload at 14 s (no god mode: it keeps the magazine full, so there would be nothing to reload)"
+areas = ["combat", "camera"]
+paths = ["engine/nvf-play/src/aim_zoom.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/iron_sights.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_CONTROL = "9:weapon,12:aim,12.5:fire,12.6:fire,14:reload,19:aim" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12"]
+run_seconds = 23
+expect = [
+  { re = 'aim zoom: \S+ \(\S+\) sight FOV', label = "aiming zooms in" },
+  { re = 'aim zoom: back to the unzoomed view', label = "the reload zooms back out with Block still held" },
+  { re = 'combat: reloaded \d+', label = "the reload finishes" },
+  { re = 'aim zoom: \S+ \(\S+\) sight FOV', label = "after the reload the sights come back up on their own" },
+  { re = 'aim zoom: back to the unzoomed view', label = "letting go of Block zooms out at the end" },
 ]
 
 [[scenario]]
@@ -10539,6 +10626,22 @@ expect = [
   { text = "menu: One: 9mm Pistol can't be equipped", label = "locked off: the inventory cannot put it on" },
   { text = "menu: One: Unequipped 9mm Pistol", label = "a plain EquipItem freed it" },
 ]
+
+[[scenario]]
+name = "equip-swap-unequip-first"
+source = "issue #1616: swapping apparel from the inventory runs the old item's OnUnequip before the new item's OnEquip (docs/spec-notes/ext-events.md)"
+note = "The player puts on a Powder Gang outfit (ArmorNVPGSimple 000A4731, script PowderGangOutfitWarningScript SCPT 00134B71) at 14 s, then a Great Khan outfit (ArmorNVGKSimple 000E674C, KhanFactionOutfitWarningScript SCPT 00134B70) in its place at 19 s, through the test aid's plain equip (the inventory menu's path)"
+areas = ["scripts"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_events.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GIVE = "000A4731:1,000E674C:1", NVF_PLAY_TEST_CONTROL = "14:equip=000A4731,19:equip=000E674C" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'script: OnEquip of FalloutNV\.esm\|SCPT 0x00134B71 ran on Some\(0x00000014\)', label = "the Powder Gang outfit's OnEquip runs" },
+  { re = 'script: OnUnequip of FalloutNV\.esm\|SCPT 0x00134B71 ran on Some\(0x00000014\)', label = "the swap runs its OnUnequip" },
+  { re = 'script: OnEquip of FalloutNV\.esm\|SCPT 0x00134B70 ran on Some\(0x00000014\)', label = "the Khan outfit's OnEquip runs" },
+]
+order = [["test aid: the player equips 0x000E674C", "script: OnUnequip of FalloutNV.esm|SCPT 0x00134B71", "script: OnEquip of FalloutNV.esm|SCPT 0x00134B70"]]
 
 [[scenario]]
 name = "move-to-marker-fade"
@@ -18794,6 +18897,22 @@ expect = [
 order = [["nvf mcm install check 1", "tiles: a mod's tiles in StartMenu", "pause menu: mods page", "scripts: MenuMode 1013 blocks run", "pause menu: mods page closed", "nvf mcm install check 0"]]
 
 [[scenario]]
+name = "dropped-clothes-fall"
+source = "issue #1604: clothing dropped from the inventory hung in the air: its folded ground model (armour MOD2, GO.NIF) is 2-4 dynamic bodies on hinges, and the drawn item follows one body only. Created references whose model's bodies are all dynamic now get one body (engine/nvf-play/src/phys.rs one_dynamic_body; simulation.md §5)"
+note = "Goodsprings, by the player: the Pre-War Spring Outfit, Leather Armor, Merc Charmer Outfit and Vault 21 Jumpsuit dropped from 8 s to 11 s from chest height, then the 10mm pistol at 12 s as a control; the ground is about 85 units below the drop point"
+areas = ["physics", "items"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvf-play/src/dropped.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "000340D0:1,00020423:1,00034122:1,00104184:1,0000434F:1", NVF_PLAY_TEST_DROP = "8:000340D0,9:00020423,10:00034122,11:00104184,12:0000434F" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'dropped reference 0xFF00000[0-3] drawn: meshes.armor.\S+.go\.nif', count = 4, label = "each piece of clothing draws its folded ground model" },
+  { re = 'collision of dropped 0xFF00000[0-3] added: meshes.armor.\S+.go\.nif, 1 bodies \(dynamic\).*: the model.s [24] dynamic bodies joined into one', count = 4, label = "their bodies are joined into one" },
+  { re = 'dropped 0xFF00000[0-3] came to rest at', count = 4, label = "each piece of clothing comes to rest" },
+  { re = 'dropped 0xFF00000[0-4] came to rest at .*, (?P<n>[\d.]+) below where its collision was added', range = [60, 120], all = true, label = "on the ground, about 85 units below the drop point, as the pistol" },
+]
+
+[[scenario]]
 name = "script-move-dynamic-clutter"
 source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
 note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"
@@ -19066,7 +19185,7 @@ expect = [
   { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', label = "the renderer takes the menu, with NVForever's own code tiles" },
   { re = 'tiles: DialogMenu painted: band 1, name 1, line 1, rows 0, dim 0, frame 0 plain, fill 0, bar 0, brackets 0, hint 0', label = "pieces of a line: band, name, line, nothing of the list" },
   { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]\d*, dim \d+, frame 0 plain, fill 0, bar 3, brackets 6, hint 1', label = "pieces of the list at open: band, name, rows in the window, nothing framed [observed: the original's], the bar's arrows and marker, the brackets, the hint" },
-  { text = "dialogue menu: TAB) Goodbye shown", count = 0, label = "the hand-built menu's hint line is never logged" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 0, label = "the hand-built menu's hint line is never logged" },
   { re = 'DialogMenu drawn by hand', count = 0, label = "the whole file was ready" },
   { re = 'ui: dropped DialogMenu', label = "the conversation's end drops the tree" },
 ]
@@ -19088,7 +19207,7 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=lea
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
 run_seconds = 40
 expect = [
-  { text = "dialogue menu: TAB) Goodbye shown", min = 1, label = "the hand-built menu with its hint" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", min = 1, label = "the hand-built menu with its hint" },
   { re = 'tiles: DialogMenu', count = 0, label = "nothing of the tile view" },
 ]
 
@@ -19228,7 +19347,7 @@ expect = [
   { re = 'ui: dropped DialogMenu', min = 2, label = "and dropped after each" },
   { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', min = 2, label = "the renderer takes a new tree each time" },
   { re = 'tiles: DialogMenu painted: band 1, name 1, line 1', min = 2, label = "pieces both times" },
-  { text = "dialogue menu: TAB) Goodbye shown", count = 0, label = "the hand-built menu's hint line is never logged" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 0, label = "the hand-built menu's hint line is never logged" },
 ]
 
 [[scenario]]
@@ -19243,6 +19362,39 @@ run_seconds = 85
 expect = [
   { re = 'script: test aid calls UnloadUIComponent', label = "the tile goes" },
   { text = "DialogMenu drawn by hand: DialogMenu/NOGLOW_BRANCH/DM_SpeakerText missing", count = 1, label = "said once" },
-  { text = "dialogue menu: TAB) Goodbye shown", min = 1, label = "the hand-built menu takes over" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", min = 1, label = "the hand-built menu takes over" },
   { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', min = 2, label = "before it, and in the next conversation from a new tree" },
 ]
+
+[[scenario]]
+name = "tiles-dialog-hint-off"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.4: the Goodbye hint switch (#1517) holds for the menu drawn from tiles too: its list is painted with no hint, and Tab still says goodbye"
+note = "as dialogue-goodbye-hint-off, the settings page flips the switch at 3 s, before the talk aid's 11 s of world clock. A flip while a conversation is open is the unit test's (the_hint_setting_hides_only_the_hint_at_once); this is what proves write_system reads the resource"
+areas = ["ui", "dialogue", "menus"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:page,3:dialogue-goodbye-hint", NVF_PLAY_TEST_TALK = "11:SunnyRef=", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_KEYS = "34:tab" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 50
+expect = [
+  { text = "settings: dialogue-goodbye-hint off", label = "the settings page turned the Goodbye hint off" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]\d*, dim \d+, frame 0 plain, fill 0, bar 3, brackets 6, hint 0', label = "the list from its tiles, with no hint" },
+  { re = 'tiles: DialogMenu painted: .*, hint [1-9]', count = 0, label = "the hint is never painted" },
+  { re = 'DialogMenu drawn by hand', count = 0, label = "the whole file was ready" },
+  { re = 'dialogue: choose Some\(\d+\) by Tab', count = 1, label = "Tab still says goodbye with the hint hidden" },
+]
+
+[[scenario]]
+name = "language-choice"
+source = "#1443: the settings page's Language row lists the languages found in the lang folders (NVF_LANG_DIR here, a made-up one), takes one at once and draws the page again; a broken language file is skipped with a warning"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/language.rs", "crates/fnv-util/src/words.rs", "engine/nvf-play/src/pause.rs", "tools/smoke/fixtures/lang/xx.toml"]
+env = { NVF_LANG_DIR = "{repo}/tools/smoke/fixtures/lang", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "11:language=Smoke Language,13:language=English" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = ["warning: language file skipped: ", "broken.toml"]
+order = [[
+  "language: xx",
+  "settings: language Smoke Language",
+  "language: en",
+  "settings: language English",
+]]

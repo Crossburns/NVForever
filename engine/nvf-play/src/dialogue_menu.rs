@@ -11,9 +11,14 @@
 //!   chooses: the choices between two brackets on the band, the selected one framed, a
 //!   scroll bar at the left when not all of them fit.
 //! - The actor's name stands at the top right throughout.
-//! - While a Goodbye choice is offered, "TAB) Goodbye" stands at the left of the band,
-//!   level with the bottom bracket (owner, list 5 item 62; the interface file has no
-//!   such hint [observed: dialog_menu.xml]): Tab picks that choice (`crate::dialogue`).
+//! - While a Goodbye choice is offered, "[Tab] Goodbye" stands at the left of the band,
+//!   level with the bottom bracket, in the band's own text on a backing in its shade (list 5
+//!   item 62 asked for "TAB) Goodbye" at the left of the dialogue box; the words are now in the
+//!   bracket style of the tile menus' key hints, proposed to the maintainer in #1517; the
+//!   interface file has no such hint [observed: dialog_menu.xml]): Tab picks that choice
+//!   (`crate::dialogue`). The settings page's "Goodbye hint" switch ([`GoodbyeHint`])
+//!   hides the words and what is made for them (docs/spec-notes/dialogue-menu.md §4);
+//!   Tab works as before.
 //! - The menu is rebuilt when what it shows changes; the pointer chooses the choice it
 //!   is on (`crate::dialogue` reads the clicks).
 
@@ -97,14 +102,39 @@ const SHADE: f32 = 0.87;
 /// Between a check's tag and the line.
 pub const TAG_GAP: &str = "  ";
 
-// ---- NVForever's own [design, owner list 5 item 62] -------------------------------------
+// ---- NVForever's own [design; the place asked for in owner list 5 item 62] -------------------------------------
 
-/// The hint shown while a Goodbye choice is offered.
-pub const GOODBYE_HINT: &str = "TAB) Goodbye";
-/// The hint's right end stands this far left of the band; its own dark box reaches this
-/// far round the text.
-const HINT_GAP: f32 = 20.0;
-const HINT_PAD: f32 = 10.0;
+/// The hint shown while a Goodbye choice is offered. The request (list 5 item 62) was
+/// "TAB) Goodbye"; these words are the bracket style of the tile menus' key hints, proposed
+/// to the maintainer in #1517.
+pub const GOODBYE_HINT: &str = "[Tab] Goodbye";
+/// The hint's backing (the band's shade, flush against the band's left edge) reaches this
+/// far left of the words and this far above and below their ink (the pictures of their
+/// glyphs); the words' right end stands as far from the band [design].
+const HINT_PAD_X: f32 = 10.0;
+const HINT_PAD_Y: f32 = 8.0;
+/// Where the screen has no room at the side, the words stand under the bottom bracket in a
+/// strip of the band: this much clear room between their ink and the bracket's line, and
+/// between their ink and the band's lower edge, the band growing under the bracket as far
+/// as that takes; their left end is this far in from the band's edge (as the line of text
+/// starts) [design].
+const HINT_CLEAR: f32 = 15.0;
+const HINT_IN: f32 = TEXT_IN;
+/// How far the words' ink reaches above and below their baseline when the font has no
+/// pictures (the stand-in text): a capital's height in font 6, and nothing below
+/// [design].
+const STAND_IN_INK: (f32, f32) = (17.0, 0.0);
+
+/// The settings page's "Goodbye hint" switch (key `dialogue-goodbye-hint`): on by
+/// default [owner, list 5 item 62]; off hides the words, their backing and the narrow screens' strip; a tall list moves back down, Tab still says goodbye.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GoodbyeHint(pub bool);
+
+impl Default for GoodbyeHint {
+    fn default() -> Self {
+        GoodbyeHint(true)
+    }
+}
 
 /// Whether the Tab hint stands on `view`, for both views: `setting` is the player's switch for
 /// it (#1517), and a Goodbye choice has to be offered [owner, list 5 item 62].
@@ -190,8 +220,10 @@ pub struct Layout {
     pub band: Option<Area>,
     pub text: Vec<Placed>,
     pub list: Option<ListPlace>,
-    /// "TAB) Goodbye" and its dark box, while a Goodbye choice is offered.
-    pub hint: Option<(Placed, Area)>,
+    /// "[Tab] Goodbye", while a Goodbye choice is offered and the switch is on.
+    pub hint: Option<Placed>,
+    /// Its backing in the band's shade, when it stands at the band's side.
+    pub hint_back: Option<Area>,
     /// The first choice shown.
     pub first: usize,
 }
@@ -203,9 +235,9 @@ fn text_height(lines: usize) -> f32 {
 
 /// Where a block `height` high starts: centred on the centring line, but not lower than
 /// the room the safe zone leaves under it.
-fn centred(height: f32) -> f32 {
+fn centred(height: f32, extra: f32) -> f32 {
     let inside = 960.0 - 2.0 * CROP_Y;
-    (inside * CENTRE - height / 2.0).min(inside - height - BOTTOM_ROOM)
+    (inside * CENTRE - height / 2.0).min(inside - height - BOTTOM_ROOM - extra)
 }
 
 /// One past the last of the whole choices from `from` that fit in `room`, at least one.
@@ -270,19 +302,68 @@ fn crop_x(width: f32) -> f32 {
     CROP_Y * 1280.0 / width
 }
 
-pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, body: &Font, name_font: &Font) -> Layout {
+/// How far the pictures of `line`'s glyphs reach above and below the baseline they stand
+/// on: the greatest ascent, and the greatest of height less ascent (the glyph's own
+/// numbers, `fnv_font::Glyph`); [`STAND_IN_INK`] where none is drawn.
+fn glyph_ink(line: &Line, font: &Font) -> (f32, f32) {
+    let drawn: Vec<_> = line.glyphs.iter().map(|p| font.glyph(p.code)).filter(|g| g.drawn()).collect();
+    if drawn.is_empty() {
+        return STAND_IN_INK;
+    }
+    let up = drawn.iter().map(|g| g.ascent).fold(f32::MIN, f32::max);
+    let down = drawn.iter().map(|g| g.height - g.ascent).fold(f32::MIN, f32::max);
+    (up.max(0.0), down.max(0.0))
+}
+
+/// How much the band grows under its bottom bracket for words whose ink is `ink`: what the
+/// ink and [`HINT_CLEAR`] above and below it need beyond the band's own strip there.
+fn hint_room(ink: (f32, f32)) -> f32 {
+    (ink.0 + ink.1 + 2.0 * HINT_CLEAR - (LIST_BAND_DOWN - THICK)).max(0.0)
+}
+
+/// Whether "[Tab] Goodbye", `words` wide, stands left of the band with its backing inside
+/// the safe zone.
+fn hint_at_side(words: f32, width: f32, band_x: f32) -> bool {
+    band_x - HINT_PAD_X - words - HINT_PAD_X >= crop_x(width)
+}
+
+/// Where "[Tab] Goodbye" stands, its letters on `base`, and its backing; `ink` is the words'
+/// [`glyph_ink`]. At the band's side: the words' right end [`HINT_PAD_X`] from the band's
+/// edge, their ink centred on the bottom bracket's line, on a backing flush against the
+/// band. Else (the screen is too narrow for that: it depends on the screen's width and the
+/// words', not on one aspect) inside the band, in the strip under the bottom bracket that
+/// [`hint_room`] makes tall enough, [`HINT_IN`] from the band's left edge (kept inside the
+/// safe zone), the ink centred in the strip: [`HINT_CLEAR`] clear of the bracket's line and
+/// corner, under the choices and the scroll bar [design].
+fn hint_place(line: Line, ink: (f32, f32), width: f32, band_x: f32, bottom_line: f32) -> (Placed, Option<Area>) {
+    let (up, down) = ink;
+    if hint_at_side(line.width, width, band_x) {
+        let x = band_x - HINT_PAD_X - line.width;
+        let base = bottom_line + THICK / 2.0 + (up - down) / 2.0;
+        let back = [x - HINT_PAD_X, base - up - HINT_PAD_Y, line.width + 2.0 * HINT_PAD_X, up + down + 2.0 * HINT_PAD_Y];
+        return (Placed { x, base, line }, Some(back));
+    }
+    let right = band_x + BAND_WIDTH - HINT_IN - line.width;
+    let x = (band_x + HINT_IN).min(right).max(crop_x(width));
+    let strip = LIST_BAND_DOWN - THICK + hint_room(ink);
+    let base = bottom_line + THICK + (strip - up - down) / 2.0 + up;
+    (Placed { x, base, line }, None)
+}
+
+/// `hint`: whether the "Goodbye hint" switch is on.
+pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, hint: bool, body: &Font, name_font: &Font) -> Layout {
     let band_x = (width - BAND_WIDTH) / 2.0;
     let name = Some(view.speaker.trim()).filter(|s| !s.is_empty()).map(|s| {
         let line = name_font.lines(s, None).remove(0);
         let right = width - 2.0 * crop_x(width) - NAME_RIGHT;
         Placed { x: right - line.width, base: 2.0 * CROP_Y + NAME_TOP + NAME_BASE, line }
     });
-    let mut out = Layout { name, band: None, text: Vec::new(), list: None, hint: None, first: 0 };
+    let mut out = Layout { name, band: None, text: Vec::new(), list: None, hint: None, hint_back: None, first: 0 };
     if view.choices.is_empty() {
         let Some(text) = view.line.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { return out };
         let lines = body.lines(text, Some(BAND_WIDTH - 2.0 * TEXT_IN));
         let height = text_height(lines.len());
-        let top = centred(height);
+        let top = centred(height, 0.0);
         out.band = Some([band_x, top - TEXT_BAND_UP, BAND_WIDTH, height + TEXT_BAND_MORE]);
         out.text = lines.into_iter().enumerate().map(|(i, line)| Placed { line, x: band_x + TEXT_IN, base: top + TEXT_BASE + LINE * i as f32 }).collect();
         return out;
@@ -294,7 +375,11 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, body: 
     let heights = choice_heights(&lines);
     let (first, end) = window(first, selected, &heights);
     let height = list_room(&heights).max(MIN_LIST);
-    let top = centred(height);
+    // The hint's own words, and the room under the band they need where they stand in it.
+    let hint_line = hint_shown(view, hint).then(|| body.lines(GOODBYE_HINT, None).remove(0));
+    let ink = hint_line.as_ref().map_or(STAND_IN_INK, |l| glyph_ink(l, body));
+    let room = hint_line.as_ref().map_or(0.0, |l| if hint_at_side(l.width, width, band_x) { 0.0 } else { hint_room(ink) });
+    let top = centred(height, room);
     let mut y = top - LIFT;
     let mut choices = Vec::new();
     for (i, ls) in lines.iter().enumerate().take(end).skip(first) {
@@ -319,16 +404,12 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, body: 
     });
     let top_line = top - BRACKET_ABOVE;
     let bottom_line = bottom + BRACKET_BELOW;
-    out.band = Some([band_x, top_line - LIST_BAND_UP, BAND_WIDTH, bottom_line - top_line + LIST_BAND_UP + LIST_BAND_DOWN]);
+    out.band = Some([band_x, top_line - LIST_BAND_UP, BAND_WIDTH, bottom_line - top_line + LIST_BAND_UP + LIST_BAND_DOWN + room]);
     out.list = Some(ListPlace { area: [list_x, top, LIST_WIDTH, height], top_line, bottom_line, bracket_x: list_x + BRACKET_IN, bracket_width: LIST_WIDTH, choices, scroll });
     out.first = first;
-    if hint_shown(view, true) {
-        let line = body.lines(GOODBYE_HINT, None).remove(0);
-        // Left of the band where the screen has room, else at the safe zone's edge.
-        let x = (band_x - HINT_GAP - line.width).max(crop_x(width) + HINT_PAD);
-        let top = bottom_line - LINE / 2.0;
-        let area = [x - HINT_PAD, top - HINT_PAD / 2.0, line.width + 2.0 * HINT_PAD, LINE + HINT_PAD];
-        out.hint = Some((Placed { x, base: top + TEXT_BASE, line }, area));
+    if let Some(line) = hint_line {
+        let (placed, back) = hint_place(line, ink, width, band_x, bottom_line);
+        (out.hint, out.hint_back) = (Some(placed), back);
     }
     out
 }
@@ -378,7 +459,19 @@ pub struct DialogueMenuPlugin;
 
 impl Plugin for DialogueMenuPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DialogueMenu>().add_systems(Update, draw.in_set(crate::PlaySet::Ui).in_set(DrawMenu));
+        app.init_resource::<DialogueMenu>().init_resource::<GoodbyeHint>().add_systems(Update, draw.in_set(crate::PlaySet::Ui).in_set(DrawMenu));
+        crate::settings::add_setting(
+            app,
+            crate::settings::Setting {
+                key: "dialogue-goodbye-hint",
+                group: crate::pause::GROUP_MENUS,
+                label: "Goodbye hint",
+                note: "On: while a conversation offers a Goodbye choice, \"[Tab] Goodbye\" stands at the left of the dialogue box. Off: the words are hidden; Tab still says goodbye.",
+                get: |w| w.resource::<GoodbyeHint>().0,
+                set: |w, on| w.resource_mut::<GoodbyeHint>().0 = on,
+                slider: None,
+            },
+        );
     }
 }
 
@@ -416,12 +509,14 @@ fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, s
         if let Some(n) = &l.name {
             set_line(s, &kit.name, &n.line, n.x, n.base, bright);
         }
-        if let Some((hint, [x, y, w, h])) = &l.hint {
+        if let Some([x, y, w, h]) = l.hint_back {
             let shade = Color::srgba(0.0, 0.0, 0.0, SHADE);
             match image(kit.band.as_ref(), shade) {
-                Some(i) => s.spawn((at(*x, *y, *w, *h), i)),
-                None => s.spawn((at(*x, *y, *w, *h), BackgroundColor(shade))),
+                Some(i) => s.spawn((at(x, y, w, h), i)),
+                None => s.spawn((at(x, y, w, h), BackgroundColor(shade))),
             };
+        }
+        if let Some(hint) = &l.hint {
             set_line(s, &kit.body, &hint.line, hint.x, hint.base, bright);
         }
         for t in &l.text {
@@ -482,6 +577,15 @@ fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, s
     });
 }
 
+/// What the drawn menu was made from: the menu's view, the first choice shown, the width
+/// in units and the "Goodbye hint" switch. The menu is rebuilt when it changes, so a
+/// flip of the switch shows at once.
+type MenuKey = (MenuView, usize, u32, bool);
+
+fn menu_key(view: Option<&MenuView>, creating: bool, first: usize, width: f32, hint: bool) -> Option<MenuKey> {
+    view.filter(|_| !creating).map(|v| (v.clone(), first, width.round() as u32, hint))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw(
     mut commands: Commands,
@@ -493,10 +597,11 @@ fn draw(
     roots: Query<Entity, With<MenuRoot>>,
     mut frames: Query<(&Frame, &mut Visibility)>,
     mut kit: Local<Option<Kit>>,
-    mut shown: Local<Option<(MenuView, usize, u32)>>,
+    mut shown: Local<Option<MenuKey>>,
     creator: Option<Res<crate::creator::CreatorMenu>>,
     tiles: Option<Res<crate::tiles::dialog_menu::DialogTiles>>,
     mut buttons: Query<&mut ChoiceButton>,
+    hint: Res<GoodbyeHint>,
 ) {
     // Drawn from its file: all of the menu, none of it here (`crate::tiles::dialog_menu`).
     if tiles.is_some_and(|t| t.by_tiles()) {
@@ -520,15 +625,19 @@ fn draw(
     // Nothing over the character creator: the opening opens it at the end of a line of
     // Doc Mitchell's, still in the conversation [owner 2026-10-17].
     let creating = creator.is_some_and(|c| c.is_open());
-    let key = menu.view.clone().filter(|_| !creating).map(|v| (v, first, width.round() as u32));
+    let key = menu_key(menu.view.as_ref(), creating, first, width, hint.0);
     if key != *shown {
         for e in &roots {
             commands.entity(e).despawn();
         }
-        if let Some((view, first, _)) = &key {
-            let l = layout(view, *first, selected, width, &kit.body.font, &kit.name.font);
-            if l.hint.is_some() && shown.as_ref().is_none_or(|s| !s.0.goodbye) {
-                info!("dialogue menu: {GOODBYE_HINT} shown at the left of the choices");
+        if let Some((view, first, _, hint_on)) = &key {
+            let l = layout(view, *first, selected, width, *hint_on, &kit.body.font, &kit.name.font);
+            // One line when the hint appears, or when the switch holds it back.
+            let was = shown.as_ref().and_then(|s| s.0.goodbye.then_some(s.3));
+            match (view.goodbye.then_some(*hint_on), was) {
+                (Some(true), was) if was != Some(true) => info!("dialogue menu: {GOODBYE_HINT} shown at the left of the choices"),
+                (Some(false), was) if was != Some(false) => info!("dialogue menu: {GOODBYE_HINT} hidden by the Goodbye hint setting"),
+                _ => {}
             }
             spawn_menu(&mut commands, view, &l, kit, selected, menu.list.as_ref());
         }
@@ -561,23 +670,187 @@ mod tests {
         MenuView { speaker: "Trudy".into(), line: None, choices: labels.iter().map(|l| ChoiceRow { label: l.to_string(), ..default() }).collect(), goodbye: false }
     }
 
+    fn lay(v: &MenuView, width: f32, hint: bool) -> Layout {
+        layout(v, 0, 0, width, hint, &font(34.0), &font(36.0))
+    }
+
+    /// A font of the test's own numbers: the letters of the hint are pictures 10 wide (as
+    /// 17 on with the 7 after them, so the words are as wide as in `font`) whose top stands
+    /// 24 above their baseline and which are 24 high, except the brackets (top 40 above, 52 high:
+    /// they reach 12 below) and "y" (top 17 above, 29 high: it reaches 12 below).
+    fn pictured() -> Font {
+        let mut f = font(34.0);
+        let glyph = |ascent: f32, height: f32| fnv_font::Glyph { uv: [0.0, 0.0, 1.0, 1.0], width: 10.0, height, before: 0.0, after: 7.0, ascent };
+        for c in "TabGodye".bytes() {
+            f.glyphs[c as usize] = glyph(24.0, 24.0);
+        }
+        f.glyphs[b'[' as usize] = glyph(40.0, 52.0);
+        f.glyphs[b']' as usize] = glyph(40.0, 52.0);
+        f.glyphs[b'y' as usize] = glyph(17.0, 29.0);
+        f
+    }
+
+    fn lay_with(v: &MenuView, width: f32, hint: bool, body: &Font) -> Layout {
+        layout(v, 0, 0, width, hint, body, &font(36.0))
+    }
+
+    /// The hint's ink: left, top, right, bottom, from the numbers `up` above and `down`
+    /// below its baseline.
+    fn ink_box(h: &Placed, up: f32, down: f32) -> [f32; 4] {
+        [h.x, h.base - up, h.x + h.line.width, h.base + down]
+    }
+
+    fn meets(a: [f32; 4], b: Area) -> bool {
+        a[0] < b[0] + b[2] && b[0] < a[2] && a[1] < b[1] + b[3] && b[1] < a[3]
+    }
+
+    fn goodbye(labels: &[&str]) -> MenuView {
+        MenuView { goodbye: true, ..choices(labels) }
+    }
+
     #[test]
-    fn the_goodbye_hint_stands_left_of_the_band() {
+    fn the_hint_ink_is_read_from_the_glyphs() {
+        let line = pictured().lines(GOODBYE_HINT, None).remove(0);
+        // "[" and "]" reach 40 above and 12 below; "y" 12 below.
+        assert_eq!(glyph_ink(&line, &pictured()), (40.0, 12.0));
+        // A font with no pictures: the stand-in's numbers.
+        assert_eq!(glyph_ink(&font(34.0).lines(GOODBYE_HINT, None).remove(0), &font(34.0)), STAND_IN_INK);
+        // 52 of ink and 15 clear above and below it need 82 under the line, 54 more than the
+        // band has there; the stand-in's 17 need 19 more.
+        assert_eq!(hint_room((40.0, 12.0)), 54.0);
+        assert_eq!(hint_room(STAND_IN_INK), 19.0);
+        assert_eq!(hint_room((5.0, 0.0)), 7.0);
+        assert_eq!(hint_room((0.0, 0.0)), 2.0);
+    }
+
+    #[test]
+    fn the_goodbye_hint_stands_left_of_the_band_on_a_backing() {
         let mut v = choices(&["What happened here?", "Goodbye."]);
-        let l = layout(&v, 0, 0, 1707.0, &font(34.0), &font(36.0));
-        assert!(l.hint.is_none(), "no hint without a Goodbye choice");
+        assert!(lay(&v, 1707.0, true).hint.is_none(), "no hint without a Goodbye choice");
         v.goodbye = true;
-        let l = layout(&v, 0, 0, 1707.0, &font(34.0), &font(36.0));
-        let (hint, area) = l.hint.expect("the hint");
-        let band = l.band.unwrap();
-        let list = l.list.unwrap();
-        assert!(hint.line.width > 0.0);
-        // Its right end is left of the band, its line level with the bottom bracket.
-        assert!(hint.x + hint.line.width <= band[0] - HINT_GAP + 0.01);
-        assert!(area[1] < list.bottom_line && list.bottom_line < area[1] + area[3]);
-        // On a 4:3 screen it keeps inside the safe zone.
-        let l = layout(&v, 0, 0, 1280.0, &font(34.0), &font(36.0));
-        assert!(l.hint.unwrap().0.x >= crop_x(1280.0));
+        // With the tall, descending glyphs: ink 40 above the baseline, 12 below.
+        let body = pictured();
+        let l = lay_with(&v, 1707.0, true, &body);
+        let hint = l.hint.expect("the hint");
+        let (band, list, back) = (l.band.unwrap(), l.list.unwrap(), l.hint_back.expect("its backing"));
+        // The words end HINT_PAD_X from the band; their ink (28 high) is centred on the
+        // bottom bracket's line, 14 above the baseline.
+        assert!((hint.x + hint.line.width - (band[0] - HINT_PAD_X)).abs() < 0.01);
+        assert!((hint.base - 14.0 - (list.bottom_line + THICK / 2.0)).abs() < 0.01);
+        // The backing is flush against the band and reaches 10 and 8 round the ink.
+        let ink = ink_box(&hint, 40.0, 12.0);
+        assert!((back[0] + back[2] - band[0]).abs() < 0.01);
+        assert!((ink[0] - back[0] - 10.0).abs() < 0.01 && (ink[1] - back[1] - 8.0).abs() < 0.01);
+        assert!((back[1] + back[3] - ink[3] - 8.0).abs() < 0.01);
+        assert!(back[0] >= crop_x(1707.0));
+        // The band is the height it is without the hint.
+        assert_eq!(l.band, lay_with(&v, 1707.0, false, &body).band);
+        // A font with no pictures: the stand-in's 17 above, none below, centred the same way.
+        let l = lay(&v, 1707.0, true);
+        let hint = l.hint.expect("the hint");
+        assert!((hint.base - 8.5 - (l.list.unwrap().bottom_line + THICK / 2.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_goodbye_hint_moves_into_the_band_where_the_side_is_too_narrow() {
+        let v = goodbye(&["One", "Two", "Goodbye."]);
+        // 1280 units wide is 4:3 (1024x768 too); 1200 is 5:4; 1100 narrower. The band's left
+        // edge is 100, 60 and 10 from the screen's, the words 218 wide: no room at the side.
+        for width in [1280.0, 1200.0, 1100.0] {
+            for (body, up, down, room) in [(pictured(), 40.0, 12.0, 54.0), (font(34.0), 17.0, 0.0, 19.0)] {
+                let l = lay_with(&v, width, true, &body);
+                let hint = l.hint.expect("the hint");
+                let (band, list) = (l.band.unwrap(), l.list.unwrap());
+                assert!(l.hint_back.is_none(), "width {width}: no backing inside the band");
+                let [left, top, right, bottom] = ink_box(&hint, up, down);
+                // The strip under the bracket's line is 28 + room high, the ink centred in it:
+                // 15 clear above and below.
+                assert!((band[3] - lay_with(&v, width, false, &body).band.unwrap()[3] - room).abs() < 0.01, "width {width}: the band grew by {room}");
+                assert!((top - (list.bottom_line + THICK) - HINT_CLEAR).abs() < 0.01, "width {width}: clear of the bracket");
+                assert!((band[1] + band[3] - bottom - HINT_CLEAR).abs() < 0.01, "width {width}: clear of the band's bottom");
+                // HINT_IN from the band's left edge (or the safe zone's), inside the safe zone.
+                assert!((left - (band[0] + HINT_IN).max(crop_x(width))).abs() < 0.01, "width {width}");
+                assert!(left >= crop_x(width) && right <= width - crop_x(width), "width {width}: inside the safe zone");
+                assert!(band[1] + band[3] <= 960.0 - CROP_Y, "width {width}: the band ends inside the safe zone");
+            }
+        }
+    }
+
+    #[test]
+    fn the_goodbye_hint_never_covers_a_choice_or_the_scroll_bar() {
+        // Six long choices scroll (the list at its tallest); 5:4, 4:3, wider screens, the
+        // selection at both ends, the tall glyphs and the stand-in.
+        let long = "Tell me everything you know about the people who attacked the town last night";
+        let v = goodbye(&[long, long, long, long, long, "Goodbye."]);
+        for (body, up, down) in [(pictured(), 40.0, 12.0), (font(34.0), 17.0, 0.0)] {
+            for width in [1200.0, 1280.0, 1440.0, 1707.0, 2560.0] {
+                for selected in [0, 5] {
+                    let l = layout(&v, 0, selected, width, true, &body, &font(36.0));
+                    let hint = l.hint.expect("the hint");
+                    let ink = ink_box(&hint, up, down);
+                    let (band, list) = (l.band.unwrap(), l.list.unwrap());
+                    assert!(list.scroll.is_some());
+                    for c in &list.choices {
+                        assert!(!meets(ink, c.area), "width {width}: over choice {}", c.index);
+                    }
+                    let bar = list.scroll.as_ref().unwrap();
+                    for a in [bar.up, bar.down, bar.marker] {
+                        assert!(!meets(ink, a), "width {width}: over the scroll bar");
+                    }
+                    if let Some(back) = l.hint_back {
+                        assert!(!meets(ink, band) && back[0] >= crop_x(width), "width {width}: the side's backing is outside the band");
+                    }
+                    assert!(ink[0] >= crop_x(width) && ink[2] <= width - crop_x(width), "width {width}: inside the safe zone");
+                    assert!(band[1] + band[3] <= 960.0 - CROP_Y, "width {width}: the band ends inside the safe zone");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_goodbye_hint_switch_changes_the_words_and_where_they_need_room() {
+        let v = goodbye(&["What happened here?", "Goodbye."]);
+        // At the side the words and their backing are all that change.
+        let (on, off) = (lay(&v, 1707.0, true), lay(&v, 1707.0, false));
+        assert!(on.hint.is_some() && on.hint_back.is_some());
+        assert!(off.hint.is_none() && off.hint_back.is_none());
+        assert_eq!((on.band, on.list, on.name), (off.band, off.list, off.name));
+        // Where they stand in the band, a short list stays and the band shrinks to its own.
+        let (on, off) = (lay(&v, 1280.0, true), lay(&v, 1280.0, false));
+        assert!(on.hint.is_some() && off.hint.is_none());
+        assert_eq!((on.list.as_ref(), on.name.as_ref()), (off.list.as_ref(), off.name.as_ref()));
+        assert!(on.band.unwrap()[3] > off.band.unwrap()[3]);
+        // But a list at its tallest moves up for the room: turning the hint on moves it up
+        // by up to the room (19 for the stand-in's ink).
+        let long = "Tell me everything you know about the people who attacked the town last night";
+        let v = goodbye(&[long, long, long, long, long, "Goodbye."]);
+        let (on, off) = (lay(&v, 1280.0, true), lay(&v, 1280.0, false));
+        let shift = off.list.unwrap().area[1] - on.list.unwrap().area[1];
+        assert!(shift > 0.0 && shift <= hint_room(STAND_IN_INK), "moved up by {shift}");
+    }
+
+    #[test]
+    fn a_flip_of_the_switch_rebuilds_the_menu() {
+        let mut v = choices(&["Hello.", "Goodbye."]);
+        v.goodbye = true;
+        let on = menu_key(Some(&v), false, 0, 1707.0, true);
+        assert_eq!(on, menu_key(Some(&v), false, 0, 1707.2, true));
+        assert_ne!(on, menu_key(Some(&v), false, 0, 1707.0, false), "the drawing's cache sees the switch");
+        assert_eq!(menu_key(Some(&v), true, 0, 1707.0, true), None, "nothing over the character creator");
+    }
+
+    #[test]
+    fn the_goodbye_hint_is_a_setting_on_by_default() {
+        let mut app = App::new();
+        app.add_plugins(DialogueMenuPlugin);
+        let world = app.world_mut();
+        assert!(world.resource::<GoodbyeHint>().0);
+        let settings = world.resource::<crate::settings::Settings>();
+        let s = settings.list()[settings.index("dialogue-goodbye-hint").expect("listed")];
+        assert_eq!((s.group, s.label), (crate::pause::GROUP_MENUS, "Goodbye hint"));
+        assert!((s.get)(world));
+        (s.set)(world, false);
+        assert!(!world.resource::<GoodbyeHint>().0 && !(s.get)(world));
     }
 
     #[test]
@@ -586,7 +859,7 @@ mod tests {
         let text = format!("{} {}", "a".repeat(55), "b".repeat(5));
         let v = MenuView { speaker: "Bruce Isaac".into(), line: Some(text), choices: Vec::new(), goodbye: false };
         let width = 960.0 * 16.0 / 9.0;
-        let l = layout(&v, 0, 0, width, &font(34.0), &font(36.0));
+        let l = layout(&v, 0, 0, width, true, &font(34.0), &font(36.0));
         assert_eq!(l.text.len(), 2);
         // The text's top at 706, its first line standing 23.3 under it, the next 38 lower.
         assert!((l.text[0].base - 729.3).abs() < 1e-3);
@@ -609,7 +882,7 @@ mod tests {
         // screenshot of Trudy; a fourth that does not fit.
         let long = "abcde ".repeat(12);
         let v = choices(&[&long, &long, "Do you know the robot?", &long]);
-        let l = layout(&v, 0, 1, 1280.0, &font(34.0), &font(36.0));
+        let l = layout(&v, 0, 1, 1280.0, true, &font(34.0), &font(36.0));
         let list = l.list.unwrap();
         assert_eq!(list.choices.len(), 3);
         // The list is 250 high, its top at 619 and the brackets' lines 20 above and 10
@@ -635,7 +908,7 @@ mod tests {
 
     #[test]
     fn a_short_list_keeps_its_least_height() {
-        let l = layout(&choices(&["Goodbye."]), 0, 0, 1280.0, &font(34.0), &font(36.0));
+        let l = layout(&choices(&["Goodbye."]), 0, 0, 1280.0, true, &font(34.0), &font(36.0));
         let list = l.list.unwrap();
         assert_eq!(list.area[3], 110.0);
         assert!(list.scroll.is_none());
@@ -676,8 +949,8 @@ mod tests {
         // In the layout the list and the band are the same at both scrolls.
         let two = "abcde ".repeat(12);
         let v = choices(&[&two, "Do you know the robot?", &two, "Short.", "Short.", "Goodbye."]);
-        let a = layout(&v, 0, 1, 1280.0, &font(34.0), &font(36.0));
-        let b = layout(&v, 0, 3, 1280.0, &font(34.0), &font(36.0));
+        let a = layout(&v, 0, 1, 1280.0, true, &font(34.0), &font(36.0));
+        let b = layout(&v, 0, 3, 1280.0, true, &font(34.0), &font(36.0));
         let (la, lb) = (a.list.unwrap(), b.list.unwrap());
         assert_eq!(la.area, lb.area);
         assert_eq!(a.band, b.band);

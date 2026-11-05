@@ -82,7 +82,7 @@ In all, 1,807 uses moved from stubs to implementations.
 The test aid `NVF_PLAY_TEST_SCRIPT` gained `call:<reference or ->:<function>[:<argument>…]`,
 which calls any function by name as a script would, an extender's too; the
 `script-stubs-play` scenario uses it for Look, StopLook, SetWeather and
-ReleaseWeatherOverride, `tiles-trait-pointer-done` for ClickMenuButton.
+ReleaseWeatherOverride.
 
 ### 3.1 Implemented by karma and crime (workstream J, claude/karma-crime)
 

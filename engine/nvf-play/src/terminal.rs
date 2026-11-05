@@ -545,8 +545,10 @@ fn open(
             stats.refused += 1;
             // [hypothesis, hacking.md §8] The wording is NVForever's.
             let line = match r {
-                fnv_game::hacking::Refusal::RequiresKey => "This terminal requires a password.".to_string(),
-                fnv_game::hacking::Refusal::Science { needed } => format!("You need a Science skill of {needed:.0} to hack this terminal."),
+                fnv_game::hacking::Refusal::RequiresKey => fnv_util::words::tr("This terminal requires a password.").to_string(),
+                fnv_game::hacking::Refusal::Science { needed } => {
+                    fnv_util::words::trf("You need a Science skill of {needed} to hack this terminal.", &[("needed", &format!("{needed:.0}"))])
+                }
             };
             info!("terminal: {reference} {name} refused (Science {sci:.0}): on screen: {line:?}");
             // A top-left corner message (owner, list 5 item 45).
@@ -945,7 +947,7 @@ fn aid_pick(p: &Puzzle, a: AidPick) -> Option<usize> {
         AidPick::Right => Some(p.words[p.password].start),
         AidPick::Wrong => p.words.iter().enumerate().find(|(i, w)| *i != p.password && !w.removed).map(|(_, w)| w.start),
         AidPick::Brackets => p.pairs().first().map(|&(s, _)| s),
-        AidPick::Symbol => (0..p.chars.len()).find(|&i| matches!(p.target(i), Target::Char(_)) && !p.chars[i].is_ascii_alphabetic()),
+        AidPick::Symbol => (0..p.chars.len()).find(|&i| matches!(p.target(i), Target::Char(_)) && !p.chars[i].is_alphabetic()),
         AidPick::Item(_) => None,
     }
 }
@@ -1115,12 +1117,14 @@ mod tests {
     use fnv_game::hacking::{Word, ATTEMPTS, DUMP_CHARS};
 
     fn puzzle() -> Puzzle {
-        let mut chars = vec![b'.'; DUMP_CHARS];
+        let mut chars = vec!['.'; DUMP_CHARS];
         // Row 0 of column 1 ends in "LOO", row 1 starts with "TING".
-        chars[9..12].copy_from_slice(b"LOO");
-        chars[12..16].copy_from_slice(b"TING");
-        chars[204..211].copy_from_slice(b"MEETING");
-        let words = vec![Word { text: "LOOTING".into(), start: 9, removed: false }, Word { text: "MEETING".into(), start: 204, removed: false }];
+        for (at, text) in [(9, "LOOTING"), (204, "MEETING")] {
+            for (k, c) in text.chars().enumerate() {
+                chars[at + k] = c;
+            }
+        }
+        let words = vec![Word { text: "LOOTING".into(), len: 7, start: 9, removed: false }, Word { text: "MEETING".into(), len: 7, start: 204, removed: false }];
         Puzzle { chars, address: 0xF650, words, password: 1, attempts: ATTEMPTS, used: Vec::new(), log: Vec::new(), state: GameState::Guessing }
     }
 
