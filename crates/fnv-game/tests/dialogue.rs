@@ -143,6 +143,10 @@ const T_BYE_B: u32 = 0xA70;
 const B_BYE: u32 = 0xA71;
 const T_BEGIN_SAY: u32 = 0xA72;
 const H_BEGIN_SAY: u32 = 0xA73;
+// ChatterREF's Goodbye line whose end script has TalkerREF force-greet the player, with
+// TopicSource in its Add Topics.
+const T_B_HAND: u32 = 0xA74;
+const B_HAND: u32 = 0xA75;
 const PATROL_REF: u32 = 0x322;
 const NPC1_REF: u32 = 0x320;
 const NPC2_REF: u32 = 0x321;
@@ -214,8 +218,13 @@ struct L {
 
 /// `ChatterREF.StartConversation player` (SCRO 1 ChatterREF, 2 the player).
 fn talk_result() -> Vec<Subrecord> {
+    talk_result_by(NPC2_REF)
+}
+
+/// `<speaker>.StartConversation player` (SCRO 1 the speaker, 2 the player).
+fn talk_result_by(speaker: u32) -> Vec<Subrecord> {
     let call = [le16(0x1C), le16(1), st(0x1056, &[le16(1), vec![b'r'], le16(2)].concat())].concat();
-    unit(0, &call, &[], &[NPC2_REF, FormId::PLAYER_REF.0])
+    unit(0, &call, &[], &[speaker, FormId::PLAYER_REF.0])
 }
 
 /// `<speaker>.Say <topic>` (SCRO 1 the speaker, 2 the topic).
@@ -717,6 +726,15 @@ fn plugin_bytes() -> Vec<u8> {
             vec![L { id: B_BYE, quest: QA, flags: info_flag::GOODBYE, speaker: Some(NPC2), responses: one("So long"), end_raw: Some(count_result()), ..L::default() }],
         ),
         topic(
+            T_B_HAND,
+            "TestByeHandoff",
+            "ByeHandoff",
+            topic_type::TOPIC,
+            0,
+            50.0,
+            vec![L { id: B_HAND, quest: QA, flags: info_flag::GOODBYE, speaker: Some(NPC2), responses: one("See him"), add: vec![T_SOURCE], end_raw: Some(talk_result_by(NPC1_REF)), ..L::default() }],
+        ),
+        topic(
             T_BEGIN_SAY,
             "TestBeginSay",
             "BeginSay",
@@ -1185,7 +1203,11 @@ fn a_goodbye_line_ends_the_conversation() {
 #[test]
 fn a_chosen_goodbye_closes_the_conversation_at_once_and_the_line_goes_on_in_the_world() {
     let mut f = fixture();
-    f.data.infos.get_mut(&FormId(C_BYE)).unwrap().add_topics = vec![FormId(T_ADDED)];
+    // The line gets Add Topics, and a begin script that counts its runs in TestCount
+    // (TestByeB's end script).
+    let count = f.data.infos[&FormId(B_BYE)].end;
+    let bye = f.data.infos.get_mut(&FormId(C_BYE)).unwrap();
+    (bye.add_topics, bye.begin) = (vec![FormId(T_ADDED)], count);
     let mut g = game(&f);
     g.start_dialogue(actor(), None).unwrap();
     listen(&mut g);
@@ -1215,10 +1237,11 @@ fn a_chosen_goodbye_closes_the_conversation_at_once_and_the_line_goes_on_in_the_
     assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { cut: true, .. })));
     assert!(g.dialogue.is_none() && g.speech.is_empty());
     // The line started once and its response was said once: nothing of its start came
-    // again with the transfer (no second begin script either: TestOut went 2 → 9 only).
+    // again with the transfer, and its begin script ran once.
     let starts = g.events.iter().filter(|e| matches!(e.kind, EventKind::LineStarted { info, .. } if info == FormId(C_BYE))).count();
     let said = g.events.iter().filter(|e| matches!(e.kind, EventKind::ResponseSaid { info, .. } if info == FormId(C_BYE))).count();
     assert_eq!((starts, said), (1, 1));
+    assert_eq!(g.world.global(FormId(G_COUNT)).unwrap(), 1.0);
     // The engine's log line takes the transfer as the conversation closed.
     assert_eq!(g.farewell_said, Some((actor(), FormId(C_BYE))));
 }
@@ -1277,6 +1300,53 @@ fn a_farewell_ending_inside_another_farewells_end_script_keeps_the_outer_hand_of
     assert!(a_end < b_end && b_end < added && added < next, "{a_end} {b_end} {added} {next}");
     let starts = g.events.iter().filter(|e| matches!(e.kind, EventKind::DialogueStarted { .. })).count();
     assert_eq!(starts, 2, "the first conversation and A's hand-off, nothing more");
+    assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::CallFailed { .. })));
+}
+
+/// Issue #1606 review: a farewell that ends inside a conversation line's end script
+/// keeps its force greet in its own slot. TalkerREF's Goodbye line, opening a
+/// conversation by its topic, asks in its end script for ChatterREF's force greet (X),
+/// then makes ChatterREF say a line, which ends ChatterREF's farewell; that farewell's
+/// end script asks for TalkerREF's (Y). Y is tried after the farewell's Add Topics and
+/// refused, the conversation still being there; X starts once the conversation closes.
+#[test]
+fn a_farewell_ending_inside_a_conversation_lines_end_script_leaves_the_conversations_hand_off() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(g.start_dialogue(actor(), Some(FormId(T_RELAY))), Ok(FormId(H_RELAY)));
+    let b = FormId(NPC2_REF);
+    g.speech.push(fnv_game::game::Speech {
+        speaker: b,
+        target: Some(FormId::PLAYER_REF),
+        topic: FormId(T_B_HAND),
+        info: FormId(B_HAND),
+        remaining: 100.0,
+        say_to: false,
+        greeting: false,
+        farewell: true,
+        conversation: None,
+        earlier_topics: Vec::new(),
+        hello: false,
+        look: fnv_game::game::LineLook::Both,
+        response: 0,
+        force_subtitles: false,
+        two_d: false,
+        end_ran: false,
+    });
+    listen(&mut g);
+    // ChatterREF's farewell ended as said inside the conversation's end script, its Add
+    // Topics before the conversation closed.
+    let b_end = event_at(&g, |k| matches!(k, EventKind::LineEnded { info, cut: false, .. } if *info == FormId(B_HAND)));
+    let b_added = event_at(&g, |k| matches!(k, EventKind::TopicAdded { by: Some(by), .. } if *by == FormId(B_HAND)));
+    let closed = event_at(&g, |k| matches!(k, EventKind::DialogueEnded { reason: "goodbye", .. }));
+    assert!(b_end < b_added && b_added < closed, "{b_end} {b_added} {closed}");
+    // The rest of the conversation's end script ran; X, not Y, started after it closed.
+    assert_eq!(out(&g), 5.0);
+    assert_eq!(g.dialogue_actor(), Some(b));
+    let started: Vec<u32> = g.events.iter().filter_map(|e| if let EventKind::DialogueStarted { actor, .. } = e.kind { Some(actor.0) } else { None }).collect();
+    assert_eq!(started, vec![NPC1_REF, NPC2_REF]);
+    let c = g.dialogue.as_ref().unwrap();
+    assert!(c.then.is_none() && !c.ending);
     assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::CallFailed { .. })));
 }
 

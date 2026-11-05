@@ -762,13 +762,22 @@ impl<'a> Game<'a> {
     /// that ends after its conversation closed ([`Speech::farewell`], `Game::end_line`):
     /// the force greet is held and starts after the line's Add Topics, the order a
     /// Goodbye line that ends in its conversation has [design].
+    ///
+    /// The farewell is asked first: `farewell_ending` is set and put back by each
+    /// `end_line`, so it holds exactly while the innermost end script running is a
+    /// farewell's. A farewell that ends inside a conversation line's end script (that
+    /// script made the farewell's speaker say a line) keeps its request in its own slot
+    /// and does not overwrite the conversation's. Its force greet is tried inside the
+    /// outer script, after its Add Topics, and is refused while a conversation exists;
+    /// likewise, a nested farewell's force greet that starts inside an outer farewell's
+    /// end script leaves the outer one's to be refused when it is tried [design].
     pub fn hold_force_greet(&mut self, speaker: FormId, topic: Option<FormId>) -> bool {
-        if let Some(c) = self.dialogue.as_mut().filter(|c| c.ending) {
-            c.then = Some((speaker, topic));
-            return true;
-        }
         if self.farewell_ending {
             self.farewell_then = Some((speaker, topic));
+            return true;
+        }
+        if let Some(c) = self.dialogue.as_mut().filter(|c| c.ending) {
+            c.then = Some((speaker, topic));
             return true;
         }
         false

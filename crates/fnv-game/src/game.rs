@@ -1570,8 +1570,11 @@ pub struct Game<'a> {
     /// a line ending inside another's end script keeps to its own. Not saved.
     pub(crate) farewell_then: Option<(FormId, Option<FormId>)>,
     /// The last Goodbye line the player chose that went on in the world, as (speaker,
-    /// line), set as its conversation closes (`Game::say_farewell`), for the engine's
-    /// log line on that close, which takes it. Not saved.
+    /// line), set as its conversation closes (`Game::say_farewell`). nvf-play's log
+    /// takes it when it logs the matching goodbye `dialogue_ended` (same actor). A
+    /// headless run leaves it set, to no effect on the game. It is not cleared when a
+    /// conversation starts or ends, on purpose: another change in the same frame would
+    /// erase it before the frame's events are logged. Not saved.
     pub farewell_said: Option<(FormId, FormId)>,
     /// The lengths of voice files, when the game was given them (`crate::voice`): a
     /// response then lasts as long as its sound. Not part of the saved state.
