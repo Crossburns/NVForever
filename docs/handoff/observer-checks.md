@@ -1234,3 +1234,13 @@ The numbers above stay put so links to them hold; each item here gives its own p
     owner-review.md item 45 asks which to keep. Close's text reads alpha 255 and brightness 255
     [observed], which rules out those two traits of its own for its (206, 147, 53), not an
     opacity from above it or the compositing; font 2's texels [hypothesis].
+
+## Added 2026-11-05 (items without a name, issue #1603)
+
+85. **Does the original list an item that has no name?** (P3; engine/nvf-play/src/menu/model.rs,
+    `shown`.) NVForever leaves an item out of every inventory list (the player's, containers,
+    barter) when its record has no FULL or a blank one [hypothesis]. The vanilla
+    DONOTUSEBookGeneric07 (0x000199BB, BOOK, no FULL) is in SublistBooks100, under the
+    household and library clutter lists. A capture: `player.additem 000199BB 1`, then open the
+    Pip-Boy's Misc page and a container holding one. Is it absent, a blank row, or shown by
+    another name?

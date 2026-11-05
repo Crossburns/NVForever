@@ -406,7 +406,7 @@ pub(crate) fn holds_nothing(game: Option<&fnv_game::Game>, sim: &mut SimState, f
         _ => return false,
     };
     let forms = sim.forms;
-    let unlisted = |item: FormId| forms.item(item).is_some_and(|i| !i.listed(false));
+    let unlisted = |item: FormId| !crate::menu::model::shown(forms, item, false);
     let Ok(s) = sim.world.get(holder) else { return false };
     if !s.inventory.as_ref().is_none_or(|inv| inv.iter().all(|(item, _)| unlisted(item))) {
         return false;
