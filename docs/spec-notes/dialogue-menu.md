@@ -135,11 +135,37 @@ From these, all [hypothesis] fitted to the pictures:
   The subtitles and radio subtitles are shown the same way (corner-messages.md §8); the
   log's `dialogue:` lines keep the record's text.
 - The list scrolls by whole choices to keep the selected one in sight [design].
-- While a Goodbye choice is offered, "TAB) Goodbye" (font 6) stands left of the band,
-  its right end 20 units from the band, level with the bottom bracket, on its own dark
-  box at the band's shade; on a screen too narrow for it, at the safe zone's left edge
-  over the band [owner, list 5 item 62; design: the place; dialog_menu.xml has no such
-  hint, observed]. Tab picks that choice (dialogue-play.md §2).
+- While a Goodbye choice is offered, "[Tab] Goodbye" (font 6, the band's own text) stands
+  left of the band. [owner, list 5 item 62: the request's words were "TAB) Goodbye", at
+  the left of the dialogue box, shown by default. The words are changed to the bracket
+  style of the tile menus' key hints, proposed to the maintainer in #1517; they are not
+  the maintainer's words. design: the rest; dialog_menu.xml has no such hint, observed.]
+  All its measures come from the pictures of its glyphs (their ascent above the baseline
+  and height, so the ink reaches `up` above and `down` below it; 17 and 0 for the
+  stand-in text when the game's font is not there), not from one assumed height [design].
+  - **At the side**, when the safe zone leaves room (a screen about 16:9 or wider for the
+    words in the game's font; it depends on the screen's width and the words' width, not
+    on one aspect): the ink is centred on the bottom bracket's line, the words' right end
+    10 units from the band's edge, on a backing in the band's shade (0.87) that reaches
+    10 units left of the words and 8 above and below the ink and is flush against the
+    band's edge, so the two read as one shape [design].
+  - **Inside the band**, where it does not (4:3, 5:4 and any screen where the above does not
+    fit; this is not outside-left but below-left): the band grows under its bottom bracket
+    until a strip holds the ink with 15 units clear above and below (19 units more for the
+    stand-in's 17; more for taller ink), and the words stand in it, 60 units in from the
+    band's left edge (as the line of text starts; kept inside the safe zone), with no
+    backing of their own. They are clear of the bracket's line and corner, under the
+    choices and the scroll bar, inside the safe zone [design].
+  - The grown band does not change the wrapping or how many choices fit, but the list is
+    set up to keep the band inside the safe zone's bottom: **at the list's maximum height,
+    turning the hint on moves the list up** (by up to the growth: 19 units for the stand-in ink), and turning it off
+    moves it back. At the side, and for shorter lists, nothing else moves.
+  Tab picks that choice (dialogue-play.md §2).
+- The settings page's Gameplay group has a "Goodbye hint" switch (key `dialogue-goodbye-hint`,
+  on by default): off removes the words, their backing and, inside the band, the strip made
+  for them (so the band is its own height again); Tab says goodbye as before [design]. The
+  menu is drawn again at once when it is flipped; the log says `[Tab] Goodbye shown at the
+  left of the choices` or `… hidden by the Goodbye hint setting` when the hint changes.
 - The keys are dialogue-play.md §2's; the old on-screen key hint and the "You cannot
   leave this conversation yet." note are gone (the original shows neither; a refused
   Tab is in the log).
