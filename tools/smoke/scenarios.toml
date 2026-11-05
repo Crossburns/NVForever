@@ -18810,3 +18810,18 @@ expect = [
   { text = 'script runner: optional\gl_nvfsmoke_late.txt ran (game load)', count = 1, label = "the file gr_ registered runs at the load" },
 ]
 order = [["load: restored", "script runner: gr_nvfsmoke.txt ran", "script runner: ln_nvfsmoke.txt ran (game load)", 'script runner: optional\gl_nvfsmoke_late.txt ran']]
+
+[[scenario]]
+name = "script-runner-menu"
+source = "issue #1548, docs/spec-notes/ext-script-runner.md §2: behind the main menu only the gr_ files run; the new game's ln_ files wait for New Game"
+areas = ["scripts", "extender", "main-menu"]
+paths = ["crates/fnv-game/src/script_runner.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/main_menu.rs", "tools/smoke/fixtures/script-runner-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/script-runner-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MAIN_MENU = "6:new", NVF_PLAY_TEST_INTRO_SKIP = "7" }
+args = ["--play", "--menu", "--no-voice"]
+run_seconds = 14
+expect = [
+  { text = "script runner: gr_nvfsmoke.txt ran (game restart)", count = 1 },
+  "main menu: New Game",
+  { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1, label = "the ln_ file runs once the new game begins" },
+]
+order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]
