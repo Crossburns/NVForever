@@ -10574,6 +10574,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "equip-swap-unequip-first"
+source = "issue #1616: swapping apparel from the inventory runs the old item's OnUnequip before the new item's OnEquip (docs/spec-notes/ext-events.md)"
+note = "The player puts on a Powder Gang outfit (ArmorNVPGSimple 000A4731, script PowderGangOutfitWarningScript SCPT 00134B71) at 14 s, then a Great Khan outfit (ArmorNVGKSimple 000E674C, KhanFactionOutfitWarningScript SCPT 00134B70) in its place at 19 s, through the test aid's plain equip (the inventory menu's path)"
+areas = ["scripts"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_events.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GIVE = "000A4731:1,000E674C:1", NVF_PLAY_TEST_CONTROL = "14:equip=000A4731,19:equip=000E674C" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'script: OnEquip of FalloutNV\.esm\|SCPT 0x00134B71 ran on Some\(0x00000014\)', label = "the Powder Gang outfit's OnEquip runs" },
+  { re = 'script: OnUnequip of FalloutNV\.esm\|SCPT 0x00134B71 ran on Some\(0x00000014\)', label = "the swap runs its OnUnequip" },
+  { re = 'script: OnEquip of FalloutNV\.esm\|SCPT 0x00134B70 ran on Some\(0x00000014\)', label = "the Khan outfit's OnEquip runs" },
+]
+order = [["test aid: the player equips 0x000E674C", "script: OnUnequip of FalloutNV.esm|SCPT 0x00134B71", "script: OnEquip of FalloutNV.esm|SCPT 0x00134B70"]]
+
+[[scenario]]
 name = "move-to-marker-fade"
 source = "script-function audit 2026-10-19: MoveToMarkerWithFade fades the object out, moves it, then fades it back in [documented: GECK wiki MoveToMarkerWithFade]; the fade-out wait is the Disable 1 hold (fnv_game FADE_OUT_HOLD) [hypothesis: capture asked]"
 note = "in Goodsprings, Easy Pete is brought 300 units north of the player at 14 s; at 16 s the console moves him with MoveToMarkerWithFade 600 units north of the player: he fades out where he stands (2 s), is moved, then fades in"
