@@ -516,7 +516,7 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   container's, fixed when its cell loads, if its state is not made before that. A door
   gets no fixed level, so it keeps its authored level whatever the player's level or its
   zone [design]. Whether the original hardens at all is [hypothesis]: the GECK tutorial
-  calls the checkbox deprecated [documented, encounter-zones.md §7]; observer check 86
+  calls the checkbox deprecated [documented, encounter-zones.md §7]; observer check 87
   asks. GetLockLevel, the crosshair's lock line and the lockpick game read the level
   built here.
   The nav graph's door locks keep the authored level (it only asks locked or not).

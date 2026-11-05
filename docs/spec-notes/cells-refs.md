@@ -27,6 +27,17 @@ teleport, no opening, no script [hypothesis: the flag's name; GetLockedOut's val
 "Inaccessible" (JIP) [documented] says such a door is locked out]. Scripts may still
 activate it.
 
+**Doors without a name** (no FULL, or a blank one) give no prompt at all, as unnamed
+activators do, when the reference also has no teleport destination (XTEL) and no Activation
+Prompt (XATO): the crosshair passes them by and E does nothing to them. A nameless door that
+has either stays offered (a travel door shows its destination; a prompted one its prompt), so
+a door a quest sends the player through is never hidden. FalloutNV.esm has 8 nameless DOOR
+bases of 320: NVInvisibleDoorNPCOnly, VHDTowerHatchNoUse, OffDoorHidden01 (Mick & Ralph's back
+room), CG04SecretDoor, FortArenaGate, REPCONHatch2, and two never placed [observed, #1598].
+Which of their placed references have an XTEL or XATO is not yet checked against the data
+(#1627) [hypothesis: OffDoorHidden01's has neither, so it stays hidden]. The rule itself is a
+hypothesis (that the original's prompt needs a name); scripts may still activate them.
+
 ## 3. Activation prompts (XATO)
 
 156 references (doors mostly: "Exit to Mojave Wasteland" 24, "Climb Ladder to Mojave

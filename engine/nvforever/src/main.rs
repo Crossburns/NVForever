@@ -1121,7 +1121,7 @@ fn main() -> AppExit {
     if let Some(p) = play.as_mut() {
         p.packages = !npc_packages.is_empty();
     }
-    let residents = if npc_packages.is_empty() {
+    let mut residents = if npc_packages.is_empty() {
         None
     } else {
         // Game hours per second: the sky's rate when it runs, else the NPCs' own.
@@ -1139,8 +1139,11 @@ fn main() -> AppExit {
     let mut trips = args.npc_travel.clone();
     let furnishings = if args.play || !args.npc_sit.is_empty() || residents.is_some() {
         match furniture::Furnishings::build(&world, &game, &args.npc_sit, trips.len()) {
-            Ok((f, sit_trips)) => {
+            Ok((mut f, sit_trips)) => {
                 trips.extend(sit_trips);
+                if let Some(r) = residents.as_mut() {
+                    r.set_furniture_facts(std::sync::Arc::new(f.asset_facts(&game)));
+                }
                 Some(f)
             }
             Err(e) => return fail(e),

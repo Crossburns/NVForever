@@ -2782,3 +2782,230 @@ fn hitvol_diff_skipped_write_answers_as_a_forced_one() {
 fn hitvol_ties_skipped_write_answers_as_a_forced_one() {
     skipped_vs_forced(false);
 }
+
+/// An actor's character standing at the origin of [`ground`], for where it can be put.
+fn spot_character(w: &mut PhysWorld) -> Character {
+    w.add_character(1, CharacterParams { max_slope_deg: 60.0, ..CharacterParams::default() }, [0.0, 0.0, 10.0])
+}
+
+const SPOT: [f32; 3] = [500.0, -500.0, 0.0];
+
+#[test]
+fn a_spot_on_open_ground_is_where_a_character_rests_and_stays() {
+    let mut w = ground();
+    let mut c = spot_character(&mut w);
+    let feet = w.character_spot(&c, SPOT).unwrap();
+    assert!((feet[0], feet[1]) == (SPOT[0], SPOT[1]));
+    assert!((feet[2] - TERRAIN_SHELL).abs() < 1e-3, "{feet:?}");
+    w.place_character(&mut c, feet);
+    settle(&mut w, &mut c, 30);
+    assert!((c.feet[2] - feet[2]).abs() < 0.5, "{:?} from {feet:?}", c.feet);
+}
+
+#[test]
+fn a_prop_in_the_way_leaves_no_room_for_the_body_and_a_way_past_is_not_asked_for() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // A wall between the character and the place does not count.
+    w.add_ref(&at(60, [250.0, -250.0, 80.0]), &[object(boxed([20.0, 200.0, 80.0]), Motion::Static)]);
+    assert!(w.character_spot(&c, SPOT).is_ok());
+    // A pillar beside the place, closer than the body's radius: no room.
+    w.add_ref(&at(61, [SPOT[0] + 30.0, SPOT[1], 80.0]), &[object(boxed([20.0, 20.0, 80.0]), Motion::Static)]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+    // Further along: room again.
+    assert!(w.character_spot(&c, [SPOT[0] - 40.0, SPOT[1], 0.0]).is_ok());
+}
+
+#[test]
+fn a_ceiling_lower_than_the_body_leaves_no_room() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // The underside 100 up, above the ray's start (48): the ground is found, the body
+    // does not fit under it.
+    w.add_ref(&at(60, [SPOT[0], SPOT[1], 110.0]), &[object(boxed([100.0, 100.0, 10.0]), Motion::Static)]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+    // A lower one, the ray's start above it: the ground is still the level asked for,
+    // and the body does not stand on top of what is over it instead.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    w.add_ref(&at(61, [SPOT[0], SPOT[1], 25.0]), &[object(boxed([100.0, 100.0, 5.0]), Motion::Static)]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+    // Higher than the body: room under it.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    w.add_ref(&at(62, [SPOT[0], SPOT[1], 150.0]), &[object(boxed([100.0, 100.0, 10.0]), Motion::Static)]);
+    assert!(w.character_spot(&c, SPOT).is_ok());
+}
+
+#[test]
+fn a_spot_is_on_the_level_asked_for_of_those_stacked() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // A floor 200 above the ground: each height asked for gets its own.
+    w.add_ref(&at(60, [SPOT[0], SPOT[1], 195.0]), &[object(boxed([60.0, 60.0, 5.0]), Motion::Static)]);
+    let upper = w.character_spot(&c, [SPOT[0], SPOT[1], 200.0]).unwrap();
+    assert!((upper[2] - 200.0).abs() < 2.0, "{upper:?}");
+    let lower = w.character_spot(&c, [SPOT[0], SPOT[1], 5.0]).unwrap();
+    assert!((lower[2] - TERRAIN_SHELL).abs() < 1e-3, "{lower:?}");
+    // Two floors of one mesh, 30 apart inside the window: one ray meets only the upper.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    let plate = |z: f32, base: u32| ([[-80.0, -80.0, z], [80.0, -80.0, z], [80.0, 80.0, z], [-80.0, 80.0, z]], [[base, base + 1, base + 2], [base, base + 2, base + 3]]);
+    let (upper, ut) = plate(0.0, 0);
+    let (under, lt) = plate(-30.0, 4);
+    let vertices = upper.iter().chain(&under).copied().collect();
+    let shape = Shape::TriMesh { vertices, triangles: vec![ut[0], ut[1], lt[0], lt[1]], materials: vec![0; 4] };
+    w.add_ref(&at(70, [SPOT[0], SPOT[1], 300.0]), &[object(shape, Motion::Static)]);
+    let on = w.character_spot(&c, [SPOT[0], SPOT[1], 302.0]);
+    assert!(matches!(on, Ok(f) if (f[2] - 300.0).abs() < 2.0), "{on:?}");
+    assert_eq!(w.character_spot(&c, [SPOT[0], SPOT[1], 272.0]), Err(SpotRefused::NoRoom), "under the upper floor");
+    // With two surfaces inside the window, the one nearer the height asked for.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    w.add_ref(&at(61, [SPOT[0], SPOT[1], 195.0]), &[object(boxed([60.0, 60.0, 5.0]), Motion::Static)]);
+    w.add_ref(&at(62, [SPOT[0], SPOT[1], 135.0]), &[object(boxed([60.0, 60.0, 5.0]), Motion::Static)]);
+    let lower = w.character_spot(&c, [SPOT[0], SPOT[1], 145.0]);
+    assert_eq!(lower, Err(SpotRefused::NoRoom), "on the lower slab, 60 under the upper");
+    let upper = w.character_spot(&c, [SPOT[0], SPOT[1], 198.0]).unwrap();
+    assert!((upper[2] - 200.0).abs() < 2.0, "{upper:?}");
+}
+
+#[test]
+fn nothing_to_stand_on_near_the_height_is_refused() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // The terrain is 500 below: too far to be the level asked for.
+    assert_eq!(w.character_spot(&c, [SPOT[0], SPOT[1], 500.0]), Err(SpotRefused::NoSupport));
+    assert_eq!(w.character_spot(&c, [f32::NAN, 0.0, 0.0]), Err(SpotRefused::NoSupport));
+    // A wall's steep face is no support either.
+    let mut w = PhysWorld::new(PhysParams::default());
+    let c = spot_character(&mut w);
+    let (s, co) = 80f32.to_radians().sin_cos();
+    let rot = [co, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, co];
+    w.add_ref(&RefPose { form_id: 60, position: [0.0, 0.0, 0.0], rotation: rot, scale: 1.0 }, &[object(boxed([100.0, 100.0, 5.0]), Motion::Static)]);
+    assert_eq!(w.character_spot(&c, [0.0, 0.0, 0.0]), Err(SpotRefused::NoSupport));
+}
+
+#[test]
+fn other_characters_block_a_spot_and_the_body_itself_does_not() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // Its own place: it does not stand in its own way.
+    assert!(w.character_spot(&c, [0.0, 0.0, 0.0]).is_ok());
+    let other = w.add_character(2, CharacterParams::default(), [SPOT[0] + 10.0, SPOT[1], TERRAIN_SHELL]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+    assert_eq!(w.queries().character_overlap(&c, [SPOT[0], SPOT[1], TERRAIN_SHELL]), vec![Owner::Character { id: 2 }]);
+    w.remove_character(other);
+    assert!(w.character_spot(&c, SPOT).is_ok());
+}
+
+#[test]
+fn only_what_a_character_cannot_push_blocks_a_spot() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // A crate it would push aside.
+    let mut light = object(boxed([10.0, 10.0, 10.0]), Motion::Dynamic);
+    light.mass = 20.0;
+    w.add_ref(&at(60, [SPOT[0], SPOT[1], 10.5]), &[light]);
+    let feet = w.character_spot(&c, SPOT).unwrap();
+    assert!((feet[2] - TERRAIN_SHELL).abs() < 1e-3, "not on top of it: {feet:?}");
+    // A car it stops at.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    let mut heavy = object(boxed([60.0, 30.0, 30.0]), Motion::Dynamic);
+    heavy.mass = 800.0;
+    w.add_ref(&at(61, [SPOT[0], SPOT[1], 30.5]), &[heavy]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+}
+
+#[test]
+fn a_slope_it_can_walk_has_room_for_the_controllers_own_shape() {
+    // A capsule's round bottom at the gap kept would sink into a slope this steep; the
+    // controller's cone does not.
+    let mut w = PhysWorld::new(PhysParams::default());
+    let c = spot_character(&mut w);
+    ramp(&mut w, 45.0);
+    let (x, z) = (300.0, 200.0);
+    let feet = w.character_spot(&c, [x, 0.0, z]).unwrap();
+    assert!((feet[2] - z).abs() < 26.0, "{feet:?}");
+    let capsule = Shape::Capsule { a: [0.0, 0.0, 22.0], b: [0.0, 0.0, 106.9], radius: 22.0 };
+    let pose = Iso { translation: [x, 0.0, z + 0.5], ..Iso::IDENTITY };
+    assert!(!w.queries().overlap(&capsule, &pose, &Filter::excluding(c.key())).unwrap().is_empty());
+}
+
+#[test]
+fn a_stair_is_stood_on_at_the_height_its_next_step_lifts_the_body_to() {
+    let mut w = ground();
+    let mut c = spot_character(&mut w);
+    // Steps 16 high and 16 deep, rising to the east from x = 0: the ray finds the tread
+    // under the feet, the cone meets the next step's edge at that height.
+    for i in 0..10u32 {
+        let top = 16.0 * (i + 1) as f32;
+        let x = 16.0 * i as f32 + 8.0;
+        w.add_ref(&at(70 + i, [SPOT[0] + x, SPOT[1], top / 2.0]), &[object(boxed([8.0, 100.0, top / 2.0]), Motion::Static)]);
+    }
+    let at_step = [SPOT[0] + 40.0, SPOT[1], 48.0];
+    let feet = w.character_spot(&c, at_step).unwrap();
+    assert!(feet[2] > 48.0, "{feet:?}");
+    assert!(feet[2] <= 48.5 + c.params.step_height, "{feet:?}");
+    // It stays about there.
+    w.place_character(&mut c, feet);
+    settle(&mut w, &mut c, 30);
+    assert!((c.feet[0] - feet[0]).abs() < 30.0 && (c.feet[2] - feet[2]).abs() < 40.0, "{:?} from {feet:?}", c.feet);
+}
+
+#[test]
+fn a_steep_hill_it_can_walk_has_ground_and_room_and_a_body_in_the_hill_has_none() {
+    let mut w = PhysWorld::new(PhysParams::default());
+    let heights: Vec<f32> = (0..SIDE * SIDE).map(|i| ((i % SIDE) as f32 * 128.0).min(1200.0)).collect();
+    w.add_terrain((0, 0), &heights);
+    let c = spot_character(&mut w);
+    let (x, y) = (1000.0, 2000.0);
+    let z = height_at(&heights, x, y).unwrap();
+    let got = w.character_spot(&c, [x, y, z]);
+    // Slope 45 degrees (rise of one per unit), within this character's 60.
+    assert!(got.is_ok(), "{got:?}");
+    let feet = got.unwrap();
+    assert!((feet[2] - z).abs() <= c.params.step_height + TERRAIN_SHELL + 1.0, "{feet:?} on {z}");
+    assert_eq!(w.queries().character_overlap(&c, [x, y, z - 40.0]), vec![Owner::Terrain { x: 0, y: 0 }]);
+}
+
+/// Put down over a light crate with no room to get out of the way (against a wall): the
+/// body is accepted, as it is over any clutter it would push aside, so this has to come
+/// out sanely. Nothing flies off or goes through the wall, and it walks away.
+#[test]
+fn a_character_put_over_light_clutter_pinned_against_a_wall_walks_on() {
+    let mut w = ground();
+    let mut c = spot_character(&mut w);
+    let wall_face = SPOT[0] + 26.0;
+    w.add_ref(&at(60, [wall_face + 10.0, SPOT[1], 100.0]), &[object(boxed([10.0, 200.0, 100.0]), Motion::Static)]);
+    let mut crate_ = object(boxed([10.0, 10.0, 10.0]), Motion::Dynamic);
+    crate_.mass = 20.0;
+    w.add_ref(&at(61, [SPOT[0] + 15.0, SPOT[1], 10.0 + TERRAIN_SHELL]), &[crate_]);
+    for _ in 0..120 {
+        w.step();
+    }
+    let rest = w.ref_bodies(61)[0];
+    assert!(rest.translation[0] + 10.0 <= wall_face + 0.5, "{rest:?}");
+    let feet = w.character_spot(&c, SPOT).unwrap();
+    assert!((feet[2] - TERRAIN_SHELL).abs() < 1e-3, "{feet:?}");
+    // It does overlap the crate.
+    let capsule = Shape::Capsule { a: [0.0, 0.0, 22.0], b: [0.0, 0.0, 106.9], radius: 22.0 };
+    let pose = Iso { translation: feet, ..Iso::IDENTITY };
+    assert!(w.queries().overlap(&capsule, &pose, &Filter::excluding(c.key())).unwrap().iter().any(|o| matches!(o, Owner::Ref { form_id: 61, .. })));
+    w.place_character(&mut c, feet);
+    for _ in 0..240 {
+        w.move_character(&mut c, CharacterInput::default());
+        w.step();
+        let b = w.ref_bodies(61)[0];
+        assert!(b.translation.iter().chain(&b.linvel).chain(&c.feet).all(|v| v.is_finite()), "{b:?} {:?}", c.feet);
+        assert!(b.linvel.iter().all(|v| v.abs() < 2000.0), "flung: {b:?}");
+        assert!(b.translation[0] + 10.0 < wall_face + 5.0 && b.translation[2] > 0.0, "through something: {b:?}");
+        assert!((c.feet[0] - feet[0]).abs() < 30.0 && (c.feet[1] - feet[1]).abs() < 30.0 && (c.feet[2] - feet[2]).abs() < 40.0, "{:?} from {feet:?}", c.feet);
+    }
+    // Along the wall, the way a path past it would go.
+    let from = c.feet;
+    walk(&mut w, &mut c, [0.0, 150.0], 120);
+    assert!(c.feet[1] - from[1] > 50.0, "{:?} from {from:?}", c.feet);
+    assert!((c.feet[2] - from[2]).abs() < 40.0, "{:?} from {from:?}", c.feet);
+}
