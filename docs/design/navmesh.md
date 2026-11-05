@@ -162,9 +162,18 @@ swimming. Otherwise each frame goes as it would without this check: the arrival 
 hand-over happens at once, so a body that never lands cannot be held up by it. An actor falling
 through its goal's column still arrives in the air, as before. There is no settling state.
 
-**What "never worse" covers.** Reaching the destination: an actor gets there at least as
-surely as without this check, since recovery has no door to fail at and every failure ends in
-an arrival. It does not mean the same route, the same time or the right floor. Its known limits:
+**What "never worse" covers.** The aim is reaching the destination: recovery has no door to
+fail at, and a failed search or used-up tries end in an arrival. It is an aim with limits, not a
+proof, and it does not mean the same route, the same time or the right floor. Its known limits:
+
+- A recovery walk is an ordinary walk. If an obstacle or a navmesh switch cuts its way, the
+  ordinary handling applies (the walk is dropped and planned again; a failed plan marks the
+  package unreachable), where the actor would otherwise already have arrived. This comes from
+  reading the code; it was not seen in a run.
+- The two tries are per uninterrupted walk. A caller that cancels the walk and asks again starts
+  a new trip, so repeated cancellation can mean further searches. None of the callers checked
+  (a Follow package, a fixed combat post, a door refusal) does that by itself; a package change
+  can.
 
 - A new or just-placed body starts with `grounded = false` (`crates/fnv-phys/src/character.rs`),
   so if it is already at the goal, as `Follower::skip_ahead` can leave it, it arrives unjudged
