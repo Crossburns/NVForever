@@ -229,6 +229,9 @@ struct Particle {
     frame: Affine3A,
     pos: Vec3,
     vel: Vec3,
+    /// Its emitter's scale in the world when it was born ([`frame_scale`]): a placed
+    /// reference's scale (and its nodes') sizes the whole spray, gravity included.
+    scale: f32,
     /// Its emitter's time when it was born: the emitter's time now is this plus `age`
     /// (for modifiers switched on and off on the emitter's time).
     born_at: f32,
@@ -589,6 +592,19 @@ fn systems_of<'a>(
 }
 
 /// A number in −1..1.
+/// The uniform scale of an emitter's place in the world: the mean length of its axes
+/// (1 for a frame that does not scale). A placed reference at scale 0.5 (the Ultra-Luxe
+/// fountain's ULFountainFX, issue #1547) gives 0.5.
+fn frame_scale(frame: &Affine3A) -> f32 {
+    let m = frame.matrix3;
+    let k = (m.x_axis.length() + m.y_axis.length() + m.z_axis.length()) / 3.0;
+    if k.is_finite() && k > 0.0 {
+        k
+    } else {
+        1.0
+    }
+}
+
 fn spread(rng: &mut SplitMix) -> f32 {
     rng.next_f32() * 2.0 - 1.0
 }
@@ -745,6 +761,9 @@ fn emit(
             let moved = rig.filter(|_| d.emitter.mesh.is_none()).and_then(|r| r.node(d.emitter.object.as_deref()?)).map(|e| game_affine(e, &transforms, &parents, root));
             let frame = moved.unwrap_or(node * d.emitter.frame);
             let (_, turn, origin) = frame.to_scale_rotation_translation();
+            // The reference's scale (and its nodes') sizes the spray as it sizes the model:
+            // the volume it is born in, its particles, their speed (particles.md §7.7).
+            let spray = frame_scale(&frame);
             let vals = match sequence {
                 Some(s) => d.emitter.values_in(t, s),
                 None => d.emitter.values(age),
@@ -783,14 +802,14 @@ fn emit(
                         } else {
                             m.size * Vec3::new(spread(&mut rng), spread(&mut rng), spread(&mut rng)) * 0.5
                         };
-                        (origin + turn * offset, turn)
+                        (origin + turn * offset * spray, turn)
                     }
                 };
                 // Thrown within the cone: so far from the axis, any way round it.
                 let decl = vals.declination + vals.declination_variation * spread(&mut rng);
                 let planar = vals.planar_angle + vals.planar_angle_variation * spread(&mut rng);
                 let dir = Vec3::new(decl.sin() * planar.cos(), decl.sin() * planar.sin(), decl.cos());
-                let speed = vals.speed + vals.speed_variation * spread(&mut rng) * 0.5;
+                let speed = (vals.speed + vals.speed_variation * spread(&mut rng) * 0.5) * spray;
                 let rot = d.rotation.clone().unwrap_or_default();
                 let mut spin = rot.speed + rot.speed_variation * spread(&mut rng);
                 if rot.random_sign && rng.next_f32() < 0.5 {
@@ -800,11 +819,12 @@ fn emit(
                     frame: node,
                     pos: start,
                     vel: axis * dir * speed,
+                    scale: spray,
                     born_at: t,
                     sequence: sequence.map(|s| s.index),
                     age: 0.0,
                     life: (vals.life + vals.life_variation * spread(&mut rng) * 0.5).max(0.02),
-                    radius: (vals.radius + vals.radius_variation * spread(&mut rng)).max(0.0),
+                    radius: (vals.radius + vals.radius_variation * spread(&mut rng)).max(0.0) * spray,
                     angle: rot.angle + rot.angle_variation * spread(&mut rng),
                     spin,
                     tex: if d.subtextures.is_empty() { 0 } else { ((rng.next_f32() * d.subtextures.len() as f32) as usize).min(d.subtextures.len() - 1) },
@@ -871,7 +891,7 @@ fn simulate(time: Res<Time>, mut p: ResMut<Particles>) {
             };
             for g in d.gravity.iter().filter(|g| g.active.on_in(seq, at, period, loops)) {
                 let pull = if g.spherical { (q.frame.transform_point3(g.origin) - q.pos).normalize_or_zero() } else { g.direction };
-                q.vel += pull * g.strength_at(at) * dt;
+                q.vel += pull * g.strength_at(at) * q.scale * dt;
             }
             for b in d.bombs.iter().filter(|b| b.active.on_in(seq, at, period, loops)) {
                 q.vel += b.push(&q.frame, q.pos) * dt;
@@ -1039,11 +1059,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_emitters_scale_is_the_mean_length_of_its_axes() {
+        assert_eq!(frame_scale(&Affine3A::IDENTITY), 1.0);
+        let half = Affine3A::from_scale_rotation_translation(Vec3::splat(0.5), Quat::from_rotation_z(1.0), Vec3::new(1176.0, -222.0, 1012.0));
+        assert!((frame_scale(&half) - 0.5).abs() < 1e-5);
+        // A frame squashed to nothing sizes nothing down to zero: 1.
+        assert_eq!(frame_scale(&Affine3A::from_scale(Vec3::ZERO)), 1.0);
+    }
+
     fn test_particle(pos: Vec3, trail: Vec<Vec3>) -> Particle {
         Particle {
             frame: Affine3A::IDENTITY,
             pos,
             vel: Vec3::ZERO,
+            scale: 1.0,
             born_at: 0.0,
             sequence: None,
             age: 0.25,

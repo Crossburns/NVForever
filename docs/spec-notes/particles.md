@@ -580,3 +580,23 @@ v\FuseSparks.dds`), below the node
   weapon particles: ["##PCloud01"] on` / `… off`; smoke `thrown-dynamite`.
 - Not built: NPCs' held weapons (`weapons.rs`) emit nothing; placed dynamite still sparks
   lying in the world (§7.5).
+
+### 7.7 A placed reference's scale sizes its spray (issue #1547, 2026-11-05)
+
+- The Ultra-Luxe fountain on the Strip is two STAT references placed at **scale 0.5**:
+  ULFountain (0x00165AD1, `architecture\strip\ul_fountainnew.nif`) and ULFountainFX
+  (0x0016566E, `architecture\strip\ul_fountainnewfx.nif`), both at (1176, -222, 1012) in
+  TheStripWorldNew [observed: `fnvtool world refs`]. The owner saw its water drawn far
+  too large and not coming out of the spout (playtest 2026-11-04).
+- Until now an emitter's place in the world gave a newborn particle only its start point
+  and the axis of its cone. The emitter volume's size, the particle's radius, its speed and
+  the gravity pulling it were the file's numbers, whatever the scale. At 0.5 the spray was
+  twice the size of the half-size basin and threw twice as far.
+- **Now** [hypothesis: the spray scales with the reference, as its model does]: the
+  emitter frame's scale (the mean length of its axes, `particles::frame_scale`) multiplies
+  the offset in the emitter's volume, the particle's radius and its speed when it is born.
+  It also multiplies the gravity a particle feels, so its path is the file's path at that
+  scale. Drag (a share of the speed) is unchanged. Bombs and colliders already sit in the
+  emitter's frame. Mesh emitters take their start points from the scaled frame, as before.
+- To compare with the original: observer-checks.md item 87 (the fountain, same spot, same
+  hour).
