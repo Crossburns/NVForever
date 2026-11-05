@@ -550,8 +550,9 @@ engine:
   its first shot at the clip's `Fire` key, then at its rate while Use stays held;
   letting go before that fires nothing, and every new press spins up again [owner
   decision 2026-10-10; combat-rules.md §4].
-- Ammo comes from the inventory (`fnv-sim`); a magazine holds the clip size. Reloading
-  takes the reload clip's length; a reload cancelled partway keeps the old magazine.
+- Ammo comes from the inventory (`fnv-sim`); a magazine holds the clip size and never
+  more than is carried (combat-rules.md §8). Reloading takes the reload clip's length; a
+  reload cancelled partway keeps the old magazine.
   A weapon whose reload animation has an opening clip (the .357, the lever-actions,
   the hunting shotgun) opens, loads one round per pass of the reload clip up to `Hit`
   and closes; a trigger pull stops it after the round in hand, closes and fires [owner

@@ -319,7 +319,9 @@ impl Cycle {
     pub fn step(&mut self, t: &CombatTuning, i: Input) -> Vec<Event> {
         let mut out = Vec::new();
         let fresh = i.trigger && !self.held;
-        let pulled = fresh || (i.trigger && self.automatic);
+        let mut pulled = fresh || (i.trigger && self.automatic);
+        // Whether an empty magazine answers this tick's pull with a click.
+        let mut click = fresh;
         self.held = i.trigger;
         if !i.trigger {
             self.spun = false;
@@ -371,7 +373,7 @@ impl Cycle {
                             out.push(Event::ReloadStarted);
                         } else {
                             // One click per pull, also for automatic weapons.
-                            if fresh {
+                            if click {
                                 out.push(Event::DryFire);
                             }
                             break;
@@ -400,8 +402,17 @@ impl Cycle {
                         break;
                     }
                     dt -= left;
+                    let free = self.free_fourth && (self.shots + 1).is_multiple_of(4);
+                    // The magazine emptied after the pull (an Ammo Swap, its rounds taken
+                    // from the inventory): no shot, and the pull is answered as one on an
+                    // empty magazine.
+                    if !free && !self.has_round() {
+                        self.phase = Phase::Ready;
+                        pulled = true;
+                        click = true;
+                        continue;
+                    }
                     self.shots += 1;
-                    let free = self.free_fourth && self.shots.is_multiple_of(4);
                     let rounds = if self.no_ammo || free { 0 } else { self.ammo_use };
                     self.magazine -= rounds;
                     out.push(Event::Fired { rounds });

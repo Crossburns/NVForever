@@ -251,7 +251,10 @@ each the identity by default. Reading PERK records is a later step.
 - **Trigger.** A semi-automatic weapon needs a fresh pull per shot; an automatic one
   fires while the trigger is held.
 - **Empty magazine.** Pulling the trigger on an empty magazine reloads when ammo is
-  carried (`auto_reload` [design]), else gives one dry click per pull.
+  carried (`auto_reload` [design]), else gives one dry click per pull. A magazine
+  emptied after the pull, during the spin-up or wind-up, fires nothing: that pull is
+  answered the same way, and its shot is not counted [design: `attack.rs`, #1613]. A
+  free fourth shot (a "Regenerate Ammo (shots)" mod) needs no round and still leaves.
 - **Ammo.** A shot takes `ammo_use` rounds.
 - **Regenerating weapons** gain a round every `regen_rate` seconds and cannot be
   reloaded by hand [documented].
@@ -368,11 +371,18 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     `CombatForms::ammo_for` (the first carried entry of its list).
   - The magazine is a view of the carried rounds. A shot removes `ammo_use` rounds
     from the inventory; a reload moves nothing.
+  - The magazine never holds more than is carried, checked every frame, holstered or
+    not: rounds dropped, sold or taken by a script are gone from the gun too, also a
+    magazine a script set above that with SetPlayerCurrentAmmoRounds [design:
+    `combat.rs`, #1612]. Regenerating weapons and god mode's full magazine are left out:
+    their rounds are not in the inventory.
   - A weapon with no ammo but a projectile (grenades) spends itself.
   - A newly equipped weapon starts loaded with what is carried [design].
 - **Controls.** Use is the trigger; the press that draws the weapon does not fire. A
   Ready Item tap reloads, and Ammo Swap takes the next carried ammo, then reloads
-  [design].
+  [design]. A swap during a spin-up or wind-up drops the shot on its way and the reload
+  starts at once; the rounds of the old type stay in the inventory, unfired, until the
+  next swap [design: `combat.rs`, #1613].
 - **Readiness and clips.** The cycle runs once the player body reports the weapon drawn
   and in hand (`WeaponAnim::ready`; without a body, as soon as it is wanted out).
   - The body gives the attack clip's length and `Hit` key (and whether a `Loop`

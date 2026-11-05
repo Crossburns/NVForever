@@ -2,7 +2,7 @@
 //! projectiles, on hand-made stats and a toy world. The expected numbers follow from the
 //! documented formulas and our CombatTuning defaults.
 
-use fnv_combat::attack::{ClipTiming, Cycle, Event, Input, Timing};
+use fnv_combat::attack::{ClipTiming, Cycle, Event, Input, Phase, Timing};
 use fnv_combat::damage::{self, Attacker, HitInput, HitPart, NoPerks, Target};
 use fnv_combat::data::{AmmoEffect, ExplosionStats, ProjectileStats, WeaponStats};
 use fnv_combat::melee::NextAttack;
@@ -570,6 +570,121 @@ fn a_spinning_weapon_fires_after_its_spin_up() {
     assert_eq!(Timing::of(&w, &ClipTiming::default(), &t).spin_up, 0.0);
     let mut c = Cycle::new(&w, Timing::of(&w, &ClipTiming::default(), &t), false, 240);
     assert_eq!(shots(&run(&mut c, &t, 2, dt, |_| true, 0)), 1, "at once");
+}
+
+/// The cycle fed as the engine feeds the player's: `total` rounds in the inventory, the
+/// magazine's among them, and a shot takes its rounds from there.
+fn run_carrying(c: &mut Cycle, t: &CombatTuning, ticks: usize, dt: f32, trigger: impl Fn(usize) -> bool, total: &mut u32) -> Vec<Event> {
+    let mut ev = Vec::new();
+    for k in 0..ticks {
+        let e = c.step(t, Input { trigger: trigger(k), reload: false, dt, carried: total.saturating_sub(c.magazine) });
+        for x in &e {
+            if let Event::Fired { rounds } = x {
+                *total -= rounds;
+            }
+        }
+        ev.extend(e);
+    }
+    ev
+}
+
+/// An Ammo Swap or a script's RemoveItem during the spin-up (#1613, 196 shots from ten
+/// rounds): the shot it was spinning up for does not leave.
+#[test]
+fn a_magazine_emptied_in_the_spin_up_fires_nothing() {
+    let t = CombatTuning::default();
+    let w = WeaponStats { automatic: true, fire_rate: 20.0, clip_size: 240, ..gun(10) };
+    let timing = Timing::of(&w, &ClipTiming { spin_up: Some(0.967), ..Default::default() }, &t);
+    let dt = 1.0 / 60.0;
+    let spinning = || {
+        let mut c = Cycle::new(&w, timing, false, 5);
+        assert_eq!(c.step(&t, Input { trigger: true, reload: false, dt, carried: 0 }), vec![Event::SpinUp]);
+        c.magazine = 0;
+        c
+    };
+
+    // Five of the other type carried, trigger held: a reload, a new spin-up, those five
+    // and then silence (one click per pull, and this pull was answered by the reload).
+    let mut c = spinning();
+    let mut total = 5;
+    let ev = run_carrying(&mut c, &t, 1200, dt, |_| true, &mut total);
+    assert_eq!(ev[..3], [Event::ReloadStarted, Event::Reloaded { taken: 5 }, Event::SpinUp], "{ev:?}");
+    assert_eq!(shots(&ev), 5, "{ev:?}");
+    assert!(!ev.contains(&Event::DryFire), "{ev:?}");
+    assert_eq!((c.magazine, total), (0, 0));
+    // Let go and pulled again: the click.
+    assert_eq!(run_carrying(&mut c, &t, 10, dt, |k| k >= 5, &mut total), vec![Event::DryFire]);
+
+    // Nothing carried: the pull ends in its one click, whenever the spin-up is over.
+    let mut c = spinning();
+    let mut total = 0;
+    assert_eq!(run_carrying(&mut c, &t, 300, dt, |_| true, &mut total), vec![Event::DryFire]);
+
+    // The swap's reload is one tick's input: taken from Ready, where the swap puts the
+    // cycle (`combat::fire`), at once; in the spin-up it would be lost.
+    let mut c = spinning();
+    let swap = Input { trigger: true, reload: true, dt, carried: 5 };
+    assert!(c.step(&t, swap).is_empty());
+    let mut c = spinning();
+    c.phase = Phase::Ready;
+    assert_eq!(c.step(&t, swap), vec![Event::ReloadStarted]);
+}
+
+/// A gun whose shot waits for the attack clip's `Hit` key, emptied in that wait.
+#[test]
+fn a_magazine_emptied_in_the_wind_up_fires_nothing() {
+    let t = CombatTuning::default();
+    let w = WeaponStats { clip_size: 12, ..gun(20) };
+    let timing = Timing { interval: 0.5, fire_delay: 0.2, reload: 1.0, spin_up: 0.0, rounds: None, attach: None };
+    let dt = 0.05;
+    let winding = |w: &WeaponStats, magazine: u32| {
+        let mut c = Cycle::new(w, timing, false, 5);
+        assert!(c.step(&t, Input { trigger: true, reload: false, dt, carried: 0 }).is_empty());
+        assert!(matches!(c.phase, Phase::WindUp { .. }));
+        c.magazine = magazine;
+        c
+    };
+
+    // Nothing carried, the trigger let go in the wait: still that pull's click.
+    let mut c = winding(&w, 0);
+    assert_eq!(run(&mut c, &t, 10, dt, |_| false, 0), vec![Event::DryFire]);
+    assert_eq!(c.magazine, 0);
+    // Rounds carried: the reload an empty pull starts.
+    let mut c = winding(&w, 0);
+    let ev = run(&mut c, &t, 10, dt, |_| false, 5);
+    assert_eq!(ev[0], Event::ReloadStarted, "{ev:?}");
+    assert_eq!(shots(&ev), 0, "{ev:?}");
+    // Fewer rounds left than a shot uses: no shot and nothing wraps.
+    let two = WeaponStats { ammo_use: 2, ..w.clone() };
+    let mut c = winding(&two, 1);
+    assert_eq!(run(&mut c, &t, 10, dt, |_| false, 0), vec![Event::DryFire]);
+    assert_eq!(c.magazine, 1);
+}
+
+/// The fourth shot of a "Regenerate Ammo (shots)" mod takes no round, so an empty magazine
+/// does not stop it once it is on its way.
+#[test]
+fn a_free_shot_leaves_from_an_emptied_magazine() {
+    let t = CombatTuning::default();
+    let w = WeaponStats { free_fourth_shot: true, clip_size: 12, ..gun(20) };
+    let timing = Timing { interval: 0.5, fire_delay: 0.2, reload: 1.0, spin_up: 0.0, rounds: None, attach: None };
+    let mut c = Cycle::new(&w, timing, false, 4);
+    assert_eq!(shots(&run(&mut c, &t, 36, 0.05, |k| k % 12 == 0, 0)), 3);
+    assert_eq!(c.magazine, 1);
+    assert!(c.step(&t, Input { trigger: true, reload: false, dt: 0.05, carried: 0 }).is_empty());
+    c.magazine = 0;
+    assert_eq!(run(&mut c, &t, 8, 0.05, |_| false, 0), vec![Event::Fired { rounds: 0 }]);
+    assert_eq!(c.magazine, 0);
+    // A shot that did not leave is not counted towards the next free one.
+    let mut c = Cycle::new(&w, timing, false, 4);
+    assert_eq!(shots(&run(&mut c, &t, 24, 0.05, |k| k % 12 == 0, 0)), 2);
+    assert!(c.step(&t, Input { trigger: true, reload: false, dt: 0.05, carried: 0 }).is_empty());
+    c.magazine = 0;
+    assert_eq!(run(&mut c, &t, 8, 0.05, |_| false, 0), vec![Event::DryFire]);
+    c.magazine = 4;
+    let ev = run(&mut c, &t, 24, 0.05, |k| k % 12 == 0, 0);
+    let rounds: Vec<u32> = ev.iter().filter_map(|e| if let Event::Fired { rounds } = e { Some(*rounds) } else { None }).collect();
+    assert_eq!(rounds, vec![1, 0], "shots 3 and 4: {ev:?}");
 }
 
 /// The .357 revolver's clips (`1hpreloadxstart.kf` 1.067 s; `1hpreloadx.kf` 1.767 s,
