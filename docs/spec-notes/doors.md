@@ -77,6 +77,11 @@ Design: docs/design/navmesh.md §6.1 (doors and actors following paths). Code:
   (`RefCollisionOptions::posed_doors`).
 - A door told to close while opening (or the reverse) turns back from the same fraction
   of the other sequence [engine choice; not observed].
+- A load stands every door at rest as the save has it, open or closed, with no animation
+  and no sound; a door that a load script or anything later changes moves as any other
+  change does [design: `Doors::rest_as_restored`, called by `script::run_scripts` before
+  the load's scripts; engine choice, what the original shows for a door saved open is not
+  captured; smoke `save-door-write`, `save-door-load`].
 - While a door swings (opening or closing), its moving parts are not solid: the leaf
   passes through actors instead of hitting or pushing them, and rays miss it; at rest,
   open or closed, it is solid again [engine choice, owner request 2026-10-09; whether

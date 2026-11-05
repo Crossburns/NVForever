@@ -659,7 +659,7 @@ impl Runtime {
     /// Put a save's game state in place of the new game's (`crate::save`): the
     /// simulation's world and the game's own state. The random numbers start from a
     /// fresh position unless `NVF_PLAY_TEST_SAVE_SAME_ROLLS=1` (docs/design/save-load.md
-    /// §5 q3). Returns the references the save changed (to redraw).
+    /// §5 q3). Returns the references the save changed or a saved fade move moved (to redraw).
     pub(crate) fn restore_save(&mut self, sim: &mut SimState, mut s: fnv_game::game::GameSnapshot) -> Result<Vec<FormId>, String> {
         if std::env::var_os("NVF_PLAY_TEST_SAVE_SAME_ROLLS").is_none_or(|v| v == "0") {
             let jump = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()) << 16;
@@ -1703,7 +1703,7 @@ pub(crate) fn run_scripts(
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
-    (mut sit, mut terminals, mut refused): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>, MessageWriter<crate::save::LoadRefused>),
+    (mut sit, mut terminals, mut doors, mut refused): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>, Option<ResMut<crate::doors::Doors>>, MessageWriter<crate::save::LoadRefused>),
     paused: Res<crate::pause::Paused>,
     (mut screen, bindings, tiles, page, mut mods_ticks): ScreenAndMenus,
 ) {
@@ -1734,6 +1734,9 @@ pub(crate) fn run_scripts(
                         Ok(changed_refs) => {
                             info!("load: restored {}: {} changed references, {} quests, {} script instances", path.display(), changed_refs.len(), rt.game.quests.len(), rt.game.instances.len());
                             restored = true;
+                            if let Some(doors) = doors.as_deref_mut() {
+                                doors.rest_as_restored(&sim);
+                            }
                             tiles.load(&mut rt.game, &sim.world);
                             // The Script Runner's files after the save is in place (the
                             // restore takes the game's state, lambdas included, from the
@@ -1747,7 +1750,7 @@ pub(crate) fn run_scripts(
                             rt.frozen_frames = 2;
                             // The drawn world follows the restored simulation.
                             for id in changed_refs {
-                                changed.write(RefChanged { form_id: id.0 });
+                                changed.write(RefChanged { form_id: id.0, restored: true });
                             }
                         }
                         Err(e) => {
@@ -2052,7 +2055,7 @@ pub(crate) fn run_scripts(
         match e {
             ScriptEffect::RefChanged(id) => {
                 if sent.insert(id) {
-                    changed.write(RefChanged { form_id: id });
+                    changed.write(RefChanged::new(id));
                 }
             }
             ScriptEffect::Fade { form_id, fade_in } => {

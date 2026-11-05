@@ -206,6 +206,18 @@ fn drain<M: Message>(app: &mut App) -> Vec<M> {
 }
 
 #[test]
+fn a_restored_change_still_reaches_the_drawn_world() {
+    let mut app = scene(&[]);
+    let stim = visual(&mut app, STIM_REF, [60.0, 0.0, 100.0]);
+    app.update();
+    assert_eq!(app.world().get::<Visibility>(stim), Some(&Visibility::Inherited));
+    app.world_mut().resource_mut::<SimState>().world.activate(FormId::PLAYER_REF, FormId(STIM_REF)).unwrap();
+    app.world_mut().resource_mut::<Messages<RefChanged>>().write(RefChanged { form_id: STIM_REF, restored: true });
+    app.update();
+    assert_eq!(app.world().get::<Visibility>(stim), Some(&Visibility::Hidden));
+}
+
+#[test]
 fn describe_by_type_lock_and_destination() {
     let sim = sim();
     let ix = index();

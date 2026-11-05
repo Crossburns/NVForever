@@ -292,10 +292,23 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   once the load order is known (remapped if it differs, §4.1); the script runtime restores the
   game and the simulation as it is made, before its first frame, and sends `RefChanged`
   for every reference the save changed so the drawn world follows; the engine part is put
-  back next. A `MoveToMarkerWithFade` the save caught during its fade is made in that
+  back next. Those `RefChanged` are marked `restored`: visuals and collision follow them
+  as any, while crime and the world's sounds take what they name as judged and heard
+  before the save, so a load judges no theft and plays no pick-up or drop sound. It is a
+  mark on each notice and not a gate on the frames of the restore, so a real pick-up or a
+  load script's change in those frames has its normal effect [design:
+  `crime::report_deeds`, `world_sounds::objects`; smoke `save-theft-write`,
+  `save-theft-load`].
+  A `MoveToMarkerWithFade` the save caught during its fade is made in the
   restore, on the world that is played, before any script of the load runs; the reference
-  is drawn where it ends up, without the fade [design: `Game::restore`,
-  `Runtime::restore_save`; smoke `save-fade-move-write`, `save-fade-move-load`]. The game's clock stays the save's: the residents' start clock goes only into
+  is drawn where it ends up, without the fade, and its `RefChanged` is marked `restored`
+  too: the move was asked for before the save [design: `Game::restore`,
+  `Runtime::restore_save`; smoke `save-fade-move-write`, `save-fade-move-load`].
+  The sky takes the save's hold and the rolls' random state as it is
+  made, before its first look at the weather lists, not when the engine part is put back:
+  a hold set after that look would hold what its roll chose, and setting them later would
+  undo a load script's release [design: `SkyState::restore_saved`; smoke
+  `save-weather-write`, `save-weather-load`]. The game's clock stays the save's: the residents' start clock goes only into
   a new game, so `--day` never changes a loaded game's GameDaysPassed [design:
   `residents::Core::prepare`; smoke `save-days-write`, `save-days-load`]. The sky alone
   starts on the header's `game_days_passed`, over `--day` (`start_days` in `main.rs`), so

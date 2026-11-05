@@ -21,12 +21,12 @@
 //! - **Loading** starts the world from the plugins at the saved place and applies the save
 //!   before the scripts' first frame: nvforever `--load <name|path>` reads the header,
 //!   starts there, and hands the body over as [`PendingLoad`]; `crate::script` restores the
-//!   game and the simulation when its runtime is made and sends `RefChanged` for every
-//!   reference the save changed, so the drawn world follows it; [`apply_engine`] then puts
-//!   back the engine's part. A save that cannot be restored is refused as it is read
-//!   ([`read_for_load`]: nvforever opens the main menu and says why), before anything starts
-//!   from it; were a restore still to fail, [`LoadRefused`] ends the same way. Loading while
-//!   playing ([`LoadRequest`]: the console's
+//!   game and the simulation when its runtime is made and sends `RefChanged` (marked
+//!   `restored`) for every reference the save changed, so the drawn world follows it;
+//!   [`apply_engine`] then puts back the engine's part. A save that cannot be restored is
+//!   refused as it is read ([`read_for_load`]: nvforever opens the main menu and says why),
+//!   before anything starts from it; were a restore still to fail, [`LoadRefused`] ends the
+//!   same way. Loading while playing ([`LoadRequest`]: the console's
 //!   `load <name>`, the QuickLoad key F9) is nvforever's: it starts itself again with
 //!   `--load`, so the save always lands in a world built fresh from the plugins.
 //! - Not saved (design §3): physics in motion (objects load at rest), menus, music and
