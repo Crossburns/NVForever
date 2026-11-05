@@ -412,9 +412,9 @@ pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut
 
 /// Rebuild the frame (and with it every page's body) when the Pip-Boy's page or tab
 /// changed, or it came up, or a page went over to its tiles or back. A page drawn from its
-/// file (`crate::tiles::stats_menu::StatsTiles::ready`, the one decision) keeps the shell, the
-/// screen menu's header, the device's background and its scanlines, and has none of the
-/// hand-built page: its heading and tab line are the tiles', once, between those.
+/// file (`crate::tiles::stats_menu::StatsTiles::ready`, the one decision) keeps the shell and
+/// the screen menu's header, and has none of the hand-built page: its heading and tab line are
+/// the tiles', once. The device's background and scanlines are `device_screen.rs`'s either way.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut commands: Commands,
@@ -446,8 +446,7 @@ pub fn draw(
     c.kit.screen = !device;
     let root = Node { overflow: Overflow::clip(), ..at(0.0, 0.0, CANVAS.x, CANVAS.y) };
     commands.spawn((PipBoyRoot, root, UiTargetCamera(screen.camera), Name::new("Pip-Boy menus"))).with_children(|r| {
-        // The shell every view of a page keeps: the header or the background here, the
-        // scanlines over all.
+        // The shell every view of a page keeps: the screen menu's header.
         if !device {
             header(r, &mut c, page);
         }

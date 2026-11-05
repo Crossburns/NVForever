@@ -954,8 +954,8 @@ pub const SLEEP_WAIT_Z: i32 = 105;
 /// (`crate::tutorial_menu`) [design].
 pub const TUTORIAL_Z: i32 = 109;
 /// The Pip-Boy's page drawn from tiles, in the Pip-Boy's image: over the shell's root (no
-/// level, 0), whose header it leaves the pointer to, and under the scanlines (one more,
-/// `crate::pipboy::frame::draw`) [design].
+/// level, 0), whose header it leaves the pointer to, and under the beam and the scanlines
+/// (`crate::pipboy::device_screen`) [design].
 pub const PIPBOY_TILES_Z: i32 = 1;
 
 pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes, mut blur: ResMut<super::menus::TileMenuBlur>) {
