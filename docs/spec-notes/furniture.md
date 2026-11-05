@@ -455,8 +455,8 @@ says how the original decides, only that a watch of it found no creature on furn
   GibsonDog01 under `Sandbox256` for 358 s, 98 to 168 units from `OldLadyGibsonChair`, which
   was probably free [hypothesis]. Weaker: three rats by an outhouse, partly in combat, and
   Neil, never under a sandbox package. People in the loaded area did read as on furniture,
-  so the reads fire. The Nipton mongrels, 596 s by a free cross carrying XIBS: not on it either,
-  which may be the flag.
+  so the reads fire. The Nipton mongrels, 596 s by a free cross: not on it either. That cross's
+  record carries XIBS [documented: `fnvtool` over the record], so that no may be the flag.
 - [observed: headless simulation only, 2026-11-05, at the last code commit of this rule]
   `fnvtool ai run` over 129 placed creatures
   of WastelandNV for 24 game hours: on main 24 creatures with 232 furniture events; with this
