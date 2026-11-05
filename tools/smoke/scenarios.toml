@@ -2132,6 +2132,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "talk-julie-topic-list-leave"
+source = "#1595 (docs/design/dialogue-play.md §2): Julie Farkas's top level offers no Goodbye in the data; Tab (the aid's leave) leaves a topic list without one instead of trapping the player"
+note = "the player beside Julie Farkas (VFSJulieFarkasREF 0x00115C5F) in the Old Mormon Fort at noon; the aid talks at 10 s and leaves at her topic list"
+areas = ["dialogue"]
+paths = ["engine/nvf-play/src/dialogue.rs", "crates/fnv-game/src/dialogue.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_TALK = "10:VFSJulieFarkasREF=leave", NVF_PLAY_TEST_TALK_DELAY = "3" }
+args = ["--play", "--world", "FreesideFortWorld", "--pos=7915,2120,1000", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = "dialogue: test aid .*leaves 0x00115C5F's topic list, which offers no Goodbye", count = 1, label = "the aid's leave at her top level ends the conversation" },
+  { re = 'dialogue: Tab refused', count = 0, label = "Tab is not refused at her topic list" },
+]
+
+[[scenario]]
 name = "intercom-goodbye-line"
 source = "docs/spec-notes/talking-activators.md §2 (fnv_game::talking_activators): a Goodbye greeting through a talking activator opens a conversation that the line ends [owner statement 2026-10-22]; owner playtest 2026-10-22, Come Fly With Me: Chris Haversam's \"I'm letting you in\" from the REPCONN intercom was never heard, the next try said \"Stop messing around with the intercom\" and the door stayed locked"
 note = "The first activation is the Say Once \"Hey! Over here!\" conversation (left); the second sets the intercom's UsingUpstairsIntercom and Chris (upstairs, in RocketLabTop) says the Goodbye greeting through it in a conversation; its end script unlocks the door beside it, which the third activation then opens. intercom_goodbye.png is the dialogue screen while the line is said"
@@ -2728,6 +2742,20 @@ args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "
 run_seconds = 30
 expect = [
   { re = "npc combat: .* opens fire on .*, shooting from its embedded weapon's node ProjectileNode_RGatling", label = "the sentry bot's gun shoots from its node" },
+]
+
+[[scenario]]
+name = "npc-burst-fire"
+source = "#1448: an NPC's automatic weapon fires in bursts with pauses between them (fnv_combat::burst, docs/design/combat-ai.md), embedded weapons too; before, Securitrons held the trigger nonstop"
+note = "a sentry bot (CrSentryBotMGHard 0x000E585E, an automatic embedded gun) created at 3 s (the first created reference, 0xFF000000) at a Joshua tree about 580 units from the player (TreeJoshBNV 0x00122CCA) and set on the player; god mode. The coyotes (VERGSCoyote1-6REF) are disabled so it fights the player alone, on its minigun. The earlier setup race (created on the player, it took up its missile launcher inside the blast and kept it) was #1621, fixed by #1622 (body weapons: a gun suits no target within its own blast)"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/burst.rs", "crates/fnv-combat/src/vats.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "2:call:VERGSCoyote1REF:Disable,2.1:call:VERGSCoyote2REF:Disable,2.2:call:VERGSCoyote3REF:Disable,2.3:call:VERGSCoyote4REF:Disable,2.4:call:VERGSCoyote5REF:Disable,2.5:call:VERGSCoyote6REF:Disable,3:call:0x00122CCA:PlaceAtMe:CrSentryBotMGHard:1,6:combat:0xFF000000:player" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'npc combat: .* fires a burst of (?P<n>\d+) rounds at .*, then lets go for', range = [3, 8], all = true, label = "every burst is 3 to 8 rounds" },
+  { re = 'npc combat: .* fires a burst of \d+ rounds at .*, then lets go for', min = 2, label = "and bursts again after a pause" },
 ]
 
 [[scenario]]
@@ -4038,6 +4066,21 @@ expect = [
   { re = 'ultraluxsignglow\.nif: 0 material and 1 transform track', label = "the Ultra-Luxe sign glow's own transform controller" },
   { re = 'nv_thetops-casino04\.nif: [1-9]\d* material and', label = "The Tops sign's own material controllers" },
 ]
+
+[[scenario]]
+name = "snow-globe-taken-particles"
+source = "#1596 (engine/nvforever/src/particles.rs): a taken snow globe's snow went on falling where it stood; a placed model's own live particles go at once when it is no longer drawn"
+note = "The Strip snow globe in Vault 21 (SnowglobeTheStrip 0x001690EC); the player starts able to take it, looking at it, and E at 10 s takes it"
+areas = ["particles", "activation"]
+paths = ["engine/nvforever/src/particles.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NEAR = "001690EC", NVF_PLAY_TEST_ACTIVATE = "10" }
+args = ["--cell", "2EOVault21", "--play", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'activate 0x001690EC ', label = "E takes the snow globe" },
+  { re = 'particles: 001690EC is not drawn any more: its \d+ live particles go', count = 1, label = "its snow goes with it" },
+]
+order = [["activate 0x001690EC ", "particles: 001690EC is not drawn any more"]]
 
 [[scenario]]
 name = "gomorrah-roof-fire"
@@ -5786,6 +5829,19 @@ expect = [
 ]
 
 [[scenario]]
+name = "vendortron-through-glass"
+source = "#1602 (docs/spec-notes/cells-refs.md §5): the Gun Runners' kiosk is one body on collision layer 27 Invisible Wall, which took the crosshair, so the Vendortron inside it could not be talked to; the activation ray passes invisible walls"
+note = "VendortronRef 0x000F2EAA in the kiosk (nv_gunrun_kiosk.nif 0x00100616); the player put 120 units in front of it facing it; E at 8 s talks to it"
+areas = ["activation", "dialogue"]
+paths = ["engine/nvf-play/src/activate.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_FACE = "5:000F2EAA", NVF_PLAY_TEST_ACTIVATE = "8" }
+args = ["--play", "--pos=-11064,98317,4420", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'target 0x000F2EAA .*by Collision', label = "the Vendortron behind the kiosk's invisible wall is targeted" },
+]
+
+[[scenario]]
 name = "door-behind-wall-face"
 source = "#1339 (docs/spec-notes/cells-refs.md §5): the Nipton town hall's collision mesh has a face 8.5 units in front of its door's slab, so the crosshair stopped on the building and the door could not be used; a door within 16 units behind a face that cannot be activated is the target"
 note = "the town hall's outside door (0x00130CFF, a teleport into NiptonTownHallInterior), the player put 100 units south of it facing it; E at 8 s takes the player inside"
@@ -6338,6 +6394,25 @@ order = [[
   { re = 'load: restored .*handoff-test\.nvfsave', label = "only then is the save put back (owner 2026-11-01: the old run does not stay through the load)" },
   { text = "the new run took over and its world is in; ending it", label = "and the world comes in" },
 ]]
+
+[[scenario]]
+name = "pause-quit-to-main-menu"
+source = "issue #1593: the pause menu's Quit, then Main Menu, goes back to the main menu (a new run opened with --menu takes the window over) instead of closing the game"
+areas = ["save", "menus"]
+paths = ["engine/nvforever/src/handoff.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/main_menu.rs"]
+env = { NVFOREVER_HOME = "quit-menu-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "20:80", NVF_PLAY_TEST_PAUSE_MENU = "21:quit,21.5:up,22:up,22.5:pick", NVF_PLAY_TEST_HANDOFF_EXIT = "1" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
+expect = [
+  { text = "pause menu: quit to the main menu", count = 1, label = "Main Menu is picked in the quit question" },
+  { re = 'pause menu: quit$', count = 0, label = "Exit Game is not picked" },
+  { text = "load: handing over to a new run with --menu", count = 1, label = "a new run starts for the main menu" },
+  { re = 'handoff: window shown after [\d.]+ s$', label = "the new window is shown (not past the time limit)" },
+  { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new one is up" },
+  { text = "the new run took over and its main menu is in; ending it", label = "the main menu is open" },
+  { re = 'before it was ready', count = 0, label = "the new run does not stop at its start" },
+]
 
 [[scenario]]
 name = "load-handoff-refused"

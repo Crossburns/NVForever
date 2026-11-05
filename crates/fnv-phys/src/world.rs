@@ -256,8 +256,7 @@ impl PreparedRef {
     /// Add its dynamic bodies asleep: they stay where they were put, whatever is (or is
     /// not) under them, until something wakes them — a body moving against them, a push
     /// ([`PhysWorld::push_ref`], [`PhysWorld::push_dynamic`]) or a body they touch being
-    /// removed. Its keyframed bodies are added asleep too, until they are first moved.
-    /// For clutter placed in a cell (physics.md §4.3.1).
+    /// removed. For clutter placed in a cell (physics.md §4.3.1).
     pub fn asleep(mut self) -> PreparedRef {
         self.asleep = true;
         self
@@ -362,6 +361,10 @@ pub struct PhysWorld {
     pub(crate) k: f32,
     terrain: BTreeMap<(i32, i32), ColliderHandle>,
     pub(crate) refs: BTreeMap<u32, Vec<RigidBodyHandle>>,
+    /// The keyframed bodies of each reference (a subset of `refs`), kept because they are
+    /// fixed bodies like the static ones and so cannot be told apart by body type. A door's
+    /// moving parts are keyframed; its static frame is not.
+    pub(crate) keyframed: BTreeMap<u32, Vec<RigidBodyHandle>>,
     /// Actor hit volumes by reference FormID (`crate::actors`).
     pub(crate) actors: BTreeMap<u32, crate::actors::ActorBody>,
     /// Ragdolls by actor reference FormID, and the ragdoll body each of their rigid
@@ -424,6 +427,7 @@ impl PhysWorld {
             k,
             terrain: BTreeMap::new(),
             refs: BTreeMap::new(),
+            keyframed: BTreeMap::new(),
             actors: BTreeMap::new(),
             ragdolls: BTreeMap::new(),
             ragdoll_of: HashMap::new(),
@@ -470,11 +474,10 @@ impl PhysWorld {
 
     /// Add the collision objects of a placed reference: one body per object, placed at
     /// `pose ∘ node_transform ∘ body_transform`, with the reference's uniform scale baked
-    /// into the shapes. Static objects become fixed bodies, keyframed ones
-    /// kinematic, dynamic ones dynamic with the object's mass, friction and restitution
-    /// (physics.md §4). Replaces an earlier add of the same reference's bodies; its placed
-    /// water ([`PhysWorld::add_placed_water`]) is kept, so the two can be added in either
-    /// order.
+    /// into the shapes. Static and keyframed objects become fixed bodies, dynamic ones
+    /// dynamic with the object's mass, friction and restitution (physics.md §4). Replaces an
+    /// earlier add of the same reference's bodies; its placed water
+    /// ([`PhysWorld::add_placed_water`]) is kept, so the two can be added in either order.
     pub fn add_ref(&mut self, pose: &RefPose, objects: &[CollisionObject]) -> AddReport {
         self.insert_ref(PreparedRef::build(self.k, pose, objects))
     }
@@ -489,19 +492,27 @@ impl PhysWorld {
         let mut handles = Vec::new();
         for o in p.objects {
             let owner = Owner::Ref { form_id: p.form_id, object: o.index, layer: o.layer };
+            // Keyframed bodies are teleported into place (`pose_ref_object` sets the
+            // position), never moved smoothly, so a fixed body is the right model. A
+            // kinematic body made rapier derive a phantom velocity from a degenerate
+            // collision mesh's centre of mass and fling a character standing on it, and its
+            // "carried by a kinematic body" rule froze a character walking down the slope
+            // [observed: the Prospector Saloon's broken door 0x00108BD7, issue #1485].
             let builder = match o.motion {
-                Motion::Static => RigidBodyBuilder::fixed(),
-                Motion::Keyframed => RigidBodyBuilder::kinematic_position_based(),
+                Motion::Static | Motion::Keyframed => RigidBodyBuilder::fixed(),
                 Motion::Dynamic => RigidBodyBuilder::dynamic().sleeping(p.asleep),
             };
-            // A keyframed body that has not moved yet would keep the clutter touching
-            // it awake (a cleaner bottle on a container's lid): asleep too.
-            let hold = p.asleep && o.motion != Motion::Static;
+            // A dynamic body that has not moved yet would keep the clutter touching it
+            // awake (a cleaner bottle on a container's lid): asleep too.
+            let hold = p.asleep && o.motion == Motion::Dynamic;
             let builder = if hold { builder.sleeping(true) } else { builder };
             let body = self.insert_body(builder.pose(o.pose).user_data(owner.encode()));
             // Kept with the reference at once, so a caller that catches a panic part way
             // (`nvf_assets::guard`) can take every body out with `remove_ref`.
             self.refs.entry(p.form_id).or_default().push(body);
+            if o.motion == Motion::Keyframed {
+                self.keyframed.entry(p.form_id).or_default().push(body);
+            }
             report.colliders += self.attach(body, owner, &o.material, o.leaves, o.shell);
             if o.motion == Motion::Dynamic {
                 self.set_mass(body, o.material.mass);
@@ -588,6 +599,7 @@ impl PhysWorld {
     /// Remove a reference's bodies only.
     fn remove_bodies(&mut self, form_id: u32) -> bool {
         let Some(bodies) = self.refs.remove(&form_id) else { return false };
+        self.keyframed.remove(&form_id);
         for b in bodies {
             self.remove_body(b);
         }
@@ -611,14 +623,12 @@ impl PhysWorld {
     /// transform in the model root's frame were `node`: to `pose ∘ node ∘ body_transform`
     /// (`add_ref` uses the stored node transform). For collision that follows an animation
     /// (an opening door, `fnv_collide::anim`). The body is moved at once, so queries and
-    /// the character controller see it before the next step, and its next kinematic
-    /// position is set too, so a step does not move it back. Returns false when the
+    /// the character controller see it before the next step. Returns false when the
     /// reference has no keyframed body for that object.
     pub fn pose_ref_object(&mut self, pose: &RefPose, object: u16, node: &Iso, body_transform: &Iso) -> bool {
-        let Some(bodies) = self.refs.get(&pose.form_id) else { return false };
+        let Some(bodies) = self.keyframed.get(&pose.form_id) else { return false };
         let found = bodies.iter().copied().find(|&b| {
-            let body = &self.w.bodies[b];
-            body.is_kinematic() && matches!(Owner::decode(body.user_data), Some(Owner::Ref { object: o, .. }) if o == object)
+            matches!(Owner::decode(self.w.bodies[b].user_data), Some(Owner::Ref { object: o, .. }) if o == object)
         });
         let Some(b) = found else { return false };
         let (Ok(rot), Ok(local)) = (convert::rotation(&pose.rotation), convert::pose(&node.compose(body_transform), pose.scale * self.k)) else {
@@ -633,7 +643,6 @@ impl PhysWorld {
             return true;
         }
         body.set_position(p, true);
-        body.set_next_kinematic_position(p);
         self.mark_dirty(DirtyBy::Transform);
         true
     }
@@ -643,13 +652,10 @@ impl PhysWorld {
     /// swings, so its moving leaf cannot hit or push an actor (`fnv_collide::anim`).
     /// Returns how many colliders changed.
     pub fn set_ref_keyframed_solid(&mut self, form_id: u32, solid: bool) -> usize {
-        let Some(bodies) = self.refs.get(&form_id) else { return 0 };
+        let Some(bodies) = self.keyframed.get(&form_id) else { return 0 };
         let mut n = 0;
         for &b in bodies {
             let body = &self.w.bodies[b];
-            if !body.is_kinematic() {
-                continue;
-            }
             for &c in body.colliders() {
                 let col = &mut self.w.colliders[c];
                 if col.is_enabled() != solid {
@@ -959,8 +965,8 @@ impl PhysWorld {
     }
 
     /// Bounding box (game units: min and max corners) of every collider on a fixed body —
-    /// terrain and references' static collision, not characters or dynamic bodies; `None`
-    /// when there are none.
+    /// terrain and references' static and keyframed collision, not characters or dynamic
+    /// bodies; `None` when there are none.
     pub fn fixed_bounds(&self) -> Option<([f32; 3], [f32; 3])> {
         let mut out: Option<([f32; 3], [f32; 3])> = None;
         for (_, c) in self.w.colliders.iter() {
@@ -1019,6 +1025,7 @@ impl PhysWorld {
             k: self.k,
             terrain: self.terrain.clone(),
             refs: self.refs.clone(),
+            keyframed: self.keyframed.clone(),
             actors: self.actors.clone(),
             ragdolls: self.ragdolls.clone(),
             ragdoll_of: self.ragdoll_of.clone(),
