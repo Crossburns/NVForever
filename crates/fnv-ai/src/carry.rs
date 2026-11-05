@@ -200,6 +200,9 @@ pub enum AiEvent {
     NotCarriedOut { package: FormId, why: &'static str },
     /// The actor uses this furniture now (`None`: it leaves the furniture it used).
     Furniture { furniture: Option<FormId> },
+    /// Whether it may be given this furniture came out other than yes: once per actor and
+    /// piece when excluded, once per actor when unknown (`crate::furniture`).
+    FurnitureEligibility { furniture: FormId, decision: &'static str, reason: &'static str },
     /// A sandboxing actor chose what to do next; `walk` is the length of the way there
     /// (0: it is there already).
     Sandbox {
@@ -564,6 +567,8 @@ pub struct Ai {
     pub events: Vec<Logged>,
     /// Furniture in use: the reference and its user.
     taken: BTreeMap<FormId, FormId>,
+    /// Which furniture an actor may be given ([`Ai::set_furniture_facts`]).
+    pub(crate) furniture: crate::furniture::Eligibility,
     /// Hellos and random conversations ([`Ai::social`]).
     pub(crate) social: crate::social::Social,
     /// The actors out of the high process, with the seconds owed to each since its last
@@ -633,7 +638,25 @@ fn hdist(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 impl Ai {
     pub fn new(cfg: AiConfig) -> Ai {
-        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, applied_obstacles: None, locked_doors: Vec::new(), unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), script_moved: BTreeMap::new(), restored: BTreeMap::new() }
+        Ai { cfg, agents: BTreeMap::new(), events: Vec::new(), taken: BTreeMap::new(), furniture: Default::default(), social: Default::default(), low: BTreeMap::new(), process_stats: Default::default(), far: Default::default(), coming: Default::default(), loaded: None, speeds: BTreeMap::new(), paces: BTreeMap::new(), applied_switches: None, applied_locks: None, applied_obstacles: None, locked_doors: Vec::new(), unseen_greets: Default::default(), restrained: Default::default(), woken: Default::default(), columns: BTreeMap::new(), script_moved: BTreeMap::new(), restored: BTreeMap::new() }
+    }
+
+    /// Give the AI what the assets say about furniture and skeletons ([`crate::furniture`]),
+    /// before the first choice. Without it every actor stays eligible for everything.
+    pub fn set_furniture_facts(&mut self, facts: std::sync::Arc<dyn fnv_sim::furniture_facts::FurnitureFacts>) {
+        self.furniture.set_facts(facts);
+    }
+
+    /// The furniture kept for, or used by, `actor`.
+    pub fn furniture_of(&self, actor: FormId) -> Option<FormId> {
+        self.taken.iter().find(|(_, user)| **user == actor).map(|(f, _)| *f)
+    }
+
+    /// Log what eligibility decided since the last call.
+    fn report_eligibility(&mut self, game: &Game) {
+        for n in std::mem::take(&mut self.furniture.notes) {
+            self.log(game, n.actor, AiEvent::FurnitureEligibility { furniture: n.furniture, decision: n.decision, reason: n.reason });
+        }
     }
 
     /// Bring the graph's navmeshes in line with the scripts' switches (EnableNavMesh,
@@ -1048,6 +1071,7 @@ impl Ai {
     pub fn update_moved(&mut self, game: &mut Game, nav: &NavGraph, dt: f32, open: &mut dyn Mover) {
         self.step(game, nav, dt, open, false);
         self.update_low(game, nav, dt);
+        self.report_eligibility(game);
     }
 
     /// Game time that passed while a menu held the game (an hour of a wait or a sleep,
@@ -1075,6 +1099,7 @@ impl Ai {
             walked.extend(on_way);
             still = if nobody && walked.len() == before { still + 1 } else { 0 };
         }
+        self.report_eligibility(game);
         walked.len()
     }
 
@@ -1126,7 +1151,11 @@ impl Ai {
         // continue to \"think\" (pick packages ...)"; "will still attempt to run the
         // package and perform various animations"]: see [`RESTRAINED_REACH`].
         let held = game.extra.get(&actor).is_some_and(|e| e.dead || e.out_cold());
-        if !game.present(actor) || held || self.agents[&actor].rooted {
+        if !game.present(actor) || held {
+            return;
+        }
+        if self.agents[&actor].rooted {
+            self.rooted_turn(game, actor, dt);
             return;
         }
         if game.ai_off(actor) {
@@ -1684,6 +1713,32 @@ impl Ai {
 
     /// Turn a standing actor towards a place for `dt` seconds, and tell the game its
     /// heading.
+    /// A rooted actor (an Immobile turret, [`Ai::root`]) stays where it is but turns in
+    /// place, at the combat turn rate, to its combat target (in Combat: the target it
+    /// detects, else the one detected last) or to the place of its alarm (Alert, Lost), as
+    /// a fighter standing its ground does (`crate::alert`). Before, it never turned, so a
+    /// HELIOS One ceiling turret kept its placed heading and the player stayed out of its
+    /// view (#1537). SetActorsAI 0 holds it as any other actor.
+    fn rooted_turn(&mut self, game: &mut Game, actor: FormId, dt: f32) {
+        if game.ai_off(actor) || game.extra.get(&actor).is_some_and(|e| e.restrained) {
+            return;
+        }
+        let state = game.awareness.state(actor);
+        if !state.in_combat() {
+            return;
+        }
+        let Some(aw) = game.awareness.get(actor) else { return };
+        let at = if state == fnv_game::awareness::State::Combat {
+            let latest = aw.targets.iter().filter(|(_, t)| t.detected.is_some()).max_by(|x, y| x.1.detected.unwrap_or(0.0).total_cmp(&y.1.detected.unwrap_or(0.0)));
+            aw.combat_target().or(latest.map(|(id, t)| (*id, t))).map(|(_, t)| t.at)
+        } else {
+            aw.search_alarm().map(|a| a.at)
+        };
+        let Some(at) = at else { return };
+        let space = self.agents[&actor].walker.space;
+        self.face(game, actor, Place { space, pos: at }, dt * crate::alert::COMBAT_TURN);
+    }
+
     pub(crate) fn face(&mut self, game: &mut Game, actor: FormId, to: Place, dt: f32) {
         let a = self.agents.get_mut(&actor).expect("listed");
         let d = [to.pos[0] - a.walker.feet[0], to.pos[1] - a.walker.feet[1]];
@@ -1761,7 +1816,7 @@ impl Ai {
                 self.log(game, actor, AiEvent::Resumed { package, patrol_point: None, sandbox: true });
             }
             self.agents.get_mut(&actor).expect("listed").sandbox = Some(sandbox);
-        } else if let Some(f) = goal::package_furniture(game, &self.taken, actor, def, at) {
+        } else if let Some(f) = goal::package_furniture(game, &self.taken, actor, def, at, &mut self.furniture) {
             self.set_using(game, actor, Some(f));
         }
     }
@@ -1883,7 +1938,7 @@ impl Ai {
             return;
         }
         let at = Place { space: a.walker.space, pos: a.walker.feet };
-        let choice = sb.next(game, nav, &self.taken, actor, at);
+        let choice = sb.next(game, nav, &self.taken, actor, at, &mut self.furniture);
         // Up from what it was on, unless it stays on the same thing; the furniture it
         // is going to is kept for it from now.
         if a.using != choice.doing.furniture() {
@@ -2350,7 +2405,7 @@ impl Ai {
                 // hypothesis: the original uses the furniture at the point, as the
                 // dance idles conditioned on it (furniture.md §3) say].
                 let furniture = game.world.placed.get(point).is_some_and(|p| game.data.furniture.contains_key(&p.base));
-                if furniture && self.taken.get(&point).is_none_or(|u| *u == actor) {
+                if furniture && self.taken.get(&point).is_none_or(|u| *u == actor) && self.furniture.fits_assigned(game, actor, point) {
                     self.set_using(game, actor, Some(point));
                 }
                 return;

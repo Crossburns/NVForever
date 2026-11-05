@@ -114,8 +114,8 @@ impl HudMessage {
 /// destination (XTEL) or an Activation Prompt (XATO): a nameless door with neither gives
 /// no prompt [hypothesis: #1598, Mick & Ralph's OffDoorHidden01; a nameless door the
 /// player may need to go through, a travel door or one given a prompt, stays offered so
-/// no quest is blocked; cells-refs.md §2]. Placed leveled items and explosives with no
-/// weapon to give are not offered.
+/// no quest is blocked; cells-refs.md §2]. A primitive is never offered (level-design.md
+/// §4.1). Placed leveled items and explosives with no weapon to give are not offered.
 pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> Option<(String, Action)> {
     if !sim.present(form_id) {
         return None;
@@ -125,6 +125,11 @@ pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> 
     let name = sim.name(base.id)?.to_string();
     let state = sim.world.peek(id);
     let placed = sim.refs.get(id);
+    // A primitive (XPRM) is a trigger volume or marker, not an object to use, whatever
+    // name its activator has (docs/spec-notes/level-design.md §4.1).
+    if placed.is_some_and(|p| p.primitive.is_some()) {
+        return None;
+    }
     // A reference with lock data starts locked, a leveled lock at the reference's level
     // [hypothesis, as fnv_sim::World does: `World::lock_of`].
     let lock = sim.world.lock_of(id).filter(|l| l.locked).map(|l| (l.level, l.key));

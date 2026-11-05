@@ -1078,6 +1078,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "nipton-mongrels-no-cross"
+source = "issue #1522: a sandboxing creature does not choose furniture it has no clips for, and nobody chooses a cross by themselves (fnv_ai::furniture, fnv_actor::furniture_facts; docs/spec-notes/furniture.md §9)"
+note = "Both Nipton mongrels sandbox within reach of the free cross 00139FD6, whose victim starts disabled. The eligibility lines show the cross was looked at and refused, whichever way the run's random choices went; they and the absence of a use in this window are what this proves, not that a dog would have chosen it"
+areas = ["ai", "furniture"]
+paths = ["crates/fnv-ai/src/furniture.rs", "crates/fnv-ai/src/sandbox.rs", "crates/fnv-actor/src/furniture_facts.rs", "engine/nvforever/src/furniture.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1" }
+args = ["--play", "--world", "WastelandNV", "--pos=-33449,-92450,6860", "--heading", "0", "--pitch", "5", "--hour", "12", "--npc-packages", "0016B483,0016B484", "--no-voice", "--no-messages"]
+run_seconds = 62
+expect = [
+  { re = 'ai furniture eligibility: actor=0016B483 furniture=00139FD6 decision=excluded reason=casual-marker-10', label = "the first mongrel does not choose the cross" },
+  { re = 'ai furniture eligibility: actor=0016B484 furniture=00139FD6 decision=excluded reason=casual-marker-10', label = "nor does the second" },
+  { re = 'furniture: 0016B48[34] (goes to|is back on|is on) 00139FD6', count = 0, label = "no mongrel gets on it" },
+]
+
+[[scenario]]
 name = "patrol-point-furniture"
 source = "owner's playtest list 7 item 30: a patrol point that is furniture is used for its idle time (fnv_ai arrived)"
 note = "Gomorrah: a courtesan (0011A2FB, template vGOMVarProstitutes) patrols to her linked DanceMarker03 (0011A2F8, 800 s of idle time)"
@@ -5453,6 +5468,22 @@ expect = [
   { text = "npc combat: 0xFF000000 shots are drawn from its weapon's muzzle", label = "from the laser, not its eyes" },
   { re = 'npc combat summary: .*; (\d+) shots \((\d+) from a muzzle', range = [5, 100000], label = "it keeps firing (41 on 2026-11-04; 0 before)" },
   { re = 'attack anims: FF000000 plays \S+1hpattackright\.kf', label = "with its firing clip" },
+]
+
+[[scenario]]
+name = "helios-ceiling-turrets"
+source = "#1537 (owner's playtest 2026-11-04): HELIOS One's ceiling turrets turn to the player and fire. Three causes: no 2hr stance (no Weapon node, fixed with #1554's no_weapon_node), eyes 112 units over the origin (above the turret's own top and past the ceiling: detection.rs eyes_of now keeps eyes within the body), and a rooted (Immobile) actor never turned (fnv-ai carry.rs rooted_turn)"
+note = "HELIOSOneTower: VHeliosTurret2REF (0x00099DB8, LvlTurretCeiling2048Robot → CrTurretCeiling01, minisentryturret skeleton, TurretGunCeiling01) at (-1792, 1024, 7760) with two more; the player put on the floor below, about 400 units off"
+areas = ["combat", "creatures"]
+paths = ["crates/fnv-ai/src/carry.rs", "engine/nvforever/src/detection.rs", "engine/nvforever/src/body_weapons.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05" }
+args = ["--cell", "HELIOSOneTower", "--play", "--pos=-1651,678,7600", "--heading", "337", "--no-voice"]
+run_seconds = 25
+expect = [
+  { re = 'body weapons: \S+skeleton\.nif 00099DB8 fights with TurretGunCeiling01', label = "the turret's gun is its arm (no Weapon node: #1554)" },
+  { re = 'detection: LvlTurretCeiling2048Robot 00099DB8 → the player: \S+ → detected \(.*in sight', label = "it sees the player below once turned (out of sight before: eyes past the ceiling, then out of its view)" },
+  { re = 'npc combat: VHeliosTurret2REF 0x00099DB8 opens fire on the player', label = "it fires" },
+  { re = 'npc combat summary: .*; (\d+) shots \((\d+) from a muzzle', range = [10, 1000000], label = "the turrets keep firing (834 shots on 2026-11-05, with a protectron; 0 from turrets before)" },
 ]
 
 [[scenario]]
@@ -11328,6 +11359,21 @@ expect = [
   { re = 'at most (?P<n>\d+) one-shots at once', range = [1, 64], label = "the footsteps are held to the voice limit" },
   { re = 'ragdolls: (?P<n>\d+) started', range = [5, 1e9], label = "nymphs die at the player's feet (their script kills them within 50 units)" },
   { re = '(?P<n>\d+) in the world at exit \((?P=n) at rest\)', label = "every corpse of the heap is at rest by the end (ragdoll.rs MAX_AWAKE)" },
+]
+
+[[scenario]]
+name = "trigger-primitive-hidden"
+source = "issue #1599 (docs/spec-notes/level-design.md §4.1): a reference with a primitive (XPRM) is a trigger volume; it is not drawn and not offered under the crosshair, even where the activator it was copied from has a model and a name"
+note = "Sloan: QJSnufflesCrippleTrigger 0x00140C37, a box primitive whose activator names a vault control panel and \"Poor Snuffles\", 195 units above Snuffles. The player stands 90 units south of it, within reach, and looks up at it; its OnLoad (Snuffles' crippled leg) still runs"
+areas = ["renderer", "physics"]
+paths = ["crates/fnv-world/src/placed.rs", "crates/fnv-phys/src/placed.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/script_draw.rs", "engine/nvf-play/src/activate.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_GOTO = "3:-29745:7055:6500", NVF_PLAY_TEST_LOOK = "4:0:25,6:0:35,8:0:45,10:0:55", NVF_PLAY_TEST_SHOTS = "7:trigger_primitive.png" }
+args = ["--world", "WastelandNV", "--pos=-29745,7055,6500", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 12
+expect = [
+  { text = 'script: OnLoad of FalloutNV.esm|SCPT 0x00140C33 ran on Some(0x00140C37)', label = "the trigger is still there for its script" },
+  { text = 'limping: QJSnufflesRef 0x000E5E50 limps on a crippled leg', label = "the OnLoad crippled Snuffles" },
+  { re = 'target 0x00140C37', count = 0, label = "the trigger is never under the crosshair" },
 ]
 
 [[scenario]]

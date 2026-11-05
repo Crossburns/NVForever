@@ -23,6 +23,7 @@
 //! - [`first_person`]: what the player's first-person rig draws (arms and hands)
 //! - [`furniture`]: furniture an actor can use: the entry points on its model, the clip
 //!   the IDLE tree names for getting on, staying on and getting off, and the phases of a use
+//! - [`furniture_facts`]: what the assets say about who can use which furniture
 //! - [`furniture_retry`]: what an actor does after furniture refused it: wait and ask
 //!   again, or not ask again until something has changed
 //! - [`head_look`]: head tracking: whom an actor looks at, the limits of the turn and its
@@ -37,6 +38,7 @@ pub mod creator;
 pub mod facegen;
 pub mod first_person;
 pub mod furniture;
+pub mod furniture_facts;
 pub mod furniture_retry;
 pub mod head_look;
 pub mod idle;

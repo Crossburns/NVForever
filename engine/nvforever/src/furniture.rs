@@ -49,6 +49,7 @@ use crate::nav::NavState;
 use crate::world::WorldData;
 use bevy::prelude::*;
 use fnv_actor::furniture::{self as furn, state, BodyAt, ClipEnds, EntryPoint, Frame, Furniture, Marker, Phase, Use, UseEvent, UseFrames, UseIdles, User};
+use fnv_actor::furniture_facts::{missing_body_nodes, AssetFacts};
 use fnv_actor::furniture_retry::{worth_logging, Refusal};
 use fnv_actor::idle::Idles;
 use fnv_actor::locomotion::yaw_of;
@@ -131,8 +132,11 @@ struct Plan {
     base: u32,
     entry: EntryPoint,
     get_on: Arc<Clip>,
-    /// The loop on the furniture, when the IDLE tree names one.
+    /// Its VFS path.
+    get_on_path: String,
+    /// The loop on the furniture, when the IDLE tree names one, and its VFS path.
     stay: Option<Arc<Clip>>,
+    stay_path: Option<String>,
     frames: UseFrames,
     /// How far the getting-on clip moves the root (`Bip01`), in the actor's space.
     travel: Vec3,
@@ -173,6 +177,13 @@ pub struct Furnishings {
     users: HashMap<u32, Vec<(usize, u32)>>,
     pub stats: Stats,
     startup: Vec<String>,
+}
+
+/// Why a clip does not fit the actor's skeleton (`missing_body_nodes`), if it does not.
+fn misfit(rig: &ActorRig, path: &str, clip: &Clip) -> Option<String> {
+    let tracks = clip.tracks.iter().map(|(n, _)| n.as_str());
+    let missing = missing_body_nodes(&rig.skeleton, path, tracks, |n| rig.skel.by_name.contains_key(n));
+    missing.first().map(|first| format!("clip {path} does not fit skeleton {}: {} body tracks have no node, first {first}", rig.skeleton, missing.len()))
 }
 
 fn clip_body(clip: &Clip, t: f32) -> BodyAt {
@@ -270,6 +281,17 @@ impl Furnishings {
         m
     }
 
+    /// What the assets say about who can use which furniture, for the AI's choices
+    /// (`fnv_ai::furniture`). Reads every furniture model once.
+    pub fn asset_facts(&mut self, data: &GameData) -> AssetFacts {
+        let t0 = std::time::Instant::now();
+        let paths = data.vfs.paths(|p| p.ends_with(".nif"));
+        let facts = AssetFacts::build(paths.iter().map(String::as_str), &self.tree, self.bases.values(), |p| data.read(p), &data.schema);
+        let (bases, read, folders) = facts.summary();
+        self.startup.push(format!("furniture: eligibility facts: {bases} bases, markers read of {read}, tree clips in {folders} skeleton folders, in {:.2}s", t0.elapsed().as_secs_f64()));
+        facts
+    }
+
     fn user(plan_entry: &EntryPoint, furniture: u32, base: u32, who: Who, state: u8) -> User {
         User {
             state,
@@ -320,19 +342,20 @@ impl Furnishings {
         let pick = |tree: &UseIdles, s: u8| tree.pick_in(&Self::user(&entry, furniture, base, who, s), game);
         let on = pick(&self.tree, state::GETTING_ON).ok_or_else(|| refused(Refusal::NoClip, format!("no clip for getting onto marker {}", entry.marker_id)))?;
         let get_on = ctx.clip(&on.clip).ok_or_else(|| missing(&format!("{} does not load", on.clip)))?;
-        let stay = pick(&self.tree, state::LOOP).and_then(|p| ctx.clip(&p.clip));
+        let (stay, stay_path) = pick(&self.tree, state::LOOP).and_then(|p| Some((ctx.clip(&p.clip)?, p.clip))).unzip();
         let ends = clip_ends(&get_on);
         let standing_yaw = ends.start.yaw;
         let loop_yaw = stay.as_ref().map_or(standing_yaw, |c| clip_body(c, c.start).yaw);
         let frames = UseFrames::new(&entry, &ends, loop_yaw);
         let travel = Vec3::from_array(ends.stop.bip01) - Vec3::from_array(ends.start.bip01);
-        Ok(Plan { furniture, base, entry, get_on, stay, frames, travel: Vec3::new(travel.x, travel.y, 0.0), standing_yaw })
+        Ok(Plan { furniture, base, entry, get_on, get_on_path: on.clip, stay, stay_path, frames, travel: Vec3::new(travel.x, travel.y, 0.0), standing_yaw })
     }
 
-    /// The clip that gets `who` off again.
-    fn get_off(&self, ctx: &mut ActorCtx, plan: &Plan, who: Who, game: furn::World) -> Option<Arc<Clip>> {
+    /// The clip that gets `who` off again, and its VFS path.
+    fn get_off(&self, ctx: &mut ActorCtx, plan: &Plan, who: Who, game: furn::World) -> Option<(String, Arc<Clip>)> {
         let pick = self.tree.pick_in(&Self::user(&plan.entry, plan.furniture, plan.base, who, state::GETTING_OFF), game)?;
-        ctx.clip(&pick.clip)
+        let clip = ctx.clip(&pick.clip)?;
+        Some((pick.clip, clip))
     }
 
     fn take(&mut self, plan: &Plan, user: u32) {
@@ -565,6 +588,13 @@ pub fn drive_actors(
         let female = actor_world.as_deref().and_then(|w| w.actors.npcs.get(&FormId(rig.base))).is_some_and(|n| n.female);
         let who = Who { reference: rig.reference, base: rig.base, female };
         let plan = f.plan(&world, &mut ctx, sit.furniture, at.to_array(), who, &|func, p| game_value(&script, func, p)).and_then(|p| {
+            // A clip that does not fit is refused here rather than posed wrongly, before
+            // the furniture is taken: anything that gets past the AI's choice
+            // (`fnv_ai::furniture`), and `--npc-sit`.
+            let stay = p.stay.as_deref().zip(p.stay_path.as_deref());
+            if let Some(why) = misfit(rig, &p.get_on_path, &p.get_on).or_else(|| stay.and_then(|(c, path)| misfit(rig, path, c))) {
+                return Err(refused(Refusal::IncompatibleClip, why));
+            }
             let d = Vec3::from_array(p.entry.pos).distance(at);
             if d > APPROACH_MAX && !sit.at_once { Err(refused(Refusal::TooFar, format!("{d:.0} units from its entry point"))) } else { Ok((p, d)) }
         });
@@ -679,7 +709,16 @@ pub fn drive_actors(
                         }
                     }
                     if usage.leave_wanted && usage.leave() {
-                        let clip = f.get_off(&mut ctx, &on.plan, on.who, &|func, p| game_value(&script, func, p));
+                        // An exit clip that does not fit is not played: the actor is off on
+                        // the next update, at the entry point, by the way of a seat with no
+                        // exit clip.
+                        let clip = f.get_off(&mut ctx, &on.plan, on.who, &|func, p| game_value(&script, func, p)).and_then(|(path, c)| match misfit(rig, &path, &c) {
+                            Some(why) => {
+                                warn!("furniture: {:08X} gets off {:08X} without a clip: {why}", on.who.reference, on.plan.furniture);
+                                None
+                            }
+                            None => Some(c),
+                        });
                         info!("furniture: {:08X} gets off {:08X} by clip {}", on.who.reference, on.plan.furniture, clip.as_ref().map_or("none", |c| c.name.as_str()));
                         let bound = clip.map(|c| (clip_ends(&c), Arc::new(bind_clip(&rig.skel, c))));
                         usage.begin_leaving(bound.as_ref().map_or(0.0, |(_, b)| b.clip.length()));
@@ -878,7 +917,7 @@ pub fn drive_player(
         }
     }
     if u.usage.phase == Phase::On && u.usage.leave_wanted && u.usage.leave() {
-        let clip = f.get_off(&mut ctx, &u.plan, who, &|func, p| game_value(&script, func, p));
+        let clip = f.get_off(&mut ctx, &u.plan, who, &|func, p| game_value(&script, func, p)).map(|(_, c)| c);
         u.usage.begin_leaving(clip.as_ref().map_or(0.0, |c| c.length()));
         u.get_off = clip.map(|c| (c.clone(), clip_ends(&c)));
         st.serial += 1;

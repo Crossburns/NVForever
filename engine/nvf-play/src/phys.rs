@@ -303,6 +303,22 @@ pub struct NpcBody {
     pub lift: step_lift::StepLift,
 }
 
+/// Why [`PhysState::npc_spot`] found no place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NpcSpotRefused {
+    /// The collision around it is not loaded (or the actor has no character).
+    NotLoaded,
+    /// Nothing to stand on at that height.
+    NoSupport,
+    /// There is ground, but the body does not fit over it.
+    NoRoom,
+}
+
+/// How far around a place the collision must be loaded before an actor is put there,
+/// game units [design: its body and what stands next to it; what reaches further over
+/// the border is not known until that square is in].
+const NPC_SPOT_MARGIN: f32 = 256.0;
+
 /// The steepest slope an actor's character walks: navmeshes cross slopes a little above
 /// the player's limit [observed: 46 to 49 degrees on paths of the walk tests,
 /// docs/design/navmesh.md §5; the value is an engine choice].
@@ -688,6 +704,21 @@ impl PhysState {
         match self.space {
             Space::Interior(_) => self.ready_at(feet),
             Space::Exterior => cells::wanted(cell_of(feet[0], feet[1])).into_iter().all(|(x, y)| self.cells.contains_key(&PhysCell::Exterior(x, y))),
+        }
+    }
+
+    /// Whether every cell within `margin` units of `feet` is loaded (indoors the one
+    /// cell). For an actor anywhere in the loaded area, where [`PhysState::ready_around`]
+    /// asks too much: the cells kept around the player reach one square past it, so the
+    /// squares around a place one square off the player need not be in.
+    pub fn ready_near(&self, feet: [f32; 3], margin: f32) -> bool {
+        match self.space {
+            Space::Interior(_) => self.ready_at(feet),
+            Space::Exterior => {
+                let (x0, y0) = cell_of(feet[0] - margin, feet[1] - margin);
+                let (x1, y1) = cell_of(feet[0] + margin, feet[1] + margin);
+                (x0..=x1).all(|x| (y0..=y1).all(|y| self.cells.contains_key(&PhysCell::Exterior(x, y))))
+            }
         }
     }
 
@@ -1201,7 +1232,9 @@ impl PhysState {
             self.world.set_ref_keyframed_solid(id, false);
         }
         self.reposes += 1;
-        debug!("collision of 0x{id:08X} built again where a script moved it ({dist:.1} from its body){}", if built { "" } else { ": none now" });
+        // At info: the smoke scenario `script-move-dynamic-clutter` reads this line, and
+        // rebuilds are few now (a held-back move waits for the reference to rest).
+        info!("collision of 0x{id:08X} built again where a script moved it ({dist:.1} from its body){}", if built { "" } else { ": none now" });
     }
 
     /// Test aid: every destruction model, by FormID (made-up cells have no index for
@@ -1467,6 +1500,36 @@ impl PhysState {
         true
     }
 
+    /// Feet where actor `id`'s character could be put down near `at`, a place on the
+    /// navmesh ([`PhysWorld::character_spot`]): collision loaded around it, ground on that
+    /// level, and room for the body, which the player and other characters take up.
+    /// Changes nothing: [`PhysState::place_npc`] puts it there.
+    pub fn npc_spot(&mut self, id: u32, at: [f32; 3]) -> Result<[f32; 3], NpcSpotRefused> {
+        if !self.ready_near(at, NPC_SPOT_MARGIN) {
+            return Err(NpcSpotRefused::NotLoaded);
+        }
+        let Some(b) = self.npcs.get(&id) else { return Err(NpcSpotRefused::NotLoaded) };
+        self.world.character_spot(&b.ch, at).map_err(|e| match e {
+            fnv_phys::SpotRefused::NoSupport => NpcSpotRefused::NoSupport,
+            fnv_phys::SpotRefused::NoRoom => NpcSpotRefused::NoRoom,
+        })
+    }
+
+    /// Move actor `id`'s character to exactly `feet` (no ground search: what
+    /// [`PhysState::npc_spot`] found is where it goes), standing still and not drawn
+    /// sliding there. False when it has no character.
+    pub fn place_npc(&mut self, id: u32, feet: [f32; 3]) -> bool {
+        let Some(mut b) = self.npcs.remove(&id) else { return false };
+        self.world.place_character(&mut b.ch, feet);
+        b.prev_feet = feet;
+        b.velocity = [0.0, 0.0];
+        b.jump = false;
+        b.lift = Default::default();
+        b.sink = drawn_sink(&b.ch, self.drawn_ground(&b.ch));
+        self.npcs.insert(id, b);
+        true
+    }
+
     pub fn remove_npc(&mut self, id: u32) {
         if let Some(b) = self.npcs.remove(&id) {
             self.world.remove_character(b.ch);
@@ -1671,8 +1734,19 @@ fn travel(
     }
     *location = to;
     let ctx = LoadCtx { d: &d, sim: &sim, data: data.as_deref() };
-    let cell = phys.cell_at(t.feet);
-    phys.load(&ctx, cell);
+    // Outdoors the squares around the arrival too, before the player is placed: a
+    // reference placed in a neighbouring square can be the floor at the door (#1584:
+    // Vault 3's way out (0x000EC6EB to WastelandNVmini) lands on NVVault3Entrance, placed
+    // in the square to the west, so the player was put on the terrain inside it), as the start waits for them
+    // (`ready_around`, #1103).
+    let centre = phys.cell_at(t.feet);
+    let around: Vec<PhysCell> = match centre {
+        PhysCell::Exterior(cx, cy) => cells::wanted((cx, cy)).into_iter().map(|(x, y)| PhysCell::Exterior(x, y)).collect(),
+        c => vec![c],
+    };
+    for cell in around {
+        phys.load(&ctx, cell);
+    }
     let hit = phys.arrive_player(t.feet).support;
     let feet = phys.player.as_ref().map_or(t.feet, |c| c.feet);
     player.feet = feet;
