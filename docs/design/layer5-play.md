@@ -65,7 +65,11 @@ open and close the runtime's menu), plus `--new-game` in `engine/nvforever/src/m
      including ScriptEffectStart/Update/Finish of effect scripts (scripts.md §7.6).
    - **The player's cell** (`RefState::cell`, kept by `player.rs`): when it changes,
      `Game::player_entered` loads it (the 5×5 grid outdoors [hypothesis, scripts.md
-     §7.2]) and newly loaded cells' scripted references get OnLoad.
+     §7.2]) and the scripted references now in newly loaded cells get OnLoad, chosen as
+     `Game::active_refs` chooses those whose GameMode blocks run: a reference moved or
+     created there runs it with that cell, and one moved away does not run it with the cell
+     it was placed in [design: `Game::scripted_refs_in`; hypothesis: that the original
+     goes by the current cell, no moved reference was seen there].
    - **OnLoad after Enable** is fnv-game's own since #63 (`Game::note_enabled` queues it
      for the start of the next tick) [observed: layer5-captures.md §8.3 d, "by the next
      frame, not inside Enable"]; nvf-play no longer tracks it.
