@@ -819,6 +819,12 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     }
+    // The languages of NVForever's own words (#1443): beside the program, in the home.
+    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf));
+    let home = fnv_install::EngineHome::default_root();
+    for problem in fnv_util::words::load(&fnv_util::words::dirs(exe_dir.as_deref(), home.as_deref())) {
+        eprintln!("warning: language file skipped: {problem}");
+    }
     // The game's folder: `--data`, NVForever.ini or asked for; its files checked (setup.rs).
     let install = match setup::game_install(args.data.as_deref()) {
         Ok(g) => g,
