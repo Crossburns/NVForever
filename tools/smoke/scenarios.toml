@@ -34,7 +34,7 @@ untimed = [
   "NVF_PLAY_TEST_SCRIPT_MENUS", "NVF_PLAY_TEST_GIVE", "NVF_PLAY_TEST_EQUIP", "NVF_PLAY_TEST_NEAR",
   "NVF_PLAY_TEST_MENU", "NVF_PLAY_TEST_BARTER", "NVF_PLAY_TEST_BARTER_DELAY", "NVF_PLAY_TEST_NO_SPREAD",
   "NVF_PLAY_TEST_GOD", "NVF_PLAY_TEST_TALK_HEAD_ONLY", "NVF_PLAY_TEST_UNSEEN",
-  "NVF_PLAY_AIDS_FROM_SCRIPTS",
+  "NVF_PLAY_AIDS_FROM_SCRIPTS", "NVF_PLAY_TEST_HELD_GRENADE",
   "NVF_PLAY_TEST_SANDBOX_INTERRUPT",
 ]
 
@@ -1295,6 +1295,38 @@ expect = [
   "alert summary: 1 actors became Alert",
 ]
 forbid = [{ re = '1EFiendViolet.*Lost → Combat', label = "Combat ↔ Lost flicker" }]
+
+[[scenario]]
+name = "combat-held-grenade-lifecycle"
+source = "docs/design/combat-ai.md §20: held grenades use their throw deadline, low lob and finite carried inventory"
+note = "stationary live combat fixture (--no-npc-packages), not a navigation or vanilla timing test; ordinary script calls replace Violet's inventory with two dynamite grenades; the player moves 900 units from stationary Violet; the probe requires actual held/drawn/ready and legal range, observes both projectile requests and accepted flight, then 30 seconds after depletion"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_grenades.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/held_grenade_probe.rs"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HELD_GRENADE = "000F570B:000BA0F3:held", NVF_PLAY_TEST_SCRIPT = "12:moveto:player:FiendVioletRef:900:0:0,16:call:FiendVioletRef:RemoveAllItems,16:call:FiendVioletRef:AddItem:WeapNVDynamite:2,16:call:FiendVioletRef:EquipItem:WeapNVDynamite,16:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--no-npc-packages"]
+run_seconds = 125
+expect = [
+  { re = 'held grenade probe: armed mode=held', label = "actual drawn grenade is ready in its legal throw band" },
+  { re = 'held grenade probe: accepted request=', count = 2, label = "two actual accepted grenade projectiles" },
+  { re = 'held grenade probe: depleted .*accepted=2 count=0', label = "two throws consume two items" },
+  { re = 'held grenade probe: PASS mode=held requests=2 accepted=2 gun_projectiles=0 count=0', label = "receiver confirms full lifecycle and 30 seconds of no extra emission" },
+]
+forbid = [{ re = 'held grenade probe: FAIL', label = "setup, timing, inventory, combat and projectile validation" }]
+
+[[scenario]]
+name = "combat-gun-with-spare-grenades"
+source = "docs/design/combat-ai.md §20: a gunman keeps grenades carried as spares"
+note = "ordinary moving live control with NPC packages enabled only for Violet; the player moves 1,200 units from Violet at 12 seconds, then two spare dynamite grenades and the combat request follow at 12.5 seconds; accepted gun projectiles and unchanged grenade count throughout a 35 second observation window; no vanilla cadence claim"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_grenades.rs", "engine/nvforever/src/npc_combat.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/combat/held_grenade_probe.rs"]
+env = { RUST_LOG = "info", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HELD_GRENADE = "000F570B:000BA0F3:carried", NVF_PLAY_TEST_SCRIPT = "12:moveto:player:FiendVioletRef:1200:0:0,12.5:call:FiendVioletRef:AddItem:WeapNVDynamite:2,12.5:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-43900,64896,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FiendVioletRef"]
+run_seconds = 125
+expect = [
+  { re = 'held grenade probe: armed mode=carried', label = "actual drawn gun is ready with two spare grenades" },
+  { re = 'held grenade probe: PASS mode=carried .*count=2', label = "accepted gunfire leaves both grenades carried" },
+]
+forbid = [{ re = 'held grenade probe: FAIL', label = "setup, combat, inventory and accepted gunfire validation" }]
 
 [[scenario]]
 name = "combat-npc-grenades"

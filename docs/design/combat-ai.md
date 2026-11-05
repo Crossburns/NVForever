@@ -1740,7 +1740,8 @@ checked against the original (observer-checks.md item 20):
   90 s at 426-1,595 units, nor at 76-667 in 24 s; the one that spawned holding its
   dynamite threw it once at about 1,225 units within a second, then drew a gun and threw
   no more]. In ours a held weapon always comes before a thrown one (actors.md §9.3) and
-  re-arming passes grenades over, so no NPC throws until drawing a grenade is built.
+  re-arming passes grenades over. An actor with only drawable thrown weapons can hold
+  a grenade (`fnv_actor::weapon::choose_weapon`); a gunman does not swap to one for a throw.
 - **Frag grenades** (2026-11-01, observer check 20, o18_air and o24_air, god-mode
   player) [observed]: a trooper holding a frag grenade (6 carried, nothing else) threw
   from 800 units within a second of combat and again at about 1.8, 5.4, 7.2 and 9.2 s,
@@ -1760,14 +1761,24 @@ checked against the original (observer-checks.md item 20):
   explosive shot is (§17.6).
 - **How**: from the eyes on the low arc that lands on the target's feet (VATS mode's
   `lob_dir`), 2° of spread, the grenade's own attack clip asked for, the FireExplosive line
-  tried on the attack timer; the gun is not put away for the throw. The live grenade is
+  tried on the attack timer. The live grenade is
   run from by those it threatens (§17.7).
 - Log: `npc combat: X throws W at T (D units, blast R); N left`, `X keeps its grenade: K
   would be caught …`; summary `N grenades thrown, M kept for a comrade or a bystander`.
   Smoke `combat-npc-grenades`: Violet, given three frag grenades, fights with her gun and
   throws none.
-- Not built: drawing a grenade (and back to the gun after the throw, as the original's
-  ganger did), throwing from the clip's release key, grenades for creatures, mines.
+- **Execution ownership** (#1498) [design]: holding a grenade uses a dedicated
+  controller, with no firearm magazine, reload or queued shot. Before the deadline,
+  while a throw is denied, and after depletion, it cannot fall through to gun firing.
+  Switching from a firearm discards any pending firearm wind-up; a firearm retained
+  across target changes still keeps its own cycle. The chosen grenade's item must be
+  removed successfully before its shot, animation, success counter or bark is emitted.
+  Lowest-FormID inventory selection remains the policy above: the selected grenade
+  supplies the projectile, ballistic parameters, animation and consumed item, even
+  when another grenade type is held. This fixes execution and inventory ownership;
+  it does not retune timing toward the original or redefine mines and other throws.
+- Not built: choosing to swap from a gun to a grenade for one throw, throwing from the
+  clip's release key, grenades for creatures, mines.
 
 ## 21. NPCs use their stimpaks (owner request 2026-10-25)
 
