@@ -776,6 +776,9 @@ fn coop_players_round_trip_apart_from_the_player() {
     assert!(Game::restore(&f.data, world, g.cfg, &twice).is_err());
 }
 
+/// A change that spoils a snapshot.
+type SnapshotChange<'a> = Box<dyn Fn(&mut fnv_game::game::GameSnapshot) + 'a>;
+
 /// What a load asks before it starts anything from a save says what the restores would
 /// say (#1590): a good snapshot passes, and each refusal is the restores' own.
 #[test]
@@ -791,7 +794,7 @@ fn a_snapshot_says_whether_the_restores_take_it() {
     let restores = |s: &GameSnapshot| World::restore(&f.forms, &f.refs, &s.sim).and_then(|w| Game::restore(&f.data, w, g.cfg, s).map(|_| ()));
     assert_eq!(good.check(), Ok(()));
     assert_eq!(restores(&good), Ok(()));
-    let bad: [(&str, Box<dyn Fn(&mut GameSnapshot)>); 6] = [
+    let bad: [(&str, SnapshotChange<'_>); 6] = [
         ("unsupported snapshot format \"fnv.game.state/2\"", Box::new(|s| s.format = "fnv.game.state/2".into())),
         ("unsupported snapshot format \"fnv.sim.state/2\"", Box::new(|s| s.sim.format = "fnv.sim.state/2".into())),
         ("bad rng_word_pos \"x\"", Box::new(|s| s.rng_word_pos = "x".into())),

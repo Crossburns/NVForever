@@ -979,6 +979,9 @@ mod tests {
         assert!(cfg.path_of("bad:name").is_err());
     }
 
+    /// A change that spoils a save's body.
+    type BodyChange = fn(&mut SaveBody);
+
     /// The restore's own refusals come at the read, before the world starts at the save's
     /// place, and the player is told why (#1590).
     #[test]
@@ -992,7 +995,7 @@ mod tests {
             read_for_load(&path, &[]).map(|_| ())
         };
         assert_eq!(read("good", &good), Ok(()));
-        let changed: [(&str, fn(&mut SaveBody), &str); 6] = [
+        let changed: [(&str, BodyChange, &str); 6] = [
             ("body", |b| b.format = "nvf.save.body/2".into(), "body format"),
             ("engine", |b| b.engine.format = "nvf.engine.state/2".into(), "engine format"),
             ("game", |b| b.game.format = "fnv.game.state/2".into(), "unsupported snapshot format \"fnv.game.state/2\""),
