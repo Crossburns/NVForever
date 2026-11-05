@@ -294,11 +294,15 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   for every reference the save changed so the drawn world follows; the engine part is put
   back next. Those `RefChanged` are marked `restored`: visuals and collision follow them
   as any, while crime and the world's sounds take what they name as judged and heard
-  before the save, so a load judges no theft and plays no pick-up or drop sound. Theirs
-  is a mark on each notice and not a gate on the frames of the restore, so a real pick-up
-  or a load script's change in those frames has its normal effect [design:
+  before the save, so a load judges no theft and plays no pick-up or drop sound. It is a
+  mark on each notice and not a gate on the frames of the restore, so a real pick-up or a
+  load script's change in those frames has its normal effect [design:
   `crime::report_deeds`, `world_sounds::objects`; smoke `save-theft-write`,
-  `save-theft-load`]. The game's clock stays the save's: the residents' start clock goes only into
+  `save-theft-load`]. The sky takes the save's hold and the rolls' random state as it is
+  made, before its first look at the weather lists, not when the engine part is put back:
+  a hold set after that look would hold what its roll chose, and setting them later would
+  undo a load script's release [design: `SkyState::restore_saved`; smoke
+  `save-weather-write`, `save-weather-load`]. The game's clock stays the save's: the residents' start clock goes only into
   a new game, so `--day` never changes a loaded game's GameDaysPassed [design:
   `residents::Core::prepare`; smoke `save-days-write`, `save-days-load`]. The sky alone
   starts on the header's `game_days_passed`, over `--day` (`start_days` in `main.rs`), so

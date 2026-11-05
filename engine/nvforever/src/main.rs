@@ -988,6 +988,9 @@ fn main() -> AppExit {
             Err(_) => return fail(e),
         },
     };
+    if let Some(saved) = pending.as_ref().and_then(|p| p.body.engine.extra.get(sky::SAVE_HOOK.key)) {
+        sky_state.restore_saved(saved);
+    }
     sky_state.shadows = (args.sun_shadows || (args.play && !args.no_sun_shadows)) && args.shadow_distance > 0.0;
     if args.shadow_distance > 0.0 {
         sky_state.shadow_distance = args.shadow_distance;

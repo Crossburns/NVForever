@@ -6420,6 +6420,31 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-weather-write"
+source = "#1609: SetWeather with the override flag holds a weather no list in Goodsprings holds, and the game is saved; save-weather-load reads it back, so run them together"
+areas = ["save", "sky", "weather"]
+paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-weather-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "20:SetWeather NVHooverDamWeather 1;21:close;24:GetIsCurrentWeather NVHooverDamWeather;save smoke-weather;25:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 29
+order = [[{ re = 'weather: NVHooverDamWeather by a script \(fading in, held until released\)', label = "the script holds the weather" }, { re = 'console: GetIsCurrentWeather >> 1\.00', label = "it is the current weather" }, { re = 'save: wrote .*smoke-weather\.nvfsave', label = "the save is written" }]]
+
+[[scenario]]
+name = "save-weather-load"
+source = "#1609: a held weather is what the sky shows and holds after a load"
+note = "Goodsprings' list holds not this weather, so the start's roll is made, which is right: under the hold it only decides what shows after a release (docs/spec-notes/world.md section 6). So no count of roll lines here: the check is that the sky never changes to the rolled weather"
+areas = ["save", "sky", "weather"]
+paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-weather-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:GetIsCurrentWeather NVHooverDamWeather;15:close" }
+args = ["--play", "--load", "smoke-weather", "--no-voice"]
+run_seconds = 19
+order = [[{ re = 'load: the weather stays held as a script left it', label = "the hold comes back with the sky" }, { re = 'load: restored .*smoke-weather\.nvfsave', label = "the save is restored" }, { re = 'console: GetIsCurrentWeather >> 1\.00', label = "the held weather is the current one" }]]
+expect = [
+  { re = 'weather: \S+ at \d\d:\d\d', count = 0, label = "the sky never changes weather" },
+  { re = 'weather: the climate takes over', count = 0, label = "the climate does not take over" },
+]
+
+[[scenario]]
 name = "save-load-order"
 source = "no-owner queue item 29 (2026-10-21; docs/design/save-load.md §4.1): a save made with one load order loads into another: FormIDs move to their plugin's place now, what came from plugins no longer loaded is dropped and the player told; run after save-write, whose save it loads"
 note = "save-write runs with the ten masters; this run loads its save with three of them, Gun Runners' Arsenal moved before Dead Money (index 05 -> 01, Dead Money 01 -> 02), the add-ons Honest Hearts, Old World Blues, Lonesome Road and the four packs gone. The base game's changes come back as in save-load"
