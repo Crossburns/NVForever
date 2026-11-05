@@ -161,6 +161,18 @@ expect = [
 ]
 
 [[scenario]]
+name = "lod-grid-origin-freeside"
+source = "#1533: Freeside's LOD files sit on a grid from the south-west cell of lodsettings/freesideworld.dlodsettings (-10, -8), not on multiples of 4; aligned there, its object blocks (the Strip towers' stand-ins Lucky38WL, Gamorrah01WL, TheTopsWL, UltraLuxHotelWL in block x-6.y-8) and its game terrain chunks are found and drawn (0 of each on main before the fix)"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/lod.rs", "engine/nvforever/src/worldspace.rs"]
+args = ["--world", "FreesideWorld", "--pos=-6000,-8800,2600", "--heading", "205", "--hour", "13"]
+run_seconds = 25
+expect = [
+  { re = 'distant LOD at the end: .* blocks (\d+) trees', range = [3, 100000], label = "Freeside's object blocks are found and drawn (6 on 2026-11-04; 0 before)" },
+  { re = 'distant LOD at the end: LOD chunks (\d+) ', range = [5, 100000], label = "and its game terrain chunks (23 on 2026-11-04; 0 before)" },
+]
+
+[[scenario]]
 name = "auto-fly"
 source = "CLAUDE.md: after renderer changes, the moving-camera smoke test (cell streaming and LOD rebuilds)"
 areas = ["renderer"]
