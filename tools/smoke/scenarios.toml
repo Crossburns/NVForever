@@ -18827,6 +18827,20 @@ expect = [
 order = [["nvf mcm install check 1", "tiles: a mod's tiles in StartMenu", "pause menu: mods page", "scripts: MenuMode 1013 blocks run", "pause menu: mods page closed", "nvf mcm install check 0"]]
 
 [[scenario]]
+name = "shot-passes-collision-marker"
+source = "issue #1545 (owner): collision markers act as invisible walls; they must stop actors but let shots through. CollisionMarker primitives without XTRI are on the Invisible Wall layer, which characters collide with and shots pass (crates/fnv-phys/src/primitive.rs, layers::shot_ignores; physics.md §4.1)"
+note = "Goodsprings: the player stands 250 units south of the CollisionMarker box 0x00176AD0 (-69349, 7330, 8682; 87 x 34 x 138 units), facing north with the view level (the eye inside the box's height), and fires the 10mm pistol once at 12 s. Before the change the shot stopped on the box: 'dirt 1 (1 on collision without a material)'"
+areas = ["combat", "physics"]
+paths = ["crates/fnv-phys/src/primitive.rs", "crates/fnv-phys/src/layers.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_LOOK = "9:0:0", NVF_PLAY_TEST_CONTROL = "8:weapon,12:fire,12.2:fire" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-69349,7080,8650", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'combat: 1 shots .*, 1 world hits', label = "one shot, which strikes the world" },
+  { text = "impacts by material: dirt 1 (0 on collision without a material)", label = "it passes the collision marker and strikes the dirt behind it" },
+]
+
+[[scenario]]
 name = "script-move-dynamic-clutter"
 source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
 note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"
