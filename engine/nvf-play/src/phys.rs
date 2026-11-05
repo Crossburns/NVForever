@@ -1703,9 +1703,8 @@ fn ref_changed(
     mut repose: MessageReader<crate::RefRepose>,
     (broken, mut broken_seen): (Option<Res<Messages<crate::combat::WeaponBroken>>>, Local<bevy::ecs::message::MessageCursor<crate::combat::WeaponBroken>>),
     d: Res<PlayWorld>,
-    sim: Res<SimState>,
+    (sim, time): (Res<SimState>, Res<Time>),
     data: Option<Res<GameData>>,
-    time: Res<Time>,
     mut phys: ResMut<PhysState>,
 ) {
     let mut ids: Vec<u32> = msgs.read().map(|m| m.form_id).collect();
