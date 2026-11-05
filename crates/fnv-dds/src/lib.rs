@@ -35,6 +35,16 @@ pub enum Format {
     A8R8G8B8,
     R8G8B8,
     A4R4G4B4,
+    // Layouts no file of the base game uses (dds.md §2.1): a mod's or a localized
+    // install's textures may.
+    X8R8G8B8,
+    A8B8G8R8,
+    X8B8G8R8,
+    R5G6B5,
+    A1R5G5B5,
+    X1R5G5B5,
+    L8,
+    A8L8,
 }
 
 impl Format {
@@ -46,6 +56,14 @@ impl Format {
             Format::A8R8G8B8 => "A8R8G8B8",
             Format::R8G8B8 => "R8G8B8",
             Format::A4R4G4B4 => "A4R4G4B4",
+            Format::X8R8G8B8 => "X8R8G8B8",
+            Format::A8B8G8R8 => "A8B8G8R8",
+            Format::X8B8G8R8 => "X8B8G8R8",
+            Format::R5G6B5 => "R5G6B5",
+            Format::A1R5G5B5 => "A1R5G5B5",
+            Format::X1R5G5B5 => "X1R5G5B5",
+            Format::L8 => "L8",
+            Format::A8L8 => "A8L8",
         }
     }
 
@@ -64,8 +82,9 @@ impl Format {
             Some(b) => w.div_ceil(4).max(1) * h.div_ceil(4).max(1) * b,
             None => {
                 let bpp = match self {
-                    Format::A8R8G8B8 => 4,
+                    Format::A8R8G8B8 | Format::X8R8G8B8 | Format::A8B8G8R8 | Format::X8B8G8R8 => 4,
                     Format::R8G8B8 => 3,
+                    Format::L8 => 1,
                     _ => 2,
                 };
                 w * h * bpp
@@ -77,6 +96,7 @@ impl Format {
 const PF_FOURCC: u32 = 0x4;
 const PF_RGB: u32 = 0x40;
 const PF_ALPHA_PIXELS: u32 = 0x1;
+const PF_LUMINANCE: u32 = 0x20000;
 const CAPS2_CUBEMAP: u32 = 0x200;
 const CAPS2_ALL_FACES: u32 = 0xFC00;
 
@@ -98,6 +118,20 @@ impl PixelFormat {
                 (32, [0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0xFF00_0000], true) => Ok(Format::A8R8G8B8),
                 (24, [0x00FF_0000, 0x0000_FF00, 0x0000_00FF, _], false) => Ok(Format::R8G8B8),
                 (16, [0x0F00, 0x00F0, 0x000F, 0xF000], true) => Ok(Format::A4R4G4B4),
+                (32, [0x00FF_0000, 0x0000_FF00, 0x0000_00FF, _], false) => Ok(Format::X8R8G8B8),
+                (32, [0x0000_00FF, 0x0000_FF00, 0x00FF_0000, 0xFF00_0000], true) => Ok(Format::A8B8G8R8),
+                (32, [0x0000_00FF, 0x0000_FF00, 0x00FF_0000, _], false) => Ok(Format::X8B8G8R8),
+                (16, [0xF800, 0x07E0, 0x001F, _], false) => Ok(Format::R5G6B5),
+                (16, [0x7C00, 0x03E0, 0x001F, 0x8000], true) => Ok(Format::A1R5G5B5),
+                (16, [0x7C00, 0x03E0, 0x001F, _], false) => Ok(Format::X1R5G5B5),
+                _ => Err(self.describe()),
+            };
+        }
+        if self.flags == PF_LUMINANCE || self.flags == PF_LUMINANCE | PF_ALPHA_PIXELS {
+            let alpha = self.flags & PF_ALPHA_PIXELS != 0;
+            return match (self.rgb_bits, self.masks[0], self.masks[3], alpha) {
+                (8, 0xFF, _, false) => Ok(Format::L8),
+                (16, 0xFF, 0xFF00, true) => Ok(Format::A8L8),
                 _ => Err(self.describe()),
             };
         }
@@ -250,6 +284,44 @@ pub fn to_rgba8(format: Format, src: &[u8]) -> Option<Vec<u8>> {
                 let v = u16::from_le_bytes([p[0], p[1]]);
                 let ch = |shift: u16| (((v >> shift) & 0xF) as u8) * 17;
                 out.extend_from_slice(&[ch(8), ch(4), ch(0), ch(12)]);
+            }
+        }
+        Format::X8R8G8B8 => {
+            for p in src.as_chunks::<4>().0 {
+                out.extend_from_slice(&[p[2], p[1], p[0], 255]);
+            }
+        }
+        Format::A8B8G8R8 => out.extend_from_slice(src),
+        Format::X8B8G8R8 => {
+            for p in src.as_chunks::<4>().0 {
+                out.extend_from_slice(&[p[0], p[1], p[2], 255]);
+            }
+        }
+        Format::R5G6B5 => {
+            for p in src.as_chunks::<2>().0 {
+                let [r, g, b] = rgb565(u16::from_le_bytes([p[0], p[1]]));
+                out.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        Format::A1R5G5B5 | Format::X1R5G5B5 => {
+            for p in src.as_chunks::<2>().0 {
+                let v = u16::from_le_bytes([p[0], p[1]]);
+                let ch = |shift: u16| { let c = ((v >> shift) & 31) as u8; (c << 3) | (c >> 2) };
+                let a = if format == Format::X1R5G5B5 || v & 0x8000 != 0 { 255 } else { 0 };
+                out.extend_from_slice(&[ch(10), ch(5), ch(0), a]);
+            }
+        }
+        // Luminance is the grey of all three colours, alpha 1 unless stored [documented:
+        // MS "Map Direct3D 9 Formats to Direct3D 10", L8 and A8L8 read as R8G8B8A8 with
+        // the grey copied].
+        Format::L8 => {
+            for &l in src {
+                out.extend_from_slice(&[l, l, l, 255]);
+            }
+        }
+        Format::A8L8 => {
+            for p in src.as_chunks::<2>().0 {
+                out.extend_from_slice(&[p[0], p[0], p[0], p[1]]);
             }
         }
         _ => return None,
@@ -438,8 +510,33 @@ mod tests {
         assert_eq!(to_rgba8(Format::A8R8G8B8, &[1, 2, 3, 4]).unwrap(), [3, 2, 1, 4]);
         assert_eq!(to_rgba8(Format::R8G8B8, &[1, 2, 3]).unwrap(), [3, 2, 1, 255]);
         assert_eq!(to_rgba8(Format::A4R4G4B4, &[0x21, 0xF3]).unwrap(), [0x33, 0x22, 0x11, 0xFF]);
-        let odd = build(1, 1, 1, PF_RGB, &[0; 4], 16, [0xF800, 0x7E0, 0x1F, 0], 0, 2);
+        let odd = build(1, 1, 1, PF_RGB, &[0; 4], 16, [0x1F, 0x7E0, 0xF800, 0], 0, 2);
         assert!(matches!(Dds::parse(&odd), Err(DdsError::Unsupported(_))));
+    }
+
+    #[test]
+    fn layouts_beyond_the_base_games() {
+        let fmt = |flags, bits, masks| Dds::parse(&build(1, 1, 1, flags, &[0; 4], bits, masks, 0, (bits / 8) as usize)).map(|d| d.format);
+        assert_eq!(fmt(PF_RGB, 32, [0xFF0000, 0xFF00, 0xFF, 0]), Ok(Format::X8R8G8B8));
+        assert_eq!(fmt(PF_RGB | PF_ALPHA_PIXELS, 32, [0xFF, 0xFF00, 0xFF0000, 0xFF000000]), Ok(Format::A8B8G8R8));
+        assert_eq!(fmt(PF_RGB, 32, [0xFF, 0xFF00, 0xFF0000, 0]), Ok(Format::X8B8G8R8));
+        assert_eq!(fmt(PF_RGB, 16, [0xF800, 0x7E0, 0x1F, 0]), Ok(Format::R5G6B5));
+        assert_eq!(fmt(PF_RGB | PF_ALPHA_PIXELS, 16, [0x7C00, 0x3E0, 0x1F, 0x8000]), Ok(Format::A1R5G5B5));
+        assert_eq!(fmt(PF_RGB, 16, [0x7C00, 0x3E0, 0x1F, 0]), Ok(Format::X1R5G5B5));
+        assert_eq!(fmt(PF_LUMINANCE, 8, [0xFF, 0, 0, 0]), Ok(Format::L8));
+        assert_eq!(fmt(PF_LUMINANCE | PF_ALPHA_PIXELS, 16, [0xFF, 0, 0, 0xFF00]), Ok(Format::A8L8));
+        assert_eq!(to_rgba8(Format::X8R8G8B8, &[1, 2, 3, 0]).unwrap(), [3, 2, 1, 255]);
+        assert_eq!(to_rgba8(Format::A8B8G8R8, &[1, 2, 3, 4]).unwrap(), [1, 2, 3, 4]);
+        assert_eq!(to_rgba8(Format::X8B8G8R8, &[1, 2, 3, 0]).unwrap(), [1, 2, 3, 255]);
+        assert_eq!(to_rgba8(Format::R5G6B5, &0xF800u16.to_le_bytes()).unwrap(), [255, 0, 0, 255]);
+        assert_eq!(to_rgba8(Format::A1R5G5B5, &0x03E0u16.to_le_bytes()).unwrap(), [0, 255, 0, 0]);
+        assert_eq!(to_rgba8(Format::A1R5G5B5, &0x801Fu16.to_le_bytes()).unwrap(), [0, 0, 255, 255]);
+        assert_eq!(to_rgba8(Format::X1R5G5B5, &0x001Fu16.to_le_bytes()).unwrap(), [0, 0, 255, 255]);
+        assert_eq!(to_rgba8(Format::L8, &[7]).unwrap(), [7, 7, 7, 255]);
+        assert_eq!(to_rgba8(Format::A8L8, &[7, 9]).unwrap(), [7, 7, 7, 9]);
+        // A level is w × h × the bytes of one texel.
+        assert_eq!(Format::L8.level_size(4, 2), 8);
+        assert_eq!(Format::X8B8G8R8.level_size(4, 2), 32);
     }
 
     #[test]
