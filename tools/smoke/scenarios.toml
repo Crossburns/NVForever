@@ -1892,6 +1892,40 @@ order = [[
 ]]
 
 [[scenario]]
+name = "radio-by-hand"
+source = "#1615 (docs/spec-notes/radio.md §4): the player's own activation goes through the shared default action, so the unscripted radio 0x0015937C (NewVegasRadio) in the NCR safehouse switches on and off; the aid is the one crime-steal uses for the player's hand"
+areas = ["radio", "activators"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/radio.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_hand_tests.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "14:activate:0x0015937C,20:activate:0x0015937C", NVF_PLAY_TEST_CONSOLE = "24:0015937C.getdisabled;24.4:close" }
+args = ["--cell", "SafehouseNCRINT", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 28
+expect = [
+  { re = 'console: GetDisabled on ', label = "the radio run reaches its check" },
+  { re = 'radio summary: .*receivers switched 2 times', label = "both activations switched the radio" },
+]
+order = [[
+  { re = 'radio: 0015937C \(.*\) switched on', label = "the first activation switches the radio on" },
+  { re = 'radio: 0015937C \(.*\) switched off', label = "the second switches it off" },
+]]
+
+[[scenario]]
+name = "jukebox-by-hand"
+source = "#1615 (docs/spec-notes/radio.md §4): the unscripted jukebox 0x00154F57 (JukeBoxDirty01) in the Coyote Mine house switches on and off by the player's own activation"
+areas = ["radio", "activators"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/radio.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_hand_tests.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "14:activate:0x00154F57,20:activate:0x00154F57", NVF_PLAY_TEST_CONSOLE = "24:00154F57.getdisabled;24.4:close" }
+args = ["--cell", "SLCoyoteMineHouseINT", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 28
+expect = [
+  { re = 'console: GetDisabled on ', label = "the jukebox run reaches its check" },
+  { re = 'radio summary: .*receivers switched 2 times', label = "both activations switched the jukebox" },
+]
+order = [[
+  { re = 'radio: 00154F57 \(.*\) switched on', label = "the first activation switches the jukebox on" },
+  { re = 'radio: 00154F57 \(.*\) switched off', label = "the second switches it off" },
+]]
+
+[[scenario]]
 name = "activators-onoff"
 launch = "saloon-jukebox"
 source = "CLAUDE.md: after changes to activators' on/off looks or to sequences on materials (docs/spec-notes/activators.md §3): the saloon radio test"

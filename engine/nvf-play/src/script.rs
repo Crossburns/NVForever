@@ -881,63 +881,21 @@ impl Runtime {
         let r = if has_block {
             info!("script: activating {target} runs its OnActivate block instead of the default action");
             g.activate(player, target, ActMode::Hand).map(|_| ByHand::Script)
-        } else if let Some(body) = g.ash_pile_source(target) {
-            // An ash or goo pile opens the inventory of the actor it came from
-            // (`fnv_game::ash_piles`, docs/spec-notes/ash-piles.md §3).
-            let a = fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: body }, unlocked_with: None, script: None };
-            self.skip.insert(g.events.len());
-            g.emit(EventKind::Activated { reference: target, by: player, outcome: serde_json::to_value(&a).ok() });
-            info!("activate: the pile {target} opens the inventory of {body}");
-            Ok(ByHand::Default(a))
-        } else if g.is_dead(target) {
-            // A dead actor opens its inventory (the loot menu), `fnv_game`'s default
-            // activation rule (combat C5).
-            let a = fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: target }, unlocked_with: None, script: None };
-            self.skip.insert(g.events.len());
-            g.emit(EventKind::Activated { reference: target, by: player, outcome: serde_json::to_value(&a).ok() });
-            Ok(ByHand::Default(a))
         } else {
-            let from = g.world.peek(player).map(|p| (p.cell, p.pos));
-            match g.world.activate(player, target) {
-                Ok(mut a) => {
-                    self.skip.insert(g.events.len());
-                    g.emit(EventKind::Activated { reference: target, by: player, outcome: serde_json::to_value(&a).ok() });
-                    // Its activate children go off (`fnv_game::traps`).
-                    g.set_off_children(target);
-                    // An activator that gives water: the player drinks it, as
-                    // `Game::default_activation` has it drunk (its actor effect, the
-                    // Adjust Drinking Radiation perks); this path (the player's hand) never
-                    // did (perk-entry-points.md §9).
-                    if matches!(a.outcome, Outcome::Activated) && g.drink_water(target).is_some() {
-                        g.drink_from(player, target);
-                    }
-                    if let Outcome::PickedUp { item, count, .. } = a.outcome {
-                        self.skip.insert(g.events.len());
-                        g.emit(EventKind::ItemAdded { to: player, item, count, silent: false });
-                        g.item_event(player, item, event::ON_ADD, Some(Value::Ref(player.0)));
-                    }
-                    // A placed mine disarmed: its XP and the statistic, as
-                    // `Game::default_activation` gives them; this path (the player's
-                    // hand) gave neither (the owner's playtest list 7 item 23).
-                    if matches!(a.outcome, Outcome::Disarmed { .. }) {
-                        g.count_stat(fnv_game::misc_stats::MINES_DISARMED, 1.0);
-                        let x = fnv_game::experience::mine_disarm_xp(g);
-                        fnv_game::experience::award(g, fnv_game::experience::Source::DisarmMine, x);
-                    }
-                    // Through a load door: the player's teammates and followers come
-                    // along (`fnv_game::followers`).
-                    if matches!(a.outcome, Outcome::Teleported { .. }) {
-                        let brought = g.bring_teammates(from);
-                        if !brought.is_empty() {
-                            info!("script: {} teammate(s) or follower(s) come along through the door", brought.len());
-                        }
-                    }
-                    // A script without OnActivate does not run on activation; the
-                    // default action was all there is.
+            // The shared default action; what is this path's own is that `activate.rs`
+            // applies the outcome, so these events do not become effects as well.
+            match g.default_activation_by_hand(target) {
+                Ok(Some(done)) => {
+                    self.skip.insert(done.activated_event);
+                    self.skip.extend(done.item_added_event);
+                    // A script without OnActivate does not run on activation; the default
+                    // action was all there is.
+                    let mut a = done.activation;
                     a.script = None;
                     Ok(ByHand::Default(a))
                 }
-                Err(e) => Err(e.to_string()),
+                Ok(None) => Ok(ByHand::Refused),
+                Err(e) => Err(e),
             }
         };
         // An actor whose default action ran (no OnActivate block, or its block called
@@ -2289,13 +2247,18 @@ impl ScriptState {
     /// A runtime over an empty load order, for tests of what works the open menu: nothing
     /// has run, no menu is open.
     pub(crate) fn over_no_plugins() -> ScriptState {
+        Self::over_plugins(&[])
+    }
+
+    /// As [`ScriptState::over_no_plugins`], over these plugins.
+    pub(crate) fn over_plugins(plugins: &[fnv_esm::Plugin]) -> ScriptState {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
-        let lo = fnv_esm::LoadOrder::new(&[]).unwrap();
+        let lo = fnv_esm::LoadOrder::new(plugins).unwrap();
         let schema = fnv_esm::Schema::load_dir(root.join("fnv")).unwrap();
         let functions = root.join("script/functions.json");
         let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&functions).unwrap()).unwrap();
         let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(fnv_sim::FormStore::build(&lo, &schema)));
-        let refs: &'static RefTable = Box::leak(Box::new(RefTable::default()));
+        let refs: &'static RefTable = Box::leak(Box::new(RefTable::build(&lo, &schema)));
         let data: &'static GameData = Box::leak(Box::new(GameData::build(&lo, &schema, FunctionTable::load(&functions).unwrap(), &json, refs)));
         let game = Game::new(data, World::new(forms, refs, fnv_sim::SimConfig::default()), GameConfig::default());
         let rt = Runtime {
@@ -2330,6 +2293,10 @@ impl ScriptState {
         self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
     }
 }
+
+#[cfg(test)]
+#[path = "script_hand_tests.rs"]
+mod hand_tests;
 
 #[cfg(test)]
 mod no_messages_tests {

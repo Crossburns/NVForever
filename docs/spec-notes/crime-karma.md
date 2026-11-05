@@ -153,8 +153,8 @@ a terminal that opens at its menu (unlocked, hacked before, password held) is no
   call") [documented: notes].
 - The doors' "No Alarm" flag (REFR XTEL): "No trespass alarm will be sent when the
   player uses the door" [documented: GECK wiki Reference, Teleport]; 5 doors, Dead Money
-  2, Lonesome Road 3 [observed]. As built (`Game::arrived_through`): arriving through such
-  a door, the player is not trespassing in the cell arrived in (no warnings, no attack,
+  2, Lonesome Road 3 [observed]. As built (`Game::arrived_through`, for the player's own
+  use of a door and a script's alike [design]): arriving through such a door, the player is not trespassing in the cell arrived in (no warnings, no attack,
   IsTrespassing 0) until leaving that cell; any other door ends it [hypothesis: the alarm
   is the owners' trespass reaction; owner-review.md]. Log: `crime: the player came
   through … a No Alarm door …`.

@@ -121,8 +121,13 @@ Activation by hand (`activate.rs`, `PlaySet::Activation`, before this) calls
 `script::activate_by_hand`: a target whose script has an OnActivate block runs it
 *instead of* the default action, which then runs only if the script calls `Activate`
 (fnv-game's rule [documented: GECK wiki Activate]); its effects come through the trace
-like any other script's. Without such a block the default action runs as before, and a
-picked-up item's OnAdd runs.
+like any other script's. Without such a block `Game::default_activation_by_hand` runs:
+the same default action as `Game::activate` (the extender's OnActivate, the receiver's
+switch, a pile's or a pushed-down actor's inventory, the door the player arrived through,
+children, OnAdd, drinking, disarm XP, followers), except that the engine's loading stays
+in charge of entering the new cell (`player_entered` follows when the player's cell has
+changed). `activate.rs` applies the outcome itself, so the activation's `Activated` and
+`ItemAdded` events do not become effects as well.
 
 ## 3. Trigger volumes
 
