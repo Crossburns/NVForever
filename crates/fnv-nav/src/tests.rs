@@ -3,7 +3,8 @@
 use crate::graph::{EdgeKind, NavGraph, Space, NONE};
 use crate::path::{PathError, PathParams, Place};
 use crate::record::{link_kind, tri_flags, DoorLink, EdgeLink, NavMeshRecord, Triangle};
-use crate::{WalkEvent, Walker};
+use crate::follow::goal_height_fits;
+use crate::{Follower, Steer, WalkEvent, Walker};
 use std::collections::HashSet;
 
 const W: Space = Space::World(0x3C);
@@ -1057,4 +1058,306 @@ fn obstacles_and_doors_with_broken_placement_do_not_hang() {
     for (s, p) in [(f32::INFINITY, [200.0, 200.0, 0.0]), (1.0e30, [200.0, 200.0, 0.0]), (f32::NAN, [200.0, 200.0, 0.0]), (1.0, [f32::NAN, 0.0, 0.0]), (1.0, [1.0e30, 1.0e30, 0.0])] {
         g.set_obstacles(vec![o(s, p)], |o| o.initially_enabled);
     }
+}
+
+// ---- a goal's height (#1500; docs/design/navmesh.md §4.1) --------------------------------
+
+/// One leg through `points`, ending at the path's goal.
+fn one_leg(points: Vec<[f32; 3]>) -> crate::Path {
+    crate::Path { legs: vec![crate::Leg { space: W, points, corridor: vec![], door: None, door_stops: vec![], hops: vec![] }], length: 0.0, expanded: 0, start_snap: 0.0, goal_snap: 0.0 }
+}
+
+const DECK_GOAL: [f32; 3] = [150.0, 350.0, 200.0];
+
+/// A walker on the deck of [`floor_with_deck_above`], on its way to [`DECK_GOAL`].
+fn walker_on_the_deck(g: &NavGraph) -> Walker {
+    let mut w = Walker::new(W, [650.0, 350.0, 200.0], -std::f32::consts::FRAC_PI_2, 200.0);
+    w.go_to(g, Place { space: W, pos: DECK_GOAL }, &PathParams::default()).unwrap();
+    w
+}
+
+#[test]
+fn a_follower_under_or_over_the_end_of_its_path_has_not_arrived() {
+    let path = one_leg(vec![[0.0, 0.0, 100.0], [100.0, 0.0, 100.0]]);
+    assert_eq!(Follower::new(path.clone()).steer([100.0, 0.0, 100.0]), Steer::Arrived);
+    assert_eq!(Follower::new(path.clone()).steer([100.0, 0.0, 0.0]), Steer::OffPath);
+    assert_eq!(Follower::new(path).steer([100.0, 0.0, 200.0]), Steer::OffPath);
+}
+
+#[test]
+fn a_real_path_with_the_feet_under_its_goal_has_not_arrived() {
+    let g = floor_with_deck_above();
+    let w = walker_on_the_deck(&g);
+    let mut f = w.follower.clone().unwrap();
+    // The path's own end is the place on the navmesh, on the deck.
+    let end = f.destination().unwrap().pos;
+    assert!((end[2] - 200.0).abs() < 1e-3, "{end:?}");
+    assert!(g.locate(W, end, 1.0).is_some());
+    assert_eq!(f.steer([DECK_GOAL[0], DECK_GOAL[1], 0.0]), Steer::OffPath);
+    // Still not there when it says so again; there at the height.
+    assert_eq!(f.steer([DECK_GOAL[0], DECK_GOAL[1], 0.0]), Steer::OffPath);
+    assert_eq!(f.steer(DECK_GOAL), Steer::Arrived);
+}
+
+#[test]
+fn the_height_a_goal_allows_grows_with_the_distance_from_it() {
+    let goal = [0.0, 0.0, 0.0];
+    assert!(goal_height_fits([0.0, 0.0, 40.0], goal));
+    assert!(goal_height_fits([0.0, 0.0, -40.0], goal));
+    assert!(!goal_height_fits([0.0, 0.0, 40.01], goal));
+    assert!(!goal_height_fits([0.0, 0.0, -40.01], goal));
+    // On a 60 degree slope at any distance, with the margin to spare.
+    for d in [1.0f32, 16.0, 64.0] {
+        let rise = d * 60f32.to_radians().tan();
+        assert!(goal_height_fits([d, 0.0, rise + 39.9], goal), "{d}");
+        assert!(!goal_height_fits([d, 0.0, rise + 40.1], goal), "{d}");
+    }
+    // Through a follower, at its radius of one unit.
+    let path = one_leg(vec![[100.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
+    assert_eq!(Follower::new(path.clone()).steer([0.5, 0.0, 40.8]), Steer::Arrived);
+    assert_eq!(Follower::new(path).steer([0.5, 0.0, 40.9]), Steer::OffPath);
+}
+
+#[test]
+fn a_walker_up_a_sixty_degree_slope_arrives_without_a_new_path() {
+    let tan = 60f32.to_radians().tan();
+    let g = graph(&[(grid(1, [0.0, 0.0], 6, 3, 100.0, &[], move |x, _| x * tan), W)]);
+    let goal = [550.0, 150.0, 550.0 * tan];
+    let mut w = Walker::new(W, [50.0, 150.0, 50.0 * tan], std::f32::consts::FRAC_PI_2, 300.0);
+    w.go_to(&g, Place { space: W, pos: goal }, &PathParams::default()).unwrap();
+    let mut arrived = false;
+    for _ in 0..200 {
+        let ev = w.update(&g, 0.1);
+        arrived = ev == WalkEvent::Arrived;
+        if arrived {
+            break;
+        }
+    }
+    assert!(arrived);
+    assert_eq!((w.height_searches, w.height_waivers), (0, 0));
+}
+
+/// Corners, door stops, take-offs, load doors and asking a door stay horizontal: feet 500
+/// under them do what feet at their height do.
+#[test]
+fn only_the_goal_asks_for_a_height() {
+    let under = -500.0;
+    // A corner reached, and one passed.
+    let mut f = Follower::new(one_leg(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, 100.0, 0.0], [200.0, 100.0, 0.0]]));
+    assert!(matches!(f.steer([95.0, 0.0, under]), Steer::Walk { target, .. } if target == [100.0, 100.0, 0.0]));
+    assert!(matches!(f.steer([100.0, 130.0, under]), Steer::Walk { target, .. } if target == [200.0, 100.0, 0.0]));
+    // A door stop, also held, and the door asked for from there.
+    let mut stops = one_leg(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [200.0, 0.0, 0.0]]);
+    stops.legs[0].door_stops = vec![crate::DoorStop { door: 7, point: 1 }];
+    let mut f = Follower::new(stops);
+    assert_eq!(f.door_ahead([90.0, 0.0, under], 48.0), Some(7));
+    assert_eq!(f.steer([95.0, 0.0, under]), Steer::OpenDoor { door: 7, at: [100.0, 0.0, 0.0] });
+    assert_eq!(f.steer([50.0, 0.0, under]), Steer::OpenDoor { door: 7, at: [100.0, 0.0, 0.0] });
+    // The take-off of a ledge link.
+    let mut hop = one_leg(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [150.0, 0.0, 100.0], [300.0, 0.0, 100.0]]);
+    hop.legs[0].hops = vec![crate::LedgeHop { point: 1, up: true }];
+    let mut f = Follower::new(hop);
+    assert!(matches!(f.steer([99.0, 0.0, under]), Steer::Walk { target, .. } if target == [150.0, 0.0, 100.0]));
+    assert!(f.hop().is_some());
+    // A load door at the end of a leg, used from another height and asked for too.
+    let door = crate::graph::DoorEdge { door: 9, to_door: 10, arrival: [0.0; 3], arrival_heading: 0.0, to: 0, door_at: None };
+    let mut load = one_leg(vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]]);
+    load.legs[0].door = Some(door);
+    let mut f = Follower::new(load);
+    assert_eq!(f.door_ahead([80.0, 0.0, under], 48.0), Some(9));
+    assert_eq!(f.steer([80.0, 0.0, under]), Steer::Door(door));
+}
+
+#[test]
+fn two_new_paths_then_the_height_is_waived() {
+    let g = graph(&[(grid(1, [0.0, 0.0], 4, 4, 100.0, &[], flat), W)]);
+    let goal = [150.0, 150.0, 0.0];
+    let feet = [150.0, 150.0, 50.0];
+    let mut w = Walker::new(W, feet, 0.0, 100.0);
+    w.go_to(&g, Place { space: W, pos: goal }, &PathParams::default()).unwrap();
+    let mut f = w.follower.take().unwrap();
+    f.goal_radius = 8.0;
+    assert_eq!(f.steer(feet), Steer::OffPath);
+    let new = w.off_path(&g, feet, &f).expect("the first new path");
+    assert_eq!(new.goal_radius, 8.0, "the caller's radius stays");
+    assert!(w.off_path(&g, feet, &f).is_some(), "the second");
+    assert_eq!(w.height_waivers, 0);
+    assert!(w.off_path(&g, feet, &f).is_none(), "no third");
+    assert_eq!((w.height_waivers, w.trip.as_ref().unwrap().waived), (1, true));
+    // Told once.
+    assert!(w.off_path(&g, feet, &f).is_none());
+    assert_eq!(w.height_waivers, 1);
+}
+
+#[test]
+fn a_new_path_starting_far_from_the_feet_or_none_at_all_waives_the_height() {
+    let g = graph(&[(grid(1, [0.0, 0.0], 2, 2, 100.0, &[], flat), W), (grid(2, [1000.0, 0.0], 2, 2, 100.0, &[], flat), W)]);
+    for feet in [[100.0, 100.0, 65.0], [1100.0, 100.0, 0.0]] {
+        let mut w = Walker::new(W, [100.0, 100.0, 0.0], 0.0, 100.0);
+        w.go_to(&g, Place { space: W, pos: [100.0, 100.0, 0.0] }, &PathParams::default()).unwrap();
+        let f = w.follower.clone().unwrap();
+        assert!(w.off_path(&g, feet, &f).is_none(), "{feet:?}");
+        let t = w.trip.as_ref().unwrap();
+        assert_eq!((t.replans, t.waived, w.height_waivers), (1, true, 1), "{feet:?}");
+    }
+}
+
+#[test]
+fn a_trip_is_the_place_asked_for() {
+    let g = graph(&[(grid(1, [0.0, 0.0], 10, 10, 100.0, &[], flat), W)]);
+    let p = PathParams::default();
+    let feet = [150.0, 150.0, 50.0];
+    let mut w = Walker::new(W, feet, 0.0, 100.0);
+    let go = |w: &mut Walker, to: [f32; 3]| {
+        w.go_to(&g, Place { space: W, pos: to }, &p).unwrap();
+    };
+    // Asked for 300 above its navmesh: the snapped end is not what a later ask is held to.
+    go(&mut w, [150.0, 150.0, 300.0]);
+    let f = w.follower.clone().unwrap();
+    assert!(w.off_path(&g, feet, &f).is_some());
+    go(&mut w, [150.0, 150.0, 300.0]);
+    assert_eq!(w.trip.as_ref().unwrap().replans, 1, "the count stays");
+    // Used up and waived; about the same place again keeps that.
+    assert!(w.off_path(&g, feet, &f).is_some());
+    assert!(w.off_path(&g, feet, &f).is_none());
+    go(&mut w, [160.0, 150.0, 300.0]);
+    let t = w.trip.as_ref().unwrap();
+    assert_eq!((t.replans, t.waived), (2, true), "a new follower does not erase it");
+    assert_eq!(t.to.pos, [160.0, 150.0, 300.0], "the new paths go to the last place asked for");
+    assert!(w.off_path(&g, feet, &f).is_none());
+    assert_eq!(w.height_waivers, 1);
+    // Further than the same trip's reach: all new.
+    go(&mut w, [160.0 + crate::follow::SAME_TRIP + 1.0, 150.0, 300.0]);
+    let t = w.trip.as_ref().unwrap();
+    assert_eq!((t.replans, t.waived), (0, false));
+    // Another space is a new trip at any distance.
+    let other = crate::follow::Trip { to: Place { space: Space::Interior(1), pos: [150.0, 150.0, 0.0] }, params: p.clone(), replans: 2, waived: true };
+    w.trip = Some(other);
+    go(&mut w, [150.0, 150.0, 0.0]);
+    let t = w.trip.as_ref().unwrap();
+    assert_eq!((t.replans, t.waived), (0, false));
+}
+
+#[test]
+fn a_walker_that_fell_under_its_goal_goes_back_by_the_ramp() {
+    let g = floor_with_deck_above();
+    let mut w = walker_on_the_deck(&g);
+    w.update(&g, 0.1);
+    let under = [DECK_GOAL[0], DECK_GOAL[1], 0.0];
+    w.feet = under;
+    w.tri = NONE;
+    let mut furthest = 0.0f32;
+    let mut arrived = false;
+    for _ in 0..600 {
+        let ev = w.update(&g, 0.1);
+        furthest = furthest.max(w.feet[0]);
+        if ev == WalkEvent::Arrived {
+            arrived = true;
+            break;
+        }
+        assert_eq!(w.trip.as_ref().unwrap().replans, 1);
+    }
+    assert!(arrived, "at {:?}", w.feet);
+    assert!(furthest > 700.0, "not by the ramp: {furthest}");
+    assert!((w.feet[2] - 200.0).abs() < 1.0, "{:?}", w.feet);
+    assert_eq!((w.height_searches, w.height_waivers), (1, 0));
+}
+
+/// A way back only through a door takes the waiver, and the walk ends where it stands.
+fn the_waiver_is_taken_for_a_way_through_a_door(g: &NavGraph, w: &mut Walker, under: [f32; 3]) {
+    w.update(g, 0.1);
+    w.feet = under;
+    w.tri = NONE;
+    assert_eq!(w.update(g, 0.1), WalkEvent::Idle);
+    assert!(w.follower.is_none(), "the walk is over");
+    assert_eq!(w.feet, under, "no teleport");
+    assert_eq!((w.height_searches, w.height_waivers), (1, 1));
+}
+
+#[test]
+fn a_way_back_through_a_door_that_opens_in_place_takes_the_waiver() {
+    let mut g = floor_with_deck_above();
+    g.set_in_place_doors(vec![hinged(0xD00, 600.0, 0.0)], |_| None);
+    let under = [DECK_GOAL[0], DECK_GOAL[1], 0.0];
+    // There is that way, and it stops at the door.
+    let way = g.find_path(Place { space: W, pos: under }, Place { space: W, pos: DECK_GOAL }, &PathParams::default()).unwrap();
+    assert_eq!((way.legs.len(), way.legs[0].door_stops.len()), (1, 1));
+    let mut w = walker_on_the_deck(&g);
+    the_waiver_is_taken_for_a_way_through_a_door(&g, &mut w, under);
+}
+
+#[test]
+fn a_way_back_through_a_load_door_takes_the_waiver() {
+    // The floor and the deck are joined only through a room in another space.
+    let room = Space::Interior(0x77);
+    let mut floor = grid(1, [0.0, 0.0], 8, 4, 100.0, &[], flat);
+    let mut deck = grid(2, [0.0, 300.0], 8, 1, 100.0, &[], |_, _| 200.0);
+    let mut inside = grid(3, [5000.0, 5000.0], 3, 3, 100.0, &[], flat);
+    let door_on = |m: &mut NavMeshRecord, door: u32, t: u16| {
+        m.door_links.push(DoorLink { door, triangle: t });
+        m.triangles[t as usize].flags |= tri_flags::DOOR;
+    };
+    door_on(&mut floor, 0xD1, 0);
+    door_on(&mut inside, 0xD2, 0);
+    door_on(&mut inside, 0xD3, 16);
+    door_on(&mut deck, 0xD4, 0);
+    let meshes = [(floor, W), (deck, W), (inside, room)];
+    let input: Vec<_> = meshes.iter().map(|(m, s)| (m, Some(0), Some(*s))).collect();
+    let mut g = NavGraph::assemble(&input);
+    g.join_doors(&input, |door| match door {
+        0xD1 => Some((0xD2, [5030.0, 5030.0, 0.0], 0.0, room)),
+        0xD2 => Some((0xD1, [30.0, 30.0, 0.0], 0.0, W)),
+        0xD3 => Some((0xD4, [30.0, 330.0, 200.0], 0.0, W)),
+        0xD4 => Some((0xD3, [5270.0, 5270.0, 0.0], 0.0, room)),
+        _ => None,
+    });
+    let under = [DECK_GOAL[0], DECK_GOAL[1], 0.0];
+    // There is that way.
+    let way = g.find_path(Place { space: W, pos: under }, Place { space: W, pos: DECK_GOAL }, &PathParams::default()).unwrap();
+    assert!(way.legs.len() > 1, "{way:?}");
+    let mut w = walker_on_the_deck(&g);
+    the_waiver_is_taken_for_a_way_through_a_door(&g, &mut w, under);
+}
+
+#[test]
+fn a_walk_that_ended_leaves_the_next_go_to_a_new_trip() {
+    let g = graph(&[(grid(1, [0.0, 0.0], 4, 4, 100.0, &[], flat), W)]);
+    let (p, goal) = (PathParams::default(), [150.0, 150.0, 0.0]);
+    let feet = [150.0, 150.0, 65.0];
+    let mut w = Walker::new(W, [50.0, 50.0, 0.0], 0.0, 100.0);
+    w.go_to(&g, Place { space: W, pos: goal }, &p).unwrap();
+    let f = w.follower.clone().unwrap();
+    assert!(w.off_path(&g, feet, &f).is_none());
+    assert!(w.trip.as_ref().unwrap().waived);
+    // Cancelled (a Follow package caught up, say), then the same place again.
+    w.follower = None;
+    w.go_to(&g, Place { space: W, pos: goal }, &p).unwrap();
+    let t = w.trip.as_ref().unwrap();
+    assert_eq!((t.replans, t.waived), (0, false));
+    // Arrived, then the same place again.
+    assert!(w.off_path(&g, feet, &f).is_none());
+    for _ in 0..200 {
+        if w.update(&g, 0.1) == WalkEvent::Arrived {
+            break;
+        }
+    }
+    assert!(w.follower.is_none());
+    w.go_to(&g, Place { space: W, pos: goal }, &p).unwrap();
+    let t = w.trip.as_ref().unwrap();
+    assert_eq!((t.replans, t.waived), (0, false));
+}
+
+#[test]
+fn a_walker_with_no_way_back_ends_its_walk_where_it_stands() {
+    // No ramp: the floor and the deck are not joined.
+    let g = graph(&[(grid(1, [0.0, 0.0], 8, 4, 100.0, &[], flat), W), (grid(2, [0.0, 300.0], 8, 1, 100.0, &[], |_, _| 200.0), W)]);
+    let mut w = walker_on_the_deck(&g);
+    w.update(&g, 0.1);
+    let under = [DECK_GOAL[0], DECK_GOAL[1], 0.0];
+    w.feet = under;
+    w.tri = NONE;
+    assert_eq!(w.update(&g, 0.1), WalkEvent::Idle);
+    assert!(w.follower.is_none(), "the walk is over");
+    assert_eq!(w.feet, under, "no teleport");
+    assert_eq!((w.height_searches, w.height_waivers), (1, 1));
 }

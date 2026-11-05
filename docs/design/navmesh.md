@@ -122,6 +122,95 @@ triangles, its door stops and the door that ends it.
   the door fully open, standing meanwhile (`WalkEvent::WaitingForDoor`); `update` passes
   doors as if open.
 
+### 4.1 A goal's height (#1500)
+
+Everything in this section is [design]: an engine choice with no claim about the original
+game, tried on synthetic navmeshes only.
+
+**What is checked.** One thing: the end of a walk. At the last point of the last leg (an
+ordinary goal, not a load door) `Follower::steer` answers `Steer::Arrived` only when
+`|feet.z - goal.z| <= 40 + horizontal distance * tan(60 degrees)`; otherwise
+`Steer::OffPath`. The goal point is the path's own end: a point on the navmesh, as a rule the
+destination snapped onto it (`search_path`, `legs_of`; a door's approach can put it on
+another point of the navmesh, `square_approach`). 40 is an engineering number, not measured safe: a stair
+step fits it and a storey does not, but stairs, actors pushed sideways on a slope and
+collision that lies apart from the navmesh have no established combined bound. The physics
+residents ask the same of the feet before `LAST_STRETCH` hands an actor to the walker, which
+would otherwise end the walk on the navmesh under the feet or, where there is none, lift it
+towards the goal's height.
+
+**What happens then.** `Walker::off_path` plans a new path from the feet to the place last
+asked for, at most twice in a trip (`HEIGHT_REPLANS`). After that, or when no path is found,
+or when the new path has a door stop or more than one leg, or when it starts more than 64
+units above or below the feet (provisional), the height is waived: the walk ends as it would have without this check, with an
+`AiEvent::HeightWaived` and its own line in the residents' log. A failure here never sets a
+package aside and never makes a sandbox choose again: both see an arrival, so a script's
+Travel package does not strand. No door on a new path means recovery cannot open a door whose
+script was never asked, and cannot be refused at one later and lose the package.
+
+The count and the waiver are on the `Walker` (`Walker::trip`), since each path a package asks
+for makes a new `Follower`. A trip is a place asked for: `go_to` compares the new request with
+the last one, as requested (not snapped), and one more than 256 units away (or in another
+space) starts a new trip. So does any `go_to` after a walk that ended, whether it arrived or
+was cancelled (a Follow package catching up, a package changing): the trip counts only while
+the walker has a follower. There are no cooldowns or progress resets: the two tries are the
+bound on one uninterrupted walk. A target that keeps moving less than 256 units between
+requests stays one trip, so a waiver lasts until that walk ends.
+
+**In the air and in the water.** A resident's body is judged only when grounded and not
+swimming. Otherwise each frame goes as it would without this check: the arrival or the
+hand-over happens at once, so a body that never lands cannot be held up by it. An actor falling
+through its goal's column still arrives in the air, as before. There is no settling state.
+
+**What "never worse" covers.** The aim is reaching the destination: recovery has no door to
+fail at, and a failed search or used-up tries end in an arrival. It is an aim with limits, not a
+proof, and it does not mean the same route, the same time or the right floor. Its known limits:
+
+- A recovery walk is an ordinary walk. If an obstacle or a navmesh switch cuts its way, the
+  ordinary handling applies (the walk is dropped and planned again; a failed plan marks the
+  package unreachable), where the actor would otherwise already have arrived. This comes from
+  reading the code; it was not seen in a run.
+- The two tries are per uninterrupted walk. A caller that cancels the walk and asks again starts
+  a new trip, so repeated cancellation can mean further searches. None of the callers checked
+  (a Follow package, a fixed combat post, a door refusal) does that by itself; a package change
+  can.
+
+- A new or just-placed body starts with `grounded = false` (`crates/fnv-phys/src/character.rs`),
+  so if it is already at the goal, as `Follower::skip_ahead` can leave it, it arrives unjudged
+  in its first frame. That equals the behaviour without this check and is left as it is.
+- Where collision lies more than the tolerance off the navmesh, with other navmesh within 64
+  units of the feet, the actor can take a longer way where it would otherwise have stopped. It
+  cannot be told from a real wrong floor. A walk on such a way can still be stuck, skipped or
+  cancelled as any walk can.
+- Only the leg before a load door is exempt: feet after a load door can mismatch the last leg's
+  end, if that end is within the goal's radius of the door's arrival.
+- `PhysMover` has no unit test (no physics in the tests): the tests move feet and hand over to
+  the headless walker. Grounding, `LAST_STRETCH`, landing on the goal and combat posts are
+  checked by reading and the smoke runs only.
+
+**What is left out, and why.** An earlier attempt at more was dropped: each review of it found
+new ways to leave an actor worse off than before. So:
+
+- Corners, passed corners, ledge take-offs and hops, door stops, load-door endpoints and
+  `door_ahead` stay horizontal. An actor on the wrong floor can still consume a corner from
+  below, and open or use a door above it. This branch does not address the wrong-floor door
+  use the issue asks about.
+- After a waiver a wrong-floor arrival is still possible, as it was before; with feet within
+  the tolerance it is not even noticed. The issue's "does not report arrival" holds until the
+  tries run out, not always.
+- Rules at package level that end a walk by proximity (`crates/fnv-ai/src/carry.rs`: a
+  place's radius in `Ai::within` and a Follow package's catching up, each of which allows 256
+  units of height) are separate policy and untouched.
+- `fnvtool nav walk` ends at `Steer::OffPath` as at `Steer::Arrived`: it does not validate what
+  the residents do, and its result says nothing about this section.
+
+**The walker on the navmesh.** Its feet are the navmesh's height after each step, so at a goal
+they fit, and it behaves as before (no new searches, no change to random numbers or door
+events). Not always: feet off the navmesh and already inside the goal's radius, with no step
+taken (an actor placed in the air, a door's arrival point right at the goal); and a triangle
+picked by `tri_near` on another level, as it searches by horizontal position within two rings.
+Those plan new paths and, if none helps, end as before.
+
 ## 5. Tests and tools
 
 - Unit tests (`crates/fnv-nav/src/tests.rs`, synthetic navmeshes): internal edges and

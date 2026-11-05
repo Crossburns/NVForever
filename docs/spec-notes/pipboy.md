@@ -503,6 +503,9 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
   pans it [design]; the pointer's own moves are followed, not Bevy's drag events, which
   ended at once because the map's nodes are drawn again as the highlight box follows the
   pointer (the owner's list 5, item 52). Test aid: `drag=<dx>:<dy>`.
+- **On a controller** [observed: the original] the right stick moves the highlight box
+  and, pushed past an edge, pans the map; the left stick's up and down zooms in and out
+  smoothly while held (the cursor and zoom speeds are design); see controller.md §3.
 - Checking it: as §7 with `page=data` and `tab=<0-4>`; `key=down|up|use` steps move and
   act on the DATA lists too. A run with a note, quests and the radio on:
   `NVF_PLAY_TEST_SCRIPT=3:info:0x001057E8:DocMitchellREF,4:start:VCG02,4.5:objective:VCG02:3,5:objective_done:VCG02:3,5.1:objective:VCG02:5`
