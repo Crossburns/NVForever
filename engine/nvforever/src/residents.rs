@@ -492,7 +492,8 @@ impl Mover for PhysMover<'_> {
     }
 }
 
-/// Where the residents' clock starts and how fast it runs.
+/// Where the residents' clock starts and how fast it runs. A game restored from a save
+/// keeps its own hour and day; after the start, everyone reads the game's calendar.
 #[derive(Clone, Copy)]
 pub struct Clock {
     pub hour: f32,
@@ -1767,7 +1768,7 @@ impl Core {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn think(&mut self, game: &mut Game, own: bool, nav: &NavState, world: &WorldData, doors: &mut nvf_play::doors::Doors, mut phys: Option<&mut PhysState>, mut blocks: Option<&mut ActorBlocks>, dt: f32, now: f32, waited: u32) {
+    fn think(&mut self, game: &mut Game, own: bool, restored: bool, nav: &NavState, world: &WorldData, doors: &mut nvf_play::doors::Doors, mut phys: Option<&mut PhysState>, mut blocks: Option<&mut ActorBlocks>, dt: f32, now: f32, waited: u32) {
         crate::profile::ai_count(crate::profile::AiCount::Think, 1);
         // Who a walker pushed since the last frame, and (below) who may be pushed in
         // the next: nobody while the game is held.
@@ -1796,15 +1797,7 @@ impl Core {
         // [design: owner 2026-10-31].
         self.breaking = self.posed.iter().copied().filter(|id| !held.contains(id) && self.ai.agents.get(&FormId(*id)).is_some_and(|a| a.activity == Activity::Travelling)).collect();
         held.extend(self.posed.iter().copied());
-        if !self.prepared {
-            self.prepared = true;
-            game.cfg.package_interval = Some(PACKAGE_INTERVAL);
-            for (edid, v) in [(clock::GAME_HOUR, self.clock.hour.rem_euclid(24.0)), (clock::GAME_DAYS_PASSED, self.clock.days_passed)] {
-                if let Err(e) = set_global(game, edid, v) {
-                    warn!("ai: {e}");
-                }
-            }
-        }
+        self.prepare(game, restored);
         // A menu, a conversation or a loading screen holds the game: nobody moves.
         self.held_now = game.menu.is_some() || game.loading || game.dialogue.is_some();
         if self.held_now {
@@ -2004,6 +1997,25 @@ impl Core {
         }
         self.no_room.retain(|_, until| now < *until);
         self.note(game, blocks, &held, now);
+    }
+
+    /// The first think with a game: the package interval, and the start clock (`--hour`,
+    /// `--day`, which reach a new game only here). A game `restored` from a save has the
+    /// save's clock and keeps it (#1607).
+    fn prepare(&mut self, game: &mut Game, restored: bool) {
+        if self.prepared {
+            return;
+        }
+        self.prepared = true;
+        game.cfg.package_interval = Some(PACKAGE_INTERVAL);
+        if restored {
+            return;
+        }
+        for (edid, v) in [(clock::GAME_HOUR, self.clock.hour.rem_euclid(24.0)), (clock::GAME_DAYS_PASSED, self.clock.days_passed)] {
+            if let Err(e) = set_global(game, edid, v) {
+                warn!("ai: {e}");
+            }
+        }
     }
 
     /// `hours` passed in the Wait menu (the calendar is already there): for each, every
@@ -2582,7 +2594,7 @@ pub fn drive(
             res.core.arrive(game, &nav, &world, &streamer, None);
             res.core.switch_navmeshes(game, &mut nav);
             let _span = info_span!("ai::think").entered();
-            res.core.think(game, true, &nav, &world, &mut doors, None, None, dt, now, 0);
+            res.core.think(game, true, false, &nav, &world, &mut doors, None, None, dt, now, 0);
         }
         (None, Some(mut script), Some(sim)) => {
             let script = &mut *script;
@@ -2622,7 +2634,8 @@ pub fn drive(
                 core.switch_navmeshes(&mut rt.game, &mut nav);
                 drop(span);
                 let _span = info_span!("ai::think").entered();
-                core.think(&mut rt.game, false, &nav, &world, &mut doors, phys, blocks, dt, now, waited)
+                let restored = rt.restored_from_save;
+                core.think(&mut rt.game, false, restored, &nav, &world, &mut doors, phys, blocks, dt, now, waited)
             });
         }
         _ => return,
@@ -3078,6 +3091,32 @@ mod tests {
         residents.own = None;
         assert!(std::ptr::eq(residents.prefetch_world(id.0, Some(&shared)).unwrap(), &shared));
         assert!(residents.prefetch_world(id.0, None).is_none());
+    }
+
+    /// A game restored from a save keeps the save's clock; a new game takes the start
+    /// clock, which is how `--hour` and `--day` reach it. The package interval is set for
+    /// both (#1607).
+    #[test]
+    fn only_a_new_game_takes_the_start_clock() {
+        use super::{clock, set_global, Clock, Residents, PACKAGE_INTERVAL};
+        use crate::outfits::tests::{actor_forms, empty_world_data, game};
+        let mut forms = actor_forms(vec![]);
+        for (id, edid) in [(0x200, clock::GAME_HOUR), (0x201, clock::GAME_DAYS_PASSED)] {
+            forms.edids.insert(edid.to_ascii_lowercase(), FormId(id));
+            forms.globals.insert(FormId(id), 0.0);
+        }
+        let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(forms));
+        let refs: &'static fnv_sim::RefTable = Box::leak(Box::new(fnv_sim::RefTable::default()));
+        for (restored, hour, days) in [(true, 20.0, 25.0), (false, 9.0, 5.0)] {
+            let mut g = game(fnv_sim::World::new(forms, refs, Default::default()));
+            set_global(&mut g, clock::GAME_HOUR, 20.0).unwrap();
+            set_global(&mut g, clock::GAME_DAYS_PASSED, 25.0).unwrap();
+            let mut residents = Residents::build(&empty_world_data(), &[], Clock { hour: 9.0, days_passed: 5.0, rate: 0.0 }, 100.0, true).unwrap();
+            residents.core.prepare(&mut g, restored);
+            assert_eq!(g.world.global(FormId(0x200)).unwrap(), hour);
+            assert_eq!(g.world.global(FormId(0x201)).unwrap(), days);
+            assert_eq!(g.cfg.package_interval, Some(PACKAGE_INTERVAL));
+        }
     }
 
     /// Out of a house and straight back: the residents seen in the street before are not

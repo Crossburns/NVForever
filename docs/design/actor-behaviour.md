@@ -358,6 +358,9 @@ Step 4c, first part (2026-10-10):
   at `--hour`, runs at the TimeScale global, and the sky shows it (17:30 became 17:55
   in a 50-second run); an hour set with the `[` `]` keys becomes the game's.
   `--still-sky` keeps the old behaviour; `--time-scale` keeps the sky's own clock.
+  With the residents running, GameDaysPassed starts at `--day` (the plugins' value
+  without it) in a new game; a loaded save keeps the hour and day it has
+  (`residents::Core::prepare`) [design].
 
 **Furniture** (2026-10-10, with `furniture.rs` from main; `residents::choose_seat`): an
 actor that has arrived uses furniture when its package gives it some:

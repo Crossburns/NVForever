@@ -292,7 +292,9 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   once the load order is known (remapped if it differs, §4.1); the script runtime restores the
   game and the simulation as it is made, before its first frame, and sends `RefChanged`
   for every reference the save changed so the drawn world follows; the engine part is put
-  back next. Loading while playing (console `load`, F9, the pause and main menus) starts
+  back next. The game's clock stays the save's: the residents' start clock goes only into
+  a new game, so `--day` does nothing with `--load` [design: `residents::Core::prepare`;
+  smoke `save-days-write`, `save-days-load`]. Loading while playing (console `load`, F9, the pause and main menus) starts
   NVForever again with the same arguments and `--load` (those the save decides left out),
   so a save always lands in a world built fresh from the plugins and nothing of the run
   before carries over.

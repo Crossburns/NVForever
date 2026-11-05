@@ -6267,6 +6267,36 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-days-write"
+source = "#1607: a new game starts at --day 30, then GameDaysPassed is set to 25 and saved; save-days-load reads it back, so run them together"
+note = "GameDaysPassed runs on with the clock and rounds up to .01 after 14.4 s of play at TimeScale 30: 30.01 at 19 s is still the --day it started at"
+areas = ["save", "ai"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-days-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "19:getglobalvalue GameDaysPassed;20:set GameDaysPassed to 25;21:getglobalvalue GameDaysPassed;save smoke-days;22:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--day", "30"]
+run_seconds = 26
+expect = [
+  { re = 'console: GetGlobalValue >> 30\.0\d', label = "--day reaches a new game" },
+  { re = 'console: GetGlobalValue >> 25\.00', label = "the day is 25 before the save" },
+  { re = 'save: wrote .*smoke-days\.nvfsave \(manual', label = "the save is written" },
+]
+
+[[scenario]]
+name = "save-days-load"
+source = "#1607: --load keeps the save's GameDaysPassed with the residents running (the default in --play)"
+note = "GameDaysPassed runs on with the clock and rounds up to .01 after 14.4 s of play at TimeScale 30: this read comes about 15 s after the set, so 25.01 is as good as 25.00; the bug read the plugins' 5.00"
+areas = ["save", "ai"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-days-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:getglobalvalue GameDaysPassed;15:close" }
+args = ["--play", "--load", "smoke-days", "--no-voice"]
+run_seconds = 19
+expect = [
+  { re = "ai: .*the package choice is the game's", label = "the residents are on" },
+  { re = 'load: restored .*smoke-days\.nvfsave', label = "the save is restored" },
+  { re = 'console: GetGlobalValue >> 25\.0\d', label = "the day survives the load with the residents on" },
+]
+
+[[scenario]]
 name = "save-load-order"
 source = "no-owner queue item 29 (2026-10-21; docs/design/save-load.md §4.1): a save made with one load order loads into another: FormIDs move to their plugin's place now, what came from plugins no longer loaded is dropped and the player told; run after save-write, whose save it loads"
 note = "save-write runs with the ten masters; this run loads its save with three of them, Gun Runners' Arsenal moved before Dead Money (index 05 -> 01, Dead Money 01 -> 02), the add-ons Honest Hearts, Old World Blues, Lonesome Road and the four packs gone. The base game's changes come back as in save-load"

@@ -280,6 +280,9 @@ pub struct Runtime {
     /// `MenuMode 1001` block still runs once with the button pressed). The menu and the
     /// box that was in front.
     closing: Option<(u16, Option<FormId>)>,
+    /// The game in place is a save's, not a new game's: its clock is the save's (the
+    /// residents leave it alone, `Core::prepare` in `nvforever::residents`).
+    pub restored_from_save: bool,
     /// `--new-game`: the opening starts on the first frame scripts run.
     opening_pending: bool,
     /// A run without a save: the Script Runner's new-game files (`gn_`, `ln_`) run on the
@@ -625,6 +628,7 @@ impl Runtime {
             marked: BTreeSet::new(),
             skip: BTreeSet::new(),
             closing: None,
+            restored_from_save: false,
             opening_pending: new_game,
             new_game_files: false,
             wake_talk: None,
@@ -682,6 +686,7 @@ impl Runtime {
         self.opening_pending = false;
         self.new_game_files = false;
         self.player_cell = None;
+        self.restored_from_save = true;
         with_world(self, sim, |rt| rt.snapshot_inventory());
         Ok(changed)
     }
@@ -2306,6 +2311,7 @@ impl ScriptState {
             marked: BTreeSet::new(),
             skip: BTreeSet::new(),
             closing: None,
+            restored_from_save: false,
             opening_pending: false,
             new_game_files: false,
             wake_talk: None,

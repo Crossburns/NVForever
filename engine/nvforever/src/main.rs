@@ -272,7 +272,8 @@ struct Args {
     /// Generated terrain: mesh vertex step in landscape grid vertices (1, 2, 4, 8, 16 or 32).
     #[arg(long, default_value_t = 2)]
     lodgen_step: usize,
-    /// Game days passed, for the moon phase (default: the GameDaysPassed global).
+    /// Game days passed at the start of a new game (default: the GameDaysPassed global);
+    /// a loaded save keeps its own.
     #[arg(long)]
     day: Option<f32>,
     /// Do not apply the image-space grade (the worldspace's image space and the weather's
