@@ -1620,7 +1620,13 @@ impl Ai {
         let from = Place { space: a.walker.space, pos: a.walker.feet };
         match a.walker.go_to(nav, target, &params) {
             Ok(path) => {
-                let (length, doors) = (path.length, path.legs.iter().filter_map(|l| l.door.map(|d| FormId(d.door))).collect());
+                let (length, doors): (f32, Vec<FormId>) = (path.length, path.legs.iter().filter_map(|l| l.door.map(|d| FormId(d.door))).collect());
+                // The way ends short of the target, inside the talking distance, not on
+                // its spot: a wait walks it to its end (issue #1597) [design: three
+                // quarters of the distance].
+                if let Some(f) = a.walker.follower.as_mut() {
+                    f.goal_radius = f.goal_radius.max(talk.distance * 0.75);
+                }
                 if a.activity != Activity::Travelling {
                     a.trip_started = game.time;
                     a.trip_from = a.walker.travelled;

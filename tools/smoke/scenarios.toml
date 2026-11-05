@@ -18913,6 +18913,24 @@ expect = [
 ]
 
 [[scenario]]
+name = "wait-greeter-stops-short"
+source = "issue #1597 (owner): waiting while a force-greeter walks up put him inside the player (Malcolm Holmes). The wait walks the approach to its end, and its end was the player's own spot. The approach's way now ends within three quarters of the talking distance (fnv_ai approach: goal radius), and the walker stops at a widened goal radius however long its step (fnv_nav Walker)"
+note = "the first star cap enables Holmes and gives him his Dialogue package (the player, distance 100); at 4 s the console moves him 1,500 units east of the player; at 7-9 s the player waits one hour. Before the change he stood 30 units off when the wait ended (inside the player, then pushed aside)"
+areas = ["ai", "dialogue", "wait"]
+paths = ["crates/fnv-nav/src/follow.rs", "crates/fnv-ai/src/carry.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "1:call:player:AddItem:NVStarBottleCap:1", NVF_PLAY_TEST_CONSOLE = "4:sshqmalcolmholmesref.moveto player 1500 0 0;4.3:close", NVF_PLAY_TEST_WAIT = "7:open,8:hours=1,9:accept" }
+args = ["--play", "--pos=21000,-14450,7500", "--heading", "90", "--hour", "12", "--no-voice"]
+run_seconds = 30
+order = [[
+  { re = 'SSHQMalcolmHolmesREF: runs up to 0x00000014 to talk .*: 1500 units away', label = "Holmes runs at the player from 1,500 units" },
+  { re = 'an hour passed in the wait menu', label = "the player waits an hour" },
+  { re = 'SSHQMalcolmHolmesREF: starts a conversation with 0x00000014 from (?P<n>\d+) units', range = [50, 150], label = "after the wait he talks from his talking distance, not from inside the player" },
+]]
+forbid = [
+  { re = 'SSHQMalcolmHolmesREF: was pushed aside', label = "he was never on the player's spot to be pushed off it" },
+]
+
+[[scenario]]
 name = "script-move-dynamic-clutter"
 source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
 note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"
