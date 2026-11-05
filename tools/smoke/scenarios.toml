@@ -3221,11 +3221,11 @@ order = [[
   "pipboy: needle settled at -36.0 deg for 300 rads",
   "pipboy: needle moving from -36.0 deg to 72.0 deg",
   "pipboy: needle settled at 72.0 deg for 900 rads",
-  "pipboy: tab knob moving from 65.0 deg to 35.0 deg",
-  "pipboy: tab knob settled at 35.0 deg (tab 1)",
-  "pipboy: tab knob settled at 5.0 deg (tab 2)",
-  "pipboy: tab knob settled at -55.0 deg (tab 4)",
-  "pipboy: tab knob settled at 65.0 deg (tab 0)",
+  "pipboy: tab knob moving from 66.0 deg to 38.0 deg",
+  "pipboy: tab knob settled at 38.0 deg (tab 1)",
+  "pipboy: tab knob settled at 10.0 deg (tab 2)",
+  "pipboy: tab knob settled at -46.0 deg (tab 4)",
+  "pipboy: tab knob settled at 66.0 deg (tab 0)",
   { re = 'pipboy: scroll wheel settled at \d+\.\d deg \(row [1-9]', label = "the wheel turned by the row" },
 ]]
 forbid = [

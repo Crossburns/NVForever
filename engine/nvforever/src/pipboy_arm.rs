@@ -50,7 +50,7 @@ use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use nvf_assets::nif_material::{Falloff, NifMaterial};
-use nvf_play::pipboy::device_screen::{screen_tint, GLARE_LINEAR_SCALE};
+use nvf_play::pipboy::device_screen::{GLARE_LINEAR_SCALE, SCREEN_TINT};
 use nvf_play::pipboy::{AidTarget, Page, PipBoy, PipBoyAid, PipBoyInput, PipBoyScreen, CANVAS, TARGET};
 use nvf_play::PlayerCamera;
 use std::sync::Arc;
@@ -180,7 +180,7 @@ fn glare_material(own: &NifMaterial) -> NifMaterial {
 fn menus_material(own: &NifMaterial, image: Handle<Image>) -> NifMaterial {
     let mut m = own.clone();
     let scale = (CANVAS / TARGET.as_vec2()) / UV_EXTENT;
-    let [r, g, b] = screen_tint();
+    let [r, g, b] = SCREEN_TINT;
     m.base.base_color = Color::LinearRgba(LinearRgba::rgb(r, g, b));
     m.base.base_color_texture = Some(image);
     m.base.emissive_texture = None;
@@ -188,6 +188,7 @@ fn menus_material(own: &NifMaterial, image: Handle<Image>) -> NifMaterial {
     m.base.unlit = true;
     m.base.alpha_mode = AlphaMode::Opaque;
     m.base.uv_transform = bevy::math::Affine2::from_scale(scale);
+    m.extension.pipboy_screen = true;
     m
 }
 

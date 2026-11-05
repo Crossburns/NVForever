@@ -90,21 +90,21 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     up it quivers a little about where it rests, a small shiver [observed: playtest 2026-11-05,
     against the original]; two sines of unrelated rates, about 2° in all at 3.7 and 6 a second,
     are [hypothesis], judged by eye. The travel and the log are without the quiver.
-  - `TabKnob`, about the Z of its node `TabKnob`, through the origin. In that frame the knob is
-    straight: its base lies flat at height 0 (within 0.02), its two fins are 180° apart and the
-    dial's disc is centred on the origin, and the plate's faces around it are within 2° of
-    square to that Z [observed: `fnvtool nif decode` of both arms, the plate's faces and UVs
-    onto `PipBoyArm01.dds`, 2026-11-05]. The shape's own local Z leans 28° off that shaft
-    (the shaft in the shape's frame: `pipboy_controls.rs` `KNOB_SHAFT`). The turn itself: the
-    page's tab, not the page (tab 0 of STATS, ITEMS and DATA look the same, and the wrap comes
-    back), five detents at the dial's five marks. Seen down the shaft, clockwise from the
-    node's Y, the marks lie at 33°, 64°, 94°, 123°, 156° on the male arm and 35°, 67°, 97°,
-    125°, 155° on the female, the pointing fin at 100° on both [observed: the same decode].
-    A constant 30° a tab, tab 0 turned 65° and tab 4 −55° from the bind pose, puts the fin
-    within 3° of every mark on either arm; that the step is constant is [hypothesis]. Side by side at all
-    five tabs the fin and body sit where the original's do [observed: this engine's shots at
-    1920 x 1080 against the private job pipboy_special_device_motion, 2026-11-05]. A step is
-    over in about 8 game loops [observed]; 180° a second, and the wrap swinging back at that speed,
+  - `TabKnob`, about the Z of its node `TabKnob`, through the origin, the whole knob leaned.
+    In that node's frame the knob is straight: its base flat (within 0.02), its two fins 180°
+    apart and the dial's disc centred on the origin [observed: `fnvtool nif decode` of both
+    arms, the plate's faces and UVs onto `PipBoyArm01.dds`, 2026-11-05]. The shape's own local Z
+    leans 28° off that shaft. Stood square to the plate it was seen tilted too far against the
+    original (playtest 2026-11-05), so it leans 17.6° with its top towards the top of the
+    device, which is what dropping the node's own tilt would give (`pipboy_controls.rs`
+    `KNOB_SHAFT`, `KNOB_LEAN_AXIS`). That the original does so is [hypothesis]: silhouettes
+    against the private job's five tabs do not settle it (0.145 against 0.147 for square),
+    though a free fit of the lean landed within 3° of it. The turn itself: the page's tab, not
+    the page (tab 0 of STATS, ITEMS and DATA look the same, and the wrap comes back), five
+    detents at the dial's five marks. Bringing the fin's tip onto each mark on the screen, by a
+    camera fitted to the private job, takes 67°, 37°, 10°, −16°, −49° [observed]; a constant 28°
+    a tab, 66° at tab 0 and −46° at tab 4, is within 3° of those, and that the step is constant
+    is [hypothesis]. A step is over in about 8 game loops [observed]; 180° a second, and the wrap swinging back at that speed,
     are [hypothesis].
   - `ScrollKnob`, about its local X, its axle: the list's selected row, one ridge a row (the
     wheel has 26 ridges, its outermost vertices every 13.85° [observed: `fnvtool nif decode`]),
@@ -151,34 +151,42 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   11) lower right and (79, 77, 49) at the top middle above the figure: a strong falloff to
   the edges, warm, and brighter across the top. Through the engine's display-value add
   (nif.md §6) the glare lay over the menus as a pale grey-blue haze, so it was hidden.
+- **The original's screen in playtest shots** [observed: 1920 × 1080 shots of the original,
+  2026-11-05]: a filled bar reads about (206, 163, 57) indoors and (201, 161, 54) at dusk, the
+  same screen in both. Across a scanline red stays almost flat (201 to 211) while green runs
+  145 to 183 and blue 48 to 66, so the stripes read yellow and orange, not grey. These shots
+  are brighter than the private job's above; the numbers below are fitted to them.
 - **The static treatment** (nvf-play `pipboy/device_screen.rs`, all its numbers in that
-  file), fitted to those places through a model of the path: image × `SCREEN_TINT` × the
-  shapes' vertex colour (0.624 in linear light), plus the glare, through Bevy's
-  TonyMcMapface table and an image-space grade fitted to our own readings. It reaches them
-  to about 2 units; measured in game, at 1280 × 720, noon in Goodsprings, our frames at
-  those places come within a few units of the capture [observed: the same eight places,
-  2026-11-04]. That is the one case measured: the image-space grade applies to these unlit
-  shapes too, so it establishes neither other hours nor interiors, nor custom colours:
+  file): image × `SCREEN_TINT` × the shapes' vertex colour (0.624 in linear light), plus the
+  glare, with red stopped at a ceiling, through Bevy's TonyMcMapface table. The scene's
+  image-space grade leaves the screen alone: the shape marks its pixels in alpha
+  (`NifSurface::pipboy_screen`, `imagespace.wesl` `SCREEN_MARK`), because the grade at noon
+  brightens by 1.3 and the original's screen does not follow it; the fade and VATS still cover
+  it [design]. In this engine at 1920 × 1080 a filled bar reads (204, 160, 59) indoors, red
+  204 to 205, green 143 to 185, blue 52 to 68, and (193, 151, 55) at noon in Goodsprings
+  [observed: this engine's shots, 2026-11-05]. Custom colours and other hours are not measured.
+  The ceiling is [hypothesis] for how the original comes by its flat red; it is fitted, and
+  the original's own path is not established:
   - The falloff is the background picture's vignette: `pipboy.dds` runs from about 9 at its
     corners to 93 near the top of its middle [observed: the file]. Drawn over a large
     undercoat, as the first fit had it, the vignette was lost. The picture is at brightness
-    129 (the menu file's 90 at the first tint [documented: inventory_menu.xml]), covering
+    120 (the menu file's 90 at the first tint [documented: inventory_menu.xml]), covering
     the undercoat at alpha 0.4 and adding what it would over black.
   - The undercoat, the screen camera's clear colour, is next to nothing: (0.00047, 0.00055,
     0.00054) of light in the view.
   - The glow across the top and the patch on the right are `glare:0`'s: its texture's
     brightest band and patch lie there [observed: the file]. It is drawn over the menus on a
     copy of its material, unlit, added in linear light as the terminal's glare is (hacking.md
-    §7), at a linear scale of (1.87, 1.07, 0.57) on the texture, warmer than the texture.
+    §7), at a linear scale of (1.95, 1.3, 0.9) on the texture, warmer than the texture.
     The copy keeps the shape's squeezed first-person depth, which Bevy's plain additive
     material would not, and the sheet's soft intersection is off.
   - `ScreenLit:8` stays hidden: `screen.dds` is black, `Screen_n.dds` is flat and its
     specular colour black [observed: the files; `fnvtool nif decode`], so it carries no
-    falloff. Both shapes used are unlit, so nothing here is lit by the world [design]; how
-    the hour changes the original's screen is not in the fit, and here the grade moves it.
+    falloff. Both shapes used are unlit, so nothing here is lit by the world [design]; the
+    hour does not move it here, the grade being left off.
   - One baked column of scanlines over the canvas, a value per row (no tiling): the band
-    of `pipboyscanlines.dds`, rescaled to dim display values by 15% at its dark end, every
-    9.5 of the canvas. The undercoat and the picture are raised by what the lines take
+    of `pipboyscanlines.dds`, rescaled to dim display values by 24% at its dark end, every
+    9.5 of the canvas (through the tone map, about 21% in green on a filled bar). The undercoat and the picture are raised by what the lines take
     away on average, as the terminal's are; the ink is not, its bright rows keeping their
     value.
   - One owner around the shared image: the layers are not part of the pages' tree, so
@@ -193,7 +201,7 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   vertical hold and shudder (the INI's transitions) are not built.
 - **The beam** [observed: playtest 2026-11-05, against the original]: a brighter
   band sweeps down the screen every 5 seconds, taking about a second. NVForever draws one
-  band an eighth of the canvas high, a raised cosine of alpha 0.12 at its middle in the
+  band an eighth of the canvas high, a raised cosine of alpha 0.045 at its middle in the
   Pip-Boy's colour lightened half way to white, over the pages and under the scanlines,
   from above the top edge to the foot in 1 s on the real clock, hidden between sweeps and
   held with the pause menu; the height, brightness and travel time are [hypothesis]

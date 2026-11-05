@@ -5,7 +5,8 @@
 //! The needle (its two shapes) turns about its local Z through its origin, out of the dial,
 //! and the wheel about its local X through its origin, its axle: their vertices lie around
 //! their origins [observed: `fnvtool nif decode`]. The tab knob turns through its origin too,
-//! about its node's Z, which is not its shape's ([`KNOB_SHAFT`]).
+//! about its node's Z, which is not its shape's ([`KNOB_SHAFT`]), and stands leaned off the
+//! plate as the original's does ([`KNOB_LEAN_AXIS`]).
 //! The model's X runs right across the device in the view and its Y up [observed: where the
 //! nodes are against the shots]. The shapes are rigid, each a child of the bone it is
 //! attached to, so an absolute `bind × rotation` on its own transform turns it, after the arm
@@ -56,23 +57,28 @@ const NEEDLE_DEGREES_PER_RAD: f32 = 0.18;
 const NEEDLE_SPEED: f32 = 30.0;
 
 /// The tab knob's five detents, one a tab of whichever page (tab 0 of each is the same, and
-/// five steps come back round). Seen down the knob's shaft, clockwise from the node's Y, the
-/// dial's marks lie at 33°, 64°, 94°, 123°, 156° on the male arm and 35°, 67°, 97°, 125°, 155°
-/// on the female, and the fin that points at them at 100° on both [observed: `fnvtool nif
-/// decode` of both arms, the plate's faces and UVs onto `PipBoyArm01.dds`, 2026-11-05]. A
-/// constant 30° a tab, with the bind pose 5° past tab 2, puts the fin within 3° of every mark
-/// on either arm; that the turn is constant is [hypothesis]. Side by side at all five tabs the
-/// fin and body sit where the original's do [observed: this engine's shots at 1920 x 1080 against
-/// the private job pipboy_special_device_motion, 2026-11-05].
+/// five steps come back round): the turn that brings the fin's tip onto each of the dial's five
+/// marks on the screen, with the lean below, is 67°, 37°, 10°, −16°, −49° [observed: the model's
+/// fin and marks (`fnvtool nif decode`, the plate's UVs onto `PipBoyArm01.dds`) through a camera
+/// fitted to the private job pipboy_special_device_motion, 2026-11-05]. A constant 28° a tab is
+/// within 3° of those; that the turn is constant is [hypothesis].
 const KNOB_BIND_TAB: i32 = 2;
-const KNOB_DEGREES_PER_TAB: f32 = 30.0;
-const KNOB_BIND_OFFSET: f32 = 5.0;
+const KNOB_DEGREES_PER_TAB: f32 = 28.0;
+const KNOB_BIND_OFFSET: f32 = 10.0;
 /// The knob's shaft in its shape's own frame: the Z of the `TabKnob` node, through the shape's
-/// origin, in both arms. In that frame the knob's base lies flat on the plate (height within
-/// 0.02), its fins are opposite each other and the dial's disc is centred on the origin; the
-/// plate's faces there are within 2° of square to it [observed: `fnvtool nif decode`]. The
-/// shape's own local Z leans 28° off it, which is why the knob slid and wobbled about that.
+/// origin, in both arms. In that frame the knob is straight: its base flat (height within
+/// 0.02), its fins opposite each other, and the dial's disc centred on the origin
+/// [observed: `fnvtool nif decode`]. The shape's own local Z leans 28° off it.
 const KNOB_SHAFT: [f32; 3] = [-0.0378, -0.4754, 0.8790];
+/// The whole knob then leans 17.6° off the plate, its top towards the top of the device: stood
+/// square to the plate, it was seen tilted too far against the original (playtest 2026-11-05).
+/// The lean is what dropping the node's own tilt would give, so that the knob stands on the
+/// model's Z rather than the node's; that the original does so is [hypothesis]. Silhouettes
+/// against the private job's five tabs do not settle it (it scores 0.145 where square scores
+/// 0.147), though a free fit of the lean landed within 3° of it. Measured on the male arm; the
+/// female's node differs by about 3°. The axis is in the shape's frame.
+const KNOB_LEAN_AXIS: [f32; 3] = [-0.9922, 0.1223, 0.0235];
+const KNOB_LEAN_DEGREES: f32 = 17.61;
 /// Degrees a second. [observed: private job pipboy_special_device_motion: a step is over
 /// within about 8 game loops; hypothesis: the rate of those loops, and that the wrap from tab
 /// 4 to 0 swings back at the same speed.]
@@ -136,6 +142,11 @@ pub fn knob_angle(tab: usize) -> f32 {
 /// Where the wheel turns to for row `row`, degrees about its axle from its bind pose.
 pub fn wheel_angle(row: usize) -> f32 {
     row as f32 * WHEEL_DEGREES_PER_ROW
+}
+
+/// The knob's rotation in its shape's frame for a turn of `degrees` about its shaft.
+fn knob_rotation(degrees: f32) -> Quat {
+    Quat::from_axis_angle(Vec3::from_array(KNOB_LEAN_AXIS).normalize(), KNOB_LEAN_DEGREES.to_radians()) * Quat::from_axis_angle(Vec3::from_array(KNOB_SHAFT).normalize(), degrees.to_radians())
 }
 
 /// A step of a control towards `target` at `speed` degrees a second, never past it.
@@ -253,13 +264,13 @@ impl ControlAngles {
         }
     }
 
-    /// The axis (in the shape's own space) and degrees of a part, if it is a control: the
-    /// needle with its quiver while the Pip-Boy is up.
-    fn of(&self, part: PipBoyPart) -> Option<(Vec3, f32)> {
+    /// The rotation (in the shape's own space) of a part, if it is a control: the needle with
+    /// its quiver while the Pip-Boy is up.
+    fn of(&self, part: PipBoyPart) -> Option<Quat> {
         match part {
-            PipBoyPart::Needle => Some((Vec3::Z, self.needle.angle + self.up_for.filter(|_| self.quiver).map_or(0.0, needle_quiver))),
-            PipBoyPart::TabKnob => Some((Vec3::from_array(KNOB_SHAFT).normalize(), self.knob.angle)),
-            PipBoyPart::ScrollKnob => Some((Vec3::X, self.wheel.angle)),
+            PipBoyPart::Needle => Some(Quat::from_rotation_z((self.needle.angle + self.up_for.filter(|_| self.quiver).map_or(0.0, needle_quiver)).to_radians())),
+            PipBoyPart::TabKnob => Some(knob_rotation(self.knob.angle)),
+            PipBoyPart::ScrollKnob => Some(Quat::from_rotation_x(self.wheel.angle.to_radians())),
             _ => None,
         }
     }
@@ -271,16 +282,16 @@ pub struct ControlBind(Option<Transform>);
 
 type ControlShapes<'w, 's> = Query<'w, 's, (Entity, &'static PipBoyPart, &'static mut Transform, &'static PartMesh, Option<&'static SkinnedMesh>, Option<&'static ControlBind>)>;
 
-/// `bind × rotation` about `axis`, in the shape's own frame, through its origin.
-fn posed(bind: &Transform, axis: Vec3, degrees: f32) -> Transform {
-    bind.mul_transform(Transform::from_rotation(Quat::from_axis_angle(axis, degrees.to_radians())))
+/// `bind × rotation`, in the shape's own frame, through its origin.
+fn posed(bind: &Transform, rotation: Quat) -> Transform {
+    bind.mul_transform(Transform::from_rotation(rotation))
 }
 
 /// Move the controls on and pose every control of the rig from its own bind.
 fn pose_controls(commands: &mut Commands, r: Readings, dt: f32, angles: &mut ControlAngles, shapes: &mut ControlShapes) {
     angles.advance(r, dt);
     for (e, part, mut t, mesh, skin, bind) in shapes {
-        let Some((axis, degrees)) = angles.of(*part) else { continue };
+        let Some(rotation) = angles.of(*part) else { continue };
         let bind = match bind {
             Some(b) => b.0,
             None => {
@@ -306,7 +317,7 @@ fn pose_controls(commands: &mut Commands, r: Readings, dt: f32, angles: &mut Con
             }
         };
         let Some(bind) = bind else { continue };
-        let want = posed(&bind, axis, degrees);
+        let want = posed(&bind, rotation);
         if *t != want {
             *t = want;
         }
@@ -371,16 +382,8 @@ mod tests {
     }
 
     #[test]
-    fn the_knobs_fin_lands_on_the_dials_marks_on_either_arm() {
-        assert_eq!([0, 1, 2, 3, 4].map(knob_angle), [65.0, 35.0, 5.0, -25.0, -55.0]);
-        // Clockwise from the node's Y down the shaft; a positive turn is counter-clockwise.
-        const FIN: f32 = 99.75;
-        for marks in [[32.9, 63.5, 94.0, 123.0, 156.0], [34.9, 66.5, 97.3, 124.9, 155.1]] {
-            for (tab, mark) in marks.into_iter().enumerate() {
-                let fin: f32 = FIN - knob_angle(tab);
-                assert!((fin - mark).abs() < 3.0, "tab {tab}: fin at {fin}, mark at {mark}");
-            }
-        }
+    fn the_knob_has_five_detents_a_step_apart() {
+        assert_eq!([0, 1, 2, 3, 4].map(knob_angle), [66.0, 38.0, 10.0, -18.0, -46.0]);
     }
 
     #[test]
@@ -479,16 +482,19 @@ mod tests {
     }
 
     #[test]
-    fn the_knob_turns_about_its_shaft_and_stays_on_it() {
-        let axis = Vec3::from_array(KNOB_SHAFT).normalize();
+    fn the_knob_turns_about_its_leaned_shaft_and_stays_on_it() {
+        let shaft = Vec3::from_array(KNOB_SHAFT).normalize();
         let b = bind();
-        let t = posed(&b, axis, knob_angle(0));
-        // Two points of the shaft stay; a point off it goes round it.
-        for p in [Vec3::ZERO, axis] {
-            assert!((t.transform_point(p) - b.transform_point(p)).length() < 1e-5, "{p}");
+        let at = |tab: usize| posed(&b, knob_rotation(knob_angle(tab)));
+        // The leaned shaft stays where it is at every tab, its origin too; a point off it goes round.
+        let leaned = knob_rotation(0.0) * shaft;
+        for tab in 1..5 {
+            assert!((at(tab).transform_point(shaft) - at(0).transform_point(shaft)).length() < 1e-5, "tab {tab}");
+            assert_eq!(at(tab).translation, b.translation, "through its origin");
+            assert!((at(tab).transform_point(Vec3::X) - at(0).transform_point(Vec3::X)).length() > 0.1, "tab {tab}");
         }
-        assert!((t.transform_point(Vec3::X) - b.transform_point(Vec3::X)).length() > 0.1);
-        assert_eq!(posed(&b, axis, 0.0), b);
+        // It leans by the lean, whatever the turn.
+        assert!((leaned.angle_between(shaft).to_degrees() - KNOB_LEAN_DEGREES).abs() < 1.0, "{leaned}");
     }
 
     #[test]
@@ -515,13 +521,13 @@ mod tests {
         a.advance(Readings { rads: Some(500.0), tab: Some(0), row: Some(0) }, 0.1);
         assert_eq!(a.needle.angle, 0.0, "the travel angle is the reading's");
         assert_eq!(a.up_for, Some(0.1));
-        let shown = a.of(PipBoyPart::Needle).unwrap().1;
-        assert!((shown - needle_quiver(0.1)).abs() < 1e-5 && shown != 0.0);
-        assert_eq!(a.of(PipBoyPart::TabKnob).unwrap().1, knob_angle(0), "the knob does not quiver");
+        let shown = a.of(PipBoyPart::Needle).unwrap();
+        assert!(shown.angle_between(Quat::from_rotation_z(needle_quiver(0.1).to_radians())) < 1e-3 && shown != Quat::IDENTITY);
+        assert_eq!(a.of(PipBoyPart::TabKnob).unwrap(), knob_rotation(knob_angle(0)), "the knob does not quiver");
         // Down: no reading, the clock is dropped and the needle rests on its angle.
         a.advance(Readings::default(), 0.1);
         assert_eq!(a.up_for, None);
-        assert_eq!(a.of(PipBoyPart::Needle).unwrap().1, 0.0);
+        assert_eq!(a.of(PipBoyPart::Needle).unwrap(), Quat::IDENTITY);
         // Up again, the clock starts afresh.
         a.advance(Readings { rads: Some(500.0), tab: Some(0), row: Some(0) }, 0.05);
         assert_eq!(a.up_for, Some(0.05));

@@ -28,7 +28,8 @@
 //! The path from the image to the frame [design: `pipboy_arm.rs`, `nvf_assets::nif_spawn`
 //! `unlit_vertex_colors`, `imagespace.wesl`]: image × [`SCREEN_TINT`] ×
 //! [`SHAPE_VERTEX_COLOUR`], plus the glare's texel × [`GLARE_LINEAR_SCALE`] ×
-//! [`SHAPE_VERTEX_COLOUR`], through the world camera's tone mapping and image-space grade.
+//! [`SHAPE_VERTEX_COLOUR`], through the world camera's tone mapping. The scene's image-space
+//! grade leaves the screen's pixels alone (`imagespace.wesl`, `SCREEN_MARK`).
 //!
 //! The Pip-Boy's colour reaches the picture here ([`apply_colour`]), not through
 //! `ui_colour::recolour`, which leaves every [`ScreenFxNode`] alone: the picture's tint is
@@ -56,12 +57,14 @@ use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
 use nvf_assets::GameData;
 
-/// What the screen multiplies the menus' picture by (linear), the view's tone map and grade
-/// after it: so that a filled bar comes out as the original's (176.8, 132.9, 47.2) where
-/// (0.83, 1.17, 1.27) gave (208.7, 167.2, 44.6) [observed: private job
-/// pipboy_special_device_base]. An older reading of another scene, (220, 180, 64), gave
-/// that first tint.
-pub const SCREEN_TINT: [f32; 3] = [0.51, 0.648, 1.389];
+/// What the screen multiplies the menus' picture by (linear), the view's tone map after it, with
+/// red stopped at a ceiling and the scene's grade left off (`nif_material.wesl`,
+/// `PIPBOY_SCREEN`; `imagespace.wesl`, `SCREEN_MARK`). Fitted so a
+/// filled bar comes out as the original's about (206, 163, 57), with green and blue dipping
+/// on the scanlines and red almost flat, 201 to 211; the original reads the same indoors and
+/// at dusk [observed: playtest shots of the original at 1920 x 1080, 2026-11-05]. The earlier
+/// (0.51, 0.648, 1.389) was fitted to the dimmer private job pipboy_special_device_base.
+pub const SCREEN_TINT: [f32; 3] = [2.1, 1.85, 1.9];
 
 /// The vertex colour both the screen's and the glare's shapes carry, in linear light: 0.81
 /// in `pipboyarm.nif` [observed: `fnvtool nif decode`], taken as a display value on an
@@ -73,18 +76,18 @@ pub const SHAPE_VERTEX_COLOUR: f32 = 0.624;
 /// [observed: private job pipboy_special_device_base; fitted with the two below].
 pub const UNDERCOAT_LIGHT: [f32; 3] = [0.00047, 0.00055, 0.00054];
 
-/// The glare's linear scale on `ScreenGlare.dds`, its colour warmer than the texture's
-/// [observed: private job pipboy_special_device_base; fitted: the top middle above the
-/// figure, (78.6, 76.9, 49.3), with the patch to the right]. The terminal's
-/// `GLARE_LINEAR_SCALE` is measured for its own glass and is not this.
-pub const GLARE_LINEAR_SCALE: [f32; 3] = [1.87, 1.07, 0.57];
+/// The glare's linear scale on `ScreenGlare.dds`, its colour warmer than the texture's: fitted
+/// to the top middle above the figure, about (86, 76, 50) [observed: playtest shots of the
+/// original at 1920 x 1080, 2026-11-05]. The terminal's `GLARE_LINEAR_SCALE` is measured for
+/// its own glass and is not this.
+pub const GLARE_LINEAR_SCALE: [f32; 3] = [1.95, 1.3, 0.9];
 
 /// The background picture over the whole canvas. Its vignette is the screen's falloff. The
-/// menu files give it brightness 90 [documented: as `frame.rs`]; it takes 129 to match
-/// beside the figure and at the edges with the dimmer [`SCREEN_TINT`] [observed: private job
-/// pipboy_special_device_base; fitted].
+/// menu files give it brightness 90 [documented: as `frame.rs`]; it takes 120 to match beside
+/// the figure, about (35, 27, 15) [observed: playtest shots of the original at 1920 x 1080,
+/// 2026-11-05; fitted].
 const BACKGROUND: &str = "Interface\\Shared\\Background\\pipboy.dds";
-pub const BACKGROUND_BRIGHTNESS: f32 = 129.0;
+pub const BACKGROUND_BRIGHTNESS: f32 = 120.0;
 /// How much of the undercoat the picture covers. What it adds stays what it would over
 /// black, its vignette whole; the undercoat shows through [design: the terminal's way,
 /// `terminal::screen::BACKGROUND_ALPHA`; the value is its].
@@ -97,38 +100,10 @@ const SCANLINES: &str = "textures\\pipboy3000\\pipboyscanlines.dds";
 pub const SCANLINE_PITCH: f32 = 9.5;
 /// The dip at the dark end: 16 to 22% between the brightest and the darkest rows of an
 /// empty stretch of the original's screen at 1920 × 1080, indoors and at dusk alike, over a
-/// 9-pixel period [observed: owner's shots 2026-11-05]; the earlier 15% was the ITEMS
-/// screenshot's reading.
-pub const SCANLINE_DEPTH: f32 = 0.20;
-
-/// The screen's tint for this run: [`SCREEN_TINT`], or `NVF_PLAY_DEBUG_SCREEN_TINT=r,g,b`
-/// (the same linear scales), a development aid for fitting the tint against the original's
-/// screenshots in the game without a rebuild. Read once and logged.
-pub fn screen_tint() -> [f32; 3] {
-    static TINT: std::sync::OnceLock<[f32; 3]> = std::sync::OnceLock::new();
-    *TINT.get_or_init(|| match std::env::var("NVF_PLAY_DEBUG_SCREEN_TINT") {
-        Ok(text) => match parse_tint(&text) {
-            Some(t) => {
-                info!("debug aid NVF_PLAY_DEBUG_SCREEN_TINT: screen tint ({:.3}, {:.3}, {:.3}) instead of ({:.3}, {:.3}, {:.3})", t[0], t[1], t[2], SCREEN_TINT[0], SCREEN_TINT[1], SCREEN_TINT[2]);
-                t
-            }
-            None => {
-                warn!("debug aid NVF_PLAY_DEBUG_SCREEN_TINT: {text:?} is not r,g,b (three finite scales above 0); the fitted tint stays");
-                SCREEN_TINT
-            }
-        },
-        Err(_) => SCREEN_TINT,
-    })
-}
-
-/// `r,g,b`: three finite scales above zero.
-pub fn parse_tint(text: &str) -> Option<[f32; 3]> {
-    let v: Vec<f32> = text.split(',').map(|x| x.trim().parse::<f32>().ok()).collect::<Option<Vec<_>>>()?;
-    if v.len() != 3 || v.iter().any(|x| !x.is_finite() || *x <= 0.0) {
-        return None;
-    }
-    Some([v[0], v[1], v[2]])
-}
+/// 9-pixel period, and 21% in green on a filled bar [observed: playtest shots of the original,
+/// 2026-11-05]. Through the view's tone map a dip of 24% here gives that 21% on a bar and about
+/// 29% on the dim empty screen; the earlier 15% was the ITEMS screenshot's reading.
+pub const SCANLINE_DEPTH: f32 = 0.24;
 
 /// The beam (module docs): seconds between sweeps [observed: playtest 2026-11-05],
 /// seconds a sweep takes from above the top edge to below the bottom, its height in canvas
@@ -137,7 +112,7 @@ pub fn parse_tint(text: &str) -> Option<[f32; 3]> {
 pub const BEAM_PERIOD: f32 = 5.0;
 pub const BEAM_TRAVEL: f32 = 1.0;
 pub const BEAM_HEIGHT: f32 = 96.0;
-pub const BEAM_ALPHA: f32 = 0.12;
+pub const BEAM_ALPHA: f32 = 0.045;
 
 /// Where the beam's top edge is at `phase` seconds into its period: from a band's height
 /// above the canvas to the canvas's foot, in [`BEAM_TRAVEL`]; `None` while it is hidden.
@@ -174,7 +149,7 @@ fn background_light(rgb: [u8; 3]) -> Vec3 {
 /// product and from under the picture. The glass, which does not follow the interface's
 /// colour [hypothesis].
 fn glass_undercoat() -> Vec3 {
-    Vec3::from_array(UNDERCOAT_LIGHT) / (Vec3::from_array(screen_tint()) * SHAPE_VERTEX_COLOUR) / (1.0 - BACKGROUND_ALPHA)
+    Vec3::from_array(UNDERCOAT_LIGHT) / (Vec3::from_array(SCREEN_TINT) * SHAPE_VERTEX_COLOUR) / (1.0 - BACKGROUND_ALPHA)
 }
 
 /// The undercoat, the screen camera's clear colour on the device: raised by what the
@@ -603,13 +578,5 @@ mod tests {
         assert!(!wanted(&PipBoy { frame: Frame::Screen, phase: Phase::Up, ..default() }));
         assert!(!wanted(&PipBoy { frame: Frame::Device, phase: Phase::Down, ..default() }));
         assert!(wanted(&PipBoy { frame: Frame::Device, phase: Phase::Raising, ..default() }));
-    }
-
-    #[test]
-    fn the_screen_tint_aid_takes_three_scales() {
-        assert_eq!(parse_tint("0.5, 0.648,1.389"), Some([0.5, 0.648, 1.389]));
-        for bad in ["", "1,2", "1,2,3,4", "1,0,2", "1,-1,2", "a,b,c", "inf,1,1"] {
-            assert_eq!(parse_tint(bad), None, "{bad:?}");
-        }
     }
 }
