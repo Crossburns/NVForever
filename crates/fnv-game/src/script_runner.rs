@@ -9,7 +9,8 @@
 //!
 //! The engine calls [`Game::run_script_runner`] at each moment (`nvf-play` script.rs):
 //! [`Moment::Restart`] when the runtime is made, then [`Moment::Load`] after a save's
-//! LoadGame events or [`Moment::NewGame`] when the run starts without one. A load while
+//! LoadGame events or [`Moment::NewGame`] on the first frame of a run without one (after
+//! the main menu's New Game; not behind the main menu, #1548). A load while
 //! playing starts a new run in NVForever, so Restart comes again after every load, as
 //! GetGameRestarted does.
 

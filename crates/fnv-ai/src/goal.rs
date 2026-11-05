@@ -747,8 +747,10 @@ fn flee(game: &Game, nav: &NavGraph, actor: FormId, def: &PackageDef) -> Goal {
 ///   if furniture is available", Eat Package; the distance is our choice].
 ///
 /// Furniture given to another actor (`taken`: furniture to its user) is left alone.
-/// Sandbox and Wander packages choose for themselves (`crate::sandbox`).
-pub fn package_furniture(game: &Game, taken: &std::collections::BTreeMap<FormId, FormId>, actor: FormId, def: &PackageDef, at: Place) -> Option<FormId> {
+/// Sandbox and Wander packages choose for themselves (`crate::sandbox`). What the actor
+/// has no clips for is not given; what is searched for is not a cross either, what is
+/// named or linked may be ([`crate::furniture`]).
+pub fn package_furniture(game: &Game, taken: &std::collections::BTreeMap<FormId, FormId>, actor: FormId, def: &PackageDef, at: Place, eligibility: &mut crate::furniture::Eligibility) -> Option<FormId> {
     let refs = game.world.placed;
     let flags = |r: FormId| refs.get(r).and_then(|p| game.data.furniture.get(&p.base)).copied();
     let free = |r: &FormId| taken.get(r).is_none_or(|a| *a == actor);
@@ -766,7 +768,7 @@ pub fn package_furniture(game: &Game, taken: &std::collections::BTreeMap<FormId,
     };
     if let Some(r) = place_ref {
         if flags(r).is_some() {
-            return free(&r).then_some(r);
+            return (free(&r) && eligibility.fits_assigned(game, actor, r)).then_some(r);
         }
     }
     let (want, reach) = match (def.ty, loc.kind) {
@@ -776,7 +778,8 @@ pub fn package_furniture(game: &Game, taken: &std::collections::BTreeMap<FormId,
         _ => return None,
     };
     let cell = cell_of_place(refs, &at)?;
-    refs.by_cell
+    let near: Vec<(f32, FormId)> = refs
+        .by_cell
         .get(&cell)?
         .iter()
         .filter(|r| free(r) && flags(**r).is_some_and(|f| f & want != 0))
@@ -785,6 +788,7 @@ pub fn package_furniture(game: &Game, taken: &std::collections::BTreeMap<FormId,
             let d = (p.pos[0] - at.pos[0]).hypot(p.pos[1] - at.pos[1]);
             (d <= reach && (p.pos[2] - at.pos[2]).abs() < 200.0).then_some((d, *r))
         })
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|x| x.1)
+        .collect();
+    let excluded = eligibility.excluded_casual(game, actor, near.iter().map(|x| x.1));
+    near.into_iter().filter(|x| !excluded.contains(&x.1)).min_by(|a, b| a.0.total_cmp(&b.0)).map(|x| x.1)
 }

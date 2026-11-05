@@ -510,8 +510,9 @@ fn throw_gore(
                 }
             }
         }
-        // The pieces.
-        let actor_scale = sim.ref_scale(e.form_id);
+        // The pieces, at the size the actor is drawn: the reference's scale times a
+        // creature's base scale (#1587: giant ants threw pieces at a full ant's size).
+        let actor_scale = sim.ref_scale(e.form_id) * rig.map_or(1.0, |r| r.base_scale);
         let (thrown, farthest, lowest) = throw_pieces(&mut commands, world_root, &models.meshes, &mut phys, &mut gore, e.form_id, origin, frame, actor_scale, &wanted, &loaded, Vec3::from(e.dir));
         gore.thrown += thrown;
         gore.landed.entry(e.form_id).or_default().0 += thrown;

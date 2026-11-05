@@ -599,7 +599,7 @@ pub fn spawn(
     commands.entity(spawned.root).insert((
         Name::new(format!("Actor {reference:08X} {}", a.edid.as_deref().unwrap_or(""))),
         RefVisual(reference),
-        ActorRig { reference, base, body: base, skeleton: a.skeleton.clone(), skel: skel.clone(), nodes: spawned.nodes.clone() },
+        ActorRig { reference, base, body: base, skeleton: a.skeleton.clone(), skel: skel.clone(), nodes: spawned.nodes.clone(), base_scale: 1.0 },
         // What it wears and holds follows its inventory (`outfits.rs`).
         crate::outfits::Dressed::new(world, &a, &part_index, &spawned),
     ));
@@ -709,10 +709,14 @@ pub fn spawn_creature(
     // The creature's base scale (BNAM) on top of the reference's [hypothesis, §10.1].
     let rt = rt * Affine3A::from_scale(Vec3::splat(c.base_scale as f32));
     let spawned = spawn_actor(commands, parent, Transform::from_matrix(Mat4::from(rt)), &skel, &uses);
+    // Where its body weapons fire from, when a body part holds the node (#1535).
+    for p in &c.parts {
+        crate::body_weapons::spawn_part_projectile_nodes(commands, ctx.models, &p.model, &skel, &spawned.nodes);
+    }
     commands.entity(spawned.root).insert((
         Name::new(format!("Creature {reference:08X} {}", c.edid.as_deref().unwrap_or(""))),
         RefVisual(reference),
-        ActorRig { reference, base, body: c.body.0, skeleton: c.skeleton.clone(), skel: skel.clone(), nodes: spawned.nodes.clone() },
+        ActorRig { reference, base, body: c.body.0, skeleton: c.skeleton.clone(), skel: skel.clone(), nodes: spawned.nodes.clone(), base_scale: c.base_scale as f32 },
     ));
     for e in &spawned.drawn {
         commands.entity(*e).insert(RefVisual(reference));
@@ -776,7 +780,7 @@ pub(crate) fn arm(
 ) -> Option<WeaponHold> {
     let held = if world.weapon_mode == WeaponMode::None { None } else { arm_weapon(commands, spawned, skel, &a.skeleton, a.weapon, a.weapon_mods, reference, world, ctx, player, stats) };
     held.or_else(|| {
-        let stance = world.anims.stance(ctx, &a.skeleton, skel, AnimType::HandToHand.prefix())?;
+        let stance = world.anims.stance(ctx, &a.skeleton, skel, AnimType::HandToHand.prefix()).filter(|s| !s.no_weapon_node)?;
         let skel_parent = skel.parents[stance.weapon_node].unwrap_or(0);
         let mut hold = WeaponHold::new(stance, world.weapon_mode == WeaponMode::Drawn, skel_parent);
         if let Some(period) = world.weapon_test {
@@ -809,7 +813,8 @@ pub(crate) fn arm_weapon(
     let prefix = w.anim_type.as_deref().and_then(AnimType::from_name)?.prefix();
     // A modded weapon's own model (weapon-mods.md §3 "In the world").
     let model = w.model_for(false, weapon_mods)?;
-    let stance = world.anims.stance(ctx, skeleton, skel, prefix);
+    // A stance without a `Weapon` node is for body weapons only (`Stance::no_weapon_node`).
+    let stance = world.anims.stance(ctx, skeleton, skel, prefix).filter(|s| !s.no_weapon_node);
     // With the weapon's alternate textures (texture-swaps.md §4).
     let swaps = weapon.map_or(&[][..], |id| world.actors.weapon_alt_textures(id, false, weapon_mods));
     let (Some(stance), Some(part)) = (stance, ctx.part_swapped(&fnv_actor::resolve::mesh_path(model), swaps)) else {

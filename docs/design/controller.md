@@ -82,6 +82,10 @@ Start cannot be bound.
   Not followed: the ITEMS page's RB Hotkey (the hotkeys are held digit keys), RadAway's
   A on the RAD view (not usable from the STATS page), caravan (its menu files are not
   read yet).
+- On the Pip-Boy DATA page's maps the right stick moves the cursor (the highlight box),
+  pushed past an edge it pans the map, and the left stick's up and down zooms in and out
+  smoothly while held [observed: the original; the speeds are design], built in
+  `pipboy/data.rs` (`stick_cursor`, `scroll_map`, `stick_zoom`).
 - The prompt under the crosshair names the Activate control's own key ("E)") or, with a
   controller, its button ("A)") (`Bindings::prompt`). The original shows the button's
   picture there (`&xbuttona;`, `general_button_a.dds`); letters are the first step.
@@ -154,6 +158,8 @@ those settings so a mod that changes them changes this too.
 - The button pictures from `Interface\Shared\Button\` in place of letters.
 - The rest of the menus' own controller buttons (§3's "not followed"), and hints in menus ("E) Exit", lockpick, Pip-Boy, container)
   following the device.
-- A pointer moved by a stick for the mouse-only parts of menus (the dialogue list, the
-  Pip-Boy map).
+- A pointer moved by a stick for the mouse-only parts of menus still left: the dialogue
+  list (the Pip-Boy map's stick cursor and zoom are built, §3).
+- Fast travel from the World Map on a controller: the original's A on a marker; the map
+  asks to travel only on a mouse click (`pipboy/data.rs`).
 - Several controllers told apart; the first pressed is not singled out.
