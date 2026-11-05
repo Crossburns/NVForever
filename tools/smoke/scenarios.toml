@@ -5786,6 +5786,19 @@ expect = [
 ]
 
 [[scenario]]
+name = "vendortron-through-glass"
+source = "#1602 (docs/spec-notes/cells-refs.md §5): the Gun Runners' kiosk is one body on collision layer 27 Invisible Wall, which took the crosshair, so the Vendortron inside it could not be talked to; the activation ray passes invisible walls"
+note = "VendortronRef 0x000F2EAA in the kiosk (nv_gunrun_kiosk.nif 0x00100616); the player put 120 units in front of it facing it; E at 8 s talks to it"
+areas = ["activation", "dialogue"]
+paths = ["engine/nvf-play/src/activate.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_FACE = "5:000F2EAA", NVF_PLAY_TEST_ACTIVATE = "8" }
+args = ["--play", "--pos=-11064,98317,4420", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'target 0x000F2EAA .*by Collision', label = "the Vendortron behind the kiosk's invisible wall is targeted" },
+]
+
+[[scenario]]
 name = "door-behind-wall-face"
 source = "#1339 (docs/spec-notes/cells-refs.md §5): the Nipton town hall's collision mesh has a face 8.5 units in front of its door's slab, so the crosshair stopped on the building and the door could not be used; a door within 16 units behind a face that cannot be activated is the target"
 note = "the town hall's outside door (0x00130CFF, a teleport into NiptonTownHallInterior), the player put 100 units south of it facing it; E at 8 s takes the player inside"
