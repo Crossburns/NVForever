@@ -386,7 +386,9 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   - Ready: the reload starts at once.
   - Spin-up or wind-up: the shot on its way is dropped and the reload starts at once.
   - Between shots: the reload starts when the wait ends, with no pull, so a swap never
-    brings the next shot forward.
+    brings the next shot forward. Holstered first, the wait and the reload freeze; on
+    the redraw the wait ends and the reload starts, with no pull [design: the cycle
+    steps only with the weapon out].
   - During a reload: it goes on, on its own clock, and takes the new ammo. Round by
     round, the rounds already in are out again and the rest are of the new type.
   - Closing after a round-by-round reload, or jammed: the magazine stays empty and the

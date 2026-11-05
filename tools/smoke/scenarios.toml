@@ -1716,17 +1716,29 @@ expect = [
 
 [[scenario]]
 name = "magazine-god-mode-stays-full"
-source = "owner's playtest list 5 item 49: god mode's magazine stays full and shots take nothing, also with no round carried (the same run as magazine-follows-inventory, whose check leaves god mode out)"
+source = "owner's playtest list 5 item 49: god mode's magazine stays full and shots take nothing from the inventory, also with no round carried (magazine-follows-inventory's check leaves god mode out)"
+note = "two pulls of the 10mm SMG (30 rounds: vats-mode-burst reads 30 loaded, in god mode too), about four shots each. After the first the magazine reads 30 and the 110 carried are all there; the rounds are then removed and after the second it still reads 30. Without the refill the first read is 30 less the shots. The magazine's count comes by PrintC, since the console's own reply to an extender function shows no value"
 areas = ["combat"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/attack.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "00004321", NVF_PLAY_TEST_GIVE = "00004241:60", NVF_PLAY_TEST_CONSOLE = "6:player.removeitem 00004241 500;player.getitemcount 00004241;6.9:close", NVF_PLAY_TEST_CONTROL = "4:weapon,8:fire,8.4:fire,11:fire,11.4:fire" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "00004321", NVF_PLAY_TEST_GIVE = "00004241:60", NVF_PLAY_TEST_CONSOLE = "6:player.getitemcount 00004241;6.5:close;10:player.getitemcount 00004241;10.2:PrintC \"nvf rounds %g\", (GetPlayerCurrentAmmoRounds);10.4:player.removeitem 00004241 500;player.getitemcount 00004241;10.9:close;14:PrintC \"nvf rounds %g\", (GetPlayerCurrentAmmoRounds);14.2:player.getitemcount 00004241;14.6:close", NVF_PLAY_TEST_CONTROL = "4:weapon,8:fire,8.4:fire,12:fire,12.4:fire" }
 args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--pitch", "60", "--play", "--hour", "12", "--no-voice", "--no-messages"]
-run_seconds = 16
+run_seconds = 18
 expect = [
-  { re = 'console: GetItemCount on player >> 0\.00', label = "no rounds carried" },
   { re = 'combat: click \(no ammo\)', count = 0, label = "no pull clicks" },
   { re = 'combat: (?P<n>\d+) shots \(', range = [2, 100], all = true, label = "both pulls fire" },
+  { re = 'script: print "nvf rounds ', count = 2, label = "the magazine is read after each pull" },
+  { re = 'script: print "nvf rounds 30"', count = 2, label = "the full 30 rounds both times" },
 ]
+order = [[
+  { re = 'console: GetItemCount on player >> 110\.00', label = "110 rounds carried before the first pull" },
+  { re = 'combat: kick: shot \d+ in a row', label = "the first pull fires" },
+  { re = 'console: GetItemCount on player >> 110\.00', label = "the shots took nothing from the inventory" },
+  { re = 'script: print "nvf rounds 30"', label = "the magazine is full after the first pull" },
+  { re = 'console: GetItemCount on player >> 0\.00', label = "every round then removed" },
+  { re = 'combat: kick: shot \d+ in a row', label = "the second pull fires with none carried" },
+  { re = 'script: print "nvf rounds 30"', label = "the magazine is full after the second pull" },
+  { re = 'console: GetItemCount on player >> 0\.00', label = "still none carried" },
+]]
 
 [[scenario]]
 name = "ammo-swap-in-spin-up"
