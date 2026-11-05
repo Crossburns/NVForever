@@ -3075,6 +3075,37 @@ fn an_actor_fallen_under_its_goal_walks_back_by_the_ramp_from_where_it_stands() 
     assert!(matches!(ev.last().unwrap(), AiEvent::Arrived { .. }), "{ev:?}");
     assert!(!ev.iter().any(|e| matches!(e, AiEvent::HeightWaived { .. })), "{ev:?}");
     assert!(s.feet(R_RUN)[2].abs() < 1.0, "{:?}", s.feet(R_RUN));
+    assert_eq!(s.ai.agents[&actor].walker.height_searches, 1);
+}
+
+#[test]
+fn an_actor_whose_way_back_needs_a_door_arrives_without_asking_it() {
+    let f = fixture();
+    let mut s = on_the_deck(&f, true, false);
+    let actor = FormId(R_RUN);
+    // A door across the ramp, and it would refuse the actor; the deck is beyond its reach.
+    let door = fnv_nav::InPlaceDoor {
+        door: DOOR_A,
+        space: A,
+        position: [600.0, 100.0, -100.0],
+        rotation: [0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        scale: 1.0,
+        bounds: ([-160.0, -4.0, 0.0], [160.0, 4.0, 200.0]),
+    };
+    s.nav.set_in_place_doors(vec![door], |_| None);
+    let way = s.nav.find_path(fnv_nav::Place { space: A, pos: UNDER_MARK_A }, fnv_nav::Place { space: A, pos: [350.0, 350.0, 0.0] }, &fnv_nav::PathParams::default()).unwrap();
+    assert_eq!(way.legs[0].door_stops.len(), 1, "that way stops at the door");
+    let until = s.game.time + 600.0;
+    s.game.door_gates.insert((actor, FormId(DOOR_A)), fnv_game::npc_doors::Gate { answer: fnv_game::npc_doors::DoorAnswer::Refused, until });
+    s.game.tick();
+    s.ai.update_moved(&mut s.game, &s.nav, 0.5, &mut FallsUnderGoal(false));
+    s.run(0.5);
+    let ev = s.events(R_RUN);
+    assert_eq!(ev.iter().filter(|e| matches!(e, AiEvent::HeightWaived { at } if *at == UNDER_MARK_A)).count(), 1, "{ev:?}");
+    assert!(matches!(ev.last().unwrap(), AiEvent::Arrived { package, .. } if package.0 == P_RUN), "{ev:?}");
+    assert!(!ev.iter().any(|e| matches!(e, AiEvent::DoorRefused { .. } | AiEvent::Unreachable { .. })), "{ev:?}");
+    assert_eq!(s.feet(R_RUN), UNDER_MARK_A, "no teleport");
+    assert_eq!(s.ai.agents[&actor].walker.height_searches, 1);
 }
 
 #[test]
@@ -3126,9 +3157,12 @@ fn walks_on_the_navmesh_plan_no_new_path_and_waive_no_height() {
     let mut s = sim(&f, &[R_TRAVEL, R_RUN, R_PATROL, R_LOOP, R_RADIUS, R_SB_ALL, R_SB_OBJECTS, R_TO_CHAIR, R_SEEKER]);
     for _ in 0..120 {
         s.run(1.0);
-        for (id, a) in &s.ai.agents {
-            assert_eq!(a.walker.trip.as_ref().map_or(0, |t| t.replans), 0, "{id:?}");
-        }
+    }
+    // Over all of it: the counts outlive a trip, which an arrival ends.
+    let arrived = s.ai.events.iter().filter(|e| matches!(e.event, AiEvent::Arrived { .. })).count();
+    assert!(arrived > 3, "{arrived}");
+    for (id, a) in &s.ai.agents {
+        assert_eq!((a.walker.height_searches, a.walker.height_waivers), (0, 0), "{id:?}");
     }
     let waived: Vec<_> = s.ai.events.iter().filter(|e| matches!(e.event, AiEvent::HeightWaived { .. })).map(|e| &e.event).collect();
     assert!(waived.is_empty(), "{waived:?}");

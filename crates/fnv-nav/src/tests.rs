@@ -1132,10 +1132,9 @@ fn a_walker_up_a_sixty_degree_slope_arrives_without_a_new_path() {
         if arrived {
             break;
         }
-        assert_eq!(w.trip.as_ref().unwrap().replans, 0);
     }
     assert!(arrived);
-    assert_eq!(w.height_waivers, 0);
+    assert_eq!((w.height_searches, w.height_waivers), (0, 0));
 }
 
 /// Corners, door stops, take-offs, load doors and asking a door stay horizontal: feet 500
@@ -1261,9 +1260,91 @@ fn a_walker_that_fell_under_its_goal_goes_back_by_the_ramp() {
     assert!(arrived, "at {:?}", w.feet);
     assert!(furthest > 700.0, "not by the ramp: {furthest}");
     assert!((w.feet[2] - 200.0).abs() < 1.0, "{:?}", w.feet);
-    assert_eq!(w.height_waivers, 0);
-    // The trip is over.
-    assert_eq!(w.trip, None);
+    assert_eq!((w.height_searches, w.height_waivers), (1, 0));
+}
+
+/// A way back only through a door takes the waiver, and the walk ends where it stands.
+fn the_waiver_is_taken_for_a_way_through_a_door(g: &NavGraph, w: &mut Walker, under: [f32; 3]) {
+    w.update(g, 0.1);
+    w.feet = under;
+    w.tri = NONE;
+    assert_eq!(w.update(g, 0.1), WalkEvent::Idle);
+    assert!(w.follower.is_none(), "the walk is over");
+    assert_eq!(w.feet, under, "no teleport");
+    assert_eq!((w.height_searches, w.height_waivers), (1, 1));
+}
+
+#[test]
+fn a_way_back_through_a_door_that_opens_in_place_takes_the_waiver() {
+    let mut g = floor_with_deck_above();
+    g.set_in_place_doors(vec![hinged(0xD00, 600.0, 0.0)], |_| None);
+    let under = [DECK_GOAL[0], DECK_GOAL[1], 0.0];
+    // There is that way, and it stops at the door.
+    let way = g.find_path(Place { space: W, pos: under }, Place { space: W, pos: DECK_GOAL }, &PathParams::default()).unwrap();
+    assert_eq!((way.legs.len(), way.legs[0].door_stops.len()), (1, 1));
+    let mut w = walker_on_the_deck(&g);
+    the_waiver_is_taken_for_a_way_through_a_door(&g, &mut w, under);
+}
+
+#[test]
+fn a_way_back_through_a_load_door_takes_the_waiver() {
+    // The floor and the deck are joined only through a room in another space.
+    let room = Space::Interior(0x77);
+    let mut floor = grid(1, [0.0, 0.0], 8, 4, 100.0, &[], flat);
+    let mut deck = grid(2, [0.0, 300.0], 8, 1, 100.0, &[], |_, _| 200.0);
+    let mut inside = grid(3, [5000.0, 5000.0], 3, 3, 100.0, &[], flat);
+    let door_on = |m: &mut NavMeshRecord, door: u32, t: u16| {
+        m.door_links.push(DoorLink { door, triangle: t });
+        m.triangles[t as usize].flags |= tri_flags::DOOR;
+    };
+    door_on(&mut floor, 0xD1, 0);
+    door_on(&mut inside, 0xD2, 0);
+    door_on(&mut inside, 0xD3, 16);
+    door_on(&mut deck, 0xD4, 0);
+    let meshes = [(floor, W), (deck, W), (inside, room)];
+    let input: Vec<_> = meshes.iter().map(|(m, s)| (m, Some(0), Some(*s))).collect();
+    let mut g = NavGraph::assemble(&input);
+    g.join_doors(&input, |door| match door {
+        0xD1 => Some((0xD2, [5030.0, 5030.0, 0.0], 0.0, room)),
+        0xD2 => Some((0xD1, [30.0, 30.0, 0.0], 0.0, W)),
+        0xD3 => Some((0xD4, [30.0, 330.0, 200.0], 0.0, W)),
+        0xD4 => Some((0xD3, [5270.0, 5270.0, 0.0], 0.0, room)),
+        _ => None,
+    });
+    let under = [DECK_GOAL[0], DECK_GOAL[1], 0.0];
+    // There is that way.
+    let way = g.find_path(Place { space: W, pos: under }, Place { space: W, pos: DECK_GOAL }, &PathParams::default()).unwrap();
+    assert!(way.legs.len() > 1, "{way:?}");
+    let mut w = walker_on_the_deck(&g);
+    the_waiver_is_taken_for_a_way_through_a_door(&g, &mut w, under);
+}
+
+#[test]
+fn a_walk_that_ended_leaves_the_next_go_to_a_new_trip() {
+    let g = graph(&[(grid(1, [0.0, 0.0], 4, 4, 100.0, &[], flat), W)]);
+    let (p, goal) = (PathParams::default(), [150.0, 150.0, 0.0]);
+    let feet = [150.0, 150.0, 65.0];
+    let mut w = Walker::new(W, [50.0, 50.0, 0.0], 0.0, 100.0);
+    w.go_to(&g, Place { space: W, pos: goal }, &p).unwrap();
+    let f = w.follower.clone().unwrap();
+    assert!(w.off_path(&g, feet, &f).is_none());
+    assert!(w.trip.as_ref().unwrap().waived);
+    // Cancelled (a Follow package caught up, say), then the same place again.
+    w.follower = None;
+    w.go_to(&g, Place { space: W, pos: goal }, &p).unwrap();
+    let t = w.trip.as_ref().unwrap();
+    assert_eq!((t.replans, t.waived), (0, false));
+    // Arrived, then the same place again.
+    assert!(w.off_path(&g, feet, &f).is_none());
+    for _ in 0..200 {
+        if w.update(&g, 0.1) == WalkEvent::Arrived {
+            break;
+        }
+    }
+    assert!(w.follower.is_none());
+    w.go_to(&g, Place { space: W, pos: goal }, &p).unwrap();
+    let t = w.trip.as_ref().unwrap();
+    assert_eq!((t.replans, t.waived), (0, false));
 }
 
 #[test]
@@ -1278,6 +1359,5 @@ fn a_walker_with_no_way_back_ends_its_walk_where_it_stands() {
     assert_eq!(w.update(&g, 0.1), WalkEvent::Idle);
     assert!(w.follower.is_none(), "the walk is over");
     assert_eq!(w.feet, under, "no teleport");
-    assert_eq!(w.height_waivers, 1);
-    assert_eq!(w.trip, None);
+    assert_eq!((w.height_searches, w.height_waivers), (1, 1));
 }

@@ -466,9 +466,13 @@ pub struct Walker {
     /// How far its heading was off the door (radians) when it last went through a load
     /// door whose place is known: 0 once it has turned to it ([`Walker::face_door`]).
     pub door_off: Option<f32>,
-    /// The trip [`Walker::go_to`] last set off on; over at the arrival.
+    /// The trip [`Walker::go_to`] last set off on. It counts while [`Self::follower`] is
+    /// set: a walk that ended, arrived or cancelled, leaves the next `go_to` a new trip.
     #[serde(skip)]
     pub trip: Option<Trip>,
+    /// Searches for a new path [`Walker::off_path`] made so far, all trips.
+    #[serde(skip)]
+    pub height_searches: u32,
     /// Goal heights waived so far ([`Walker::off_path`]).
     #[serde(skip)]
     pub height_waivers: u32,
@@ -586,6 +590,7 @@ impl Walker {
             landings: 0,
             door_off: None,
             trip: None,
+            height_searches: 0,
             height_waivers: 0,
         }
     }
@@ -626,8 +631,9 @@ impl Walker {
     /// Plan a path from the walker's feet to `to` and start following it.
     pub fn go_to(&mut self, nav: &NavGraph, to: Place, params: &PathParams) -> Result<&Path, PathError> {
         let path = nav.find_path(Place { space: self.space, pos: self.feet }, to, params)?;
+        let walking = self.follower.is_some();
         self.follower = Some(Follower::new(path));
-        let same = self.trip.as_ref().filter(|t| t.to.space == to.space && (0..3).map(|i| (t.to.pos[i] - to.pos[i]).powi(2)).sum::<f32>() <= SAME_TRIP * SAME_TRIP);
+        let same = self.trip.as_ref().filter(|t| walking && t.to.space == to.space && (0..3).map(|i| (t.to.pos[i] - to.pos[i]).powi(2)).sum::<f32>() <= SAME_TRIP * SAME_TRIP);
         let (replans, waived) = same.map_or((0, false), |t| (t.replans, t.waived));
         self.trip = Some(Trip { to, params: params.clone(), replans, waived });
         Ok(&self.follower.as_ref().expect("just set").path)
@@ -635,9 +641,10 @@ impl Walker {
 
     /// `old` said [`Steer::OffPath`] with the feet at `feet`: the follower of a new path
     /// from there to the place asked for, or `None` when the height is waived and the
-    /// walk ends as if it fitted (no tries left, no such path, a path starting too far
-    /// above or below the feet, or a follower no [`Walker::go_to`] gave). Never fails the
-    /// walk: a package or a sandbox sees an arrival [design, docs/design/navmesh.md §4.1].
+    /// walk ends as if it fitted (no tries left, no such path, a path through a door, a
+    /// path starting too far above or below the feet, or a follower no [`Walker::go_to`]
+    /// gave). Never fails the walk: a package or a sandbox sees an arrival, and a new path
+    /// has no door to be refused at [design, docs/design/navmesh.md §4.1].
     pub fn off_path(&mut self, nav: &NavGraph, feet: [f32; 3], old: &Follower) -> Option<Follower> {
         let from = Place { space: self.space, pos: feet };
         if let Some(t) = self.trip.as_mut() {
@@ -646,8 +653,9 @@ impl Walker {
             }
             if t.replans < HEIGHT_REPLANS {
                 t.replans += 1;
-                let starts_here = |p: &Path| p.legs.first().and_then(|l| l.points.first()).is_some_and(|s| (s[2] - feet[2]).abs() <= REPLAN_START_HEIGHT);
-                if let Some(path) = nav.find_path(from, t.to, &t.params).ok().filter(starts_here) {
+                self.height_searches += 1;
+                let fits = |p: &Path| matches!(p.legs.as_slice(), [l] if l.door_stops.is_empty() && l.points.first().is_some_and(|s| (s[2] - feet[2]).abs() <= REPLAN_START_HEIGHT));
+                if let Some(path) = nav.find_path(from, t.to, &t.params).ok().filter(fits) {
                     let mut f = Follower::new(path);
                     f.goal_radius = old.goal_radius;
                     return Some(f);
@@ -681,7 +689,6 @@ impl Walker {
         };
         if !keep {
             self.turning = false;
-            self.trip = None;
         }
         if keep {
             self.follower = Some(f);

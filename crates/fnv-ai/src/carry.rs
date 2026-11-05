@@ -2262,7 +2262,6 @@ impl Ai {
     pub(crate) fn arrived(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
         let a = self.agents.get_mut(&actor).expect("listed");
         a.walker.follower = None;
-        a.walker.trip = None;
         // The end of the way to a conversation partner: `crate::social` starts the
         // conversation.
         if a.chat.is_some() {
