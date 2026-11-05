@@ -500,6 +500,9 @@ impl SkyState {
         let first = !self.placed;
         self.placed = true;
         // Said here, not in `new`, which runs before the log is set up.
+        if first {
+            info!("weather: the sky starts on day {:.0} at {:02}:{:02}", self.days_passed, self.hour as u32 % 24, (self.hour.fract() * 60.0) as u32);
+        }
         if first && !self.regions.is_empty() {
             let names: Vec<String> = self
                 .regions
@@ -1901,6 +1904,65 @@ pub fn initial_fog() -> DistanceFog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rolls made once a sky that started on `sky_day` follows a restored game on day
+    /// 25, half a game minute on from the save's noon, with a saved weather its list holds
+    /// and a volatility that rolls at every whole hour passed.
+    fn rolls_following_the_restored_game(sky_day: f32) -> u64 {
+        const SAVED: u32 = 1;
+        let weather = |id| Weather { form_id: id, ..Default::default() };
+        let choice = |id| Choice { weather: weather(id), chance: 100, global: None };
+        let mut sky = SkyState {
+            climate: Climate { volatility: 255, ..Default::default() },
+            weather: weather(SAVED),
+            hour: 12.0,
+            fog_override: None,
+            interior: None,
+            interior_grade: None,
+            shadows: false,
+            shadow_distance: DEFAULT_SHADOW_DISTANCE,
+            shadow_reach: 1.0,
+            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            grade: true,
+            time_scale: 0.0,
+            clock_running: false,
+            days_passed: sky_day,
+            prev: None,
+            fade: 1.0,
+            choices: vec![choice(SAVED), choice(2)],
+            image_space: None,
+            adapters: HashMap::new(),
+            changed: true,
+            script: None,
+            pinned: false,
+            regions: Vec::new(),
+            source: None,
+            placed: false,
+            clock_seen: false,
+            rolled_for: None,
+            pick: SAVED,
+            rolls: 0,
+            rng: DEFAULT_WEATHER_SEED,
+            hour_index: None,
+            live_globals: HashMap::new(),
+            resume: Some(SAVED),
+            flash: [0.0; 3],
+        };
+        sky.place(Some(None));
+        assert_eq!((sky.rolls, sky.pick), (0, SAVED), "the first look keeps the saved weather");
+        sky.follow_game_clock(12.0 + 1.0 / 60.0, 25.375);
+        assert_eq!(sky.days_passed, 25.0);
+        sky.rolls
+    }
+
+    #[test]
+    fn a_sky_on_the_games_day_rolls_nothing_following_it() {
+        assert_eq!(rolls_following_the_restored_game(25.0), 0);
+        // On the plugins' day it counts the days between as hours passed (#1607).
+        assert_eq!(rolls_following_the_restored_game(5.0), 1);
+        // Ahead of the game, as after a restore that failed: a step back, no roll.
+        assert_eq!(rolls_following_the_restored_game(30.0), 0);
+    }
 
     #[test]
     fn a_new_dome_is_coloured_even_when_the_sky_colours_stay() {

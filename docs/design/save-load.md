@@ -294,13 +294,17 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   for every reference the save changed so the drawn world follows; the engine part is put
   back next. The game's clock stays the save's: the residents' start clock goes only into
   a new game, so `--day` never changes a loaded game's GameDaysPassed [design:
-  `residents::Core::prepare`; smoke `save-days-write`, `save-days-load`]. The sky starts on
-  the header's `game_days_passed`, over `--day`, so its weather rolls see no hours pass at
-  the load. A save made before the header held the day leaves the sky on `--day` or the
+  `residents::Core::prepare`; smoke `save-days-write`, `save-days-load`]. The sky alone
+  starts on the header's `game_days_passed`, over `--day` (`start_days` in `main.rs`), so
+  its weather rolls see no hours pass at the load. A restore that fails goes on from the
+  plugins' game, on `--day` or the plugins' day and at the save's hour; its sky starts on
+  the failed save's day and steps back to the game's about a second into play, which rolls
+  nothing. A save made before the header held the day leaves the sky on `--day` or the
   plugins' day; it jumps to the game's day about a second into play, up to 24 volatility
   rolls at once, which can replace the weather kept from the save [design:
-  `SkyState::follow_climate`]. Under `--time-scale` or `--still-sky` the sky of such a save
-  stays on that day for the run. Loading while playing (console `load`, F9, the pause and
+  `SkyState::follow_climate`]. The sky does not follow the game under two flags: with
+  `--still-sky` its day stays the one it started on, with `--time-scale` its own clock
+  counts on from there. Loading while playing (console `load`, F9, the pause and
   main menus) starts NVForever again with the same arguments and `--load` (those the save decides left out),
   so a save always lands in a world built fresh from the plugins and nothing of the run
   before carries over.

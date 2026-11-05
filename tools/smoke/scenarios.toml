@@ -6268,36 +6268,37 @@ expect = [
 
 [[scenario]]
 name = "save-days-write"
-source = "#1607: a new game starts at --day 30, then GameDaysPassed is set to 25 and saved; save-days-load reads it back, so run them together"
-note = "GameDaysPassed runs on with the clock and rounds up to .01 after 14.4 s of play at TimeScale 30: 30.01 at 19 s is still the --day it started at"
+source = "#1607: a new game starts at --day 30, then GameDaysPassed is set to 25.375 and saved; save-days-load reads it back, so run them together"
+note = "GameDaysPassed runs on with the clock, a hundredth of a day in 28.8 s of play at TimeScale 30, so the patterns leave it room. The fraction is on purpose: the residents' start clock is in whole days, so a write of it over the save shows as 25.0x (or the plugins' 5.00)"
 areas = ["save", "ai"]
-paths = ["engine/nvforever/src/residents.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "crates/fnv-save/"]
-env = { NVFOREVER_HOME = "save-days-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "19:getglobalvalue GameDaysPassed;20:set GameDaysPassed to 25;21:getglobalvalue GameDaysPassed;save smoke-days;22:close" }
-args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--day", "30", "--hour", "12"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/sky.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "crates/fnv-save/"]
+env = { NVFOREVER_HOME = "save-days-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "19:getglobalvalue GameDaysPassed;20:set GameDaysPassed to 25.375;21:getglobalvalue GameDaysPassed;save smoke-days;22:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--day", "30"]
 run_seconds = 26
 order = [[{ re = "ai: the game's clock is the start clock's: .*GameDaysPassed 30[.]", label = "the residents' first think starts the clock" }, { re = 'console: GetGlobalValue >> 30\.0\d', label = "the first read comes after it" }]]
 expect = [
+  { re = 'weather: the sky starts on day 30 ', label = "--day starts the sky" },
   { re = 'console: GetGlobalValue >> 30\.0\d', label = "--day reaches a new game" },
-  { re = 'console: GetGlobalValue >> 25\.00', label = "the day is 25 before the save" },
+  { re = 'console: GetGlobalValue >> 25\.3[7-9]', label = "the day is 25.375 before the save" },
   { re = 'save: wrote .*smoke-days\.nvfsave \(manual', label = "the save is written" },
 ]
 
 [[scenario]]
 name = "save-days-load"
-source = "#1607: --load keeps the save's GameDaysPassed with the residents running (the default in --play)"
-note = "GameDaysPassed runs on with the clock and rounds up to .01 after 14.4 s of play at TimeScale 30: these reads come 15 s and more after the set, so 25.01 is as good as 25.00; the bug read the plugins' 5.00. The save is made at about 12:10, so no whole game hour passes in this run and a volatility roll can only be the sky's day jumping"
+source = "#1607: --load keeps the save's GameDaysPassed with the residents running (the default in --play), and the sky starts on the save's day"
+note = "GameDaysPassed runs on with the clock, a hundredth of a day in 28.8 s of play at TimeScale 30, so the patterns leave it room; the residents' start clock written over the save would read 5.00 (25.0x if it held the save's whole day). No check of volatility rolls: every base-game climate's volatility is 0 (docs/spec-notes/world.md §6), so none can fire here. The sky's day line is the check, and engine test a_sky_on_the_games_day_rolls_nothing_following_it covers the rolls"
 areas = ["save", "ai"]
-paths = ["engine/nvforever/src/residents.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "crates/fnv-save/"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/sky.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "crates/fnv-save/"]
 env = { NVFOREVER_HOME = "save-days-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:getglobalvalue GameDaysPassed;17.5:getglobalvalue GameDaysPassed;18.5:close" }
 args = ["--play", "--load", "smoke-days", "--no-voice"]
 run_seconds = 22
-order = [[{ re = 'load: restored .*smoke-days\.nvfsave', label = "the save is restored" }, { re = "ai: the game's clock is the save's: .*GameDaysPassed 25[.]", label = "the residents' first think leaves the save's clock" }, { re = 'console: GetGlobalValue >> 25\.0\d', label = "a read comes after that think" }]]
+order = [[{ re = 'load: restored .*smoke-days\.nvfsave', label = "the save is restored" }, { re = "ai: the game's clock is the save's: .*GameDaysPassed 25[.](3[7-9]|4[0-9])", label = "the residents' first think leaves the save's clock" }, { re = 'console: GetGlobalValue >> 25\.(3[7-9]|4\d)', label = "a read comes after that think" }]]
 expect = [
   { re = "ai: .*the package choice is the game's", label = "the residents are on" },
-  { re = 'console: GetGlobalValue >> 25\.0\d', count = 2, label = "both reads hold the save's day" },
+  { re = 'weather: the sky starts on day 25 ', label = "the sky starts on the save's day" },
+  { re = 'console: GetGlobalValue >> 25\.(3[7-9]|4\d)', count = 2, label = "both reads hold the save's day, fraction and all" },
   { re = 'weather: \S+ kept from the saved game', label = "the sky keeps the saved weather" },
 ]
-forbid = [{ re = "weather roll: .*by the climate's volatility", label = "no catch-up rolls: the sky starts on the save's day" }]
 
 [[scenario]]
 name = "save-load-order"
