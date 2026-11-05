@@ -298,11 +298,14 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   starts on the header's `game_days_passed`, over `--day` (`start_days` in `main.rs`), so
   its weather rolls see no hours pass at the load. A restore that fails goes on from the
   plugins' game, on `--day` or the plugins' day and at the save's hour; its sky starts on
-  the failed save's day and steps back to the game's about a second into play, which rolls
-  nothing. A save made before the header held the day leaves the sky on `--day` or the
-  plugins' day; it jumps to the game's day about a second into play, up to 24 volatility
-  rolls at once, which can replace the weather kept from the save [design:
-  `SkyState::follow_climate`]. The sky does not follow the game under two flags: with
+  the failed save's day and takes the game's once the game's hour has moved half a game
+  minute (about a second of play at TimeScale 30, not while paused or at TimeScale 0).
+  Going back to a lower day makes no volatility check; going forward (a failed save on day
+  25 with `--day 30`) can. A save made before the header held the day leaves the sky on
+  `--day` or the plugins' day; it takes the game's day at the same step, with up to 24
+  volatility checks at once, which can make one weather roll and replace the weather kept
+  from the save [design: `SkyState::follow_climate`, `SkyState::follow_game_clock`]. The
+  sky does not follow the game under two flags: with
   `--still-sky` its day stays the one it started on, with `--time-scale` its own clock
   counts on from there. Loading while playing (console `load`, F9, the pause and
   main menus) starts NVForever again with the same arguments and `--load` (those the save decides left out),
