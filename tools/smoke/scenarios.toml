@@ -11331,6 +11331,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "trigger-primitive-hidden"
+source = "issue #1599 (docs/spec-notes/level-design.md §4.1): a reference with a primitive (XPRM) is a trigger volume; it is not drawn and not offered under the crosshair, even where the activator it was copied from has a model and a name"
+note = "Sloan: QJSnufflesCrippleTrigger 0x00140C37, a box primitive whose activator names a vault control panel and \"Poor Snuffles\", 195 units above Snuffles. The player stands 150 units south of it and looks up at it"
+areas = ["renderer", "physics"]
+paths = ["crates/fnv-world/src/placed.rs", "crates/fnv-phys/src/placed.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/script_draw.rs", "engine/nvf-play/src/activate.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_GOTO = "3:-29745:6995:6500", NVF_PLAY_TEST_LOOK = "4:0:20,6:0:30,8:0:40", NVF_PLAY_TEST_SHOTS = "7:trigger_primitive.png" }
+args = ["--world", "WastelandNV", "--pos=-29745,6995,6500", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 12
+expect = [
+  { re = 'cells loaded in .* not drawn \d+ \{.*"primitive": (?P<n>\d+)', range = [1, 1e9], label = "primitives with a model are left out of the drawn cells" },
+  { re = 'target 0x00140C37', count = 0, label = "the trigger is never under the crosshair" },
+]
+
+[[scenario]]
 name = "rooms-repconn"
 source = "playtest list 7 item 47 (docs/design/frame-rate-audit.md §3; docs/spec-notes/level-design.md §3.1): the REPCONN test site's facility floor draws only the rooms seen through portals"
 note = "RocketLabMid has 17 room markers and 31 portals. From the start (room 0008D44A) 11 rooms and the unbounded space are in view and about 1,200 meshes are hidden; pictures with and without the culling were the same (frame-rate-audit.md §3). Unseen, so the ghouls stay where they are"

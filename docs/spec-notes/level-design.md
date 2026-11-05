@@ -249,6 +249,33 @@ work in New Vegas.
   activator 0x00104C07 carry no record flags, so where the GECK stores ActorZone and
   Projectile is unknown (§13).
 
+### 4.1 What a primitive shows in game
+
+- **A primitive shows nothing in game.** The editor draws it as a coloured, see-through
+  shape, and only while marker viewing is on [documented: Creating Primitives, "If your
+  primitive isn't visible, you may have marker viewing turned off"]. The console switch
+  for primitives is ToggleAllPrimitives [documented: ToggleAllPrimitives]. So a reference
+  with `XPRM` is drawn as its primitive or not at all, never as its base object's model
+  [hypothesis: the pages describe the editor; not captured in game, but no primitive
+  with a model is ever meant to be seen, see the next point].
+- **Copied triggers keep the model** [observed: survey of the `XPRM` references in the
+  six base and DLC ESMs, 2026-11-05]. FalloutNV.esm has 5,677 references with `XPRM`:
+  3,438 on CollisionMarker, 922 room, portal and occlusion markers with no base record,
+  1,200 activators with no model, 49 acoustic spaces, 2 sounds, and **66 activators
+  whose base names a real model**: 64 `Architecture\Wasteland\WaterTowerPipes01.NIF`
+  (most named "Gas Valve", e.g. Hoover Dam's battle triggers, `v34AmbushVolume`,
+  `REPHQEnterTrigger`) and 2 `Dungeons\Vault\Accessories\ControlPanelVault01.NIF`
+  (Sloan's `QJSnufflesCrippleTrigger`, 0x00140C37, whose only script block is OnLoad).
+  Old World Blues and Lonesome Road add one pipe trigger each. The trigger was made by
+  copying an activator, and the copy kept its model and name.
+- **NVForever's rule** (#1599): a reference with `XPRM` is not drawn (render streaming
+  and script Enable), gets no collision from its base model (only CollisionMarker boxes
+  collide, physics.md §4), and is not offered under the crosshair, whatever FULL its
+  activator has. Its trigger shape is the primitive (`script_events.rs`, T2). Code:
+  `fnv_world::placed::Placement::draws_base_model`; `engine/nvforever/src/world.rs`,
+  `engine/nvf-play/src/script_draw.rs`, `crates/fnv-phys/src/placed.rs`
+  (`primitive_model` count), `engine/nvf-play/src/activate.rs` (`describe`).
+
 ## 5. Navmesh (Layer 6 groundwork)
 
 - A navmesh is a set of triangles telling actors where they can walk; it replaces Oblivion's

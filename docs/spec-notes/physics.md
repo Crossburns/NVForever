@@ -2442,7 +2442,8 @@ gains `water_volume` for references whose model holds one); probes report `swimm
 `initially_disabled`, `disabled_by_parent` (enabled itself but disabled at the start by
 its enable-parent chain, §4), `no_base`, `actor` (placed NPCs and creatures, which get no
 collision here, §4), `no_model`, `collision_primitive` (CollisionMarker
-primitives added), `bad_primitive`, `speedtree`, `model_without_collision`,
+primitives added), `bad_primitive`, `primitive_model` (a primitive, a trigger, whose
+base names a model: the model is left out, level-design.md §4.1), `speedtree`, `model_without_collision`,
 `model_unreadable`, `awaiting_collision` (meshes not loaded), `with_collision`
 (references added to the world), `colliders` (their collider count) and `object_errors`.
 `by_base_type` counts references with a readable base by its record type.
