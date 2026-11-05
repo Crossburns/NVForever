@@ -287,7 +287,8 @@ engine if needed, and delete the item here.
     - Greetings flagged Goodbye are said at you; when an actor starts the conversation
       they hold you for one line.
     - A generic Goodbye is added where the only Goodbye has an end script (100+ lists).
-    - Tab leaves only where a Goodbye is offered.
+    - Tab leaves only where a Goodbye is offered, or at any topic list (#1595: Julie
+      Farkas's has none; how does the original leave her?).
     - A skipped line still runs its end script.
     - Spent Say Once questions vanish.
     - No pause is added between voiced lines (scenes run 0.3–0.4 s short per line).
