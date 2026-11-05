@@ -1761,7 +1761,7 @@ mod tests {
         ui.set_trait(ui.find_tile(BAND).unwrap(), "x", Value::Num(400.0));
         let moved = MenuView { speaker: "Nora again".into(), ..view };
         frame_on(&mut ui, &mut written, moved, 1, 0);
-        assert_eq!(f(&ui, HINT, "x"), 400.0 - HINT_GAP - 120.0);
+        assert_eq!(f(&ui, HINT, "x"), 400.0 - HINT_GAP - size(0.0, GOODBYE_HINT, None).0);
         // Code's own, and not taken for a mod's tile.
         let menu = ui.menu(DIALOG_MENU).unwrap();
         let hint = ui.find_tile(HINT).unwrap();
@@ -2194,7 +2194,7 @@ mod tests {
         assert_eq!(f(&ui, HINT, "y"), 680.0);
         ui.set_trait(ui.find_tile(BAND).unwrap(), "x", Value::Num(500.0));
         frame_on(&mut ui, &mut written, view, 1, 5);
-        assert_eq!(f(&ui, HINT, "x"), 500.0 - HINT_GAP - 120.0);
+        assert_eq!(f(&ui, HINT, "x"), 500.0 - HINT_GAP - size(0.0, GOODBYE_HINT, None).0);
     }
 
     #[test]
