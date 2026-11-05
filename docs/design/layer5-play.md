@@ -196,6 +196,14 @@ form's model, at the reference's pose (the simulation's once it holds one), unde
 cell's `RenderCell` entity, with `RefVisual` on every mesh. Actors, SpeedTrees, markers
 and light sources are not; the enabled-at-start rule is a copy of render streaming's.
 
+**References created at run time** (`dropped.rs`) go by the same filter on what is drawn
+[design: `dropped::draws_model`]: a marker, or a base of a type placed references are not
+drawn for (PlaceAtMe of an explosion), draws nothing. The reference stays in the
+simulation for scripts, and its collision still comes from its model
+(`phys::add_created`). That the original hides a marker made at run time as it hides a
+placed one is [hypothesis, as render streaming's `is_marker`]. An explosion's created
+reference is not removed after the blast (open).
+
 **Placed NPCs** carry `RefVisual(reference)` on their root and every mesh entity
 (`engine/nvforever/src/actors.rs`, `spawn`), so a script's Disable hides them and Enable
 of one that was drawn shows it again; their collision is the physics side's (none for

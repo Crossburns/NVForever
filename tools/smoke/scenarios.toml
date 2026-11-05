@@ -7750,6 +7750,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "i1-placeatme-expl"
+source = "issue #1617: PlaceAtMe of a marker drew the marker's editor model in the world (a large red box) and PlaceAtMe of an explosion drew its effect model; created references now go by the filter placed ones do (engine/nvf-play/src/dropped.rs draws_model)"
+note = "In Goodsprings: an explosion at 14 s, a marker at 20 s and a bottle at 22 s, placed at the player. The bottle must still be drawn. Frame i1_after.png in target/smoke: no red box where the player stands"
+areas = ["console", "rendering"]
+paths = ["engine/nvf-play/src/dropped.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.placeatme MineFragExplosion 1;15:close;20:player.placeatme XMarkerHeading 1;21:close;22:player.placeatme 0010A1F6 1;23:close", NVF_PLAY_TEST_SHOTS = "25:i1_after.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--heading", "0", "--no-voice"]
+run_seconds = 29
+expect = [
+  { re = 'console: PlaceAtMe on player >> ', count = 3, label = "the three PlaceAtMe calls ran" },
+  { re = 'combat: explosion MineFragExplosion at \(', label = "the explosion still goes off" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes.markerxheading\.nif', count = 0, label = "the marker draws nothing" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes.effects.explosion', count = 0, label = "the explosion's reference draws nothing" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes', min = 1, label = "the bottle is still drawn" },
+]
+
+[[scenario]]
 name = "placeatme-fights"
 source = "owner 2026-10-16: creatures a script places (PlaceAtMe) never fought; they should sense the enemies around them from the moment they are placed (engine/nvforever/src/residents.rs take_created, fnv_game::Game::created_actors)"
 note = "a cazador (NVCrCazador 000E584D) placed at the player at 10 s by the script test aid in Goodsprings; the player's health raised to 5000 by the console, no god mode; the cazador should become a resident, sense the player and attack, its sting poisoning"

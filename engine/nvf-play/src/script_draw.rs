@@ -27,7 +27,7 @@ use crate::{PlaySet, PlayWorld, RefVisual, RenderCell};
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 use fnv_sim::FormId;
-use fnv_world::placed::{base_object, placement, Placement};
+use fnv_world::placed::{base_object, placement, BaseObject, Placement};
 use fnv_world::transform::ref_rotation;
 use nvf_assets::model::ModelCtx;
 use std::collections::{BTreeMap, HashMap};
@@ -105,9 +105,14 @@ fn enabled_at_start(play: &PlayWorld, p: &Placement, depth: usize) -> bool {
     }
 }
 
-fn is_marker(path: &str) -> bool {
+pub(crate) fn is_marker(path: &str) -> bool {
     let file = path.rsplit('\\').next().unwrap_or(path);
     file.starts_with("marker") || path.contains("\\markers\\")
+}
+
+/// Whether a base form is of a type drawn from its model ([`DRAWN`]; not a SpeedTree).
+pub(crate) fn drawn_type(b: &BaseObject) -> bool {
+    DRAWN.contains(&&b.sig) && !b.is_speedtree()
 }
 
 /// The dormant references of a render cell.
@@ -131,7 +136,7 @@ fn dormant_in(play: &PlayWorld, sim: &SimState, cell: RenderCell) -> Vec<Dormant
                 return None;
             }
             let b = base_object(play.lo, play.schema, p.base?)?;
-            if !DRAWN.contains(&&b.sig) || b.is_speedtree() {
+            if !drawn_type(&b) {
                 return None;
             }
             let path = b.world_model_path().filter(|m| !is_marker(m) && !m.ends_with(".spt"))?;
