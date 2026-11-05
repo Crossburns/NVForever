@@ -73,14 +73,17 @@ actors, `resolve_changed_at`), `engine/nvforever/src/zones.rs` (the engine's cop
 - Scripts' AddItem of a leveled list reads the player's current level [observed:
   simulation.md §4, `L4.sim.leveled.basic`], and so do the carried items of references
   made at run time (PlaceAtMe, PlaceLeveledActorAtMe) [hypothesis: simulation.md §6].
-- A reference with no fixed level also reads the player's level at that moment, not its
-  zone's (`World::item_level`) [design]: a door's lock (only actors and containers get a
-  fixed level), and the carried items of an actor or container read before its cell
-  loads, a merchant chest's restocks included. What the game does for these is not seen
-  [hypothesis].
-- The world keeps the level in its configuration: `Game::sync_player_level` writes it on
-  SetLevel, on a level-up, on every tick and on a load [design]. The static viewer (no
-  `--play`) keeps the display level 1.
+- A reference with no fixed level reads the level its cell's load would fix now
+  (`World::item_level`, `World::level_at`) [design]: its zone's level, or the level the
+  zone would take if entered now, else the player's level, changed by its level modifier.
+  That covers a door's lock (only actors and containers get a fixed level), and the
+  carried items of an actor or container read before its cell loads, a merchant chest's
+  restocks included. What the game does for these is not seen [hypothesis].
+- The world keeps the player's level in its configuration: `Game::sync_player_level`
+  writes it on SetLevel, on a level-up and on every tick, and the engine's load
+  (`Runtime::restore_save`) calls it before anything runs. `fnv_game::Game::restore` does
+  not; there the next tick does [design]. The static viewer (no `--play`) keeps the
+  display level 1.
 
 ## 4. Never Resets
 

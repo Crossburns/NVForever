@@ -509,12 +509,15 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   wiki Reference, Lock tab; GetLockLevel: "If the terminal is leveled, the value you get
   will be the leveled value (same as locks)"]; by how much is not documented. As built
   (`fnv_sim::refs::Lock::level_at`, `World::lock_of`): one step of 25 for every 10
-  levels past the first, up to Very Hard (100), never Requires Key [hypothesis,
-  owner-review.md], from the level fixed for the reference when its cell loaded
-  (containers), else the player's level, not its zone's (doors, which get no fixed level;
-  encounter-zones.md) [design]. A door's lock follows the player's level until the
-  door's state is first made and keeps that level from then on [design];
-  GetLockLevel, the crosshair's lock line and the lockpick game then read that level.
+  levels past the first, up to Very Hard (100), never Requires Key [hypothesis: a guess,
+  listed as one in docs/owner-review.md until 2026-10-25; no decision on it is recorded],
+  from the reference's level (its encounter zone's, else the player's;
+  encounter-zones.md) [design]. A container's level is fixed when its cell loads. A door
+  gets no fixed level, so an unmade door's lock is read anew each time; in a zone the
+  zone's level holds from first entry, with no zone it follows the player's level. The
+  first activation or GetLockLevel makes the door's state, and the lock keeps that level
+  from then on [design]. GetLockLevel, the crosshair's lock line and the lockpick game
+  read that level.
   The nav graph's door locks keep the authored level (it only asks locked or not).
 - **XTEL** (door FormID, position, rotation, flag) makes a door a teleport [documented:
   xEdit]. The flag is "No Alarm": "No trespass alarm will be sent when the player uses

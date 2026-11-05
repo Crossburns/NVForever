@@ -554,8 +554,9 @@ impl<'a> World<'a> {
     }
 
     /// The player's level changed (`fnv_game::Game::sync_player_level`): AddItem, PlaceAtMe
-    /// and references with no fixed level roll at it from now on. Kept here because
-    /// inventories and locks are made on any read, where no caller can pass it in.
+    /// and references with neither a fixed level nor a zone roll at it from now on. Kept
+    /// here because inventories and locks are made on any read, where no caller can pass
+    /// it in.
     pub fn set_player_level(&mut self, level: u16) {
         self.cfg.player_level = level.max(1);
     }
