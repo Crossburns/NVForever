@@ -5278,12 +5278,12 @@ expect = [
 [[scenario]]
 name = "protectron-lasers"
 source = "#1535 (owner's playtest 2026-11-04): protectrons fire their lasers. Their skeleton has no Weapon node, so no 1hp/2hl stance loaded and they fought with their own 2-damage attack; a stance without one is now kept for body weapons (engine/nvforever/src/weapons.rs no_weapon_node), and the lasers fire from the projectile nodes in their body-part models (body_weapons.rs spawn_part_projectile_nodes, place_muzzles)"
-note = "VCrTier0CrProtectron (00167ED5: ProtectronHandLaser1HP NNAM ProjectileNode_RHandLaser in 1hprhandlaser.nif under Bip01 R Forearm; ProtectronHeadLaser2HL ProjectileNode_HeadLaser in 2hlheadlaser.nif) placed at the player and moved 800 units north; see-through-walls so detection in this dim spot (light 14) does not decide whether it fires"
+note = "VCrTier0CrProtectron (00167ED5: ProtectronHandLaser1HP NNAM ProjectileNode_RHandLaser in 1hprhandlaser.nif under Bip01 R Forearm; ProtectronHeadLaser2HL ProjectileNode_HeadLaser in 2hlheadlaser.nif) placed at the player and moved 800 units north 1.5 s later (moved in the frame it was made, the drawn actor did not follow: a setup race); see-through-walls so detection in this dim spot (light 14) does not decide whether it fires"
 areas = ["combat", "creatures"]
 paths = ["engine/nvforever/src/body_weapons.rs", "engine/nvforever/src/weapons.rs", "engine/nvforever/src/actors.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SEE_THROUGH_WALLS = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 00167ED5 1;9.3:ff000000.moveto player 0 800 0;9.5:close" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SEE_THROUGH_WALLS = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 00167ED5 1;10.5:ff000000.moveto player 0 800 0;10.7:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
-run_seconds = 35
+run_seconds = 36
 expect = [
   { text = "protectron 1hp: clips [Holster, Equip, Aim, Unequip]", label = "the hand laser's stance loads without a Weapon node" },
   { re = 'body weapons: \S+skeleton\.nif FF000000 fights with ProtectronHandLaser1HP, ProtectronHeadLaser2HL', label = "both lasers are its arms" },

@@ -64,7 +64,10 @@ pub struct BodyWeaponsPlugin;
 impl Plugin for BodyWeaponsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BodyStats>()
-            .add_systems(Update, (attach.after(StanceAttach), switch.after(crate::npc_combat::fight), place_muzzles.before(crate::npc_combat::fight)))
+            .add_systems(Update, (attach.after(StanceAttach), switch.after(crate::npc_combat::fight)))
+            // Its muzzle may follow a frame late: no order against `npc_combat::fight`, whose
+            // place in the schedule other fights depend on (an edge here changed combat-violet).
+            .add_systems(Update, place_muzzles)
             .add_systems(Last, report);
     }
 }
@@ -269,11 +272,15 @@ fn attach(
                 continue;
             }
             let Some(prefix) = ws.anim_type.as_deref().and_then(AnimType::from_name).map(AnimType::prefix) else { continue };
-            let Some(stance) = world.anims.stance(&mut ctx, &rig.skeleton, &rig.skel, prefix) else {
+            let gun = is_gun(&combat, ws, item);
+            // A stance on a skeleton without a `Weapon` node serves guns only (the
+            // protectron's lasers, a turret's gun, #1535/#1537): a melee arm there stays
+            // the creature's own attack, as before [design: the change was made for the
+            // guns; melee body arms on such skeletons are left as they fought].
+            let Some(stance) = world.anims.stance(&mut ctx, &rig.skeleton, &rig.skel, prefix).filter(|s| gun || !s.no_weapon_node) else {
                 *stats.no_stance.entry(format!("{folder} {prefix}")).or_default() += 1;
                 continue;
             };
-            let gun = is_gun(&combat, ws, item);
             let dps = body_weapon::damage_per_second(ws.base_damage, ws.projectile_count, ws.attack_shots_per_sec, ws.fire_rate);
             let name = ws.edid.clone().unwrap_or_else(|| item.to_string());
             arms.push(BodyArm { weapon: Some(item), name, stance: Some(stance), limb: ws.embedded_limb, rule: Arm { melee: !gun, min_range: ws.min_range, max_range: ws.max_range, dps, usable: true } });
