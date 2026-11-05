@@ -6492,6 +6492,7 @@ expect = [
 order = [[
   { re = 'handoff: window shown after [\d.]+ s$', label = "the new window shows" },
   { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new window shows" },
+  { re = 'handoff: the old run has ended after [\d.]+ s; the save goes back now', label = "the new run sees the old one end (#1651)" },
   { re = 'load: restored .*handoff-test\.nvfsave', label = "only then is the save put back (owner 2026-11-01: the old run does not stay through the load)" },
   { text = "the new run took over and its world is in; ending it", label = "and the world comes in" },
 ]]
