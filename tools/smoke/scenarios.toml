@@ -2722,7 +2722,7 @@ name = "creature-embedded-muzzle"
 source = "ESM audit 2026-10-24 gap 14 (nvforever npc_combat.rs, weapon-data-fields.md §7): a creature's embedded weapon shoots from the node its WEAP NNAM names (a sentry bot's ProjectileNode_RGatling)"
 note = "a sentry bot (CrSentryBotMGHard 0x000E585E) placed at the player in Goodsprings at 3 s (the first created reference, 0xFF000000), put 600 units away and set on the player; god mode"
 areas = ["combat"]
-paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/data.rs"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/data.rs", "engine/nvforever/src/body_weapons.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:CrSentryBotMGHard:1,5:moveto:0xFF000000:player:0:600:0,6:combat:0xFF000000:player" }
 args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 30
@@ -5391,6 +5391,25 @@ run_seconds = 36
 expect = [
   { re = 'actor feet: 00104C80 GSEasyPete at .*, root (?P<n>-?[\d.]+) above it', range = [-1.0, 1.0], label = "Pete's body stands on the drawn landscape" },
   { re = 'actor feet: 00104C80 GSEasyPete at .*, root (?P<n>-?[\d.]+) above the drawn ground', range = [-1.0, 1.0], label = "on the drawn ground the probe finds" },
+]
+
+[[scenario]]
+name = "protectron-lasers"
+source = "#1535 (owner's playtest 2026-11-04): protectrons fire their lasers. Their skeleton has no Weapon node, so no 1hp/2hl stance loaded and they fought with their own 2-damage attack; a stance without one is now kept for body weapons (engine/nvforever/src/weapons.rs no_weapon_node), and the lasers fire from the projectile nodes in their body-part models (body_weapons.rs spawn_part_projectile_nodes, place_muzzles)"
+note = "VCrTier0CrProtectron (00167ED5: ProtectronHandLaser1HP NNAM ProjectileNode_RHandLaser in 1hprhandlaser.nif under Bip01 R Forearm; ProtectronHeadLaser2HL ProjectileNode_HeadLaser in 2hlheadlaser.nif) placed at the player and moved 800 units north 1.5 s later (moved in the frame it was made, the drawn actor did not follow: a setup race); see-through-walls so detection in this dim spot (light 14) does not decide whether it fires"
+areas = ["combat", "creatures"]
+paths = ["engine/nvforever/src/body_weapons.rs", "engine/nvforever/src/weapons.rs", "engine/nvforever/src/actors.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SEE_THROUGH_WALLS = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 00167ED5 1;10.5:ff000000.moveto player 0 800 0;10.7:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 36
+expect = [
+  { text = "protectron 1hp: clips [Holster, Equip, Aim, Unequip]", label = "the hand laser's stance loads without a Weapon node" },
+  { re = 'body weapons: \S+skeleton\.nif FF000000 fights with ProtectronHandLaser1HP, ProtectronHeadLaser2HL', label = "both lasers are its arms" },
+  { text = "body weapons: FF000000 fires ProtectronHandLaser1HP from its node ProjectileNode_RHandLaser", label = "the hand laser fires from its body part's node" },
+  { re = 'npc combat: 0xFF000000 opens fire on the player from (\d+) units', range = [300, 1000], label = "it opens fire from a distance" },
+  { text = "npc combat: 0xFF000000 shots are drawn from its weapon's muzzle", label = "from the laser, not its eyes" },
+  { re = 'npc combat summary: .*; (\d+) shots \((\d+) from a muzzle', range = [5, 100000], label = "it keeps firing (41 on 2026-11-04; 0 before)" },
+  { re = 'attack anims: FF000000 plays \S+1hpattackright\.kf', label = "with its firing clip" },
 ]
 
 [[scenario]]
