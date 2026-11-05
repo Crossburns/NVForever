@@ -997,7 +997,7 @@ impl PhysState {
         // Test aid: the reference as its made-up cell has it.
         #[cfg(test)]
         if let (Some(fake), Some(&cell)) = (self.fake, self.ref_cell.get(&r)) {
-            let job = with_poses(Job { models: self.fake_models(), ..self.job(ctx.d, cell) }, ctx.sim);
+            let job = with_poses(Job { refs: vec![r], models: self.fake_models(), ..self.job(ctx.d, cell) }, ctx.sim);
             let Some(e) = fake(&job).refs.into_iter().find(|e| e.form_id == r) else { return false };
             let shapes = e.shapes;
             return self.apply(ctx, e.placement, |_| shapes.expect("made up with its placement"));
