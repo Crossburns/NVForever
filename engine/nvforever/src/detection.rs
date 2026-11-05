@@ -333,23 +333,25 @@ fn unseen() -> bool {
 
 /// Whether the collision world lets `from` see `to` (also the combat AI's cover test,
 /// `combat_tactics`).
-/// An actor's eyes, game space: `eye` above its feet (its origin), but never above the
-/// top of its drawn body (its hit volume), where they stand just under that top over the
-/// volume's middle. A person's body reaches above `eye`, so nothing changes for people; a
-/// ceiling turret's eyes were 112 units over its origin, above its own top (7853 for
-/// HELIOSOneTower's LvlTurretCeiling2048Robot at z 7760 [observed in NVForever]) and
-/// past the ceiling, so it never saw the player below and never turned or fired (#1537).
+/// An actor's eyes, game space: `eye` above its feet (its origin), but for a body that is
+/// drawn clear of its origin and ends below that eye height (its hit volume starts more
+/// than [`LIFTED`] above the origin), halfway up that body. A ceiling turret's eyes were
+/// 112 units over its origin, above its own top (body 7807–7853 for HELIOSOneTower's
+/// LvlTurretCeiling2048Robot at z 7760 [observed in NVForever]) and past the ceiling, so
+/// it never saw the player below and never turned or fired (#1537). Anyone on its feet,
+/// standing or crouched, keeps the eye height (a crouched body is shorter than 112 but
+/// starts at its feet).
 pub(crate) fn eyes_of(phys: Option<&PhysState>, id: u32, feet: [f32; 3], eye: f32) -> [f32; 3] {
-    let low = phys.and_then(|p| p.world.actor_volume(id)).filter(|v| v.height > 0.0 && v.feet[2] + v.height < feet[2] + eye);
-    match low {
-        Some(v) => [v.feet[0], v.feet[1], v.feet[2] + v.height * LOW_EYES],
+    let lifted = phys.and_then(|p| p.world.actor_volume(id)).filter(|v| v.height > 0.0 && v.feet[2] > feet[2] + LIFTED && v.feet[2] + v.height < feet[2] + eye);
+    match lifted {
+        Some(v) => [v.feet[0], v.feet[1], v.feet[2] + v.height / 2.0],
         None => [feet[0], feet[1], feet[2] + eye],
     }
 }
 
-/// Where the eyes of a body shorter than its eye height are, as a share of its height
-/// from the bottom [design: a turret's top is inside the block it hangs from].
-const LOW_EYES: f32 = 0.5;
+/// How far above its origin a body must start to have its eyes on it, game units
+/// [design: the ceiling turret's starts 47 up; feet and a crouch start at 0].
+const LIFTED: f32 = 16.0;
 
 pub(crate) fn clear_sight(phys: Option<&mut PhysState>, from: [f32; 3], to: [f32; 3]) -> bool {
     let Some(phys) = phys else { return true };
