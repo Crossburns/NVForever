@@ -797,10 +797,12 @@ impl ActorCtx<'_, '_> {
             }
             let Ok(shape) = &dec.blocks[o.block] else { continue };
             let Some(data) = shape.block_ref("data").and_then(|r| dec.get(r)) else { continue };
-            let props = shape_props(&file, &dec, o, &by_block);
+            let mut props = shape_props(&file, &dec, o, &by_block);
             if props.is_helper() {
                 continue;
             }
+            // The actor's clips may fade this shape's material alpha (Mr. House's screens).
+            props.alpha_gated = crate::nif_spawn::material_alpha_controlled(&file, &dec, o.block);
             let Some((mut mesh, _tris)) = build_mesh(data) else { continue };
             // Hair-shader shapes (hair, beards, eyebrows) carry a mask in their vertex
             // colours, not a colour [observed: red 0.04–0.39 with green and blue at 1 in
