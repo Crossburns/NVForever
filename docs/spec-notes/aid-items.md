@@ -255,6 +255,8 @@ Food:      fMagicSurvivalSkillBase + fMagicSurvivalSkillMult × Survival / 100  
 - Log lines (`engine/nvf-play/src/aid.rs`): `aid: the player used <item> (potency p):
   <changes>; <value> before → after, …`, `aid: <item>'s effects on the player ended: …`,
   `aid: the player is addicted to …`, and at exit `aid summary: …`.
+  The summary's `effects started` and `ended` count the same effects, those a use applied [design]:
+  an effect held inactive at the use counts in neither, even if it takes hold later or runs out (#1494).
 - The Pip-Boy's STATS EFF list shows each aid item with active value changes, with the
   amounts applied (potency included). Inactive effects (conditions failing) are not listed (#1438).
 - Hardcore mode's Stimpak and RadAway effects are chosen by their conditions (IsHardcore,
