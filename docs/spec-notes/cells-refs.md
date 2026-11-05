@@ -27,6 +27,13 @@ teleport, no opening, no script [hypothesis: the flag's name; GetLockedOut's val
 "Inaccessible" (JIP) [documented] says such a door is locked out]. Scripts may still
 activate it.
 
+**Doors without a name** (no FULL, or a blank one) give no prompt at all, as unnamed
+activators do: the crosshair passes them by and E does nothing to them. FalloutNV.esm has 8
+such DOOR bases of 320, and their Editor IDs say what they are for: NVInvisibleDoorNPCOnly,
+VHDTowerHatchNoUse, OffDoorHidden01 (Mick & Ralph's back room), CG04SecretDoor,
+FortArenaGate, REPCONHatch2, and two never placed [observed, #1598]. The rule itself is a
+hypothesis (that the original's prompt needs a name); scripts may still activate them.
+
 ## 3. Activation prompts (XATO)
 
 156 references (doors mostly: "Exit to Mojave Wasteland" 24, "Climb Ladder to Mojave
