@@ -1566,8 +1566,13 @@ pub struct Game<'a> {
     pub(crate) farewell_ending: bool,
     /// A force greet (`StartConversation player`) asked for by that end script, as
     /// (speaker, topic): it starts after the line's Add Topics
-    /// ([`Game::hold_force_greet`]). Not saved.
+    /// ([`Game::hold_force_greet`]). Both are set and put back by each `end_line`, so
+    /// a line ending inside another's end script keeps to its own. Not saved.
     pub(crate) farewell_then: Option<(FormId, Option<FormId>)>,
+    /// The last Goodbye line the player chose that went on in the world, as (speaker,
+    /// line), set as its conversation closes (`Game::say_farewell`), for the engine's
+    /// log line on that close, which takes it. Not saved.
+    pub farewell_said: Option<(FormId, FormId)>,
     /// The lengths of voice files, when the game was given them (`crate::voice`): a
     /// response then lasts as long as its sound. Not part of the saved state.
     pub voice: Option<std::sync::Arc<dyn crate::voice::VoiceLengths>>,
@@ -2191,6 +2196,7 @@ impl<'a> Game<'a> {
             talking_through: None,
             farewell_ending: false,
             farewell_then: None,
+            farewell_said: None,
             voice: None,
             frame: 0,
             time: 0.0,
@@ -4090,17 +4096,20 @@ impl<'a> Game<'a> {
         let s = self.speech.remove(k);
         let (speaker, info) = (s.speaker, s.info);
         self.emit(EventKind::LineEnded { speaker, info, cut: false });
-        if s.farewell {
-            self.farewell_then = None;
-        }
+        // The force greet this line's end script holds, if it is a farewell
+        // (`Game::hold_force_greet`).
+        let mut then = None;
         if let Some(def) = data.infos.get(&info) {
             if let Some(u) = def.end.filter(|_| !s.end_ran) {
                 self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(speaker) });
-                // A farewell's end script may ask for the next conversation
-                // (`Game::hold_force_greet`).
-                let was = std::mem::replace(&mut self.farewell_ending, s.farewell);
+                // A farewell's end script may ask for the next conversation. The state is
+                // this call's own: a line that ends inside the script (another farewell
+                // its speaker's new line ends) neither sees nor clears the outer one's
+                // request, and the outer state comes back afterwards [design].
+                let outer = (std::mem::replace(&mut self.farewell_ending, s.farewell), self.farewell_then.take());
                 self.run_result(u, RunCtx { self_ref: Some(speaker), action_ref: None, quest: def.quest });
-                self.farewell_ending = was;
+                then = self.farewell_then.take().filter(|_| s.farewell);
+                (self.farewell_ending, self.farewell_then) = outer;
             }
             // A greeting said at the player ends as a conversation's line does
             // (`Game::start_dialogue`): its Add Topics join the known topics, and it
@@ -4117,7 +4126,7 @@ impl<'a> Game<'a> {
         // script and the Add Topics, as after a Goodbye line that ends in its conversation
         // (`Game::finish_line`). Refusals are not errors, as for StartConversation.
         if s.farewell {
-            if let Some((speaker, topic)) = self.farewell_then.take() {
+            if let Some((speaker, topic)) = then {
                 let _ = self.force_greet(speaker, topic);
             }
             return;

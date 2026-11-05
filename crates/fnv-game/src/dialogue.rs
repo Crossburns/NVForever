@@ -964,7 +964,7 @@ impl<'a> Game<'a> {
         if c.line.is_some() {
             return Err("the actor is still speaking".into());
         }
-        let actor = c.actor;
+        let (actor, lines) = (c.actor, c.lines);
         let choice = c.choices.get(index).cloned().ok_or_else(|| format!("no choice {index} ({} offered)", c.choices.len()))?;
         self.emit(EventKind::ChoiceMade { actor, index, topic: choice.topic, info: choice.info });
         // A Fallout 3 style speech challenge (the flag and a difficulty) gives its XP when
@@ -986,7 +986,7 @@ impl<'a> Game<'a> {
             self.count_stat(if passed { crate::misc_stats::SPEECH_SUCCESSES } else { crate::misc_stats::SPEECH_FAILURES }, 1.0);
         }
         self.speak(actor, choice.topic, choice.info);
-        self.say_farewell(actor, choice.topic, choice.info);
+        self.say_farewell(actor, choice.topic, choice.info, lines + 1);
         Ok(choice.info)
     }
 
@@ -1005,27 +1005,40 @@ impl<'a> Game<'a> {
     /// The conversation's line is taken before it closes, so no cut `line_ended` comes;
     /// `dialogue_ended` (goodbye) counts the line.
     ///
-    /// Left in the conversation, as before: a line the begin script ended or replaced,
-    /// and a conversation through a talking activator, whose line stays heard from the
-    /// activator until it is over [hypothesis: the owner's playtest was face to face; a
-    /// line said in the world is heard from its speaker, and the activator is not carried
-    /// by [`Speech`]; open, docs/spec-notes/dialogue.md §5]. A Goodbye line that opens a
+    /// Left as it is: a line the begin script ended or replaced. The conversation must be
+    /// the one the line was chosen in: the same actor, saying this line, and `lines` lines
+    /// said (the count before the choice and this line). A conversation the begin script
+    /// started afresh with the same actor and line is at 1 line, this one at 2 or more,
+    /// since the line the choices followed counts [design].
+    ///
+    /// Left in the conversation until it is over, as before:
+    /// - a conversation through a talking activator, whose line stays heard from the
+    ///   activator [hypothesis: the owner's playtest was face to face; a line said in the
+    ///   world is heard from its speaker, and the activator is not carried by
+    ///   [`Speech`]; open, docs/spec-notes/dialogue.md §5];
+    /// - a line whose begin script (or Run Immediately end script) made the actor say
+    ///   another line ([`Game::speech`] has one of the actor's after [`Game::speak`],
+    ///   which cut any earlier one): that line is kept and not cut for the farewell
+    ///   [design: a begin script that makes the actor say another line keeps today's
+    ///   behaviour].
+    ///
+    /// A Goodbye line that opens a
     /// conversation (a force greet's greeting, a StartConversation topic) and a Goodbye
     /// follow-up are not chosen: they end their conversation when they are over, as
     /// before (`Game::finish_line`) [owner statement 2026-10-11 for the force greet].
-    fn say_farewell(&mut self, actor: FormId, topic: FormId, info: FormId) {
+    fn say_farewell(&mut self, actor: FormId, topic: FormId, info: FormId, lines: u32) {
         let data = self.data;
         let Some(def) = data.infos.get(&info).filter(|d| d.goodbye) else { return };
+        if self.speech.iter().any(|s| s.speaker == actor) {
+            return;
+        }
         let Some(c) = self.dialogue.as_mut() else { return };
-        if c.actor != actor || c.through.is_some() || !c.line.as_ref().is_some_and(|l| l.info == info) {
+        if c.actor != actor || c.lines != lines || c.through.is_some() || !c.line.as_ref().is_some_and(|l| l.info == info) {
             return;
         }
         let Some(line) = c.line.take() else { return };
         let lengths = self.response_lengths(actor, info);
         let later: f64 = def.response_order().iter().skip(line.response + 1).map(|&r| lengths.get(r).copied().unwrap_or(0.0)).sum();
-        // A line the begin script made the actor say (Say) gives way, as to any new line
-        // of its speaker: one line per speaker [design].
-        self.cut_line(actor);
         self.speech.push(Speech {
             speaker: actor,
             target: Some(FormId::PLAYER_REF),
@@ -1046,6 +1059,7 @@ impl<'a> Game<'a> {
             two_d: false,
             end_ran: def.has(info_flag::RUN_IMMEDIATELY),
         });
+        self.farewell_said = Some((actor, info));
         self.end_dialogue_as(ended::GOODBYE);
     }
 

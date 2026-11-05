@@ -1977,7 +1977,7 @@ pub(crate) fn run_scripts(
     let gt = rt.game.time;
     for e in &events {
         log_event(rt.game.data, e);
-        crate::dialogue::log_farewell(&rt.game, e);
+        crate::dialogue::log_farewell(&mut rt.game, e);
         if let EventKind::LineStarted { info, .. } = &e.kind {
             if !hud.knows_line(*info) {
                 hud.remember_line(*info, responses(&play, *info));
