@@ -18913,6 +18913,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "nellis-artillery-fires"
+source = "issue #1600 (owner): the Boomers' artillery did not fire on the player at Nellis's gate. NellisArtilleryScript's GameMode calls CurrentActor2.GetDead on an unset ref every frame one actor is in its trigger; a call on an empty ref stopped the script there, before its timers. It now gives 0 and the script goes on, as in the original (crates/fnv-game/src/game.rs Exec::call; script-language.md §7.3 row 1)"
+note = "the player starts inside NellisArtilleryActivatorREF (0x000FF806, a box primitive about 6,400 by 8,600 units at (28955, 121961)), god mode; the script fires a shell every 2 s for 30 s"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/game.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1" }
+args = ["--world", "WastelandNV", "--pos=28955,121500,6000", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 40
+order = [[
+  { text = "script: player entered trigger NellisArtilleryActivatorREF", label = "the player is in the artillery's trigger" },
+  { re = 'script: ArtillerySoundMarkerREF moved to', label = "the barrage's sound marker is moved to the player (the script went past its empty-ref call)" },
+]]
+expect = [
+  { re = 'combat: explosion NellisArtilleryExplosion at', min = 3, label = "shells land around the player" },
+]
+
+[[scenario]]
 name = "script-move-dynamic-clutter"
 source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
 note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"
