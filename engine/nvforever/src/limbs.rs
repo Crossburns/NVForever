@@ -69,6 +69,10 @@ pub struct ActorRig {
     pub skel: Arc<PreparedSkeleton>,
     /// The skeleton's node entities, in `skel` order.
     pub nodes: Vec<Entity>,
+    /// A creature's base scale (CREA BNAM) drawn on top of the reference's scale
+    /// (`actors.rs`); 1 for NPCs and the player. Its gore is thrown at this size too
+    /// (`dismember.rs`, #1587).
+    pub base_scale: f32,
 }
 
 /// An actor's body parts on its node entities.

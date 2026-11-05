@@ -119,6 +119,11 @@ pub struct Conversation {
     pub line: Option<Line>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<Choice>,
+    /// The choices are the topic list (the line had no choices of its own), not a line's
+    /// own choices: the player may leave it even when no Goodbye is offered, as at
+    /// Julie Farkas's, whose top level has none in the data (#1595; the engine's Tab).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub topic_list: bool,
     /// Lines said so far.
     #[serde(default)]
     pub lines: u32,
@@ -586,7 +591,7 @@ impl<'a> Game<'a> {
             self.say_line(actor, listener, topic, info, LineKind::Greeting);
             return Ok(info);
         }
-        self.dialogue = Some(Conversation { actor, through, line: None, choices: Vec::new(), lines: 0, then: None, ending: false });
+        self.dialogue = Some(Conversation { actor, through, line: None, choices: Vec::new(), topic_list: false, lines: 0, then: None, ending: false });
         self.extra.entry(actor).or_default().talked_to_pc = true;
         self.emit(EventKind::DialogueStarted { actor, topic });
         self.speak(actor, topic, info);
@@ -745,6 +750,7 @@ impl<'a> Game<'a> {
         self.emit(EventKind::ChoicesOffered { actor, choices: choices.clone() });
         if let Some(c) = self.dialogue.as_mut() {
             c.choices = choices;
+            c.topic_list = def.choices.is_empty();
         }
     }
 

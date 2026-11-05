@@ -88,13 +88,16 @@ original unless it carries a tag.
 | | Up / Down, W / S, mouse wheel | move the selection |
 | | Enter, Space, Activate (E) | pick the selected choice |
 | | left click on a choice (hovering selects it) | picks it |
-| | Tab | says goodbye: picks the offered Goodbye choice; the conversation ends at once and the actor finishes its goodbye line in the world (§1 item 4); refused when no Goodbye choice is offered |
+| | Tab | says goodbye: picks the offered Goodbye choice; the conversation ends at once and the actor finishes its goodbye line in the world (§1 item 4); at a topic list (the top level) without one, leaves it (#1595); refused at a line's own choices without one; refused when no Goodbye choice is offered |
 | Any time | Esc | the pause menu (Resume goes back to the conversation) |
 
 - The original leaves a conversation with Tab [hypothesis: the coordinator's brief of
   2026-10-10, from play; when it allows leaving is not captured]. Ours: Tab only where
   the data offers a goodbye, so a forced conversation (the psych test) cannot be left by
-  accident.
+  accident. The topic list is never forced: one without a Goodbye is left by Tab, and the
+  log names the actor (#1595: Julie Farkas's top level offers none; her Goodbye lines are
+  all answers on sub-menus, and the generic GOODBYE lines' conditions leave out her voice
+  type FemaleAdult11) [design]. The "TAB) Goodbye" hint stands there too.
 - Breaking a conversation off (cutting the line, no end script) is not a key of the
   game: it is a debug switch, off by default (§4) [owner decision 2026-10-10].
 - The cursor: free look while the actor speaks, the cursor released while the player

@@ -1201,7 +1201,9 @@ impl PhysState {
             self.world.set_ref_keyframed_solid(id, false);
         }
         self.reposes += 1;
-        debug!("collision of 0x{id:08X} built again where a script moved it ({dist:.1} from its body){}", if built { "" } else { ": none now" });
+        // At info: the smoke scenario `script-move-dynamic-clutter` reads this line, and
+        // rebuilds are few now (a held-back move waits for the reference to rest).
+        info!("collision of 0x{id:08X} built again where a script moved it ({dist:.1} from its body){}", if built { "" } else { ": none now" });
     }
 
     /// Test aid: every destruction model, by FormID (made-up cells have no index for
@@ -1671,8 +1673,19 @@ fn travel(
     }
     *location = to;
     let ctx = LoadCtx { d: &d, sim: &sim, data: data.as_deref() };
-    let cell = phys.cell_at(t.feet);
-    phys.load(&ctx, cell);
+    // Outdoors the squares around the arrival too, before the player is placed: a
+    // reference placed in a neighbouring square can be the floor at the door (#1584:
+    // Vault 3's way out (0x000EC6EB to WastelandNVmini) lands on NVVault3Entrance, placed
+    // in the square to the west, so the player was put on the terrain inside it), as the start waits for them
+    // (`ready_around`, #1103).
+    let centre = phys.cell_at(t.feet);
+    let around: Vec<PhysCell> = match centre {
+        PhysCell::Exterior(cx, cy) => cells::wanted((cx, cy)).into_iter().map(|(x, y)| PhysCell::Exterior(x, y)).collect(),
+        c => vec![c],
+    };
+    for cell in around {
+        phys.load(&ctx, cell);
+    }
     let hit = phys.arrive_player(t.feet).support;
     let feet = phys.player.as_ref().map_or(t.feet, |c| c.feet);
     player.feet = feet;

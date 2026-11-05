@@ -258,7 +258,7 @@ fn clutter_on_the_terrain_shell_falls_asleep() {
 }
 
 #[test]
-fn fixed_bounds_cover_static_collision_only() {
+fn fixed_bounds_cover_static_and_keyframed_collision_only() {
     let mut w = PhysWorld::new(PhysParams::default());
     assert_eq!(w.fixed_bounds(), None);
     w.add_ref(&at(1, [100.0, 0.0, 500.0]), &[object(boxed([50.0, 20.0, 10.0]), Motion::Static)]);
@@ -1353,6 +1353,40 @@ fn keyframed_door_blocks_until_posed_open() {
     assert!((b.translation[0] - 150.0).abs() < 0.5, "{:?}", b.translation);
 }
 
+/// A keyframed body is teleported into place (never moved smoothly), so it is a fixed
+/// body. As a kinematic body it broke the character controller: rapier's "carried by a
+/// kinematic body" rule froze a character walking down its slope (the Prospector Saloon's
+/// broken door 0x00108BD7, issue #1485; the same model also let a degenerate collision
+/// mesh's centre of mass become a phantom velocity that flung a character). A character
+/// walking down a keyframed slope must move normally.
+#[test]
+fn keyframed_slope_does_not_freeze_the_character() {
+    // A slab tilted so its top descends eastward, keyframed as door parts are.
+    let a = 5.0f32.to_radians();
+    let (s, c) = a.sin_cos();
+    let rot = [c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c];
+    let half = [200.0, 200.0, 5.0];
+    let west = [-half[0], 0.0, half[2]];
+    let rw = [rot[0] * west[0] + rot[2] * west[2], 0.0, rot[6] * west[0] + rot[8] * west[2]];
+    let mut panel = object(boxed(half), Motion::Keyframed);
+    panel.shell = 0.7;
+    let mut w = ground();
+    w.add_ref(&RefPose { form_id: 1, position: [0.0 - rw[0], 0.0, 100.0 - rw[2]], rotation: rot, scale: 1.0 }, &[panel]);
+    let mut c = w.add_character(1, CharacterParams::default(), [0.0, 100.0, 120.0]);
+    settle(&mut w, &mut c, 60);
+    let dt = w.params.dt;
+    let mut min_speed = f32::INFINITY;
+    let mut prev = c.feet;
+    for _ in 0..120 {
+        let s = w.move_character(&mut c, CharacterInput { velocity: [0.0, -344.0], ..Default::default() });
+        w.step();
+        let speed = ((s.feet[0] - prev[0]).powi(2) + (s.feet[1] - prev[1]).powi(2)).sqrt() / dt;
+        min_speed = min_speed.min(speed);
+        prev = s.feet;
+    }
+    assert!(min_speed > 50.0, "froze on the keyframed slope: min {min_speed:.1} units/s");
+}
+
 #[test]
 fn explosions_push_dynamic_bodies_away() {
     let mut w = ground();
@@ -1696,9 +1730,9 @@ fn clutter_added_asleep_on_a_shelf_it_overlaps_stays_asleep() {
 
 #[test]
 fn clutter_asleep_on_a_keyframed_lid_stays_asleep() {
-    // A container's keyframed lid added with the cell (asleep), a bottle overlapping it.
+    // A container's keyframed lid (a fixed body), a bottle overlapping it.
     let mut w = ground();
-    let lid = PreparedRef::new(&w.params, &at(0x9C, [100.0, 100.0, 290.0]), &[object(boxed([50.0, 50.0, 10.0]), Motion::Keyframed)]).asleep();
+    let lid = PreparedRef::new(&w.params, &at(0x9C, [100.0, 100.0, 290.0]), &[object(boxed([50.0, 50.0, 10.0]), Motion::Keyframed)]);
     w.insert_ref(lid);
     add_asleep(&mut w, 0x99, [100.0, 100.0, 304.0], [5.0, 5.0, 5.0]);
     for _ in 0..120 {
