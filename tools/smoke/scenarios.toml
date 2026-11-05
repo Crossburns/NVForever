@@ -6284,6 +6284,26 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-after-answered-box"
+source = "#1649 (a user's report): after a mod's MessageBoxEx warning was answered, every save was refused for the rest of the session with \"a script's menu or message box is open\": the answered box stayed in the game's message box until its script read the button, which a fire-and-forget box never does"
+note = "the console's MessageBoxEx box is answered by NVF_PLAY_TEST_SCRIPT_MENUS after 1 s and nothing reads its button, as with the mods' start-up warnings; the console's save comes after"
+areas = ["save", "scripts"]
+paths = ["engine/nvf-play/src/save.rs", "crates/fnv-game/src/functions/misc.rs"]
+env = { NVFOREVER_HOME = "save-box-home", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "20:MessageBoxEx \"nvf answered box|Ok\";20.3:close;24:save nvf-after-box;25:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 27
+expect = [
+  { re = 'script: menu 1001 .*answered', label = "the box is answered" },
+  { re = 'save: wrote .*nvf-after-box\.nvfsave \(manual, ', label = "the save after the answered box is written" },
+  { re = 'save: not now', count = 0, label = "no save is refused" },
+]
+order = [[
+  { re = 'console: MessageBoxEx "nvf answered box\|Ok" >> ran' },
+  { re = 'script: menu 1001 .*answered' },
+  { re = 'save: wrote .*nvf-after-box\.nvfsave' },
+]]
+
+[[scenario]]
 name = "save-load"
 source = "owner 2026-10-15: save and load (docs/design/save-load.md): the second half of the round trip: --load the save save-write made and find its changes"
 areas = ["save"]
