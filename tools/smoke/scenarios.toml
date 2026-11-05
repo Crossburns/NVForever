@@ -2630,6 +2630,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "npc-burst-fire"
+source = "#1448: an NPC's automatic weapon fires in bursts with pauses between them (fnv_combat::burst, docs/design/combat-ai.md), embedded weapons too; before, Securitrons held the trigger nonstop"
+note = "creature-embedded-muzzle's set-up: a sentry bot (CrSentryBotMGHard 0x000E585E, an automatic embedded gun) placed at the player in Goodsprings at 3 s (the first created reference, 0xFF000000), put 600 units away and set on the player; god mode"
+areas = ["combat"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/burst.rs", "crates/fnv-combat/src/vats.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:CrSentryBotMGHard:1,5:moveto:0xFF000000:player:0:600:0,6:combat:0xFF000000:player" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'npc combat: .* fires a burst of (?P<n>\d+) rounds at .*, then lets go for', range = [3, 8], all = true, label = "every burst is 3 to 8 rounds" },
+  { re = 'npc combat: .* fires a burst of \d+ rounds at .*, then lets go for', min = 2, label = "and bursts again after a pause" },
+]
+
+[[scenario]]
 name = "anim-sounds"
 source = "CLAUDE.md: after changes to the sounds animations and doors name (docs/spec-notes/audio.md §10): footsteps, reload and doors"
 areas = ["anim-sounds", "audio"]
