@@ -27,6 +27,17 @@ teleport, no opening, no script [hypothesis: the flag's name; GetLockedOut's val
 "Inaccessible" (JIP) [documented] says such a door is locked out]. Scripts may still
 activate it.
 
+**Doors without a name** (no FULL, or a blank one) give no prompt at all, as unnamed
+activators do, when the reference also has no teleport destination (XTEL) and no Activation
+Prompt (XATO): the crosshair passes them by and E does nothing to them. A nameless door that
+has either stays offered (a travel door shows its destination; a prompted one its prompt), so
+a door a quest sends the player through is never hidden. FalloutNV.esm has 8 nameless DOOR
+bases of 320: NVInvisibleDoorNPCOnly, VHDTowerHatchNoUse, OffDoorHidden01 (Mick & Ralph's back
+room), CG04SecretDoor, FortArenaGate, REPCONHatch2, and two never placed [observed, #1598].
+Which of their placed references have an XTEL or XATO is not yet checked against the data
+(#1627) [hypothesis: OffDoorHidden01's has neither, so it stays hidden]. The rule itself is a
+hypothesis (that the original's prompt needs a name); scripts may still activate them.
+
 ## 3. Activation prompts (XATO)
 
 156 references (doors mostly: "Exit to Mojave Wasteland" 24, "Climb Ladder to Mojave
@@ -73,3 +84,11 @@ activated, a door within 16 units behind it is the target (`pick::door_behind`) 
 the reach; the original's picking rule is not known]. Only doors are looked for, so items
 behind a wall stay out of reach. This may also be why the 2026-10-22 doors above were never
 targeted; not retried.
+
+**Invisible walls do not take the crosshair.** The activation ray passes collision on
+layer 27, Invisible Wall, as it passes trigger volumes; what stands behind such a wall is
+the target. The Gun Runners' kiosk (`nv_gunrun_kiosk.nif`, one static body on layer 27,
+306 vertices) stood between the crosshair and the Vendortron inside it (GunRunnerProtectron,
+VendortronRef 0x000F2EAA), so it could not be talked to [observed: fnvtool collide objects,
+#1602]. [hypothesis: by the layer's name; sight and blast cover pass the layer too.] Shots
+and the player still stop at it, and PlaceAtReticle's far ray stops at it.

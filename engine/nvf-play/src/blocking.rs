@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn the_torso_is_the_first_torso_part() {
-        let seg = |part, limb, a: [f32; 3], b: [f32; 3]| PartSegment { part, limb, a, b };
+        let seg = |part, limb, a: [f32; 3], b: [f32; 3]| PartSegment { part, limb, a, b, radius: None };
         let segs = [
             seg(0, Limb::Head, [0.0, 0.0, 112.0], [0.0, 0.0, 128.0]),
             seg(1, Limb::Torso, [1.0, 0.0, 70.0], [2.0, 0.0, 90.0]),

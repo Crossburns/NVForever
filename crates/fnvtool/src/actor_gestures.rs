@@ -32,7 +32,7 @@ pub fn run(lo: &LoadOrder, schema: &Schema, data: &GameData, refs: &RefTable, ac
             None => FormId(0),
         };
         let topic = data.infos.get(&info).and_then(|d| d.topic).unwrap_or(FormId(0));
-        g.dialogue = Some(Conversation { actor, through: None, line: Some(Line { topic, info, response: 0, remaining: 10.0 }), choices: Vec::new(), lines: 0, then: None, ending: false });
+        g.dialogue = Some(Conversation { actor, through: None, line: Some(Line { topic, info, response: 0, remaining: 10.0 }), choices: Vec::new(), topic_list: false, lines: 0, then: None, ending: false });
         let emotion = g.dialogue_emotion(actor);
         let mut parts = serde_json::Map::new();
         for talking in [true, false] {
