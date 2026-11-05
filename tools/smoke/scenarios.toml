@@ -4040,6 +4040,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "snow-globe-taken-particles"
+source = "#1596 (engine/nvforever/src/particles.rs): a taken snow globe's snow went on falling where it stood; a placed model's own live particles go at once when it is no longer drawn"
+note = "The Strip snow globe in Vault 21 (SnowglobeTheStrip 0x001690EC); the player starts able to take it, looking at it, and E at 10 s takes it"
+areas = ["particles", "activation"]
+paths = ["engine/nvforever/src/particles.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NEAR = "001690EC", NVF_PLAY_TEST_ACTIVATE = "10" }
+args = ["--cell", "2EOVault21", "--play", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'activate 0x001690EC ', label = "E takes the snow globe" },
+  { re = 'particles: 001690EC is not drawn any more: its \d+ live particles go', count = 1, label = "its snow goes with it" },
+]
+order = [["activate 0x001690EC ", "particles: 001690EC is not drawn any more"]]
+
+[[scenario]]
 name = "gomorrah-roof-fire"
 source = "docs/spec-notes/particles.md §5: Gomorrah's roof fires are placed STATs (refs 0013BA36, 00174ECC: effects/nv/nvfiregomorrah01/02.nif) whose own particle system and add-on node 14 (ADDN MPSFireSmall01) now emit; two frames 0.3 s apart at night in target/smoke (gomorrah_fire_N.png): flames behind the main sign and on the side sign"
 areas = ["particles", "effects"]
@@ -5784,21 +5799,6 @@ run_seconds = 12
 expect = [
   { re = 'reticle: prompt "Enter Goodsprings Cave"', label = "the door's prompt reads its XATO" },
 ]
-
-[[scenario]]
-name = "snow-globe-taken-particles"
-source = "#1596 (engine/nvforever/src/particles.rs): a taken snow globe's snow went on falling where it stood; a placed model's own live particles go at once when it is no longer drawn"
-note = "The Strip snow globe in Vault 21 (SnowglobeTheStrip 0x001690EC); the player starts able to take it, looking at it, and E at 10 s takes it"
-areas = ["particles", "activation"]
-paths = ["engine/nvforever/src/particles.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NEAR = "001690EC", NVF_PLAY_TEST_ACTIVATE = "10" }
-args = ["--cell", "2EOVault21", "--play", "--no-voice", "--no-messages"]
-run_seconds = 16
-expect = [
-  { re = 'activate 0x001690EC ', label = "E takes the snow globe" },
-  { re = 'particles: 001690EC is not drawn any more: its \d+ live particles go', count = 1, label = "its snow goes with it" },
-]
-order = [["activate 0x001690EC ", "particles: 001690EC is not drawn any more"]]
 
 [[scenario]]
 name = "door-behind-wall-face"
