@@ -133,7 +133,9 @@ From these, all [hypothesis] fitted to the pictures:
   its right end 20 units from the band, level with the bottom bracket, on its own dark
   box at the band's shade; on a screen too narrow for it, at the safe zone's left edge
   over the band [owner, list 5 item 62; design: the place; dialog_menu.xml has no such
-  hint, observed]. Tab picks that choice (dialogue-play.md §2).
+  hint, observed]. Tab picks that choice (dialogue-play.md §2); a Goodbye choice
+  closes the menu at once and the actor finishes its line in the world (dialogue.md §5,
+  issue #1606).
 - The keys are dialogue-play.md §2's; the old on-screen key hint and the "You cannot
   leave this conversation yet." note are gone (the original shows neither; a refused
   Tab is in the log).

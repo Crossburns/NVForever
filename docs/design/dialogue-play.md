@@ -65,7 +65,16 @@ original unless it carries a tag.
    when the player falls short [documented: Category:Dialogue "AV/Perk"; where the two
    numbers come from is the runtime's hypothesis, dialogue.md §3.3]; the frame of one
    the player falls short of is red (dialogue-menu.md §3).
-4. **The end.** A Goodbye line ends the conversation when it has been said; so does an
+4. **The end.** A Goodbye choice ends the conversation at once: the screen goes as the
+   line starts, the player is free and the game runs again, and the actor finishes the
+   line in the world (heard where it stands, its subtitle drawn as a SayTo line's, its
+   end script run when it is over) [observed: owner's playtest 2026-11-05, against the
+   original: choosing a Goodbye closes the menu at once and the actor finishes the line
+   as the player walks away; the runtime's rule, `Game::choose`, dialogue.md §5; issue
+   #1606]. The log says `dialogue: the conversation ends on the Goodbye choice; <actor>
+   finishes the line <line> in the world`. A Goodbye line the player did not choose (a
+   force greet's Goodbye greeting, a Goodbye follow-up) and any Goodbye line through a
+   talking activator still end the conversation when they have been said; so does an
    actor with nothing more to offer (the runtime's rules).
 
 ## 2. Keys
@@ -78,7 +87,7 @@ original unless it carries a tag.
 | | Up / Down, W / S, mouse wheel | move the selection |
 | | Enter, Space, Activate (E) | pick the selected choice |
 | | left click on a choice (hovering selects it) | picks it |
-| | Tab | says goodbye: picks the offered Goodbye choice, so the actor says its goodbye line and the conversation ends as the data ends it; refused when no Goodbye choice is offered |
+| | Tab | says goodbye: picks the offered Goodbye choice; the conversation ends at once and the actor finishes its goodbye line in the world (§1 item 4); refused when no Goodbye choice is offered |
 | Any time | Esc | the pause menu (Resume goes back to the conversation) |
 
 - The original leaves a conversation with Tab [hypothesis: the coordinator's brief of
@@ -188,6 +197,7 @@ dialogue: <actor> offers N choices: 0) "<text>" [<topic>]; 1) … (goodbye) (dim
 dialogue: choice <index> made: "<text>" [<topic>], <actor> answers with <line>
 dialogue: topic <topic> added by line <line>
 dialogue: conversation with <actor> ended (<goodbye|no_choices|left|actor_gone>, N lines)
+dialogue: the conversation ends on the Goodbye choice; <actor> finishes the line <line> in the world
 ```
 
 The aid's own lines start `test aid NVF_PLAY_TEST_TALK:`. With `NVF_PLAY_SCRIPT_TRACE`
@@ -729,8 +739,8 @@ nobody (Say).
 ### 9.2 The rule (`fnv_game::game::Game::facings`)
 
 For each line being said outside a conversation with the player that has a listener
-(SayTo, a hello to the player, a Goodbye greeting at the player, a line of a
-conversation between actors):
+(SayTo, a hello to the player, a Goodbye greeting at the player, the rest of a Goodbye
+line the player chose (§1 item 4), a line of a conversation between actors):
 
 - the **speaker** turns its head and body to the listener [owner decision 2026-10-11];
 - the **listener** looks at the speaker [documented for SayTo, §9.1]: head only for a

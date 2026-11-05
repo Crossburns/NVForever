@@ -43,9 +43,16 @@
 //!   Space or Activate pick the selected one, a click picks the one under the cursor. A
 //!   choice the actor has answered before is dimmed (`Choice::darkened`); a skill or perk
 //!   line carries its tag, and the frame of one the player falls short of is red.
-//! - **Leaving.** Tab says goodbye: it picks the offered Goodbye choice, so the actor
-//!   says its goodbye line and the conversation ends as the data ends it. Without such a
-//!   choice Tab is refused (a forced conversation; a log line says so).
+//! - **Leaving.** Tab says goodbye: it picks the offered Goodbye choice. A Goodbye
+//!   choice (by Tab or picked like any other) closes the conversation at once: the
+//!   screen goes, the player is free, and the actor finishes its goodbye line in the
+//!   world, heard where it stands with a subtitle like a SayTo line; the line's end
+//!   script runs when it is over [observed: owner's playtest 2026-11-05, against the
+//!   original: choosing a Goodbye closes the menu at once and the actor finishes the line
+//!   as the player walks away; the runtime's rule, `Game::choose`]. A log line says so
+//!   ([`log_farewell`]). Through a talking activator the line still ends the conversation
+//!   when it is over [hypothesis, as before]. Without a Goodbye choice Tab is refused (a
+//!   forced conversation; a log line says so).
 //!
 //! Debug switch `NVF_PLAY_DEBUG_TALK_BREAK=1` (off unless set; a development tool, not
 //! for a release [owner decision 2026-10-10]): Shift+Tab breaks the conversation off at
@@ -76,7 +83,8 @@
 //!
 //! Log, one line each (`dialogue: …`, [`log_event`]): a conversation started, every
 //! response said (speaker, topic, line, text), the choices offered, the choice made, a
-//! topic added, the conversation ended (reason, lines). The trace log
+//! topic added, the conversation ended (reason, lines), and after a Goodbye choice that
+//! the actor finishes the line in the world. The trace log
 //! (`NVF_PLAY_SCRIPT_TRACE`) has the same as trace events, and a `talk_input` line for
 //! each thing the player or the aid did.
 
@@ -390,6 +398,21 @@ pub(crate) fn log_event(data: &GameData, e: &Event) {
         }
         EventKind::NoLine { speaker, topic } => debug!("dialogue: {} has no line of {} to say", n(*speaker), n(*topic)),
         _ => {}
+    }
+}
+
+/// The log line of a conversation that ended at once on the player's Goodbye choice
+/// (`Game::choose`): its actor finishes the line in the world (`Speech::farewell`).
+/// Called for every trace event after its own log line; the frame's events are logged
+/// after the frame's tick, while the line is still said (a line lasts more than a
+/// frame, `fnv_game::game::fitted_seconds`).
+pub(crate) fn log_farewell(g: &Game, e: &Event) {
+    let EventKind::DialogueEnded { actor, reason, .. } = &e.kind else { return };
+    if *reason != fnv_game::dialogue::ended::GOODBYE {
+        return;
+    }
+    if let Some(s) = g.speech.iter().find(|s| s.farewell && s.speaker == *actor) {
+        info!("dialogue: the conversation ends on the Goodbye choice; {} finishes the line {} in the world", g.data.name(*actor), g.data.name(s.info));
     }
 }
 

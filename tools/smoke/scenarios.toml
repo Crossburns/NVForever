@@ -2031,6 +2031,26 @@ expect = [
 ]
 
 [[scenario]]
+name = "goodbye-at-once"
+source = "owner's playtest 2026-11-05 against the original (issue #1606; docs/spec-notes/dialogue.md §5): choosing a Goodbye closes the menu at once and the actor finishes the line as the player walks away (Game::choose, Speech::farewell)"
+note = "Chet's conversation of talk-gestures-menu, left by Tab (the Goodbye choice) once he offers choices. Before #1606 the line was said in the dialogue screen and the conversation ended after it (its line ended before the conversation did); now the conversation ends first and the line ends in the world, not cut, with its subtitle drawn as a SayTo line's"
+areas = ["dialogue"]
+paths = ["crates/fnv-game/src/dialogue.rs", "engine/nvf-play/src/dialogue.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "10:GSChetRef=leave" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--hour", "12"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue: choice \d+ made: .*, GSChetRef answers with ', label = "Tab picks Chet's Goodbye choice" },
+  { re = 'dialogue: conversation with GSChetRef ended \(goodbye, \d+ lines\)', label = "the conversation ends at once" },
+  { re = 'dialogue: the conversation ends on the Goodbye choice; GSChetRef finishes the line \S+ in the world', label = "and Chet goes on with the line in the world" },
+  { re = 'subtitle: Chet: \S', label = "its subtitle, as any line said in the world" },
+  { re = 'script: GSChetRef ended line ', label = "the line ends after the conversation, said to the end" },
+]]
+expect = [
+  { re = 'script: GSChetRef cut line', count = 0, label = "the line is not cut" },
+]
+
+[[scenario]]
 name = "intercom-goodbye-line"
 source = "docs/spec-notes/talking-activators.md §2 (fnv_game::talking_activators): a Goodbye greeting through a talking activator opens a conversation that the line ends [owner statement 2026-10-22]; owner playtest 2026-10-22, Come Fly With Me: Chris Haversam's \"I'm letting you in\" from the REPCONN intercom was never heard, the next try said \"Stop messing around with the intercom\" and the door stayed locked"
 note = "The first activation is the Say Once \"Hey! Over here!\" conversation (left); the second sets the intercom's UsingUpstairsIntercom and Chris (upstairs, in RocketLabTop) says the Goodbye greeting through it in a conversation; its end script unlocks the door beside it, which the third activation then opens. intercom_goodbye.png is the dialogue screen while the line is said"
