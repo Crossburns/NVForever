@@ -4739,10 +4739,10 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<CombatStats>) {
 fn watch_hit_effects(script: Option<Res<ScriptState>>, mut stats: ResMut<CombatStats>) {
     let Some(rt) = script.as_deref().and_then(|s| s.rt.as_ref()) else { return };
     hit_effects::watch(&rt.game, &mut stats.hit_effects);
-    // A death by an effect's drain (a burn, a poison) rather than by a hit.
+    // A death by an effect's drain (a burn, a poison) or a script rather than by a hit.
     if !stats.player_died && rt.game.is_dead(FormId::PLAYER_REF) {
         stats.player_died = true;
-        info!("combat: the player died (no hit: an effect's drain)");
+        info!("combat: the player died (no hit: an effect's drain or a script)");
     }
 }
 

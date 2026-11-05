@@ -406,7 +406,11 @@ impl Game<'_> {
             return Vec::new();
         }
         let mods = crate::aid::Mods { hit: true, ..crate::aid::Mods::default() };
+        // The hit's damage comes next, and it decides a death by a Script effect's damage
+        // (`Game::health_lowered`).
+        self.hits_running.push(target);
         let applied = self.apply_magic_item_with(target, item, caster, false, &mods);
+        self.hits_running.pop();
         // OnFire, Poisoned (`crate::combat_lines`).
         self.effect_started_lines(target, caster, &applied);
         applied
@@ -465,16 +469,19 @@ impl Game<'_> {
     /// A script lowered `r`'s Health (DamageActorValue): at 0 or less it dies, an essential
     /// actor is knocked out [observed for an NPC's death: observer-checks.md check 22;
     /// hypothesis: the rest, unconscious.md §2.2]. Nobody is credited, so no XP, karma or
-    /// challenge. A god-mode player stands [design]. During a hit on `r` the hit decides,
-    /// so that a kill finished by an OnHit script is still the attacker's (the boxing
-    /// gloves' `DamageAV Health 10`, unconscious.md §1).
+    /// challenge. A god-mode player stands [design], and so does an actor whose record gives
+    /// no Health, as its Health is only `max_health`'s stand-in of 1. During a hit on `r`
+    /// the hit decides, so that a kill finished by an OnHit script or by a Script effect the
+    /// hit brings is still the attacker's (the boxing gloves' `DamageAV Health 10`,
+    /// unconscious.md §1).
     pub(crate) fn health_lowered(&mut self, r: FormId) {
         if self.is_dead(r) || self.is_immune(r) || self.hits_running.contains(&r) {
             return;
         }
         let player = r == FormId::PLAYER_REF;
-        // Only actors have a Health to run out of.
-        if (player && self.toggles.god_mode) || (!player && self.stats_def(r).is_none()) {
+        // Only actors whose record gives a Health have one to run out of.
+        let has_health = self.stats_def(r).is_some_and(|d| d.base_health != 0 || d.zero_health);
+        if (player && self.toggles.god_mode) || (!player && !has_health) {
             return;
         }
         if !actor::actor_value(self, r, HEALTH).is_ok_and(|v| v <= 0.0) {

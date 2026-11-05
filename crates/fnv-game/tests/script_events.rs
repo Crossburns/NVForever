@@ -16,11 +16,14 @@ use serde_json::Value as Json;
 const CELL: u32 = 0x200;
 const BURN_FX: u32 = 0x850;
 const OTHER_FX: u32 = 0x851;
+const HURT_FX: u32 = 0x852;
 const BURNING: u32 = 0x860;
+const HURTING: u32 = 0x861;
 const DOOR_SCRIPT: u32 = 0x901;
 const TRAP_SCRIPT: u32 = 0x902;
 const NPC_SCRIPT: u32 = 0x903;
 const HURT_SCRIPT: u32 = 0x904;
+const HURT_FX_SCRIPT: u32 = 0x905;
 const DOOR: u32 = 0x700;
 const TRAP: u32 = 0x710;
 const NPC: u32 = 0x720;
@@ -67,6 +70,12 @@ fn mgef(fid: u32, edid: &str) -> Vec<u8> {
     record(b"MGEF", 0, fid, &[sub(b"EDID", z(edid)), sub(b"DATA", data)])
 }
 
+/// A Script effect (archetype 1) running `script`; MGEF DATA as in [`mgef`].
+fn script_mgef(fid: u32, edid: &str, script: u32) -> Vec<u8> {
+    let data = [u32s(&[0]), vec![0; 4], u32s(&[script]), (-1i32).to_le_bytes().to_vec(), (-1i32).to_le_bytes().to_vec(), vec![0; 4], vec![0; 4], 1f32.to_le_bytes().to_vec(), vec![0; 24], vec![0; 8], u32s(&[1]), (-1i32).to_le_bytes().to_vec()].concat();
+    record(b"MGEF", 0, fid, &[sub(b"EDID", z(edid)), sub(b"DATA", data)])
+}
+
 fn placed(sig: &[u8; 4], fid: u32, base: u32) -> Vec<u8> {
     record(sig, 0, fid, &[sub(b"NAME", base.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])])
 }
@@ -104,6 +113,7 @@ fn plugin_bytes() -> Vec<u8> {
             ]
             .concat(),
         ),
+        record(b"SCPT", 0, HURT_FX_SCRIPT, &[vec![sub(b"EDID", z("HurtFxScript"))], unit(0x100, &script(&[(event::SCRIPT_EFFECT_START, None, damage_health())]), &[], &[])].concat()),
         // nDamaged (1), nSeen (2): as the NPC's, by damage; OnHit does the same damage.
         record(
             b"SCPT",
@@ -155,12 +165,14 @@ fn plugin_bytes() -> Vec<u8> {
     );
     let mut ench = vec![sub(b"EDID", z("Burning")), sub(b"ENIT", [u32s(&[2, 0, 0]), vec![0; 4]].concat())];
     ench.extend([sub(b"EFID", BURN_FX.to_le_bytes().to_vec()), sub(b"EFIT", [u32s(&[1, 0, 5, 1]), 16i32.to_le_bytes().to_vec()].concat())]);
+    let mut hurting = vec![sub(b"EDID", z("Hurting")), sub(b"ENIT", [u32s(&[2, 0, 0]), vec![0; 4]].concat())];
+    hurting.extend([sub(b"EFID", HURT_FX.to_le_bytes().to_vec()), sub(b"EFIT", [u32s(&[1, 0, 0, 1]), (-1i32).to_le_bytes().to_vec()].concat())]);
     let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", z("TestCell"))]);
     let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &[placed(b"REFR", DOOR_REF, DOOR), placed(b"REFR", TRAP_REF, TRAP), placed(b"REFR", BOX_REF, BOX), placed(b"ACHR", NPC_REF, NPC), placed(b"ACHR", DAMAGED_REF, HURT_NPC), placed(b"ACHR", HIT_REF, HURT_NPC)].concat()));
     [
         tes4(),
-        top(b"MGEF", &[mgef(BURN_FX, "Burn"), mgef(OTHER_FX, "Other")].concat()),
-        top(b"ENCH", &record(b"ENCH", 0, BURNING, &ench)),
+        top(b"MGEF", &[mgef(BURN_FX, "Burn"), mgef(OTHER_FX, "Other"), script_mgef(HURT_FX, "HurtFx", HURT_FX_SCRIPT)].concat()),
+        top(b"ENCH", &[record(b"ENCH", 0, BURNING, &ench), record(b"ENCH", 0, HURTING, &hurting)].concat()),
         top(b"SCPT", &scripts),
         top(b"MISC", &item),
         top(b"ACTI", &trap),
@@ -311,6 +323,21 @@ fn a_kill_finished_by_an_on_hit_script_is_the_attackers() {
     // ran the block is what killed.
     let f = fixture();
     let mut g = game(&f);
+    let info = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 0, critical: false, limb: None };
+    let r = g.hit(FormId(HIT_REF), 1.0, info);
+    assert!(r.died, "{r:?}");
+    assert!(r.xp > 0.0, "{r:?}");
+    assert_eq!(g.extra[&FormId(HIT_REF)].killer, Some(FormId::PLAYER_REF));
+}
+
+#[test]
+fn a_kill_finished_by_a_hits_script_effect_is_the_attackers() {
+    // The engine applies a hit's effects just before its damage (`hit_actor`).
+    let f = fixture();
+    let mut g = game(&f);
+    let applied = g.apply_hit_effect(FormId(HIT_REF), FormId(HURTING), Some(FormId::PLAYER_REF));
+    assert_eq!(applied.len(), 1);
+    assert!(!g.is_dead(FormId(HIT_REF)), "the hit that follows decides");
     let info = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 0, critical: false, limb: None };
     let r = g.hit(FormId(HIT_REF), 1.0, info);
     assert!(r.died, "{r:?}");

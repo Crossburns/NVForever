@@ -86,10 +86,13 @@ on screen).
    with no floor of 1, and an essential actor still gets up at half its maximum [design].
    The death has no killer: no XP, karma, murder or challenge, and OnDeath's killer is 0
    [hypothesis]. A ghost, a child or an Invulnerable creature does not die of it, as of a
-   hit [hypothesis], nor a player in god mode [design]. While a hit is being applied the
-   hit decides: an OnHit script's DamageAV (the gloves' `DamageAV Health 10`, §1) leaves
-   the death to the hit, which credits its attacker [design]. ModActorValue,
-   ForceActorValue and SetActorValue that bring Health to 0 kill nobody [design].
+   hit [hypothesis], nor a player in god mode, nor an actor whose record gives no Health
+   (no DATA, so its Health is only a stand-in of 1) [design]. While a hit is being applied
+   the hit decides: DamageAV in an OnHit script (the gloves' `DamageAV Health 10`, §1) or
+   in the ScriptEffectStart of an effect the hit brings leaves the death to the hit, which
+   credits its attacker [design]. A lasting effect's later script ticks have no killer.
+   ModActorValue, ForceActorValue and SetActorValue that bring Health to 0 kill nobody
+   [design].
 3. **Fatigue at zero**: whenever an actor's Fatigue is lowered (DamageAV, a fatigue
    effect) and its current Fatigue is 0 or less, it is knocked out (cause fatigue) and
    says its KOed line [documented: §1 Stats Tab and KOed].
