@@ -455,7 +455,8 @@ fn not_now(world: &World) -> Option<String> {
     if rt.game.dialogue.is_some() {
         return Some("in a conversation".into());
     }
-    if rt.game.menu.is_some() || rt.game.message_box.is_some() {
+    // A box answered and never read by its script is not on screen (#1649).
+    if rt.game.menu.is_some() || rt.game.message_box.as_ref().is_some_and(|b| b.waiting()) {
         return Some("a script's menu or message box is open".into());
     }
     let state = *world.resource::<State<PlayState>>().get();
@@ -489,6 +490,9 @@ fn write_saves(world: &mut World) {
             let line = format!("Cannot save {:?} now: {why}", r.name);
             info!("save: not now: {why}");
             world.resource_mut::<SaveLog>().0.push(line);
+            // The pause menu's status line says it too, instead of "Saving..." for good.
+            let path = world.resource::<SaveConfig>().path_of(&r.name).unwrap_or_default();
+            world.write_message(SaveDone { path, result: Err(format!("not now: {why}")) });
         }
         return;
     }
