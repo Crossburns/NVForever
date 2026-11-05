@@ -110,7 +110,8 @@ impl HudMessage {
 /// Name and action of a reference the player can activate now: present in the
 /// simulation and of an activatable type. Activators and furniture need a display name
 /// (FULL) [hypothesis: unnamed activators are trigger volumes and markers the player is
-/// not meant to use; not captured]; placed leveled items and explosives with no weapon
+/// not meant to use; not captured], and a primitive is never offered (level-design.md
+/// §4.1); placed leveled items and explosives with no weapon
 /// to give are not offered.
 pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> Option<(String, Action)> {
     if !sim.present(form_id) {
@@ -121,6 +122,11 @@ pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> 
     let name = sim.name(base.id)?.to_string();
     let state = sim.world.peek(id);
     let placed = sim.refs.get(id);
+    // A primitive (XPRM) is a trigger volume or marker, not an object to use, whatever
+    // name its activator has (docs/spec-notes/level-design.md §4.1).
+    if placed.is_some_and(|p| p.primitive.is_some()) {
+        return None;
+    }
     // A reference with lock data starts locked, a leveled lock at the reference's level
     // [hypothesis, as fnv_sim::World does: `World::lock_of`].
     let lock = sim.world.lock_of(id).filter(|l| l.locked).map(|l| (l.level, l.key));
