@@ -237,9 +237,13 @@ fn watch_monitor(windows: Query<(&Window, Option<&OnMonitor>), With<PrimaryWindo
     }
 }
 
+/// What [`apply_display`] last made the window: the mode, the window size, the full-screen
+/// size and the chosen monitor.
+type DisplayWant = (WindowChoice, String, Option<UVec2>, Option<String>);
+
 /// Make the window what `Args` (`window`, `size`) and [`FullScreenSize`] ask, when they
 /// change (and again once the monitor's modes are known, for exclusive full screen).
-fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorModes>, monitor: Res<MonitorChoice>, mut windows: Query<&mut Window, With<PrimaryWindow>>, mut last: Local<Option<(WindowChoice, String, Option<UVec2>, Option<String>)>>, mut waiting: Local<bool>) {
+fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorModes>, monitor: Res<MonitorChoice>, mut windows: Query<&mut Window, With<PrimaryWindow>>, mut last: Local<Option<DisplayWant>>, mut waiting: Local<bool>) {
     let want = (args.window, args.size.clone(), full.0, monitor.0.clone());
     // Re-applied when the choice or the monitors change: a saved monitor's entity is only
     // known after the monitors are discovered, a frame or so after the start.
