@@ -40,9 +40,10 @@ impl WindowChoice {
         match self {
             WindowChoice::Windowed => WindowMode::Windowed,
             // Primary, not Current: `Current` cannot be resolved while the window is being
-            // created (it has no monitor yet), so the compositor placed the window on a
-            // random monitor (#1641). Primary always resolves; `apply_display` moves the
-            // window to the saved [`MonitorChoice`] once the monitors are known.
+            // created (it has no monitor yet) [documented: bevy_window MonitorSelection],
+            // so the compositor placed the window on a random monitor [observed: #1641].
+            // Primary always resolves; `apply_display` moves the window to the saved
+            // [`MonitorChoice`] once the monitors are known.
             WindowChoice::Borderless => WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
         }
     }
@@ -62,8 +63,6 @@ pub struct MonitorModes {
     /// Every monitor, by name and entity, for the Display "Monitor" list and for selecting
     /// one (its entity) once it is known.
     pub monitors: Vec<(String, Entity)>,
-    /// The name of the monitor the window is on now (else the primary one's).
-    pub current: Option<String>,
 }
 
 impl MonitorModes {
@@ -186,20 +185,28 @@ pub fn resolution_load(world: &mut World, text: &str) -> bool {
     true
 }
 
-/// The Display "Monitor" list's choices: the monitors' names, in the order discovered.
+/// The "Monitor" list's choice for the primary monitor (the default, kept as "" in the INI).
+const MONITOR_NONE: &str = "Primary monitor";
+
+/// The Display "Monitor" list's choices: the primary monitor, then the monitors' names.
 pub fn monitor_names(world: &World) -> Vec<String> {
-    world.resource::<MonitorModes>().monitors.iter().map(|(n, _)| n.clone()).filter(|n| !n.is_empty()).collect()
+    let mut names = vec![MONITOR_NONE.to_string()];
+    names.extend(world.resource::<MonitorModes>().monitors.iter().map(|(n, _)| n.clone()).filter(|n| !n.is_empty()));
+    names
 }
 
-/// The chosen monitor: the saved choice, else the one the window is on (or the primary's).
+/// The chosen monitor: the saved choice, else the primary monitor.
 pub fn monitor_chosen(world: &World) -> String {
-    let m = world.resource::<MonitorModes>();
-    let c = world.resource::<MonitorChoice>();
-    c.0.clone().or_else(|| m.current.clone()).unwrap_or_default()
+    world.resource::<MonitorChoice>().0.clone().unwrap_or_else(|| MONITOR_NONE.to_string())
 }
 
-/// Choose a monitor by name; false when it is not attached now.
+/// Choose a monitor by name; "Primary monitor" clears the choice, any other name must be
+/// attached now (false otherwise).
 pub fn monitor_pick(world: &mut World, name: &str) -> bool {
+    if name == MONITOR_NONE {
+        world.resource_mut::<MonitorChoice>().0 = None;
+        return true;
+    }
     if !world.resource::<MonitorModes>().monitors.iter().any(|(n, _)| n == name) {
         return false;
     }
@@ -227,13 +234,11 @@ fn watch_monitor(windows: Query<(&Window, Option<&OnMonitor>), With<PrimaryWindo
     let Some((_, m, _)) = monitor else { return };
     let desktop = if matches!(w.mode, WindowMode::Fullscreen(..)) { modes.desktop } else { Some(m.physical_size()) };
     let all = monitors.iter().map(|(e, m, _)| (m.name.clone().unwrap_or_default(), e)).collect::<Vec<_>>();
-    let current = m.name.clone();
-    if modes.desktop != desktop || modes.modes != m.video_modes || modes.monitors != all || modes.current != current {
+    if modes.desktop != desktop || modes.modes != m.video_modes || modes.monitors != all {
         info!("window: monitor {} {}, {} video modes", m.name.as_deref().unwrap_or("?"), desktop.map_or("?".to_string(), size_text), m.video_modes.len());
         modes.desktop = desktop;
         modes.modes = m.video_modes.clone();
         modes.monitors = all;
-        modes.current = current;
     }
 }
 
@@ -293,7 +298,7 @@ fn log_mode(args: Res<Args>, windows: Query<&Window, (With<PrimaryWindow>, Chang
     *last = Some(now);
     match w.mode {
         WindowMode::Windowed => info!("window: windowed, {}x{}", w.resolution.width(), w.resolution.height()),
-        WindowMode::BorderlessFullscreen(_) => info!("window: borderless full screen on the current monitor"),
+        WindowMode::BorderlessFullscreen(_) => info!("window: borderless full screen"),
         WindowMode::Fullscreen(_, VideoModeSelection::Specific(m)) => info!("window: exclusive full screen, {} at {:.0} Hz", size_text(m.physical_size), m.refresh_rate_millihertz as f32 / 1000.0),
         WindowMode::Fullscreen(..) => info!("window: exclusive full screen"),
     }
@@ -332,5 +337,23 @@ mod tests {
         assert_eq!(borderless_selection(&modes, &MonitorChoice(Some("HDMI-A-1".into()))), MonitorSelection::Entity(e2));
         // A chosen monitor that is not attached now (unplugged): the primary monitor.
         assert_eq!(borderless_selection(&modes, &MonitorChoice(Some("DP-2".into()))), MonitorSelection::Primary);
+    }
+
+    #[test]
+    fn the_monitor_list_picks_a_monitor_and_clears_to_primary() {
+        let mut world = World::new();
+        world.init_resource::<MonitorModes>();
+        world.init_resource::<MonitorChoice>();
+        world.resource_mut::<MonitorModes>().monitors = vec![("HDMI-A-1".to_string(), Entity::from_raw_u32(1).unwrap())];
+        // The list leads with the primary choice, which is the default.
+        assert_eq!(monitor_names(&world), vec!["Primary monitor".to_string(), "HDMI-A-1".to_string()]);
+        assert_eq!(monitor_chosen(&world), "Primary monitor");
+        // Pick a monitor, then clear back to the primary.
+        assert!(monitor_pick(&mut world, "HDMI-A-1"));
+        assert_eq!(monitor_chosen(&world), "HDMI-A-1");
+        assert!(monitor_pick(&mut world, "Primary monitor"));
+        assert_eq!(monitor_chosen(&world), "Primary monitor");
+        // A monitor that is not attached now is refused.
+        assert!(!monitor_pick(&mut world, "DP-1"));
     }
 }
