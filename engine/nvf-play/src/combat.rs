@@ -135,6 +135,7 @@ use crate::sim::SimState;
 use crate::{space, PlaySet, PlayState, PlayWorld};
 
 mod hit_effects;
+pub mod held_grenade_probe;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
@@ -508,6 +509,13 @@ pub struct Knockback {
     pub dir: [f32; 2],
     pub speed: f32,
     pub secs: f32,
+    /// Who struck the blow (a reference's FormID); 0: no blow (`SetVel`).
+    pub attacker: u32,
+    /// The blow's number in this run, from 1 in the order they land; 0: no blow. Ties a
+    /// knockback's log lines to the blow.
+    pub blow: u32,
+    /// The blow was a power attack.
+    pub power: bool,
 }
 
 impl Knockback {
@@ -516,7 +524,12 @@ impl Knockback {
     /// or no force.
     pub fn of(form_id: u32, dir: V3, force: f32, secs: f32) -> Option<Knockback> {
         let len = dir[0].hypot(dir[1]);
-        (len > 1e-3 && force > 0.0 && secs > 0.0).then(|| Knockback { form_id, dir: [dir[0] / len, dir[1] / len], speed: force, secs })
+        (len > 1e-3 && force > 0.0 && secs > 0.0).then(|| Knockback { form_id, dir: [dir[0] / len, dir[1] / len], speed: force, secs, attacker: 0, blow: 0, power: false })
+    }
+
+    /// This knockback comes of blow number `blow` by `attacker`.
+    pub fn by(self, attacker: FormId, blow: u32, power: bool) -> Knockback {
+        Knockback { attacker: attacker.0, blow, power, ..self }
     }
 
     /// How far it pushes in all, game units.
@@ -999,6 +1012,8 @@ pub struct Combat {
     melee: bool,
     /// The melee swings (step C6).
     swings: Melee,
+    /// Blows that have knocked someone back so far ([`Knockback::blow`]).
+    blows: u32,
     /// Explosions to set off this frame (impacts, detonations, destruction stages), with
     /// who set each off.
     boom: Vec<(FormId, V3, Option<Cause>)>,
@@ -1181,6 +1196,18 @@ impl Combat {
 
     /// The figures of the player's weapon `id`: the equipped one's with its mods on
     /// (`WeaponStats::modded`), any other's as the record has them.
+    /// The next blow's number ([`Knockback::blow`]).
+    fn next_blow(&mut self) -> u32 {
+        self.blows += 1;
+        self.blows
+    }
+
+    /// For the melee knockback test aid: whether the player's weapon is melee or the fists,
+    /// and the swing playing, if any: whether it is a power attack.
+    pub(crate) fn melee_swing(&self) -> (bool, Option<bool>) {
+        (self.melee, self.swings.swing.as_ref().map(|s| s.power.is_some()))
+    }
+
     pub fn player_stats(&self, id: FormId) -> Option<WeaponStats> {
         let w = self.forms.weapons.get(&id)?;
         Some(if self.equipped.flatten() == Some(id) && self.mods != 0 { w.modded(self.mods) } else { w.clone() })
@@ -1409,6 +1436,7 @@ impl Plugin for CombatPlugin {
         );
         app.init_resource::<WeaponAnim>()
             .init_resource::<CombatStats>()
+            .init_resource::<held_grenade_probe::Probe>()
             .init_resource::<ShotVisuals>()
             .add_message::<ShotFired>()
             .add_message::<ImpactFx>()
@@ -1897,6 +1925,7 @@ fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
         self_ammo: false,
         melee: false,
         swings: Melee::default(),
+        blows: 0,
         boom: Vec::new(),
         debris: Vec::new(),
         cycle: None,
@@ -3613,7 +3642,7 @@ fn melee(
             // A living actor struck is pushed back by the knockback (module notes).
             if r.as_ref().is_some_and(|r| !r.died && !r.immune && !r.knocked_out) {
                 if let Some(k) = Knockback::of(target.0, player.look_dir(), push, c.rules.knockback_time) {
-                    knocks.write(k);
+                    knocks.write(k.by(FormId::PLAYER_REF, c.next_blow(), power.is_some()));
                 }
             }
             if r.as_ref().is_some_and(|r| !r.died && !r.immune) {
@@ -3774,6 +3803,8 @@ fn actor_attacks(
     (mut impacts, mut broken, mut knocks): (MessageWriter<ImpactFx>, MessageWriter<WeaponBroken>, MessageWriter<Knockback>),
     (control, anim, player): Guard,
     mut dm: ResMut<crate::dismember::Dismemberment>,
+    mut grenade_probe: ResMut<held_grenade_probe::Probe>,
+    time: Res<Time>,
 ) {
     let c = &mut *c;
     let gravity = phys.world.params.gravity;
@@ -3782,13 +3813,14 @@ fn actor_attacks(
     let player_guard = (c.melee && control.as_deref().is_some_and(|k| k.aiming) && anim.as_deref().is_some_and(|a| a.ready)).then(|| player.as_deref().map(|p| p.look_dir())).flatten().map(|d| [d[0], d[1]]);
     let script_shots = std::mem::take(&mut c.script_shots);
     for (s, scripted) in shots.read().map(|s| (s, false)).chain(script_shots.iter().map(|s| (s, true))) {
+        let probe_request = grenade_probe.request(s, &sim.world);
         // The shooter's own body is never hit: the player's is `PLAYER`, not its FormID (a
         // player's FireWeapon hit the player at the muzzle, 2026-10-27).
         let own = if s.shooter == FormId::PLAYER_REF { PLAYER } else { s.shooter.0 as ActorId };
         let carried = |a: FormId| sim.world.peek(s.shooter).and_then(|st| st.inventory.as_ref()).is_some_and(|i| i.count(a) > 0);
         let ammo = c.forms.ammo_for(s.weapon, carried);
-        let Some(chain) = c.forms.chain(s.weapon, ammo) else { continue };
-        let Some(proj) = chain.projectile else { continue };
+        let Some(chain) = c.forms.chain(s.weapon, ammo) else { grenade_probe.finish_request(probe_request, 0); continue };
+        let Some(proj) = chain.projectile else { grenade_probe.finish_request(probe_request, 0); continue };
         stats.actor_shots += 1;
         let range = c.forms.projectiles.get(&proj).map_or(0.0, |p| p.range);
         let reach = if range > 0.0 { range } else { AIM_REACH };
@@ -3823,6 +3855,7 @@ fn actor_attacks(
         if let Some(m) = c.forms.weapons.get(&s.weapon).filter(|_| mods != 0).and_then(|w| w.modded(mods).projectile_speed_mult) {
             ps.iter_mut().for_each(|p| p.speed_up(m));
         }
+        let probe_created = ps.len();
         for p in ps {
             let rolled = c.rng.next_f32() < tracer_chance || c.tracer_hold.is_some();
             let shown = rolled || DRAW_EVERY_PROJECTILE;
@@ -3830,7 +3863,11 @@ fn actor_attacks(
             let dir = vec::normalize(p.vel);
             c.next_visual += 1;
             c.flying.push(Flying { p, id: c.next_visual, proj, shown, dir, from_muzzle: s.muzzle.is_some(), origin: leaving.origin, seen: leaving.seen, tracer, projectiles_per_shot: chain.projectiles_per_shot, force, by, rref: None, registered: false, speed_mult: 1.0, ended_at: None });
+            if let Some(flying) = c.flying.last() {
+                grenade_probe.accepted(probe_request, s, &flying.p, flying.proj, flying.id);
+            }
         }
+        grenade_probe.finish_request(probe_request, probe_created);
         let wname = c.forms.weapons.get(&s.weapon).and_then(|w| w.edid.as_deref()).unwrap_or("?");
         if scripted {
             // A script's FireWeapon (a rigged shotgun, a turret): worth a line.
@@ -3848,6 +3885,7 @@ fn actor_attacks(
             }
         }
     }
+    grenade_probe.receiver_done(time.elapsed_secs());
     for b in blows.read() {
         // The weapon: its own, else the Fists; a creature's own attack damage in the Fists'
         // place [design: the Fists' other figures stand in for a creature's].
@@ -3954,7 +3992,7 @@ fn actor_attacks(
             let agility = actor_av(script.as_deref_mut(), &mut sim, b.target, fnv_game::actor_values::AGILITY).unwrap_or(5.0);
             let force = damage::knockback_force(&c.rules, d.dealt, agility);
             if let Some(k) = Knockback::of(b.target.0, b.dir, force, c.rules.knockback_time) {
-                knocks.write(k);
+                knocks.write(k.by(b.attacker, c.next_blow(), b.anim.is_some()));
             }
         }
         if b.target != FormId::PLAYER_REF {

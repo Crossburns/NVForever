@@ -66,7 +66,7 @@ pub fn phys_cell(index: &WorldIndex, world: u32, space: Space, s: &RefState) -> 
 
 /// Whether a created reference is in the world (not taken or deleted, enabled).
 pub fn present(s: &RefState) -> bool {
-    !s.deleted && s.enabled
+    !s.deleted() && s.enabled()
 }
 
 /// Where a created reference is drawn (or should be).

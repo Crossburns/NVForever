@@ -35,7 +35,8 @@ What this gets us, compared with the original game plus DLLs:
 - **Reading or importing `.nvse` co-saves** of the original game. NVForever's own saves carry
   the extender state (§5.4). An importer could come later, alongside any `.fos` import.
 - **Other extenders**, such as ShowOff (173 function pages), kNVSE (28) and the long tail. The
-  design leaves room for them (one module per origin) but they are not in this plan's scope.
+  design leaves room for them (one module per origin) but they are not in this plan's scope. (Later work built several of them anyway: ShowOff,
+  kNVSE, ITR, One111, ppNVSE and others, release v0.6.0; see docs/status.md.)
 
 ## 3. Scope, measured
 

@@ -121,15 +121,40 @@ pub struct LockState {
     pub locked: bool,
 }
 
+/// A reference's run-time state.
+///
+/// `enabled` and `deleted` are private to this module, so that [`World::presence_serial`]
+/// moves with them: read them with [`RefState::enabled`] and [`RefState::deleted`], change
+/// them with [`World::set_enabled`] and [`World::set_deleted`].
+///
+/// ```
+/// fn present(state: &fnv_sim::world::RefState) -> bool {
+///     state.enabled() && !state.deleted()
+/// }
+/// ```
+///
+/// Writing either field from outside does not compile:
+///
+/// ```compile_fail,E0616
+/// fn write(state: &mut fnv_sim::world::RefState) {
+///     state.enabled = false;
+/// }
+/// ```
+///
+/// ```compile_fail,E0616
+/// fn write(state: &mut fnv_sim::world::RefState) {
+///     state.deleted = true;
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RefState {
     pub base: FormId,
     pub cell: Option<FormId>,
     pub pos: [f32; 3],
     pub rot: [f32; 3],
-    pub enabled: bool,
+    enabled: bool,
     /// Removed from the world (picked up, or a created reference deleted).
-    pub deleted: bool,
+    deleted: bool,
     /// Stack size for item references; 1 otherwise.
     pub count: i32,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -164,6 +189,20 @@ pub struct RefState {
     /// there picks this reference up ([`World::dropped_beside`]).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub dropped_by: Option<FormId>,
+}
+
+impl RefState {
+    /// The reference's own enabled flag; [`World::is_enabled`] adds its enable parents.
+    #[inline]
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Removed from the world (picked up, or a created reference deleted).
+    #[inline]
+    pub fn deleted(&self) -> bool {
+        self.deleted
+    }
 }
 
 /// A script's lock on an item of an actor [documented: GECK wiki EquipItem, "If
@@ -560,7 +599,7 @@ impl<'a> World<'a> {
             // state that starts with those values changes nothing a reader of presence
             // sees, so it leaves the serial; any other (the player, which is not placed)
             // moves it.
-            let as_placed = self.placed.get(id).is_some_and(|p| s.enabled == !p.initially_disabled() && !s.deleted);
+            let as_placed = self.placed.get(id).is_some_and(|p| s.enabled() == !p.initially_disabled() && !s.deleted());
             self.refs.insert(id, s);
             if !as_placed {
                 self.presence_serial += 1;
@@ -843,7 +882,7 @@ impl<'a> World<'a> {
         let due: Vec<(FormId, FormId)> = self
             .refs
             .iter()
-            .filter(|&(&id, s)| !s.deleted && self.restocks(id, s.base))
+            .filter(|&(&id, s)| !s.deleted() && self.restocks(id, s.base))
             .map(|(&id, s)| (id, s.base))
             .collect();
         for (id, base) in due {
@@ -857,7 +896,7 @@ impl<'a> World<'a> {
 
     fn inventory(&mut self, id: FormId) -> Result<&mut Inventory, SimError> {
         let s = self.get(id)?;
-        if s.deleted {
+        if s.deleted() {
             return Err(SimError::Deleted(id));
         }
         s.inventory.as_mut().ok_or(SimError::NoInventory(id))
@@ -1237,7 +1276,7 @@ impl<'a> World<'a> {
             [holder.pos[0] + dx, holder.pos[1] + dy, holder.pos[2] + PLAYER_DROP_ABOVE]
         };
         let taken = |p: [f32; 3]| {
-            self.created().any(|(_, s)| s.cell == holder.cell && !s.deleted && s.enabled && (s.pos[0] - p[0]).hypot(s.pos[1] - p[1]) < PLAYER_DROP_CLEAR)
+            self.created().any(|(_, s)| s.cell == holder.cell && !s.deleted() && s.enabled() && (s.pos[0] - p[0]).hypot(s.pos[1] - p[1]) < PLAYER_DROP_CLEAR)
         };
         (0..PLAYER_DROP_RING * PLAYER_DROP_RINGS).map(at).find(|&p| !taken(p)).unwrap_or_else(|| at(0))
     }
@@ -1488,7 +1527,7 @@ impl<'a> World<'a> {
     pub fn is_enabled(&self, id: FormId) -> Result<bool, SimError> {
         let own = |w: &World, id: FormId| -> Option<bool> {
             match w.refs.get(&id) {
-                Some(s) => Some(s.enabled),
+                Some(s) => Some(s.enabled()),
                 None => w.placed.get(id).map(|p| !p.initially_disabled()),
             }
         };
@@ -1671,8 +1710,10 @@ impl<'a> World<'a> {
     }
 
     /// Mark a reference removed from the world (`deleted`: picked up, MarkForDelete, a
-    /// shot that is over), or not. Every writer of `deleted` outside this file goes
-    /// through here, so [`World::presence_serial`] sees it.
+    /// shot that is over), or not. The field is private to this module, so a direct write
+    /// from outside it does not compile and [`World::presence_serial`] sees the change.
+    /// Replacing a whole state through [`World::get`] is not stopped
+    /// ([`World::presence_serial`] says what that leaves open).
     pub fn set_deleted(&mut self, id: FormId, deleted: bool) -> Result<(), SimError> {
         let s = self.get(id)?;
         if s.deleted != deleted {
@@ -1721,10 +1762,12 @@ impl<'a> World<'a> {
     /// of the same world reads the same presence for every reference. A new or restored
     /// world starts from a number no other world of this process used.
     ///
-    /// The fields are public through [`World::get`]'s `&mut RefState`: a writer of
-    /// `enabled` or `deleted` that does not go through these functions must bump this
-    /// itself (none does: the writers are listed in docs/spec-notes/navmesh.md §4c;
-    /// issue #1430).
+    /// `enabled` and `deleted` are private to this module, so a direct write of either
+    /// field from outside it does not compile (issue #1464; the writers are listed in
+    /// docs/spec-notes/navmesh.md §4c). That is not all of the rule: [`World::get`] still
+    /// hands out `&mut RefState`, so `*world.get(id)? = another_state` compiles and would
+    /// change the flags without moving this number. A search of `crates/` and `engine/`
+    /// found none [design]; closing that is a separate question, left open.
     pub fn presence_serial(&self) -> u64 {
         self.presence_serial
     }
@@ -1850,7 +1893,7 @@ impl<'a> World<'a> {
     /// The created references `holder` dropped as it died ([`RefState::dropped_by`]) that
     /// are still present (not taken, enabled), in FormID order.
     pub fn dropped_beside(&self, holder: FormId) -> Vec<FormId> {
-        self.created().filter(|(_, s)| s.dropped_by == Some(holder) && !s.deleted && s.enabled).map(|(id, _)| id).collect()
+        self.created().filter(|(_, s)| s.dropped_by == Some(holder) && !s.deleted() && s.enabled()).map(|(id, _)| id).collect()
     }
 
     /// The newest reference created at run time (a drop) whose base is `base` and that
@@ -1860,7 +1903,7 @@ impl<'a> World<'a> {
         self.refs
             .range(FormId::FIRST_DYNAMIC..)
             .rev()
-            .find(|(_, s)| s.base == base && !s.deleted && s.enabled)
+            .find(|(_, s)| s.base == base && !s.deleted() && s.enabled())
             .map(|(&id, _)| id)
     }
 
@@ -1912,7 +1955,7 @@ impl<'a> World<'a> {
             let count = if scripted { t.count.min(1) } else { t.count };
             // A placed weapon's own ammo (XAMT, XAMC) comes with it the first time it is
             // taken by hand [hypothesis: the rounds in it; world-fields.md §1].
-            let ammo = (!scripted && !t.deleted).then(|| self.placed.get(target).and_then(|p| p.ammo)).flatten();
+            let ammo = (!scripted && !t.deleted()).then(|| self.placed.get(target).and_then(|p| p.ammo)).flatten();
             self.inventory(actor)?.add_extra(t.base, count, t.extra);
             if let Some((a, n)) = ammo {
                 self.inventory(actor)?.add(a, n);
@@ -1926,7 +1969,7 @@ impl<'a> World<'a> {
         // Other types: a taken or disabled reference does nothing. [observed by the
         // owner in game, 2026-10-08: disabled references cannot be interacted with; not
         // captured by script for doors, containers and activators]
-        if t.deleted || !self.is_enabled(target)? {
+        if t.deleted() || !self.is_enabled(target)? {
             return Ok(done(Outcome::Disabled, None));
         }
         let Some(base) = base else {
@@ -2019,7 +2062,7 @@ impl<'a> World<'a> {
     /// original drops them too; its save M held 574 created forms while its next created
     /// FormID was 0xFF00155E, save-files.md §6.3].
     pub fn snapshot(&self) -> Snapshot {
-        let gone = |id: &FormId, s: &RefState| id.is_dynamic() && s.deleted;
+        let gone = |id: &FormId, s: &RefState| id.is_dynamic() && s.deleted();
         let mut deleted_created = self.deleted_created.clone();
         deleted_created.extend(self.created().filter(|(id, s)| gone(id, s)).map(|(id, s)| (id, s.base)));
         let kept = |id: &FormId| !deleted_created.contains_key(id);

@@ -41,6 +41,11 @@ pub enum ScriptEffect {
     /// A script's `Activate` ran a piece of furniture's default activation for the
     /// player: the player uses it (`crate::furniture`).
     UseFurniture(u32),
+    /// A script's `Activate` ran a terminal's default activation for the player: its
+    /// screen opens (`crate::terminal`), as by hand. The Lucky 38 penthouse terminals'
+    /// OnActivate blocks end in `Activate` on every branch [observed: FalloutNV.esm SCPT
+    /// 0x001746C1 on Lucky38MrHouseTerminal]; before, nothing opened (#1532).
+    OpenTerminal(u32),
 }
 
 /// A short line for the top left of the view (`crate::corner_messages`). A message
@@ -150,6 +155,10 @@ pub trait EffectCtx {
     fn activation_effects(&self, a: &Activation, target: FormId) -> Vec<Effect>;
     /// Whether the reference's base is a piece of furniture.
     fn is_furniture(&self, _r: FormId) -> bool {
+        false
+    }
+    /// Whether the reference's base is a terminal.
+    fn is_terminal(&self, _r: FormId) -> bool {
         false
     }
     /// A string game setting's text (GMST), by Editor ID.
@@ -309,6 +318,11 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
                 // Furniture's default activation, as by hand (`activate.rs`).
                 if *by == player && matches!(a.outcome, Outcome::Activated) && ctx.is_furniture(*reference) {
                     out.push(ScriptEffect::UseFurniture(reference.0));
+                    continue;
+                }
+                // A terminal's default activation, as by hand (`activate.rs`).
+                if *by == player && matches!(a.outcome, Outcome::Activated) && ctx.is_terminal(*reference) {
+                    out.push(ScriptEffect::OpenTerminal(reference.0));
                     continue;
                 }
                 for eff in ctx.activation_effects(&a, *reference) {
@@ -779,6 +793,7 @@ mod tests {
     const INTERIOR: u32 = 0x103DF9;
     const WORLD: u32 = 0xDA726;
     const EXTERIOR: u32 = 0x200;
+    const TERMINAL: FormId = FormId(0x14B0A7);
 
     struct Fake;
 
@@ -835,6 +850,9 @@ mod tests {
             ix.cells.insert(INTERIOR, fnv_world::Cell { form_id: INTERIOR, ..Default::default() });
             ix.cells.insert(EXTERIOR, fnv_world::Cell { form_id: EXTERIOR, world: Some(WORLD), ..Default::default() });
             crate::activate::outcome::effects(a, target.0, "Gate", &ix, |id| self.name(id))
+        }
+        fn is_terminal(&self, r: FormId) -> bool {
+            r == TERMINAL
         }
     }
 
@@ -913,6 +931,19 @@ mod tests {
         let locked = Activation { outcome: Outcome::Locked { level: 255 }, unlocked_with: None, script: None };
         let e = run(vec![EventKind::Activated { reference: DOOR, by: FormId::PLAYER_REF, outcome: Some(serde_json::to_value(&locked).unwrap()) }]);
         assert_eq!(e, vec![ScriptEffect::Notify("Gate is locked (Requires Key)".into())]);
+    }
+
+    #[test]
+    fn a_scripted_activate_of_a_terminal_opens_it_for_the_player_only() {
+        // Lucky38MrHouseTerminal's OnActivate ends in `Activate` (#1532): the default
+        // activation of a scripted terminal, by the player.
+        let a = Activation { outcome: Outcome::Activated, unlocked_with: None, script: Some(FormId(0x1746C1)) };
+        let o = Some(serde_json::to_value(&a).unwrap());
+        let e = run(vec![EventKind::Activated { reference: TERMINAL, by: FormId::PLAYER_REF, outcome: o.clone() }]);
+        assert_eq!(e, vec![ScriptEffect::OpenTerminal(TERMINAL.0)]);
+        assert!(run(vec![EventKind::Activated { reference: TERMINAL, by: FormId(0x99), outcome: o.clone() }]).is_empty());
+        // Another scripted activator opens nothing.
+        assert!(run(vec![EventKind::Activated { reference: DOOR, by: FormId::PLAYER_REF, outcome: o }]).is_empty());
     }
 
     #[test]

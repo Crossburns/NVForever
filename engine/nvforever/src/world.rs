@@ -1128,8 +1128,9 @@ pub fn spawn_model(
     // A door that opens in place (no XTEL) and has Open/Close sequences: posed from
     // its state in `nvf_play::doors` (doors.rs). Teleport doors stay static. A container
     // whose model has them (a locker, a safe) is drawn and timed the same way
-    // (`nvf_play::container_anim`).
-    let door = model.rig.as_ref().filter(|rig| rig.door.is_some() && ((&base.sig == b"DOOR" && !p.teleport) || &base.sig == b"CONT"));
+    // (`nvf_play::container_anim`), and so is a terminal whose keyboard and screen come
+    // out (`nvf_play::terminal`, #1532).
+    let door = model.rig.as_ref().filter(|rig| rig.door.is_some() && ((&base.sig == b"DOOR" && !p.teleport) || &base.sig == b"CONT" || &base.sig == b"TERM"));
     // An activator with Open/Close or an idle (a radio, a jukebox): its on and off
     // looks follow its state (activators.rs).
     let activator = model.rig.as_ref().filter(|rig| (rig.door.is_some() || rig.idle.is_some()) && &base.sig == b"ACTI");

@@ -1403,7 +1403,7 @@ impl Game<'_> {
         let mut queue = std::collections::VecDeque::from([(start, Vec::<FormId>::new())]);
         while let Some((cell, way)) = queue.pop_front() {
             for d in self.place_doors(cell) {
-                if self.data.sig(crate::functions::base_of(self, d).unwrap_or(d)) != Some(*b"DOOR") || self.world.peek(d).is_some_and(|s| !s.enabled) {
+                if self.data.sig(crate::functions::base_of(self, d).unwrap_or(d)) != Some(*b"DOOR") || self.world.peek(d).is_some_and(|s| !s.enabled()) {
                     continue;
                 }
                 let Some((to, _, _)) = self.door_teleport(d) else { continue };

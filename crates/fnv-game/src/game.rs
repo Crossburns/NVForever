@@ -4038,7 +4038,7 @@ impl<'a> Game<'a> {
         let death = self.data.by_edid("Death");
         for s in self.speech.iter_mut().filter(|s| only.is_none_or(|o| o == s.speaker)) {
             s.remaining -= dt;
-            let here = self.world.peek(s.speaker).is_none_or(|w| !w.deleted) && self.world.is_enabled(s.speaker).unwrap_or(false);
+            let here = self.world.peek(s.speaker).is_none_or(|w| !w.deleted()) && self.world.is_enabled(s.speaker).unwrap_or(false);
             // A Goodbye greeting at the player whose speaker is drawn into a fight ends at
             // once as if said to the end (`Game::cut_line`, `Game::greets_player`) [owner
             // statement 2026-10-27: "skip to the end of the line as if she finished
@@ -4126,7 +4126,7 @@ impl<'a> Game<'a> {
     /// `fnv_sim::World::presence_serial` (the AI's obstacle poll relies on that,
     /// `fnv_ai::Ai::obstacles_in_line`): keep it so, or key that poll on the new input.
     pub fn present(&self, r: FormId) -> bool {
-        self.world.peek(r).is_none_or(|s| !s.deleted) && self.world.is_enabled(r).unwrap_or(false)
+        self.world.peek(r).is_none_or(|s| !s.deleted()) && self.world.is_enabled(r).unwrap_or(false)
     }
 
     /// Whether a reference's critical stage culls it (GooEnd, DisintegrateEnd): the
@@ -4150,7 +4150,7 @@ impl<'a> Game<'a> {
         }
         out.extend(self.moved.iter().copied());
         out.into_iter()
-            .filter(|&r| self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c)) && self.world.peek(r).is_none_or(|s| !s.deleted))
+            .filter(|&r| self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c)) && self.world.peek(r).is_none_or(|s| !s.deleted()))
             .collect()
     }
 
@@ -4206,7 +4206,7 @@ impl<'a> Game<'a> {
         for c in new {
             let refs = self.data.scripted_by_cell.get(&c).cloned().unwrap_or_default();
             for &r in &refs {
-                if self.world.peek(r).is_none_or(|s| !s.deleted) {
+                if self.world.peek(r).is_none_or(|s| !s.deleted()) {
                     self.ref_event(r, event::ON_LOAD, None, None);
                 }
             }

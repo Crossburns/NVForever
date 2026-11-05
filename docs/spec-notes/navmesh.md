@@ -314,9 +314,13 @@ that the graph agrees. Every writer of those inputs moves one of the two numbers
 On the graph side `NavGraph::obstacles` is written only by `set_obstacles` and
 `sync_obstacles` (crates/fnv-nav/src/obstacles.rs); each takes a stamp no graph of the
 process had (`sync_obstacles` only when it switched something). `enabled` and `deleted`
-are public fields reached through `World::get`'s `&mut RefState`: a new writer that does
-not go through `set_enabled`/`set_deleted` must move the serial itself, or the cache
-leaves an obstacle cut or open in release builds.
+are private to `fnv_sim::world` (issue #1464): a direct write of either field outside that
+module, in `fnv-sim` or any other crate, no longer compiles, so writers go through
+`set_enabled`/`set_deleted`. That does not enforce every change of the flags:
+`World::get` still hands out `&mut RefState`, so `*world.get(id)? = another_state` compiles
+and would replace a whole state, flags included, without moving the serial, and the cache
+would leave an obstacle cut or open in release builds. A search found none [design];
+whether to close that is a separate question, left open.
 
 ## 7. Open questions
 
