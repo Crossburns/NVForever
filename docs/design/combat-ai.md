@@ -518,6 +518,34 @@ facing its target; a post comes before closing in (§5). A post it has no way to
 dropped (`has no way to …: closes in instead`) and the combat AI gives no post of that
 kind for 3 s (`NO_POST_SECONDS`); cover it could not reach is not chosen again [design].
 
+Arriving is measured at the actor's feet [design]. When the way to a post ends, or after
+30 s (`FLEE_WALK_SECONDS`) since it was planned, feet within 64 units horizontally of the
+point the post asks for (`combat_group::POST_ARRIVAL`, the engine's `AT_POST`; a way that
+ends short of a point off the navmesh counts while it is within that) are arrival:
+`AiEvent::AtPost`, with the point and the feet. Farther off, it failed:
+`AiEvent::PostFailed` says why (`TimedOut`, `StoppedShort`), with the point, the feet, the
+distance and the seconds; the post is released and the actor holds or closes in (§5) on
+that same update. `fnv_ai` keeps no failed state and makes no automatic retry after
+release; the recovery is the engine's, as for a post with no way to it (the 3 s above, the
+cover discarded, a melee fighter's guard or bound ended). A later try at the place is a new
+request from the combat AI. This says nothing about what the place is good for: 64 units
+is nearness, not sight or cover. A door wait given up with the walk is told as that
+(`AiEvent::DoorWaitCancelled`), not as a passage. The failure is logged for every fighter
+(`post failed: <post> (timed out|stopped short) after …`).
+
+The point is the one asked for now, not the one the way was planned to or the place the
+way ends: the engine's tactics measure to it too (`AT_POST`), so arrival here means the same
+to them. `POST_SLACK` (48 units) only decides whether a new request still is the post the
+way was planned to, so a request moved within it plus a way that ended short of the first
+request can add up past 64 and fail a way walked to its end.
+
+A separate case is a walk within one assignment. Standing at its post, an actor stays there
+until its feet are 96 units from the point (`POST_RETAINED`, wider than arrival so an actor
+shoved about near 64 does not flip between the states and fill the log). Past that it plans
+the way back to the same post: not a retry after release, as the post was never released.
+That walk has its own 30 s and ends in arrival or in the failure above, so it cannot loop on
+a way that stops short.
+
 ### 12.2 Fleeing [documented: GECK wiki Confidence, Combat Flee]
 
 - **When**: once hurt, every random 0 to fCombatThreatRatioUpdateTime (7.5 s) a fighter

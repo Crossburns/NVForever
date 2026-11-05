@@ -2024,7 +2024,11 @@ impl Core {
                 }
                 _ => {}
             }
-            let Some(r) = self.list.iter().find(|r| r.actor == e.actor) else { continue };
+            let Some(r) = self.list.iter_mut().find(|r| r.actor == e.actor) else { continue };
+            // Told before `note`, which takes a wait that ended unannounced for a passage.
+            if matches!(e.event, AiEvent::DoorWaitCancelled { .. }) {
+                r.waiting = None;
+            }
             // Named residents in full; the crowd of `all` only when it sets off or fails.
             let line = format!("ai [{hour}] {}: {}", r.label, describe(game.data, world, &e.event));
             match e.event {
@@ -2034,6 +2038,7 @@ impl Core {
                 | AiEvent::Unreachable { .. }
                 | AiEvent::HeightWaived { .. }
                 | AiEvent::DoorRefused { .. }
+                | AiEvent::DoorWaitCancelled { .. }
                 | AiEvent::Resumed { .. }
                 | AiEvent::Approach { .. }
                 | AiEvent::Follow { .. }
@@ -2061,6 +2066,7 @@ impl Core {
                 | AiEvent::Pace { .. }
                 | AiEvent::Post { .. }
                 | AiEvent::NoPost { .. }
+                | AiEvent::PostFailed { .. }
                 | AiEvent::Flee { .. }
                 | AiEvent::FleeArrived { .. }
                 | AiEvent::Cornered { .. }
@@ -2193,6 +2199,7 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         AiEvent::PushedBack { package, away } => format!("was pushed {away:.0} units from the place of {}: goes back", n(package)),
         AiEvent::Door { door, .. } => format!("used door {door}"),
         AiEvent::DoorRefused { door } => format!("was not let through door {door} by its script: plans again"),
+        AiEvent::DoorWaitCancelled { door } => format!("stops waiting at door {door}: its walk was given up"),
         AiEvent::Resumed { package, patrol_point: Some(p), .. } => format!("goes on with {} at patrol point {} (from the save)", n(package), n(p)),
         AiEvent::Resumed { package, .. } => format!("goes on with {}, its sandbox day as saved", n(package)),
         AiEvent::Arrived { seconds, travelled, .. } => format!("arrived after {seconds:.1}s, {travelled:.0} units"),
@@ -2303,8 +2310,31 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
             to[1],
             to[2]
         ),
-        AiEvent::AtPost { post, off, .. } => format!("is at {} ({off:.0} units off)", post.name()),
+        AiEvent::AtPost { post, off, at, feet, .. } => format!(
+            "is at {} ({off:.0} units off): asked for ({:.0}, {:.0}, {:.0}), stands at ({:.0}, {:.0}, {:.0})",
+            post.name(),
+            at[0],
+            at[1],
+            at[2],
+            feet[0],
+            feet[1],
+            feet[2]
+        ),
         AiEvent::NoPost { post } => format!("has no way to {}: closes in instead", post.name()),
+        AiEvent::PostFailed { post, at, feet, off, elapsed, reason, .. } => format!(
+            "post failed: {} ({}) after {elapsed:.1} s, {off:.0} units from ({:.0}, {:.0}, {:.0}), stands at ({:.0}, {:.0}, {:.0})",
+            post.name(),
+            match reason {
+                fnv_ai::alert::PostFailure::TimedOut => "timed out",
+                fnv_ai::alert::PostFailure::StoppedShort => "stopped short",
+            },
+            at[0],
+            at[1],
+            at[2],
+            feet[0],
+            feet[1],
+            feet[2]
+        ),
         AiEvent::Flee { from, how, to, away, length } => format!(
             "flees from {} {}: to ({:.0}, {:.0}, {:.0}), {} from it, {length:.0} units to go",
             if *from == FormId::PLAYER_REF { "the player".to_string() } else { n(from) },

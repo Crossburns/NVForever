@@ -188,6 +188,8 @@ pub enum AiEvent {
     /// The script of the next door on the way did not let the actor through
     /// (`fnv_game::npc_doors`): it plans again without that door.
     DoorRefused { door: FormId },
+    /// Its walk was given up while it waited for `door` to open: it did not go through.
+    DoorWaitCancelled { door: FormId },
     /// The walk ended at the package's place, after `seconds` and `travelled` units.
     Arrived { package: FormId, seconds: f64, travelled: f32, patrol_point: Option<FormId> },
     /// No way to the package's location: the package is set aside.
@@ -285,10 +287,14 @@ pub enum AiEvent {
     /// In Combat it goes to the post the combat AI chose (`crate::alert`): `to`, `away`
     /// units off, a way of `length` units.
     Post { post: fnv_game::combat_group::PostKind, target: FormId, to: [f32; 3], away: f32, length: f32 },
-    /// It is at its post, `off` units from where the post is.
-    AtPost { post: fnv_game::combat_group::PostKind, target: FormId, off: f32 },
+    /// It is at its post: its feet at `feet`, `off` units from where the post asks for it
+    /// (`at`).
+    AtPost { post: fnv_game::combat_group::PostKind, target: FormId, off: f32, at: [f32; 3], feet: [f32; 3] },
     /// It has no way to its post: it closes in instead.
     NoPost { post: fnv_game::combat_group::PostKind },
+    /// Its walk to its post ended away from it after `elapsed` seconds: its feet at `feet`,
+    /// `off` units from where the post asks for it (`at`). The post is dropped.
+    PostFailed { post: fnv_game::combat_group::PostKind, target: FormId, at: [f32; 3], feet: [f32; 3], off: f32, elapsed: f32, reason: crate::alert::PostFailure },
     /// It flees `from` (`how`): to `to`, `away` units from the one it flees, a way of
     /// `length` units.
     Flee { from: FormId, how: fnv_game::combat_group::FleeBy, to: [f32; 3], away: f32, length: f32 },
