@@ -8273,6 +8273,41 @@ expect = [
 ]
 
 [[scenario]]
+name = "g5-self-kill-1"
+source = "#1614: the player at 50 Health fires a 40 mm grenade at their own feet and dies of it: no kill XP, statistic or challenge (docs/spec-notes/experience.md, a design choice)"
+note = "the blast misses the player on some runs (#1581, 2 of 3 on main), so the death line is marked; player-own-hit-no-credit is the same check with no blast"
+areas = ["combat"]
+paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/challenges.rs", "crates/fnv-game/src/misc_stats.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0007EA25", NVF_PLAY_TEST_GIVE = "0007EA26:8", NVF_PLAY_TEST_CONSOLE = "4:player.damageav health 150;player.getav health;player.getav xp;4.6:close", NVF_PLAY_TEST_LOOK = "6:46:-75", NVF_PLAY_TEST_CONTROL = "7:weapon,10:fire" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
+run_seconds = 18
+expect = [
+  { re = 'combat: explosion 40mmGrenadeExplosion at', label = "the grenade goes off" },
+  { re = 'combat: the player died, killed by Player', label = "the player dies of it", known_failing = "#1581: the blast misses the player on some runs" },
+]
+forbid = [
+  { re = 'xp: \S+ XP from a kill', label = "no kill XP" },
+  { re = 'challenge: (Lord Death|Kaboom|The Rifleman) ', label = "no kill challenge" },
+]
+
+[[scenario]]
+name = "player-own-hit-no-credit"
+source = "#1614: the player's own hit with the grenade rifle kills them (the hit aid, the path their blast takes, without #1581's misses): no kill XP or challenge (docs/spec-notes/experience.md, a design choice)"
+areas = ["combat"]
+paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/challenges.rs", "crates/fnv-game/src/misc_stats.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HIT = "8:player:500:0007EA25" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
+run_seconds = 14
+order = [[
+  'combat: the player died, killed by Player',
+  { re = 'test aid: the player hits 0x00000014 for \d+ with ' },
+]]
+forbid = [
+  { re = 'XP from a kill', label = "no XP for their own death" },
+  { re = 'challenge: (Lord Death|The Rifleman|Kaboom) ', label = "no challenge for their own death" },
+]
+
+[[scenario]]
 name = "ragdoll-floats"
 source = "owner 2026-10-25: anything ragdolled floats to the surface in water (docs/spec-notes/ragdoll.md §8, crates/fnv-phys/src/buoyancy.rs)"
 note = "the player swims out from the Boulder Beach shore as wade-in-swim (on to x about 59300), is killed under the lake's surface (2600) at 19 s, and its body rises and comes to rest floating there"
@@ -10774,6 +10809,31 @@ expect = [
   { re = 'dismember: gore of 00104C79 at rest: [0-9]+ pieces lie', label = "the pieces come to rest (how far from the corpse: the line)" },
 ]
 manual = "dismember_head.png and dismember_after.png: Chet's head gone with a neck cap, bits about; his left arm lying apart with caps at both ends; his left leg gone with a cap"
+
+[[scenario]]
+name = "b3-killing-blow"
+source = "#1588: Easy Pete is shot once and lives, then KillActor with no cause: GetKillingBlowLimb and GetCauseofDeath read -1 after the death, not the earlier shot's (docs/spec-notes/dismemberment.md §5)"
+note = "the shot must land and leave him alive, or the two -1 would prove nothing; Pete is 65 Health [observed: this run on main, combat: hit ... health 55/65]"
+areas = ["combat", "scripts"]
+paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/functions/fighting.rs", "crates/fnv-game/src/resurrect.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_SCRIPT = "6:moveto:EasyPeteRef:player:0:300:0,8.8:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_CONTROL = "7:weapon,9:aimnpc,9.5:fire", NVF_PLAY_TEST_CONSOLE = "12:EasyPeteRef.getdead;EasyPeteRef.getav health;EasyPeteRef.getkillingblowlimb;EasyPeteRef.getcauseofdeath;EasyPeteRef.killactor;EasyPeteRef.getdead;EasyPeteRef.getkillingblowlimb;EasyPeteRef.getcauseofdeath;13:close" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 17
+order = [[
+  { re = 'combat: hit 0x00104C80 on .*, health [1-9]\d*/\d+' },
+  'console: GetDead on EasyPeteRef >> 0.00',
+  'console: GetKillingBlowLimb on EasyPeteRef >> -1.00',
+  'console: GetCauseofDeath on EasyPeteRef >> -1.00',
+  'console: KillActor on EasyPeteRef',
+  'console: GetDead on EasyPeteRef >> 1.00',
+  'console: GetKillingBlowLimb on EasyPeteRef >> -1.00',
+  'console: GetCauseofDeath on EasyPeteRef >> -1.00',
+]]
+expect = [
+  { re = 'console: GetActorValue on EasyPeteRef >> (-?[\d.]+)', range = [0.01, 64.99], label = "wounded and alive before KillActor" },
+  { re = 'console: GetKillingBlowLimb on EasyPeteRef >> -1\.00', count = 2, label = "-1 before and after the death" },
+  { re = 'console: GetCauseofDeath on EasyPeteRef >> -1\.00', count = 2, label = "-1 before and after the death" },
+]
 
 [[scenario]]
 name = "sever-chet"

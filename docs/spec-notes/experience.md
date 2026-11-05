@@ -48,7 +48,9 @@ master.
 
 A hired companion's (a teammate's) kill earns the player the same XP as the player's own,
 and the player's and the companions' damage count together towards the share above
-[owner, 2026-10-27; design: the shared share] (`Game::kill_earns_xp`). The other rewards:
+[owner, 2026-10-27; design: the shared share] (`Game::kill_earns_xp`). The player's own
+death earns nothing, by the player's or a companion's hand (`Game::kill_xp`) [design: what the
+original does there is not known]. The other rewards:
 
 | Source | Settings (FalloutNV.esm; default) | Where (code) |
 | --- | --- | --- |

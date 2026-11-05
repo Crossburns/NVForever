@@ -330,14 +330,21 @@ impl Game<'_> {
         Some((damage, d.attack_reach.map(f64::from)))
     }
 
-    /// The actor dies: dead flag, killer, GetDeadCount, OnDeath (KillActor's effect).
-    /// False when it was already dead.
+    /// The actor dies, of no hit: dead flag, killer, GetDeadCount, OnDeath (KillActor's
+    /// effect). False when it was already dead.
     pub fn kill(&mut self, r: FormId, killer: Option<FormId>) -> bool {
+        self.die(r, killer, None)
+    }
+
+    /// [`Game::kill`], with the hit that killed if one did (`RefExtra::killing_hit`, set
+    /// before anything of the death runs). The player's own death is no kill to count, by
+    /// anyone's hand [design: nobody has looked at what the original counts].
+    fn die(&mut self, r: FormId, killer: Option<FormId>, fatal: Option<crate::game::LastHit>) -> bool {
         if self.is_dead(r) {
             return false;
         }
         // Karma and murder are judged while the victim still lives (`crate::crime`).
-        if killer == Some(FormId::PLAYER_REF) {
+        if killer == Some(FormId::PLAYER_REF) && r != FormId::PLAYER_REF {
             self.player_kills(r);
             self.count_kill(r);
             self.challenge_kill(r);
@@ -345,6 +352,7 @@ impl Game<'_> {
         let e = self.extra.entry(r).or_default();
         e.dead = true;
         e.killer = killer;
+        e.killing_hit = fatal;
         if let Some(b) = base_of(self, r) {
             *self.player.dead_count.entry(b).or_default() += 1;
         }
@@ -530,9 +538,10 @@ impl Game<'_> {
         self.jip_event("hit", Some(target), Vec::new());
         actor::add_damage(self, target, HEALTH, dealt);
         let players_side = info.attacker.is_some_and(|a| self.kill_earns_xp(a));
+        let this_hit = crate::game::LastHit { attacker: info.attacker, weapon: info.weapon, location: info.location, critical: info.critical };
         {
             let e = self.extra.entry(target).or_default();
-            e.last_hit = Some(crate::game::LastHit { attacker: info.attacker, weapon: info.weapon, location: info.location, critical: info.critical });
+            e.last_hit = Some(this_hit);
             if players_side {
                 e.player_damage += dealt;
             }
@@ -573,7 +582,9 @@ impl Game<'_> {
                 // Said its KOed line when knocked out now (`Game::knock_out`).
                 out.knocked_out = self.knock_out(target, crate::unconscious::Cause::Essential, info.attacker);
             } else {
-                out.died = self.kill(target, info.attacker);
+                // Also when an OnHit script or the hit's Script effect took the last of the
+                // Health ([`Game::health_lowered`]): this hit decides, so it is the killing one.
+                out.died = self.die(target, info.attacker, Some(this_hit));
                 if out.died {
                     out.overkill = (damage - dealt).max(0.0);
                 }
@@ -934,8 +945,12 @@ impl Game<'_> {
         self.item_event(actor, weapon, event::ON_FIRE, None)
     }
 
-    /// The XP the player earns for killing `target` (see the module notes).
+    /// The XP the player earns for killing `target` (see the module notes): none for the
+    /// player's own death, by the player's or a companion's hand [design].
     pub fn kill_xp(&self, target: FormId) -> f64 {
+        if target == FormId::PLAYER_REF {
+            return 0.0;
+        }
         let e = self.extra.get(&target);
         let (by_player, total) = e.map_or((0.0, 0.0), |e| (e.player_damage, e.total_damage));
         if total > 0.0 && by_player / total * 100.0 < setting(self, "iXPDeathRewardHealthThreshold", 40.0) {

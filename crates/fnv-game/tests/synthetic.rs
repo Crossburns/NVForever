@@ -1667,6 +1667,131 @@ fn a_hired_companions_kill_earns_the_player_xp() {
     assert!(r.died && r.xp == 20.0, "{r:?}");
 }
 
+/// GetKillingBlowLimb and GetCauseofDeath answer from the hit that killed, not from an
+/// earlier wound; GetHitLocation still reads the last hit (#1588).
+#[test]
+fn only_the_hit_that_killed_is_the_killing_blow() {
+    use fnv_game::combat::HitInfo;
+    const HIT_LOCATION: u16 = 0x1187;
+    const CAUSE: u16 = 0x118D;
+    const KILLING_BLOW_LIMB: u16 = 0x11F0;
+    const KILL_ACTOR: u16 = 0x108B;
+    let f = fixture();
+    let npc = FormId(NPC_REF);
+    let call = |g: &mut Game, op: u16, args: &[ArgValue]| {
+        let ctx = Ctx { unit: "test".into(), opcode: op, on: Some(npc), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+        g.call_function(&ctx, args).num()
+    };
+    let wound = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 3, critical: true, limb: None };
+
+    // A wound, then a KillActor with no cause: no hit killed.
+    let mut g = game(&f);
+    g.new_game();
+    assert!(!g.hit(npc, 10.0, wound).died);
+    assert_eq!((call(&mut g, KILLING_BLOW_LIMB, &[]), call(&mut g, CAUSE, &[])), (-1.0, -1.0), "alive");
+    call(&mut g, KILL_ACTOR, &[]);
+    assert!(g.is_dead(npc));
+    assert_eq!((call(&mut g, KILLING_BLOW_LIMB, &[]), call(&mut g, CAUSE, &[])), (-1.0, -1.0), "the wound did not kill");
+    assert_eq!(call(&mut g, HIT_LOCATION, &[]), 3.0, "still its last hit");
+    assert!(!g.kill_outcome(npc).critical, "the wound's critical is not the kill's");
+
+    // KillActor's own cause still counts, and it is no killing blow.
+    let mut g = game(&f);
+    g.new_game();
+    g.hit(npc, 10.0, wound);
+    call(&mut g, KILL_ACTOR, &[ArgValue::Value(Value::Ref(FormId::PLAYER_REF.0)), ArgValue::Value(Value::Num(-1.0)), ArgValue::Value(Value::Num(1.0))]);
+    assert_eq!((call(&mut g, KILLING_BLOW_LIMB, &[]), call(&mut g, CAUSE, &[])), (-1.0, 1.0));
+
+    // A wound, then a fatal hit: the fatal one, which a hit on the corpse does not replace.
+    let mut g = game(&f);
+    g.new_game();
+    g.hit(npc, 10.0, wound);
+    assert!(g.hit(npc, 500.0, HitInfo { location: 1, ..wound }).died);
+    g.hit(npc, 5.0, HitInfo { location: 7, critical: false, ..wound });
+    assert_eq!((call(&mut g, KILLING_BLOW_LIMB, &[]), call(&mut g, CAUSE, &[])), (1.0, 4.0));
+    assert!(g.kill_outcome(npc).critical);
+
+    // A save keeps the record.
+    let snap = serde_json::to_value(g.snapshot()).unwrap();
+    let back: fnv_game::game::GameSnapshot = serde_json::from_value(snap.clone()).unwrap();
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert_eq!((call(&mut h, KILLING_BLOW_LIMB, &[]), call(&mut h, CAUSE, &[])), (1.0, 4.0));
+
+    // A save from before the record: what killed is unknown, not taken from the last hit.
+    let mut old = snap;
+    for e in old["extra"].as_object_mut().unwrap().values_mut() {
+        e.as_object_mut().unwrap().remove("killing_hit");
+    }
+    let old: fnv_game::game::GameSnapshot = serde_json::from_value(old).unwrap();
+    let world = World::restore(&f.forms, &f.refs, &old.sim).unwrap();
+    let mut o = Game::restore(&f.data, world, g.cfg, &old).unwrap();
+    assert!(o.is_dead(npc));
+    assert_eq!((call(&mut o, KILLING_BLOW_LIMB, &[]), call(&mut o, CAUSE, &[])), (-1.0, -1.0));
+    assert_eq!(call(&mut o, HIT_LOCATION, &[]), 1.0);
+
+    // Back from the dead the record is gone: a later death without a hit reads none.
+    g.resurrect(npc, false);
+    assert_eq!(g.extra[&npc].killing_hit, None);
+    assert_eq!(call(&mut g, KILLING_BLOW_LIMB, &[]), -1.0);
+    call(&mut g, KILL_ACTOR, &[]);
+    assert_eq!((call(&mut g, KILLING_BLOW_LIMB, &[]), call(&mut g, CAUSE, &[])), (-1.0, -1.0));
+}
+
+/// The player's death is no kill: not by their own hit, a companion's or their own
+/// KillActor; the same kills of an NPC still count (#1614) [design].
+#[test]
+fn a_players_death_earns_no_kill_credit() {
+    use fnv_game::challenges::{kind, ChallengeDef};
+    use fnv_game::combat::HitInfo;
+    use fnv_game::misc_stats::{PEOPLE_KILLED, TOTAL_THINGS_KILLED};
+    const KILL_ACTOR: u16 = 0x108B;
+    const HEALTH: u16 = 16;
+    let p = FormId::PLAYER_REF;
+    let (npc, mate, chal) = (FormId(NPC_REF), FormId(NPC_AUTO_REF), FormId(0x9990));
+    let mut f = fixture();
+    let def = ChallengeDef { form: chal, kind: kind::KILL_CATEGORY, threshold: 100, flags: 0, interval: 0, value1: 0, value2: 0, value3: 0, form1: None, form2: None, name: None, description: None };
+    f.data.challenge_defs.insert(chal, def);
+    let by_player = HitInfo { attacker: Some(p), weapon: None, location: 0, critical: false, limb: None };
+    let credit = |g: &Game| (g.player.xp, g.misc_stat(PEOPLE_KILLED), g.misc_stat(TOTAL_THINGS_KILLED), g.player.challenges.get(&chal).map_or(0, |c| c.progress));
+    let start = || {
+        let mut g = game(&f);
+        g.new_game();
+        g.extra.entry(mate).or_default().teammate = true;
+        fnv_game::functions::set_actor_value_current(&mut g, p, HEALTH, 100.0).unwrap();
+        g
+    };
+
+    // The controls: the player's kill and a hired companion's.
+    let mut g = start();
+    assert!(g.hit(npc, 500.0, by_player).died);
+    assert_eq!(credit(&g), (20.0, 1.0, 1.0, 1));
+    let mut g = start();
+    assert!(g.hit(npc, 500.0, HitInfo { attacker: Some(mate), ..by_player }).died);
+    assert_eq!(credit(&g), (20.0, 0.0, 0.0, 0));
+
+    // By the player's own hit (their own blast's, in play).
+    let mut g = start();
+    let r = g.hit(p, 500.0, by_player);
+    assert!(r.died && r.xp == 0.0, "{r:?}");
+    assert_eq!(g.extra[&p].killer, Some(p), "the killer stays");
+    assert_eq!(credit(&g), (0.0, 0.0, 0.0, 0));
+
+    // By a hired companion's.
+    let mut g = start();
+    let r = g.hit(p, 500.0, HitInfo { attacker: Some(mate), ..by_player });
+    assert!(r.died && r.xp == 0.0, "{r:?}");
+    assert_eq!(g.extra[&p].killer, Some(mate));
+    assert_eq!(credit(&g), (0.0, 0.0, 0.0, 0));
+
+    // By their own KillActor.
+    let mut g = start();
+    let ctx = Ctx { unit: "test".into(), opcode: KILL_ACTOR, on: Some(p), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+    g.call_function(&ctx, &[ArgValue::Value(Value::Ref(p.0))]);
+    assert!(g.is_dead(p));
+    assert_eq!(credit(&g), (0.0, 0.0, 0.0, 0));
+}
+
 /// Gone parts: IsLimbGone, GetKillingBlowLimb, KillActor's limb, the Dismembered Limbs
 /// statistic (docs/spec-notes/dismemberment.md §5).
 #[test]

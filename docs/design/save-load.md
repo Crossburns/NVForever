@@ -151,7 +151,8 @@ body    u32 length + zstd(JSON or postcard) of SaveBody
 - Each snapshot keeps its own `format` string (`fnv.game.state/N`, `fnv.sim.state/N`).
   New fields use `#[serde(default)]` so older saves still load (already the pattern in
   both snapshots); a change that cannot default bumps N and adds a migration function
-  from N−1, so old saves stay loadable.
+  from N−1, so old saves stay loadable. `RefExtra::killing_hit` is one: the dead of an
+  older save have no killing hit, as nothing in the save tells it [design].
 - Encoding: JSON keeps saves inspectable and is what the tests already use; size is the
   question. Measure a long session's snapshot first: if compressed JSON stays in the low
   megabytes (the original's 61-hour save is 8 MB uncompressed), keep JSON; otherwise

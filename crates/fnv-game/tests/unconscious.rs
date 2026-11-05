@@ -28,6 +28,9 @@ const ESSENTIAL: u32 = 0x2;
 const GET_ACTOR_VALUE: u16 = 0x100E;
 const DAMAGE_ACTOR_VALUE: u16 = 0x1181;
 const GET_DEAD: u16 = 0x102E;
+const GET_HIT_LOCATION: u16 = 0x1187;
+const GET_CAUSE_OF_DEATH: u16 = 0x118D;
+const GET_KILLING_BLOW_LIMB: u16 = 0x11F0;
 const KILL_ACTOR: u16 = 0x108B;
 const RESURRECT_ACTOR: u16 = 0x108C;
 const GET_UNCONSCIOUS: u16 = 0x10F2;
@@ -289,6 +292,19 @@ fn damage_actor_value_past_zero_kills_with_no_killer() {
     // More damage on the corpse is no second death.
     ask(&mut g, BOXER_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
     assert_eq!(g.player.dead_count.get(&FormId(BOXER)), Some(&1));
+}
+
+/// The wound before it is not what killed (#1588).
+#[test]
+fn a_damage_actor_value_death_has_no_killing_hit() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(!g.hit(BOXER_REF, 5.0, HitInfo { location: 3, ..by_player() }).died);
+    ask(&mut g, BOXER_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert!(g.is_dead(BOXER_REF));
+    assert_eq!(ask(&mut g, BOXER_REF, GET_KILLING_BLOW_LIMB, &[]), -1.0);
+    assert_eq!(ask(&mut g, BOXER_REF, GET_CAUSE_OF_DEATH, &[]), -1.0);
+    assert_eq!(ask(&mut g, BOXER_REF, GET_HIT_LOCATION, &[]), 3.0);
 }
 
 #[test]
