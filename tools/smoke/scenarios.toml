@@ -18353,12 +18353,14 @@ expect = [
   { re = 'melee knockback aid: ready target=000F36F5', count = 1, label = "the target stands ready for the blow, once" },
   { re = 'combat: \S+ power attack hits 0x000F36F5 on ', count = 1, label = "one player power attack hits the target" },
   { re = 'combat: .*\b(hits|strikes)\b.*0x000F36F5\b', count = 1, label = "nothing else hits the target" },
+  { re = 'combat: \S+( power attack)? hits 0x[0-9A-F]{8} on ', count = 1, label = "the player's melee hits one actor, once" },
+  { re = 'knockback trace: blow=\d+ target=000F36F5 dt=', min = 2, label = "each frame of the push is traced" },
   { re = 'melee knockback aid: blow=\d+ landed target=000F36F5', count = 1, label = "that blow's knockback is the target's first and only" },
   { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 knocked back at \d+ units/s for 1[.]00 s', count = 1, label = "the player's power blow starts the knockback" },
   { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 power=[01] knocked back at', count = 1, label = "no other knockback starts on the target" },
   { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(]', count = 1, label = "that knockback ends on a living target no script moved and no walk or clip carried" },
   { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*pushed back', count = 1, label = "no other knockback ends on the target" },
-  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(](?P<n>\d+(?:[.]\d+)?) %[)]', range = [60, 140], all = true, known_failing = "#1386: original scenario permits unrelated combat reports; isolated player-blow measurement, replacement baseline, and frame-pacing validation pending.", label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, its AI off)" },
+  { re = 'knockback: blow=\d+ attacker=00000014 target=000F36F5 power=1 alive=1 moved=0 walked=0 pushed back [\d.]+ units of [\d.]+ [(](?P<n>\d+(?:[.]\d+)?) %[)] along=-?[\d.]+ lateral=[\d.]+ push=along,', range = [60, 140], all = true, known_failing = "#1386: original scenario permits unrelated combat reports; isolated player-blow measurement, replacement baseline, and frame-pacing validation pending.", label = "the trooper is pushed back about the distance its knockback asked (its own push, not a walk: it stands, its AI off)" },
   { re = 'knockback summary: ([1-9]\d*) knockbacks on actors', label = "knockbacks in the summary" },
 ]
 order = [[
@@ -18373,6 +18375,7 @@ order = [[
 forbid = [
   { text = "melee knockback aid: FAIL", label = "the aid's setup or its one blow went wrong" },
   { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*interrupted by', label = "a second blow replaced the knockback" },
+  { re = 'knockback: blow=\d+ attacker=[0-9A-F]+ target=000F36F5 .*push=(reversed|sideways)', label = "the push went another way than the blow asked" },
 ]
 
 [[scenario]]

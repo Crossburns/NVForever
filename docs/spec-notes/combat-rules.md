@@ -609,24 +609,32 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     power=<0|1>`; `<n>` counts the blows that knock someone back in this run; `SetVel`'s
     pushes have blow 0 and attacker 0): `knockback: <tag> knocked back at <v> units/s for
     <s> s (<d> units)`; at its end, `knockback: <tag> alive=<0|1> moved=<0|1> walked=<0|1>
-    pushed back <n> units of <d> (<p> %), from … to …, frames=<n> secs=<s> travel=<t>
-    steps=<n>`; replaced, `knockback: <tag> interrupted by blow=<n> …` (the player:
+    pushed back <n> units of <d> (<p> %) along=<a> lateral=<l> push=<word>, from … to …,
+    frames=<n> secs=<s> travel=<t> steps=<n>`; replaced, `knockback: <tag> interrupted by
+    blow=<n> …`, unless its time was already up, when it gets its end line (the player:
     `player: knocked back …`, `player: knockback done: …`); `knockback summary` at exit.
   - **What "pushed back" measures** [design: `residents/knock_run.rs`]: the net ground
     distance between the feet when the blow began and the feet when its time is up. It is
     not the push alone: a walk or MoveTo moves the feet too, and a death can stop it short.
     `moved` (a script moved the actor), `walked` (it walked, or an attack clip carried it)
-    and `alive` (0 for dead or out cold) say when something else went into it. `frames`,
+    and `alive` (0 for dead or out cold) say when something else went into it. The size
+    alone would score a push backwards as 100 %, so `along` and `lateral` split it against
+    the way the blow asked, and `push` is `none` (under 5 % of the distance asked),
+    `reversed`, `sideways` (over 25 % of it to the side) or `along` [design]. `frames`,
     `secs` and `travel` are what the frames asked for, `steps` the fixed physics steps
     taken meanwhile, to compare frame rates: the travel is integrated with the frame's
     time and consumed by later fixed steps, and whether that changes the distance
-    delivered is unmeasured [hypothesis: #1386].
+    delivered is unmeasured [hypothesis: #1386]. With the aid below, each frame also logs
+    `knockback trace: … dt=<s> left=<s> owed=<d> consumed=<d> along=<a> lateral=<l>
+    dir=(<x>, <y>) steps=<n>`.
   - Smoke `melee-knockback` isolates one player power blow
     (`NVF_PLAY_TEST_MELEE_KNOCKBACK`, nvf-play `test_aid/melee_knockback.rs`, nvforever
-    `residents/melee_knockback.rs`): AI off on the target and the loaded area's actors,
-    then one MoveTo, a blow gated on readiness, and the report tied to that blow. A
-    standing actor has no character until its knockback makes one [design], so "settled"
-    is its feet still on collision with its hit volume there.
+    `residents/melee_knockback.rs`): AI off on the target (it may be far away, with no
+    state yet: SetActorsAI only writes the game's record of the reference [design]) and on
+    the loaded area's actors, then one MoveTo onto the ground, a blow gated on readiness and
+    watched up to impact, and the report tied to that blow. A standing actor has no
+    character until its knockback makes one [design], so "settled" is its feet still, at
+    the height of what is under them, with its hit volume there.
 - **Blocking.** `damage::blocked` takes `block` (60 %) off a melee hit taken while
   blocking [design]. Nothing attacks the player yet; NPC melee (Layer 6 AI) will use it.
 - **The body.** A power attack plays `{prefix}attackpower.kf` (`1hmattackpower.kf`,

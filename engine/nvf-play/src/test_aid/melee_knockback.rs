@@ -19,8 +19,6 @@ use crate::{PlaySet, PlayState};
 use bevy::prelude::*;
 use fnv_sim::FormId;
 
-pub const ENV: &str = "NVF_PLAY_TEST_MELEE_KNOCKBACK";
-
 /// From the world aids' first moment to the press, at most: past this the setup failed
 /// [design: above what a scripts start, a landing and the settling take].
 const SETUP_SECONDS: f32 = 20.0;
@@ -41,7 +39,7 @@ enum Stage {
 #[derive(Resource, Debug)]
 pub struct MeleeKnockbackAid {
     pub target: FormId,
-    /// Where the target goes, from the player (MoveTo's offsets).
+    /// Where the target goes: x and y from the player, z over the ground there.
     pub offset: [f32; 3],
     /// The world half's verdict, each frame until the press: in place, or what it waits for.
     pub arranged: Result<(), &'static str>,
@@ -51,6 +49,8 @@ pub struct MeleeKnockbackAid {
 }
 
 impl MeleeKnockbackAid {
+    pub const ENV: &'static str = "NVF_PLAY_TEST_MELEE_KNOCKBACK";
+
     pub fn parse(v: &str) -> Result<MeleeKnockbackAid, String> {
         let fields: Vec<&str> = v.split(':').map(str::trim).collect();
         let [target, x, y, z] = fields.as_slice() else { return Err(format!("{v:?}: expected <target FormID hex>:<x>:<y>:<z>")) };
@@ -65,6 +65,11 @@ impl MeleeKnockbackAid {
     /// Before the press: the world half still arranges the target.
     pub fn waiting(&self) -> bool {
         self.stage == Stage::Waiting
+    }
+
+    /// A failure was logged: nothing more is done.
+    pub fn failed(&self) -> bool {
+        self.stage == Stage::Failed
     }
 
     /// Log the failure, once; nothing more is pressed.
@@ -104,12 +109,12 @@ fn keys_gate(playing: bool, fighting_locked: bool, lowered: bool, weapon_ready: 
 }
 
 pub(super) fn setup(app: &mut App) {
-    let Ok(v) = std::env::var(ENV) else { return };
+    let Ok(v) = std::env::var(MeleeKnockbackAid::ENV) else { return };
     match MeleeKnockbackAid::parse(&v) {
         Ok(aid) => {
             app.insert_resource(aid).add_systems(Update, press.in_set(PlaySet::Input).after(read_controls));
         }
-        Err(e) => warn!("melee knockback aid: FAIL invalid {ENV}: {e}"),
+        Err(e) => warn!("melee knockback aid: FAIL invalid {}: {e}", MeleeKnockbackAid::ENV),
     }
 }
 
@@ -128,7 +133,13 @@ fn press(
     mut knocks: MessageReader<Knockback>,
 ) {
     let target = aid.target.0;
-    let blows: Vec<Knockback> = knocks.read().filter(|k| k.form_id == target).copied().collect();
+    let knocked: Vec<Knockback> = knocks.read().copied().collect();
+    let blows: Vec<Knockback> = knocked.iter().filter(|k| k.form_id == target).copied().collect();
+    // One victim: the swing can strike several (the scenario also counts the player's hits,
+    // for a victim no knockback comes of).
+    if let Some(k) = knocked.iter().find(|k| k.attacker == FormId::PLAYER_REF.0 && k.form_id != target) {
+        aid.fail(&format!("the player's blow knocked back another actor, {:08X}", k.form_id));
+    }
     let Some(now) = time.world_secs() else { return };
     let began = *aid.began.get_or_insert(now);
     let (melee, swing) = combat.as_deref().map_or((false, None), Combat::melee_swing);

@@ -73,7 +73,8 @@
 //!   Unlike `NVF_PLAY_TEST_CONTROL` it tests the key's path, not just what it does.
 //!
 //! - `NVF_PLAY_TEST_MELEE_KNOCKBACK=<target FormID hex>:<x>:<y>:<z>`: one player power blow
-//!   on one actor put that far from the player and left standing, gated on readiness
+//!   on one actor put `x`, `y` from the player and `z` over the ground there (it may start
+//!   far away and unloaded) and left standing, gated on readiness
 //!   ([`melee_knockback`], with nvforever `residents::melee_knockback`).
 //!
 //! The aids that stand in for the keys and the mouse (`NVF_PLAY_TEST_MOVE`,

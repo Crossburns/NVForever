@@ -1,13 +1,22 @@
 //! The world half of `NVF_PLAY_TEST_MELEE_KNOCKBACK` (the keys: nvf-play
-//! `test_aid::melee_knockback`; #1386). It waits for the scripts, the residents and the
-//! player on the ground; turns the AI off (SetActorsAI 0) on the target and on every actor
-//! of the loaded area, keeping it off for those who arrive later; then, AI off first so
-//! that `fnv_ai`'s `Ai::relocate` ends any walk for good, makes the one MoveTo; and says
-//! each frame whether the target stands ready for the blow.
+//! `test_aid::melee_knockback`; #1386). As soon as the scripts run it turns the AI off
+//! (SetActorsAI 0) on the target and on every actor of the loaded area, keeping it off for
+//! those who arrive later; once the player stands on the ground it makes the one MoveTo; and
+//! it says each frame whether the target stands ready for the blow, then watches that this
+//! stays so up to the blow and through the push.
+//!
+//! The target is usually not loaded at the start: a reference far away has no state in the
+//! sim's world until something asks for one ([`World::peek`](fnv_sim::World::peek) is
+//! `None`, `World::get` makes it), and it is no resident until the MoveTo brings it near.
+//! Neither makes it invalid: SetActorsAI only writes the game's per-reference record
+//! (`fnv_game` `functions/ai_state.rs`), which needs no state, and `Ai::step_actor` reads
+//! that record, so the AI is off before the actor joins and it never takes a step
+//! [design]. Whether it can be the target is the placed table's to say.
 //!
 //! A standing actor has no character (`Core::think`, "no character is kept"): its knockback
-//! makes one (`Core::carry`, `PhysState::add_npc`), so "settled" here is the feet still, on
-//! collision, with a hit volume there, and any character it has grounded [design].
+//! makes one (`Core::carry`, `PhysState::add_npc`), so "settled" here is the feet still and
+//! at the height a character would rest at, with a hit volume there, and any character it
+//! has grounded [design].
 
 use super::{in_loaded_space, is_actor, Core, Residents};
 use bevy::prelude::*;
@@ -34,8 +43,18 @@ const CORRIDOR_HALF_WIDTH: f32 = 64.0;
 const CORRIDOR_HEIGHTS: [f32; 3] = [32.0, 64.0, 110.0];
 /// How much the ground may rise or fall along the way, game units [design].
 const CORRIDOR_RISE: f32 = 48.0;
-/// How far the hit volume may be from the feet: it follows the drawn actor [design].
+/// How far the hit volume's middle may be from the feet: it follows the drawn actor's
+/// bounds, which an idle sways [design].
 const VOLUME_NEAR: f32 = 32.0;
+/// How far the bottom of the hit volume may be from the feet, up or down: the lowest drawn
+/// point of a standing pose [design].
+const VOLUME_NEAR_Z: f32 = 24.0;
+/// How far above or below where a character would rest on what is under them the feet may
+/// be: more than this would drop or lift it when its knockback makes it [design].
+const SUPPORT_NEAR: f32 = 4.0;
+/// How far above and below where the MoveTo aims its support is looked for [design: well
+/// over a slope's rise across the 90 units or so of the blow].
+const SUPPORT_LOOK: [f32; 2] = [200.0, 400.0];
 
 /// How long a point has stayed put.
 #[derive(Default)]
@@ -60,9 +79,14 @@ impl Still {
 pub(crate) struct Setup {
     player: Still,
     target: Still,
+    /// The target's AI is off (from the first frame the scripts run).
+    target_off: bool,
     /// Where the MoveTo put the target.
     put_at: Option<[f32; 3]>,
-    in_place: bool,
+    /// Where it stood when it was last found ready.
+    ready_at: Option<[f32; 3]>,
+    /// The blow's knockback has begun.
+    struck: bool,
     /// AI turned off on how many others so far.
     others: usize,
 }
@@ -84,6 +108,23 @@ fn ai_off(game: &mut Game, actor: FormId) -> Result<(), String> {
     call(game, "SetActorsAI", actor, &[ArgValue::Value(Value::Num(0.0))])
 }
 
+/// Whether a reference can be the target. Not whether it is loaded or has a state yet: see
+/// the module's notes (the first run failed on that, the trooper being far away).
+fn can_be_target(placed_actor: bool, dead: bool) -> Result<(), &'static str> {
+    if !placed_actor {
+        Err("the target is not a placed actor")
+    } else if dead {
+        Err("the target is dead")
+    } else {
+        Ok(())
+    }
+}
+
+/// Whether feet at height `feet` stand where a character would rest, at height `rest`.
+fn supported(feet: f32, rest: f32) -> bool {
+    (feet - rest).abs() <= SUPPORT_NEAR
+}
+
 /// Whether no other actor stands within `half_width` of the way from `feet` along the unit
 /// vector `dir`, `len` long.
 fn clear_of_others(feet: [f32; 2], dir: [f32; 2], len: f32, half_width: f32, others: impl IntoIterator<Item = [f32; 2]>) -> bool {
@@ -98,8 +139,7 @@ fn clear_of_others(feet: [f32; 2], dir: [f32; 2], len: f32, half_width: f32, oth
 /// ground under it.
 fn way_is_clear(phys: &mut PhysState, feet: [f32; 3], dir: [f32; 2]) -> Result<(), &'static str> {
     let things = || Filter { no_actors: true, exclude_layers: fnv_phys::layers::character_ignores().union(fnv_phys::layers::actor_volumes()), ..Default::default() };
-    let Some(ground) = phys.ground_below(feet, 48.0, 400.0) else { return Err("ground under the target") };
-    let z = ground.point[2];
+    let z = feet[2];
     for h in CORRIDOR_HEIGHTS {
         if phys.ray([feet[0], feet[1], z + h], [dir[0], dir[1], 0.0], CORRIDOR, things()).is_some() {
             return Err("a clear way behind the target");
@@ -150,7 +190,10 @@ fn standing_ready(core: &Core, game: &Game, phys: &mut PhysState, target: FormId
     if !in_loaded_space(&a.walker, phys) || !phys.ready_around(feet) {
         return Err("collision around the target");
     }
-    if !phys.world.actor_volume(id).is_some_and(|v| near(v.feet, VOLUME_NEAR)) || phys.world.actor_aim_point(id).is_none() {
+    if !phys.ground_below(feet, 48.0, SUPPORT_NEAR).is_some_and(|g| supported(feet[2], g.point[2] + g.shell.max(0.0))) {
+        return Err("the target's feet on what is under them");
+    }
+    if !phys.world.actor_volume(id).is_some_and(|v| near(v.feet, VOLUME_NEAR) && (v.feet[2] - feet[2]).abs() <= VOLUME_NEAR_Z) || phys.world.actor_aim_point(id).is_none() {
         return Err("the target's hit volume at its feet");
     }
     let Some(player) = phys.player.as_ref().map(|c| c.feet) else { return Err("the player's character") };
@@ -166,6 +209,27 @@ fn standing_ready(core: &Core, game: &Game, phys: &mut PhysState, target: FormId
     }
     way_is_clear(phys, feet, dir)?;
     Ok(feet)
+}
+
+/// While Use is held and the swing plays: that nothing has changed since the target was
+/// found ready. Later than this a knockback's report says so itself (`moved`, `walked`,
+/// `alive`).
+fn still_standing(core: &Core, game: &Game, target: FormId, put_at: [f32; 3], ready_at: [f32; 3]) -> Result<(), &'static str> {
+    let same = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() <= 1.0);
+    if !game.present(target) || game.extra.get(&target).is_some_and(|e| e.dead || e.restrained || e.out_cold()) {
+        return Err("the target is gone, dead, out cold or restrained");
+    }
+    if !game.ai_off(target) {
+        return Err("the target's AI came back on");
+    }
+    if !game.world.peek(target).is_some_and(|s| same(s.pos, put_at)) {
+        return Err("a script moved the target");
+    }
+    match core.ai.agents.get(&target) {
+        Some(a) if a.walker.moving || !same(a.walker.feet, ready_at) => Err("the target moved"),
+        Some(_) => Ok(()),
+        None => Err("the target is no longer a resident"),
+    }
 }
 
 /// Turn the AI off on the actors of the loaded area that still have it on.
@@ -212,7 +276,38 @@ pub(crate) fn arrange(mut res: ResMut<Residents>, mut aid: ResMut<MeleeKnockback
     with_world(rt, &mut sim, |rt| {
         let game = &mut rt.game;
         keep_ai_off(core, game, phys, target, &mut setup.others);
+        if aid.failed() {
+            return;
+        }
+        // First of all, before it is a resident or anything can walk it.
+        if !setup.target_off {
+            if let Err(why) = can_be_target(is_actor(game.world.placed, target), game.is_dead(target)) {
+                aid.fail(why);
+                return;
+            }
+            if let Err(e) = ai_off(game, target) {
+                aid.fail(&e);
+                return;
+            }
+            info!("melee knockback aid: AI off on the target {:08X}", target.0);
+            setup.target_off = true;
+        }
         if !aid.waiting() {
+            if let Some(run) = core.knocks.get(&target.0) {
+                if !setup.struck {
+                    setup.struck = true;
+                    // MoveTo in the frames before this is in `from`, not in `moved`.
+                    if setup.ready_at.is_none_or(|at| (run.from[0] - at[0]).hypot(run.from[1] - at[1]) > 1.0) {
+                        aid.fail("the knockback began away from where the target was found ready");
+                    }
+                } else if !game.ai_off(target) {
+                    aid.fail("the target's AI came back on during its knockback");
+                }
+            } else if let (false, Some(put_at), Some(ready_at)) = (setup.struck, setup.put_at, setup.ready_at) {
+                if let Err(why) = still_standing(core, game, target, put_at, ready_at) {
+                    aid.fail(&format!("the setup broke before the blow: {why}"));
+                }
+            }
             return;
         }
         let Some(put_at) = setup.put_at else {
@@ -224,17 +319,22 @@ pub(crate) fn arrange(mut res: ResMut<Residents>, mut aid: ResMut<MeleeKnockback
                 aid.arranged = Err("the player to settle");
                 return;
             }
-            if game.world.peek(target).is_none() || !is_actor(game.world.placed, target) {
-                aid.fail("the target is not a placed actor");
+            // MoveTo goes from where the game has the player. Its height comes from what
+            // is under the place, so the target rests there, not at the player's height
+            // (the third number is on top of that).
+            let Some(from) = game.world.peek(FormId::PLAYER_REF).map(|s| s.pos) else {
+                aid.arranged = Err("the player's place in the game");
                 return;
-            }
-            // The AI first: the MoveTo's relocation then ends any walk for good.
-            let [x, y, z] = aid.offset.map(|v| ArgValue::Value(Value::Num(f64::from(v))));
-            let moved = ai_off(game, target).and_then(|()| {
-                info!("melee knockback aid: AI off on the target {:08X}", target.0);
-                call(game, "MoveTo", target, &[ArgValue::Value(Value::Ref(FormId::PLAYER_REF.0)), x, y, z])
-            });
-            if let Err(e) = moved {
+            };
+            let [ox, oy, oz] = aid.offset;
+            let Some(ground) = phys.ground_below([from[0] + ox, from[1] + oy, from[2]], SUPPORT_LOOK[0], SUPPORT_LOOK[1]) else {
+                aid.fail("nothing under the place the target is to go");
+                return;
+            };
+            let rest = ground.point[2] + ground.shell.max(0.0);
+            let offsets = [ox, oy, rest - from[2] + oz].map(|v| ArgValue::Value(Value::Num(f64::from(v))));
+            let [x, y, z] = offsets;
+            if let Err(e) = call(game, "MoveTo", target, &[ArgValue::Value(Value::Ref(FormId::PLAYER_REF.0)), x, y, z]) {
                 aid.fail(&e);
                 return;
             }
@@ -249,10 +349,10 @@ pub(crate) fn arrange(mut res: ResMut<Residents>, mut aid: ResMut<MeleeKnockback
         };
         match standing_ready(core, game, phys, target, put_at) {
             Ok(feet) if setup.target.seconds(feet, now) >= SETTLE_SECONDS => {
-                if !setup.in_place {
+                if setup.ready_at.is_none() {
                     info!("melee knockback aid: target {:08X} in place at ({:.1}, {:.1}, {:.1}), the way behind it clear, {} other actors' AI off", target.0, feet[0], feet[1], feet[2], setup.others);
-                    setup.in_place = true;
                 }
+                setup.ready_at = Some(feet);
                 aid.arranged = Ok(());
             }
             Ok(_) => aid.arranged = Err("the target to settle"),
@@ -264,6 +364,23 @@ pub(crate) fn arrange(mut res: ResMut<Residents>, mut aid: ResMut<MeleeKnockback
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_target_far_away_is_a_valid_one() {
+        // Being unloaded is no input: the reference's kind and life are all that count.
+        assert_eq!(can_be_target(true, false), Ok(()));
+        assert!(can_be_target(false, false).is_err());
+        assert!(can_be_target(true, true).is_err());
+    }
+
+    #[test]
+    fn feet_float_or_sink_only_a_little() {
+        assert!(supported(100.0, 100.0));
+        assert!(supported(103.0, 100.0));
+        assert!(supported(97.0, 100.0));
+        assert!(!supported(105.0, 100.0));
+        assert!(!supported(95.0, 100.0));
+    }
 
     #[test]
     fn an_actor_near_the_way_blocks_it() {

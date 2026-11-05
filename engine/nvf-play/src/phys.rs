@@ -74,9 +74,6 @@ pub const CELLS_BEHIND_LOADING_SCREEN: usize = 8;
 pub struct PhysState {
     pub world: PhysWorld,
     pub stepper: Stepper,
-    /// Fixed physics steps taken so far, for what measures a stretch of play (the knockback
-    /// report, `nvforever` residents).
-    pub steps: u64,
     /// The player's character, once placed.
     pub player: Option<Character>,
     /// Characters of actors another system walks (`nvforever`'s residents), by
@@ -182,7 +179,6 @@ impl Default for PhysState {
         PhysState {
             world: play_world(),
             stepper: Stepper::default(),
-            steps: 0,
             player: None,
             npcs: BTreeMap::new(),
             worldspace: 0,
