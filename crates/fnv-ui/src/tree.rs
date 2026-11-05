@@ -303,6 +303,12 @@ pub struct Ui {
     /// none, it has nothing to work out [design: writes of the same value, as the
     /// engine's every frame, leave the tree clean].
     dirty: bool,
+    /// Trait writes from outside so far, and those that changed the value
+    /// ([`Ui::trait_write_counts`]). Not behind the test aid: an integer added to in
+    /// `set_at`, as `gen` is beside them, with no lock, allocation or output; a gate would
+    /// read a flag in the same place.
+    trait_writes: u64,
+    trait_changes: u64,
     /// How many live mod-added tiles (an `Injected`, `Template` or loose file origin, or
     /// a loose UIO include's) each root tile holds, itself included, by root: kept where
     /// tiles are made, unloaded or change origin, so [`Ui::has_mod_added_tiles`] walks
@@ -933,13 +939,22 @@ impl Ui {
         self.set_at(tile, k, v);
     }
 
+    /// Trait writes from outside so far ([`Ui::set_trait`] and the like) and how many of
+    /// them changed the value, for measuring what a frame writes (the engine's
+    /// `NVF_PLAY_TEST_TILE_COUNTS`).
+    pub fn trait_write_counts(&self) -> (u64, u64) {
+        (self.trait_writes, self.trait_changes)
+    }
+
     fn set_at(&mut self, t: TileId, k: usize, v: Value) {
         self.gen += 1;
+        self.trait_writes += 1;
         let gen = self.gen;
         let tr = &mut self.tiles[t.index as usize].traits[k];
         if v.differs(&tr.value) {
             tr.changed = gen;
             self.dirty = true;
+            self.trait_changes += 1;
         }
         tr.value = v;
         // A trait set from outside keeps its value until a source changes again. What it

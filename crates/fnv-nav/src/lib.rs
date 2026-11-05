@@ -25,7 +25,7 @@ pub mod obstacles;
 pub mod path;
 pub mod record;
 
-pub use follow::{Follower, Steer, WalkEvent, Walker};
+pub use follow::{Follower, SkipCandidate, Steer, WalkEvent, Walker};
 pub use doors::InPlaceDoor;
 pub use graph::{CoverEdge, NavGraph, Space};
 pub use load::NavRecords;
