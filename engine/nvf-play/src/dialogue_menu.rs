@@ -925,8 +925,8 @@ mod tests {
         // In the layout the list and the band are the same at both scrolls.
         let two = "abcde ".repeat(12);
         let v = choices(&[&two, "Do you know the robot?", &two, "Short.", "Short.", "Goodbye."]);
-        let a = layout(&v, 0, 1, 1280.0, &font(34.0), &font(36.0));
-        let b = layout(&v, 0, 3, 1280.0, &font(34.0), &font(36.0));
+        let a = layout(&v, 0, 1, 1280.0, true, &font(34.0), &font(36.0));
+        let b = layout(&v, 0, 3, 1280.0, true, &font(34.0), &font(36.0));
         let (la, lb) = (a.list.unwrap(), b.list.unwrap());
         assert_eq!(la.area, lb.area);
         assert_eq!(a.band, b.band);
