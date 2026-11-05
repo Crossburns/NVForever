@@ -604,7 +604,8 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     owner-review item 37].
   - **A second blow** during a knockback replaces it [design]. The replaced one is logged
     as interrupted, and the new one is measured from where the feet are then, so a report
-    never divides several blows' travel by the last one's request [design: #1386].
+    never divides several blows' travel by the last one's request [design: #1386, which
+    fixed the report keeping the first blow's start; checked by unit test, not in a run].
   - Logged, each line tied to its blow (`<tag>` = `blow=<n> attacker=<id> target=<id>
     power=<0|1>`; `<n>` counts the blows that knock someone back in this run; `SetVel`'s
     pushes have blow 0 and attacker 0): `knockback: <tag> knocked back at <v> units/s for
@@ -623,8 +624,8 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     `reversed`, `sideways` (over 25 % of it to the side) or `along` [design]. `frames`,
     `secs` and `travel` are what the frames asked for, `steps` the fixed physics steps
     taken meanwhile, to compare frame rates: the travel is integrated with the frame's
-    time and consumed by later fixed steps, and whether that changes the distance
-    delivered is unmeasured [hypothesis: #1386]. With the aid below, each frame also logs
+    time and consumed by later fixed steps (measured below). With the aid below, each frame
+    also logs
     `knockback trace: … dt=<s> left=<s> owed=<d> consumed=<d> along=<a> lateral=<l>
     dir=(<x>, <y>) steps=<n>`.
   - Smoke `melee-knockback` isolates one player power blow
@@ -635,6 +636,22 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     watched up to impact, and the report tied to that blow. A standing actor has no
     character until its knockback makes one [design], so "settled" is its feet still, at
     the height of what is under them, with its hit volume there.
+  - **Frame rate** [observed 2026-11-05, #1386: that scenario's blow, Display sync Off, a
+    fresh home each run, 20 runs, all in the scenario's range]: the distance pushed as a
+    share of the 17.25 units asked, by the Frame rate limit set.
+
+    | Limit | Runs | Mean | Min to max | Frames in the 1 s push | Mean frame |
+    |---|---|---|---|---|---|
+    | 30 | 5 | 99.57 % | 98.11-102.32 | 30.0 | 32.3 ms |
+    | 60 | 5 | 100.57 % | 99.86-101.86 | 59.2 | 16.8 ms |
+    | 120 | 5 | 100.05 % | 98.99-101.25 | 57.0 | 18.0 ms |
+    | 144 | 5 | 100.12 % | 98.30-101.29 | 60.0 | 16.5 ms |
+
+    No dependence on the frame rate was found between 30 and about 60 frames a second: the
+    spread within a limit is as big as any difference between limits, so the render-frame
+    travel needs no fix for this range. That is all it shows. The machine never ran above
+    about 65 frames a second, so limits 120 and 144 did not reach those rates and higher
+    rates are untested; irregular frames were not tested separately.
 - **Blocking.** `damage::blocked` takes `block` (60 %) off a melee hit taken while
   blocking [design]. Nothing attacks the player yet; NPC melee (Layer 6 AI) will use it.
 - **The body.** A power attack plays `{prefix}attackpower.kf` (`1hmattackpower.kf`,
