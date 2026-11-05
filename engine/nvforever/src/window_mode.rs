@@ -1,7 +1,8 @@
 //! The window's mode: an ordinary window (`--window windowed`, the default) or borderless
-//! full screen on the monitor the window is on (`--window borderless`). The settings
-//! page's Display group switches it while the game runs (`settings.rs`), kept in
-//! `NVForever.ini` like every switch. Each mode the primary window takes is logged.
+//! full screen on the primary monitor, or the one chosen in the Display group's "Monitor"
+//! row (`--window borderless`). The settings page's Display group switches it while the
+//! game runs (`settings.rs`), kept in `NVForever.ini` like every switch. Each mode the
+//! primary window takes is logged.
 //!
 //! **The resolution** is the Display group's first row, a dropdown of the sizes the
 //! window's monitor can show (its video modes, smallest first) [owner 2026-10-18: a
@@ -28,8 +29,9 @@ pub enum WindowChoice {
     /// A window of --size with a frame.
     #[default]
     Windowed,
-    /// Borderless full screen on the current monitor (its own resolution; --size is not
-    /// used then, screenshots too are the monitor's size).
+    /// Borderless full screen on the primary monitor, or the one chosen in the Display
+    /// group's "Monitor" row (its own resolution; --size is not used then, screenshots too
+    /// are the monitor's size).
     Borderless,
 }
 
