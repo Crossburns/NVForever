@@ -28,6 +28,10 @@ use fnv_sim::{clock, FormId};
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
+/// How far from the player a StartConversation speaker may be and still talk at once,
+/// game units ([`Game::walk_up_greet`]) [design: twice the AI's standard talk distance].
+pub const WALK_UP_REACH: f32 = 300.0;
+
 /// The dialogue menu's code [documented: GECK wiki GetMenuTargetRef, owner export: menu
 /// 1009's target is the actor being spoken to; observed: one script of the masters
 /// tests `MenuMode 1009`].
@@ -760,6 +764,50 @@ impl<'a> Game<'a> {
     /// choices, so theirs starts when nothing is offered after them [observed]; whether the original
     /// opens the new conversation is observer check 39 [hypothesis]]. A later call in the
     /// same script replaces an earlier one [design].
+    /// StartConversation with the player from `speaker` farther than [`WALK_UP_REACH`]
+    /// while the AI runs packages (`GameConfig::package_interval`): the speaker walks up
+    /// to the player first and talks once there (`fnv_ai`), "the actor will walk to the
+    /// target" [documented: GECK wiki StartConversation; how fast and how near is our
+    /// choice]. Until 2026-11-05 the conversation opened at once from any distance: the
+    /// Legion explorers about Nelson, whose script calls it once as their cell loads,
+    /// greeted the player from 10,000 units off, halfway to Novac (issue #1544). Returns
+    /// whether the walk is recorded; otherwise the caller starts the conversation now
+    /// (headless runs without the AI, a speaker already near).
+    pub fn walk_up_greet(&mut self, speaker: FormId, topic: Option<FormId>) -> bool {
+        if self.cfg.package_interval.is_none() || self.dialogue.is_some() {
+            return false;
+        }
+        // Its space: the worldspace of an exterior cell, else the interior cell itself.
+        // A reference nothing has changed yet is where it was placed.
+        let at = |r: FormId| {
+            let (cell, pos) = match self.world.peek(r) {
+                Some(s) => (s.cell, s.pos),
+                None => self.world.placed.get(r).map(|p| (p.cell, p.pos))?,
+            };
+            Some((self.world.placed.world_of(cell?).unwrap_or(cell?), pos))
+        };
+        let (Some((space, from)), Some((pspace, to))) = (at(speaker), at(FormId::PLAYER_REF)) else { return false };
+        let away = ((from[0] - to[0]).powi(2) + (from[1] - to[1]).powi(2) + (from[2] - to[2]).powi(2)).sqrt();
+        // In another space (an interior and the world, two interiors) it is far too.
+        let far = space != pspace || away > WALK_UP_REACH;
+        if far {
+            self.walk_up_greets.insert(speaker, topic);
+        }
+        far
+    }
+
+    /// The walk-up greeting of `speaker` ([`Game::walk_up_greet`]), still to be said.
+    pub fn walk_up_pending(&self, speaker: FormId) -> Option<Option<FormId>> {
+        self.walk_up_greets.get(&speaker).copied()
+    }
+
+    /// `speaker` has walked up (or cannot): its conversation starts now, as a force
+    /// greet. Returns the line it opens with.
+    pub fn walk_up_arrived(&mut self, speaker: FormId) -> Option<FormId> {
+        let topic = self.walk_up_greets.remove(&speaker)?;
+        self.force_greet(speaker, topic).ok()
+    }
+
     pub fn hold_force_greet(&mut self, speaker: FormId, topic: Option<FormId>) -> bool {
         match self.dialogue.as_mut().filter(|c| c.ending) {
             Some(c) => {

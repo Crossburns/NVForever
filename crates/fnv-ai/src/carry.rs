@@ -240,6 +240,13 @@ pub enum AiEvent {
     /// It is near enough to force-greet `target`, `away` units off, but something solid
     /// is between them (a wall, a closed door): it waits ([`Game::greet_sight`]).
     TalkUnseen { package: FormId, target: FormId, away: f32 },
+    /// A script's StartConversation sent it to the player (`Game::walk_up_greet`): it sets
+    /// off, `away` units from the player, a way of `length` units.
+    WalkUp { away: Option<f32>, length: f32 },
+    /// It has walked up to the player (or could get no nearer, `reached` false) and
+    /// opens the conversation, `away` units off; `line` is what it says first, none when
+    /// it had nothing to say.
+    WalkedUp { away: f32, reached: bool, line: Option<FormId> },
     /// It said hello to the passing player, `away` units from it (`crate::social`).
     Hello { line: FormId, away: f32 },
     /// It said an IdleChatter line, `away` units from the player (`crate::social`).
@@ -558,6 +565,10 @@ pub struct Agent {
     /// Told to back up on the companion wheel: on its way back until then (`Game::time`)
     /// ([`Ai::back_up`]).
     pub(crate) backing: Option<f64>,
+    /// Walking up to the player for a script's StartConversation ([`Ai::walk_up_step`]):
+    /// where the player was when the way was planned, and from when it may be planned
+    /// again.
+    pub(crate) walk_up: Option<(Place, f64)>,
 }
 
 #[derive(Default)]
@@ -836,7 +847,7 @@ impl Ai {
             own_turning(&mut walker, s);
         }
         walker.pace = self.paces.get(&actor).copied().unwrap_or(1.0);
-        self.agents.insert(actor, Agent { walker, activity: Activity::None, package: None, goal: None, route_at: 0, trip_started: 0.0, trip_from: 0.0, waiting_at: None, using: None, held_seat: None, sandbox: None, wait_until: None, talk: None, pushed_at: None, chat: None, search: None, face_to: None, following: None, rooted: false, weapon_order: None, errand: None, backing: None });
+        self.agents.insert(actor, Agent { walker, activity: Activity::None, package: None, goal: None, route_at: 0, trip_started: 0.0, trip_from: 0.0, waiting_at: None, using: None, held_seat: None, sandbox: None, wait_until: None, talk: None, pushed_at: None, chat: None, search: None, face_to: None, following: None, rooted: false, weapon_order: None, errand: None, backing: None, walk_up: None });
         Ok(())
     }
 
@@ -1109,6 +1120,11 @@ impl Ai {
     /// is not quiet ([`Ai::update_moved`] gives them their own, now and then), and those
     /// not updated there at all out of every update.
     fn step(&mut self, game: &mut Game, nav: &NavGraph, dt: f32, open: &mut dyn Mover, quiet: bool) {
+        // A StartConversation speaker the AI does not walk talks at once, as without it.
+        let unwalked: Vec<FormId> = game.walk_up_greets.keys().copied().filter(|a| !self.agents.contains_key(a)).collect();
+        for a in unwalked {
+            game.walk_up_arrived(a);
+        }
         let actors: Vec<FormId> = self.agents.keys().copied().filter(|a| self.low.get(a).is_none_or(|owed| quiet && owed.is_some())).collect();
         for actor in actors {
             self.step_actor(game, nav, actor, dt, open, quiet);
@@ -1225,7 +1241,7 @@ impl Ai {
         }
         // A script's weapon use comes before the fight and the package
         // (`fnv_game::use_weapon`); a combat state before the package (`crate::alert`).
-        let ordered = !quiet && self.weapon_step(game, nav, actor, dt);
+        let ordered = !quiet && (self.walk_up_step(game, nav, actor) || self.weapon_step(game, nav, actor, dt));
         let alerted = !quiet && !ordered && self.alert_step(game, nav, actor, dt);
         let chatting = self.agents[&actor].chat.is_some();
         // The companion wheel's Back Up (`fnv_game::companion_wheel`).
@@ -2158,6 +2174,77 @@ impl Ai {
     /// package. In place, a weapon use (a script's, or its package's while it is not in
     /// combat) turns it to its target at the standing turn rate. Returns whether a
     /// script's use holds the actor (its package's own doings and its fight wait).
+    /// A script's StartConversation with the player from afar (`Game::walk_up_greet`):
+    /// the actor runs to the player, planning the way again as the player moves, and
+    /// opens the conversation once within [`goal::STANDARD_TALK_DISTANCE`]; with no way
+    /// there, or once it gets no nearer, it opens it where it is [design]. Meanwhile its
+    /// package waits, and it takes it up again after. Returns whether it is walking up.
+    fn walk_up_step(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) -> bool {
+        if game.walk_up_pending(actor).is_none() {
+            if self.agents.get_mut(&actor).expect("listed").walk_up.take().is_some() {
+                self.after_walk_up(game, nav, actor);
+            }
+            return false;
+        }
+        let a = &self.agents[&actor];
+        let feet = Place { space: a.walker.space, pos: a.walker.feet };
+        let travelling = a.activity == Activity::Travelling;
+        let planned = a.walk_up;
+        let Some(player) = goal::place_of_ref(game, FormId::PLAYER_REF) else {
+            game.walk_up_arrived(actor);
+            return false;
+        };
+        let away = if feet.space == player.space { goal::dist(feet.pos, player.pos) } else { f32::INFINITY };
+        let moved = planned.is_some_and(|(to, _)| to.space != player.space || goal::dist(to.pos, player.pos) > REPLAN_DISTANCE);
+        let near = away <= goal::STANDARD_TALK_DISTANCE.max(self.cfg.arrive);
+        // Near enough, or at the end of its way with the player still where it led.
+        if near || (planned.is_some() && !travelling && !moved) {
+            let a = self.agents.get_mut(&actor).expect("listed");
+            (a.walker.follower, a.activity, a.walk_up) = (None, Activity::There, None);
+            let line = game.walk_up_arrived(actor);
+            self.log(game, actor, AiEvent::WalkedUp { away, reached: near, line });
+            self.after_walk_up(game, nav, actor);
+            return true;
+        }
+        if planned.is_some_and(|(_, at)| !moved || game.time < at) {
+            return true;
+        }
+        self.set_using(game, actor, None);
+        let params = self.path_params(game, actor);
+        let speed = self.pace(game, actor, true);
+        let a = self.agents.get_mut(&actor).expect("listed");
+        (a.search, a.sandbox, a.talk, a.face_to, a.following) = (None, None, None, None, None);
+        a.walker.speed = speed;
+        match a.walker.go_to(nav, player, &params).map(|p| p.length) {
+            Ok(length) => {
+                if a.activity != Activity::Travelling {
+                    a.trip_started = game.time;
+                    a.trip_from = a.walker.travelled;
+                }
+                a.activity = Activity::Travelling;
+                a.walk_up = Some((player, game.time + REPLAN_SECONDS));
+                if planned.is_none() {
+                    let away = (feet.space == player.space).then_some(away);
+                    self.log(game, actor, AiEvent::WalkUp { away, length });
+                }
+            }
+            Err(_) => {
+                (a.walker.follower, a.activity, a.walk_up) = (None, Activity::There, None);
+                let line = game.walk_up_arrived(actor);
+                self.log(game, actor, AiEvent::WalkedUp { away, reached: false, line });
+                self.after_walk_up(game, nav, actor);
+            }
+        }
+        true
+    }
+
+    /// The walk-up is over: the actor's package goes on.
+    fn after_walk_up(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId) {
+        if let Some(p) = self.agents[&actor].package {
+            self.begin(game, nav, actor, p);
+        }
+    }
+
     fn weapon_step(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId, dt: f32) -> bool {
         let script = game.weapon_use(actor).filter(|w| w.source == Source::Script).map(|w| (w.seq, w.stand, w.target));
         let order = self.agents[&actor].weapon_order;
