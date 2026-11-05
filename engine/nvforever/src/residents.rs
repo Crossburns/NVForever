@@ -1076,6 +1076,11 @@ impl Residents {
         self.core.ai.cfg.keep_apart = on;
     }
 
+    /// What the assets say about who can use which furniture (`fnv_ai::furniture`).
+    pub fn set_furniture_facts(&mut self, facts: std::sync::Arc<dyn fnv_sim::furniture_facts::FurnitureFacts>) {
+        self.core.ai.set_furniture_facts(facts);
+    }
+
     /// Whether the AI runs this reference (it turns and moves its body).
     pub fn runs(&self, reference: u32) -> bool {
         self.core.ai.agents.contains_key(&FormId(reference))
@@ -2161,6 +2166,11 @@ impl Core {
     fn tell(&mut self, game: &Game, world: &WorldData) {
         let hour = clock_text(game);
         for e in &self.ai.events {
+            // For anyone, not only those told in full; once per actor and piece.
+            if let AiEvent::FurnitureEligibility { furniture, decision, reason } = e.event {
+                info!("ai furniture eligibility: actor={:08X} furniture={:08X} decision={decision} reason={reason}", e.actor.0, furniture.0);
+                continue;
+            }
             match e.event {
                 AiEvent::Trip { .. } => self.counts[0] += 1,
                 AiEvent::Arrived { .. } => self.counts[1] += 1,
@@ -2370,6 +2380,7 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         AiEvent::NotCarriedOut { package, why } => format!("stays: {} is {why}, not carried out yet", n(package)),
         AiEvent::Furniture { furniture: Some(f) } => format!("is to use furniture {f}"),
         AiEvent::Furniture { furniture: None } => "leaves its furniture".into(),
+        AiEvent::FurnitureEligibility { furniture, decision, reason } => format!("furniture {furniture}: {decision} ({reason})"),
         AiEvent::Sandbox { doing, walk } => {
             let what = match doing {
                 Doing::Standing => "stands".to_string(),

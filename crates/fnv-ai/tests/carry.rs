@@ -13,8 +13,11 @@ use fnv_nav::graph::DoorLock;
 use fnv_nav::record::{tri_flags, DoorLink, NavMeshRecord, Triangle};
 use fnv_nav::{NavGraph, PathParams, Place, Space};
 use fnv_script::FunctionTable;
+use fnv_sim::furniture_facts::{ActorKind, Fit, FurnitureFacts};
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::Value as Json;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 // ---- plugin builders ---------------------------------------------------------------
 
@@ -212,8 +215,44 @@ const R_KEEPER: u32 = 0x8A0;
 const R_HUNTER: u32 = 0x8A1;
 const DOOR_A: u32 = 0x8D1;
 const DOOR_B: u32 = 0x8D2;
+// Cell D (furniture eligibility, issue #1522): 10 x 10 squares from (20000, 20000).
+const CELL_D: u32 = 0x8E0;
+const MARK_D: u32 = 0x8E1;
+const CHAIR_NEAR: u32 = 0x8E2;
+const CHAIR_FAR: u32 = 0x8E3;
+const BED_D: u32 = 0x8E4;
+const CROSS_D: u32 = 0x8E5;
+const CROSS_LINK: u32 = 0x8E6;
+const R_HOUND: u32 = 0x8E7;
+const R_PERSON_D: u32 = 0x8E8;
+const R_VICTIM: u32 = 0x8E9;
+const R_HOUND_LINKED: u32 = 0x8EA;
+const R_EATER_CHAIRS: u32 = 0x8EB;
+const R_EATER_CROSS: u32 = 0x8EC;
+const R_HOUND_MAN: u32 = 0x8ED;
+const R_HOUND_COPY: u32 = 0x8EE;
+const R_LEVELED_MAN: u32 = 0x8EF;
+const R_MAN_HOUND: u32 = 0x8A2;
+const CHAIR_2: u32 = 0x8C0;
+const CROSS: u32 = 0x8C1;
+const P_SB_D: u32 = 0x8C2;
+const P_TO_LINKED: u32 = 0x8C3;
+const P_EAT_D: u32 = 0x8C4;
+const N_HOUND: u32 = 0x8C5;
+const N_PERSON_D: u32 = 0x8C6;
+const N_VICTIM: u32 = 0x8C7;
+const N_HOUND_LINKED: u32 = 0x8C8;
+const N_EATER: u32 = 0x8C9;
+const N_HOUND_MAN: u32 = 0x8CA;
+const N_HOUND_COPY: u32 = 0x8CB;
+const N_LEVELED_MAN: u32 = 0x8CC;
+const N_MODELLED: u32 = 0x8CD;
+const N_MAN_HOUND: u32 = 0x8CE;
+const PERSON_MODEL: &str = r"Characters\_Male\Skeleton.nif";
+const HOUND_MODEL: &str = r"Creatures\Hound\Skeleton.nif";
 
 const TRAVEL: u8 = 6;
+const EAT: u8 = 3;
 const SLEEP: u8 = 4;
 const SANDBOX: u8 = 12;
 const PATROL: u8 = 13;
@@ -256,6 +295,9 @@ fn plugin_bytes() -> Vec<u8> {
         pack(P_TO_CHAIR, "TravelToChair", 0, TRAVEL, (0, CHAIR_C, 0), None),
         pack(P_SLEEP_C, "SleepInC", 0, SLEEP, (1, CELL_C, 0), None),
         pack(P_STEADY, "TravelToBInCombat", flags::MUST_REACH_LOCATION | flags::CONTINUE_DURING_COMBAT, TRAVEL, (0, MARK_B, 0), None),
+        pack(P_SB_D, "SandboxInD", 0, SANDBOX, (0, MARK_D, 450), None),
+        pack(P_TO_LINKED, "TravelNearLinked", 0, TRAVEL, (6, 0, 64), None),
+        pack(P_EAT_D, "EatWhereItStands", 0, EAT, (3, 0, 64), None),
         accompany(P_ACCOMPANY, "AccompanyTheTraveller", R_TRAVEL, 128),
         accompany(P_WITH_PLAYER, "AccompanyThePlayer", 0x14, 256),
         shoot(P_SHOOT, "ShootAtTheLoner", MARK_A, R_LONER),
@@ -301,13 +343,35 @@ fn plugin_bytes() -> Vec<u8> {
         npc(N_SEEKER, "Seeker", &[P_NEAR_OBJECT]),
         npc(N_KEEPER, "Keeper", &[P_GUARD_NEAR]),
         npc(N_HUNTER, "Hunter", &[P_HUNT]),
+        npc(N_PERSON_D, "PersonInD", &[P_SB_D]),
+        npc(N_VICTIM, "Victim", &[P_TO_LINKED]),
+        npc(N_EATER, "Eater", &[P_EAT_D]),
     ]
     .concat();
+    // Creatures with a skeleton of their own.
+    let hound = |id: u32, edid: &str, package: u32| record(b"CREA", id, &[sub(b"EDID", z(edid)), sub(b"MODL", z(HOUND_MODEL)), sub(b"PKID", package.to_le_bytes().to_vec())]);
+    // ACBS with the template flag "Model/Animation" [documented: xEdit]: what the template
+    // gives is its skeleton; its own MODL says nothing.
+    let by_template = |sig: &[u8; 4], id: u32, edid: &str, template: u32| {
+        let acbs = [&0u32.to_le_bytes()[..], &[0; 18], &0x40u16.to_le_bytes()].concat();
+        record(sig, id, &[sub(b"EDID", z(edid)), sub(b"ACBS", acbs), sub(b"TPLT", template.to_le_bytes().to_vec()), sub(b"MODL", z("marker_placeholder.nif")), sub(b"PKID", P_SB_D.to_le_bytes().to_vec())])
+    };
+    let npcs = [npcs, by_template(b"NPC_", N_HOUND_MAN, "HoundMan", N_HOUND), record(b"NPC_", N_MODELLED, &[sub(b"EDID", z("Modelled")), sub(b"MODL", z(PERSON_MODEL))])].concat();
+    // A leveled list that picks the person on a creature's model.
+    let lists = record(
+        b"LVLN",
+        N_LEVELED_MAN,
+        &[sub(b"EDID", z("LeveledMan")), sub(b"LVLD", vec![0]), sub(b"LVLF", vec![0]), sub(b"LVLO", [1i16.to_le_bytes().to_vec(), vec![0; 2], N_HOUND_MAN.to_le_bytes().to_vec(), 1i16.to_le_bytes().to_vec(), vec![0; 2]].concat())],
+    );
+    let creatures = [hound(N_HOUND, "Hound", P_SB_D), hound(N_HOUND_LINKED, "LinkedHound", P_TO_LINKED), by_template(b"CREA", N_HOUND_COPY, "HoundCopy", N_HOUND), by_template(b"CREA", N_MAN_HOUND, "CreatureOnAPersonsModel", N_MODELLED)].concat();
     // Furniture: a chair (marker flags bit 30) and a bed (bit 31); an idle marker with
     // two idles, ten seconds apart.
     let furn = [
         record(b"FURN", CHAIR, &[sub(b"EDID", z("Chair")), sub(b"MNAM", 0x4000_0001u32.to_le_bytes().to_vec())]),
         record(b"FURN", BED, &[sub(b"EDID", z("Bed")), sub(b"MNAM", 0x8000_0001u32.to_le_bytes().to_vec())]),
+        record(b"FURN", CHAIR_2, &[sub(b"EDID", z("SecondChair")), sub(b"MNAM", 0x4000_0001u32.to_le_bytes().to_vec())]),
+        // Its flags say what a chair's say: only its model's marker tells them apart.
+        record(b"FURN", CROSS, &[sub(b"EDID", z("Cross")), sub(b"MNAM", 0x4000_0001u32.to_le_bytes().to_vec())]),
     ]
     .concat();
     let idlm = record(
@@ -366,7 +430,28 @@ fn plugin_bytes() -> Vec<u8> {
         placed(b"ACHR", R_KEEPER, "KeeperRef", N_KEEPER, [10950.0, 10050.0, 0.0], None),
     ]
     .concat();
-    let cells = [cell(CELL_A, "CellA", &a_refs), cell(CELL_B, "CellB", &b_refs), cell(CELL_C, "CellC", &c_refs)].concat();
+    // Cell D: around its middle, two seats of two bases, a bed and a cross; a cross of its
+    // own out of the sandbox's radius; actors linked to it, and eaters by a seat or the cross.
+    let d_refs = [
+        placed(b"REFR", MARK_D, "MarkD", STAT, [20500.0, 20500.0, 0.0], None),
+        placed(b"REFR", CHAIR_NEAR, "ChairNear", CHAIR, [20650.0, 20500.0, 0.0], None),
+        placed(b"REFR", CHAIR_FAR, "ChairFar", CHAIR_2, [20800.0, 20700.0, 0.0], None),
+        placed(b"REFR", BED_D, "BedD", BED, [20300.0, 20700.0, 0.0], None),
+        placed(b"REFR", CROSS_D, "CrossD", CROSS, [20400.0, 20300.0, 0.0], None),
+        placed(b"REFR", CROSS_LINK, "CrossLink", CROSS, [20950.0, 20050.0, 0.0], None),
+        placed(b"ACRE", R_HOUND, "HoundRef", N_HOUND, [20480.0, 20480.0, 0.0], None),
+        placed(b"ACHR", R_PERSON_D, "PersonInDRef", N_PERSON_D, [20520.0, 20480.0, 0.0], None),
+        placed(b"ACHR", R_HOUND_MAN, "HoundManRef", N_HOUND_MAN, [20540.0, 20520.0, 0.0], None),
+        placed(b"ACRE", R_HOUND_COPY, "HoundCopyRef", N_HOUND_COPY, [20460.0, 20520.0, 0.0], None),
+        placed(b"ACHR", R_LEVELED_MAN, "LeveledManRef", N_LEVELED_MAN, [20440.0, 20460.0, 0.0], None),
+        placed(b"ACRE", R_MAN_HOUND, "ManHoundRef", N_MAN_HOUND, [20560.0, 20460.0, 0.0], None),
+        placed(b"ACHR", R_VICTIM, "VictimRef", N_VICTIM, [20900.0, 20100.0, 0.0], Some(CROSS_LINK)),
+        placed(b"ACRE", R_HOUND_LINKED, "LinkedHoundRef", N_HOUND_LINKED, [20900.0, 20150.0, 0.0], Some(CROSS_LINK)),
+        placed(b"ACHR", R_EATER_CHAIRS, "ChairEaterRef", N_EATER, [20700.0, 20560.0, 0.0], None),
+        placed(b"ACHR", R_EATER_CROSS, "CrossEaterRef", N_EATER, [20350.0, 20250.0, 0.0], None),
+    ]
+    .concat();
+    let cells = [cell(CELL_A, "CellA", &a_refs), cell(CELL_B, "CellB", &b_refs), cell(CELL_C, "CellC", &c_refs), cell(CELL_D, "CellD", &d_refs)].concat();
     let top = |sig: &[u8; 4], body: &[u8]| group(*sig, 0, body);
     [
         tes4(),
@@ -375,6 +460,8 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"FURN", &furn),
         top(b"IDLM", &idlm),
         top(b"NPC_", &npcs),
+        top(b"CREA", &creatures),
+        top(b"LVLN", &lists),
         top(b"PACK", &packs),
         top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cells))),
     ]
@@ -418,6 +505,7 @@ fn grid_of(form_id: u32, origin: [f32; 2], n: usize, size: f32, z: f32) -> NavMe
 
 const A: Space = Space::Interior(CELL_A);
 const B: Space = Space::Interior(CELL_B);
+const D: Space = Space::Interior(CELL_D);
 
 /// Cell A: 4 × 4 squares at the origin; cell B: 3 × 3 at (5000, 5000), height 50. A door
 /// in A's far corner leads to B's near corner and back.
@@ -429,7 +517,8 @@ fn nav() -> NavGraph {
     a.triangles[corner].flags |= tri_flags::DOOR;
     b.door_links.push(DoorLink { door: DOOR_B, triangle: 0 });
     let c = grid_of(3, [10000.0, 10000.0], 10, 100.0, 0.0);
-    let input = [(&a, Some(CELL_A), Some(A)), (&b, Some(CELL_B), Some(B)), (&c, Some(CELL_C), Some(C))];
+    let d = grid_of(4, [20000.0, 20000.0], 10, 100.0, 0.0);
+    let input = [(&a, Some(CELL_A), Some(A)), (&b, Some(CELL_B), Some(B)), (&c, Some(CELL_C), Some(C)), (&d, Some(CELL_D), Some(D))];
     let mut g = NavGraph::assemble(&input);
     g.join_doors(&input, |door| match door {
         DOOR_A => Some((DOOR_B, [5050.0, 5030.0, 50.0], 0.5, B)),
@@ -3403,6 +3492,294 @@ fn sandbox_interrupt_preserves_a_valid_chat_approach_and_wait_until_combat() {
         s.game.stop_combat(actor);
         sandbox_resumes(&mut s, who);
     }
+}
+
+// ---- furniture eligibility (issue #1522): cell D ------------------------------------
+
+/// The facts of a test: its own answer for fit, and marker IDs by furniture base. The
+/// cross has marker 10, the seats 11 and the bed 1; all made up for the test.
+fn facts(fit: fn(ActorKind, &str, FormId) -> Fit) -> Arc<dyn FurnitureFacts> {
+    struct Facts(fn(ActorKind, &str, FormId) -> Fit, BTreeMap<FormId, Vec<u8>>);
+    impl FurnitureFacts for Facts {
+        fn marker_ids(&self, base: FormId) -> Option<&[u8]> {
+            self.1.get(&base).map(Vec::as_slice)
+        }
+        fn fit(&self, kind: ActorKind, skeleton: &str, base: FormId) -> Fit {
+            (self.0)(kind, skeleton, base)
+        }
+    }
+    Arc::new(Facts(fit, BTreeMap::from([(FormId(CROSS), vec![10]), (FormId(CHAIR), vec![11]), (FormId(CHAIR_2), vec![11]), (FormId(BED), vec![1])])))
+}
+
+/// What the eligibility events of `actor` say: (furniture, decision, reason).
+fn eligibility(s: &Sim, actor: u32) -> Vec<(u32, &'static str, &'static str)> {
+    s.events(actor).iter().filter_map(|e| match e {
+        AiEvent::FurnitureEligibility { furniture, decision, reason } => Some((furniture.0, *decision, *reason)),
+        _ => None,
+    }).collect()
+}
+
+fn set_clock(s: &mut Sim, hour: f32, days: f32) {
+    s.game.world.set_global(FormId(G_HOUR), hour).unwrap();
+    s.game.world.set_global(FormId(G_DAYS), days).unwrap();
+}
+
+/// The hour of lunch this sandbox rolled.
+fn lunch(s: &Sim, actor: u32) -> f32 {
+    s.ai.agents[&FormId(actor)].sandbox.as_ref().unwrap().times().1[1].0 + 0.1
+}
+
+#[test]
+fn unsupported_creature_skips_seats_beds_and_meal_seats() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_HOUND]);
+    // The skeleton the record names reaches the facts.
+    s.ai.set_furniture_facts(facts(|kind, skeleton, _| if kind == ActorKind::Creature && skeleton == HOUND_MODEL { Fit::Unsupported } else { panic!("{kind:?} {skeleton}") }));
+    let hound = FormId(R_HOUND);
+    let watch = |s: &mut Sim, seconds: usize| {
+        for _ in 0..seconds {
+            s.run(1.0);
+            assert_eq!(s.ai.agents[&hound].using, None);
+            assert_eq!(s.ai.furniture_of(hound), None, "nothing is kept for it");
+        }
+    };
+    // Night, with a bed in the area.
+    set_clock(&mut s, 2.0, 5.0);
+    watch(&mut s, 60);
+    // The afternoon, with seats.
+    set_clock(&mut s, 16.5, 5.7);
+    watch(&mut s, 300);
+    // A meal: standing.
+    let at = lunch(&s, R_HOUND);
+    set_clock(&mut s, at, 5.7);
+    watch(&mut s, 240);
+    assert_eq!(s.ai.agents[&hound].sandbox.as_ref().unwrap().doing, Doing::Eating(None));
+    let did = doings(&s, R_HOUND);
+    assert!(did.iter().all(|d| matches!(d, Doing::Wandering | Doing::Standing | Doing::Eating(None))), "{did:?}");
+    // Told once for each piece, however many choices were made.
+    let mut told = eligibility(&s, R_HOUND);
+    told.sort();
+    let (no_clips, marker) = ("no-clips-for-skeleton", "casual-marker-10");
+    assert_eq!(told, [(CHAIR_NEAR, "excluded", no_clips), (CHAIR_FAR, "excluded", no_clips), (BED_D, "excluded", no_clips), (CROSS_D, "excluded", marker)]);
+}
+
+#[test]
+fn supported_creature_can_sit_and_sleep() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_HOUND]);
+    s.ai.set_furniture_facts(facts(|_, _, _| Fit::Supported));
+    let hound = FormId(R_HOUND);
+    set_clock(&mut s, 2.0, 5.0);
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&hound].sandbox.as_ref().unwrap().doing, Doing::Sleeping(FormId(BED_D)));
+    assert_eq!(s.ai.agents[&hound].using, Some(FormId(BED_D)));
+    assert_eq!(s.ai.furniture_of(hound), Some(FormId(BED_D)));
+    set_clock(&mut s, 16.5, 5.7);
+    s.run(600.0);
+    assert!(doings(&s, R_HOUND).iter().any(|d| matches!(d, Doing::Sitting(c) if [CHAIR_NEAR, CHAIR_FAR].contains(&c.0))));
+}
+
+/// What nothing is known of stays as it was: the same choices as a run without facts
+/// (the same random numbers drawn), the cross among what it may choose, and one line.
+#[test]
+fn unknown_creature_preserves_eligibility() {
+    let f = fixture();
+    let run = |given: Option<Arc<dyn FurnitureFacts>>| {
+        let mut s = sim(&f, &[R_HOUND]);
+        if let Some(given) = given {
+            s.ai.set_furniture_facts(given);
+        }
+        s.run(1500.0);
+        s
+    };
+    let (without, unknown) = (run(None), run(Some(Arc::new(NoFacts))));
+    assert!(doings(&without, R_HOUND).iter().any(|d| d.furniture().is_some()));
+    assert_eq!(doings(&without, R_HOUND), doings(&unknown, R_HOUND));
+    assert_eq!(without.feet(R_HOUND), unknown.feet(R_HOUND));
+    assert!(eligibility(&without, R_HOUND).is_empty());
+    let told = eligibility(&unknown, R_HOUND);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!((told[0].1, told[0].2), ("unknown", "no-evidence"));
+}
+
+/// A person with facts for it, no cross near: nothing changes, down to the random numbers.
+#[test]
+fn a_person_with_no_cross_around_chooses_as_without_facts() {
+    let f = fixture();
+    let run = |given: bool| {
+        let mut s = sim(&f, &[R_SB_ALL]);
+        if given {
+            s.ai.set_furniture_facts(facts(|_, _, _| Fit::Supported));
+        }
+        s.run(600.0);
+        (doings(&s, R_SB_ALL), s.feet(R_SB_ALL), eligibility(&s, R_SB_ALL))
+    };
+    let (without, with) = (run(false), run(true));
+    assert!(without.0.iter().any(|d| d.furniture().is_some()));
+    assert_eq!(without, with);
+    assert!(with.2.is_empty());
+}
+
+#[test]
+fn sandbox_excludes_marker_10_for_people_and_creatures() {
+    let f = fixture();
+    let on_cross = |s: &Sim, actor: u32| doings(s, actor).iter().any(|d| d.furniture() == Some(FormId(CROSS_D)));
+    let run = |given: bool| {
+        let mut s = sim(&f, &[R_HOUND, R_PERSON_D]);
+        // The afternoon: neither a meal nor the night.
+        set_clock(&mut s, 16.5, 5.7);
+        if given {
+            s.ai.set_furniture_facts(facts(|_, _, _| Fit::Supported));
+        }
+        s.run(3000.0);
+        s
+    };
+    // Without the rule the cross is one seat among the others.
+    let free = run(false);
+    assert!(on_cross(&free, R_HOUND) || on_cross(&free, R_PERSON_D));
+    let s = run(true);
+    for actor in [R_HOUND, R_PERSON_D] {
+        assert!(!on_cross(&s, actor), "{:?}", doings(&s, actor));
+        assert!(doings(&s, actor).iter().any(|d| matches!(d, Doing::Sitting(_))), "the seats stay");
+        assert_eq!(eligibility(&s, actor), [(CROSS_D, "excluded", "casual-marker-10")], "told once");
+    }
+}
+
+#[test]
+fn a_linked_cross_stays_assigned_where_the_actor_fits() {
+    let f = fixture();
+    // A person, with the cross known for what it is: on it.
+    let mut s = sim(&f, &[R_VICTIM]);
+    s.ai.set_furniture_facts(facts(|_, _, _| Fit::Supported));
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_VICTIM)].using, Some(FormId(CROSS_LINK)));
+    assert!(eligibility(&s, R_VICTIM).is_empty());
+    // Nothing known of the creature: as before.
+    let mut s = sim(&f, &[R_HOUND_LINKED]);
+    s.ai.set_furniture_facts(Arc::new(NoFacts));
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_HOUND_LINKED)].using, Some(FormId(CROSS_LINK)));
+    // No clips for it: the link does not put it there, and nothing is kept for it.
+    let mut s = sim(&f, &[R_HOUND_LINKED]);
+    s.ai.set_furniture_facts(facts(|_, _, _| Fit::Unsupported));
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_HOUND_LINKED)].using, None);
+    assert_eq!(s.ai.furniture_of(FormId(R_HOUND_LINKED)), None);
+    assert_eq!(eligibility(&s, R_HOUND_LINKED), [(CROSS_LINK, "excluded", "no-clips-for-skeleton")]);
+}
+
+#[test]
+fn an_unsupported_nearest_piece_does_not_hide_a_supported_farther_one() {
+    let f = fixture();
+    let fit: fn(ActorKind, &str, FormId) -> Fit = |_, _, base| if base.0 == CHAIR_2 { Fit::Supported } else { Fit::Unsupported };
+    let mut s = sim(&f, &[R_HOUND]);
+    s.ai.set_furniture_facts(facts(fit));
+    s.run(1.0);
+    let at = lunch(&s, R_HOUND);
+    set_clock(&mut s, at, 5.0);
+    s.run(240.0);
+    assert_eq!(s.ai.agents[&FormId(R_HOUND)].sandbox.as_ref().unwrap().doing, Doing::Eating(Some(FormId(CHAIR_FAR))));
+    assert_eq!(s.ai.furniture_of(FormId(R_HOUND)), Some(FormId(CHAIR_FAR)));
+    // An Eat package's search: the seat beyond the nearest.
+    let mut s = sim(&f, &[R_EATER_CHAIRS]);
+    s.ai.set_furniture_facts(facts(fit));
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_EATER_CHAIRS)].using, Some(FormId(CHAIR_FAR)));
+    // Without facts, the nearest.
+    let mut s = sim(&f, &[R_EATER_CHAIRS]);
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_EATER_CHAIRS)].using, Some(FormId(CHAIR_NEAR)));
+}
+
+#[test]
+fn a_package_searching_for_a_seat_does_not_take_a_cross() {
+    let f = fixture();
+    let mut s = sim(&f, &[R_EATER_CROSS]);
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_EATER_CROSS)].using, Some(FormId(CROSS_D)));
+    let mut s = sim(&f, &[R_EATER_CROSS]);
+    s.ai.set_furniture_facts(facts(|_, _, _| Fit::Supported));
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_EATER_CROSS)].using, None);
+    assert_eq!(s.ai.furniture_of(FormId(R_EATER_CROSS)), None);
+    assert_eq!(eligibility(&s, R_EATER_CROSS), [(CROSS_D, "excluded", "casual-marker-10")]);
+}
+
+/// A run whose assets could not be read.
+struct NoFacts;
+
+impl FurnitureFacts for NoFacts {
+    fn marker_ids(&self, _: FormId) -> Option<&[u8]> {
+        None
+    }
+    fn fit(&self, _: ActorKind, _: &str, _: FormId) -> Fit {
+        Fit::Unknown
+    }
+}
+
+/// The rule's answers by kind: a creature out, a person not known. The person sits and the
+/// creature does not, side by side, and the kinds are what the records make them: a person
+/// on a creature's template stays a person, a creature on a template stays a creature.
+#[test]
+fn people_are_never_ruled_out_by_what_a_folder_lacks() {
+    let f = fixture();
+    let fit: fn(ActorKind, &str, FormId) -> Fit = |kind, skeleton, _| {
+        if kind != ActorKind::Creature {
+            return Fit::Unknown;
+        }
+        assert_eq!(skeleton, HOUND_MODEL, "a template's skeleton");
+        Fit::Unsupported
+    };
+    let mut s = sim(&f, &[R_HOUND, R_PERSON_D, R_HOUND_MAN, R_HOUND_COPY]);
+    s.ai.set_furniture_facts(facts(fit));
+    set_clock(&mut s, 2.0, 5.0);
+    s.run(30.0);
+    // One bed, and a person gets it.
+    let person_abed = [R_PERSON_D, R_HOUND_MAN].iter().filter(|a| s.ai.agents[&FormId(**a)].using == Some(FormId(BED_D))).count();
+    assert_eq!(person_abed, 1);
+    for creature in [R_HOUND, R_HOUND_COPY] {
+        assert_eq!(s.ai.agents[&FormId(creature)].using, None);
+        assert_eq!(s.ai.furniture_of(FormId(creature)), None);
+        assert!(eligibility(&s, creature).iter().all(|e| e.1 == "excluded"), "{:?}", eligibility(&s, creature));
+    }
+    for person in [R_PERSON_D, R_HOUND_MAN] {
+        let told = eligibility(&s, person);
+        assert!(told.iter().all(|e| e.2 != "no-clips-for-skeleton"), "{told:?}");
+        assert_eq!(told.iter().filter(|e| e.1 == "unknown").count(), 1, "{told:?}");
+    }
+}
+
+/// What an actor is comes from its own record, a leveled base's pick included; only its
+/// skeleton comes from the template. Both ways round: the leveled person on a creature's
+/// model must not be ruled out as a creature, the creature on a person's model must not
+/// pass as a person.
+#[test]
+fn what_an_actor_is_comes_from_its_own_record_and_its_skeleton_from_its_template() {
+    use fnv_game::nvse_nx::{is_creature, skeleton_model};
+    let f = fixture();
+    let s = sim(&f, &[]);
+    for (actor, creature, skeleton) in [
+        (R_LEVELED_MAN, false, HOUND_MODEL),
+        (R_HOUND_MAN, false, HOUND_MODEL),
+        (R_MAN_HOUND, true, PERSON_MODEL),
+        (R_HOUND_COPY, true, HOUND_MODEL),
+        (R_HOUND, true, HOUND_MODEL),
+    ] {
+        assert_eq!(is_creature(&s.game, FormId(actor)), Some(creature), "{actor:X}");
+        assert_eq!(skeleton_model(&s.game, FormId(actor)), skeleton, "{actor:X}");
+    }
+    // And by the rule: the person gets the bed, the creature gets nothing.
+    let mut s = sim(&f, &[R_LEVELED_MAN, R_MAN_HOUND]);
+    s.ai.set_furniture_facts(facts(|kind, skeleton, _| match kind {
+        ActorKind::Person if skeleton == HOUND_MODEL => Fit::Unknown,
+        ActorKind::Creature if skeleton == PERSON_MODEL => Fit::Unsupported,
+        _ => panic!("{kind:?} {skeleton}"),
+    }));
+    set_clock(&mut s, 2.0, 5.0);
+    s.run(30.0);
+    assert_eq!(s.ai.agents[&FormId(R_LEVELED_MAN)].using, Some(FormId(BED_D)));
+    assert_eq!(s.ai.agents[&FormId(R_MAN_HOUND)].using, None);
+    assert_eq!(s.ai.furniture_of(FormId(R_MAN_HOUND)), None);
 }
 
 // ---- feet that do not fit the goal's height (#1500; docs/design/navmesh.md §4.1) ----------
