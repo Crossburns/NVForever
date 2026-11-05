@@ -400,17 +400,23 @@ impl Game<'_> {
     /// blast's, an actor's unarmed attack effect (docs/spec-notes/hit-effects.md §1). A
     /// dead or unharmable target takes none. The target's resistances cut the harmful
     /// magnitudes, a fully resisted effect does not start, and a hit with the same item
-    /// while its effect lasts starts that effect's time again (§2, §3).
+    /// while its effect lasts starts that effect's time again (§2, §3). The hit's damage
+    /// comes next, and it decides a death by a Script effect's damage
+    /// ([`Game::health_lowered`]).
     pub fn apply_hit_effect(&mut self, target: FormId, item: FormId, caster: Option<FormId>) -> Vec<crate::aid::Applied> {
+        self.hits_running.push(target);
+        let applied = self.start_hit_effect(target, item, caster);
+        self.hits_running.pop();
+        applied
+    }
+
+    /// [`Game::apply_hit_effect`] with no hit to come: a Script effect's damage kills at once.
+    pub(crate) fn start_hit_effect(&mut self, target: FormId, item: FormId, caster: Option<FormId>) -> Vec<crate::aid::Applied> {
         if self.is_dead(target) || self.is_immune(target) {
             return Vec::new();
         }
         let mods = crate::aid::Mods { hit: true, ..crate::aid::Mods::default() };
-        // The hit's damage comes next, and it decides a death by a Script effect's damage
-        // (`Game::health_lowered`).
-        self.hits_running.push(target);
         let applied = self.apply_magic_item_with(target, item, caster, false, &mods);
-        self.hits_running.pop();
         // OnFire, Poisoned (`crate::combat_lines`).
         self.effect_started_lines(target, caster, &applied);
         applied
@@ -582,6 +588,7 @@ impl Game<'_> {
         if info.attacker == Some(FormId::PLAYER_REF) && !out.died && self.vats.mode == crate::vats::MODE_PLAYBACK {
             let roll = crate::magic_archetypes::hash_roll(self.time, target);
             self.paralyzing_palm(target, info.weapon, roll);
+            out.health = actor::actor_value(self, target, HEALTH).unwrap_or(out.health);
         }
         // What the target says (`crate::combat_lines`): Death was said by `kill`, KOed by
         // `knock_out`; nothing more from one lying knocked out.

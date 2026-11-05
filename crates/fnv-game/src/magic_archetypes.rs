@@ -180,9 +180,7 @@ impl Game<'_> {
         if roll >= crate::combat::setting(self, "fVATSParalyzePalmChance", PALM_CHANCE) {
             return false;
         }
-        let applied = self.apply_hit_effect(target, palm, Some(FormId::PLAYER_REF));
-        // No hit follows this one to decide a death by its Script effect.
-        self.health_lowered(target);
+        let applied = self.start_hit_effect(target, palm, Some(FormId::PLAYER_REF));
         let took = applied.iter().any(|a| self.data.magic_effects.get(&a.effect).is_some_and(|m| m.archetype == ARCHETYPE_PARALYSIS));
         if took {
             self.count_stat(PARALYZING_PUNCHES, 1.0);
