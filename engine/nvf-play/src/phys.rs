@@ -639,18 +639,13 @@ pub struct LoadCtx<'a> {
 }
 
 /// Whether a placed reference is in the world now: not deleted in the plugins, and
-/// present for the simulation. A reference the simulation has not touched also needs to
-/// be enabled by its own flag, as render streaming and `fnvtool phys` require; once the
-/// simulation holds state for it, the simulation alone decides (so a reference enabled
-/// at run time gets its collision).
+/// present for the simulation, whether or not it holds state for the reference (under an
+/// enable parent `World::is_enabled` ignores the reference's own Initially Disabled flag;
+/// nothing sends a `RefChanged` for a reference whose state never changed, so this is
+/// its only chance). A placed type the simulation's table leaves out, which
+/// `SimState::present` takes for enabled, goes by its own flag.
 pub fn in_world(sim: &SimState, pl: &Placement) -> bool {
-    if pl.deleted() {
-        return false;
-    }
-    match sim.world.peek(FormId(pl.form_id)) {
-        Some(_) => sim.present(pl.form_id),
-        None => !pl.initially_disabled() && sim.present(pl.form_id),
-    }
+    !pl.deleted() && sim.present(pl.form_id) && sim.world.is_enabled(FormId(pl.form_id)).unwrap_or(!pl.initially_disabled())
 }
 
 impl PhysState {

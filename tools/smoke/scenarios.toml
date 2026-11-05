@@ -10595,6 +10595,20 @@ expect = [
 forbid = [{ text = "move refused", label = "every move the sides choose is legal" }]
 
 [[scenario]]
+name = "f5-helios-rows-untouched"
+source = "issue #1620: two solar reflector rows at HELIOS One (0x000D7D09, 0x000D7D29) are flagged Initially Disabled under an enabled enable parent; they were drawn with no collision, so the player fell through. The physics at a cell load and render streaming's start rule now go by the simulation's rule"
+note = "The player drops 400 units onto the plain neighbour 0x000D7D0A, then is set by coordinates 400 units above the flagged row 0x000D7D09. No console line names the flagged row, before or after the cell loads: a read would create its state and hide the bug. Both drops must end on a row (z about 5321), not on the ground through it (5235.5)"
+areas = ["physics", "rendering"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.moveto 000D7D0A 0 0 400;15:close;30:player.getpos x;player.getpos y;player.getpos z;player.setpos x 22010.1;player.setpos y 1834.8;player.setpos z 5632;31:close;40:player.getpos x;player.getpos y;player.getpos z;41:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 45
+expect = [
+  { re = 'console: GetPos on player >> 532[0-3]\.', count = 2, label = "both drops end on a row: on the plain one and on the flagged one" },
+  { re = 'reference 0x000D7D(09|29) drawn \(enabled at run time\)', count = 0, label = "render streaming draws the flagged rows, so script_draw has nothing to draw" },
+]
+
+[[scenario]]
 name = "enable-disable-fade"
 source = "docs/design/script-function-params.md §3: Enable fades in unless FadeIn is 0, Disable fades out only with FadeOut 1 (GECK wiki Enable, Disable; 544 shipped calls pass the flag)"
 note = "Sunny (SunnyRef 00104E85) is disabled with a fade at 14 s, enabled with the default fade at 17 s, then disabled and enabled without one at 20 s and 22 s: one fade each way. A fade lasts 2 s: the time the original kept a Disable 1 reference enabled (capture disable_fade_long); the fade in's length is a guess"
