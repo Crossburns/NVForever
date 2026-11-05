@@ -80,17 +80,20 @@ on screen).
    [documented: KillActor notes]. It says its KOed line [design: the topic's text names
    fatigue only].
    **DamageActorValue** on Health that leaves an actor at 0 or less: a non-essential NPC
-   dies [observed: observer-checks.md check 22, run o21_air, two super mutants hurt by
-   DamageAV 300 died]; an essential actor is knocked out as by KillActor, and the player
-   dies [hypothesis: observer-checks.md check 86]. Health stays where the damage left it,
-   with no floor of 1, and an essential actor still gets up at half its maximum [design].
+   dies, an essential actor is knocked out as by KillActor, and the player dies
+   [hypothesis: observer-checks.md check 86 asks]. The only sighting is check 22: two super
+   mutants hurt by DamageAV 300 died [observed, run o21_air: not isolated from the NCR
+   troopers firing in the scene, no GetDead read, their Health not known to be below 300].
+   Health stays where the damage left it, with no floor of 1, and an essential actor still
+   gets up at half its maximum [design].
    The death has no killer: no XP, karma, murder or challenge, and OnDeath's killer is 0
    [hypothesis]. A ghost, a child or an Invulnerable creature does not die of it, as of a
    hit [hypothesis], nor a player in god mode, nor an actor whose record gives no Health
    (no DATA, so its Health is only a stand-in of 1) [design]. While a hit is being applied
    the hit decides: DamageAV in an OnHit script (the gloves' `DamageAV Health 10`, §1) or
    in the ScriptEffectStart of an effect the hit brings leaves the death to the hit, which
-   credits its attacker [design]. A lasting effect's later script ticks have no killer.
+   credits its attacker [design]. A lasting effect's later script ticks and a Paralyzing
+   Palm's effect, which comes after its hit, have no killer.
    ModActorValue, ForceActorValue and SetActorValue that bring Health to 0 kill nobody
    [design].
 3. **Fatigue at zero**: whenever an actor's Fatigue is lowered (DamageAV, a fatigue

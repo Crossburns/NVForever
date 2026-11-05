@@ -24,7 +24,7 @@ constant where the original returns something live.
   needs), **stub** (`Kind::Stub`/`NoOp`; docs/design/script-stubs.md §4 has each one's
   reason).
 
-Totals: 282 matches, 37 stub, 35 fixed here, 25 gap left, 19 open.
+Totals: 283 matches, 37 stub, 35 fixed here, 25 gap left, 18 open.
 
 ## 2. What was fixed
 
@@ -164,7 +164,7 @@ what writes it now).
 | CompleteAllObjectives | 0x11AD | 105/- | writes objectives | rules | matches |  |
 | CompleteQuest | 0x1071 | 124/- | writes completed | rules | matches | Does not stop the quest [hypothesis]. |
 | CreateDetectionEvent | 0x1068 | 1/ | queue_detection_event | engine hears | matches |  |
-| DamageActorValue | 0x1181 | 138/ | `av_damage` | rules | open | Health at 0 or less kills an NPC [observed]; the essential knock-out, the player's death and no killer are [hypothesis] (unconscious.md §2.2; capture: observer-checks.md check 86). |
+| DamageActorValue | 0x1181 | 138/ | `av_damage` | rules | matches | Health at 0 or less kills, or knocks out an essential actor, with no killer [hypothesis: unconscious.md §2.2; observer-checks.md check 86]. |
 | DamageObject | 0x116C | 89/- | `Game::damage_object` | rules + engine combat.rs:1783 | matches |  |
 | DetonatePlacedExplosives | 0x124D | 1/ | `combat_requests` | engine | matches |  |
 | Disable | 0x1022 | 3336/- | `w.enabled` | rules / RefChanged | matches |  |

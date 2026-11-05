@@ -871,7 +871,7 @@ never restored past its permanent value [documented: the pages of those function
 observed: Contreras' supplies (three blocks of `RestoreActorValue <limb> 100`) left a
 head condition damaged by 40 at 100, `L5.quest.effect_start`, layer5-captures.md §9.3 b].
 DamageActorValue that leaves Health at 0 or less kills, or knocks out an essential actor
-(observed for an NPC, hypothesis for the rest: unconscious.md §2.2).
+[hypothesis: unconscious.md §2.2, whose one sighting in the original is not isolated].
 GetBaseActorValue reads the base and GetPermanentActorValue the base plus the permanent
 modifier [documented]. The override, the modifier and the damage are per reference in
 `RefExtra` (`actor_values`, `av_permanent`, `av_damage`); the permanent value of

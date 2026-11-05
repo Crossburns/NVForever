@@ -31,7 +31,7 @@ An actor value is a base value and three pools added to it [documented: ActorVal
 | Damage | `DamageActorValue`, `RestoreActorValue` (never past zero); combat's health and limb damage; effects without Recover | `GetActorValue` = base + both modifiers − damage |
 
 - `DamageActorValue` on Health at 0 or less kills, or knocks out an essential actor
-  (unconscious.md §2.2).
+  [hypothesis: unconscious.md §2.2].
 - NVForever keeps the base override, the permanent modifier, the temporary modifier and
   the damage. Active effects (aid items, spells cast or added) feed the temporary pool and
   the damage as aid-items.md §3 says; worn enchantments do not yet (the Pip-Boy adds them

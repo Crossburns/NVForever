@@ -8843,7 +8843,7 @@ expect = [
 
 [[scenario]]
 name = "damageav-health-kills"
-source = "#1568: DamageActorValue on Health past zero kills an NPC (the original: observer-checks.md check 22) and the player and knocks an essential actor out; no killer, so no XP (docs/spec-notes/unconscious.md §2.2)"
+source = "#1568: DamageActorValue on Health past zero kills an NPC and the player and knocks an essential actor out; no killer, so no XP (docs/spec-notes/unconscious.md §2.2, a hypothesis: observer-checks.md check 86)"
 note = "in Goodsprings: Easy Pete (not essential) survives 10 and dies of 9999, and is still dead 5 s later; Sunny Smiles is made essential and is knocked out; the player last, as the death ends the play"
 areas = ["scripts", "combat"]
 paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/combat.rs", "crates/fnv-game/src/unconscious.rs"]
