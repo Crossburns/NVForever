@@ -210,13 +210,29 @@ fn a_tick_brings_the_world_to_the_players_level() {
     let f = fixture();
     let mut g = game(&f);
     g.player_entered(Some(FormId(PLAIN_CELL)));
+    // The level written with no call that tells the world.
+    g.player.level = Some(20);
+    assert_eq!(g.world.roll_level(), 1);
+    g.tick();
+    assert_eq!(g.world.roll_level(), 20);
+    assert_eq!(roll(&mut g), vec![(FormId(PELT), 1)]);
+    assert_eq!(g.snapshot().sim.config.player_level, 1);
+}
+
+/// The headless SaveLoad advances no frame: the roll right after a restore is at the
+/// player's level.
+#[test]
+fn a_restored_game_rolls_at_the_players_level_before_any_tick() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.player_entered(Some(FormId(PLAIN_CELL)));
     // A saved game: the player at 20; the world saves its configured level, not this one.
     g.player.level = Some(20);
     let s = g.snapshot();
     assert_eq!(s.sim.config.player_level, 1);
     let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
+    assert_eq!(world.roll_level(), 1);
     let mut g2 = Game::restore(&f.data, world, GameConfig { strict: true, ..GameConfig::default() }, &s).unwrap();
-    g2.tick();
     assert_eq!(g2.world.roll_level(), 20);
     assert_eq!(roll(&mut g2), vec![(FormId(PELT), 1)]);
     assert_eq!(g2.snapshot().sim.config.player_level, 1);

@@ -5104,6 +5104,8 @@ impl<'a> Game<'a> {
         g.instances = s.instances.iter().cloned().collect();
         g.extra = s.extra.clone();
         g.player = s.player.clone();
+        // The world does not save the level it rolls at.
+        g.sync_player_level();
         g.form_lists = s.form_lists.clone();
         g.loaded_cells = s.loaded_cells.clone();
         g.moved = s.moved.clone();

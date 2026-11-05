@@ -683,7 +683,7 @@ impl Runtime {
         self.new_game_files = false;
         self.player_cell = None;
         with_world(self, sim, |rt| {
-            // The world does not save the level it rolls at, and the Script Runner's files
+            // `Game::restore` above reached only the stand-in, and the Script Runner's files
             // and the LoadGame events run ahead of the first tick.
             rt.game.sync_player_level();
             rt.snapshot_inventory();

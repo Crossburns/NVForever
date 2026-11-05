@@ -84,10 +84,10 @@ actors, `resolve_changed_at`), `engine/nvforever/src/zones.rs` (the engine's cop
   [design].
 - The world holds the player's level for item rolls apart from its configuration, and does
   not save it (`World::set_player_level`, `World::roll_level`): `Game::sync_player_level`
-  writes it on SetLevel, on a level-up and on every tick, and the engine's load
-  (`Runtime::restore_save`) calls it before anything runs. `fnv_game::Game::restore` does
-  not; there the next tick does [design]. The static viewer (no `--play`) keeps the
-  display level 1.
+  writes it on SetLevel, on a level-up, on every tick and in `fnv_game::Game::restore`. In
+  the engine that restore holds only a stand-in world, so the engine's load
+  (`Runtime::restore_save`) calls it again on the played world before anything runs
+  [design]. The static viewer (no `--play`) keeps the display level 1.
 
 ## 4. Never Resets
 

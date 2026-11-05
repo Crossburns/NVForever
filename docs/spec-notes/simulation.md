@@ -438,8 +438,9 @@ consistent with three independent rolls), all-levels vs highest eligible level
 (`VFactionSquadStimpaks`: always 1 stimpak at player level 10, always 3 at level 30, in
 game and candidate), Use All (`VendorChestStimpaksBoomer`), a uniform pick of 18
 (`ClutterHouseholdJunkNV`). Console `AddItem` with a leveled list resolves it against
-the player's level [observed, same captures]; `World::add_item` reads it from the world's
-configuration, which follows the game's player (encounter-zones.md) [design].
+the player's level [observed, same captures]. `World::add_item` reads
+`World::roll_level`, which `Game::sync_player_level` keeps at the game's player's level;
+`SimConfig::player_level` stays the configured value (encounter-zones.md) [design].
 
 Also **consistent with the game** for backlog B8 [observed in game, 2026-10-08,
 `L4.sim.leveled.b8`, `parity-lab/inputs/layer4/leveled_b8.cases.json`: 300 `AddItem`
