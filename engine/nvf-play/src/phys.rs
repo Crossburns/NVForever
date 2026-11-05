@@ -107,6 +107,10 @@ pub struct PhysState {
     pub destruction_models: HashMap<u32, String>,
     /// The destruction model each reference was last given collision from.
     built_models: HashMap<u32, String>,
+    /// The pose (position, Euler angles) each placed reference's collision was last built
+    /// at, for [`Self::repose_ref`] to see a script's move of collision that physics does
+    /// not move.
+    built_at: HashMap<u32, ([f32; 3], [f32; 3])>,
     /// References given collision so far (each add, and each build again): a reader that
     /// must act on rebuilt collision (nvforever `wrecks.rs`) looks again only when it grew.
     pub refs_built: u64,
@@ -192,6 +196,7 @@ impl Default for PhysState {
             animated: BTreeMap::new(),
             destruction_models: HashMap::new(),
             built_models: HashMap::new(),
+            built_at: HashMap::new(),
             refs_built: 0,
             drawn: HashMap::new(),
             player_sink: 0.0,
@@ -951,6 +956,7 @@ impl PhysState {
             }
         }
         self.refs_built += 1;
+        self.built_at.insert(pl.form_id, (pl.position, pl.rotation));
         let counts = &mut self.stats.counts;
         *counts.entry("with_collision").or_default() += 1;
         match drawn {
@@ -991,7 +997,7 @@ impl PhysState {
         // Test aid: the reference as its made-up cell has it.
         #[cfg(test)]
         if let (Some(fake), Some(&cell)) = (self.fake, self.ref_cell.get(&r)) {
-            let job = Job { models: self.fake_models(), ..self.job(ctx.d, cell) };
+            let job = with_poses(Job { models: self.fake_models(), ..self.job(ctx.d, cell) }, ctx.sim);
             let Some(e) = fake(&job).refs.into_iter().find(|e| e.form_id == r) else { return false };
             let shapes = e.shapes;
             return self.apply(ctx, e.placement, |_| shapes.expect("made up with its placement"));
@@ -1033,6 +1039,7 @@ impl PhysState {
             self.animated.remove(&r);
             self.drawn.remove(&r);
             self.built_models.remove(&r);
+            self.built_at.remove(&r);
             if self.ref_cell.get(&r) == Some(&cell) {
                 self.ref_cell.remove(&r);
             }
@@ -1071,21 +1078,40 @@ impl PhysState {
     }
 
     /// A script moved or turned reference `id` (SetPos, SetAngle, Rotate, SetScale, the
-    /// console's too): when its collision is one dynamic body still at the old pose, the
-    /// settle write-back ([`Self::settle_created`], [`Self::settle_placed`]) would copy that
-    /// pose over the move, so the collision is built again at the simulation's pose.
-    /// Found 2026-11-01: a raised bottle read its old height again at
-    /// once [observed: GetPos Z 8396.80 after SetPos Z 8461]. Collision that is not one
-    /// dynamic body is left where it was (not written back, so no move is lost; it
-    /// collides at the old place until its cell loads again) [engineering choice].
+    /// console's too): its collision is built again at the simulation's pose when it is
+    /// not there already.
+    ///
+    /// - One dynamic body (placed or created clutter): the settle write-back
+    ///   ([`Self::settle_created`], [`Self::settle_placed`]) would copy the body's old pose
+    ///   over the move. Found 2026-11-01: a raised bottle read its old height again at
+    ///   once [observed: GetPos Z 8396.80 after SetPos Z 8461].
+    /// - Any other collision of a placed reference (fixed bodies of a STAT or SCOL,
+    ///   keyframed bodies, the jointed bodies of an XRGD-posed skeleton held by
+    ///   `prepare::hold_jointed`, a door's or an animated group's): physics never moves
+    ///   it, so it stayed where it was built while the model was drawn at the new place
+    ///   (issue #1466). It is built again when the simulation's pose is not the one it was
+    ///   built at (`built_at`); a skeleton's stored pose is laid out again from the new
+    ///   reference pose, as at load.
+    ///
+    /// A created reference whose collision is not one dynamic body is left where it was
+    /// [engineering choice: not met yet].
     pub fn repose_ref(&mut self, ctx: &LoadCtx, id: u32) {
+        let Some(s) = ctx.sim.world.peek(FormId(id)) else { return };
         let single = match self.created.get(&id) {
             Some(cb) => cb.local.filter(|_| cb.dynamic).map(|l| (l, 1.0)),
             None => self.placed_dynamic.get(&id).map(|p| (p.local, p.scale)),
         };
-        let Some((local, scale)) = single else { return };
-        let (Some(b), Some(s)) = (self.world.ref_bodies(id).first().copied(), ctx.sim.world.peek(FormId(id))) else { return };
-        let (pos, rot) = dropped::ref_pose_from_body(&b, &local, scale);
+        let (pos, rot) = match single {
+            Some((local, scale)) => {
+                let Some(b) = self.world.ref_bodies(id).first().copied() else { return };
+                dropped::ref_pose_from_body(&b, &local, scale)
+            }
+            None if FormId(id).is_dynamic() || !self.has_collision(id) => return,
+            None => {
+                let Some(&(pos, angles)) = self.built_at.get(&id) else { return };
+                (pos, ref_rotation(angles))
+            }
+        };
         let dist = (0..3).map(|i| (pos[i] - s.pos[i]).powi(2)).sum::<f32>().sqrt();
         if dist <= MOVED_DISTANCE && max_diff(&ref_rotation(s.rot), &rot) <= 1e-3 {
             return;
@@ -1099,6 +1125,7 @@ impl PhysState {
             self.doors.remove(&id);
             self.animated.remove(&id);
             self.drawn.remove(&id);
+            self.built_at.remove(&id);
             self.add_ref(ctx, id)
         };
         info!("collision of 0x{id:08X} built again where a script moved it ({:.1} from its body){}", dist, if built { "" } else { ": none now" });

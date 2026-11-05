@@ -367,8 +367,13 @@ fn indoors_the_one_cell_is_all_a_start_waits_for() {
 
 /// The dynamic crate of cell (0, 0) as a placed reference the simulation knows.
 fn sim_with_crate() -> (SimState, u32, [f32; 3]) {
-    let id = 0x0100_0000 + (100 << 12) + (100 << 4) + 5;
+    let id = fake_ref(0, 0, 5);
     let pos = [300.0 + 5.0 * 600.0, 1500.0 + 900.0, 400.0];
+    (sim_with_placed(id, pos, [0.0, 0.0, 2.0]), id, pos)
+}
+
+/// A simulation that places made-up reference `id` ([`fake_cell`]) at `pos`, turned `rot`.
+fn sim_with_placed(id: u32, pos: [f32; 3], rot: [f32; 3]) -> SimState {
     let mut table = RefTable::default();
     table.refs.insert(
         FormId(id),
@@ -383,7 +388,7 @@ fn sim_with_crate() -> (SimState, u32, [f32; 3]) {
             flags: 0,
             in_persistent_group: false,
             pos,
-            rot: [0.0, 0.0, 2.0],
+            rot,
             scale: None,
             count: None,
             ammo: None,
@@ -410,7 +415,7 @@ fn sim_with_crate() -> (SimState, u32, [f32; 3]) {
     );
     let forms: &'static FormStore = Box::leak(Box::default());
     let refs: &'static RefTable = Box::leak(Box::new(table));
-    (SimState { forms, refs, world: World::new(forms, refs, SimConfig::default()) }, id, pos)
+    SimState { forms, refs, world: World::new(forms, refs, SimConfig::default()) }
 }
 
 #[test]
@@ -444,6 +449,42 @@ fn placed_clutter_moved_by_physics_is_written_back_and_reloads_there() {
     }
     assert!(fnv_world::transform::max_diff(&b.rotation, &fnv_world::transform::ref_rotation(rot)) < 1e-4);
     assert!(!p.placed_dynamic[&id].moved, "a fresh start from where it rests");
+}
+
+/// A script's move of a reference whose collision physics never moves (a fixed box, as
+/// a STAT's) builds it again at the simulation's pose, not left at the old one (issue
+/// #1466); a repose where it already stands builds nothing.
+#[test]
+fn a_script_moved_fixed_reference_collides_at_its_new_pose() {
+    let d = play_data();
+    let id = fake_ref(0, 0, 1);
+    let placed = [300.0 + 600.0, 1500.0 + 900.0, 60.0];
+    let mut sim = sim_with_placed(id, placed, [0.0, 0.0, 0.4]);
+    let mut p = state(true);
+    p.load(&LoadCtx { d: &d, sim: &sim, data: None }, PhysCell::Exterior(0, 0));
+    assert!(p.has_collision(id) && !p.placed_dynamic.contains_key(&id), "fixed collision, not one dynamic body");
+    let built = p.refs_built;
+    // Told of a move it has not made: nothing built.
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id);
+    assert_eq!(p.refs_built, built);
+    // SetPos and SetAngle.
+    let (to, angles) = ([placed[0] + 400.0, placed[1] - 200.0, placed[2] + 30.0], [0.0, 0.0, 1.2]);
+    {
+        let s = sim.world.get(FormId(id)).expect("placed");
+        s.pos = to;
+        s.rot = angles;
+    }
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id);
+    assert_eq!(p.refs_built, built + 1, "built again");
+    let bodies = p.world.ref_bodies(id);
+    assert_eq!(bodies.len(), 1);
+    for i in 0..3 {
+        assert!((bodies[0].translation[i] - to[i]).abs() < 1e-2, "{:?} against {to:?}", bodies[0]);
+    }
+    assert!(fnv_world::transform::max_diff(&bodies[0].rotation, &fnv_world::transform::ref_rotation(angles)) < 1e-4);
+    // Where it was built now: nothing more.
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id);
+    assert_eq!(p.refs_built, built + 1);
 }
 
 /// A STAT's dynamic bodies are fixed (the saloon's motorcycles, playtest list 5 item 59);
