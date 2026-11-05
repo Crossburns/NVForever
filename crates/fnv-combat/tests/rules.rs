@@ -2,7 +2,7 @@
 //! projectiles, on hand-made stats and a toy world. The expected numbers follow from the
 //! documented formulas and our CombatTuning defaults.
 
-use fnv_combat::attack::{ClipTiming, Cycle, Event, Input, Phase, Timing};
+use fnv_combat::attack::{ClipTiming, Cycle, Event, Input, Phase, RoundReload, Timing};
 use fnv_combat::damage::{self, Attacker, HitInput, HitPart, NoPerks, Target};
 use fnv_combat::data::{AmmoEffect, ExplosionStats, ProjectileStats, WeaponStats};
 use fnv_combat::melee::NextAttack;
@@ -620,14 +620,89 @@ fn a_magazine_emptied_in_the_spin_up_fires_nothing() {
     let mut total = 0;
     assert_eq!(run_carrying(&mut c, &t, 300, dt, |_| true, &mut total), vec![Event::DryFire]);
 
-    // The swap's reload is one tick's input: taken from Ready, where the swap puts the
-    // cycle (`combat::fire`), at once; in the spin-up it would be lost.
+    // An Ammo Swap: the reload starts at the next step, not when the spin-up is over.
     let mut c = spinning();
-    let swap = Input { trigger: true, reload: true, dt, carried: 5 };
-    assert!(c.step(&t, swap).is_empty());
-    let mut c = spinning();
-    c.phase = Phase::Ready;
-    assert_eq!(c.step(&t, swap), vec![Event::ReloadStarted]);
+    c.swap_ammo();
+    assert_eq!(c.step(&t, Input { trigger: true, reload: false, dt, carried: 5 }), vec![Event::ReloadStarted]);
+}
+
+/// Ammo Swap between shots: the reload comes without another pull, and the next shot no
+/// sooner than the weapon's rate allows, even when the reload is shorter than the wait.
+#[test]
+fn a_swap_between_shots_reloads_when_the_wait_ends() {
+    let t = CombatTuning::default();
+    let w = WeaponStats { clip_size: 12, ..gun(20) };
+    let timing = Timing { interval: 3.0, fire_delay: 0.0, reload: 1.0, spin_up: 0.0, rounds: None, attach: None };
+    let dt = 0.05;
+    let mut c = Cycle::new(&w, timing, false, 5);
+    assert_eq!(run(&mut c, &t, 2, dt, |k| k == 0, 0), vec![Event::Fired { rounds: 1 }]);
+    assert!(matches!(c.phase, Phase::Cooldown { .. }));
+    c.swap_ammo();
+    // Still waiting 2.8 s on: 2.9 s of the 3 s since the shot.
+    assert!(run(&mut c, &t, 56, dt, |_| false, 5).is_empty());
+    assert_eq!(c.magazine, 0);
+    // The wait ends and the reload follows, the trigger untouched.
+    assert_eq!(run(&mut c, &t, 6, dt, |_| false, 5), vec![Event::ReloadStarted]);
+    assert_eq!(run(&mut c, &t, 24, dt, |_| false, 5), vec![Event::Reloaded { taken: 5 }]);
+    assert_eq!(c.magazine, 5);
+    assert_eq!(shots(&run(&mut c, &t, 2, dt, |k| k == 0, 0)), 1);
+
+    // An automatic weapon held through it reloads and does not click.
+    let w = WeaponStats { automatic: true, fire_rate: 2.0, clip_size: 12, ..gun(20) };
+    let mut c = Cycle::new(&w, Timing::of(&w, &ClipTiming::default(), &t), false, 5);
+    assert_eq!(c.step(&t, Input { trigger: true, reload: false, dt, carried: 0 }), vec![Event::Fired { rounds: 1 }]);
+    c.swap_ammo();
+    let ev = run(&mut c, &t, 20, dt, |_| true, 5);
+    assert_eq!(ev, vec![Event::ReloadStarted], "{ev:?}");
+
+    // Nothing to reload into: the wish is dropped and does not fire off later.
+    let w = WeaponStats { clip_size: 12, ..gun(20) };
+    let mut c = Cycle::new(&w, timing, false, 5);
+    assert_eq!(run(&mut c, &t, 2, dt, |k| k == 0, 0), vec![Event::Fired { rounds: 1 }]);
+    c.swap_ammo();
+    assert!(run(&mut c, &t, 70, dt, |_| false, 0).is_empty());
+    assert!(run(&mut c, &t, 10, dt, |_| false, 5).is_empty());
+}
+
+/// Ammo Swap during a reload: it goes on, into the new ammo, on its own clock; while the
+/// weapon closes or is jammed the magazine stays empty until the next pull.
+#[test]
+fn a_swap_leaves_a_reload_and_a_jam_as_they_are() {
+    let t = CombatTuning::default();
+    let w = WeaponStats { clip_size: 12, ..gun(20) };
+    let timing = Timing { interval: 0.5, fire_delay: 0.0, reload: 1.0, spin_up: 0.0, rounds: None, attach: None };
+    let dt = 0.05;
+    let reload = Input { trigger: false, reload: true, dt, carried: 5 };
+
+    // The whole magazine: the time left stands, and the new ammo goes in.
+    let mut c = Cycle::new(&w, timing, false, 4);
+    assert_eq!(c.step(&t, reload), vec![Event::ReloadStarted]);
+    assert!(run(&mut c, &t, 10, dt, |_| false, 5).is_empty());
+    c.swap_ammo();
+    let ev = run(&mut c, &t, 12, dt, |_| false, 5);
+    assert_eq!(ev, vec![Event::Reloaded { taken: 5 }], "{ev:?}");
+    assert_eq!(c.magazine, 5);
+
+    // Round by round, in the closing: nothing more goes in, and the next pull reloads.
+    let rounds = Timing { rounds: Some(RoundReload { open: 0.1, round: 0.1, close: 0.5 }), ..timing };
+    let mut c = Cycle::new(&w, rounds, false, 11);
+    assert_eq!(c.step(&t, reload), vec![Event::ReloadStarted]);
+    let mut closing = run(&mut c, &t, 6, dt, |_| false, 5);
+    closing.retain(|e| matches!(e, Event::ReloadClosing { .. }));
+    assert_eq!(closing.len(), 1);
+    c.swap_ammo();
+    assert_eq!(c.magazine, 0);
+    let ev = run(&mut c, &t, 12, dt, |_| false, 5);
+    assert!(ev.iter().any(|e| matches!(e, Event::Reloaded { .. })), "{ev:?}");
+    assert_eq!(c.magazine, 0);
+    assert_eq!(c.step(&t, Input { trigger: true, reload: false, dt, carried: 5 }), vec![Event::ReloadStarted]);
+
+    // Jammed: cleared with no reload, then the next pull reloads.
+    let mut c = Cycle::new(&w, timing, false, 5);
+    c.jam(0.2);
+    c.swap_ammo();
+    assert_eq!(run(&mut c, &t, 8, dt, |_| false, 5), vec![Event::Cleared]);
+    assert_eq!(c.step(&t, Input { trigger: true, reload: false, dt, carried: 5 }), vec![Event::ReloadStarted]);
 }
 
 /// A gun whose shot waits for the attack clip's `Hit` key, emptied in that wait.

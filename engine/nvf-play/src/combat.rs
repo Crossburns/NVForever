@@ -2654,19 +2654,15 @@ pub(crate) fn fire(
         }
     }
     // Ammo Swap: the next carried type down the list, then a reload [design].
-    let mut reload = reload;
     if swap {
         if let Some(cur) = c.ammo {
             let next = c.forms.next_ammo(id, cur, |a| player_count(&sim, Some(a)) > 0);
             if next.is_some_and(|n| n != cur) {
                 c.ammo = next;
-                cycle.magazine = 0;
-                // The shot on its way has no round now, and the cycle takes a reload only
-                // from Ready. God mode's magazine is filled again below: its shot goes on.
-                if !god && matches!(cycle.phase, fnv_combat::attack::Phase::SpinUp { .. } | fnv_combat::attack::Phase::WindUp { .. }) {
-                    cycle.phase = fnv_combat::attack::Phase::Ready;
+                // God mode's magazine stays full: its shot goes on and nothing reloads.
+                if !god {
+                    cycle.swap_ammo();
                 }
-                reload = true;
                 info!("combat: ammo swapped to {}", next.and_then(|a| c.forms.ammo.get(&a)).and_then(|a| a.edid.clone()).unwrap_or_default());
             }
         }

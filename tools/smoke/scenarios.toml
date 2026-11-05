@@ -1745,6 +1745,21 @@ expect = [
 ]
 order = [["combat: ammo swapped to", { re = 'console: GetItemCount on player >> 5\.00' }, { re = 'console: GetItemCount on player >> 0\.00' }]]
 
+[[scenario]]
+name = "ammo-swap-between-shots"
+source = "#1613: the 9mm pistol with both its ammo types, one shot, Ammo Swap in the time before the next (0.32 s, combat-rules.md §4) with the trigger let go: the reload follows without another pull"
+note = "both types 50, so the swap's reload fills the 13-round magazine"
+areas = ["combat"]
+paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/attack.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50,0013E43A:50", NVF_PLAY_TEST_CONTROL = "4:weapon,8:fire,8.05:fire,8.15:swap" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--pitch", "60", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'combat: (?P<n>\d+) shots \(', range = [1, 1], all = true, label = "the one shot" },
+  { re = 'combat: reloaded 13, magazine 13\b', count = 1, label = "the swap's reload fills the magazine" },
+]
+order = [["combat: ammo swapped to", "combat: reloaded 13, magazine 13"]]
+
 # ------------------------------------------------------------------ texture swaps
 
 [[scenario]]

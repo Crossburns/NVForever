@@ -254,6 +254,8 @@ pub struct Cycle {
     /// Seconds since a pull made while a round-by-round reload was stopped or closing:
     /// the shot it asks for, kept for [`SHOT_GRACE`].
     queued: Option<f32>,
+    /// An Ammo Swap's reload, waiting for the cycle to be `Ready` ([`Cycle::swap_ammo`]).
+    swap_reload: bool,
     pub timing: Timing,
 }
 
@@ -274,8 +276,23 @@ impl Cycle {
             held: false,
             spun: false,
             queued: None,
+            swap_reload: false,
             timing,
         }
+    }
+
+    /// The loaded ammo changed: the magazine is empty and a reload follows. A shot still
+    /// on its way (a spin-up, a wind-up) has no round now and is dropped. The reload starts
+    /// at the next step, or between shots when the wait ends: starting it at once would
+    /// fire the next shot early when the wait is longer than the reload. A reload under
+    /// way goes on and takes the new ammo; a closing or jammed weapon reloads on its next
+    /// pull [design].
+    pub fn swap_ammo(&mut self) {
+        self.magazine = 0;
+        if matches!(self.phase, Phase::SpinUp { .. } | Phase::WindUp { .. }) {
+            self.phase = Phase::Ready;
+        }
+        self.swap_reload = matches!(self.phase, Phase::Ready | Phase::Cooldown { .. });
     }
 
     /// A reload is under way (whole, or any part of a round-by-round one).
@@ -355,7 +372,8 @@ impl Cycle {
         for _ in 0..8 {
             match self.phase {
                 Phase::Ready => {
-                    if i.reload && self.can_reload(i.carried) {
+                    let swapped = std::mem::take(&mut self.swap_reload);
+                    if (i.reload || swapped) && self.can_reload(i.carried) {
                         self.phase = self.start_reload();
                         stop_pull = false;
                         out.push(Event::ReloadStarted);
