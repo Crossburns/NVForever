@@ -22,7 +22,10 @@
 //! - **Switching** ([`switch`], the rule: `fnv_combat::body_weapon`): while it fights,
 //!   every [`body_weapon::SWITCH_SECONDS`] at most it takes up the arm the rule chooses
 //!   for its target's distance; the new arm's equip clip plays and it attacks once that
-//!   is drawn. Its first choice in a fight is made at once (the arm drawn before the fight
+//!   is drawn. A gun whose projectile explodes suits no target within its blast (the
+//!   rule's `Arm::blast`, `npc_combat` holding fire there), unless the creature's combat
+//!   style has Ignore Damaging Self: a sentry bot keeps its minigun inside its missile
+//!   launcher's 1000 units (#1621). Its first choice in a fight is made at once (the arm drawn before the fight
 //!   was chosen for [`FIRST_DISTANCE`]), so a Mister Handy that fights at its target's
 //!   feet takes up its saw rather than stepping back with its flamer; and a creature with
 //!   a melee arm ([`BodyMelee`]) does not step back from a target too near
@@ -43,7 +46,7 @@ use crate::actors::ActorWorld;
 use crate::creature_stance::{CreatureClips, CreatureStance, NoStance, StanceAttach};
 use crate::limbs::ActorRig;
 use crate::locomotion::Dying;
-use crate::npc_combat::{is_gun, Fighters};
+use crate::npc_combat::{gun_reach_of, is_gun, Fighters};
 use crate::outfits::CreatureArms;
 use crate::weapons::{Muzzle, Stance, WeaponHold, WeaponMode};
 use bevy::prelude::*;
@@ -208,6 +211,9 @@ struct BodyArm {
     stance: Option<Arc<Stance>>,
     /// The limb-condition actor value that disables it at 0.
     limb: Option<u16>,
+    /// Its projectile's explosion radius (0: none); the rule's `blast` unless the
+    /// creature's combat style ignores damaging itself.
+    blast: f32,
     rule: Arm,
 }
 
@@ -292,7 +298,8 @@ fn attach(
             };
             let dps = body_weapon::damage_per_second(ws.base_damage, ws.projectile_count, ws.attack_shots_per_sec, ws.fire_rate);
             let name = ws.edid.clone().unwrap_or_else(|| item.to_string());
-            arms.push(BodyArm { weapon: Some(item), name, stance: Some(stance), limb: ws.embedded_limb, rule: Arm { melee: !gun, min_range: ws.min_range, max_range: ws.max_range, dps, usable: true } });
+            let blast = if gun { gun_reach_of(&combat, item, ws, 1.0).blast } else { 0.0 };
+            arms.push(BodyArm { weapon: Some(item), name, stance: Some(stance), limb: ws.embedded_limb, blast, rule: Arm { melee: !gun, min_range: ws.min_range, max_range: ws.max_range, blast, dps, usable: true } });
         }
         commands.entity(e).insert(BodyChecked);
         if arms.is_empty() {
@@ -304,7 +311,7 @@ fn attach(
             !ctx.models.data.vfs.paths(|p| p.starts_with(&pre) && p.ends_with(".kf")).is_empty()
         });
         if has_own {
-            arms.push(BodyArm { weapon: None, name: "its own attack".into(), stance: None, limb: None, rule: Arm { melee: true, min_range: 0.0, max_range: 0.0, dps: 0.0, usable: true } });
+            arms.push(BodyArm { weapon: None, name: "its own attack".into(), stance: None, limb: None, blast: 0.0, rule: Arm { melee: true, min_range: 0.0, max_range: 0.0, blast: 0.0, dps: 0.0, usable: true } });
         }
         let rules: Vec<Arm> = arms.iter().map(|a| a.rule).collect();
         let first = body_weapon::choose(&rules, FIRST_DISTANCE, None).unwrap_or(0);
@@ -367,11 +374,15 @@ fn switch(
         if body.since.is_some_and(|t| now - t < body_weapon::SWITCH_SECONDS) {
             continue;
         }
-        // Arms on a crippled limb are left out.
+        // Arms on a crippled limb are left out; a blast counts unless its combat style
+        // ignores damaging itself.
         let limbs: Vec<Option<u16>> = body.arms.iter().map(|a| a.limb).collect();
-        let usable: Vec<bool> = match script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
-            Some(rt) => with_world(rt, &mut sim, |rt| limbs.iter().map(|l| l.is_none_or(|code| !rt.game.is_crippled(FormId(id), code))).collect()),
-            None => vec![true; limbs.len()],
+        let (usable, ignores_self): (Vec<bool>, bool) = match script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
+            Some(rt) => with_world(rt, &mut sim, |rt| {
+                let usable = limbs.iter().map(|l| l.is_none_or(|code| !rt.game.is_crippled(FormId(id), code))).collect();
+                (usable, rt.game.combat_style(FormId(id)).is_some_and(|s| s.ignore_damaging_self))
+            }),
+            None => (vec![true; limbs.len()], false),
         };
         for (a, u) in body.arms.iter_mut().zip(usable) {
             if a.rule.usable && !u {
@@ -379,6 +390,7 @@ fn switch(
                 info!("body weapons: {id:08X} can no longer use {} (its limb is crippled)", a.name);
             }
             a.rule.usable = u;
+            a.rule.blast = if ignores_self { 0.0 } else { a.blast };
         }
         let rules: Vec<Arm> = body.arms.iter().map(|a| a.rule).collect();
         let to = body_weapon::choose(&rules, d, body.current);
