@@ -927,6 +927,7 @@ impl PlayerBody {
             skeleton: r.skeleton.clone(),
             skel: r.animator.skel.clone(),
             nodes: r.animator.nodes.clone(),
+            base_scale: 1.0,
         };
         Some((r.root, rig))
     }

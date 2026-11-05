@@ -24,8 +24,10 @@
 //!   first saw it in this fight, with its weapon drawn, and a gun only facing it (within
 //!   [`FIRE_FACING`] of straight ahead; owner's playtest list 5 item 33). A gun keeps its own cycle
 //!   (`fnv_combat::attack::Cycle`: fire rate, magazine, reload) as the player's does;
-//!   the trigger is held for automatic weapons and pulled once a shot for the others
-//!   [design]. As the trigger is pulled, a gun fires only with a clear line from its
+//!   an automatic weapon's trigger is held for a burst and let go for a pause
+//!   (`fnv_combat::burst`: the V.A.T.S. burst's rounds, a 0.5–1.5 s pause scaled by the
+//!   style's semi-automatic delay multipliers; embedded weapons too, issue #1448), and
+//!   pulled once a shot for the others [design]. As the trigger is pulled, a gun fires only with a clear line from its
 //!   eyes and muzzle to the target's chest, else its head (`combat_tactics`: a wall in
 //!   the way), whatever detection says; held, it steps aside or closes in [design].
 //!   Test aid `NVF_PLAY_TEST_SEE_THROUGH_WALLS=1`: fighters count their targets as seen
@@ -395,6 +397,8 @@ struct Fighter {
     /// Seconds before a semi-automatic gun may be fired again (its combat style's
     /// firing delay).
     pull_in: f32,
+    /// An automatic gun's burst under way and the pause after it (`fnv_combat::burst`).
+    burst: fnv_combat::burst::Burst,
     /// This fight's confidence modifier; seconds to the next flee check.
     confidence_mod: f64,
     flee_check_in: f32,
@@ -1079,7 +1083,7 @@ impl GunReach {
 
 /// A gun's [`GunReach`] from its data: the projectile its default ammo fires (as
 /// [`is_gun`] reads it) and that projectile's explosion.
-fn gun_reach_of(c: &Combat, id: FormId, ws: &WeaponStats, range_mult: f32) -> GunReach {
+pub(crate) fn gun_reach_of(c: &Combat, id: FormId, ws: &WeaponStats, range_mult: f32) -> GunReach {
     let chain = c.forms.chain(id, None);
     let projectile = chain.as_ref().and_then(|ch| ch.projectile).and_then(|p| c.forms.projectiles.get(&p));
     let blast = chain.as_ref().and_then(|ch| ch.explosion).and_then(|e| c.forms.explosions.get(&e)).map_or(0.0, |e| e.radius);
@@ -1422,6 +1426,7 @@ pub(crate) fn fight(
                         sights: false,
                         ready_sights: None,
                         pull_in: 0.0,
+                        burst: Default::default(),
                         confidence_mod: 0.0,
                         flee_check_in: 0.0,
                         tactic,
@@ -2362,6 +2367,10 @@ pub(crate) fn fight(
                             }
                         }
                     }
+                    // A burst under way ends with the switch to a grenade: the gun's
+                    // next pull starts a fresh one, its pause still running.
+                    fighter.burst.let_go();
+                    fighter.burst.tick(dt);
                 }
                 Arm::Gun(w) => {
                     let Some(ws) = c.forms.weapons.get(w) else { continue };
@@ -2377,11 +2386,14 @@ pub(crate) fn fight(
                     }
                     let reloading = cycle.reloading();
                     fighter.firing_for = if ready && !reloading { fighter.firing_for + dt } else { 0.0 };
-                    // Automatic weapons hold the trigger; others pull it again each time
-                    // the cycle is ready and the style's firing delay has passed. Not while
-                    // it reloads: a pull would stop a round-by-round reload after a round.
+                    // Automatic weapons hold the trigger for a burst, then let it go for a
+                    // pause (`fnv_combat::burst`); others pull it again each time the cycle
+                    // is ready and the style's firing delay has passed. Not while it
+                    // reloads: a pull would stop a round-by-round reload after a round.
                     fighter.pull_in = (fighter.pull_in - dt).max(0.0);
-                    let mut trigger = ready && !reloading && (ws.automatic || (!fighter.pulled && fighter.pull_in <= 0.0));
+                    fighter.burst.tick(dt);
+                    let pull = if ws.automatic { fighter.burst.may_fire() } else { !fighter.pulled && fighter.pull_in <= 0.0 };
+                    let mut trigger = ready && !reloading && pull;
                     // A wall in the way holds the shot (`combat_tactics` module notes),
                     // looked at as the trigger is pulled, not every frame; the shot goes
                     // at the point the line is clear to.
@@ -2434,6 +2446,10 @@ pub(crate) fn fight(
                         }
                     }
                     fighter.pulled = trigger;
+                    if !trigger {
+                        // A burst cut short: the next pull starts a fresh one.
+                        fighter.burst.let_go();
+                    }
                     // An empty magazine is reloaded at once, whether it can fire or not;
                     // it carries what it loads (module notes).
                     let empty = cycle.magazine < cycle.ammo_use && cycle.regen.is_none();
@@ -2443,10 +2459,12 @@ pub(crate) fn fight(
                     for e in events {
                         match e {
                             Event::Fired { .. } => {
+                                let mult = style.map_or((1.0, 1.0), |s| s.semi_auto_delay_mult);
                                 if !ws.automatic {
-                                    let mult = style.map_or((1.0, 1.0), |s| s.semi_auto_delay_mult);
                                     let (lo, hi) = (ws.semi_auto_fire_delay[0] * mult.0, ws.semi_auto_fire_delay[1] * mult.1);
                                     fighter.pull_in = (lo + (hi - lo).max(0.0) * next_unit(&mut f.rng)).max(0.0);
+                                } else if let Some(end) = fighter.burst.fired(ws.fire_rate, mult, next_unit(&mut f.rng)) {
+                                    info!("npc combat: {me_name} fires a burst of {} rounds at {target_name}, then lets go for {:.2} s", end.rounds, end.pause);
                                 }
                                 // Aimed from the eyes, drawn from the muzzle when the weapon
                                 // has one (module notes).

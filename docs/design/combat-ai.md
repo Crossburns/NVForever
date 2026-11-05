@@ -67,8 +67,14 @@ fists (the default draws it holstered).
   and in sight (detection.md), after a reaction time of 0.6 s from first seeing it in
   this fight, with its weapon drawn (alerted actors draw it, alert.md §5).
 - **Guns** keep their own `fnv_combat::attack::Cycle`, as the player's: the weapon's fire
-  rate, magazine and reload. The trigger is held for automatic weapons and pulled again
-  for each shot of the others.
+  rate, magazine and reload. An automatic weapon's trigger is held for a burst and let
+  go for a pause (`fnv_combat::burst`, issue #1448) [design: the original's rule is not
+  known]: a burst is the V.A.T.S. burst's rounds (0.4 s of the fire rate, 3 to 8), the
+  pause 0.5–1.5 s with each end scaled by the combat style's Semi-Auto Firing Delay Mult
+  (min, max); a burst cut short (sight lost, a wall, a reload) starts afresh without a
+  pause. Embedded weapons (Securitrons, sentry bots) burst too. The trigger is pulled
+  again for each shot of the others. Log: `npc combat: <name> fires a burst of N rounds
+  at <target>, then lets go for S s`.
 - **Reloads** (owner 2026-10-17: NPCs never reloaded in test runs): an empty magazine is
   reloaded at once, fired at or not, with the weapon's reload clips (the player's:
   `1hpreloada.kf`; round by round the opening clip `1hpreloadxstart.kf`, then
@@ -1727,6 +1733,17 @@ bloatfly and protectron folders also keep stance clips there.
   per second; at most one switch every 1.5 s, the new arm's equip clip played before it
   attacks. Mister Handy: saw within 192, flamer beyond. Mister Gutsy: flamer within 512,
   plasma gun beyond 600, and between the two the one in use.
+- **A gun suits no target within its own blast** [design, #1621]: a gun whose projectile
+  explodes counts its explosion radius as one more Min Range (a fresh choice wants the
+  target 15 % beyond it, the arm in use keeps to the radius itself), unless the
+  creature's combat style has Ignore Damaging Self (the exception `npc_combat`'s blast
+  hold makes, §16). Before (observed 2026-11-05, testing #1585): a Hardened Sentry Bot
+  (CrSentryBotMGHard: SentryBotMinigun2HR 500–2000, 9 × 15/s; SentryBotMissileLauncher2HL
+  500–2000, 20 × 1.58/s, MissileExplosion radius 1000) nearer than both Min Ranges took
+  the launcher (the tie on the smallest Min Range went to it), held fire within the
+  blast and kept it, so it stopped attacking. Now it fires its minigun at any distance
+  (its damage per second is higher) and takes up the launcher only beyond 1000 units
+  with the minigun lost to a crippled limb.
 - The first choice in a fight is made at once, and a creature with a melee arm does not
   step back from a target within `BACK_OFF_WITHIN` (256) [design]. Before (2026-10-25,
   full smoke on main 8ec4062d): Mister Handy, drawn with its flamer, stepped back from the

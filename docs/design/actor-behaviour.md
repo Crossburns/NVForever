@@ -387,7 +387,7 @@ leave crosses (marker ID 10) out for anyone; a package that names or links to on
 point, a Find and a Use Item At do not. All this before anything is chosen or kept, and the
 engine refuses a getting-on or loop clip that does not fit before binding it, and plays no
 exit clip that does not [design, interim: furniture.md §9, issue #1522; a few minutes'
-watch of the original found no creature on furniture, observer-checks.md item 85].
+watch of the original found no creature on furniture, observer-checks.md item 86].
 Not done:
 an actor that arrives while not drawn sits down only when it is next drawn (it walks
 the last steps then, instead of being found seated); `fnvtool ai run` (headless) has no
@@ -455,8 +455,24 @@ still happen elsewhere.
 
 Objects are references of the area's cell, present, at about the actor's height, not
 given to another actor (a seat is kept for an actor from the moment it chooses it), and
-with a way to them. Random numbers are the sandbox's own (seeded by actor and package),
-so runs repeat and the script runtime's are not disturbed.
+not waiting out a failed way to them. Random numbers are the sandbox's own (seeded by
+actor and package), so runs repeat and the script runtime's are not disturbed.
+
+**An object with no way to it** [design; issue #1504; the numbers are ours, neither the
+documentation nor the original gives any]: the actor stands 5 seconds and chooses again,
+and that object stays out of the choices for 60 seconds of `Game::time` from the failure,
+then 120, 240, 480 and from then on 600 for each further failure in a row. The wait ending
+does nothing by itself (no search, no random number, no event): the object is simply among
+the candidates at the sandbox's next choice, so a way that has come back is found, and one
+that has not costs one search per wait (at most nine in the first 3,600 seconds, for one
+object's consecutive failures in one retained sandbox; competing behaviours mean fewer). Its record goes only when the behaviour
+with that object begins; a walk to the object begun is not enough, and combat interrupting
+the sandbox leaves the record alone. The record is not saved: a load discards deadlines and
+stages and restarts the backoff, as a new sandbox does. An object at the cap with the full
+600 seconds left to wait gets up to four more searches in that time, for each failed object at each load (in the
+retry tests' timing, about 0.5, 65.5, 190.5 and 435.5 seconds after it; other behaviours can
+move those); a shorter wait left may mean fewer. No test loads a game here; this is from the
+delays.
 
 **Also in this step**: a patrol waits out a point's idle time (REFR `XPRD`) before going
 on [documented: Idle Markers, Patrol Data]; the furniture a package gives its actor

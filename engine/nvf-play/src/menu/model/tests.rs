@@ -400,6 +400,29 @@ fn non_playable_items_are_not_listed_and_stay_in_containers() {
 }
 
 #[test]
+fn nameless_items_are_listed_nowhere() {
+    // #1603: DONOTUSEBookGeneric07 has no FULL; its row read as the Editor ID.
+    let mut f = fixture();
+    let anvil = f.forms.bases.get_mut(&FormId(ANVIL)).unwrap();
+    assert!(anvil.edid.is_some(), "the fixture's anvil has an Editor ID to fall back on");
+    anvil.name = None;
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    let mut m = MenuModel::open_container(&mut w, FormId(BOX_REF)).unwrap();
+    assert!(m.list(Side::Container).rows.iter().all(|r| r.item != FormId(ANVIL)));
+    m.apply(&mut w, Command::TakeAll);
+    assert_eq!(count(&mut w, BOX_REF, ANVIL), 1, "the nameless item stays");
+    // Carried, it is not listed either, the player's inventory included.
+    w.add_item(PLAYER, FormId(ANVIL), 1).unwrap();
+    let inv = MenuModel::open_inventory(&mut w).unwrap();
+    assert!(inv.list(Side::Player).rows.iter().all(|r| r.item != FormId(ANVIL)));
+    // A blank name is no name.
+    f.forms.bases.get_mut(&FormId(ANVIL)).unwrap().name = Some("  ".into());
+    let w = World::new(&f.forms, &f.refs, SimConfig::default());
+    assert!(!crate::menu::model::shown(w.forms, FormId(ANVIL), true));
+    assert!(crate::menu::model::shown(w.forms, FormId(RIFLE), false), "a named item is shown");
+}
+
+#[test]
 fn non_playable_weapons_show_only_in_the_players_inventory() {
     let mut f = fixture();
     // The rifle stands in for a companion's non-playable weapon (Boone's rifle).

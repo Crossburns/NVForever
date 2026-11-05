@@ -107,6 +107,17 @@ pub struct PhysState {
     pub destruction_models: HashMap<u32, String>,
     /// The destruction model each reference was last given collision from.
     built_models: HashMap<u32, String>,
+    /// The pose (position, Euler angles) each placed reference's collision was last built
+    /// at, for [`Self::repose_ref`] to see a script's move of collision that physics does
+    /// not move.
+    built_at: HashMap<u32, ([f32; 3], [f32; 3])>,
+    /// Script moves of fixed or keyframed collision not built yet, by when the last one
+    /// came (seconds, the caller's clock): built once the reference rests
+    /// ([`REPOSE_SETTLE`]) or strays far from where it was built ([`Self::repose_ref`]).
+    repose_pending: BTreeMap<u32, f64>,
+    /// Collision built again for a script's move ([`Self::repose_ref`]), for tests and
+    /// the stats line.
+    pub reposes: u64,
     /// References given collision so far (each add, and each build again): a reader that
     /// must act on rebuilt collision (nvforever `wrecks.rs`) looks again only when it grew.
     pub refs_built: u64,
@@ -192,6 +203,9 @@ impl Default for PhysState {
             animated: BTreeMap::new(),
             destruction_models: HashMap::new(),
             built_models: HashMap::new(),
+            built_at: HashMap::new(),
+            repose_pending: BTreeMap::new(),
+            reposes: 0,
             refs_built: 0,
             drawn: HashMap::new(),
             player_sink: 0.0,
@@ -493,6 +507,22 @@ pub struct PlacedDynamic {
 /// units) from where it was added [engineering choice: clutter placed a little above its
 /// support settles by a unit or less when its cell loads, which is not a push].
 pub const MOVED_DISTANCE: f32 = 1.0;
+
+/// How far (game units) a script may move fixed or keyframed collision before it is
+/// built again at once, rather than when the reference rests ([`PhysState::repose_ref`])
+/// [engineering choice: about a quarter of an actor's height; a slow lift or a turning
+/// sign rebuilds a few times a second at most].
+pub const REPOSE_NOW_DISTANCE: f32 = 32.0;
+
+/// How far (largest rotation-matrix entry difference, about radians for small turns) a
+/// script may turn fixed or keyframed collision before it is built again at once
+/// [engineering choice: about 15 degrees; a 10 degree per second turn rebuilds every
+/// 1.5 s].
+pub const REPOSE_NOW_ANGLE: f32 = 0.26;
+
+/// Seconds with no script move after which held-back collision is built where its
+/// reference rests ([`PhysState::flush_reposes`]) [engineering choice].
+pub const REPOSE_SETTLE: f64 = 0.25;
 /// Or turned this much (largest difference of a rotation matrix entry, about 1.1 degrees)
 /// [engineering choice].
 pub const MOVED_ROTATION: f32 = 0.02;
@@ -951,6 +981,7 @@ impl PhysState {
             }
         }
         self.refs_built += 1;
+        self.built_at.insert(pl.form_id, (pl.position, pl.rotation));
         let counts = &mut self.stats.counts;
         *counts.entry("with_collision").or_default() += 1;
         match drawn {
@@ -991,7 +1022,7 @@ impl PhysState {
         // Test aid: the reference as its made-up cell has it.
         #[cfg(test)]
         if let (Some(fake), Some(&cell)) = (self.fake, self.ref_cell.get(&r)) {
-            let job = Job { models: self.fake_models(), ..self.job(ctx.d, cell) };
+            let job = with_poses(Job { refs: vec![r], models: self.fake_models(), ..self.job(ctx.d, cell) }, ctx.sim);
             let Some(e) = fake(&job).refs.into_iter().find(|e| e.form_id == r) else { return false };
             let shapes = e.shapes;
             return self.apply(ctx, e.placement, |_| shapes.expect("made up with its placement"));
@@ -1033,6 +1064,8 @@ impl PhysState {
             self.animated.remove(&r);
             self.drawn.remove(&r);
             self.built_models.remove(&r);
+            self.built_at.remove(&r);
+            self.repose_pending.remove(&r);
             if self.ref_cell.get(&r) == Some(&cell) {
                 self.ref_cell.remove(&r);
             }
@@ -1071,25 +1104,87 @@ impl PhysState {
     }
 
     /// A script moved or turned reference `id` (SetPos, SetAngle, Rotate, SetScale, the
-    /// console's too): when its collision is one dynamic body still at the old pose, the
-    /// settle write-back ([`Self::settle_created`], [`Self::settle_placed`]) would copy that
-    /// pose over the move, so the collision is built again at the simulation's pose.
-    /// Found 2026-11-01: a raised bottle read its old height again at
-    /// once [observed: GetPos Z 8396.80 after SetPos Z 8461]. Collision that is not one
-    /// dynamic body is left where it was (not written back, so no move is lost; it
-    /// collides at the old place until its cell loads again) [engineering choice].
-    pub fn repose_ref(&mut self, ctx: &LoadCtx, id: u32) {
+    /// console's too) at time `now` (seconds): its collision is built again at the
+    /// simulation's pose when it is not there already.
+    ///
+    /// - One dynamic body (placed or created clutter): built again at once, since the
+    ///   settle write-back ([`Self::settle_created`], [`Self::settle_placed`]) would copy
+    ///   the body's old pose over the move. Found 2026-11-01: a raised bottle read its old
+    ///   height again at once [observed: GetPos Z 8396.80 after SetPos Z 8461].
+    /// - Any other collision of a placed reference (fixed bodies of a STAT or SCOL,
+    ///   keyframed bodies, the jointed bodies of an XRGD-posed skeleton held by
+    ///   `prepare::hold_jointed`, a door's or an animated group's): physics never moves
+    ///   it, so it stayed where it was built while the model was drawn at the new place
+    ///   (issue #1466). A script may turn such a reference a little every frame, so it is
+    ///   not built again on every move: at once only when the simulation's pose is more
+    ///   than [`REPOSE_NOW_DISTANCE`] or [`REPOSE_NOW_ANGLE`] from where it was built
+    ///   (`built_at`), otherwise once it has rested [`REPOSE_SETTLE`]
+    ///   ([`Self::flush_reposes`]). A skeleton's stored pose is laid out again from the
+    ///   new reference pose, as at load.
+    ///
+    /// A created reference whose collision is not one dynamic body is left where it was
+    /// [engineering choice: not met yet].
+    pub fn repose_ref(&mut self, ctx: &LoadCtx, id: u32, now: f64) {
+        let Some(s) = ctx.sim.world.peek(FormId(id)) else { return };
         let single = match self.created.get(&id) {
             Some(cb) => cb.local.filter(|_| cb.dynamic).map(|l| (l, 1.0)),
             None => self.placed_dynamic.get(&id).map(|p| (p.local, p.scale)),
         };
-        let Some((local, scale)) = single else { return };
-        let (Some(b), Some(s)) = (self.world.ref_bodies(id).first().copied(), ctx.sim.world.peek(FormId(id))) else { return };
-        let (pos, rot) = dropped::ref_pose_from_body(&b, &local, scale);
+        let (pos, rot) = match single {
+            Some((local, scale)) => {
+                let Some(b) = self.world.ref_bodies(id).first().copied() else { return };
+                dropped::ref_pose_from_body(&b, &local, scale)
+            }
+            None if FormId(id).is_dynamic() || !self.has_collision(id) => return,
+            None => {
+                let Some(&(pos, angles)) = self.built_at.get(&id) else { return };
+                (pos, ref_rotation(angles))
+            }
+        };
         let dist = (0..3).map(|i| (pos[i] - s.pos[i]).powi(2)).sum::<f32>().sqrt();
-        if dist <= MOVED_DISTANCE && max_diff(&ref_rotation(s.rot), &rot) <= 1e-3 {
+        let turn = max_diff(&ref_rotation(s.rot), &rot);
+        if dist <= MOVED_DISTANCE && turn <= 1e-3 {
+            self.repose_pending.remove(&id);
             return;
         }
+        if single.is_none() && dist <= REPOSE_NOW_DISTANCE && turn <= REPOSE_NOW_ANGLE {
+            self.repose_pending.insert(id, now);
+            return;
+        }
+        self.rebuild_moved(ctx, id, dist);
+    }
+
+    /// Build again the collision of the references [`Self::repose_ref`] held back that
+    /// no script has moved for [`REPOSE_SETTLE`] by time `now` (seconds).
+    pub fn flush_reposes(&mut self, ctx: &LoadCtx, now: f64) {
+        let rested: Vec<u32> = self.repose_pending.iter().filter(|(_, &t)| now - t >= REPOSE_SETTLE).map(|(&r, _)| r).collect();
+        for id in rested {
+            self.repose_pending.remove(&id);
+            if !self.has_collision(id) {
+                continue;
+            }
+            let (Some(s), Some(&(pos, angles))) = (ctx.sim.world.peek(FormId(id)), self.built_at.get(&id)) else { continue };
+            let dist = (0..3).map(|i| (pos[i] - s.pos[i]).powi(2)).sum::<f32>().sqrt();
+            if dist > MOVED_DISTANCE || max_diff(&ref_rotation(s.rot), &ref_rotation(angles)) > 1e-3 {
+                self.rebuild_moved(ctx, id, dist);
+            }
+        }
+    }
+
+    /// Whether a script move is waiting on reference `id` to rest ([`Self::repose_ref`]).
+    pub fn repose_waiting(&self, id: u32) -> bool {
+        self.repose_pending.contains_key(&id)
+    }
+
+    /// Build reference `id`'s collision again at the simulation's pose, `dist` from where
+    /// it was. Keyframed collision switched off (a swing trap's or a wreck's held bodies
+    /// after let-go, while their object ragdoll swings: `set_ref_keyframed_solid`) stays
+    /// off in the new build, so the move does not bring back a solid copy beside the
+    /// ragdoll.
+    fn rebuild_moved(&mut self, ctx: &LoadCtx, id: u32, dist: f32) {
+        self.repose_pending.remove(&id);
+        // Turning them solid reports whether any were off; they are removed next anyway.
+        let off = self.world.set_ref_keyframed_solid(id, true) > 0;
         self.world.remove_ref(id);
         let built = if FormId(id).is_dynamic() {
             self.created.remove(&id);
@@ -1099,9 +1194,14 @@ impl PhysState {
             self.doors.remove(&id);
             self.animated.remove(&id);
             self.drawn.remove(&id);
+            self.built_at.remove(&id);
             self.add_ref(ctx, id)
         };
-        info!("collision of 0x{id:08X} built again where a script moved it ({:.1} from its body){}", dist, if built { "" } else { ": none now" });
+        if built && off {
+            self.world.set_ref_keyframed_solid(id, false);
+        }
+        self.reposes += 1;
+        debug!("collision of 0x{id:08X} built again where a script moved it ({dist:.1} from its body){}", if built { "" } else { ": none now" });
     }
 
     /// Test aid: every destruction model, by FormID (made-up cells have no index for
@@ -1571,8 +1671,19 @@ fn travel(
     }
     *location = to;
     let ctx = LoadCtx { d: &d, sim: &sim, data: data.as_deref() };
-    let cell = phys.cell_at(t.feet);
-    phys.load(&ctx, cell);
+    // Outdoors the squares around the arrival too, before the player is placed: a
+    // reference placed in a neighbouring square can be the floor at the door (#1584:
+    // Vault 3's way out (0x000EC6EB to WastelandNVmini) lands on NVVault3Entrance, placed
+    // in the square to the west, so the player was put on the terrain inside it), as the start waits for them
+    // (`ready_around`, #1103).
+    let centre = phys.cell_at(t.feet);
+    let around: Vec<PhysCell> = match centre {
+        PhysCell::Exterior(cx, cy) => cells::wanted((cx, cy)).into_iter().map(|(x, y)| PhysCell::Exterior(x, y)).collect(),
+        c => vec![c],
+    };
+    for cell in around {
+        phys.load(&ctx, cell);
+    }
     let hit = phys.arrive_player(t.feet).support;
     let feet = phys.player.as_ref().map_or(t.feet, |c| c.feet);
     player.feet = feet;
@@ -1603,7 +1714,7 @@ fn ref_changed(
     mut repose: MessageReader<crate::RefRepose>,
     (broken, mut broken_seen): (Option<Res<Messages<crate::combat::WeaponBroken>>>, Local<bevy::ecs::message::MessageCursor<crate::combat::WeaponBroken>>),
     d: Res<PlayWorld>,
-    sim: Res<SimState>,
+    (sim, time): (Res<SimState>, Res<Time>),
     data: Option<Res<GameData>>,
     mut phys: ResMut<PhysState>,
 ) {
@@ -1612,16 +1723,18 @@ fn ref_changed(
         ids.extend(broken_seen.read(broken).filter_map(|b| b.dropped).map(|r| r.0));
     }
     let moved: BTreeSet<u32> = repose.read().map(|m| m.form_id).collect();
-    if ids.is_empty() && moved.is_empty() {
+    if ids.is_empty() && moved.is_empty() && phys.repose_pending.is_empty() {
         return;
     }
+    let now = time.elapsed_secs_f64();
     let ctx = LoadCtx { d: &d, sim: &sim, data: data.as_deref() };
     for id in ids {
         phys.sync_ref(&ctx, id);
     }
     for id in moved {
-        phys.repose_ref(&ctx, id);
+        phys.repose_ref(&ctx, id, now);
     }
+    phys.flush_reposes(&ctx, now);
 }
 
 /// How often the game's destruction models are looked at, seconds [design: as nvforever's

@@ -287,7 +287,8 @@ engine if needed, and delete the item here.
     - Greetings flagged Goodbye are said at you; when an actor starts the conversation
       they hold you for one line.
     - A generic Goodbye is added where the only Goodbye has an end script (100+ lists).
-    - Tab leaves only where a Goodbye is offered.
+    - Tab leaves only where a Goodbye is offered, or at any topic list (#1595: Julie
+      Farkas's has none; how does the original leave her?).
     - A skipped line still runs its end script.
     - Spent Say Once questions vanish.
     - No pause is added between voiced lines (scenes run 0.3–0.4 s short per line).
@@ -1234,9 +1235,19 @@ The numbers above stay put so links to them hold; each item here gives its own p
     [observed], which rules out those two traits of its own for its (206, 147, 53), not an
     opacity from above it or the compositing; font 2's texels [hypothesis].
 
+## Added 2026-11-05 (items without a name, issue #1603)
+
+85. **Does the original list an item that has no name?** (P3; engine/nvf-play/src/menu/model.rs,
+    `shown`.) NVForever leaves an item out of every inventory list (the player's, containers,
+    barter) when its record has no FULL or a blank one [hypothesis]. The vanilla
+    DONOTUSEBookGeneric07 (0x000199BB, BOOK, no FULL) is in SublistBooks100, under the
+    household and library clutter lists. A capture: `player.additem 000199BB 1`, then open the
+    Pip-Boy's Misc page and a container holding one. Is it absent, a blank row, or shown by
+    another name?
+
 ## Added 2026-11-05 (creatures and furniture, issue #1522)
 
-85. **Does a sandboxing creature near free furniture ever use it?** (P2; furniture.md §9.)
+86. **Does a sandboxing creature near free furniture ever use it?** (P2; furniture.md §9.)
     Answered in part, minutes of watching and not days [observed, 2026-11-04 and 05, the
     original over Moonlight]: no creature read as on furniture in any of these.
     - Super mutants `001744C1` to `C4` among `SuperMutantBed` and `FloorSitMarker`: 534 s,

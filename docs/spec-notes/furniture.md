@@ -479,7 +479,7 @@ mongrel climbed a Legion cross, with a human clip bound to its skeleton [observe
 game's log, issue #1522]. What follows is NVForever's policy, an interim one. Nothing here
 says how the original decides, only that a watch of it found no creature on furniture:
 
-- [observed, 2026-11-04 and 05, the original, minutes of watching and not days; item 85 of
+- [observed, 2026-11-04 and 05, the original, minutes of watching and not days; item 86 of
   docs/handoff/observer-checks.md] no creature read as on furniture: four super mutants
   among `SuperMutantBed` and `FloorSitMarker` for 534 s at hours 12 and 23 (one of them never
   under a sandbox package while sampled); Colmillo and
