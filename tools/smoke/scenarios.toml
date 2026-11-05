@@ -8295,7 +8295,7 @@ name = "player-own-hit-no-credit"
 source = "#1614: the player's own hit with the grenade rifle kills them (the hit aid, the path their blast takes, without #1581's misses): no kill XP or challenge (docs/spec-notes/experience.md, a design choice)"
 areas = ["combat"]
 paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/challenges.rs", "crates/fnv-game/src/misc_stats.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HIT = "8:player:500:0007EA25" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HIT = "8:player:500:0x0007EA25" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
 run_seconds = 14
 order = [[
