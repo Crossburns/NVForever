@@ -8334,6 +8334,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "aim-reload-lowers-sights"
+source = "owner's report #1642: a reload or a jam while aiming down the sights plays with the sights still up; they should come down for it and go back up after while Block is held (engine/nvf-play/src/combat.rs sights_held_down, aim_zoom.rs)"
+note = "the 10mm pistol (0000434F) drawn at 9 s, Block held from 12 s to 19 s, one shot at 12.5 s, a reload at 14 s (no god mode: it keeps the magazine full, so there would be nothing to reload)"
+areas = ["combat", "camera"]
+paths = ["engine/nvf-play/src/aim_zoom.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/iron_sights.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_CONTROL = "9:weapon,12:aim,12.5:fire,12.6:fire,14:reload,19:aim" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12"]
+run_seconds = 23
+expect = [
+  { re = 'aim zoom: \S+ \(\S+\) sight FOV', label = "aiming zooms in" },
+  { re = 'aim zoom: back to the unzoomed view', label = "the reload zooms back out with Block still held" },
+  { re = 'combat: reloaded \d+', label = "the reload finishes" },
+  { re = 'aim zoom: \S+ \(\S+\) sight FOV', label = "after the reload the sights come back up on their own" },
+  { re = 'aim zoom: back to the unzoomed view', label = "letting go of Block zooms out at the end" },
+]
+
+[[scenario]]
 name = "scope-overlay"
 source = "ESM gap audit row 10 (docs/handoff/esm-gap-audit-2026-10-21.md): a scoped weapon aimed shows its WEAP MOD3 picture at its Sight FOV, the arms and crosshair go, the view sways (docs/spec-notes/weapon-scopes.md, engine/nvforever/src/scope_view.rs)"
 note = "the sniper rifle (00004353, Has Scope, mildotscope.nif) drawn at 9 s, Block held 12-15 s at noon; screenshot at 14 s through the scope"
