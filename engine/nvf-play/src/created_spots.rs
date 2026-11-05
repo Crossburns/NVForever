@@ -68,7 +68,7 @@ pub enum Placement {
 /// The caller of a PlaceAtMe that put an actor at `pos` in `cell`: a reference of the cell
 /// (placed or created, not `actor`) standing at exactly that position.
 fn caller(world: &World, refs: &RefTable, cell: Option<FormId>, pos: [f32; 3], actor: FormId) -> Option<FormId> {
-    let at = |id: FormId| world.peek(id).filter(|s| !s.deleted && dist2(s.pos, pos) < 0.25).map(|_| id);
+    let at = |id: FormId| world.peek(id).filter(|s| !s.deleted() && dist2(s.pos, pos) < 0.25).map(|_| id);
     let placed = cell.and_then(|c| refs.by_cell.get(&c)).into_iter().flatten().copied();
     let created = world.created().map(|(id, _)| id);
     placed.chain(created).filter(|&id| id != actor).find_map(at)
@@ -169,7 +169,7 @@ pub fn place(world: &mut World, refs: &RefTable, phys: &mut PhysState, actors: &
     // Characters, and the actors created before (most stand without a character).
     let mut taken: Vec<[f32; 3]> = phys.npcs.values().map(|b| b.ch.feet).collect();
     let forms = world.forms;
-    taken.extend(world.created().filter(|(id, s)| !s.deleted && !actors.contains(id) && fnv_game::ai::is_actor_base(forms, s.base)).map(|(_, s)| s.pos));
+    taken.extend(world.created().filter(|(id, s)| !s.deleted() && !actors.contains(id) && fnv_game::ai::is_actor_base(forms, s.base)).map(|(_, s)| s.pos));
     let mut out = Vec::new();
     for &actor in actors {
         let Some((cell, pos)) = world.peek(actor).map(|s| (s.cell, s.pos)) else { continue };

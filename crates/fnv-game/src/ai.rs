@@ -512,7 +512,7 @@ impl<'a> Game<'a> {
     /// combat as placed actors do.
     pub fn created_actors(&self) -> Vec<FormId> {
         let forms = self.world.forms;
-        self.world.created().filter(|(_, s)| !s.deleted && is_actor_base(forms, s.base)).map(|(id, _)| id).collect()
+        self.world.created().filter(|(_, s)| !s.deleted() && is_actor_base(forms, s.base)).map(|(id, _)| id).collect()
     }
 
     /// Placed actors whose packages the periodic choice covers: those in loaded cells

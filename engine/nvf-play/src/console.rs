@@ -879,7 +879,7 @@ pub fn describe(id: u32, d: &PlayData, sim: &SimState, rt: Option<&mut Runtime>)
         out.push(format!("cell {}  pos {:.0} {:.0} {:.0}", cell.unwrap_or_else(|| "-".into()), p[0], p[1], p[2]));
     }
     if let Some(s) = state {
-        out.push(format!("{}{}{}", if s.enabled { "enabled" } else { "disabled" }, if s.deleted { ", removed" } else { "" }, if s.count != 1 { format!(", count {}", s.count) } else { String::new() }));
+        out.push(format!("{}{}{}", if s.enabled() { "enabled" } else { "disabled" }, if s.deleted() { ", removed" } else { "" }, if s.count != 1 { format!(", count {}", s.count) } else { String::new() }));
     } else if let Some(p) = placed.filter(|p| sim.forms.item(p.base).is_some()) {
         // Not touched yet: the stack it was placed with.
         let n = sim.forms.placed_count(p.base, p.count);

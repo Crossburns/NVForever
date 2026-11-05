@@ -21,7 +21,7 @@ pub fn enable(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
         g.emit(EventKind::RefEnabled { reference: r, fade });
         return none();
     }
-    let was = g.world.get(r).map_err(|e| e.to_string())?.enabled;
+    let was = g.world.get(r).map_err(|e| e.to_string())?.enabled();
     g.world.set_enabled(r, true).map_err(|e| e.to_string())?;
     if !was {
         g.emit(EventKind::RefEnabled { reference: r, fade });
@@ -57,13 +57,13 @@ pub fn disable(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     if fade && held {
         return none();
     }
-    if fade && g.world.get(r).map_err(|e| e.to_string())?.enabled {
+    if fade && g.world.get(r).map_err(|e| e.to_string())?.enabled() {
         g.script_looks.fading_out.insert(r, g.time + FADE_OUT_HOLD);
         g.emit(EventKind::RefDisabled { reference: r, fade });
         return none();
     }
     g.script_looks.fading_out.remove(&r);
-    let was = g.world.get(r).map_err(|e| e.to_string())?.enabled;
+    let was = g.world.get(r).map_err(|e| e.to_string())?.enabled();
     g.world.set_enabled(r, false).map_err(|e| e.to_string())?;
     if was {
         g.emit(EventKind::RefDisabled { reference: r, fade });
