@@ -100,6 +100,16 @@ fn fake_cell(job: &Job) -> Prepared {
     Prepared { cell: job.cell, heights: Some(heights), terrain, refs, times: LoadTimes::default() }
 }
 
+/// [`fake_cell`] with its second box keyframed (as a swing trap's held bodies).
+fn fake_cell_keyframed(job: &Job) -> Prepared {
+    let mut c = fake_cell(job);
+    let e = &mut c.refs[1];
+    let pl = e.placement.as_ref().expect("placed");
+    let prepared = PreparedRef::new(&PhysParams::default(), &RefPose::from_placement(pl), &[object(50.0, Motion::Keyframed)]);
+    e.shapes.as_mut().expect("shapes").prepared = Some(prepared);
+    c
+}
+
 fn state(manual: bool) -> PhysState {
     let loader = if manual { loader::Loader::manual() } else { loader::Loader::default() };
     PhysState { fake: Some(fake_cell), loader, ..Default::default() }
@@ -465,7 +475,7 @@ fn a_script_moved_fixed_reference_collides_at_its_new_pose() {
     assert!(p.has_collision(id) && !p.placed_dynamic.contains_key(&id), "fixed collision, not one dynamic body");
     let built = p.refs_built;
     // Told of a move it has not made: nothing built.
-    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id);
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id, 0.0);
     assert_eq!(p.refs_built, built);
     // SetPos and SetAngle.
     let (to, angles) = ([placed[0] + 400.0, placed[1] - 200.0, placed[2] + 30.0], [0.0, 0.0, 1.2]);
@@ -474,7 +484,7 @@ fn a_script_moved_fixed_reference_collides_at_its_new_pose() {
         s.pos = to;
         s.rot = angles;
     }
-    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id);
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id, 0.0);
     assert_eq!(p.refs_built, built + 1, "built again");
     let bodies = p.world.ref_bodies(id);
     assert_eq!(bodies.len(), 1);
@@ -483,8 +493,62 @@ fn a_script_moved_fixed_reference_collides_at_its_new_pose() {
     }
     assert!(fnv_world::transform::max_diff(&bodies[0].rotation, &fnv_world::transform::ref_rotation(angles)) < 1e-4);
     // Where it was built now: nothing more.
-    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id);
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id, 0.0);
     assert_eq!(p.refs_built, built + 1);
+}
+
+/// A script that turns a fixed reference a little every frame (Rotate, 10 degrees a
+/// second at 60 frames a second) does not build its collision again every frame: only
+/// when it strays [`super::REPOSE_NOW_ANGLE`] from its build, and once when it rests.
+#[test]
+fn a_reference_turned_every_frame_is_built_again_a_bounded_number_of_times() {
+    let d = play_data();
+    let id = fake_ref(0, 0, 1);
+    let placed = [300.0 + 600.0, 1500.0 + 900.0, 60.0];
+    let mut sim = sim_with_placed(id, placed, [0.0, 0.0, 0.4]);
+    let mut p = state(true);
+    p.load(&LoadCtx { d: &d, sim: &sim, data: None }, PhysCell::Exterior(0, 0));
+    assert!(p.has_collision(id) && !p.placed_dynamic.contains_key(&id));
+    let (dt, frames) = (1.0 / 60.0, 180);
+    let step = 10f32.to_radians() * dt as f32;
+    for f in 1..=frames {
+        sim.world.get(FormId(id)).expect("placed").rot[2] += step;
+        let now = f as f64 * dt;
+        let ctx = LoadCtx { d: &d, sim: &sim, data: None };
+        p.repose_ref(&ctx, id, now);
+        p.flush_reposes(&ctx, now);
+    }
+    // 30 degrees in 3 s: twice past 15 degrees from the last build, at most.
+    assert!(p.reposes <= 2, "built again {} times in {frames} frames", p.reposes);
+    assert!(p.repose_waiting(id), "the last turn waits for it to rest");
+    // It rests: built once more, where the script left it.
+    let rest = frames as f64 * dt + super::REPOSE_SETTLE;
+    let before = p.reposes;
+    p.flush_reposes(&LoadCtx { d: &d, sim: &sim, data: None }, rest);
+    assert_eq!(p.reposes, before + 1);
+    assert!(!p.repose_waiting(id));
+    let rot = fnv_world::transform::ref_rotation([0.0, 0.0, 0.4 + step * frames as f32]);
+    assert!(fnv_world::transform::max_diff(&p.world.ref_bodies(id)[0].rotation, &rot) < 1e-3);
+    p.flush_reposes(&LoadCtx { d: &d, sim: &sim, data: None }, rest + 1.0);
+    assert_eq!(p.reposes, before + 1, "nothing more once built where it rests");
+}
+
+/// Keyframed collision switched off (a swing trap's held bodies after let-go) stays off
+/// when a script's move builds it again.
+#[test]
+fn a_switched_off_collision_stays_off_when_built_again() {
+    let d = play_data();
+    let id = fake_ref(0, 0, 1);
+    let placed = [300.0 + 600.0, 1500.0 + 900.0, 60.0];
+    let mut sim = sim_with_placed(id, placed, [0.0, 0.0, 0.4]);
+    let mut p = PhysState { fake: Some(fake_cell_keyframed), ..state(true) };
+    p.load(&LoadCtx { d: &d, sim: &sim, data: None }, PhysCell::Exterior(0, 0));
+    assert_eq!(p.world.set_ref_keyframed_solid(id, false), 1, "its keyframed box switched off");
+    sim.world.get(FormId(id)).expect("placed").pos[0] += 400.0;
+    p.repose_ref(&LoadCtx { d: &d, sim: &sim, data: None }, id, 0.0);
+    assert_eq!(p.reposes, 1);
+    assert_eq!(p.world.set_ref_keyframed_solid(id, false), 0, "still off after the build");
+    assert_eq!(p.world.set_ref_keyframed_solid(id, true), 1, "and there to switch on again");
 }
 
 /// A STAT's dynamic bodies are fixed (the saloon's motorcycles, playtest list 5 item 59);
