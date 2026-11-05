@@ -10692,8 +10692,8 @@ expect = [
 
 [[scenario]]
 name = "blast-perks-mine-plain"
-source = "#1569 (docs/spec-notes/perk-entry-points.md §2): the frag mine's blast on the player with no perks, the figure blast-perks-mine-toughness is read against"
-note = "the mines-blast-limbs set-up, Health 200, no armour: 88.4 at 30 units"
+source = "#1569 (docs/spec-notes/perk-entry-points.md §2): the frag mine's blast on the player with no perks: it hits, and no perk changes it"
+note = "the mines-blast-limbs set-up, Health 200, no armour. The damage falls off with where the player lands (88.4 at 30 units, 90.1 at 25), so the blast line carries no figure"
 areas = ["combat", "perks"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/damage.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "4:player.setav explosives 5;player.getav health;player.getav damagethreshold;4.6:close;12:player.getav health;12.4:close", NVF_PLAY_TEST_SCRIPT = "7:moveto:player:0x00172DB5:0:0:0" }
@@ -10701,7 +10701,7 @@ args = ["--play", "--pos=-61200,-52600,6300", "--hour", "12", "--no-voice", "--n
 run_seconds = 16
 expect = [
   { re = 'mines: 0x00000014 sets off mine 0x00172DB5', label = "the player sets the mine off" },
-  { re = 'combat: blast MineFragExplosion on 0x00000014 at \d+: (?P<n>[\d.]+) health damage', range = [87, 90], label = "the blast deals its 88.4 with no perks" },
+  { re = 'combat: blast MineFragExplosion on 0x00000014 at \d+: [\d.]+ health damage', label = "the blast catches the player (no perks)" },
   { re = 'combat: blast on 0x00000014: [1-9][\d.]* limb damage', label = "the limb damage of the blast is logged" },
 ]
 forbid = [{ re = "combat: perks on .*blast", label = "no perk changes the blast" }]
@@ -10709,7 +10709,7 @@ forbid = [{ re = "combat: perks on .*blast", label = "no perk changes the blast"
 [[scenario]]
 name = "blast-perks-mine-toughness"
 source = "#1569 (docs/spec-notes/perk-entry-points.md §2): a mine nobody put down is a blast with no cause: Toughness x 2 (+6 DT) takes off, Hit the Deck has no weapon to run on [hypothesis: that the original does the same]"
-note = "the same run with Toughness twice and Hit the Deck: 88.4 - 6 = 82.4, not 88.4 - 31"
+note = "the same run with Toughness twice and Hit the Deck: DT 6, not 31. The damage falls off with where the player lands (88.4 at 30 units, 90.1 at 25), so the check reads the perks line: the damage unchanged and the DT, whatever the distance"
 areas = ["combat", "perks"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/damage.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "4:player.setav explosives 5;player.addperk Toughness;player.addperk Toughness;player.addperk HitTheDeck;player.hasperk Toughness;player.hasperk HitTheDeck;player.getav health;player.getav damagethreshold;4.6:close;12:player.getav health;12.4:close", NVF_PLAY_TEST_SCRIPT = "7:moveto:player:0x00172DB5:0:0:0" }
@@ -10717,15 +10717,15 @@ args = ["--play", "--pos=-61200,-52600,6300", "--hour", "12", "--no-voice", "--n
 run_seconds = 16
 expect = [
   { re = 'mines: 0x00000014 sets off mine 0x00172DB5', label = "the player sets the mine off (perks held)" },
-  { re = 'combat: blast MineFragExplosion on 0x00000014 at \d+: (?P<n>[\d.]+) health damage', range = [81, 84], label = "Toughness alone takes its 6 off the blast" },
-  { re = "combat: perks on no one's blast on 0x00000014: attacker \\[\\], target \\[Toughness\\]", label = "and the log names Toughness and not Hit the Deck" },
+  { re = 'combat: blast MineFragExplosion on 0x00000014 at \d+: [\d.]+ health damage', label = "the blast catches the player (perks held)" },
+  { re = '''combat: perks on no one's blast on 0x00000014: attacker \[\], target \[Toughness\]: damage ([\d.]+) -> \1, DT 6\.0''', label = "Toughness alone sets the DT: Hit the Deck is not named, and the damage is left as it was" },
   { re = 'combat: blast on 0x00000014: [1-9][\d.]* limb damage', label = "the limb damage of the blast is logged (perks held)" },
 ]
 
 [[scenario]]
 name = "blast-perks-grenade-demolition"
-source = "#1569 (docs/spec-notes/perk-entry-points.md §2): the player's own 40 mm grenade at their feet: Demolition Expert 93.2 x 1.2 = 111.8"
-note = "the shot catches the player in about 6 runs of 10 (#1581): a missing blast line fails this scenario, so rerun it before reading more into that"
+source = "#1569 (docs/spec-notes/perk-entry-points.md §2): the player's own 40 mm grenade at their feet: Demolition Expert changes the damage, with the weapon behind the blast, and no DT comes in"
+note = "The damage falls off with where the blast lands, so the check reads the perks line. Its factor is not read here (a log line cannot divide): fnv-combat a_blast_passes_the_damage_and_dt_entry_points and nvf-play combat::tests::blast_perks have the arithmetic. the shot catches the player in about 6 runs of 10 (#1581): a missing blast line fails this scenario, so rerun it before reading more into that"
 areas = ["combat", "perks"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/damage.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0007EA25", NVF_PLAY_TEST_GIVE = "0007EA26:8", NVF_PLAY_TEST_CONSOLE = "4:player.addperk DemolitionExpert;player.getav health;4.6:close;14:player.getav health;14.4:close", NVF_PLAY_TEST_LOOK = "6:46:-75", NVF_PLAY_TEST_CONTROL = "7:weapon,10:fire" }
@@ -10733,14 +10733,14 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos
 run_seconds = 18
 expect = [
   { re = 'combat: explosion 40mmGrenadeExplosion at', label = "the grenade goes off" },
-  { re = 'combat: blast 40mmGrenadeExplosion on 0x00000014 at \d+: (?P<n>[\d.]+) health damage', range = [111, 113], label = "Demolition Expert multiplies the blast" },
-  { re = "combat: perks on 0x00000014's blast on 0x00000014: attacker \\[DemolitionExpert\\], target \\[\\]", label = "and the log names it" },
+  { re = 'combat: blast 40mmGrenadeExplosion on 0x00000014 at \d+: [\d.]+ health damage', label = "the blast catches the player (Demolition Expert held)" },
+  { re = '''combat: perks on 0x00000014's blast on 0x00000014: attacker \[DemolitionExpert\], target \[\]: damage ([\d.]+) -> (?!\1,)[\d.]+, DT 0\.0''', label = "Demolition Expert changes the damage, and no DT comes in" },
 ]
 
 [[scenario]]
 name = "blast-perks-grenade-deck"
-source = "#1569 (docs/spec-notes/perk-entry-points.md §2): the same grenade: Hit the Deck 93.2 - 25 = 68.2, by the weapon behind the blast"
-note = "the shot catches the player in about 6 runs of 10 (#1581): a missing blast line fails this scenario, so rerun it before reading more into that"
+source = "#1569 (docs/spec-notes/perk-entry-points.md §2): the same grenade: Hit the Deck's DT 25, by the weapon behind the blast, and the damage left as it was"
+note = "The damage falls off with where the blast lands, so the check reads the perks line. the shot catches the player in about 6 runs of 10 (#1581): a missing blast line fails this scenario, so rerun it before reading more into that"
 areas = ["combat", "perks"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/damage.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0007EA25", NVF_PLAY_TEST_GIVE = "0007EA26:8", NVF_PLAY_TEST_CONSOLE = "4:player.addperk HitTheDeck;player.getav health;4.6:close;14:player.getav health;14.4:close", NVF_PLAY_TEST_LOOK = "6:46:-75", NVF_PLAY_TEST_CONTROL = "7:weapon,10:fire" }
@@ -10748,14 +10748,14 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos
 run_seconds = 18
 expect = [
   { re = 'combat: explosion 40mmGrenadeExplosion at', label = "the grenade goes off" },
-  { re = 'combat: blast 40mmGrenadeExplosion on 0x00000014 at \d+: (?P<n>[\d.]+) health damage', range = [67, 70], label = "Hit the Deck takes its 25 off the blast" },
-  { re = "combat: perks on 0x00000014's blast on 0x00000014: attacker \\[\\], target \\[HitTheDeck\\]", label = "and the log names it" },
+  { re = 'combat: blast 40mmGrenadeExplosion on 0x00000014 at \d+: [\d.]+ health damage', label = "the blast catches the player (Hit the Deck held)" },
+  { re = '''combat: perks on 0x00000014's blast on 0x00000014: attacker \[\], target \[HitTheDeck\]: damage ([\d.]+) -> \1, DT 25\.0''', label = "Hit the Deck sets the DT to 25, and the damage is left as it was" },
 ]
 
 [[scenario]]
 name = "blast-perks-grenade-both"
-source = "#1569 (docs/spec-notes/perk-entry-points.md §2): the same grenade with both perks: 93.2 x 1.2 - 25 = 86.8"
-note = "the shot catches the player in about 6 runs of 10 (#1581): a missing blast line fails this scenario, so rerun it before reading more into that"
+source = "#1569 (docs/spec-notes/perk-entry-points.md §2): the same grenade with both perks: each on its side of one blast, the damage changed and DT 25"
+note = "The damage falls off with where the blast lands, so the check reads the perks line. The order (the damage perk, then the DT) is not read here: fnv-combat a_blast_passes_the_damage_and_dt_entry_points has it. the shot catches the player in about 6 runs of 10 (#1581): a missing blast line fails this scenario, so rerun it before reading more into that"
 areas = ["combat", "perks"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/damage.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0007EA25", NVF_PLAY_TEST_GIVE = "0007EA26:8", NVF_PLAY_TEST_CONSOLE = "4:player.addperk DemolitionExpert;player.addperk HitTheDeck;player.getav health;4.6:close;14:player.getav health;14.4:close", NVF_PLAY_TEST_LOOK = "6:46:-75", NVF_PLAY_TEST_CONTROL = "7:weapon,10:fire" }
@@ -10763,8 +10763,8 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos
 run_seconds = 18
 expect = [
   { re = 'combat: explosion 40mmGrenadeExplosion at', label = "the grenade goes off" },
-  { re = 'combat: blast 40mmGrenadeExplosion on 0x00000014 at \d+: (?P<n>[\d.]+) health damage', range = [85, 89], label = "the damage perk first, then the DT" },
-  { re = "combat: perks on 0x00000014's blast on 0x00000014: attacker \\[DemolitionExpert\\], target \\[HitTheDeck\\]", label = "and the log names both" },
+  { re = 'combat: blast 40mmGrenadeExplosion on 0x00000014 at \d+: [\d.]+ health damage', label = "the blast catches the player (both perks held)" },
+  { re = '''combat: perks on 0x00000014's blast on 0x00000014: attacker \[DemolitionExpert\], target \[HitTheDeck\]: damage ([\d.]+) -> (?!\1,)[\d.]+, DT 25\.0''', label = "both perks act on one blast: the damage changed and DT 25" },
 ]
 
 [[scenario]]
