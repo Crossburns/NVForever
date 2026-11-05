@@ -1154,7 +1154,7 @@ pub(crate) fn fight(
             let feet = bevy_to_game(g.translation()).to_array();
             let scale = g.affine().transform_vector3(Vec3::Z).length().max(0.1);
             let eye = EYE_HEIGHT * scale * if crouched_now.contains(&rig.reference) { stance::CROUCH_EYE } else { 1.0 };
-            places.insert(rig.reference, (feet, [feet[0], feet[1], feet[2] + eye], scale));
+            places.insert(rig.reference, (feet, crate::detection::eyes_of(phys.as_deref(), rig.reference, feet, eye), scale));
         }
     }
     if let Some(p) = player.as_deref() {

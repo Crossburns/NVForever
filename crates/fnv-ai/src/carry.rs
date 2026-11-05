@@ -1117,7 +1117,11 @@ impl Ai {
         // continue to \"think\" (pick packages ...)"; "will still attempt to run the
         // package and perform various animations"]: see [`RESTRAINED_REACH`].
         let held = game.extra.get(&actor).is_some_and(|e| e.dead || e.out_cold());
-        if !game.present(actor) || held || self.agents[&actor].rooted {
+        if !game.present(actor) || held {
+            return;
+        }
+        if self.agents[&actor].rooted {
+            self.rooted_turn(game, actor, dt);
             return;
         }
         if game.ai_off(actor) {
@@ -1670,6 +1674,32 @@ impl Ai {
 
     /// Turn a standing actor towards a place for `dt` seconds, and tell the game its
     /// heading.
+    /// A rooted actor (an Immobile turret, [`Ai::root`]) stays where it is but turns in
+    /// place, at the combat turn rate, to its combat target (in Combat: the target it
+    /// detects, else the one detected last) or to the place of its alarm (Alert, Lost), as
+    /// a fighter standing its ground does (`crate::alert`). Before, it never turned, so a
+    /// HELIOS One ceiling turret kept its placed heading and the player stayed out of its
+    /// view (#1537). SetActorsAI 0 holds it as any other actor.
+    fn rooted_turn(&mut self, game: &mut Game, actor: FormId, dt: f32) {
+        if game.ai_off(actor) || game.extra.get(&actor).is_some_and(|e| e.restrained) {
+            return;
+        }
+        let state = game.awareness.state(actor);
+        if !state.in_combat() {
+            return;
+        }
+        let Some(aw) = game.awareness.get(actor) else { return };
+        let at = if state == fnv_game::awareness::State::Combat {
+            let latest = aw.targets.iter().filter(|(_, t)| t.detected.is_some()).max_by(|x, y| x.1.detected.unwrap_or(0.0).total_cmp(&y.1.detected.unwrap_or(0.0)));
+            aw.combat_target().or(latest.map(|(id, t)| (*id, t))).map(|(_, t)| t.at)
+        } else {
+            aw.search_alarm().map(|a| a.at)
+        };
+        let Some(at) = at else { return };
+        let space = self.agents[&actor].walker.space;
+        self.face(game, actor, Place { space, pos: at }, dt * crate::alert::COMBAT_TURN);
+    }
+
     pub(crate) fn face(&mut self, game: &mut Game, actor: FormId, to: Place, dt: f32) {
         let a = self.agents.get_mut(&actor).expect("listed");
         let d = [to.pos[0] - a.walker.feet[0], to.pos[1] - a.walker.feet[1]];

@@ -333,6 +333,24 @@ fn unseen() -> bool {
 
 /// Whether the collision world lets `from` see `to` (also the combat AI's cover test,
 /// `combat_tactics`).
+/// An actor's eyes, game space: `eye` above its feet (its origin), but never above the
+/// top of its drawn body (its hit volume), where they stand just under that top over the
+/// volume's middle. A person's body reaches above `eye`, so nothing changes for people; a
+/// ceiling turret's eyes were 112 units over its origin, above its own top (7853 for
+/// HELIOSOneTower's LvlTurretCeiling2048Robot at z 7760 [observed in NVForever]) and
+/// past the ceiling, so it never saw the player below and never turned or fired (#1537).
+pub(crate) fn eyes_of(phys: Option<&PhysState>, id: u32, feet: [f32; 3], eye: f32) -> [f32; 3] {
+    let low = phys.and_then(|p| p.world.actor_volume(id)).filter(|v| v.height > 0.0 && v.feet[2] + v.height < feet[2] + eye);
+    match low {
+        Some(v) => [v.feet[0], v.feet[1], v.feet[2] + v.height * LOW_EYES],
+        None => [feet[0], feet[1], feet[2] + eye],
+    }
+}
+
+/// Where the eyes of a body shorter than its eye height are, as a share of its height
+/// from the bottom [design: a turret's top is inside the block it hangs from].
+const LOW_EYES: f32 = 0.5;
+
 pub(crate) fn clear_sight(phys: Option<&mut PhysState>, from: [f32; 3], to: [f32; 3]) -> bool {
     let Some(phys) = phys else { return true };
     let filters = SightFilters::of(phys);
@@ -785,7 +803,7 @@ fn measure(
         // "Actor 0010634A EasyPete" → "EasyPete 0010634A".
         let edid = name.and_then(|n| n.as_str().split_whitespace().nth(2)).unwrap_or("");
         let label = format!("{edid} {:08X}", rig.reference).trim().to_string();
-        let eyes = [feet[0], feet[1], feet[2] + EYE_HEIGHT * scale];
+        let eyes = eyes_of(phys.as_deref(), rig.reference, feet, EYE_HEIGHT * scale);
         people.push(Person {
             id: rig.reference,
             label,
