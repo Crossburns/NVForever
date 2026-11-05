@@ -37,7 +37,11 @@ impl WindowChoice {
     pub fn mode(self) -> WindowMode {
         match self {
             WindowChoice::Windowed => WindowMode::Windowed,
-            WindowChoice::Borderless => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
+            // Primary, not Current: `Current` cannot be resolved while the window is being
+            // created (it has no monitor yet), so the compositor placed the window on a
+            // random monitor (#1641). Primary always resolves; `apply_display` moves the
+            // window to the saved [`MonitorChoice`] once the monitors are known.
+            WindowChoice::Borderless => WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
         }
     }
 }
@@ -53,6 +57,11 @@ pub struct FullScreenSize(pub Option<UVec2>);
 pub struct MonitorModes {
     pub desktop: Option<UVec2>,
     pub modes: Vec<VideoMode>,
+    /// Every monitor, by name and entity, for the Display "Monitor" list and for selecting
+    /// one (its entity) once it is known.
+    pub monitors: Vec<(String, Entity)>,
+    /// The name of the monitor the window is on now (else the primary one's).
+    pub current: Option<String>,
 }
 
 impl MonitorModes {
@@ -71,6 +80,20 @@ impl MonitorModes {
     }
 }
 
+/// The monitor borderless full screen opens on: the Display "Monitor" choice (kept in the
+/// INI), or the primary monitor when none is chosen or the chosen one is not attached now.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct MonitorChoice(pub Option<String>);
+
+/// The monitor selection for [`MonitorChoice`]: the chosen monitor by its name, else the
+/// primary monitor (a chosen name that is not attached now, e.g. unplugged, falls back).
+fn borderless_selection(modes: &MonitorModes, monitor: &MonitorChoice) -> MonitorSelection {
+    match &monitor.0 {
+        Some(name) => modes.monitors.iter().find(|(n, _)| n == name).map_or(MonitorSelection::Primary, |(_, e)| MonitorSelection::Entity(*e)),
+        None => MonitorSelection::Primary,
+    }
+}
+
 pub struct WindowModePlugin;
 
 /// Apply the chosen window settings before telemetry snapshots their physical size.
@@ -79,7 +102,7 @@ pub struct ApplyWindowMode;
 
 impl Plugin for WindowModePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<FullScreenSize>().init_resource::<MonitorModes>().add_systems(Update, (watch_monitor, apply_display, log_mode).chain().in_set(ApplyWindowMode));
+        app.init_resource::<FullScreenSize>().init_resource::<MonitorModes>().init_resource::<MonitorChoice>().add_systems(Update, (watch_monitor, apply_display, log_mode).chain().in_set(ApplyWindowMode));
     }
 }
 
@@ -161,6 +184,39 @@ pub fn resolution_load(world: &mut World, text: &str) -> bool {
     true
 }
 
+/// The Display "Monitor" list's choices: the monitors' names, in the order discovered.
+pub fn monitor_names(world: &World) -> Vec<String> {
+    world.resource::<MonitorModes>().monitors.iter().map(|(n, _)| n.clone()).filter(|n| !n.is_empty()).collect()
+}
+
+/// The chosen monitor: the saved choice, else the one the window is on (or the primary's).
+pub fn monitor_chosen(world: &World) -> String {
+    let m = world.resource::<MonitorModes>();
+    let c = world.resource::<MonitorChoice>();
+    c.0.clone().or_else(|| m.current.clone()).unwrap_or_default()
+}
+
+/// Choose a monitor by name; false when it is not attached now.
+pub fn monitor_pick(world: &mut World, name: &str) -> bool {
+    if !world.resource::<MonitorModes>().monitors.iter().any(|(n, _)| n == name) {
+        return false;
+    }
+    world.resource_mut::<MonitorChoice>().0 = Some(name.to_string());
+    true
+}
+
+/// The monitor choice as the INI keeps it: its name, or "" for none (the primary monitor).
+pub fn monitor_save(world: &World) -> String {
+    world.resource::<MonitorChoice>().0.clone().unwrap_or_default()
+}
+
+/// The monitor choice from its INI text; "" is none (the primary monitor).
+pub fn monitor_load(world: &mut World, text: &str) -> bool {
+    let name = text.trim();
+    world.resource_mut::<MonitorChoice>().0 = (!name.is_empty()).then(|| name.to_string());
+    true
+}
+
 /// Note the monitor the window is on (else the primary one): its video modes, and its
 /// size while the window is not in exclusive full screen (then it is the desktop's).
 fn watch_monitor(windows: Query<(&Window, Option<&OnMonitor>), With<PrimaryWindow>>, monitors: Query<(Entity, &Monitor, Has<PrimaryMonitor>)>, mut modes: ResMut<MonitorModes>) {
@@ -168,35 +224,42 @@ fn watch_monitor(windows: Query<(&Window, Option<&OnMonitor>), With<PrimaryWindo
     let monitor = on.and_then(|o| monitors.get(o.0).ok()).or_else(|| monitors.iter().find(|m| m.2)).or_else(|| monitors.iter().next());
     let Some((_, m, _)) = monitor else { return };
     let desktop = if matches!(w.mode, WindowMode::Fullscreen(..)) { modes.desktop } else { Some(m.physical_size()) };
-    if modes.desktop != desktop || modes.modes != m.video_modes {
+    let all = monitors.iter().map(|(e, m, _)| (m.name.clone().unwrap_or_default(), e)).collect::<Vec<_>>();
+    let current = m.name.clone();
+    if modes.desktop != desktop || modes.modes != m.video_modes || modes.monitors != all || modes.current != current {
         info!("window: monitor {} {}, {} video modes", m.name.as_deref().unwrap_or("?"), desktop.map_or("?".to_string(), size_text), m.video_modes.len());
         modes.desktop = desktop;
         modes.modes = m.video_modes.clone();
+        modes.monitors = all;
+        modes.current = current;
     }
 }
 
 /// Make the window what `Args` (`window`, `size`) and [`FullScreenSize`] ask, when they
 /// change (and again once the monitor's modes are known, for exclusive full screen).
-fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorModes>, mut windows: Query<&mut Window, With<PrimaryWindow>>, mut last: Local<Option<(WindowChoice, String, Option<UVec2>)>>, mut waiting: Local<bool>) {
-    let want = (args.window, args.size.clone(), full.0);
-    if last.as_ref() == Some(&want) && !(*waiting && modes.is_changed()) {
+fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorModes>, monitor: Res<MonitorChoice>, mut windows: Query<&mut Window, With<PrimaryWindow>>, mut last: Local<Option<(WindowChoice, String, Option<UVec2>, Option<String>)>>, mut waiting: Local<bool>) {
+    let want = (args.window, args.size.clone(), full.0, monitor.0.clone());
+    // Re-applied when the choice or the monitors change: a saved monitor's entity is only
+    // known after the monitors are discovered, a frame or so after the start.
+    if last.as_ref() == Some(&want) && !modes.is_changed() {
         return;
     }
     *last = Some(want);
     *waiting = false;
     let Ok(mut w) = windows.single_mut() else { return };
+    let selection = borderless_selection(&modes, &monitor);
     let mode = match (args.window, full.0) {
         (WindowChoice::Windowed, _) => WindowMode::Windowed,
-        (WindowChoice::Borderless, None) => WindowChoice::Borderless.mode(),
+        (WindowChoice::Borderless, None) => WindowMode::BorderlessFullscreen(selection),
         (WindowChoice::Borderless, Some(s)) => match modes.mode_of(s) {
-            Some(m) => WindowMode::Fullscreen(MonitorSelection::Current, VideoModeSelection::Specific(m)),
+            Some(m) => WindowMode::Fullscreen(selection, VideoModeSelection::Specific(m)),
             None => {
                 // Not known yet (or not the monitor's): borderless until it is.
                 *waiting = modes.modes.is_empty();
                 if !*waiting {
                     warn!("window: the monitor has no video mode {}; borderless full screen instead", size_text(s));
                 }
-                WindowChoice::Borderless.mode()
+                WindowMode::BorderlessFullscreen(selection)
             }
         },
     };
@@ -246,9 +309,22 @@ mod tests {
     #[test]
     fn the_monitor_sizes_are_listed_smallest_first_once_each() {
         let mode = |x, y, hz| VideoMode { physical_size: UVec2::new(x, y), bit_depth: 32, refresh_rate_millihertz: hz };
-        let m = MonitorModes { desktop: Some(UVec2::new(1920, 1080)), modes: vec![mode(1280, 720, 60000), mode(1920, 1080, 60000), mode(1920, 1080, 144000), mode(640, 400, 60000), mode(1600, 900, 60000)] };
+        let m = MonitorModes { desktop: Some(UVec2::new(1920, 1080)), modes: vec![mode(1280, 720, 60000), mode(1920, 1080, 60000), mode(1920, 1080, 144000), mode(640, 400, 60000), mode(1600, 900, 60000)], ..default() };
         assert_eq!(m.sizes(), [UVec2::new(1280, 720), UVec2::new(1600, 900), UVec2::new(1920, 1080)]);
         assert_eq!(m.mode_of(UVec2::new(1920, 1080)).map(|m| m.refresh_rate_millihertz), Some(144000), "the highest refresh rate");
         assert_eq!(m.mode_of(UVec2::new(1024, 768)), None);
+    }
+
+    #[test]
+    fn borderless_opens_on_the_saved_monitor_else_primary() {
+        let e1 = Entity::from_raw_u32(1).unwrap();
+        let e2 = Entity::from_raw_u32(2).unwrap();
+        let modes = MonitorModes { monitors: vec![("DP-1".to_string(), e1), ("HDMI-A-1".to_string(), e2)], ..default() };
+        // No choice: the primary monitor.
+        assert_eq!(borderless_selection(&modes, &MonitorChoice(None)), MonitorSelection::Primary);
+        // A chosen monitor that is attached: its entity.
+        assert_eq!(borderless_selection(&modes, &MonitorChoice(Some("HDMI-A-1".into()))), MonitorSelection::Entity(e2));
+        // A chosen monitor that is not attached now (unplugged): the primary monitor.
+        assert_eq!(borderless_selection(&modes, &MonitorChoice(Some("DP-2".into()))), MonitorSelection::Primary);
     }
 }
