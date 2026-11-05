@@ -544,7 +544,11 @@ All of it is in `GameSnapshot`.
   said in the world. Not changed, as they are not chosen: a Goodbye greeting that opens
   a conversation (a force greet, above), a Goodbye line of a topic named by
   StartConversation, and a Goodbye follow-up; each ends its conversation when it is
-  over. **Open:** a conversation through a talking activator keeps a chosen Goodbye line
+  over. Nor does a chosen Goodbye line whose begin result made the actor say another
+  line (Say) leave its conversation: it ends it when it is over, and the other line is
+  not cut [design: a begin script that makes the actor say another line keeps today's
+  behaviour]; a begin result that ended or replaced the conversation leaves nothing to
+  move. **Open:** a conversation through a talking activator keeps a chosen Goodbye line
   in the conversation until it is over, as before [hypothesis: the statement was face to
   face; a farewell is heard from its speaker, and the activator it went through is not
   carried by `Speech`]; whether the original closes that menu at once too is a question
@@ -984,17 +988,19 @@ gains `dialogue`.
   has begun; end: `bGiveTest` 0), and fourteen `choose` steps answer six word
   associations, five statements and three inkblots; each answer's begin script adds to
   the scores; the last line (Goodbye) sets `bDoFinalCalculation` at its start and stage
-  85 at its end. 15 lines; tag skills Guns, Science, Sneak as before. The whole test
-  happens in paused time (real time passes for the lines, script time does not). One script used to lean on GameMode running meanwhile: VCG01Test's quest
-  script does the tag-skill calculation in GameMode once `bDoFinalCalculation` is 1,
-  which the last line's begin script sets. It ran while that line was being said, as long as
-  conversations did not pause; now it runs in the first GameMode frames after the
-  Goodbye line, still well before stage 90 opens the tag-skill menu 1 s later. The
-  result is the same. That last line is the fourteenth `choose` (15 lines: the
-  opening line and fourteen answers), so since issue #1606 it closes the conversation
-  at once (§5): the calculation then runs while Doc finishes the line in the world, and
-  stage 85 is set when it ends [design; the real-data test `dialogue_data.rs` checks
-  the tag skills and stages].
+  85 at its end. 15 lines; tag skills Guns, Science, Sneak as before. The test up to
+  the last answer happens in paused time (real time passes for the lines, script time
+  does not). That last line is the fourteenth `choose` (15 lines: the opening line and
+  fourteen answers), a chosen Goodbye line, so since issue #1606 it closes the
+  conversation at once (§5) and Doc finishes it in the world, in game time. VCG01Test's
+  quest script does the tag-skill calculation in GameMode once `bDoFinalCalculation`
+  is 1, which that line's begin script sets: the calculation runs in the first GameMode
+  frames while Doc finishes the line, and stage 85 is set by its end script when the
+  line ends, still before stage 90 opens the tag-skill menu 1 s later [design; the
+  real-data test `dialogue_data.rs` checks the tag skills and stages]. (While the
+  conversation paused the game up to its end, before #1606, the calculation ran in the
+  first GameMode frames after the line; as long as conversations did not pause, while
+  it was being said. The result is the same.)
 - **The farewell.** Stand-in: `talk` for Doc's dialogue package after stage 115 (and 4 s
   for his walk). Then the game's: the greeting that returns the player's things,
   two follow-up lines (the Pip-Boy with its message, the suit by the player's sex), the

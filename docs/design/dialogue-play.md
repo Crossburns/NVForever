@@ -65,13 +65,14 @@ original unless it carries a tag.
    when the player falls short [documented: Category:Dialogue "AV/Perk"; where the two
    numbers come from is the runtime's hypothesis, dialogue.md §3.3]; the frame of one
    the player falls short of is red (dialogue-menu.md §3).
-4. **The end.** A Goodbye choice ends the conversation at once: the screen goes as the
-   line starts, the player is free and the game runs again, and the actor finishes the
-   line in the world (heard where it stands, its subtitle drawn as a SayTo line's, its
-   end script run when it is over) [observed: owner's playtest 2026-11-05, against the
-   original: choosing a Goodbye closes the menu at once and the actor finishes the line
-   as the player walks away; the runtime's rule, `Game::choose`, dialogue.md §5; issue
-   #1606]. The log says `dialogue: the conversation ends on the Goodbye choice; <actor>
+4. **The end.** A Goodbye choice ends the conversation at once and the actor finishes
+   the line [observed: owner's playtest 2026-11-05, against the original: choosing a
+   Goodbye closes the menu at once and the actor finishes the line as the player walks
+   away; the runtime's rule, `Game::choose`, dialogue.md §5; issue #1606]. The screen
+   goes as the line starts, the player is free and the game runs again; the line is
+   heard where the actor stands and its subtitle drawn as a SayTo line's [design: a line
+   said in the world], and its end script runs when it is over [hypothesis,
+   dialogue.md §7 item 18]. The log says `dialogue: the conversation ends on the Goodbye choice; <actor>
    finishes the line <line> in the world`. A Goodbye line the player did not choose (a
    force greet's Goodbye greeting, a Goodbye follow-up) and any Goodbye line through a
    talking activator still end the conversation when they have been said; so does an
