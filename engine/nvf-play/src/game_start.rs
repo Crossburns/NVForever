@@ -103,14 +103,29 @@ impl GameStart {
         let q = if hex.len() == 8 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             FormId(u32::from_str_radix(hex, 16).map_err(|e| e.to_string())?)
         } else {
-            g.data.by_edid(s).ok_or_else(|| format!("no form named {s:?}"))?
+            g.data.by_edid(s).ok_or_else(|| format!("no form named {s:?} in the load order"))?
         };
         if g.data.is_quest(q) {
             Ok(q)
         } else {
-            Err(format!("{s} ({q}) is not a quest in the load order"))
+            Err(not_a_quest(s, q))
         }
     }
+}
+
+/// The start's warning when `sCharGenQuest` names no quest the load order can start
+/// (issue #1394): the player is then left at the New Vegas opening, easy to mistake for
+/// the INI line being ignored. A mod's start quest (Tale of Two Wastelands' `001FFFF8`)
+/// is not a quest until its plugin is enabled in NVForever's own `plugins.txt`; NVForever
+/// reads only its own `NVForever.ini`, never the original's `Fallout.ini`
+/// (docs/design/install-layout.md).
+pub fn not_a_quest(value: &str, resolved: FormId) -> String {
+    format!(
+        "{value} ({resolved}) is not a quest in the load order; New Game starts nothing and \
+         leaves the player at the New Vegas opening. If {value} names a mod's start quest, \
+         enable that plugin in NVForever's own plugins.txt (NVForever reads only its own \
+         NVForever.ini, never the original's)"
+    )
 }
 
 /// A value without the quotes around it.
@@ -157,6 +172,15 @@ mod tests {
         assert_eq!(GameStart::parse("[General]\nsIntroMovie=\"B01.bik\"\n").intro.as_deref(), Some("video\\b01.bik"));
         // An empty quest keeps the default rather than starting nothing.
         assert_eq!(GameStart::parse("[General]\nsCharGenQuest=\n").chargen_quest, "VCG00");
+    }
+
+    #[test]
+    fn a_start_quest_not_in_the_load_order_names_the_plugin_to_enable() {
+        let m = not_a_quest("001FFFF8", FormId(0x001FFFF8));
+        assert!(m.contains("001FFFF8 (0x001FFFF8) is not a quest in the load order"), "{m}");
+        assert!(m.contains("New Game starts nothing and leaves the player at the New Vegas opening"), "{m}");
+        assert!(m.contains("enable that plugin in NVForever's own plugins.txt"), "{m}");
+        assert!(m.contains("NVForever reads only its own NVForever.ini, never the original's"), "{m}");
     }
 }
 

@@ -79,6 +79,13 @@ SIntroMovie=
 Both are read once at start and never written; unattended runs read them only under their
 own `NVFOREVER_HOME`.
 
+These lines go in NVForever's own `NVForever.ini`, not the original's
+`Fallout.ini` / `FalloutCustom.ini` (NVForever never reads or writes those — see above), and
+the start quest must be in NVForever's own load order. A quest named here but not loaded
+(e.g. TTW's `001FFFF8` when Tale of Two Wastelands is not turned on in `<home>\plugins.txt`)
+is not started: New Game logs a warning and leaves the player at the New Vegas opening, so
+a missing TTW start looks like the INI line being ignored (issue #1394).
+
 **Before every start** the folder must pass (`fnv_install::GameInstall`):
 
 - `Data\FalloutNV.esm` exists (the folder is a game install at all);
