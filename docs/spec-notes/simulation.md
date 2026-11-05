@@ -510,14 +510,14 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   will be the leveled value (same as locks)"]; by how much is not documented. As built
   (`fnv_sim::refs::Lock::level_at`, `World::lock_of`): one step of 25 for every 10
   levels past the first, up to Very Hard (100), never Requires Key [hypothesis: a guess,
-  listed as one in docs/owner-review.md until 2026-10-25; no decision on it is recorded],
-  from the reference's level (its encounter zone's, else the player's;
-  encounter-zones.md) [design]. A container's level is fixed when its cell loads. A door
-  gets no fixed level, so an unmade door's lock is read anew each time; in a zone the
-  zone's level holds from first entry, with no zone it follows the player's level. The
-  first activation or GetLockLevel makes the door's state, and the lock keeps that level
-  from then on [design]. GetLockLevel, the crosshair's lock line and the lockpick game
-  read that level.
+  listed as one in docs/owner-review.md until 2026-10-25; no decision on it is recorded].
+  A leveled lock hardens from a fixed level only (`World::lock_read_level`) [design]: a
+  container's, fixed when its cell loads, if its state is not made before that. A door
+  gets no fixed level, so it keeps its authored level whatever the player's level or its
+  zone [design]. Whether the original hardens at all is [hypothesis]: the GECK tutorial
+  calls the checkbox deprecated [documented, encounter-zones.md §7]; observer check 86
+  asks. GetLockLevel, the crosshair's lock line and the lockpick game read the level
+  built here.
   The nav graph's door locks keep the authored level (it only asks locked or not).
 - **XTEL** (door FormID, position, rotation, flag) makes a door a teleport [documented:
   xEdit]. The flag is "No Alarm": "No trespass alarm will be sent when the player uses

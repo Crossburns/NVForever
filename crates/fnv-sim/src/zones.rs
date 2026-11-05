@@ -170,11 +170,19 @@ impl World<'_> {
         self.zone_respawns.insert(zone, respawns);
     }
 
-    /// The level carried items and the lock of `r` are read at: [`World::level_at`] at the
-    /// player's level now ([`World::set_player_level`]), so the number a cell load would
-    /// fix. An Easy modifier's "all levels" is not passed on, fixed or not.
+    /// The level carried items of `r` are rolled at: [`World::level_at`] at the player's
+    /// level now ([`World::roll_level`]), so the number a cell load would fix. An Easy
+    /// modifier's "all levels" is not passed on, fixed or not.
     pub(crate) fn item_level(&self, r: FormId) -> u16 {
-        self.level_at(r, self.config().player_level).level
+        self.level_at(r, self.roll_level()).level
+    }
+
+    /// The level a leveled lock on `r` is read at: its fixed level, else the configured
+    /// one, 1 in play, whatever the player's level or its zone. So only a container fixed
+    /// at a cell load hardens, and a door, which gets no fixed level, keeps its authored
+    /// level [design; simulation.md §5].
+    pub(crate) fn lock_read_level(&self, r: FormId) -> u16 {
+        self.ref_levels.get(&r).map_or(self.config().player_level, |l| l.level)
     }
 }
 

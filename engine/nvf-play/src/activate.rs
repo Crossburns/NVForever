@@ -121,7 +121,7 @@ pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> 
     let name = sim.name(base.id)?.to_string();
     let state = sim.world.peek(id);
     let placed = sim.refs.get(id);
-    // A reference with lock data starts locked, a leveled lock at the reference's level
+    // A reference with lock data starts locked, a leveled lock at its fixed level
     // [hypothesis, as fnv_sim::World does: `World::lock_of`].
     let lock = sim.world.lock_of(id).filter(|l| l.locked).map(|l| (l.level, l.key));
     let carried = |k: FormId| {

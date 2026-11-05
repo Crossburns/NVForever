@@ -782,7 +782,7 @@ fn header(world: &World, kind: SaveKind, game: &fnv_game::game::GameSnapshot, en
     h.coop = game
         .coop
         .iter()
-        .map(|p| fnv_save::CoopEntry { slot: p.slot, name: p.character.name.clone().unwrap_or_else(|| format!("Player {}", p.slot)), level: p.character.level.unwrap_or(1).max(1) as u32 })
+        .map(|p| fnv_save::CoopEntry { slot: p.slot, name: p.character.name.clone().unwrap_or_else(|| format!("Player {}", p.slot)), level: p.character.level.unwrap_or(game.sim.config.player_level as i32).max(1) as u32 })
         .collect();
     h.weather = engine.extra.get("sky").and_then(|v| v.get("weather")).and_then(|w| w.as_str()).map(str::to_string);
     h

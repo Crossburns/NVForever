@@ -49,8 +49,8 @@ It does not replace a lock's or key's line, nor an inaccessible door's.
 - **Leveled Lock** (XLOC flag bit 2): none of FalloutNV.esm's 426 locked references has
   it, but the add-ons do: Dead Money 22, Old World Blues 3, Honest Hearts 1 [observed:
   docs/handoff/esm-full-audit-2026-10-24.md gap 24]. No source gives the rule; since
-  2026-10-24 a leveled lock hardens with the level (simulation.md, leveled locks;
-  encounter-zones.md) [hypothesis].
+  2026-10-24 a leveled lock hardens from a level fixed for its reference, so a door keeps
+  its authored level (simulation.md §5; encounter-zones.md) [hypothesis].
 - **TERM Leveled** (DNAM flags bit 0): eleven terminals. "If the terminal is leveled, the
   actual lock level may be adjusted" [documented: GECK wiki Lock] gives no rule, and no
   game setting does either; hacking.md §6 keeps the stored difficulty.

@@ -32,7 +32,8 @@ impl<'a> Game<'a> {
         self.player_level().clamp(1.0, f64::from(u16::MAX)) as u16
     }
 
-    /// Tell the world the player's level. `self.world` is the played world during a game
+    /// Tell the world the player's level, for its item rolls (`World::set_player_level`;
+    /// not locks, and not saved). `self.world` is the played world during a game
     /// turn (the engine's `script::with_world`); called outside one it reaches only the
     /// stand-in, and the next tick puts it right.
     pub fn sync_player_level(&mut self) {

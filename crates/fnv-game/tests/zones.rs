@@ -195,7 +195,7 @@ fn the_world_rolls_at_the_players_level_as_soon_as_it_changes() {
     assert_eq!(roll(&mut g), vec![(FormId(TAIL), 1)]);
     // SetLevel, with no tick before the roll: a console line or a script's next statement.
     call(&mut g, SET_LEVEL, FormId::PLAYER_REF.0, &[ArgValue::Value(Value::Num(20.0)), ArgValue::Value(Value::Num(0.0))]);
-    assert_eq!(g.world.config().player_level, 20);
+    assert_eq!(g.world.roll_level(), 20);
     assert_eq!(roll(&mut g), vec![(FormId(PELT), 1)]);
     // A level-up the same way.
     let mut g = game(&f);
@@ -210,16 +210,16 @@ fn a_tick_brings_the_world_to_the_players_level() {
     let f = fixture();
     let mut g = game(&f);
     g.player_entered(Some(FormId(PLAIN_CELL)));
-    // A save from before the level followed: the player at 20, the world's level 1.
+    // A saved game: the player at 20; the world saves its configured level, not this one.
     g.player.level = Some(20);
     let s = g.snapshot();
     assert_eq!(s.sim.config.player_level, 1);
     let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
     let mut g2 = Game::restore(&f.data, world, GameConfig { strict: true, ..GameConfig::default() }, &s).unwrap();
     g2.tick();
-    assert_eq!(g2.world.config().player_level, 20);
+    assert_eq!(g2.world.roll_level(), 20);
     assert_eq!(roll(&mut g2), vec![(FormId(PELT), 1)]);
-    assert_eq!(g2.snapshot().sim.config.player_level, 20);
+    assert_eq!(g2.snapshot().sim.config.player_level, 1);
 }
 
 #[test]
@@ -228,6 +228,7 @@ fn a_game_with_no_level_set_keeps_the_configured_one() {
     let world = World::new(&f.forms, &f.refs, SimConfig { player_level: 5, ..SimConfig::default() });
     let mut g = Game::new(&f.data, world, GameConfig { strict: true, ..GameConfig::default() });
     g.tick();
+    assert_eq!(g.world.roll_level(), 5);
     assert_eq!(g.world.config().player_level, 5);
 }
 
