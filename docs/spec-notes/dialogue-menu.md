@@ -217,8 +217,9 @@ Kept from §4, with the rules still in `crate::dialogue`:
 - the list drawn from the file scrolls by whole rows, as §4's hand-built list [owner choice
   2026-11-05: whole rows, as the hand-built menu; the original's 56-unit steps and mid-glyph
   clipping, observed in the capture, read as a jump]. The original's steps are kept in §6.6 as
-  what the capture read, not what NVForever does. The scroll is the first row shown whole at
-  the window's top: the rows move by its place (code writes `_scroll_delta` 1 and that place as
+  what the capture read, not what NVForever does. The scroll is the first row shown, which
+  starts at the window's top, so no row is cut there; it shows whole unless it is taller than
+  the window, when its foot is cut below. The rows move by its place (code writes `_scroll_delta` 1 and that place as
   the bar's `_current_value`, so the file's own `_current_value × _scroll_delta` moves them).
   The keys and the wheel move the selection, and the first row moves as few rows as show the
   selected one whole: down, it rises until the row's foot is in the window; up, a row above the
@@ -226,14 +227,17 @@ Kept from §4, with the rules still in `crate::dialogue`:
   from the first (`_jump_size`). The last first row is the least row from which the rest fit in
   the window: the scroll stops as soon as the last row shows whole, and goes no further to
   leave room under it. The bar counts to that row's place (items that place and 1, visible 1):
-  the marker's `y` is the value times `_step_height`, the track over items less visible
-  [documented: scrollbar_vert.xml, as tutorial-menu.md §5 reads it], so the marker reaches the
+  the marker's `y` is the value times `_step_height`, which is (the track's length less the
+  marker's) over (items less visible) [documented: scrollbar_vert.xml, as tutorial-menu.md §5
+  reads it], so the marker reaches the
   track's end with the last first row [design]. Counting to the rows' total less the window
   would put the value past the prefab's range whenever the last first row's place is more;
-- **only the window's foot can cut a row**: the top row is always whole, but the window keeps
-  the height rule below (the first three rows or the least height, as the capture read the
-  original, §6.6), which keeps the band's size; from a first row other than the first, the rows
-  below seldom add up to that height, and the last one shown is cut at the foot [design];
+- **only the window's foot can cut a row**: the top row always starts at the window's top, but
+  the window keeps the height rule below (the first three rows or the least height, a
+  [hypothesis]: §6.6 leaves it open), which keeps the band's size; from a first row other than
+  the first, the rows below seldom add up to that height, and the last one shown is cut at the
+  foot [design]. What the capture read of the original is only its 56-unit steps and the top
+  row cut part way (§6.6);
 - the list's height is its first three rows' or its least height [hypothesis: §6.6];
 - a said-before choice is dim: `_line_alpha` 128 (§6.6);
 - skip, refused Tab, the keys, the wheel, the pause and an overlying menu act as in §4 and

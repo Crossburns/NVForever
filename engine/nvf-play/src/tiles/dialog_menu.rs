@@ -1596,17 +1596,17 @@ mod tests {
     #[test]
     fn the_last_first_row_leaves_the_rest_in_the_window() {
         let (tops, heights) = ([0.0, 96.0, 154.0, 250.0, 308.0, 366.0], [96.0, 58.0, 96.0, 58.0, 58.0, 58.0]);
-        assert_eq!(last_first(&tops, &heights, 250.0), 3);
+        assert_eq!(last_first(&tops, &heights, 250.0), 3, "rows 3 to 5 make 174; rows 2 to 5 make 270, over 250");
         assert_eq!(last_first(&tops, &heights, 270.0), 2, "exactly the rest from row 2");
-        assert_eq!(last_first(&tops, &heights, 500.0), 0);
+        assert_eq!(last_first(&tops, &heights, 500.0), 0, "the whole list (424) fits: no scroll");
         // A last row taller than the window: it comes to the top, its foot cut.
-        assert_eq!(last_first(&[0.0, 50.0], &[50.0, 300.0], 100.0), 1);
-        assert_eq!(scroll_to_show(0, 1, &[0.0, 50.0], &[50.0, 300.0], 100.0, 1), 1);
-        assert_eq!(rows_fitting(0, &tops, &heights, 250.0), 3);
-        assert_eq!(rows_fitting(1, &tops, &heights, 100.0), 1);
+        assert_eq!(last_first(&[0.0, 50.0], &[50.0, 300.0], 100.0), 1, "no first row fits the rest: the last row");
+        assert_eq!(scroll_to_show(0, 1, &[0.0, 50.0], &[50.0, 300.0], 100.0, 1), 1, "the tall row starts at the top");
+        assert_eq!(rows_fitting(0, &tops, &heights, 250.0), 3, "96 + 58 + 96 = 250, the window exactly");
+        assert_eq!(rows_fitting(1, &tops, &heights, 100.0), 1, "58 fits; 58 + 96 = 154 does not");
         assert_eq!(rows_fitting(0, &tops, &heights, 50.0), 1, "at least one, though none fits whole");
         assert_eq!(scroll_to_show(3, 1, &tops, &heights, 250.0, 3), 1, "a row above comes to the top");
-        assert_eq!(scroll_to_show(0, 5, &tops, &heights, 250.0, 3), 3);
+        assert_eq!(scroll_to_show(0, 5, &tops, &heights, 250.0, 3), 3, "row 5 ends at 424: the first row at 174 or below, row 3 at 250");
         assert_eq!(scroll_to_show(0, 2, &tops, &heights, 250.0, 3), 0, "a row ending at the window's foot shows");
     }
 
@@ -1647,7 +1647,7 @@ mod tests {
         // The last first row is 9 (560): rows 9 to 11 fill the window.
         assert_eq!(f(&ui, BAR, "_number_of_items"), 561.0);
         // An arrow: a row, the frame on the first row carried off with it; from row 1 two whole
-        // rows fit (58 and 96), so a page is two.
+        // rows fit (58 + 58 = 116; the 96 after them would make 212, over 174), so a page is two.
         let down = bar_piece(&ui, "scrollbar_vert_down");
         assert_eq!(down, 1);
         assert_eq!(go(&mut ui, &mut written, down), (58.0, -58.0, 2.0));
@@ -1692,6 +1692,26 @@ mod tests {
         assert_eq!(f(&ui, BAR, "_current_value"), 270.0);
         assert_eq!(f(&ui, BAR, "_jump_size"), 3.0);
         assert_eq!(f(&ui, BAR, "_SetInCode"), 1.0);
+    }
+
+    #[test]
+    fn one_oversized_choice_makes_its_own_height_and_an_empty_list_has_no_rows() {
+        let mut ui = menu();
+        let mut written = fresh();
+        // Wrap at 200: 150 characters are eight lines, 332 with the spacing.
+        let view = choosing(vec![row(&"o".repeat(150)), row("After.")]);
+        frame_on(&mut ui, &mut written, view.clone(), 1, 0);
+        assert_eq!(f(&ui, LIST, "height"), 384.0);
+        // Both rows are among the first three, so the list holds them: no scroll, by rows.
+        assert!(describe(&ui, &shown(&ui, view, 1, 0)).contains(", scroll 0 of 0, bar false"));
+        assert_eq!(f(&ui, BAR, "_current_value"), 0.0);
+        assert_eq!(f(&ui, BAR, "_number_of_items"), 1.0);
+        // The list gone: its rows too.
+        let view = MenuView { speaker: "Nora".into(), line: Some("Well.".into()), choices: Vec::new(), goodbye: false };
+        frame_on(&mut ui, &mut written, view, 2, 0);
+        assert!(rows(&ui).is_empty());
+        assert_eq!(f(&ui, LIST, "_selected_height"), 0.0);
+        assert_eq!((f(&ui, BAR, "_current_value"), f(&ui, BAR, "_number_of_items")), (0.0, 1.0), "no rows, no scroll");
     }
 
     #[test]
