@@ -1,8 +1,8 @@
 //! Drawing the character creator (docs/spec-notes/character-creator.md §4): a panel on
 //! the right over the world, the player's face in the clear part of the picture at the
-//! left. That arrangement, the frame, the controls and the pages along the bottom are
-//! proposed to the maintainer: closer to the original's portrait and terminal, on a
-//! draft [design; the original's arrangement observed, the note's §4]. The menu's own
+//! left. That arrangement, the frame, the controls and the pages along the bottom come
+//! closer to the original's portrait and terminal [design; the original's arrangement
+//! observed, the note's §4; owner 2026-11-06, asked directly: free to restyle it]. The menu's own
 //! look stands [owner 2026-10-16: "something new in design without having to add new
 //! assets"]: the game menus' own fonts, pieces and plain drawn shapes, in the
 //! interface's amber [owner 2026-10-17: "can we also change the colour scheme to match

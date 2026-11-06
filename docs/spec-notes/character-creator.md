@@ -13,10 +13,11 @@ customise or extend to customise".
 
 So this menu does **not** follow the original's race menu (`menus\chargen\race_sex_menu.xml`,
 the Reflectron): it is a new design, drawn only from the game's own fonts, menu pieces
-and plain shapes, offering what the game's own character data allows. **Proposed to the
-owner, on a draft, not decided:** the layout of §4 and the camera's side in §5 move closer
-to the arrangement of the original's portrait and terminal; what the player can change,
-the tabs, the amber and the fonts stay the owner's.
+and plain shapes, offering what the game's own character data allows. **Restyled 2026-11-06**
+[owner, asked directly by a contributor: free to restyle it as we see fit; issue #1731]: the
+layout of §4 and the camera's side in §5 move closer to the arrangement of the original's
+portrait and terminal; what the player can change, the tabs, the amber and the fonts stay
+the owner's. The original's menu itself is a separate option (#1730).
 
 Code: data `crates/fnv-actor/src/creator.rs` (with the controls file reader in
 `facegen.rs`); the look kept by the game `crates/fnv-game/src/chargen.rs` (`Look`,
@@ -170,8 +171,8 @@ reader; full tables kept in the session notes, not in the repository).
 
 ## 4. The look of the menu [design unless tagged]
 
-A sketch: the published mockup (the owner's review). The layout below is **proposed to the
-owner** [design]: the first version had the panel on the left, 640 wide, on a flat black
+A sketch: the published mockup (the owner's review). The layout below is the restyle of
+2026-11-06 [design; owner, asked directly: free to restyle it]: the first version had the panel on the left, 640 wide, on a flat black
 0.8 with a bar along its edge, the tabs on top, and the hints "Space / X". It moves towards
 the original's arrangement [observed, the original at 1280 x 720: the portrait on the left,
 a narrow terminal on the right; sliders as a label over a `<--->` bar; a square on the
@@ -247,7 +248,7 @@ The rules:
   units away), the head turned 0.45 rad and seen a little from above on Hair (58), the
   **face** on the others (42, turned 0.15). The camera steps right a third of its
   distance so the player stands left of the picture's middle, clear of the panel, the
-  face turned towards it as in the original's portrait [proposed to the owner with §4; it
+  face turned towards it as in the original's portrait [the restyle of §4; it
   stepped left while the panel was on the left: observed, the smoke run's screenshots at
   1280 × 800 had the face behind the panel without a step]. No collision: the player's
   own space.
