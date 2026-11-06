@@ -972,7 +972,10 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
     // T11: the Mods page, the start menu's mod tiles over the pause menu.
     let mods_on = switch.start && view.paused.as_ref().zip(view.page.as_ref()).is_some_and(|(p, page)| crate::pause::mods_open(p, page));
     mods_page(&mut commands, &script, mods_on, &mut kit, &mut others.start, &mut nodes, scale, heading);
-    hud(&mut commands, &script, &view, &mut kit, &mut drawn, &mut nodes, scale, heading);
+    // The HUD at the UI scale (#1631): its places are written for a view 960 / scale units
+    // high (`fnv_game::ui_hud::write`), a unit `scale` times the size it is in the menus.
+    let _hud = crate::interface::hud_units();
+    hud(&mut commands, &script, &view, &mut kit, &mut drawn, &mut nodes, scale * interface::ui_scale(), heading);
 }
 
 /// The pause menu's Mods page (T11, `super::mods`): the tiles mods added to `StartMenu`,

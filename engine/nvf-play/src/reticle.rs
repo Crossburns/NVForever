@@ -513,6 +513,8 @@ fn draw(
     ),
     texts: Query<Entity, With<Texts>>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     // Not over the character creator, whatever state the opening leaves the game in
     // [owner 2026-10-17: "E) Talk" stayed under it]. Nor while an idle holds the camera
     // (the opening's wake-up, `crate::player::ViewDriven`): only subtitles then [owner

@@ -341,6 +341,7 @@ impl HudTiles<'_> {
             need_stages,
             crippled: std::array::from_fn(|i| self.player_limbs.as_ref().is_some_and(|l| l.crippled(25 + i as u16))),
             animation: Default::default(),
+            ui_scale: f64::from(crate::interface::ui_scale()),
             health: self.bars.as_ref().map_or(1.0, |v| f64::from(v.health)),
             action_points: self.bars.as_ref().map_or(1.0, |v| f64::from(v.action_points)),
             condition: weapon.condition.map(f64::from),

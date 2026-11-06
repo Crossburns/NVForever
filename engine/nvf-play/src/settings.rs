@@ -405,7 +405,13 @@ pub(crate) fn setup(app: &mut App) {
     app.init_resource::<Settings>();
     app.insert_resource(SettingsFile::for_run(crate::test_aid::Unattended::from_env().0));
     app.add_systems(PostStartup, (apply_stored, crate::bindings::apply_stored));
+    app.add_systems(PostStartup, fix_ui_scale.after(apply_stored));
     app.add_systems(Update, revert_unkept);
+}
+
+/// The UI scale is fixed for the run once the INI is read (`crate::interface::fix_ui_scale`).
+pub fn fix_ui_scale() {
+    crate::interface::fix_ui_scale();
 }
 
 /// `1`/`0` (also true/false, on/off, yes/no, any case).
@@ -615,6 +621,43 @@ mod tests {
         assert!(std::fs::read_to_string(&path).unwrap().contains("[Settings]\nlamp=1"));
         let app = start(&path);
         assert!(app.world().resource::<Lamp>().0, "the stored state wins");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #1631: the UI scale row is kept in the INI as its part and read back at the next
+    /// start; a value out of range is brought to the nearest end, one that is not a
+    /// number is skipped. (The only test that sets the UI scale setting.)
+    #[test]
+    fn the_ui_scale_survives_a_restart_and_is_clamped() {
+        let dir = std::env::temp_dir().join(format!("nvf-settings-ui-scale-{}", std::process::id()));
+        let path = dir.join("NVForever.ini");
+        let _ = std::fs::remove_dir_all(&dir);
+        let start = |path: &Path| {
+            crate::interface::set_ui_scale_setting(1.0);
+            let mut app = App::new();
+            app.insert_resource(SettingsFile(Some(path.to_path_buf())));
+            add_setting(&mut app, crate::interface::ui_scale_row("Display"));
+            app.add_systems(PostStartup, apply_stored);
+            app.update();
+            app
+        };
+        let mut app = start(&path);
+        assert_eq!(crate::interface::ui_scale_setting(), 1.0, "no INI yet: 100%");
+        set_slider(app.world_mut(), 0, 0.25);
+        assert_eq!(crate::interface::ui_scale_setting(), 0.75);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("[Settings]
+ui-scale=0.25
+"));
+        let _app = start(&path);
+        assert_eq!(crate::interface::ui_scale_setting(), 0.75, "the stored scale wins at the next start");
+        for (stored, scale) in [("7", 1.5), ("-2", 0.5), ("0.26", 0.75), ("big", 1.0)] {
+            std::fs::write(&path, format!("[Settings]
+ui-scale={stored}
+")).unwrap();
+            let _app = start(&path);
+            assert_eq!(crate::interface::ui_scale_setting(), scale, "ui-scale={stored}");
+        }
+        crate::interface::set_ui_scale_setting(1.0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
