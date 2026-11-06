@@ -744,7 +744,7 @@ the face is, and the view narrows where it looks).
   up over 0.5 s, not the mouse.
 - **Times.** In 0.8 s, out 0.3 s [observed: fitted, rough]; smoothstep.
 - **Framing.** The opening turn (and `--dialogue-recentre`'s) aims under the face so that
-  it sits 0.32 of the height from the top: `atan(0.36 tan(v/2))` below it. Nothing after
+  the head bone sits 0.38 of the height from the top, which puts the face's centre at about 0.32: `atan(0.24 tan(v/2))` below it. Nothing after
   that: free look stays and the view is the player's [owner decision 2026-10-10, §8.2].
   The turn takes its 0.4 s and then stays on the face until 1.6 s from its start
   (`ZOOM_HOLD_SECONDS`), as the speaker's body may still be coming round: at 8.7° a body
