@@ -1319,3 +1319,19 @@ The numbers above stay put so links to them hold; each item here gives its own p
     and the counter follow? (b) what does Reset restore with traits taken? (c) `_TextAlpha` and
     `_enabled` on a trait that cannot be taken. (d) a real wheel over the list. (e) the
     description scrolled to value 8. (f) why did the capture's list lack two traits?
+
+## Added 2026-11-06 (exploding pants, issue #1640)
+
+92. **A planted explosive: who dies, who panics, who sees.** (P3; pickpocket.md §5.)
+    Reverse-pickpocket while sneaking and unseen, each in its own run from a fresh load: (a)
+    a Pulse Grenade on an ordinary NPC (a Goodsprings settler): does it die? Note its
+    Health before and after; NVForever keeps it alive [hypothesis]. (b) The same on a
+    robot (a Protectron or Mister Handy): does it die? (c) A Frag Grenade on a child (Freeside
+    or Westside) and on an essential NPC (Sunny Smiles before Back in the Saddle, or Doc
+    Mitchell): does it go live (GetPlantedExplosive 1 after 0.1 s) and go off? Is it still
+    in their inventory afterwards? NVForever: neither goes live. (d) During the panic,
+    stand within 2 m in view with Sneak low: does the victim detect the player
+    (`GetDetected` on it, then hostility after the blast)? (e) The panic on a creature that
+    can be pickpocketed (a giant rat): does it play anything, does it stop, or does it go
+    on walking? (f) Seen by a third NPC halfway through the fuse, then hidden at the blast:
+    does that NPC turn hostile? NVForever counts it as a witness.
