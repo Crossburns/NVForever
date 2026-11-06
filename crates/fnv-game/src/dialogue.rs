@@ -215,11 +215,11 @@ fn is_own_id_condition(c: &crate::cond::Condition) -> bool {
 impl<'a> Game<'a> {
     // ---- which line ---------------------------------------------------------------
 
-    /// The game clock in hours (GameDaysPassed × 24 + GameHour), for Say Once a Day
-    /// [hypothesis: the timer runs on game time].
+    /// The game clock in hours, for Say Once a Day: GameDaysPassed × 24, as GameDaysPassed
+    /// already grows by the fraction of the day [design: simulation.md §5b; hypothesis: the
+    /// timer runs on game time]. Saved in `said_day`: `GameSnapshot::said_day_days_clock`.
     fn game_hours(&self) -> f64 {
-        let global = |name: &str| self.world.forms.global_by_edid(name).and_then(|(id, _)| self.world.global(id).ok()).unwrap_or(0.0) as f64;
-        global(clock::GAME_DAYS_PASSED) * 24.0 + global(clock::GAME_HOUR)
+        self.world.forms.global_by_edid(clock::GAME_DAYS_PASSED).and_then(|(id, _)| self.world.global(id).ok()).unwrap_or(0.0) as f64 * 24.0
     }
 
     fn say_once_a_day_hours(&self) -> f64 {
@@ -1225,18 +1225,22 @@ impl<'a> Game<'a> {
             _ => &[(listener, speaker)],
         };
         let next = LineKind::Conversation(lines + 1);
+        // "If this box is unchecked, conversations will never use the same topic twice
+        // (in the same conversation)" [documented: GECK wiki Quest Data Tab, Allow
+        // Repeated Conversation Topics]: a topic used already is passed over unless the
+        // line's quest allows it. A follow-up is named outright, so it is not passed over,
+        // but it carries the history on.
+        let earlier: Vec<FormId> = said.earlier_topics.iter().copied().chain(std::iter::once(said.topic)).collect();
         for &(who, to) in turns {
             if let Some(&f) = def.follow_ups.iter().find(|&&f| data.infos.get(&f).is_some_and(between_actors) && self.can_say(who, Some(to), f)) {
                 let topic = data.infos.get(&f).and_then(|d| d.topic).unwrap_or(FormId(0));
                 self.say_line(who, Some(to), topic, f, next);
                 self.set_line_look(who, said.look);
+                if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == who && s.info == f) {
+                    s.earlier_topics = earlier;
+                }
                 return;
             }
-            // "If this box is unchecked, conversations will never use the same topic twice
-            // (in the same conversation)" [documented: GECK wiki Quest Data Tab, Allow
-            // Repeated Conversation Topics]: a topic used already is passed over unless
-            // the line's quest allows it.
-            let earlier: Vec<FormId> = said.earlier_topics.iter().copied().chain(std::iter::once(said.topic)).collect();
             let mut linked: Vec<(FormId, FormId)> = Vec::new();
             for link in self.links_after(said.topic, def) {
                 if let Some(i) = self.link_line_where(who, Some(to), link, between_actors, Says::Actor) {

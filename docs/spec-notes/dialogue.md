@@ -406,8 +406,10 @@ A speaker **can say** a line when:
   to hold across actors: the Yes Man mainframe skipped the greeting 0x001164F1 the Tops
   Yes Man had said [observed 2026-10-31, observer check 31; one case, and the two may
   count as one speaker]. Ours holds a Say Once line back from every actor once any has
-  said it (#1113); Say Once a Day stays per actor. The clock is GameDaysPassed × 24 + GameHour
-  [hypothesis];
+  said it (#1113); Say Once a Day stays per actor. The clock is GameDaysPassed × 24
+  [design: `Game::game_hours`], which moves one per game hour as GameDaysPassed already
+  grows by the fraction of the day (simulation.md §5b); that the timer runs on game time
+  at all is [hypothesis];
 - it is the line's fixed speaker, if the line has one [documented: Category:Dialogue] —
   unless the line has its own GetIsID condition on the speaker, which then decides
   [observed 2026-10-31: the Lucky 38 elevator Victor said 0x00165102, whose fixed
@@ -642,10 +644,13 @@ Joe Cobb and Trudy (below).
   Allow Repeated Conversation Topics]. The next line's linked topics leave out one the
   conversation has used already unless the candidate line's quest has the flag (QUST DATA
   bit 2; 118 quests in the masters [observed]). Choices that name an INFO directly
-  (follow-ups) are not filtered. Radio programmes are not filtered either: their quests
+  (follow-ups) are not filtered, but they carry the conversation's used topics on to the
+  lines after them, their own topic added [design: `Game::next_conversation_line`, #1592].
+  Radio programmes are not filtered either: their quests
   set the flag, as the wiki asks for radio stations [documented: Creating Radio
-  Stations]. Test: `dialogue.rs`
-  `a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats`.
+  Stations]. Tests: `dialogue.rs`
+  `a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats`,
+  `a_follow_up_between_actors_keeps_the_topics_of_the_conversation`.
 - **The next line** (`Game::next_conversation_line`), when a line has ended and its end
   result has run: a Goodbye line ends the conversation [documented]; so does either
   side being gone [hypothesis]. Otherwise the line's next speaker says the next line:

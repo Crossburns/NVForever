@@ -86,7 +86,7 @@ original lacks it); **Save?**: *yes* (must be saved), *have* (already in the sna
 | Crime and enemies | `player.crime_counts`, `crime_enemies`, `enemy_of` | not found | have |
 | Faction reactions, names, cell owners, item values changed by script | `forms: FormChanges` | FACT bit 2 (§6.2) | have |
 | Form list additions | `form_lists` | FLST bit 31 | have |
-| Dialogue: said-once, said-today | `said`, `said_day` | INFO bit 31, no data (§6.2) [hypothesis] | have |
+| Dialogue: said-once, said-today | `said`, `said_day`, `said_day_days_clock` | INFO bit 31, no data (§6.2) [hypothesis] | have. A save without `said_day_days_clock` holds its said-today hours on an older clock (GameDaysPassed × 24 + GameHour) that cannot be converted: the load drops them, once, so those Say Once a Day lines are free again; `said` stays [design: `Game::restore`, #1579] |
 | Active effects, image-space modifiers | `effects`, `image_modifiers` | player/actor records [hypothesis] | have |
 | Broken locks | `locks` | not found | have |
 | Script clock, frame count, RNG | `time`, `frame`, `rng_word_pos` | none | have |
