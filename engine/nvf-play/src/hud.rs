@@ -844,6 +844,8 @@ fn draw(
     mut bar: Query<&mut Node, (With<ConditionBar>, Without<Strip>)>,
     mut strip: Query<(&mut Strip, &mut Node), Without<ConditionBar>>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     if art.is_none() {
         // The first frame the HUD is wanted: read the game's pictures and set it up.
         if view.shown {
@@ -897,7 +899,8 @@ fn pips(
         return;
     }
     let Ok(window) = windows.single() else { return };
-    let key = (window.physical_height() as f32, window.scale_factor());
+    // The ticks are set for the HUD's height at the UI scale: the view's at 100% (#1631).
+    let key = (window.physical_height() as f32 * crate::interface::ui_scale(), window.scale_factor());
     if rows.is_empty() {
         return;
     }
@@ -955,6 +958,8 @@ fn texts(
     stats: Query<Entity, With<EnemyStats>>,
     sneak: Query<Entity, With<SneakText>>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     if !view.shown || ammo.is_empty() {
         return;
     }

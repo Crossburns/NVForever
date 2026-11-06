@@ -437,6 +437,8 @@ fn draw(
     mut words: Query<&mut TextColor, With<Faded>>,
     mut fills: Query<&mut BackgroundColor, With<FadedFill>>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     let on = view.shown && meter.show.is_some();
     if kit.is_none() {
         if !on {

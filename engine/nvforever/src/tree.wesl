@@ -33,6 +33,7 @@ import bevy_render::globals::Globals;
 @if(!PREPASS_PIPELINE) import bevy_pbr::render::pbr_fragment::pbr_input_from_standard_material;
 @if(!PREPASS_PIPELINE) import bevy_pbr::render::pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing};
 @if(!PREPASS_PIPELINE && VISIBILITY_RANGE_DITHER) import bevy_pbr::render::pbr_functions::visibility_range_dither;
+@if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) import bevy_pbr::prepass::bindings::previous_view_uniforms;
 // The prepass view bind group holds the globals at binding 1 (the main pass at 11).
 @if(PREPASS_PIPELINE) @group(0) @binding(1) var<uniform> globals: Globals;
 
@@ -42,6 +43,8 @@ struct TreeWind {
     // x: unused; y: rock angular speed; z: rustle angular speed (rad/s); w: tree
     // height in local units.
     motion: vec4<f32>,
+    previous_wind: vec4<f32>,
+    change_frame: vec4<u32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> tree_wind: TreeWind;
@@ -56,7 +59,7 @@ const TILT: f32 = 0.35;
 
 // World-space offset of a point `local` (game space, z up) of the tree placed by
 // `world_from_local`.
-fn rock(world_from_local: mat4x4<f32>, local: vec3<f32>) -> vec3<f32> {
+fn rock(world_from_local: mat4x4<f32>, local: vec3<f32>, wind: vec4<f32>, time: f32) -> vec3<f32> {
     let origin = world_from_local[3].xyz;
     let scale = length(world_from_local[0].xyz);
     let height = max(tree_wind.motion.w, 1e-4);
@@ -64,10 +67,10 @@ fn rock(world_from_local: mat4x4<f32>, local: vec3<f32>) -> vec3<f32> {
     // Each tree has its own phase, from where it stands.
     let phase = dot(origin.xz, vec2<f32>(0.0131, 0.0173));
     // Seconds since start-up (wraps after an hour: one jump in the motion per hour).
-    let t = globals.time * tree_wind.motion.y;
+    let t = time * tree_wind.motion.y;
     // Leaning with the wind, plus two unrelated swings.
     let swing = 0.5 + 0.35 * sin(t + phase) + 0.15 * sin(2.31 * t + 1.7 * phase);
-    return tree_wind.wind.xyz * (tree_wind.wind.w * ROCK * h * h * height * scale * swing);
+    return wind.xyz * (wind.w * ROCK * h * h * height * scale * swing);
 }
 
 @vertex
@@ -75,7 +78,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     let base = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0)).xyz;
-    var world = base + rock(world_from_local, vertex.position);
+    var world = base + rock(world_from_local, vertex.position, tree_wind.wind, globals.time);
 
     // Bevy space: y is up. Right = up x (towards the camera, flattened).
     @if(TREE_BILLBOARD && VERTEX_UVS_B) let to_cam = view.world_position.xyz - base;
@@ -112,7 +115,41 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) out.position.z = min(out.position.z, 1.0);
     @if(PREPASS_PIPELINE && NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS) out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
     @if(PREPASS_PIPELINE && NORMAL_PREPASS_OR_DEFERRED_PREPASS && !VERTEX_NORMALS) out.world_normal = view.world_from_view[2].xyz;
-    @if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) out.previous_world_position = out.world_position;
+    @if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) {
+        let previous_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
+        let previous_base = mesh_functions::mesh_position_local_to_world(previous_model, vec4(vertex.position, 1.0)).xyz;
+        let previous_time_unwrapped = globals.time - globals.delta_time;
+        let previous_time = select(previous_time_unwrapped, previous_time_unwrapped + 3600.0, previous_time_unwrapped < 0.0);
+        let wind = select(tree_wind.wind, tree_wind.previous_wind, globals.frame_count == tree_wind.change_frame.x);
+        var previous_world = previous_base + rock(previous_model, vertex.position, wind, previous_time);
+        @if((TREE_BILLBOARD || TREE_LEAVES) && VERTEX_UVS_B) {
+            let v = previous_view_uniforms.view_from_world;
+            let rotation = transpose(mat3x3(v[0].xyz, v[1].xyz, v[2].xyz));
+            @if(TREE_BILLBOARD) {
+                let camera = -(rotation * v[3].xyz);
+                let to_camera = camera - previous_base;
+                var previous_flat = vec2(to_camera.x, to_camera.z);
+                var previous_right = vec3(1.0, 0.0, 0.0);
+                if dot(previous_flat, previous_flat) > 1e-6 {
+                    previous_flat = normalize(previous_flat);
+                    previous_right = vec3(previous_flat.y, 0.0, -previous_flat.x);
+                }
+                previous_world += previous_right * vertex.uv_b.x + vec3(0.0, vertex.uv_b.y, 0.0);
+            }
+            @if(TREE_LEAVES) {
+                let scale = length(previous_model[0].xyz);
+                let previous_phase = dot(vertex.position, vec3(311.7, 173.3, 237.1));
+                let rustle = sin(previous_time * tree_wind.motion.z + previous_phase);
+                let angle = wind.w * TILT * rustle;
+                let previous_c = cos(angle);
+                let previous_sn = sin(angle);
+                let previous_corner = vec2(previous_c * vertex.uv_b.x - previous_sn * vertex.uv_b.y, previous_sn * vertex.uv_b.x + previous_c * vertex.uv_b.y);
+                previous_world += (rotation[0] * previous_corner.x + rotation[1] * previous_corner.y) * scale;
+                previous_world += wind.xyz * (wind.w * FLUTTER * length(vertex.uv_b) * scale * rustle);
+            }
+        }
+        out.previous_world_position = vec4(previous_world, 1.0);
+    }
     @if(!PREPASS_PIPELINE && VERTEX_NORMALS) out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
 
     @if(VERTEX_COLORS) out.color = vertex.color;

@@ -254,6 +254,8 @@ fn draw(
     mut pieces: Query<(&MeterPiece, &mut Visibility), Without<MeterRoot>>,
     mut last: Local<Option<usize>>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     let Some(b) = breath else { return };
     let wanted = view.shown && shown(&b);
     if read.is_none() {

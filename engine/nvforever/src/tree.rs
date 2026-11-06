@@ -37,6 +37,10 @@ pub struct WindParams {
     /// x: unused (time comes from the view globals); y: rock angular speed; z: rustle
     /// angular speed (rad/s); w: tree height in the mesh's own units.
     pub motion: Vec4,
+    /// Wind before the most recent change, used only on that rendered frame.
+    pub previous_wind: Vec4,
+    /// x: rendered frame of the change (FrameCount increments in Last).
+    pub change_frame: UVec4,
 }
 
 /// Leaf cards: camera-facing, rocking and rustling (vertex shaders of the main pass and
@@ -178,6 +182,7 @@ pub fn wind_vector(sky: &crate::sky::SkyState) -> Vec4 {
 fn wind(
     sky: Res<crate::sky::SkyState>,
     cache: Res<TreeCache>,
+    frame: Res<bevy::diagnostic::FrameCount>,
     mut leaves: ResMut<Assets<LeafMaterial>>,
     mut bark: ResMut<Assets<BarkMaterial>>,
     mut last: Local<(Vec4, usize)>,
@@ -188,7 +193,11 @@ fn wind(
         return;
     }
     *last = (dir, built);
-    let set = |w: &mut WindParams| w.wind = dir;
+    let set = |w: &mut WindParams| {
+        w.previous_wind = w.wind;
+        w.change_frame.x = frame.0.wrapping_add(1);
+        w.wind = dir;
+    };
     for v in cache.0.values().flatten() {
         for p in &v.parts {
             match &p.material {
@@ -290,7 +299,7 @@ fn build(
     let scale = rec.size? / g.width().max(g.top()).max(1e-6);
     let mut parts = Vec::new();
     let (rock, rustle) = angular_speeds(rec.rock_speed.unwrap_or(1.0), rec.rustle_speed.unwrap_or(1.0));
-    let wind = WindParams { wind: Vec4::ZERO, motion: Vec4::new(0.0, rock, rustle, g.top()) };
+    let wind = WindParams { wind: Vec4::ZERO, motion: Vec4::new(0.0, rock, rustle, g.top()), ..default() };
     // Room for the swing (tree.wesl ROCK: a quarter of the height at the top).
     let sway = 0.3 * g.top();
 
