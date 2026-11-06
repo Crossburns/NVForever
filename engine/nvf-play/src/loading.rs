@@ -71,8 +71,8 @@ pub const PIPELINE_CAP_SECS: f64 = 15.0;
 /// them, the one that prepares the picture, the one that draws it].
 pub const PICTURE_FRAMES: u32 = 3;
 /// Real seconds the world waits for that at most [engineering choice: a start must not
-/// depend on it].
-pub const PICTURE_CAP_SECS: f64 = 3.0;
+/// depend on it; about twice the 2-2.9 s measured, and the scripts take about 5 s beside it].
+pub const PICTURE_CAP_SECS: f64 = 5.0;
 
 /// Move the player to another place behind a loading screen; see [`Travel`] for the
 /// fields. Sent by activation and scripts; [`LoadingPlugin`] turns it into the `Travel`.
