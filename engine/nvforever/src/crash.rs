@@ -16,8 +16,9 @@
 //! **Crash reports.** A panic on any thread writes `<home>\logs\crash-<UTC time>-<pid>.txt`:
 //! the thread, the message and where it was raised, the backtrace, the command line,
 //! where the camera was (worldspace or interior, cell, position; [`note_place`], kept
-//! every frame) and the name of the run log; the panic is logged too, and the default
-//! hook prints it to the console as before.
+//! every frame) and the name of the run log; the panic is logged too, and the console gets
+//! the words Rust's default hook prints, redacted (the default hook is not called: it would
+//! print the home folder).
 //!
 //! Not covered: native crashes (they skip Rust's panic hook; see the run log check above).
 //!
@@ -79,26 +80,56 @@ pub fn redact(text: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// `text` with every `folder` in it written as `shown`: letters in any case (Windows paths
-/// are not case sensitive) and `\` and `/` alike; only where the folder name ends (at a
-/// separator or a non-name character), so `C:\Users\Al` leaves `C:\Users\Alex` alone.
+/// are not case sensitive) and `\` and `/` alike, a run of them counting as one separator
+/// (a path printed with `{:?}` doubles its backslashes: `C:\\Users\\Alex`); only where the
+/// folder name ends (at a separator or a non-name character), so `C:\Users\Al` leaves
+/// `C:\Users\Alex` alone.
 fn redact_folder<'a>(text: &'a str, folder: &str, shown: &str) -> std::borrow::Cow<'a, str> {
-    let same = |a: u8, b: u8| a.eq_ignore_ascii_case(&b) || (matches!(a, b'\\' | b'/') && matches!(b, b'\\' | b'/'));
+    let sep = |c: u8| matches!(c, b'\\' | b'/');
     let (t, f) = (text.as_bytes(), folder.as_bytes());
-    if f.is_empty() || t.len() < f.len() {
+    if f.is_empty() {
         return std::borrow::Cow::Borrowed(text);
     }
+    // Where a match of `folder` that starts at `i` ends in `text`, if there is one.
+    let match_at = |i: usize| -> Option<usize> {
+        let (mut ti, mut fi) = (i, 0);
+        while fi < f.len() {
+            if sep(f[fi]) {
+                if !t.get(ti).is_some_and(|&c| sep(c)) {
+                    return None;
+                }
+                while fi < f.len() && sep(f[fi]) {
+                    fi += 1;
+                }
+                while ti < t.len() && sep(t[ti]) {
+                    ti += 1;
+                }
+            } else {
+                if !t.get(ti).is_some_and(|c| c.eq_ignore_ascii_case(&f[fi])) {
+                    return None;
+                }
+                ti += 1;
+                fi += 1;
+            }
+        }
+        Some(ti)
+    };
     let mut out: Option<String> = None;
     let (mut i, mut copied) = (0, 0);
-    while i + f.len() <= t.len() {
-        let ends = t.get(i + f.len()).is_none_or(|&c| !(c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-') || c >= 0x80));
-        if t[i..i + f.len()].iter().zip(f).all(|(&a, &b)| same(a, b)) && ends && text.is_char_boundary(i) && text.is_char_boundary(i + f.len()) {
-            let o = out.get_or_insert_with(|| String::with_capacity(text.len()));
-            o.push_str(&text[copied..i]);
-            o.push_str(shown);
-            i += f.len();
-            copied = i;
-        } else {
-            i += 1;
+    while i < t.len() {
+        let found = match_at(i).filter(|&end| {
+            let ends = t.get(end).is_none_or(|&c| !(c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-') || c >= 0x80));
+            ends && text.is_char_boundary(i) && text.is_char_boundary(end)
+        });
+        match found {
+            Some(end) => {
+                let o = out.get_or_insert_with(|| String::with_capacity(text.len()));
+                o.push_str(&text[copied..i]);
+                o.push_str(shown);
+                i = end;
+                copied = i;
+            }
+            None => i += 1,
         }
     }
     match out {
@@ -328,7 +359,6 @@ fn report_text(thread: &str, message: &str, location: &str, place: &str, command
 }
 
 fn set_hook() {
-    let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // A broken model, texture or animation: caught, and that file counts as failed
         // (nvf_assets::guard). Logged, not a crash.
@@ -365,7 +395,16 @@ fn set_hook() {
                 let _ = f.flush();
             }
         }
-        default(info);
+        // What Rust's default hook prints to the console, redacted: the default hook itself
+        // would print the message and backtrace with the home folder in them. Kept (rather
+        // than only the `error!` line) because it says the panic before the log plugin is
+        // up, and the smoke runner looks for "panicked" in the console.
+        eprint_line(format_args!("thread '{thread}' panicked at {location}:\n{message}"));
+        if std::env::var_os("RUST_BACKTRACE").is_some_and(|v| v != "0") {
+            eprint_line(format_args!("stack backtrace:\n{backtrace}"));
+        } else {
+            eprint_line(format_args!("note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"));
+        }
     }));
 }
 
@@ -488,6 +527,11 @@ mod tests {
         // Another account whose name starts the same is left alone.
         assert_eq!(r(r"C:\Users\Alexandra\x"), r"C:\Users\Alexandra\x");
         assert!(matches!(redact_folder("no paths here", r"C:\Users\Alex", "~"), std::borrow::Cow::Borrowed(_)));
+        // A path printed with `{:?}` (doubled backslashes), and one with a stray double slash.
+        let debug = format!("{:?}", std::path::Path::new(r"C:\Users\Alex\Documents\a.ini"));
+        assert_eq!(redact_folder(&debug, r"C:\Users\Alex", "%USERPROFILE%"), r#""%USERPROFILE%\\Documents\\a.ini""#);
+        assert_eq!(r("C:\\\\Users\\\\Alexandra"), "C:\\\\Users\\\\Alexandra");
+        assert_eq!(r("c://users//alex//x"), "%USERPROFILE%//x");
         // Not ASCII: matched byte for byte, and the text around it kept whole.
         assert_eq!(redact_folder("é /home/Zoë/x é", "/home/Zoë", "~"), "é ~/x é");
     }
