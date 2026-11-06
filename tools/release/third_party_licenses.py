@@ -70,7 +70,21 @@ def ours(pkg: dict) -> bool:
 
 
 def license_texts(pkg: dict) -> list[tuple[str, str]]:
-    folder = Path(pkg["manifest_path"]).parent
+    folder = Path(pkg["manifest_path"]).resolve().parent
+    found = licence_files(folder)
+    # A vendored workspace (engine/vendor/wgpu-ffx) keeps one licence at its root for its
+    # crates: look up to the vendor folder, never past it into NVForever's own licence.
+    vendor = REPO / "engine" / "vendor"
+    for parent in folder.parents if not found and vendor in folder.parents else ():
+        if parent == vendor:
+            break
+        found = [((parent.relative_to(vendor) / name).as_posix(), text) for name, text in licence_files(parent)]
+        if found:
+            break
+    return found
+
+
+def licence_files(folder: Path) -> list[tuple[str, str]]:
     return [
         (f.name, f.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n").strip())
         for f in sorted(folder.iterdir())

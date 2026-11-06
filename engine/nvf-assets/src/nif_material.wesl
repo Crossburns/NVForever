@@ -66,7 +66,7 @@ import bevy_pbr::{
     render::pbr_lighting::{EnvBRDFApprox, F_AB},
     render::mesh_view_bindings::{lights, view, globals, view_transmission_texture, view_transmission_sampler, fog},
     render::mesh_view_types::FOG_MODE_ATMOSPHERIC,
-    render::view_transformations::{frag_coord_to_uv, frag_coord_to_ndc, position_ndc_to_world, depth_ndc_to_view_z},
+    render::view_transformations::{position_ndc_to_world, depth_ndc_to_view_z},
 };
 @if(!PREPASS_PIPELINE && DEPTH_PREPASS) import bevy_pbr::prepass::utils as prepass_utils;
 @if(!PREPASS_PIPELINE) import nvf_assets::first_person_depth;
@@ -79,6 +79,22 @@ import bevy_pbr::{
 };
 
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, normal_map_texel};
+
+// Main-pass geometry uses the render viewport, which can be smaller than the
+// display attachment when FSR is enabled. Transmission remains a full-size texture.
+@if(!PREPASS_PIPELINE) fn frag_coord_to_uv(fc: vec2<f32>) -> vec2<f32> {
+    return (fc - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
+}
+@if(!PREPASS_PIPELINE) fn frag_coord_to_ndc(fc: vec4<f32>) -> vec3<f32> {
+    let uv = frag_coord_to_uv(fc.xy);
+    return vec3(uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), fc.z);
+}
+@if(!PREPASS_PIPELINE) fn transmission_uv(uv: vec2<f32>) -> vec2<f32> {
+    let pixel = view.main_pass_viewport.xy + uv * view.main_pass_viewport.zw;
+    return clamp(pixel, view.main_pass_viewport.xy + 0.5,
+        view.main_pass_viewport.xy + view.main_pass_viewport.zw - 0.5)
+        / vec2<f32>(textureDimensions(view_transmission_texture));
+}
 
 // The FaceGen offset at texture coordinate `uv` (CPU: fnv_actor::facegen::add_offset):
 // the offset image stretched over the texture, flipped vertically (its first row is the
@@ -400,7 +416,7 @@ fn nif_fragment(
     }
     @if(REFRACT) let shifted = clamp(frag_coord_to_uv(in.position.xy) + vec2(tilt.x, -tilt.y) * surface.refraction, vec2(0.0), vec2(1.0));
     @if(REFRACT) var refracted: FragmentOutput;
-    @if(REFRACT) refracted.color = vec4(textureSampleLevel(view_transmission_texture, view_transmission_sampler, shifted, 0.0).rgb, 1.0);
+    @if(REFRACT) refracted.color = vec4(textureSampleLevel(view_transmission_texture, view_transmission_sampler, transmission_uv(shifted), 0.0).rgb, 1.0);
     @if(REFRACT) return refracted;
     // |N·V|: the normal is already flipped towards the viewer on back faces of double-sided
     // shapes; abs() also covers single-sided ones seen edge-on.
@@ -502,7 +518,7 @@ fn nif_fragment(
         // faded only by the view-angle falloff.
         let add_a = select(out.color.a, falloff, surface.add_whole > 0.5);
         let fogged = main_pass_post_lighting_processing(pbr_input, vec4(out.color.rgb, 1.0));
-        @if(!ADD_LINEAR) let behind = textureSampleLevel(view_transmission_texture, view_transmission_sampler, frag_coord_to_uv(in.position.xy), 0.0).rgb;
+        @if(!ADD_LINEAR) let behind = textureSampleLevel(view_transmission_texture, view_transmission_sampler, transmission_uv(frag_coord_to_uv(in.position.xy)), 0.0).rgb;
         @if(!ADD_LINEAR) out.color = vec4(add_display(fogged.rgb, add_a, behind), 0.0);
         // NifSurface::add_linear: the colour added as it is, in linear light.
         @if(ADD_LINEAR) out.color = vec4(fogged.rgb * saturate(add_a), 0.0);
