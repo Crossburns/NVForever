@@ -1019,8 +1019,9 @@ pub struct BarterRequest {
     pub discount: i32,
 }
 
-/// A dialogue line being said outside a conversation (SayTo, Say, or a greeting with the
-/// Goodbye flag, `Game::start_dialogue`): docs/spec-notes/scripts.md §7.7.
+/// A dialogue line being said outside a conversation (SayTo, Say, a greeting with the
+/// Goodbye flag, `Game::start_dialogue`, or the rest of a Goodbye line the player chose,
+/// `Game::choose`): docs/spec-notes/scripts.md §7.7.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Speech {
     pub speaker: FormId,
@@ -1040,6 +1041,16 @@ pub struct Speech {
     /// Topics are applied and no SayToDone block runs [hypothesis for both].
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub greeting: bool,
+    /// A Goodbye line the player chose, said at the player after its conversation closed
+    /// at once (`Game::choose`, docs/spec-notes/dialogue.md §5) [observed: owner's
+    /// playtest 2026-11-05, against the original: choosing a Goodbye closes the menu at
+    /// once and the actor finishes the line as the player walks away]. It ends as a
+    /// Goodbye greeting does: its end script and Add Topics, no SayToDone block; it is
+    /// never cut (`Game::cut_line`); a `StartConversation player` in its end script starts
+    /// after its Add Topics (`Game::hold_force_greet`). Unlike a greeting it does not
+    /// hold its speaker in place (`Game::greets_player`) [design].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub farewell: bool,
     /// A line of a conversation between two actors (StartConversation with an actor as
     /// the target, `crate::dialogue`, docs/spec-notes/dialogue.md §5.1): its number in
     /// the conversation, from 1. Only its first response is said; when it ends the
@@ -1093,6 +1104,15 @@ pub enum LineLook {
 impl LineLook {
     pub fn is_both(&self) -> bool {
         *self == LineLook::Both
+    }
+}
+
+impl Speech {
+    /// A Goodbye line said at the player outside a conversation: a greeting
+    /// ([`Speech::greeting`]) or a farewell ([`Speech::farewell`]). It is never cut
+    /// (`Game::cut_line`).
+    pub fn goodbye_at_player(&self) -> bool {
+        (self.greeting || self.farewell) && self.target == Some(FormId::PLAYER_REF)
     }
 }
 
@@ -1553,6 +1573,21 @@ pub struct Game<'a> {
     /// the activator (IsActorTalkingThroughActivator, `crate::talking_activators`). Not
     /// saved.
     pub talking_through: Option<(FormId, FormId)>,
+    /// A farewell's end result script is running ([`Speech::farewell`], `Game::end_line`).
+    /// Not saved: a save never lands inside a script.
+    pub(crate) farewell_ending: bool,
+    /// A force greet (`StartConversation player`) asked for by that end script, as
+    /// (speaker, topic): it starts after the line's Add Topics
+    /// ([`Game::hold_force_greet`]). Both are set and put back by each `end_line`, so
+    /// a line ending inside another's end script keeps to its own. Not saved.
+    pub(crate) farewell_then: Option<(FormId, Option<FormId>)>,
+    /// The last Goodbye line the player chose that went on in the world, as (speaker,
+    /// line), set as its conversation closes (`Game::say_farewell`). nvf-play's log
+    /// takes it when it logs the matching goodbye `dialogue_ended` (same actor). A
+    /// headless run leaves it set, to no effect on the game. It is not cleared when a
+    /// conversation starts or ends, on purpose: another change in the same frame would
+    /// erase it before the frame's events are logged. Not saved.
+    pub farewell_said: Option<(FormId, FormId)>,
     /// The lengths of voice files, when the game was given them (`crate::voice`): a
     /// response then lasts as long as its sound. Not part of the saved state.
     pub voice: Option<std::sync::Arc<dyn crate::voice::VoiceLengths>>,
@@ -2203,6 +2238,9 @@ impl<'a> Game<'a> {
             said_day: BTreeMap::new(),
             dialogue: None,
             talking_through: None,
+            farewell_ending: false,
+            farewell_then: None,
+            farewell_said: None,
             voice: None,
             frame: 0,
             time: 0.0,
@@ -3962,7 +4000,7 @@ impl<'a> Game<'a> {
         self.emit(EventKind::LineStarted { speaker, target, topic, info, seconds });
         self.cover_info(info);
         let (say_to, greeting, hello) = (kind == LineKind::SayTo, kind == LineKind::Greeting, kind == LineKind::Hello);
-        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: false });
+        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, farewell: false, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: false });
         if let Some(&first) = def.response_order().first() {
             self.ask_response_idles(speaker, target, info, first);
         }
@@ -4012,10 +4050,13 @@ impl<'a> Game<'a> {
     /// is never cut: whatever stops it (its speaker dying, disabled or deleted, another
     /// line, a fight) ends it as if said to the end, its end result script and Add
     /// Topics applying [owner statement 2026-10-27, of the Goodsprings settler's water:
-    /// "do this for any reason as a catch all"].
+    /// "do this for any reason as a catch all"]. Nor is a farewell, the Goodbye line the
+    /// player chose ([`Speech::farewell`]) [hypothesis: a Goodbye line's end script sets
+    /// quest stages and must not be lost; the owner's catch-all statement was about the
+    /// greeting].
     pub(crate) fn cut_line(&mut self, speaker: FormId) {
         if let Some(k) = self.speech.iter().position(|s| s.speaker == speaker) {
-            if self.speech[k].greeting && self.speech[k].target == Some(FormId::PLAYER_REF) {
+            if self.speech[k].goodbye_at_player() {
                 self.end_line(k);
                 return;
             }
@@ -4073,8 +4114,9 @@ impl<'a> Game<'a> {
             // A Goodbye greeting at the player whose speaker is drawn into a fight ends at
             // once as if said to the end (`Game::cut_line`, `Game::greets_player`) [owner
             // statement 2026-10-27: "skip to the end of the line as if she finished
-            // speaking", "all the code runs"].
-            let fights = s.greeting && s.target == Some(FormId::PLAYER_REF) && self.awareness.state(s.speaker).in_combat();
+            // speaking", "all the code runs"]; so does a farewell ([`Speech::farewell`])
+            // [hypothesis, as in `Game::cut_line`].
+            let fights = s.goodbye_at_player() && self.awareness.state(s.speaker).in_combat();
             if !here || (self.extra.get(&s.speaker).is_some_and(|e| e.dead) && Some(s.topic) != death) {
                 cut.push(s.speaker);
             } else if s.remaining <= 1e-9 || fights {
@@ -4098,19 +4140,40 @@ impl<'a> Game<'a> {
         let s = self.speech.remove(k);
         let (speaker, info) = (s.speaker, s.info);
         self.emit(EventKind::LineEnded { speaker, info, cut: false });
+        // The force greet this line's end script holds, if it is a farewell
+        // (`Game::hold_force_greet`).
+        let mut then = None;
         if let Some(def) = data.infos.get(&info) {
             if let Some(u) = def.end.filter(|_| !s.end_ran) {
                 self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(speaker) });
+                // A farewell's end script may ask for the next conversation. The state is
+                // this call's own: a line that ends inside the script (another farewell
+                // its speaker's new line ends) neither sees nor clears the outer one's
+                // request, and the outer state comes back afterwards [design].
+                let outer = (std::mem::replace(&mut self.farewell_ending, s.farewell), self.farewell_then.take());
                 self.run_result(u, RunCtx { self_ref: Some(speaker), action_ref: None, quest: def.quest });
+                then = self.farewell_then.take().filter(|_| s.farewell);
+                (self.farewell_ending, self.farewell_then) = outer;
             }
             // A greeting said at the player ends as a conversation's line does
             // (`Game::start_dialogue`): its Add Topics join the known topics, and it
-            // is no SayTo line [hypothesis for both].
-            if s.greeting {
+            // is no SayTo line [hypothesis for both]. A farewell is a conversation's
+            // line that ends after its conversation closed (`Game::choose`): the same,
+            // as the line would have ended in the conversation (`Game::finish_line`).
+            if s.greeting || s.farewell {
                 for t in self.player.topics.learn(&def.add_topics) {
                     self.emit(EventKind::TopicAdded { topic: t, by: Some(info) });
                 }
             }
+        }
+        // The force greet a farewell's end script asked for starts now, after the end
+        // script and the Add Topics, as after a Goodbye line that ends in its conversation
+        // (`Game::finish_line`). Refusals are not errors, as for StartConversation.
+        if s.farewell {
+            if let Some((speaker, topic)) = then {
+                let _ = self.force_greet(speaker, topic);
+            }
+            return;
         }
         if s.greeting || s.hello {
             return;
