@@ -868,8 +868,10 @@ fn flat_point(aid: &PipBoyAid, windows: &Query<&Window, With<PrimaryWindow>>, co
 }
 
 /// The flat image's pointer for this frame's tile input ([`PointerSet`]), from the cursor now
-/// and the image's place as last laid out; none until the image stands. Nothing while the
-/// device has the pointer ([`pointer_source`]).
+/// and the image's place as last laid out. Nothing while the device has the pointer
+/// ([`pointer_source`]). Until the image stands up the last place stays: the hand-built page
+/// compares it with a row's hover, so a reopening under a resting cursor selects nothing
+/// (`stats::View::drawn_at`).
 pub fn flat_pointer(
     pip: Res<PipBoy>,
     screen: Option<ResMut<PipBoyScreen>>,
@@ -881,7 +883,8 @@ pub fn flat_pointer(
     if pointer_source(pip.frame, screen.on_model) != PointerSource::Flat {
         return;
     }
-    let now = flat.iter().next().filter(|_| pip.phase == Phase::Up).and_then(|(computed, at)| flat_point(&aid, &windows, computed, at));
+    let Some((computed, at)) = flat.iter().next().filter(|_| pip.phase == Phase::Up) else { return };
+    let now = flat_point(&aid, &windows, computed, at);
     if screen.pointer != now {
         screen.pointer = now;
     }
@@ -974,6 +977,20 @@ mod tests {
         assert_eq!(pointer_source(Frame::Device, false), PointerSource::Flat, "nothing shows the model's screen");
         assert_eq!(pointer_source(Frame::Screen, true), PointerSource::Flat, "the frame changed, the body has not let go yet");
         assert_eq!(pointer_source(Frame::Screen, false), PointerSource::Flat);
+    }
+
+    #[test]
+    fn the_flat_pointer_keeps_its_last_place_while_the_image_is_not_up() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(PipBoy::default());
+        world.insert_resource(PipBoyAid::default());
+        let camera = world.spawn_empty().id();
+        let last = Some(Vec2::new(200.0, 240.0));
+        world.insert_resource(PipBoyScreen { image: Handle::default(), camera, on_model: false, pointer: last, scale: 1.0 });
+        assert_ne!(world.resource::<PipBoy>().phase, Phase::Up);
+        world.run_system_once(flat_pointer).unwrap();
+        assert_eq!(world.resource::<PipBoyScreen>().pointer, last, "down, with no image");
     }
 
     #[test]

@@ -451,7 +451,7 @@ fn write_geometry(ui: &mut Ui, p: &Paths, rows: &[MadeRow], g: &Geometry) {
     ui.write_changed(p.list, "height", Value::Num(g.list));
     ui.write_changed(p.list, "_highlight_y", Value::Num(g.highlight.0));
     ui.write_changed(p.list, "_selected_height", Value::Num(g.highlight.1));
-    // Hidden at 1 [observed: pipboy.md §5.1.1]; the +1 is our adaptation [design].
+    // Hidden at 1 [design: pipboy.md §5.1.1]; the +1 is our adaptation [design].
     ui.write_changed(p.bar, "_number_of_items", Value::Num(g.desc_bound as f64 + 1.0));
 }
 

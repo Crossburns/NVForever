@@ -594,8 +594,10 @@ for the other ids is a [hypothesis]. The hand-built `PipBoyInput::Tab(i)` uses t
 
 **The title**: the `string` of `stats_title` is an entity without its closing `;`, which the
 reader keeps as plain text (menu-xml.md §2.4) [observed: the vanilla files, by fnvtool ui tree].
-The tile would show those characters. Code replaces them with `Page::title` only while the string
-still is such an unresolved name, and leaves a replacement's or a script's text alone [design].
+The tile would show those characters, and neither the masters nor `BUILT_IN` have a setting of that
+name. Code replaces them with `Page::title`, the hand-built page's own word, only while the string
+still is such an unresolved name, and leaves a replacement's or a script's text alone [design: the
+string rule, LEGAL.md: a word NVForever writes, none taken from the original's screen].
 What the original does with it: not known; capture.
 
 **What the page needs of `screen()`**, the question menu-xml.md §4.2 leaves open for the Pip-Boy.
