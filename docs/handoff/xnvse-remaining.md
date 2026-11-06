@@ -119,6 +119,10 @@ Lutana batch 1: 92 (#1009, ext-lutana.md: challenges, casinos, recipes, actor AI
 cells and water, zone flags, activators, terminals and locks, form flags, weapon fields,
 load screen types; from the pages and the records, not probed). Census after it: 765;
 LU 145 → 53.
+ShowOff batch 3: 38 (#1010, ext-showoff.md §6: the equipped-item family, the seeded
+randomizer, aux timer start and update handlers, temporary faction relations, a
+reference's radiation; from the pages, not probed). Census after it, with Lutana batch 1
+and #1775's TTW functions merged: 718 (ShowOff 111 → 73).
 
 **The plugin libraries: 1,519 left** (recounted with #1022's census). JIP LN 349,
 JohnnyGuitar 313, SUP 184, LU 145, ShowOff 139, ITR 119, One111 51, CacheUI 45, PP 42,
