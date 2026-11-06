@@ -486,6 +486,8 @@ pub fn draw(
     mut input: Input,
     mut tools: Tools,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     let Some(mut state) = state else {
         commands.init_resource::<DataState>();
         return;
@@ -1876,6 +1878,8 @@ fn knotted(n: u64, stream: u64) -> f32 {
 /// Move the waveform panel's trace while it is shown: the Pip-Boy radio's loudness
 /// (`crate::radio`) or a holotape's steady one.
 pub fn wave_moves(time: Res<Time<Real>>, radio: Option<Res<Radio>>, mut scope: ResMut<WaveScope>, mut pieces: Query<(&WaveSegment, &mut Node, &mut UiTransform)>) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     if pieces.is_empty() {
         return;
     }

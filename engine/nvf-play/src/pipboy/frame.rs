@@ -392,6 +392,8 @@ fn on_tab_out(out: On<PointerOut>, nodes: Query<&Clickable>, mut pip: ResMut<Pip
 
 /// Show the hover box of the tab under the pointer (none while the Pip-Boy is down).
 pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut Visibility)>) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     if !pip.open() && pip.hover_tab.is_some() {
         pip.hover_tab = None;
     }
@@ -417,6 +419,8 @@ pub fn draw(
     formats: Option<Res<CompressedImageFormatSupport>>,
     mut shown: Local<Option<(Page, usize, Frame)>>,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     let Some(screen) = screen else { return };
     let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame));
     if want == *shown && (want.is_none() || !roots.is_empty()) {

@@ -341,6 +341,8 @@ pub fn draw(
     mut d: Drawing,
     mut mem: Local<Memory>,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     let Some(mut view) = view else {
         commands.init_resource::<StatsView>();
         return;
@@ -1012,6 +1014,8 @@ pub fn use_hints(
     mut sounds: MessageWriter<crate::ui_sounds::UiSound>,
     mut active: ResMut<crate::menu::ActiveMenu>,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     use crate::ui_sounds::{UiEvent, UiMenu, UiSound};
     for &UseHint { hint, limb } in asks.read() {
         let Some(item) = read::hint_item(&sim, hint) else {

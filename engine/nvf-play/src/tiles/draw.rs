@@ -923,6 +923,18 @@ pub const CONTAINER_Z: i32 = 100;
 /// The trait menu's, its hand-built drawing's (`crate::chargen`) [design].
 pub const TRAIT_Z: i32 = crate::interface::TOP_MENU_Z;
 
+/// Where a tile menu keeps its place at the UI scale (`crate::interface::menu_frame`): the
+/// dialogue menu at the view's bottom, as its hand-built drawing does
+/// (`crate::dialogue_menu`), the others in its middle [design: #1631]. The pointer reads
+/// the same (`super::input`).
+pub fn menu_anchor(dialog: bool) -> Vec2 {
+    if dialog {
+        interface::BOTTOM_MIDDLE
+    } else {
+        interface::MIDDLE
+    }
+}
+
 pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes, mut blur: ResMut<super::menus::TileMenuBlur>) {
     let scale = view.windows.single().map_or(1.0, |w| w.height() / 960.0);
     let heading = view.hud.as_ref().map_or(0.0, |h| h.heading);
@@ -966,12 +978,15 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
             }
             None => Vec::new(),
         };
-        paint(&mut commands, drawn, pieces, scale, z, heading, ui, &mut kit, &mut nodes);
+        // At the UI scale (#1631): the units `scale × ui_scale` logical pixels, in a frame
+        // kept at the menu's anchor.
+        let frame = Some(menu_anchor(name == super::dialog_menu::DIALOG_MENU));
+        paint(&mut commands, drawn, pieces, scale * interface::ui_scale(), frame, z, heading, ui, &mut kit, &mut nodes);
     }
     *blur = blur_now;
     // T11: the Mods page, the start menu's mod tiles over the pause menu.
     let mods_on = switch.start && view.paused.as_ref().zip(view.page.as_ref()).is_some_and(|(p, page)| crate::pause::mods_open(p, page));
-    mods_page(&mut commands, &script, mods_on, &mut kit, &mut others.start, &mut nodes, scale, heading);
+    mods_page(&mut commands, &script, mods_on, &mut kit, &mut others.start, &mut nodes, scale * interface::ui_scale(), heading);
     // The HUD at the UI scale (#1631): its places are written for a view 960 / scale units
     // high (`fnv_game::ui_hud::write`), a unit `scale` times the size it is in the menus.
     let _hud = crate::interface::hud_units();
@@ -1008,7 +1023,8 @@ fn mods_page(commands: &mut Commands, script: &ScriptState, on: bool, kit: &mut 
         info!("tiles: {}: Mods page, {} mod tiles drawn ({} items)", super::mods::START_MENU, counts.0, counts.1);
         drawn.counts = counts;
     }
-    paint(commands, drawn, pieces, scale, super::mods::MODS_Z, heading, ui, kit, nodes);
+    // In the middle of the view, as the pause menu's page under it (`crate::pause`).
+    paint(commands, drawn, pieces, scale, Some(interface::MIDDLE), super::mods::MODS_Z, heading, ui, kit, nodes);
 }
 
 /// The fonts of `pieces`' texts that are not loaded (`loaded` says which are), each once:
@@ -1127,14 +1143,17 @@ fn hud(commands: &mut Commands, script: &ScriptState, view: &View, kit: &mut Fon
         }
         drawn.counts = counts;
     }
-    paint(commands, drawn, pieces, scale, TILES_Z, heading, ui, kit, nodes);
+    // The HUD keeps the view's own frame: its places are written for the scaled view.
+    paint(commands, drawn, pieces, scale, None, TILES_Z, heading, ui, kit, nodes);
 }
 
 /// Bring one menu's drawn nodes in line with its `pieces`, at stacking level `z`: nothing
 /// when they and the scale are as last drawn; otherwise each piece's slot kept, moved and
 /// recoloured in place, spawned again or removed ([`change`]).
 #[allow(clippy::too_many_arguments)]
-fn paint(commands: &mut Commands, drawn: &mut Drawn, pieces: Vec<Piece>, scale: f32, z: i32, heading: f32, ui: Option<&Ui>, kit: &mut FontKit, nodes: &mut Nodes) {
+/// `frame`: where a menu keeps its place at the UI scale (its root a
+/// `crate::interface::menu_frame` kept there); `None` for the HUD, whose root is the view.
+fn paint(commands: &mut Commands, drawn: &mut Drawn, pieces: Vec<Piece>, scale: f32, frame: Option<Vec2>, z: i32, heading: f32, ui: Option<&Ui>, kit: &mut FontKit, nodes: &mut Nodes) {
     if pieces == drawn.pieces && scale == drawn.scale {
         return;
     }
@@ -1145,6 +1164,7 @@ fn paint(commands: &mut Commands, drawn: &mut Drawn, pieces: Vec<Piece>, scale: 
     }
     let root = *drawn.root.get_or_insert_with(|| {
         let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
+        let full = frame.map_or(full.clone(), |anchor| interface::framed_root(full, anchor));
         commands.spawn((TileRoot, full, GlobalZIndex(z), Pickable::IGNORE)).id()
     });
     // A new size: the tiled pictures are set for the old one, so every piece again.

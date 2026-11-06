@@ -353,31 +353,35 @@ fn spawn(commands: &mut Commands, menu: &MainMenu, logo: Option<(Handle<Image>, 
             // Stretched to the window whatever its shape.
             root.spawn((ImageNode { image_mode: NodeImageMode::Stretch, ..ImageNode::new(edge) }, full.clone()));
             root.spawn((ImageNode { image_mode: NodeImageMode::Stretch, ..ImageNode::new(shade) }, Node { position_type: PositionType::Absolute, right: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(40.0), height: Val::Percent(100.0), ..default() }));
-            if let Some((image, size)) = logo {
-                let h = LOGO_WIDTH * size.y / size.x.max(1.0);
-                root.spawn((Logo, ImageNode::new(image), Node { position_type: PositionType::Absolute, left: u(LOGO_LEFT), top: u(LOGO_TOP), width: u(LOGO_WIDTH), height: u(h), ..default() }));
-            }
-            let Some(f) = menu.face.as_ref() else { return };
-            let n = Entry::ALL.len() as f32;
-            let top = (960.0 - n * ITEM) / 2.0;
-            let width = COLUMN - 5.0;
-            for (i, e) in Entry::ALL.iter().enumerate() {
-                let line = f.font.lines(e.label(), None).into_iter().next();
-                let w = f.font.width(e.label());
-                // The whole row takes the pointer; its border is the highlight box (`show_entries`).
-                root.spawn((
-                    EntryNode(i),
-                    Button,
-                    Node { position_type: PositionType::Absolute, right: u(RIGHT), top: u(top + i as f32 * ITEM), width: u(width), height: u(ITEM), border: UiRect::all(u(LINE)), ..default() },
-                    BorderColor::all(Color::NONE),
-                    BackgroundColor(Color::NONE),
-                ))
-                .with_children(|p| {
-                    if let Some(line) = line {
-                        set_line(p, f, &line, width - w - 10.0 - 2.0 * LINE, BASE - LINE, color(Shade::Bright));
-                    }
-                });
-            }
+            // The logo and the entries at the UI scale, in the middle of the view
+            // (`crate::interface::menu_frame`, #1631); the pictures above fill the view.
+            crate::interface::in_menu_frame(root, crate::interface::MIDDLE, |root| {
+                if let Some((image, size)) = logo {
+                    let h = LOGO_WIDTH * size.y / size.x.max(1.0);
+                    root.spawn((Logo, ImageNode::new(image), Node { position_type: PositionType::Absolute, left: u(LOGO_LEFT), top: u(LOGO_TOP), width: u(LOGO_WIDTH), height: u(h), ..default() }));
+                }
+                let Some(f) = menu.face.as_ref() else { return };
+                let n = Entry::ALL.len() as f32;
+                let top = (960.0 - n * ITEM) / 2.0;
+                let width = COLUMN - 5.0;
+                for (i, e) in Entry::ALL.iter().enumerate() {
+                    let line = f.font.lines(e.label(), None).into_iter().next();
+                    let w = f.font.width(e.label());
+                    // The whole row takes the pointer; its border is the highlight box (`show_entries`).
+                    root.spawn((
+                        EntryNode(i),
+                        Button,
+                        Node { position_type: PositionType::Absolute, right: u(RIGHT), top: u(top + i as f32 * ITEM), width: u(width), height: u(ITEM), border: UiRect::all(u(LINE)), ..default() },
+                        BorderColor::all(Color::NONE),
+                        BackgroundColor(Color::NONE),
+                    ))
+                    .with_children(|p| {
+                        if let Some(line) = line {
+                            set_line(p, f, &line, width - w - 10.0 - 2.0 * LINE, BASE - LINE, color(Shade::Bright));
+                        }
+                    });
+                }
+            });
         });
 }
 

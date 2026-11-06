@@ -192,7 +192,8 @@ fn spawn(commands: &mut Commands, c: &Ctx, s: &Session, view: Option<&PokerView>
         });
     }
     let t = &s.table;
-    root.with_children(|r| {
+    // The menu at the UI scale, in the middle of the view (`crate::interface::menu_frame`, #1631).
+    root.with_children(|r| crate::interface::in_menu_frame(r, crate::interface::MIDDLE, |r| {
         // The heading, top left; the pot, top right.
         let title = format!("{}  -  TEXAS HOLD'EM", s.casino.title().to_uppercase());
         c.text(r, Font::Glow, &title, EDGE, EDGE, 0.0, bright);
@@ -235,7 +236,7 @@ fn spawn(commands: &mut Commands, c: &Ctx, s: &Session, view: Option<&PokerView>
             }
             x -= w + CHOICE_GAP;
         }
-    });
+    }));
 }
 
 /// Seat labels without the engine's picture: round the top of the view [design].
