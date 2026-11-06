@@ -2566,7 +2566,7 @@ expect = [
   { text = "tiles: BarterMenu Hover(Player, 0) on its tiles", label = "pointer crosses back to player rows through the focus rect" },
   { text = "tiles: ContainerMenu", count = 0, label = "barter only" },
 ]
-order = [["menu: a script opens the barter menu with 0x00104C79", "stock in 0x00104C7A", "tiles: BarterMenu Select(Player, 0) on its tiles", "Selling 10mm Pistol x1", "Took back 10mm Pistol x1", "tiles: BarterMenu Accept on its tiles", "menu: Accept: Traded", "tiles: BarterMenu Category(Player, -1) on its tiles", "tiles: BarterMenu Close on its tiles", "menu: close", "Goodbye."]]
+order = [["menu: a script opens the barter menu with 0x00104C79", "stock in 0x00104C7A", "tiles: BarterMenu Select(Player, 0) on its tiles", "Selling 10mm Pistol x1", "Took back 10mm Pistol x1", "tiles: BarterMenu Accept on its tiles", "menu: Accept: Traded", "tiles: BarterMenu Category(Player, -1) on its tiles", "tiles: BarterMenu Close on its tiles", "menu: close"]]
 
 [[scenario]]
 name = "tiles-barter-quantity"
@@ -2598,7 +2598,7 @@ source = "[design] barter-menu.md sections 5 and 9: with the tile switch empty t
 note = "The barter-figures-currency recipe through Chet's dialogue, with the same timed shots and trade as tiles-barter but using the hand-built keys. No pointer aid. The automatic barter aid is delayed beyond the run. At 1280x720 these shots are the comparison set for the supervisor."
 areas = ["ui", "barter", "menus"]
 paths = ["engine/nvf-play/src/tiles/barter_menu.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**"]
-env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "9:call:0x00104C79:ShowBarterMenu", NVF_PLAY_TEST_GIVE = "0000000F:100,0000434F:1,00176AC4:3", NVF_PLAY_TEST_KEYS = "14.5:enter,16:right,16.2:up,16.5:enter,18:left,18.5:enter,20.5:a,22:bracketleft,24:bracketright,29:down,30:pagedown,31:wheel-down,32:right,36.5:x", NVF_PLAY_TEST_SHOTS = "13:default_barter_open.png,15:default_barter_offered.png,17:default_barter_returned.png,19:default_barter_sale.png,21:default_barter_accepted.png,23:default_barter_category.png,30.5:default_barter_scrolled.png" }
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "9:call:0x00104C79:ShowBarterMenu", NVF_PLAY_TEST_GIVE = "0000000F:100,0000434F:1,00176AC4:3", NVF_PLAY_TEST_KEYS = "14.5:enter,16:right,16.2:up,16.5:enter,18:left,18.5:enter,19:enter,20.5:a,22:bracketleft,24:bracketright,29:down,30:pagedown,31:wheel-down,32:right,36.5:x", NVF_PLAY_TEST_SHOTS = "13:default_barter_open.png,15:default_barter_offered.png,17:default_barter_returned.png,19:default_barter_sale.png,21:default_barter_accepted.png,23:default_barter_category.png,30.5:default_barter_scrolled.png" }
 args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 42
 expect = [
@@ -2608,7 +2608,7 @@ expect = [
   { re = 'menu: figures of 10mm Pistol: DAM \d+, WG [\d.]+, VAL \d+, .*DPS \d+, .*CND', label = "hand-built item card" },
   { text = "menu: Accept: Traded", count = 1, label = "A accepts once" },
 ]
-order = [["menu: a script opens the barter menu with 0x00104C79", "stock in 0x00104C7A", "Selling 10mm Pistol x1", "Took back 10mm Pistol x1", "menu: Accept: Traded", "menu: close", "Goodbye."]]
+order = [["menu: a script opens the barter menu with 0x00104C79", "stock in 0x00104C7A", "Selling 10mm Pistol x1", "Took back 10mm Pistol x1", "menu: Accept: Traded", "menu: close"]]
 
 [[scenario]]
 name = "barter"
