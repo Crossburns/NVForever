@@ -816,7 +816,8 @@ fn write_container(
     // What the model shows is read when it changed: an aid's figures run its conditions.
     let due = active.is_changed() || st.needs_snapshot(menu);
     // The load order's setting over NVForever's label.
-    let hint = if due { fnv_game::ui_loading::game_string(game, container_menu::TAKE_ALL_HINT) } else { String::new() };
+    // With a controller the button that takes all (X, `crate::pad::menu_buttons`) [#1662].
+    let hint = if due { crate::pad::game_hint(&fnv_game::ui_loading::game_string(game, container_menu::TAKE_ALL_HINT), &[KeyCode::KeyR], crate::pad::at_menu(crate::script::MENU_CONTAINER)) } else { String::new() };
     let new = due.then(|| {
         if forms.is_none() {
             *forms = play.as_ref().map(|p| crate::pipboy::stats::read::Forms::new(p.lo, p.schema));

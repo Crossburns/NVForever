@@ -73,15 +73,27 @@ Start cannot be bound.
   | Roulette | A Place, Y Remove, X Finish, LT Lower, RT Raise, B Exit |
   | Slot machine | A Spin, RT Raise, LT Lower, Y Payouts, X Max Bet, B Exit |
   | Tutorial | RT Next, LT Previous |
+  | Caravan bet [design, #1662] | A Accept, Y Auto Match, RT Raise, B Exit |
+  | Caravan deck [design, #1662] | A Add, X Remove, Y Randomize, RT Play Caravan (B, the shared Esc, leaves) |
+  | Caravan game [design, #1662] | A Select Card, X Discard Card, Y Discard Track, B Cancel; D-pad left / right the hand |
+  | Poker [design, #1662] | A Check/Call (between hands Next Hand), RT Raise, Y All In, X Fold, B Leave; D-pad up / down the raise |
+  | Pause menu [design, #1662] | X Delete (a save on the Load page, a binding on the Controls tab) |
+  | Pip-Boy STATS, RAD view [design, #1662] | A RadAway (not used from the page, as its key), X Rad-X |
+
+  Caravan has no menu file read yet and poker and the pause menu are NVForever's own,
+  so those buttons are NVForever's, following the other card games (A the main action,
+  Y and X the next, B leave). A minigame's help box rests the minigame's own buttons, so
+  A (Enter) and B (Esc) close it as its keys do (blackjack's A is otherwise its F)
+  (`pad::MenuPages`, `pad::HELP_PAGE`). Poker and the pause menu have no MenuMode code
+  and stand in `pad::MenuAt` as codes of their own (`POKER_MENU`, `PAUSE_MENU`); while
+  the pause menu is up its buttons are the menu's own, not those of a menu under it.
 
   On the ITEMS page the triggers are the pages and LB is Mod, so of the shared paging
   buttons only RB (Page Down) is left there; the D-pad steps the rows both ways.
   On the STATS status tab X is Rad-X, which only acts on the RAD view; on CND and EFF it
   does nothing.
 
-  Not followed: the ITEMS page's RB Hotkey (the hotkeys are held digit keys), RadAway's
-  A on the RAD view (not usable from the STATS page), caravan (its menu files are not
-  read yet).
+  Not followed: the ITEMS page's RB Hotkey (the hotkeys are held digit keys).
 - On the Pip-Boy DATA page's maps the right stick moves the cursor (the highlight box),
   pushed past an edge it pans the map, and the left stick's up and down zooms in and out
   smoothly while held [observed: the original; the speeds are design], built in
@@ -89,6 +101,26 @@ Start cannot be bound.
 - The prompt under the crosshair names the Activate control's own key ("E)") or, with a
   controller, its button ("A)") (`Bindings::prompt`). The original shows the button's
   picture there (`&xbuttona;`, `general_button_a.dds`); letters are the first step.
+- **Menu hints follow the device** (#1662). Every hint names the key its menu answers
+  ("Take All R)", "Close [E]") or, with a controller, the button that presses that key
+  there (`pad::hint`, looked up in the tables above through `pad::button_for`, the
+  menu's own buttons first, then the shared ones, B before Start for Esc): "Take All X)",
+  "Close [B]". A hint whose keys no button presses keeps the key's name (a unit test
+  lists every hint and fails on such a gap). Which names are in use is one setting for
+  every menu (`pad::labels`, kept in step with Input Device each frame) [design, #1662:
+  as a language is; the drawing code reads it without each menu taking the bindings].
+  Built: the container, barter and "How many?" buttons, the tiled container menu's Take
+  All, the Pip-Boy's Repair/Maintain, Mod, mod menu, repair list, STATS hints and
+  General/Reputation switch, DATA's Challenges/Notes, crafting, repair services,
+  level-up and the tag-skill/trait lists, lockpicking and every minigame's help box
+  Close, blackjack, roulette, slots, caravan, poker, the Wait/Sleep menu, the dialogue's
+  Goodbye hint, the pause menu's Delete and Yes/No. The help texts' control strings
+  (`&sUActnCrouch;` …, `lockpick::help::expand_keys`) name the control's button. Menus
+  drawn with a view kept for change detection redraw when the device changes; the others
+  (the container, barter and Pip-Boy pages) take the new names at their next redraw.
+  Not followed: the hint words the tiled Wait/Sleep, tutorial and message menus take
+  from their files' `_PCButtonText` (opt-in `[UI] TileMenus`), and the button pictures
+  (letters stand in).
 
 ## 4. Rumble
 
@@ -156,8 +188,8 @@ those settings so a mod that changes them changes this too.
 ## 6. Not built yet
 
 - The button pictures from `Interface\Shared\Button\` in place of letters.
-- The rest of the menus' own controller buttons (§3's "not followed"), and hints in menus ("E) Exit", lockpick, Pip-Boy, container)
-  following the device.
+- The ITEMS page's RB Hotkey (§3's "not followed"); the tiled menus' file hints
+  following the device (§3).
 - A pointer moved by a stick for the mouse-only parts of menus still left: the dialogue
   list (the Pip-Boy map's stick cursor and zoom are built, §3).
 - Fast travel from the World Map on a controller: the original's A on a marker; the map

@@ -173,6 +173,8 @@ pub struct RowView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListView {
     pub code: u16,
+    /// The names the hints use (`crate::pad::labels`).
+    pub labels: crate::pad::Labels,
     /// The attributes page of the tag-skill menu's file.
     pub attributes: bool,
     pub title: String,
@@ -392,7 +394,7 @@ impl ListMenu {
                 )
             }
         };
-        ListView { code: self.code, attributes: self.attributes(), title, rows, selected: self.selected, scroll: self.scroll, icon, info, counter, done: self.can_finish(), hover: self.hover }
+        ListView { code: self.code, labels: crate::pad::labels(), attributes: self.attributes(), title, rows, selected: self.selected, scroll: self.scroll, icon, info, counter, done: self.can_finish(), hover: self.hover }
     }
 }
 
@@ -590,7 +592,8 @@ fn info(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
 }
 
 fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
-    let list = [(ListButton::Reset, "Reset", "R)", 0.0, true), (ListButton::Done, "Done", "A)", s.done_y, v.done)];
+    let h = |k: KeyCode| crate::pad::hint_as(&[k], crate::pad::at_menu(v.code), v.labels);
+    let list = [(ListButton::Reset, "Reset", h(KeyCode::KeyR), 0.0, true), (ListButton::Done, "Done", h(KeyCode::KeyA), s.done_y, v.done)];
     for (b, label, hint, dy, on) in list {
         let color = amber(255.0).with_alpha(if on { 1.0 } else { DIM });
         let y = BUTTONS.y + dy;
@@ -601,7 +604,7 @@ fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
             c.outline(p, BUTTONS.x - bw, y, bw, bh, amber(200.0));
         }
         c.text(p, Which::Body, label, BUTTONS.x - BUTTON_PAD, y + BUTTON_PAD, Align::Right, color);
-        c.text(p, Which::Body, hint, BUTTONS.x + HINT_X, y + BUTTON_PAD, Align::Left, color);
+        c.text(p, Which::Body, &hint, BUTTONS.x + HINT_X, y + BUTTON_PAD, Align::Left, color);
         p.spawn((Button, b, at(BUTTONS.x - bw, y, bw + 40.0, bh)));
     }
 }

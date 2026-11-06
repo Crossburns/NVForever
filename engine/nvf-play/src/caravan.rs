@@ -145,14 +145,57 @@ impl Session {
         self.game.as_ref().is_some_and(|g| g.phase != Phase::Over && g.turn == PLAYER) && self.help.is_none()
     }
 
-    /// The buttons of the bet and game screens, top to bottom: label, key, command, lit.
-    pub fn buttons(&self) -> Vec<(&'static str, &'static str, CaravanInput, bool)> {
+    /// Where the screen is for its controller buttons (`crate::pad::menu_buttons`): its
+    /// stage, or the help box while one is up (whose A and B close it).
+    pub fn hint_at(&self) -> crate::pad::MenuAt {
+        if self.help.is_some() {
+            return crate::pad::MenuAt { code: Some(MENU_CARAVAN), tab: crate::pad::HELP_PAGE };
+        }
+        self.stage_at()
+    }
+
+    /// The stage's own buttons, help box or not (the buttons under a help box keep their
+    /// hints).
+    fn stage_at(&self) -> crate::pad::MenuAt {
+        let tab = match self.stage {
+            Stage::Bet => crate::pad::CARAVAN_BET,
+            Stage::Deck => crate::pad::CARAVAN_DECK,
+            Stage::Play => crate::pad::CARAVAN_PLAY,
+            Stage::Results => crate::pad::HELP_PAGE,
+        };
+        crate::pad::MenuAt { code: Some(MENU_CARAVAN), tab }
+    }
+
+    /// The hint for the keys `keys` on this screen ("W)", with a controller "A)").
+    pub fn hint(&self, keys: &[KeyCode]) -> String {
+        crate::pad::hint(keys, self.stage_at())
+    }
+
+    /// The screen's hints as one log line ("Auto Match W), Raise A), …", with a help box
+    /// "…; help: Close [E]").
+    pub fn hint_line(&self) -> String {
+        use KeyCode::*;
+        let parts: Vec<String> = match self.stage {
+            Stage::Deck => [("Randomize Caravan Deck", KeyS), ("Add", KeyW), ("Remove", KeyA), ("Play Caravan", KeyF)].iter().map(|(l, k)| format!("{l} {}", self.hint(&[*k]))).collect(),
+            _ => self.buttons().into_iter().map(|(l, h, _, _)| format!("{l} {h}")).collect(),
+        };
+        let mut line = parts.join(", ");
+        if let Some(h) = &self.help {
+            line.push_str(&format!("; help: {} {}", h.words.close, crate::pad::game_hint(&h.words.close_hint, &[KeyE, Escape], crate::pad::HELP_AT)));
+        }
+        line
+    }
+
+    /// The buttons of the bet and game screens, top to bottom: label, key hint, command,
+    /// lit.
+    pub fn buttons(&self) -> Vec<(&'static str, String, CaravanInput, bool)> {
+        use KeyCode::*;
         match self.stage {
             Stage::Bet => vec![
-                ("Auto Match", "W)", CaravanInput::AutoMatch, self.bet.can_match()),
-                ("Raise", "A)", CaravanInput::Raise, self.bet.can_raise()),
-                ("Accept", "F)", CaravanInput::Accept, self.bet.can_accept()),
-                ("Exit", "R)", CaravanInput::Exit, true),
+                ("Auto Match", self.hint(&[KeyW]), CaravanInput::AutoMatch, self.bet.can_match()),
+                ("Raise", self.hint(&[KeyA]), CaravanInput::Raise, self.bet.can_raise()),
+                ("Accept", self.hint(&[KeyF]), CaravanInput::Accept, self.bet.can_accept()),
+                ("Exit", self.hint(&[KeyR, Escape]), CaravanInput::Exit, true),
             ],
             Stage::Play => {
                 let mine = self.players_turn();
@@ -162,10 +205,10 @@ impl Session {
                 let discard = mine && !matches!(self.pick, Pick::Track { .. });
                 let track = mine && !opening && g.is_some_and(|g| g.sides[PLAYER].caravans.iter().any(|c| !c.is_empty()));
                 vec![
-                    ("Select Card", "W)", CaravanInput::Select, select),
-                    ("Discard Card", "Q)", CaravanInput::Discard, discard),
-                    ("Discard Track", "E)", CaravanInput::DiscardTrack, track),
-                    ("Cancel", "R)", CaravanInput::Cancel, mine || self.game.as_ref().is_some_and(|g| g.phase != Phase::Over)),
+                    ("Select Card", self.hint(&[KeyW]), CaravanInput::Select, select),
+                    ("Discard Card", self.hint(&[KeyQ]), CaravanInput::Discard, discard),
+                    ("Discard Track", self.hint(&[KeyE]), CaravanInput::DiscardTrack, track),
+                    ("Cancel", self.hint(&[KeyR]), CaravanInput::Cancel, mine || self.game.as_ref().is_some_and(|g| g.phase != Phase::Over)),
                 ]
             }
             _ => Vec::new(),

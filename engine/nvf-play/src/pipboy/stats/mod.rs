@@ -74,6 +74,15 @@ const BOX_TEXT_DROP: f32 = 3.0;
 /// The keys the hints name [observed: "S)", "E)", "A)", "X)" on the owner's
 /// screenshots; documented: `_PCButton_S` and the others name these buttons].
 const HINT_KEYS: [&str; 4] = ["S)", "E)", "A)", "X)"];
+/// The keys themselves; with a controller the hints name the buttons that press them
+/// (`crate::pad::menu_buttons`: A, Y on CND; A, X on RAD) [#1662].
+const HINT_KEY_CODES: [KeyCode; 4] = [KeyCode::KeyS, KeyCode::KeyE, KeyCode::KeyA, KeyCode::KeyX];
+
+/// The status tab's hint `i` for the device in use.
+fn hint_key(v: &StatsView, i: usize) -> String {
+    let tab = if v.status == 1 { crate::pad::STATS_RAD } else { 0 };
+    crate::pad::hint(&[HINT_KEY_CODES[i]], crate::pad::MenuAt { code: Some(fnv_game::game::menus::STATS), tab })
+}
 
 /// The Vault Boy (`stats_player_*`): the head 40 down, centred, at zoom 145, and each
 /// piece's place and size before the zoom; the pictures fill the top left of their files
@@ -665,7 +674,7 @@ fn status(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &mut StatsView, s: &Snap
         }
         let ty = box_text_top(c, top, size.y);
         c.text(p, 2, text, right - HINT_HORBUF / 2.0, ty, Align::Right, colour);
-        c.text(p, 2, HINT_KEYS[i], right + HINT_KEY_GAP, ty, Align::Left, colour);
+        c.text(p, 2, &hint_key(v, i), right + HINT_KEY_GAP, ty, Align::Left, colour);
         spots.push((r, Spot::Hint(i)));
     }
     match v.status {
@@ -968,7 +977,9 @@ fn general(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &mut StatsView, s: &Sna
     }
     let ty = box_text_top(c, top, size.y);
     c.text(p, 2, name, right - HINT_HORBUF / 2.0, ty, Align::Right, bright());
-    c.text(p, 2, "R)", right + HINT_KEY_GAP, ty, Align::Left, bright());
+    // R, with a controller X (`stats_menu.xml`'s, `crate::pad::menu_buttons`).
+    let key = crate::pad::hint(&[KeyCode::KeyR], crate::pad::MenuAt { code: Some(fnv_game::game::menus::STATS), tab: 4 });
+    c.text(p, 2, &key, right + HINT_KEY_GAP, ty, Align::Left, bright());
     spots.push((sr, Spot::Switch));
     if rows.is_empty() && v.reputation {
         // [hypothesis: the words.]

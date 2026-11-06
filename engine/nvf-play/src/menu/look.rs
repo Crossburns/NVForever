@@ -503,16 +503,19 @@ fn caps_flow(p: &mut ChildSpawnerCommands, c: &mut Ctx, flow: Flow, caps: u64, a
 }
 
 fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel) {
-    let list: Vec<(&str, &str, Command, bool)> = match (m.mode, &m.trade) {
-        (Mode::Barter(_), Some(t)) => vec![("Accept", "A)", Command::Accept, !t.is_empty()), ("Exit", "X)", Command::Close, true)],
-        _ => vec![("Take All", "R)", Command::TakeAll, !m.list(Side::Container).rows.is_empty()), ("Exit", "E)", Command::Close, true)],
+    use crate::pad::{at_menu, hint};
+    use KeyCode::*;
+    let (barter, container) = (at_menu(fnv_game::game::menus::BARTER), at_menu(crate::script::MENU_CONTAINER));
+    let list: Vec<(&str, String, Command, bool)> = match (m.mode, &m.trade) {
+        (Mode::Barter(_), Some(t)) => vec![("Accept", hint(&[KeyA], barter), Command::Accept, !t.is_empty()), ("Exit", hint(&[KeyX, Escape], barter), Command::Close, true)],
+        _ => vec![("Take All", hint(&[KeyR], container), Command::TakeAll, !m.list(Side::Container).rows.is_empty()), ("Exit", hint(&[KeyE, Escape], container), Command::Close, true)],
     };
     let h = 31.0 + BUTTON_PAD;
     for (i, (label, hint, cmd, on)) in list.into_iter().enumerate() {
         let color = amber(255.0).with_alpha(if on { 1.0 } else { DIM });
         let y = BUTTONS_Y + i as f32 * h;
         let w = c.text(p, false, label, BUTTONS_RIGHT, y + BUTTON_PAD, Align::Right, color);
-        c.text(p, false, hint, BUTTONS_RIGHT + HINT_GAP, y + BUTTON_PAD, Align::Left, color);
+        c.text(p, false, &hint, BUTTONS_RIGHT + HINT_GAP, y + BUTTON_PAD, Align::Left, color);
         p.spawn((Button, CmdButton(cmd), at(BUTTONS_RIGHT - w - 10.0, y, w + 20.0 + HINT_GAP + 30.0, h)));
     }
 }
@@ -669,9 +672,12 @@ pub fn spawn_quantity(root: &mut ChildSpawnerCommands, q: &Quantity, words: &[St
             }
             c.text(p, true, &q.amount.to_string(), Q_CENTRE, Q_AMOUNT_Y, Align::Centre, bright);
             let h = 31.0 + BUTTON_PAD;
-            for ((label, hint, cmd), y) in [(words[0].as_str(), "A)", Command::AmountOk), (words[1].as_str(), "E)", Command::AmountCancel)].into_iter().zip(Q_BUTTONS_Y) {
+            // The prompt's own keys over any menu: A (Enter) and B (Esc) on a controller.
+            let any = crate::pad::MenuAt::default();
+            let (ok, cancel) = (crate::pad::hint(&[KeyCode::KeyA, KeyCode::Enter], any), crate::pad::hint(&[KeyCode::KeyE, KeyCode::Escape], any));
+            for ((label, hint, cmd), y) in [(words[0].as_str(), ok, Command::AmountOk), (words[1].as_str(), cancel, Command::AmountCancel)].into_iter().zip(Q_BUTTONS_Y) {
                 let w = c.text(p, false, label, Q_BUTTONS_RIGHT, y + BUTTON_PAD, Align::Right, bright);
-                c.text(p, false, hint, Q_BUTTONS_RIGHT + HINT_GAP, y + BUTTON_PAD, Align::Left, bright);
+                c.text(p, false, &hint, Q_BUTTONS_RIGHT + HINT_GAP, y + BUTTON_PAD, Align::Left, bright);
                 p.spawn((Button, CmdButton(cmd), at(Q_BUTTONS_RIGHT - w - 10.0, y, w + 20.0 + HINT_GAP + 30.0, h)));
             }
         });

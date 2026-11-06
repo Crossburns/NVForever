@@ -1365,7 +1365,7 @@ fn controls_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
         Some(c) if listening && controller => format!("Press the new controller button for {}. Start cancels.", label(c)),
         Some(c) if listening => format!("Press the new key or mouse button for {}. Esc cancels.", label(c)),
         Some(c) if controller => format!(
-            "A or a click: bind a new controller button to {} (a control that had it gets the old one). Delete clears it. Kept as \"{}\" in [Controller] of NVForever.ini.",
+            "A or a click: bind a new controller button to {} (a control that had it gets the old one). X or Delete clears it. Kept as \"{}\" in [Controller] of NVForever.ini.",
             label(c),
             Bindings::name(c)
         ),
@@ -1531,15 +1531,16 @@ fn load_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list:
     let side = |top: f32, height: f32| from_right(RIGHT + COLUMN, top, DELETE_WIDTH, height);
     let top = DETAILS_TOP - THUMB_DRAWN.y - 10.0;
     match d.delete_ask.filter(|r| *r == selected) {
-        None => right_entry(root, &f.small, "Delete  Del)", side(top, ITEM), DELETE_WIDTH, Shade::Bright, false, PauseButton::Delete),
+        None => right_entry(root, &f.small, &format!("Delete  {}", crate::pad::hint(&[KeyCode::Delete], crate::pad::PAUSE_AT)), side(top, ITEM), DELETE_WIDTH, Shade::Bright, false, PauseButton::Delete),
         Some(_) => {
             root.spawn((DetailLine, Text::new("Delete this save?"), Node { display: Display::None, ..default() }));
             root.spawn(side(top, ITEM)).with_children(|t| {
                 let w = f.small.font.width("Delete this save?");
                 sm_text(t, &f.small, "Delete this save?", DELETE_WIDTH - w - 10.0, BASE, color(Shade::Bright));
             });
-            right_entry(root, &f.small, "Yes  Y)", side(top + ITEM, ITEM), DELETE_WIDTH, Shade::Bright, true, PauseButton::DeleteAnswer(true));
-            right_entry(root, &f.small, "No  N)", side(top + 2.0 * ITEM, ITEM), DELETE_WIDTH, Shade::Bright, false, PauseButton::DeleteAnswer(false));
+            let (yes, no) = (crate::pad::hint(&[KeyCode::KeyY, KeyCode::Enter], crate::pad::PAUSE_AT), crate::pad::hint(&[KeyCode::KeyN, KeyCode::Escape], crate::pad::PAUSE_AT));
+            right_entry(root, &f.small, &format!("Yes  {yes}"), side(top + ITEM, ITEM), DELETE_WIDTH, Shade::Bright, true, PauseButton::DeleteAnswer(true));
+            right_entry(root, &f.small, &format!("No  {no}"), side(top + 2.0 * ITEM, ITEM), DELETE_WIDTH, Shade::Bright, false, PauseButton::DeleteAnswer(false));
         }
     }
     // With the scroll bar the rows leave room for it at their right.
