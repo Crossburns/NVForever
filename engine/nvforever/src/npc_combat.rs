@@ -2347,7 +2347,7 @@ pub(crate) fn fight(
                         Decision::Waiting => {}
                         Decision::Empty => debug!("npc combat: {me_name} has no grenade to throw"),
                         Decision::OutOfBand(gr) => {
-                            debug!("npc combat: {me_name} keeps its {}: {target_name} is {away_feet:.0} units away (throws between {:.0} and {:.0})", g.data.name(gr.weapon), gr.blast * npc_grenades::MIN_BLAST_SHARE, npc_grenades::reach(&gr, gravity));
+                            debug!("npc combat: {me_name} keeps its {}: {target_name} is {away_feet:.0} units away (throws between {:.0} and {:.0})", g.data.name(gr.weapon), npc_grenades::MIN_THROW, npc_grenades::reach(&gr, gravity));
                         }
                         Decision::Held { grenade: gr, by } => {
                             f.stats.grenade_holds += 1;

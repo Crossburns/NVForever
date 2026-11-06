@@ -1796,11 +1796,13 @@ checked against the original (observer-checks.md item 20):
   carrying 5 frags threw none in 27 s at 600 units. So a held grenade is thrown every
   1.6-3.6 s from the start, from 800 units at least (not from 300), against ours' first
   throw after 4-10 s, one every 12-25 s and nothing within 990 units [issue #1351].
-- **When**: holding it, not fleeing, ready on a target it sees; the first throw 4 to 10 s
-  after it is first ready on that target, then one every 12 to 25 s, rolled on the
-  grenade rolls' own sequence [design; the original's one throw came within a second].
-- **Where**: only at a target beyond 1.1 times the blast's radius (a frag grenade's
-  blast radius is 900 units, so beyond 990) and within the throw's reach:
+- **When** (since 2026-11-06, #1351): holding it, not fleeing, ready on a target it sees;
+  the first throw 0 to 1 s after it is first ready on that target, then one every 1.6 to
+  3.6 s, rolled on the grenade rolls' own sequence [observed: the frag captures above].
+  It was 4 to 10 s, then 12 to 25 s [design].
+- **Where**: only at a target beyond 550 units [design: between the observed 300 (no
+  throw) and 800 (thrown); the original's floor is not pinned. Until #1351 it was 1.1
+  times the blast's radius, 990 for a frag] and within the throw's reach:
   the low arc's under the projectile's gravity, at most 1,500 units. Held when a comrade
   or a bystander would be caught, by the combat style's Ignore Damaging flags as an
   explosive shot is (§17.6).
