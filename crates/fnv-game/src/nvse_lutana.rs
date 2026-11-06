@@ -368,7 +368,8 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             let bit = num(args, 1).map_or(0, |b| b as i64 as u32);
             yes(bit != 0 && flags & bit == bit)
         }
-        // `npc flag on`: read by the vendor's services too (`Game::services`).
+        // `npc flag on`: changes the AI data's flags, which the vendor's services read
+        // unless "Autocalc Service" takes the class's (`Game::services`).
         "setserviceflag" => {
             let (Some(src), Some(bit)) = (form(args, 0).and_then(|f| ai_source(g, f)), num(args, 1).map(|b| b as i64 as u32)) else { return Some(Ok(zero)) };
             let now = g.other.lutana.services.get(&src).copied().unwrap_or_else(|| g.data.actors.get(&src).map_or(0, |d| d.services));
@@ -391,22 +392,16 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `[actorBase]`: the combat style the actor fights with (`Game::combat_style`'s
-        // order: the package's, SetCombatStyle's, the AI data's ZNAM) [documented:
+        // `[actorBase]`: the combat style the actor fights with (`Game::combat_style_id`:
+        // the package's, SetCombatStyle's, the AI data's ZNAM) [documented:
         // GetCombatStyle, "the current Combat Style"]; for a base form its AI data's ZNAM;
         // none 0 [hypothesis: no fall back to DefaultCombatstyle here].
         "getcombatstyle" => {
             if let Some(b) = form(args, 0) {
                 let src = ai_source(g, b);
                 reff(src.and_then(|s| g.data.actors.get(&s)).and_then(|d| d.combat_style))
-            } else if let Some(r) = subject {
-                let extra = g.extra.get(&r);
-                let package = extra.and_then(|e| e.current_package).and_then(|p| g.package_def(&p)).and_then(|d| d.combat_style);
-                let set = extra.and_then(|e| e.combat_style);
-                let own = package.or(set).or_else(|| ai_source(g, r).and_then(|s| g.data.actors.get(&s)).and_then(|d| d.combat_style));
-                reff(own.filter(|c| g.data.combat_styles.contains_key(c)))
             } else {
-                XVal::Ref(0)
+                reff(subject.and_then(|r| g.combat_style_id(r)))
             }
         }
         // ---- perks ----
@@ -418,9 +413,9 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         }
         // `perk index`: an ability entry's spell, a quest stage entry's quest [documented:
         // "Ability for type 5, Quest for type 6"]; an entry point 0 (its leveled list is
-        // not kept decoded) [hypothesis], past the entries 0.
+        // not kept decoded) [hypothesis], a negative index or past the entries 0.
         "getnthperkentryform" => {
-            let e = form(args, 0).and_then(|p| g.data.perks.get(&p)).and_then(|p| p.entries.get(num(args, 1).unwrap_or(-1.0).max(0.0) as usize));
+            let e = form(args, 0).and_then(|p| g.data.perks.get(&p)).and_then(|p| num(args, 1).filter(|i| *i >= 0.0).and_then(|i| p.entries.get(i as usize)));
             reff(match e.map(|e| &e.effect) {
                 Some(crate::data::PerkEffect::Ability(s)) => Some(*s),
                 Some(crate::data::PerkEffect::QuestStage { quest, .. }) => Some(*quest),

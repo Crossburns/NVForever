@@ -64,7 +64,7 @@ changes. The engine's crafting menu (`engine/nvf-play/src/crafting.rs`) reads
 |---|---|
 | ActorHasEffect `effect` | an active effect of that base effect on the calling actor [documented], as HasMagicEffect |
 | GetServiceFlag `npc flag` | the AI data's services (1 Weapons, 2 Armor, 4 Alcohol, 8 Books, 16 Food, 32 Chems, 64 Stimpacks, 1024 Misc, 131072 Repair) [documented: the table; AIDT, xEdit]; the record supplying the AI data, following "Use AI Data" templates [hypothesis] |
-| SetServiceFlag `npc flag on` | read by the vendors too (`Game::services`, over the class's autocalc services) [hypothesis] |
+| SetServiceFlag `npc flag on` | sets or clears the flag (GetServiceFlag's table) in the AI data's services, which GetServiceFlag reads [hypothesis]; the vendors read the change (`Game::services`) where they read the AI data's, so an NPC with "Autocalc Service" keeps trading its class's services [hypothesis: the change is to the AI data, which autocalc overrides] |
 | LNGetAggroRadius, LNSetAggroRadius `[radius] [actorBase]` | AIDT aggro radius of the base given, else the calling reference's [documented]; the aggro checks read the change (`Game::aggro_radius`), still gated by the record's "Aggro Radius Behavior" |
 | GetCombatStyle `[actorBase]` | a reference: its package's, SetCombatStyle's, else its AI data's ZNAM (`Game::combat_style`'s order); a base: its ZNAM [documented: "the current Combat Style"]; none 0, no fall back to DefaultCombatstyle [hypothesis] |
 
@@ -73,7 +73,7 @@ changes. The engine's crafting menu (`engine/nvf-play/src/crafting.rs`) reads
 | Function | NVForever |
 |---|---|
 | IsTrait `perk` | PERK DATA Trait, SetPerkFlag's change first [documented] |
-| GetNthPerkEntryForm `perk index` | an ability entry's spell, a quest stage entry's quest [documented: "Ability for type 5, Quest for type 6"]; an entry point's leveled list ("type 3") is not kept decoded, so 0 [hypothesis] |
+| GetNthPerkEntryForm `perk index` | an ability entry's spell, a quest stage entry's quest [documented: "Ability for type 5, Quest for type 6"]; an entry point's leveled list ("type 3") is not kept decoded, so 0 [hypothesis]; a negative or missing index 0 [hypothesis] |
 | GetWorldspaceParentWorldspace (GetWorldParentWorld) `world` | WRLD WNAM [documented] |
 | GetCellWaterForm `[cell]` | XCWT; an exterior cell its worldspace's NAM2 [documented]; the player's cell when none is given [documented] |
 | GetCellWaterHeight `[cell]` | XCLW; an exterior cell without one its worldspace's DNAM default water height [hypothesis] |
