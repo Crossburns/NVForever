@@ -12,6 +12,7 @@ use fnv_game::game::{Game, GameConfig};
 use fnv_game::GameData;
 use fnv_script::vm::{ArgValue, Value};
 use fnv_script::FunctionTable;
+use fnv_sim::world::Outcome;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::Value as Json;
 
@@ -489,6 +490,27 @@ fn a_no_alarm_door_excuses_trespassing_in_its_cell() {
     g.arrived_through(FormId(LOUD_DOOR_REF), Some(FormId(SHOP)));
     assert!(g.crimes.take_notes().is_empty());
     assert_eq!(call(&mut g, IS_TRESPASSING, Some(0x14), &[]), 1.0);
+}
+
+/// #1615: the door the player uses by hand is the door arrived through, and the cell is
+/// left to the engine's loading, unlike a script's `Activate player`.
+#[test]
+fn the_players_own_door_counts_and_leaves_the_cell_to_the_engine() {
+    let f = fixture();
+    let mut g = game(&f);
+    let shop = FormId(SHOP);
+    g.set_loaded(Default::default());
+    let done = g.default_activation_by_hand(FormId(QUIET_DOOR_REF)).unwrap().expect("not refused");
+    assert!(matches!(done.activation.outcome, Outcome::Teleported { cell: Some(c), .. } if c == shop));
+    assert!(g.crimes.take_notes().contains(&Note::NoAlarm { door: FormId(QUIET_DOOR_REF), cell: shop }));
+    assert_eq!(call(&mut g, IS_TRESPASSING, Some(0x14), &[]), 0.0);
+    assert!(g.loaded_cells.is_empty(), "the engine's loading says when the player is there");
+    g.player_entered(Some(shop));
+    assert!(g.loaded_cells.contains(&shop));
+    // A script's activation has no loading of its own to wait for.
+    g.set_loaded(Default::default());
+    g.default_activation(FormId::PLAYER_REF, FormId(LOUD_DOOR_REF), false).unwrap();
+    assert!(g.loaded_cells.contains(&shop));
 }
 
 #[test]

@@ -1851,6 +1851,18 @@ impl GameSnapshot {
 
 pub const SNAPSHOT_FORMAT: &str = "fnv.game.state/1";
 
+/// What the default action of the player's own activation did
+/// ([`Game::default_activation_by_hand`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandActivation {
+    pub activation: fnv_sim::world::Activation,
+    /// Where its `Activated` event is in [`Game::events`]: the engine applies the outcome
+    /// itself and leaves this event out of what it turns into effects.
+    pub activated_event: usize,
+    /// Where a pickup's `ItemAdded` event is, likewise.
+    pub item_added_event: Option<usize>,
+}
+
 /// How an activation runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActMode {
@@ -4277,13 +4289,9 @@ impl<'a> Game<'a> {
     /// `actor` activates `target`. A destroyed door or activator
     /// ([`Game::activation_refused`]) does nothing: no default action, no OnActivate.
     pub fn activate(&mut self, actor: FormId, target: FormId, mode: ActMode) -> Result<serde_json::Value, String> {
-        // The extender's OnActivate handlers run first, even when the activation is then
-        // refused, and do not block it [documented: NVSE Event Handling].
-        self.dispatch_event("OnActivate", vec![fnv_script::vm::XVal::Ref(target.0), fnv_script::vm::XVal::Ref(actor.0)], Some(target));
-        if self.activation_refused(target) {
+        if !self.activation_begins(actor, target) {
             return Ok(serde_json::json!({"result": "destroyed"}));
         }
-        self.action_refs.insert(target, actor);
         // A door's block letting the NPC that walks through it go on (`crate::npc_doors`).
         if mode == ActMode::Default && self.npc_door_activated(actor, target) {
             return Ok(serde_json::json!({"result": "npc door"}));
@@ -4301,21 +4309,58 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// What every activation does first: the extender's OnActivate handlers run, even when
+    /// the activation is then refused, and do not block it [documented: NVSE Event
+    /// Handling]. Whether it goes on (not [`Game::activation_refused`]), with `actor` as
+    /// the target's action reference.
+    fn activation_begins(&mut self, actor: FormId, target: FormId) -> bool {
+        self.dispatch_event("OnActivate", vec![fnv_script::vm::XVal::Ref(target.0), fnv_script::vm::XVal::Ref(actor.0)], Some(target));
+        if self.activation_refused(target) {
+            return false;
+        }
+        self.action_refs.insert(target, actor);
+        true
+    }
+
+    /// The player's own activation (E) of a target whose script has no OnActivate block:
+    /// [`Game::activate`] in [`ActMode::Hand`] but for the door. The engine's loading takes
+    /// the player into the new cell and tells [`Game::player_entered`] when the player is
+    /// there, so this does not. `None`: the activation was refused.
+    pub fn default_activation_by_hand(&mut self, target: FormId) -> Result<Option<HandActivation>, String> {
+        let player = FormId::PLAYER_REF;
+        if !self.activation_begins(player, target) {
+            return Ok(None);
+        }
+        self.run_default_activation(player, target, true, false).map(Some)
+    }
+
     /// The default action of an activation (Layer 4), with its Layer 5 consequences:
     /// a picked-up item reaches the actor's inventory (OnAdd), a door moves the player, a
     /// dead actor opens its inventory (the loot menu) [observed: a scripted Activate of a
     /// dead actor opened the container menu, `L5.quest.dead_activation`], and so does one
     /// lying pushed down by PushActorAway [documented: GECK wiki PushActorAway notes, "can
-    /// have its inventory accessed by the player until the actor gets up again"].
+    /// have its inventory accessed by the player until the actor gets up again"]. An ash
+    /// or goo pile opens the inventory of the actor it came from (`crate::ash_piles`).
     pub fn default_activation(&mut self, actor: FormId, target: FormId, by_hand: bool) -> Result<serde_json::Value, String> {
+        let done = self.run_default_activation(actor, target, by_hand, true)?;
+        serde_json::to_value(&done.activation).map_err(|e| e.to_string())
+    }
+
+    /// [`Game::default_activation`]; `enter_cell`: a player sent through a door enters the
+    /// new cell now, else the caller sees to [`Game::player_entered`].
+    fn run_default_activation(&mut self, actor: FormId, target: FormId, by_hand: bool, enter_cell: bool) -> Result<HandActivation, String> {
         let base = functions::base_of(self, target);
         // Where the player was, for whoever follows them through a door
         // (`Game::bring_teammates`).
         let from = self.world.peek(FormId::PLAYER_REF).map(|p| (p.cell, p.pos));
         let pushed = self.knockout(target).is_some_and(|k| k.pushed && k.lying());
         let dead_actor = (self.extra.get(&target).is_some_and(|e| e.dead) || pushed)
-            && base.and_then(|b| self.data.sig(b)).is_some_and(|s| &s == b"NPC_" || &s == b"CREA");
-        let act = if dead_actor && self.present(target) {
+            && base.and_then(|b| self.data.sig(b)).is_some_and(|s| matches!(&s, b"NPC_" | b"CREA" | b"LVLN" | b"LVLC"));
+        let pile_of = self.ash_pile_source(target).filter(|_| self.present(target));
+        let act = if let Some(body) = pile_of {
+            tracing::info!("activate: the pile {target} opens the inventory of {body}");
+            fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: body }, unlocked_with: None, script: None }
+        } else if dead_actor && self.present(target) {
             let script = base.and_then(|b| self.world.forms.get(b)).and_then(|b| b.script);
             fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: target }, unlocked_with: None, script }
         } else if by_hand {
@@ -4325,7 +4370,9 @@ impl<'a> Game<'a> {
         };
         let v = serde_json::to_value(&act).map_err(|e| e.to_string())?;
         self.note_activating(actor, target);
-        self.emit(EventKind::Activated { reference: target, by: actor, outcome: Some(v.clone()) });
+        let activated_event = self.events.len();
+        self.emit(EventKind::Activated { reference: target, by: actor, outcome: Some(v) });
+        let mut item_added_event = None;
         if matches!(act.outcome, Outcome::Activated) {
             self.radio_activated(target);
             self.drink_from(actor, target);
@@ -4334,13 +4381,19 @@ impl<'a> Game<'a> {
         self.set_off_children(target);
         match act.outcome {
             Outcome::PickedUp { item, count, .. } => {
+                item_added_event = Some(self.events.len());
                 self.emit(EventKind::ItemAdded { to: actor, item, count, silent: false });
                 self.item_event(actor, item, event::ON_ADD, Some(Value::Ref(actor.0)));
             }
             Outcome::Teleported { cell, .. } if actor == FormId::PLAYER_REF => {
                 self.arrived_through(target, cell);
-                self.player_entered(cell);
-                self.bring_teammates(from);
+                if enter_cell {
+                    self.player_entered(cell);
+                }
+                let brought = self.bring_teammates(from);
+                if !brought.is_empty() {
+                    tracing::info!("script: {} teammate(s) or follower(s) come along through the door", brought.len());
+                }
             }
             // A placed mine disarmed by the player gives its XP (`crate::experience`).
             Outcome::Disarmed { .. } if actor == FormId::PLAYER_REF => {
@@ -4350,7 +4403,7 @@ impl<'a> Game<'a> {
             }
             _ => {}
         }
-        Ok(v)
+        Ok(HandActivation { activation: act, activated_event, item_added_event })
     }
 
     /// The water an activator gives to drink (ACTI WNAM), when it names one.
