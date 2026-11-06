@@ -1058,6 +1058,8 @@ pub struct Combat {
     /// A save's weapon and magazine, applied when that weapon is next taken in hand
     /// (`crate::save`).
     load_magazine: Option<(u32, u32)>,
+    /// A save's weapon and the type of round in its magazine, with `load_magazine`.
+    load_ammo: Option<(u32, FormId)>,
     /// Test aid `NVF_PLAY_TEST_TRACERS=<seconds>`: every projectile draws a line, and
     /// the lines and a marker at the muzzle stay that long, so one screenshot of an
     /// unattended check shows where the shots were drawn from. The muzzle flashes and
@@ -1224,13 +1226,27 @@ impl Combat {
         Some((self.weapon?.0, cy.magazine))
     }
 
-    /// A save's magazine: the rounds go back in when that weapon is in hand.
-    pub fn restore_magazine(&mut self, m: (u32, u32)) {
+    /// The type of round in the magazine of the weapon in hand, for a save (#1574).
+    pub fn magazine_ammo_for_save(&self) -> Option<u32> {
+        self.cycle.as_ref().filter(|c| !c.no_ammo)?;
+        self.ammo.map(|a| a.0)
+    }
+
+    /// A save's magazine and the type of round in it: the rounds go back in when that
+    /// weapon is in hand. A weapon already in hand with another type is taken in hand
+    /// again (`equip_sync`), so the saved type and its projectile are put back together.
+    pub fn restore_magazine(&mut self, m: (u32, u32), ammo: Option<u32>) {
         self.load_magazine = Some(m);
+        self.load_ammo = ammo.map(|a| (m.0, FormId(a)));
         if let (Some(w), Some(cy)) = (self.weapon, self.cycle.as_mut()) {
             if w.0 == m.0 {
+                if ammo.is_some_and(|a| self.ammo != Some(FormId(a))) {
+                    self.equipped = None;
+                    return;
+                }
                 cy.magazine = m.1.min(cy.clip_size.max(m.1));
                 self.load_magazine = None;
+                self.load_ammo = None;
             }
         }
     }
@@ -1371,9 +1387,17 @@ impl Combat {
     }
 
     /// The player aims down a gun's sights now: a gun with sights in hand and Block held
-    /// (IsPlayerActionActive 9).
+    /// (IsPlayerActionActive 9, GetPCUsingIronSights), not while a reload or a jam holds
+    /// the sights down ([`sights_held_down`]).
     pub fn player_sights_up(&self, anim: &WeaponAnim, aiming: bool) -> bool {
-        anim.ready && aiming && self.sight_fov().is_some()
+        anim.ready && aiming && !self.player_sights_held_down() && self.sight_fov().is_some()
+    }
+
+    /// The gun's firing cycle holds the sights down now: it reloads or clears a jam
+    /// ([`sights_held_down`]). The aim zoom and the sight pose ease out meanwhile
+    /// (`crate::aim_zoom`) and come back once the cycle is through, if Block is still held.
+    pub fn player_sights_held_down(&self) -> bool {
+        !self.melee && self.cycle.as_ref().is_some_and(|c| sights_held_down(&c.phase))
     }
 
     /// The player's melee swing is playing (VATS mode waits for it, vats-mode.md §16.2).
@@ -1392,6 +1416,14 @@ impl Combat {
     pub fn vats_part(&self, parts: &ActorParts, actor: u32, part: Option<u8>) -> Option<BodyPart> {
         body_part(self, parts, actor as ActorId, part)
     }
+}
+
+/// A firing cycle in this phase holds the sights down: a reload (every step of a
+/// round-by-round one too) or a jam plays its clip with the gun off the eye, so the player
+/// comes out of the sights (and a scope) as it starts (the owner's report, #1642)
+/// [design: the clip's timing is unchanged; the sights ease out as it begins].
+pub fn sights_held_down(phase: &Phase) -> bool {
+    matches!(phase, Phase::Reloading { .. } | Phase::ReloadOpen { .. } | Phase::ReloadRound { .. } | Phase::ReloadClose { .. } | Phase::Jammed { .. })
 }
 
 /// The weapon in hand for VATS mode ([`Combat::vats_weapon`]).
@@ -1952,6 +1984,7 @@ fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
         no_spread: std::env::var_os("NVF_PLAY_TEST_NO_SPREAD").is_some_and(|v| v != "0"),
         tracer_hold,
         load_magazine: None,
+        load_ammo: None,
         crosshair_cone: None,
         player_spread: None,
         vats_cone: None,
@@ -2062,7 +2095,16 @@ fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut
         return;
     };
     let w = &c.player_stats(id).expect("weapon present");
-    let ammo = c.forms.ammo_for(id, |a| player_count(&sim, Some(a)) > 0);
+    let mut ammo = c.forms.ammo_for(id, |a| player_count(&sim, Some(a)) > 0);
+    // A save's type of round for this weapon (`crate::save`; #1574), while it is one of
+    // the weapon's types and some is carried.
+    if let Some((sw, a)) = c.load_ammo.take() {
+        if sw == id.0 && c.forms.ammo_choices(w).contains(&a) && player_count(&sim, Some(a)) > 0 {
+            ammo = Some(a);
+        } else if sw != id.0 {
+            c.load_ammo = Some((sw, a));
+        }
+    }
     let chain = c.forms.chain_with(id, w, ammo);
     let melee = AttackKind::of(w) != AttackKind::Gun;
     c.melee = melee && chain.projectile.is_none();
@@ -4799,6 +4841,23 @@ fn sound_edid(sfx: Option<&Sfx>, sound: FormId) -> String {
 mod tests {
     use super::*;
     use crate::phys::NpcBody;
+
+    #[test]
+    fn a_reload_or_a_jam_holds_the_sights_down() {
+        for p in [
+            Phase::Reloading { left: 1.0 },
+            Phase::ReloadOpen { left: 0.3, stop: false },
+            Phase::ReloadRound { left: 0.5, stop: false, taken: 1 },
+            Phase::ReloadClose { left: 0.4, taken: 2 },
+            Phase::Jammed { left: 1.2 },
+        ] {
+            assert!(sights_held_down(&p), "{p:?}");
+        }
+        // Firing and waiting keep them up.
+        for p in [Phase::Ready, Phase::SpinUp { left: 0.2 }, Phase::WindUp { left: 0.1 }, Phase::Cooldown { left: 0.3 }] {
+            assert!(!sights_held_down(&p), "{p:?}");
+        }
+    }
 
     #[test]
     fn a_knockback_pushes_half_its_force_over_its_time() {
