@@ -1465,6 +1465,13 @@ pub struct Game<'a> {
     /// Crimes being reported, trespass warnings and karma changes for the engine
     /// (`crate::crime`); what lasts is in [`PlayerState`]. Not part of the saved state.
     pub crimes: crate::crime::Crimes,
+    /// The player's speed factor as last taken (`Game::player_move_speed_mult`), with the
+    /// equipment it was taken for and [`Self::player_equips`] then. Not part of the saved
+    /// state: a load takes it again.
+    pub player_speed: Option<crate::combat::PlayerSpeed>,
+    /// Items the player equipped or unequipped this session (OnEquip / OnUnequip sent,
+    /// [`Game::item_event`]), counted for [`Self::player_speed`].
+    pub player_equips: u64,
     /// Pickpocketing: who caught the player, planted explosives (`crate::pickpocket`).
     pub pickpocket: crate::pickpocket::State,
     pub world: World<'a>,
@@ -2228,6 +2235,8 @@ impl<'a> Game<'a> {
             console_requests: Vec::new(),
             mfg: Default::default(),
             crimes: Default::default(),
+            player_speed: None,
+            player_equips: 0,
             pickpocket: Default::default(),
             world,
             cfg,
@@ -4567,6 +4576,9 @@ impl<'a> Game<'a> {
         // the dropped reference.
         if matches!(ev, event::ON_EQUIP | event::ON_UNEQUIP) {
             self.ext_event(ev, holder, Some(Value::Ref(item.0)));
+            if holder == FormId::PLAYER_REF {
+                self.player_equips += 1;
+            }
         }
         if ev == event::ON_ADD {
             self.showoff_on_add(holder, item);

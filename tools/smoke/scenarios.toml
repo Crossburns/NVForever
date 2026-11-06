@@ -3317,19 +3317,21 @@ expect = [
 
 [[scenario]]
 name = "player-speedmult"
-source = "issue #1364: the player's speed follows its Speed Mult actor value and its body armour's class, as people's (actors.md §8.10)"
-note = "SetAV SpeedMult 200 at 8 s, 50 at 10 s, 100 at 12 s; metal armour (ArmorMetal 0003307F, heavy: 1 - fMoveHeavyArmorPenalty 0.15) is given and put on at 14 s"
+source = "issue #1364: the player's speed follows its Speed Mult actor value and its body armour's class, as people's; issue #1742: but only as taken when the equipment changes, as in the original's capture o25_speed (actors.md §8.10)"
+note = "SetAV SpeedMult 200 at 8 s (no change yet); metal armour (ArmorMetal 0003307F, heavy: 1 - fMoveHeavyArmorPenalty 0.15) is given and put on at 10 s (200 x 0.85 taken); SetAV 50 at 13 s (no change); the armour taken off at 15 s (50 taken)"
 areas = ["controls"]
 paths = ["engine/nvf-play/src/player.rs", "engine/nvf-play/src/combat.rs", "crates/fnv-game/src/combat.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav speedmult 200;8.3:close;10:player.setav speedmult 50;10.3:close;12:player.setav speedmult 100;12.3:close;14:player.additem 0003307F 1;14.3:player.equipitem 0003307F;14.6:close" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav speedmult 200;8.3:close;10:player.additem 0003307F 1;10.3:player.equipitem 0003307F;10.6:close;13:player.setav speedmult 50;13.3:close;15:player.unequipitem 0003307F;15.3:close" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
-run_seconds = 18
+run_seconds = 19
 order = [[
-  { re = 'movement: Speed Mult and body armour make the player move at 200% \(armour 100%\)', label = "SpeedMult 200: twice as fast" },
-  { re = 'movement: Speed Mult and body armour make the player move at 50% \(armour 100%\)', label = "SpeedMult 50: half" },
-  { re = 'movement: Speed Mult and body armour make the player move at 100% \(armour 100%\)', label = "back to 100" },
-  { re = 'movement: Speed Mult and body armour make the player move at 85% \(armour 85%\)', label = "heavy armour on: 85%, as people's" },
+  { re = 'movement: Speed Mult and body armour make the player move at 170% \(armour 85%\)', label = "armour put on: SpeedMult 200 taken with it, x 0.85 (heavy, as people's)" },
+  { re = 'movement: Speed Mult and body armour make the player move at 50% \(armour 100%\)', label = "armour taken off: SpeedMult 50 taken" },
 ]]
+expect = [
+  { re = 'movement: Speed Mult and body armour make the player move at 200% ', count = 0, label = "SetAV 200 alone leaves the speed as it was (o25_speed)" },
+  { re = 'movement: Speed Mult and body armour make the player move at 4[23]% ', count = 0, label = "SetAV 50 alone (armour on) leaves 170% as it was, not 50 x 0.85" },
+]
 
 [[scenario]]
 name = "bear-trap"
