@@ -809,22 +809,27 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
 /// in the smoke or flames behind it, low enough that the strands keep their soft ends].
 pub const HAIR_DEPTH_CUT: f32 = 0.25;
 
-/// The alpha from which a hair model's shapes (the HAIR record's model) are drawn: they
-/// are cut-outs, solid at and above it and absent below ([`hair_model_cut_out`]).
-/// [engineering choice, judged on Chet against the store window beside the owner's frame
-/// of the original, 2026-11-03 (#1454): the original's hair is solid over the soft band
-/// its outer layer is mapped to (texture alpha 0.4–0.7), with a clean hairline].
-pub const HAIR_MODEL_CUT: f32 = 0.25;
+/// The alpha from which a hair model's shapes (the HAIR record's model) are drawn solid:
+/// a cut-out at it ([`hair_model_cut_out`]) holds the hair's depth and shadow, and the
+/// fainter texels are drawn blended over it ([`hair_model_layer`]) (docs/spec-notes/nif.md
+/// §6 "Hair models: a solid core and a blended layer") [engineering choice, from the
+/// hair textures' alpha: the Mohawk's shaved sides (`hairraider01.dds`, which 11 of the
+/// 67 HAIR models use) are a plateau at 0.65–0.75 that has to stay see-through, while
+/// `hairbase.dds` (Buzz Saw, Balding, Combover) is a plateau at 0.85–0.95 with no texel
+/// above it, so a cut above 0.85 would leave those hairs no solid part at all].
+pub const HAIR_MODEL_CUT: f32 = 0.8;
 
-/// Make a hair model's shape a cut-out ([`HAIR_MODEL_CUT`]) in place of the blend its
-/// NiAlphaProperty asks for (docs/spec-notes/nif.md §6 "Hair and depth"). Blended, the
-/// outer layer of `hairwavy.nif` (Chet) is mapped onto the soft edge of its texture's
-/// alpha and showed as a see-through shell around his head against a bright window,
-/// where the original draws solid hair [observed: owner's frame of the original,
-/// 2026-11-03, #1454]. Head parts that use the hair shader (beards, brows) stay blended:
-/// as cut-outs `beardthin.nif` became a full beard, where the original's is thin.
-/// A cut-out draws in the opaque passes, so it hides what lies behind it whatever the
-/// order of the blended shapes, and it casts a shadow.
+/// Make a hair model's shape the solid core of the hair: a cut-out at [`HAIR_MODEL_CUT`]
+/// in place of the blend its NiAlphaProperty asks for (docs/spec-notes/nif.md §6). The
+/// fainter texels are drawn by a second, blended draw of the shape
+/// ([`hair_model_layer`]). Blended alone, the outer layer of `hairwavy.nif` (Chet), mapped
+/// onto the soft edge of its texture's alpha, showed as a see-through shell around his
+/// head against a bright window where the original draws solid hair [observed: owner's
+/// frame of the original, 2026-11-03, #1454]: a blended layer that writes depth hides the
+/// hair drawn after it behind it. Head parts that use the hair shader (beards, brows)
+/// stay blended: as cut-outs `beardthin.nif` became a full beard, where the original's is
+/// thin. A cut-out draws in the opaque passes, so it hides what lies behind it whatever
+/// the order of the blended shapes, and it casts a shadow.
 pub fn hair_model_cut_out(material: &mut NifMaterial) {
     if !matches!(material.base.alpha_mode, AlphaMode::Blend) || material.extension.refract {
         return;
@@ -832,6 +837,25 @@ pub fn hair_model_cut_out(material: &mut NifMaterial) {
     material.base.alpha_mode = AlphaMode::Mask(HAIR_MODEL_CUT);
     material.extension.alpha_cut = 0.0;
     material.extension.depth_write = false;
+}
+
+/// The blended layer drawn over a hair model's solid core ([`hair_model_cut_out`]), made
+/// from the shape's blended material: the texels below [`HAIR_MODEL_CUT`] (shaved and
+/// stubbled scalp, the soft ends and edges of the strands) blend over what lies behind
+/// them, the hair's own core included, as the NiAlphaProperty asks (SRC_ALPHA /
+/// INV_SRC_ALPHA). It writes no depth, so its order among the hair's layers does not
+/// matter, and it casts no shadow. Over the core it draws the core's own colour again at
+/// the core's depth, which the main passes' depth test (greater or equal) lets through
+/// and which leaves the colour as it is. `None` for a shape that is not blended or that
+/// refracts.
+pub fn hair_model_layer(material: &NifMaterial) -> Option<NifMaterial> {
+    if !matches!(material.base.alpha_mode, AlphaMode::Blend) || material.extension.refract {
+        return None;
+    }
+    let mut layer = material.clone();
+    layer.extension.alpha_cut = 0.0;
+    layer.extension.depth_write = false;
+    Some(layer)
 }
 
 /// Make `material` a refracting one (`nif_material`, module notes "Refraction"): drawn
@@ -1141,21 +1165,28 @@ mod tests {
         assert_eq!(m.extension.alpha_cut, 0.0);
     }
 
-    /// A hair model's blended shape becomes a solid cut-out (#1454); one that is already
-    /// a cut-out or refracts is left alone.
+    /// A hair model's blended shape becomes a solid cut-out (#1454) with a blended layer
+    /// drawn over it (#1576); one that is already a cut-out or refracts is left alone.
     #[test]
-    fn hair_models_are_cut_outs() {
+    fn hair_models_are_a_core_and_a_layer() {
         let hair = Props { hair: true, alpha: Some((4333, 0)), ..Default::default() };
-        let (mut m, _) = shape_material_with(&hair, &mut triangle(), &mut NoTextures);
+        let (blended, _) = shape_material_with(&hair, &mut triangle(), &mut NoTextures);
+        let mut m = blended.clone();
         hair_model_cut_out(&mut m);
         assert_eq!(m.base.alpha_mode, AlphaMode::Mask(HAIR_MODEL_CUT));
         assert!(!m.extension.depth_write);
         assert_eq!(m.extension.alpha_cut, 0.0);
         assert!(!crate::nif_material::see_through(&m), "a cut-out casts a shadow");
+        let layer = hair_model_layer(&blended).expect("a blended hair shape has a layer");
+        assert_eq!(layer.base.alpha_mode, AlphaMode::Blend);
+        assert!(!layer.extension.depth_write, "the layer writes no depth");
+        assert_eq!(layer.extension.alpha_cut, 0.0, "the layer drops nothing");
+        assert!(crate::nif_material::see_through(&layer), "the layer casts no shadow");
         let mut masked = m.clone();
         masked.base.alpha_mode = AlphaMode::Mask(0.7);
         hair_model_cut_out(&mut masked);
         assert_eq!(masked.base.alpha_mode, AlphaMode::Mask(0.7));
+        assert!(hair_model_layer(&masked).is_none());
     }
 
     #[test]
