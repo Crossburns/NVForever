@@ -12226,6 +12226,27 @@ order = [[
 ]]
 
 [[scenario]]
+name = "onload-moved-reference"
+source = "issue #1577: the Goodsprings Mojave Express box (vMEGoodSpringsRef 0x0015F22D, vMojaveExpressBoxSCRIPT with an OnLoad block) is moved into the Prospector Saloon; its OnLoad runs at the start and when the saloon loads again, not when Goodsprings does"
+areas = ["scripts"]
+paths = ["crates/fnv-game/src/game.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:coc GSProspectorSaloonInterior;24:0015F22D.moveto player;0015F22D.getincell GSProspectorSaloonInterior;25:coc Goodsprings;36:0015F22D.getincell GSProspectorSaloonInterior;37:coc GSProspectorSaloonInterior;48:0015F22D.getincell GSProspectorSaloonInterior;49:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 54
+expect = [
+  { re = 'console: GetInCell on \S+ >> 1', min = 3, label = "the box stays in the saloon" },
+  { text = 'script: OnLoad of FalloutNV.esm|SCPT 0x0014B062 ran on Some(0x0015F22D)', count = 2, label = "the box's OnLoad runs twice in all" },
+]
+order = [[
+  { text = 'script: OnLoad of FalloutNV.esm|SCPT 0x0014B062 ran on Some(0x0015F22D)', label = "the box's OnLoad at the start" },
+  { text = 'console: Travelling to GSProspectorSaloonInterior', label = "to the saloon" },
+  { re = 'console: MoveTo on ', label = "the box is moved" },
+  { text = 'console: Travelling to Goodsprings', label = "back to Goodsprings" },
+  { text = 'console: Travelling to GSProspectorSaloonInterior', label = "to the saloon again" },
+  { text = 'script: OnLoad of FalloutNV.esm|SCPT 0x0014B062 ran on Some(0x0015F22D)', label = "the box's OnLoad after the second trip to the saloon" },
+]]
+
+[[scenario]]
 name = "hair-under-fire"
 source = "owner's playtest 2026-10-24: in third person, the player's hair vanished (the head showed bald) while the player burned or stood in a dust devil. Burning: Flames01's edge overlay covered the hair's cards whole (docs/spec-notes/effect-shaders.md §4); behind blended fire or dust the hair wrote no depth (nif.md §6 'Hair and depth'). PlayMagicShaderVisuals Flames01 (0005F9B6) on the player, frames from behind at 7 s (no fire) and 11 s (burning) in target/smoke; the hair must show in both"
 areas = ["effect-shaders", "render"]

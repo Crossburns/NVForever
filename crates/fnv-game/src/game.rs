@@ -4173,15 +4173,21 @@ impl<'a> Game<'a> {
     /// `od_09a_disabled_ref_script`, a disabled skull's timer kept falling]. OnLoad at a cell
     /// load runs for disabled references too (`Game::set_loaded`).
     fn active_refs(&self) -> Vec<FormId> {
+        self.scripted_refs_in(&self.loaded_cells)
+    }
+
+    /// Scripted references now in `cells` and not deleted, disabled ones included, in
+    /// FormID order: those placed there that stayed, and those moved or created there.
+    fn scripted_refs_in(&self, cells: &BTreeSet<FormId>) -> Vec<FormId> {
         let mut out: BTreeSet<FormId> = BTreeSet::new();
-        for c in &self.loaded_cells {
+        for c in cells {
             if let Some(v) = self.data.scripted_by_cell.get(c) {
                 out.extend(v.iter().copied());
             }
         }
         out.extend(self.moved.iter().copied());
         out.into_iter()
-            .filter(|&r| self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c)) && self.world.peek(r).is_none_or(|s| !s.deleted()))
+            .filter(|&r| self.cell_of(r).is_some_and(|c| cells.contains(&c)) && self.world.peek(r).is_none_or(|s| !s.deleted()))
             .collect()
     }
 
@@ -4203,9 +4209,10 @@ impl<'a> Game<'a> {
         out
     }
 
-    /// Make `cells` the loaded set; scripted references in newly loaded cells get
-    /// OnLoad, disabled ones included [hypothesis: OnLoad runs when the reference's cell
-    /// is loaded; observed for a disabled one, below].
+    /// Make `cells` the loaded set; scripted references now in newly loaded cells get
+    /// OnLoad, disabled ones included [hypothesis: OnLoad runs when the cell a reference
+    /// is in now is loaded; observed for a disabled one, below; a moved one was not seen
+    /// in the original].
     pub fn set_loaded(&mut self, cells: BTreeSet<FormId>) {
         let new: Vec<FormId> = cells.difference(&self.loaded_cells).copied().collect();
         let left: Vec<FormId> = self.loaded_cells.difference(&cells).copied().collect();
@@ -4234,19 +4241,28 @@ impl<'a> Game<'a> {
         // (`Game::note_enabled`). References disabled through an enable parent are
         // treated the same [hypothesis: the plane was disabled by its own flag].
         let all = self.handled("onload");
-        for c in new {
-            let refs = self.data.scripted_by_cell.get(&c).cloned().unwrap_or_default();
-            for &r in &refs {
+        // Chosen before any block runs: a block that moves a reference into another new
+        // cell, or makes one, must not give it a second OnLoad here.
+        let chosen: Vec<(Vec<FormId>, Vec<FormId>)> = new
+            .iter()
+            .map(|&c| {
+                let mut refs = self.scripted_refs_in(&BTreeSet::from([c]));
+                // MoveTo lists a scripted player as moved; no cell loads the player.
+                refs.retain(|&r| r != FormId::PLAYER_REF);
+                // The extender's OnLoad handlers hear the unscripted references too.
+                let others = if all { self.refs_in_cell(c, false).into_iter().filter(|r| !refs.contains(r)).collect() } else { Vec::new() };
+                (refs, others)
+            })
+            .collect();
+        for (refs, others) in chosen {
+            for r in refs {
                 if self.world.peek(r).is_none_or(|s| !s.deleted()) {
                     self.ref_event(r, event::ON_LOAD, None, None);
                 }
             }
-            // The extender's OnLoad handlers hear the unscripted references too.
-            if all {
-                for r in self.refs_in_cell(c, false) {
-                    if !refs.contains(&r) {
-                        self.ext_event(event::ON_LOAD, r, None);
-                    }
+            for r in others {
+                if self.world.peek(r).is_none_or(|s| !s.deleted()) {
+                    self.ext_event(event::ON_LOAD, r, None);
                 }
             }
         }
