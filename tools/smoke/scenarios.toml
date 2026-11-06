@@ -18943,6 +18943,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "mccarran-monorail-arrival"
+source = "issue #1605 (owner): leaving Camp McCarran's Terminal Building by the door onto the monorail track put the player under and inside the building. The door 0x000F627D (CampMCTermInt02) leads to 0x001287F6 at (-9263, 70863, 4792) in WastelandNV, a platform about 460 units above the terrain; the arrival rule has to find that floor (crates/fnv-phys/src/arrival.rs, physics.md §6.2; the squares around an outdoor arrival load first since #1633)"
+note = "the player starts in the Terminal Building and takes the monorail door at 8 s"
+areas = ["physics", "loading"]
+paths = ["crates/fnv-phys/src/arrival.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/script.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "8:activate:0x000F627D" }
+args = ["--cell", "CampMCTermInt02", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 25
+order = [[
+  { re = '0x000F627D activated by 0x00000014: \{"result":"teleported","to_door":"0x001287F6"', label = "the player takes the monorail door" },
+  { re = 'travel to worldspace 000DA726 \(WastelandNV\): feet \(-9263, 70863, [\d.]+\), floor z (?P<n>[\d.]+)', range = [4700, 4850], label = "the arrival finds the platform's floor, about 460 units above the terrain (not the ground under it)" },
+]]
+
+[[scenario]]
 name = "nellis-artillery-fires"
 source = "issue #1600 (owner): the Boomers' artillery did not fire on the player at Nellis's gate. NellisArtilleryScript's GameMode calls CurrentActor2.GetDead on an unset ref every frame one actor is in its trigger; a call on an empty ref stopped the script there, before its timers. It now gives 0 and the script goes on, as in the original (crates/fnv-game/src/game.rs Exec::call; script-language.md §7.3 row 1)"
 note = "the player starts inside NellisArtilleryActivatorREF (0x000FF806, a box primitive about 6,400 by 8,600 units at (28955, 121961)), god mode; the script fires a shell every 2 s for 30 s"
