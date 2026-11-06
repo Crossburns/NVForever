@@ -5,7 +5,8 @@
 //! - **Theft**: an item reference the player picked up (it left the world: `RefChanged`
 //!   with the reference deleted, as `crate::world_sounds` hears pick-ups) and items taken
 //!   out of a container in the container menu ([`ItemsTaken`]); a dead actor's inventory
-//!   is not owned through its cell [hypothesis].
+//!   is not owned through its cell [hypothesis]. A pick-up a load puts back was judged
+//!   when it happened: it is not judged again.
 //! - **Locks**: the lockpicking menu's crime hook (`crate::lockpick::LockOpened`), and a
 //!   terminal hacked, the same crime as a lock picked (the owner, 2026-10-22).
 //! - **Trespass**: [`fnv_game::Game::crime_tick`] four times a second of game time.
@@ -82,7 +83,7 @@ fn report_deeds(
     mut script: Option<ResMut<ScriptState>>,
     mut stats: ResMut<CrimeStats>,
 ) {
-    let picked: Vec<u32> = changed.read().map(|c| c.form_id).collect();
+    let picked: Vec<RefChanged> = changed.read().copied().collect();
     let taken: Vec<ItemsTaken> = taken.read().cloned().collect();
     let locks: Vec<LockOpened> = locks.read().copied().collect();
     if picked.is_empty() && taken.is_empty() && locks.is_empty() {
@@ -90,8 +91,16 @@ fn report_deeds(
     }
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
     let mut items = Vec::new();
-    for id in picked {
+    for RefChanged { form_id: id, restored } in picked {
         let Some(s) = sim.world.peek(FormId(id)) else { continue };
+        // In the save as picked up: judged before it, as `picked` would say had this
+        // process seen it.
+        if restored {
+            if s.deleted() {
+                stats.picked.insert(id);
+            }
+            continue;
+        }
         let item = matches!(sim.forms.get(s.base).map(|b| &b.data), Some(BaseData::Item(_)));
         // Gone into the player's inventory, not removed by a script.
         let carried = sim.world.peek(FormId::PLAYER_REF).and_then(|p| p.inventory.as_ref()).is_some_and(|inv| inv.count(s.base) > 0);
@@ -242,4 +251,72 @@ fn summary(mut exit: MessageReader<AppExit>, stats: Res<CrimeStats>) {
         "crime summary: {} thefts ({} seen), {} owned locks opened ({} seen), {} trespasses, {} assaults, {} murders ({} seen); {} actors turned on the player, {} trespass warnings, {} factions made enemies; karma changed {} times, {karma}",
         theft.0, theft.1, lock.0, lock.1, trespass.0, assault.0, murder.0, murder.1, s.turned, s.warnings, s.faction_enemies, s.karma_changes
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::test_world::{item_base, placed, sim};
+    use bevy::ecs::message::Messages;
+    use fnv_sim::refs::PlacedRef;
+
+    const CARTON: u32 = 0x100;
+    const OWNER: u32 = 0x400;
+    const IN_THE_SAVE: u32 = 0x301;
+    const JUST_TAKEN: u32 = 0x302;
+
+    /// Two owned items in the player's pack, gone from the world.
+    fn after_two_pickups() -> App {
+        let owned = |id| PlacedRef { owner: Some(FormId(OWNER)), ..placed(id, CARTON) };
+        let mut world = sim(vec![item_base(CARTON)], vec![owned(IN_THE_SAVE), owned(JUST_TAKEN)]);
+        for id in [IN_THE_SAVE, JUST_TAKEN] {
+            world.world.activate(FormId::PLAYER_REF, FormId(id)).unwrap();
+        }
+        let mut app = App::new();
+        app.insert_resource(world)
+            .insert_resource(ScriptState::over_no_plugins())
+            .init_resource::<CrimeStats>()
+            .add_message::<RefChanged>()
+            .add_message::<ItemsTaken>()
+            .add_message::<LockOpened>()
+            .add_systems(Update, report_deeds);
+        app
+    }
+
+    fn tell(app: &mut App, changes: &[RefChanged]) {
+        let mut m = app.world_mut().resource_mut::<Messages<RefChanged>>();
+        for &c in changes {
+            m.write(c);
+        }
+    }
+
+    /// The karma changes and thefts the game noted since the last call.
+    fn judged(app: &mut App) -> (usize, usize) {
+        let notes = app.world_mut().resource_mut::<ScriptState>().rt.as_mut().unwrap().game.crimes.take_notes();
+        let karma = notes.iter().filter(|n| matches!(n, Note::Karma { .. })).count();
+        let thefts = notes.iter().filter(|n| matches!(n, Note::Crime { kind: Kind::Theft, .. })).count();
+        (karma, thefts)
+    }
+
+    #[test]
+    fn a_pickup_the_load_restores_is_not_judged_and_a_real_one_beside_it_is() {
+        let mut app = after_two_pickups();
+        tell(&mut app, &[RefChanged { form_id: IN_THE_SAVE, restored: true }, RefChanged::new(JUST_TAKEN)]);
+        app.update();
+        assert_eq!(judged(&mut app), (1, 1), "the real pick-up alone");
+        // The restored one counts as judged, as in the run that picked it up: a later
+        // notice of the same reference (a script touching it) is no new theft.
+        tell(&mut app, &[RefChanged::new(IN_THE_SAVE)]);
+        app.update();
+        assert_eq!(judged(&mut app), (0, 0));
+    }
+
+    #[test]
+    fn a_pickup_told_as_a_real_change_is_judged() {
+        // The other half of the test above: what keeps a restored pick-up out is its mark.
+        let mut app = after_two_pickups();
+        tell(&mut app, &[RefChanged::new(IN_THE_SAVE)]);
+        app.update();
+        assert_eq!(judged(&mut app), (1, 1));
+    }
 }

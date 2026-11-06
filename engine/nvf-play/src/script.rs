@@ -1670,7 +1670,7 @@ pub(crate) fn run_scripts(
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
-    (mut sit, mut terminals): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>),
+    (mut sit, mut terminals, mut doors): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>, Option<ResMut<crate::doors::Doors>>),
     paused: Res<crate::pause::Paused>,
     (mut screen, bindings, tiles, page, mut mods_ticks): ScreenAndMenus,
 ) {
@@ -1702,6 +1702,9 @@ pub(crate) fn run_scripts(
                         Ok(changed_refs) => {
                             info!("load: restored {}: {} changed references, {} quests, {} script instances", path.display(), changed_refs.len(), rt.game.quests.len(), rt.game.instances.len());
                             restored = true;
+                            if let Some(doors) = doors.as_deref_mut() {
+                                doors.rest_as_restored(&sim);
+                            }
                             tiles.load(&mut rt.game, &sim.world);
                             // The Script Runner's files after the save is in place (the
                             // restore takes the game's state, lambdas included, from the
@@ -1715,7 +1718,7 @@ pub(crate) fn run_scripts(
                             rt.frozen_frames = 2;
                             // The drawn world follows the restored simulation.
                             for id in changed_refs {
-                                changed.write(RefChanged { form_id: id.0 });
+                                changed.write(RefChanged { form_id: id.0, restored: true });
                             }
                         }
                         Err(e) => warn!("load: {}: {e}; the game goes on from the plugins", path.display()),
@@ -2013,7 +2016,7 @@ pub(crate) fn run_scripts(
         match e {
             ScriptEffect::RefChanged(id) => {
                 if sent.insert(id) {
-                    changed.write(RefChanged { form_id: id });
+                    changed.write(RefChanged::new(id));
                 }
             }
             ScriptEffect::Fade { form_id, fade_in } => {
