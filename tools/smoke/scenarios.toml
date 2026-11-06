@@ -6368,6 +6368,33 @@ expect = [
 ]
 
 [[scenario]]
+name = "active-quest-write"
+source = "issue #1610: the active quest a script forced is read by GetActiveQuest after a load; the first half: force VCG02, read it, save (active-quest-load reads this save, so run them together)"
+areas = ["save", "scripts"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/pipboy/data.rs", "crates/fnv-game/src/functions/ui.rs"]
+env = { NVFOREVER_HOME = "active-quest-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "20:ForceActiveQuest VCG02;21:printc \"activequest is VCG02: %g\" (GetActiveQuest == VCG02);21.5:save aq-roundtrip;22:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 25
+expect = [
+  "console: activequest is VCG02: 1",
+  { re = 'save: wrote .*aq-roundtrip\.nvfsave', label = "the save is written" },
+]
+
+[[scenario]]
+name = "active-quest-load"
+source = "issue #1610: the second half: --load the save active-quest-write made; GetActiveQuest still reads VCG02"
+areas = ["save", "scripts"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/pipboy/data.rs", "crates/fnv-game/src/functions/ui.rs"]
+env = { NVFOREVER_HOME = "active-quest-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:printc \"activequest is VCG02: %g\" (GetActiveQuest == VCG02);15:close" }
+args = ["--play", "--load", "aq-roundtrip", "--no-voice"]
+run_seconds = 18
+expect = [
+  { re = 'load: engine state of .*aq-roundtrip\.nvfsave put back', label = "the engine state is put back" },
+  "console: activequest is VCG02: 1",
+]
+order = [["load: engine state of", "console: activequest is VCG02: 1"]]
+
+[[scenario]]
 name = "marker-found-write"
 source = "issue #1571: a save made inside a found map marker's radius pays nothing for it on load; the first half: Goodsprings is found, then saved (marker-found-load reads this save, so run them together)"
 areas = ["save", "map"]
