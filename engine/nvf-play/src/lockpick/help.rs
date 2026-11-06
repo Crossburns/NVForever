@@ -246,7 +246,7 @@ pub fn expand_keys(text: &str, bindings: &Bindings) -> String {
             // With a controller the control's button [design, #1662: the gamepad copies
             // of the messages are not shown, so the PC text names the button].
             (Some(c), _, _) if bindings.device == crate::bindings::InputDevice::Controller => match bindings.pad(c) {
-                Some(p) => out.push_str(crate::pad::pad_name(p)),
+                Some(p) => out.push_str(crate::pad::pad_shown(p)),
                 None => out.push_str(Bindings::name(c)),
             },
             (Some(c), _, _) => {

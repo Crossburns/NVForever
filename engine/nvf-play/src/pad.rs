@@ -122,9 +122,223 @@ pub const PAD_NAMES: &[(PadInput, &str)] = {
 /// Start opens and closes the pause menu: no control may take it.
 pub const RESERVED_PAD: [PadInput; 1] = [PadInput::Button(GamepadButton::Start)];
 
+/// The input's name in the INI ([`PAD_NAMES`]: the Xbox names whatever the button style,
+/// so every INI keeps loading) [design, #1452].
 pub fn pad_name(p: PadInput) -> &'static str {
     PAD_NAMES.iter().find(|(x, _)| *x == p).map_or("?", |(_, n)| n)
 }
+
+/// The PlayStation controller's names of the buttons whose Xbox names differ [design,
+/// #1452: Select and Start as on the PS3-era pad, the game's era; the face buttons by
+/// their shapes, drawn as NVForever's own glyphs where a picture fits ([`Glyph`])].
+pub const PLAYSTATION_NAMES: &[(GamepadButton, &str)] = {
+    use GamepadButton::*;
+    &[
+        (South, "Cross"), (East, "Circle"), (West, "Square"), (North, "Triangle"),
+        (LeftTrigger, "L1"), (RightTrigger, "R1"), (LeftTrigger2, "L2"), (RightTrigger2, "R2"),
+        (LeftThumb, "L3"), (RightThumb, "R3"), (Select, "Select"), (Start, "Start"),
+    ]
+};
+
+/// The input's name on screen with the labels `l`: the PlayStation name of a button that
+/// has one, else [`pad_name`] (the Xbox names, the D-pad's and the stick's).
+pub fn pad_label(p: PadInput, l: Labels) -> &'static str {
+    match (p, l) {
+        (PadInput::Button(b), Labels::PlayStation) => PLAYSTATION_NAMES.iter().find(|(x, _)| *x == b).map_or_else(|| pad_name(p), |(_, n)| n),
+        _ => pad_name(p),
+    }
+}
+
+/// The labels a controller's names take now: those in use, or the Xbox ones while the
+/// keyboard's are (a name asked for before the frame's [`sync_labels`]).
+pub fn pad_labels() -> Labels {
+    match labels() {
+        Labels::Keys => Labels::Xbox,
+        l => l,
+    }
+}
+
+/// [`pad_label`] with [`pad_labels`].
+pub fn pad_shown(p: PadInput) -> &'static str {
+    pad_label(p, pad_labels())
+}
+
+/// Which names a controller's buttons go by: the settings page's Button style (Controller
+/// group), kept in `[Settings]` of NVForever.ini as `button-style` [design, #1452]. Auto
+/// follows the controller in use ([`PadInUse`]); Xbox and PlayStation hold whatever the
+/// controller (one whose name is not recognised).
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ButtonStyle {
+    #[default]
+    Auto,
+    Xbox,
+    PlayStation,
+}
+
+impl ButtonStyle {
+    pub const ALL: [ButtonStyle; 3] = [ButtonStyle::Auto, ButtonStyle::Xbox, ButtonStyle::PlayStation];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ButtonStyle::Auto => "Auto",
+            ButtonStyle::Xbox => "Xbox",
+            ButtonStyle::PlayStation => "PlayStation",
+        }
+    }
+
+    pub fn by_name(name: &str) -> Option<ButtonStyle> {
+        ButtonStyle::ALL.into_iter().find(|s| s.name().eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// The labels with a controller; `playstation`: the controller in use is one.
+    pub fn labels(self, playstation: bool) -> Labels {
+        match self {
+            ButtonStyle::Xbox => Labels::Xbox,
+            ButtonStyle::PlayStation => Labels::PlayStation,
+            ButtonStyle::Auto if playstation => Labels::PlayStation,
+            ButtonStyle::Auto => Labels::Xbox,
+        }
+    }
+}
+
+fn style_pick(w: &mut World, name: &str) -> bool {
+    match ButtonStyle::by_name(name) {
+        Some(s) => {
+            info!("controller: button style {}", s.name());
+            *w.resource_mut::<ButtonStyle>() = s;
+            true
+        }
+        None => false,
+    }
+}
+
+/// Whether a controller's reported name is a PlayStation pad's [design, #1452: the names
+/// the platform's drivers and SDL's controller list give them, e.g. "DualSense Wireless
+/// Controller", "DUALSHOCK 4", the bare "Wireless Controller" of a DualShock 4 or
+/// DualSense, "PS3 Controller"; a name that says Xbox never is].
+pub fn playstation_pad(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    if n.contains("xbox") || n.contains("xinput") {
+        return false;
+    }
+    ["dualsense", "dualshock", "playstation", "sony", "ps3", "ps4", "ps5"].iter().any(|w| n.contains(w)) || n.trim() == "wireless controller"
+}
+
+/// The controller in use: the last one connected, or the last one whose button went down,
+/// so the labels follow a pad picked up mid-game [design, #1452].
+#[derive(Resource, Debug, Default, Clone)]
+pub struct PadInUse {
+    pub name: Option<String>,
+    pub playstation: bool,
+}
+
+fn track_pad(pads: Query<(Entity, &Gamepad, Option<&Name>)>, added: Query<Entity, Added<Gamepad>>, mut in_use: ResMut<PadInUse>) {
+    let now = pads.iter().find(|(e, g, _)| added.contains(*e) || g.get_just_pressed().next().is_some());
+    let Some((e, _, name)) = now else { return };
+    let name = name.map_or_else(|| format!("controller {e}"), |n| n.as_str().to_string());
+    if in_use.name.as_deref() != Some(name.as_str()) {
+        let playstation = playstation_pad(&name);
+        info!("controller: {name} in use ({} names)", if playstation { "PlayStation" } else { "Xbox" });
+        *in_use = PadInUse { name: Some(name), playstation };
+    }
+}
+
+// ---- NVForever's own PlayStation glyphs [design, #1452] --------------------------------
+
+/// A PlayStation face button's shape, drawn by NVForever (no game or Sony art).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Glyph {
+    Cross,
+    Circle,
+    Square,
+    Triangle,
+}
+
+impl Glyph {
+    pub const ALL: [Glyph; 4] = [Glyph::Cross, Glyph::Circle, Glyph::Square, Glyph::Triangle];
+
+    /// The face button's glyph under the PlayStation labels.
+    pub fn of(b: GamepadButton) -> Option<Glyph> {
+        Some(match b {
+            GamepadButton::South => Glyph::Cross,
+            GamepadButton::East => Glyph::Circle,
+            GamepadButton::West => Glyph::Square,
+            GamepadButton::North => Glyph::Triangle,
+            _ => return None,
+        })
+    }
+
+    /// The glyph a label names ("Cross"), for the drawing that shows the picture in
+    /// place of the word.
+    pub fn named(label: &str) -> Option<Glyph> {
+        Glyph::ALL.into_iter().find(|g| g.name() == label)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Glyph::Cross => "Cross",
+            Glyph::Circle => "Circle",
+            Glyph::Square => "Square",
+            Glyph::Triangle => "Triangle",
+        }
+    }
+
+    /// How far the point `p` (the picture's middle at 0, its half side 1) lies from the
+    /// shape's outline, in the same units.
+    fn distance(self, p: Vec2) -> f32 {
+        fn segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+            let ab = b - a;
+            let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+            (p - (a + ab * t)).length()
+        }
+        match self {
+            Glyph::Cross => {
+                let r = 0.62;
+                segment(p, Vec2::new(-r, -r), Vec2::new(r, r)).min(segment(p, Vec2::new(-r, r), Vec2::new(r, -r)))
+            }
+            Glyph::Circle => (p.length() - 0.66).abs(),
+            Glyph::Square => {
+                let h = 0.6;
+                let q = p.abs() - Vec2::splat(h);
+                let outside = q.max(Vec2::ZERO).length();
+                let inside = q.x.max(q.y).min(0.0);
+                (outside + inside).abs()
+            }
+            Glyph::Triangle => {
+                // Point up (y down in the picture): the apex at the top.
+                let (a, b, c) = (Vec2::new(0.0, -0.68), Vec2::new(0.74, 0.58), Vec2::new(-0.74, 0.58));
+                segment(p, a, b).min(segment(p, b, c)).min(segment(p, c, a))
+            }
+        }
+    }
+
+    /// The glyph's coverage (0 to 1) of the pixel at `x`, `y` of a `size` square picture:
+    /// an outline [`GLYPH_STROKE`] of the half side thick, its edge eased over a pixel.
+    pub fn coverage(self, x: u32, y: u32, size: u32) -> f32 {
+        let half = size as f32 / 2.0;
+        let p = (Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - Vec2::splat(half)) / half;
+        let d = self.distance(p) * half;
+        (GLYPH_STROKE * half / 2.0 - d + 0.5).clamp(0.0, 1.0)
+    }
+
+    /// The glyph as a white picture, its outline in the alpha (tinted by the node's colour).
+    pub fn image(self, size: u32) -> Image {
+        use bevy::asset::RenderAssetUsages;
+        use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+        let mut data = Vec::with_capacity((size * size * 4) as usize);
+        for y in 0..size {
+            for x in 0..size {
+                let a = (self.coverage(x, y, size) * 255.0).round() as u8;
+                data.extend_from_slice(&[255, 255, 255, a]);
+            }
+        }
+        Image::new(Extent3d { width: size, height: size, depth_or_array_layers: 1 }, TextureDimension::D2, data, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD)
+    }
+}
+
+/// A glyph's outline width, as a share of the picture's half side [design].
+pub const GLYPH_STROKE: f32 = 0.16;
+
 
 /// The input of a name (without case); `None` for none or an unknown name.
 pub fn parse_pad(name: &str) -> Option<PadInput> {
@@ -398,6 +612,9 @@ pub enum Labels {
     #[default]
     Keys,
     Xbox,
+    /// A PlayStation controller's names (Cross, Circle, Square, Triangle, L1 … R3, Select,
+    /// Start) [design, #1452].
+    PlayStation,
 }
 
 impl Labels {
@@ -408,6 +625,7 @@ impl Labels {
     fn of(code: u8) -> Labels {
         match code {
             1 => Labels::Xbox,
+            2 => Labels::PlayStation,
             _ => Labels::Keys,
         }
     }
@@ -444,9 +662,11 @@ pub fn set_labels(l: Labels) {
     LABELS.with(|c| c.set(l.code()));
 }
 
-/// The labels follow the Input Device setting.
-fn sync_labels(bindings: Option<Res<crate::bindings::Bindings>>) {
-    let l = if bindings.is_some_and(|b| b.device == crate::bindings::InputDevice::Controller) { Labels::Xbox } else { Labels::Keys };
+/// The labels follow the Input Device setting and, with a controller, the Button style
+/// ([`ButtonStyle`]; Auto: the controller in use, [`PadInUse`]).
+fn sync_labels(bindings: Option<Res<crate::bindings::Bindings>>, style: Option<Res<ButtonStyle>>, in_use: Option<Res<PadInUse>>) {
+    let controller = bindings.is_some_and(|b| b.device == crate::bindings::InputDevice::Controller);
+    let l = if controller { style.map_or(ButtonStyle::Auto, |s| *s).labels(in_use.is_some_and(|u| u.playstation)) } else { Labels::Keys };
     if cfg!(not(test)) && labels() != l {
         info!("hints: {l:?} labels");
         set_labels(l);
@@ -481,7 +701,7 @@ pub fn hint_name_as(keys: &[KeyCode], at: MenuAt, l: Labels) -> String {
     let key = || keys.first().map_or_else(|| "?".into(), |k| key_hint_name(*k));
     match l {
         Labels::Keys => key(),
-        Labels::Xbox => keys.iter().find_map(|k| button_for(*k, at)).map_or_else(key, |b| pad_name(PadInput::Button(b)).to_string()),
+        Labels::Xbox | Labels::PlayStation => keys.iter().find_map(|k| button_for(*k, at)).map_or_else(key, |b| pad_label(PadInput::Button(b), l).to_string()),
     }
 }
 
@@ -552,8 +772,30 @@ impl Plugin for PadPlugin {
         use bevy::input::InputSystems;
         app.init_resource::<StickButtons>()
             .init_resource::<MenuKeys>()
-            .add_systems(PreUpdate, (update_stick_buttons, menu_keys, sync_labels).after(InputSystems))
+            .init_resource::<ButtonStyle>()
+            .init_resource::<PadInUse>()
+            .add_systems(PreUpdate, (update_stick_buttons, menu_keys, track_pad, sync_labels.after(track_pad)).after(InputSystems))
             .add_systems(Update, log_pads);
+        crate::settings::add_choice_list(
+            app,
+            crate::settings::Setting {
+                key: "button-style",
+                group: crate::aim_assist::GROUP,
+                label: "Button style",
+                note: "Which names and pictures the controller's buttons go by in prompts, menu hints and the Controls tab. Auto: a PlayStation controller's (Cross, Circle, Square, Triangle, L1, R2, Select…) when the controller in use says it is one, else an Xbox controller's. Xbox or PlayStation: always those. The INI keeps the Xbox names either way.",
+                get: |_| false,
+                set: |_, _| {},
+                slider: None,
+            },
+            crate::settings::ChoiceList {
+                names: |_| ButtonStyle::ALL.iter().map(|s| s.name().to_string()).collect(),
+                chosen: |w| w.resource::<ButtonStyle>().name().to_string(),
+                pick: style_pick,
+                save: |w| w.resource::<ButtonStyle>().name().to_string(),
+                load: style_pick,
+                ask_keep: false,
+            },
+        );
     }
 }
 
@@ -676,6 +918,69 @@ mod tests {
         assert_eq!(crate::dialogue_menu::goodbye_hint(), "[B] Goodbye");
         set_labels(Labels::Keys);
         assert_eq!(crate::dialogue_menu::goodbye_hint(), crate::dialogue_menu::GOODBYE_HINT);
+    }
+
+    #[test]
+    fn playstation_pads_are_told_by_name() {
+        for n in ["DualSense Wireless Controller", "DUALSHOCK 4 Wireless Controller", "Wireless Controller", "PS3 Controller", "Sony PLAYSTATION(R)3 Controller", "PS4 Controller", "PS5 Controller"] {
+            assert!(playstation_pad(n), "{n}");
+        }
+        for n in ["Xbox Wireless Controller", "Xbox 360 Controller", "XInput Controller #1", "Logitech Dual Action", "8BitDo Pro 2", "Controller (Xbox One For Windows)"] {
+            assert!(!playstation_pad(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn the_button_style_picks_the_names() {
+        assert_eq!(ButtonStyle::Auto.labels(true), Labels::PlayStation);
+        assert_eq!(ButtonStyle::Auto.labels(false), Labels::Xbox);
+        assert_eq!(ButtonStyle::Xbox.labels(true), Labels::Xbox);
+        assert_eq!(ButtonStyle::PlayStation.labels(false), Labels::PlayStation);
+        assert_eq!(ButtonStyle::by_name(" playstation "), Some(ButtonStyle::PlayStation));
+        use GamepadButton::*;
+        let ps = |b| pad_label(PadInput::Button(b), Labels::PlayStation);
+        assert_eq!([ps(South), ps(East), ps(West), ps(North)], ["Cross", "Circle", "Square", "Triangle"]);
+        assert_eq!([ps(LeftTrigger), ps(RightTrigger), ps(LeftTrigger2), ps(RightTrigger2), ps(LeftThumb), ps(RightThumb)], ["L1", "R1", "L2", "R2", "L3", "R3"]);
+        assert_eq!([ps(Select), ps(Start), ps(DPadUp)], ["Select", "Start", "D-Pad Up"]);
+        assert_eq!(pad_label(PadInput::Stick(StickDir::Up), Labels::PlayStation), "Left Stick Up");
+        // The INI's names stay the Xbox ones, so every INI keeps loading.
+        for (p, n) in PAD_NAMES {
+            assert_eq!(pad_name(*p), *n);
+            assert_eq!(parse_pad(n), Some(*p));
+        }
+        // Hints with each style.
+        let at = MenuAt { code: Some(fnv_game::game::menus::MAP), tab: 3 };
+        assert_eq!(hint_as(&[KeyCode::KeyR], at, Labels::Keys), "R)");
+        assert_eq!(hint_as(&[KeyCode::KeyR], at, Labels::Xbox), "Y)");
+        assert_eq!(hint_as(&[KeyCode::KeyR], at, Labels::PlayStation), "Triangle)");
+        let bet = MenuAt { code: Some(crate::caravan::MENU_CARAVAN), tab: CARAVAN_BET };
+        assert_eq!(hint_as(&[KeyCode::KeyA], bet, Labels::PlayStation), "R2)");
+        assert_eq!(hint_name_as(&[KeyCode::KeyE, KeyCode::Escape], HELP_AT, Labels::PlayStation), "Circle");
+        set_labels(Labels::PlayStation);
+        assert_eq!(crate::dialogue_menu::goodbye_hint(), "[Circle] Goodbye");
+        assert_eq!(pad_shown(PadInput::Button(South)), "Cross");
+        set_labels(Labels::Keys);
+        assert_eq!(pad_shown(PadInput::Button(South)), "A");
+    }
+
+    #[test]
+    fn the_glyphs_are_outlines() {
+        let n = 64;
+        for g in Glyph::ALL {
+            let img = g.image(n);
+            assert_eq!(img.data.as_ref().map(|d| d.len()), Some((n * n * 4) as usize));
+            // Something drawn, the corners clear.
+            assert!((0..n).any(|x| g.coverage(x, n / 2, n) > 0.9 || g.coverage(n / 2, x, n) > 0.9), "{g:?}");
+            assert_eq!(g.coverage(0, 0, n), 0.0, "{g:?}");
+            assert_eq!(Glyph::named(g.name()), Some(g));
+        }
+        // The cross is drawn through the middle, the circle and the square are hollow.
+        assert!(Glyph::Cross.coverage(n / 2, n / 2, n) > 0.9);
+        assert_eq!(Glyph::Circle.coverage(n / 2, n / 2, n), 0.0);
+        assert_eq!(Glyph::Square.coverage(n / 2, n / 2, n), 0.0);
+        assert_eq!(Glyph::Triangle.coverage(n / 2, n / 2, n), 0.0);
+        assert_eq!(Glyph::of(GamepadButton::North), Some(Glyph::Triangle));
+        assert_eq!(Glyph::of(GamepadButton::Start), None);
     }
 
     #[test]

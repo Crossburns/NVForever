@@ -368,7 +368,7 @@ impl Bindings {
     pub fn prompt(&self, c: Control) -> String {
         let b = self.get(c);
         let name = match self.device {
-            InputDevice::Controller => self.pad(c).map(|p| crate::pad::pad_name(p).to_string()),
+            InputDevice::Controller => self.pad(c).map(|p| crate::pad::pad_shown(p).to_string()),
             InputDevice::KeyboardMouse => b.key.and_then(key_name).map(String::from).or_else(|| b.mouse.map(mouse_name)),
         };
         format!("{})", name.unwrap_or_else(|| "?".into()))
@@ -378,7 +378,8 @@ impl Bindings {
     pub fn text_on(&self, c: Control) -> String {
         match self.device {
             InputDevice::KeyboardMouse => self.get(c).text(),
-            InputDevice::Controller => pad_text(self.pad(c)),
+            // The button style's names (#1452); the INI keeps the Xbox ones ([`pad_text`]).
+            InputDevice::Controller => self.pad(c).map_or_else(|| "None".into(), |p| crate::pad::pad_shown(p).to_string()),
         }
     }
 
