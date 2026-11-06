@@ -5756,6 +5756,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "death-cry-cut"
+source = "#1539 (playtest 2026-11-05): a MaleAdult07 Powder Ganger's generic death file (generic_death_00175181_1 9.80 s, _00175182_1 15.23 s) holds several cries and played whole, so the corpse groaned for 10-15 s. Now one cry of it is played, picked at random, and the line ends with it (crates/fnv-voice/src/cry.rs, engine/nvf-play/src/voice.rs one_cry, Game::cut_line_after; voice.md §9.1)"
+note = "four GoodspringsPowderGangerCM (0015F311, voice MaleAdult07, traits not from its template) placed at the player and killed by the test aid 2 s apart; the Death line is one of three Random lines (00175180's MaleAdult07 file is 1.09 s and plays whole), so with four deaths at least one long file is all but certain; --no-voice still decodes and cuts (the log is the check)"
+areas = ["voice", "combat"]
+paths = ["crates/fnv-voice/src/cry.rs", "engine/nvf-play/src/voice.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 0015F311 1;9.2:player.placeatme 0015F311 1;9.4:player.placeatme 0015F311 1;9.6:player.placeatme 0015F311 1;9.8:close", NVF_PLAY_TEST_SCRIPT = "13:kill:0xFF000000,15:kill:0xFF000001,17:kill:0xFF000002,19:kill:0xFF000003" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'voice: playing sound\\voice\\falloutnv\.esm\\maleadult07\\generic_death_0017518[012]_1\.ogg', min = 1, label = "the Powder Gangers say their generic Death line in MaleAdult07's voice" },
+  { re = 'voice: one cry of sound\\voice\\falloutnv\.esm\\maleadult07\\generic_death_0017518[12]_1\.ogg: cry \d+ of (?P<n>\d+)', range = [2, 40], label = "a long death file is split into its cries and one is played" },
+  { re = 'voice: one cry of .*, (?P<n>[\d.]+)-[\d.]+ s of its', range = [0.0, 15.3], label = "from a point inside the file" },
+  { re = 'voice: playing sound\\voice\\falloutnv\.esm\\maleadult07\\generic_death_0017518[12]_1\.ogg \((?P<n>[\d.]+) s\)', range = [0.1, 5.0], all = true, label = "every long death file plays one cry (9.80 or 15.23 s whole)" },
+  { re = 'voice summary: .* (?P<n>\d+) long generic death files cut to one cry', range = [1, 4], label = "counted at exit" },
+]
+
+[[scenario]]
 name = "helios-ceiling-turrets"
 source = "#1537 (owner's playtest 2026-11-04): HELIOS One's ceiling turrets turn to the player and fire. Three causes: no 2hr stance (no Weapon node, fixed with #1554's no_weapon_node), eyes 112 units over the origin (above the turret's own top and past the ceiling: detection.rs eyes_of now keeps eyes within the body), and a rooted (Immobile) actor never turned (fnv-ai carry.rs rooted_turn)"
 note = "HELIOSOneTower: VHeliosTurret2REF (0x00099DB8, LvlTurretCeiling2048Robot → CrTurretCeiling01, minisentryturret skeleton, TurretGunCeiling01) at (-1792, 1024, 7760) with two more; the player put on the floor below, about 400 units off"

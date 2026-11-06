@@ -8,6 +8,7 @@
 //! - [`index`]: the lines of a load order and the names their paths are built from
 //! - [`bank`]: the index over the archives, with lengths; `fnv_game`'s line-length hook
 //! - [`coverage`]: how many lines of a load order have a sound (`fnvtool voice coverage`)
+//! - [`cry`]: one cry of a long generic death file (issue #1539)
 //!
 //! - [`lip`]: the `.lip` file beside a sound, decoded: the face animation of the
 //!   response as weights per channel and frame (docs/spec-notes/lipsync.md)
@@ -15,6 +16,7 @@
 
 pub mod bank;
 pub mod coverage;
+pub mod cry;
 pub mod index;
 pub mod length;
 pub mod lip;
