@@ -803,7 +803,7 @@ mod tests {
         fn set_enabled(app: &mut App, r: u32, enabled: bool, told: &[u32]) {
             app.world_mut().resource_mut::<SimState>().world.set_enabled(FormId(r), enabled).unwrap();
             for &form_id in told {
-                app.world_mut().write_message(RefChanged { form_id });
+                app.world_mut().write_message(RefChanged::new(form_id));
             }
             app.update();
         }
