@@ -579,11 +579,13 @@ impl Game<'_> {
     }
 
     /// Addictions are held back while their chem is active, and come back when it ends.
+    /// An effect its conditions hold is left alone: when they pass, [`Game::start_change`]
+    /// looks at the chem itself, and a modifier put in its pool here would go in twice.
     pub(crate) fn refresh_suspended(&mut self, _dt: f64) {
         let ids: Vec<(u32, FormId, FormId)> = self
             .effects
             .iter()
-            .filter(|e| e.permanent && e.change.is_some_and(|c| c.kind == ChangeKind::Modifier))
+            .filter(|e| e.permanent && !e.inactive && e.change.is_some_and(|c| c.kind == ChangeKind::Modifier))
             .filter(|e| self.data.spell_types.get(&e.source) == Some(&SPELL_ADDICTION))
             .map(|e| (e.id, e.target, e.source))
             .collect();
