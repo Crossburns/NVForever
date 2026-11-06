@@ -66,13 +66,22 @@ use fnv_nav::{NavGraph, Place, Space};
 use fnv_sim::FormId;
 use serde::Serialize;
 
+/// A creature in combat turns to face its target this many times faster than the
+/// standing turn rate (240 degrees a second, its own × 1.25 on top): the engine's gunmen
+/// fire only facing their target (nvforever npc_combat, owner's playtest list 5 item
+/// 33), and at the standing rate a turn to a new target held their fire for up to 1.5 s
+/// [design]. Kept for creatures when people took the measured rates below (#1352): only
+/// a person was measured [hypothesis: a creature's combat turn is unmeasured].
+pub const COMBAT_TURN_CREATURE: f32 = 2.0;
+
 /// A person standing in combat turns to face its target at this rate, radians a second,
 /// while the target is within a quarter turn of its heading (225 degrees a second), and
 /// at [`COMBAT_TURN_WIDE`] beyond: an NCR trooper given StartCombat 45° and 90° off its
 /// bearing to the player turned 3.5° a game loop, steadily up to the bearing, and 135°
 /// (and 180°) off, 4.3° a loop [observed 2026-11-06, capture o25_turn,
 /// docs/spec-notes/actors.md §8.9; hypothesis: the threshold between 90° and 135° lies at
-/// 90°, and the rate goes by the angle still to turn]. No ease-out: the slower end of a
+/// 90°, and the rate goes by the angle still to turn: the original may pick it when the
+/// turn begins, and the data cannot tell the two apart]. No ease-out: the slower end of a
 /// long turn came from stepping off while turning (the walk's own turn rate).
 pub const COMBAT_TURN_NEAR: f32 = 225.0 * std::f32::consts::PI / 180.0;
 /// The combat turn rate with the target more than a quarter turn off (275 degrees a
@@ -82,7 +91,9 @@ pub const COMBAT_TURN_WIDE: f32 = 275.0 * std::f32::consts::PI / 180.0;
 /// Alert) before it turns to its target and sets off: the trooper above stood still on
 /// its first heading for about 1.1 s after StartCombat, already in combat [observed
 /// 2026-11-06, capture o25_turn; hypothesis: the same when it goes into combat by
-/// detecting its target].
+/// detecting its target]. People only ([`combat_began`]): creatures turn and charge at
+/// once as before [hypothesis: a creature's reaction is unmeasured; o25's spawned
+/// coyotes were in combat at once].
 pub const COMBAT_REACTION_SECONDS: f64 = 1.1;
 
 /// The combat turn rate ([`COMBAT_TURN_NEAR`], [`COMBAT_TURN_WIDE`]) with `off` radians
@@ -101,10 +112,23 @@ pub fn combat_turn(off: f32) -> f32 {
     combat_turn_rate(off) / fnv_nav::follow::SPOT_TURN_RATE
 }
 
-/// Whether a fighter is still in its moment after going into Combat
-/// ([`COMBAT_REACTION_SECONDS`]): it stands on its heading.
-pub fn reacting(aw: &fnv_game::awareness::Awareness, now: f64) -> bool {
-    aw.state == State::Combat && aw.combat_began.is_some_and(|t| now - t < COMBAT_REACTION_SECONDS)
+/// Whether `actor` is a creature by its record (`fnv_game::nvse_nx::is_creature`); an
+/// actor of no known record counts as a person.
+pub fn creature(game: &Game, actor: FormId) -> bool {
+    fnv_game::nvse_nx::is_creature(game, actor) == Some(true)
+}
+
+/// When a person went into Combat (`Awareness::combat_began`), for the moment it stands
+/// ([`COMBAT_REACTION_SECONDS`]); `None` for a creature, which does not stand.
+pub fn combat_began(game: &Game, actor: FormId) -> Option<f64> {
+    let aw = game.awareness.get(actor)?;
+    (aw.state == State::Combat && !creature(game, actor)).then_some(aw.combat_began).flatten()
+}
+
+/// Whether a person in Combat is still in its moment after going into it
+/// ([`COMBAT_REACTION_SECONDS`]): it stands on its heading. Never a creature.
+pub fn reacting(game: &Game, actor: FormId) -> bool {
+    combat_began(game, actor).is_some_and(|t| game.time - t < COMBAT_REACTION_SECONDS)
 }
 
 /// Seconds an actor looks about where it searched before it searches on
@@ -250,7 +274,7 @@ impl Ai {
         if state == State::Combat {
             // Just in combat it stands a moment on its heading before it turns and sets
             // off ([`COMBAT_REACTION_SECONDS`]).
-            if reacting(aw, now) {
+            if reacting(game, actor) {
                 let a = self.agents.get_mut(&actor).expect("listed");
                 if a.activity == Activity::Travelling {
                     a.walker.follower = None;

@@ -2117,7 +2117,7 @@ impl Core {
             let aw = game.awareness.get(r.actor).filter(|x| x.state == fnv_game::awareness::State::Combat);
             // Just gone into Combat it stands a moment on its heading (`fnv_ai::alert::reacting`;
             // nor is it locked on its target then, `npc_combat`).
-            if aw.is_some_and(|x| fnv_ai::alert::reacting(x, game.time)) {
+            if fnv_ai::alert::reacting(game, r.actor) {
                 continue;
             }
             let Some((target, _)) = aw.and_then(|x| x.combat_target()) else { continue };

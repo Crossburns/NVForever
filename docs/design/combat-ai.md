@@ -1995,9 +1995,14 @@ target through every phase of the attack and fired only once turned to it
   225°/s while its target is within 90° of its heading and 275°/s beyond
   (`combat_turn_rate`), steadily with no ease-out, and walking at the walk's own turn
   rate (180°/s). Before, it turned at once at 240°/s standing and 360°/s walking. Back in
-  Combat from Lost it does not stand again, and a creature's combat turn keeps its × 1.25
-  [hypothesis: neither measured; nor is the delay when combat starts by detection rather
-  than StartCombat]. The facing summary (`npc_combat`, smoke battle-ncr-fiends,
+  Combat from Lost it does not stand again [hypothesis: not measured; nor is the delay
+  when combat starts by detection rather than StartCombat]. `combat_turn_rate` picks the
+  rate from the angle still left to turn; the original may set it when the turn begins,
+  and the data cannot tell the two apart [hypothesis]. Creatures are unchanged
+  (`fnv_ai::alert::creature`, `combat_began` is `None` for them): no stand, and their
+  standing combat turn is still twice the standing rate with their own × 1.25
+  (`COMBAT_TURN_CREATURE`) [hypothesis: a creature's reaction and turn are unmeasured;
+  only a human trooper was, and o25's spawned coyotes were in combat at once]. The facing summary (`npc_combat`, smoke battle-ncr-fiends,
   combat-violet) gives a fighter its 0.6 s to turn (`REACTION_SECONDS`) from the end of
   that moment, not from first seeing its target, and does not count it locked meanwhile.
 - **Why it slipped**: the drawn facing used the target's AI place, which for a charging

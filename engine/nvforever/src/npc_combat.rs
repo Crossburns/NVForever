@@ -2090,9 +2090,9 @@ pub(crate) fn fight(
             // Just in combat, a fighter stands a moment on its heading before it turns
             // (`fnv_ai::alert::reacting`, #1352): not locked on its target meanwhile, and
             // the time it is given to turn to it counts from the end of that moment.
-            let aware = g.awareness.get(me);
-            let reacting = aware.is_some_and(|x| fnv_ai::alert::reacting(x, g.time));
-            let turning_for = aware.and_then(|x| x.combat_began).map_or(f64::INFINITY, |t| g.time - t - fnv_ai::alert::COMBAT_REACTION_SECONDS);
+            // People only: a creature does not stand (`fnv_ai::alert::combat_began`).
+            let reacting = fnv_ai::alert::reacting(g, me);
+            let turning_for = fnv_ai::alert::combat_began(g, me).map_or(f64::INFINITY, |t| g.time - t - fnv_ai::alert::COMBAT_REACTION_SECONDS);
             let settled = fighter.seen_for >= REACTION_SECONDS && turning_for >= f64::from(REACTION_SECONDS);
             if !facing && sees && settled {
                 f.stats.unfaced += 1;

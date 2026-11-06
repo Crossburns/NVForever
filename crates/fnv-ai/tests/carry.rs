@@ -1682,6 +1682,32 @@ fn an_actor_going_into_combat_stands_a_moment_then_turns_at_the_combat_rate() {
 }
 
 #[test]
+fn a_creature_going_into_combat_turns_at_once() {
+    // People only stand 1.1 s on going into combat (#1352); a creature turns to its
+    // target at once, as before [hypothesis: a creature's reaction is unmeasured].
+    let f = fixture();
+    let mut s = sim(&f, &[R_HOUND]);
+    s.run(1.0);
+    let hound = FormId(R_HOUND);
+    assert!(fnv_ai::alert::creature(&s.game, hound));
+    let (now, t) = (s.game.time, Timers::default());
+    let at = s.feet(R_HOUND);
+    let target = [at[0] + 300.0, at[1], at[2]];
+    let a = s.game.awareness.actors.entry(hound).or_default();
+    a.observe(FormId::PLAYER_REF, &Detection { value: 5.0, band: Band::Detected, ..Default::default() }, target, now, &t);
+    a.settle(hound, now, &t, true);
+    assert_eq!(a.state, State::Combat);
+    assert_eq!(a.combat_began, Some(now));
+    assert!(!fnv_ai::alert::reacting(&s.game, hound));
+    assert_eq!(fnv_ai::alert::combat_began(&s.game, hound), None);
+    let want = fnv_nav::follow::heading_of([300.0, 0.0]);
+    s.ai.agents.get_mut(&hound).unwrap().walker.heading = want + 3.0;
+    s.run(0.5);
+    let off = fnv_nav::follow::heading_delta(want, s.ai.agents[&hound].walker.heading);
+    assert!(off.abs() < 2.5, "it turned within the half second a person stands: {off}");
+}
+
+#[test]
 fn an_actor_in_combat_closes_in_on_a_target_it_cannot_see() {
     let f = fixture();
     let mut s = sim(&f, &[R_TRAVEL]);
