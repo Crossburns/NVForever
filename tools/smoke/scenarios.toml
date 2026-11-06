@@ -8858,6 +8858,24 @@ expect = [
 order = [["controls: input device Controller", "caravan: hints: Auto Match Y)", "caravan: hints: Randomize Caravan Deck Y)", "caravan: hints: Select Card A)"]]
 
 [[scenario]]
+name = "controller-playstation-hints"
+source = "#1452: PlayStation button names; the settings page's Button style (Controller group) set to PlayStation with Controller as the Input Device, the caravan screens' hints in the PlayStation names (docs/design/controller.md §3a)"
+note = "as controller-menu-hints, with button-style=PlayStation; no controller is connected in a smoke run, so Auto's name detection is covered by the unit tests (pad.rs playstation_pads_are_told_by_name), not here"
+areas = ["caravan", "menus"]
+paths = ["engine/nvf-play/src/pad.rs", "engine/nvf-play/src/reticle.rs", "engine/nvf-play/src/bindings.rs"]
+env = { NVFOREVER_HOME = "controller-ps-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller,3:button-style=PlayStation", NVF_PLAY_TEST_CARAVAN = "1:seed:7,14:caps:200,15:cards:15D7A2,16:open:104C7D:15D7A2:0.25,18:help,19:match,20:accept,21:help,22:randomize,23:play,25:help,26:forfeit,26.5:forfeit,29:continue" }
+args = ["--cell", "GSHouseInterior02", "--play", "--no-voice", "--no-messages"]
+run_seconds = 32
+expect = [
+  { text = "controller: button style PlayStation", label = "the settings page's Button style picks the PlayStation names" },
+  { text = "hints: PlayStation labels", label = "the hints take them" },
+  { re = 'caravan: hints: Auto Match Triangle\), Raise R2\), Accept Cross\), Exit Circle\); help: \S.* \[Circle\]', label = "the bet screen under its help box, Circle closing the box" },
+  { re = 'caravan: hints: Randomize Caravan Deck Triangle\), Add Cross\), Remove Square\), Play Caravan R2\)', label = "the deck builder's buttons" },
+  { re = 'caravan: hints: Select Card Cross\), Discard Card Square\), Discard Track Triangle\), Cancel Circle\)', label = "the game's buttons" },
+  { re = 'caravan: hints: [^;]* (?:[WQFRSAXYB]|RT)\)', max = 0, label = "no keyboard key or Xbox name left in a caravan hint" },
+]
+
+[[scenario]]
 name = "controller-read"
 source = "owner 2026-10-16: the second half of the controller round trip: a new start in controller-write's home takes the device and the buttons it stored"
 areas = ["main-menu", "save"]

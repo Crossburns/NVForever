@@ -122,6 +122,33 @@ Start cannot be bound.
   from their files' `_PCButtonText` (opt-in `[UI] TileMenus`), and the button pictures
   (letters stand in).
 
+## 3a. PlayStation names (#1452)
+
+The original shows only Xbox button pictures; a PlayStation controller's names are
+NVForever's own [design, #1452]:
+
+- **Which names.** The settings page's Button style (Controller group, `button-style` in
+  `[Settings]` of NVForever.ini): Auto (the default), Xbox or PlayStation (`pad::ButtonStyle`).
+  Auto takes the PlayStation names while the controller in use reports a PlayStation
+  name (`pad::playstation_pad`: "DualSense", "DualShock", "PlayStation", "Sony", "PS3",
+  "PS4", "PS5", or the bare "Wireless Controller" of a DualShock 4 or DualSense; a name
+  with "Xbox" or "XInput" never), else the Xbox ones. The controller in use is the last
+  connected or the last whose button went down, so the names follow a pad picked up
+  mid-game (`pad::PadInUse`; the log: `controller: <name> in use (PlayStation names)`).
+- **The names**: A Cross, B Circle, X Square, Y Triangle, LB L1, RB R1, LT L2, RT R2,
+  LS L3, RS R3, Back Select, Start Start (the PS3-era pair, the game's era, not Share/
+  Create and Options); the D-pad and the stick keep their names (`pad::PLAYSTATION_NAMES`).
+  They are used everywhere a button is named on screen: the crosshair prompt, the menu
+  hints (§3), the Controls tab's bindings and the help texts' control strings.
+- **The INI keeps the Xbox names** (`[Controller] Jump=Y`) whatever the style, so every
+  existing NVForever.ini keeps loading and an INI does not change when the pad does;
+  the rebinding log names them so too.
+- **Glyphs**: NVForever draws its own Cross, Circle, Square and Triangle: outlines
+  computed at start into small pictures (`pad::Glyph`, nothing from the game's or Sony's
+  art). The crosshair prompt shows the glyph and ")" in place of "Cross)"; the menu hints,
+  drawn with the game's fonts, which have no such symbols, write the names. L1 … R3,
+  Select and Start are text everywhere.
+
 ## 4. Rumble
 
 The original rumbles the pad by its `bGamePadRumble` switch (`1` in the owner's
@@ -194,4 +221,5 @@ those settings so a mod that changes them changes this too.
   list (the Pip-Boy map's stick cursor and zoom are built, §3).
 - Fast travel from the World Map on a controller: the original's A on a marker; the map
   asks to travel only on a mouse click (`pipboy/data.rs`).
-- Several controllers told apart; the first pressed is not singled out.
+- Several controllers told apart for the controls (any pad's buttons work them); only the
+  button names follow the pad in use (§3a).

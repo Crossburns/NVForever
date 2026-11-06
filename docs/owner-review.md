@@ -170,6 +170,14 @@ the spec it links to.
     A, Leave B. The pause menu's X deletes (a save on the Load page, a binding on the
     Controls tab). The STATS page's RAD view: RadAway A, Rad-X X. Right buttons?
     ([controller §3](design/controller.md))
+49. **PlayStation button names (#1452).** With a controller, Button style Auto (settings
+    page, Controller group) shows Cross/Circle/Square/Triangle, L1-R3, Select/Start when
+    the pad says it is a PlayStation one (DualSense, DualShock, "Wireless Controller",
+    PS3/PS4/PS5, Sony), else the Xbox names; Xbox or PlayStation forces them. The INI keeps
+    the Xbox names. The crosshair prompt draws NVForever's own outline glyphs for the four
+    face buttons; menu hints write the names (the game fonts have no symbols). Select and
+    Start rather than Share/Create and Options. Right choices, and do the glyphs look
+    right? ([controller §3a](design/controller.md))
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
