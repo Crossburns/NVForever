@@ -139,6 +139,7 @@ mod shafts;
 mod imagespace;
 mod imposters;
 mod sky;
+mod start_times;
 mod weather_fx;
 mod limping;
 mod sneaking;
@@ -1430,6 +1431,7 @@ fn main() -> AppExit {
     .add_systems(PostUpdate, sky::sun_casters_over_slice.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
     .add_systems(PostUpdate, sky::reach_toward_sun.after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades).before(bevy::light::SimulationLightSystems::UpdateLightFrusta))
     .add_systems(Startup, (crash::report_start, report_archives))
+    .add_plugins(start_times::StartTimesPlugin)
     .add_systems(Last, (crash::note_place, crash::report_exit, stray_commands::report));
     if let Some(probe) = actor_feet::from_env() {
         app.insert_resource(probe).add_systems(Last, actor_feet::probe);
