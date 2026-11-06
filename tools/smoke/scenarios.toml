@@ -608,6 +608,40 @@ order = [[
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while the multisampling changes" }]
 
 [[scenario]]
+name = "ui-scale-write"
+source = "issue #1631: the settings page's Display row UI scale (ui-scale) sets the HUD's size, kept in NVForever.ini; the first half of the round trip, ui-scale-read starts with what this run keeps"
+note = "The home's INI may hold any scale from an earlier run, so the row is set to 100% first and then to 75%: the second is always a change and is written"
+areas = ["hud", "settings"]
+paths = ["engine/nvf-play/src/interface.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs"]
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:ui-scale=0.5,12:ui-scale=0.25" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 16
+expect = [
+  { re = 'interface: UI scale \d+% ', count = 1, label = "the run's UI scale is fixed once, at the start" },
+  { text = "settings: ui-scale 75%", label = "the row is set to 75%" },
+]
+
+[[scenario]]
+name = "ui-scale-read"
+source = "issue #1631: the second half of the UI scale round trip: the next start reads ui-scale 75% from the home ui-scale-write kept it in and draws the HUD at that size, each piece kept at its edge"
+areas = ["hud", "settings"]
+paths = [
+  "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs",
+  "engine/nvf-play/src/hud*.rs", "engine/nvf-play/src/script_hud.rs", "engine/nvf-play/src/reticle.rs",
+  "engine/nvf-play/src/xp_meter.rs", "engine/nvf-play/src/radiation.rs", "engine/nvf-play/src/compass.rs",
+  "engine/nvf-play/src/tiles/draw.rs", "crates/fnv-game/src/ui_hud.rs", "crates/fnv-game/src/ui_hud/**",
+]
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:ui_scale_75.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 16
+expect = [
+  { re = 'settings: .* read from .*ui-scale 75%', label = "the INI's 75% is read at the start" },
+  { text = "interface: UI scale 75% (the HUD drawn at 75% of the original's size)", label = "the run's HUD is drawn at 75%" },
+  { re = 'compass: heading at x ', label = "the HUD is drawn" },
+]
+manual = "ui_scale_75.png: the HUD three quarters of its 100% size, the health and compass corner at the bottom left, the action points at the bottom right, the sneak word and other top pieces at the top; the text readable"
+
+[[scenario]]
 name = "draw-distance-sliders"
 source = "engine/nvforever/src/draw_distance.rs (owner request 2026-10-16): the settings page's Display sliders set how far objects, actors and items are drawn and how far shadows and grass reach, while the game runs, without a rendering error"
 areas = ["renderer", "settings"]
@@ -987,6 +1021,22 @@ expect = [
   { re = 'VStreetTravelerAREF: put at .* by a script \(MoveTo\)', min = 4, label = "traveller A sent on by its package's end script" },
   # Victor's messenger, enabled when the player walks into its trigger by the gate.
   "VMQTopsSecMessengerREF: package VMQTopsSecuritronMsgDialog38",
+  "ai summary",
+]
+
+[[scenario]]
+name = "strip-fade-in-walk"
+source = "#1473 (engine/nvforever/src/nav.rs JUMP_STEP, residents.rs FirstSteps): an actor a script puts somewhere (the Strip crowd the gate's VFSVegasDoorSCRIPT places, the travellers' MoveToMarkerWithFade to another port) plays its package's gait from its first frame drawn there; the jump was read as speed and it ran for about a second while it faded in (owner playtest 2026-11-03)"
+note = "strip-crowd-evening's arrival through the Freeside gate at 20:06, cut to its first minute: the crowd is moved at about 20:07 and the travellers' walk packages (no Always Run) go on from where they were put"
+areas = ["ai"]
+paths = ["engine/nvforever/src/nav.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/locomotion.rs", "engine/nvf-play/src/fade.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GIVE = "00119875:1", NVF_PLAY_TEST_SCRIPT = "1:activate:FreesideGateToStripREF", NVF_PLAY_TEST_GOTO = "30:847:8561:1019", NVF_PLAY_TEST_TALK = "0:*=leave" }
+args = ["--play", "--world", "FreesideWorld", "--pos=-6850,-10120,1040", "--heading", "220", "--hour", "20.1", "--no-voice", "--npc-packages", "all,VStreetTravelerAREF,VStreetTravelerBREF"]
+run_seconds = 60
+expect = [
+  { re = 'VStreetTraveler[AB]REF: put at .* by a script \(MoveTo\)', label = "a traveller is put at a port by a script" },
+  { re = 'first second drawn after its move by a script: [1-9]\d* walk frames, 0 run frames', label = "an actor a script moved walks from its first frame drawn there" },
+  { re = 'VStreetTraveler[AB]REF: first second drawn after its move by a script: \d+ walk frames, [1-9]\d* run frames', count = 0, label = "no traveller (walk packages, no Always Run) runs while it fades in after its move" },
   "ai summary",
 ]
 
@@ -2695,7 +2745,7 @@ name = "vigor-tester"
 note = "not shared with chargen-menus: moved 18 s later in one launch the Vigor Tester took none of its steps (run 2026-10-12); alone it passes"
 source = "CLAUDE.md: after changes to the Vigor Tester's S.P.E.C.I.A.L. menu (docs/spec-notes/vigor-tester.md §7)"
 areas = ["chargen", "vigor", "menus"]
-paths = ["engine/nvf-play/src/chargen/vigor*", "engine/nvf-play/src/chargen.rs"]
+paths = ["engine/nvf-play/src/chargen/vigor*", "engine/nvf-play/src/chargen.rs", "engine/nvforever/src/vigor_view.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1074", NVF_PLAY_TEST_VIGOR = "2:click:LookInside_Btn:0,4.5:raise,4.6:raise,4.7:done,5.5:page:review,8:select:luck,8.1:raise,8.2:raise:L,8.3:raise:endurance,8.5:click:P1_RT_Btn:0" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
 run_seconds = 20
@@ -2730,7 +2780,7 @@ name = "vigor-upload-budget"
 source = "owner report 2026-10-26: with VRP 4X textures (4096x4096 pages) the Vigor Tester menu showed only its bulb glows and arrows: its meshes waited behind the textures under the GPU upload limit and Bevy 0.19 never drew them (engine/nvforever/src/world.rs respecialize_late_meshes)"
 note = "a 2 MB upload limit makes the vanilla model's meshes wait as VRP's textures did; without the fix the 6 s screenshot shows only the two arrow buttons (checked 2026-10-26), with it the whole machine. The log cannot tell a drawn mesh from a lost one, so the expectations only show the marks were made"
 areas = ["vigor", "streaming", "render"]
-paths = ["engine/nvforever/src/world.rs", "engine/nvf-play/src/chargen/vigor*"]
+paths = ["engine/nvforever/src/world.rs", "engine/nvf-play/src/chargen/vigor*", "engine/nvforever/src/vigor_view.rs"]
 env = { NVF_PLAY_TEST_UPLOAD_BYTES = "2000000", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1074", NVF_PLAY_TEST_SHOTS = "6" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
 run_seconds = 9
@@ -3317,21 +3367,19 @@ expect = [
 
 [[scenario]]
 name = "player-speedmult"
-source = "issue #1364: the player's speed follows its Speed Mult actor value and its body armour's class, as people's; issue #1742: but only as taken when the equipment changes, as in the original's capture o25_speed (actors.md §8.10)"
-note = "SetAV SpeedMult 200 at 8 s (no change yet); metal armour (ArmorMetal 0003307F, heavy: 1 - fMoveHeavyArmorPenalty 0.15) is given and put on at 10 s (200 x 0.85 taken); SetAV 50 at 13 s (no change); the armour taken off at 15 s (50 taken)"
+source = "issue #1364: the player's speed follows its Speed Mult actor value and its body armour's class, as people's; issue #1742: at once, not waiting for an equipment change as the original did (owner: a bug; actors.md §8.10)"
+note = "SetAV SpeedMult 200 at 8 s, 50 at 10 s, 100 at 12 s; metal armour (ArmorMetal 0003307F, heavy: 1 - fMoveHeavyArmorPenalty 0.15) is given and put on at 14 s"
 areas = ["controls"]
 paths = ["engine/nvf-play/src/player.rs", "engine/nvf-play/src/combat.rs", "crates/fnv-game/src/combat.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav speedmult 200;8.3:close;10:player.additem 0003307F 1;10.3:player.equipitem 0003307F;10.6:close;13:player.setav speedmult 50;13.3:close;15:player.unequipitem 0003307F;15.3:close" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "8:player.setav speedmult 200;8.3:close;10:player.setav speedmult 50;10.3:close;12:player.setav speedmult 100;12.3:close;14:player.additem 0003307F 1;14.3:player.equipitem 0003307F;14.6:close" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages"]
-run_seconds = 19
+run_seconds = 18
 order = [[
-  { re = 'movement: Speed Mult and body armour make the player move at 170% \(armour 85%\)', label = "armour put on: SpeedMult 200 taken with it, x 0.85 (heavy, as people's)" },
-  { re = 'movement: Speed Mult and body armour make the player move at 50% \(armour 100%\)', label = "armour taken off: SpeedMult 50 taken" },
+  { re = 'movement: Speed Mult and body armour make the player move at 200% \(armour 100%\)', label = "SpeedMult 200: twice as fast" },
+  { re = 'movement: Speed Mult and body armour make the player move at 50% \(armour 100%\)', label = "SpeedMult 50: half" },
+  { re = 'movement: Speed Mult and body armour make the player move at 100% \(armour 100%\)', label = "back to 100" },
+  { re = 'movement: Speed Mult and body armour make the player move at 85% \(armour 85%\)', label = "heavy armour on: 85%, as people's" },
 ]]
-expect = [
-  { re = 'movement: Speed Mult and body armour make the player move at 200% ', count = 0, label = "SetAV 200 alone leaves the speed as it was (o25_speed)" },
-  { re = 'movement: Speed Mult and body armour make the player move at 4[23]% ', count = 0, label = "SetAV 50 alone (armour on) leaves 170% as it was, not 50 x 0.85" },
-]
 
 [[scenario]]
 name = "bear-trap"
@@ -5984,6 +6032,27 @@ expect = [
   { re = 'player body summary: (?P<n>\d+) falls', range = [0, 0], label = "no jump loop: not after the door, not running down the road" },
   { re = 'player body summary: \d+ falls \(the jump loop\), (?P<n>\d+) landings', range = [0, 0], label = "no landing played" },
   { re = 'walk summary: .* (?P<n>\d+) stops of 1-3 frames', range = [0, 5], label = "walking residents do not flicker between walking and standing" },
+]
+
+[[scenario]]
+name = "loading-screen-look"
+source = "docs/spec-notes/loading-screens.md §4: the loading screen laid out as the original's: the picture stretched, the tip on its band, the emblem turning; the shot NVF_PLAY_TEST_LOADING_SHOT saves is for looking at, the run only checks that the emblem's model reads as the original's model and that the screen comes and goes"
+note = "The emblem reads once a run though two screens come up, the start's and the door's: 4 pieces (the hidden plate left out), wheel and ball turning. The look itself is not judged here: see the shots in target/smoke (the run's folder; -2 is the door's)"
+areas = ["loading"]
+paths = ["engine/nvf-play/src/loading.rs", "engine/nvf-play/src/loading_look.rs", "engine/nvf-play/src/hud_breath.rs", "crates/fnv-world/src/loadscreen.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_LOADING_SHOT = "loading-screen-look.png" }
+args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "9", "--no-dialogue-look"]
+run_seconds = 20
+order = [[
+  "loading screen: the start is held until the world can be played",
+  "loading screen down after",
+  "loading screen up: … for worldspace 000DA726",
+  "test aid: loading screen screenshot",
+  "loading screen down after",
+]]
+expect = [
+  { text = "loading screen: emblem read: 4 pieces, 2 turning, sequence 5.333 s", count = 1, label = "the emblem's model is read once, its pieces and turning nodes found" },
+  { text = "loading screen: no emblem", count = 0, label = "the emblem's model reads" },
 ]
 
 [[scenario]]
@@ -8750,6 +8819,35 @@ expect = [
 ]
 
 [[scenario]]
+name = "settings-switch-write"
+source = "#1382: the first half of the command line against NVForever.ini (settings-switch-wins starts in the same home): a run given --fps turns the settings page's Frame rate counter off, which is stored"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs"]
+env = { NVFOREVER_HOME = "switch-wins-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:page,13:fps-counter", NVF_PLAY_TEST_PAUSE_MENU = "12:defaults" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-68375,4800,8700", "--fps"]
+run_seconds = 18
+expect = [
+  { text = "pause menu: settings back to their defaults", label = "Defaults puts back the command line's switches" },
+  { text = "settings: fps-counter off", label = "the counter is turned off and stored" },
+]
+order = [["pause menu: settings back to their defaults", "settings: fps-counter off"]]
+
+[[scenario]]
+name = "settings-switch-wins"
+source = "#1382: the second half: a test run (--run-seconds) given --fps keeps the counter on although settings-switch-write stored it off, and the log says which stored setting was not applied"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs"]
+env = { NVFOREVER_HOME = "switch-wins-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-68375,4800,8700", "--fps"]
+run_seconds = 12
+expect = [
+  { re = 'settings: fps-counter kept at on as --fps on the command line set it; \[Settings\] fps-counter=0 of .*NVForever\.ini is not applied in a test run', label = "the command line's --fps wins in a test run, and the log says so" },
+  { re = 'settings: \d+ of \d+ switch\(es\) read from .*NVForever\.ini, \d+ changed.*, 1 kept as the command line set them', label = "the summary counts it" },
+  { re = 'fps counter: first reading \d+ fps', label = "the counter is on" },
+]
+forbid = [{ text = "overrides --fps on the command line", label = "the stored state is not applied over --fps" }]
+
+[[scenario]]
 name = "window-borderless"
 source = "coordinator 2026-10-16: the game can run borderless full screen (--window borderless), and the settings page's Display group switches the live window back and forth (engine/nvforever/src/window_mode.rs); no home, so the player's INI is neither read nor written"
 areas = ["main-menu"]
@@ -11512,8 +11610,8 @@ expect = [
 
 [[scenario]]
 name = "mines-blast-limbs"
-source = "#1338 (docs/spec-notes/crippled-limbs.md §5): a blast damages every limb as well as Health; before, stepping on a mine never crippled the player"
-note = "Not in god mode: the player, at Explosives 20, is put on the frag mine 0x00172DB5 on the bridge north of Primm; its blast (88 after armour) takes half of that off each of six limbs, which cripples the head (a pool of 10 % of 200 Health)"
+source = "#1338, #1741 (docs/spec-notes/crippled-limbs.md §5): a blast damages limbs as well as Health, by the original's shares [observed 2026-11-06, o25_limbs]: the torso 1/30 of the Health damage, the legs 0.24 (ours 0.16 left, 0.08 right), the head and arms nothing"
+note = "Not in god mode: the player, at Explosives 20, is put on the frag mine 0x00172DB5 on the bridge north of Primm; its blast (about 88 after armour) takes about 2.9 points off the torso, 14 off the left leg and 7 off the right, which cripples nothing. Before #1741 it took half of it off each of six limbs and crippled the head"
 areas = ["combat"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-game/src/combat.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "4:player.setav explosives 5", NVF_PLAY_TEST_SCRIPT = "6:moveto:player:0x00172DB5:0:0:0" }
@@ -11521,10 +11619,11 @@ args = ["--play", "--pos=-61200,-52600,6300", "--hour", "12", "--no-voice", "--n
 run_seconds = 14
 expect = [
   { re = 'mines: 0x00000014 sets off mine 0x00172DB5', label = "the player sets the mine off" },
-  { re = 'combat: blast on 0x00000014: [1-9][\d.]* limb damage on [1-9] limbs', label = "its blast damages the player's limbs" },
-  { re = 'combat: the player flinches for [\d.]+ s \(crippled', label = "the crippling blast makes the player flinch (unless it knocks the player down)" },
-  { re = "combat: player's [a-z]+( [a-z]+)? crippled", label = "and cripples one" },
-  { re = 'hud: crippled limbs shown', label = "the HUD shows it" },
+  { re = 'combat: blast on 0x00000014: limb damage torso [1-9]\.\d+, left leg [1-9]\d\.\d+, right leg [1-9]\.\d+$', label = "its blast takes the torso's and the legs' shares off the player's limbs, nothing else" },
+]
+forbid = [
+  { re = "combat: player's (head|left arm|right arm) crippled", label = "the blast at the feet cripples no arm and not the head" },
+  { re = 'combat: blast on 0x00000014: limb damage .*(head|arm|brain)', label = "the head, arms and brain take no share" },
 ]
 
 [[scenario]]
@@ -11539,7 +11638,7 @@ run_seconds = 16
 expect = [
   { re = 'mines: 0x00000014 sets off mine 0x00172DB5', label = "the player sets the mine off" },
   { re = 'combat: blast MineFragExplosion on 0x00000014 at \d+: [\d.]+ health damage', label = "the blast catches the player (no perks)" },
-  { re = 'combat: blast on 0x00000014: [1-9][\d.]* limb damage', label = "the limb damage of the blast is logged" },
+  { re = 'combat: blast on 0x00000014: limb damage torso [1-9]', label = "the limb damage of the blast is logged" },
 ]
 forbid = [{ re = "combat: perks on .*blast", label = "no perk changes the blast" }]
 
@@ -11556,7 +11655,7 @@ expect = [
   { re = 'mines: 0x00000014 sets off mine 0x00172DB5', label = "the player sets the mine off (perks held)" },
   { re = 'combat: blast MineFragExplosion on 0x00000014 at \d+: [\d.]+ health damage', label = "the blast catches the player (perks held)" },
   { re = '''combat: perks on no one's blast on 0x00000014: attacker \[\], target \[Toughness\]: damage ([\d.]+) -> \1, DT 6\.0''', label = "Toughness alone sets the DT: Hit the Deck is not named, and the damage is left as it was" },
-  { re = 'combat: blast on 0x00000014: [1-9][\d.]* limb damage', label = "the limb damage of the blast is logged (perks held)" },
+  { re = 'combat: blast on 0x00000014: limb damage torso [1-9]', label = "the limb damage of the blast is logged (perks held)" },
 ]
 
 [[scenario]]
@@ -20294,16 +20393,29 @@ expect = [
 
 [[scenario]]
 name = "hair-solid-chet"
-source = "issue #1454: Chet's hair (hairwavy.nif) drew as a see-through shell around his head against the general store's window; its outer layer is mapped onto the soft edge of the texture's alpha. Hair models are now cut-outs (nif_spawn::hair_model_cut_out, nif.md §6 'Hair models are cut-outs'); beards stay blended. The owner's frame of the original (2026-11-03) shows a solid cap and a thin beard"
+source = "issue #1454: Chet's hair (hairwavy.nif) drew as a see-through shell around his head against the general store's window; its outer layer is mapped onto the soft edge of the texture's alpha. Hair models are now a solid cut-out core (nif_spawn::hair_model_cut_out) with the fainter texels blended over it (hair_model_layer, #1576; nif.md §6 'Hair models: a solid core and a blended layer'); beards stay blended. The owner's frame of the original (2026-11-03) shows a solid cap and a thin beard"
 note = "Chet is moved in front of the south window (0x001057F3), the player stands facing him and talks to him; frame hair_solid_chet.png in target/smoke shows his head against the window: the hair must be solid to its edge, with no see-through band, and his beard thin"
 areas = ["actors", "render"]
-paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/actors.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl"]
+paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/actors.rs", "engine/nvf-assets/src/actor.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "5:moveto:GSChetRef:0x001057F3:0:75:-38", NVF_PLAY_TEST_GOTO = "6:-575:560:545", NVF_PLAY_TEST_TALK = "8:GSChetRef=leave", NVF_PLAY_TEST_TALK_DELAY = "6", NVF_PLAY_TEST_SHOTS = "11:hair_solid_chet.png" }
 args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-sound", "--no-music", "--hour", "8.5"]
 run_seconds = 16
 expect = [
   { re = 'ai \[\d\d:\d\d\] GSChetRef: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Chet stands in front of the window" },
   { re = 'dialogue: conversation with GSChetRef started', label = "the dialogue camera frames his head" },
+]
+
+[[scenario]]
+name = "hair-shaved-mohawk"
+source = "issue #1576: as a cut-out (#1458) the Mohawk's shaved sides drew as solid hair; hairraiderspike.nif maps them onto a plateau of texture alpha at 0.65-0.75 (hairraider01.dds). Hair models are now a solid cut-out core at 0.8 with the fainter texels blended over it (nif_spawn::hair_model_cut_out, hair_model_layer; nif.md §6 'Hair models: a solid core and a blended layer')"
+note = "Jessup (0x00101C9F, hairraiderspike.nif, the Warhawk; his bandana covers the head, so RemoveAllItems takes it off) is enabled and moved in front of the general store's south window where hair-solid-chet puts Chet; the player stands 70 units behind him looking south; frame hair_shaved_mohawk.png in target/smoke shows the back of his head: the shaved sides must show the scalp under a thin brown layer, the crest solid (before #1576 the sides were solid brown)"
+areas = ["actors", "render"]
+paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/actors.rs", "engine/nvf-assets/src/actor.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "4:enable:0x00101C9F,4.5:call:0x00101C9F:RemoveAllItems,5:moveto:0x00101C9F:0x001057F3:0:75:-38", NVF_PLAY_TEST_GOTO = "6:-575:505:545", NVF_PLAY_TEST_LOOK = "7:180:0", NVF_PLAY_TEST_SHOTS = "10:hair_shaved_mohawk.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-sound", "--no-music", "--no-messages", "--hour", "8.5"]
+run_seconds = 16
+expect = [
+  { re = 'ai \[\d\d:\d\d\] JessupREF: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Jessup stands in front of the window" },
 ]
 
 [[scenario]]

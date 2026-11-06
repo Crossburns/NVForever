@@ -157,6 +157,45 @@ pub const RIGHT_ARM: u16 = 28;
 pub const LEFT_MOBILITY: u16 = 29;
 pub const RIGHT_MOBILITY: u16 = 30;
 
+/// The share of a blast's Health damage the torso loses, in condition points
+/// (docs/spec-notes/crippled-limbs.md §5) [observed 2026-11-06, o25_limbs: 1/30 for five
+/// frag mine and grenade blasts].
+pub const BLAST_TORSO_SHARE: f64 = 1.0 / 30.0;
+/// The share of a blast's Health damage the legs lose together, in condition points
+/// [observed: 0.24 for the same five blasts].
+pub const BLAST_LEGS_SHARE: f64 = 0.24;
+
+/// An explosion's limb damage (docs/spec-notes/crippled-limbs.md §5) on an actor whose
+/// body part data names the limb conditions `conditions`, for `damage` (the blast's
+/// damage to Health): condition points, as a fall's leg ([`LimbHit::points`]). The torso
+/// takes [`BLAST_TORSO_SHARE`] of it and the legs [`BLAST_LEGS_SHARE`] together, the left
+/// leg two thirds of that and the right one third (all of it on the one leg when the data
+/// has one); the head, arms and brain take nothing [observed: the shares and the
+/// untouched parts, frag mines and a grenade at a human's feet; hypothesis: the
+/// left/right split, which the original varied between all-left and 2:1, and that a
+/// blast at any height or on any body does the same]. The points come straight off the
+/// condition, not as a share of a pool, at any maximum Health and with no player limb
+/// multiplier [hypothesis: measured only on one NPC at 5000 Health; a share of the
+/// limb's pool fits the same numbers, observer check 74].
+pub fn blast_limb_shares(conditions: &[u16], damage: f64) -> Vec<LimbHit> {
+    if damage <= 0.0 {
+        return Vec::new();
+    }
+    let has = |c: u16| conditions.contains(&c);
+    let legs = match (has(LEFT_MOBILITY), has(RIGHT_MOBILITY)) {
+        (true, true) => vec![(LEFT_MOBILITY, BLAST_LEGS_SHARE * 2.0 / 3.0), (RIGHT_MOBILITY, BLAST_LEGS_SHARE / 3.0)],
+        (true, false) => vec![(LEFT_MOBILITY, BLAST_LEGS_SHARE)],
+        (false, true) => vec![(RIGHT_MOBILITY, BLAST_LEGS_SHARE)],
+        (false, false) => Vec::new(),
+    };
+    has(TORSO)
+        .then_some((TORSO, BLAST_TORSO_SHARE))
+        .into_iter()
+        .chain(legs)
+        .map(|(condition, share)| LimbHit { condition, health_percent: 0.0, damage: damage * share, points: true })
+        .collect()
+}
+
 /// `fCombatPlayerLimbDamageMult` when the load order lacks it [observed: FalloutNV.esm].
 pub const PLAYER_LIMB_DAMAGE_MULT: f64 = 0.5;
 /// `fMoveOneCrippledLegSpeedMult` and `fMoveTwoCrippledLegsSpeedMult` when the load
@@ -207,15 +246,6 @@ pub fn worn_armor_class(world: &fnv_sim::World, id: FormId) -> fnv_sim::forms::A
         .filter_map(|i| world.forms.item(i))
         .find(|it| it.kind == ItemKind::Armor && it.slots.is_some_and(|s| s & crate::detection::UPPER_BODY != 0))
         .map_or(ArmorClass::Light, |it| it.armor_class)
-}
-
-/// The player's speed factor as last taken ([`Game::player_move_speed_mult`]): the
-/// equipment it was taken for (sorted), the equip count then ([`Game::player_equips`]).
-#[derive(Clone, Debug, PartialEq)]
-pub struct PlayerSpeed {
-    pub worn: Vec<FormId>,
-    pub equips: u64,
-    pub factor: f64,
 }
 
 /// Settings with their documented defaults (GECK wiki Experience Settings).
@@ -696,8 +726,9 @@ impl Game<'_> {
     }
 
     /// An explosion's limb damage on the actor it caught (docs/spec-notes/crippled-limbs.md
-    /// §5): every limb in `limbs` at once, after its health damage ([`Game::hit`], whose
-    /// hit record this marks crippled), scaled by the difficulty as a hit's. Nothing on a
+    /// §5): every limb in `limbs` ([`blast_limb_shares`]) at once, after its health damage
+    /// ([`Game::hit`], whose hit record this marks crippled), scaled by the difficulty as
+    /// a hit's, so the shares hold of the Health it lost. Nothing on a
     /// dead or immune actor. Returns each limb's condition code, its condition after and
     /// whether this blast crippled it.
     pub fn blast_limbs(&mut self, target: FormId, attacker: Option<FormId>, limbs: &[LimbHit]) -> Vec<(u16, f64, bool)> {
@@ -772,32 +803,13 @@ impl Game<'_> {
     /// [documented: GECK wiki Stats Tab - NPC, "The Player Character would have a Speed of
     /// 100%"; observed for people: SetAV SpeedMult 150 ran 1.5 times as fast,
     /// actors.md §8.10], times its body armour's share ([`Game::armor_speed_mult`]).
-    /// The value now, for any actor; the player's walk and run take it as last taken
-    /// ([`Game::player_move_speed_mult`]).
+    /// The player's walk and run take it every frame (issues #1364, #1742) [observed on
+    /// the player: capture o25_speed, the armour shares and Speed Mult 150 = 1.5 times the
+    /// run]. A new Speed Mult counts at once, by design: the original waited for an
+    /// equipment change, which the owner ruled a bug (actors.md §8.10, The player).
     pub fn move_speed_mult(&mut self, r: FormId) -> f64 {
         let mult = actor::actor_value(self, r, crate::actor_values::SPEED_MULTIPLIER).unwrap_or(100.0);
         (mult / 100.0).clamp(0.0, 10.0) * self.armor_speed_mult(r)
-    }
-
-    /// The share of the standard speeds the player's walk and run take: its
-    /// [`Game::move_speed_mult`] as last taken, taken again only when its equipment
-    /// changes (an item equipped or unequipped, or the set it wears differing from the
-    /// last time) and after a game load or a new game (actors.md §8.10, The player;
-    /// issue #1742). [observed: capture o25_speed, SetAV SpeedMult 150 and 50 left the run
-    /// at its Speed Mult 100 rate while GetAV read 150 and 50; every run with armour put
-    /// on or taken off came out at GetAV's value. Hypothesis: that the equipment change
-    /// is what takes it again, that ModAV / ForceAV and effects wait for it as SetAV
-    /// did, that any item counts (only body armour was seen), and that a load takes it.]
-    pub fn player_move_speed_mult(&mut self) -> f64 {
-        let mut worn = self.world.equipment(FormId::PLAYER_REF).unwrap_or_default();
-        worn.sort_unstable();
-        let equips = self.player_equips;
-        if let Some(s) = self.player_speed.as_ref().filter(|s| s.equips == equips && s.worn == worn) {
-            return s.factor;
-        }
-        let factor = self.move_speed_mult(FormId::PLAYER_REF);
-        self.player_speed = Some(PlayerSpeed { worn, equips, factor });
-        factor
     }
 
     /// An actor's limb conditions, codes 25–31 in order.

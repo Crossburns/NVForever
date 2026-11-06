@@ -1143,22 +1143,46 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   is 0.25 or more and drop fainter fragments [engineering choice; whether the game's
   hair writes depth is not known: the file has no NiZBufferProperty, and the Z-buffer
   test flag (bit 31) above says nothing of writing]. Smoke check `hair-under-fire`.
-- **Hair models are cut-outs** (2026-11-03, #1454): the HAIR record's model is drawn
-  alpha-tested, solid where its alpha is 0.25 or more and absent below (soft edges in a
-  multisampled view), not blended; beards and brows (head parts with the hair shader)
-  stay blended as above. `hairwavy.nif` (Chet) maps its outer layer onto the soft edge
-  of the texture's alpha: sampled per triangle, the outer tenth averages 0.43 where the
-  inner averages 0.92, and the texture's alpha is otherwise near 0 or 1 at every mip
-  level [observed: `characters\hair\hairwavy.dds`]. Blended, that layer drew as a
-  see-through shell around his head against the store's window; in the original his
-  hair is a solid cap with a clean hairline, and his `beardthin.nif` beard is thin
-  [observed: owner's frame of the original, Chet in dialogue in front of the
-  GSGeneralStore window, 2026-11-03]. As a cut-out at 0.5 the beard became a full one,
-  hence beards stay blended. The cut of 0.25 is an engineering choice (0.5 thinned the
-  hair's sides beside the original frame). Whether the game alpha-tests its hair or
-  draws it some other way that comes out solid is not known. A cut-out draws in the
-  opaque passes, so blended glows and rays drawn after it no longer show through it or
-  vanish behind it, and hair now casts a shadow. Smoke check `hair-solid-chet`.
+- **Hair models: a solid core and a blended layer** (2026-11-06, #1576; before that
+  cut-outs, #1454): the HAIR record's model is drawn twice. A cut-out at alpha 0.8 is its
+  solid core: it draws in the opaque passes, writes depth and casts the shadow. The same
+  shape is then drawn blended (SRC_ALPHA / INV_SRC_ALPHA, as its NiAlphaProperty asks),
+  writing no depth, so the fainter texels (shaved scalp, the soft ends and edges of the
+  strands) blend over the core and over what lies behind; over the core it draws the
+  core's own colour again. Beards and brows (head parts with the hair shader) stay
+  blended as in "Hair and depth" above. What was measured:
+  - `hairwavy.nif` (Chet) maps its outer layer onto the soft edge of the texture's
+    alpha: sampled per triangle, the outer tenth averages 0.43 where the inner averages
+    0.92, and the texture's alpha is otherwise near 0 or 1 at every mip level
+    [observed: `characters\hair\hairwavy.dds`, 71% of texels 255, 15% 0]. Blended with
+    the depth write of "Hair and depth", that layer drew as a see-through shell around
+    his head against the store's window; in the original his hair is a solid cap with a
+    clean hairline, and his `beardthin.nif` beard is thin [observed: owner's frame of
+    the original, Chet in dialogue in front of the GSGeneralStore window, 2026-11-03].
+    As a cut-out at 0.5 the beard became a full one, hence beards stay blended.
+  - As a cut-out at 0.25 everywhere (#1458), the Mohawk's shaved sides drew as solid
+    hair [observed: owner, #1576]. `hairraiderspike.nif` (Warhawk; Jessup) maps the
+    sides of the head onto one region of `hairraider01.dds` whose alpha is a flat
+    plateau, 166–190 of 255 (5th to 95th percentile, median 185, about 0.72), and its
+    colour is that of the strands [observed: the texture; the UV layout of the NoHat
+    shape]. 9.7% of the texture's texels lie in 179–191; 28% are 255. The eleven raider
+    hair models (the Mohawks and the female raider styles, among them `HairBaseF`
+    "Shaved") all use that texture [observed: MODL and texture sets of the 67 HAIR
+    records of FalloutNV.esm]. Blended, the plateau lets about a quarter of the scalp
+    show through a dark layer; cut out, it is solid.
+  - `hairbase.dds` (`hairbase.nif`: Buzz Saw, Balding, Combover, Buzz Cut) is a plateau
+    at 217–242 (0.85–0.95) with 7.5% of texels at 0 and none above 242 [observed].
+  - All hair models' NiAlphaProperty blends with no threshold: flags 4333 (0x10ED: blend,
+    no test) or 4845 (0x12ED: blend and test GREATER 0, which drops only alpha 0)
+    [observed over the NoHat shapes of the 67 HAIR records; documented: nif.xml AlphaFlags]. The flags do not
+    tell shaved parts from solid ones; only the texture alpha does.
+  The cut of 0.8 is an engineering choice from those plateaus: below it the raider
+  scalp (≤ 0.75) stays see-through, above it the short hair of `hairbase.dds` (≥ 0.85)
+  keeps a solid core (a cut above 0.85 would leave those hairs no depth and no shadow).
+  Chet's hair stays solid because the core (his texels at 255) is drawn first and his
+  soft outer band blends over it instead of hiding it. Whether the game draws its hair
+  this way, alpha-tests it, or does something else that comes out the same is not known
+  [hypothesis]. Smoke checks `hair-solid-chet`, `hair-shaved-mohawk`.
 
 ## 7. Coverage status
 

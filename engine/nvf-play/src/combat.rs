@@ -666,24 +666,19 @@ fn limb_hit(bp: Option<&BodyPart>, d: &damage::Damage, w: &WeaponStats) -> Optio
 /// body is not posed (first person).
 const HUMAN_SKELETON: &str = "characters\\_male\\skeleton.nif";
 
-/// An explosion's limb damage on `target` (docs/spec-notes/crippled-limbs.md §5): each
-/// limb of its body part data, once per limb condition, takes the blast's damage after
-/// armour times the weapon's Limb Dmg Mult (1 without a weapon) [documented: explosions
-/// deal limb damage, GECK wiki GetHitLimbDamage; hypothesis: the share]. The player's body
-/// part data is the human skeleton's when the body is not posed.
+/// An explosion's limb damage on `target` (docs/spec-notes/crippled-limbs.md §5): the
+/// shares of `fnv_game::combat::blast_limb_shares` (the torso 1/30 of the blast's damage
+/// after armour, the legs 0.24; nothing on the head, arms or brain) of the limb conditions
+/// its body part data names, times the weapon's Limb Dmg Mult (1 without a weapon)
+/// [observed: the shares; hypothesis: the multiplier, 1 on the measured mine and grenade].
+/// The player's body part data is the human skeleton's when the body is not posed.
 fn blast_limb_hits(c: &Combat, parts: &ActorParts, target: FormId, dealt: f32, weapon: Option<&WeaponStats>) -> Vec<LimbHit> {
     let mult = weapon.map_or(1.0, |w| w.limb_dmg_mult.max(0.0));
     let damage = f64::from(dealt.max(0.0) * mult);
     let data = parts.data_of(target.0).or_else(|| (target == FormId::PLAYER_REF).then(|| c.forms.body_parts_for(FormId::PLAYER_BASE, HUMAN_SKELETON)).flatten());
     let Some(bpd) = data.and_then(|d| c.forms.body_parts.get(&d)).filter(|_| damage > 0.0) else { return Vec::new() };
-    let mut out: Vec<LimbHit> = Vec::new();
-    for bp in &bpd.parts {
-        let Some(condition) = bp.actor_value.as_deref().and_then(fnv_game::combat::limb_condition) else { continue };
-        if !out.iter().any(|l| l.condition == condition) {
-            out.push(LimbHit { condition, health_percent: f64::from(bp.health_percent), damage, points: false });
-        }
-    }
-    out
+    let conditions: Vec<u16> = bpd.parts.iter().filter_map(|bp| bp.actor_value.as_deref().and_then(fnv_game::combat::limb_condition)).collect();
+    fnv_game::combat::blast_limb_shares(&conditions, damage)
 }
 
 /// A hit that may dismember (`crate::dismember`): one that killed the actor, or landed on
@@ -1699,15 +1694,14 @@ fn perk_speed(c: Res<Combat>, mut anim: ResMut<WeaponAnim>, mut script: Option<R
 }
 
 /// The player's Speed Mult, body armour and size (`crate::player::StatSpeed`): asked every
-/// frame. Speed Mult and armour count as last taken, which is again only when the
-/// equipment changes or a game loads (`fnv_game::Game::player_move_speed_mult`; SetAV
-/// alone waits for it, issue #1742); SetScale counts at once. A smaller player takes smaller steps: the speed goes with a script's scale, as a
+/// frame, so SetAV / ModAV / ForceAV, effects, changes of armour and SetScale count at
+/// once. A smaller player takes smaller steps: the speed goes with a script's scale, as a
 /// creature's pace goes with its scale (`creature_pace`) [hypothesis: the clips' root
 /// motion shrinks with the body; owner's TTW run 2026-11-02, the baby at
 /// `player.SetScale 0.4` moved at full speed].
 fn stat_speed(mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::StatSpeed>>) {
     let (Some(mut speed), Some(rt)) = (speed, script.as_deref_mut().and_then(|s| s.rt.as_mut())) else { return };
-    let (mult, armor) = with_world(rt, &mut sim, |rt| (rt.game.player_move_speed_mult() as f32, rt.game.armor_speed_mult(FormId::PLAYER_REF)));
+    let (mult, armor) = with_world(rt, &mut sim, |rt| (rt.game.move_speed_mult(FormId::PLAYER_REF) as f32, rt.game.armor_speed_mult(FormId::PLAYER_REF)));
     let scale = sim.script_scale(FormId::PLAYER_REF.0).unwrap_or(1.0).max(crate::sim::MIN_DRAWN_SCALE);
     let want = mult * scale;
     if (speed.0 - want).abs() > 1e-4 {
@@ -3439,7 +3433,8 @@ fn blast_limbs(rt: &mut crate::script::Runtime, sim: &mut SimState, target: Form
     let crippled: Vec<u16> = hurt.iter().filter(|h| h.2).map(|h| h.0).collect();
     if !hurt.is_empty() {
         let names: Vec<&str> = crippled.iter().map(|&c| limb_name(c)).collect();
-        info!("combat: blast on {target}: {:.1} limb damage on {} limbs{}", blast[0].damage, hurt.len(), if names.is_empty() { String::new() } else { format!(", crippled {}", names.join(", ")) });
+        let each: Vec<String> = blast.iter().map(|l| format!("{} {:.2}", limb_name(l.condition), l.damage)).collect();
+        info!("combat: blast on {target}: limb damage {}{}", each.join(", "), if names.is_empty() { String::new() } else { format!(", crippled {}", names.join(", ")) });
     }
     crippled
 }
@@ -4450,8 +4445,8 @@ fn fly(
             let info = blast_hit_info(cause);
             // The blast's object effect on those it catches (hit-effects.md §1).
             let items: Vec<FormId> = x.enchantment.into_iter().collect();
-            // Its limb damage, on every limb (crippled-limbs.md §5): from the damage after
-            // armour; `Game::blast_limbs` applies the difficulty, as `hit` does to Health.
+            // Its limb damage, on the torso and legs (crippled-limbs.md §5): from the damage
+            // after armour; `Game::blast_limbs` applies the difficulty, as `hit` does to Health.
             let limbs = blast_limb_hits(c, &parts, target, dealt, cause.and_then(|k| c.forms.weapons.get(&k.weapon)));
             let (r, hit) = hit_actor(script.as_deref_mut(), &mut sim, target, dealt, info, &mut stats, &mut feedback, hud.as_deref_mut(), &items, false, None, &limbs).unzip();
             let mut hit = hit.flatten();

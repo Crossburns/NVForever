@@ -186,8 +186,24 @@ them.
 - **Explosions** (built, `nvf_play::combat::blast_limb_hits`, `Game::blast_limbs`): a
   blast damages limbs as well as Health [documented: GECK wiki GetHitLimbDamage, which
   returns 0 for an explosion "even if the explosion dealt limb damage"]. It has no hit
-  location (GetHitLocation −1, jip-hit-info.md §1), so it is spread over the body: each
-  limb of the actor's body part data, once per limb condition, takes the blast's damage
+  location (GetHitLocation −1, jip-hit-info.md §1). Since 2026-11-06 (#1741) it takes
+  shares of the blast's damage to Health: the torso (Endurance Condition) 1/30, the
+  legs (Left and Right Mobility Condition) 0.24 together, the head, arms and brain
+  nothing, at any distance inside the blast [observed 2026-11-06, o25_limbs, observer
+  check 74: frag mines and a grenade at a human's feet, one NPC, Ringo, after `SetAV
+  Health 5000`]. NVForever takes the shares in condition points straight off the
+  condition as a fall's leg (physics.md §6.12: no pool, no player limb multiplier, no
+  perks), the same at any maximum Health [hypothesis: measured only at 5000 Health
+  and only on an NPC; a share of the limb's pool (of maximum Health, as shots use)
+  fits the same numbers and would do 25–50× more at a normal NPC's 100–200 Health, and
+  the player was never measured; rerun open under observer check 74]. NVForever gives the left leg 0.16 and the right 0.08, all 0.24 to a
+  body part data with one of them [hypothesis: the original put it all on the left leg
+  twice and 2:1 three times; the simplest rule that fits the 2:1 runs], times the
+  weapon's Limb Dmg Mult (1 for a blast without a weapon; 1 on both measured weapons)
+  and the difficulty, as Health is [hypothesis], and the same shares for a blast at any
+  height and on creatures [hypothesis: only a human was measured]. So one frag mine no
+  longer cripples arms or the head. Before that, each limb of the actor's body part
+  data, once per limb condition, took the blast's damage
   after armour times the weapon's Limb Dmg Mult (1 for a blast without a weapon), then
   the difficulty and the two rules above, as a shot's limb damage [hypothesis: every
   limb takes the full amount; no game setting or page gives the share; owner-review 41].
@@ -212,7 +228,7 @@ them.
   limb damage share as a shot does (the torso's 0.4167 of observer check 3: 0.08 ×
   0.4167 = 1/30; a leg 1.0 per share, three shares to the legs). Which parts the
   shares reach (the legs only here, a blast at the feet) is open: a blast at head
-  height would show it. NVForever still takes the full amount off every limb. A blast that kills or knocks out does no limb damage. The limb
+  height would show it. A blast that kills or knocks out does no limb damage. The limb
   damage counts as the blast's hit (`nvf_play::combat::hit_actor`): a limb it cripples
   makes it a crippling hit, so the actor staggers once (the player flinches) by the rule
   in §3, an arm it cripples disarms, and the "limb crippled" HUD line shows for the

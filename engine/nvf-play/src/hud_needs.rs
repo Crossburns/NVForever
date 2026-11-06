@@ -238,6 +238,8 @@ fn draw(
     mut word_nodes: Query<(&Word, &mut Visibility), Without<WordsRoot>>,
     mut letters: Query<(&Letter, Option<&mut ImageNode>, Option<&mut TextColor>)>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     if !*spawned {
         // The first frame the HUD is wanted: set the words out.
         if !view.shown {

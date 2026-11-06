@@ -104,9 +104,128 @@ pub fn pipboy_amber(brightness: f32) -> Color {
     tint(pipboy_rgb(), brightness)
 }
 
-/// A length of the interface (960 units high) as a part of the view's height.
+/// The UI scale the settings page shows and `NVForever.ini` keeps (`ui-scale`), as a
+/// factor (1 the original's size). It takes effect at the next start ([`ui_scale`]).
+/// Stored as the bits of an `f32`.
+static UI_SCALE_SETTING: AtomicU32 = AtomicU32::new(0x3f80_0000);
+/// The UI scale this run draws with, fixed once the INI is read ([`fix_ui_scale`]).
+static UI_SCALE: AtomicU32 = AtomicU32::new(0x3f80_0000);
+
+/// The least and greatest UI scale [design: #1631, 50% to 150%].
+pub const UI_SCALE_RANGE: (f32, f32) = (0.5, 1.5);
+
+/// `s` brought into [`UI_SCALE_RANGE`] (1 when not a number), to the hundredth.
+pub fn fit_ui_scale(s: f32) -> f32 {
+    if !s.is_finite() {
+        return 1.0;
+    }
+    (s.clamp(UI_SCALE_RANGE.0, UI_SCALE_RANGE.1) * 100.0).round() / 100.0
+}
+
+/// The settings page's UI scale choices: [`UI_SCALE_RANGE`] in steps of 5% [design].
+pub const UI_SCALE_CHOICES: usize = 21;
+
+/// The settings page's UI scale row, `ui-scale` in `NVForever.ini` (kept as the slider's
+/// part, [`ui_scale_part`]: `ui-scale=0.25` is 75%), under `group` (the renderer lists it
+/// with the Display rows) [design: #1631].
+pub fn ui_scale_row(group: &'static str) -> crate::settings::Setting {
+    crate::settings::Setting::slider(
+        "ui-scale",
+        group,
+        "UI scale",
+        "The size of the HUD, as a part of the original's (100%): smaller leaves more of the picture free, each piece kept at its edge of the screen. The menus keep their size for now. Takes effect at the next start (loading a save starts the game again). Not in the original.",
+        crate::settings::Slider::choice(UI_SCALE_CHOICES, |_| ui_scale_part(ui_scale_setting()), |_, v| set_ui_scale_setting(ui_scale_of_part(v)), |v| format!("{:.0}%", ui_scale_of_part(v) * 100.0)),
+    )
+}
+
+/// A UI scale as the settings slider's part (0 at 50%, 0.5 at 100%, 1 at 150%), to the
+/// thousandth as `crate::settings::Slider::fit` keeps it.
+pub fn ui_scale_part(s: f32) -> f32 {
+    let (lo, hi) = UI_SCALE_RANGE;
+    (((fit_ui_scale(s) - lo) / (hi - lo)) * 1000.0).round() / 1000.0
+}
+
+/// The UI scale a slider's part stands for ([`ui_scale_part`]'s inverse).
+pub fn ui_scale_of_part(part: f32) -> f32 {
+    let (lo, hi) = UI_SCALE_RANGE;
+    let part = if part.is_finite() { part.clamp(0.0, 1.0) } else { 0.5 };
+    fit_ui_scale(lo + part * (hi - lo))
+}
+
+/// The UI scale the settings page shows (what the next start draws with).
+pub fn ui_scale_setting() -> f32 {
+    f32::from_bits(UI_SCALE_SETTING.load(Ordering::Relaxed))
+}
+
+pub fn set_ui_scale_setting(s: f32) {
+    UI_SCALE_SETTING.store(fit_ui_scale(s).to_bits(), Ordering::Relaxed);
+}
+
+/// The UI scale this run's HUD is drawn at [design: #1631]: an NVForever setting, not the
+/// original's (its view is 960 units high at every size [observed: hud.md §14]).
+pub fn ui_scale() -> f32 {
+    f32::from_bits(UI_SCALE.load(Ordering::Relaxed))
+}
+
+/// Fix the run's UI scale from the setting, once the INI is read (`PostStartup`, after
+/// `crate::settings::apply_stored`): what is drawn keeps one size until the next start,
+/// rather than mixing pieces drawn before and after a change [design].
+pub fn fix_ui_scale() {
+    let s = ui_scale_setting();
+    UI_SCALE.store(s.to_bits(), Ordering::Relaxed);
+    info!("interface: UI scale {:.0}% (the HUD drawn at {:.0}% of the original's size)", s * 100.0, s * 100.0);
+}
+
+std::thread_local! {
+    /// The scale [`u`] applies on this thread: 1 except inside a [`hud_units`] scope.
+    static UNIT_SCALE: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
+}
+
+/// While alive, [`u`] (and so [`at`], the text and picture helpers) on this thread draw
+/// at the run's UI scale ([`ui_scale`]); dropped, they go back to the original's size.
+/// A HUD system takes one before working out its nodes' lengths, so the menus, which
+/// share these helpers, keep their size [design: #1631, the HUD first].
+#[must_use]
+pub struct HudUnits(f32);
+
+impl Drop for HudUnits {
+    fn drop(&mut self) {
+        UNIT_SCALE.with(|c| c.set(self.0));
+    }
+}
+
+/// Draw at the UI scale until the returned guard is dropped ([`HudUnits`]).
+pub fn hud_units() -> HudUnits {
+    units_at(ui_scale())
+}
+
+/// [`hud_units`] at a given scale.
+pub fn units_at(scale: f32) -> HudUnits {
+    HudUnits(UNIT_SCALE.with(|c| c.replace(scale)))
+}
+
+/// The scale [`u`] applies here and now (1 outside a [`hud_units`] scope).
+pub fn unit_scale() -> f32 {
+    UNIT_SCALE.with(|c| c.get())
+}
+
+/// A length of the interface (960 units high) as a part of the view's height, times the
+/// UI scale inside a [`hud_units`] scope (1 elsewhere, so `units / 9.6` exactly).
 pub fn u(units: f32) -> Val {
-    Val::Vh(units / 9.6)
+    Val::Vh(units * unit_scale() / 9.6)
+}
+
+/// A font size in interface units, as [`u`].
+pub fn font_units(units: f32) -> FontSize {
+    FontSize::Vh(units * unit_scale() / 9.6)
+}
+
+/// Where a frame 960 units high (the original's view) stands from the view's top for its
+/// pieces to keep their distance from the view's top (`anchor` 0), middle (0.5) or bottom
+/// (1) at the scale [`u`] applies: `anchor × (100% − 960 units)`, 0 at the original's
+/// size [design: #1631, the pieces keep to their edges].
+pub fn frame_top(anchor: f32) -> Val {
+    Val::Vh(anchor * 100.0 * (1.0 - unit_scale()))
 }
 
 pub fn at(left: f32, top: f32, width: f32, height: f32) -> Node {
@@ -279,7 +398,7 @@ pub fn set_marked(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32
         let text = line.text();
         let size = face.font.size * 0.75;
         p.spawn(Node { position_type: PositionType::Absolute, left: u(x), top: u(base - size), ..default() }).with_children(|n| {
-            n.spawn((Text::new(text), TextFont { font_size: FontSize::Vh(size / 9.6), ..default() }, TextColor(color), mark));
+            n.spawn((Text::new(text), TextFont { font_size: font_units(size), ..default() }, TextColor(color), mark));
         });
         return;
     };
@@ -500,5 +619,63 @@ mod tests {
         assert_eq!(font_file_in(FONT_FILES[1], Some(&fonts)), FONT_FILES[1]);
         assert_eq!(font_file_in("textures\\fonts\\other.fnt", Some(&fonts)), "textures\\fonts\\other.fnt");
         assert_eq!(font_file_in(FONT_FILES[0], None), FONT_FILES[0]);
+    }
+
+    /// #1631: at 100% every length is the original's `units / 9.6` of the view's height
+    /// exactly; inside a HUD scope at 75% it is three quarters of that, and the menus'
+    /// lengths outside the scope (or after it) are the original's again.
+    #[test]
+    fn the_ui_scale_shrinks_the_huds_lengths_only_inside_its_scope() {
+        let vh = |v: Val| match v {
+            Val::Vh(x) => x,
+            other => panic!("{other:?}"),
+        };
+        for units in [0.0, 1.0, 13.0, 386.0, 803.0, 960.0, -480.0] {
+            assert_eq!(vh(u(units)).to_bits(), (units / 9.6f32).to_bits(), "{units}");
+            let _same = units_at(1.0);
+            assert_eq!(vh(u(units)).to_bits(), (units / 9.6f32).to_bits(), "{units} at 100%");
+        }
+        assert_eq!(frame_top(1.0), Val::Vh(0.0));
+        {
+            let _hud = units_at(0.75);
+            assert!((vh(u(960.0)) - 75.0).abs() < 1e-4);
+            assert_eq!(at(10.0, 20.0, 40.0, 80.0).width, u(40.0));
+            assert!((vh(at(10.0, 20.0, 40.0, 80.0).height) - 80.0 * 0.75 / 9.6).abs() < 1e-5);
+            // A frame kept to the bottom stands a quarter of the view down; to the middle
+            // an eighth; to the top not at all.
+            assert!((vh(frame_top(1.0)) - 25.0).abs() < 1e-4);
+            assert!((vh(frame_top(0.5)) - 12.5).abs() < 1e-4);
+            assert_eq!(frame_top(0.0), Val::Vh(0.0));
+            {
+                let _inner = units_at(1.0);
+                assert_eq!(vh(u(96.0)), 96.0 / 9.6);
+            }
+            assert!((vh(u(96.0)) - 7.5).abs() < 1e-4, "the inner scope gives the outer one back");
+        }
+        assert_eq!(vh(u(96.0)), 96.0 / 9.6, "out of the scope: the original's size");
+    }
+
+    /// #1631: the slider's 21 steps are 50% to 150% by 5%, 100% in the middle; a value out
+    /// of range (or not a number) is brought into it.
+    #[test]
+    fn the_ui_scale_slider_reaches_50_to_150_percent() {
+        assert_eq!(ui_scale_of_part(0.5), 1.0);
+        assert_eq!(ui_scale_part(1.0), 0.5);
+        assert_eq!((ui_scale_of_part(0.0), ui_scale_of_part(1.0)), (0.5, 1.5));
+        assert_eq!(ui_scale_of_part(0.25), 0.75);
+        assert_eq!(ui_scale_part(0.75), 0.25);
+        for i in 0..UI_SCALE_CHOICES {
+            let part = crate::settings::choice_part(i, UI_SCALE_CHOICES);
+            let s = ui_scale_of_part(part);
+            assert!((s - (0.5 + 0.05 * i as f32)).abs() < 1e-6, "{i}: {s}");
+            assert_eq!(ui_scale_part(s), part, "{i}");
+        }
+        assert_eq!((fit_ui_scale(0.1), fit_ui_scale(9.0), fit_ui_scale(f32::NAN), fit_ui_scale(0.876)), (0.5, 1.5, 1.0, 0.88));
+        assert_eq!((ui_scale_of_part(-3.0), ui_scale_of_part(7.0), ui_scale_of_part(f32::NAN)), (0.5, 1.5, 1.0));
+        let row = ui_scale_row("Display");
+        let slider = row.slider.unwrap();
+        assert_eq!((slider.text(0.5), slider.text(0.25), slider.text(1.0)), ("100%".to_string(), "75%".to_string(), "150%".to_string()));
+        // Out of range from the INI: the slider's fit brings it to an end.
+        assert_eq!((slider.fit(-1.0), slider.fit(2.0), slider.fit(0.26)), (0.0, 1.0, 0.25));
     }
 }
