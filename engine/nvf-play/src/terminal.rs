@@ -464,7 +464,7 @@ fn menu_view(rt: &mut crate::script::Runtime, reference: FormId, terminal: FormI
 
 /// The lines of terminal `terminal`'s items `items`.
 fn labels(rt: &crate::script::Runtime, terminal: FormId, items: &[usize]) -> Vec<String> {
-    items.iter().map(|&i| rules::item(&rt.game, terminal, i).map(|it| it.text).unwrap_or_default()).collect()
+    items.iter().map(|&i| rules::item(&rt.game, terminal, i).map(|it| rt.game.expand_codes(&it.text)).unwrap_or_default()).collect()
 }
 
 /// The menu lists `items` of `terminal`, with their lines: every change of the list
@@ -903,7 +903,7 @@ fn apply(
                     c.submenu.map(|s| format!(", sub menu {}", rt.game.data.name(s))).unwrap_or_default(),
                     c.note.map(|n| format!(", note {}", rt.game.data.name(n))).unwrap_or_default()
                 );
-                m.result = c.result;
+                m.result = rt.game.expand_codes(&c.result);
                 // The result script called ForceTerminalBack: back one level, or out of
                 // the terminal from its top level [documented: GECK wiki ForceTerminalBack].
                 if c.back {
@@ -1027,7 +1027,7 @@ fn draw(
     rows.0.clear();
     let (Some(s), Some(rt), Some(image)) = (screen.0.as_ref(), script.as_ref().and_then(|s| s.rt.as_ref()), image) else { return };
     let faces = faces.get_or_insert_with(|| screen::load_faces(data.as_deref(), &mut images, bc_supported(formats.as_deref())));
-    rows.0 = screen::spawn(&mut commands, image.camera, faces, s, rt.game.data, on);
+    rows.0 = screen::spawn(&mut commands, image.camera, faces, s, &rt.game, on);
 }
 
 fn close(

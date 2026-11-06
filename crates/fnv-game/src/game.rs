@@ -2365,7 +2365,7 @@ impl<'a> Game<'a> {
     /// NVForever's, the owner's example in issue #1163 (LEGAL.md).
     pub fn note_notice_text(&self, note: FormId) -> String {
         let name = self.data.notes.get(&note).and_then(|n| n.name.clone()).filter(|n| !n.trim().is_empty());
-        format!("Note: {}", name.unwrap_or_else(|| self.data.name(note)))
+        format!("Note: {}", self.expand_codes(&name.unwrap_or_else(|| self.data.name(note))))
     }
 
     /// The new-game state: every quest flagged "Start game enabled" is running, with no
