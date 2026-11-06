@@ -21225,6 +21225,56 @@ expect = [
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error" }]
 
 [[scenario]]
+name = "occlusion-planes-sewers"
+source = "issue #1434 (docs/spec-notes/level-design.md §3.2, row C3): occlusion planes hide the placed meshes wholly behind them, in interiors"
+note = "OVWestSewers02 has 8 occlusion planes and no rooms. From the start (heading 0) 1,549 of 3,600 meshes are behind a plane; screenshots with and without (occlusion-planes-sewers-off) were the same on 2026-11-06 apart from the HUD's messages. The frame `occl_sewers_on.png` is kept for comparing with that scenario's"
+areas = ["renderer", "performance"]
+paths = ["engine/nvforever/src/occlusion.rs", "engine/nvforever/src/rooms.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SHOT_FLATNESS = "1", NVF_PLAY_TEST_SHOTS = "4:occl_sewers_on.png" }
+args = ["--cell", "OVWestSewers02", "--play", "--no-voice", "--no-messages"]
+run_seconds = 6
+expect = [
+  "occlusion: 0012BE13: 8 planes",
+  { re = 'occlusion: 8 planes in front, (?P<n>\d+) of \d+ meshes hidden by planes', range = [500, 3000], label = "meshes behind the planes are hidden, not all" },
+  { re = 'occl_sewers_on.png: (?P<n>\d+) % of the view is one colour', range = [0, 80], label = "the frame is drawn, not empty (45 % in the dark sewer, with or without the planes)" },
+  { re = 'occlusion summary: \d+ frames with occlusion planes in front, at most (?P<n>\d+) meshes hidden by planes', range = [500, 3000], label = "the summary" },
+]
+
+[[scenario]]
+name = "occlusion-planes-sewers-off"
+source = "issue #1434: --no-occlusion-planes turns the occlusion planes off"
+note = "as occlusion-planes-sewers with the switch; its frame `occl_sewers_off.png` is the one to compare with `occl_sewers_on.png`"
+areas = ["renderer", "performance"]
+paths = ["engine/nvforever/src/occlusion.rs", "engine/nvforever/src/rooms.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SHOT_FLATNESS = "1", NVF_PLAY_TEST_SHOTS = "4:occl_sewers_off.png" }
+args = ["--cell", "OVWestSewers02", "--play", "--no-voice", "--no-messages", "--no-occlusion-planes"]
+run_seconds = 6
+expect = [
+  "occlusion: --no-occlusion-planes: occlusion planes hide nothing",
+  "occlusion: 0012BE13: 8 planes",
+  { re = 'occl_sewers_off.png: (?P<n>\d+) % of the view is one colour', range = [0, 80], label = "the frame is drawn" },
+]
+forbid = [
+  { re = 'occlusion: [1-9]\d* planes in front', label = "no plane is used" },
+  { re = '[1-9]\d* of \d+ meshes hidden by planes', label = "nothing is hidden by planes" },
+]
+
+[[scenario]]
+name = "occlusion-planes-vault21"
+source = "issue #1434 (docs/spec-notes/level-design.md §3.1-3.2): a portal wholly behind an occlusion plane is not followed"
+note = "2EOVault21 (Vault 21 hotel) has 16 rooms, 40 portals and 9 occlusion planes; from the start 1,127 meshes are behind planes and 8 portals lie wholly behind one (2026-11-06); screenshots with and without the planes at four headings were the same apart from the HUD"
+areas = ["renderer", "performance"]
+paths = ["engine/nvforever/src/occlusion.rs", "engine/nvforever/src/rooms.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1" }
+args = ["--cell", "2EOVault21", "--play", "--no-voice", "--no-messages"]
+run_seconds = 6
+expect = [
+  "occlusion: 0010FDEB: 9 planes",
+  { re = 'occlusion: 9 planes in front, (?P<n>\d+) of \d+ meshes hidden by planes', range = [200, 4000], label = "meshes behind the planes are hidden" },
+  { re = 'occlusion summary: .*, at most (?P<n>\d+) portals not followed', range = [1, 40], label = "portals behind a plane are not followed" },
+]
+
+[[scenario]]
 name = "fsr-quality"
 source = "docs/design/fsr-upscaling.md: real FSR dispatch with skinned/alpha-tested inputs, full-resolution postprocessing and HUD"
 areas = ["graphics"]
