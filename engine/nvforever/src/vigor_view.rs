@@ -162,12 +162,15 @@ fn spawn(commands: &mut Commands, images: &mut Assets<Image>, size: Extent3d, pl
     (camera, picture, image)
 }
 
+/// The player's camera and its projection, for fitting the menu's camera to it.
+type PlayerProjection<'w, 's> = Query<'w, 's, (Entity, &'static Projection), (With<PlayerCamera>, Without<VigorCamera>)>;
+
 #[allow(clippy::too_many_arguments)]
 fn show(
     mut commands: Commands,
     menu: Option<Res<VigorMenu>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    player: Query<(Entity, &Projection), (With<PlayerCamera>, Without<VigorCamera>)>,
+    player: PlayerProjection,
     mut cameras: Query<&mut Projection, (With<VigorCamera>, Without<PlayerCamera>)>,
     mut nodes: Query<&mut ImageNode>,
     mut images: ResMut<Assets<Image>>,
