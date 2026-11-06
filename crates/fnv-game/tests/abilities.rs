@@ -646,12 +646,13 @@ fn player_speed_is_taken_again_when_the_equipment_changes() {
     g.world.unequip(P, FormId(HAT)).unwrap();
     assert_eq!(g.player_move_speed_mult(), 0.5);
     // Unequipped and equipped again by scripts between two looks: the count moved.
-    call(&mut g, P, SET_AV, &[speed.clone(), ArgValue::Value(Value::Num(80.0))]);
+    // (SetAV sets the base; ModAV's -100 stays: 180 - 100.)
+    call(&mut g, P, SET_AV, &[speed.clone(), ArgValue::Value(Value::Num(180.0))]);
     call(&mut g, P, EQUIP, &[form(HAT)]);
     call(&mut g, P, UNEQUIP, &[form(HAT)]);
     assert_eq!(g.player_move_speed_mult(), 0.8);
     // A load takes it again.
-    call(&mut g, P, SET_AV, &[speed, ArgValue::Value(Value::Num(120.0))]);
+    call(&mut g, P, SET_AV, &[speed, ArgValue::Value(Value::Num(220.0))]);
     assert_eq!(g.player_move_speed_mult(), 0.8);
     let s = g.snapshot();
     let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
