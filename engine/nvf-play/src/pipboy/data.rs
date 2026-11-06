@@ -550,17 +550,28 @@ impl DataState {
         (self.sel.get(tab).copied().unwrap_or(0), self.challenges)
     }
 
-    /// The active quest, for a save (`crate::save`).
-    pub fn active_quest(&self) -> Option<u32> {
-        self.active_quest
+    /// The active quest, for a save (`crate::save`): a ForceActiveQuest the Pip-Boy has
+    /// not taken yet wins, as it would on the Pip-Boy's next refresh, and the game's copy
+    /// stands in while the Pip-Boy has none (it fills only when its lists are made; #1610).
+    pub fn active_quest(&self, game: Option<&fnv_game::Game<'_>>) -> Option<u32> {
+        let ui = game.map(|g| &g.ui);
+        match ui {
+            Some(u) if u.active_quest_count != self.forced_seen && u.active_quest.is_some() => u.active_quest.map(|q| q.0),
+            _ => self.active_quest.or(ui.and_then(|u| u.active_quest).map(|q| q.0)),
+        }
     }
 
-    /// A save's active quest.
+    /// A save's active quest, for the Pip-Boy and for scripts (GetActiveQuest and the
+    /// functions that read it take the game's copy, which the save does not hold; #1610).
     pub fn restore_active_quest(world: &mut bevy::prelude::World, q: u32) {
         if !world.contains_resource::<DataState>() {
             world.init_resource::<DataState>();
         }
         world.resource_mut::<DataState>().active_quest = Some(q);
+        if let Some(rt) = world.get_resource_mut::<ScriptState>().and_then(|s| s.into_inner().rt.as_mut()) {
+            // The quest is set without counting a ForceActiveQuest.
+            rt.game.ui.active_quest = Some(FormId(q));
+        }
     }
 
     /// The map markers the player found, for a save (`crate::compass`).
@@ -924,6 +935,10 @@ fn use_row(st: &mut DataState, tab: usize, i: usize, l: &Lists, game: &mut Game)
             if let Some(q) = l.quests.get(i).filter(|q| !q.done) {
                 st.active_quest = Some(q.form);
                 info!("pipboy data: active quest {}", FormId(q.form));
+                // Scripts read the player's pick too (not counted as a ForceActiveQuest).
+                if let Some(rt) = game.script.as_mut().and_then(|s| s.rt.as_mut()) {
+                    rt.game.ui.active_quest = Some(FormId(q.form));
+                }
             }
         }
         RADIO => {

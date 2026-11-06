@@ -245,6 +245,10 @@ pub struct ScriptState {
     pub console_out: Vec<crate::console::ConsoleReply>,
     /// A save to restore when the runtime is made (`crate::save`, nvforever `--load`).
     pending_game: Option<PendingGame>,
+    /// The runtime is not made (nor the save put back) while this is set: a load while
+    /// playing holds it until the old run has ended (nvforever `handoff`; owner
+    /// 2026-11-01, #1357, #1651).
+    pub held: bool,
 }
 
 /// A save's game snapshot for the runtime to restore when it is made (`crate::save`).
@@ -373,7 +377,7 @@ impl ScriptState {
         let write = (!unattended || own_home).then(|| fnv_install::EngineHome::default_root().map(|r| fnv_install::EngineHome::new(r).mods())).flatten();
         fnv_game::mod_files::update_roots(|r| r.write = write);
         let loader = off.is_none().then(|| Mutex::new(start_loading(d, refs)));
-        ScriptState { loader, rt: None, off, trace, aids, aids_started: false, gates: HashMap::new(), auto_close, no_messages, on_screen: None, walks: Vec::new(), new_game, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None }
+        ScriptState { loader, rt: None, off, trace, aids, aids_started: false, gates: HashMap::new(), auto_close, no_messages, on_screen: None, walks: Vec::new(), new_game, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None, held: false }
     }
 
     /// The player answers the script's open menu: `Some(b)` picks button b (0 = first) of
@@ -670,6 +674,10 @@ impl Runtime {
         let session = self.game.take_session();
         self.game = Game::restore(data, World::new(sim.forms, sim.refs, world.config()), cfg, &s)?;
         self.game.put_session(session);
+        // The engine's seat is not saved, so a load stands the player up
+        // (docs/design/save-load.md §3.4); the saved furniture use goes with it, or
+        // GetSitting and its kin go on reading the seat (#1573).
+        self.game.set_furniture_use(FormId::PLAYER_REF, None);
         // The world's session edits (game settings, leveled lists, base containers changed
         // by script) last for the run, not in the save (`fnv_sim::world::WorldSession`).
         // Empty here as the game's session is: a load while playing starts a new run
@@ -775,11 +783,14 @@ impl Runtime {
             debug!("script: {n} x {item} reached the player's inventory outside scripts");
             g.item_event(FormId::PLAYER_REF, *item, event::ON_ADD, player);
         }
-        for item in &changes.equipped {
-            g.equip_events(FormId::PLAYER_REF, *item, false);
-        }
+        // What was taken off before what was put on, as the other equip paths do
+        // (docs/spec-notes/ext-events.md; #1616): on a swap the old item's OnUnequip
+        // must not undo what the new item's OnEquip has set.
         for item in &changes.unequipped {
             g.item_event(FormId::PLAYER_REF, *item, event::ON_UNEQUIP, player);
+        }
+        for item in &changes.equipped {
+            g.equip_events(FormId::PLAYER_REF, *item, false);
         }
         for (item, _) in changes.removed.iter().filter(|(i, _)| dropped.contains(i)) {
             g.item_event(FormId::PLAYER_REF, *item, event::ON_DROP, player);
@@ -881,63 +892,21 @@ impl Runtime {
         let r = if has_block {
             info!("script: activating {target} runs its OnActivate block instead of the default action");
             g.activate(player, target, ActMode::Hand).map(|_| ByHand::Script)
-        } else if let Some(body) = g.ash_pile_source(target) {
-            // An ash or goo pile opens the inventory of the actor it came from
-            // (`fnv_game::ash_piles`, docs/spec-notes/ash-piles.md §3).
-            let a = fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: body }, unlocked_with: None, script: None };
-            self.skip.insert(g.events.len());
-            g.emit(EventKind::Activated { reference: target, by: player, outcome: serde_json::to_value(&a).ok() });
-            info!("activate: the pile {target} opens the inventory of {body}");
-            Ok(ByHand::Default(a))
-        } else if g.is_dead(target) {
-            // A dead actor opens its inventory (the loot menu), `fnv_game`'s default
-            // activation rule (combat C5).
-            let a = fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: target }, unlocked_with: None, script: None };
-            self.skip.insert(g.events.len());
-            g.emit(EventKind::Activated { reference: target, by: player, outcome: serde_json::to_value(&a).ok() });
-            Ok(ByHand::Default(a))
         } else {
-            let from = g.world.peek(player).map(|p| (p.cell, p.pos));
-            match g.world.activate(player, target) {
-                Ok(mut a) => {
-                    self.skip.insert(g.events.len());
-                    g.emit(EventKind::Activated { reference: target, by: player, outcome: serde_json::to_value(&a).ok() });
-                    // Its activate children go off (`fnv_game::traps`).
-                    g.set_off_children(target);
-                    // An activator that gives water: the player drinks it, as
-                    // `Game::default_activation` has it drunk (its actor effect, the
-                    // Adjust Drinking Radiation perks); this path (the player's hand) never
-                    // did (perk-entry-points.md §9).
-                    if matches!(a.outcome, Outcome::Activated) && g.drink_water(target).is_some() {
-                        g.drink_from(player, target);
-                    }
-                    if let Outcome::PickedUp { item, count, .. } = a.outcome {
-                        self.skip.insert(g.events.len());
-                        g.emit(EventKind::ItemAdded { to: player, item, count, silent: false });
-                        g.item_event(player, item, event::ON_ADD, Some(Value::Ref(player.0)));
-                    }
-                    // A placed mine disarmed: its XP and the statistic, as
-                    // `Game::default_activation` gives them; this path (the player's
-                    // hand) gave neither (the owner's playtest list 7 item 23).
-                    if matches!(a.outcome, Outcome::Disarmed { .. }) {
-                        g.count_stat(fnv_game::misc_stats::MINES_DISARMED, 1.0);
-                        let x = fnv_game::experience::mine_disarm_xp(g);
-                        fnv_game::experience::award(g, fnv_game::experience::Source::DisarmMine, x);
-                    }
-                    // Through a load door: the player's teammates and followers come
-                    // along (`fnv_game::followers`).
-                    if matches!(a.outcome, Outcome::Teleported { .. }) {
-                        let brought = g.bring_teammates(from);
-                        if !brought.is_empty() {
-                            info!("script: {} teammate(s) or follower(s) come along through the door", brought.len());
-                        }
-                    }
-                    // A script without OnActivate does not run on activation; the
-                    // default action was all there is.
+            // The shared default action; what is this path's own is that `activate.rs`
+            // applies the outcome, so these events do not become effects as well.
+            match g.default_activation_by_hand(target) {
+                Ok(Some(done)) => {
+                    self.skip.insert(done.activated_event);
+                    self.skip.extend(done.item_added_event);
+                    // A script without OnActivate does not run on activation; the default
+                    // action was all there is.
+                    let mut a = done.activation;
                     a.script = None;
                     Ok(ByHand::Default(a))
                 }
-                Err(e) => Err(e.to_string()),
+                Ok(None) => Ok(ByHand::Refused),
+                Err(e) => Err(e),
             }
         };
         // An actor whose default action ran (no OnActivate block, or its block called
@@ -1700,6 +1669,9 @@ pub(crate) fn run_scripts(
     let st = &mut *script;
     st.used.extend(used.read().map(|u| (FormId(u.item), u.limb)));
     if st.rt.is_none() {
+        if st.held {
+            return;
+        }
         let Some(rx) = st.loader.as_ref() else { return };
         let got = rx.lock().ok().and_then(|r| r.try_recv().ok());
         match got {
@@ -1998,6 +1970,7 @@ pub(crate) fn run_scripts(
     let gt = rt.game.time;
     for e in &events {
         log_event(rt.game.data, e);
+        crate::dialogue::log_farewell(&mut rt.game, e);
         if let EventKind::LineStarted { info, .. } = &e.kind {
             if !hud.knows_line(*info) {
                 hud.remember_line(*info, responses(&play, *info));
@@ -2289,13 +2262,18 @@ impl ScriptState {
     /// A runtime over an empty load order, for tests of what works the open menu: nothing
     /// has run, no menu is open.
     pub(crate) fn over_no_plugins() -> ScriptState {
+        Self::over_plugins(&[])
+    }
+
+    /// As [`ScriptState::over_no_plugins`], over these plugins.
+    pub(crate) fn over_plugins(plugins: &[fnv_esm::Plugin]) -> ScriptState {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
-        let lo = fnv_esm::LoadOrder::new(&[]).unwrap();
+        let lo = fnv_esm::LoadOrder::new(plugins).unwrap();
         let schema = fnv_esm::Schema::load_dir(root.join("fnv")).unwrap();
         let functions = root.join("script/functions.json");
         let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&functions).unwrap()).unwrap();
         let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(fnv_sim::FormStore::build(&lo, &schema)));
-        let refs: &'static RefTable = Box::leak(Box::new(RefTable::default()));
+        let refs: &'static RefTable = Box::leak(Box::new(RefTable::build(&lo, &schema)));
         let data: &'static GameData = Box::leak(Box::new(GameData::build(&lo, &schema, FunctionTable::load(&functions).unwrap(), &json, refs)));
         let game = Game::new(data, World::new(forms, refs, fnv_sim::SimConfig::default()), GameConfig::default());
         let rt = Runtime {
@@ -2322,7 +2300,7 @@ impl ScriptState {
             choices_passed: None,
             activate_pick: None,
         };
-        ScriptState { loader: None, rt: Some(rt), off: None, trace: None, aids: Vec::new(), aids_started: false, gates: HashMap::new(), auto_close: None, no_messages: false, on_screen: None, walks: Vec::new(), new_game: false, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None }
+        ScriptState { loader: None, rt: Some(rt), off: None, trace: None, aids: Vec::new(), aids_started: false, gates: HashMap::new(), auto_close: None, no_messages: false, on_screen: None, walks: Vec::new(), new_game: false, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None, held: false }
     }
 
     /// The player answered the open menu: it closes after this frame's scripts.
@@ -2330,6 +2308,10 @@ impl ScriptState {
         self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
     }
 }
+
+#[cfg(test)]
+#[path = "script_hand_tests.rs"]
+mod hand_tests;
 
 #[cfg(test)]
 mod no_messages_tests {

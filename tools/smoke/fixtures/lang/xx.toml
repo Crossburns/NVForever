@@ -1,0 +1,7 @@
+# A made-up language for the smoke test "language-choice" (#1443): its words are marked
+# English, so a page drawn in it is easy to tell.
+name = "Smoke Language"
+
+[words]
+"Language" = "[xx] Language"
+"Interface" = "[xx] Interface"

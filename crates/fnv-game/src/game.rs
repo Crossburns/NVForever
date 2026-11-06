@@ -884,6 +884,14 @@ impl MessageBox {
         }
         Ok(())
     }
+
+    /// Whether the box still waits for the player's click. An answered box stays in
+    /// [`Game::message_box`] until its script reads the button, which a fire-and-forget
+    /// box (a mod's MessageBoxEx warning at start) never does: it is off the screen all
+    /// the same, and must not count as open (saving was refused for a whole session, #1649).
+    pub fn waiting(&self) -> bool {
+        self.pressed.is_none()
+    }
 }
 
 /// Menu codes (`MenuMode <code>`) of the menus scripts open [observed: each code was
@@ -1011,8 +1019,9 @@ pub struct BarterRequest {
     pub discount: i32,
 }
 
-/// A dialogue line being said outside a conversation (SayTo, Say, or a greeting with the
-/// Goodbye flag, `Game::start_dialogue`): docs/spec-notes/scripts.md §7.7.
+/// A dialogue line being said outside a conversation (SayTo, Say, a greeting with the
+/// Goodbye flag, `Game::start_dialogue`, or the rest of a Goodbye line the player chose,
+/// `Game::choose`): docs/spec-notes/scripts.md §7.7.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Speech {
     pub speaker: FormId,
@@ -1032,6 +1041,16 @@ pub struct Speech {
     /// Topics are applied and no SayToDone block runs [hypothesis for both].
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub greeting: bool,
+    /// A Goodbye line the player chose, said at the player after its conversation closed
+    /// at once (`Game::choose`, docs/spec-notes/dialogue.md §5) [observed: owner's
+    /// playtest 2026-11-05, against the original: choosing a Goodbye closes the menu at
+    /// once and the actor finishes the line as the player walks away]. It ends as a
+    /// Goodbye greeting does: its end script and Add Topics, no SayToDone block; it is
+    /// never cut (`Game::cut_line`); a `StartConversation player` in its end script starts
+    /// after its Add Topics (`Game::hold_force_greet`). Unlike a greeting it does not
+    /// hold its speaker in place (`Game::greets_player`) [design].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub farewell: bool,
     /// A line of a conversation between two actors (StartConversation with an actor as
     /// the target, `crate::dialogue`, docs/spec-notes/dialogue.md §5.1): its number in
     /// the conversation, from 1. Only its first response is said; when it ends the
@@ -1085,6 +1104,15 @@ pub enum LineLook {
 impl LineLook {
     pub fn is_both(&self) -> bool {
         *self == LineLook::Both
+    }
+}
+
+impl Speech {
+    /// A Goodbye line said at the player outside a conversation: a greeting
+    /// ([`Speech::greeting`]) or a farewell ([`Speech::farewell`]). It is never cut
+    /// (`Game::cut_line`).
+    pub fn goodbye_at_player(&self) -> bool {
+        (self.greeting || self.farewell) && self.target == Some(FormId::PLAYER_REF)
     }
 }
 
@@ -1305,6 +1333,10 @@ pub struct Game<'a> {
     /// the last number given to one. Not part of the saved state.
     pub weapon_uses: BTreeMap<FormId, crate::use_weapon::WeaponUse>,
     pub weapon_use_seq: u64,
+    /// Speakers a script's StartConversation sent to walk up to the player before they
+    /// talk, with the topic to start with ([`Game::walk_up_greet`]), for the AI to carry
+    /// out (`fnv_ai`). Not part of the saved state.
+    pub walk_up_greets: BTreeMap<FormId, Option<FormId>>,
     /// The sounds scripts asked for (`crate::sound::SoundRequest`), for the engine to
     /// take. Not part of the saved state.
     pub sound_requests: Vec<crate::sound::SoundRequest>,
@@ -1447,9 +1479,9 @@ pub struct Game<'a> {
     /// engine to draw at their new angle and size. Not saved.
     pub turned: BTreeSet<FormId>,
     /// Actors whose OnStartCombat block was fired and whose OnCombatEnd was not yet
-    /// (`Game::combat_blocks`). Not saved, as the combat states are not [documented:
-    /// GECK wiki event handler table, OnStartCombat does not run again on loading a save
-    /// with combat already going].
+    /// (`Game::combat_blocks`). Saved with the combat states, so that a load runs no block
+    /// for a fight already going [documented: GECK wiki event handler table, OnStartCombat
+    /// does not run again on loading a save with combat already going].
     pub fighting: BTreeSet<FormId>,
     /// The target of the condition list being evaluated ([`Game::conditions_pass`]), for
     /// the functions that ask for it (Exists). Not saved.
@@ -1541,6 +1573,21 @@ pub struct Game<'a> {
     /// the activator (IsActorTalkingThroughActivator, `crate::talking_activators`). Not
     /// saved.
     pub talking_through: Option<(FormId, FormId)>,
+    /// A farewell's end result script is running ([`Speech::farewell`], `Game::end_line`).
+    /// Not saved: a save never lands inside a script.
+    pub(crate) farewell_ending: bool,
+    /// A force greet (`StartConversation player`) asked for by that end script, as
+    /// (speaker, topic): it starts after the line's Add Topics
+    /// ([`Game::hold_force_greet`]). Both are set and put back by each `end_line`, so
+    /// a line ending inside another's end script keeps to its own. Not saved.
+    pub(crate) farewell_then: Option<(FormId, Option<FormId>)>,
+    /// The last Goodbye line the player chose that went on in the world, as (speaker,
+    /// line), set as its conversation closes (`Game::say_farewell`). nvf-play's log
+    /// takes it when it logs the matching goodbye `dialogue_ended` (same actor). A
+    /// headless run leaves it set, to no effect on the game. It is not cleared when a
+    /// conversation starts or ends, on purpose: another change in the same frame would
+    /// erase it before the frame's events are logged. Not saved.
+    pub farewell_said: Option<(FormId, FormId)>,
     /// The lengths of voice files, when the game was given them (`crate::voice`): a
     /// response then lasts as long as its sound. Not part of the saved state.
     pub voice: Option<std::sync::Arc<dyn crate::voice::VoiceLengths>>,
@@ -1682,6 +1729,11 @@ pub struct GameSnapshot {
     pub said: BTreeSet<(FormId, FormId)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub said_day: BTreeMap<FormId, BTreeMap<FormId, f64>>,
+    /// `said_day` counts hours as GameDaysPassed × 24. Absent in older saves, whose hours
+    /// added GameHour as well: one such number fits many times of day, so it cannot be
+    /// converted and a load drops those holds (Say Once history stays).
+    #[serde(default)]
+    pub said_day_days_clock: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialogue: Option<crate::dialogue::Conversation>,
     pub frame: u64,
@@ -1770,6 +1822,11 @@ pub struct GameSnapshot {
     /// before the first detection round (#971; save-load.md §3.2).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub awareness: BTreeMap<FormId, crate::awareness::Awareness>,
+    /// Who has had OnStartCombat and not yet OnCombatEnd (`Game::fighting`), written when
+    /// empty too: a start still due when the save was made still runs. `None` in saves
+    /// made before this field, which did not record it (`Game::restore`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fighting: Option<BTreeSet<FormId>>,
     /// (actor, target) pairs StartCombat made hostile until StopCombat.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub forced_combat: BTreeSet<(FormId, FormId)>,
@@ -1791,14 +1848,20 @@ impl GameSnapshot {
     /// dropped), script instances whose key or script is gone, magic effects whose effect,
     /// source, target or script is gone (and their effect scripts; a co-op player's
     /// likewise), NX form variables naming a gone form, and the radio station
-    /// or weather shown. Other fields keep the gone ID, which names no form: a lookup of it
+    /// or weather shown. A dropped reference's detection state and place among the fighters
+    /// go with it: in Combat and not among them, it would start a fight on the next tick.
+    /// Other fields keep the gone ID, which names no form: a lookup of it
     /// fails as one of any form that does not exist [hypothesis: the original's behaviour
     /// with a missing plugin is not documented]. Returns how many were dropped.
     pub fn drop_gone(&mut self, gone: impl Fn(FormId) -> bool) -> usize {
         let mut n = 0;
-        let before = self.sim.refs.len();
-        self.sim.refs.retain(|_, r| !gone(r.base) && !r.cell.is_some_and(&gone));
-        n += before - self.sim.refs.len();
+        let dropped: BTreeSet<FormId> = self.sim.refs.iter().filter(|(_, r)| gone(r.base) || r.cell.is_some_and(&gone)).map(|(&id, _)| id).collect();
+        self.sim.refs.retain(|id, _| !dropped.contains(id));
+        n += dropped.len();
+        self.awareness.retain(|id, _| !dropped.contains(id));
+        if let Some(fighting) = &mut self.fighting {
+            fighting.retain(|id| !dropped.contains(id));
+        }
         let before = self.sim.deleted_created.len();
         self.sim.deleted_created.retain(|_, &mut b| !gone(b));
         n += before - self.sim.deleted_created.len();
@@ -1837,6 +1900,18 @@ impl GameSnapshot {
 }
 
 pub const SNAPSHOT_FORMAT: &str = "fnv.game.state/1";
+
+/// What the default action of the player's own activation did
+/// ([`Game::default_activation_by_hand`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandActivation {
+    pub activation: fnv_sim::world::Activation,
+    /// Where its `Activated` event is in [`Game::events`]: the engine applies the outcome
+    /// itself and leaves this event out of what it turns into effects.
+    pub activated_event: usize,
+    /// Where a pickup's `ItemAdded` event is, likewise.
+    pub item_added_event: Option<usize>,
+}
 
 /// How an activation runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2088,6 +2163,7 @@ impl<'a> Game<'a> {
             idle_picks: Vec::new(),
             weapon_uses: BTreeMap::new(),
             weapon_use_seq: 0,
+            walk_up_greets: BTreeMap::new(),
             sound_requests: Vec::new(),
             music_requests: Vec::new(),
             texture_swaps: Default::default(),
@@ -2166,6 +2242,9 @@ impl<'a> Game<'a> {
             said_day: BTreeMap::new(),
             dialogue: None,
             talking_through: None,
+            farewell_ending: false,
+            farewell_then: None,
+            farewell_said: None,
             voice: None,
             frame: 0,
             time: 0.0,
@@ -3926,7 +4005,7 @@ impl<'a> Game<'a> {
         self.emit(EventKind::LineStarted { speaker, target, topic, info, seconds });
         self.cover_info(info);
         let (say_to, greeting, hello) = (kind == LineKind::SayTo, kind == LineKind::Greeting, kind == LineKind::Hello);
-        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: false });
+        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, farewell: false, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: false });
         if let Some(&first) = def.response_order().first() {
             self.ask_response_idles(speaker, target, info, first);
         }
@@ -3976,10 +4055,13 @@ impl<'a> Game<'a> {
     /// is never cut: whatever stops it (its speaker dying, disabled or deleted, another
     /// line, a fight) ends it as if said to the end, its end result script and Add
     /// Topics applying [owner statement 2026-10-27, of the Goodsprings settler's water:
-    /// "do this for any reason as a catch all"].
+    /// "do this for any reason as a catch all"]. Nor is a farewell, the Goodbye line the
+    /// player chose ([`Speech::farewell`]) [hypothesis: a Goodbye line's end script sets
+    /// quest stages and must not be lost; the owner's catch-all statement was about the
+    /// greeting].
     pub(crate) fn cut_line(&mut self, speaker: FormId) {
         if let Some(k) = self.speech.iter().position(|s| s.speaker == speaker) {
-            if self.speech[k].greeting && self.speech[k].target == Some(FormId::PLAYER_REF) {
+            if self.speech[k].goodbye_at_player() {
                 self.end_line(k);
                 return;
             }
@@ -4037,8 +4119,9 @@ impl<'a> Game<'a> {
             // A Goodbye greeting at the player whose speaker is drawn into a fight ends at
             // once as if said to the end (`Game::cut_line`, `Game::greets_player`) [owner
             // statement 2026-10-27: "skip to the end of the line as if she finished
-            // speaking", "all the code runs"].
-            let fights = s.greeting && s.target == Some(FormId::PLAYER_REF) && self.awareness.state(s.speaker).in_combat();
+            // speaking", "all the code runs"]; so does a farewell ([`Speech::farewell`])
+            // [hypothesis, as in `Game::cut_line`].
+            let fights = s.goodbye_at_player() && self.awareness.state(s.speaker).in_combat();
             if !here || (self.extra.get(&s.speaker).is_some_and(|e| e.dead) && Some(s.topic) != death) {
                 cut.push(s.speaker);
             } else if s.remaining <= 1e-9 || fights {
@@ -4062,19 +4145,40 @@ impl<'a> Game<'a> {
         let s = self.speech.remove(k);
         let (speaker, info) = (s.speaker, s.info);
         self.emit(EventKind::LineEnded { speaker, info, cut: false });
+        // The force greet this line's end script holds, if it is a farewell
+        // (`Game::hold_force_greet`).
+        let mut then = None;
         if let Some(def) = data.infos.get(&info) {
             if let Some(u) = def.end.filter(|_| !s.end_ran) {
                 self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(speaker) });
+                // A farewell's end script may ask for the next conversation. The state is
+                // this call's own: a line that ends inside the script (another farewell
+                // its speaker's new line ends) neither sees nor clears the outer one's
+                // request, and the outer state comes back afterwards [design].
+                let outer = (std::mem::replace(&mut self.farewell_ending, s.farewell), self.farewell_then.take());
                 self.run_result(u, RunCtx { self_ref: Some(speaker), action_ref: None, quest: def.quest });
+                then = self.farewell_then.take().filter(|_| s.farewell);
+                (self.farewell_ending, self.farewell_then) = outer;
             }
             // A greeting said at the player ends as a conversation's line does
             // (`Game::start_dialogue`): its Add Topics join the known topics, and it
-            // is no SayTo line [hypothesis for both].
-            if s.greeting {
+            // is no SayTo line [hypothesis for both]. A farewell is a conversation's
+            // line that ends after its conversation closed (`Game::choose`): the same,
+            // as the line would have ended in the conversation (`Game::finish_line`).
+            if s.greeting || s.farewell {
                 for t in self.player.topics.learn(&def.add_topics) {
                     self.emit(EventKind::TopicAdded { topic: t, by: Some(info) });
                 }
             }
+        }
+        // The force greet a farewell's end script asked for starts now, after the end
+        // script and the Add Topics, as after a Goodbye line that ends in its conversation
+        // (`Game::finish_line`). Refusals are not errors, as for StartConversation.
+        if s.farewell {
+            if let Some((speaker, topic)) = then {
+                let _ = self.force_greet(speaker, topic);
+            }
+            return;
         }
         if s.greeting || s.hello {
             return;
@@ -4137,15 +4241,21 @@ impl<'a> Game<'a> {
     /// `od_09a_disabled_ref_script`, a disabled skull's timer kept falling]. OnLoad at a cell
     /// load runs for disabled references too (`Game::set_loaded`).
     fn active_refs(&self) -> Vec<FormId> {
+        self.scripted_refs_in(&self.loaded_cells)
+    }
+
+    /// Scripted references now in `cells` and not deleted, disabled ones included, in
+    /// FormID order: those placed there that stayed, and those moved or created there.
+    fn scripted_refs_in(&self, cells: &BTreeSet<FormId>) -> Vec<FormId> {
         let mut out: BTreeSet<FormId> = BTreeSet::new();
-        for c in &self.loaded_cells {
+        for c in cells {
             if let Some(v) = self.data.scripted_by_cell.get(c) {
                 out.extend(v.iter().copied());
             }
         }
         out.extend(self.moved.iter().copied());
         out.into_iter()
-            .filter(|&r| self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c)) && self.world.peek(r).is_none_or(|s| !s.deleted()))
+            .filter(|&r| self.cell_of(r).is_some_and(|c| cells.contains(&c)) && self.world.peek(r).is_none_or(|s| !s.deleted()))
             .collect()
     }
 
@@ -4167,9 +4277,10 @@ impl<'a> Game<'a> {
         out
     }
 
-    /// Make `cells` the loaded set; scripted references in newly loaded cells get
-    /// OnLoad, disabled ones included [hypothesis: OnLoad runs when the reference's cell
-    /// is loaded; observed for a disabled one, below].
+    /// Make `cells` the loaded set; scripted references now in newly loaded cells get
+    /// OnLoad, disabled ones included [hypothesis: OnLoad runs when the cell a reference
+    /// is in now is loaded; observed for a disabled one, below; a moved one was not seen
+    /// in the original].
     pub fn set_loaded(&mut self, cells: BTreeSet<FormId>) {
         let new: Vec<FormId> = cells.difference(&self.loaded_cells).copied().collect();
         let left: Vec<FormId> = self.loaded_cells.difference(&cells).copied().collect();
@@ -4198,19 +4309,28 @@ impl<'a> Game<'a> {
         // (`Game::note_enabled`). References disabled through an enable parent are
         // treated the same [hypothesis: the plane was disabled by its own flag].
         let all = self.handled("onload");
-        for c in new {
-            let refs = self.data.scripted_by_cell.get(&c).cloned().unwrap_or_default();
-            for &r in &refs {
+        // Chosen before any block runs: a block that moves a reference into another new
+        // cell, or makes one, must not give it a second OnLoad here.
+        let chosen: Vec<(Vec<FormId>, Vec<FormId>)> = new
+            .iter()
+            .map(|&c| {
+                let mut refs = self.scripted_refs_in(&BTreeSet::from([c]));
+                // MoveTo lists a scripted player as moved; no cell loads the player.
+                refs.retain(|&r| r != FormId::PLAYER_REF);
+                // The extender's OnLoad handlers hear the unscripted references too.
+                let others = if all { self.refs_in_cell(c, false).into_iter().filter(|r| !refs.contains(r)).collect() } else { Vec::new() };
+                (refs, others)
+            })
+            .collect();
+        for (refs, others) in chosen {
+            for r in refs {
                 if self.world.peek(r).is_none_or(|s| !s.deleted()) {
                     self.ref_event(r, event::ON_LOAD, None, None);
                 }
             }
-            // The extender's OnLoad handlers hear the unscripted references too.
-            if all {
-                for r in self.refs_in_cell(c, false) {
-                    if !refs.contains(&r) {
-                        self.ext_event(event::ON_LOAD, r, None);
-                    }
+            for r in others {
+                if self.world.peek(r).is_none_or(|s| !s.deleted()) {
+                    self.ext_event(event::ON_LOAD, r, None);
                 }
             }
         }
@@ -4264,13 +4384,9 @@ impl<'a> Game<'a> {
     /// `actor` activates `target`. A destroyed door or activator
     /// ([`Game::activation_refused`]) does nothing: no default action, no OnActivate.
     pub fn activate(&mut self, actor: FormId, target: FormId, mode: ActMode) -> Result<serde_json::Value, String> {
-        // The extender's OnActivate handlers run first, even when the activation is then
-        // refused, and do not block it [documented: NVSE Event Handling].
-        self.dispatch_event("OnActivate", vec![fnv_script::vm::XVal::Ref(target.0), fnv_script::vm::XVal::Ref(actor.0)], Some(target));
-        if self.activation_refused(target) {
+        if !self.activation_begins(actor, target) {
             return Ok(serde_json::json!({"result": "destroyed"}));
         }
-        self.action_refs.insert(target, actor);
         // A door's block letting the NPC that walks through it go on (`crate::npc_doors`).
         if mode == ActMode::Default && self.npc_door_activated(actor, target) {
             return Ok(serde_json::json!({"result": "npc door"}));
@@ -4288,21 +4404,58 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// What every activation does first: the extender's OnActivate handlers run, even when
+    /// the activation is then refused, and do not block it [documented: NVSE Event
+    /// Handling]. Whether it goes on (not [`Game::activation_refused`]), with `actor` as
+    /// the target's action reference.
+    fn activation_begins(&mut self, actor: FormId, target: FormId) -> bool {
+        self.dispatch_event("OnActivate", vec![fnv_script::vm::XVal::Ref(target.0), fnv_script::vm::XVal::Ref(actor.0)], Some(target));
+        if self.activation_refused(target) {
+            return false;
+        }
+        self.action_refs.insert(target, actor);
+        true
+    }
+
+    /// The player's own activation (E) of a target whose script has no OnActivate block:
+    /// [`Game::activate`] in [`ActMode::Hand`] but for the door. The engine's loading takes
+    /// the player into the new cell and tells [`Game::player_entered`] when the player is
+    /// there, so this does not. `None`: the activation was refused.
+    pub fn default_activation_by_hand(&mut self, target: FormId) -> Result<Option<HandActivation>, String> {
+        let player = FormId::PLAYER_REF;
+        if !self.activation_begins(player, target) {
+            return Ok(None);
+        }
+        self.run_default_activation(player, target, true, false).map(Some)
+    }
+
     /// The default action of an activation (Layer 4), with its Layer 5 consequences:
     /// a picked-up item reaches the actor's inventory (OnAdd), a door moves the player, a
     /// dead actor opens its inventory (the loot menu) [observed: a scripted Activate of a
     /// dead actor opened the container menu, `L5.quest.dead_activation`], and so does one
     /// lying pushed down by PushActorAway [documented: GECK wiki PushActorAway notes, "can
-    /// have its inventory accessed by the player until the actor gets up again"].
+    /// have its inventory accessed by the player until the actor gets up again"]. An ash
+    /// or goo pile opens the inventory of the actor it came from (`crate::ash_piles`).
     pub fn default_activation(&mut self, actor: FormId, target: FormId, by_hand: bool) -> Result<serde_json::Value, String> {
+        let done = self.run_default_activation(actor, target, by_hand, true)?;
+        serde_json::to_value(&done.activation).map_err(|e| e.to_string())
+    }
+
+    /// [`Game::default_activation`]; `enter_cell`: a player sent through a door enters the
+    /// new cell now, else the caller sees to [`Game::player_entered`].
+    fn run_default_activation(&mut self, actor: FormId, target: FormId, by_hand: bool, enter_cell: bool) -> Result<HandActivation, String> {
         let base = functions::base_of(self, target);
         // Where the player was, for whoever follows them through a door
         // (`Game::bring_teammates`).
         let from = self.world.peek(FormId::PLAYER_REF).map(|p| (p.cell, p.pos));
         let pushed = self.knockout(target).is_some_and(|k| k.pushed && k.lying());
         let dead_actor = (self.extra.get(&target).is_some_and(|e| e.dead) || pushed)
-            && base.and_then(|b| self.data.sig(b)).is_some_and(|s| &s == b"NPC_" || &s == b"CREA");
-        let act = if dead_actor && self.present(target) {
+            && base.and_then(|b| self.data.sig(b)).is_some_and(|s| matches!(&s, b"NPC_" | b"CREA" | b"LVLN" | b"LVLC"));
+        let pile_of = self.ash_pile_source(target).filter(|_| self.present(target));
+        let act = if let Some(body) = pile_of {
+            tracing::info!("activate: the pile {target} opens the inventory of {body}");
+            fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: body }, unlocked_with: None, script: None }
+        } else if dead_actor && self.present(target) {
             let script = base.and_then(|b| self.world.forms.get(b)).and_then(|b| b.script);
             fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: target }, unlocked_with: None, script }
         } else if by_hand {
@@ -4312,7 +4465,9 @@ impl<'a> Game<'a> {
         };
         let v = serde_json::to_value(&act).map_err(|e| e.to_string())?;
         self.note_activating(actor, target);
-        self.emit(EventKind::Activated { reference: target, by: actor, outcome: Some(v.clone()) });
+        let activated_event = self.events.len();
+        self.emit(EventKind::Activated { reference: target, by: actor, outcome: Some(v) });
+        let mut item_added_event = None;
         if matches!(act.outcome, Outcome::Activated) {
             self.radio_activated(target);
             self.drink_from(actor, target);
@@ -4321,13 +4476,19 @@ impl<'a> Game<'a> {
         self.set_off_children(target);
         match act.outcome {
             Outcome::PickedUp { item, count, .. } => {
+                item_added_event = Some(self.events.len());
                 self.emit(EventKind::ItemAdded { to: actor, item, count, silent: false });
                 self.item_event(actor, item, event::ON_ADD, Some(Value::Ref(actor.0)));
             }
             Outcome::Teleported { cell, .. } if actor == FormId::PLAYER_REF => {
                 self.arrived_through(target, cell);
-                self.player_entered(cell);
-                self.bring_teammates(from);
+                if enter_cell {
+                    self.player_entered(cell);
+                }
+                let brought = self.bring_teammates(from);
+                if !brought.is_empty() {
+                    tracing::info!("script: {} teammate(s) or follower(s) come along through the door", brought.len());
+                }
             }
             // A placed mine disarmed by the player gives its XP (`crate::experience`).
             Outcome::Disarmed { .. } if actor == FormId::PLAYER_REF => {
@@ -4337,7 +4498,7 @@ impl<'a> Game<'a> {
             }
             _ => {}
         }
-        Ok(v)
+        Ok(HandActivation { activation: act, activated_event, item_added_event })
     }
 
     /// The water an activator gives to drink (ACTI WNAM), when it names one.
@@ -5047,6 +5208,7 @@ impl<'a> Game<'a> {
             speech: self.speech.clone(),
             said: self.said.clone(),
             said_day: self.said_day.clone(),
+            said_day_days_clock: true,
             dialogue: self.dialogue.clone(),
             frame: self.frame,
             time: self.time,
@@ -5078,6 +5240,7 @@ impl<'a> Game<'a> {
             queued_ref_events: self.queued_ref_events.clone(),
             door_open_seen: self.door_open_seen.iter().filter(|&(&r, &seen)| self.world.peek(r).is_some_and(|s| s.open != seen)).map(|(&r, &seen)| (r, seen)).collect(),
             awareness: self.awareness.actors.iter().filter(|(_, a)| a.state.in_combat() || !a.targets.is_empty() || !a.alarms.is_empty() || a.fighting.is_some()).map(|(&r, a)| (r, a.clone())).collect(),
+            fighting: Some(self.fighting.clone()),
             forced_combat: self.awareness.forced.clone(),
             form_instances: self.pp.instances.iter().map(|(k, v)| (*k, v.clone())).collect(),
             object_groups: self.anims.asked_all().clone(),
@@ -5121,7 +5284,9 @@ impl<'a> Game<'a> {
         g.align_queued();
         g.speech = s.speech.clone();
         g.said = s.said.clone();
-        g.said_day = s.said_day.clone();
+        if s.said_day_days_clock {
+            g.said_day = s.said_day.clone();
+        }
         g.dialogue = s.dialogue.clone();
         g.frame = s.frame;
         g.time = s.time;
@@ -5152,6 +5317,10 @@ impl<'a> Game<'a> {
         g.anims.restore_asked(s.object_groups.clone());
         g.awareness.actors = s.awareness.clone();
         g.awareness.forced = s.forced_combat.clone();
+        // A save from before `fighting` was saved cannot say which starts had run: everyone
+        // in Combat or Lost counts as started, Alert (no fight yet) does not [design:
+        // docs/design/save-load.md §3.2]. A start still due in such a save does not run.
+        g.fighting = s.fighting.clone().unwrap_or_else(|| s.awareness.iter().filter(|(_, a)| matches!(a.state, crate::awareness::State::Combat | crate::awareness::State::Lost)).map(|(&r, _)| r).collect());
         g.coop =crate::coop::checked(s.coop.clone()).map_err(|e| e.to_string())?;
         for (&on, texture) in &s.securitron_faces {
             g.texture_swaps.set_securitron(on, texture.clone());
@@ -5373,15 +5542,19 @@ impl Host for Exec<'_, '_> {
             Some(v) => match v.as_form() {
                 Some(f) => Some(FormId(f)),
                 None => {
-                    // A call on an empty reference variable stops the script silently
-                    // for this run [documented: GECK wiki Ref Variable, Eval and Let
-                    // pages, owner export; docs/spec-notes/script-language.md §7.3 row
-                    // 1]; traced as `call_failed`. Classic `&&` and `||` evaluate both
-                    // sides, so a reference guarded by `&&` (EDEScript) still makes this
-                    // call every frame, in the original too [observed: o5_01,
-                    // observer-checks.md check 51; script-language.md §4]. A script
-                    // record's failure is traced once per function, not every frame.
-                    self.game.stop_run = true;
+                    // A call on an empty reference variable is skipped: it gives 0 and
+                    // the script goes on [observed: o5_00, a function script went on to
+                    // its next line, alone and in an `if`; the Nellis artillery's trigger
+                    // script (NellisArtilleryScript) calls CurrentActor2.GetDead with the
+                    // variable unset every frame one actor is inside, and the original's
+                    // barrage fires (owner, issue #1600). The GECK wiki's Ref Variable,
+                    // Eval and Let pages say it stops the script: until 2026-11-05 it did
+                    // here, and the barrage never came; script-language.md §7.3 row 1].
+                    // Traced as `call_failed`. Classic `&&` and `||` evaluate both sides,
+                    // so a reference guarded by `&&` (EDEScript) still makes this call
+                    // every frame, in the original too [observed: o5_01, observer-checks.md
+                    // check 51]. A script record's failure is traced once per function,
+                    // not every frame.
                     if let fnv_script::UnitOwner::Script { form } = self.unit.unit.owner {
                         if !self.game.empty_ref_traced.insert((form, opcode)) {
                             return Ok(Value::ZERO);
