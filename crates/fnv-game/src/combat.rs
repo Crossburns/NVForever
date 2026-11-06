@@ -400,8 +400,18 @@ impl Game<'_> {
     /// blast's, an actor's unarmed attack effect (docs/spec-notes/hit-effects.md §1). A
     /// dead or unharmable target takes none. The target's resistances cut the harmful
     /// magnitudes, a fully resisted effect does not start, and a hit with the same item
-    /// while its effect lasts starts that effect's time again (§2, §3).
+    /// while its effect lasts starts that effect's time again (§2, §3). The hit's damage
+    /// comes next, and it decides a death by a Script effect's damage
+    /// ([`Game::health_lowered`]).
     pub fn apply_hit_effect(&mut self, target: FormId, item: FormId, caster: Option<FormId>) -> Vec<crate::aid::Applied> {
+        self.hits_running.push(target);
+        let applied = self.start_hit_effect(target, item, caster);
+        self.hits_running.pop();
+        applied
+    }
+
+    /// [`Game::apply_hit_effect`] with no hit to come: a Script effect's damage kills at once.
+    pub(crate) fn start_hit_effect(&mut self, target: FormId, item: FormId, caster: Option<FormId>) -> Vec<crate::aid::Applied> {
         if self.is_dead(target) || self.is_immune(target) {
             return Vec::new();
         }
@@ -462,6 +472,33 @@ impl Game<'_> {
         }
     }
 
+    /// A script lowered `r`'s Health (DamageActorValue): at 0 or less it dies, an essential
+    /// actor is knocked out [hypothesis: unconscious.md §2.2, observer-checks.md check 89].
+    /// Nobody is credited, so no XP, karma or challenge. A god-mode player stands [design], and so does an actor whose record gives
+    /// no Health, as its Health is only `max_health`'s stand-in of 1. During a hit on `r`
+    /// the hit decides, so that a kill finished by an OnHit script or by a Script effect the
+    /// hit brings is still the attacker's (the boxing gloves' `DamageAV Health 10`,
+    /// unconscious.md §1).
+    pub(crate) fn health_lowered(&mut self, r: FormId) {
+        if self.is_dead(r) || self.is_immune(r) || self.hits_running.contains(&r) {
+            return;
+        }
+        let player = r == FormId::PLAYER_REF;
+        // Only actors whose record gives a Health have one to run out of.
+        let has_health = self.stats_def(r).is_some_and(|d| d.base_health != 0 || d.zero_health);
+        if (player && self.toggles.god_mode) || (!player && !has_health) {
+            return;
+        }
+        if !actor::actor_value(self, r, HEALTH).is_ok_and(|v| v <= 0.0) {
+            return;
+        }
+        if self.is_essential(r) && !player {
+            self.knock_out(r, crate::unconscious::Cause::Essential, None);
+        } else {
+            self.kill(r, None);
+        }
+    }
+
     /// Apply `damage` health damage to `target` (see the module notes).
     pub fn hit(&mut self, target: FormId, damage: f64, mut info: HitInfo) -> HitResult {
         // The difficulty scales the player's hits and the hits on the player, limb damage
@@ -485,6 +522,7 @@ impl Game<'_> {
         // SetOnHitEventHandler; observed: jip-hits, Health in the handler is the value
         // before the hit] (jip-hit-info.md).
         let fatal = before - dealt <= floor;
+        self.hits_running.push(target);
         let flags = (u16::from(info.critical) << 1) | (u16::from(fatal) << 2);
         let limb_damage = info.limb.map_or(0.0, |l| l.damage);
         let rec = crate::jip_events::JipHit { attacker: info.attacker, weapon: info.weapon, health_damage: dealt, limb_damage, location: info.location, flags };
@@ -518,6 +556,7 @@ impl Game<'_> {
             self.item_event(a, w, event::ON_HIT, Some(Value::Ref(target.0)));
         }
         let health = actor::actor_value(self, target, HEALTH).unwrap_or(before - dealt);
+        self.hits_running.pop();
         let mut out = HitResult { dealt, health, max_health, ..HitResult::default() };
         if let Some(l) = info.limb {
             let (condition, crippled) = self.hit_limb(target, l, max_health);
@@ -549,6 +588,7 @@ impl Game<'_> {
         if info.attacker == Some(FormId::PLAYER_REF) && !out.died && self.vats.mode == crate::vats::MODE_PLAYBACK {
             let roll = crate::magic_archetypes::hash_roll(self.time, target);
             self.paralyzing_palm(target, info.weapon, roll);
+            out.health = actor::actor_value(self, target, HEALTH).unwrap_or(out.health);
         }
         // What the target says (`crate::combat_lines`): Death was said by `kill`, KOed by
         // `knock_out`; nothing more from one lying knocked out.

@@ -9364,6 +9364,40 @@ expect = [
 ]
 
 [[scenario]]
+name = "damageav-health-kills"
+source = "#1568: DamageActorValue on Health past zero kills an NPC and the player and knocks an essential actor out; no killer, so no XP (docs/spec-notes/unconscious.md §2.2, a hypothesis: observer-checks.md check 89)"
+note = "in Goodsprings: Easy Pete (not essential) survives 10 and dies of 9999, and is still dead 5 s later; Sunny Smiles is made essential and is knocked out; the player last, as the death ends the play"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/combat.rs", "crates/fnv-game/src/unconscious.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:EasyPeteRef.damageav health 10;EasyPeteRef.getdead;EasyPeteRef.damageav health 9999;EasyPeteRef.getdead;SunnyRef.setactorrefessential 1;SunnyRef.damageav health 9999;SunnyRef.getdead;15:close;19:EasyPeteRef.getdead;player.damageav health 9999;player.getdead;20:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 24
+order = [[
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00' },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00' },
+]]
+expect = [
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00', count = 1, label = "10 of his health leaves him standing" },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00', count = 2, label = "Easy Pete is dead and stays dead" },
+  { re = 'console: GetDead on SunnyRef >> 0\.00', label = "the essential actor is not dead" },
+  { re = 'knockout: Sunny Smiles \S+ knocked out \(essential\)', label = "she is knocked out" },
+  { re = 'console: GetDead on player >> 1\.00', label = "the player is dead" },
+  "combat: the player died",
+]
+forbid = [{ re = 'xp: \S+ XP from a kill', label = "no killer, no kill XP" }]
+
+[[scenario]]
+name = "damageav-health-god-mode"
+source = "#1568: DamageActorValue on Health past zero leaves a player in god mode standing (docs/spec-notes/unconscious.md §2.2)"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.damageav health 9999;player.getdead;15:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 18
+expect = [{ re = 'console: GetDead on player >> 0\.00', label = "the player stands" }]
+forbid = [{ re = 'the player died', label = "the player dies" }]
+
+[[scenario]]
 name = "knockout-boxing-gloves"
 source = "owner request 2026-10-17: boxing gloves knock out by fatigue, with no corner message (docs/spec-notes/unconscious.md)"
 note = "in Goodsprings, Easy Pete (not essential) is brought 300 units north of the player at 3 s; at 6 s and 7 s the player hits him with WeapNVBoxingGloves (1 damage each): the gloves' OnHit script takes 35 Fatigue a hit, so the second (fatigue 50 - 70) knocks him out; his fatigue returns at 10 a second and his fatigue knockout lasts 30 s (a test value, unconscious.md §2.5) whatever goes on, so he gets up at about 37 s of game time (later on the clock: scripted message boxes pause game time)"

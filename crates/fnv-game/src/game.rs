@@ -1615,6 +1615,10 @@ pub struct Game<'a> {
     /// Deaths during a script run (KillActor, a script's damage) whose OnDeath blocks wait
     /// for the outermost script to finish, with their killers ([`Game::kill`]).
     deferred_deaths: Vec<(FormId, Option<FormId>)>,
+    /// The actors a hit is being applied to, from its effects until it has read their
+    /// Health back after its script events ([`Game::health_lowered`]). Not part of the
+    /// saved state.
+    pub(crate) hits_running: Vec<FormId>,
     /// The open flag last seen on each scripted door with OnOpen or OnClose blocks
     /// ([`Game::watch_doors`]). Saved only where the door changed since it was seen:
     /// a door first seen after a load is taken as it stands.
@@ -2250,6 +2254,7 @@ impl<'a> Game<'a> {
             queued_ref_events: Vec::new(),
             action_refs: Default::default(),
             deferred_deaths: Vec::new(),
+            hits_running: Vec::new(),
             door_open_seen: BTreeMap::new(),
             events: Vec::new(),
             unhandled: BTreeMap::new(),
