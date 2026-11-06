@@ -317,7 +317,7 @@ engine if needed, and delete the item here.
       on cazadors only); the CREA Turning Speed field is unused. People's combat turns
       measured 2026-11-01 and 2026-11-06 (o25_turn): about 1.1 s after StartCombat, a
       steady 225°/s for 45° and 90° and 275°/s at first for 135° and 180°, slower only once
-      it steps forward (actors §8.10, issue #1352); a package turn out of combat is still
+      it steps forward (actors §8.9, issue #1352); a package turn out of combat is still
       unmeasured.
     - Speed Mult on people: answered 2026-11-01 (o18_air): a trooper ran 305 units/s at
       100 and about 460 at 150, proportional as ours (actors §8.10); Cook-Cook (110, ran
