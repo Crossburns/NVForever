@@ -113,10 +113,13 @@ fn ingestible_service(i: Option<&IngestibleDef>) -> u32 {
 }
 
 impl Game<'_> {
-    /// `actor`'s service flags (module notes): its AI data's, or its class's with
-    /// "Autocalc Service". 0 for what is no actor.
+    /// `actor`'s service flags (module notes): SetServiceFlag's (`nvse_lutana`), else its
+    /// AI data's, or its class's with "Autocalc Service". 0 for what is no actor.
     pub fn services(&self, actor: FormId) -> u32 {
-        let Some(ai) = self.def_following(actor, |d| d.template_ai) else { return 0 };
+        let Some((id, ai)) = crate::functions::base_of(self, actor).and_then(|b| self.template_source(b, actor, |d| d.template_ai)) else { return 0 };
+        if let Some(&s) = self.other.lutana.services.get(&id) {
+            return s;
+        }
         if ai.autocalc_service {
             let class = self.traits_def(actor).and_then(|d| d.class);
             if let Some(s) = class.and_then(|c| self.data.class_services.get(&c)) {
