@@ -48,8 +48,44 @@ Start cannot be bound.
 ## 3. Menus and prompts
 
 - Start is Esc (the pause menu) everywhere. In a menu the D-pad is the arrow keys, A
-  Enter, B Esc, LB and RB Page Up and Page Down: the menus read keys, and the controller
-  stands in for them (`pad::menu_keys`), pressing a key only as its button goes down.
+  Enter, B Esc, LB and RB, LT and RT Page Up and Page Down: the menus read keys, and the
+  controller stands in for them (`pad::menu_keys`), pressing a key only as its button
+  goes down.
+- Each menu's own buttons follow the original's menu files (`_xbox_button` of the button
+  tiles [documented: the vanilla menu files]) and press the key NVForever's menu gives
+  that control (`pad::menu_buttons`, keyed by the open menu's MenuMode code); a menu's
+  own button wins over the shared ones above (#1393):
+
+  | Menu | Buttons |
+  |------|---------|
+  | Container | X Take All |
+  | Barter | X Accept |
+  | Pip-Boy (every page) | LT / RT the previous / next page (STATS, ITEMS, DATA, round again); D-pad left / right the tabs [design: owner 2026-11-02] |
+  | Pip-Boy ITEMS | X Drop (`pipboy::items`, not while "How many?" is up), Y Repair, LB Mod |
+  | Pip-Boy STATS | status tab: A Stimpak, Y Doctor's Bag, X Rad-X; General tab: X switch lists |
+  | Pip-Boy DATA | Y Challenges (Notes tab) |
+  | Crafting | X Accept |
+  | Repair services | X Repair All |
+  | Level up, traits | Y Reset, X Continue, B Back |
+  | Tag skills | Y Reset, X Done |
+  | Lockpicking | X Force Lock |
+  | Blackjack | A Hit, Y Double/Deal, RT Split/Raise, LT Switch/Lower, X Surrender/Max Bet, B Stay/Exit |
+  | Roulette | A Place, Y Remove, X Finish, LT Lower, RT Raise, B Exit |
+  | Slot machine | A Spin, RT Raise, LT Lower, Y Payouts, X Max Bet, B Exit |
+  | Tutorial | RT Next, LT Previous |
+
+  On the ITEMS page the triggers are the pages and LB is Mod, so of the shared paging
+  buttons only RB (Page Down) is left there; the D-pad steps the rows both ways.
+  On the STATS status tab X is Rad-X, which only acts on the RAD view; on CND and EFF it
+  does nothing.
+
+  Not followed: the ITEMS page's RB Hotkey (the hotkeys are held digit keys), RadAway's
+  A on the RAD view (not usable from the STATS page), caravan (its menu files are not
+  read yet).
+- On the Pip-Boy DATA page's maps the right stick moves the cursor (the highlight box),
+  pushed past an edge it pans the map, and the left stick's up and down zooms in and out
+  smoothly while held [observed: the original; the speeds are design], built in
+  `pipboy/data.rs` (`stick_cursor`, `scroll_map`, `stick_zoom`).
 - The prompt under the crosshair names the Activate control's own key ("E)") or, with a
   controller, its button ("A)") (`Bindings::prompt`). The original shows the button's
   picture there (`&xbuttona;`, `general_button_a.dds`); letters are the first step.
@@ -120,9 +156,10 @@ those settings so a mod that changes them changes this too.
 ## 6. Not built yet
 
 - The button pictures from `Interface\Shared\Button\` in place of letters.
-- Each menu's own controller buttons (the original's `<xbuttonx>` etc.: barter X/B,
-  inventory X/Y/LB/RB, lockpick X, the Pip-Boy's tabs on the shoulders and triggers), and
-  hints in menus ("E) Exit", lockpick, Pip-Boy, container) following the device.
-- A pointer moved by a stick for the mouse-only parts of menus (the dialogue list, the
-  Pip-Boy map).
+- The rest of the menus' own controller buttons (§3's "not followed"), and hints in menus ("E) Exit", lockpick, Pip-Boy, container)
+  following the device.
+- A pointer moved by a stick for the mouse-only parts of menus still left: the dialogue
+  list (the Pip-Boy map's stick cursor and zoom are built, §3).
+- Fast travel from the World Map on a controller: the original's A on a marker; the map
+  asks to travel only on a mouse click (`pipboy/data.rs`).
 - Several controllers told apart; the first pressed is not singled out.

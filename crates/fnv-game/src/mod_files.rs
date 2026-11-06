@@ -71,15 +71,60 @@ pub fn nif_has_name(bytes: &[u8], name: &str) -> bool {
     bytes.windows(pat.len()).any(|w| w == pat.as_slice())
 }
 
+/// The loose files directly in a Data folder: each name (as on disk) with its path, from
+/// the read roots in order (NVForever's layer first), a name once, the first root's.
+/// Archives are not looked in.
+pub fn data_files(folder: &str) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for root in roots().read {
+        let Some(dir) = on_disk_any_case(&root, folder) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if e.path().is_file() && !out.iter().any(|(x, _)| x.eq_ignore_ascii_case(&n)) {
+                out.push((n, e.path()));
+            }
+        }
+    }
+    out
+}
+
+/// A Data file's bytes: the first read root's loose copy (NVForever's layer before the
+/// game's Data), else through the host (archives included).
+pub fn read_data_file(path: &str) -> Option<Vec<u8>> {
+    roots().read.iter().filter_map(|root| on_disk_any_case(root, path)).find_map(|p| std::fs::read(p).ok()).or_else(|| read_data(path))
+}
+
+/// [`on_disk`], each part of the path matched to what is on disk in any case, as Windows
+/// does: mods spell `NVSE\Plugins\Scripts` every way [observed: the owner's MO2 mods], and
+/// a case-sensitive file system (Linux) would miss them. `None` when a part is missing.
+fn on_disk_any_case(base: &Path, rel: &str) -> Option<PathBuf> {
+    let exact = on_disk(base, rel)?;
+    if exact.exists() {
+        return Some(exact);
+    }
+    let mut p = base.to_path_buf();
+    for part in rel.split(['\\', '/']).filter(|c| !c.is_empty()) {
+        let direct = p.join(part);
+        p = if direct.exists() {
+            direct
+        } else {
+            std::fs::read_dir(&p).ok()?.flatten().map(|e| e.path()).find(|e| e.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(part)))?
+        };
+    }
+    Some(p)
+}
+
 /// The game's Data folder, when the host gave one (the last read root).
 pub fn data_dir() -> Option<PathBuf> {
     roots().read.last().cloned()
 }
 
-/// Whether a Data path is a file of the game: in a read root or in an archive.
+/// Whether a Data path is a file of the game: in a read root (its parts in any case, as
+/// on Windows; mods spell `Meshes` and `meshes` both) or in an archive.
 pub fn exists(path: &str) -> bool {
     let r = roots();
-    r.read.iter().any(|root| on_disk(root, path).is_some_and(|p| p.is_file())) || r.lookup.as_ref().is_some_and(|f| f(path) > 0)
+    r.read.iter().any(|root| on_disk(root, path).is_some_and(|p| p.is_file()) || find_file(root, path).is_some()) || r.lookup.as_ref().is_some_and(|f| f(path) > 0)
 }
 
 fn roots() -> Roots {
@@ -129,6 +174,82 @@ fn on_disk(base: &Path, rel: &str) -> Option<PathBuf> {
         }
     }
     Some(p)
+}
+
+/// A folder under `base` by a Data-relative path, each part matched without regard to
+/// case (mods spell `_1stPerson`, `_1stperson` and `Meshes` as they like, and other
+/// systems than Windows tell them apart); `None` when a part is missing or could leave
+/// `base` (as [`on_disk`]).
+fn find_dir(base: &Path, rel: &str) -> Option<PathBuf> {
+    on_disk(base, rel)?;
+    let mut p = base.to_path_buf();
+    for part in rel.split(['\\', '/']).filter(|c| !c.is_empty()) {
+        let direct = p.join(part);
+        p = if direct.is_dir() {
+            direct
+        } else {
+            std::fs::read_dir(&p).ok()?.flatten().map(|e| e.path()).find(|e| e.is_dir() && e.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(part)))?
+        };
+    }
+    Some(p)
+}
+
+/// The loose files under a Data folder, as paths relative to it (`\` between parts),
+/// walked through every read root: a path in an earlier root (NVForever's layer) hides
+/// the same path, compared without regard to case, in a later one. Sorted without
+/// regard to case. kNVSE's AnimGroupOverride folders (`crate::nvse_anim_folders`).
+pub fn files_under(rel: &str) -> Vec<String> {
+    list_files(rel, true)
+}
+
+/// The loose files directly in a Data folder (no subfolders), as [`files_under`].
+pub fn files_in(rel: &str) -> Vec<String> {
+    list_files(rel, false)
+}
+
+fn list_files(rel: &str, deep: bool) -> Vec<String> {
+    fn walk(dir: &Path, prefix: &str, deep: bool, seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let rel = if prefix.is_empty() { name } else { format!("{prefix}\\{name}") };
+            if e.path().is_dir() {
+                if deep {
+                    walk(&e.path(), &rel, deep, seen, out);
+                }
+            } else if seen.insert(rel.to_ascii_lowercase()) {
+                out.push(rel);
+            }
+        }
+    }
+    let (mut seen, mut out) = (std::collections::HashSet::new(), Vec::new());
+    for root in roots().read {
+        if let Some(dir) = find_dir(&root, rel) {
+            walk(&dir, "", deep, &mut seen, &mut out);
+        }
+    }
+    out.sort_by_key(|n| n.to_ascii_lowercase());
+    out
+}
+
+/// A file under `base` by a Data-relative path, each part matched without regard to
+/// case (as [`find_dir`]).
+fn find_file(base: &Path, rel: &str) -> Option<PathBuf> {
+    // The whole path stays under `base`, the file's name too (`C:x` names a drive).
+    on_disk(base, rel)?;
+    let (dir, name) = rel.rsplit_once(['\\', '/']).unwrap_or(("", rel));
+    let d = find_dir(base, dir)?;
+    let direct = d.join(name);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    std::fs::read_dir(&d).ok()?.flatten().map(|e| e.path()).find(|e| e.is_file() && e.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)))
+}
+
+/// A loose Data file's bytes through the read roots (the first that has it), the path's
+/// parts matched without regard to case.
+pub fn read_loose(rel: &str) -> Option<Vec<u8>> {
+    roots().read.iter().find_map(|root| std::fs::read(find_file(root, rel)?).ok())
 }
 
 /// Whether NVForever may write `path`: never inside the game's install or the original
@@ -586,10 +707,8 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
             let p = text(args, 0).unwrap_or_default().replace('/', "\\");
             let folder = num(args, 1, 0.0) != 0.0;
             let r = roots();
-            let loose = r.read.iter().any(|root| {
-                let full = root.join(&p);
-                if folder { full.is_dir() } else { full.is_file() }
-            }) || (!folder && g.mod_files.written.contains_key(&norm(&p)));
+            // In any case, and never outside the root (`find_dir`, `find_file`).
+            let loose = r.read.iter().any(|root| if folder { find_dir(root, &p).is_some() } else { find_file(root, &p).is_some() }) ||(!folder && g.mod_files.written.contains_key(&norm(&p)));
             if loose {
                 XVal::Num(1.0)
             } else if !folder {
@@ -649,8 +768,20 @@ fn glob(pat: &str, s: &str) -> bool {
 
 #[cfg(test)]
 mod path_tests {
-    use super::on_disk;
+    use super::{on_disk, on_disk_any_case};
     use std::path::Path;
+
+    #[test]
+    fn a_data_path_matches_folders_in_any_case() {
+        let base = std::env::temp_dir().join(format!("nvf-any-case-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("NVSE").join("Plugins").join("Scripts")).unwrap();
+        std::fs::write(base.join("NVSE").join("Plugins").join("Scripts").join("gr_A.txt"), "").unwrap();
+        let found = on_disk_any_case(&base, "nvse\\plugins\\scripts\\GR_a.txt").expect("found in any case");
+        assert!(found.is_file());
+        assert_eq!(on_disk_any_case(&base, "nvse\\plugins\\missing.txt"), None);
+        assert_eq!(on_disk_any_case(&base, "..\\x"), None, "the plain-name rule of on_disk still holds");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn only_plain_names_stay_under_the_base() {

@@ -56,6 +56,19 @@ impl SimState {
         actor_ref(placed, created)
     }
 
+    /// Whether a reference could pass [`SimState::is_actor`] now or later, whatever the
+    /// simulation does: a placed ACHR or ACRE (a placed reference's record type never
+    /// changes) or any id without a placement that is dynamic (a created reference's base
+    /// is read from the world, and the id may be given to another base). Everything
+    /// `is_actor` accepts passes this; the reverse is not so, it is no substitute for it.
+    pub fn may_be_actor(&self, form_id: u32) -> bool {
+        let id = FormId(form_id);
+        match self.refs.get(id) {
+            Some(p) => actor_ref(Some(p.sig), None),
+            None => id.is_dynamic(),
+        }
+    }
+
     /// Display name of a base form (FULL), else its Editor ID.
     pub fn name(&self, base: FormId) -> Option<&str> {
         let b = self.forms.get(base)?;
@@ -102,7 +115,59 @@ impl SimState {
     /// Whether a placed reference is in the world now (not taken or deleted, enabled).
     pub fn present(&self, form_id: u32) -> bool {
         let id = FormId(form_id);
-        !self.world.peek(id).is_some_and(|s| s.deleted) && self.world.is_enabled(id).unwrap_or(true)
+        !self.world.peek(id).is_some_and(|s| s.deleted()) && self.world.is_enabled(id).unwrap_or(true)
+    }
+}
+
+#[cfg(test)]
+impl SimState {
+    /// A simulation of these placed references, with no base forms (no game data).
+    pub(crate) fn over_placed(placed: impl IntoIterator<Item = fnv_sim::refs::PlacedRef>) -> SimState {
+        let mut refs = RefTable::default();
+        refs.refs.extend(placed.into_iter().map(|p| (p.id, p)));
+        let forms: &'static FormStore = Box::leak(Box::default());
+        let refs: &'static RefTable = Box::leak(Box::new(refs));
+        SimState { forms, refs, world: World::new(forms, refs, SimConfig::default()) }
+    }
+}
+
+/// A placed reference of nothing in particular, for [`SimState::over_placed`].
+#[cfg(test)]
+pub(crate) fn placed_ref(id: u32) -> fnv_sim::refs::PlacedRef {
+    fnv_sim::refs::PlacedRef {
+        id: FormId(id),
+        sig: *b"REFR",
+        edid: None,
+        base: FormId(0x100),
+        cell: Some(FormId(0x200)),
+        stored_in: Some(FormId(0x200)),
+        plugin: 0,
+        flags: 0,
+        in_persistent_group: false,
+        pos: [0.0; 3],
+        rot: [0.0; 3],
+        scale: None,
+        count: None,
+        ammo: None,
+        health: None,
+        owner: None,
+        lock: None,
+        teleport: None,
+        enable_parent: None,
+        linked: None,
+        patrol_idle: None,
+        patrol_topic: None,
+        merchant_container: None,
+        marker_reputation: None,
+        open_by_default: false,
+        primitive: None,
+        activate_parents: Vec::new(),
+        parent_activate_only: false,
+        prompt: None,
+        radiation: None,
+        radius: None,
+        encounter_zone: None,
+        level_modifier: None,
     }
 }
 
@@ -160,5 +225,81 @@ mod tests {
         }
         // A created item or container is not.
         assert!(!actor_ref(None, Some(*b"MISC")) && !actor_ref(None, Some(*b"CONT")) && !actor_ref(None, None));
+    }
+}
+
+/// A simulation made by hand for tests: forms and references in memory, no game data.
+#[cfg(test)]
+pub(crate) mod test_world {
+    use super::*;
+    use fnv_sim::forms::{ActorBase, BaseData, BaseForm, Door, Item, ItemKind};
+    use fnv_sim::refs::PlacedRef;
+
+    fn base(id: u32, data: BaseData) -> BaseForm {
+        BaseForm { id: FormId(id), sig: *b"MISC", edid: Some(format!("Edid{id:X}")), name: None, script: None, prompt: None, voice_filter: false, data }
+    }
+
+    pub(crate) fn item_base(id: u32) -> BaseForm {
+        base(id, BaseData::Item(Item { kind: ItemKind::Aid, value: Some(1), money: None, weight: Some(0.5), slots: None, projectile: None, health: None, non_playable: false, cant_drop: false, armor_class: Default::default(), power_armor: false, armor_dr: None, armor_dt: None, weapon_damage: None, weight_mods: [0.0; 3], drawable: false, not_for_npcs: false, thrown: false, quest_item: false, icon: None, placed_count: None, teaches: None, cant_be_taken: false, modulates_voice: false, weapon_traits: None }))
+    }
+
+    pub(crate) fn door_base(id: u32) -> BaseForm {
+        base(id, BaseData::Door(Door { automatic: false, minimal_use: false }))
+    }
+
+    /// A plain reference of `base` nowhere in particular.
+    pub(crate) fn placed(id: u32, base: u32) -> PlacedRef {
+        PlacedRef {
+            id: FormId(id),
+            sig: *b"REFR",
+            edid: None,
+            base: FormId(base),
+            cell: None,
+            stored_in: None,
+            plugin: 0,
+            flags: 0,
+            in_persistent_group: false,
+            pos: [0.0; 3],
+            rot: [0.0; 3],
+            scale: None,
+            count: None,
+            ammo: None,
+            health: None,
+            owner: None,
+            lock: None,
+            teleport: None,
+            enable_parent: None,
+            linked: None,
+            patrol_idle: None,
+            patrol_topic: None,
+            merchant_container: None,
+            marker_reputation: None,
+            open_by_default: false,
+            primitive: None,
+            activate_parents: Vec::new(),
+            parent_activate_only: false,
+            prompt: None,
+            radiation: None,
+            radius: None,
+            encounter_zone: None,
+            level_modifier: None,
+        }
+    }
+
+    /// These bases (and the player's) and references.
+    pub(crate) fn sim(bases: Vec<BaseForm>, placed: Vec<PlacedRef>) -> SimState {
+        let mut forms = FormStore::default();
+        for b in bases.into_iter().chain([base(FormId::PLAYER_BASE.0, BaseData::Actor(ActorBase { entries: Vec::new(), attributes: None }))]) {
+            // `World::place` knows a form by its signature.
+            forms.sigs.insert(b.id, b.sig);
+            forms.bases.insert(b.id, b);
+        }
+        let mut refs = RefTable::default();
+        for r in placed {
+            refs.refs.insert(r.id, r);
+        }
+        let forms: &'static FormStore = Box::leak(Box::new(forms));
+        let refs: &'static RefTable = Box::leak(Box::new(refs));
+        SimState { forms, refs, world: World::new(forms, refs, SimConfig::default()) }
     }
 }

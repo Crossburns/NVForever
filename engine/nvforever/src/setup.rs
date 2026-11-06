@@ -68,7 +68,7 @@ pub fn game_install(cli: Option<&Path>) -> Result<GameInstall, String> {
             format!("The game folder Mod Organizer 2 manages ({}) cannot be used:\n\n{e}", dir.display())
         });
     }
-    let cfg =Config::load(&home).map_err(|e| e.to_string())?;
+    let cfg = Config::load(&home).map_err(|e| e.to_string())?;
     let mut problem = None;
     if let Some(dir) = &cfg.game_dir {
         match validate(dir, &home) {
@@ -83,9 +83,35 @@ pub fn game_install(cli: Option<&Path>) -> Result<GameInstall, String> {
         }
     }
     let game = ask(&home, problem)?;
-    Config { game_dir: Some(game.root.clone()) }.save(&home, Some(&game)).map_err(|e| e.to_string())?;
+    Config { game_dir: Some(game.root.clone()), ..cfg }.save(&home, Some(&game)).map_err(|e| e.to_string())?;
     eprintln!("setup: game folder {} stored in {}", game.root.display(), home.config_file().display());
     Ok(game)
+}
+
+/// The code page of the game's text for this run (`fnv_util::text::chosen`, #1439):
+/// `NVF_CODE_PAGE`, else `[Text] CodePage` of the home's NVForever.ini, else
+/// Windows-1252. Set before any of the game's text is read.
+pub fn text_code_page() -> Result<fnv_util::text::CodePage, String> {
+    let ini = EngineHome::user().and_then(|h| Config::load(&h).ok()).and_then(|c| c.code_page);
+    fnv_util::text::chosen(ini.as_deref())
+}
+
+/// Draw the fonts the install's `Fallout_default.ini` names in `[Fonts]` (`sFontFile_N`),
+/// not always the English install's files (#1439). The file is in the game's own folder,
+/// read-only input; the per-user `My Games\FalloutNV` copy is never read
+/// (docs/design/install-layout.md). A localized install pointing these at its own files is
+/// [hypothesis: no localized install looked at, observer check 77].
+pub fn install_fonts(game: &GameInstall) {
+    let Some(text) = fnv_install::child_ci(&game.root, "Fallout_default.ini").and_then(|p| std::fs::read(p).ok()) else {
+        return;
+    };
+    let fonts = nvf_play::interface::fonts_in_ini(&fnv_util::text::code_page().decode(&text));
+    for (n, (own, default)) in fonts.iter().zip(nvf_play::interface::FONT_FILES).enumerate() {
+        if let Some(own) = own.as_deref().filter(|own| !own.eq_ignore_ascii_case(default)) {
+            eprintln!("setup: font {} read from {own} (the install's Fallout_default.ini)", n + 1);
+        }
+    }
+    nvf_play::interface::set_font_files(fonts);
 }
 
 #[cfg(windows)]

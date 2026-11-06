@@ -115,10 +115,12 @@ pub mod tutorial_menu;
 pub mod ui_pointer;
 pub mod credits;
 mod test_aid;
+pub use test_aid::melee_knockback::MeleeKnockbackAid;
 pub use test_aid::{drives_run, MEASURING_AIDS};
 pub mod sfx;
 pub mod sneak_gauges;
 pub mod ui_colour;
+pub mod language;
 pub mod ui_sounds;
 pub mod stress;
 pub mod vats_mode;
@@ -212,7 +214,11 @@ pub struct PlayerCamera;
 /// references, by [`dropped`] for references the simulation created (dropped items), so
 /// the game can hide what the simulation removed and the crosshair can find items by
 /// their render bounds.
+///
+/// Immutable: giving an entity another reference means inserting a new `RefVisual`, so
+/// its hooks see every change and keep [`hitvol::ActorBoundsCandidate`] right.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[component(immutable, on_insert = hitvol::ref_visual_inserted, on_remove = hitvol::ref_visual_removed)]
 pub struct RefVisual(pub u32);
 
 /// Put by nvforever on the entity of every render cell it streams in (its transform is
@@ -276,14 +282,28 @@ pub struct OpenContainer {
 /// disabled): visuals and collision must follow. Sent for placed references and for
 /// references the simulation creates (a drop from the inventory sends one per new
 /// reference; taking a dropped item back sends one for it).
+///
+/// `restored`: sent by a load for a reference as the save has it, not for anything that
+/// happened now. Visuals and collision follow it all the same; what reads a change as a
+/// deed of this moment (`crate::crime`, `crate::world_sounds`) must not.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct RefChanged {
     pub form_id: u32,
+    pub restored: bool,
 }
 
-/// A script moved or turned a placed or created reference (SetPos, SetAngle, Rotate,
-/// SetScale: `fnv_game::Game::turned`): its collision follows when the settle write-back
-/// would otherwise undo the move (`crate::phys::PhysState::repose_ref`).
+impl RefChanged {
+    /// A change happening now.
+    pub fn new(form_id: u32) -> RefChanged {
+        RefChanged { form_id, restored: false }
+    }
+}
+
+/// A script or the console moved or turned a placed or created reference (SetPos, SetAngle,
+/// Rotate, SetScale: `fnv_game::Game::turned`, and what it held before the tick cleared it):
+/// its collision follows when the settle write-back would otherwise undo the move
+/// (`crate::phys::PhysState::repose_ref`), and its drawn model follows (`crate::moved`,
+/// `crate::script_draw`).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct RefRepose {
     pub form_id: u32,
@@ -366,7 +386,7 @@ impl Plugin for PlayPlugin {
             .add_plugins(grab::GrabPlugin)
             .add_plugins(difficulty::DifficultyPlugin)
             .add_plugins(hardcore::HardcorePlugin)
-            .add_plugins(ui_colour::UiColourPlugin);
+            .add_plugins((ui_colour::UiColourPlugin, language::LanguagePlugin));
         test_aid::setup(app);
         stress::setup(app);
         settings::setup(app);

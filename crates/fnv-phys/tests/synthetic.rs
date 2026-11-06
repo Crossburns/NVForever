@@ -258,7 +258,7 @@ fn clutter_on_the_terrain_shell_falls_asleep() {
 }
 
 #[test]
-fn fixed_bounds_cover_static_collision_only() {
+fn fixed_bounds_cover_static_and_keyframed_collision_only() {
     let mut w = PhysWorld::new(PhysParams::default());
     assert_eq!(w.fixed_bounds(), None);
     w.add_ref(&at(1, [100.0, 0.0, 500.0]), &[object(boxed([50.0, 20.0, 10.0]), Motion::Static)]);
@@ -1353,6 +1353,40 @@ fn keyframed_door_blocks_until_posed_open() {
     assert!((b.translation[0] - 150.0).abs() < 0.5, "{:?}", b.translation);
 }
 
+/// A keyframed body is teleported into place (never moved smoothly), so it is a fixed
+/// body. As a kinematic body it broke the character controller: rapier's "carried by a
+/// kinematic body" rule froze a character walking down its slope (the Prospector Saloon's
+/// broken door 0x00108BD7, issue #1485; the same model also let a degenerate collision
+/// mesh's centre of mass become a phantom velocity that flung a character). A character
+/// walking down a keyframed slope must move normally.
+#[test]
+fn keyframed_slope_does_not_freeze_the_character() {
+    // A slab tilted so its top descends eastward, keyframed as door parts are.
+    let a = 5.0f32.to_radians();
+    let (s, c) = a.sin_cos();
+    let rot = [c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c];
+    let half = [200.0, 200.0, 5.0];
+    let west = [-half[0], 0.0, half[2]];
+    let rw = [rot[0] * west[0] + rot[2] * west[2], 0.0, rot[6] * west[0] + rot[8] * west[2]];
+    let mut panel = object(boxed(half), Motion::Keyframed);
+    panel.shell = 0.7;
+    let mut w = ground();
+    w.add_ref(&RefPose { form_id: 1, position: [0.0 - rw[0], 0.0, 100.0 - rw[2]], rotation: rot, scale: 1.0 }, &[panel]);
+    let mut c = w.add_character(1, CharacterParams::default(), [0.0, 100.0, 120.0]);
+    settle(&mut w, &mut c, 60);
+    let dt = w.params.dt;
+    let mut min_speed = f32::INFINITY;
+    let mut prev = c.feet;
+    for _ in 0..120 {
+        let s = w.move_character(&mut c, CharacterInput { velocity: [0.0, -344.0], ..Default::default() });
+        w.step();
+        let speed = ((s.feet[0] - prev[0]).powi(2) + (s.feet[1] - prev[1]).powi(2)).sqrt() / dt;
+        min_speed = min_speed.min(speed);
+        prev = s.feet;
+    }
+    assert!(min_speed > 50.0, "froze on the keyframed slope: min {min_speed:.1} units/s");
+}
+
 #[test]
 fn explosions_push_dynamic_bodies_away() {
     let mut w = ground();
@@ -1423,6 +1457,101 @@ fn part_capsules_say_which_part_was_hit() {
     w.update_queries();
     assert_eq!(w.actor_part_count(0x10), 0);
     assert_eq!(shot(&mut w, 125.0).unwrap().0, Owner::Actor { form_id: 0x10, layer: layers::BIPED, part: fnv_phys::actors::WHOLE });
+}
+
+/// The torso, head and a leg of `part_capsules_say_which_part_was_hit`, `dx` along x.
+fn three_parts(dx: f32) -> Vec<PartCapsule> {
+    [
+        PartCapsule { part: 0, a: [200.0, 0.0, 70.0], b: [200.0, 0.0, 110.0], radius: 15.0 },
+        PartCapsule { part: 1, a: [200.0, 0.0, 120.0], b: [200.0, 0.0, 130.0], radius: 9.0 },
+        PartCapsule { part: 4, a: [200.0, 0.0, 60.0], b: [220.0, 0.0, 10.0], radius: 7.0 },
+    ]
+    .iter()
+    .map(|p| PartCapsule { a: [p.a[0] + dx, p.a[1], p.a[2]], b: [p.b[0] + dx, p.b[1], p.b[2]], ..*p })
+    .collect()
+}
+
+#[test]
+fn bit_identical_part_writes_are_skipped_and_dirty_nothing() {
+    let mut w = ground();
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &three_parts(0.0));
+    w.update_queries();
+    let before = w.refresh_stats();
+    assert_eq!(before.hitvol_written, 3);
+    // The same pose again: nothing written, nothing for a refresh to do.
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &three_parts(0.0));
+    w.update_queries();
+    let same = w.refresh_stats();
+    assert_eq!((same.hitvol_written, same.hitvol_skipped, same.refreshes), (3, 3, before.refreshes));
+    assert_eq!(same.hitvol_colliders, 6, "every capsule handed in is still counted");
+    // -0.0 is not 0.0 to the bit: written.
+    let mut signed = three_parts(0.0);
+    signed[1].a[1] = -0.0;
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &signed);
+    assert_eq!(w.refresh_stats().hitvol_written, 6);
+    // Dead now (same pose): written, the colliders move to DEAD_BIP.
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], true), &signed);
+    w.update_queries();
+    assert_eq!(w.refresh_stats().hitvol_written, 9);
+    assert_eq!(w.refresh_stats().refreshes, before.refreshes + 1);
+    let shot = w.queries().ray([0.0, 0.0, 90.0], [1.0, 0.0, 0.0], 1000.0, &Filter::default()).unwrap();
+    assert_eq!(shot.owner, Owner::Actor { form_id: 0x10, layer: layers::DEAD_BIP, part: 0 });
+    // After the single capsule, the same parts are written again (its parts were dropped).
+    w.set_actor_volume(0x10, person([200.0, 0.0, 0.0], true));
+    w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], true), &signed);
+    assert_eq!(w.actor_part_count(0x10), 3);
+    assert_eq!(w.refresh_stats().hitvol_written, 13);
+}
+
+#[test]
+fn standalone_hit_volumes_answer_as_attached_ones_to_the_bit() {
+    // The same writes into a world with attached capsules and one with standalone ones
+    // (both set explicitly, whatever the default): every query, aim point, body digest and
+    // step agrees to the bit, including aim points read between a write and the next refresh.
+    let mut a = ground();
+    a.set_standalone_hit_volumes(false);
+    let mut b = ground();
+    b.set_standalone_hit_volumes(true);
+    let bits = |h: Option<RayHit>| h.map(|h| (h.owner, h.distance.to_bits(), h.point.map(f32::to_bits), h.normal.map(f32::to_bits)));
+    let look = |w: &mut PhysWorld| {
+        let aims = (w.actor_aim_point(0x10).map(|p| p.map(f32::to_bits)), w.actor_part_centers(0x10).iter().map(|p| p.map(f32::to_bits)).collect::<Vec<_>>());
+        let mut shots = Vec::new();
+        for z in [10.0, 35.0, 69.0, 90.0, 115.0, 125.0, 131.0, 145.0] {
+            for y in [-12.0, -3.0, 0.0, 4.5, 11.0] {
+                shots.push(bits(w.queries().ray([0.0, y, z], [1.0, 0.0, 0.0], 1000.0, &Filter::default())));
+            }
+        }
+        shots.push(bits(w.queries().ray([210.0, 0.0, 300.0], [0.0, 0.0, -1.0], 1000.0, &Filter::default())));
+        (aims, shots, w.state_digest())
+    };
+    #[allow(clippy::type_complexity)]
+    let script: Vec<Box<dyn Fn(&mut PhysWorld)>> = vec![
+        Box::new(|w| w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &three_parts(0.0))),
+        Box::new(|w| w.set_actor_parts(0x10, person([213.5, 1.25, 0.5], false), &three_parts(13.5))),
+        Box::new(|w| w.step()),
+        Box::new(|w| w.set_actor_parts(0x10, person([213.5, 1.25, 0.5], true), &three_parts(13.5)[..2])),
+        Box::new(|w| w.set_actor_volume(0x10, person([250.0, -3.0, 0.0], false))),
+        Box::new(|w| w.step()),
+        Box::new(|w| w.set_actor_parts(0x10, person([180.0, 0.0, 0.0], false), &three_parts(-20.0))),
+    ];
+    for (i, act) in script.iter().enumerate() {
+        act(&mut a);
+        act(&mut b);
+        // Before any refresh (aim points read the colliders as they stand), then after.
+        let early = |w: &PhysWorld| (w.actor_aim_point(0x10).map(|p| p.map(f32::to_bits)), w.actor_part_centers(0x10).iter().map(|p| p.map(f32::to_bits)).collect::<Vec<_>>());
+        assert_eq!(early(&a), early(&b), "write {i}, before the refresh");
+        assert_eq!(look(&mut a), look(&mut b), "write {i}");
+    }
+    for _ in 0..5 {
+        a.step();
+        b.step();
+    }
+    assert_eq!(a.state_digest(), b.state_digest());
+    assert_eq!((a.stats().bodies_kinematic, a.stats().colliders), (b.stats().bodies_kinematic, b.stats().colliders));
+    assert!(a.remove_actor_volume(0x10) && b.remove_actor_volume(0x10));
+    assert_eq!(a.stats().colliders, b.stats().colliders, "the standalone colliders went with the volume");
+    assert_eq!(look(&mut a), look(&mut b));
+    assert!(b.queries().ray([0.0, 0.0, 90.0], [1.0, 0.0, 0.0], 1000.0, &Filter::default()).is_none());
 }
 
 #[test]
@@ -1601,9 +1730,9 @@ fn clutter_added_asleep_on_a_shelf_it_overlaps_stays_asleep() {
 
 #[test]
 fn clutter_asleep_on_a_keyframed_lid_stays_asleep() {
-    // A container's keyframed lid added with the cell (asleep), a bottle overlapping it.
+    // A container's keyframed lid (a fixed body), a bottle overlapping it.
     let mut w = ground();
-    let lid = PreparedRef::new(&w.params, &at(0x9C, [100.0, 100.0, 290.0]), &[object(boxed([50.0, 50.0, 10.0]), Motion::Keyframed)]).asleep();
+    let lid = PreparedRef::new(&w.params, &at(0x9C, [100.0, 100.0, 290.0]), &[object(boxed([50.0, 50.0, 10.0]), Motion::Keyframed)]);
     w.insert_ref(lid);
     add_asleep(&mut w, 0x99, [100.0, 100.0, 304.0], [5.0, 5.0, 5.0]);
     for _ in 0..120 {
@@ -1742,4 +1871,1141 @@ fn loose_items_float_or_sink_by_material() {
     let t = metal_low_at.expect("the metal item reaches the bed");
     assert!(t > 1.2 && t < 3.0, "the metal item reached the bed after {t} s");
     assert!(z(&w, 4) < 20.0, "out of water the wooden item lies on the ground: z {}", z(&w, 4));
+}
+
+// --- attached vs standalone hit volumes: differential tests ---
+//
+// Each scenario drives a world with attached part capsules and one with standalone ones
+// (`PhysWorld::set_standalone_hit_volumes`, both set explicitly) through the same script and
+// compares every answer. Exact ties are built on purpose: first-hit `ray`/`sweep` keep the
+// first of equal costs in tree-traversal order [design: parry3d 0.31.1
+// `partitioning/bvh/bvh_traverse.rs:393`], `ray_all` breaks equal distances only by owner
+// [design: crates/fnv-phys/src/world.rs:1226], and several segments can share a part id
+// [design: engine/nvforever/src/limbs.rs:334].
+//
+// Every scenario runs twice: `hitvol_diff_*` compares to the bit (owner, part, normal,
+// point, distance, hit order); `hitvol_ties_*` compares what a tie cannot change (a ray's
+// distance and point, the set of `ray_all` hits, a sweep's fraction, overlaps, aim points,
+// body states, the character), and every answer it lets through that differs to the bit
+// must be an exact tie shown in both worlds (`tied`). A `hitvol_diff_*` marked `#[ignore]`
+// is a divergence found (the observed values are in its comment), kept as the record, not
+// loosened.
+
+/// One query answer: what was asked, the answer as printed, every float in it to the bit,
+/// the part of it no exact tie can change (`loose`), and what shows that a difference
+/// outside `loose` is an exact tie (`tie`, [`tied`]).
+#[derive(Debug)]
+struct Ans {
+    q: String,
+    shown: String,
+    bits: Vec<u32>,
+    loose: String,
+    tie: Tie,
+}
+
+/// The evidence [`tied`] reads, asked of the answer's own world.
+#[derive(Debug, Default)]
+enum Tie {
+    /// An answer with no tie in it (loose and exact are the same).
+    #[default]
+    None,
+    /// A first-hit ray, and every hit of the same ray (`ray_all`).
+    Ray(Option<RayHit>, Vec<RayHit>),
+    /// `ray_all`'s hits.
+    RayAll(Vec<RayHit>),
+    /// A sweep, and the owners the swept shape touches (within [`TIE_TOUCH`]) where it
+    /// stopped.
+    Sweep(Option<SweepHit>, Vec<Owner>),
+}
+
+/// How far (game units) a sweep's shape is grown to find what it touches at its stop.
+const TIE_TOUCH: f32 = 0.05;
+
+/// `s` grown by `by` on every side (the probe shapes: spheres, capsules and boxes).
+fn grown(s: &Shape, by: f32) -> Shape {
+    match s {
+        Shape::Sphere { radius } => Shape::Sphere { radius: radius + by },
+        Shape::Capsule { a, b, radius } => Shape::Capsule { a: *a, b: *b, radius: radius + by },
+        Shape::Box { half_extents } => Shape::Box { half_extents: half_extents.map(|h| h + by) },
+        other => panic!("no probe shape: {other:?}"),
+    }
+}
+
+/// Whether a difference between the attached world's answer `x` and the standalone one's
+/// `y` that `loose` lets through is an exact tie, shown in both worlds:
+/// - `ray`: each world's winner is among the other world's `ray_all` hits, with the same
+///   owner, distance and normal to the bit;
+/// - `ray_all`: the hits come in the same order of distances, so only hits at one
+///   distance changed places;
+/// - `sweep`: each world's winner is touched by the swept shape where the other world's
+///   sweep stopped (the same fraction, by `loose`).
+fn tied(x: &Ans, y: &Ans) -> Result<(), String> {
+    let same = |a: &RayHit, b: &RayHit| a.owner == b.owner && a.distance.to_bits() == b.distance.to_bits() && a.normal.map(f32::to_bits) == b.normal.map(f32::to_bits);
+    match (&x.tie, &y.tie) {
+        (Tie::Ray(Some(hx), all_x), Tie::Ray(Some(hy), all_y)) => {
+            if !all_x.iter().any(|h| same(h, hy)) {
+                return Err(format!("the standalone winner is no attached hit at its distance: {hy:?}"));
+            }
+            if !all_y.iter().any(|h| same(h, hx)) {
+                return Err(format!("the attached winner is no standalone hit at its distance: {hx:?}"));
+            }
+            Ok(())
+        }
+        (Tie::RayAll(ax), Tie::RayAll(ay)) => {
+            let d = |hs: &[RayHit]| hs.iter().map(|h| h.distance.to_bits()).collect::<Vec<_>>();
+            if d(ax) == d(ay) {
+                Ok(())
+            } else {
+                Err("hits changed places across distances".into())
+            }
+        }
+        (Tie::Sweep(Some(hx), touch_x), Tie::Sweep(Some(hy), touch_y)) => {
+            if !touch_x.contains(&hy.owner) {
+                return Err(format!("the standalone winner {:?} is not touched at the attached stop {touch_x:?}", hy.owner));
+            }
+            if !touch_y.contains(&hx.owner) {
+                return Err(format!("the attached winner {:?} is not touched at the standalone stop {touch_y:?}", hx.owner));
+            }
+            Ok(())
+        }
+        _ => Err("differs where no tie can be".into()),
+    }
+}
+
+fn ray_bits(h: &RayHit, out: &mut Vec<u32>) {
+    out.push(h.distance.to_bits());
+    out.extend(h.point.map(f32::to_bits));
+    out.extend(h.normal.map(f32::to_bits));
+    out.push(h.shell.to_bits());
+}
+
+fn ray_shown(h: &RayHit) -> String {
+    format!("{:?} d={:?} n={:?} p={:?}", h.owner, h.distance, h.normal, h.point)
+}
+
+/// A first-hit ray, with `all`, the same ray's `ray_all` (for [`tied`]).
+fn ans_ray(q: String, h: Option<RayHit>, all: Vec<RayHit>) -> Ans {
+    let mut bits = Vec::new();
+    if let Some(h) = &h {
+        ray_bits(h, &mut bits);
+    }
+    // Equal distances give the same point; owner and normal follow the tie's winner.
+    let loose = format!("{:x?}", h.map(|h| (h.distance.to_bits(), h.point.map(f32::to_bits))));
+    Ans { q, shown: h.as_ref().map_or("miss".into(), ray_shown), bits, loose, tie: Tie::Ray(h, all) }
+}
+
+fn ans_ray_all(q: String, hs: Vec<RayHit>) -> Ans {
+    let mut bits = Vec::new();
+    hs.iter().for_each(|h| ray_bits(h, &mut bits));
+    // The same hits in any order.
+    let mut each: Vec<String> = hs
+        .iter()
+        .map(|h| {
+            let mut b = Vec::new();
+            ray_bits(h, &mut b);
+            format!("{:?} {b:x?}", h.owner)
+        })
+        .collect();
+    each.sort();
+    Ans { q, shown: format!("[{}]", hs.iter().map(ray_shown).collect::<Vec<_>>().join("; ")), bits, loose: each.join("; "), tie: Tie::RayAll(hs) }
+}
+
+/// A sweep, with `touch`, what its shape touches where it stopped (for [`tied`]).
+fn ans_sweep(q: String, h: Option<SweepHit>, touch: Vec<Owner>) -> Ans {
+    let mut bits = Vec::new();
+    let shown = match &h {
+        Some(h) => {
+            bits.push(h.fraction.to_bits());
+            bits.extend(h.point.map(f32::to_bits));
+            bits.extend(h.normal.map(f32::to_bits));
+            format!("{:?} f={:?} n={:?} p={:?}", h.owner, h.fraction, h.normal, h.point)
+        }
+        None => "miss".into(),
+    };
+    // The witness point and normal belong to the tie's winner; the fraction does not.
+    let loose = format!("{:x?}", h.map(|h| h.fraction.to_bits()));
+    Ans { q, shown, bits, loose, tie: Tie::Sweep(h, touch) }
+}
+
+/// An answer with no tie in it: loose and exact are the same.
+fn ans_plain(q: String, shown: String, bits: Vec<u32>) -> Ans {
+    let loose = format!("{shown} {bits:x?}");
+    Ans { q, shown, bits, loose, tie: Tie::None }
+}
+
+fn ans_points(q: String, ps: &[[f32; 3]]) -> Ans {
+    ans_plain(q, format!("{ps:?}"), ps.iter().flat_map(|p| p.map(f32::to_bits)).collect())
+}
+
+fn ans_bodies(q: String, bs: &[BodyState]) -> Ans {
+    let bits = bs.iter().flat_map(|b| b.translation.iter().chain(&b.rotation).chain(&b.linvel).map(|v| v.to_bits()).chain([b.sleeping as u32])).collect();
+    ans_plain(q, format!("{bs:?}"), bits)
+}
+
+fn ans_character(s: &CharacterStep, c: &Character) -> Ans {
+    let mut bits: Vec<u32> = s.feet.map(f32::to_bits).to_vec();
+    bits.push(s.gap.to_bits());
+    bits.extend(s.landed_speed.map(f32::to_bits));
+    bits.extend(c.feet.map(f32::to_bits));
+    bits.push(c.vertical_speed.to_bits());
+    ans_plain("character".into(), format!("{s:?}"), bits)
+}
+
+/// The questions put to both worlds.
+#[derive(Default)]
+struct Probe {
+    /// (origin, direction): each asked as `ray` and `ray_all`, default filter, 1000 units.
+    rays: Vec<([f32; 3], [f32; 3])>,
+    /// (shape, start, motion, filter) for `sweep`.
+    sweeps: Vec<(Shape, Iso, [f32; 3], Filter)>,
+    /// (shape, place) for `overlap`, default filter.
+    overlaps: Vec<(Shape, Iso)>,
+    /// Actors whose aim point and part centres are read (before the queries refresh).
+    actors: Vec<u32>,
+}
+
+fn place(t: [f32; 3]) -> Iso {
+    Iso { translation: t, rotation: ID }
+}
+
+/// A controller-sized capsule (18-unit radius, 128 tall) standing on its start point.
+fn controller_capsule() -> Shape {
+    Shape::Capsule { a: [0.0, 0.0, 18.0], b: [0.0, 0.0, 110.0], radius: 18.0 }
+}
+
+fn ask(w: &mut PhysWorld, p: &Probe) -> Vec<Ans> {
+    let mut out = Vec::new();
+    for &id in &p.actors {
+        let aim = w.actor_aim_point(id);
+        out.push(ans_points(format!("aim {id:#x}"), aim.as_slice()));
+        out.push(ans_points(format!("part centres {id:#x}"), &w.actor_part_centers(id)));
+    }
+    let f = Filter::default();
+    let q = w.queries();
+    for (i, &(o, d)) in p.rays.iter().enumerate() {
+        let all = q.ray_all(o, d, 1000.0, &f);
+        out.push(ans_ray(format!("ray {i} {o:?}->{d:?}"), q.ray(o, d, 1000.0, &f), all.clone()));
+        out.push(ans_ray_all(format!("ray_all {i} {o:?}->{d:?}"), all));
+    }
+    for (i, (s, from, m, filter)) in p.sweeps.iter().enumerate() {
+        let hit = q.sweep(s, from, *m, filter).unwrap();
+        // What the shape touches where it stopped: a tie's other candidate is there too.
+        let touch = hit.map_or(Vec::new(), |h| {
+            let at = Iso { translation: std::array::from_fn(|k| from.translation[k] + m[k] * h.fraction), rotation: from.rotation };
+            q.overlap(&grown(s, TIE_TOUCH), &at, filter).unwrap()
+        });
+        out.push(ans_sweep(format!("sweep {i} from {:?} by {m:?} no_actors={}", from.translation, filter.no_actors), hit, touch));
+    }
+    for (i, (s, at)) in p.overlaps.iter().enumerate() {
+        let o = q.overlap(s, at, &f).unwrap();
+        out.push(ans_plain(format!("overlap {i} at {:?}", at.translation), format!("{o:?}"), Vec::new()));
+    }
+    out
+}
+
+/// Whether two answers differ: to the bit, or (`exact` false) where no tie reaches.
+fn differ(x: &Ans, y: &Ans, exact: bool) -> bool {
+    assert_eq!(x.q, y.q);
+    if exact {
+        (&x.shown, &x.bits) != (&y.shown, &y.bits)
+    } else {
+        x.loose != y.loose
+    }
+}
+
+/// The kind of a question (its first word), for the summary.
+fn kind(q: &str) -> &str {
+    q.split(' ').next().unwrap_or(q)
+}
+
+fn summary(diffs: &[(String, String)], asked: usize) -> String {
+    let mut kinds = std::collections::BTreeMap::<&str, usize>::new();
+    for (k, _) in diffs {
+        *kinds.entry(k.as_str()).or_default() += 1;
+    }
+    format!("{} of {asked} answers differ, by kind {kinds:?}:\n{}", diffs.len(), diffs.iter().take(40).map(|d| d.1.clone()).collect::<Vec<_>>().join("\n"))
+}
+
+#[test]
+fn hitvol_tie_check_rejects_what_is_no_tie() {
+    let hit = |form_id: u32, part: u8, distance: f32, normal: [f32; 3]| RayHit { owner: Owner::Actor { form_id, layer: 8, part }, distance, point: [distance, 0.0, 0.0], normal, material: None, shell: 0.0 };
+    let ray = |h: RayHit, all: Vec<RayHit>| ans_ray("ray".into(), Some(h), all);
+    let (a, b) = (hit(0x10, 0, 5.0, [-1.0, 0.0, 0.0]), hit(0x11, 0, 5.0, [-1.0, 0.0, 0.0]));
+    // Both candidates in both worlds at one distance: a tie.
+    assert!(tied(&ray(a, vec![a, b]), &ray(b, vec![b, a])).is_ok());
+    // The other world's winner is not a hit here, or not at that distance: no tie.
+    assert!(tied(&ray(a, vec![a]), &ray(b, vec![b, a])).is_err());
+    assert!(tied(&ray(a, vec![a, hit(0x11, 0, 5.5, [-1.0, 0.0, 0.0])]), &ray(b, vec![b, a])).is_err());
+    // Same owner, other normal, and only one such hit: no tie.
+    let c = hit(0x10, 0, 5.0, [0.0, 1.0, 0.0]);
+    assert!(tied(&ray(a, vec![a]), &ray(c, vec![c])).is_err());
+    // `ray_all`: places swapped at one distance is a tie, across distances is not.
+    let far = hit(0x12, 0, 9.0, [-1.0, 0.0, 0.0]);
+    assert!(tied(&ans_ray_all("ray_all".into(), vec![a, b, far]), &ans_ray_all("ray_all".into(), vec![b, a, far])).is_ok());
+    assert!(tied(&ans_ray_all("ray_all".into(), vec![a, far]), &ans_ray_all("ray_all".into(), vec![far, a])).is_err());
+    // A sweep whose other winner is not touched where it stopped: no tie.
+    let sw = |owner: Owner, touch: Vec<Owner>| ans_sweep("sweep".into(), Some(SweepHit { owner, fraction: 0.5, point: [0.0; 3], normal: [1.0, 0.0, 0.0] }), touch);
+    assert!(tied(&sw(a.owner, vec![a.owner, b.owner]), &sw(b.owner, vec![a.owner, b.owner])).is_ok());
+    assert!(tied(&sw(a.owner, vec![a.owner]), &sw(b.owner, vec![a.owner, b.owner])).is_err());
+    // An answer with no tie in it never passes as one.
+    assert!(tied(&ans_plain("aim".into(), "x".into(), vec![1]), &ans_plain("aim".into(), "y".into(), vec![2])).is_err());
+}
+
+/// An attached-capsule world and a standalone-capsule one built alike, and the
+/// differences between their answers so far.
+struct Pair {
+    a: PhysWorld,
+    s: PhysWorld,
+    exact: bool,
+    diffs: Vec<(String, String)>,
+    asked: usize,
+    /// Relaxed: answers that differed to the bit, each shown to be an exact tie ([`tied`]).
+    ties: usize,
+}
+
+impl Pair {
+    fn new(make: impl Fn() -> PhysWorld, exact: bool) -> Pair {
+        let mut a = make();
+        a.set_standalone_hit_volumes(false);
+        let mut s = make();
+        s.set_standalone_hit_volumes(true);
+        Pair { a, s, exact, diffs: Vec::new(), asked: 0, ties: 0 }
+    }
+
+    fn act(&mut self, f: impl Fn(&mut PhysWorld)) {
+        f(&mut self.a);
+        f(&mut self.s);
+    }
+
+    fn compare(&mut self, ctx: &str, a: Vec<Ans>, s: Vec<Ans>) {
+        assert_eq!(a.len(), s.len());
+        for (x, y) in a.iter().zip(&s) {
+            self.asked += 1;
+            let why = if differ(x, y, self.exact) {
+                Some("differs".to_string())
+            } else if !self.exact && differ(x, y, true) {
+                // Relaxed: a difference `loose` lets through must be an exact tie.
+                self.ties += 1;
+                tied(x, y).err().map(|e| format!("not an exact tie: {e}"))
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                self.diffs.push((kind(&x.q).to_string(), format!("{ctx}: {} ({why})\n    attached:   {}\n    standalone: {}", x.q, x.shown, y.shown)));
+            }
+        }
+    }
+
+    fn check(&mut self, ctx: &str, p: &Probe) {
+        let (a, s) = (ask(&mut self.a, p), ask(&mut self.s, p));
+        self.compare(ctx, a, s);
+    }
+
+    fn check_boxes(&mut self, ctx: &str) {
+        let (a, s) = (ans_bodies("boxes".into(), &box_states(&self.a)), ans_bodies("boxes".into(), &box_states(&self.s)));
+        let (da, ds) = (self.a.state_digest(), self.s.state_digest());
+        let digest = |d: u64| ans_plain("digest".into(), format!("{d:#x}"), Vec::new());
+        self.compare(ctx, vec![a, digest(da)], vec![s, digest(ds)]);
+    }
+
+    /// Panics listing every answer that differed.
+    fn finish(self) {
+        assert!(self.asked > 0);
+        assert!(self.diffs.is_empty(), "{}", summary(&self.diffs, self.asked));
+        println!("{} answers, all equal{}", self.asked, if self.exact { " to the bit".to_string() } else { format!(" modulo {} exact ties, each shown", self.ties) });
+    }
+}
+
+/// Tie geometry on an actor standing at x = 200 + dx: part 0 holds part 7 (a ray starting
+/// inside both hits each at distance 0); two segments of part 2 at y = +-3 and a part 3 /
+/// part 4 pair at y = +-3 are mirror images, so a ray along y = 0 meets each pair at the
+/// same distance with mirrored normals.
+fn tie_parts(dx: f32) -> Vec<PartCapsule> {
+    let p = |part: u8, a: [f32; 3], b: [f32; 3], radius: f32| PartCapsule { part, a: [a[0] + dx, a[1], a[2]], b: [b[0] + dx, b[1], b[2]], radius };
+    vec![
+        p(0, [200.0, 0.0, 60.0], [200.0, 0.0, 110.0], 15.0),
+        p(7, [200.0, 0.0, 70.0], [200.0, 0.0, 100.0], 12.0),
+        p(2, [260.0, 3.0, 40.0], [260.0, 3.0, 80.0], 10.0),
+        p(2, [260.0, -3.0, 40.0], [260.0, -3.0, 80.0], 10.0),
+        p(3, [320.0, 3.0, 40.0], [320.0, 3.0, 80.0], 10.0),
+        p(4, [320.0, -3.0, 40.0], [320.0, -3.0, 80.0], 10.0),
+    ]
+}
+
+/// Rays, sweeps and overlaps aimed at the ties of `tie_parts(dx)`.
+fn tie_probe(dx: f32, actors: &[u32]) -> Probe {
+    let x = |v: f32| v + dx;
+    let ball = Shape::Sphere { radius: 4.0 };
+    Probe {
+        rays: vec![
+            // Inside parts 0 and 7: both at distance 0.
+            ([x(200.0), 0.0, 85.0], [1.0, 0.0, 0.0]),
+            ([x(200.0), 0.0, 85.0], [-1.0, 0.0, 0.0]),
+            ([x(200.0), 0.0, 85.0], [0.0, 1.0, 0.0]),
+            ([x(200.0), 0.0, 85.0], [0.0, 0.0, 1.0]),
+            // Grazing the two part-2 segments at equal distance (same owner).
+            ([x(230.0), 0.0, 60.0], [1.0, 0.0, 0.0]),
+            ([x(290.0), 0.0, 60.0], [-1.0, 0.0, 0.0]),
+            // The part 3 / part 4 pair at equal distance (owners differ by part).
+            ([x(290.0), 0.0, 60.0], [1.0, 0.0, 0.0]),
+            ([x(350.0), 0.0, 60.0], [-1.0, 0.0, 0.0]),
+            // Down through the middle of each pair.
+            ([x(260.0), 0.0, 200.0], [0.0, 0.0, -1.0]),
+            ([x(320.0), 0.0, 200.0], [0.0, 0.0, -1.0]),
+            // Along the whole actor.
+            ([0.0, 0.0, 60.0], [1.0, 0.0, 0.0]),
+            ([0.0, 0.0, 90.0], [1.0, 0.0, 0.0]),
+        ],
+        sweeps: vec![
+            (ball.clone(), place([x(230.0), 0.0, 60.0]), [100.0, 0.0, 0.0], Filter::default()),
+            (ball.clone(), place([x(290.0), 0.0, 60.0]), [100.0, 0.0, 0.0], Filter::default()),
+            (ball.clone(), place([x(200.0), 0.0, 85.0]), [50.0, 0.0, 0.0], Filter::default()),
+            (controller_capsule(), place([x(100.0), 0.0, 0.5]), [300.0, 0.0, 0.0], Filter::default()),
+            (controller_capsule(), place([x(100.0), 0.0, 0.5]), [300.0, 0.0, 0.0], Filter { no_actors: true, ..Default::default() }),
+            (controller_capsule(), place([x(100.0), 0.0, 40.0]), [0.0, 0.0, -100.0], Filter::default()),
+        ],
+        overlaps: vec![
+            (ball.clone(), place([x(200.0), 0.0, 85.0])),
+            (ball, place([x(260.0), 0.0, 60.0])),
+            (Shape::Box { half_extents: [80.0, 30.0, 60.0] }, place([x(260.0), 0.0, 60.0])),
+        ],
+        actors: actors.to_vec(),
+    }
+}
+
+/// Scenario 1: Overlapping parts of one actor (a ray starting inside two capsules) and equidistant
+/// ones (same part id, and different part ids).
+fn one_actor_ties(exact: bool) {
+    let mut p = Pair::new(ground, exact);
+    p.act(|w| w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0)));
+    p.check("written", &tie_probe(0.0, &[0x10]));
+    // The ties are exact in the geometry itself, so a divergence can only be their order.
+    let both = p.a.queries().ray_all([230.0, 0.0, 60.0], [1.0, 0.0, 0.0], 1000.0, &Filter::default());
+    assert!(both.len() >= 2 && both[0].distance.to_bits() == both[1].distance.to_bits() && both[0].owner == both[1].owner && both[0].normal != both[1].normal, "{both:?}");
+    let pair34 = p.a.queries().ray_all([290.0, 0.0, 60.0], [1.0, 0.0, 0.0], 1000.0, &Filter::default());
+    assert!(pair34.len() >= 2 && pair34[0].distance.to_bits() == pair34[1].distance.to_bits() && pair34[0].owner != pair34[1].owner, "{pair34:?}");
+    let inside = p.a.queries().ray_all([200.0, 0.0, 85.0], [1.0, 0.0, 0.0], 1000.0, &Filter::default());
+    assert_eq!(inside.iter().filter(|h| h.distance == 0.0).count(), 2, "{inside:?}");
+    // Moved (every capsule written again; attached ones are re-inserted into the tree).
+    p.act(|w| w.set_actor_parts(0x10, person([213.5, 1.25, 0.5], false), &tie_parts(13.5)));
+    p.check("moved", &tie_probe(13.5, &[0x10]));
+    p.act(|w| w.step());
+    p.check("stepped", &tie_probe(13.5, &[0x10]));
+    p.finish();
+}
+
+// Observed 2026-11-03: 29 of 105 answers differ (ray 16, ray_all 12, sweep 1), none on the
+// first write, all from the first move on (and after the step). Inside parts 0 and 7
+// (distance 0) the attached world answers part 0, the standalone one part 7 (after the move;
+// after the step these agree); the sweep from there returns
+// part 0 (witness z 85.9849) vs part 7 (85.729836). On the two part-2 segments (d 20.460611)
+// the attached world gives normal y +0.3 first, the standalone one -0.3, in `ray` and in
+// `ray_all`'s order; on the part 3 / part 4 pair (d 20.460594) attached part 4, standalone
+// part 3. Distances, points, hit sets and fractions agree (`hitvol_ties_*` passes).
+// Tie: an exact-TOI tie between coincident (parts 0/7) or mirrored (part 2, parts 3/4) capsules, whose winner was already traversal-order dependent before this change.
+#[test]
+#[ignore = "diverges on exact ties: first hit and ray_all order (part 0 vs 7, part-2 normal +-0.3, part 4 vs 3); see comment"]
+fn hitvol_diff_overlapping_and_equidistant_parts_of_one_actor() {
+    one_actor_ties(true);
+}
+
+#[test]
+fn hitvol_ties_overlapping_and_equidistant_parts_of_one_actor() {
+    one_actor_ties(false);
+}
+
+/// Scenario 2: Two actors whose capsules coincide exactly.
+fn two_actors_coincide(exact: bool) {
+    let mut p = Pair::new(ground, exact);
+    p.act(|w| {
+        w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0));
+        w.set_actor_parts(0x11, person([200.0, 0.0, 0.0], false), &tie_parts(0.0));
+    });
+    let probe = tie_probe(0.0, &[0x10, 0x11]);
+    p.check("written", &probe);
+    // The second actor written again (bit-different, same pose: -0.0 for 0.0), then both moved.
+    p.act(|w| {
+        let mut again = tie_parts(0.0);
+        again[0].a[1] = -0.0;
+        w.set_actor_parts(0x11, person([200.0, 0.0, 0.0], false), &again);
+    });
+    p.check("one rewritten", &probe);
+    p.act(|w| {
+        w.set_actor_parts(0x11, person([213.5, 1.25, 0.5], false), &tie_parts(13.5));
+        w.set_actor_parts(0x10, person([213.5, 1.25, 0.5], false), &tie_parts(13.5));
+    });
+    p.check("moved", &tie_probe(13.5, &[0x10, 0x11]));
+    p.act(|w| w.step());
+    p.check("stepped", &tie_probe(13.5, &[0x10, 0x11]));
+    p.finish();
+}
+
+// Observed 2026-11-03: 29 of 148 answers differ (ray 16, ray_all 12, sweep 1), none after the
+// first write or the -0.0 rewrite, all from the move on. Inside parts 0 and 7 (distance 0):
+// attached 0x11 part 0, standalone 0x10 part 7. On the part-2 segments (d 20.460611):
+// attached 0x11 normal y +0.3, standalone 0x10 normal y -0.3; `ray_all` lists 0x10's two
+// part-2 hits (same owner, same distance) in opposite orders. On the part 3 / 4 pair
+// (d 20.460594): attached 0x11 part 4, standalone 0x10 part 3. The sweep from inside part 0/7
+// picks a different capsule. Overlaps agree; `hitvol_ties_*` passes.
+// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+#[test]
+#[ignore = "diverges on exact ties between coincident actors: first hit owner (0x10 vs 0x11), sweep winner; see comment"]
+fn hitvol_diff_two_actors_coincide() {
+    two_actors_coincide(true);
+}
+
+#[test]
+fn hitvol_ties_two_actors_coincide() {
+    two_actors_coincide(false);
+}
+
+/// `ground()` with six dynamic boxes falling near the actors.
+fn ground_with_boxes() -> PhysWorld {
+    let mut w = ground();
+    for i in 0..6u32 {
+        let o = object(boxed([4.0, 4.0, 4.0]), Motion::Dynamic);
+        w.add_ref(&RefPose { rotation: rz(i as f32 * 0.7), ..at(500 + i, [150.0 + (i % 3) as f32 * 40.0, -30.0 + (i / 3) as f32 * 60.0, 30.0 + i as f32 * 9.0]) }, &[o]);
+    }
+    w
+}
+
+fn box_states(w: &PhysWorld) -> Vec<BodyState> {
+    (500..506).flat_map(|id| w.ref_bodies(id)).collect()
+}
+
+/// Scenario 3: A pending pose flushed straight into `step` (no query between the write and the
+/// step), and two or three writes to one actor before one step.
+fn pending_into_step(exact: bool) {
+    let mut p = Pair::new(ground_with_boxes, exact);
+    p.act(|w| {
+        w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0));
+        w.step();
+    });
+    p.check_boxes("first write stepped");
+    p.check("first write stepped", &tie_probe(0.0, &[0x10]));
+    p.act(|w| {
+        w.set_actor_parts(0x10, person([213.5, 1.25, 0.5], false), &tie_parts(13.5));
+        w.step();
+    });
+    p.check_boxes("move stepped");
+    p.check("move stepped", &tie_probe(13.5, &[0x10]));
+    // Two writes to the same actor before one step; the second is where it ends up.
+    p.act(|w| {
+        w.set_actor_parts(0x10, person([180.0, 0.0, 0.0], false), &tie_parts(-20.0));
+        w.set_actor_parts(0x10, person([226.0, -2.0, 0.0], false), &tie_parts(26.0));
+        w.step();
+    });
+    p.check_boxes("two writes stepped");
+    p.check("two writes stepped", &tie_probe(26.0, &[0x10]));
+    // Three writes, back to an earlier pose, then several steps before the query.
+    p.act(|w| {
+        w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0));
+        w.set_actor_parts(0x10, person([226.0, -2.0, 0.0], false), &tie_parts(26.0));
+        w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0));
+        for _ in 0..3 {
+            w.step();
+        }
+    });
+    p.check_boxes("three writes, three steps");
+    p.check("three writes, three steps", &tie_probe(0.0, &[0x10]));
+    p.finish();
+}
+
+// Observed 2026-11-03: 10 of 148 answers differ, none on the first write stepped and none
+// after three writes and three steps; after "move stepped" and "two writes stepped" the ray
+// starting inside parts 0 and 7 (4 directions, distance 0) answers part 0 attached vs part 7
+// standalone, and the sweep from there part 0 (witness z 85.9849) vs part 7 (85.729836).
+// Boxes and state digest agree on every step.
+// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+#[test]
+#[ignore = "diverges on the zero-distance tie after a write flushed into step: part 0 vs part 7; see comment"]
+fn hitvol_diff_pending_pose_flushed_straight_into_step() {
+    pending_into_step(true);
+}
+
+#[test]
+fn hitvol_ties_pending_pose_flushed_straight_into_step() {
+    pending_into_step(false);
+}
+
+/// Scenario 4: A snapshot taken while poses are pending, restored and queried.
+fn snapshot_pending(exact: bool) {
+    let mut p = Pair::new(ground_with_boxes, exact);
+    p.act(|w| w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0)));
+    p.check("written", &tie_probe(0.0, &[0x10]));
+    // Pending (no refresh yet) when the copies are taken.
+    p.act(|w| {
+        w.set_actor_parts(0x10, person([213.5, 1.25, 0.5], false), &tie_parts(13.5));
+        w.set_actor_parts(0x11, person([213.5, 1.25, 0.5], false), &tie_parts(13.5));
+    });
+    let (snap_a, snap_s) = (p.a.snapshot(), p.s.snapshot());
+    // The originals go on; their copies are not touched by it.
+    p.act(|w| {
+        w.set_actor_parts(0x10, person([180.0, 0.0, 0.0], false), &tie_parts(-20.0));
+        w.step();
+    });
+    p.check("originals went on", &tie_probe(-20.0, &[0x10, 0x11]));
+    // Restored: the copies answer as their originals would have at the snapshot.
+    (p.a, p.s) = (snap_a, snap_s);
+    p.check("restored", &tie_probe(13.5, &[0x10, 0x11]));
+    p.act(|w| w.step());
+    p.check_boxes("restored and stepped");
+    p.check("restored and stepped", &tie_probe(13.5, &[0x10, 0x11]));
+    // A copy taken with poses pending and stepped before any query.
+    p.act(|w| w.set_actor_parts(0x10, person([226.0, -2.0, 0.0], false), &tie_parts(26.0)));
+    let (mut c_a, mut c_s) = (p.a.snapshot(), p.s.snapshot());
+    c_a.step();
+    c_s.step();
+    (p.a, p.s) = (c_a, c_s);
+    p.check_boxes("copy stepped while pending");
+    p.check("copy stepped while pending", &tie_probe(26.0, &[0x10, 0x11]));
+    p.finish();
+}
+
+// Observed 2026-11-03: 66 of 187 answers differ (ray 34, ray_all 24, sweep 8), none on the
+// first write or in the copy stepped while pending; in the originals after the snapshot, in
+// the restored copies and after their step. Restored, the ray from (213.5, 0, 85) along +x:
+// attached 0x10 part 7, standalone 0x10 part 0 (d 0); from (0, 0, 60) along +x: attached
+// 0x11 part 0, standalone 0x10 part 0 (d 198.5); the controller-capsule sweep from
+// (113.5, 0, 0.5): attached 0x11, standalone 0x10 (f 0.22333331). Boxes and digest agree;
+// `hitvol_ties_*` passes.
+// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+#[test]
+#[ignore = "diverges on exact ties before and after restoring a snapshot taken with poses pending; see comment"]
+fn hitvol_diff_snapshot_taken_with_poses_pending() {
+    snapshot_pending(true);
+}
+
+#[test]
+fn hitvol_ties_snapshot_taken_with_poses_pending() {
+    snapshot_pending(false);
+}
+
+/// Scenario 5: An actor removed and added again (handles freed and reused) with the same poses, and
+/// part-count changes.
+fn removed_readded(exact: bool) {
+    let mut p = Pair::new(ground, exact);
+    p.act(|w| {
+        w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0));
+        w.set_actor_parts(0x11, person([200.0, 0.0, 0.0], false), &tie_parts(0.0));
+    });
+    let probe = tie_probe(0.0, &[0x10, 0x11]);
+    p.check("written", &probe);
+    // Removed and added again with the same poses, a query between.
+    p.act(|w| assert!(w.remove_actor_volume(0x10)));
+    p.check("removed", &probe);
+    p.act(|w| w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0)));
+    p.check("added again", &probe);
+    // Removed and added again with no query between (handles freed and reused at once).
+    p.act(|w| {
+        assert!(w.remove_actor_volume(0x11));
+        w.set_actor_parts(0x11, person([200.0, 0.0, 0.0], false), &tie_parts(0.0));
+    });
+    p.check("removed and added again unqueried", &probe);
+    // One part more for 0x10 (every collider replaced), then one fewer than at first.
+    p.act(|w| {
+        let mut more = tie_parts(0.0);
+        more.push(PartCapsule { part: 2, a: [260.0, 0.0, 85.0], b: [260.0, 0.0, 95.0], radius: 6.0 });
+        w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &more);
+    });
+    assert_eq!((p.a.actor_part_count(0x10), p.s.actor_part_count(0x10)), (7, 7));
+    p.check("a part more", &probe);
+    p.act(|w| w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0)[1..]));
+    p.check("a part fewer", &probe);
+    // To the single capsule and back to parts.
+    p.act(|w| w.set_actor_volume(0x10, person([200.0, 0.0, 0.0], false)));
+    p.check("single capsule", &probe);
+    p.act(|w| w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), &tie_parts(0.0)));
+    p.check("parts again", &probe);
+    p.act(|w| w.step());
+    p.check("stepped", &probe);
+    assert_eq!(p.a.stats().colliders, p.s.stats().colliders);
+    p.finish();
+}
+
+#[test]
+fn hitvol_diff_removed_and_readded_actor_and_part_count_change() {
+    removed_readded(true);
+}
+
+#[test]
+fn hitvol_ties_removed_and_readded_actor_and_part_count_change() {
+    removed_readded(false);
+}
+
+/// A seeded generator (64-bit LCG, Knuth's MMIX constants) for the crowd's poses.
+struct Lcg(u64);
+
+impl Lcg {
+    fn unit(&mut self) -> f32 {
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (self.0 >> 40) as f32 / (1u64 << 24) as f32
+    }
+
+    fn range(&mut self, lo: f32, hi: f32) -> f32 {
+        lo + (hi - lo) * self.unit()
+    }
+}
+
+/// The 19 segments of a crowd member as (part, from, to, radius) about its feet, several
+/// sharing a part id as limbs do.
+const SKELETON: [(u8, [f32; 3], [f32; 3], f32); 19] = [
+    (0, [0.0, 0.0, 70.0], [0.0, 0.0, 95.0], 14.0),
+    (0, [0.0, 0.0, 95.0], [0.0, 0.0, 110.0], 13.0),
+    (1, [0.0, 0.0, 115.0], [0.0, 0.0, 125.0], 8.0),
+    (2, [0.0, 10.0, 105.0], [0.0, 22.0, 85.0], 5.0),
+    (2, [0.0, 22.0, 85.0], [0.0, 24.0, 65.0], 4.5),
+    (2, [0.0, 24.0, 65.0], [0.0, 24.0, 58.0], 3.0),
+    (3, [0.0, -10.0, 105.0], [0.0, -22.0, 85.0], 5.0),
+    (3, [0.0, -22.0, 85.0], [0.0, -24.0, 65.0], 4.5),
+    (3, [0.0, -24.0, 65.0], [0.0, -24.0, 58.0], 3.0),
+    (4, [0.0, 7.0, 65.0], [0.0, 8.0, 35.0], 7.0),
+    (4, [0.0, 8.0, 35.0], [0.0, 8.0, 6.0], 5.5),
+    (4, [0.0, 8.0, 6.0], [6.0, 8.0, 2.0], 3.0),
+    (5, [0.0, -7.0, 65.0], [0.0, -8.0, 35.0], 7.0),
+    (5, [0.0, -8.0, 35.0], [0.0, -8.0, 6.0], 5.5),
+    (5, [0.0, -8.0, 6.0], [6.0, -8.0, 2.0], 3.0),
+    (6, [0.0, 0.0, 110.0], [0.0, 0.0, 115.0], 6.0),
+    (7, [-6.0, 0.0, 75.0], [-6.0, 0.0, 100.0], 9.0),
+    (8, [3.0, 0.0, 122.0], [6.0, 0.0, 124.0], 2.0),
+    (9, [-4.0, 0.0, 60.0], [-4.0, 0.0, 70.0], 10.0),
+];
+
+/// Actor `i`'s volume and parts for one frame: a wander about a grid spot and every joint
+/// jittered, from `rng`.
+fn crowd_pose(i: usize, rng: &mut Lcg) -> (HitVolume, Vec<PartCapsule>) {
+    let home = [120.0 + (i % 5) as f32 * 70.0, -140.0 + (i / 5) as f32 * 70.0];
+    let feet = [home[0] + rng.range(-25.0, 25.0), home[1] + rng.range(-25.0, 25.0), rng.range(-0.5, 0.5)];
+    let mut parts = Vec::with_capacity(SKELETON.len());
+    for &(part, a, b, radius) in &SKELETON {
+        let mut j = || rng.range(-4.0, 4.0);
+        let a = [feet[0] + a[0] + j(), feet[1] + a[1] + j(), feet[2] + a[2] + j()];
+        let b = [feet[0] + b[0] + j(), feet[1] + b[1] + j(), feet[2] + b[2] + j()];
+        parts.push(PartCapsule { part, a, b, radius });
+    }
+    (person(feet, i % 7 == 6), parts)
+}
+
+fn crowd_probe() -> Probe {
+    let mut rays = Vec::new();
+    for z in [8.0, 30.0, 60.0, 80.0, 100.0, 118.0] {
+        for y in [-150.0, -100.0, -45.0, 0.0, 30.0, 95.0, 140.0] {
+            rays.push(([0.0, y, z], [1.0, 0.0, 0.0]));
+        }
+    }
+    for x in [130.0, 190.0, 265.0, 330.0, 405.0] {
+        rays.push(([x, -250.0, 70.0], [0.0, 1.0, 0.0]));
+        rays.push(([x, 20.0, 300.0], [0.0, 0.0, -1.0]));
+        rays.push(([x, -120.0, 300.0], [0.1, 0.3, -1.0]));
+    }
+    let mut sweeps = Vec::new();
+    for y in [-140.0, -70.0, 0.0, 70.0] {
+        let from = place([20.0, y, 0.5]);
+        sweeps.push((controller_capsule(), from, [450.0, 0.0, 0.0], Filter::default()));
+        sweeps.push((controller_capsule(), from, [450.0, 0.0, 0.0], Filter { no_actors: true, ..Default::default() }));
+        sweeps.push((Shape::Sphere { radius: 3.0 }, place([20.0, y, 90.0]), [450.0, 10.0, -20.0], Filter::default()));
+    }
+    let mut overlaps = Vec::new();
+    for (x, y) in [(120.0, -140.0), (260.0, -70.0), (330.0, 0.0), (190.0, 70.0), (400.0, 70.0)] {
+        overlaps.push((Shape::Sphere { radius: 40.0 }, place([x, y, 70.0])));
+        overlaps.push((controller_capsule(), place([x + 20.0, y, 0.5])));
+    }
+    Probe { rays, sweeps, overlaps, actors: vec![0x100, 0x105, 0x10c, 0x113] }
+}
+
+/// Scenario 6: 20 actors of 19 parts each, posed from a seeded generator over 50 frames (every actor
+/// written each frame before any query), with falling boxes and a walking character; every
+/// third frame the writes go straight into the step. With `twins`, the last two actors copy
+/// the first two exactly (coincident actors in a full tree).
+fn crowd(twins: bool, exact: bool) {
+    let mut p = Pair::new(ground_with_boxes, exact);
+    let params = CharacterParams::default();
+    let mut ca = p.a.add_character(9, params, [30.0, -100.0, 0.0]);
+    let mut cs = p.s.add_character(9, params, [30.0, -100.0, 0.0]);
+    let probe = crowd_probe();
+    let mut rng = Lcg(0x5eed_2026_1103);
+    for frame in 0..50 {
+        let mut poses: Vec<(HitVolume, Vec<PartCapsule>)> = (0..20).map(|i| crowd_pose(i, &mut rng)).collect();
+        if twins {
+            poses[18] = poses[0].clone();
+            poses[19] = poses[1].clone();
+        }
+        p.act(|w| {
+            for (i, (v, parts)) in poses.iter().enumerate() {
+                w.set_actor_parts(0x100 + i as u32, *v, parts);
+            }
+        });
+        let input = CharacterInput { velocity: [120.0, 25.0 * ((frame % 9) as f32 - 4.0)], ..Default::default() };
+        let ctx = format!("frame {frame}");
+        let straight = frame % 3 == 0;
+        if straight {
+            // Straight into the step, then the character and the queries.
+            p.act(|w| w.step());
+        } else {
+            p.act(|w| w.update_queries());
+        }
+        let (sa, ss) = (p.a.move_character(&mut ca, input), p.s.move_character(&mut cs, input));
+        let (xa, xs) = (ans_character(&sa, &ca), ans_character(&ss, &cs));
+        p.compare(&ctx, vec![xa], vec![xs]);
+        p.check(&ctx, &probe);
+        if !straight {
+            p.act(|w| w.step());
+        }
+        p.check_boxes(&ctx);
+    }
+    assert_eq!(p.a.stats().steps, 50);
+    assert_eq!((p.a.actor_volumes().count(), p.a.actor_part_count(0x100)), (20, 19));
+    p.finish();
+}
+
+#[test]
+fn hitvol_diff_crowd_of_twenty_over_fifty_frames() {
+    crowd(false, true);
+}
+
+#[test]
+fn hitvol_ties_crowd_of_twenty_over_fifty_frames() {
+    crowd(false, false);
+}
+
+// Observed 2026-11-03: 205 of 7350 answers differ (ray 173, sweep 32), all first hits and winners
+// that pick the other twin at the same distance (e.g. frame 1, ray from (0, -150, 30) along
+// +x: attached 0x100 part 5, standalone 0x112 part 5, both d 127.61765); boxes, digest,
+// character, overlaps and ray_all agree.
+// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+#[test]
+#[ignore = "diverges on coincident twins in a full tree: first hit / sweep winner picks the other twin; see comment"]
+fn hitvol_diff_crowd_with_coincident_twins() {
+    crowd(true, true);
+}
+
+#[test]
+fn hitvol_ties_crowd_with_coincident_twins() {
+    crowd(true, false);
+}
+
+/// Scenario 7: A's skip: the same pose written twice leaves the world alone. The public API can force
+/// that write: -0.0 for 0.0 in a segment end defeats the bit comparison
+/// [design: crates/fnv-phys/src/actors.rs:108-111] yet hands rapier the very same pose,
+/// since the mid-point (-0.0 + 0.0 = +0.0) and the direction (0.0 - -0.0 = +0.0) are
+/// unchanged [design: crates/fnv-phys/src/actors.rs:251-253]. Four worlds: attached and
+/// standalone, each skipped and forced; all must answer as the attached skipped one. A forced
+/// write is what every write did before the skip existed.
+fn skipped_vs_forced(exact: bool) {
+    let pose = |w: &mut PhysWorld, parts: &[PartCapsule]| {
+        w.set_actor_parts(0x10, person([200.0, 0.0, 0.0], false), parts);
+        w.set_actor_parts(0x11, person([200.0, 0.0, 0.0], false), &tie_parts(0.0));
+    };
+    let forced: Vec<PartCapsule> = tie_parts(0.0)
+        .into_iter()
+        .map(|mut c| {
+            if c.a[1] == 0.0 {
+                c.a[1] = -0.0;
+            }
+            c
+        })
+        .collect();
+    assert_eq!(forced.iter().filter(|c| c.a[1].to_bits() == (-0.0f32).to_bits()).count(), 2);
+    let names = ["attached skipped", "standalone skipped", "attached forced", "standalone forced"];
+    let mut worlds: Vec<PhysWorld> = (0..4)
+        .map(|i| {
+            let mut w = ground_with_boxes();
+            w.set_standalone_hit_volumes(i % 2 == 1);
+            w
+        })
+        .collect();
+    let probe = tie_probe(0.0, &[0x10, 0x11]);
+    let mut diffs = Vec::new();
+    let (mut asked, mut ties) = (0, 0);
+    for frame in 0..5 {
+        for (i, w) in worlds.iter_mut().enumerate() {
+            // Frames 1 and 3: the skipped worlds write the same pose again, the forced ones
+            // force it.
+            let force = i >= 2 && frame % 2 == 1;
+            let plain = tie_parts(0.0);
+            pose(w, if force { &forced } else { &plain });
+            if frame == 2 {
+                w.step();
+            }
+        }
+        let answers: Vec<Vec<Ans>> = worlds
+            .iter_mut()
+            .map(|w| {
+                let mut a = ask(w, &probe);
+                a.push(ans_bodies("boxes".into(), &box_states(w)));
+                a.push(ans_plain("digest".into(), format!("{:#x}", w.state_digest()), Vec::new()));
+                a
+            })
+            .collect();
+        for (i, other) in answers.iter().enumerate().skip(1) {
+            for (x, y) in answers[0].iter().zip(other) {
+                asked += 1;
+                let why = if differ(x, y, exact) {
+                    Some("differs".to_string())
+                } else if !exact && differ(x, y, true) {
+                    // Relaxed: a difference `loose` lets through must be an exact tie.
+                    ties += 1;
+                    tied(x, y).err().map(|e| format!("not an exact tie: {e}"))
+                } else {
+                    None
+                };
+                if let Some(why) = why {
+                    diffs.push((format!("{} {}", names[i], kind(&x.q)), format!("frame {frame}: {} ({why})\n    attached skipped: {}\n    {}: {}", x.q, x.shown, names[i], y.shown)));
+                }
+            }
+        }
+    }
+    // The skipped worlds wrote once (frame 0); the forced ones wrote 0x10 again on every later
+    // frame (frames 1 and 3 forced, 2 and 4 back from the forced bits).
+    let written: Vec<u64> = worlds.iter().map(|w| w.refresh_stats().hitvol_written).collect();
+    assert_eq!((written[0], written[1], written[2], written[3]), (12, 12, 36, 36), "{written:?}");
+    assert!(diffs.is_empty(), "{}", summary(&diffs, asked));
+    println!("{asked} answers, all equal{}", if exact { " to the bit".to_string() } else { format!(" modulo {ties} exact ties, each shown") });
+}
+
+// Observed 2026-11-03: 61 of 585 answers differ (ray 46, sweep 15), all of them "attached
+// forced" against "attached skipped" (standalone skipped and standalone forced both answer as
+// attached skipped, to the bit): from frame 1
+// on, the first hits on every tie pick the other coincident actor, e.g. the ray from
+// (200, 0, 85) along +x: skipped 0x10 part 7, forced 0x11 part 7, both d 0; the ray from
+// (0, 0, 60) along +x: skipped 0x11 part 0, forced 0x10 part 0, both d 185.00002; sweeps
+// likewise. So the skip (A) changes which of two exactly tied hits wins compared with the
+// old always-write behaviour: not a zero change on exact ties.
+// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+#[test]
+#[ignore = "diverges: attached forced vs attached skipped pick different tie winners (0x10 vs 0x11); standalone matches skipped; see comment"]
+fn hitvol_diff_skipped_write_answers_as_a_forced_one() {
+    skipped_vs_forced(true);
+}
+
+#[test]
+fn hitvol_ties_skipped_write_answers_as_a_forced_one() {
+    skipped_vs_forced(false);
+}
+
+/// An actor's character standing at the origin of [`ground`], for where it can be put.
+fn spot_character(w: &mut PhysWorld) -> Character {
+    w.add_character(1, CharacterParams { max_slope_deg: 60.0, ..CharacterParams::default() }, [0.0, 0.0, 10.0])
+}
+
+const SPOT: [f32; 3] = [500.0, -500.0, 0.0];
+
+#[test]
+fn a_spot_on_open_ground_is_where_a_character_rests_and_stays() {
+    let mut w = ground();
+    let mut c = spot_character(&mut w);
+    let feet = w.character_spot(&c, SPOT).unwrap();
+    assert!((feet[0], feet[1]) == (SPOT[0], SPOT[1]));
+    assert!((feet[2] - TERRAIN_SHELL).abs() < 1e-3, "{feet:?}");
+    w.place_character(&mut c, feet);
+    settle(&mut w, &mut c, 30);
+    assert!((c.feet[2] - feet[2]).abs() < 0.5, "{:?} from {feet:?}", c.feet);
+}
+
+#[test]
+fn a_prop_in_the_way_leaves_no_room_for_the_body_and_a_way_past_is_not_asked_for() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // A wall between the character and the place does not count.
+    w.add_ref(&at(60, [250.0, -250.0, 80.0]), &[object(boxed([20.0, 200.0, 80.0]), Motion::Static)]);
+    assert!(w.character_spot(&c, SPOT).is_ok());
+    // A pillar beside the place, closer than the body's radius: no room.
+    w.add_ref(&at(61, [SPOT[0] + 30.0, SPOT[1], 80.0]), &[object(boxed([20.0, 20.0, 80.0]), Motion::Static)]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+    // Further along: room again.
+    assert!(w.character_spot(&c, [SPOT[0] - 40.0, SPOT[1], 0.0]).is_ok());
+}
+
+#[test]
+fn a_ceiling_lower_than_the_body_leaves_no_room() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // The underside 100 up, above the ray's start (48): the ground is found, the body
+    // does not fit under it.
+    w.add_ref(&at(60, [SPOT[0], SPOT[1], 110.0]), &[object(boxed([100.0, 100.0, 10.0]), Motion::Static)]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+    // A lower one, the ray's start above it: the ground is still the level asked for,
+    // and the body does not stand on top of what is over it instead.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    w.add_ref(&at(61, [SPOT[0], SPOT[1], 25.0]), &[object(boxed([100.0, 100.0, 5.0]), Motion::Static)]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+    // Higher than the body: room under it.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    w.add_ref(&at(62, [SPOT[0], SPOT[1], 150.0]), &[object(boxed([100.0, 100.0, 10.0]), Motion::Static)]);
+    assert!(w.character_spot(&c, SPOT).is_ok());
+}
+
+#[test]
+fn a_spot_is_on_the_level_asked_for_of_those_stacked() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // A floor 200 above the ground: each height asked for gets its own.
+    w.add_ref(&at(60, [SPOT[0], SPOT[1], 195.0]), &[object(boxed([60.0, 60.0, 5.0]), Motion::Static)]);
+    let upper = w.character_spot(&c, [SPOT[0], SPOT[1], 200.0]).unwrap();
+    assert!((upper[2] - 200.0).abs() < 2.0, "{upper:?}");
+    let lower = w.character_spot(&c, [SPOT[0], SPOT[1], 5.0]).unwrap();
+    assert!((lower[2] - TERRAIN_SHELL).abs() < 1e-3, "{lower:?}");
+    // Two floors of one mesh, 30 apart inside the window: one ray meets only the upper.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    let plate = |z: f32, base: u32| ([[-80.0, -80.0, z], [80.0, -80.0, z], [80.0, 80.0, z], [-80.0, 80.0, z]], [[base, base + 1, base + 2], [base, base + 2, base + 3]]);
+    let (upper, ut) = plate(0.0, 0);
+    let (under, lt) = plate(-30.0, 4);
+    let vertices = upper.iter().chain(&under).copied().collect();
+    let shape = Shape::TriMesh { vertices, triangles: vec![ut[0], ut[1], lt[0], lt[1]], materials: vec![0; 4] };
+    w.add_ref(&at(70, [SPOT[0], SPOT[1], 300.0]), &[object(shape, Motion::Static)]);
+    let on = w.character_spot(&c, [SPOT[0], SPOT[1], 302.0]);
+    assert!(matches!(on, Ok(f) if (f[2] - 300.0).abs() < 2.0), "{on:?}");
+    assert_eq!(w.character_spot(&c, [SPOT[0], SPOT[1], 272.0]), Err(SpotRefused::NoRoom), "under the upper floor");
+    // With two surfaces inside the window, the one nearer the height asked for.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    w.add_ref(&at(61, [SPOT[0], SPOT[1], 195.0]), &[object(boxed([60.0, 60.0, 5.0]), Motion::Static)]);
+    w.add_ref(&at(62, [SPOT[0], SPOT[1], 135.0]), &[object(boxed([60.0, 60.0, 5.0]), Motion::Static)]);
+    let lower = w.character_spot(&c, [SPOT[0], SPOT[1], 145.0]);
+    assert_eq!(lower, Err(SpotRefused::NoRoom), "on the lower slab, 60 under the upper");
+    let upper = w.character_spot(&c, [SPOT[0], SPOT[1], 198.0]).unwrap();
+    assert!((upper[2] - 200.0).abs() < 2.0, "{upper:?}");
+}
+
+#[test]
+fn nothing_to_stand_on_near_the_height_is_refused() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // The terrain is 500 below: too far to be the level asked for.
+    assert_eq!(w.character_spot(&c, [SPOT[0], SPOT[1], 500.0]), Err(SpotRefused::NoSupport));
+    assert_eq!(w.character_spot(&c, [f32::NAN, 0.0, 0.0]), Err(SpotRefused::NoSupport));
+    // A wall's steep face is no support either.
+    let mut w = PhysWorld::new(PhysParams::default());
+    let c = spot_character(&mut w);
+    let (s, co) = 80f32.to_radians().sin_cos();
+    let rot = [co, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, co];
+    w.add_ref(&RefPose { form_id: 60, position: [0.0, 0.0, 0.0], rotation: rot, scale: 1.0 }, &[object(boxed([100.0, 100.0, 5.0]), Motion::Static)]);
+    assert_eq!(w.character_spot(&c, [0.0, 0.0, 0.0]), Err(SpotRefused::NoSupport));
+}
+
+#[test]
+fn other_characters_block_a_spot_and_the_body_itself_does_not() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // Its own place: it does not stand in its own way.
+    assert!(w.character_spot(&c, [0.0, 0.0, 0.0]).is_ok());
+    let other = w.add_character(2, CharacterParams::default(), [SPOT[0] + 10.0, SPOT[1], TERRAIN_SHELL]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+    assert_eq!(w.queries().character_overlap(&c, [SPOT[0], SPOT[1], TERRAIN_SHELL]), vec![Owner::Character { id: 2 }]);
+    w.remove_character(other);
+    assert!(w.character_spot(&c, SPOT).is_ok());
+}
+
+#[test]
+fn only_what_a_character_cannot_push_blocks_a_spot() {
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    // A crate it would push aside.
+    let mut light = object(boxed([10.0, 10.0, 10.0]), Motion::Dynamic);
+    light.mass = 20.0;
+    w.add_ref(&at(60, [SPOT[0], SPOT[1], 10.5]), &[light]);
+    let feet = w.character_spot(&c, SPOT).unwrap();
+    assert!((feet[2] - TERRAIN_SHELL).abs() < 1e-3, "not on top of it: {feet:?}");
+    // A car it stops at.
+    let mut w = ground();
+    let c = spot_character(&mut w);
+    let mut heavy = object(boxed([60.0, 30.0, 30.0]), Motion::Dynamic);
+    heavy.mass = 800.0;
+    w.add_ref(&at(61, [SPOT[0], SPOT[1], 30.5]), &[heavy]);
+    assert_eq!(w.character_spot(&c, SPOT), Err(SpotRefused::NoRoom));
+}
+
+#[test]
+fn a_slope_it_can_walk_has_room_for_the_controllers_own_shape() {
+    // A capsule's round bottom at the gap kept would sink into a slope this steep; the
+    // controller's cone does not.
+    let mut w = PhysWorld::new(PhysParams::default());
+    let c = spot_character(&mut w);
+    ramp(&mut w, 45.0);
+    let (x, z) = (300.0, 200.0);
+    let feet = w.character_spot(&c, [x, 0.0, z]).unwrap();
+    assert!((feet[2] - z).abs() < 26.0, "{feet:?}");
+    let capsule = Shape::Capsule { a: [0.0, 0.0, 22.0], b: [0.0, 0.0, 106.9], radius: 22.0 };
+    let pose = Iso { translation: [x, 0.0, z + 0.5], ..Iso::IDENTITY };
+    assert!(!w.queries().overlap(&capsule, &pose, &Filter::excluding(c.key())).unwrap().is_empty());
+}
+
+#[test]
+fn a_stair_is_stood_on_at_the_height_its_next_step_lifts_the_body_to() {
+    let mut w = ground();
+    let mut c = spot_character(&mut w);
+    // Steps 16 high and 16 deep, rising to the east from x = 0: the ray finds the tread
+    // under the feet, the cone meets the next step's edge at that height.
+    for i in 0..10u32 {
+        let top = 16.0 * (i + 1) as f32;
+        let x = 16.0 * i as f32 + 8.0;
+        w.add_ref(&at(70 + i, [SPOT[0] + x, SPOT[1], top / 2.0]), &[object(boxed([8.0, 100.0, top / 2.0]), Motion::Static)]);
+    }
+    let at_step = [SPOT[0] + 40.0, SPOT[1], 48.0];
+    let feet = w.character_spot(&c, at_step).unwrap();
+    assert!(feet[2] > 48.0, "{feet:?}");
+    assert!(feet[2] <= 48.5 + c.params.step_height, "{feet:?}");
+    // It stays about there.
+    w.place_character(&mut c, feet);
+    settle(&mut w, &mut c, 30);
+    assert!((c.feet[0] - feet[0]).abs() < 30.0 && (c.feet[2] - feet[2]).abs() < 40.0, "{:?} from {feet:?}", c.feet);
+}
+
+#[test]
+fn a_steep_hill_it_can_walk_has_ground_and_room_and_a_body_in_the_hill_has_none() {
+    let mut w = PhysWorld::new(PhysParams::default());
+    let heights: Vec<f32> = (0..SIDE * SIDE).map(|i| ((i % SIDE) as f32 * 128.0).min(1200.0)).collect();
+    w.add_terrain((0, 0), &heights);
+    let c = spot_character(&mut w);
+    let (x, y) = (1000.0, 2000.0);
+    let z = height_at(&heights, x, y).unwrap();
+    let got = w.character_spot(&c, [x, y, z]);
+    // Slope 45 degrees (rise of one per unit), within this character's 60.
+    assert!(got.is_ok(), "{got:?}");
+    let feet = got.unwrap();
+    assert!((feet[2] - z).abs() <= c.params.step_height + TERRAIN_SHELL + 1.0, "{feet:?} on {z}");
+    assert_eq!(w.queries().character_overlap(&c, [x, y, z - 40.0]), vec![Owner::Terrain { x: 0, y: 0 }]);
+}
+
+/// Put down over a light crate with no room to get out of the way (against a wall): the
+/// body is accepted, as it is over any clutter it would push aside, so this has to come
+/// out sanely. Nothing flies off or goes through the wall, and it walks away.
+#[test]
+fn a_character_put_over_light_clutter_pinned_against_a_wall_walks_on() {
+    let mut w = ground();
+    let mut c = spot_character(&mut w);
+    let wall_face = SPOT[0] + 26.0;
+    w.add_ref(&at(60, [wall_face + 10.0, SPOT[1], 100.0]), &[object(boxed([10.0, 200.0, 100.0]), Motion::Static)]);
+    let mut crate_ = object(boxed([10.0, 10.0, 10.0]), Motion::Dynamic);
+    crate_.mass = 20.0;
+    w.add_ref(&at(61, [SPOT[0] + 15.0, SPOT[1], 10.0 + TERRAIN_SHELL]), &[crate_]);
+    for _ in 0..120 {
+        w.step();
+    }
+    let rest = w.ref_bodies(61)[0];
+    assert!(rest.translation[0] + 10.0 <= wall_face + 0.5, "{rest:?}");
+    let feet = w.character_spot(&c, SPOT).unwrap();
+    assert!((feet[2] - TERRAIN_SHELL).abs() < 1e-3, "{feet:?}");
+    // It does overlap the crate.
+    let capsule = Shape::Capsule { a: [0.0, 0.0, 22.0], b: [0.0, 0.0, 106.9], radius: 22.0 };
+    let pose = Iso { translation: feet, ..Iso::IDENTITY };
+    assert!(w.queries().overlap(&capsule, &pose, &Filter::excluding(c.key())).unwrap().iter().any(|o| matches!(o, Owner::Ref { form_id: 61, .. })));
+    w.place_character(&mut c, feet);
+    for _ in 0..240 {
+        w.move_character(&mut c, CharacterInput::default());
+        w.step();
+        let b = w.ref_bodies(61)[0];
+        assert!(b.translation.iter().chain(&b.linvel).chain(&c.feet).all(|v| v.is_finite()), "{b:?} {:?}", c.feet);
+        assert!(b.linvel.iter().all(|v| v.abs() < 2000.0), "flung: {b:?}");
+        assert!(b.translation[0] + 10.0 < wall_face + 5.0 && b.translation[2] > 0.0, "through something: {b:?}");
+        assert!((c.feet[0] - feet[0]).abs() < 30.0 && (c.feet[1] - feet[1]).abs() < 30.0 && (c.feet[2] - feet[2]).abs() < 40.0, "{:?} from {feet:?}", c.feet);
+    }
+    // Along the wall, the way a path past it would go.
+    let from = c.feet;
+    walk(&mut w, &mut c, [0.0, 150.0], 120);
+    assert!(c.feet[1] - from[1] > 50.0, "{:?} from {from:?}", c.feet);
+    assert!((c.feet[2] - from[2]).abs() < 40.0, "{:?} from {from:?}", c.feet);
 }

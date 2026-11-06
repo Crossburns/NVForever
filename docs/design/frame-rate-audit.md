@@ -149,6 +149,39 @@ before a query). Held by furniture or flying with ToggleCollision the steps stil
 `phys::rapier_step` and perhaps `phys::query_refresh`, but not the walking path's
 `phys::blocks`, `phys::player_move`, `phys::world_step` and `phys::after` wrappers.
 
+### Many cells, each option, and the stored settings (#1375)
+
+- **Stored settings win over the command line** [documented: `settings.rs` module notes]:
+  `NVForever.ini` `[Settings]` (the settings page) sets the resolution, the anti-aliasing,
+  sun shadows and every enhanced key after the arguments are read, so `--size`, `--msaa`,
+  `--no-sun-shadows` and `--graphics` are silently overruled there. [observed 2026-11-02]
+  On the desktop the stored `resolution=1920x1080;desktop` and `anti-aliasing=0.50` (8x
+  MSAA) held every run. Measure with `NVFOREVER_HOME` set to a home whose `NVForever.ini`
+  is a copy without `[Settings]` (with `plugins.txt`); `--graphics-cycle` steps switch at
+  run time and hold either way. Test runs (`--run-seconds`) default to `--graphics vanilla`.
+- `tools/profile/tracy-tour.ps1` + `cells.csv`: one launch per cell of a Tracy build, a
+  `tracy-capture` after the load, CPU and GPU (`tracy-csvexport -g`) zone CSVs per cell;
+  `summarise.py <folder>` gives per cell the main/extract/render-thread split, the GPU passes
+  and the heaviest spans. `-NvfHome`, `-Graphics`, `-Repeat`, `-Vsync`, `-NoCollector`.
+- `tools/profile/option-costs.ps1`: per cell, `--graphics-cycle` through all on, all on but
+  each enhanced key in turn, vanilla and no sun shadows; a key's cost is "all on" minus
+  "all on but it". Periods are grouped by the set the log line names, not by position.
+- With `NVF_PLAY_TEST_PROFILE`: `profile shadows:` (casters per cascade of each
+  directional light, nearest first), `profile visibility:` (entities Bevy's visibility
+  systems walk every frame, meshes or not) and `profile transforms:` (transforms written
+  that frame, with a mesh, by name: about 950 of 7,200 at the Strip and Novac, nearly all
+  the animated actors' skeleton nodes [observed 2026-11-02]).
+- Test aids, off unless `=1`: `NVF_PLAY_TEST_NO_REFLECTION` (the water reflection camera
+  stays off), `NVF_PLAY_TEST_NO_ARMS_SHADE` (no arms shade light, #1374),
+  `NVF_PLAY_TEST_ACTOR_NO_SHADOWS` (actor meshes cast no shadows; still drawn).
+- [observed 2026-11-02, i9-14900K, RTX 4070, 1920x1080, enhanced, vsync off] What they
+  found: the sun's 4096² maps (#1367), moon shadows (#1369, fixed in #1371), full-size
+  ambient occlusion (#1370), the arms shade light (#1374: 3.6 ms at Novac 07:00); 8x MSAA
+  costs about 2.3 ms against none at Novac and Goodsprings; a low sun about doubles the
+  sun's shadow cost (Novac 4.4 ms at noon, 7.9-8.3 ms at 07:00 and 19:00, with the shade
+  light); the reflection camera at Hoover Dam 0.6 ms; the Tracy build adds about 0.85 ms
+  where the CPU sets the frame (Hoover) and nothing where the GPU does (Novac).
+
 ## 2. Item 4: the mantis ootheca
 
 **What happens** [observed: `fnvtool script decompile --form 000EF406`, `esm decode`]:
@@ -277,3 +310,145 @@ does not remove most of the render thread's work here; what does scale is not se
   small corpses dropped on one spot: 61 touching pairs at the peak and 0.38 ms a physics
   step before, 0 and 0.09 ms after (fnv-phys test, release). A heap of big corpses still
   costs the solver for its 3 s before rest.
+
+## 5. The profiling campaign (#1421, 2026-11-03)
+
+The owner asked for every kind of scene to be profiled: standing in places, combat, crowds,
+interiors and the player moving. `tools/profile/campaign.py` runs the scenarios of
+`tools/profile/campaign.toml` in one go:
+
+- 12 exterior towns at several hours
+- 7 crowd scenes
+- 18 interiors
+- stress battles of 10, 25 and 50 a side, plus 25 a side with creatures
+- 7 player-movement runs: running, walking, third person, turning in place, walking interiors
+- 3 streaming runs: a 2-minute run east across the desert and two free-camera fly-throughs
+
+Each scenario is one launch of a `profile` build through tools/stress's launcher. That gives:
+
+- the game locks
+- a fresh home without stored settings
+- god mode, unseen, script boxes closed
+- crash and hang handling
+- memory samples
+
+Each launch runs at 1920 × 1080 with `--graphics enhanced` and vsync off, and logs the span
+profile and stress samples every 5 s. The first 15 s after the first frame-time line are
+left out. `NVF_PLAY_TEST_PROFILE_HITCH_MS` (new, `profile.rs`) lists every frame over the
+scenario's `slow_ms` (16 ms; battles 40 or 100) with its 25 heaviest spans
+(`NVF_PLAY_TEST_PROFILE_HITCH_SPANS=<n>` lists more). The report subtracts each
+span's mean over every frame from its mean in the slow frames, which names what makes the
+slow frames slow.
+
+```
+cd engine; cargo build --release -p nvforever --features nvforever/profile --target-dir F:/nvf-target/profile
+python tools/profile/campaign.py run --exe F:/nvf-target/profile/release/nvforever.exe --data <Data> [--only …] [--group …]
+python tools/profile/campaign.py report --reparse target/profile-campaign/<run>   # after a parser change
+```
+
+[observed 2026-11-03, main abd2c02f, i9-14900K, RTX 4070 (Vulkan), two full runs of 51
+scenarios, about 1 h 45 min each, nothing else running (others' CPU share 1–2 %)]
+
+| Scenario kind | Frame (ms) | Slowest frame (ms) |
+|---|---|---|
+| Interiors | 4.2-7.4 | 11-20 |
+| Crowds (Strip, Freeside, McCarran) | 6.1-7.2 | 21-23 |
+| Exterior towns | 6.9-11.5 (Novac 11.5 at 07:00, Jacobstown 10.2, Primm 9.3) | 19-28 |
+| Player moving | 5.3-9.2 | 13-28 |
+| Battles: 10 / 25 / 50 a side, 25 with creatures | 9.6 / 13.7 / 46.0 / 16.8 | 28 / 55 / 398 / 221 |
+| Fly-throughs (free camera) | 4.4-5.2 | 6.5-8.8 |
+
+What it found, each with its issue:
+
+- **The 20 ms stutters in every exterior are first plays of sounds** (#1428). In 26 of 29
+  exterior and crowd scenarios, `sfx::play` is what grows most in the slow frames, by
+  9–15 ms: a new sound's file is read and decoded whole on the main thread.
+- **The 50-a-side battle collapses** (#1426). It runs at 46 ms frames with 98 frames over
+  100 ms. `detection::measure` is +81 ms in those frames: every pair within reach gets a
+  ray, about 6,900 pairs for 118 actors. The fixed-step physics of the character
+  controller adds +31 ms (#1383, #1404 are spooknik's).
+- **Submitting the frame costs 1.5–3.5 ms of the render thread** almost everywhere
+  (`submit_pending_command_buffers`, `queue_submit`; 23 command buffers a frame) (#1427;
+  broken down below).
+- **Single 8–16 ms stalls** (#1429):
+  - a light probe upload on the Lucky 38 floor
+  - an instance-buffer write when walking into REPCONN's rooms
+  - an idle choice in Gomorrah
+  - a late placement in the Sierra Madre lobby
+- **Bugs found on the way:**
+  - The Sierra Madre lobby stops on GPU validation errors: the hologram effect shader on
+    skinned meshes (#1424).
+  - One start-up crash in 53 launches: an access violation after 1 s with an empty log,
+    not repeated (#1425).
+- **Not new:** the towns that wait on the GPU (Novac, Jacobstown, Primm: 3–4 ms in
+  `prepare_windows`) are mostly sun shadows. PRs #1418 (casters over the slice) and #1419
+  (2048² maps) cut Novac by 2–2.4 ms each. Measure them again after those merge. Actor
+  placement at start-up, 100–450 ms, is #1322.
+- **Memory:** private bytes peak at 2.2–2.7 GB in interiors and fly-throughs and
+  3.9–4.2 GB in towns and battles. No growth was seen within a run.
+
+The scenario logs are game-derived and stay private, under `target/profile-campaign/` (not
+committed).
+
+### What the submission costs (#1427)
+
+[documented: bevy_core_pipeline 0.20.1 `schedule.rs`, bevy_render 0.20.1
+`renderer/render_context.rs`] In Bevy 0.20 a render system that records GPU work gets its
+own command encoder for each view. `submit_pending_command_buffers` first finishes every
+pending encoder (`finish_command_buffers`, spread over the compute threads, one
+`finish_command_buffer{system=…}` span each) and then submits them all (`queue_submit`).
+With wgpu 29, `CommandEncoder::finish` is where the recorded passes are encoded for
+Vulkan. The span profile now keys each finished encoder by the system that recorded it
+(`finish_command_buffer[light::per_view_shadow_pass<…>]`). The `profile batches:` line now
+also counts the sorted blended draws (`transparent <v> views, <n> sorted draws`).
+
+wgpu-core's own scopes (`Queue::submit`, `CommandEncoder::finish`, `cleanup`,
+`triage_submissions`, `Queue::write_buffer`, `Device::create_bind_group`) are tracing
+spans too. Bevy's default log filter (`wgpu=error`) hides them. To profile them, run with
+`RUST_LOG=info,wgpu=warn,wgpu_core=info,wgpu_hal=warn,naga=warn`. Those spans make the
+frames about 1.5 ms slower, so compare their shares, not frame times.
+
+[observed 2026-11-03, this branch on main 8a83b44e, the `profile` build, i9-14900K, RTX 4070,
+Vulkan, `campaign.py --only goodsprings-noon novac-noon`, means a frame after the warm-up]
+
+| | Goodsprings noon | Novac noon |
+|---|---|---|
+| Frame | 8.9 | 12.2 |
+| `submit_pending_command_buffers` | 2.36 | 2.34 |
+| … finishing the encoders (wall time) | 1.14 | 1.09 |
+| … `queue_submit` | 1.20 | 1.24 |
+
+These are the encoders' finishing times, summed over the threads. They run side by side,
+so the wall time is about the longest one.
+
+| Encoder (system) | Goodsprings | Novac |
+|---|---|---|
+| sun and light shadows (`per_view_shadow_pass`, 4 shadow views) | 1.05 | 1.04 |
+| blended draws (`main_transparent_pass_3d`, about 240 / 200 sorted draws) | 1.02 | 0.90 |
+| depth prepass (`early_prepass`) | 0.70 | 0.68 |
+| opaque pass | 0.69 | 0.68 |
+| GPU culling and indirect parameters (4 compute encoders) | 1.59 | 1.46 or more (one below the list) |
+| Bevy's bloom | 0.37 | below 0.25 |
+| NVForever's passes (eye mask, bright pass, ambient occlusion, sun shafts, bloom and sharpen, grade) | below 0.25 each | below 0.25 each |
+
+What this says:
+
+- **The cost is Bevy's core passes and wgpu's work for each command buffer. The enhanced
+  look's own passes do not add much.** Goodsprings vanilla against enhanced, run one after
+  the other: submit 2.14 against 2.86, finishing 4.19 against 5.38 summed. That batch was
+  slowed by something else on the machine (frames near 17 ms), so only its split is used.
+  The opaque phases are already only 17-22 multi-drawn sets. The shadow encoder covers 4
+  views.
+- **None of NVForever's passes records when it has nothing to do.** Each returns before
+  asking for an encoder (sun off screen, Bright Scale 0, no modifier), or Bevy skips it
+  for a view without its component. Merging passes into fewer encoders would mean
+  changing Bevy's encoder-per-system design: a patched `bevy_render`, not engine code.
+- **Inside `Queue::submit`** (the run with wgpu-core spans, Goodsprings) the largest
+  parts are cleaning up finished submissions, 0.8 ms (`cleanup`, `triage_submissions`,
+  of which `drop command buffer trackers` is 0.4), and `prepare`, 0.4 ms. These scale
+  with the command buffers and the resources each one tracks. The game materials'
+  bindless slabs (`#[bindless(limit(512))]`, nif_material.rs) are among those resources.
+  [hypothesis] Fewer resources tracked per pass would make these cheaper.
+- **Seen on the way:** `Queue::write_buffer` takes 2.2 ms a frame and
+  `Device::create_bind_group` 1.0 ms (Bevy's `prepare_preprocess_bind_groups` makes its
+  bind groups again every frame). Both are on the render thread before the submission.

@@ -25,9 +25,10 @@ use crate::refs::{PlacedRef, RefTable};
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SimConfig {
     pub seed: u64,
-    /// Level used for leveled lists (the player's level). [observed in game: `AddItem` of
-    /// a list resolves against the player's level (`L4.sim.leveled.basic`); that
-    /// containers do too is hypothesis]
+    /// The configured level: what item rolls read until [`World::set_player_level`], and
+    /// what a leveled lock with no fixed level reads ([`World::lock_read_level`]); 1 in
+    /// play [design]. [observed in game: `AddItem` of a list resolves against the player's
+    /// level (`L4.sim.leveled.basic`); that containers do too is hypothesis]
     pub player_level: u16,
     /// Hardcore mode: ammunition has weight. (Absent in older snapshots.)
     #[serde(default)]
@@ -121,15 +122,40 @@ pub struct LockState {
     pub locked: bool,
 }
 
+/// A reference's run-time state.
+///
+/// `enabled` and `deleted` are private to this module, so that [`World::presence_serial`]
+/// moves with them: read them with [`RefState::enabled`] and [`RefState::deleted`], change
+/// them with [`World::set_enabled`] and [`World::set_deleted`].
+///
+/// ```
+/// fn present(state: &fnv_sim::world::RefState) -> bool {
+///     state.enabled() && !state.deleted()
+/// }
+/// ```
+///
+/// Writing either field from outside does not compile:
+///
+/// ```compile_fail,E0616
+/// fn write(state: &mut fnv_sim::world::RefState) {
+///     state.enabled = false;
+/// }
+/// ```
+///
+/// ```compile_fail,E0616
+/// fn write(state: &mut fnv_sim::world::RefState) {
+///     state.deleted = true;
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RefState {
     pub base: FormId,
     pub cell: Option<FormId>,
     pub pos: [f32; 3],
     pub rot: [f32; 3],
-    pub enabled: bool,
+    enabled: bool,
     /// Removed from the world (picked up, or a created reference deleted).
-    pub deleted: bool,
+    deleted: bool,
     /// Stack size for item references; 1 otherwise.
     pub count: i32,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -164,6 +190,20 @@ pub struct RefState {
     /// there picks this reference up ([`World::dropped_beside`]).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub dropped_by: Option<FormId>,
+}
+
+impl RefState {
+    /// The reference's own enabled flag; [`World::is_enabled`] adds its enable parents.
+    #[inline]
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Removed from the world (picked up, or a created reference deleted).
+    #[inline]
+    pub fn deleted(&self) -> bool {
+        self.deleted
+    }
 }
 
 /// A script's lock on an item of an actor [documented: GECK wiki EquipItem, "If
@@ -288,6 +328,14 @@ pub struct Snapshot {
     /// Globals whose value differs from the plugins (absent in older snapshots).
     #[serde(default)]
     pub globals: BTreeMap<FormId, f32>,
+    /// GameHour and GameDaysPassed at the clock's own precision, as decimal strings like
+    /// `rng_word_pos`; absent in older snapshots, which go on from the globals
+    /// ([`clock::FineClock`]). An editor that changes one of those globals in a snapshot
+    /// must clear its field here: a same-value write cannot be seen from the values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock_hour: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock_days_passed: Option<String>,
     /// Unloaded cells: GameDaysPassed when each was detached (absent in older snapshots).
     #[serde(default)]
     pub detached_cells: BTreeMap<FormId, f32>,
@@ -302,6 +350,10 @@ pub struct Snapshot {
     /// Encounter zones entered and their levels (`crate::zones`); absent when none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub zone_levels: BTreeMap<FormId, u16>,
+    /// Encounter zones whose respawning a script turned on or off (SetZoneRespawns,
+    /// `crate::zones`); absent when none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub zone_respawns: BTreeMap<FormId, bool>,
     /// The level fixed for each reference whose cell was loaded (`crate::zones`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub ref_levels: BTreeMap<FormId, crate::zones::LevelAt>,
@@ -378,13 +430,26 @@ fn next_world_serial() -> u64 {
     WORLDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) << 32
 }
 
+/// The time globals [`World::set_global`] has to recognise, as the load order names them.
+struct TimeGlobalIds {
+    hour: Option<FormId>,
+    days_passed: Option<FormId>,
+}
+
 pub struct World<'a> {
     pub forms: &'a FormStore,
     pub placed: &'a RefTable,
     cfg: SimConfig,
+    /// The player's level as item rolls read it ([`World::set_player_level`]); `None`:
+    /// [`SimConfig::player_level`]. Not saved: the game sets it on a load and on each tick.
+    roll_level: Option<u16>,
     refs: BTreeMap<FormId, RefState>,
     /// Globals set at run time (scripts, the clock); others keep their authored value.
     globals: BTreeMap<FormId, f32>,
+    /// The digits of the time globals their f32 cannot hold.
+    fine_clock: clock::FineClock,
+    /// Resolved once as `set_global` is on the scripts' hot path; `forms` is not replaced after construction [design: nothing assigns `World::forms`].
+    time_global_ids: TimeGlobalIds,
     /// Unloaded cells and the GameDaysPassed at which they were unloaded.
     detached_cells: BTreeMap<FormId, f32>,
     /// Quest-item flags set at run time (`set_quest_object`); they replace the record's.
@@ -420,6 +485,8 @@ pub struct World<'a> {
     power_armor_training: bool,
     /// Encounter zones entered and their levels (`crate::zones`).
     pub(crate) zone_levels: BTreeMap<FormId, u16>,
+    /// SetZoneRespawns: zone → whether it respawns, over its "Never Resets" flag.
+    pub(crate) zone_respawns: BTreeMap<FormId, bool>,
     /// The leveled-list level fixed per reference (`crate::zones`).
     pub(crate) ref_levels: BTreeMap<FormId, crate::zones::LevelAt>,
     /// Death items owed to dead actors not read yet, rolled into the inventory when it is
@@ -435,18 +502,29 @@ pub struct World<'a> {
     /// saved: every world made (a new or a restored one) starts from a number no other
     /// world of this process used, so a reader sees the change of world as a change.
     lock_serial: u64,
+    /// Counts the changes that can change [`World::is_enabled`] or a reference's
+    /// `deleted` flag ([`World::presence_serial`]): a reference's state made with flags
+    /// other than its placement's, put in or taken out of `refs`, and every write of
+    /// `enabled` or `deleted`. Not saved; every
+    /// world starts from a number no other world of this process used, as
+    /// `lock_serial`.
+    presence_serial: u64,
     next_dynamic: u32,
     rng: ChaCha8Rng,
 }
 
 impl<'a> World<'a> {
     pub fn new(forms: &'a FormStore, placed: &'a RefTable, cfg: SimConfig) -> World<'a> {
+        let serial = next_world_serial();
         World {
             forms,
             placed,
             cfg,
+            roll_level: None,
             refs: BTreeMap::new(),
             globals: BTreeMap::new(),
+            fine_clock: clock::FineClock::default(),
+            time_global_ids: TimeGlobalIds { hour: forms.by_edid(clock::GAME_HOUR), days_passed: forms.by_edid(clock::GAME_DAYS_PASSED) },
             detached_cells: BTreeMap::new(),
             quest_objects: BTreeMap::new(),
             leveled_added: BTreeMap::new(),
@@ -459,10 +537,12 @@ impl<'a> World<'a> {
             setting_changes: BTreeMap::new(),
             power_armor_training: false,
             zone_levels: BTreeMap::new(),
+            zone_respawns: BTreeMap::new(),
             ref_levels: BTreeMap::new(),
             death_items: BTreeMap::new(),
             deleted_created: BTreeMap::new(),
-            lock_serial: next_world_serial(),
+            lock_serial: serial,
+            presence_serial: serial,
             next_dynamic: FormId::FIRST_DYNAMIC.0,
             rng: ChaCha8Rng::seed_from_u64(cfg.seed),
         }
@@ -476,6 +556,19 @@ impl<'a> World<'a> {
     /// SetHardcore): ammunition weighs from then on, or no longer.
     pub fn set_hardcore(&mut self, on: bool) {
         self.cfg.hardcore = on;
+    }
+
+    /// The player's level changed (`fnv_game::Game::sync_player_level`): AddItem, PlaceAtMe
+    /// and references with neither a fixed level nor a zone roll their items at it from now
+    /// on. Kept here because inventories are made on any read, where no caller can pass it
+    /// in. Locks do not read it ([`World::lock_read_level`]).
+    pub fn set_player_level(&mut self, level: u16) {
+        self.roll_level = Some(level.max(1));
+    }
+
+    /// The level item rolls read as the player's.
+    pub fn roll_level(&self) -> u16 {
+        self.roll_level.unwrap_or(self.cfg.player_level)
     }
 
     /// Whether the player may wear power armour (ARMO BMDT "Power Armor"): without it
@@ -504,11 +597,12 @@ impl<'a> World<'a> {
     }
 
     /// The lock `id` has: its state's once it has one, else the lock it would start with
-    /// (its placed XLOC, a leveled lock at the reference's level as `initial` sets it).
+    /// (its placed XLOC, a leveled lock at the level `initial` sets it from,
+    /// [`World::lock_read_level`]).
     pub fn lock_of(&self, id: FormId) -> Option<LockState> {
         match self.peek(id) {
             Some(s) => s.lock,
-            None => self.placed.get(id).and_then(|p| p.lock).map(|l| LockState { level: l.level_at(self.item_level(id)), key: l.key, locked: true }),
+            None => self.placed.get(id).and_then(|p| p.lock).map(|l| LockState { level: l.level_at(self.lock_read_level(id)), key: l.key, locked: true }),
         }
     }
 
@@ -519,7 +613,16 @@ impl<'a> World<'a> {
                 return Err(SimError::Deleted(id));
             }
             let s = self.initial(id)?;
+            // Until it has a state, a placed reference's presence is read from its
+            // placement (`is_enabled`: enabled unless Initially Disabled; not deleted). A
+            // state that starts with those values changes nothing a reader of presence
+            // sees, so it leaves the serial; any other (the player, which is not placed)
+            // moves it.
+            let as_placed = self.placed.get(id).is_some_and(|p| s.enabled() == !p.initially_disabled() && !s.deleted());
             self.refs.insert(id, s);
+            if !as_placed {
+                self.presence_serial += 1;
+            }
         }
         Ok(self.refs.get_mut(&id).expect("inserted above"))
     }
@@ -543,7 +646,7 @@ impl<'a> World<'a> {
             None => return Err(SimError::UnknownRef(id)),
         };
         let mut inventory = self.roll_inventory(self.inventory_base(id, base), self.item_level(id))?;
-        let lock_level = self.item_level(id);
+        let lock_level = self.lock_read_level(id);
         if let Some(list) = self.death_items.remove(&id) {
             let level = self.item_level(id);
             let inv = inventory.get_or_insert_with(Inventory::new);
@@ -576,7 +679,7 @@ impl<'a> World<'a> {
             count: self.forms.placed_count(base, placed.and_then(|p| p.count)),
             inventory,
             // A reference with lock data starts locked. [hypothesis] A leveled lock's
-            // level is set now, from the reference's level (`Lock::level_at`).
+            // level is set now (`World::lock_read_level`, `Lock::level_at`).
             lock: placed.and_then(|p| p.lock).map(|l| LockState { level: l.level_at(lock_level), key: l.key, locked: true }),
             // A door flagged Open by Default starts open. [hypothesis from the flag's
             // name; a gate so flagged let the player drop through it, physics.md §4]
@@ -798,7 +901,7 @@ impl<'a> World<'a> {
         let due: Vec<(FormId, FormId)> = self
             .refs
             .iter()
-            .filter(|&(&id, s)| !s.deleted && self.restocks(id, s.base))
+            .filter(|&(&id, s)| !s.deleted() && self.restocks(id, s.base))
             .map(|(&id, s)| (id, s.base))
             .collect();
         for (id, base) in due {
@@ -812,7 +915,7 @@ impl<'a> World<'a> {
 
     fn inventory(&mut self, id: FormId) -> Result<&mut Inventory, SimError> {
         let s = self.get(id)?;
-        if s.deleted {
+        if s.deleted() {
             return Err(SimError::Deleted(id));
         }
         s.inventory.as_mut().ok_or(SimError::NoInventory(id))
@@ -852,7 +955,7 @@ impl<'a> World<'a> {
         }
         self.inventory(to)?;
         let mut out = Vec::new();
-        leveled::resolve_with(self.forms, &self.globals, &self.leveled_added, &self.leveled_edits, item, count, self.cfg.player_level, &mut self.rng, &mut out)?;
+        leveled::resolve_with(self.forms, &self.globals, &self.leveled_added, &self.leveled_edits, item, count, self.roll_level(), &mut self.rng, &mut out)?;
         let inv = self.inventory(to)?;
         Ok(out
             .into_iter()
@@ -1130,6 +1233,7 @@ impl<'a> World<'a> {
             };
             let id = FormId(self.next_dynamic);
             self.next_dynamic += 1;
+            self.presence_serial += 1;
             self.refs.insert(
                 id,
                 RefState {
@@ -1191,7 +1295,7 @@ impl<'a> World<'a> {
             [holder.pos[0] + dx, holder.pos[1] + dy, holder.pos[2] + PLAYER_DROP_ABOVE]
         };
         let taken = |p: [f32; 3]| {
-            self.created().any(|(_, s)| s.cell == holder.cell && !s.deleted && s.enabled && (s.pos[0] - p[0]).hypot(s.pos[1] - p[1]) < PLAYER_DROP_CLEAR)
+            self.created().any(|(_, s)| s.cell == holder.cell && !s.deleted() && s.enabled() && (s.pos[0] - p[0]).hypot(s.pos[1] - p[1]) < PLAYER_DROP_CLEAR)
         };
         (0..PLAYER_DROP_RING * PLAYER_DROP_RINGS).map(at).find(|&p| !taken(p)).unwrap_or_else(|| at(0))
     }
@@ -1442,7 +1546,7 @@ impl<'a> World<'a> {
     pub fn is_enabled(&self, id: FormId) -> Result<bool, SimError> {
         let own = |w: &World, id: FormId| -> Option<bool> {
             match w.refs.get(&id) {
-                Some(s) => Some(s.enabled),
+                Some(s) => Some(s.enabled()),
                 None => w.placed.get(id).map(|p| !p.initially_disabled()),
             }
         };
@@ -1476,6 +1580,12 @@ impl<'a> World<'a> {
             return Err(SimError::UnknownForm(id));
         }
         self.globals.insert(id, value);
+        // A write is the time now, even when it equals what the clock last stored.
+        if self.time_global_ids.hour == Some(id) {
+            self.fine_clock.forget_hour();
+        } else if self.time_global_ids.days_passed == Some(id) {
+            self.fine_clock.forget_days_passed();
+        }
         Ok(())
     }
 
@@ -1499,7 +1609,23 @@ impl<'a> World<'a> {
     /// containers restock at the midnights passed ([`World::restock_merchants`]).
     pub fn advance_hours(&mut self, hours: f64) -> Result<Calendar, SimError> {
         let before = self.calendar()?;
-        let c = before.advance(hours);
+        let c = self.fine_clock.advance(before, hours);
+        self.store_calendar(before, c)?;
+        Ok(c)
+    }
+
+    /// Move game time forward to `hour` (the next day's when it has passed today), landing
+    /// on it; the game hours that passed, 0 when the clock shows that hour already.
+    pub fn advance_to_hour(&mut self, hour: f64) -> Result<f64, SimError> {
+        let before = self.calendar()?;
+        let (c, hours) = self.fine_clock.advance_to_hour(before, hour);
+        if hours > 0.0 {
+            self.store_calendar(before, c)?;
+        }
+        Ok(hours)
+    }
+
+    fn store_calendar(&mut self, before: Calendar, c: Calendar) -> Result<(), SimError> {
         for (edid, v) in [
             (clock::GAME_YEAR, c.year),
             (clock::GAME_MONTH, c.month),
@@ -1510,8 +1636,7 @@ impl<'a> World<'a> {
             let (id, _) = self.time_global(edid)?;
             self.globals.insert(id, v);
         }
-        self.restock_merchants(before.days_passed as f64, c.days_passed as f64)?;
-        Ok(c)
+        self.restock_merchants(before.days_passed as f64, c.days_passed as f64)
     }
 
     /// The TimeScale global (game seconds per real second), if the plugins define it.
@@ -1567,6 +1692,13 @@ impl<'a> World<'a> {
         if self.cell_never_resets(cell) {
             return Ok(Vec::new());
         }
+        Ok(self.reset_containers(cell))
+    }
+
+    /// The containers of `cell` whose base has the Respawns flag go back to their
+    /// authored state now, as [`World::attach_cell`] does after the respawn delay (a
+    /// script's ResetInterior). Returns the containers reset.
+    pub fn reset_containers(&mut self, cell: FormId) -> Vec<FormId> {
         let forms = self.forms;
         let respawns = |base: FormId| matches!(forms.get(base).map(|b| &b.data), Some(BaseData::Container(c)) if c.respawns);
         let reset: Vec<FormId> = self
@@ -1580,14 +1712,33 @@ impl<'a> World<'a> {
             .collect();
         for id in &reset {
             self.refs.remove(id);
+            self.presence_serial += 1;
             // Made anew: its level is fixed again when the cell is entered.
             self.ref_levels.remove(id);
         }
-        Ok(reset)
+        reset
     }
 
     pub fn set_enabled(&mut self, id: FormId, enabled: bool) -> Result<(), SimError> {
-        self.get(id)?.enabled = enabled;
+        let s = self.get(id)?;
+        if s.enabled != enabled {
+            s.enabled = enabled;
+            self.presence_serial += 1;
+        }
+        Ok(())
+    }
+
+    /// Mark a reference removed from the world (`deleted`: picked up, MarkForDelete, a
+    /// shot that is over), or not. The field is private to this module, so a direct write
+    /// from outside it does not compile and [`World::presence_serial`] sees the change.
+    /// Replacing a whole state through [`World::get`] is not stopped
+    /// ([`World::presence_serial`] says what that leaves open).
+    pub fn set_deleted(&mut self, id: FormId, deleted: bool) -> Result<(), SimError> {
+        let s = self.get(id)?;
+        if s.deleted != deleted {
+            s.deleted = deleted;
+            self.presence_serial += 1;
+        }
         Ok(())
     }
 
@@ -1620,6 +1771,26 @@ impl<'a> World<'a> {
         self.lock_serial
     }
 
+    /// Goes up with every change that can change whether a reference is present
+    /// (`fnv_game::Game::present`: not `deleted`, and [`World::is_enabled`] with its
+    /// enable parents): a state made ([`World::get`]) whose flags differ from what the
+    /// placement gave before (the player's; a placed reference's state starts as placed
+    /// and leaves it), created ([`World::place`], drops), reset ([`World::attach_cell`]),
+    /// and every write of `enabled` ([`World::set_enabled`]) or `deleted`
+    /// ([`World::set_deleted`], activation's pick-ups). A reader that saw the same number
+    /// of the same world reads the same presence for every reference. A new or restored
+    /// world starts from a number no other world of this process used.
+    ///
+    /// `enabled` and `deleted` are private to this module, so a direct write of either
+    /// field from outside it does not compile (issue #1464; the writers are listed in
+    /// docs/spec-notes/navmesh.md §4c). That is not all of the rule: [`World::get`] still
+    /// hands out `&mut RefState`, so `*world.get(id)? = another_state` compiles and would
+    /// change the flags without moving this number. A search of `crates/` and `engine/`
+    /// found none [design]; closing that is a separate question, left open.
+    pub fn presence_serial(&self) -> u64 {
+        self.presence_serial
+    }
+
     /// The access state of a door or container lock, as the in-game `GetLocked` reports
     /// it: 0 not locked, 1 locked. [documented: GECK wiki `GetLocked`, which also lists 2
     /// "locked out" for an impossible level or a broken lock; observed in game,
@@ -1645,11 +1816,12 @@ impl<'a> World<'a> {
         if self.forms.sig(base).is_none() {
             return Err(SimError::UnknownForm(base));
         }
-        let mut inventory = self.roll_inventory(base, self.cfg.player_level)?;
+        let mut inventory = self.roll_inventory(base, self.roll_level())?;
         // A created actor appears where the player is: it is outfitted at once.
         let outfitted = self.equip_default(base, &mut inventory);
         let id = FormId(self.next_dynamic);
         self.next_dynamic += 1;
+        self.presence_serial += 1;
         self.refs.insert(
             id,
             RefState {
@@ -1740,7 +1912,7 @@ impl<'a> World<'a> {
     /// The created references `holder` dropped as it died ([`RefState::dropped_by`]) that
     /// are still present (not taken, enabled), in FormID order.
     pub fn dropped_beside(&self, holder: FormId) -> Vec<FormId> {
-        self.created().filter(|(_, s)| s.dropped_by == Some(holder) && !s.deleted && s.enabled).map(|(id, _)| id).collect()
+        self.created().filter(|(_, s)| s.dropped_by == Some(holder) && !s.deleted() && s.enabled()).map(|(id, _)| id).collect()
     }
 
     /// The newest reference created at run time (a drop) whose base is `base` and that
@@ -1750,7 +1922,7 @@ impl<'a> World<'a> {
         self.refs
             .range(FormId::FIRST_DYNAMIC..)
             .rev()
-            .find(|(_, s)| s.base == base && !s.deleted && s.enabled)
+            .find(|(_, s)| s.base == base && !s.deleted() && s.enabled())
             .map(|(&id, _)| id)
     }
 
@@ -1802,22 +1974,21 @@ impl<'a> World<'a> {
             let count = if scripted { t.count.min(1) } else { t.count };
             // A placed weapon's own ammo (XAMT, XAMC) comes with it the first time it is
             // taken by hand [hypothesis: the rounds in it; world-fields.md §1].
-            let ammo = (!scripted && !t.deleted).then(|| self.placed.get(target).and_then(|p| p.ammo)).flatten();
+            let ammo = (!scripted && !t.deleted()).then(|| self.placed.get(target).and_then(|p| p.ammo)).flatten();
             self.inventory(actor)?.add_extra(t.base, count, t.extra);
             if let Some((a, n)) = ammo {
                 self.inventory(actor)?.add(a, n);
             }
-            let s = self.get(target)?;
-            s.deleted = true;
+            self.set_deleted(target, true)?;
             if scripted {
-                s.count = count;
+                self.get(target)?.count = count;
             }
             return Ok(done(Outcome::PickedUp { item: t.base, count, owner: t.extra.owner }, None));
         }
         // Other types: a taken or disabled reference does nothing. [observed by the
         // owner in game, 2026-10-08: disabled references cannot be interacted with; not
         // captured by script for doors, containers and activators]
-        if t.deleted || !self.is_enabled(target)? {
+        if t.deleted() || !self.is_enabled(target)? {
             return Ok(done(Outcome::Disabled, None));
         }
         let Some(base) = base else {
@@ -1886,8 +2057,8 @@ impl<'a> World<'a> {
             // item [hypothesis].
             BaseData::Projectile { item: Some(item), .. } => {
                 let owner = self.placed.get(target).and_then(|p| p.owner);
+                self.set_deleted(target, true)?;
                 let s = self.get(target)?;
-                s.deleted = true;
                 let (cell, pos, rot, owner) = (s.cell, s.pos, s.rot, s.extra.owner.or(owner).filter(|&o| o != FormId::PLAYER_REF));
                 let placed = self.place(*item, cell, pos, rot, 1)?;
                 self.get(placed)?.extra.owner = owner;
@@ -1910,10 +2081,11 @@ impl<'a> World<'a> {
     /// original drops them too; its save M held 574 created forms while its next created
     /// FormID was 0xFF00155E, save-files.md §6.3].
     pub fn snapshot(&self) -> Snapshot {
-        let gone = |id: &FormId, s: &RefState| id.is_dynamic() && s.deleted;
+        let gone = |id: &FormId, s: &RefState| id.is_dynamic() && s.deleted();
         let mut deleted_created = self.deleted_created.clone();
         deleted_created.extend(self.created().filter(|(id, s)| gone(id, s)).map(|(id, s)| (id, s.base)));
         let kept = |id: &FormId| !deleted_created.contains_key(id);
+        let (clock_hour, clock_days_passed) = self.fine_clock.saved();
         Snapshot {
             format: SNAPSHOT_FORMAT.into(),
             config: self.cfg,
@@ -1921,10 +2093,13 @@ impl<'a> World<'a> {
             next_dynamic: self.next_dynamic,
             refs: self.refs.iter().filter(|(id, s)| !gone(id, s)).map(|(&k, v)| (k, v.clone())).collect(),
             globals: self.globals.clone(),
+            clock_hour,
+            clock_days_passed,
             detached_cells: self.detached_cells.clone(),
             quest_objects: self.quest_objects.clone(),
             leveled_added: self.leveled_added.clone(),
             zone_levels: self.zone_levels.clone(),
+            zone_respawns: self.zone_respawns.clone(),
             ref_levels: self.ref_levels.iter().filter(|(id, _)| kept(id)).map(|(&k, &v)| (k, v)).collect(),
             death_items: self.death_items.iter().filter(|(id, _)| kept(id)).map(|(&k, &v)| (k, v)).collect(),
             // The same `kept` set as the references: a pruned one keeps no source.
@@ -1963,10 +2138,14 @@ impl<'a> World<'a> {
         w.next_dynamic = s.next_dynamic;
         w.refs = s.refs.clone();
         w.globals = s.globals.clone();
+        if let Ok(stored) = w.calendar() {
+            w.fine_clock = clock::FineClock::restored(s.clock_hour.as_deref(), s.clock_days_passed.as_deref(), &stored);
+        }
         w.detached_cells = s.detached_cells.clone();
         w.quest_objects = s.quest_objects.clone();
         w.leveled_added = s.leveled_added.clone();
         w.zone_levels = s.zone_levels.clone();
+        w.zone_respawns = s.zone_respawns.clone();
         w.ref_levels = s.ref_levels.clone();
         w.death_items = s.death_items.clone();
         w.deleted_created = s.deleted_created.clone();

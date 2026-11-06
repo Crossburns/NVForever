@@ -168,6 +168,9 @@ pub(crate) struct Props {
     pub(crate) animated_emissive: bool,
     /// A clip of the model drives the shape's material alpha ([`shape_alpha_mode`]).
     pub(crate) animated_alpha: bool,
+    /// An actor's part whose material carries an NiAlphaController for the actor's
+    /// clips to drive ([`shape_alpha_mode`], [`material_alpha_controlled`]).
+    pub(crate) alpha_gated: bool,
     /// Some property is attached (to the shape or an ancestor).
     has_properties: bool,
     /// One of them derives from BSShaderProperty.
@@ -446,16 +449,52 @@ pub(crate) const LOD_BUILDING_CUT: f32 = 128.5 / 255.0;
 /// of `explosionincendiarygrenade.nif`, and both are faded in and out by alpha tracks
 /// from a stored alpha of 0; drawn opaque the mushroom stood whole for 5 s (owner,
 /// 2026-10-20). In the base mesh archives 29 more shapes have such a shader and no
-/// NiAlphaProperty (Lucky 38's light glows, terminal screens, Mr. House's screens), whose
-/// alpha no clip fades; they stay as they were checked, opaque]. Everything else without
-/// the property is opaque.
+/// NiAlphaProperty (Lucky 38's light glows, terminal screens), whose alpha no clip fades;
+/// they stay as they were checked, opaque]. Such a shape of an actor's part whose
+/// material carries an NiAlphaController, the target of the actor's own `.kf` clips
+/// ([`material_alpha_controlled`]), is drawn opaque where its material alpha is 1/2 or
+/// more and not at all below [observed: in the actor folders of all the archives, 9
+/// such unlit shapes, all Mr. House's three stacked screens in the three
+/// `nvpenthouemaincomputer` screen files, each with an alpha controller and an opaque
+/// texture; `crates/fnv-nif/examples/actor_alpha_survey.rs`. They lie a few units apart,
+/// Yes Man's face in front, House's behind it, Connection Lost at the back, and the
+/// clips set their alpha to 0 or 1: `mtidle.kf` shows Connection Lost alone,
+/// `DynamicIdle_MrHouse.kf` House alone, `DynamicIdle_YesMan.kf` Yes Man over Connection
+/// Lost. Drawn opaque whatever the alpha, Yes Man's face covered House's before Yes Man
+/// was uploaded (#1542). Hypothesis: the original skips geometry at material alpha 0 and
+/// draws the rest by depth, as the clips' alphas of 0 and 1 suggest; blending is not
+/// needed for them]. Everything else without the property is opaque.
 pub(crate) fn shape_alpha_mode(props: &Props) -> AlphaMode {
     match props.alpha {
         Some((flags, threshold)) => alpha_mode(flags, threshold),
         None if props.lod_building => AlphaMode::Mask(LOD_BUILDING_CUT),
         None if props.unlit && props.dynamic_alpha && props.animated_alpha => AlphaMode::Blend,
+        None if props.unlit && props.dynamic_alpha && props.alpha_gated => AlphaMode::Mask(0.5),
         None => AlphaMode::Opaque,
     }
+}
+
+/// Whether the NiMaterialProperty that shape block `shape` lists carries an
+/// NiAlphaController in its controller chain: the material alpha a `.kf` clip can drive
+/// (a sequence's controlled block names the shape and the property type, and drives the
+/// controller of that type on it [documented: nif.xml ControlledBlock "Node Name",
+/// "Property Type", "Controller Type"]).
+pub(crate) fn material_alpha_controlled(file: &NifFile, dec: &Decoded, shape: usize) -> bool {
+    let Some(s) = dec.blocks.get(shape).and_then(|b| b.as_ref().ok()) else { return false };
+    s.refs("properties").unwrap_or_default().iter().any(|&r| {
+        if !file.blocks.get(r as usize).is_some_and(|p| p.type_name == "NiMaterialProperty") {
+            return false;
+        }
+        let mut c = dec.get(r).and_then(|m| m.block_ref("controller"));
+        for _ in 0..64 {
+            let Some(cr) = c.filter(|&x| x >= 0) else { return false };
+            if file.blocks.get(cr as usize).is_some_and(|b| b.type_name == "NiAlphaController") {
+                return true;
+            }
+            c = dec.get(cr).and_then(|b| b.block_ref("next_controller"));
+        }
+        false
+    })
 }
 
 /// The cut of a shape that is drawn blended although its alpha test would make it an
@@ -770,6 +809,31 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
 /// in the smoke or flames behind it, low enough that the strands keep their soft ends].
 pub const HAIR_DEPTH_CUT: f32 = 0.25;
 
+/// The alpha from which a hair model's shapes (the HAIR record's model) are drawn: they
+/// are cut-outs, solid at and above it and absent below ([`hair_model_cut_out`]).
+/// [engineering choice, judged on Chet against the store window beside the owner's frame
+/// of the original, 2026-11-03 (#1454): the original's hair is solid over the soft band
+/// its outer layer is mapped to (texture alpha 0.4–0.7), with a clean hairline].
+pub const HAIR_MODEL_CUT: f32 = 0.25;
+
+/// Make a hair model's shape a cut-out ([`HAIR_MODEL_CUT`]) in place of the blend its
+/// NiAlphaProperty asks for (docs/spec-notes/nif.md §6 "Hair and depth"). Blended, the
+/// outer layer of `hairwavy.nif` (Chet) is mapped onto the soft edge of its texture's
+/// alpha and showed as a see-through shell around his head against a bright window,
+/// where the original draws solid hair [observed: owner's frame of the original,
+/// 2026-11-03, #1454]. Head parts that use the hair shader (beards, brows) stay blended:
+/// as cut-outs `beardthin.nif` became a full beard, where the original's is thin.
+/// A cut-out draws in the opaque passes, so it hides what lies behind it whatever the
+/// order of the blended shapes, and it casts a shadow.
+pub fn hair_model_cut_out(material: &mut NifMaterial) {
+    if !matches!(material.base.alpha_mode, AlphaMode::Blend) || material.extension.refract {
+        return;
+    }
+    material.base.alpha_mode = AlphaMode::Mask(HAIR_MODEL_CUT);
+    material.extension.alpha_cut = 0.0;
+    material.extension.depth_write = false;
+}
+
 /// Make `material` a refracting one (`nif_material`, module notes "Refraction"): drawn
 /// after the opaque pass from Bevy's copy of it (a specular transmission above 0 puts
 /// the material there and keeps it out of the prepass), opaque, without depth writes.
@@ -1077,6 +1141,23 @@ mod tests {
         assert_eq!(m.extension.alpha_cut, 0.0);
     }
 
+    /// A hair model's blended shape becomes a solid cut-out (#1454); one that is already
+    /// a cut-out or refracts is left alone.
+    #[test]
+    fn hair_models_are_cut_outs() {
+        let hair = Props { hair: true, alpha: Some((4333, 0)), ..Default::default() };
+        let (mut m, _) = shape_material_with(&hair, &mut triangle(), &mut NoTextures);
+        hair_model_cut_out(&mut m);
+        assert_eq!(m.base.alpha_mode, AlphaMode::Mask(HAIR_MODEL_CUT));
+        assert!(!m.extension.depth_write);
+        assert_eq!(m.extension.alpha_cut, 0.0);
+        assert!(!crate::nif_material::see_through(&m), "a cut-out casts a shadow");
+        let mut masked = m.clone();
+        masked.base.alpha_mode = AlphaMode::Mask(0.7);
+        hair_model_cut_out(&mut masked);
+        assert_eq!(masked.base.alpha_mode, AlphaMode::Mask(0.7));
+    }
+
     #[test]
     fn fire_period_needs_its_flag() {
         // The Incinerator's shell: flags 0x82018101, period 10.
@@ -1129,7 +1210,12 @@ mod tests {
         assert!(matches!(shape_alpha_mode(&card), AlphaMode::Blend));
         assert!(matches!(shape_alpha_mode(&Props { animated_alpha: false, ..card.clone() }), AlphaMode::Opaque));
         assert!(matches!(shape_alpha_mode(&Props { dynamic_alpha: false, ..card.clone() }), AlphaMode::Opaque));
-        assert!(matches!(shape_alpha_mode(&Props { unlit: false, ..card }), AlphaMode::Opaque));
+        assert!(matches!(shape_alpha_mode(&Props { unlit: false, ..card.clone() }), AlphaMode::Opaque));
+        // An actor's screen whose material its clips fade is shown or not by its alpha
+        // (Mr. House's screens, #1542).
+        let screen = Props { animated_alpha: false, alpha_gated: true, ..card };
+        assert!(matches!(shape_alpha_mode(&screen), AlphaMode::Mask(t) if t == 0.5));
+        assert!(matches!(shape_alpha_mode(&Props { dynamic_alpha: false, ..screen }), AlphaMode::Opaque));
     }
 
     #[test]

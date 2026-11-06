@@ -15,11 +15,12 @@
 //!
 //! **Menus** read keys, so while a controller works the controls its buttons stand in
 //! for them ([`menu_keys`]): Start is Esc everywhere; in a menu (not playing) the D-pad
-//! is the arrow keys, A Enter, B Esc, LB and RB Page Up and Page Down [design: the
-//! original's menus name A, B, X, Y, LB, RB, LT, RT and the sticks for their buttons
-//! (`_xbox_button` of its menu files, e.g. `&xbuttona;` for the HUD's activate prompt)
-//! [observed: the interface XMLs]; which button does what in each menu is not followed
-//! yet].
+//! is the arrow keys, A Enter, B Esc, LB and RB, LT and RT Page Up and Page Down
+//! [design]. On top of that each menu's own buttons press the key NVForever gives the
+//! same button there ([`menu_buttons`]), as the original's menu files assign them
+//! (`_xbox_button` on each button tile, e.g. `IM_DropButton` `&xbuttonx;`) [documented:
+//! the vanilla menu files, read with `fnvtool ui tree`]; a menu's own button wins over
+//! the shared ones (on the ITEMS page LB is Mod, not Page Up).
 
 use bevy::prelude::*;
 
@@ -180,7 +181,7 @@ pub struct MenuKeys {
 /// Start: Esc, always.
 const ALWAYS: [(GamepadButton, KeyCode); 1] = [(GamepadButton::Start, KeyCode::Escape)];
 /// In a menu.
-const IN_MENUS: [(GamepadButton, KeyCode); 8] = [
+const IN_MENUS: [(GamepadButton, KeyCode); 10] = [
     (GamepadButton::DPadUp, KeyCode::ArrowUp),
     (GamepadButton::DPadDown, KeyCode::ArrowDown),
     (GamepadButton::DPadLeft, KeyCode::ArrowLeft),
@@ -189,7 +190,71 @@ const IN_MENUS: [(GamepadButton, KeyCode); 8] = [
     (GamepadButton::East, KeyCode::Escape),
     (GamepadButton::LeftTrigger, KeyCode::PageUp),
     (GamepadButton::RightTrigger, KeyCode::PageDown),
+    (GamepadButton::LeftTrigger2, KeyCode::PageUp),
+    (GamepadButton::RightTrigger2, KeyCode::PageDown),
 ];
+
+/// The menu open on top ([`fnv_game::Game::top_menu`]'s MenuMode code) and the Pip-Boy's
+/// tab, for [`menu_buttons`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MenuAt {
+    pub code: Option<u16>,
+    pub tab: usize,
+}
+
+/// A menu's own controller buttons: the key each stands in for there. The button each
+/// menu file gives a control [documented: `_xbox_button` of the button tiles, below as
+/// "file"], pressing the key NVForever's hand-built menu answers for that control.
+pub fn menu_buttons(at: MenuAt) -> &'static [(GamepadButton, KeyCode)] {
+    use fnv_game::game::menus;
+    use GamepadButton::{East, LeftTrigger, LeftTrigger2, North, RightTrigger2, South, West};
+    // The Pip-Boy: LT and RT step through its pages, STATS, ITEMS, DATA and round again,
+    // through their keys F1-F3 (`crate::pipboy`); the D-pad's left and right step the tabs
+    // as the arrow keys do [design: owner 2026-11-02; the original's page buttons are not in
+    // its menu files].
+    use KeyCode::*;
+    let Some(code) = at.code else { return &[] };
+    match code {
+        // container_menu.xml: Take All X.
+        crate::script::MENU_CONTAINER => &[(West, KeyR)],
+        // barter_menu.xml: Accept X (B exits, as Esc).
+        menus::BARTER => &[(West, KeyA)],
+        // inventory_menu.xml: Repair Y, Mod LB (Drop X: `crate::pipboy::items`, which has
+        // no key for it; Hotkey RB: the hotkeys are held digits, not built for the pad).
+        menus::INVENTORY => &[(North, KeyR), (LeftTrigger, KeyX), (LeftTrigger2, F1), (RightTrigger2, F3)],
+        // stats_menu.xml: Stimpak A, Doctor's Bag Y, Rad-X X on the status tab; the
+        // General/Reputation switch X on the General tab.
+        menus::STATS if at.tab == 0 => &[(South, KeyS), (North, KeyE), (West, KeyX), (LeftTrigger2, F3), (RightTrigger2, F2)],
+        menus::STATS if at.tab == 4 => &[(West, KeyR), (LeftTrigger2, F3), (RightTrigger2, F2)],
+        menus::STATS => &[(LeftTrigger2, F3), (RightTrigger2, F2)],
+        // map_menu.xml: the Challenges toggle Y (R on the Notes tab).
+        menus::MAP => &[(North, KeyR), (LeftTrigger2, F2), (RightTrigger2, F1)],
+        // recipe_menu.xml: Accept X.
+        fnv_game::crafting::RECIPE_MENU => &[(West, KeyA)],
+        // repair_services_menu.xml: Repair All X.
+        fnv_game::repair::REPAIR_SERVICES_MENU => &[(West, KeyA)],
+        // levelup_menu.xml, trait_menu.xml: Reset Y, Continue X, Back B.
+        menus::LEVEL_UP | menus::TRAITS => &[(North, KeyR), (West, KeyA), (East, KeyE)],
+        // char_gen_menu.xml (the tag skills): Reset Y, Done X.
+        menus::TAG_SKILLS => &[(North, KeyR), (West, KeyA)],
+        // lockpick_menu.xml: Force Lock X.
+        menus::LOCKPICK => &[(West, KeyF)],
+        // black_jack_menu.xml: Hit A, Double/Deal Y, Split/Raise RT, Switch/Lower LT,
+        // Surrender/Max Bet X, Stay/Exit B.
+        fnv_game::blackjack::MENU_CODE => &[(South, KeyF), (North, KeyW), (RightTrigger2, KeyE), (LeftTrigger2, KeyQ), (West, KeyS), (East, KeyR)],
+        // roulette_menu.xml: Place A, Remove Y, Finish X, Lower LT, Raise RT, Exit B.
+        fnv_game::roulette::MENU_CODE => &[(South, KeyW), (North, KeyF), (West, KeyS), (LeftTrigger2, KeyQ), (RightTrigger2, KeyE), (East, KeyR)],
+        // slot_machine_menu.xml: Spin A, Raise RT, Lower LT, Payouts Y, Max Bet X, Exit B.
+        fnv_game::slots::MENU_CODE => &[(South, KeyW), (RightTrigger2, KeyE), (LeftTrigger2, KeyQ), (North, KeyF), (West, KeyS), (East, KeyR)],
+        // tutorial_menu.xml: Next RT, Previous LT.
+        menus::TUTORIAL => &[(RightTrigger2, KeyA), (LeftTrigger2, KeyS)],
+        // A conversation (1009): B (East) leaves as Tab does (the Goodbye choice, or the
+        // topic list's end). While the actor speaks Tab does nothing, so B does nothing
+        // there too, matching the original [observed: play, issue #1657].
+        menus::DIALOGUE => &[(East, Tab)],
+        _ => &[],
+    }
+}
 
 /// Press and release the keys the controller's buttons stand for, after the input
 /// systems have read the keyboard (so a menu sees a just-pressed key this frame). A key
@@ -203,14 +268,17 @@ pub(crate) fn menu_keys(
     (state, paused, page): (Option<Res<State<crate::PlayState>>>, Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>),
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut mk: ResMut<MenuKeys>,
+    (script, pip): (Option<Res<crate::script::ScriptState>>, Option<Res<crate::pipboy::PipBoy>>),
 ) {
     let waiting = page.is_some_and(|p| matches!(*p, crate::pause::Page::Controls { listening: true, .. }));
     let on = bindings.is_some_and(|b| b.device == crate::bindings::InputDevice::Controller) && !waiting;
     let in_menu = state.is_some_and(|s| *s.get() != crate::PlayState::Playing) || paused.is_some_and(|p| p.0);
     let mut want: Vec<KeyCode> = Vec::new();
     if on {
-        let table = ALWAYS.iter().chain(if in_menu { IN_MENUS.iter() } else { [].iter() });
-        for (b, k) in table {
+        let at = MenuAt { code: script.as_ref().and_then(|s| s.rt.as_ref()).and_then(|rt| rt.game.top_menu()), tab: pip.map_or(0, |p| p.tab()) };
+        let own = if in_menu { menu_buttons(at) } else { &[] };
+        let shared = ALWAYS.iter().chain(if in_menu { IN_MENUS.iter() } else { [].iter() }).filter(|(b, _)| !own.iter().any(|(o, _)| o == b));
+        for (b, k) in own.iter().chain(shared) {
             let down = if mk.held.contains(k) { pads.iter().any(|g| g.pressed(*b)) } else { pads.iter().any(|g| g.just_pressed(*b)) };
             if down && !want.contains(k) {
                 want.push(*k);
@@ -234,6 +302,20 @@ pub(crate) fn menu_keys(
 /// controller works the controls: what the menus' own key handlers then see.
 pub(crate) fn menu_key(button: GamepadButton) -> Option<KeyCode> {
     ALWAYS.iter().chain(IN_MENUS.iter()).find(|(b, _)| *b == button).map(|(_, k)| *k)
+}
+
+/// [`menu_key`] in the menu `at`: what its own buttons stand for there first, as
+/// [`menu_keys`] has them ([`menu_buttons`]; the tutorial menu's triggers are its A and S, not
+/// Page Up and Page Down).
+pub(crate) fn menu_key_at(button: GamepadButton, at: MenuAt) -> Option<KeyCode> {
+    menu_buttons(at).iter().find(|(b, _)| *b == button).map(|(_, k)| *k).or_else(|| menu_key(button))
+}
+
+/// Whether `button` went down this frame on a controller that works the controls: for a
+/// menu's own controller buttons beyond the keys [`menu_keys`] stands in for (the ITEMS
+/// page's X drop, `crate::pipboy::items`).
+pub(crate) fn menu_button(pads: &Query<&Gamepad>, bindings: Option<&crate::bindings::Bindings>, button: GamepadButton) -> bool {
+    bindings.is_some_and(|b| b.device == crate::bindings::InputDevice::Controller) && pads.iter().any(|g| g.just_pressed(button))
 }
 
 /// A controller's arrival and departure, in the log.
@@ -261,6 +343,49 @@ impl Plugin for PadPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menus_own_buttons_follow_the_files() {
+        use fnv_game::game::menus;
+        use GamepadButton::*;
+        let at = |code, tab| MenuAt { code: Some(code), tab };
+        // The ITEMS page: Repair Y, Mod LB (the keyboard's R and X); X is the drop button.
+        assert!(menu_buttons(at(menus::INVENTORY, 0)).starts_with(&[(North, KeyCode::KeyR), (LeftTrigger, KeyCode::KeyX)]));
+        assert!(menu_buttons(at(menus::INVENTORY, 0)).iter().all(|(b, _)| *b != West));
+        assert!(menu_buttons(at(crate::script::MENU_CONTAINER, 0)).contains(&(West, KeyCode::KeyR)));
+        assert!(menu_buttons(at(menus::BARTER, 0)).contains(&(West, KeyCode::KeyA)));
+        assert!(menu_buttons(at(menus::STATS, 4)).contains(&(West, KeyCode::KeyR)));
+        // The triggers step the Pip-Boy's pages, round from DATA to STATS.
+        for (code, lt, rt) in [(menus::STATS, KeyCode::F3, KeyCode::F2), (menus::INVENTORY, KeyCode::F1, KeyCode::F3), (menus::MAP, KeyCode::F2, KeyCode::F1)] {
+            for tab in 0..5 {
+                let t = menu_buttons(at(code, tab));
+                assert!(t.contains(&(LeftTrigger2, lt)) && t.contains(&(RightTrigger2, rt)), "menu {code} tab {tab}");
+            }
+        }
+        assert!(menu_buttons(MenuAt::default()).is_empty());
+        // No menu gives one button two keys.
+        for code in 1000..1200 {
+            for tab in 0..5 {
+                let t = menu_buttons(at(code, tab));
+                for (i, (b, _)) in t.iter().enumerate() {
+                    assert!(t[i + 1..].iter().all(|(o, _)| o != b), "menu {code} tab {tab}: {b:?} twice");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dialogue_owns_b_as_tab_not_escape() {
+        use fnv_game::game::menus;
+        use GamepadButton::East;
+        let at = MenuAt { code: Some(menus::DIALOGUE), tab: 0 };
+        // B (East) is the conversation's own leave key (Tab/Goodbye), not the shared Esc
+        // that opens the pause menu (#1657).
+        assert!(menu_buttons(at).contains(&(East, KeyCode::Tab)));
+        assert_eq!(menu_key_at(East, at), Some(KeyCode::Tab));
+        // Outside a conversation East is still the shared Esc.
+        assert_eq!(menu_key(East), Some(KeyCode::Escape));
+    }
 
     #[test]
     fn the_games_codes_give_the_console_layout() {

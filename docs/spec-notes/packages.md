@@ -319,6 +319,19 @@ location, in cell (radius ignored), near reference; the radius is editable.
     first topic of a conversation between two NPCs, or the Say To line.
   - Must Complete: the package "will not reevaluate until actor has engaged in
     dialogue with the target".
+  - **A wait location that is furniture**: the actor sits on it and talks from its
+    seat; it does not go up to the target, even without a trigger location (case 3),
+    and waits until the target is within the activate distance [observed: the owner's
+    frame from the original, 2026-11-03, issue #1474: Benny on his bar stool in the
+    Tops' presidential suite greets the player, who is close by with objective 20 (go
+    to the suite) just completed, and stays seated and facing the bar while the
+    greeting plays; the owner: "he never gets up".
+    His package VTopsBennyPresidentialTalk: wait location near the reference
+    0x001110C4 (DinerStool01L, FURN) with radius 128, no trigger location, the player
+    within 256, Must Complete, PKDD Don't Control Target Movement; the stool is about
+    630 units from the ambush trigger the player arrives in. hypothesis: that every
+    actor waiting on furniture does the same, and that only its head turns to the
+    target; the wiki text quoted above does not mention furniture.]
 
 **Doors and packages**: the door flags lock or unlock all doors of the cell at the start,
 the end, or while at the location. Known New Vegas bugs listed on the wiki: door flags
@@ -746,7 +759,10 @@ reported, so an actor with no valid package shows the one it keeps.
 navmeshes in the authored game: per actor the distance walked, counts of events, its
 state after every game hour (space, position, package, activity) and the events
 (package, trip with its doors and length, door, arrived, already there, unreachable,
-not carried out). `--force` gives an actor a package as AddScriptPackage would. With
+not carried out). Each actor's `furniture` (`starts` per piece, `excluded_pieces` per
+reason, `unknown`) covers the whole run, whatever the cap on `events`; `furniture_facts`
+is null when the assets did not open, and `unknown` with it (furniture.md §9). `--force` gives an actor a package
+as AddScriptPackage would. With
 `--samples` each actor starts where a capture first saw it, at the capture's hour, and
 is compared at every sample (`files[].actors[]`: samples, same package, same cell, the
 share in the same cell among same-package samples, the distance when in the same cell,

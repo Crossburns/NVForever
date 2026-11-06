@@ -449,7 +449,13 @@ impl Ai {
         if found >= f.count {
             return;
         }
-        let objects: Vec<(f32, FormId)> = self.objects(game, actor, f.wanted, &f.area, centre, f.kill, f.steal, f.buy || self.cfg.find_buying, feet).into_iter().filter(|(_, r)| !given_up.contains(r)).collect();
+        let objects: Vec<(f32, FormId)> = self.objects(game, actor, f.wanted, &f.area, centre, f.kill, f.steal, f.buy || self.cfg.find_buying, feet)
+            .into_iter()
+            .filter(|(_, r)| !given_up.contains(r))
+            // Furniture it has no clips for is not what it looks for: passed over before
+            // a way is planned, it counts for nothing (`crate::furniture`).
+            .filter(|(_, r)| self.furniture.fits_assigned(game, actor, *r))
+            .collect();
         let mut given_up = given_up;
         for (_, object) in objects.into_iter().take(TRIES) {
             let Some(to) = goal::place_of_ref(game, object) else { continue };
@@ -575,7 +581,7 @@ impl Ai {
         if !Self::alive(game, vendor) {
             return None;
         }
-        let stock = game.world.placed.get(vendor).and_then(|p| p.merchant_container)?;
+        let stock = game.merchant_container(vendor)?;
         let caps = game.world.item_count(buyer, CAPS).unwrap_or(0).max(0) as u32;
         let items: Vec<FormId> = carried(game, stock).into_iter().filter(|i| *i != CAPS && game.sells(vendor, *i) && item_wanted(game, stock, *i, wanted)).collect();
         let mut best: Option<(u32, FormId)> = None;
@@ -613,11 +619,14 @@ impl Ai {
         let free = |r: &FormId| !taken.contains(r);
         let sit = |game: &Game, r: FormId| fnv_game::functions::base_of(game, r).and_then(|b| game.data.furniture.get(&b)).is_some_and(|f| f & furniture::SIT != 0);
         let thing = match u.wanted {
-            Wanted::Reference(r) => Some(r),
+            // Furniture it has no clips for is nothing to use: it goes to the package's
+            // place and its goal is met, as when a search finds nothing (`crate::furniture`).
+            Wanted::Reference(r) => Some(r).filter(|r| self.furniture.fits_assigned(game, actor, *r)),
             Wanted::Nothing => None,
             w => {
                 let area = Area { centre: Some(centre), radius: u.area.radius };
-                self.objects(game, actor, w, &area, centre, false, true, false, feet).into_iter().map(|x| x.1).filter(free).find(|r| !u.sit_down || sit(game, *r))
+                let found = self.objects(game, actor, w, &area, centre, false, true, false, feet);
+                found.into_iter().map(|x| x.1).filter(free).filter(|r| !u.sit_down || sit(game, *r)).find(|r| self.furniture.fits_assigned(game, actor, *r))
             }
         };
         *self.errand_mut(actor) = Some(Errand::UseAt { thing });
@@ -822,6 +831,6 @@ pub(crate) fn cells_around(game: &Game, centre: Place, radius: f32) -> Vec<FormI
         }
     }
     let mut out: Vec<FormId> = cells.iter().flat_map(|c| refs.by_cell.get(c).into_iter().flatten().copied()).collect();
-    out.extend(game.world.created().filter(|(_, s)| s.cell.is_some_and(|c| cells.contains(&c)) && !s.deleted).map(|(id, _)| id));
+    out.extend(game.world.created().filter(|(_, s)| s.cell.is_some_and(|c| cells.contains(&c)) && !s.deleted()).map(|(id, _)| id));
     out
 }

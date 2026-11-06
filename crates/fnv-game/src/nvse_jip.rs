@@ -71,13 +71,9 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // when it has passed today), the other time globals with it.
         "setgamehour" => {
             let Ok(c) = g.world.calendar() else { return Some(Ok(XVal::Num(0.0))) };
-            let to = num(args, 0, f64::from(c.hour)).rem_euclid(24.0);
-            let mut dh = to - f64::from(c.hour);
-            if dh < 0.0 {
-                dh += 24.0;
-            }
-            if dh > 0.0 && g.world.advance_hours(dh).is_ok() {
-                g.pass_hours(dh, false);
+            let to = num(args, 0, f64::from(c.hour));
+            if let Some(hours) = g.world.advance_to_hour(to).ok().filter(|h| *h > 0.0) {
+                g.pass_hours(hours, false);
             }
             XVal::Num(0.0)
         }

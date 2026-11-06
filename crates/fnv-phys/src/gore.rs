@@ -70,7 +70,7 @@ impl PhysWorld {
             self.set_mass(h, s.mass);
         }
         self.gore.insert(s.id, h);
-        self.mark_dirty();
+        self.mark_dirty(crate::world::DirtyBy::Bodies);
     }
 
     /// Remove a gore piece.

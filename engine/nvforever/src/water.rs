@@ -36,6 +36,11 @@
 //!   the land without a seam ("used for edges of the water, to blend it smoothly with
 //!   the land" [documented: GECK wiki WaterType]; the units are a hypothesis).
 //!
+//! - A script's RemapWaterType (Fallout 3's; `fnv_game::Game::water_type`) draws one
+//!   water type as another: [`WaterRemaps`] holds the game's remaps and
+//!   [`water_material`] builds the remapped type's material. Water already drawn keeps
+//!   its material until its cell is drawn again [design].
+//!
 //! Not done: the ANAM opacity (the GECK wiki names it without a meaning), distortion,
 //! light radius and brightness.
 
@@ -71,9 +76,11 @@ impl Plugin for WaterPlugin {
         app.add_plugins(MaterialPlugin::<WaterMaterial>::default())
             .init_resource::<WaterCache>()
             .init_resource::<DistantWater>()
+            .init_resource::<WaterRemaps>()
             .add_systems(
                 Update,
                 (
+                    sync_remaps.before(crate::world::stream),
                     update_water_sky.after(crate::sky::update_sky),
                     crate::underwater::underwater_fog.after(crate::sky::update_sky),
                     distant_water.after(crate::world::stream),
@@ -216,9 +223,23 @@ impl WaterCache {
     }
 }
 
+/// The game's RemapWaterType remaps (old water type → new), copied each frame they change.
+#[derive(Resource, Default, PartialEq)]
+pub struct WaterRemaps(HashMap<u32, u32>);
+
+fn sync_remaps(script: Option<Res<nvf_play::script::ScriptState>>, mut remaps: ResMut<WaterRemaps>) {
+    let Some(g) = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game) else { return };
+    let now = WaterRemaps(g.forms.water_remaps.iter().map(|(a, b)| (a.0, b.0)).collect());
+    if *remaps != now {
+        info!("water: {} water type(s) remapped (RemapWaterType)", now.0.len());
+        *remaps = now;
+    }
+}
+
 /// Water materials and the plane mesh, for spawning water.
 #[derive(SystemParam)]
 pub struct WaterCtx<'w> {
+    remaps: Option<Res<'w, WaterRemaps>>,
     materials: ResMut<'w, Assets<WaterMaterial>>,
     cache: ResMut<'w, WaterCache>,
     reflection: Option<Res<'w, Reflection>>,
@@ -238,6 +259,7 @@ impl WaterCtx<'_> {
 
 /// The material for water type `wid` (built on first use).
 pub fn water_material(world: &WorldData, wid: u32, models: &mut ModelCtx, water: &mut WaterCtx) -> Option<Handle<WaterMaterial>> {
+    let wid = water.remaps.as_ref().and_then(|r| r.0.get(&wid).copied()).unwrap_or(wid);
     if let Some(m) = water.cache.materials.get(&wid) {
         return Some(m.clone());
     }

@@ -48,8 +48,60 @@ The codes are those of the game's text, Windows-1252 [hypothesis: the letters at
 codes of plain English text are right; the accented ones were not checked]. About 113
 codes have no picture in each font.
 
+### 2.1 Localized installs: the code page (#1439)
+
+Nothing in this section was looked at in a localized install; it says what NVForever
+assumes and what is still to be checked.
+
+- **What is assumed.** A localized release keeps the 256-glyph file of §2 and changes
+  two things: the code page of the 8-bit text in its plugins (and its menu files, credits
+  and terminal word list), and the glyphs its font files and textures carry at those codes
+  (Windows-1251 for Russian, Windows-1250 for Polish and Czech). So a Cyrillic letter
+  is drawn with the glyph at its 1251 code [hypothesis: no localized `.fnt`, texture
+  or plugin looked at].
+- **What NVForever does.** All the game's 8-bit text (plugin strings, script strings,
+  archive and model names, settings, menu files that are not UTF-8, credits, the
+  terminal word list) is read in one code page per run, and a character is set with the
+  glyph at its code in that code page (`fnv_util::text`, `fnv_font::code_of`). Typed
+  text (console, character name) takes only the characters that code page has. Archive
+  and model names use the same code page as the plugins, so a path in a plugin still
+  finds its file [hypothesis: that a localized install's file names use the plugins'
+  code page; every vanilla English name is ASCII, the same in all three code pages].
+- **How it is chosen.** `NVF_CODE_PAGE`, else `[Text] CodePage=` in NVForever's own
+  `NVForever.ini` (1252, 1251 or 1250), else Windows-1252 (the English install's, the release this engine targets) [hypothesis]. It is not
+  detected from the install yet: which setting of a localized install names its
+  language (an INI key such as `sLanguage`, a file of its own) was not looked at, so
+  none is read.
+- **Every code page here maps all 256 bytes** to a character (the WHATWG tables in
+  `encoding_rs`; an undefined slot becomes the C1 control of the same value), so text read
+  and written again keeps its bytes [documented: WHATWG Encoding Standard, the
+  windows-1250/1251/1252 indexes].
+
+**To check on a Russian install** (owner or the reporting user): the code page of a
+few `FULL` names and dialogue lines in its plugins; whether its `.fnt` files are still
+14 632 bytes with the glyphs of Cyrillic letters at their 1251 codes; whether file names
+in its archives use high bytes; which setting names the language.
+
 The texture of `monofonto_large` is 256 x 256, 16 bits a texel with 4 of them alpha
 [observed]; the letters are in the alpha, the colour is a light grey.
+
+All eight font textures of `Fallout - Textures2.bsa` are A4R4G4B4 with one level, no
+smaller ones: 256 x 256 for `monofonto_large`, `glow_monofonto_medium` and
+`fixedsys_comp_uniform_width`, 512 x 512 for the other five [observed: `fnvtool dds
+list`, 2026-11-05]. NVForever draws a font from its texture's largest level only, so a
+texture that brings smaller levels (a localized or modded one) cannot blend a glyph with
+its neighbours [design, #1439].
+
+**Which files.** Font n is read from the file `sFontFile_n` of `[Fonts]` names in the
+install's `Fallout_default.ini` (in the game's folder; the per-user copy in `My
+Games\FalloutNV` is never read, install-layout.md), else from the English install's
+file for n [documented: Fallout_default.ini `[Fonts]`; hypothesis: a localized install
+names its own files there, not checked]. The start's log names each font read from a
+file of its own.
+
+**Without the font.** When a font file or its texture cannot be read, the text is drawn
+with Bevy's font, its characters read back from their codes in the run's code page
+(`fnv_font::Line::text`), not as Latin-1 [design, #1439].
 
 ## 3. Setting text
 

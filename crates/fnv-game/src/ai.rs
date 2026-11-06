@@ -202,12 +202,12 @@ impl<'a> Game<'a> {
             return Some(p);
         }
         let list = self.package_list(actor);
-        for &p in &list {
-            if self.check_package(actor, p) == PackageCheck::Valid {
-                return Some(p);
-            }
-        }
-        self.extra.get(&actor).and_then(|e| e.current_package).filter(|c| list.contains(c))
+        // The conditions may ask for the actor's current package (GetIsCurrentPackage):
+        // `current_package` answers with the one it had rather than choosing again.
+        self.choosing_package.push(actor);
+        let valid = list.iter().copied().find(|&p| self.check_package(actor, p) == PackageCheck::Valid);
+        self.choosing_package.pop();
+        valid.or_else(|| self.extra.get(&actor).and_then(|e| e.current_package).filter(|c| list.contains(c)))
     }
 
     /// Whether the AI runs packages itself (their begin, end and change scripts and the
@@ -309,9 +309,18 @@ impl<'a> Game<'a> {
 
     /// The actor's current package: the one last chosen, or chosen now when it never
     /// evaluated its packages (an actor always runs a package once loaded [hypothesis]).
+    /// Asked while the actor chooses (a condition of one of its packages), it is the one
+    /// the actor had, none on its first choice [hypothesis: choosing again from inside
+    /// the choice would never end]; that case is traced as skipped, so that the sweep
+    /// lists the packages whose conditions do it.
     pub fn current_package(&mut self, actor: FormId) -> Option<FormId> {
         match self.extra.get(&actor).and_then(|e| e.current_package) {
             Some(p) => Some(p),
+            None if self.choosing_package.contains(&actor) => {
+                let what = format!("current package of {actor} asked by a package condition while it chooses its first one");
+                self.emit(EventKind::Skipped { unit: "packages".into(), what });
+                None
+            }
             None => self.evaluate_package(actor),
         }
     }
@@ -503,7 +512,7 @@ impl<'a> Game<'a> {
     /// combat as placed actors do.
     pub fn created_actors(&self) -> Vec<FormId> {
         let forms = self.world.forms;
-        self.world.created().filter(|(_, s)| !s.deleted && is_actor_base(forms, s.base)).map(|(id, _)| id).collect()
+        self.world.created().filter(|(_, s)| !s.deleted() && is_actor_base(forms, s.base)).map(|(id, _)| id).collect()
     }
 
     /// Placed actors whose packages the periodic choice covers: those in loaded cells

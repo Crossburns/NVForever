@@ -11,6 +11,31 @@
 //!
 //! Sizes and bone positions come from the caller; this module keeps the shapes where it
 //! is told.
+//!
+//! **Cost of a write** [design: rapier3d 0.36.0 `geometry/broad_phase_bvh/update.rs:79-94,272`,
+//! `geometry/collider.rs:439-444`]: placing a capsule attached to the actor's body
+//! (`Collider::set_position_wrt_parent`) flags it `PARENT`, which rapier's broad phase treats
+//! as a re-parent: at the next refresh the leaf is taken out of the tree and inserted again
+//! as a brand-new one, and the whole tree is refitted. So
+//! - a call whose volume and parts are bit-identical to the last one writes nothing and does
+//!   not dirty the world (counted in `RefreshStats::hitvol_skipped`);
+//! - by default ([`PhysWorld::set_standalone_hit_volumes`], on unless switched off), new
+//!   actors' capsules are colliders of no body, placed at the pose rapier would give them on
+//!   the body (`body pose * local pose`, worked out at the next refresh or step, where rapier
+//!   works it out for an attached collider), which flags only `POSITION`: no forced
+//!   re-parent. A leaf inside its margin is left alone; one that leaves it is handled as any
+//!   moved collider (updated in place, re-inserted by SAH in a small batch, or covered by a
+//!   full refit; rapier `update.rs:139,288`). The body is kept (same bodies, same digest).
+//!   Switched off, the capsules are attached to the body as before.
+//!
+//! Exact ties (docs/spec-notes/physics.md §5.1): a first-hit `ray`/`sweep` whose two
+//! candidates have the same time of impact (coincident or mirrored capsules) returns the
+//! first in tree-traversal order, and the two representations shape the tree differently,
+//! so they can pick different winners (another actor or part). Which one wins was already
+//! history-dependent with attached capsules. The differential tests (`hitvol_diff_*` /
+//! `hitvol_ties_*`, `tests/synthetic.rs`) saw differences only on exact ties: the winner,
+//! its sweep witness point and normal, and `ray_all` order among equal distances
+//! [observed: `cargo test -p fnv-phys --test synthetic hitvol`, 2026-11-03].
 
 use crate::world::{Owner, PhysWorld};
 use crate::{layers, BodyState};
@@ -77,6 +102,23 @@ pub(crate) struct ActorBody {
     /// (collider, part, half segment length, radius); one with [`WHOLE`] for the single
     /// capsule.
     colliders: Vec<(ColliderHandle, u8, f32, f32)>,
+    /// The part capsules of the last [`PhysWorld::set_actor_parts`] that wrote them (empty
+    /// after [`PhysWorld::set_actor_volume`]): a call with bit-identical ones writes nothing.
+    parts: Vec<PartCapsule>,
+    /// Its colliders belong to no body ([`PhysWorld::set_standalone_hit_volumes`] when the
+    /// actor's body was made).
+    standalone: bool,
+}
+
+/// Whether two volumes are the same to the bit (`PartialEq` would take -0.0 for 0.0).
+fn same_volume(a: &HitVolume, b: &HitVolume) -> bool {
+    a.feet.map(f32::to_bits) == b.feet.map(f32::to_bits) && a.radius.to_bits() == b.radius.to_bits() && a.height.to_bits() == b.height.to_bits() && a.dead == b.dead
+}
+
+/// Whether two lists of part capsules are the same to the bit.
+fn same_parts(a: &[PartCapsule], b: &[PartCapsule]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| x.part == y.part && x.a.map(f32::to_bits) == y.a.map(f32::to_bits) && x.b.map(f32::to_bits) == y.b.map(f32::to_bits) && x.radius.to_bits() == y.radius.to_bits())
 }
 
 /// In no group and colliding with none: queries (whose filter has no groups) still see it.
@@ -98,7 +140,8 @@ impl PhysWorld {
         }
         let owner = Owner::Actor { form_id, layer: v.layer(), part: WHOLE };
         let body = self.insert_body(RigidBodyBuilder::kinematic_position_based().translation(f).user_data(owner.encode()));
-        self.actors.insert(form_id, ActorBody { body, volume: v, colliders: Vec::new() });
+        let standalone = self.standalone_hit_volumes;
+        self.actors.insert(form_id, ActorBody { body, volume: v, colliders: Vec::new(), parts: Vec::new(), standalone });
         body
     }
 
@@ -109,16 +152,23 @@ impl PhysWorld {
         if same {
             return;
         }
-        let body = a.body;
+        let (body, standalone) = (a.body, a.standalone);
         let old: Vec<ColliderHandle> = a.colliders.iter().map(|c| c.0).collect();
         for c in old {
             self.w.remove_collider(c);
         }
         let k = self.k;
+        // A standalone collider starts where an attached one would: rapier places a new
+        // attached collider at `body pose * local pose`, the local pose being the identity
+        // here [design: rapier3d 0.36.0 `dynamics/rigid_body_components.rs:1242`].
+        let start = self.w.bodies.get(body).map(|b| *b.position() * Pose::IDENTITY);
         let mut cols = Vec::new();
         for &(part, half, radius) in want {
             let co = ColliderBuilder::capsule_z(half * k, radius.max(1.0) * k).collision_groups(NO_CONTACTS).solver_groups(NO_CONTACTS);
-            let h = self.w.insert_collider(co, Some(body));
+            let h = match (standalone, start) {
+                (true, Some(pose)) => self.w.insert_collider(co.position(pose), None),
+                _ => self.w.insert_collider(co, Some(body)),
+            };
             cols.push((h, part, half, radius));
         }
         if let Some(a) = self.actors.get_mut(&form_id) {
@@ -134,6 +184,7 @@ impl PhysWorld {
             return;
         }
         if self.actors.get(&form_id).is_some_and(|a| a.volume == v && a.colliders.len() == 1 && a.colliders[0].1 == WHOLE) {
+            self.count_hitvol_writes(0, 1);
             return;
         }
         let k = self.k;
@@ -146,17 +197,25 @@ impl PhysWorld {
         let local = Pose::from_translation((Vector::new(c[0], c[1], c[2]) - Vector::new(v.feet[0], v.feet[1], v.feet[2])) * k);
         let a = self.actors.get_mut(&form_id).expect("added");
         a.volume = v;
+        a.parts.clear();
+        let (body, standalone) = (a.body, a.standalone);
         let (h, _, old_half, old_r) = a.colliders[0];
         a.colliders[0].2 = half;
         a.colliders[0].3 = radius;
         if let Some(co) = self.w.colliders.get_mut(h) {
             co.user_data = owner;
-            co.set_position_wrt_parent(local);
+            if standalone {
+                self.hitvol_pending.push((h, body, local));
+            } else {
+                co.set_position_wrt_parent(local);
+            }
             if (old_half - half).abs() > RESIZE || (old_r - radius).abs() > RESIZE {
                 co.set_shape(SharedShape::capsule_z(half * k, radius * k));
             }
         }
-        self.mark_dirty();
+        self.count_hitvol_colliders(1);
+        self.count_hitvol_writes(1, 0);
+        self.mark_dirty(crate::world::DirtyBy::HitVolume);
     }
 
     /// One capsule per body part (step C8): `v` is the actor's overall extent (its body
@@ -173,6 +232,13 @@ impl PhysWorld {
         if parts.is_empty() || !v.is_finite() {
             return self.set_actor_volume(form_id, v);
         }
+        // Counted as before the skip below existed: every capsule handed in.
+        self.count_hitvol_colliders(parts.len());
+        // Bit-identical to the last write: nothing to write, nothing dirtied.
+        if self.actors.get(&form_id).is_some_and(|a| same_volume(&a.volume, &v) && same_parts(&a.parts, parts) && a.colliders.len() == parts.len()) {
+            self.count_hitvol_writes(0, parts.len() as u64);
+            return;
+        }
         let k = self.k;
         let feet = Vector::new(v.feet[0], v.feet[1], v.feet[2]);
         let want: Vec<(u8, f32, f32)> = parts
@@ -187,6 +253,9 @@ impl PhysWorld {
         let layer = v.layer();
         let a = self.actors.get_mut(&form_id).expect("added");
         a.volume = v;
+        a.parts.clear();
+        a.parts.extend_from_slice(parts);
+        let (body, standalone) = (a.body, a.standalone);
         for (i, p) in parts.iter().enumerate() {
             let (h, _, old_half, old_r) = a.colliders[i];
             let (pa, pb) = (Vector::from(p.a), Vector::from(p.b));
@@ -198,20 +267,65 @@ impl PhysWorld {
             a.colliders[i].3 = p.radius;
             if let Some(co) = self.w.colliders.get_mut(h) {
                 co.user_data = Owner::Actor { form_id, layer, part: p.part }.encode();
-                co.set_position_wrt_parent(local);
+                if standalone {
+                    self.hitvol_pending.push((h, body, local));
+                } else {
+                    co.set_position_wrt_parent(local);
+                }
                 if (old_half - half).abs() > RESIZE || (old_r - p.radius).abs() > RESIZE {
                     co.set_shape(SharedShape::capsule_z(half * k, p.radius.max(1.0) * k));
                 }
             }
         }
-        self.mark_dirty();
+        self.count_hitvol_writes(parts.len() as u64, 0);
+        self.mark_dirty(crate::world::DirtyBy::HitVolume);
     }
 
     /// Remove an actor's hit volume (it left the loaded area or was disabled).
     pub fn remove_actor_volume(&mut self, form_id: u32) -> bool {
         let Some(a) = self.actors.remove(&form_id) else { return false };
+        // Standalone colliders go with it (attached ones go with the body).
+        if a.standalone {
+            for c in &a.colliders {
+                self.w.remove_collider(c.0);
+            }
+        }
         self.remove_body(a.body);
         true
+    }
+
+    /// Whether actors whose hit volume is made from now on get colliders of no body (on, the
+    /// default; see the module notes) or colliders attached to the actor's body (off, the
+    /// representation before 2026-11-03). Actors that already have one keep theirs.
+    pub fn set_standalone_hit_volumes(&mut self, on: bool) {
+        self.standalone_hit_volumes = on;
+    }
+
+    /// Whether new actors' hit volumes get colliders of no body
+    /// ([`PhysWorld::set_standalone_hit_volumes`]).
+    pub fn standalone_hit_volumes(&self) -> bool {
+        self.standalone_hit_volumes
+    }
+
+    /// Place the standalone capsules written since the last refresh or step where rapier
+    /// would place them attached: `body pose * local pose`, with the body's pose now, the
+    /// product rapier forms for an attached collider at that point
+    /// [design: rapier3d 0.36.0 `pipeline/user_changes.rs:24`,
+    /// `dynamics/rigid_body_components.rs:1274`].
+    pub(crate) fn flush_hit_volumes(&mut self) {
+        if self.hitvol_pending.is_empty() {
+            return;
+        }
+        let _span = tracing::info_span!("phys::hitvol_flush").entered();
+        let mut pending = std::mem::take(&mut self.hitvol_pending);
+        for (c, b, local) in pending.drain(..) {
+            let Some(body) = self.w.bodies.get(b) else { continue };
+            let pose = *body.position() * local;
+            if let Some(co) = self.w.colliders.get_mut(c) {
+                co.set_position(pose);
+            }
+        }
+        self.hitvol_pending = pending;
     }
 
     /// The actors that have a hit volume, by FormID.

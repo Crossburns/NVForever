@@ -9,11 +9,12 @@ use common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::ash_piles::CritEffect;
 use fnv_game::functions::Ctx;
-use fnv_game::game::{Game, GameConfig};
+use fnv_game::game::{ActMode, Game, GameConfig};
 use fnv_game::trace::EventKind;
 use fnv_game::GameData;
 use fnv_script::vm::{ArgValue, Value};
 use fnv_script::FunctionTable;
+use fnv_sim::world::Outcome;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::Value as Json;
 
@@ -151,8 +152,32 @@ fn attach_ash_pile_places_one_linked_pile() {
     assert_eq!(g.misc_stat(fnv_game::misc_stats::DISINTEGRATIONS), 1.0);
     // Brought back to life, the actor's pile goes.
     g.resurrect(RAIDER_REF, false);
-    assert!(g.world.peek(pile).unwrap().deleted);
+    assert!(g.world.peek(pile).unwrap().deleted());
     assert_eq!(g.extra[&RAIDER_REF].ash_pile, None);
+}
+
+/// #1615: every activation of a pile opens the inventory of the body it came from, the
+/// player's own (once, by the shared default action) and a script's; a pile taken away by
+/// ResurrectActor opens nothing.
+#[test]
+fn activating_a_pile_opens_the_body_it_came_from() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(g.kill(RAIDER_REF, Some(P)));
+    let pile = g.attach_ash_pile(RAIDER_REF, 1).unwrap();
+    let from = g.events.len();
+    let done = g.default_activation_by_hand(pile).unwrap().expect("not refused");
+    assert_eq!(done.activation.outcome, Outcome::OpenedContainer { container: RAIDER_REF });
+    assert_eq!(done.activated_event, from);
+    let activated = |g: &Game| g.events.iter().filter(|e| matches!(e.kind, EventKind::Activated { reference, .. } if reference == pile)).count();
+    assert_eq!(activated(&g), 1);
+    assert_eq!(g.activating(P), Some(pile));
+    let v = g.activate(P, pile, ActMode::Default).unwrap();
+    assert_eq!(v.pointer("/result").and_then(Json::as_str), Some("opened_container"));
+    assert_eq!(activated(&g), 2);
+    g.resurrect(RAIDER_REF, false);
+    let v = g.activate(P, pile, ActMode::Hand).unwrap();
+    assert_ne!(v.pointer("/result").and_then(Json::as_str), Some("opened_container"));
 }
 
 #[test]

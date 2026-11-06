@@ -6,7 +6,8 @@
 //! children of their cell's [`RenderCell`] entity; this module moves those entities by
 //! the change from the pose they were drawn at to the simulation's: each frame for the
 //! references physics moved or a script's Rotate turned or SetScale resized
-//! (`Game::turned`), and for every reference whose entities just appeared (a cell
+//! (`Game::turned`) or the console moved (`crate::RefRepose`, which still names what the
+//! tick cleared from `turned`), and for every reference whose entities just appeared (a cell
 //! streamed in) and whose simulation pose or script scale differs. The scale is a
 //! script's (SetScale, kept on the reference's state) in place of the placement's. Only entities whose parent is the
 //! cell are moved (a model with its own node hierarchy moves with its root). Actors are
@@ -51,17 +52,20 @@ impl Plugin for MovedPlugin {
 
 type Drawn<'w, 's> = Query<'w, 's, (Entity, &'static RefVisual, &'static mut Transform, Option<&'static Baked>, &'static ChildOf)>;
 
+#[allow(clippy::too_many_arguments)]
 fn follow(
     mut commands: Commands,
     sim: Res<SimState>,
     phys: Res<PhysState>,
     script: Res<ScriptState>,
+    mut repose: MessageReader<crate::RefRepose>,
     added: Query<&RefVisual, Added<RefVisual>>,
     mut drawn: Drawn,
     cells: Query<&Transform, (With<RenderCell>, Without<RefVisual>)>,
 ) {
     let mut ids: BTreeSet<u32> = phys.moved_now.iter().copied().collect();
     ids.extend(script.rt.iter().flat_map(|rt| rt.game.turned.iter().map(|r| r.0)));
+    ids.extend(repose.read().map(|m| m.form_id));
     ids.extend(added.iter().map(|r| r.0).filter(|&id| sim.moved_pose(id).is_some() || sim.script_scale(id).is_some()));
     if ids.is_empty() {
         return;
@@ -103,5 +107,47 @@ mod tests {
         // Back again: the first transform.
         let back = rebake(&t, origin, moved, placed);
         assert!(back.translation.abs_diff_eq(drawn.translation, 1e-3), "{back:?}");
+    }
+
+    /// Issue #1618: what the console moved reaches the drawing through `RefRepose` alone
+    /// (the tick has cleared `Game::turned` by then, and physics moved nothing), once.
+    #[test]
+    fn a_console_move_moves_the_drawn_model_once() {
+        use crate::sim::placed_ref;
+        use fnv_sim::refs::PlacedRef;
+        const BOX: u32 = 0x301;
+        const ACTOR: u32 = 0x302;
+        let at = [4100.0, 10.0, 20.0];
+        let origin = Vec3::new(4096.0, 0.0, 0.0);
+        let sim = SimState::over_placed([PlacedRef { pos: at, ..placed_ref(BOX) }, PlacedRef { sig: *b"ACHR", pos: at, ..placed_ref(ACTOR) }]);
+        let mut app = App::new();
+        app.add_message::<crate::RefRepose>().insert_resource(sim).insert_resource(PhysState::default()).insert_resource(ScriptState::over_no_plugins()).add_systems(Update, follow);
+        let cell = app.world_mut().spawn((RenderCell::Interior(0x200), Transform::from_translation(origin))).id();
+        // A mesh 5 units above the reference's origin.
+        let shape = Affine3A::from_translation(Vec3::Z * 5.0);
+        let drawn = Transform::from_matrix(Mat4::from(Affine3A::from_translation(-origin) * ref_affine(at, [0.0; 3], 1.0) * shape));
+        let mesh = app.world_mut().spawn((RefVisual(BOX), drawn, ChildOf(cell))).id();
+        let body = app.world_mut().spawn((RefVisual(ACTOR), drawn, ChildOf(cell))).id();
+        // Past `Added<RefVisual>`, which would find a moved pose by itself.
+        app.update();
+        let z = |app: &App, e: Entity| app.world().get::<Transform>(e).unwrap().translation.z;
+        assert!((z(&app, mesh) - 25.0).abs() < 1e-3);
+        // As `SetPos z 170` from the console: the simulation holds the new height.
+        for r in [BOX, ACTOR] {
+            app.world_mut().resource_mut::<SimState>().world.get(FormId(r)).unwrap().pos[2] = 170.0;
+        }
+        app.update();
+        assert!((z(&app, mesh) - 25.0).abs() < 1e-3, "nothing named it: no sweep of the scene");
+        app.world_mut().write_message(crate::RefRepose { form_id: BOX });
+        app.world_mut().write_message(crate::RefRepose { form_id: ACTOR });
+        app.update();
+        assert!((z(&app, mesh) - 175.0).abs() < 1e-3);
+        assert!((z(&app, body) - 25.0).abs() < 1e-3, "actors are left alone");
+        // No second application: on a later frame, or when it is named again.
+        app.update();
+        assert!((z(&app, mesh) - 175.0).abs() < 1e-3);
+        app.world_mut().write_message(crate::RefRepose { form_id: BOX });
+        app.update();
+        assert!((z(&app, mesh) - 175.0).abs() < 1e-3);
     }
 }

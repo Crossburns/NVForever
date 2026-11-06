@@ -46,8 +46,14 @@ pub fn limb_name(code: u16) -> &'static str {
 pub struct AidStats {
     /// Items used, by name.
     pub used: BTreeMap<String, u32>,
+    /// Effects the uses applied: none held inactive at the use, none merely extended.
     pub effects_started: u32,
+    /// Those of [`AidStats::effects_started`] that have ended.
     pub effects_ended: u32,
+    /// The ids behind `effects_started` that have not ended yet, so the two numbers count
+    /// the same effects: every effect's removal raises `EffectFinished`, a held one's too
+    /// (#1494).
+    started_ids: BTreeSet<u32>,
     pub addicted: Vec<String>,
     pub cured: u32,
     /// Changes of the player's stage of rads or of a need.
@@ -59,6 +65,22 @@ pub struct AidStats {
     /// Items with effects on the player that last (modifiers, by the second), and the
     /// values they change: logged when the last of them ends.
     pub lasting: BTreeMap<FormId, BTreeSet<u16>>,
+}
+
+impl AidStats {
+    /// A use applied these effects (`Ingested::effects`).
+    fn count_started(&mut self, ids: &[u32]) {
+        self.effects_started += ids.len() as u32;
+        self.started_ids.extend(ids);
+    }
+
+    /// An effect is gone: it counts as ended only if it was counted as started. Whether
+    /// it was suspended since does not matter, it took hold.
+    fn count_finished(&mut self, id: u32) {
+        if self.started_ids.remove(&id) {
+            self.effects_ended += 1;
+        }
+    }
 }
 
 fn av_name(code: u16) -> &'static str {
@@ -152,7 +174,7 @@ pub fn use_item(rt: &mut Runtime, item: FormId, limb: Option<u16>) -> Ingested {
         }
     }
     *s.used.entry(name).or_default() += 1;
-    s.effects_started += r.effects.len() as u32;
+    s.count_started(&r.effects);
     s.codes.extend(codes);
     r
 }
@@ -195,8 +217,8 @@ pub fn after_tick(rt: &mut Runtime, from: usize) {
     let mut lines = Vec::new();
     for e in rt.game.events.get(from..).unwrap_or(&[]) {
         match &e.kind {
-            EventKind::EffectFinished { target, source, .. } if *target == P && data.ingestibles.contains_key(source) => {
-                rt.aid.effects_ended += 1;
+            EventKind::EffectFinished { id, target, source } if *target == P && data.ingestibles.contains_key(source) => {
+                rt.aid.count_finished(*id);
                 if !ended.contains(source) {
                     ended.push(*source);
                 }
@@ -231,7 +253,7 @@ pub fn after_tick(rt: &mut Runtime, from: usize) {
     }
     for item in ended {
         // Only once no effect of the item is left on the player.
-        if rt.game.effects.iter().any(|e| e.target == P && e.source == item && e.effect != fnv_game::aid::USAGE_MONITOR) {
+        if rt.game.effects.iter().any(|e| e.target == P && e.source == item && !e.inactive && e.effect != fnv_game::aid::USAGE_MONITOR) {
             continue;
         }
         let Some(codes) = rt.aid.lasting.remove(&item) else { continue };
@@ -299,4 +321,52 @@ pub fn report(mut exit: MessageReader<AppExit>, mut script: ResMut<ScriptState>,
         if hardcore { " (Hardcore)" } else { "" },
         values.join(", ")
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AidStats;
+
+    fn counts(s: &AidStats) -> (u32, u32) {
+        (s.effects_started, s.effects_ended)
+    }
+
+    #[test]
+    fn an_instant_effect_ends_as_counted() {
+        let mut s = AidStats::default();
+        s.count_started(&[7]);
+        s.count_finished(7);
+        assert_eq!(counts(&s), (1, 1));
+    }
+
+    /// An effect held inactive at the use is not in `Ingested::effects`, but its removal
+    /// still raises `EffectFinished`.
+    #[test]
+    fn a_held_effect_that_expires_is_not_counted() {
+        let mut s = AidStats::default();
+        s.count_started(&[7]);
+        s.count_finished(8);
+        s.count_finished(9);
+        assert_eq!(counts(&s), (1, 0));
+    }
+
+    /// A second dose extends the running effect and lists no new id: one start, one end.
+    #[test]
+    fn a_repeated_dose_is_one_start_and_one_end() {
+        let mut s = AidStats::default();
+        s.count_started(&[7]);
+        s.count_started(&[]);
+        assert_eq!(counts(&s), (1, 0));
+        s.count_finished(7);
+        assert_eq!(counts(&s), (1, 1));
+    }
+
+    #[test]
+    fn an_effect_ends_only_once() {
+        let mut s = AidStats::default();
+        s.count_started(&[7]);
+        s.count_finished(7);
+        s.count_finished(7);
+        assert_eq!(counts(&s), (1, 1));
+    }
 }

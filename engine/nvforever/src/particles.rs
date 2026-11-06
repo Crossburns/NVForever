@@ -32,6 +32,9 @@
 //!   born (`Particle::frame`).
 //! - **Placed models** emit their own systems and their add-on nodes' from a holder at
 //!   the reference (`world::spawn_emitters`: Gomorrah's roof fires), not while hidden;
+//!   a placed model's own live particles go at once when it is hidden or gone (a taken
+//!   snow globe, #1596; log `particles: <ref> is not drawn any more: its <n> live
+//!   particles go`);
 //!   a placed model's own systems are that reference's own, and a master system serves
 //!   the add-on nodes nearest the camera first (particles.md §7). References a script
 //!   enables (`nvf_play::script_draw`) emit too.
@@ -53,7 +56,7 @@
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::light::NotShadowCaster;
 use bevy::math::Affine3A;
-use bevy::mesh::Indices;
+use bevy::mesh::{Indices, MeshVertexAttribute, VertexAttributeValues};
 use bevy::prelude::*;
 use fnv_combat::rng::SplitMix;
 use nvf_assets::anim_play::Playing;
@@ -226,6 +229,9 @@ struct Particle {
     frame: Affine3A,
     pos: Vec3,
     vel: Vec3,
+    /// The scale of its speed and gravity when it was born: the reference's
+    /// ([`frame_scale`]) times the system node's (particles.md §7.7).
+    scale: f32,
     /// Its emitter's time when it was born: the emitter's time now is this plus `age`
     /// (for modifiers switched on and off on the emitter's time).
     born_at: f32,
@@ -246,6 +252,9 @@ struct Particle {
 struct Live {
     def: ParticleSystemDef,
     particles: Vec<Particle>,
+    /// The previous frame's mesh storage. Geometry is built here, then exchanged with
+    /// the mesh's attribute vectors so steady-state draws retain their capacities.
+    geometry: ParticleGeometry,
     mesh: Handle<Mesh>,
     entity: Entity,
     /// Emitters served this frame.
@@ -255,6 +264,157 @@ struct Live {
     /// about one particle, and a count kept by each flash would round most of them away
     /// [design].
     owed: f32,
+}
+
+/// CPU-side particle geometry exchanged with a live mesh after each draw.
+///
+/// The mesh and this scratch storage each retain one set of capacities. Replacing mesh
+/// attributes with new vectors every frame would drop the mesh's old allocation; swapping
+/// lets both sets reach their high-water marks and be reused on subsequent frames.
+///
+/// The ADDN and shot effect systems live as long as the run, so a burst would otherwise
+/// pin its high-water mark for good: each rebuilt set gives back memory once it uses
+/// under a quarter of it ([`trim`]), so both sets stay within about four times the
+/// last frames' geometry, and a system that empties drops its scratch set.
+#[derive(Default)]
+struct ParticleGeometry {
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    colors: Vec<[f32; 4]>,
+    indices: Vec<u32>,
+    /// A ribbon's points (its trail and its place), reused from ribbon to ribbon.
+    points: Vec<Vec3>,
+}
+
+/// Shrink `v` to twice its length when it uses under a quarter of its capacity.
+fn trim<T>(v: &mut Vec<T>) {
+    if v.len() < v.capacity() / 4 {
+        v.shrink_to(v.len() * 2);
+    }
+}
+
+impl ParticleGeometry {
+    fn clear(&mut self) {
+        self.positions.clear();
+        self.normals.clear();
+        self.uvs.clear();
+        self.colors.clear();
+        self.indices.clear();
+    }
+
+    fn trim(&mut self) {
+        trim(&mut self.positions);
+        trim(&mut self.normals);
+        trim(&mut self.uvs);
+        trim(&mut self.colors);
+        trim(&mut self.indices);
+    }
+
+    fn rebuild(&mut self, d: &ParticleSystemDef, particles: &[Particle], right: Vec3, up: Vec3, back: Vec3) {
+        self.clear();
+        let n = particles.len();
+        self.positions.reserve(n * 4);
+        self.uvs.reserve(n * 4);
+        self.colors.reserve(n * 4);
+        self.indices.reserve(n * 6);
+        if d.strip.is_some() {
+            // Ribbons through each particle's recorded points and its place, facing the
+            // camera; the texture rectangle's width across, its height along, the oldest
+            // point at its bottom (particles.md §6.2).
+            for q in particles {
+                let points = &mut self.points;
+                points.clear();
+                points.extend(q.trail.iter().copied().chain([q.pos]));
+                let count = points.len();
+                if count < 2 {
+                    continue;
+                }
+                let t = (q.age / q.life).clamp(0.0, 1.0);
+                let half = q.radius * d.scale(q.age, q.life);
+                let [u, w, v, h] = d.subtextures.get(q.tex).copied().unwrap_or([0.0, 1.0, 0.0, 1.0]);
+                let tint = d.tint(t);
+                let e = d.emitter.color;
+                let colour = display_colour([tint[0] * e[0], tint[1] * e[1], tint[2] * e[2], tint[3] * e[3] * keyed_alpha(d, q)]);
+                let base = self.positions.len() as u32;
+                for (i, p) in self.points.iter().enumerate() {
+                    let tangent = self.points[(i + 1).min(count - 1)] - self.points[i.saturating_sub(1)];
+                    let side = tangent.cross(back).normalize_or(right) * half;
+                    self.positions.extend([(*p - side).to_array(), (*p + side).to_array()]);
+                    let along = v + h * (1.0 - i as f32 / (count - 1) as f32);
+                    self.uvs.extend([[u, along], [u + w, along]]);
+                    self.colors.extend([colour; 2]);
+                }
+                for i in 0..(count as u32 - 1) {
+                    let a = base + i * 2;
+                    self.indices.extend([a, a + 1, a + 3, a, a + 3, a + 2]);
+                }
+            }
+        }
+        for (k, q) in particles.iter().enumerate().filter(|_| d.strip.is_none()) {
+            let t = (q.age / q.life).clamp(0.0, 1.0);
+            let half = q.radius * d.scale(q.age, q.life);
+            let (s, c) = q.angle.sin_cos();
+            let (x, y) = ((right * c + up * s) * half, (up * c - right * s) * half);
+            for corner in [-x - y, x - y, x + y, -x + y] {
+                self.positions.push((q.pos + corner).to_array());
+            }
+            let [u, w, v, h] = d.subtextures.get(q.tex).copied().unwrap_or([0.0, 1.0, 0.0, 1.0]);
+            self.uvs.extend([[u, v + h], [u + w, v + h], [u + w, v], [u, v]]);
+            let tint = d.tint(t);
+            let e = d.emitter.color;
+            self.colors.extend([display_colour([tint[0] * e[0], tint[1] * e[1], tint[2] * e[2], tint[3] * e[3] * keyed_alpha(d, q)]); 4]);
+            let b = (k * 4) as u32;
+            self.indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
+        }
+        self.normals.resize(self.positions.len(), back.to_array());
+        self.trim();
+        trim(&mut self.points);
+    }
+
+    /// Replace every live attribute's contents while retaining both the mesh and scratch
+    /// capacities. [`particle_mesh`] establishes these exact attribute and index types;
+    /// should a mesh lack one or hold another type, the geometry is inserted instead
+    /// (that set's capacity goes to the mesh) and false is returned.
+    fn swap_into_mesh(&mut self, mesh: &mut Mesh) -> bool {
+        let mut matched = swap_attribute(mesh, Mesh::ATTRIBUTE_POSITION, &mut self.positions, |v| match v {
+            VertexAttributeValues::Float32x3(v) => Some(v),
+            _ => None,
+        });
+        matched &= swap_attribute(mesh, Mesh::ATTRIBUTE_NORMAL, &mut self.normals, |v| match v {
+            VertexAttributeValues::Float32x3(v) => Some(v),
+            _ => None,
+        });
+        matched &= swap_attribute(mesh, Mesh::ATTRIBUTE_UV_0, &mut self.uvs, |v| match v {
+            VertexAttributeValues::Float32x2(v) => Some(v),
+            _ => None,
+        });
+        matched &= swap_attribute(mesh, Mesh::ATTRIBUTE_COLOR, &mut self.colors, |v| match v {
+            VertexAttributeValues::Float32x4(v) => Some(v),
+            _ => None,
+        });
+        if let Some(Indices::U32(values)) = mesh.indices_mut() {
+            std::mem::swap(values, &mut self.indices);
+        } else {
+            mesh.insert_indices(Indices::U32(std::mem::take(&mut self.indices)));
+            matched = false;
+        }
+        matched
+    }
+}
+
+/// Swap `scratch` with the mesh's `attribute` when `values` finds a vector of its type
+/// there; otherwise insert it (taking its storage) and return false.
+fn swap_attribute<T>(mesh: &mut Mesh, attribute: MeshVertexAttribute, scratch: &mut Vec<T>, values: fn(&mut VertexAttributeValues) -> Option<&mut Vec<T>>) -> bool
+where
+    Vec<T>: Into<VertexAttributeValues>,
+{
+    if let Some(v) = mesh.attribute_mut(attribute.id).and_then(values) {
+        std::mem::swap(v, scratch);
+        return true;
+    }
+    mesh.insert_attribute(attribute, std::mem::take(scratch));
+    false
 }
 
 #[derive(Resource)]
@@ -270,6 +430,8 @@ pub struct Particles {
     /// Placed references with an emitter, and those whose emitters gave birth.
     placed_seen: HashSet<u32>,
     placed_emitted: HashSet<u32>,
+    /// The placed reference of each placed model's emitter, for the log.
+    instance_refs: HashMap<Entity, u32>,
     /// Most placed model instances live at once.
     most_instances: usize,
     rng: SplitMix,
@@ -305,6 +467,7 @@ impl Default for Particles {
             tally: HashMap::new(),
             placed_seen: HashSet::new(),
             placed_emitted: HashSet::new(),
+            instance_refs: HashMap::new(),
             most_instances: 0,
             rng: SplitMix(0x2545_f491),
             born: 0,
@@ -415,7 +578,7 @@ fn systems_of<'a>(
                     let entity = commands
                         .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(def.material.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, NoFrustumCulling, ChildOf(root)))
                         .id();
-                    Live { def: def.clone(), particles: Vec::new(), mesh, entity, served: 0, owed: 0.0 }
+                    Live { def: def.clone(), particles: Vec::new(), geometry: ParticleGeometry::default(), mesh, entity, served: 0, owed: 0.0 }
                 })
                 .collect()
         });
@@ -429,6 +592,19 @@ fn systems_of<'a>(
 }
 
 /// A number in −1..1.
+/// The uniform scale of an emitter's place in the world: the mean length of its axes
+/// (1 for a frame that does not scale). A placed reference at scale 0.5 (the Ultra-Luxe
+/// fountain's ULFountainFX, issue #1547) gives 0.5.
+fn frame_scale(frame: &Affine3A) -> f32 {
+    let m = frame.matrix3;
+    let k = (m.x_axis.length() + m.y_axis.length() + m.z_axis.length()) / 3.0;
+    if k.is_finite() && k > 0.0 {
+        k
+    } else {
+        1.0
+    }
+}
+
 fn spread(rng: &mut SplitMix) -> f32 {
     rng.next_f32() * 2.0 - 1.0
 }
@@ -474,8 +650,10 @@ fn emit(
         live.served = 0;
     }
     let mut sources: Vec<EmitSource> = Vec::new();
-    // Placed model instances whose emitter still exists (hidden or not).
+    // Placed model instances whose emitter still exists (hidden or not), and those of
+    // them hidden this frame.
     let mut present: HashSet<Entity> = HashSet::new();
+    let mut hidden_now: HashSet<Entity> = HashSet::new();
     // A hidden emitter (a disabled placed fire, `world::spawn_emitters`) keeps its time
     // but makes nothing. Not in its first frame, before its visibility was worked out:
     // a muzzle flash lives one frame [design].
@@ -495,6 +673,7 @@ fn emit(
         if let Some(r) = em.placed {
             p.placed_seen.insert(r);
             present.insert(e);
+            p.instance_refs.insert(e, r);
         }
         // Drawn with its own nodes: the sequence playing on it and the span of its time
         // since last frame; a sequence just begun counts from its start, unless it was
@@ -516,6 +695,9 @@ fn emit(
             em.clock = now;
             Drive { rig: e, playing: span, began }
         });
+        if em.placed.is_some() && hidden(em.age, v) {
+            hidden_now.insert(e);
+        }
         // A held model whose clips switch nothing on costs nothing.
         let idle = em.driven.as_ref().is_some_and(HashMap::is_empty);
         if !hidden(em.age, v) && !idle {
@@ -579,6 +761,11 @@ fn emit(
             let moved = rig.filter(|_| d.emitter.mesh.is_none()).and_then(|r| r.node(d.emitter.object.as_deref()?)).map(|e| game_affine(e, &transforms, &parents, root));
             let frame = moved.unwrap_or(node * d.emitter.frame);
             let (_, turn, origin) = frame.to_scale_rotation_translation();
+            // The reference's scale and the system node's set the spray's speed and its
+            // gravity (particles.md §7.7).
+            let spray = frame_scale(&node) * d.system_scale;
+            // The volume is the emitter object's, at that object's scale.
+            let volume = frame_scale(&frame);
             let vals = match sequence {
                 Some(s) => d.emitter.values_in(t, s),
                 None => d.emitter.values(age),
@@ -617,14 +804,14 @@ fn emit(
                         } else {
                             m.size * Vec3::new(spread(&mut rng), spread(&mut rng), spread(&mut rng)) * 0.5
                         };
-                        (origin + turn * offset, turn)
+                        (origin + turn * offset * volume, turn)
                     }
                 };
                 // Thrown within the cone: so far from the axis, any way round it.
                 let decl = vals.declination + vals.declination_variation * spread(&mut rng);
                 let planar = vals.planar_angle + vals.planar_angle_variation * spread(&mut rng);
                 let dir = Vec3::new(decl.sin() * planar.cos(), decl.sin() * planar.sin(), decl.cos());
-                let speed = vals.speed + vals.speed_variation * spread(&mut rng) * 0.5;
+                let speed = (vals.speed + vals.speed_variation * spread(&mut rng) * 0.5) * spray;
                 let rot = d.rotation.clone().unwrap_or_default();
                 let mut spin = rot.speed + rot.speed_variation * spread(&mut rng);
                 if rot.random_sign && rng.next_f32() < 0.5 {
@@ -634,11 +821,14 @@ fn emit(
                     frame: node,
                     pos: start,
                     vel: axis * dir * speed,
+                    scale: spray,
                     born_at: t,
                     sequence: sequence.map(|s| s.index),
                     age: 0.0,
                     life: (vals.life + vals.life_variation * spread(&mut rng) * 0.5).max(0.02),
-                    radius: (vals.radius + vals.radius_variation * spread(&mut rng)).max(0.0),
+                    // Sized by the system node's scale; the reference's scale moves and speeds
+                    // the spray but leaves the drops' size (particles.md §3, §7.7).
+                    radius: (vals.radius + vals.radius_variation * spread(&mut rng)).max(0.0) * d.system_scale,
                     angle: rot.angle + rot.angle_variation * spread(&mut rng),
                     spin,
                     tex: if d.subtextures.is_empty() { 0 } else { ((rng.next_f32() * d.subtextures.len() as f32) as usize).min(d.subtextures.len() - 1) },
@@ -663,14 +853,22 @@ fn emit(
             }
         }
     }
-    // A placed model's systems go once its emitter is gone (its cell unloaded, a script
-    // disabled it) and their last particles have died.
-    let gone: Vec<Key> = p
-        .systems
-        .iter()
-        .filter(|(k, live)| k.instance.is_some_and(|e| !present.contains(&e)) && live.as_ref().is_none_or(|l| l.iter().all(|s| s.particles.is_empty())))
-        .map(|(k, _)| k.clone())
-        .collect();
+    // A placed model's own particles go at once when it is no longer drawn: its emitter
+    // hidden (a script disabled it, the item was taken) or gone (its cell unloaded, the
+    // reference's model taken down) [design, #1596: a taken snow globe's snow went on
+    // falling where it stood]. Its systems go with an emitter that is gone.
+    for (k, live) in p.systems.iter_mut() {
+        let Some(e) = k.instance.filter(|e| hidden_now.contains(e) || !present.contains(e)) else { continue };
+        let n: usize = live.iter().flatten().map(|s| s.particles.len()).sum();
+        if n > 0 {
+            info!("particles: {:08X} is not drawn any more: its {n} live particles go", p.instance_refs.get(&e).copied().unwrap_or(0));
+            for s in live.iter_mut().flatten() {
+                s.particles.clear();
+            }
+        }
+    }
+    let gone: Vec<Key> = p.systems.keys().filter(|k| k.instance.is_some_and(|e| !present.contains(&e))).cloned().collect();
+    p.instance_refs.retain(|e, _| present.contains(e));
     for k in gone {
         for live in p.systems.remove(&k).flatten().unwrap_or_default() {
             commands.entity(live.entity).try_despawn();
@@ -696,15 +894,26 @@ fn simulate(time: Res<Time>, mut p: ResMut<Particles>) {
                 None => (None, d.period, d.loops),
             };
             for g in d.gravity.iter().filter(|g| g.active.on_in(seq, at, period, loops)) {
-                let pull = if g.spherical { (q.frame.transform_point3(g.origin) - q.pos).normalize_or_zero() } else { g.direction };
-                q.vel += pull * g.strength_at(at) * dt;
+                let centre = q.frame.transform_point3(g.origin);
+                let pull = if g.spherical { (centre - q.pos).normalize_or_zero() } else { g.direction };
+                // Weaker away from its object, by the distance in the system's own units
+                // (those of its speeds and radii: `scale`).
+                let fall = g.falloff(q.pos.distance(centre) / q.scale);
+                q.vel += pull * g.strength_at(at) * fall * q.scale * dt;
             }
             for b in d.bombs.iter().filter(|b| b.active.on_in(seq, at, period, loops)) {
                 q.vel += b.push(&q.frame, q.pos) * dt;
             }
             for drag in d.drag.iter().filter(|g| g.active.on_in(seq, at, period, loops)) {
                 // The share of the speed along the axis kept after `dt`.
-                let keep = (1.0 - drag.percentage.clamp(0.0, 1.0)).powf(dt * DRAG_STEPS_PER_SECOND);
+                // Only near its object, when the file gives it a range.
+                // Its range is in the model's units, about its object's place in the file
+                // (particles.md §7.7: fitted to the owner's video of the fountain).
+                let reach = drag.reach(q.pos.distance(q.frame.transform_point3(drag.origin)) / frame_scale(&q.frame));
+                if reach <= 0.0 {
+                    continue;
+                }
+                let keep = (1.0 - drag.percentage.clamp(0.0, 1.0) * reach).powf(dt * DRAG_STEPS_PER_SECOND);
                 let along = q.vel.dot(drag.axis);
                 q.vel -= drag.axis * along * (1.0 - keep);
             }
@@ -739,7 +948,7 @@ fn simulate(time: Res<Time>, mut p: ResMut<Particles>) {
 
 /// One mesh per system: a square facing the camera for each particle.
 fn draw(
-    p: Res<Particles>,
+    mut p: ResMut<Particles>,
     mut meshes: ResMut<Assets<Mesh>>,
     camera: Query<&Transform, (With<Camera3d>, Without<crate::reflection::ReflectionCamera>)>,
     root: Query<&Transform, With<WorldRoot>>,
@@ -751,7 +960,7 @@ fn draw(
     let right = to_game.transform_vector3(cam.rotation * Vec3::X).normalize_or(Vec3::X);
     let up = to_game.transform_vector3(cam.rotation * Vec3::Y).normalize_or(Vec3::Z);
     let back = to_game.transform_vector3(cam.rotation * Vec3::Z).normalize_or(Vec3::Y);
-    for live in p.systems.values().flatten().flatten() {
+    for live in p.systems.values_mut().flatten().flatten() {
         let shown = !live.particles.is_empty();
         if let Ok(mut v) = visibility.get_mut(live.entity) {
             let want = if shown { Visibility::Inherited } else { Visibility::Hidden };
@@ -760,67 +969,16 @@ fn draw(
             }
         }
         if !shown {
+            // An emptied system keeps only the mesh's set (its last geometry, hidden).
+            if live.geometry.positions.capacity() > 0 {
+                live.geometry = ParticleGeometry::default();
+            }
             continue;
         }
         let Some(mut mesh) = meshes.get_mut(&live.mesh) else { continue };
-        let d = &live.def;
-        let n = live.particles.len();
-        let mut positions = Vec::with_capacity(n * 4);
-        let mut uvs = Vec::with_capacity(n * 4);
-        let mut colors = Vec::with_capacity(n * 4);
-        let mut indices = Vec::with_capacity(n * 6);
-        if d.strip.is_some() {
-            // Ribbons through each particle's recorded points and its place, facing the
-            // camera; the texture rectangle's width across, its height along, the oldest
-            // point at its bottom (particles.md §6.2).
-            for q in &live.particles {
-                let points: Vec<Vec3> = q.trail.iter().copied().chain([q.pos]).collect();
-                let count = points.len();
-                if count < 2 {
-                    continue;
-                }
-                let t = (q.age / q.life).clamp(0.0, 1.0);
-                let half = q.radius * d.scale(q.age, q.life);
-                let [u, w, v, h] = d.subtextures.get(q.tex).copied().unwrap_or([0.0, 1.0, 0.0, 1.0]);
-                let tint = d.tint(t);
-                let e = d.emitter.color;
-                let colour = display_colour([tint[0] * e[0], tint[1] * e[1], tint[2] * e[2], tint[3] * e[3] * keyed_alpha(d, q)]);
-                let base = positions.len() as u32;
-                for (i, p) in points.iter().enumerate() {
-                    let tangent = points[(i + 1).min(count - 1)] - points[i.saturating_sub(1)];
-                    let side = tangent.cross(back).normalize_or(right) * half;
-                    positions.extend([(*p - side).to_array(), (*p + side).to_array()]);
-                    let along = v + h * (1.0 - i as f32 / (count - 1) as f32);
-                    uvs.extend([[u, along], [u + w, along]]);
-                    colors.extend([colour; 2]);
-                }
-                for i in 0..(count as u32 - 1) {
-                    let a = base + i * 2;
-                    indices.extend([a, a + 1, a + 3, a, a + 3, a + 2]);
-                }
-            }
-        }
-        for (k, q) in live.particles.iter().enumerate().filter(|_| d.strip.is_none()) {
-            let t = (q.age / q.life).clamp(0.0, 1.0);
-            let half = q.radius * d.scale(q.age, q.life);
-            let (s, c) = q.angle.sin_cos();
-            let (x, y) = ((right * c + up * s) * half, (up * c - right * s) * half);
-            for corner in [-x - y, x - y, x + y, -x + y] {
-                positions.push((q.pos + corner).to_array());
-            }
-            let [u, w, v, h] = d.subtextures.get(q.tex).copied().unwrap_or([0.0, 1.0, 0.0, 1.0]);
-            uvs.extend([[u, v + h], [u + w, v + h], [u + w, v], [u, v]]);
-            let tint = d.tint(t);
-            let e = d.emitter.color;
-            colors.extend([display_colour([tint[0] * e[0], tint[1] * e[1], tint[2] * e[2], tint[3] * e[3] * keyed_alpha(d, q)]); 4]);
-            let b = (k * 4) as u32;
-            indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
-        }
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![back.to_array(); positions.len()]);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-        mesh.insert_indices(Indices::U32(indices));
+        live.geometry.rebuild(&live.def, &live.particles, right, up, back);
+        let matched = live.geometry.swap_into_mesh(&mut mesh);
+        debug_assert!(matched, "particles: {}: mesh layout differs from particle_mesh's; geometry inserted", live.def.name);
     }
 }
 
@@ -865,10 +1023,310 @@ fn report(mut exit: MessageReader<AppExit>, p: Res<Particles>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nvf_assets::particles::{Emitter, Strip};
+
+    fn test_def(strip: Option<Strip>) -> ParticleSystemDef {
+        ParticleSystemDef {
+            name: "test".into(),
+            max: 0,
+            material: default(),
+            emitter: Emitter {
+                frame: Affine3A::IDENTITY,
+                size: Vec3::ZERO,
+                round: false,
+                speed: 0.0,
+                speed_variation: 0.0,
+                declination: 0.0,
+                declination_variation: 0.0,
+                planar_angle: 0.0,
+                planar_angle_variation: 0.0,
+                color: [1.0; 4],
+                radius: 1.0,
+                radius_variation: 0.0,
+                life: 1.0,
+                life_variation: 0.0,
+                mesh: None,
+                keyed: Vec::new(),
+                object: None,
+            },
+            rate: 0.0,
+            rate_keys: None,
+            active: Vec::new(),
+            period: 0.0,
+            loops: false,
+            sequences: Vec::new(),
+            max_emitters: 0,
+            grow_time: 0.0,
+            fade_time: 0.0,
+            base_scale: 1.0,
+            system_scale: 1.0,
+            color: None,
+            color_keys: None,
+            rotation: None,
+            gravity: Vec::new(),
+            drag: Vec::new(),
+            bombs: Vec::new(),
+            colliders: Vec::new(),
+            strip,
+            subtextures: vec![[0.25, 0.5, 0.125, 0.75]],
+            mover: None,
+            alpha_keys: None,
+            soft: 0.0,
+        }
+    }
+
+    #[test]
+    fn an_emitters_scale_is_the_mean_length_of_its_axes() {
+        assert_eq!(frame_scale(&Affine3A::IDENTITY), 1.0);
+        let half = Affine3A::from_scale_rotation_translation(Vec3::splat(0.5), Quat::from_rotation_z(1.0), Vec3::new(1176.0, -222.0, 1012.0));
+        assert!((frame_scale(&half) - 0.5).abs() < 1e-5);
+        // A frame squashed to nothing sizes nothing down to zero: 1.
+        assert_eq!(frame_scale(&Affine3A::from_scale(Vec3::ZERO)), 1.0);
+    }
+
+    fn test_particle(pos: Vec3, trail: Vec<Vec3>) -> Particle {
+        Particle {
+            frame: Affine3A::IDENTITY,
+            pos,
+            vel: Vec3::ZERO,
+            scale: 1.0,
+            born_at: 0.0,
+            sequence: None,
+            age: 0.25,
+            life: 1.0,
+            radius: 2.0,
+            angle: 0.25,
+            spin: 0.0,
+            tex: 0,
+            trail,
+            trail_clock: 0.0,
+        }
+    }
+
+    /// The pre-buffer-reuse construction path, retained only as a differential oracle.
+    fn reference_geometry(d: &ParticleSystemDef, particles: &[Particle], right: Vec3, up: Vec3, back: Vec3) -> ParticleGeometry {
+        let n = particles.len();
+        let mut positions = Vec::with_capacity(n * 4);
+        let mut uvs = Vec::with_capacity(n * 4);
+        let mut colors = Vec::with_capacity(n * 4);
+        let mut indices = Vec::with_capacity(n * 6);
+        if d.strip.is_some() {
+            for q in particles {
+                let points: Vec<Vec3> = q.trail.iter().copied().chain([q.pos]).collect();
+                let count = points.len();
+                if count < 2 {
+                    continue;
+                }
+                let t = (q.age / q.life).clamp(0.0, 1.0);
+                let half = q.radius * d.scale(q.age, q.life);
+                let [u, w, v, h] = d.subtextures.get(q.tex).copied().unwrap_or([0.0, 1.0, 0.0, 1.0]);
+                let tint = d.tint(t);
+                let e = d.emitter.color;
+                let colour = display_colour([tint[0] * e[0], tint[1] * e[1], tint[2] * e[2], tint[3] * e[3] * keyed_alpha(d, q)]);
+                let base = positions.len() as u32;
+                for (i, p) in points.iter().enumerate() {
+                    let tangent = points[(i + 1).min(count - 1)] - points[i.saturating_sub(1)];
+                    let side = tangent.cross(back).normalize_or(right) * half;
+                    positions.extend([(*p - side).to_array(), (*p + side).to_array()]);
+                    let along = v + h * (1.0 - i as f32 / (count - 1) as f32);
+                    uvs.extend([[u, along], [u + w, along]]);
+                    colors.extend([colour; 2]);
+                }
+                for i in 0..(count as u32 - 1) {
+                    let a = base + i * 2;
+                    indices.extend([a, a + 1, a + 3, a, a + 3, a + 2]);
+                }
+            }
+        }
+        for (k, q) in particles.iter().enumerate().filter(|_| d.strip.is_none()) {
+            let t = (q.age / q.life).clamp(0.0, 1.0);
+            let half = q.radius * d.scale(q.age, q.life);
+            let (s, c) = q.angle.sin_cos();
+            let (x, y) = ((right * c + up * s) * half, (up * c - right * s) * half);
+            for corner in [-x - y, x - y, x + y, -x + y] {
+                positions.push((q.pos + corner).to_array());
+            }
+            let [u, w, v, h] = d.subtextures.get(q.tex).copied().unwrap_or([0.0, 1.0, 0.0, 1.0]);
+            uvs.extend([[u, v + h], [u + w, v + h], [u + w, v], [u, v]]);
+            let tint = d.tint(t);
+            let e = d.emitter.color;
+            colors.extend([display_colour([tint[0] * e[0], tint[1] * e[1], tint[2] * e[2], tint[3] * e[3] * keyed_alpha(d, q)]); 4]);
+            let b = (k * 4) as u32;
+            indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
+        }
+        ParticleGeometry { normals: vec![back.to_array(); positions.len()], positions, uvs, colors, indices, points: Vec::new() }
+    }
+
+    fn assert_geometry_eq(actual: &ParticleGeometry, expected: &ParticleGeometry) {
+        assert_eq!(actual.positions, expected.positions);
+        assert_eq!(actual.normals, expected.normals);
+        assert_eq!(actual.uvs, expected.uvs);
+        assert_eq!(actual.colors, expected.colors);
+        assert_eq!(actual.indices, expected.indices);
+    }
 
     #[test]
     fn particle_colours_are_display_values() {
         let c = display_colour([0.5, 1.0, 0.0, 0.3]);
         assert!((c[0] - 0.214).abs() < 1e-3 && (c[1] - 1.0).abs() < 1e-6 && c[2] == 0.0 && c[3] == 0.3, "{c:?}");
+    }
+
+    #[test]
+    fn billboard_geometry_matches_reference_across_growth_and_shrink() {
+        let d = test_def(None);
+        let particles = vec![test_particle(Vec3::new(1.0, 2.0, 3.0), Vec::new()), test_particle(Vec3::new(-2.0, 1.0, 0.0), Vec::new())];
+        let (right, up, back) = (Vec3::X, Vec3::Z, Vec3::Y);
+        let mut actual = ParticleGeometry::default();
+        actual.rebuild(&d, &particles, right, up, back);
+        assert_geometry_eq(&actual, &reference_geometry(&d, &particles, right, up, back));
+        let capacities = (actual.positions.capacity(), actual.normals.capacity(), actual.uvs.capacity(), actual.colors.capacity(), actual.indices.capacity());
+
+        let smaller = &particles[..1];
+        actual.rebuild(&d, smaller, right, up, back);
+        assert_geometry_eq(&actual, &reference_geometry(&d, smaller, right, up, back));
+        assert!(actual.positions.capacity() >= capacities.0 && actual.normals.capacity() >= capacities.1 && actual.uvs.capacity() >= capacities.2 && actual.colors.capacity() >= capacities.3 && actual.indices.capacity() >= capacities.4);
+    }
+
+    #[test]
+    fn strip_geometry_matches_reference_at_empty_and_one_point_boundaries() {
+        let d = test_def(Some(Strip { max_points: 4, step: 0.1 }));
+        let (right, up, back) = (Vec3::X, Vec3::Z, Vec3::Y);
+        let mut actual = ParticleGeometry::default();
+
+        actual.rebuild(&d, &[], right, up, back);
+        assert_geometry_eq(&actual, &reference_geometry(&d, &[], right, up, back));
+
+        let one_point = [test_particle(Vec3::new(1.0, 0.0, 0.0), Vec::new())];
+        actual.rebuild(&d, &one_point, right, up, back);
+        assert_geometry_eq(&actual, &reference_geometry(&d, &one_point, right, up, back));
+        assert!(actual.positions.is_empty() && actual.indices.is_empty());
+
+        let trail = [test_particle(Vec3::new(1.0, 0.0, 0.0), vec![Vec3::ZERO])];
+        actual.rebuild(&d, &trail, right, up, back);
+        assert_geometry_eq(&actual, &reference_geometry(&d, &trail, right, up, back));
+        assert_eq!((actual.positions.len(), actual.indices.len()), (4, 6));
+    }
+
+    #[test]
+    fn mesh_swaps_publish_current_geometry_and_reuse_both_capacity_sets() {
+        fn assert_mesh(mesh: &Mesh, expected: &ParticleGeometry) {
+            assert_eq!(mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap(), expected.positions);
+            assert_eq!(mesh.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap().as_float3().unwrap(), expected.normals);
+            let Some(VertexAttributeValues::Float32x2(uvs)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0) else { panic!("UV type") };
+            let Some(VertexAttributeValues::Float32x4(colors)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else { panic!("colour type") };
+            let Some(Indices::U32(indices)) = mesh.indices() else { panic!("index type") };
+            assert_eq!(uvs, &expected.uvs);
+            assert_eq!(colors, &expected.colors);
+            assert_eq!(indices, &expected.indices);
+        }
+        fn capacities(g: &ParticleGeometry) -> [usize; 5] {
+            [g.positions.capacity(), g.normals.capacity(), g.uvs.capacity(), g.colors.capacity(), g.indices.capacity()]
+        }
+        for strip in [None, Some(Strip { max_points: 4, step: 0.1 })] {
+            let d = test_def(strip);
+            let particles = [
+                test_particle(Vec3::new(1.0, 2.0, 3.0), vec![Vec3::ZERO, Vec3::X]),
+                test_particle(Vec3::new(-2.0, 1.0, 0.0), vec![Vec3::Y]),
+                test_particle(Vec3::new(2.0, -1.0, 0.0), Vec::new()),
+            ];
+            let mut geometry = ParticleGeometry::default();
+            let mut mesh = particle_mesh();
+            // Warm both storage sets before shrinking and growing again (an empty system
+            // is not rebuilt: `draw` hides it and drops the scratch set).
+            for _ in 0..3 {
+                assert!(geometry.rebuild_and_swap(&d, &particles, Vec3::X, Vec3::Z, Vec3::Y, &mut mesh));
+            }
+            let retained = capacities(&geometry);
+            for (frame, count) in [1, 3, 2, 3, 1, 3].into_iter().enumerate() {
+                let rotation = Quat::from_rotation_z(frame as f32 * 0.37);
+                let (right, up, back) = (rotation * Vec3::X, Vec3::Z, rotation * Vec3::Y);
+                let expected = reference_geometry(&d, &particles[..count], right, up, back);
+                assert!(geometry.rebuild_and_swap(&d, &particles[..count], right, up, back, &mut mesh));
+                assert_mesh(&mesh, &expected);
+                assert_eq!(capacities(&geometry), retained);
+            }
+        }
+    }
+
+    impl ParticleGeometry {
+        fn rebuild_and_swap(&mut self, d: &ParticleSystemDef, particles: &[Particle], right: Vec3, up: Vec3, back: Vec3, mesh: &mut Mesh) -> bool {
+            self.rebuild(d, particles, right, up, back);
+            self.swap_into_mesh(mesh)
+        }
+    }
+
+    /// Two squares worked by hand: camera right X, up Z, back Y, no spin, radius 2, the
+    /// subtexture u 0.25 + 0.5, v 0.125 + 0.75.
+    #[test]
+    fn billboard_geometry_by_hand() {
+        let d = test_def(None);
+        let mut a = test_particle(Vec3::new(1.0, 2.0, 3.0), Vec::new());
+        a.angle = 0.0;
+        let mut b = test_particle(Vec3::ZERO, Vec::new());
+        b.angle = 0.0;
+        let mut g = ParticleGeometry::default();
+        g.rebuild(&d, &[a, b], Vec3::X, Vec3::Z, Vec3::Y);
+        assert_eq!(&g.positions[..4], &[[-1.0, 2.0, 1.0], [3.0, 2.0, 1.0], [3.0, 2.0, 5.0], [-1.0, 2.0, 5.0]]);
+        assert_eq!(&g.positions[4..], &[[-2.0, 0.0, -2.0], [2.0, 0.0, -2.0], [2.0, 0.0, 2.0], [-2.0, 0.0, 2.0]]);
+        assert_eq!(&g.uvs[..4], &[[0.25, 0.875], [0.75, 0.875], [0.75, 0.125], [0.25, 0.125]]);
+        assert_eq!(g.indices, [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+        assert_eq!(g.normals, vec![[0.0, 1.0, 0.0]; 8]);
+        assert_eq!(g.colors, vec![[1.0; 4]; 8]);
+    }
+
+    /// A two-point ribbon from the origin to X: its sides 2 either way along Z (X × Y),
+    /// the oldest point at the subtexture's bottom.
+    #[test]
+    fn ribbon_geometry_by_hand() {
+        let d = test_def(Some(Strip { max_points: 4, step: 0.1 }));
+        let mut g = ParticleGeometry::default();
+        g.rebuild(&d, &[test_particle(Vec3::X, vec![Vec3::ZERO])], Vec3::X, Vec3::Z, Vec3::Y);
+        assert_eq!(g.positions, [[0.0, 0.0, -2.0], [0.0, 0.0, 2.0], [1.0, 0.0, -2.0], [1.0, 0.0, 2.0]]);
+        assert_eq!(g.uvs, [[0.25, 0.875], [0.75, 0.875], [0.25, 0.125], [0.75, 0.125]]);
+        assert_eq!(g.indices, [0, 1, 3, 0, 3, 2]);
+    }
+
+    /// A mesh without `particle_mesh`'s layout (a missing attribute, another type, other
+    /// indices) gets the geometry inserted, and the swap says so.
+    #[test]
+    fn mesh_with_another_layout_gets_geometry_inserted() {
+        let d = test_def(None);
+        let particles = [test_particle(Vec3::ZERO, Vec::new()), test_particle(Vec3::X, Vec::new())];
+        let expected = reference_geometry(&d, &particles, Vec3::X, Vec3::Z, Vec3::Y);
+        let mut mesh = particle_mesh();
+        mesh.remove_attribute(Mesh::ATTRIBUTE_NORMAL);
+        // (insert_attribute refuses a wrong format, so the colours are changed in place.)
+        *mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR).unwrap() = VertexAttributeValues::Float32x3(vec![[0.0; 3]]);
+        mesh.insert_indices(Indices::U16(vec![0]));
+        let mut g = ParticleGeometry::default();
+        assert!(!g.rebuild_and_swap(&d, &particles, Vec3::X, Vec3::Z, Vec3::Y, &mut mesh));
+        assert_eq!(mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap(), expected.positions);
+        assert_eq!(mesh.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap().as_float3().unwrap(), expected.normals);
+        let Some(VertexAttributeValues::Float32x4(colors)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else { panic!("colour type") };
+        assert_eq!(colors, &expected.colors);
+        let Some(Indices::U32(indices)) = mesh.indices() else { panic!("index type") };
+        assert_eq!(indices, &expected.indices);
+        // Once inserted the layout matches, and the next frame swaps again.
+        assert!(g.rebuild_and_swap(&d, &particles, Vec3::X, Vec3::Z, Vec3::Y, &mut mesh));
+    }
+
+    /// After a burst, a set drawing a quarter or less of its capacity gives memory back.
+    #[test]
+    fn burst_capacity_is_given_back() {
+        let d = test_def(None);
+        let burst: Vec<Particle> = (0..256).map(|i| test_particle(Vec3::splat(i as f32), Vec::new())).collect();
+        let mut g = ParticleGeometry::default();
+        let mut mesh = particle_mesh();
+        for _ in 0..2 {
+            g.rebuild_and_swap(&d, &burst, Vec3::X, Vec3::Z, Vec3::Y, &mut mesh);
+        }
+        assert!(g.positions.capacity() >= 1024);
+        for _ in 0..2 {
+            g.rebuild_and_swap(&d, &burst[..4], Vec3::X, Vec3::Z, Vec3::Y, &mut mesh);
+        }
+        // Both sets (the scratch one and the mesh's) are back to twice four squares.
+        assert!(g.positions.capacity() <= 32 && g.indices.capacity() <= 48, "{} {}", g.positions.capacity(), g.indices.capacity());
+        let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!("position type") };
+        assert!(positions.capacity() <= 32);
     }
 }

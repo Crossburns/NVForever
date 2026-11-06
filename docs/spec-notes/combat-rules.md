@@ -251,7 +251,10 @@ each the identity by default. Reading PERK records is a later step.
 - **Trigger.** A semi-automatic weapon needs a fresh pull per shot; an automatic one
   fires while the trigger is held.
 - **Empty magazine.** Pulling the trigger on an empty magazine reloads when ammo is
-  carried (`auto_reload` [design]), else gives one dry click per pull.
+  carried (`auto_reload` [design]), else gives one dry click per pull. A magazine
+  emptied after the pull, during the spin-up or wind-up, fires nothing: that pull is
+  answered the same way, and its shot is not counted [design: `attack.rs`, #1613]. A
+  free fourth shot (a "Regenerate Ammo (shots)" mod) needs no round and still leaves.
 - **Ammo.** A shot takes `ammo_use` rounds.
 - **Regenerating weapons** gain a round every `regen_rate` seconds and cannot be
   reloaded by hand [documented].
@@ -336,6 +339,10 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     walks through it [design].
   - Setting an unchanged volume does nothing; the shape is rebuilt only when its size
     changes.
+  - Since 2026-11-03 the capsules are colliders of no body, placed beside the kinematic
+    body (not attached to it), which avoids the forced re-insertion and full refit an
+    attached write caused; `NVF_PHYS_HITVOL_ATTACHED=1`
+    attaches them again (physics.md §5.1) [design].
 - **In play** (`engine/nvf-play/src/hitvol.rs`): every drawn, present ACHR/ACRE gets a
   volume each frame from its render bounds [design]:
   - the union of its drawn parts' world boxes;
@@ -364,11 +371,29 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     `CombatForms::ammo_for` (the first carried entry of its list).
   - The magazine is a view of the carried rounds. A shot removes `ammo_use` rounds
     from the inventory; a reload moves nothing.
+  - The magazine never holds more than is carried, checked every frame, holstered or
+    not: rounds dropped, sold or taken by a script are gone from the gun too, also a
+    magazine a script set above that with SetPlayerCurrentAmmoRounds [design:
+    `combat.rs`, #1612]; the original may keep such a count, nobody has seen it
+    [hypothesis]. Regenerating weapons and god mode's full magazine are left out: their
+    rounds are not in the inventory.
   - A weapon with no ammo but a projectile (grenades) spends itself.
   - A newly equipped weapon starts loaded with what is carried [design].
 - **Controls.** Use is the trigger; the press that draws the weapon does not fire. A
-  Ready Item tap reloads, and Ammo Swap takes the next carried ammo, then reloads
-  [design].
+  Ready Item tap reloads. Ammo Swap takes the next carried ammo and empties the
+  magazine; the old type's rounds stay in the inventory, unfired, until a swap comes back
+  to them. What follows depends on the cycle [design: `Cycle::swap_ammo`, #1613]:
+  - Ready: the reload starts at once.
+  - Spin-up or wind-up: the shot on its way is dropped and the reload starts at once.
+  - Between shots: the reload starts when the wait ends, with no pull, so a swap never
+    brings the next shot forward. Holstered first, the wait and the reload freeze; on
+    the redraw the wait ends and the reload starts, with no pull [design: the cycle
+    steps only with the weapon out].
+  - During a reload: it goes on, on its own clock, and takes the new ammo. Round by
+    round, the rounds already in are out again and the rest are of the new type.
+  - Closing after a round-by-round reload, or jammed: the magazine stays empty and the
+    next pull reloads.
+  - God mode: the magazine stays full and nothing reloads.
 - **Readiness and clips.** The cycle runs once the player body reports the weapon drawn
   and in hand (`WeaponAnim::ready`; without a body, as soon as it is wanted out).
   - The body gives the attack clip's length and `Hit` key (and whether a `Loop`
@@ -463,7 +488,8 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   on first touch, so the engine reads it through `World::inventory_mut`.
 - **In play** (`engine/nvf-play/src/combat.rs`). Every projectile hit and blast goes
   through `Game::hit` inside the script runtime's world swap.
-  - Blasts use location −1 and the same armour rule as bullets.
+  - Blasts use location −1 and the same armour rule as bullets, with the damage and DT
+    perk entries and none of the weapon formula (perk-entry-points.md §2, "Blasts").
   - An `ActorHit` message goes out with each hit.
   - Without the script runtime, hits are only logged.
 - **On screen** (`engine/nvforever/src/deaths.rs`, `locomotion.rs`):
@@ -598,10 +624,56 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   - **Blocked and 0-damage blows** push too: the formula's force with no damage (about 30,
     15 units) [documented formula; design to apply it to a blocked blow,
     owner-review item 37].
-  - Logged: `knockback: <id> knocked back at <v> units/s for <s> s (<d> units)` and, at
-    its end, `knockback: … pushed back <n> units of <d>, from … to …` (the player:
+  - **A second blow** during a knockback replaces it [design]. The replaced one is logged
+    as interrupted, and the new one is measured from where the feet are then, so a report
+    never divides several blows' travel by the last one's request [design: #1386, which
+    fixed the report keeping the first blow's start; checked by unit test, not in a run].
+  - Logged, each line tied to its blow (`<tag>` = `blow=<n> attacker=<id> target=<id>
+    power=<0|1>`; `<n>` counts the blows that knock someone back in this run; `SetVel`'s
+    pushes have blow 0 and attacker 0): `knockback: <tag> knocked back at <v> units/s for
+    <s> s (<d> units)`; at its end, `knockback: <tag> alive=<0|1> moved=<0|1> walked=<0|1>
+    pushed back <n> units of <d> (<p> %) along=<a> lateral=<l> push=<word>, from … to …,
+    frames=<n> secs=<s> travel=<t> steps=<n>`; replaced, `knockback: <tag> interrupted by
+    blow=<n> …`, unless its time was already up, when it gets its end line (the player:
     `player: knocked back …`, `player: knockback done: …`); `knockback summary` at exit.
-    Smoke `melee-knockback`.
+  - **What "pushed back" measures** [design: `residents/knock_run.rs`]: the net ground
+    distance between the feet when the blow began and the feet when its time is up. It is
+    not the push alone: a walk or MoveTo moves the feet too, and a death can stop it short.
+    `moved` (a script moved the actor), `walked` (it walked, or an attack clip carried it)
+    and `alive` (0 for dead or out cold) say when something else went into it. The size
+    alone would score a push backwards as 100 %, so `along` and `lateral` split it against
+    the way the blow asked, and `push` is `none` (under 5 % of the distance asked),
+    `reversed`, `sideways` (over 25 % of it to the side) or `along` [design]. `frames`,
+    `secs` and `travel` are what the frames asked for, `steps` the fixed physics steps
+    taken meanwhile, to compare frame rates: the travel is integrated with the frame's
+    time and consumed by later fixed steps (measured below). With the aid below, each frame
+    also logs
+    `knockback trace: … dt=<s> left=<s> owed=<d> consumed=<d> along=<a> lateral=<l>
+    dir=(<x>, <y>) steps=<n>`.
+  - Smoke `melee-knockback` isolates one player power blow
+    (`NVF_PLAY_TEST_MELEE_KNOCKBACK`, nvf-play `test_aid/melee_knockback.rs`, nvforever
+    `residents/melee_knockback.rs`): AI off on the target (it may be far away, with no
+    state yet: SetActorsAI only writes the game's record of the reference [design]) and on
+    the loaded area's actors, then one MoveTo onto the ground, a blow gated on readiness and
+    watched up to impact, and the report tied to that blow. A standing actor has no
+    character until its knockback makes one [design], so "settled" is its feet still, at
+    the height of what is under them, with its hit volume there.
+  - **Frame rate** [observed 2026-11-05, #1386: that scenario's blow, Display sync Off, a
+    fresh home each run, 20 runs, all in the scenario's range]: the distance pushed as a
+    share of the 17.25 units asked, by the Frame rate limit set.
+
+    | Limit | Runs | Mean | Min to max | Frames in the 1 s push | Mean frame |
+    |---|---|---|---|---|---|
+    | 30 | 5 | 99.57 % | 98.11-102.32 | 30.0 | 32.3 ms |
+    | 60 | 5 | 100.57 % | 99.86-101.86 | 59.2 | 16.8 ms |
+    | 120 | 5 | 100.05 % | 98.99-101.25 | 57.0 | 18.0 ms |
+    | 144 | 5 | 100.12 % | 98.30-101.29 | 60.0 | 16.5 ms |
+
+    No dependence on the frame rate was found between 30 and about 60 frames a second: the
+    spread within a limit is as big as any difference between limits, so the render-frame
+    travel needs no fix for this range. That is all it shows. The machine never ran above
+    about 65 frames a second, so limits 120 and 144 did not reach those rates and higher
+    rates are untested; irregular frames were not tested separately.
 - **Blocking.** `damage::blocked` takes `block` (60 %) off a melee hit taken while
   blocking [design]. Nothing attacks the player yet; NPC melee (Layer 6 AI) will use it.
 - **The body.** A power attack plays `{prefix}attackpower.kf` (`1hmattackpower.kf`,
@@ -710,7 +782,9 @@ module notes).
   - Ranged weapons without a projectile (the detonator, binoculars) cycle without ammo.
 - **Explosions** (`fly`). A queue of up to 64 per frame takes impacts, detonations and
   destruction stages [design]. Each explosion:
-  - damages actors in its radius, with line of sight and armour;
+  - damages actors in its radius, with line of sight, armour and the cause's and target's
+    damage and DT perks (perk-entry-points.md §2, "Blasts"; with no cause, the target's
+    with no condition on the attacker or the weapon [hypothesis: as the original]);
   - rolls knockdown: always with "Knock Down - Always", by the documented formula with
     "By Formula". A knockdown is counted and logged; it is not animated yet;
   - damages destructible objects whose collision overlaps its radius;

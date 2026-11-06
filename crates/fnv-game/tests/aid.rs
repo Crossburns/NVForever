@@ -45,9 +45,15 @@ const RESISTANT: u32 = 0x891;
 const LEAD_BELLY: u32 = 0x892;
 const MAGAZINE: u32 = 0x869;
 const BLOOD: u32 = 0x86A;
+const STIM_GATED: u32 = 0x86B;
+const REDUCE_END: u32 = 0x859;
+const CHEM_HELD: u32 = 0x86C;
+const WITHDRAWAL_HELD: u32 = 0x873;
 
 const P: FormId = FormId::PLAYER_REF;
 const STRENGTH: u16 = 5;
+const ENDURANCE: u16 = 7;
+const LUCK: u16 = 11;
 const HEALTH: u16 = 16;
 const PERCEPTION_CONDITION: u16 = 25;
 const MEDICINE: u16 = 37;
@@ -81,6 +87,26 @@ fn has_perk(perk: u32, value: f32) -> fnv_esm::raw::Subrecord {
     d.extend(449u16.to_le_bytes());
     d.extend([0, 0]);
     d.extend(perk.to_le_bytes());
+    d.extend([0; 12]);
+    sub(b"CTDA", d)
+}
+
+/// A condition `IsHardcore == value` (function 586).
+fn is_hardcore(value: f32) -> fnv_esm::raw::Subrecord {
+    let mut d = vec![0x00, 0, 0, 0];
+    d.extend(value.to_le_bytes());
+    d.extend(586u16.to_le_bytes());
+    d.extend([0; 18]);
+    sub(b"CTDA", d)
+}
+
+/// A condition `GetActorValue Luck >= 5` on the subject (function 14, comparison byte 0x60).
+fn lucky() -> fnv_esm::raw::Subrecord {
+    let mut d = vec![0x60, 0, 0, 0];
+    d.extend(5f32.to_le_bytes());
+    d.extend(14u16.to_le_bytes());
+    d.extend([0, 0]);
+    d.extend(u32::from(LUCK).to_le_bytes());
     d.extend([0; 12]);
     sub(b"CTDA", d)
 }
@@ -143,6 +169,7 @@ fn plugin_bytes() -> Vec<u8> {
         mgef(CHAMELEON_FX, "StealthField", 2, 12, 49),
         mgef(DAMAGE_RADS, "DamageRads", 4, 0, 54),
         mgef(RESTORE_HUNGER, "RestoreHunger", 0, 0, 74),
+        mgef(REDUCE_END, "ReduceEndurance", 2 | 4, 0, 7),
     ]
     .concat();
     let alchs = [
@@ -159,13 +186,18 @@ fn plugin_bytes() -> Vec<u8> {
         // Comprehension); a Blood Pack: 1 Health at once, 4 a second for 5 s more with the
         // perk (as Hematophage).
         alch(MAGAZINE, "Magazine", 0, 0, 0.0, vec![effect_if(MOD_STR, 1, 60, 5, vec![has_perk(RESISTANT, 0.0)]), effect_if(MOD_STR, 2, 60, 5, vec![has_perk(RESISTANT, 1.0)])]),
+        // A Stimpak as the masters' (aid-items.md §14): 30 at once outside Hardcore, 5 a
+        // second for 6 s in it, each behind IsHardcore.
+        alch(STIM_GATED, "StimGated", 4, 0, 0.0, vec![effect_if(PARTS, 30, 0, 16, vec![is_hardcore(0.0)]), effect_if(RESTORE_HEALTH, 5, 6, 16, vec![is_hardcore(1.0)])]),
         alch(BLOOD, "Blood", 0, 0, 0.0, vec![effect_if(RESTORE_HEALTH, 4, 5, 16, vec![has_perk(LEAD_BELLY, 1.0)]), effect(RESTORE_HEALTH, 1, 0, 16)]),
+        alch(CHEM_HELD, "ChemHeld", 0, WITHDRAWAL_HELD, 0.0, vec![effect(MOD_STR, 2, 4, 5)]),
     ]
     .concat();
     let spels = [
         spel(WITHDRAWAL, "BuffWithdrawal", 10, vec![effect(REDUCE_STR, 1, 0, 5)]),
         spel(ABILITY, "StrongAbility", 4, vec![effect(MOD_STR, 1, 0, 5)]),
         spel(THIRST1, "Dehydration200", 1, vec![effect(REDUCE_STR, 1, 0, 5)]),
+        spel(WITHDRAWAL_HELD, "HeldWithdrawal", 10, vec![effect_if(REDUCE_STR, 1, 0, 5, vec![lucky()]), effect_if(REDUCE_END, 1, 0, 7, vec![lucky()])]),
     ]
     .concat();
     let stages = record(b"DEHY", 0, WATER1, &[sub(b"EDID", z("Water1")), sub(b"DATA", u32s(&[200, THIRST1]))]);
@@ -390,6 +422,129 @@ fn addiction_follows_usage_and_is_cured() {
     assert!(g.addictions(P).is_empty());
     assert_eq!(av(&mut g, STRENGTH), 5.0);
     assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::AddictionCured { .. })));
+}
+
+/// Strength and Endurance, the two values the conditional withdrawal takes.
+fn str_end(g: &mut Game) -> (f64, f64) {
+    (av(g, STRENGTH), av(g, ENDURANCE))
+}
+
+/// The conditional withdrawal's conditions pass or fail, and the once-a-second check sees it.
+fn set_lucky(g: &mut Game, pass: bool) {
+    set_actor_value_current(g, P, LUCK, if pass { 5.0 } else { 1.0 }).unwrap();
+    g.frames(90);
+}
+
+/// The chem's 4 s run out, and the frame after sees it.
+fn chem_runs_out(g: &mut Game) {
+    g.frames(4 * 60 + 2);
+}
+
+/// A withdrawal held by its conditions takes nothing when its chem ends; when they pass it
+/// applies once, and the cure gives back that once (#1580).
+#[test]
+fn a_held_addiction_applies_once_after_its_chem() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    call(&mut g, 0x101C, &[form(WITHDRAWAL_HELD)]);
+    assert_eq!(str_end(&mut g), (4.0, 4.0));
+    set_lucky(&mut g, false);
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    g.ingest(P, FormId(CHEM_HELD));
+    g.frames(1);
+    assert_eq!(str_end(&mut g), (7.0, 5.0));
+    chem_runs_out(&mut g);
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    g.frames(10 * 60);
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    set_lucky(&mut g, true);
+    assert_eq!(str_end(&mut g), (4.0, 4.0));
+    g.frames(10 * 60);
+    assert_eq!(str_end(&mut g), (4.0, 4.0));
+    g.ingest(P, FormId(FIXER));
+    assert!(g.addictions(P).is_empty());
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+}
+
+/// The same with the conditions failing already when the addiction is gained, so its effects
+/// never started.
+#[test]
+fn an_addiction_gained_held_applies_once_after_its_chem() {
+    let f = fixture();
+    let mut g = game(&f);
+    set_lucky(&mut g, false);
+    call(&mut g, 0x101C, &[form(WITHDRAWAL_HELD)]);
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    g.ingest(P, FormId(CHEM_HELD));
+    g.frames(1);
+    assert_eq!(str_end(&mut g), (7.0, 5.0));
+    chem_runs_out(&mut g);
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    set_lucky(&mut g, true);
+    assert_eq!(str_end(&mut g), (4.0, 4.0));
+    g.ingest(P, FormId(FIXER));
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+}
+
+/// Conditions failing while the chem sates the addiction: nothing to give back, and nothing
+/// taken when the chem ends; it applies when they pass, and is sated again by another dose.
+#[test]
+fn a_sated_addiction_held_by_its_conditions_stays_out_when_the_chem_ends() {
+    let f = fixture();
+    let mut g = game(&f);
+    call(&mut g, 0x101C, &[form(WITHDRAWAL_HELD)]);
+    g.ingest(P, FormId(CHEM_HELD));
+    g.frames(1);
+    assert_eq!(str_end(&mut g), (7.0, 5.0));
+    set_lucky(&mut g, false);
+    assert_eq!(str_end(&mut g), (7.0, 5.0));
+    chem_runs_out(&mut g);
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    set_lucky(&mut g, true);
+    assert_eq!(str_end(&mut g), (4.0, 4.0));
+    g.ingest(P, FormId(CHEM_HELD));
+    g.frames(1);
+    assert_eq!(str_end(&mut g), (7.0, 5.0));
+    chem_runs_out(&mut g);
+    assert_eq!(str_end(&mut g), (4.0, 4.0));
+}
+
+/// A cure gives back only what the addiction holds: nothing while its conditions hold it,
+/// and nothing while the chem sates it, conditions passing or not.
+#[test]
+fn a_cure_of_a_held_or_sated_addiction_changes_nothing() {
+    let f = fixture();
+    // Held, the chem run out.
+    let mut g = game(&f);
+    call(&mut g, 0x101C, &[form(WITHDRAWAL_HELD)]);
+    set_lucky(&mut g, false);
+    g.ingest(P, FormId(CHEM_HELD));
+    chem_runs_out(&mut g);
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    g.ingest(P, FormId(FIXER));
+    assert!(g.addictions(P).is_empty());
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    set_lucky(&mut g, true);
+    assert_eq!(str_end(&mut g), (5.0, 5.0));
+    // Sated, then sated and held.
+    for held in [false, true] {
+        let mut g = game(&f);
+        call(&mut g, 0x101C, &[form(WITHDRAWAL_HELD)]);
+        g.ingest(P, FormId(CHEM_HELD));
+        g.frames(1);
+        if held {
+            set_lucky(&mut g, false);
+        }
+        assert_eq!(str_end(&mut g), (7.0, 5.0));
+        g.ingest(P, FormId(FIXER));
+        assert!(g.addictions(P).is_empty());
+        assert_eq!(str_end(&mut g), (7.0, 5.0));
+        chem_runs_out(&mut g);
+        assert_eq!(str_end(&mut g), (5.0, 5.0));
+        set_lucky(&mut g, true);
+        assert_eq!(str_end(&mut g), (5.0, 5.0));
+    }
 }
 
 /// A player's ability without conditions changes the permanent pool; RemoveSpell takes
@@ -664,4 +819,38 @@ fn the_preview_keeps_the_effects_that_apply() {
     // Nothing was used.
     assert!(g.effects.is_empty());
     assert_eq!(av(&mut g, STRENGTH), 5.0);
+}
+
+/// A Stimpak's effects split by IsHardcore (#1438): outside Hardcore it heals at once and
+/// leaves no active effect (its Hardcore heal is held inactive for its 6 s, then gone, and
+/// never takes hold if Hardcore comes on later); in Hardcore one heal over time runs.
+#[test]
+fn a_hardcore_gated_stimpak_applies_only_its_mode() {
+    let f = fixture();
+    let active = |g: &Game| g.effects.iter().filter(|e| e.target == P && e.source == FormId(STIM_GATED) && !e.inactive).count();
+    // Outside Hardcore: 30 × 1.3 at once.
+    let mut g = game(&f);
+    add_actor_value_damage(&mut g, P, HEALTH, 60.0);
+    assert_eq!(g.aid_preview(P, FormId(STIM_GATED)), vec![(HEALTH, 39.0)]);
+    let r = g.ingest(P, FormId(STIM_GATED));
+    assert_eq!(r.applied.len(), 1);
+    assert!(near(av(&mut g, HEALTH), 79.0));
+    assert_eq!(active(&g), 0);
+    g.frames(6 * 60 + 2);
+    assert!(!g.effects.iter().any(|e| e.source == FormId(STIM_GATED)), "{:?}", g.effects);
+    g.player.hardcore = Some(true);
+    g.frames(3 * 60);
+    assert!(near(av(&mut g, HEALTH), 79.0));
+    // In Hardcore: one heal over time, 5 × 1.3 floored to 6 a second for 6 s.
+    let mut g = game(&f);
+    g.player.hardcore = Some(true);
+    add_actor_value_damage(&mut g, P, HEALTH, 60.0);
+    assert_eq!(g.aid_preview(P, FormId(STIM_GATED)), vec![(HEALTH, 36.0)]);
+    let r = g.ingest(P, FormId(STIM_GATED));
+    assert_eq!(r.applied.len(), 1);
+    assert!(near(av(&mut g, HEALTH), 40.0));
+    assert_eq!(active(&g), 1);
+    g.frames(6 * 60 + 2);
+    assert!(near(av(&mut g, HEALTH), 76.0), "{}", av(&mut g, HEALTH));
+    assert!(!g.effects.iter().any(|e| e.source == FormId(STIM_GATED)));
 }

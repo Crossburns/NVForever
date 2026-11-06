@@ -98,6 +98,7 @@ mod object_anims;
 mod outfits;
 mod own_sounds;
 mod pipboy_arm;
+mod pipboy_controls;
 mod player_body;
 mod stealth_field;
 mod stray_commands;
@@ -106,6 +107,7 @@ mod particles;
 mod shot_fx;
 mod ragdoll;
 mod swing_traps;
+mod wrecks;
 mod talk_clips;
 mod readahead;
 mod reflection;
@@ -231,6 +233,9 @@ struct Args {
     /// lists it (not a pin, unlike --weather).
     #[arg(skip)]
     start_weather: Option<String>,
+    /// A loaded game's GameDaysPassed, for the sky alone ([`start_days`]).
+    #[arg(skip)]
+    sky_day: Option<f32>,
     /// Override the weather's fog distances: "near,far" in game units.
     #[arg(long)]
     fog: Option<String>,
@@ -271,7 +276,9 @@ struct Args {
     /// Generated terrain: mesh vertex step in landscape grid vertices (1, 2, 4, 8, 16 or 32).
     #[arg(long, default_value_t = 2)]
     lodgen_step: usize,
-    /// Game days passed, for the moon phase (default: the GameDaysPassed global).
+    /// Game days passed at the start of a new game, whole days (default: the GameDaysPassed
+    /// global). A loaded save keeps its own game day; only the sky of a save made before
+    /// saves held the day starts on this, until it follows the game.
     #[arg(long)]
     day: Option<f32>,
     /// Do not apply the image-space grade (the worldspace's image space and the weather's
@@ -347,7 +354,8 @@ struct Args {
     #[arg(long, default_value = "1280x800")]
     size: String,
     /// The window: `windowed` (of --size) or `borderless` (borderless full screen on the
-    /// current monitor). With --play the settings page's Display group switches it too.
+    /// display chosen in Display settings, the first display until one is chosen). With
+    /// --play the settings page's Display group switches it too.
     #[arg(long, value_enum, default_value_t = window_mode::WindowChoice::Windowed)]
     window: window_mode::WindowChoice,
     /// The game's field-of-view setting in degrees (fDefaultFOV, default 75): the horizontal
@@ -550,8 +558,8 @@ struct Args {
     new_game: bool,
     /// With --play: load a save (a name in NVForever's saves folder, or a path to a
     /// .nvfsave): start at its place and put its state back (nvf_play::save,
-    /// docs/design/save-load.md); --cell, --pos, --heading, --pitch, --hour, --weather and
-    /// --world are taken from the save.
+    /// docs/design/save-load.md); --cell, --pos, --heading, --pitch, --hour, --day, --weather
+    /// and --world are taken from the save.
     #[arg(long, requires = "play", conflicts_with = "new_game")]
     load: Option<String>,
     /// With --play: open on the main menu (nvf_play::main_menu): Continue, New Game, Load
@@ -806,6 +814,24 @@ fn main() -> AppExit {
         eprintln!("explore: the free-camera explorer (--explore)");
     }
     let developer_data = args.data.is_some();
+    match setup::text_code_page() {
+        Ok(c) => {
+            if c != fnv_util::text::CodePage::default() {
+                eprintln!("setup: game text read as {c}");
+            }
+            fnv_util::text::set_code_page(c);
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            return AppExit::error();
+        }
+    }
+    // The languages of NVForever's own words (#1443): beside the program, in the home.
+    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf));
+    let home = fnv_install::EngineHome::default_root();
+    for problem in fnv_util::words::load(&fnv_util::words::dirs(exe_dir.as_deref(), home.as_deref())) {
+        eprintln!("warning: language file skipped: {problem}");
+    }
     // The game's folder: `--data`, NVForever.ini or asked for; its files checked (setup.rs).
     let install = match setup::game_install(args.data.as_deref()) {
         Ok(g) => g,
@@ -815,6 +841,7 @@ fn main() -> AppExit {
         }
     };
     args.data = Some(install.data.clone());
+    setup::install_fonts(&install);
     // Every `fnv_install::guard_write` from here on refuses writes into this install,
     // also where the writer has none at hand (saves, test aids; #994).
     fnv_install::remember_game(&install);
@@ -970,6 +997,9 @@ fn main() -> AppExit {
             Err(_) => return fail(e),
         },
     };
+    if let Some(saved) = pending.as_ref().and_then(|p| p.body.engine.extra.get(sky::SAVE_HOOK.key)) {
+        sky_state.restore_saved(saved);
+    }
     sky_state.shadows = (args.sun_shadows || (args.play && !args.no_sun_shadows)) && args.shadow_distance > 0.0;
     if args.shadow_distance > 0.0 {
         sky_state.shadow_distance = args.shadow_distance;
@@ -988,7 +1018,8 @@ fn main() -> AppExit {
         None => None,
     };
     sky_state.time_scale = args.time_scale.max(0.0);
-    sky_state.days_passed = args.day.or_else(|| sky::find_global(&world, "GameDaysPassed")).unwrap_or(0.0).floor();
+    let (start_day, sky_day) = start_days(args.day, args.sky_day, sky::find_global(&world, "GameDaysPassed"));
+    sky_state.days_passed = sky_day;
     if let Some(dir) = &args.timelapse {
         if let Err(e) = fnv_install::guard_write(dir, None) {
             return fail(format!("--timelapse {}: {e}", dir.display()));
@@ -1057,6 +1088,7 @@ fn main() -> AppExit {
             Err(e) => return fail(e),
         }
     };
+    let lod_origin = lod::grid_origin(&game, &world);
     let actor_world = (!args.no_actors).then(|| {
         let t0 = std::time::Instant::now();
         let mut a = actors::ActorWorld::build(world.lo, world.schema);
@@ -1107,12 +1139,12 @@ fn main() -> AppExit {
     if let Some(p) = play.as_mut() {
         p.packages = !npc_packages.is_empty();
     }
-    let residents = if npc_packages.is_empty() {
+    let mut residents = if npc_packages.is_empty() {
         None
     } else {
         // Game hours per second: the sky's rate when it runs, else the NPCs' own.
         let rate = if sky_state.time_scale > 0.0 { sky_state.time_scale as f64 } else { args.npc_timescale.max(0.0) as f64 / 3600.0 };
-        let clock = residents::Clock { hour: sky_state.hour, days_passed: sky_state.days_passed, rate };
+        let clock = residents::Clock { hour: sky_state.hour, days_passed: start_day, rate };
         match residents::Residents::build(&world, &npc_packages, clock, args.npc_speed, args.play) {
             Ok(mut r) => {
                 r.set_keep_apart(!args.actors_pass_through);
@@ -1125,8 +1157,11 @@ fn main() -> AppExit {
     let mut trips = args.npc_travel.clone();
     let furnishings = if args.play || !args.npc_sit.is_empty() || residents.is_some() {
         match furniture::Furnishings::build(&world, &game, &args.npc_sit, trips.len()) {
-            Ok((f, sit_trips)) => {
+            Ok((mut f, sit_trips)) => {
                 trips.extend(sit_trips);
+                if let Some(r) = residents.as_mut() {
+                    r.set_furniture_facts(std::sync::Arc::new(f.asset_facts(&game)));
+                }
                 Some(f)
             }
             Err(e) => return fail(e),
@@ -1252,7 +1287,7 @@ fn main() -> AppExit {
     .insert_resource(sky_state)
     .insert_resource(screen_modifiers)
     .insert_resource(fly::AutoFly(args.auto_fly))
-    .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen))
+    .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
     .init_resource::<TerrainCache>()
     .init_resource::<imposters::Imposters>()
@@ -1334,6 +1369,8 @@ fn main() -> AppExit {
     .add_systems(Update, actor_materials::pose_player.after(nvf_play::player::BodySet))
     .add_systems(Update, timelapse.after(sky::update_sky))
     // The sun's cascades reach behind the player's body (sky::SUN_REACH_BACK).
+    // Only the sun's casters that can shade the view's slice of each cascade (#1378).
+    .add_systems(PostUpdate, sky::sun_casters_over_slice.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
     .add_systems(PostUpdate, sky::reach_toward_sun.after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades).before(bevy::light::SimulationLightSystems::UpdateLightFrusta))
     .add_systems(Startup, (crash::report_start, report_archives))
     .add_systems(Last, (crash::note_place, crash::report_exit, stray_commands::report));
@@ -1423,7 +1460,7 @@ fn main() -> AppExit {
         if play.is_some() {
             // The player's own body (player_body.rs): needs the actor records.
             app.add_plugins(creator_view::CreatorViewPlugin { light_scale: args.light_scale });
-            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin));
+            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin));
             app.insert_resource(nvf_play::aim_zoom::Scope3d { on: args.scope_3d, lens: false });
             app.add_plugins(decals::DecalsPlugin);
             app.add_plugins(knockouts::KnockoutsPlugin);
@@ -1524,7 +1561,8 @@ fn main() -> AppExit {
         let follow = n.follow;
         app.insert_resource(n).add_systems(Startup, nav::log_startup).add_systems(
             Update,
-            (nav::drive.after(world::stream), nav::follow_camera.after(fly::fly).before(world::stream), nav::draw.after(nav::drive)),
+            // After the read-ahead, which sets its loading-screen rule (`ReadAhead::unseen`) for this frame.
+            (nav::drive.after(world::stream).after(readahead::read_ahead), nav::follow_camera.after(fly::fly).before(world::stream), nav::draw.after(nav::drive)),
         ).add_systems(
             Last,
             nav::report,
@@ -1532,7 +1570,8 @@ fn main() -> AppExit {
         if let Some(r) = residents {
             app.insert_resource(r)
                 .add_systems(Startup, residents::log_startup)
-                .add_systems(Update, residents::drive.after(world::stream).after(nvf_play::PlaySet::Scripts).before(nav::drive))
+                .add_systems(Update, residents::drive.after(world::stream).after(readahead::read_ahead).after(nvf_play::PlaySet::Scripts).before(nav::drive))
+                .add_systems(Update, residents::melee_knockback::arrange.after(residents::drive).run_if(resource_exists::<nvf_play::MeleeKnockbackAid>))
                 .add_systems(Last, residents::report);
             // Patrols and sandboxes go on after a load where the save had them.
             if play.is_some() {
@@ -1604,11 +1643,14 @@ fn main() -> AppExit {
                 if c.actor_frames == 0 {
                     info!("actor animation: no actors posed");
                 } else {
+                    // The us per actor figure is approximate: `total` less `held_time` still holds
+                    // the loop's cost on held actors, divided by sampled actor frames only, so
+                    // many held corpses can raise it.
                     info!(
                     "actor animation: up to {} actors posed at once, {:.3} ms per frame on average, {:.2} us per actor and frame, {:.2} clips per actor and frame ({:.1}% of actor frames with more than one clip), {:.1} tracks per actor and frame",
                     c.peak,
                     c.total.as_secs_f64() * 1e3 / f64::from(c.frames.max(1)),
-                    c.total.as_secs_f64() * 1e6 / c.actor_frames.max(1) as f64,
+                    c.total.saturating_sub(c.held_time).as_secs_f64() * 1e6 / c.actor_frames.max(1) as f64,
                     c.layer_frames as f64 / c.actor_frames.max(1) as f64,
                     100.0 * c.blend_frames as f64 / c.actor_frames.max(1) as f64,
                     c.tracks as f64 / c.actor_frames as f64
@@ -1616,6 +1658,18 @@ fn main() -> AppExit {
                     info!("actor turns: {} actor frames playing a turn-on-the-spot clip", c.turn_frames);
                     info!("actor idle under movement: {} actor frames with the idle laid under another clip", c.under_frames);
                     info!("actor moves without a clip: {} actor frames moving with no movement clip showing; {} actor frames of a creature's blow on its head and neck over its run", c.clipless_frames, c.head_blow_frames);
+                }
+                if c.held_frames + c.dead_tracks > 0 {
+                    info!(
+                        "death poses: {} actor frames held without sampling ({} at the clip's end), {} more at the clip's end sampled ({:.2} finished poses per frame), {} tracks sampled on dead actors ({:.1} per frame), {:.2} us per held pose (in the actor animation line's ms, not its per actor figures)",
+                        c.held_frames,
+                        c.finished_held_frames,
+                        c.finished_sampled_frames,
+                        (c.finished_held_frames + c.finished_sampled_frames) as f64 / f64::from(c.frames.max(1)),
+                        c.dead_tracks,
+                        c.dead_tracks as f64 / f64::from(c.frames.max(1)),
+                        c.held_time.as_secs_f64() * 1e6 / c.held_frames.max(1) as f64
+                    );
                 }
                 if let Some(a) = actors {
                     let fg = a.facegen.lock().expect("facegen cache");
@@ -1638,7 +1692,7 @@ fn main() -> AppExit {
     if play.is_some() {
         settings::register(&mut app);
         console_toggles::register(&mut app);
-        app.init_resource::<handoff::Handoff>().add_systems(Update, (handoff::leave, handoff::reveal.after(world::loading_gate)));
+        app.init_resource::<handoff::Handoff>().add_systems(Update, (handoff::leave, handoff::reveal.after(world::loading_gate), handoff::hold_restore.after(handoff::reveal)));
         handoff::add_end_now(&mut app);
         if let Some(why) = load_failed {
             app.insert_resource(handoff::LoadFailed(why)).add_systems(Update, handoff::tell_load_failed);
@@ -1689,12 +1743,21 @@ fn start_from_save(name: &str, opened: &world::OpenedPlugins, args: &mut Args) -
     args.heading = pl.heading_deg;
     args.pitch = pl.pitch_deg;
     args.hour = header.game_hour;
+    args.sky_day = header.game_days_passed;
     if header.weather.is_some() && args.weather.is_none() {
         args.start_weather = header.weather.clone();
     }
     // Before the log is set up: straight to the output.
     eprintln!("load: {} ({}, level {}, {}): starting at {:?}", path.display(), header.player_name, header.level, header.location, pl);
     Ok(nvf_play::save::PendingLoad { path, body, order })
+}
+
+/// The whole days a run starts on: the game's start clock (`--day`, else the plugins'), and
+/// the sky's, which a save's day overrides. A save's day stays out of the start clock: a
+/// restore that fails goes on from the plugins' game, which is not on that save's day.
+fn start_days(day: Option<f32>, sky_day: Option<f32>, plugins: Option<f32>) -> (f32, f32) {
+    let game = day.or(plugins).unwrap_or(0.0).floor();
+    (game, sky_day.map_or(game, f32::floor))
 }
 
 /// The arguments of this run without those a save or the window decide (with their
@@ -2052,7 +2115,7 @@ fn screenshot_and_exit(
 
 #[cfg(test)]
 mod tests {
-    use super::{restart_args, vertical_fov, with_default_mode, with_schemas_beside, Args};
+    use super::{restart_args, start_days, vertical_fov, with_default_mode, with_schemas_beside, Args};
     use clap::Parser;
 
     fn parse(a: &[&str]) -> Args {
@@ -2086,6 +2149,17 @@ mod tests {
         let args = parse(&["--play", "--menu"]);
         assert!(args.play && args.menu);
         assert!(Args::try_parse_from(["nvforever", "--explore", "--play"]).is_err());
+    }
+
+    #[test]
+    fn a_saves_day_starts_the_sky_and_not_the_game() {
+        // A save's day, over --day for the sky, never in the game's start clock (#1607).
+        assert_eq!(start_days(None, Some(25.375), Some(5.0)), (5.0, 25.0));
+        assert_eq!(start_days(Some(30.0), Some(25.375), Some(5.0)), (30.0, 25.0));
+        // A save without the day, and a new game: both on --day, else the plugins' day.
+        assert_eq!(start_days(Some(30.5), None, Some(5.0)), (30.0, 30.0));
+        assert_eq!(start_days(None, None, Some(5.5)), (5.0, 5.0));
+        assert_eq!(start_days(None, None, None), (0.0, 0.0));
     }
 
     #[test]

@@ -131,6 +131,8 @@ pub struct QuestMessages {
     /// [hypothesis: the switch keeps the objectives in view while the Pip-Boy cannot be
     /// used, the GECK wiki's reason for it].
     pub hold_objectives: bool,
+    /// The game's KillQuestUpdates count last acted on (`fnv_game::functions::fo3`).
+    updates_killed: u64,
 }
 
 impl QuestMessages {
@@ -191,6 +193,14 @@ impl QuestMessages {
 
     pub fn waiting(&self) -> usize {
         self.waiting.len()
+    }
+
+    /// Drop the lines waiting (KillQuestUpdates); the one on screen goes after its time.
+    /// Returns how many were dropped.
+    pub fn kill_waiting(&mut self) -> usize {
+        let n = self.waiting.len();
+        self.waiting.clear();
+        n
     }
 
     /// How strongly a piece that starts to come `from` seconds after the line is drawn:
@@ -339,6 +349,13 @@ fn draw(
         info!("quest messages: objectives {} (AutoDisplayObjectives)", if hold { "held on screen" } else { "go after their time" });
         quests.hold_objectives = hold;
     }
+    // Fallout 3's KillQuestUpdates: the lines waiting are dropped.
+    let killed = script.as_ref().and_then(|s| s.rt.as_ref()).map(|rt| rt.game.ui.quest_updates_killed);
+    if let Some(k) = killed.filter(|&k| k != quests.updates_killed) {
+        quests.updates_killed = k;
+        let n = quests.kill_waiting();
+        info!("quest messages: {n} waiting line(s) dropped (KillQuestUpdates)");
+    }
     // Hidden with the clock stopped as the corner messages are (`crate::corner_messages::held`).
     let held = crate::corner_messages::held(panel.view.is_some(), state.map(|s| *s.get()), driven.is_some_and(|d| d.0), kill_cam.is_some_and(|k| k.active()));
     for (_, mut v) in &mut roots {
@@ -459,6 +476,20 @@ mod tests {
             ]
         );
         assert_eq!(p[3], Piece::Box { completed: false, rect: [TEXT_X - 16.0, LIST_BASE + 2.0 * pitch - 21.0, 26.0, 26.0] });
+    }
+
+    #[test]
+    fn kill_quest_updates_drops_the_lines_waiting() {
+        let mut q = QuestMessages::default();
+        q.push(QuestNotice::Added("Growing Up Fast".into()));
+        q.step(0.0);
+        q.push(QuestNotice::Completed("Growing Up Fast".into()));
+        q.push(objectives(&[("Go to the party", false)]));
+        assert_eq!(q.waiting(), 2);
+        assert_eq!(q.kill_waiting(), 2);
+        assert_eq!(q.waiting(), 0);
+        // The line on screen stays for its time.
+        assert!(matches!(q.showing(), Some(QuestNotice::Added(_))));
     }
 
     #[test]

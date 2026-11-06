@@ -249,6 +249,33 @@ work in New Vegas.
   activator 0x00104C07 carry no record flags, so where the GECK stores ActorZone and
   Projectile is unknown (§13).
 
+### 4.1 What a primitive shows in game
+
+- **A primitive shows nothing in game.** The editor draws it as a coloured, see-through
+  shape, and only while marker viewing is on [documented: Creating Primitives, "If your
+  primitive isn't visible, you may have marker viewing turned off"]. The console switch
+  for primitives is ToggleAllPrimitives [documented: ToggleAllPrimitives]. So a reference
+  with `XPRM` is drawn as its primitive or not at all, never as its base object's model
+  [hypothesis: the pages describe the editor; not captured in game, but no primitive
+  with a model is ever meant to be seen, see the next point].
+- **Copied triggers keep the model** [observed: survey of the `XPRM` references in the
+  six base and DLC ESMs, 2026-11-05]. FalloutNV.esm has 5,677 references with `XPRM`:
+  3,438 on CollisionMarker, 922 room, portal and occlusion markers with no base record,
+  1,200 activators with no model, 49 acoustic spaces, 2 sounds, and **66 activators
+  whose base names a real model**: 64 `Architecture\Wasteland\WaterTowerPipes01.NIF`
+  (most named "Gas Valve", e.g. Hoover Dam's battle triggers, `v34AmbushVolume`,
+  `REPHQEnterTrigger`) and 2 `Dungeons\Vault\Accessories\ControlPanelVault01.NIF`
+  (Sloan's `QJSnufflesCrippleTrigger`, 0x00140C37, whose only script block is OnLoad).
+  Old World Blues and Lonesome Road add one pipe trigger each. The trigger was made by
+  copying an activator, and the copy kept its model and name.
+- **NVForever's rule** (#1599): a reference with `XPRM` is not drawn (render streaming
+  and script Enable), gets no collision from its base model (only CollisionMarker boxes
+  collide, physics.md §4), and is not offered under the crosshair, whatever FULL its
+  activator has. Its trigger shape is the primitive (`script_events.rs`, T2). Code:
+  `fnv_world::placed::Placement::draws_base_model`; `engine/nvforever/src/world.rs`,
+  `engine/nvf-play/src/script_draw.rs`, `crates/fnv-phys/src/placed.rs`
+  (`primitive_model` count), `engine/nvf-play/src/activate.rs` (`describe`).
+
 ## 5. Navmesh (Layer 6 groundwork)
 
 - A navmesh is a set of triangles telling actors where they can walk; it replaces Oblivion's
@@ -416,9 +443,9 @@ scripts, so picking one up is detected from a trigger with `GetHasNote`
 | T4 | Trigger scripts and cell loading | trigger scripts run only while their cell is loaded [Basic Quest] | candidates are scripted references of loaded cells | script_trigger.rs | agrees |
 | T5 | Trigger flags | ActorZone and Projectile flags on the primitive [Primitives] | not read anywhere; storage unknown (no `XTRI` in FalloutNV.esm) | `crates/fnv-phys/src/primitive.rs`, schemas/fnv/world.json | gap (data) |
 | T6 | "Physics sensors (5D)" | detection is the physics engine's collision | layer5.md §3.4 table already says physics sensors; the implementation is geometric | docs/design/layer5.md §3.4 vs layer5-play.md §3 | consistent with the plan, not with the interim code |
-| C1 | Room/portal culling | rooms, portals, unbounded space, portal frusta (§3.1) | not implemented: every enabled reference of a loaded cell is drawn; portal and occlusion references (bases 0x17, 0x20) are skipped as markers; only Bevy's per-mesh frustum culling | `engine/nvforever/src/world.rs`, layer3.md §2.2, world.md §2 | difference (performance; visible only where the game shows "the void" or hides a moved object) |
-| C2 | Moved objects and rooms | a settled object is drawn only with its original room [Optimization] | no rooms; moved objects are always drawn | `engine/nvf-play/src/dropped.rs`, world.rs | difference (fidelity edge case) |
-| C3 | Multibounds and occlusion planes | per-frame occlusion test of multibounds against plane frusta [Occlusion] | not implemented | engine/nvforever | difference (performance only) |
+| C1 | Room/portal culling | rooms, portals, unbounded space, portal frusta (§3.1) | built (#606): in interiors only the rooms seen through portals are drawn; membership by box overlap grown by 32 units, the narrower frustum a screen rectangle, everything drawn with the camera in no room (never the void); portals hidden by occlusion planes are still followed (C3); `--no-room-culling` turns it off | `engine/nvforever/src/rooms.rs`, smoke `rooms-repconn` | simplified (performance; the original can show "the void" where portals are missing, NVForever does not) |
+| C2 | Moved objects and rooms | a settled object is drawn only with its original room [Optimization] | dropped items, actors and effects are never room-culled; moved objects are always drawn | `engine/nvf-play/src/dropped.rs`, world.rs | difference (fidelity edge case) |
+| C3 | Multibounds and occlusion planes | per-frame occlusion test of multibounds against plane frusta [Occlusion] | not implemented (#1434) | engine/nvforever | difference (performance only) |
 | C4 | XPRM bounds | (room edges must meet; portals snap to faces) | physics.md §4.1: half extents [hypothesis] | `crates/fnv-phys/src/primitive.rs`, physics.md §4.1 | **settled by our data**: 1,298 of 1,341 portal centres on a room face as half extents, 0 as full extents (§3.1) |
 | C5 | Object fade by bounds | objects fade in at a distance growing with their bounds [Static Collections] | all objects of loaded cells are drawn at any distance; fades exist only per cell and for LOD | `engine/nvforever/src/fade.rs`, layer3.md §2.2 | difference |
 | L1 | Light radius | radius set per reference [Lighting] | range = base radius + `XRDS` (`placed_light_radius`); SSIM up on all seven interior frames (world.md §8) | `engine/nvforever/src/lights.rs`, `crates/fnv-world/src/lighting.rs`, world.md §8 | **settled** (2026-10-09) |

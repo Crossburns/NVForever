@@ -870,6 +870,8 @@ adds to the damage; RestoreActorValue takes it off, never below zero, so a value
 never restored past its permanent value [documented: the pages of those functions;
 observed: Contreras' supplies (three blocks of `RestoreActorValue <limb> 100`) left a
 head condition damaged by 40 at 100, `L5.quest.effect_start`, layer5-captures.md §9.3 b].
+DamageActorValue that leaves Health at 0 or less kills, or knocks out an essential actor
+[hypothesis: unconscious.md §2.2, whose one sighting in the original is not isolated].
 GetBaseActorValue reads the base and GetPermanentActorValue the base plus the permanent
 modifier [documented]. The override, the modifier and the damage are per reference in
 `RefExtra` (`actor_values`, `av_permanent`, `av_damage`); the permanent value of
@@ -882,6 +884,50 @@ health; with no weapon equipped GetWeaponHealthPerc is 100. Without the last thr
 the CGTutorial script read a new character as hurt, crippled and with a broken weapon
 on its first run (its stages 200, 210 and 218), which the capture saves never show
 (layer5-captures.md §2: only stage 2 done).
+
+**Fallout 3's functions** (2026-11-03, `functions::fo3`; Tale of Two Wastelands, audit
+docs/handoff/ttw-fo3-script-audit-2026-11-02.md §1). The New Vegas masters never call
+them, so the catalogue had no opcode for them; each opcode is the in-game GetCommandOpcode
+capture's (`schemas/script/command_opcodes.json`) [observed], and TTW's compiled calls
+agree (`Dad.MatchRace player` compiles to 0x11E5 in Vault101ExitScript) [observed].
+ModDisposition adds to what GetDisposition reads and keeps the sum as SetDisposition
+keeps its value, within 0–100 [documented: catalogue summary; the range is a
+hypothesis]. GetPCIsRace is GetIsRace on the player. GetForceSneak reads SetForceSneak's
+flag. SetMerchantContainer puts the actor's goods in another container
+(`RefExtra::merchant_container`, read by `Game::merchant_container` for the barter menu,
+actors that buy, and GetMerchantContainer), refused for a container that is not
+persistent [documented: catalogue notes]. MatchRace gives the caller the race the source
+has now and is drawn again as AgeRace's change is (appearance-changes.md).
+ClearActorsFactionsPlayerEnemyFlag clears the player's enemy flag in each crime-tracking
+faction of the actor. GetPCSleepHours reads the hours of a sleep in progress, 0 while
+awake or waiting. SetLastExtDoorActivated sets the door GetPCLastExteriorDoor reads.
+SetPCYoung, SetPCToddler, SetNoActivationSound / ClearNoActivationSound and
+SetLocationSpecificLoadScreensOnly are kept in `PlayerState` (`young`, `toddler`,
+`no_activation_sound`, `location_load_screens_only`), but nothing draws, animates or
+plays by them yet: the child's default hair, the toddler's walk, the refused-activation
+sound and the load screen choice are not built.
+
+The rest of the audit's §1 (2026-11-03, same module, opcodes the same way; Wait 0x10B7
+and IsWaiting 0x106F come with StopWaiting). Two opcodes have no catalogue name and
+none in the GetCommandOpcode capture: 0x1231 is KillQuestUpdates and 0x11F3
+TriggerLODApocalypse, each read by lining its quest stage's source text up with the
+compiled order (CG01 stage 90, MS11 stage 60) [observed]; the catalogue has them as
+`observed-only` entries. What each does, and the evidence, is on its function:
+MatchFaceGeometry morphs an NPC's FaceGen shape coefficients towards another's
+(appearance-changes.md, `appearance.rs`; the engine applies the morphs as it draws the
+head). Wait / StopWaiting / IsWaiting hold an actor in its current Follow or Accompany
+package where it stands (`RefExtra::waiting`, the AI's follow step). SetCellFullName
+renames an interior (the load door prompt reads it). ResetInterior resets an interior at
+its next load without bringing actors back (`crate::respawn`). SetZoneRespawns turns an
+encounter zone's resets on or off over its Never Resets flag (`fnv_sim` zones, saved).
+DisableAllMines disables the live mines of the player's cell (`nvf_play::mines`).
+RemapWaterType draws one water type as another (`nvforever` water.rs). KillQuestUpdates
+drops the HUD's quest lines waiting to show. TriggerScreenBlood is drawn as the screen
+splatter. GetLastPlayerAction answers the player's action now, as IsPlayerActionActive
+reads it. Kept, with nothing built on them yet: SetFactionReaction's disposition
+modifiers (`FormChanges::faction_modifiers`; dispositions do not read faction modifiers),
+TriggerLODApocalypse (`FormChanges::lod_apocalypse`), TriggerHitShader's blur and
+FadeSFX's fade (`UiRequests::hit_shaders`, `sfx_fades`).
 
 ### 7.4 Coverage (`fnvtool script coverage`, 2026-10-09, after rounds 3 and 4)
 

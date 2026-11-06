@@ -31,10 +31,25 @@
 //!   NPC whose hair is invalid for the new sex gets the default hair"; AgeRace notes,
 //!   "invalid hair falls back to default"]. The player's hair is kept [hypothesis: the
 //!   original restores it on the way back, "restored on return for the player only"].
+//! - **MatchFaceGeometry source percent** (Fallout 3's; Tale of Two Wastelands calls it
+//!   on Dad in Vault101ExitScript and CG04 stage 65, `MatchFaceGeometry player
+//!   CGMatchFace`) morphs the actor's face geometry `percent` (0–100) of the way from
+//!   its current face to `source`'s; 100 is the same face; the face texture is not
+//!   changed [documented: GECK wiki MatchFaceGeometry and its notes]. The geometry is
+//!   the FaceGen shape coefficients, symmetric (FGGS) and asymmetric (FGGA)
+//!   [documented: xEdit wbFaceGen]; each moves in a straight line towards the source's
+//!   [hypothesis: "a 50% morph from his current face" read as a weighted mean of the
+//!   coefficients]. An NPC keeps its calls in order ([`FaceMatch`], `RefExtra::
+//!   face_matches`, saved) and is drawn again; the engine applies them to the record's
+//!   coefficients as it draws the head (`nvforever` actors.rs). A source the game holds
+//!   the face of (the player, once the character creator has given a look) has its
+//!   coefficients kept with the call, so the face matched is the one it had then; any
+//!   other source's is read from its record when drawn [design]. On the player the
+//!   creator's look itself is changed, which needs both faces known.
 
 use crate::game::Game;
 use fnv_sim::FormId;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A change for the engine: draw the actor again (module notes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -43,6 +58,29 @@ pub struct AppearanceChange {
     /// SexChange's reset on the player: its face becomes the race's first starting face
     /// for the new sex.
     pub reset: bool,
+}
+
+/// One MatchFaceGeometry call (module notes).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FaceMatch {
+    /// The actor whose face is matched.
+    pub source: FormId,
+    /// How far, 0–100.
+    pub percent: f32,
+    /// The source's FGGS and FGGA when the game held them at the call; empty: the
+    /// engine reads them from the source's record.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub fggs: Vec<f32>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub fgga: Vec<f32>,
+}
+
+/// `current` moved `percent` (0–100) of the way to `toward`, coefficient by coefficient;
+/// a coefficient one side lacks counts as 0 (module notes).
+pub fn blend_coefficients(current: &[f64], toward: &[f64], percent: f64) -> Vec<f64> {
+    let t = (percent / 100.0).clamp(0.0, 1.0);
+    let at = |v: &[f64], i: usize| v.get(i).copied().unwrap_or(0.0);
+    (0..current.len().max(toward.len())).map(|i| at(current, i) + (at(toward, i) - at(current, i)) * t).collect()
 }
 
 /// The longest walk along a race's age links (a guard against a looping chain).
@@ -104,6 +142,15 @@ impl Game<'_> {
         Some(to)
     }
 
+    /// `actor.MatchRace source` (`functions::fo3`): the actor takes `race`, drawn again
+    /// as AgeRace's change is.
+    pub(crate) fn change_race(&mut self, r: FormId, race: FormId) {
+        if self.actor_race(r) != Some(race) {
+            self.set_race(r, race);
+            self.appearance_changes.push(AppearanceChange { actor: r, reset: false });
+        }
+    }
+
     fn set_race(&mut self, r: FormId, race: FormId) {
         if r == FormId::PLAYER_REF {
             match self.player.look.as_mut() {
@@ -131,6 +178,30 @@ impl Game<'_> {
             let reset = reset && r == FormId::PLAYER_REF;
             self.appearance_changes.push(AppearanceChange { actor: r, reset });
         }
+    }
+
+    /// `actor.MatchFaceGeometry source percent` (module notes).
+    pub fn match_face_geometry(&mut self, actor: FormId, source: FormId, percent: f32) -> Result<(), String> {
+        let percent = if percent.is_finite() { percent.clamp(0.0, 100.0) } else { 0.0 };
+        let known = match self.player.look.as_ref() {
+            Some(l) if source == FormId::PLAYER_REF => Some((l.fggs.clone(), l.fgga.clone())),
+            _ => None,
+        };
+        if actor == FormId::PLAYER_REF {
+            let ((fggs, fgga), Some(look)) = (known.ok_or("the player's face can only be matched to a face the game holds")?, self.player.look.as_mut()) else {
+                return Err("the player has no face from the character creator yet".into());
+            };
+            let blend = |cur: &[f32], to: &[f32]| {
+                let wide = |v: &[f32]| v.iter().map(|&x| f64::from(x)).collect::<Vec<_>>();
+                blend_coefficients(&wide(cur), &wide(to), f64::from(percent)).into_iter().map(|x| x as f32).collect()
+            };
+            (look.fggs, look.fgga) = (blend(&look.fggs, &fggs), blend(&look.fgga, &fgga));
+        } else {
+            let (fggs, fgga) = known.unwrap_or_default();
+            self.extra.entry(actor).or_default().face_matches.push(FaceMatch { source, percent, fggs, fgga });
+        }
+        self.appearance_changes.push(AppearanceChange { actor, reset: false });
+        Ok(())
     }
 
     /// The race and sex changes since the last call (the engine draws the actors again).

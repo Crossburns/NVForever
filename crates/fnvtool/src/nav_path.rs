@@ -581,7 +581,7 @@ pub fn walk_cmd(lo: &LoadOrder, schema: &Schema, ends: &Ends, opts: &PathOpts, w
                     plugin_rule(pl)
                 }
             };
-            let options = |pl: &fnv_world::Placement| RefCollisionOptions { posed_doors: animated.contains_key(&pl.form_id) };
+            let options = |pl: &fnv_world::Placement| RefCollisionOptions { posed_doors: animated.contains_key(&pl.form_id), ..Default::default() };
             let b = build_with(nav.lo, nav.schema, &nav.ix, centre, 1, &around, phys, meshes.as_mut(), &in_world, &options);
             build_ms += ms(t);
             builds += 1;
@@ -595,7 +595,7 @@ pub fn walk_cmd(lo: &LoadOrder, schema: &Schema, ends: &Ends, opts: &PathOpts, w
                 }
                 let (pl, anim) = animated.remove(&id).expect("listed");
                 let models = meshes.as_mut().map(|m| m as &mut dyn fnv_phys::ModelCollision);
-                let rc = fnv_phys::ref_collision_with(nav.lo, nav.schema, &pl, models, &mut |_| {}, RefCollisionOptions { posed_doors: true });
+                let rc = fnv_phys::ref_collision_with(nav.lo, nav.schema, &pl, models, &mut |_| {}, RefCollisionOptions { posed_doors: true, ..Default::default() });
                 let objects: Vec<(u16, usize, fnv_collide::Iso)> = rc
                     .objects
                     .iter()
@@ -633,7 +633,10 @@ pub fn walk_cmd(lo: &LoadOrder, schema: &Schema, ends: &Ends, opts: &PathOpts, w
         let lw = leg_world.as_mut().expect("built");
         let ch = c.as_mut().expect("placed");
         match follower.steer(feet) {
-            Steer::Arrived => {
+            // This walk test does not judge the goal's height: it ends as it always did,
+            // and so does not check what the game's residents do about it
+            // (docs/design/navmesh.md §4.1).
+            Steer::Arrived | Steer::OffPath => {
                 outcome = "arrived";
                 break;
             }

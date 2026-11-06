@@ -293,6 +293,13 @@ fn arms_material(materials: &mut Assets<NifMaterial>, m: &Handle<NifMaterial>) -
     materials.add(copy)
 }
 
+/// Test aid `NVF_PLAY_TEST_NO_ARMS_SHADE=1`: no [`ArmsShade`] light, for measuring what it
+/// costs (#1374; docs/design/frame-rate-audit.md §1).
+fn no_arms_shade() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("NVF_PLAY_TEST_NO_ARMS_SHADE").is_ok_and(|v| v == "1"))
+}
+
 /// Keep the [`ArmsShade`] light: there while the arms rig is drawn and the sun casts
 /// shadows, so that nothing pays for it otherwise.
 ///
@@ -317,7 +324,7 @@ fn shade_light(
     // A sun casting no shadows has no shade light either.
     let Ok((sun, sun_light)) = sun.single() else { return };
     let arms_drawn = state.body.as_ref().and_then(|b| b.first.as_ref()).is_some_and(|f| f.shown == Some(true));
-    let on = arms_drawn && sun_light.shadow_maps_enabled;
+    let on = arms_drawn && sun_light.shadow_maps_enabled && !no_arms_shade();
     let illuminance = sun_light.illuminance * ARMS_SHADE_SHARE;
     if let Ok((e, mut light)) = shade.single_mut() {
         if !on {
@@ -920,6 +927,7 @@ impl PlayerBody {
             skeleton: r.skeleton.clone(),
             skel: r.animator.skel.clone(),
             nodes: r.animator.nodes.clone(),
+            base_scale: 1.0,
         };
         Some((r.root, rig))
     }

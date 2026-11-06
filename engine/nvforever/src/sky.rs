@@ -303,24 +303,17 @@ struct RegionList {
 pub const DEFAULT_WEATHER_SEED: u64 = 0x4E56_5745_4154_4852;
 
 /// The sky's part of a save (nvf_play::save): the weather shown (the start takes it from
-/// the save's header) and whether a script holds it against the climate.
+/// the save's header), whether a script holds it against the climate and the rolls' random
+/// state. All of it is taken as the sky is made ([`SkyState::restore_saved`]), so loading
+/// the part later does nothing: by then the sky has rolled from that state and a load
+/// script may have released or changed the weather.
 pub const SAVE_HOOK: nvf_play::save::SaveHook = nvf_play::save::SaveHook {
     key: "sky",
     save: |w| {
         let s = w.get_resource::<SkyState>()?;
         Some(serde_json::json!({"weather": s.weather.edid, "held": s.script.is_some_and(|sw| sw.hold), "rng": s.rng.to_string()}))
     },
-    load: |w, v| {
-        let Some(mut s) = w.get_resource_mut::<SkyState>() else { return };
-        if let Some(r) = v.get("rng").and_then(serde_json::Value::as_str).and_then(|r| r.parse().ok()) {
-            s.rng = r;
-        }
-        if v.get("held").and_then(serde_json::Value::as_bool) == Some(true) {
-            let rolls = s.rolls;
-            s.script = Some(ScriptWeather { hold: true, roll: rolls });
-            info!("load: the weather stays held as a script left it");
-        }
-    },
+    load: |_, _| {},
     remap: None,
 };
 
@@ -493,6 +486,22 @@ impl SkyState {
         })
     }
 
+    /// A loaded game's part of the sky ([`SAVE_HOOK`]), before the first look at the weather
+    /// lists ([`SkyState::place`]): a hold set after that look would hold what its roll
+    /// chose. Only the weather the save holds is held: the sky starts on another when that
+    /// one is gone from the load order or `--weather` names one, and nothing asked to hold
+    /// those.
+    pub fn restore_saved(&mut self, saved: &serde_json::Value) {
+        if let Some(r) = saved.get("rng").and_then(serde_json::Value::as_str).and_then(|r| r.parse().ok()) {
+            self.rng = r;
+        }
+        let held = saved.get("held").and_then(serde_json::Value::as_bool) == Some(true);
+        let showing = saved.get("weather").and_then(serde_json::Value::as_str).is_some_and(|w| self.weather.edid.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(w)));
+        if held && showing {
+            self.script = Some(ScriptWeather { hold: true, roll: self.rolls });
+        }
+    }
+
     /// The camera stands in the overriding weather region `region` (FormID; `None`: in
     /// none), or indoors with `at` = `None`, where the list followed stays as it was:
     /// follow that region's list, or the climate's.
@@ -500,6 +509,9 @@ impl SkyState {
         let first = !self.placed;
         self.placed = true;
         // Said here, not in `new`, which runs before the log is set up.
+        if first {
+            info!("weather: the sky starts on day {:.0} at {:02}:{:02}", self.days_passed, self.hour as u32 % 24, (self.hour.fract() * 60.0) as u32);
+        }
         if first && !self.regions.is_empty() {
             let names: Vec<String> = self
                 .regions
@@ -508,10 +520,17 @@ impl SkyState {
                 .collect();
             info!("weather: {} region(s) override the climate here: {}", self.regions.len(), names.join(", "));
         }
+        if first && self.script.is_some_and(|sw| sw.hold) {
+            info!("load: the weather stays held as a script left it");
+        }
         if let Some(region) = at {
             self.source = region.and_then(|f| self.regions.iter().position(|r| r.region.form_id == f));
         }
         self.follow_climate(first || !self.clock_seen);
+        // A release waits for the roll after this one, not for the start's own.
+        if let Some(sw) = self.script.as_mut().filter(|_| first) {
+            sw.roll = self.rolls;
+        }
     }
 
     /// The camera's region, if the place has been looked at.
@@ -1382,6 +1401,76 @@ pub fn reach_toward_sun(mut suns: Query<&mut bevy::light::Cascades, With<Sun>>) 
     }
 }
 
+/// Drop the sun's casters that cannot shade anything a cascade covers. Seen from the sun,
+/// a caster shades a receiver only if it covers it, and a cascade's receivers all lie in
+/// the slice of the camera's view it was fitted to; Bevy draws everything in the square
+/// around that slice's outline (`bevy_light` `calculate_cascade`), so the square's corners
+/// hold casters for nothing. Kept: whatever comes within [`SLICE_MARGIN_TEXELS`] of the
+/// outline, for the shadow filter's reach.
+#[allow(clippy::type_complexity)]
+pub fn sun_casters_over_slice(
+    mut suns: Query<(&mut bevy::camera::visibility::CascadesVisibleEntities, &bevy::light::Cascades, &CascadeShadowConfig, &GlobalTransform), With<Sun>>,
+    views: Query<(&GlobalTransform, &Projection)>,
+    casters: Query<(&bevy::camera::primitives::Aabb, &GlobalTransform)>,
+) {
+    for (mut visible, cascades, config, light) in &mut suns {
+        let light_from_world = Mat3::from_quat(light.rotation()).transpose();
+        let near_bounds = std::iter::once(config.minimum_distance).chain(config.bounds.iter().map(|b| b * (1.0 - config.overlap_proportion)));
+        let bounds: Vec<(f32, f32)> = near_bounds.zip(config.bounds.iter().copied()).collect();
+        for (view, lists) in visible.entities.iter_mut() {
+            let (Ok((at, projection)), Some(cs)) = (views.get(*view), cascades.cascades.get(view)) else { continue };
+            let world_from_view = at.affine();
+            for ((list, c), (near, far)) in lists.iter_mut().zip(cs).zip(&bounds) {
+                let outline = hull(projection.get_frustum_corners(-near, -far).map(|p| (light_from_world * Vec3::from(world_from_view.transform_point3a(p))).truncate()));
+                let margin = SLICE_MARGIN_TEXELS * c.texel_size;
+                list.entities.retain(|e| {
+                    let Ok((aabb, at)) = casters.get(*e) else { return true };
+                    let place = at.affine();
+                    let centre = (light_from_world * Vec3::from(place.transform_point3a(aabb.center))).truncate();
+                    let m = light_from_world * Mat3::from(place.matrix3);
+                    let half = Vec3::from(aabb.half_extents);
+                    let reach = Vec2::new(m.row(0).abs().dot(half), m.row(1).abs().dot(half));
+                    overlaps(&outline, centre, reach + margin)
+                });
+            }
+        }
+    }
+}
+
+/// How far past a slice's outline a caster still counts, in the cascade's shadow-map
+/// texels [engineering choice: wider than the shadow filter's reach, a few texels].
+const SLICE_MARGIN_TEXELS: f32 = 8.0;
+
+/// The convex hull of `points`, counter-clockwise (monotone chain).
+fn hull<const N: usize>(mut points: [Vec2; N]) -> Vec<Vec2> {
+    points.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    let mut out: Vec<Vec2> = Vec::with_capacity(2 * N);
+    for pass in 0..2 {
+        let start = out.len();
+        for i in 0..N {
+            let p = if pass == 0 { points[i] } else { points[N - 1 - i] };
+            while out.len() >= start + 2 && (out[out.len() - 1] - out[out.len() - 2]).perp_dot(p - out[out.len() - 2]) <= 0.0 {
+                out.pop();
+            }
+            out.push(p);
+        }
+        out.pop();
+    }
+    out
+}
+
+/// Whether the rectangle `centre` ± `reach` overlaps the convex polygon `outline`
+/// (counter-clockwise): separated only along one of the outline's edges (the rectangle's
+/// own axes are the cascade's square, which Bevy has tested already).
+fn overlaps(outline: &[Vec2], centre: Vec2, reach: Vec2) -> bool {
+    (0..outline.len()).all(|i| {
+        let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+        let out = -(b - a).perp();
+        let n = out.normalize_or_zero();
+        n.dot(centre - a) - n.abs().dot(reach) <= 0.0
+    })
+}
+
 /// The sun's shadow cascades, in game units: the first covers the area right around the
 /// camera (a twelfth of `distance`), the last ends at `distance` × `reach`.
 pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> CascadeShadowConfig {
@@ -1550,6 +1639,16 @@ pub fn update_night_sky(
     }
 }
 
+/// The dome mesh last coloured and the sky colours it was coloured with.
+type DomeShown = (AssetId<Mesh>, [f32; 10]);
+
+/// Whether the dome mesh `mesh` needs colouring for the sky colours `now`: a new dome (a
+/// worldspace change spawns one whose vertex colours are still the atmosphere's weights,
+/// drawn as a green-to-red sky, #1395) or colours that moved noticeably since `shown`.
+fn dome_needs_colour(shown: Option<DomeShown>, mesh: AssetId<Mesh>, now: [f32; 10]) -> bool {
+    shown.is_none_or(|(was_mesh, was)| was_mesh != mesh || was.iter().zip(now).any(|(a, b)| (a - b).abs() > 1e-3))
+}
+
 /// Colour of an atmosphere vertex at `elevation` (degrees) with sky-upper weight `up_w`
 /// (the vertex colour's blue), linear RGB. Mixed as display (sRGB) values: sky-upper ×
 /// `up_w` plus horizon × `horizon_weight(elevation, twilight)`; below the horizon the
@@ -1650,7 +1749,7 @@ pub fn update_sky(
     mut sun: Query<(&mut DirectionalLight, &mut Transform), (With<Sun>, Without<FlyCam>, Without<SkyDome>, Without<CloudLayer>)>,
     mut materials: ResMut<Assets<SkyMaterial>>,
     mut flashed: Local<bool>,
-    mut dome_shown: Local<Option<[f32; 10]>>,
+    mut dome_shown: Local<Option<DomeShown>>,
     screen: Option<Res<crate::imagespace::ScreenModifiers>>,
 ) {
     let mut cam = cam;
@@ -1747,9 +1846,11 @@ pub fn update_sky(
     // The dome is coloured again only when its colours moved noticeably (as the sky
     // materials above): a changed mesh is sent to the GPU again, every frame before (#897).
     let shown = [upper[0], upper[1], upper[2], lower[0], lower[1], lower[2], horizon[0], horizon[1], horizon[2], twilight];
-    let dome_moved = dome_shown.is_none_or(|was| was.iter().zip(shown).any(|(a, b)| (a - b).abs() > 1e-3));
-    if let (true, Ok((m, weights, _))) = (dome_moved, dome.single()) {
-        *dome_shown = Some(shown);
+    if let Some((m, weights, _)) = dome.single().ok().filter(|(m, _, _)| dome_needs_colour(*dome_shown, m.0.id(), shown)) {
+        if dome_shown.is_none_or(|(was, _)| was != m.0.id()) {
+            info!("sky: a new dome coloured from {}'s sky colours", sky.weather.edid.as_deref().unwrap_or("the weather"));
+        }
+        *dome_shown = Some((m.0.id(), shown));
         if let Some(mut mesh) = meshes.get_mut(&m.0) {
             let cols: Vec<[f32; 4]> = weights
                 .0
@@ -1819,6 +1920,195 @@ pub fn initial_fog() -> DistanceFog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rolls made once a sky that started on `sky_day` follows a restored game on day
+    /// 25, half a game minute on from the save's noon, with a saved weather its list holds
+    /// and a volatility that rolls at every whole hour passed.
+    fn rolls_following_the_restored_game(sky_day: f32) -> u64 {
+        const SAVED: u32 = 1;
+        let weather = |id| Weather { form_id: id, ..Default::default() };
+        let choice = |id| Choice { weather: weather(id), chance: 100, global: None };
+        let mut sky = SkyState {
+            climate: Climate { volatility: 255, ..Default::default() },
+            weather: weather(SAVED),
+            hour: 12.0,
+            fog_override: None,
+            interior: None,
+            interior_grade: None,
+            shadows: false,
+            shadow_distance: DEFAULT_SHADOW_DISTANCE,
+            shadow_reach: 1.0,
+            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            grade: true,
+            time_scale: 0.0,
+            clock_running: false,
+            days_passed: sky_day,
+            prev: None,
+            fade: 1.0,
+            choices: vec![choice(SAVED), choice(2)],
+            image_space: None,
+            adapters: HashMap::new(),
+            changed: true,
+            script: None,
+            pinned: false,
+            regions: Vec::new(),
+            source: None,
+            placed: false,
+            clock_seen: false,
+            rolled_for: None,
+            pick: SAVED,
+            rolls: 0,
+            rng: DEFAULT_WEATHER_SEED,
+            hour_index: None,
+            live_globals: HashMap::new(),
+            resume: Some(SAVED),
+            flash: [0.0; 3],
+        };
+        sky.place(Some(None));
+        assert_eq!((sky.rolls, sky.pick), (0, SAVED), "the first look keeps the saved weather");
+        sky.follow_game_clock(12.0 + 1.0 / 60.0, 25.375);
+        assert_eq!(sky.days_passed, 25.0);
+        sky.rolls
+    }
+
+    #[test]
+    fn a_sky_on_the_games_day_rolls_nothing_following_it() {
+        assert_eq!(rolls_following_the_restored_game(25.0), 0);
+        // On the plugins' day it counts the days between as hours passed (#1607).
+        assert_eq!(rolls_following_the_restored_game(5.0), 1);
+        // Ahead of the game, as after a restore that failed: a step back, no roll.
+        assert_eq!(rolls_following_the_restored_game(30.0), 0);
+    }
+
+    const HELD: u32 = 9;
+    const LISTED: u32 = 1;
+    const GATED: u32 = 2;
+    const GATE: u32 = 77;
+
+    /// A sky as the start makes it for a save showing `HELD`, which no list holds; the
+    /// list's other entry waits for global `GATE`.
+    fn sky_started_on_held() -> SkyState {
+        let weather = |id| Weather { form_id: id, edid: Some(format!("W{id}")), ..Default::default() };
+        let gate = Gate { id: GATE, edid: None, stored: Some(0.0) };
+        SkyState {
+            climate: Climate::default(),
+            weather: weather(HELD),
+            hour: 12.0,
+            fog_override: None,
+            interior: None,
+            interior_grade: None,
+            shadows: false,
+            shadow_distance: DEFAULT_SHADOW_DISTANCE,
+            shadow_reach: 1.0,
+            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            grade: true,
+            time_scale: 0.0,
+            clock_running: false,
+            days_passed: 25.0,
+            prev: None,
+            fade: 1.0,
+            choices: vec![Choice { weather: weather(LISTED), chance: 100, global: None }, Choice { weather: weather(GATED), chance: 100, global: Some(gate) }],
+            image_space: None,
+            adapters: HashMap::new(),
+            changed: true,
+            script: None,
+            pinned: false,
+            regions: Vec::new(),
+            source: None,
+            placed: false,
+            clock_seen: false,
+            rolled_for: None,
+            pick: HELD,
+            rolls: 0,
+            rng: DEFAULT_WEATHER_SEED,
+            hour_index: None,
+            live_globals: HashMap::new(),
+            resume: Some(HELD),
+            flash: [0.0; 3],
+        }
+    }
+
+    fn saved_held() -> serde_json::Value {
+        serde_json::json!({"weather": format!("W{HELD}"), "held": true, "rng": "123"})
+    }
+
+    #[test]
+    fn a_saved_hold_outlasts_the_first_look_and_what_follows() {
+        let mut sky = sky_started_on_held();
+        sky.restore_saved(&saved_held());
+        sky.place(Some(None));
+        // The climate still rolls under the hold; what it picks waits for a release.
+        assert_eq!((sky.weather.form_id, sky.rolls, sky.pick), (HELD, 1, LISTED));
+        let mut rng = 123;
+        next_unit(&mut rng);
+        assert_eq!(sky.rng, rng, "the roll comes from the saved random state");
+        sky.follow_game_clock(12.0 + 1.0 / 60.0, 25.0);
+        assert_eq!(sky.weather.form_id, HELD);
+        sky.set_live_global(GATE, 1.0);
+        assert_eq!((sky.weather.form_id, sky.rolls, sky.pick), (HELD, 2, GATED));
+        assert!(sky.prev.is_none());
+    }
+
+    #[test]
+    fn a_release_after_the_load_stands_and_the_next_roll_takes_over() {
+        let mut sky = sky_started_on_held();
+        sky.restore_saved(&saved_held());
+        sky.place(Some(None));
+        // A load script releases it before the engine's part of the save is put back.
+        sky.release_script_weather();
+        assert_eq!(sky.weather.form_id, HELD, "until the next roll, as any release");
+        let rng = sky.rng;
+        let mut world = World::new();
+        world.insert_resource(sky);
+        (SAVE_HOOK.load)(&mut world, &saved_held());
+        let mut sky = world.remove_resource::<SkyState>().unwrap();
+        assert_eq!(sky.rng, rng, "the hook does not put the random state back");
+        sky.set_live_global(GATE, 1.0);
+        assert_eq!(sky.weather.form_id, GATED, "the hook did not hold it again");
+        assert!(sky.script.is_none());
+    }
+
+    #[test]
+    fn only_the_saved_held_weather_is_held() {
+        // Not held in the save, and held in a save whose weather the sky could not start
+        // on: the first look's roll shows.
+        for saved in [serde_json::json!({"weather": format!("W{HELD}"), "held": false}), serde_json::json!({"weather": "Gone", "held": true})] {
+            let mut sky = sky_started_on_held();
+            sky.restore_saved(&saved);
+            sky.place(Some(None));
+            assert_eq!(sky.weather.form_id, LISTED, "{saved}");
+            assert!(sky.script.is_none());
+        }
+    }
+
+    #[test]
+    fn a_new_dome_is_coloured_even_when_the_sky_colours_stay() {
+        // #1395: on a worldspace change the colours were recorded against the old dome in
+        // the frame before the new one spawned; the new one kept its raw weights.
+        let colours = [0.2, 0.4, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 1.0];
+        let (old, new) = (AssetId::<Mesh>::from(bevy::asset::uuid::Uuid::from_u128(1)), AssetId::<Mesh>::from(bevy::asset::uuid::Uuid::from_u128(2)));
+        assert!(dome_needs_colour(None, old, colours));
+        assert!(!dome_needs_colour(Some((old, colours)), old, colours));
+        assert!(dome_needs_colour(Some((old, colours)), new, colours));
+        let mut moved = colours;
+        moved[0] += 0.01;
+        assert!(dome_needs_colour(Some((old, colours)), old, moved));
+    }
+
+    #[test]
+    fn a_caster_counts_only_near_the_slice_outline() {
+        // A diamond with a point inside it; the hull keeps the four corners.
+        let outline = hull([Vec2::new(0.0, -10.0), Vec2::new(10.0, 0.0), Vec2::new(0.0, 10.0), Vec2::new(-10.0, 0.0), Vec2::new(1.0, 1.0)]);
+        assert_eq!(outline.len(), 4);
+        // Inside, and touching an edge.
+        assert!(overlaps(&outline, Vec2::ZERO, Vec2::splat(1.0)));
+        assert!(overlaps(&outline, Vec2::new(6.0, 6.0), Vec2::splat(1.0)));
+        // In the diamond's bounding square but past its edge: Bevy would draw it, nothing
+        // in the slice is under it.
+        assert!(!overlaps(&outline, Vec2::new(8.0, 8.0), Vec2::splat(1.0)));
+        // The same with the margin added to its reach.
+        assert!(overlaps(&outline, Vec2::new(8.0, 8.0), Vec2::splat(1.0 + 5.0)));
+    }
 
     #[test]
     fn cascade_reaches_further_toward_the_light() {

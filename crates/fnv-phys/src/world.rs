@@ -256,8 +256,7 @@ impl PreparedRef {
     /// Add its dynamic bodies asleep: they stay where they were put, whatever is (or is
     /// not) under them, until something wakes them — a body moving against them, a push
     /// ([`PhysWorld::push_ref`], [`PhysWorld::push_dynamic`]) or a body they touch being
-    /// removed. Its keyframed bodies are added asleep too, until they are first moved.
-    /// For clutter placed in a cell (physics.md §4.3.1).
+    /// removed. For clutter placed in a cell (physics.md §4.3.1).
     pub fn asleep(mut self) -> PreparedRef {
         self.asleep = true;
         self
@@ -287,6 +286,74 @@ impl PreparedTerrain {
     }
 }
 
+/// What marked the world dirty, so that the next query refreshes the broad phase
+/// (diagnostics only: counted in [`RefreshStats`], never read by the simulation).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirtyBy {
+    /// An actor's hit volume set or moved ([`PhysWorld::set_actor_volume`],
+    /// [`PhysWorld::set_actor_parts`]).
+    HitVolume = 0,
+    /// Bodies or colliders added or removed (terrain, references, characters, gore,
+    /// ragdolls, hit-volume bodies taken out).
+    Bodies = 1,
+    /// A body or collider moved, placed or switched on or off by hand (keyframed
+    /// reference objects, placed characters and bodies).
+    Transform = 2,
+    /// Anything else (a ragdoll's joints cut; bodies added asleep found by a step).
+    Other = 3,
+}
+
+/// Who asked for a broad-phase refresh (diagnostics only: [`RefreshStats`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryConsumer {
+    /// [`PhysWorld::move_character`] (in the engine, the player's controller).
+    Controller = 0,
+    /// The walked actors' planned moves (the engine's `move_npcs`).
+    Npc = 1,
+    /// [`PhysWorld::step`], for bodies added asleep.
+    Step = 2,
+    /// Every other caller of [`PhysWorld::update_queries`] or [`PhysWorld::queries`]:
+    /// rays, shape casts and overlaps from gameplay.
+    Cast = 3,
+}
+
+/// Counts of the broad-phase refreshes ([`PhysWorld::update_queries`]) since the world was
+/// made, for attributing their cost (diagnostics only: cumulative, never read by the
+/// simulation; a reader takes differences between two reads).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RefreshStats {
+    /// Refreshes that did work (the world was dirty).
+    pub refreshes: u64,
+    /// Refreshes by [`QueryConsumer`].
+    pub by_consumer: [u64; 4],
+    /// Refreshes whose only cause since the last refresh or step was [`DirtyBy::HitVolume`],
+    /// by [`QueryConsumer`].
+    pub hitvol_only: [u64; 4],
+    /// Dirty marks by [`DirtyBy`] (every mark, whether or not a refresh followed).
+    pub marks: [u64; 4],
+    /// Refreshes with at least one mark of each [`DirtyBy`] since the last refresh or step.
+    pub refreshes_with: [u64; 4],
+    /// Steps that found the world dirty with no refresh since the marks: the step's own
+    /// collision detection took them.
+    pub step_absorbed: u64,
+    /// Hit-volume capsules written by the hit-volume setters.
+    pub hitvol_colliders: u64,
+    /// Hit-volume capsules the setters actually wrote to rapier.
+    pub hitvol_written: u64,
+    /// Hit-volume capsules the setters left alone, bit-identical to the last write (the
+    /// single capsule's equal-volume return counts one).
+    pub hitvol_skipped: u64,
+    /// Colliders in the world, summed over the refreshes (divide by `refreshes`).
+    pub colliders: u64,
+    /// Bodies added since the last step, summed over the refreshes (re-flagged after
+    /// the detection).
+    pub repair_new: u64,
+    /// Bodies added asleep, summed over the refreshes (put back to sleep).
+    pub repair_sleep: u64,
+    /// Bodies struck since the last step, summed over the refreshes (woken again).
+    pub repair_struck: u64,
+}
+
 pub struct PhysWorld {
     pub params: PhysParams,
     pub(crate) w: PhysicsWorld,
@@ -294,6 +361,10 @@ pub struct PhysWorld {
     pub(crate) k: f32,
     terrain: BTreeMap<(i32, i32), ColliderHandle>,
     pub(crate) refs: BTreeMap<u32, Vec<RigidBodyHandle>>,
+    /// The keyframed bodies of each reference (a subset of `refs`), kept because they are
+    /// fixed bodies like the static ones and so cannot be told apart by body type. A door's
+    /// moving parts are keyframed; its static frame is not.
+    pub(crate) keyframed: BTreeMap<u32, Vec<RigidBodyHandle>>,
     /// Actor hit volumes by reference FormID (`crate::actors`).
     pub(crate) actors: BTreeMap<u32, crate::actors::ActorBody>,
     /// Ragdolls by actor reference FormID, and the ragdoll body each of their rigid
@@ -310,6 +381,11 @@ pub struct PhysWorld {
     shells: HashMap<ColliderHandle, f32>,
     /// Colliders changed since the broad phase was last updated.
     dirty: bool,
+    /// Which [`DirtyBy`] marked it since the last refresh or step (a bit each;
+    /// diagnostics only).
+    dirty_by: u8,
+    /// Diagnostics only ([`PhysWorld::refresh_stats`]).
+    refresh_stats: RefreshStats,
     /// Bodies inserted since the last step (see [`PhysWorld::update_queries`]).
     new_bodies: Vec<RigidBodyHandle>,
     /// Bodies struck ([`PhysWorld::push_ref`], [`PhysWorld::push_dynamic`]) or moved by
@@ -324,6 +400,11 @@ pub struct PhysWorld {
     pub(crate) water: crate::water::Waters,
     /// The body held by the player's grab (`crate::grab`), driven before every step.
     pub(crate) grip: Option<crate::grab::Grip>,
+    /// New actors' hit volumes get colliders of no body (`crate::actors`; on by default).
+    pub(crate) standalone_hit_volumes: bool,
+    /// Standalone hit-volume colliders written since the last refresh or step: (collider,
+    /// actor body, pose on the body), placed by `flush_hit_volumes`.
+    pub(crate) hitvol_pending: Vec<(ColliderHandle, RigidBodyHandle, Pose)>,
 }
 
 impl PhysWorld {
@@ -346,6 +427,7 @@ impl PhysWorld {
             k,
             terrain: BTreeMap::new(),
             refs: BTreeMap::new(),
+            keyframed: BTreeMap::new(),
             actors: BTreeMap::new(),
             ragdolls: BTreeMap::new(),
             ragdoll_of: HashMap::new(),
@@ -353,12 +435,16 @@ impl PhysWorld {
             materials: HashMap::new(),
             shells: HashMap::new(),
             dirty: false,
+            dirty_by: 0,
+            refresh_stats: RefreshStats::default(),
             new_bodies: Vec::new(),
             struck: Vec::new(),
             pending_sleep: Vec::new(),
             steps: 0,
             water: Default::default(),
             grip: None,
+            standalone_hit_volumes: true,
+            hitvol_pending: Vec::new(),
         }
     }
 
@@ -376,23 +462,22 @@ impl PhysWorld {
         let c = t.collider.user_data(Owner::Terrain { x: grid.0, y: grid.1 }.encode()).contact_skin(TERRAIN_SHELL * self.k);
         let h = self.w.insert_collider(c, None);
         self.terrain.insert(grid, h);
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Bodies);
     }
 
     pub fn remove_terrain(&mut self, grid: (i32, i32)) -> bool {
         let Some(h) = self.terrain.remove(&grid) else { return false };
         self.w.remove_collider(h);
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Bodies);
         true
     }
 
     /// Add the collision objects of a placed reference: one body per object, placed at
     /// `pose ∘ node_transform ∘ body_transform`, with the reference's uniform scale baked
-    /// into the shapes. Static objects become fixed bodies, keyframed ones
-    /// kinematic, dynamic ones dynamic with the object's mass, friction and restitution
-    /// (physics.md §4). Replaces an earlier add of the same reference's bodies; its placed
-    /// water ([`PhysWorld::add_placed_water`]) is kept, so the two can be added in either
-    /// order.
+    /// into the shapes. Static and keyframed objects become fixed bodies, dynamic ones
+    /// dynamic with the object's mass, friction and restitution (physics.md §4). Replaces an
+    /// earlier add of the same reference's bodies; its placed water
+    /// ([`PhysWorld::add_placed_water`]) is kept, so the two can be added in either order.
     pub fn add_ref(&mut self, pose: &RefPose, objects: &[CollisionObject]) -> AddReport {
         self.insert_ref(PreparedRef::build(self.k, pose, objects))
     }
@@ -407,19 +492,27 @@ impl PhysWorld {
         let mut handles = Vec::new();
         for o in p.objects {
             let owner = Owner::Ref { form_id: p.form_id, object: o.index, layer: o.layer };
+            // Keyframed bodies are teleported into place (`pose_ref_object` sets the
+            // position), never moved smoothly, so a fixed body is the right model. A
+            // kinematic body made rapier derive a phantom velocity from a degenerate
+            // collision mesh's centre of mass and fling a character standing on it, and its
+            // "carried by a kinematic body" rule froze a character walking down the slope
+            // [observed: the Prospector Saloon's broken door 0x00108BD7, issue #1485].
             let builder = match o.motion {
-                Motion::Static => RigidBodyBuilder::fixed(),
-                Motion::Keyframed => RigidBodyBuilder::kinematic_position_based(),
+                Motion::Static | Motion::Keyframed => RigidBodyBuilder::fixed(),
                 Motion::Dynamic => RigidBodyBuilder::dynamic().sleeping(p.asleep),
             };
-            // A keyframed body that has not moved yet would keep the clutter touching
-            // it awake (a cleaner bottle on a container's lid): asleep too.
-            let hold = p.asleep && o.motion != Motion::Static;
+            // A dynamic body that has not moved yet would keep the clutter touching it
+            // awake (a cleaner bottle on a container's lid): asleep too.
+            let hold = p.asleep && o.motion == Motion::Dynamic;
             let builder = if hold { builder.sleeping(true) } else { builder };
             let body = self.insert_body(builder.pose(o.pose).user_data(owner.encode()));
             // Kept with the reference at once, so a caller that catches a panic part way
             // (`nvf_assets::guard`) can take every body out with `remove_ref`.
             self.refs.entry(p.form_id).or_default().push(body);
+            if o.motion == Motion::Keyframed {
+                self.keyframed.entry(p.form_id).or_default().push(body);
+            }
             report.colliders += self.attach(body, owner, &o.material, o.leaves, o.shell);
             if o.motion == Motion::Dynamic {
                 self.set_mass(body, o.material.mass);
@@ -432,7 +525,7 @@ impl PhysWorld {
         }
         report.bodies = handles.len();
         if !handles.is_empty() {
-            self.dirty = true;
+            self.mark_dirty(DirtyBy::Bodies);
         }
         report
     }
@@ -506,10 +599,11 @@ impl PhysWorld {
     /// Remove a reference's bodies only.
     fn remove_bodies(&mut self, form_id: u32) -> bool {
         let Some(bodies) = self.refs.remove(&form_id) else { return false };
+        self.keyframed.remove(&form_id);
         for b in bodies {
             self.remove_body(b);
         }
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Bodies);
         true
     }
 
@@ -521,7 +615,7 @@ impl PhysWorld {
             }
         }
         self.w.remove_body(b);
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Bodies);
     }
 
     /// Move the keyframed body of collision object `object` (its index in the list given
@@ -529,14 +623,12 @@ impl PhysWorld {
     /// transform in the model root's frame were `node`: to `pose ∘ node ∘ body_transform`
     /// (`add_ref` uses the stored node transform). For collision that follows an animation
     /// (an opening door, `fnv_collide::anim`). The body is moved at once, so queries and
-    /// the character controller see it before the next step, and its next kinematic
-    /// position is set too, so a step does not move it back. Returns false when the
+    /// the character controller see it before the next step. Returns false when the
     /// reference has no keyframed body for that object.
     pub fn pose_ref_object(&mut self, pose: &RefPose, object: u16, node: &Iso, body_transform: &Iso) -> bool {
-        let Some(bodies) = self.refs.get(&pose.form_id) else { return false };
+        let Some(bodies) = self.keyframed.get(&pose.form_id) else { return false };
         let found = bodies.iter().copied().find(|&b| {
-            let body = &self.w.bodies[b];
-            body.is_kinematic() && matches!(Owner::decode(body.user_data), Some(Owner::Ref { object: o, .. }) if o == object)
+            matches!(Owner::decode(self.w.bodies[b].user_data), Some(Owner::Ref { object: o, .. }) if o == object)
         });
         let Some(b) = found else { return false };
         let (Ok(rot), Ok(local)) = (convert::rotation(&pose.rotation), convert::pose(&node.compose(body_transform), pose.scale * self.k)) else {
@@ -551,8 +643,7 @@ impl PhysWorld {
             return true;
         }
         body.set_position(p, true);
-        body.set_next_kinematic_position(p);
-        self.dirty = true;
+        self.mark_dirty(DirtyBy::Transform);
         true
     }
 
@@ -561,13 +652,10 @@ impl PhysWorld {
     /// swings, so its moving leaf cannot hit or push an actor (`fnv_collide::anim`).
     /// Returns how many colliders changed.
     pub fn set_ref_keyframed_solid(&mut self, form_id: u32, solid: bool) -> usize {
-        let Some(bodies) = self.refs.get(&form_id) else { return 0 };
+        let Some(bodies) = self.keyframed.get(&form_id) else { return 0 };
         let mut n = 0;
         for &b in bodies {
             let body = &self.w.bodies[b];
-            if !body.is_kinematic() {
-                continue;
-            }
             for &c in body.colliders() {
                 let col = &mut self.w.colliders[c];
                 if col.is_enabled() != solid {
@@ -577,7 +665,7 @@ impl PhysWorld {
             }
         }
         if n > 0 {
-            self.dirty = true;
+            self.mark_dirty(DirtyBy::Transform);
         }
         n
     }
@@ -728,15 +816,18 @@ impl PhysWorld {
     /// the step ([`PhysWorld::update_queries`]).
     pub(crate) fn body_placed(&mut self, h: RigidBodyHandle) {
         self.struck.push(h);
-        self.mark_dirty();
+        self.mark_dirty(DirtyBy::Transform);
     }
 
     /// Advance one fixed step.
     pub fn step(&mut self) {
+        // Standalone hit volumes written since the last refresh, placed as rapier's step
+        // would place attached ones (`crate::actors`).
+        self.flush_hit_volumes();
         if !self.pending_sleep.is_empty() {
             // Find the contacts of bodies added asleep first (`update_queries`).
-            self.dirty = true;
-            self.update_queries();
+            self.mark_dirty(DirtyBy::Other);
+            self.update_queries_for(QueryConsumer::Step);
         }
         // Spans for profiling (the engine's Tracy build shows them as zones) [design].
         {
@@ -748,6 +839,11 @@ impl PhysWorld {
             let _span = tracing::info_span!("phys::rapier_step").entered();
             self.step_world();
         }
+        // Diagnostics: marks the step's own detection took, with no refresh between.
+        if self.dirty {
+            self.refresh_stats.step_absorbed += 1;
+        }
+        self.dirty_by = 0;
         self.dirty = false;
         self.new_bodies.clear();
         self.struck.clear();
@@ -761,10 +857,26 @@ impl PhysWorld {
     /// Bring the broad phase up to date after adding or removing bodies, so that queries
     /// see them, without advancing time.
     pub fn update_queries(&mut self) {
+        self.update_queries_for(QueryConsumer::Cast);
+    }
+
+    /// [`PhysWorld::update_queries`], counted for `by` in [`RefreshStats`] (the same work
+    /// whoever asks).
+    pub fn update_queries_for(&mut self, by: QueryConsumer) {
         if self.dirty {
             // Only when there is work: this is called before every query.
             let _span = tracing::info_span!("phys::query_refresh").entered();
-            self.detect();
+            self.count_refresh(by);
+            // Standalone hit volumes written since the last refresh (`crate::actors`).
+            self.flush_hit_volumes();
+            {
+                // The collision-only broad- and narrow-phase update.
+                let _span = tracing::info_span!("phys::refresh_detect").entered();
+                self.detect();
+            }
+            // The repairs after it: bodies added since the last step, bodies added asleep,
+            // bodies struck since the last step.
+            let _repair = tracing::info_span!("phys::refresh_repair").entered();
             // rapier 0.36's collision-only pipeline consumes the change flags of bodies
             // inserted since the last step without registering them with the island
             // manager, so they would never move [observed: a dynamic box added, queried
@@ -809,13 +921,52 @@ impl PhysWorld {
         Queries { world: self }
     }
 
-    pub(crate) fn mark_dirty(&mut self) {
+    pub(crate) fn mark_dirty(&mut self, by: DirtyBy) {
         self.dirty = true;
+        self.dirty_by |= 1 << by as u8;
+        self.refresh_stats.marks[by as usize] += 1;
+    }
+
+    /// Diagnostics: a refresh asked for by `by` (before its work; reads only sizes).
+    fn count_refresh(&mut self, by: QueryConsumer) {
+        let s = &mut self.refresh_stats;
+        s.refreshes += 1;
+        s.by_consumer[by as usize] += 1;
+        for (i, n) in s.refreshes_with.iter_mut().enumerate() {
+            if self.dirty_by & (1 << i) != 0 {
+                *n += 1;
+            }
+        }
+        if self.dirty_by == 1 << DirtyBy::HitVolume as u8 {
+            s.hitvol_only[by as usize] += 1;
+        }
+        s.colliders += self.w.colliders.len() as u64;
+        s.repair_new += self.new_bodies.len() as u64;
+        s.repair_sleep += self.pending_sleep.len() as u64;
+        s.repair_struck += self.struck.len() as u64;
+        self.dirty_by = 0;
+    }
+
+    /// Counts of the broad-phase refreshes since the world was made (diagnostics).
+    pub fn refresh_stats(&self) -> RefreshStats {
+        self.refresh_stats
+    }
+
+    /// Diagnostics: `n` hit-volume capsules written ([`RefreshStats::hitvol_colliders`]).
+    pub(crate) fn count_hitvol_colliders(&mut self, n: usize) {
+        self.refresh_stats.hitvol_colliders += n as u64;
+    }
+
+    /// Diagnostics: hit-volume capsules written to rapier and left alone as bit-identical
+    /// ([`RefreshStats::hitvol_written`], [`RefreshStats::hitvol_skipped`]).
+    pub(crate) fn count_hitvol_writes(&mut self, written: u64, skipped: u64) {
+        self.refresh_stats.hitvol_written += written;
+        self.refresh_stats.hitvol_skipped += skipped;
     }
 
     /// Bounding box (game units: min and max corners) of every collider on a fixed body —
-    /// terrain and references' static collision, not characters or dynamic bodies; `None`
-    /// when there are none.
+    /// terrain and references' static and keyframed collision, not characters or dynamic
+    /// bodies; `None` when there are none.
     pub fn fixed_bounds(&self) -> Option<([f32; 3], [f32; 3])> {
         let mut out: Option<([f32; 3], [f32; 3])> = None;
         for (_, c) in self.w.colliders.iter() {
@@ -874,6 +1025,7 @@ impl PhysWorld {
             k: self.k,
             terrain: self.terrain.clone(),
             refs: self.refs.clone(),
+            keyframed: self.keyframed.clone(),
             actors: self.actors.clone(),
             ragdolls: self.ragdolls.clone(),
             ragdoll_of: self.ragdoll_of.clone(),
@@ -881,12 +1033,16 @@ impl PhysWorld {
             materials: self.materials.clone(),
             shells: self.shells.clone(),
             dirty: self.dirty,
+            dirty_by: self.dirty_by,
+            refresh_stats: self.refresh_stats,
             new_bodies: self.new_bodies.clone(),
             struck: self.struck.clone(),
             pending_sleep: self.pending_sleep.clone(),
             steps: self.steps,
             water: self.water.clone(),
             grip: self.grip.clone(),
+            standalone_hit_volumes: self.standalone_hit_volumes,
+            hitvol_pending: self.hitvol_pending.clone(),
         }
     }
 
@@ -1095,6 +1251,24 @@ impl Queries<'_> {
                 normal: arr3(hit.normal1),
             }
         }))
+    }
+
+    /// What would keep `c` from standing with its feet at `feet`, sorted: whatever its
+    /// shape (the controller's own, not a capsule's stand-in) overlaps there, but for what
+    /// the controller passes through or pushes aside (its own body, its ignored layers,
+    /// dynamic bodies up to [`crate::character::PUSH_MAX_MASS`]). Other characters count.
+    pub fn character_overlap(&self, c: &crate::character::Character, feet: [f32; 3]) -> Vec<Owner> {
+        let k = self.world.k;
+        let pose = Pose::from_translation((vec3(feet) + Vector::Z * (c.params.height / 2.0)) * k);
+        let filter = Filter { exclude: vec![c.key()], exclude_layers: c.ignore_layers, ..Default::default() };
+        let w = &self.world.w;
+        let blocks = |co: &Collider| co.parent().and_then(|b| w.bodies.get(b)).is_none_or(|b| !b.is_dynamic() || b.mass() > crate::character::PUSH_MAX_MASS);
+        let mut out: Vec<Owner> = self.with_filter(&filter, |f| {
+            w.intersect_shape(pose, c.shape.as_ref(), f).filter(|(_, co)| blocks(co)).filter_map(|(_, co)| Owner::decode(co.user_data)).collect()
+        });
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// Every entity whose collision overlaps a convex `shape` placed at `at`, sorted.

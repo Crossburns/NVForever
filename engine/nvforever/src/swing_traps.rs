@@ -234,27 +234,7 @@ fn swing(
             s.log_in = 1.0;
             s.logs -= 1;
         }
-        // The nodes follow their bodies. A chain's links can be nodes inside each other:
-        // each one's place under its parent is taken from where the parent is put this
-        // frame, not from its drawn place of the last frame (which lags a frame, and the
-        // lags add up down the chain).
-        let wanted: HashMap<Entity, Affine3A> = bodies
-            .iter()
-            .enumerate()
-            .filter_map(|(i, b)| Some((s.nodes.get(i).copied().flatten()?, bevy_affine(b.as_ref()?.translation, &b.as_ref()?.rotation, s.scale))))
-            .collect();
-        let mut placed: HashMap<Entity, Affine3A> = HashMap::new();
-        for (&e, &g) in &wanted {
-            let Some(parent) = parents.get(e).ok().map(|p| p.parent()) else { continue };
-            let Some(pg) = global_now(parent, s.root, &wanted, &mut placed, &parents, &globals, &transforms, 0) else { continue };
-            if let Ok(mut t) = transforms.get_mut(e) {
-                let (_, rotation, translation) = (pg.inverse() * g).to_scale_rotation_translation();
-                if rotation.is_finite() && translation.is_finite() {
-                    t.translation = translation;
-                    t.rotation = rotation.normalize();
-                }
-            }
-        }
+        follow_bodies(&bodies, &s.nodes, s.scale, s.root, &parents, &globals, &mut transforms);
         for (i, b) in bodies.iter().enumerate() {
             let Some(b) = b else { continue };
             // A moving body meets actors.
@@ -289,6 +269,39 @@ fn swing(
         }
     }
     traps.hits += found;
+}
+
+/// Put the nodes the bodies move (`nodes`, per body; `None` for a body that moves none)
+/// where their bodies are (`bodies`, `PhysWorld::ragdoll_nodes`), the rig drawn at
+/// `scale` under `root`. A chain's links can be nodes inside each other: each one's place
+/// under its parent is taken from where the parent is put this frame, not from its drawn
+/// place of the last frame (which lags a frame, and the lags add up down the chain).
+pub(crate) fn follow_bodies(
+    bodies: &[Option<fnv_phys::BodyState>],
+    nodes: &[Option<Entity>],
+    scale: f32,
+    root: Entity,
+    parents: &Query<&ChildOf>,
+    globals: &Query<&GlobalTransform>,
+    transforms: &mut Query<&mut Transform>,
+) {
+    let wanted: HashMap<Entity, Affine3A> = bodies
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| Some((nodes.get(i).copied().flatten()?, bevy_affine(b.as_ref()?.translation, &b.as_ref()?.rotation, scale))))
+        .collect();
+    let mut placed: HashMap<Entity, Affine3A> = HashMap::new();
+    for (&e, &g) in &wanted {
+        let Some(parent) = parents.get(e).ok().map(|p| p.parent()) else { continue };
+        let Some(pg) = global_now(parent, root, &wanted, &mut placed, parents, globals, transforms, 0) else { continue };
+        if let Ok(mut t) = transforms.get_mut(e) {
+            let (_, rotation, translation) = (pg.inverse() * g).to_scale_rotation_translation();
+            if rotation.is_finite() && translation.is_finite() {
+                t.translation = translation;
+                t.rotation = rotation.normalize();
+            }
+        }
+    }
 }
 
 /// Where node `e` is this frame (Bevy space): a node a body moves where the body puts

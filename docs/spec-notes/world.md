@@ -308,6 +308,11 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   - A loaded game shows its saved weather and keeps it, without a roll, while the list
     followed at its place lists it; `--weather` pins one weather for the whole run (the
     parity lab passes it for every exterior frame; interior frames do not use the sky).
+    A weather a script held when the game was saved is held again from the first frame,
+    listed there or not: the list's roll at the start is still made, and only decides
+    what shows after the release and the next roll [design: `SkyState::restore_saved`].
+    A script's weather not held is not kept: at the start's roll the list's weather
+    replaces it, unless the list holds it.
 - **Weather sound, precipitation and lightning** (`fnv_world::sky::Weather::{sounds,
   precipitation_model, lightning}`, engine `weather_fx.rs`; built 2026-10-21, ESM gap
   audit row 9). The fields [documented: xEdit wbDefinitionsFNV WTHR, wbWeatherSounds]:

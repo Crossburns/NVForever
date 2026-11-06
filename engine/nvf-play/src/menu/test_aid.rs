@@ -14,7 +14,7 @@
 //! `NVF_PLAY_TEST_DROP=<seconds>:<item FormID hex>[:stack|:use|:ask|:<count>][,...]` drops (or
 //! uses) a carried item through the inventory menu: at that time (once no menu is open) it
 //! opens the inventory, half a second later selects the item's row and drops one unit
-//! (`Drop`, the X key), the whole stack (`DropStack`, Shift+X), `<count>` units (`Drop`,
+//! (`Drop`, a right click), the whole stack (`DropStack`, Shift + right click), `<count>` units (`Drop`,
 //! then that amount and Ok on "How many?", which a stack of more than five asks; `ask`
 //! leaves the prompt open until it is answered, for a screenshot or clicks) or uses
 //! it (`One`, Enter: equips, or uses up an aid item) and logs the list, and half a second

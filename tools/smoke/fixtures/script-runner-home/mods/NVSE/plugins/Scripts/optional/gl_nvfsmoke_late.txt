@@ -1,0 +1,2 @@
+; NVForever smoke (script-runner): registered by gr_nvfsmoke.txt, runs after a load.
+player.ModAV Luck 10

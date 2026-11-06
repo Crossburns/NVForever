@@ -114,9 +114,10 @@ impl WorldData {
         self.index.cells.get(w.grid.get(&g)?)
     }
 
-    /// Whether a reference is enabled at the start of a game: not initially disabled,
-    /// and its enable parent (if any) in the required state [documented: XESP; the
-    /// parent chain is followed, cycles count as disabled].
+    /// Whether a reference is enabled at the start of a game: not deleted, and its enable
+    /// parent in the required state, or with no parent not initially disabled [documented:
+    /// XESP; the parent chain is followed, cycles count as disabled]. Under a parent its
+    /// own flag does not count, as `fnv_sim::World::is_enabled` has it (simulation.md §1).
     pub fn enabled(&self, p: &Placement, depth: usize) -> bool {
         enabled(self.lo, self.schema, p, depth)
     }
@@ -124,15 +125,15 @@ impl WorldData {
 
 /// [`WorldData::enabled`] from the load order (for worker threads).
 pub fn enabled(lo: &LoadOrder, schema: &EsmSchema, p: &Placement, depth: usize) -> bool {
-    if p.deleted() || p.initially_disabled() {
+    if p.deleted() {
         return false;
     }
     match p.enable_parent {
-        None => true,
+        None => !p.initially_disabled(),
         Some(_) if depth > 16 => false,
         Some((parent, opposite)) => match placement(lo, schema, parent) {
             Some(pp) => enabled(lo, schema, &pp, depth + 1) != opposite,
-            None => !opposite,
+            None => !opposite && !p.initially_disabled(),
         },
     }
 }
@@ -626,7 +627,7 @@ fn cell_models(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], hide: &[String]
     let mut out = Vec::new();
     for &r in refs {
         let Some(p) = placement(lo, schema, r) else { continue };
-        if p.imposter || !enabled(lo, schema, &p, 0) {
+        if p.imposter || !p.draws_base_model() || !enabled(lo, schema, &p, 0) {
             continue;
         }
         let Some(base) = p.base.and_then(|b| base_object(lo, schema, b)) else { continue };
@@ -972,6 +973,13 @@ fn spawn_ref(
         stats.refs_imposters += 1;
         return;
     }
+    // A primitive (a trigger volume, room bounds, a portal) is seen only in the editor,
+    // even where its activator was copied from one with a model (level-design.md §4.1).
+    if !p.draws_base_model() {
+        stats.refs_skipped_type += 1;
+        *stats.skipped_types.entry("primitive".into()).or_default() += 1;
+        return;
+    }
     if manage_actors && p.base.and_then(|b| base_object(world.lo, world.schema, b)).is_some_and(|b| matches!(&b.sig, b"NPC_" | b"CREA")) {
         return;
     }
@@ -1128,8 +1136,9 @@ pub fn spawn_model(
     // A door that opens in place (no XTEL) and has Open/Close sequences: posed from
     // its state in `nvf_play::doors` (doors.rs). Teleport doors stay static. A container
     // whose model has them (a locker, a safe) is drawn and timed the same way
-    // (`nvf_play::container_anim`).
-    let door = model.rig.as_ref().filter(|rig| rig.door.is_some() && ((&base.sig == b"DOOR" && !p.teleport) || &base.sig == b"CONT"));
+    // (`nvf_play::container_anim`), and so is a terminal whose keyboard and screen come
+    // out (`nvf_play::terminal`, #1532).
+    let door = model.rig.as_ref().filter(|rig| rig.door.is_some() && ((&base.sig == b"DOOR" && !p.teleport) || &base.sig == b"CONT" || &base.sig == b"TERM"));
     // An activator with Open/Close or an idle (a radio, a jukebox): its on and off
     // looks follow its state (activators.rs).
     let activator = model.rig.as_ref().filter(|rig| (rig.door.is_some() || rig.idle.is_some()) && &base.sig == b"ACTI");
@@ -1144,7 +1153,13 @@ pub fn spawn_model(
     // An activator whose model joins its bodies (a swinging trap): its nodes, for its
     // bodies to move once it is let go (swing_traps.rs).
     let jointed = model.jointed && &base.sig == b"ACTI";
-    if let Some(rig) = model.rig.as_ref().filter(|rig| (rig.idle.is_some() && idle.is_some()) || door.is_some() || activator.is_some() || scripted || jointed) {
+    // A destroyed reference drawn with its destruction model (destroyed.rs: not its base
+    // object's model) whose bodies are loose parts, a car's hulk: its nodes, for the
+    // bodies to move once they fall (wrecks.rs). Any other model in place of the base's
+    // passes this test too; wrecks.rs lets the parts fall only when the game has the
+    // reference destroyed to that model and physics built its collision from it.
+    let wreck = model.loose && p.base.and_then(|b| base_object(world.lo, world.schema, b)).and_then(|b| b.world_model_path()).is_some_and(|m| m != path);
+    if let Some(rig) = model.rig.as_ref().filter(|rig| (rig.idle.is_some() && idle.is_some()) || door.is_some() || activator.is_some() || scripted || jointed || wreck) {
         // Animated (Idle sequence): its own node hierarchy per reference.
         // "Random Anim Start" bases start their idle at a phase spread by reference
         // (fnv_actor::anims::random_anim_start; animation.md §8).
@@ -1179,6 +1194,9 @@ pub fn spawn_model(
         }
         if jointed {
             commands.entity(root).insert(crate::swing_traps::TrapRig { form_id: r, path: path.clone(), nodes: nodes.clone() });
+        }
+        if wreck {
+            commands.entity(root).insert(crate::wrecks::WreckRig { form_id: r, path: path.clone(), nodes: nodes.clone() });
         }
         if !rig.groups.is_empty() {
             commands.entity(root).insert(crate::object_anims::GroupRig::new(r, model.clone(), &path, nodes));
@@ -1279,7 +1297,7 @@ fn random_anim_start(world: &WorldData, fid: u32) -> bool {
 /// `SpawnedDisabled`; docs/design/layer5-play.md §4). The light's model is drawn by
 /// nvf-play's `script_draw.rs` when enabled.
 #[allow(clippy::too_many_arguments)]
-fn spawn_dormant(
+pub(crate) fn spawn_dormant(
     commands: &mut Commands,
     cell_e: Entity,
     world: &WorldData,
@@ -1490,5 +1508,64 @@ mod tests {
     fn markers() {
         assert!(is_marker("meshes\\marker_x.nif"));
         assert!(!is_marker("meshes\\clutter\\junk\\can.nif"));
+    }
+
+    /// Issue #1620, over a synthetic plugin (`nvf_play::script_draw`'s copy of the rule is
+    /// tested the same way): under an enable parent a reference's own Initially Disabled
+    /// flag does not count.
+    #[test]
+    fn under_an_enable_parent_a_references_own_flag_does_not_count() {
+        use fnv_esm::raw::{write_subrecords, Subrecord};
+        const FLAGGED: u32 = 0x800;
+        const DELETED: u32 = 0x20;
+        const ON: u32 = 0x301;
+        const OFF: u32 = 0x302;
+        const CELL: u32 = 0x200;
+        let sub = |sig: &[u8; 4], data: Vec<u8>| Subrecord { sig: *sig, data, extended: false };
+        let record = |sig: &[u8; 4], flags: u32, fid: u32, subs: &[Subrecord]| {
+            let payload = write_subrecords(subs);
+            [&sig[..], &(payload.len() as u32).to_le_bytes(), &flags.to_le_bytes(), &fid.to_le_bytes(), &[0; 4], &15u16.to_le_bytes(), &[0; 2], &payload].concat()
+        };
+        let group = |label: [u8; 4], kind: i32, body: &[u8]| [&b"GRUP"[..], &((24 + body.len()) as u32).to_le_bytes(), &label, &kind.to_le_bytes(), &[0; 8], body].concat();
+        let refr = |fid: u32, flags: u32, parent: Option<(u32, bool)>| {
+            let mut subs = vec![sub(b"NAME", 0x100u32.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])];
+            if let Some((p, opposite)) = parent {
+                subs.push(sub(b"XESP", [&p.to_le_bytes()[..], &[opposite as u8, 0, 0, 0]].concat()));
+            }
+            record(b"REFR", flags, fid, &subs)
+        };
+        // (reference, its flags, its parent, enabled at the start)
+        let cases = [
+            (ON, 0, None, true),
+            (OFF, FLAGGED, None, false),
+            (0x310, FLAGGED, Some((ON, false)), true),
+            (0x311, FLAGGED, Some((ON, true)), false),
+            (0x312, FLAGGED, Some((OFF, false)), false),
+            (0x313, FLAGGED, Some((OFF, true)), true),
+            (0x314, 0, Some((ON, false)), true),
+            (0x315, 0, Some((OFF, false)), false),
+            (0x316, 0, Some((OFF, true)), true),
+            // Two deep, flagged all the way down.
+            (0x317, FLAGGED, Some((0x310, false)), true),
+            // Deleted stays out; a parent that does not exist leaves the flag as it was.
+            (0x318, DELETED | FLAGGED, Some((ON, false)), false),
+            (0x319, FLAGGED, Some((0x999, false)), false),
+            (0x31A, 0, Some((0x999, false)), true),
+            (0x31B, 0, Some((0x999, true)), false),
+        ];
+        let refs: Vec<u8> = cases.iter().flat_map(|&(id, flags, parent, _)| refr(id, flags, parent)).collect();
+        let label = CELL.to_le_bytes();
+        let children = group(label, 6, &group(label, 9, &refs));
+        let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", b"TestCell\0".to_vec())]);
+        let cells = group(*b"CELL", 0, &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat())));
+        let hedr = [&1.34f32.to_le_bytes()[..], &0i32.to_le_bytes(), &0x800u32.to_le_bytes()].concat();
+        let bytes = [record(b"TES4", 1, 0, &[sub(b"HEDR", hedr)]), cells].concat();
+        let plugins = vec![EsmPlugin::parse(&bytes, "Test.esm".into()).unwrap()];
+        let lo = LoadOrder::new(&plugins).unwrap();
+        let schema = EsmSchema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+        for (id, _, _, want) in cases {
+            let p = placement(&lo, &schema, id).unwrap();
+            assert_eq!(enabled(&lo, &schema, &p, 0), want, "0x{id:X}");
+        }
     }
 }

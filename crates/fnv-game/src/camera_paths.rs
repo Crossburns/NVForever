@@ -253,7 +253,7 @@ impl Game<'_> {
         let e = self.extra.get(&target);
         let gone = |exploded: bool| e.is_some_and(|e| e.limbs_gone.values().any(|&x| x == exploded));
         VatsOutcome {
-            critical: e.and_then(|e| e.last_hit).is_some_and(|h| h.critical),
+            critical: e.and_then(|e| e.killing_hit).is_some_and(|h| h.critical),
             fatal: true,
             explode: gone(true),
             dismember: gone(false),
@@ -314,8 +314,8 @@ pub fn hit_shots(path: &CameraPathDef, shots: &HashMap<FormId, CameraShotDef>) -
 }
 
 fn zstring(b: &[u8]) -> String {
-    let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
-    String::from_utf8_lossy(&b[..end]).into_owned()
+    // In this run's code page (fnv_util::text, #1439).
+    fnv_util::text::decode_z(b)
 }
 
 #[cfg(test)]

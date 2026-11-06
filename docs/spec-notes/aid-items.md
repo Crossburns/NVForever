@@ -211,6 +211,12 @@ Food:      fMagicSurvivalSkillBase + fMagicSurvivalSkillMult × Survival / 100  
   conditions fail then is not started; one that started has them checked again every
   second as an ability's (§13), and is held while they fail [hypothesis; since
   2026-10-18, for the player's `PlayerConcussed`, crippled-limbs.md §2].
+- An effect held by its conditions changes nothing when the chem starts or ends. When they
+  pass it looks at the chem then: held back if the chem is active, otherwise applied, once.
+  A cure gives back what the effect holds, so nothing while it is held or held back
+  [design: `crates/fnv-game/src/aid.rs` `refresh_suspended`, `start_change`; #1580]. A point
+  a save lost to the double application of #1580 stays lost: nothing in the save records it
+  [design].
 - Addictions do not wear off with time here [hypothesis: nothing in the export says they
   do].
 
@@ -235,6 +241,13 @@ Food:      fMagicSurvivalSkillBase + fMagicSurvivalSkillMult × Survival / 100  
   last 900 hours waited. Each effect runs one ScriptEffectUpdate with the hour's
   seconds, a value changed by the second changes by the seconds of its duration left,
   and an effect whose time is up finishes [hypothesis].
+- An effect with a duration whose conditions fail when it is applied (a Stimpak's
+  Hardcore heal over time used outside Hardcore) is held inactive, as a spell's is
+  (§5.3), and its time runs all the same: it goes when its duration has passed, with no
+  update or finish of its own, and does not take hold later if its conditions come to
+  pass after that (#1438) [hypothesis; before 2026-11-03 an inactive effect's time stood
+  still, so the Stimpak's Hardcore effects stayed listed on STATS EFF for good and would
+  heal whenever Hardcore was turned on].
 - The same item used again while its effect is active extends that effect (one effect,
   one end) [observed: scripts.md §7.6]; a modifier is therefore not doubled by a second
   dose [hypothesis follows from it].
@@ -248,8 +261,10 @@ Food:      fMagicSurvivalSkillBase + fMagicSurvivalSkillMult × Survival / 100  
 - Log lines (`engine/nvf-play/src/aid.rs`): `aid: the player used <item> (potency p):
   <changes>; <value> before → after, …`, `aid: <item>'s effects on the player ended: …`,
   `aid: the player is addicted to …`, and at exit `aid summary: …`.
+  The summary's `effects started` and `ended` count the same effects, those a use applied [design]:
+  an effect held inactive at the use counts in neither, even if it takes hold later or runs out (#1494).
 - The Pip-Boy's STATS EFF list shows each aid item with active value changes, with the
-  amounts applied (potency included).
+  amounts applied (potency included). Inactive effects (conditions failing) are not listed (#1438).
 - Hardcore mode's Stimpak and RadAway effects are chosen by their conditions (IsHardcore,
   HasPerk); the conditions of the masters' aid effects [observed]: IsHardcore 179,
   HasPerk 147, and a few others (§8).

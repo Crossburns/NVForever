@@ -107,6 +107,27 @@ pub enum ExtCmd {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Compile the JIP Script Runner files (`Data\NVSE\plugins\scripts\*.txt`,
+    /// fnv_game::script_runner) against the load order, and with `--run` run the game
+    /// restart and new-game files in a headless new game (fnv.ext.script_runner/1): each
+    /// file's name and whether it compiled (ran), or the error. No script text is printed.
+    ScriptRunner {
+        #[command(flatten)]
+        lo: LoadOrderArgs,
+        /// Layer 1 schema directory (schemas/fnv).
+        #[arg(long)]
+        schema: PathBuf,
+        /// Function catalogue (default: ../script/functions.json next to --schema).
+        #[arg(long)]
+        functions: Option<PathBuf>,
+        /// More folders that stand for Data (a mod manager's mod folders), read before it,
+        /// in order. Only read.
+        #[arg(long = "root")]
+        roots: Vec<PathBuf>,
+        /// Also run the files of the game restart, then of a new game.
+        #[arg(long)]
+        run: bool,
+    },
     /// Write the compiled script units that have no source text (route 1 input) to a
     /// directory: each unit's bytes as `<n>.scda`, and `units.json` with its plugin, owner,
     /// header, variables, references and whether its bytes call extender opcodes. Keep the
@@ -170,6 +191,7 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             doc["runs"] = json!(runs);
             Ok(doc)
         }
+        ExtCmd::ScriptRunner { lo, schema, functions, roots, run } => script_runner(&lo, &schema, functions, roots, run),
         ExtCmd::Queries { lo, schema, functions, steps, start_cell, save, trace, ini, config } => {
             // Mods' files as `script run` sees them: the Data folder (and its archives)
             // read-only, `--config` for Data\Config; nothing is written to disk.
@@ -300,6 +322,51 @@ pub(crate) fn query_input(job: &Value, start_cell: Option<&str>) -> anyhow::Resu
 
 /// fnv.ext.probes/1 from a run's query observations, as jip_probes.py's collector writes
 /// it from the game's capture: numbers as `%.6g`, errors listed apart.
+/// `ext script-runner`: the Script Runner files of `roots` and Data, compiled (and run).
+fn script_runner(lo: &LoadOrderArgs, schema: &Path, functions: Option<PathBuf>, mut roots: Vec<PathBuf>, run: bool) -> anyhow::Result<Value> {
+    use fnv_game::script_runner::{Moment, SrRun};
+    let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
+    let vfs = std::sync::Arc::new(fnv_vfs::Vfs::open_for_plugins(&lo.data_dir, &lo.plugins).ok());
+    let reader: fnv_game::mod_files::Reader = std::sync::Arc::new(move |p: &str| vfs.as_ref().as_ref().and_then(|v| v.read(p)).and_then(Result::ok));
+    roots.push(lo.data_dir.clone());
+    fnv_game::mod_files::set_roots(fnv_game::mod_files::Roots { read: roots, config: None, write: None, lookup: None, reader: Some(reader) });
+    let ftext = std::fs::read_to_string(&fp).with_context(|| fp.display().to_string())?;
+    let fjson: Value = serde_json::from_str(&ftext).with_context(|| fp.display().to_string())?;
+    let table = FunctionTable::load(&fp).with_context(|| fp.display().to_string())?;
+    let plugins = open_load_order(lo)?;
+    let order = LoadOrder::new(&plugins)?;
+    let schema = Schema::load_dir(schema)?;
+    let forms = fnv_sim::FormStore::build(&order, &schema);
+    let refs = fnv_sim::RefTable::build(&order, &schema);
+    let data = fnv_game::GameData::build(&order, &schema, table, &fjson, &refs);
+    let world = fnv_sim::World::new(&forms, &refs, fnv_sim::SimConfig::default());
+    let mut g = fnv_game::game::Game::new(&data, world, fnv_game::game::GameConfig::default());
+    let rows = |runs: Vec<SrRun>| -> Vec<Value> {
+        runs.into_iter()
+            .map(|r| match r.result {
+                Ok(()) => json!({"file": r.path, "ok": true}),
+                Err(e) => json!({"file": r.path, "ok": false, "error": e}),
+            })
+            .collect()
+    };
+    let compiled = rows(g.compile_script_runner());
+    let failed = compiled.iter().filter(|r| r["ok"] == false).count();
+    let mut doc = json!({
+        "schema": "fnv.ext.script_runner/1",
+        "files": compiled.len(),
+        "compiled": compiled.len() - failed,
+        "failed": failed,
+        "compile": compiled,
+    });
+    if run {
+        let restart = rows(g.run_script_runner(Moment::Restart));
+        g.new_game();
+        let new_game = rows(g.run_script_runner(Moment::NewGame));
+        doc["ran"] = json!({"restart": restart, "new_game": new_game});
+    }
+    Ok(doc)
+}
+
 pub(crate) fn queries_doc(set: &str, trace: &Value) -> Value {
     let mut rows = Vec::new();
     let mut errors = Vec::new();

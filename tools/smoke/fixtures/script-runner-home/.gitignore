@@ -1,0 +1,5 @@
+# NVForever's home for the script-runner smoke scenarios: only the mods layer is the
+# fixture; a run writes its saves, logs, cache and settings beside it.
+/*
+!/.gitignore
+!/mods/

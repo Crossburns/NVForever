@@ -44,7 +44,7 @@ pub mod world;
 
 pub use actors::{HitVolume, PartCapsule};
 pub use arrival::Arrival;
-pub use character::{Character, CharacterInput, CharacterParams, CharacterStep, Push};
+pub use character::{Character, CharacterInput, CharacterParams, CharacterStep, Push, SpotRefused};
 pub use convert::ConvertError;
 pub use grab::{Grip, GripOn, HoldParams};
 pub use layers::LayerSet;
@@ -53,6 +53,6 @@ pub use placed::{ref_collision, ref_collision_with, ModelCollision, RefCollision
 pub use swim::Stroke;
 pub use water::{PlacedWater, WaterArea};
 pub use world::{
-    AddReport, BodyState, Filter, Key, Owner, PhysParams, PhysWorld, PreparedRef, PreparedTerrain, Queries, RayHit, RefPose, Stats, Stepper,
-    SweepHit, TERRAIN_SHELL,
+    AddReport, BodyState, DirtyBy, Filter, Key, Owner, PhysParams, PhysWorld, PreparedRef, PreparedTerrain, Queries, QueryConsumer, RayHit,
+    RefPose, RefreshStats, Stats, Stepper, SweepHit, TERRAIN_SHELL,
 };

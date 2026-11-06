@@ -406,7 +406,7 @@ impl PhysWorld {
             }
         }
         self.ragdolls.insert(form_id, rag);
-        self.mark_dirty();
+        self.mark_dirty(crate::world::DirtyBy::Bodies);
         report
     }
 
@@ -442,7 +442,7 @@ impl PhysWorld {
         // Like a struck body, the parts must not sleep through the change.
         self.struck.extend(woken);
         if newly > 0 {
-            self.mark_dirty();
+            self.mark_dirty(crate::world::DirtyBy::Other);
         }
         newly
     }

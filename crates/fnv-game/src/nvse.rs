@@ -308,6 +308,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
     if let Some(r) = crate::nvse_plugins::call(g, ctx, name, subject, args) {
         return Some(r);
     }
+    if let Some(r) = crate::script_runner::call(g, name, args) {
+        return Some(r);
+    }
     // The UI functions, over the menus' tile tree (docs/design/ui-tile-tree.md §5.1);
     // before the `set…` setters below, which would read SetUIFloat as a record field's
     // setter.

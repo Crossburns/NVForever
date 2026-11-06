@@ -164,7 +164,7 @@ pub fn set_vel(id: u32, axis: char, speed: f32, phys: Option<&mut crate::phys::P
                 (false, _) => "SetVel: 0 along the ground pushes nothing".into(),
                 (true, None) => "SetVel: no pushes in this run".into(),
                 (true, Some(k)) => {
-                    k.write(crate::combat::Knockback { form_id: id, dir, speed: speed.abs(), secs: SET_VEL_SECS });
+                    k.write(crate::combat::Knockback { form_id: id, dir, speed: speed.abs(), secs: SET_VEL_SECS, attacker: 0, blow: 0, power: false });
                     format!("SetVel: {who} pushed along {axis} at {speed:.0} units/s, slowing to rest over {SET_VEL_SECS} s")
                 }
             }
@@ -470,7 +470,7 @@ fn typing(
             Key::PageUp => c.scroll = (c.scroll + SHOWN / 2).min(c.lines.len().saturating_sub(SHOWN)),
             Key::PageDown => c.scroll = c.scroll.saturating_sub(SHOWN / 2),
             _ => {
-                if let Some(t) = k.text.as_deref().filter(|t| !t.is_empty() && t.chars().all(|ch| !ch.is_control() && ch != '`')) {
+                if let Some(t) = k.text.as_deref().filter(|t| !t.is_empty() && t.chars().all(|ch| !ch.is_control() && ch != '`') && fnv_util::text::encodable(t)) {
                     c.input.push_str(t);
                 }
             }
@@ -667,7 +667,10 @@ fn typing(
                 }
             }
             _ => match script.as_deref_mut() {
-                Some(st) if st.rt.is_some() => st.console.push(ConsoleCall { line, selected: c.selected, active_quest: pipboy.as_ref().and_then(|p| p.active_quest()) }),
+                Some(st) if st.rt.is_some() => {
+                    let active_quest = pipboy.as_ref().and_then(|p| p.active_quest(st.rt.as_ref().map(|rt| &rt.game)));
+                    st.console.push(ConsoleCall { line, selected: c.selected, active_quest });
+                }
                 _ => c.print("Scripts are not running: only cls, tgm and coc work"),
             },
         }
@@ -829,7 +832,7 @@ fn select(c: &mut Console, id: u32, d: &PlayData, sim: &SimState, rt: Option<&mu
 fn record_names(d: &PlayData, id: FormId) -> (String, Option<String>, Option<String>) {
     let Some((_, rec)) = d.lo.winner(id.0) else { return (String::new(), None, None) };
     let sig = String::from_utf8_lossy(&rec.header.sig).to_string();
-    let text = |b: &[u8]| String::from_utf8_lossy(b.split(|&c| c == 0).next().unwrap_or_default()).to_string();
+    let text = fnv_util::text::decode_z;
     let subs = rec.subrecords().unwrap_or_default();
     let get = |want: &[u8; 4]| subs.iter().find(|s| &s.sig == want).map(|s| text(&s.data)).filter(|t| !t.is_empty());
     (sig, get(b"EDID"), get(b"FULL"))
@@ -879,7 +882,7 @@ pub fn describe(id: u32, d: &PlayData, sim: &SimState, rt: Option<&mut Runtime>)
         out.push(format!("cell {}  pos {:.0} {:.0} {:.0}", cell.unwrap_or_else(|| "-".into()), p[0], p[1], p[2]));
     }
     if let Some(s) = state {
-        out.push(format!("{}{}{}", if s.enabled { "enabled" } else { "disabled" }, if s.deleted { ", removed" } else { "" }, if s.count != 1 { format!(", count {}", s.count) } else { String::new() }));
+        out.push(format!("{}{}{}", if s.enabled() { "enabled" } else { "disabled" }, if s.deleted() { ", removed" } else { "" }, if s.count != 1 { format!(", count {}", s.count) } else { String::new() }));
     } else if let Some(p) = placed.filter(|p| sim.forms.item(p.base).is_some()) {
         // Not touched yet: the stack it was placed with.
         let n = sim.forms.placed_count(p.base, p.count);
@@ -1233,7 +1236,7 @@ impl SearchIndex {
 }
 
 fn read_records(lo: &fnv_esm::LoadOrder<'_>, refs: &fnv_sim::RefTable) -> Vec<Found> {
-    let text = |b: &[u8]| String::from_utf8_lossy(b.split(|&c| c == 0).next().unwrap_or_default()).trim().to_string();
+    let text = |b: &[u8]| fnv_util::text::decode_z(b).trim().to_string();
     let mut out: Vec<Found> = lo
         .index
         .keys()

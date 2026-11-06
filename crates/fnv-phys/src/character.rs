@@ -178,7 +178,7 @@ pub struct Character {
     pub id: u32,
     pub params: CharacterParams,
     body: RigidBodyHandle,
-    shape: SharedShape,
+    pub(crate) shape: SharedShape,
     /// Feet position (bottom of the capsule).
     pub feet: [f32; 3],
     /// Vertical speed, units/s (positive up).
@@ -264,6 +264,30 @@ impl Character {
     }
 }
 
+/// How far above and below a place [`PhysWorld::character_spot`] looks for what stands
+/// under it, game units [design: up as far as `PhysState::add_npc`'s ray in the game,
+/// down far less than its 400, to stay on the level asked for: navmesh heights follow the
+/// collision only roughly].
+const SPOT_UP: f32 = 48.0;
+const SPOT_DOWN: f32 = 96.0;
+/// Rays down a place, each from just under the nearest surface the last one met [design:
+/// one ray meets a collider once, so a second finds another floor of the same mesh; a
+/// third for a mesh with three in reach, more than a window this short holds].
+const SPOT_RAYS: usize = 3;
+/// The heights over its support a body is tried at, in shares of `step_height` [design:
+/// a ray finds the support under the feet's middle; a cone that wide standing on a stair
+/// rests on the next step's edge, higher than that, as it does walking there].
+const SPOT_LIFTS: [f32; 3] = [0.0, 0.5, 1.0];
+
+/// Why [`PhysWorld::character_spot`] found no place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpotRefused {
+    /// Nothing to stand on near the height asked for.
+    NoSupport,
+    /// There is ground, but the body does not fit over it.
+    NoRoom,
+}
+
 /// The character's shape around its centre (half the height above the feet): a vertical
 /// capsule, or with `bottom_slope` a cylinder with a cone at each end (convex hull of
 /// rings of [`RING_POINTS`] points circumscribing the radius). The top mirrors the bottom
@@ -328,7 +352,7 @@ impl PhysWorld {
         let groups = InteractionGroups::new(CHARACTER_SOLVER, Group::ALL, InteractionTestMode::And);
         self.w.insert_collider(ColliderBuilder::new(c.shape.clone()).user_data(owner.encode()).collision_groups(groups).solver_groups(groups), Some(body));
         c.body = body;
-        self.mark_dirty();
+        self.mark_dirty(crate::world::DirtyBy::Bodies);
         c
     }
 
@@ -354,6 +378,45 @@ impl PhysWorld {
         self.body_placed(c.body);
     }
 
+    /// Feet where `c` could be put down near `at`, without the way there counting (for
+    /// moving it past what blocks it): a walkable support on the level of `at` (of the
+    /// surfaces found from [`SPOT_UP`] above to [`SPOT_DOWN`] below, the one nearest its
+    /// height; never an actor or a dynamic body) and room for `c`'s own shape over it,
+    /// at the gap a character rests at or, on uneven ground, up to a step above that.
+    /// [`Queries::character_overlap`] says what counts as in the way.
+    ///
+    /// [`Queries::character_overlap`]: crate::world::Queries::character_overlap
+    pub fn character_spot(&mut self, c: &Character, at: [f32; 3]) -> Result<[f32; 3], SpotRefused> {
+        if !at.iter().all(|v| v.is_finite()) {
+            return Err(SpotRefused::NoSupport);
+        }
+        let p = &c.params;
+        let filter = crate::world::Filter { exclude_layers: c.ignore_layers, no_dynamic: true, no_actors: true, ..Default::default() };
+        let q = self.queries();
+        let (mut top, bottom) = (at[2] + SPOT_UP, at[2] - SPOT_DOWN);
+        let mut support: Option<(f32, f32)> = None;
+        for _ in 0..SPOT_RAYS {
+            let hits = q.ray_all([at[0], at[1], top], [0.0, 0.0, -1.0], top - bottom, &filter);
+            for hit in hits.iter().filter(|h| h.normal[2] >= p.max_slope_deg.to_radians().cos()) {
+                let off = (hit.point[2] - at[2]).abs();
+                if support.is_none_or(|(_, best)| off < best) {
+                    support = Some((hit.point[2] + p.rest_gap(hit.shell), off));
+                }
+            }
+            let Some(nearest) = hits.first() else { break };
+            top = nearest.point[2] - 0.5;
+            if top <= bottom {
+                break;
+            }
+        }
+        let Some((z, _)) = support else { return Err(SpotRefused::NoSupport) };
+        SPOT_LIFTS
+            .iter()
+            .map(|share| [at[0], at[1], z + share * p.step_height])
+            .find(|&feet| q.character_overlap(c, feet).is_empty())
+            .ok_or(SpotRefused::NoRoom)
+    }
+
     /// One fixed step of character movement (call once per [`PhysWorld::step`], before
     /// it, with the same `dt`).
     ///
@@ -365,7 +428,7 @@ impl PhysWorld {
     /// Wedged into a concave corner of walls, the character does not move horizontally
     /// (see [`wedged`]).
     pub fn move_character(&mut self, c: &mut Character, input: CharacterInput) -> CharacterStep {
-        self.update_queries();
+        self.update_queries_for(crate::world::QueryConsumer::Controller);
         let (step, push) = self.plan_move(c, input);
         self.apply_move(c, push);
         step

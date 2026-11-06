@@ -19,11 +19,14 @@
 //!
 //! What is ours, because the documentation gives no numbers ("various gamesettings and
 //! formulas"): how an object is scored (nearer is better), how fast weights grow back,
-//! how long each behaviour lasts, and that an actor without a bed in its area does not
-//! sleep. Not done: conversations between actors, picking up and eating food (an eating
+//! how long each behaviour lasts, how long an object with no way to it stays out of the
+//! choices (`RETRY_DELAYS`), that an actor without a bed in its area does not
+//! sleep, and that an actor does not choose an idle marker whose idles are all another
+//! skeleton's clips (`clip_fits`: a person at a robot's marker, #1660). Not done: conversations between actors, picking up and eating food (an eating
 //! actor sits down if a seat is free, as an Eat package's does), and the idles an idle
 //! marker lists (the actor goes there and faces its way).
 
+use crate::furniture::Eligibility;
 use crate::goal::{self, Goal};
 use fnv_game::ai::SandboxPhase;
 use fnv_game::game::Game;
@@ -32,7 +35,42 @@ use fnv_nav::graph::NONE;
 use fnv_nav::{NavGraph, Place};
 use fnv_sim::FormId;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+
+/// The skeleton folder a model path lies in, as the first two folders under `meshes\`
+/// in lower case (`characters\_male`, `creatures\protectron`); `None` for a path
+/// without two folders.
+fn skeleton_family(path: &str) -> Option<String> {
+    let p = path.to_ascii_lowercase().replace('/', "\\");
+    let p = p.strip_prefix("meshes\\").unwrap_or(&p);
+    let mut parts = p.split('\\').filter(|s| !s.is_empty());
+    let (a, b) = (parts.next()?, parts.next()?);
+    // A file name is not a folder.
+    parts.next()?;
+    Some(format!("{a}\\{b}"))
+}
+
+/// Whether an idle clip at `clip` is one an actor with the skeleton model `skeleton` can
+/// play: false only when both lie in known folders and the folders differ. A clip binds to
+/// the actor's bones by name and the protectron's skeleton shares the biped's names, so
+/// another skeleton's clip moves a person's head and neck to the robot's [observed:
+/// #1660]. The original's rule is not known [design].
+pub fn clip_fits(skeleton: &str, clip: &str) -> bool {
+    match (skeleton_family(skeleton), skeleton_family(clip)) {
+        (Some(s), Some(c)) => s == c,
+        _ => true,
+    }
+}
+
+/// Whether an actor with the skeleton model `skeleton` may choose an idle marker of base
+/// `base`: unless every idle it lists names a `.kf` from another skeleton's folder
+/// (`clip_fits`). One with no idles, or an idle naming no clip, stays open. A script's
+/// SetIdleMarkerAnimation(s) list is the one read when there is one.
+fn marker_fits(game: &Game, skeleton: &str, base: FormId) -> bool {
+    let Some(c) = game.other.idle_markers.get(&base).or_else(|| game.data.idle_markers.get(&base)) else { return true };
+    let clips: Vec<&str> = c.idles.iter().filter_map(|i| game.data.idles.get(i)?.model.as_deref()).filter(|m| m.to_ascii_lowercase().ends_with(".kf")).collect();
+    clips.is_empty() || clips.len() < c.idles.len() || clips.iter().any(|m| clip_fits(skeleton, m))
+}
 
 /// Reach of a sandbox whose location has no radius of its own, game units [our choice;
 /// the default sandbox packages use 512].
@@ -138,6 +176,21 @@ const FURNITURE: usize = 0;
 const IDLE_MARKER: usize = 1;
 const WANDER: usize = 2;
 
+/// How long an object with no way to it stays out of the choices, seconds of `Game::time`
+/// from each failure, longer with each failure in a row and capped at the last [design:
+/// our balance of how soon an actor notices a restored way against what failed searches
+/// cost; neither the documentation nor the original gives numbers].
+const RETRY_DELAYS: [f64; 5] = [60.0, 120.0, 240.0, 480.0, 600.0];
+
+/// An object there was no way to, the last time the actor tried.
+#[derive(Debug, Clone, Copy)]
+struct FailedObject {
+    /// `Game::time` from which it may be chosen again.
+    retry_at: f64,
+    /// Which of [`RETRY_DELAYS`] its last failure waits.
+    stage: usize,
+}
+
 pub struct Sandbox {
     pub allowed: Allowed,
     centre: Place,
@@ -147,8 +200,10 @@ pub struct Sandbox {
     rng: Rng,
     weights: [f32; 3],
     last_object: Option<FormId>,
-    /// Objects there was no way to.
-    bad: BTreeSet<FormId>,
+    /// Objects there was no way to. An entry stays after its wait is over, to keep its
+    /// stage, until the object's behaviour begins [design]. Not saved: a load starts it
+    /// empty.
+    failed_objects: BTreeMap<FormId, FailedObject>,
     /// The day the sleep and meal times were rolled for.
     day: i32,
     /// Start hour and duration in hours.
@@ -165,6 +220,8 @@ pub struct Sandbox {
     /// It got up from furniture for its last choice, which has not begun yet
     /// ([`Sandbox::phase`]).
     pub(crate) got_up: bool,
+    /// Another behaviour took control; cancellation runs once until the next choice.
+    interrupted: bool,
 }
 
 /// A sandbox's day as a save keeps it ([`crate::progress`]): where its random numbers
@@ -202,7 +259,7 @@ impl Sandbox {
             rng: Rng((actor.0 as u64) << 32 | package.0 as u64),
             weights: [1.0; 3],
             last_object: None,
-            bad: BTreeSet::new(),
+            failed_objects: BTreeMap::new(),
             day: i32::MIN,
             sleep: (0.0, 0.0),
             meals: [(0.0, 0.0); 3],
@@ -211,6 +268,7 @@ impl Sandbox {
             until: Until::Time(f64::NEG_INFINITY),
             pending: None,
             got_up: false,
+            interrupted: false,
             chosen_at: 0.0,
         };
         s.roll(game);
@@ -267,6 +325,23 @@ impl Sandbox {
         }
     }
 
+    /// Give up the current choice when another behaviour takes control [design].
+    /// The next package update chooses afresh, retaining the day, random sequence and
+    /// object-selection history. This is neither an arrival nor a failed route.
+    /// Returns true only on the first interruption, so the caller can relinquish the
+    /// sandbox's movement without clearing the interrupting behaviour's later walks.
+    pub(crate) fn interrupt(&mut self) -> bool {
+        if self.interrupted {
+            return false;
+        }
+        self.interrupted = true;
+        self.pending = None;
+        self.got_up = false;
+        self.doing = Doing::Standing;
+        self.until = Until::Time(f64::NEG_INFINITY);
+        true
+    }
+
     /// Hours left of a window that started at `start` and lasts `hours`, at `hour`.
     fn left(start: f32, hours: f32, hour: f32) -> Option<f32> {
         let since = (hour - start).rem_euclid(24.0);
@@ -274,8 +349,8 @@ impl Sandbox {
     }
 
     /// The objects of the area: references of the centre's cell within the radius, at
-    /// about the actor's height, present, not found unreachable, not given to another
-    /// actor.
+    /// about the actor's height, present, not waiting out a failed way to them, not given
+    /// to another actor.
     fn objects(&self, game: &Game, taken: &BTreeMap<FormId, FormId>, actor: FormId, at: Place) -> Vec<(FormId, [f32; 3], f32)> {
         let refs = game.world.placed;
         let Some(cell) = goal::cell_of_place(refs, &self.centre) else { return Vec::new() };
@@ -283,7 +358,7 @@ impl Sandbox {
             .get(&cell)
             .into_iter()
             .flatten()
-            .filter(|r| !self.bad.contains(r) && taken.get(r).is_none_or(|a| *a == actor))
+            .filter(|r| self.failed_objects.get(r).is_none_or(|f| game.time >= f.retry_at) && taken.get(r).is_none_or(|a| *a == actor))
             .filter_map(|r| {
                 let p = refs.get(*r)?;
                 let near = self.radius.is_infinite() || hdist(p.pos, self.centre.pos) <= self.radius;
@@ -320,7 +395,8 @@ impl Sandbox {
     }
 
     /// Choose what to do next, standing at `at`.
-    pub fn next(&mut self, game: &Game, nav: &NavGraph, taken: &BTreeMap<FormId, FormId>, actor: FormId, at: Place) -> Choice {
+    pub fn next(&mut self, game: &Game, nav: &NavGraph, taken: &BTreeMap<FormId, FormId>, actor: FormId, at: Place, eligibility: &mut Eligibility) -> Choice {
+        self.interrupted = false;
         self.roll(game);
         self.chosen_at = game.time;
         let cal = game.world.calendar().ok();
@@ -328,7 +404,9 @@ impl Sandbox {
         let data = game.data;
         let refs = game.world.placed;
         let objects = self.objects(game, taken, actor, at);
-        let flags = |r: FormId| refs.get(r).and_then(|p| data.furniture.get(&p.base)).copied();
+        // Of the seats and beds only: the idle markers are in the same list.
+        let excluded = eligibility.excluded_casual(game, actor, objects.iter().map(|o| o.0));
+        let flags = |r: FormId| refs.get(r).filter(|_| !excluded.contains(&r)).and_then(|p| data.furniture.get(&p.base)).copied();
         let nearest = |want: u32| {
             objects.iter().filter(|o| flags(o.0).is_some_and(|f| f & want != 0)).min_by(|a, b| hdist(a.1, at.pos).total_cmp(&hdist(b.1, at.pos))).copied()
         };
@@ -350,7 +428,12 @@ impl Sandbox {
         // the object just used.
         let fresh = |o: &&(FormId, [f32; 3], f32)| Some(o.0) != self.last_object;
         let seats: Vec<&(FormId, [f32; 3], f32)> = objects.iter().filter(|o| flags(o.0).is_some_and(|f| f & furniture::SIT != 0)).filter(fresh).collect();
-        let markers: Vec<&(FormId, [f32; 3], f32)> = objects.iter().filter(|o| refs.get(o.0).is_some_and(|p| data.idle_markers.contains_key(&p.base))).filter(fresh).collect();
+        // Not a marker whose idles are all another skeleton's (`marker_fits`): a person
+        // left at a robot's marker played the protectron's clips (#1660).
+        let skeleton = std::cell::OnceCell::new();
+        let fits = |base: FormId| marker_fits(game, skeleton.get_or_init(|| fnv_game::nvse_nx::skeleton_model(game, actor)), base);
+        let markers: Vec<&(FormId, [f32; 3], f32)> =
+            objects.iter().filter(|o| refs.get(o.0).is_some_and(|p| data.idle_markers.contains_key(&p.base) && fits(p.base))).filter(fresh).collect();
         let spot = if self.allowed.wandering { self.wander_spot(nav, at) } else { None };
         // Energy: the less of it, the more sitting; the more, the more walking about.
         let e = self.energy;
@@ -444,6 +527,9 @@ impl Sandbox {
         self.got_up = false;
         self.doing = choice.doing;
         self.last_object = choice.doing.object().or(self.last_object);
+        if let Some(object) = choice.doing.object() {
+            self.failed_objects.remove(&object);
+        }
         // The time a timed behaviour lasts counts from getting there.
         self.until = match choice.until {
             Until::Time(t) if choice.target.is_some() => Until::Time(game.time + (t - self.chosen_at).max(1.0)),
@@ -451,12 +537,42 @@ impl Sandbox {
         };
     }
 
-    /// Nothing came of a choice (no way to its object): stand a little, then choose again.
+    /// Nothing came of a choice (no way to its object): stand a little, then choose again;
+    /// the object waits out its next delay before it can be chosen.
     pub(crate) fn failed(&mut self, game: &Game, choice: &Choice) {
         self.pending = None;
         self.got_up = false;
-        self.bad.extend(choice.doing.object());
+        if let Some(object) = choice.doing.object() {
+            let stage = self.failed_objects.get(&object).map_or(0, |f| (f.stage + 1).min(RETRY_DELAYS.len() - 1));
+            self.failed_objects.insert(object, FailedObject { retry_at: game.time + RETRY_DELAYS[stage], stage });
+        }
         self.doing = Doing::Standing;
         self.until = Until::Time(game.time + 5.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clip_fits;
+
+    #[test]
+    fn a_person_does_not_play_the_protectrons_clips() {
+        // The robot idle marker in front of the car at Vikki and Vance (#1660).
+        let human = "Characters\\_Male\\skeleton.nif";
+        assert!(!clip_fits(human, "Creatures\\Protectron\\IdleAnims\\MTSpecialIdle_Halt.kf"));
+        assert!(!clip_fits("Creatures\\Protectron\\Skeleton.nif", "Characters\\_Male\\IdleAnims\\DLCAnims\\LeanTable.kf"));
+    }
+
+    #[test]
+    fn a_clip_of_the_actors_own_folder_fits_whatever_the_case_and_prefix() {
+        assert!(clip_fits("Characters\\_Male\\skeleton.nif", "characters\\_male\\idleanims\\talk_armscrossed.kf"));
+        assert!(clip_fits("meshes\\Creatures\\Protectron\\Skeleton.nif", "Creatures/Protectron/IdleAnims/MTSpecialIdle_Activate.kf"));
+    }
+
+    #[test]
+    fn what_is_not_known_stays_allowed() {
+        // No skeleton read, or a path without two folders.
+        assert!(clip_fits("", "Creatures\\Protectron\\IdleAnims\\MTSpecialIdle_Halt.kf"));
+        assert!(clip_fits("Characters\\_Male\\skeleton.nif", "idle.kf"));
     }
 }

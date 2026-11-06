@@ -163,10 +163,11 @@ pub fn cause_code(record_type: Option<i64>) -> i32 {
     }
 }
 
-/// `actor.GetCauseofDeath`: how the actor died, by [`cause_code`] of the last hit it took
-/// (`RefExtra::last_hit`: the killing blow, hits on a corpse do not count), unless
-/// KillActor named a cause (`RefExtra::death_cause`); −1 while it
-/// lives, or dead with no hit (KillActor, dead from the start) [hypothesis: "none"].
+/// `actor.GetCauseofDeath`: how the actor died, by [`cause_code`] of the hit that killed it
+/// (`RefExtra::killing_hit`; an earlier wound or a hit on the corpse does not count), unless
+/// KillActor named a cause (`RefExtra::death_cause`); −1 while it lives, or dead with no
+/// killing hit (KillActor, an effect's or a script's damage, dead from the start)
+/// [hypothesis: "none"].
 /// Poison and radiation deaths are not told apart yet.
 pub fn get_cause_of_death(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
@@ -176,7 +177,7 @@ pub fn get_cause_of_death(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, S
     if let Some(cause) = g.extra.get(&r).and_then(|e| e.death_cause) {
         return Ok(Value::Num(cause as f64));
     }
-    let Some(hit) = g.extra.get(&r).and_then(|e| e.last_hit) else { return Ok(Value::Num(-1.0)) };
+    let Some(hit) = g.extra.get(&r).and_then(|e| e.killing_hit) else { return Ok(Value::Num(-1.0)) };
     let record_type = match hit.weapon {
         Some(w) => Some(g.data.weapon_anim_types.get(&w).copied().unwrap_or(-1)),
         None => None,
@@ -196,14 +197,14 @@ pub fn is_limb_gone(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> 
 }
 
 /// `actor.GetKillingBlowLimb`: the location of the hit that killed the actor, −1 while it
-/// lives or when no hit killed it [documented: GECK wiki GetKillingBlowLimb]. The last hit
-/// recorded is the killing one: hits on a corpse are not recorded (`Game::hit`).
+/// lives or when no hit killed it [documented: GECK wiki GetKillingBlowLimb]
+/// (`RefExtra::killing_hit`).
 pub fn get_killing_blow_limb(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
     if !g.is_dead(r) {
         return Ok(Value::Num(-1.0));
     }
-    Ok(Value::Num(g.extra.get(&r).and_then(|e| e.last_hit).map_or(-1, |h| h.location) as f64))
+    Ok(Value::Num(g.extra.get(&r).and_then(|e| e.killing_hit).map_or(-1, |h| h.location) as f64))
 }
 
 /// `actor.GetArmorRating`: the total damage resistance of the armour the actor has

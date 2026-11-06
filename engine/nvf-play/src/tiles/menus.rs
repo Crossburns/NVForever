@@ -128,6 +128,27 @@ pub fn background_alpha() -> f64 {
 /// A text's width and height in interface units: font number, string, wrap width.
 pub type Size<'a> = dyn Fn(f64, &str, Option<f64>) -> (f64, f64) + 'a;
 
+/// Which menus `super::draw` drew from their tiles this frame, for the blur of the world
+/// behind them (nvforever's `imagespace::tile_menu_blur`) [design]. Empty by default: with
+/// the menu switches off it stays empty and nothing reads differently. Written whole every
+/// drawing frame from the decision the drawing itself made, so it cannot outlive a closed
+/// menu or a fallback to the hand-built drawing.
+#[derive(bevy::prelude::Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TileMenuBlur {
+    /// `TutorialMenu` is drawn from its tiles.
+    pub tutorial: bool,
+    /// `ContainerMenu` is drawn from its tiles. Not set yet: that menu's tile drawing is not
+    /// in `super::draw` so far, and sets it there beside `tutorial` when it comes.
+    pub container: bool,
+}
+
+impl TileMenuBlur {
+    /// Any menu drawn from its tiles wants the world blurred.
+    pub fn any(self) -> bool {
+        self.tutorial || self.container
+    }
+}
+
 /// Whether the open message box is drawn from `MessageMenu`'s tiles: the switch on, the
 /// menu files read, a message box the open menu and its file built into the tree (the
 /// panels other script menus show in the same box, and a box whose file is missing or did
@@ -186,7 +207,8 @@ pub fn modal_sheet() -> impl bevy::prelude::Bundle {
 /// them (`super::input`): the prompt's A, E, Left, Right (`crate::menu`'s prompt keys) and
 /// the controller buttons that stand in for its Enter, Esc, Page Up and Page Down
 /// (`crate::pad::menu_key`); the box's Up, Down and the controller's A for its Enter
-/// (`crate::script_hud::menu_keys`). Any other key a file binds is left to the file.
+/// (`crate::script_hud::menu_keys`); the Wait and tutorial menus' their own lists. Any other
+/// key a file binds is left to the file.
 pub fn hand_built_takes(menu: &str, key: &str) -> bool {
     let keys: &[&str] = if menu.eq_ignore_ascii_case(QUANTITY_MENU) {
         &["A", "E", "xleft", "xright", "xbuttona", "xbuttonb", "xbuttonlb", "xbuttonrb"]
@@ -194,6 +216,8 @@ pub fn hand_built_takes(menu: &str, key: &str) -> bool {
         &["xup", "xdown", "xbuttona"]
     } else if menu.eq_ignore_ascii_case(super::wait_menu::SLEEP_WAIT_MENU) {
         &super::wait_menu::HAND_BUILT_KEYS
+    } else if menu.eq_ignore_ascii_case(super::tutorial_menu::TUTORIAL_MENU) {
+        &super::tutorial_menu::HAND_BUILT_KEYS
     } else {
         &[]
     };
@@ -560,7 +584,10 @@ pub fn fonts_of(ui: &Ui, texts: &[TileId]) -> Vec<f64> {
 /// message box's list and text places read]. An axis the file (or a mod) works out with an
 /// expression is left to it and the other axis still written; a tile measured from the
 /// same string, font and wrap is not measured again (`last`, as
-/// `super::notices::write_widths`). Returns how many tiles were written.
+/// `super::notices::write_widths`). Every measure is kept, 0 x 0 too: `size` from
+/// `super::draw::FontKit::menu_measure` has a face, the game's or a stand-in, for each font it
+/// was given, so each caller gets it with the fonts as the tree stands just before measuring
+/// [design]. Returns how many tiles were written.
 pub fn write_text_sizes(ui: &mut Ui, menu: TileId, last: &mut SizesWritten, size: &Size<'_>) -> usize {
     let tiles = texts(ui, menu);
     write_text_sizes_of(ui, &tiles, last, size)

@@ -2,7 +2,9 @@
 //! docs/design/knvse-anim.md: an actor with replacement paths plays from its own copy of
 //! the standing set, the replaced moves taken from the script's files
 //! (`ClipSet::with_replacements`); when the script takes them back the shared set
-//! returns. The paths come from the game (`fnv_game::nvse_anim::AnimPaths`).
+//! returns. The paths come from the game (`fnv_game::nvse_anim::AnimPaths`), after the
+//! files kNVSE's AnimGroupOverride folders give the actor (`Game::anim_overrides`,
+//! `fnv_game::nvse_anim_folders`).
 
 use crate::limbs::ActorRig;
 use crate::locomotion::Locomotion;
@@ -27,14 +29,14 @@ type Applied = HashMap<u32, (Vec<String>, Arc<crate::locomotion::ClipSet>)>;
 
 fn apply(script: Option<Res<ScriptState>>, parts: Option<ResMut<ActorParts>>, mut models: ModelCtx, mut actors: Query<(&ActorRig, &mut Locomotion)>, mut applied: Local<Applied>) {
     let Some(rt) = script.as_deref().and_then(|s| s.rt.as_ref()) else { return };
-    let wanted = &rt.game.anim_paths.actor;
-    if wanted.is_empty() && applied.is_empty() {
+    let game = &rt.game;
+    if game.anim_paths.actor.is_empty() && game.anim_folders.active.is_empty() && applied.is_empty() {
         return;
     }
     let Some(mut parts) = parts else { return };
     let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
     for (rig, mut lo) in &mut actors {
-        let paths: Vec<String> = wanted.get(&(FormId(rig.reference), false)).cloned().unwrap_or_default();
+        let paths = game.anim_overrides(FormId(rig.reference), false);
         let now = applied.get(&rig.reference).map(|(p, _)| p.clone()).unwrap_or_default();
         if paths == now {
             continue;
@@ -49,7 +51,7 @@ fn apply(script: Option<Res<ScriptState>>, parts: Option<ResMut<ActorParts>>, mu
             continue;
         }
         let (set, n) = shared.with_replacements(&mut ctx, &rig.skel, &paths);
-        info!("anim paths: {:08X} plays {n} replaced move(s) from {paths:?}", rig.reference);
+        info!("anim paths: {:08X} plays {n} replaced move(s) from {} file(s)", rig.reference, paths.len());
         lo.replace_stand(Arc::new(set));
         applied.insert(rig.reference, (paths, shared));
     }

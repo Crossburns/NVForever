@@ -51,6 +51,9 @@ pub enum IdleSource {
     Cower,
     /// A script's `PickIdle`: the idle tree's pick by its conditions ([`Game::pick_idle`]).
     Picked,
+    /// A creature standing still plays a look of the idle tree's Idle section in place
+    /// of its base idle, looping while its branch holds ([`Game::standing_idle`]).
+    Standing,
     /// An NPC uses a stimpak it carries (`crate::npc_stimpaks`): played on its upper
     /// body only, over what it does otherwise.
     Stimpak,
@@ -349,6 +352,48 @@ impl<'a> Game<'a> {
                 continue;
             }
             if let Some((leaf, _)) = self.first_leaf(actor, root, None, true, held_back) {
+                return Some(leaf);
+            }
+        }
+        None
+    }
+
+    /// The standing look of creature `actor` from the idle tree, or `None`: the roots of
+    /// the actor's own `folder` in chain order, as for [`Game::pick_idle`], counting only
+    /// idles of the Idle section (DATA section 0, the `DynamicIdle_…` files) that are not
+    /// Loose (`IdleDef::loose`): a branch whose conditions pass is gone into for its first
+    /// such leaf whose conditions pass; a root that is such an idle itself is the pick when
+    /// its own conditions pass [observed: FalloutNV.esm and the DLC masters have eight
+    /// such creature leaves, each below a branch whose conditions name a state (Mr.
+    /// House's screen, Festus switched off, the spore carriers unconscious, Mr. House's
+    /// pod closed, Big MT's brain tanks closed), and one such root, the screen's
+    /// `LooseNVPHMCconnectionLost`. The screen's roots in chain order: `NVPHMCYesMan`
+    /// (GetStage VMQYesMan01 >= 70: Yes Man's face), `LooseNVPHMCconnectionLost`
+    /// (GetGlobalValue 0x00136FCE > 0 or GetPCEnemyOfFaction 0x00126DAB == 1: "Connection
+    /// Lost"), `NVPHMCHouse` (stage < 70, the global <= 0, not an enemy: House's face).
+    /// Owner 2026-11-05: Connection Lost shows after House is killed and before Yes Man
+    /// is uploaded, and in the Fort's bunker while House is not connected; hypothesis:
+    /// the original plays such an idle in place of the standing idle while it holds]. The
+    /// engine plays the pick looping and asks again now and then, so a change of state
+    /// changes the look (#1542).
+    pub fn standing_idle(&mut self, actor: FormId, folder: &str) -> Option<FormId> {
+        let data = self.data;
+        let folder = folder.to_ascii_lowercase();
+        let look = |id: FormId| data.idles.get(&id).is_some_and(|d| d.section == 0 && !d.loose && d.has_file());
+        let own = |id: &FormId| data.idles.get(id).and_then(|d| d.model.as_deref()).is_some_and(|m| m.to_ascii_lowercase().starts_with(&folder));
+        let roots: Vec<FormId> = data.idle_children.get(&None).into_iter().flatten().copied().filter(own).collect();
+        for root in roots {
+            let branch = data.idle_children.contains_key(&Some(root));
+            if !branch && !look(root) {
+                continue;
+            }
+            if !self.idle_allowed(actor, root) {
+                continue;
+            }
+            if !branch {
+                return Some(root);
+            }
+            if let Some((leaf, _)) = self.first_leaf(actor, root, None, true, &|i| !look(i)) {
                 return Some(leaf);
             }
         }

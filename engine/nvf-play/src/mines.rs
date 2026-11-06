@@ -30,6 +30,8 @@
 //!   the drawing code marks those meshes, [`MineLight::of`])
 //!   [observed: the frag mine model's nodes; owner 2026-10-19: live mines show the light,
 //!   it blinks once set off; hypothesis: which part shows when].
+//! - **DisableAllMines** (Fallout 3's): the live mines of the player's cell are disabled
+//!   at once, a burning fuse with them (`fnv_game::functions::fo3`).
 //! - Not built: NPCs putting mines down, NPCs seeing and avoiding mines, the HUD's mine
 //!   marker, mines owned by an actor base (XOWN naming an NPC_).
 
@@ -74,6 +76,8 @@ pub struct Mines {
     lit: HashMap<u32, bool>,
     /// (mine, actor) pairs whose perks kept the mine from going off, logged once.
     spared: HashSet<(FormId, FormId)>,
+    /// The game's DisableAllMines count last acted on.
+    disabled_count: u64,
 }
 
 struct Burning {
@@ -136,7 +140,7 @@ pub(crate) fn tick(
                 if let Ok(r) = sim.world.get(id) {
                     r.extra.owner = Some(s.actor);
                 }
-                changed.write(RefChanged { form_id: id.0 });
+                changed.write(RefChanged::new(id.0));
                 info!("mines: {} put down mine {id} ({}) at ({:.0}, {:.0}, {:.0}), armed", s.actor, s.proj, s.point[0], s.point[1], s.point[2]);
             }
             Err(e) => warn!("mines: a thrown mine could not be placed: {e}"),
@@ -144,7 +148,7 @@ pub(crate) fn tick(
     }
 
     // The live mines of the loaded cells.
-    let created: Vec<FormId> = sim.world.created().filter(|(id, r)| !r.deleted && kinds.contains(&r.base) && phys.created.contains_key(&id.0)).map(|(id, _)| id).collect();
+    let created: Vec<FormId> = sim.world.created().filter(|(id, r)| !r.deleted() && kinds.contains(&r.base) && phys.created.contains_key(&id.0)).map(|(id, _)| id).collect();
     let mut live: HashMap<FormId, V3> = HashMap::new();
     for id in m.placed.iter().copied().filter(|id| phys.ref_cell.contains_key(&id.0)).chain(created) {
         if !sim.present(id.0) {
@@ -155,6 +159,24 @@ pub(crate) fn tick(
             live.insert(id, pos);
         }
     }
+    // Fallout 3's DisableAllMines (`fnv_game::functions::fo3`): the live mines of the
+    // player's cell are disabled, fuses and all.
+    let asked = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| rt.game.ui.mines_disabled);
+    if let Some(n) = asked.filter(|&n| n != m.disabled_count) {
+        m.disabled_count = n;
+        let here = sim.world.peek(FormId::PLAYER_REF).and_then(|a| a.cell);
+        let cell_of = |id: FormId| sim.world.peek(id).and_then(|r| r.cell).or_else(|| sim.refs.get(id).and_then(|p| p.cell));
+        let off: Vec<FormId> = live.keys().copied().filter(|&id| here.is_some() && cell_of(id) == here).collect();
+        for &id in &off {
+            if let Err(e) = sim.world.set_enabled(id, false) {
+                warn!("mines: mine {id} could not be disabled: {e}");
+            }
+            changed.write(RefChanged::new(id.0));
+            live.remove(&id);
+            m.burning.remove(&id);
+        }
+        info!("mines: {} mine(s) of the player's cell disabled (DisableAllMines)", off.len());
+    }
     // Gone since the last frame: taken by the player's activation (disarmed), or
     // disabled (it went off, or a blast or a shot destroyed it).
     for (&id, &pos) in &m.live {
@@ -162,7 +184,7 @@ pub(crate) fn tick(
             continue;
         }
         m.burning.remove(&id);
-        if sim.world.peek(id).is_some_and(|r| r.deleted) {
+        if sim.world.peek(id).is_some_and(|r| r.deleted()) {
             let sound = sim.base_of(id.0).and_then(|b| sfx.as_deref()?.forms.projectiles.get(&b)?.sound_disable);
             if let Some(sound) = sound {
                 sounds.write(PlaySound { sound, at: Some(pos) });
@@ -239,7 +261,7 @@ pub(crate) fn tick(
                 if let Err(e) = sim.world.set_enabled(id, false) {
                     warn!("mines: mine {id} could not be disabled: {e}");
                 }
-                changed.write(RefChanged { form_id: id.0 });
+                changed.write(RefChanged::new(id.0));
                 // The blast is the hits of whoever put it down (an actor reference).
                 let owner = sim.world.peek(id).and_then(|r| r.extra.owner).filter(|o| sim.world.peek(*o).is_some() && (sim.is_actor(o.0) || *o == FormId::PLAYER_REF));
                 let weapon = p.default_weapon;

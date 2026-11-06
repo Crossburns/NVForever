@@ -20,6 +20,7 @@ mod ai_state;
 pub mod camera;
 pub mod console;
 mod fighting;
+mod fo3;
 pub mod toggles;
 pub(crate) mod furniture;
 pub(crate) mod items;
@@ -58,8 +59,9 @@ use std::sync::OnceLock;
 /// The context of one call.
 #[derive(Debug, Clone)]
 pub struct Ctx {
-    /// The running unit's key (for trace events), or a condition's owner label.
-    pub unit: String,
+    /// The running unit's key (for trace events), or a condition's owner label. Shared:
+    /// a script's calls clone its unit's key without copying the text (#1389).
+    pub unit: std::sync::Arc<str>,
     pub opcode: u16,
     /// The explicit calling reference (`Ref.Func`), resolved.
     pub on: Option<FormId>,
@@ -719,6 +721,36 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             (0x1236, "AddItemToLeveledList", Impl(items::add_item_to_leveled_list)),
             (0x126F, "IsDLCInstalled", Impl(misc::is_dlc_installed)),
             (0x1215, "GetXPForNextLevel", Impl(player::get_xp_for_next_level)),
+            // Called only by Fallout 3's scripts (Tale of Two Wastelands; fo3.rs).
+            (0x1053, "ModDisposition", Impl(fo3::mod_disposition)),
+            (0x1082, "GetPCIsRace", Impl(fo3::get_pc_is_race)),
+            (0x10D2, "GetForceSneak", Impl(fo3::get_force_sneak)),
+            (0x11B7, "SetMerchantContainer", Impl(fo3::set_merchant_container)),
+            (0x11E5, "MatchRace", Impl(fo3::match_race)),
+            (0x11CA, "ClearActorsFactionsPlayerEnemyFlag", Impl(fo3::clear_actors_factions_player_enemy_flag)),
+            (0x10BC, "GetPCSleepHours", Impl(fo3::get_pc_sleep_hours)),
+            (0x11E6, "SetPCYoung", Impl(fo3::set_pc_young)),
+            (0x1202, "SetPCToddler", Impl(fo3::set_pc_toddler)),
+            (0x11FC, "SetNoActivationSound", Impl(fo3::set_no_activation_sound)),
+            (0x11FD, "ClearNoActivationSound", Impl(fo3::clear_no_activation_sound)),
+            (0x1200, "SetLocationSpecificLoadScreensOnly", Impl(fo3::set_location_specific_load_screens_only)),
+            (0x1230, "SetLastExtDoorActivated", Impl(fo3::set_last_ext_door_activated)),
+            (0x11DF, "MatchFaceGeometry", Impl(fo3::match_face_geometry)),
+            (0x10B7, "Wait", Impl(fo3::wait)),
+            (0x10B8, "StopWaiting", Impl(fo3::stop_waiting)),
+            (0x106F, "IsWaiting", Impl(fo3::is_waiting)),
+            (0x10A8, "SetFactionReaction", Impl(fo3::set_faction_reaction)),
+            (0x111B, "SetCellFullName", Impl(fo3::set_cell_full_name)),
+            (0x1127, "ResetInterior", Impl(fo3::reset_interior)),
+            (0x11EA, "SetZoneRespawns", Impl(fo3::set_zone_respawns)),
+            (0x122F, "DisableAllMines", Impl(fo3::disable_all_mines)),
+            (0x1237, "RemapWaterType", Impl(fo3::remap_water_type)),
+            (0x11F3, "TriggerLODApocalypse", Impl(fo3::trigger_lod_apocalypse)),
+            (0x1144, "TriggerHitShader", Impl(fo3::trigger_hit_shader)),
+            (0x1205, "TriggerScreenBlood", Impl(fo3::trigger_screen_blood)),
+            (0x1227, "FadeSFX", Impl(fo3::fade_sfx)),
+            (0x1231, "KillQuestUpdates", Impl(fo3::kill_quest_updates)),
+            (0x116F, "GetLastPlayerAction", Impl(fo3::get_last_player_action)),
         ]
     };
     REGISTRY

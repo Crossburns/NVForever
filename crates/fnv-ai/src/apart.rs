@@ -89,6 +89,39 @@ pub fn separate(bodies: &[Body], dt: f32) -> (Vec<[f32; 2]>, Vec<bool>) {
     (moves, touched)
 }
 
+/// Separation passes ([`Ai::keep_apart`]) since [`probe::enable`], for attributing their
+/// cost (diagnostics only: never read by the AI; a reader takes differences between two
+/// reads). Nothing is counted until it is enabled.
+pub mod probe {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+
+    static ON: AtomicBool = AtomicBool::new(false);
+    static PASSES: AtomicU64 = AtomicU64::new(0);
+    static BODIES: AtomicU64 = AtomicU64::new(0);
+    static PAIRS: AtomicU64 = AtomicU64::new(0);
+
+    /// A pass over `n` bodies: `separate` looks at every pair of them.
+    pub(crate) fn separated(n: usize) {
+        if !ON.load(Relaxed) {
+            return;
+        }
+        let n = n as u64;
+        PASSES.fetch_add(1, Relaxed);
+        BODIES.fetch_add(n, Relaxed);
+        PAIRS.fetch_add(n * n.saturating_sub(1) / 2, Relaxed);
+    }
+
+    /// Count from now on (the engine's `NVF_PLAY_TEST_PROFILE_COUNTS`).
+    pub fn enable() {
+        ON.store(true, Relaxed);
+    }
+
+    /// (passes, bodies, pairs) so far.
+    pub fn separations() -> (u64, u64, u64) {
+        (PASSES.load(Relaxed), BODIES.load(Relaxed), PAIRS.load(Relaxed))
+    }
+}
+
 impl Ai {
     /// Move apart the actors that stand or walk inside each other (see the module).
     /// `fixed`: actors whose position another system decides this frame (the character
@@ -104,6 +137,7 @@ impl Ai {
             .filter(|(id, a)| a.using.is_none() && game.present(**id) && !game.extra.get(*id).is_some_and(|e| e.dead))
             .map(|(id, a)| Body { id: id.0, space: a.walker.space, feet: a.walker.feet, movable: !a.rooted && !fixed.contains(&id.0) })
             .collect();
+        probe::separated(bodies.len());
         let (moves, touched) = separate(&bodies, dt);
         let mut moved = 0;
         for ((b, m), t) in bodies.iter().zip(moves).zip(touched) {

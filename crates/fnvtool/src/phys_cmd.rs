@@ -352,7 +352,7 @@ pub(crate) fn build_with<'a>(
     params: PhysParams,
     mut meshes: Option<&mut Meshes>,
     in_world: InWorld,
-    options: &dyn Fn(&fnv_world::placed::Placement) -> RefCollisionOptions,
+    options: &dyn Fn(&fnv_world::placed::Placement) -> RefCollisionOptions<'static>,
 ) -> Built<'a> {
     let mut world = PhysWorld::new(params);
     let mut cells: Vec<&Cell> = vec![centre];

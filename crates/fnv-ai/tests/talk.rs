@@ -131,6 +131,7 @@ const T_CHATTER: u32 = 0x814;
 const I_CHATTER: u32 = 0x81A;
 const STAT: u32 = 0x820;
 const ACTI: u32 = 0x821;
+const STOOL: u32 = 0x822;
 // Packages.
 const P_GREET: u32 = 0x830;
 const P_COME: u32 = 0x831;
@@ -139,6 +140,7 @@ const P_SAY: u32 = 0x833;
 const P_TO_NPC: u32 = 0x834;
 const P_MUTE: u32 = 0x835;
 const P_WANDER: u32 = 0x836;
+const P_SEATED: u32 = 0x837;
 // Bases.
 const N_GREET: u32 = 0x840;
 const N_COME: u32 = 0x841;
@@ -147,11 +149,13 @@ const N_SAY: u32 = 0x843;
 const N_TO_NPC: u32 = 0x844;
 const N_MUTE: u32 = 0x845;
 const N_IDLE: u32 = 0x846;
+const N_SEATED: u32 = 0x847;
 // The cell and its references.
 const CELL: u32 = 0x860;
 const TRIGGER: u32 = 0x870;
 const MARK_WAIT: u32 = 0x871;
 const MARK_TRIGGER: u32 = 0x872;
+const R_STOOL: u32 = 0x873;
 const R_GREET: u32 = 0x880;
 const R_COME: u32 = 0x881;
 const R_WAIT: u32 = 0x882;
@@ -159,6 +163,7 @@ const R_SAY: u32 = 0x883;
 const R_TO_NPC: u32 = 0x884;
 const R_MUTE: u32 = 0x885;
 const R_IDLE: u32 = 0x886;
+const R_SEATED: u32 = 0x887;
 
 const PLAYER: u32 = 0x14;
 const GOODBYE: u16 = 0x0001;
@@ -166,6 +171,8 @@ const ROOM: Space = Space::Interior(CELL);
 /// Where the greeter stands, and its trigger box: x 300 to 900, y 250 to 950.
 const GREETER: [f32; 3] = [600.0, 900.0, 0.0];
 const CORNER: [f32; 3] = [100.0, 100.0, 0.0];
+/// The stool a seated talker waits on.
+const STOOL_AT: [f32; 3] = [600.0, 1100.0, 0.0];
 
 /// The plugin; `greeting` is the flags of the one GREETING line.
 fn plugin_bytes(greeting: u16) -> Vec<u8> {
@@ -190,6 +197,9 @@ fn plugin_bytes(greeting: u16) -> Vec<u8> {
         talk_pack(P_SAY, "SayALine", 0, None, None, (0, PLAYER, 200), T_SAY, true),
         talk_pack(P_TO_NPC, "TalkToAnActor", 0, None, None, (0, R_GREET, 200), 0, false),
         talk_pack(P_MUTE, "NothingToSay", flags::MUST_COMPLETE, None, None, (0, PLAYER, 200), T_EMPTY, false),
+        // Benny's shape in the Tops' suite: wait at a stool (radius 128), no trigger
+        // location, the player within 256.
+        talk_pack(P_SEATED, "TalkFromTheStool", flags::MUST_COMPLETE, Some((0, R_STOOL, 128)), None, (0, PLAYER, 256), GREETING, false),
         // A Wander package about its editor location, no Fallout behaviour flags set (so all
         // of them allowed).
         record(b"PACK", P_WANDER, &[sub(b"EDID", z("WanderHere")), sub(b"PKDT", [&0u32.to_le_bytes()[..], &[5, 0, 0, 0], &[0; 4]].concat()), sub(b"PLDT", triple((3, 0, 0))), sub(b"PSDT", [&[0xFF, 0xFF, 0, 0xFF][..], &0u32.to_le_bytes()].concat())]),
@@ -204,11 +214,17 @@ fn plugin_bytes(greeting: u16) -> Vec<u8> {
         npc(N_TO_NPC, "Chatter", &[P_TO_NPC]),
         npc(N_MUTE, "Mute", &[P_MUTE]),
         npc(N_IDLE, "Idler", &[P_WANDER]),
+        npc(N_SEATED, "Sitter", &[P_SEATED]),
     ]
     .concat();
     let quest = record(b"QUST", QUEST, &[sub(b"EDID", z("TalkQuest")), sub(b"DATA", [vec![1, 50, 0, 0], 0f32.to_le_bytes().to_vec()].concat())]);
     let dial = [topic(GREETING, "GREETING", Some((I_HELLO, greeting, "Hello there."))), topic(T_SAY, "SayTopic", Some((I_SAY, 0, "Mind the step."))), topic(T_EMPTY, "EmptyTopic", None), topic(T_CHATTER, "IdleChatter", Some((I_CHATTER, 0, "Hot one today.")))].concat();
-    let bases = [record(b"STAT", STAT, &[sub(b"EDID", z("Marker"))]), record(b"ACTI", ACTI, &[sub(b"EDID", z("TalkTrigger"))])];
+    let bases = [
+        record(b"STAT", STAT, &[sub(b"EDID", z("Marker"))]),
+        record(b"ACTI", ACTI, &[sub(b"EDID", z("TalkTrigger"))]),
+        // Sit (bit 30), marker 0.
+        record(b"FURN", STOOL, &[sub(b"EDID", z("Stool")), sub(b"MNAM", 0x4000_0001u32.to_le_bytes().to_vec())]),
+    ];
     let refs = [
         placed(b"REFR", TRIGGER, "TriggerBox", ACTI, [600.0, 600.0, 100.0], Some(box_primitive([300.0, 350.0, 110.0]))),
         placed(b"REFR", MARK_WAIT, "WaitMarker", STAT, [200.0, 1000.0, 0.0], None),
@@ -220,6 +236,8 @@ fn plugin_bytes(greeting: u16) -> Vec<u8> {
         placed(b"ACHR", R_TO_NPC, "ChatterRef", N_TO_NPC, CORNER, None),
         placed(b"ACHR", R_MUTE, "MuteRef", N_MUTE, CORNER, None),
         placed(b"ACHR", R_IDLE, "IdlerRef", N_IDLE, CORNER, None),
+        placed(b"REFR", R_STOOL, "StoolRef", STOOL, STOOL_AT, None),
+        placed(b"ACHR", R_SEATED, "SitterRef", N_SEATED, CORNER, None),
     ]
     .concat();
     let cell = [record(b"CELL", CELL, &[sub(b"EDID", z("Room"))]), group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &refs))].concat();
@@ -229,6 +247,7 @@ fn plugin_bytes(greeting: u16) -> Vec<u8> {
         top(b"GLOB", &globs),
         top(b"STAT", &bases[0]),
         top(b"ACTI", &bases[1]),
+        top(b"FURN", &bases[2]),
         top(b"NPC_", &npcs),
         top(b"PACK", &packs),
         top(b"QUST", &quest),
@@ -625,6 +644,26 @@ fn an_actor_talked_to_turns_to_the_player_and_keeps_facing_the_player() {
     assert_eq!(s.agent(R_GREET).walker.heading, heading);
 }
 
+/// A rooted actor (an Immobile creature such as Mr. House's screen, `Ai::root`) talked
+/// to does not turn: its heading stays as placed for the whole conversation (issue
+/// #1543).
+#[test]
+fn a_rooted_actor_talked_to_does_not_turn() {
+    let f = fixture();
+    let mut s = sim(&f, R_GREET, CORNER);
+    s.run(0.5);
+    s.ai.root(&s.game, FormId(R_GREET));
+    let before = s.agent(R_GREET).walker.heading;
+    let rot = s.game.world.peek(FormId(R_GREET)).map(|r| r.rot);
+    s.game.start_dialogue(FormId(R_GREET), None).unwrap();
+    for _ in 0..20 {
+        s.ai.update_held(&mut s.game, 0.25);
+    }
+    assert_eq!(s.agent(R_GREET).walker.heading, before);
+    assert_eq!(s.game.world.peek(FormId(R_GREET)).map(|r| r.rot), rot);
+    assert_eq!(s.agent(R_GREET).walker.feet, GREETER);
+}
+
 /// A script's Look with `rotateBody` 1 turns the whole body of an actor the AI runs to
 /// its target, at the walker's own turn rate, and keeps it there; StopLook ends it and
 /// the body keeps its heading. Without the flag only the head turns (the engine's): the
@@ -759,6 +798,57 @@ fn far_away_a_dialogue_package_with_a_wait_location_keeps_its_actor_there() {
     assert_eq!(s.talks(), 0);
 }
 
+/// A script's StartConversation from afar (issue #1544, `Game::walk_up_greet`): with the AI
+/// running, the speaker runs to the player and opens the conversation there, not from
+/// where it stood (the Legion explorers about Nelson greeted from 10,000 units off).
+#[test]
+fn start_conversation_from_afar_walks_up_to_the_player_first() {
+    let f = fixture();
+    let mut s = sim(&f, R_IDLE, [1100.0, 1100.0, 0.0]);
+    assert!(s.game.cfg.package_interval.is_some(), "the AI runs packages");
+    assert!(s.game.walk_up_greet(FormId(R_IDLE), None), "the speaker is far: it walks up");
+    assert!(s.game.dialogue.is_none(), "no conversation from afar");
+    s.run(1.0);
+    assert!(s.events().iter().any(|e| matches!(e, AiEvent::WalkUp { .. })), "{:?}", s.events());
+    assert!(s.game.dialogue.is_none());
+    s.run(15.0);
+    let walked = s.events().into_iter().find_map(|e| match e { AiEvent::WalkedUp { away, reached, line } => Some((*away, *reached, *line)), _ => None });
+    assert!(matches!(walked, Some((away, true, Some(_))) if away <= 150.0), "{:?}", s.events());
+    // Its greeting (the fixture's has no choices, so the conversation closes after it).
+    assert!(s.game.walk_up_greets.is_empty());
+}
+
+/// A StartConversation speaker the AI does not walk (not handed to it: its cell has not
+/// loaded) never talks from afar (issue #1544): its greeting waits until it is near the
+/// player, here the player coming up to it.
+#[test]
+fn start_conversation_by_a_speaker_the_ai_does_not_walk_waits_until_near() {
+    let f = fixture();
+    let mut s = sim(&f, R_IDLE, [1100.0, 1100.0, 0.0]);
+    assert!(!s.ai.agents.contains_key(&FormId(R_WAIT)));
+    assert!(s.game.walk_up_greet(FormId(R_WAIT), None), "the speaker is far");
+    s.run(5.0);
+    assert!(s.game.dialogue.is_none(), "no conversation from afar");
+    assert_eq!(s.game.walk_up_pending(FormId(R_WAIT)), Some(None), "its greeting waits");
+    assert!(!s.game.extra.get(&FormId(R_WAIT)).is_some_and(|e| e.talked_to_pc));
+    s.player_to([CORNER[0] + 100.0, CORNER[1], 0.0]);
+    s.run(0.25);
+    assert!(s.game.walk_up_greets.is_empty(), "near: it has talked");
+    assert!(s.game.extra[&FormId(R_WAIT)].talked_to_pc);
+}
+
+/// Near the player, or without the AI, StartConversation opens the conversation at once.
+#[test]
+fn start_conversation_near_the_player_talks_at_once() {
+    let f = fixture();
+    let mut s = sim(&f, R_IDLE, [CORNER[0] + 100.0, CORNER[1], 0.0]);
+    assert!(!s.game.walk_up_greet(FormId(R_IDLE), None), "near: no walk");
+    s.game.cfg.package_interval = None;
+    s.player_to([1100.0, 1100.0, 0.0]);
+    assert!(!s.game.walk_up_greet(FormId(R_IDLE), None), "without the AI: no walk");
+    assert!(s.game.walk_up_greets.is_empty());
+}
+
 /// Idle chatter (fnv-ai social.rs, packages.md §7.7): an actor whose package allows it
 /// says its IdleChatter line next to the player once the area's timer (15 to 60 s by
 /// default) runs out; far from the player it says nothing.
@@ -873,3 +963,35 @@ fn spectators_run_only_from_a_real_fight_and_not_the_players_side() {
     assert!(!ev.iter().any(|e| matches!(e, AiEvent::SpectatorFlee { fighter, .. } if *fighter == FormId::PLAYER_REF)), "the player fights nobody: {ev:?}");
 }
 
+/// A wait location that is furniture: the actor sits on it and stays seated. Without a
+/// trigger location (case 3) it does not go up to the player, but greets the player
+/// from its seat once within the activate distance, and its body does not turn
+/// [observed: Benny on his bar stool in the Tops' presidential suite,
+/// VTopsBennyPresidentialTalk, owner's frame 2026-11-03].
+#[test]
+fn an_actor_waiting_on_furniture_greets_from_its_seat() {
+    let f = fixture();
+    // 800 units from the stool.
+    let mut s = sim(&f, R_SEATED, [600.0, 300.0, 0.0]);
+    s.run(15.0);
+    let a = s.agent(R_SEATED);
+    assert_eq!(a.talk, Some(Talking::Waiting), "{:?}", s.events());
+    assert_eq!(a.using, Some(FormId(R_STOOL)), "{:?}", s.events());
+    assert!(flat(a.walker.feet, STOOL_AT) <= 128.0, "{:?}", a.walker.feet);
+    assert!(!s.events().iter().any(|e| matches!(e, AiEvent::Approach { .. })), "{:?}", s.events());
+    // Still seated a while later, the player as far.
+    s.run(10.0);
+    assert_eq!(s.agent(R_SEATED).using, Some(FormId(R_STOOL)));
+    assert_eq!(s.talks(), 0);
+    let (feet, heading) = (s.agent(R_SEATED).walker.feet, s.agent(R_SEATED).walker.heading);
+    // The player walks up to 200 units: the greeting, from the seat.
+    s.player_to([600.0, 900.0, 0.0]);
+    s.run(2.0);
+    let ev = s.events();
+    assert!(ev.iter().any(|e| matches!(e, AiEvent::Talk { package, line, say_to: false, .. } if package.0 == P_SEATED && line.0 == I_HELLO)), "{ev:?}");
+    assert!(!ev.iter().any(|e| matches!(e, AiEvent::Approach { .. })), "{ev:?}");
+    let a = s.agent(R_SEATED);
+    assert_eq!(a.using, Some(FormId(R_STOOL)));
+    assert_eq!(a.walker.feet, feet);
+    assert_eq!(a.walker.heading, heading);
+}

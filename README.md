@@ -29,7 +29,9 @@ NVForever never writes into the game folder. Its settings, saves and logs live i
   order of the lines is the load order. NVForever keeps its own list, so the original
   game's mod list is not changed.
 
-Mods that need NVSE may not work yet: NVSE plugins (`.dll`) do not run in NVForever.
+Script extenders (xNVSE, JIP LN, JohnnyGuitar and several smaller ones) are built into the
+engine: their script functions run without the plugin `.dll` files, which NVForever never
+loads. A mod that needs a plugin's engine patches, or a function not built yet, may not work.
 
 ## Building from source
 
