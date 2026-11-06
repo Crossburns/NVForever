@@ -55,7 +55,7 @@ const INGESTIBLE_BITS: [Option<u32>; 4] = [None, Some(0), Some(1), Some(0)];
 /// curves; an unknown name gives -1 [observed: plugins1 and plugins2, quad, cubic, quart,
 /// quint, sine, expo, circ, back, elastic and bounce at 0.25 in all three modes;
 /// "linear" -1].
-fn ease(t: f64, name: &str, mode: i64) -> f64 {
+pub(crate) fn ease(t: f64, name: &str, mode: i64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     let f: fn(f64) -> f64 = match name.to_ascii_lowercase().as_str() {
         "quad" => |t| t * t,
