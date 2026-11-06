@@ -14,7 +14,8 @@
 //!   line; the line goes on although its speaker is dead (`Game::update_speech`). The
 //!   nearest living member of its group within [`RESPONSE_RADIUS`] then says
 //!   DeathResponse once the Death line is over [documented: Combat Tab, "If a valid actor
-//!   is nearby"; design: who is valid and how near].
+//!   is nearby"; design: who is valid and how near]. A long generic death file plays
+//!   one cry, and the line ends with it ([`Game::cut_line_after`]; voice.md §9.1).
 //! - **Attack, PowerAttack, FireExplosive** ([`Game::attack_line`], from the engine when
 //!   the player or an NPC begins an attack): at most one per actor per random time between
 //!   `fCombatDialogueAttackMinElapsedTime` and `…MaxElapsedTime` [documented: Combat Tab];
@@ -427,6 +428,22 @@ impl Game<'_> {
             return;
         }
         self.queue_answer(actor, "DeathResponse");
+    }
+
+    /// The engine plays only one cry of `speaker`'s line `info` (a long generic death
+    /// file, `fnv_voice::cry`, issue #1539): the line ends `seconds` from now instead of
+    /// with its file, and an answer due about it (DeathResponse) comes when it ends. A
+    /// line already shorter, or another line, is left as it is.
+    pub fn cut_line_after(&mut self, speaker: FormId, info: FormId, seconds: f64) {
+        let Some(s) = self.speech.iter_mut().find(|s| s.speaker == speaker && s.info == info) else { return };
+        if seconds >= s.remaining {
+            return;
+        }
+        let less = s.remaining - seconds;
+        s.remaining = seconds;
+        for d in self.combat_lines.responses.iter_mut().filter(|d| d.about == speaker) {
+            d.at = (d.at - less).max(self.time + seconds);
+        }
     }
 
     /// The DeathResponse lines that are due (called each frame from `Game::update_speech`).

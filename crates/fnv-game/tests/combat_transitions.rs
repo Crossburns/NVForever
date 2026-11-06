@@ -26,7 +26,7 @@ const RAIDER_REF: u32 = 0x320;
 const WATCHMAN_REF: u32 = 0x321;
 
 /// The topics, with one line each (line id = topic id + 0x100).
-const TOPICS: [(u32, &str, u8); 7] = [
+const TOPICS: [(u32, &str, u8); 8] = [
     (0xA00, "CombatToNormal", topic_type::DETECTION),
     (0xA01, "CombatToLost", topic_type::DETECTION),
     (0xA02, "LostToNormal", topic_type::DETECTION),
@@ -34,6 +34,7 @@ const TOPICS: [(u32, &str, u8); 7] = [
     (0xA04, "AlertToNormal", topic_type::DETECTION),
     (0xA05, "KOed", topic_type::COMBAT),
     (0xA06, "Wake", topic_type::COMBAT),
+    (0xA07, "Death", topic_type::COMBAT),
 ];
 
 fn u32b(v: u32) -> Vec<u8> {
@@ -277,6 +278,32 @@ fn a_knocked_out_actor_says_koed_and_wake_when_it_gets_up() {
     g.time += FATIGUE_DOWN + 1.0;
     assert_eq!(g.tick_knockouts(0.0), vec![watchman]);
     assert_eq!(g.combat_lines.said, vec![("Wake", watchman, Some(line_of(&f, "Wake")))]);
+}
+
+#[test]
+fn a_death_line_cut_after_one_cry_ends_early_and_brings_its_answer_forward() {
+    // #1539: the engine plays one cry of a long generic death file and tells the game the
+    // line ends with it (`Game::cut_line_after`).
+    use fnv_game::combat_lines::Due;
+    let f = fixture();
+    let mut g = game(&f);
+    let (raider, watchman) = (FormId(RAIDER_REF), FormId(WATCHMAN_REF));
+    assert!(g.kill(raider, Some(FormId::PLAYER_REF)));
+    let death = line_of(&f, "Death");
+    let remaining = |g: &Game| g.speech.iter().find(|s| s.speaker == raider).map(|s| (s.info, s.remaining));
+    let (info, before) = remaining(&g).expect("the raider says its Death line");
+    assert_eq!(info, death);
+    let cut = before / 4.0;
+    g.combat_lines.responses.push(Due { at: g.time + before, who: watchman, about: raider, topic: "DeathResponse" });
+    g.combat_lines.responses.push(Due { at: g.time + 3.0, who: raider, about: watchman, topic: "DeathResponse" });
+    // Another line, or a longer length: nothing changes.
+    g.cut_line_after(raider, line_of(&f, "Wake"), cut);
+    g.cut_line_after(raider, death, before + 1.0);
+    assert_eq!(remaining(&g), Some((death, before)));
+    g.cut_line_after(raider, death, cut);
+    assert_eq!(remaining(&g), Some((death, cut)));
+    assert!((g.combat_lines.responses[0].at - (g.time + cut)).abs() < 1e-9, "the answer comes when the cry ends");
+    assert_eq!(g.combat_lines.responses[1].at, g.time + 3.0, "an answer about someone else stays");
 }
 
 #[test]

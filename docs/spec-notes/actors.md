@@ -1654,13 +1654,12 @@ stopped and started, as Victor's walk had before #258). Code:
   - **Not built**: the walk with a weapon drawn outside combat (77–78 here, about the
     `1hm`/`h2h` clip or `fMoveBaseSpeed`, which of the two is open); in combat, walking
     with a weapon drawn was faster (a fiend 105, Cook-Cook 97; not explained).
-  - **The player** (issue #1364) [hypothesis: the people's rule; not measured on the
-    player]: the player's walk and run (86.8 and 344) are multiplied by its current Speed
-    Mult over 100 (SetAV's base, ModAV's and effects' modifiers and damage, as
-    GetActorValue reads it; 0 at the least) and by its body armour's share (1, 0.925,
-    0.85 as above), on top of the crippled legs, the two-handed run, the Modify Run Speed
-    perks and the reload (`Game::move_speed_mult`, nvf-play `StatSpeed`, asked every
-    frame; smoke `player-speedmult`).
+  - **The player** (issues #1364, #1742): the player's walk and run (86.8 and 344) are
+    multiplied by its Speed Mult over 100 (SetAV's base, ModAV's and effects' modifiers
+    and damage, as GetActorValue reads it; 0 at the least) and by its body armour's
+    share (1, 0.925, 0.85 as above), on top of the crippled legs, the two-handed run, the
+    Modify Run Speed perks and the reload; but that product is the one last taken, not
+    the one now (below).
     Measured 2026-11-06 (capture o25_speed, `nvfairport`, the player running about 1,200
     units along the runway by the observer's walk, holstered, one game load for all six
     in this order) [observed]: at `setav speedmult` 100 the run was 339.7 units/s (median
@@ -1672,9 +1671,21 @@ stopped and started, as Victor's walk had before #258). Code:
     150 gives 1.5 times the run; but SetAV alone left the speed as it was until something
     else changed in the same session (the armour put on or taken off). Whether the speed
     is taken again only when the equipment changes, or whether ModAV applies at once and
-    SetAV never does, is open [hypothesis: the former, as the runs with an equipment
-    change all came out at the GetAV value]; a ModAV with no equipment change would tell.
-    The run clip's rate at 150 was not looked at (no frames).
+    SetAV never does, is open; a ModAV with no equipment change would tell. The run
+    clip's rate at 150 was not looked at (no frames).
+    Rule built (issue #1742) [hypothesis, the simplest one that fits every run above]:
+    the factor (Speed Mult over 100 times the armour's share) is kept and taken again
+    only when the player's equipment changes, which is an item equipped or unequipped
+    (OnEquip / OnUnequip sent: EquipItem, UnequipItem, the Pip-Boy, the inventory) or the
+    set of items it wears differing from the last time it was taken, and after a game
+    load or a new game (the cache is not saved). Any item counts, not only body armour
+    (only body armour was seen); an aid item used up does not. SetAV, ModAV, ForceAV,
+    DamageAV and effects (chems, abilities) all wait for it, as SetAV did; the
+    alternative (ModAV at once, SetAV never) would be told apart by the capture above.
+    SetScale's share is not cached (it counts at once). `Game::player_move_speed_mult`
+    (the cache: `Game::player_speed`, `Game::player_equips`), nvf-play `StatSpeed`
+    (asked every frame; smoke `player-speedmult`). People (`creature_pace`, the base
+    value) are unchanged: nothing measured on them waited.
 - **Alert stance** [observed: the owner, 2026-10-16: "the cazadors scurry along the
   ground when not alert and fly when they are alert/in combat"]: the cazador's folder
   has `h2hforward.kf` (298.15 units/s), `h2hfastforward.kf` (545.54) and `h2hidle.kf`

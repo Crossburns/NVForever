@@ -36,6 +36,10 @@
 //!   past it [documented: `&no_click_past;`]. The wheel stays the hand-built menu's. On the
 //!   frame it is first built, when the hand-built buttons of the frame before still stand, it
 //!   takes nothing, so a press acts once, on what was on screen [design].
+//! - **The Pip-Boy's S.P.E.C.I.A.L. page** (`super::stats_menu`): takes the pointer on its own
+//!   canvas (`crate::pipboy::PipBoyScreen::pointer`), so its input is its own system,
+//!   `super::stats_menu::feed`, on a frame no other menu takes input; this one then leaves
+//!   the frame's one step to it.
 //! - **The container menu** (T15c, `super::container_menu`): a row the pointer comes onto is
 //!   selected, unless the wheel holds the selection; a click on a row, a heading or its arrow,
 //!   Take All and Exit send the hand-built menu's commands (`crate::menu::MenuInput`), to
@@ -163,8 +167,8 @@ pub fn to_units(at: Vec2, window_height: f32) -> (f64, f64) {
 
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct Devices<'w, 's> {
-    keys: Res<'w, ButtonInput<KeyCode>>,
-    mouse: Res<'w, ButtonInput<MouseButton>>,
+    pub(super) keys: Res<'w, ButtonInput<KeyCode>>,
+    pub(super) mouse: Res<'w, ButtonInput<MouseButton>>,
     pads: Query<'w, 's, &'static Gamepad>,
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
 }
@@ -549,6 +553,66 @@ fn stood_in(button: GamepadButton, at: crate::pad::MenuAt, just_pressed: &dyn Fn
     crate::pad::menu_key_at(button, at).is_some_and(just_pressed)
 }
 
+/// The frame's keys into `input`: the keyboard's, a script's MenuTapKey and the controller's.
+/// Returns the keys from the keyboard and the controller buttons that stood in for a key this
+/// frame in the menu `pad_menu` (`crate::pad::menu_key`): what the hand-built handlers saw too.
+pub(super) fn frame_keys(input: &mut Input, devices: &Devices, game: &mut fnv_game::Game<'_>, pad_menu: crate::pad::MenuAt) -> Vec<&'static str> {
+    let mut physical: Vec<&'static str> = Vec::new();
+    for k in devices.keys.get_just_pressed() {
+        if let Some(n) = key_name(*k) {
+            push(input, n);
+            physical.push(n.1);
+        }
+    }
+    for code in std::mem::take(&mut game.ui_taps) {
+        if let Some(n) = u8::try_from(code).ok().and_then(crate::bindings::dik_key).and_then(key_name) {
+            push(input, n);
+        }
+    }
+    for (button, name) in PAD {
+        if devices.pads.iter().any(|g| g.just_pressed(button)) {
+            push(input, (false, name));
+            if stood_in(button, pad_menu, &|k| devices.keys.just_pressed(k)) {
+                physical.push(name);
+            }
+        }
+    }
+    physical
+}
+
+/// A step's log lines: what the pointer is over, each click, each key that named nothing.
+pub(super) fn log_report(ui: &fnv_ui::Ui, report: &fnv_ui::input::Report) {
+    if let Some((_, to)) = report.over {
+        match to.filter(|&t| ui.is_live(t)) {
+            Some(t) => {
+                let id = ui.tile(t).get("id").map_or_else(|| "no id".to_string(), |v| format!("id {}", v.text()));
+                let over = ui.tile(t).get(fnv_ui::input::MOUSEOVER).map_or(0.0, fnv_ui::Value::num);
+                info!("tiles: pointer over {} ({id}), mouseover {over}", ui.path_of(t));
+            }
+            None => info!("tiles: pointer over nothing"),
+        }
+    }
+    for c in &report.clicks {
+        if ui.is_live(c.tile) {
+            let clicked = ui.tile(c.tile).get(fnv_ui::input::CLICKED).map_or(0.0, fnv_ui::Value::num);
+            info!("tiles: {}, clicked {clicked}", fnv_game::ui_input::click_line(ui, c));
+        }
+    }
+    for line in &report.unfollowed {
+        info!("tiles: key not followed: {line}");
+    }
+}
+
+/// What else says who takes the frame's input: the pause menu and its page, and the Pip-Boy's
+/// page drawn from tiles (`super::stats_menu`).
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct Others<'w> {
+    paused: Option<Res<'w, crate::pause::Paused>>,
+    page: Option<Res<'w, crate::pause::Page>>,
+    stats: Option<ResMut<'w, super::stats_menu::StatsTiles>>,
+    pip: Option<Res<'w, crate::pipboy::PipBoy>>,
+}
+
 pub(crate) fn feed(
     mut script: ResMut<ScriptState>,
     menus: Res<super::vanilla::TileMenus>,
@@ -556,8 +620,9 @@ pub(crate) fn feed(
     time: crate::pause::AidTime,
     devices: Devices,
     mut inputs: MenuInputs,
-    (paused, page): (Option<Res<crate::pause::Paused>>, Option<Res<crate::pause::Page>>),
+    others: Others,
 ) {
+    let Others { paused, page, mut stats, pip } = others;
     let Some(rt) = script.rt.as_mut() else { return };
     if rt.game.ui_files.is_none() {
         return;
@@ -624,7 +689,16 @@ pub(crate) fn feed(
     if !wait_tiled {
         inputs.wait_check.drawn = None;
     }
+    let others = !taking.is_empty();
+    if let Some(s) = stats.as_mut().filter(|s| s.others != others) {
+        s.others = others;
+    }
     if taking.is_empty() {
+        // The Pip-Boy's page has the frame's step (`super::stats_menu::feed`).
+        let is_paused = paused.as_ref().is_some_and(|p| p.0);
+        if stats.as_deref().zip(pip.as_deref()).is_some_and(|(s, p)| super::stats_menu::takes(s, *menus, p, &rt.game, is_paused).is_some()) {
+            return;
+        }
         // A highlight left from the last menu that took input goes (mouseover back to 0),
         // and the scripts' clicks end and fire their events; otherwise nothing to do
         // [design: `fnv_game::ui_input::idle`].
@@ -650,32 +724,11 @@ pub(crate) fn feed(
         shift: devices.keys.pressed(KeyCode::ShiftLeft) || devices.keys.pressed(KeyCode::ShiftRight),
         ..Input::default()
     };
-    // The keys from the keyboard, and the controller buttons that stood in for a key this
-    // frame (`crate::pad::menu_key`): what the hand-built handlers saw too.
-    let mut physical: Vec<&'static str> = Vec::new();
     // The tutorial menu's triggers stand for its own keys (`crate::pad::menu_buttons`), which
     // a press of them would otherwise turn a page with twice: here and through the file.
     // The container menu's X stands for its R (the same table).
     let pad_menu = crate::pad::MenuAt { code: tutorial.map(|_| fnv_game::game::menus::TUTORIAL).or(inputs.container.menu.map(|_| crate::script::MENU_CONTAINER)).or(inputs.traits.as_ref().and_then(|t| t.takes()).map(|_| fnv_game::game::menus::TRAITS)), tab: 0 };
-    for k in devices.keys.get_just_pressed() {
-        if let Some(n) = key_name(*k) {
-            push(&mut input, n);
-            physical.push(n.1);
-        }
-    }
-    for code in std::mem::take(&mut rt.game.ui_taps) {
-        if let Some(n) = u8::try_from(code).ok().and_then(crate::bindings::dik_key).and_then(key_name) {
-            push(&mut input, n);
-        }
-    }
-    for (button, name) in PAD {
-        if devices.pads.iter().any(|g| g.just_pressed(button)) {
-            push(&mut input, (false, name));
-            if stood_in(button, pad_menu, &|k| devices.keys.just_pressed(k)) {
-                physical.push(name);
-            }
-        }
-    }
+    let physical = frame_keys(&mut input, &devices, &mut rt.game, pad_menu);
     // The dialogue menu's pointer decides on what was drawn (`super::dialog_menu`).
     if let (Some(_), [_], Some(d)) = (dialog_menu, taking.as_slice(), inputs.dialog.as_ref()) {
         input.resolved = Some(d.hits().to_vec());
@@ -693,25 +746,7 @@ pub(crate) fn feed(
             shared.scroll(steps);
         }
     }
-    if let Some((_, to)) = report.over {
-        match to.filter(|&t| ui.is_live(t)) {
-            Some(t) => {
-                let id = ui.tile(t).get("id").map_or_else(|| "no id".to_string(), |v| format!("id {}", v.text()));
-                let over = ui.tile(t).get(fnv_ui::input::MOUSEOVER).map_or(0.0, fnv_ui::Value::num);
-                info!("tiles: pointer over {} ({id}), mouseover {over}", ui.path_of(t));
-            }
-            None => info!("tiles: pointer over nothing"),
-        }
-    }
-    for c in &report.clicks {
-        if ui.is_live(c.tile) {
-            let clicked = ui.tile(c.tile).get(fnv_ui::input::CLICKED).map_or(0.0, fnv_ui::Value::num);
-            info!("tiles: {}, clicked {clicked}", fnv_game::ui_input::click_line(ui, c));
-        }
-    }
-    for line in &report.unfollowed {
-        info!("tiles: key not followed: {line}");
-    }
+    log_report(ui, &report);
     // T15b: the slider's value is the model's again on every frame the menu is tiled, over
     // the file's own count of the clicks and their pulses' ends (`super::wait_menu`), after
     // this frame's step and before the tree is worked out after scripts: the hours a command

@@ -49,7 +49,9 @@
 
 use super::menus::{self, SizesWritten, Tiled};
 use crate::dialogue::{DialogueScreen, ListId, ViewInput};
-use crate::dialogue_menu::{hint_shown, GoodbyeHint, MenuView, GOODBYE_HINT};
+use crate::dialogue_menu::{goodbye_hint, hint_shown, GoodbyeHint, MenuView};
+#[cfg(test)]
+use crate::dialogue_menu::GOODBYE_HINT;
 use bevy::prelude::*;
 use fnv_ui::input::{By, HitCandidate, Report};
 use fnv_ui::{MemSource, Origin, TileId, Ui, Value};
@@ -563,7 +565,11 @@ pub fn publish(ui: &mut Ui, view: &MenuView, list: &ListId, written: &mut Writte
     if before.is_none() {
         set_at(ui, BAND, "alpha", Value::Num(BAND_ALPHA));
         set_at(ui, LIST, "_scroll_delta", Value::Num(SCROLL_DELTA));
-        set_at(ui, HINT_TEXT, "string", Value::Str(GOODBYE_HINT.to_string()));
+    }
+    // The hint's words follow the device (a controller's B, #1662).
+    let words = goodbye_hint();
+    if ui.get_string(&format!("{HINT_TEXT}/string")).as_deref() != Some(words.as_str()) {
+        set_at(ui, HINT_TEXT, "string", Value::Str(words));
     }
     hold_crop(ui, written);
     let mut made = rows(ui);
