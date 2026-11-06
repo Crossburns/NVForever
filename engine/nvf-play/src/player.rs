@@ -774,7 +774,7 @@ fn mouse_look(
         o.moved = true;
         return;
     }
-    if control.orbit.free {
+    if control.orbit.free && control.talk_camera == 0.0 {
         // The detached camera (`crate::control::detach_camera`): the camera turns, the
         // player does not.
         let (yaw, pitch) = look_with(control.orbit.yaw, player.pitch, delta, s, inv);

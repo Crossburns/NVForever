@@ -673,6 +673,10 @@ struct Args {
     /// Accepted for older command lines; not coming back is the default now.
     #[arg(long, hide = true)]
     no_dialogue_recentre: bool,
+    /// With --play: in a conversation, do not narrow the view onto the speaker nor blur
+    /// what is behind them (docs/design/dialogue-play.md §8.8).
+    #[arg(long)]
+    no_dialogue_zoom: bool,
 }
 
 impl Args {
@@ -1405,6 +1409,7 @@ fn main() -> AppExit {
     app.insert_resource(nvf_play::music::MusicSettings { play: !args.no_music, volume: args.music_volume });
     app.insert_resource(if args.menu_pause == "original" { nvf_play::pause::MenuPause::Original } else { nvf_play::pause::MenuPause::Living });
     app.insert_resource(nvf_play::dialogue_look::LookSettings { enabled: !args.no_dialogue_look, recentre_on_choices: args.dialogue_recentre && !args.no_dialogue_recentre });
+    app.insert_resource(nvf_play::dialogue_zoom::ZoomSettings { enabled: !args.no_dialogue_zoom });
     if let Some(p) = pending {
         app.insert_resource(p);
     }

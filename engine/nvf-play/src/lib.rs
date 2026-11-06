@@ -33,6 +33,7 @@ pub mod cursor;
 pub mod crime;
 pub mod dialogue;
 pub mod dialogue_look;
+pub mod dialogue_zoom;
 pub mod dialogue_menu;
 pub mod difficulty;
 pub mod hardcore;

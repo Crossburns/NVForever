@@ -21,9 +21,11 @@
 //!   free look the rest of the time"]. With [`LookSettings::recentre_on_choices`] on
 //!   (`nvforever --dialogue-recentre`) the view eases back onto the face over
 //!   [`RECENTRE_SECONDS`] each time the choices appear.
-//! - **No roll, no zoom.** Only the view's heading and pitch change (`Player::heading`,
-//!   `Player::pitch`); the camera's field of view and place are left alone. A dialogue
-//!   camera is not built (dialogue-play.md §8.5).
+//! - **No roll.** Only the view's heading and pitch change here (`Player::heading`,
+//!   `Player::pitch`). The zoom is `crate::dialogue_zoom`'s (the field of view and, from
+//!   third person, the camera's place, dialogue-play.md §8.8); with it the turn aims a
+//!   little under the face ([`crate::dialogue_zoom::face_drop`]), so the face sits above
+//!   the view's centre; and only where a turn aims: after it the view is the player's.
 //! - **Pausing** (docs/design/dialogue.md §8). The eases run on the virtual clock, so the
 //!   Esc pause menu holds them. With `--menu-pause original` the picture stands still
 //!   for the whole conversation (the virtual clock is paused), so an ease is completed at
@@ -35,6 +37,7 @@
 //! and to which angles), an ease dropped because the view was moved, the re-centring on
 //! choices, and the end of the conversation.
 
+use crate::dialogue_zoom::{DialogueZoom, ZoomSettings};
 use crate::pause::{MenuPause, Paused};
 use crate::phys::PhysState;
 use crate::player::{Player, MAX_PITCH};
@@ -231,9 +234,15 @@ impl Plugin for DialogueLookPlugin {
         app.init_resource::<LookSettings>()
             .init_resource::<SpeakerFace>()
             .init_resource::<ViewLook>()
+            .init_resource::<ZoomSettings>()
+            .init_resource::<DialogueZoom>()
             // After the frame's input (the mouse, the test aids), before the player's body
             // poses itself and the camera is placed.
-            .add_systems(Update, face_speaker.in_set(PlaySet::Physics).before(crate::player::BodySet));
+            .add_systems(Update, (crate::dialogue_zoom::track, face_speaker).chain().in_set(PlaySet::Physics).before(crate::player::BodySet))
+            .add_systems(Update, crate::dialogue_zoom::apply.in_set(PlaySet::Sync).after(crate::aim_zoom::zoom));
+        if !app.world().resource::<ZoomSettings>().enabled {
+            info!("dialogue zoom is off (--no-dialogue-zoom)");
+        }
         let s = app.world().resource::<LookSettings>();
         if !s.enabled {
             info!("dialogue look is off (--no-dialogue-look)");
@@ -265,6 +274,18 @@ impl Plugin for DialogueLookPlugin {
                 slider: None,
             },
         );
+        add_setting(
+            app,
+            Setting {
+                key: "dialogue-zoom",
+                group: crate::pause::GROUP_MENUS,
+                label: "Close in on the speaker in dialogue",
+                note: "On: in a conversation the view narrows onto the speaker, with what is behind them out of focus; from third person the camera comes to the eyes. Off: the view stays as it is. (--no-dialogue-zoom)",
+                get: |w| w.resource::<ZoomSettings>().enabled,
+                set: |w, on| w.resource_mut::<ZoomSettings>().enabled = on,
+                slider: None,
+            },
+        );
     }
 }
 
@@ -285,6 +306,7 @@ fn face_speaker(
     sim: Res<SimState>,
     mut view: ResMut<ViewLook>,
     player: Option<ResMut<Player>>,
+    zoom: Res<DialogueZoom>,
 ) {
     let game = script.as_ref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
     let Some((game, conv)) = game.and_then(|g| g.dialogue.as_ref().map(|c| (g, c))) else {
@@ -322,7 +344,9 @@ fn face_speaker(
         return;
     };
     let now = (player.heading, player.pitch);
+    // With a zoom the face sits above the view's centre (`crate::dialogue_zoom`).
     let target = aim(player.eye(), point);
+    let target = (target.0, target.1 - zoom.face_drop());
     if !talk.opened {
         talk.opened = true;
         talk.ease = Some(Ease::new(now, OPEN_SECONDS));
