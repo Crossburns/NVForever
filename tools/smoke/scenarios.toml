@@ -8422,7 +8422,7 @@ name = "crippled-torso-arms"
 source = "crippled limbs (docs/spec-notes/crippled-limbs.md §3): with the torso crippled any hit staggers (after the cooldown) [observed: HelpCrippling, 'Higher chance to be staggered'], the player flinches the same way, and an NPC whose arm a hit cripples drops its weapon [observed: HelpCrippling, 'Enemies will be disarmed']"
 note = "the console cripples the player's and Chet's torso; the hit aid hits Chet on the torso (staggers him: torso crippled), then his right arm on a part of 1 % of his health (he drops his revolver); Chet is set on the player, whose hits on the player make it flinch"
 areas = ["combat"]
-paths = ["engine/nvf-play/src/combat.rs", "engine/nvforever/src/deaths.rs", "crates/fnv-combat/src/damage.rs", "engine/nvf-play/src/knockouts.rs"]
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvforever/src/deaths.rs", "crates/fnv-combat/src/damage.rs", "engine/nvf-play/src/knockouts.rs", "engine/nvforever/src/weapons.rs", "engine/nvforever/src/outfits.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "10:player.DamageAV EnduranceCondition 1000;10.2:GSChetRef.DamageAV EnduranceCondition 1000;10.5:close", NVF_PLAY_TEST_SCRIPT = "12:combat:GSChetRef:player", NVF_PLAY_TEST_HIT = "14:GSChetRef:1,22:GSChetRef:2:limb=RightAttackCondition" }
 args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 28
@@ -8432,6 +8432,7 @@ expect = [
   { re = 'combat: the player flinches for 0\.6 s \(torso crippled\)', label = "the player flinches from Chet's hits" },
   "player: held where they stand while they flinch",
   { re = "combat: 0x00104C79's arm crippled: it drops its", label = "Chet drops his weapon when an arm is crippled" },
+  { re = 'outfit: actor 00104C79: (no weapon held: its fists|weapon \S+.* now held)', label = "... and takes up his fists or another weapon, not the bind pose (#1714)" },
 ]
 
 [[scenario]]
