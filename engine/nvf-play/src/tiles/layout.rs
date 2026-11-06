@@ -6,12 +6,22 @@ use fnv_ui::{Tile, TileId, Ui, Value};
 /// The private trait of a tile that takes no `alpha` from the tiles above it. `tutorial_menu.xml`
 /// nests all its content under its background picture [documented: the file]; under that
 /// picture at alpha 193.8 the text and lines read full strength (255, 182, 66) at 1280 x 720
-/// [observed: shot 091 of hud_menus]. Whether pictures pass alpha on elsewhere is not known
-/// (observer check 83) [hypothesis]. It drops every alpha from above, an ancestor's fade too.
-/// [design] An engine-written mark, in no game file, written by a menu's model so nothing else
-/// changes: an ordinary trait to the tree, so generic trait dumps list it and a file naming
-/// it would be read too.
+/// [observed: shot 091 of hud_menus]. [observed] In the original's container menu the
+/// `StrengthReqInfo` card reads `alpha` 0 and its top line and side line still show at full
+/// strength (launchtest shot, 1280 x 720; barter-menu.md §8), the scrollbar image reads `alpha` 0
+/// with its arrows shown, and the text buttons, an image and a rect at `alpha` 0, show their
+/// words. Whether pictures pass alpha on elsewhere, or this holds outside these two menus, is
+/// not known (observer check 83; barter-menu.md §8) [hypothesis]. It drops every alpha from
+/// above, an ancestor's fade too. [design] An engine-written mark, in no game file, written by
+/// a menu's model so nothing else changes: an ordinary trait to the tree, so generic trait dumps
+/// list it and a file naming it would be read too.
 pub const OWN_ALPHA: &str = "_NVFOwnAlpha";
+
+/// The private trait of a hotrect that draws its own box filled at its `alpha` and
+/// `brightness` (the list highlight's faint fill, [documented: `list_box.xml`'s `_fill_alpha`
+/// 40 through `box.xml`]; hotrects draw nothing otherwise). [design] Written by a menu's
+/// model, so the other T15 menus' hotrects stay as they are.
+pub const HOTRECT_FILL: &str = "_NVFHotrectFill";
 
 /// [design] Rectangle in the tree's screen units, without viewport scaling.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -272,7 +282,8 @@ pub fn layout(ui: &Ui, root: TileId, measure: &Measure<'_>, t15: bool) -> Vec<Dr
         }
         let kind = kind(tile);
         let context = place(tile, &kind, parent, measure);
-        if !matches!(kind, Kind::Menu | Kind::Hotrect) {
+        let fill = matches!(kind, Kind::Hotrect) && tile.get(HOTRECT_FILL).is_some_and(Value::truthy);
+        if fill || !matches!(kind, Kind::Menu | Kind::Hotrect) {
             out.push(DrawItem {
                 tile: id,
                 kind,
@@ -436,6 +447,33 @@ mod tests {
         // From a subtree too: what stands above it counts the same.
         let from_tab = layout(&ui, tab, &|_, _, _| (0.0, 0.0), true);
         assert_eq!(from_tab.iter().find(|i| i.tile == inner).map(|i| (i.rect.left, i.rect.top)), Some((112.0, 76.0)));
+    }
+
+    #[test]
+    fn scrollbar_children_are_visible() {
+        // [design] A scrollbar as an image at alpha 0 over its pieces, the marker's alpha copied.
+        let xml = r#"<menu name="M"><hotrect name="L"><alpha>0</alpha>
+            <image name="lb_scrollbar"><alpha>0</alpha><_marker_alpha>255</_marker_alpha>
+              <image name="scrollbar_vert_marker"><filename>m.dds</filename><alpha><copy src="parent()" trait="_marker_alpha"/></alpha></image>
+            </image></hotrect></menu>"#;
+        let (mut ui, root) = tree(xml);
+        let marker = ui.find_tile("M/L/lb_scrollbar/scrollbar_vert_marker").unwrap();
+        let alpha = |ui: &Ui| layout(ui, root, &unmeasured, true).into_iter().find(|i| i.tile == marker).unwrap().alpha;
+        assert_eq!(alpha(&ui), 0.0, "unmarked, the image's alpha hides it");
+        ui.set_trait(marker, OWN_ALPHA, Value::Num(1.0));
+        assert_eq!(alpha(&ui), 255.0, "on the 0-255 scale, what `draw::pieces` divides by 255");
+    }
+
+    #[test]
+    fn a_hotrect_draws_its_fill_only_when_marked() {
+        let (mut ui, root) = tree(r#"<menu name="M"><hotrect name="H"><alpha>40</alpha><width>9</width><height>9</height><image name="I"/></hotrect></menu>"#);
+        let h = ui.find_tile("M/H").unwrap();
+        assert!(layout(&ui, root, &unmeasured, true).iter().all(|i| i.tile != h), "a hotrect draws nothing");
+        ui.set_trait(h, HOTRECT_FILL, Value::Num(1.0));
+        ui.set_trait(h, OWN_ALPHA, Value::Num(1.0));
+        let items = layout(&ui, root, &unmeasured, true);
+        let item = items.iter().find(|i| i.tile == h).unwrap();
+        assert_eq!((item.alpha, &item.kind), (40.0, &Kind::Hotrect));
     }
 
     #[test]

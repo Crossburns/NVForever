@@ -725,6 +725,149 @@ fn a_leveled_entrys_coed_gives_items_at_its_condition() {
     assert_eq!(inv.groups().find(|g| g.0 == id(STIMPAK)).unwrap().1.condition, None);
 }
 
+/// `World::set_player_level`: what AddItem, PlaceAtMe and a reference with no fixed level
+/// roll at from then on. A snapshot keeps the configured level, not this one: the game sets
+/// it again. LL_LOOT: level 1 stimpaks, level 5 caps.
+#[test]
+fn the_players_level_moves_the_rolls_until_a_restore() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    let p = FormId::PLAYER_REF;
+    assert_eq!(w.add_item(p, id(LL_LOOT), 1).unwrap(), vec![(id(STIMPAK), 2)]);
+    w.set_player_level(5);
+    assert_eq!((w.roll_level(), w.config().player_level), (5, 1));
+    assert_eq!(w.add_item(p, id(LL_LOOT), 1).unwrap(), vec![(id(CAPS), 10)]);
+    // SAFE holds 3 caps and LL_LOOT: created and placed alike, the list gives the caps.
+    let made = w.place(id(SAFE), None, [0.0; 3], [0.0; 3], 1).unwrap();
+    for safe in [made, id(SAFE_REF)] {
+        assert_eq!(w.item_count(safe, id(CAPS)).unwrap(), 13);
+        assert_eq!(w.item_count(safe, id(STIMPAK)).unwrap(), 0);
+    }
+    let snap: fnv_sim::Snapshot = serde_json::from_str(&serde_json::to_string(&w.snapshot()).unwrap()).unwrap();
+    let mut back = World::restore(&f.forms, &f.refs, &snap).unwrap();
+    assert_eq!(back.roll_level(), 1);
+    assert_eq!(back.add_item(p, id(LL_LOOT), 1).unwrap(), vec![(id(STIMPAK), 2)]);
+    // Never below 1.
+    back.set_player_level(0);
+    assert_eq!(back.roll_level(), 1);
+}
+
+const ROOM: u32 = 0x410; // no zone
+const ZONED_ROOM: u32 = 0x411; // in LOCK_ZONE
+const LOCK_ZONE: u32 = 0x420; // ECZN, minimum level 11
+const LEVELED_DOOR: u32 = 0x400; // lock 25, leveled, in ROOM
+const ZONED_DOOR: u32 = 0x401; // lock 25, leveled, in ZONED_ROOM
+const ZONED_CHEST: u32 = 0x402; // SAFE (LL_LOOT, Respawns), merchant stock, in ZONED_ROOM
+const SHOPKEEPER_REF: u32 = 0x403; // XMRC -> ZONED_CHEST
+const LEVELED_CHEST: u32 = 0x404; // SAFE, lock 25, leveled, in ROOM
+
+/// Leveled locks and a merchant chest, with and without an encounter zone.
+fn levels_fixture() -> Fixture {
+    let xloc_leveled = || sub(b"XLOC", cat(&[&[25, 0, 0, 0], &0u32.to_le_bytes(), &[4, 0, 0, 0]]));
+    let cell = |fid: u32, edid: &str, zone: Option<u32>, refs: &[u8]| {
+        let mut subs = vec![sub(b"EDID", z(edid)), sub(b"DATA", vec![1])];
+        subs.extend(zone.map(|z| sub(b"XEZN", z.to_le_bytes().to_vec())));
+        cat(&[&record(b"CELL", 0, fid, &subs), &group(fid.to_le_bytes(), 6, &group(fid.to_le_bytes(), 9, refs))])
+    };
+    let zoned = cat(&[
+        &refr(ZONED_DOOR, 0, DOOR, [0.0; 3], vec![xloc_leveled()]),
+        &refr(ZONED_CHEST, 0, SAFE, [0.0; 3], vec![]),
+        &refr(SHOPKEEPER_REF, 0, CHAIR, [0.0; 3], vec![sub(b"XMRC", ZONED_CHEST.to_le_bytes().to_vec())]),
+    ]);
+    let plain = cat(&[&refr(LEVELED_DOOR, 0, DOOR, [0.0; 3], vec![xloc_leveled()]), &refr(LEVELED_CHEST, 0, SAFE, [0.0; 3], vec![xloc_leveled()])]);
+    let cells = cat(&[&cell(ROOM, "Room", None, &plain), &cell(ZONED_ROOM, "ZonedRoom", Some(LOCK_ZONE), &zoned)]);
+    let glob = cat(&[
+        &glob_rec(0x35, "GameYear", b's', 2281.0),
+        &glob_rec(0x36, "GameMonth", b's', 9.0),
+        &glob_rec(0x37, "GameDay", b's', 31.0),
+        &glob_rec(0x38, "GameHour", b's', 12.0),
+        &glob_rec(0x39, "GameDaysPassed", b'f', 5.0),
+        &glob_rec(0x3A, "TimeScale", b's', 30.0),
+    ]);
+    let misc = cat(&[
+        &record(b"MISC", 0, STIMPAK, &[sub(b"EDID", z("TestStim")), sub(b"DATA", value_weight(25, 0.5))]),
+        &record(b"MISC", 0, CAPS, &[sub(b"EDID", z("TestCaps")), sub(b"DATA", value_weight(1, 0.0))]),
+    ]);
+    let bytes = cat(&[
+        &tes4(),
+        &top(b"GLOB", &glob),
+        &top(b"MISC", &misc),
+        &top(b"FURN", &record(b"FURN", 0, CHAIR, &[sub(b"EDID", z("TestChair"))])),
+        &top(b"LVLI", &record(b"LVLI", 0, LL_LOOT, &[sub(b"EDID", z("TestLoot")), sub(b"LVLD", vec![0]), sub(b"LVLF", vec![0]), lvlo(1, STIMPAK, 2), lvlo(5, CAPS, 10)])),
+        &top(b"CONT", &record(b"CONT", 0, SAFE, &[sub(b"EDID", z("TestSafe")), cnto(LL_LOOT, 1), sub(b"DATA", cat(&[&[2u8], &10f32.to_le_bytes()]))])),
+        &top(b"DOOR", &record(b"DOOR", 0, DOOR, &[sub(b"EDID", z("TestDoor")), sub(b"FNAM", vec![0])])),
+        &top(b"ECZN", &record(b"ECZN", 0, LOCK_ZONE, &[sub(b"EDID", z("LockZone")), sub(b"DATA", cat(&[&0u32.to_le_bytes(), &[0, 11, 0, 0]]))])),
+        &top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cells))),
+    ]);
+    let plugins = vec![Plugin::parse(&bytes, "Levels.esm".into()).unwrap()];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    let s = schema();
+    Fixture { forms: FormStore::build(&lo, &s), refs: RefTable::build(&lo, &s) }
+}
+
+/// A door gets no fixed level, so its lock keeps its authored level whatever the player's
+/// level, with or without a zone, before and after its state is made.
+#[test]
+fn a_door_keeps_its_authored_lock_level_when_the_players_level_changes() {
+    let f = levels_fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    for door in [id(LEVELED_DOOR), id(ZONED_DOOR)] {
+        w.set_player_level(1);
+        assert_eq!(w.lock_of(door).unwrap().level, 25);
+        w.set_player_level(21);
+        assert_eq!(w.lock_of(door).unwrap().level, 25);
+    }
+    assert_eq!(w.enter_zone(id(LOCK_ZONE), 21), Some(21));
+    w.set_player_level(41);
+    for door in [id(LEVELED_DOOR), id(ZONED_DOOR)] {
+        assert_eq!(w.lock_of(door).unwrap().level, 25);
+        w.get(door).unwrap();
+        assert_eq!(w.lock_of(door).unwrap().level, 25);
+    }
+    // The configured level still counts, as a test or the runner sets it.
+    let mut w = World::new(&f.forms, &f.refs, SimConfig { player_level: 11, ..SimConfig::default() });
+    assert_eq!(w.lock_of(id(LEVELED_DOOR)).unwrap().level, 50);
+    w.get(id(LEVELED_DOOR)).unwrap();
+    assert_eq!(w.lock_of(id(LEVELED_DOOR)).unwrap().level, 50);
+}
+
+/// A container's leveled lock hardens from the level fixed at its cell's load, and only
+/// from that: the player's level alone moves nothing, and a state made before the load
+/// keeps the authored level.
+#[test]
+fn a_containers_lock_hardens_from_its_fixed_level_only() {
+    let f = levels_fixture();
+    let chest = id(LEVELED_CHEST);
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_player_level(21);
+    assert_eq!(w.lock_of(chest).unwrap().level, 25);
+    assert!(w.fix_level(chest, 21).is_some());
+    assert_eq!(w.lock_of(chest).unwrap().level, 75);
+    w.get(chest).unwrap();
+    w.set_player_level(41);
+    assert_eq!(w.lock_of(chest).unwrap().level, 75);
+    // Read before its cell loads.
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_player_level(21);
+    w.get(chest).unwrap();
+    assert!(w.fix_level(chest, 21).is_some());
+    assert_eq!(w.lock_of(chest).unwrap().level, 25);
+}
+
+/// A chest in a zone, read before its cell loads, rolls at the zone's level, not a level-1
+/// player's: the list's caps (level 5), not its stimpaks. A restock reads the same level.
+#[test]
+fn a_chest_in_a_zone_rolls_at_the_zones_level_before_its_cell_loads_and_on_a_restock() {
+    let f = levels_fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    let chest = id(ZONED_CHEST);
+    assert_eq!((w.item_count(chest, id(CAPS)).unwrap(), w.item_count(chest, id(STIMPAK)).unwrap()), (10, 0));
+    // The fixture's clock starts at GameDaysPassed 5.0, noon: midnight 7 restocks.
+    w.advance_hours(48.0).unwrap();
+    assert_eq!(w.peek(chest).unwrap().last_restock, Some(7.0));
+    assert_eq!((w.item_count(chest, id(CAPS)).unwrap(), w.item_count(chest, id(STIMPAK)).unwrap()), (10, 0));
+}
+
 #[test]
 fn entries_added_to_a_leveled_list_count_and_persist() {
     use fnv_sim::forms::LeveledEntry;

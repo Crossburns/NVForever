@@ -2288,6 +2288,26 @@ expect = [
 ]
 
 [[scenario]]
+name = "goodbye-at-once"
+source = "owner's playtest 2026-11-05 against the original (issue #1606; docs/spec-notes/dialogue.md §5): choosing a Goodbye closes the menu at once and the actor finishes the line as the player walks away (Game::choose, Speech::farewell)"
+note = "Chet's conversation of talk-gestures-menu, left by Tab (the Goodbye choice) once he offers choices. Before #1606 the line was said in the dialogue screen and the conversation ended after it (its line ended before the conversation did); now the conversation ends first and the line ends in the world, not cut, with its subtitle drawn as a SayTo line's"
+areas = ["dialogue"]
+paths = ["crates/fnv-game/src/dialogue.rs", "engine/nvf-play/src/dialogue.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "10:GSChetRef=leave" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--hour", "12"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue: choice \d+ made: .*, GSChetRef answers with ', label = "Tab picks Chet's Goodbye choice" },
+  { re = 'dialogue: conversation with GSChetRef ended \(goodbye, \d+ lines\)', label = "the conversation ends at once" },
+  { re = 'dialogue: the conversation ends on the Goodbye choice; GSChetRef finishes the line \S+ in the world', label = "and Chet goes on with the line in the world" },
+  { re = 'subtitle: Chet: \S', label = "its subtitle, as any line said in the world" },
+  { re = 'script: GSChetRef ended line ', label = "the line ends after the conversation, said to the end" },
+]]
+expect = [
+  { re = 'script: GSChetRef cut line', count = 0, label = "the line is not cut" },
+]
+
+[[scenario]]
 name = "intercom-goodbye-line"
 source = "docs/spec-notes/talking-activators.md §2 (fnv_game::talking_activators): a Goodbye greeting through a talking activator opens a conversation that the line ends [owner statement 2026-10-22]; owner playtest 2026-10-22, Come Fly With Me: Chris Haversam's \"I'm letting you in\" from the REPCONN intercom was never heard, the next try said \"Stop messing around with the intercom\" and the door stayed locked"
 note = "The first activation is the Say Once \"Hey! Over here!\" conversation (left); the second sets the intercom's UsingUpstairsIntercom and Chris (upstairs, in RocketLabTop) says the Goodbye greeting through it in a conversation; its end script unlocks the door beside it, which the third activation then opens. intercom_goodbye.png is the dialogue screen while the line is said"
@@ -6597,6 +6617,198 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-days-write"
+source = "#1607: a new game starts at --day 30, then GameDaysPassed is set to 25.375 and saved; save-days-load reads it back, so run them together"
+note = "GameDaysPassed runs on with the clock, a hundredth of a day in 28.8 s of play at TimeScale 30, so the patterns leave it room. The fraction is on purpose: the residents' start clock is in whole days, so a write of it over the save shows as 25.0x (or the plugins' 5.00)"
+areas = ["save", "ai"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/sky.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "crates/fnv-save/"]
+env = { NVFOREVER_HOME = "save-days-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "19:getglobalvalue GameDaysPassed;20:set GameDaysPassed to 25.375;21:getglobalvalue GameDaysPassed;save smoke-days;22:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--day", "30"]
+run_seconds = 26
+order = [[{ re = "ai: the game's clock is the start clock's: .*GameDaysPassed 30[.]", label = "the residents' first think starts the clock" }, { re = 'console: GetGlobalValue >> 30\.0\d', label = "the first read comes after it" }]]
+expect = [
+  { re = 'weather: the sky starts on day 30 ', label = "--day starts the sky" },
+  { re = 'console: GetGlobalValue >> 30\.0\d', label = "--day reaches a new game" },
+  { re = 'console: GetGlobalValue >> 25\.3[7-9]', label = "the day is 25.375 before the save" },
+  { re = 'save: wrote .*smoke-days\.nvfsave \(manual', label = "the save is written" },
+]
+
+[[scenario]]
+name = "save-days-load"
+source = "#1607: --load keeps the save's GameDaysPassed with the residents running (the default in --play), and the sky starts on the save's day"
+note = "GameDaysPassed runs on with the clock, a hundredth of a day in 28.8 s of play at TimeScale 30, so the patterns leave it room; the residents' start clock written over the save would read 5.00 (25.0x if it held the save's whole day). No check of volatility rolls: every base-game climate's volatility is 0 (docs/spec-notes/world.md §6), so none can fire here. The sky's day line is the check, and engine test a_sky_on_the_games_day_rolls_nothing_following_it covers the rolls"
+areas = ["save", "ai"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/sky.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "crates/fnv-save/"]
+env = { NVFOREVER_HOME = "save-days-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:getglobalvalue GameDaysPassed;17.5:getglobalvalue GameDaysPassed;18.5:close" }
+args = ["--play", "--load", "smoke-days", "--no-voice"]
+run_seconds = 22
+order = [[{ re = 'load: restored .*smoke-days\.nvfsave', label = "the save is restored" }, { re = "ai: the game's clock is the save's: .*GameDaysPassed 25[.](3[7-9]|4[0-9])", label = "the residents' first think leaves the save's clock" }, { re = 'console: GetGlobalValue >> 25\.(3[7-9]|4\d)', label = "a read comes after that think" }]]
+expect = [
+  { re = "ai: .*the package choice is the game's", label = "the residents are on" },
+  { re = 'weather: the sky starts on day 25 ', label = "the sky starts on the save's day" },
+  { re = 'console: GetGlobalValue >> 25\.(3[7-9]|4\d)', count = 2, label = "both reads hold the save's day, fraction and all" },
+  { re = 'weather: \S+ kept from the saved game', label = "the sky keeps the saved weather" },
+]
+
+[[scenario]]
+name = "save-fade-move-write"
+source = "#1589: Easy Pete is sent to the Mojave Express box with MoveToMarkerWithFade and the game is saved in the same console line, inside the fade; save-fade-move-load reads where he ends up, so run them together"
+note = "No NPC packages, so he stays where the move puts him for the read after the load"
+areas = ["save"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/refs.rs", "engine/nvf-play/src/script.rs"]
+env = { NVFOREVER_HOME = "save-fade-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:EasyPeteRef.movetomarkerwithfade 0015F22D;save smoke-fade;15:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-npc-packages"]
+run_seconds = 19
+order = [[{ re = 'save: wrote .*smoke-fade\.nvfsave \(manual', label = "the save is written" }, { text = "script: EasyPeteRef fades in after its move for MoveToMarkerWithFade", label = "the move comes after it: the save caught the fade" }]]
+expect = [
+  { re = 'console: MoveToMarkerWithFade on EasyPeteRef >> 0\.00', label = "the move is asked for" },
+  { re = 'save: wrote .*smoke-fade\.nvfsave \(manual', label = "the save is written" },
+]
+
+[[scenario]]
+name = "save-fade-move-load"
+source = "#1589: a MoveToMarkerWithFade caught by a save is made on load, on the world that is played: he reads at the box (vMEGoodSpringsRef, -69594.8, 3438.5), not in the saloon"
+areas = ["save"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/refs.rs", "engine/nvf-play/src/script.rs"]
+env = { NVFOREVER_HOME = "save-fade-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "12:EasyPeteRef.getpos x;EasyPeteRef.getpos y;13:close" }
+args = ["--play", "--load", "smoke-fade", "--no-voice", "--no-npc-packages"]
+run_seconds = 17
+expect = [
+  { re = 'load: restored .*smoke-fade\.nvfsave', label = "the save is restored" },
+  { re = 'console: GetPos on EasyPeteRef >> -69594\.80', label = "x: at the box" },
+  { re = 'console: GetPos on EasyPeteRef >> 3438\.50', label = "y: at the box" },
+]
+
+[[scenario]]
+name = "save-refused-write"
+source = "#1590: two saves for the two load scenarios: smoke-refused says a game snapshot format no build reads (test aid NVF_PLAY_TEST_SAVE_UNKNOWN_FORMAT, as a save from a later version would), smoke-good is plain; run them together"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/script.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs", "crates/fnv-game/src/game.rs", "crates/fnv-sim/src/world.rs"]
+env = { NVFOREVER_HOME = "save-refused-home", NVF_PLAY_TEST_SAVE_UNKNOWN_FORMAT = "smoke-refused", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:save smoke-refused;15:save smoke-good;16:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 20
+expect = [
+  { re = 'save: wrote .*smoke-refused\.nvfsave \(manual', label = "the save of the unknown format is written" },
+  { re = 'save: wrote .*smoke-good\.nvfsave \(manual', label = "the plain save is written" },
+]
+
+[[scenario]]
+name = "save-refused-load"
+source = "#1590, owner 2026-11-01 (#1357): a save whose game snapshot is refused opens the main menu with the message saying why, before the world starts at its place; no new game goes on there"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/script.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs", "crates/fnv-game/src/game.rs", "crates/fnv-sim/src/world.rs"]
+env = { NVFOREVER_HOME = "save-refused-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--load", "smoke-refused", "--no-voice"]
+run_seconds = 12
+expect = [
+  { re = 'load: --load smoke-refused: .*unsupported snapshot format "fnv\.game\.state/2"; opening the main menu', count = 1, label = "the save is refused and the main menu opens instead" },
+  { re = 'main menu: open \(', label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: --load smoke-refused: .*unsupported snapshot format', count = 1, label = "the player is told why" },
+  { re = 'smoke-refused\.nvfsave .*starting at', count = 0, label = "the world does not start at the save's place" },
+  { re = 'load: restored ', count = 0, label = "nothing is restored" },
+  { re = 'load: engine state of ', count = 0, label = "the save's engine part is not put back" },
+  { re = 'console: Loaded ', count = 0, label = "nothing says it loaded" },
+]
+
+[[scenario]]
+name = "load-refused-late"
+source = "#1590: should a restore fail after the save was read (test aid NVF_PLAY_TEST_LOAD_FAILS_LATE: no save reaches this now), no game goes on: the run starts again on the main menu and the player is told why"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/script.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs"]
+env = { NVFOREVER_HOME = "save-refused-home", NVF_PLAY_TEST_LOAD_FAILS_LATE = "1", NVF_PLAY_TEST_HANDOFF_EXIT = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--load", "smoke-good", "--no-voice"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
+expect = [
+  { re = 'load: .*smoke-good\.nvfsave: test aid NVF_PLAY_TEST_LOAD_FAILS_LATE; starting again on the main menu', count = 1, label = "the restore fails" },
+  { text = "load: handing over to a new run with --menu", count = 1, label = "a new run starts on the main menu" },
+  { re = 'load: .*smoke-good\.nvfsave: test aid NVF_PLAY_TEST_LOAD_FAILS_LATE; opening the main menu', count = 1, label = "the new run opens the main menu" },
+  { text = "the new run took over and its main menu is in; ending it", label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: .*smoke-good\.nvfsave', count = 1, label = "the player is told why" },
+  { re = 'load: restored |load: engine state of |console: Loaded ', count = 0, label = "neither run restores anything, puts an engine part back or says it loaded" },
+]
+
+[[scenario]]
+name = "save-door-write"
+source = "#1611: Doc Mitchell's inner door 0x001062AC opened by the player and saved open; save-door-load reads it back, so run them together"
+areas = ["save", "doors"]
+paths = ["engine/nvf-play/src/doors.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "engine/nvforever/src/doors.rs"]
+env = { NVFOREVER_HOME = "save-door-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "14:activate:0x001062AC", NVF_PLAY_TEST_CONSOLE = "19:001062AC.getopenstate;save smoke-door;20:close" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 24
+order = [[{ re = 'door 0x001062AC opening', label = "the player opens the door" }, { re = 'console: GetOpenState on 0x001062AC >> 1\.00', label = "it reads open" }, { re = 'save: wrote .*smoke-door\.nvfsave', label = "the save is written" }]]
+
+[[scenario]]
+name = "save-door-load"
+source = "#1611: a door saved open stands open from the load on, without its opening; closing it afterwards still moves it"
+note = "The close comes late in the run, a second before it ends, so that nobody opening the door again after it can fail the count of opening lines"
+areas = ["save", "doors"]
+paths = ["engine/nvf-play/src/doors.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "engine/nvforever/src/doors.rs"]
+env = { NVFOREVER_HOME = "save-door-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "12:001062AC.getopenstate;15:001062AC.setopenstate 0;16:close" }
+args = ["--play", "--load", "smoke-door", "--no-voice"]
+run_seconds = 18
+order = [[{ re = 'load: restored .*smoke-door\.nvfsave', label = "the save is restored" }, { re = 'console: GetOpenState on 0x001062AC >> 1\.00', label = "the door reads open" }, { re = 'door 0x001062AC closing', label = "a real close after the load still moves it" }]]
+expect = [
+  { re = 'door 0x001062AC opening', count = 0, label = "the load does not open it again" },
+  { re = 'door 0x001062AC closing', count = 1, label = "one close, the console's" },
+]
+
+[[scenario]]
+name = "save-theft-write"
+source = "#1608: the crime-steal theft (Chet's carton of cigarettes), karma -5, saved; save-theft-load reads it back, so run them together"
+areas = ["save", "crime", "karma"]
+paths = ["engine/nvf-play/src/crime.rs", "engine/nvf-play/src/world_sounds.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/lib.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-theft-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOTO = "14:-400:540:560", NVF_PLAY_TEST_SCRIPT = "20:activate:0x00106D34", NVF_PLAY_TEST_CONSOLE = "24:player.getav karma;save smoke-theft;25:close" }
+args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 29
+order = [[{ re = 'crime: the player took .* \(0x00106D34\) x1, owned by someone else', label = "the carton taken is theft" }, { re = 'crime: karma -5 for stealing', label = "karma -5 for it" }, { re = 'console: GetActorValue on player >> -5\.00', label = "the karma before the save" }, { re = 'save: wrote .*smoke-theft\.nvfsave', label = "the save is written" }]]
+expect = [
+  { re = 'world sounds: 00106D34 .*picked up', count = 1, label = "the pick-up is heard once" },
+]
+
+[[scenario]]
+name = "save-theft-load"
+source = "#1608: a load judges nothing: karma stays as saved, no theft or pick-up sound for what the save holds as picked up"
+areas = ["save", "crime", "karma"]
+paths = ["engine/nvf-play/src/crime.rs", "engine/nvf-play/src/world_sounds.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/lib.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-theft-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.getav karma;15:close" }
+args = ["--play", "--load", "smoke-theft", "--no-voice"]
+run_seconds = 19
+order = [[{ re = 'load: restored .*smoke-theft\.nvfsave', label = "the save is restored" }, { re = 'console: GetActorValue on player >> -5\.00', label = "the karma as saved" }]]
+expect = [
+  { re = 'crime: the player took', count = 0, label = "no pick-up judged again" },
+  { re = 'crime: karma ', count = 0, label = "no karma change" },
+  { re = 'crime: theft against', count = 0, label = "no theft counted" },
+  { re = 'world sounds: 00106D34 .*picked up', count = 0, label = "no pick-up sound" },
+  { re = 'crime summary: 0 thefts', label = "the run's summary: no thefts" },
+]
+
+[[scenario]]
+name = "save-weather-write"
+source = "#1609: SetWeather with the override flag holds a weather no list in Goodsprings holds, and the game is saved; save-weather-load reads it back, so run them together"
+areas = ["save", "sky", "weather"]
+paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-weather-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "20:SetWeather NVHooverDamWeather 1;21:close;24:GetIsCurrentWeather NVHooverDamWeather;save smoke-weather;25:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 29
+order = [[{ re = 'weather: NVHooverDamWeather by a script \(fading in, held until released\)', label = "the script holds the weather" }, { re = 'console: GetIsCurrentWeather >> 1\.00', label = "it is the current weather" }, { re = 'save: wrote .*smoke-weather\.nvfsave', label = "the save is written" }]]
+
+[[scenario]]
+name = "save-weather-load"
+source = "#1609: a held weather is what the sky shows and holds after a load"
+note = "Goodsprings' list holds not this weather, so the start's roll is made, which is right: under the hold it only decides what shows after a release (docs/spec-notes/world.md section 6). So no count of roll lines here: the check is that the sky never changes to the rolled weather"
+areas = ["save", "sky", "weather"]
+paths = ["engine/nvforever/src/sky.rs", "engine/nvforever/src/main.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "save-weather-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:GetIsCurrentWeather NVHooverDamWeather;15:close" }
+args = ["--play", "--load", "smoke-weather", "--no-voice"]
+run_seconds = 19
+order = [[{ re = 'load: the weather stays held as a script left it', label = "the hold comes back with the sky" }, { re = 'load: restored .*smoke-weather\.nvfsave', label = "the save is restored" }, { re = 'console: GetIsCurrentWeather >> 1\.00', label = "the held weather is the current one" }]]
+expect = [
+  { re = 'weather: \S+ at \d\d:\d\d', count = 0, label = "the sky never changes weather" },
+  { re = 'weather: the climate takes over', count = 0, label = "the climate does not take over" },
+]
+
+[[scenario]]
 name = "active-quest-write"
 source = "issue #1610: the active quest a script forced is read by GetActiveQuest after a load; the first half: force VCG02, read it, save (active-quest-load reads this save, so run them together)"
 areas = ["save", "scripts"]
@@ -8134,6 +8346,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "i1-placeatme-expl"
+source = "issue #1617: PlaceAtMe of a marker drew the marker's editor model in the world (a large red box) and PlaceAtMe of an explosion drew its effect model; created references now go by the filter placed ones do (engine/nvf-play/src/dropped.rs draws_model)"
+note = "In Goodsprings: an explosion at 14 s, a marker at 20 s and a bottle at 22 s, placed at the player. The bottle must still be drawn. Frame i1_after.png in target/smoke: no red box where the player stands"
+areas = ["console", "rendering"]
+paths = ["engine/nvf-play/src/dropped.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.placeatme MineFragExplosion 1;15:close;20:player.placeatme XMarkerHeading 1;21:close;22:player.placeatme 0010A1F6 1;23:close", NVF_PLAY_TEST_SHOTS = "25:i1_after.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--heading", "0", "--no-voice"]
+run_seconds = 29
+expect = [
+  { re = 'console: PlaceAtMe on player >> ', count = 3, label = "the three PlaceAtMe calls ran" },
+  { re = 'combat: explosion MineFragExplosion at \(', label = "the explosion still goes off" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes.markerxheading\.nif', count = 0, label = "the marker draws nothing" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes.effects.explosion', count = 0, label = "the explosion's reference draws nothing" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes', min = 1, label = "the bottle is still drawn" },
+]
+
+[[scenario]]
 name = "placeatme-fights"
 source = "owner 2026-10-16: creatures a script places (PlaceAtMe) never fought; they should sense the enemies around them from the moment they are placed (engine/nvforever/src/residents.rs take_created, fnv_game::Game::created_actors)"
 note = "a cazador (NVCrCazador 000E584D) placed at the player at 10 s by the script test aid in Goodsprings; the player's health raised to 5000 by the console, no god mode; the cazador should become a resident, sense the player and attack, its sting poisoning"
@@ -8691,6 +8920,41 @@ run_seconds = 22
 expect = [
   "death camera: the player died in third person: the body drops as a ragdoll, the camera stays put and looks at it",
   { re = 'death camera: the body is on the ground [\d.]+ s after the death', label = "the ragdoll comes to rest" },
+]
+
+[[scenario]]
+name = "g5-self-kill-1"
+source = "#1614: the player at 50 Health fires a 40 mm grenade at their own feet and dies of it: no kill XP, statistic or challenge (docs/spec-notes/experience.md, a design choice)"
+note = "the blast misses the player on some runs (#1581, 2 of 3 on main), so the death line is marked; player-own-hit-no-credit is the same check with no blast"
+areas = ["combat"]
+paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/challenges.rs", "crates/fnv-game/src/misc_stats.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0007EA25", NVF_PLAY_TEST_GIVE = "0007EA26:8", NVF_PLAY_TEST_CONSOLE = "4:player.damageav health 150;player.getav health;player.getav xp;4.6:close", NVF_PLAY_TEST_LOOK = "6:46:-75", NVF_PLAY_TEST_CONTROL = "7:weapon,10:fire" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
+run_seconds = 18
+expect = [
+  { re = 'combat: explosion 40mmGrenadeExplosion at', label = "the grenade goes off" },
+  { re = 'combat: the player died, killed by Player', label = "the player dies of it", known_failing = "#1581: the blast misses the player on some runs" },
+]
+forbid = [
+  { re = 'xp: \S+ XP from a kill', label = "no kill XP" },
+  { re = 'challenge: (Lord Death|Kaboom|The Rifleman) ', label = "no kill challenge" },
+]
+
+[[scenario]]
+name = "player-own-hit-no-credit"
+source = "#1614: the player's own hit with the grenade rifle kills them (the hit aid, the path their blast takes, without #1581's misses): no kill XP or challenge (docs/spec-notes/experience.md, a design choice)"
+areas = ["combat"]
+paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/challenges.rs", "crates/fnv-game/src/misc_stats.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HIT = "8:player:500:0x0007EA25" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
+run_seconds = 14
+order = [[
+  'combat: the player died, killed by Player',
+  { re = 'test aid: the player hits 0x00000014 for \d+ with ' },
+]]
+forbid = [
+  { re = 'XP from a kill', label = "no XP for their own death" },
+  { re = 'challenge: (Lord Death|The Rifleman|Kaboom) ', label = "no challenge for their own death" },
 ]
 
 [[scenario]]
@@ -9342,6 +9606,40 @@ expect = [
   { re = 'test aid: 0x[0-9A-F]{8} hits 0x00000014 for 20: health', label = "Very Hard: the same hit takes 20 from the player" },
   { re = 'test aid: the player hits 0x[0-9A-F]{8} for 5: health', label = "Very Hard: the player's same hit does 5" },
 ]
+
+[[scenario]]
+name = "damageav-health-kills"
+source = "#1568: DamageActorValue on Health past zero kills an NPC and the player and knocks an essential actor out; no killer, so no XP (docs/spec-notes/unconscious.md §2.2, a hypothesis: observer-checks.md check 89)"
+note = "in Goodsprings: Easy Pete (not essential) survives 10 and dies of 9999, and is still dead 5 s later; Sunny Smiles is made essential and is knocked out; the player last, as the death ends the play"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/combat.rs", "crates/fnv-game/src/unconscious.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:EasyPeteRef.damageav health 10;EasyPeteRef.getdead;EasyPeteRef.damageav health 9999;EasyPeteRef.getdead;SunnyRef.setactorrefessential 1;SunnyRef.damageav health 9999;SunnyRef.getdead;15:close;19:EasyPeteRef.getdead;player.damageav health 9999;player.getdead;20:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 24
+order = [[
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00' },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00' },
+]]
+expect = [
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00', count = 1, label = "10 of his health leaves him standing" },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00', count = 2, label = "Easy Pete is dead and stays dead" },
+  { re = 'console: GetDead on SunnyRef >> 0\.00', label = "the essential actor is not dead" },
+  { re = 'knockout: Sunny Smiles \S+ knocked out \(essential\)', label = "she is knocked out" },
+  { re = 'console: GetDead on player >> 1\.00', label = "the player is dead" },
+  "combat: the player died",
+]
+forbid = [{ re = 'xp: \S+ XP from a kill', label = "no killer, no kill XP" }]
+
+[[scenario]]
+name = "damageav-health-god-mode"
+source = "#1568: DamageActorValue on Health past zero leaves a player in god mode standing (docs/spec-notes/unconscious.md §2.2)"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.damageav health 9999;player.getdead;15:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 18
+expect = [{ re = 'console: GetDead on player >> 0\.00', label = "the player stands" }]
+forbid = [{ re = 'the player died', label = "the player dies" }]
 
 [[scenario]]
 name = "knockout-boxing-gloves"
@@ -10979,6 +11277,20 @@ expect = [
 forbid = [{ text = "move refused", label = "every move the sides choose is legal" }]
 
 [[scenario]]
+name = "f5-helios-rows-untouched"
+source = "issue #1620: two solar reflector rows at HELIOS One (0x000D7D09, 0x000D7D29) are flagged Initially Disabled under an enabled enable parent; they were drawn with no collision, so the player fell through. The physics at a cell load and render streaming's start rule now go by the simulation's rule"
+note = "The player drops 400 units onto the plain neighbour 0x000D7D0A, then is set by coordinates 400 units above the flagged row 0x000D7D09. No console line names the flagged row, before or after the cell loads: a read would create its state and hide the bug. Both drops must end on a row (z about 5321), not on the ground through it (5235.5)"
+areas = ["physics", "rendering"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.moveto 000D7D0A 0 0 400;15:close;30:player.getpos x;player.getpos y;player.getpos z;player.setpos x 22010.1;player.setpos y 1834.8;player.setpos z 5632;31:close;40:player.getpos x;player.getpos y;player.getpos z;41:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 45
+expect = [
+  { re = 'console: GetPos on player >> 532[0-3]\.', count = 2, label = "both drops end on a row: on the plain one and on the flagged one" },
+  { re = 'reference 0x000D7D(09|29) drawn \(enabled at run time\)', count = 0, label = "render streaming draws the flagged rows, so script_draw has nothing to draw" },
+]
+
+[[scenario]]
 name = "enable-disable-fade"
 source = "docs/design/script-function-params.md §3: Enable fades in unless FadeIn is 0, Disable fades out only with FadeOut 1 (GECK wiki Enable, Disable; 544 shipped calls pass the flag)"
 note = "Sunny (SunnyRef 00104E85) is disabled with a fade at 14 s, enabled with the default fade at 17 s, then disabled and enabled without one at 20 s and 22 s: one fade each way. A fade lasts 2 s: the time the original kept a Disable 1 reference enabled (capture disable_fade_long); the fade in's length is a guess"
@@ -11271,6 +11583,31 @@ expect = [
   { re = 'dismember: gore of 00104C79 at rest: [0-9]+ pieces lie', label = "the pieces come to rest (how far from the corpse: the line)" },
 ]
 manual = "dismember_head.png and dismember_after.png: Chet's head gone with a neck cap, bits about; his left arm lying apart with caps at both ends; his left leg gone with a cap"
+
+[[scenario]]
+name = "b3-killing-blow"
+source = "#1588: Easy Pete is shot once and lives, then KillActor with no cause: GetKillingBlowLimb and GetCauseofDeath read -1 after the death, not the earlier shot's (docs/spec-notes/dismemberment.md §5)"
+note = "the shot must land and leave him alive, or the two -1 would prove nothing; Pete is 65 Health [observed: this run on main, combat: hit ... health 55/65]"
+areas = ["combat", "scripts"]
+paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/functions/fighting.rs", "crates/fnv-game/src/resurrect.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_SCRIPT = "6:moveto:EasyPeteRef:player:0:300:0,8.8:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_CONTROL = "7:weapon,9:aimnpc,9.5:fire", NVF_PLAY_TEST_CONSOLE = "12:EasyPeteRef.getdead;EasyPeteRef.getav health;EasyPeteRef.getkillingblowlimb;EasyPeteRef.getcauseofdeath;EasyPeteRef.killactor;EasyPeteRef.getdead;EasyPeteRef.getkillingblowlimb;EasyPeteRef.getcauseofdeath;13:close" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 17
+order = [[
+  { re = 'combat: hit 0x00104C80 on .*, health [1-9]\d*/\d+' },
+  'console: GetDead on EasyPeteRef >> 0.00',
+  'console: GetKillingBlowLimb on EasyPeteRef >> -1.00',
+  'console: GetCauseofDeath on EasyPeteRef >> -1.00',
+  'console: KillActor on EasyPeteRef',
+  'console: GetDead on EasyPeteRef >> 1.00',
+  'console: GetKillingBlowLimb on EasyPeteRef >> -1.00',
+  'console: GetCauseofDeath on EasyPeteRef >> -1.00',
+]]
+expect = [
+  { re = 'console: GetActorValue on EasyPeteRef >> (-?[\d.]+)', range = [0.01, 64.99], label = "wounded and alive before KillActor" },
+  { re = 'console: GetKillingBlowLimb on EasyPeteRef >> -1\.00', count = 2, label = "-1 before and after the death" },
+  { re = 'console: GetCauseofDeath on EasyPeteRef >> -1\.00', count = 2, label = "-1 before and after the death" },
+]
 
 [[scenario]]
 name = "sever-chet"
@@ -18904,6 +19241,170 @@ order = [[
 ]]
 
 [[scenario]]
+name = "tiles-container"
+source = "[design] ui-tile-tree.md §6.2 step 3, barter-menu.md §8 (T15c, issue #1468): with [UI] TileMenus=ContainerMenu the container menu is drawn from container_menu.xml; rows come from the template and keep what they stand for, the lists scroll by the counts the capture reads, and clicks and keys go through the hand-built menu's commands: a store through the prompt (drawn from QuantityMenu's tiles with no switch of its own; cancelled, then accepted), focus, keyboard selection, the bar's arrows, page areas and marker, a heading's arrow and wheel, Take All and Exit"
+note = "positions at 1280 x 720 (screen 1706.67 x 960; CM_MainRect at 341.33, 80): left rows x 378-803, row n at y 160 + 52 n; right rows from x 938; left bar x 346-378, its arrows at y 160-176 and 509-525, the marker 6 wide at x 358-364, its area y 176-509; the left heading's left arrow at 391-408, y 90-125; Take All x 1259-1375, y 670-717; Exit x 1307-1375, y 715-762. the 20 rounds given join the start inventory's 50, so the first row reads '10mm Round (70)', and the prompt asks at 70; the box holds the mug alone until the stack goes in. The marker is 32 high with 22 items, 14.33 a value from y 176: at value 5 (after the bar's clicks) y 247.67-279.67, so the press at y 264 takes it, 136 down leaves it at value 14. Card shots: the selection walks 40mm Grenade, 9mm Pistol, Armored Vault 13 Jumpsuit, Binoculars, Bleak Venom at 22.2 s to 23 s. The aid's pointer moves no real cursor, so the wheel's hold stays on after 25 s (crate::menu::WheelHold) and no later row is hovered"
+areas = ["ui", "menu", "items"]
+paths = [
+  "engine/nvforever/src/imagespace.rs",
+  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/item_card.rs",
+  "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/pad.rs",
+  "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20,000E9C3B,0008F21A,0003307F,00015169:2,00022102,000E3778,00020423,00034045,0008C214,0008ED0B,0001519E", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_KEYS = "12:f10,17.5:e,18.5:a,20:a,20.5:d,22:a,22.2:down,22.4:down,22.6:down,22.8:down,23:down,23.2:down,23.4:down,23.6:down,25:wheel-down,25.5:wheel-up,30:mouse-left:1.2,32:wheel-down,35:f10", NVF_PLAY_TEST_POINTER = "14:600:186,16:600:186:click,18:600:186:click,19.5:1150:186,26:362:517:click,26.5:362:168:click,27:362:480:click,28:362:178:click,29.8:361:264,30.5:361:400,31.5:400:108:click,32.5:450:100:click,33:1320:690,33.2:1320:690:click,36.5:1340:738,36.7:1340:738:click,37:off", NVF_PLAY_TEST_SHOTS = "13:tiles_container_open.png,15:tiles_container_row.png,17:tiles_container_prompt.png,21:tiles_container_right.png,22.5:tiles_container_card_weapon.png,22.7:tiles_container_card_armour.png,23.1:tiles_container_card_aid.png,24:tiles_container_scrolled.png,27.5:tiles_container_paged.png,36:tiles_container_reopened.png" }
+args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 40
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=ContainerMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): ContainerMenu drawn from tiles; its QuantityMenu prompt follows', label = "the switch is read from the test aid, and says the prompt follows" },
+  { re = 'ui: built ContainerMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', min = 2, label = "the open menu builds its file, and again when opened again" },
+  { re = 'tiles: ContainerMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', label = "the menu's tree draws, with its rows" },
+  { text = "tile menu blur: ContainerMenu radius 3", min = 1, label = "the world blurs behind the menu drawn from its tiles" },
+  { text = "tile menu blur: off", min = 1, label = "and clears when it closes" },
+  { re = 'tiles: ContainerMenu drawn from tiles: "ITEMS" \d+ rows, "[^"]+" \d+ rows, "Wg   \d+/\d+", player selected "10mm Round \(70\)", figures: .*WEIGHT', label = "the pointer's row: the model's rows, headings, weight and unit figures" },
+  { text = "tiles: ContainerMenu Hover(Player, 0) on its tiles", count = 1, label = "the pointer onto a row selects it, once; a resting pointer over changed rows does not" },
+  { text = "tiles: ContainerMenu Hover(Container, 0) on its tiles", count = 1, label = "a row of the list without the focus takes the pointer" },
+  { text = "tiles: ContainerMenu Select(Player, 0) on its tiles", count = 2, label = "a click on the selected row acts on it" },
+  { re = 'how many\? \(70 of 70\)', count = 2, label = "a stack of more than five asks, at the whole stack" },
+  { re = 'ui: built QuantityMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', min = 2, label = "each prompt builds its file while it shows (Game::ui_prompt)" },
+  { re = 'tiles: QuantityMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "with ContainerMenu alone, the prompt's tree draws" },
+  { text = "tiles: QuantityMenu drawn from tiles: amount 70 of 70", count = 2, label = "each prompt is written from the model, drawn from QuantityMenu's tiles" },
+  { re = 'tiles: QuantityMenu Amount', count = 0, label = "the keys answer it, once: a key's click on the tiles does not act too" },
+  { re = 'QuantityMenu drawn by hand', count = 0, label = "the vanilla file builds every path of the prompt" },
+  { re = 'ui: dropped QuantityMenu', min = 2, label = "the closed prompt drops its tiles" },
+  { text = "menu: AmountOk: Stored 10mm Round x70", count = 1, label = "Cancel moved nothing, Ok moved the stack" },
+  { re = 'drawn from tiles: "ITEMS" 28 rows, "Metal Box" 2 rows, .*player selected "20 Gauge Round', label = "the lists read the world after: a row less on the left, one more on the right" },
+  { re = 'drawn from tiles: "ITEMS" 28 rows, "Metal Box" 2 rows, .*container selected "10mm Round \(70\)"', label = "the box holds all 70" },
+  { re = 'drawn from tiles: "ITEMS" 30 rows, "Metal Box" 0 rows', label = "Take All left the box empty and the player both rows" },
+  { text = "tiles: ContainerMenu Category(Player, 1) on its tiles", count = 1, label = "a click on the heading steps it on" },
+  { text = "menu: AmountCancel: prompt closed", count = 1, label = "the first prompt is cancelled" },
+  { text = "tiles: ContainerMenu TakeAll on its tiles", count = 1, label = "only the pointer takes all: physical A focuses the player's list" },
+  { re = 'tiles: ContainerMenu player list scrolled to [1-9]', min = 3, label = "keys, arrows and the marker move the left list" },
+  { text = "tiles: ContainerMenu Down on its tiles", count = 1, label = "the bar's down arrow" },
+  { text = "tiles: ContainerMenu Up on its tiles", count = 1, label = "the bar's up arrow" },
+  { text = "tiles: ContainerMenu PageDown on its tiles", count = 1, label = "the bar's page area" },
+  { text = "tiles: ContainerMenu PageUp on its tiles", count = 1, label = "the other page area" },
+  { text = "tiles: ContainerMenu player list scrolled to 14 of 21", count = 1, label = "the marker held and moved" },
+  { re = 'tiles: ContainerMenu \S+ list drawn at \S+, not the \S+ written', count = 0, label = "the scroll never draws the file's own count of the clicks" },
+  { text = "tiles: ContainerMenu Category(Player, -1) on its tiles", count = 1, label = "the heading's arrow" },
+  { re = 'tiles: ContainerMenu drawn from tiles: "AMMO" ', label = "the category changes the list and its title" },
+  { text = "tiles: ContainerMenu Close on its tiles", count = 1, label = "Exit by the pointer" },
+  { text = "menu: close", count = 2, label = "Take All closes the menu, Exit closes it" },
+  { re = 'ui: dropped ContainerMenu', min = 2, label = "the closed menu drops its tiles" },
+  { re = 'ContainerMenu drawn by hand', count = 0, label = "the vanilla file builds every path" },
+]
+order = [[
+  "F10: nearest container",
+  "tiles: ContainerMenu Hover(Player, 0) on its tiles",
+  "tiles: ContainerMenu Select(Player, 0) on its tiles",
+  { re = 'how many\? \(70 of 70\)', label = "the prompt" },
+  { text = "tiles: QuantityMenu drawn from tiles: amount 70 of 70", label = "drawn from its tiles" },
+  { text = "menu: AmountCancel: prompt closed", label = "cancelled" },
+  { re = 'drawn from tiles: "ITEMS" 29 rows, "Metal Box" 1 rows, .*player selected "10mm Round \(70\)"', label = "Cancel left the lists" },
+  { re = 'how many\? \(70 of 70\)', label = "the whole stack is asked again" },
+  { text = "tiles: QuantityMenu drawn from tiles: amount 70 of 70", label = "drawn from its tiles again" },
+  { re = 'menu: AmountOk: Stored 10mm Round x70', label = "the stack moved" },
+  { re = 'drawn from tiles: "ITEMS" 28 rows, "Metal Box" 2 rows', label = "the lists after it" },
+  "tiles: ContainerMenu Hover(Container, 0) on its tiles",
+  { re = 'tiles: ContainerMenu player list scrolled to [1-9]', label = "the keys bring the row into view" },
+  "tiles: ContainerMenu Down on its tiles",
+  "tiles: ContainerMenu PageDown on its tiles",
+  { re = 'tiles: ContainerMenu drawn from tiles: "AMMO" ', label = "the heading's arrow" },
+  { re = 'tiles: ContainerMenu drawn from tiles: "ITEMS" ', label = "the wheel over the heading steps back" },
+  "tiles: ContainerMenu Category(Player, 1) on its tiles",
+  { re = 'tiles: ContainerMenu drawn from tiles: "WEAPONS" ', label = "the click on the heading steps ITEMS on to WEAPONS" },
+  "tiles: ContainerMenu TakeAll on its tiles",
+  "menu: close",
+  "tiles: ContainerMenu Close on its tiles",
+  "menu: close",
+], [
+  "tile menu blur: ContainerMenu radius 3",
+  "tile menu blur: off",
+  "tile menu blur: ContainerMenu radius 3",
+  "tile menu blur: off",
+]]
+
+[[scenario]]
+name = "tiles-container-quantity"
+source = "[design] barter-menu.md §8 (T15c, issue #1468): with [UI] TileMenus=ContainerMenu,QuantityMenu the prompt over the tiled container menu is drawn from its own file on top, and takes the pointer alone: a click on a row beside it acts on nothing, the decrease arrow and OK act once"
+note = "at 1280 x 720 the prompt's box stands at x 483.33: the decrease arrow at x 635-652, y 452-487; OK ends at x 1170, y 492-543; the row clicked under the prompt stands above its box; the pointer goes to the box's first row after OK, so the log reads what the box holds"
+areas = ["ui", "menu", "items"]
+paths = [
+  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu,QuantityMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_KEYS = "12:f10", NVF_PLAY_TEST_POINTER = "14:600:186,15:600:186:click,17:600:238:click,18:644:470,18.5:644:470:click,19.5:1155:515,20:1155:515:click,20.5:1150:186,21:off", NVF_PLAY_TEST_SHOTS = "16:tiles_container_quantity.png" }
+args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { re = 'how many\? \(70 of 70\)', count = 1, label = "the prompt asks once" },
+  "tiles: QuantityMenu drawn from tiles: amount 70 of 70",
+  { text = "tiles: ContainerMenu One on its tiles", count = 0, label = "no click goes past the prompt to a row" },
+  { text = "tiles: ContainerMenu Hover(Player, 1) on its tiles", count = 0, label = "nor the pointer" },
+  { text = "tiles: QuantityMenu AmountStep(-1) on its tiles", count = 1, label = "the decrease arrow" },
+  { text = "tiles: QuantityMenu AmountOk on its tiles", count = 1, label = "OK" },
+  { text = "menu: AmountOk: Stored 10mm Round x69", count = 1, label = "the amount moves" },
+  { re = 'drawn from tiles: .*"Metal Box" 2 rows, .*player selected "10mm Round"', label = "one stays with the player, a stack of one with no count, the rest in the box" },
+  { re = 'drawn from tiles: .*"Metal Box" 2 rows, .*container selected "10mm Round \(69\)"', label = "the box holds the 69" },
+]
+order = [[
+  "tiles: ContainerMenu Select(Player, 0) on its tiles",
+  "tiles: QuantityMenu drawn from tiles: amount 70 of 70",
+  "tiles: QuantityMenu AmountOk on its tiles",
+]]
+
+[[scenario]]
+name = "tiles-container-quantity-alone"
+source = "[design] barter-menu.md §7 and §8: with [UI] TileMenus=ContainerMenu alone the prompt over the tiled container menu is drawn from QuantityMenu's tiles, as with both switches on (tiles-container-quantity), and takes the pointer alone: a click on a row beside it acts on nothing, the decrease arrow and OK act once"
+note = "the run and pointer steps of tiles-container-quantity, its positions at 1280 x 720"
+areas = ["ui", "menu", "items"]
+paths = [
+  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_KEYS = "12:f10", NVF_PLAY_TEST_POINTER = "14:600:186,15:600:186:click,17:600:238:click,18:644:470,18.5:644:470:click,19.5:1155:515,20:1155:515:click,20.5:1150:186,21:off", NVF_PLAY_TEST_SHOTS = "16:tiles_container_quantity_alone.png" }
+args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { re = 'how many\? \(70 of 70\)', count = 1, label = "the prompt asks once, with its switch off" },
+  "tiles: QuantityMenu drawn from tiles: amount 70 of 70",
+  { re = 'tiles: QuantityMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "the prompt's own tree draws, with its switch off" },
+  { text = "tiles: ContainerMenu One on its tiles", count = 0, label = "no click goes past the prompt that followed the container" },
+  { text = "tiles: ContainerMenu Hover(Player, 1) on its tiles", count = 0, label = "nor the pointer past it" },
+  { text = "tiles: QuantityMenu AmountStep(-1) on its tiles", count = 1, label = "its decrease arrow acts once" },
+  { text = "tiles: QuantityMenu AmountOk on its tiles", count = 1, label = "its OK acts once" },
+  { text = "menu: AmountOk: Stored 10mm Round x69", count = 1, label = "the amount chosen on its tiles moves" },
+  { re = 'drawn from tiles: .*"Metal Box" 2 rows, .*player selected "10mm Round"', label = "the player keeps one, a stack of one with no count" },
+  { re = 'drawn from tiles: .*"Metal Box" 2 rows, .*container selected "10mm Round \(69\)"', label = "the box holds the other 69" },
+]
+order = [[
+  "tiles: ContainerMenu Select(Player, 0) on its tiles",
+  "tiles: QuantityMenu drawn from tiles: amount 70 of 70",
+  "tiles: QuantityMenu AmountOk on its tiles",
+]]
+
+[[scenario]]
+name = "container-default-drawing"
+source = "barter-menu.md §5 and §8: without the switch the container menu is the hand-built drawing: nothing of the tile menu is written or drawn, and its keys act as before; the same views as tiles-container, for the pictures beside it"
+note = "the same give and times as tiles-container, by keys alone (the aid's pointer is the tiles'); the 20 rounds given join the start inventory's 50"
+areas = ["ui", "menu", "items"]
+paths = ["engine/nvforever/src/imagespace.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/pad.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20,000E9C3B,0008F21A,0003307F,00015169:2,00022102,000E3778,00020423,00034045,0008C214,0008ED0B,0001519E", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_KEYS = "12:f10,14:a,16:enter,17.5:e,18:enter,18.5:a,20:d,22:a,22.2:down,22.4:down,22.6:down,22.8:down,23:down,23.2:down,23.4:down,23.6:down,25:wheel-down,25.5:wheel-up,33:r,35:f10,36.5:e", NVF_PLAY_TEST_SHOTS = "13:default_container_open.png,15:default_container_row.png,17:default_container_prompt.png,21:default_container_right.png,22.5:default_container_card_weapon.png,22.7:default_container_card_armour.png,23.1:default_container_card_aid.png,24:default_container_scrolled.png,27.5:default_container_paged.png,36:default_container_reopened.png" }
+args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 40
+expect = [
+  { re = 'tiles: ContainerMenu', count = 0, label = "nothing of the tile menu runs without its switch" },
+  { re = 'tiles: QuantityMenu', count = 0, label = "nor is the prompt drawn from its tiles" },
+  { text = "tile menu blur:", count = 0, label = "and no tile menu's blur" },
+  { re = 'how many\? \(70 of 70\)', count = 2, label = "a stack of more than five asks" },
+  { text = "menu: AmountOk: Stored 10mm Round x70", count = 1, label = "Cancel moved nothing, Ok moved the stack" },
+  { text = "menu: TakeAll: Took everything (71 items)", count = 1, label = "the 70 and the mug come back" },
+  { text = "menu: close", count = 2, label = "R takes all and closes; E closes" },
+]
+order = [["F10: nearest container", { re = 'menu: AmountOk: ', label = "the stack moved" }, "menu: close", "menu: close"]]
+
+[[scenario]]
 name = "nvse-engine-events"
 source = "The extender's events that only the running engine raises (docs/handoff/nvse-next-batch.md §6): OnLoad of a placed unscripted item, OnHit/OnHitWith of a hit, OnMagicEffectHit of a stimpak, OnPackageStart, OnCombatEnd; handlers set from the console as one-line lambdas"
 areas = ["scripts", "actors"]
@@ -19446,6 +19947,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "i2-setpos-console"
+source = "issue #1618: a reference moved from the console kept its collision's new place but was drawn at its old one: the tick clears Game::turned before the drawing reads it. The drawing followers now also read RefRepose (engine/nvf-play/src/moved.rs, script_draw.rs)"
+note = "The Goodsprings Mojave Express box (0x0015F22D), seen from 250 units away, raised 150 units with a console SetPos at 21 s. The log lines show only that the simulation moved it, which they showed before the fix too: a PASS here does not show the box moved. Compare by eye, in target/smoke: i2_before.png (19.5 s) and i2_after.png (26 s), same view; the box must stand about 150 units higher in i2_after.png"
+areas = ["console", "scripts", "rendering"]
+paths = ["engine/nvf-play/src/moved.rs", "engine/nvf-play/src/script_draw.rs", "engine/nvf-play/src/script.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.moveto 0015F22D 0 -250 0;15:close;21:0015F22D.getpos z;0015F22D.setpos z 8537;0015F22D.getpos z;22:close", NVF_PLAY_TEST_LOOK = "17:0:-8", NVF_PLAY_TEST_SHOTS = "19.5:i2_before.png,26:i2_after.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--heading", "0", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'console: SetPos on vMEGoodSpringsRef >> 0\.00', label = "SetPos ran" },
+  { re = 'console: GetPos on vMEGoodSpringsRef >> 8537\.00', label = "GetPos reads the raised height (the frames must show it: see the note)" },
+]
+manual = "compare i2_before.png with i2_after.png in target/smoke: the box must stand about 150 units higher in the second; no log line proves it"
+
+[[scenario]]
 name = "mccarran-monorail-arrival"
 source = "issue #1605 (owner): leaving Camp McCarran's Terminal Building by the door onto the monorail track put the player under and inside the building. The door 0x000F627D (CampMCTermInt02) leads to 0x001287F6 at (-9263, 70863, 4792) in WastelandNV, a platform about 460 units above the terrain; the arrival rule has to find that floor (crates/fnv-phys/src/arrival.rs, physics.md §6.2; the squares around an outdoor arrival load first since #1633)"
 note = "the player starts in the Terminal Building and takes the monorail door at 8 s"
@@ -19918,6 +20434,249 @@ expect = [
   { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1, label = "the ln_ file runs once the new game begins" },
 ]
 order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]
+
+# ------------------------------------------------------------------ the dialogue menu from its file
+# What these prove: the pieces handed to the tile renderer (`tiles: DialogMenu painted`), the tile
+# hits and the commands accepted with their origin. How the pieces look is for the shots. Not
+# covered here, unit tests only (tiles/dialog_menu.rs): a red frame, a stale script click, a key
+# or controller press acting twice, a missing file or template. Not covered at all: a refused Tab.
+
+[[scenario]]
+name = "tiles-dialog-on"
+source = "[design] docs/spec-notes/dialogue-menu.md §6 (issue #1518): with [UI] TileMenus=DialogMenu the renderer is given the band, name and line, then the band, name, rows, frame, brackets and hint, from the game's DialogMenu tiles; the hand-built menu says nothing of its hint; the tree drops with the conversation"
+note = "dialogue-menu.md §5: Sunny Smiles offers six choices of one and two lines. tiles_dialog_line.png the greeting; tiles_dialog_choices.png the list and the hint: the greeting takes about 5 s from 8 s and the aid leaves 15 s after the list, and the order below ties the shot to the list on the log"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "15", NVF_PLAY_TEST_SHOTS = "9:tiles_dialog_line.png,20:tiles_dialog_choices.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 55
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=DialogMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): DialogMenu drawn from tiles', label = "the switch is read from the test aid" },
+  { re = 'ui: built DialogMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', label = "the conversation builds the menu" },
+  { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', label = "the renderer takes the menu, with NVForever's own code tiles" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 1, rows 0, dim 0, frame 0 plain, fill 0, bar 0, brackets 0, hint 0', label = "pieces of a line: band, name, line, nothing of the list" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]\d*, dim \d+, frame 0 plain, fill 0, bar 3, brackets 6, hint 1', label = "pieces of the list at open: band, name, rows in the window, nothing framed [observed: the original's], the bar's arrows and marker, the brackets, the hint" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 0, label = "the hand-built menu's hint line is never logged" },
+  { re = 'DialogMenu drawn by hand', count = 0, label = "the whole file was ready" },
+  { re = 'ui: dropped DialogMenu', label = "the conversation's end drops the tree" },
+]
+order = [[
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 1' },
+  "test aid: screenshot tiles_dialog_line.png",
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]' },
+  "test aid: screenshot tiles_dialog_choices.png",
+  { re = 'dialogue: choose Some\(\d+\) by test aid' },
+  "ui: dropped DialogMenu",
+]]
+
+[[scenario]]
+name = "tiles-dialog-off"
+source = "[design] docs/spec-notes/dialogue-menu.md §6: off by default: the hand-built menu draws the conversation and no tile of the dialogue menu is written or drawn"
+areas = ["ui", "dialogue"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "6" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 40
+expect = [
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", min = 1, label = "the hand-built menu with its hint" },
+  { re = 'tiles: DialogMenu', count = 0, label = "nothing of the tile view" },
+]
+
+[[scenario]]
+name = "tiles-dialog-scroll"
+source = "[design: owner choice 2026-11-05, whole rows, dialogue-menu.md §6.3; the bar and the first Down as the capture of the original read them, §6.6] a list of wrapped and one-line choices that overflows is painted with the bar; the first Down frames the first choice, and the list then scrolls by whole rows, as few as show the framed row whole"
+note = "the aid holds off with a delay longer than the run; the keys go down the list and back; the heights differ when a row wraps; at 1280 x 720 Sunny Smiles's six rows are 96, 58, 96, 58, 58, 58 and the list 250 high at 619 (round 1's logs). The log's scroll is 'scroll <first row shown> of <last first row>': 0 of 3 at the top; Down to choice 3 makes it 1 of 3, choice 4 2 of 3; back up it holds 2 of 3 to choice 2, then 1 of 3 at choice 1 (until 2026-11-05 it counted the original's 56-unit steps; the regexes hold for both)"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "60", NVF_PLAY_TEST_KEYS = "26:down,27:down,28:down,29:down,30:down,31:up,32:up,33:up,34:up,35:up", NVF_PLAY_TEST_SHOTS = "30.5:tiles_dialog_scrolled.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 45
+expect = [
+  { re = 'tiles: DialogMenu drawn from tiles: .* row heights \[(\d+), (?:\d+, )*(?!\1\b)\d+', label = "rows of different heights: one wrapped" },
+  { re = 'tiles: DialogMenu painted: .* rows [1-5], dim \d+, frame 4 (plain|red), fill 1, bar 3, ', label = "rows in the window painted, framed, with the bar's arrows and marker" },
+  { re = 'tiles: DialogMenu drawn from tiles: .* selected none, .* scroll 0 of [1-9]\d*, bar true', label = "more than fit, at the top, nothing framed" },
+  { re = 'tiles: DialogMenu drawn from tiles: .* selected 0, .* scroll 0 of [1-9]', label = "the first Down frames the first choice" },
+  { re = 'tiles: DialogMenu drawn from tiles: .* selected [1-5], .* scroll [1-9]\d* of [1-9]\d*, bar true', label = "the list scrolled by rows to the framed row" },
+]
+
+[[scenario]]
+name = "tiles-dialog-pointer"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.3, §6.6: the pointer on a row selects it, a press picks it, accepted once as a tile click through the conversation's own command, and the bar's arrow scrolls one row"
+note = "the aid holds off with a delay longer than the run, so only the pointer picks. At 1280 x 720 the screen is 1706.7 wide; the list is centred on y 744 and its rows run from x 365, so x 853, y 744 stands on a row (dialogue-menu.md §2-§3). The bar's down arrow is at x 349, y 861: the list's bottom less 8 from the describe line, list y 619 height 250, and its click was logged there. One row (the first, 96) brings choice 3 (rows 96, 58, 96, 58) to 154-212 in the list, so y 800 is on it (until 2026-11-05 one step of 56 took it to 194-252 and the point was y 840, which a row's scroll puts on choice 4): fnvtool dialogue talk says that choice's list comes back with it darkened, about 12 s later, and the second arrow click shows it in the window, as the list starts at its top"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_POINTER = "25:853:744,27:349:861:click,29:853:800:click,31:off,47:349:861:click,48:off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 60
+expect = [
+  { re = 'tiles: pointer over DialogMenu/.*DM_Topic', label = "the pointer finds a row" },
+  { re = 'tiles: clicked DialogMenu/.*/DM_Topic \(', count = 1, label = "the press hits the row's tile" },
+  { re = 'tiles: DialogMenu list scrolled 1 on its tiles', count = 2, label = "the bar's arrow scrolls one row, each list" },
+  { re = 'tiles: DialogMenu choice \d+ picked on its tiles', count = 1, label = "the row picks its choice, once" },
+  { re = 'dialogue: choose Some\(3\) by tile click', count = 1, label = "the choice under the point, accepted once, as a tile click" },
+  { re = 'dialogue: choose Some\(\d+\) by (click|test aid|number key|Enter)', count = 0, label = "by nothing else" },
+  { re = 'tiles: DialogMenu painted: .* dim [1-9]\d*, ', label = "the list again, a dim row painted" },
+]
+order = [[
+  { re = 'tiles: DialogMenu choice \d+ picked on its tiles' },
+  { re = 'dialogue: choose Some\(\d+\) by tile click' },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 1' },
+  { re = 'tiles: DialogMenu painted: .* dim [1-9]\d*, ' },
+]]
+
+[[scenario]]
+name = "tiles-dialog-skip"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.2: while the actor speaks a click on the file's click area skips what is being said, accepted once as a tile click"
+note = "the pointer aid presses no real button, so the skip can only come from the tile; the greeting is said from 8 s"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_POINTER = "9:853:300:click,9.5:off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 30
+expect = [
+  { re = 'tiles: clicked DialogMenu/.*DM_(ClickRect|SpeakerText)', count = 1, label = "the press hits the click area" },
+  { re = 'tiles: DialogMenu line skipped on its tiles', count = 1, label = "asked once" },
+  { re = 'dialogue: skip None by tile click', count = 1, label = "accepted once, as a tile click" },
+]
+
+[[scenario]]
+name = "tiles-dialog-tab"
+source = "[design] docs/spec-notes/dialogue-menu.md §4, §6.3: Tab picks the offered Goodbye choice with the menu drawn from tiles, accepted as Tab; this does not test a refused Tab, as no conversation that offers no Goodbye was found in Goodsprings"
+note = "no steps and a delay longer than the run: the aid does not leave by itself, and nothing else can end the conversation"
+areas = ["ui", "dialogue"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_KEYS = "28:tab" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 50
+expect = [
+  { re = 'dialogue: choose Some\(\d+\) by Tab', count = 1, label = "Tab picks the Goodbye choice" },
+  { re = 'test aid NVF_PLAY_TEST_TALK: no steps left', count = 0, label = "the aid's own leave never ran" },
+  { re = 'dialogue: choose Some\(\d+\) by test aid', count = 0, label = "nor any choice of the aid's" },
+  { re = 'dialogue: conversation with SunnyRef ended \(goodbye', label = "the conversation ends as the data ends it" },
+]
+
+[[scenario]]
+name = "tiles-dialog-pause"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.3: under the pause menu the tile input takes nothing; after it the same press is accepted"
+areas = ["ui", "dialogue", "menus"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/pause.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_PAUSE = "24:27", NVF_PLAY_TEST_POINTER = "25:853:744:click,26:off,29:853:744:click,30:off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 45
+expect = [
+  { re = 'tiles: DialogMenu choice \d+ picked on its tiles', count = 1, label = "only the press after the pause picks" },
+  { re = 'dialogue: choose Some\(\d+\) by tile click', count = 1, label = "accepted once, as a tile click" },
+]
+
+[[scenario]]
+name = "tiles-dialog-overlay"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.3: a two-button message box over the conversation keeps the input through its closing frame: Enter answers it and a press in that second is not also a choice; a later press on the list is accepted"
+note = "the script aid opens the box, as the console does not open during a conversation; two buttons, as --no-messages closes a box that asks nothing. NVF_PLAY_TEST_SCRIPT_MENUS is far later than Enter. The key and the pointer fire on the first frame at or after 28 s on the aids' clocks, so the same frame is what is meant, not proved by the log; the delay keeps the aid from choosing"
+areas = ["ui", "dialogue"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/script_hud.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "30", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_SCRIPT = "25:call:-:MessageBoxEx:\"nvf over|Yes|No\"", NVF_PLAY_TEST_KEYS = "28:enter", NVF_PLAY_TEST_POINTER = "26:853:744:click,27:853:744,28:853:744:click,29:off,32:853:744:click,33:off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 45
+expect = [
+  { re = 'script: test aid calls MessageBoxEx', label = "the box opens over the conversation" },
+  { re = 'dialogue: choose Some\(\d+\) by tile click', count = 1, label = "of the three presses only the one after the box closed" },
+  { re = 'dialogue: choose Some\(\d+\) by (Enter|click)', count = 0, label = "Enter answered the box, not the list" },
+]
+order = [[
+  { re = 'script: test aid calls MessageBoxEx' },
+  { re = 'script: menu 1001 .*answered' },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]' },
+  { re = 'dialogue: choose Some\(\d+\) by tile click' },
+]]
+
+[[scenario]]
+name = "tiles-dialog-reopen"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.1: the menu lives as long as the conversation: a second conversation builds it again, whole, with its own rows"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave;36:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "2" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 60
+expect = [
+  { re = 'ui: built DialogMenu', min = 2, label = "built for each conversation" },
+  { re = 'ui: dropped DialogMenu', min = 2, label = "and dropped after each" },
+  { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', min = 2, label = "the renderer takes a new tree each time" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 1', min = 2, label = "pieces both times" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 0, label = "the hand-built menu's hint line is never logged" },
+]
+
+[[scenario]]
+name = "tiles-dialog-cut-down"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.5: a tree that lacks a tile the model needs gives the hand-built menu, a warning once, and a later conversation that builds the whole file is drawn from it again"
+note = "the script aid unloads the line's tile from the built menu at 24 s, as the console does not open during a conversation, standing in for a mod's cut-down file: a smoke run has no such mod folder. A file missing altogether or a template lacking a piece is the unit tests'"
+areas = ["ui", "dialogue"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/tiles/draw.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave;55:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "22", NVF_PLAY_TEST_SCRIPT = "24:call:-:UnloadUIComponent:\"DialogMenu/NOGLOW_BRANCH/DM_SpeakerText\"", NVF_PLAY_TEST_SHOTS = "26:tiles_dialog_by_hand.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 85
+expect = [
+  { re = 'script: test aid calls UnloadUIComponent', label = "the tile goes" },
+  { text = "DialogMenu drawn by hand: DialogMenu/NOGLOW_BRANCH/DM_SpeakerText missing", count = 1, label = "said once" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", min = 1, label = "the hand-built menu takes over" },
+  { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', min = 2, label = "before it, and in the next conversation from a new tree" },
+]
+
+[[scenario]]
+name = "tiles-dialog-hint-off"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.4: the Goodbye hint switch (#1517) holds for the menu drawn from tiles too: its list is painted with no hint, and Tab still says goodbye"
+note = "as dialogue-goodbye-hint-off, the settings page flips the switch at 3 s, before the talk aid's 11 s of world clock. A flip while a conversation is open is the unit test's (the_hint_setting_hides_only_the_hint_at_once); this is what proves write_system reads the resource"
+areas = ["ui", "dialogue", "menus"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:page,3:dialogue-goodbye-hint", NVF_PLAY_TEST_TALK = "11:SunnyRef=", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_KEYS = "34:tab" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 50
+expect = [
+  { text = "settings: dialogue-goodbye-hint off", label = "the settings page turned the Goodbye hint off" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]\d*, dim \d+, frame 0 plain, fill 0, bar 3, brackets 6, hint 0', label = "the list from its tiles, with no hint" },
+  { re = 'tiles: DialogMenu painted: .*, hint [1-9]', count = 0, label = "the hint is never painted" },
+  { re = 'DialogMenu drawn by hand', count = 0, label = "the whole file was ready" },
+  { re = 'dialogue: choose Some\(\d+\) by Tab', count = 1, label = "Tab still says goodbye with the hint hidden" },
+]
+
+[[scenario]]
+name = "leveled-additem-player-level"
+source = "#1567: AddItem of VendorAmmoGunsHigh (0x0017B5F6, level-16 entries Tier4 and Tier5 only from level 16) right after SetLevel 20 adds nothing from Tier3 (10mm, .22LR, 20 gauge) and gives Tier4 or Tier5 rounds (.308, 5mm, .45-70, 12.7mm)"
+note = "Counts in the order asked: 10mm stays at the start's 50, .22LR at 0, 20 gauge at the start's 40 [observed: repro run f1-leveled-additem-l20, before the AddItem]; at level 1 they grew to 734, 570 and 166. Then at least one of the higher tiers is above 0 (40 rolls)"
+areas = ["sim", "scripts"]
+paths = ["crates/fnv-sim/src/world.rs", "crates/fnv-sim/src/zones.rs", "crates/fnv-game/src/zones.rs", "crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/levelup.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.setlevel 20;player.getlevel;player.additem VendorAmmoGunsHigh 40;14.5:player.getitemcount 00004241;player.getitemcount 0007EA27;player.getitemcount 000E86F2;player.getitemcount 0006B53C;player.getitemcount 0006B53D;player.getitemcount 00121133;player.getitemcount 001429CF;15:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 20
+expect = [
+  { re = 'console: GetLevel on player >> 20\.00', label = "the player is level 20" },
+]
+order = [[
+  { re = 'console: AddItem on player >> ', label = "AddItem ran" },
+  { re = 'console: GetItemCount on player >> 50\.00', label = "no 10mm from the list" },
+  { re = 'console: GetItemCount on player >> 0\.00', label = "no .22LR from the list" },
+  { re = 'console: GetItemCount on player >> 40\.00', label = "no 20 gauge from the list" },
+  { re = 'console: GetItemCount on player >> [1-9]', label = "the higher tiers gave rounds" },
+]]
 
 [[scenario]]
 name = "language-choice"

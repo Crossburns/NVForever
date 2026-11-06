@@ -70,9 +70,24 @@ actors, `resolve_changed_at`), `engine/nvforever/src/zones.rs` (the engine's cop
   multiplier, `Game::actor_level`) is not used for its items].
 - A cell reset (`fnv_game::respawn`) fixes the level of the actors it brings back again,
   at the player's level then (a zone's level does not change); refilled containers too.
-- Not changed: references made at run time (PlaceAtMe, PlaceLeveledActorAtMe) read at
-  the configured player level as before; scripts' AddItem of a leveled list reads the
-  configured player level. The static viewer (no `--play`) keeps the display level 1.
+- Scripts' AddItem of a leveled list reads the player's current level [observed:
+  simulation.md §4, `L4.sim.leveled.basic`], and so do the carried items of references
+  made at run time (PlaceAtMe, PlaceLeveledActorAtMe) [hypothesis: simulation.md §6].
+- The carried items of a reference with no fixed level read the level its cell's load
+  would fix now (`World::item_level`, `World::level_at`) [design]: its zone's level, or
+  the level the zone would take if entered now, else the player's level, changed by its
+  level modifier. That covers an actor or container read before its cell loads, a
+  merchant chest's restocks included. What the game does for these is not seen
+  [hypothesis].
+- Locks do not follow this: a leveled lock hardens from a fixed level only, so a door,
+  which gets none, keeps its authored level (`World::lock_read_level`, simulation.md §5)
+  [design].
+- The world holds the player's level for item rolls apart from its configuration, and does
+  not save it (`World::set_player_level`, `World::roll_level`): `Game::sync_player_level`
+  writes it on SetLevel, on a level-up, on every tick and in `fnv_game::Game::restore`. In
+  the engine that restore holds only a stand-in world, so the engine's load
+  (`Runtime::restore_save`) calls it again on the played world before anything runs
+  [design]. The static viewer (no `--play`) keeps the display level 1.
 
 ## 4. Never Resets
 
@@ -108,7 +123,8 @@ actors, `resolve_changed_at`), `engine/nvforever/src/zones.rs` (the engine's cop
   population, "The 'leveled' checkbox in the lock tab is a deprecated feature: leave it
   unchecked"; Reference: "will start at the base level specified and become harder as
   the player levels" — no rule for how much is documented]. Built 2026-10-24 with a
-  guessed rule from the reference's level (simulation.md §5).
+  guessed rule, from a level fixed for the reference only (simulation.md §5); observer
+  check 88 asks whether the original's door locks change at all.
 - The game settings that bound how far below the level an entry may be
   (`iLevItemLevelDifferenceMax` and the like) are not read; the "highest eligible level"
   pool makes them matter only with "Calculate from all levels".

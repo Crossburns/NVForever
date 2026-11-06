@@ -798,3 +798,14 @@ owner to add to its pull request or issue (owner, 2026-10-29).
       measured text; clicks are the hand-built menu's commands
       (`crate::tutorial_menu::TutorialInput`). Tests: `tiles::tutorial_menu`, `tiles::input`,
       `tiles::layout`, `fnv_ui::input`. Smoke: `tiles-tutorial`, `tutorial-default-drawing`.
+    - **T15c, the first of the template lists: the container menu built as a candidate**
+      2026-11-04 (`tile-container-menu`, issue #1468), behind `[UI] TileMenus=ContainerMenu`,
+      not the default. `tiles/container_menu.rs` (the view),
+      `tiles/list.rs` (rows by what they stand for, counts, scroll, highlight, bar pieces, the
+      marker's drag; for the barter, inventory, recipe and repair lists next),
+      `tiles/item_card.rs` (`item_stats_display.xml`), the marks `_NVFOwnAlpha` and
+      `_NVFHotrectFill`. The model, keys and wheel stay the hand-built menu's. Notes and the
+      captured numbers: barter-menu.md §8. Smoke: `tiles-container`,
+      `tiles-container-quantity`, `container-default-drawing`. **Left**: the comparison with
+      the original's shots (parts b to g of the capture retaken), DAM/DPS's fade, then the
+      barter menu on the same pieces.

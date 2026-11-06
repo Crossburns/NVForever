@@ -5,6 +5,8 @@
 use super::*;
 use fnv_esm::raw::{write_subrecords, Subrecord};
 use fnv_esm::{LoadOrder, Plugin, Schema};
+use bevy::app::{App, Update};
+use bevy::state::app::AppExtStates;
 use fnv_sim::SimConfig;
 
 fn sub(sig: &[u8; 4], data: Vec<u8>) -> Subrecord {
@@ -577,6 +579,7 @@ fn categories_filter_each_list() {
     m.apply(&mut w, Command::Category(Side::Container, 1));
     assert_eq!(m.category[0], Category::Weapons);
     assert_eq!(names(m.list(Side::Container)), vec![("Varmint Rifle", 1)]);
+    assert_eq!(m.filtered[Side::Container as usize], 3, "what the category leaves out");
     // The player's list keeps its own.
     assert_eq!(m.list(Side::Player).rows.len(), 4);
     m.apply(&mut w, Command::Category(Side::Container, -2));
@@ -920,4 +923,86 @@ fn a_weapon_dropped_beside_its_holder_is_one_item_in_the_menu_and_the_world() {
     let a = m.apply(&mut w, Command::TakeAll);
     assert_eq!(a.picked, vec![r]);
     assert_eq!(count(&mut w, 0x14, RIFLE), 1);
+}
+
+/// `crate::menu::apply_input` over the box, as the game runs it.
+fn app_on_the_box() -> App {
+    let f: &'static Fixture = Box::leak(Box::new(fixture()));
+    let mut world = World::new(&f.forms, &f.refs, SimConfig::default());
+    let m = MenuModel::open_container(&mut world, FormId(BOX_REF)).unwrap();
+    let mut app = App::new();
+    app.add_plugins(bevy::state::app::StatesPlugin)
+        .insert_state(crate::PlayState::Menu)
+        .insert_resource(crate::sim::SimState { forms: &f.forms, refs: &f.refs, world })
+        .insert_resource(crate::menu::ActiveMenu(Some(m)))
+        .init_resource::<crate::menu::PromptKeys>()
+        .add_message::<crate::menu::MenuInput>()
+        .add_message::<crate::RefChanged>()
+        .add_message::<crate::ItemUsed>()
+        .add_message::<crate::ui_sounds::UiSound>()
+        .add_message::<crate::crime::ItemsTaken>()
+        .add_message::<crate::pickpocket::Pickpocketed>()
+        .add_systems(Update, crate::menu::apply_input);
+    app
+}
+
+fn send(app: &mut App, commands: &[Command]) {
+    for &c in commands {
+        app.world_mut().write_message(crate::menu::MenuInput(c));
+    }
+    app.update();
+}
+
+fn in_box(app: &mut App, item: u32) -> i32 {
+    count(&mut app.world_mut().resource_mut::<crate::sim::SimState>().world, BOX_REF, item)
+}
+
+/// The guard the tile input sends with a click on the container's row `index`.
+fn guard_of(app: &App, index: usize, selected: bool, then: u8) -> RowGuard {
+    let m = app.world().resource::<crate::menu::ActiveMenu>().0.as_ref().unwrap();
+    RowGuard { mode: m.mode, side: Side::Container, index, key: RowKey::at(&m.list(Side::Container).rows, index).unwrap(), selected, then }
+}
+
+fn row_of(app: &App, name: &str) -> usize {
+    let m = app.world().resource::<crate::menu::ActiveMenu>().0.as_ref().unwrap();
+    m.list(Side::Container).rows.iter().position(|r| r.name == name).unwrap()
+}
+
+#[test]
+fn a_queued_category_leaves_a_clicked_row_to_nothing() {
+    // The hazard: unguarded, the category's refresh puts the rifle at the index clicked.
+    let mut app = app_on_the_box();
+    assert_ne!(row_of(&app, "Varmint Rifle"), 0);
+    send(&mut app, &[Command::Category(Side::Container, 1), Command::Hover(Side::Container, 0), Command::One]);
+    assert_eq!(in_box(&mut app, RIFLE), 0, "the other row went");
+    // Guarded, by what the click saw: nothing moves, the category does change, and the next
+    // command is the menu's own again.
+    let mut app = app_on_the_box();
+    let guard = guard_of(&app, 0, false, 2);
+    send(&mut app, &[Command::Category(Side::Container, 1), Command::Expect(guard), Command::Hover(Side::Container, 0), Command::One]);
+    assert_eq!(in_box(&mut app, RIFLE), 1);
+    assert_eq!(app.world().resource::<crate::menu::ActiveMenu>().0.as_ref().unwrap().category[0], Category::Weapons);
+    send(&mut app, &[Command::Hover(Side::Container, 0), Command::One]);
+    assert_eq!(in_box(&mut app, RIFLE), 0);
+}
+
+#[test]
+fn a_guarded_click_on_a_row_still_there_acts() {
+    let mut app = app_on_the_box();
+    let can = row_of(&app, "tin can");
+    let guard = guard_of(&app, can, false, 2);
+    send(&mut app, &[Command::Expect(guard), Command::Hover(Side::Container, can), Command::One]);
+    assert_eq!(in_box(&mut app, CAN), 1, "one of the two");
+    // A click on the selected row, the selection moved before it applies: nothing.
+    let can = row_of(&app, "tin can");
+    let guard = guard_of(&app, can, true, 1);
+    send(&mut app, &[Command::Up, Command::Expect(guard), Command::Select(Side::Container, can)]);
+    assert_eq!(in_box(&mut app, CAN), 1);
+    assert_eq!(app.world().resource::<crate::menu::ActiveMenu>().0.as_ref().unwrap().selected[Side::Container as usize], can - 1, "not selected again");
+    // Another menu's row.
+    let guard = RowGuard { mode: Mode::Inventory, ..guard_of(&app, 0, false, 2) };
+    let first = app.world().resource::<crate::menu::ActiveMenu>().0.as_ref().unwrap().list(Side::Container).rows[0].item.0;
+    let held = in_box(&mut app, first);
+    send(&mut app, &[Command::Expect(guard), Command::Hover(Side::Container, 0), Command::Stack]);
+    assert_eq!(in_box(&mut app, first), held);
 }

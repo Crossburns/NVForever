@@ -160,7 +160,8 @@ From these, all [hypothesis] fitted to the pictures:
     set up to keep the band inside the safe zone's bottom: **at the list's maximum height,
     turning the hint on moves the list up** (by up to the growth: 19 units for the stand-in ink), and turning it off
     moves it back. At the side, and for shorter lists, nothing else moves.
-  Tab picks that choice (dialogue-play.md §2).
+  Tab picks that choice (dialogue-play.md §2); a Goodbye choice closes the menu at once and
+  the actor finishes its line in the world (dialogue.md §5, issue #1606).
 - The settings page's Gameplay group has a "Goodbye hint" switch (key `dialogue-goodbye-hint`,
   on by default): off removes the words, their backing and, inside the band, the strip made
   for them (so the band is its own height again); Tab says goodbye as before [design]. The
@@ -174,6 +175,8 @@ Not built: the subtitles setting (the line is always shown), the click and focus
 (the file names none for a row), dragging the marker or clicking the arrows, the
 player's own font and colour settings.
 
+That is the default drawing. Drawn from the file instead, behind a switch: §6.
+
 ## 5. Looking at it
 
 `NVF_PLAY_TEST_TALK="8:EasyPeteRef="` with `NVF_PLAY_TEST_TALK_DELAY=60` and
@@ -186,3 +189,188 @@ Bruce Isaac's in the owner's picture and its capitals start one pixel higher; th
 lets through about 0.11 of the light behind it. Sunny Smiles's list shows three choices
 (two lines, one line, two lines) with both arrows and the marker at the top, as in
 Trudy's picture.
+
+## 6. The menu drawn from its file: what code owns
+
+`[UI] TileMenus=DialogMenu` draws the menu from its file, off by default
+(`engine/nvf-play/src/tiles/dialog_menu.rs`, ui-tile-tree.md §6.2 step 3). This section is
+the contract between the file and the code. It says what code has to give the file, in
+NVForever's words, not how the file is laid out: the file itself places the rest, read at
+run time from the player's archives. Everything named below was read with `fnvtool ui tree
+--menu menus\dialog\dialog_menu.xml` and `fnvtool bsa extract` [observed: the vanilla
+files, by fnvtool, 2026-11-04]; **the only run of the original looked at for this section is
+the capture §6.6 reads**, so what the original's code does with these names is [hypothesis]
+except where §6.6 reports it.
+
+### 6.1 The conversation is the menu's lifetime
+
+`Game::menu` stays empty during a conversation (it holds what stands *over* one); the tree
+builds the menu class while `Game::dialogue` is `Some` (`fnv_game::ui_loading::sync`) and
+drops it after [design]. So readiness follows the conversation, not `Game::menu`.
+
+### 6.2 Inputs from code
+
+Names the file reads and never sets a meaningful value for, or marks as code's:
+
+| Tile | Name | What code gives it [hypothesis unless tagged] |
+|---|---|---|
+| the menu (`io()`) | `_DialogVisible` | the whole menu shown |
+| the menu | `_ShowingText` | the actor's line is up, not the choices |
+| the menu | `_ShowSubtitles` | the subtitles setting; NVForever has none yet, and also clears it for an empty line, so that no band stands behind nothing [design] |
+| `DM_SpeakerNameLabel` | `string` | the speaker |
+| `DM_SpeakerText` | `string` | the line |
+| every text tile | `width`, `height` | measured with the fonts; no expression in the file sets them (`menus::write_text_sizes`, message-menu.md) [design] |
+| `DM_TopicList` | `height` | the rows' height; the file only holds a least height (`_MinListHeight`) [observed: the vanilla files, by fnvtool: its comments call the rest code's] |
+| `DM_TopicList` | `_highlight_y`, `_selected_height` | the selected row's place and height [observed: the vanilla files, by fnvtool: the list box prefab's comments] |
+| `lb_scrollbar` | `_number_of_items`, `_number_of_visible_items` | counted in `_scroll_delta`s, as the message box's list (message-menu.md §5a): code writes a delta of 1 at open, so items are the last first row's place (§6.3) and 1, visible 1 [design] |
+| `lb_scrollbar` | `_current_value`, `_SetInCode` | the scroll, and the signal that code set it [observed: the vanilla files, by fnvtool: the prefab's comments]; the value is the first row's place (§6.3) |
+| `lb_scrollbar` | `_jump_size` | the page: the whole rows that fit in the window from the first row, at least 1, written on every frame [design] |
+| a row (`DM_TopicTemplate`, under `DM_TopicList`) | `string`, `listindex`, `height`, `_y`, `_line_alpha` | the label; the choice's number (the file hides a row with a negative one); its text and `_VerticalSpacing`; its place with nothing scrolled; the text's strength |
+
+Names NVForever reads from the file, not code's: `_VerticalSpacing`, `_MinListHeight`, and
+`_scroll_delta` after code's write at open (a script's own value is read: the bar's value and
+counts are written in its units). `id`s 0 to 3 on the click area, the name, the line and the list suggest
+the original's code finds them by number; NVForever finds them by path [hypothesis]. The
+click area's `target` follows `_ShowingText`, so a click on it skips only while the actor
+speaks.
+
+The file reads `screen()`'s `cropx` and `cropy`. No other vanilla menu with a tile switch
+does (message, quantity, sleep/wait, tutorial, HUD) [observed: the vanilla files, by
+fnvtool]. While `DialogMenu` is on the code writes them, in interface units: `cropy` is
+`iSafeZoneY`'s 15 [documented: `Fallout_default.ini`, hud.md §3], and `cropx` 15 too (§6.6). `dialog_menu.xml` has no hint for Tab, no red, and no fill picture for
+the frame [observed: the vanilla files, by fnvtool]: those three are NVForever's own tiles
+and writes (§6.4).
+
+### 6.3 What stays NVForever's choice, not the file's
+
+Kept from §4, with the rules still in `crate::dialogue`:
+
+- the acting notes stripped, square brackets kept (`dialogue::shown_text`); the speaker or
+  the talking activator's name; no list, brackets or hint during a response; an empty
+  response leaves only the name;
+- the list drawn from the file scrolls by whole rows, as §4's hand-built list [owner choice
+  2026-11-05: whole rows, as the hand-built menu; the original's 56-unit steps and mid-glyph
+  clipping, observed in the capture, read as a jump]. The original's steps are kept in §6.6 as
+  what the capture read, not what NVForever does. The scroll is the first row shown, which
+  starts at the window's top, so no row is cut there; it shows whole unless it is taller than
+  the window, when its foot is cut below. The rows move by its place (code writes `_scroll_delta` 1 and that place as
+  the bar's `_current_value`, so the file's own `_current_value × _scroll_delta` moves them).
+  The keys and the wheel move the selection, and the first row moves as few rows as show the
+  selected one whole: down, it rises until the row's foot is in the window; up, a row above the
+  window comes to its top. The bar's arrows move a row, its page areas the whole rows that fit
+  from the first (`_jump_size`). The last first row is the least row from which the rest fit in
+  the window: the scroll stops as soon as the last row shows whole, and goes no further to
+  leave room under it. The bar counts to that row's place (items that place and 1, visible 1):
+  the marker's `y` is the value times `_step_height`, which is (the track's length less the
+  marker's) over (items less visible) [documented: scrollbar_vert.xml, as tutorial-menu.md §5
+  reads it], so the marker reaches the
+  track's end with the last first row [design]. Counting to the rows' total less the window
+  would put the value past the prefab's range whenever the last first row's place is more;
+- **only the window's foot can cut a row**: the top row always starts at the window's top, but
+  the window keeps the height rule below (the first three rows or the least height, a
+  [hypothesis]: §6.6 leaves it open), which keeps the band's size; from a first row other than
+  the first, the rows below seldom add up to that height, and the last one shown is cut at the
+  foot [design]. What the capture read of the original is only its 56-unit steps and the top
+  row cut part way (§6.6);
+- the list's height is its first three rows' or its least height [hypothesis: §6.6];
+- a said-before choice is dim: `_line_alpha` 128 (§6.6);
+- skip, refused Tab, the keys, the wheel, the pause and an overlying menu act as in §4 and
+  dialogue-play.md §2. The scroll bar's arrows and page areas scroll (above); dragging its
+  marker is not built [design: the hand-built bar takes no clicks at all].
+
+Rows stand where the file puts them, §3's lift **not** applied (§6.6). The hand-built view keeps
+the lift and clips at the brackets.
+
+### 6.4 NVForever's own tiles
+
+Code-made under the menu, named `NVF_…` so nobody takes them for the file's, from templates
+NVForever writes itself (`tiles/dialog_menu.rs`):
+
+- `NVF_GoodbyeHint`: the Tab hint and its dark box, placed from the file's worked-out band
+  and bottom bracket. Its wording and whether it shows come from the same model and the
+  same "Goodbye hint" switch (§4) as the hand-built hint's (`dialogue_menu::GOODBYE_HINT`,
+  `MenuView::goodbye`, `dialogue_menu::GoodbyeHint`) [owner, list 5 item 62].
+- `NVF_SelectionFill`: the frame's fill. The file's highlight box is a hotrect with an alpha
+  and a brightness, which the tile renderer does not paint (message-menu.md §2); the fill
+  uses §3's look.
+
+The scroll bar's pictures are marked to keep their own alpha: the bar above them is a picture
+tile with an alpha of 0, and the tile renderer passes a picture's alpha to its children
+[hypothesis: §3's pictures show them; how the original does is for a capture].
+
+The red frame of a short check is a write on the highlight box's four lines and the fill
+(§3's colours). The file names no such colour [observed: the vanilla files, by fnvtool].
+
+### 6.5 Readiness
+
+One decision (`DialogTiles`, worked out after the scripts of each frame) controls the tile
+drawing, the hand-built view and the tile input [design]. It needs the switch, the menu files,
+a live conversation, every path above with the frame's four lines and the bar's controls, a row
+template that makes a row with its text, every row made, text that measures, boxes with a
+worked-out size and something to click; and, on every frame as it is to be drawn, what it has
+to show as the renderer selects it and regions whose middle the input gives to them, no other
+target taking the click. Anything else: the whole hand-built menu, a warning
+once per reason, the made rows unloaded, the safe zone given back, and the preparation tried
+again next frame. The Tab hint and the frame's fill never stand alone.
+
+### 6.5a The order in a frame
+
+- At each transition of the conversation, inside the runtime's own work, when a line goes up,
+  whether a script of it runs or not (`Game::ui_dialogue_hook`), and again before the frame's
+  scripts: the model's
+  view is written, each trait only when the model's value for it changed, so a script reads the
+  phase, words and rows of the screen it runs in, and what it sets of them stands until the
+  model changes that very thing. A new selection changes none of them. With no world at hand a
+  new speaker's name can be the runtime's until the frame's own step puts it right.
+- After the scripts: measure, place, decide. Placing runs again when the model, a text's size
+  or an evaluated number it reads moved. These are read one frame late by a script [design].
+- A click on the tiles is decided on what was drawn: every tile that can be hit, with its place,
+  clip, depth and target, taken after the frame's last working out of the tree, animations stepped.
+  An animation goes on under it and does not stop input. On a frame with a new window size the
+  tile input takes nothing: that one press is lost.
+- Every click carries the screen it was made on, a script's the one it was queued on: the
+  conversation, the lines said, the response. A click from an earlier screen does nothing, and
+  neither does a hand-built button's: those carry their screen too.
+- The safe zone on `screen()` is held from the first write to the conversation's end or a
+  fallback, then given back as it was, absent if it was; a script's own value stands.
+
+### 6.6 What a capture of the original read, and what it did not
+
+[observed: the original, private job dialogue, 1280 x 720, one conversation of 12 rows; numbers
+and pixels only, in interface units, kept private]. These replace the fitted values above in the
+view drawn from the file; the hand-built menu is unchanged.
+
+- Band and name: the band x 313.33, y 661 while the line is up, 1080 x 156, alpha 193.8, brightness
+  128 (y 607, 264 high over the choices); the line x 373.33, y 706, wrap width 960; the name at
+  1626.67, 200. From those places `cropx` and `cropy` are 15 by arithmetic, not by a read.
+- The list: x 333.33, y 657, 1010 wide, height 174 over 12 rows, `_MinListHeight` 110 (110 with
+  few or no rows). `_scroll_delta` 56; the bar's items 11, visible 1. Rows 58 high, 96 for two
+  lines, `y` their running sum, the first at 0: no lift.
+- At open `_highlight_y` -1, `_selected_height` 0, the box hidden. The first Down frames the
+  first row, then the next: `_highlight_y` 0, 58, 116. A pointer on a row does the same.
+- The keys scroll as little as shows the framed row whole, in steps: going down `_current_value` 0,
+  2, 3 … 10 with `_highlight_y` 62, 102, 104 … 116; going up 10, 8, 7 … 0. The list's height holds.
+  The top row is then cut part way, mid-glyph. NVForever scrolls by whole rows instead (§6.3,
+  owner choice 2026-11-05); these steps are what the capture read.
+- The bar's arrows moved `_current_value` by 1 and its page areas by 3, the value in
+  `_jump_size`'s place; `_highlight_y` went with it, off the top to -336: the view scrolled and
+  the framed row stayed. One arrow reading went from 1 to 3 across two reads: 1 is the step
+  [hypothesis: the burst around it shows 2 to 3].
+- A said-before row: `_line_alpha` 128, its text's alpha 128, brightness 255. Frame lines of a plain
+  row: amber at brightness 200, (200, 143, 52) on the shots; the box alpha 40.
+- `_current_value` 0 again on the list after a choice.
+
+Not read, and still [hypothesis] or open:
+
+- what fixes the list's height beyond these rows: the first three (agrees with §3's Trudy) or a
+  greatest height of 250 (agrees too): a list of many short rows would tell; §3's 290 was a list in
+  another font and does not fit this one;
+- what `_scroll_delta` is worked out from, on another list; `cropx` and `cropy` at another aspect;
+- the frame on a check the player falls short of: no shot holds that row framed, and no plain read
+  of it hovered, so red stays §3's one picture;
+- a mouse wheel: the capture's wheel step moved nothing, which may be the aid's; a write to
+  `wheelmoved` did. The wheel stays `crate::dialogue`'s;
+- which of its methods advanced a response or took a choice beyond the fact: the reads say the
+  choices came up after a button step, and Enter took a choice where a named and a mouse try did
+  not; nothing here changes `crate::dialogue`'s keys on them;
+- the band and the name for a line with no text; dragging the marker.

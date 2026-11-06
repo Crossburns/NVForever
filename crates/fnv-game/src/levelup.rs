@@ -77,6 +77,7 @@ pub fn open(g: &mut Game) {
 pub fn advance(g: &mut Game) -> i32 {
     let level = g.player_level() as i32 + 1;
     g.player.level = Some(level);
+    g.sync_player_level();
     open(g);
     level
 }

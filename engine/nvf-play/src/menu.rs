@@ -166,10 +166,18 @@ impl PromptKeys {
     }
 }
 
+/// [`wheel_hold`], first: what reads [`WheelHold`] this frame runs after it, the hand-built
+/// pointer ([`menu_mouse`]) and the tiles' (`crate::tiles::input::feed`), which runs before the
+/// other menu systems: a wheel step and a pointer's move in one frame leave the row alone
+/// [owner 2026-10-22, #1192].
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WheelHoldSet;
+
 pub struct MenuPlugin;
 
 impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
+        app.configure_sets(Update, WheelHoldSet.before(MenuSystems)).add_systems(Update, wheel_hold.in_set(WheelHoldSet));
         app.init_resource::<ActiveMenu>()
             .init_resource::<FreshMenu>()
             .init_resource::<PromptKeys>()
@@ -191,7 +199,6 @@ impl Plugin for MenuPlugin {
                     keep_menu_state,
                     sync_cards,
                     publish_menu_picks,
-                    wheel_hold,
                     (quantity_keys, menu_keys, menu_mouse, quantity_mouse, apply_input).chain().run_if(menu_open),
                     draw,
                 )
@@ -534,12 +541,17 @@ fn menu_mouse(
     mut wheel: MessageReader<MouseWheel>,
     mut lines: Local<f32>,
     mut out: MessageWriter<MenuInput>,
+    (tile_menu, tile_title): (Option<Res<crate::tiles::container_menu::ContainerTiles>>, Option<Res<crate::tiles::container_menu::TileWheelTitle>>),
 ) {
     let Some(m) = active.0.as_ref().filter(|m| m.mode != Mode::Inventory && m.quantity.is_none()) else {
         wheel.clear();
         return;
     };
-    let hover = true;
+    // T15c: drawn from its file the pointer on rows and buttons is `crate::tiles::input`'s,
+    // also on the frame the hand-built drawing is still there, which would act on the same
+    // press; the wheel stays here, with the heading the tiles say the pointer is over.
+    let tiled = tile_menu.is_some_and(|t| t.menu.is_some());
+    let hover = !tiled;
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     // Only a pointer that moves takes the selection: a redrawn row under a resting
     // pointer leaves the keys' choice alone.
@@ -557,14 +569,14 @@ fn menu_mouse(
                 out.write(MenuInput(Command::Hover(r.0, r.1)));
                 out.write(MenuInput(if shift { Command::Stack } else { Command::One }));
             }
-            PointerState::Pressed => {
+            PointerState::Pressed if hover => {
                 out.write(MenuInput(Command::Select(r.0, r.1)));
             }
             _ => {}
         }
     }
     for (i, b) in &buttons {
-        if *i == PointerState::Pressed {
+        if *i == PointerState::Pressed && !tiled {
             out.write(MenuInput(b.0));
         }
     }
@@ -576,7 +588,7 @@ fn menu_mouse(
     }
     let whole = lines.trunc();
     if whole != 0.0 {
-        let title = titles.iter().find(|(i, _)| **i != PointerState::None).map(|(_, t)| t.0);
+        let title = if tiled { tile_title.and_then(|t| t.0) } else { titles.iter().find(|(i, _)| **i != PointerState::None).map(|(_, t)| t.0) };
         out.write(MenuInput(Command::wheel(title, whole as i32)));
         *lines -= whole;
     }
@@ -727,14 +739,30 @@ fn apply_input(
     mut held: ResMut<PromptKeys>,
 ) {
     let mut script = script.map(|s| s.into_inner());
+    // The commands left of a guard that failed ([`Command::Expect`]).
+    let mut dropping = 0;
     for &MenuInput(cmd) in input.read() {
         let Some(m) = active.0.as_mut() else { return };
+        if let Command::Expect(guard) = cmd {
+            dropping = if m.row_is(&guard) { 0 } else { guard.then };
+            if dropping > 0 {
+                info!("menu: a command on a row that changed before it applied is dropped");
+            }
+            continue;
+        }
+        if dropping > 0 {
+            dropping -= 1;
+            continue;
+        }
         let before = crate::ui_sounds::MenuBefore::of(m);
         let asking = m.quantity.is_some();
         let a = m.apply(&mut sim.world, cmd);
         held.0 |= m.quantity.is_some();
         if let (false, Some(q)) = (asking, m.quantity) {
             info!("menu: {cmd:?}: how many? ({} of {})", q.amount, q.max);
+        }
+        if asking && m.quantity.is_none() && matches!(cmd, Command::AmountCancel | Command::Close) {
+            info!("menu: {cmd:?}: prompt closed");
         }
         // What the command did, for its sound (`crate::ui_sounds`).
         if let Some(event) = crate::ui_sounds::menu_event(cmd, &before, m, &a) {
@@ -781,13 +809,13 @@ fn apply_input(
             }
             let (at, count) = sim.world.peek(*id).map(|s| (s.pos, s.count)).unwrap_or_default();
             info!("menu: dropped reference {id} (count {count}) at ({:.1}, {:.1}, {:.1})", at[0], at[1], at[2]);
-            changed.write(RefChanged { form_id: id.0 });
+            changed.write(RefChanged::new(id.0));
         }
         // A corpse's dropped weapon taken from its loot menu: picked up from the world,
         // so its collision and drawing go (`model::Row::reference`).
         for id in &a.picked {
             info!("menu: picked up reference {id} lying beside the container");
-            changed.write(RefChanged { form_id: id.0 });
+            changed.write(RefChanged::new(id.0));
         }
         if a.close {
             info!("menu: close");
@@ -805,7 +833,7 @@ fn apply_input(
 // ---- drawing -----------------------------------------------------------------------
 
 /// The line under a container menu: the note for a container that refills.
-fn note(m: &MenuModel, sim: &SimState) -> Option<String> {
+pub(crate) fn note(m: &MenuModel, sim: &SimState) -> Option<String> {
     let refused = m.status.as_deref().filter(|s| s.ends_with("enough caps.") || s.starts_with("Cannot"));
     if let Some(s) = refused {
         return Some(s.to_string());
@@ -825,6 +853,10 @@ fn note(m: &MenuModel, sim: &SimState) -> Option<String> {
 /// the scripts' game (an aid item's effects, `crate::pipboy::items::info_of`).
 type DrawSources<'w> = (Option<Res<'w, crate::combat::Combat>>, Option<Res<'w, crate::PlayWorld>>, Option<ResMut<'w, crate::script::ScriptState>>);
 
+/// [`draw`]'s view of the tile menus: the switch, what was drawn from tiles last, the container
+/// menu's tile state.
+type DrawTiles<'w, 's> = (Option<Res<'w, crate::tiles::vanilla::TileMenus>>, Local<'s, (bool, bool)>, Option<Res<'w, crate::tiles::container_menu::ContainerTiles>>);
+
 /// Rebuild the container or barter menu's UI when the model changed (the inventory is
 /// the Pip-Boy's).
 #[allow(clippy::too_many_arguments)]
@@ -839,17 +871,22 @@ fn draw(
     mut kit: Local<Option<look::Kit>>,
     (combat, play, mut script): DrawSources,
     mut forms: Local<Option<crate::pipboy::stats::read::Forms>>,
-    (tiles, mut was_tiled): (Option<Res<crate::tiles::vanilla::TileMenus>>, Local<bool>),
+    (tiles, mut was_tiled, tile_menu): DrawTiles,
 ) {
-    // T15a: with `[UI] TileMenus=QuantityMenu` the prompt is drawn from its tiles
-    // (`crate::tiles::menus`) once the tree has built its file; drawn again here when that
-    // changes (the frame the prompt opens, before the tree builds it, draws it by hand).
+    // T15c: with `[UI] TileMenus=ContainerMenu` the menu is drawn from its tiles
+    // (`crate::tiles::container_menu`) once the tree has built its file; a sheet takes the
+    // pointer here instead (no click past it [documented: `&no_click_past;`]).
+    let container_tiled = tile_menu.is_some_and(|t| t.menu.is_some());
+    // T15a: with `[UI] TileMenus=QuantityMenu`, or over a container menu drawn from its tiles,
+    // the prompt is drawn from its tiles (`crate::tiles::menus`) once the tree has built its
+    // file; drawn again here when that changes (the frame the prompt opens, before the tree
+    // builds it, draws it by hand).
     let prompt = active.0.as_ref().is_some_and(|m| m.quantity.is_some());
-    let tiled = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| crate::tiles::menus::quantity_tiled(tiles.as_ref().is_some_and(|t| t.quantity), &rt.game, prompt));
-    if !active.is_changed() && !roots.is_empty() && tiled == *was_tiled {
+    let tiled = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| crate::tiles::menus::quantity_tiled(tiles.as_ref().is_some_and(|t| t.quantity), &rt.game, prompt, container_tiled));
+    if !active.is_changed() && !roots.is_empty() && (tiled, container_tiled) == *was_tiled {
         return;
     }
-    *was_tiled = tiled;
+    *was_tiled = (tiled, container_tiled);
     for e in &roots {
         commands.entity(e).despawn();
     }
@@ -861,7 +898,7 @@ fn draw(
     let bc = crate::interface::bc_supported(formats.as_deref());
     let kit = kit.get_or_insert_with(|| look::Kit::load(data.as_deref(), &mut images, bc));
     // The lists' scroll positions follow the rows drawn (`MenuModel::pointer_pick`).
-    if m.mode != Mode::Inventory {
+    if m.mode != Mode::Inventory && !container_tiled {
         let first = [Side::Container, Side::Player].map(|s| look::drawn_first(m, s, kit));
         if let Some(m) = active.bypass_change_detection().0.as_mut() {
             m.scroll = first;
@@ -876,7 +913,11 @@ fn draw(
         align_items: AlignItems::Center,
         ..default()
     };
-    if m.mode != Mode::Inventory {
+    if container_tiled {
+        commands.spawn((MenuRoot, screen.clone(), GlobalZIndex(100))).with_children(|root| {
+            root.spawn(crate::tiles::menus::modal_sheet());
+        });
+    } else if m.mode != Mode::Inventory {
         let note = note(m, &sim);
         // The selected item's figures, as the Pip-Boy's ITEMS page reads them
         // (`crate::pipboy::items::info_of`; owner's playtest list 7 item 25).
@@ -918,6 +959,21 @@ mod wheel_hold_tests {
         }
         app.world_mut().write_message(CursorMoved { window, position: Vec2::ZERO, delta: Some(Vec2::new(travel, 0.0)) });
         app.update();
+    }
+
+    #[derive(Resource, Default)]
+    struct SeenHeld(bool);
+
+    #[test]
+    fn a_reader_after_the_set_sees_this_frames_wheel() {
+        let mut app = App::new();
+        app.init_resource::<WheelHold>()
+            .init_resource::<SeenHeld>()
+            .add_message::<MouseWheel>()
+            .add_message::<CursorMoved>()
+            .add_systems(Update, (wheel_hold.in_set(WheelHoldSet), (|hold: Res<WheelHold>, mut seen: ResMut<SeenHeld>| seen.0 = hold.held()).after(WheelHoldSet)));
+        step(&mut app, true, 50.0);
+        assert!(app.world().resource::<SeenHeld>().0, "the frame's own wheel step, as the tile hover reads it");
     }
 
     #[test]

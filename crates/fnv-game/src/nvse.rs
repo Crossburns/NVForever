@@ -154,7 +154,7 @@ impl Game<'_> {
 
 /// An xNVSE function by catalogue name (lower case); `None` when it is not built here.
 /// `on` is the reference it was called on, else the calling reference.
-pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[XVal]) -> Option<Result<XVal, String>> {
+pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[XVal]) -> Option<Result<XVal, String>> {
     if let Some(r) = crate::delayed::call(g, ctx, name, on, args) {
         return Some(r);
     }

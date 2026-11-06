@@ -10,7 +10,9 @@
 //!   streaming drops the cell or a door reloads everything, and comes back with the cell.
 //!   Its mesh entities carry `RefVisual(id)`, so the crosshair's render-bounds fallback
 //!   finds it like a placed item. A taken one (`RefState::deleted`) is despawned; one
-//!   that moved (falling, settling, pushed) follows the simulation's pose.
+//!   that moved (falling, settling, pushed) follows the simulation's pose. Markers and
+//!   bases of a type placed references are not drawn for (PlaceAtMe of an explosion) draw
+//!   nothing ([`draws_model`]).
 //! - Physics (`crate::phys`): its model's collision objects, dynamic when the model says
 //!   so, loaded and unloaded with its physics cell; while it moves the body's pose is
 //!   written back to the simulation's reference ([`ref_pose_from_body`]), so a cell
@@ -38,7 +40,7 @@ use fnv_sim::FormId;
 use fnv_world::transform::{mul, ref_rotation, transpose};
 use fnv_world::{cell_of, WorldIndex};
 use nvf_assets::model::ModelCtx;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// The render cell a created reference belongs to: its interior cell, or the exterior
 /// grid square containing its position in its cell's worldspace (the rule render
@@ -154,6 +156,14 @@ pub fn model_path(d: &crate::PlayData, base: FormId, mods: u8) -> Option<String>
     b.world_model_path().filter(|m| !m.ends_with(".spt"))
 }
 
+/// Whether a created reference draws the model [`model_path`] gives: the rule placed
+/// references are drawn by (`crate::script_draw`), so a marker made at run time is as
+/// unseen as a placed one and an explosion's reference draws no effect model. The
+/// reference itself stays for scripts, and [`model_path`] stays the collision's model.
+pub fn draws_model(d: &crate::PlayData, base: FormId, mods: u8) -> bool {
+    fnv_world::placed::base_object(d.lo, d.schema, base.0).is_none_or(|b| crate::script_draw::drawn_type(&b)) && !model_path(d, base, mods).is_some_and(|m| crate::script_draw::is_marker(&m))
+}
+
 /// The alternate textures of the model [`model_path`] gives: the base's world-model
 /// list (`BaseObject::world_alt_textures`), none for a modded weapon's own model
 /// (docs/spec-notes/texture-swaps.md §4).
@@ -210,6 +220,7 @@ fn sync_drawn(
     mut transforms: Query<&mut Transform, With<DroppedRoot>>,
     mut drawn: ResMut<Drawn>,
     mut models: ModelCtx,
+    mut not_drawn: Local<BTreeSet<(FormId, u8)>>,
 ) {
     let loaded: HashMap<RenderCell, (Entity, Vec3)> = cells.iter().map(|(e, c, t)| (*c, (e, t.translation))).collect();
     // Drawn under a cell entity that is gone (render streaming, door travel: the root
@@ -247,6 +258,15 @@ fn sync_drawn(
         let w = wanted[&id];
         let (cell_e, origin) = loaded[&w.cell];
         let Some((base, mods)) = sim.world.peek(FormId(id)).map(|s| (s.base, s.extra.mods)) else { continue };
+        // Known from the records alone, so asked once: such a reference is in the plan every frame.
+        if not_drawn.contains(&(base, mods)) {
+            continue;
+        }
+        if !draws_model(&d, base, mods) {
+            info!("dropped reference 0x{id:08X}: base {base} draws nothing (a marker, or a type with no model in the world)");
+            not_drawn.insert((base, mods));
+            continue;
+        }
         let Some(path) = model_path(&d, base, mods) else {
             warn_once!("dropped reference 0x{id:08X}: base {base} has no model to draw");
             continue;
