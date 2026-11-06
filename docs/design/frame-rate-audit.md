@@ -282,6 +282,21 @@ against 34.6 ms a frame, inside the machine's noise. So hiding a third of the me
 does not remove most of the render thread's work here; what does scale is not settled
 (see §4). Smoke: `rooms-repconn`.
 
+**Occlusion planes** (#1434, `engine/nvforever/src/occlusion.rs`, level-design.md §3.2):
+a placed object's mesh wholly behind one plane is hidden as well, and a portal wholly
+behind one is not followed; interiors only by default (`--occlusion-planes-outdoors` for
+the exterior ones, `--no-occlusion-planes` off; `NVF_PLAY_TEST_OCCLUSION_CYCLE=<s>`
+switches them in one run). Hidden from the start [observed, 2026-11-06]: OVWestSewers02
+1,549 of 3,600 meshes, 2EOVault21 1,127 of 4,923 (and 8 portals), RocketLabMid 943 of
+4,134, HooverDamIntLowerLevel 127 of 4,005; outdoors at Primm 1,504 of 3,152. Pictures
+with and without were the same in the sewers (no pixel off by more than 1), Vault 21
+and REPCONN apart from HUD messages and flicker; at Primm a roof sign was hidden, hence
+interiors only. Frame time, the planes switched every 10 s in one run, frame times
+logged every 5 s: in the sewers 16.67 ms both ways (the run held at 60 Hz, so not
+measurable), in an earlier unlocked run 5.0 against 5.0 ms; at Primm (outdoors switch)
+5.9–6.4 ms on against 5.8–6.6 ms off. No measurable gain at these counts: as with rooms,
+hiding a third to a half of the meshes is not what these frames are bound by.
+
 ## 4. Left to do
 
 - **Batching** (REPCONN, and every interior): about one material asset per mesh, and

@@ -146,6 +146,7 @@ mod taa;
 mod speech_look;
 mod stress_sample;
 mod profile;
+mod occlusion;
 mod rooms;
 mod terrain;
 mod texture_swap;
@@ -268,6 +269,13 @@ struct Args {
     /// Draw every room of an interior: no room and portal culling (rooms.rs).
     #[arg(long)]
     no_room_culling: bool,
+    /// Occlusion planes hide nothing (rooms.rs, occlusion.rs).
+    #[arg(long)]
+    no_occlusion_planes: bool,
+    /// Use the occlusion planes of exterior cells too (off by default: some poke out of
+    /// their walls and would hide what is seen over them; occlusion.rs).
+    #[arg(long)]
+    occlusion_planes_outdoors: bool,
     /// Seconds a streamed cell takes to fade in or out against the distant LOD; 0 swaps
     /// at once (fade.rs).
     #[arg(long, default_value_t = 1.0)]
@@ -1312,7 +1320,7 @@ fn main() -> AppExit {
     // Small objects far away cast no sun shadows (shadow_thin.rs).
     .add_plugins(shadow_thin::ShadowThinPlugin(args.shadow_thin))
     // Interiors draw the rooms seen through portals only (rooms.rs).
-    .add_plugins(rooms::RoomsPlugin { off: args.no_room_culling })
+    .add_plugins(rooms::RoomsPlugin { off: args.no_room_culling, planes_off: args.no_occlusion_planes, planes_outdoors: args.occlusion_planes_outdoors })
     .insert_resource(ClearColor(Color::srgb(0.62, 0.72, 0.85)))
     .insert_resource(GlobalAmbientLight { brightness: 600.0, ..default() })
     .insert_resource(sky_state)
