@@ -284,6 +284,14 @@ the point's distance `z` from the eye along the view, in game units:
 - **Aiming down the sights**: strength `fIronSightsDOFStrengthCap` with the zoom's blend,
   distance `fIronSightsDOFDistance`, range `fIronSightsDOFRange`. The shipped cap is 0,
   so there is none in the shipped game [observed]; a plugin that raises it gets it.
+- **In a conversation**: focused on the speaker's face, at its straight distance from the
+  camera (so looking around does not move the focus), what is beyond it only (Mode -
+  Back), faded with the close-up's zoom and following the `dialogue-zoom` setting
+  (docs/design/dialogue-play.md §8.8). Strength 1, distance 32 (the speaker's own body
+  stays clean), range 512 [design: no setting names it, §8.2; to tune against the
+  original's shots, where the far background is strongly blurred and a wall close behind
+  the speaker a little: observed, dialogue-play.md §8.5]. Whether the original's is a
+  depth of field at all is a [hypothesis].
 - PipBackgroundFX and PauseBackgroundFX are not used: the Pip-Boy keeps its blur from
   `fBlurRadiusPipboy` (§5) and the pause menu covers the screen [design].
 - Camera shots' modifiers (VATS kill cameras, CAMS MNAM) are not played here.
@@ -302,9 +310,9 @@ the point's distance `z` from the eye along the view, in game units:
 - Applied with the modifiers' blur (§5.1) where both are on; what is nearer than the
   Pip-Boy's sharp depth stays sharp.
 
-Log line (smoke `imagespace-dof`, `vats-mode-dof`): "depth of field: strength S, distance D,
-range R[, focus F][, front][, back][, no sky] (source)" when it changes (source: the
-modifier's Editor ID, `VATS` or `iron sights`), and "depth of field: off".
+Log line (smoke `imagespace-dof`, `vats-mode-dof`, `dialogue-zoom`): "depth of field: strength
+S, distance D, range R[, focus F][, front][, back][, no sky] (source)" when it changes (source:
+the modifier's Editor ID, `VATS`, `iron sights` or `dialogue`), and "depth of field: off".
 
 ## 9. Motion blur
 

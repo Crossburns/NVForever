@@ -3214,6 +3214,137 @@ expect = [
 ]
 
 [[scenario]]
+name = "dialogue-zoom"
+source = "docs/design/dialogue-play.md §8.8: a conversation narrows the view onto the speaker, the head about 0.30 of the view's height wherever the speaker stands, and gives the field of view back"
+note = "Chet in the general store at 1280x720; the talk aid starts the conversation at 11 s and says goodbye after his greeting and 4 s of choices. Vertical 59.8 is --fov 75. Shot zoom_settled.png to compare with the original's framing"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/dialogue_look.rs", "engine/nvf-play/src/aim_zoom.rs", "engine/nvf-play/src/free_cam.rs", "engine/nvforever/src/imagespace.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "14:zoom_settled.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): (?P<n>\d+) units, vertical 59\.8° to', range = [10, 3000], label = "the view narrows on the drawn head" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back exactly" },
+], [
+  { re = 'depth of field: strength 1\.0, distance 32, range 512, focus \d+, back \(dialogue\)', label = "what is behind the speaker is out of focus at full zoom" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends, with the blur on" },
+  { text = "depth of field: off", label = "and the blur has gone" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-victor"
+source = "docs/design/dialogue-play.md §8.8: a robot is framed by its drawn height, not a human's head: in the original the whole upper machine is in view, the screen about 0.25 of the height with its centre at 0.44"
+note = "Goodsprings' Victor (GSVictorRef 0x001073E8) is put 150 units in front of the player at 3 s, faced at 5 s and talked to at 7 s. Shot victor_settled.png to compare with the original's. The view's range is the rule's for his meshes, 187 tall in the bind pose: a run outside it first asks what the hit volume says (the 'drawn N tall' in the line)"
+areas = ["dialogue", "camera", "creatures"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:0x001073E8:player:150:0:0", NVF_PLAY_TEST_FACE = "5:001073E8", NVF_PLAY_TEST_TALK = "7:0x001073E8=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "10:victor_settled.png" }
+args = ["--cell", "Goodsprings", "--pos=-71400,3600,8352", "--play", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 34
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): .*; view (?P<n>\d+) units tall \(drawn \d+ tall\)', range = [100, 135], label = "Victor is framed by his height, on his head bone" },
+  { re = 'dialogue: conversation with \S+ ended', label = "the conversation with Victor ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back after Victor" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-marcus"
+source = "docs/design/dialogue-play.md §8.8: a big creature's head fills less of the view than a human's: in the original Marcus's head is about 0.25 of the height, its centre at 0.325"
+note = "Marcus (MarcusRef 0x0013AFDE) in Jacobstown, faced at 5 s and talked to at 7 s from about where he stands; he may greet first, then the aid's steps wait on that conversation. Shot marcus_settled.png to compare with the original's. The view's range is the rule's for his meshes, 173 tall in the bind pose: see dialogue-zoom-victor"
+areas = ["dialogue", "camera", "creatures"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_FACE = "5:0013AFDE", NVF_PLAY_TEST_TALK = "7:0x0013AFDE=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "10:marcus_settled.png" }
+args = ["--play", "--pos=-103557,94176,12000", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 34
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): .*; view (?P<n>\d+) units tall \(drawn \d+ tall\)', range = [85, 115], label = "Marcus is framed by his height, on his head bone" },
+  { re = 'dialogue: conversation with \S+ ended', label = "the conversation with Marcus ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back after Marcus" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-house"
+source = "docs/design/dialogue-play.md §8.8: Mr. House, a screen 300 tall, is framed by the same rule as Victor and Marcus: in the original vertical 18.3° from about 466 units, his face well over half of the view"
+note = "Lucky38MrHouseREF 0x001264C5 in the penthouse: the player is put 450 units in front of his screen at 5 s (his front is local -y, on heading 315 from him; the stairs are under that spot) and talks to him at 9 s. A greeting his dialogue's conditions refuse here would show as the first order step missing: read the dialogue lines first. Shot house_settled.png to compare with the original's"
+areas = ["dialogue", "camera", "creatures"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "5:-1357:5653:19100", NVF_PLAY_TEST_LOOK = "7:135:15", NVF_PLAY_TEST_TALK = "9:0x001264C5=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "12:house_settled.png" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): .*; view (?P<n>\d+) units tall \(drawn \d+ tall\)', range = [130, 170], label = "House is framed by his height, on his head bone" },
+  { re = 'dialogue: conversation with \S+ ended', label = "the conversation with House ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back after House" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-off"
+source = "docs/design/dialogue-play.md §8.8: the dialogue-zoom setting off (--no-dialogue-zoom)"
+note = "As dialogue-zoom: the turn still happens, the field of view is left alone and nothing is blurred"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/dialogue_look.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--no-dialogue-zoom"]
+run_seconds = 40
+expect = [
+  { text = "dialogue zoom is off (--no-dialogue-zoom)", label = "the switch is read" },
+  { re = 'dialogue look: the view turns to', label = "the opening turn still happens" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends" },
+  { re = 'dialogue zoom: (in on|out from)', count = 0, label = "no close-up" },
+  { re = 'depth of field: .*\(dialogue\)', count = 0, label = "no blur" },
+]
+
+[[scenario]]
+name = "dialogue-zoom-no-look"
+source = "docs/design/dialogue-play.md §8.8: the close-up does not need dialogue-look; with the turning off the renderer still says where the head is (nvforever dialogue_look.rs)"
+note = "As dialogue-zoom with --no-dialogue-look: nobody turns, and the view narrows where it looks, from the head's distance and not the hit volume's"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvforever/src/dialogue_look.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--no-dialogue-look", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\)', label = "the close-up finds the drawn head with the turning off" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back" },
+]]
+expect = [
+  { re = 'dialogue look: the view turns to', count = 0, label = "nobody turns" },
+]
+
+[[scenario]]
+name = "dialogue-zoom-third"
+source = "docs/design/dialogue-play.md §8.8: from third person the original ends in the same close-up with no player body, the camera having travelled from behind the player, and returns (observed, dialogue-play.md §8.5)"
+note = "As dialogue-zoom with the view in third person from 6 s. The crosshair's line says which view the camera is in. Shots: third_settled.png has no body, third_after.png has it again"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/control.rs", "engine/nvf-play/src/player.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONTROL = "6:view", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "14:third_settled.png,38:third_after.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { text = "crosshair: the third-person camera's line", label = "third person before the conversation" },
+  { text = "crosshair: the eye's view", label = "the camera comes to the eye" },
+  { re = 'dialogue zoom: in on .*third person: the camera at the eye, no body', label = "in the same close-up" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends" },
+  { text = "crosshair: the third-person camera's line", label = "third person again" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-frozen"
+source = "docs/design/dialogue-play.md §8.8: with --menu-pause original the picture stands still, so the close-up's eases complete at once"
+note = "As dialogue-zoom under --menu-pause original. Nothing proves here that the eases took no time beyond their lines' order; unit test a_frozen_picture_gets_the_end_of_the_ease_at_once does"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/pause.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--menu-pause", "original", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue zoom: in on ', label = "the close-up is on" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back" },
+]]
+
+[[scenario]]
 name = "dialogue-goodbye-hint-off"
 note = "As dialogue-goodbye-hint with the Goodbye hint switched off first: the pause menu's settings page flips dialogue-goodbye-hint at 3 s (the aids that act on the world, the talk among them, wait for 11 s of the world clock, which never runs ahead of the real one, so the flip comes first on any machine). The hint is held back, the real Tab at 36 s still says goodbye. Shots hint_off_*.png. Does not cover the flip while a conversation is open (unit test of the cache key) or a refused Tab"
 source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint switch (#1517)"
@@ -11025,6 +11156,8 @@ run_seconds = 26
 expect = [
   { re = 'You hear nothing', label = "Ramos's line through the intercom is said" },
   { re = 'dialogue look: the view turns to', label = "the view turns to the intercom, not to Ramos" },
+  { re = 'dialogue zoom: no zoom in the conversation with .*talking activator', count = 1, label = "no close-up through an activator, said once" },
+  { re = 'dialogue zoom: in on', count = 0, label = "and the view does not narrow" },
 ]
 
 [[scenario]]
