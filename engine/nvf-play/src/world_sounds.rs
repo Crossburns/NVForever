@@ -15,7 +15,8 @@
 //!   MISC, KEYM, WEAP, ARMO, AMMO, ALCH, BOOK, NOTE, IMOD, CHIP, CCRD, CMNY]: a
 //!   reference taken out of the world (`RefState::deleted` on its `RefChanged`) plays
 //!   its base's pick-up sound, a reference a drop creates plays its drop sound, both at
-//!   the reference [hypothesis: where]; an item moved between the player and an open
+//!   the reference [hypothesis: where], and neither for what a load puts back (a
+//!   `RefChanged` marked `restored`); an item moved between the player and an open
 //!   container plays the pick-up sound when taken and the drop sound when put in, at the
 //!   listener. An item whose record names none plays `UIItemGenericUp` / `…Down`
 //!   [hypothesis: by the names].
@@ -517,9 +518,18 @@ fn objects(
         ws.stats.impacts_no_material += i.no_material as u32;
     }
     let in_container = menu.as_ref().and_then(|m| m.0.as_ref()).is_some_and(|m| matches!(m.mode, Mode::Container(_)));
-    for &RefChanged { form_id: id } in changed.read() {
+    for &RefChanged { form_id: id, restored } in changed.read() {
         let Some(s) = sim.world.peek(FormId(id)) else { continue };
         if !ws.forms.items.contains_key(&s.base) {
+            continue;
+        }
+        // In the save as picked up or dropped: heard before it.
+        if restored {
+            if s.deleted() {
+                ws.picked.insert(id);
+            } else if id >= 0xFF00_0000 {
+                ws.dropped.insert(id);
+            }
             continue;
         }
         let (base, pos) = (s.base, s.pos);
@@ -887,5 +897,61 @@ mod tests {
         // Landing from 300 units/s: a hard knock; bouncing straight back: twice the speed.
         assert!((knock_speed([0.0, 0.0, -300.0], [0.0; 3]) - 300.0).abs() < 1e-3);
         assert!((knock_speed([0.0, 0.0, -100.0], [0.0, 0.0, 100.0]) - 200.0).abs() < 1e-3);
+    }
+
+    const CARTON: u32 = 0x100;
+    const UP: FormId = FormId(0x900);
+    const DOWN: FormId = FormId(0x901);
+
+    /// The world's sounds over two item references picked up (0x301, 0x302) and two
+    /// dropped (returned).
+    fn objects_app() -> (App, u32, u32) {
+        use crate::sim::test_world::{item_base, placed, sim};
+        let mut world = sim(vec![item_base(CARTON)], vec![placed(0x301, CARTON), placed(0x302, CARTON)]);
+        for id in [0x301, 0x302] {
+            world.world.activate(FormId::PLAYER_REF, FormId(id)).unwrap();
+        }
+        let mut drop = || world.world.place(FormId(CARTON), None, [0.0; 3], [0.0; 3], 1).unwrap().0;
+        let (a, b) = (drop(), drop());
+        let mut ws = WorldSounds::default();
+        ws.forms.items.insert(FormId(CARTON), (Some(UP), Some(DOWN)));
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin)
+            .init_state::<PlayState>()
+            .insert_resource(world)
+            .insert_resource(ws)
+            .init_resource::<crate::sfx::ScriptSounds>()
+            .add_message::<RefChanged>()
+            .add_message::<Activated>()
+            .add_message::<DoorPassed>()
+            .add_message::<ImpactPicked>()
+            .add_message::<crate::ui_sounds::UiSound>()
+            .add_message::<PlaySound>()
+            .add_systems(Update, objects);
+        (app, a, b)
+    }
+
+    /// Tell these changes and run a frame: the sounds asked for.
+    fn hear(app: &mut App, changes: &[RefChanged]) -> Vec<FormId> {
+        let mut m = app.world_mut().resource_mut::<bevy::ecs::message::Messages<RefChanged>>();
+        for &c in changes {
+            m.write(c);
+        }
+        app.update();
+        app.world_mut().resource_mut::<bevy::ecs::message::Messages<PlaySound>>().drain().map(|s| s.sound).collect()
+    }
+
+    #[test]
+    fn what_the_load_restores_is_silent_and_a_real_change_beside_it_is_heard() {
+        let (mut app, dropped_before, dropped_now) = objects_app();
+        let restored = |form_id| RefChanged { form_id, restored: true };
+        // Picked up before the save, and picked up now, in the same frame.
+        assert_eq!(hear(&mut app, &[restored(0x301), RefChanged::new(0x302)]), vec![UP]);
+        // Dropped before the save, and dropped now.
+        assert_eq!(hear(&mut app, &[restored(dropped_before), RefChanged::new(dropped_now)]), vec![DOWN]);
+        let stats = &app.world().resource::<WorldSounds>().stats;
+        assert_eq!((stats.pickups, stats.drops), (1, 1));
+        // Both count as heard: a later notice of them makes no sound.
+        assert!(hear(&mut app, &[RefChanged::new(0x301), RefChanged::new(dropped_before)]).is_empty());
     }
 }

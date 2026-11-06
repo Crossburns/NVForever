@@ -294,17 +294,30 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   once the load order is known (remapped if it differs, §4.1); the script runtime restores the
   game and the simulation as it is made, before its first frame, and sends `RefChanged`
   for every reference the save changed so the drawn world follows; the engine part is put
-  back next. The game's clock stays the save's: the residents' start clock goes only into
+  back next. Those `RefChanged` are marked `restored`: visuals and collision follow them
+  as any, while crime and the world's sounds take what they name as judged and heard
+  before the save, so a load judges no theft and plays no pick-up or drop sound. It is a
+  mark on each notice and not a gate on the frames of the restore, so a real pick-up or a
+  load script's change in those frames has its normal effect [design:
+  `crime::report_deeds`, `world_sounds::objects`; smoke `save-theft-write`,
+  `save-theft-load`].
+  A `MoveToMarkerWithFade` the save caught during its fade is made in the
+  restore, on the world that is played, before any script of the load runs; the reference
+  is drawn where it ends up, without the fade, and its `RefChanged` is marked `restored`
+  too: the move was asked for before the save [design: `Game::restore`,
+  `Runtime::restore_save`; smoke `save-fade-move-write`, `save-fade-move-load`].
+  The sky takes the save's hold and the rolls' random state as it is
+  made, before its first look at the weather lists, not when the engine part is put back:
+  a hold set after that look would hold what its roll chose, and setting them later would
+  undo a load script's release [design: `SkyState::restore_saved`; smoke
+  `save-weather-write`, `save-weather-load`]. The game's clock stays the save's: the residents' start clock goes only into
   a new game, so `--day` never changes a loaded game's GameDaysPassed [design:
   `residents::Core::prepare`; smoke `save-days-write`, `save-days-load`]. The sky alone
   starts on the header's `game_days_passed`, over `--day` (`start_days` in `main.rs`), so
-  its weather rolls see no hours pass at the load. A restore that fails goes on from the
-  plugins' game, on `--day` or the plugins' day and at the save's hour; its sky starts on
-  the failed save's day and takes the game's once the game's hour has moved half a game
-  minute (about a second of play at TimeScale 30, not while paused or at TimeScale 0).
-  Going back to a lower day makes no volatility check; going forward (a failed save on day
-  25 with `--day 30`) can. A save made before the header held the day leaves the sky on
-  `--day` or the plugins' day; it takes the game's day at the same step, with up to 24
+  its weather rolls see no hours pass at the load. A save made before the header held the
+  day leaves the sky on `--day` or the plugins' day; it takes the game's day once the game's
+  hour has moved half a game minute (about a second of play at TimeScale 30, not while
+  paused or at TimeScale 0), with up to 24
   volatility checks at once, which can make one weather roll and replace the weather kept
   from the save [design: `SkyState::follow_climate`, `SkyState::follow_game_clock`]. The
   sky does not follow the game under two flags: with
@@ -339,7 +352,15 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   main menu instead, and once its window is up a message box says the save could not be
   loaded and why (none in unattended runs; the log line `load: <why>; opening the main
   menu` carries it). The same for `--load` given by hand and for a load while playing
-  (smoke `load-handoff-refused`).
+  (smoke `load-handoff-refused`). All that the restore itself checks (the formats of the
+  body, game, simulation and engine parts, both random-number positions, the co-op
+  players) is asked as the save is read, before the world starts at its place
+  [design: `nvf_play::save::read_for_load`, `GameSnapshot::check`; smoke
+  `save-refused-write`, `save-refused-load`]. No game ever goes on from a save that failed:
+  should a restore still fail after that read, the run keeps no runtime (no script runs,
+  no engine part is put back, nothing can be saved, the loading screen stays up) and
+  starts again on the main menu with the same message [design: `nvf_play::save::LoadRefused`,
+  `--load-refused`; smoke `load-refused-late`, through a test aid, as no save reaches it now].
 - **Memory** (#1357, load-handoff scenario at Goodsprings, private bytes): one run's
   start peak was 6.9 GB, 3.3 GB of it the script data build holding every record's read
   at once (now read a slice at a time, `fnv_game::data`): 4.1 GB. Old and new run

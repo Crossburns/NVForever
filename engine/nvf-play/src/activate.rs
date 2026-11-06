@@ -28,7 +28,7 @@
 pub mod outcome;
 pub mod pick;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::phys::PhysState;
 use crate::player::Player;
@@ -659,7 +659,7 @@ pub(crate) fn activate(
     for e in effects {
         match e {
             Effect::RefChanged(form_id) => {
-                changed.write(RefChanged { form_id });
+                changed.write(RefChanged::new(form_id));
             }
             Effect::Travel { world, interior, feet, heading_deg } => {
                 let to = match (interior, world) {

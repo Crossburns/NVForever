@@ -60,7 +60,9 @@
 //!   object, e.g. a bottle to shoot), `equip=<FormID hex>` (give one unless carried and
 //!   equip it, as `NVF_PLAY_TEST_EQUIP`) and `condition=<percent>` (set the condition of
 //!   everything the player has equipped, e.g. a weapon about to break). `aimpart=254`
-//!   aims at the weapon the nearest NPC holds drawn (`hitvol::WEAPON_PART`). The `aim…`
+//!   aims at the weapon the nearest NPC holds drawn (`hitvol::WEAPON_PART`);
+//!   `aimcreaturepart=<n>` aims at the nearest creature's body part `n` (its BPTD index,
+//!   e.g. a bighorner's calf, which its head does not hide when it faces the player). The `aim…`
 //!   presses put the point under the crosshair: in third person the view turns so the
 //!   over-the-shoulder camera's line passes through it (`control::Crosshair::aim_at`).
 //!   `flashlight` switches the flashlight as a hold of Menu Mode does (`crate::flashlight`).
@@ -205,6 +207,8 @@ enum Press {
     /// A share of the NPC's height, over a body part's centre.
     AimNpcOver(f32, u8),
     AimPart(u8),
+    /// `aimcreaturepart=<n>`: the nearest creature's body part `n` (its BPTD index).
+    AimCreaturePart(u8),
     AimRef(u32),
     Equip(FormId),
     Condition(f32),
@@ -240,6 +244,8 @@ fn press(rest: &str) -> Result<Press, String> {
                 Press::AimNpcOver(h, n)
             } else if let Some(Ok(h)) = rest.strip_prefix("aimnpc=").map(|h| h.trim().parse::<f32>()) {
                 Press::AimNpcAt(h)
+            } else if let Some(Ok(n)) = rest.strip_prefix("aimcreaturepart=").map(|n| n.trim().parse::<u8>()) {
+                Press::AimCreaturePart(n)
             } else if let Some(Ok(n)) = rest.strip_prefix("aimpart=").map(|n| n.trim().parse::<u8>()) {
                 Press::AimPart(n)
             } else if let Some(Ok(id)) = rest.strip_prefix("aimref=").map(|h| u32::from_str_radix(h.trim().trim_start_matches("0x"), 16)) {
@@ -575,6 +581,7 @@ fn keys_and_controls(
             Press::AimNpcAt(h) => aim_at_nearest_actor(&phys, &mut player, cross.as_ref(), |id| play.index.refs.get(&id).is_some_and(|e| &e.sig == b"ACHR"), Some(Aim::Share(h))),
             Press::AimNpcOver(h, n) => aim_at_nearest_actor(&phys, &mut player, cross.as_ref(), |id| play.index.refs.get(&id).is_some_and(|e| &e.sig == b"ACHR"), Some(Aim::ShareOver(h, n))),
             Press::AimPart(n) => aim_at_nearest_actor(&phys, &mut player, cross.as_ref(), |id| play.index.refs.get(&id).is_some_and(|e| &e.sig == b"ACHR"), Some(Aim::Part(n))),
+            Press::AimCreaturePart(n) => aim_at_nearest_actor(&phys, &mut player, cross.as_ref(), |id| play.index.refs.get(&id).is_some_and(|e| &e.sig == b"ACRE"), Some(Aim::Part(n))),
             Press::AimRef(id) => aim_at_ref(&phys, &mut player, cross.as_ref(), id),
             Press::AimVats => {
                 let marked = vats.marked();
@@ -873,6 +880,7 @@ mod tests {
         assert_eq!(press("aimnpc=0.95@0").unwrap(), Press::AimNpcOver(0.95, 0));
         assert_eq!(press("aimref=0010A202").unwrap(), Press::AimRef(0x10A202));
         assert_eq!(press("aimpart=4").unwrap(), Press::AimPart(4));
+        assert_eq!(press("aimcreaturepart=1").unwrap(), Press::AimCreaturePart(1));
         assert_eq!(press("condition=2.5").unwrap(), Press::Condition(2.5));
         assert!(press("shoot").is_err());
         assert_eq!(press("orbit=180:0").unwrap(), Press::Orbit(std::f32::consts::PI, 0.0));

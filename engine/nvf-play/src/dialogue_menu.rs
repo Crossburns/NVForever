@@ -22,7 +22,7 @@
 //! - The menu is rebuilt when what it shows changes; the pointer chooses the choice it
 //!   is on (`crate::dialogue` reads the clicks).
 
-use crate::dialogue::ChoiceButton;
+use crate::dialogue::{ChoiceButton, ListId};
 use crate::interface::{amber, at, bc_supported, face, plain_font, set_line, Face, Picture, Pictures};
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
@@ -136,6 +136,12 @@ impl Default for GoodbyeHint {
     }
 }
 
+/// Whether the Tab hint stands on `view`, for both views: `setting` is the player's switch for
+/// it (#1517), and a Goodbye choice has to be offered [owner, list 5 item 62].
+pub fn hint_shown(view: &MenuView, setting: bool) -> bool {
+    setting && view.goodbye && !view.choices.is_empty()
+}
+
 /// A choice as the menu shows it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ChoiceRow {
@@ -158,12 +164,14 @@ pub struct MenuView {
 }
 
 /// The menu to draw (set by `crate::dialogue`), its selected choice and the first choice
-/// shown.
+/// shown ([`window`]).
 #[derive(Resource, Default)]
 pub struct DialogueMenu {
     pub view: Option<MenuView>,
     pub selected: usize,
     first: usize,
+    /// The screen of the conversation this stands for, which its buttons carry.
+    pub list: Option<ListId>,
 }
 
 // ---- layout --------------------------------------------------------------------------
@@ -368,7 +376,7 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, hint: 
     let (first, end) = window(first, selected, &heights);
     let height = list_room(&heights).max(MIN_LIST);
     // The hint's own words, and the room under the band they need where they stand in it.
-    let hint_line = (view.goodbye && hint).then(|| body.lines(GOODBYE_HINT, None).remove(0));
+    let hint_line = hint_shown(view, hint).then(|| body.lines(GOODBYE_HINT, None).remove(0));
     let ink = hint_line.as_ref().map_or(STAND_IN_INK, |l| glyph_ink(l, body));
     let room = hint_line.as_ref().map_or(0.0, |l| if hint_at_side(l.width, width, band_x) { 0.0 } else { hint_room(ink) });
     let top = centred(height, room);
@@ -487,7 +495,7 @@ fn image(p: Option<&Picture>, color: Color) -> Option<ImageNode> {
     p.map(|(image, rect)| ImageNode { rect: *rect, color, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) })
 }
 
-fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize) {
+fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize, on_screen: Option<&ListId>) {
     let screen = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     let bright = amber(255.0);
     commands.spawn((MenuRoot, screen, GlobalZIndex(90))).with_children(|s| {
@@ -543,7 +551,7 @@ fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, s
             for c in &list.choices {
                 let [x, y, cw, ch] = c.area;
                 let row = &view.choices[c.index];
-                w.spawn((Button, ChoiceButton(c.index), at(x, y - clip_top, cw, ch))).with_children(|r| {
+                w.spawn((Button, ChoiceButton(c.index, on_screen.cloned()), at(x, y - clip_top, cw, ch))).with_children(|r| {
                     // [documented: the list's highlight box] One unit short of the row; a
                     // faint fill and a line around it, red for a check the player falls
                     // short of [observed].
@@ -591,8 +599,18 @@ fn draw(
     mut kit: Local<Option<Kit>>,
     mut shown: Local<Option<MenuKey>>,
     creator: Option<Res<crate::creator::CreatorMenu>>,
+    tiles: Option<Res<crate::tiles::dialog_menu::DialogTiles>>,
+    mut buttons: Query<&mut ChoiceButton>,
     hint: Res<GoodbyeHint>,
 ) {
+    // Drawn from its file: all of the menu, none of it here (`crate::tiles::dialog_menu`).
+    if tiles.is_some_and(|t| t.by_tiles()) {
+        for e in &roots {
+            commands.entity(e).despawn();
+        }
+        *shown = None;
+        return;
+    }
     let width = windows.single().map_or(960.0 * 16.0 / 9.0, |w| 960.0 * w.width() / w.height().max(1.0));
     let selected = menu.selected;
     let kit = kit.get_or_insert_with(|| load_kit(data.as_deref(), &mut images, bc_supported(formats.as_deref())));
@@ -621,13 +639,19 @@ fn draw(
                 (Some(false), was) if was != Some(false) => info!("dialogue menu: {GOODBYE_HINT} hidden by the Goodbye hint setting"),
                 _ => {}
             }
-            spawn_menu(&mut commands, view, &l, kit, selected);
+            spawn_menu(&mut commands, view, &l, kit, selected, menu.list.as_ref());
         }
         *shown = key;
         return;
     }
     for (frame, mut v) in &mut frames {
         v.set_if_neq(if frame.0 == selected { Visibility::Inherited } else { Visibility::Hidden });
+    }
+    // The same words for the next screen (no rebuild): what stands is that screen's now.
+    for mut b in &mut buttons {
+        if b.1 != menu.list {
+            b.1.clone_from(&menu.list);
+        }
     }
 }
 

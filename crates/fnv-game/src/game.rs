@@ -1148,6 +1148,9 @@ pub enum LineKind {
     Hello,
 }
 
+/// See [`Game::ui_dialogue_hook`].
+pub type DialogueHook = Box<dyn for<'g> FnMut(&mut Game<'g>) + Send + Sync>;
+
 pub struct Game<'a> {
     pub data: &'a GameData,
     /// The script extender's strings and arrays by id (fnv_script::vm::ExtStore;
@@ -1283,6 +1286,11 @@ pub struct Game<'a> {
     pub ui_menus: fnv_ui::MenuIndex,
     /// Menu lifetime's once-only warnings, reset with the tree [design].
     pub ui_lifetime: crate::ui_loading::MenuLifetime,
+    /// Conversations started in this run (`crate::dialogue::conversation_stamp`).
+    pub dialogue_serial: u32,
+    /// Told at each transition of the conversation, before any script of it runs
+    /// ([`Game::dialogue_transition`]): for what shows the conversation to what scripts read.
+    pub ui_dialogue_hook: Option<DialogueHook>,
     /// Where InjectUIXML and the menus' includes read files: the engine's archives and
     /// loose files. `None` headless: InjectUIXML then fails, InjectUIComponent works
     /// without includes.
@@ -1846,6 +1854,18 @@ pub struct GameSnapshot {
 }
 
 impl GameSnapshot {
+    /// Whether [`Game::restore`] and `World::restore` can take this snapshot: a load asks
+    /// before it starts anything from the save (docs/design/save-load.md §6).
+    pub fn check(&self) -> Result<(), String> {
+        if self.format != SNAPSHOT_FORMAT {
+            return Err(format!("unsupported snapshot format {:?}", self.format));
+        }
+        self.sim.check()?;
+        crate::coop::checked(self.coop.clone()).map_err(|e| e.to_string())?;
+        self.rng_word_pos.parse::<u128>().map_err(|_| format!("bad rng_word_pos {:?}", self.rng_word_pos))?;
+        Ok(())
+    }
+
     /// After a save made with another load order was remapped (`fnv_save::remap_json`,
     /// docs/design/save-load.md §4.1): drop what stands on forms of plugins no longer
     /// loaded (`gone`), where a field and not a key names them. References whose base form
@@ -2149,6 +2169,8 @@ impl<'a> Game<'a> {
             ui_tree: fnv_ui::Ui::new(),
             ui_menus: fnv_ui::MenuIndex::default(),
             ui_lifetime: crate::ui_loading::MenuLifetime::default(),
+            dialogue_serial: 0,
+            ui_dialogue_hook: None,
             ui_files: None,
             page_menu: None,
             ui_hud_pending: None,
@@ -5254,9 +5276,7 @@ impl<'a> Game<'a> {
     }
 
     pub fn restore(data: &'a GameData, world: World<'a>, cfg: GameConfig, s: &GameSnapshot) -> Result<Game<'a>, String> {
-        if s.format != SNAPSHOT_FORMAT {
-            return Err(format!("unsupported snapshot format {:?}", s.format));
-        }
+        s.check()?;
         let mut g = Game::new(data, world, cfg);
         g.ext = s.ext.clone();
         for l in &s.lambdas {
