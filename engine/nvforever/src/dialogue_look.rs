@@ -665,6 +665,16 @@ pub(crate) fn turn_speaker(
     for r in over {
         looks.by_ref.remove(&r);
     }
+    // With the turning switched off nothing above says where the face is, and the
+    // conversation's zoom (`nvf_play::dialogue_zoom`) still wants its distance.
+    if !settings.enabled {
+        let speaker = game.and_then(|g| g.dialogue.as_ref()).filter(|c| c.through.is_none()).map(|c| c.actor.0);
+        said = speaker.and_then(|r| {
+            let rig = actors.iter().find(|a| a.1.reference == r)?.1;
+            let at = globals.get(*rig.nodes.get(*rig.skel.by_name.get(HEAD_BONE)?)?).ok()?;
+            Some((r, space::to_game(at.translation())))
+        });
+    }
     face.set_if_neq(SpeakerFace(said));
 }
 

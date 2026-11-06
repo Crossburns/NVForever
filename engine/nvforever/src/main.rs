@@ -147,6 +147,7 @@ mod fsr;
 mod speech_look;
 mod stress_sample;
 mod profile;
+mod occlusion;
 mod rooms;
 mod terrain;
 mod texture_swap;
@@ -270,6 +271,13 @@ struct Args {
     /// Draw every room of an interior: no room and portal culling (rooms.rs).
     #[arg(long)]
     no_room_culling: bool,
+    /// Occlusion planes hide nothing (rooms.rs, occlusion.rs).
+    #[arg(long)]
+    no_occlusion_planes: bool,
+    /// Use the occlusion planes of exterior cells too (off by default: some poke out of
+    /// their walls and would hide what is seen over them; occlusion.rs).
+    #[arg(long)]
+    occlusion_planes_outdoors: bool,
     /// Seconds a streamed cell takes to fade in or out against the distant LOD; 0 swaps
     /// at once (fade.rs).
     #[arg(long, default_value_t = 1.0)]
@@ -688,6 +696,10 @@ struct Args {
     /// Accepted for older command lines; not coming back is the default now.
     #[arg(long, hide = true)]
     no_dialogue_recentre: bool,
+    /// With --play: in a conversation, do not narrow the view onto the speaker nor blur
+    /// what is behind them (docs/design/dialogue-play.md §8.8).
+    #[arg(long)]
+    no_dialogue_zoom: bool,
 }
 
 impl Args {
@@ -1319,7 +1331,7 @@ fn main() -> AppExit {
     // Small objects far away cast no sun shadows (shadow_thin.rs).
     .add_plugins(shadow_thin::ShadowThinPlugin(args.shadow_thin))
     // Interiors draw the rooms seen through portals only (rooms.rs).
-    .add_plugins(rooms::RoomsPlugin { off: args.no_room_culling })
+    .add_plugins(rooms::RoomsPlugin { off: args.no_room_culling, planes_off: args.no_occlusion_planes, planes_outdoors: args.occlusion_planes_outdoors })
     .insert_resource(ClearColor(Color::srgb(0.62, 0.72, 0.85)))
     .insert_resource(GlobalAmbientLight { brightness: 600.0, ..default() })
     .insert_resource(sky_state)
@@ -1435,6 +1447,7 @@ fn main() -> AppExit {
     app.insert_resource(nvf_play::music::MusicSettings { play: !args.no_music, volume: args.music_volume });
     app.insert_resource(if args.menu_pause == "original" { nvf_play::pause::MenuPause::Original } else { nvf_play::pause::MenuPause::Living });
     app.insert_resource(nvf_play::dialogue_look::LookSettings { enabled: !args.no_dialogue_look, recentre_on_choices: args.dialogue_recentre && !args.no_dialogue_recentre });
+    app.insert_resource(nvf_play::dialogue_zoom::ZoomSettings { enabled: !args.no_dialogue_zoom });
     if let Some(p) = pending {
         app.insert_resource(p);
     }

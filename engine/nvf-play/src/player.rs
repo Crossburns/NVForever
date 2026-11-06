@@ -738,6 +738,7 @@ fn mouse_look(
     free_cam: Option<Res<crate::free_cam::FreeCam>>,
     kill_cam: Option<Res<crate::kill_cam::KillCam>>,
     assist: Option<Res<crate::aim_assist::AimAssistState>>,
+    talk: Option<Res<crate::dialogue_zoom::DialogueZoom>>,
 ) {
     // The console's free camera takes the mouse (`crate::free_cam`), and so does the
     // weapon wheel while it is open (`crate::weapon_wheel`); a playing kill camera holds
@@ -764,6 +765,8 @@ fn mouse_look(
     if !grabbed || !playing || locks.looking || delta == Vec2::ZERO {
         return;
     }
+    // A conversation's zoom: the picture moves as far as it does unzoomed.
+    let s = s * talk.as_deref().map_or(1.0, crate::dialogue_zoom::DialogueZoom::look_scale);
     let inv = bindings.invert_y;
     if control.orbit.held {
         let o = &mut control.orbit;
@@ -774,7 +777,7 @@ fn mouse_look(
         o.moved = true;
         return;
     }
-    if control.orbit.free {
+    if control.orbit.free && control.talk_camera == 0.0 {
         // The detached camera (`crate::control::detach_camera`): the camera turns, the
         // player does not.
         let (yaw, pitch) = look_with(control.orbit.yaw, player.pitch, delta, s, inv);
