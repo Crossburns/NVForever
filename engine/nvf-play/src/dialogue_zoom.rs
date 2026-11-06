@@ -10,8 +10,12 @@
 //!   [`MIN_VFOV`]. It follows the speaker's distance slowly ([`FOLLOW_SECONDS`]), not the
 //!   mouse: the player still looks around while zoomed.
 //! - **Framing.** The opening turn (`crate::dialogue_look`) aims [`face_drop`] under the
-//!   face, so the face lands at [`FACE_FROM_TOP`]; after it the view is the player's
-//!   [owner decision 2026-10-10].
+//!   face, so the face lands at [`FACE_FROM_TOP`], and stays on it for
+//!   [`crate::dialogue_look::ZOOM_HOLD_SECONDS`] while the speaker finishes turning; after
+//!   it, and at the first move of the mouse, the view is the player's [owner decision
+//!   2026-10-10].
+//! - **Looking around** is scaled with the zoom ([`DialogueZoom::look_scale`]), so the
+//!   mouse moves the picture as far as it does unzoomed.
 //! - **Who owns the field of view** (as `chargen/vigor.rs`'s `fov_before`). [`DialogueZoom`]
 //!   keeps what was on the camera underneath its own value and gives it back. A value on
 //!   the camera that is not the one it last wrote is someone else's (the settings slider,
@@ -50,10 +54,12 @@ use bevy::prelude::*;
 use fnv_game::game::menus;
 use fnv_sim::FormId;
 
-/// The speaker's head, crown to chin, in game units [design: the human head's mesh tops
-/// out at about 128 and the chin is at about 109 on a 128-unit actor (`nvforever`
-/// `limbs.rs`' head test); creatures and robots get the same number].
-pub const HEAD_HEIGHT: f32 = 18.0;
+/// The speaker's head, crown to chin, in game units [observed: our run of `dialogue-zoom`,
+/// 2026-11-06: Chet's head as drawn came out about 185 of 720 px from 394 units at 8.7°, in
+/// a view 59.9 units tall there, so about 15.4; one head measured by eye]. Creatures and
+/// robots get the same number: the rigs have bones, not the head mesh's size, so a head
+/// measured as drawn would need the skinned shape's bounds.
+pub const HEAD_HEIGHT: f32 = 15.5;
 /// The head's share of the view's height [observed: about 215 of 720 px in the original,
 /// near and far].
 pub const HEAD_SHARE: f32 = 0.30;
@@ -65,9 +71,9 @@ pub const FACE_FROM_TOP: f32 = 0.32;
 pub const IN_SECONDS: f32 = 0.8;
 /// Seconds of the ease out [observed: fitted, rough; about 0.3 s, 4-6 samples].
 pub const OUT_SECONDS: f32 = 0.3;
-/// The narrowest vertical field of view, radians, for a speaker far away (8°: a head at
-/// the share above from about 430 units; the original's far spot was about 300) [design].
-pub const MIN_VFOV: f32 = 8.0 * std::f32::consts::PI / 180.0;
+/// The narrowest vertical field of view, radians, for a speaker far away (6°: a head at
+/// the share above from about 490 units; the original's far spot was about 300) [design].
+pub const MIN_VFOV: f32 = 6.0 * std::f32::consts::PI / 180.0;
 /// How slowly the zoom follows the distance to the face (a speaker walking up), seconds;
 /// a head's idle sway would otherwise breathe in the field of view [design].
 pub const FOLLOW_SECONDS: f32 = 0.5;
@@ -152,6 +158,29 @@ impl DialogueZoom {
     /// How far under the face the opening turn should aim (0 without a zoom).
     pub fn face_drop(&self) -> f32 {
         self.want.map_or(0.0, face_drop)
+    }
+
+    /// Whether a zoom is wanted this frame.
+    pub fn wanted(&self) -> bool {
+        self.want.is_some()
+    }
+
+    /// What looking around is multiplied by: the share of the unzoomed view's height the
+    /// zoomed view has, 1 without a zoom [design: the sights' zoom has no such scale to
+    /// follow].
+    pub fn look_scale(&self) -> f32 {
+        match (self.applied, self.base) {
+            (Some(a), Some(b)) if b > 0.0 => ((a * 0.5).tan() / (b * 0.5).tan()).clamp(0.0, 1.0),
+            _ => 1.0,
+        }
+    }
+
+    /// Another owner has the camera now (the Vigor Tester): off at once, and what this
+    /// module last wrote, if still there, is taken back. Whatever else is there is left.
+    fn let_go(&mut self, seen: f32) -> Applied {
+        let write = self.base.filter(|b| self.applied == Some(seen) && *b != seen);
+        (self.weight, self.want, self.applied, self.told_in) = (0.0, None, None, false);
+        Applied { write, back: None }
     }
 
     /// Advance the ease by `dt` towards `want` (none: out). `instant` completes it at once.
@@ -292,11 +321,13 @@ pub(crate) fn track(
 
 /// Put the zoom on the camera. After `crate::aim_zoom::zoom`, the other writer of a frame,
 /// which goes by [`DialogueZoom::underlying`]; a write of its own here is read as the base.
-pub(crate) fn apply(mut zoom: ResMut<DialogueZoom>, mut cams: Query<&mut Projection, With<PlayerCamera>>) {
+pub(crate) fn apply(script: Option<Res<ScriptState>>, mut zoom: ResMut<DialogueZoom>, mut cams: Query<&mut Projection, With<PlayerCamera>>) {
     let Ok(mut proj) = cams.single_mut() else { return };
     // Read first: a write every frame would mark the projection changed.
     let Projection::Perspective(p) = &*proj else { return };
-    let done = zoom.apply(p.fov);
+    // The Vigor Tester may have written its own this frame, before [`track`] saw it open.
+    let vigor = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.menu == Some(menus::LOVE_TESTER));
+    let done = if vigor { zoom.let_go(p.fov) } else { zoom.apply(p.fov) };
     if let Some(fov) = done.write {
         if let Projection::Perspective(p) = &mut *proj {
             p.fov = fov;
@@ -468,6 +499,43 @@ mod tests {
         z.step(None, OUT_SECONDS * 2.0, false);
         frame(&mut z, &mut fov);
         assert_eq!(fov, BASE);
+    }
+
+    #[test]
+    fn looking_around_is_scaled_with_the_zoom_and_only_then() {
+        let mut z = DialogueZoom::default();
+        let mut fov = BASE;
+        z.step(None, 0.1, false);
+        frame(&mut z, &mut fov);
+        assert_eq!(z.look_scale(), 1.0);
+        z.step(Some(0.15), IN_SECONDS * 2.0, false);
+        frame(&mut z, &mut fov);
+        let want = (0.15f32 * 0.5).tan() / (BASE * 0.5).tan();
+        assert!((z.look_scale() - want).abs() < 1e-5, "{}", z.look_scale());
+        z.step(None, OUT_SECONDS * 2.0, false);
+        frame(&mut z, &mut fov);
+        assert_eq!(z.look_scale(), 1.0, "restored with the field of view");
+        // A speaker too near to narrow the view: no change.
+        z.step(Some(BASE), IN_SECONDS * 2.0, false);
+        frame(&mut z, &mut fov);
+        assert_eq!(z.look_scale(), 1.0);
+    }
+
+    #[test]
+    fn letting_go_for_the_vigor_tester() {
+        // It wrote its own first: left alone, and not reported as the view coming back.
+        let mut z = DialogueZoom::default();
+        let mut fov = BASE;
+        z.step(Some(0.5), IN_SECONDS / 2.0, false);
+        frame(&mut z, &mut fov);
+        assert_eq!(z.let_go(0.9), Applied::default());
+        assert_eq!((z.blend(), z.underlying(0.9)), (0.0, 0.9));
+        // It has not drawn yet: the zoomed value goes, so it finds what lay under it.
+        let mut z = DialogueZoom::default();
+        let mut fov = BASE;
+        z.step(Some(0.5), IN_SECONDS / 2.0, false);
+        frame(&mut z, &mut fov);
+        assert_eq!(z.let_go(fov), Applied { write: Some(BASE), back: None });
     }
 
     #[test]

@@ -735,18 +735,24 @@ and turned away by `NVF_PLAY_TEST_LOOK`.
 `dialogue-look`, whose turning it only aims (with that off the renderer still says where
 the face is, and the view narrows where it looks).
 
-- **Field of view.** The vertical angle in which a head of `HEAD_HEIGHT`, 18 units, at the
-  distance to the face fills 0.30 of the view's height: `2 atan(18 / (0.6 d))`, so the
-  aspect ratio does not enter [design: 18 is from the human head's mesh top at about 128
-  and its chin at about 109 on a 128-unit actor, `limbs.rs`' head test; 0.30 observed].
-  About 37° from 90 units, 11° from 300. Never wider than the view the player has
-  (nearer than about 52 units at the default, the view stays), never narrower than 8°
-  [design]. It follows a speaker walking up over 0.5 s, not the mouse.
+- **Field of view.** The vertical angle in which a head of `HEAD_HEIGHT`, 15.5 units, at
+  the distance to the face fills 0.30 of the view's height: `2 atan(15.5 / (0.6 d))`, so the
+  aspect ratio does not enter [observed: 0.30 in the original; 15.5 from Chet's head as
+  drawn in our run, about 185 of 720 px from 394 units at 8.7°]. About 32° from 90 units,
+  10° from 300. Never wider than the view the player has (nearer than about 45 units at the
+  default, the view stays), never narrower than 6° [design]. It follows a speaker walking
+  up over 0.5 s, not the mouse.
 - **Times.** In 0.8 s, out 0.3 s [observed: fitted, rough]; smoothstep.
 - **Framing.** The opening turn (and `--dialogue-recentre`'s) aims under the face so that
   it sits 0.32 of the height from the top: `atan(0.36 tan(v/2))` below it. Nothing after
   that: free look stays and the view is the player's [owner decision 2026-10-10, §8.2].
-  A mouse move during the opening turn drops it as before, framing and all.
+  The turn takes its 0.4 s and then stays on the face until 1.6 s from its start
+  (`ZOOM_HOLD_SECONDS`), as the speaker's body may still be coming round: at 8.7° a body
+  turn of 163° had moved Chet's face 2.5° off, far right of the picture's centre [observed:
+  our run, 2026-11-06]. A mouse move at any time in it drops it as before, framing and all.
+- **Looking around** while zoomed is scaled by the zoom (`tan(v/2)` against the unzoomed
+  view's), mouse and stick, so the picture moves as far as it does unzoomed, and is back
+  to the usual rate as the zoom goes [design].
 - **Who owns the field of view.** The zoom keeps what is on the camera underneath and
   gives it back. A value it did not write is someone else's (the settings slider, the
   console's SetCameraFOV, the sights' zoom) and the new base. The sights' zoom, the console
@@ -772,9 +778,8 @@ the face is, and the view narrows where it looks).
 - Smoke: `dialogue-zoom`, `dialogue-zoom-off`, `dialogue-zoom-no-look`,
   `dialogue-zoom-third`, `dialogue-zoom-frozen`, and `talking-activator-intercom` for the
   activator's line.
-- Open: creatures and robots get the human head's number, not looked at. The mouse turns
-  the view at its usual rate at the narrow angle. Not compared with the shots yet: the
-  times, the blur's strength and range (its picture is the fixed radius of
+- Open: creatures and robots get the human head's number, not looked at. Not compared with
+  the shots yet: the times, the blur's strength and range (its picture is the fixed radius of
   image-modifiers.md §8.5, which may be too little for the far hall view).
 
 ## 9. Turning to whom a line is said (2026-10-11, `claude/sayto-facing`)

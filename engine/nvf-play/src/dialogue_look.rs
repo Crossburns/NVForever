@@ -55,6 +55,13 @@ pub const RECENTRE_SECONDS: f32 = 0.35;
 /// The view is on the face when it is this close (radians); no ease is started for less
 /// [design].
 pub const ON_TARGET: f32 = 0.5 * PI / 180.0;
+/// With a zoom the opening turn stays on the face this long from its start, seconds: the
+/// face goes on moving after the turn as the speaker's body comes round (half a turn in 1.5
+/// s at `fnv_nav::follow::SPOT_TURN_RATE`, the head well off the turn's axis), and at a
+/// narrow angle that moves it far across the picture [observed: Chet's face 2.5° off after
+/// a body turn of 163°, his distance going from 401 to 379 units, our run 2026-11-06;
+/// design: the time]. The mouse lets go of it at once, as of any ease.
+pub const ZOOM_HOLD_SECONDS: f32 = 1.6;
 /// With a frozen picture (`--menu-pause original`) the view is put on the face at once,
 /// and again on each of this many frames: the eye stands in front of the player's feet
 /// and moves as the body turns with the view, so the first aim is a few degrees off as
@@ -379,8 +386,12 @@ fn face_speaker(
     let Some(ease) = talk.ease.as_mut() else { return };
     // With `--menu-pause original` the picture stands still: no ease could be seen.
     let instant = *mode == MenuPause::Original;
-    match ease.step(now, target, time.delta_secs(), instant) {
+    let step = ease.step(now, target, time.delta_secs(), instant);
+    let hold = zoom.wanted() && !instant && ease.t < ZOOM_HOLD_SECONDS;
+    match step {
         Step::Turn(v) => (player.heading, player.pitch) = v,
+        // The ease is kept, on the moving face, until the speaker has come round.
+        Step::Done(v) if hold => (player.heading, player.pitch) = v,
         Step::Done(v) => {
             (player.heading, player.pitch) = v;
             debug!("dialogue look: the view is on {}: heading {:.1}°, pitch {:.1}°", talk.name, deg(v.0), deg(v.1));
@@ -460,6 +471,18 @@ mod tests {
         let mut e = Ease::new((1.0, 0.0), 0.4);
         let Step::Turn(v) = e.step((1.0, 0.0), (2.0, 0.3), 0.1, false) else { panic!() };
         assert!(matches!(e.step(v, (2.0, 0.3), 0.1, false), Step::Turn(_)));
+    }
+
+    #[test]
+    fn an_ease_kept_past_its_end_stays_on_a_moving_face_until_the_mouse() {
+        let mut e = Ease::new((1.0, 0.0), 0.4);
+        let Step::Done(v) = e.step((1.0, 0.0), (2.0, 0.1), 0.5, false) else { panic!("over") };
+        assert!(apart(v, (2.0, 0.1)) < 1e-5);
+        // The face moved on: the view is on it, not on where it was.
+        let Step::Done(v) = e.step(v, (2.1, 0.15), 0.5, false) else { panic!("over") };
+        assert!(apart(v, (2.1, 0.15)) < 1e-5, "{v:?}");
+        assert!(e.t < ZOOM_HOLD_SECONDS, "still held at {}", e.t);
+        assert_eq!(e.step((v.0 + 0.02, v.1), (2.1, 0.15), 0.1, false), Step::Dropped);
     }
 
     #[test]
