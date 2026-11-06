@@ -5801,10 +5801,10 @@ expect = [
 [[scenario]]
 name = "stagger-holds-attack"
 source = "playtest list 4 item 21 (npc_combat.rs, residents.rs): an actor playing a crippled stagger neither attacks nor walks until it ends"
-note = "Chet (GSChetRef) is shot in the legs with a 10mm pistol from 18 s (as provoked-yield): he fights back, and a crippled leg staggers him"
+note = "Chet (GSChetRef) is shot in the right leg (DefaultBodyPartData part 4) with a 10mm pistol from 18 s (as provoked-yield): he fights back, and a crippled leg staggers him. He is moved 150 units from the player at 17 s: left where he walked, he stood about 400 units off behind the counter, and shots at 20 % of his height went between his legs, one to each leg and none crippled (#1483, #1685)"
 areas = ["combat"]
 paths = ["engine/nvforever/src/npc_combat.rs", "engine/nvforever/src/deaths.rs", "engine/nvforever/src/residents.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_CONTROL = "9:weapon,18:aimnpc=0.2,18.1:fire,18.4:fire,19:aimnpc=0.2,19.1:fire,19.4:fire,20:aimnpc=0.2,20.1:fire,20.4:fire,21:aimnpc=0.2,21.1:fire,22:aimnpc=0.2,22.1:fire,23:aimnpc=0.2,23.1:fire" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_SCRIPT = "17:moveto:GSChetRef:player:0:150:0", NVF_PLAY_TEST_CONTROL = "9:weapon,18:aimpart=4,18.1:fire,18.4:fire,19:aimpart=4,19.1:fire,19.4:fire,20:aimpart=4,20.1:fire,20.4:fire,21:aimpart=4,21.1:fire,22:aimpart=4,22.1:fire,23:aimpart=4,23.1:fire" }
 args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 32
 expect = [
@@ -6394,6 +6394,34 @@ expect = [
 ]
 
 [[scenario]]
+name = "ammo-type-save-write"
+source = "issue #1574: the ammo type swapped into the weapon comes back on load; the first half: 10mm Pistol (0000434F) with 10mm (00004241) and 10mm JHP (0013E43B): it loads 10mm, Ammo Swap to JHP, save (ammo-type-save-load reads this save, so run them together)"
+areas = ["save", "combat"]
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "ammo-type-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:40,0013E43B:40", NVF_PLAY_TEST_CONTROL = "14:weapon,17:swap", NVF_PLAY_TEST_CONSOLE = "22:save ammo-type;23:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 26
+expect = [
+  { re = 'combat: ammo swapped to ', label = "the swap loads the other type" },
+  { re = 'save: wrote .*ammo-type\.nvfsave', label = "the save is written" },
+]
+order = [["combat: ammo swapped to ", "save: wrote"]]
+
+[[scenario]]
+name = "ammo-type-save-load"
+source = "issue #1574: the second half: --load the save ammo-type-save-write made; the weapon comes back with the swapped type, and the first swap goes back to the plain round"
+areas = ["save", "combat"]
+paths = ["engine/nvf-play/src/combat.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "ammo-type-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONTROL = "12:weapon,16:swap" }
+args = ["--play", "--load", "ammo-type", "--no-voice"]
+run_seconds = 19
+expect = [
+  { re = 'load: engine state of .*ammo-type\.nvfsave put back', label = "the engine state is put back" },
+  { re = 'combat: weapon \S+ \(0x0000434F\), ammo Ammo10mmHollowPoint,', label = "the weapon comes back with the swapped type" },
+  { re = 'combat: ammo swapped to Ammo10mm(?!HollowPoint)', label = "the first swap after the load goes to the plain round" },
+]
+
+[[scenario]]
 name = "save-load-order"
 source = "no-owner queue item 29 (2026-10-21; docs/design/save-load.md §4.1): a save made with one load order loads into another: FormIDs move to their plugin's place now, what came from plugins no longer loaded is dropped and the player told; run after save-write, whose save it loads"
 note = "save-write runs with the ten masters; this run loads its save with three of them, Gun Runners' Arsenal moved before Dead Money (index 05 -> 01, Dead Money 01 -> 02), the add-ons Honest Hearts, Old World Blues, Lonesome Road and the four packs gone. The base game's changes come back as in save-load"
@@ -6518,6 +6546,7 @@ expect = [
 order = [[
   { re = 'handoff: window shown after [\d.]+ s$', label = "the new window shows" },
   { re = 'load: the new run is up after [\d.]+ s; ending this one', label = "the old run ends once the new window shows" },
+  { re = 'handoff: the old run has ended after [\d.]+ s; the save goes back now', label = "the new run sees the old one end (#1651)" },
   { re = 'load: restored .*handoff-test\.nvfsave', label = "only then is the save put back (owner 2026-11-01: the old run does not stay through the load)" },
   { text = "the new run took over and its world is in; ending it", label = "and the world comes in" },
 ]]
@@ -9327,10 +9356,10 @@ forbid = [{ re = 'combat: hit 0x000F573F on ', label = "the missed shot hits its
 [[scenario]]
 name = "vats-kill-cam"
 source = "ESM full audit gap 10 (2026-10-24): the masters' camera paths and shots (CPTH, CAMS) play as VATS mode's kill cameras (docs/design/vats-mode.md §19); owner's playtest requests #1034 (the HUD hidden while it plays) and #1036 (the player's input held)"
-note = "vats-mode-miss' setup (a .357 among the Goodsprings dogs on their packages, god mode) with both dogs left at 1 health (set_av) and every roll forced to hit: one mark, E; Violet, her two Fiends and the other dog are killed at 3 s (they fight the player, and the camera plays only for the last enemy, #1035); the shot kills the dog, the camera path tree picks a path whose hit shots play (each its Max Time in real seconds at its Global time multiplier), then the view is the player's again. Which path and shots is the tree's choice (GetRandomPercent varies it), so only their form is checked; a shot whose model fails to load would leave the view where it is. While it plays the HUD is hidden and comes back after it; W held from 10.8 s and a look at 10.9 s (test aids standing in for the keys and the mouse) are held by it"
+note = "vats-mode-miss' setup (a .357 among the Goodsprings dogs on their packages, god mode) with both dogs left at 1 health (set_av) and every roll forced to hit: one mark, E; Violet, her two Fiends and the other dog are killed at 3 s (they fight the player, and the camera plays only for the last enemy, #1035); the shot kills the dog, the camera path tree picks a path whose hit shots play (each its Max Time in real seconds at its Global time multiplier), then the view is the player's again. Which path and shots is the tree's choice (GetRandomPercent varies it), so only their form is checked; a shot whose model fails to load would leave the view where it is. While it plays the HUD is hidden and comes back after it; W held from 10.4 s and a look at 10.45 s (test aids standing in for the keys and the mouse) are held by it. The world aids' clock runs at the world's speed, which VATS mode and the kill camera slow (FirstPersonCam: 0.12), so the aids sit just after the shot (10.36 s) to land within the camera whatever shot the tree picks; at 10.8/10.9 they came after a slowed 3 s camera had ended (#1666)"
 areas = ["combat", "vats", "hud"]
 paths = ["engine/nvf-play/src/kill_cam.rs", "crates/fnv-game/src/camera_paths.rs", "engine/nvf-assets/src/camera_shot.rs", "engine/nvf-play/src/vats_mode.rs", "crates/fnv-game/src/vats.rs", "engine/nvf-play/src/hud.rs", "engine/nvf-play/src/bindings.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_VATS_ROLL = "hit", NVF_PLAY_TEST_SCRIPT = "3:set_av:0x000F573F:Health:1,3:set_av:0x0013E5BB:Health:1,3:kill:0x000F570B,3:kill:0x000F573C,3:kill:0x000F5741,3:kill:0x0013E5BB", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,10.3:aimvats", NVF_PLAY_TEST_KEYS = "10:v,10.32:mouse-left,10.36:e", NVF_PLAY_TEST_MOVE = "10.8:1:0,13:0:0", NVF_PLAY_TEST_LOOK = "10.9:90:0" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_VATS_ROLL = "hit", NVF_PLAY_TEST_SCRIPT = "3:set_av:0x000F573F:Health:1,3:set_av:0x0013E5BB:Health:1,3:kill:0x000F570B,3:kill:0x000F573C,3:kill:0x000F5741,3:kill:0x0013E5BB", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,10.3:aimvats", NVF_PLAY_TEST_KEYS = "10:v,10.32:mouse-left,10.36:e", NVF_PLAY_TEST_MOVE = "10.4:1:0,13:0:0", NVF_PLAY_TEST_LOOK = "10.45:90:0" }
 args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "000F573F,0013E5BB"]
 run_seconds = 28
 order = [
@@ -18464,16 +18493,17 @@ expect = [
 [[scenario]]
 name = "jip-radios-fall"
 source = "JohnnyGuitar GetAvailableRadios: the enabled Pip-Boy stations that broadcast everywhere, from the engine's placed stations [observed: radio1]; JIP GetFallTimeElapsed from the engine's character physics, 0 on the ground"
+note = "The MoveTo goes through a travel with a loading screen and the fall starts when it ends; read 0.55 s after a 600-unit lift (about 1.3 s of fall) it read 0.03 when the load was slow (#1679), so the lift is higher and the read later, inside the fall either way"
 areas = ["scripts", "physics"]
 paths = ["crates/fnv-game/src/nvse_gaps.rs", "engine/nvf-play/src/radio.rs", "engine/nvf-play/src/script.rs"]
-env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:PrintC \"nvf radios %g\", (ar_Size (player.GetAvailableRadios));9.0:PrintC \"nvf st 0 %n\", ((player.GetAvailableRadios)[0]);9.5:PrintC \"nvf fall ground %g\", (player.GetFallTimeElapsed);10:player.MoveTo player 0 0 600;10.05:close;10.6:PrintC \"nvf fall air %.2f\", (player.GetFallTimeElapsed);11:close" }
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "9:PrintC \"nvf radios %g\", (ar_Size (player.GetAvailableRadios));9.0:PrintC \"nvf st 0 %n\", ((player.GetAvailableRadios)[0]);9.5:PrintC \"nvf fall ground %g\", (player.GetFallTimeElapsed);10:player.MoveTo player 0 0 1200;10.05:close;11.2:PrintC \"nvf fall air %.2f\", (player.GetFallTimeElapsed);11.6:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
-run_seconds = 13
+run_seconds = 14
 expect = [
   { re = 'script: print "nvf radios 3"', label = "a new game at Goodsprings: Mojave Music Radio and two add-on broadcasts (Radio New Vegas starts disabled)" },
   { re = 'script: print "nvf st 0 Mojave Music Radio"', label = "the first, in FormID order, is Mojave Music Radio" },
   { re = 'script: print "nvf fall ground 0"', label = "standing on the ground, no fall time" },
-  { re = 'script: print "nvf fall air (0\.[1-9]|[1-9])', label = "half a second after MoveTo lifts the player 600 units, the fall time counts" },
+  { re = 'script: print "nvf fall air (0\.[1-9]|[1-9])', label = "1.2 s after MoveTo lifts the player 1,200 units (about 1.9 s of fall), the fall time counts" },
 ]
 
 [[scenario]]
@@ -18939,6 +18969,37 @@ expect = [
 ]
 
 [[scenario]]
+name = "mccarran-monorail-arrival"
+source = "issue #1605 (owner): leaving Camp McCarran's Terminal Building by the door onto the monorail track put the player under and inside the building. The door 0x000F627D (CampMCTermInt02) leads to 0x001287F6 at (-9263, 70863, 4792) in WastelandNV, a platform about 460 units above the terrain; the arrival rule has to find that floor (crates/fnv-phys/src/arrival.rs, physics.md §6.2; the squares around an outdoor arrival load first since #1633)"
+note = "the player starts in the Terminal Building and takes the monorail door at 8 s"
+areas = ["physics", "loading"]
+paths = ["crates/fnv-phys/src/arrival.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/script.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "8:activate:0x000F627D" }
+args = ["--cell", "CampMCTermInt02", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 25
+order = [[
+  { re = '0x000F627D activated by 0x00000014: \{"result":"teleported","to_door":"0x001287F6"', label = "the player takes the monorail door" },
+  { re = 'travel to worldspace 000DA726 \(WastelandNV\): feet \(-9263, 70863, [\d.]+\), floor z (?P<n>[\d.]+)', range = [4700, 4850], label = "the arrival finds the platform's floor, about 460 units above the terrain (not the ground under it)" },
+]]
+
+[[scenario]]
+name = "nellis-artillery-fires"
+source = "issue #1600 (owner): the Boomers' artillery did not fire on the player at Nellis's gate. NellisArtilleryScript's GameMode calls CurrentActor2.GetDead on an unset ref every frame one actor is in its trigger; a call on an empty ref stopped the script there, before its timers. It now gives 0 and the script goes on, as in the original (crates/fnv-game/src/game.rs Exec::call; script-language.md §7.3 row 1)"
+note = "the player starts inside NellisArtilleryActivatorREF (0x000FF806, a box primitive about 6,400 by 8,600 units at (28955, 121961)), god mode; the script fires a shell every 2 s for 30 s"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/game.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1" }
+args = ["--world", "WastelandNV", "--pos=28955,121500,6000", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 40
+order = [[
+  { text = "script: player entered trigger NellisArtilleryActivatorREF", label = "the player is in the artillery's trigger" },
+  { re = 'script: ArtillerySoundMarkerREF moved to', label = "the barrage's sound marker is moved to the player (the script went past its empty-ref call)" },
+]]
+expect = [
+  { re = 'combat: explosion NellisArtilleryExplosion at', min = 3, label = "shells land around the player" },
+]
+
+[[scenario]]
 name = "script-move-dynamic-clutter"
 source = "issue #1311: SetPos on a reference whose collision is one dynamic body (clutter, dropped or placed items) snapped back at once, the settle write-back copying the body's old pose over the move; console moves were never seen (the tick cleared Game::turned first)"
 note = "A bottle (0x0010A1F6) placed by the console at the player in Goodsprings, moved sideways 3 s later to x = -68150 with SetPos; GetPos x half a second and two seconds later reads the new x"
@@ -19200,4 +19261,81 @@ order = [[
   "settings: language Smoke Language",
   "language: en",
   "settings: language English",
+]]
+
+[[scenario]]
+name = "lucky38-door-closed"
+source = "#1541: the Lucky 38's outer door (Lucky38EntranceDoorActor 0x00118E76) stands closed until Victor opens it: a closed door is drawn and collides in its model's stored pose, not at the end of its Close sequence, which for this model holds the panels slid aside (docs/spec-notes/doors.md §1)"
+note = "the player starts in front of the entrance on the Strip and walks at it for 5 s: before the fix it walked past Victor through the open panels to the casino's own door 0x0013BB17 and went in"
+areas = ["doors", "activation"]
+paths = ["crates/fnv-collide/src/anim.rs", "engine/nvforever/src/doors.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/doors.rs"]
+env = { NVF_PLAY_TEST_GOTO = "5:1300:5938:1100", NVF_PLAY_TEST_LOOK = "6:90:5", NVF_PLAY_TEST_SHOTS = "8:lucky38_door_closed.png", NVF_PLAY_TEST_MOVE = "9:1:0,14:0:0", NVF_PLAY_TEST_ACTIVATE = "14.5" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=3453,5400,1100", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+manual = "lucky38_door_closed.png: the four red panels with diamonds closed behind Victor"
+expect = [
+  { text = "Door (Open: Lucky 38 Casino)", count = 0, label = "the casino's door is not offered through the closed outer door" },
+  { text = '"result":"teleported","to_door":"0x00112078"', count = 0, label = "nobody goes in" },
+]
+
+[[scenario]]
+name = "lucky38-door-opened"
+source = "#1541: once Victor's scripts open the outer door (SetOpenState 1), it slides aside and the player can walk in through the casino's door"
+areas = ["doors", "activation"]
+paths = ["crates/fnv-collide/src/anim.rs", "engine/nvforever/src/doors.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/doors.rs"]
+env = { NVF_PLAY_TEST_GOTO = "5:1300:5938:1100", NVF_PLAY_TEST_LOOK = "6:90:5", NVF_PLAY_TEST_CONSOLE = "7:00118E76.setopenstate 1;7.5:close", NVF_PLAY_TEST_SHOTS = "22:lucky38_door_opened.png", NVF_PLAY_TEST_MOVE = "22.5:1:0.15,29:0:0", NVF_PLAY_TEST_ACTIVATE = "29.5" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=3453,5400,1100", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 33
+manual = "lucky38_door_opened.png: the panels slid aside, the glass doors behind Victor"
+order = [[
+  "door 0x00118E76 opening",
+  { re = 'target 0x0013BB17 Door \(Open: Lucky 38 Casino\)', label = "the casino's door is offered" },
+  { text = '"result":"teleported","to_door":"0x00112078"', label = "the player goes in" },
+]]
+
+[[scenario]]
+name = "house-screen-house-then-yes-man"
+source = "#1542: Mr. House's penthouse screen shows House's face until Yes Man is uploaded (VMQYesMan01 stage 70), then Yes Man's: the idle tree's Idle-section looks played as a creature's standing look, the actor's screens shown only at material alpha 1/2 or more, and an idle's material tracks over the base idle's at the same priority"
+note = "Lucky38MrHouseREF 0x001264C5 (base MrHouse, screens NVDefaultScreen.NIF); the tree's roots NVPHMCYesMan (GetStage VMQYesMan01 >= 70), LooseNVPHMCconnectionLost, NVPHMCHouse [observed: FalloutNV.esm]. Before the fix the screen showed Yes Man's face from the start"
+areas = ["idles", "actors"]
+paths = ["engine/nvf-assets/src/actor.rs", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/material_anim.rs", "engine/nvforever/src/idles.rs", "engine/nvforever/src/actor_materials.rs", "crates/fnv-game/src/idles.rs"]
+env = { NVF_PLAY_TEST_FACE = "6:001264C5", NVF_PLAY_TEST_GOTO = "7:-1290:5590:18905", NVF_PLAY_TEST_LOOK = "8:135:22", NVF_PLAY_TEST_SHOTS = "9:house_screen_house.png,13:house_screen_yes_man.png", NVF_PLAY_TEST_CONSOLE = "10:setstage VMQYesMan01 70" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 15
+manual = "house_screen_house.png: House's face on the big screen; house_screen_yes_man.png: Yes Man's face"
+order = [[
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCHouseIdle .*\(Standing\)', label = "House's face first" },
+  "console: > setstage VMQYesMan01 70",
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCYesManIdle .*\(Standing\)', label = "Yes Man's face once he is uploaded" },
+]]
+
+[[scenario]]
+name = "house-screen-connection-lost"
+source = "#1542, owner 2026-11-05: the screen says Connection Lost once House is neutralized (GetGlobalValue VStoryEventMrHouseNeutralized > 0) and before Yes Man is uploaded: the tree's root LooseNVPHMCconnectionLost, an Idle-section idle with no children, played as the standing look"
+areas = ["idles", "actors"]
+paths = ["engine/nvforever/src/idles.rs", "crates/fnv-game/src/idles.rs", "crates/fnv-game/src/data.rs"]
+env = { NVF_PLAY_TEST_FACE = "6:001264C5", NVF_PLAY_TEST_GOTO = "7:-1290:5590:18905", NVF_PLAY_TEST_LOOK = "8:135:22", NVF_PLAY_TEST_SHOTS = "13:house_screen_lost.png", NVF_PLAY_TEST_CONSOLE = "10:set VStoryEventMrHouseNeutralized to 1" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 15
+manual = "house_screen_lost.png: Connection Lost... on the big screen"
+order = [[
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCHouseIdle .*\(Standing\)', label = "House's face first" },
+  "console: > set VStoryEventMrHouseNeutralized to 1",
+  { re = 'idle: Lucky38MrHouseREF plays LooseNVPHMCconnectionLost .*\(Standing\)', label = "Connection Lost once House is neutralized" },
+]]
+
+[[scenario]]
+name = "silver-rush-volunteer"
+source = "#1550: the Silver Rush's entry scene: the player walks into VFSVanGraffIntroTrigger, Gloria talks with the customer and tells Jean-Baptiste \"Do it.\", and his Use Weapon package (VFSJeanBaptisteShootVolunteerPackage, Always Hit) shoots the kneeling volunteer; the volunteer's OnHit (SCPT 0x0012424D) kills and disintegrates him and the scene goes on. Scripted shots aim at the target's posed chest, so a kneeling target is hit"
+note = "the volunteer (VFSVanGraffVolunteerREF 0x00124122) kneels restrained on 0x00124256; aimed at a standing actor's chest height, the shot went over him into the wall and the quest variable stayed at 5 (soft-lock)"
+areas = ["combat", "scripts", "ai"]
+paths = ["engine/nvforever/src/use_weapon.rs", "crates/fnv-game/src/use_weapon.rs", "crates/fnv-game/src/ash_piles.rs"]
+env = { NVF_PLAY_TEST_GOTO = "4:2964:-3375:770", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "FreesideSilverRush", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 70
+order = [[
+  { re = 'use weapon: VFSJeanBaptisteCuttingREF 0x0010D8E5 uses WeapLaserRifle on VFSVanGraffVolunteerREF', label = "Jean-Baptiste takes aim at the volunteer" },
+  { re = 'combat: hit 0x00124122 on ', label = "the shot hits the kneeling volunteer" },
+  { text = "OnHit of FalloutNV.esm|SCPT 0x0012424D ran on Some(0x00124122)", label = "the volunteer's OnHit runs the scene on" },
+  { re = 'ash pile: .* replaces the body of 0x00124122', label = "he is disintegrated" },
 ]]
