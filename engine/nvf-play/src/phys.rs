@@ -393,16 +393,17 @@ pub struct PosedDoor {
 }
 
 impl PosedDoor {
-    /// Pose the door's keyframed bodies for `seq` ("Open" when true) at `time` seconds.
-    fn pose(&mut self, world: &mut PhysWorld, open: bool, time: f32) {
+    /// Pose the door's keyframed bodies for `seq` ("Open" when true) at `time` seconds,
+    /// or in the model's stored pose when `stored` (a closed door, `DoorMotion::closed`).
+    fn pose(&mut self, world: &mut PhysWorld, open: bool, time: f32, stored: bool) {
         if self.shown == Some((open, time)) {
             return;
         }
         let anim = &self.bodies.anim;
         let Some((o, c)) = anim.door() else { return };
-        let seq = if open { o } else { c };
+        let seq = (!stored).then_some(if open { o } else { c });
         for (object, block, body) in &self.bodies.objects {
-            if let Some(node) = anim.node_to_root(Some(seq), time, *block) {
+            if let Some(node) = anim.node_to_root(seq, time, *block) {
                 world.pose_ref_object(&self.pose, *object, &node.iso, body);
             }
         }
@@ -1940,7 +1941,7 @@ fn pose_doors(sim: Res<SimState>, mut doors: ResMut<crate::doors::Doors>, mut ph
         }
         let Some(door) = doors.get(id) else { continue };
         let (open, time) = door.motion.pose();
-        d.pose(&mut phys.world, open, time);
+        d.pose(&mut phys.world, open, time, door.motion.closed());
         // The moving parts are not solid while the door swings (`DoorMotion::swinging`).
         let solid = !door.motion.swinging();
         if d.solid != Some(solid) {

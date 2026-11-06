@@ -19238,6 +19238,36 @@ order = [[
 ]]
 
 [[scenario]]
+name = "lucky38-door-closed"
+source = "#1541: the Lucky 38's outer door (Lucky38EntranceDoorActor 0x00118E76) stands closed until Victor opens it: a closed door is drawn and collides in its model's stored pose, not at the end of its Close sequence, which for this model holds the panels slid aside (docs/spec-notes/doors.md §1)"
+note = "the player starts in front of the entrance on the Strip and walks at it for 5 s: before the fix it walked past Victor through the open panels to the casino's own door 0x0013BB17 and went in"
+areas = ["doors", "activation"]
+paths = ["crates/fnv-collide/src/anim.rs", "engine/nvforever/src/doors.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/doors.rs"]
+env = { NVF_PLAY_TEST_GOTO = "5:1300:5938:1100", NVF_PLAY_TEST_LOOK = "6:90:5", NVF_PLAY_TEST_SHOTS = "8:lucky38_door_closed.png", NVF_PLAY_TEST_MOVE = "9:1:0,14:0:0", NVF_PLAY_TEST_ACTIVATE = "14.5" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=3453,5400,1100", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+manual = "lucky38_door_closed.png: the four red panels with diamonds closed behind Victor"
+expect = [
+  { text = "Door (Open: Lucky 38 Casino)", count = 0, label = "the casino's door is not offered through the closed outer door" },
+  { text = '"result":"teleported","to_door":"0x00112078"', count = 0, label = "nobody goes in" },
+]
+
+[[scenario]]
+name = "lucky38-door-opened"
+source = "#1541: once Victor's scripts open the outer door (SetOpenState 1), it slides aside and the player can walk in through the casino's door"
+areas = ["doors", "activation"]
+paths = ["crates/fnv-collide/src/anim.rs", "engine/nvforever/src/doors.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/doors.rs"]
+env = { NVF_PLAY_TEST_GOTO = "5:1300:5938:1100", NVF_PLAY_TEST_LOOK = "6:90:5", NVF_PLAY_TEST_CONSOLE = "7:00118E76.setopenstate 1;7.5:close", NVF_PLAY_TEST_SHOTS = "22:lucky38_door_opened.png", NVF_PLAY_TEST_MOVE = "22.5:1:0.15,29:0:0", NVF_PLAY_TEST_ACTIVATE = "29.5" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=3453,5400,1100", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 33
+manual = "lucky38_door_opened.png: the panels slid aside, the glass doors behind Victor"
+order = [[
+  "door 0x00118E76 opening",
+  { re = 'target 0x0013BB17 Door \(Open: Lucky 38 Casino\)', label = "the casino's door is offered" },
+  { text = '"result":"teleported","to_door":"0x00112078"', label = "the player goes in" },
+]]
+
+[[scenario]]
 name = "house-screen-house-then-yes-man"
 source = "#1542: Mr. House's penthouse screen shows House's face until Yes Man is uploaded (VMQYesMan01 stage 70), then Yes Man's: the idle tree's Idle-section looks played as a creature's standing look, the actor's screens shown only at material alpha 1/2 or more, and an idle's material tracks over the base idle's at the same priority"
 note = "Lucky38MrHouseREF 0x001264C5 (base MrHouse, screens NVDefaultScreen.NIF); the tree's roots NVPHMCYesMan (GetStage VMQYesMan01 >= 70), LooseNVPHMCconnectionLost, NVPHMCHouse [observed: FalloutNV.esm]. Before the fix the screen showed Yes Man's face from the start"
