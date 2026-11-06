@@ -417,7 +417,7 @@ fn blur(a: &mut [f32], w: usize, h: usize, sigma: f32, reach: usize) {
 /// ([`soften`]) and bent ([`display_blend`]) for the ink over the glass, and again for the
 /// dark text over a lit cell; the two share one layout.
 fn soft_faces(path: &str, data: &GameData, images: &mut Assets<Image>) -> Option<(Face, Face)> {
-    let font = Font::parse(&data.read(path)?).ok()?;
+    let font = Font::parse(&data.read(&crate::interface::font_file(path))?).ok()?;
     let bytes = data.read(&font.texture_path())?;
     let dds = fnv_dds::Dds::parse(&bytes).ok()?;
     let (w, h) = (dds.header.width, dds.header.height);
@@ -483,7 +483,7 @@ fn scanline_image(data: &GameData, images: &mut Assets<Image>) -> Option<(Handle
 }
 
 /// [design] Quantize the overlay first, then measure the light those actual bytes keep.
-fn scanline_pixels(column: &[f32]) -> (Vec<u8>, f32) {
+pub(crate) fn scanline_pixels(column: &[f32]) -> (Vec<u8>, f32) {
     let alpha: Vec<u8> = column.iter().map(|&k| ((1.0 - k).clamp(0.0, 1.0) * 255.0).round() as u8).collect();
     let kept = alpha.iter().map(|&a| 1.0 - a as f32 / 255.0).sum::<f32>() / alpha.len() as f32;
     let rgba = alpha.iter().flat_map(|&a| [0, 0, 0, a]).collect();

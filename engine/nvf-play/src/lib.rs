@@ -120,6 +120,7 @@ pub use test_aid::{drives_run, MEASURING_AIDS};
 pub mod sfx;
 pub mod sneak_gauges;
 pub mod ui_colour;
+pub mod language;
 pub mod ui_sounds;
 pub mod stress;
 pub mod vats_mode;
@@ -286,9 +287,11 @@ pub struct RefChanged {
     pub form_id: u32,
 }
 
-/// A script moved or turned a placed or created reference (SetPos, SetAngle, Rotate,
-/// SetScale: `fnv_game::Game::turned`): its collision follows when the settle write-back
-/// would otherwise undo the move (`crate::phys::PhysState::repose_ref`).
+/// A script or the console moved or turned a placed or created reference (SetPos, SetAngle,
+/// Rotate, SetScale: `fnv_game::Game::turned`, and what it held before the tick cleared it):
+/// its collision follows when the settle write-back would otherwise undo the move
+/// (`crate::phys::PhysState::repose_ref`), and its drawn model follows (`crate::moved`,
+/// `crate::script_draw`).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct RefRepose {
     pub form_id: u32,
@@ -371,7 +374,7 @@ impl Plugin for PlayPlugin {
             .add_plugins(grab::GrabPlugin)
             .add_plugins(difficulty::DifficultyPlugin)
             .add_plugins(hardcore::HardcorePlugin)
-            .add_plugins(ui_colour::UiColourPlugin);
+            .add_plugins((ui_colour::UiColourPlugin, language::LanguagePlugin));
         test_aid::setup(app);
         stress::setup(app);
         settings::setup(app);

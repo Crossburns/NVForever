@@ -7,7 +7,7 @@ order, the Set/Add/Multiply functions) were first written for aid items
 points ([levelup](levelup.md) §9); this note adds the argument tabs, the other functions
 and the combat entry points. Code: `fnv_game::perks` (evaluation),
 `fnv_combat::damage::PerkHooks` / `EntryOps` (the hit), `nvf-play` `combat.rs`
-(`hit_perks`, `player_weapon_perk`) and `vats_mode.rs` (AP cost).
+(`hit_perks`, `blast_perks`, `player_weapon_perk`) and `vats_mode.rs` (AP cost).
 Every perk of the masters and whether NVForever acts on it: [perk-audit-2026-10-23](../handoff/perk-audit-2026-10-23.md).
 
 ## 1. Entries, functions and ranks
@@ -48,14 +48,14 @@ tabs, below]. Tab 0 is always the perk owner. "Perks" are FalloutNV.esm's entrie
 
 | Code | Entry point | Tabs 1, 2 | FalloutNV.esm perks | NVForever |
 |---|---|---|---|---|
-| 0 | Calculate Weapon Damage | Weapon, Target | 40 entries: Bloody Mess × 1.05, Cowboy × 1.25 (IsInList on tab 1), Demolition Expert × 1.2/1.4/1.6 (IsWeaponSkillType Explosives on tab 1), Lady Killer / Confirmed Bachelor / Black Widow / Cherchez La Femme × 1.1 (GetIsSex on tab 2), Animal Control and the other challenge perks (GetIsCreatureType on tab 2), Center of Mass × 1.15 (GetVATSValue Targeted Part torso on tab 0), Purifier, Pyromaniac, Laser Commander, Heavy Handed, Unstoppable Force, Spray and Pray × 0.25 (GetInFaction on tab 2) … | the damage before critical damage, every hit by the player (`damage::hit`, `weapon_damage`) |
+| 0 | Calculate Weapon Damage | Weapon, Target | 40 entries: Bloody Mess × 1.05, Cowboy × 1.25 (IsInList on tab 1), Demolition Expert × 1.2/1.4/1.6 (IsWeaponSkillType Explosives on tab 1), Lady Killer / Confirmed Bachelor / Black Widow / Cherchez La Femme × 1.1 (GetIsSex on tab 2), Animal Control and the other challenge perks (GetIsCreatureType on tab 2), Center of Mass × 1.15 (GetVATSValue Targeted Part torso on tab 0), Purifier, Pyromaniac, Laser Commander, Heavy Handed, Unstoppable Force, Spray and Pray × 0.25 (GetInFaction on tab 2) … | the damage before critical damage, every hit by the player (`damage::hit`, `weapon_damage`); a blast's damage (below) |
 | 1 | Calculate My Critical Hit Chance | Weapon, Target | Laser Commander + 10, Set Lasers for Fun + 2/+ 4, Ninja × 1.15 | the chance after the formula, before VATS's bonus |
 | 2 | Calculate My Critical Hit Damage | Weapon, Target | Better Criticals × 1.5, Hunter × 1.75, Ninja × 1.25 and Stealth Girl × 1.1 and The Professional × 1.2 (GetDetected on tab 0: unseen), Heavy Handed × 0.4 | the weapon's critical damage |
 | 34 | Calculate Gun Spread | Weapon | Fast Shot × 1.2, Trigger Discipline × 0.8, Steady Chem Set 0, Gun Strength Fail + 1 | the player's actor spread, not the weapon's minimum spread [documented: GECK wiki Entry Point, "Has no effect on a Weapon's Min Spread in New Vegas"]; the crosshair's cone too |
 | 36 | Modify Enemy Critical Hit Chance | Weapon, Target | Dream Crusher × 0.5 | the attacker's chance when the player is hit; tab 2 taken as the attacker [hypothesis: the page says "Target"; no entry has conditions] |
 | 40 | Action Point Cost | Weapon | Fast Shot × 0.8, Loose Cannon × 0.7, Math Wrath × 0.9, Plasma Spaz × 0.8, Trigger Discipline × 1.2, Beautiful Beatdown × 0.9 | VATS mode's AP a mark, set on entering it (logged `vats mode: perks change the AP cost`) |
-| 56 | Modify Damage Threshold (defender) | Attacker, Attacker's weapon | Toughness + 3/+ 6, Sub-Dermal Armor + 4, Kamikaze − 2, Hit the Deck + 25 (Explosives on tab 2), Stonewall + 5 (melee/unarmed on tab 2), Bonds of Steel + 4 | the player's own DT when hit |
-| 58 | Modify Damage Threshold (attacker) | Weapon, Target | Shotgun Surgeon Set 10, Piercing Strike Set 15, Companion Suite Set 10 | the DT the player's hit ignores: from 0, taken off the target's DT, never below 0 [documented: GECK wiki Entry Point, "read as 'How much DT to subtract from the targeted actor'"] |
+| 56 | Modify Damage Threshold (defender) | Attacker, Attacker's weapon | Toughness + 3/+ 6, Sub-Dermal Armor + 4, Kamikaze − 2, Hit the Deck + 25 (Explosives on tab 2), Stonewall + 5 (melee/unarmed on tab 2), Bonds of Steel + 4 | the player's own DT when hit, by a blast too (below) |
+| 58 | Modify Damage Threshold (attacker) | Weapon, Target | Shotgun Surgeon Set 10, Piercing Strike Set 15, Companion Suite Set 10 | the DT the player's hit ignores: from 0, taken off the target's DT, never below 0 [documented: GECK wiki Entry Point, "read as 'How much DT to subtract from the targeted actor'"]; a blast's too (below) |
 | 57 | Modify Chance for Ammo Item | Weapon | Hand Loader × 2 (IsWeaponSkillType Guns on tab 1), Vigilant Recycler × 2 (Energy Weapons) | the chance of a shot's spent item, the ammo's DAT2 percentage (claude/e13-spent-casings, [spent-ammo-items](spent-ammo-items.md)) |
 | 8 | Calculate To Hit Chance | Weapon, Target | Commando × 1.25, Gunslinger × 1.25, Sniper × 1.25 (GetVATSValue Targeted Part head on tab 0), Hobbler × 1.25 (legs), Wired Reflexes × 1.1, Fast Shot × 0.8, Trigger Discipline × 1.2 (IsWeaponSkillType on tab 1), Sneering Imperialist × 1.25 (GetInFaction on tab 2), Camarader-E, Lonesome Road | VATS mode's chance of each mark, read when the mark is made with GetVATSValue answering for it (since 2026-10-23, vats-mode.md §17.2) |
 | 33 | Has Concentrated Fire | — | Concentrated Fire Set 1 | + `iVATSConcentratedFireBonus` for each earlier mark on the same part (vats-mode.md §17.2) |
@@ -78,6 +78,26 @@ Not wired yet, with why:
 | 38, 43 | Equip Speed, Modify Attack Speed | Quick Draw, Fast Shot, Loose Cannon, Slayer, Melee Hacker, Old Vaquero, Causeless Rebel, Trigger Discipline | the player body plays its clips at their own speed; changing only the cycle's timing would fire before the clip does. The reload's layer rate (`WeaponAnim::reload_rate`) is the way to do it for the draw and attack clips too |
 | 53 | Modify Weapon Strength Req | Weapon Handling Set 2 | built 2026-10-25 (§12) |
 | 54 | Modify Aiming Move Speed | Run 'n Gun × 2 | built 2026-10-25 (§12) |
+
+**Blasts.** A blast on an actor passes entry points 0, 58 and 56, each once, and no others
+[design: `nvf-play` `combat::blast_entry_ops`, `damage::blast_hit`]. Its damage, after the
+falloff and ShowOff:OnExplosionHit's handlers, takes the cause's entry 0 (Demolition Expert
+on a grenade, with the cause's weapon on tab 1 and the target on tab 2); then DT is the
+target's with its entry 56 (attacker and weapon on tabs 1 and 2) less the cause's entry 58,
+never below 0; then the DT floor and DR, as a shot's. It does not pass the weapon formula:
+no skill, condition, critical or body part. A grenade that strikes an actor is two hits,
+the weapon's and the blast's, and each passes entry 0 once.
+
+A blast with no cause (a placed mine nobody put down, a stage burning down, a script's) has
+no attacker's entries, and the target's entry 56 runs with nothing on tabs 1 and 2. An entry
+with a condition on those tabs does not apply, so Toughness does and Hit the Deck does not;
+the player and the player's weapon do not stand in [design]. That the original does the same
+is [hypothesis]: which entries it runs for a blast with no weapon behind it has not been seen.
+
+Logged `combat: perks on <cause>'s blast on <target>: …` (`no one's` with no cause). Checks:
+`nvf-play` `combat::tests::blast_perks`; `fnv-combat` `a_blast_passes_the_damage_and_dt_entry_points`;
+smoke `blast-perks-mine-plain`, `blast-perks-mine-toughness`, `blast-perks-grenade-demolition`,
+`blast-perks-grenade-deck`, `blast-perks-grenade-both`.
 
 ## 3. Conditions by tab
 

@@ -8,7 +8,8 @@ use common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::combat::{CombatRequest, HitInfo};
 use fnv_game::functions::Ctx;
-use fnv_game::game::{Game, GameConfig, InstKey};
+use fnv_game::awareness::State;
+use fnv_game::game::{Game, GameConfig, GameSnapshot, InstKey};
 use fnv_game::GameData;
 use fnv_script::vm::{ArgValue, Value};
 use fnv_script::FunctionTable;
@@ -166,6 +167,126 @@ fn on_start_combat_runs_once_a_fight_and_on_combat_end_when_it_is_over() {
     g.stop_combat(GUARD_REF);
     g.tick();
     assert_eq!(local(&g, 2), 1.0);
+}
+
+/// A save and load through the JSON a save holds.
+fn reload<'a>(f: &'a Fixture, g: &Game) -> Game<'a> {
+    from_json(f, g, serde_json::to_value(g.snapshot()).unwrap())
+}
+
+fn from_json<'a>(f: &'a Fixture, g: &Game, v: Json) -> Game<'a> {
+    let s: GameSnapshot = serde_json::from_value(v).unwrap();
+    let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
+    Game::restore(&f.data, world, g.cfg, &s).unwrap()
+}
+
+fn set_state(g: &mut Game, actor: FormId, state: State) {
+    g.awareness.actors.get_mut(&actor).unwrap().state = state;
+}
+
+/// The runs so far of `begin OnStartCombat player`, `begin OnStartCombat`, `begin OnCombatEnd`.
+fn counts(g: &Game) -> (f64, f64, f64) {
+    (local(g, 1), local(g, 4), local(g, 2))
+}
+
+#[test]
+fn a_load_in_a_fight_runs_no_second_start_and_its_end_runs_once() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.start_combat(GUARD_REF, FormId::PLAYER_REF);
+    g.tick();
+    assert_eq!(counts(&g), (1.0, 1.0, 0.0));
+    let mut h = reload(&f, &g);
+    h.tick();
+    h.tick();
+    assert_eq!(counts(&h), (1.0, 1.0, 0.0), "the fight the save holds does not start again");
+    h.stop_combat(GUARD_REF);
+    h.tick();
+    h.tick();
+    assert_eq!(counts(&h), (1.0, 1.0, 1.0), "it ends once");
+}
+
+#[test]
+fn a_load_with_the_target_lost_is_the_same_fight_when_it_is_found_again() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.start_combat(GUARD_REF, FormId::PLAYER_REF);
+    g.tick();
+    set_state(&mut g, GUARD_REF, State::Lost);
+    g.tick();
+    let mut h = reload(&f, &g);
+    h.tick();
+    set_state(&mut h, GUARD_REF, State::Combat);
+    h.tick();
+    assert_eq!(counts(&h), (1.0, 1.0, 0.0), "Lost and back across a load is one fight");
+}
+
+#[test]
+fn a_start_still_due_when_the_save_was_made_runs_once_after_the_load() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.tick();
+    g.start_combat(GUARD_REF, FormId::PLAYER_REF);
+    let mut h = reload(&f, &g);
+    h.tick();
+    h.tick();
+    assert_eq!(counts(&h), (1.0, 1.0, 0.0));
+}
+
+#[test]
+fn a_save_without_the_field_counts_combat_and_lost_as_started_and_not_alert() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.start_combat(GUARD_REF, FormId::PLAYER_REF);
+    g.tick();
+    for (state, started) in [(State::Combat, true), (State::Lost, true), (State::Alert, false)] {
+        set_state(&mut g, GUARD_REF, state);
+        let mut v = serde_json::to_value(g.snapshot()).unwrap();
+        assert!(v.as_object_mut().unwrap().remove("fighting").is_some());
+        let mut h = from_json(&f, &g, v);
+        assert_eq!(h.fighting.contains(&GUARD_REF), started, "{state:?}");
+        h.tick();
+        set_state(&mut h, GUARD_REF, State::Combat);
+        h.tick();
+        assert_eq!(local(&h, 4), if started { 1.0 } else { 2.0 }, "{state:?}");
+        h.stop_combat(GUARD_REF);
+        h.tick();
+        h.tick();
+        assert_eq!(local(&h, 2), 1.0, "{state:?}: its end runs once");
+    }
+}
+
+#[test]
+fn fighters_follow_a_remapped_load_order_and_a_gone_plugin_takes_its_own() {
+    let e = |n: &str| fnv_save::PluginEntry { name: n.into(), size: 0 };
+    let f = fixture();
+    let mut g = game(&f);
+    g.start_combat(GUARD_REF, FormId::PLAYER_REF);
+    g.tick();
+    let mut v = serde_json::to_value(g.snapshot()).unwrap();
+    // The save as made with Extra.esm before Combat.esm.
+    fnv_save::remap_json(&mut v, &fnv_save::PluginRemap::new(&[e("Combat.esm"), e("Extra.esm")], &[e("Extra.esm"), e("Combat.esm")]));
+    assert_eq!(v["fighting"], serde_json::json!(["0x01000300"]));
+    // Extra.esm's own fighters: one placed, one created from one of its bases.
+    let guard = v["awareness"]["0x01000300"].clone();
+    let mut created = v["sim"]["refs"].as_object().unwrap().values().next().cloned().expect("a changed reference");
+    created["base"] = serde_json::json!("0x00000ABC");
+    v["sim"]["refs"]["0xFF000099"] = created;
+    for id in ["0x00000123", "0xFF000099"] {
+        v["awareness"][id] = guard.clone();
+    }
+    v["fighting"] = serde_json::json!(["0x00000123", "0x01000300", "0xFF000099"]);
+    // Loaded without Extra.esm.
+    fnv_save::remap_json(&mut v, &fnv_save::PluginRemap::new(&[e("Extra.esm"), e("Combat.esm")], &[e("Combat.esm")]));
+    assert_eq!(v["fighting"], serde_json::json!(["0x00000300", "0xFF000099"]));
+    let mut s: GameSnapshot = serde_json::from_value(v).unwrap();
+    assert_eq!(s.drop_gone(|id| fnv_save::is_gone(id.0)), 1, "the created reference");
+    assert_eq!(s.fighting, Some([GUARD_REF].into_iter().collect()));
+    assert_eq!(s.awareness.keys().copied().collect::<Vec<_>>(), [GUARD_REF]);
+    let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &s).unwrap();
+    h.tick();
+    assert_eq!(counts(&h), (1.0, 1.0, 0.0));
 }
 
 #[test]

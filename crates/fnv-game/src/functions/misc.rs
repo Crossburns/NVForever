@@ -256,8 +256,8 @@ pub fn say(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
 /// [headTrack] [allowMovement]`: with the player as the target, the speaker starts a
 /// conversation with the named topic, GREETING without one [documented: GECK wiki
 /// StartConversation, owner export: a "force greet"; nothing happens when either actor
-/// is disabled]. In the game the speaker first walks up to the target; that needs AI
-/// packages, so here the conversation starts at once [stand-in]. A call while a
+/// is disabled]. The speaker first walks up to the player when it is not near and the AI
+/// runs (`Game::walk_up_greet`); without the AI the conversation starts at once. A call while a
 /// conversation is running (except from the end script of the line that closes it:
 /// `Game::hold_force_greet`), or when the speaker has no line to say, does nothing
 /// [hypothesis]. With another actor as the target the two talk to each other and the
@@ -296,7 +296,7 @@ pub fn start_conversation(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, St
     // also for a Goodbye greeting (`Game::force_greet`). Called from the end script of
     // the line that closes the running conversation, it starts once that has closed
     // (`Game::hold_force_greet`).
-    if !g.hold_force_greet(speaker, a.opt_form(1)) {
+    if !g.hold_force_greet(speaker, a.opt_form(1)) && !g.walk_up_greet(speaker, a.opt_form(1)) {
         let _ = g.force_greet(speaker, a.opt_form(1));
     }
     none()

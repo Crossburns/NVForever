@@ -72,6 +72,19 @@ pub struct Line {
     pub width: f32,
 }
 
+impl Line {
+    /// The line's characters, its codes read back in this run's code page (the spaces it
+    /// was broken at are not in it).
+    pub fn text(&self) -> String {
+        self.text_in(fnv_util::text::code_page())
+    }
+
+    /// The line's characters, its codes read back in a given code page.
+    pub fn text_in(&self, page: fnv_util::text::CodePage) -> String {
+        self.glyphs.iter().map(|g| page.char_of(g.code)).collect()
+    }
+}
+
 fn f32_at(b: &[u8], at: usize) -> f32 {
     f32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
 }
@@ -255,5 +268,16 @@ mod tests {
         assert_eq!(code_in('ż', Windows1250), 0xBF);
         assert_eq!(code_in('é', Windows1252), 0xE9);
         assert_eq!(code_in('\u{2019}', Windows1251), 0x92);
+    }
+
+    #[test]
+    fn a_line_reads_back_in_its_code_page() {
+        use fnv_util::text::CodePage::*;
+        let line = |s: &str, page| Line { glyphs: s.chars().map(|c| Placed { code: code_in(c, page), x: 0.0 }).collect(), width: 0.0 };
+        assert_eq!(line("Привет", Windows1251).text_in(Windows1251), "Привет");
+        assert_eq!(line("Łódź", Windows1250).text_in(Windows1250), "Łódź");
+        assert_eq!(line("café", Windows1252).text_in(Windows1252), "café");
+        // Read as Latin-1 the same codes were other letters (the old stand-in text).
+        assert_ne!(line("Привет", Windows1251).text_in(Windows1252), "Привет");
     }
 }

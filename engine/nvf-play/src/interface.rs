@@ -147,8 +147,24 @@ pub struct Face {
 /// A game texture for the interface: not repeated, so that a stretched picture's two
 /// ends do not run into each other.
 pub fn texture(path: &str, data: &GameData, images: &mut Assets<Image>, bc: bool) -> Option<(Handle<Image>, Vec2)> {
+    texture_read(path, data, images, bc, nvf_assets::texture::dds_image)
+}
+
+/// A font's texture: [`texture`] with its largest level only, so a glyph cut out of it
+/// never takes in its neighbours from a smaller level ([`nvf_assets::texture::dds_image_top`]).
+pub fn font_texture(path: &str, data: &GameData, images: &mut Assets<Image>, bc: bool) -> Option<(Handle<Image>, Vec2)> {
+    texture_read(path, data, images, bc, nvf_assets::texture::dds_image_top)
+}
+
+fn texture_read(
+    path: &str,
+    data: &GameData,
+    images: &mut Assets<Image>,
+    bc: bool,
+    decode: fn(&[u8], bool, bool) -> Result<Image, String>,
+) -> Option<(Handle<Image>, Vec2)> {
     let bytes = data.read(path)?;
-    match nvf_assets::texture::dds_image(&bytes, true, bc) {
+    match decode(&bytes, true, bc) {
         Ok(mut image) => {
             image.sampler = ImageSampler::linear();
             let size = image.size().as_vec2();
@@ -168,8 +184,46 @@ pub fn plain_font(size: f32, advance: f32) -> Font {
     Font { size, texture: String::new(), glyphs: vec![glyph; 256] }
 }
 
-/// The game's font at `path`, else `stand_in`.
+/// The install's own font files, by number (`None`: the default, [`FONT_FILES`]); set once
+/// at start ([`set_font_files`]).
+static INSTALL_FONTS: std::sync::OnceLock<[Option<String>; 9]> = std::sync::OnceLock::new();
+
+/// The font files an INI's `[Fonts]` section names: `sFontFile_1` … `_9`, each as a game
+/// path in small letters with backslashes; `None` where the INI names none
+/// [documented: Fallout_default.ini `[Fonts]`; hypothesis: a localized install points
+/// these at its own files, #1439].
+pub fn fonts_in_ini(text: &str) -> [Option<String>; 9] {
+    std::array::from_fn(|i| {
+        let v = fnv_install::ini_get(text, "Fonts", &format!("sFontFile_{}", i + 1))?;
+        let v = v.trim().trim_matches('"').replace('/', "\\").to_ascii_lowercase();
+        (!v.is_empty()).then_some(v)
+    })
+}
+
+/// Draw font n with the file `files[n - 1]` names where it names one, from now on (once
+/// a run; a second call is ignored).
+pub fn set_font_files(files: [Option<String>; 9]) {
+    let _ = INSTALL_FONTS.set(files);
+}
+
+/// The file a font is read from: a default font file ([`FONT_FILES`]) is the install's
+/// own one for that number when its INI names one ([`set_font_files`]); any other path
+/// is itself.
+pub fn font_file(path: &str) -> String {
+    font_file_in(path, INSTALL_FONTS.get())
+}
+
+fn font_file_in(path: &str, install: Option<&[Option<String>; 9]>) -> String {
+    let own = install.and_then(|fonts| {
+        let n = FONT_FILES.iter().position(|f| f.eq_ignore_ascii_case(path))?;
+        fonts[n].clone()
+    });
+    own.unwrap_or_else(|| path.to_string())
+}
+
+/// The game's font at `path` (the install's own file for it: [`font_file`]), else `stand_in`.
 pub fn face(path: &str, stand_in: Font, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Face {
+    let path = &font_file(path);
     let read = data.and_then(|d| {
         let font = match Font::parse(&d.read(path)?) {
             Ok(f) => f,
@@ -178,7 +232,7 @@ pub fn face(path: &str, stand_in: Font, data: Option<&GameData>, images: &mut As
                 return None;
             }
         };
-        let image = texture(&font.texture_path(), d, images, bc)?;
+        let image = font_texture(&font.texture_path(), d, images, bc)?;
         Some(Face { font, image: Some(image) })
     });
     read.unwrap_or_else(|| {
@@ -221,7 +275,8 @@ pub fn set_line(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32, 
 /// [`set_line`] with `mark` on every coloured node (each glyph, or the stand-in text).
 pub fn set_marked(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32, base: f32, color: Color, mark: impl Bundle + Clone) {
     let Some((image, size)) = &face.image else {
-        let text: String = line.glyphs.iter().map(|g| g.code as char).collect();
+        // The codes are the run's code page's, not Latin-1 (`Ж` is 0xC6 in Windows-1251).
+        let text = line.text();
         let size = face.font.size * 0.75;
         p.spawn(Node { position_type: PositionType::Absolute, left: u(x), top: u(base - size), ..default() }).with_children(|n| {
             n.spawn((Text::new(text), TextFont { font_size: FontSize::Vh(size / 9.6), ..default() }, TextColor(color), mark));
@@ -429,5 +484,21 @@ mod tests {
     fn a_pictures_file_name_is_what_the_atlas_knows_it_by() {
         assert_eq!(file_name("Interface\\Icons\\Message Icons\\Glow_Message_Vaultboy_In_Pain.dds"), "glow_message_vaultboy_in_pain.dds");
         assert_eq!(file_name("a.dds"), "a.dds");
+    }
+
+    #[test]
+    fn the_installs_ini_names_its_fonts() {
+        let ini = "[General]\nsFontFile_1=Nope.fnt\n[Fonts]\nsFontFile_1=Textures\\Fonts\\Glow_Monofonto_Large_RU.fnt\nsFontFile_7 = Textures/Fonts/Baked-in_RU.fnt\nsFontFile_9=\n";
+        let fonts = fonts_in_ini(ini);
+        assert_eq!(fonts[0].as_deref(), Some("textures\\fonts\\glow_monofonto_large_ru.fnt"));
+        assert_eq!(fonts[6].as_deref(), Some("textures\\fonts\\baked-in_ru.fnt"));
+        assert!(fonts[1].is_none() && fonts[8].is_none());
+        // A default font file is read from the install's own file for its number.
+        assert_eq!(font_file_in(FONT_FILES[0], Some(&fonts)), "textures\\fonts\\glow_monofonto_large_ru.fnt");
+        assert_eq!(font_file_in("Textures\\Fonts\\Baked-in_Monofonto_Large.fnt", Some(&fonts)), "textures\\fonts\\baked-in_ru.fnt");
+        // A font the INI does not name, another path, or no INI: the path as given.
+        assert_eq!(font_file_in(FONT_FILES[1], Some(&fonts)), FONT_FILES[1]);
+        assert_eq!(font_file_in("textures\\fonts\\other.fnt", Some(&fonts)), "textures\\fonts\\other.fnt");
+        assert_eq!(font_file_in(FONT_FILES[0], None), FONT_FILES[0]);
     }
 }

@@ -68,8 +68,15 @@ not visible in the data and stays **[hypothesis]** until the in-game captures of
   Parent" [documented: xEdit]): 5,171 references have one, 759 with the opposite flag;
   162 chains are two deep, none deeper; no chain loops or names a missing reference
   [observed]. The simulation derives a child's enabled state from its parent's
-  (inverted for "opposite") and ignores the child's own flag while it has a parent; a
-  broken chain falls back to the own flag [hypothesis: GECK wiki "Enable Parent"].
+  (inverted for "opposite") and ignores the child's own flag while it has a parent
+  [observed: a session of the original, 2026-11-05, `GetDisabled` read by script on
+  persistent references: children flagged Initially Disabled read as their parent's state
+  or its opposite, and follow the parent's Enable and Disable; issue #1620]; a broken
+  chain falls back to the own flag [hypothesis: GECK wiki "Enable Parent"]. Render
+  streaming's start rule and the physics at a cell load go by the same rule [design:
+  `engine/nvforever/src/world.rs` `enabled`, `engine/nvf-play/src/phys.rs` `in_world`];
+  that the original draws these references and gives them collision by it is
+  [hypothesis]: only `GetDisabled` was read, no frame was taken.
 - Record flag **0x400** on a reference coincides exactly with placement in a
   persistent-children group: 20,344 references have both, none has only one [observed].
   It is the "Persistent" flag [documented: UESP].
@@ -438,7 +445,9 @@ consistent with three independent rolls), all-levels vs highest eligible level
 (`VFactionSquadStimpaks`: always 1 stimpak at player level 10, always 3 at level 30, in
 game and candidate), Use All (`VendorChestStimpaksBoomer`), a uniform pick of 18
 (`ClutterHouseholdJunkNV`). Console `AddItem` with a leveled list resolves it against
-the player's level [observed, same captures].
+the player's level [observed, same captures]. `World::add_item` reads
+`World::roll_level`, which `Game::sync_player_level` keeps at the game's player's level;
+`SimConfig::player_level` stays the configured value (encounter-zones.md) [design].
 
 Also **consistent with the game** for backlog B8 [observed in game, 2026-10-08,
 `L4.sim.leveled.b8`, `parity-lab/inputs/layer4/leveled_b8.cases.json`: 300 `AddItem`
@@ -508,10 +517,15 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   wiki Reference, Lock tab; GetLockLevel: "If the terminal is leveled, the value you get
   will be the leveled value (same as locks)"]; by how much is not documented. As built
   (`fnv_sim::refs::Lock::level_at`, `World::lock_of`): one step of 25 for every 10
-  levels past the first, up to Very Hard (100), never Requires Key [hypothesis,
-  owner-review.md], from the reference's level (its encounter zone's, else the
-  player's) when its state is first made, as leveled lists are (encounter-zones.md);
-  GetLockLevel, the crosshair's lock line and the lockpick game then read that level.
+  levels past the first, up to Very Hard (100), never Requires Key [hypothesis: a guess,
+  listed as one in docs/owner-review.md until 2026-10-25; no decision on it is recorded].
+  A leveled lock hardens from a fixed level only (`World::lock_read_level`) [design]: a
+  container's, fixed when its cell loads, if its state is not made before that. A door
+  gets no fixed level, so it keeps its authored level whatever the player's level or its
+  zone [design]. Whether the original hardens at all is [hypothesis]: the GECK tutorial
+  calls the checkbox deprecated [documented, encounter-zones.md §7]; observer check 88
+  asks. GetLockLevel, the crosshair's lock line and the lockpick game read the level
+  built here.
   The nav graph's door locks keep the authored level (it only asks locked or not).
 - **XTEL** (door FormID, position, rotation, flag) makes a door a teleport [documented:
   xEdit]. The flag is "No Alarm": "No trespass alarm will be sent when the player uses
@@ -649,6 +663,18 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     pose (and, outdoors, the grid cell containing it) is written back to the reference, so
     reloads and snapshots find it at rest. `fnvtool sim run` applies no physics to created
     references, so scripted traces keep a drop at the drop point, as the capture did.
+  - **Models with several dynamic bodies** (issue #1604). Clothing and armour draw their
+    MOD2 ground object when dropped (`BaseObject::world_model_path`). Those `GO.NIF`
+    models are two or four dynamic bodies, joined by limited hinges, with the mesh skinned
+    to them [observed: `fnvtool collide ragdoll`, `armor\vaultsuit\m\go.nif` Bone01 and
+    Bone02; 2026-11-05 drops of the Pre-War Spring Outfit, Leather Armor, Merc Charmer
+    Outfit and Vault 21 Jumpsuit made 2, 2, 4 and 2 bodies]. Only a single body's pose is
+    written back, so the drawn item hung at the drop point while its bodies fell. Now a
+    created reference whose model's bodies are all dynamic gets one body that holds every
+    shape at its place in the file (`phys::one_dynamic_body`). The item falls and comes
+    to rest in its folded pose, like any other drop [design: the hinge is not simulated;
+    whether the original lets the cloth flop is not captured]. Models where any body is
+    static or keyframed keep their bodies as they are.
   - **Capture for the owner** (not run: other sessions are using the game; about 2 min,
     the last part needs a person). From `nvfdoc`, outside the front door, tgm:
     (1) `player.Drop` a stimpak, find the new reference with the `GetFirstRef 201 0 0`
