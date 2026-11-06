@@ -447,6 +447,23 @@ impl PcmSound {
         self.samples.len() as f64 / (self.channels.max(1) as f64 * self.rate.max(1) as f64)
     }
 
+    /// Interleaved samples (`channels` per frame, `rate` frames per second), unplaced.
+    pub fn from_samples(samples: Vec<f32>, channels: u16, rate: u32) -> PcmSound {
+        PcmSound { samples: samples.into(), channels, rate, pan: None, reverb: None }
+    }
+
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
     /// Decode a whole file of another encoding (Ogg Vorbis) with rodio.
     pub fn from_encoded(bytes: Vec<u8>) -> Result<PcmSound, String> {
         let d = rodio::Decoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
