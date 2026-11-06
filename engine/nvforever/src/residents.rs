@@ -2114,7 +2114,13 @@ impl Core {
             if tactics.flights.contains_key(&r.actor) {
                 continue;
             }
-            let Some((target, _)) = game.awareness.get(r.actor).filter(|x| x.state == fnv_game::awareness::State::Combat).and_then(|x| x.combat_target()) else { continue };
+            let aw = game.awareness.get(r.actor).filter(|x| x.state == fnv_game::awareness::State::Combat);
+            // Just gone into Combat it stands a moment on its heading (`fnv_ai::alert::reacting`;
+            // nor is it locked on its target then, `npc_combat`).
+            if fnv_ai::alert::reacting(game, r.actor) {
+                continue;
+            }
+            let Some((target, _)) = aw.and_then(|x| x.combat_target()) else { continue };
             if let Some(p) = fnv_ai::goal::place_of_ref(game, target).filter(|p| p.space == a.walker.space) {
                 self.aims.insert(r.actor, p.pos);
                 if tactics.posts.get(&r.actor).is_some_and(|p| p.kind == fnv_game::combat_group::PostKind::Cover) {
@@ -2983,9 +2989,12 @@ pub fn drive(
             (Some(t), from) => {
                 let want = heading_of([t[0] - feet[0], t[1] - feet[1]]);
                 let from = from.unwrap_or(w.heading);
-                // Standing, at the rate the AI turns a fighter (`fnv_ai::alert`), so one
-                // that never moves is drawn as its walker turns.
-                let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE * 2.0 } else { fnv_nav::follow::SPOT_TURN_RATE * fnv_ai::alert::COMBAT_TURN };
+                // Standing, at the rate the AI turns a fighter (`fnv_ai::alert::combat_turn_rate`),
+                // so one that never moves is drawn as its walker turns; on the move, at the
+                // walking turn rate: the original's trooper turned slower from the moment it
+                // stepped off (275 down to about 90°/s) [observed 2026-11-06, capture
+                // o25_turn, docs/spec-notes/actors.md §8.9].
+                let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE } else { fnv_ai::alert::combat_turn_rate(heading_delta(from, want)) };
                 let hold = lock.is_some() && (held || heading_delta(from, want).abs() <= LOCK_HOLD);
                 let h = if hold { want } else { turn_towards(from, want, rate * dt) };
                 if hold {
