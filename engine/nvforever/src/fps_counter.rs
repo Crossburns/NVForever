@@ -100,7 +100,10 @@ fn count(counter: Res<FpsCounter>, time: Res<Time<Real>>, mut text: Query<&mut T
         w.logged = true;
         info!("fps counter: first reading {:.0} fps, {:.1} ms, slowest {:.1} ms", r.fps, r.mean_ms, r.worst_ms);
     }
-    if !w.usage_logged && (cpu.is_some() || gpu.is_some()) {
+    // Once both are read: the GPU's can come a sample after the CPU's (its counter array
+    // grows between PDH's size and fill calls) or never (no GPU counters; the counters
+    // line says which were found), and a line without it said once would never say it.
+    if !w.usage_logged && cpu.is_some() && gpu.is_some() {
         w.usage_logged = true;
         info!("fps counter: first usage reading{}", usage_text(cpu, gpu));
     }
