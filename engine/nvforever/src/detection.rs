@@ -515,6 +515,11 @@ struct SightCounts {
     shared_differs: usize,
     kept_would: usize,
     kept_differs: usize,
+    /// Lines of sight over a measurement's [`SIGHT_BUDGET`]: answered from their last
+    /// measurement, or out of sight when there is none, and how many measurements had any.
+    deferred: usize,
+    deferred_new: usize,
+    over_budget: usize,
 }
 
 /// Two points as bits, the same whichever comes first: the key of a line of sight that
@@ -614,6 +619,8 @@ struct KeptSight {
     eyes: [f32; 3],
     clear: bool,
     cast: bool,
+    /// Measurements since it was cast (0: cast at this one).
+    age: u32,
 }
 
 /// A pair's line of sight is kept for the next measurement when neither the detector's
@@ -623,6 +630,14 @@ struct KeptSight {
 /// between two shows at most one measurement late [design: 4 units, about 6 cm, less
 /// than a step].
 const STILL: f32 = 4.0;
+
+/// The most lines of sight a measurement casts [design, #1426: at 118 actors (the stress
+/// battle at 50 a side) every pair's line was cast in one measurement, about 6,900, and
+/// `detection::measure` took 140-166 ms]. The pairs with the player and those whose
+/// detector fights the target are always cast; over the budget the others are cast oldest
+/// answer first, and the rest keep their last answer for this measurement (out of sight
+/// when they have none). Under it nothing changes.
+const SIGHT_BUDGET: usize = 1024;
 
 impl KeptSight {
     fn still(&self, from: [f32; 3], chest: [f32; 3], eyes: [f32; 3]) -> bool {
@@ -940,6 +955,13 @@ fn measure(
         // chest, else its eyes; for the player also the camera's, where the target is in
         // the camera's view.
         // A still pair's line of sight of the last measurement serves again ([`STILL`]).
+        // Pairs whose line is cast first when a measurement has more than its budget: the
+        // player's, and a fighter's on its combat target ([`SIGHT_BUDGET`]).
+        let first: Vec<bool> = ordered
+            .iter()
+            .map(|&(i, j)| i == 0 || j == 0 || g.awareness.get(FormId(people[i].id)).is_some_and(|a| a.state.in_combat() && a.targets.contains_key(&FormId(people[j].id))))
+            .collect();
+        let mut budget = SIGHT_BUDGET;
         let mut look = |asked: Vec<(usize, [f32; 3], bool)>, answers: &mut Vec<bool>| {
             let mut cast = Vec::new();
             let mut would = Vec::new();
@@ -951,7 +973,7 @@ fn measure(
                     Some(s) if !check => {
                         answers[k] = s.clear;
                         counts.kept += 1;
-                        kept_now.insert(key, KeptSight { cast: false, ..*s });
+                        kept_now.insert(key, KeptSight { cast: false, age: s.age + 1, ..*s });
                     }
                     kept => {
                         if let Some(s) = kept {
@@ -961,10 +983,33 @@ fn measure(
                     }
                 }
             }
+            // Over the budget: the first pairs, then the oldest answers, are cast; the
+            // others keep their last answer (out of sight without one) and are older next
+            // time, so every pair is cast in turn.
+            let firsts = cast.iter().filter(|c| first[c.0]).count();
+            if cast.len() > budget.max(firsts) {
+                counts.over_budget += 1;
+                let age = |key: &(u32, u32, bool)| kept_before.get(key).map_or(u32::MAX, |s| s.age);
+                cast.sort_by_key(|&(k, _, key, ..)| (!first[k], std::cmp::Reverse(age(&key))));
+                for (k, _, key, ..) in cast.split_off(budget.max(firsts)) {
+                    match kept_before.get(&key) {
+                        Some(s) => {
+                            answers[k] = s.clear;
+                            kept_now.insert(key, KeptSight { cast: false, age: s.age.saturating_add(1), ..*s });
+                        }
+                        None => {
+                            answers[k] = false;
+                            counts.deferred_new += 1;
+                        }
+                    }
+                    counts.deferred += 1;
+                }
+            }
+            budget = budget.saturating_sub(cast.len());
             let asks: Vec<_> = cast.iter().map(|&(_, from, _, chest, eyes)| (from, [chest, eyes])).collect();
             for (&(k, from, key, chest, eyes), clear) in cast.iter().zip(sights(phys.as_deref_mut(), land, world, exterior, &asks, &mut counts)) {
                 answers[k] = clear;
-                kept_now.insert(key, KeptSight { from, chest, eyes, clear, cast: true });
+                kept_now.insert(key, KeptSight { from, chest, eyes, clear, cast: true, age: 0 });
             }
             counts.kept_would += would.len();
             counts.kept_differs += would.iter().filter(|&&(k, clear)| answers[k] != clear).count();
@@ -1267,11 +1312,14 @@ fn report(mut exit: MessageReader<AppExit>, state: Res<DetectionState>) {
     );
     let c = &s.sight;
     info!(
-        "detection summary, lines of sight: {} asked through the collision world, {} answered by a line cast for another asker, {} kept for still pairs; {} rays cast{}",
+        "detection summary, lines of sight: {} asked through the collision world, {} answered by a line cast for another asker, {} kept for still pairs; {} rays cast; {} over the budget of {SIGHT_BUDGET} a measurement ({} without a last answer, in {} measurements){}",
         c.asked,
         c.shared,
         c.kept,
         c.rays,
+        c.deferred,
+        c.deferred_new,
+        c.over_budget,
         if sight_check() {
             format!(
                 "; sight check: the old way cast {} rays, {} answers differ from it, {} shared answers differ from the asker's own ray; {} still pairs could have been kept, {} of them would have answered otherwise",
