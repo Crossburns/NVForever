@@ -2087,7 +2087,14 @@ pub(crate) fn fight(
                 _ => FIRE_FACING,
             };
             let facing = off <= arc || !matches!(arm, Arm::Gun(_)) || residents.as_deref().is_none_or(|r| !r.runs(id));
-            if !facing && sees && fighter.seen_for >= REACTION_SECONDS {
+            // Just in combat, a fighter stands a moment on its heading before it turns
+            // (`fnv_ai::alert::reacting`, #1352): not locked on its target meanwhile, and
+            // the time it is given to turn to it counts from the end of that moment.
+            let aware = g.awareness.get(me);
+            let reacting = aware.is_some_and(|x| fnv_ai::alert::reacting(x, g.time));
+            let turning_for = aware.and_then(|x| x.combat_began).map_or(f64::INFINITY, |t| g.time - t - fnv_ai::alert::COMBAT_REACTION_SECONDS);
+            let settled = fighter.seen_for >= REACTION_SECONDS && turning_for >= f64::from(REACTION_SECONDS);
+            if !facing && sees && settled {
                 f.stats.unfaced += 1;
             }
             // Locked on its target (owner 2026-10-25: "if they have a target in sight they
@@ -2099,7 +2106,7 @@ pub(crate) fn fight(
             // its target away or by a door.
             let running_off = flight.is_some_and(|fl| !matches!(fl.spot, Some((_, fnv_game::combat_group::FleeBy::Cover))));
             // Who the AI does not run stands as it was put (and fires as it stands, above).
-            if person && sees && !running_off && residents.as_deref().is_some_and(|r| r.runs(id)) {
+            if person && sees && !running_off && !reacting && residents.as_deref().is_some_and(|r| r.runs(id)) {
                 f.locks.insert(id, (target.0, tfeet));
                 // Measured against where it was drawn facing (last frame's lock on the same
                 // target, `residents`): this frame's place of a target in contact range
@@ -2110,7 +2117,7 @@ pub(crate) fn fight(
                     Some((t, at)) if *t == target.0 => facing_off(global, feet, *at),
                     _ => off,
                 };
-                if fighter.seen_for >= REACTION_SECONDS {
+                if settled {
                     f.stats.seen_offs.push(off.to_degrees());
                     if off.to_degrees() > 10.0 && f.stats.seen_offs.iter().filter(|o| **o > 10.0).count() <= 40 {
                         info!(

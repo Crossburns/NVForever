@@ -1708,6 +1708,9 @@ fn fighting(s: &mut Sim, actor: u32, at: [f32; 3]) {
     a.observe(FormId::PLAYER_REF, &Detection { value: 5.0, band: Band::Detected, ..Default::default() }, at, now, &t);
     a.settle(FormId(actor), now, &t, true);
     assert_eq!(a.state, State::Combat);
+    // Past the moment it stands on going into combat (`fnv_ai::alert::reacting`): what
+    // the tests below look at is what a fighter does once it fights.
+    a.combat_began = Some(now - fnv_ai::alert::COMBAT_REACTION_SECONDS - 1.0);
 }
 
 #[test]

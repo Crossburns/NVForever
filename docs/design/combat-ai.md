@@ -1997,7 +1997,9 @@ target through every phase of the attack and fired only once turned to it
   rate (180°/s). Before, it turned at once at 240°/s standing and 360°/s walking. Back in
   Combat from Lost it does not stand again, and a creature's combat turn keeps its × 1.25
   [hypothesis: neither measured; nor is the delay when combat starts by detection rather
-  than StartCombat].
+  than StartCombat]. The facing summary (`npc_combat`, smoke battle-ncr-fiends,
+  combat-violet) gives a fighter its 0.6 s to turn (`REACTION_SECONDS`) from the end of
+  that moment, not from first seeing its target, and does not count it locked meanwhile.
 - **Why it slipped**: the drawn facing used the target's AI place, which for a charging
   Fiend was 110 units from where it was drawn; a trooper shooting at it faced 16° off.
   Flights to cover were not turned to the target at all.
