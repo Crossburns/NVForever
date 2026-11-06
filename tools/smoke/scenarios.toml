@@ -10150,6 +10150,23 @@ order = [[
 forbid = [{ re = 'combat: hit 0x000F573F on ', label = "the missed shot hits its mark" }]
 
 [[scenario]]
+name = "vats-mode-preview"
+source = "issue #1384 (owner): in VATS mode every body part's hit chance is shown on the target before marking, the part under the crosshair set apart (docs/design/vats-mode.md §17.5)"
+note = "vats-mode-miss' setup without the forced roll (a .357 among the Goodsprings dogs on their packages, god mode, Violetta killed at 3 s so the nearest living actor is the Fiend Guard Dog): V at 10 s, aimvats turns the crosshair on the dog, the preview logs each part's chance; the click marks the part under the crosshair and the mark line carries the figure the preview showed for it, which must be its own chance; V again leaves without firing. Frame vats_preview.png (10.33 s game time, about 0.6 s real after the aim) shows the dog's parts' labels, the one under the crosshair in brackets and brighter"
+areas = ["combat", "vats"]
+paths = ["engine/nvf-play/src/vats_mode.rs", "crates/fnv-combat/src/vats.rs", "crates/fnv-game/src/vats.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:kill:0x0013E5BB", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,10.3:aimvats", NVF_PLAY_TEST_KEYS = "10:v,10.36:mouse-left,10.4:v", NVF_PLAY_TEST_SHOTS = "10.33:vats_preview.png" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "000F573F,0013E5BB"]
+run_seconds = 16
+order = [[
+  { re = 'vats mode: on \(WeapNV357Revolver, 26 AP a shot', label = "V enters VATS mode with the .357" },
+  { re = 'vats mode: preview Fiend Guard Dog 000F573F: \S.* \d+%, .* \d+%', label = "before marking, the dog's parts each show a chance (more than one part)" },
+  { re = 'vats mode: marked Fiend Guard Dog 000F573F .* mark 1; .* AP left; (\d+)% to hit \(base .*; previewed \1%', label = "the mark's chance is the figure the preview showed for that part" },
+  { re = 'vats mode: off \(0 shots fired, 0 AP spent; V pressed again\)', label = "V leaves without firing" },
+]]
+manual = "vats_preview.png: amber 'part NN%' labels on the dog's head, torso and legs before any mark; the one under the crosshair in brackets and brighter"
+
+[[scenario]]
 name = "vats-kill-cam"
 source = "ESM full audit gap 10 (2026-10-24): the masters' camera paths and shots (CPTH, CAMS) play as VATS mode's kill cameras (docs/design/vats-mode.md §19); owner's playtest requests #1034 (the HUD hidden while it plays) and #1036 (the player's input held)"
 note = "vats-mode-miss' setup (a .357 among the Goodsprings dogs on their packages, god mode) with both dogs left at 1 health (set_av) and every roll forced to hit: one mark, E; Violet, her two Fiends and the other dog are killed at 3 s (they fight the player, and the camera plays only for the last enemy, #1035); the shot kills the dog, the camera path tree picks a path whose hit shots play (each its Max Time in real seconds at its Global time multiplier), then the view is the player's again. Which path and shots is the tree's choice (GetRandomPercent varies it), so only their form is checked; a shot whose model fails to load would leave the view where it is. While it plays the HUD is hidden and comes back after it; W held from 10.4 s and a look at 10.45 s (test aids standing in for the keys and the mouse) are held by it. The world aids' clock runs at the world's speed, which VATS mode and the kill camera slow (FirstPersonCam: 0.12), so the aids sit just after the shot (10.36 s) to land within the camera whatever shot the tree picks; at 10.8/10.9 they came after a slowed 3 s camera had ended (#1666)"
