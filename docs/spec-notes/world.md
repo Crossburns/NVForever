@@ -1016,7 +1016,20 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   has no such flags and always uses its type's reflection settings. In the masters 3 of
   the 29 PWAT lack bit 0: the fountain's, NVCleanWater1x402 (NVCleanWaterGS; the
   Goodsprings Source troughs, cells -16,-5 and -16,-4) and NVCleanWater1x1
-  (NVCleanWater03) [observed]. Checked on the Goodsprings Source troughs too (below).
+  (NVCleanWater03) [observed]. The Goodsprings Source trough (REFR 0x000E38C7) in the
+  original at noon shows no reflection either, not of the sky nor of the pipe above it,
+  only a dim grey-olive body (about sRGB 70,69,54) [observed: capture `gs_source`,
+  2026-11-06], which fits the rule. Since the change both are drawn without reflection.
+  Still different, and not this rule's: the body colour. The fountain is darker in ours
+  (about 17,40,21, the deep colour lit, against the original's 61,77,39, about the
+  shallow colour lit) and the trough bluer (about 70,82,83, NVCleanWaterGS's shallow
+  colour 91,102,145 through thin fog). The GECK wiki gives the above-water fog near and
+  far as "the distance in game units below the surface" of the shallow and deep colour
+  planes [documented: GECK wiki WaterType], where the renderer fogs by the length of the
+  view ray in the water (above), which reaches the far distance (36 units) at a grazing
+  look into a pool about 14 units deep [observed: the fountain model's pool floor ring
+  at model z 68, scale 0.5, so z 1046 under the water at 1060]; a depth-below-surface
+  measure is a candidate, open (#1787).
 - **Ripples** [hypothesis, the renderer's model]: DNAM's "rain" and "displacement"
   groups (starting size, force, velocity, falloff, dampner; NVCleanWater: rain 0.05 /
   0.1 / 0.6 / 0.985 / 2.0, displacement 0.01 / 0.4 / 0.6 / 0.985 / 10.0) are read as two
