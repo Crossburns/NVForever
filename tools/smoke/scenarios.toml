@@ -19175,3 +19175,19 @@ order = [[
   "language: en",
   "settings: language English",
 ]]
+
+[[scenario]]
+name = "loading-pipelines-start"
+source = "#1520: the start's screen waits for the pipelines the world draws with, so the view is never flat as it comes down; the world starts loading only once the screen has been drawn"
+areas = ["renderer", "ui"]
+paths = ["engine/nvforever/src/pipeline_gate.rs", "engine/nvf-play/src/loading.rs"]
+env = { NVF_PLAY_TEST_SHOT_FLATNESS = "1", NVF_PLAY_TEST_SHOTS = "0.05:flat_a.png,0.5:flat_b.png,1:flat_c.png,2:flat_d.png" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--heading", "0", "--pitch", "8", "--hour", "12"]
+run_seconds = 4
+expect = [
+  { re = 'the world starts loading [\d.]+ s after the screen \(drawn\)', label = "the screen was drawn before the world started loading" },
+  { re = 'loading screen down after [\d.]+ s \(the start', label = "the screen came down" },
+  { re = 'flat_[abcd]\.png: \d+ % of the view is one colour', count = 4, label = "all four shots after the screen were judged" },
+  { re = 'flat_[abcd]\.png: (\d+) % of the view is one colour', range = [0, 60], all = true, label = "no shot after the screen is flat" },
+]
+forbid = [{ text = "pipelines not ready after", label = "the pipelines' cap" }, { text = "failed and will not be tried again", label = "a pipeline that failed for good" }, { text = "and no longer waited for", label = "a pipeline over the cap" }]

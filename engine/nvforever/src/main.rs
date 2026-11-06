@@ -71,6 +71,7 @@ mod lights;
 mod limbs;
 mod lips;
 mod memory_budget;
+mod pipeline_gate;
 mod lockpick_view;
 mod roulette_view;
 mod blackjack_view;
@@ -791,6 +792,19 @@ fn command_line() -> Vec<String> {
     COMMAND_LINE.get().map_or_else(|| std::env::args().skip(1).collect(), |a| a[1..].to_vec())
 }
 
+/// Bevy's task pools. Test aid `NVF_PLAY_TEST_ASYNC_THREADS=<n>` sets the async compute
+/// pool's size, which is 25 % of the cores and 1 to 4 threads otherwise [documented:
+/// bevy_app 0.20.1 `task_pool_plugin.rs`], to compare with a smaller machine's.
+fn task_pools() -> TaskPoolPlugin {
+    let mut task_pool_options = bevy::app::TaskPoolOptions::default();
+    if let Some(n) = std::env::var("NVF_PLAY_TEST_ASYNC_THREADS").ok().and_then(|v| v.parse::<usize>().ok()) {
+        task_pool_options.async_compute.min_threads = n;
+        task_pool_options.async_compute.max_threads = n;
+        info!("test aid NVF_PLAY_TEST_ASYNC_THREADS: {n}");
+    }
+    TaskPoolPlugin { task_pool_options }
+}
+
 fn main() -> AppExit {
     let mut line = with_default_mode(std::env::args().collect());
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf)) {
@@ -1191,6 +1205,7 @@ fn main() -> AppExit {
     app.set_error_handler(stray_commands::handler);
     app.add_plugins(
         DefaultPlugins
+            .set(task_pools())
             .set(ImagePlugin {
                 default_sampler: ImageSamplerDescriptor {
                     address_mode_u: ImageAddressMode::Repeat,
@@ -1324,12 +1339,12 @@ fn main() -> AppExit {
     })
     .insert_resource(args.clone())
     .add_systems(Startup, (world::setup_root, setup, sky::setup_sky))
-    .add_systems(Update, (fly::fly.run_if(move || play.is_none()), sky::sky_keys, sky::weather_region, sky::update_sky, sky::interior_clip, sky::update_clouds, sky::update_night_sky, world::stream, imposters::update, fade::fade_cells, world::face_billboards, lod::update_lod, treelod::update_distant_trees, overlay, keys).chain())
+    .add_systems(Update, (fly::fly.run_if(move || play.is_none()), sky::sky_keys, sky::weather_region, sky::update_sky, sky::interior_clip, sky::update_clouds, sky::update_night_sky, world::stream.run_if(world::world_not_held), imposters::update, fade::fade_cells, world::face_billboards, lod::update_lod, treelod::update_distant_trees, overlay, keys).chain())
     .add_systems(Update, cell_buffer::remember.after(world::stream))
     .add_systems(Update, world::draw_waiting_actors.after(world::stream))
     // Actors of the next ring of cells read and prepared before they come into range.
     .insert_resource(readahead::ReadAhead::from_env())
-    .add_systems(Update, readahead::read_ahead.after(world::stream).after(world::draw_waiting_actors))
+    .add_systems(Update, readahead::read_ahead.run_if(world::world_not_held).after(world::stream).after(world::draw_waiting_actors))
     .add_systems(Last, readahead::report)
     .init_resource::<AnimCost>()
     .add_systems(Update, advance_animations)
@@ -1404,6 +1419,7 @@ fn main() -> AppExit {
         // the renderer is done: both this frame.
         app.add_plugins(nvf_play::PlayPlugin(data))
             .add_systems(Update, (worldspace::switch, world::travel, world::cell_image_space).chain().after(nvf_play::PlaySet::Input).before(world::stream))
+            .add_plugins(pipeline_gate::PipelineGatePlugin)
             .add_systems(Update, world::loading_gate.after(world::stream))
             .configure_sets(Update, nvf_play::PlaySet::Physics.before(world::stream));
         // Animation groups scripts play on objects (object_anims.rs).
