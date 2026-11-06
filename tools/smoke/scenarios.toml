@@ -14102,6 +14102,7 @@ expect = [
   { json = "observations.?label=milestone: NVDLC01MQ02 100 (Trigger the Gala Event done).stage", equals = 100, label = "milestone: NVDLC01MQ02 100 (Trigger the Gala Event done): stage = 100" },
   { json = "observations.?label=milestone: Act 3 begins (MQ03a 5).done.5", equals = true, label = "milestone: Act 3 begins (MQ03a 5): done.5 = true" },
   { json = "observations.?label=milestone: Act 3 begins (MQ03a 5).stage", equals = 5, label = "milestone: Act 3 begins (MQ03a 5): stage = 5" },
+  { json = "events.?info=0x01013C60.speaker", equals = "0x01010A0E", label = "the narrator says the second opening slide (INFO 0x01013C60, fixed speaker Elijah, no GetIsID; #965)" },
 ]
 manual = "on a failure, the chain's notes say what each step stands for; the stalls and their causes are in the Dead Money walkthrough report (addon-dm-report.md)"
 
@@ -14136,6 +14137,7 @@ expect = [
   { json = "observations.?label=milestone: the end slides said, bunker transition started.found", equals = true, label = "milestone: the end slides said, bunker transition started: found = true" },
   { json = "observations.?label=final: the end slides over, the player back at the bunker (NVDLC01BunkerTransitionTimer faded out).running", equals = false, label = "final: the end slides over, the player back at the bunker (NVDLC01BunkerTransitionTimer faded out): running = false" },
   { json = "observations.?label=final: the end slides over, the player back at the bunker (NVDLC01BunkerTransitionTimer faded out).var.bfadeoutdone", equals = 1.0, label = "final: the end slides over, the player back at the bunker (NVDLC01BunkerTransitionTimer faded out): var.bfadeoutdone = 1.0" },
+  { json = "events.?info=0x01011DE9.speaker", equals = "0x01010A0E", label = "the narrator says Elijah's ending intro (INFO 0x01011DE9, fixed speaker Elijah, no GetIsID; #965)" },
 ]
 manual = "on a failure, the chain's notes say what each step stands for; the stalls and their causes are in the Dead Money walkthrough report (addon-dm-report.md)"
 

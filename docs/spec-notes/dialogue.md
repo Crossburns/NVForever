@@ -415,6 +415,26 @@ A speaker **can say** a line when:
   [observed 2026-10-31: the Lucky 38 elevator Victor said 0x00165102, whose fixed
   speaker is the entrance Victor and whose condition is GetIsID the elevator Victor;
   observer check 29];
+  - **a script's Say or SayTo** whose topic has no line passing this check tries the
+    topic's lines again without it, so the speaker the script names says a fixed
+    speaker's line in that speaker's stead (`Game::say_by_script`, `Says::InStead`;
+    issue #965) [hypothesis]. The data behind it [observed 2026-11-06, `fnvtool dialogue
+    lines --all` and `script decompile` over FalloutNV.esm and the five add-ons, the
+    Say/SayTo calls whose speaker is a placed reference named in the call]: 30 calls
+    (29 topics, 52 lines, 10 speakers) find no line passing the check, and in every
+    one the speaker is a narrator or an intercom saying another character's words: Dead
+    Money's narrator (NVDLC01NarratorRef, base NVDLC01Narrator) saying INFO 0x01013C60
+    (topic NVDLC01IntroSlide02) and 0x01011DE9 (NVDLC01EndingIntroElijah), fixed speaker
+    Elijah, and 0x01011DE8 (NVDLC01EndingIntroVera), fixed speaker Vera, none with a
+    condition, while the topics' other slide lines carry GetIsID NVDLC01Narrator; Dead
+    Money's suite and restaurant intercoms (Christine's, Dog's and God's lines); Old World
+    Blues' X-8 and satellite intercoms (Mobius's, Borous's and the other Think Tank
+    doctors' lines, most with GetIsReference on the intercom, three with no condition).
+    The other 20 calls whose topic has refused lines also have lines the speaker passes
+    (GREETING, Hit, Death, Dog's kitchen barks), so they pick as before. Only the two
+    script functions do this: combat barks, package and patrol topics keep the check,
+    so an actor with no Hit line does not say Mobius's. Calls whose speaker is the
+    script's own reference (no reference before the dot) were not surveyed.
 - the line's quest is running **and the quest's own conditions pass**
   [owner statement 2026-10-10: "every actor has the line as long as the quest is active
   and the conditions are met on both the topic and the quest itself"; not yet captured;

@@ -201,6 +201,10 @@ pub(crate) enum Says {
     Actor,
     /// A radio station's placed reference (`crate::radio`).
     Station,
+    /// The speaker a script's Say or SayTo names, when no line of the topic passes the
+    /// fixed-speaker check: it says a fixed speaker's line in that speaker's stead
+    /// ([`Game::say_by_script`]). The other checks are an actor's.
+    InStead,
 }
 
 /// A topic a line leads to ([`Game::links_after`]): by the line's own choices (TCLT,
@@ -252,7 +256,9 @@ impl<'a> Game<'a> {
     ///   own GetIsID condition, 167 of them the end slides (fixed speaker a Boomer or
     ///   another character, GetIsID Narrator), which the narrator says
     ///   [hypothesis: the condition is the run-time rule and the field a leftover;
-    ///   docs/handoff/mq-walkthrough-2026-10-27.md];
+    ///   docs/handoff/mq-walkthrough-2026-10-27.md]. A script's Say or SayTo whose topic
+    ///   has no line passing this check tries the lines again without it
+    ///   ([`Game::say_by_script`], [`Says::InStead`]);
     /// - the line's quest is running and the quest's own conditions pass [owner
     ///   statement 2026-10-10: every actor has the line as long as the quest is active
     ///   and the conditions are met; documented: Quest Data Tab: quest conditions gate
@@ -306,7 +312,7 @@ impl<'a> Game<'a> {
         }
         // A voice type without Allow Default Dialog says only lines conditioned on it; not
         // the player's own lines (its voice types lack the flag, observed).
-        if says == Says::Actor && speaker != FormId::PLAYER_REF && def.speaker.is_none() && self.voice_without_default(speaker) && !def.conditions.iter().any(|c| VOICE_GATE_FUNCTIONS.contains(&c.function)) {
+        if says != Says::Station && speaker != FormId::PLAYER_REF && def.speaker.is_none() && self.voice_without_default(speaker) && !def.conditions.iter().any(|c| VOICE_GATE_FUNCTIONS.contains(&c.function)) {
             return false;
         }
         self.conditions_pass(&def.conditions, Some(speaker), listener, &format!("INFO {info}"))

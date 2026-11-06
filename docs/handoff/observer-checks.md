@@ -616,7 +616,11 @@ The numbers above stay put so links to them hold; each item here gives its own p
     High-Roller Suite", whose fixed speaker is the entrance Victor (Lucky38VictorEntrance)
     [observed]; later talks to him open with his usual elevator greeting, as a Say
     Once line should. Ours does the same (dialogue.rs `can_say_as`). Still open: lines with a
-    fixed speaker and no GetIsID condition (the Dead Money end slides, #965). The
+    fixed speaker and no GetIsID condition (the Dead Money intro and end slides, #965);
+    ours lets a script's Say/SayTo say them when no line of the topic passes the check
+    (dialogue.md §4, [hypothesis]); finishing Dead Money (and starting it, IntroSlide02)
+    and seeing whether Elijah's and Vera's narration plays, and in whose voice, would
+    settle it. The
     Boomers' end slide (VEndingBoomers, ANAM NellisPete, GetIsID Narrator) plays in the
     child Pete's voice, not the narrator's (owner, nvfSlides) [observed]; ours says it
     as the narrator with the fixed speaker's file (voice.rs), which matches. Also: the penthouse elevator can only be

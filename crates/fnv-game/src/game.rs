@@ -3966,8 +3966,30 @@ impl<'a> Game<'a> {
     /// met, and the chain must go on to VEndingConclusion; observer-checks.md;
     /// docs/handoff/mq-walkthrough-2026-10-27.md].
     pub fn say(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool) -> Option<FormId> {
+        self.say_with(speaker, target, topic, say_to, false)
+    }
+
+    /// [`Game::say`] for the script functions Say and SayTo: when no line of the topic
+    /// passes the fixed-speaker check (the speaker is not the line's fixed speaker, and
+    /// the line has no GetIsID condition of its own), the lines are tried again without
+    /// that check, so the speaker the script names says the fixed speaker's line in its
+    /// stead ([`crate::dialogue::Says::InStead`]); a topic with a line the speaker passes
+    /// the check for picks as before [hypothesis, fitted to the masters and the story
+    /// add-ons: every scripted Say/SayTo of a topic none of whose lines passes the check
+    /// is a narrator or an intercom saying another character's lines, Dead Money's
+    /// narrator saying Elijah's and Vera's slide lines among them; docs/spec-notes/
+    /// dialogue.md §4, issue #965]. Combat barks, package and patrol topics keep
+    /// [`Game::say`]: an actor with no Hit line does not say another's.
+    pub fn say_by_script(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool) -> Option<FormId> {
+        self.say_with(speaker, target, topic, say_to, true)
+    }
+
+    fn say_with(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool, in_stead: bool) -> Option<FormId> {
         let listener = target.or(Some(FormId::PLAYER_REF));
-        let Some(info) = self.select_line(speaker, listener, topic) else {
+        let chosen = self.select_line(speaker, listener, topic).or_else(|| {
+            in_stead.then(|| self.select_line_as(speaker, listener, topic, |_| true, crate::dialogue::Says::InStead)).flatten()
+        });
+        let Some(info) = chosen else {
             self.emit(EventKind::NoLine { speaker, topic });
             if say_to {
                 self.say_to_unsaid.push((speaker, topic));
