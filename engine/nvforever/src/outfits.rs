@@ -484,7 +484,7 @@ pub(crate) mod tests {
             explosion_damage: 0.0, skill: None, embedded: false, non_playable: false, not_for_npcs: false,
             first_person: None, first_person_model: None, mod_models: Default::default(),
             mod_first_person: Default::default(), mod_first_person_models: Default::default(),
-            held_world_model: None, grip: None, hide_backpack: true,
+            held_world_model: None, grip: None, hide_backpack: true, addons: Vec::new(),
         });
         actors
     }

@@ -1342,3 +1342,13 @@ The numbers above stay put so links to them hold; each item here gives its own p
     pipe swings still land (GetHealthPercentage or OnHit per swing, the player backing off
     5 units a swing). And a deathclaw (VCrTier4DeathClawMed) on the standing god-mode
     player again: o12_reach had one start at 88 units, far nearer than its RNAM 192 gives.
+
+## Added 2026-11-06 (the power fist's hand, issue #1586)
+
+93. **Answered 2026-11-06: the power fist on Veronica.** (actors.md §9.2.) Capture
+    `pf_h2h_rest3` (nvfairport, Veronica at her placed spot at the 188, power fist drawn
+    with SetAlert, AI off, first-person camera 110 units off in front, to her right and to
+    her side; brass knuckles the same way): the gauntlet sits on the forearm where
+    NVForever puts it. At its front the original shows the weapon's metal hand (the WEAP's
+    BIPL addon `ARMAPowerfist`), not her bare hand. Left open: the same with the weapon
+    holstered, and in the player's first person.

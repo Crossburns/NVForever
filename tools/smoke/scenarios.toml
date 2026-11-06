@@ -1688,6 +1688,18 @@ expect = [
 ]
 
 [[scenario]]
+name = "h2h-weapon-hand"
+source = "#1586 (owner's report 2026-11-04): Veronica's bare hand stuck out of her power fist. A hand-to-hand weapon's BIPL names its own hand model (WeapPowerFistVeronica: WeaponPowerfist -> ARMAPowerfist, Right Hand, PowerFist.NIF), worn in place of the bare hand as an outfit's glove is [observed: the original shows the metal hand, capture pf_h2h_rest3 2026-11-06] (docs/spec-notes/actors.md §9.2, crates/fnv-actor/src/resolve.rs)"
+note = "at the 188 Trading Post at noon with every NPC's weapon out (--actor-weapons drawn); Veronica (VeronicaREF 0x000E32A9) stands 180 units south of the camera with her power fist"
+areas = ["actors"]
+paths = ["crates/fnv-actor/src/resolve.rs", "crates/fnv-actor/src/records.rs", "engine/nvforever/src/player_body.rs"]
+args = ["--play", "--pos=30941,31711,5531", "--heading", "180", "--hour", "12", "--no-voice", "--actor-weapons", "drawn"]
+run_seconds = 15
+expect = [
+  { re = '(?i)actor weapons: 000E32A9 \S*powerfistrigid\.nif: worn with its hand model\(s\) \[.*powerfist\.nif.*\] in place of the bare hand', label = "Veronica's power fist comes with its metal hand" },
+]
+
+[[scenario]]
 name = "crouched-npc-weapon"
 source = "docs/outstanding.md §2 Animation (2026-10-20): a sneaking NPC with a weapon out uses the weapon type's crouched equip, aim and unequip clips (sneak1hpaim.kf …); the standing aim's upright legs (priority 25) outranked the crouched idle's (20) (docs/spec-notes/actors.md §9.4, engine/nvforever/src/weapons.rs WeaponHold::set_crouched)"
 note = "in Goodsprings at noon every NPC's weapon is out (--actor-weapons drawn); Ringo (GSRingo, 9mm pistol: 1hp) is brought 300 units north of the player at 3 s, forced to sneak at 5 s (SetForceSneak 1) and let up at 15 s (SetForceSneak 0). The 1hp stance has all three crouched clips [observed: the base meshes archive], so his aim is sneak1hpaim.kf while he sneaks"
