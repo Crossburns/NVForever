@@ -65,13 +65,15 @@ pub struct MonitorModes {
     pub monitors: Vec<MonitorInfo>,
 }
 
-/// A monitor: its connector name (stable — kept in the INI), its entity, and its native
-/// size (for the list's label).
+/// A monitor: its connector name (stable — kept in the INI), its entity, its native size
+/// (for the list's label), and its position in the desktop (for a stable left-to-right,
+/// top-to-bottom order).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MonitorInfo {
     pub name: String,
     pub entity: Entity,
     pub size: UVec2,
+    pub position: IVec2,
 }
 
 impl MonitorModes {
@@ -99,6 +101,13 @@ pub struct MonitorChoice(pub Option<String>);
 /// The "Monitor" list's label for a display: "Display N (WxH)".
 fn monitor_label(i: usize, m: &MonitorInfo) -> String {
     format!("Display {} ({}x{})", i + 1, m.size.x, m.size.y)
+}
+
+/// A stable display order, independent of the discovery order: left-to-right, then
+/// top-to-bottom (the discovery order can put the window's current display first).
+fn ordered(mut monitors: Vec<MonitorInfo>) -> Vec<MonitorInfo> {
+    monitors.sort_by_key(|m| (m.position.x, m.position.y));
+    monitors
 }
 
 /// The monitor selection for [`MonitorChoice`]: the chosen monitor by its name, else the
@@ -245,7 +254,7 @@ fn watch_monitor(windows: Query<(&Window, Option<&OnMonitor>), With<PrimaryWindo
     let monitor = on.and_then(|o| monitors.get(o.0).ok()).or_else(|| monitors.iter().find(|m| m.2)).or_else(|| monitors.iter().next());
     let Some((_, m, _)) = monitor else { return };
     let desktop = if matches!(w.mode, WindowMode::Fullscreen(..)) { modes.desktop } else { Some(m.physical_size()) };
-    let all = monitors.iter().map(|(e, m, _)| MonitorInfo { name: m.name.clone().unwrap_or_default(), entity: e, size: m.physical_size() }).collect::<Vec<_>>();
+    let all = ordered(monitors.iter().map(|(e, m, _)| MonitorInfo { name: m.name.clone().unwrap_or_default(), entity: e, size: m.physical_size(), position: m.physical_position }).collect());
     if modes.desktop != desktop || modes.modes != m.video_modes || modes.monitors != all {
         info!("window: monitor {} {}, {} video modes", m.name.as_deref().unwrap_or("?"), desktop.map_or("?".to_string(), size_text), m.video_modes.len());
         modes.desktop = desktop;
@@ -369,7 +378,7 @@ mod tests {
     fn borderless_opens_on_the_chosen_display_else_the_first() {
         let e1 = Entity::from_raw_u32(1).unwrap();
         let e2 = Entity::from_raw_u32(2).unwrap();
-        let info = |name: &str, e| MonitorInfo { name: name.to_string(), entity: e, size: UVec2::new(1920, 1080) };
+        let info = |name: &str, e| MonitorInfo { name: name.to_string(), entity: e, size: UVec2::new(1920, 1080), position: IVec2::ZERO };
         let modes = MonitorModes { monitors: vec![info("DP-1", e1), info("HDMI-A-1", e2)], ..default() };
         // No choice: the first display.
         assert_eq!(borderless_selection(&modes, &MonitorChoice(None)), MonitorSelection::Entity(e1));
@@ -386,7 +395,7 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<MonitorModes>();
         world.init_resource::<MonitorChoice>();
-        world.resource_mut::<MonitorModes>().monitors = vec![MonitorInfo { name: "HDMI-A-1".to_string(), entity: Entity::from_raw_u32(1).unwrap(), size: UVec2::new(1920, 1080) }];
+        world.resource_mut::<MonitorModes>().monitors = vec![MonitorInfo { name: "HDMI-A-1".to_string(), entity: Entity::from_raw_u32(1).unwrap(), size: UVec2::new(1920, 1080), position: IVec2::ZERO }];
         // The list shows each display's label, and the default (nothing saved) is the first.
         assert_eq!(monitor_names(&world), vec!["Display 1 (1920x1080)".to_string()]);
         assert_eq!(monitor_chosen(&world), "Display 1 (1920x1080)");
@@ -397,5 +406,13 @@ mod tests {
         // A saved display that is then unplugged reads as the first (the effective selection).
         world.resource_mut::<MonitorModes>().monitors.clear();
         assert_eq!(monitor_chosen(&world), "");
+    }
+
+    #[test]
+    fn displays_are_ordered_left_to_right_then_top_to_bottom() {
+        let m = |x, y| MonitorInfo { name: format!("({x},{y})"), entity: Entity::PLACEHOLDER, size: UVec2::ZERO, position: IVec2::new(x, y) };
+        let ordered = ordered(vec![m(0, 100), m(-200, 0), m(0, 0), m(200, 0)]);
+        let pos: Vec<IVec2> = ordered.iter().map(|m| m.position).collect();
+        assert_eq!(pos, vec![IVec2::new(-200, 0), IVec2::new(0, 0), IVec2::new(0, 100), IVec2::new(200, 0)]);
     }
 }
