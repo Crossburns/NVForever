@@ -48,6 +48,7 @@ pub mod model;
 pub mod mods;
 pub mod notices;
 pub mod stats_menu;
+mod selection_menu;
 pub mod trait_menu;
 pub mod tutorial_menu;
 pub mod vanilla;
