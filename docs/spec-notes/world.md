@@ -765,6 +765,10 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   tube (36 short quads at white × 25) averages under its threshold: the original merges
   them into one white-cored line with an orange halo. The enhanced Bloom now adds to the
   light glow instead of replacing it (and with it the HDR view and eye adaptation).
+  Unlit pictures and soft cut-out signs use the fitted emissive rules in
+  [nif.md §6 "Unlit shapes that are pictures, and cut-out signs"](nif.md#6-conventions-verified-on-the-data),
+  leaving these bright-pass and light-glow strengths unchanged for Gomorrah's halo
+  [hypothesis, fitted to the supervisor's 2026-11-06 frames; design: `post.rs`].
 - **Eye adaptation** (2026-10-23). The HDR tab's Eye Adapt Speed "controls how quickly
   the adapted scene lum chases the actual lum", and Target LUM exists ("changing this
   just seems to break everything") [documented: GECK wiki ImageSpace, HDR tab]; what the

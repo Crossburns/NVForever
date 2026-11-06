@@ -434,11 +434,13 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   the OPEN sign white. The two string-light shapes are the only visible shapes with a
   `_n` texture in slot 2 and a non-black emissive colour; their shader flags equal the
   OPEN sign's (0x82000101), so no flag tells them apart [observed].
-  BSShaderNoLightingProperty shapes are drawn unlit and ignore the emissive colour: 2,663
-  of them have a black emissive colour (hangar lights, casino stairs) yet show in game,
+  The initial reading left BSShaderNoLightingProperty shapes unlit and ignored the
+  emissive colour: 2,663 of them have a black emissive colour (hangar lights, casino
+  stairs) yet show in game,
   so it is not a plain colour multiplier there. How their multipliers (up to 10, e.g.
   the saloon's neon tubes ×7.5) and the 717 NiMaterialColorController / 317
-  BSMaterialEmittanceMultController blocks (blinking bulbs) affect brightness is open.
+  BSMaterialEmittanceMultController blocks (blinking bulbs) affect brightness is
+  addressed by the unlit rules below [design: `nif_spawn.rs`, `material_anim.rs`].
 - **Emissive multiplier of unlit shapes** (2026-10-23). Gomorrah's neon
   (`architecture\strip\gomorrahlights.nif`, `gomorrahlightslowerlevel.nif` [observed,
   `crates/fnv-nif/examples/fx_audit.rs`]) is BSShaderNoLightingProperty shapes on
@@ -471,12 +473,51 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   holograms ((0, 0.87, 1) × 6) cyan, grey colours change nothing, Gomorrah's white × 25
   is as before. Without the light glow the result is held to the surface colour. An
   additive shape takes the brightness in display values (raised to the display gamma
-  like its hue; "Additive blend"), as does the image space's Emissive Mult on it.
+  like its hue; "Additive blend"); additive shapes skip the image space's Emissive
+  Mult (2026-10-25, "Additive blend" below).
 
   Until 2026-10-23 neither rule reached unlit shapes: Bevy's
   `pbr_input_from_standard_material` fills the emissive light in only for lit materials
   [observed: bevy_pbr 0.19 `pbr_fragment.wgsl`], so an unlit shape's stayed black. The
   shader now reads the material's emissive light for unlit shapes itself.
+- **Unlit shapes that are pictures, and cut-out signs** (2026-11-06, #1540).
+  [observed: the supervisor compared the original and NVForever at matching 1280×720
+  views, private jobs `ov_strip_n`, `ov_strip_d`, `ui_talk_house`]: House's screen and
+  the Securitrons' faces retain detail in the original, while main burns them into a
+  white-green blur; holding their multipliers to 1 matches those frames. Their
+  BSShaderNoLightingProperty shapes are opaque, store multipliers 10–45 and lack
+  External Emittance (shader flag bit 29); the Strip neon that must burn has the flag.
+  The Tops marquee (`nv_thetops-casino_neon.nif`, `Yellow_Neon1`, cut-out, yellow ×4,
+  with the flag) has distinct bright stripes and a small halo in the original; main
+  draws a flat yellow blob many times their width. The Lucky 38 stair lights
+  (`lucky38stairlights.nif`, blended, ×1.25, without the flag) become white slabs on
+  main at the Strip's night emissive scale, 2.67 over the worldspace's.
+
+  Rules [hypothesis, fitted to those frames], only for unlit shapes:
+  an opaque surface without External Emittance is a picture, with its multiplier
+  held to at most 1; House's authored opaque screen remains a picture when its actor
+  alpha gate selects a mask [design: `nif_spawn.rs` `shape_alpha_mode`].
+  Blended and additive surfaces keep their multipliers: laser sights at ×40, muzzle
+  flashes and beams without the flag must retain their light. Unlit shapes without
+  the flag skip the image space's Emissive Mult, as additive shapes already do.
+  A cut-out unlit surface whose stored multiplier is below `SOFT_UNLIT_CUTOUT_MULT`
+  (5) also skips that scale and uses the soft path, with each channel held to
+  `SOFT_UNLIT_CUTOUT_HOLD` (1.5), instead of `hot_light`. At 5 or more it keeps the
+  previous path: the bulb signs at 6, 7.5 and 14 (Lucky 38, Prospector Saloon,
+  Freeside) were not compared and are treated as authored to burn [hypothesis].
+
+  [design: `nif_spawn.rs` `shape_emissive_mult`, `shape_emissive_rule`]: the picture
+  hold applies both in `shape_emissive` and `Props::emissive_parts`, so the stored
+  multiplier passed to material animation's `Look` is held too. `NifSurface` and
+  `NifSurfaceUniform` carry `emissive_rule` (x 1 skips the image-space scale; y the
+  per-channel hold, 0 for none). Both shaders read the same struct from
+  `nif_surface_bindings.wesl`, in the Rust uniform's field order. Materials built by
+  hand, including overlays, default to zero and keep their previous behaviour.
+
+  [observed: the same supervisor comparisons]: the Lucky 38 rails remain brighter
+  and wider than the original's, and its walls darker at that view. The bright pass
+  and light glow strengths stay unchanged because Gomorrah's halo depends on them
+  [design: `nvforever/src/post.rs`; the maintainer's PR #731 choice to keep its look].
 - **Emitted light on screen** (2026-10-23). In the original's frames of Dead Money's wall
   lantern (front and three-quarter, private `dm_lamp_front.png`, `dm_lamp_side.png`) the
   glass (lit shape, emissive (0.76, 0.55, 0.20) × 10 × the image space's Emissive Mult)
@@ -497,7 +538,8 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   Money's Emissive Mult the lantern's glow card passed white and burned into a hard
   yellow disc on an unlit wall (owner: "looking really unnatural"); kept soft it is a
   warm haze. Solid unlit emitters (neon tubes, opaque or cut-out) are (the owner wants the natural look kept: "I don't want all
-  the walls glowing"). The light glow (Bevy bloom) then catches only those hot pixels,
+  the walls glowing"), except the soft cut-out signs described above [hypothesis,
+  2026-11-06]. The light glow (Bevy bloom) then catches only those hot pixels,
   so the lantern gets a local halo. The lab's 15 frames move by under 0.01. Tried and
   left out: per-channel clipping of the whole picture (glass right, saloon −0.03), and
   placed lights summed in display values, (fade × falloff)^2.2 or fade^2.2 alone (the

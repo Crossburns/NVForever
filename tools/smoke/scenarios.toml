@@ -4669,6 +4669,23 @@ expect = [
   { re = 'emittance: shapes drawn by scripts take source 0x0012762b', label = "the beams take the street light's colour" },
 ]
 
+[[scenario]]
+name = "strip-bright-views"
+source = "#1540; docs/spec-notes/nif.md §6 \"Unlit shapes that are pictures, and cut-out signs\": the Tops marquee and Lucky 38 stair lights at night, with the light glow on"
+areas = ["renderer", "effects", "lights"]
+paths = [
+  "engine/nvf-assets/src/nif_material*", "engine/nvf-assets/src/nif_prepass.wesl", "engine/nvforever/src/emittance.rs",
+  "engine/nvf-play/src/script_draw.rs", "engine/nvforever/src/post.rs", "crates/fnv-world/src/imagespace.rs",
+  "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:strip_tops_marquee.png" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=-400,2400,1014", "--heading", "270", "--pitch", "0", "--hour", "22", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 16
+manual = "strip_tops_marquee.png: the Tops marquee keeps distinct bright stripes with a small halo; the Lucky 38 stair lights keep detail instead of white slabs. The Lucky 38 rails may remain brighter and wider, and its walls darker, than the original at this view; Gomorrah's neon halo must keep its look."
+expect = [
+  { re = 'graphics: light glow$', label = "the light glow is on by default" },
+]
+
 # ------------------------------------------------------------------ aid items (docs/spec-notes/aid-items.md)
 
 [[scenario]]
