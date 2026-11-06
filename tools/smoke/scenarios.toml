@@ -8819,6 +8819,35 @@ expect = [
 ]
 
 [[scenario]]
+name = "settings-switch-write"
+source = "#1382: the first half of the command line against NVForever.ini (settings-switch-wins starts in the same home): a run given --fps turns the settings page's Frame rate counter off, which is stored"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs"]
+env = { NVFOREVER_HOME = "switch-wins-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:page,13:fps-counter", NVF_PLAY_TEST_PAUSE_MENU = "12:defaults" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-68375,4800,8700", "--fps"]
+run_seconds = 18
+expect = [
+  { text = "pause menu: settings back to their defaults", label = "Defaults puts back the command line's switches" },
+  { text = "settings: fps-counter off", label = "the counter is turned off and stored" },
+]
+order = [["pause menu: settings back to their defaults", "settings: fps-counter off"]]
+
+[[scenario]]
+name = "settings-switch-wins"
+source = "#1382: the second half: a test run (--run-seconds) given --fps keeps the counter on although settings-switch-write stored it off, and the log says which stored setting was not applied"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs"]
+env = { NVFOREVER_HOME = "switch-wins-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-68375,4800,8700", "--fps"]
+run_seconds = 12
+expect = [
+  { re = 'settings: fps-counter kept at on as --fps on the command line set it; \[Settings\] fps-counter=0 of .*NVForever\.ini is not applied in a test run', label = "the command line's --fps wins in a test run, and the log says so" },
+  { re = 'settings: \d+ of \d+ switch\(es\) read from .*NVForever\.ini, \d+ changed.*, 1 kept as the command line set them', label = "the summary counts it" },
+  { re = 'fps counter: first reading \d+ fps', label = "the counter is on" },
+]
+forbid = [{ text = "overrides --fps on the command line", label = "the stored state is not applied over --fps" }]
+
+[[scenario]]
 name = "window-borderless"
 source = "coordinator 2026-10-16: the game can run borderless full screen (--window borderless), and the settings page's Display group switches the live window back and forth (engine/nvforever/src/window_mode.rs); no home, so the player's INI is neither read nor written"
 areas = ["main-menu"]
@@ -21209,11 +21238,11 @@ forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error
 
 [[scenario]]
 name = "fsr-restart"
-source = "docs/design/fsr-upscaling.md: a cold process restores Quality and the kept resolution from fsr-resize despite off/smaller CLI defaults"
+source = "docs/design/fsr-upscaling.md: a cold process restores Quality and the kept resolution from fsr-resize; no --size or --fsr is given, as in a test run a given switch wins over the INI (#1382)"
 areas = ["graphics", "ui"]
 paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/settings.rs"]
 env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-resize-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
-args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "off", "--no-voice", "--no-lodgen"]
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-lodgen"]
 run_seconds = 12
 expect = ["FSR 3.1.4: Quality, 1066x600 -> 1600x900", "FSR dispatch active: 3.1.4, 1066x600 -> 1600x900"]
 forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
