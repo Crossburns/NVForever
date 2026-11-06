@@ -6368,6 +6368,32 @@ expect = [
 ]
 
 [[scenario]]
+name = "seated-save-write"
+source = "issue #1573: after loading a save made while seated the player stands and GetSitting reads 0; the first half: sit (Goodsprings bench 0010634A), GetSitting reads 3, save (seated-save-load reads this save, so run them together)"
+areas = ["save", "furniture"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-game/src/functions/furniture.rs"]
+env = { NVFOREVER_HOME = "seated-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "14:activate:0x0010634A", NVF_PLAY_TEST_CONSOLE = "19:player.getsitting;save seated;20:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'console: GetSitting on player >> 3\.00', label = "seated before the save" },
+  { re = 'save: wrote .*seated\.nvfsave', label = "the save is written" },
+]
+
+[[scenario]]
+name = "seated-save-load"
+source = "issue #1573: the second half: --load the save seated-save-write made; the player stands, and GetSitting reads 0"
+areas = ["save", "furniture"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-game/src/functions/furniture.rs"]
+env = { NVFOREVER_HOME = "seated-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "12:player.getsitting;13:close" }
+args = ["--play", "--load", "seated", "--no-voice"]
+run_seconds = 16
+expect = [
+  { re = 'load: restored .*seated\.nvfsave', label = "the save is restored" },
+  { re = 'console: GetSitting on player >> 0\.00', label = "standing after the load" },
+]
+
+[[scenario]]
 name = "ammo-type-save-write"
 source = "issue #1574: the ammo type swapped into the weapon comes back on load; the first half: 10mm Pistol (0000434F) with 10mm (00004241) and 10mm JHP (0013E43B): it loads 10mm, Ammo Swap to JHP, save (ammo-type-save-load reads this save, so run them together)"
 areas = ["save", "combat"]
