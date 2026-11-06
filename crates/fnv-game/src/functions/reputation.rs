@@ -269,14 +269,24 @@ pub fn get_reputation_threshold(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Va
 pub const THEFT_INFAMY: f64 = 2.0;
 pub const MURDER_INFAMY: f64 = 30.0;
 
-/// The reputations `who` counts towards: a faction's own (FACT WMI1), or those of every
-/// faction an actor is in now [documented: FACT "Reputation", xEdit wbDefinitionsFNV.pas;
-/// hypothesis: an actor counts towards each of its factions' reputations once].
+/// The reputations `who` counts towards: a faction's own (FACT WMI1), those of every
+/// faction a reference is in now, or those of the factions an actor base's record gives
+/// [documented: FACT "Reputation", xEdit wbDefinitionsFNV.pas; hypothesis: an actor counts
+/// towards each of its factions' reputations once].
 pub fn reputations_of(g: &Game, who: FormId) -> Vec<FormId> {
     if let Some(&r) = g.data.faction_reputations.get(&who) {
         return vec![r];
     }
-    let mut out: Vec<FormId> = super::factions_of(g, who).into_iter().filter_map(|f| g.data.faction_reputations.get(&f).copied()).collect();
+    // An NPC owner (XOWN) is a base form: no reference, so no run-time faction changes and
+    // no leveled pick. A placed reference of it would be an arbitrary choice, and it may
+    // have none or several [design].
+    let factions: Vec<FormId> = if g.data.actors.contains_key(&who) {
+        let source = g.data.base_template_source(who, |d| d.template_factions);
+        g.data.actors.get(&source).map_or(Vec::new(), |d| d.factions.iter().filter(|(_, rank)| *rank >= 0).map(|(f, _)| *f).collect())
+    } else {
+        super::factions_of(g, who)
+    };
+    let mut out: Vec<FormId> = factions.into_iter().filter_map(|f| g.data.faction_reputations.get(&f).copied()).collect();
     out.sort();
     out.dedup();
     out
