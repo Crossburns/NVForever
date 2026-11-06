@@ -550,6 +550,10 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
     Some(Ok(v))
 }
 
+/// The most draws one `AdvanceSeed` throws away [design]: about 10 ms of MT19937, so a
+/// script's huge or garbage count cannot freeze the game.
+const ADVANCE_SEED_MAX: u64 = 1_000_000;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,7 +571,3 @@ mod tests {
         assert_eq!(last, 4_123_659_995);
     }
 }
-
-/// The most draws one `AdvanceSeed` throws away [design]: about 10 ms of MT19937, so a
-/// script's huge or garbage count cannot freeze the game.
-const ADVANCE_SEED_MAX: u64 = 1_000_000;
