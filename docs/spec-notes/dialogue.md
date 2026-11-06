@@ -406,8 +406,10 @@ A speaker **can say** a line when:
   to hold across actors: the Yes Man mainframe skipped the greeting 0x001164F1 the Tops
   Yes Man had said [observed 2026-10-31, observer check 31; one case, and the two may
   count as one speaker]. Ours holds a Say Once line back from every actor once any has
-  said it (#1113); Say Once a Day stays per actor. The clock is GameDaysPassed × 24 + GameHour
-  [hypothesis];
+  said it (#1113); Say Once a Day stays per actor. The clock is GameDaysPassed × 24
+  [design: `Game::game_hours`], which moves one per game hour as GameDaysPassed already
+  grows by the fraction of the day (simulation.md §5b); that the timer runs on game time
+  at all is [hypothesis];
 - it is the line's fixed speaker, if the line has one [documented: Category:Dialogue] —
   unless the line has its own GetIsID condition on the speaker, which then decides
   [observed 2026-10-31: the Lucky 38 elevator Victor said 0x00165102, whose fixed
@@ -479,6 +481,21 @@ All of it is in `GameSnapshot`.
   the statement is about GREETING]. Through a talking activator the greeting opens a
   conversation that the line ends, as below [owner statement 2026-10-22, of the REPCONN
   intercom; talking-activators.md §2].
+- **StartConversation from afar walks up first** (issue #1544, 2026-11-05). "The actor
+  will walk to the target" before the conversation [documented: GECK wiki
+  StartConversation]. With the AI running, a speaker more than 300 units from the
+  player, or in another space, records a walk-up (`Game::walk_up_greet`). The AI runs it
+  to the player, planning the way again as the player moves, and opens the conversation
+  within 150 units (`Ai::walk_up_step`). With no way there, or at the end of its way, it
+  opens it where it is. Its package waits meanwhile, and a change of package plans the
+  walk-up again. A speaker the AI does not walk (its cell not loaded) talks once it is
+  within 300 units of the player, never from afar; out of the loaded area (the low
+  process) the walk-up waits. Without the AI (headless runners) the
+  conversation opens at once, as before [design: the distances and the run].
+  [observed 2026-11-05] The Legion explorers about Nelson (nvNelsonExplorerBarkSCRIPT
+  calls StartConversation Player once its GameMode runs) greeted from 10,099 units off.
+  Now explorer 01 runs over and greets from 147 units (smoke
+  `start-conversation-walks-up`).
 - **The rule above is for the player talking to the actor. When the actor starts the
   conversation** (a force greet: StartConversation with the player, or the actor's
   Dialogue package that is not Say To), a greeting with the Goodbye flag **opens a
@@ -627,10 +644,13 @@ Joe Cobb and Trudy (below).
   Allow Repeated Conversation Topics]. The next line's linked topics leave out one the
   conversation has used already unless the candidate line's quest has the flag (QUST DATA
   bit 2; 118 quests in the masters [observed]). Choices that name an INFO directly
-  (follow-ups) are not filtered. Radio programmes are not filtered either: their quests
+  (follow-ups) are not filtered, but they carry the conversation's used topics on to the
+  lines after them, their own topic added [design: `Game::next_conversation_line`, #1592].
+  Radio programmes are not filtered either: their quests
   set the flag, as the wiki asks for radio stations [documented: Creating Radio
-  Stations]. Test: `dialogue.rs`
-  `a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats`.
+  Stations]. Tests: `dialogue.rs`
+  `a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats`,
+  `a_follow_up_between_actors_keeps_the_topics_of_the_conversation`.
 - **The next line** (`Game::next_conversation_line`), when a line has ended and its end
   result has run: a Goodbye line ends the conversation [documented]; so does either
   side being gone [hypothesis]. Otherwise the line's next speaker says the next line:

@@ -48,6 +48,7 @@
 //!   fills the [`PageBody`] node with its own system, so a page can read what it needs.
 
 pub mod data;
+pub mod device_screen;
 pub mod frame;
 pub mod hotkey_panel;
 pub mod items;
@@ -404,6 +405,7 @@ impl Plugin for PipBoyPlugin {
             .init_resource::<UsePipBoy>()
             .init_resource::<PipBoyAid>()
             .init_resource::<frame::Kit>()
+            .init_resource::<device_screen::ScreenFx>()
             .init_resource::<repair::PipRepair>()
             .add_message::<repair::RepairInput>()
             .init_resource::<item_mod::PipItemMod>()
@@ -432,6 +434,7 @@ impl Plugin for PipBoyPlugin {
                     camera_on,
                     (image_scale, flat_screen),
                     frame::draw,
+                    (device_screen::draw, device_screen::sweep).chain(),
                     (stats::draw, items::draw, data::draw),
                     data::wave_moves,
                     stats::use_hints,
@@ -678,14 +681,15 @@ fn advance(time: crate::pause::AidTime, mut pip: ResMut<PipBoy>, mut control: Re
 }
 
 /// The screen camera draws only while the Pip-Boy shows; in the screen menu onto a clear
-/// image, so the menus lie on the shade behind them and not on a black box.
-fn camera_on(pip: Res<PipBoy>, screen: Option<Res<PipBoyScreen>>, mut cams: Query<&mut Camera>) {
+/// image, so the menus lie on the shade behind them and not on a black box; on the device
+/// onto the screen's undercoat (`device_screen.rs`).
+fn camera_on(pip: Res<PipBoy>, screen: Option<Res<PipBoyScreen>>, fx: Res<device_screen::ScreenFx>, mut cams: Query<&mut Camera>) {
     let Some(screen) = screen else { return };
     if let Ok(mut c) = cams.get_mut(screen.camera) {
         if c.is_active != pip.shown() {
             c.is_active = pip.shown();
         }
-        let clear = if pip.frame == Frame::Screen { Color::NONE } else { Color::BLACK };
+        let clear = if pip.frame == Frame::Screen { Color::NONE } else { device_screen::undercoat(fx.kept) };
         if !matches!(c.clear_color, ClearColorConfig::Custom(now) if now == clear) {
             c.clear_color = ClearColorConfig::Custom(clear);
         }
