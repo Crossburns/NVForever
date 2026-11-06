@@ -10796,7 +10796,7 @@ order = [[
 [[scenario]]
 name = "mines-placed"
 source = "owner 2026-10-19: the Primm bridge's mines were invisible and not armed; a mine starts beeping at about 2 m, the Explosives skill sets the fuse, one activation disarms it (even beeping) into a loose item, a shot blows it up (docs/spec-notes/combat-rules.md §11a)"
-note = "God mode, at the three frag mines on the bridge north of Primm (0x00172DB5, DDA, DDC). Explosives 100 (3 s fuse): put 60 units from DDC along the bridge (within reach), it starts its fuse; aimed at and activated at once, it is disarmed, and the Frag Mine left lying is taken. Then 450 units from DDA along the bridge, the 10mm pistol shoots it: its destruction stage sets off MediumExplosion. Then at Explosives 20, put on DB5: it goes off after 0.6 s"
+note = "God mode, at the three frag mines on the bridge north of Primm (0x00172DB5, DDA, DDC). Explosives 100 (3 s fuse): put 60 units from DDC along the bridge (within reach), it starts its fuse; aimed at and activated at once, it is disarmed, and the Frag Mine left lying is taken. Then 450 units from DDA along the bridge, the 10mm pistol shoots it: its destruction stage sets off MediumExplosion. Then at Explosives 20, put on DB5: it goes off after 1.44 s (0.6 s before #1659's longer fuse)"
 areas = ["combat"]
 paths = ["engine/nvf-play/src/mines.rs", "crates/fnv-combat/src/mine.rs", "crates/fnv-combat/src/projectile.rs", "crates/fnv-sim/src/world.rs", "engine/nvforever/src/world.rs"]
 # SetActorValue on a player skill sets the part above the attributes' share (15 for each skill
@@ -10813,7 +10813,7 @@ expect = [
   { re = 'activate 0xFF[0-9A-F]{6} Frag Mine \(Take\): .*PickedUp', label = "the disarmed mine is taken as a loose item" },
   { re = 'combat: 0x00172DDA destruction stage -?\d+ -> \d+.*explosion', label = "a shot mine reaches its destruction stage" },
   { re = 'combat: explosion MediumExplosion at', label = "and its explosion goes off" },
-  { re = 'mines: 0x00000014 sets off mine 0x00172DB5 at \d+ units .*fuse 0\.60 s at Explosives 20', label = "stepped on at Explosives 20: a 0.6 s fuse" },
+  { re = 'mines: 0x00000014 sets off mine 0x00172DB5 at \d+ units .*fuse 1\.44 s at Explosives 20', label = "stepped on at Explosives 20: a 1.44 s fuse (#1659: 3 x (0.35 + 0.65 x 20 / 100))" },
   { re = 'mines: mine 0x00172DB5 goes off', label = "the fuse burns down" },
   { re = 'combat: explosion MineFragExplosion at', label = "the frag mine's explosion" },
   { re = 'combat: blast MineFragExplosion on 0x00000014 at \d+', label = "its blast catches the player standing on it (playtest list 7 item 19)" },
