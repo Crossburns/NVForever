@@ -8154,6 +8154,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "i1-placeatme-expl"
+source = "issue #1617: PlaceAtMe of a marker drew the marker's editor model in the world (a large red box) and PlaceAtMe of an explosion drew its effect model; created references now go by the filter placed ones do (engine/nvf-play/src/dropped.rs draws_model)"
+note = "In Goodsprings: an explosion at 14 s, a marker at 20 s and a bottle at 22 s, placed at the player. The bottle must still be drawn. Frame i1_after.png in target/smoke: no red box where the player stands"
+areas = ["console", "rendering"]
+paths = ["engine/nvf-play/src/dropped.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.placeatme MineFragExplosion 1;15:close;20:player.placeatme XMarkerHeading 1;21:close;22:player.placeatme 0010A1F6 1;23:close", NVF_PLAY_TEST_SHOTS = "25:i1_after.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--heading", "0", "--no-voice"]
+run_seconds = 29
+expect = [
+  { re = 'console: PlaceAtMe on player >> ', count = 3, label = "the three PlaceAtMe calls ran" },
+  { re = 'combat: explosion MineFragExplosion at \(', label = "the explosion still goes off" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes.markerxheading\.nif', count = 0, label = "the marker draws nothing" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes.effects.explosion', count = 0, label = "the explosion's reference draws nothing" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes', min = 1, label = "the bottle is still drawn" },
+]
+
+[[scenario]]
 name = "placeatme-fights"
 source = "owner 2026-10-16: creatures a script places (PlaceAtMe) never fought; they should sense the enemies around them from the moment they are placed (engine/nvforever/src/residents.rs take_created, fnv_game::Game::created_actors)"
 note = "a cazador (NVCrCazador 000E584D) placed at the player at 10 s by the script test aid in Goodsprings; the player's health raised to 5000 by the console, no god mode; the cazador should become a resident, sense the player and attack, its sting poisoning"
@@ -11066,6 +11083,20 @@ expect = [
   { re = 'caravan summary: 2 asked, 1 opened \(1 refused\); 1 games: [01] won, [01] lost', label = "the summary" },
 ]
 forbid = [{ text = "move refused", label = "every move the sides choose is legal" }]
+
+[[scenario]]
+name = "f5-helios-rows-untouched"
+source = "issue #1620: two solar reflector rows at HELIOS One (0x000D7D09, 0x000D7D29) are flagged Initially Disabled under an enabled enable parent; they were drawn with no collision, so the player fell through. The physics at a cell load and render streaming's start rule now go by the simulation's rule"
+note = "The player drops 400 units onto the plain neighbour 0x000D7D0A, then is set by coordinates 400 units above the flagged row 0x000D7D09. No console line names the flagged row, before or after the cell loads: a read would create its state and hide the bug. Both drops must end on a row (z about 5321), not on the ground through it (5235.5)"
+areas = ["physics", "rendering"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.moveto 000D7D0A 0 0 400;15:close;30:player.getpos x;player.getpos y;player.getpos z;player.setpos x 22010.1;player.setpos y 1834.8;player.setpos z 5632;31:close;40:player.getpos x;player.getpos y;player.getpos z;41:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 45
+expect = [
+  { re = 'console: GetPos on player >> 532[0-3]\.', count = 2, label = "both drops end on a row: on the plain one and on the flagged one" },
+  { re = 'reference 0x000D7D(09|29) drawn \(enabled at run time\)', count = 0, label = "render streaming draws the flagged rows, so script_draw has nothing to draw" },
+]
 
 [[scenario]]
 name = "enable-disable-fade"
@@ -19558,6 +19589,21 @@ expect = [
   { re = 'dropped 0xFF00000[0-3] came to rest at', count = 4, label = "each piece of clothing comes to rest" },
   { re = 'dropped 0xFF00000[0-4] came to rest at .*, (?P<n>[\d.]+) below where its collision was added', range = [60, 120], all = true, label = "on the ground, about 85 units below the drop point, as the pistol" },
 ]
+
+[[scenario]]
+name = "i2-setpos-console"
+source = "issue #1618: a reference moved from the console kept its collision's new place but was drawn at its old one: the tick clears Game::turned before the drawing reads it. The drawing followers now also read RefRepose (engine/nvf-play/src/moved.rs, script_draw.rs)"
+note = "The Goodsprings Mojave Express box (0x0015F22D), seen from 250 units away, raised 150 units with a console SetPos at 21 s. The log lines show only that the simulation moved it, which they showed before the fix too: a PASS here does not show the box moved. Compare by eye, in target/smoke: i2_before.png (19.5 s) and i2_after.png (26 s), same view; the box must stand about 150 units higher in i2_after.png"
+areas = ["console", "scripts", "rendering"]
+paths = ["engine/nvf-play/src/moved.rs", "engine/nvf-play/src/script_draw.rs", "engine/nvf-play/src/script.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.moveto 0015F22D 0 -250 0;15:close;21:0015F22D.getpos z;0015F22D.setpos z 8537;0015F22D.getpos z;22:close", NVF_PLAY_TEST_LOOK = "17:0:-8", NVF_PLAY_TEST_SHOTS = "19.5:i2_before.png,26:i2_after.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--heading", "0", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'console: SetPos on vMEGoodSpringsRef >> 0\.00', label = "SetPos ran" },
+  { re = 'console: GetPos on vMEGoodSpringsRef >> 8537\.00', label = "GetPos reads the raised height (the frames must show it: see the note)" },
+]
+manual = "compare i2_before.png with i2_after.png in target/smoke: the box must stand about 150 units higher in the second; no log line proves it"
 
 [[scenario]]
 name = "mccarran-monorail-arrival"
