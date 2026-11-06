@@ -20576,3 +20576,17 @@ order = [[
   { text = "OnHit of FalloutNV.esm|SCPT 0x0012424D ran on Some(0x00124122)", label = "the volunteer's OnHit runs the scene on" },
   { re = 'ash pile: .* replaces the body of 0x00124122', label = "he is disintegrated" },
 ]]
+
+[[scenario]]
+name = "sierra-madre-lobby-hologram"
+source = "#1424: in the Sierra Madre lobby the starlet hologram (NVDLC01StarletHologramLobby, its effect shader NVDLC01HologramNeutral) is drawn see-through; its boxing tape's skinned shapes, hung rigidly from the hand, had no skin, and every blended draw of them was a GPU validation error until the run stopped"
+note = "before the fix 4 of 5 runs stopped after 20 rendering errors right after `covers 21 meshes`; after it 3 of 3 ran clean with the effect on and the actor alpha switching"
+areas = ["effect-shaders", "render"]
+paths = ["engine/nvforever/src/effect_shaders.rs", "engine/nvforever/src/weapons.rs", "engine/nvforever/src/anim_objects.rs", "engine/nvf-assets/src/actor.rs"]
+args = ["--cell", "NVDLC01Lobby", "--play", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = 'effect shader: NVDLC01HologramNeutral covers \d+ meshes of NVDLC01StarLobby', label = "the hologram's effect shader covers it" },
+  { re = 'actor alpha: NVDLC01StarLobby', label = "the hologram is drawn see-through" },
+]
+forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error" }]
