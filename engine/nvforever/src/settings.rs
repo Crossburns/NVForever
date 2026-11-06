@@ -501,12 +501,32 @@ fn register_distances(app: &mut App) {
 /// of them on, `vanilla` with none).
 fn register_graphics(app: &mut App) {
     type Switch = (&'static str, &'static str, &'static str, fn(&World) -> bool, fn(&mut World, bool));
+    add_choice_list(
+        app,
+        Setting {
+            key: "fsr-upscaling",
+            group: GROUP_GRAPHICS,
+            label: "FSR 3.1 upscaling",
+            note: "Reconstruct the world at display resolution; Native AA keeps full resolution. Disables MSAA, FXAA, SMAA and TAA while active. Menus stay sharp. Requires Vulkan; unsupported devices keep native rendering. Sharpening controls FSR sharpening. No frame generation. (--fsr)",
+            get: |_| false,
+            set: |_, _| {},
+            slider: None,
+        },
+        ChoiceList {
+            names: |_| graphics::FSR_CHOICES.iter().map(|(name, _)| (*name).to_string()).collect(),
+            chosen: fsr_chosen,
+            pick: pick_fsr,
+            save: fsr_chosen,
+            load: load_fsr,
+            ask_keep: false,
+        },
+    );
     let choices = [
         Setting::slider(
             "anti-aliasing",
             GROUP_GRAPHICS,
-            "Anti-aliasing",
-            "How edges are smoothed: multisampling Off, 2x, 4x or 8x (--msaa; the cut-out edges of plants too), or the picture smoothed afterwards: FXAA (cheapest, softest), SMAA (sharper, a little dearer) or TAA (over the frames; plants too, soft while moving).",
+            "Native anti-aliasing",
+            "FSR performs its own temporal anti-aliasing, so native AA is Off while FSR is active. Your saved native choice returns when FSR is Off: multisampling Off, 2x, 4x or 8x (--msaa), FXAA, SMAA or TAA.",
             Slider::choice(graphics::AA_CHOICES.len(), |w| choice_part(graphics::aa_choice(w), graphics::AA_CHOICES.len()), |w, v| graphics::set_aa_choice(w, choice_index(v, graphics::AA_CHOICES.len())), |v| {
                 graphics::AA_CHOICES[choice_index(v, graphics::AA_CHOICES.len())].0.to_string()
             }),
@@ -530,6 +550,7 @@ fn register_graphics(app: &mut App) {
     for s in choices {
         add_setting(app, s);
     }
+    nvf_play::settings::set_disabled_status(app, "anti-aliasing", |w| graphics::fsr_active(w).then_some("Off (FSR active)"));
     let switches: [Switch; 11] = [
         (
             "ambient-occlusion",
@@ -617,6 +638,28 @@ fn register_graphics(app: &mut App) {
     }
 }
 
+fn fsr_chosen(world: &World) -> String {
+    let quality = world.resource::<Graphics>().fsr;
+    graphics::FSR_CHOICES.iter().find(|(_, mode)| mode.quality() == quality).map_or("Off", |(name, _)| *name).to_string()
+}
+
+fn pick_fsr(world: &mut World, name: &str) -> bool {
+    let Some((_, mode)) = graphics::FSR_CHOICES.iter().find(|(label, _)| label.eq_ignore_ascii_case(name.trim())) else { return false };
+    world.resource_mut::<Graphics>().fsr = mode.quality();
+    true
+}
+
+fn load_fsr(world: &mut World, value: &str) -> bool {
+    if pick_fsr(world, value) {
+        return true;
+    }
+    // Preserve settings written by the early local slider build; new files store
+    // the actual choice name, independent of the number/order of future options.
+    let Some(part) = value.trim().parse::<f32>().ok().filter(|v| v.is_finite() && (0.0..=1.0).contains(v)) else { return false };
+    world.resource_mut::<Graphics>().fsr = graphics::FSR_CHOICES[choice_index(part, graphics::FSR_CHOICES.len())].1.quality();
+    true
+}
+
 /// Distant LOD on or off now; indoors there is none either way, and the door out goes
 /// by `Args::no_lod` (`world::travel`).
 fn set_lod(world: &mut World, on: bool) {
@@ -633,5 +676,64 @@ fn set_overlay(world: &mut World, on: bool) {
     let mut overlays = world.query_filtered::<&mut Visibility, With<Overlay>>();
     for mut v in overlays.iter_mut(world) {
         *v = if on { Visibility::Inherited } else { Visibility::Hidden };
+    }
+}
+
+#[cfg(test)]
+mod fsr_settings_tests {
+    use super::*;
+
+    #[test]
+    fn native_aa_row_is_off_and_locked_for_every_supported_fsr_mode_then_restores_the_saved_choice() {
+        let mut app = App::new();
+        app.insert_resource(Graphics::preset(graphics::Preset::Vanilla))
+            .insert_resource(graphics::MsaaSetting(Msaa::Sample8))
+            .insert_resource(crate::fsr::FsrSupport(true));
+        register_graphics(&mut app);
+        let row = app.world().resource::<nvf_play::settings::Settings>().index("anti-aliasing").unwrap();
+        for (_, mode) in graphics::FSR_CHOICES.into_iter().filter(|(_, m)| m.quality().is_some()) {
+            app.world_mut().resource_mut::<Graphics>().fsr = mode.quality();
+            let settings = app.world().resource::<nvf_play::settings::Settings>();
+            assert_eq!(settings.disabled_status(app.world(), row), Some("Off (FSR active)"));
+            let saved = settings.list()[row].value(app.world());
+            assert_eq!(saved, choice_part(3, graphics::AA_CHOICES.len()));
+            assert!(nvf_play::settings::set_slider(app.world_mut(), row, 0.0).is_none());
+            assert!(nvf_play::settings::step_slider(app.world_mut(), row, 1).is_none());
+            assert_eq!(graphics::aa_choice(app.world()), 3, "disabled UI must preserve saved 8x");
+            app.world_mut().resource_mut::<Graphics>().fsr = None;
+            let settings = app.world().resource::<nvf_play::settings::Settings>();
+            assert_eq!(settings.disabled_status(app.world(), row), None);
+            assert_eq!(settings.list()[row].slider.unwrap().text(saved), "8x");
+        }
+        app.world_mut().resource_mut::<crate::fsr::FsrSupport>().0 = false;
+        app.world_mut().resource_mut::<Graphics>().fsr = Some(crate::fsr::FsrQuality::NativeAa);
+        assert_eq!(app.world().resource::<nvf_play::settings::Settings>().disabled_status(app.world(), row), None, "unsupported FSR leaves native AA editable");
+        assert!(nvf_play::settings::set_slider(app.world_mut(), row, 0.0).is_some());
+        assert_eq!(graphics::aa_choice(app.world()), 0);
+    }
+
+    #[test]
+    fn fsr_is_a_named_dropdown_and_round_trips_every_mode() {
+        let mut app = App::new();
+        app.insert_resource(Graphics::preset(graphics::Preset::Vanilla));
+        register_graphics(&mut app);
+        let settings = app.world().resource::<nvf_play::settings::Settings>();
+        let row = settings.index("fsr-upscaling").unwrap();
+        assert!(settings.list()[row].slider.is_none());
+        let dropdown = settings.choices(row).expect("FSR must use the native dropdown widget");
+        assert_eq!((dropdown.names)(app.world()).len(), 6);
+        for (name, mode) in graphics::FSR_CHOICES {
+            assert!((dropdown.pick)(app.world_mut(), name));
+            assert_eq!(app.world().resource::<Graphics>().fsr, mode.quality());
+            let saved = (dropdown.save)(app.world());
+            app.world_mut().resource_mut::<Graphics>().fsr = None;
+            assert!((dropdown.load)(app.world_mut(), &saved));
+            assert_eq!((dropdown.chosen)(app.world()), name);
+        }
+        assert!(!pick_fsr(app.world_mut(), "unknown"));
+        assert!(!load_fsr(app.world_mut(), "NaN"));
+        assert!(!load_fsr(app.world_mut(), "2"));
+        assert!(load_fsr(app.world_mut(), "0.40"));
+        assert_eq!(fsr_chosen(app.world()), "Quality");
     }
 }

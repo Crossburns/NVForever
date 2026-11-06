@@ -143,6 +143,7 @@ mod sneaking;
 mod swimming;
 mod ssao;
 mod taa;
+mod fsr;
 mod speech_look;
 mod stress_sample;
 mod profile;
@@ -424,6 +425,10 @@ struct Args {
     /// runs (--screenshot, --timelapse, --frame-json, --run-seconds) always default to it.
     #[arg(long, value_enum)]
     graphics: Option<graphics::Preset>,
+    /// FSR 3.1 upscaling (no frame generation). Replaces other anti-aliasing while on.
+    /// Saved Graphics settings take precedence in normal play, as for other switches.
+    #[arg(long, value_enum, default_value = "off")]
+    fsr: graphics::FsrMode,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
     /// water-reflections) and choices (fxaa, smaa or taa instead of --msaa;
@@ -1214,6 +1219,7 @@ fn main() -> AppExit {
         },
         None => graphics::Graphics::preset(graphics_preset(&args)),
     };
+    graphics.fsr = args.fsr.quality();
     let frame_times = match (args.log_frame_times, args.graphics_cycle.as_deref()) {
         (None, _) => None,
         (Some(every), cycle) => {
