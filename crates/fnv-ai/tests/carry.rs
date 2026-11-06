@@ -2834,6 +2834,34 @@ fn a_fighter_keeps_the_weapon_it_holds_over_its_other_carried_ones_until_it_lose
 }
 
 #[test]
+fn a_melee_only_fighter_holding_a_gun_takes_up_its_knife_by_the_style_rule() {
+    // #1721: a held weapon its combat style rules out is the style rule's to swap
+    // (`fnv_game::style_weapon`), not re-arming's, though re-arming runs first.
+    const MELEE_ONLY: u32 = 0xC51;
+    let mut f = with_arms(fixture());
+    f.data.combat_styles.insert(FormId(MELEE_ONLY), fnv_game::data::CombatStyleDef { weapon_restrictions: 1, ..Default::default() });
+    let mut s = sim(&f, &[R_SB_NOTHING]);
+    s.run(1.0);
+    let me = FormId(R_SB_NOTHING);
+    for (item, n) in [(KNIFE, 1), (PISTOL, 1), (ROUNDS, 5)] {
+        s.game.world.add_item(me, FormId(item), n).unwrap();
+    }
+    assert!(s.game.world.outfit(me).unwrap());
+    s.game.world.equip(me, FormId(PISTOL)).unwrap();
+    s.game.extra.entry(me).or_default().combat_style = Some(FormId(MELEE_ONLY));
+    fighting(&mut s, R_SB_NOTHING, [10450.0, 10950.0, 0.0]);
+    // The AI's update before the game's frame, as in the engine: re-arming sees the fight
+    // before `Game::arm_by_style` (only for actors already in `Game::fighting`) does.
+    s.ai.update(&mut s.game, &s.nav, 0.5);
+    assert!(!s.game.fighting.contains(&me));
+    assert_eq!(s.game.held_weapon(me).map(|w| w.0), Some(FormId(KNIFE)), "{:?}", s.events(R_SB_NOTHING));
+    s.run(1.5);
+    let ev = s.events(R_SB_NOTHING);
+    assert_eq!(s.game.held_weapon(me).map(|w| w.0), Some(FormId(KNIFE)), "{ev:?}");
+    assert!(!ev.iter().any(|e| matches!(e, AiEvent::Rearmed { .. })), "re-arming did not take it: {ev:?}");
+}
+
+#[test]
 fn a_fighter_takes_the_incinerator_for_a_far_target_and_the_flamer_for_a_near_one() {
     let f = with_arms(fixture());
     let mut s = sim(&f, &[R_SB_NOTHING]);

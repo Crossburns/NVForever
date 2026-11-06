@@ -30,6 +30,11 @@
 //!   changes weapon at once. Out of combat nothing changes [hypothesis]. The swap is an
 //!   ordinary equip: OnUnequip and OnEquip run, and the engine draws what the rules say
 //!   the actor holds (`outfits::follow_inventory`).
+//! - **Before re-arming**: re-arming (`fnv_ai::rearm`, which runs in every combat state,
+//!   Alert and Lost too) counts a weapon its style rules out as no usable weapon; it asks
+//!   this rule first ([`Game::arm_restricted_by_style`]), so a held weapon the style rules
+//!   out is swapped here, by this rule's pick, and logged with the style as its reason
+//!   (#1721). Re-arming keeps the empty hand and the better weapon.
 
 use crate::game::{event, Game};
 use fnv_script::vm::Value;
@@ -121,9 +126,16 @@ impl Game<'_> {
         pick(&carried, restriction)
     }
 
-    fn arm_one_by_style(&mut self, actor: FormId) {
-        let Some(weapon) = self.style_weapon_swap(actor) else { return };
-        let Ok(e) = self.world.equip(actor, weapon) else { return };
+    /// `actor`, holding a weapon its combat style rules out, takes up the one the style
+    /// allows (module notes, "Before re-arming"). Returns the weapon taken up.
+    pub fn arm_restricted_by_style(&mut self, actor: FormId) -> Option<FormId> {
+        self.held_weapon(actor)?;
+        self.arm_one_by_style(actor)
+    }
+
+    fn arm_one_by_style(&mut self, actor: FormId) -> Option<FormId> {
+        let weapon = self.style_weapon_swap(actor)?;
+        let e = self.world.equip(actor, weapon).ok()?;
         let why = match self.combat_style(actor).map_or(0, |s| s.weapon_restrictions) {
             1 => "its combat style is Melee Only",
             2 => "its combat style is Ranged Only",
@@ -141,6 +153,7 @@ impl Game<'_> {
         }
         self.equip_events(actor, weapon, false);
         self.sync_actor_effects(actor);
+        Some(weapon)
     }
 }
 
