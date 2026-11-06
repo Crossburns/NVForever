@@ -17,10 +17,10 @@ The home is beside the original game's own `My Games\FalloutNV` (owner request
 gigabytes and Documents is often synced (OneDrive).
 
 Never touched at all: the original game's user folder
-`%USERPROFILE%\Documents\My Games\FalloutNV` (its `Fallout.ini`, `FalloutPrefs.ini` and
-saves) and its plugin list `%LOCALAPPDATA%\FalloutNV\plugins.txt` [observed: there, not in
-`My Games`, on the owner's PC]. NVForever keeps its own settings, saves and load order, so
-playing either game never changes the other.
+`%USERPROFILE%\Documents\My Games\FalloutNV` (its `Fallout.ini`, `FalloutPrefs.ini`,
+`FalloutCustom.ini` and saves) and its plugin list `%LOCALAPPDATA%\FalloutNV\plugins.txt`
+[observed: there, not in `My Games`, on the owner's PC]. NVForever keeps its own settings,
+saves and load order, so playing either game never changes the other.
 
 The one exception: a start from Mod Organizer 2 reads that `plugins.txt` path, where MO2's
 hook shows the program its profile's list instead of the game's file (next section).
@@ -84,6 +84,13 @@ SIntroMovie=
 
 Both are read once at start and never written; unattended runs read them only under their
 own `NVFOREVER_HOME`.
+
+These lines go in NVForever's own `NVForever.ini`, not the original's
+`Fallout.ini` / `FalloutCustom.ini` (NVForever never reads or writes those — see above), and
+the start quest must be in NVForever's own load order. A quest named here but not loaded
+(e.g. TTW's `001FFFF8` when Tale of Two Wastelands is not turned on in `<home>\plugins.txt`)
+is not started: New Game logs a warning and leaves the player at the New Vegas opening, so
+a missing TTW start looks like the INI line being ignored (issue #1394).
 
 **Before every start** the folder must pass (`fnv_install::GameInstall`):
 
