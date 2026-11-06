@@ -35,11 +35,23 @@ behind the screen).
    (`Streamer::settled`, reported through `Loading::render_busy`) and no actor in view is
    still waiting for its parts to be read (`readahead::actors_waiting`, reported through
    `Loading::actors_busy`; owner 2026-10-24: NPCs were seen being drawn in after the
-   screen), and that has been so
+   screen), the pipelines they are drawn with are ready (`pipeline_gate.rs`, reported
+   through `Loading::pipelines_busy`, #1520), and that has been so
    for 0.25 s and 3 frames (`SETTLE_SECS`, `SETTLE_FRAMES`: time for textures and meshes
    to reach the graphics card). `PlayState` returns to `Playing`, the clock runs again.
 6. If loading has not finished after 120 s (`TIMEOUT_SECS`) the screen comes down with a
    warning, so an unattended run cannot hang there.
+   Pipelines have a shorter limit of their own: 15 s (`PIPELINE_CAP_SECS`) once they alone
+   are waited for, with a warning naming those still waiting. One that has failed for good,
+   or is still being retried 15 s after it was asked for, is logged with its label and not
+   waited for again.
+
+   Without this wait the view stayed flat under the HUD for 1-2 s after a start's screen
+   came down, then the world appeared in one frame, with 104-125 pipelines still waiting as
+   it came down [observed: Goodsprings, main e2517687 and the same with logging, all 19 starts with shots, across
+   pool sizes]. A task holds Bevy's shader cache lock while it composes a shader [design:
+   bevy_render 0.20.1 `pipeline_cache.rs`], and more threads did not shorten the wait
+   [observed: 1 to 16 threads, about 3.7-4.1 s to clear in all but one batch]. Objects first seen after the screen is down are not covered.
 
 The player arrives standing: physics puts the character on the support the arrival rule
 found and counts it as on the ground until its first step, so the body does not play the
@@ -60,6 +72,13 @@ A travel asked for under it goes out behind it and is waited for too.
   14 s comes 14 s after the world can be played, with the world and the scripts run for
   14 s; the world aids' late-start rule (`pause::WorldAidClock`, `SCRIPTS_START_SECONDS`)
   then never holds them back. A run lasts its seconds plus its start.
+- **The picture first.** The first render frame blocks on a blit pipeline [design:
+  bevy_core_pipeline 0.20.1 `prepare_view_upscaling_pipelines`], compiled on the pool that
+  also reads models and cells, so the world's reads delayed the screen: its picture showed
+  in at most one capture of three starts [observed]. So under the start's screen cells and
+  actors start loading only once the screen has had `PICTURE_FRAMES` render frames with the
+  pipelines it is drawn with ready, or after `PICTURE_CAP_SECS` (`Loading::world_held`). Log: `loading
+  screen: the world starts loading <s> s after the screen (drawn)`.
 - Log: `loading screen: the start is held until the world can be played`, `loading
   screen down after <s> s (the start: cells, actors and scripts ready); …`, or after
   120 s `the start still waits for <what> after <s> s; going on without it`.
