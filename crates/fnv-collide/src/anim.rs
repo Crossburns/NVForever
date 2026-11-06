@@ -392,6 +392,16 @@ impl DoorMotion {
         }
     }
 
+    /// Fully closed: the door is drawn and collides in the stored pose of its model, not
+    /// at the end of "Close". The two are the same for 606 of the 610 keyframed door
+    /// bodies; the 4 of `Lucky38ExtDoorDUPLICATE000` differ, whose "Close" holds the
+    /// panels slid aside, the pose "Open" ends in, while the stored pose closes the
+    /// Lucky 38's entrance until Victor's `SetOpenState 1` opens it [observed:
+    /// docs/spec-notes/doors.md §1; #1541].
+    pub fn closed(&self) -> bool {
+        self.phase == DoorPhase::Closed
+    }
+
     /// The sequence that poses the door (true: "Open", false: "Close") and the time in it.
     pub fn pose(&self) -> (bool, f32) {
         (self.opens(), self.time)
@@ -482,10 +492,11 @@ mod tests {
     fn door_motion_opens_holds_and_turns_back() {
         let mut d = DoorMotion::new(false, 2.0, 1.0);
         assert_eq!(d.pose(), (false, 1.0));
+        assert!(d.closed(), "at rest closed: the stored pose (#1541)");
         assert!(!d.is_open() && d.update(0.5).is_none());
         assert!(!d.swinging());
         assert!(d.set_open(true));
-        assert!(d.swinging());
+        assert!(d.swinging() && !d.closed());
         assert!(!d.set_open(true), "already opening");
         assert_eq!(d.update(0.5), Some(0.0));
         assert_eq!((d.phase, d.time), (DoorPhase::Opening, 0.5));
@@ -495,12 +506,14 @@ mod tests {
         assert!((d.time - 0.75).abs() < 1e-6);
         d.update(1.0);
         assert_eq!(d.phase, DoorPhase::Closed);
+        assert!(d.closed());
         d.set_open(true);
         d.update(1.9);
         assert!(!d.is_open() && d.opens());
         d.update(0.1);
         assert!(d.is_open() && !d.swinging());
         assert_eq!(d.pose(), (true, 2.0));
+        assert!(!d.closed());
     }
 
     #[test]

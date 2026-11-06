@@ -270,6 +270,9 @@ fn defender_dt_by_rank_and_by_the_attackers_weapon() {
     g.player.perks.insert(FormId(DECK), 1);
     assert_eq!(value(&mut g, dt, &[attacker, Some(FormId(REVOLVER))], attacker, 5.0), 36.0);
     assert_eq!(value(&mut g, dt, &[attacker, Some(FormId(RIFLE))], attacker, 5.0), 11.0);
+    // A hit with neither (a blast nobody set off): Toughness has no condition, and Hit
+    // the Deck's has no weapon to run on.
+    assert_eq!(value(&mut g, dt, &[None, None], None, 5.0), 11.0);
 }
 
 #[test]

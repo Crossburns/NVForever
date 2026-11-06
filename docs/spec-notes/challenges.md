@@ -82,7 +82,8 @@ Every count is the player's; others' deeds count nothing [design].
 
 - The weapon of a kill is the one the player last hit the victim with, else the one the
   player holds; none is fists (Unarmed, Hand to Hand) [hypothesis].
-- A kill of anyone counts, friend or foe [hypothesis: the descriptions say "enemies"].
+- A kill of anyone counts, friend or foe [hypothesis: the descriptions say "enemies"], but
+  the player's own death is none [design: `Game::kill`].
 - Damage is counted as dealt (after DT and the floor at 0 health); fractions are kept
   until they make a whole step [hypothesis].
 - Acquiring counts every item that reaches the player, also from the barter menu and

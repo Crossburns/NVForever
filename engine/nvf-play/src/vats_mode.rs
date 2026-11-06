@@ -957,7 +957,7 @@ fn mark(
     let reach = v.weapon.as_ref().map_or(REACH, |w| w.reach);
     // Through what the character passes and the actors' walking capsules (their hit
     // volumes are their bodies), as the shots go.
-    let mut filter = Filter { exclude_layers: layers::character_ignores(), ..Default::default() };
+    let mut filter = Filter { exclude_layers: layers::shot_ignores(), ..Default::default() };
     filter.exclude.extend(phys.npcs.values().map(|b| b.ch.key()));
     let hit = phys.ray(from, dir, reach, filter);
     // A placed object VATS may target (§20): a destructible flagged VATS Targetable, or
@@ -1304,7 +1304,7 @@ fn helper_spot(phys: &mut PhysState, feet: [f32; 3], point: [f32; 3], target: u3
             return false;
         }
         let dir = [to[0] / len, to[1] / len, to[2] / len];
-        let mut filter = Filter { exclude_layers: layers::character_ignores(), ..Default::default() };
+        let mut filter = Filter { exclude_layers: layers::shot_ignores(), ..Default::default() };
         filter.exclude.extend(phys.npcs.values().map(|b| b.ch.key()));
         match phys.ray(eye, dir, len + 30.0, filter) {
             None => true,
