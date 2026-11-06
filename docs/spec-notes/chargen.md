@@ -110,22 +110,35 @@ The open `ListMenu` owns the sheet and all its rules. This view reads it, writes
 and queues acts for `chargen::input`; it never constructs a sheet or consumes a script's
 pending request. The hand-built drawing remains with the switch off or a failed readiness.
 Sources: the file's tile-name contract [documented: `menus\chargen\char_gen_menu.xml`, read
-privately], §3's geometry and screenshots, and the trait contract in §4.1. The original's
-tag-menu runtime capture is pending; assumptions below are not observations.
+privately], §3's geometry and screenshots, the trait contract in §4.1, and the private job
+`ov_tags` [observed 2026-11-06: the original at 1280 x 720, the hudtest save, `SetTagSkills 3`,
+read with JIP]. Assumptions below are not observations.
+
+- **What the original was seen to do** [observed: `ov_tags`]. The list reads `y` 65, `x` -15,
+  450 x 728, with 13 rows, each 52 high with `_y` the sum above it; the tree's order is not the
+  list's, `listindex` is. `_highlight_y` is -1 with `_selected_height` 0 at the opening, where
+  row 0's picture and text show, and the row's `_y` with 52 under the pointer; the highlight
+  and text keep the last row when it leaves. A tagged row reads `_selected` 1 and shows its
+  marker. `CGM_SelectionText` is at 20, 20, wrapping at 540; the counter is at 20, 317.33, 32
+  high. At 3/3 the counter is empty and hidden and Done's `target` is 1; at 0/3 it is shown and
+  Done's `target` is 0. **Reset took 3/3 to 0/3** with the save's three tags on the list, against
+  §3's reading that it goes back to the opening state. `ClickMenuTile` on `*:k` moved nothing in this
+  job, so taking and giving back by the pointer was not seen. This view keeps the hand-built
+  rule for Reset, whose sheet it does not own.
 
 - **What the program writes** [design: `tag_menu::snapshot`, `selection_menu::write`].
   `_CurrPoints` is the sheet's number tagged, `_MaxPoints` its `count`, and `_OnlyAdd` says
   whether it has locked tags [hypothesis: follows the sheet's AddTagSkills semantics;
   the file's runtime meaning awaits the capture]. The title, description and counter get
   `string`; the icon gets `filename` and `visible`; the list gets `visible` and its code-set
-  `y` of 66 (§3). Rows come from `CGM_SelectItemTemplate`, row `CGM_SelectItem`, with
+  `y` of 65. Rows come from `CGM_SelectItemTemplate`, row `CGM_SelectItem`, with
   `ListItemText`, `CGM_Template_ItemValue`, and `CGM_Template_ItemMarker`. They get `string`,
   the value child's `string`, `_selected`, `_TextAlpha`, `id`, `listindex`, `_y`, and measured
   `height`. The list's highlight and its `lb_scrollbar` counts and value follow §4.1. Done's
   `target` follows the sheet's `complete()`, so an unfinished sheet cannot finish.
 - **Every string this view writes** [design: `tag_menu.rs`, LEGAL.md,
   `crates/fnv-ui/src/strings.rs`]. The title is our own `Choose skills: {taken}/{count}`;
-  the counter our own `{remaining} left to choose`, including zero. Neither has a named
+  the counter our own `{remaining} left to choose`, and empty with none left. Neither has a named
   setting in the strings table; this path does not reuse the hand-built title or counter.
   Row names are AVIF FULL through `ListView`; row values are decimal `TagSheet::value`
   (including this sheet's tag bonus); the description is AVIF DESC without an added label.

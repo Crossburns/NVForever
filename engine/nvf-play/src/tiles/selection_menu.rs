@@ -337,8 +337,8 @@ pub fn write<const CODE: u16>(ui: &mut Ui, s: &Snapshot, st: &mut SelectionTiles
     // the rows take no pointer and the highlight stays hidden.
     set(ui, LIST, "visible", flag(true));
     if CODE == fnv_game::game::menus::TAG_SKILLS {
-        // [documented: chargen.md §3] The list's top is left to code.
-        set(ui, LIST, "y", Value::Num(66.0));
+        // [documented: chargen.md §3] The list's top is left to code; 65 [observed: job ov_tags, §3.1].
+        set(ui, LIST, "y", Value::Num(65.0));
         set(ui, TRAIT_MENU, "_OnlyAdd", flag(s.only_add));
     }
     set(ui, TITLE, "string", Value::Str(s.title.clone()));

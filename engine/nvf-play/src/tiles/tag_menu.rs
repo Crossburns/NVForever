@@ -67,7 +67,12 @@ pub fn drawn(st: &TagTiles, open: Option<crate::chargen::TraitsOpen<'_>>, game: 
 fn own_title(taken: usize, count: usize) -> String {
     format!("Choose skills: {taken}/{count}")
 }
+/// Nothing with none left: the counter's tile is empty and hidden at 3/3 [observed: the
+/// original's job ov_tags, chargen.md §3.1].
 fn own_counter(left: usize) -> String {
+    if left == 0 {
+        return String::new();
+    }
     format!("{left} left to choose")
 }
 
@@ -221,7 +226,8 @@ mod tests {
             let view = view(&sheet, "A description from AVIF.");
             let s = snapshot(&view, &sheet, 7, 4);
             assert_eq!(s.title, format!("Choose skills: {}/{count}", sheet.tagged.len()));
-            assert_eq!(s.counter, format!("{} left to choose", sheet.remaining()));
+            let left = sheet.remaining();
+            assert_eq!(s.counter, if left == 0 { String::new() } else { format!("{left} left to choose") });
             assert_eq!(s.done, sheet.complete());
             assert_eq!((s.most, s.taken, s.generation, s.navigated), (count, sheet.tagged.len(), 7, 4));
             assert_eq!(s.info, view.info);
@@ -279,7 +285,7 @@ mod tests {
         assert_eq!(num(&ui, TAG_MENU, "_MaxPoints"), 4.0);
         assert_eq!(num(&ui, TAG_MENU, "_OnlyAdd"), 1.0);
         assert_eq!(num(&ui, DONE, "target"), 0.0);
-        assert_eq!(num(&ui, LIST, "y"), 66.0);
+        assert_eq!(num(&ui, LIST, "y"), 65.0);
         assert_eq!(ui.tile(st.rows[0].tile).get("_selected").map(Value::num), Some(1.0));
         s.taken = 4;
         s.done = true;
