@@ -631,13 +631,16 @@ struct KeptSight {
 /// than a step].
 const STILL: f32 = 4.0;
 
-/// The most lines of sight a measurement casts [design, #1426: at 118 actors (the stress
-/// battle at 50 a side) every pair's line was cast in one measurement, about 6,900, and
-/// `detection::measure` took 140-166 ms]. The pairs with the player and those whose
+/// The most lines of sight a measurement casts besides the always-cast pairs below
+/// [design, #1426: at 118 actors (the stress battle at 50 a side) every pair's line was
+/// cast in one measurement, about 6,900, and `detection::measure` took 140-166 ms in its
+/// slow frames, 21.6 ms a frame on average; with 1,024 it took 7.3 ms on average and
+/// about 70 in a measurement's frame, with 512 5.0 ms and at most 39, no longer among the
+/// slow frames' causes (profile build, battle-50, 2026-11-06)]. The pairs with the player and those whose
 /// detector fights the target are always cast; over the budget the others are cast oldest
 /// answer first, and the rest keep their last answer for this measurement (out of sight
 /// when they have none). Under it nothing changes.
-const SIGHT_BUDGET: usize = 1024;
+const SIGHT_BUDGET: usize = 512;
 
 impl KeptSight {
     fn still(&self, from: [f32; 3], chest: [f32; 3], eyes: [f32; 3]) -> bool {
@@ -902,9 +905,14 @@ fn measure(
     let (mut pairs, mut far_pairs, mut far_detected) = (0, 0, 0);
     let land = &mut state.land;
     let mut counts = state.stats.sight;
-    let kept_before = std::mem::take(&mut state.kept);
-    // Kept lines of sight serve the measurement right after theirs only.
-    let kept_before = if now - kept_before.at <= INTERVAL * 1.5 { kept_before.sights } else { HashMap::new() };
+    let kept_all = std::mem::take(&mut state.kept);
+    // Kept lines of sight serve still pairs at the measurement right after theirs only;
+    // over the budget ([`SIGHT_BUDGET`]) a pair keeps its last answer however old, or
+    // after a slow frame every pair would read as never measured and be out of sight.
+    let fresh = now - kept_all.at <= INTERVAL * 1.5;
+    let last_answers = kept_all.sights;
+    let empty = HashMap::new();
+    let kept_before = if fresh { &last_answers } else { &empty };
     let mut kept_now: HashMap<(u32, u32, bool), KeptSight> = HashMap::new();
     let check = sight_check();
     let world = world.as_deref();
@@ -989,10 +997,10 @@ fn measure(
             let firsts = cast.iter().filter(|c| first[c.0]).count();
             if cast.len() > budget.max(firsts) {
                 counts.over_budget += 1;
-                let age = |key: &(u32, u32, bool)| kept_before.get(key).map_or(u32::MAX, |s| s.age);
+                let age = |key: &(u32, u32, bool)| last_answers.get(key).map_or(u32::MAX, |s| s.age);
                 cast.sort_by_key(|&(k, _, key, ..)| (!first[k], std::cmp::Reverse(age(&key))));
                 for (k, _, key, ..) in cast.split_off(budget.max(firsts)) {
-                    match kept_before.get(&key) {
+                    match last_answers.get(&key) {
                         Some(s) => {
                             answers[k] = s.clear;
                             kept_now.insert(key, KeptSight { cast: false, age: s.age.saturating_add(1), ..*s });
