@@ -55,11 +55,20 @@ pub struct AmbientOcclusion {
     pub params: Vec4,
     /// Projection x and y scale, largest screen radius, fade start.
     pub proj: Vec4,
+    /// The size the depth prepass was drawn at (x, y) and the picture's size (z, w): all 1
+    /// here; set in the render world while FSR upscales (`fsr.rs` `prepare`), which expands
+    /// that depth to the picture's size, so the normals are taken from the texels as drawn
+    /// (ssao.wesl `normal_at`). The extraction puts 1 back every frame.
+    pub render_scale: Vec4,
 }
 
 impl Default for AmbientOcclusion {
     fn default() -> Self {
-        AmbientOcclusion { params: Vec4::new(RADIUS, STRENGTH, 5.0, FADE_END), proj: Vec4::new(1.0, 1.0, MAX_SCREEN_RADIUS, FADE_START) }
+        AmbientOcclusion {
+            params: Vec4::new(RADIUS, STRENGTH, 5.0, FADE_END),
+            proj: Vec4::new(1.0, 1.0, MAX_SCREEN_RADIUS, FADE_START),
+            render_scale: Vec4::ONE,
+        }
     }
 }
 

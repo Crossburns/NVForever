@@ -124,7 +124,7 @@ pub fn max_winnings(g: &Game, casino: FormId, asked: u32) -> u32 {
     if asked > 0 {
         return asked;
     }
-    g.data.casinos.get(&casino).map_or(0, |c| c.max_winnings)
+    crate::nvse_lutana::casino(g, casino).map_or(0, |c| c.max_winnings)
 }
 
 /// Why the menu does not open.

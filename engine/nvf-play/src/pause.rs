@@ -876,6 +876,8 @@ struct Drawn {
     confirm: Option<usize>,
     /// Every row's state (`Setting::value`).
     states: Vec<f32>,
+    /// Explanations replacing disabled rows' saved values.
+    disabled: Vec<Option<&'static str>>,
     status: String,
     /// The column's labels and whether each can be taken.
     column: Vec<(&'static str, bool)>,
@@ -1238,9 +1240,17 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     for (n, i) in (first..rows.end).take(OPTION_ROWS).enumerate() {
         let s = &list[i];
         let v = d.states.get(i).copied().unwrap_or(0.0);
+        let disabled = d.disabled.get(i).copied().flatten();
         root.spawn((Button, PauseButton::Switch(i), boxed(from_middle(left, top + n as f32 * OPTION_ROW, OPTIONS_WIDTH, OPTION_ROW), i == selected)))
         .with_children(|r| {
-            sm_text(r, &f.entry, tr(s.label), 10.0, BASE + 2.0, color(Shade::Bright));
+            sm_text(r, &f.entry, tr(s.label), 10.0, BASE + 2.0, color(if disabled.is_some() { Shade::Dim } else { Shade::Bright }));
+            if let Some(reason) = disabled {
+                let reason = tr(reason);
+                r.spawn((SwitchState(i), Text::new(reason), Node { display: Display::None, ..default() }));
+                let vw = f.entry.font.width(reason);
+                sm_text(r, &f.entry, reason, VALUE_AT - vw / 2.0, BASE + 2.0, color(Shade::Dim));
+                return;
+            }
             if let Some(slider) = &s.slider {
                 slider_row(r, look, i, v, &slider.text(v));
                 return;
@@ -2431,23 +2441,27 @@ fn choose(
         sounds.write(UiSound { menu: UiMenu::Pause, event: UiEvent::Focus });
     }
     for i in flips {
+        if view_disabled(&view, i) { continue; }
         sounds.write(UiSound { menu: UiMenu::Settings, event: UiEvent::Flipped });
         commands.queue(move |world: &mut World| {
             crate::settings::flip(world, i);
         });
     }
     for (i, n) in steps {
+        if view_disabled(&view, i) { continue; }
         sounds.write(UiSound { menu: UiMenu::Settings, event: UiEvent::Flipped });
         commands.queue(move |world: &mut World| {
             crate::settings::step_slider(world, i, n);
         });
     }
     for (i, v) in sets {
+        if view_disabled(&view, i) { continue; }
         commands.queue(move |world: &mut World| {
             crate::settings::set_slider(world, i, v);
         });
     }
     for (i, name) in picks {
+        if view_disabled(&view, i) { continue; }
         pick_choice(&mut commands, &mut sounds, i, name);
     }
 }
@@ -2463,6 +2477,7 @@ fn pick_choice(commands: &mut Commands, sounds: &mut MessageWriter<crate::ui_sou
 
 /// Open list row `i`'s dropdown on its chosen one.
 fn open_dropdown(view: &mut PauseView, i: usize) {
+    if view_disabled(view, i) { return; }
     let Some((names, chosen)) = view.drawn.as_ref().and_then(|d| d.list(i)) else { return };
     let at = names.iter().position(|n| n == chosen).unwrap_or(0);
     let first = (at + 1).saturating_sub(DROP_ROWS).min(names.len().saturating_sub(DROP_ROWS));
@@ -2472,9 +2487,15 @@ fn open_dropdown(view: &mut PauseView, i: usize) {
 
 /// The choice `step` (-1 or 1) from list row `i`'s chosen one, not past the ends.
 fn neighbour(view: &PauseView, i: usize, step: i32) -> Option<String> {
+    if view_disabled(view, i) { return None; }
     let (names, chosen) = view.drawn.as_ref()?.list(i)?;
     let at = names.iter().position(|n| n == chosen)? as i32 + step;
     names.get(usize::try_from(at).ok()?).cloned()
+}
+
+/// Whether row `i` was disabled when the page was last drawn.
+fn view_disabled(view: &PauseView, i: usize) -> bool {
+    view.drawn.as_ref().and_then(|d| d.disabled.get(i)).is_some_and(Option::is_some)
 }
 
 /// Row `i`'s value as the page last drew it.
@@ -2502,6 +2523,7 @@ fn drawn_now(world: &mut World) -> Drawn {
     let page = *world.resource::<Page>();
     let list = world.resource::<Settings>().list().to_vec();
     let states: Vec<f32> = world.resource::<Settings>().values(world);
+    let disabled: Vec<_> = (0..list.len()).map(|i| world.resource::<Settings>().disabled_status(world, i)).collect();
     let lists: Vec<(usize, Vec<String>, String)> = {
         let settings = world.resource::<Settings>();
         (0..list.len()).filter_map(|i| settings.choices(i).map(|c| (i, (c.names)(world), (c.chosen)(world)))).collect()
@@ -2522,6 +2544,7 @@ fn drawn_now(world: &mut World) -> Drawn {
         main_selected: view.main_selected,
         confirm: view.confirm,
         states,
+        disabled,
         status: world.resource::<PauseStatus>().line.clone(),
         under_main: main.is_some(),
         column: main.unwrap_or_else(|| entries(world.get_resource::<ModsEntry>().is_some_and(|m| m.0)).iter().map(|e| (e.label(), true)).collect()),
@@ -2820,7 +2843,7 @@ mod tests {
             list.saves.push((PathBuf::from(format!("{name}.nvfsave")), h));
         }
         app.insert_resource(list);
-        let drawn = Drawn { page: Page::Load { selected: 1 }, main_selected: 0, confirm: None, states: vec![], status: String::new(), column: entries(false).iter().map(|e| (e.label(), true)).collect(), under_main: false, thumb: None, controls: vec![], device: ("Keyboard and Mouse", false), rumble: true, invert_y: false, sensitivity: 1.0, scroll: 0, lists: vec![], dropdown: None, keep: None, delete_ask: None, view_w: VIEW_W as u32, language: 0 };
+        let drawn = Drawn { page: Page::Load { selected: 1 }, main_selected: 0, confirm: None, states: vec![], disabled: vec![], status: String::new(), column: entries(false).iter().map(|e| (e.label(), true)).collect(), under_main: false, thumb: None, controls: vec![], device: ("Keyboard and Mouse", false), rumble: true, invert_y: false, sensitivity: 1.0, scroll: 0, lists: vec![], dropdown: None, keep: None, delete_ask: None, view_w: VIEW_W as u32, language: 0 };
         app.world_mut().run_system_cached_with(|In(d): In<Drawn>, mut commands: Commands, list: Res<LoadList>| spawn_page(&mut commands, &d, &PauseLook::plain(), &[], &list), drawn).unwrap();
         let world = app.world_mut();
         let mut rows = world.query::<(&PauseButton, &BorderColor)>();
@@ -2868,6 +2891,34 @@ mod tests {
 
     #[derive(Resource)]
     struct Reach(f32);
+
+    #[test]
+    fn a_disabled_slider_shows_its_reason_without_controls_and_restores_its_saved_value() {
+        let mut app = App::new();
+        app.insert_resource(Reach(0.5)).insert_resource(Lamp(true)).init_resource::<Paused>().insert_resource(Page::Settings { selected: 0 });
+        let slider = crate::settings::Slider { get: |w| w.resource::<Reach>().0, set: |w, v| w.resource_mut::<Reach>().0 = v, min: 0.1, step: 0.05, shown: None };
+        add_setting(&mut app, Setting::slider("reach", "Test", "Reach", "How far.", slider));
+        crate::settings::set_disabled_status(&mut app, "reach", |w| w.resource::<Lamp>().0.then_some("Off (FSR active)"));
+        app.init_resource::<PauseView>().init_resource::<LoadList>().init_resource::<PauseStatus>().insert_resource(PauseLook::plain());
+        app.world_mut().resource_mut::<Paused>().0 = true;
+        app.add_systems(Update, draw);
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<(&SwitchState, &Text)>().single(world).unwrap().1.0, "Off (FSR active)");
+        let buttons: Vec<PauseButton> = world.query::<&PauseButton>().iter(world).copied().collect();
+        assert!(!buttons.iter().any(|b| matches!(b, PauseButton::Meter(0) | PauseButton::SliderStep(0, _))), "disabled sliders have no clickable adjustment controls");
+        assert!(view_disabled(world.resource::<PauseView>(), 0));
+        assert!(crate::settings::step_slider(world, 0, 1).is_none());
+        assert_eq!(world.resource::<Reach>().0, 0.5);
+
+        world.resource_mut::<Lamp>().0 = false;
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<(&SwitchState, &Text)>().single(world).unwrap().1.0, "50%");
+        assert!(!view_disabled(world.resource::<PauseView>(), 0));
+        assert!(world.query::<&PauseButton>().iter(world).any(|b| *b == PauseButton::Meter(0)));
+        assert_eq!(crate::settings::step_slider(world, 0, 1), Some(0.55));
+    }
 
     #[test]
     fn a_slider_row_shows_its_value_as_a_meter_and_a_percentage() {

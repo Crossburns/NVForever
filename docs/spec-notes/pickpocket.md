@@ -101,7 +101,7 @@ FalloutNV.esm: timer 2.0 s, freak-out 0.1 s [observed].
   child's inventory", with no explosion [documented: Fallout Wiki, Fallout 3 Pickpocket
   page, owner's paste of 2026-11-05]. New Vegas is not described. NVForever does the same
   for a child (its race has the Child flag) and for an essential actor: the item stays an
-  ordinary item and nothing goes off [hypothesis: observer check 92].
+  ordinary item and nothing goes off [hypothesis: observer check 93].
 - **The panic.** From the freak-out time to the blast the victim panics. The masters'
   only GetPlantedExplosive condition is on the IDLE root `PanicExplosivePlanted`
   (0x00042F24, folder `Characters\_Male\IdleAnims`, GetPlantedExplosive == 1). Its two
@@ -121,7 +121,7 @@ FalloutNV.esm: timer 2.0 s, freak-out 0.1 s [observed].
   hurts others as a thrown grenade's does [hypothesis].
 - **Only an explosion that hurts the victim's kind kills it** ("instantly killing them if
   it's a damaging type", owner 2026-11-05). The rule (`Game::explosive_harms`)
-  [hypothesis: observer check 92]:
+  [hypothesis: observer check 93]:
   - an actor that takes no damage (a child, an Invulnerable creature, a ghost) is not
     killed;
   - when the explosion's object effect (EXPL EITM) has effects that lower Health (base

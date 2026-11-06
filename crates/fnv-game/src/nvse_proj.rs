@@ -100,12 +100,16 @@ impl Game<'_> {
     /// The shot hit `what` (0: the terrain or nothing placed) of Havok material `material`:
     /// what the scripts set on it, for the hit; the reference stays one frame more with the
     /// impact on it (GetProjectileRefImpactRef) [hypothesis: the original keeps a shot
-    /// that hit for its impact's frame].
+    /// that hit for its impact's frame]. JIP's projectile-impact event runs then, on the
+    /// shot's reference, with no arguments, for anything hit, the terrain too
+    /// [documented: SetOnProjectileImpactEventHandler; the filter is the PROJ form or a
+    /// list of them, matched against the reference's base].
     pub fn projectile_impact(&mut self, r: FormId, what: FormId, material: Option<u32>) -> Option<Shot> {
         let s = self.gaps.projs.shots.get_mut(&r)?;
         s.impact = Some((what, material));
         s.left = Some(self.cfg.frame_seconds as f32);
-        Some(s.clone())
+        self.jip_event("projectileimpact", Some(r), Vec::new());
+        self.gaps.projs.shots.get(&r).cloned()
     }
 
     /// The shot is over: its reference goes [observed: proj1, IsFormValid 0 on the kept

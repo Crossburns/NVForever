@@ -109,6 +109,7 @@ fn take_requests(
     player: Option<Res<crate::player::Player>>,
     mut cams: Query<(&Transform, &mut Projection), With<PlayerCamera>>,
     mut default_vfov: Local<Option<f32>>,
+    talk: Option<Res<crate::dialogue_zoom::DialogueZoom>>,
 ) {
     let Some(mut st) = script else { return };
     let Some(rt) = st.rt.as_mut() else { return };
@@ -141,7 +142,8 @@ fn take_requests(
     }
     if let Some((world, first_deg)) = fov {
         if let Projection::Perspective(p) = &mut *proj {
-            let base = *default_vfov.get_or_insert(p.fov);
+            // Not a conversation's zoom: what lies under it (`crate::dialogue_zoom`).
+            let base = *default_vfov.get_or_insert(talk.as_deref().map_or(p.fov, |t| t.underlying(p.fov)));
             p.fov = world.map_or(base, vertical_fov);
             first.0 = first_deg;
             let deg = |v: Option<f32>| v.map_or("the default".to_string(), |v| format!("{v:.0}°"));

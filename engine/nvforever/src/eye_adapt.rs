@@ -126,7 +126,12 @@ impl Plugin for EyeAdaptPlugin {
         app.add_plugins(AutoExposurePlugin).init_resource::<EyeCurve>().add_systems(PostUpdate, follow_target_lum);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         // Before the post-processing, where Bevy's auto exposure reads the mask.
-        render_app.add_systems(RenderStartup, init_mask_pipelines).add_systems(Core3d, mask_pass.in_set(Core3dSystems::EarlyPostProcess));
+        render_app.add_systems(RenderStartup, init_mask_pipelines).add_systems(
+            Core3d,
+            // FSR restores the depth prepass to display resolution before this
+            // mask meters the complete screen.
+            mask_pass.in_set(Core3dSystems::EarlyPostProcess).after(crate::fsr::fsr_pass),
+        );
     }
 }
 
