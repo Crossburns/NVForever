@@ -98,6 +98,7 @@ mod object_anims;
 mod outfits;
 mod own_sounds;
 mod pipboy_arm;
+mod pipboy_controls;
 mod player_body;
 mod stealth_field;
 mod stray_commands;

@@ -499,16 +499,25 @@ fn nif_fragment(
         // faded only by the view-angle falloff.
         let add_a = select(out.color.a, falloff, surface.add_whole > 0.5);
         let fogged = main_pass_post_lighting_processing(pbr_input, vec4(out.color.rgb, 1.0));
-        let behind = textureSampleLevel(view_transmission_texture, view_transmission_sampler, frag_coord_to_uv(in.position.xy), 0.0).rgb;
-        out.color = vec4(add_display(fogged.rgb, add_a, behind), 0.0);
+        @if(!ADD_LINEAR) let behind = textureSampleLevel(view_transmission_texture, view_transmission_sampler, frag_coord_to_uv(in.position.xy), 0.0).rgb;
+        @if(!ADD_LINEAR) out.color = vec4(add_display(fogged.rgb, add_a, behind), 0.0);
+        // NifSurface::add_linear: the colour added as it is, in linear light.
+        @if(ADD_LINEAR) out.color = vec4(fogged.rgb * saturate(add_a), 0.0);
     } else {
         out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     }
+    // NifSurface::pipboy_screen: linear red's ceiling, fitted so a bar's red stays near the
+    // original's 206 (nvf-play pipboy/device_screen.rs). Before the post-lighting step, which
+    // tone maps here when the view has no HDR (the Glow setting off).
+    @if(PIPBOY_SCREEN) out.color.r = min(out.color.r, 0.67);
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY && !BLEND_PREMULTIPLIED_ALPHA) out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY) let blend_mode = pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS;
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY) if blend_mode == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND && (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) != 0u {
         out.color = vec4(out.color.rgb * blend_colour_scale(out.color.a), out.color.a);
     }
+    // NifSurface::pipboy_screen: the mark that keeps these pixels out of the image-space grade
+    // (imagespace.wesl SCREEN_MARK).
+    @if(PIPBOY_SCREEN) out.color.a = 0.25;
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY && SOFT_EDGES) out.color.a = edge;
     return out;
 }
