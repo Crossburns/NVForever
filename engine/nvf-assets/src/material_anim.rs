@@ -293,7 +293,11 @@ pub fn animate_rig_materials(mut rigs: Query<(&Playing, &mut RigMaterials)>, mut
 /// (shape, member) the layer with the most weight that drives it [design: a material is
 /// not blended as bones are; the strongest clip's value is the one drawn], and of layers
 /// as strong the track of the higher priority (a robot's `Talking` at 85 over its idle's
-/// 0 on the chest light, `talk_clips.rs` in nvforever; docs/spec-notes/lipsync.md §6.1).
+/// 0 on the chest light, `talk_clips.rs` in nvforever; docs/spec-notes/lipsync.md §6.1),
+/// and of those as strong and as high the layer played over the others (the later slot,
+/// as an idle's over the base idle's: Mr. House's `DynamicIdle_YesMan.kf` and his
+/// `mtidle.kf` both give his Yes Man screen priority 20, and the idle's alpha 1 shows it,
+/// #1542) [design].
 /// `out` gets (shape, target, value, weight) and is cleared first; shapes are named as
 /// the clips name them.
 pub fn actor_material_values<'a>(player: &'a BlendPlayer, out: &mut Vec<(&'a str, MaterialTarget, [f32; 3], f32)>) {
@@ -309,7 +313,7 @@ pub fn actor_material_values<'a>(player: &'a BlendPlayer, out: &mut Vec<(&'a str
         for tr in &bc.clip.materials {
             let Some(v) = tr.values.at(tr.cycle.map_or(time, |c| c.time(time - bc.clip.start))) else { continue };
             match out.iter().position(|(s, t, ..)| *t == tr.target && s.eq_ignore_ascii_case(&tr.shape)) {
-                Some(k) if (out[k].3, priorities[k]) >= (layer.weight, tr.priority) => {}
+                Some(k) if (out[k].3, priorities[k]) > (layer.weight, tr.priority) => {}
                 Some(k) => {
                     out[k] = (tr.shape.as_str(), tr.target, v, layer.weight);
                     priorities[k] = tr.priority;
@@ -501,5 +505,10 @@ mod tests {
         assert!((value(&talk, 1.0, &idle, 1.0) - 0.15).abs() < 1e-6);
         // A stronger layer still wins over a higher priority.
         assert_eq!(value(&idle, 1.0, &talk, 0.5), 0.0);
+        // As strong and of the same priority: the layer played over the other (the
+        // later slot) shows, as an idle over the base idle (Mr. House's screen, #1542).
+        let (base, over) = (clip(0.0, 20), clip(1.0, 20));
+        assert_eq!(value(&base, 1.0, &over, 1.0), 1.0);
+        assert_eq!(value(&over, 1.0, &base, 1.0), 0.0);
     }
 }

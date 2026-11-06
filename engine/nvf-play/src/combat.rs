@@ -1058,6 +1058,8 @@ pub struct Combat {
     /// A save's weapon and magazine, applied when that weapon is next taken in hand
     /// (`crate::save`).
     load_magazine: Option<(u32, u32)>,
+    /// A save's weapon and the type of round in its magazine, with `load_magazine`.
+    load_ammo: Option<(u32, FormId)>,
     /// Test aid `NVF_PLAY_TEST_TRACERS=<seconds>`: every projectile draws a line, and
     /// the lines and a marker at the muzzle stay that long, so one screenshot of an
     /// unattended check shows where the shots were drawn from. The muzzle flashes and
@@ -1224,13 +1226,27 @@ impl Combat {
         Some((self.weapon?.0, cy.magazine))
     }
 
-    /// A save's magazine: the rounds go back in when that weapon is in hand.
-    pub fn restore_magazine(&mut self, m: (u32, u32)) {
+    /// The type of round in the magazine of the weapon in hand, for a save (#1574).
+    pub fn magazine_ammo_for_save(&self) -> Option<u32> {
+        self.cycle.as_ref().filter(|c| !c.no_ammo)?;
+        self.ammo.map(|a| a.0)
+    }
+
+    /// A save's magazine and the type of round in it: the rounds go back in when that
+    /// weapon is in hand. A weapon already in hand with another type is taken in hand
+    /// again (`equip_sync`), so the saved type and its projectile are put back together.
+    pub fn restore_magazine(&mut self, m: (u32, u32), ammo: Option<u32>) {
         self.load_magazine = Some(m);
+        self.load_ammo = ammo.map(|a| (m.0, FormId(a)));
         if let (Some(w), Some(cy)) = (self.weapon, self.cycle.as_mut()) {
             if w.0 == m.0 {
+                if ammo.is_some_and(|a| self.ammo != Some(FormId(a))) {
+                    self.equipped = None;
+                    return;
+                }
                 cy.magazine = m.1.min(cy.clip_size.max(m.1));
                 self.load_magazine = None;
+                self.load_ammo = None;
             }
         }
     }
@@ -1968,6 +1984,7 @@ fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
         no_spread: std::env::var_os("NVF_PLAY_TEST_NO_SPREAD").is_some_and(|v| v != "0"),
         tracer_hold,
         load_magazine: None,
+        load_ammo: None,
         crosshair_cone: None,
         player_spread: None,
         vats_cone: None,
@@ -2078,7 +2095,16 @@ fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut
         return;
     };
     let w = &c.player_stats(id).expect("weapon present");
-    let ammo = c.forms.ammo_for(id, |a| player_count(&sim, Some(a)) > 0);
+    let mut ammo = c.forms.ammo_for(id, |a| player_count(&sim, Some(a)) > 0);
+    // A save's type of round for this weapon (`crate::save`; #1574), while it is one of
+    // the weapon's types and some is carried.
+    if let Some((sw, a)) = c.load_ammo.take() {
+        if sw == id.0 && c.forms.ammo_choices(w).contains(&a) && player_count(&sim, Some(a)) > 0 {
+            ammo = Some(a);
+        } else if sw != id.0 {
+            c.load_ammo = Some((sw, a));
+        }
+    }
     let chain = c.forms.chain_with(id, w, ammo);
     let melee = AttackKind::of(w) != AttackKind::Gun;
     c.melee = melee && chain.projectile.is_none();
