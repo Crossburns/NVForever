@@ -19,6 +19,15 @@
 //! aids) leave the INI of the player's home alone, neither read nor written; with
 //! `NVFOREVER_HOME` set they use that home's INI, so a test can check the round trip.
 //!
+//! A row whose note names a command-line switch (`--msaa`, `--no-lip`; not one it is "a
+//! part of") counts as set by the command line when that switch was given
+//! ([`GivenSwitches`], filled by the program from its command line). When the INI holds
+//! another state for such a row, the log says so (#1382): in a test run (a timed or
+//! measured run, [`GivenSwitches::win`]) the command line's state is kept and the stored
+//! one is not applied, so a measurement or a smoke run tests what its switches say;
+//! otherwise the stored state is applied as before, with a warning naming the switch it
+//! overrode.
+//!
 //! A row can be a [`Slider`] instead ([`Setting::slider`]): a part of a full amount, up
 //! to 1, set in steps by Left/Right or its meter (e.g. how far objects are drawn, as a
 //! part of how far they are drawn at most). It is kept as `key=0.50`; a value that is not
@@ -59,6 +68,39 @@ impl SettingsFile {
         }
         SettingsFile(EngineHome::default_root().map(|r| EngineHome::new(r).config_file()))
     }
+}
+
+/// The command-line switches given this run (`--msaa`, as named in the rows' notes) and
+/// whether they win over the INI's states (a test run); module notes. Absent: none given.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct GivenSwitches {
+    pub given: Vec<String>,
+    pub win: bool,
+}
+
+impl GivenSwitches {
+    /// The switches of `note` that were given, as `--a, --b`; `None`: none of them.
+    fn named_in(&self, note: &str) -> Option<String> {
+        let hits: Vec<&str> = note_switches(note).into_iter().filter(|n| self.given.iter().any(|g| g == n)).collect();
+        (!hits.is_empty()).then(|| hits.join(", "))
+    }
+}
+
+/// The command-line switches a row's note names (`--no-lip`, `--msaa`), leaving out one
+/// the row is "a part of" (a slider scaling `--shadow-distance` does not replace it).
+pub fn note_switches(note: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(k) = note[at..].find("--") {
+        let start = at + k;
+        let len = note[start + 2..].find(|c: char| !(c.is_ascii_alphanumeric() || c == '-')).unwrap_or(note.len() - start - 2);
+        let name = &note[start..start + 2 + len];
+        if len > 0 && !note[..start].ends_with("part of ") && !out.contains(&name) {
+            out.push(name);
+        }
+        at = start + 2 + len;
+    }
+    out
 }
 
 /// One on/off switch of the settings page.
@@ -470,35 +512,61 @@ pub fn apply_stored(world: &mut World) {
     let keys: Vec<&str> = lists.iter().map(|(i, _)| list[*i].key).collect();
     let mut bad = Vec::new();
     let found = stored(&text, &list, &keys, &mut bad);
+    let given = world.get_resource::<GivenSwitches>().cloned().unwrap_or_default();
     let mut changed = Vec::new();
+    let mut kept = 0;
     let mut listed = 0;
     for (i, c) in lists {
         let Some(v) = ini_get(&text, SECTION, list[i].key) else { continue };
         let v = v.trim();
+        let key = list[i].key;
         if (c.save)(world) == v {
             listed += 1;
+            continue;
+        }
+        let flags = given.named_in(list[i].note);
+        if let (Some(f), true) = (&flags, given.win) {
+            listed += 1;
+            kept += 1;
+            info!("settings: {key} kept at {} as {f} on the command line set it; [{SECTION}] {key}={v} of {} is not applied in a test run", (c.chosen)(world), path.display());
         } else if (c.load)(world, v) {
             listed += 1;
-            changed.push(format!("{} {}", list[i].key, (c.chosen)(world)));
+            changed.push(format!("{key} {}", (c.chosen)(world)));
+            if let Some(f) = flags {
+                warn!("settings: [{SECTION}] {key}={v} of {} overrides {f} on the command line: {key} {}", path.display(), (c.chosen)(world));
+            }
         } else {
-            bad.push(format!("{}={v}", list[i].key));
+            bad.push(format!("{key}={v}"));
         }
     }
+    let shown = |s: &Setting, v: f32| match s.slider {
+        Some(sl) => sl.text(v),
+        None => (if v > 0.5 { "on" } else { "off" }).to_string(),
+    };
     for &(i, v) in &found {
         let s = list[i];
-        if s.value(world) != v {
-            s.put(world, v);
-            changed.push(match s.slider {
-                Some(sl) => format!("{} {}", s.key, sl.text(v)),
-                None => format!("{} {}", s.key, if v > 0.5 { "on" } else { "off" }),
-            });
+        let now = s.value(world);
+        if now == v {
+            continue;
+        }
+        let flags = given.named_in(s.note);
+        if let (Some(f), true) = (&flags, given.win) {
+            kept += 1;
+            info!("settings: {} kept at {} as {f} on the command line set it; [{SECTION}] {}={} of {} is not applied in a test run", s.key, shown(&s, now), s.key, s.stored_text(v), path.display());
+            continue;
+        }
+        s.put(world, v);
+        changed.push(format!("{} {}", s.key, shown(&s, v)));
+        if let Some(f) = flags {
+            warn!("settings: [{SECTION}] {}={} of {} overrides {f} on the command line: {} {}", s.key, s.stored_text(v), path.display(), s.key, shown(&s, v));
         }
     }
     for b in &bad {
         warn!("settings: [{SECTION}] {b} in {} is not 1 or 0 (a slider's: a number, a list's: one of its choices); left as it is", path.display());
     }
     let what = if changed.is_empty() { String::new() } else { format!(": {}", changed.join(", ")) };
-    info!("settings: {} of {} switch(es) read from {}, {} changed{what}", found.len() + listed, list.len(), path.display(), changed.len());
+    let kept = if kept == 0 { String::new() } else { format!(", {kept} kept as the command line set them") };
+    info!("settings: {} of {} switch(es) read from {}, {} changed{what}{kept}", found.len() + listed, list.len(), path.display(), changed.len());
 }
 
 /// Write every switch's state to the INI, keeping its other lines.
@@ -615,6 +683,32 @@ mod tests {
         assert!(std::fs::read_to_string(&path).unwrap().contains("[Settings]\nlamp=1"));
         let app = start(&path);
         assert!(app.world().resource::<Lamp>().0, "the stored state wins");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_switch_given_on_the_command_line_wins_in_a_test_run_only() {
+        assert_eq!(note_switches("On: a lamp. (--lamp, --no-lamp)"), ["--lamp", "--no-lamp"]);
+        assert_eq!(note_switches("Off: --no-reverb."), ["--no-reverb"]);
+        assert_eq!(note_switches("as a part of --shadow-distance. (--graphics-only no-glow)"), ["--graphics-only"]);
+        let dir = std::env::temp_dir().join(format!("nvf-settings-given-{}", std::process::id()));
+        let path = dir.join("NVForever.ini");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "[Settings]\nlamp=0\n").unwrap();
+        let start = |given: &[&str], win: bool| {
+            let mut app = App::new();
+            app.insert_resource(Lamp(true));
+            app.insert_resource(SettingsFile(Some(path.clone())));
+            app.insert_resource(GivenSwitches { given: given.iter().map(|g| g.to_string()).collect(), win });
+            add_setting(&mut app, Setting { note: "On: a lamp. (--lamp)", ..setting("lamp", "Test") });
+            app.add_systems(PostStartup, apply_stored);
+            app.update();
+            app.world().resource::<Lamp>().0
+        };
+        assert!(start(&["--lamp"], true), "a test run keeps the command line's state");
+        assert!(!start(&["--lamp"], false), "otherwise the stored state wins (with a warning)");
+        assert!(!start(&["--other"], true), "a switch the row does not name is no reason to keep it");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
