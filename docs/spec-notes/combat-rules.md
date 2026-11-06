@@ -1497,10 +1497,12 @@ Owner's request, 2026-10-11. Code: `fnv_combat::condition`, `fnv_sim::inventory`
     Flamer, Heavy Incinerator and Incinerator (health 200), the grenade machineguns,
     the chainsaw, the Rippers, the Thermic Lance and Euclid's C-Finder at 0.005, the
     binoculars and the BB gun at 0 [observed: `fnvtool esm decode`, every WEAP].
-  - It applies to every actor's weapon, the player's and an NPC's (an NPC's own shots and
-    landed blows since 2026-10-20, `nvf_play::combat::actor_attacks`) [hypothesis: the
-    documentation names no actor; the original's NPC weapons do wear, below]. A shot from
-    a scripted FireWeapon wears nothing [design].
+  - It applies to the player's weapon. An NPC's own shots and landed blows wear its
+    weapon only when the weapon's record sets its own Damage to Weapon Mult (since
+    2026-11-06, #1334; `nvf_play::combat::npc_weapon_wears`) [observed: the weapons
+    without it did not wear (o14_reach, o15_round, below), Cook-Cook's Incinerator, which
+    has it, did; hypothesis: that the override is what decides]. A shot from a scripted
+    FireWeapon wears nothing [design].
   - [hypothesis: the setting's role.] It fits the published figure the owner quoted:
     "about 395 standard rounds, the equivalent of 33 reloads" for the 10mm Pistol from
     full condition. Its record has health 80 and 12 rounds [observed]: 80 ÷ 0.2 = 400
@@ -1542,7 +1544,8 @@ Owner's request, 2026-10-11. Code: `fnv_combat::condition`, `fnv_sim::inventory`
     weapons' GetEquippedCurrentHealth 5 did not move at all: lead pipe 49.95 over 10
     swings, sledgehammer 149.85 over 12, and an NPC 10mm Pistol 79.92 over 42 shots, a
     Hunting Rifle 299.7 over 15 [observed]. So these NPCs' weapons do not wear from
-    their own attacks; ours wears them (`actor_attacks`) — #1334.
+    their own attacks; ours wore them until #1334 and now wears only weapons with the
+    override, as the Incinerator.
 - **A weapon that is hit** [design: the owner's rule]. An actor holding its weapon
   drawn has a hit volume along the weapon (`hitvol::WEAPON_PART`: one capsule along the
   longest side of the model's bounds, `nvforever::limbs::weapon_segment`).

@@ -3222,6 +3222,13 @@ pub fn wear_weapon(
 /// where it is (`at`) as one hit to nothing, and its owner says WeaponBroke. A weapon
 /// the simulation's inventory lacks (the renderer's choice, `strike_weapon`) does not
 /// wear [design].
+///
+/// Only a weapon whose record sets its own Damage to Weapon Mult wears from an NPC's
+/// attacks [observed: observer captures o14_reach and o15_round, 2026-11-01 (#1334): a
+/// lead pipe, sledgehammer, 10mm Pistol and Hunting Rifle stayed at their exact health
+/// through 10-42 attacks each, against god-mode and mortal players; Cook-Cook's
+/// Incinerator, which has the override, wore. That the override is what decides is
+/// [hypothesis], the one rule both fit].
 #[allow(clippy::too_many_arguments)]
 fn wear_actor_weapon(
     forms: &CombatForms,
@@ -3234,7 +3241,7 @@ fn wear_actor_weapon(
     points: f32,
     at: V3,
 ) {
-    if actor == FormId::PLAYER_REF || points <= 0.0 {
+    if actor == FormId::PLAYER_REF || points <= 0.0 || !npc_weapon_wears(forms, item) {
         return;
     }
     let Some(w) = wear_weapon(forms, sim, stats, None, Some(broken), script, actor, item, points, Some(at)) else { return };
@@ -3242,6 +3249,12 @@ fn wear_actor_weapon(
     e.attacks += 1;
     e.points += (w.before - w.after) * forms.item_health(item) as f32;
     e.last = w.after;
+}
+
+/// Whether an NPC's own attacks wear `weapon`: only one whose record overrides Damage to
+/// Weapon Mult ([`wear_actor_weapon`]).
+pub fn npc_weapon_wears(forms: &CombatForms, weapon: FormId) -> bool {
+    forms.weapons.get(&weapon).is_some_and(|w| w.damage_to_weapon_mult.is_some())
 }
 
 /// A hit landed on the weapon `target` holds (§17): the hit's damage comes off the
@@ -4899,6 +4912,16 @@ fn sound_edid(sfx: Option<&Sfx>, sound: FormId) -> String {
 mod tests {
     use super::*;
     use crate::phys::NpcBody;
+
+    #[test]
+    fn npc_weapons_wear_only_with_their_own_damage_to_weapon_mult() {
+        let mut forms = CombatForms::default();
+        forms.weapons.insert(FormId(1), fnv_combat::data::WeaponStats::default());
+        forms.weapons.insert(FormId(2), fnv_combat::data::WeaponStats { damage_to_weapon_mult: Some(0.005), ..Default::default() });
+        assert!(!npc_weapon_wears(&forms, FormId(1)), "the masters' setting: an NPC's weapon does not wear (#1334)");
+        assert!(npc_weapon_wears(&forms, FormId(2)), "the record's override: it wears, as Cook-Cook's Incinerator");
+        assert!(!npc_weapon_wears(&forms, FormId(3)), "no record");
+    }
 
     #[test]
     fn the_magazine_never_holds_more_than_is_carried() {

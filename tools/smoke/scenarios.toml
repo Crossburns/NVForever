@@ -5032,14 +5032,14 @@ expect = [
 name = "combat-npc-weapon-wear"
 launch = "ncr-fiends-four"
 source = "docs/spec-notes/combat-rules.md §17: an NPC's own shots wear its weapon as the player's, fDamageToWeaponValue (0.2) a shot or the record's Damage to Weapon Mult in its place (GECK wiki SetWeaponDegradationMult); outstanding.md §4"
-note = "the troopers' Service Rifles lose 0.2 a shot, Cook-Cook's Flamer (ours draws it, 2026-10-20) or Incinerator its override 0.005 a shot; the original's 2.19 a burst is not explained by it (combat-rules.md §17)"
+note = "the troopers' Service Rifles (no override) do not wear (since #1334, 2026-11-06; they lost 0.2 a shot before), Cook-Cook's Flamer (ours draws it, 2026-10-20) or Incinerator its override 0.005 a shot; the original's 2.19 a burst is not explained by it (combat-rules.md §17)"
 areas = ["combat"]
 paths = ["crates/fnv-combat/src/condition.rs", "engine/nvf-play/src/combat.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:0x000F36F5:player:-400:600:0,3:moveto:0x000F36F6:player:-200:650:0,3:moveto:0x0015CE0A:player:0:600:0,3:moveto:0x0015CE08:player:200:650:0" }
 args = ["--cell", "Goodsprings", "--pos=-43200,72000,7000", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 130
 expect = [
-  { re = 'npc weapon wear summary: \S+.s 000E9C3B lost .*\((?P<n>[\d.]+) an attack\)', range = [0.199, 0.201], all = true, label = "a trooper's Service Rifle loses 0.2 a shot" },
+  { re = 'npc weapon wear summary: .*000E9C3B', count = 0, label = "a trooper's Service Rifle does not wear from its own shots (#1334: the original's NPC weapons without an override did not wear, o14_reach and o15_round)" },
   { re = 'npc weapon wear summary: 000F5704.s (0000432D|000906DA) lost .*\((?P<n>[\d.]+) an attack\)', range = [0.004, 0.006], label = "Cook-Cook's Flamer or Incinerator loses its override, 0.005 a shot" },
 ]
 
