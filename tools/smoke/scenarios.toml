@@ -19224,6 +19224,37 @@ order = [[
 ]]
 
 [[scenario]]
+name = "house-screen-house-then-yes-man"
+source = "#1542: Mr. House's penthouse screen shows House's face until Yes Man is uploaded (VMQYesMan01 stage 70), then Yes Man's: the idle tree's Idle-section looks played as a creature's standing look, the actor's screens shown only at material alpha 1/2 or more, and an idle's material tracks over the base idle's at the same priority"
+note = "Lucky38MrHouseREF 0x001264C5 (base MrHouse, screens NVDefaultScreen.NIF); the tree's roots NVPHMCYesMan (GetStage VMQYesMan01 >= 70), LooseNVPHMCconnectionLost, NVPHMCHouse [observed: FalloutNV.esm]. Before the fix the screen showed Yes Man's face from the start"
+areas = ["idles", "actors"]
+paths = ["engine/nvf-assets/src/actor.rs", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/material_anim.rs", "engine/nvforever/src/idles.rs", "engine/nvforever/src/actor_materials.rs", "crates/fnv-game/src/idles.rs"]
+env = { NVF_PLAY_TEST_FACE = "6:001264C5", NVF_PLAY_TEST_GOTO = "7:-1290:5590:18905", NVF_PLAY_TEST_LOOK = "8:135:22", NVF_PLAY_TEST_SHOTS = "9:house_screen_house.png,13:house_screen_yes_man.png", NVF_PLAY_TEST_CONSOLE = "10:setstage VMQYesMan01 70" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 15
+manual = "house_screen_house.png: House's face on the big screen; house_screen_yes_man.png: Yes Man's face"
+order = [[
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCHouseIdle .*\(Standing\)', label = "House's face first" },
+  "console: > setstage VMQYesMan01 70",
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCYesManIdle .*\(Standing\)', label = "Yes Man's face once he is uploaded" },
+]]
+
+[[scenario]]
+name = "house-screen-connection-lost"
+source = "#1542, owner 2026-11-05: the screen says Connection Lost once House is neutralized (GetGlobalValue VStoryEventMrHouseNeutralized > 0) and before Yes Man is uploaded: the tree's root LooseNVPHMCconnectionLost, an Idle-section idle with no children, played as the standing look"
+areas = ["idles", "actors"]
+paths = ["engine/nvforever/src/idles.rs", "crates/fnv-game/src/idles.rs", "crates/fnv-game/src/data.rs"]
+env = { NVF_PLAY_TEST_FACE = "6:001264C5", NVF_PLAY_TEST_GOTO = "7:-1290:5590:18905", NVF_PLAY_TEST_LOOK = "8:135:22", NVF_PLAY_TEST_SHOTS = "13:house_screen_lost.png", NVF_PLAY_TEST_CONSOLE = "10:set VStoryEventMrHouseNeutralized to 1" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 15
+manual = "house_screen_lost.png: Connection Lost... on the big screen"
+order = [[
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCHouseIdle .*\(Standing\)', label = "House's face first" },
+  "console: > set VStoryEventMrHouseNeutralized to 1",
+  { re = 'idle: Lucky38MrHouseREF plays LooseNVPHMCconnectionLost .*\(Standing\)', label = "Connection Lost once House is neutralized" },
+]]
+
+[[scenario]]
 name = "silver-rush-volunteer"
 source = "#1550: the Silver Rush's entry scene: the player walks into VFSVanGraffIntroTrigger, Gloria talks with the customer and tells Jean-Baptiste \"Do it.\", and his Use Weapon package (VFSJeanBaptisteShootVolunteerPackage, Always Hit) shoots the kneeling volunteer; the volunteer's OnHit (SCPT 0x0012424D) kills and disintegrates him and the scene goes on. Scripted shots aim at the target's posed chest, so a kneeling target is hit"
 note = "the volunteer (VFSVanGraffVolunteerREF 0x00124122) kneels restrained on 0x00124256; aimed at a standing actor's chest height, the shot went over him into the wall and the quest variable stayed at 5 (soft-lock)"
