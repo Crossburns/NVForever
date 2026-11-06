@@ -7,7 +7,8 @@ mod common;
 
 use common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
-use fnv_game::functions::{actor_value, set_actor_value_current};
+use fnv_game::combat::HitInfo;
+use fnv_game::functions::{actor_value, set_actor_value_current, Ctx};
 use fnv_game::game::{Game, GameConfig};
 use fnv_game::GameData;
 use fnv_script::FunctionTable;
@@ -186,4 +187,44 @@ fn the_drain_kills_and_death_ends_effects_without_no_death_dispel() {
     assert_eq!(g.effects[0].source, FormId(BURNING));
     // A dead target takes no new effect.
     assert!(g.apply_hit_effect(P, FormId(POISON), None).is_empty());
+}
+
+fn ask(g: &mut Game, opcode: u16) -> f64 {
+    let ctx = Ctx { unit: "test".into(), opcode, on: Some(P), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+    g.call_function(&ctx, &[]).num()
+}
+
+/// A wound, then a drain kills: the wound is not the killing blow (#1588).
+#[test]
+fn a_drains_death_has_no_killing_hit() {
+    const GET_HIT_LOCATION: u16 = 0x1187;
+    const GET_CAUSE_OF_DEATH: u16 = 0x118D;
+    const GET_KILLING_BLOW_LIMB: u16 = 0x11F0;
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(!g.hit(P, 10.0, HitInfo { attacker: None, weapon: None, location: 3, critical: false, limb: None }).died);
+    g.apply_hit_effect(P, FormId(DEADLY), None);
+    g.frames(180);
+    assert!(g.is_dead(P));
+    assert_eq!(ask(&mut g, GET_KILLING_BLOW_LIMB), -1.0);
+    assert_eq!(ask(&mut g, GET_CAUSE_OF_DEATH), -1.0);
+    assert_eq!(ask(&mut g, GET_HIT_LOCATION), 3.0);
+}
+
+/// The player's death by their own effect, or a companion's, earns no kill credit (#1614).
+#[test]
+fn a_players_death_by_a_drain_earns_no_credit() {
+    use fnv_game::misc_stats::TOTAL_THINGS_KILLED;
+    let mate = FormId(0x7777);
+    for caster in [P, mate] {
+        let f = fixture();
+        let mut g = game(&f);
+        g.extra.entry(mate).or_default().teammate = true;
+        g.apply_hit_effect(P, FormId(DEADLY), Some(caster));
+        g.frames(180);
+        assert!(g.is_dead(P));
+        assert_eq!(g.extra[&P].killer, Some(caster));
+        assert_eq!(g.player.xp, 0.0);
+        assert_eq!(g.misc_stat(TOTAL_THINGS_KILLED), 0.0);
+    }
 }

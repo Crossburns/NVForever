@@ -2288,6 +2288,26 @@ expect = [
 ]
 
 [[scenario]]
+name = "goodbye-at-once"
+source = "owner's playtest 2026-11-05 against the original (issue #1606; docs/spec-notes/dialogue.md §5): choosing a Goodbye closes the menu at once and the actor finishes the line as the player walks away (Game::choose, Speech::farewell)"
+note = "Chet's conversation of talk-gestures-menu, left by Tab (the Goodbye choice) once he offers choices. Before #1606 the line was said in the dialogue screen and the conversation ended after it (its line ended before the conversation did); now the conversation ends first and the line ends in the world, not cut, with its subtitle drawn as a SayTo line's"
+areas = ["dialogue"]
+paths = ["crates/fnv-game/src/dialogue.rs", "engine/nvf-play/src/dialogue.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "10:GSChetRef=leave" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--hour", "12"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue: choice \d+ made: .*, GSChetRef answers with ', label = "Tab picks Chet's Goodbye choice" },
+  { re = 'dialogue: conversation with GSChetRef ended \(goodbye, \d+ lines\)', label = "the conversation ends at once" },
+  { re = 'dialogue: the conversation ends on the Goodbye choice; GSChetRef finishes the line \S+ in the world', label = "and Chet goes on with the line in the world" },
+  { re = 'subtitle: Chet: \S', label = "its subtitle, as any line said in the world" },
+  { re = 'script: GSChetRef ended line ', label = "the line ends after the conversation, said to the end" },
+]]
+expect = [
+  { re = 'script: GSChetRef cut line', count = 0, label = "the line is not cut" },
+]
+
+[[scenario]]
 name = "intercom-goodbye-line"
 source = "docs/spec-notes/talking-activators.md §2 (fnv_game::talking_activators): a Goodbye greeting through a talking activator opens a conversation that the line ends [owner statement 2026-10-22]; owner playtest 2026-10-22, Come Fly With Me: Chris Haversam's \"I'm letting you in\" from the REPCONN intercom was never heard, the next try said \"Stop messing around with the intercom\" and the door stayed locked"
 note = "The first activation is the Say Once \"Hey! Over here!\" conversation (left); the second sets the intercom's UsingUpstairsIntercom and Chris (upstairs, in RocketLabTop) says the Goodbye greeting through it in a conversation; its end script unlocks the door beside it, which the third activation then opens. intercom_goodbye.png is the dialogue screen while the line is said"
@@ -6597,6 +6617,40 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-days-write"
+source = "#1607: a new game starts at --day 30, then GameDaysPassed is set to 25.375 and saved; save-days-load reads it back, so run them together"
+note = "GameDaysPassed runs on with the clock, a hundredth of a day in 28.8 s of play at TimeScale 30, so the patterns leave it room. The fraction is on purpose: the residents' start clock is in whole days, so a write of it over the save shows as 25.0x (or the plugins' 5.00)"
+areas = ["save", "ai"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/sky.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "crates/fnv-save/"]
+env = { NVFOREVER_HOME = "save-days-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "19:getglobalvalue GameDaysPassed;20:set GameDaysPassed to 25.375;21:getglobalvalue GameDaysPassed;save smoke-days;22:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--day", "30"]
+run_seconds = 26
+order = [[{ re = "ai: the game's clock is the start clock's: .*GameDaysPassed 30[.]", label = "the residents' first think starts the clock" }, { re = 'console: GetGlobalValue >> 30\.0\d', label = "the first read comes after it" }]]
+expect = [
+  { re = 'weather: the sky starts on day 30 ', label = "--day starts the sky" },
+  { re = 'console: GetGlobalValue >> 30\.0\d', label = "--day reaches a new game" },
+  { re = 'console: GetGlobalValue >> 25\.3[7-9]', label = "the day is 25.375 before the save" },
+  { re = 'save: wrote .*smoke-days\.nvfsave \(manual', label = "the save is written" },
+]
+
+[[scenario]]
+name = "save-days-load"
+source = "#1607: --load keeps the save's GameDaysPassed with the residents running (the default in --play), and the sky starts on the save's day"
+note = "GameDaysPassed runs on with the clock, a hundredth of a day in 28.8 s of play at TimeScale 30, so the patterns leave it room; the residents' start clock written over the save would read 5.00 (25.0x if it held the save's whole day). No check of volatility rolls: every base-game climate's volatility is 0 (docs/spec-notes/world.md §6), so none can fire here. The sky's day line is the check, and engine test a_sky_on_the_games_day_rolls_nothing_following_it covers the rolls"
+areas = ["save", "ai"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/sky.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/save.rs", "crates/fnv-save/"]
+env = { NVFOREVER_HOME = "save-days-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:getglobalvalue GameDaysPassed;17.5:getglobalvalue GameDaysPassed;18.5:close" }
+args = ["--play", "--load", "smoke-days", "--no-voice"]
+run_seconds = 22
+order = [[{ re = 'load: restored .*smoke-days\.nvfsave', label = "the save is restored" }, { re = "ai: the game's clock is the save's: .*GameDaysPassed 25[.](3[7-9]|4[0-9])", label = "the residents' first think leaves the save's clock" }, { re = 'console: GetGlobalValue >> 25\.(3[7-9]|4\d)', label = "a read comes after that think" }]]
+expect = [
+  { re = "ai: .*the package choice is the game's", label = "the residents are on" },
+  { re = 'weather: the sky starts on day 25 ', label = "the sky starts on the save's day" },
+  { re = 'console: GetGlobalValue >> 25\.(3[7-9]|4\d)', count = 2, label = "both reads hold the save's day, fraction and all" },
+  { re = 'weather: \S+ kept from the saved game', label = "the sky keeps the saved weather" },
+]
+
+[[scenario]]
 name = "active-quest-write"
 source = "issue #1610: the active quest a script forced is read by GetActiveQuest after a load; the first half: force VCG02, read it, save (active-quest-load reads this save, so run them together)"
 areas = ["save", "scripts"]
@@ -8134,6 +8188,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "i1-placeatme-expl"
+source = "issue #1617: PlaceAtMe of a marker drew the marker's editor model in the world (a large red box) and PlaceAtMe of an explosion drew its effect model; created references now go by the filter placed ones do (engine/nvf-play/src/dropped.rs draws_model)"
+note = "In Goodsprings: an explosion at 14 s, a marker at 20 s and a bottle at 22 s, placed at the player. The bottle must still be drawn. Frame i1_after.png in target/smoke: no red box where the player stands"
+areas = ["console", "rendering"]
+paths = ["engine/nvf-play/src/dropped.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.placeatme MineFragExplosion 1;15:close;20:player.placeatme XMarkerHeading 1;21:close;22:player.placeatme 0010A1F6 1;23:close", NVF_PLAY_TEST_SHOTS = "25:i1_after.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--heading", "0", "--no-voice"]
+run_seconds = 29
+expect = [
+  { re = 'console: PlaceAtMe on player >> ', count = 3, label = "the three PlaceAtMe calls ran" },
+  { re = 'combat: explosion MineFragExplosion at \(', label = "the explosion still goes off" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes.markerxheading\.nif', count = 0, label = "the marker draws nothing" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes.effects.explosion', count = 0, label = "the explosion's reference draws nothing" },
+  { re = 'dropped reference 0x[0-9A-F]{8} drawn: meshes', min = 1, label = "the bottle is still drawn" },
+]
+
+[[scenario]]
 name = "placeatme-fights"
 source = "owner 2026-10-16: creatures a script places (PlaceAtMe) never fought; they should sense the enemies around them from the moment they are placed (engine/nvforever/src/residents.rs take_created, fnv_game::Game::created_actors)"
 note = "a cazador (NVCrCazador 000E584D) placed at the player at 10 s by the script test aid in Goodsprings; the player's health raised to 5000 by the console, no god mode; the cazador should become a resident, sense the player and attack, its sting poisoning"
@@ -8691,6 +8762,41 @@ run_seconds = 22
 expect = [
   "death camera: the player died in third person: the body drops as a ragdoll, the camera stays put and looks at it",
   { re = 'death camera: the body is on the ground [\d.]+ s after the death', label = "the ragdoll comes to rest" },
+]
+
+[[scenario]]
+name = "g5-self-kill-1"
+source = "#1614: the player at 50 Health fires a 40 mm grenade at their own feet and dies of it: no kill XP, statistic or challenge (docs/spec-notes/experience.md, a design choice)"
+note = "the blast misses the player on some runs (#1581, 2 of 3 on main), so the death line is marked; player-own-hit-no-credit is the same check with no blast"
+areas = ["combat"]
+paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/challenges.rs", "crates/fnv-game/src/misc_stats.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0007EA25", NVF_PLAY_TEST_GIVE = "0007EA26:8", NVF_PLAY_TEST_CONSOLE = "4:player.damageav health 150;player.getav health;player.getav xp;4.6:close", NVF_PLAY_TEST_LOOK = "6:46:-75", NVF_PLAY_TEST_CONTROL = "7:weapon,10:fire" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
+run_seconds = 18
+expect = [
+  { re = 'combat: explosion 40mmGrenadeExplosion at', label = "the grenade goes off" },
+  { re = 'combat: the player died, killed by Player', label = "the player dies of it", known_failing = "#1581: the blast misses the player on some runs" },
+]
+forbid = [
+  { re = 'xp: \S+ XP from a kill', label = "no kill XP" },
+  { re = 'challenge: (Lord Death|Kaboom|The Rifleman) ', label = "no kill challenge" },
+]
+
+[[scenario]]
+name = "player-own-hit-no-credit"
+source = "#1614: the player's own hit with the grenade rifle kills them (the hit aid, the path their blast takes, without #1581's misses): no kill XP or challenge (docs/spec-notes/experience.md, a design choice)"
+areas = ["combat"]
+paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/challenges.rs", "crates/fnv-game/src/misc_stats.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_HIT = "8:player:500:0x0007EA25" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
+run_seconds = 14
+order = [[
+  'combat: the player died, killed by Player',
+  { re = 'test aid: the player hits 0x00000014 for \d+ with ' },
+]]
+forbid = [
+  { re = 'XP from a kill', label = "no XP for their own death" },
+  { re = 'challenge: (Lord Death|The Rifleman|Kaboom) ', label = "no challenge for their own death" },
 ]
 
 [[scenario]]
@@ -9342,6 +9448,40 @@ expect = [
   { re = 'test aid: 0x[0-9A-F]{8} hits 0x00000014 for 20: health', label = "Very Hard: the same hit takes 20 from the player" },
   { re = 'test aid: the player hits 0x[0-9A-F]{8} for 5: health', label = "Very Hard: the player's same hit does 5" },
 ]
+
+[[scenario]]
+name = "damageav-health-kills"
+source = "#1568: DamageActorValue on Health past zero kills an NPC and the player and knocks an essential actor out; no killer, so no XP (docs/spec-notes/unconscious.md §2.2, a hypothesis: observer-checks.md check 89)"
+note = "in Goodsprings: Easy Pete (not essential) survives 10 and dies of 9999, and is still dead 5 s later; Sunny Smiles is made essential and is knocked out; the player last, as the death ends the play"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/combat.rs", "crates/fnv-game/src/unconscious.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:EasyPeteRef.damageav health 10;EasyPeteRef.getdead;EasyPeteRef.damageav health 9999;EasyPeteRef.getdead;SunnyRef.setactorrefessential 1;SunnyRef.damageav health 9999;SunnyRef.getdead;15:close;19:EasyPeteRef.getdead;player.damageav health 9999;player.getdead;20:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 24
+order = [[
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00' },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00' },
+]]
+expect = [
+  { re = 'console: GetDead on EasyPeteRef >> 0\.00', count = 1, label = "10 of his health leaves him standing" },
+  { re = 'console: GetDead on EasyPeteRef >> 1\.00', count = 2, label = "Easy Pete is dead and stays dead" },
+  { re = 'console: GetDead on SunnyRef >> 0\.00', label = "the essential actor is not dead" },
+  { re = 'knockout: Sunny Smiles \S+ knocked out \(essential\)', label = "she is knocked out" },
+  { re = 'console: GetDead on player >> 1\.00', label = "the player is dead" },
+  "combat: the player died",
+]
+forbid = [{ re = 'xp: \S+ XP from a kill', label = "no killer, no kill XP" }]
+
+[[scenario]]
+name = "damageav-health-god-mode"
+source = "#1568: DamageActorValue on Health past zero leaves a player in god mode standing (docs/spec-notes/unconscious.md §2.2)"
+areas = ["scripts", "combat"]
+paths = ["crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.damageav health 9999;player.getdead;15:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 18
+expect = [{ re = 'console: GetDead on player >> 0\.00', label = "the player stands" }]
+forbid = [{ re = 'the player died', label = "the player dies" }]
 
 [[scenario]]
 name = "knockout-boxing-gloves"
@@ -10979,6 +11119,20 @@ expect = [
 forbid = [{ text = "move refused", label = "every move the sides choose is legal" }]
 
 [[scenario]]
+name = "f5-helios-rows-untouched"
+source = "issue #1620: two solar reflector rows at HELIOS One (0x000D7D09, 0x000D7D29) are flagged Initially Disabled under an enabled enable parent; they were drawn with no collision, so the player fell through. The physics at a cell load and render streaming's start rule now go by the simulation's rule"
+note = "The player drops 400 units onto the plain neighbour 0x000D7D0A, then is set by coordinates 400 units above the flagged row 0x000D7D09. No console line names the flagged row, before or after the cell loads: a read would create its state and hide the bug. Both drops must end on a row (z about 5321), not on the ground through it (5235.5)"
+areas = ["physics", "rendering"]
+paths = ["engine/nvf-play/src/phys.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/script_draw.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.moveto 000D7D0A 0 0 400;15:close;30:player.getpos x;player.getpos y;player.getpos z;player.setpos x 22010.1;player.setpos y 1834.8;player.setpos z 5632;31:close;40:player.getpos x;player.getpos y;player.getpos z;41:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 45
+expect = [
+  { re = 'console: GetPos on player >> 532[0-3]\.', count = 2, label = "both drops end on a row: on the plain one and on the flagged one" },
+  { re = 'reference 0x000D7D(09|29) drawn \(enabled at run time\)', count = 0, label = "render streaming draws the flagged rows, so script_draw has nothing to draw" },
+]
+
+[[scenario]]
 name = "enable-disable-fade"
 source = "docs/design/script-function-params.md §3: Enable fades in unless FadeIn is 0, Disable fades out only with FadeOut 1 (GECK wiki Enable, Disable; 544 shipped calls pass the flag)"
 note = "Sunny (SunnyRef 00104E85) is disabled with a fade at 14 s, enabled with the default fade at 17 s, then disabled and enabled without one at 20 s and 22 s: one fade each way. A fade lasts 2 s: the time the original kept a Disable 1 reference enabled (capture disable_fade_long); the fade in's length is a guess"
@@ -11271,6 +11425,31 @@ expect = [
   { re = 'dismember: gore of 00104C79 at rest: [0-9]+ pieces lie', label = "the pieces come to rest (how far from the corpse: the line)" },
 ]
 manual = "dismember_head.png and dismember_after.png: Chet's head gone with a neck cap, bits about; his left arm lying apart with caps at both ends; his left leg gone with a cap"
+
+[[scenario]]
+name = "b3-killing-blow"
+source = "#1588: Easy Pete is shot once and lives, then KillActor with no cause: GetKillingBlowLimb and GetCauseofDeath read -1 after the death, not the earlier shot's (docs/spec-notes/dismemberment.md §5)"
+note = "the shot must land and leave him alive, or the two -1 would prove nothing; Pete is 65 Health [observed: this run on main, combat: hit ... health 55/65]"
+areas = ["combat", "scripts"]
+paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/functions/fighting.rs", "crates/fnv-game/src/resurrect.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_SCRIPT = "6:moveto:EasyPeteRef:player:0:300:0,8.8:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_CONTROL = "7:weapon,9:aimnpc,9.5:fire", NVF_PLAY_TEST_CONSOLE = "12:EasyPeteRef.getdead;EasyPeteRef.getav health;EasyPeteRef.getkillingblowlimb;EasyPeteRef.getcauseofdeath;EasyPeteRef.killactor;EasyPeteRef.getdead;EasyPeteRef.getkillingblowlimb;EasyPeteRef.getcauseofdeath;13:close" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 17
+order = [[
+  { re = 'combat: hit 0x00104C80 on .*, health [1-9]\d*/\d+' },
+  'console: GetDead on EasyPeteRef >> 0.00',
+  'console: GetKillingBlowLimb on EasyPeteRef >> -1.00',
+  'console: GetCauseofDeath on EasyPeteRef >> -1.00',
+  'console: KillActor on EasyPeteRef',
+  'console: GetDead on EasyPeteRef >> 1.00',
+  'console: GetKillingBlowLimb on EasyPeteRef >> -1.00',
+  'console: GetCauseofDeath on EasyPeteRef >> -1.00',
+]]
+expect = [
+  { re = 'console: GetActorValue on EasyPeteRef >> (-?[\d.]+)', range = [0.01, 64.99], label = "wounded and alive before KillActor" },
+  { re = 'console: GetKillingBlowLimb on EasyPeteRef >> -1\.00', count = 2, label = "-1 before and after the death" },
+  { re = 'console: GetCauseofDeath on EasyPeteRef >> -1\.00', count = 2, label = "-1 before and after the death" },
+]
 
 [[scenario]]
 name = "sever-chet"
@@ -19610,6 +19789,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "i2-setpos-console"
+source = "issue #1618: a reference moved from the console kept its collision's new place but was drawn at its old one: the tick clears Game::turned before the drawing reads it. The drawing followers now also read RefRepose (engine/nvf-play/src/moved.rs, script_draw.rs)"
+note = "The Goodsprings Mojave Express box (0x0015F22D), seen from 250 units away, raised 150 units with a console SetPos at 21 s. The log lines show only that the simulation moved it, which they showed before the fix too: a PASS here does not show the box moved. Compare by eye, in target/smoke: i2_before.png (19.5 s) and i2_after.png (26 s), same view; the box must stand about 150 units higher in i2_after.png"
+areas = ["console", "scripts", "rendering"]
+paths = ["engine/nvf-play/src/moved.rs", "engine/nvf-play/src/script_draw.rs", "engine/nvf-play/src/script.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.moveto 0015F22D 0 -250 0;15:close;21:0015F22D.getpos z;0015F22D.setpos z 8537;0015F22D.getpos z;22:close", NVF_PLAY_TEST_LOOK = "17:0:-8", NVF_PLAY_TEST_SHOTS = "19.5:i2_before.png,26:i2_after.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--heading", "0", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'console: SetPos on vMEGoodSpringsRef >> 0\.00', label = "SetPos ran" },
+  { re = 'console: GetPos on vMEGoodSpringsRef >> 8537\.00', label = "GetPos reads the raised height (the frames must show it: see the note)" },
+]
+manual = "compare i2_before.png with i2_after.png in target/smoke: the box must stand about 150 units higher in the second; no log line proves it"
+
+[[scenario]]
 name = "mccarran-monorail-arrival"
 source = "issue #1605 (owner): leaving Camp McCarran's Terminal Building by the door onto the monorail track put the player under and inside the building. The door 0x000F627D (CampMCTermInt02) leads to 0x001287F6 at (-9263, 70863, 4792) in WastelandNV, a platform about 460 units above the terrain; the arrival rule has to find that floor (crates/fnv-phys/src/arrival.rs, physics.md §6.2; the squares around an outdoor arrival load first since #1633)"
 note = "the player starts in the Terminal Building and takes the monorail door at 8 s"
@@ -20110,6 +20304,26 @@ expect = [
   { re = 'DialogMenu drawn by hand', count = 0, label = "the whole file was ready" },
   { re = 'dialogue: choose Some\(\d+\) by Tab', count = 1, label = "Tab still says goodbye with the hint hidden" },
 ]
+
+[[scenario]]
+name = "leveled-additem-player-level"
+source = "#1567: AddItem of VendorAmmoGunsHigh (0x0017B5F6, level-16 entries Tier4 and Tier5 only from level 16) right after SetLevel 20 adds nothing from Tier3 (10mm, .22LR, 20 gauge) and gives Tier4 or Tier5 rounds (.308, 5mm, .45-70, 12.7mm)"
+note = "Counts in the order asked: 10mm stays at the start's 50, .22LR at 0, 20 gauge at the start's 40 [observed: repro run f1-leveled-additem-l20, before the AddItem]; at level 1 they grew to 734, 570 and 166. Then at least one of the higher tiers is above 0 (40 rolls)"
+areas = ["sim", "scripts"]
+paths = ["crates/fnv-sim/src/world.rs", "crates/fnv-sim/src/zones.rs", "crates/fnv-game/src/zones.rs", "crates/fnv-game/src/functions/actor.rs", "crates/fnv-game/src/levelup.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.setlevel 20;player.getlevel;player.additem VendorAmmoGunsHigh 40;14.5:player.getitemcount 00004241;player.getitemcount 0007EA27;player.getitemcount 000E86F2;player.getitemcount 0006B53C;player.getitemcount 0006B53D;player.getitemcount 00121133;player.getitemcount 001429CF;15:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 20
+expect = [
+  { re = 'console: GetLevel on player >> 20\.00', label = "the player is level 20" },
+]
+order = [[
+  { re = 'console: AddItem on player >> ', label = "AddItem ran" },
+  { re = 'console: GetItemCount on player >> 50\.00', label = "no 10mm from the list" },
+  { re = 'console: GetItemCount on player >> 0\.00', label = "no .22LR from the list" },
+  { re = 'console: GetItemCount on player >> 40\.00', label = "no 20 gauge from the list" },
+  { re = 'console: GetItemCount on player >> [1-9]', label = "the higher tiers gave rounds" },
+]]
 
 [[scenario]]
 name = "language-choice"

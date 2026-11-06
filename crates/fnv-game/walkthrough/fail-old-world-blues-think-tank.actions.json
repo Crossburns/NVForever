@@ -1440,7 +1440,7 @@
     },
     {
       "op": "note",
-      "text": "The fight is a stand-in (kill, the player as killer). The quest script (NVDLC03MQ05SCRIPT) sets 40 once Mobius is dead."
+      "text": "The fight is a stand-in (kill, the player as killer). The quest script (NVDLC03MQ05SCRIPT) sets 40 on its next GameMode tick once Mobius is dead; the wait is for that tick rather than a fixed two seconds, as the quest's tick phase depends on how much game time the earlier conversations' Goodbye lines ran (a chosen Goodbye closes the conversation at once and the line goes on in game time, #1606), and a tick that falls inside the brain tank's conversation waits for it."
     },
     {
       "op": "kill",
@@ -1448,8 +1448,7 @@
       "killer": "player"
     },
     {
-      "op": "advance_seconds",
-      "seconds": 2
+      "op": "wait_quest", "quest": "NVDLC03MQ05", "field": "stage", "value": 40, "max_frames": 1800, "label": "MQ05 40 on the quest script's tick"
     },
     {
       "op": "get_quest",

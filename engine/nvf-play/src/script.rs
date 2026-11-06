@@ -284,6 +284,9 @@ pub struct Runtime {
     /// `MenuMode 1001` block still runs once with the button pressed). The menu and the
     /// box that was in front.
     closing: Option<(u16, Option<FormId>)>,
+    /// The game in place is a save's, not a new game's: its clock is the save's (the
+    /// residents leave it alone, `Core::prepare` in `nvforever::residents`).
+    pub restored_from_save: bool,
     /// `--new-game`: the opening starts on the first frame scripts run.
     opening_pending: bool,
     /// A run without a save: the Script Runner's new-game files (`gn_`, `ln_`) run on the
@@ -629,6 +632,7 @@ impl Runtime {
             marked: BTreeSet::new(),
             skip: BTreeSet::new(),
             closing: None,
+            restored_from_save: false,
             opening_pending: new_game,
             new_game_files: false,
             wake_talk: None,
@@ -690,7 +694,13 @@ impl Runtime {
         self.opening_pending = false;
         self.new_game_files = false;
         self.player_cell = None;
-        with_world(self, sim, |rt| rt.snapshot_inventory());
+        self.restored_from_save = true;
+        with_world(self, sim, |rt| {
+            // `Game::restore` above reached only the stand-in, and the Script Runner's files
+            // and the LoadGame events run ahead of the first tick.
+            rt.game.sync_player_level();
+            rt.snapshot_inventory();
+        });
         Ok(changed)
     }
 
@@ -2011,6 +2021,7 @@ pub(crate) fn run_scripts(
     let gt = rt.game.time;
     for e in &events {
         log_event(rt.game.data, e);
+        crate::dialogue::log_farewell(&mut rt.game, e);
         if let EventKind::LineStarted { info, .. } = &e.kind {
             if !hud.knows_line(*info) {
                 hud.remember_line(*info, responses(&play, *info));
@@ -2324,6 +2335,7 @@ impl ScriptState {
             marked: BTreeSet::new(),
             skip: BTreeSet::new(),
             closing: None,
+            restored_from_save: false,
             opening_pending: false,
             new_game_files: false,
             wake_talk: None,
@@ -2352,6 +2364,25 @@ impl ScriptState {
 #[cfg(test)]
 #[path = "script_hand_tests.rs"]
 mod hand_tests;
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+
+    #[test]
+    fn a_loaded_game_rolls_at_the_players_level_before_any_tick() {
+        let mut state = ScriptState::over_no_plugins();
+        let rt = state.rt.as_mut().unwrap();
+        let (forms, refs) = (rt.game.world.forms, rt.game.world.placed);
+        let mut sim = SimState { forms, refs, world: World::new(forms, refs, fnv_sim::SimConfig::default()) };
+        rt.game.player.level = Some(20);
+        let save = rt.game.snapshot();
+        assert_eq!(save.sim.config.player_level, 1);
+        rt.restore_save(&mut sim, save).unwrap();
+        assert_eq!(sim.world.roll_level(), 20);
+        assert_eq!(sim.world.config().player_level, 1);
+    }
+}
 
 #[cfg(test)]
 mod no_messages_tests {
