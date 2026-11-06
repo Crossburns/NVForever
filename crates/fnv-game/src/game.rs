@@ -1313,6 +1313,10 @@ pub struct Game<'a> {
     /// the last number given to one. Not part of the saved state.
     pub weapon_uses: BTreeMap<FormId, crate::use_weapon::WeaponUse>,
     pub weapon_use_seq: u64,
+    /// Speakers a script's StartConversation sent to walk up to the player before they
+    /// talk, with the topic to start with ([`Game::walk_up_greet`]), for the AI to carry
+    /// out (`fnv_ai`). Not part of the saved state.
+    pub walk_up_greets: BTreeMap<FormId, Option<FormId>>,
     /// The sounds scripts asked for (`crate::sound::SoundRequest`), for the engine to
     /// take. Not part of the saved state.
     pub sound_requests: Vec<crate::sound::SoundRequest>,
@@ -2092,6 +2096,7 @@ impl<'a> Game<'a> {
             idle_picks: Vec::new(),
             weapon_uses: BTreeMap::new(),
             weapon_use_seq: 0,
+            walk_up_greets: BTreeMap::new(),
             sound_requests: Vec::new(),
             music_requests: Vec::new(),
             texture_swaps: Default::default(),

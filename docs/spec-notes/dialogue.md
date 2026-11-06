@@ -479,6 +479,21 @@ All of it is in `GameSnapshot`.
   the statement is about GREETING]. Through a talking activator the greeting opens a
   conversation that the line ends, as below [owner statement 2026-10-22, of the REPCONN
   intercom; talking-activators.md §2].
+- **StartConversation from afar walks up first** (issue #1544, 2026-11-05). "The actor
+  will walk to the target" before the conversation [documented: GECK wiki
+  StartConversation]. With the AI running, a speaker more than 300 units from the
+  player, or in another space, records a walk-up (`Game::walk_up_greet`). The AI runs it
+  to the player, planning the way again as the player moves, and opens the conversation
+  within 150 units (`Ai::walk_up_step`). With no way there, or at the end of its way, it
+  opens it where it is. Its package waits meanwhile, and a change of package plans the
+  walk-up again. A speaker the AI does not walk (its cell not loaded) talks once it is
+  within 300 units of the player, never from afar; out of the loaded area (the low
+  process) the walk-up waits. Without the AI (headless runners) the
+  conversation opens at once, as before [design: the distances and the run].
+  [observed 2026-11-05] The Legion explorers about Nelson (nvNelsonExplorerBarkSCRIPT
+  calls StartConversation Player once its GameMode runs) greeted from 10,099 units off.
+  Now explorer 01 runs over and greets from 147 units (smoke
+  `start-conversation-walks-up`).
 - **The rule above is for the player talking to the actor. When the actor starts the
   conversation** (a force greet: StartConversation with the player, or the actor's
   Dialogue package that is not Say To), a greeting with the Goodbye flag **opens a

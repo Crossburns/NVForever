@@ -19007,6 +19007,21 @@ expect = [
 order = [["nvf mcm install check 1", "tiles: a mod's tiles in StartMenu", "pause menu: mods page", "scripts: MenuMode 1013 blocks run", "pause menu: mods page closed", "nvf mcm install check 0"]]
 
 [[scenario]]
+name = "start-conversation-walks-up"
+source = "issue #1544 (owner): the Legion explorers about Nelson greeted the player halfway to Novac. Their script (nvNelsonExplorerBarkSCRIPT) calls StartConversation Player once its GameMode runs, and the conversation opened at once from 10,099 units off. With the AI running, StartConversation's speaker now walks up first (fnv_game Game::walk_up_greet, fnv_ai Ai::walk_up_step)"
+note = "the player stands near Ranger Milo's post at (42000, -38000), noon; explorer 01 (0x0014F408) is placed at (51986, -38898). It runs over and opens the conversation once within 150 units, about 18 game minutes later"
+areas = ["ai", "dialogue", "scripts"]
+paths = ["crates/fnv-ai/src/carry.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/functions/misc.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--world", "WastelandNV", "--pos=42000,-38000,6500", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 60
+order = [[
+  { re = 'nvNelsonExplorer01REF: walks up to the player for a script.s StartConversation: (?P<n>\d+) units away', range = [5000, 20000], label = "the explorer sets off from far away instead of talking from there" },
+  { re = 'nvNelsonExplorer01REF: has walked up to the player \((?P<n>\d+) units\) and starts the conversation, line', range = [0, 150], label = "it opens the conversation once near the player" },
+  { text = "conversation with nvNelsonExplorer01REF started (topic GREETING)", label = "then the conversation starts" },
+]]
+
+[[scenario]]
 name = "shot-passes-collision-marker"
 source = "issue #1545 (owner): collision markers act as invisible walls; they must stop actors but let shots through. CollisionMarker primitives without XTRI are on the Invisible Wall layer, which characters collide with and shots pass (crates/fnv-phys/src/primitive.rs, layers::shot_ignores; physics.md §4.1)"
 note = "Goodsprings: the player stands 250 units south of the CollisionMarker box 0x00176AD0 (-69349, 7330, 8682; 87 x 34 x 138 units), facing north with the view level (the eye inside the box's height), and fires the 10mm pistol once at 12 s. Before the change the shot stopped on the box: 'dirt 1 (1 on collision without a material)'"
