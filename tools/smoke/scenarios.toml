@@ -680,7 +680,7 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 
 [[scenario]]
 name = "fps-counter"
-source = "engine/nvforever/src/fps_counter.rs (issue #1087): --fps shows the frame rate counter from the start, and the settings page's Frame rate counter switch hides and shows it while the game runs"
+source = "engine/nvforever/src/fps_counter.rs (issues #1087, #1704): --fps shows the frame rate counter (with CPU and GPU use) from the start, and the settings page's Frame rate counter switch hides and shows it while the game runs"
 areas = ["renderer", "settings"]
 paths = ["engine/nvforever/src/fps_counter.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:fps-counter,12:fps-counter" }
@@ -688,6 +688,7 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 16
 order = [[
   { re = 'fps counter: first reading \d+ fps, [\d.]+ ms, slowest [\d.]+ ms' },
+  { re = 'fps counter: first usage reading  CPU \d+%  GPU \d+%' },
   "settings: fps-counter off",
   "fps counter: off",
   "settings: fps-counter on",
