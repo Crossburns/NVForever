@@ -8838,6 +8838,26 @@ expect = [
 order = [["controls: input device Controller", "controls: every control back to the game's controller buttons", "controls: Jump bound to controller RB"]]
 
 [[scenario]]
+name = "controller-menu-hints"
+source = "#1662: with Controller as the Input Device the menus' action hints name the button that presses their key (docs/design/controller.md §3, engine/nvf-play/src/pad.rs `hint`); the caravan screens against Ringo (the caravan scenario's aid steps), each stage's hints logged as they change"
+note = "the caravan buttons are [design, #1662] (no caravan menu file is read); a home of its own keeps the Controller choice away from the other scenarios. The help box's Close word comes from the game strings, so it is matched loosely"
+areas = ["caravan", "menus"]
+paths = ["engine/nvf-play/src/pad.rs", "engine/nvf-play/src/caravan.rs", "engine/nvf-play/src/caravan/**", "engine/nvf-play/src/lockpick/help.rs"]
+env = { NVFOREVER_HOME = "controller-hints-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller", NVF_PLAY_TEST_CARAVAN = "1:seed:7,14:caps:200,15:cards:15D7A2,16:open:104C7D:15D7A2:0.25,18:help,19:match,20:accept,21:help,22:randomize,23:play,25:help,26:forfeit,26.5:forfeit,29:continue" }
+args = ["--cell", "GSHouseInterior02", "--play", "--no-voice", "--no-messages"]
+run_seconds = 32
+expect = [
+  { text = "controls: input device Controller", label = "the Controls tab's first row picks the controller" },
+  { text = "hints: Xbox labels", label = "the hints take the controller's names" },
+  { re = 'caravan: hints: Auto Match Y\), Raise RT\), Accept A\), Exit B\); help: \S.* \[B\]', label = "the bet screen under its help box: the buttons, and B closes the box" },
+  { text = "caravan: hints: Auto Match Y), Raise RT), Accept A), Exit B)", label = "the bet screen's buttons once the help box is closed" },
+  { re = 'caravan: hints: Randomize Caravan Deck Y\), Add A\), Remove X\), Play Caravan RT\)', label = "the deck builder's buttons" },
+  { re = 'caravan: hints: Select Card A\), Discard Card X\), Discard Track Y\), Cancel B\)', label = "the game's buttons" },
+  { re = 'caravan: hints: [^;]* [WQFRS]\)', max = 0, label = "no keyboard key left in a caravan hint" },
+]
+order = [["controls: input device Controller", "caravan: hints: Auto Match Y)", "caravan: hints: Randomize Caravan Deck Y)", "caravan: hints: Select Card A)"]]
+
+[[scenario]]
 name = "controller-read"
 source = "owner 2026-10-16: the second half of the controller round trip: a new start in controller-write's home takes the device and the buttons it stored"
 areas = ["main-menu", "save"]

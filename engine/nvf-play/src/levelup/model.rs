@@ -81,6 +81,8 @@ pub struct View {
     pub next_on: bool,
     pub back: bool,
     pub hover: Option<Part>,
+    /// The names the hints use (`crate::pad::labels`).
+    pub labels: crate::pad::Labels,
 }
 
 impl LevelUp {
@@ -231,6 +233,7 @@ impl LevelUp {
             next_on: self.can_continue(),
             back: self.page == Page::Perks,
             hover: self.hover,
+            labels: crate::pad::labels(),
         }
     }
 }

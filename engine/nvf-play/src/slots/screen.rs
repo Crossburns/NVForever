@@ -66,7 +66,7 @@ fn view_key(s: &Session, now: f32, view_w: f32) -> String {
     // While the reels turn, a new picture every sixth of a stop.
     let reels = s.positions(now).map(|p| (p * 6.0).round() as i64);
     format!(
-        "{}:{}:{}:{:?}:{:?}:{:?}:{}:{}:{view_w:.0}",
+        "{}:{}:{}:{:?}:{:?}:{:?}:{}:{}:{view_w:.0}:{:?}",
         s.bet,
         s.chips,
         s.earnings,
@@ -74,7 +74,8 @@ fn view_key(s: &Session, now: f32, view_w: f32) -> String {
         std::mem::discriminant(&s.phase),
         reels,
         s.help.is_some(),
-        s.payouts
+        s.payouts,
+        crate::pad::labels(),
     )
 }
 
@@ -143,13 +144,14 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, now: f32, view_w: f3
             });
             let betting = s.betting();
             let top = s.limits.top(s.chips);
+            let h = |k: KeyCode| crate::pad::hint(&[k], crate::pad::at_menu(fnv_game::slots::MENU_CODE));
             let buttons = [
-                ("Spin", "W)", SlotsInput::Spin, betting && s.chips >= s.bet && s.chips > 0),
-                ("Increase Bet", "E)", SlotsInput::Increase, betting && s.bet < top),
-                ("Decrease Bet", "Q)", SlotsInput::Decrease, betting && s.bet > s.limits.min_bet),
-                ("Payout List", "F)", SlotsInput::Payouts, betting),
-                ("Bet Max", "S)", SlotsInput::Max, betting && s.bet < top),
-                ("Exit", "R)", SlotsInput::Exit, betting),
+                ("Spin", h(KeyCode::KeyW), SlotsInput::Spin, betting && s.chips >= s.bet && s.chips > 0),
+                ("Increase Bet", h(KeyCode::KeyE), SlotsInput::Increase, betting && s.bet < top),
+                ("Decrease Bet", h(KeyCode::KeyQ), SlotsInput::Decrease, betting && s.bet > s.limits.min_bet),
+                ("Payout List", h(KeyCode::KeyF), SlotsInput::Payouts, betting),
+                ("Bet Max", h(KeyCode::KeyS), SlotsInput::Max, betting && s.bet < top),
+                ("Exit", h(KeyCode::KeyR), SlotsInput::Exit, betting),
             ];
             let column = Node { position_type: PositionType::Absolute, right: u(BUTTONS_RIGHT), top: u(BUTTONS_TOP), width: u(0.0), height: u(6.0 * BUTTON_H), ..default() };
             m.spawn(column).with_children(|b| {
@@ -157,7 +159,7 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, now: f32, view_w: f3
                     let color = if on { bright } else { dim };
                     let y = i as f32 * BUTTON_H;
                     let w = c.text_in(b, FontKind::Menu, label, 0.0, y + 9.0, true, color);
-                    c.text_in(b, FontKind::Menu, hint, HINT_GAP, y + 9.0, false, color);
+                    c.text_in(b, FontKind::Menu, &hint, HINT_GAP, y + 9.0, false, color);
                     if on {
                         b.spawn((Button, SlotsButton(cmd), at(-w - 10.0, y, w + 20.0 + HINT_GAP + 30.0, BUTTON_H)));
                     }

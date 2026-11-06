@@ -195,7 +195,8 @@ fn mouse_label(m: MouseButton) -> String {
     }
 }
 
-/// The help text with the executable's key strings replaced by the keys bound now:
+/// The help text with the executable's key strings replaced by the keys bound now (the
+/// buttons, with a controller as the Input Device):
 /// `&-sUActn<control>;` and `&sUActn<control>;` by the control's key (its mouse button
 /// when it has no key), `&sKB<key>;` by the key's name and the mouse strings by the
 /// button's. Anything else between `&` and `;` is kept as it is.
@@ -242,6 +243,12 @@ pub fn expand_keys(text: &str, bindings: &Bindings) -> String {
             _ => None,
         };
         match (control, name.strip_prefix("sKB"), mouse) {
+            // With a controller the control's button [design, #1662: the gamepad copies
+            // of the messages are not shown, so the PC text names the button].
+            (Some(c), _, _) if bindings.device == crate::bindings::InputDevice::Controller => match bindings.pad(c) {
+                Some(p) => out.push_str(crate::pad::pad_name(p)),
+                None => out.push_str(Bindings::name(c)),
+            },
             (Some(c), _, _) => {
                 let b = bindings.get(c);
                 match (b.key, b.mouse) {
@@ -356,7 +363,7 @@ pub fn spawn(r: &mut ChildSpawnerCommands, c: &mut Ctx, help: &Help, view_w: f32
         let right = w - BUTTONS_FROM_RIGHT;
         let top = bottom - FADE - body_h - 2.0 * VERBUF + CLOSE_LOWER;
         let cw = c.text_in(b, FontKind::Body, &help.words.close, right, top + VERBUF, true, dim);
-        c.text_in(b, FontKind::Body, &help.words.close_hint, right + HINT_GAP, top + VERBUF, false, dim);
+        c.text_in(b, FontKind::Body, &crate::pad::game_hint(&help.words.close_hint, &[KeyCode::KeyE, KeyCode::Escape], crate::pad::HELP_AT), right + HINT_GAP, top + VERBUF, false, dim);
         b.spawn((Button, LockButton(LockpickInput::CloseHelp), at(right - cw - 10.0, top, cw + 2.0 * HINT_GAP + 40.0, body_h + 2.0 * VERBUF)));
     });
 }
@@ -379,5 +386,11 @@ mod tests {
         assert_eq!(expand_keys("&sMouseLeftButton;, &sDeviceMouse;", &b), "Left Mouse, Mouse");
         assert_eq!(key_label(KeyCode::Digit4), "4");
         assert_eq!(key_label(KeyCode::Space), "Space");
+        // With a controller the controls' buttons (the game's: Sneak on the left stick's
+        // press, V.A.T.S. RB) [#1662].
+        let mut pad = Bindings::game_defaults();
+        pad.device = crate::bindings::InputDevice::Controller;
+        assert_eq!(expand_keys("nvf low, &sUActnCrouch;.", &pad), "nvf low, LS.");
+        assert_eq!(expand_keys("nvf aim &sUActnVats;", &pad), "nvf aim RB");
     }
 }

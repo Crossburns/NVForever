@@ -146,26 +146,27 @@ impl Session {
 
     /// The choices of the six buttons now, top to bottom (blackjack.md §5): the label,
     /// the key and the command; `None` for a button not drawn.
-    pub fn buttons(&self) -> [Option<(&'static str, &'static str, BlackjackInput)>; 6] {
+    pub fn buttons(&self) -> [Option<(&'static str, String, BlackjackInput)>; 6] {
+        let h = |k: KeyCode| crate::pad::hint(&[k], crate::pad::at_menu(fnv_game::blackjack::MENU_CODE));
         if self.betting() {
             [
                 None,
-                Some(("Deal", "W)", BlackjackInput::Deal)),
-                Some(("Increase Bet", "E)", BlackjackInput::Bet { up: true })),
-                Some(("Decrease Bet", "Q)", BlackjackInput::Bet { up: false })),
-                Some(("Max Bet", "S)", BlackjackInput::MaxBet)),
-                Some(("Exit Game", "R)", BlackjackInput::Exit)),
+                Some(("Deal", h(KeyCode::KeyW), BlackjackInput::Deal)),
+                Some(("Increase Bet", h(KeyCode::KeyE), BlackjackInput::Bet { up: true })),
+                Some(("Decrease Bet", h(KeyCode::KeyQ), BlackjackInput::Bet { up: false })),
+                Some(("Max Bet", h(KeyCode::KeyS), BlackjackInput::MaxBet)),
+                Some(("Exit Game", h(KeyCode::KeyR), BlackjackInput::Exit)),
             ]
         } else {
             let l = self.table.legal(self.chips);
             let b = |on: bool, label, key, a| on.then_some((label, key, BlackjackInput::Play(a)));
             [
-                b(l.hit, "Hit", "F)", Action::Hit),
-                b(l.double, "Double Down", "W)", Action::Double),
-                b(l.split, "Split", "E)", Action::Split),
-                b(l.switch, "Switch Hands", "Q)", Action::Switch),
-                b(l.surrender, "Surrender", "S)", Action::Surrender),
-                b(l.stay, "Stay", "R)", Action::Stay),
+                b(l.hit, "Hit", h(KeyCode::KeyF), Action::Hit),
+                b(l.double, "Double Down", h(KeyCode::KeyW), Action::Double),
+                b(l.split, "Split", h(KeyCode::KeyE), Action::Split),
+                b(l.switch, "Switch Hands", h(KeyCode::KeyQ), Action::Switch),
+                b(l.surrender, "Surrender", h(KeyCode::KeyS), Action::Surrender),
+                b(l.stay, "Stay", h(KeyCode::KeyR), Action::Stay),
             ]
         }
     }
