@@ -29,7 +29,9 @@
 //!   that direction's `fDamagePowerAttack…Bonus`. The body plays [`WeaponAnim::swing`]
 //!   and times it ([`WeaponAnim::timed`]); the swing strikes once at the clip's `Hit` key
 //!   [documented: NiTextKeyExtraData] with a fan of rays from the eye out to the reach
-//!   (`damage::melee_reach`), and at any actor whose centre is within that reach across
+//!   (`damage::melee_reach`, which reaches from the body: plus the player's capsule
+//!   radius from the eye [hypothesis, as the NPCs' 45 + 107 × Reach is read,
+//!   combat-rules.md §10]), and at any actor whose centre is within that reach across
 //!   the ground, low or high (`projectile::swing_reaching`: a gecko at the player's feet). With no weapon equipped the player fights with the
 //!   Fists (WEAP `Fists`) [hypothesis: the game's unarmed weapon form]. Knockback force
 //!   is computed (documented formula) and logged; living actors are not pushed until they
@@ -1285,7 +1287,9 @@ impl Combat {
                 rounds_per_shot: 1,
                 rounds: u32::MAX / 2,
                 reach: crate::vats_mode::MELEE_MARK_REACH,
-                melee_reach: damage::melee_reach(&self.rules, w, 1.0),
+                // From the eye, as the player's swing reaches (`melee`): the reach is
+                // from the body, the capsule's radius further.
+                melee_reach: damage::melee_reach(&self.rules, w, 1.0) + fnv_phys::CharacterParams::default().radius,
             });
         }
         // A gun needs to be equipped: the Fists are melee.
@@ -1438,7 +1442,8 @@ pub struct VatsWeapon {
     /// `vats_mode::REACH`; a thrown weapon's no farther than it throws; a melee
     /// weapon's `vats_mode::MELEE_MARK_REACH`.
     pub reach: f32,
-    /// A melee weapon's own reach (`damage::melee_reach`), units; 0 otherwise.
+    /// A melee weapon's own reach from the eye (`damage::melee_reach` plus the player's
+    /// capsule radius), units; 0 otherwise.
     pub melee_reach: f32,
 }
 
@@ -1694,15 +1699,14 @@ fn perk_speed(c: Res<Combat>, mut anim: ResMut<WeaponAnim>, mut script: Option<R
 }
 
 /// The player's Speed Mult, body armour and size (`crate::player::StatSpeed`): asked every
-/// frame. Speed Mult and armour count as last taken, which is again only when the
-/// equipment changes or a game loads (`fnv_game::Game::player_move_speed_mult`; SetAV
-/// alone waits for it, issue #1742); SetScale counts at once. A smaller player takes smaller steps: the speed goes with a script's scale, as a
+/// frame, so SetAV / ModAV / ForceAV, effects, changes of armour and SetScale count at
+/// once. A smaller player takes smaller steps: the speed goes with a script's scale, as a
 /// creature's pace goes with its scale (`creature_pace`) [hypothesis: the clips' root
 /// motion shrinks with the body; owner's TTW run 2026-11-02, the baby at
 /// `player.SetScale 0.4` moved at full speed].
 fn stat_speed(mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::StatSpeed>>) {
     let (Some(mut speed), Some(rt)) = (speed, script.as_deref_mut().and_then(|s| s.rt.as_mut())) else { return };
-    let (mult, armor) = with_world(rt, &mut sim, |rt| (rt.game.player_move_speed_mult() as f32, rt.game.armor_speed_mult(FormId::PLAYER_REF)));
+    let (mult, armor) = with_world(rt, &mut sim, |rt| (rt.game.move_speed_mult(FormId::PLAYER_REF) as f32, rt.game.armor_speed_mult(FormId::PLAYER_REF)));
     let scale = sim.script_scale(FormId::PLAYER_REF.0).unwrap_or(1.0).max(crate::sim::MIN_DRAWN_SCALE);
     let want = mult * scale;
     if (speed.0 - want).abs() > 1e-4 {
@@ -3612,7 +3616,8 @@ fn melee(
         // The special move chosen as the swing started (its clip is playing).
         let special = c.special_swing.take();
         let power_mult = power.map_or(1.0, |d| d.damage(&c.rules));
-        let reach = damage::melee_reach(&c.rules, &w, 1.0);
+        // The reach is from the body; the rays start at the eye, the capsule's middle.
+        let reach = damage::melee_reach(&c.rules, &w, 1.0) + phys.player.as_ref().map_or(0.0, |p| p.params.radius);
         let eye = player.eye();
         // A blow that meets no one but strikes the world within reach (a wall, the
         // ground ahead) shows its impact there.

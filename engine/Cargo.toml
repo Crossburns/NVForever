@@ -3,6 +3,7 @@
 [workspace]
 resolver = "2"
 members = ["nvf-assets", "nvf-play", "nvf-viewer", "nvforever"]
+exclude = ["vendor/wgpu-ffx", "vendor/wgpu-ffx/wgpu-ffx", "vendor/wgpu-ffx/wgpu-ffx-shaders-spv"]
 
 [workspace.package]
 version = "0.6.0"
@@ -57,3 +58,4 @@ opt-level = 3
 # Patched dependencies (engine/vendor/README.md says what was changed and why).
 [patch.crates-io]
 gpu-allocator = { path = "vendor/gpu-allocator" }
+bevy_pbr = { path = "vendor/bevy_pbr" }

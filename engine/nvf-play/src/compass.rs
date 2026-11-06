@@ -462,6 +462,8 @@ fn draw(
     mut art: Local<Option<Art>>,
     mut spawned: Local<Spawned>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     let Ok(layer) = layers.single() else { return };
     let fresh = added.get(layer).is_ok();
     if !view.is_changed() && !fresh {

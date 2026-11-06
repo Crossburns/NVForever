@@ -621,41 +621,19 @@ End
     assert_eq!(q("SetFunctionValue ((GetBaseSpellListSpells RobotCopy)[3])"), XVal::Ref(GHOUL_RAD));
 }
 
-/// The player's walk and run take Speed Mult as last taken: SetAV and ModAV alone leave
-/// it, an item equipped or unequipped (by a script, or outside one as in the Pip-Boy)
-/// takes it again, and so does a load (issue #1742; actors.md §8.10, The player).
+/// The player's speed follows Speed Mult at once: SetAV and ModAV count without an
+/// equipment change (issue #1742: the original waited for one, which the owner ruled a
+/// bug; actors.md §8.10, The player).
 #[test]
-fn player_speed_is_taken_again_when_the_equipment_changes() {
+fn player_speed_follows_speed_mult_at_once() {
     const SET_AV: u16 = 0x100F;
     const MOD_AV: u16 = 0x1010;
     let speed = code(fnv_game::actor_values::SPEED_MULTIPLIER);
     let f = fixture();
     let mut g = game(&f);
-    assert_eq!(g.player_move_speed_mult(), 1.0);
+    assert_eq!(g.move_speed_mult(P), 1.0);
     call(&mut g, P, SET_AV, &[speed.clone(), ArgValue::Value(Value::Num(150.0))]);
-    g.tick();
-    assert_eq!(g.move_speed_mult(P), 1.5, "the value now follows SetAV");
-    assert_eq!(g.player_move_speed_mult(), 1.0, "the player's speed waits for the equipment");
-    g.world.add_item(P, FormId(HAT), 1).unwrap();
-    assert_eq!(g.player_move_speed_mult(), 1.0, "an item added but not worn changes nothing");
-    call(&mut g, P, EQUIP, &[form(HAT)]);
-    assert_eq!(g.player_move_speed_mult(), 1.5);
-    call(&mut g, P, MOD_AV, &[speed.clone(), ArgValue::Value(Value::Num(-100.0))]);
-    assert_eq!(g.player_move_speed_mult(), 1.5);
-    // Taken off outside a script: the worn set differs.
-    g.world.unequip(P, FormId(HAT)).unwrap();
-    assert_eq!(g.player_move_speed_mult(), 0.5);
-    // Unequipped and equipped again by scripts between two looks: the count moved.
-    // (SetAV sets the base; ModAV's -100 stays: 180 - 100.)
-    call(&mut g, P, SET_AV, &[speed.clone(), ArgValue::Value(Value::Num(180.0))]);
-    call(&mut g, P, EQUIP, &[form(HAT)]);
-    call(&mut g, P, UNEQUIP, &[form(HAT)]);
-    assert_eq!(g.player_move_speed_mult(), 0.8);
-    // A load takes it again.
-    call(&mut g, P, SET_AV, &[speed, ArgValue::Value(Value::Num(220.0))]);
-    assert_eq!(g.player_move_speed_mult(), 0.8);
-    let s = g.snapshot();
-    let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
-    let mut h = Game::restore(&f.data, world, g.cfg, &s).unwrap();
-    assert_eq!(h.player_move_speed_mult(), 1.2);
+    assert_eq!(g.move_speed_mult(P), 1.5);
+    call(&mut g, P, MOD_AV, &[speed, ArgValue::Value(Value::Num(-100.0))]);
+    assert_eq!(g.move_speed_mult(P), 0.5);
 }

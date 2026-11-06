@@ -106,6 +106,16 @@ const GAME_HOURS_PER_SECOND: f32 = 30.0 / 3600.0;
 /// sky (centred on the camera) first; blended world meshes write no depth and would
 /// otherwise be painted over. Within the sky, lower biases are drawn first.
 const SKY_SORT_BIAS: f32 = -1.0e6;
+
+/// Whether a transparent item's sort key (view distance plus depth bias, as Bevy sorts
+/// them) is one of the sky's blended or additive parts ([`SKY_SORT_BIAS`]: the cloud
+/// layers, the night's starfield layer, the stars, the moon): above half again the bias and
+/// up to the terrain layers' band (`nif_material::sorts_first`), which leaves room for
+/// every view distance in the world (the stars sit at the world's origin, the moon
+/// [`SUN_DISTANCE`] out). FSR draws these into its reactive reference (fsr.rs).
+pub(crate) fn sorts_with_sky(sort_key: f32) -> bool {
+    sort_key > SKY_SORT_BIAS * 1.5 && sort_key <= nvf_assets::nif_material::SORT_FIRST_BIAS * 1.5
+}
 /// How far the sun's shadows reach when they are switched on in a run started without
 /// them (game units): the default of `--shadow-distance`. With [`DEFAULT_SHADOW_CASCADES`]
 /// [engineering choice, 2026-10-12, owner's playtest "shadow rendering seriously affects
@@ -215,6 +225,7 @@ impl Plugin for SkyPlugin {
 }
 
 #[derive(Resource)]
+#[cfg_attr(test, derive(Default))]
 pub struct SkyState {
     pub climate: Climate,
     pub weather: Weather,
