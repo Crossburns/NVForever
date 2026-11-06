@@ -432,7 +432,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getpipboymode" => zero,
         // [observed: an unknown stat is -1, and ModExtraMiscStat did not create one]
         "getextramiscstat" => XVal::Num(g.jip2.misc_stats.get(&text(args, 0).to_ascii_lowercase()).copied().unwrap_or(-1.0)),
-        "modextramiscstat" => zero,
+        // ModExtraMiscStat and InitExtraMiscStat: `crate::nvse_ttw`.
         "setcamerashakenohudshudder" => zero,
         // Aux timers: per owner (the player when none), counting down in game seconds
         // [observed: plugin-odds].

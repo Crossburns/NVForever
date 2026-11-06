@@ -389,6 +389,7 @@ fn draw(
     mut transforms: Query<&mut Transform>,
     mut visibility: Query<&mut Visibility>,
     mut ctx: SpawnCtx,
+    talk: Option<Res<crate::dialogue_zoom::DialogueZoom>>,
 ) {
     let Some(o) = menu.open.as_mut() else { return };
     // The same place in front of the camera every frame.
@@ -398,7 +399,8 @@ fn draw(
         Ok(Projection::Perspective(p)) => {
             let fit = view::FIT_VFOV_DEG.to_radians();
             if o.fov_before.is_none() {
-                o.fov_before = Some(p.fov);
+                // Not a conversation's zoom: what lies under it (`crate::dialogue_zoom`).
+                o.fov_before = Some(talk.as_deref().map_or(p.fov, |t| t.underlying(p.fov)));
             }
             if p.fov != fit {
                 p.fov = fit;

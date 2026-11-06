@@ -324,9 +324,12 @@ to talk (the play loop does); a container opened by the player runs OnOpen/OnClo
 8); `get_quest` reads `failed`.
 
 **Open, ranked:**
-1. Possibly hard: two Dead Money narrator lines name Elijah as fixed speaker with no GetIsID
-   condition (INFO 0x01013C60, 0x01011DE9), so `can_say_as` refuses them and their slides are
-   skipped [observed]; what the original does is an observer question.
+1. **Done** (2026-11-06, issue #965): three Dead Money narrator lines name Elijah or Vera as
+   fixed speaker with no GetIsID condition (INFO 0x01013C60, 0x01011DE9, 0x01011DE8), so
+   `can_say_as` refused them and their slides were skipped [observed]. A script's Say/SayTo
+   whose topic has no line passing the fixed-speaker check now tries the lines again
+   without it (`Game::say_by_script`, dialogue.md §4) [hypothesis, fitted to every such
+   call in the masters and add-ons]; what the original does is still observer check 29.
 2. **Done** (2026-10-30, issue #906): the REPCONN intercom's trigger (SCPT 0x000CD04E)
    runs `<intercom>.Activate player`, so the player is the activator, not the intercom
    [observed: `fnvtool script decompile`], and the play loop's `talk_after` (player's
