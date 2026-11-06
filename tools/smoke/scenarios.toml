@@ -2695,7 +2695,7 @@ name = "vigor-tester"
 note = "not shared with chargen-menus: moved 18 s later in one launch the Vigor Tester took none of its steps (run 2026-10-12); alone it passes"
 source = "CLAUDE.md: after changes to the Vigor Tester's S.P.E.C.I.A.L. menu (docs/spec-notes/vigor-tester.md §7)"
 areas = ["chargen", "vigor", "menus"]
-paths = ["engine/nvf-play/src/chargen/vigor*", "engine/nvf-play/src/chargen.rs"]
+paths = ["engine/nvf-play/src/chargen/vigor*", "engine/nvf-play/src/chargen.rs", "engine/nvforever/src/vigor_view.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1074", NVF_PLAY_TEST_VIGOR = "2:click:LookInside_Btn:0,4.5:raise,4.6:raise,4.7:done,5.5:page:review,8:select:luck,8.1:raise,8.2:raise:L,8.3:raise:endurance,8.5:click:P1_RT_Btn:0" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
 run_seconds = 20
@@ -2730,7 +2730,7 @@ name = "vigor-upload-budget"
 source = "owner report 2026-10-26: with VRP 4X textures (4096x4096 pages) the Vigor Tester menu showed only its bulb glows and arrows: its meshes waited behind the textures under the GPU upload limit and Bevy 0.19 never drew them (engine/nvforever/src/world.rs respecialize_late_meshes)"
 note = "a 2 MB upload limit makes the vanilla model's meshes wait as VRP's textures did; without the fix the 6 s screenshot shows only the two arrow buttons (checked 2026-10-26), with it the whole machine. The log cannot tell a drawn mesh from a lost one, so the expectations only show the marks were made"
 areas = ["vigor", "streaming", "render"]
-paths = ["engine/nvforever/src/world.rs", "engine/nvf-play/src/chargen/vigor*"]
+paths = ["engine/nvforever/src/world.rs", "engine/nvf-play/src/chargen/vigor*", "engine/nvforever/src/vigor_view.rs"]
 env = { NVF_PLAY_TEST_UPLOAD_BYTES = "2000000", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1074", NVF_PLAY_TEST_SHOTS = "6" }
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
 run_seconds = 9

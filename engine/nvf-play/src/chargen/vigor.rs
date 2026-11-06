@@ -7,12 +7,13 @@
 //!   their glows) with `nv_vitomaticvigortester_activate.nif` (the label boards, the
 //!   posters, the lever, the buttons and the 16 sequences) in one frame [observed: the
 //!   two files share it; the placed activator's own model is `…_cabinet02.nif`, with a
-//!   fixed poster]. Drawn without lighting [engineering choice: the menu must look the
-//!   same in a dark room and at noon; each part's colour is scaled towards the
-//!   original's lit look, `model::shade`], on the main camera, whose field of view is the
-//!   original menu's while the menu is open and is given back when it closes ([`view`]),
-//!   with a dark sheet between the machine and the world for the original's blurred
-//!   background (no blur: [engineering choice]).
+//!   fixed poster]. Lit, on a render layer of its own ([`VIGOR_LAYER`]), by a camera and
+//!   lights of its own (nvforever `vigor_view.rs`), so the menu looks the same in a dark
+//!   room and at noon and the room's lighting does not change; each part's colour is
+//!   tinted by `model::shade`. It stays below the main camera, whose field of view is the
+//!   original menu's while the menu is open and is given back when it closes ([`view`]);
+//!   the view's camera takes that field of view, and the room behind is blurred and
+//!   darkened there.
 //! - Pages ([`model::Page`]): Attract (the model's stored pose), the seven attributes,
 //!   Review. A turn plays the sequence of [`model::sequence`] (about 1.3 s).
 //! - Keys [hypothesis: the original's PC keys are not documented; the menu file binds the
@@ -42,6 +43,7 @@ use crate::sim::SimState;
 use crate::ui_sounds::{UiEvent, UiMenu, UiSound};
 use crate::{PlayerCamera, PlaySet};
 use bevy::camera::primitives::Aabb;
+use bevy::camera::visibility::RenderLayers;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -55,9 +57,9 @@ use std::sync::Arc;
 const CABINET: &str = "meshes\\architecture\\goodsprings\\nv_vitomaticvigortester_cabinet.nif";
 const ACTIVATE: &str = "meshes\\architecture\\goodsprings\\nv_vitomaticvigortester_activate.nif";
 
-/// How dark the sheet behind the machine makes the world [engineering choice: a stand-in
-/// for the original's blur, matched by eye to the screenshots' margins].
-const SHADE_ALPHA: f32 = 0.45;
+/// The render layer of the machine, its lights and its camera (nvforever `vigor_view.rs`);
+/// no other view has it, so the machine takes no light from the room and gives it none.
+pub const VIGOR_LAYER: usize = 14;
 
 pub struct VigorPlugin;
 
@@ -85,22 +87,27 @@ impl Plugin for VigorPlugin {
 
 /// The open menu, if any.
 #[derive(Resource, Default)]
-struct VigorMenu {
+pub struct VigorMenu {
     open: Option<OpenMenu>,
     /// The activate model's sequences by name, read on the first opening.
     clips: Option<Arc<HashMap<String, Clip>>>,
 }
 
+impl VigorMenu {
+    pub fn is_open(&self) -> bool {
+        self.open.is_some()
+    }
+}
+
 struct OpenMenu {
     vigor: Vigor,
-    /// The two models' roots (children of the camera) and the shade.
+    /// The two models' roots (children of the camera).
     roots: [Entity; 2],
-    shade: Entity,
     /// Named objects of both models (the activate model's first).
     nodes: HashMap<String, Entity>,
     /// The turn playing, or the last one (held at its end).
     flip: Option<Playing>,
-    /// Shapes given their own unlit material, by entity.
+    /// Shapes given their own material, by entity.
     materials: HashMap<Entity, Handle<NifMaterial>>,
     /// The texture each changed shape shows now.
     shown: HashMap<Entity, String>,
@@ -134,14 +141,13 @@ fn open_close(
     mut script: ResMut<ScriptState>,
     mut sim: ResMut<SimState>,
     mut ctx: SpawnCtx,
-    mut plain: ResMut<Assets<StandardMaterial>>,
     mut camera: Query<(Entity, &mut Projection), With<PlayerCamera>>,
     mut stats: ResMut<VigorStats>,
 ) {
     let code = crate::chargen::open_code(&script);
     if code != Some(menus::LOVE_TESTER) {
         if let Some(o) = menu.open.take() {
-            for e in o.roots.into_iter().chain([o.shade]) {
+            for e in o.roots {
                 ctx.commands.entity(e).despawn();
             }
             if let (Some(fov), Ok((_, mut proj))) = (o.fov_before, camera.single_mut()) {
@@ -174,22 +180,12 @@ fn open_close(
     for (k, v) in cab.nodes {
         nodes.entry(k).or_insert(v);
     }
+    // Hidden until `draw` has put the shapes on the machine's layer, or the main camera
+    // would draw them for a frame in the room's light.
     for r in [ra, rc] {
-        ctx.commands.entity(r).insert((VigorPart, view::model_in_camera(1.0)));
+        ctx.commands.entity(r).insert((VigorPart, Visibility::Hidden, view::model_in_camera(1.0)));
         ctx.commands.entity(cam).add_child(r);
     }
-    let shade_mat = plain.add(StandardMaterial {
-        base_color: Color::srgba(0.0, 0.0, 0.0, SHADE_ALPHA),
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        fog_enabled: false,
-        ..default()
-    });
-    let shade = ctx
-        .commands
-        .spawn((VigorPart, Mesh3d(ctx.meshes.add(Rectangle::new(1.0, 1.0))), MeshMaterial3d(shade_mat), Transform::default(), NotShadowCaster))
-        .id();
-    ctx.commands.entity(cam).add_child(shade);
     let vigor = Vigor::new(sheet);
     // The Attract page: the stored pose, as the end of the turn back to it holds it.
     let clips = menu.clips.clone().unwrap_or_default();
@@ -202,7 +198,7 @@ fn open_close(
         nodes.len()
     );
     stats.opened += 1;
-    menu.open = Some(OpenMenu { vigor, roots: [ra, rc], shade, nodes, flip, materials: HashMap::new(), shown: HashMap::new(), keyed_row: false, fov_before: None, aid_from: None });
+    menu.open = Some(OpenMenu { vigor, roots: [ra, rc], nodes, flip, materials: HashMap::new(), shown: HashMap::new(), keyed_row: false, fov_before: None, aid_from: None });
 }
 
 /// The machine's clips by name. A broken file (a panic reading it) gives none, and a clip
@@ -417,29 +413,31 @@ fn draw(
             t.set_if_neq(place);
         }
     }
-    let depth = view::board_depth(vfov) + 2.0;
-    if let Ok(mut t) = transforms.get_mut(o.shade) {
-        t.set_if_neq(Transform::from_xyz(0.0, 0.0, -depth).with_scale(Vec3::new(depth * 6.0, depth * 4.0, 1.0)));
-    }
-    // Once the shapes exist: each its own material, unlit, casting no shadow.
+    // Once the shapes exist: each its own material and tint, on the machine's layer,
+    // casting no shadow. The model says which shapes are unlit; the glows always are.
     if o.materials.is_empty() {
         for r in o.roots {
             for e in children.iter_descendants(r) {
                 let Ok(m) = meshes.get(e) else { continue };
                 let Some(mut mat) = ctx.materials.get(&m.0).cloned() else { continue };
-                mat.base.unlit = true;
                 let name = names.get(e).map(|n| n.as_str()).unwrap_or("");
+                mat.base.unlit |= model::is_glow(name);
                 let [r, g, b] = model::shade(name, r == o.roots[1]);
                 let c = mat.base.base_color.to_srgba();
                 mat.base.base_color = Color::srgba(c.red * r, c.green * g, c.blue * b, c.alpha);
                 mat.base.fog_enabled = false;
                 let h = ctx.materials.add(mat);
-                ctx.commands.entity(e).insert((MeshMaterial3d(h.clone()), NotShadowCaster));
+                ctx.commands.entity(e).insert((MeshMaterial3d(h.clone()), NotShadowCaster, RenderLayers::layer(VIGOR_LAYER)));
                 o.materials.insert(e, h);
             }
         }
         if !o.materials.is_empty() {
             debug!("vigor tester: {} shapes drawn", o.materials.len());
+            for r in o.roots {
+                if let Ok(mut vis) = visibility.get_mut(r) {
+                    vis.set_if_neq(Visibility::Inherited);
+                }
+            }
         }
     }
     if let Some(f) = o.flip.as_mut() {
