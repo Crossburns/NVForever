@@ -65,6 +65,7 @@ pub mod hud_target;
 pub mod aim_assist;
 pub mod knockouts;
 pub mod loading;
+pub mod loading_look;
 pub mod main_menu;
 pub mod location_markers;
 pub mod lockpick;

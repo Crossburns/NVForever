@@ -505,7 +505,7 @@ const PIPBOY_SHARP: f32 = 40.0;
 /// A fade colour and amount (`ScreenEffect::fade`) with black laid over it to `f` (0 …
 /// 1): the share of the screen covered grows to `f` of what was left, and the colour
 /// darkens with it.
-fn black_over(fade: [f32; 4], f: f32) -> [f32; 4] {
+pub(crate) fn black_over(fade: [f32; 4], f: f32) -> [f32; 4] {
     let f = f.clamp(0.0, 1.0);
     let a = fade[3].clamp(0.0, 1.0);
     let covered = a + (1.0 - a) * f;

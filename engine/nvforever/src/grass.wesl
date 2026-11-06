@@ -37,6 +37,7 @@ import bevy_render::globals::Globals;
 @if(!PREPASS_PIPELINE) import bevy_pbr::render::pbr_fragment::pbr_input_from_standard_material;
 @if(!PREPASS_PIPELINE) import bevy_pbr::render::pbr_functions::{nvf_apply_pbr_lighting, main_pass_post_lighting_processing};
 @if(!PREPASS_PIPELINE && VISIBILITY_RANGE_DITHER) import bevy_pbr::render::pbr_functions::visibility_range_dither;
+@if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) import bevy_pbr::prepass::bindings::previous_view_uniforms;
 // The prepass view bind group holds the globals at binding 1 (the main pass at 11).
 @if(PREPASS_PIPELINE) @group(0) @binding(1) var<uniform> globals: Globals;
 
@@ -49,6 +50,9 @@ struct GrassParams {
     motion: vec4<f32>,
     // x: factor on the ambient light; y: factor on every other light (the sun).
     light: vec4<f32>,
+    previous_wind: vec4<f32>,
+    previous_motion: vec4<f32>,
+    change_frame: vec4<u32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> grass: GrassParams;
@@ -59,24 +63,28 @@ const SINK: f32 = 24.0;
 const WAVE_ALONG: f32 = 900.0;
 const WAVE_ACROSS: f32 = 2300.0;
 
+// Evaluate the identical deformation at either frame's model, time and camera.
+@if(VERTEX_UVS_B)
+fn deform(base: vec3<f32>, uv_b: vec2<f32>, wind: vec4<f32>, motion: vec4<f32>, time: f32, camera: vec3<f32>) -> vec3<f32> {
+    var world = base;
+    let along = wind.xyz;
+    let across = vec3<f32>(-along.z, 0.0, along.x);
+    let phase = 6.2831853 * (dot(world, along) / WAVE_ALONG + dot(world, across) / WAVE_ACROSS);
+    let t = time * motion.x;
+    let swing = 0.5 + 0.35 * sin(t - phase) + 0.15 * sin(2.31 * t - 1.7 * phase);
+    world += along * (wind.w * uv_b.x * swing);
+    let gone = clamp((distance(camera, world) - motion.y) / motion.z, 0.0, 1.0);
+    world.y -= gone * (uv_b.y + SINK);
+    return world;
+}
+
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     var world = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0)).xyz;
 
-    // Bevy space: y is up, the ground is the xz plane.
-    @if(VERTEX_UVS_B) let along = grass.wind.xyz;
-    @if(VERTEX_UVS_B) let across = vec3<f32>(-along.z, 0.0, along.x);
-    @if(VERTEX_UVS_B) let phase = 6.2831853 * (dot(world, along) / WAVE_ALONG + dot(world, across) / WAVE_ACROSS);
-    // Seconds since start-up (wraps after an hour: one jump in the motion per hour).
-    @if(VERTEX_UVS_B) let t = globals.time * grass.motion.x;
-    // Leaning with the wind, a main wave and a smaller, unrelated one.
-    @if(VERTEX_UVS_B) let swing = 0.5 + 0.35 * sin(t - phase) + 0.15 * sin(2.31 * t - 1.7 * phase);
-    @if(VERTEX_UVS_B) world += along * (grass.wind.w * vertex.uv_b.x * swing);
-
-    @if(VERTEX_UVS_B) let gone = clamp((distance(view.world_position.xyz, world) - grass.motion.y) / grass.motion.z, 0.0, 1.0);
-    @if(VERTEX_UVS_B) world.y -= gone * (vertex.uv_b.y + SINK);
+    @if(VERTEX_UVS_B) world = deform(world, vertex.uv_b, grass.wind, grass.motion, globals.time, view.world_position.xyz);
     @if(VERTEX_UVS_B) out.uv_b = vertex.uv_b;
 
     out.world_position = vec4<f32>(world, 1.0);
@@ -87,7 +95,24 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) out.position.z = min(out.position.z, 1.0);
     @if(PREPASS_PIPELINE && NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS) out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
     @if(PREPASS_PIPELINE && NORMAL_PREPASS_OR_DEFERRED_PREPASS && !VERTEX_NORMALS) out.world_normal = view.world_from_view[2].xyz;
-    @if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) out.previous_world_position = out.world_position;
+    @if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) {
+        let previous_model = mesh_functions::get_previous_world_from_local(vertex.instance_index);
+        var previous_world = mesh_functions::mesh_position_local_to_world(previous_model, vec4(vertex.position, 1.0)).xyz;
+        @if(VERTEX_UVS_B) {
+            // The view transform is rigid: its transposed rotation and translation
+            // recover the previous camera position without a matrix inverse.
+            let v = previous_view_uniforms.view_from_world;
+            let rotation = transpose(mat3x3(v[0].xyz, v[1].xyz, v[2].xyz));
+            let camera = -(rotation * v[3].xyz);
+            let changed = globals.frame_count == grass.change_frame.x;
+            let wind = select(grass.wind, grass.previous_wind, changed);
+            let motion = select(grass.motion, grass.previous_motion, changed);
+            let previous_time_unwrapped = globals.time - globals.delta_time;
+            let previous_time = select(previous_time_unwrapped, previous_time_unwrapped + 3600.0, previous_time_unwrapped < 0.0);
+            previous_world = deform(previous_world, vertex.uv_b, wind, motion, previous_time, camera);
+        }
+        out.previous_world_position = vec4(previous_world, 1.0);
+    }
     @if(!PREPASS_PIPELINE && VERTEX_NORMALS) out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
 
     @if(VERTEX_COLORS) out.color = vertex.color;

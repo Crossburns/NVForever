@@ -159,6 +159,12 @@ before a query). Held by furniture or flying with ToggleCollision the steps stil
   MSAA) held every run. Measure with `NVFOREVER_HOME` set to a home whose `NVForever.ini`
   is a copy without `[Settings]` (with `plugins.txt`); `--graphics-cycle` steps switch at
   run time and hold either way. Test runs (`--run-seconds`) default to `--graphics vanilla`.
+  Since #1382 a switch given on the command line of a test run (`--run-seconds`,
+  `--log-frame-times`, `--screenshot`, `--timelapse`, `--frame-json`) keeps its state over
+  the stored one, and the log says so (`settings: anti-aliasing kept at 4x as --msaa on the
+  command line set it; ...`); outside test runs the stored state is still applied, with a
+  warning naming the switch it overrode (nvf-play `settings.rs` module notes). Switches
+  not given still take the stored states, so a clean home stays the surest base.
 - `tools/profile/tracy-tour.ps1` + `cells.csv`: one launch per cell of a Tracy build, a
   `tracy-capture` after the load, CPU and GPU (`tracy-csvexport -g`) zone CSVs per cell;
   `summarise.py <folder>` gives per cell the main/extract/render-thread split, the GPU passes

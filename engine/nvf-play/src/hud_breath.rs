@@ -123,37 +123,16 @@ impl MeterModel {
         let dec = Decoded::new(&f, bytes, schema);
         let objects = scene_objects(&f, &dec);
         let by_block: std::collections::HashMap<usize, usize> = objects.iter().enumerate().map(|(i, o)| (o.block, i)).collect();
-        // The object's transform to the model's root: v' = R v · s + t, rows stored.
-        let world = |mut i: usize| {
-            let mut m = Mat3::IDENTITY;
-            let mut t = Vec3::ZERO;
-            loop {
-                let o = &objects[i];
-                let r = Mat3::from_cols_array(&o.transform.rotation).transpose() * o.transform.scale;
-                t = r * t + Vec3::from_array(o.transform.translation);
-                m = r * m;
-                match o.parent.and_then(|p| by_block.get(&p)) {
-                    Some(&p) => i = p,
-                    None => return (m, t),
-                }
-            }
-        };
         let mut pieces = Vec::new();
         for (i, o) in objects.iter().enumerate().filter(|(_, o)| !o.is_node) {
             let Some(shape) = dec.get(o.block as i32) else { continue };
             let Some(data) = shape.block_ref("data").and_then(|d| dec.get(d)) else { continue };
             let mesh = mesh_data(data);
             let Some(uvs) = mesh.uv_sets.first() else { continue };
-            let (m, t) = world(i);
+            let (m, t) = to_root(&objects, &by_block, i);
             let corners: Vec<[f32; 2]> = mesh.positions.iter().map(|p| m * Vec3::from_array(*p) + t).map(|w| [w.x, w.z]).collect();
             let Some((centre, size, angle, uv)) = quad(&corners, uvs) else { continue };
-            let tex = shape
-                .refs("properties")
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|&p| dec.get(p))
-                .find_map(|p| p.text("file_name").filter(|s| !s.is_empty()).map(str::to_string));
-            let Some(texture) = tex else { continue };
+            let Some(texture) = shape_texture(shape, &dec) else { continue };
             let node = o.parent.and_then(|p| by_block.get(&p)).and_then(|&p| objects[p].name.clone()).unwrap_or_default();
             pieces.push(Piece { node, centre, size, angle, uv, texture });
         }
@@ -180,6 +159,27 @@ impl MeterModel {
     pub fn lit(&self, node: &str, t: f32) -> bool {
         self.keys.iter().find(|(n, _)| n == node).is_none_or(|(_, k)| shown_at(k, t))
     }
+}
+
+/// Object `i`'s transform to the model's root: v' = R v · s + t, rows stored.
+pub(crate) fn to_root(objects: &[fnv_nif::scene::SceneObject], by_block: &std::collections::HashMap<usize, usize>, mut i: usize) -> (Mat3, Vec3) {
+    let mut m = Mat3::IDENTITY;
+    let mut t = Vec3::ZERO;
+    loop {
+        let o = &objects[i];
+        let r = Mat3::from_cols_array(&o.transform.rotation).transpose() * o.transform.scale;
+        t = r * t + Vec3::from_array(o.transform.translation);
+        m = r * m;
+        match o.parent.and_then(|p| by_block.get(&p)) {
+            Some(&p) => i = p,
+            None => return (m, t),
+        }
+    }
+}
+
+/// The texture a shape's properties name.
+pub(crate) fn shape_texture(shape: &fnv_nif::Struct, dec: &fnv_nif::scene::Decoded) -> Option<String> {
+    shape.refs("properties").unwrap_or_default().iter().filter_map(|&p| dec.get(p)).find_map(|p| p.text("file_name").filter(|s| !s.is_empty()).map(str::to_string))
 }
 
 /// A piece's centre and size in a box, box units with y down: the model's point `origin`
@@ -254,6 +254,8 @@ fn draw(
     mut pieces: Query<(&MeterPiece, &mut Visibility), Without<MeterRoot>>,
     mut last: Local<Option<usize>>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     let Some(b) = breath else { return };
     let wanted = view.shown && shown(&b);
     if read.is_none() {
