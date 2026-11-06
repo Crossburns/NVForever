@@ -218,7 +218,7 @@ pub fn text(p: &mut ChildSpawnerCommands, face: &Face, s: &str, x: f32, top: f32
     let base = top + face.font.size * 0.75 * scale;
     let Some((image, size)) = &face.image else {
         p.spawn(Node { position_type: PositionType::Absolute, left: u(x), top: u(top), ..default() }).with_children(|n| {
-            n.spawn((Text::new(s.to_string()), TextFont { font_size: FontSize::Vh(face.font.size * 0.75 * scale / 9.6), ..default() }, TextColor(color)));
+            n.spawn((Text::new(s.to_string()), TextFont { font_size: crate::interface::font_units(face.font.size * 0.75 * scale), ..default() }, TextColor(color)));
         });
         return w;
     };

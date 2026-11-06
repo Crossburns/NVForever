@@ -340,6 +340,8 @@ fn keys(
     }
     // The pointer in interface units from the wheel's centre.
     if let Some((p, size)) = windows.single().ok().and_then(|w| Some((w.cursor_position()?, Vec2::new(w.width(), w.height())))) {
+        // Where the pointer is on the wheel as drawn at the UI scale (#1631).
+        let p = crate::interface::from_menu_frame(p, size, crate::interface::MIDDLE);
         let k = 960.0 / size.y.max(1.0);
         let centre = Vec2::new(size.x * k / 2.0, 480.0 - RAISE);
         match hit(p * k - centre) {
@@ -556,7 +558,8 @@ fn draw(
     let top = (960.0 - SIZE) / 2.0 - RAISE;
     let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     let bright = amber(255.0);
-    commands.spawn((WheelRoot, full, GlobalZIndex(106))).with_children(|r| {
+    // At the UI scale the wheel keeps to the view's middle (#1631).
+    commands.spawn((WheelRoot, crate::interface::framed_root(full, crate::interface::MIDDLE), GlobalZIndex(106))).with_children(|r| {
         r.spawn(at(left, top, SIZE, SIZE)).with_children(|m| {
             // The matte darkens the world inside the wheel [observed: dark behind the pie on
             // the owner's screenshots of 2026-10-19; the file's brightness 128 at fill
