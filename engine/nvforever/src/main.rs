@@ -348,8 +348,8 @@ struct Args {
     #[arg(long, default_value = "1280x800")]
     size: String,
     /// The window: `windowed` (of --size) or `borderless` (borderless full screen on the
-    /// primary monitor, or the one chosen in Display settings). With --play the settings
-    /// page's Display group switches it too.
+    /// display chosen in Display settings, the first display until one is chosen). With
+    /// --play the settings page's Display group switches it too.
     #[arg(long, value_enum, default_value_t = window_mode::WindowChoice::Windowed)]
     window: window_mode::WindowChoice,
     /// The game's field-of-view setting in degrees (fDefaultFOV, default 75): the horizontal
