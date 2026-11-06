@@ -4399,3 +4399,99 @@ fn a_failed_object_can_be_chosen_from_the_moment_its_wait_ends() {
     assert_eq!(choosing_at(60.0), (Vec::new(), Some((60.0, Doing::Standing))), "half a second before the deadline");
     assert_eq!(choosing_at(60.5), (vec![60.5], Some((60.5, Doing::Sitting(FormId(CHAIR_C))))), "at the deadline");
 }
+
+// ---- a sandbox's only object is used again after a while (#1505) --------------------
+
+/// The sandboxer's choices with their times, in order.
+fn timed_doings(s: &Sim) -> Vec<(f64, Doing)> {
+    s.ai.events.iter().filter(|e| e.actor == FormId(R_SB_OBJECTS)).filter_map(|e| match e.event {
+        AiEvent::Sandbox { doing, .. } => Some((e.time, doing)),
+        _ => None,
+    }).collect()
+}
+
+/// The times the sandboxer got off furniture.
+fn got_up_times(s: &Sim) -> Vec<f64> {
+    s.ai.events.iter().filter(|e| e.actor == FormId(R_SB_OBJECTS) && matches!(e.event, AiEvent::Furniture { furniture: None })).map(|e| e.time).collect()
+}
+
+/// The issue's case: one chair and nothing else on. Once it has been sat on, it is not
+/// chosen at the next look, but after a minute of standing it is again, and so on.
+#[test]
+fn a_sandboxs_only_chair_is_sat_on_again_after_a_minute_of_something_else() {
+    let f = lone_sandboxer(false);
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    s.nav = way_restored();
+    assert!(way_to(&s, CHAIR_AT));
+    let actor = FormId(R_SB_OBJECTS);
+    let chair = Doing::Sitting(FormId(CHAIR_C));
+    s.run(900.0);
+    let allowed = s.ai.agents[&actor].sandbox.as_ref().unwrap().allowed;
+    assert!(allowed.furniture && !allowed.wandering && !allowed.idle_markers && !allowed.eating && !allowed.sleeping && !allowed.conversation);
+    let did = timed_doings(&s);
+    let sits: Vec<f64> = did.iter().filter(|d| d.1 == chair).map(|d| d.0).collect();
+    // Before #1505: one sit, then only standing (50 times in 600 seconds).
+    assert!(sits.len() >= 3, "{did:?}");
+    assert!(did.iter().all(|d| d.1 == chair || d.1 == Doing::Standing), "{did:?}");
+    let ups = got_up_times(&s);
+    assert!(ups.len() + 1 >= sits.len(), "{ups:?} {sits:?}");
+    for (i, again) in sits.iter().enumerate().skip(1) {
+        let up = ups[i - 1];
+        // Never at once: the look on getting up stands, and so does every look for the
+        // next minute; the first look a minute after that first stand takes the chair.
+        let between: Vec<&(f64, Doing)> = did.iter().filter(|d| d.0 >= up && d.0 < *again).collect();
+        assert!(!between.is_empty() && between.iter().all(|d| d.1 == Doing::Standing), "{between:?}");
+        let first_stand = between[0].0;
+        assert_eq!(first_stand, up, "the look on getting up");
+        assert!(again - first_stand >= fnv_ai::sandbox::SOLE_OBJECT_AGAIN_AFTER, "{first_stand} to {again}");
+        assert!(again - first_stand < fnv_ai::sandbox::SOLE_OBJECT_AGAIN_AFTER + 10.0, "the first look after the minute: {first_stand} to {again}");
+    }
+    assert_eq!(package_events(&s), 1, "no new package or sandbox was needed");
+}
+
+/// The rule against choosing the object just used again at once still holds for the only
+/// object: an interruption right after getting up does not let it through early.
+#[test]
+fn a_sandboxs_only_chair_is_not_chosen_again_at_once() {
+    let f = lone_sandboxer(false);
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    s.nav = way_restored();
+    let chair = Doing::Sitting(FormId(CHAIR_C));
+    // Until it gets up from the first sit.
+    for _ in 0..1200 {
+        s.run(0.5);
+        if !got_up_times(&s).is_empty() {
+            break;
+        }
+    }
+    let up = got_up_times(&s)[0];
+    assert_eq!(timed_doings(&s).last(), Some(&(up, Doing::Standing)));
+    // Combat for an update brings an early look: still standing.
+    s.run(20.0);
+    interrupt_for_one_update(&mut s);
+    s.run(0.5);
+    let did = timed_doings(&s);
+    assert!(did.iter().filter(|d| d.0 > up).all(|d| d.1 == Doing::Standing), "{did:?}");
+    assert_eq!(did.iter().filter(|d| d.1 == chair).count(), 1, "{did:?}");
+    // Up to the minute's end, no sit.
+    let until = up + fnv_ai::sandbox::SOLE_OBJECT_AGAIN_AFTER - 0.5 - s.game.time;
+    s.run(until);
+    assert_eq!(timed_doings(&s).iter().filter(|d| d.1 == chair).count(), 1, "{:?}", timed_doings(&s));
+    s.run(10.5);
+    assert_eq!(timed_doings(&s).iter().filter(|d| d.1 == chair).count(), 2, "{:?}", timed_doings(&s));
+}
+
+/// With two chairs the sandboxer goes from one to the other, never standing between and
+/// never on the same one twice running, as before #1505.
+#[test]
+fn two_chairs_still_take_turns() {
+    let f = lone_sandboxer(true);
+    let mut s = sim(&f, &[R_SB_OBJECTS]);
+    s.nav = way_restored();
+    s.run(900.0);
+    let did = doings(&s, R_SB_OBJECTS);
+    assert!(did.len() >= 4, "{did:?}");
+    let chairs = [Doing::Sitting(FormId(CHAIR_C)), Doing::Sitting(FormId(SECOND_CHAIR))];
+    assert!(did.iter().all(|d| chairs.contains(d)), "{did:?}");
+    assert!(did.windows(2).all(|w| w[0] != w[1]), "{did:?}");
+}

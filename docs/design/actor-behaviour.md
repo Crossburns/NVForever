@@ -451,6 +451,21 @@ packages.md §2). Wander packages are treated as sandboxes with their own flags
    wander 4 to 12 seconds at the spot [ours].
 4. Nothing open: stand, look again in 10 seconds.
 
+**The only object, used again** [design, #1505; no vanilla-parity claim, the original is
+unmeasured: observer check 93]: the object just used stays out of the choices, and with
+several objects open the actor goes from one to another as above. When the object used
+last is the only one open (no other seat or idle marker the package allows), it comes back
+once the actor has done something else for 60 seconds of `Game::time`
+(`SOLE_OBJECT_AGAIN_AFTER`), counted from when the first behaviour without an object
+(standing or wandering) began after it. So at least one other choice comes between, and
+the look on getting up never takes it again. 60 seconds is about a short sit (45) or a
+default idle marker's stint (30), so a lone chair is sat on about as long as it is left;
+with nothing else on, the actor stands, looks every 10 seconds, and the first look past
+the minute takes the chair. Using any object starts the minute over; the time is not
+saved, like the object just used (a load forgets both). Before this, a sandbox with one
+object used it once and then stood (or wandered) until the package changed
+[observed: issue #1505's synthetic run, 50 standing choices in 600 s].
+
 Sandboxing goes on only where the game is loaded (the cells around the player; anywhere
 in a headless run without a player) [observed: the sandboxers of unloaded cells in the
 owner's captures stood on one spot for hours]; package changes and the walks they bring

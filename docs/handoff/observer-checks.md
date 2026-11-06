@@ -1342,3 +1342,14 @@ The numbers above stay put so links to them hold; each item here gives its own p
     pipe swings still land (GetHealthPercentage or OnHit per swing, the player backing off
     5 units a swing). And a deathclaw (VCrTier4DeathClawMed) on the standing god-mode
     player again: o12_reach had one start at 88 units, far nearer than its RNAM 192 gives.
+
+## Added 2026-11-06 (a sandbox's only object, issue #1505)
+
+93. **Does a sandboxer with one seat and nothing else to use sit on it again, and when?**
+    (P3; actor-behaviour.md, "The only object, used again".) NVForever lets the object
+    just used come back once it is the only one open and the actor has stood or wandered
+    for 60 s [design]. In the original: an NPC whose sandbox area holds a single free chair
+    (idle markers and wandering off or absent, outside meal and sleep windows), watched
+    for about 10 minutes with GetSitting (or the furniture it uses) sampled each second:
+    does it sit again, and how long after getting up? Never, a fixed wait, or random
+    gaps each settle the number; record the package's flags and the cell's other objects.

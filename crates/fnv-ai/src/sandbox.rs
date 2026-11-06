@@ -182,6 +182,12 @@ const WANDER: usize = 2;
 /// cost; neither the documentation nor the original gives numbers].
 const RETRY_DELAYS: [f64; 5] = [60.0, 120.0, 240.0, 480.0, 600.0];
 
+/// How long an actor does something else (stands or wanders) before the object it used
+/// last may be chosen again when it is the only object open, seconds of `Game::time` from
+/// the first other behaviour begun [design, #1505: about a short seat's or a default idle
+/// marker's stint (45 s, 30 s); neither the documentation nor the original gives a number].
+pub const SOLE_OBJECT_AGAIN_AFTER: f64 = 60.0;
+
 /// An object there was no way to, the last time the actor tried.
 #[derive(Debug, Clone, Copy)]
 struct FailedObject {
@@ -200,6 +206,9 @@ pub struct Sandbox {
     rng: Rng,
     weights: [f32; 3],
     last_object: Option<FormId>,
+    /// `Game::time` when the first behaviour without an object began since the last object's
+    /// ([`SOLE_OBJECT_AGAIN_AFTER`]); none until one has. Not saved, like `last_object`.
+    other_since: Option<f64>,
     /// Objects there was no way to. An entry stays after its wait is over, to keep its
     /// stage, until the object's behaviour begins [design]. Not saved: a load starts it
     /// empty.
@@ -259,6 +268,7 @@ impl Sandbox {
             rng: Rng((actor.0 as u64) << 32 | package.0 as u64),
             weights: [1.0; 3],
             last_object: None,
+            other_since: None,
             failed_objects: BTreeMap::new(),
             day: i32::MIN,
             sleep: (0.0, 0.0),
@@ -425,15 +435,20 @@ impl Sandbox {
             }
         }
         // Otherwise one of the behaviours that take turns. Candidates per kind, without
-        // the object just used.
+        // the object just used, unless it is the only one open and the actor has done
+        // something else for a while since (#1505).
         let fresh = |o: &&(FormId, [f32; 3], f32)| Some(o.0) != self.last_object;
-        let seats: Vec<&(FormId, [f32; 3], f32)> = objects.iter().filter(|o| flags(o.0).is_some_and(|f| f & furniture::SIT != 0)).filter(fresh).collect();
+        let seats: Vec<&(FormId, [f32; 3], f32)> = objects.iter().filter(|o| flags(o.0).is_some_and(|f| f & furniture::SIT != 0)).collect();
         // Not a marker whose idles are all another skeleton's (`marker_fits`): a person
         // left at a robot's marker played the protectron's clips (#1660).
         let skeleton = std::cell::OnceCell::new();
         let fits = |base: FormId| marker_fits(game, skeleton.get_or_init(|| fnv_game::nvse_nx::skeleton_model(game, actor)), base);
         let markers: Vec<&(FormId, [f32; 3], f32)> =
-            objects.iter().filter(|o| refs.get(o.0).is_some_and(|p| data.idle_markers.contains_key(&p.base) && fits(p.base))).filter(fresh).collect();
+            objects.iter().filter(|o| refs.get(o.0).is_some_and(|p| data.idle_markers.contains_key(&p.base) && fits(p.base))).collect();
+        let another = (self.allowed.furniture && seats.iter().any(fresh)) || (self.allowed.idle_markers && markers.iter().any(fresh));
+        let again = !another && self.other_since.is_some_and(|t| game.time - t >= SOLE_OBJECT_AGAIN_AFTER);
+        let seats: Vec<_> = seats.into_iter().filter(|o| again || fresh(o)).collect();
+        let markers: Vec<_> = markers.into_iter().filter(|o| again || fresh(o)).collect();
         let spot = if self.allowed.wandering { self.wander_spot(nav, at) } else { None };
         // Energy: the less of it, the more sitting; the more, the more walking about.
         let e = self.energy;
@@ -527,6 +542,11 @@ impl Sandbox {
         self.got_up = false;
         self.doing = choice.doing;
         self.last_object = choice.doing.object().or(self.last_object);
+        // The time away from the last object counts from the first other behaviour begun.
+        self.other_since = match choice.doing.object() {
+            Some(_) => None,
+            None => self.other_since.or(Some(game.time)),
+        };
         if let Some(object) = choice.doing.object() {
             self.failed_objects.remove(&object);
         }
