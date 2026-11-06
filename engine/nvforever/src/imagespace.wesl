@@ -53,6 +53,14 @@ const VATS_BAND: f32 = 0.22;
 const VATS_SOFT: f32 = 0.02;
 const VATS_VIGNETTE: f32 = 0.35;
 
+// The alpha the Pip-Boy's screen writes (nvf_assets NifSurface::pipboy_screen): those pixels
+// skip the scene's grade. The original's screen reads about the same indoors and at dusk
+// [observed: playtest shots of the original, 2026-11-05, docs/spec-notes/pipboy.md §3], where
+// this engine's grade would move it: clear weather at noon brightens by 1.3 [observed: this
+// engine's log, `sky:`]. That it stays out at every hour is [hypothesis]. Screen effects (VATS,
+// the fade) still cover it.
+const SCREEN_MARK: f32 = 0.25;
+
 fn to_srgb(c: vec3<f32>) -> vec3<f32> {
     return select(1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, c * 12.92, c <= vec3(0.0031308));
 }
@@ -118,12 +126,15 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         }
     }
     var c = to_srgb(clamp(lin, vec3(0.0), vec3(1.0)));
-    let lum = dot(c, vec3(0.2125, 0.7154, 0.0721));
-    c = mix(vec3(lum), c, grade.saturation);
-    c = mix(c, lum * grade.tint.rgb, grade.tint.a);
-    c = c * grade.brightness;
-    c = mix(vec3(grade.contrast_avg_lum), c, grade.contrast);
-    c = clamp(c, vec3(0.0), vec3(1.0));
+    let marked = abs(src.a - SCREEN_MARK) < 0.02;
+    if !marked {
+        let lum = dot(c, vec3(0.2125, 0.7154, 0.0721));
+        c = mix(vec3(lum), c, grade.saturation);
+        c = mix(c, lum * grade.tint.rgb, grade.tint.a);
+        c = c * grade.brightness;
+        c = mix(vec3(grade.contrast_avg_lum), c, grade.contrast);
+        c = clamp(c, vec3(0.0), vec3(1.0));
+    }
     // VATS mode: the amber grade left of the swipe's edge, the band riding the edge, the
     // wash over the whole screen.
     let vats = grade.vats;
@@ -140,5 +151,5 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     // The fade colour covers the graded picture [observed: the opening is white while a
     // modifier holds the brightness at zero, image-modifiers.md §5].
     c = mix(c, grade.fade.rgb, clamp(grade.fade.a, 0.0, 1.0));
-    return vec4(to_linear(clamp(c, vec3(0.0), vec3(1.0))), src.a);
+    return vec4(to_linear(clamp(c, vec3(0.0), vec3(1.0))), select(src.a, 1.0, marked));
 }

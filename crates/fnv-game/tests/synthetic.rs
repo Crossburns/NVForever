@@ -162,11 +162,13 @@ const TOPIC: u32 = 0x930;
 const INFO_A: u32 = 0x931;
 const INFO_B: u32 = 0x932;
 const CELL: u32 = 0x200;
+const OTHER_CELL: u32 = 0x201;
 const ACT_REF: u32 = 0x300;
 const TRIG_REF: u32 = 0x301;
 const NPC_REF: u32 = 0x320;
 const NPC_AUTO_REF: u32 = 0x321;
 const PATROL_REF: u32 = 0x330;
+const OTHER_REF: u32 = 0x331;
 
 const SET_STAGE: u16 = 0x1039;
 const GET_SECONDS_PASSED: u16 = 0x100C;
@@ -412,6 +414,10 @@ fn plugin_bytes() -> Vec<u8> {
         .concat(),
     );
     let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &[refr, trig_ref, achr, achr_auto, patrol_ref].concat()));
+    // A second cell, with one unscripted reference to move things to.
+    let other_cell = record(b"CELL", 0, OTHER_CELL, &[sub(b"EDID", z("TestOtherCell"))]);
+    let other_ref = record(b"REFR", 0, OTHER_REF, &[sub(b"EDID", z("TestOtherREF")), sub(b"NAME", MARKER.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
+    let other_children = group(OTHER_CELL.to_le_bytes(), 6, &group(OTHER_CELL.to_le_bytes(), 9, &other_ref));
     [
         tes4(),
         top(b"GLOB", &glob),
@@ -423,7 +429,7 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"PACK", &pack),
         top(b"QUST", &qust),
         top(b"DIAL", &dial),
-        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
+        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children, other_cell, other_children].concat()))),
     ]
     .concat()
 }
@@ -1131,6 +1137,132 @@ fn a_disabled_reference_runs_on_load_when_its_cell_loads() {
     assert_eq!(loads(&g), 2.0);
     g.tick();
     assert_eq!(loads(&g), 2.0);
+}
+
+/// How many times `r`'s OnLoad block has run (the activator script's nOnLoad).
+fn on_loads(g: &Game, r: FormId) -> f64 {
+    match g.var(InstKey::Ref { reference: r }, 7) {
+        Value::Num(x) => x,
+        v => panic!("{v:?}"),
+    }
+}
+
+fn load_only(g: &mut Game, cell: u32) {
+    g.set_loaded([FormId(cell)].into_iter().collect());
+}
+
+/// OnLoad at a cell load goes by the cell a reference is in now: a moved one runs it when
+/// its new cell loads, not when its old one does (issue #1577; the same reading as
+/// `Game::active_refs`, which picks the references whose GameMode blocks run).
+#[test]
+fn a_moved_reference_runs_on_load_with_its_new_cell() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    let act = FormId(ACT_REF);
+    load_only(&mut g, CELL);
+    assert_eq!(on_loads(&g, act), 1.0);
+    load_only(&mut g, OTHER_CELL);
+    assert_eq!(on_loads(&g, act), 1.0, "not in the other cell yet");
+    g.run_source("TestActivatorREF.MoveTo TestOtherREF", Default::default()).unwrap();
+    assert_eq!(g.cell_of(act), Some(FormId(OTHER_CELL)));
+    assert_eq!(on_loads(&g, act), 1.0, "moving into a loaded cell is no cell load");
+    load_only(&mut g, CELL);
+    assert_eq!(on_loads(&g, act), 1.0, "its old cell loads without it");
+    load_only(&mut g, OTHER_CELL);
+    assert_eq!(on_loads(&g, act), 2.0, "its new cell loads with it, once");
+    // Moved back, it goes by its first cell again.
+    g.run_source("TestActivatorREF.MoveTo TestPatrolPointREF", Default::default()).unwrap();
+    load_only(&mut g, CELL);
+    assert_eq!(on_loads(&g, act), 3.0);
+}
+
+/// Disabled references run OnLoad in the cell they moved to, as in their own
+/// (`a_disabled_reference_runs_on_load_when_its_cell_loads`); deleted ones run none.
+#[test]
+fn a_moved_reference_keeps_the_disabled_and_deleted_rules() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    let act = FormId(ACT_REF);
+    g.run_source("TestActivatorREF.MoveTo TestOtherREF", Default::default()).unwrap();
+    g.world.set_enabled(act, false).unwrap();
+    load_only(&mut g, OTHER_CELL);
+    assert_eq!(on_loads(&g, act), 1.0);
+    load_only(&mut g, CELL);
+    g.world.set_deleted(act, true).unwrap();
+    load_only(&mut g, OTHER_CELL);
+    assert_eq!(on_loads(&g, act), 1.0);
+}
+
+/// A reference made at run time is in no cell's placed list: it runs OnLoad when its cell
+/// loads later (issue #1577).
+#[test]
+fn a_created_reference_runs_on_load_when_its_cell_loads_later() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    load_only(&mut g, CELL);
+    let made = g.create_at(FormId(ACTIVATOR), Some(FormId(OTHER_CELL)), [0.0; 3], [0.0; 3]).unwrap();
+    g.tick();
+    assert_eq!(on_loads(&g, made), 0.0, "its cell is not loaded");
+    load_only(&mut g, OTHER_CELL);
+    assert_eq!(on_loads(&g, made), 1.0);
+    load_only(&mut g, CELL);
+    assert_eq!(on_loads(&g, made), 1.0);
+    load_only(&mut g, OTHER_CELL);
+    assert_eq!(on_loads(&g, made), 2.0);
+}
+
+/// A scripted player runs no OnLoad at a cell load, MoveTo or not.
+#[test]
+fn a_moved_player_runs_no_on_load_at_a_cell_load() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    load_only(&mut g, CELL);
+    g.other.scripts.insert(FormId::PLAYER_BASE, Some(FormId(ACT_SCRIPT)));
+    g.run_source("player.MoveTo TestOtherREF", Default::default()).unwrap();
+    assert!(g.loaded_cells.contains(&FormId(OTHER_CELL)));
+    assert_eq!(on_loads(&g, FormId::PLAYER_REF), 0.0);
+}
+
+/// An OnLoad event handler that counts in TestGlobal: 1 for the activator, 10 for the
+/// trigger, 100 for the unscripted reference of the other cell.
+const COUNT_ON_LOADS: &str = "SetEventHandler \"OnLoad\" (begin function {ref rOn, ref rSame}\nif rOn == TestActivatorREF\nlet TestGlobal := TestGlobal + 1\nelseif rOn == TestTriggerREF\nlet TestGlobal := TestGlobal + 10\nelseif rOn == TestOtherREF\nlet TestGlobal := TestGlobal + 100\nendif\nend)";
+
+/// The extender's handlers hear each reference of a loaded cell once, by the cell it is in
+/// now, scripted or not.
+#[test]
+fn on_load_handlers_hear_a_moved_reference_once_with_its_new_cell() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    load_only(&mut g, OTHER_CELL);
+    g.run_source("TestActivatorREF.MoveTo TestOtherREF", Default::default()).unwrap();
+    g.run_source(COUNT_ON_LOADS, Default::default()).unwrap();
+    g.world.set_global(FormId(GLOBAL), 0.0).unwrap();
+    load_only(&mut g, CELL);
+    assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 10.0, "the trigger stayed; the activator left");
+    g.world.set_global(FormId(GLOBAL), 0.0).unwrap();
+    load_only(&mut g, OTHER_CELL);
+    assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 101.0, "the activator and the unscripted reference, once each");
+    assert_eq!(on_loads(&g, FormId(ACT_REF)), 1.0);
+}
+
+/// A block moving a reference during the load gives it one OnLoad, not one per cell: the
+/// references are chosen before any block runs.
+#[test]
+fn a_reference_moved_during_the_load_runs_on_load_once() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.run_source(COUNT_ON_LOADS, Default::default()).unwrap();
+    g.run_source("SetEventHandler \"OnLoad\" (begin function {ref rOn, ref rSame}\nif rOn == TestActivatorREF\nTestTriggerREF.MoveTo TestOtherREF\nendif\nend)", Default::default()).unwrap();
+    g.world.set_global(FormId(GLOBAL), 0.0).unwrap();
+    g.set_loaded([FormId(CELL), FormId(OTHER_CELL)].into_iter().collect());
+    assert_eq!(g.cell_of(FormId(TRIG_REF)), Some(FormId(OTHER_CELL)));
+    assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 111.0, "the activator, the trigger and the other cell's reference, once each");
 }
 
 #[test]
@@ -2495,6 +2627,24 @@ fn a_scripts_call_on_an_empty_reference_is_traced_once() {
         g.run_source("ref r\nr.Disable", Default::default()).expect("compiles");
     }
     assert_eq!(failed(&g), 3);
+}
+
+#[test]
+fn a_call_on_an_empty_reference_gives_0_and_the_script_goes_on() {
+    // [observed: o5_00, a function script went on to its next line; the Nellis artillery
+    // (issue #1600) fires in the original although its script calls GetDead on an unset
+    // reference every frame]. Until 2026-11-05 the call stopped the script.
+    let f = udf_fixture();
+    assert_eq!(global_after(&f, "ref r
+r.Disable
+let TestGlobal := 7"), 7.0);
+    assert_eq!(global_after(&f, "ref r
+if r.GetDisabled == 0
+  let TestGlobal := 8
+endif"), 8.0);
+    // Behind a classic `&&` (EDEScript's shape), the line after it runs too.
+    assert_eq!(global_after(&f, "let TestGlobal := Call TestEmpty 1
+let TestGlobal := 9"), 9.0);
 }
 
 #[test]

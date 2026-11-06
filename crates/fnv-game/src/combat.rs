@@ -481,7 +481,7 @@ impl Game<'_> {
     }
 
     /// A script lowered `r`'s Health (DamageActorValue): at 0 or less it dies, an essential
-    /// actor is knocked out [hypothesis: unconscious.md §2.2, observer-checks.md check 88].
+    /// actor is knocked out [hypothesis: unconscious.md §2.2, observer-checks.md check 89].
     /// Nobody is credited, so no XP, karma or challenge. A god-mode player stands [design], and so does an actor whose record gives
     /// no Health, as its Health is only `max_health`'s stand-in of 1. During a hit on `r`
     /// the hit decides, so that a kill finished by an OnHit script or by a Script effect the

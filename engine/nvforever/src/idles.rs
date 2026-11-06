@@ -136,6 +136,10 @@ pub const FIDGET_CHECK_SECONDS: f32 = 2.0;
 /// [engineering choice].
 pub const COWER_CHECK_SECONDS: f32 = 0.5;
 
+/// Seconds between two looks at the idle tree for a creature's standing look
+/// (`IdleSource::Standing`): a changed state shows within a second [engineering choice].
+pub const STANDING_CHECK_SECONDS: f32 = 1.0;
+
 /// After the tree gave an actor in a conversation no gesture, seconds until it is asked
 /// again in the same part (a new response asks at once) [engineering choice].
 pub const GESTURE_RETRY_SECONDS: f32 = 1.0;
@@ -504,6 +508,8 @@ pub struct Idles {
     /// Seconds until each actor's next look for a fidget, and for its cower idle.
     fidget_check: HashMap<u32, f32>,
     cower_check: HashMap<u32, f32>,
+    /// Seconds until each creature's next look for its standing look.
+    standing_check: HashMap<u32, f32>,
     /// When each actor last started each fidget or gesture (seconds of `clock`), for
     /// the replay delay.
     fidget_last: HashMap<(u32, u32), f32>,
@@ -526,6 +532,7 @@ impl Default for Idles {
             collections: HashMap::new(),
             fidget_check: HashMap::new(),
             cower_check: HashMap::new(),
+            standing_check: HashMap::new(),
             fidget_last: HashMap::new(),
             gesturing: HashMap::new(),
             clock: 0.0,
@@ -535,13 +542,15 @@ impl Default for Idles {
     }
 }
 
-/// The clip of an idle and its playback, as its record and text keys say.
-fn load(ctx: &mut ActorCtx, game: &Game, idle: FormId, rng: &mut Rng) -> Result<(Arc<Clip>, IdlePlay), String> {
+/// The clip of an idle and its playback, as its record and text keys say; a creature's
+/// standing look loops until replaced (`IdleSource::Standing`).
+fn load(ctx: &mut ActorCtx, game: &Game, idle: FormId, rng: &mut Rng, endless: bool) -> Result<(Arc<Clip>, IdlePlay), String> {
     let def = game.data.idles.get(&idle).ok_or("not an idle animation")?;
     let path = clip_path(game, idle).ok_or("it names no file")?;
     let clip = ctx.clip(&path).ok_or_else(|| format!("{path} does not load"))?;
     let keys = IdleKeys::read(clip.start, clip.stop, &clip.text_keys);
     let passes = match def.loops(|n| rng.below(n)) {
+        _ if endless => None,
         Loops::Forever => None,
         Loops::Times(n) => Some(n),
     };
@@ -680,6 +689,10 @@ pub fn drive(
         // A cower goes on while its actor runs and ends when it no longer flees
         // (idles.md §13.2).
         if let Some(c) = idle.0.cur.as_mut().filter(|c| c.source == IdleSource::Cower && !fleeing(game, v.0)) {
+            c.play.stop();
+        }
+        // A creature's standing look ends when it moves, fights or dies [design].
+        if let Some(c) = idle.0.cur.as_mut().filter(|c| c.source == IdleSource::Standing && (moving || game.draws_weapon(FormId(v.0)) || game.is_dead(FormId(v.0)))) {
             c.play.stop();
         }
         // A gesture ends when its actor walks or is no longer in a conversation [design].
@@ -874,6 +887,48 @@ pub fn drive(
         game.ask_idle(FormId(actor), idle, kind.source());
     }
 
+    // Standing looks: creatures standing still and calm play the tree's Idle-section leaf
+    // their state calls for in place of their base idle (Mr. House's screen, #1542). The
+    // look is asked again now and then: a changed state changes it, none ends it.
+    let calm: Vec<(u32, String, Option<u32>)> = actors
+        .iter()
+        .filter(|(_, v, ..)| !live.contains(&v.0) && !game.is_dead(FormId(v.0)) && !game.draws_weapon(FormId(v.0)) && game.furniture_use(FormId(v.0)).is_none())
+        .filter(|(_, v, ..)| !talk_parts.iter().any(|p| p.actor.0 == v.0) && !cowering.iter().any(|(c, _)| *c == v.0))
+        .filter(|(_, _, _, _, lo, _)| lo.is_none_or(|l| l.velocity == [0.0; 2]))
+        .filter_map(|(_, v, rig, slot, ..)| {
+            let folder = skeleton_folder(&rig.skeleton).filter(|f| f.split('\\').any(|p| p == "creatures"))?;
+            Some((v.0, folder, slot.and_then(|s| s.0.playing()).filter(|p| p.source == IdleSource::Standing).map(|p| p.idle)))
+        })
+        .collect();
+    st.standing_check.retain(|a, _| calm.iter().any(|(c, ..)| c == a));
+    let mut looks: Vec<(u32, FormId)> = Vec::new();
+    let mut end_looks: Vec<u32> = Vec::new();
+    for (actor, folder, look) in &calm {
+        let check = st.standing_check.entry(*actor).or_insert(0.0);
+        *check -= dt;
+        // Another idle plays (not its own look): the look waits.
+        if *check > 0.0 || (busy.get(actor).copied().unwrap_or(false) && look.is_none()) {
+            continue;
+        }
+        *check = STANDING_CHECK_SECONDS;
+        let mut pick = None;
+        with_world(game, &mut |game| pick = game.standing_idle(FormId(*actor), folder));
+        match (pick, look) {
+            (Some(p), Some(l)) if p.0 == *l => {}
+            (Some(p), _) => looks.push((*actor, p)),
+            (None, Some(_)) => end_looks.push(*actor),
+            (None, None) => {}
+        }
+    }
+    for actor in end_looks {
+        if let Some(c) = actors.iter_mut().find(|(_, v, ..)| v.0 == actor).and_then(|(_, _, _, s, ..)| s).and_then(|s| s.into_inner().0.cur.as_mut()) {
+            c.play.stop();
+        }
+    }
+    for (actor, idle) in looks {
+        game.ask_idle(FormId(actor), idle, IdleSource::Standing);
+    }
+
     // Talking gestures: NPCs drawn in a conversation (idles.md §12).
     // Those waiting for their clip were asked for too (#1429).
     let asked_now: Vec<u32> = game.idle_requests.iter().chain(st.waiting.iter().map(|(r, _)| r)).map(|r| r.actor.0).collect();
@@ -897,7 +952,8 @@ pub fn drive(
         let playing = slot.and_then(|s| s.0.playing());
         // Another idle (the response's own, a script's) plays, or was asked for this
         // frame: it comes first. A gesture goes on until the part changes.
-        let other = playing.is_some_and(|p| p.source != IdleSource::Gesture) || asked_now.contains(&actor);
+        // A standing look gives way to the gestures (House's talking face).
+        let other = playing.is_some_and(|p| !matches!(p.source, IdleSource::Gesture | IdleSource::Standing)) || asked_now.contains(&actor);
         let gesture_on = playing.is_some_and(|p| p.source == IdleSource::Gesture);
         // Walking, or turning on the spot to face the other fast enough for the turn
         // clips (they step the feet; the walker's heading noise is far below it).
@@ -999,7 +1055,7 @@ pub fn drive(
                     IdleSource::PackageBegin | IdleSource::PackageEnd | IdleSource::PackageChange => st.stats.package += 1,
                     IdleSource::PackageIdles | IdleSource::MarkerIdles => st.stats.collection += 1,
                     IdleSource::Speaker | IdleSource::Listener => st.stats.dialogue += 1,
-                    IdleSource::Fidget | IdleSource::FurnitureFidget | IdleSource::CombatIdle | IdleSource::Gesture | IdleSource::Cower | IdleSource::Stimpak | IdleSource::PickUp => {}
+                    IdleSource::Fidget | IdleSource::FurnitureFidget | IdleSource::CombatIdle | IdleSource::Gesture | IdleSource::Cower | IdleSource::Stimpak | IdleSource::PickUp | IdleSource::Standing => {}
                 }
             }
             let name = game.data.name(actor);
@@ -1032,7 +1088,7 @@ pub fn drive(
                 st.stats.clip_read_late += 1;
                 debug!("idle: {name}: the clip of {} was not read in {} ms: read now", game.data.name(idle), CLIP_WAIT.as_millis());
             }
-            let (clip, play) = match load(&mut ctx, game, idle, &mut st.rng) {
+            let (clip, play) = match load(&mut ctx, game, idle, &mut st.rng, source == IdleSource::Standing) {
                 Ok(l) => l,
                 Err(why) => {
                     st.stats.no_clip += 1;
