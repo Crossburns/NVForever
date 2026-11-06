@@ -1106,6 +1106,10 @@ The numbers above stay put so links to them hold; each item here gives its own p
     128 units) and read them again. Repeat with a Frag Grenade thrown by the player, and
     once on the player. The answer: which limbs lose condition, how much each against the
     Health lost, and whether distance or the side facing the blast matters.
+    - Still open after o25_limbs (2026-11-06, Ringo at `SetAV Health 5000` only): rerun
+      on an NPC at its stock Health (100–200) and once on the player, to tell condition
+      points straight off the condition from a share of the limb's pool (of maximum
+      Health), and whether the player's limbs take `fCombatPlayerLimbDamageMult`.
 
 ## Added 2026-11-02 (the player's Speed Mult and armour, issue #1364)
 

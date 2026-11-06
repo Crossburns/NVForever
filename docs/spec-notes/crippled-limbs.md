@@ -187,12 +187,16 @@ them.
   blast damages limbs as well as Health [documented: GECK wiki GetHitLimbDamage, which
   returns 0 for an explosion "even if the explosion dealt limb damage"]. It has no hit
   location (GetHitLocation −1, jip-hit-info.md §1). Since 2026-11-06 (#1741) it takes
-  shares of the blast's damage to Health in condition points, straight off the
+  shares of the blast's damage to Health: the torso (Endurance Condition) 1/30, the
+  legs (Left and Right Mobility Condition) 0.24 together, the head, arms and brain
+  nothing, at any distance inside the blast [observed 2026-11-06, o25_limbs, observer
+  check 74: frag mines and a grenade at a human's feet, one NPC, Ringo, after `SetAV
+  Health 5000`]. NVForever takes the shares in condition points straight off the
   condition as a fall's leg (physics.md §6.12: no pool, no player limb multiplier, no
-  perks): the torso (Endurance Condition) 1/30, the legs (Left and Right Mobility
-  Condition) 0.24 together, the head, arms and brain nothing, at any distance inside
-  the blast [observed 2026-11-06, o25_limbs, observer check 74: frag mines and a grenade at a
-  human's feet]. NVForever gives the left leg 0.16 and the right 0.08, all 0.24 to a
+  perks), the same at any maximum Health [hypothesis: measured only at 5000 Health
+  and only on an NPC; a share of the limb's pool (of maximum Health, as shots use)
+  fits the same numbers and would do 25–50× more at a normal NPC's 100–200 Health, and
+  the player was never measured; rerun open under observer check 74]. NVForever gives the left leg 0.16 and the right 0.08, all 0.24 to a
   body part data with one of them [hypothesis: the original put it all on the left leg
   twice and 2:1 three times; the simplest rule that fits the 2:1 runs], times the
   weapon's Limb Dmg Mult (1 for a blast without a weapon; 1 on both measured weapons)

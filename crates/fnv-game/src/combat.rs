@@ -173,7 +173,10 @@ pub const BLAST_LEGS_SHARE: f64 = 0.24;
 /// has one); the head, arms and brain take nothing [observed: the shares and the
 /// untouched parts, frag mines and a grenade at a human's feet; hypothesis: the
 /// left/right split, which the original varied between all-left and 2:1, and that a
-/// blast at any height or on any body does the same].
+/// blast at any height or on any body does the same]. The points come straight off the
+/// condition, not as a share of a pool, at any maximum Health and with no player limb
+/// multiplier [hypothesis: measured only on one NPC at 5000 Health; a share of the
+/// limb's pool fits the same numbers, observer check 74].
 pub fn blast_limb_shares(conditions: &[u16], damage: f64) -> Vec<LimbHit> {
     if damage <= 0.0 {
         return Vec::new();

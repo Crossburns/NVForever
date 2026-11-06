@@ -2157,8 +2157,9 @@ fn limb_hits_lower_conditions_and_cripple() {
 /// An explosion's limb damage follows the original's shares (docs/spec-notes/crippled-
 /// limbs.md §5): for the five measured blasts (o25_limbs, Ringo; Health lost, then the
 /// torso's and the legs' condition points lost) the torso loses 1/30 of the Health
-/// damage and the legs 0.24 together, the head, arms and brain nothing, whatever the
-/// actor's maximum health; nothing on a dead actor.
+/// damage and the legs 0.24 together, the head, arms and brain nothing [observed];
+/// nothing on a dead actor. The points come straight off the condition, whatever the
+/// actor's maximum Health [hypothesis: measured only at 5000 Health, on an NPC].
 #[test]
 fn blasts_take_the_measured_limb_shares() {
     use fnv_game::combat::{blast_limb_shares, HEAD, LEFT_ARM, LEFT_MOBILITY, RIGHT_ARM, RIGHT_MOBILITY, TORSO};
