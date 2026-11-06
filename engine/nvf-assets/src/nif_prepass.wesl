@@ -53,7 +53,8 @@ fn test_fragment(in: VertexOutput) {
     }
     // The holes of the main pass (nif_material.rs "Holes").
     @if(MAY_DISCARD && VERTEX_UVS_A) if surface.holes.x >= 0.0 && surface.holes.x < 255.0 {
-        if holes_alpha(in.instance_index, in.uv) * 255.0 >= surface.holes.x {
+        let h = holes_alpha(in.instance_index, in.uv) * 255.0;
+        if select(h >= surface.holes.x, h < surface.holes.x, surface.holes.z > 0.5) {
             discard;
         }
     }

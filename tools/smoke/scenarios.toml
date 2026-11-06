@@ -20030,3 +20030,17 @@ order = [[
   { text = "OnHit of FalloutNV.esm|SCPT 0x0012424D ran on Some(0x00124122)", label = "the volunteer's OnHit runs the scene on" },
   { re = 'ash pile: .* replaces the body of 0x00124122', label = "he is disintegrated" },
 ]]
+
+[[scenario]]
+name = "perk-spotter-robot"
+source = "owner's playtest 2026-11-06: Spotter's red highlight on a Mister Gutsy did not sit on the model (and robot hit volumes looked off); a Steel Mill Mister Gutsy (Mr Steel, 0x000FFB72) moved in front of the player and set on it (god mode), the perk Spotting by test aid, the player aims from 9 to 12 s"
+note = "frames before and while aiming in target/smoke for the owner: the highlight must cover the robot's body, eyes and arms where they are drawn"
+areas = ["perks", "effects"]
+paths = ["engine/nvf-play/src/perk_marks.rs", "engine/nvforever/src/effect_shaders.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_SCRIPT = "2:moveto:0x000FFB72:player:0:250:0,3:perk:Spotting,3:combat:0x000FFB72:player", NVF_PLAY_TEST_CONTROL = "2:weapon,8.2:aimactor,8.95:aimactor", NVF_PLAY_TEST_KEYS = "9:mouse-right:3", NVF_PLAY_TEST_SHOTS = "8.6:spotter_robot_not_aiming.png,10.5:spotter_robot_aiming.png" }
+args = ["--cell", "1ESteelMill", "--play", "--no-voice", "--no-messages"]
+run_seconds = 16
+order = [[
+  { re = 'perk marks: Spotter marks [1-9]\d* hostile actors while the player aims', label = "Spotter marks the Mister Gutsy while the player aims" },
+  { re = 'effect shader: fxSpotterShader on .* while the player aims', label = "it plays the Spotter Effect" },
+]]

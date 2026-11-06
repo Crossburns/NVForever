@@ -8,8 +8,11 @@
 //!   gets up to two overlays drawn on the same surface (its mesh, and its skin when it
 //!   has one): the fill (texture × colour, panned by the texture speed) and the edge
 //!   (the edge colour, faded in towards the outline by the NIF material's view-angle
-//!   falloff). Cut-out and blended meshes (hair, beards, lashes) get none: the overlays
-//!   do not carry the mesh's texture alpha. The player's are the meshes of its
+//!   falloff). Blended meshes (beards, lashes) get none: the overlays do not carry the
+//!   mesh's texture alpha; nor do refracting ones (heat haze), which show no surface. Alpha-tested meshes (a robot's body, cut-out hair) get copies
+//!   cut by their own texture's alpha at their own cut (the holes test turned round,
+//!   `nvf_assets::nif_material` "Holes"; none when the shader has holes of its own),
+//!   #1717. The player's are the meshes of its
 //!   third-person body. Both are unlit, cast no shadow and sit a decal's depth step in
 //!   front of the surface. Their alpha follows the record's cycle every frame; a mesh drawn later
 //!   (a cell loaded again, armour put on) gets its overlays then.
@@ -74,6 +77,9 @@ pub(crate) enum Source {
     Perk(u32, u32),
 }
 
+/// An overlay's fill and edge materials.
+type Looks = [Option<Handle<NifMaterial>>; 2];
+
 /// A shader playing on a reference.
 pub(crate) struct Active {
     pub(crate) on: u32,
@@ -86,6 +92,9 @@ pub(crate) struct Active {
     pub(crate) persist: bool,
     fill: Option<Handle<NifMaterial>>,
     edge: Option<Handle<NifMaterial>>,
+    /// Copies of `fill` and `edge` cut by an alpha-tested mesh's own texture, by that
+    /// texture and cut (in alpha units): see [`cut_out_overlay`].
+    cut: HashMap<(AssetId<Image>, u8), Looks>,
     /// The meshes covered, and their overlays.
     pub(crate) covered: HashMap<Entity, Vec<Entity>>,
     /// The holes texture, when the shader has holes and it was found.
@@ -229,7 +238,7 @@ fn play(
         for x in a.covered.values().flatten() {
             commands.entity(*x).try_despawn();
         }
-        for h in [a.fill, a.edge].into_iter().flatten() {
+        for h in [a.fill, a.edge].into_iter().chain(a.cut.into_values().flatten()).flatten() {
             models.materials.remove(&h);
         }
         // The meshes get their own materials back, unless something else changed them since.
@@ -302,7 +311,7 @@ fn play(
                 (None, Source::Perk(..)) => "while the player aims (a companion perk)".to_string(),
             }
         );
-        st.active.insert(k, Active { on, shader: s, since: now, until, persist, fill, edge, covered: HashMap::new(), holes_texture, holed: HashMap::new(), addons: Vec::new() });
+        st.active.insert(k, Active { on, shader: s, since: now, until, persist, fill, edge, cut: HashMap::new(), covered: HashMap::new(), holes_texture, holed: HashMap::new(), addons: Vec::new() });
     }
 
     // [documented: #1323] Ends and starts must run even when no shader remains to draw.
@@ -344,16 +353,32 @@ fn play(
             if a.covered.contains_key(&e) {
                 continue;
             }
-            // A cut-out or blended mesh (hair, beards, lashes) gets no overlay: drawn
-            // without the mesh's texture alpha, it covered every card of the hair in the
-            // membrane's colour and the head showed bald (owner's playtest, 2026-10-24).
+            // A blended mesh (beards, lashes) gets no overlay: drawn without the mesh's
+            // texture alpha, it covered every card of the hair in the membrane's colour
+            // and the head showed bald (owner's playtest, 2026-10-24). An alpha-tested
+            // one (a robot's body, #1717) gets overlays cut by its own texture.
             let own = a.holed.get(&e).map_or(&mat.0, |(original, _)| original);
-            if models.materials.get(own).is_some_and(|m| !matches!(m.base.alpha_mode, AlphaMode::Opaque) || m.extension.alpha_cut > 0.0) {
-                a.covered.insert(e, Vec::new());
-                continue;
-            }
+            let look = match models.materials.get(own).map(|m| cut_out_overlay(m, a.shader.holes.is_some())) {
+                Some(Cover::Plain) | None => [a.fill.clone(), a.edge.clone()],
+                Some(Cover::CutBy(tex, cut)) => {
+                    let key = (tex.id(), (cut * 255.0).round() as u8);
+                    a.cut
+                        .entry(key)
+                        .or_insert_with(|| {
+                            [&a.fill, &a.edge].map(|m| {
+                                let copy = models.materials.get(m.as_ref()?)?.clone();
+                                Some(models.materials.add(cut_by(copy, tex.clone(), cut)))
+                            })
+                        })
+                        .clone()
+                }
+                Some(Cover::None) => {
+                    a.covered.insert(e, Vec::new());
+                    continue;
+                }
+            };
             let mut overlays = Vec::new();
-            for mat in [&a.fill, &a.edge].into_iter().flatten() {
+            for mat in look.iter().flatten() {
                 let mut c = commands.spawn((Mesh3d(mesh.0.clone()), MeshMaterial3d(mat.clone()), Transform::IDENTITY, Overlay, NoFrustumCulling, bevy::light::NotShadowCaster));
                 if let Some(skin) = skin {
                     c.insert(skin.clone());
@@ -473,15 +498,56 @@ fn play(
             let (scale, alpha) = ad.look(t, None);
             addon_look(&a.addons, scale, alpha, &mut transforms, &mut fades);
         }
-        if let Some(fill) = &a.fill {
-            let [u, v] = a.shader.fill_speed;
-            let uv = bevy::math::Affine2::from_translation(Vec2::new((u * t).fract(), (v * t).fract()));
+        // The cut copies (made only for shaders without holes) follow their originals.
+        let fills = a.fill.iter().chain(a.cut.values().filter_map(|c| c[0].as_ref()));
+        let [u, v] = a.shader.fill_speed;
+        let uv = bevy::math::Affine2::from_translation(Vec2::new((u * t).fract(), (v * t).fract()));
+        for fill in fills {
             animate_material(&mut models.materials, fill, holes, Some(a.shader.fill.alpha(t, a.persist)), Some(uv));
         }
-        if let Some(edge) = &a.edge {
+        for edge in a.edge.iter().chain(a.cut.values().filter_map(|c| c[1].as_ref())) {
             animate_material(&mut models.materials, edge, holes, Some(a.shader.edge.alpha(t, a.persist)), None);
         }
     }
+}
+
+/// How a mesh is covered, from its own material.
+#[derive(Debug, PartialEq)]
+enum Cover {
+    /// With the shader's overlays as they are (an opaque mesh).
+    Plain,
+    /// With copies cut where the mesh's own texture's alpha is below the cut (an
+    /// alpha-tested mesh: a robot's body, #1717; hair drawn as a cut-out).
+    CutBy(Handle<Image>, f32),
+    /// Not at all: a blended mesh (beards, lashes), a refracting one (heat haze), or an
+    /// alpha-tested one when the shader has holes of its own (one holes texture per
+    /// material).
+    None,
+}
+
+/// How a mesh drawn with `m` is covered (`shader_has_holes`: the shader eats its
+/// overlays away with a holes texture).
+fn cut_out_overlay(m: &NifMaterial, shader_has_holes: bool) -> Cover {
+    // A refracting shape shows no surface, only the shimmer behind it: a Mister Gutsy's
+    // jet haze (`##RefractCloudMesh`) was covered as a cluster of solid blobs under it
+    // (#1717) [design].
+    if m.extension.refract {
+        return Cover::None;
+    }
+    match (m.base.alpha_mode, &m.base.base_color_texture) {
+        (AlphaMode::Opaque, _) if m.extension.alpha_cut <= 0.0 => Cover::Plain,
+        (AlphaMode::Mask(cut), Some(tex)) if m.extension.alpha_cut <= 0.0 && !shader_has_holes => Cover::CutBy(tex.clone(), cut),
+        _ => Cover::None,
+    }
+}
+
+/// An overlay material cut where `texture`'s alpha, at the mesh's own texture
+/// coordinates, is below `cut` (0-1): the holes test turned round (nif_material.rs
+/// "Holes", `holes.z`), with no edge band.
+fn cut_by(mut m: NifMaterial, texture: Handle<Image>, cut: f32) -> NifMaterial {
+    m.extension.holes = Vec4::new(cut * 255.0, 0.0, 1.0, 0.0);
+    m.extension.holes_texture = Some(texture);
+    m
 }
 
 /// Apply only differing values in one mutable access [documented: Bevy 0.20.1
@@ -750,5 +816,29 @@ mod tests {
             assert!((p.opacity(half) - 0.5).abs() < 1e-4, "fall off {f}");
             assert_eq!(p.opacity(1.0), 0.0);
         }
+    }
+
+    #[test]
+    fn alpha_tested_meshes_get_overlays_cut_by_their_own_texture() {
+        let tex = Handle::<Image>::default();
+        let with = |mode: AlphaMode, cut: f32| {
+            let mut m = nif_material(StandardMaterial { alpha_mode: mode, base_color_texture: Some(tex.clone()), ..default() });
+            m.extension.alpha_cut = cut;
+            m
+        };
+        assert_eq!(cut_out_overlay(&with(AlphaMode::Opaque, 0.0), false), Cover::Plain);
+        // A Mister Gutsy's body: NiAlphaProperty test at 120 (#1717).
+        assert_eq!(cut_out_overlay(&with(AlphaMode::Mask(120.0 / 255.0), 0.0), false), Cover::CutBy(tex.clone(), 120.0 / 255.0));
+        // One holes texture per material: the shader's own holes win.
+        assert_eq!(cut_out_overlay(&with(AlphaMode::Mask(0.5), 0.0), true), Cover::None);
+        assert_eq!(cut_out_overlay(&with(AlphaMode::Blend, 0.0), false), Cover::None);
+        assert_eq!(cut_out_overlay(&with(AlphaMode::Blend, 0.3), false), Cover::None);
+        // A Mister Gutsy's jet haze.
+        let mut haze = with(AlphaMode::Opaque, 0.0);
+        haze.extension.refract = true;
+        assert_eq!(cut_out_overlay(&haze, false), Cover::None);
+        let m = cut_by(with(AlphaMode::Add, 0.0), tex.clone(), 0.5);
+        assert_eq!(m.extension.holes, Vec4::new(127.5, 0.0, 1.0, 0.0));
+        assert_eq!(m.extension.holes_texture, Some(tex));
     }
 }
