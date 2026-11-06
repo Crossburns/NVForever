@@ -1233,14 +1233,25 @@ impl Runtime {
                         }
                         Some(Err(error)) => Err(format!("{func}: {error}")),
                         // One the script machine holds itself (MessageBoxEx): a line of script,
-                        // as the console's.
-                        None => match g.run_source(&format!("{func} {}", args.join(" ")), ctx) {
-                            Ok(_) => {
-                                info!("script: test aid calls {func}{}", on.map(|r| format!(" on {}", g.data.name(r))).unwrap_or_default());
-                                Ok(())
+                        // as the console's. A line that compiles but stops on an error when it
+                        // runs (a `ScriptError` in the trace) fails the aid, so a scenario's
+                        // `call:` cannot pass on a line that did nothing.
+                        None => {
+                            let from = g.events.len();
+                            match g.run_source(&format!("{func} {}", args.join(" ")), ctx) {
+                                Ok(_) => match g.events[from..].iter().find_map(|e| match &e.kind {
+                                    EventKind::ScriptError { error, .. } => Some(error.clone()),
+                                    _ => None,
+                                }) {
+                                    Some(error) => Err(format!("{func}: {error}")),
+                                    None => {
+                                        info!("script: test aid calls {func}{}", on.map(|r| format!(" on {}", g.data.name(r))).unwrap_or_default());
+                                        Ok(())
+                                    }
+                                },
+                                Err(e) => Err(format!("{func} is not a script function: {e}")),
                             }
-                            Err(e) => Err(format!("{func} is not a script function: {e}")),
-                        },
+                        }
                     };
                 };
                 let mut values = Vec::new();
