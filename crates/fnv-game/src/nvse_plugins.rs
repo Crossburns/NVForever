@@ -147,7 +147,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // [observed: plugins1, Recipe127mm 4 inputs, the first 00140AAA; category
         // 00153621, subcategory 0013E44E]
         "getrecipeinputforms" => {
-            let ins: Vec<XVal> = form(args, 0).and_then(|f| g.data.recipes.get(&f)).map(|r| r.ingredients.iter().map(|(f, _)| XVal::Ref(f.0)).collect()).unwrap_or_default();
+            let ins: Vec<XVal> = form(args, 0).and_then(|f| crate::nvse_lutana::recipe(g, f)).map(|r| r.ingredients.iter().map(|(f, _)| XVal::Ref(f.0)).collect()).unwrap_or_default();
             list(g, ins)
         }
         "getrecipecategory" | "getrecipesubcategory" => {
@@ -186,7 +186,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             yes((0.0..4.0).contains(&k) && INGESTIBLE_BITS[k as usize].is_some_and(|b| flags >> b & 1 != 0))
         }
         // [observed: plugins1, 2]
-        "getdefaultmessagetime" => XVal::Num(2.0),
+        "getdefaultmessagetime" => XVal::Num(crate::nvse_lutana::message_time(g)),
         // ---- JohnnyGuitar ----
         // The current value by code [observed: plugins1, Strength 5, Health 200, Barter
         // and Guns 17].

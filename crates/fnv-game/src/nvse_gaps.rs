@@ -1197,7 +1197,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             yes(rise != set && (hour < rise || hour >= set))
         }
         "getrecipeoutputforms" => {
-            let outs: Vec<XVal> = form(args, 0).and_then(|f| g.data.recipes.get(&f)).map(|r| r.outputs.iter().map(|(f, _)| XVal::Ref(f.0)).collect()).unwrap_or_default();
+            let outs: Vec<XVal> = form(args, 0).and_then(|f| crate::nvse_lutana::recipe(g, f)).map(|r| r.outputs.iter().map(|(f, _)| XVal::Ref(f.0)).collect()).unwrap_or_default();
             list(g, outs)
         }
         "getactivequest" => XVal::Ref(g.ui.active_quest.map_or(0, |q| q.0)),
