@@ -636,7 +636,7 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 16
 expect = [
   { re = 'settings: .* read from .*ui-scale 75%', label = "the INI's 75% is read at the start" },
-  { text = "interface: UI scale 75% (the HUD and the menus drawn at 75% of the original's size)", label = "the run's HUD is drawn at 75%" },
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run's HUD is drawn at 75%" },
   { re = 'compass: heading at x ', label = "the HUD is drawn" },
 ]
 manual = "ui_scale_75.png: the HUD three quarters of its 100% size, the health and compass corner at the bottom left, the action points at the bottom right, the sneak word and other top pieces at the top; the text readable"
@@ -654,7 +654,7 @@ env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NV
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 24
 expect = [
-  { text = "interface: UI scale 75% (the HUD and the menus drawn at 75% of the original's size)", label = "the run draws the menus at 75%" },
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run draws the menus at 75%" },
   "pause menu: open",
   "wait menu: open",
   { re = 'wait menu: waiting (?P<n>\d+) hour', range = [17, 19], label = "the press on the 75% slider's drawn 72% chose about 18 hours, and the press on the drawn Accept took it" },
@@ -671,7 +671,7 @@ env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_TILE_MENUS = "SleepWaitM
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 16
 expect = [
-  { text = "interface: UI scale 75% (the HUD and the menus drawn at 75% of the original's size)", label = "the run draws the menus at 75%" },
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run draws the menus at 75%" },
   { re = 'tiles: SleepWaitMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "the menu's tree draws" },
   { text = "tiles: SleepWaitMenu Step(6) on its tiles", count = 1, label = "the real press on the drawn page area pages the slider" },
 ]
