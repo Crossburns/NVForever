@@ -771,14 +771,39 @@ the face is, and the view narrows where it looks).
 - **Blur.** A depth of field on the face's distance (image-modifiers.md §8.4), behind the
   speaker only, faded with the zoom, following the setting. No dimming.
 - Log: `dialogue zoom: in on <actor> (<what the face point is>): <d> units, vertical <a>° to
-  <b>°, over 0.80 s[; third person: the camera at the eye, no body]` as the ease in ends;
+  <b>°, over 0.80 s; view <v> units tall (<a human-style actor | drawn <h> tall>), the point <s> from its top[; third person: the camera at the eye, no body]` as the ease in ends;
   `dialogue zoom: out from <d> units: the view is back at vertical <a>°, over 0.30 s` as
   the ease out ends; `dialogue zoom: no zoom in the conversation with <actor>: <why>`;
   `dialogue zoom is off (--no-dialogue-zoom)`.
 - Smoke: `dialogue-zoom`, `dialogue-zoom-off`, `dialogue-zoom-no-look`,
-  `dialogue-zoom-third`, `dialogue-zoom-frozen`, and `talking-activator-intercom` for the
+  `dialogue-zoom-third`, `dialogue-zoom-frozen`, `dialogue-zoom-victor`, `dialogue-zoom-marcus`, `dialogue-zoom-house`, and `talking-activator-intercom` for the
   activator's line.
-- Open: creatures and robots get the human head's number, not looked at. Not compared with
+- **Creatures and robots** (ACRE; `creature_framing`). Every actor's head here is a head
+  bone, `Bip01 Head`, on the securitron and the super mutant skeletons too, so a robot was
+  aimed at sensibly but framed as a human head: 52 units of view for a machine 187 tall.
+  From the original's shots, measured against the meshes in the data [observed, 2026-11-06]:
+
+  | Speaker | Drawn height | View's height | Head or face share | Point from the top |
+  |---|---|---|---|---|
+  | Human (Doc Mitchell, Chet) | about 128 | 51.7 | head 0.30 | 0.38 (bone + face offset) |
+  | Marcus (super mutant) | 173 | about 97 | head 0.25, face's centre 0.325 | bone about 0.31 |
+  | Victor (securitron) | 187 | about 125 | screen 0.22, its centre 0.44 | bone 0.457, antenna 0.055 |
+  | Mr. House (a screen) | 300 | about 150 (vertical 18.3° from about 466) | face well over half | bone about 0.55 |
+
+  The view is `51.7 + 7.5 sqrt(height - 128)`, which gives 102 (+5 %), 109 (-13 %) and 150,
+  with a creature's point at `0.9 * top above it / view`, held to 0.31 to 0.55: Marcus's at
+  0.31, Victor's 0.46, House's 0.55. One rule over three big speakers, no table and no
+  exception for House (his head bone is low on his machine, in front of the screen, and the
+  rule puts it low in the view), and a fit, not the original's: a proportion to height or a
+  power of it fits none of the three together. Height is the hit volume's, the union of the
+  drawn meshes' boxes (`crate::hitvol`); 173, 187 and 300 are worked out from the meshes in the
+  bind pose, the `in on` line logs what a run has. A creature no taller than a human
+  gets a human's view. Human-style actors (ACHR) keep the numbers above, whatever their hit
+  volume says, as a hat or a seat changes that and not their framing: in the original Raul,
+  a ghoul seated, shows a head about 0.24, not looked into. A creature with no head bone
+  aims at 0.9 of its hit volume's height (`face_point`), under the same rule; one with no
+  hit volume is not drawn and gets no zoom.
+- Open: not compared with
   the shots yet: the times, the blur's strength and range (its picture is the fixed radius of
   image-modifiers.md §8.5, which may be too little for the far hall view).
 

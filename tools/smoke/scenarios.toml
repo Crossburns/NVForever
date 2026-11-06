@@ -3167,6 +3167,51 @@ order = [[
 ]]
 
 [[scenario]]
+name = "dialogue-zoom-victor"
+source = "docs/design/dialogue-play.md §8.8: a robot is framed by its drawn height, not a human's head: in the original the whole upper machine is in view, the screen about 0.25 of the height with its centre at 0.44"
+note = "Goodsprings' Victor (GSVictorRef 0x001073E8) is put 150 units in front of the player at 3 s, faced at 5 s and talked to at 7 s. Shot victor_settled.png to compare with the original's. The view's range is the rule's for his meshes, 187 tall in the bind pose: a run outside it first asks what the hit volume says (the 'drawn N tall' in the line)"
+areas = ["dialogue", "camera", "creatures"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:0x001073E8:player:150:0:0", NVF_PLAY_TEST_FACE = "5:001073E8", NVF_PLAY_TEST_TALK = "7:0x001073E8=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "10:victor_settled.png" }
+args = ["--cell", "Goodsprings", "--pos=-71400,3600,8352", "--play", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 34
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): .*; view (?P<n>\d+) units tall \(drawn \d+ tall\)', range = [100, 135], label = "Victor is framed by his height, on his head bone" },
+  { re = 'dialogue: conversation with \S+ ended', label = "the conversation with Victor ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back after Victor" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-marcus"
+source = "docs/design/dialogue-play.md §8.8: a big creature's head fills less of the view than a human's: in the original Marcus's head is about 0.25 of the height, its centre at 0.325"
+note = "Marcus (MarcusRef 0x0013AFDE) in Jacobstown, faced at 5 s and talked to at 7 s from about where he stands; he may greet first, then the aid's steps wait on that conversation. Shot marcus_settled.png to compare with the original's. The view's range is the rule's for his meshes, 173 tall in the bind pose: see dialogue-zoom-victor"
+areas = ["dialogue", "camera", "creatures"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_FACE = "5:0013AFDE", NVF_PLAY_TEST_TALK = "7:0x0013AFDE=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "10:marcus_settled.png" }
+args = ["--play", "--pos=-103557,94176,12000", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 34
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): .*; view (?P<n>\d+) units tall \(drawn \d+ tall\)', range = [85, 115], label = "Marcus is framed by his height, on his head bone" },
+  { re = 'dialogue: conversation with \S+ ended', label = "the conversation with Marcus ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back after Marcus" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-house"
+source = "docs/design/dialogue-play.md §8.8: Mr. House, a screen 300 tall, is framed by the same rule as Victor and Marcus: in the original vertical 18.3° from about 466 units, his face well over half of the view"
+note = "Lucky38MrHouseREF 0x001264C5 in the penthouse: the player is put 450 units in front of his screen at 5 s (his front is local -y, on heading 315 from him; the stairs are under that spot) and talks to him at 9 s. A greeting his dialogue's conditions refuse here would show as the first order step missing: read the dialogue lines first. Shot house_settled.png to compare with the original's"
+areas = ["dialogue", "camera", "creatures"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "5:-1357:5653:19100", NVF_PLAY_TEST_LOOK = "7:135:15", NVF_PLAY_TEST_TALK = "9:0x001264C5=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "12:house_settled.png" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): .*; view (?P<n>\d+) units tall \(drawn \d+ tall\)', range = [130, 170], label = "House is framed by his height, on his head bone" },
+  { re = 'dialogue: conversation with \S+ ended', label = "the conversation with House ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back after House" },
+]]
+
+[[scenario]]
 name = "dialogue-zoom-off"
 source = "docs/design/dialogue-play.md §8.8: the dialogue-zoom setting off (--no-dialogue-zoom)"
 note = "As dialogue-zoom: the turn still happens, the field of view is left alone and nothing is blurred"

@@ -9,6 +9,11 @@
 //!   ([`framed_vfov`]); never wider than the view the player has, never narrower than
 //!   [`MIN_VFOV`]. It follows the speaker's distance slowly ([`FOLLOW_SECONDS`]), not the
 //!   mouse: the player still looks around while zoomed.
+//! - **Creatures and robots.** They are framed by how tall they are drawn, not by a human's
+//!   head ([`creature_framing`]): the view grows with it, and the point lands lower so most
+//!   of it shows, as with the original's Marcus, Victor and Mr. House [observed, 2026-11-06].
+//!   Human-style actors (ACHR) keep the numbers above whatever their hit volume
+//!   says: a hat or a seat changes that, and not their framing.
 //! - **Framing.** The opening turn (`crate::dialogue_look`) aims [`face_drop`] under the
 //!   face, so the face lands at [`FACE_FROM_TOP`], and stays on it for
 //!   [`crate::dialogue_look::ZOOM_HOLD_SECONDS`] while the speaker finishes turning; after
@@ -68,6 +73,33 @@ pub const HEAD_SHARE: f32 = 0.30;
 /// [observed: captures of 2026-11-06]; the bone lies about 0.06 of the view under that centre
 /// at this framing [observed: Chet at 0.32 showed the face's centre at 0.26], hence 0.38.
 pub const FACE_FROM_TOP: f32 = 0.38;
+/// How tall the view is where a human-style speaker stands, game units: the head at its
+/// share.
+pub const HUMAN_VIEW_HEIGHT: f32 = HEAD_HEIGHT / HEAD_SHARE;
+/// A creature this tall or less is framed in [`HUMAN_VIEW_HEIGHT`], game units [design: about
+/// a human's drawn height, `crate::hitvol`].
+pub const HUMAN_HEIGHT: f32 = 128.0;
+/// A taller creature's view grows by this times the square root of what it has over
+/// [`HUMAN_HEIGHT`]. Fitted to the original's three big speakers, their views measured
+/// against their meshes: Marcus's about 97 units (goggle lenses 48 px apart, 6.5 units in the
+/// mesh), his meshes 173 tall in the bind pose; Victor's about 125 (screen 210 px, 35.7 units;
+/// shoulders 785 px, 136 units), his 187; Mr. House's about 150 (magnified 3.58 from the
+/// default view by template match, so vertical 18.3° from about 466 units), his 300 [observed:
+/// shots of 2026-11-06, meshes in the data]. It gives 102 (+5 %), 109 (-13 %) and 150. A fit
+/// over three points, not the original's rule. Neither a proportion to height nor a power of
+/// it fits: Marcus is 1.35 times a human with a view 1.9 times, House 2.3 times with 2.9.
+pub const SIZE_GROWTH: f32 = 7.5;
+/// Where a creature's point lands, as [`FACE_FROM_TOP`] does for a human: its head bone lies
+/// nearer the middle of its head than a human's, and Marcus's lies about 0.31 from the top
+/// [observed: his head 145-323 px, the bone about 0.41 down the head in the mesh].
+pub const CREATURE_FROM_TOP: f32 = 0.31;
+/// A creature whose top stands far above its point keeps this share of that in the view,
+/// which puts the point lower: so most of it shows [fitted: gives Victor's bone 0.46, 0.457
+/// in the original, with his antenna (about 49 over the bone) in view].
+pub const TOP_SHARE: f32 = 0.9;
+/// A creature's point lands no lower than this, for one much taller than the view [observed:
+/// about 0.55 for Mr. House's bone, worked out from his eyes in the shots].
+pub const CREATURE_FROM_TOP_MAX: f32 = 0.55;
 /// Seconds of the ease in [observed: fitted, rough; settled in about 0.6-1 s in the
 /// original at samples every 4 frames].
 pub const IN_SECONDS: f32 = 0.8;
@@ -92,17 +124,38 @@ impl Default for ZoomSettings {
     }
 }
 
-/// The vertical field of view (radians) in which a head [`HEAD_HEIGHT`] tall at `distance`
-/// fills [`HEAD_SHARE`] of the view's height, no narrower than [`MIN_VFOV`]. The view is
-/// `2 d tan(v/2)` tall at distance `d`, so the aspect ratio does not enter.
-pub fn framed_vfov(distance: f32) -> f32 {
-    (2.0 * (HEAD_HEIGHT / (2.0 * HEAD_SHARE * distance.max(1.0))).atan()).max(MIN_VFOV)
+/// How a speaker is framed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Framing {
+    /// How tall the view is where the speaker stands, game units.
+    pub view_height: f32,
+    /// Where the point aimed at lands, as a share of the view's height from the top.
+    pub from_top: f32,
 }
 
-/// How far under the face the view looks (radians) for the face to sit at
-/// [`FACE_FROM_TOP`] in a view `vfov` tall.
-pub fn face_drop(vfov: f32) -> f32 {
-    (2.0 * (0.5 - FACE_FROM_TOP) * (vfov * 0.5).tan()).atan()
+/// A human-style speaker.
+pub const HUMAN_FRAMING: Framing = Framing { view_height: HUMAN_VIEW_HEIGHT, from_top: FACE_FROM_TOP };
+
+/// A creature or a robot `height` tall as drawn, whose top is `top_above` over the point
+/// aimed at (its head bone, or a point of its hit volume without one). No smaller than a
+/// human's view, however small it is.
+pub fn creature_framing(height: f32, top_above: f32) -> Framing {
+    let view_height = HUMAN_VIEW_HEIGHT + SIZE_GROWTH * (height - HUMAN_HEIGHT).max(0.0).sqrt();
+    let from_top = (TOP_SHARE * top_above / view_height).clamp(CREATURE_FROM_TOP, CREATURE_FROM_TOP_MAX);
+    Framing { view_height, from_top }
+}
+
+/// The vertical field of view (radians) in which the view is `view_height` tall at
+/// `distance`, no narrower than [`MIN_VFOV`]. The view is `2 d tan(v/2)` tall at distance
+/// `d`, so the aspect ratio does not enter.
+pub fn framed_vfov(distance: f32, view_height: f32) -> f32 {
+    (2.0 * (view_height / (2.0 * distance.max(1.0))).atan()).max(MIN_VFOV)
+}
+
+/// How far under the point the view looks (radians) for it to sit at `from_top` in a view
+/// `vfov` tall.
+pub fn face_drop(vfov: f32, from_top: f32) -> f32 {
+    (2.0 * (0.5 - from_top) * (vfov * 0.5).tan()).atan()
 }
 
 /// What [`DialogueZoom::apply`] asks of the camera this frame.
@@ -121,6 +174,8 @@ pub struct DialogueZoom {
     weight: f32,
     /// The field of view wanted this frame; none when the zoom is not wanted.
     want: Option<f32>,
+    /// Where the point aimed at lands ([`Framing::from_top`]).
+    from_top: f32,
     /// The field of view last wanted (held while easing out).
     target: Option<f32>,
     /// What is on the camera underneath the zoom.
@@ -159,7 +214,7 @@ impl DialogueZoom {
 
     /// How far under the face the opening turn should aim (0 without a zoom).
     pub fn face_drop(&self) -> f32 {
-        self.want.map_or(0.0, face_drop)
+        self.want.map_or(0.0, |v| face_drop(v, self.from_top))
     }
 
     /// Whether a zoom is wanted this frame.
@@ -285,8 +340,14 @@ pub(crate) fn track(
         // From the start of a zoom the distance is taken as it is, then followed.
         zoom.distance = if zoom.want.is_none() || instant { d } else { zoom.distance + (d - zoom.distance) * (1.0 - (-dt.max(0.0) / FOLLOW_SECONDS).exp()) };
         zoom.face = Some(point);
-        said = Some((actor, from));
-        framed_vfov(zoom.distance).min(base)
+        // Human-style actors keep their numbers (the module notes); a reference the placed
+        // list does not know was made by a script: as a human without a hit volume.
+        let creature = sim.refs.get(actor).is_some_and(|p| &p.sig == b"ACRE");
+        let drawn = phys.world.actor_volume(actor.0).filter(|_| creature);
+        let framing = drawn.map_or(HUMAN_FRAMING, |v| creature_framing(v.height, v.feet[2] + v.height - point[2]));
+        zoom.from_top = framing.from_top;
+        said = Some((actor, from, framing, drawn.map(|v| v.height)));
+        framed_vfov(zoom.distance, framing.view_height).min(base)
     });
     // The detached camera looks off the player's heading: the close-up looks along it, as
     // `crate::control::detach_camera` does when it stops (it runs only while playing). Here,
@@ -298,7 +359,7 @@ pub(crate) fn track(
         (o.yaw, o.pitch) = (0.0, 0.0);
     }
     zoom.step(want, dt, instant);
-    if let (Some(fov), Some((actor, from)), Some(g), true, false) = (want, said, game, zoom.weight >= 1.0, zoom.told_in) {
+    if let (Some(fov), Some((actor, from, framing, tall)), Some(g), true, false) = (want, said, game, zoom.weight >= 1.0, zoom.told_in) {
         zoom.told_in = true;
         let source = match from {
             FaceFrom::Head => "its head as drawn",
@@ -306,12 +367,15 @@ pub(crate) fn track(
             FaceFrom::Reference | FaceFrom::Activator => "?",
         };
         let close = if control.own_third_person() { "; third person: the camera at the eye, no body" } else { "" };
+        let size = tall.map_or_else(|| "a human-style actor".to_string(), |h| format!("drawn {h:.0} tall"));
         info!(
-            "dialogue zoom: in on {} ({source}): {:.0} units, vertical {:.1}° to {:.1}°, over {IN_SECONDS:.2} s{close}",
+            "dialogue zoom: in on {} ({source}): {:.0} units, vertical {:.1}° to {:.1}°, over {IN_SECONDS:.2} s; view {:.0} units tall ({size}), the point {:.2} from its top{close}",
             g.data.name(actor),
             zoom.distance,
             base.to_degrees(),
-            fov.to_degrees()
+            fov.to_degrees(),
+            framing.view_height,
+            framing.from_top
         );
     }
     // The third-person camera travels with the zoom.
@@ -364,24 +428,76 @@ mod tests {
     #[test]
     fn the_head_comes_out_the_same_size_from_any_distance() {
         for d in [60.0, 90.0, 150.0, 300.0] {
-            assert!((share(d, framed_vfov(d)) - HEAD_SHARE).abs() < 1e-4, "at {d}");
+            assert!((share(d, framed_vfov(d, HUMAN_VIEW_HEIGHT)) - HEAD_SHARE).abs() < 1e-4, "at {d}");
         }
+    }
+
+    #[test]
+    fn a_human_is_framed_as_before_whatever_its_size() {
+        // What the numbers came to before creatures had a rule of their own.
+        for d in [60.0f32, 90.0, 300.0, 394.0] {
+            let before = (2.0 * (HEAD_HEIGHT / (2.0 * HEAD_SHARE * d)).atan()).max(MIN_VFOV);
+            assert!((framed_vfov(d, HUMAN_FRAMING.view_height) - before).abs() < 1e-5, "at {d}");
+        }
+        assert_eq!(HUMAN_FRAMING.from_top, FACE_FROM_TOP);
+        // A creature of a human's height sees the same view, and a small one no less.
+        for height in [HUMAN_HEIGHT, 90.0, 30.0] {
+            assert_eq!(creature_framing(height, 10.0).view_height, HUMAN_VIEW_HEIGHT);
+        }
+    }
+
+    #[test]
+    fn big_speakers_are_framed_as_the_original_frames_them() {
+        // Marcus: the view about 97 units tall, his head (about 24) about 0.25 of it, the
+        // bone where the original has it.
+        let marcus = creature_framing(173.0, 20.0);
+        assert!((marcus.view_height - 97.0).abs() < 8.0, "{marcus:?}");
+        assert!((24.0 / marcus.view_height - 0.25).abs() < 0.02, "{marcus:?}");
+        assert_eq!(marcus.from_top, CREATURE_FROM_TOP);
+        // Victor: the rule's largest miss, -13 % on a view about 125 units tall, his screen
+        // (26 units) 0.24 of it against 0.22. His meshes reach 56 over the bone, his antenna 49.
+        let victor = creature_framing(187.0, 56.0);
+        assert!((victor.view_height - 125.0).abs() < 17.0, "{victor:?}");
+        assert!((26.0 / victor.view_height - 0.22).abs() < 0.02, "{victor:?}");
+        assert!(victor.from_top > 49.0 / victor.view_height, "the antenna is in the view: {victor:?}");
+        assert!((victor.from_top - 0.457).abs() < 0.02, "the original's bone: {victor:?}");
+        // The clamps hold at his size too, from far off (the capture's was about 1000 units).
+        assert!(framed_vfov(1000.0, victor.view_height) > MIN_VFOV);
+        // Mr. House, 300 tall, the bone 139 under his top: vertical 18.3° from about 466 units,
+        // no exception for him.
+        let house = creature_framing(300.0, 139.0);
+        assert!((house.view_height - 150.0).abs() < 5.0, "{house:?}");
+        assert!((framed_vfov(466.0, house.view_height).to_degrees() - 18.3).abs() < 1.0, "{house:?}");
+        assert_eq!(house.from_top, CREATURE_FROM_TOP_MAX);
+    }
+
+    #[test]
+    fn a_very_tall_point_stays_clear_of_the_subtitle() {
+        assert_eq!(creature_framing(190.0, 400.0).from_top, CREATURE_FROM_TOP_MAX);
+    }
+
+    #[test]
+    fn the_point_lands_where_the_framing_says() {
+        let z = DialogueZoom { from_top: 0.45, want: Some(0.3), ..Default::default() };
+        assert_eq!(z.face_drop(), face_drop(0.3, 0.45));
+        let y = 0.5 - 0.5 * z.face_drop().tan() / 0.15f32.tan();
+        assert!((y - 0.45).abs() < 1e-5, "{y}");
     }
 
     #[test]
     fn a_far_speaker_does_not_zoom_absurdly() {
         // The original's far spot, about 300 units, is still framed; beyond the limit the
         // head stays small.
-        assert!(framed_vfov(300.0) > MIN_VFOV);
-        assert_eq!(framed_vfov(100_000.0), MIN_VFOV);
+        assert!(framed_vfov(300.0, HUMAN_VIEW_HEIGHT) > MIN_VFOV);
+        assert_eq!(framed_vfov(100_000.0, HUMAN_VIEW_HEIGHT), MIN_VFOV);
     }
 
     #[test]
     fn a_very_near_speaker_does_not_widen_the_view() {
-        assert!(framed_vfov(20.0) > BASE, "the framing alone would widen it");
+        assert!(framed_vfov(20.0, HUMAN_VIEW_HEIGHT) > BASE, "the framing alone would widen it");
         let mut z = DialogueZoom::default();
         let mut fov = BASE;
-        z.step(Some(framed_vfov(20.0).min(BASE)), 1.0, false);
+        z.step(Some(framed_vfov(20.0, HUMAN_VIEW_HEIGHT).min(BASE)), 1.0, false);
         frame(&mut z, &mut fov);
         assert_eq!(fov, BASE);
         // And even if the target were wider, the base is the limit.
@@ -395,7 +511,7 @@ mod tests {
         for v in [8f32, 30.0, 59.8] {
             let v = v.to_radians();
             // Seen `drop` above the view's axis, on a screen of half-height tan(v/2).
-            let y = 0.5 - 0.5 * face_drop(v).tan() / (v * 0.5).tan();
+            let y = 0.5 - 0.5 * face_drop(v, FACE_FROM_TOP).tan() / (v * 0.5).tan();
             assert!((y - FACE_FROM_TOP).abs() < 1e-5, "{y} at {v}");
         }
         // No zoom, no drop: the opening turn aims at the face itself.
