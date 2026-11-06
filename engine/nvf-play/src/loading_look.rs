@@ -6,7 +6,7 @@
 //!   text's size parts of 960 of its height [observed: 1280x720 and 1280x1024]. The band is
 //!   `loading_text_bar.dds` across the whole window, its own clear sides leaving the dark
 //!   part about over the box [observed]; how far it reaches round the lines is
-//!   [`BAND_ABOVE`] and [`BAND_EXTRA`]. No text, no band.
+//!   [`BAND_ABOVE`] and [`BAND_BELOW`], how dark it is [`BAND_LAYERS`]. No text, no band.
 //! - **The emblem** ([`Emblem`]): the model's flat pieces, each a picture turned to its
 //!   angle (`crate::hud_breath::spawn_pieces`). Unlike the breath meter's they lie in the
 //!   model's x-y plane, x to the right and y down, seen from below z [observed: the file's
@@ -30,12 +30,23 @@ use std::sync::Arc;
 
 /// The tip's band [documented: `menus\loading_menu.xml`, `tip_matte_01`].
 pub const BAND_TEXTURE: &str = "textures\\interface\\loading\\loading_text_bar.dds";
-/// The band's top stands this far over the box, interface units [observed: fitted to the two
-/// shots of two-line tips, 1280x720 and 1280x1024, within a pixel or two].
-pub const BAND_ABOVE: f32 = 10.0;
-/// The band's height over the lines' own, interface units [observed: as [`BAND_ABOVE`];
-/// hypothesis: the same for other numbers of lines].
-pub const BAND_EXTRA: f32 = 25.0;
+/// The dark part's top edge stands this far over the box, interface units [observed: fitted
+/// to the two shots of two-line tips, 1280x720 and 1280x1024, within a pixel].
+pub const BAND_ABOVE: f32 = 7.5;
+/// Its bottom edge stands this far under the box's top plus the lines' pitches, interface
+/// units [observed: as [`BAND_ABOVE`]; hypothesis: the same for other numbers of lines].
+pub const BAND_BELOW: f32 = 3.0;
+/// Where the texture's dark part begins and ends down its height: the rows at half of its
+/// alpha, 8 and 115 of 128 [observed: `loading_text_bar.dds`].
+const BAND_DARK: (f32, f32) = (8.0 / 128.0, 115.0 / 128.0);
+/// The band's texture is drawn this many times, at these alphas. The original lets through
+/// 0.26 of a picture's value, which is the texture's own alpha of 192 of 255 blended on
+/// gamma values; this interface blends in linear light, where the same alpha once lets
+/// through 0.54 of the value [observed: both, against the pictures]. Black over a picture
+/// needs about the alpha's complement to the power 2.2, and layers do that along the
+/// texture's soft edges too, which raising one alpha would not [fitted: 225, 211, 194
+/// comes out about 60, 55, 50 where the original has 57, 53, 49].
+pub const BAND_LAYERS: [f32; 3] = [1.0, 1.0, 0.2];
 
 /// The emblem's model and sequence [documented: `menus\loading_menu.xml`, `loading_pinwheel`].
 pub const EMBLEM_MODEL: &str = "meshes\\interface\\circular loading\\loading01.nif";
@@ -45,8 +56,12 @@ const EMBLEM_WHEEL_TEXTURE: &str = "load_roulette_wheel.dds";
 /// The wheel's centre as parts of the window's width and height [observed: 1280x720 and
 /// 1280x1024, about +-5 px].
 pub const EMBLEM_CENTRE: Vec2 = Vec2::new(0.5, 0.794);
-/// The wheel's width as a part of the window's height [observed: as [`EMBLEM_CENTRE`]].
+/// The wheel's outer ring across, as a part of the window's height [observed: 124 of 720
+/// and 176 of 1024].
 pub const EMBLEM_WHEEL: f32 = 0.172;
+/// That ring across, as a part of the wheel's square in the model [observed: the same
+/// measure on NVForever's frame, 132 px for a square of 137.6].
+const EMBLEM_RING: f32 = 0.96;
 
 /// Interface units a window's height holds.
 const HEIGHT_UNITS: f32 = 960.0;
@@ -68,10 +83,15 @@ pub fn tip_place(style: &TipStyle, window: Vec2) -> TipPlace {
     TipPlace { left: style.x * across, width: style.width * across, top: style.y }
 }
 
-/// The band's top and height for a text of `lines` lines `pitch` apart under `top`,
-/// interface units; `None` with no text.
+/// The band's texture's top and height for a text of `lines` lines `pitch` apart under
+/// `top`, interface units; `None` with no text. The dark part goes from [`BAND_ABOVE`] over
+/// the box to [`BAND_BELOW`] under the lines, so the text stands about 3 units over its
+/// middle, as in the original [observed].
 pub fn band(top: f32, lines: usize, pitch: f32) -> Option<(f32, f32)> {
-    (lines > 0).then(|| (top - BAND_ABOVE, lines as f32 * pitch + BAND_EXTRA))
+    (lines > 0).then(|| {
+        let height = (BAND_ABOVE + lines as f32 * pitch + BAND_BELOW) / (BAND_DARK.1 - BAND_DARK.0);
+        (top - BAND_ABOVE - BAND_DARK.0 * height, height)
+    })
 }
 
 /// A style's font number; one that names no font file is the fallback's [design].
@@ -169,8 +189,10 @@ pub fn fit_tip(
         let [r, g, b] = tip.style.colour.map(|c| c / 255.0);
         commands.entity(entity).despawn_related::<Children>().with_children(|p| {
             if let (Some((top, height)), Some(image)) = (at, image) {
-                let node = Node { position_type: PositionType::Absolute, left: Val::Px(0.0), width: Val::Percent(100.0), top: u(top), height: u(height), ..default() };
-                p.spawn((node, ImageNode { image_mode: NodeImageMode::Stretch, ..ImageNode::new(image) }, Pickable::IGNORE));
+                for alpha in BAND_LAYERS {
+                    let node = Node { position_type: PositionType::Absolute, left: Val::Px(0.0), width: Val::Percent(100.0), top: u(top), height: u(height), ..default() };
+                    p.spawn((node, ImageNode { color: Color::WHITE.with_alpha(alpha), image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }, Pickable::IGNORE));
+                }
             }
             for (line, x, base) in &lines {
                 set_line(p, &font, line, *x, *base, Color::srgb(r, g, b));
@@ -241,12 +263,12 @@ pub struct Emblem {
 }
 
 /// The point at the emblem's centre and the interface units of a model unit: the wheel's
-/// centre and its width at [`EMBLEM_WHEEL`] of the height; without a wheel (another model in
+/// centre and its ring at [`EMBLEM_WHEEL`] of the height; without a wheel (another model in
 /// its place) its bounds' [design].
 pub fn anchor_and_zoom(model: &MeterModel) -> (Vec2, f32) {
     let wheel = model.pieces.iter().find(|p| file_name(&p.texture) == EMBLEM_WHEEL_TEXTURE);
     let (centre, across) = wheel.map_or((model.bounds.center(), model.bounds.width().max(model.bounds.height())), |p| (p.centre, p.size.x));
-    (centre, EMBLEM_WHEEL * HEIGHT_UNITS / across.max(1e-3))
+    (centre, EMBLEM_WHEEL / EMBLEM_RING * HEIGHT_UNITS / across.max(1e-3))
 }
 
 impl Emblem {
@@ -408,14 +430,35 @@ mod tests {
     #[test]
     fn the_band_follows_the_text_and_goes_with_it() {
         assert_eq!(band(100.0, 0, 38.0), None);
-        let (top, height) = band(100.0, 2, 38.0).unwrap();
-        // Where the shots have the band's whole texture for two lines (its dark part from
-        // about 5 % to 89 % of it, so about y 70-135 and 99-191) [observed].
-        close(px(top, WIDE.y), 67.5, 0.01);
-        close(px(height, WIDE.y), 75.75, 0.01);
-        close(px(top, TALL.y), 96.0, 0.01);
-        close(px(height, TALL.y), 107.7, 0.1);
-        assert_eq!(band(100.0, 3, 38.0).unwrap().1, height + 38.0);
+        let dark = |lines: usize, height: f32| {
+            let (top, whole) = band(100.0, lines, 38.0).unwrap();
+            (px(top + BAND_DARK.0 * whole, height), px(top + BAND_DARK.1 * whole, height))
+        };
+        // Two lines: the dark part where the shots have it, y 70-134.5 and 99-191 [observed].
+        let (top, bottom) = dark(2, WIDE.y);
+        close(top, 69.4, 0.1);
+        close(bottom, 134.25, 0.1);
+        let (top, bottom) = dark(2, TALL.y);
+        close(top, 98.7, 0.1);
+        close(bottom, 190.9, 0.1);
+        // Measured from the lines' letters' middles, 114 units down and one pitch on: as
+        // much room at both ends but for 5.5 units, the original's, at any number of lines.
+        for (lines, last) in [(1, 114.0), (2, 152.0), (3, 190.0)] {
+            let (top, bottom) = dark(lines, HEIGHT_UNITS);
+            close((bottom - last) - (114.0 - top), 5.5, 0.01);
+        }
+    }
+
+    /// The layers let through what the original's one draw does on gamma values (module notes).
+    #[test]
+    fn the_bands_layers_darken_as_the_original_blends() {
+        let through = |alpha: f32| BAND_LAYERS.iter().map(|layer| 1.0 - alpha * layer).product::<f32>();
+        // The texture's alpha as it comes out at its middle: 0.262 let through by one draw.
+        let middle = through(1.0 - 0.262);
+        assert!((0.05..0.065).contains(&middle), "{middle}");
+        // Along its soft edge, half the alpha: about the complement to the power 2.2.
+        close(through(0.37), 0.63f32.powf(2.2), 0.03);
+        assert_eq!(through(0.0), 1.0);
     }
 
     #[test]
@@ -460,9 +503,12 @@ mod tests {
         let model = MeterModel { pieces: vec![bars.clone(), wheel.clone()], keys: Vec::new(), length: 1.0, bounds: Rect::new(-200.0, 30.0, 36.0, 120.0) };
         let (anchor, zoom) = anchor_and_zoom(&model);
         assert_eq!(anchor, wheel.centre);
-        // About 124 px at 720, 176 at 1024 [observed: about 125 and 175].
-        close(px(wheel.size.x * zoom, WIDE.y), 123.84, 0.01);
-        close(px(wheel.size.x * zoom, TALL.y), 176.13, 0.01);
+        // The ring about 124 px at 720, 176 at 1024 [observed: 124 and 176].
+        close(px(wheel.size.x * EMBLEM_RING * zoom, WIDE.y), 123.84, 0.01);
+        close(px(wheel.size.x * EMBLEM_RING * zoom, TALL.y), 176.13, 0.01);
+        // The bars, about 200.6 model units from tip to tip on NVForever's frame, keep to
+        // the original's 0.42 of the height with no change of the model [observed].
+        close(200.6 * zoom / HEIGHT_UNITS, 0.418, 0.002);
         // The window's y 572 and 813 [observed: 0.794 of 720 and 1024].
         close(EMBLEM_CENTRE.y * WIDE.y, 571.7, 0.05);
         close(EMBLEM_CENTRE.y * TALL.y, 813.1, 0.05);
@@ -473,7 +519,7 @@ mod tests {
         let other = MeterModel { pieces: vec![bars], keys: Vec::new(), length: 1.0, bounds: Rect::new(0.0, 0.0, 200.0, 100.0) };
         let (anchor, zoom) = anchor_and_zoom(&other);
         assert_eq!(anchor, Vec2::new(100.0, 50.0));
-        close(200.0 * zoom, EMBLEM_WHEEL * HEIGHT_UNITS, 0.01);
+        close(200.0 * zoom * EMBLEM_RING, EMBLEM_WHEEL * HEIGHT_UNITS, 0.01);
     }
 
     /// The nodes' rotation keys as the file has them: a half turn about x, then about z.

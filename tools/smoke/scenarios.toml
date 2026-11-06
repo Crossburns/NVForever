@@ -5969,10 +5969,10 @@ expect = [
 [[scenario]]
 name = "loading-screen-look"
 source = "docs/spec-notes/loading-screens.md §4: the loading screen laid out as the original's: the picture stretched, the tip on its band, the emblem turning; the shot NVF_PLAY_TEST_LOADING_SHOT saves is for looking at, the run only checks that the emblem's model reads as the original's model and that the screen comes and goes"
-note = "The emblem reads once a run though two screens come up, the start's and the door's: 4 pieces (the hidden plate left out), wheel and ball turning. The look itself is not judged here: see the shot in target/smoke"
+note = "The emblem reads once a run though two screens come up, the start's and the door's: 4 pieces (the hidden plate left out), wheel and ball turning. The look itself is not judged here: see the shots in target/smoke (the run's folder; -2 is the door's)"
 areas = ["loading"]
 paths = ["engine/nvf-play/src/loading.rs", "engine/nvf-play/src/loading_look.rs", "engine/nvf-play/src/hud_breath.rs", "crates/fnv-world/src/loadscreen.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_LOADING_SHOT = "target/smoke/loading-screen-look.png" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_LOADING_SHOT = "loading-screen-look.png" }
 args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "9", "--no-dialogue-look"]
 run_seconds = 20
 order = [[

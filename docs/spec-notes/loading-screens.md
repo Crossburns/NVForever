@@ -134,13 +134,24 @@ shipped; a hudtest save at Doc Mitchell's house. Numbers are read off the frames
 - **The band** is `Interface\Loading\loading_text_bar.dds` (`tip_matte_01`) [documented],
   as wide as the screen in the file: the texture's sides are clear and its dark part (alpha up to 192)
   comes out at x about 205-1075 on a window 1280 wide, as in the frames. Down, its dark part
-  lies at about y 70-135 at 720 and 99-191 at 1024 for two lines, so the whole texture
-  stands from 10 units over the box for two pitches and 25 units [fitted to these two;
-  hypothesis: the same for other numbers of lines]. A screen with no text has none [design].
+  (the rows at half the texture's alpha, 8 and 115 of 128) lies at about y 70-134.5 at 720
+  and 99-191 at 1024 for two lines: from 7.5 units over the box to 3 under its top plus two
+  pitches [fitted to these two; hypothesis: the same for other numbers of lines]. The letters'
+  middles then stand 21.5 units under its top edge and about 27 over its bottom edge, at both
+  sizes, so not quite in the middle. A screen with no text has none [design].
+- **How dark the band is.** It lets through 0.26 of a picture's value on bright and dark
+  alike (225, 211, 194 becomes 57, 53, 49): the texture's alpha of 192 of 255 blended on
+  gamma values. NVForever's interface blends in linear light, where one draw lets through
+  0.54 of the value [observed: its frame at 1280x800 against the picture]. So it draws the
+  texture three times, at alphas 1, 1 and 0.2 [fitted], which keeps the soft edges too.
+  The same difference must lighten other half-clear pictures (the wheel's ring, alpha 128;
+  the glow of the fonts); they are left as they are.
 - **The emblem**, bottom centre: a roulette wheel with bars either side, a ball going round
-  it. The wheel's centre at (0.5 W, 0.794 H); the wheel about 125 px across at 720 and 175 at
-  1024, so 0.172 H; with the bars about 300 and 430, 0.42 H. The bars come out about
-  right by the model's own proportions with the wheel at 0.172 H.
+  it. The wheel's centre at (0.5 W, 0.794 H); its outer ring 124 px across at 720 and 176 at
+  1024, so 0.172 H; with the bars 300 and 427, 0.42 H. The ring is 0.96 of the wheel's square
+  in the model, by the same measure on NVForever's frame. Ring to bars is 0.41 in the
+  original and in the model (132 and 321 px at 800 high when the square was 0.172 H), so no
+  piece is out of place; the hidden plate plays no part.
 - **The emblem's model** is `meshes\interface\circular loading\loading01.nif`, sequence
   `Idle`, 5.333 s, cycle type 0 (`loading_pinwheel` in the menu file) [documented: the
   file]. Flat squares with `TileShaderProperty` textures, in the model's x-y plane, x to the
