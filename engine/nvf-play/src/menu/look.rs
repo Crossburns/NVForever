@@ -397,6 +397,15 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &MenuModel, note: Option<&str>,
     });
 }
 
+/// [design: barter-menu.md section 9] Keep the model's own refusal note over the tiled
+/// barter view, whose file has no subtitle tile, at the existing hand-built place.
+pub fn spawn_note(root: &mut ChildSpawnerCommands, note: &str, kit: &mut Kit, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) {
+    let mut c = Ctx { kit, data, images, bc };
+    root.spawn(Node { width: crate::interface::u(MAIN.x), height: crate::interface::u(MAIN.y), ..default() }).with_children(|p| {
+        c.text(p, false, note, MAIN.x / 2.0, NOTE_Y + (31.0 + 20.0) / 2.0 + 20.0, Align::Centre, amber(255.0));
+    });
+}
+
 fn half(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, side: Side) {
     let bright = amber(255.0);
     let x0 = if side == Side::Player { LEFT_X } else { RIGHT_X };

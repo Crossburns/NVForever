@@ -557,6 +557,33 @@ fn barter_put_up_take_back_and_accept() {
 }
 
 #[test]
+fn barter_tiles_show_the_models_sale_first_and_use_their_own_headings() {
+    use crate::tiles::barter_menu::tests::of_model;
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    let mut m = barter(&mut w);
+    let before = of_model(&m);
+    let root = "BarterMenu/NOGLOW_BRANCH";
+    assert_eq!(before.get_string(&format!("{root}/BM_ItemsRect/BM_ItemsTitle/string")).as_deref(), Some("Personal items"));
+    assert_eq!(before.get_string(&format!("{root}/BM_ItemsRect/BM_Items_CapsLabel/string")).as_deref(), Some("Coins  5"));
+    assert_eq!(before.get_float(&format!("{root}/BM_ButtonRect/BM_ButtonX/target")), Some(0.0));
+    select(&mut m, Side::Player, "Pistol");
+    m.apply(&mut w, Command::One);
+    let sold = of_model(&m);
+    let offered = format!("{root}/BM_ContainerRect/BM_Container_InventoryList/Pistol");
+    assert_eq!(sold.get_float(&format!("{offered}/listindex")), Some(0.0));
+    assert_eq!(sold.get_string(&format!("{offered}/BM_list_template_ItemValue/string")).as_deref(), Some("90"));
+    assert_eq!(sold.get_float(&format!("{offered}/BM_list_template_ItemMarker/visible")), Some(1.0));
+    assert!(sold.find_tile(&format!("{root}/BM_ItemsRect/BM_Items_InventoryList/Pistol")).is_none());
+    assert_eq!(sold.get_string(&format!("{root}/BM_CapsFlow/BM_TransactionAmount/string")).as_deref(), Some("90"));
+    assert_eq!(sold.get_float(&format!("{root}/BM_ButtonRect/BM_ButtonX/target")), Some(1.0));
+    m.apply(&mut w, Command::Accept);
+    let accepted = of_model(&m);
+    assert_eq!(accepted.get_string(&format!("{root}/BM_ItemsRect/BM_Items_CapsLabel/string")).as_deref(), Some("Coins  95"));
+    assert_eq!(accepted.get_float(&format!("{root}/BM_ButtonRect/BM_ButtonX/target")), Some(0.0));
+}
+
+#[test]
 fn a_merchant_without_enough_caps_cannot_buy() {
     let f = fixture();
     let mut w = World::new(&f.forms, &f.refs, SimConfig::default());

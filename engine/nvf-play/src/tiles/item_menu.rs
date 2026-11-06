@@ -169,6 +169,7 @@ pub enum MenuTile {
     Arrow(Side, i32),
     Title(Side),
     TakeAll,
+    Accept,
     Exit,
     Bar(Side, list::BarPiece),
     /// Another tile of the menu: nothing to do.
@@ -181,6 +182,8 @@ impl Default for MenuTiles {
 }
 
 impl MenuTiles {
+    pub fn name(&self) -> &'static str { self.paths.menu }
+
     pub fn new(paths: &'static Paths) -> Self {
         Self { paths, menu: None, rows: Default::default(), views: Default::default(), shown: None,
             written_in: None, sizes: Default::default(), drag: None, drawn: [None; 2], warned: false }
@@ -466,4 +469,3 @@ pub fn row_commands(side: Side, index: usize, on_it: bool, shift: bool) -> Vec<c
         (true, false) => vec![Command::Select(side, index)],
     }
 }
-

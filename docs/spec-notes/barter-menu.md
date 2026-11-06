@@ -429,3 +429,126 @@ What the tile path does with these, and where it differs:
     `ConditionMeter` and `CNDArrows` follow the numbers read (meter 104.67 wide, image the
     condition's part, arrows x 140.5 or 114.33, y 15, 16 x 20) and are not yet compared by eye:
     `tiles-container`'s `card_*` shots hold them (a weapon, armour, an aid item).
+
+
+## 9. The barter menu from its file (issue #1468)
+
+[design: `engine/nvf-play/src/tiles/barter_menu.rs`, `tiles/vanilla.rs`] With
+`[UI] TileMenus=BarterMenu`, the open barter menu (1053) draws from
+`menus\barter_menu.xml`. The hand-built view stays the default. The adapter writes
+nothing with its switch off. A missing file, missing required path, or row template
+without its name, price or marker child keeps the whole hand-built view. The writer's
+single decision supplies drawing, input, and the prompt's drawing; the modal sheet
+stands at the hand-built menu's level, 100, beneath its prompt at 101.
+
+[design: `tiles/item_menu.rs`, `tiles/container_menu.rs`] The first commit extracts the
+container's row reconciliation, template validation, text measuring, row placement,
+counts, scroll, highlight, marker drag state, click meanings, row guards, and alpha/clip
+marks. Both adapters use that state with a table of paths and click meanings. The
+container's snapshot constructor, weight, subtitle, arrow and Take All writes remain
+separate, as do barter's caps and buttons: putting those in one conditional writer
+would obscure their different purposes. The container's existing synthetic tests stay
+in `container_menu.rs`.
+
+[design: `tiles/input.rs`, `menu.rs`, `menu/model.rs`, `ui_sounds.rs`] Every row,
+heading, Accept and Exit action goes through `MenuInput` and `apply_input`, including
+its sounds and events. At most one row click acts per frame; a guard checks the row's
+identity again when queued commands apply. The pointer selects only after moving,
+does not scroll the list, and yields to the wheel's held selection. The wheel still
+moves the selected row, or the category over a heading. Physical A accepts and X exits;
+the arrow keys change sides, W/S and Up/Down select, Enter/Space act, brackets change
+category, and Page Up/Down move the selection. Controller mappings remain `pad.rs`'s.
+The adapter suppresses a second tile action for keys already handled by the model;
+a script's MenuTapKey still follows the file's bindings. Exit sends only Close, so
+it cannot bypass the model's prompt cancellation or menu closing rules.
+
+[design: `tiles/barter_menu.rs::Snapshot::of`, `menu/model.rs::refresh_trade`]
+Prices use the model's existing `barter::price_text`, including `--` for no worth
+and a tenth for a price below one cap. Caps come from each side's purse. The model
+moves an offered row to the opposite list, first, and the adapter shows an open square
+for it, a filled square for an equipped row. Accept is dim and untargetable with no
+items offered, bright with an offer, including a zero-net trade. The flow is hidden
+with a zero balance. A positive balance pays the player and uses
+`barter_arrow_sell.dds`; a negative balance uses `barter_arrow_buy.dds` [documented:
+section 1 names the two textures]. The amount is the absolute balance. The flow's
+picture and texts dim when the payer cannot afford it [design: the maintainer's
+request in section 5]; Accept still sends the model's command, which refuses that trade.
+
+[hypothesis: container measurements in section 8, pending the barter captures]
+The shared path applies the container's counts formula, retained scroll delta,
+row measuring and spacing, highlight, clip and pointer handling, each tile's own
+alpha, and backing alpha 193.8 to barter. The original barter's writes have not been
+read tonight. The card uses `item_card.rs` unchanged, including the container's
+condition-arrow y 15 and height 20 and the owner's separate DPS placement; those
+numbers and alpha behavior need comparison too. No row width, wrapping width,
+button place or arrow offset is copied into this adapter: those remain the file's.
+
+[hypothesis: `tiles/barter_menu.rs::write`, pending the barter captures]
+`_ArrowDirection` is written as 0 for buying and 1 for selling, while the icon's
+filename is written explicitly to the documented buy/sell texture. The file uses the
+root direction for its placement. `_IsContainerListSelected` is the boolean focus
+on the merchant list. `BM_CapsFlow/_Value` receives the unsigned amount; the amount
+text is also written. Check those traits and both directions against the captures,
+particularly a wide amount. The brightness writes use 128 while dim and 255 while
+bright, as the earlier screenshot's Accept states (section 3); the file's colors and
+places remain its own.
+
+[design: `tiles/menus.rs`, `tiles/mod.rs`, `menu.rs`] The quantity prompt follows an
+actually tiled barter view even with only BarterMenu switched on. With a missing or
+short QuantityMenu file it stays hand-built, including the frame before its tree
+builds. Either prompt blocks the underlying rows, headings, buttons and marker drag.
+A barter view that fell back does not implicitly turn its prompt into tiles; the
+explicit QuantityMenu switch still works independently.
+
+[design: LEGAL.md, `tiles/barter_menu.rs`, `tiles/item_card.rs`] String audit:
+
+- All-items heading: `sInventoryItems` through `ui_loading::game_string`, with the
+  load order's GMST winning over `fnv_ui::strings`. Merchant heading: the model's
+  record or script name. Filtered categories use our own words: Weapons, Clothing,
+  Consumables, Other items, Ammunition. `look::half_title`'s transcribed uppercase
+  headings are replaced before anything is written.
+- Purse labels and the flow label: `sInventoryCaps` through the same setting lookup;
+  the two spaces and purse digits are formatting. `look::half_figure` is not used.
+  Amounts and prices are model numbers, with `--` as our no-value notation.
+- Row names: the model's record or script names, its mod marker and count formatting
+  (`look::row_text` formats only the name and count). The model's separate condition
+  suffix helper is not used by this view. No category abbreviation is transcribed.
+- Item-card titles, Accept and Exit: left to the files' settings, with the strings
+  table's own fallback labels (`sAccept`, `sExit`, and the inventory card settings).
+  Hints written by the adapter: `sPCMenuHintA` and `sPCMenuHintX`, adjusted by
+  `pad::game_hint` for the controller's existing mapping and label style.
+- Card values: `look::item_figures` supplies numbers, condition and one-unit weight
+  and value. `pipboy::items::info_of` supplies ammunition names from AMMO records,
+  clip/carried numbers, armor-class enum labels (our functional words), and effects
+  named by AVIF ANAM/FULL or the engine's actor-value names. `item_card::write` uses
+  the DAM/DT identifiers only to choose cards; it leaves their visible titles to the
+  settings. Empty strings clear absent data; `--` is our no-value notation. Icon,
+  marker and flow filenames identify installed assets, rather than displayed wording.
+
+[design: synthetic tests beside `tiles/barter_menu.rs` and `menu/model/tests.rs`]
+Tests cover short files and missing price children, prices/purses/open and filled
+marks, unit card figures and untouched titles, both flow directions, insufficient
+funds, a zero-net trade, empty Accept, child click meanings, stale rows/guards,
+scroll rewrite, pointer picks, physical/script key arbitration, prompt fallback,
+and a real model sale appearing first on the merchant's side before acceptance.
+The fixtures use their own dimensions and expressions, never the game file's (#1512).
+
+[design: `tools/smoke/scenarios.toml`] New scenarios: `tiles-barter`,
+`tiles-barter-quantity` (BarterMenu alone, including Cancel and blocked underlying
+clicks), and `barter-default-drawing`, through Chet's dialogue in GSGeneralStore
+using section 6's talk/barter aids and the currency/pistol recipe. They take 1280x720
+shots of empty Accept, offered and returned items, the caps flow, acceptance, category,
+scroll and quantity states. The automatic trade aid is delayed beyond the runs so
+that the actual tile or hand-built input makes each trade. The input aid now names
+Page Up/Down and the bracket keys for those checks. Pointer places and timing are
+hypotheses borrowed from the container runs, and await the supervisor's first smoke.
+No game, engine test, or smoke run was performed by this writer. The file has no
+subtitle tile, so the model's own refusal note stays as a small hand-built overlay
+at its existing place (`menu/look.rs::spawn_note`), alongside the dimmed flow
+[design: the contract's paths and `menu::note`]. Those words are the model's own
+functional error messages: "You don't have enough caps." and
+"<merchant> doesn't have enough caps." (`menu/model.rs::accept`), or the engine's
+"Cannot..." errors (`plain_error`). They are not transcribed lines. This piece remains separate to
+preserve the feedback without inventing a tile in the file. Blur uses the existing
+tile-menu blur path at radius 3
+[hypothesis for barter: the same shared presentation as the container].
