@@ -312,7 +312,7 @@ pub struct RefExtra {
     /// Who killed the actor (KillActor's killer), for IsKiller.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub killer: Option<FormId>,
-    /// KillActor's cause of death, which GetCauseofDeath reads before the last hit.
+    /// KillActor's cause of death, which GetCauseofDeath reads before the killing hit.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub death_cause: Option<i32>,
     /// The furniture the actor is on, getting on or getting off.
@@ -330,6 +330,11 @@ pub struct RefExtra {
     /// The last hit taken (combat), for GetHitLocation.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub last_hit: Option<LastHit>,
+    /// The hit that killed the actor, for GetKillingBlowLimb, GetCauseofDeath and the kill
+    /// camera; `None` when no hit did (KillActor, an effect's damage, a script's) or when
+    /// the save is older than this record, whose hits are not guessed at from `last_hit`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub killing_hit: Option<LastHit>,
     /// Its dismembered body parts by location (GetHitLocation's numbering), true when the
     /// part exploded, false when it was severed (docs/spec-notes/dismemberment.md §5).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]

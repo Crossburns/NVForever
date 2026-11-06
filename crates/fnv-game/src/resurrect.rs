@@ -73,6 +73,7 @@ impl Game<'_> {
         e.death_cause = None;
         e.av_damage.clear();
         e.last_hit = None;
+        e.killing_hit = None;
         e.player_damage = 0.0;
         e.total_damage = 0.0;
         let was_culled = crate::functions::critical_stage_culls(e.critical_stage);

@@ -7,6 +7,7 @@ mod common;
 use common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::combat::HitInfo;
+use fnv_game::functions::Ctx;
 use fnv_game::game::{event, Game, GameConfig, InstKey};
 use fnv_game::GameData;
 use fnv_script::FunctionTable;
@@ -24,10 +25,12 @@ const TRAP_SCRIPT: u32 = 0x902;
 const NPC_SCRIPT: u32 = 0x903;
 const HURT_SCRIPT: u32 = 0x904;
 const HURT_FX_SCRIPT: u32 = 0x905;
+const KILL_ON_HIT_SCRIPT: u32 = 0x906;
 const DOOR: u32 = 0x700;
 const TRAP: u32 = 0x710;
 const NPC: u32 = 0x720;
 const HURT_NPC: u32 = 0x721;
+const KILL_ON_HIT_NPC: u32 = 0x722;
 const ITEM: u32 = 0x730;
 const BOX: u32 = 0x740;
 const DOOR_REF: u32 = 0x300;
@@ -36,8 +39,12 @@ const TRAP_REF: u32 = 0x301;
 const NPC_REF: u32 = 0x320;
 const DAMAGED_REF: u32 = 0x321;
 const HIT_REF: u32 = 0x322;
+const KILL_ON_HIT_REF: u32 = 0x323;
 const KILL_ACTOR: u16 = 0x108B;
 const DAMAGE_ACTOR_VALUE: u16 = 0x1181;
+const GET_HIT_LOCATION: u16 = 0x1187;
+const GET_CAUSE_OF_DEATH: u16 = 0x118D;
+const GET_KILLING_BLOW_LIMB: u16 = 0x11F0;
 const HEALTH: u16 = 16;
 
 fn r(i: u16) -> Vec<u8> {
@@ -134,6 +141,7 @@ fn plugin_bytes() -> Vec<u8> {
             ]
             .concat(),
         ),
+        record(b"SCPT", 0, KILL_ON_HIT_SCRIPT, &[vec![sub(b"EDID", z("KillOnHitScript"))], unit(0, &script(&[(event::ON_HIT, None, call0(KILL_ACTOR))]), &[], &[])].concat()),
     ]
     .concat();
     let door = record(b"DOOR", 0, DOOR, &[sub(b"EDID", z("TestDoor")), sub(b"SCRI", DOOR_SCRIPT.to_le_bytes().to_vec())]);
@@ -163,12 +171,23 @@ fn plugin_bytes() -> Vec<u8> {
             sub(b"SCRI", HURT_SCRIPT.to_le_bytes().to_vec()),
         ],
     );
+    let kill_on_hit_npc = record(
+        b"NPC_",
+        0,
+        KILL_ON_HIT_NPC,
+        &[
+            sub(b"EDID", z("TestKillOnHitNpc")),
+            sub(b"ACBS", [&0u32.to_le_bytes()[..], &[0; 4], &4u16.to_le_bytes(), &[0; 6], &0f32.to_le_bytes(), &[0; 4]].concat()),
+            sub(b"DATA", [&100i32.to_le_bytes()[..], &[5, 5, 5, 5, 5, 5, 5]].concat()),
+            sub(b"SCRI", KILL_ON_HIT_SCRIPT.to_le_bytes().to_vec()),
+        ],
+    );
     let mut ench = vec![sub(b"EDID", z("Burning")), sub(b"ENIT", [u32s(&[2, 0, 0]), vec![0; 4]].concat())];
     ench.extend([sub(b"EFID", BURN_FX.to_le_bytes().to_vec()), sub(b"EFIT", [u32s(&[1, 0, 5, 1]), 16i32.to_le_bytes().to_vec()].concat())]);
     let mut hurting = vec![sub(b"EDID", z("Hurting")), sub(b"ENIT", [u32s(&[2, 0, 0]), vec![0; 4]].concat())];
     hurting.extend([sub(b"EFID", HURT_FX.to_le_bytes().to_vec()), sub(b"EFIT", [u32s(&[1, 0, 0, 1]), (-1i32).to_le_bytes().to_vec()].concat())]);
     let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", z("TestCell"))]);
-    let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &[placed(b"REFR", DOOR_REF, DOOR), placed(b"REFR", TRAP_REF, TRAP), placed(b"REFR", BOX_REF, BOX), placed(b"ACHR", NPC_REF, NPC), placed(b"ACHR", DAMAGED_REF, HURT_NPC), placed(b"ACHR", HIT_REF, HURT_NPC)].concat()));
+    let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &[placed(b"REFR", DOOR_REF, DOOR), placed(b"REFR", TRAP_REF, TRAP), placed(b"REFR", BOX_REF, BOX), placed(b"ACHR", NPC_REF, NPC), placed(b"ACHR", DAMAGED_REF, HURT_NPC), placed(b"ACHR", HIT_REF, HURT_NPC), placed(b"ACHR", KILL_ON_HIT_REF, KILL_ON_HIT_NPC)].concat()));
     [
         tes4(),
         top(b"MGEF", &[mgef(BURN_FX, "Burn"), mgef(OTHER_FX, "Other"), script_mgef(HURT_FX, "HurtFx", HURT_FX_SCRIPT)].concat()),
@@ -178,7 +197,7 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"ACTI", &trap),
         top(b"CONT", &cont),
         top(b"DOOR", &door),
-        top(b"NPC_", &[npc, hurt_npc].concat()),
+        top(b"NPC_", &[npc, hurt_npc, kill_on_hit_npc].concat()),
         top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
     ]
     .concat()
@@ -345,4 +364,44 @@ fn a_kill_finished_by_a_hits_script_effect_is_the_attackers() {
     assert!(r.died, "{r:?}");
     assert!(r.xp > 0.0, "{r:?}");
     assert_eq!(g.extra[&FormId(NPC_REF)].killer, Some(FormId::PLAYER_REF));
+}
+
+fn ask(g: &mut Game, on: u32, opcode: u16) -> f64 {
+    let ctx = Ctx { unit: "test".into(), opcode, on: Some(FormId(on)), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+    g.call_function(&ctx, &[]).num()
+}
+
+#[test]
+fn a_hit_finished_by_its_on_hit_script_is_the_killing_hit() {
+    let f = fixture();
+    let mut g = game(&f);
+    let r = g.hit(FormId(HIT_REF), 1.0, HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 3, critical: false, limb: None });
+    assert!(r.died, "{r:?}");
+    assert_eq!(ask(&mut g, HIT_REF, GET_KILLING_BLOW_LIMB), 3.0);
+    assert_eq!(ask(&mut g, HIT_REF, GET_CAUSE_OF_DEATH), 4.0, "no weapon");
+}
+
+#[test]
+fn a_hit_finished_by_its_script_effect_is_the_killing_hit() {
+    let f = fixture();
+    let mut g = game(&f);
+    // NPC_REF has no OnHit block, so only the effect can take its Health.
+    g.apply_hit_effect(FormId(NPC_REF), FormId(HURTING), Some(FormId::PLAYER_REF));
+    assert!(fnv_game::functions::actor_value(&mut g, FormId(NPC_REF), HEALTH).unwrap() <= 0.0, "the effect took it");
+    assert!(!g.is_dead(FormId(NPC_REF)), "the hit that follows decides");
+    let r = g.hit(FormId(NPC_REF), 1.0, HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 3, critical: false, limb: None });
+    assert!(r.died, "{r:?}");
+    assert_eq!(ask(&mut g, NPC_REF, GET_KILLING_BLOW_LIMB), 3.0);
+}
+
+#[test]
+fn a_kill_actor_in_an_on_hit_block_is_no_killing_hit() {
+    // A hit is running but did not kill: running is no proof of what killed.
+    let f = fixture();
+    let mut g = game(&f);
+    let r = g.hit(FormId(KILL_ON_HIT_REF), 1.0, HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 3, critical: false, limb: None });
+    assert!(!r.died && g.is_dead(FormId(KILL_ON_HIT_REF)), "{r:?}");
+    assert_eq!(ask(&mut g, KILL_ON_HIT_REF, GET_KILLING_BLOW_LIMB), -1.0);
+    assert_eq!(ask(&mut g, KILL_ON_HIT_REF, GET_CAUSE_OF_DEATH), -1.0);
+    assert_eq!(ask(&mut g, KILL_ON_HIT_REF, GET_HIT_LOCATION), 3.0, "the hit is still its last");
 }
