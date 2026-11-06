@@ -19,6 +19,8 @@
 //! the world too) and `_AUDIO_REOPEN`; `_VIGOR` counts from its menu's first frame and
 //! `_RADIO` on the radio's own clock. Without the switch every aid counts from the start.
 //!
+//! - `NVF_PLAY_TEST_SHOT_FLATNESS=1`: each of those shots also logs how much of the view is
+//!   one colour ([`one_colour_percent`]), for a scenario to check without reading the file.
 //! - `NVF_PLAY_TEST_SHOTS=<seconds>[:<path.png>][,...]`: save a screenshot at each time,
 //!   to the path given, else as `play-<seconds>s.png` in `NVF_PLAY_TEST_SHOT_DIR`
 //!   (default: the current folder).
@@ -120,7 +122,7 @@ use crate::player::{MoveIntent, Player};
 use crate::sim::SimState;
 use crate::PlaySet;
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use fnv_sim::FormId;
 use std::path::{Path, PathBuf};
 
@@ -684,8 +686,35 @@ fn take_shots(time: crate::pause::AidTime, mut aids: ResMut<Aids>, mut commands:
             let _ = std::fs::create_dir_all(dir);
         }
         info!("test aid: screenshot {}", path.display());
-        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut shot = commands.spawn(Screenshot::primary_window());
+        shot.observe(save_to_disk(path));
+        if std::env::var_os("NVF_PLAY_TEST_SHOT_FLATNESS").is_some() {
+            shot.observe(move |ev: On<ScreenshotCaptured>| {
+                let size = ev.image.texture_descriptor.size;
+                if let Some(data) = ev.image.data.as_deref() {
+                    info!("test aid: {name}: {} % of the view is one colour", one_colour_percent(data, size.width as usize, size.height as usize));
+                }
+            });
+        }
     }
+}
+
+/// Test aid `NVF_PLAY_TEST_SHOT_FLATNESS`: the share of the view, its lower fifth left out
+/// (the HUD), taken by its commonest colour at 32 levels a channel. A view the world has not
+/// been drawn into is one colour (#1520). `pixels`: four bytes each, row by row.
+fn one_colour_percent(pixels: &[u8], width: usize, height: usize) -> u32 {
+    let mut counts = std::collections::HashMap::<[u8; 3], u32>::new();
+    let mut seen = 0u32;
+    for y in (0..height * 4 / 5).step_by(4) {
+        for x in (0..width).step_by(4) {
+            if let Some(p) = pixels.get((y * width + x) * 4..(y * width + x) * 4 + 3) {
+                *counts.entry([p[0] >> 3, p[1] >> 3, p[2] >> 3]).or_default() += 1;
+                seen += 1;
+            }
+        }
+    }
+    counts.values().max().map_or(0, |n| n * 100 / seen.max(1))
 }
 
 fn face_reference(time: crate::pause::AidTime, mut aids: ResMut<Aids>, sim: Res<SimState>, mut phys: ResMut<PhysState>, mut player: ResMut<Player>) {
@@ -772,6 +801,19 @@ fn goto_and_look(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_flat_view_is_one_colour_and_a_varied_one_is_not() {
+        let (w, h) = (64, 40);
+        let flat = [92u8, 116, 148, 255].repeat(w * h);
+        assert_eq!(one_colour_percent(&flat, w, h), 100);
+        let varied: Vec<u8> = (0..w * h).flat_map(|i| [(i % 251) as u8, (i % 127) as u8 * 2, (i % 61) as u8 * 4, 255]).collect();
+        assert!(one_colour_percent(&varied, w, h) < 10);
+        // The lower fifth is the HUD's: not counted.
+        let mut hud = flat.clone();
+        hud[(h * 4 / 5) * w * 4..].fill(0);
+        assert_eq!(one_colour_percent(&hud, w, h), 100);
+    }
+
     use super::*;
 
     #[test]

@@ -1377,7 +1377,7 @@ impl EffectCtx for PlayCtx<'_> {
     }
 
     fn objective_text(&self, quest: FormId, index: i32) -> Option<String> {
-        self.data.quests.get(&quest)?.objectives.get(&index)?.text.clone()
+        self.data.quests.get(&quest)?.objectives.get(&index)?.text.as_deref().map(|t| self.game.expand_codes(t))
     }
 
     fn quest_title(&self, quest: FormId) -> Option<String> {
@@ -2108,6 +2108,9 @@ pub(crate) fn run_scripts(
                 open.write(OpenContainer { container: c });
             }
             ScriptEffect::Notify(mut note) => {
+                // The player string codes (`&PCName;`) as they read now; ShowMessage's
+                // text has them already, MessageEx's and the notes' not (`fnv_game::text_codes`).
+                note.text = rt.game.expand_codes(&note.text);
                 // Key strings (`&sUActnVats;`) name the keys bound now.
                 if let Some(b) = bindings.as_deref() {
                     note.text = crate::lockpick::help::expand_keys(&note.text, b);
@@ -2120,6 +2123,9 @@ pub(crate) fn run_scripts(
                 quest_lines.push(n);
             }
             ScriptEffect::MessageBox(mut b) => {
+                // The player string codes in the text and the buttons (`fnv_game::text_codes`).
+                b.text = rt.game.expand_codes(&b.text);
+                b.buttons = b.buttons.iter().map(|t| rt.game.expand_codes(t)).collect();
                 if let Some(k) = bindings.as_deref() {
                     b.text = crate::lockpick::help::expand_keys(&b.text, k);
                 }

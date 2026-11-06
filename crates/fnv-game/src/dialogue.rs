@@ -1045,6 +1045,13 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// [`Game::choice_text`] as the menu shows it, its player string codes expanded
+    /// ([`Game::expand_codes`]; FalloutNV.esm's topics read "The name's &PCName;."
+    /// [observed]).
+    pub fn shown_choice_text(&self, c: &Choice) -> String {
+        self.expand_codes(self.choice_text(c))
+    }
+
     /// Whether the player is dim: Intelligence at or below
     /// `iDialogueDummySpeakThisIntOrBelow` (3 in FalloutNV.esm [observed]). A dim player's
     /// lines show their topic's Dumb Response (DIAL TDUM: "Peace." is "Pizza.", "Where

@@ -711,7 +711,13 @@ fn lists(st: &mut DataState, game: &Game) -> Lists {
             let note = st.notes.entry(n.0).or_insert_with(|| read::note(w.lo, w.schema, n.0));
             if let Some(note) = note {
                 if !st.notes_of_active || (note.quest.is_some() && note.quest == st.active_quest) {
-                    out.notes.push(note.clone());
+                    // The player string codes as they read now (the bounty notices'
+                    // "&PCName;", "&PCRace;" [observed: FalloutNV.esm]); the cache keeps
+                    // the record's text.
+                    let mut note = note.clone();
+                    note.name = g.expand_codes(&note.name);
+                    note.text = note.text.map(|t| g.expand_codes(&t));
+                    out.notes.push(note);
                 }
             }
         }
@@ -1122,7 +1128,7 @@ fn objectives(game: &Game, q: u32) -> Vec<Row> {
         .iter()
         .filter(|(_, o)| o.displayed || o.completed)
         .filter_map(|(i, o)| {
-            let text = def.objectives.get(i)?.text.clone()?;
+            let text = rt.game.expand_codes(def.objectives.get(i)?.text.as_deref()?);
             (!text.trim().is_empty()).then(|| ObjectiveLine { index: *i, text: text.trim().to_string(), done: o.completed })
         })
         .collect();

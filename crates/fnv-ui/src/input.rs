@@ -109,10 +109,25 @@ fn flag(ui: &Ui, t: TileId, name: &str) -> bool {
     ui.tile(t).get(name).is_some_and(Value::truthy)
 }
 
+/// The private trait of a tile whose children do not stand from its place but from where it
+/// stands itself [hypothesis: the file's tabs have no `locus`, their inner rect repeats the
+/// tab's place, and the original stands them at that one place, pipboy.md §5.1.1]. An
+/// engine-written mark, in no game file, written by a menu's model, so nothing else changes;
+/// the layout (`nvf-play`'s `tiles::layout`) reads it too, so the pointer finds what is drawn.
+pub const NO_ORIGIN: &str = "_NVFNoOrigin";
+
 /// The private trait that turns a tile's `clipwindow` on ([`mark_clip_windows`]) [design].
 /// An engine-written mark, in no game file: an ordinary trait to the tree, so generic trait
 /// dumps list it and a file naming it would be read too.
 pub const CLIP_WINDOW_ON: &str = "_NVFClipWindow";
+
+/// The private trait of a tile its parent's window does not crop, in the drawing and under the
+/// pointer alike; windows further up still do [design: an engine-written mark, in no game file,
+/// written by a menu's model; so nothing else changes]. [hypothesis] A `clipwindow` crops only what has a true `clips`: the
+/// trait menu's description bar stands beside its window with none, its text in it with one, and
+/// the bar's arrows show on the owner's screenshot (chargen.md §4). `clips_children` crops all
+/// below it, which the other menus' lists rely on, so a menu marks the exception.
+pub const OUTSIDE_CLIP: &str = "_NVFOutsideClip";
 
 /// Whether a tile crops its children to its own box, in the drawing (`nvf_play::tiles::layout`)
 /// and under the pointer ([`hit`]) alike: a true `clips` [hypothesis: menu-xml.md §3.1.1], or
@@ -180,6 +195,8 @@ struct Place {
     area: Area,
     depth: f64,
     clip: Option<Area>,
+    /// The crop without the parent's own window, for a tile marked [`OUTSIDE_CLIP`].
+    clip_above: Option<Area>,
     /// A target hotrect above makes this a target [documented: Hotrect, "Hotrect with
     /// Target set to 1 will enforce it to its childs even if child Target is set 0";
     /// hypothesis: to all below it, not only its children].
@@ -216,7 +233,8 @@ fn place(ui: &Ui, t: TileId, parent: Place, measure: &Measure<'_>) -> Place {
     Place {
         area,
         depth: parent.depth + num(ui, t, "depth", 0.0),
-        clip: parent.clip,
+        clip: if flag(ui, t, OUTSIDE_CLIP) { parent.clip_above } else { parent.clip },
+        clip_above: parent.clip_above,
         forced: parent.forced,
     }
 }
@@ -268,7 +286,7 @@ pub fn hit_candidates(ui: &Ui, menu: TileId, measure: &Measure<'_>) -> Vec<HitCa
     if !ui.is_live(menu) || !shown(ui, menu) {
         return out;
     }
-    let root = Place { area: Area::default(), depth: 0.0, clip: None, forced: false };
+    let root = Place { area: Area::default(), depth: 0.0, clip: None, clip_above: None, forced: false };
     let mut order = 0;
     let mut stack = vec![(menu, root)];
     while let Some((id, parent)) = stack.pop() {
@@ -285,8 +303,13 @@ pub fn hit_candidates(ui: &Ui, menu: TileId, measure: &Measure<'_>) -> Vec<HitCa
         }
         let mut below = here;
         below.forced |= own && tile.kind == "hotrect";
+        below.clip_above = here.clip;
         if clips_children(tile) {
             below.clip = Some(below.clip.map_or(here.area, |c| c.intersect(here.area)));
+        }
+        if flag(ui, id, NO_ORIGIN) {
+            below.area.left = parent.area.left;
+            below.area.top = parent.area.top;
         }
         let mut children = tile.children.clone();
         children.sort_by(|&a, &b| num(ui, a, "depth", 0.0).total_cmp(&num(ui, b, "depth", 0.0)));
@@ -392,6 +415,9 @@ pub struct Input {
 pub struct Report {
     /// The highlight moved: (from, to).
     pub over: Option<(Option<TileId>, Option<TileId>)>,
+    /// A key's `<ref … trait="mouseover"/>` moved it, not the pointer, wherever it went: back
+    /// onto the tile under the pointer too.
+    pub over_by_key: bool,
     /// Every click since the last step: the scripts' (ClickMenuButton, ClickMenuTile)
     /// first, then this frame's.
     pub clicks: Vec<Click>,
@@ -586,6 +612,7 @@ impl Pointer {
             } else if trait_name.eq_ignore_ascii_case(MOUSEOVER) {
                 self.highlight(ui, Some(t), report);
                 self.keyed = true;
+                report.over_by_key = report.over.is_some();
                 return;
             }
             report.unfollowed.push(format!("{name}: ref to {trait_name} not followed"));
@@ -642,6 +669,42 @@ mod tests {
     <rect name="Cover"> <target> &true; </target> <x> 0 </x> <y> 0 </y> <width> 800 </width> <height> 600 </height> <depth> 99 </depth> </rect>
   </rect>
 </menu>"#;
+
+    #[test]
+    fn a_tile_marked_outside_a_window_is_hit_there() {
+        let src = MemSource::default().with(
+            "w.xml",
+            r#"<menu name="W"><hotrect name="Box"><width>100</width><height>100</height><clips>&true;</clips>
+              <image name="Beside"><target>&true;</target><x>100</x><width>20</width><height>20</height></image>
+              <image name="In"><target>&true;</target><width>20</width><height>20</height></image>
+            </hotrect></menu>"#,
+        );
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "w.xml").unwrap();
+        ui.update();
+        assert!(hit(&ui, &[menu], (110.0, 10.0), &no_measure).is_none(), "cropped by the window");
+        let beside = ui.find_tile("W/Box/Beside").unwrap();
+        ui.set_trait(beside, OUTSIDE_CLIP, Value::Num(1.0));
+        ui.update();
+        assert_eq!(hit(&ui, &[menu], (110.0, 10.0), &no_measure).map(|h| h.tile), Some(beside));
+        let inside = ui.find_tile("W/Box/In").unwrap();
+        assert_eq!(hit(&ui, &[menu], (10.0, 10.0), &no_measure).map(|h| h.tile), Some(inside));
+        // A window above that one still crops it.
+        let src = MemSource::default().with(
+            "o.xml",
+            r#"<menu name="O"><hotrect name="Outer"><width>105</width><height>100</height><clips>&true;</clips>
+              <hotrect name="Box"><width>100</width><height>100</height><clips>&true;</clips>
+              <image name="Beside"><target>&true;</target><x>100</x><width>20</width><height>20</height></image></hotrect></hotrect></menu>"#,
+        );
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "o.xml").unwrap();
+        ui.update();
+        let beside = ui.find_tile("O/Outer/Box/Beside").unwrap();
+        ui.set_trait(beside, OUTSIDE_CLIP, Value::Num(1.0));
+        ui.update();
+        assert_eq!(hit(&ui, &[menu], (102.0, 10.0), &no_measure).map(|h| h.tile), Some(beside));
+        assert!(hit(&ui, &[menu], (110.0, 10.0), &no_measure).is_none(), "cropped by the outer window");
+    }
 
     fn tree() -> (Ui, TileId) {
         let src = MemSource::default().with("menus\\test.xml", MENU);
@@ -839,6 +902,28 @@ mod tests {
         assert_eq!(r.clicks, [Click { tile: ok, id: Some(1.0), by: By::Key("S".into()), stamp: 0 }]);
     }
 
+    /// A marked tile's children stand from where it stands, not from its place.
+    #[test]
+    fn a_tile_marked_no_origin_gives_its_children_no_place() {
+        let src = crate::MemSource::default().with(
+            "n.xml",
+            r#"<menu name="N"><rect name="Line"><x>11</x><y>23</y>
+              <hotrect name="Tab"><target>&true;</target><x>101</x><y>53</y><width>30</width><height>10</height>
+                <image name="Inner"><x>101</x><y>53</y><width>30</width><height>10</height></image></hotrect></rect></menu>"#,
+        );
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "n.xml").unwrap();
+        ui.update();
+        let under = |ui: &Ui, at| hit(ui, &[menu], at, &no_measure).map(|h| ui.tile(h.under).name.clone());
+        // Unmarked, the child stands from the tab, twice over.
+        assert_eq!(under(&ui, (218.0, 134.0)).as_deref(), Some("Inner"));
+        let tab = ui.find_tile("N/Line/Tab").unwrap();
+        ui.set_trait(tab, NO_ORIGIN, Value::Num(1.0));
+        ui.update();
+        assert_eq!(under(&ui, (218.0, 134.0)), None);
+        assert_eq!(under(&ui, (117.0, 81.0)).as_deref(), Some("Inner"), "at the tab's one place");
+    }
+
     #[test]
     fn pad_refs_are_followed() {
         let (mut ui, menu) = tree();
@@ -857,6 +942,7 @@ mod tests {
         p.step(&mut ui, &[menu], &at(120.0, 115.0), &no_measure);
         let r = p.step(&mut ui, &[menu], &Input { pads: vec!["xdown".into()], ..at(120.0, 115.0) }, &no_measure);
         assert_eq!(r.over, Some((Some(ok), Some(cancel))));
+        assert!(r.over_by_key);
         assert_eq!(ui.get_float("TestMenu/Main/CancelButton/mouseover"), Some(1.0));
         assert_eq!(p.step(&mut ui, &[menu], &at(120.0, 115.0), &no_measure).over, None);
         assert_eq!(p.over, Some(cancel));

@@ -77,7 +77,8 @@
 //! texture's alpha (0–255, read at the shape's own texture coordinates) is at or above
 //! [`NifSurface::holes`]`.x` nothing is drawn, in every pass, and the band of `.y` units
 //! below it is drawn in [`NifSurface::holes_edge`]; `.x` negative (every other shape): no
-//! holes. A shape with holes is drawn alpha-tested, so the depth-only passes run the
+//! holes. With `.z` 1 the test is turned round: alpha below `.x` leaves a hole and there
+//! is no band (an effect shader's overlay cut by an alpha-tested mesh's own texture). A shape with holes is drawn alpha-tested, so the depth-only passes run the
 //! same test (`nif_prepass.wesl`).
 //!
 //! Depth of blended hair: hair-shader shapes (hair, beards, brows) are blended
@@ -319,7 +320,9 @@ pub struct NifSurface {
     pub pipboy_screen: bool,
     /// Holes (module notes, "Holes"): x the value in alpha units (0–255) at and above
     /// which the holes texture's alpha leaves a hole, negative for none; y the width of
-    /// the edge band below it; z, w unused.
+    /// the edge band below it; z 1 turns the test round (a hole where the alpha is
+    /// below x, no band: an effect shader's overlay on an alpha-tested mesh, cut by the
+    /// mesh's own texture), 0 otherwise; w unused.
     pub holes: Vec4,
     /// The colour of the holes' edge band (linear, alpha unused).
     pub holes_edge: Vec4,
