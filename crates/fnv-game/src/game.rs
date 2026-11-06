@@ -1148,6 +1148,9 @@ pub enum LineKind {
     Hello,
 }
 
+/// See [`Game::ui_dialogue_hook`].
+pub type DialogueHook = Box<dyn for<'g> FnMut(&mut Game<'g>) + Send + Sync>;
+
 pub struct Game<'a> {
     pub data: &'a GameData,
     /// The script extender's strings and arrays by id (fnv_script::vm::ExtStore;
@@ -1283,6 +1286,11 @@ pub struct Game<'a> {
     pub ui_menus: fnv_ui::MenuIndex,
     /// Menu lifetime's once-only warnings, reset with the tree [design].
     pub ui_lifetime: crate::ui_loading::MenuLifetime,
+    /// Conversations started in this run (`crate::dialogue::conversation_stamp`).
+    pub dialogue_serial: u32,
+    /// Told at each transition of the conversation, before any script of it runs
+    /// ([`Game::dialogue_transition`]): for what shows the conversation to what scripts read.
+    pub ui_dialogue_hook: Option<DialogueHook>,
     /// Where InjectUIXML and the menus' includes read files: the engine's archives and
     /// loose files. `None` headless: InjectUIXML then fails, InjectUIComponent works
     /// without includes.
@@ -2161,6 +2169,8 @@ impl<'a> Game<'a> {
             ui_tree: fnv_ui::Ui::new(),
             ui_menus: fnv_ui::MenuIndex::default(),
             ui_lifetime: crate::ui_loading::MenuLifetime::default(),
+            dialogue_serial: 0,
+            ui_dialogue_hook: None,
             ui_files: None,
             page_menu: None,
             ui_hud_pending: None,

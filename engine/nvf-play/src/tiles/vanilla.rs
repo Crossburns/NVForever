@@ -4,7 +4,8 @@
 //! - **The switch**: `[UI] TileMenus=` in the home's `NVForever.ini`, a comma-separated
 //!   list of menu names, empty by default; `HUDMainMenu`, and since T15a `MessageMenu`
 //!   and `QuantityMenu` (`super::menus`), and since T11 `StartMenu` (the pause menu's
-//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), are acted on. It is
+//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), and `DialogMenu`
+//!   (`super::dialog_menu`) are acted on. It is
 //!   read once at start, from the INI the settings page uses
 //!   (`crate::settings::SettingsFile`: an unattended run in the player's own home reads
 //!   none). The test aid `NVF_PLAY_TEST_TILE_MENUS=<list>` sets it instead, so a smoke
@@ -53,6 +54,9 @@ pub struct TileMenus {
     /// `TutorialMenu` (T15b): the tutorial menu from its file, the hand-built drawing
     /// (`crate::tutorial_menu`) not spawned (`super::tutorial_menu`).
     pub tutorial: bool,
+    /// `DialogMenu`: the dialogue menu from its file, the hand-built drawing
+    /// (`crate::dialogue_menu`) not spawned (`super::dialog_menu`).
+    pub dialog: bool,
 }
 
 impl TileMenus {
@@ -74,6 +78,8 @@ impl TileMenus {
                 menus.sleep_wait = true;
             } else if name.eq_ignore_ascii_case(super::tutorial_menu::TUTORIAL_MENU) {
                 menus.tutorial = true;
+            } else if name.eq_ignore_ascii_case(super::dialog_menu::DIALOG_MENU) {
+                menus.dialog = true;
             } else {
                 other.push(name.to_string());
             }
@@ -110,11 +116,11 @@ pub(crate) fn setup(app: &mut App) {
 
 impl TileMenus {
     /// The menus the switch acts on, in its order.
-    pub const NAMES: [&str; 6] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::tutorial_menu::TUTORIAL_MENU, super::mods::START_MENU];
+    pub const NAMES: [&str; 7] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::tutorial_menu::TUTORIAL_MENU, super::mods::START_MENU, super::dialog_menu::DIALOG_MENU];
 
     /// The start-up line's end: the menus drawn from tiles, or none.
     pub fn line(&self) -> String {
-        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.tutorial, self.start]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
+        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.tutorial, self.start, self.dialog]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
         if on.is_empty() {
             "no menu drawn from tiles".into()
         } else {
@@ -482,7 +488,7 @@ mod tests {
         assert_eq!(TileMenus::default().line(), "no menu drawn from tiles");
         // T15a: the message box and the prompt, each on its own.
         let (menus, other) = TileMenus::parse("messagemenu,QuantityMenu, SleepWaitMenu");
-        assert_eq!(menus, TileMenus { hud: false, message: true, quantity: true, sleep_wait: true, tutorial: false, start: false });
+        assert_eq!(menus, TileMenus { message: true, quantity: true, sleep_wait: true, ..TileMenus::default() });
         assert!(other.is_empty());
         assert_eq!(menus.line(), "MessageMenu, QuantityMenu, SleepWaitMenu drawn from tiles");
         // T15b: the Wait / Sleep and tutorial menus; a menu not built yet stays a name not
@@ -492,6 +498,11 @@ mod tests {
         assert_eq!(t15b.line(), "SleepWaitMenu, TutorialMenu drawn from tiles");
         assert!(!TileMenus::parse("sleepwaitmenu").0.tutorial, "off unless named");
         assert_eq!(TileMenus::parse("QuantityMenu").0, TileMenus { quantity: true, ..TileMenus::default() });
+        // The dialogue menu, on its own and off unless named.
+        let dialog = TileMenus { dialog: true, ..TileMenus::default() };
+        assert_eq!(TileMenus::parse(" dialogmenu "), (dialog, Vec::new()));
+        assert_eq!(dialog.line(), "DialogMenu drawn from tiles");
+        assert!(!TileMenus::parse("HUDMainMenu,MessageMenu").0.dialog);
     }
 
     #[test]

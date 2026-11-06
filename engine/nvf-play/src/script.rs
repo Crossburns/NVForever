@@ -1194,8 +1194,49 @@ impl Runtime {
                 }
             }
             ScriptAid::Call(on, func, args) => {
-                let opcode = g.data.table.by_name(func).ok_or_else(|| format!("{func} is not a script function"))?;
                 let on = if on == "-" { None } else { Some(resolve(g, on)?) };
+                let Some(opcode) = g.data.table.by_name(func) else {
+                    // An extender's function has no number in the table: called by name, as a
+                    // compiled script's does (`fnv_game::nvse::call`, in lower case). Numbers and
+                    // quoted strings as below, anything else a reference.
+                    use fnv_script::vm::XVal;
+                    let mut values = Vec::new();
+                    for a in args {
+                        values.push(match a.parse::<f64>() {
+                            Ok(n) => XVal::Num(n),
+                            Err(_) if a.len() >= 2 && a.starts_with('"') && a.ends_with('"') => XVal::Str(a[1..a.len() - 1].to_string()),
+                            Err(_) => XVal::Ref(resolve(g, a)?.0),
+                        });
+                    }
+                    let ctx = fnv_game::game::RunCtx { self_ref: on, ..Default::default() };
+                    return match fnv_game::nvse::call(g, &ctx, &func.to_ascii_lowercase(), on, &values) {
+                        Some(Ok(value)) => {
+                            info!("script: test aid calls {func}{} = {value:?}", on.map(|r| format!(" on {}", g.data.name(r))).unwrap_or_default());
+                            Ok(())
+                        }
+                        Some(Err(error)) => Err(format!("{func}: {error}")),
+                        // One the script machine holds itself (MessageBoxEx): a line of script,
+                        // as the console's. A line that compiles but stops on an error when it
+                        // runs (a `ScriptError` in the trace) fails the aid, so a scenario's
+                        // `call:` cannot pass on a line that did nothing.
+                        None => {
+                            let from = g.events.len();
+                            match g.run_source(&format!("{func} {}", args.join(" ")), ctx) {
+                                Ok(_) => match g.events[from..].iter().find_map(|e| match &e.kind {
+                                    EventKind::ScriptError { error, .. } => Some(error.clone()),
+                                    _ => None,
+                                }) {
+                                    Some(error) => Err(format!("{func}: {error}")),
+                                    None => {
+                                        info!("script: test aid calls {func}{}", on.map(|r| format!(" on {}", g.data.name(r))).unwrap_or_default());
+                                        Ok(())
+                                    }
+                                },
+                                Err(e) => Err(format!("{func} is not a script function: {e}")),
+                            }
+                        }
+                    };
+                };
                 let mut values = Vec::new();
                 for a in args {
                     values.push(match a.parse::<f64>() {
