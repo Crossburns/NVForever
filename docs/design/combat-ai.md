@@ -973,6 +973,13 @@ The owner's list 4, items 14, 18, 19 and 20 (`docs/handoff/archive/playtest-list
   weapon or stance every 2-2.5 s; the owner judged that a quirk (2026-10-25): NVForever's
   draw once and hold it, and say a GuardTrespass line at each warning (the Detection
   lines' cooldown does not hold warnings back).
+- **Spawned actors do not warn** [observed 2026-11-06, capture o25_coyote,
+  observer-checks.md item 2]: a CrCoyote spawned by PlaceAtMe at the spot of the placed
+  VERGSCoyote6REF, the player 700 units off, was in combat at once with no warning,
+  where the placed coyote warned for 14.9 s first; the base record has the same aggro
+  radius (1,024) and packages. Spawned coyotes on the airport runway did the same at 250
+  and 700 units (o16_air). Ours still warns with any actor whose record turns aggro
+  radius behaviour on (#1341).
 - **Guard packages do not warn** (built 2026-10-24, taken out 2026-10-25): Gomorrah's
   room guards on vGomorrahGuardPackage, with no aggro radius of their own, neither
   warned nor fought the player by the door they guard [observed: capture `warnings2`].

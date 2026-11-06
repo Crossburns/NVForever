@@ -1,0 +1,175 @@
+{
+ "format": "fnv.observe.campaign/1",
+ "name": "o25_speed",
+ "title": "Observer check 75: the player's run over ~1,200 units of the runway at Speed Mult 100/150/50, in metal and NCR trooper armour, and with ModAV +50; positions in the header",
+ "save": "nvfairport",
+ "defaults": {
+  "fields": "fight",
+  "every": 1,
+  "depth": 0,
+  "settle_frames": 200,
+  "hours": 0.12,
+  "extra_header": [
+   [
+    "p_speedmult",
+    "num",
+    "player.GetAV SpeedMult"
+   ],
+   [
+    "p_running",
+    "num",
+    "player.IsRunning"
+   ],
+   [
+    "p_weapon_out",
+    "num",
+    "player.IsWeaponOut"
+   ]
+  ]
+ },
+ "sessions": [
+  {
+   "name": "sm100",
+   "console_first": [
+    "CloseAllMenus",
+    "tgm",
+    "player.setav speedmult 100"
+   ],
+   "do_first": [
+    [
+     "player.MoveTo {0} 851 228 40",
+     "0x0013DA13"
+    ],
+    {
+     "frames": 120
+    }
+   ],
+   "walk": {
+    "to": "0x0013DA13",
+    "within": 150,
+    "approach": 1200,
+    "max_frames": 2400
+   },
+   "note": "base"
+  },
+  {
+   "name": "sm150",
+   "console_first": [
+    "CloseAllMenus",
+    "player.setav speedmult 150"
+   ],
+   "do_first": [
+    [
+     "player.MoveTo {0} 851 228 40",
+     "0x0013DA13"
+    ],
+    {
+     "frames": 120
+    }
+   ],
+   "walk": {
+    "to": "0x0013DA13",
+    "within": 150,
+    "approach": 1200,
+    "max_frames": 2400
+   },
+   "note": ""
+  },
+  {
+   "name": "sm50",
+   "console_first": [
+    "CloseAllMenus",
+    "player.setav speedmult 50"
+   ],
+   "do_first": [
+    [
+     "player.MoveTo {0} 851 228 40",
+     "0x0013DA13"
+    ],
+    {
+     "frames": 120
+    }
+   ],
+   "walk": {
+    "to": "0x0013DA13",
+    "within": 150,
+    "approach": 1200,
+    "max_frames": 2400
+   },
+   "note": ""
+  },
+  {
+   "name": "metal",
+   "console_first": [
+    "CloseAllMenus",
+    "player.setav speedmult 100",
+    "player.additem 0003307F 1",
+    "player.equipitem 0003307F"
+   ],
+   "do_first": [
+    [
+     "player.MoveTo {0} 851 228 40",
+     "0x0013DA13"
+    ],
+    {
+     "frames": 120
+    }
+   ],
+   "walk": {
+    "to": "0x0013DA13",
+    "within": 150,
+    "approach": 1200,
+    "max_frames": 2400
+   },
+   "note": "Metal Armor (heavy)"
+  },
+  {
+   "name": "ncr",
+   "console_first": [
+    "CloseAllMenus",
+    "player.additem 000EE692 1",
+    "player.equipitem 000EE692"
+   ],
+   "do_first": [
+    [
+     "player.MoveTo {0} 851 228 40",
+     "0x0013DA13"
+    ],
+    {
+     "frames": 120
+    }
+   ],
+   "walk": {
+    "to": "0x0013DA13",
+    "within": 150,
+    "approach": 1200,
+    "max_frames": 2400
+   },
+   "note": "NCR Trooper Armor (medium)"
+  },
+  {
+   "name": "modav50",
+   "console_first": [
+    "CloseAllMenus",
+    "player.unequipitem 000EE692",
+    "player.modav speedmult 50"
+   ],
+   "do_first": [
+    [
+     "player.MoveTo {0} 851 228 40",
+     "0x0013DA13"
+    ],
+    {
+     "frames": 120
+    }
+   ],
+   "walk": {
+    "to": "0x0013DA13",
+    "within": 150,
+    "approach": 1200,
+    "max_frames": 2400
+   },
+   "note": "setav 100 then modav +50"
+  }
+ ]
+}

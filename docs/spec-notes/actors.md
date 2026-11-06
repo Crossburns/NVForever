@@ -1314,6 +1314,20 @@ only in the walk test and on the player's body. All rules here are engine choice
   0.12 s, 128 to 98° in 0.27 s (it stepped about 125 units/s meanwhile); a trooper
   spawned 14° off turned it at 225°/s. So a person's combat turn starts near 270°/s and
   eases out, faster than ours (120°/s standing) [issue #1352].
+  Measured again 2026-11-06 (capture o25_turn, nvfairport runway, an LvlNCRTrooper with
+  a 10mm spawned 400 units north of the player, SetAngle Z to 45°, 90° or 135° off its
+  bearing to the player, then StartCombat; heading every game loop, about 64 a second)
+  [observed]: the trooper stood still on its first heading for about 1.1 s after
+  StartCombat (in combat at once, GetAnimAction −1), then turned. Off by 45° and by
+  90° (two runs each, the same to the tenth of a degree), it turned 3.5° a game loop,
+  about 225°/s, at a steady rate to within 2° of the bearing and stopped on it,
+  standing; it set off only after. Off by 135°, it turned 4.3° a loop (about 275°/s,
+  the rate seen at 180°) while standing, then slower (3.0, 2.5, then 1.4° a loop) from
+  the moment it began to step forward, 0.13 s into the turn. So there is no ease-out
+  by angle or time: the rate is set when the turn begins (about 225°/s up to 90°, 275°/s
+  beyond [hypothesis: a threshold between 90° and 135°]) and falls while the actor
+  moves. Ours: 240°/s flat standing in combat (`SPOT_TURN_RATE` × `COMBAT_TURN`), with
+  no delay before the turn.
 - **Before walking** (`fnv_nav::Walker`): a walker that stands (it did not move in its
   last update: at the start of a path, after waiting at a door, after arriving through a
   teleport door) and whose way lies more than 20° off its heading
@@ -1646,9 +1660,21 @@ stopped and started, as Victor's walk had before #258). Code:
     GetActorValue reads it; 0 at the least) and by its body armour's share (1, 0.925,
     0.85 as above), on top of the crippled legs, the two-handed run, the Modify Run Speed
     perks and the reload (`Game::move_speed_mult`, nvf-play `StatSpeed`, asked every
-    frame; smoke `player-speedmult`). Whether `setav speedmult` on the player changes
-    its speed in the original, and whether its animations then keep up, is to be checked
-    with the observer (docs/handoff/observer-checks.md).
+    frame; smoke `player-speedmult`).
+    Measured 2026-11-06 (capture o25_speed, `nvfairport`, the player running about 1,200
+    units along the runway by the observer's walk, holstered, one game load for all six
+    in this order) [observed]: at `setav speedmult` 100 the run was 339.7 units/s (median
+    over 10-loop windows); after `setav speedmult 150` and then `50` it was still 339.7,
+    while GetAV SpeedMult read 150 and 50. With `setav speedmult 100` and Metal Armor
+    (0x0003307F, heavy) equipped, 288.7 (0.850); with NCR Trooper Armor (0x000EE692,
+    medium), 314.2 (0.925); with that armour taken off and `modav speedmult 50` (GetAV
+    150), 509.5 (1.500). So the armour shares hold for the player, and a Speed Mult of
+    150 gives 1.5 times the run; but SetAV alone left the speed as it was until something
+    else changed in the same session (the armour put on or taken off). Whether the speed
+    is taken again only when the equipment changes, or whether ModAV applies at once and
+    SetAV never does, is open [hypothesis: the former, as the runs with an equipment
+    change all came out at the GetAV value]; a ModAV with no equipment change would tell.
+    The run clip's rate at 150 was not looked at (no frames).
 - **Alert stance** [observed: the owner, 2026-10-16: "the cazadors scurry along the
   ground when not alert and fly when they are alert/in combat"]: the cazador's folder
   has `h2hforward.kf` (298.15 units/s), `h2hfastforward.kf` (545.54) and `h2hidle.kf`
