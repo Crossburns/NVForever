@@ -393,3 +393,20 @@ fn size_union_picks_variant_by_length() {
     let bad = r#"{"format":"fnv.schema/1","common":{"DATA":{"type":{"union":[]}}}}"#;
     assert!(Schema::default().merge_str(bad, "x").is_err());
 }
+
+/// QUST DATA of 2 bytes (two FalloutNV.esm quests, #1001) decodes as flags and priority
+/// with the real schema; the 8-byte form still reads its quest delay.
+#[test]
+fn quest_data_of_two_bytes_is_flags_and_priority() {
+    use fnv_esm::decode::{decode_sub, DecodeCtx, SubStatus};
+    let s = Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+    let mut ctx = DecodeCtx { schema: &s, on_formid: None };
+    let d = decode_sub(b"QUST", &sub(b"DATA", &[5, 0]), &mut ctx);
+    assert_eq!(d.status, SubStatus::Ok);
+    let v = d.value.unwrap();
+    assert_eq!((v["flags"]["value"].as_u64(), v["priority"].as_u64(), v.get("quest_delay")), (Some(5), Some(0), None));
+    let d = decode_sub(b"QUST", &sub(b"DATA", &[1, 40, 0, 0, 0, 0, 128, 63]), &mut ctx);
+    assert_eq!(d.status, SubStatus::Ok);
+    let v = d.value.unwrap();
+    assert_eq!((v["priority"].as_u64(), v["quest_delay"].as_f64()), (Some(40), Some(1.0)));
+}
