@@ -143,6 +143,7 @@ mod sneaking;
 mod swimming;
 mod ssao;
 mod taa;
+mod fsr;
 mod speech_look;
 mod stress_sample;
 mod profile;
@@ -154,6 +155,7 @@ mod effect_shaders;
 mod tree;
 mod treelod;
 mod underwater;
+mod vigor_view;
 mod water;
 mod window_icon;
 mod window_mode;
@@ -424,6 +426,10 @@ struct Args {
     /// runs (--screenshot, --timelapse, --frame-json, --run-seconds) always default to it.
     #[arg(long, value_enum)]
     graphics: Option<graphics::Preset>,
+    /// FSR 3.1 upscaling (no frame generation). Replaces other anti-aliasing while on.
+    /// Saved Graphics settings take precedence in normal play, as for other switches.
+    #[arg(long, value_enum, default_value = "off")]
+    fsr: graphics::FsrMode,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
     /// water-reflections) and choices (fxaa, smaa or taa instead of --msaa;
@@ -1214,6 +1220,7 @@ fn main() -> AppExit {
         },
         None => graphics::Graphics::preset(graphics_preset(&args)),
     };
+    graphics.fsr = args.fsr.quality();
     let frame_times = match (args.log_frame_times, args.graphics_cycle.as_deref()) {
         (None, _) => None,
         (Some(every), cycle) => {
@@ -1492,6 +1499,8 @@ fn main() -> AppExit {
         if play.is_some() {
             // The player's own body (player_body.rs): needs the actor records.
             app.add_plugins(creator_view::CreatorViewPlugin { light_scale: args.light_scale });
+            // The Vigor Tester's machine: its camera and lights, the room behind it.
+            app.add_plugins(vigor_view::VigorViewPlugin);
             app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin));
             app.insert_resource(nvf_play::aim_zoom::Scope3d { on: args.scope_3d, lens: false });
             app.add_plugins(decals::DecalsPlugin);

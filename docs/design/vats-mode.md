@@ -260,6 +260,8 @@ AP, rounds needed, the shots in order). The engine module only feeds it.
   spends it for real, so the bar stays where it was.
 - The crosshair stays as it is. The HUD is not hidden [design].
 - A refused press is heard (§10) and logged, not written on the screen (§3).
+- **Chances before marking**: the actor under or nearest the crosshair shows each body
+  part's chance on the part, the one under the crosshair in brackets and brighter (§17.5).
 
 ## 9. Firing
 
@@ -599,7 +601,8 @@ at each mark; replaced before it was built into a run.)
      (`PhysState::place_player`, the ground looked for from 150 units above to 600
      below), on the line from where they stand to the mark's point, `stand_off` from it
      across the ground: half the weapon's reach (`damage::melee_reach`: `fCombatDistance`
-     150 × the WEAP Reach) plus 32 units [design]; the view turns to the mark. Nothing
+     107 × the WEAP Reach, combat-rules.md §10, plus the player's capsule radius 22: the reach
+     from the eye) plus 32 units [design]; the view turns to the mark. Nothing
      checks the spot is free beyond the character's own placing [design: the mark was
      within 5 m and in sight, so the spot is too in practice].
   2. **Swing**: the next frame (the mark is within the weapon's reach plus `CLOSE_SLACK`,
@@ -780,19 +783,45 @@ cone   = the VATS actor spread (below) and the weapon's Min Spread, in degrees, 
   marks' brightened amber (§8) [design: the owner's wishes of 2026-10-24; it was a
   creamy white]. It follows the mark and changes as the
   chance does; it goes with the "x" once the mark is fired.
-- Nothing shows the chance of what is under the crosshair before it is marked [design:
-  the owner asked for the marks; a later step if wanted].
+- **Before marking** (issue #1384, 2026-11-06): while marking, one actor shows every
+  body part's chance before anything is marked: the living actor under the crosshair,
+  else the nearest valid target (§6) whose aim point lies within 10° of the crosshair's
+  line (`PREVIEW_CONE`), in the weapon's reach and in sight [design: one actor, not
+  every one in view, so the labels stay readable; the one the next click would land on
+  or near]. Each part its hit volume has a capsule for (the weapon it holds too) draws
+  "head 41%" (the BPTD part name in small letters, "weapon" for the held weapon) centred
+  on the part's capsule centre (`PhysWorld::actor_part_center`); an actor with a single
+  capsule draws its chance alone at its aim point. The part the crosshair is on is drawn
+  in brackets, "[head 41%]", and brighter (the amber lifted 75 % to white against the
+  marks' 25 %), so the player sees which part a click marks [design: NVForever's own
+  wording and look]. Same font as the marks' labels, the marks' amber, the same size on
+  the screen at any range; a label that would overlap one drawn before it moves down a
+  line [design].
+- The figure is the one a mark on that part shows: both come from the same work
+  (`vats_mode::spot_on`: the part's BPTD To Hit Chance and size, the to-hit perks seeing
+  it as the shot, then `chance_of` every frame: skill, the spread at range, the 95 %
+  cap). The parts, their names and their perks are worked out again when the actor
+  changes and four times a second (`PREVIEW_REBUILD`), their points and chances every
+  frame [design: the perks may read the distance].
+- A part already marked shows its mark's "x" and label only. A part behind the camera,
+  or whose centre the world hides from the crosshair's line, is not drawn; an actor in
+  the way does not hide it. A dead actor, a cloaked one without Enhanced Sensors and a
+  No VATS Melee one with a melee weapon (§6) show nothing, as they cannot be marked.
+  Nothing is previewed while firing.
 
 ### 17.6 Log lines
 
 - `vats mode: marked <name> <ref> (<part>), mark <k>; <r> AP reserved, <left> AP left;
   <c>% to hit (base <b>[, perks <names>][, concentrated fire +<n>]); <d> units, skill <s>,
-  cone <deg> deg|none` (the distance, skill and cone the chance was worked from)
+  cone <deg> deg|none[; previewed <c>%]` (the distance, skill and cone the chance was
+  worked from; the preview's figure for the part when it showed one, §17.5)
 - `vats mode: shot <k> of <n> at … , <cost> AP spent; <c>% to hit: hit|missed (rolled
   <r>)` (`burst …; round 1 …`, `throw …`, `swing …` alike; later rounds of a burst at
   debug)
 - `combat: vats mode blow on <ref>: missed (the hit roll)` for a swing's miss
 - `vats mode: rolls: <h> hit, <x> missed` after `off (…)`
+- `vats mode: preview <name> <ref>: <part> <c>%, …` when the previewed actor changes
+  (§17.5), each part's chance as its label shows it
 - the summary's `<h> hit, <x> missed`
 
 ### 17.7 Checks
@@ -801,10 +830,13 @@ cone   = the VATS actor spread (below) and the weapon's Min Spread, in degrees, 
   `the_chance_matches_the_originals_samples`,
   `perks_concentrated_fire_and_the_cap`, `a_miss_passes_wide_and_never_below`),
   `nvf-play` `vats_mode` (`a_marks_chance_follows_range_and_perks`,
-  `a_chance_reads_as_whole_percent`), `fnv-game` `perk_combat`.
+  `a_chance_reads_as_whole_percent`, `a_preview_figure_is_the_marks_chance`,
+  `a_preview_label_names_the_part`), `fnv-game` `perk_combat`.
 - Smoke: `vats-mode-hit-chance` (two marks on the Goodsprings dogs show their chances and
   are rolled), `vats-mode-miss` (every roll forced to miss: the shot goes wide and the
-  dog is not hit by it).
+  dog is not hit by it), `vats-mode-preview` (the dog under the crosshair shows its
+  parts' chances before marking, and the mark's chance is one of them; frame
+  `vats_preview.png`).
 
 ## 18. VATS helpers and the AP perks (2026-10-24)
 

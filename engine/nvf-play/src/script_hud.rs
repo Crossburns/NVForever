@@ -172,7 +172,7 @@ impl Plugin for ScriptHudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ScriptHud>()
             .add_plugins((crate::message_menu::MessageMenuPlugin, crate::corner_messages::CornerMessagesPlugin, crate::quest_messages::QuestMessagesPlugin))
-            .add_systems(Startup, spawn)
+            .add_systems(PostStartup, spawn.after(crate::settings::fix_ui_scale))
             .add_systems(Update, draw.in_set(crate::PlaySet::Ui).before(crate::message_menu::DrawBox));
     }
 }
@@ -212,9 +212,13 @@ pub fn subtitle_layout(texts: &[String], font: &Font) -> Vec<(Line, f32, f32)> {
 #[derive(Component, Clone, Copy, Debug)]
 pub struct BoxButton(pub usize);
 
+/// The area's frame keeps the subtitles' distance from the view's middle at any UI scale,
+/// as the activation prompt's (`crate::reticle`) and the tile HUD's (`fnv_game::ui_hud`)
+/// (`crate::interface::frame_top`; at 100% its top is the view's, as before) [design: #1631].
 fn spawn(mut commands: Commands) {
+    let _hud = crate::interface::hud_units();
     commands.spawn((
-        Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), top: u(0.0), justify_content: JustifyContent::Center, ..default() },
+        Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), top: crate::interface::frame_top(0.5), justify_content: JustifyContent::Center, ..default() },
         children![(Node { width: u(SUBTITLE_WIDTH), ..default() }, SubtitleArea)],
     ));
 }
@@ -362,6 +366,7 @@ fn draw(
             info!("subtitle: {}", subs.logged.replace('\n', " / "));
         }
         if subs.on_screen != shown.on_screen {
+            let _hud = crate::interface::hud_units();
             let face = font.get_or_insert_with(|| face(SUBTITLE_FONT, plain_font(36.0, 17.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
             let lines = subtitle_layout(&subs.on_screen, &face.font);
             for area in &areas {

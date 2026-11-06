@@ -401,6 +401,9 @@ pub fn hit(
 
 /// Melee reach in game units: `fCombatDistance` × the actor's scale × the weapon's Reach
 /// [documented: GECK wiki Weapons]; a Reach of 0 (the Fists) counts as 1 [hypothesis].
+/// It reaches from the attacker's body, not its centre: the original's NPCs began their
+/// swings about the two bodies' radii (45) plus 107 × Reach centre to centre [observed:
+/// o14_reach, 2026-11-01; the body reading is a hypothesis, combat-rules.md §10].
 pub fn melee_reach(r: &Rules, w: &WeaponStats, scale: f32) -> f32 {
     let reach = if w.reach > 0.0 { w.reach } else { 1.0 };
     r.combat_distance * scale * reach

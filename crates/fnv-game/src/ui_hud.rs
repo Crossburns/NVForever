@@ -75,39 +75,48 @@ pub fn write(ui: &mut Ui, shown: Shown, texts: &Texts) {
     let screen = ui.tile(ui.screen());
     let size = screen.get("width").zip(screen.get("height")).map(|(w, h)| (w.num(), h.num()));
     if let Some((width, height)) = size.filter(|(w, h)| w.is_finite() && h.is_finite() && *w > 0.0 && *h > 0.0) {
-        // The view is 960 units high [documented: hud.md §2/§14].
-        let w = 960.0 * width / height;
+        // The view is 960 units high [documented: hud.md §2/§14]; at a UI scale other
+        // than 1 it is 960 / scale units high, the pieces as far from their edges [design:
+        // #1631]. The scale is the run's (`Frame::ui_scale`), at least a tenth.
+        let scale = if texts.frame.ui_scale.is_finite() { texts.frame.ui_scale.max(0.1) } else { 1.0 };
+        let view = 960.0 / scale;
+        let w = view * width / height;
+        // How much further down a piece kept to the view's middle (0.5) or bottom (1)
+        // stands: nothing at 1 [design].
+        let down = |anchor: f64| anchor * (view - 960.0);
         // Truncate W and W/2 before offsets [hypothesis: hud.md §14: at 16:9,
         // W - 386 = 1320.67 reads 1320; truncating the middle before the half-unit
         // offset also reproduces the child's 820.5. Nearest would give 1321].
         let (right, middle) = (w.floor(), (w / 2.0).floor());
-        // Every place below [observed: hud.md §14, every piece's place table].
-        for (name, x, y) in [
-            ("HitPoints", HIT_POINTS_AT.0, HIT_POINTS_AT.1),
-            ("ActionPoints", right - 386.0, 803.0),
-            ("HardcoreMode", HARDCORE_MODE_AT.0, HARDCORE_MODE_AT.1),
-            ("SneakMeter", middle, 30.0),
-            ("ReticleCenter", middle - 34.5, 439.5),
-            ("EnemyHealth", middle - 175.0, 843.0),
-            ("QuestReminder", 45.0, 200.0),
-            ("Messages", 25.0, 55.0),
-            ("Info", middle - 160.0, 820.0),
-            ("Hokeys", right - 371.0, 483.0),
-            ("Region_Location", 45.0, 728.0),
-            ("XPMeter", right - 420.0, 650.0),
-            ("RadiationMeter", right - 417.0, 30.0),
-            ("BreathMeter", middle, 110.0),
-            ("Explosive_positioning_rect", middle, 480.0),
-            ("crippled_limb_indicator", right - 230.0, 130.0),
-            ("DDTIcon", 414.0, 852.0),
-            ("DDTIconEnemy", middle - 207.0, 846.0),
-            ("DDTIconEnemyAP", middle - 207.0, 846.0),
-            ("AmmoTypeLabel", right - 236.0, 883.0),
-            ("CNDArrows", right - 253.0, 886.0),
+        // Every place below [observed: hud.md §14, every piece's place table]. The edge
+        // each keeps to as the scale changes is the hand-built HUD's (0 top, 0.5 middle,
+        // 1 bottom) [design: #1631].
+        for (name, x, y, anchor) in [
+            ("HitPoints", HIT_POINTS_AT.0, HIT_POINTS_AT.1, 1.0),
+            ("ActionPoints", right - 386.0, 803.0, 1.0),
+            ("HardcoreMode", HARDCORE_MODE_AT.0, HARDCORE_MODE_AT.1, 1.0),
+            ("SneakMeter", middle, 30.0, 0.0),
+            ("ReticleCenter", middle - 34.5, 439.5, 0.5),
+            ("EnemyHealth", middle - 175.0, 843.0, 1.0),
+            ("QuestReminder", 45.0, 200.0, 0.0),
+            ("Messages", 25.0, 55.0, 0.0),
+            ("Info", middle - 160.0, 820.0, 0.5),
+            ("Hokeys", right - 371.0, 483.0, 0.5),
+            ("Region_Location", 45.0, 728.0, 1.0),
+            ("XPMeter", right - 420.0, 650.0, 1.0),
+            ("RadiationMeter", right - 417.0, 30.0, 0.0),
+            ("BreathMeter", middle, 110.0, 0.0),
+            ("Explosive_positioning_rect", middle, 480.0, 0.5),
+            ("crippled_limb_indicator", right - 230.0, 130.0, 0.0),
+            ("DDTIcon", 414.0, 852.0, 1.0),
+            ("DDTIconEnemy", middle - 207.0, 846.0, 1.0),
+            ("DDTIconEnemyAP", middle - 207.0, 846.0, 1.0),
+            ("AmmoTypeLabel", right - 236.0, 883.0, 1.0),
+            ("CNDArrows", right - 253.0, 886.0, 1.0),
         ] {
             if let Some(tile) = ui.find_tile(&format!("HUDMainMenu/{name}")) {
                 ui.set_trait(tile, "x", Value::Num(x));
-                ui.set_trait(tile, "y", Value::Num(y));
+                ui.set_trait(tile, "y", Value::Num(y + down(anchor)));
             }
         }
         if let Some(tile) = ui.find_tile("HUDMainMenu/Subtitles") {

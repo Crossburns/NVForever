@@ -16,6 +16,10 @@ struct Ao {
     // x, y: the projection's x and y scale (clip_from_view[0][0], [1][1]); z: the
     // largest radius on the screen (pixels); w: the distance where the fade starts.
     proj: vec4<f32>,
+    // x, y: the size the depth prepass was drawn at; z, w: the picture's size. They differ
+    // under FSR's upscaling (fsr.rs `prepare`), whose depth is expanded to the picture's
+    // size by nearest texels (fsr_depth.wgsl `expand_depth`); all 1 otherwise.
+    render_scale: vec4<f32>,
 }
 
 @if(MULTISAMPLED) @group(0) @binding(0) var depth: texture_depth_multisampled_2d;
@@ -63,6 +67,47 @@ fn view_pos(p: vec2<f32>, d: f32) -> vec3<f32> {
     return vec3(ndc.x * z / ao.proj.x, ndc.y * z / ao.proj.y, -z);
 }
 
+// The texel of the depth as drawn that the pixel centred at `p` shows, as fsr_depth.wgsl
+// `expand_depth` picks it; without upscaling, the pixel itself.
+fn drawn_texel(p: vec2<f32>) -> vec2<f32> {
+    return floor(p * ao.render_scale.xy / ao.render_scale.zw);
+}
+
+// The centre of drawn texel `t`, in pixels of the picture.
+fn texel_centre(t: vec2<f32>) -> vec2<f32> {
+    return (t + 0.5) * ao.render_scale.zw / ao.render_scale.xy;
+}
+
+// The view-space position at the centre of drawn texel `t`, its depth read at a pixel
+// that shows it.
+fn texel_pos(t: vec2<f32>) -> vec3<f32> {
+    let c = texel_centre(t);
+    return view_pos(c, depth_at(vec2<i32>(floor(c))));
+}
+
+// The view-space normal at pixel `px`, whose depth is `d`: from the neighbouring texels of
+// the depth as drawn, on each axis the side with the smaller step in depth, so an edge
+// does not bend it. Without upscaling a texel is a pixel. Under FSR's upscaling a texel
+// covers 1.5 to 3 pixels, so neighbouring pixels often held this pixel's own depth: the
+// normal faced the camera and every surface seen at an angle occluded itself, a grey veil
+// over the ground and walls [observed 2026-11-06, FSR Performance at Goodsprings: mean
+// darkening 4.2%, against 0.7% without FSR].
+fn normal_at(px: vec2<i32>, d: f32) -> vec3<f32> {
+    let t = drawn_texel(vec2<f32>(px) + 0.5);
+    let p = view_pos(texel_centre(t), d);
+    let l = texel_pos(t - vec2(1.0, 0.0));
+    let r = texel_pos(t + vec2(1.0, 0.0));
+    let u = texel_pos(t - vec2(0.0, 1.0));
+    let b = texel_pos(t + vec2(0.0, 1.0));
+    let dx = select(p - l, r - p, abs(r.z - p.z) < abs(p.z - l.z));
+    let dy = select(p - u, b - p, abs(b.z - p.z) < abs(p.z - u.z));
+    var n = normalize(cross(dx, dy));
+    if dot(n, -p) < 0.0 {
+        n = -n;
+    }
+    return n;
+}
+
 // The 4 x 4 ordered pattern that turns each pixel's spiral (0..1).
 fn pattern(p: vec2<i32>) -> f32 {
     var b = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
@@ -85,18 +130,7 @@ fn occlusion(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     if fade <= 0.0 {
         return texel(1.0, dist);
     }
-    // The normal from the neighbours on the side with the smaller step in depth, so an
-    // edge does not bend it.
-    let l = view_pos(c - vec2(1.0, 0.0), depth_at(px - vec2(1, 0)));
-    let r = view_pos(c + vec2(1.0, 0.0), depth_at(px + vec2(1, 0)));
-    let u = view_pos(c - vec2(0.0, 1.0), depth_at(px - vec2(0, 1)));
-    let b = view_pos(c + vec2(0.0, 1.0), depth_at(px + vec2(0, 1)));
-    let dx = select(p - l, r - p, abs(r.z - p.z) < abs(p.z - l.z));
-    let dy = select(p - u, b - p, abs(b.z - p.z) < abs(p.z - u.z));
-    var n = normalize(cross(dx, dy));
-    if dot(n, -p) < 0.0 {
-        n = -n;
-    }
+    let n = normal_at(px, d);
     let radius = ao.params.x;
     let size = vec2<f32>(dims());
     let on_screen = min(radius * ao.proj.y * 0.5 * size.y / dist, ao.proj.z);
