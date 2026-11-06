@@ -133,12 +133,14 @@ struct Context {
     alpha: f64,
     visible: bool,
     clip: Option<Rect>,
+    /// The crop without the parent's own window, for a tile marked outside it.
+    clip_above: Option<Rect>,
     t15: bool,
 }
 
 impl Default for Context {
     fn default() -> Self {
-        Self { rect: Rect::default(), depth: 0.0, alpha: 255.0, visible: true, clip: None, t15: false }
+        Self { rect: Rect::default(), depth: 0.0, alpha: 255.0, visible: true, clip: None, clip_above: None, t15: false }
     }
 }
 
@@ -235,12 +237,14 @@ fn place(tile: &Tile, kind: &Kind, parent: Context, measure: &Measure<'_>) -> Co
             _ => parent.alpha * number(tile, "alpha", 255.0).clamp(0.0, 255.0) / 255.0,
         },
         visible: parent.visible && tile.get("visible").is_none_or(Value::truthy),
-        clip: parent.clip,
+        clip: if tile.get(fnv_ui::input::OUTSIDE_CLIP).is_some_and(Value::truthy) { parent.clip_above } else { parent.clip },
+        clip_above: parent.clip_above,
         t15: parent.t15,
     }
 }
 
 fn children_context(tile: &Tile, mut context: Context) -> Context {
+    context.clip_above = context.clip;
     // `clips`, or a `clipwindow` its menu turned on: the same rule as under the pointer.
     if fnv_ui::input::clips_children(tile) {
         context.clip = Some(context.clip.map_or(context.rect, |clip| clip.intersect(context.rect)));
@@ -319,6 +323,26 @@ mod tests {
 
     fn unmeasured(_: f64, _: &str, _: Option<f64>) -> (f64, f64) {
         panic!("this tree needs no text measurement")
+    }
+
+    #[test]
+    fn a_tile_outside_its_window_stays_inside_the_ones_above() {
+        // [design] A window in a window: the mark skips the nearest only.
+        let (mut ui, root) = tree(
+            r#"<menu name="M"><rect name="Outer"><width>100</width><height>100</height><clips>&true;</clips>
+              <rect name="Inner"><width>50</width><height>50</height><clips>&true;</clips>
+                <image name="Beside"><x>50</x><width>20</width><height>20</height></image>
+                <image name="In"><width>20</width><height>20</height></image>
+              </rect></rect></menu>"#,
+        );
+        let beside = ui.find_tile("M/Outer/Inner/Beside").unwrap();
+        let clip = |ui: &Ui, t: TileId| layout(ui, root, &unmeasured, true).into_iter().find(|i| i.tile == t).unwrap().clip.unwrap();
+        assert_eq!(clip(&ui, beside).width, 50.0, "both windows");
+        ui.set_trait(beside, fnv_ui::input::OUTSIDE_CLIP, Value::Num(1.0));
+        ui.update();
+        assert_eq!(clip(&ui, beside).width, 100.0, "the outer window still crops it");
+        let inside = ui.find_tile("M/Outer/Inner/In").unwrap();
+        assert_eq!(clip(&ui, inside).width, 50.0, "its neighbour keeps both");
     }
 
     #[test]

@@ -299,8 +299,9 @@ at the same view size). That is the work of each migration task, not guessed up 
      The old drawing stays the default until the owner agrees a menu has moved.
      `HUDMainMenu` (T12), `MessageMenu` and `QuantityMenu` (T15a), `SleepWaitMenu` (T15b) and
      `ContainerMenu` (T15c, a candidate: barter-menu.md §8; its prompt follows from
-     `QuantityMenu`'s file with no switch of its own, while the container is so drawn) are
-     acted on, and `DialogMenu` (its contract and fallback: spec-notes/dialogue-menu.md §6).
+     `QuantityMenu`'s file with no switch of its own, while the container is so drawn),
+     `TraitMenu` (chargen.md §4.1) and `DialogMenu` (its contract and fallback:
+     spec-notes/dialogue-menu.md §6) are acted on.
    - The game rules stay where they are (`menu::model`, `pipboy::items`,
      `wait::model`, …). Only the view changes: the model writes `io()` traits and
      template rows, input comes back as clicked tiles.

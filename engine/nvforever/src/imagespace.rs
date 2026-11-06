@@ -652,7 +652,7 @@ fn update_grade(
 
 /// What [`tile_menu_blur`] tells of a state: this contribution, not the screen's whole blur.
 fn tile_menu_blur_text(now: TileMenuBlur) -> String {
-    let names: Vec<&str> = [(now.tutorial, nvf_play::tiles::tutorial_menu::TUTORIAL_MENU), (now.container, "ContainerMenu")].into_iter().filter(|m| m.0).map(|m| m.1).collect();
+    let names: Vec<&str> = [(now.tutorial, nvf_play::tiles::tutorial_menu::TUTORIAL_MENU), (now.container, "ContainerMenu"), (now.traits, nvf_play::tiles::trait_menu::TRAIT_MENU)].into_iter().filter(|m| m.0).map(|m| m.1).collect();
     if names.is_empty() {
         "off".to_string()
     } else {
@@ -885,12 +885,13 @@ mod tests {
 
     #[test]
     fn the_tile_menu_blur_lines() {
-        let tutorial = TileMenuBlur { tutorial: true, container: false };
-        let container = TileMenuBlur { tutorial: false, container: true };
+        let tutorial = TileMenuBlur { tutorial: true, ..Default::default() };
+        let container = TileMenuBlur { container: true, ..Default::default() };
         assert_eq!(tile_menu_blur_text(TileMenuBlur::default()), "off");
         assert_eq!(tile_menu_blur_text(tutorial), "TutorialMenu radius 3");
         assert_eq!(tile_menu_blur_text(container), "ContainerMenu radius 3");
-        assert_eq!(tile_menu_blur_text(TileMenuBlur { tutorial: true, container: true }), "TutorialMenu, ContainerMenu radius 3");
+        assert_eq!(tile_menu_blur_text(TileMenuBlur { tutorial: true, container: true, ..Default::default() }), "TutorialMenu, ContainerMenu radius 3");
+        assert_eq!(tile_menu_blur_text(TileMenuBlur { traits: true, ..Default::default() }), "TraitMenu radius 3");
     }
 
     #[test]

@@ -44,6 +44,11 @@
 //!   scrollbar's arrows, page areas and marker move the list's view, no
 //!   command of the model's. Under the "How many?" prompt it takes nothing. The wheel stays
 //!   `crate::menu::menu_mouse`'s, told which heading the pointer is over.
+//! - **The trait menu** (`super::trait_menu`): a row the pointer comes onto is chosen, a click on
+//!   a row, Reset or Done is queued for `crate::chargen`'s `input`, named by its trait; the two
+//!   bars' arrows, page areas and markers move their views. On the frame it is first ready, when
+//!   the hand-built menu of the frame before still stands, it takes nothing, as the tutorial
+//!   menu. The wheel and the keys stay `crate::chargen`'s.
 //! - **The dialogue menu** (`super::dialog_menu`): while drawn from its tiles with nothing over
 //!   it and no pause menu; what it asks goes to `crate::dialogue::input` through
 //!   `crate::dialogue::ViewInput`, the same commands as the keys. It takes the input as drawn
@@ -201,6 +206,10 @@ pub(crate) struct MenuInputs<'w, 's> {
     last_at: Local<'s, Option<(f64, f64)>>,
     hold: Option<Res<'w, crate::menu::WheelHold>>,
     wheel_title: ResMut<'w, super::container_menu::TileWheelTitle>,
+    /// The trait menu's state, the writer's and this input's.
+    traits: Option<ResMut<'w, super::trait_menu::TraitTiles>>,
+    /// The hand-built trait menu's rows, while they stand.
+    trait_hand_built: Query<'w, 's, (), With<crate::chargen::lists::ListRow>>,
     /// The dialogue menu's one decision, what it asks of the conversation, and its scroll.
     dialog: Option<Res<'w, super::dialog_menu::DialogTiles>>,
     view_input: Option<ResMut<'w, crate::dialogue::ViewInput>>,
@@ -226,6 +235,9 @@ impl MenuInputs<'_, '_> {
             return out;
         }
         out.extend(super::container_menu::takes_input(self.container.menu, self.quantity().is_some()));
+        if self.trait_hand_built.is_empty() {
+            out.extend(self.traits.as_ref().and_then(|t| t.takes()));
+        }
         if quantity_tiled(menus.quantity, game, self.quantity().is_some(), self.container.menu.is_some()) {
             out.extend(game.ui_tree.menu(QUANTITY_MENU));
         }
@@ -424,6 +436,9 @@ impl MenuInputs<'_, '_> {
             if self.follow_tutorial(ui, c, at, held, physical, tutorial).is_some() {
                 continue;
             }
+            if self.traits.as_mut().filter(|t| t.menu.is_some()).is_some_and(|t| super::trait_menu::follow_click(t, ui, c, at, held, physical).is_some()) {
+                continue;
+            }
             if self.follow_container(ui, c, at, Pressed { held, shift, physical }, &mut row_acted).is_some() {
                 continue;
             }
@@ -479,6 +494,9 @@ impl MenuInputs<'_, '_> {
         }
         if self.container.menu.is_some() {
             self.follow_container_pointer(ui, report, over, at, moved, row_acted);
+        }
+        if let Some(t) = self.traits.as_mut().filter(|t| t.takes().is_some()) {
+            super::trait_menu::follow_pointer(t, ui, report, at, moved);
         }
         slider
     }
@@ -597,6 +615,9 @@ pub(crate) fn feed(
     if container_now.is_none() {
         inputs.wheel_title.0 = None;
     }
+    if let Some(t) = inputs.traits.as_mut().filter(|t| t.menu.is_some()) {
+        t.hold_drag(held);
+    }
     let cursor = || aid_at.or_else(|| devices.windows.single().ok().and_then(|w| Some(to_units(w.cursor_position()?, w.height()))));
     let wait_tiled = super::wait_menu::tiled(menus.sleep_wait, &rt.game);
     inputs.wait_check.wrote = None;
@@ -613,6 +634,9 @@ pub(crate) fn feed(
         // A click's pulse ended there too: the scroll is the view's again.
         if inputs.container.menu.is_some() {
             inputs.container.rewrite(&mut rt.game.ui_tree);
+        }
+        if let Some(t) = inputs.traits.as_ref().filter(|t| t.menu.is_some()) {
+            t.rewrite(&mut rt.game.ui_tree);
         }
         // Where the pointer rests when a menu takes input again is no move onto a row.
         *inputs.last_at = cursor();
@@ -632,7 +656,7 @@ pub(crate) fn feed(
     // The tutorial menu's triggers stand for its own keys (`crate::pad::menu_buttons`), which
     // a press of them would otherwise turn a page with twice: here and through the file.
     // The container menu's X stands for its R (the same table).
-    let pad_menu = crate::pad::MenuAt { code: tutorial.map(|_| fnv_game::game::menus::TUTORIAL).or(inputs.container.menu.map(|_| crate::script::MENU_CONTAINER)), tab: 0 };
+    let pad_menu = crate::pad::MenuAt { code: tutorial.map(|_| fnv_game::game::menus::TUTORIAL).or(inputs.container.menu.map(|_| crate::script::MENU_CONTAINER)).or(inputs.traits.as_ref().and_then(|t| t.takes()).map(|_| fnv_game::game::menus::TRAITS)), tab: 0 };
     for k in devices.keys.get_just_pressed() {
         if let Some(n) = key_name(*k) {
             push(&mut input, n);
@@ -703,6 +727,9 @@ pub(crate) fn feed(
     // clicks and their pulses' ends, with what the frame's bar clicks and drag did.
     if inputs.container.menu.is_some() {
         inputs.container.rewrite(&mut rt.game.ui_tree);
+    }
+    if let Some(t) = inputs.traits.as_ref().filter(|t| t.menu.is_some()) {
+        t.rewrite(&mut rt.game.ui_tree);
     }
 }
 
@@ -924,6 +951,21 @@ mod tests {
         assert_eq!(tutorial_acted(&app), (1, false));
         app.update();
         assert_eq!(tutorial_acted(&app), (1, false));
+    }
+
+    #[test]
+    fn the_trait_menus_keys_act_once() {
+        // Y and X stand for R and A there: the hand-built handler acts, so the file's bindings
+        // do not act again; a controller not working the controls presses no key.
+        use super::super::menus::key_click_acts;
+        use super::super::trait_menu::TRAIT_MENU;
+        let at = crate::pad::MenuAt { code: Some(fnv_game::game::menus::TRAITS), tab: 0 };
+        assert!(stood_in(GamepadButton::North, at, &|k| k == KeyCode::KeyR));
+        assert!(stood_in(GamepadButton::West, at, &|k| k == KeyCode::KeyA));
+        for (key, physical) in [("R", vec!["R"]), ("A", vec!["A"]), ("xbuttony", vec!["R", "xbuttony"]), ("xbuttonx", vec!["A", "xbuttonx"])] {
+            assert!(!key_click_acts(TRAIT_MENU, key, &physical), "{key} by hand");
+            assert!(key_click_acts(TRAIT_MENU, key, &[]), "{key} by a script or the file");
+        }
     }
 
     #[test]
