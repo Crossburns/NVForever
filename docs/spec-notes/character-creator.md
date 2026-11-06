@@ -12,8 +12,12 @@ anything else you can think of using the base assets for characters that we coul
 customise or extend to customise".
 
 So this menu does **not** follow the original's race menu (`menus\chargen\race_sex_menu.xml`,
-the Reflectron): it is a new design, drawn only from the game's own fonts and plain
-shapes, offering what the game's own character data allows.
+the Reflectron): it is a new design, drawn only from the game's own fonts, menu pieces
+and plain shapes, offering what the game's own character data allows. **Restyled 2026-11-06**
+[owner, asked directly by a contributor: free to restyle it as we see fit; issue #1731]: the
+layout of §4 and the camera's side in §5 move closer to the arrangement of the original's
+portrait and terminal; what the player can change, the tabs, the amber and the fonts stay
+the owner's. The original's menu itself is a separate option (#1730).
 
 Code: data `crates/fnv-actor/src/creator.rs` (with the controls file reader in
 `facegen.rs`); the look kept by the game `crates/fnv-game/src/chargen.rs` (`Look`,
@@ -167,10 +171,18 @@ reader; full tables kept in the session notes, not in the repository).
 
 ## 4. The look of the menu [design unless tagged]
 
-A sketch: the published mockup (the owner's review). The rules:
+A sketch: the published mockup (the owner's review). The layout below is the restyle of
+2026-11-06 [design; owner, asked directly: free to restyle it]: the first version had the panel on the left, 640 wide, on a flat black
+0.8 with a bar along its edge, the tabs on top, and the hints "Space / X". It moves towards
+the original's arrangement [observed, the original at 1280 x 720: the portrait on the left,
+a narrow terminal on the right; sliders as a label over a `<--->` bar; a square on the
+chosen list row; the pages' lamps along the bottom], not its machine: that is not drawn.
+The rules:
 
-- **No new art**: the game menus' own fonts and plain filled rectangles; no picture, no
-  Pip-Boy frame.
+- **No new art**: the game menus' own fonts, its shared menu pieces
+  (`Interface\Shared`: `fade_to_bottom`, `fade_to_top`, `arrow_left`, `arrow_right`,
+  `square_filled`, `background\pipboy.dds`) and plain filled rectangles; no picture of a
+  machine, no Pip-Boy model.
 - **Fonts** [owner 2026-10-17: "if we can also get the font to match our game"]: the
   menus' title font (font 6, `glow_monofonto_vl_dialogs`, the tag-skill and trait menus'
   headlines) for the title, the tabs and the buttons, `monofonto_large` (font 2) for the
@@ -178,15 +190,29 @@ A sketch: the published mockup (the owner's review). The rules:
 - **Colours** [owner 2026-10-17: "can we also change the colour scheme to match the UI
   amber look im not a fan of the light blue trim"]: everything in the interface's amber
   (`interface::AMBER`): text at brightness 215 (fainter by transparency where it is a
-  hint or not chosen), values, the edge bar, the chosen tab's underline, the chosen
-  row's bar, the slider's fill and knob, the race
-  tick and Done's outline at full brightness; the chosen row's band and button's fill dim amber (brightness 128) a quarter opaque, as the menus' highlight; dividers at 18%; a black panel at 0.8 so
-  the text reads over a bright room. The first version was bone white with a turquoise
+  hint or not chosen), values, the frame, the chosen tab's underline, the chosen
+  row's square, the slider's fill and knob, the race
+  tick and Done's outline at full brightness; the chosen row's band and button's fill dim amber (brightness 128) a quarter opaque, as the menus' highlight; dividers at 18%. The first version was bone white with a turquoise
   accent and sand values.
-- **Layout** (interface units, 960 high): one panel on the left, 640 wide, 32 in from the
-  top and left; the rest of the picture is the player, framed by the camera (§5).
-  - Title "APPEARANCE", the look's name on the right ("Female Hispanic").
-  - Six tabs: **BASICS** (sex, origin, starting face, age), **FACE** (the 56 shape
+- **Backing and frame**: `background\pipboy.dds`, the grey vignette behind the Pip-Boy's
+  and terminal's screens, in amber at brightness 120, 0.98 opaque so the text reads over a
+  bright room (a black 0.8 if the picture cannot be read) [design; at 0.9 a bright wall
+  could be read behind the text, observed on the first shots: transparency mixes in
+  linear light]. The frame is the menus' brackets (`chargen::draw`,
+  top_bracket.xml and bottom_bracket.xml): a line along the top and the bottom, a line
+  fading away from each of their ends, 50 down and 40 up.
+- **Layout** (interface units, 960 high): one panel on the right, 480 wide, 32 in from the
+  top and the view's right; the rest of the picture is the player, framed by the camera
+  (§5). 480 fits the longest words [observed, measured with the two font files against
+  `fnvtool actor creator`'s names: "Face forehead-sellion-nose ratio" and its value 399 of
+  the 424 between the margins; "Facial hair 47/47" 165 and "Shaggy Sideburns" 184 in a
+  row].
+  - Title "APPEARANCE", the look's name on the right ("Female Hispanic"), and under them a
+    line saying what the tab is for.
+  - The rows, in the middle (below).
+  - Six tabs, along the panel's bottom over the buttons [design: the original's pages
+    stand along the bottom; there was room, the words at most 59 wide in 70, and the rows
+    keep the seven sliders they had]: **BASICS** (sex, origin, starting face, age), **FACE** (the 56 shape
     sliders, one region at a time), **DETAIL** (the 26 asymmetry sliders by region),
     **SKIN** (tone and tints first, then blush, lips, lipstick, nose, naso-labial lines),
     **HAIR** (style, a strip of 16 authored colours, shade / warmth / grey fine-tuning,
@@ -194,17 +220,21 @@ A sketch: the published mockup (the owner's review). The rules:
     theirs; no Region row [owner 2026-10-23: it switched sliders out of sight and seemed
     to do nothing]), **EYES**
     (eye colour, then eye sockets, eyelids, eyeliner, eyeshadow, the eyes' tint).
-  - A line under the tabs saying what the tab is for.
   - Rows: a list row is its label, "n/m", and `< value >`; a slider row its label and
-    value over a thin track with a centre mark, the race tick, an amber fill from the
-    centre to the knob, and the two end words under the ends. The chosen row has a
-    bar at its left and a band of dim amber, a quarter opaque (the menus' highlight fill). "more above / below" when a region has
+    value over a thin bar with an arrow at each end (the game's `arrow_left` and
+    `arrow_right`; a click steps it, as a list row's arrows do), a centre mark, the race
+    tick, an amber fill from the centre to the knob, and the two end words under the ends.
+    The chosen row has a small square at its left (the game's `square_filled`, as its
+    lists mark a row) and a band of dim amber, a quarter opaque (the menus' highlight fill). "more above / below" when a region has
     more rows than fit, and a scrollbar in the panel's right margin (track and a thumb the
     size of the part shown) [owner 2026-10-23: "add a scroll to show there are more
     options"]. The list scrolls apart from the chosen row; the buttons never scroll.
   - Four buttons along the bottom: RANDOM, UNDO, RESET, DONE (outlined brighter), each
-    with its key and button under it.
-  - A hint in the bottom right of the picture: turning and zooming.
+    with its key and button under it in the form the other menus give a button's key
+    ("Done A)"): "Space) X)", "Z) Y)", "R) Back)", "Enter) Start)".
+  - A hint in the bottom left of the picture, on the same backing: turning, panning and
+    zooming in words ("Drag to turn"), since a drag or a stick is not a key; the same form
+    only for the keys and buttons ("Reset View C)").
 - **Sounds**: the game's own UI sound records (`ui_sounds.rs`): rows and tabs
   `UIMenuFocus` / `UIMenuPrevNext`, Reset and Undo `UIMenuCancel`, Done `UIMenuOK`.
 
@@ -216,10 +246,12 @@ A sketch: the published mockup (the owner's review). The rules:
   the face tabs' distance and tilt, straight on (`model::View::face_on`); zooming out from
   there shows the whole body. Each tab has a framing: the **whole body** on Basics (175
   units away), the head turned 0.45 rad and seen a little from above on Hair (58), the
-  **face** on the others (42, turned 0.15). The camera steps left a third of its
-  distance so the player stands right of the picture's middle, clear of the panel
-  [observed: the smoke run's screenshots at 1280 × 800 had the face behind the panel
-  without it]. No collision: the player's own space.
+  **face** on the others (42, turned 0.15). The camera steps right a third of its
+  distance so the player stands left of the picture's middle, clear of the panel, the
+  face turned towards it as in the original's portrait [the restyle of §4; it
+  stepped left while the panel was on the left: observed, the smoke run's screenshots at
+  1280 × 800 had the face behind the panel without a step]. No collision: the player's
+  own space.
 - **Aimed from the drawn body's eye** (`BodyView::portrait_eye`), not the first-person
   view's: in the real opening the first-person eye still sat where the wake-up idle had
   put it while the body already stood, and the whole-body framing showed the chest to

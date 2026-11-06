@@ -2154,28 +2154,49 @@ fn limb_hits_lower_conditions_and_cripple() {
     assert_eq!(r.health, 40.0);
 }
 
-/// An explosion damages every limb it is given at once, crippling those whose pool it
-/// empties; the player's limbs take half; nothing on a dead actor
-/// (docs/spec-notes/crippled-limbs.md §5).
+/// An explosion's limb damage follows the original's shares (docs/spec-notes/crippled-
+/// limbs.md §5): for the five measured blasts (o25_limbs, Ringo; Health lost, then the
+/// torso's and the legs' condition points lost) the torso loses 1/30 of the Health
+/// damage and the legs 0.24 together, the head, arms and brain nothing [observed];
+/// nothing on a dead actor. The points come straight off the condition, whatever the
+/// actor's maximum Health [hypothesis: measured only at 5000 Health, on an NPC].
 #[test]
-fn blasts_damage_every_limb() {
-    use fnv_game::combat::{LimbHit, LEFT_MOBILITY, RIGHT_MOBILITY};
+fn blasts_take_the_measured_limb_shares() {
+    use fnv_game::combat::{blast_limb_shares, HEAD, LEFT_ARM, LEFT_MOBILITY, RIGHT_ARM, RIGHT_MOBILITY, TORSO};
+    const BRAIN: u16 = 31;
     let f = fixture();
+    let npc = FormId(NPC_REF);
+    let human = [LEFT_MOBILITY, RIGHT_MOBILITY, TORSO, RIGHT_ARM, LEFT_ARM, HEAD, BRAIN];
+    // (Health lost, torso, left leg + right leg) [observed 2026-11-06].
+    let measured = [(99.95, 3.33, 23.99), (96.99, 3.27, 23.52), (98.97, 3.33, 24.00), (98.00, 3.27, 23.52), (123.0, 4.10, 29.52)];
+    for (health, torso, legs) in measured {
+        let mut g = game(&f);
+        g.new_game();
+        let hurt = g.blast_limbs(npc, None, &blast_limb_shares(&human, health));
+        let lost = |c: u16| 100.0 - hurt.iter().find(|h| h.0 == c).map_or(100.0, |h| h.1);
+        let close = |ours: f64, theirs: f64| (ours - theirs).abs() <= theirs * 0.015;
+        assert!(close(lost(TORSO), torso), "torso {} against {torso} for {health}", lost(TORSO));
+        assert!(close(lost(LEFT_MOBILITY) + lost(RIGHT_MOBILITY), legs), "legs against {legs} for {health}: {hurt:?}");
+        for c in [HEAD, LEFT_ARM, RIGHT_ARM, BRAIN] {
+            assert_eq!(lost(c), 0.0, "{c} for {health}");
+            assert!(!g.is_crippled(npc, c));
+        }
+        // The left leg takes two thirds of the legs' share [hypothesis].
+        assert!((lost(LEFT_MOBILITY) - 2.0 * lost(RIGHT_MOBILITY)).abs() < 1e-9);
+    }
+    // A blast big enough cripples the left leg first; never an arm or the head.
     let mut g = game(&f);
     g.new_game();
-    let npc = FormId(NPC_REF);
-    // Maximum health 55: a head at 10 % has a pool of 5.5, a leg at 25 % one of 13.75.
-    let limb = |condition: u16, health_percent: f64| LimbHit { condition, health_percent, damage: 11.0, points: false };
-    let limbs = [limb(25, 10.0), limb(LEFT_MOBILITY, 25.0), limb(RIGHT_MOBILITY, 25.0)];
-    let hurt = g.blast_limbs(npc, None, &limbs);
-    assert_eq!(hurt, vec![(25, 0.0, true), (LEFT_MOBILITY, 20.0, false), (RIGHT_MOBILITY, 20.0, false)]);
-    assert!(g.is_crippled(npc, 25) && !g.is_crippled(npc, LEFT_MOBILITY));
-    // The player's limbs take fCombatPlayerLimbDamageMult (0.5) of it.
-    let hurt = g.blast_limbs(FormId::PLAYER_REF, None, &limbs[1..2]);
-    assert_eq!(hurt.len(), 1);
-    assert!(hurt[0].1 > 20.0 && hurt[0].1 < 100.0 && !hurt[0].2, "{hurt:?}");
+    let hurt = g.blast_limbs(npc, None, &blast_limb_shares(&human, 700.0));
+    assert_eq!(hurt.iter().filter(|h| h.2).map(|h| h.0).collect::<Vec<_>>(), vec![LEFT_MOBILITY]);
+    // One leg in the data takes the whole 0.24; no torso, no limb damage there.
+    let one = blast_limb_shares(&[RIGHT_MOBILITY], 100.0);
+    assert_eq!(one.len(), 1);
+    assert!((one[0].damage - 24.0).abs() < 1e-9 && one[0].points);
+    assert!(blast_limb_shares(&[HEAD, LEFT_ARM], 100.0).is_empty());
+    assert!(blast_limb_shares(&human, 0.0).is_empty());
     g.kill(npc, None);
-    assert!(g.blast_limbs(npc, None, &limbs).is_empty());
+    assert!(g.blast_limbs(npc, None, &blast_limb_shares(&human, 100.0)).is_empty());
 }
 
 /// A fall's leg (docs/spec-notes/physics.md §6.12): limb damage in condition points comes

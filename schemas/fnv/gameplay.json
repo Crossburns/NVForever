@@ -2695,6 +2695,99 @@
     }
    }
   },
+  "LSCT": {
+   "name": "Load Screen Type",
+   "confidence": "documented",
+   "subrecords": {
+    "DATA": {
+     "name": "Data",
+     "type": {
+      "struct": [
+       {
+        "name": "type",
+        "type": "u32"
+       },
+       {
+        "name": "x",
+        "type": "u32"
+       },
+       {
+        "name": "y",
+        "type": "u32"
+       },
+       {
+        "name": "width",
+        "type": "u32"
+       },
+       {
+        "name": "height",
+        "type": "u32"
+       },
+       {
+        "name": "orientation",
+        "type": "f32"
+       },
+       {
+        "name": "font_1",
+        "type": "u32"
+       },
+       {
+        "name": "font_1_red",
+        "type": "f32"
+       },
+       {
+        "name": "font_1_green",
+        "type": "f32"
+       },
+       {
+        "name": "font_1_blue",
+        "type": "f32"
+       },
+       {
+        "name": "font_1_alignment",
+        "type": "u32"
+       },
+       {
+        "name": "unknown_1",
+        "type": {
+         "array": "u8",
+         "count": 20
+        }
+       },
+       {
+        "name": "font_2",
+        "type": "u32"
+       },
+       {
+        "name": "font_2_red",
+        "type": "f32"
+       },
+       {
+        "name": "font_2_green",
+        "type": "f32"
+       },
+       {
+        "name": "font_2_blue",
+        "type": "f32"
+       },
+       {
+        "name": "unknown_2",
+        "type": {
+         "array": "u8",
+         "count": 4
+        }
+       },
+       {
+        "name": "stats",
+        "type": "u32"
+       }
+      ]
+     },
+     "confidence": "documented",
+     "note": "fopdoc FalloutNV/Records/LSCT (tes5edit.github.io/fopdoc, from xEdit wbDefinitionsFNV.pas): type 0 none, 1 XP progress, 2 objective, 3 tip, 4 stats; alignment 1 left, 2 centre, 4 right; the colours are floats of 0 to 255 [observed: the one LSCT of FalloutNV.esm, docs/spec-notes/loading-screens.md]. 88 bytes"
+    }
+   }
+  },
   "DOBJ": {
    "name": "Default Object Manager",
    "confidence": "documented",
