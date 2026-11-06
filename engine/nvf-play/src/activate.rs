@@ -28,7 +28,7 @@
 pub mod outcome;
 pub mod pick;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::phys::PhysState;
 use crate::player::Player;

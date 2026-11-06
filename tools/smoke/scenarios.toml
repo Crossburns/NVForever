@@ -6651,6 +6651,84 @@ expect = [
 ]
 
 [[scenario]]
+name = "save-fade-move-write"
+source = "#1589: Easy Pete is sent to the Mojave Express box with MoveToMarkerWithFade and the game is saved in the same console line, inside the fade; save-fade-move-load reads where he ends up, so run them together"
+note = "No NPC packages, so he stays where the move puts him for the read after the load"
+areas = ["save"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/refs.rs", "engine/nvf-play/src/script.rs"]
+env = { NVFOREVER_HOME = "save-fade-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:EasyPeteRef.movetomarkerwithfade 0015F22D;save smoke-fade;15:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-npc-packages"]
+run_seconds = 19
+order = [[{ re = 'save: wrote .*smoke-fade\.nvfsave \(manual', label = "the save is written" }, { text = "script: EasyPeteRef fades in after its move for MoveToMarkerWithFade", label = "the move comes after it: the save caught the fade" }]]
+expect = [
+  { re = 'console: MoveToMarkerWithFade on EasyPeteRef >> 0\.00', label = "the move is asked for" },
+  { re = 'save: wrote .*smoke-fade\.nvfsave \(manual', label = "the save is written" },
+]
+
+[[scenario]]
+name = "save-fade-move-load"
+source = "#1589: a MoveToMarkerWithFade caught by a save is made on load, on the world that is played: he reads at the box (vMEGoodSpringsRef, -69594.8, 3438.5), not in the saloon"
+areas = ["save"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/functions/refs.rs", "engine/nvf-play/src/script.rs"]
+env = { NVFOREVER_HOME = "save-fade-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "12:EasyPeteRef.getpos x;EasyPeteRef.getpos y;13:close" }
+args = ["--play", "--load", "smoke-fade", "--no-voice", "--no-npc-packages"]
+run_seconds = 17
+expect = [
+  { re = 'load: restored .*smoke-fade\.nvfsave', label = "the save is restored" },
+  { re = 'console: GetPos on EasyPeteRef >> -69594\.80', label = "x: at the box" },
+  { re = 'console: GetPos on EasyPeteRef >> 3438\.50', label = "y: at the box" },
+]
+
+[[scenario]]
+name = "save-refused-write"
+source = "#1590: two saves for the two load scenarios: smoke-refused says a game snapshot format no build reads (test aid NVF_PLAY_TEST_SAVE_UNKNOWN_FORMAT, as a save from a later version would), smoke-good is plain; run them together"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/script.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs", "crates/fnv-game/src/game.rs", "crates/fnv-sim/src/world.rs"]
+env = { NVFOREVER_HOME = "save-refused-home", NVF_PLAY_TEST_SAVE_UNKNOWN_FORMAT = "smoke-refused", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:save smoke-refused;15:save smoke-good;16:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 20
+expect = [
+  { re = 'save: wrote .*smoke-refused\.nvfsave \(manual', label = "the save of the unknown format is written" },
+  { re = 'save: wrote .*smoke-good\.nvfsave \(manual', label = "the plain save is written" },
+]
+
+[[scenario]]
+name = "save-refused-load"
+source = "#1590, owner 2026-11-01 (#1357): a save whose game snapshot is refused opens the main menu with the message saying why, before the world starts at its place; no new game goes on there"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/script.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs", "crates/fnv-game/src/game.rs", "crates/fnv-sim/src/world.rs"]
+env = { NVFOREVER_HOME = "save-refused-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--load", "smoke-refused", "--no-voice"]
+run_seconds = 12
+expect = [
+  { re = 'load: --load smoke-refused: .*unsupported snapshot format "fnv\.game\.state/2"; opening the main menu', count = 1, label = "the save is refused and the main menu opens instead" },
+  { re = 'main menu: open \(', label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: --load smoke-refused: .*unsupported snapshot format', count = 1, label = "the player is told why" },
+  { re = 'smoke-refused\.nvfsave .*starting at', count = 0, label = "the world does not start at the save's place" },
+  { re = 'load: restored ', count = 0, label = "nothing is restored" },
+  { re = 'load: engine state of ', count = 0, label = "the save's engine part is not put back" },
+  { re = 'console: Loaded ', count = 0, label = "nothing says it loaded" },
+]
+
+[[scenario]]
+name = "load-refused-late"
+source = "#1590: should a restore fail after the save was read (test aid NVF_PLAY_TEST_LOAD_FAILS_LATE: no save reaches this now), no game goes on: the run starts again on the main menu and the player is told why"
+areas = ["save"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/script.rs", "engine/nvforever/src/main.rs", "engine/nvforever/src/handoff.rs"]
+env = { NVFOREVER_HOME = "save-refused-home", NVF_PLAY_TEST_LOAD_FAILS_LATE = "1", NVF_PLAY_TEST_HANDOFF_EXIT = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--play", "--load", "smoke-good", "--no-voice"]
+run_seconds = 90
+ends = "test aid NVF_PLAY_TEST_HANDOFF_EXIT: the new run took over and its main menu is in"
+expect = [
+  { re = 'load: .*smoke-good\.nvfsave: test aid NVF_PLAY_TEST_LOAD_FAILS_LATE; starting again on the main menu', count = 1, label = "the restore fails" },
+  { text = "load: handing over to a new run with --menu", count = 1, label = "a new run starts on the main menu" },
+  { re = 'load: .*smoke-good\.nvfsave: test aid NVF_PLAY_TEST_LOAD_FAILS_LATE; opening the main menu', count = 1, label = "the new run opens the main menu" },
+  { text = "the new run took over and its main menu is in; ending it", label = "the main menu is open" },
+  { re = 'load: message box not shown \(unattended run\): the save could not be loaded: .*smoke-good\.nvfsave', count = 1, label = "the player is told why" },
+  { re = 'load: restored |load: engine state of |console: Loaded ', count = 0, label = "neither run restores anything, puts an engine part back or says it loaded" },
+]
+
+[[scenario]]
 name = "save-door-write"
 source = "#1611: Doc Mitchell's inner door 0x001062AC opened by the player and saved open; save-door-load reads it back, so run them together"
 areas = ["save", "doors"]

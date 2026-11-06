@@ -567,6 +567,10 @@ struct Args {
     /// game, held until New Game.
     #[arg(long, requires = "play", conflicts_with_all = ["new_game", "load"])]
     menu: bool,
+    /// With --menu: why the run before could not restore the save it was given, for the
+    /// message box (a run that fails so starts this one, handoff.rs).
+    #[arg(long, requires = "menu")]
+    load_refused: Option<String>,
     /// Open the window with its outer top-left corner here on the desktop, "X,Y" in
     /// pixels (a new run taking over a load keeps the old window's place, handoff.rs).
     #[arg(long, value_parser = |s: &str| handoff::parse_at(s).ok_or("expected X,Y"))]
@@ -877,10 +881,14 @@ fn main() -> AppExit {
     args.plugins = opened.plugins.iter().map(|p| p.name.clone()).collect();
     // `--load`: the save's place decides where the world starts (its worldspace before
     // the world is opened); its body waits for the scripts (nvf_play::save). It is read
-    // in full now, remapped to the plugins opened (nvf_play::save::read_for_load): a save
-    // that cannot be loaded opens the main menu instead, and the player is told why once
-    // the window is up [owner 2026-11-01, #1357] (`handoff::LoadFailed`).
-    let mut load_failed = None;
+    // in full now, remapped to the plugins opened and checked as the restore will
+    // (nvf_play::save::read_for_load): a save that cannot be loaded opens the main menu
+    // instead, and the player is told why once the window is up [owner 2026-11-01, #1357]
+    // (`handoff::LoadFailed`). So does a run a failed restore started (`--load-refused`).
+    let mut load_failed = args.load_refused.clone();
+    if let Some(why) = &load_failed {
+        eprintln!("load: {why}; opening the main menu");
+    }
     let pending = match args.load.clone() {
         Some(name) => match start_from_save(&name, &opened, &mut args) {
             Ok(p) => Some(p),
@@ -1753,8 +1761,9 @@ fn start_from_save(name: &str, opened: &world::OpenedPlugins, args: &mut Args) -
 }
 
 /// The whole days a run starts on: the game's start clock (`--day`, else the plugins'), and
-/// the sky's, which a save's day overrides. A save's day stays out of the start clock: a
-/// restore that fails goes on from the plugins' game, which is not on that save's day.
+/// the sky's, which a save's day overrides. A save's day stays out of the start clock, which
+/// only a new game takes (`Core::prepare` in residents.rs); a save that cannot be restored
+/// plays no game at all, it opens the main menu [owner 2026-11-01, #1357].
 fn start_days(day: Option<f32>, sky_day: Option<f32>, plugins: Option<f32>) -> (f32, f32) {
     let game = day.or(plugins).unwrap_or(0.0).floor();
     (game, sky_day.map_or(game, f32::floor))
@@ -1764,7 +1773,7 @@ fn start_days(day: Option<f32>, sky_day: Option<f32>, plugins: Option<f32>) -> (
 /// values, in both the `--flag value` and `--flag=value` forms), for the run that takes
 /// over a load (handoff.rs).
 fn restart_args(args: &[String]) -> Vec<String> {
-    const VALUED: [&str; 12] = ["--load", "--cell", "--pos", "--heading", "--pitch", "--hour", "--weather", "--world", "--eye-height", "--size", "--window-at", "--handoff"];
+    const VALUED: [&str; 13] = ["--load", "--load-refused", "--cell", "--pos", "--heading", "--pitch", "--hour", "--weather", "--world", "--eye-height", "--size", "--window-at", "--handoff"];
     let mut out = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -2152,6 +2161,12 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_load_is_told_on_the_main_menu_only() {
+        assert_eq!(parse(&["--play", "--menu", "--load-refused=old: why"]).load_refused.as_deref(), Some("old: why"));
+        assert!(Args::try_parse_from(["nvforever", "--play", "--load-refused=old: why"]).is_err());
+    }
+
+    #[test]
     fn a_saves_day_starts_the_sky_and_not_the_game() {
         // A save's day, over --day for the sky, never in the game's start clock (#1607).
         assert_eq!(start_days(None, Some(25.375), Some(5.0)), (5.0, 25.0));
@@ -2175,7 +2190,7 @@ mod tests {
 
     #[test]
     fn a_restart_for_a_load_drops_what_the_save_decides() {
-        let a: Vec<String> = ["--data", "D", "--cell", "Goodsprings", "--play", "--menu", "--pos=-1,2,3", "--new-game", "--hour", "9", "--no-music", "--load", "old", "--size", "1600x900", "--window-at=-8,0", "--window-maximized", "--handoff", "f"].map(String::from).to_vec();
+        let a: Vec<String> = ["--data", "D", "--cell", "Goodsprings", "--play", "--menu", "--pos=-1,2,3", "--new-game", "--hour", "9", "--no-music", "--load", "old", "--load-refused=old: why", "--size", "1600x900", "--window-at=-8,0", "--window-maximized", "--handoff", "f"].map(String::from).to_vec();
         assert_eq!(restart_args(&a), ["--data", "D", "--play", "--no-music"]);
     }
 
