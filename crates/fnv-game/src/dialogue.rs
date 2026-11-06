@@ -755,15 +755,6 @@ impl<'a> Game<'a> {
         }
     }
 
-    /// `StartConversation player` while the player's conversation runs: inside the end
-    /// result script of the line that just ended, the force greet is held and starts
-    /// once the conversation closes, if the line closes it (Goodbye, or nothing to offer
-    /// after it); returns whether it was held. Anywhere else it is refused, as before
-    /// [design, issue #1107: 8 end scripts in FalloutNV.esm call it, 4 of them of Goodbye
-    /// lines, e.g. Anders' thanks in VMS46 (INFO 0x00142A9C); the other 4 lines have no
-    /// choices, so theirs starts when nothing is offered after them [observed]; whether the original
-    /// opens the new conversation is observer check 39 [hypothesis]]. A later call in the
-    /// same script replaces an earlier one [design].
     /// StartConversation with the player from `speaker` farther than [`WALK_UP_REACH`]
     /// while the AI runs packages (`GameConfig::package_interval`): the speaker walks up
     /// to the player first and talks once there (`fnv_ai`), "the actor will walk to the
@@ -777,6 +768,17 @@ impl<'a> Game<'a> {
         if self.cfg.package_interval.is_none() || self.dialogue.is_some() {
             return false;
         }
+        let far = self.walk_up_far(speaker);
+        if far {
+            self.walk_up_greets.insert(speaker, topic);
+        }
+        far
+    }
+
+    /// Whether `speaker` is too far from the player to talk at once
+    /// ([`Game::walk_up_greet`]): more than [`WALK_UP_REACH`] away, or in another space
+    /// (an interior and the world, two interiors). Not when either has no place.
+    pub fn walk_up_far(&self, speaker: FormId) -> bool {
         // Its space: the worldspace of an exterior cell, else the interior cell itself.
         // A reference nothing has changed yet is where it was placed.
         let at = |r: FormId| {
@@ -788,12 +790,7 @@ impl<'a> Game<'a> {
         };
         let (Some((space, from)), Some((pspace, to))) = (at(speaker), at(FormId::PLAYER_REF)) else { return false };
         let away = ((from[0] - to[0]).powi(2) + (from[1] - to[1]).powi(2) + (from[2] - to[2]).powi(2)).sqrt();
-        // In another space (an interior and the world, two interiors) it is far too.
-        let far = space != pspace || away > WALK_UP_REACH;
-        if far {
-            self.walk_up_greets.insert(speaker, topic);
-        }
-        far
+        space != pspace || away > WALK_UP_REACH
     }
 
     /// The walk-up greeting of `speaker` ([`Game::walk_up_greet`]), still to be said.
@@ -808,6 +805,15 @@ impl<'a> Game<'a> {
         self.force_greet(speaker, topic).ok()
     }
 
+    /// `StartConversation player` while the player's conversation runs: inside the end
+    /// result script of the line that just ended, the force greet is held and starts
+    /// once the conversation closes, if the line closes it (Goodbye, or nothing to offer
+    /// after it); returns whether it was held. Anywhere else it is refused, as before
+    /// [design, issue #1107: 8 end scripts in FalloutNV.esm call it, 4 of them of Goodbye
+    /// lines, e.g. Anders' thanks in VMS46 (INFO 0x00142A9C); the other 4 lines have no
+    /// choices, so theirs starts when nothing is offered after them [observed]; whether the original
+    /// opens the new conversation is observer check 39 [hypothesis]]. A later call in the
+    /// same script replaces an earlier one [design].
     pub fn hold_force_greet(&mut self, speaker: FormId, topic: Option<FormId>) -> bool {
         match self.dialogue.as_mut().filter(|c| c.ending) {
             Some(c) => {

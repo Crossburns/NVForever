@@ -1120,8 +1120,14 @@ impl Ai {
     /// is not quiet ([`Ai::update_moved`] gives them their own, now and then), and those
     /// not updated there at all out of every update.
     fn step(&mut self, game: &mut Game, nav: &NavGraph, dt: f32, open: &mut dyn Mover, quiet: bool) {
-        // A StartConversation speaker the AI does not walk talks at once, as without it.
-        let unwalked: Vec<FormId> = game.walk_up_greets.keys().copied().filter(|a| !self.agents.contains_key(a)).collect();
+        // A StartConversation speaker the AI does not walk (not handed to it yet: its
+        // cell has not loaded, or it could not be) talks once it is near the player, a
+        // script having moved it or the player having come up; until then its greeting
+        // waits, and once it joins the AI it walks up (`Ai::walk_up_step`). It never talks
+        // from afar, as it did before the walk-up (issue #1544). The AI keeps an agent
+        // once added (an unloaded cell's actors go to the low process, which leaves the
+        // walk-up waiting), so this is not a walk cut short.
+        let unwalked: Vec<FormId> = game.walk_up_greets.keys().copied().filter(|a| !self.agents.contains_key(a) && !game.walk_up_far(*a)).collect();
         for a in unwalked {
             game.walk_up_arrived(a);
         }
@@ -1214,6 +1220,10 @@ impl Ai {
             a.following = None;
             a.errand = None;
             a.backing = None;
+            // A walk-up still owed is planned again (`Ai::walk_up_step`): the new
+            // package's walk must not be taken for the end of the walk-up's, which would
+            // open the conversation from afar (a package changed in the low process).
+            a.walk_up = None;
             self.set_using(game, actor, None);
             self.taken.retain(|_, user| *user != actor);
             // What the old package had it use ends with it.
@@ -2168,12 +2178,6 @@ impl Ai {
         }
     }
 
-    /// A script's weapon use (`fnv_game::use_weapon`): a new one sends the actor to
-    /// where it is to stand (it stays where it is when it is there already, is to stand
-    /// on its own reference, or has no way there); one that is over sends it back to its
-    /// package. In place, a weapon use (a script's, or its package's while it is not in
-    /// combat) turns it to its target at the standing turn rate. Returns whether a
-    /// script's use holds the actor (its package's own doings and its fight wait).
     /// A script's StartConversation with the player from afar (`Game::walk_up_greet`):
     /// the actor runs to the player, planning the way again as the player moves, and
     /// opens the conversation once within [`goal::STANDARD_TALK_DISTANCE`]; with no way
@@ -2245,6 +2249,12 @@ impl Ai {
         }
     }
 
+    /// A script's weapon use (`fnv_game::use_weapon`): a new one sends the actor to
+    /// where it is to stand (it stays where it is when it is there already, is to stand
+    /// on its own reference, or has no way there); one that is over sends it back to its
+    /// package. In place, a weapon use (a script's, or its package's while it is not in
+    /// combat) turns it to its target at the standing turn rate. Returns whether a
+    /// script's use holds the actor (its package's own doings and its fight wait).
     fn weapon_step(&mut self, game: &mut Game, nav: &NavGraph, actor: FormId, dt: f32) -> bool {
         let script = game.weapon_use(actor).filter(|w| w.source == Source::Script).map(|w| (w.seq, w.stand, w.target));
         let order = self.agents[&actor].weapon_order;

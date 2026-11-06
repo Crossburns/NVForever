@@ -818,6 +818,25 @@ fn start_conversation_from_afar_walks_up_to_the_player_first() {
     assert!(s.game.walk_up_greets.is_empty());
 }
 
+/// A StartConversation speaker the AI does not walk (not handed to it: its cell has not
+/// loaded) never talks from afar (issue #1544): its greeting waits until it is near the
+/// player, here the player coming up to it.
+#[test]
+fn start_conversation_by_a_speaker_the_ai_does_not_walk_waits_until_near() {
+    let f = fixture();
+    let mut s = sim(&f, R_IDLE, [1100.0, 1100.0, 0.0]);
+    assert!(!s.ai.agents.contains_key(&FormId(R_WAIT)));
+    assert!(s.game.walk_up_greet(FormId(R_WAIT), None), "the speaker is far");
+    s.run(5.0);
+    assert!(s.game.dialogue.is_none(), "no conversation from afar");
+    assert_eq!(s.game.walk_up_pending(FormId(R_WAIT)), Some(None), "its greeting waits");
+    assert!(!s.game.extra.get(&FormId(R_WAIT)).is_some_and(|e| e.talked_to_pc));
+    s.player_to([CORNER[0] + 100.0, CORNER[1], 0.0]);
+    s.run(0.25);
+    assert!(s.game.walk_up_greets.is_empty(), "near: it has talked");
+    assert!(s.game.extra[&FormId(R_WAIT)].talked_to_pc);
+}
+
 /// Near the player, or without the AI, StartConversation opens the conversation at once.
 #[test]
 fn start_conversation_near_the_player_talks_at_once() {
