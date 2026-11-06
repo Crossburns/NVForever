@@ -115,6 +115,10 @@ impact data, weathers and climates, armour; from the pages and the records, not 
 Census after it, with batch 6 merged: 877 (JIP 284 → 257).
 SUP batch 1: 19 (#1008, ext-sup1.md, from the pages; SUP is not installed here, nothing
 probed). Census after it, with JIP batches 6 and 7 merged: 858; SUP 122 left.
+Lutana batch 1: 92 (#1009, ext-lutana.md: challenges, casinos, recipes, actor AI data,
+cells and water, zone flags, activators, terminals and locks, form flags, weapon fields,
+load screen types; from the pages and the records, not probed). Census after it: 765;
+LU 145 → 53.
 
 **The plugin libraries: 1,519 left** (recounted with #1022's census). JIP LN 349,
 JohnnyGuitar 313, SUP 184, LU 145, ShowOff 139, ITR 119, One111 51, CacheUI 45, PP 42,
