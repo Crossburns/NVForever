@@ -723,7 +723,8 @@ Seen [observed 2026-10-11, `nvforever --play`, the owner's load order]:
 - The retrigger delay (its values look unset) and `NAM1`; the inner radius and threat
   ratios of the combat music settings; the crossfade overlap time (sets loop by
   starting their files again).
-- `IsMusicPlaying`, `SetMusicState` and the other NVSE music functions.
+- The other NVSE music functions. IsMusicPlaying and SetMusicState are built
+  (`nvse_gaps.rs`, [jip-ttw-functions.md](jip-ttw-functions.md) §2).
 
 ### 13.4 Open
 
