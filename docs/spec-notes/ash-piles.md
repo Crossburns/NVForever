@@ -68,7 +68,9 @@ FalloutNV.esm, read with `fnvtool esm decode`]:
   the actor it came from, which keeps everything it carried [hypothesis: the original
   lets the player loot ash piles; whether the items are moved into the pile or the pile
   shows the body's inventory is not documented — the result for the player is the same].
-  The culled body itself can no longer be targeted.
+  The rule is the shared default activation's, so a script's `Activate` of a pile does the
+  same [design: `Game::default_activation`]. The culled body itself can no longer be
+  targeted.
 - When the player killed the actor, the statistic Disintegrations counts one
   [hypothesis: by its name; misc-stats.md].
 - ResurrectActor on the actor removes its pile [hypothesis].

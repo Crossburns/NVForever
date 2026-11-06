@@ -88,6 +88,13 @@ whenever `IsAnimPlaying` is 0, and on load. Nothing plays `Forward` or `Backward
   `model-lights-klaxon` (REPCONN HQ with the first floor's alarm raised by the console:
   the five klaxons play `Left` and their orange light sweeps the walls in the frames)
   [observed 2026-10-23].
+- A placed light's source carries its reference's `RefVisual` (`lights.rs` `spawn_light`)
+  [design]: `RefVisual` sync hides it while the reference is disabled, by a script or
+  through its enable parent, and when its cell loads again, and shows it once enabled;
+  hidden, it lights nothing and `detection.rs` does not count it. One whose parent is the
+  cell moves with its reference as the model does (`nvf-play` `moved.rs`). It is left out
+  when a reference's model is swapped or its root sought (`NotLightSource`). Smoke
+  scenario `lights-disable`.
 
 ## 3. Open questions
 

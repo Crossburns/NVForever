@@ -153,8 +153,8 @@ a terminal that opens at its menu (unlocked, hacked before, password held) is no
   call") [documented: notes].
 - The doors' "No Alarm" flag (REFR XTEL): "No trespass alarm will be sent when the
   player uses the door" [documented: GECK wiki Reference, Teleport]; 5 doors, Dead Money
-  2, Lonesome Road 3 [observed]. As built (`Game::arrived_through`): arriving through such
-  a door, the player is not trespassing in the cell arrived in (no warnings, no attack,
+  2, Lonesome Road 3 [observed]. As built (`Game::arrived_through`, for the player's own
+  use of a door and a script's alike [design]): arriving through such a door, the player is not trespassing in the cell arrived in (no warnings, no attack,
   IsTrespassing 0) until leaving that cell; any other door ends it [hypothesis: the alarm
   is the owners' trespass reaction; owner-review.md]. Log: `crime: the player came
   through … a No Alarm door …`.
@@ -260,9 +260,12 @@ highway patrol station; "should be good"). AI observer campaigns `functions_roun
   [observed: `schemas/script/functions.json`].
 - New Vegas tracks **reputation** (REPU: fame and infamy per reputation, ranks Accepted …
   Vilified) [documented: GECK wiki Reputation]; it "has no actual impact on the combat
-  reactions of actors". The reputation functions are built (`functions/reputation.rs`);
-  scripts change reputation, the engine's crime rules do not [hypothesis: nothing in the
-  sources ties a crime to a reputation change].
+  reactions of actors". The reputation functions are built (`functions/reputation.rs`).
+  Scripts change reputation, and a seen theft or kill adds infamy with the victim's
+  reputations: 2 and 30 points [documented: Fallout wiki "Reputation (Fallout: New
+  Vegas)"; hypothesis: that "caught" and "openly" mean seen, and that the points are
+  infamy]. A faction owner, an NPC owner's base and a killed reference each find their
+  reputations differently (reputation.md §3).
 
 ## 6. In play (`nvf-play` `crime.rs`)
 

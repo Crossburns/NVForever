@@ -20,8 +20,9 @@
 //! What is ours, because the documentation gives no numbers ("various gamesettings and
 //! formulas"): how an object is scored (nearer is better), how fast weights grow back,
 //! how long each behaviour lasts, how long an object with no way to it stays out of the
-//! choices (`RETRY_DELAYS`), and that an actor without a bed in its area does not
-//! sleep. Not done: conversations between actors, picking up and eating food (an eating
+//! choices (`RETRY_DELAYS`), that an actor without a bed in its area does not
+//! sleep, and that an actor does not choose an idle marker whose idles are all another
+//! skeleton's clips (`clip_fits`: a person at a robot's marker, #1660). Not done: conversations between actors, picking up and eating food (an eating
 //! actor sits down if a seat is free, as an Eat package's does), and the idles an idle
 //! marker lists (the actor goes there and faces its way).
 
@@ -35,6 +36,41 @@ use fnv_nav::{NavGraph, Place};
 use fnv_sim::FormId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+/// The skeleton folder a model path lies in, as the first two folders under `meshes\`
+/// in lower case (`characters\_male`, `creatures\protectron`); `None` for a path
+/// without two folders.
+fn skeleton_family(path: &str) -> Option<String> {
+    let p = path.to_ascii_lowercase().replace('/', "\\");
+    let p = p.strip_prefix("meshes\\").unwrap_or(&p);
+    let mut parts = p.split('\\').filter(|s| !s.is_empty());
+    let (a, b) = (parts.next()?, parts.next()?);
+    // A file name is not a folder.
+    parts.next()?;
+    Some(format!("{a}\\{b}"))
+}
+
+/// Whether an idle clip at `clip` is one an actor with the skeleton model `skeleton` can
+/// play: false only when both lie in known folders and the folders differ. A clip binds to
+/// the actor's bones by name and the protectron's skeleton shares the biped's names, so
+/// another skeleton's clip moves a person's head and neck to the robot's [observed:
+/// #1660]. The original's rule is not known [design].
+pub fn clip_fits(skeleton: &str, clip: &str) -> bool {
+    match (skeleton_family(skeleton), skeleton_family(clip)) {
+        (Some(s), Some(c)) => s == c,
+        _ => true,
+    }
+}
+
+/// Whether an actor with the skeleton model `skeleton` may choose an idle marker of base
+/// `base`: unless every idle it lists names a `.kf` from another skeleton's folder
+/// (`clip_fits`). One with no idles, or an idle naming no clip, stays open. A script's
+/// SetIdleMarkerAnimation(s) list is the one read when there is one.
+fn marker_fits(game: &Game, skeleton: &str, base: FormId) -> bool {
+    let Some(c) = game.other.idle_markers.get(&base).or_else(|| game.data.idle_markers.get(&base)) else { return true };
+    let clips: Vec<&str> = c.idles.iter().filter_map(|i| game.data.idles.get(i)?.model.as_deref()).filter(|m| m.to_ascii_lowercase().ends_with(".kf")).collect();
+    clips.is_empty() || clips.len() < c.idles.len() || clips.iter().any(|m| clip_fits(skeleton, m))
+}
 
 /// Reach of a sandbox whose location has no radius of its own, game units [our choice;
 /// the default sandbox packages use 512].
@@ -392,7 +428,12 @@ impl Sandbox {
         // the object just used.
         let fresh = |o: &&(FormId, [f32; 3], f32)| Some(o.0) != self.last_object;
         let seats: Vec<&(FormId, [f32; 3], f32)> = objects.iter().filter(|o| flags(o.0).is_some_and(|f| f & furniture::SIT != 0)).filter(fresh).collect();
-        let markers: Vec<&(FormId, [f32; 3], f32)> = objects.iter().filter(|o| refs.get(o.0).is_some_and(|p| data.idle_markers.contains_key(&p.base))).filter(fresh).collect();
+        // Not a marker whose idles are all another skeleton's (`marker_fits`): a person
+        // left at a robot's marker played the protectron's clips (#1660).
+        let skeleton = std::cell::OnceCell::new();
+        let fits = |base: FormId| marker_fits(game, skeleton.get_or_init(|| fnv_game::nvse_nx::skeleton_model(game, actor)), base);
+        let markers: Vec<&(FormId, [f32; 3], f32)> =
+            objects.iter().filter(|o| refs.get(o.0).is_some_and(|p| data.idle_markers.contains_key(&p.base) && fits(p.base))).filter(fresh).collect();
         let spot = if self.allowed.wandering { self.wander_spot(nav, at) } else { None };
         // Energy: the less of it, the more sitting; the more, the more walking about.
         let e = self.energy;
@@ -507,5 +548,31 @@ impl Sandbox {
         }
         self.doing = Doing::Standing;
         self.until = Until::Time(game.time + 5.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clip_fits;
+
+    #[test]
+    fn a_person_does_not_play_the_protectrons_clips() {
+        // The robot idle marker in front of the car at Vikki and Vance (#1660).
+        let human = "Characters\\_Male\\skeleton.nif";
+        assert!(!clip_fits(human, "Creatures\\Protectron\\IdleAnims\\MTSpecialIdle_Halt.kf"));
+        assert!(!clip_fits("Creatures\\Protectron\\Skeleton.nif", "Characters\\_Male\\IdleAnims\\DLCAnims\\LeanTable.kf"));
+    }
+
+    #[test]
+    fn a_clip_of_the_actors_own_folder_fits_whatever_the_case_and_prefix() {
+        assert!(clip_fits("Characters\\_Male\\skeleton.nif", "characters\\_male\\idleanims\\talk_armscrossed.kf"));
+        assert!(clip_fits("meshes\\Creatures\\Protectron\\Skeleton.nif", "Creatures/Protectron/IdleAnims/MTSpecialIdle_Activate.kf"));
+    }
+
+    #[test]
+    fn what_is_not_known_stays_allowed() {
+        // No skeleton read, or a path without two folders.
+        assert!(clip_fits("", "Creatures\\Protectron\\IdleAnims\\MTSpecialIdle_Halt.kf"));
+        assert!(clip_fits("Characters\\_Male\\skeleton.nif", "idle.kf"));
     }
 }
