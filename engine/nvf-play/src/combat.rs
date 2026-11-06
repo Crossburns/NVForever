@@ -1694,14 +1694,15 @@ fn perk_speed(c: Res<Combat>, mut anim: ResMut<WeaponAnim>, mut script: Option<R
 }
 
 /// The player's Speed Mult, body armour and size (`crate::player::StatSpeed`): asked every
-/// frame, so SetAV / ModAV / ForceAV, effects, changes of armour and SetScale count at
-/// once. A smaller player takes smaller steps: the speed goes with a script's scale, as a
+/// frame. Speed Mult and armour count as last taken, which is again only when the
+/// equipment changes or a game loads (`fnv_game::Game::player_move_speed_mult`; SetAV
+/// alone waits for it, issue #1742); SetScale counts at once. A smaller player takes smaller steps: the speed goes with a script's scale, as a
 /// creature's pace goes with its scale (`creature_pace`) [hypothesis: the clips' root
 /// motion shrinks with the body; owner's TTW run 2026-11-02, the baby at
 /// `player.SetScale 0.4` moved at full speed].
 fn stat_speed(mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::StatSpeed>>) {
     let (Some(mut speed), Some(rt)) = (speed, script.as_deref_mut().and_then(|s| s.rt.as_mut())) else { return };
-    let (mult, armor) = with_world(rt, &mut sim, |rt| (rt.game.move_speed_mult(FormId::PLAYER_REF) as f32, rt.game.armor_speed_mult(FormId::PLAYER_REF)));
+    let (mult, armor) = with_world(rt, &mut sim, |rt| (rt.game.player_move_speed_mult() as f32, rt.game.armor_speed_mult(FormId::PLAYER_REF)));
     let scale = sim.script_scale(FormId::PLAYER_REF.0).unwrap_or(1.0).max(crate::sim::MIN_DRAWN_SCALE);
     let want = mult * scale;
     if (speed.0 - want).abs() > 1e-4 {
