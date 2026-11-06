@@ -601,7 +601,8 @@ at each mark; replaced before it was built into a run.)
      (`PhysState::place_player`, the ground looked for from 150 units above to 600
      below), on the line from where they stand to the mark's point, `stand_off` from it
      across the ground: half the weapon's reach (`damage::melee_reach`: `fCombatDistance`
-     150 × the WEAP Reach) plus 32 units [design]; the view turns to the mark. Nothing
+     107 × the WEAP Reach, combat-rules.md §10, plus the player's capsule radius 22: the reach
+     from the eye) plus 32 units [design]; the view turns to the mark. Nothing
      checks the spot is free beyond the character's own placing [design: the mark was
      within 5 m and in sight, so the spot is too in practice].
   2. **Swing**: the next frame (the mark is within the weapon's reach plus `CLOSE_SLACK`,

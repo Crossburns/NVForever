@@ -116,6 +116,47 @@ these (a deathclaw, a radroach) is not covered by the rows]. Ours now keeps that
 centre to centre: it stops at 0.9 of it and bites within it, never nearer than the two
 bodies' gaps.
 
+**Refit by skeleton (#1334, 2026-11-06).** The airport rounds of 2026-11-01 (campaigns
+o14_reach and o12_reach, `nvfairport` runway, a god-mode player standing still, every
+game loop, the centre-to-centre distance at each swing start, median; combat-rules.md
+§10) [observed] put more creatures against the 59. Their leveled-list forms as
+`fnvtool esm decode` reads them (RNAM and BNAM from the Stats template source, as the
+engine resolves them) [observed]:
+
+| Creature (form) | Skeleton folder | RNAM × scale | Original: starts | (RNAM + 59) × scale | Beyond RNAM: start ÷ scale − RNAM |
+|---|---|---|---|---|---|
+| Gecko (VCrTier2GeckoMed) | NVGecko | 35 × 0.8 | 81 | 75 | 66 |
+| Young cazador (VCrTier3CazadorSmall) | NVCazadores | 100 × 0.5 | 80 | 80 | 60 |
+| Young night stalker (VCrTier2NightStalkerSmall) | NightStalker | 48 × 0.75 | 102 | 80 | 88 |
+| Radscorpion (VCrTier2RadscorpionMed) | Radscorpion | 64 × 0.6 | 97-129 (middle 113) | 74 | 124 |
+| Feral ghoul (VCrTier1FeralGhoul1A) | Ghoul | 96 × 1.0 | 135-140 | 155 | 42 |
+| Giant mantis (VCrTier2GiantMantisMed) | NVMantis | 100 × 1.0 | 101-163 (163 on 2026-10-17) | 159 | 59 |
+| Bighorner bull (VCrTier3BigHornerLarge) | NVBigHorner | 50 × 1.7 | 232 | 185 | 86 |
+| Coyote (VCrTier1CoyoteMed) | Dog | 48 × 1.0 | 84-117 (109 on 2026-10-17) | 107 | 61 |
+| Violet's dogs (above) | Dog | 48 × 1.2 | 133 | 128 | 63 |
+| Deathclaw (VCrTier4DeathClawMed, template CrDeathClaw) | DeathClaw | 192 × 1.0 | 88 (one start; its hit at 108) | 251 | - |
+| Dog (VCrTier1DogMed) | Dog | 48 × 0.8 | 172 (one start, still closing; its hit at 69) | 86 | - |
+
+Which exact forms the campaigns spawned is read from the names they logged; the forms
+above are the leveled-list ones of those names [hypothesis]. The reach beyond RNAM is not
+one number: 42 (the ghoul) to 124 (the radscorpion, whose tail strikes over its body).
+Ours now takes it from the skeleton (`npc_combat::creature_body_reach`): Gecko 66,
+cazadores 60, night stalker 88, radscorpion 124, ghoul 42, bighorner 86, dog 62; any
+other skeleton keeps 59 (the mantis's own fit) [hypothesis: that this reach belongs to
+the skeleton and grows with the creature's scale, as RNAM's does, so a young and an
+adult of one skeleton share it]. Not refitted: the deathclaw (one start, far nearer than
+its RNAM 192 gives: open, to measure again) and the giant rat (two starts, 84 against
+92).
+
+The people's rows (same rounds: knife 95, sledgehammer 120, super sledge 150, bumper
+sword 175, lead pipe 180, about 45 + 107 × Reach) moved `fCombatDistance` to 107 and
+`melee_spacing` to the bodies' whole radii (combat-rules.md §10). Ours mostly begins its
+blows once stopped, so the stop (people and creatures) moved from 0.9 of the strike
+distance to 6 units inside it
+(`MELEE_STOP_SHORT`, the knife rows' start 96 against closest 92), its walk ending 0.9
+of that in: with the old 0.9 stop Violet's dogs began at 115 (original 133), now 133-134
+[observed: smoke combat-dogs, 2026-11-06].
+
 ## 4. Encounters
 
 | | Original | Ours |
