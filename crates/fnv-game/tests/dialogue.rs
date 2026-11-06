@@ -2508,3 +2508,51 @@ fn known_topics_newest_first() {
     let old: KnownTopics = serde_json::from_value(json!([FormId(1).to_string(), FormId(2).to_string(), FormId(3).to_string()])).unwrap();
     assert_eq!(ids(&old), vec![1, 2, 3]);
 }
+
+/// The editor's dialogue debugger (docs/design/editor.md §14): its winner is the line
+/// `select_line` takes, on every topic of the fixture, for each gate value.
+#[test]
+fn the_debugger_agrees_with_the_line_the_game_takes() {
+    let f = fixture();
+    let listener = Some(FormId::PLAYER_REF);
+    let mut topics: Vec<FormId> = f.data.topics.keys().copied().collect();
+    topics.sort();
+    for gate in [0.0, 31.0, 77.0] {
+        for &t in &topics {
+            let mut g = game(&f);
+            set_global(&mut g, G_GATE, gate);
+            let e = g.explain_topic(actor(), listener, t);
+            let picked = g.select_line(actor(), listener, t);
+            match picked {
+                Some(p) => assert!(e.winners.contains(&p), "topic {t} gate {gate}: game took {p}, debugger says {:?}", e.winners),
+                None => assert!(e.winners.is_empty(), "topic {t} gate {gate}: nothing said, debugger says {:?}", e.winners),
+            }
+            assert_eq!(e.lines.len(), f.data.lines_tried(t).len());
+        }
+    }
+}
+
+#[test]
+fn the_debugger_shows_pools_and_why_a_line_is_held_back() {
+    use fnv_game::dialogue::Blocked;
+    let f = fixture();
+    let listener = Some(FormId::PLAYER_REF);
+    let mut g = game(&f);
+    set_global(&mut g, G_GATE, 0.0);
+    let e = g.explain_topic(actor(), listener, FormId(T_POOL));
+    assert_eq!(e.lines.iter().map(|l| l.info.0).collect::<Vec<_>>(), vec![P1, P2, P_PLAIN, P3, P4]);
+    assert_eq!(e.lines.iter().map(|l| l.group).collect::<Vec<_>>(), vec![0, 0, 1, 2, 2]);
+    assert_eq!(e.winners, vec![FormId(P1), FormId(P2)]);
+    assert!(matches!(&e.lines[2].verdict, Err(Blocked::Conditions(r)) if r.iter().any(|c| !c.passed)));
+    let text = g.explain_topic_text(actor(), listener, FormId(T_POOL), true);
+    assert!(text.last().unwrap().contains("at random"), "{text:?}");
+    // A Say Once greeting once said: held back for that reason, the next line wins.
+    let greeting = f.data.greeting.unwrap();
+    g.said.insert((actor(), FormId(A_FIRST)));
+    let e = g.explain_topic(actor(), listener, greeting);
+    let first = e.lines.iter().find(|l| l.info == FormId(A_FIRST)).unwrap();
+    assert_eq!(first.verdict, Err(Blocked::SaidOnce));
+    assert_eq!(e.winners, vec![FormId(A_LATER)]);
+    let text = g.explain_topic_text(actor(), listener, greeting, true);
+    assert!(text.iter().any(|l| l.contains("Say Once, and it has been said")), "{text:?}");
+}

@@ -207,21 +207,48 @@ pub fn parse(v: &Json, types: &ParamTypes, map: &dyn Fn(u32) -> Option<u32>) -> 
 /// wiki Category:Conditions, "AND/OR Precedence": consecutive ORs are one block, and
 /// A AND B OR C AND D is A AND (B OR C) AND D]. An empty list passes.
 pub fn combine(results: &[(bool, bool)]) -> bool {
-    // (passed, or-flag)
+    combine_iter(results.iter().copied())
+}
+
+/// [`combine`] over (passed, or-flag) pairs as they come.
+pub fn combine_iter(results: impl IntoIterator<Item = (bool, bool)>) -> bool {
     let mut all = true;
     let mut group = false;
-    for &(passed, or) in results {
+    let mut last_or = false;
+    for (passed, or) in results {
         group |= passed;
+        last_or = or;
         if !or {
             all &= group;
             group = false;
         }
     }
     // A trailing OR flag on the last condition: its group still counts.
-    if results.last().is_some_and(|r| r.1) {
+    if last_or {
         all &= group;
     }
     all
+}
+
+/// One condition as the game evaluated it (`Game::eval_conditions`): what the editor's
+/// debugger shows, from the same evaluation the game decides by
+/// (docs/design/editor.md §14.3).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct CondResult {
+    /// The function's value.
+    pub value: f64,
+    /// What it was compared with (the operand, or the global's value).
+    pub rhs: f64,
+    pub passed: bool,
+    /// Joined to the next condition with OR.
+    pub or: bool,
+    /// The reference the function ran on (`None`: nothing to run on).
+    pub on: Option<u32>,
+}
+
+/// [`combine`] over evaluated conditions.
+pub fn combine_results(results: &[CondResult]) -> bool {
+    combine_iter(results.iter().map(|r| (r.passed, r.or)))
 }
 
 #[cfg(test)]

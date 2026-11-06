@@ -41,6 +41,15 @@ Contents:
 
 ---
 
+## Handover (2026-11-06, fourth session; the earlier ones below)
+
+**Start here.** `origin/main` merged again (406 commits, no conflicts). The dialogue
+debugger's core is in (progress log, fourth session): `editor why [topic]` in editor
+mode explains the selected actor's lines of a topic from the game's own verdicts. Next:
+the quest view (§13.1-§13.2, `editor quest <quest>`), then the "what if" overrides
+(§14.4) and the follow-up rule for chosen topics in the explainer. Back up with
+`git push origin local/editor-encoder`; still no issue or PR.
+
 ## Handover (2026-11-03, third session; the second session's below)
 
 **Start here.** `origin/main` is merged in (2026-11-03), and all 11 editor smoke scenarios
@@ -118,8 +127,9 @@ The record picker's smoke `editor-find-place`, left unrun here, passed in the th
   §8), and actor bases (needs the writer to write ACHR/ACRE).
 - [x] Clean masters on save, and a `.bsa` beside a plugin in `mods\` mounted (third
   session, see the progress log).
-- [ ] The quest and dialogue debugger (§13–§14). It needs no writer: per-condition results
-  from `fnv-game/src/cond.rs` and `dialogue.rs` (`can_say_explained`).
+- [ ] The quest and dialogue debugger (§13–§14). Dialogue core done in the fourth
+  session (`editor why`); open: the quest view, history (§13.3), the stuck-quest helper,
+  checkpoints, "what if" (§14.4).
 - [ ] The record property panel (§8): needs a UI toolkit (bevy_egui; add it to
   docs/design/dependencies.md first).
 - [ ] Terrain (§9) and navmesh (§10) editing: later phases.
@@ -332,6 +342,36 @@ which needs no writer and could start any time).
   Data's. The engine passes the mods folder (`GameData::open_for_plugins_in`). Unit test
   `mods_folder_archives_follow_their_plugins`; no smoke, since an archive cannot be
   committed.
+
+### 2026-11-06 (fourth session): main merged, the dialogue debugger's core
+
+- `origin/main` merged (406 commits, no conflicts; `tools/smoke verify` fine).
+- **One evaluation for the game and the debugger** (§14.3). `Game::eval_conditions`
+  returns each condition's value, operand, result and run-on reference
+  (`cond::CondResult`); `conditions_pass` is `cond::combine_results` over it, and
+  `explain_conditions` (runner and `run_info` diagnostics) formats it, so it now sets the
+  condition target as the game does (before, it had its own copy of the loop without it).
+- **Line verdicts**: `Game::line_verdict` holds the rules `can_say_as` used and returns
+  the line's conditions or the first rule that blocks it (`dialogue::Blocked`: Say Once
+  said, intelligence, Say Once a Day with the hours, fixed speaker, quest not running,
+  quest conditions, voice type without Allow Default Dialog, the line's conditions);
+  `can_say_as` is its `is_ok`. The grouping of plain lines and Random pools is one
+  function (`dialogue::group_end`) for `select_among` and the explainer.
+- **`fnv_game::debugger`**: `Game::explain_topic` judges every line of a topic in the
+  order the game tries them and gives the line (or Random pool) the game takes now;
+  `explain_topic_text` makes console lines. It follows `select_line` (greetings, SayTo,
+  Say); the chosen-topic rule that passes over follow-up lines is not shown yet.
+  Evaluating runs the condition functions, so a GetRandomPercent condition draws here
+  too [design: read-only otherwise].
+- **`editor why [<topic>]`** (console, editor mode only): the selected reference (the
+  editor's selection, else the console's) as speaker, the player as listener, GREETING
+  when no topic is named; a topic by Editor ID or FormID. By default it lists only the
+  lines written for the speaker (`Game::line_fits`: fixed speaker, voice-type gate and
+  the "who says it" conditions of the line and its quest allow it; display only):
+  Sunny's GREETING goes from 5584 lines to 67. `editor why <topic> all` lists every line.
+- Tests: `the_debugger_agrees_with_the_line_the_game_takes` (every topic of the dialogue
+  fixture, three gate values: the debugger's winners hold the line `select_line` took),
+  `the_debugger_shows_pools_and_why_a_line_is_held_back`; smoke `editor-why`.
 
 ## 1. Goals and non-goals
 

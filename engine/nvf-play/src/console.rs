@@ -555,7 +555,7 @@ fn typing(
                 if terms.is_empty() {
                     c.print("A line is a script function: [reference.]Function argument ...  e.g. player.additem 0000000F 100");
                     c.print("help <text>: records and functions whose name or Editor ID contains it (not case sensitive); \"two words\" for a phrase, several words must all match");
-                    c.print("prid <ref>, coc <cell>, cow <world> <x> <y>, coe <x> <y>, tgm, cls, save <name>, load [name], saves, set <var> to <value>, editor (editor mode on/off), editor select|move|turn|place|delete|undo, editor save <Name.esp>. Click something to select it; calls without a reference run on it.");
+                    c.print("prid <ref>, coc <cell>, cow <world> <x> <y>, coe <x> <y>, tgm, cls, save <name>, load [name], saves, set <var> to <value>, editor (editor mode on/off), editor select|move|turn|place|delete|undo, editor save <Name.esp>, editor why [topic] (why the selected actor says what it says). Click something to select it; calls without a reference run on it.");
                     c.print("Quests and info: sq, sqt, movetoqt [n], sqs <quest>, sqv <quest>, sv, caqs, inv, getavinfo <av>, setgs <setting> <value>, cam, qqq, advlevel (level up), poker [casino] (a poker table)");
                     c.print("Toggles: tcl (collision), tai (actors' AI), tdetect, tgm, tscr (scripts), tg (grass), ts (sky), tws (water), tt (trees), tlv (leaves), ToggleLODLand, ToggleNavmesh, tlik (head tracking), temo (emotions)");
                     c.print("bat <file> (console lines from a text file), rbat [file] (record lines for bat), scof [file] (write the console to a file), slpm [1-5] (a practice lock), [ref.]mfg expression|phoneme|modifier <id> <0-100>, mfg reset");
@@ -584,6 +584,15 @@ fn typing(
             // target (`crate::editor`).
             "editor" if crate::editor::verb_is(rest, "save") => editor.save_asked = Some(rest[4..].trim().to_string()),
             "editor" if crate::editor::verb_is(rest, "open") => editor.open_asked = Some(rest[4..].trim().to_string()),
+            // `editor why [<topic>]`: the dialogue debugger, read-only (`crate::editor::why`).
+            "editor" if crate::editor::verb_is(rest, "why") => match script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
+                _ if !editor.on => c.print("Editor mode is off: type editor first"),
+                Some(rt) => match crate::editor::why(&mut rt.game, editor.selected.or(c.selected), &rest[3..]) {
+                    Ok(lines) => lines.into_iter().for_each(|l| c.print(l)),
+                    Err(e) => c.print(e),
+                },
+                None => c.print("editor why: scripts are not running"),
+            },
             "editor" if crate::editor::verb_is(rest, "find") => match rest[4..].trim() {
                 "" => c.print("editor find <words>: the placeable records named like that"),
                 q => editor.find_asked = Some(q.to_string()),

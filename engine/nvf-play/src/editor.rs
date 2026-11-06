@@ -308,6 +308,36 @@ pub fn verb_is(rest: &str, verb: &str) -> bool {
     rest.split_whitespace().next().is_some_and(|w| w.eq_ignore_ascii_case(verb))
 }
 
+/// `editor why [<topic>] [all]`: why the selected actor says what it says to the player on a
+/// topic (GREETING when none is named), every line in the order the game tries them, with
+/// its conditions' live values (docs/design/editor.md §14, `fnv_game::debugger`).
+pub fn why(game: &mut fnv_game::game::Game, speaker: Option<u32>, words: &str) -> Result<Vec<String>, String> {
+    let speaker = FormId(speaker.ok_or("editor why: select an actor first (click it, or editor select <FormID>)")?);
+    let mut w: Vec<&str> = words.split_whitespace().collect();
+    let every = w.last().is_some_and(|l| l.eq_ignore_ascii_case("all"));
+    if every {
+        w.pop();
+    }
+    let topic = why_topic(game.data, &w.join(" "))?;
+    let lines = game.explain_topic_text(speaker, Some(FormId::PLAYER_REF), topic, every);
+    info!("editor: why {topic} for {speaker}: {} console line(s); {}", lines.len(), lines.last().map(String::as_str).unwrap_or_default());
+    Ok(lines)
+}
+
+/// The topic `editor why` names: an Editor ID or a FormID, GREETING when empty.
+fn why_topic(data: &fnv_game::GameData, words: &str) -> Result<FormId, String> {
+    let w = words.trim();
+    let topic = if w.is_empty() {
+        data.greeting.ok_or("editor why: the load order has no GREETING topic")?
+    } else {
+        crate::console::parse_form_id(w).or_else(|| data.by_edid(w)).ok_or_else(|| format!("editor why: no topic {w:?}"))?
+    };
+    if !data.topic_defs.contains_key(&topic) && !data.topics.contains_key(&topic) {
+        return Err(format!("editor why: {w} is not a topic (DIAL)"));
+    }
+    Ok(topic)
+}
+
 /// Marks a target looked up from the INI (so `open` says it is the last one used).
 const LAST: &str = "\u{1}";
 
@@ -1220,7 +1250,8 @@ fn describe(mut ed: ResMut<Editor>, play: Res<PlayWorld>, sim: Res<SimState>, mu
          Click: select   Drag: move (Shift: up/down, Ctrl: 16-unit grid)   End: set down on what is below\n\
          Arrows: move   Page Up/Down: up/down   Ctrl+Left/Right: turn   Alt: fine steps   Delete: delete   Ctrl+Z: undo   P: place another\n\
          Console: editor find <words> lists things to place; editor place #<n> (or an Editor ID, or a base FormID) places one where the screen's centre points\n\
-         Console: editor open <Name.esp> picks the plugin to save into (editor open lists them); editor save writes into it\n",
+         Console: editor open <Name.esp> picks the plugin to save into (editor open lists them); editor save writes into it\n\
+         Console: editor why [topic] [all] shows why the selected actor says what it says (GREETING when no topic is named)\n",
     );
     match &ed.target {
         Some(t) => text.push_str(&format!("Target plugin: {t}\n")),

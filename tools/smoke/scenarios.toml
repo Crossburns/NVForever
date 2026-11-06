@@ -19730,6 +19730,27 @@ expect = [
 
 
 [[scenario]]
+name = "editor-why"
+source = "local editor design §14: editor why explains the selected actor's lines of a topic (GREETING by default) from the game's own line verdicts; read-only"
+areas = ["editor"]
+paths = ["engine/nvf-play/src/editor.rs", "engine/nvf-play/src/console.rs", "crates/fnv-game/src/debugger.rs", "crates/fnv-game/src/dialogue.rs", "crates/fnv-game/src/cond.rs"]
+# Sunny Smiles, selected with prid; GREETING, then GOODBYE by Editor ID, then a word that
+# names no topic and one that names a form that is not a topic.
+env = { NVFOREVER_HOME = "editor-home-why", NVF_PLAY_TEST_EDITOR = "1", NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "15:editor why;16:editor;17:prid SunnyRef;17.5:editor why;18:editor why GOODBYE all;18.5:editor why NoSuchTopic;19:editor why 00000007;20:editor;20.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'console: Editor mode is off: type editor first', label = "refused outside editor mode" },
+  { re = 'editor: why 0x[0-9A-F]{8} for 0x[0-9A-F]{8}: [1-9]\d* console line\(s\); (Said now: |Nothing to say)', min = 2, label = "GREETING and GOODBYE explained, with the line said now" },
+  { re = 'console: Topic 0x[0-9A-F]{8} \(GREETING\) for 0x[0-9A-F]{8} \(SunnyRef\) talking to ', label = "the speaker and topic named" },
+  { re = 'console: +\d+\. \[(no|SAID|could)\] 0x[0-9A-F]{8}', label = "lines listed with their verdicts" },
+  { re = 'console: +\d+ (pass|FAIL) [A-Za-z]+\(.*\) = ', label = "conditions with live values" },
+  { re = 'console:   [1-9]\d* line\(s\) written for other speakers are not shown', label = "lines for other speakers hidden on GREETING" },
+  { re = 'console: editor why: no topic "NoSuchTopic"', label = "an unknown topic is refused" },
+  { re = 'console: editor why: 00000007 is not a topic \(DIAL\)', label = "a form that is not a topic is refused" },
+]
+
+[[scenario]]
 name = "editor-place-write"
 source = "owner 2026-11-01 (local editor design): editor mode places a new reference and saves it as the plugin's own; editor-place-load finds it, so run them together"
 areas = ["editor"]
