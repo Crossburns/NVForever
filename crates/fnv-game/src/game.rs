@@ -3971,8 +3971,9 @@ impl<'a> Game<'a> {
 
     /// [`Game::say`] for the script functions Say and SayTo: when no line of the topic
     /// passes the fixed-speaker check (the speaker is not the line's fixed speaker, and
-    /// the line has no GetIsID condition of its own), the lines are tried again without
-    /// that check, so the speaker the script names says the fixed speaker's line in its
+    /// the line has no GetIsID condition of its own), judged from the data alone
+    /// ([`Game::no_line_for_speaker`]; a line refused at run time by Say Once or a
+    /// condition does not count), the lines are tried without that check, so the speaker the script names says the fixed speaker's line in its
     /// stead ([`crate::dialogue::Says::InStead`]); a topic with a line the speaker passes
     /// the check for picks as before [hypothesis, fitted to the masters and the story
     /// add-ons: every scripted Say/SayTo of a topic none of whose lines passes the check
@@ -3986,9 +3987,14 @@ impl<'a> Game<'a> {
 
     fn say_with(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool, in_stead: bool) -> Option<FormId> {
         let listener = target.or(Some(FormId::PLAYER_REF));
-        let chosen = self.select_line(speaker, listener, topic).or_else(|| {
-            in_stead.then(|| self.select_line_as(speaker, listener, topic, |_| true, crate::dialogue::Says::InStead)).flatten()
-        });
+        // The fallback is decided from the data, not from select_line's result: a topic
+        // with a line the speaker passes the fixed-speaker check for never falls back, so
+        // a spent Say Once line or a false condition leaves the call unsaid as before.
+        let chosen = if in_stead && self.no_line_for_speaker(speaker, topic) {
+            self.select_line_as(speaker, listener, topic, |_| true, crate::dialogue::Says::InStead)
+        } else {
+            self.select_line(speaker, listener, topic)
+        };
         let Some(info) = chosen else {
             self.emit(EventKind::NoLine { speaker, topic });
             if say_to {

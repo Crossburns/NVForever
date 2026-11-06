@@ -415,8 +415,11 @@ A speaker **can say** a line when:
   [observed 2026-10-31: the Lucky 38 elevator Victor said 0x00165102, whose fixed
   speaker is the entrance Victor and whose condition is GetIsID the elevator Victor;
   observer check 29];
-  - **a script's Say or SayTo** whose topic has no line passing this check tries the
-    topic's lines again without it, so the speaker the script names says a fixed
+  - **a script's Say or SayTo** whose topic has no line passing this check, judged from
+    the data alone (every line names another fixed speaker and has no own-ID condition;
+    a line the speaker passes the check for but cannot say now, because it was said
+    once already or a condition is false, still counts, so that call says nothing as
+    before), tries the topic's lines without the check, so the speaker the script names says a fixed
     speaker's line in that speaker's stead (`Game::say_by_script`, `Says::InStead`;
     issue #965) [hypothesis]. The data behind it [observed 2026-11-06, `fnvtool dialogue
     lines --all` and `script decompile` over FalloutNV.esm and the five add-ons, the

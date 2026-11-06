@@ -257,7 +257,8 @@ impl<'a> Game<'a> {
     ///   another character, GetIsID Narrator), which the narrator says
     ///   [hypothesis: the condition is the run-time rule and the field a leftover;
     ///   docs/handoff/mq-walkthrough-2026-10-27.md]. A script's Say or SayTo whose topic
-    ///   has no line passing this check tries the lines again without it
+    ///   has no line passing this check, judged from the data alone
+    ///   ([`Game::no_line_for_speaker`]), tries the lines without it
     ///   ([`Game::say_by_script`], [`Says::InStead`]);
     /// - the line's quest is running and the quest's own conditions pass [owner
     ///   statement 2026-10-10: every actor has the line as long as the quest is active
@@ -269,6 +270,23 @@ impl<'a> Game<'a> {
     ///   target [documented: Category:Conditions, Run On].
     pub fn can_say(&mut self, speaker: FormId, listener: Option<FormId>, info: FormId) -> bool {
         self.can_say_as(speaker, listener, info, Says::Actor)
+    }
+
+    /// The fixed-speaker (ANAM) check alone, from the data: the line names a fixed speaker
+    /// that is neither `speaker` nor its base, and has no GetIsID condition of its own
+    /// ([`Game::can_say`]). It does not look at run-time state (Say Once, conditions).
+    pub(crate) fn fixed_speaker_refuses(&self, def: &InfoDef, speaker: FormId) -> bool {
+        def.speaker.is_some_and(|s| !def.conditions.iter().any(is_own_id_condition) && s != speaker && Some(s) != crate::functions::base_of(self, speaker))
+    }
+
+    /// Whether every line of `topic` ([`GameData::lines_tried`]) fails the fixed-speaker
+    /// check for `speaker` ([`Game::fixed_speaker_refuses`]), decided from the data alone:
+    /// the case in which a script's Say or SayTo says a fixed speaker's line in the
+    /// speaker's stead ([`Game::say_by_script`]). A topic with no lines is not one.
+    pub(crate) fn no_line_for_speaker(&self, speaker: FormId, topic: FormId) -> bool {
+        let data = self.data;
+        let lines = data.lines_tried(topic);
+        !lines.is_empty() && lines.iter().all(|i| data.infos.get(i).is_some_and(|def| self.fixed_speaker_refuses(def, speaker)))
     }
 
     /// [`Game::can_say`] for an actor or a radio station. A station is not held to a
@@ -295,10 +313,8 @@ impl<'a> Game<'a> {
                 }
             }
         }
-        if let Some(s) = def.speaker.filter(|_| says == Says::Actor && !def.conditions.iter().any(is_own_id_condition)) {
-            if s != speaker && Some(s) != crate::functions::base_of(self, speaker) {
-                return false;
-            }
+        if says == Says::Actor && self.fixed_speaker_refuses(def, speaker) {
+            return false;
         }
         if let Some(q) = def.quest {
             if !self.quests.get(&q).is_some_and(|s| s.running) {

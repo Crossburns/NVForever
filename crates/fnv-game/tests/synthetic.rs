@@ -1676,6 +1676,22 @@ fn a_scripts_say_falls_back_to_a_fixed_speakers_line_when_no_line_passes_the_che
 }
 
 #[test]
+fn a_scripts_say_does_not_fall_back_when_the_speakers_own_line_is_spent() {
+    // Review of #1767: the fallback is decided from the data, not from the run-time
+    // result. The speaker's own Say Once line, once said, leaves the topic with no line
+    // it can say; the other speaker's fixed line beside it is still not said in its
+    // mouth, and the SayTo goes unsaid as before (dialogue.md §4).
+    let speaker = FormId(NPC_REF);
+    let mut f = fixture();
+    f.data.infos.get_mut(&FormId(INFO_A)).unwrap().speaker = Some(FormId(NPC_AUTO));
+    f.data.infos.get_mut(&FormId(INFO_B)).unwrap().say_once = true;
+    let mut g = game(&f);
+    g.new_game();
+    assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), true), Some(FormId(INFO_B)));
+    assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), true), None);
+}
+
+#[test]
 fn an_actor_whose_traits_come_from_a_leveled_list_speaks_with_the_picked_entrys_voice() {
     // Issue #1051: generic actors take race, sex and voice type from a leveled list of
     // male and female entries (template flag "Traits"). The voice is the entry's, the
