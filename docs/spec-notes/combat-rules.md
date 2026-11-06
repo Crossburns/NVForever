@@ -266,6 +266,24 @@ each the identity by default. Reading PERK records is a later step.
   `actors_near(point, radius)`.
 - **A shot.** `shot::fire` spawns the chain's projectiles per shot, each with its own
   direction in the cone.
+- **Where an arcing round leaves** (issue #1471). The player's shots leave the eye along
+  the view, except an arcing explosive missile (a PROJ of type Missile with gravity and
+  an explosion: the grenade launchers' rounds), which leaves the weapon's muzzle along the
+  view when nothing stands between the eye and the muzzle. The original's 40 mm round
+  started 110 / 125 / 138 units above the feet and 51-55 units ahead at aim 0 / 15 / 30
+  degrees up [observed: o26_gl, 2026-11-06, the first positions of its projectile
+  reference]; our Grenade Launcher's muzzle is 110 / 126 / 142 above the feet and 60-64
+  ahead [observed: smoke `grenade-launcher-arc`, debug log], while the eye stays about
+  118 above. From the eye ours first hit the ground 840 / 1,841 / 2,763 units out after
+  0.48 / 1.09 / 1.82 s, against the original's 793 / 1,944 / 2,815 after 0.45 / 1.16 /
+  1.86 s: speed (1,750) and gravity (1.5 × 686.7) were the same, the launch point was not
+  [observed]. From the muzzle ours lands 812 / 1,864 / 2,801 units out after 0.46 / 1.10 /
+  1.85 s [observed: smoke `grenade-launcher-arc`, no spread]. The rest of the gap at 15
+  degrees is the launch angle: the original's left 1.2 degrees above the aim there (0.3
+  below at 0, 0.3 above at 30) [observed]; ours leaves along the aim [hypothesis: the
+  original's small offsets are its aim spread]. Thrown weapons (lobbers) still leave the eye: the original's frag
+  grenade started 118 above the feet and 52 ahead [observed: o26_gl frag0], as high as our
+  eye.
 - **Flight.**
   - Beams and hitscan projectiles trace at once. The hit is delivered after distance ÷
     speed; beams deliver at once.
@@ -277,9 +295,32 @@ each the identity by default. Reading PERK records is a later step.
 - **Explosions.**
   - Without Alt. Trigger, the explosion goes off on impact.
   - With it, a lobber bounces (× its bouncy multiplier, else `default_bounce`) and
-    settles. It explodes when its timer runs out, or, when it has a proximity radius,
+    settles; a thrown grenade (a fuse, no proximity, not Detonates) rolls instead, below. It explodes when its timer runs out, or, when it has a proximity radius,
     once armed (after the timer) when an actor other than the thrower comes within
     the radius.
+  - **A thrown grenade rolls** (issue #1785; owner 2026-11-06: only thrown grenades
+    roll, launcher rounds go off where they first land). At a contact the speed into the
+    surface keeps `fGrenadeRestitution` of itself, out of it (0.01 in FalloutNV.esm
+    [observed]; its meaning [hypothesis: from its name]), the speed along it keeps
+    `grenade_roll_keep` (0.9) at the first landing, and the grenade goes on along the
+    surface; on ground (a normal at least 0.7 up) it rolls, its speed falling as
+    e^(−0.66 × t) (`grenade_roll_damping`), until it is slower than 40 units/s or its fuse
+    ends. Both shares are fitted to the original's frag grenade [observed: o26_gl frag0:
+    it touched down 513 units out after 0.58 s, rolled off at about 636 units/s and
+    slowed at 0.66 a second (rms 2.6 units), to 1,206 units by 2.47 s; the 0.9 is its
+    speed just after over just before]. `fGrenadeFriction` (5.0 in FalloutNV.esm) is
+    not used [hypothesis: a Havok friction; our grenade is no rigid body]. The grenade
+    model's own body (`GrenadeFrag.NIF` bhkRigidBody: mass 5, friction 0.5, restitution
+    0.4, linear damping 0.1, angular damping 0.05) is not used either [observed values].
+  - **Throw speed, open** (issue #1785). Ours throws at the PROJ speed (1,200 for
+    `GrenadeFragProjectile`) times the throwing perks. The original's left at about
+    1,030 units/s and slowed in flight (a fit with damping 0.40 a second, gravity 686.7,
+    rms 3 units; without damping 923 units/s, rms 4.4) [observed: o26_gl frag0, times
+    from GameHour, which ran at half the real rate in that campaign: the 40 mm round's
+    1,750 units/s and 1.5 × 686.7 both come out at half and a quarter on it; the "about
+    470 units/s" first written for the frag is that clock's figure]. Nothing in the data
+    gives 1,030 or the slowing (no throw GMST in the masters but `fGrenadeFriction` and
+    `fGrenadeRestitution`), so ours keeps the PROJ speed.
   - Detonating projectiles wait for `detonate()` (C-4).
   - Anything else ends after 60 s [design].
 - **Melee swing.** A fan of `melee_rays` rays over ±`melee_arc_deg` at the eye, as
