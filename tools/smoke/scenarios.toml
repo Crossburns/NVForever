@@ -19175,3 +19175,19 @@ order = [[
   "language: en",
   "settings: language English",
 ]]
+
+[[scenario]]
+name = "silver-rush-volunteer"
+source = "#1550: the Silver Rush's entry scene: the player walks into VFSVanGraffIntroTrigger, Gloria talks with the customer and tells Jean-Baptiste \"Do it.\", and his Use Weapon package (VFSJeanBaptisteShootVolunteerPackage, Always Hit) shoots the kneeling volunteer; the volunteer's OnHit (SCPT 0x0012424D) kills and disintegrates him and the scene goes on. Scripted shots aim at the target's posed chest, so a kneeling target is hit"
+note = "the volunteer (VFSVanGraffVolunteerREF 0x00124122) kneels restrained on 0x00124256; aimed at a standing actor's chest height, the shot went over him into the wall and the quest variable stayed at 5 (soft-lock)"
+areas = ["combat", "scripts", "ai"]
+paths = ["engine/nvforever/src/use_weapon.rs", "crates/fnv-game/src/use_weapon.rs", "crates/fnv-game/src/ash_piles.rs"]
+env = { NVF_PLAY_TEST_GOTO = "4:2964:-3375:770", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "FreesideSilverRush", "--play", "--hour", "12", "--no-voice"]
+run_seconds = 70
+order = [[
+  { re = 'use weapon: VFSJeanBaptisteCuttingREF 0x0010D8E5 uses WeapLaserRifle on VFSVanGraffVolunteerREF', label = "Jean-Baptiste takes aim at the volunteer" },
+  { re = 'combat: hit 0x00124122 on ', label = "the shot hits the kneeling volunteer" },
+  { text = "OnHit of FalloutNV.esm|SCPT 0x0012424D ran on Some(0x00124122)", label = "the volunteer's OnHit runs the scene on" },
+  { re = 'ash pile: .* replaces the body of 0x00124122', label = "he is disintegrated" },
+]]
