@@ -1329,3 +1329,17 @@ The numbers above stay put so links to them hold; each item here gives its own p
     and the counter follow? (b) what does Reset restore with traits taken? (c) `_TextAlpha` and
     `_enabled` on a trait that cannot be taken. (d) a real wheel over the list. (e) the
     description scrolled to value 8. (f) why did the capture's list lack two traits?
+
+## Added 2026-11-06 (burning in first person, issue #1772)
+
+92. **What does burning draw on the first-person arms?** (P2; effect-shaders.md §4.)
+    NVForever puts shader overlays only on the third-person body and leaves the
+    first-person arms alone [design: `effect_shaders.rs::play`]. Whether the original
+    puts Flames01's membrane, flames or add-on models on the arms is unconfirmed
+    [hypothesis]. Capture the same first-person view before and during
+    `player.PlayMagicShaderVisuals 0005F9B6`, with a weapon lowered and then raised;
+    switch to third person while it plays for comparison. Do the arms change colour,
+    carry flame sprites, or emit particles, and does switching perspective change that?
+    Answered in part 2026-11-06 (private job ov_burn, the Prospector Saloon) [observed]: with
+    the weapon holstered first person shows nothing of the burn, third person shows flames at
+    the head, and back in first person nothing again. The raised weapon's arms are still open.
