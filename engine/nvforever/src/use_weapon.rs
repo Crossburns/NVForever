@@ -225,6 +225,11 @@ pub(crate) fn shoot(
         let radius = if target == FormId::PLAYER_REF.0 { player_radius? } else { body(target)?.radius };
         Some(mine.room([tfeet[0], tfeet[1]], radius))
     };
+    // The two bodies' radii summed (`npc_combat::melee_spacing`).
+    let radii = |me: u32, target: u32| -> Option<f32> {
+        let radius = if target == FormId::PLAYER_REF.0 { player_radius? } else { body(target)?.radius };
+        Some(body(me)?.radius + radius)
+    };
     let s = &mut *shooters;
     let mut still: Vec<u32> = Vec::new();
     with_world(rt, &mut sim, |rt| {
@@ -266,7 +271,7 @@ pub(crate) fn shoot(
                 melee => {
                     still.push(id);
                     let x = MeleeCtx { c, me, name: &name, target_name: &target_name, global, hold, feet, eyes, tfeet, teyes, places: &places, dt, scale };
-                    let room = gap(id, w.target.0, tfeet);
+                    let room = gap(id, w.target.0, tfeet).zip(radii(id, w.target.0));
                     swing(g, s, &mut times, &x, &w, melee, room, (&mut strike, &mut anims));
                     continue;
                 }
@@ -439,7 +444,7 @@ fn swing(
     x: &MeleeCtx,
     w: &fnv_game::use_weapon::WeaponUse,
     arm: Arm,
-    room: Option<f32>,
+    room: Option<(f32, f32)>,
     (strike, anims): (&mut MessageWriter<ActorStrike>, &mut MessageWriter<PlayAttack>),
 ) {
     let (c, me, id) = (x.c, x.me, x.me.0);
@@ -451,8 +456,8 @@ fn swing(
     let away = (x.feet[0] - x.tfeet[0]).hypot(x.feet[1] - x.tfeet[1]);
     // How near it closes, and within what its blows land (`npc_combat`'s spacing).
     let (stop, within) = match (creature_damage, room) {
-        (Some(_), room) => creature_spacing(room.map(|r| away - r), reach),
-        (None, Some(r)) => melee_spacing(away - r, reach),
+        (Some(_), room) => creature_spacing(room.map(|(r, _)| away - r), reach),
+        (None, Some((r, radii))) => melee_spacing(away - r, radii, reach),
         (None, None) => engage(Some(reach), None),
     };
     if let Some(u) = g.weapon_uses.get_mut(&me) {

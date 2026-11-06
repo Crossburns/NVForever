@@ -150,7 +150,12 @@ its RNAM 192 gives: open, to measure again) and the giant rat (two starts, 84 ag
 
 The people's rows (same rounds: knife 95, sledgehammer 120, super sledge 150, bumper
 sword 175, lead pipe 180, about 45 + 107 × Reach) moved `fCombatDistance` to 107 and
-`melee_spacing` to the bodies' whole radii (combat-rules.md §10).
+`melee_spacing` to the bodies' whole radii (combat-rules.md §10). Ours mostly begins its
+blows once stopped, so the stop (people and creatures) moved from 0.9 of the strike
+distance to 6 units inside it
+(`MELEE_STOP_SHORT`, the knife rows' start 96 against closest 92), its walk ending 0.9
+of that in: with the old 0.9 stop Violet's dogs began at 115 (original 133), now 133-134
+[observed: smoke combat-dogs, 2026-11-06].
 
 ## 4. Encounters
 

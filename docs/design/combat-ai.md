@@ -101,8 +101,8 @@ closes in again (`Awarenesses::engage`):
 | Fighting with | Stops at | Closes in again beyond |
 |---|---|---|
 | a gun | 80 % of its reach (§16: WEAP max range × style mult, within the projectile's range), between 400 and 2,500 units, clear of its own blast, never beyond 90 % of its reach | its reach (at most 3,125) |
-| melee, a person, bodies measured | 0.9 × its reach (`fCombatDistance` 107 × scale × WEAP Reach) plus the two bodies' radii, centre to centre, never nearer than a 6-unit gap between the bodies | its reach plus the radii (at least a 24-unit gap): a knife 97.5, a lead pipe 178 against the original's 95 and 180 [observed: o14_reach, 2026-11-01, combat-rules.md §10] |
-| melee, a creature | 0.9 × (RNAM + its skeleton's reach beyond it) × scale, centre to centre, never nearer than a 6-unit gap | (RNAM + its skeleton's reach beyond it) × scale: a gecko 81, a bighorner bull 232, as the original's swing starts [observed: o14_reach, o12_reach; npc-behaviour-compare.md §3] |
+| melee, a person | 6 units short of its reach (`fCombatDistance` 107 × scale × WEAP Reach) plus the two bodies' radii (two people's, 44, until the bodies are known), centre to centre, never nearer than a 6-unit gap between the bodies; the walk ends 10 % inside that, where it mostly swings (a lead pipe 170, the original 180: combat-rules.md §10, open) | its reach plus the radii (at least a 24-unit gap): a knife 97.5, a lead pipe 178 against the original's 95 and 180 [observed: o14_reach, 2026-11-01, combat-rules.md §10] |
+| melee, a creature | 6 units short of (RNAM + its skeleton's reach beyond it) × scale, centre to centre, never nearer than a 6-unit gap | (RNAM + its skeleton's reach beyond it) × scale: a gecko 81, a bighorner bull 232, as the original's swing starts [observed: o14_reach, o12_reach; npc-behaviour-compare.md §3] |
 | melee without bodies to measure | 80 % of its reach | its reach |
 
 The bodies are the blocks `nvf_play::blocking` keeps (a dog's reaches well in front of

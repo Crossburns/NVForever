@@ -579,7 +579,17 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   attacker's body [hypothesis: the reading of the 45 below]: an NPC strikes within its
   reach plus the two bodies' radii centre to centre (`npc_combat::melee_spacing`; two
   people, 22 + 22: knife 97.5, sledgehammer 124, super sledge 151, bumper sword 172,
-  lead pipe 178) and stops at 0.9 × its reach plus the radii; the player's fan of rays
+  lead pipe 178), and stops 6 units inside that (`MELEE_STOP_SHORT`, fitted to the knife
+  troopers' 96 start and 92 closest), closing in again beyond it; the bodies, until known,
+  are two people's (44). **Open:** ours mostly swings once stopped (a blow is rolled on
+  the style's attack chance; a failed roll holds it for the hold timer), and the AI's
+  walk ends `fnv_ai::alert::STOP_SHORT` (0.9) of its stop in, so its blows begin short of
+  the original's: Violet with a lead pipe at 170 on open ground (151-158 among her camp's
+  rocks) against 180 [observed: smoke melee-reach-lead-pipe, 2026-11-06]. Given its strike distance to stop at instead, she
+  swung at 176, but with no band between stopping and closing in again she stopped and
+  closed in again every frame as her body's radius moved with the swing (271 AI lines in
+  30 s); a knife, whose walk ends only 10 units inside, could stop outside its reach. The
+  fix belongs to the AI's walk (swing on the way in, or end the walk at the stop). The player's fan of rays
   runs from the eye out to the reach plus the player's capsule radius (22: a knife 75.5,
   as long as with the old 150 × 0.5).
   Measured 2026-11-01 (campaign o14_reach, `nvfairport` runway, god-mode player standing

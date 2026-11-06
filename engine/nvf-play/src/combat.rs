@@ -1292,7 +1292,9 @@ impl Combat {
                 rounds_per_shot: 1,
                 rounds: u32::MAX / 2,
                 reach: crate::vats_mode::MELEE_MARK_REACH,
-                melee_reach: damage::melee_reach(&self.rules, w, 1.0),
+                // From the eye, as the player's swing reaches (`melee`): the reach is
+                // from the body, the capsule's radius further.
+                melee_reach: damage::melee_reach(&self.rules, w, 1.0) + fnv_phys::CharacterParams::default().radius,
             });
         }
         // A gun needs to be equipped: the Fists are melee.
@@ -1445,7 +1447,8 @@ pub struct VatsWeapon {
     /// `vats_mode::REACH`; a thrown weapon's no farther than it throws; a melee
     /// weapon's `vats_mode::MELEE_MARK_REACH`.
     pub reach: f32,
-    /// A melee weapon's own reach (`damage::melee_reach`), units; 0 otherwise.
+    /// A melee weapon's own reach from the eye (`damage::melee_reach` plus the player's
+    /// capsule radius), units; 0 otherwise.
     pub melee_reach: f32,
 }
 
