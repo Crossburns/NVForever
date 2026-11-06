@@ -12,6 +12,7 @@ use fnv_game::game::{ActMode, Game, GameConfig};
 use fnv_game::trace::EventKind;
 use fnv_game::GameData;
 use fnv_script::FunctionTable;
+use fnv_sim::world::Outcome;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::Value as Json;
 
@@ -23,6 +24,7 @@ const GUN_NOW: FormId = FormId(0x401);
 const GUN_LATER: FormId = FormId(0x402);
 const LONE_REF: FormId = FormId(0x403);
 const P: FormId = FormId::PLAYER_REF;
+const GLOBAL: u32 = 0x800;
 
 fn f32b(v: f32) -> Vec<u8> {
     v.to_le_bytes().to_vec()
@@ -54,7 +56,8 @@ fn plugin_bytes() -> Vec<u8> {
     ]
     .concat();
     let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &refs));
-    [tes4(), top(b"ACTI", &actis), top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat())))].concat()
+    let glob = record(b"GLOB", 0, GLOBAL, &[sub(b"EDID", z("TestGlobal")), sub(b"FNAM", vec![b's']), sub(b"FLTV", 0f32.to_le_bytes().to_vec())]);
+    [tes4(), top(b"GLOB", &glob), top(b"ACTI", &actis), top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat())))].concat()
 }
 
 struct Fixture {
@@ -163,4 +166,46 @@ fn a_waiting_child_survives_a_save_and_load() {
     h.tick();
     assert_eq!(activations(&h, GUN_LATER), vec![WIRE_REF]);
     assert!(h.due_children.is_empty());
+}
+
+/// #1615: the player's own activation of something without an OnActivate block has the
+/// shared activation's consequences, each once: the receiver's switch, what the player is
+/// activating (IsWaterObject), the action reference, the activate children.
+#[test]
+fn the_players_own_activation_has_every_consequence_once() {
+    let f = fixture();
+    let mut g = game(&f);
+    let done = g.default_activation_by_hand(WIRE_REF).unwrap().expect("not refused");
+    assert_eq!(done.activation.outcome, Outcome::Activated);
+    assert_eq!(done.item_added_event, None);
+    assert!(matches!(g.events[done.activated_event].kind, EventKind::Activated { reference, by, .. } if reference == WIRE_REF && by == P));
+    assert_eq!(activations(&g, WIRE_REF), vec![P]);
+    assert_eq!((g.radio_switches(WIRE_REF), g.radio_on(WIRE_REF)), (1, true));
+    assert_eq!(g.activating(P), Some(WIRE_REF));
+    assert_eq!(g.action_refs.get(&WIRE_REF), Some(&P));
+    assert_eq!(g.due_children.len(), 2);
+    // Switched back: a receiver is a toggle.
+    g.default_activation_by_hand(WIRE_REF).unwrap().expect("not refused");
+    assert_eq!((g.radio_switches(WIRE_REF), g.radio_on(WIRE_REF)), (2, false));
+    assert_eq!(activations(&g, WIRE_REF), vec![P, P]);
+}
+
+/// #1615: the extender's OnActivate handlers hear the player's own activation once, as they
+/// hear `Game::activate`'s, and also when it is then refused [documented: NVSE Event
+/// Handling].
+#[test]
+fn the_extender_hears_the_players_own_activation_once() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.run_source("SetEventHandler \"OnActivate\" (begin function {ref rTarget, ref rActor}\nset TestGlobal to TestGlobal + 1\nend)", Default::default()).expect("compiles");
+    let heard = |g: &Game| g.world.global(FormId(GLOBAL)).unwrap();
+    g.default_activation_by_hand(WIRE_REF).unwrap().expect("not refused");
+    assert_eq!(heard(&g), 1.0);
+    g.activate(P, WIRE_REF, ActMode::Hand).unwrap();
+    assert_eq!(heard(&g), 2.0);
+    g.extra.entry(GUN_NOW).or_default().destroyed = true;
+    assert!(g.default_activation_by_hand(GUN_NOW).unwrap().is_none(), "a destroyed activator refuses");
+    assert_eq!(heard(&g), 3.0);
+    assert!(activations(&g, GUN_NOW).is_empty());
+    assert_eq!(g.radio_switches(GUN_NOW), 0);
 }

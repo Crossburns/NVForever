@@ -157,6 +157,10 @@ pub struct EngineSnapshot {
     /// The weapon in hand and the rounds in its magazine.
     #[serde(default)]
     pub magazine: Option<(u32, u32)>,
+    /// The type of round in that magazine (an Ammo Swap's pick; #1574). Absent in older
+    /// saves: the weapon's default pick, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub magazine_ammo: Option<u32>,
     /// The Pip-Boy's active quest.
     #[serde(default)]
     pub active_quest: Option<u32>,
@@ -761,8 +765,13 @@ fn engine_snapshot(world: &World) -> EngineSnapshot {
         e.always_run = c.always_run;
     }
     e.flashlight = world.get_resource::<crate::flashlight::Flashlight>().is_some_and(|f| f.on);
+    e.magazine_ammo = world.get_resource::<crate::combat::Combat>().and_then(|c| c.magazine_ammo_for_save());
     e.magazine = world.get_resource::<crate::combat::Combat>().and_then(|c| c.magazine_for_save());
-    e.active_quest = world.get_resource::<crate::pipboy::data::DataState>().and_then(|d| d.active_quest());
+    let game = world.get_resource::<ScriptState>().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+    e.active_quest = match world.get_resource::<crate::pipboy::data::DataState>() {
+        Some(d) => d.active_quest(game),
+        None => game.and_then(|g| g.ui.active_quest).map(|q| q.0),
+    };
     e.coop = world.get_resource::<CoopEngineState>().map(|c| c.0.clone()).unwrap_or_default();
     let hooks = world.resource::<SaveHooks>().0.clone();
     for h in hooks {
@@ -781,6 +790,7 @@ fn header(world: &World, kind: SaveKind, game: &fnv_game::game::GameSnapshot, en
     h.play_seconds = game.time;
     if let Ok(c) = sim.world.calendar() {
         (h.game_year, h.game_month, h.game_day, h.game_hour) = (c.year as u32, c.month as u32, c.day as u32, c.hour);
+        h.game_days_passed = Some(c.days_passed);
     }
     h.player_name = game.player.name.clone().unwrap_or_else(|| "Courier".into());
     if let Some(rt) = world.resource::<ScriptState>().rt.as_ref() {
@@ -829,7 +839,7 @@ fn apply_engine(world: &mut World) {
         f.on = e.flashlight;
     }
     if let (Some(m), Some(mut c)) = (e.magazine, world.get_resource_mut::<crate::combat::Combat>()) {
-        c.restore_magazine(m);
+        c.restore_magazine(m, e.magazine_ammo);
     }
     if let Some(q) = e.active_quest {
         crate::pipboy::data::DataState::restore_active_quest(world, q);
@@ -898,6 +908,7 @@ pub fn read_for_load(path: &std::path::Path, current: &[PluginEntry]) -> Result<
     let dropped_game = body.game.drop_gone(gone);
     let e = &mut body.engine;
     e.magazine = e.magazine.and_then(|(w, n)| remap.map(w).map(|w| (w, n)));
+    e.magazine_ammo = e.magazine_ammo.and_then(|a| remap.map(a));
     e.active_quest = e.active_quest.and_then(|q| remap.map(q));
     for c in &mut e.coop {
         c.magazine = c.magazine.and_then(|(w, n)| remap.map(w).map(|w| (w, n)));
@@ -928,7 +939,7 @@ mod tests {
     fn an_engine_snapshot_without_new_fields_still_reads() {
         let e: EngineSnapshot = serde_json::from_str(r#"{"format":"nvf.engine.state/1"}"#).unwrap();
         assert_eq!(e, EngineSnapshot { format: ENGINE_FORMAT.into(), ..default() });
-        let full = EngineSnapshot { format: ENGINE_FORMAT.into(), third_person: true, distance: 150.0, sneak: true, always_run: true, flashlight: true, magazine: Some((0x1234, 7)), active_quest: Some(0x104C1C), extra: [("sky".to_string(), serde_json::json!({"weather": "NVWastelandClear"}))].into(), coop: vec![CoopEngine { slot: 3, third_person: true, distance: 90.0, sneak: true, always_run: false, flashlight: true, magazine: Some((0x1235, 2)) }] };
+        let full = EngineSnapshot { format: ENGINE_FORMAT.into(), third_person: true, distance: 150.0, sneak: true, always_run: true, flashlight: true, magazine: Some((0x1234, 7)), magazine_ammo: Some(0x2345), active_quest: Some(0x104C1C), extra: [("sky".to_string(), serde_json::json!({"weather": "NVWastelandClear"}))].into(), coop: vec![CoopEngine { slot: 3, third_person: true, distance: 90.0, sneak: true, always_run: false, flashlight: true, magazine: Some((0x1235, 2)) }] };
         let back: EngineSnapshot = serde_json::from_str(&serde_json::to_string(&full).unwrap()).unwrap();
         assert_eq!(back, full);
         // One player writes no `coop`.

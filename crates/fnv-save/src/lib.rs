@@ -114,6 +114,12 @@ pub struct SaveHeader {
     pub game_month: u32,
     pub game_day: u32,
     pub game_hour: f32,
+    /// The GameDaysPassed global, to start the sky on the save's day, as `game_hour` starts
+    /// it at the save's hour: its weather rolls count the hours from there. None in a save
+    /// made before the field existed: the sky starts on `--day` or the plugins' day and
+    /// jumps to the game's once the clock moves, which can roll the weather.
+    #[serde(default)]
+    pub game_days_passed: Option<f32>,
     pub player_name: String,
     pub level: u32,
     pub location: String,
@@ -139,6 +145,7 @@ impl SaveHeader {
             game_month: 0,
             game_day: 0,
             game_hour: 0.0,
+            game_days_passed: None,
             player_name: String::new(),
             level: 1,
             location: String::new(),
@@ -613,6 +620,21 @@ mod tests {
         let mut old = serde_json::to_value(&h).unwrap();
         old.as_object_mut().unwrap().remove("coop");
         assert!(serde_json::from_value::<SaveHeader>(old).unwrap().coop.is_empty());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// The save's day reads back; a header written before the field existed has none.
+    #[test]
+    fn days_passed_in_the_header() {
+        let mut h = header();
+        h.game_days_passed = Some(25.375);
+        let d = dir("days");
+        let p = path_of(&d, "days").unwrap();
+        write(&p, &h, b"", b"{}", false).unwrap();
+        assert_eq!(read_header(&p).unwrap().header.game_days_passed, Some(25.375));
+        let mut old = serde_json::to_value(&h).unwrap();
+        old.as_object_mut().unwrap().remove("game_days_passed");
+        assert_eq!(serde_json::from_value::<SaveHeader>(old).unwrap().game_days_passed, None);
         let _ = fs::remove_dir_all(&d);
     }
 

@@ -217,7 +217,7 @@ nothing to act on (perk-entry-points.md §12).
 | Concentrated Fire | FalloutNV | perk | entry points 33 Concentrated Fire | nothing to change (VATS mode never misses) (33) |
 | Confirmed Bachelor | FalloutNV | perk | entry points 0 Weapon Damage; conditions in INFO | works |
 | Cowboy | FalloutNV | perk | entry points 0 Weapon Damage | works |
-| Demolition Expert | FalloutNV | perk | entry points 0 Weapon Damage | works |
+| Demolition Expert | FalloutNV | perk | entry points 0 Weapon Damage | works, on blasts too (perk-entry-points.md §2, "Blasts") |
 | Educated | FalloutNV | perk | entry points 10 Gained Skill Points | works |
 | Entomologist | FalloutNV | perk | entry points 0 Weapon Damage | works |
 | Explorer | FalloutNV | perk | quest stage Generic@50; conditions in INFO | works |
@@ -231,7 +231,7 @@ nothing to act on (perk-entry-points.md §12).
 | Gunslinger | FalloutNV | perk | entry points 8 To Hit Chance | nothing to change (VATS mode never misses) (8) |
 | Hand Loader | FalloutNV | perk | entry points 57 Ammo Item Chance; conditions in RCPE | works |
 | Heave, Ho! | FalloutNV | perk | entry points 59 Throwing Velocity | built by 2026-10-25 (59) |
-| Hit the Deck | FalloutNV | perk | entry points 56 DT defender | works |
+| Hit the Deck | FalloutNV | perk | entry points 56 DT defender | works; not against a blast with no weapon behind it [hypothesis: a placed mine; perk-entry-points.md §2, "Blasts"] |
 | Hunter | FalloutNV | perk | entry points 2 My Crit Damage | works |
 | Infiltrator | FalloutNV | perk | entry points 32 Ignore Broken Lock | built by 2026-10-25 (32) |
 | Intense Training | FalloutNV | perk | quest stage Generic@101, Generic@102, Generic@103, Generic@104, Generic@105, Generic@106, Generic@107, Generic@108, Generic@109, Generic@110 | works |
@@ -283,7 +283,7 @@ nothing to act on (perk-entry-points.md §12).
 | Tag! | FalloutNV | perk | quest stage Generic@40 | works |
 | Terrifying Presence | FalloutNV | perk | conditions in INFO | works through scripts / conditions |
 | The Professional | FalloutNV | perk | entry points 2 My Crit Damage | works |
-| Toughness | FalloutNV | perk | entry points 56 DT defender | works |
+| Toughness | FalloutNV | perk | entry points 56 DT defender | works, on blasts too (perk-entry-points.md §2, "Blasts") |
 | Travel Light | FalloutNV | perk | entry points 42 Run Speed | built by 2026-10-25 (42) |
 | Unstoppable Force | FalloutNV | perk | entry points 0 Weapon Damage | works |
 | Vigilant Recycler | FalloutNV | perk | entry points 57 Ammo Item Chance; conditions in RCPE | works |
@@ -347,7 +347,7 @@ nothing to act on (perk-entry-points.md §12).
 | Steady Chem | FalloutNV | other | entry points 34 Gun Spread | works |
 | Stealth Girl | FalloutNV | other | entry points 2 My Crit Damage; conditions in ALCH | works |
 | Strength Implant | FalloutNV | other | ability IncreaseStrength | works |
-| Sub-Dermal Armor | FalloutNV | other | entry points 56 DT defender | works |
+| Sub-Dermal Armor | FalloutNV | other | entry points 56 DT defender | works, on blasts too (perk-entry-points.md §2, "Blasts") |
 | Survival Expert | FalloutNV | other | ability IncreaseCritChance, IncreasePoisonResistance, IncreaseRadiationResistance | works |
 | Survival Expert | FalloutNV | other | ability IncreasePoisonResistance, IncreaseRadiationResistance, IncreaseSkillSneak, IncreaseSkillSpeech | works |
 | Survival Expert | FalloutNV | other | ability IncreaseDamageResistance, IncreasePoisonResistance, IncreaseRadiationResistance | works |

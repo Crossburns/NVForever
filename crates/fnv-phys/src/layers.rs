@@ -169,9 +169,26 @@ pub fn character_ignores() -> LayerSet {
     ])
 }
 
+/// Layers a shot passes: what the character passes ([`character_ignores`]) and the
+/// invisible walls, which stop actors but not bullets, lasers or thrown weapons (the
+/// owner, issue #1545) [design].
+pub fn shot_ignores() -> LayerSet {
+    let mut s = character_ignores();
+    s.insert(INVISIBLE_WALL);
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shots_pass_invisible_walls_that_stop_characters() {
+        assert!(!character_ignores().contains(INVISIBLE_WALL));
+        assert!(shot_ignores().contains(INVISIBLE_WALL));
+        assert!(character_ignores().layers().iter().all(|&l| shot_ignores().contains(l)));
+        assert!(!shot_ignores().contains(STATIC) && !shot_ignores().contains(UNIDENTIFIED));
+    }
 
     #[test]
     fn names_match_numbers() {

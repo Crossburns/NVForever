@@ -251,7 +251,10 @@ each the identity by default. Reading PERK records is a later step.
 - **Trigger.** A semi-automatic weapon needs a fresh pull per shot; an automatic one
   fires while the trigger is held.
 - **Empty magazine.** Pulling the trigger on an empty magazine reloads when ammo is
-  carried (`auto_reload` [design]), else gives one dry click per pull.
+  carried (`auto_reload` [design]), else gives one dry click per pull. A magazine
+  emptied after the pull, during the spin-up or wind-up, fires nothing: that pull is
+  answered the same way, and its shot is not counted [design: `attack.rs`, #1613]. A
+  free fourth shot (a "Regenerate Ammo (shots)" mod) needs no round and still leaves.
 - **Ammo.** A shot takes `ammo_use` rounds.
 - **Regenerating weapons** gain a round every `regen_rate` seconds and cannot be
   reloaded by hand [documented].
@@ -368,11 +371,29 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
     `CombatForms::ammo_for` (the first carried entry of its list).
   - The magazine is a view of the carried rounds. A shot removes `ammo_use` rounds
     from the inventory; a reload moves nothing.
+  - The magazine never holds more than is carried, checked every frame, holstered or
+    not: rounds dropped, sold or taken by a script are gone from the gun too, also a
+    magazine a script set above that with SetPlayerCurrentAmmoRounds [design:
+    `combat.rs`, #1612]; the original may keep such a count, nobody has seen it
+    [hypothesis]. Regenerating weapons and god mode's full magazine are left out: their
+    rounds are not in the inventory.
   - A weapon with no ammo but a projectile (grenades) spends itself.
   - A newly equipped weapon starts loaded with what is carried [design].
 - **Controls.** Use is the trigger; the press that draws the weapon does not fire. A
-  Ready Item tap reloads, and Ammo Swap takes the next carried ammo, then reloads
-  [design].
+  Ready Item tap reloads. Ammo Swap takes the next carried ammo and empties the
+  magazine; the old type's rounds stay in the inventory, unfired, until a swap comes back
+  to them. What follows depends on the cycle [design: `Cycle::swap_ammo`, #1613]:
+  - Ready: the reload starts at once.
+  - Spin-up or wind-up: the shot on its way is dropped and the reload starts at once.
+  - Between shots: the reload starts when the wait ends, with no pull, so a swap never
+    brings the next shot forward. Holstered first, the wait and the reload freeze; on
+    the redraw the wait ends and the reload starts, with no pull [design: the cycle
+    steps only with the weapon out].
+  - During a reload: it goes on, on its own clock, and takes the new ammo. Round by
+    round, the rounds already in are out again and the rest are of the new type.
+  - Closing after a round-by-round reload, or jammed: the magazine stays empty and the
+    next pull reloads.
+  - God mode: the magazine stays full and nothing reloads.
 - **Readiness and clips.** The cycle runs once the player body reports the weapon drawn
   and in hand (`WeaponAnim::ready`; without a body, as soon as it is wanted out).
   - The body gives the attack clip's length and `Hit` key (and whether a `Loop`
@@ -467,7 +488,8 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   on first touch, so the engine reads it through `World::inventory_mut`.
 - **In play** (`engine/nvf-play/src/combat.rs`). Every projectile hit and blast goes
   through `Game::hit` inside the script runtime's world swap.
-  - Blasts use location −1 and the same armour rule as bullets.
+  - Blasts use location −1 and the same armour rule as bullets, with the damage and DT
+    perk entries and none of the weapon formula (perk-entry-points.md §2, "Blasts").
   - An `ActorHit` message goes out with each hit.
   - Without the script runtime, hits are only logged.
 - **On screen** (`engine/nvforever/src/deaths.rs`, `locomotion.rs`):
@@ -760,7 +782,9 @@ module notes).
   - Ranged weapons without a projectile (the detonator, binoculars) cycle without ammo.
 - **Explosions** (`fly`). A queue of up to 64 per frame takes impacts, detonations and
   destruction stages [design]. Each explosion:
-  - damages actors in its radius, with line of sight and armour;
+  - damages actors in its radius, with line of sight, armour and the cause's and target's
+    damage and DT perks (perk-entry-points.md §2, "Blasts"; with no cause, the target's
+    with no condition on the attacker or the weapon [hypothesis: as the original]);
   - rolls knockdown: always with "Knock Down - Always", by the documented formula with
     "By Formula". A knockdown is counted and logged; it is not animated yet;
   - damages destructible objects whose collision overlaps its radius;
