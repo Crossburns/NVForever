@@ -537,6 +537,39 @@ All of it is in `GameSnapshot`.
   lines, e.g. Anders' thanks in VMS46, INFO 0x00142A9C; the other 4 lines have neither
   the flag nor choices [observed: `fnvtool dialogue lines --all`]; observer check 39]. A
   conversation the end script ends some other way does not start it [design].
+- **A Goodbye line the player chooses ends the conversation at once** (`Game::choose`,
+  issue #1606): the dialogue menu closes as the line starts, the game is no longer
+  paused, and the actor finishes the line in the world, said at the player
+  [observed: owner's playtest 2026-11-05, against the original: choosing a Goodbye
+  closes the menu at once and the actor finishes the line as the player walks away].
+  In the runtime the line moves to `Game::speech` as a farewell (`Speech::farewell`)
+  with the time it has left (the rest of the response being said and the responses
+  after it), and `dialogue_ended` (`goodbye`, the line counted) comes before its
+  `line_ended` (not cut). Its begin result, `line_started` and Say Once came as it was
+  chosen and do not come again; with Run Immediately its end result ran then and does
+  not run again. When the line ends it ends as above: end result, Add Topics, and a
+  `StartConversation player` from that end result starts after them
+  (`Game::hold_force_greet`) [design: the order of a Goodbye line that ends in its
+  conversation]; no SayToDone block runs [hypothesis, as for a Goodbye greeting]. It is
+  heard and subtitled where the actor stands, like a SayTo line, and it does not hold
+  the actor in place: the actor goes about its package while it speaks [design, from the
+  statement: the player walks away]. It is never cut: another line of the actor, the
+  actor disabled, dead or deleted, or a fight ends it as if said to the end, as a
+  Goodbye greeting at the player [hypothesis: a Goodbye line's end result sets quest
+  stages and must not be lost; the owner's catch-all statement of 2026-10-27 was about
+  the greeting]. Game time and GameMode scripts run while it is said, as for any line
+  said in the world. Not changed, as they are not chosen: a Goodbye greeting that opens
+  a conversation (a force greet, above), a Goodbye line of a topic named by
+  StartConversation, and a Goodbye follow-up; each ends its conversation when it is
+  over. Nor does a chosen Goodbye line whose begin result made the actor say another
+  line (Say) leave its conversation: it ends it when it is over, and the other line is
+  not cut [design: a begin script that makes the actor say another line keeps today's
+  behaviour]; a begin result that ended or replaced the conversation leaves nothing to
+  move. **Open:** a conversation through a talking activator keeps a chosen Goodbye line
+  in the conversation until it is over, as before [hypothesis: the statement was face to
+  face; a farewell is heard from its speaker, and the activator it went through is not
+  carried by `Speech`]; whether the original closes that menu at once too is a question
+  for the observer (§7 item 18).
 - **Choices** (`Game::build_choices`). After a line with choices: those topics and
   nothing else [documented; owner statement 2026-10-11: a line linked by choices offers
   only the topics given as its choices]. Otherwise the top-level topics plus the known
@@ -890,6 +923,12 @@ up to C and F):
     they talk from; how long the starter tries); whether the player's presence matters for
     random conversations; general bit 12 as the switch between the default and the
     package's own Fallout behaviour (packages.md §1).
+18. A chosen Goodbye line said on in the world (§5, issue #1606): whether the original
+    closes the menu at once also for a conversation through a talking activator; whether
+    the end result runs when the line ends or as the menu closes; whether the actor stops
+    to finish the line or walks on; what ends the line early (another line, a fight, the
+    player out of earshot); whether a StartConversation from its end result waits for the
+    line.
 
 ## 8. Tool contracts
 
@@ -969,13 +1008,19 @@ gains `dialogue`.
   has begun; end: `bGiveTest` 0), and fourteen `choose` steps answer six word
   associations, five statements and three inkblots; each answer's begin script adds to
   the scores; the last line (Goodbye) sets `bDoFinalCalculation` at its start and stage
-  85 at its end. 15 lines; tag skills Guns, Science, Sneak as before. The whole test
-  happens in paused time (real time passes for the lines, script time does not). One script used to lean on GameMode running meanwhile: VCG01Test's quest
-  script does the tag-skill calculation in GameMode once `bDoFinalCalculation` is 1,
-  which the last line's begin script sets. It ran while that line was being said, as long as
-  conversations did not pause; now it runs in the first GameMode frames after the
-  Goodbye line, still well before stage 90 opens the tag-skill menu 1 s later. The
-  result is the same.
+  85 at its end. 15 lines; tag skills Guns, Science, Sneak as before. The test up to
+  the last answer happens in paused time (real time passes for the lines, script time
+  does not). That last line is the fourteenth `choose` (15 lines: the opening line and
+  fourteen answers), a chosen Goodbye line, so since issue #1606 it closes the
+  conversation at once (§5) and Doc finishes it in the world, in game time. VCG01Test's
+  quest script does the tag-skill calculation in GameMode once `bDoFinalCalculation`
+  is 1, which that line's begin script sets: the calculation runs in the first GameMode
+  frames while Doc finishes the line, and stage 85 is set by its end script when the
+  line ends, still before stage 90 opens the tag-skill menu 1 s later [design; the
+  real-data test `dialogue_data.rs` checks the tag skills and stages]. (While the
+  conversation paused the game up to its end, before #1606, the calculation ran in the
+  first GameMode frames after the line; as long as conversations did not pause, while
+  it was being said. The result is the same.)
 - **The farewell.** Stand-in: `talk` for Doc's dialogue package after stage 115 (and 4 s
   for his walk). Then the game's: the greeting that returns the player's things,
   two follow-up lines (the Pip-Boy with its message, the suit by the player's sex), the

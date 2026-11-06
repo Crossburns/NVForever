@@ -359,8 +359,13 @@ and whether each was severed or exploded (`RefExtra::limbs_gone`).
   wiki's "their head is destroyed" for limb 1, and "If a body part is not checked as
   Explodable, neither it nor any body parts that share its ActorValue will explode when
   dismembered"]. Severable or Explodable parts only.
-- **GetKillingBlowLimb**: the location of the last hit when the actor died, −1 if none
-  [documented: GECK wiki].
+- **GetKillingBlowLimb**: the location of the hit that killed the actor, −1 if no hit did
+  [documented: GECK wiki]. The record is `RefExtra::killing_hit`, written only by a death
+  through `Game::hit` (also when an OnHit script or the hit's Script effect took the last of
+  the Health); KillActor, an effect's or a script's damage and a planted explosive leave none,
+  whatever wounds came before, and GetHitLocation still reads the last hit
+  (`RefExtra::last_hit`) [design: `crates/fnv-game/src/combat.rs`]. A save from before the
+  record reads −1: what killed is unknown and is not taken from the last hit [design].
 - **Dismembered Limbs** misc stat (36): +1 per part gone by the player's hit
   [hypothesis: counted per part, the player's kills only].
 

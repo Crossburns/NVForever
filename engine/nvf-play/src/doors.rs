@@ -8,7 +8,8 @@
 //! In `--play`, the simulation's open state (`fnv_sim` `RefState::open`, toggled by
 //! activation and `SetOpenState`) drives the doors; a door opened here (by an actor) is
 //! written back to it. Without the simulation, a door starts as its placement says (ONAM
-//! "Open by Default").
+//! "Open by Default"). A load puts each door at rest as the save has it, silently
+//! ([`Doors::rest_as_restored`]); what changes after that moves it as any change does.
 //!
 //! Sounds: the sequences' `sound:` text keys name them; passing one sends a [`DoorSound`],
 //! which nvforever plays at the door (`anim_sounds.rs`). A sequence without sound keys
@@ -103,6 +104,45 @@ impl Doors {
         self.map.get(&id).map(|d| d.motion.is_open())
     }
 
+    /// Follow the simulation's open flags (activation, scripts) and write back the doors
+    /// opened here.
+    fn follow_sim(&mut self, sim: &mut SimState) {
+        for (&id, d) in self.map.iter_mut() {
+            if let Some(open) = d.to_sim.take() {
+                if let Ok(s) = sim.world.get(FormId(id)) {
+                    s.open = open;
+                }
+                d.sim_seen = Some(open);
+                continue;
+            }
+            let open = sim_open(sim, id);
+            match d.sim_seen {
+                // First sight: the door is as the simulation says, at rest.
+                None => d.motion = DoorMotion::new(open, d.timing.open_end, d.timing.close_end),
+                Some(seen) if seen != open => {
+                    d.motion.set_open(open);
+                    info!("door 0x{id:08X} {}", if open { "opening" } else { "closing" });
+                }
+                _ => {}
+            }
+            d.sim_seen = Some(open);
+        }
+    }
+
+    /// A save was just put into the simulation: every door known so far (they register
+    /// from the plugins' state while the world streams in under the loading screen) stands
+    /// at rest as the save has it, and what it saw or meant to write of the world before is
+    /// forgotten. Called before the load's own scripts run, so a door one of them changes
+    /// moves as any other change does.
+    pub(crate) fn rest_as_restored(&mut self, sim: &SimState) {
+        for (&id, d) in self.map.iter_mut() {
+            let open = sim_open(sim, id);
+            d.motion = DoorMotion::new(open, d.timing.open_end, d.timing.close_end);
+            d.sim_seen = Some(open);
+            d.to_sim = None;
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.map.len()
     }
@@ -160,29 +200,8 @@ impl Plugin for DoorsPlugin {
     }
 }
 
-/// Follow the simulation's open flags (activation, scripts) and write back the doors
-/// opened here.
 fn sync_sim(mut doors: ResMut<Doors>, mut sim: ResMut<SimState>) {
-    for (&id, d) in doors.map.iter_mut() {
-        if let Some(open) = d.to_sim.take() {
-            if let Ok(s) = sim.world.get(FormId(id)) {
-                s.open = open;
-            }
-            d.sim_seen = Some(open);
-            continue;
-        }
-        let open = sim_open(&sim, id);
-        match d.sim_seen {
-            // First sight: the door is as the simulation says, at rest.
-            None => d.motion = DoorMotion::new(open, d.timing.open_end, d.timing.close_end),
-            Some(seen) if seen != open => {
-                d.motion.set_open(open);
-                info!("door 0x{id:08X} {}", if open { "opening" } else { "closing" });
-            }
-            _ => {}
-        }
-        d.sim_seen = Some(open);
-    }
+    doors.follow_sim(&mut sim);
 }
 
 /// Tell the scripts the open state of every door and animated container known here
@@ -231,6 +250,7 @@ pub fn initial_open(sim: Option<&SimState>, id: u32, open_by_default: bool) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fnv_collide::anim::DoorPhase;
 
     fn timing() -> DoorTiming {
         let open = vec![(0.0, "start".to_string()), (0.00001, "sound: DRSOpen".to_string()), (1.5, "end".to_string())];
@@ -262,5 +282,62 @@ mod tests {
         doors.set_open(9, true);
         assert_eq!(doors.advance(0.1), vec![DoorSound { door: 9, opening: true, key: None }]);
         assert!(doors.advance(0.1).is_empty());
+    }
+
+    /// Door references (id, placed open) over one DOOR base.
+    fn door_sim(placements: &[(u32, bool)]) -> SimState {
+        use crate::sim::test_world::{door_base, placed, sim};
+        const DOOR: u32 = 0x130;
+        let refs = placements.iter().map(|&(id, open_by_default)| fnv_sim::refs::PlacedRef { open_by_default, ..placed(id, DOOR) }).collect();
+        sim(vec![door_base(DOOR)], refs)
+    }
+
+    fn phase(doors: &Doors, id: u32) -> DoorPhase {
+        doors.get(id).unwrap().motion.phase
+    }
+
+    #[test]
+    fn a_door_saved_open_rests_open_and_a_real_close_after_the_load_still_moves_it() {
+        let mut sim = door_sim(&[(7, false)]);
+        let mut doors = Doors::default();
+        // Registered and seen from the plugins' state, closed, under the loading screen.
+        doors.register(7, false, timing());
+        doors.follow_sim(&mut sim);
+        // The restore: the saved flag is in the simulation.
+        sim.world.get(FormId(7)).unwrap().open = true;
+        doors.rest_as_restored(&sim);
+        assert_eq!(phase(&doors, 7), DoorPhase::Open);
+        doors.follow_sim(&mut sim);
+        assert_eq!(phase(&doors, 7), DoorPhase::Open, "no animation of the restored flag");
+        assert!(doors.advance(2.0).is_empty(), "no sound of it");
+        // A real change right after the load: the same frames as any close.
+        sim.world.get(FormId(7)).unwrap().open = false;
+        doors.follow_sim(&mut sim);
+        assert_eq!(phase(&doors, 7), DoorPhase::Closing);
+        assert_eq!(doors.advance(1.0), vec![DoorSound { door: 7, opening: false, key: Some("DRSClose".to_string()) }]);
+        assert_eq!(phase(&doors, 7), DoorPhase::Closed);
+    }
+
+    #[test]
+    fn a_door_saved_closed_rests_closed_and_a_write_back_from_before_the_load_is_dropped() {
+        // 7 placed open and saved closed; 8 placed closed, opened by an actor in the frames
+        // before the restore (its write to the simulation still waiting), not open in the save.
+        let mut sim = door_sim(&[(7, true), (8, false)]);
+        let mut doors = Doors::default();
+        doors.register(7, true, timing());
+        doors.register(8, false, timing());
+        doors.follow_sim(&mut sim);
+        assert!(doors.set_open(8, true));
+        sim.world.get(FormId(7)).unwrap().open = false;
+        doors.rest_as_restored(&sim);
+        doors.follow_sim(&mut sim);
+        assert!(!sim_open(&sim, 8), "the old write does not reach the restored world");
+        assert!(doors.advance(2.0).is_empty());
+        assert_eq!((phase(&doors, 7), phase(&doors, 8)), (DoorPhase::Closed, DoorPhase::Closed));
+        // A door opened here after the load is written back and heard as ever.
+        assert!(doors.set_open(8, true));
+        doors.follow_sim(&mut sim);
+        assert!(sim_open(&sim, 8));
+        assert_eq!(doors.advance(0.5), vec![DoorSound { door: 8, opening: true, key: Some("DRSOpen".to_string()) }]);
     }
 }

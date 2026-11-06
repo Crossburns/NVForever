@@ -911,9 +911,12 @@ terrain is put back on the ground (logged as a warning); indoors, §6.7.
 
 References get collision by the same rule as `fnvtool phys cell`
 (`fnv_phys::ref_collision`); whether one is in the world is the simulation's: not
-deleted, enabled following its enable parents (`World::is_enabled`), not taken; until the
-simulation holds state for a reference, its own Initially Disabled flag also keeps it out
-(as render streaming and `fnvtool phys` do). In Goodsprings' 3×3 that gives 839
+deleted, enabled following its enable parents (`World::is_enabled`), not taken, whether or
+not the simulation holds state for the reference: under an enable parent its own Initially
+Disabled flag does not count [design: `engine/nvf-play/src/phys.rs` `in_world`; that the
+original's collision follows `GetDisabled` here is [hypothesis], simulation.md §1], while
+`fnvtool phys` still lets the flag win [design: `crates/fnvtool/src/phys_cmd.rs`]. In
+Goodsprings' 3×3 that gives 839
 references with collision against `fnvtool phys cell`'s 849 [observed: `nvforever --play`
 debug log: 18 references not in the world, the 8 that `fnvtool` also counts as Initially
 Disabled and 10 that the simulation disables through their enable parents].

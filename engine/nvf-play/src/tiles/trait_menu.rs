@@ -1103,7 +1103,7 @@ mod tests {
     }
 
     fn click(tile: TileId, by: By) -> Click {
-        Click { tile, id: None, by }
+        Click { tile, id: None, by, stamp: 0 }
     }
 
     fn at(ui: &Ui, path: &str) -> f64 {

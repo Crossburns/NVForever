@@ -1280,6 +1280,31 @@ The numbers above stay put so links to them hold; each item here gives its own p
     whether it comes out of the spout. If the original's spray is the file's full size, the
     rule in §7.7 is wrong and the cause of the misplaced spray lies elsewhere.
 
+## Added 2026-11-05 (leveled rolls and locks, issue #1567)
+
+88. **Does a leveled door lock change with the player's level?** (P3; simulation.md §5,
+    `fnv_sim::World::lock_read_level`.) NVForever hardens a leveled lock only from a level
+    fixed at its cell's load, so a door keeps its authored level [design]; the GECK tutorial
+    calls the checkbox deprecated [documented, encounter-zones.md §7], and nothing says the
+    original hardens at all [hypothesis]. The 26 leveled locks are all in the add-ons (Dead
+    Money 22, Old World Blues 3, Honest Hearts 1; simulation.md §5). A capture at a door with
+    the flag, never activated: `GetLockLevel` on it at the save's level, `player.SetLevel 31`,
+    `GetLockLevel` again, then the same on a flagged container, and on both after leaving the
+    area and coming back. Does the number move, by how much, and from which level?
+
+## Added 2026-11-05 (DamageActorValue past zero, issue #1568)
+
+89. **Does DamageAV past zero kill at all, and what of the player, an essential actor and the
+    kill's credit?** (P3; unconscious.md §2.2.) NVForever kills [hypothesis]. Check 22's two
+    super mutants died after DamageAV 300 with NCR troopers firing, no GetDead read and their
+    Health not read, so it does not isolate the cause. In the original, first: a lone
+    non-essential NPC with nobody shooting, `getav health`, `damageav health 9999`, `getdead`
+    at once and 5 s later, `getav health`. Then, each in its own run: `player.damageav health
+    9999` (does the player die?); on an essential NPC the same (knocked out, or dead, or
+    standing at a negative Health, and GetDead); on the lone NPC, the player's XP and karma
+    before and after (is the kill anyone's?). Also: does Health stay negative or stop at 0?
+    The answer: the logs.
+
 ## Added 2026-11-04 (the container menu from its file, issue #1468)
 
 90. **The container menu: what the reads could not show.** (P3; barter-menu.md §8; the capture
