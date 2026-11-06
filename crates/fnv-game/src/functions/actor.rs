@@ -1023,6 +1023,7 @@ pub fn set_level(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
             return none();
         }
         g.player.level = Some(level);
+        g.sync_player_level();
         return none();
     }
     if a.num_or(1, 0.0) != 0.0 {

@@ -3381,6 +3381,7 @@ impl<'a> Game<'a> {
     pub fn tick(&mut self) {
         self.frame += 1;
         self.temp_refs.clear();
+        self.sync_player_level();
         // JIP's SetGameMainLoopCallback functions due this frame (task J6), then xNVSE's
         // delayed calls.
         self.run_main_loop();
@@ -5276,6 +5277,8 @@ impl<'a> Game<'a> {
         g.instances = s.instances.iter().cloned().collect();
         g.extra = s.extra.clone();
         g.player = s.player.clone();
+        // The world does not save the level it rolls at.
+        g.sync_player_level();
         g.form_lists = s.form_lists.clone();
         g.loaded_cells = s.loaded_cells.clone();
         g.moved = s.moved.clone();

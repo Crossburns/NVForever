@@ -445,7 +445,9 @@ consistent with three independent rolls), all-levels vs highest eligible level
 (`VFactionSquadStimpaks`: always 1 stimpak at player level 10, always 3 at level 30, in
 game and candidate), Use All (`VendorChestStimpaksBoomer`), a uniform pick of 18
 (`ClutterHouseholdJunkNV`). Console `AddItem` with a leveled list resolves it against
-the player's level [observed, same captures].
+the player's level [observed, same captures]. `World::add_item` reads
+`World::roll_level`, which `Game::sync_player_level` keeps at the game's player's level;
+`SimConfig::player_level` stays the configured value (encounter-zones.md) [design].
 
 Also **consistent with the game** for backlog B8 [observed in game, 2026-10-08,
 `L4.sim.leveled.b8`, `parity-lab/inputs/layer4/leveled_b8.cases.json`: 300 `AddItem`
@@ -515,10 +517,15 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   wiki Reference, Lock tab; GetLockLevel: "If the terminal is leveled, the value you get
   will be the leveled value (same as locks)"]; by how much is not documented. As built
   (`fnv_sim::refs::Lock::level_at`, `World::lock_of`): one step of 25 for every 10
-  levels past the first, up to Very Hard (100), never Requires Key [hypothesis,
-  owner-review.md], from the reference's level (its encounter zone's, else the
-  player's) when its state is first made, as leveled lists are (encounter-zones.md);
-  GetLockLevel, the crosshair's lock line and the lockpick game then read that level.
+  levels past the first, up to Very Hard (100), never Requires Key [hypothesis: a guess,
+  listed as one in docs/owner-review.md until 2026-10-25; no decision on it is recorded].
+  A leveled lock hardens from a fixed level only (`World::lock_read_level`) [design]: a
+  container's, fixed when its cell loads, if its state is not made before that. A door
+  gets no fixed level, so it keeps its authored level whatever the player's level or its
+  zone [design]. Whether the original hardens at all is [hypothesis]: the GECK tutorial
+  calls the checkbox deprecated [documented, encounter-zones.md §7]; observer check 88
+  asks. GetLockLevel, the crosshair's lock line and the lockpick game read the level
+  built here.
   The nav graph's door locks keep the authored level (it only asks locked or not).
 - **XTEL** (door FormID, position, rotation, flag) makes a door a teleport [documented:
   xEdit]. The flag is "No Alarm": "No trespass alarm will be sent when the player uses

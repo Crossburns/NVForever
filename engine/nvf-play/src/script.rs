@@ -690,7 +690,12 @@ impl Runtime {
         self.opening_pending = false;
         self.new_game_files = false;
         self.player_cell = None;
-        with_world(self, sim, |rt| rt.snapshot_inventory());
+        with_world(self, sim, |rt| {
+            // `Game::restore` above reached only the stand-in, and the Script Runner's files
+            // and the LoadGame events run ahead of the first tick.
+            rt.game.sync_player_level();
+            rt.snapshot_inventory();
+        });
         Ok(changed)
     }
 
@@ -2312,6 +2317,25 @@ impl ScriptState {
 #[cfg(test)]
 #[path = "script_hand_tests.rs"]
 mod hand_tests;
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+
+    #[test]
+    fn a_loaded_game_rolls_at_the_players_level_before_any_tick() {
+        let mut state = ScriptState::over_no_plugins();
+        let rt = state.rt.as_mut().unwrap();
+        let (forms, refs) = (rt.game.world.forms, rt.game.world.placed);
+        let mut sim = SimState { forms, refs, world: World::new(forms, refs, fnv_sim::SimConfig::default()) };
+        rt.game.player.level = Some(20);
+        let save = rt.game.snapshot();
+        assert_eq!(save.sim.config.player_level, 1);
+        rt.restore_save(&mut sim, save).unwrap();
+        assert_eq!(sim.world.roll_level(), 20);
+        assert_eq!(sim.world.config().player_level, 1);
+    }
+}
 
 #[cfg(test)]
 mod no_messages_tests {

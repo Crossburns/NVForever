@@ -1280,6 +1280,18 @@ The numbers above stay put so links to them hold; each item here gives its own p
     whether it comes out of the spout. If the original's spray is the file's full size, the
     rule in §7.7 is wrong and the cause of the misplaced spray lies elsewhere.
 
+## Added 2026-11-05 (leveled rolls and locks, issue #1567)
+
+88. **Does a leveled door lock change with the player's level?** (P3; simulation.md §5,
+    `fnv_sim::World::lock_read_level`.) NVForever hardens a leveled lock only from a level
+    fixed at its cell's load, so a door keeps its authored level [design]; the GECK tutorial
+    calls the checkbox deprecated [documented, encounter-zones.md §7], and nothing says the
+    original hardens at all [hypothesis]. The 26 leveled locks are all in the add-ons (Dead
+    Money 22, Old World Blues 3, Honest Hearts 1; simulation.md §5). A capture at a door with
+    the flag, never activated: `GetLockLevel` on it at the save's level, `player.SetLevel 31`,
+    `GetLockLevel` again, then the same on a flagged container, and on both after leaving the
+    area and coming back. Does the number move, by how much, and from which level?
+
 ## Added 2026-11-05 (DamageActorValue past zero, issue #1568)
 
 89. **Does DamageAV past zero kill at all, and what of the player, an essential actor and the
