@@ -15,6 +15,14 @@
 //! switches what `settings.rs` and `nvf_play::settings` list while the game runs) and
 //! closes the open menu. `--play --menu` opens on the main menu (`nvf_play::main_menu`).
 
+/// The console lines written before the log is up, with the player's home folder hidden
+/// like every logged line (crash.rs, Privacy). Shadows `std::eprintln!` in this crate.
+macro_rules! eprintln {
+    ($($t:tt)*) => {
+        $crate::crash::eprint_line(format_args!($($t)*))
+    };
+}
+
 mod activators;
 mod nif_mirror;
 mod anim_paths;
@@ -1228,7 +1236,7 @@ fn main() -> AppExit {
             .disable::<bevy::ui_widgets::TabPlugin>()
             .disable::<bevy::input_focus::pointer_focus::PointerFocusPlugin>()
             // The console's lines go to the run log too (crash.rs).
-            .set(bevy::log::LogPlugin { custom_layer: crash::file_layer, ..default() })
+            .set(bevy::log::LogPlugin { custom_layer: crash::file_layer, fmt_layer: crash::console_layer, ..default() })
             .set(WindowPlugin {
                 // Scale factor 1 so screenshots are exactly --size pixels on any display.
                 primary_window: Some(Window {
