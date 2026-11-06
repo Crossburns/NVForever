@@ -95,12 +95,22 @@ A travel asked for under it goes out behind it and is waited for too.
   destination has its own, one of them is taken every other time. Both rules are
   hypotheses (spec note §3).
 - The picture: the record's ICON, read through the texture cache like any other
-  texture. Scaled to cover the window without changing its shape; what does not fit is
-  cropped evenly (`loading::cover`). A record without a picture, or one whose texture
-  is missing, gives a black screen with the text.
-- The text: the record's DESC in a band along the bottom, with "Loading...".
-- The layout is NVForever's own. The original's roulette wheel, level progress and text
-  box (LSCT) are not drawn.
+  texture. Stretched to the window, as the original's (spec note §4). A record without a
+  picture, or one whose texture is missing, gives a black screen with the rest. The whole
+  screen is over black from its first frame.
+- The tip (`loading_look::fit_tip`): the record's DESC at the top, set by the LSCT its WMI1
+  names: box, font, colour and alignment (`fnv_world::loadscreen::TipStyle`; without an LSCT
+  of the tip type, the values of the base game's one). x and width follow the window's width
+  as pixels of a window 1280 wide, y and the text's size its height as parts of 960. It lies
+  on `loading_text_bar.dds` across the window, as high as the text. No text, no band. Drawn
+  again when the window's size changes, since the wrapping follows its shape.
+- The emblem (`loading_look::Emblem`): `meshes\interface\circular loading\loading01.nif`,
+  the wheel's centre at (0.5 W, 0.794 H) and the wheel 0.172 H across, its nodes turned by
+  the sequence `Idle` on real time, since the virtual clock is paused behind the screen. By
+  elapsed time, so a long frame makes it jump to where it should be. Without the model (or
+  with one that does not read) no emblem and one log line; nothing waits for it.
+- Read once and kept (`loading_look::Look`): the emblem, its textures, the band and the font.
+- The original's picture stage, objective, stats and level bar are not built (spec note §4).
 
 ## 4. Scope and open points
 
@@ -108,15 +118,18 @@ A travel asked for under it goes out behind it and is waited for too.
   menu still loads behind the menu and the intro film.
 - Travel without `--play` (the free camera following `--npc-travel` NPCs) is unchanged:
   no loading screen.
-- The game's rules for choosing a screen and its layout are open (spec note §3, §4).
+- The game's rules for choosing a screen are open (spec note §3).
 - Test aid: `NVF_PLAY_TEST_LOADING_SHOT=<png>` saves the window when the travel goes out
   (the screen is up); later screens of the run go to `<name>-2.png`, and so on.
 
 ## 5. Checks
 
-- `fnv-world`: `loadscreen::tests` (locations, choice).
-- `nvf-play`: `loading::tests` (cover, destination, and the sequence: screen up and
-  clock paused before the travel goes out, held while the renderer is busy, down and
-  playing again after; held while actors are read; the start's screen and its clock;
-  a travel under the start's screen).
+- `fnv-world`: `loadscreen::tests` (locations, choice), `tests/load_screen_type.rs` (LSCT
+  on a plugin written for the test).
+- `nvf-play`: `loading::tests` (cover, destination, a tip only with text, and the sequence:
+  screen up and clock paused before the travel goes out, held while the renderer is busy,
+  down and playing again after; held while actors are read; the start's screen and its
+  clock; a travel under the start's screen), `loading_look::tests` (the tip's box and band
+  and the emblem's place at 1280x720 and 1280x1024, its turning).
+- Smoke: `loading-screen-look`.
 - In the game (owner's data): Doc Mitchell's front door, both ways; see the pull request.

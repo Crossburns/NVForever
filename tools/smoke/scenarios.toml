@@ -5967,6 +5967,27 @@ expect = [
 ]
 
 [[scenario]]
+name = "loading-screen-look"
+source = "docs/spec-notes/loading-screens.md §4: the loading screen laid out as the original's: the picture stretched, the tip on its band, the emblem turning; the shot NVF_PLAY_TEST_LOADING_SHOT saves is for looking at, the run only checks that the emblem's model reads as the original's model and that the screen comes and goes"
+note = "The emblem reads once a run though two screens come up, the start's and the door's: 4 pieces (the hidden plate left out), wheel and ball turning. The look itself is not judged here: see the shot in target/smoke"
+areas = ["loading"]
+paths = ["engine/nvf-play/src/loading.rs", "engine/nvf-play/src/loading_look.rs", "engine/nvf-play/src/hud_breath.rs", "crates/fnv-world/src/loadscreen.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_FACE = "4:0010903F", NVF_PLAY_TEST_ACTIVATE = "5", NVF_PLAY_TEST_LOADING_SHOT = "target/smoke/loading-screen-look.png" }
+args = ["--cell", "GSGasStation", "--play", "--no-voice", "--hour", "9", "--no-dialogue-look"]
+run_seconds = 20
+order = [[
+  "loading screen: the start is held until the world can be played",
+  "loading screen down after",
+  "loading screen up: … for worldspace 000DA726",
+  "test aid: loading screen screenshot",
+  "loading screen down after",
+]]
+expect = [
+  { text = "loading screen: emblem read: 4 pieces, 2 turning, sequence 5.333 s", count = 1, label = "the emblem's model is read once, its pieces and turning nodes found" },
+  { text = "loading screen: no emblem", count = 0, label = "the emblem's model reads" },
+]
+
+[[scenario]]
 name = "holmes-comes-from-far"
 source = "owner 2026-10-24 (actors heading for the player from outside the loaded area): Malcolm Holmes after the first star cap, as the original's observer capture holmes_far_travel showed (fnv_ai::process, docs/spec-notes/ai-observer.md §13)"
 note = "the player stands on Holmes's observed route, about 15,000 units west of SSHQMalcolmHolmesMarker; at 1 s AddItem gives the first star cap, whose OnAdd script (NVStarBottleCapScript) moves him to the marker out of the loaded area and enables him. His Dialogue package (Always Run, the player) walks him at the Low level, every 120 s, and the walk stops at the edge of the loaded area; from there he runs in and talks"

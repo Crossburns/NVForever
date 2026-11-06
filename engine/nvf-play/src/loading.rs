@@ -22,8 +22,10 @@
 //!   (docs/design/loading-screen.md §1a).
 //! - The picture and its text are a loading screen record of the plugins
 //!   (`fnv_world::loadscreen`): one that belongs to the destination, or one for anywhere.
-//!   The layout is ours: the picture fills the window (cropped, not stretched), the text
-//!   in a band along the bottom. The original's roulette wheel and progress are not drawn.
+//!   As the original lays it out [observed: loading-screens.md §4]: the picture stretched
+//!   to the window, the text at the top on its band and the turning emblem at the bottom
+//!   (`crate::loading_look`). The original's picture stage, objective, stats and level bar
+//!   are not built.
 //! - A [`CoverRequest`] brings the same screen up with no trip: it holds the game as
 //!   above and stays until an [`Uncover`]. nvforever puts it up while loading a save or
 //!   going back to the main menu, which start the program again behind it
@@ -39,15 +41,15 @@
 //!   takes no clicks, hovers or arrow keys, and a key held through the screen counts
 //!   only once it is pressed again.
 
+use crate::interface::bc_supported;
+use crate::loading_look::{self as look, Look};
 use crate::phys::PhysState;
 use crate::{Location, PlaySet, PlayState, PlayWorld, Travel};
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
-use bevy::window::PrimaryWindow;
-use fnv_world::loadscreen::{choose, load_screens, Destination, LoadScreen};
+use fnv_world::loadscreen::{choose, load_screens, Destination, LoadScreen, TipStyle};
 use nvf_assets::{GameData, TextureCache};
-use std::collections::HashMap;
 
 /// Frames the screen is up before the travel is applied [engineering choice: the frame
 /// it is spawned in and one more, so the picture is on screen before the long frames].
@@ -144,9 +146,6 @@ pub struct Loading {
     /// #1208). Set by the door's activation and the fast travel; taken by the residents
     /// when the `Travel` goes out.
     pub arriving: bool,
-    /// Picture sizes by texture (the image's own data leaves the main world once it is on
-    /// the graphics card).
-    sizes: HashMap<AssetId<Image>, Vec2>,
 }
 
 impl Loading {
@@ -180,15 +179,12 @@ struct Screens(Vec<LoadScreen>);
 #[derive(Component)]
 struct LoadingRoot;
 
-/// The picture, with its size in texels.
-#[derive(Component)]
-struct Picture(Vec2);
-
 pub struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Loading>()
+            .init_resource::<Look>()
             .add_message::<TravelRequest>()
             .add_message::<CoverRequest>()
             .add_message::<Uncover>()
@@ -197,7 +193,7 @@ impl Plugin for LoadingPlugin {
                 PreUpdate,
                 hold_input.after(bevy::input::InputSystems).after(crate::pad::menu_keys).after(crate::test_aid::real_presses).before(bevy::ui::UiSystems::Focus),
             )
-            .add_systems(Update, (send.in_set(PlaySet::Input), (begin_start, begin, hold, fit_picture).chain().in_set(PlaySet::Sync)))
+            .add_systems(Update, (send.in_set(PlaySet::Input), (begin_start, begin, hold, look::fit_tip, look::turn_emblem).chain().in_set(PlaySet::Sync)))
             .add_systems(Last, finish);
     }
 }
@@ -226,7 +222,8 @@ fn read_screens(mut commands: Commands, d: Option<Res<PlayWorld>>) {
 }
 
 /// The size and offset of a `picture` scaled to cover a `window` without changing its
-/// shape: the overflow is cropped evenly on both sides.
+/// shape: the overflow is cropped evenly on both sides. The main menu's and the credits'
+/// pictures; a loading screen's is stretched ([`picture_node`]).
 pub fn cover(picture: Vec2, window: Vec2) -> (Vec2, Vec2) {
     if picture.x <= 0.0 || picture.y <= 0.0 {
         return (window, Vec2::ZERO);
@@ -259,6 +256,7 @@ struct Art<'w> {
     textures: Option<ResMut<'w, TextureCache>>,
     images: Option<ResMut<'w, Assets<Image>>>,
     formats: Option<Res<'w, CompressedImageFormatSupport>>,
+    look: ResMut<'w, Look>,
 }
 
 /// The run starts in the world ([`StartCover`]): bring the screen up in its first frame
@@ -369,18 +367,20 @@ fn hold(
     loading.cover = true;
 }
 
-/// The screen's nodes: a picture for `to` (for anywhere without it) and its text.
+/// The picture's node: the whole window, whatever the picture's shape [observed: the
+/// original's frame at 1280x720 matches the 2:1 picture stretched, loading-screens.md §4].
+fn picture_node() -> Node {
+    Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }
+}
+
+/// The screen's nodes: a picture for `to` (for anywhere without it), its tip and the emblem.
 fn spawn_screen(commands: &mut Commands, loading: &mut Loading, art: &mut Art, to: Option<&Destination>) {
     let anywhere = Destination { interior: None, exterior: None };
     let to = to.unwrap_or(&anywhere);
     loading.shown += 1;
     let screen = art.screens.as_deref().and_then(|s| choose(&s.0, to, roll(loading.shown)));
     let picture = match (screen.and_then(|s| s.texture.as_deref()), art.data.as_deref(), art.textures.as_mut(), art.images.as_mut()) {
-        (Some(path), Some(data), Some(textures), Some(images)) => textures.get(path, true, data, images, art.formats.as_deref()).map(|h| {
-            let size = images.get(&h).map(|i| i.size().as_vec2());
-            let size = *loading.sizes.entry(h.id()).or_insert(size.unwrap_or(Vec2::new(2.0, 1.0)));
-            (h, size)
-        }),
+        (Some(path), Some(data), Some(textures), Some(images)) => textures.get(path, true, data, images, art.formats.as_deref()),
         _ => None,
     };
     info!(
@@ -397,7 +397,6 @@ fn spawn_screen(commands: &mut Commands, loading: &mut Loading, art: &mut Art, t
             (None, None) => "anywhere".to_string(),
         },
     );
-    let font = |size: f32| TextFont { font_size: FontSize::Px(size), ..default() };
     let root = commands
         .spawn((
             LoadingRoot,
@@ -408,40 +407,17 @@ fn spawn_screen(commands: &mut Commands, loading: &mut Loading, art: &mut Art, t
             bevy::ui::FocusPolicy::Block,
         ))
         .id();
-    if let Some((image, size)) = picture {
-        // Sized by `fit_picture` (this frame too).
-        commands.spawn((Picture(size), ImageNode::new(image), Node { position_type: PositionType::Absolute, ..default() }, ChildOf(root)));
+    if let Some(image) = picture {
+        commands.spawn((ImageNode { image_mode: NodeImageMode::Stretch, ..ImageNode::new(image) }, picture_node(), ChildOf(root)));
     }
-    let text = screen.map(|s| s.text.trim()).filter(|t| !t.is_empty());
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            right: Val::Px(0.0),
-            bottom: Val::Px(0.0),
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(8.0),
-            padding: UiRect::axes(Val::Percent(8.0), Val::Px(18.0)),
-            ..default()
-        },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
-        ChildOf(root),
-        children![
-            (Text::new(text.unwrap_or_default()), font(18.0), TextColor(Color::srgb(1.0, 0.75, 0.30))),
-            (Text::new("Loading..."), font(14.0), TextColor(Color::srgb(0.85, 0.95, 0.80))),
-        ],
-    ));
-}
-
-/// Keep the picture covering the window.
-fn fit_picture(windows: Query<&Window, With<PrimaryWindow>>, mut pictures: Query<(&Picture, &mut Node)>) {
-    let Ok(window) = windows.single() else { return };
-    for (p, mut node) in &mut pictures {
-        let (size, at) = cover(p.0, Vec2::new(window.width(), window.height()));
-        let want = (Val::Px(size.x), Val::Px(size.y), Val::Px(at.x), Val::Px(at.y));
-        if (node.width, node.height, node.left, node.top) != want {
-            (node.width, node.height, node.left, node.top) = want;
-        }
+    // Drawn by `look::fit_tip` (this frame too). No text, no band.
+    if let Some(text) = screen.map(|s| s.text.trim()).filter(|t| !t.is_empty()) {
+        let style = screen.and_then(|s| s.tip).unwrap_or(TipStyle::FALLBACK);
+        let node = Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
+        commands.spawn((look::Tip { text: text.to_string(), style, drawn_for: None }, node, ChildOf(root)));
+    }
+    if let (Some(data), Some(images)) = (art.data.as_deref(), art.images.as_mut()) {
+        look::spawn_emblem(commands, root, &mut art.look, data, images, bc_supported(art.formats.as_deref()));
     }
 }
 
@@ -577,6 +553,13 @@ mod tests {
     }
 
     #[test]
+    fn the_picture_fills_the_window_whatever_its_shape() {
+        let node = picture_node();
+        assert_eq!((node.position_type, node.width, node.height), (PositionType::Absolute, Val::Percent(100.0), Val::Percent(100.0)));
+        assert_eq!((node.left, node.top), (Val::Auto, Val::Auto));
+    }
+
+    #[test]
     fn where_a_travel_arrives() {
         let outside = Location { world: 0xDA726, interior: None };
         let indoors = Travel { world: None, interior: Some(0x100), feet: [0.0; 3], heading_deg: 0.0 };
@@ -596,6 +579,22 @@ mod tests {
             .add_plugins(LoadingPlugin);
         // No plugins to read: no picture, the screen is still shown.
         app
+    }
+
+    /// A screen's tip comes up only with text to show (`look::fit_tip` draws the band with
+    /// it); the screen and its black are there either way, with no model to read.
+    #[test]
+    fn a_screen_has_a_tip_only_with_text() {
+        for (text, tips) in [("A tip.", 1), ("  ", 0)] {
+            let mut app = app();
+            let screen = LoadScreen { form_id: 1, edid: None, texture: None, text: text.into(), locations: Vec::new(), main_menu: false, tip: None };
+            app.insert_resource(Screens(vec![screen]));
+            app.update();
+            app.world_mut().write_message(CoverRequest { to: None });
+            app.update();
+            assert_eq!(app.world_mut().query::<&LoadingRoot>().iter(app.world()).count(), 1);
+            assert_eq!(app.world_mut().query::<&look::Tip>().iter(app.world()).count(), tips, "{text:?}");
+        }
     }
 
     fn sent(app: &mut App) -> usize {

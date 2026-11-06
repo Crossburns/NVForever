@@ -36,5 +36,5 @@ flag on FFEncounterWorld, WastelandNVmini, Lucky38World, NVDLC03BigMT and NVDLC0
 - **NAVI, NAVM edge cover**: the AI uses cover as yes or no per triangle; NAVI is loaded by
   `fnv-nav` (`load.rs`, `info_maps`) and fnvtool, but nothing in the engine reads it.
 - **PMIS, PBEA, PFLA, PCBE**: no master places one.
-- **LSCR "Displays In Main Menu", LSCT**: the main menu picks its slides by having no
-  location; the base game has one LSCT, the tip type (loading-screens.md).
+- **LSCR "Displays In Main Menu"**: the main menu picks its slides by having no
+  location (loading-screens.md).
