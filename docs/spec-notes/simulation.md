@@ -68,8 +68,15 @@ not visible in the data and stays **[hypothesis]** until the in-game captures of
   Parent" [documented: xEdit]): 5,171 references have one, 759 with the opposite flag;
   162 chains are two deep, none deeper; no chain loops or names a missing reference
   [observed]. The simulation derives a child's enabled state from its parent's
-  (inverted for "opposite") and ignores the child's own flag while it has a parent; a
-  broken chain falls back to the own flag [hypothesis: GECK wiki "Enable Parent"].
+  (inverted for "opposite") and ignores the child's own flag while it has a parent
+  [observed: a session of the original, 2026-11-05, `GetDisabled` read by script on
+  persistent references: children flagged Initially Disabled read as their parent's state
+  or its opposite, and follow the parent's Enable and Disable; issue #1620]; a broken
+  chain falls back to the own flag [hypothesis: GECK wiki "Enable Parent"]. Render
+  streaming's start rule and the physics at a cell load go by the same rule [design:
+  `engine/nvforever/src/world.rs` `enabled`, `engine/nvf-play/src/phys.rs` `in_world`];
+  that the original draws these references and gives them collision by it is
+  [hypothesis]: only `GetDisabled` was read, no frame was taken.
 - Record flag **0x400** on a reference coincides exactly with placement in a
   persistent-children group: 20,344 references have both, none has only one [observed].
   It is the "Persistent" flag [documented: UESP].
@@ -516,7 +523,7 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
   container's, fixed when its cell loads, if its state is not made before that. A door
   gets no fixed level, so it keeps its authored level whatever the player's level or its
   zone [design]. Whether the original hardens at all is [hypothesis]: the GECK tutorial
-  calls the checkbox deprecated [documented, encounter-zones.md §7]; observer check 87
+  calls the checkbox deprecated [documented, encounter-zones.md §7]; observer check 88
   asks. GetLockLevel, the crosshair's lock line and the lockpick game read the level
   built here.
   The nav graph's door locks keep the authored level (it only asks locked or not).

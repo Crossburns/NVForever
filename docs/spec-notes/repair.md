@@ -212,7 +212,11 @@ epairmenuPlayer, Repair 17]:
   repaired or merged, so it doesn't appear in the list"]. The parts: the player's units
   of the same item or of one on its repair list (`REPL`, run-time additions to the list
   included), below full condition [owner's rule] and not equipped [design]; another unit
-  of the item's own group counts. Each group of units is a row, by name.
+  of the item's own group counts. Each group of units is a row, by name. Full, for the
+  item, its parts and closing the list, is from `SHOWN_FULL` (0.995) up, the vendor's
+  line [design: `crates/fnv-game/src/repair.rs`, `engine/nvf-play/src/pipboy/repair.rs`],
+  so the 99.9 % that AddItem gives counts as full; the log's percentages
+  (`fnv_combat::condition::percent`) still print such an item as 99 %.
 - Up/Down (W/S) choose, Enter or Space uses the chosen part, E or Esc cancels, Tab puts
   the Pip-Boy away [documented: `_PCButton_E`; design: the rest]. With the pointer
   (2026-10-19) [design: as the ITEMS list]: the row under it is chosen, a click on a row

@@ -124,7 +124,7 @@ actors, `resolve_changed_at`), `engine/nvforever/src/zones.rs` (the engine's cop
   unchecked"; Reference: "will start at the base level specified and become harder as
   the player levels" — no rule for how much is documented]. Built 2026-10-24 with a
   guessed rule, from a level fixed for the reference only (simulation.md §5); observer
-  check 87 asks whether the original's door locks change at all.
+  check 88 asks whether the original's door locks change at all.
 - The game settings that bound how far below the level an entry may be
   (`iLevItemLevelDifferenceMax` and the like) are not read; the "highest eligible level"
   pool makes them matter only with "Calculate from all levels".

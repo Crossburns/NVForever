@@ -61,7 +61,7 @@ names]. Locations Discovered also counts the map markers found (`found_markers`)
 |---|---|---|
 | Quests Completed | a quest is completed (CompleteQuest, a Complete Quest stage), shown in the Pip-Boy or not [hypothesis: the original's "Save 3", in Doc Mitchell's house, already reads 1] | `Game::quest_completed` |
 | Locations Discovered | the found map markers (§2) | `Game::misc_stat` |
-| People Killed / Creatures Killed / Total Things Killed | the player kills an NPC / a creature; both count in the total [observed: the sum, §1]. Kills by companions do not count [hypothesis] | `Game::kill` |
+| People Killed / Creatures Killed / Total Things Killed | the player kills an NPC / a creature; both count in the total [observed: the sum, §1]. Kills by companions do not count [hypothesis]; the player's own death is no kill [design] | `Game::kill` |
 | Locks Picked | a lock opened by picking (not by force) [hypothesis] | `lockpick::opened` |
 | Computers Hacked | a hack succeeded | `terminal::hacked` |
 | Stimpaks Taken, Health From Stimpaks | the player uses a Stimpak-type item (ETYP 11); the health its effects restore over their whole time | `misc_stats::ingest_counts` |

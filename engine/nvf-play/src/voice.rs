@@ -24,7 +24,9 @@
 //! - **Heard where it is said** (since 2026-10-11, owner request: "audio volume based on
 //!   the distance … if the NPC is out of hearing range we shouldn't show the
 //!   subtitle"). A line said outside the conversation with the player (SayTo, Say, a
-//!   hello, a line between two actors, a detection bark) is heard from where its
+//!   hello, a Goodbye greeting or the rest of a Goodbye line the player chose, said on
+//!   after the conversation closed (`fnv_game::game::Speech::farewell`), a line between
+//!   two actors, a detection bark) is heard from where its
 //!   speaker stands ([`hearing`]): at full volume within [`DIALOG_MIN_DISTANCE`] of the
 //!   player's eye, falling as minimum ÷ distance beyond it and fading to nothing at
 //!   [`DIALOG_MAX_DISTANCE`] ([`voice_gain`]),

@@ -253,7 +253,7 @@ impl Game<'_> {
         let e = self.extra.get(&target);
         let gone = |exploded: bool| e.is_some_and(|e| e.limbs_gone.values().any(|&x| x == exploded));
         VatsOutcome {
-            critical: e.and_then(|e| e.last_hit).is_some_and(|h| h.critical),
+            critical: e.and_then(|e| e.killing_hit).is_some_and(|h| h.critical),
             fatal: true,
             explode: gone(true),
             dismember: gone(false),

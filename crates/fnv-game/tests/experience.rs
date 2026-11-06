@@ -183,6 +183,16 @@ fn a_mine_the_player_disarms_gives_its_xp() {
     assert_eq!(g.player.xp, 5.0);
 }
 
+/// #1615: by the player's own hand too, once.
+#[test]
+fn a_mine_disarmed_by_the_players_own_hand_gives_its_xp_once() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.default_activation_by_hand(FormId(MINE_REF)).unwrap().expect("not refused");
+    assert_eq!(g.player.xp, 5.0);
+    assert_eq!(g.misc_stat(fnv_game::misc_stats::MINES_DISARMED), 1.0);
+}
+
 /// Educated's Adjust Gained Skill Points entry adds two points a level
 /// (docs/spec-notes/levelup.md §9).
 #[test]

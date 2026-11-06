@@ -702,7 +702,7 @@ pub(crate) fn drawn(sim: &SimState, script: Option<&crate::script::ScriptState>,
 /// Hide or show `RefVisual` entities from the simulation's state ([`drawn`]): every entity
 /// of a reference named by `RefChanged`, and new entities as cells stream in (a taken item
 /// must not come back when its cell reloads).
-pub(crate) fn sync_visuals(
+pub fn sync_visuals(
     sim: Res<SimState>,
     script: Option<Res<crate::script::ScriptState>>,
     mut changes: MessageReader<RefChanged>,

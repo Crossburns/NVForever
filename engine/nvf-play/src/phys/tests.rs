@@ -131,6 +131,85 @@ fn fake_ref(gx: i32, gy: i32, i: u32) -> u32 {
     0x0100_0000 + (((gx + 100) as u32) << 12) + (((gy + 100) as u32) << 4) + i
 }
 
+const ENABLE_PARENT: u32 = 0x0200_0000;
+
+/// How [`parented_cell`] sets up made-up reference `i`: (header flags, its enable parent
+/// and opposite flag). Reference 4 is flagged too, but the simulation's table leaves it out.
+fn parented(i: u32) -> (u32, Option<(u32, bool)>) {
+    use fnv_world::placed::ref_flags::{DELETED, INITIALLY_DISABLED};
+    match i {
+        0 => (INITIALLY_DISABLED, Some((ENABLE_PARENT, false))),
+        1 => (INITIALLY_DISABLED, Some((ENABLE_PARENT, true))),
+        2 | 4 => (INITIALLY_DISABLED, None),
+        3 => (0, Some((ENABLE_PARENT, false))),
+        _ => (DELETED, Some((ENABLE_PARENT, false))),
+    }
+}
+
+/// [`fake_cell`] with its first six references as [`parented`] says.
+fn parented_cell(job: &Job) -> Prepared {
+    let mut c = fake_cell(job);
+    for (i, e) in c.refs.iter_mut().take(6).enumerate() {
+        let pl = e.placement.as_mut().expect("placed");
+        (pl.flags, pl.enable_parent) = parented(i as u32);
+    }
+    c
+}
+
+/// The simulation's side of [`parented_cell`]: the parent and the references it holds.
+fn parented_sim() -> SimState {
+    use fnv_sim::refs::{EnableParent, PlacedRef};
+    let child = |i: u32| {
+        let (flags, parent) = parented(i);
+        let enable_parent = parent.map(|(p, opposite)| EnableParent { reference: FormId(p), opposite, pop_in: false });
+        PlacedRef { flags, enable_parent, ..crate::sim::placed_ref(fake_ref(0, 0, i)) }
+    };
+    SimState::over_placed([crate::sim::placed_ref(ENABLE_PARENT), child(0), child(1), child(2), child(3), child(5)])
+}
+
+/// Issue #1620: a reference with an enable parent follows the parent, whatever its own
+/// Initially Disabled flag, and no state is made for it to find that out (the reflector
+/// rows at HELIOS One were drawn but had no collision until a console read made state).
+#[test]
+fn an_enable_parents_children_collide_by_the_parents_state() {
+    let d = play_data();
+    let mut sim = parented_sim();
+    let mut p = PhysState { fake: Some(parented_cell), loader: loader::Loader::manual(), ..Default::default() };
+    let cell = PhysCell::Exterior(0, 0);
+    let (child, opposite, alone, plain, not_simulated, deleted) = (fake_ref(0, 0, 0), fake_ref(0, 0, 1), fake_ref(0, 0, 2), fake_ref(0, 0, 3), fake_ref(0, 0, 4), fake_ref(0, 0, 5));
+    let untouched = |sim: &SimState| [child, opposite, alone, plain, not_simulated, deleted].iter().all(|&r| sim.world.peek(FormId(r)).is_none());
+
+    // The parent is enabled.
+    p.load(&LoadCtx { d: &d, sim: &sim, data: None }, cell);
+    assert!(p.has_collision(child), "flagged: follows its parent");
+    assert!(!p.has_collision(opposite), "flagged, opposite of its parent");
+    assert!(!p.has_collision(alone), "flagged, no parent: its own flag");
+    assert!(p.has_collision(plain));
+    assert!(!p.has_collision(not_simulated), "flagged, not in the simulation's table: its own flag");
+    assert!(!p.has_collision(deleted));
+    assert!(untouched(&sim), "asking makes no state");
+
+    // Disabled while the cell is away: the other way round when it comes back.
+    p.unload(cell);
+    sim.world.set_enabled(FormId(ENABLE_PARENT), false).unwrap();
+    p.load(&LoadCtx { d: &d, sim: &sim, data: None }, cell);
+    assert!(!p.has_collision(child));
+    assert!(p.has_collision(opposite));
+    assert!(!p.has_collision(alone));
+    assert!(!p.has_collision(plain));
+    assert!(!p.has_collision(not_simulated));
+    assert!(!p.has_collision(deleted));
+    assert!(untouched(&sim));
+
+    // Enabled again while it is away.
+    p.unload(cell);
+    sim.world.set_enabled(FormId(ENABLE_PARENT), true).unwrap();
+    p.load(&LoadCtx { d: &d, sim: &sim, data: None }, cell);
+    assert!(p.has_collision(child));
+    assert!(!p.has_collision(opposite));
+    assert!(untouched(&sim));
+}
+
 #[test]
 fn a_destroyed_reference_collides_as_its_destruction_model_and_back() {
     let (d, sim) = (play_data(), sim());
