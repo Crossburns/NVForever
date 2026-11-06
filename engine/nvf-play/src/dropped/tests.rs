@@ -5,7 +5,6 @@ use super::*;
 use crate::phys::{CreatedBody, PhysState};
 use fnv_collide::{CollisionObject, Motion, Shape};
 use fnv_phys::{PhysParams, PhysWorld, RefPose};
-use fnv_sim::inventory::Extra;
 use fnv_sim::world::{Snapshot, SNAPSHOT_FORMAT};
 use fnv_sim::{FormStore, RefTable, SimConfig, World};
 use fnv_world::transform::{axis, max_diff, ref_angles};
@@ -30,26 +29,27 @@ fn index() -> WorldIndex {
     ix
 }
 
+/// A state in no World, read from its saved form: its flags are private to `fnv-sim`.
 fn state(cell: Option<u32>, pos: [f32; 3]) -> RefState {
-    RefState {
-        base: FormId(0x100),
-        cell: cell.map(FormId),
-        pos,
-        rot: [0.0; 3],
-        enabled: true,
-        deleted: false,
-        count: 1,
-        inventory: None,
-        lock: None,
-        open: false,
-        extra: Extra::default(),
-        actor_values: Default::default(),
-        last_restock: None,
-        outfitted: false,
-        scale: None,
-        equip_locks: Default::default(),
-        dropped_by: None,
-    }
+    serde_json::from_value(serde_json::json!({
+        "base": FormId(0x100),
+        "cell": cell.map(FormId),
+        "pos": pos,
+        "rot": [0.0, 0.0, 0.0],
+        "enabled": true,
+        "deleted": false,
+        "count": 1,
+        "open": false,
+    }))
+    .expect("a whole saved state")
+}
+
+/// `s` with other flags, through its saved form as [`state`].
+fn with_flags(s: &RefState, enabled: bool, deleted: bool) -> RefState {
+    let mut saved = serde_json::to_value(s).expect("a state saves");
+    saved["enabled"] = enabled.into();
+    saved["deleted"] = deleted.into();
+    serde_json::from_value(saved).expect("a whole saved state")
 }
 
 #[test]
@@ -93,13 +93,11 @@ fn a_drop_becomes_a_spawn_and_a_take_a_despawn() {
     s.rot = [0.1, 0.0, 0.0];
     assert_eq!(plan(&created(&s), &drawn, loaded), Plan { moved: vec![DROPPED], ..Default::default() });
     // Taken back: no longer wanted.
-    s.deleted = true;
-    assert!(created(&s).is_empty());
-    assert_eq!(plan(&created(&s), &drawn, loaded), Plan { despawn: vec![DROPPED], ..Default::default() });
+    let taken = with_flags(&s, true, true);
+    assert!(created(&taken).is_empty());
+    assert_eq!(plan(&created(&taken), &drawn, loaded), Plan { despawn: vec![DROPPED], ..Default::default() });
     // A disabled one is not drawn either.
-    s.deleted = false;
-    s.enabled = false;
-    assert!(created(&s).is_empty());
+    assert!(created(&with_flags(&s, false, false)).is_empty());
 }
 
 #[test]
@@ -293,4 +291,40 @@ fn a_dropped_modded_weapon_draws_its_mods_model() {
     assert_eq!(modded_model(Some(&w), 4).as_deref(), Some(r"meshes\weapons\2handrifle\varmintrifle.nif"));
     assert_eq!(modded_model(Some(&w), 0), None);
     assert_eq!(modded_model(None, 2), None);
+}
+
+/// Issue #1617: created references go by the filter placed ones do. Markers and bases of
+/// a type not drawn (PlaceAtMe of an explosion) draw nothing; items keep their models,
+/// a modded weapon its mods' one, and the collision's model is not touched.
+#[test]
+fn a_created_marker_or_explosion_draws_nothing_and_items_their_models() {
+    use crate::script_draw::tests::{play_over, record, sub, top};
+    const HEADING: u32 = 0x100; // meshes\markerxheading.nif
+    const IN_MARKERS: u32 = 0x101; // meshes\markers\...
+    const CLUTTER: u32 = 0x102;
+    const MINE_BLAST: u32 = 0x110;
+    const CAN: u32 = 0x120;
+    const RIFLE: u32 = 0x130;
+    const NOTHING: u32 = 0x999;
+    let string = |sig: &[u8; 4], s: &str| sub(sig, [s.as_bytes(), &[0]].concat());
+    let play = play_over(&[
+        top(b"STAT", &[record(b"STAT", 0, HEADING, &[string(b"MODL", "MarkerXHeading.NIF")]), record(b"STAT", 0, IN_MARKERS, &[string(b"MODL", "Markers\\Spot.NIF")]), record(b"STAT", 0, CLUTTER, &[string(b"MODL", "Clutter\\Rock.NIF")])].concat()),
+        top(b"EXPL", &record(b"EXPL", 0, MINE_BLAST, &[string(b"MODL", "Effects\\ExplosionGrenadeFrag.NIF")])),
+        top(b"MISC", &record(b"MISC", 0, CAN, &[string(b"MODL", "Clutter\\Can.NIF")])),
+        top(b"WEAP", &record(b"WEAP", 0, RIFLE, &[string(b"MODL", "Weapons\\Rifle.NIF"), string(b"MWD2", "Weapons\\RifleScope.NIF")])),
+    ]);
+    for (base, why) in [(HEADING, "a marker by its file name"), (IN_MARKERS, "in the markers folder"), (MINE_BLAST, "an explosion")] {
+        assert!(!draws_model(&play, FormId(base), 0), "{why}");
+        assert!(model_path(&play, FormId(base), 0).is_some(), "{why}: physics still asks for its model");
+    }
+    assert!(draws_model(&play, FormId(CLUTTER), 0));
+    assert!(draws_model(&play, FormId(CAN), 0));
+    assert_eq!(model_path(&play, FormId(CAN), 0).as_deref(), Some(r"meshes\clutter\can.nif"));
+    assert!(draws_model(&play, FormId(RIFLE), 0));
+    assert_eq!(model_path(&play, FormId(RIFLE), 0).as_deref(), Some(r"meshes\weapons\rifle.nif"));
+    assert!(draws_model(&play, FormId(RIFLE), 2));
+    assert_eq!(model_path(&play, FormId(RIFLE), 2).as_deref(), Some(r"meshes\weapons\riflescope.nif"));
+    // No record at all: left to the warning that has no model to draw.
+    assert!(draws_model(&play, FormId(NOTHING), 0));
+    assert!(model_path(&play, FormId(NOTHING), 0).is_none());
 }

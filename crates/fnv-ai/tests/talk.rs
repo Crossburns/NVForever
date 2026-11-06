@@ -644,6 +644,26 @@ fn an_actor_talked_to_turns_to_the_player_and_keeps_facing_the_player() {
     assert_eq!(s.agent(R_GREET).walker.heading, heading);
 }
 
+/// A rooted actor (an Immobile creature such as Mr. House's screen, `Ai::root`) talked
+/// to does not turn: its heading stays as placed for the whole conversation (issue
+/// #1543).
+#[test]
+fn a_rooted_actor_talked_to_does_not_turn() {
+    let f = fixture();
+    let mut s = sim(&f, R_GREET, CORNER);
+    s.run(0.5);
+    s.ai.root(&s.game, FormId(R_GREET));
+    let before = s.agent(R_GREET).walker.heading;
+    let rot = s.game.world.peek(FormId(R_GREET)).map(|r| r.rot);
+    s.game.start_dialogue(FormId(R_GREET), None).unwrap();
+    for _ in 0..20 {
+        s.ai.update_held(&mut s.game, 0.25);
+    }
+    assert_eq!(s.agent(R_GREET).walker.heading, before);
+    assert_eq!(s.game.world.peek(FormId(R_GREET)).map(|r| r.rot), rot);
+    assert_eq!(s.agent(R_GREET).walker.feet, GREETER);
+}
+
 /// A script's Look with `rotateBody` 1 turns the whole body of an actor the AI runs to
 /// its target, at the walker's own turn rate, and keeps it there; StopLook ends it and
 /// the body keeps its heading. Without the flag only the head turns (the engine's): the
@@ -776,6 +796,57 @@ fn far_away_a_dialogue_package_with_a_wait_location_keeps_its_actor_there() {
     next_far_update(&mut s);
     assert!(flat(s.agent(R_GREET).walker.feet, GREETER) < 1.0, "stays at {:?}", s.agent(R_GREET).walker.feet);
     assert_eq!(s.talks(), 0);
+}
+
+/// A script's StartConversation from afar (issue #1544, `Game::walk_up_greet`): with the AI
+/// running, the speaker runs to the player and opens the conversation there, not from
+/// where it stood (the Legion explorers about Nelson greeted from 10,000 units off).
+#[test]
+fn start_conversation_from_afar_walks_up_to_the_player_first() {
+    let f = fixture();
+    let mut s = sim(&f, R_IDLE, [1100.0, 1100.0, 0.0]);
+    assert!(s.game.cfg.package_interval.is_some(), "the AI runs packages");
+    assert!(s.game.walk_up_greet(FormId(R_IDLE), None), "the speaker is far: it walks up");
+    assert!(s.game.dialogue.is_none(), "no conversation from afar");
+    s.run(1.0);
+    assert!(s.events().iter().any(|e| matches!(e, AiEvent::WalkUp { .. })), "{:?}", s.events());
+    assert!(s.game.dialogue.is_none());
+    s.run(15.0);
+    let walked = s.events().into_iter().find_map(|e| match e { AiEvent::WalkedUp { away, reached, line } => Some((*away, *reached, *line)), _ => None });
+    assert!(matches!(walked, Some((away, true, Some(_))) if away <= 150.0), "{:?}", s.events());
+    // Its greeting (the fixture's has no choices, so the conversation closes after it).
+    assert!(s.game.walk_up_greets.is_empty());
+}
+
+/// A StartConversation speaker the AI does not walk (not handed to it: its cell has not
+/// loaded) never talks from afar (issue #1544): its greeting waits until it is near the
+/// player, here the player coming up to it.
+#[test]
+fn start_conversation_by_a_speaker_the_ai_does_not_walk_waits_until_near() {
+    let f = fixture();
+    let mut s = sim(&f, R_IDLE, [1100.0, 1100.0, 0.0]);
+    assert!(!s.ai.agents.contains_key(&FormId(R_WAIT)));
+    assert!(s.game.walk_up_greet(FormId(R_WAIT), None), "the speaker is far");
+    s.run(5.0);
+    assert!(s.game.dialogue.is_none(), "no conversation from afar");
+    assert_eq!(s.game.walk_up_pending(FormId(R_WAIT)), Some(None), "its greeting waits");
+    assert!(!s.game.extra.get(&FormId(R_WAIT)).is_some_and(|e| e.talked_to_pc));
+    s.player_to([CORNER[0] + 100.0, CORNER[1], 0.0]);
+    s.run(0.25);
+    assert!(s.game.walk_up_greets.is_empty(), "near: it has talked");
+    assert!(s.game.extra[&FormId(R_WAIT)].talked_to_pc);
+}
+
+/// Near the player, or without the AI, StartConversation opens the conversation at once.
+#[test]
+fn start_conversation_near_the_player_talks_at_once() {
+    let f = fixture();
+    let mut s = sim(&f, R_IDLE, [CORNER[0] + 100.0, CORNER[1], 0.0]);
+    assert!(!s.game.walk_up_greet(FormId(R_IDLE), None), "near: no walk");
+    s.game.cfg.package_interval = None;
+    s.player_to([1100.0, 1100.0, 0.0]);
+    assert!(!s.game.walk_up_greet(FormId(R_IDLE), None), "without the AI: no walk");
+    assert!(s.game.walk_up_greets.is_empty());
 }
 
 /// Idle chatter (fnv-ai social.rs, packages.md §7.7): an actor whose package allows it

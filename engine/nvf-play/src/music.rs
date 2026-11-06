@@ -1059,7 +1059,8 @@ impl Plugin for MusicPlugin {
             .init_resource::<MusicCues>()
             .add_audio_source::<LayeredMusic>()
             .add_systems(Startup, init)
-            .add_systems(Update, (cues.after(crate::PlaySet::Scripts), play.after(crate::PlaySet::Activation)).chain())
+            // Its stingers are sound effects: before sfx plays them (crate::sfx::SfxSet).
+            .add_systems(Update, (cues.after(crate::PlaySet::Scripts), play.after(crate::PlaySet::Activation)).chain().before(crate::sfx::SfxSet))
             .add_systems(Last, report);
         crate::settings::add_setting(
             app,

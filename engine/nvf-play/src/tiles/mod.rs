@@ -1,4 +1,40 @@
 //! The tile tree beside the drawn menus [design: ui-tile-tree.md §6.2 step 1].
+//!
+//! Measuring the writes (issue #1457): the span profile (`nvforever::profile`) sees
+//! `tiles::write` as a system and these parts of it, as `tiles::write::<part>`. Top level:
+//! `sync` (`screen()` and the menus' lifetime), `menus` (the T15 menus and the Mods entry),
+//! `shown`, `texts`, `animation`, and then either `widths` (the HUD's writes kept back, the
+//! default game) or `hud_write`, `text_widths`, `corners`, `notices`, `breath`. Inside
+//! those: `menu_drop`, `menu_build`, `menu_update` in `sync` (`fnv_game::ui_loading`),
+//! `subtitles` in `shown`, `prompt` in `texts`, `font_load` wherever a face is first made.
+//! Entries say what was tried, not what came of it: `menu_build` is entered for a menu with
+//! no file and for a load that fails, and `font_load` for a face that ends as the stand-in.
+//! Parts nest, so don't add a part to its parent. `tiles::write` less the top-level parts
+//! is what no part names plus the spans' own cost and, with the counts on, their line.
+//!
+//! The spans are in every build, with no profile collector too [design]. `LogPlugin` keeps
+//! its default `INFO` (unless `RUST_LOG` says otherwise), so they are enabled: 8 a frame on
+//! the default game's path, up to 12 when the HUD is written, and `menu_drop`, `menu_build`,
+//! `menu_update` and `font_load` only on the frames doing that work. Each takes a slot in
+//! `tracing_subscriber`'s `Registry`, a push and a pop on the thread's span stack, a look
+//! at `EnvFilter`'s span map on entering and leaving, and the fmt layers' `on_new_span`,
+//! which keep an empty `FormattedFields` in the span's extensions (Bevy's fmt layer and
+//! `engine/nvforever/src/crash.rs` `file_layer`). They print nothing themselves, but a log
+//! line made inside one now names it. One span's create, enter, exit and close took about
+//! 440 ns in a scratch benchmark under the same kind of subscriber stack, which estimates
+//! 3.5 to 5.3 µs at 8 to 12 a frame; frame times of whole runs could not resolve a cost at
+//! that size [observed 2026-11-04, #1511].
+//!
+//! `NVF_PLAY_TEST_TILE_COUNTS=1` (a test aid of its own, in any build; time without it, its
+//! line lies outside the parts): a line a frame, `tile counts: writes=<n> changed=<n>
+//! speech=<n> faces=<n> measure_candidates=<n> deferred=<bool>`: the trait writes this
+//! system made and how many changed a value, `game.speech`'s lines (those `subtitles` goes
+//! over; a line not heard stops at its first test), the faces made so far (the game's fonts
+//! and stand-ins alike), the HUD text tiles a width could be measured for on a frame that
+//! writes the HUD (no count of measures: no game font means none, a tile without a string
+//! is passed over; 0 when deferred, the measuring waits), and whether the HUD's writes were
+//! kept back. Off, one cached flag a frame is read here and the tree's two counters advance
+//! anyway ([`fnv_ui::Ui::trait_write_counts`]).
 
 pub mod draw;
 pub mod input;
@@ -7,6 +43,7 @@ pub mod menus;
 pub mod model;
 pub mod mods;
 pub mod notices;
+pub mod tutorial_menu;
 pub mod vanilla;
 pub mod wait_menu;
 
@@ -61,13 +98,13 @@ impl MenuFiles<'_, '_> {
 }
 
 /// Whether `screen()` is written in interface units ([`write_screen`]): only while a T15
-/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`) or the start menu's Mods page
+/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`) or the start menu's Mods page
 /// (T11, `mods`) is switched on, whose files centre their boxes by `screen()` (MCM's `x`
 /// and `y`, menu-xml.md §10). The default game and the tile HUD alone keep the window's
 /// pixels [design]. The original reports interface units [observed: hud_menus capture
 /// 2026-10-31, three window sizes]; applying them unconditionally is a follow-up.
 pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
-    menus.message || menus.quantity || menus.sleep_wait || menus.start
+    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.start
 }
 
 /// Write `screen()`'s traits for a window `window_width` x `window_height` (logical
@@ -201,7 +238,10 @@ impl HudTiles<'_> {
             enemy: corners && enemy.is_some(),
             quests: notices && quest.is_some() && !location,
             messages: notices && self.corner.as_ref().is_some_and(|c| c.showing().is_some()),
-            subtitles: !creating && self.hud.as_ref().is_some_and(|h| crate::script_hud::hud_subtitles_shown(h, game, &self.sim, self.player.as_deref())),
+            subtitles: {
+                let _span = info_span!("tiles::write::subtitles").entered();
+                !creating && self.hud.as_ref().is_some_and(|h| crate::script_hud::hud_subtitles_shown(h, game, &self.sim, self.player.as_deref()))
+            },
             info,
             location: notices && location,
             xp: corners && self.xp.as_ref().is_some_and(|m| m.show.is_some()), // xp_meter::draw [design].
@@ -277,7 +317,10 @@ impl HudTiles<'_> {
     fn texts(&self, game: &mut fnv_game::Game<'_>, shown: fnv_game::ui_hud::Shown) -> fnv_game::ui_hud::Texts {
         // Read the drawing's current values before scripts, as for Shown [design:
         // ui-tile-tree.md §4.1]; the strings' file tiles [observed: hud.md §14.2].
-        let prompt = self.target.as_ref().and_then(|t| t.0.as_ref()).filter(|_| shown.info).map(|t| crate::reticle::Prompt::bound(t, &self.sim, self.bindings.as_deref()));
+        let prompt = {
+            let _span = info_span!("tiles::write::prompt").entered();
+            self.target.as_ref().and_then(|t| t.0.as_ref()).filter(|_| shown.info).map(|t| crate::reticle::Prompt::bound(t, &self.sim, self.bindings.as_deref()))
+        };
         // Reuse the latest drawing snapshot before scripts [design: ui-tile-tree.md §4.1].
         let weapon = self.combat.as_ref().map(|c| c.hud_weapon(&self.sim)).unwrap_or_default();
         // Hostility as `hud_target::aim` worked it out this frame, so both HUDs agree.
@@ -423,8 +466,13 @@ impl MenuTiles<'_, '_> {
                 let was = written.message.as_ref();
                 let another = menus::another_box(was.map(|(b, _)| b), &now);
                 if another || was.is_some_and(|(_, s)| *s != selected) {
+                    {
+                        let size = fonts.menu_measure(&menus::fonts(ui, menu));
+                        menus::write_message(ui, view, selected, another, &size);
+                    }
+                    // The fonts again: the rows are new and the tree was worked out, and a
+                    // measure is kept, so a font not loaded yet would stay at 0 x 0.
                     let size = fonts.menu_measure(&menus::fonts(ui, menu));
-                    menus::write_message(ui, view, selected, another, &size);
                     menus::write_text_sizes(ui, menu, &mut written.sizes[0], &size);
                     if another && menus::message_status(ui).yes() {
                         info!("{}", menus::describe_message(ui, view));
@@ -511,11 +559,16 @@ fn write(
     mut start_names: Local<mods::KeptNames>,
 ) {
     let Some(rt) = script.rt.as_mut() else { return };
+    let before = counts_on().then(|| rt.game.ui_tree.trait_write_counts());
     // T15a: the prompt over the container, barter and inventory menus builds `QuantityMenu`
     // while it shows (`Game::ui_prompt`), whether or not it is drawn from it, as the open
     // menus build (T3b).
     rt.game.ui_prompt = menu_tiles.quantity().map(|_| fnv_game::game::menus::QUANTITY);
-    files.write(&mut rt.game);
+    {
+        let _span = info_span!("tiles::write::sync").entered();
+        files.write(&mut rt.game);
+    }
+    let menus_span = info_span!("tiles::write::menus").entered();
     // T11: the pause column's Mods entry, while a mod's tiles are in the start menu.
     let ui_files = rt.game.ui_files.as_deref().map(|f| f as &dyn fnv_ui::Source);
     let mods_now = crate::pause::ModsEntry(mods::available(*menus, &rt.game.ui_tree, ui_files, &mut start_names));
@@ -524,8 +577,16 @@ fn write(
         *mods_entry = mods_now;
     }
     menu_tiles.write(&mut rt.game, *menus, &mut fonts, hud.sim.world.calendar().ok());
-    let shown = hud.shown(&rt.game, &files);
-    let mut texts = hud.texts(&mut rt.game, shown);
+    drop(menus_span);
+    let shown = {
+        let _span = info_span!("tiles::write::shown").entered();
+        hud.shown(&rt.game, &files)
+    };
+    let mut texts = {
+        let _span = info_span!("tiles::write::texts").entered();
+        hud.texts(&mut rt.game, shown)
+    };
+    let animation_span = info_span!("tiles::write::animation").entered();
     if let Some(root) = rt.game.ui_tree.find_tile("HUDMainMenu") {
         // [design] Reset clocks on tree rebuild/save-load, without touching the hand HUD.
         if rt.game.ui_tree.tile(root).get("_NVFAnimationClock").is_none() {
@@ -534,6 +595,7 @@ fn write(
         }
         texts.frame.animation = animation.step(f64::from(time.delta_secs()), shown.root && shown.corners, fnv_game::experience::standing(&rt.game), texts.frame.crippled);
     }
+    drop(animation_span);
     // Who reads the HUD's traits: the tile-drawn HUD, mod tiles in it (their traits may
     // copy the HUD's), or a script that called a UI function. With none (the default
     // game), the writes wait for the first UI call (`ui_hud::flush`) and the frame does
@@ -543,19 +605,33 @@ fn write(
     let ui = &rt.game.ui_tree;
     let mod_tiles = ui.menu(draw::HUD_MENU).is_some_and(|m| ui.has_mod_added_tiles(m));
     if !(menus.hud || mod_tiles || rt.game.ui_used) {
-        let widths = if rt.game.ui_files.is_some() { fonts.widths(&rt.game.ui_tree) } else { None };
+        let widths = {
+            let _span = info_span!("tiles::write::widths").entered();
+            if rt.game.ui_files.is_some() { fonts.widths(&rt.game.ui_tree) } else { None }
+        };
         fnv_game::ui_hud::defer(&mut rt.game, shown, texts, widths);
+        tell_counts(before, &rt.game, &fonts, true);
         return;
     }
     rt.game.ui_hud_pending = None;
-    fnv_game::ui_hud::write(&mut rt.game.ui_tree, shown, &texts);
+    {
+        let _span = info_span!("tiles::write::hud_write").entered();
+        fnv_game::ui_hud::write(&mut rt.game.ui_tree, shown, &texts);
+    }
     // The text tiles' widths from the strings just written, before scripts read them
     // [design: ui-tile-tree.md §4.1; observed widths: hud.md §14.1].
     if rt.game.ui_files.is_some() {
-        fonts.write_widths(&mut rt.game.ui_tree);
+        {
+            let _span = info_span!("tiles::write::text_widths").entered();
+            fonts.write_widths(&mut rt.game.ui_tree);
+        }
         if menus.hud {
-            let corner = hud.corner(shown, &mut fonts);
-            vanilla::write_corners(&mut rt.game.ui_tree, &corner);
+            {
+                let _span = info_span!("tiles::write::corners").entered();
+                let corner = hud.corner(shown, &mut fonts);
+                vanilla::write_corners(&mut rt.game.ui_tree, &corner);
+            }
+            let notices_span = info_span!("tiles::write::notices").entered();
             // The messages, quest notices and subtitles, only while the switch is on: off,
             // nothing is made under their pieces [design].
             let shows = hud.notices(&rt.game, shown);
@@ -569,23 +645,139 @@ fn write(
                 }
                 *last = line;
             }
+            drop(notices_span);
+            let _span = info_span!("tiles::write::breath").entered();
             // The breath meter: shown under the hand-built meter's rule, at the breath used
             // (`vanilla::write_breath`, hud.md §14.12).
             let used = hud.breath.as_ref().map_or(0.0, |b| 1.0 - f64::from(b.share()));
             vanilla::write_breath(&mut rt.game.ui_tree, shown.breath, used);
         }
     }
+    tell_counts(before, &rt.game, &fonts, false);
+}
+
+/// Whether `NVF_PLAY_TEST_TILE_COUNTS` asks for the frame's counts (the module's notes).
+fn counts_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("NVF_PLAY_TEST_TILE_COUNTS").is_ok_and(|v| !v.trim().is_empty() && v.trim() != "0"))
+}
+
+/// The frame's counts line, from the tree's trait counts when the frame began (`None`
+/// without the test aid: nothing is read or logged here).
+fn tell_counts(before: Option<(u64, u64)>, game: &fnv_game::Game<'_>, fonts: &draw::FontKit, deferred: bool) {
+    let Some((writes, changes)) = before else { return };
+    let (writes_now, changes_now) = game.ui_tree.trait_write_counts();
+    let candidates = if deferred || game.ui_files.is_none() { 0 } else { fnv_game::ui_hud::measured_texts(&game.ui_tree).len() };
+    info!(
+        "tile counts: writes={} changed={} speech={} faces={} measure_candidates={candidates} deferred={deferred}",
+        writes_now - writes,
+        changes_now - changes,
+        game.speech.len(),
+        fonts.faces_made(),
+    );
+}
+
+/// T15b: what the tutorial menu drawn from tiles was last written from.
+#[derive(Default)]
+struct TutorialWritten {
+    shown: Option<tutorial_menu::Shown>,
+    sizes: menus::SizesWritten,
+    /// The symbol's picture's width, read once.
+    symbol: Option<Option<f64>>,
+    /// [design] The fallback's reason is warned once per session.
+    warned: bool,
+}
+
+/// T15b: the scroll written for the tutorial menu this frame, and what was last seen drawn.
+#[derive(Resource, Default)]
+struct TutorialScrollCheck {
+    wrote: Option<f64>,
+    drawn: Option<(f64, f64)>,
+}
+
+/// T15b: write the tutorial menu's traits after its keys and clicks were applied
+/// (`crate::tutorial_menu::keys`), before the scripts: the page when it changed, then its
+/// sizes, range and scroll every frame it is drawn (`tutorial_menu::settle`), so the frame's
+/// page and scroll reach the tree together (`tutorial_menu`).
+fn write_tutorial(
+    mut script: ResMut<ScriptState>,
+    switch: Res<vanilla::TileMenus>,
+    mut view: ResMut<crate::tutorial_menu::TutorialView>,
+    mut fonts: draw::FontKit,
+    mut written: Local<TutorialWritten>,
+    mut check: ResMut<TutorialScrollCheck>,
+) {
+    check.wrote = None;
+    if !switch.tutorial {
+        return;
+    }
+    let Some(rt) = script.rt.as_mut() else { return };
+    let game = &mut rt.game;
+    let open = game.ui_files.is_some() && game.menu == Some(fnv_game::game::menus::TUTORIAL);
+    if let (true, false, menus::Tiled::No(reason)) = (open, written.warned, tutorial_menu::built(&game.ui_tree)) {
+        warn!("{} drawn by hand: {reason}", tutorial_menu::TUTORIAL_MENU);
+        written.warned = true;
+    }
+    if !tutorial_menu::tiled(true, game) {
+        written.shown = None;
+        check.drawn = None;
+        return;
+    }
+    let pages = crate::tutorial_menu::pages_with(game, tutorial_menu::body_text);
+    let (Some(menu), false) = (game.ui_tree.menu(tutorial_menu::TUTORIAL_MENU), pages.is_empty()) else { return };
+    let at = view.page.min(pages.len() - 1);
+    let now = tutorial_menu::Shown { menu, page: pages[at].clone(), at, of: pages.len() };
+    let changed = written.shown.as_ref() != Some(&now);
+    let ui = &mut game.ui_tree;
+    if changed {
+        tutorial_menu::write(ui, &now);
+        let file = tutorial_menu::symbol_file(ui);
+        let texels = *written.symbol.get_or_insert_with(|| file.and_then(|f| fonts.picture_size(&f)).map(|s| f64::from(s.x)));
+        tutorial_menu::write_symbol(ui, texels);
+    }
+    let texts = menus::texts(ui, menu);
+    // Each round's fonts as the tree stands then: a computed font follows what was just written.
+    let mut write_sizes = |ui: &mut fnv_ui::Ui, sizes: &mut menus::SizesWritten| {
+        let size = fonts.menu_measure(&menus::fonts_of(ui, &texts));
+        menus::write_text_sizes_of(ui, &texts, sizes, &size)
+    };
+    let scroll = tutorial_menu::settle(ui, &mut written.sizes, &mut write_sizes, &mut view);
+    if changed {
+        info!("{}", tutorial_menu::describe(ui, &now));
+        written.shown = Some(now);
+    }
+    check.wrote = Some(scroll);
+}
+
+/// T15b: the scroll and the body's place once the tree is worked out after scripts (what is
+/// drawn), logged when they change, and when the scroll is not the value written this frame
+/// (smoke reads both: the model's value must outlast a click's pulse, as the wait menu's).
+/// Its `clipwindow`s are turned on here, after the scripts and before the drawing.
+fn check_tutorial_drawn(ui: &mut fnv_ui::Ui, check: &mut TutorialScrollCheck) {
+    use tutorial_menu::{marker_y, scroll_bound, scroll_shown, text_y, TUTORIAL_MENU};
+    let Some(wrote) = check.wrote.take() else { return };
+    tutorial_menu::mark_windows(ui);
+    let (Some(v), Some(y)) = (scroll_shown(ui), text_y(ui)) else { return };
+    let n = |x: f64| Value::Num(x).text();
+    if check.drawn != Some((v, y)) {
+        info!("tiles: {TUTORIAL_MENU} scroll drawn at {} of {}, text y {}, marker y {}", n(v), n(scroll_bound(ui)), n(y), n(marker_y(ui).unwrap_or(-1.0)));
+        check.drawn = Some((v, y));
+    }
+    if wrote != v {
+        info!("tiles: {TUTORIAL_MENU} scroll drawn at {}, not the {} written", n(v), n(wrote));
+    }
 }
 
 /// Works the tree out after the scripts; nothing to do on a frame where nothing changed
 /// it (`fnv_ui::Ui::update`). The scripts' gradual changes step first, on real time
 /// (`fnv_game::ui_gradients`, task T9).
-fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check: ResMut<input::WaitSliderCheck>) {
+fn update(mut script: ResMut<ScriptState>, time: Res<Time<Real>>, mut wait_check: ResMut<input::WaitSliderCheck>, mut tutorial_check: ResMut<TutorialScrollCheck>) {
     let Some(rt) = script.rt.as_mut() else { return };
     rt.game.ui_gradients.step(&mut rt.game.ui_tree, f64::from(time.delta_secs()));
     if rt.game.ui_files.is_some() {
         rt.game.ui_tree.update();
         input::check_wait_drawn(&rt.game.ui_tree, &mut wait_check);
+        check_tutorial_drawn(&mut rt.game.ui_tree, &mut tutorial_check);
         // Once, if something changes the tree's shape every frame (#1061).
         if let Some(line) = rt.game.ui_tree.take_reshape_warning() {
             warn!("{line}");
@@ -607,6 +799,10 @@ impl Plugin for TilesPlugin {
         vanilla::setup(app);
         input::setup(app);
         app.init_resource::<draw::TileFonts>()
+            .init_resource::<TutorialScrollCheck>()
+            .init_resource::<menus::TileMenuBlur>()
+            // T15b: after the tutorial menu's keys, in the scripts' chain, before they run.
+            .add_systems(Update, write_tutorial.in_set(PlaySet::Scripts).after(crate::tutorial_menu::keys).before(crate::script::run_scripts))
             .add_systems(Update, write.after(PlaySet::Physics).after(crate::compass::place).before(PlaySet::Activation))
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).before(PlaySet::Activation))
@@ -668,6 +864,7 @@ mod tests {
         assert!(interface_screen(vanilla::TileMenus { quantity: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { start: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { sleep_wait: true, ..Default::default() }));
+        assert!(interface_screen(vanilla::TileMenus { tutorial: true, ..Default::default() }));
         write_screen(&mut ui, 1280.0, 720.0, true);
         ui.update();
         assert_eq!(ui.get_float("M/Box/x").map(|x| (x * 100.0).round() / 100.0), Some(803.33));

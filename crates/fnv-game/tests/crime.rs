@@ -12,11 +12,16 @@ use fnv_game::game::{Game, GameConfig};
 use fnv_game::GameData;
 use fnv_script::vm::{ArgValue, Value};
 use fnv_script::FunctionTable;
+use fnv_sim::world::Outcome;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::Value as Json;
 
 const TOWN: u32 = 0x900;
 const GANG: u32 = 0x901;
+/// A second faction counting towards the town's reputation.
+const MARKET: u32 = 0x902;
+const REP_TOWN: u32 = 0x920;
+const REP_GANG: u32 = 0x921;
 const SHOPKEEPER: u32 = 0x830;
 const TOWNSMAN: u32 = 0x831;
 const FIEND: u32 = 0x832;
@@ -30,6 +35,13 @@ const BOSS: u32 = 0x835;
 const BOSS_REF: u32 = 0x325;
 const SAINT: u32 = 0x836;
 const SAINT_REF: u32 = 0x326;
+/// In the town, the market and the gang: two factions share a reputation.
+const ELDER: u32 = 0x837;
+/// In the gang by its own record, but its factions come from the shopkeeper (a template
+/// with Use Factions).
+const HEIR: u32 = 0x838;
+/// In the town's list at rank -1: not a member.
+const EXILE: u32 = 0x839;
 const TRINKET: u32 = 0x850;
 const SHOP: u32 = 0x200;
 const SHOPKEEPER_REF: u32 = 0x320;
@@ -38,6 +50,7 @@ const FIEND_REF: u32 = 0x322;
 const STRANGER_REF: u32 = 0x323;
 const TRINKET_REF: u32 = 0x330;
 const GANG_TRINKET_REF: u32 = 0x331;
+const HEIR_TRINKET_REF: u32 = 0x332;
 const SHOP_DOOR: u32 = 0x860;
 /// Two teleport doors into the shop: the first flagged No Alarm (XTEL), the second not.
 const QUIET_DOOR_REF: u32 = 0x340;
@@ -72,6 +85,10 @@ fn acbs_templated(karma: f32, template_flags: u16) -> fnv_esm::raw::Subrecord {
 
 fn snam(faction: u32) -> fnv_esm::raw::Subrecord {
     sub(b"SNAM", [faction.to_le_bytes().to_vec(), vec![0, 0, 0, 0]].concat())
+}
+
+fn snam_at_rank(faction: u32, rank: i8) -> fnv_esm::raw::Subrecord {
+    sub(b"SNAM", [faction.to_le_bytes().to_vec(), vec![rank as u8, 0, 0, 0]].concat())
 }
 
 /// AIDT: aggression, and Assistance 0.
@@ -116,11 +133,18 @@ fn topic(id: u32, edid: &str) -> Vec<u8> {
 fn plugin_bytes() -> Vec<u8> {
     let quest = record(b"QUST", 0, QUEST, &[sub(b"EDID", z("CrimeTalk")), sub(b"DATA", [vec![1, 50, 0, 0], 0f32.to_le_bytes().to_vec()].concat())]);
     let dial: Vec<u8> = NO_CRIME_TOPICS.iter().flat_map(|&(id, edid)| topic(id, edid)).collect();
+    let reputations = [
+        record(b"REPU", 0, REP_TOWN, &[sub(b"EDID", z("RepTown")), sub(b"DATA", 20f32.to_le_bytes().to_vec())]),
+        record(b"REPU", 0, REP_GANG, &[sub(b"EDID", z("RepGang")), sub(b"DATA", 20f32.to_le_bytes().to_vec())]),
+    ]
+    .concat();
+    let wmi1 = |r: u32| sub(b"WMI1", r.to_le_bytes().to_vec());
     let factions = [
         // Track Crime (second byte, bit 0).
-        record(b"FACT", 0, TOWN, &[sub(b"EDID", z("Town")), sub(b"DATA", vec![0, 1, 0, 0])]),
+        record(b"FACT", 0, TOWN, &[sub(b"EDID", z("Town")), sub(b"DATA", vec![0, 1, 0, 0]), wmi1(REP_TOWN)]),
         // Evil (first byte, bit 1) and Track Crime.
-        record(b"FACT", 0, GANG, &[sub(b"EDID", z("Gang")), sub(b"DATA", vec![2, 1, 0, 0])]),
+        record(b"FACT", 0, GANG, &[sub(b"EDID", z("Gang")), sub(b"DATA", vec![2, 1, 0, 0]), wmi1(REP_GANG)]),
+        record(b"FACT", 0, MARKET, &[sub(b"EDID", z("Market")), sub(b"DATA", vec![0, 1, 0, 0]), wmi1(REP_TOWN)]),
     ]
     .concat();
     let npcs = [
@@ -132,6 +156,10 @@ fn plugin_bytes() -> Vec<u8> {
         record(b"NPC_", 0, CONVICT, &[sub(b"EDID", z("Convict")), acbs_templated(0.0, 0x01), sub(b"TPLT", FIEND.to_le_bytes().to_vec()), aidt(0)]),
         record(b"NPC_", 0, BOSS, &[sub(b"EDID", z("Boss")), acbs(-900.0), aidt(0)]),
         record(b"NPC_", 0, SAINT, &[sub(b"EDID", z("Saint")), acbs(900.0), aidt(0)]),
+        record(b"NPC_", 0, ELDER, &[sub(b"EDID", z("Elder")), acbs(0.0), snam(TOWN), snam(MARKET), snam(GANG), aidt(0)]),
+        // Template flag 0x04: Use Factions [schema `gameplay.json`].
+        record(b"NPC_", 0, HEIR, &[sub(b"EDID", z("Heir")), acbs_templated(0.0, 0x04), snam(GANG), sub(b"TPLT", SHOPKEEPER.to_le_bytes().to_vec()), aidt(0)]),
+        record(b"NPC_", 0, EXILE, &[sub(b"EDID", z("Exile")), acbs(0.0), snam_at_rank(TOWN, -1), aidt(0)]),
     ]
     .concat();
     let misc = record(b"MISC", 0, TRINKET, &[sub(b"EDID", z("Trinket")), sub(b"DATA", [5i32.to_le_bytes(), 1f32.to_le_bytes()].concat())]);
@@ -150,6 +178,7 @@ fn plugin_bytes() -> Vec<u8> {
         placed(b"ACHR", SAINT_REF, SAINT, vec![]),
         placed(b"REFR", TRINKET_REF, TRINKET, vec![]),
         placed(b"REFR", GANG_TRINKET_REF, TRINKET, vec![sub(b"XOWN", GANG.to_le_bytes().to_vec()), sub(b"XRNK", 1i32.to_le_bytes().to_vec())]),
+        placed(b"REFR", HEIR_TRINKET_REF, TRINKET, vec![sub(b"XOWN", HEIR.to_le_bytes().to_vec())]),
         placed(b"REFR", QUIET_DOOR_REF, SHOP_DOOR, vec![xtel(LOUD_DOOR_REF, 1)]),
         placed(b"REFR", LOUD_DOOR_REF, SHOP_DOOR, vec![xtel(QUIET_DOOR_REF, 0)]),
     ]
@@ -157,6 +186,7 @@ fn plugin_bytes() -> Vec<u8> {
     let children = group(SHOP.to_le_bytes(), 6, &group(SHOP.to_le_bytes(), 9, &refs));
     [
         tes4(),
+        top(b"REPU", &reputations),
         top(b"FACT", &factions),
         top(b"QUST", &quest),
         top(b"DIAL", &dial),
@@ -282,6 +312,73 @@ fn the_owner_who_sees_a_theft_turns_on_the_player() {
     assert!(!g.would_attack(FormId(SHOPKEEPER_REF), FormId::PLAYER_REF));
 }
 
+fn infamy(g: &mut Game) -> Vec<(FormId, f64, f64)> {
+    g.crimes.take_notes().into_iter().filter_map(|n| if let Note::Infamy { reputation, before, after } = n { Some((reputation, before, after)) } else { None }).collect()
+}
+
+/// Goods owned by an NPC name its base form (XOWN), not a reference: a seen theft adds the
+/// infamy with the reputations of the factions that base is in, and an unseen one none
+/// (#1570).
+#[test]
+fn a_seen_theft_from_an_npc_owner_adds_infamy() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(g.player_stole(Some(FormId(TRINKET_REF)), None, FormId(TRINKET), 1));
+    assert!(infamy(&mut g).is_empty(), "unseen");
+    sees(&mut g, SHOPKEEPER_REF);
+    assert!(g.player_stole(Some(FormId(TRINKET_REF)), None, FormId(TRINKET), 1));
+    assert_eq!(infamy(&mut g), vec![(FormId(REP_TOWN), 0.0, 2.0)]);
+    assert_eq!(g.player.reputation[&FormId(REP_TOWN)], [2.0, 0.0]);
+}
+
+/// The factions come from the owner's template when it has Use Factions (not its own list).
+#[test]
+fn a_seen_theft_from_a_templated_owner_counts_the_templates_factions() {
+    let f = fixture();
+    let mut g = game(&f);
+    sees(&mut g, TOWNSMAN_REF);
+    assert!(g.player_stole(Some(FormId(HEIR_TRINKET_REF)), None, FormId(TRINKET), 1));
+    assert_eq!(infamy(&mut g), vec![(FormId(REP_TOWN), 0.0, 2.0)]);
+}
+
+#[test]
+fn a_seen_theft_from_a_faction_adds_its_infamy() {
+    let f = fixture();
+    let mut g = game(&f);
+    sees(&mut g, FIEND_REF);
+    assert!(g.player_stole(Some(FormId(GANG_TRINKET_REF)), None, FormId(TRINKET), 1));
+    assert_eq!(infamy(&mut g), vec![(FormId(REP_GANG), 0.0, 2.0)]);
+}
+
+#[test]
+fn an_actor_base_counts_towards_its_records_reputations_once() {
+    use fnv_game::functions::reputations_of;
+    let f = fixture();
+    let g = game(&f);
+    // Town and market share one reputation.
+    assert_eq!(reputations_of(&g, FormId(ELDER)), vec![FormId(REP_TOWN), FormId(REP_GANG)]);
+    assert_eq!(reputations_of(&g, FormId(HEIR)), vec![FormId(REP_TOWN)]);
+    assert!(reputations_of(&g, FormId(EXILE)).is_empty(), "rank -1 is not a member");
+    assert!(reputations_of(&g, FormId(STRANGER)).is_empty());
+    assert_eq!(reputations_of(&g, FormId(GANG)), vec![FormId(REP_GANG)]);
+}
+
+/// A reference follows its faction changes at run time; its base keeps what the record says.
+#[test]
+fn a_reference_counts_towards_the_factions_it_is_in_now() {
+    use fnv_game::functions::reputations_of;
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(reputations_of(&g, FormId(SHOPKEEPER_REF)), vec![FormId(REP_TOWN)]);
+    g.extra.entry(FormId(SHOPKEEPER_REF)).or_default().factions.insert(FormId(TOWN), -1);
+    assert!(reputations_of(&g, FormId(SHOPKEEPER_REF)).is_empty(), "removed from the town");
+    assert_eq!(reputations_of(&g, FormId(SHOPKEEPER)), vec![FormId(REP_TOWN)]);
+    assert!(reputations_of(&g, FormId(STRANGER_REF)).is_empty());
+    g.extra.entry(FormId(STRANGER_REF)).or_default().factions.insert(FormId(GANG), 0);
+    assert_eq!(reputations_of(&g, FormId(STRANGER_REF)), vec![FormId(REP_GANG)]);
+    assert!(reputations_of(&g, FormId(STRANGER)).is_empty());
+}
+
 #[test]
 fn killing_by_alignment_and_murder() {
     let f = fixture();
@@ -393,6 +490,27 @@ fn a_no_alarm_door_excuses_trespassing_in_its_cell() {
     g.arrived_through(FormId(LOUD_DOOR_REF), Some(FormId(SHOP)));
     assert!(g.crimes.take_notes().is_empty());
     assert_eq!(call(&mut g, IS_TRESPASSING, Some(0x14), &[]), 1.0);
+}
+
+/// #1615: the door the player uses by hand is the door arrived through, and the cell is
+/// left to the engine's loading, unlike a script's `Activate player`.
+#[test]
+fn the_players_own_door_counts_and_leaves_the_cell_to_the_engine() {
+    let f = fixture();
+    let mut g = game(&f);
+    let shop = FormId(SHOP);
+    g.set_loaded(Default::default());
+    let done = g.default_activation_by_hand(FormId(QUIET_DOOR_REF)).unwrap().expect("not refused");
+    assert!(matches!(done.activation.outcome, Outcome::Teleported { cell: Some(c), .. } if c == shop));
+    assert!(g.crimes.take_notes().contains(&Note::NoAlarm { door: FormId(QUIET_DOOR_REF), cell: shop }));
+    assert_eq!(call(&mut g, IS_TRESPASSING, Some(0x14), &[]), 0.0);
+    assert!(g.loaded_cells.is_empty(), "the engine's loading says when the player is there");
+    g.player_entered(Some(shop));
+    assert!(g.loaded_cells.contains(&shop));
+    // A script's activation has no loading of its own to wait for.
+    g.set_loaded(Default::default());
+    g.default_activation(FormId::PLAYER_REF, FormId(LOUD_DOOR_REF), false).unwrap();
+    assert!(g.loaded_cells.contains(&shop));
 }
 
 #[test]

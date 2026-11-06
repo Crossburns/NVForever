@@ -138,10 +138,11 @@ class CpuLoad:
     The first successful read is only a baseline: it starts the first interval and gives
     no share (a share over the moment between the counters' creation and their first read
     came out at 195 % and 390 % of the machine [observed, #1412]). A read that fails keeps
-    the last baseline, so the next interval is longer, not lost. An interval with no
-    elapsed time or an impossible share is left out and counted in `skipped`, not turned
-    into a zero load. Each kept sample is (seconds since the launch at its end, game's
-    share, others' share, its elapsed seconds), so the summary can weight it by its time."""
+    the last baseline, so the next interval is longer, not lost; so does a read with no
+    elapsed time. An interval with an impossible share is left out and counted in
+    `skipped` (its end becomes the new baseline), not turned into a zero load. Each kept
+    sample is (seconds since the launch at its end, game's share, others' share, its
+    elapsed seconds), so the summary can weight it by its time."""
 
     def __init__(self, cores: int, started: float):
         self.cores = max(cores, 1)
@@ -162,7 +163,7 @@ class CpuLoad:
         elapsed = now - t0
         if elapsed <= 0:
             # No time has passed: keep the baseline, the next read ends a longer interval.
-            self.skipped += 1
+            # Its time is not lost, so it is not counted in `skipped`.
             return None
         self.base = (now, system, process)
         wall = elapsed * self.cores
@@ -295,7 +296,7 @@ class Result:
     stacks: Path | None = None
     # (seconds at its end, game's share, others' share, elapsed seconds) per kept interval (CpuLoad)
     cpu: list[tuple[float, float, float, float]] = field(default_factory=list)
-    cpu_skipped: int = 0  # intervals left out (no elapsed time, impossible share)
+    cpu_skipped: int = 0  # intervals left out (impossible share)
 
     def tail(self, n: int = 40) -> list[str]:
         return self.lines[-n:]

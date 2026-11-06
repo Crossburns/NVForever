@@ -43,6 +43,11 @@ pub struct Placement {
     /// [documented: xEdit wbDefinitionsFNV.pas REFR; GECK wiki "Reference"]; see
     /// [`crate::imposter`].
     pub imposter: bool,
+    /// XPRM present: the reference is a primitive (a box, sphere or plane drawn only in
+    /// the editor) rather than an object, a trigger volume when its base is an activator
+    /// (docs/spec-notes/level-design.md §4.1). Such a reference shows nothing and offers
+    /// nothing in game, whatever model its base names ([`Self::draws_base_model`]).
+    pub primitive: bool,
 }
 
 impl Placement {
@@ -51,6 +56,15 @@ impl Placement {
     }
     pub fn initially_disabled(&self) -> bool {
         self.flags & ref_flags::INITIALLY_DISABLED != 0
+    }
+    /// Whether the base object's model is drawn, collides and can be aimed at for this
+    /// reference: not for a primitive. A trigger made by copying an activator keeps the
+    /// copied model: 68 references with XPRM in the base game and DLC have a base with a
+    /// model, all activators, 66 naming `WaterTowerPipes01.NIF` and 2 a vault control panel
+    /// [observed: survey of the six ESMs], and primitives show only with marker viewing on [documented: GECK wiki
+    /// Creating Primitives; ToggleAllPrimitives] (level-design.md §4.1).
+    pub fn draws_base_model(&self) -> bool {
+        !self.primitive
     }
 }
 
@@ -76,6 +90,7 @@ pub fn placement(lo: &LoadOrder, schema: &Schema, fid: u32) -> Option<Placement>
     let teleport = f.raw(b"XTEL").is_some();
     let emittance = f.formid(b"XEMI", lo).filter(|&e| e != 0);
     let imposter = f.get(b"XSRF").and_then(|v| num(&v, "value")).is_some_and(|b| b as u32 & IMPOSTER != 0);
+    let primitive = f.raw(b"XPRM").is_some();
     Some(Placement {
         form_id: fid,
         sig: r.header.sig,
@@ -89,6 +104,7 @@ pub fn placement(lo: &LoadOrder, schema: &Schema, fid: u32) -> Option<Placement>
         teleport,
         emittance,
         imposter,
+        primitive,
     })
 }
 
@@ -273,6 +289,28 @@ mod tests {
         assert_eq!(b("WastelandShrub01.spt").model_path().unwrap(), "trees\\wastelandshrub01.spt");
         assert_eq!(b("\\WastelandShrub01.spt").model_path().unwrap(), "trees\\wastelandshrub01.spt");
         assert!(b("WastelandShrub01.spt").is_speedtree() && !b("a.nif").is_speedtree());
+    }
+
+    #[test]
+    fn primitives_draw_no_model() {
+        // level-design.md §4.1: a trigger copied from an activator with a model.
+        let p = |primitive| Placement {
+            form_id: 1,
+            sig: *b"REFR",
+            flags: 0,
+            base: Some(2),
+            position: [0.0; 3],
+            rotation: [0.0; 3],
+            scale: 1.0,
+            enable_parent: None,
+            open_by_default: false,
+            teleport: false,
+            emittance: None,
+            imposter: false,
+            primitive,
+        };
+        assert!(p(false).draws_base_model());
+        assert!(!p(true).draws_base_model());
     }
 
     #[test]

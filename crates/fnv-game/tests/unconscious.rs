@@ -28,6 +28,9 @@ const ESSENTIAL: u32 = 0x2;
 const GET_ACTOR_VALUE: u16 = 0x100E;
 const DAMAGE_ACTOR_VALUE: u16 = 0x1181;
 const GET_DEAD: u16 = 0x102E;
+const GET_HIT_LOCATION: u16 = 0x1187;
+const GET_CAUSE_OF_DEATH: u16 = 0x118D;
+const GET_KILLING_BLOW_LIMB: u16 = 0x11F0;
 const KILL_ACTOR: u16 = 0x108B;
 const RESURRECT_ACTOR: u16 = 0x108C;
 const GET_UNCONSCIOUS: u16 = 0x10F2;
@@ -270,4 +273,89 @@ fn an_essential_actor_stays_down_while_a_fight_goes_on_near_it() {
     g.stop_combat(BOXER_REF);
     wait(&mut g, 1.0);
     assert!(rising(&g, HERO_REF));
+}
+
+/// DamageActorValue past zero is a death as a hit's is, with nobody to credit (#1568).
+#[test]
+fn damage_actor_value_past_zero_kills_with_no_killer() {
+    let f = fixture();
+    let mut g = game(&f);
+    let xp = g.player.xp;
+    ask(&mut g, BOXER_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(10.0)]);
+    assert!(!g.is_dead(BOXER_REF), "health left: it stands");
+    ask(&mut g, BOXER_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert!(g.is_dead(BOXER_REF));
+    assert_eq!(ask(&mut g, BOXER_REF, GET_DEAD, &[]), 1.0);
+    assert_eq!(g.extra[&BOXER_REF].killer, None);
+    assert_eq!(g.player.dead_count.get(&FormId(BOXER)), Some(&1));
+    assert_eq!(g.player.xp, xp, "no killer, no XP");
+    // More damage on the corpse is no second death.
+    ask(&mut g, BOXER_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert_eq!(g.player.dead_count.get(&FormId(BOXER)), Some(&1));
+}
+
+/// The wound before it is not what killed (#1588).
+#[test]
+fn a_damage_actor_value_death_has_no_killing_hit() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(!g.hit(BOXER_REF, 5.0, HitInfo { location: 3, ..by_player() }).died);
+    ask(&mut g, BOXER_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert!(g.is_dead(BOXER_REF));
+    assert_eq!(ask(&mut g, BOXER_REF, GET_KILLING_BLOW_LIMB, &[]), -1.0);
+    assert_eq!(ask(&mut g, BOXER_REF, GET_CAUSE_OF_DEATH, &[]), -1.0);
+    assert_eq!(ask(&mut g, BOXER_REF, GET_HIT_LOCATION, &[]), 3.0);
+}
+
+#[test]
+fn damage_actor_value_past_zero_knocks_an_essential_actor_out_and_it_gets_up() {
+    let f = fixture();
+    let mut g = game(&f);
+    let max = ask(&mut g, HERO_REF, GET_ACTOR_VALUE, &[av(HEALTH)]);
+    ask(&mut g, HERO_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert!(!g.is_dead(HERO_REF));
+    assert_eq!(g.knockout(HERO_REF).map(|k| k.cause), Some(Cause::Essential));
+    // Again while down: nothing new.
+    ask(&mut g, HERO_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert_eq!(events(&g, |k| matches!(k, EventKind::KnockedOut { actor, cause: "essential" } if *actor == HERO_REF)), 1);
+    // Up after its time at half its health, however far below zero it was.
+    wait(&mut g, ESSENTIAL_DOWN + 1.0);
+    assert!(rising(&g, HERO_REF));
+    let health = ask(&mut g, HERO_REF, GET_ACTOR_VALUE, &[av(HEALTH)]);
+    assert!((health - max * ESSENTIAL_UP_HEALTH).abs() < 1e-6, "{health} of {max}");
+}
+
+#[test]
+fn damage_actor_value_past_zero_kills_an_essential_teammate_in_hardcore() {
+    const SET_PLAYER_TEAMMATE: u16 = 0x11C5;
+    let f = fixture();
+    let mut g = game(&f);
+    g.set_hardcore(true);
+    ask(&mut g, HERO_REF, SET_PLAYER_TEAMMATE, &[num(1.0)]);
+    ask(&mut g, HERO_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert!(g.is_dead(HERO_REF));
+    assert!(g.knockout(HERO_REF).is_none());
+}
+
+#[test]
+fn damage_actor_value_past_zero_kills_the_player_unless_in_god_mode() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.toggles.god_mode = true;
+    ask(&mut g, FormId::PLAYER_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert!(!g.is_dead(FormId::PLAYER_REF));
+    let mut g = game(&f);
+    ask(&mut g, FormId::PLAYER_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert!(g.is_dead(FormId::PLAYER_REF));
+    assert_eq!(ask(&mut g, FormId::PLAYER_REF, GET_DEAD, &[]), 1.0);
+}
+
+#[test]
+fn damage_actor_value_does_not_kill_a_ghost() {
+    const SET_GHOST: u16 = 0x10EC;
+    let f = fixture();
+    let mut g = game(&f);
+    ask(&mut g, BOXER_REF, SET_GHOST, &[num(1.0)]);
+    ask(&mut g, BOXER_REF, DAMAGE_ACTOR_VALUE, &[av(HEALTH), num(9999.0)]);
+    assert!(!g.is_dead(BOXER_REF));
 }

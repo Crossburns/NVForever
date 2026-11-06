@@ -32,6 +32,9 @@
 //!   born (`Particle::frame`).
 //! - **Placed models** emit their own systems and their add-on nodes' from a holder at
 //!   the reference (`world::spawn_emitters`: Gomorrah's roof fires), not while hidden;
+//!   a placed model's own live particles go at once when it is hidden or gone (a taken
+//!   snow globe, #1596; log `particles: <ref> is not drawn any more: its <n> live
+//!   particles go`);
 //!   a placed model's own systems are that reference's own, and a master system serves
 //!   the add-on nodes nearest the camera first (particles.md §7). References a script
 //!   enables (`nvf_play::script_draw`) emit too.
@@ -226,6 +229,9 @@ struct Particle {
     frame: Affine3A,
     pos: Vec3,
     vel: Vec3,
+    /// The scale of its speed and gravity when it was born: the reference's
+    /// ([`frame_scale`]) times the system node's (particles.md §7.7).
+    scale: f32,
     /// Its emitter's time when it was born: the emitter's time now is this plus `age`
     /// (for modifiers switched on and off on the emitter's time).
     born_at: f32,
@@ -424,6 +430,8 @@ pub struct Particles {
     /// Placed references with an emitter, and those whose emitters gave birth.
     placed_seen: HashSet<u32>,
     placed_emitted: HashSet<u32>,
+    /// The placed reference of each placed model's emitter, for the log.
+    instance_refs: HashMap<Entity, u32>,
     /// Most placed model instances live at once.
     most_instances: usize,
     rng: SplitMix,
@@ -459,6 +467,7 @@ impl Default for Particles {
             tally: HashMap::new(),
             placed_seen: HashSet::new(),
             placed_emitted: HashSet::new(),
+            instance_refs: HashMap::new(),
             most_instances: 0,
             rng: SplitMix(0x2545_f491),
             born: 0,
@@ -583,6 +592,19 @@ fn systems_of<'a>(
 }
 
 /// A number in −1..1.
+/// The uniform scale of an emitter's place in the world: the mean length of its axes
+/// (1 for a frame that does not scale). A placed reference at scale 0.5 (the Ultra-Luxe
+/// fountain's ULFountainFX, issue #1547) gives 0.5.
+fn frame_scale(frame: &Affine3A) -> f32 {
+    let m = frame.matrix3;
+    let k = (m.x_axis.length() + m.y_axis.length() + m.z_axis.length()) / 3.0;
+    if k.is_finite() && k > 0.0 {
+        k
+    } else {
+        1.0
+    }
+}
+
 fn spread(rng: &mut SplitMix) -> f32 {
     rng.next_f32() * 2.0 - 1.0
 }
@@ -628,8 +650,10 @@ fn emit(
         live.served = 0;
     }
     let mut sources: Vec<EmitSource> = Vec::new();
-    // Placed model instances whose emitter still exists (hidden or not).
+    // Placed model instances whose emitter still exists (hidden or not), and those of
+    // them hidden this frame.
     let mut present: HashSet<Entity> = HashSet::new();
+    let mut hidden_now: HashSet<Entity> = HashSet::new();
     // A hidden emitter (a disabled placed fire, `world::spawn_emitters`) keeps its time
     // but makes nothing. Not in its first frame, before its visibility was worked out:
     // a muzzle flash lives one frame [design].
@@ -649,6 +673,7 @@ fn emit(
         if let Some(r) = em.placed {
             p.placed_seen.insert(r);
             present.insert(e);
+            p.instance_refs.insert(e, r);
         }
         // Drawn with its own nodes: the sequence playing on it and the span of its time
         // since last frame; a sequence just begun counts from its start, unless it was
@@ -670,6 +695,9 @@ fn emit(
             em.clock = now;
             Drive { rig: e, playing: span, began }
         });
+        if em.placed.is_some() && hidden(em.age, v) {
+            hidden_now.insert(e);
+        }
         // A held model whose clips switch nothing on costs nothing.
         let idle = em.driven.as_ref().is_some_and(HashMap::is_empty);
         if !hidden(em.age, v) && !idle {
@@ -733,6 +761,11 @@ fn emit(
             let moved = rig.filter(|_| d.emitter.mesh.is_none()).and_then(|r| r.node(d.emitter.object.as_deref()?)).map(|e| game_affine(e, &transforms, &parents, root));
             let frame = moved.unwrap_or(node * d.emitter.frame);
             let (_, turn, origin) = frame.to_scale_rotation_translation();
+            // The reference's scale and the system node's set the spray's speed and its
+            // gravity (particles.md §7.7).
+            let spray = frame_scale(&node) * d.system_scale;
+            // The volume is the emitter object's, at that object's scale.
+            let volume = frame_scale(&frame);
             let vals = match sequence {
                 Some(s) => d.emitter.values_in(t, s),
                 None => d.emitter.values(age),
@@ -771,14 +804,14 @@ fn emit(
                         } else {
                             m.size * Vec3::new(spread(&mut rng), spread(&mut rng), spread(&mut rng)) * 0.5
                         };
-                        (origin + turn * offset, turn)
+                        (origin + turn * offset * volume, turn)
                     }
                 };
                 // Thrown within the cone: so far from the axis, any way round it.
                 let decl = vals.declination + vals.declination_variation * spread(&mut rng);
                 let planar = vals.planar_angle + vals.planar_angle_variation * spread(&mut rng);
                 let dir = Vec3::new(decl.sin() * planar.cos(), decl.sin() * planar.sin(), decl.cos());
-                let speed = vals.speed + vals.speed_variation * spread(&mut rng) * 0.5;
+                let speed = (vals.speed + vals.speed_variation * spread(&mut rng) * 0.5) * spray;
                 let rot = d.rotation.clone().unwrap_or_default();
                 let mut spin = rot.speed + rot.speed_variation * spread(&mut rng);
                 if rot.random_sign && rng.next_f32() < 0.5 {
@@ -788,11 +821,14 @@ fn emit(
                     frame: node,
                     pos: start,
                     vel: axis * dir * speed,
+                    scale: spray,
                     born_at: t,
                     sequence: sequence.map(|s| s.index),
                     age: 0.0,
                     life: (vals.life + vals.life_variation * spread(&mut rng) * 0.5).max(0.02),
-                    radius: (vals.radius + vals.radius_variation * spread(&mut rng)).max(0.0),
+                    // Sized by the system node's scale; the reference's scale moves and speeds
+                    // the spray but leaves the drops' size (particles.md §3, §7.7).
+                    radius: (vals.radius + vals.radius_variation * spread(&mut rng)).max(0.0) * d.system_scale,
                     angle: rot.angle + rot.angle_variation * spread(&mut rng),
                     spin,
                     tex: if d.subtextures.is_empty() { 0 } else { ((rng.next_f32() * d.subtextures.len() as f32) as usize).min(d.subtextures.len() - 1) },
@@ -817,14 +853,22 @@ fn emit(
             }
         }
     }
-    // A placed model's systems go once its emitter is gone (its cell unloaded, a script
-    // disabled it) and their last particles have died.
-    let gone: Vec<Key> = p
-        .systems
-        .iter()
-        .filter(|(k, live)| k.instance.is_some_and(|e| !present.contains(&e)) && live.as_ref().is_none_or(|l| l.iter().all(|s| s.particles.is_empty())))
-        .map(|(k, _)| k.clone())
-        .collect();
+    // A placed model's own particles go at once when it is no longer drawn: its emitter
+    // hidden (a script disabled it, the item was taken) or gone (its cell unloaded, the
+    // reference's model taken down) [design, #1596: a taken snow globe's snow went on
+    // falling where it stood]. Its systems go with an emitter that is gone.
+    for (k, live) in p.systems.iter_mut() {
+        let Some(e) = k.instance.filter(|e| hidden_now.contains(e) || !present.contains(e)) else { continue };
+        let n: usize = live.iter().flatten().map(|s| s.particles.len()).sum();
+        if n > 0 {
+            info!("particles: {:08X} is not drawn any more: its {n} live particles go", p.instance_refs.get(&e).copied().unwrap_or(0));
+            for s in live.iter_mut().flatten() {
+                s.particles.clear();
+            }
+        }
+    }
+    let gone: Vec<Key> = p.systems.keys().filter(|k| k.instance.is_some_and(|e| !present.contains(&e))).cloned().collect();
+    p.instance_refs.retain(|e, _| present.contains(e));
     for k in gone {
         for live in p.systems.remove(&k).flatten().unwrap_or_default() {
             commands.entity(live.entity).try_despawn();
@@ -850,15 +894,26 @@ fn simulate(time: Res<Time>, mut p: ResMut<Particles>) {
                 None => (None, d.period, d.loops),
             };
             for g in d.gravity.iter().filter(|g| g.active.on_in(seq, at, period, loops)) {
-                let pull = if g.spherical { (q.frame.transform_point3(g.origin) - q.pos).normalize_or_zero() } else { g.direction };
-                q.vel += pull * g.strength_at(at) * dt;
+                let centre = q.frame.transform_point3(g.origin);
+                let pull = if g.spherical { (centre - q.pos).normalize_or_zero() } else { g.direction };
+                // Weaker away from its object, by the distance in the system's own units
+                // (those of its speeds and radii: `scale`).
+                let fall = g.falloff(q.pos.distance(centre) / q.scale);
+                q.vel += pull * g.strength_at(at) * fall * q.scale * dt;
             }
             for b in d.bombs.iter().filter(|b| b.active.on_in(seq, at, period, loops)) {
                 q.vel += b.push(&q.frame, q.pos) * dt;
             }
             for drag in d.drag.iter().filter(|g| g.active.on_in(seq, at, period, loops)) {
                 // The share of the speed along the axis kept after `dt`.
-                let keep = (1.0 - drag.percentage.clamp(0.0, 1.0)).powf(dt * DRAG_STEPS_PER_SECOND);
+                // Only near its object, when the file gives it a range.
+                // Its range is in the model's units, about its object's place in the file
+                // (particles.md §7.7: fitted to the owner's video of the fountain).
+                let reach = drag.reach(q.pos.distance(q.frame.transform_point3(drag.origin)) / frame_scale(&q.frame));
+                if reach <= 0.0 {
+                    continue;
+                }
+                let keep = (1.0 - drag.percentage.clamp(0.0, 1.0) * reach).powf(dt * DRAG_STEPS_PER_SECOND);
                 let along = q.vel.dot(drag.axis);
                 q.vel -= drag.axis * along * (1.0 - keep);
             }
@@ -1004,6 +1059,7 @@ mod tests {
             grow_time: 0.0,
             fade_time: 0.0,
             base_scale: 1.0,
+            system_scale: 1.0,
             color: None,
             color_keys: None,
             rotation: None,
@@ -1019,11 +1075,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_emitters_scale_is_the_mean_length_of_its_axes() {
+        assert_eq!(frame_scale(&Affine3A::IDENTITY), 1.0);
+        let half = Affine3A::from_scale_rotation_translation(Vec3::splat(0.5), Quat::from_rotation_z(1.0), Vec3::new(1176.0, -222.0, 1012.0));
+        assert!((frame_scale(&half) - 0.5).abs() < 1e-5);
+        // A frame squashed to nothing sizes nothing down to zero: 1.
+        assert_eq!(frame_scale(&Affine3A::from_scale(Vec3::ZERO)), 1.0);
+    }
+
     fn test_particle(pos: Vec3, trail: Vec<Vec3>) -> Particle {
         Particle {
             frame: Affine3A::IDENTITY,
             pos,
             vel: Vec3::ZERO,
+            scale: 1.0,
             born_at: 0.0,
             sequence: None,
             age: 0.25,

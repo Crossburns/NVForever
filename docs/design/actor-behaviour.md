@@ -358,6 +358,9 @@ Step 4c, first part (2026-10-10):
   at `--hour`, runs at the TimeScale global, and the sky shows it (17:30 became 17:55
   in a 50-second run); an hour set with the `[` `]` keys becomes the game's.
   `--still-sky` keeps the old behaviour; `--time-scale` keeps the sky's own clock.
+  With the residents running, GameDaysPassed starts at `--day` (the plugins' value
+  without it), in whole days, in a new game; a loaded save keeps the hour and day it has
+  (`residents::Core::prepare`) [design].
 
 **Furniture** (2026-10-10, with `furniture.rs` from main; `residents::choose_seat`): an
 actor that has arrived uses furniture when its package gives it some:
@@ -371,11 +374,24 @@ actor that has arrived uses furniture when its package gives it some:
   furniture is available"; the distance is our choice].
 It is told to sit once it is drawn (`SitOn`); when its package changes it is told to get
 up (`GetUp`) and its walk waits until it is off. Furniture one resident was given is not
-given to another. Smoke tests: Easy Pete sits in his porch chair, gets up at 12:03,
+given to another. Told to sit and refused, it does not stay told [design, #1506;
+furniture.md §7]: for occupied furniture it stands free and asks again every 5 s of active
+play (an engineering number, no claim about the original) while it still wants it; for
+any other reason it does not ask again until something has changed. This covers furniture
+the renderer finds occupied; two residents contending in the AI's reservation are not
+covered (the loser gets no order, and no new choice while its activity lasts). Smoke tests: Easy Pete sits in his porch chair, gets up at 12:03,
 walks into the saloon and sits at his booth; at 22:04 he gets up, walks home and lies
 down on his bed (`SpecialIdle_BedLeft_Enter`, `DynamicIdle_Sleep`); flying across the
 map with `all`, other actors sit down where their packages send them.
-Sandboxing actors choose seats, beds and idle markers themselves (§5.5). Not done:
+Sandboxing actors choose seats, beds and idle markers themselves (§5.5). A creature the
+IDLE tree gives no clip of its own for a piece does not get it, by a package or by its own
+choice; a person is never ruled out for that. A sandbox and a Sleep or Eat package's search
+leave crosses (marker ID 10) out for anyone; a package that names or links to one, a patrol
+point, a Find and a Use Item At do not. All this before anything is chosen or kept, and the
+engine refuses a getting-on or loop clip that does not fit before binding it, and plays no
+exit clip that does not [design, interim: furniture.md §9, issue #1522; a few minutes'
+watch of the original found no creature on furniture, observer-checks.md item 86].
+Not done:
 an actor that arrives while not drawn sits down only when it is next drawn (it walks
 the last steps then, instead of being found seated); `fnvtool ai run` (headless) has no
 furniture.
@@ -442,8 +458,24 @@ still happen elsewhere.
 
 Objects are references of the area's cell, present, at about the actor's height, not
 given to another actor (a seat is kept for an actor from the moment it chooses it), and
-with a way to them. Random numbers are the sandbox's own (seeded by actor and package),
-so runs repeat and the script runtime's are not disturbed.
+not waiting out a failed way to them. Random numbers are the sandbox's own (seeded by
+actor and package), so runs repeat and the script runtime's are not disturbed.
+
+**An object with no way to it** [design; issue #1504; the numbers are ours, neither the
+documentation nor the original gives any]: the actor stands 5 seconds and chooses again,
+and that object stays out of the choices for 60 seconds of `Game::time` from the failure,
+then 120, 240, 480 and from then on 600 for each further failure in a row. The wait ending
+does nothing by itself (no search, no random number, no event): the object is simply among
+the candidates at the sandbox's next choice, so a way that has come back is found, and one
+that has not costs one search per wait (at most nine in the first 3,600 seconds, for one
+object's consecutive failures in one retained sandbox; competing behaviours mean fewer). Its record goes only when the behaviour
+with that object begins; a walk to the object begun is not enough, and combat interrupting
+the sandbox leaves the record alone. The record is not saved: a load discards deadlines and
+stages and restarts the backoff, as a new sandbox does. An object at the cap with the full
+600 seconds left to wait gets up to four more searches in that time, for each failed object at each load (in the
+retry tests' timing, about 0.5, 65.5, 190.5 and 435.5 seconds after it; other behaviours can
+move those); a shorter wait left may mean fewer. No test loads a game here; this is from the
+delays.
 
 **Also in this step**: a patrol waits out a point's idle time (REFR `XPRD`) before going
 on [documented: Idle Markers, Patrol Data]; the furniture a package gives its actor

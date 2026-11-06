@@ -303,24 +303,17 @@ struct RegionList {
 pub const DEFAULT_WEATHER_SEED: u64 = 0x4E56_5745_4154_4852;
 
 /// The sky's part of a save (nvf_play::save): the weather shown (the start takes it from
-/// the save's header) and whether a script holds it against the climate.
+/// the save's header), whether a script holds it against the climate and the rolls' random
+/// state. All of it is taken as the sky is made ([`SkyState::restore_saved`]), so loading
+/// the part later does nothing: by then the sky has rolled from that state and a load
+/// script may have released or changed the weather.
 pub const SAVE_HOOK: nvf_play::save::SaveHook = nvf_play::save::SaveHook {
     key: "sky",
     save: |w| {
         let s = w.get_resource::<SkyState>()?;
         Some(serde_json::json!({"weather": s.weather.edid, "held": s.script.is_some_and(|sw| sw.hold), "rng": s.rng.to_string()}))
     },
-    load: |w, v| {
-        let Some(mut s) = w.get_resource_mut::<SkyState>() else { return };
-        if let Some(r) = v.get("rng").and_then(serde_json::Value::as_str).and_then(|r| r.parse().ok()) {
-            s.rng = r;
-        }
-        if v.get("held").and_then(serde_json::Value::as_bool) == Some(true) {
-            let rolls = s.rolls;
-            s.script = Some(ScriptWeather { hold: true, roll: rolls });
-            info!("load: the weather stays held as a script left it");
-        }
-    },
+    load: |_, _| {},
     remap: None,
 };
 
@@ -493,6 +486,22 @@ impl SkyState {
         })
     }
 
+    /// A loaded game's part of the sky ([`SAVE_HOOK`]), before the first look at the weather
+    /// lists ([`SkyState::place`]): a hold set after that look would hold what its roll
+    /// chose. Only the weather the save holds is held: the sky starts on another when that
+    /// one is gone from the load order or `--weather` names one, and nothing asked to hold
+    /// those.
+    pub fn restore_saved(&mut self, saved: &serde_json::Value) {
+        if let Some(r) = saved.get("rng").and_then(serde_json::Value::as_str).and_then(|r| r.parse().ok()) {
+            self.rng = r;
+        }
+        let held = saved.get("held").and_then(serde_json::Value::as_bool) == Some(true);
+        let showing = saved.get("weather").and_then(serde_json::Value::as_str).is_some_and(|w| self.weather.edid.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(w)));
+        if held && showing {
+            self.script = Some(ScriptWeather { hold: true, roll: self.rolls });
+        }
+    }
+
     /// The camera stands in the overriding weather region `region` (FormID; `None`: in
     /// none), or indoors with `at` = `None`, where the list followed stays as it was:
     /// follow that region's list, or the climate's.
@@ -500,6 +509,9 @@ impl SkyState {
         let first = !self.placed;
         self.placed = true;
         // Said here, not in `new`, which runs before the log is set up.
+        if first {
+            info!("weather: the sky starts on day {:.0} at {:02}:{:02}", self.days_passed, self.hour as u32 % 24, (self.hour.fract() * 60.0) as u32);
+        }
         if first && !self.regions.is_empty() {
             let names: Vec<String> = self
                 .regions
@@ -508,10 +520,17 @@ impl SkyState {
                 .collect();
             info!("weather: {} region(s) override the climate here: {}", self.regions.len(), names.join(", "));
         }
+        if first && self.script.is_some_and(|sw| sw.hold) {
+            info!("load: the weather stays held as a script left it");
+        }
         if let Some(region) = at {
             self.source = region.and_then(|f| self.regions.iter().position(|r| r.region.form_id == f));
         }
         self.follow_climate(first || !self.clock_seen);
+        // A release waits for the roll after this one, not for the start's own.
+        if let Some(sw) = self.script.as_mut().filter(|_| first) {
+            sw.roll = self.rolls;
+        }
     }
 
     /// The camera's region, if the place has been looked at.
@@ -1901,6 +1920,166 @@ pub fn initial_fog() -> DistanceFog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rolls made once a sky that started on `sky_day` follows a restored game on day
+    /// 25, half a game minute on from the save's noon, with a saved weather its list holds
+    /// and a volatility that rolls at every whole hour passed.
+    fn rolls_following_the_restored_game(sky_day: f32) -> u64 {
+        const SAVED: u32 = 1;
+        let weather = |id| Weather { form_id: id, ..Default::default() };
+        let choice = |id| Choice { weather: weather(id), chance: 100, global: None };
+        let mut sky = SkyState {
+            climate: Climate { volatility: 255, ..Default::default() },
+            weather: weather(SAVED),
+            hour: 12.0,
+            fog_override: None,
+            interior: None,
+            interior_grade: None,
+            shadows: false,
+            shadow_distance: DEFAULT_SHADOW_DISTANCE,
+            shadow_reach: 1.0,
+            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            grade: true,
+            time_scale: 0.0,
+            clock_running: false,
+            days_passed: sky_day,
+            prev: None,
+            fade: 1.0,
+            choices: vec![choice(SAVED), choice(2)],
+            image_space: None,
+            adapters: HashMap::new(),
+            changed: true,
+            script: None,
+            pinned: false,
+            regions: Vec::new(),
+            source: None,
+            placed: false,
+            clock_seen: false,
+            rolled_for: None,
+            pick: SAVED,
+            rolls: 0,
+            rng: DEFAULT_WEATHER_SEED,
+            hour_index: None,
+            live_globals: HashMap::new(),
+            resume: Some(SAVED),
+            flash: [0.0; 3],
+        };
+        sky.place(Some(None));
+        assert_eq!((sky.rolls, sky.pick), (0, SAVED), "the first look keeps the saved weather");
+        sky.follow_game_clock(12.0 + 1.0 / 60.0, 25.375);
+        assert_eq!(sky.days_passed, 25.0);
+        sky.rolls
+    }
+
+    #[test]
+    fn a_sky_on_the_games_day_rolls_nothing_following_it() {
+        assert_eq!(rolls_following_the_restored_game(25.0), 0);
+        // On the plugins' day it counts the days between as hours passed (#1607).
+        assert_eq!(rolls_following_the_restored_game(5.0), 1);
+        // Ahead of the game, as after a restore that failed: a step back, no roll.
+        assert_eq!(rolls_following_the_restored_game(30.0), 0);
+    }
+
+    const HELD: u32 = 9;
+    const LISTED: u32 = 1;
+    const GATED: u32 = 2;
+    const GATE: u32 = 77;
+
+    /// A sky as the start makes it for a save showing `HELD`, which no list holds; the
+    /// list's other entry waits for global `GATE`.
+    fn sky_started_on_held() -> SkyState {
+        let weather = |id| Weather { form_id: id, edid: Some(format!("W{id}")), ..Default::default() };
+        let gate = Gate { id: GATE, edid: None, stored: Some(0.0) };
+        SkyState {
+            climate: Climate::default(),
+            weather: weather(HELD),
+            hour: 12.0,
+            fog_override: None,
+            interior: None,
+            interior_grade: None,
+            shadows: false,
+            shadow_distance: DEFAULT_SHADOW_DISTANCE,
+            shadow_reach: 1.0,
+            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            grade: true,
+            time_scale: 0.0,
+            clock_running: false,
+            days_passed: 25.0,
+            prev: None,
+            fade: 1.0,
+            choices: vec![Choice { weather: weather(LISTED), chance: 100, global: None }, Choice { weather: weather(GATED), chance: 100, global: Some(gate) }],
+            image_space: None,
+            adapters: HashMap::new(),
+            changed: true,
+            script: None,
+            pinned: false,
+            regions: Vec::new(),
+            source: None,
+            placed: false,
+            clock_seen: false,
+            rolled_for: None,
+            pick: HELD,
+            rolls: 0,
+            rng: DEFAULT_WEATHER_SEED,
+            hour_index: None,
+            live_globals: HashMap::new(),
+            resume: Some(HELD),
+            flash: [0.0; 3],
+        }
+    }
+
+    fn saved_held() -> serde_json::Value {
+        serde_json::json!({"weather": format!("W{HELD}"), "held": true, "rng": "123"})
+    }
+
+    #[test]
+    fn a_saved_hold_outlasts_the_first_look_and_what_follows() {
+        let mut sky = sky_started_on_held();
+        sky.restore_saved(&saved_held());
+        sky.place(Some(None));
+        // The climate still rolls under the hold; what it picks waits for a release.
+        assert_eq!((sky.weather.form_id, sky.rolls, sky.pick), (HELD, 1, LISTED));
+        let mut rng = 123;
+        next_unit(&mut rng);
+        assert_eq!(sky.rng, rng, "the roll comes from the saved random state");
+        sky.follow_game_clock(12.0 + 1.0 / 60.0, 25.0);
+        assert_eq!(sky.weather.form_id, HELD);
+        sky.set_live_global(GATE, 1.0);
+        assert_eq!((sky.weather.form_id, sky.rolls, sky.pick), (HELD, 2, GATED));
+        assert!(sky.prev.is_none());
+    }
+
+    #[test]
+    fn a_release_after_the_load_stands_and_the_next_roll_takes_over() {
+        let mut sky = sky_started_on_held();
+        sky.restore_saved(&saved_held());
+        sky.place(Some(None));
+        // A load script releases it before the engine's part of the save is put back.
+        sky.release_script_weather();
+        assert_eq!(sky.weather.form_id, HELD, "until the next roll, as any release");
+        let rng = sky.rng;
+        let mut world = World::new();
+        world.insert_resource(sky);
+        (SAVE_HOOK.load)(&mut world, &saved_held());
+        let mut sky = world.remove_resource::<SkyState>().unwrap();
+        assert_eq!(sky.rng, rng, "the hook does not put the random state back");
+        sky.set_live_global(GATE, 1.0);
+        assert_eq!(sky.weather.form_id, GATED, "the hook did not hold it again");
+        assert!(sky.script.is_none());
+    }
+
+    #[test]
+    fn only_the_saved_held_weather_is_held() {
+        // Not held in the save, and held in a save whose weather the sky could not start
+        // on: the first look's roll shows.
+        for saved in [serde_json::json!({"weather": format!("W{HELD}"), "held": false}), serde_json::json!({"weather": "Gone", "held": true})] {
+            let mut sky = sky_started_on_held();
+            sky.restore_saved(&saved);
+            sky.place(Some(None));
+            assert_eq!(sky.weather.form_id, LISTED, "{saved}");
+            assert!(sky.script.is_none());
+        }
+    }
 
     #[test]
     fn a_new_dome_is_coloured_even_when_the_sky_colours_stay() {

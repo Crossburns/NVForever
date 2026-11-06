@@ -291,6 +291,37 @@ obstacles that can be enabled or disabled stand on the navmesh …` at the start
 obstacles switched […]` on a change. Not done: the collision-layer condition (fnv-nav
 reads no models), cutting by the shape rather than the bounds.
 
+**The poll is skipped while nothing it reads changed** (issue #1430) [design:
+`fnv_ai::Ai::obstacles_in_line`, crates/fnv-ai/src/carry.rs]. `Game::present` reads the
+world's reference states alone (crates/fnv-game/src/game.rs): whether a reference and the
+members of its enable-parent chain have a state, their `enabled` flags, the reference's
+`deleted` flag, and the placement table, which never changes. After a full poll the AI
+keeps the pair (`World::presence_serial`, `NavGraph::obstacles_stamp`); while both are
+the same, a poll would switch nothing, so none runs. Debug builds poll anyway and assert
+that the graph agrees. Every writer of those inputs moves one of the two numbers
+[design; checked by search over `crates/` and `engine/` for writes of `enabled`/`deleted`,
+`RefState` literals and changes to the `refs` map]:
+
+| writer | where | presence serial |
+|---|---|---|
+| a state made on first use (`World::get`) | crates/fnv-sim/src/world.rs | moves unless the state starts as placed (enabled unless Initially Disabled, not deleted), which is what presence read before; the player's state (not placed) moves it |
+| items dropped (`World::drop_groups`), references created (`World::place`: PlaceAtMe, disarmed mines) | world.rs | moves |
+| respawning containers reset on a cell attach (`World::attach_cell`) | world.rs | moves per state removed |
+| `World::set_enabled` (Enable/Disable, script runner, actions, mines, fnvtool) | world.rs | moves when the flag changes |
+| `World::set_deleted`: activation pick-ups and mine disarms (`World::activate_as`), ash piles removed (crates/fnv-game/src/ash_piles.rs), console `zap` (functions/console.rs), MarkForDelete (functions/refs.rs), JIP MoveToContainer (nvse_jip3.rs, with `set_enabled`), a projectile gone (nvse_proj.rs) | world.rs, crates/fnv-game/src/ | moves when the flag changes |
+| a new or restored world (`World::new`, `World::restore`) | world.rs | starts from a number no other world of the process used (as `lock_serial`), so a swapped, loaded or new world reads as changed |
+
+On the graph side `NavGraph::obstacles` is written only by `set_obstacles` and
+`sync_obstacles` (crates/fnv-nav/src/obstacles.rs); each takes a stamp no graph of the
+process had (`sync_obstacles` only when it switched something). `enabled` and `deleted`
+are private to `fnv_sim::world` (issue #1464): a direct write of either field outside that
+module, in `fnv-sim` or any other crate, no longer compiles, so writers go through
+`set_enabled`/`set_deleted`. That does not enforce every change of the flags:
+`World::get` still hands out `&mut RefState`, so `*world.get(id)? = another_state` compiles
+and would replace a whole state, flags included, without moving the serial, and the cache
+would leave an obstacle cut or open in release builds. A search found none [design];
+whether to close that is a separate question, left open.
+
 ## 7. Open questions
 
 - How the original chooses paths (costs, the weight of Preferred and Water, door costs)

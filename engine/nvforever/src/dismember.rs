@@ -109,7 +109,7 @@ impl Plugin for DismemberPlugin {
         app.init_resource::<Gore>()
             .add_systems(
                 Update,
-                (apply_skins, cut_ragdolls, throw_gore.before(crate::shot_fx::ShotFxSet), throw_object_debris, move_pieces.after(nvf_play::PlaySet::Physics))
+                (apply_skins, cut_ragdolls, throw_gore.before(crate::shot_fx::ShotFxSet).before(nvf_play::sfx::SfxSet), throw_object_debris, move_pieces.after(nvf_play::PlaySet::Physics))
                     .after(nvf_play::PlaySet::Activation)
                     .run_if(resource_exists::<Combat>)
                     .run_if(resource_exists::<PhysState>),
@@ -510,8 +510,9 @@ fn throw_gore(
                 }
             }
         }
-        // The pieces.
-        let actor_scale = sim.ref_scale(e.form_id);
+        // The pieces, at the size the actor is drawn: the reference's scale times a
+        // creature's base scale (#1587: giant ants threw pieces at a full ant's size).
+        let actor_scale = sim.ref_scale(e.form_id) * rig.map_or(1.0, |r| r.base_scale);
         let (thrown, farthest, lowest) = throw_pieces(&mut commands, world_root, &models.meshes, &mut phys, &mut gore, e.form_id, origin, frame, actor_scale, &wanted, &loaded, Vec3::from(e.dir));
         gore.thrown += thrown;
         gore.landed.entry(e.form_id).or_default().0 += thrown;

@@ -952,6 +952,17 @@ impl NavGraph {
     /// from the edges it may not cross, of the triangles it passes and their neighbours.
     /// Returns the triangle under `b`.
     pub fn walkable_line(&self, space: Space, t: u32, a: [f32; 3], b: [f32; 3], clear: f32, p: &PathParams) -> Option<u32> {
+        let cur = self.trace_line(space, t, a, b, clear, p)?;
+        // The line walks one surface: where it reaches b's spot seen from above, b must
+        // be on that surface. A b far above or below is on another level stacked over
+        // this one (a catwalk over a floor): not walkable straight.
+        ((self.height_on(cur, b[0], b[1]) - b[2]).abs() <= LEVEL_GAP).then_some(cur)
+    }
+
+    /// The surface walk of [`NavGraph::walkable_line`]: the triangle under `b`'s spot
+    /// seen from above reached along the line from `a` on triangle `t`, whatever height
+    /// `b` gives.
+    pub(crate) fn trace_line(&self, space: Space, t: u32, a: [f32; 3], b: [f32; 3], clear: f32, p: &PathParams) -> Option<u32> {
         let (mut cur, mut prev) = (t, NONE);
         let mut checked = std::collections::HashSet::new();
         for _ in 0..4096 {
@@ -969,10 +980,7 @@ impl NavGraph {
                 }
             }
             if self.contains_xy(cur, b[0], b[1]) {
-                // The line walks one surface: where it reaches b's spot seen from above, b
-                // must be on that surface. A b far above or below is on another level
-                // stacked over this one (a catwalk over a floor): not walkable straight.
-                return ((self.height_on(cur, b[0], b[1]) - b[2]).abs() <= LEVEL_GAP).then_some(cur);
+                return Some(cur);
             }
             // Leave by the edge the line crosses furthest along (not back the way in).
             let c = self.corners(cur);

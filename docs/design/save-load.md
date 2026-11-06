@@ -86,7 +86,7 @@ original lacks it); **Save?**: *yes* (must be saved), *have* (already in the sna
 | Crime and enemies | `player.crime_counts`, `crime_enemies`, `enemy_of` | not found | have |
 | Faction reactions, names, cell owners, item values changed by script | `forms: FormChanges` | FACT bit 2 (§6.2) | have |
 | Form list additions | `form_lists` | FLST bit 31 | have |
-| Dialogue: said-once, said-today | `said`, `said_day` | INFO bit 31, no data (§6.2) [hypothesis] | have |
+| Dialogue: said-once, said-today | `said`, `said_day`, `said_day_days_clock` | INFO bit 31, no data (§6.2) [hypothesis] | have. A save without `said_day_days_clock` holds its said-today hours on an older clock (GameDaysPassed × 24 + GameHour) that cannot be converted: the load drops them, once, so those Say Once a Day lines are free again; `said` stays [design: `Game::restore`, #1579] |
 | Active effects, image-space modifiers | `effects`, `image_modifiers` | player/actor records [hypothesis] | have |
 | Broken locks | `locks` | not found | have |
 | Script clock, frame count, RNG | `time`, `frame`, `rng_word_pos` | none | have |
@@ -98,6 +98,7 @@ original lacks it); **Save?**: *yes* (must be saved), *have* (already in the sna
 | Trespass warnings | `crimes.warnings/trespassing` | not found | drop |
 | Request queues, animations, detection values, detection events, Wait/Sleep in progress | marked "Not saved" in `Game` | none | drop |
 | Detection states: each actor's state (Normal/Alert/Combat/Lost), alert and target lists, the target fought; StartCombat's forced pairs | `awareness` (`awareness.actors`, `awareness.forced`) | not found | **saved since 2026-11-01** (#971): a fight goes on after a load, and IsInCombat on the player reads the same before the first detection round; the next round measures again as before. Combat groups' tactics, barks and the engine's engage/aim/crouch hints are rebuilt |
+| Who has had OnStartCombat and not yet OnCombatEnd | `fighting` | not found | **saved** (#1578): a load runs no OnStartCombat for a fight the save holds [documented: spec-notes/ext-save.md §4], a start still due at the save runs once, and the fight's OnCombatEnd runs when it ends. A created reference dropped on a load (§4.1) leaves it with its detection state. Saves from before this field did not record it, and that history cannot be recovered: their actors in Combat or Lost count as started, Alert does not, so a start still due in such a save does not run [design: `Game::restore`] |
 | Config | `cfg: GameConfig` | none | rebuild from settings (seed: see §5) |
 
 ### 3.3 AI (fnv-ai, used by `engine/nvforever`)
@@ -151,7 +152,8 @@ body    u32 length + zstd(JSON or postcard) of SaveBody
 - Each snapshot keeps its own `format` string (`fnv.game.state/N`, `fnv.sim.state/N`).
   New fields use `#[serde(default)]` so older saves still load (already the pattern in
   both snapshots); a change that cannot default bumps N and adds a migration function
-  from N−1, so old saves stay loadable.
+  from N−1, so old saves stay loadable. `RefExtra::killing_hit` is one: the dead of an
+  older save have no killing hit, as nothing in the save tells it [design].
 - Encoding: JSON keeps saves inspectable and is what the tests already use; size is the
   question. Measure a long session's snapshot first: if compressed JSON stays in the low
   megabytes (the original's 61-hour save is 8 MB uncompressed), keep JSON; otherwise
@@ -286,14 +288,39 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   The body is
   `nvf.save.body/1` = game snapshot + engine snapshot.
 - **Loading**: `nvforever --load <name|path>` reads the header first (its worldspace,
-  cell, position, heading, pitch, hour and weather start the world there; the weather is
+  cell, position, heading, pitch, hour, day and weather start the world there; the weather is
   kept while the weather system lists it there, not pinned as `--weather` pins it,
   spec-notes/world.md §6), then the body
   once the load order is known (remapped if it differs, §4.1); the script runtime restores the
   game and the simulation as it is made, before its first frame, and sends `RefChanged`
   for every reference the save changed so the drawn world follows; the engine part is put
-  back next. Loading while playing (console `load`, F9, the pause and main menus) starts
-  NVForever again with the same arguments and `--load` (those the save decides left out),
+  back next. Those `RefChanged` are marked `restored`: visuals and collision follow them
+  as any, while crime and the world's sounds take what they name as judged and heard
+  before the save, so a load judges no theft and plays no pick-up or drop sound. It is a
+  mark on each notice and not a gate on the frames of the restore, so a real pick-up or a
+  load script's change in those frames has its normal effect [design:
+  `crime::report_deeds`, `world_sounds::objects`; smoke `save-theft-write`,
+  `save-theft-load`]. The sky takes the save's hold and the rolls' random state as it is
+  made, before its first look at the weather lists, not when the engine part is put back:
+  a hold set after that look would hold what its roll chose, and setting them later would
+  undo a load script's release [design: `SkyState::restore_saved`; smoke
+  `save-weather-write`, `save-weather-load`]. The game's clock stays the save's: the residents' start clock goes only into
+  a new game, so `--day` never changes a loaded game's GameDaysPassed [design:
+  `residents::Core::prepare`; smoke `save-days-write`, `save-days-load`]. The sky alone
+  starts on the header's `game_days_passed`, over `--day` (`start_days` in `main.rs`), so
+  its weather rolls see no hours pass at the load. A restore that fails goes on from the
+  plugins' game, on `--day` or the plugins' day and at the save's hour; its sky starts on
+  the failed save's day and takes the game's once the game's hour has moved half a game
+  minute (about a second of play at TimeScale 30, not while paused or at TimeScale 0).
+  Going back to a lower day makes no volatility check; going forward (a failed save on day
+  25 with `--day 30`) can. A save made before the header held the day leaves the sky on
+  `--day` or the plugins' day; it takes the game's day at the same step, with up to 24
+  volatility checks at once, which can make one weather roll and replace the weather kept
+  from the save [design: `SkyState::follow_climate`, `SkyState::follow_game_clock`]. The
+  sky does not follow the game under two flags: with
+  `--still-sky` its day stays the one it started on, with `--time-scale` its own clock
+  counts on from there. Loading while playing (console `load`, F9, the pause and
+  main menus) starts NVForever again with the same arguments and `--load` (those the save decides left out),
   so a save always lands in a world built fresh from the plugins and nothing of the run
   before carries over.
 - **The change of run is hidden** (`engine/nvforever/src/handoff.rs`) [design, owner
@@ -304,9 +331,12 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   `--size`, `--window-maximized`), and updates only 20 times a second while it waits. The
   new run opens its window hidden; as soon as its own loading screen (or the main menu)
   is up and drawn for 0.25 s, it shows its window over the old one, takes the focus and
-  writes the file, and loads behind its screen alone. The old run sees the file, writes
-  its exit logs and ends the process at once (not taking its world apart, which held its
-  memory about 2 s more). The pause menu's return to the main menu (`--menu`) goes the
+  writes the file, and loads behind its screen alone. The old run sees the file, takes it
+  away, writes its exit logs and ends the process at once (not taking its world apart,
+  which held its memory about 2 s more). The new run makes its game and puts the save
+  back only once the file is gone (or 2 s after writing it, for an old run that died):
+  on a busy machine the screen's first frames were slow enough for the save to go back
+  before the window was shown, the old run still holding its game (#1651). The pause menu's return to the main menu (`--menu`) goes the
   same way. If the new run ends before it is shown (it stops at the start), the screen
   comes down and the old game goes on; a new run that fails later is on its own (its
   crash report). Closing the old window while it waits ends the new run; a new run

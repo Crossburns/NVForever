@@ -52,6 +52,7 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::ShaderRef;
 use fnv_world::image_modifier::{combine, graded, image_modifier, Dof, ImageModifier, ScreenEffect, DOF_BACK, DOF_FRONT, DOF_NO_SKY};
 use fnv_world::imagespace::Hdr;
+use nvf_play::tiles::menus::TileMenuBlur;
 
 /// Grade parameters on the main camera.
 #[derive(Component, ExtractComponent, Clone, Copy, ShaderType)]
@@ -240,8 +241,10 @@ impl Plugin for ImageSpacePlugin {
         bevy::asset::embedded_asset!(app, "imagespace_blur.wesl");
         app.init_resource::<ScreenModifiers>()
             .add_plugins(FullscreenMaterialPlugin::<ImageSpaceGrade>::default())
-            .add_systems(Update, update_grade.after(crate::sky::update_sky))
-            .add_systems(PostUpdate, update_motion.after(bevy::transform::TransformSystems::Propagate).after(bevy::camera::CameraUpdateSystems));
+            // A modifier's sounds: before sfx plays them.
+            .add_systems(Update, update_grade.after(crate::sky::update_sky).before(nvf_play::sfx::SfxSet))
+            .add_systems(PostUpdate, update_motion.after(bevy::transform::TransformSystems::Propagate).after(bevy::camera::CameraUpdateSystems))
+            .add_systems(PostUpdate, tile_menu_blur);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app
             .add_systems(RenderStartup, init_blur)
@@ -483,6 +486,11 @@ fn update_motion(time: Res<Time>, mut last: Local<LastViews>, mut cams: Query<(E
 /// choice: by eye against the owner's screenshot of the original menu].
 const WAIT_MENU_BLUR: f32 = 3.0;
 
+/// The blur behind a menu drawn from its tiles, in the same units, on and off at once as the
+/// wait menu's [design: the original's shots show the world blurred behind the tutorial and
+/// container menus (docs/spec-notes/tutorial-menu.md §5), not how strongly or how fast].
+const TILE_MENU_BLUR: f32 = 3.0;
+
 /// The blur of the world behind the Pip-Boy, in the same units [documented:
 /// `Fallout_default.ini` `[Pipboy] fBlurRadiusPipboy=3.5`; hypothesis: the same units as
 /// a modifier's blur radius; its `fBlurIntensityPipboy=0.25` is not used, what it scales
@@ -642,6 +650,43 @@ fn update_grade(
     }
 }
 
+/// What [`tile_menu_blur`] tells of a state: this contribution, not the screen's whole blur.
+fn tile_menu_blur_text(now: TileMenuBlur) -> String {
+    let names: Vec<&str> = [(now.tutorial, nvf_play::tiles::tutorial_menu::TUTORIAL_MENU), (now.container, "ContainerMenu")].into_iter().filter(|m| m.0).map(|m| m.1).collect();
+    if names.is_empty() {
+        "off".to_string()
+    } else {
+        format!("{} radius {TILE_MENU_BLUR}", names.join(", "))
+    }
+}
+
+/// The world blurred behind a menu drawn from its tiles: the strongest of this and what
+/// `update_grade` worked out this frame (the modifiers, the wait menu, the Pip-Boy, death, the
+/// weapon wheel), so closing the menu leaves theirs as they were [design]. After `Update`, so
+/// the drawing's decision of this frame (`nvf_play::tiles::draw`) reaches this frame's picture
+/// whatever the order of `update_grade` and the drawing; `update_grade` writes every grade
+/// afresh each frame, so nothing stays when the menu goes. A 3D scope's lens has its own
+/// grade, which holds only the lens's modifiers, and `sharp`, what the Pip-Boy keeps sharp, is
+/// left alone. With nothing drawn from tiles no grade is touched.
+fn tile_menu_blur(drawing: Option<Res<TileMenuBlur>>, mut last: Local<TileMenuBlur>, mut grades: Query<&mut ImageSpaceGrade, Without<LensGrade>>) {
+    let now = drawing.as_deref().copied().unwrap_or_default();
+    if now != *last {
+        info!("tile menu blur: {}", tile_menu_blur_text(now));
+        // What the menu had covered: the grades hold this frame's blur without the menu's.
+        let own = grades.iter().map(|g| g.blur).fold(0.0, f32::max);
+        if !now.any() && own > 0.0 {
+            info!("tile menu blur: the screen's own blur {own:.1} stays");
+        }
+        *last = now;
+    }
+    if !now.any() {
+        return;
+    }
+    for mut grade in &mut grades {
+        grade.blur = grade.blur.max(TILE_MENU_BLUR);
+    }
+}
+
 /// The blur passes' pipelines: the motion blur, across and down, per target format and whether the
 /// view's depth is multisampled (the depth is read to keep what is near sharp).
 #[derive(Resource)]
@@ -748,7 +793,105 @@ pub(crate) fn blur_pass(
 
 #[cfg(test)]
 mod tests {
-    use super::{black_over, dof_text, engine_dof, motion_blur, motion_frames, DofSettings, MOTION_EXPOSURE};
+    use super::{black_over, dof_text, engine_dof, motion_blur, motion_frames, tile_menu_blur, tile_menu_blur_text, DofSettings, ImageSpaceGrade, LensGrade, TileMenuBlur, MOTION_EXPOSURE, PIPBOY_BLUR, WAIT_MENU_BLUR};
+    use bevy::prelude::*;
+
+    /// What `update_grade` writes this frame: the screen's own blur and what stays sharp.
+    /// (`update_grade` itself needs a `SkyState`, which only `WorldData` builds; the smoke
+    /// `tiles-tutorial` has the real one under this.)
+    #[derive(Resource, Default)]
+    struct Own(f32, f32);
+
+    fn write_own(own: Res<Own>, mut grades: Query<&mut ImageSpaceGrade, Without<LensGrade>>) {
+        for mut grade in &mut grades {
+            *grade = ImageSpaceGrade { blur: own.0, sharp: own.1, ..ImageSpaceGrade::default() };
+        }
+    }
+
+    /// The main camera's grade and a scope lens's, as `update_grade` and the blur run in a frame.
+    fn grades_app() -> (App, Entity, Entity) {
+        let mut app = App::new();
+        app.init_resource::<Own>().init_resource::<TileMenuBlur>().add_systems(Update, write_own).add_systems(PostUpdate, tile_menu_blur);
+        let main = app.world_mut().spawn(ImageSpaceGrade::default()).id();
+        let lens = app.world_mut().spawn((ImageSpaceGrade::default(), LensGrade)).id();
+        (app, main, lens)
+    }
+
+    fn frame(app: &mut App, entity: Entity, own: (f32, f32), tutorial: bool) -> (f32, f32) {
+        app.insert_resource(Own(own.0, own.1));
+        app.world_mut().resource_mut::<TileMenuBlur>().tutorial = tutorial;
+        app.update();
+        let g = app.world().get::<ImageSpaceGrade>(entity).unwrap();
+        (g.blur, g.sharp)
+    }
+
+    #[test]
+    fn a_tile_menus_blur_is_the_strongest_and_leaves_the_others_when_it_goes() {
+        for (case, own, want) in [
+            ("nothing else", 0.0, 3.0),
+            ("the wait menu", WAIT_MENU_BLUR, 3.0),
+            ("the Pip-Boy, coming up", PIPBOY_BLUR * crate::player_body::pipboy_ease(0.05), 3.0),
+            ("the Pip-Boy, up", PIPBOY_BLUR, 3.5),
+            ("death, at once", crate::death_cam::blur_at(0.0), 3.0),
+            ("death, at its strongest", crate::death_cam::blur_at(crate::death_cam::BLUR_IN), 4.0),
+        ] {
+            let (mut app, main, _) = grades_app();
+            assert_eq!(frame(&mut app, main, (own, 0.0), false).0, own, "{case}: before the menu");
+            assert_eq!(frame(&mut app, main, (own, 0.0), true).0, want, "{case}: the first tiled frame");
+            assert_eq!(frame(&mut app, main, (own, 0.0), true).0, want, "{case}: and again, not summed");
+            assert_eq!(frame(&mut app, main, (own, 0.0), false).0, own, "{case}: closed, at once");
+            assert_eq!(frame(&mut app, main, (own, 0.0), true).0, want, "{case}: reopened");
+        }
+    }
+
+    /// The Pip-Boy's near depth stays sharp under the menu's blur, and a scope's lens keeps its
+    /// own grade.
+    #[test]
+    fn a_tile_menus_blur_keeps_the_pipboys_sharp_depth_and_leaves_a_scope_lens() {
+        let (mut app, main, lens) = grades_app();
+        assert_eq!(frame(&mut app, main, (PIPBOY_BLUR, 0.25), true), (3.5, 0.25));
+        assert_eq!(frame(&mut app, main, (0.0, 0.25), true), (3.0, 0.25));
+        assert_eq!(app.world().get::<ImageSpaceGrade>(lens).unwrap().blur, 0.0);
+    }
+
+    /// With nothing drawn from tiles, or no tile drawing at all (the resource absent), the
+    /// system writes no grade: `Changed` does not fire on them.
+    #[test]
+    fn no_tile_menu_writes_no_grade() {
+        #[derive(Resource, Default)]
+        struct Changes(usize);
+        fn count(grades: Query<(), Changed<ImageSpaceGrade>>, mut changes: ResMut<Changes>) {
+            changes.0 += grades.iter().count();
+        }
+        for present in [true, false] {
+            let mut app = App::new();
+            app.init_resource::<Changes>().add_systems(PostUpdate, tile_menu_blur).add_systems(Last, count);
+            if present {
+                app.init_resource::<TileMenuBlur>();
+            }
+            app.world_mut().spawn(ImageSpaceGrade { blur: 0.5, ..ImageSpaceGrade::default() });
+            app.update();
+            app.world_mut().resource_mut::<Changes>().0 = 0;
+            app.update();
+            app.update();
+            assert_eq!(app.world().resource::<Changes>().0, 0, "resource present: {present}");
+            if present {
+                app.world_mut().resource_mut::<TileMenuBlur>().tutorial = true;
+                app.update();
+                assert_eq!(app.world().resource::<Changes>().0, 1, "drawn from tiles it does write");
+            }
+        }
+    }
+
+    #[test]
+    fn the_tile_menu_blur_lines() {
+        let tutorial = TileMenuBlur { tutorial: true, container: false };
+        let container = TileMenuBlur { tutorial: false, container: true };
+        assert_eq!(tile_menu_blur_text(TileMenuBlur::default()), "off");
+        assert_eq!(tile_menu_blur_text(tutorial), "TutorialMenu radius 3");
+        assert_eq!(tile_menu_blur_text(container), "ContainerMenu radius 3");
+        assert_eq!(tile_menu_blur_text(TileMenuBlur { tutorial: true, container: true }), "TutorialMenu, ContainerMenu radius 3");
+    }
 
     #[test]
     fn the_engine_focuses_vats_on_the_mark() {

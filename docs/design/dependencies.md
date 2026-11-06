@@ -26,6 +26,7 @@ still has to be re-run there (84/84 Layer 1 scenarios expected).
 | — | `proptest` | malformed-input properties for every parser; `cargo-fuzz` (nightly) not set up |
 | — | `cargo-deny` | `deny.toml`: licences, RustSec advisories, sources; runs in CI |
 | — | `fancy-regex` 0.14 (MIT) | JIP's Sv_RegexMatch/Search/Replace and ValidateRegex in fnv-script (jip-strings.md §1): ECMAScript-style patterns need back-references, which the `regex` crate lacks |
+| — | `toml` 1 (MIT/Apache-2.0), `parse` + `serde` only, the version the engine already has through Bevy | fnv-util `words` (#1443): the language files of NVForever's own words (`lang/<id>.toml`) |
 | — | `chrono` 0.4 (MIT/Apache-2.0), `clock` only | xNVSE GetUserTime in fnv-game (the computer's local time); the standard library has no time zones |
 | — | `wgpu` 30 (`vulkan`) + `ash` 0.38, MIT/Apache-2.0, the versions Bevy already uses | nvforever `memory_budget.rs` (#1170): the GPU's `VK_EXT_memory_budget` through wgpu's Vulkan device (`Device::as_hal`); no wgpu patch |
 | — | `tracy-client` 0.19 (MIT/Apache-2.0; its `tracy-client-sys` 0.30.1 carries the Tracy 0.14.1 C++ client, BSD-3-Clause) with `tracing-tracy` 0.12 (MIT/Apache-2.0), through Bevy's `trace_tracy`, the versions Bevy 0.20.1 pins | optional, only in the engine's `tracy`/`tracy-memory` build features (#1329): Bevy's spans sent live to the Tracy profiler; built `ondemand` + `only-localhost`; never in release or CI builds (frame-rate-audit.md §1) |

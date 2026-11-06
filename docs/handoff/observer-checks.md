@@ -287,7 +287,8 @@ engine if needed, and delete the item here.
     - Greetings flagged Goodbye are said at you; when an actor starts the conversation
       they hold you for one line.
     - A generic Goodbye is added where the only Goodbye has an end script (100+ lists).
-    - Tab leaves only where a Goodbye is offered.
+    - Tab leaves only where a Goodbye is offered, or at any topic list (#1595: Julie
+      Farkas's has none; how does the original leave her?).
     - A skipped line still runs its end script.
     - Spent Say Once questions vanish.
     - No pause is added between voiced lines (scenes run 0.3–0.4 s short per line).
@@ -320,8 +321,10 @@ engine if needed, and delete the item here.
     - A call on an empty ref is skipped — partly answered 2026-10-31 (o5_00): in a
       function script run through xNVSE's CallFunction, `rE.GetDisabled` on an unset
       `ref`, alone or as an `if` condition, let the script go on (the next line ran). Ours
-      stops the script (game.rs `stop_run`, scripts.md §4.2). Still open: the same in a
-      quest or object script run by the game itself, before ours changes.
+      stopped the script (scripts.md §4.2). An object script run by the game goes on too:
+      the Nellis artillery trigger's script makes such a call every frame and the
+      original's barrage fires (issue #1600). Ours goes on since 2026-11-05. Still open:
+      a quest script.
     - Return ends one block only.
     - Scripted items in other inventories don't run.
     - Message boxes don't freeze the player, and MenuMode 1002 is our guess.
@@ -1154,6 +1157,19 @@ The numbers above stay put so links to them hold; each item here gives its own p
     names the language, so the code page can be detected. Then with `CodePage=1251`:
     menus, dialogue, the Pip-Boy and the HUD show Cyrillic, not `?` or wrong letters.
 
+## Added 2026-11-03 (sounds decoded on worker threads, issue #1428)
+
+82. **Does `PlaySound X; StopSound X` in one frame play anything?** (P3; audio.md §11.5.)
+    NVForever reads a sound's file on a worker, and a StopSound covers the sounds of X
+    asked for before it, also in the same frame, so the pair plays nothing; `StopSound X;
+    PlaySound X` plays X [hypothesis]. In the original (`nvfstrip`, a probe like sound1):
+    one script block that runs `PlaySound` then `StopSound` of a short one-shot never
+    played before in the session (its file not loaded yet) and of one played a moment
+    earlier; the same with the order turned round; then the same with a Loop-flag SOUN
+    (EMTMedicalBeep01). Log `IsSoundPlaying` of it each frame for 10 frames and record
+    the audio. The answer: whether any of it is heard, and IsSoundPlaying's values per
+    frame for each order.
+
 ## Added 2026-11-03 (volume sliders, issue #1450)
 
 79. **How does the original's Music slider turn its music down, and does the main menu
@@ -1199,3 +1215,92 @@ The numbers above stay put so links to them hold; each item here gives its own p
     whether (a)'s handler prints, and what (c) returns. If (a) is refused, the drop goes
     and ln_B42Optics.txt is the mod's own error. If (b) compiles, dropped arguments are not
     read. If (c) differs from `5 0 0`, the catalogue needs the fourth parameter.
+
+## Added 2026-11-04 (the tutorial menu from its file, issue #978)
+
+82. **What does `clipwindow` do?** (P3; menu-xml.md §3.1.1.) Answered in part (private
+    capture hud_tutorial_more, 1280 x 720) [observed]: in the drawing it is a rectangular
+    crop of the descendants, a scrolled line stopping part way at the column's top and bottom
+    edges. Still open: whether a click below the column's edge reaches a tile inside it (a
+    list's row scrolled out, in a menu with `list_box.xml`).
+83. **Does a picture's `alpha` reach the tiles inside it?** (P3; tutorial-menu.md §5.) The
+    tutorial menu's content under its background of alpha 193.8 reads full strength, so
+    NVForever marks that one tile; other tiles still multiply through a picture. A menu or
+    a test tile with a text inside a half-alpha picture answers whether this holds for
+    pictures generally.
+84. **The tutorial menu with two pages.** (P3; tutorial-menu.md §4, §5.) Answered (private
+    capture hud_tutorial_more, 1280 x 720) [observed]: a second `ShowTutorialMenu` replaces the
+    first, `TM_page` stays hidden, Next and Previous stay hidden and not targets, and
+    `ClickMenuButton` on them returned 1 with the text unchanged. The keys A and S were not
+    tried: the job taps them only when that call returns 0. NVForever's pages differ;
+    owner-review.md item 45 asks which to keep. Close's text reads alpha 255 and brightness 255
+    [observed], which rules out those two traits of its own for its (206, 147, 53), not an
+    opacity from above it or the compositing; font 2's texels [hypothesis].
+
+## Added 2026-11-05 (items without a name, issue #1603)
+
+85. **Does the original list an item that has no name?** (P3; engine/nvf-play/src/menu/model.rs,
+    `shown`.) NVForever leaves an item out of every inventory list (the player's, containers,
+    barter) when its record has no FULL or a blank one [hypothesis]. The vanilla
+    DONOTUSEBookGeneric07 (0x000199BB, BOOK, no FULL) is in SublistBooks100, under the
+    household and library clutter lists. A capture: `player.additem 000199BB 1`, then open the
+    Pip-Boy's Misc page and a container holding one. Is it absent, a blank row, or shown by
+    another name?
+
+## Added 2026-11-05 (creatures and furniture, issue #1522)
+
+86. **Does a sandboxing creature near free furniture ever use it?** (P2; furniture.md §9.)
+    Answered in part, minutes of watching and not days [observed, 2026-11-04 and 05, the
+    original over Moonlight]: no creature read as on furniture in any of these.
+    - Super mutants `001744C1` to `C4` among `SuperMutantBed` and `FloorSitMarker`: 534 s,
+      hours 12 and 23; `DefaultSandboxEditorLocation512` for at least the first, and `C4` was
+      under Sandbox in 0 of 111 samples.
+    - Colmillo and GibsonDog01 under `Sandbox256` the whole time: 358 s, within 98 to 168
+      units of `OldLadyGibsonChair`, probably free at hour 20 [hypothesis]. People in the
+      loaded area did read as on furniture, so the reads fire.
+    - Three rats near `Outhouse0000`: 355 s, partly in combat, so weak.
+    - Neil: 533 s, never under a sandbox package, so weak.
+    - The Nipton mongrels `0016B483` and `0016B484` under `DefaultSandboxEditorLocation1024`:
+      596 s, hours 12 to 15 and 18 to 20, no combat, one of them 226 units from the free cross
+      `00139FD6` for most of it. The cross's record carries XIBS (Ignored By Sandbox) [documented:
+      `fnvtool` over the record], so this no may be the flag and not the creature; the dogs and mutants above, whose furniture has no XIBS,
+      carry the question.
+
+    **Pending**: a person sandboxing near an empty cross. NVForever
+    keeps a creature off furniture the tree gives it no clip for, and leaves crosses out of a
+    sandbox's choices [design]. If a creature does use furniture, say which, on what, and
+    with which clip: the rule in §9 changes.
+
+## Added 2026-11-05 (placed particle scale, issue #1547)
+
+87. **Does a placed reference's scale size its particles?** (P2; particles.md §7.7.) The
+    Ultra-Luxe fountain's ULFountainFX (0x0016566E) is placed at scale 0.5. Take a frame of the
+    original at hour 12 from about (1176, -700, 1080), facing north, and the same frame in
+    NVForever. Check the size of the drops against the basin, how high the spray goes, and
+    whether it comes out of the spout. If the original's spray is the file's full size, the
+    rule in §7.7 is wrong and the cause of the misplaced spray lies elsewhere.
+
+## Added 2026-11-05 (leveled rolls and locks, issue #1567)
+
+88. **Does a leveled door lock change with the player's level?** (P3; simulation.md §5,
+    `fnv_sim::World::lock_read_level`.) NVForever hardens a leveled lock only from a level
+    fixed at its cell's load, so a door keeps its authored level [design]; the GECK tutorial
+    calls the checkbox deprecated [documented, encounter-zones.md §7], and nothing says the
+    original hardens at all [hypothesis]. The 26 leveled locks are all in the add-ons (Dead
+    Money 22, Old World Blues 3, Honest Hearts 1; simulation.md §5). A capture at a door with
+    the flag, never activated: `GetLockLevel` on it at the save's level, `player.SetLevel 31`,
+    `GetLockLevel` again, then the same on a flagged container, and on both after leaving the
+    area and coming back. Does the number move, by how much, and from which level?
+
+## Added 2026-11-05 (DamageActorValue past zero, issue #1568)
+
+89. **Does DamageAV past zero kill at all, and what of the player, an essential actor and the
+    kill's credit?** (P3; unconscious.md §2.2.) NVForever kills [hypothesis]. Check 22's two
+    super mutants died after DamageAV 300 with NCR troopers firing, no GetDead read and their
+    Health not read, so it does not isolate the cause. In the original, first: a lone
+    non-essential NPC with nobody shooting, `getav health`, `damageav health 9999`, `getdead`
+    at once and 5 s later, `getav health`. Then, each in its own run: `player.damageav health
+    9999` (does the player die?); on an essential NPC the same (knocked out, or dead, or
+    standing at a negative Health, and GetDead); on the lone NPC, the player's XP and karma
+    before and after (is the kill anyone's?). Also: does Health stay negative or stop at 0?
+    The answer: the logs.

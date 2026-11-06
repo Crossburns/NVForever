@@ -15,7 +15,7 @@ use fnv_sim::{FormId, RefTable};
 use rayon::prelude::*;
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// A unit with its decoded program.
 #[derive(Debug, Clone)]
@@ -24,11 +24,33 @@ pub struct Compiled {
     pub program: Program,
     /// Undecodable pieces (none in the shipped masters).
     pub raw: usize,
+    /// [`ScriptUnit::key`], built once in [`Compiled::new`] (#1389).
+    key: Arc<str>,
 }
 
 impl Compiled {
+    /// A unit with its decoded program. Its key is built here, once: the key reads only
+    /// the unit's plugin and owner, which nothing changes afterwards [design:
+    /// `crate::source_compile::apply` replaces the bytes, references, variables and
+    /// program only].
+    ///
+    /// Known limit: `unit` is a public field, so code that changed its `plugin` or
+    /// `owner` after this would leave the cached key stale; no code does [design: checked
+    /// for #1389]. Such a change would have to build a new `Compiled`.
+    pub fn new(unit: ScriptUnit, program: Program, raw: usize) -> Self {
+        let key: Arc<str> = Arc::from(unit.key());
+        Compiled { unit, program, raw, key }
+    }
+
+    /// `<plugin>|<owner label>` ([`ScriptUnit::key`]).
     pub fn key(&self) -> String {
-        self.unit.key()
+        self.key.to_string()
+    }
+
+    /// The same key, shared: a clone copies no text. Every function call the unit's
+    /// script makes carries it in its `functions::Ctx` (#1389).
+    pub fn shared_key(&self) -> &Arc<str> {
+        &self.key
     }
 
     pub fn has_block(&self, event: u16) -> bool {
@@ -1087,6 +1109,10 @@ pub struct IdleDef {
     /// 20 Whole Body, 21 Upper Body, ...) [documented: xEdit IDLE DATA, wbIdleAnam;
     /// `fnv_actor::idle::SECTIONS`].
     pub section: u8,
+    /// DATA byte 0 bit 0x40, which xEdit labels "Loose Idle" [documented: xEdit
+    /// wbIdleAnam]: an idle for scripts to play by name (`LooseNVPHMCYesMan`), not one the
+    /// tree's walk gives [hypothesis].
+    pub loose: bool,
 }
 
 /// The "Upper Body" animation group section ([`IdleDef::section`]) [documented: xEdit
@@ -1101,7 +1127,7 @@ impl IdleDef {
         let model = model.map(|m| m.trim().to_string()).filter(|s| !s.is_empty());
         let n = |k: &str| data.and_then(|d| d.get(k)).and_then(Json::as_i64).unwrap_or(0);
         let no_attacking = flag_bits(data.and_then(|d| d.get("flags"))) & 1 != 0;
-        IdleDef { model, loop_min: n("loop_min") as u8, loop_max: n("loop_max") as u8, conditions: Some(Vec::new()), parent: None, previous: None, replay_delay: n("replay_delay") as i16, no_attacking, section: n("animation_group_section") as u8 & 0x3F }
+        IdleDef { model, loop_min: n("loop_min") as u8, loop_max: n("loop_max") as u8, conditions: Some(Vec::new()), parent: None, previous: None, replay_delay: n("replay_delay") as i16, no_attacking, section: n("animation_group_section") as u8 & 0x3F, loose: n("animation_group_section") as u8 & 0x40 != 0 }
     }
 
     /// Whether the record names an animation file.
@@ -1791,7 +1817,7 @@ impl GameData {
             .map(|(id, unit)| {
                 let dec = decode(&unit.bytes, &d.table);
                 let raw = dec.report.raw_total();
-                (id, Compiled { unit, program: dec.program, raw })
+                (id, Compiled::new(unit, dec.program, raw))
             })
             .collect();
         crate::source_compile::apply(lo, &d.table, &mut compiled, &mut d.issues);
@@ -3449,3 +3475,41 @@ pub(crate) fn field_code(schema: &Schema, sig: &[u8; 4], sub: &[u8; 4], field: O
     }
 }
 
+
+#[cfg(test)]
+mod unit_key_tests {
+    use super::*;
+    use fnv_script::unit::{Header, PackageEvent};
+    use fnv_script::ScriptKind;
+
+    fn unit(plugin: &str, owner: UnitOwner) -> ScriptUnit {
+        ScriptUnit { plugin: plugin.into(), owner, kind: ScriptKind::Object, header: Header::default(), variables: Vec::new(), refs: Vec::new(), has_scda: false, bytes: Vec::new(), source: None }
+    }
+
+    #[test]
+    fn the_built_key_is_the_units_key_for_every_owner() {
+        let owners = [
+            UnitOwner::Script { form: 0x0001_0F2A },
+            UnitOwner::QuestStage { form: 0x0010_4C1C, stage: 10, entry: 0 },
+            UnitOwner::Info { form: 0x0200_0801, end: true },
+            UnitOwner::Info { form: 0x0200_0801, end: false },
+            UnitOwner::Package { form: 0x5, event: PackageEvent::Begin },
+            UnitOwner::Package { form: 0x5, event: PackageEvent::End },
+            UnitOwner::Package { form: 0x5, event: PackageEvent::Change },
+            UnitOwner::Terminal { form: 0x7, item: 3 },
+            UnitOwner::Perk { form: 0x9, entry: 1 },
+            UnitOwner::Patrol { form: 0xA },
+            UnitOwner::Other { sig: "NOTE".into(), form: 0xB, ordinal: 2 },
+        ];
+        for owner in owners {
+            let u = unit("FalloutNV.esm", owner);
+            let c = Compiled::new(u.clone(), Program::default(), 0);
+            assert_eq!(c.key(), u.key());
+            assert_eq!(&**c.shared_key(), u.key().as_str());
+            // A clone of the unit shares the text.
+            assert!(Arc::ptr_eq(c.shared_key(), c.clone().shared_key()));
+        }
+        let c = Compiled::new(unit("FalloutNV.esm", UnitOwner::QuestStage { form: 0x0010_4C1C, stage: 10, entry: 0 }), Program::default(), 0);
+        assert_eq!(c.key(), "FalloutNV.esm|QUST 0x00104C1C stage 10 entry 0");
+    }
+}

@@ -169,7 +169,7 @@ pub fn set_vel(id: u32, axis: char, speed: f32, phys: Option<&mut crate::phys::P
                 (false, _) => "SetVel: 0 along the ground pushes nothing".into(),
                 (true, None) => "SetVel: no pushes in this run".into(),
                 (true, Some(k)) => {
-                    k.write(crate::combat::Knockback { form_id: id, dir, speed: speed.abs(), secs: SET_VEL_SECS });
+                    k.write(crate::combat::Knockback { form_id: id, dir, speed: speed.abs(), secs: SET_VEL_SECS, attacker: 0, blow: 0, power: false });
                     format!("SetVel: {who} pushed along {axis} at {speed:.0} units/s, slowing to rest over {SET_VEL_SECS} s")
                 }
             }
@@ -696,7 +696,10 @@ fn typing(
                 }
             }
             _ => match script.as_deref_mut() {
-                Some(st) if st.rt.is_some() => st.console.push(ConsoleCall { line, selected: c.selected, active_quest: pipboy.as_ref().and_then(|p| p.active_quest()) }),
+                Some(st) if st.rt.is_some() => {
+                    let active_quest = pipboy.as_ref().and_then(|p| p.active_quest(st.rt.as_ref().map(|rt| &rt.game)));
+                    st.console.push(ConsoleCall { line, selected: c.selected, active_quest });
+                }
                 _ => c.print("Scripts are not running: only cls, tgm and coc work"),
             },
         }
@@ -908,7 +911,7 @@ pub fn describe(id: u32, d: &PlayData, sim: &SimState, rt: Option<&mut Runtime>)
         out.push(format!("cell {}  pos {:.0} {:.0} {:.0}", cell.unwrap_or_else(|| "-".into()), p[0], p[1], p[2]));
     }
     if let Some(s) = state {
-        out.push(format!("{}{}{}", if s.enabled { "enabled" } else { "disabled" }, if s.deleted { ", removed" } else { "" }, if s.count != 1 { format!(", count {}", s.count) } else { String::new() }));
+        out.push(format!("{}{}{}", if s.enabled() { "enabled" } else { "disabled" }, if s.deleted() { ", removed" } else { "" }, if s.count != 1 { format!(", count {}", s.count) } else { String::new() }));
     } else if let Some(p) = placed.filter(|p| sim.forms.item(p.base).is_some()) {
         // Not touched yet: the stack it was placed with.
         let n = sim.forms.placed_count(p.base, p.count);

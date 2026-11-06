@@ -132,6 +132,7 @@
 
 use crate::interface::{bc_supported, u, Face, Picture, Pictures};
 use crate::settings::{add_setting, Setting, Settings};
+use fnv_util::words::tr;
 use crate::start_menu::{color, highlight_colors, text as sm_text, Faces, Shade, BASE, COLUMN, ITEM, LINE, RIGHT, SUB_RIGHT, SUB_WIDTH};
 use crate::{PlaySet, PlayState};
 use bevy::ecs::system::SystemParam;
@@ -902,6 +903,9 @@ struct Drawn {
     delete_ask: Option<usize>,
     /// The view's width in interface units (960 high), rounded.
     view_w: u32,
+    /// The language's count of changes (`fnv_util::words::generation`): a new language
+    /// draws the page again in it.
+    language: u32,
 }
 
 impl Drawn {
@@ -1224,7 +1228,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     category_column(root, f, list, list.get(selected).map(|s| s.group), top);
     let top = OPTIONS_TOP;
     if list.is_empty() {
-        root.spawn(from_middle(left, top, OPTIONS_WIDTH, OPTION_ROW)).with_children(|t| sm_text(t, &f.entry, "Nothing to switch.", 10.0, BASE, color(Shade::Dim)));
+        root.spawn(from_middle(left, top, OPTIONS_WIDTH, OPTION_ROW)).with_children(|t| sm_text(t, &f.entry, tr("Nothing to switch."), 10.0, BASE, color(Shade::Dim)));
     }
     let rows = group_rows(list, selected);
     // A window of the group's rows from the one scrolled to, the chosen one in it.
@@ -1235,7 +1239,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
         let v = d.states.get(i).copied().unwrap_or(0.0);
         root.spawn((Button, PauseButton::Switch(i), boxed(from_middle(left, top + n as f32 * OPTION_ROW, OPTIONS_WIDTH, OPTION_ROW), i == selected)))
         .with_children(|r| {
-            sm_text(r, &f.entry, s.label, 10.0, BASE + 2.0, color(Shade::Bright));
+            sm_text(r, &f.entry, tr(s.label), 10.0, BASE + 2.0, color(Shade::Bright));
             if let Some(slider) = &s.slider {
                 slider_row(r, look, i, v, &slider.text(v));
                 return;
@@ -1251,7 +1255,7 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
         });
     }
     // The chosen switch's note under the rows.
-    let note = list.get(selected).map_or("", |s| s.note);
+    let note = list.get(selected).map_or("", |s| tr(s.note));
     root.spawn((SwitchNote, Text::new(note), Node { display: Display::None, ..default() }));
     let shown = (rows.end - first).min(OPTION_ROWS) as f32;
     note_lines(root, f, note, left, top + shown * OPTION_ROW + 20.0);
@@ -1296,6 +1300,7 @@ fn category_column(root: &mut ChildSpawnerCommands, f: &Faces, list: &[Setting],
     let cats = categories(list);
     let tabs = cats.iter().map(|&(name, first)| (name, Some(name) == current, PauseButton::Category(first))).chain([(CONTROLS_TAB, current.is_none(), PauseButton::ControlsTab)]);
     for (i, (name, on, b)) in tabs.enumerate() {
+        let name = tr(name);
         let w = SUB_WIDTH.max(f.entry.font.width(name) + 20.0);
         let shade = if on { Shade::Bright } else { Shade::Dim };
         right_entry(root, &f.entry, name, from_right(SUB_RIGHT, top + i as f32 * ITEM, w, ITEM), w, shade, false, b);
@@ -2530,6 +2535,7 @@ fn drawn_now(world: &mut World) -> Drawn {
         keep,
         delete_ask: view.delete_ask.filter(|_| matches!(page, Page::Load { .. })),
         view_w,
+        language: fnv_util::words::generation(),
     }
 }
 
@@ -2812,7 +2818,7 @@ mod tests {
             list.saves.push((PathBuf::from(format!("{name}.nvfsave")), h));
         }
         app.insert_resource(list);
-        let drawn = Drawn { page: Page::Load { selected: 1 }, main_selected: 0, confirm: None, states: vec![], status: String::new(), column: entries(false).iter().map(|e| (e.label(), true)).collect(), under_main: false, thumb: None, controls: vec![], device: ("Keyboard and Mouse", false), rumble: true, invert_y: false, sensitivity: 1.0, scroll: 0, lists: vec![], dropdown: None, keep: None, delete_ask: None, view_w: VIEW_W as u32 };
+        let drawn = Drawn { page: Page::Load { selected: 1 }, main_selected: 0, confirm: None, states: vec![], status: String::new(), column: entries(false).iter().map(|e| (e.label(), true)).collect(), under_main: false, thumb: None, controls: vec![], device: ("Keyboard and Mouse", false), rumble: true, invert_y: false, sensitivity: 1.0, scroll: 0, lists: vec![], dropdown: None, keep: None, delete_ask: None, view_w: VIEW_W as u32, language: 0 };
         app.world_mut().run_system_cached_with(|In(d): In<Drawn>, mut commands: Commands, list: Res<LoadList>| spawn_page(&mut commands, &d, &PauseLook::plain(), &[], &list), drawn).unwrap();
         let world = app.world_mut();
         let mut rows = world.query::<(&PauseButton, &BorderColor)>();

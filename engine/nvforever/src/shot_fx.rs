@@ -216,6 +216,8 @@ pub struct ShotFxPlugin;
 impl Plugin for ShotFxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ShotFx>()
+            // The casings' knocks are sounds: before sfx plays them.
+            .configure_sets(Update, ShotFxSet.before(nvf_play::sfx::SfxSet))
             .add_systems(Update, (preload, flash, draw_flying, casings, impacts, explosions, face_camera).chain().in_set(ShotFxSet).after(nvf_play::PlaySet::Activation).run_if(resource_exists::<Combat>))
             .add_systems(Last, report);
     }

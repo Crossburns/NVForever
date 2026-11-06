@@ -18,7 +18,8 @@
 //! next; `NVF_PLAY_TEST_PROFILE_HITCH_MS=<ms>` sets another threshold, to see what the
 //! occasional 20 ms frames hold) also logs `profile hitch: <ms> ms; spans ms: <span> <ms> (<entries>), …`: the
 //! spans that ended in it, over every thread, so a single stall is not lost in a window's
-//! means.
+//! means. A line lists the [`LISTED_HITCH`] heaviest; `NVF_PLAY_TEST_PROFILE_HITCH_SPANS=<n>`
+//! lists more, for the small spans inside a system (`tiles::write::<part>`, issue #1457).
 //!
 //! Each window also logs `profile scene: <n> mesh entities (<v> visible, <c> moved this
 //! frame), <m> distinct meshes, <u> distinct materials in use (<a> material assets)`: what
@@ -77,6 +78,12 @@ fn hitch_ms() -> f64 {
 
 /// Spans listed in a hitch's line.
 const LISTED_HITCH: usize = 25;
+
+/// How many spans a hitch's line lists: [`LISTED_HITCH`] or `NVF_PLAY_TEST_PROFILE_HITCH_SPANS`.
+fn listed_hitch() -> usize {
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| std::env::var("NVF_PLAY_TEST_PROFILE_HITCH_SPANS").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|n| *n > 0).unwrap_or(LISTED_HITCH))
+}
 
 /// The window in seconds, when `NVF_PLAY_TEST_PROFILE` asks for a profile.
 pub fn interval() -> Option<f32> {
@@ -482,7 +489,7 @@ fn report(
         if ms >= hitch_ms() {
             let line = format!(
                 "{}; pipelines {pipelines} ({new_pipelines} new since the frame before, {} waiting)",
-                hitch_line(ms, &frame),
+                hitch_line(ms, &frame, listed_hitch()),
                 PIPELINES_WAITING.load(std::sync::atomic::Ordering::Relaxed)
             );
             if loading.as_deref().is_some_and(nvf_play::loading::Loading::unseen_frames) {
@@ -714,10 +721,10 @@ fn line(secs: f32, frames: u32, frame_secs: f32, totals: &HashMap<String, (f64, 
 
 /// The line for one slow frame: `profile hitch: <ms> ms; spans ms: <span> <ms> (<n>), …`,
 /// each span's time in that frame and how often it was entered.
-fn hitch_line(ms: f64, frame: &HashMap<String, (f64, u64)>) -> String {
+fn hitch_line(ms: f64, frame: &HashMap<String, (f64, u64)>, listed: usize) -> String {
     let mut spans: Vec<(&String, &(f64, u64))> = frame.iter().collect();
     spans.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
-    let listed: Vec<String> = spans.iter().take(LISTED_HITCH).map(|(k, (s, n))| format!("{k} {:.1} ({n})", s * 1000.0)).collect();
+    let listed: Vec<String> = spans.iter().take(listed).map(|(k, (s, n))| format!("{k} {:.1} ({n})", s * 1000.0)).collect();
     if listed.is_empty() {
         format!("profile hitch: {ms:.0} ms; no spans seen (build with --features profile)")
     } else {
@@ -792,8 +799,8 @@ mod tests {
         let mut t = HashMap::new();
         t.insert("a".to_string(), (0.010, 1));
         t.insert("b".to_string(), (0.500, 3));
-        let l = hitch_line(612.4, &t);
+        let l = hitch_line(612.4, &t, LISTED_HITCH);
         assert!(l.starts_with("profile hitch: 612 ms; spans ms: b 500.0 (3), a 10.0 (1)"), "{l}");
-        assert!(hitch_line(150.0, &HashMap::new()).contains("no spans seen"));
+        assert!(hitch_line(150.0, &HashMap::new(), LISTED_HITCH).contains("no spans seen"));
     }
 }

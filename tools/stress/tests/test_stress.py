@@ -580,12 +580,19 @@ class PerfTest(unittest.TestCase):
         self.assertIsNone(cpu.read(1.0, None, 1.5))  # a failed read keeps the baseline
         # 1.9 s since the baseline, 3.8 core-seconds: the game 0.95 (25 %), the machine 1.9.
         self.assertEqual(cpu.read(2.0, 11.9, 1.95), (2.0, 0.25, 0.25, 1.9))
-        # No time passed: left out, the baseline kept.
+        # No time passed: no sample, the baseline kept, and nothing counted as left out
+        # (no time is lost).
         self.assertIsNone(cpu.read(2.0, 12.0, 2.0))
+        self.assertEqual(cpu.skipped, 0)
         # More processor time than the cores have (an impossible share): left out, not zero.
         self.assertIsNone(cpu.read(3.0, 20.0, 2.0))
-        self.assertEqual(cpu.skipped, 2)
+        self.assertEqual(cpu.skipped, 1)
         self.assertEqual(len(cpu.samples), 1)
+        # The discard moved the baseline to its end (3.0 s): the next interval is 1 s from
+        # there, not 2 s from the last kept sample. 2 core-seconds: the game 0.4 (20 %), the
+        # machine 0.8 (others 20 %).
+        self.assertEqual(cpu.read(4.0, 20.8, 2.4), (4.0, 0.2, 0.2, 1.0))
+        self.assertEqual((cpu.skipped, len(cpu.samples)), (1, 2))
 
     def test_budget(self):
         frames = {"mean_ms": 17.0, "low1_ms": 53.0, "worst_ms": 988.0}

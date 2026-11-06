@@ -163,6 +163,17 @@ Menus, message boxes, subtitles and the HUD are drawn over the result and are no
 affected [observed for a message box: the same capture shows the pack box over the white
 screen].
 
+The world behind a menu drawn from its tiles is blurred with this same pass (behind
+`[UI] TileMenus=`, tutorial-menu.md §5): radius 3, on and off at once, as behind the wait
+menu [design: the original's shots show that the world is blurred, not its radius or its
+timing]. Like every other request it is the highest value, not a sum: the modifiers, the
+wait menu, the Pip-Boy, death and the weapon wheel keep theirs when the menu goes, and what
+is nearer than the Pip-Boy's sharp depth stays sharp. It is applied after the frame's
+`update_grade` (`imagespace::tile_menu_blur`), so the first frame drawn from tiles has it and
+the frame the menu closes has not. Log, on changes only, of this contribution alone:
+"tile menu blur: TutorialMenu radius 3", "tile menu blur: off", and with the off "tile menu
+blur: the screen's own blur N stays" when something else still blurs the screen.
+
 Depth of field is drawn as §8 says, motion blur as §9 says, the HDR and bloom tracks as
 §11 says. Not drawn: radial blur "use target".
 

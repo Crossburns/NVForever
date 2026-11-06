@@ -118,6 +118,11 @@ pub struct Post {
     pub run: bool,
 }
 
+/// A fighter counts as at its post within this horizontal distance of the point asked
+/// for, game units [design: `fnv_ai::alert` when its way there ends, and the engine's
+/// tactics, `AT_POST`; docs/design/combat-ai.md §12.1].
+pub const POST_ARRIVAL: f32 = 64.0;
+
 /// How a fleeing actor gets away [documented: Combat Flee, in this order].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "by", rename_all = "snake_case")]

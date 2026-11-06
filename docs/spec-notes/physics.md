@@ -91,7 +91,7 @@ is unknown; to be checked by standing a probe on a steep square in-game, §6].
 | Collision object | Body | Tag |
 |---|---|---|
 | `Motion::Static` | fixed | [hypothesis] |
-| `Motion::Keyframed` | kinematic, position-driven | [hypothesis] |
+| `Motion::Keyframed` | fixed (posed by teleport, never moved smoothly) | [hypothesis] |
 | `Motion::Dynamic` | dynamic; collider densities scaled so the body mass equals `mass` (volume-derived mass kept when `mass` ≤ 0) | [hypothesis] |
 
 Friction and restitution are passed to rapier unchanged [hypothesis: Havok's coefficients
@@ -181,6 +181,14 @@ float above the ground (median bottom 115 units *below* it); read as full extent
 float (median bottom 160 units *above* it), which would leave walls the player could walk
 under. Still a [hypothesis] until checked in game (§6). Reproduce:
 `cargo run --release -p fnv-phys --example primitive_bounds -- <Data> schemas/fnv`.
+
+**Layer** (issue #1545, 2026-11-05) [hypothesis: what a CollisionMarker is for]: a
+CollisionMarker primitive without XTRI is on the **Invisible Wall** layer (27), not
+Unidentified (0). Characters collide with it, as before. Shots, VATS mode's line of fire
+and the aim ray pass it (`layers::shot_ignores`, the character's layers plus Invisible
+Wall), and so do sight (`detection.rs` `see_through`) and blast cover lines, which already
+passed layer 27. Before the change, a 10mm round fired at the box 0x00176AD0 in Goodsprings
+stopped on it (smoke `shot-passes-collision-marker`).
 
 ### 4.2 Collision layer matrix (B11): design and predictions
 
@@ -573,9 +581,8 @@ GSGeneralStore --play`, 2026-10-11], 53 of the 67 dynamic references there moved
 object stays where it was placed, inactive, until something disturbs it — the books in the
 display case, and a resting dropped item not woken by `SetPos` (§4.3, `pc_drop_fall`)]:
 
-- Placed references' dynamic bodies are added **asleep** (`PreparedRef::asleep`), and so
-  are their keyframed bodies (a container's lid would otherwise keep what stands on it
-  awake). rapier wakes both sides of every contact that starts, so a body added asleep
+- Placed references' dynamic bodies are added **asleep** (`PreparedRef::asleep`).
+  rapier wakes both sides of every contact that starts, so a body added asleep
   woke as soon as its first contacts were found; `PhysWorld` finds the contacts of bodies
   added asleep before the next step and puts them back to sleep (`update_queries`). They
   wake when a body moves against them (the player, an actor, another item falling), when
@@ -904,9 +911,12 @@ terrain is put back on the ground (logged as a warning); indoors, §6.7.
 
 References get collision by the same rule as `fnvtool phys cell`
 (`fnv_phys::ref_collision`); whether one is in the world is the simulation's: not
-deleted, enabled following its enable parents (`World::is_enabled`), not taken; until the
-simulation holds state for a reference, its own Initially Disabled flag also keeps it out
-(as render streaming and `fnvtool phys` do). In Goodsprings' 3×3 that gives 839
+deleted, enabled following its enable parents (`World::is_enabled`), not taken, whether or
+not the simulation holds state for the reference: under an enable parent its own Initially
+Disabled flag does not count [design: `engine/nvf-play/src/phys.rs` `in_world`; that the
+original's collision follows `GetDisabled` here is [hypothesis], simulation.md §1], while
+`fnvtool phys` still lets the flag win [design: `crates/fnvtool/src/phys_cmd.rs`]. In
+Goodsprings' 3×3 that gives 839
 references with collision against `fnvtool phys cell`'s 849 [observed: `nvforever --play`
 debug log: 18 references not in the world, the 8 that `fnvtool` also counts as Initially
 Disabled and 10 that the simulation disables through their enable parents].
@@ -2443,7 +2453,8 @@ gains `water_volume` for references whose model holds one); probes report `swimm
 `initially_disabled`, `disabled_by_parent` (enabled itself but disabled at the start by
 its enable-parent chain, §4), `no_base`, `actor` (placed NPCs and creatures, which get no
 collision here, §4), `no_model`, `collision_primitive` (CollisionMarker
-primitives added), `bad_primitive`, `speedtree`, `model_without_collision`,
+primitives added), `bad_primitive`, `primitive_model` (a primitive, a trigger, whose
+base names a model: the model is left out, level-design.md §4.1), `speedtree`, `model_without_collision`,
 `model_unreadable`, `awaiting_collision` (meshes not loaded), `with_collision`
 (references added to the world), `colliders` (their collider count) and `object_errors`.
 `by_base_type` counts references with a readable base by its record type.

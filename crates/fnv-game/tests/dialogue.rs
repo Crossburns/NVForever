@@ -21,6 +21,7 @@ const G_GATE: u32 = 0x801;
 const G_DAYS: u32 = 0x803;
 const G_TICKS: u32 = 0x804;
 const G_MENU_TICKS: u32 = 0x805;
+const G_COUNT: u32 = 0x809;
 const QTICK: u32 = 0x904;
 const QTICK_SCRIPT: u32 = 0x905;
 const T_POOL: u32 = 0x939;
@@ -87,6 +88,18 @@ const P_PING: u32 = 0xF5A;
 const P_PONG: u32 = 0xF5B;
 const P_RPING: u32 = 0xF5C;
 const P_RPONG: u32 = 0xF5D;
+// Between actors: a line links to a topic whose line has a follow-up stored under the first
+// topic, and the follow-up links back. In QA (no repeated topics) and in QREP (repeats allowed).
+const T_HIST_A: u32 = 0x960;
+const T_HIST_B: u32 = 0x961;
+const T_RHIST_A: u32 = 0x962;
+const T_RHIST_B: u32 = 0x963;
+const H_A: u32 = 0xF62;
+const H_FOLLOW: u32 = 0xF63;
+const H_B: u32 = 0xF64;
+const H_RA: u32 = 0xF65;
+const H_RFOLLOW: u32 = 0xF66;
+const H_RB: u32 = 0xF67;
 // Follow-up lines stored under a topic of their own (dialogue.md §3.4).
 const T_FU_LEAD: u32 = 0x95D;
 const T_FU: u32 = 0x95E;
@@ -133,6 +146,19 @@ const W_BOTH_FU: u32 = 0xA6A;
 const W_BOTH_BYE: u32 = 0xA6B;
 const T_KEEP: u32 = 0xA6C;
 const W_KEEP: u32 = 0xA6D;
+// Issue #1606: a Goodbye line whose end script hands off to ChatterREF and makes it say
+// TestByeB (ChatterREF's Goodbye line, which counts its end in TestCount); a Goodbye line
+// whose begin script makes its speaker say another line.
+const T_RELAY: u32 = 0xA6E;
+const H_RELAY: u32 = 0xA6F;
+const T_BYE_B: u32 = 0xA70;
+const B_BYE: u32 = 0xA71;
+const T_BEGIN_SAY: u32 = 0xA72;
+const H_BEGIN_SAY: u32 = 0xA73;
+// ChatterREF's Goodbye line whose end script has TalkerREF force-greet the player, with
+// TopicSource in its Add Topics.
+const T_B_HAND: u32 = 0xA74;
+const B_HAND: u32 = 0xA75;
 const PATROL_REF: u32 = 0x322;
 const NPC1_REF: u32 = 0x320;
 const NPC2_REF: u32 = 0x321;
@@ -196,13 +222,42 @@ struct L {
     end: Option<&'static str>,
     /// The end script is `ChatterREF.StartConversation player` instead.
     end_talk: bool,
+    /// Result scripts as given (instead of `begin` / `end`).
+    begin_raw: Option<Vec<Subrecord>>,
+    end_raw: Option<Vec<Subrecord>>,
     knam: Option<u32>,
 }
 
 /// `ChatterREF.StartConversation player` (SCRO 1 ChatterREF, 2 the player).
 fn talk_result() -> Vec<Subrecord> {
+    talk_result_by(NPC2_REF)
+}
+
+/// `<speaker>.StartConversation player` (SCRO 1 the speaker, 2 the player).
+fn talk_result_by(speaker: u32) -> Vec<Subrecord> {
     let call = [le16(0x1C), le16(1), st(0x1056, &[le16(1), vec![b'r'], le16(2)].concat())].concat();
-    unit(0, &call, &[], &[NPC2_REF, FormId::PLAYER_REF.0])
+    unit(0, &call, &[], &[speaker, FormId::PLAYER_REF.0])
+}
+
+/// `<speaker>.Say <topic>` (SCRO 1 the speaker, 2 the topic).
+fn say_result(speaker: u32, topic: u32) -> Vec<Subrecord> {
+    let call = [le16(0x1C), le16(1), st(0x1033, &[le16(1), vec![b'r'], le16(2)].concat())].concat();
+    unit(0, &call, &[], &[speaker, topic])
+}
+
+/// `ChatterREF.StartConversation player`, `ChatterREF.Say TestByeB`, `set TestOut to 5`:
+/// the hand-off first, then a line that ends ChatterREF's farewell, then one more
+/// statement (SCRO 1 ChatterREF, 2 the player, 3 TestByeB, 4 TestOut).
+fn relay_result() -> Vec<Subrecord> {
+    let talk = [le16(0x1C), le16(1), st(0x1056, &[le16(1), vec![b'r'], le16(2)].concat())].concat();
+    let say = [le16(0x1C), le16(1), st(0x1033, &[le16(1), vec![b'r'], le16(3)].concat())].concat();
+    let out = set(var(b'G', 4), ex(&[a("5")]));
+    unit(0, &[talk, say, out].concat(), &[], &[NPC2_REF, FormId::PLAYER_REF.0, T_BYE_B, G_OUT])
+}
+
+/// `set TestCount to TestCount + 1`.
+fn count_result() -> Vec<Subrecord> {
+    unit(0, &set(var(b'G', 1), ex(&[var(b'G', 1), a("1"), a("+")])), &[], &[G_COUNT])
 }
 
 fn result(value: Option<&str>) -> Vec<Subrecord> {
@@ -223,9 +278,13 @@ fn info(l: L) -> Vec<u8> {
     s.extend(l.choices.iter().map(|t| sub(b"TCLT", u32b(*t))));
     s.extend(l.link_from.iter().map(|t| sub(b"TCLF", u32b(*t))));
     s.extend(l.follow.iter().map(|t| sub(b"TCFU", u32b(*t))));
-    s.extend(result(l.begin));
+    s.extend(l.begin_raw.unwrap_or_else(|| result(l.begin)));
     s.push(sub(b"NEXT", vec![]));
-    s.extend(if l.end_talk { talk_result() } else { result(l.end) });
+    s.extend(match l.end_raw {
+        Some(raw) => raw,
+        None if l.end_talk => talk_result(),
+        None => result(l.end),
+    });
     s.extend(l.prompt.map(|p| sub(b"RNAM", z(p))));
     s.extend(l.speaker.map(|a| sub(b"ANAM", u32b(a))));
     s.extend(l.knam.map(|k| sub(b"KNAM", u32b(k))));
@@ -264,8 +323,12 @@ fn plugin_bytes() -> Vec<u8> {
         glob(G_GATE, "TestGate", 0.0),
         glob(0x802, "GameHour", 8.0),
         glob(G_DAYS, "GameDaysPassed", 0.0),
+        glob(0x806, "GameYear", 2281.0),
+        glob(0x807, "GameMonth", 9.0),
+        glob(0x808, "GameDay", 18.0),
         glob(G_TICKS, "TestTicks", 0.0),
         glob(G_MENU_TICKS, "TestMenuTicks", 0.0),
+        glob(G_COUNT, "TestCount", 0.0),
     ]
     .concat();
     // A quest whose script counts its GameMode runs in TestTicks and its MenuMode runs in
@@ -609,6 +672,32 @@ fn plugin_bytes() -> Vec<u8> {
         topic(T_RPING, "TestRPing", "TestRPing", topic_type::CONVERSATION, 0, 50.0, vec![L { id: P_RPING, quest: QREP, ty: CONV, responses: one("Ping"), choices: vec![T_RPONG], ..L::default() }]),
         topic(T_RPONG, "TestRPong", "TestRPong", topic_type::CONVERSATION, 0, 50.0, vec![L { id: P_RPONG, quest: QREP, ty: CONV, responses: one("Pong"), choices: vec![T_RPING], ..L::default() }]),
         topic(
+            T_HIST_A,
+            "TestHistA",
+            "TestHistA",
+            topic_type::CONVERSATION,
+            0,
+            50.0,
+            vec![
+                L { id: H_A, quest: QA, ty: CONV, responses: one("Start"), choices: vec![T_HIST_B], ..L::default() },
+                L { id: H_FOLLOW, quest: QA, ty: CONV, responses: one("Follow-up"), choices: vec![T_HIST_B], ..L::default() },
+            ],
+        ),
+        topic(T_HIST_B, "TestHistB", "TestHistB", topic_type::CONVERSATION, 0, 50.0, vec![L { id: H_B, quest: QA, ty: CONV, responses: one("Linked"), follow: vec![H_FOLLOW], ..L::default() }]),
+        topic(
+            T_RHIST_A,
+            "TestRHistA",
+            "TestRHistA",
+            topic_type::CONVERSATION,
+            0,
+            50.0,
+            vec![
+                L { id: H_RA, quest: QREP, ty: CONV, responses: one("Start"), choices: vec![T_RHIST_B], ..L::default() },
+                L { id: H_RFOLLOW, quest: QREP, ty: CONV, responses: one("Follow-up"), choices: vec![T_RHIST_B], ..L::default() },
+            ],
+        ),
+        topic(T_RHIST_B, "TestRHistB", "TestRHistB", topic_type::CONVERSATION, 0, 50.0, vec![L { id: H_RB, quest: QREP, ty: CONV, responses: one("Linked"), follow: vec![H_RFOLLOW], ..L::default() }]),
+        topic(
             T_HANDOFF,
             "TestHandoff",
             "Handoff",
@@ -659,6 +748,42 @@ fn plugin_bytes() -> Vec<u8> {
             ],
         ),
         topic(T_TAPE, "TestTape", "TestTape", topic_type::TOPIC, 0, 50.0, vec![L { id: S_TAPE, quest: QA, speaker: me, responses: one("Tape"), begin: Some("6"), end: Some("7"), ..L::default() }]),
+        topic(
+            T_RELAY,
+            "TestRelay",
+            "Relay",
+            topic_type::TOPIC,
+            0,
+            50.0,
+            vec![L { id: H_RELAY, quest: QA, flags: info_flag::GOODBYE, speaker: me, responses: one("Off you go"), add: vec![T_ADDED], end_raw: Some(relay_result()), ..L::default() }],
+        ),
+        topic(
+            T_BYE_B,
+            "TestByeB",
+            "ByeB",
+            topic_type::TOPIC,
+            0,
+            50.0,
+            vec![L { id: B_BYE, quest: QA, flags: info_flag::GOODBYE, speaker: Some(NPC2), responses: one("So long"), end_raw: Some(count_result()), ..L::default() }],
+        ),
+        topic(
+            T_B_HAND,
+            "TestByeHandoff",
+            "ByeHandoff",
+            topic_type::TOPIC,
+            0,
+            50.0,
+            vec![L { id: B_HAND, quest: QA, flags: info_flag::GOODBYE, speaker: Some(NPC2), responses: one("See him"), add: vec![T_SOURCE], end_raw: Some(talk_result_by(NPC1_REF)), ..L::default() }],
+        ),
+        topic(
+            T_BEGIN_SAY,
+            "TestBeginSay",
+            "BeginSay",
+            topic_type::TOPIC,
+            0,
+            50.0,
+            vec![L { id: H_BEGIN_SAY, quest: QA, flags: info_flag::GOODBYE, speaker: me, responses: one("Hold on"), begin_raw: Some(say_result(NPC1_REF, T_ASK)), end: Some("9"), ..L::default() }],
+        ),
     ]
     .concat();
     // DATA 3 Voice; SNAM the speaker, TNAM the topic (the NOTE unions, holotapes.md §1).
@@ -734,6 +859,23 @@ fn listen(g: &mut Game) {
         g.tick();
     }
     panic!("the actor never stopped speaking");
+}
+
+/// Frames until the actor has finished the Goodbye line the player chose, said in the
+/// world once its conversation closed (`Speech::farewell`).
+fn hear_out(g: &mut Game) {
+    for _ in 0..20_000 {
+        if !g.speech.iter().any(|s| s.farewell) {
+            return;
+        }
+        g.tick();
+    }
+    panic!("the farewell never ended");
+}
+
+/// Where the first trace event that matches comes in the trace.
+fn event_at(g: &Game, m: impl Fn(&EventKind) -> bool) -> usize {
+    g.events.iter().position(|e| m(&e.kind)).expect("no such event")
 }
 
 fn offered(g: &Game) -> Vec<u32> {
@@ -900,7 +1042,8 @@ fn a_conversation_pauses_the_game_behind_it() {
     assert!(spoken > 60.0);
     assert_eq!(ticks(&g), (15.0, spoken));
     assert_eq!(g.time, t0);
-    // Choosing does not unpause; the Goodbye line's end does.
+    // Choosing an answer does not unpause; a chosen Goodbye line ends the conversation,
+    // and the pause, at once (its line goes on in the world).
     pick(&mut g, T_BYE);
     listen(&mut g);
     assert!(g.dialogue.is_none() && !g.paused());
@@ -963,6 +1106,21 @@ fn a_lines_choices_are_offered_and_nothing_else_and_a_topic_without_a_line_is_hi
     assert!(g.choose(5).is_err());
     pick(&mut g, T_ASK);
     assert!(g.choose(0).is_err());
+}
+
+/// The engine lets Tab leave a topic list even without a Goodbye (#1595); a line's own
+/// choices are no topic list.
+#[test]
+fn the_conversation_says_whether_its_choices_are_the_topic_list() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    assert_eq!(offered(&g), vec![T_ASK, T_BYE], "the first greeting's own choices");
+    assert!(!g.dialogue.as_ref().unwrap().topic_list);
+    let g = at_topic_list(&f);
+    assert!(!g.dialogue_choices().is_empty());
+    assert!(g.dialogue.as_ref().unwrap().topic_list, "a line without choices of its own offers the topic list");
 }
 
 /// A choice listed for a dim player shows its topic's Dumb Response (`Game::player_dim`,
@@ -1079,18 +1237,333 @@ fn a_goodbye_line_ends_the_conversation() {
     let mut g = game(&f);
     g.start_dialogue(actor(), None).unwrap();
     listen(&mut g);
+    // Chosen, the Goodbye line ends the conversation at once; the actor finishes it in
+    // the world and its end script runs when it is over.
     assert_eq!(pick(&mut g, T_BYE), FormId(C_BYE));
-    assert!(g.dialogue.is_some());
-    listen(&mut g);
     assert!(g.dialogue.is_none());
-    assert_eq!(out(&g), 9.0);
     assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::DialogueEnded { reason: "goodbye", lines: 2, .. })));
     assert_eq!(call(&mut g, 0x1024, NPC1_REF, &[ArgValue::Value(Value::Num(1009.0))]), 0.0);
+    assert_eq!(out(&g), 2.0);
+    hear_out(&mut g);
+    assert_eq!(out(&g), 9.0);
     // The generic GOODBYE of the topic list ends it too.
     let mut h = at_topic_list(&f);
     assert_eq!(pick(&mut h, GOODBYE), FormId(I_BYE));
-    listen(&mut h);
     assert!(h.dialogue.is_none());
+    assert!(h.speech.iter().any(|s| s.farewell && s.info == FormId(I_BYE)));
+}
+
+/// Owner's playtest 2026-11-05 against the original: choosing a Goodbye closes the menu
+/// at once and the actor finishes the line as the player walks away (`Game::choose`,
+/// `Speech::farewell`).
+#[test]
+fn a_chosen_goodbye_closes_the_conversation_at_once_and_the_line_goes_on_in_the_world() {
+    let mut f = fixture();
+    // The line gets Add Topics, and a begin script that counts its runs in TestCount
+    // (TestByeB's end script).
+    let count = f.data.infos[&FormId(B_BYE)].end;
+    let bye = f.data.infos.get_mut(&FormId(C_BYE)).unwrap();
+    (bye.add_topics, bye.begin) = (vec![FormId(T_ADDED)], count);
+    let mut g = game(&f);
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    assert_eq!(pick(&mut g, T_BYE), FormId(C_BYE));
+    // No conversation, no menu mode: the game goes on while the line is heard.
+    assert!(g.dialogue.is_none() && !g.in_menu() && !g.paused());
+    let s = g.speech.iter().find(|s| s.speaker == actor()).expect("the line goes on in the world");
+    assert!(s.farewell && !s.greeting && !s.say_to && s.info == FormId(C_BYE) && s.target == Some(FormId::PLAYER_REF) && s.conversation.is_none());
+    assert_eq!(s.remaining, fnv_game::game::fitted_seconds(8));
+    assert!(g.is_talking(actor()));
+    // A farewell does not hold its speaker in place, as a Goodbye greeting does.
+    assert!(!g.greets_player(actor()));
+    // Nothing of the line's start comes again: one line_started.
+    let started = g.events.iter().filter(|e| matches!(e.kind, EventKind::LineStarted { info, .. } if info == FormId(C_BYE))).count();
+    assert_eq!(started, 1);
+    // The end script and the Add Topics wait for the line's end.
+    assert_eq!(out(&g), 2.0);
+    assert!(!g.player.topics.contains(&FormId(T_ADDED)));
+    hear_out(&mut g);
+    assert_eq!(out(&g), 9.0);
+    assert!(g.player.topics.contains(&FormId(T_ADDED)));
+    // The conversation ended before the line did, and the line was not cut.
+    let ended = event_at(&g, |k| matches!(k, EventKind::DialogueEnded { reason: "goodbye", lines: 2, .. }));
+    let line_end = event_at(&g, |k| matches!(k, EventKind::LineEnded { info, cut: false, .. } if *info == FormId(C_BYE)));
+    let added = event_at(&g, |k| matches!(k, EventKind::TopicAdded { by: Some(by), .. } if *by == FormId(C_BYE)));
+    assert!(ended < line_end && line_end < added, "{ended} {line_end} {added}");
+    assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { cut: true, .. })));
+    assert!(g.dialogue.is_none() && g.speech.is_empty());
+    // The line started once and its response was said once: nothing of its start came
+    // again with the transfer, and its begin script ran once.
+    let starts = g.events.iter().filter(|e| matches!(e.kind, EventKind::LineStarted { info, .. } if info == FormId(C_BYE))).count();
+    let said = g.events.iter().filter(|e| matches!(e.kind, EventKind::ResponseSaid { info, .. } if info == FormId(C_BYE))).count();
+    assert_eq!((starts, said), (1, 1));
+    assert_eq!(g.world.global(FormId(G_COUNT)).unwrap(), 1.0);
+    // The engine's log line takes the transfer as the conversation closed.
+    assert_eq!(g.farewell_said, Some((actor(), FormId(C_BYE))));
+}
+
+/// Issue #1606 review: a farewell that ends inside another farewell's end script keeps
+/// to its own state. A's end script asks for ChatterREF's force greet, then makes
+/// ChatterREF say a line, which ends ChatterREF's own farewell (B) as said; A's force
+/// greet still starts, after the rest of A's end script and A's Add Topics, and B's end
+/// script runs once.
+#[test]
+fn a_farewell_ending_inside_another_farewells_end_script_keeps_the_outer_hand_off() {
+    let mut f = fixture();
+    f.data.infos.get_mut(&FormId(S_DEAD_END)).unwrap().choices = vec![FormId(T_RELAY)];
+    let mut g = game(&f);
+    g.start_dialogue(actor(), Some(FormId(T_DEAD_END))).unwrap();
+    listen(&mut g);
+    assert_eq!(pick(&mut g, T_RELAY), FormId(H_RELAY));
+    assert!(g.dialogue.is_none());
+    // ChatterREF is saying its own farewell meanwhile, ending well after A's.
+    let b = FormId(NPC2_REF);
+    g.speech.push(fnv_game::game::Speech {
+        speaker: b,
+        target: Some(FormId::PLAYER_REF),
+        topic: FormId(T_BYE_B),
+        info: FormId(B_BYE),
+        remaining: 100.0,
+        say_to: false,
+        greeting: false,
+        farewell: true,
+        conversation: None,
+        earlier_topics: Vec::new(),
+        hello: false,
+        look: fnv_game::game::LineLook::Both,
+        response: 0,
+        force_subtitles: false,
+        two_d: false,
+        end_ran: false,
+    });
+    for _ in 0..20_000 {
+        if !g.speech.iter().any(|s| s.farewell && s.speaker == actor()) {
+            break;
+        }
+        g.tick();
+    }
+    // B ended as said inside A's end script, once.
+    assert_eq!(g.world.global(FormId(G_COUNT)).unwrap(), 1.0);
+    let b_ends = g.events.iter().filter(|e| matches!(e.kind, EventKind::LineEnded { info, cut: false, .. } if info == FormId(B_BYE))).count();
+    assert_eq!(b_ends, 1);
+    // A's hand-off started after A's whole end script and A's Add Topics.
+    assert_eq!(g.dialogue_actor(), Some(b));
+    assert_eq!(out(&g), 5.0);
+    let a_end = event_at(&g, |k| matches!(k, EventKind::LineEnded { info, cut: false, .. } if *info == FormId(H_RELAY)));
+    let b_end = event_at(&g, |k| matches!(k, EventKind::LineEnded { info, cut: false, .. } if *info == FormId(B_BYE)));
+    let added = event_at(&g, |k| matches!(k, EventKind::TopicAdded { by: Some(by), .. } if *by == FormId(H_RELAY)));
+    let next = event_at(&g, |k| matches!(k, EventKind::DialogueStarted { actor, .. } if *actor == b));
+    assert!(a_end < b_end && b_end < added && added < next, "{a_end} {b_end} {added} {next}");
+    let starts = g.events.iter().filter(|e| matches!(e.kind, EventKind::DialogueStarted { .. })).count();
+    assert_eq!(starts, 2, "the first conversation and A's hand-off, nothing more");
+    assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::CallFailed { .. })));
+}
+
+/// Issue #1606 review: a farewell that ends inside a conversation line's end script
+/// keeps its force greet in its own slot. TalkerREF's Goodbye line, opening a
+/// conversation by its topic, asks in its end script for ChatterREF's force greet (X),
+/// then makes ChatterREF say a line, which ends ChatterREF's farewell; that farewell's
+/// end script asks for TalkerREF's (Y). Y is tried after the farewell's Add Topics and
+/// refused, the conversation still being there; X starts once the conversation closes.
+#[test]
+fn a_farewell_ending_inside_a_conversation_lines_end_script_leaves_the_conversations_hand_off() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(g.start_dialogue(actor(), Some(FormId(T_RELAY))), Ok(FormId(H_RELAY)));
+    let b = FormId(NPC2_REF);
+    g.speech.push(fnv_game::game::Speech {
+        speaker: b,
+        target: Some(FormId::PLAYER_REF),
+        topic: FormId(T_B_HAND),
+        info: FormId(B_HAND),
+        remaining: 100.0,
+        say_to: false,
+        greeting: false,
+        farewell: true,
+        conversation: None,
+        earlier_topics: Vec::new(),
+        hello: false,
+        look: fnv_game::game::LineLook::Both,
+        response: 0,
+        force_subtitles: false,
+        two_d: false,
+        end_ran: false,
+    });
+    listen(&mut g);
+    // ChatterREF's farewell ended as said inside the conversation's end script, its Add
+    // Topics before the conversation closed.
+    let b_end = event_at(&g, |k| matches!(k, EventKind::LineEnded { info, cut: false, .. } if *info == FormId(B_HAND)));
+    let b_added = event_at(&g, |k| matches!(k, EventKind::TopicAdded { by: Some(by), .. } if *by == FormId(B_HAND)));
+    let closed = event_at(&g, |k| matches!(k, EventKind::DialogueEnded { reason: "goodbye", .. }));
+    assert!(b_end < b_added && b_added < closed, "{b_end} {b_added} {closed}");
+    // The rest of the conversation's end script ran; X, not Y, started after it closed.
+    assert_eq!(out(&g), 5.0);
+    assert_eq!(g.dialogue_actor(), Some(b));
+    let started: Vec<u32> = g.events.iter().filter_map(|e| if let EventKind::DialogueStarted { actor, .. } = e.kind { Some(actor.0) } else { None }).collect();
+    assert_eq!(started, vec![NPC1_REF, NPC2_REF]);
+    let c = g.dialogue.as_ref().unwrap();
+    assert!(c.then.is_none() && !c.ending);
+    assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::CallFailed { .. })));
+}
+
+/// Issue #1606 review: a chosen Goodbye line whose begin script makes its speaker say
+/// another line stays in the conversation until it is over, as before, and the other
+/// line is not cut for it.
+#[test]
+fn a_goodbye_whose_begin_script_makes_its_speaker_say_a_line_stays_in_the_conversation() {
+    let mut f = fixture();
+    f.data.infos.get_mut(&FormId(S_DEAD_END)).unwrap().choices = vec![FormId(T_BEGIN_SAY)];
+    let mut g = game(&f);
+    g.start_dialogue(actor(), Some(FormId(T_DEAD_END))).unwrap();
+    listen(&mut g);
+    assert_eq!(pick(&mut g, T_BEGIN_SAY), FormId(H_BEGIN_SAY));
+    assert!(g.dialogue.as_ref().is_some_and(|c| c.line.as_ref().is_some_and(|l| l.info == FormId(H_BEGIN_SAY))));
+    assert_eq!(g.speech.iter().map(|s| (s.info.0, s.farewell)).collect::<Vec<_>>(), vec![(B_ASK, false)]);
+    assert!(g.farewell_said.is_none());
+    listen(&mut g);
+    assert!(g.dialogue.is_none() && out(&g) == 9.0);
+    assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::DialogueEnded { reason: "goodbye", .. })));
+    assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { info, cut: true, .. } if info == FormId(B_ASK))));
+}
+
+/// A farewell of two responses lasts as long as both together, as the line would have
+/// in the conversation.
+#[test]
+fn a_two_response_farewell_lasts_as_long_as_both_responses() {
+    let mut f = fixture();
+    let first = f.data.infos[&FormId(A_FIRST)].clone();
+    let bye = f.data.infos.get_mut(&FormId(C_BYE)).unwrap();
+    (bye.responses, bye.response_chars) = (first.responses, first.response_chars);
+    let mut g = game(&f);
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    pick(&mut g, T_BYE);
+    let s = g.speech.iter().find(|s| s.farewell).unwrap();
+    let whole = fnv_game::game::fitted_seconds(5) + fnv_game::game::fitted_seconds(7);
+    assert!((s.remaining - whole).abs() < 1e-9, "{} for {whole}", s.remaining);
+    assert_eq!(s.response, 0);
+    let f0 = g.frame;
+    hear_out(&mut g);
+    assert!(((g.frame - f0) as f64 - whole * 60.0).abs() <= 2.0, "{} frames for {}", g.frame - f0, whole * 60.0);
+    assert_eq!(out(&g), 9.0);
+}
+
+/// With Run Immediately the Goodbye line's end script ran when it was picked; it does
+/// not run again when the farewell ends.
+#[test]
+fn a_run_immediately_farewell_runs_its_end_script_once() {
+    let mut f = fixture();
+    f.data.infos.get_mut(&FormId(C_BYE)).unwrap().flags |= info_flag::RUN_IMMEDIATELY;
+    let mut g = game(&f);
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    pick(&mut g, T_BYE);
+    assert_eq!(out(&g), 9.0);
+    assert!(g.speech.iter().any(|s| s.farewell && s.end_ran));
+    set_global(&mut g, G_OUT, 0.0);
+    hear_out(&mut g);
+    assert_eq!(out(&g), 0.0);
+    let ends = g.events.iter().filter(|e| matches!(e.kind, EventKind::LineEnded { info, cut: false, .. } if info == FormId(C_BYE))).count();
+    assert_eq!(ends, 1);
+}
+
+/// Issue #1107 with a chosen Goodbye line: its end script's `StartConversation player`
+/// starts the next conversation when the farewell ends, after its end script and its
+/// Add Topics (`Game::hold_force_greet`).
+#[test]
+fn a_chosen_goodbyes_end_script_starts_the_next_conversation_after_its_add_topics() {
+    let mut f = fixture();
+    f.data.infos.get_mut(&FormId(S_DEAD_END)).unwrap().choices = vec![FormId(T_HANDOFF)];
+    f.data.infos.get_mut(&FormId(H_HANDOFF)).unwrap().add_topics = vec![FormId(T_ADDED)];
+    let mut g = game(&f);
+    g.start_dialogue(actor(), Some(FormId(T_DEAD_END))).unwrap();
+    listen(&mut g);
+    assert_eq!(pick(&mut g, T_HANDOFF), FormId(H_HANDOFF));
+    assert!(g.dialogue.is_none());
+    hear_out(&mut g);
+    assert_eq!(g.dialogue_actor(), Some(FormId(NPC2_REF)));
+    let ended = event_at(&g, |k| matches!(k, EventKind::DialogueEnded { actor: a, reason: "goodbye", .. } if *a == actor()));
+    let line_end = event_at(&g, |k| matches!(k, EventKind::LineEnded { info, cut: false, .. } if *info == FormId(H_HANDOFF)));
+    let added = event_at(&g, |k| matches!(k, EventKind::TopicAdded { by: Some(by), .. } if *by == FormId(H_HANDOFF)));
+    let next = event_at(&g, |k| matches!(k, EventKind::DialogueStarted { actor, .. } if *actor == FormId(NPC2_REF)));
+    assert!(ended < line_end && line_end < added && added < next, "{ended} {line_end} {added} {next}");
+    assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::CallFailed { .. })));
+    let c = g.dialogue.as_ref().unwrap();
+    assert!(c.then.is_none() && !c.ending);
+}
+
+/// A farewell is never cut: another line of its speaker ends it as said, end script
+/// included; so does its speaker going away.
+#[test]
+fn a_farewell_cut_by_another_line_of_its_speaker_still_runs_its_end_script() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    pick(&mut g, T_BYE);
+    g.frames(3);
+    assert_eq!(out(&g), 2.0);
+    assert_eq!(g.say(actor(), Some(FormId::PLAYER_REF), FormId(T_ASK), true), Some(FormId(B_ASK)));
+    assert_eq!(out(&g), 9.0);
+    assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { info, cut: false, .. } if info == FormId(C_BYE))));
+    assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { cut: true, .. })));
+    assert_eq!(g.speech.iter().map(|s| (s.info.0, s.farewell)).collect::<Vec<_>>(), vec![(B_ASK, false)]);
+    // Its speaker disabled mid-line: the same.
+    let mut h = game(&f);
+    h.start_dialogue(actor(), None).unwrap();
+    listen(&mut h);
+    pick(&mut h, T_BYE);
+    h.frames(3);
+    h.world.set_enabled(actor(), false).unwrap();
+    h.frames(1);
+    assert!(h.speech.is_empty() && out(&h) == 9.0);
+    assert!(!h.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { cut: true, .. })));
+}
+
+/// A save made while the farewell is heard keeps it; its end script runs after the load.
+#[test]
+fn a_farewell_survives_a_snapshot_and_runs_its_end_script_after_the_load() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    pick(&mut g, T_BYE);
+    g.frames(5);
+    let snap = g.snapshot();
+    let text = serde_json::to_string(&snap).unwrap();
+    assert!(text.contains(r#""farewell":true"#), "{text}");
+    let back: GameSnapshot = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, snap);
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert!(h.dialogue.is_none());
+    assert!(h.speech.iter().any(|s| s.farewell && s.info == FormId(C_BYE)));
+    assert_eq!(out(&h), 2.0);
+    hear_out(&mut h);
+    assert_eq!(out(&h), 9.0);
+    hear_out(&mut g);
+    assert_eq!(h.frame, g.frame);
+}
+
+/// A conversation through a talking activator keeps a chosen Goodbye line in the
+/// conversation until it is over, as before [hypothesis, `Game::choose`]. The fixture
+/// has no talking activator: the conversation is given a present reference to go
+/// through.
+#[test]
+fn a_goodbye_chosen_through_a_talking_activator_stays_in_the_conversation() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    g.dialogue.as_mut().unwrap().through = Some(FormId(PATROL_REF));
+    pick(&mut g, T_BYE);
+    assert!(g.dialogue.as_ref().is_some_and(|c| c.line.as_ref().is_some_and(|l| l.info == FormId(C_BYE))));
+    assert!(g.speech.is_empty());
+    listen(&mut g);
+    assert!(g.dialogue.is_none() && out(&g) == 9.0);
+    let line_end = event_at(&g, |k| matches!(k, EventKind::LineEnded { info, cut: false, .. } if *info == FormId(C_BYE)));
+    let ended = event_at(&g, |k| matches!(k, EventKind::DialogueEnded { reason: "goodbye", .. }));
+    assert!(line_end < ended);
 }
 
 /// Issue #1107: `StartConversation player` in the end script of a Goodbye line starts
@@ -1306,13 +1779,15 @@ fn skipping_a_response_ends_it_early_and_the_line_still_runs_its_end_script() {
     assert_eq!(said, vec![1, 2]);
     // Nothing to skip while the player chooses.
     assert!(!g.skip_response());
-    // A skipped Goodbye line ends the conversation, end script included.
+    // A chosen Goodbye line ends the conversation at once and goes on in the world,
+    // where there is nothing to skip; its end script runs when it is over.
     pick(&mut g, T_BYE);
-    assert!(g.skip_response());
     assert!(g.dialogue.is_none());
-    assert_eq!(out(&g), 9.0);
     assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::DialogueEnded { reason: "goodbye", lines: 2, .. })));
     assert!(!g.skip_response());
+    assert_eq!(out(&g), 2.0);
+    hear_out(&mut g);
+    assert_eq!(out(&g), 9.0);
     // A menu holds the conversation: nothing is skipped under it.
     let mut h = game(&f);
     h.start_dialogue(actor(), None).unwrap();
@@ -1368,6 +1843,109 @@ fn say_once_a_day_lines_come_back_after_the_timer() {
     assert!(offered(&g).contains(&T_TOP));
     // Another actor's count is its own.
     assert!(g.said_day[&actor()].contains_key(&FormId(E_DAY)));
+}
+
+/// At the topic list, `hours` game hours after the fixture's 08:00, the actor says the Say
+/// Once a Day line.
+fn daily_line_said_after(f: &Fixture, hours: f64) -> Game<'_> {
+    let mut g = at_topic_list(f);
+    g.world.advance_hours(hours).unwrap();
+    assert!(daily_line_free(&mut g));
+    assert_eq!(pick(&mut g, T_TOP), FormId(E_DAY));
+    listen(&mut g);
+    g
+}
+
+fn daily_line_free(g: &mut Game) -> bool {
+    g.can_say(actor(), Some(FormId::PLAYER_REF), FormId(E_DAY))
+}
+
+fn game_hour(g: &Game) -> f32 {
+    g.world.global(FormId(0x802)).unwrap()
+}
+
+/// Issue #1579: every hour through the clock counts once, whatever the time of day. On a
+/// clock adding GameHour to GameDaysPassed × 24, the line came back at 16:00.
+#[test]
+fn a_daily_line_said_in_the_morning_is_held_twelve_hours_of_the_clock() {
+    let f = fixture();
+    let mut g = daily_line_said_after(&f, 2.0);
+    assert!((game_hour(&g) - 10.0).abs() < 0.01);
+    g.world.advance_hours(6.0).unwrap();
+    assert!((game_hour(&g) - 16.0).abs() < 0.01);
+    assert!(!daily_line_free(&mut g), "six hours on");
+    g.world.advance_hours(5.99).unwrap();
+    assert!(!daily_line_free(&mut g), "just under twelve hours on");
+    g.world.advance_hours(0.02).unwrap();
+    assert!((game_hour(&g) - 22.01).abs() < 0.01);
+    assert!(daily_line_free(&mut g), "just over twelve hours on");
+}
+
+/// Issue #1579: midnight takes nothing off the clock. On a clock adding GameHour, the line
+/// said at 23:00 was held until 17:00.
+#[test]
+fn a_daily_line_said_before_midnight_is_held_twelve_hours_of_the_clock() {
+    let f = fixture();
+    let mut g = daily_line_said_after(&f, 15.0);
+    assert!((game_hour(&g) - 23.0).abs() < 0.01);
+    g.world.advance_hours(2.0).unwrap();
+    assert!((game_hour(&g) - 1.0).abs() < 0.01);
+    assert!(!daily_line_free(&mut g), "two hours on, past midnight");
+    g.world.advance_hours(9.99).unwrap();
+    assert!(!daily_line_free(&mut g), "just under twelve hours on");
+    g.world.advance_hours(0.02).unwrap();
+    assert!((game_hour(&g) - 11.01).abs() < 0.01);
+    assert!(daily_line_free(&mut g), "just over twelve hours on");
+    // The topic list says the same.
+    pick(&mut g, T_TOP2);
+    listen(&mut g);
+    assert!(offered(&g).contains(&T_TOP));
+}
+
+#[test]
+fn a_save_keeps_a_daily_line_held_on_the_same_clock() {
+    let f = fixture();
+    let mut g = daily_line_said_after(&f, 2.0);
+    g.world.advance_hours(6.0).unwrap();
+    let snap = g.snapshot();
+    assert!(snap.said_day_days_clock);
+    let back: GameSnapshot = serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+    assert_eq!(back, snap);
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert_eq!(h.said_day, g.said_day);
+    assert!(!daily_line_free(&mut h));
+    h.world.advance_hours(5.99).unwrap();
+    assert!(!daily_line_free(&mut h), "just under twelve hours from when it was said");
+    h.world.advance_hours(0.02).unwrap();
+    assert!(daily_line_free(&mut h));
+}
+
+/// A save from before #1579 holds hours of the old clock, which cannot be converted: its
+/// Say Once a Day holds end at the load, once, and its Say Once history stays.
+#[test]
+fn a_save_of_the_old_clock_drops_daily_holds_and_keeps_say_once() {
+    let f = fixture();
+    let g = daily_line_said_after(&f, 2.0);
+    let text = serde_json::to_string(&g.snapshot()).unwrap();
+    let older = text.replacen("\"said_day_days_clock\":true,", "", 1);
+    assert_ne!(older, text);
+    let back: GameSnapshot = serde_json::from_str(&older).unwrap();
+    assert!(!back.said_day_days_clock && !back.said_day.is_empty());
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert!(h.said_day.is_empty());
+    assert!(!h.said.is_empty());
+    assert_eq!(h.said, g.said);
+    assert!(daily_line_free(&mut h));
+    // Said again after the load, it is held on the new clock, and a save says so.
+    pick(&mut h, T_TOP2);
+    listen(&mut h);
+    assert_eq!(pick(&mut h, T_TOP), FormId(E_DAY));
+    listen(&mut h);
+    assert!(!daily_line_free(&mut h));
+    let next = h.snapshot();
+    assert!(next.said_day_days_clock && !next.said_day.is_empty());
 }
 
 #[test]
@@ -1784,6 +2362,32 @@ fn a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats() {
         g.tick();
     }
     assert!(lines(&g) >= 4, "the repeating quest's ping-pong goes on: {} lines", lines(&g));
+}
+
+/// Issue #1592: a follow-up keeps the conversation's topics, so a link after it back to a
+/// topic already used is passed over unless the quest allows repeats. The follow-up itself
+/// is stored under a topic already used and is said all the same (dialogue.md §5.1).
+#[test]
+fn a_follow_up_between_actors_keeps_the_topics_of_the_conversation() {
+    let f = fixture();
+    let r = |id: u32| ArgValue::Value(Value::Ref(id));
+    let lines = |g: &Game| g.events.iter().filter_map(|e| if let EventKind::LineStarted { info, .. } = e.kind { Some(info.0) } else { None }).collect::<Vec<_>>();
+    let mut g = game(&f);
+    call(&mut g, 0x1056, NPC1_REF, &[r(NPC2_REF), r(T_HIST_A)]);
+    for _ in 0..20_000 {
+        if g.speech.is_empty() {
+            break;
+        }
+        g.tick();
+    }
+    assert_eq!(lines(&g), vec![H_A, H_B, H_FOLLOW], "the link back to the linked line's topic is passed over");
+    assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::ActorConversationEnded { reason: "no_links", lines: 3, .. })));
+    let mut g = game(&f);
+    call(&mut g, 0x1056, NPC1_REF, &[r(NPC2_REF), r(T_RHIST_A)]);
+    for _ in 0..2_000 {
+        g.tick();
+    }
+    assert_eq!(lines(&g).get(..4), Some(&[H_RA, H_RB, H_RFOLLOW, H_RB][..]), "the repeating quest's chain goes back: {:X?}", lines(&g));
 }
 
 /// Playing a Voice note runs its line's result scripts: the begin script as it starts,

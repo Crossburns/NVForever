@@ -725,6 +725,149 @@ fn a_leveled_entrys_coed_gives_items_at_its_condition() {
     assert_eq!(inv.groups().find(|g| g.0 == id(STIMPAK)).unwrap().1.condition, None);
 }
 
+/// `World::set_player_level`: what AddItem, PlaceAtMe and a reference with no fixed level
+/// roll at from then on. A snapshot keeps the configured level, not this one: the game sets
+/// it again. LL_LOOT: level 1 stimpaks, level 5 caps.
+#[test]
+fn the_players_level_moves_the_rolls_until_a_restore() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    let p = FormId::PLAYER_REF;
+    assert_eq!(w.add_item(p, id(LL_LOOT), 1).unwrap(), vec![(id(STIMPAK), 2)]);
+    w.set_player_level(5);
+    assert_eq!((w.roll_level(), w.config().player_level), (5, 1));
+    assert_eq!(w.add_item(p, id(LL_LOOT), 1).unwrap(), vec![(id(CAPS), 10)]);
+    // SAFE holds 3 caps and LL_LOOT: created and placed alike, the list gives the caps.
+    let made = w.place(id(SAFE), None, [0.0; 3], [0.0; 3], 1).unwrap();
+    for safe in [made, id(SAFE_REF)] {
+        assert_eq!(w.item_count(safe, id(CAPS)).unwrap(), 13);
+        assert_eq!(w.item_count(safe, id(STIMPAK)).unwrap(), 0);
+    }
+    let snap: fnv_sim::Snapshot = serde_json::from_str(&serde_json::to_string(&w.snapshot()).unwrap()).unwrap();
+    let mut back = World::restore(&f.forms, &f.refs, &snap).unwrap();
+    assert_eq!(back.roll_level(), 1);
+    assert_eq!(back.add_item(p, id(LL_LOOT), 1).unwrap(), vec![(id(STIMPAK), 2)]);
+    // Never below 1.
+    back.set_player_level(0);
+    assert_eq!(back.roll_level(), 1);
+}
+
+const ROOM: u32 = 0x410; // no zone
+const ZONED_ROOM: u32 = 0x411; // in LOCK_ZONE
+const LOCK_ZONE: u32 = 0x420; // ECZN, minimum level 11
+const LEVELED_DOOR: u32 = 0x400; // lock 25, leveled, in ROOM
+const ZONED_DOOR: u32 = 0x401; // lock 25, leveled, in ZONED_ROOM
+const ZONED_CHEST: u32 = 0x402; // SAFE (LL_LOOT, Respawns), merchant stock, in ZONED_ROOM
+const SHOPKEEPER_REF: u32 = 0x403; // XMRC -> ZONED_CHEST
+const LEVELED_CHEST: u32 = 0x404; // SAFE, lock 25, leveled, in ROOM
+
+/// Leveled locks and a merchant chest, with and without an encounter zone.
+fn levels_fixture() -> Fixture {
+    let xloc_leveled = || sub(b"XLOC", cat(&[&[25, 0, 0, 0], &0u32.to_le_bytes(), &[4, 0, 0, 0]]));
+    let cell = |fid: u32, edid: &str, zone: Option<u32>, refs: &[u8]| {
+        let mut subs = vec![sub(b"EDID", z(edid)), sub(b"DATA", vec![1])];
+        subs.extend(zone.map(|z| sub(b"XEZN", z.to_le_bytes().to_vec())));
+        cat(&[&record(b"CELL", 0, fid, &subs), &group(fid.to_le_bytes(), 6, &group(fid.to_le_bytes(), 9, refs))])
+    };
+    let zoned = cat(&[
+        &refr(ZONED_DOOR, 0, DOOR, [0.0; 3], vec![xloc_leveled()]),
+        &refr(ZONED_CHEST, 0, SAFE, [0.0; 3], vec![]),
+        &refr(SHOPKEEPER_REF, 0, CHAIR, [0.0; 3], vec![sub(b"XMRC", ZONED_CHEST.to_le_bytes().to_vec())]),
+    ]);
+    let plain = cat(&[&refr(LEVELED_DOOR, 0, DOOR, [0.0; 3], vec![xloc_leveled()]), &refr(LEVELED_CHEST, 0, SAFE, [0.0; 3], vec![xloc_leveled()])]);
+    let cells = cat(&[&cell(ROOM, "Room", None, &plain), &cell(ZONED_ROOM, "ZonedRoom", Some(LOCK_ZONE), &zoned)]);
+    let glob = cat(&[
+        &glob_rec(0x35, "GameYear", b's', 2281.0),
+        &glob_rec(0x36, "GameMonth", b's', 9.0),
+        &glob_rec(0x37, "GameDay", b's', 31.0),
+        &glob_rec(0x38, "GameHour", b's', 12.0),
+        &glob_rec(0x39, "GameDaysPassed", b'f', 5.0),
+        &glob_rec(0x3A, "TimeScale", b's', 30.0),
+    ]);
+    let misc = cat(&[
+        &record(b"MISC", 0, STIMPAK, &[sub(b"EDID", z("TestStim")), sub(b"DATA", value_weight(25, 0.5))]),
+        &record(b"MISC", 0, CAPS, &[sub(b"EDID", z("TestCaps")), sub(b"DATA", value_weight(1, 0.0))]),
+    ]);
+    let bytes = cat(&[
+        &tes4(),
+        &top(b"GLOB", &glob),
+        &top(b"MISC", &misc),
+        &top(b"FURN", &record(b"FURN", 0, CHAIR, &[sub(b"EDID", z("TestChair"))])),
+        &top(b"LVLI", &record(b"LVLI", 0, LL_LOOT, &[sub(b"EDID", z("TestLoot")), sub(b"LVLD", vec![0]), sub(b"LVLF", vec![0]), lvlo(1, STIMPAK, 2), lvlo(5, CAPS, 10)])),
+        &top(b"CONT", &record(b"CONT", 0, SAFE, &[sub(b"EDID", z("TestSafe")), cnto(LL_LOOT, 1), sub(b"DATA", cat(&[&[2u8], &10f32.to_le_bytes()]))])),
+        &top(b"DOOR", &record(b"DOOR", 0, DOOR, &[sub(b"EDID", z("TestDoor")), sub(b"FNAM", vec![0])])),
+        &top(b"ECZN", &record(b"ECZN", 0, LOCK_ZONE, &[sub(b"EDID", z("LockZone")), sub(b"DATA", cat(&[&0u32.to_le_bytes(), &[0, 11, 0, 0]]))])),
+        &top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cells))),
+    ]);
+    let plugins = vec![Plugin::parse(&bytes, "Levels.esm".into()).unwrap()];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    let s = schema();
+    Fixture { forms: FormStore::build(&lo, &s), refs: RefTable::build(&lo, &s) }
+}
+
+/// A door gets no fixed level, so its lock keeps its authored level whatever the player's
+/// level, with or without a zone, before and after its state is made.
+#[test]
+fn a_door_keeps_its_authored_lock_level_when_the_players_level_changes() {
+    let f = levels_fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    for door in [id(LEVELED_DOOR), id(ZONED_DOOR)] {
+        w.set_player_level(1);
+        assert_eq!(w.lock_of(door).unwrap().level, 25);
+        w.set_player_level(21);
+        assert_eq!(w.lock_of(door).unwrap().level, 25);
+    }
+    assert_eq!(w.enter_zone(id(LOCK_ZONE), 21), Some(21));
+    w.set_player_level(41);
+    for door in [id(LEVELED_DOOR), id(ZONED_DOOR)] {
+        assert_eq!(w.lock_of(door).unwrap().level, 25);
+        w.get(door).unwrap();
+        assert_eq!(w.lock_of(door).unwrap().level, 25);
+    }
+    // The configured level still counts, as a test or the runner sets it.
+    let mut w = World::new(&f.forms, &f.refs, SimConfig { player_level: 11, ..SimConfig::default() });
+    assert_eq!(w.lock_of(id(LEVELED_DOOR)).unwrap().level, 50);
+    w.get(id(LEVELED_DOOR)).unwrap();
+    assert_eq!(w.lock_of(id(LEVELED_DOOR)).unwrap().level, 50);
+}
+
+/// A container's leveled lock hardens from the level fixed at its cell's load, and only
+/// from that: the player's level alone moves nothing, and a state made before the load
+/// keeps the authored level.
+#[test]
+fn a_containers_lock_hardens_from_its_fixed_level_only() {
+    let f = levels_fixture();
+    let chest = id(LEVELED_CHEST);
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_player_level(21);
+    assert_eq!(w.lock_of(chest).unwrap().level, 25);
+    assert!(w.fix_level(chest, 21).is_some());
+    assert_eq!(w.lock_of(chest).unwrap().level, 75);
+    w.get(chest).unwrap();
+    w.set_player_level(41);
+    assert_eq!(w.lock_of(chest).unwrap().level, 75);
+    // Read before its cell loads.
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_player_level(21);
+    w.get(chest).unwrap();
+    assert!(w.fix_level(chest, 21).is_some());
+    assert_eq!(w.lock_of(chest).unwrap().level, 25);
+}
+
+/// A chest in a zone, read before its cell loads, rolls at the zone's level, not a level-1
+/// player's: the list's caps (level 5), not its stimpaks. A restock reads the same level.
+#[test]
+fn a_chest_in_a_zone_rolls_at_the_zones_level_before_its_cell_loads_and_on_a_restock() {
+    let f = levels_fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    let chest = id(ZONED_CHEST);
+    assert_eq!((w.item_count(chest, id(CAPS)).unwrap(), w.item_count(chest, id(STIMPAK)).unwrap()), (10, 0));
+    // The fixture's clock starts at GameDaysPassed 5.0, noon: midnight 7 restocks.
+    w.advance_hours(48.0).unwrap();
+    assert_eq!(w.peek(chest).unwrap().last_restock, Some(7.0));
+    assert_eq!((w.item_count(chest, id(CAPS)).unwrap(), w.item_count(chest, id(STIMPAK)).unwrap()), (10, 0));
+}
+
 #[test]
 fn entries_added_to_a_leveled_list_count_and_persist() {
     use fnv_sim::forms::LeveledEntry;
@@ -918,11 +1061,17 @@ fn presence_serial_moves_with_every_presence_change() {
     // Reads leave it.
     w.is_enabled(id(GRANDCHILD)).unwrap();
     assert_eq!(w.presence_serial(), last);
-    // A state made (its own flag now read from it).
+    // A placed reference's state starts with the flags presence read from its placement
+    // (KEY_REF is Initially Disabled): made, it leaves the serial.
+    assert!(!w.is_enabled(id(KEY_REF)).unwrap());
     w.get(id(KEY_REF)).unwrap();
-    moved(&w, &mut last, "materialising");
+    assert_eq!(w.presence_serial(), last, "materialising a state as placed");
     w.get(id(KEY_REF)).unwrap();
     assert_eq!(w.presence_serial(), last, "an existing state");
+    // The player is not placed: its state makes it present.
+    assert!(w.peek(p).is_none() && w.is_enabled(p).is_err());
+    w.get(p).unwrap();
+    moved(&w, &mut last, "materialising the player");
     // Enabling a parent changes its children: the serial says so.
     w.set_enabled(id(KEY_REF), true).unwrap();
     moved(&w, &mut last, "set_enabled");
@@ -934,7 +1083,7 @@ fn presence_serial_moves_with_every_presence_change() {
     moved(&w, &mut last, "set_deleted back");
     // An item picked up by activation.
     w.get(id(CHILD_SAME)).unwrap();
-    moved(&w, &mut last, "materialising the child");
+    assert_eq!(w.presence_serial(), last, "materialising the child as placed");
     assert!(matches!(w.activate(p, id(CHILD_SAME)).unwrap().outcome, Outcome::PickedUp { .. }));
     moved(&w, &mut last, "a pick-up");
     // Created references: placed and dropped.
@@ -958,6 +1107,29 @@ fn presence_serial_moves_with_every_presence_change() {
     assert_ne!(restored.presence_serial(), w.presence_serial());
 }
 
+/// Making a placed reference's state (`World::get`) does not move the presence serial,
+/// as presence reads the same flags from the placement before; a change of a flag on
+/// that state does: on a reference placed enabled, one placed Initially Disabled and
+/// one under an enable parent.
+#[test]
+fn presence_serial_stands_still_for_a_state_made_as_placed() {
+    let mut f = fixture();
+    f.refs.merchant_containers.clear();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    for r in [id(SAFE_REF), id(KEY_REF), id(CHILD_SAME)] {
+        let before = w.presence_serial();
+        let was = w.is_enabled(r).unwrap();
+        let own = w.get(r).unwrap().enabled();
+        assert_eq!(w.presence_serial(), before, "{r:?} made as placed");
+        assert_eq!(w.is_enabled(r).unwrap(), was, "{r:?} reads as before");
+        w.set_enabled(r, !own).unwrap();
+        assert_ne!(w.presence_serial(), before, "{r:?} switched");
+        let before = w.presence_serial();
+        w.set_deleted(r, true).unwrap();
+        assert_ne!(w.presence_serial(), before, "{r:?} deleted");
+    }
+}
+
 #[test]
 fn clock_lives_in_the_time_globals() {
     let f = fixture();
@@ -976,6 +1148,270 @@ fn clock_lives_in_the_time_globals() {
     assert_eq!(snap.globals[&id(0x150)], 7.0);
     let back = World::restore(&f.forms, &f.refs, &snap).unwrap();
     assert_eq!(back.calendar().unwrap(), w.calendar().unwrap());
+}
+
+const GAME_YEAR: u32 = 0x35;
+const GAME_MONTH: u32 = 0x36;
+const GAME_DAY: u32 = 0x37;
+const GAME_HOUR: u32 = 0x38;
+const GAME_DAYS_PASSED: u32 = 0x39;
+const TIME_SCALE: u32 = 0x3A;
+
+/// Frames of `dt` real seconds, as the running game calls the clock; the game days they took.
+fn clock_frames(w: &mut World, dt: f64, frames: u64) -> f64 {
+    let scale = w.global(id(TIME_SCALE)).unwrap() as f64;
+    for _ in 0..frames {
+        w.advance_real_seconds(dt).unwrap();
+    }
+    frames as f64 * dt * scale / 3600.0 / 24.0
+}
+
+fn close_to(value: f32, want: f64, tolerance: f64) -> bool {
+    (value as f64 - want).abs() <= tolerance
+}
+
+/// Two f32 steps of GameDaysPassed just past day 1000 (one is about 6.1e-5 days).
+const PAST_DAY_1000: f64 = 1.3e-4;
+
+#[test]
+fn clock_globals_follow_frames_past_day_1000() {
+    let f = fixture();
+    for (scale, fps) in [(1.0, 60.0), (1.0, 240.0), (30.0, 60.0), (30.0, 240.0)] {
+        let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+        w.set_global(id(TIME_SCALE), scale as f32).unwrap();
+        w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+        w.set_global(id(GAME_HOUR), 0.0).unwrap();
+        // Ten game minutes, 7e-3 days: far more than the tolerance, had it stopped.
+        let frames = (600.0 / scale * fps) as u64;
+        let elapsed = clock_frames(&mut w, 1.0 / fps, frames);
+        let what = format!("TimeScale {scale} at {fps} frames a second");
+        assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1000.0 + elapsed, PAST_DAY_1000), "{what}");
+        assert!(close_to(w.global(id(GAME_HOUR)).unwrap(), elapsed * 24.0, 1e-3), "{what}");
+    }
+}
+
+#[test]
+fn script_writes_to_the_time_globals_win_over_the_running_clock() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    clock_frames(&mut w, 1.0 / 60.0, 600);
+    let (hour, days) = (w.global(id(GAME_HOUR)).unwrap(), w.global(id(GAME_DAYS_PASSED)).unwrap());
+
+    // Set GameDaysPassed: frames go on from there, the hour does not jump.
+    w.set_global(id(GAME_DAYS_PASSED), 2000.0).unwrap();
+    assert_eq!(w.calendar().unwrap().days_passed, 2000.0);
+    let elapsed = clock_frames(&mut w, 1.0 / 60.0, 600);
+    assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), 2000.0 + elapsed, 2.5e-4));
+    assert!(close_to(w.global(id(GAME_HOUR)).unwrap(), hour as f64 + elapsed * 24.0, 1e-3));
+
+    // Set GameHour: the same, and GameDaysPassed does not jump.
+    let days_now = w.global(id(GAME_DAYS_PASSED)).unwrap();
+    w.set_global(id(GAME_HOUR), 3.5).unwrap();
+    let elapsed = clock_frames(&mut w, 1.0 / 60.0, 600);
+    assert!(close_to(w.global(id(GAME_HOUR)).unwrap(), 3.5 + elapsed * 24.0, 1e-3));
+    assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), days_now as f64 + elapsed, 2.5e-4));
+
+    // Backwards as well.
+    w.set_global(id(GAME_DAYS_PASSED), days).unwrap();
+    w.advance_hours(1.0).unwrap();
+    assert!(close_to(w.global(id(GAME_DAYS_PASSED)).unwrap(), days as f64 + 1.0 / 24.0, 1e-5));
+
+    // GameDay, GameMonth and GameYear live in the globals alone: the next wrap counts on
+    // from what was set.
+    w.set_global(id(GAME_YEAR), 2300.0).unwrap();
+    w.set_global(id(GAME_MONTH), 1.0).unwrap();
+    w.set_global(id(GAME_DAY), 28.0).unwrap();
+    w.set_global(id(GAME_HOUR), 23.0).unwrap();
+    let c = w.advance_hours(2.0).unwrap();
+    assert_eq!((c.year, c.month, c.day, c.hour), (2300.0, 2.0, 1.0, 1.0));
+
+    // TimeScale set: read every frame, and 0 holds the clock.
+    w.set_global(id(TIME_SCALE), 0.0).unwrap();
+    let held = w.calendar().unwrap();
+    clock_frames(&mut w, 1.0 / 60.0, 60);
+    assert_eq!(w.calendar().unwrap(), held);
+    w.set_global(id(TIME_SCALE), 7200.0).unwrap();
+    assert!(close_to(w.advance_real_seconds(0.5).unwrap().hour, 2.0, 1e-5));
+}
+
+#[test]
+fn a_write_to_a_time_global_counts_even_when_the_value_is_the_same() {
+    let f = fixture();
+    // GameDaysPassed: four frames round back to 1000, and the write of 1000 is the time.
+    let frame = 1.0 / 60.0;
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 4);
+    assert_eq!(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1000.0);
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 2);
+    assert_eq!(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1000.0, "two frames after the write");
+    clock_frames(&mut w, frame, 4);
+    assert!(w.global(id(GAME_DAYS_PASSED)).unwrap() > 1000.0, "six frames after the write");
+
+    // Written away and back before the next frame is the same.
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 4);
+    w.set_global(id(GAME_DAYS_PASSED), 5.0).unwrap();
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 2);
+    assert_eq!(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1000.0);
+
+    // GameHour, on its own: a step under half its f32 step, and GameDaysPassed goes on.
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(TIME_SCALE), 1.0).unwrap();
+    w.set_global(id(GAME_HOUR), 16.0).unwrap();
+    let dt = 1.0 / 1000.0;
+    clock_frames(&mut w, dt, 3);
+    let carried = w.snapshot().clock_days_passed;
+    assert_eq!(w.global(id(GAME_HOUR)).unwrap(), 16.0);
+    w.set_global(id(GAME_HOUR), 16.0).unwrap();
+    assert_eq!(w.snapshot().clock_hour, None);
+    assert_eq!(w.snapshot().clock_days_passed, carried);
+    clock_frames(&mut w, dt, 3);
+    assert_eq!(w.global(id(GAME_HOUR)).unwrap(), 16.0, "the three frames before the write are gone");
+
+    // The clock's own writes go on, frame after frame.
+    let elapsed = clock_frames(&mut w, dt, 2000);
+    assert!(close_to(w.global(id(GAME_HOUR)).unwrap(), 16.0 + (elapsed + 3.0 * dt / 86400.0) * 24.0, 1e-5));
+}
+
+#[test]
+fn advancing_to_an_hour_reaches_midnight_and_the_date() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAY), 18.0).unwrap();
+    // Start 12, one frame at TimeScale 30 and 60 frames a second.
+    clock_frames(&mut w, 1.0 / 60.0, 1);
+    let hours = w.advance_to_hour(0.0).unwrap();
+    assert!((hours - 12.0).abs() < 1e-3, "{hours}");
+    let c = w.calendar().unwrap();
+    assert_eq!((c.day, c.hour), (19.0, 0.0));
+    // The hour it shows is no move, and leaves nothing behind.
+    assert_eq!(w.advance_to_hour(0.0).unwrap(), 0.0);
+    assert_eq!(w.calendar().unwrap(), c);
+}
+
+/// Through JSON and back, as a save goes.
+fn reload<'a>(f: &'a Fixture, w: &World) -> World<'a> {
+    let text = serde_json::to_string(&w.snapshot()).unwrap();
+    World::restore(&f.forms, &f.refs, &serde_json::from_str(&text).unwrap()).unwrap()
+}
+
+#[test]
+fn save_and_load_keep_the_clock() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, 1.0 / 60.0, 3600);
+    let mut r = reload(&f, &w);
+    assert_eq!(r.calendar().unwrap(), w.calendar().unwrap());
+    assert_eq!(r.snapshot(), w.snapshot());
+    // A world loaded with the clock far on goes on from it as the running one does.
+    clock_frames(&mut r, 1.0 / 60.0, 3600);
+    clock_frames(&mut w, 1.0 / 60.0, 3600);
+    assert_eq!(r.snapshot(), w.snapshot());
+}
+
+#[test]
+fn a_restored_run_matches_the_uninterrupted_one_through_a_restock() {
+    let f = fixture();
+    let (p, safe) = (FormId::PLAYER_REF, id(SAFE_REF));
+    let frame = 1.0 / 60.0;
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.unlock(safe).unwrap();
+    w.transfer_all(safe, p).unwrap();
+    // Day 1001 is a restock day (7 x 143); a game day is 172800 frames here.
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, frame, 172_793);
+    let mut r = reload(&f, &w);
+    for at in 172_794..=172_830 {
+        clock_frames(&mut w, frame, 1);
+        clock_frames(&mut r, frame, 1);
+        assert_eq!(r.snapshot(), w.snapshot(), "frame {at}");
+        let restock = (at >= 172_795).then_some(1001.0);
+        assert_eq!(r.peek(safe).unwrap().last_restock, restock, "frame {at}");
+    }
+    assert_eq!(w.global(id(GAME_DAYS_PASSED)).unwrap(), 1001.0002);
+    assert_eq!(w.item_count(safe, id(CAPS)).unwrap(), 3);
+}
+
+#[test]
+fn restoring_every_frame_does_not_stop_the_clock() {
+    let f = fixture();
+    let frame = 1.0 / 60.0;
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    let mut r = reload(&f, &w);
+    for _ in 0..2000 {
+        clock_frames(&mut w, frame, 1);
+        clock_frames(&mut r, frame, 1);
+        r = reload(&f, &r);
+    }
+    assert_eq!(r.snapshot(), w.snapshot());
+    assert!(r.global(id(GAME_DAYS_PASSED)).unwrap() > 1000.01);
+}
+
+#[test]
+fn a_restore_just_before_midnight_rolls_the_date_on_the_same_frame() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(TIME_SCALE), 1.0).unwrap();
+    w.set_global(id(GAME_HOUR), 23.0).unwrap();
+    let c = w.advance_hours(1.0 - 1e-9).unwrap();
+    assert!(c.hour < 24.0);
+    let mut r = reload(&f, &w);
+    assert_eq!(r.calendar().unwrap(), c);
+    clock_frames(&mut w, 1.0 / 240.0, 1);
+    clock_frames(&mut r, 1.0 / 240.0, 1);
+    assert_eq!(r.calendar().unwrap(), w.calendar().unwrap());
+    assert_ne!(r.calendar().unwrap().day, c.day);
+    assert_eq!(r.snapshot(), w.snapshot());
+}
+
+#[test]
+fn a_save_without_the_clock_copies_or_with_stale_ones_goes_on_from_the_globals() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.set_global(id(GAME_DAYS_PASSED), 1000.0).unwrap();
+    clock_frames(&mut w, 1.0 / 60.0, 3600);
+    let stored = w.calendar().unwrap();
+
+    // An older save: the fields are absent, and it still loads.
+    let mut json = serde_json::to_value(w.snapshot()).unwrap();
+    let fields = json.as_object_mut().unwrap();
+    assert!(fields.remove("clock_hour").is_some() && fields.remove("clock_days_passed").is_some());
+    let mut old = World::restore(&f.forms, &f.refs, &serde_json::from_value(json).unwrap()).unwrap();
+    assert_eq!(old.calendar().unwrap(), stored);
+    let before = old.global(id(GAME_DAYS_PASSED)).unwrap() as f64;
+    let elapsed = clock_frames(&mut old, 1.0 / 60.0, 3600);
+    assert!(close_to(old.global(id(GAME_DAYS_PASSED)).unwrap(), before + elapsed, PAST_DAY_1000));
+
+    // A global edited in the save: the copy that no longer rounds to it does not count.
+    let mut snap = w.snapshot();
+    snap.globals.insert(id(GAME_DAYS_PASSED), 7.0);
+    let mut edited = World::restore(&f.forms, &f.refs, &snap).unwrap();
+    assert_eq!(edited.calendar().unwrap().days_passed, 7.0);
+    let c = edited.advance_hours(24.0).unwrap();
+    assert!((c.days_passed - 8.0).abs() < 1e-5);
+    assert_eq!(edited.snapshot().clock_hour, w.snapshot().clock_hour);
+}
+
+#[test]
+fn merchants_restock_at_a_midnight_crossed_by_frames_past_day_1000() {
+    // The stopped GameDaysPassed never reached the next midnight (#1377). Day 1001 is a
+    // restock day (7 x 143).
+    let f = fixture();
+    let (p, safe) = (FormId::PLAYER_REF, id(SAFE_REF));
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    w.unlock(safe).unwrap();
+    w.transfer_all(safe, p).unwrap();
+    w.set_global(id(GAME_DAYS_PASSED), 1000.999).unwrap();
+    // 0.0017 days at TimeScale 30 and 60 frames a second.
+    clock_frames(&mut w, 1.0 / 60.0, 300);
+    assert_eq!(w.peek(safe).unwrap().last_restock, Some(1001.0));
+    assert_eq!(w.item_count(safe, id(CAPS)).unwrap(), 3);
 }
 
 #[test]
@@ -1522,7 +1958,7 @@ fn created_lists_drops_taken_ones_included() {
     let a = w.drop_item(p, id(STIMPAK), 1).unwrap()[0];
     let b = w.drop_item(p, id(STIMPAK), 1).unwrap()[0];
     w.activate(p, a).unwrap();
-    let listed: Vec<(FormId, bool)> = w.created().map(|(id, s)| (id, s.deleted)).collect();
+    let listed: Vec<(FormId, bool)> = w.created().map(|(id, s)| (id, s.deleted())).collect();
     assert_eq!(listed, vec![(a, true), (b, false)]);
     // The player (materialised, below the created range) is not listed.
     assert!(w.peek(p).is_some());
@@ -1884,7 +2320,7 @@ fn deleted_created_references_are_pruned_from_saves() {
     let holder = id(SAFE_REF);
     w.get(held).unwrap().dropped_by = Some(holder);
     assert!(matches!(w.activate(p, held).unwrap().outcome, Outcome::PickedUp { .. }));
-    assert!(w.peek(held).unwrap().deleted);
+    assert!(w.peek(held).unwrap().deleted());
     let lying = w.place(id(CAPS), cell, [0.0; 3], [0.0; 3], 5).unwrap();
     w.get(lying).unwrap().dropped_by = Some(holder);
     let snap: fnv_sim::Snapshot = serde_json::from_str(&serde_json::to_string(&w.snapshot()).unwrap()).unwrap();
@@ -1907,7 +2343,7 @@ fn deleted_created_references_are_pruned_from_saves() {
     old.deleted_created.clear();
     old.refs.insert(held, w.peek(held).unwrap().clone());
     let mut again = World::restore(&f.forms, &f.refs, &old).unwrap();
-    assert!(again.get(held).unwrap().deleted);
+    assert!(again.get(held).unwrap().deleted());
     assert!(!again.snapshot().refs.contains_key(&held));
 
     // Size after N drops and pick-ups: the whole entries the save used to keep against
@@ -2042,4 +2478,22 @@ fn a_later_plugin_moves_and_deletes_references_into_one_cell_each() {
     assert!(cells_of(CHAIR_REF).is_empty(), "{:?}", cells_of(CHAIR_REF));
     // Untouched references stay where the master put them.
     assert_eq!(cells_of(SAFE_REF), vec![(id(CELL_A), 1)]);
+}
+
+/// A reference state's saved form with its flags: fixed text, as saves hold it. Making the
+/// flags private (issue #1464) kept their names, their place and that both must be there.
+#[test]
+fn ref_state_json_contract() {
+    use fnv_sim::world::RefState;
+    let text = |flags: &str| format!(r#"{{"base":"0x00000100","cell":null,"pos":[1.0,2.0,3.0],"rot":[0.0,0.0,0.5],{flags}"count":1,"open":false}}"#);
+    for (enabled, deleted) in [(true, false), (false, true), (true, true), (false, false)] {
+        let saved = text(&format!(r#""enabled":{enabled},"deleted":{deleted},"#));
+        let state: RefState = serde_json::from_str(&saved).unwrap();
+        assert_eq!((state.enabled(), state.deleted()), (enabled, deleted), "{saved}");
+        assert_eq!(serde_json::to_string(&state).unwrap(), saved, "the same fields in the same order");
+    }
+    for (flags, missing) in [(r#""deleted":false,"#, "enabled"), (r#""enabled":true,"#, "deleted")] {
+        let error = serde_json::from_str::<RefState>(&text(flags)).unwrap_err().to_string();
+        assert!(error.contains(&format!("missing field `{missing}`")), "{error}");
+    }
 }

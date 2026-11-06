@@ -15,7 +15,7 @@
 //! another tile's `clicked` or `mouseover`. The rest is tagged where it is decided.
 
 use crate::expr::{Arg, OpKind};
-use crate::tree::{TileId, Ui};
+use crate::tree::{Tile, TileId, Ui};
 use crate::value::Value;
 
 /// Text measuring for text tiles without a `width` or `height`: font number, string, wrap
@@ -107,6 +107,41 @@ fn num(ui: &Ui, t: TileId, name: &str, default: f64) -> f64 {
 
 fn flag(ui: &Ui, t: TileId, name: &str) -> bool {
     ui.tile(t).get(name).is_some_and(Value::truthy)
+}
+
+/// The private trait that turns a tile's `clipwindow` on ([`mark_clip_windows`]) [design].
+/// An engine-written mark, in no game file: an ordinary trait to the tree, so generic trait
+/// dumps list it and a file naming it would be read too.
+pub const CLIP_WINDOW_ON: &str = "_NVFClipWindow";
+
+/// Whether a tile crops its children to its own box, in the drawing (`nvf_play::tiles::layout`)
+/// and under the pointer ([`hit`]) alike: a true `clips` [hypothesis: menu-xml.md §3.1.1], or
+/// a true `clipwindow` in a menu whose model turned it on ([`mark_clip_windows`]).
+/// [hypothesis] `clipwindow` is the same rectangular crop: `list_box.xml` gives its highlight
+/// box `clips` from its parent's `clipwindow`, and `tutorial_menu.xml`'s text moves inside a
+/// `clipwindow` hotrect; no page says what it means (menu-xml.md §3.1.1, the observer check).
+pub fn clips_children(tile: &Tile) -> bool {
+    let on = |name: &str| tile.get(name).is_some_and(Value::truthy);
+    on("clips") || (on("clipwindow") && on(CLIP_WINDOW_ON))
+}
+
+/// Turn `clipwindow` on for every tile under `root` that has it true, `root` included
+/// [design: `clipwindow` stands in vanilla files drawn from tiles behind other switches
+/// (`list_box.xml` in the message box) and in mods' tiles the default game draws, so the
+/// reading reaches only a menu that asks for it].
+pub fn mark_clip_windows(ui: &mut Ui, root: TileId) {
+    let mut stack = vec![root];
+    while let Some(t) = stack.pop() {
+        if !ui.is_live(t) {
+            continue;
+        }
+        let tile = ui.tile(t);
+        let window = tile.get("clipwindow").is_some_and(Value::truthy) && !tile.get(CLIP_WINDOW_ON).is_some_and(Value::truthy);
+        stack.extend(tile.children.iter().copied());
+        if window {
+            ui.set_trait(t, CLIP_WINDOW_ON, Value::Num(1.0));
+        }
+    }
 }
 
 /// Whether a tile and all above it are visible (a missing `visible` is true) [documented:
@@ -215,7 +250,7 @@ fn candidates(ui: &Ui, menu: TileId, at: (f64, f64), measure: &Measure<'_>, out:
         }
         let mut below = here;
         below.forced |= own && tile.kind == "hotrect";
-        if flag(ui, id, "clips") {
+        if clips_children(tile) {
             below.clip = Some(below.clip.map_or(here.area, |c| c.intersect(here.area)));
         }
         let mut children = tile.children.clone();
@@ -611,6 +646,58 @@ mod tests {
         let main = id(&ui, "TestMenu/Main");
         ui.set_trait(main, "visible", Value::Sym("false".into()));
         assert_eq!(hit(&ui, &[menu], (550.0, 150.0), &no_measure), None);
+    }
+
+    /// A target inside a `clipwindow` hotrect, reaching past the window's box.
+    fn clip_window(value: &str) -> (Ui, TileId) {
+        let xml = format!(
+            r#"<menu name="ClipMenu">
+  <hotrect name="Window"><x>100</x><y>100</y><width>200</width><height>100</height><clipwindow>{value}</clipwindow>
+    <hotrect name="Long"><id>1</id><target>&true;</target><y>-50</y><width>200</width><height>400</height></hotrect>
+  </hotrect></menu>"#
+        );
+        let mut ui = Ui::new();
+        ui.load_menu(&MemSource::default().with("clip.xml", &xml), "clip.xml").unwrap();
+        ui.update();
+        let menu = ui.menu("ClipMenu").unwrap();
+        (ui, menu)
+    }
+
+    #[test]
+    fn clipwindow_excludes_clipped_targets() {
+        let (mut ui, menu) = clip_window("&true;");
+        let long = id(&ui, "ClipMenu/Window/Long");
+        let under = |ui: &Ui, at| hit(ui, &[menu], at, &no_measure).map(|h| h.tile);
+        // Off, as in every menu that did not ask for it: the child takes the pointer outside
+        // the window as before.
+        assert_eq!(under(&ui, (150.0, 150.0)), Some(long));
+        assert_eq!(under(&ui, (150.0, 300.0)), Some(long));
+        // On: only inside the window's box, top and bottom.
+        mark_clip_windows(&mut ui, menu);
+        ui.update();
+        assert_eq!(under(&ui, (150.0, 150.0)), Some(long));
+        assert_eq!(under(&ui, (150.0, 300.0)), None, "below the window");
+        assert_eq!(under(&ui, (150.0, 75.0)), None, "above the window");
+    }
+
+    #[test]
+    fn clipwindow_is_read_only_when_true_and_marked() {
+        // A false `clipwindow` crops nothing and gets no mark.
+        let (mut ui, menu) = clip_window("&false;");
+        let window = id(&ui, "ClipMenu/Window");
+        mark_clip_windows(&mut ui, menu);
+        assert!(ui.tile(window).get(CLIP_WINDOW_ON).is_none());
+        assert!(!clips_children(ui.tile(window)));
+        // A true one crops only once marked; `clips` crops by itself.
+        let (mut ui, menu) = clip_window("&true;");
+        let window = id(&ui, "ClipMenu/Window");
+        assert!(!clips_children(ui.tile(window)));
+        mark_clip_windows(&mut ui, menu);
+        assert!(clips_children(ui.tile(window)));
+        let long = id(&ui, "ClipMenu/Window/Long");
+        assert!(!clips_children(ui.tile(long)));
+        ui.set_trait(long, "clips", Value::Num(1.0));
+        assert!(clips_children(ui.tile(long)));
     }
 
     #[test]

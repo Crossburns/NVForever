@@ -140,7 +140,7 @@ pub(crate) fn tick(
                 if let Ok(r) = sim.world.get(id) {
                     r.extra.owner = Some(s.actor);
                 }
-                changed.write(RefChanged { form_id: id.0 });
+                changed.write(RefChanged::new(id.0));
                 info!("mines: {} put down mine {id} ({}) at ({:.0}, {:.0}, {:.0}), armed", s.actor, s.proj, s.point[0], s.point[1], s.point[2]);
             }
             Err(e) => warn!("mines: a thrown mine could not be placed: {e}"),
@@ -148,7 +148,7 @@ pub(crate) fn tick(
     }
 
     // The live mines of the loaded cells.
-    let created: Vec<FormId> = sim.world.created().filter(|(id, r)| !r.deleted && kinds.contains(&r.base) && phys.created.contains_key(&id.0)).map(|(id, _)| id).collect();
+    let created: Vec<FormId> = sim.world.created().filter(|(id, r)| !r.deleted() && kinds.contains(&r.base) && phys.created.contains_key(&id.0)).map(|(id, _)| id).collect();
     let mut live: HashMap<FormId, V3> = HashMap::new();
     for id in m.placed.iter().copied().filter(|id| phys.ref_cell.contains_key(&id.0)).chain(created) {
         if !sim.present(id.0) {
@@ -171,7 +171,7 @@ pub(crate) fn tick(
             if let Err(e) = sim.world.set_enabled(id, false) {
                 warn!("mines: mine {id} could not be disabled: {e}");
             }
-            changed.write(RefChanged { form_id: id.0 });
+            changed.write(RefChanged::new(id.0));
             live.remove(&id);
             m.burning.remove(&id);
         }
@@ -184,7 +184,7 @@ pub(crate) fn tick(
             continue;
         }
         m.burning.remove(&id);
-        if sim.world.peek(id).is_some_and(|r| r.deleted) {
+        if sim.world.peek(id).is_some_and(|r| r.deleted()) {
             let sound = sim.base_of(id.0).and_then(|b| sfx.as_deref()?.forms.projectiles.get(&b)?.sound_disable);
             if let Some(sound) = sound {
                 sounds.write(PlaySound { sound, at: Some(pos) });
@@ -261,7 +261,7 @@ pub(crate) fn tick(
                 if let Err(e) = sim.world.set_enabled(id, false) {
                     warn!("mines: mine {id} could not be disabled: {e}");
                 }
-                changed.write(RefChanged { form_id: id.0 });
+                changed.write(RefChanged::new(id.0));
                 // The blast is the hits of whoever put it down (an actor reference).
                 let owner = sim.world.peek(id).and_then(|r| r.extra.owner).filter(|o| sim.world.peek(*o).is_some() && (sim.is_actor(o.0) || *o == FormId::PLAYER_REF));
                 let weapon = p.default_weapon;

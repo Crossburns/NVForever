@@ -16,8 +16,10 @@ const STIMPAK: u32 = 0x100;
 const KEY: u32 = 0x101;
 const CHEST: u32 = 0x120;
 const DOOR: u32 = 0x130;
+const HIDDEN_DOOR: u32 = 0x131; // no FULL, as OffDoorHidden01 (#1598)
 const TRIGGER: u32 = 0x140;
 const CHAIR: u32 = 0x150;
+const LEVER: u32 = 0x160; // a named activator with a model
 const CELL_EXT: u32 = 0x200;
 const CELL_INT: u32 = 0x201;
 const WORLD: u32 = 0x3C;
@@ -28,6 +30,8 @@ const DOOR_REF: u32 = 0x304; // -> DOOR_DEST in CELL_INT
 const DOOR_DEST: u32 = 0x305;
 const TRIGGER_REF: u32 = 0x306; // unnamed activator
 const CHAIR_REF: u32 = 0x307;
+const LEVER_REF: u32 = 0x308;
+const LEVER_TRIGGER_REF: u32 = 0x309; // LEVER placed as a box primitive (a trigger)
 
 fn base(id: u32, name: Option<&str>, data: BaseData) -> BaseForm {
     BaseForm { id: FormId(id), sig: *b"MISC", edid: Some(format!("Edid{id:X}")), name: name.map(Into::into), script: None, prompt: None, voice_filter: false, data }
@@ -83,8 +87,10 @@ fn sim() -> SimState {
         base(KEY, Some("Safe Key"), item(ItemKind::Key)),
         base(CHEST, Some("Chest"), chest()),
         base(DOOR, Some("Door"), BaseData::Door(Door { automatic: false, minimal_use: false })),
+        base(HIDDEN_DOOR, None, BaseData::Door(Door { automatic: false, minimal_use: false })),
         base(TRIGGER, None, BaseData::Activator),
         base(CHAIR, Some("Chair"), BaseData::Furniture),
+        base(LEVER, Some("Lever"), BaseData::Activator),
         base(FormId::PLAYER_BASE.0, Some("Courier"), BaseData::Actor(ActorBase { entries: Vec::new(), attributes: None })),
     ] {
         forms.bases.insert(b.id, b);
@@ -97,7 +103,12 @@ fn sim() -> SimState {
     // An inaccessible door (header bit 8) and a chest with an Activation Prompt (XATO).
     let sealed = PlacedRef { flags: fnv_sim::refs::INACCESSIBLE, ..placed(0x7777, DOOR, CELL_EXT) };
     let prompted = PlacedRef { prompt: Some("Search Footlocker".into()), ..placed(0x7778, CHEST, CELL_EXT) };
-    for r in [stim, safe, door, sealed, prompted, placed(CHEST_REF, CHEST, CELL_EXT), placed(DOOR_DEST, DOOR, CELL_INT), placed(TRIGGER_REF, TRIGGER, CELL_EXT), placed(CHAIR_REF, CHAIR, CELL_EXT)] {
+    // Nameless doors (#1598): one leading nowhere, one that teleports, one with a prompt.
+    let hidden = placed(0x7779, HIDDEN_DOOR, CELL_EXT);
+    let hidden_travel = PlacedRef { teleport: Some(tp), ..placed(0x777A, HIDDEN_DOOR, CELL_EXT) };
+    let hidden_prompted = PlacedRef { prompt: Some("Enter Hatch".into()), ..placed(0x777B, HIDDEN_DOOR, CELL_EXT) };
+    let box_trigger = PlacedRef { primitive: Some(fnv_sim::refs::Primitive { sphere: false, bounds: [30.0, 25.0, 31.0] }), ..placed(LEVER_TRIGGER_REF, LEVER, CELL_EXT) };
+    for r in [stim, safe, door, sealed, prompted, hidden, hidden_travel, hidden_prompted, box_trigger, placed(LEVER_REF, LEVER, CELL_EXT), placed(CHEST_REF, CHEST, CELL_EXT), placed(DOOR_DEST, DOOR, CELL_INT), placed(TRIGGER_REF, TRIGGER, CELL_EXT), placed(CHAIR_REF, CHAIR, CELL_EXT)] {
         refs.refs.insert(r.id, r);
     }
     let forms: &'static FormStore = Box::leak(Box::new(forms));
@@ -195,6 +206,18 @@ fn drain<M: Message>(app: &mut App) -> Vec<M> {
 }
 
 #[test]
+fn a_restored_change_still_reaches_the_drawn_world() {
+    let mut app = scene(&[]);
+    let stim = visual(&mut app, STIM_REF, [60.0, 0.0, 100.0]);
+    app.update();
+    assert_eq!(app.world().get::<Visibility>(stim), Some(&Visibility::Inherited));
+    app.world_mut().resource_mut::<SimState>().world.activate(FormId::PLAYER_REF, FormId(STIM_REF)).unwrap();
+    app.world_mut().resource_mut::<Messages<RefChanged>>().write(RefChanged { form_id: STIM_REF, restored: true });
+    app.update();
+    assert_eq!(app.world().get::<Visibility>(stim), Some(&Visibility::Hidden));
+}
+
+#[test]
 fn describe_by_type_lock_and_destination() {
     let sim = sim();
     let ix = index();
@@ -203,6 +226,16 @@ fn describe_by_type_lock_and_destination() {
     assert_eq!(describe(&sim, ix, SAFE_REF), Some(("Chest".into(), Action::Locked { level: 50 })));
     assert_eq!(describe(&sim, ix, DOOR_REF), Some(("Door".into(), Action::Travel { to: Some("Doc Mitchell's House".into()) })));
     assert_eq!(describe(&sim, ix, TRIGGER_REF), None, "unnamed activators are not offered");
+    assert_eq!(describe(&sim, ix, 0x7779), None, "nor an unnamed door leading nowhere (#1598)");
+    assert!(
+        matches!(describe(&sim, ix, 0x777A), Some((_, Action::Travel { .. }))),
+        "an unnamed teleport door is still offered: a quest may send the player through it"
+    );
+    assert_eq!(describe(&sim, ix, 0x777B).map(|(_, a)| a), Some(Action::Open), "an unnamed door with a prompt is still offered");
+    // A primitive is a trigger volume even when its activator has a name (level-design.md
+    // §4.1): the same activator placed as an object is offered.
+    assert_eq!(describe(&sim, ix, LEVER_REF), Some(("Lever".into(), Action::Activate)));
+    assert_eq!(describe(&sim, ix, LEVER_TRIGGER_REF), None, "primitives are not offered");
     assert_eq!(describe(&sim, ix, 0x999), None);
 }
 

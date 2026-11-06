@@ -36,8 +36,13 @@ pub struct SoundState {
     pub played: Vec<Played>,
     /// Seconds of play since the session began, for the sounds' ends.
     pub clock: f64,
-    /// Sounds StopSound stopped, for the engine to take.
-    pub stops: Vec<FormId>,
+    /// Sounds StopSound stopped, for the engine to take: the SOUN and the id of the last
+    /// sound asked for before the stop ([`SoundState::ask`]'s ids rise), so the engine
+    /// stops the playings asked for before it, also those of the same frame, and still
+    /// plays one asked for after it. So `PlaySound X; StopSound X` in one frame plays
+    /// nothing [engineering choice; hypothesis: what the original does with that order in
+    /// one frame is not known, docs/spec-notes/audio.md §11.5, observer check 82].
+    pub stops: Vec<(FormId, u32)>,
 }
 
 impl SoundState {
@@ -56,6 +61,21 @@ impl SoundState {
                 Some(s) => p.until = Some(clock + f64::from(s)),
                 None => p.looping = true,
             }
+        }
+    }
+
+    /// StopSound of `sound` in `frame`: every playing of it not stopped yet is stopped, and
+    /// the engine is told (with the last id asked for so far) when there was one. A playing
+    /// asked for earlier in the same frame is stopped too, before it is heard
+    /// [engineering choice; the original's behaviour is not known, audio.md §11.5].
+    pub fn stop(&mut self, sound: FormId, frame: u64) {
+        let mut any = false;
+        for p in self.played.iter_mut().filter(|p| p.sound == sound && p.stopped.is_none()) {
+            p.stopped = Some(frame);
+            any = true;
+        }
+        if any {
+            self.stops.push((sound, self.next_id));
         }
     }
 
@@ -113,14 +133,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // frame [observed: sound1, 1 in StopSound's frame, 0 from the next].
         "stopsound" => {
             if let Some(s) = form(args, 0) {
-                let mut any = false;
-                for p in g.gaps.sounds.played.iter_mut().filter(|p| p.sound == s && p.stopped.is_none()) {
-                    p.stopped = Some(frame);
-                    any = true;
-                }
-                if any {
-                    g.gaps.sounds.stops.push(s);
-                }
+                g.gaps.sounds.stop(s, frame);
             }
             zero
         }
@@ -178,5 +191,21 @@ mod tests {
         assert!(st.playing(&st.played[0].clone(), 23));
         st.tick(0.02, 24);
         assert!(st.played.is_empty());
+    }
+
+    #[test]
+    fn a_stop_names_the_last_sound_asked_for_before_it() {
+        let mut st = SoundState::default();
+        // PlaySound, then StopSound in the same frame: the stop covers that play.
+        let first = st.ask(FormId(7), None, 10);
+        st.stop(FormId(7), 10);
+        assert_eq!(st.stops, vec![(FormId(7), first)]);
+        // StopSound, then PlaySound: the new one is asked for after it, a higher id.
+        let second = st.ask(FormId(7), None, 10);
+        assert!(second > first);
+        // A stop with nothing of the sound playing tells the engine nothing.
+        st.stops.clear();
+        st.stop(FormId(8), 10);
+        assert!(st.stops.is_empty());
     }
 }

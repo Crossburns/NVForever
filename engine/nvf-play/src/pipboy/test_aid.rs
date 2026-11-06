@@ -9,6 +9,7 @@
 //!   out of a Misc folder);
 //! - `point=<x>:<y>`: put the pointer on that point of the canvas (1024 x 768 from its
 //!   top left), through the model's screen where it is shown, as the mouse would be;
+//!   `point=stats|items|data` puts it on that page's button on the device, with no click;
 //!   `point=off` gives the pointer back to the mouse;
 //! - `click=<x>:<y>`: the same, then a left click there;
 //! - `click=stats|items|data`: a left click on the page's button on the device;
@@ -44,7 +45,7 @@ enum Step {
     Page(Page),
     Tab(usize),
     Key(Command),
-    Point(Option<Vec2>),
+    Point(Option<AidTarget>),
     /// A click on the target; true with the right button.
     Click(AidTarget, bool),
     Drag(Vec2),
@@ -83,7 +84,7 @@ fn step(s: &str) -> Option<Step> {
         _ => match s.split_once('=')? {
             ("page", p) => Step::Page(page(p)?),
             ("point", "off") => Step::Point(None),
-            ("point", p) => Step::Point(Some(canvas(p)?)),
+            ("point", p) => Step::Point(Some(page(p).map(AidTarget::Button).or_else(|| canvas(p).map(AidTarget::Canvas))?)),
             ("drag", p) => Step::Drag(canvas(p)?),
             ("travel", m) => Step::Travel(u32::from_str_radix(m.trim().trim_start_matches("0x"), 16).ok()?),
             ("note", m) => Step::Note(u32::from_str_radix(m.trim().trim_start_matches("0x"), 16).ok()?),
@@ -189,7 +190,7 @@ fn run(
                 }
             }
             Step::Point(p) => {
-                aid.target = p.map(AidTarget::Canvas);
+                aid.target = p;
             }
             Step::Click(t, right) => {
                 aid.target = Some(t);
@@ -227,7 +228,7 @@ mod tests {
 
     #[test]
     fn steps_are_read_in_time_order() {
-        let s = parse("9:close, 3:open,4:page=stats, 5:tab=2, 6:key=down, 7:tab=9, x:open, 8:click=data, 8.5:click=100:650, 8.6:rclick=260:150, 8.7:point=off, 8.8:point=1:2, 8.9:drag=-40:25, 8.95:travel=0x000CDF51, 8.96:note=001618BF, 8.97:repair=use, 8.98:mod=open, 8.99:hotkey=3, 8.995:hotkey=off, 8.996:hotkey=9, 8.997:frame=screen, 8.998:frame=device, 8.999:frame=up");
+        let s = parse("9:close, 3:open,4:page=stats, 5:tab=2, 6:key=down, 7:tab=9, x:open, 8:click=data, 8.5:click=100:650, 8.6:rclick=260:150, 8.7:point=off, 8.8:point=1:2, 8.85:point=items, 8.9:drag=-40:25, 8.95:travel=0x000CDF51, 8.96:note=001618BF, 8.97:repair=use, 8.98:mod=open, 8.99:hotkey=3, 8.995:hotkey=off, 8.996:hotkey=9, 8.997:frame=screen, 8.998:frame=device, 8.999:frame=up");
         assert_eq!(
             s,
             vec![
@@ -239,7 +240,8 @@ mod tests {
                 (8.5, Step::Click(AidTarget::Canvas(Vec2::new(100.0, 650.0)), false)),
                 (8.6, Step::Click(AidTarget::Canvas(Vec2::new(260.0, 150.0)), true)),
                 (8.7, Step::Point(None)),
-                (8.8, Step::Point(Some(Vec2::new(1.0, 2.0)))),
+                (8.8, Step::Point(Some(AidTarget::Canvas(Vec2::new(1.0, 2.0))))),
+                (8.85, Step::Point(Some(AidTarget::Button(Page::Items)))),
                 (8.9, Step::Drag(Vec2::new(-40.0, 25.0))),
                 (8.95, Step::Travel(0x000C_DF51)),
                 (8.96, Step::Note(0x0016_18BF)),
