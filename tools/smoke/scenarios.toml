@@ -11512,8 +11512,8 @@ expect = [
 
 [[scenario]]
 name = "mines-blast-limbs"
-source = "#1338 (docs/spec-notes/crippled-limbs.md §5): a blast damages every limb as well as Health; before, stepping on a mine never crippled the player"
-note = "Not in god mode: the player, at Explosives 20, is put on the frag mine 0x00172DB5 on the bridge north of Primm; its blast (88 after armour) takes half of that off each of six limbs, which cripples the head (a pool of 10 % of 200 Health)"
+source = "#1338, #1741 (docs/spec-notes/crippled-limbs.md §5): a blast damages limbs as well as Health, by the original's shares [observed 2026-11-06, o25_limbs]: the torso 1/30 of the Health damage, the legs 0.24 (ours 0.16 left, 0.08 right), the head and arms nothing"
+note = "Not in god mode: the player, at Explosives 20, is put on the frag mine 0x00172DB5 on the bridge north of Primm; its blast (about 88 after armour) takes about 2.9 points off the torso, 14 off the left leg and 7 off the right, which cripples nothing. Before #1741 it took half of it off each of six limbs and crippled the head"
 areas = ["combat"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-game/src/combat.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "4:player.setav explosives 5", NVF_PLAY_TEST_SCRIPT = "6:moveto:player:0x00172DB5:0:0:0" }
@@ -11521,10 +11521,11 @@ args = ["--play", "--pos=-61200,-52600,6300", "--hour", "12", "--no-voice", "--n
 run_seconds = 14
 expect = [
   { re = 'mines: 0x00000014 sets off mine 0x00172DB5', label = "the player sets the mine off" },
-  { re = 'combat: blast on 0x00000014: [1-9][\d.]* limb damage on [1-9] limbs', label = "its blast damages the player's limbs" },
-  { re = 'combat: the player flinches for [\d.]+ s \(crippled', label = "the crippling blast makes the player flinch (unless it knocks the player down)" },
-  { re = "combat: player's [a-z]+( [a-z]+)? crippled", label = "and cripples one" },
-  { re = 'hud: crippled limbs shown', label = "the HUD shows it" },
+  { re = 'combat: blast on 0x00000014: limb damage torso [1-9]\.\d+, left leg [1-9]\d\.\d+, right leg [1-9]\.\d+$', label = "its blast takes the torso's and the legs' shares off the player's limbs, nothing else" },
+]
+forbid = [
+  { re = "combat: player's (head|left arm|right arm) crippled", label = "the blast at the feet cripples no arm and not the head" },
+  { re = 'combat: blast on 0x00000014: limb damage .*(head|arm|brain)', label = "the head, arms and brain take no share" },
 ]
 
 [[scenario]]
@@ -11539,7 +11540,7 @@ run_seconds = 16
 expect = [
   { re = 'mines: 0x00000014 sets off mine 0x00172DB5', label = "the player sets the mine off" },
   { re = 'combat: blast MineFragExplosion on 0x00000014 at \d+: [\d.]+ health damage', label = "the blast catches the player (no perks)" },
-  { re = 'combat: blast on 0x00000014: [1-9][\d.]* limb damage', label = "the limb damage of the blast is logged" },
+  { re = 'combat: blast on 0x00000014: limb damage torso [1-9]', label = "the limb damage of the blast is logged" },
 ]
 forbid = [{ re = "combat: perks on .*blast", label = "no perk changes the blast" }]
 
@@ -11556,7 +11557,7 @@ expect = [
   { re = 'mines: 0x00000014 sets off mine 0x00172DB5', label = "the player sets the mine off (perks held)" },
   { re = 'combat: blast MineFragExplosion on 0x00000014 at \d+: [\d.]+ health damage', label = "the blast catches the player (perks held)" },
   { re = '''combat: perks on no one's blast on 0x00000014: attacker \[\], target \[Toughness\]: damage ([\d.]+) -> \1, DT 6\.0''', label = "Toughness alone sets the DT: Hit the Deck is not named, and the damage is left as it was" },
-  { re = 'combat: blast on 0x00000014: [1-9][\d.]* limb damage', label = "the limb damage of the blast is logged (perks held)" },
+  { re = 'combat: blast on 0x00000014: limb damage torso [1-9]', label = "the limb damage of the blast is logged (perks held)" },
 ]
 
 [[scenario]]

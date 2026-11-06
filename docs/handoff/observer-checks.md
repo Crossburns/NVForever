@@ -1107,6 +1107,16 @@ The numbers above stay put so links to them hold; each item here gives its own p
     `…/x`, `…/y`, `…/width`, `…/_alpha`, `…/_enabled`, and `StartMenu/_isPauseMenu`; then
     the same with the Settings page open.
 
+## Added 2026-11-01 (explosions' limb damage, issue #1338; open part since 2026-11-06, #1741)
+
+74. **How much of a blast reaches each limb, at stock Health and on the player?** (P2;
+    crippled-limbs.md §5.) Answered in part 2026-11-06 (o25_limbs) [observed]: on Ringo at
+    `SetAV Health 5000` the torso lost 1/30 of the Health damage and the legs 0.24 of it,
+    nothing else; NVForever takes those as condition points. Still open: rerun on an NPC at
+    its stock Health (100–200) and once on the player, to tell condition points straight
+    off the condition from a share of the limb's pool (of maximum Health), and whether the
+    player's limbs take `fCombatPlayerLimbDamageMult`.
+
 ## Added 2026-11-03 (a Stimpak's Hardcore effects outside Hardcore, issue #1438)
 
 76. **Does an aid effect whose conditions fail still count down its duration?** (P3;
