@@ -264,6 +264,11 @@ the spec it links to.
     unanswered ([observer check 86](handoff/observer-checks.md)). If you want people choosing
     crosses again, the exclusion can apply to creatures alone.
     ([furniture.md §9](spec-notes/furniture.md))
+48. **A new Speed Mult waits for an equipment change (#1742).** The player's run speed now
+    copies the original's lag: `setav speedmult`, ModAV, chems and abilities change it only
+    once an item is equipped or taken off, or a game loads. If you rule it a quirk not
+    worth keeping, the speed follows Speed Mult at once again.
+    ([actors.md §8.10, The player](spec-notes/actors.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

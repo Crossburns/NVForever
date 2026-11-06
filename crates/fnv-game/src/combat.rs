@@ -209,6 +209,15 @@ pub fn worn_armor_class(world: &fnv_sim::World, id: FormId) -> fnv_sim::forms::A
         .map_or(ArmorClass::Light, |it| it.armor_class)
 }
 
+/// The player's speed factor as last taken ([`Game::player_move_speed_mult`]): the
+/// equipment it was taken for (sorted), the equip count then ([`Game::player_equips`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerSpeed {
+    pub worn: Vec<FormId>,
+    pub equips: u64,
+    pub factor: f64,
+}
+
 /// Settings with their documented defaults (GECK wiki Experience Settings).
 pub(crate) fn setting(g: &Game, name: &str, default: f64) -> f64 {
     g.world.setting_f32(name).map_or(default, |v| v as f64)
@@ -763,11 +772,32 @@ impl Game<'_> {
     /// [documented: GECK wiki Stats Tab - NPC, "The Player Character would have a Speed of
     /// 100%"; observed for people: SetAV SpeedMult 150 ran 1.5 times as fast,
     /// actors.md §8.10], times its body armour's share ([`Game::armor_speed_mult`]).
-    /// The player's walk and run take it (issue #1364) [hypothesis: the player follows
-    /// the people's rule; not measured on the player].
+    /// The value now, for any actor; the player's walk and run take it as last taken
+    /// ([`Game::player_move_speed_mult`]).
     pub fn move_speed_mult(&mut self, r: FormId) -> f64 {
         let mult = actor::actor_value(self, r, crate::actor_values::SPEED_MULTIPLIER).unwrap_or(100.0);
         (mult / 100.0).clamp(0.0, 10.0) * self.armor_speed_mult(r)
+    }
+
+    /// The share of the standard speeds the player's walk and run take: its
+    /// [`Game::move_speed_mult`] as last taken, taken again only when its equipment
+    /// changes (an item equipped or unequipped, or the set it wears differing from the
+    /// last time) and after a game load or a new game (actors.md §8.10, The player;
+    /// issue #1742). [observed: capture o25_speed, SetAV SpeedMult 150 and 50 left the run
+    /// at its Speed Mult 100 rate while GetAV read 150 and 50; every run with armour put
+    /// on or taken off came out at GetAV's value. Hypothesis: that the equipment change
+    /// is what takes it again, that ModAV / ForceAV and effects wait for it as SetAV
+    /// did, that any item counts (only body armour was seen), and that a load takes it.]
+    pub fn player_move_speed_mult(&mut self) -> f64 {
+        let mut worn = self.world.equipment(FormId::PLAYER_REF).unwrap_or_default();
+        worn.sort_unstable();
+        let equips = self.player_equips;
+        if let Some(s) = self.player_speed.as_ref().filter(|s| s.equips == equips && s.worn == worn) {
+            return s.factor;
+        }
+        let factor = self.move_speed_mult(FormId::PLAYER_REF);
+        self.player_speed = Some(PlayerSpeed { worn, equips, factor });
+        factor
     }
 
     /// An actor's limb conditions, codes 25–31 in order.
