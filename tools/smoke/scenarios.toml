@@ -20579,6 +20579,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "ttw-functions-console"
+source = "[documented + hypothesis] docs/spec-notes/jip-ttw-functions.md (issue #1408): SetMusicState 1 and 2 reach the engine's music (paused, then not), InitExtraMiscStat makes a stat ModExtraMiscStat adds to; TTW's own data is not a smoke data dir, so the console runs them in Goodsprings"
+areas = ["scripts", "console", "extender"]
+paths = ["crates/fnv-game/src/nvse_ttw.rs", "engine/nvf-play/src/music.rs"]
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:SetMusicState 1;10.5:SetMusicState 2;11:InitExtraMiscStat \"nvf ttw\";11.5:ModExtraMiscStat \"nvf ttw\" 3;12:PrintC \"nvf ttw stat %g\", (GetExtraMiscStat \"nvf ttw\");12.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 16
+expect = [
+  { re = 'music: SetMusicState 1, paused', label = "SetMusicState 1 pauses the music" },
+  { re = 'music: SetMusicState 2(?!, paused)', label = "SetMusicState 2 resumes it" },
+  { re = 'script: print "nvf ttw stat 3(?:\.0+)?"', label = "an initialised extra misc stat adds" },
+]
+
+[[scenario]]
 name = "script-runner-tool"
 kind = "tool"
 source = "issue #1460, docs/spec-notes/ext-script-runner.md: JIP's Script Runner files of the fixture home's mods layer compiled and run headless (game restart, new game)"
