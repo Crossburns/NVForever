@@ -56,7 +56,20 @@ Design: docs/design/navmesh.md §6.1 (doors and actors following paths). Code:
   end moves every one of them, and "Close" at its end equals the stored (bind) pose for
   606; the 4 bodies of `Lucky38ExtDoorDUPLICATE000` differ [observed]. So the stored
   pose is the closed door, and keyframed collision is meant to follow the animated nodes
-  [hypothesis from the motion type, consistent with these poses].
+  [hypothesis from the motion type, consistent with these poses]. NVForever draws and
+  collides a closed door at rest in its stored pose, not at the end of "Close" (#1541).
+- **The Lucky 38's outer door** (`Lucky38EntranceDoorActor` 0x00118E76, base
+  `Lucky38ExtDoorDUPLICATE000`, `architecture\strip\Lucky38ExtDoor.NIF`, nameless): four
+  panels `DoorE01`–`DoorE04` whose pivots are the model's origin, the tower's centre,
+  about 1,700 units away; in the stored pose they close the entrance as one curved wall
+  some 500 units before the casino's own door 0x0013BB17 (a teleport door, glass
+  `Lucky38Door.NIF`). "Open" (13.27 s) turns them 0 → ±0.17 and ±0.349 radians about z,
+  sliding them aside round the façade; "Close" (0.03 s) holds ±0.17/±0.349, the open
+  pose [observed: FalloutNV.esm, the model]. Its script (`Lucky38EntranceScript`) is all
+  comment; Victor's dialogue and quest scripts open it with `SetOpenState 1` (INFO
+  0x00117B13, 0x0016510E, 0x00157259, SCPT 0x00165E64, 0x001629AA) [observed]. Held at
+  "Close"'s end, it stood open from the start and the player walked in without Victor
+  (owner playtest 2026-11-04, #1541).
 - **Locks**: 244 placed doors without XTEL carry XLOC (241 on Open/Close models); 203
   carry ONAM [observed].
 

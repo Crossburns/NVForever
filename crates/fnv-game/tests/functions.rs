@@ -532,6 +532,17 @@ fn remove_item_of_none_is_a_no_op() {
     assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::ItemRemoved { .. })));
 }
 
+/// No DATA in the record: its Health is only `max_health`'s stand-in of 1, nothing to run
+/// out of.
+#[test]
+fn damage_actor_value_does_not_kill_an_actor_whose_record_gives_no_health() {
+    let f = fixture();
+    let mut g = game(&f);
+    call(&mut g, 0x1181, Some(ADULT_REF), &[ArgValue::Enum(16), n(5.0)]);
+    assert!(!g.is_dead(FormId(ADULT_REF)));
+    assert_eq!(call(&mut g, 0x102E, Some(ADULT_REF), &[]), 0.0);
+}
+
 /// Damage and restore [documented: catalogue; observed: layer5-captures.md §9.3 b].
 #[test]
 fn resurrect_generates_a_dead_actor_again_where_it_lies() {

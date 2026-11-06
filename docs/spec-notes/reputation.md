@@ -40,6 +40,13 @@ are in scripts.md §7.6 and layer5-captures.md §9.3 a. This note is what play a
   (`fnv_game::functions::crime_infamy`, `Note::Infamy`). Self-defence counts: the
   owner's Vilified box came from killing Powder Gangers. Opening an owned lock,
   trespass and assault change no reputation.
+- **Who counts towards what** [design: `functions/reputation.rs` `reputations_of`]: a
+  faction that owns the goods counts towards its own reputation. A killed actor is a
+  reference: the factions it is in now, run-time changes included. Goods owned by an NPC or
+  creature name its base form (XOWN), which has no run-time changes: the factions of its
+  record, or of its template's with Use Factions, at rank 0 or above. So a script taking a
+  placed Chet out of his faction does not change what stealing Chet's goods counts
+  towards. Each reputation counts once, however many of the factions name it.
 - **The box** [observed: the screenshots]: when a reputation's title changes the game's
   message box opens (it stops the game as message boxes do, queued with the others),
   titled with the reputation's name; the text is the new title, then its description

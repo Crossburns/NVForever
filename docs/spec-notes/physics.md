@@ -182,6 +182,14 @@ float (median bottom 160 units *above* it), which would leave walls the player c
 under. Still a [hypothesis] until checked in game (§6). Reproduce:
 `cargo run --release -p fnv-phys --example primitive_bounds -- <Data> schemas/fnv`.
 
+**Layer** (issue #1545, 2026-11-05) [hypothesis: what a CollisionMarker is for]: a
+CollisionMarker primitive without XTRI is on the **Invisible Wall** layer (27), not
+Unidentified (0). Characters collide with it, as before. Shots, VATS mode's line of fire
+and the aim ray pass it (`layers::shot_ignores`, the character's layers plus Invisible
+Wall), and so do sight (`detection.rs` `see_through`) and blast cover lines, which already
+passed layer 27. Before the change, a 10mm round fired at the box 0x00176AD0 in Goodsprings
+stopped on it (smoke `shot-passes-collision-marker`).
+
 ### 4.2 Collision layer matrix (B11): design and predictions
 
 Which collision layers stop the player is unknown (§4); `layers::character_ignores` is a
@@ -903,9 +911,12 @@ terrain is put back on the ground (logged as a warning); indoors, §6.7.
 
 References get collision by the same rule as `fnvtool phys cell`
 (`fnv_phys::ref_collision`); whether one is in the world is the simulation's: not
-deleted, enabled following its enable parents (`World::is_enabled`), not taken; until the
-simulation holds state for a reference, its own Initially Disabled flag also keeps it out
-(as render streaming and `fnvtool phys` do). In Goodsprings' 3×3 that gives 839
+deleted, enabled following its enable parents (`World::is_enabled`), not taken, whether or
+not the simulation holds state for the reference: under an enable parent its own Initially
+Disabled flag does not count [design: `engine/nvf-play/src/phys.rs` `in_world`; that the
+original's collision follows `GetDisabled` here is [hypothesis], simulation.md §1], while
+`fnvtool phys` still lets the flag win [design: `crates/fnvtool/src/phys_cmd.rs`]. In
+Goodsprings' 3×3 that gives 839
 references with collision against `fnvtool phys cell`'s 849 [observed: `nvforever --play`
 debug log: 18 references not in the world, the 8 that `fnvtool` also counts as Initially
 Disabled and 10 that the simulation disables through their enable parents].

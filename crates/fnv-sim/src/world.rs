@@ -25,9 +25,10 @@ use crate::refs::{PlacedRef, RefTable};
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SimConfig {
     pub seed: u64,
-    /// Level used for leveled lists (the player's level). [observed in game: `AddItem` of
-    /// a list resolves against the player's level (`L4.sim.leveled.basic`); that
-    /// containers do too is hypothesis]
+    /// The configured level: what item rolls read until [`World::set_player_level`], and
+    /// what a leveled lock with no fixed level reads ([`World::lock_read_level`]); 1 in
+    /// play [design]. [observed in game: `AddItem` of a list resolves against the player's
+    /// level (`L4.sim.leveled.basic`); that containers do too is hypothesis]
     pub player_level: u16,
     /// Hardcore mode: ammunition has weight. (Absent in older snapshots.)
     #[serde(default)]
@@ -454,6 +455,9 @@ pub struct World<'a> {
     pub forms: &'a FormStore,
     pub placed: &'a RefTable,
     cfg: SimConfig,
+    /// The player's level as item rolls read it ([`World::set_player_level`]); `None`:
+    /// [`SimConfig::player_level`]. Not saved: the game sets it on a load and on each tick.
+    roll_level: Option<u16>,
     refs: BTreeMap<FormId, RefState>,
     /// Globals set at run time (scripts, the clock); others keep their authored value.
     globals: BTreeMap<FormId, f32>,
@@ -531,6 +535,7 @@ impl<'a> World<'a> {
             forms,
             placed,
             cfg,
+            roll_level: None,
             refs: BTreeMap::new(),
             globals: BTreeMap::new(),
             fine_clock: clock::FineClock::default(),
@@ -568,6 +573,19 @@ impl<'a> World<'a> {
         self.cfg.hardcore = on;
     }
 
+    /// The player's level changed (`fnv_game::Game::sync_player_level`): AddItem, PlaceAtMe
+    /// and references with neither a fixed level nor a zone roll their items at it from now
+    /// on. Kept here because inventories are made on any read, where no caller can pass it
+    /// in. Locks do not read it ([`World::lock_read_level`]).
+    pub fn set_player_level(&mut self, level: u16) {
+        self.roll_level = Some(level.max(1));
+    }
+
+    /// The level item rolls read as the player's.
+    pub fn roll_level(&self) -> u16 {
+        self.roll_level.unwrap_or(self.cfg.player_level)
+    }
+
     /// Whether the player may wear power armour (ARMO BMDT "Power Armor"): without it
     /// [`World::equip`] refuses such armour on the player with
     /// [`SimError::NoPowerArmorTraining`] [documented: GECK wiki SetPCCanUsePowerArmor,
@@ -594,11 +612,12 @@ impl<'a> World<'a> {
     }
 
     /// The lock `id` has: its state's once it has one, else the lock it would start with
-    /// (its placed XLOC, a leveled lock at the reference's level as `initial` sets it).
+    /// (its placed XLOC, a leveled lock at the level `initial` sets it from,
+    /// [`World::lock_read_level`]).
     pub fn lock_of(&self, id: FormId) -> Option<LockState> {
         match self.peek(id) {
             Some(s) => s.lock,
-            None => self.placed.get(id).and_then(|p| p.lock).map(|l| LockState { level: l.level_at(self.item_level(id)), key: l.key, locked: true }),
+            None => self.placed.get(id).and_then(|p| p.lock).map(|l| LockState { level: l.level_at(self.lock_read_level(id)), key: l.key, locked: true }),
         }
     }
 
@@ -642,7 +661,7 @@ impl<'a> World<'a> {
             None => return Err(SimError::UnknownRef(id)),
         };
         let mut inventory = self.roll_inventory(self.inventory_base(id, base), self.item_level(id))?;
-        let lock_level = self.item_level(id);
+        let lock_level = self.lock_read_level(id);
         if let Some(list) = self.death_items.remove(&id) {
             let level = self.item_level(id);
             let inv = inventory.get_or_insert_with(Inventory::new);
@@ -675,7 +694,7 @@ impl<'a> World<'a> {
             count: self.forms.placed_count(base, placed.and_then(|p| p.count)),
             inventory,
             // A reference with lock data starts locked. [hypothesis] A leveled lock's
-            // level is set now, from the reference's level (`Lock::level_at`).
+            // level is set now (`World::lock_read_level`, `Lock::level_at`).
             lock: placed.and_then(|p| p.lock).map(|l| LockState { level: l.level_at(lock_level), key: l.key, locked: true }),
             // A door flagged Open by Default starts open. [hypothesis from the flag's
             // name; a gate so flagged let the player drop through it, physics.md §4]
@@ -951,7 +970,7 @@ impl<'a> World<'a> {
         }
         self.inventory(to)?;
         let mut out = Vec::new();
-        leveled::resolve_with(self.forms, &self.globals, &self.leveled_added, &self.leveled_edits, item, count, self.cfg.player_level, &mut self.rng, &mut out)?;
+        leveled::resolve_with(self.forms, &self.globals, &self.leveled_added, &self.leveled_edits, item, count, self.roll_level(), &mut self.rng, &mut out)?;
         let inv = self.inventory(to)?;
         Ok(out
             .into_iter()
@@ -1812,7 +1831,7 @@ impl<'a> World<'a> {
         if self.forms.sig(base).is_none() {
             return Err(SimError::UnknownForm(base));
         }
-        let mut inventory = self.roll_inventory(base, self.cfg.player_level)?;
+        let mut inventory = self.roll_inventory(base, self.roll_level())?;
         // A created actor appears where the player is: it is outfitted at once.
         let outfitted = self.equip_default(base, &mut inventory);
         let id = FormId(self.next_dynamic);

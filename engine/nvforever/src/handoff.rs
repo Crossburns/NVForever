@@ -17,10 +17,15 @@
 //!    loading screen (or the main menu) is up and drawn for [`SETTLE_SECS`], it shows its
 //!    window over the old one, takes the focus and writes the file; it loads behind its
 //!    screen from then on, alone. (Holding its script data build until then took the
-//!    swap's peak from 7.6 to 6.1 GB but the load from 6-12 s to 16 s: not done.)
-//! 3. This run sees the file and ends: the frame's exit logs are written (`Last`), then
-//!    the process ends at once ([`EndNow`]) instead of taking its world apart piece by
-//!    piece, which held its memory for about 2 s more.
+//!    swap's peak from 7.6 to 6.1 GB but the load from 6-12 s to 16 s: not done.) Only
+//!    the last step, making its game and putting the save back
+//!    (`nvf_play::script::ScriptState::held`), waits until the old run has taken the file
+//!    away as it ends, or [`ACK_WAIT_SECS`] after the file was written: on a busy machine
+//!    the screen's first frames were slow enough for the save to be put back before the
+//!    window was shown, while the old run still held its game (#1651).
+//! 3. This run sees the file, takes it away and ends: the frame's exit logs are written
+//!    (`Last`), then the process ends at once ([`EndNow`]) instead of taking its world
+//!    apart piece by piece, which held its memory for about 2 s more.
 //!
 //! If the new run ends before it is shown (it stops at the start: a damaged archive, say),
 //! the screen comes down and this game goes on; when the new run's log says why it
@@ -61,6 +66,11 @@ use std::time::{Duration, Instant};
 /// [engineering choice, as `nvf_play::loading::SETTLE_SECS`].
 pub const SETTLE_SECS: f64 = 0.25;
 pub const SETTLE_FRAMES: u32 = 3;
+
+/// Seconds the new run waits, after telling the old run, for it to take the file away
+/// before putting the save back anyway (an old run that died) [engineering choice: the
+/// old run looks a few times a second, `WAIT_TICK`].
+pub const ACK_WAIT_SECS: f64 = 2.0;
 
 /// A new run shows its window after this many seconds whatever is still loading
 /// [engineering choice: as long as a loading screen waits, `nvf_play::loading`].
@@ -354,14 +364,18 @@ pub struct Hidden {
     shown: Option<u32>,
     /// Test aid `NVF_PLAY_TEST_HANDOFF_EXIT`.
     exit_after: bool,
-    /// The file is written: with the test aid, the run waits for its world, then ends.
+    /// The file is written (and when): with the test aid, the run waits for its world,
+    /// then ends.
     told: bool,
+    told_at: Option<Instant>,
+    /// The save may be put back: the old run has ended ([`ACK_WAIT_SECS`]).
+    released: bool,
 }
 
 impl Hidden {
     pub fn new(file: PathBuf, maximize: bool) -> Self {
         let exit_after = std::env::var(EXIT_AID).is_ok_and(|v| v == "1");
-        Hidden { file, maximize, started: Instant::now(), ready: None, shown: None, exit_after, told: false }
+        Hidden { file, maximize, started: Instant::now(), ready: None, shown: None, exit_after, told: false, told_at: None, released: false }
     }
 }
 
@@ -380,6 +394,15 @@ fn settle(h: &mut Hidden, up: bool, now: Instant) -> Option<bool> {
     (now.duration_since(h.started).as_secs_f64() >= SHOW_AFTER_SECS).then_some(true)
 }
 
+/// The new run's save waits while [`Hidden`] says the old run has not ended
+/// (`ScriptState::held`; module notes, step 2).
+pub fn hold_restore(hidden: Option<Res<Hidden>>, script: Option<ResMut<nvf_play::script::ScriptState>>) {
+    let held = hidden.is_some_and(|h| !h.released);
+    if let Some(mut s) = script.filter(|s| s.held != held) {
+        s.held = held;
+    }
+}
+
 /// The new run's side: once its loading screen (or the main menu) is up, show the window
 /// over the old run's, take the focus and tell the old run.
 #[allow(clippy::too_many_arguments)]
@@ -395,6 +418,14 @@ pub fn reveal(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     let Some(mut h) = hidden else { return };
+    // The save waits for the old run to end (module notes, step 2).
+    if !h.released {
+        if let Some(t) = h.told_at.filter(|t| !h.file.exists() || t.elapsed().as_secs_f64() >= ACK_WAIT_SECS) {
+            h.released = true;
+            let gone = !h.file.exists();
+            info!("handoff: {} after {:.2} s; the save goes back now", if gone { "the old run has ended" } else { "no word from the old run" }, t.elapsed().as_secs_f64());
+        }
+    }
     let Ok(mut window) = windows.single_mut() else { return };
     match h.shown {
         None => {
@@ -420,7 +451,10 @@ pub fn reveal(
                 warn!("handoff: cannot tell the old run ({}: {e}); it ends when its own window closes", h.file.display());
             }
             h.told = true;
-            if !h.exit_after {
+            h.told_at = Some(Instant::now());
+        }
+        Some(_) if !h.exit_after => {
+            if h.released {
                 commands.remove_resource::<Hidden>();
             }
         }

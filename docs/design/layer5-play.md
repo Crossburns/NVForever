@@ -65,7 +65,11 @@ open and close the runtime's menu), plus `--new-game` in `engine/nvforever/src/m
      including ScriptEffectStart/Update/Finish of effect scripts (scripts.md §7.6).
    - **The player's cell** (`RefState::cell`, kept by `player.rs`): when it changes,
      `Game::player_entered` loads it (the 5×5 grid outdoors [hypothesis, scripts.md
-     §7.2]) and newly loaded cells' scripted references get OnLoad.
+     §7.2]) and the scripted references now in newly loaded cells get OnLoad, chosen as
+     `Game::active_refs` chooses those whose GameMode blocks run: a reference moved or
+     created there runs it with that cell, and one moved away does not run it with the cell
+     it was placed in [design: `Game::scripted_refs_in`; hypothesis: that the original
+     goes by the current cell, no moved reference was seen there].
    - **OnLoad after Enable** is fnv-game's own since #63 (`Game::note_enabled` queues it
      for the start of the next tick) [observed: layer5-captures.md §8.3 d, "by the next
      frame, not inside Enable"]; nvf-play no longer tracks it.
@@ -121,8 +125,13 @@ Activation by hand (`activate.rs`, `PlaySet::Activation`, before this) calls
 `script::activate_by_hand`: a target whose script has an OnActivate block runs it
 *instead of* the default action, which then runs only if the script calls `Activate`
 (fnv-game's rule [documented: GECK wiki Activate]); its effects come through the trace
-like any other script's. Without such a block the default action runs as before, and a
-picked-up item's OnAdd runs.
+like any other script's. Without such a block `Game::default_activation_by_hand` runs:
+the same default action as `Game::activate` (the extender's OnActivate, the receiver's
+switch, a pile's or a pushed-down actor's inventory, the door the player arrived through,
+children, OnAdd, drinking, disarm XP, followers), except that the engine's loading stays
+in charge of entering the new cell (`player_entered` follows when the player's cell has
+changed). `activate.rs` applies the outcome itself, so the activation's `Activated` and
+`ItemAdded` events do not become effects as well.
 
 ## 3. Trigger volumes
 
@@ -187,8 +196,7 @@ have no trace event; after each frame's scripts the runtime's seven flags
 the inventory key obey them from the next frame (docs/spec-notes/controls.md §5). A
 change is a log line and a `controls` line in the script trace.
 
-Not applied (open, §7): `moved` of other references, `SetPos` / `SetAngle`, `SetOpenState`
-on a drawn door, sound and the other Layer 6 stubs (of the image-space functions, the
+Not applied (open, §7): `SetOpenState` on a drawn door, sound and the other Layer 6 stubs (of the image-space functions, the
 screen splatter and `SetCellImageSpace`).
 
 **References enabled at run time** that render streaming skipped (it draws only what is
@@ -196,6 +204,16 @@ enabled at the start of a game) are drawn by `script_draw.rs` while scripts run:
 form's model, at the reference's pose (the simulation's once it holds one), under the
 cell's `RenderCell` entity, with `RefVisual` on every mesh. Actors, SpeedTrees, markers
 and light sources are not; the enabled-at-start rule is a copy of render streaming's.
+A light source has its own `RefVisual` (`lights.rs` `spawn_light`, docs/spec-notes/model-lights.md
+§2), so it goes out and comes back with its reference [design].
+
+**References created at run time** (`dropped.rs`) go by the same filter on what is drawn
+[design: `dropped::draws_model`]: a marker, or a base of a type placed references are not
+drawn for (PlaceAtMe of an explosion), draws nothing. The reference stays in the
+simulation for scripts, and its collision still comes from its model
+(`phys::add_created`). That the original hides a marker made at run time as it hides a
+placed one is [hypothesis, as render streaming's `is_marker`]. An explosion's created
+reference is not removed after the blast (open).
 
 **Placed NPCs** carry `RefVisual(reference)` on their root and every mesh entity
 (`engine/nvforever/src/actors.rs`, `spawn`), so a script's Disable hides them and Enable
@@ -468,13 +486,18 @@ with identical observations with and without voice lengths.
     boxes (§6.2).
   - Bevy's virtual clock caps a frame at 0.25 s, so a very slow frame loses real time
     for scripts as for everything else.
-- Other references a script moves keep their drawn place and collision (visuals of
-  placed references are nvforever's; only `script_draw.rs`'s own follow the simulation).
+- A reference a script moves, turns or resizes is drawn where the simulation holds it
+  (`moved.rs` for render streaming's entities, `script_draw.rs` for its own) from
+  `Game::turned`, which holds only what the tick's own scripts moved by then, and from
+  `RefRepose`, which also names what was in `turned` when `script::run_scripts` copied it
+  just after the console's lines [design]. The console's move is the case this was made
+  for (smoke `i2-setpos-console`, a pair of frames to compare by eye). Not audited for the
+  drawing: OnActivate by hand, terminal and dialogue result scripts, moves made under the
+  menu and loading early returns, the calls the tick runs before it clears `turned`
+  (extender main loop and delayed calls), and a move into another cell.
 - Voice (§6.4): sounds are not placed in space, do not pause with menus, and the
   dialogue the test aids stand in for is not heard (it waits for the dialogue screen,
   docs/design/dialogue.md D4).
-- Lights a script enables or disables (e.g. the Strip gate's lamp 0x0011A1F9 by the hour)
-  keep their light source as streamed.
 - NPCs enabled at run time that render streaming skipped are not drawn (`actors.rs`
   would have to build them; coordination).
 - OnHit, OnDeath, combat, dialogue and AI package events wait for Layer 6.

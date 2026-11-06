@@ -119,6 +119,58 @@ impl SimState {
     }
 }
 
+#[cfg(test)]
+impl SimState {
+    /// A simulation of these placed references, with no base forms (no game data).
+    pub(crate) fn over_placed(placed: impl IntoIterator<Item = fnv_sim::refs::PlacedRef>) -> SimState {
+        let mut refs = RefTable::default();
+        refs.refs.extend(placed.into_iter().map(|p| (p.id, p)));
+        let forms: &'static FormStore = Box::leak(Box::default());
+        let refs: &'static RefTable = Box::leak(Box::new(refs));
+        SimState { forms, refs, world: World::new(forms, refs, SimConfig::default()) }
+    }
+}
+
+/// A placed reference of nothing in particular, for [`SimState::over_placed`].
+#[cfg(test)]
+pub(crate) fn placed_ref(id: u32) -> fnv_sim::refs::PlacedRef {
+    fnv_sim::refs::PlacedRef {
+        id: FormId(id),
+        sig: *b"REFR",
+        edid: None,
+        base: FormId(0x100),
+        cell: Some(FormId(0x200)),
+        stored_in: Some(FormId(0x200)),
+        plugin: 0,
+        flags: 0,
+        in_persistent_group: false,
+        pos: [0.0; 3],
+        rot: [0.0; 3],
+        scale: None,
+        count: None,
+        ammo: None,
+        health: None,
+        owner: None,
+        lock: None,
+        teleport: None,
+        enable_parent: None,
+        linked: None,
+        patrol_idle: None,
+        patrol_topic: None,
+        merchant_container: None,
+        marker_reputation: None,
+        open_by_default: false,
+        primitive: None,
+        activate_parents: Vec::new(),
+        parent_activate_only: false,
+        prompt: None,
+        radiation: None,
+        radius: None,
+        encounter_zone: None,
+        level_modifier: None,
+    }
+}
+
 /// The smallest scale a reference is drawn at: `SetScale 0` (an artillery piece the
 /// scripts hide that way, FalloutNV.esm SCPT 0x001043CC) draws it this small, too small
 /// to see, so that the drawn transform stays invertible; below it the reference has no

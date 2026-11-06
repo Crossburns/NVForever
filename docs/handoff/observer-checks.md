@@ -321,8 +321,10 @@ engine if needed, and delete the item here.
     - A call on an empty ref is skipped — partly answered 2026-10-31 (o5_00): in a
       function script run through xNVSE's CallFunction, `rE.GetDisabled` on an unset
       `ref`, alone or as an `if` condition, let the script go on (the next line ran). Ours
-      stops the script (game.rs `stop_run`, scripts.md §4.2). Still open: the same in a
-      quest or object script run by the game itself, before ours changes.
+      stopped the script (scripts.md §4.2). An object script run by the game goes on too:
+      the Nellis artillery trigger's script makes such a call every frame and the
+      original's barrage fires (issue #1600). Ours goes on since 2026-11-05. Still open:
+      a quest script.
     - Return ends one block only.
     - Scripted items in other inventories don't run.
     - Message boxes don't freeze the player, and MenuMode 1002 is our guess.
@@ -1268,3 +1270,37 @@ The numbers above stay put so links to them hold; each item here gives its own p
     keeps a creature off furniture the tree gives it no clip for, and leaves crosses out of a
     sandbox's choices [design]. If a creature does use furniture, say which, on what, and
     with which clip: the rule in §9 changes.
+
+## Added 2026-11-05 (placed particle scale, issue #1547)
+
+87. **Does a placed reference's scale size its particles?** (P2; particles.md §7.7.) The
+    Ultra-Luxe fountain's ULFountainFX (0x0016566E) is placed at scale 0.5. Take a frame of the
+    original at hour 12 from about (1176, -700, 1080), facing north, and the same frame in
+    NVForever. Check the size of the drops against the basin, how high the spray goes, and
+    whether it comes out of the spout. If the original's spray is the file's full size, the
+    rule in §7.7 is wrong and the cause of the misplaced spray lies elsewhere.
+
+## Added 2026-11-05 (leveled rolls and locks, issue #1567)
+
+88. **Does a leveled door lock change with the player's level?** (P3; simulation.md §5,
+    `fnv_sim::World::lock_read_level`.) NVForever hardens a leveled lock only from a level
+    fixed at its cell's load, so a door keeps its authored level [design]; the GECK tutorial
+    calls the checkbox deprecated [documented, encounter-zones.md §7], and nothing says the
+    original hardens at all [hypothesis]. The 26 leveled locks are all in the add-ons (Dead
+    Money 22, Old World Blues 3, Honest Hearts 1; simulation.md §5). A capture at a door with
+    the flag, never activated: `GetLockLevel` on it at the save's level, `player.SetLevel 31`,
+    `GetLockLevel` again, then the same on a flagged container, and on both after leaving the
+    area and coming back. Does the number move, by how much, and from which level?
+
+## Added 2026-11-05 (DamageActorValue past zero, issue #1568)
+
+89. **Does DamageAV past zero kill at all, and what of the player, an essential actor and the
+    kill's credit?** (P3; unconscious.md §2.2.) NVForever kills [hypothesis]. Check 22's two
+    super mutants died after DamageAV 300 with NCR troopers firing, no GetDead read and their
+    Health not read, so it does not isolate the cause. In the original, first: a lone
+    non-essential NPC with nobody shooting, `getav health`, `damageav health 9999`, `getdead`
+    at once and 5 s later, `getav health`. Then, each in its own run: `player.damageav health
+    9999` (does the player die?); on an essential NPC the same (knocked out, or dead, or
+    standing at a negative Health, and GetDead); on the lone NPC, the player's XP and karma
+    before and after (is the kill anyone's?). Also: does Health stay negative or stop at 0?
+    The answer: the logs.

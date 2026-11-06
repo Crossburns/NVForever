@@ -667,7 +667,10 @@ fn typing(
                 }
             }
             _ => match script.as_deref_mut() {
-                Some(st) if st.rt.is_some() => st.console.push(ConsoleCall { line, selected: c.selected, active_quest: pipboy.as_ref().and_then(|p| p.active_quest()) }),
+                Some(st) if st.rt.is_some() => {
+                    let active_quest = pipboy.as_ref().and_then(|p| p.active_quest(st.rt.as_ref().map(|rt| &rt.game)));
+                    st.console.push(ConsoleCall { line, selected: c.selected, active_quest });
+                }
                 _ => c.print("Scripts are not running: only cls, tgm and coc work"),
             },
         }
