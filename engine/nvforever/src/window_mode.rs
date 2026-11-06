@@ -39,11 +39,11 @@ impl WindowChoice {
         match self {
             WindowChoice::Windowed => WindowMode::Windowed,
             // `Current` cannot be resolved while the window is being created (it has no
-            // monitor yet) [documented: bevy_window MonitorSelection], and on Wayland there
-            // is no "primary" monitor to report either [observed: #1641], so the compositor
-            // places the window. This is only the window's initial mode: `apply_display`
-            // moves it to the chosen display (the first one until a choice is kept) once the
-            // monitors are known.
+            // monitor yet) [documented: bevy_window MonitorSelection]; on Wayland there is no
+            // "primary" monitor either [documented: winit Wayland backend], so the compositor
+            // places the window [observed: #1641]. This is only the window's initial mode:
+            // `apply_display` moves it to the chosen display (the first one until a choice is
+            // kept) once the monitors are known.
             WindowChoice::Borderless => WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
         }
     }
@@ -249,20 +249,22 @@ pub fn monitor_load(world: &mut World, text: &str) -> bool {
     true
 }
 
-/// Note the monitor the window is on (else the primary one): its video modes, and its
-/// size while the window is not in exclusive full screen (then it is the desktop's).
+/// Note the window's monitor for the resolution list (its video modes and, while not in
+/// exclusive full screen, its size), and the window's actual monitor (from `OnMonitor`, for
+/// comparing against a chosen display).
 fn watch_monitor(windows: Query<(&Window, Option<&OnMonitor>), With<PrimaryWindow>>, monitors: Query<(Entity, &Monitor, Has<PrimaryMonitor>)>, mut modes: ResMut<MonitorModes>) {
     let Ok((w, on)) = windows.single() else { return };
     let monitor = on.and_then(|o| monitors.get(o.0).ok()).or_else(|| monitors.iter().find(|m| m.2)).or_else(|| monitors.iter().next());
-    let Some((e, m, _)) = monitor else { return };
+    let Some((_, m, _)) = monitor else { return };
     let desktop = if matches!(w.mode, WindowMode::Fullscreen(..)) { modes.desktop } else { Some(m.physical_size()) };
     let all = ordered(monitors.iter().map(|(e, m, _)| MonitorInfo { name: m.name.clone().unwrap_or_default(), entity: e, size: m.physical_size(), position: m.physical_position }).collect());
-    if modes.desktop != desktop || modes.modes != m.video_modes || modes.monitors != all || modes.current != Some(e) {
+    let current = on.map(|o| o.0);
+    if modes.desktop != desktop || modes.modes != m.video_modes || modes.monitors != all || modes.current != current {
         info!("window: monitor {} {}, {} video modes", m.name.as_deref().unwrap_or("?"), desktop.map_or("?".to_string(), size_text), m.video_modes.len());
         modes.desktop = desktop;
         modes.modes = m.video_modes.clone();
         modes.monitors = all;
-        modes.current = Some(e);
+        modes.current = current;
     }
 }
 
@@ -273,8 +275,6 @@ type DisplayWant = (WindowChoice, String, Option<UVec2>, Option<String>);
 /// [`apply_display`]'s frame-to-frame state.
 #[derive(Default)]
 struct DisplayState {
-    /// Waiting for the monitor's video modes to be known (exclusive full screen).
-    waiting: bool,
     /// The frame after a monitor move bounced through windowed: the target mode to enter.
     bounce: Option<WindowMode>,
 }
@@ -299,7 +299,6 @@ fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorM
         return;
     }
     *last = Some(want);
-    state.waiting = false;
     let Ok(mut w) = windows.single_mut() else { return };
     let selection = borderless_selection(&modes, &monitor);
     let mode = match (args.window, full.0) {
@@ -309,8 +308,7 @@ fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorM
             Some(m) => WindowMode::Fullscreen(selection, VideoModeSelection::Specific(m)),
             None => {
                 // Not known yet (or not the monitor's): borderless until it is.
-                state.waiting = modes.modes.is_empty();
-                if !state.waiting {
+                if !modes.modes.is_empty() {
                     warn!("window: the monitor has no video mode {}; borderless full screen instead", size_text(s));
                 }
                 WindowMode::BorderlessFullscreen(selection)
