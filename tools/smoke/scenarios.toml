@@ -6234,6 +6234,18 @@ order = [[
 expect = [{ re = 'provocation summary: .*aggro radius: (?P<n>\d+) warnings, (?P<m>\d+) attacks', label = "the aggro radius in the provocation summary" }]
 
 [[scenario]]
+name = "aggro-spawned-no-warning"
+source = "#1341 (crates/fnv-game/src/aggro.rs \"Spawned actors do not warn\", docs/design/combat-ai.md §13.1): an actor created at run time (PlaceAtMe) attacks a player inside its aggro radius at once, without the placed one's warnings; the original's CrCoyote did so at the placed coyote's spot, 700 of 1,024 units off (capture o25_coyote, 2026-11-06)"
+note = "the setup of aggro-radius (the player about 600 units from VERGSCoyote6REF 0x00157B38, past half its 1,024 radius, where a placed one warns); the six Goodsprings coyotes are disabled and a CrCoyote (the first created reference, 0xFF0000xx) is PlaceAtMe'd at coyote 6's spot at 3 s"
+areas = ["combat", "alert"]
+paths = ["crates/fnv-game/src/aggro.rs", "engine/nvforever/src/provoked.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:VERGSCoyote1REF:Disable,2.1:call:VERGSCoyote2REF:Disable,2.2:call:VERGSCoyote3REF:Disable,2.3:call:VERGSCoyote4REF:Disable,2.4:call:VERGSCoyote5REF:Disable,2.5:call:VERGSCoyote6REF:Disable,3:call:VERGSCoyote6REF:PlaceAtMe:CrCoyote:1" }
+args = ["--play", "--pos=-59300,-753,9100", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 25
+expect = [{ re = 'provocation: .*0xFF0000[0-9A-F]{2} attacks the player, who stayed inside its aggro radius \((?P<n>\d+) of 1024 units\)', range = [513, 1024], label = "the spawned coyote attacks past half its radius" }]
+forbid = [{ re = 'provocation: .*0xFF0000[0-9A-F]{2} warns the player inside its aggro radius', label = "a warning from the spawned coyote" }]
+
+[[scenario]]
 name = "aggro-warning-look"
 source = "owner's playtest 2026-10-24, \"baby geckos were not showing the aggressive stay away from me warnings\" (crates/fnv-game/src/aggro.rs \"The look\", crates/fnv-ai/src/alert.rs Warnings, engine/nvforever/src/idles.rs creatures' combat idles): a young gecko warning the player stops and faces the player and draws its unarmed stance and holds it (owner 2026-10-25; the original drew and put it away every 2 s, capture `warnings`), not alerted, then attacks 15 s after its first warning; standing in the fight it plays its idle tree's combat idles (hiss, side hops)"
 note = "VERGSGecko6REF 0x00157B3C (VSpawnTier1GeckoSmall, a Young Gecko: Unaggressive, aggro radius 500, DefaultSandboxEditorLocation512 all day, which allows it); the player starts about 350 units east of its editor spot. The two GS02 gecko hunters 0x0016518B/0x0016518C (within 600 units) and the geckos 0x00157B3F, 0x00157B40, 0x00157B41 (within 5,000) are disabled so that no other fight is joined"
