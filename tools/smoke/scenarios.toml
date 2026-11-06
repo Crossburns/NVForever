@@ -20422,6 +20422,201 @@ expect = [
 order = [["load: restored", "script runner: gr_nvfsmoke.txt ran", "script runner: ln_nvfsmoke.txt ran (game load)", 'script runner: optional\gl_nvfsmoke_late.txt ran']]
 
 [[scenario]]
+name = "tiles-stats-special"
+source = "[design] pipboy.md section 5.1.1, issue 1513: with [UI] TileMenus=StatsMenu the S.P.E.C.I.A.L. tab is drawn from stats_menu.xml into the Pip-Boy's image on the device, its rows, tabs and values through its tiles; the other tabs stay hand-built and reopening keeps its rows"
+note = "the points are canvas units on the page as run [hypothesis until the first run: rows 52 high from the list top, the tab by its text]; S selects at 29 s, the pointer on row 2 at 30.5 s, a click on row 4 at 32 s, the Skills tab at 34 s, then back by the aid and through Status by A and D, and a close and reopening. Shots: compare tiles_stats_device with tiles_stats_off_device at the same time."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/stats_menu.rs", "engine/nvf-play/src/pipboy/stats/*", "engine/nvf-play/src/pipboy/frame.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvforever/src/pipboy_arm.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_KEYS = "29:s,37:a,38:d", NVF_PLAY_TEST_CONSOLE = "22.5:player.equipitem 00015038;22.8:close", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=stats,27:tab=1,30.5:point=200:240,32:click=200:344,33.5:point=off,34:click=500:651,36:tab=1,39:close,41:open,43:close", NVF_PLAY_TEST_TILE_MENUS = "StatsMenu", NVF_PLAY_TEST_SHOTS = "28:tiles_stats_device.png,31:tiles_stats_device_row.png,35:tiles_stats_device_skills.png,42:tiles_stats_device_reopened.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=StatsMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): StatsMenu drawn from tiles', label = "on the device: the switch is read from the test aid" },
+  { text = "pipboy: frame Device", min = 1, label = "on the device: on the device" },
+  { re = 'tiles: StatsMenu page from tiles: .*, device$', min = 1, label = "on the device: the device's layout" },
+  { re = 'tiles: StatsMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', count = 1, label = "on the device: structure only, no pixels: the menu goes to the painter, once for the run: the rows outlast tab changes and reopening" },
+  { re = '''tiles: StatsMenu set out for the Pip-Boy's image: [1-9]\d* pieces, 7 row names''', min = 1, label = "on the device: structure only, logs cannot prove pixels (the shots do): pieces of the file go to the painter, the seven rows' names among them" },
+  { text = "StatsMenu drawn by hand", count = 0, label = "on the device: the file has every name the page needs" },
+  { re = 'tiles: StatsMenu page from tiles: 7 rows, "[^"]+" selected, value \d+, boxed at -1, list height [1-9]\d*(\.\d+)?, row height [1-9]', label = "on the device: seven rows measured, no box at opening" },
+  { re = 'tiles: StatsMenu page from tiles: 7 rows, "[^"]+" selected, value \d+, boxed at [0-9]', label = "on the device: a key or the pointer boxes the row" },
+  { re = 'tiles: pointer over StatsMenu/\S*stats_special_container/Endurance \(id -1\)', min = 1, label = "on the device: a tile hit on row 2, on the canvas: its tile has the value's name and id -1, as the original's" },
+  { text = "tiles: StatsMenu Row(4) on its tiles", count = 1, label = "on the device: the click on row 4 acted once, through its tile" },
+  { text = "tiles: StatsMenu Tab(2) on its tiles", count = 1, label = "on the device: the click on the Skills tab, through its tile" },
+  { re = 'tiles: pointer over StatsMenu/\S*stats_tailline_skills/stb_text_box', min = 1, label = "on the device: structure only, no pixels: the tab under the point is that tab, at its own place" },
+  { re = 'tiles: StatsMenu description scroll drawn at 0 of \d+, text y', min = 1, label = "on the device: the description's value is the model's" },
+  { re = 'pipboy stats: LVL \S+, HP \S+, AP \S+, XP \S+; 7 S\.P\.E\.C\.I\.A\.L\.', min = 3, label = "on the device: the page's summary at each opening and tab change, logged with no hand-built body" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Perception \d+\S* ?\S* ?selected', label = "on the device: a key selects, the page's own keys and log line" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Endurance \d+\S* ?\S* ?selected', label = "on the device: the pointer moved onto row 2 selects it" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Intelligence \d+\S* ?\S* ?selected', label = "on the device: a click on row 4 selects it" },
+  { text = "pipboy: STATS Skills", min = 1, label = "on the device: a click on the tab line goes to the next tab, hand-built" },
+]
+order = [["pipboy: frame Device", { text = "tiles: StatsMenu Tab(2) on its tiles" }, "pipboy: STATS Skills", "pipboy: STATS S.P.E.C.I.A.L.", { re = 'tiles: StatsMenu page from tiles: 7 rows', label = "back on the tab: written again from tiles" }, { re = "tiles: StatsMenu set out for the Pip-Boy's image: [1-9]\\d* pieces, 7 row names", label = "and set out again" }, "pipboy: STATS Status", "pipboy: STATS S.P.E.C.I.A.L.", "pipboy: down", "pipboy: up, page STATS tab S.P.E.C.I.A.L.", { re = 'tiles: StatsMenu page from tiles: 7 rows', label = "reopened: written again from tiles" }, { re = "tiles: StatsMenu set out for the Pip-Boy's image: [1-9]\\d* pieces, 7 row names", label = "and set out again" }]]
+
+[[scenario]]
+name = "tiles-stats-special-screen"
+source = "[design] pipboy.md section 5.1.1, issue 1513, the owner 2026-10-31: the same page in the screen menu: no title, no background or scanlines from the shell, and the page names' header still takes clicks, with no tile under it"
+note = "the points are canvas units on the page as run [hypothesis until the first run: rows 52 high from the list top, the tab by its text]; S selects at 29 s, the pointer on row 2 at 30.5 s, a click on row 4 at 32 s, the Skills tab at 34 s, then back by the aid and through Status by A and D, and a close and reopening; at 33.7 s a click on the header goes to ITEMS by the shell, the aid brings STATS back. Shots: compare tiles_stats_screen with tiles_stats_off_screen."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/stats_menu.rs", "engine/nvf-play/src/pipboy/stats/*", "engine/nvf-play/src/pipboy/frame.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvforever/src/pipboy_arm.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_KEYS = "29:s,37:a,38:d", NVF_PLAY_TEST_PIPBOY = "22:frame=screen,25:open,26:page=stats,27:tab=1,30.5:point=200:240,32:click=200:344,33.5:point=off,33.7:click=320:35,34.2:page=stats,34.7:click=500:651,36:tab=1,39:close,41:open,43:close", NVF_PLAY_TEST_TILE_MENUS = "StatsMenu", NVF_PLAY_TEST_SHOTS = "28:tiles_stats_screen.png,31:tiles_stats_screen_row.png,35:tiles_stats_screen_skills.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  { text = "pipboy: frame Screen", min = 1, label = "in the screen menu: the screen menu" },
+  { re = 'tiles: StatsMenu page from tiles: .*, screen menu$', min = 1, label = "in the screen menu: the screen menu's layout" },
+  { re = 'pipboy: ITEMS ', min = 1, label = "in the screen menu: the header's click reached the hand-built shell over the tile page" },
+  { re = 'tiles: StatsMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', count = 1, label = "in the screen menu: structure only, no pixels: the menu goes to the painter, once for the run: the rows outlast tab changes and reopening" },
+  { re = '''tiles: StatsMenu set out for the Pip-Boy's image: [1-9]\d* pieces, 7 row names''', min = 1, label = "in the screen menu: structure only, logs cannot prove pixels (the shots do): pieces of the file go to the painter, the seven rows' names among them" },
+  { text = "StatsMenu drawn by hand", count = 0, label = "in the screen menu: the file has every name the page needs" },
+  { re = 'tiles: StatsMenu page from tiles: 7 rows, "[^"]+" selected, value \d+, boxed at -1, list height [1-9]\d*(\.\d+)?, row height [1-9]', label = "in the screen menu: seven rows measured, no box at opening" },
+  { re = 'tiles: StatsMenu page from tiles: 7 rows, "[^"]+" selected, value \d+, boxed at [0-9]', label = "in the screen menu: a key or the pointer boxes the row" },
+  { re = 'tiles: pointer over StatsMenu/\S*stats_special_container/Endurance \(id -1\)', min = 1, label = "in the screen menu: a tile hit on row 2, on the canvas: its tile has the value's name and id -1, as the original's" },
+  { text = "tiles: StatsMenu Row(4) on its tiles", count = 1, label = "in the screen menu: the click on row 4 acted once, through its tile" },
+  { text = "tiles: StatsMenu Tab(2) on its tiles", count = 1, label = "in the screen menu: the click on the Skills tab, through its tile" },
+  { re = 'tiles: pointer over StatsMenu/\S*stats_tailline_skills/stb_text_box', min = 1, label = "in the screen menu: structure only, no pixels: the tab under the point is that tab, at its own place" },
+  { re = 'tiles: StatsMenu description scroll drawn at 0 of \d+, text y', min = 1, label = "in the screen menu: the description's value is the model's" },
+  { re = 'pipboy stats: LVL \S+, HP \S+, AP \S+, XP \S+; 7 S\.P\.E\.C\.I\.A\.L\.', min = 3, label = "in the screen menu: the page's summary at each opening and tab change, logged with no hand-built body" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Perception \d+\S* ?\S* ?selected', label = "in the screen menu: a key selects, the page's own keys and log line" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Endurance \d+\S* ?\S* ?selected', label = "in the screen menu: the pointer moved onto row 2 selects it" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Intelligence \d+\S* ?\S* ?selected', label = "in the screen menu: a click on row 4 selects it" },
+  { text = "pipboy: STATS Skills", min = 1, label = "in the screen menu: a click on the tab line goes to the next tab, hand-built" },
+]
+order = [["pipboy: frame Screen", { re = 'pipboy: ITEMS ' }, { text = "tiles: StatsMenu Tab(2) on its tiles" }, "pipboy: STATS Skills", "pipboy: STATS S.P.E.C.I.A.L.", { re = 'tiles: StatsMenu page from tiles: 7 rows', label = "back on the tab: written again from tiles" }, { re = "tiles: StatsMenu set out for the Pip-Boy's image: [1-9]\\d* pieces, 7 row names", label = "and set out again" }, "pipboy: STATS Status", "pipboy: STATS S.P.E.C.I.A.L.", "pipboy: down", "pipboy: up, page STATS tab S.P.E.C.I.A.L.", { re = 'tiles: StatsMenu page from tiles: 7 rows', label = "reopened: written again from tiles" }, { re = "tiles: StatsMenu set out for the Pip-Boy's image: [1-9]\\d* pieces, 7 row names", label = "and set out again" }]]
+
+[[scenario]]
+name = "tiles-stats-special-off"
+source = "[design] pipboy.md section 5.1.1: without the switch the page is the hand-built one on the device: nothing of the tile page runs, and its keys, pointer, tabs and log lines work as before"
+note = "the same steps and times as tiles-stats-special, at the hand-built places. Shots to compare with it."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/stats_menu.rs", "engine/nvf-play/src/pipboy/stats/*", "engine/nvf-play/src/pipboy/frame.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvforever/src/pipboy_arm.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_KEYS = "29:s,37:a,38:d", NVF_PLAY_TEST_CONSOLE = "22.5:player.equipitem 00015038;22.8:close", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=stats,27:tab=1,30.5:point=200:240,32:click=200:344,33.5:point=off,34:click=500:651,36:tab=1,39:close,41:open,43:close", NVF_PLAY_TEST_SHOTS = "28:tiles_stats_off_device.png,31:tiles_stats_off_device_row.png,35:tiles_stats_off_device_skills.png,42:tiles_stats_off_device_reopened.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  { re = 'tiles: StatsMenu|StatsMenu drawn by hand', count = 0, label = "switch off, on the device: nothing of the tile page runs without its switch" },
+  { re = 'pipboy stats: LVL \S+, HP \S+, AP \S+, XP \S+; 7 S\.P\.E\.C\.I\.A\.L\.', min = 3, label = "switch off, on the device: the summary as before" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Perception \d+\S* ?\S* ?selected', label = "switch off, on the device: a key selects, the page's own keys and log line" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Endurance \d+\S* ?\S* ?selected', label = "switch off, on the device: the pointer moved onto row 2 selects it" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Intelligence \d+\S* ?\S* ?selected', label = "switch off, on the device: a click on row 4 selects it" },
+  { text = "pipboy: STATS Skills", min = 1, label = "switch off, on the device: a click on the tab line goes to the next tab, hand-built" },
+]
+
+[[scenario]]
+name = "tiles-stats-special-off-screen"
+source = "[design] pipboy.md section 5.1.1: without the switch the screen menu's page is the hand-built one"
+note = "the same steps and times as tiles-stats-special-screen. Shots to compare with it."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/stats_menu.rs", "engine/nvf-play/src/pipboy/stats/*", "engine/nvf-play/src/pipboy/frame.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvforever/src/pipboy_arm.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_KEYS = "29:s,37:a,38:d", NVF_PLAY_TEST_PIPBOY = "22:frame=screen,25:open,26:page=stats,27:tab=1,30.5:point=200:240,32:click=200:344,33.5:point=off,33.7:click=320:35,34.2:page=stats,34.7:click=500:651,36:tab=1,39:close,41:open,43:close", NVF_PLAY_TEST_SHOTS = "28:tiles_stats_off_screen.png,31:tiles_stats_off_screen_row.png,35:tiles_stats_off_screen_skills.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  { re = 'tiles: StatsMenu|StatsMenu drawn by hand', count = 0, label = "switch off, in the screen menu: nothing of the tile page runs without its switch" },
+  { text = "pipboy: frame Screen", min = 1, label = "switch off, in the screen menu: the screen menu" },
+  { re = 'pipboy: ITEMS ', min = 1, label = "switch off, in the screen menu: the header's click" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Perception \d+\S* ?\S* ?selected', label = "switch off, in the screen menu: a key selects, the page's own keys and log line" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Endurance \d+\S* ?\S* ?selected', label = "switch off, in the screen menu: the pointer moved onto row 2 selects it" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Intelligence \d+\S* ?\S* ?selected', label = "switch off, in the screen menu: a click on row 4 selects it" },
+  { text = "pipboy: STATS Skills", min = 1, label = "switch off, in the screen menu: a click on the tab line goes to the next tab, hand-built" },
+]
+
+[[scenario]]
+name = "tiles-stats-special-missing-template"
+source = "[design] pipboy.md section 5.1.1: a file short of what the page needs keeps the whole hand-built page, says why once across reopening, and draws no tile of it"
+note = "NVF_PLAY_TEST_STATS_TILE_CUT takes the row template as missing, so no changed game file is needed; the hand-built places, as tiles-stats-special-off."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/stats_menu.rs", "engine/nvf-play/src/pipboy/stats/*", "engine/nvf-play/src/pipboy/frame.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvforever/src/pipboy_arm.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_KEYS = "29:s,37:a,38:d", NVF_PLAY_TEST_CONSOLE = "22.5:player.equipitem 00015038;22.8:close", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=stats,27:tab=1,30.5:point=200:240,32:click=200:344,33.5:point=off,34:click=500:651,36:tab=1,39:close,41:open,43:close", NVF_PLAY_TEST_TILE_MENUS = "StatsMenu", NVF_PLAY_TEST_STATS_TILE_CUT = "stats_list_template", NVF_PLAY_TEST_SHOTS = "28:tiles_stats_missing_template.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  { text = "StatsMenu drawn by hand: stats_list_template missing", count = 1, label = "the template cut, by hand: the reason, once across the reopening" },
+  { text = "tiles: StatsMenu set out", count = 0, label = "the template cut, by hand: no tile of the page goes to the painter" },
+  { text = "tiles: StatsMenu drawn from tiles", count = 0, label = "the template cut, by hand: not drawn from tiles" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Perception \d+\S* ?\S* ?selected', label = "the template cut, by hand: a key selects, the page's own keys and log line" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Endurance \d+\S* ?\S* ?selected', label = "the template cut, by hand: the pointer moved onto row 2 selects it" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Intelligence \d+\S* ?\S* ?selected', label = "the template cut, by hand: a click on row 4 selects it" },
+  { text = "pipboy: STATS Skills", min = 1, label = "the template cut, by hand: a click on the tab line goes to the next tab, hand-built" },
+]
+
+[[scenario]]
+name = "tiles-stats-special-with-hud"
+source = "[design] pipboy.md section 5.1.1, tiles::interface_screen: StatsMenu beside the tile HUD: both draw, and the gate is the whole tree's, so the HUD gets interface units and the hotrect-alpha rule it does not get alone"
+note = "the points are canvas units on the page as run [hypothesis until the first run: rows 52 high from the list top, the tab by its text]; S selects at 29 s, the pointer on row 2 at 30.5 s, a click on row 4 at 32 s, the Skills tab at 34 s, then back by the aid and through Status by A and D, and a close and reopening. tiles_stats_hud_hud against the tile HUD alone shows what the shared gate changes in the HUD; the effect is stated and unit tested, not isolated."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/stats_menu.rs", "engine/nvf-play/src/pipboy/stats/*", "engine/nvf-play/src/pipboy/frame.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvforever/src/pipboy_arm.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_KEYS = "29:s,37:a,38:d", NVF_PLAY_TEST_CONSOLE = "22.5:player.equipitem 00015038;22.8:close", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=stats,27:tab=1,30.5:point=200:240,32:click=200:344,33.5:point=off,34:click=500:651,36:tab=1,39:close,41:open,43:close", NVF_PLAY_TEST_TILE_MENUS = "HUDMainMenu,StatsMenu", NVF_PLAY_TEST_SHOTS = "24:tiles_stats_hud_hud.png,28:tiles_stats_hud_page.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 46
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=HUDMainMenu,StatsMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): HUDMainMenu, StatsMenu drawn from tiles', label = "beside the tile HUD: both switches" },
+  { re = 'tiles: HUDMainMenu drawn from tiles', min = 1, label = "beside the tile HUD: the HUD draws from its tiles" },
+  { re = 'tiles: StatsMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', count = 1, label = "beside the tile HUD: structure only, no pixels: the menu goes to the painter, once for the run: the rows outlast tab changes and reopening" },
+  { re = '''tiles: StatsMenu set out for the Pip-Boy's image: [1-9]\d* pieces, 7 row names''', min = 1, label = "beside the tile HUD: structure only, logs cannot prove pixels (the shots do): pieces of the file go to the painter, the seven rows' names among them" },
+  { text = "StatsMenu drawn by hand", count = 0, label = "beside the tile HUD: the file has every name the page needs" },
+  { re = 'tiles: StatsMenu page from tiles: 7 rows, "[^"]+" selected, value \d+, boxed at -1, list height [1-9]\d*(\.\d+)?, row height [1-9]', label = "beside the tile HUD: seven rows measured, no box at opening" },
+  { re = 'tiles: StatsMenu page from tiles: 7 rows, "[^"]+" selected, value \d+, boxed at [0-9]', label = "beside the tile HUD: a key or the pointer boxes the row" },
+  { re = 'tiles: pointer over StatsMenu/\S*stats_special_container/Endurance \(id -1\)', min = 1, label = "beside the tile HUD: a tile hit on row 2, on the canvas: its tile has the value's name and id -1, as the original's" },
+  { text = "tiles: StatsMenu Row(4) on its tiles", count = 1, label = "beside the tile HUD: the click on row 4 acted once, through its tile" },
+  { text = "tiles: StatsMenu Tab(2) on its tiles", count = 1, label = "beside the tile HUD: the click on the Skills tab, through its tile" },
+  { re = 'tiles: pointer over StatsMenu/\S*stats_tailline_skills/stb_text_box', min = 1, label = "beside the tile HUD: structure only, no pixels: the tab under the point is that tab, at its own place" },
+  { re = 'tiles: StatsMenu description scroll drawn at 0 of \d+, text y', min = 1, label = "beside the tile HUD: the description's value is the model's" },
+  { re = 'pipboy stats: LVL \S+, HP \S+, AP \S+, XP \S+; 7 S\.P\.E\.C\.I\.A\.L\.', min = 3, label = "beside the tile HUD: the page's summary at each opening and tab change, logged with no hand-built body" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Perception \d+\S* ?\S* ?selected', label = "beside the tile HUD: a key selects, the page's own keys and log line" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Endurance \d+\S* ?\S* ?selected', label = "beside the tile HUD: the pointer moved onto row 2 selects it" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Intelligence \d+\S* ?\S* ?selected', label = "beside the tile HUD: a click on row 4 selects it" },
+  { text = "pipboy: STATS Skills", min = 1, label = "beside the tile HUD: a click on the tab line goes to the next tab, hand-built" },
+]
+
+[[scenario]]
+name = "tiles-stats-special-scroll"
+source = "[design] pipboy.md section 5.1.1: a description longer than its window scrolls: the test aid, the wheel over the file's own description area, back again, and a new row starting at its top, the value the model's. Logs only: the shot shows the text itself"
+note = "longdesc forces a long description in the aid's own words, as vanilla's seem to fit; the point is on the description, in canvas units, [hypothesis until the first run]."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/stats_menu.rs", "engine/nvf-play/src/pipboy/stats/*", "engine/nvf-play/src/pipboy/frame.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvforever/src/pipboy_arm.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_TILE_MENUS = "StatsMenu", NVF_PLAY_TEST_PIPBOY = "22:frame=screen,25:open,26:page=stats,27:tab=1,30:point=600:500,38:close", NVF_PLAY_TEST_PIPBOY_STATS = "28:longdesc,29:desc=down", NVF_PLAY_TEST_KEYS = "31:wheel-down,33:wheel-up,35:s", NVF_PLAY_TEST_SHOTS = "32:tiles_stats_scrolled.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 42
+expect = [
+  { re = 'tiles: StatsMenu description scroll drawn at 0 of [1-9]', min = 1, label = "the forced text overflows the tile's own window" },
+  { re = 'tiles: StatsMenu description scroll drawn at 1 of [1-9]\d*, text y -\d', min = 1, label = "a step moves the text, by the file, from the model's value" },
+  { re = 'tiles: StatsMenu description scroll drawn at 2 of [1-9]\d*, text y -\d', count = 1, label = "the wheel over the description, once" },
+]
+order = [[{ re = 'scroll drawn at 0 of [1-9]' }, { re = 'scroll drawn at 1 of [1-9]' }, { re = 'scroll drawn at 2 of [1-9]', label = "wheel down" }, { re = 'scroll drawn at 1 of [1-9]', label = "wheel up" }, { re = 'S\.P\.E\.C\.I\.A\.L\.: Perception \d+\S* ?\S* ?selected' }, { re = 'scroll drawn at 0 of [1-9]', label = "a new row starts at its top" }]]
+
+[[scenario]]
+name = "tiles-stats-special-modal"
+source = "[design] pipboy.md section 5.1.1, the review of the first slice: a menu over the tiled page owns the input, for all of the frame it closes in: S while it is up steps nothing, the Esc that closes it does not close the Pip-Boy, and the page's keys come back after"
+note = "hand-built tutorial menu over the tiled page; S at 33 s is the menu's, Esc at 35 s closes it, S at 37 s is the page's. Only logs: selection and close order."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/stats_menu.rs", "engine/nvf-play/src/pipboy/stats/*", "engine/nvf-play/src/pipboy/frame.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvforever/src/pipboy_arm.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_TILE_MENUS = "StatsMenu", NVF_PLAY_TEST_SCRIPT = "30:call:-:ShowTutorialMenu:0x00072358", NVF_PLAY_TEST_PIPBOY = "22:frame=screen,25:open,26:page=stats,27:tab=1,39:close", NVF_PLAY_TEST_KEYS = "33:s,35:esc,37:s" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 42
+expect = [
+  { text = "tutorial menu: closed (key)", count = 1, label = "Esc closes the menu over the page" },
+  { re = 'S\.P\.E\.C\.I\.A\.L\.: Perception \d+\S* ?\S* ?selected', count = 1, label = "of two presses of S only the one after the close steps the page" },
+  { text = "pipboy: down", count = 1, label = "the closing Esc did not also close the Pip-Boy: only the aid's close" },
+  { text = "StatsMenu drawn by hand", count = 0, label = "the page stays tiled under the menu" },
+]
+order = [["script: test aid calls ShowTutorialMenu", "tutorial menu: closed (key)", { re = 'S\.P\.E\.C\.I\.A\.L\.: Perception \d+\S* ?\S* ?selected' }, "pipboy: down"]]
+
+[[scenario]]
+name = "tiles-stats-special-recovery"
+source = "[design] pipboy.md section 5.1.1: a page that failed to prepare is tried again: while the template is taken as missing the page is hand-built, and when it comes back the tiles take over on the same tab, with no reopening"
+note = "NVF_PLAY_TEST_STATS_TILE_CUT ends at 33 s. Compare tiles_stats_recovery_before and _after: logs show the change of owner, the shots the drawing."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/tiles/stats_menu.rs", "engine/nvf-play/src/pipboy/stats/*", "engine/nvf-play/src/pipboy/frame.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvforever/src/pipboy_arm.rs", "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_TILE_MENUS = "StatsMenu", NVF_PLAY_TEST_STATS_TILE_CUT = "stats_list_template@33", NVF_PLAY_TEST_PIPBOY = "22:frame=screen,25:open,26:page=stats,27:tab=1,38:close", NVF_PLAY_TEST_SHOTS = "31:tiles_stats_recovery_before.png,36:tiles_stats_recovery_after.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 42
+expect = [
+  { text = "StatsMenu drawn by hand: stats_list_template missing", count = 1, label = "the reason, once" },
+  { re = 'tiles: StatsMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', count = 1, label = "structure only, no pixels: the menu goes to the painter once it can" },
+]
+order = [["StatsMenu drawn by hand: stats_list_template missing", "test aid: NVF_PLAY_TEST_STATS_TILE_CUT over", { re = 'tiles: StatsMenu drawn from tiles' }, { re = "tiles: StatsMenu set out for the Pip-Boy's image: [1-9]\\d* pieces, 7 row names" }, "pipboy: down"]]
+
+[[scenario]]
 name = "script-runner-menu"
 source = "issue #1548, docs/spec-notes/ext-script-runner.md §2: behind the main menu only the gr_ files run; the new game's ln_ files wait for New Game"
 areas = ["scripts", "extender", "main-menu"]

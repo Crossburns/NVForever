@@ -243,11 +243,17 @@ fn place(tile: &Tile, kind: &Kind, parent: Context, measure: &Measure<'_>) -> Co
     }
 }
 
-fn children_context(tile: &Tile, mut context: Context) -> Context {
+/// What a tile's children stand in: `context` is the tile's own, `above` its parent's.
+fn children_context(tile: &Tile, mut context: Context, above: Context) -> Context {
     context.clip_above = context.clip;
     // `clips`, or a `clipwindow` its menu turned on: the same rule as under the pointer.
     if fnv_ui::input::clips_children(tile) {
         context.clip = Some(context.clip.map_or(context.rect, |clip| clip.intersect(context.rect)));
+    }
+    // A mark only a menu's model writes (`fnv_ui::input::NO_ORIGIN`), the same under the pointer.
+    if tile.get(fnv_ui::input::NO_ORIGIN).is_some_and(Value::truthy) {
+        context.rect.left = above.rect.left;
+        context.rect.top = above.rect.top;
     }
     context
 }
@@ -269,7 +275,7 @@ pub fn layout(ui: &Ui, root: TileId, measure: &Measure<'_>, t15: bool) -> Vec<Dr
         if !tile.live {
             return Vec::new();
         }
-        context = children_context(tile, place(tile, &kind(tile), context, measure));
+        context = children_context(tile, place(tile, &kind(tile), context, measure), context);
     }
     let mut out = Vec::new();
     let mut stack = vec![(root, context)];
@@ -300,7 +306,7 @@ pub fn layout(ui: &Ui, root: TileId, measure: &Measure<'_>, t15: bool) -> Vec<Dr
                 },
             });
         }
-        let parent = children_context(tile, context);
+        let parent = children_context(tile, context, parent);
         let mut children = tile.children.clone();
         children.sort_by(|&a, &b| number(ui.tile(a), "depth", 0.0).total_cmp(&number(ui.tile(b), "depth", 0.0)));
         stack.extend(children.into_iter().rev().map(|id| (id, parent)));
@@ -447,6 +453,24 @@ mod tests {
         assert_eq!(alpha(&ui, "B"), 51.0, "the picture keeps its own");
         assert_eq!(alpha(&ui, "R"), 255.0, "the mark starts again at full strength");
         assert_eq!(alpha(&ui, "I"), 127.5, "under the mark, only what is below it");
+    }
+
+    /// A marked tile keeps its own place, and its children stand from where it stands.
+    #[test]
+    fn a_tile_marked_no_origin_gives_its_children_no_place() {
+        let src = MemSource::default().with("n.xml", r#"<menu name="N"><rect name="Line"><x>11</x><y>23</y><hotrect name="Tab"><x>101</x><y>53</y><image name="Inner"><x>101</x><y>53</y></image></hotrect></rect></menu>"#);
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "n.xml").unwrap();
+        ui.update();
+        let inner = ui.find_tile("N/Line/Tab/Inner").unwrap();
+        let place = |ui: &Ui| layout(ui, menu, &|_, _, _| (0.0, 0.0), true).into_iter().find(|i| i.tile == inner).map(|i| (i.rect.left, i.rect.top));
+        assert_eq!(place(&ui), Some((213.0, 129.0)), "unmarked, twice over");
+        let tab = ui.find_tile("N/Line/Tab").unwrap();
+        ui.set_trait(tab, fnv_ui::input::NO_ORIGIN, Value::Num(1.0));
+        assert_eq!(place(&ui), Some((112.0, 76.0)));
+        // From a subtree too: what stands above it counts the same.
+        let from_tab = layout(&ui, tab, &|_, _, _| (0.0, 0.0), true);
+        assert_eq!(from_tab.iter().find(|i| i.tile == inner).map(|i| (i.rect.left, i.rect.top)), Some((112.0, 76.0)));
     }
 
     #[test]

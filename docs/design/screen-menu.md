@@ -177,8 +177,8 @@ would need a widened layout. Left open (§7); the first build keeps 4:3 with sid
   frame is `Screen` or nothing shows the model's screen); it spawns the shade and the
   image, maps the window's pointer onto the canvas as before, and
   spawns them again when the image's scale changed (its crop is in the image's pixels).
-- **`frame::draw`** leaves out the device's background picture and scanlines in the
-  screen menu; the page modules do not branch.
+- **`device_screen.rs`** leaves out the device's background picture and scanlines in the
+  screen menu (`wanted`); the page modules do not branch.
 - No fade: the menus are there at once, as the barter menu is [design].
 
 ## 5. Switching

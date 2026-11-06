@@ -227,6 +227,8 @@ pub fn hand_built_takes(menu: &str, key: &str) -> bool {
         &super::wait_menu::HAND_BUILT_KEYS
     } else if menu.eq_ignore_ascii_case(super::tutorial_menu::TUTORIAL_MENU) {
         &super::tutorial_menu::HAND_BUILT_KEYS
+    } else if menu.eq_ignore_ascii_case(super::stats_menu::STATS_MENU) {
+        &super::stats_menu::HAND_BUILT_KEYS
     } else if menu.eq_ignore_ascii_case(super::container_menu::CONTAINER_MENU) {
         &super::container_menu::HAND_BUILT_KEYS
     } else if menu.eq_ignore_ascii_case(super::trait_menu::TRAIT_MENU) {
