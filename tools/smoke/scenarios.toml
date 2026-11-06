@@ -6368,6 +6368,33 @@ expect = [
 ]
 
 [[scenario]]
+name = "marker-found-write"
+source = "issue #1571: a save made inside a found map marker's radius pays nothing for it on load; the first half: Goodsprings is found, then saved (marker-found-load reads this save, so run them together)"
+areas = ["save", "map"]
+paths = ["engine/nvf-play/src/compass.rs", "engine/nvf-play/src/pipboy/data.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "marker-found-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "18:save marker-found;19:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'compass: discovered .*\+10 XP', label = "the town is found, 10 XP" },
+  { re = 'save: wrote .*marker-found\.nvfsave', label = "the save is written" },
+]
+order = [["compass: discovered", "save: wrote"]]
+
+[[scenario]]
+name = "marker-found-load"
+source = "issue #1571: the second half: --load the save marker-found-write made, at the same place; no second discovery and no XP"
+areas = ["save", "map"]
+paths = ["engine/nvf-play/src/compass.rs", "engine/nvf-play/src/pipboy/data.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "marker-found-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05" }
+args = ["--play", "--load", "marker-found", "--no-voice"]
+run_seconds = 18
+expect = [
+  { re = 'load: engine state of .*marker-found\.nvfsave put back', label = "the engine state is put back" },
+  { re = 'compass: discovered ', count = 0, label = "the marker the save holds is not found again" },
+]
+
+[[scenario]]
 name = "seated-save-write"
 source = "issue #1573: after loading a save made while seated the player stands and GetSitting reads 0; the first half: sit (Goodsprings bench 0010634A), GetSitting reads 3, save (seated-save-load reads this save, so run them together)"
 areas = ["save", "furniture"]
