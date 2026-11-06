@@ -8331,7 +8331,7 @@ expect = [
 
 [[scenario]]
 name = "look-sensitivity-write"
-source = "owner 2026-11-03 (#1451): Invert Y and a sensitivity slider (as the sound sliders) on the settings page's Controls tab, Mouse Sensitivity with keyboard and mouse and Stick Sensitivity with a controller, kept apart; NVForever's own range (25%-300% of the game's); the first half of a round trip (look-sensitivity-read starts in the same home), run them together"
+source = "owner 2026-11-03 (#1451): Invert Y and a sensitivity slider (as the sound sliders) on the settings page's Controls tab, Mouse Sensitivity with keyboard and mouse and Stick Sensitivity with a controller, kept apart; NVForever's own range (25%-300% of the game's, floor 5% since #1632); the first half of a round trip (look-sensitivity-read starts in the same home), run them together"
 areas = ["main-menu", "save"]
 paths = ["engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/pause.rs"]
 env = { NVFOREVER_HOME = "look-sensitivity-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:17", NVF_PLAY_TEST_SETTINGS = "10.5:controls,11:device:Keyboard and Mouse,11.5:invert:0,12:sensitivity:100,12.5:invert:1,13:sensitivity:150,14:device:Controller,14.5:sensitivity:100,15:sensitivity:50" }
