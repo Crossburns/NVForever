@@ -38,12 +38,12 @@ impl WindowChoice {
     pub fn mode(self) -> WindowMode {
         match self {
             WindowChoice::Windowed => WindowMode::Windowed,
-            // `Current` and `Primary` cannot be resolved while the window is being created
-            // (it has no monitor yet, and on Wayland the compositor has no "primary" to
-            // report) [documented: bevy_window MonitorSelection], so either leaves the
-            // placement to the compositor [observed: #1641]. This is only the window's
-            // initial mode: `apply_display` moves it to the chosen display (the first one
-            // until a choice is kept) once the monitors are known.
+            // `Current` cannot be resolved while the window is being created (it has no
+            // monitor yet) [documented: bevy_window MonitorSelection], and on Wayland there
+            // is no "primary" monitor to report either [observed: #1641], so the compositor
+            // places the window. This is only the window's initial mode: `apply_display`
+            // moves it to the chosen display (the first one until a choice is kept) once the
+            // monitors are known.
             WindowChoice::Borderless => WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
         }
     }
@@ -63,6 +63,8 @@ pub struct MonitorModes {
     /// Every monitor, for the Display "Monitor" list and for selecting one (its entity)
     /// once it is known.
     pub monitors: Vec<MonitorInfo>,
+    /// The monitor the window is on now (its entity), for comparing against a chosen one.
+    pub current: Option<Entity>,
 }
 
 /// A monitor: its connector name (stable — kept in the INI), its entity, its native size
@@ -252,14 +254,15 @@ pub fn monitor_load(world: &mut World, text: &str) -> bool {
 fn watch_monitor(windows: Query<(&Window, Option<&OnMonitor>), With<PrimaryWindow>>, monitors: Query<(Entity, &Monitor, Has<PrimaryMonitor>)>, mut modes: ResMut<MonitorModes>) {
     let Ok((w, on)) = windows.single() else { return };
     let monitor = on.and_then(|o| monitors.get(o.0).ok()).or_else(|| monitors.iter().find(|m| m.2)).or_else(|| monitors.iter().next());
-    let Some((_, m, _)) = monitor else { return };
+    let Some((e, m, _)) = monitor else { return };
     let desktop = if matches!(w.mode, WindowMode::Fullscreen(..)) { modes.desktop } else { Some(m.physical_size()) };
     let all = ordered(monitors.iter().map(|(e, m, _)| MonitorInfo { name: m.name.clone().unwrap_or_default(), entity: e, size: m.physical_size(), position: m.physical_position }).collect());
-    if modes.desktop != desktop || modes.modes != m.video_modes || modes.monitors != all {
+    if modes.desktop != desktop || modes.modes != m.video_modes || modes.monitors != all || modes.current != Some(e) {
         info!("window: monitor {} {}, {} video modes", m.name.as_deref().unwrap_or("?"), desktop.map_or("?".to_string(), size_text), m.video_modes.len());
         modes.desktop = desktop;
         modes.modes = m.video_modes.clone();
         modes.monitors = all;
+        modes.current = Some(e);
     }
 }
 
@@ -280,11 +283,12 @@ struct DisplayState {
 /// change (and again once the monitor's modes are known, for exclusive full screen).
 fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorModes>, monitor: Res<MonitorChoice>, mut windows: Query<&mut Window, With<PrimaryWindow>>, mut last: Local<Option<DisplayWant>>, mut state: Local<DisplayState>) {
     // The frame after a monitor move bounced through windowed: enter the target mode.
-    if let Some(mode) = state.bounce.take() {
+    if let Some(mode) = state.bounce {
         if let Ok(mut w) = windows.single_mut() {
             if w.mode != mode {
                 w.mode = mode;
             }
+            state.bounce = None;
         }
         return;
     }
@@ -316,8 +320,15 @@ fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorM
     if w.mode != mode {
         // Moving full screen to a different display: the compositor ignores a full-screen
         // request to another output while already full screen [observed: #1641], so bounce
-        // through windowed (one frame) and re-enter on the next.
-        let moving = matches!(w.mode, WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(..)) && matches!(mode, WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(..));
+        // through windowed (one frame) and re-enter on the next. Only when the chosen
+        // display is a specific monitor other than the one the window is already on.
+        let target = match selection {
+            MonitorSelection::Entity(e) => Some(e),
+            _ => None,
+        };
+        let moving = target.is_some() && modes.current != target
+            && matches!(w.mode, WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(..))
+            && matches!(mode, WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(..));
         if moving {
             w.mode = WindowMode::Windowed;
             state.bounce = Some(mode);

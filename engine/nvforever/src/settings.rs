@@ -138,7 +138,7 @@ pub fn register(app: &mut App) {
             key: "monitor",
             group: GROUP_PICTURE,
             label: "Monitor",
-            note: "The display the game opens on in borderless full screen (the first display until you pick one). (--window borderless)",
+            note: "The display the game opens on in full screen (the first display until you pick one). (--window borderless)",
             get: |_| false,
             set: |_, _| {},
             slider: None,
