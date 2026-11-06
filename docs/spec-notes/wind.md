@@ -58,9 +58,16 @@ direction may be a fixed world wind or the weather's (WTHR DATA stores no direct
 
 - A body whose collision object has the wind flag and is dynamic is put in the world
   awake, even with the clutter that starts asleep (physics.md §4.3.1).
-- Each frame outdoors, every such body that is awake has its horizontal velocity drawn
-  towards the wind's by at most 300 units a second squared (`tumble::WIND_ACCEL`, about
-  the pull of gravity on a 25° slope); a body asleep is left so [hypothesis, §2].
+- Each frame outdoors, for its first 3 s awake (`tumble::GUST`) such a body has its
+  horizontal velocity drawn towards the wind's by at most 300 units a second squared
+  (`tumble::WIND_ACCEL`, about the pull of gravity on a 25° slope); after that it is
+  slowed by 50 units a second squared (`tumble::SETTLE`) until it rests and sleeps; a
+  body asleep is left so, and one woken again (a shot, a push) has a new gust
+  [hypothesis fitted to §2: a 200 units a second roller goes about 1,000 units, as the
+  farthest one did]. Without the end of the gust, the first build's tumbleweeds rolled
+  3,500–6,700 units in 30 s on Goodsprings' ground (smoke, 2026-11-06): a sphere rolls
+  on for ever on rapier's terrain, which has no rolling resistance and none of the
+  original's stones and scrub to lodge in.
 - The wind: the trees' and grass's direction, now 120° from +x towards +y (330°
   clockwise from north, §2; it was 30° [chosen]), at 4 units a second per unit of the
   weather's DATA wind speed, so 200 for the usual 50 (`tumble::SPEED_PER_WIND`)

@@ -7,11 +7,12 @@
 //!   pile effect and Caesar's throne [observed: `fnvtool collide objects`, its `wind`
 //!   column, 2026-11-06]. Chosen by that flag, never by a name (`fnv_phys`
 //!   `PhysWorld::wind_refs`); only dynamic bodies are blown, and none indoors.
-//! - **How.** While such a body is awake, its horizontal velocity is drawn towards the
-//!   wind's at most [`WIND_ACCEL`] a second, so it rolls downwind, climbs what it can and
-//!   stops on a slope too steep for that pull or against something in its way; once it
-//!   has come to rest and fallen asleep the wind leaves it (a body asleep is not woken),
-//!   and it starts awake when its cell loads [hypothesis fitted to o27_tumble, 2026-11-06:
+//! - **How.** Such a body starts awake when its cell loads. For its first [`GUST`] seconds
+//!   awake its horizontal velocity is drawn towards the wind's, by at most [`WIND_ACCEL`]
+//!   a second, so it rolls downwind and climbs what it can; then the gust is over and it
+//!   is slowed by [`SETTLE`] a second until it rests and falls asleep. A body asleep is
+//!   not woken by the wind; woken by something else (a shot, a push) it has a gust again
+//!   [hypothesis fitted to o27_tumble, 2026-11-06:
 //!   in the original the tumbleweeds near the player rolled at 100–200 units a second
 //!   towards about 330° (north-north-west) after a load, came to rest within 5–17 s and
 //!   stayed there for the next minute, in a dust storm too; one held on a slope kept
@@ -38,6 +39,15 @@ pub const SPEED_PER_WIND: f32 = 4.0;
 /// a tumbleweed stops [hypothesis: one of o27_tumble climbed about 85 units and stopped].
 pub const WIND_ACCEL: f32 = 300.0;
 
+/// How long the wind drives a body after it wakes, seconds [hypothesis: with
+/// [`SETTLE`], a tumbleweed rolling at 200 units a second goes about 1,000 units, as the
+/// farthest of o27_tumble did (1,012 along its path) before resting].
+pub const GUST: f32 = 3.0;
+
+/// How fast a body slows once its gust is over, game units a second squared
+/// [hypothesis: the original's slowed from about 200 units a second to rest in 2–5 s].
+pub const SETTLE: f32 = 50.0;
+
 /// The wind in game space: (x, y) in game units a second.
 pub fn wind_velocity(sky: &crate::sky::SkyState) -> [f32; 2] {
     let w = crate::tree::wind_vector(sky);
@@ -54,6 +64,8 @@ struct WindStats {
     most: usize,
     /// The longest a frame's blowing took, µs.
     most_us: u128,
+    /// Seconds each awake body has been driven since it woke.
+    driven: HashMap<u32, f32>,
 }
 
 fn blow(time: Res<Time>, sky: Option<Res<crate::sky::SkyState>>, phys: Option<ResMut<PhysState>>, paused: Option<Res<nvf_play::pause::Paused>>, mut stats: ResMut<WindStats>) {
@@ -71,7 +83,13 @@ fn blow(time: Res<Time>, sky: Option<Res<crate::sky::SkyState>>, phys: Option<Re
     let mut n = 0;
     for (id, at) in phys.world.wind_refs() {
         stats.first.entry(id).or_insert(at);
-        n += phys.world.blow(id, wind, WIND_ACCEL, dt);
+        if phys.world.ref_bodies(id).iter().all(|b| b.sleeping) {
+            stats.driven.remove(&id);
+            continue;
+        }
+        let driven = stats.driven.entry(id).or_insert(0.0);
+        *driven += dt;
+        n += if *driven <= GUST { phys.world.blow(id, wind, WIND_ACCEL, dt) } else { phys.world.blow(id, [0.0, 0.0], SETTLE, dt) };
     }
     stats.most = stats.most.max(n);
     stats.most_us = stats.most_us.max(t.elapsed().as_micros());
