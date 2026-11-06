@@ -205,6 +205,7 @@ mod usage {
     /// The busiest engine's use from `\GPU Engine(*)` instances (name, percent). An
     /// instance is named `pid_<n>_luid_<adapter>_phys_<n>_eng_<n>_engtype_<kind>`
     /// [observed]; everything from `luid_` on names the engine.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn busiest_engine<'a>(items: impl IntoIterator<Item = (&'a str, f64)>) -> Option<f32> {
         let mut per: HashMap<&str, f64> = HashMap::new();
         for (name, v) in items {
