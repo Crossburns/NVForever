@@ -758,13 +758,34 @@ pub fn report(mut exit: MessageReader<AppExit>, streamer: Res<Streamer>, models:
 /// the window still answers, and fewer frames are drawn while the screen is up].
 const LOADING_SCREEN_FRAME: std::time::Duration = std::time::Duration::from_millis(200);
 
+/// Whether cells and actors may start loading: not yet under the start's screen until it
+/// has been drawn (`nvf_play::loading::Loading::world_held`). Before its first frame the
+/// screen is only asked for.
+pub fn world_not_held(loading: Option<Res<nvf_play::loading::Loading>>, cover: Option<Res<nvf_play::loading::StartCover>>) -> bool {
+    cover.is_none() && !loading.is_some_and(|l| l.world_held())
+}
+
 /// Tell the loading screen whether cells around the camera are still to be drawn (runs
 /// after [`stream`]; `travel` has run before it, so a travel sent this frame counts).
-pub fn loading_gate(streamer: Res<Streamer>, mut loading: ResMut<nvf_play::loading::Loading>) {
+pub fn loading_gate(
+    streamer: Res<Streamer>,
+    mut loading: ResMut<nvf_play::loading::Loading>,
+    gate: Res<crate::pipeline_gate::PipelineGate>,
+) {
     let busy = !streamer.settled;
     if loading.render_busy != busy {
         loading.render_busy = busy;
     }
+    // Pipelines not ready: what they would draw is missing from the view, which keeps the
+    // clear colour (`pipeline_gate`). Before the first render frame nothing has asked yet.
+    let pipelines = gate.frames() == 0 || gate.busy() > 0;
+    if loading.pipelines_busy != pipelines {
+        loading.pipelines_busy = pipelines;
+    }
+    if std::mem::take(&mut loading.pipeline_cap_note) {
+        gate.list_busy();
+    }
+    loading.release_picture_hold(gate.frames() >= nvf_play::loading::PICTURE_FRAMES && gate.screen_busy() == 0, std::time::Instant::now());
     // Actors around the player not drawn yet: a loading screen waits for them too, so
     // they are not seen appearing after it comes down (`readahead::actors_waiting`).
     let actors = crate::readahead::actors_waiting() > 0;

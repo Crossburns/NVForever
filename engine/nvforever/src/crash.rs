@@ -16,10 +16,16 @@
 //! **Crash reports.** A panic on any thread writes `<home>\logs\crash-<UTC time>-<pid>.txt`:
 //! the thread, the message and where it was raised, the backtrace, the command line,
 //! where the camera was (worldspace or interior, cell, position; [`note_place`], kept
-//! every frame) and the name of the run log; the panic is logged too, and the default
-//! hook prints it to the console as before.
+//! every frame) and the name of the run log; the panic is logged too, and the console gets
+//! the words Rust's default hook prints, redacted (the default hook is not called: it would
+//! print the home folder).
 //!
 //! Not covered: native crashes (they skip Rust's panic hook; see the run log check above).
+//!
+//! **Privacy.** Players send these files to us, so the player's home folder (which holds
+//! their account name: `C:\Users\<name>`) is written as `%USERPROFILE%` (`~` off Windows)
+//! in the run log, the console and crash reports ([`redact`]; owner's request 2026-11-06,
+//! #1710).
 
 use bevy::log::tracing_subscriber;
 use bevy::log::BoxedLayer;
@@ -50,6 +56,90 @@ static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 static COMMAND: OnceLock<String> = OnceLock::new();
 /// Where the camera is (updated every frame by [`note_place`]).
 static PLACE: Mutex<String> = Mutex::new(String::new());
+
+/// The player's home folder and what it is written as in logs: `USERPROFILE` on Windows,
+/// `HOME` elsewhere. Read once.
+fn home_folder() -> Option<&'static (String, &'static str)> {
+    static HOME: OnceLock<Option<(String, &'static str)>> = OnceLock::new();
+    HOME.get_or_init(|| {
+        let (var, shown) = if cfg!(windows) { ("USERPROFILE", "%USERPROFILE%") } else { ("HOME", "~") };
+        let home = std::env::var(var).ok()?;
+        let home = home.trim_end_matches(['\\', '/']);
+        // A root or drive ("/", "C:") would hide every path: not a home to hide.
+        (home.len() > 3).then(|| (home.to_string(), shown))
+    })
+    .as_ref()
+}
+
+/// `text` with the player's home folder replaced (see the module's Privacy note).
+pub fn redact(text: &str) -> std::borrow::Cow<'_, str> {
+    match home_folder() {
+        Some((home, shown)) => redact_folder(text, home, shown),
+        None => std::borrow::Cow::Borrowed(text),
+    }
+}
+
+/// `text` with every `folder` in it written as `shown`: letters in any case (Windows paths
+/// are not case sensitive) and `\` and `/` alike, a run of them counting as one separator
+/// (a path printed with `{:?}` doubles its backslashes: `C:\\Users\\Alex`); only where the
+/// folder name ends (at a separator or a non-name character), so `C:\Users\Al` leaves
+/// `C:\Users\Alex` alone.
+fn redact_folder<'a>(text: &'a str, folder: &str, shown: &str) -> std::borrow::Cow<'a, str> {
+    let sep = |c: u8| matches!(c, b'\\' | b'/');
+    let (t, f) = (text.as_bytes(), folder.as_bytes());
+    if f.is_empty() {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    // Where a match of `folder` that starts at `i` ends in `text`, if there is one.
+    let match_at = |i: usize| -> Option<usize> {
+        let (mut ti, mut fi) = (i, 0);
+        while fi < f.len() {
+            if sep(f[fi]) {
+                if !t.get(ti).is_some_and(|&c| sep(c)) {
+                    return None;
+                }
+                while fi < f.len() && sep(f[fi]) {
+                    fi += 1;
+                }
+                while ti < t.len() && sep(t[ti]) {
+                    ti += 1;
+                }
+            } else {
+                if !t.get(ti).is_some_and(|c| c.eq_ignore_ascii_case(&f[fi])) {
+                    return None;
+                }
+                ti += 1;
+                fi += 1;
+            }
+        }
+        Some(ti)
+    };
+    let mut out: Option<String> = None;
+    let (mut i, mut copied) = (0, 0);
+    while i < t.len() {
+        let found = match_at(i).filter(|&end| {
+            let ends = t.get(end).is_none_or(|&c| !(c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-') || c >= 0x80));
+            ends && text.is_char_boundary(i) && text.is_char_boundary(end)
+        });
+        match found {
+            Some(end) => {
+                let o = out.get_or_insert_with(|| String::with_capacity(text.len()));
+                o.push_str(&text[copied..i]);
+                o.push_str(shown);
+                i = end;
+                copied = i;
+            }
+            None => i += 1,
+        }
+    }
+    match out {
+        Some(mut o) => {
+            o.push_str(&text[copied..]);
+            std::borrow::Cow::Owned(o)
+        }
+        None => std::borrow::Cow::Borrowed(text),
+    }
+}
 
 /// The logs folder in NVForever's home, created; `None` (with the reason) when there is
 /// no home or it may not be written there.
@@ -128,7 +218,7 @@ pub fn install(data: &Path, previous_running: bool) {
     let dir = match logs_dir(data) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("run log: not written ({e})");
+            eprintln!("run log: not written ({})", redact(&e));
             set_hook();
             return;
         }
@@ -147,7 +237,7 @@ pub fn install(data: &Path, previous_running: bool) {
         Ok(f) => {
             let _ = RUN_LOG.set(RunLog { path: path.clone(), writer: Mutex::new(Some(LineWriter::new(f))) });
         }
-        Err(e) => eprintln!("run log: {}: {e}", path.display()),
+        Err(e) => eprintln!("run log: {}: {e}", redact(&path.display().to_string())),
     }
     set_hook();
     test_panic();
@@ -184,7 +274,32 @@ pub fn file_layer(_app: &mut App) -> Option<BoxedLayer> {
     (!layers.is_empty()).then(|| Box::new(layers) as BoxedLayer)
 }
 
-/// One write to the run log (the layer makes one per line).
+/// The console's lines (the log plugin's own layer, the same but for the home folder,
+/// [`redact`]).
+pub fn console_layer(_app: &mut App) -> Option<bevy::log::BoxedFmtLayer> {
+    Some(Box::new(tracing_subscriber::fmt::Layer::default().with_writer(|| ConsoleWriter)))
+}
+
+/// A line to the console, redacted (this crate's `eprintln!`, main.rs).
+pub fn eprint_line(args: std::fmt::Arguments<'_>) {
+    let _ = writeln!(std::io::stderr(), "{}", redact(&args.to_string()));
+}
+
+/// One write to the console, redacted (the layer writes each line whole).
+struct ConsoleWriter;
+
+impl Write for ConsoleWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        std::io::stderr().write_all(redact(&String::from_utf8_lossy(buf)).as_bytes())?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::stderr().flush()
+    }
+}
+
+/// One write to the run log, redacted (the layer makes one per line).
 struct RunLogWriter(&'static RunLog);
 
 impl Write for RunLogWriter {
@@ -192,7 +307,7 @@ impl Write for RunLogWriter {
         // A panic while the lock was held must not stop the log.
         let mut w = self.0.writer.lock().unwrap_or_else(|e| e.into_inner());
         match w.as_mut() {
-            Some(f) => f.write(buf),
+            Some(f) => f.write_all(redact(&String::from_utf8_lossy(buf)).as_bytes()).map(|()| buf.len()),
             None => Ok(buf.len()),
         }
     }
@@ -208,7 +323,7 @@ pub fn early_exit(why: &str) {
     let Some(log) = RUN_LOG.get() else { return };
     let mut w = log.writer.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = w.as_mut() {
-        let _ = writeln!(f, "{ERROR_EXIT} {why}");
+        let _ = writeln!(f, "{ERROR_EXIT} {}", redact(why));
     }
 }
 
@@ -244,7 +359,6 @@ fn report_text(thread: &str, message: &str, location: &str, place: &str, command
 }
 
 fn set_hook() {
-    let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // A broken model, texture or animation: caught, and that file counts as failed
         // (nvf_assets::guard). Logged, not a crash.
@@ -268,7 +382,7 @@ fn set_hook() {
         let text = report_text(&thread, &message, &location, &place, COMMAND.get().map_or("", |s| s.as_str()), run_log_path(), &backtrace);
         let written = LOG_DIR.get().map(|dir| {
             let path = dir.join(format!("crash-{}-{}.txt", stamp(now_secs()), std::process::id()));
-            (std::fs::write(&path, &text).map(|_| path.clone()), path)
+            (std::fs::write(&path, redact(&text).as_bytes()).map(|_| path.clone()), path)
         });
         let place = if place.is_empty() { "not known yet" } else { place.as_str() };
         match &written {
@@ -281,7 +395,16 @@ fn set_hook() {
                 let _ = f.flush();
             }
         }
-        default(info);
+        // What Rust's default hook prints to the console, redacted: the default hook itself
+        // would print the message and backtrace with the home folder in them. Kept (rather
+        // than only the `error!` line) because it says the panic before the log plugin is
+        // up, and the smoke runner looks for "panicked" in the console.
+        eprint_line(format_args!("thread '{thread}' panicked at {location}:\n{message}"));
+        if std::env::var_os("RUST_BACKTRACE").is_some_and(|v| v != "0") {
+            eprint_line(format_args!("stack backtrace:\n{backtrace}"));
+        } else {
+            eprint_line(format_args!("note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"));
+        }
     }));
 }
 
@@ -394,6 +517,23 @@ mod tests {
         assert!(ended_abnormally("line\nINFO streaming cell -2,26\n"));
         assert_eq!(stop_reason(&format!("a\n{ERROR_EXIT} --load: x was made with other plugins\n")).as_deref(), Some("--load: x was made with other plugins"));
         assert_eq!(stop_reason("a\nb\n"), None);
+    }
+
+    #[test]
+    fn the_home_folder_is_hidden_in_any_case_and_slash() {
+        let r = |t: &'static str| redact_folder(t, r"C:\Users\Alex", "%USERPROFILE%").into_owned();
+        assert_eq!(r(r"run log: C:\Users\Alex\Documents\My Games\NVForever\logs\a.log"), r"run log: %USERPROFILE%\Documents\My Games\NVForever\logs\a.log");
+        assert_eq!(r("data c:/users/ALEX/Games and C:\\Users\\Alex"), r"data %USERPROFILE%/Games and %USERPROFILE%");
+        // Another account whose name starts the same is left alone.
+        assert_eq!(r(r"C:\Users\Alexandra\x"), r"C:\Users\Alexandra\x");
+        assert!(matches!(redact_folder("no paths here", r"C:\Users\Alex", "~"), std::borrow::Cow::Borrowed(_)));
+        // A path printed with `{:?}` (doubled backslashes), and one with a stray double slash.
+        let debug = format!("{:?}", std::path::Path::new(r"C:\Users\Alex\Documents\a.ini"));
+        assert_eq!(redact_folder(&debug, r"C:\Users\Alex", "%USERPROFILE%"), r#""%USERPROFILE%\\Documents\\a.ini""#);
+        assert_eq!(r("C:\\\\Users\\\\Alexandra"), "C:\\\\Users\\\\Alexandra");
+        assert_eq!(r("c://users//alex//x"), "%USERPROFILE%//x");
+        // Not ASCII: matched byte for byte, and the text around it kept whole.
+        assert_eq!(redact_folder("é /home/Zoë/x é", "/home/Zoë", "~"), "é ~/x é");
     }
 
     #[test]

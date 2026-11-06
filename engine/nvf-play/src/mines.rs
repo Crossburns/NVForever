@@ -140,7 +140,7 @@ pub(crate) fn tick(
                 if let Ok(r) = sim.world.get(id) {
                     r.extra.owner = Some(s.actor);
                 }
-                changed.write(RefChanged { form_id: id.0 });
+                changed.write(RefChanged::new(id.0));
                 info!("mines: {} put down mine {id} ({}) at ({:.0}, {:.0}, {:.0}), armed", s.actor, s.proj, s.point[0], s.point[1], s.point[2]);
             }
             Err(e) => warn!("mines: a thrown mine could not be placed: {e}"),
@@ -171,7 +171,7 @@ pub(crate) fn tick(
             if let Err(e) = sim.world.set_enabled(id, false) {
                 warn!("mines: mine {id} could not be disabled: {e}");
             }
-            changed.write(RefChanged { form_id: id.0 });
+            changed.write(RefChanged::new(id.0));
             live.remove(&id);
             m.burning.remove(&id);
         }
@@ -261,7 +261,7 @@ pub(crate) fn tick(
                 if let Err(e) = sim.world.set_enabled(id, false) {
                     warn!("mines: mine {id} could not be disabled: {e}");
                 }
-                changed.write(RefChanged { form_id: id.0 });
+                changed.write(RefChanged::new(id.0));
                 // The blast is the hits of whoever put it down (an actor reference).
                 let owner = sim.world.peek(id).and_then(|r| r.extra.owner).filter(|o| sim.world.peek(*o).is_some() && (sim.is_actor(o.0) || *o == FormId::PLAYER_REF));
                 let weapon = p.default_weapon;

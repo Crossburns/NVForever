@@ -531,12 +531,7 @@ fn item_data(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, r: &Row, 
         c.image(p, icon, at(ICON_AT.x, ICON_AT.y, ICON, ICON), bright);
     }
     let x0 = if matches!(m.mode, Mode::Barter(_)) { DATA_X_BARTER } else { DATA_X_CONTAINER };
-    let prices = m.trade.as_ref().map(|t| t.prices).unwrap_or_default();
-    let value = r.value.map(|v| prices.value_at(v, r.condition).round() as i64);
-    let condition = r.condition.filter(|_| matches!(r.kind, Some(ItemKind::Weapon | ItemKind::Armor)));
-    let mut i = info.cloned().unwrap_or_else(|| Info { condition, ..Info::default() });
-    i.weight = r.weight.filter(|w| *w > 0.0).map(|w| format!("{w:.2}"));
-    i.value = value.filter(|v| *v > 0).map(|v| v.to_string());
+    let i = item_figures(m, r, info);
     let tiles = tiles_in(&i, Vec2::new(3.0 * TILE.x, 3.0 * TILE.y));
     let shown: Vec<String> = tiles.iter().map(|t| if t.value.is_empty() { t.title.clone() } else { format!("{} {}", t.title, t.value) }).collect();
     info!("menu: figures of {}: {}", r.name, shown.join(", "));
@@ -550,6 +545,20 @@ fn item_data(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, r: &Row, 
             p.spawn((at(mx, my, mw * fill, 20.0), BackgroundColor(bright)));
         }
     }
+}
+
+/// The figures of the selected row in these menus: the Pip-Boy's ([`Info`]), with the weight
+/// and value of one unit, the value at its condition and before the trade's multiplier
+/// [owner's playtest list 7 item 25]. The hand-built drawing and the tiles
+/// (`crate::tiles::item_card`) both read these.
+pub fn item_figures(m: &MenuModel, r: &Row, info: Option<&Info>) -> Info {
+    let prices = m.trade.as_ref().map(|t| t.prices).unwrap_or_default();
+    let value = r.value.map(|v| prices.value_at(v, r.condition).round() as i64);
+    let condition = r.condition.filter(|_| matches!(r.kind, Some(ItemKind::Weapon | ItemKind::Armor)));
+    let mut i = info.cloned().unwrap_or_else(|| Info { condition, ..Info::default() });
+    i.weight = r.weight.filter(|w| *w > 0.0).map(|w| format!("{w:.2}"));
+    i.value = value.filter(|v| *v > 0).map(|v| v.to_string());
+    i
 }
 
 /// A tile of figures `w` wide: a line along its top and one fading down its right side,

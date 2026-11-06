@@ -83,6 +83,7 @@ fn click(g: &mut Game, tile: Option<fnv_ui::TileId>, times: usize) -> bool {
         g.ui_used = true;
         crate::ui_hud::flush(g);
     }
+    g.ui_pointer.stamp = crate::dialogue::conversation_stamp(g.dialogue_serial, g.dialogue.as_ref());
     for _ in 0..times {
         g.ui_pointer.script_click(&mut g.ui_tree, tile);
     }

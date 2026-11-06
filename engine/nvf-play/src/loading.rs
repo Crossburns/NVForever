@@ -61,6 +61,18 @@ pub const SETTLE_FRAMES: u32 = 3;
 /// Real seconds after which a loading screen comes down whatever is still missing
 /// (logged as a warning), so a cell that never loads cannot hold the game forever.
 pub const TIMEOUT_SECS: f64 = 120.0;
+/// Real seconds a screen waits for pipelines alone once all else is in: a pipeline that
+/// never comes must not hold the game for [`TIMEOUT_SECS`] [engineering choice: about
+/// four times the longest wait measured, a Goodsprings start's 3.7 s].
+pub const PIPELINE_CAP_SECS: f64 = 15.0;
+/// Render frames the start's screen is given to reach the window, the pipelines it is
+/// drawn with ready,
+/// before the world starts loading behind it [engineering choice: the frame that asks for
+/// them, the one that prepares the picture, the one that draws it].
+pub const PICTURE_FRAMES: u32 = 3;
+/// Real seconds the world waits for that at most [engineering choice: a start must not
+/// depend on it; about twice the 2-2.9 s measured, and the scripts take about 5 s beside it].
+pub const PICTURE_CAP_SECS: f64 = 5.0;
 
 /// Move the player to another place behind a loading screen; see [`Travel`] for the
 /// fields. Sent by activation and scripts; [`LoadingPlugin`] turns it into the `Travel`.
@@ -144,6 +156,18 @@ pub struct Loading {
     /// #1208). Set by the door's activation and the fast travel; taken by the residents
     /// when the `Travel` goes out.
     pub arriving: bool,
+    /// Pipelines the view still needs are compiling. Set by the renderer every frame
+    /// (nvforever `loading_gate`, `pipeline_gate`); stays false without one.
+    pub pipelines_busy: bool,
+    /// Since when only pipelines have been waited for (real time), and whether
+    /// [`PIPELINE_CAP_SECS`] has passed this screen.
+    pipelines_since: Option<f64>,
+    pipelines_capped: bool,
+    /// The cap has just passed: nvforever logs which pipelines are late.
+    pub pipeline_cap_note: bool,
+    /// The start's screen is not on the window yet (since this real time): the world holds
+    /// off, so that its reads and pipelines do not come first ([`Loading::world_held`]).
+    picture_hold: Option<std::time::Instant>,
     /// Picture sizes by texture (the image's own data leaves the main world once it is on
     /// the graphics card).
     sizes: HashMap<AssetId<Image>, Vec2>,
@@ -165,6 +189,26 @@ impl Loading {
     /// Whether a loading screen is up for travel (not for a [`CoverRequest`]).
     pub fn travelling(&self) -> bool {
         self.trip.is_some()
+    }
+
+    /// Whether the world holds off loading until the start's screen has been drawn: its
+    /// model reads share the pool that compiles the screen's pipelines, and the frame that
+    /// first asks for them blocks on one (docs/design/loading-screen.md §1a).
+    pub fn world_held(&self) -> bool {
+        self.picture_hold.is_some()
+    }
+
+    /// Let the world load once the screen is `drawn`, or [`PICTURE_CAP_SECS`] after it came up.
+    ///
+    /// By the wall clock: `Time<Real>` stands still for a whole frame, and the first frames
+    /// are the long ones the cap is there to outlast.
+    pub fn release_picture_hold(&mut self, drawn: bool, now: std::time::Instant) {
+        let Some(since) = self.picture_hold else { return };
+        let waited = now.duration_since(since).as_secs_f64();
+        if drawn || waited >= PICTURE_CAP_SECS {
+            self.picture_hold = None;
+            info!("loading screen: the world starts loading {waited:.2} s after the screen ({})", if drawn { "drawn" } else { "not drawn yet" });
+        }
     }
 
     /// Whether a long frame would not be seen: a screen is up, or nothing is shown yet.
@@ -289,6 +333,7 @@ fn begin_start(
     clock.pause();
     next.set(PlayState::Loading);
     loading.start = Some(StartHold { started: real.elapsed_secs_f64(), ready: None });
+    loading.picture_hold = Some(std::time::Instant::now());
 }
 
 /// A travel was asked for: bring the screen up and hold the game.
@@ -489,7 +534,37 @@ fn missing(loading: &Loading, phys: Option<&PhysState>, scripts: Option<&crate::
     if start && scripts.is_some_and(|s| s.loading() || s.pending_game_waiting()) {
         out.push("the scripts");
     }
+    if loading.pipelines_busy {
+        out.push(PIPELINES);
+    }
     out
+}
+
+/// What [`missing`] names for pipelines.
+const PIPELINES: &str = "pipelines";
+
+/// Take pipelines off `wait` once they alone have held the screen for [`PIPELINE_CAP_SECS`].
+/// Returns whether that has just happened.
+fn cap_pipelines(since: &mut Option<f64>, capped: &mut bool, wait: &mut Vec<&'static str>, now: f64) -> bool {
+    if wait.as_slice() != [PIPELINES] {
+        *since = None;
+        return false;
+    }
+    if now - *since.get_or_insert(now) < PIPELINE_CAP_SECS {
+        return false;
+    }
+    wait.clear();
+    !std::mem::replace(capped, true)
+}
+
+/// [`missing`] with the pipelines' cap applied.
+fn waiting_for(loading: &mut Loading, phys: Option<&PhysState>, scripts: Option<&crate::script::ScriptState>, start: bool, now: f64) -> Vec<&'static str> {
+    let mut wait = missing(loading, phys, scripts, start);
+    if cap_pipelines(&mut loading.pipelines_since, &mut loading.pipelines_capped, &mut wait, now) {
+        warn!("loading screen: pipelines not ready after {PIPELINE_CAP_SECS:.0} s; going on without them");
+        loading.pipeline_cap_note = true;
+    }
+    wait
 }
 
 /// Whether `ready` has held for the settle time, counting this frame; `false` resets it.
@@ -520,7 +595,7 @@ fn finish(
     let now = real.elapsed_secs_f64();
     let starting = loading.start.is_some();
     if loading.trip.as_ref().is_some_and(|t| t.sent) {
-        let wait = missing(&loading, phys.as_deref(), None, false);
+        let wait = waiting_for(&mut loading, phys.as_deref(), None, false, now);
         let trip = loading.trip.as_mut().expect("trip");
         let waited = now - trip.started;
         if !settled(&mut trip.ready, wait.is_empty(), now) {
@@ -537,7 +612,7 @@ fn finish(
         }
         info!("loading screen down after {waited:.2} s");
     } else if starting && loading.trip.is_none() {
-        let wait = missing(&loading, phys.as_deref(), scripts.as_deref(), true);
+        let wait = waiting_for(&mut loading, phys.as_deref(), scripts.as_deref(), true, now);
         let hold = loading.start.as_mut().expect("start");
         let waited = now - hold.started;
         if !settled(&mut hold.ready, wait.is_empty(), now) {
@@ -552,6 +627,7 @@ fn finish(
     } else {
         return;
     }
+    (loading.pipelines_since, loading.pipelines_capped) = (None, false);
     for e in &roots {
         commands.entity(e).despawn();
     }
@@ -600,6 +676,77 @@ mod tests {
 
     fn sent(app: &mut App) -> usize {
         app.world_mut().resource_mut::<Messages<Travel>>().drain().count()
+    }
+
+    #[test]
+    fn pipelines_hold_the_screen_up_to_their_cap_once_all_else_is_in() {
+        let (mut since, mut capped) = (None, false);
+        let mut wait = vec![PIPELINES];
+        assert!(!cap_pipelines(&mut since, &mut capped, &mut wait, 10.0));
+        assert_eq!(wait, [PIPELINES], "held at first");
+        assert!(!cap_pipelines(&mut since, &mut capped, &mut wait, 10.0 + PIPELINE_CAP_SECS - 0.1));
+        assert_eq!(wait, [PIPELINES], "held just before the cap");
+        assert!(cap_pipelines(&mut since, &mut capped, &mut wait, 10.0 + PIPELINE_CAP_SECS), "the cap is noted once");
+        assert!(wait.is_empty(), "let go at the cap");
+        let mut wait = vec![PIPELINES];
+        assert!(!cap_pipelines(&mut since, &mut capped, &mut wait, 30.0), "not noted twice");
+        assert!(wait.is_empty(), "still let go");
+    }
+
+    #[test]
+    fn the_cap_counts_only_while_pipelines_alone_are_waited_for() {
+        let (mut since, mut capped) = (None, false);
+        assert!(!cap_pipelines(&mut since, &mut capped, &mut vec![PIPELINES], 0.0));
+        let mut others = vec!["cells to draw", PIPELINES];
+        assert!(!cap_pipelines(&mut since, &mut capped, &mut others, 100.0));
+        assert_eq!(others, ["cells to draw", PIPELINES], "other waits keep the whole list");
+        assert_eq!(since, None, "and start the count again");
+        let mut wait = vec![PIPELINES];
+        assert!(!cap_pipelines(&mut since, &mut capped, &mut wait, 101.0));
+        assert_eq!(wait, [PIPELINES]);
+    }
+
+    #[test]
+    fn busy_pipelines_hold_a_travels_screen() {
+        let mut app = app();
+        app.update();
+        let t = Travel { world: None, interior: Some(0x100), feet: [1.0, 2.0, 3.0], heading_deg: 90.0 };
+        app.world_mut().write_message(TravelRequest(t));
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(sent(&mut app), 1);
+        app.world_mut().resource_mut::<Loading>().pipelines_busy = true;
+        let t0 = std::time::Instant::now();
+        while t0.elapsed().as_secs_f64() < SETTLE_SECS * 2.0 {
+            app.update();
+        }
+        assert!(app.world().resource::<Loading>().active(), "held while pipelines compile");
+        app.world_mut().resource_mut::<Loading>().pipelines_busy = false;
+        let t0 = std::time::Instant::now();
+        while app.world().resource::<Loading>().active() {
+            assert!(t0.elapsed().as_secs_f64() < 10.0, "the screen never came down");
+            app.update();
+        }
+    }
+
+    #[test]
+    fn the_world_holds_until_the_starts_screen_is_drawn_or_the_cap() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let after = |s: f64| t0 + Duration::from_secs_f64(s);
+        let mut loading = Loading { picture_hold: Some(t0), ..default() };
+        assert!(loading.world_held());
+        loading.release_picture_hold(false, after(PICTURE_CAP_SECS - 0.1));
+        assert!(loading.world_held(), "not drawn and within the cap");
+        loading.release_picture_hold(true, after(0.5));
+        assert!(!loading.world_held(), "drawn");
+        let mut loading = Loading { picture_hold: Some(t0), ..default() };
+        loading.release_picture_hold(false, after(PICTURE_CAP_SECS));
+        assert!(!loading.world_held(), "the cap");
+        let mut loading = Loading::default();
+        loading.release_picture_hold(true, after(9.0));
+        assert!(!loading.world_held(), "nothing to let go");
     }
 
     #[test]

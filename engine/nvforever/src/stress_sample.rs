@@ -96,6 +96,11 @@ struct Caches<'w> {
     grass: Option<Res<'w, crate::grass::GrassCache>>,
     trees: Option<Res<'w, crate::tree::TreeCache>>,
     water: Option<Res<'w, crate::water::WaterCache>>,
+    sfx: Option<Res<'w, nvf_play::sfx::Sfx>>,
+    pcm: Option<Res<'w, Assets<nvf_play::sfx::PcmSound>>>,
+    radio: Option<Res<'w, nvf_play::radio::Radio>>,
+    music: Option<Res<'w, nvf_play::music::Music>>,
+    ambient: Option<Res<'w, nvf_play::ambient::Ambient>>,
 }
 
 /// Every [`CENSUS_SECS`] of real time, `stress caches: <cache> <entries> (<idle> idle, <n>
@@ -125,8 +130,27 @@ fn cache_census(real: Res<Time<Real>>, c: Caches, mut last: Local<f32>) {
         put("shared particle systems", Some(shared));
     }
     put("terrain materials", c.terrain.as_deref().map(|e| e.share(m)));
+    let sounds = match (c.sfx.as_deref(), c.pcm.as_deref()) {
+        (Some(s), Some(p)) => {
+            let (n, idle, bytes) = s.file_share(p);
+            format!("; sound files {n} ({idle} idle, {:.0} MB, {} let go)", bytes as f64 / (1024.0 * 1024.0), s.files_released)
+        }
+        _ => String::new(),
+    };
+    let streamed = [
+        ("radio files", c.radio.as_deref().map(|r| &r.files)),
+        ("music files", c.music.as_deref().map(|m| &m.files)),
+        ("ambient files", c.ambient.as_deref().map(|a| &a.files)),
+    ];
+    let mut sounds = sounds;
+    for (name, f) in streamed {
+        if let Some(f) = f {
+            let (n, idle, bytes) = f.share();
+            sounds.push_str(&format!("; {name} {n} ({idle} idle, {:.0} MB, {} let go)", bytes as f64 / (1024.0 * 1024.0), f.released));
+        }
+    }
     let counts = format!(
-        "grass models {}; trees {}; water materials {}",
+        "grass models {}; trees {}; water materials {}{sounds}",
         c.grass.as_deref().map_or(0, crate::grass::GrassCache::models),
         c.trees.as_deref().map_or(0, crate::tree::TreeCache::len),
         c.water.as_deref().map_or(0, crate::water::WaterCache::len)

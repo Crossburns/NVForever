@@ -607,12 +607,22 @@ fn bit(on: bool) -> &'static str {
     }
 }
 
+/// The INI's `Mouse Sensitivity`: four decimals as before (`0.0020`), more where the low
+/// end of the slider needs them (6% is `0.00012`), trailing zeros past the fourth dropped.
+fn mouse_sensitivity_text(s: f32) -> String {
+    let mut t = format!("{s:.6}");
+    while t.ends_with('0') && t.split_once('.').is_some_and(|(_, f)| f.len() > 4) {
+        t.pop();
+    }
+    t
+}
+
 /// `text` (an INI, or empty) with every control in `[Controls]`.
 pub fn with_controls(text: &str, b: &Bindings) -> String {
     let mut t = b.all().fold(text.to_string(), |t, (c, x)| ini_set(&t, SECTION, Bindings::name(c), &x.text()));
     t = ini_set(&t, SECTION, ALWAYS_RUN_KEY, bit(b.always_run_by_default));
     t = ini_set(&t, SECTION, INVERT_Y_KEY, bit(b.invert_y));
-    t = ini_set(&t, SECTION, SENSITIVITY_KEY, &format!("{:.4}", b.mouse_sensitivity));
+    t = ini_set(&t, SECTION, SENSITIVITY_KEY, &mouse_sensitivity_text(b.mouse_sensitivity));
     t = ini_set(&t, SECTION, DEVICE_KEY, b.device.name());
     t = b.all().fold(t, |t, (c, _)| ini_set(&t, PAD_SECTION, Bindings::name(c), &pad_text(b.pad(c))));
     for (k, v) in LOOK_KEYS.iter().zip(b.look_speed) {
@@ -659,6 +669,8 @@ pub fn read_controls(text: &str, b: &mut Bindings, bad: &mut Vec<String>) -> (us
         found += 1;
         match v.trim().parse::<f32>() {
             Ok(s) if s.is_finite() && s > 0.0 => {
+                // Below the slider's least (a hand edit) it is brought up to it, not refused.
+                let s = clamp_to_least(s, SENSITIVITY_LEAST * MOUSE_SENSITIVITY);
                 if (s - b.mouse_sensitivity).abs() > 1e-7 {
                     changed.push(format!("{SENSITIVITY_KEY} {s}"));
                     b.mouse_sensitivity = s;
@@ -715,6 +727,7 @@ pub fn read_controls(text: &str, b: &mut Bindings, bad: &mut Vec<String>) -> (us
         found += 1;
         match v.trim().parse::<f32>() {
             Ok(m) if m.is_finite() && m > 0.0 => {
+                let m = clamp_to_least(m, SENSITIVITY_LEAST);
                 if (m - b.stick_sensitivity).abs() > 1e-4 {
                     changed.push(format!("[{PAD_SECTION}] {STICK_SENSITIVITY_KEY} {m}"));
                     b.stick_sensitivity = m;
@@ -809,34 +822,64 @@ pub fn set_invert_y(world: &mut World, on: bool) {
 }
 
 /// The Controls tab's Mouse Sensitivity and Stick Sensitivity sliders, as multiples of the
-/// game's (`fMouseSensitivity`, the right stick's look speeds): from a quarter to three
-/// times in twentieths [design: owner 2026-11-03, #1451: NVForever's own range, not the
-/// original slider's, to be tuned by playing; the mouse and the stick set apart].
-pub const SENSITIVITY_LEAST: f32 = 0.25;
+/// game's (`fMouseSensitivity`, the right stick's look speeds): from a twentieth to three
+/// times [design: owner 2026-11-03, #1451: NVForever's own range, not the original
+/// slider's, to be tuned by playing; the mouse and the stick set apart. #1632: the least
+/// lowered from 25% to 5%, as 25% still turned a full circle in about 20 cm at 1600 dpi;
+/// 5% is about 100 cm, 100% about 5 cm, 300% about 1.7 cm, reading `fMouseSensitivity` as
+/// radians a count (hypothesis, see [`MOUSE_SENSITIVITY`])].
+pub const SENSITIVITY_LEAST: f32 = 0.05;
 pub const SENSITIVITY_MOST: f32 = 3.0;
-pub const SENSITIVITY_STEP: f32 = 0.05;
+
+/// The sliders' steps in percent [design, #1632]: about a tenth apart (a step changes the
+/// turn by about the same share anywhere on the slider), whole percents at the bottom, and
+/// the round values the slider had before (50%, 100%, 150%, ...) kept.
+pub const SENSITIVITY_STEPS: [u16; 44] = [
+    5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 110, 120, 130,
+    140, 150, 165, 180, 200, 225, 250, 275, 300,
+];
+
+/// `v` raised to `least` when below it (a value read from the INI under the slider's least
+/// is clamped, not refused); a hair under is left as it is (an INI's rounding).
+fn clamp_to_least(v: f32, least: f32) -> f32 {
+    if v < least * (1.0 - 1e-4) {
+        least
+    } else {
+        v
+    }
+}
 
 /// A sensitivity multiple as the Controls tab shows it: a percentage of the game's.
 pub fn sensitivity_text(m: f32) -> String {
     format!("{:.0}%", m * 100.0)
 }
 
-/// The sensitivity `steps` of [`SENSITIVITY_STEP`] from multiple `m`, on the steps and in
-/// the sliders' range.
-pub fn step_sensitivity(m: f32, steps: i32) -> f32 {
-    let at = (m / SENSITIVITY_STEP).round() as i32 + steps;
-    let (least, most) = ((SENSITIVITY_LEAST / SENSITIVITY_STEP).round() as i32, (SENSITIVITY_MOST / SENSITIVITY_STEP).round() as i32);
-    at.clamp(least, most) as f32 * SENSITIVITY_STEP
+/// The index of the step of [`SENSITIVITY_STEPS`] nearest multiple `m` (on the
+/// logarithmic scale the meter uses).
+fn nearest_step(m: f32) -> usize {
+    let at = m.max(SENSITIVITY_LEAST / 2.0).ln();
+    let off = |p: u16| (f32::from(p) / 100.0).ln() - at;
+    (0..SENSITIVITY_STEPS.len()).min_by(|&a, &b| off(SENSITIVITY_STEPS[a]).abs().total_cmp(&off(SENSITIVITY_STEPS[b]).abs())).unwrap_or(0)
 }
 
-/// Multiple `m` as a part of the slider's meter (0 at the least, 1 at the most).
+/// The sensitivity `steps` of [`SENSITIVITY_STEPS`] from multiple `m` (from the step
+/// nearest it), on the steps and in the sliders' range.
+pub fn step_sensitivity(m: f32, steps: i32) -> f32 {
+    let last = SENSITIVITY_STEPS.len() as i32 - 1;
+    let at = (nearest_step(m) as i32 + steps).clamp(0, last);
+    f32::from(SENSITIVITY_STEPS[at as usize]) / 100.0
+}
+
+/// Multiple `m` as a part of the slider's meter (0 at the least, 1 at the most), on a
+/// logarithmic scale so the slow end, where a few percent matter, has room [design,
+/// #1632].
 pub fn sensitivity_part(m: f32) -> f32 {
-    ((m - SENSITIVITY_LEAST) / (SENSITIVITY_MOST - SENSITIVITY_LEAST)).clamp(0.0, 1.0)
+    ((m.max(f32::MIN_POSITIVE) / SENSITIVITY_LEAST).ln() / (SENSITIVITY_MOST / SENSITIVITY_LEAST).ln()).clamp(0.0, 1.0)
 }
 
 /// The multiple at part `p` of the slider's meter, on the steps.
 pub fn sensitivity_at_part(p: f32) -> f32 {
-    step_sensitivity(SENSITIVITY_LEAST + p.clamp(0.0, 1.0) * (SENSITIVITY_MOST - SENSITIVITY_LEAST), 0)
+    step_sensitivity(SENSITIVITY_LEAST * (SENSITIVITY_MOST / SENSITIVITY_LEAST).powf(p.clamp(0.0, 1.0)), 0)
 }
 
 /// Set the look sensitivity of the device in use to multiple `m` of the game's (the
@@ -1026,15 +1069,23 @@ mod tests {
     fn the_sensitivity_steps_within_its_range() {
         let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
         assert_eq!(sensitivity_text(1.0), "100%");
-        assert!(near(step_sensitivity(1.0, 1), 1.05));
+        assert!(near(step_sensitivity(1.0, 1), 1.1));
         assert!(near(step_sensitivity(1.0, -2), 0.9));
-        assert!(near(step_sensitivity(1.0, -100), 0.25), "not under a quarter");
+        assert!(near(step_sensitivity(1.0, -100), 0.05), "not under a twentieth");
         assert!(near(step_sensitivity(1.0, 100), 3.0), "not past three times");
+        assert!(near(step_sensitivity(0.05, 1), 0.06), "whole percents at the bottom");
         // A value from the INI off the steps is brought onto them.
-        assert!(near(step_sensitivity(1.063, 0), 1.05));
-        assert!(near(sensitivity_part(0.25), 0.0) && near(sensitivity_part(3.0), 1.0));
+        assert!(near(step_sensitivity(1.03, 0), 1.0) && near(step_sensitivity(1.063, 0), 1.1), "the nearest on the log scale");
+        assert!(near(step_sensitivity(0.0001, 0), 0.05) && near(step_sensitivity(9.0, -1), 2.75));
+        assert!(near(sensitivity_part(0.05), 0.0) && near(sensitivity_part(3.0), 1.0));
+        assert!(near(sensitivity_part(0.01), 0.0) && near(sensitivity_part(0.0), 0.0));
         assert!(near(sensitivity_at_part(sensitivity_part(1.5)), 1.5));
         assert!(near(sensitivity_at_part(2.0), 3.0), "a drag past the meter's end stops at the most");
+        assert!(near(sensitivity_at_part(-1.0), 0.05));
+        // The values the slider had before are still steps (the smoke scenarios use them).
+        for p in [25, 50, 100, 150, 200, 300] {
+            assert!(SENSITIVITY_STEPS.contains(&p), "{p}");
+        }
         // The mouse's and the stick's are kept apart.
         let mut b = Bindings::game_defaults();
         b.mouse_sensitivity = 0.003;
@@ -1046,6 +1097,66 @@ mod tests {
         let (_, changed) = read_controls(&ini_set(&with_controls("", &b), PAD_SECTION, STICK_SENSITIVITY_KEY, "2.00"), &mut back, &mut bad);
         assert!(bad.is_empty(), "{bad:?}");
         assert!(near(back.stick_sensitivity, 2.0) && near(back.mouse_sensitivity, 0.003), "{changed:?}");
+    }
+
+    /// #1632: centimetres of mouse travel for a full turn at 1600 dpi, reading the
+    /// sensitivity as radians a count [hypothesis, as `MOUSE_SENSITIVITY`].
+    fn cm_per_turn_at_1600_dpi(m: f32) -> f32 {
+        std::f32::consts::TAU / (m * MOUSE_SENSITIVITY) / 1600.0 * 2.54
+    }
+
+    #[test]
+    fn the_slowest_mouse_sensitivity_suits_a_1600_dpi_mouse() {
+        assert!(cm_per_turn_at_1600_dpi(SENSITIVITY_LEAST) >= 60.0, "{}", cm_per_turn_at_1600_dpi(SENSITIVITY_LEAST));
+        let default = cm_per_turn_at_1600_dpi(1.0);
+        assert!((4.9..5.1).contains(&default), "the default is unchanged: {default}");
+        assert!(cm_per_turn_at_1600_dpi(SENSITIVITY_MOST) < 2.0);
+        // The steps rise, stay in the range, and no step changes the turn by more than a
+        // fifth (finer than the old 25% -> 30% at the bottom).
+        assert_eq!(f32::from(SENSITIVITY_STEPS[0]) / 100.0, SENSITIVITY_LEAST);
+        assert_eq!(f32::from(SENSITIVITY_STEPS[SENSITIVITY_STEPS.len() - 1]) / 100.0, SENSITIVITY_MOST);
+        for w in SENSITIVITY_STEPS.windows(2) {
+            assert!(w[0] < w[1] && f32::from(w[1]) / f32::from(w[0]) <= 1.2 + 1e-6, "{w:?}");
+        }
+        // Each step walks to the next and back.
+        for (i, &p) in SENSITIVITY_STEPS.iter().enumerate() {
+            let m = f32::from(p) / 100.0;
+            assert_eq!(nearest_step(m), i, "{p}");
+            assert!((sensitivity_at_part(sensitivity_part(m)) - m).abs() < 1e-5, "{p}");
+        }
+        // The meter is logarithmic: the slow end has room, 100% sits about three quarters in.
+        let at_default = sensitivity_part(1.0);
+        assert!((0.7..0.76).contains(&at_default), "{at_default}");
+    }
+
+    #[test]
+    fn a_saved_sensitivity_below_the_least_is_clamped_not_refused() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-7;
+        let text = with_controls("", &Bindings::game_defaults());
+        // Old INIs: 25% (the old least) keeps loading as it was.
+        let mut b = Bindings::game_defaults();
+        let mut bad = vec![];
+        read_controls(&ini_set(&text, SECTION, SENSITIVITY_KEY, "0.0005"), &mut b, &mut bad);
+        assert!(bad.is_empty() && near(b.mouse_sensitivity, 0.0005), "{bad:?}");
+        // Under the new least: brought up to it.
+        let low = ini_set(&ini_set(&text, SECTION, SENSITIVITY_KEY, "0.00001"), PAD_SECTION, STICK_SENSITIVITY_KEY, "0.01");
+        let mut b = Bindings::game_defaults();
+        read_controls(&low, &mut b, &mut bad);
+        assert!(bad.is_empty(), "{bad:?}");
+        assert!(near(b.mouse_sensitivity, SENSITIVITY_LEAST * MOUSE_SENSITIVITY), "{}", b.mouse_sensitivity);
+        assert!((b.stick_sensitivity - SENSITIVITY_LEAST).abs() < 1e-6);
+        // Zero is still refused (not a number above 0).
+        let mut b = Bindings::game_defaults();
+        read_controls(&ini_set(&text, SECTION, SENSITIVITY_KEY, "0"), &mut b, &mut bad);
+        assert_eq!(bad.len(), 1);
+        // The low end is written with the decimals it needs and read back.
+        assert_eq!(mouse_sensitivity_text(0.002), "0.0020");
+        assert_eq!(mouse_sensitivity_text(0.06 * MOUSE_SENSITIVITY), "0.00012");
+        let mut slow = Bindings::game_defaults();
+        slow.mouse_sensitivity = 0.07 * MOUSE_SENSITIVITY;
+        let mut back = Bindings::game_defaults();
+        read_controls(&with_controls("", &slow), &mut back, &mut bad);
+        assert!((back.sensitivity() - 0.07).abs() < 1e-4, "{}", back.sensitivity());
     }
 
     #[test]

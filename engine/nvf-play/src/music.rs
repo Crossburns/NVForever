@@ -429,7 +429,7 @@ struct Battle {
 #[derive(Resource)]
 pub struct Music {
     /// File bytes by archive path; `None`: not there.
-    files: HashMap<String, Option<Arc<[u8]>>>,
+    pub files: crate::file_bytes::FileBytes,
     folders: HashMap<String, Vec<String>>,
     /// CELL `XCMO` and WRLD `ZNAM` by FormID.
     types: HashMap<u32, Option<u32>>,
@@ -466,7 +466,7 @@ pub struct Music {
 impl Default for Music {
     fn default() -> Self {
         Music {
-            files: HashMap::new(),
+            files: Default::default(),
             folders: HashMap::new(),
             types: HashMap::new(),
             regions: HashMap::new(),
@@ -623,21 +623,17 @@ impl Music {
             }
             return None;
         };
-        if !self.files.contains_key(&path) {
-            let read = match vfs.read(&path) {
-                Some(Ok(b)) => Some(Arc::<[u8]>::from(b)),
-                Some(Err(e)) => {
-                    warn!("music: {path}: {e}");
-                    None
-                }
-                None => {
-                    warn!("music: {path}: not in the game's files");
-                    None
-                }
-            };
-            self.files.insert(path.clone(), read);
-        }
-        self.files[&path].clone()
+        self.files.get_or_read(&path, || match vfs.read(&path) {
+            Some(Ok(b)) => Some(Arc::<[u8]>::from(b)),
+            Some(Err(e)) => {
+                warn!("music: {path}: {e}");
+                None
+            }
+            None => {
+                warn!("music: {path}: not in the game's files");
+                None
+            }
+        })
     }
 
     /// Start what is wanted, silent, with its layers fading in.
@@ -1052,6 +1048,13 @@ fn report(mut exit: MessageReader<AppExit>, music: Option<Res<Music>>) {
 
 pub struct MusicPlugin;
 
+/// Let go of the music's files nothing plays ([`crate::file_bytes`]).
+fn release_files(real: Res<Time<Real>>, limits: Option<Res<nvf_assets::KeepLimits>>, x: Option<ResMut<Music>>) {
+    if let Some(mut x) = x {
+        x.files.sweep(real.elapsed_secs_f64(), crate::file_bytes::limits(limits));
+    }
+}
+
 impl Plugin for MusicPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MusicSettings>()
@@ -1061,7 +1064,7 @@ impl Plugin for MusicPlugin {
             .add_systems(Startup, init)
             // Its stingers are sound effects: before sfx plays them (crate::sfx::SfxSet).
             .add_systems(Update, (cues.after(crate::PlaySet::Scripts), play.after(crate::PlaySet::Activation)).chain().before(crate::sfx::SfxSet))
-            .add_systems(Last, report);
+            .add_systems(Last, (release_files, report));
         crate::settings::add_setting(
             app,
             crate::settings::Setting {

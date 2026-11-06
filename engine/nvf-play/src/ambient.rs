@@ -114,7 +114,7 @@ pub struct Ambient {
     /// CELL `XCAS` by cell.
     spaces: HashMap<u32, Option<u32>>,
     /// Loop files by archive path; `None`: not there.
-    files: HashMap<String, Option<Arc<[u8]>>>,
+    pub files: crate::file_bytes::FileBytes,
     bed: Option<Bed>,
     beds_leaving: Vec<Bed>,
     pub loops_started: u32,
@@ -157,24 +157,20 @@ fn start_loop(commands: &mut Commands, amb: &mut Ambient, sfx: &mut Sfx, setting
         return None;
     }
     let Resolved { s, name, path } = resolve(sfx, vfs, FormId(sound))?;
-    let bytes = amb
-        .files
-        .entry(path.clone())
-        .or_insert_with(|| match vfs.read(&path) {
-            Some(Ok(b)) => Some(b.into()),
-            Some(Err(e)) => {
-                warn!("ambient: {name}: {path}: {e}");
-                None
-            }
-            None => {
-                warn!("ambient: {name}: {path}: not in the archives");
-                None
-            }
-        })
-        .clone()?;
+    let bytes = amb.files.get_or_read(&path, || match vfs.read(&path) {
+        Some(Ok(b)) => Some(b.into()),
+        Some(Err(e)) => {
+            warn!("ambient: {name}: {path}: {e}");
+            None
+        }
+        None => {
+            warn!("ambient: {name}: {path}: not in the archives");
+            None
+        }
+    })?;
     let Some((music, level)) = LayeredMusic::single(bytes, true) else {
         warn!("ambient: {name}: {path}: not decoded");
-        amb.files.insert(path, None);
+        amb.files.mark_broken(path);
         return None;
     };
     // Start at Random Position: somewhere in the file (audio.md §15.2).
@@ -511,6 +507,13 @@ fn report(mut exit: MessageReader<AppExit>, amb: Res<Ambient>) {
 
 pub struct AmbientPlugin;
 
+/// Let go of the ambient's files nothing plays ([`crate::file_bytes`]).
+fn release_files(real: Res<Time<Real>>, limits: Option<Res<nvf_assets::KeepLimits>>, x: Option<ResMut<Ambient>>) {
+    if let Some(mut x) = x {
+        x.files.sweep(real.elapsed_secs_f64(), crate::file_bytes::limits(limits));
+    }
+}
+
 impl Plugin for AmbientPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Ambient>()
@@ -519,7 +522,7 @@ impl Plugin for AmbientPlugin {
             // listener under water) and before its play, which plays the region sounds
             // asked for here in the same frame.
             .add_systems(Update, (play, region_sounds).chain().in_set(crate::sfx::SfxStep::Ambient))
-            .add_systems(Last, report);
+            .add_systems(Last, (release_files, report));
     }
 }
 

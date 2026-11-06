@@ -306,7 +306,7 @@ pub(crate) fn menu_key(button: GamepadButton) -> Option<KeyCode> {
 
 /// [`menu_key`] in the menu `at`: what its own buttons stand for there first, as
 /// [`menu_keys`] has them ([`menu_buttons`]; the tutorial menu's triggers are its A and S, not
-/// Page Up and Page Down).
+/// Page Up and Page Down; the container menu's X is its R).
 pub(crate) fn menu_key_at(button: GamepadButton, at: MenuAt) -> Option<KeyCode> {
     menu_buttons(at).iter().find(|(b, _)| *b == button).map(|(_, k)| *k).or_else(|| menu_key(button))
 }
