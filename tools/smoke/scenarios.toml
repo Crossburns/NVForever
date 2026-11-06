@@ -18925,7 +18925,7 @@ expect = [
   { re = 'tiles: ContainerMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', label = "the menu's tree draws, with its rows" },
   { text = "tile menu blur: ContainerMenu radius 3", min = 1, label = "the world blurs behind the menu drawn from its tiles" },
   { text = "tile menu blur: off", min = 1, label = "and clears when it closes" },
-  { re = 'tiles: ContainerMenu drawn from tiles: "ITEMS" \d+ rows, "[^"]+" \d+ rows, "Wg   \d+/\d+", player selected "10mm Round \(70\)", figures: .*WG', label = "the pointer's row: the model's rows, headings, weight and unit figures" },
+  { re = 'tiles: ContainerMenu drawn from tiles: "ITEMS" \d+ rows, "[^"]+" \d+ rows, "Wg   \d+/\d+", player selected "10mm Round \(70\)", figures: .*WEIGHT', label = "the pointer's row: the model's rows, headings, weight and unit figures" },
   { text = "tiles: ContainerMenu Hover(Player, 0) on its tiles", count = 1, label = "the pointer onto a row selects it, once; a resting pointer over changed rows does not" },
   { text = "tiles: ContainerMenu Hover(Container, 0) on its tiles", count = 1, label = "a row of the list without the focus takes the pointer" },
   { text = "tiles: ContainerMenu Select(Player, 0) on its tiles", count = 2, label = "a click on the selected row acts on it" },

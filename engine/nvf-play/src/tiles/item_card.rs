@@ -6,14 +6,13 @@
 //! - A card shows through its `visible`, its figure through `_Value` ("Set in code" in the
 //!   prefab), its title from the file but for `AmmoInfo`'s, the ammunition or the armour's
 //!   class [observed: `AmmoInfo` title "9mm (13/37)", "Heavy", `_Value` empty].
-//! - The titles' words: a title from a plugin's setting, a mod's file or a script stays, by
-//!   where it came from (`fnv_ui::Ui::built_in_label`), whatever its words. Only a title the
-//!   file left to `fnv_ui::strings::BUILT_IN` ("WEIGHT", "Value", "Condition" ...) takes the
-//!   hand-built figures' card words ([`crate::pipboy::items::card_title`], [`SHORT_TITLES`]
-//!   [design]; whether those words may stay is open, barter-menu.md, "The words on the tiles"):
-//!   the two drawings of a card agree, and the labels do not fit
-//!   the file's card: `ConditionMeter` stands 62 in, a title 5 in [documented], and "WEIGHT"
-//!   alone measures 72 units [observed: this menu at 1280 x 720].
+//! - The titles' words are the file's, never written here: the load order's setting where a
+//!   plugin defines it, else `fnv_ui::strings::BUILT_IN`'s label ("WEIGHT", "Value",
+//!   "Condition" ...) [design: the string rule, LEGAL.md; the words the original shows on
+//!   screen are not transcribed]. Those labels are wider than the card's place for them
+//!   (`ConditionMeter` stands 62 in, a title 5 in [documented], and "WEIGHT" alone measures
+//!   72 units [observed: this menu at 1280 x 720]); the fit is left open (barter-menu.md, "The
+//!   words on the tiles").
 //! - The condition: `ConditionInfo`'s `user5` 0 to 1, which its meter reads, and `user6` 1 for
 //!   a weapon, 0 for armour [observed], with `CNDArrows` at y 15, 20 high once a card is
 //!   written [observed; what it looks like there is an open observer check].
@@ -28,7 +27,7 @@
 //! - Nothing selected: every card hidden, but `StrengthReqInfo` as the file has it, shown at
 //!   `alpha` 0 [observed: at the opening of the menu its lines show and no words].
 
-use crate::pipboy::items::{card_title, Info};
+use crate::pipboy::items::Info;
 use fnv_ui::{Ui, Value};
 
 /// The cards this writes, under the prefab's root [documented: item_stats_display.xml].
@@ -44,28 +43,6 @@ pub const CONDITION_METER_IMAGE: &str = "ConditionInfo/ConditionMeter/MeterImage
 /// A card's words [documented: card_info.xml]: `_Title` and `_Value` show only through them.
 pub const CARD_TEXTS: [&str; 2] = ["CI_TitleText", "CI_ValueText"];
 
-/// By card: the setting its file reads for the title, the word it says (module notes). DPS and
-/// DT are the same in both.
-const SHORT_TITLES: [(&str, &str, &str); 6] = [
-    ("DAMInfo", "sInventoryDamage", card_title::DAM),
-    ("WeightInfo", "sInventoryWeightUpper", card_title::WG),
-    ("ValueInfo", "sInventoryValue", card_title::VAL),
-    ("StrengthReqInfo", "sInventoryStrReq", card_title::STR),
-    ("ConditionInfo", "sInventoryCondition", card_title::CND),
-    (EFFECTS, "sInventoryEffects", card_title::EFFECTS),
-];
-
-/// [`SHORT_TITLES`] over the titles that still hold the setting's built-in label. Once written
-/// the title reads as chosen, so this writes once a menu.
-fn short_titles(ui: &mut Ui, root: &str) {
-    for (card, setting, word) in SHORT_TITLES {
-        let Some(tile) = ui.find_tile(&format!("{root}/{card}")) else { continue };
-        if ui.built_in_label(tile, "_Title").is_some_and(|s| s.eq_ignore_ascii_case(setting)) {
-            ui.set_trait(tile, "_Title", Value::Str(word.to_string()));
-        }
-    }
-}
-
 fn set(ui: &mut Ui, root: &str, card: &str, name: &str, v: Value) {
     if let Some(t) = ui.find_tile(&format!("{root}/{card}")) {
         ui.set_trait(t, name, v);
@@ -80,7 +57,6 @@ fn show(ui: &mut Ui, root: &str, card: &str, value: Option<&str>) {
 /// Write what the cards under `root` show of `info`, or the empty state with `None`. Every
 /// card is written, so nothing stays of the item before.
 pub fn write(ui: &mut Ui, root: &str, info: Option<&Info>) {
-    short_titles(ui, root);
     let Some(i) = info else {
         for card in CARDS.into_iter().chain([EFFECTS]) {
             show(ui, root, card, None);
@@ -197,9 +173,9 @@ mod tests {
     }
 
     #[test]
-    fn only_built_in_labels_take_the_card_words() {
-        // The file's titles read settings; `WeightInfo`'s and `ConditionInfo`'s text is the
-        // same "WEIGHT" and "Condition" throughout, only where it came from differs.
+    fn titles_stay_the_files() {
+        // The file's titles read settings: a plugin's and a built-in label alike stay as the
+        // file has them, nothing written over them.
         let xml = format!(
             r#"<menu name="M"><rect name="D"><user1>40</user1>{}{}{}</rect></menu>"#,
             card_titled("WeightInfo", "&-sInventoryWeightUpper;"),
@@ -220,19 +196,12 @@ mod tests {
             ui
         };
         let title = |ui: &Ui, card: &str| ui.get_string(&format!("{ROOT}/{card}/_Title")).unwrap_or_default();
-        // Built-in fallbacks.
-        let ui = loaded(&["sInventoryWeightUpper", "sInventoryCondition", "sInventoryDamagePerSecond"], &xml);
-        assert_eq!(title(&ui, "WeightInfo"), "WG");
-        assert_eq!(title(&ui, "ConditionInfo"), "CND");
-        assert_eq!(title(&ui, "DPSInfo"), "DPS", "no card word of its own");
-        // A plugin's setting worded as the label: the plugin wins.
-        let ui = loaded(&["sInventoryCondition"], &xml);
-        assert_eq!(title(&ui, "WeightInfo"), "WEIGHT");
-        assert_eq!(title(&ui, "ConditionInfo"), "CND");
-        // A mod's file writing the same words itself.
-        let modded = xml.replace("&-sInventoryWeightUpper;", "WEIGHT");
-        let ui = loaded(&["sInventoryWeightUpper"], &modded);
-        assert_eq!(title(&ui, "WeightInfo"), "WEIGHT");
+        for built_in in [&["sInventoryWeightUpper", "sInventoryCondition", "sInventoryDamagePerSecond"][..], &[]] {
+            let ui = loaded(built_in, &xml);
+            assert_eq!(title(&ui, "WeightInfo"), "WEIGHT");
+            assert_eq!(title(&ui, "ConditionInfo"), "Condition");
+            assert_eq!(title(&ui, "DPSInfo"), "DPS");
+        }
     }
 
     #[test]
