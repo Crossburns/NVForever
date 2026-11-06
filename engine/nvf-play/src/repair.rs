@@ -184,6 +184,8 @@ struct View {
     /// What Repair All costs, and whether the player can pay it.
     total: u32,
     all_ready: bool,
+    /// The names the hints use (`crate::pad::labels`).
+    labels: crate::pad::Labels,
 }
 
 /// What `open` lists now (with the world in the runtime).
@@ -230,7 +232,7 @@ fn view(rt: &mut crate::script::Runtime, sim: &mut SimState, combat: Option<&cra
         rows.sort_by(|a, b| b.ready.cmp(&a.ready).then_with(|| a.label.cmp(&b.label)).then(a.condition.total_cmp(&b.condition)));
         let total: u32 = rows.iter().filter_map(|r| r.quote.cost().map(|c| c * r.count.max(1) as u32)).sum();
         let selected = open.selected.min(rows.len().saturating_sub(1));
-        View { all_ready: total > 0 && total as i64 <= caps as i64, rows, selected, first: open.first, skill: skill.max(0.0).floor() as i32, caps, total }
+        View { all_ready: total > 0 && total as i64 <= caps as i64, rows, selected, first: open.first, skill: skill.max(0.0).floor() as i32, caps, total, labels: crate::pad::labels() }
     })
 }
 
@@ -568,8 +570,12 @@ fn spawn(commands: &mut Commands, look: &mut RepairLook, v: &View, data: Option<
                 }
             }
             // The buttons [observed: "Repair All (285)  A)", "Done  E)"].
-            let all = format!("Repair All ({})  A)", v.total);
-            for (k, (label, b, on)) in [(all.as_str(), RepairButton::All, v.all_ready), ("Done  E)", RepairButton::Done, true)].into_iter().enumerate() {
+            // A and E, with a controller X (`repair_services_menu.xml`'s Repair All) and B
+            // (Esc) [#1662].
+            let hint_at = crate::pad::at_menu(fnv_game::repair::REPAIR_SERVICES_MENU);
+            let all = format!("Repair All ({})  {}", v.total, crate::pad::hint_as(&[KeyCode::KeyA], hint_at, v.labels));
+            let done = format!("Done  {}", crate::pad::hint_as(&[KeyCode::KeyE, KeyCode::Escape], hint_at, v.labels));
+            for (k, (label, b, on)) in [(all.as_str(), RepairButton::All, v.all_ready), (done.as_str(), RepairButton::Done, true)].into_iter().enumerate() {
                 let w = look.row.font.width(label);
                 m.spawn((Button, b, at(BUTTONS.x - w - 10.0, BUTTONS.y + k as f32 * BUTTON_STEP, w + 10.0, 44.0))).with_children(|t| {
                     text(t, &look.row, label, 0.0, 0.0, if on { bright } else { dim });

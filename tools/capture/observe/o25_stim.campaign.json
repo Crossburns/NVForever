@@ -1,0 +1,78 @@
+{
+ "format": "fnv.observe.campaign/1",
+ "name": "o25_stim",
+ "title": "Observer check 76: a Stimpak used outside Hardcore, then SetHardcore 1 after ~3 s and ~10 s; the player's Health every 2 loops",
+ "save": "nvfairport",
+ "defaults": {
+  "fields": "fight",
+  "every": 2,
+  "depth": 0,
+  "settle_frames": 200,
+  "hours": 0.2,
+  "extra_header": [
+   [
+    "p_health",
+    "num",
+    "player.GetAV Health"
+   ],
+   [
+    "p_health_base",
+    "num",
+    "player.GetBaseAV Health"
+   ],
+   [
+    "hc",
+    "num",
+    "IsHardcore"
+   ]
+  ]
+ },
+ "sessions": [
+  {
+   "name": "hc3",
+   "console_first": [
+    "CloseAllMenus"
+   ],
+   "do": [
+    "player.additem 00015169 2",
+    "player.damageav health 60",
+    {
+     "frames": 30
+    },
+    "player.equipitem 00015169"
+   ],
+   "timed": [
+    {
+     "after": 90,
+     "do": [
+      "SetHardcore 1"
+     ]
+    }
+   ],
+   "note": "Hardcore on 90 samples after the Stimpak"
+  },
+  {
+   "name": "hc10",
+   "console_first": [
+    "CloseAllMenus"
+   ],
+   "do": [
+    "player.additem 00015169 2",
+    "player.damageav health 60",
+    {
+     "frames": 30
+    },
+    "player.equipitem 00015169"
+   ],
+   "timed": [
+    {
+     "after": 300,
+     "do": [
+      "SetHardcore 1"
+     ]
+    }
+   ],
+   "note": "Hardcore on 300 samples after the Stimpak"
+  }
+ ]
+}

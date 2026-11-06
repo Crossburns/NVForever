@@ -5756,6 +5756,23 @@ expect = [
 ]
 
 [[scenario]]
+name = "death-cry-cut"
+source = "#1539 (playtest 2026-11-05): a MaleAdult07 Powder Ganger's generic death file (generic_death_00175181_1 9.80 s, _00175182_1 15.23 s) holds several cries and played whole, so the corpse groaned for 10-15 s. Now one cry of it is played, picked at random, and the line ends with it (crates/fnv-voice/src/cry.rs, engine/nvf-play/src/voice.rs one_cry, Game::cut_line_after; voice.md §9.1)"
+note = "four GoodspringsPowderGangerCM (0015F311, voice MaleAdult07, traits not from its template) placed at the player and killed by the test aid 2 s apart; the Death line is one of three Random lines (00175180's MaleAdult07 file is 1.09 s and plays whole), so with four deaths at least one long file is all but certain; --no-voice still decodes and cuts (the log is the check)"
+areas = ["voice", "combat"]
+paths = ["crates/fnv-voice/src/cry.rs", "engine/nvf-play/src/voice.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "9:player.placeatme 0015F311 1;9.2:player.placeatme 0015F311 1;9.4:player.placeatme 0015F311 1;9.6:player.placeatme 0015F311 1;9.8:close", NVF_PLAY_TEST_SCRIPT = "13:kill:0xFF000000,15:kill:0xFF000001,17:kill:0xFF000002,19:kill:0xFF000003" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--hour", "12", "--no-voice"]
+run_seconds = 30
+expect = [
+  { re = 'voice: playing sound\\voice\\falloutnv\.esm\\maleadult07\\generic_death_0017518[012]_1\.ogg', min = 1, label = "the Powder Gangers say their generic Death line in MaleAdult07's voice" },
+  { re = 'voice: one cry of sound\\voice\\falloutnv\.esm\\maleadult07\\generic_death_0017518[12]_1\.ogg: cry \d+ of (?P<n>\d+)', range = [2, 40], label = "a long death file is split into its cries and one is played" },
+  { re = 'voice: one cry of .*, (?P<n>[\d.]+)-[\d.]+ s of its', range = [0.0, 15.3], label = "from a point inside the file" },
+  { re = 'voice: playing sound\\voice\\falloutnv\.esm\\maleadult07\\generic_death_0017518[12]_1\.ogg \((?P<n>[\d.]+) s\)', range = [0.1, 5.0], all = true, label = "every long death file plays one cry (9.80 or 15.23 s whole)" },
+  { re = 'voice summary: .* (?P<n>\d+) long generic death files cut to one cry', range = [1, 4], label = "counted at exit" },
+]
+
+[[scenario]]
 name = "helios-ceiling-turrets"
 source = "#1537 (owner's playtest 2026-11-04): HELIOS One's ceiling turrets turn to the player and fire. Three causes: no 2hr stance (no Weapon node, fixed with #1554's no_weapon_node), eyes 112 units over the origin (above the turret's own top and past the ceiling: detection.rs eyes_of now keeps eyes within the body), and a rooted (Immobile) actor never turned (fnv-ai carry.rs rooted_turn)"
 note = "HELIOSOneTower: VHeliosTurret2REF (0x00099DB8, LvlTurretCeiling2048Robot → CrTurretCeiling01, minisentryturret skeleton, TurretGunCeiling01) at (-1792, 1024, 7760) with two more; the player put on the floor below, about 400 units off"
@@ -6234,6 +6251,18 @@ order = [[
   { re = 'provocation: VERGSCoyote6REF 0x00157B38 attacks the player, who stayed inside its aggro radius', label = "then it attacks" },
 ]]
 expect = [{ re = 'provocation summary: .*aggro radius: (?P<n>\d+) warnings, (?P<m>\d+) attacks', label = "the aggro radius in the provocation summary" }]
+
+[[scenario]]
+name = "aggro-spawned-no-warning"
+source = "#1341 (crates/fnv-game/src/aggro.rs \"Spawned actors do not warn\", docs/design/combat-ai.md §13.1): an actor created at run time (PlaceAtMe) attacks a player inside its aggro radius at once, without the placed one's warnings; the original's CrCoyote did so at the placed coyote's spot, 700 of 1,024 units off (capture o25_coyote, 2026-11-06)"
+note = "the setup of aggro-radius (the player about 600 units from VERGSCoyote6REF 0x00157B38, past half its 1,024 radius, where a placed one warns); the six Goodsprings coyotes are disabled and a CrCoyote (the first created reference, 0xFF0000xx) is PlaceAtMe'd at coyote 6's spot at 3 s"
+areas = ["combat", "alert"]
+paths = ["crates/fnv-game/src/aggro.rs", "engine/nvforever/src/provoked.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:call:VERGSCoyote1REF:Disable,2.1:call:VERGSCoyote2REF:Disable,2.2:call:VERGSCoyote3REF:Disable,2.3:call:VERGSCoyote4REF:Disable,2.4:call:VERGSCoyote5REF:Disable,2.5:call:VERGSCoyote6REF:Disable,3:call:VERGSCoyote6REF:PlaceAtMe:CrCoyote:1" }
+args = ["--play", "--pos=-59300,-753,9100", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 25
+expect = [{ re = 'provocation: .*0xFF0000[0-9A-F]{2} attacks the player, who stayed inside its aggro radius \((?P<n>\d+) of 1024 units\)', range = [513, 1024], label = "the spawned coyote attacks past half its radius" }]
+forbid = [{ re = 'provocation: .*0xFF0000[0-9A-F]{2} warns the player inside its aggro radius', label = "a warning from the spawned coyote" }]
 
 [[scenario]]
 name = "aggro-warning-look"
@@ -8824,6 +8853,44 @@ expect = [
   { text = "controls: controller rumble off", label = "the Controls tab's Rumble row turns the rumble off" },
 ]
 order = [["controls: input device Controller", "controls: every control back to the game's controller buttons", "controls: Jump bound to controller RB"]]
+
+[[scenario]]
+name = "controller-menu-hints"
+source = "#1662: with Controller as the Input Device the menus' action hints name the button that presses their key (docs/design/controller.md §3, engine/nvf-play/src/pad.rs `hint`); the caravan screens against Ringo (the caravan scenario's aid steps), each stage's hints logged as they change"
+note = "the caravan buttons are [design, #1662] (no caravan menu file is read); a home of its own keeps the Controller choice away from the other scenarios. The help box's Close word comes from the game strings, so it is matched loosely"
+areas = ["caravan", "menus"]
+paths = ["engine/nvf-play/src/pad.rs", "engine/nvf-play/src/caravan.rs", "engine/nvf-play/src/caravan/**", "engine/nvf-play/src/lockpick/help.rs"]
+env = { NVFOREVER_HOME = "controller-hints-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller", NVF_PLAY_TEST_CARAVAN = "1:seed:7,14:caps:200,15:cards:15D7A2,16:open:104C7D:15D7A2:0.25,18:help,19:match,20:accept,21:help,22:randomize,23:play,25:help,26:forfeit,26.5:forfeit,29:continue" }
+args = ["--cell", "GSHouseInterior02", "--play", "--no-voice", "--no-messages"]
+run_seconds = 32
+expect = [
+  { text = "controls: input device Controller", label = "the Controls tab's first row picks the controller" },
+  { text = "hints: Xbox labels", label = "the hints take the controller's names" },
+  { re = 'caravan: hints: Auto Match Y\), Raise RT\), Accept A\), Exit B\); help: \S.* \[B\]', label = "the bet screen under its help box: the buttons, and B closes the box" },
+  { text = "caravan: hints: Auto Match Y), Raise RT), Accept A), Exit B)", label = "the bet screen's buttons once the help box is closed" },
+  { re = 'caravan: hints: Randomize Caravan Deck Y\), Add A\), Remove X\), Play Caravan RT\)', label = "the deck builder's buttons" },
+  { re = 'caravan: hints: Select Card A\), Discard Card X\), Discard Track Y\), Cancel B\)', label = "the game's buttons" },
+  { re = 'caravan: hints: [^;]* [WQFRS]\)', max = 0, label = "no keyboard key left in a caravan hint" },
+]
+order = [["controls: input device Controller", "caravan: hints: Auto Match Y)", "caravan: hints: Randomize Caravan Deck Y)", "caravan: hints: Select Card A)"]]
+
+[[scenario]]
+name = "controller-playstation-hints"
+source = "#1452: PlayStation button names; the settings page's Button style (Controller group) set to PlayStation with Controller as the Input Device, the caravan screens' hints in the PlayStation names (docs/design/controller.md §3a)"
+note = "as controller-menu-hints, with button-style=PlayStation; no controller is connected in a smoke run, so Auto's name detection is covered by the unit tests (pad.rs playstation_pads_are_told_by_name), not here"
+areas = ["caravan", "menus"]
+paths = ["engine/nvf-play/src/pad.rs", "engine/nvf-play/src/reticle.rs", "engine/nvf-play/src/bindings.rs"]
+env = { NVFOREVER_HOME = "controller-ps-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:device:Controller,3:button-style=PlayStation", NVF_PLAY_TEST_CARAVAN = "1:seed:7,14:caps:200,15:cards:15D7A2,16:open:104C7D:15D7A2:0.25,18:help,19:match,20:accept,21:help,22:randomize,23:play,25:help,26:forfeit,26.5:forfeit,29:continue" }
+args = ["--cell", "GSHouseInterior02", "--play", "--no-voice", "--no-messages"]
+run_seconds = 32
+expect = [
+  { text = "controller: button style PlayStation", label = "the settings page's Button style picks the PlayStation names" },
+  { text = "hints: PlayStation labels", label = "the hints take them" },
+  { re = 'caravan: hints: Auto Match Triangle\), Raise R2\), Accept Cross\), Exit Circle\); help: \S.* \[Circle\]', label = "the bet screen under its help box, Circle closing the box" },
+  { re = 'caravan: hints: Randomize Caravan Deck Triangle\), Add Cross\), Remove Square\), Play Caravan R2\)', label = "the deck builder's buttons" },
+  { re = 'caravan: hints: Select Card Cross\), Discard Card Square\), Discard Track Triangle\), Cancel Circle\)', label = "the game's buttons" },
+  { re = 'caravan: hints: [^;]* (?:[WQFRSAXYB]|RT)\)', max = 0, label = "no keyboard key or Xbox name left in a caravan hint" },
+]
 
 [[scenario]]
 name = "controller-read"

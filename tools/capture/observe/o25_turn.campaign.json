@@ -1,0 +1,207 @@
+{
+ "format": "fnv.observe.campaign/1",
+ "name": "o25_turn",
+ "title": "Issue #1352: a trooper's turn onto its combat target, 90 and 45 degrees, heading every loop",
+ "save": "nvfairport",
+ "defaults": {
+  "fields": "fight",
+  "events": "fight",
+  "every": 1,
+  "depth": 0,
+  "settle_frames": 200
+ },
+ "sessions": [
+  {
+   "name": "t90",
+   "hours": 0.08,
+   "console_first": [
+    "CloseAllMenus",
+    "tgm",
+    "player.SetAngle Z 0"
+   ],
+   "place": [
+    {
+     "base": "0x001543E0",
+     "count": 1,
+     "distance": 200,
+     "arm": "0x0000434F",
+     "ammo": "0x00004241",
+     "offset": [
+      0,
+      400,
+      0
+     ]
+    }
+   ],
+   "timed": [
+    {
+     "after": 20,
+     "script": {
+      "decls": [
+       "ref rA"
+      ],
+      "lines": [
+       "let rA := GetFirstRef 200 1",
+       "while rA != 0",
+       "  if rA.GetSourceModIndex == 255",
+       "    if rA.GetDead == 0",
+       "      rA.SetAngle Z 90",
+       "    endif",
+       "  endif",
+       "  let rA := GetNextRef",
+       "loop"
+      ]
+     }
+    },
+    {
+     "after": 60,
+     "script": {
+      "decls": [
+       "ref rA"
+      ],
+      "lines": [
+       "let rA := GetFirstRef 200 1",
+       "while rA != 0",
+       "  if rA.GetSourceModIndex == 255",
+       "    if rA.GetDead == 0",
+       "      rA.StartCombat player",
+       "    endif",
+       "  endif",
+       "  let rA := GetNextRef",
+       "loop"
+      ]
+     }
+    }
+   ],
+   "note": "trooper 400 north of the player, set to heading 90 (bearing to the player 180), then StartCombat"
+  },
+  {
+   "name": "t45",
+   "hours": 0.08,
+   "console_first": [
+    "CloseAllMenus",
+    "tgm",
+    "player.SetAngle Z 0"
+   ],
+   "place": [
+    {
+     "base": "0x001543E0",
+     "count": 1,
+     "distance": 200,
+     "arm": "0x0000434F",
+     "ammo": "0x00004241",
+     "offset": [
+      0,
+      400,
+      0
+     ]
+    }
+   ],
+   "timed": [
+    {
+     "after": 20,
+     "script": {
+      "decls": [
+       "ref rA"
+      ],
+      "lines": [
+       "let rA := GetFirstRef 200 1",
+       "while rA != 0",
+       "  if rA.GetSourceModIndex == 255",
+       "    if rA.GetDead == 0",
+       "      rA.SetAngle Z 135",
+       "    endif",
+       "  endif",
+       "  let rA := GetNextRef",
+       "loop"
+      ]
+     }
+    },
+    {
+     "after": 60,
+     "script": {
+      "decls": [
+       "ref rA"
+      ],
+      "lines": [
+       "let rA := GetFirstRef 200 1",
+       "while rA != 0",
+       "  if rA.GetSourceModIndex == 255",
+       "    if rA.GetDead == 0",
+       "      rA.StartCombat player",
+       "    endif",
+       "  endif",
+       "  let rA := GetNextRef",
+       "loop"
+      ]
+     }
+    }
+   ],
+   "note": "trooper 400 north of the player, set to heading 135 (bearing to the player 180), then StartCombat"
+  },
+  {
+   "name": "t135",
+   "hours": 0.08,
+   "console_first": [
+    "CloseAllMenus",
+    "tgm",
+    "player.SetAngle Z 0"
+   ],
+   "place": [
+    {
+     "base": "0x001543E0",
+     "count": 1,
+     "distance": 200,
+     "arm": "0x0000434F",
+     "ammo": "0x00004241",
+     "offset": [
+      0,
+      400,
+      0
+     ]
+    }
+   ],
+   "timed": [
+    {
+     "after": 20,
+     "script": {
+      "decls": [
+       "ref rA"
+      ],
+      "lines": [
+       "let rA := GetFirstRef 200 1",
+       "while rA != 0",
+       "  if rA.GetSourceModIndex == 255",
+       "    if rA.GetDead == 0",
+       "      rA.SetAngle Z 45",
+       "    endif",
+       "  endif",
+       "  let rA := GetNextRef",
+       "loop"
+      ]
+     }
+    },
+    {
+     "after": 60,
+     "script": {
+      "decls": [
+       "ref rA"
+      ],
+      "lines": [
+       "let rA := GetFirstRef 200 1",
+       "while rA != 0",
+       "  if rA.GetSourceModIndex == 255",
+       "    if rA.GetDead == 0",
+       "      rA.StartCombat player",
+       "    endif",
+       "  endif",
+       "  let rA := GetNextRef",
+       "loop"
+      ]
+     }
+    }
+   ],
+   "note": "trooper 400 north of the player, set to heading 45 (bearing to the player 180), then StartCombat"
+  }
+ ]
+}

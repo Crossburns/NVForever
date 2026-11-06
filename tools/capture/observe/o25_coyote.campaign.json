@@ -1,0 +1,63 @@
+{
+ "format": "fnv.observe.campaign/1",
+ "name": "o25_coyote",
+ "title": "Issue #1341: placed VERGSCoyote6REF vs a spawned CrCoyote at its spot, the player 700 units off, package/procedure/combat every 2 loops",
+ "save": "nvfairport",
+ "defaults": {
+  "fields": "full",
+  "events": "fight",
+  "every": 2,
+  "depth": 1,
+  "settle_frames": 300,
+  "hour": 12,
+  "hours": 0.3,
+  "go": {
+   "cow": [
+    "WastelandNV",
+    -15,
+    -1
+   ]
+  },
+  "track": [
+   "0x00157B38"
+  ],
+  "console_first": [
+   "CloseAllMenus",
+   "tgm"
+  ]
+ },
+ "sessions": [
+  {
+   "name": "placed",
+   "do": [
+    [
+     "player.MoveTo {0} 0 700 0",
+     "0x00157B38"
+    ]
+   ],
+   "note": "baseline: the placed coyote alone"
+  },
+  {
+   "name": "spawned",
+   "do": [
+    [
+     "{0}.PlaceAtMe {1} 1",
+     "0x00157B38",
+     "0x000E584E"
+    ],
+    {
+     "frames": 60
+    },
+    [
+     "{0}.Disable",
+     "0x00157B38"
+    ],
+    [
+     "player.MoveTo {0} 0 700 0",
+     "0x00157B38"
+    ]
+   ],
+   "note": "a CrCoyote spawned at the placed coyote's spot, the placed one disabled"
+  }
+ ]
+}

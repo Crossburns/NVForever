@@ -154,6 +154,22 @@ the spec it links to.
     original's PC file gives it; the controller drops with X. A keyboard-only player can't
     drop. If you want a key, name it and it drops one (Shift with it the stack); free on
     that page are, for example, G or Delete. ([pipboy §6](spec-notes/pipboy.md))
+48. **Controller buttons for menus whose files are not read (#1662).** Menu hints now
+    name the controller button that presses their key. Where no menu file gives a button,
+    these are guesses: Caravan bet Accept A, Auto Match Y, Raise RT, Exit B; deck Add A,
+    Remove X, Randomize Y, Play Caravan RT (B leaves); game Select A, Discard Card X,
+    Discard Track Y, Cancel B. Poker Check/Call A, Raise RT, All In Y, Fold X, Next Hand
+    A, Leave B. The pause menu's X deletes (a save on the Load page, a binding on the
+    Controls tab). The STATS page's RAD view: RadAway A, Rad-X X. Right buttons?
+    ([controller §3](design/controller.md))
+49. **PlayStation button names (#1452).** With a controller, Button style Auto (settings
+    page, Controller group) shows Cross/Circle/Square/Triangle, L1-R3, Select/Start when
+    the pad says it is a PlayStation one (DualSense, DualShock, "Wireless Controller",
+    PS3/PS4/PS5, Sony), else the Xbox names; Xbox or PlayStation forces them. The INI keeps
+    the Xbox names. The crosshair prompt draws NVForever's own outline glyphs for the four
+    face buttons; menu hints write the names (the game fonts have no symbols). Select and
+    Start rather than Share/Create and Options. Right choices, and do the glyphs look
+    right? ([controller §3a](design/controller.md))
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 

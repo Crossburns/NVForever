@@ -206,8 +206,29 @@ them.
   data, once per limb condition, took the blast's damage
   after armour times the weapon's Limb Dmg Mult (1 for a blast without a weapon), then
   the difficulty and the two rules above, as a shot's limb damage [hypothesis: every
-  limb takes the full amount; no game setting or page gives the share; owner-review 41,
-  observer check 74]. A blast that kills or knocks out does no limb damage. The limb
+  limb takes the full amount; no game setting or page gives the share; owner-review 41].
+  The original does not [observed 2026-11-06, capture o25_limbs, `nvftest`: Ringo at
+  Health 5000, the player in god mode 900 units off, MineFragExplosion 0x0007078B placed
+  by Ringo's PlaceAtMe at 0, 64 and 128 units in front and 64 to his right, then
+  GrenadeFragExplosion 0x000179DA at 0, conditions restored between]:
+
+  | blast | Health lost | torso (Endurance) | left leg | right leg | head, arms, brain |
+  |---|---|---|---|---|---|
+  | mine, 0 | 99.95 | 3.33 | 23.99 | 0 | 0 |
+  | mine, 64 in front | 96.99 | 3.27 | 15.68 | 7.84 | 0 |
+  | mine, 128 in front | 98.97 | 3.33 | 16.00 | 8.00 | 0 |
+  | mine, 64 to the right | 98.00 | 3.27 | 23.52 | 0 | 0 |
+  | grenade, 0 | 123.0 | 4.10 | 19.68 | 9.84 | 0 |
+
+  So the torso lost 1/30 of the Health damage every time and the legs 0.24 of it
+  together, all on the left leg or split 2:1 left and right; the head, arms and brain
+  lost nothing, the damage did not fall with distance out to 128 units, and Ringo was
+  not knocked down. A reading that fits all five [hypothesis]: the blast's damage is
+  split in 1/12.5 shares (0.08), each share hitting one body part with that part's
+  limb damage share as a shot does (the torso's 0.4167 of observer check 3: 0.08 ×
+  0.4167 = 1/30; a leg 1.0 per share, three shares to the legs). Which parts the
+  shares reach (the legs only here, a blast at the feet) is open: a blast at head
+  height would show it. A blast that kills or knocks out does no limb damage. The limb
   damage counts as the blast's hit (`nvf_play::combat::hit_actor`): a limb it cripples
   makes it a crippling hit, so the actor staggers once (the player flinches) by the rule
   in §3, an arm it cripples disarms, and the "limb crippled" HUD line shows for the
