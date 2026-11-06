@@ -33,6 +33,36 @@ pub struct LoadScreen {
     pub locations: Vec<ScreenLocation>,
     /// Header flag "Displays In Main Menu" ([`MAIN_MENU_FLAG`]).
     pub main_menu: bool,
+    /// How the text is set: the LSCT that WMI1 names, when it is one of the tip type.
+    pub tip: Option<TipStyle>,
+}
+
+/// LSCT's type for a tip [documented: fopdoc FalloutNV/Records/LSCT].
+const TIP_TYPE: u64 = 3;
+
+/// How a screen's tip is set: the fields of an LSCT of the tip type
+/// [documented: fopdoc FalloutNV/Records/LSCT; units: loading-screens.md §4].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TipStyle {
+    /// The text box's left edge and width, pixels of a window 1280 wide.
+    pub x: f32,
+    pub width: f32,
+    /// The text box's top and height, parts of 960 of the window's height.
+    pub y: f32,
+    pub height: f32,
+    /// The font's number (`sFontFile_n`).
+    pub font: u32,
+    /// The text's colour, 0 to 255 per channel.
+    pub colour: [f32; 3],
+    /// 1 left, 2 centre, 4 right.
+    pub alignment: u32,
+}
+
+impl TipStyle {
+    /// For a screen with no LSCT of the tip type behind it: the values of
+    /// `StandardLoadingTip` in FalloutNV.esm [observed: `fnvtool esm decode`,
+    /// loading-screens.md §2].
+    pub const FALLBACK: TipStyle = TipStyle { x: 210.0, width: 850.0, y: 100.0, height: 400.0, font: 6, colour: [255.0, 180.0, 53.0], alignment: 2 };
 }
 
 /// Where the player is being taken.
@@ -101,6 +131,31 @@ fn load_screen(lo: &LoadOrder, schema: &Schema, form_id: u32) -> Option<LoadScre
         text: f.string(b"DESC").unwrap_or_default(),
         locations,
         main_menu: schema.header_flag(b"LSCR", MAIN_MENU_FLAG).is_some_and(|m| r.header.flags & m != 0),
+        tip: f.formid(b"WMI1", lo).and_then(|id| tip_style(lo, schema, id)),
+    })
+}
+
+/// The style of the LSCT `form_id`; `None` for anything but a whole one of the tip type.
+fn tip_style(lo: &LoadOrder, schema: &Schema, form_id: u32) -> Option<TipStyle> {
+    let (pi, r) = winner(lo, form_id)?;
+    if &r.header.sig != b"LSCT" || r.header.flags & DELETED != 0 {
+        return None;
+    }
+    let f = Fields::new(r, pi, schema).ok()?;
+    let v = f.get(b"DATA")?;
+    let int = |k: &str| num(&v, k).map(|n| n as u32);
+    let float = |k: &str| num(&v, k).map(|n| n as f32);
+    if num(&v, "type")? as u64 != TIP_TYPE {
+        return None;
+    }
+    Some(TipStyle {
+        x: float("x")?,
+        width: float("width")?,
+        y: float("y")?,
+        height: float("height")?,
+        font: int("font_1")?,
+        colour: [float("font_1_red")?, float("font_1_green")?, float("font_1_blue")?],
+        alignment: int("font_1_alignment")?,
     })
 }
 
@@ -147,7 +202,7 @@ mod tests {
     const SALOON: u32 = 0x106FE5;
 
     fn screen(form_id: u32, locations: Vec<ScreenLocation>) -> LoadScreen {
-        LoadScreen { form_id, edid: None, texture: None, text: String::new(), locations, main_menu: false }
+        LoadScreen { form_id, edid: None, texture: None, text: String::new(), locations, main_menu: false, tip: None }
     }
 
     fn outdoors(x: i32, y: i32) -> Destination {

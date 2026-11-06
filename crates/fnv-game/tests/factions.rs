@@ -1032,6 +1032,36 @@ fn inside_half_its_aggro_radius_an_actor_attacks_without_warning() {
 }
 
 #[test]
+fn an_actor_created_at_run_time_attacks_inside_its_aggro_radius_without_warning() {
+    // `fnv_game::aggro` "Spawned actors do not warn" (#1341): the original's CrCoyote
+    // PlaceAtMe'd at a placed coyote's spot fought the player 700 of 1,024 units off at
+    // once, where the placed one warned for 14.9 s. The lurker's base placed at run time,
+    // 600 of its 650 units off (the placed one warns there): it attacks at the first tick.
+    let f = fixture();
+    let mut g = game(&f);
+    let player = FormId::PLAYER_REF;
+    g.world.get(player).unwrap().pos = [0.0; 3];
+    let cell = g.world.get(FormId(LURKER_REF)).unwrap().cell;
+    let spawned = g.world.place(FormId(LURKER), cell, [600.0, 0.0, 0.0], [0.0; 3], 1).unwrap();
+    assert!(spawned.is_dynamic());
+    assert_eq!(g.aggro_radius(spawned), Some(650.0));
+    assert!(!g.would_attack(spawned, player));
+    let now = g.time;
+    g.detection.pairs.insert((spawned, player), (Detection { value: 5.0, band: Band::Detected, ..Default::default() }, now));
+    assert_eq!(g.aggro_tick(), 1);
+    let notes = g.provocations.take_notes();
+    assert!(!notes.iter().any(|n| matches!(n, Note::AggroWarned { .. })), "{notes:?}");
+    assert!(notes.iter().any(|n| matches!(n, Note::AggroAttacks { actor, .. } if *actor == spawned)));
+    assert!(g.would_attack(spawned, player));
+    // Outside its radius it leaves the player alone, as a placed one does.
+    let far = g.world.place(FormId(LURKER), cell, [700.0, 0.0, 0.0], [0.0; 3], 1).unwrap();
+    let now = g.time;
+    g.detection.pairs.insert((far, player), (Detection { value: 5.0, band: Band::Detected, ..Default::default() }, now));
+    assert_eq!(g.aggro_tick(), 0);
+    assert!(!g.would_attack(far, player));
+}
+
+#[test]
 fn an_aggro_warning_ends_when_the_player_leaves_the_radius() {
     // The warning look (`fnv_game::aggro`, "The look") lasts while the player is inside;
     // the count is kept for the grace, the look is not.

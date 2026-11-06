@@ -503,8 +503,10 @@ pub fn draw(
                 item_info(p, &mut c, icon.as_deref(), i);
             }
             if let (false, true, Some(r)) = (panel, i.mod_hint, selected) {
-                info!("pipboy items: {} Mod X)", r.name);
-                c.text(p, 2, "Mod X)", MAIN.min.x + MOD_HINT.x - 10.0, MAIN.min.y + MOD_HINT.y + frame::BUTTON_TEXT_Y, Align::Right, amber(TEXT));
+                // X, with a controller LB (`inventory_menu.xml`'s, `crate::pad::menu_buttons`).
+                let hint = format!("Mod {}", crate::pad::hint(&[KeyCode::KeyX], crate::pad::at_menu(fnv_game::game::menus::INVENTORY)));
+                info!("pipboy items: {} {hint}", r.name);
+                c.text(p, 2, &hint, MAIN.min.x + MOD_HINT.x - 10.0, MAIN.min.y + MOD_HINT.y + frame::BUTTON_TEXT_Y, Align::Right, amber(TEXT));
             }
         }
     });

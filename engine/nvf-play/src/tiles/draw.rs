@@ -641,6 +641,69 @@ pub(crate) enum Ink {
     Drawn,
 }
 
+/// Where a menu's pieces are painted: the window (every menu until the Pip-Boy's pages), or
+/// an image a camera renders ([`Target::canvas`]). A root node and the pieces' slots belong
+/// to one target, so its fields are part of what a drawing is compared with ([`paint`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Target {
+    /// The camera the pieces are drawn by; none: the window's.
+    pub camera: Option<Entity>,
+    /// The pieces' area in the view's units, from its top left and cut off there; none: the
+    /// whole view.
+    pub canvas: Option<Vec2>,
+    /// Logical pixels to an interface unit (the tiled pictures').
+    pub scale: f32,
+    /// The camera's image's pixels to a logical pixel: 1 in the window. Layout does not
+    /// read it (the units are logical: the camera's target already scales them).
+    pub image_scale: f32,
+    /// The stacking level of the root.
+    pub z: i32,
+    /// Where a menu in the window keeps its place at the UI scale (its root a
+    /// `crate::interface::menu_frame` kept there); none: the root is the whole view (the
+    /// HUD, whose places are written for the scaled view, and a camera's image, which keeps
+    /// its size: its picture is what scales) [design: #1631].
+    pub frame: Option<Vec2>,
+}
+
+impl Target {
+    /// In the window, at `scale` logical pixels to an interface unit.
+    pub fn window(scale: f32, z: i32) -> Target {
+        Target { camera: None, canvas: None, scale, image_scale: 1.0, z, frame: None }
+    }
+
+    /// An image a camera renders: `canvas` is the part of it the pieces lie on. The image
+    /// is as many logical pixels as interface units (`crate::pipboy::TARGET`), so one unit
+    /// is one logical pixel whatever `image_scale` is [design: pipboy.rs, its module notes].
+    pub fn image(camera: Entity, canvas: Vec2, image_scale: f32, z: i32) -> Target {
+        Target { camera: Some(camera), canvas: Some(canvas), scale: 1.0, image_scale, z, frame: None }
+    }
+
+    /// A menu in the window drawn at the UI scale in a frame kept at `anchor`
+    /// ([`Target::frame`]).
+    pub fn in_frame(self, anchor: Vec2) -> Target {
+        Target { frame: Some(anchor), ..self }
+    }
+
+    /// Whether a root made for `self` serves `other`: the same camera, area, level and frame.
+    fn same_root(&self, other: &Target) -> bool {
+        self.camera == other.camera && self.canvas == other.canvas && self.z == other.z && self.frame == other.frame
+    }
+}
+
+/// The root node of a menu's pieces on `target`.
+fn spawn_root(commands: &mut Commands, target: &Target) -> Entity {
+    let node = match target.canvas {
+        Some(c) => Node { overflow: Overflow::clip(), ..at(0.0, 0.0, c.x, c.y) },
+        None => Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+    };
+    let node = target.frame.map_or(node.clone(), |anchor| interface::framed_root(node, anchor));
+    let mut root = commands.spawn((TileRoot, node, GlobalZIndex(target.z), Pickable::IGNORE));
+    if let Some(camera) = target.camera {
+        root.insert(UiTargetCamera(camera));
+    }
+    root.id()
+}
+
 /// A piece's nodes: its slot (over the whole view, stacked by the piece's place in the
 /// list), the clip wrapper in it and the piece's own outer node.
 struct Slot {
@@ -669,8 +732,9 @@ fn keys(pieces: &[Piece]) -> Vec<Key> {
 pub(crate) struct Drawn {
     root: Option<Entity>,
     pieces: Vec<Piece>,
-    /// Logical pixels to an interface unit the pieces were set for (the tiled pictures').
-    scale: f32,
+    /// Where the pieces were set out for: the camera, the area and the scale (the tiled
+    /// pictures').
+    target: Option<Target>,
     counts: (usize, usize),
     /// The whole menu's start line is written (T12a).
     told: bool,
@@ -871,6 +935,9 @@ pub(crate) struct View<'w, 's> {
     /// The pause menu and its page, for the Mods page (T11, `super::mods`).
     paused: Option<Res<'w, crate::pause::Paused>>,
     page: Option<Res<'w, crate::pause::Page>>,
+    /// The Pip-Boy's image and the S.P.E.C.I.A.L. page's one decision (`super::stats_menu`).
+    screen: Option<Res<'w, crate::pipboy::PipBoyScreen>>,
+    stats: Option<ResMut<'w, super::stats_menu::StatsTiles>>,
     /// T15c: the container menu, when this frame's writer has it drawn from its tiles.
     container: Option<Res<'w, super::container_menu::ContainerTiles>>,
     /// The trait menu, when this frame's writer has it drawn from its tiles.
@@ -900,6 +967,8 @@ pub(crate) struct MenusDrawn {
     start: Drawn,
     sleep_wait: Drawn,
     tutorial: Drawn,
+    /// The Pip-Boy's S.P.E.C.I.A.L. page, in the Pip-Boy's image.
+    stats: Drawn,
     container: Drawn,
     traits: Drawn,
     dialog: Drawn,
@@ -917,6 +986,10 @@ pub const DIALOG_Z: i32 = 90;
 /// T15b: the tutorial menu's, over the other menus as its hand-built drawing is
 /// (`crate::tutorial_menu`) [design].
 pub const TUTORIAL_Z: i32 = 109;
+/// The Pip-Boy's page drawn from tiles, in the Pip-Boy's image: over the shell's root (no
+/// level, 0), whose header it leaves the pointer to, and under the beam and the scanlines
+/// (`crate::pipboy::device_screen`) [design].
+pub const PIPBOY_TILES_Z: i32 = 1;
 /// T15c: the container menu's, its hand-built drawing's 100 (`crate::menu`), under its prompt
 /// [design].
 pub const CONTAINER_Z: i32 = 100;
@@ -935,7 +1008,7 @@ pub fn menu_anchor(dialog: bool) -> Vec2 {
     }
 }
 
-pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes, mut blur: ResMut<super::menus::TileMenuBlur>) {
+pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes, mut blur: ResMut<super::menus::TileMenuBlur>) {
     let scale = view.windows.single().map_or(1.0, |w| w.height() / 960.0);
     let heading = view.hud.as_ref().map_or(0.0, |h| h.heading);
     // T15a: the message box and the prompt, when switched on and in the tree (their
@@ -978,19 +1051,60 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
             }
             None => Vec::new(),
         };
-        // At the UI scale (#1631): the units `scale × ui_scale` logical pixels, in a frame
+        // At the menus' scale (#1631, the UI scale at most 100%): the units `scale × it` logical pixels, in a frame
         // kept at the menu's anchor.
-        let frame = Some(menu_anchor(name == super::dialog_menu::DIALOG_MENU));
-        paint(&mut commands, drawn, pieces, scale * interface::ui_scale(), frame, z, heading, ui, &mut kit, &mut nodes);
+        let anchor = menu_anchor(name == super::dialog_menu::DIALOG_MENU);
+        paint(&mut commands, drawn, pieces, Target::window(scale * interface::menu_scale(), z).in_frame(anchor), heading, ui, &mut kit, &mut nodes);
     }
     *blur = blur_now;
+    stats_page(&mut commands, game, &mut view, &mut kit, &mut others.stats, &mut nodes, heading);
     // T11: the Mods page, the start menu's mod tiles over the pause menu.
     let mods_on = switch.start && view.paused.as_ref().zip(view.page.as_ref()).is_some_and(|(p, page)| crate::pause::mods_open(p, page));
-    mods_page(&mut commands, &script, mods_on, &mut kit, &mut others.start, &mut nodes, scale * interface::ui_scale(), heading);
+    mods_page(&mut commands, &script, mods_on, &mut kit, &mut others.start, &mut nodes, scale * interface::menu_scale(), heading);
     // The HUD at the UI scale (#1631): its places are written for a view 960 / scale units
     // high (`fnv_game::ui_hud::write`), a unit `scale` times the size it is in the menus.
     let _hud = crate::interface::hud_units();
     hud(&mut commands, &script, &view, &mut kit, &mut drawn, &mut nodes, scale * interface::ui_scale(), heading);
+}
+
+/// The Pip-Boy's S.P.E.C.I.A.L. page, in the Pip-Boy's image, while it is ready
+/// (`super::stats_menu::StatsTiles::ready`, decided before this drawing). What was painted is
+/// published for the next frame's tile input, which acts on what the player saw. Logged when it
+/// changes: how many pieces go to the painter, and how many of them are the rows' names. That
+/// is structure, before painting: it says nothing of the pixels, which only shots can.
+fn stats_page(commands: &mut Commands, game: Option<&fnv_game::Game<'_>>, view: &mut View, kit: &mut FontKit, drawn: &mut Drawn, nodes: &mut Nodes, heading: f32) {
+    let Some(target) = view.screen.as_ref().map(|s| Target::image(s.camera, crate::pipboy::CANVAS, s.scale, PIPBOY_TILES_Z)) else { return };
+    let name = super::stats_menu::STATS_MENU;
+    let ui = game.map(|g| &g.ui_tree);
+    let ready = view.stats.as_ref().and_then(|s| s.ready);
+    let menu = ui.zip(ready).filter(|(ui, m)| ui.is_live(*m));
+    // The one measured layout the decision checked; worked out again next frame.
+    let pieces = match (menu, view.stats.as_mut()) {
+        (Some((ui, menu)), Some(stats)) => {
+            if drawn.told_menu != Some(menu) {
+                let (file, code) = origins(ui, menu);
+                info!("tiles: {name} drawn from tiles ({file} file tiles, {code} code tiles)");
+                drawn.told_menu = Some(menu);
+            }
+            let pieces = std::mem::take(&mut stats.pieces);
+            let names = pieces.iter().filter(|p| matches!(p.look, Look::Text { .. }) && ui.tile(p.tile).name.eq_ignore_ascii_case("ListItemText")).count();
+            let counts = (pieces.len(), names);
+            if counts != drawn.counts {
+                info!("tiles: {name} set out for the Pip-Boy's image: {} pieces, {} row names", counts.0, counts.1);
+                drawn.counts = counts;
+            }
+            pieces
+        }
+        _ => {
+            drawn.counts = (0, 0);
+            Vec::new()
+        }
+    };
+    paint(commands, drawn, pieces, target, heading, ui, kit, nodes);
+    let shown = menu.map(|(_, m)| m);
+    if let Some(stats) = view.stats.as_mut().filter(|s| s.shown != shown) {
+        stats.shown = shown;
+    }
 }
 
 /// The pause menu's Mods page (T11, `super::mods`): the tiles mods added to `StartMenu`,
@@ -1024,7 +1138,7 @@ fn mods_page(commands: &mut Commands, script: &ScriptState, on: bool, kit: &mut 
         drawn.counts = counts;
     }
     // In the middle of the view, as the pause menu's page under it (`crate::pause`).
-    paint(commands, drawn, pieces, scale, Some(interface::MIDDLE), super::mods::MODS_Z, heading, ui, kit, nodes);
+    paint(commands, drawn, pieces, Target::window(scale, super::mods::MODS_Z).in_frame(interface::MIDDLE), heading, ui, kit, nodes);
 }
 
 /// The fonts of `pieces`' texts that are not loaded (`loaded` says which are), each once:
@@ -1144,35 +1258,38 @@ fn hud(commands: &mut Commands, script: &ScriptState, view: &View, kit: &mut Fon
         drawn.counts = counts;
     }
     // The HUD keeps the view's own frame: its places are written for the scaled view.
-    paint(commands, drawn, pieces, scale, None, TILES_Z, heading, ui, kit, nodes);
+    paint(commands, drawn, pieces, Target::window(scale, TILES_Z), heading, ui, kit, nodes);
 }
 
-/// Bring one menu's drawn nodes in line with its `pieces`, at stacking level `z`: nothing
-/// when they and the scale are as last drawn; otherwise each piece's slot kept, moved and
-/// recoloured in place, spawned again or removed ([`change`]).
+/// Bring one menu's drawn nodes in line with its `pieces` on `target`: nothing when they and
+/// the target are as last drawn; otherwise each piece's slot kept, moved and recoloured in
+/// place, spawned again or removed ([`change`]).
 #[allow(clippy::too_many_arguments)]
-/// `frame`: where a menu keeps its place at the UI scale (its root a
-/// `crate::interface::menu_frame` kept there); `None` for the HUD, whose root is the view.
-fn paint(commands: &mut Commands, drawn: &mut Drawn, pieces: Vec<Piece>, scale: f32, frame: Option<Vec2>, z: i32, heading: f32, ui: Option<&Ui>, kit: &mut FontKit, nodes: &mut Nodes) {
-    if pieces == drawn.pieces && scale == drawn.scale {
+fn paint(commands: &mut Commands, drawn: &mut Drawn, pieces: Vec<Piece>, target: Target, heading: f32, ui: Option<&Ui>, kit: &mut FontKit, nodes: &mut Nodes) {
+    let scale = target.scale;
+    // A camera's image is laid out at its own size whatever the UI scale (#1631).
+    let _canvas = target.camera.map(|_| interface::original_units());
+    if pieces == drawn.pieces && drawn.target == Some(target) {
         return;
     }
     // Nothing drawn yet and nothing to draw (a menu switched off): no root node either.
     if pieces.is_empty() && drawn.root.is_none() {
-        drawn.scale = scale;
+        drawn.target = Some(target);
         return;
     }
-    let root = *drawn.root.get_or_insert_with(|| {
-        let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
-        let full = frame.map_or(full.clone(), |anchor| interface::framed_root(full, anchor));
-        commands.spawn((TileRoot, full, GlobalZIndex(z), Pickable::IGNORE)).id()
-    });
+    // Another camera, area or level: the root is made again for it.
+    if drawn.target.is_some_and(|was| !was.same_root(&target)) {
+        if let Some(root) = drawn.root.take() {
+            commands.entity(root).despawn();
+        }
+    }
+    let root = *drawn.root.get_or_insert_with(|| spawn_root(commands, &target));
     // A new size: the tiled pictures are set for the old one, so every piece again.
-    if scale != drawn.scale {
+    if drawn.target != Some(target) {
         commands.entity(root).despawn_related::<Children>();
         drawn.slots.clear();
         drawn.pieces.clear();
-        drawn.scale = scale;
+        drawn.target = Some(target);
     }
     let keys = keys(&pieces);
     let old: HashMap<Key, &Piece> = self::keys(&drawn.pieces).into_iter().zip(&drawn.pieces).collect();
@@ -1346,6 +1463,28 @@ mod tests {
     /// Every character 10 wide, lines 20 high [design].
     fn plain(_: f64, text: &str, _: Option<f64>) -> (f64, f64) {
         (10.0 * text.chars().count() as f64, 20.0)
+    }
+
+    /// [design] A window's target is told by its scale and level alone; an image's by its
+    /// camera, area and scale too, so a drawing kept for one is never kept for another.
+    #[test]
+    fn a_target_is_part_of_what_a_drawing_is_kept_for() {
+        let mut world = World::new();
+        let (a, b) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let canvas = Vec2::new(400.0, 300.0);
+        assert_eq!(Target::window(1.5, 7), Target::window(1.5, 7));
+        assert_ne!(Target::window(1.5, 7), Target::window(2.0, 7));
+        assert!(Target::window(1.5, 7).same_root(&Target::window(2.0, 7)), "a new window size keeps its root");
+        assert!(!Target::window(1.5, 7).same_root(&Target::window(1.5, 8)));
+        let image = Target::image(a, canvas, 1.0, 1);
+        assert!(!image.same_root(&Target::window(1.0, 1)), "the window's root cannot serve a camera");
+        assert!(!image.same_root(&Target::image(b, canvas, 1.0, 1)), "nor another camera's");
+        assert!(!image.same_root(&Target::image(a, Vec2::new(500.0, 300.0), 1.0, 1)), "nor another area's");
+        // A sharper image keeps the root and its units, and is another drawing.
+        let sharper = Target::image(a, canvas, 1.5, 1);
+        assert!(image.same_root(&sharper));
+        assert_ne!(image, sharper);
+        assert_eq!(sharper.scale, 1.0, "layout is not scaled twice: the camera's target does it");
     }
 
     /// [design] The real drawing system over a runtime with the menu files read, the tutorial

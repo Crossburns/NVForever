@@ -159,6 +159,12 @@ before a query). Held by furniture or flying with ToggleCollision the steps stil
   MSAA) held every run. Measure with `NVFOREVER_HOME` set to a home whose `NVForever.ini`
   is a copy without `[Settings]` (with `plugins.txt`); `--graphics-cycle` steps switch at
   run time and hold either way. Test runs (`--run-seconds`) default to `--graphics vanilla`.
+  Since #1382 a switch given on the command line of a test run (`--run-seconds`,
+  `--log-frame-times`, `--screenshot`, `--timelapse`, `--frame-json`) keeps its state over
+  the stored one, and the log says so (`settings: anti-aliasing kept at 4x as --msaa on the
+  command line set it; ...`); outside test runs the stored state is still applied, with a
+  warning naming the switch it overrode (nvf-play `settings.rs` module notes). Switches
+  not given still take the stored states, so a clean home stays the surest base.
 - `tools/profile/tracy-tour.ps1` + `cells.csv`: one launch per cell of a Tracy build, a
   `tracy-capture` after the load, CPU and GPU (`tracy-csvexport -g`) zone CSVs per cell;
   `summarise.py <folder>` gives per cell the main/extract/render-thread split, the GPU passes
@@ -281,6 +287,21 @@ switched every 8 s in one run, frame means 17.9 against 18.1 ms and processor ti
 against 34.6 ms a frame, inside the machine's noise. So hiding a third of the meshes
 does not remove most of the render thread's work here; what does scale is not settled
 (see §4). Smoke: `rooms-repconn`.
+
+**Occlusion planes** (#1434, `engine/nvforever/src/occlusion.rs`, level-design.md §3.2):
+a placed object's mesh wholly behind one plane is hidden as well, and a portal wholly
+behind one is not followed; interiors only by default (`--occlusion-planes-outdoors` for
+the exterior ones, `--no-occlusion-planes` off; `NVF_PLAY_TEST_OCCLUSION_CYCLE=<s>`
+switches them in one run). Hidden from the start [observed, 2026-11-06]: OVWestSewers02
+1,549 of 3,600 meshes, 2EOVault21 1,127 of 4,923 (and 8 portals), RocketLabMid 943 of
+4,134, HooverDamIntLowerLevel 127 of 4,005; outdoors at Primm 1,504 of 3,152. Pictures
+with and without were the same in the sewers (no pixel off by more than 1), Vault 21
+and REPCONN apart from HUD messages and flicker; at Primm a roof sign was hidden, hence
+interiors only. Frame time, the planes switched every 10 s in one run, frame times
+logged every 5 s: in the sewers 16.67 ms both ways (the run held at 60 Hz, so not
+measurable), in an earlier unlocked run 5.0 against 5.0 ms; at Primm (outdoors switch)
+5.9–6.4 ms on against 5.8–6.6 ms off. No measurable gain at these counts: as with rooms,
+hiding a third to a half of the meshes is not what these frames are bound by.
 
 ## 4. Left to do
 

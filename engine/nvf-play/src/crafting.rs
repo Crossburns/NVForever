@@ -192,6 +192,8 @@ struct View {
     effects: Option<String>,
     /// The "How many?" prompt: amount and most.
     quantity: Option<(i32, i32)>,
+    /// The names the hints use (`crate::pad::labels`).
+    labels: crate::pad::Labels,
 }
 
 /// The recipe's label: its name, and the number made after it when more than one and the
@@ -257,7 +259,7 @@ fn view(rt: &mut crate::script::Runtime, sim: &mut SimState, open: &Open) -> Vie
         });
         let (weight, value, icon) = item.map_or((None, None, None), |i| (i.0, i.1, i.2));
         let first = keep_in_view(open.first, selected, rows.len(), ROWS);
-        View { title, rows, filters: subs.len(), selected, first, made_at, skill, ingredients, weight, value, icon, effects: None, quantity: open.quantity }
+        View { title, rows, filters: subs.len(), selected, first, made_at, skill, ingredients, weight, value, icon, effects: None, quantity: open.quantity, labels: crate::pad::labels() }
     })
 }
 
@@ -485,6 +487,12 @@ fn make_recipe(rt: &mut crate::script::Runtime, sim: &mut SimState, recipe: &Rec
             rt.game.count_stat(fnv_game::misc_stats::ITEMS_CRAFTED, times as f64);
             let ingredients: Vec<FormId> = recipe.ingredients.iter().map(|&(i, _)| i).collect();
             rt.game.challenge_crafted(&ingredients, times);
+            // JIP's crafting event, once per output (`fnv_game::jip_events`).
+            crate::script::with_world(rt, sim, |rt| {
+                for &(i, k) in &added {
+                    rt.game.item_crafted(i, i64::from(k));
+                }
+            });
             let what = added.iter().map(|(i, k)| format!("{k} x {}", crate::menu::model::display_name(forms, *i))).collect::<Vec<_>>().join(", ");
             if times > 1 {
                 info!("recipe menu: made {times} x {:?} ({what})", recipe.name);
@@ -630,7 +638,10 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, v: &View, words: &[String; 
             });
             // Accept and Exit [observed: "Accept  A)", "Exit  X)"].
             let ready = v.rows.get(v.selected).is_some_and(|r| r.ready);
-            for (k, (label, b, on)) in [("Accept  A)", RecipeButton::Accept, ready), ("Exit  X)", RecipeButton::Exit, true)].into_iter().enumerate() {
+            let hint_at = crate::pad::at_menu(fnv_game::crafting::RECIPE_MENU);
+            let accept = format!("Accept  {}", crate::pad::hint_as(&[KeyCode::KeyA], hint_at, v.labels));
+            let exit = format!("Exit  {}", crate::pad::hint_as(&[KeyCode::KeyX, KeyCode::Escape], hint_at, v.labels));
+            for (k, (label, b, on)) in [(accept.as_str(), RecipeButton::Accept, ready), (exit.as_str(), RecipeButton::Exit, true)].into_iter().enumerate() {
                 let w = look.row.font.width(label);
                 m.spawn((Button, b, at(rx + BOX_WIDTH - w - 10.0, BUTTONS_TOP + k as f32 * 48.0, w + 10.0, 44.0))).with_children(|t| {
                     text(t, &look.row, label, 0.0, 0.0, if on { bright } else { amber(NOT_READY) });

@@ -77,6 +77,9 @@ pub fn actors_waiting() -> usize {
 static AT_ONCE: AtomicUsize = AtomicUsize::new(0);
 static AFTER_WAIT: AtomicUsize = AtomicUsize::new(0);
 static LONGEST_WAIT_US: AtomicU64 = AtomicU64::new(0);
+/// Frames an actor's cached equipment is kept without being asked for (`read_ahead`)
+/// [engineering choice: waiting actors ask every frame].
+const STILL_WANTED_FRAMES: u64 = 30;
 /// A wait longer than this is an actor that left view before it was drawn.
 const STALE_WAIT: Duration = Duration::from_secs(20);
 
@@ -104,11 +107,17 @@ pub struct Plan {
 /// the ring was listed [design]. Initial cell spawns and explicit respawns can still
 /// read missing parts synchronously through `ActorCtx`, as before.
 pub fn actor_plan(world: &ActorWorld, sim: Option<&fnv_sim::World<'_>>, reference: u32, base: u32, creature: bool) -> Option<Plan> {
+    let equipment = if creature { None } else { crate::outfits::Equipment::of(world, sim, reference) };
+    plan_wearing(world, equipment, reference, base, creature)
+}
+
+/// [`actor_plan`] with the simulation's equipment already looked up (an NPC's; `None`
+/// for a creature or an actor the simulation holds no inventory for).
+fn plan_wearing(world: &ActorWorld, equipment: Option<crate::outfits::Equipment>, reference: u32, base: u32, creature: bool) -> Option<Plan> {
     if creature {
         let c = world.resolve_creature(base, reference).ok()?;
         Some(Plan { parts: c.parts.iter().map(|p| p.model.clone()).collect(), skeleton: c.skeleton, body: Body::Male, prefix: None, facegen: Vec::new(), morphs: Vec::new() })
     } else {
-        let equipment = crate::outfits::Equipment::of(world, sim, reference);
         let a = crate::outfits::appearance(world, base, reference, equipment.as_ref()).ok()?;
         let w = a.weapon.and_then(|id| world.actors.weapons.get(&id)).filter(|_| world.weapon_mode != crate::weapons::WeaponMode::None);
         let model = w.and_then(|w| w.model_for(false, a.weapon_mods)).map(fnv_actor::resolve::mesh_path);
@@ -135,7 +144,16 @@ pub fn actor_plan(world: &ActorWorld, sim: Option<&fnv_sim::World<'_>>, referenc
 /// ready: spawning it says why. Counts for the summary whether it was ready at once.
 #[allow(clippy::too_many_arguments)]
 pub fn ready_to_draw(world: &ActorWorld, sim: Option<&fnv_sim::World<'_>>, ctx: &mut ActorCtx, ahead: &mut ReadAhead, reference: u32, base: u32, creature: bool) -> bool {
-    let ready = actor_plan(world, sim, reference, base, creature).is_none_or(|mut p| ahead.request_plan(world, ctx, &mut p, creature));
+    // The simulation's equipment is kept until the inventory changes: this is asked
+    // every frame the actor waits (`outfits::EquipmentCache`).
+    let equipment = if creature { None } else { ahead.equipment.of(world, sim, reference) };
+    let ready = plan_wearing(world, equipment, reference, base, creature).is_none_or(|mut p| {
+        let ready = ahead.request_plan(world, ctx, &mut p, creature);
+        if !ready {
+            ahead.want(&p);
+        }
+        ready
+    });
     let mut waiting = WAITING.lock().expect("read-ahead waits");
     let waiting = waiting.get_or_insert_with(HashMap::new);
     if !ready {
@@ -186,11 +204,27 @@ pub struct ReadAhead {
     anims_queued: HashSet<AnimsKey>,
     /// Keep tasks until all warm-up work has finished, even if some cache entries
     /// became visible earlier. Readiness waits for completion, not just task launch.
+    /// The warm-up and FaceGen tasks stay polled with `check_ready`, not detached
+    /// (#1359, decided): readiness needs to know a warm-up finished (`anims_queued`
+    /// is released only then) and a FaceGen task returns the file read. A detached task
+    /// that panicked would never release its key, so its actor would wait forever and a
+    /// loading screen waiting on [`actors_waiting`] would never close; polled, the panic
+    /// is resumed on the main thread when the task is polled (bevy's `Task`), as the same
+    /// warm-up run synchronously by `actors::spawn` would panic there [design].
     anims: Vec<(AnimsKey, Task<()>)>,
     anims_loaded: usize,
     /// FaceGen files being read on a worker thread, and how many were read.
     facegen: Vec<(String, Task<crate::facegen::FaceGenFile>)>,
     facegen_read: usize,
+    /// The simulation's equipment of the actors waiting to be drawn ([`ready_to_draw`]).
+    equipment: crate::outfits::EquipmentCache,
+    /// What actors waiting to be drawn asked for since the last [`read_ahead`]: parts,
+    /// skeletons and FaceGen files (normalised paths), and clip sets. On going indoors
+    /// the work the exterior ring queued that no one waits for is dropped (#1359).
+    wanted: HashSet<String>,
+    anims_wanted: HashSet<AnimsKey>,
+    /// Whether the last [`read_ahead`] ran with an interior loaded.
+    indoors: bool,
     rings: usize,
     actors_listed: usize,
     parts_read: usize,
@@ -212,6 +246,44 @@ impl ReadAhead {
                 true
             }
         });
+    }
+
+    /// Note what a waiting actor's plan needs, so going indoors keeps that work.
+    fn want(&mut self, plan: &Plan) {
+        self.wanted.extend(plan.parts.iter().chain([&plan.skeleton]).map(|p| fnv_vfs::normalize(p)));
+        self.wanted.extend(plan.facegen.iter().cloned());
+        self.anims_wanted.insert((fnv_vfs::normalize(&plan.skeleton), plan.body, plan.prefix));
+    }
+
+    /// Going indoors: the exterior ring's actors are not drawn there, so the work queued
+    /// for them is dropped, except what an actor waiting to be drawn asked for (an
+    /// interior's own, or one drawn behind the loading screen). A dropped path or clip
+    /// set is no longer marked queued, so a later ask queues it again rather than waiting
+    /// on a job that is gone [design]. Tasks already started finish.
+    fn drop_exterior_work(&mut self) -> usize {
+        let before = self.jobs.len();
+        let (wanted, anims_wanted) = (&self.wanted, &self.anims_wanted);
+        let (queued, anims_queued) = (&mut self.queued, &mut self.anims_queued);
+        self.jobs.retain(|j| {
+            let keep = match j {
+                Job::Actor { .. } => false,
+                Job::Prepare(path, _) | Job::FaceGen(path) => wanted.contains(path),
+                Job::Anims { skeleton, body, prefix, .. } => anims_wanted.contains(&(skeleton.clone(), *body, *prefix)),
+            };
+            if !keep {
+                match j {
+                    Job::Actor { .. } => {}
+                    Job::Prepare(path, _) | Job::FaceGen(path) => {
+                        queued.remove(path);
+                    }
+                    Job::Anims { skeleton, body, prefix, .. } => {
+                        anims_queued.remove(&(skeleton.clone(), *body, *prefix));
+                    }
+                }
+            }
+            keep
+        });
+        before - self.jobs.len()
     }
 
     pub fn from_env() -> ReadAhead {
@@ -351,11 +423,21 @@ pub fn read_ahead(
         let (x, y) = centre.unwrap_or_default();
         debug!("actor read-ahead: around cell {x},{y}: {} actors in the {} cells of the ring", listed.len(), cells.len());
     }
-    if streamer.interior.is_some() {
-        // Drop unresolved exterior actors, but finish dependencies requested by readiness
-        // (including an interior spawn); clearing those would strand its wait [design].
+    let indoors = streamer.interior.is_some();
+    if indoors && !ahead.indoors {
+        let dropped = ahead.drop_exterior_work();
+        if dropped > 0 {
+            debug!("actor read-ahead: indoors: {dropped} job(s) queued for the exterior ring dropped");
+        }
+    } else if indoors {
+        // Unresolved exterior actors listed since (none are listed indoors).
         ahead.jobs.retain(|j| !matches!(j, Job::Actor { .. }));
     }
+    ahead.indoors = indoors;
+    ahead.wanted.clear();
+    ahead.anims_wanted.clear();
+    // Waiting actors ask every frame; one not asked for in a few frames was drawn or left view.
+    ahead.equipment.next_frame(STILL_WANTED_FRAMES);
     ahead.centre = centre;
     // FaceGen files read: into the cache (unless read here meanwhile).
     if !ahead.facegen.is_empty() {
@@ -588,6 +670,32 @@ mod tests {
         assert!(!ahead.queue_plan(&new, false, true, true, |_| PartState::Prepared, |_| false));
         // `FaceGenCache::has` also returns true for files found absent, avoiding a hang.
         assert!(ahead.queue_plan(&new, false, true, true, |_| PartState::Prepared, |_| true));
+    }
+
+    #[test]
+    fn going_indoors_drops_the_rings_work_but_not_a_waiting_actors() {
+        let ring = Plan { parts: vec!["Outside.nif".into()], skeleton: "outside_skel.nif".into(),
+            body: Body::Male, prefix: Some("h2h"), facegen: vec!["outside.egm".into()], morphs: vec![] };
+        let waiting = Plan { parts: vec!["inside.nif".into()], skeleton: "inside_skel.nif".into(),
+            prefix: Some("2hr"), facegen: vec!["inside.egm".into()], ..ring.clone() };
+        let mut ahead = ReadAhead::default();
+        ahead.jobs.push_back(Job::Actor { reference: 7, base: 8, creature: false });
+        assert!(!ahead.queue_plan(&ring, false, true, false, |_| PartState::Reading, |_| false));
+        assert!(!ahead.queue_plan(&waiting, false, true, false, |_| PartState::Reading, |_| false));
+        ahead.want(&waiting);
+        let jobs = ahead.jobs.len();
+        assert_eq!(ahead.drop_exterior_work(), 1 + 4, "the ring's actor, part, skeleton, FaceGen file and clip sets");
+        assert_eq!(ahead.jobs.len(), jobs - 5);
+        assert!(ahead.jobs.iter().all(|j| match j {
+            Job::Prepare(p, _) | Job::FaceGen(p) => p.contains("inside"),
+            Job::Anims { skeleton, .. } => skeleton.contains("inside"),
+            Job::Actor { .. } => false,
+        }));
+        assert!(!ahead.queued.iter().any(|p| p.contains("outside")));
+        assert!(ahead.anims_queued.iter().all(|k| k.0.contains("inside")));
+        // Asked for again (an exterior actor drawn after all): queued again, not stranded.
+        assert!(!ahead.queue_plan(&ring, false, true, false, |_| PartState::Reading, |_| false));
+        assert_eq!(ahead.jobs.len(), jobs - 1);
     }
 
     #[test]

@@ -75,12 +75,22 @@ const NAME_RIGHT_IN: f32 = 100.0;
 /// The buttons [documented: `IMM_ButtonRect`].
 const BUTTONS: Vec2 = Vec2::new(855.0, 75.0);
 /// The exit button's words [hypothesis: `sExit` reads "Exit", as the companion wheel's].
-const EXIT: &str = "Exit E)";
+/// "Exit E)": E or Esc, with a controller B [#1662].
+fn exit_label() -> String {
+    format!("Exit {}", crate::pad::hint(&[KeyCode::KeyE, KeyCode::Escape], items_at()))
+}
 /// The effect's line ends this short of the row's right end [design].
 const EFFECT_IN: f32 = 15.0;
 /// The chosen mod's action, under the exit button [design].
-const ATTACH: &str = "Attach Enter)";
-const REMOVE: &str = "Remove Enter)";
+/// "Attach Enter)" and "Remove Enter)": Enter, with a controller A.
+fn act_label(attached: bool) -> String {
+    format!("{} {}", if attached { "Remove" } else { "Attach" }, crate::pad::hint(&[KeyCode::Enter], items_at()))
+}
+
+/// The ITEMS page, for its hints.
+fn items_at() -> crate::pad::MenuAt {
+    crate::pad::at_menu(fnv_game::game::menus::INVENTORY)
+}
 const ACT_DOWN: f32 = 40.0;
 /// The meter's empty part [documented: the repair template's alpha 64, the same meter].
 const BAR_BACK: f32 = 64.0 / 255.0;
@@ -436,13 +446,14 @@ pub fn draw_list(p: &mut ChildSpawnerCommands, c: &mut Ctx, s: &Session, combat:
     let o = &s.offer;
     frame::heading_named(p, c, Page::Items.title(), &o.name, NAME_RIGHT_IN);
     let by = MAIN.min.y + BUTTONS.y + frame::BUTTON_TEXT_Y;
-    c.text(p, 2, EXIT, MAIN.min.x + BUTTONS.x - 10.0, by, Align::Right, bright);
-    let ew = c.width(2, EXIT);
+    let exit = exit_label();
+    c.text(p, 2, &exit, MAIN.min.x + BUTTONS.x - 10.0, by, Align::Right, bright);
+    let ew = c.width(2, &exit);
     p.spawn((at(MAIN.min.x + BUTTONS.x - 10.0 - ew, by - 5.0, ew + 10.0, 40.0), ModExit, Pickable::default())).observe(on_exit_click);
     let chosen = s.selected.checked_sub(1).and_then(|i| o.choices.get(i));
     if let Some(ch) = chosen {
-        let act = if ch.attached { REMOVE } else { ATTACH };
-        let aw = c.text(p, 2, act, MAIN.min.x + BUTTONS.x - 10.0, by + ACT_DOWN, Align::Right, bright);
+        let act = act_label(ch.attached);
+        let aw = c.text(p, 2, &act, MAIN.min.x + BUTTONS.x - 10.0, by + ACT_DOWN, Align::Right, bright);
         p.spawn((at(MAIN.min.x + BUTTONS.x - 10.0 - aw, by + ACT_DOWN - 5.0, aw + 10.0, 40.0), ModAct, Pickable::default())).observe(on_act_click);
     }
     // The rows: the weapon, then the mods (an attached one marked, as the equipped

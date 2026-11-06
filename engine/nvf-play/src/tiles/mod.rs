@@ -47,6 +47,7 @@ pub mod menus;
 pub mod model;
 pub mod mods;
 pub mod notices;
+pub mod stats_menu;
 pub mod trait_menu;
 pub mod tutorial_menu;
 pub mod vanilla;
@@ -105,11 +106,16 @@ impl MenuFiles<'_, '_> {
 /// Whether `screen()` is written in interface units ([`write_screen`]): only while a T15
 /// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`, `ContainerMenu`, `TraitMenu`, `DialogMenu`) or the start menu's Mods page
 /// (T11, `mods`) is switched on, whose files centre their boxes by `screen()` (MCM's `x`
-/// and `y`, menu-xml.md §10). The default game and the tile HUD alone keep the window's
-/// pixels [design]. The original reports interface units [observed: hud_menus capture
-/// 2026-10-31, three window sizes]; applying them unconditionally is a follow-up.
+/// and `y`, menu-xml.md §10), or `StatsMenu`, whose lines take their thickness from the
+/// converter and whose hotrects' `alpha` 0 this same gate lets pass (pipboy.md §5.1.1). The
+/// default game and the tile HUD alone keep the window's pixels [design]. The gate is one for
+/// the whole tree, not a menu's own: `StatsMenu` beside the tile HUD changes the shared screen
+/// traits and the HUD's hotrect-alpha handling, as any of these does, and beside another of
+/// them changes nothing more. The Pip-Boy's canvas is never written here. The original reports
+/// interface units [observed: hud_menus capture 2026-10-31, three window sizes]; applying them
+/// unconditionally is a follow-up.
 pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
-    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.container || menus.traits || menus.start || menus.dialog
+    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.container || menus.traits || menus.start || menus.stats || menus.dialog
 }
 
 /// Write `screen()`'s traits for a window `window_width` x `window_height` (logical
@@ -818,7 +824,8 @@ fn write_container(
     // What the model shows is read when it changed: an aid's figures run its conditions.
     let due = active.is_changed() || st.needs_snapshot(menu);
     // The load order's setting over NVForever's label.
-    let hint = if due { fnv_game::ui_loading::game_string(game, container_menu::TAKE_ALL_HINT) } else { String::new() };
+    // With a controller the button that takes all (X, `crate::pad::menu_buttons`) [#1662].
+    let hint = if due { crate::pad::game_hint(&fnv_game::ui_loading::game_string(game, container_menu::TAKE_ALL_HINT), &[KeyCode::KeyR], crate::pad::at_menu(crate::script::MENU_CONTAINER)) } else { String::new() };
     let new = due.then(|| {
         if forms.is_none() {
             *forms = play.as_ref().map(|p| crate::pipboy::stats::read::Forms::new(p.lo, p.schema));
@@ -890,6 +897,7 @@ impl Plugin for TilesPlugin {
         // hidden after every drawing system, before visibility is passed down [design].
         vanilla::setup(app);
         input::setup(app);
+        stats_menu::setup(app);
         app.init_resource::<draw::TileFonts>()
             .init_resource::<TutorialScrollCheck>()
             .init_resource::<container_menu::ContainerTiles>()
@@ -909,6 +917,11 @@ impl Plugin for TilesPlugin {
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).after(crate::menu::WheelHoldSet).before(PlaySet::Activation))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
+            // The Pip-Boy's S.P.E.C.I.A.L.: written after the tile input and before the scripts;
+            // again after its keys and decided before the frame and the tile drawing read it.
+            .add_systems(Update, stats_menu::feed.after(input::feed).after(crate::pipboy::PointerSet).before(PlaySet::Activation))
+            .add_systems(Update, stats_menu::write.after(stats_menu::feed).before(PlaySet::Activation))
+            .add_systems(Update, stats_menu::settle.in_set(PlaySet::Ui).after(crate::pipboy::stats::prepare).before(crate::pipboy::frame::draw))
             // The dialogue menu (`dialog_menu`): what the model says, at each of the runtime's
             // transitions and before the frame's scripts; then what they left measured and
             // placed, worked out by `update`, and what can be hit as it is then drawn.
@@ -917,7 +930,7 @@ impl Plugin for TilesPlugin {
             .add_systems(Update, dialog_menu::write_system.after(PlaySet::Scripts).before(update))
             .add_systems(Update, dialog_menu::snapshot_system.after(update).before(PlaySet::Ui))
             // After the character menus' sync, so the trait menu's decision reads this frame's.
-            .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui).after(crate::chargen::ChargenSet))
+            .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui).after(crate::pipboy::frame::draw).after(crate::chargen::ChargenSet))
             .add_systems(PostUpdate, vanilla::hide_hand_built.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
     }
 }
@@ -953,6 +966,38 @@ mod tests {
         let mut ui = Ui::new();
         ui.load_menu(&src, "m.xml").unwrap();
         ui
+    }
+
+    /// [design] The gate is global: `StatsMenu` beside the tile HUD changes what the HUD gets,
+    /// the screen's units and whether a hotrect's `alpha` 0 passes to what is under it, and
+    /// beside another menu of the gate it changes nothing more. A synthetic hotrect and image.
+    #[test]
+    fn stats_menu_turns_on_the_one_gate_every_menu_shares() {
+        use vanilla::TileMenus;
+        let hud = TileMenus { hud: true, ..Default::default() };
+        let stats = TileMenus { stats: true, ..Default::default() };
+        let both = TileMenus { hud: true, stats: true, ..Default::default() };
+        assert!(!interface_screen(hud));
+        assert!(interface_screen(stats));
+        assert!(interface_screen(both), "the HUD beside it gets interface units too");
+        let message = TileMenus { message: true, ..Default::default() };
+        assert_eq!(interface_screen(message), interface_screen(TileMenus { stats: true, ..message }), "already on: no further change");
+        let src = MemSource::default().with("m.xml", r#"<menu name="M"><hotrect name="H"><alpha>0</alpha><image name="I"><width>4</width><height>4</height><filename>a.dds</filename></image></hotrect></menu>"#);
+        let mut ui = Ui::new();
+        let menu = ui.load_menu(&src, "m.xml").unwrap();
+        ui.update();
+        let drawn = |menus: TileMenus| {
+            let measure = |_: f64, _: &str, _: Option<f64>| (0.0, 0.0);
+            draw::pieces(&ui, menu, &measure, draw::Select::Whole { kept: &[], strip: None }, interface_screen(menus)).0.len()
+        };
+        assert_eq!(drawn(hud), 0, "the tile HUD alone keeps the hotrect's alpha");
+        assert_eq!(drawn(both), 1, "beside StatsMenu the hotrect's alpha 0 passes");
+        // The screen's traits are the window's interface units, never the Pip-Boy's canvas.
+        write_screen(&mut ui, 1280.0, 720.0, interface_screen(both));
+        ui.update();
+        let s = ui.tile(ui.screen());
+        assert_eq!(s.get("height").map(Value::num), Some(960.0));
+        assert_eq!(s.get("resolutionconverter").map(Value::num), Some(960.0 / 720.0));
     }
 
     #[test]

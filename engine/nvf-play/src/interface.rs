@@ -133,7 +133,7 @@ pub fn ui_scale_row(group: &'static str) -> crate::settings::Setting {
         "ui-scale",
         group,
         "UI scale",
-        "The size of the HUD and the menus, as a part of the original's (100%): smaller leaves more of the picture free, each HUD piece kept at its edge of the screen and each menu in the middle. Takes effect at the next start (loading a save starts the game again). Not in the original.",
+        "The size of the HUD and the menus, as a part of the original's (100%): smaller leaves more of the picture free, each HUD piece kept at its edge of the screen and each menu in the middle. Above 100% only the HUD grows: the menus stay at the original's size, so they keep on the screen. Takes effect at the next start (loading a save starts the game again). Not in the original.",
         crate::settings::Slider::choice(UI_SCALE_CHOICES, |_| ui_scale_part(ui_scale_setting()), |_, v| set_ui_scale_setting(ui_scale_of_part(v)), |v| format!("{:.0}%", ui_scale_of_part(v) * 100.0)),
     )
 }
@@ -167,25 +167,39 @@ pub fn ui_scale() -> f32 {
     f32::from_bits(UI_SCALE.load(Ordering::Relaxed))
 }
 
+/// The scale the menus are drawn at: the UI scale, but never above the original's size.
+/// A menu is laid out for the whole view (its buttons and columns reach close to the
+/// view's edges, the pause menu's Back row 882 of 960 units down), so drawn larger in a
+/// frame kept to the middle it would run off the screen; it may shrink, not grow
+/// [design: #1631]. The HUD, whose pieces keep to their edges, takes the whole scale.
+pub fn menu_scale() -> f32 {
+    menu_scale_of(ui_scale())
+}
+
+/// [`menu_scale`] for a UI scale `ui`.
+pub fn menu_scale_of(ui: f32) -> f32 {
+    ui.min(1.0)
+}
+
 /// Fix the run's UI scale from the setting, once the INI is read (`PostStartup`, after
 /// `crate::settings::apply_stored`): what is drawn keeps one size until the next start,
 /// rather than mixing pieces drawn before and after a change [design].
 pub fn fix_ui_scale() {
     let s = ui_scale_setting();
     UI_SCALE.store(s.to_bits(), Ordering::Relaxed);
-    info!("interface: UI scale {:.0}% (the HUD and the menus drawn at {:.0}% of the original's size)", s * 100.0, s * 100.0);
+    info!("interface: UI scale {:.0}% (the HUD drawn at {:.0}%, the menus at {:.0}% of the original's size)", s * 100.0, s * 100.0, s.min(1.0) * 100.0);
 }
 
 std::thread_local! {
     /// The scale [`u`] applies on this thread when a scope set one ([`units_at`]); `None`
-    /// is the run's UI scale ([`ui_scale`]).
+    /// is the menus' scale ([`menu_scale`]).
     static UNIT_SCALE: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
 }
 
 /// While alive, [`u`] (and so [`at`], the text and picture helpers) on this thread draw
 /// at the scale it was made with; dropped, they go back to what they drew at before.
-/// Outside every scope they draw at the run's UI scale ([`ui_scale`]): the HUD and the
-/// menus alike [design: #1631]. The screens drawn into a texture (the Pip-Boy's pages,
+/// Outside every scope they draw at the menus' scale ([`menu_scale`]: the UI scale, at
+/// most 100%) [design: #1631]; the HUD's systems take [`hud_units`], the whole scale. The screens drawn into a texture (the Pip-Boy's pages,
 /// the terminal's) take [`original_units`]: their texture keeps its size, the picture of
 /// it on the window is what scales.
 #[must_use]
@@ -198,7 +212,7 @@ impl Drop for HudUnits {
 }
 
 /// Draw at the UI scale until the returned guard is dropped ([`HudUnits`]). The HUD's
-/// systems take one (#1766); it is what they draw at outside any scope too.
+/// systems take one (#1766); outside any scope the menus draw at [`menu_scale`].
 pub fn hud_units() -> HudUnits {
     units_at(ui_scale())
 }
@@ -216,10 +230,10 @@ pub fn units_at(scale: f32) -> HudUnits {
     HudUnits(UNIT_SCALE.with(|c| c.replace(Some(scale))))
 }
 
-/// The scale [`u`] applies here and now: a scope's ([`units_at`]), else the run's UI
-/// scale ([`ui_scale`]).
+/// The scale [`u`] applies here and now: a scope's ([`units_at`]), else the menus'
+/// ([`menu_scale`]).
 pub fn unit_scale() -> f32 {
-    UNIT_SCALE.with(|c| c.get()).unwrap_or_else(ui_scale)
+    UNIT_SCALE.with(|c| c.get()).unwrap_or_else(menu_scale)
 }
 
 /// A length of the interface (960 units high) as a part of the view's height, times the
@@ -833,14 +847,14 @@ mod tests {
         Vec2::new(pct(f.left) / 100.0 * view.x + vh(u(units.x)), pct(f.top) / 100.0 * view.y + vh(u(units.y)))
     }
 
-    /// #1631: at 75% and 125% a menu's frame is the view's size times the scale, kept at
+    /// #1631: at 50% and 75% a menu's frame is the view's size times the scale, kept at
     /// its anchor; the pointer read through [`from_menu_frame`] lands where the piece under
     /// it would stand at 100%; [`from_top`] and [`over_view`] agree with the frame.
     #[test]
     fn a_scaled_menu_keeps_its_anchor_and_its_clicks_land_on_what_is_drawn() {
         let view = Vec2::new(1280.0, 720.0);
         let per = view.y / 960.0;
-        for s in [0.75f32, 1.25] {
+        for s in [0.5f32, 0.75] {
             let _s = units_at(s);
             let f = menu_frame(MIDDLE).unwrap();
             assert!((pct(f.width) - 100.0 * s).abs() < 1e-4 && (pct(f.height) - 100.0 * s).abs() < 1e-4, "{s}");
@@ -876,6 +890,36 @@ mod tests {
             let frame_at = view * (1.0 - s) / 2.0;
             assert!((frame_at.y + pct(sheet.top) / 100.0 * frame_px.y).abs() < 1e-3 && (pct(sheet.height) / 100.0 * frame_px.y - view.y).abs() < 1e-3, "{s}");
             assert!((frame_at.x + pct(sheet.left) / 100.0 * frame_px.x).abs() < 1e-3 && (pct(sheet.width) / 100.0 * frame_px.x - view.x).abs() < 1e-3, "{s}");
+        }
+    }
+
+    /// #1631: above 100% the menus stay at the original's size (only the HUD grows), so
+    /// a menu's frame is never larger than the view and the pieces at its edges stay on
+    /// it: the pause menu's Back row (882 units down) and its right column (50 units from
+    /// the right edge, 375 wide). Below 100% the menus follow the UI scale.
+    #[test]
+    fn above_100_percent_a_menus_frame_is_no_larger_than_the_view() {
+        let view = Vec2::new(1280.0, 720.0);
+        let units_px = |units: f32| units * unit_scale() * view.y / 960.0;
+        for ui in [1.05f32, 1.25, 1.5] {
+            let s = menu_scale_of(ui);
+            assert_eq!(s, 1.0, "{ui}");
+            let _s = units_at(s);
+            if let Some(f) = menu_frame(MIDDLE) {
+                assert!(pct(f.width) <= 100.0 && pct(f.height) <= 100.0 && pct(f.left) >= 0.0 && pct(f.top) >= 0.0, "{ui}: {f:?}");
+            }
+            // The Back row's top and the right column's right edge, in pixels of the view.
+            assert!(units_px(882.0) < view.y, "{ui}");
+            let width_units = 960.0 * view.x / view.y;
+            assert!(units_px(width_units - 50.0) <= view.x, "{ui}");
+        }
+        for ui in [0.5f32, 0.75, 0.95, 1.0] {
+            assert_eq!(menu_scale_of(ui), ui);
+            let _s = units_at(menu_scale_of(ui));
+            match menu_frame(MIDDLE) {
+                Some(f) => assert!(pct(f.width) <= 100.0 && pct(f.height) <= 100.0 && pct(f.left) >= 0.0 && pct(f.top) >= 0.0, "{ui}: {f:?}"),
+                None => assert_eq!(ui, 1.0),
+            }
         }
     }
 }

@@ -101,7 +101,8 @@ closes in again (`Awarenesses::engage`):
 | Fighting with | Stops at | Closes in again beyond |
 |---|---|---|
 | a gun | 80 % of its reach (§16: WEAP max range × style mult, within the projectile's range), between 400 and 2,500 units, clear of its own blast, never beyond 90 % of its reach | its reach (at most 3,125) |
-| melee, creature | its body 6 units from the target's | a 24-unit gap |
+| melee, a person | 6 units short of its reach (`fCombatDistance` 107 × scale × WEAP Reach) plus the two bodies' radii (two people's, 44, until the bodies are known), centre to centre, never nearer than a 6-unit gap between the bodies; the walk ends 10 % inside that, where it mostly swings (a lead pipe 170, the original 180: combat-rules.md §10, open) | its reach plus the radii (at least a 24-unit gap): a knife 97.5, a lead pipe 178 against the original's 95 and 180 [observed: o14_reach, 2026-11-01, combat-rules.md §10] |
+| melee, a creature | 6 units short of (RNAM + its skeleton's reach beyond it) × scale, centre to centre, never nearer than a 6-unit gap | (RNAM + its skeleton's reach beyond it) × scale: a gecko 81, a bighorner bull 232, as the original's swing starts [observed: o14_reach, o12_reach; npc-behaviour-compare.md §3] |
 | melee without bodies to measure | 80 % of its reach | its reach |
 
 The bodies are the blocks `nvf_play::blocking` keeps (a dog's reaches well in front of
@@ -389,7 +390,8 @@ NPCs should not be able to move at full speed whilst aiming" (the player's half 
 ### 10.7 Melee reaches low targets
 
 The owner could not hit a gecko with a machete. The player's swing was a fan of rays
-from the eye at eye height, as long as the reach (fCombatDistance 150 × Reach): a gecko
+from the eye at eye height, as long as the reach (then fCombatDistance 150 × Reach; 107 × Reach plus the player's
+radius since #1334): a gecko
 at the player's feet lies under the fan, and a ray pitched down to it spends most of
 the reach on the drop from the eye. `fnv_combat::projectile::swing_reaching` adds every
 actor whose centre is within the reach across the ground (plus 24 units for its body),
@@ -973,6 +975,18 @@ The owner's list 4, items 14, 18, 19 and 20 (`docs/handoff/archive/playtest-list
   weapon or stance every 2-2.5 s; the owner judged that a quirk (2026-10-25): NVForever's
   draw once and hold it, and say a GuardTrespass line at each warning (the Detection
   lines' cooldown does not hold warnings back).
+- **Spawned actors do not warn** (#1341, built 2026-11-06) [observed: capture
+  o25_coyote, original game, docs/handoff/observer-checks.md item 2]: a CrCoyote
+  PlaceAtMe'd at the spot of the placed VERGSCoyote6REF, the player 700 units off (of
+  1,024), was in combat at the first sample with no warning, where the placed coyote
+  warned for 14.9 s first; the base has the same aggro radius and packages. Spawned
+  coyotes on the airport runway did the same at 250 and 700 units (o16_air). So an actor
+  created at run time (a dynamic reference, FormID 0xFF……) that the aggro rules above
+  would warn attacks at once instead, as one inside half its radius does; who, the
+  package, the radius stay as for placed ones [hypothesis: every created actor, people
+  too, which no capture tried; why: a PlaceAtMe'd actor has no editor location for the
+  radius to be kept around, or it starts alerted]. Placed ones keep warning. Smoke
+  `aggro-spawned-no-warning`.
 - **Guard packages do not warn** (built 2026-10-24, taken out 2026-10-25): Gomorrah's
   room guards on vGomorrahGuardPackage, with no aggro radius of their own, neither
   warned nor fought the player by the door they guard [observed: capture `warnings2`].
@@ -1979,7 +1993,8 @@ target through every phase of the attack and fired only once turned to it
 - **The lock** (`npc_combat::Fighters::lock_on`): each frame, a person the AI runs, in combat,
   that sees its target and does not run from it (a flight away or by a door; a flight to cover keeps
   it) is locked on where that target is drawn this frame. `residents` draws it facing that
-  place, turning at the combat turn rate (240° a second standing, 360° walking) and, once
+  place, turning at the combat turn rate (standing 225° a second with its target within a
+  quarter turn, 275° beyond; walking 180°; #1352, below) and, once
   within 10° (`LOCK_HOLD`), following it exactly; once held it stays on that target even
   when the target sweeps more than 10° in one frame (2026-11-01, #1162 [design]: melee
   Fiends circling troopers 70–340 units away, and long frames, slipped out of the hold and
@@ -1987,6 +2002,23 @@ target through every phase of the attack and fired only once turned to it
   [observed: smoke logs of #1292]); a new target is still turned to at the turn rate. On its way to cover, a post or a flee
   spot it strafes or backs away with its target in front. Out of sight it faces the
   target's AI place as before (`Core::aims`).
+- **The turn onto a target** (#1352, built 2026-11-06 from capture o25_turn,
+  docs/spec-notes/actors.md §8.9 [observed]): a person going into Combat from Normal or
+  Alert stands on its heading for 1.1 s (`fnv_ai::alert::COMBAT_REACTION_SECONDS`;
+  `Awareness::combat_began`), neither turning, setting off nor locked on, then turns at
+  225°/s while its target is within 90° of its heading and 275°/s beyond
+  (`combat_turn_rate`), steadily with no ease-out, and walking at the walk's own turn
+  rate (180°/s). Before, it turned at once at 240°/s standing and 360°/s walking. Back in
+  Combat from Lost it does not stand again [hypothesis: not measured; nor is the delay
+  when combat starts by detection rather than StartCombat]. `combat_turn_rate` picks the
+  rate from the angle still left to turn; the original may set it when the turn begins,
+  and the data cannot tell the two apart [hypothesis]. Creatures are unchanged
+  (`fnv_ai::alert::creature`, `combat_began` is `None` for them): no stand, and their
+  standing combat turn is still twice the standing rate with their own × 1.25
+  (`COMBAT_TURN_CREATURE`) [hypothesis: a creature's reaction and turn are unmeasured;
+  only a human trooper was, and o25's spawned coyotes were in combat at once]. The facing summary (`npc_combat`, smoke battle-ncr-fiends,
+  combat-violet) gives a fighter its 0.6 s to turn (`REACTION_SECONDS`) from the end of
+  that moment, not from first seeing its target, and does not count it locked meanwhile.
 - **Why it slipped**: the drawn facing used the target's AI place, which for a charging
   Fiend was 110 units from where it was drawn; a trooper shooting at it faced 16° off.
   Flights to cover were not turned to the target at all.

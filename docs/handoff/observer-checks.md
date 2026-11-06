@@ -19,7 +19,8 @@ engine if needed, and delete the item here.
 - **Unattended, from the saves we have** (a session can run them): 1, 2, the rest of 3,
   5 (weapon health around scripted shots), 6 (nvftest, Sunny), the rest of 8, 11 (72 h at a raised
   TimeScale), 13, 15, 20, 21, 22 (dialogue events), the rest of 33, 35, 36, 52, 53, and
-  #1076 (melee reach; measured 2026-11-01, o14_reach: combat-rules §8).
+  #1076 (melee reach; measured 2026-11-01, o14_reach: combat-rules §10; built in #1334),
+  92.
 - **A save from the owner** (quest or character state no save has yet):
   - Hardcore on: done (nvfHardcore).
   - Boone, Rex and ED-E hired (19, 22's complaints, 18's wheel): Boone done (nvfBoone).
@@ -95,6 +96,18 @@ engine if needed, and delete the item here.
    the player, placed (not spawned) animals, warnings, allies, onlookers, escorts.
    (killall between sessions left the earlier spawns standing: later sessions had them
    around too.)
+   Placed against spawned, 2026-11-06 (o25_coyote, Goodsprings at VERGSCoyote6REF
+   0x00157B38, the player in god mode MoveTo'd 700 units off, one run each) [observed]:
+   the placed coyote warned for 14.9 s (0.124 game h under a package made at run time,
+   FF0011EA, GetCurrentAIPackage 35, procedure 44, drawing and holstering about every
+   2 s), then OnStartCombat and bit the player 7 times. A CrCoyote spawned at the same
+   spot by the placed one's PlaceAtMe, the placed one disabled, was already in combat
+   (package type 5, procedure 13) at the first sample and bit 12 times, with no warning.
+   The CrCoyote base has Aggro Radius Behavior on with radius 1,024 and the same two
+   packages as the coyotes placed around it [observed: `fnvtool esm decode`], so the
+   difference is placed against spawned, not the spot or the record. Why [hypothesis]:
+   a PlaceAtMe'd actor has no editor location for the aggro radius to be kept around,
+   or it starts alerted. Answers #1341's question.
 3. **Damage numbers.** Ours:
    - Power attacks do 3× standing and 2× moving.
    - A damage type uses its resistance in place of DR (capped at 85 %, after DT).
@@ -303,8 +316,10 @@ engine if needed, and delete the item here.
     Speed Mult × their skeleton's share). Still open, ours:
     - People turn ≤180°/s walking, 120°/s standing; creatures 300°/s × scale (measured
       on cazadors only); the CREA Turning Speed field is unused. People's combat turns
-      measured 2026-11-01: about 270°/s at first, easing out (actors §8.9, issue #1352);
-      a package turn out of combat is still unmeasured.
+      measured 2026-11-01 and 2026-11-06 (o25_turn): about 1.1 s after StartCombat, a
+      steady 225°/s for 45° and 90° and 275°/s at first for 135° and 180°, slower only once
+      it steps forward (actors §8.9, issue #1352); a package turn out of combat is still
+      unmeasured.
     - Speed Mult on people: answered 2026-11-01 (o18_air): a trooper ran 305 units/s at
       100 and about 460 at 150, proportional as ours (actors §8.10); Cook-Cook (110, ran
       as if 100) stays the one exception, asked in owner-review.md.
@@ -602,7 +617,11 @@ The numbers above stay put so links to them hold; each item here gives its own p
     High-Roller Suite", whose fixed speaker is the entrance Victor (Lucky38VictorEntrance)
     [observed]; later talks to him open with his usual elevator greeting, as a Say
     Once line should. Ours does the same (dialogue.rs `can_say_as`). Still open: lines with a
-    fixed speaker and no GetIsID condition (the Dead Money end slides, #965). The
+    fixed speaker and no GetIsID condition (the Dead Money intro and end slides, #965);
+    ours lets a script's Say/SayTo say them when no line of the topic passes the check
+    (dialogue.md §4, [hypothesis]); finishing Dead Money (and starting it, IntroSlide02)
+    and seeing whether Elijah's and Vera's narration plays, and in whose voice, would
+    settle it. The
     Boomers' end slide (VEndingBoomers, ANAM NellisPete, GetIsID Narrator) plays in the
     child Pete's voice, not the narrator's (owner, nvfSlides) [observed]; ours says it
     as the narrator with the fixed speaker's file (voice.rs), which matches. Also: the penthouse elevator can only be
@@ -1093,31 +1112,15 @@ The numbers above stay put so links to them hold; each item here gives its own p
     `…/x`, `…/y`, `…/width`, `…/_alpha`, `…/_enabled`, and `StartMenu/_isPauseMenu`; then
     the same with the Settings page open.
 
-## Added 2026-11-01 (explosions' limb damage, issue #1338)
+## Added 2026-11-01 (explosions' limb damage, issue #1338; open part since 2026-11-06, #1741)
 
-74. **How much of a blast reaches each limb?** (P2; crippled-limbs.md §5.) Blasts damage
-    limbs [documented: GetHitLimbDamage returns 0 for an explosion "even if the explosion
-    dealt limb damage"], and NVForever takes the full blast damage after armour off every
-    limb [hypothesis]. In the original, with a fresh NPC of known Health (e.g. an NCR
-    trooper at the airport, `nvfairport`, tgm on the player): read all seven limb
-    conditions (GetAV PerceptionCondition, EnduranceCondition, LeftAttackCondition,
-    RightAttackCondition, LeftMobilityCondition, RightMobilityCondition,
-    BrainCondition) and Health; `PlaceAtMe MineFragExplosion` at known distances (0, 64,
-    128 units) and read them again. Repeat with a Frag Grenade thrown by the player, and
-    once on the player. The answer: which limbs lose condition, how much each against the
-    Health lost, and whether distance or the side facing the blast matters.
-
-## Added 2026-11-02 (the player's Speed Mult and armour, issue #1364)
-
-75. **Does Speed Mult, and body armour, change the player's speed?** (P2; actors.md
-    §8.10, The player.) NVForever now multiplies the player's walk and run by its current
-    Speed Mult / 100 and by its body armour's share (medium 0.925, heavy 0.85), as
-    measured on people [hypothesis for the player]. In the original (`nvfairport`, the
-    runway, holstered, light or no armour): run 1,500 units forward and time it at
-    `player.setav speedmult 100`, `150` and `50`; then at 100 in medium armour
-    (ArmorNVNCRTrooper*) and in metal armour (ArmorMetal 0003307F). Also once with
-    `player.modav speedmult 50` (whether a modifier counts as SetAV does), and whether the
-    run clip plays faster at 150 or the feet slide. The answer: the speeds in units/s.
+74. **How much of a blast reaches each limb, at stock Health and on the player?** (P2;
+    crippled-limbs.md §5.) Answered in part 2026-11-06 (o25_limbs) [observed]: on Ringo at
+    `SetAV Health 5000` the torso lost 1/30 of the Health damage and the legs 0.24 of it,
+    nothing else; NVForever takes those as condition points. Still open: rerun on an NPC at
+    its stock Health (100–200) and once on the player, to tell condition points straight
+    off the condition from a share of the limb's pool (of maximum Health), and whether the
+    player's limbs take `fCombatPlayerLimbDamageMult`.
 
 ## Added 2026-11-03 (a Stimpak's Hardcore effects outside Hardcore, issue #1438)
 
@@ -1131,6 +1134,12 @@ The numbers above stay put so links to them hold; each item here gives its own p
     on (the held effect taking hold) or not. Then again with 10 s between the use and
     Hardcore on. Also whether STATS EFF lists the Stimpak at any point outside Hardcore.
     The answer: the Health log and the EFF screenshots.
+    Tried 2026-11-06 (o25_stim, `nvfairport`), no answer: the observer's compiler refused
+    `IsHardcore` as a field ("Let fV := IsHardcore"), and the damage and the use ran
+    before the first sample (Health read 180 of 200 throughout both runs, before and after
+    `SetHardcore 1`). Next try: read Health in a `timed` script around the use, and check
+    that SetHardcore takes hold first (check 4 saw it do nothing on `nvfairport`), or start
+    from `nvfHardcore` and turn Hardcore off instead.
 
 ## Added 2026-11-03 (collision of animated objects, issue #1396)
 
@@ -1325,3 +1334,11 @@ The numbers above stay put so links to them hold; each item here gives its own p
     and the counter follow? (b) what does Reset restore with traits taken? (c) `_TextAlpha` and
     `_enabled` on a trait that cannot be taken. (d) a real wheel over the list. (e) the
     description scrolled to value 8. (f) why did the capture's list lack two traits?
+92. **The player's melee reach, and the deathclaw's.** (P2; combat-rules.md §10,
+    npc-behaviour-compare.md §3.) Ours now reaches `fCombatDistance` 107 × Reach from the
+    player's body (fitted to the NPCs' swings), so long weapons reach less than before (a
+    lead pipe 156 units from the eye, was 188). In `nvfairport`, a standing settler: the
+    farthest centre-to-centre distance at which the player's knife, sledgehammer and lead
+    pipe swings still land (GetHealthPercentage or OnHit per swing, the player backing off
+    5 units a swing). And a deathclaw (VCrTier4DeathClawMed) on the standing god-mode
+    player again: o12_reach had one start at 88 units, far nearer than its RNAM 192 gives.

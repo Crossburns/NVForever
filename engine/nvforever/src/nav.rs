@@ -403,7 +403,7 @@ pub fn drive(
         let moving = ev == WalkEvent::Moved;
         let stage = (&mut tr.spawned, &mut tr.root);
         let air = tr.walker.air.is_some();
-        if let Err(e) = show_actor(&mut commands, root, visible, actor_world.as_deref(), sim.as_deref().map(|s| &s.world), &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, Who { reference: tr.reference, base: tr.base, creature: false, scale: tr.scale, strafe: false, air }, stage, (tr.walker.feet, tr.walker.heading), moving, dt) {
+        if let Err(e) = show_actor(&mut commands, root, visible, actor_world.as_deref(), sim.as_deref().map(|s| &s.world), &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, Who { reference: tr.reference, base: tr.base, creature: false, scale: tr.scale, strafe: false, air, jumped: false }, stage, (tr.walker.feet, tr.walker.heading), moving, dt) {
             warn!("nav: {} could not be drawn", tr.label);
             tr.failed = Some(e.into());
         }
@@ -426,7 +426,20 @@ pub(crate) struct Who {
     /// (`locomotion::Locomotion::in_air`; one with a physics character is told by
     /// `actor_jumps.rs` instead).
     pub air: bool,
+    /// Put somewhere this frame rather than walked there (a script's MoveTo or
+    /// MoveToMarkerWithFade): the jump is no step of its gait ([`JUMP_STEP`]).
+    pub jumped: bool,
 }
+
+/// A drawn actor's move in one frame longer than this (units) is a jump, not a step:
+/// its locomotion keeps last frame's velocity and turn rather than taking the jump's
+/// speed [design: a traveller a script moved to another Strip port with
+/// MoveToMarkerWithFade (VStripFluff2PortGomToVaultPackage's end script) was measured
+/// moving thousands of units in a frame; the smoothed gait speed
+/// (`locomotion::GAIT_SMOOTHING`) took about a second to fall back under the walk/run
+/// switch, so it ran that long while it faded in (#1473)]. No actor covers this in a
+/// frame: the fastest creature moves about 1,400 units/s, 280 in a 0.2 s frame.
+pub const JUMP_STEP: f32 = 512.0;
 
 /// Keep the visual of an actor that a walker moves in step with it: drawn while
 /// `visible` (its space is the one drawn), spawned on demand (`spawned`, and `root` once
@@ -451,7 +464,7 @@ pub(crate) fn show_actor(
     moving: bool,
     dt: f32,
 ) -> Result<(), &'static str> {
-    let Who { reference, base, creature, scale, strafe, air } = who;
+    let Who { reference, base, creature, scale, strafe, air, jumped } = who;
     if !visible {
         if let Some(e) = root.take() {
             commands.entity(e).despawn();
@@ -489,8 +502,13 @@ pub(crate) fn show_actor(
         *spawned = true;
     }
     // The actor's root: the entity of its reference placed directly under the world
-    // root (spawned last frame; its parts sit below it).
-    if root.is_none() {
+    // root (spawned last frame; its parts sit below it). Found now, it still stands
+    // where it was spawned, maybe frames ago (its parts read meanwhile): the step from
+    // there is no step of its gait either [observed: VStreetGamblerBREF, drawn anew
+    // after a MoveToMarkerWithFade, ran 14 of its first 28 frames drawn though its
+    // package walks, smoke strip-fade-in-walk 2026-11-06].
+    let found_now = root.is_none();
+    if found_now {
         crate::profile::ai_count(crate::profile::AiCount::RootScans, 1);
         let _span = info_span!("ai::find_root").entered();
         *root = roots.iter().find(|(_, v, p)| v.0 == reference && p.parent() == world_root).map(|(e, _, _)| e);
@@ -504,22 +522,36 @@ pub(crate) fn show_actor(
     // and the turn rate (positive = left, counter-clockwise; the compass heading
     // turns the other way).
     if let Some(mut lo) = lo {
-        let scale = t.scale.x.max(1e-3);
         let step = t.translation.truncate() - before.0.truncate();
-        let speed = if dt > 0.0 && moving { step.length() / dt } else { 0.0 };
-        lo.velocity = if strafe && speed > 0.0 {
-            // The step in the body's axes (x right, y forward; heading 0 faces +y).
-            let (s, c) = heading.sin_cos();
-            let v = step / dt / scale;
-            [v.x * c - v.y * s, v.x * s + v.y * c]
-        } else {
-            [0.0, speed / scale]
-        };
-        let d = (heading - before.1 + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-        lo.turn = if dt > 0.0 { -d / dt } else { 0.0 };
+        let turned = (heading - before.1 + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        if let Some((velocity, turn)) = step_motion(step, turned, heading, t.scale.x.max(1e-3), dt, moving, strafe, jumped || found_now) {
+            (lo.velocity, lo.turn) = (velocity, turn);
+        }
         lo.in_air = air;
     }
     Ok(())
+}
+
+/// The locomotion's velocity (in the actor's axes and own `scale`, y forward) and turn
+/// rate (positive = left, counter-clockwise; the compass heading turns the other way)
+/// for a drawn step of `step` units and a heading change of `turned` radians in `dt`
+/// seconds. `None` for a jump ([`JUMP_STEP`], `jumped`): the locomotion keeps last
+/// frame's.
+#[allow(clippy::too_many_arguments)]
+fn step_motion(step: Vec2, turned: f32, heading: f32, scale: f32, dt: f32, moving: bool, strafe: bool, jumped: bool) -> Option<([f32; 2], f32)> {
+    if jumped || step.length() > JUMP_STEP {
+        return None;
+    }
+    let speed = if dt > 0.0 && moving { step.length() / dt } else { 0.0 };
+    let velocity = if strafe && speed > 0.0 {
+        // The step in the body's axes (x right, y forward; heading 0 faces +y).
+        let (s, c) = heading.sin_cos();
+        let v = step / dt / scale;
+        [v.x * c - v.y * s, v.x * s + v.y * c]
+    } else {
+        [0.0, speed / scale]
+    };
+    Some((velocity, if dt > 0.0 { -turned / dt } else { 0.0 }))
 }
 
 /// `--follow-npc`: the camera behind the first traveller, a little above, looking at it.
@@ -635,6 +667,19 @@ pub fn report(mut exit: MessageReader<AppExit>, nav: Res<NavState>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_jump_is_no_step_of_the_gait() {
+        let dt = 1.0 / 60.0;
+        // A walk: 85 units/s forward.
+        let (v, _) = super::step_motion(bevy::math::Vec2::new(0.0, 85.0 * dt), 0.0, 0.0, 1.0, dt, true, false, false).unwrap();
+        assert!((v[1] - 85.0).abs() < 0.01);
+        // A script's move to a port 3,000 units off, or one flagged as a move: not a speed.
+        assert!(super::step_motion(bevy::math::Vec2::new(3000.0, 0.0), 0.0, 0.0, 1.0, dt, true, false, false).is_none());
+        assert!(super::step_motion(bevy::math::Vec2::new(20.0, 0.0), 0.0, 0.0, 1.0, dt, true, false, true).is_none());
+        // The fastest creature in a long frame is still a step.
+        assert!(super::step_motion(bevy::math::Vec2::new(0.0, 1400.0 * 0.2), 0.0, 0.0, 1.0, 0.2, true, false, false).is_some());
+    }
+
     use super::*;
 
     #[test]

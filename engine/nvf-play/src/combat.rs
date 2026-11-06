@@ -29,7 +29,9 @@
 //!   that direction's `fDamagePowerAttack…Bonus`. The body plays [`WeaponAnim::swing`]
 //!   and times it ([`WeaponAnim::timed`]); the swing strikes once at the clip's `Hit` key
 //!   [documented: NiTextKeyExtraData] with a fan of rays from the eye out to the reach
-//!   (`damage::melee_reach`), and at any actor whose centre is within that reach across
+//!   (`damage::melee_reach`, which reaches from the body: plus the player's capsule
+//!   radius from the eye [hypothesis, as the NPCs' 45 + 107 × Reach is read,
+//!   combat-rules.md §10]), and at any actor whose centre is within that reach across
 //!   the ground, low or high (`projectile::swing_reaching`: a gecko at the player's feet). With no weapon equipped the player fights with the
 //!   Fists (WEAP `Fists`) [hypothesis: the game's unarmed weapon form]. Knockback force
 //!   is computed (documented formula) and logged; living actors are not pushed until they
@@ -666,24 +668,19 @@ fn limb_hit(bp: Option<&BodyPart>, d: &damage::Damage, w: &WeaponStats) -> Optio
 /// body is not posed (first person).
 const HUMAN_SKELETON: &str = "characters\\_male\\skeleton.nif";
 
-/// An explosion's limb damage on `target` (docs/spec-notes/crippled-limbs.md §5): each
-/// limb of its body part data, once per limb condition, takes the blast's damage after
-/// armour times the weapon's Limb Dmg Mult (1 without a weapon) [documented: explosions
-/// deal limb damage, GECK wiki GetHitLimbDamage; hypothesis: the share]. The player's body
-/// part data is the human skeleton's when the body is not posed.
+/// An explosion's limb damage on `target` (docs/spec-notes/crippled-limbs.md §5): the
+/// shares of `fnv_game::combat::blast_limb_shares` (the torso 1/30 of the blast's damage
+/// after armour, the legs 0.24; nothing on the head, arms or brain) of the limb conditions
+/// its body part data names, times the weapon's Limb Dmg Mult (1 without a weapon)
+/// [observed: the shares; hypothesis: the multiplier, 1 on the measured mine and grenade].
+/// The player's body part data is the human skeleton's when the body is not posed.
 fn blast_limb_hits(c: &Combat, parts: &ActorParts, target: FormId, dealt: f32, weapon: Option<&WeaponStats>) -> Vec<LimbHit> {
     let mult = weapon.map_or(1.0, |w| w.limb_dmg_mult.max(0.0));
     let damage = f64::from(dealt.max(0.0) * mult);
     let data = parts.data_of(target.0).or_else(|| (target == FormId::PLAYER_REF).then(|| c.forms.body_parts_for(FormId::PLAYER_BASE, HUMAN_SKELETON)).flatten());
     let Some(bpd) = data.and_then(|d| c.forms.body_parts.get(&d)).filter(|_| damage > 0.0) else { return Vec::new() };
-    let mut out: Vec<LimbHit> = Vec::new();
-    for bp in &bpd.parts {
-        let Some(condition) = bp.actor_value.as_deref().and_then(fnv_game::combat::limb_condition) else { continue };
-        if !out.iter().any(|l| l.condition == condition) {
-            out.push(LimbHit { condition, health_percent: f64::from(bp.health_percent), damage, points: false });
-        }
-    }
-    out
+    let conditions: Vec<u16> = bpd.parts.iter().filter_map(|bp| bp.actor_value.as_deref().and_then(fnv_game::combat::limb_condition)).collect();
+    fnv_game::combat::blast_limb_shares(&conditions, damage)
 }
 
 /// A hit that may dismember (`crate::dismember`): one that killed the actor, or landed on
@@ -1290,7 +1287,9 @@ impl Combat {
                 rounds_per_shot: 1,
                 rounds: u32::MAX / 2,
                 reach: crate::vats_mode::MELEE_MARK_REACH,
-                melee_reach: damage::melee_reach(&self.rules, w, 1.0),
+                // From the eye, as the player's swing reaches (`melee`): the reach is
+                // from the body, the capsule's radius further.
+                melee_reach: damage::melee_reach(&self.rules, w, 1.0) + fnv_phys::CharacterParams::default().radius,
             });
         }
         // A gun needs to be equipped: the Fists are melee.
@@ -1443,7 +1442,8 @@ pub struct VatsWeapon {
     /// `vats_mode::REACH`; a thrown weapon's no farther than it throws; a melee
     /// weapon's `vats_mode::MELEE_MARK_REACH`.
     pub reach: f32,
-    /// A melee weapon's own reach (`damage::melee_reach`), units; 0 otherwise.
+    /// A melee weapon's own reach from the eye (`damage::melee_reach` plus the player's
+    /// capsule radius), units; 0 otherwise.
     pub melee_reach: f32,
 }
 
@@ -3438,7 +3438,8 @@ fn blast_limbs(rt: &mut crate::script::Runtime, sim: &mut SimState, target: Form
     let crippled: Vec<u16> = hurt.iter().filter(|h| h.2).map(|h| h.0).collect();
     if !hurt.is_empty() {
         let names: Vec<&str> = crippled.iter().map(|&c| limb_name(c)).collect();
-        info!("combat: blast on {target}: {:.1} limb damage on {} limbs{}", blast[0].damage, hurt.len(), if names.is_empty() { String::new() } else { format!(", crippled {}", names.join(", ")) });
+        let each: Vec<String> = blast.iter().map(|l| format!("{} {:.2}", limb_name(l.condition), l.damage)).collect();
+        info!("combat: blast on {target}: limb damage {}{}", each.join(", "), if names.is_empty() { String::new() } else { format!(", crippled {}", names.join(", ")) });
     }
     crippled
 }
@@ -3615,7 +3616,8 @@ fn melee(
         // The special move chosen as the swing started (its clip is playing).
         let special = c.special_swing.take();
         let power_mult = power.map_or(1.0, |d| d.damage(&c.rules));
-        let reach = damage::melee_reach(&c.rules, &w, 1.0);
+        // The reach is from the body; the rays start at the eye, the capsule's middle.
+        let reach = damage::melee_reach(&c.rules, &w, 1.0) + phys.player.as_ref().map_or(0.0, |p| p.params.radius);
         let eye = player.eye();
         // A blow that meets no one but strikes the world within reach (a wall, the
         // ground ahead) shows its impact there.
@@ -4449,8 +4451,8 @@ fn fly(
             let info = blast_hit_info(cause);
             // The blast's object effect on those it catches (hit-effects.md §1).
             let items: Vec<FormId> = x.enchantment.into_iter().collect();
-            // Its limb damage, on every limb (crippled-limbs.md §5): from the damage after
-            // armour; `Game::blast_limbs` applies the difficulty, as `hit` does to Health.
+            // Its limb damage, on the torso and legs (crippled-limbs.md §5): from the damage
+            // after armour; `Game::blast_limbs` applies the difficulty, as `hit` does to Health.
             let limbs = blast_limb_hits(c, &parts, target, dealt, cause.and_then(|k| c.forms.weapons.get(&k.weapon)));
             let (r, hit) = hit_actor(script.as_deref_mut(), &mut sim, target, dealt, info, &mut stats, &mut feedback, hud.as_deref_mut(), &items, false, None, &limbs).unzip();
             let mut hit = hit.flatten();

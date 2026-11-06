@@ -341,6 +341,54 @@ Not done [decision]: the response's sound form (§6) and emotions; occlusion. Li
 `engine/nvforever/src/lips.rs` (`VoiceState::spoken`; docs/spec-notes/lipsync.md §5),
 and holds with it.
 
+### 9.1 One cry of a long generic death file
+
+[design, #1539] FalloutNV.esm has three Generic Death lines (quest `Generic`, topic
+`Death`, INFO 00175180 to 00175182, flag Random, one response each) [observed: `fnvtool
+dialogue lines --topic Death --quest Generic`]. Each has files in 22 voice types, of 0.68
+to 4.08 s, except MaleAdult07's of 00175181 and 00175182, which last 9.80 and 15.23 s and
+hold several cries back to back [observed: `fnvtool voice line`; that the short files are
+one cry each: hypothesis, checked on three below]. Played
+whole, a Powder Ganger killed in Goodsprings groaned on for 10 to 15 s as a ragdoll
+[observed: playtest 2026-11-05, issue #1539]. Owner design: start at a random point so a
+different cry is heard each time, and cut after one cry; named NPCs' death lines are not
+cut.
+
+The rules (`fnv_voice::cry`, played by `nvf-play`'s `voice.rs`):
+
+- **Which files.** A file whose name is `<quest>_death_<FormID>_<n>` with a quest ending
+  in `generic` (`cry::is_generic_death`), longer than 5.0 s (`cry::LONG_SECONDS`), of a
+  line with one response, said outside the conversation with the player. Every other
+  file plays whole: the short one-cry files, and a named NPC's death line, which lives
+  in its own quest's files. [design: the file name tells the generic line apart; a named
+  NPC that says the Generic line with a voice type whose file is long is cut too.]
+- **Split at silences.** The file is decoded and measured in 10 ms windows (RMS of all
+  channels). A window below 5 % of the loudest window (about -26 dB), or below 0.002, is
+  silence; silence of 0.25 s or more separates two cries, a shorter one (a breath) stays
+  inside a cry; a loud run under 80 ms is a click and dropped. Each cry is played from
+  30 ms before its first loud window to 150 ms after its last, never past the middle of
+  the silence beside it. [design: all these numbers]
+- **One cry.** One of the cries is picked at random (uniformly) and only it plays, with a
+  40 ms fade-out. A picked cry still longer than 5.0 s (no silence found in it) plays
+  1.5 s of itself from a random point, faded in and out over 40 ms.
+- **The line ends with the cry.** The game's line (`Game::speech`) ends when the cry does
+  (`Game::cut_line_after`), so its subtitle goes with it and the DeathResponse of a
+  nearby group member comes then rather than after the whole file.
+- **Lip sync** follows the file's `.lip` from the cry's place in the file and stops at
+  the cut (`VoiceState::spoken` reports the file's start as the time the cry began minus
+  its offset in the file).
+
+Checked on the files [observed 2026-11-06, the split run on the decoded files]:
+MaleAdult07's 00175182 (15.24 s) splits into 5 cries of about 1 s (0.98-1.92,
+4.34-5.34, 7.78-8.74, 12.15-13.13, 13.97-15.08 s) and 00175181 (9.81 s) into 6 (0.37-1.69,
+2.82-3.77, 4.21-4.80, 5.62-6.29, 7.16-8.00, 8.58-9.54 s); MaleGenericGhoul's 00175182
+(2.53 s), FemaleGhoul02's (3.44 s) and MaleAdult02's (0.78 s) are one cry each and play
+whole.
+
+Log: `voice: one cry of <path>: cry <k> of <n>, <start>-<end> s of its <total> s; <who>
+line <INFO> ends with it` (or `a stretch (no silence found)`); at exit the voice summary
+counts `N long generic death files cut to one cry`. Smoke scenario `death-cry-cut`.
+
 ## 10. Tools
 
 - `fnvtool voice line <data> <plugins…> --info <FormID> [--speaker <Editor ID|FormID>]`

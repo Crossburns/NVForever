@@ -364,7 +364,8 @@ pub fn keys(
 /// The ITEMS page's Repair or Maintain hint for the selected row.
 pub fn draw_hint(p: &mut ChildSpawnerCommands, c: &mut Ctx, o: Option<&Offer>) {
     let Some(o) = o else { return };
-    let label = format!("{} R)", hint(o.gear, o.condition));
+    // R, with a controller Y (`inventory_menu.xml`'s Repair, `crate::pad::menu_buttons`).
+    let label = format!("{} {}", hint(o.gear, o.condition), crate::pad::hint(&[KeyCode::KeyR], crate::pad::at_menu(fnv_game::game::menus::INVENTORY)));
     info!("pipboy items: {} {label}{}", o.name, if o.usable() { "" } else { " (dim)" });
     let color = amber(if o.usable() { TEXT } else { frame::DIMMED });
     c.text(p, 2, &label, MAIN.min.x + HINT.x - 10.0, MAIN.min.y + HINT.y + frame::BUTTON_TEXT_Y, Align::Right, color);
@@ -392,8 +393,9 @@ pub fn draw_list(p: &mut ChildSpawnerCommands, c: &mut Ctx, s: &Session, combat:
     let o = &s.offer;
     frame::heading(p, c, Page::Items.title(), &[Card::new(MAIN.width() - SKILL_W, SKILL_W, "Repair Skill", format!("{:.0}", s.skill.max(0.0).floor()))]);
     let by = MAIN.min.y + BUTTONS.y + frame::BUTTON_TEXT_Y;
-    c.text(p, 2, "Cancel E)", MAIN.min.x + BUTTONS.x - 10.0, by, Align::Right, bright);
-    let cw = c.width(2, "Cancel E)");
+    let cancel = format!("Cancel {}", crate::pad::hint(&[KeyCode::KeyE, KeyCode::Escape], crate::pad::at_menu(fnv_game::game::menus::INVENTORY)));
+    c.text(p, 2, &cancel, MAIN.min.x + BUTTONS.x - 10.0, by, Align::Right, bright);
+    let cw = c.width(2, &cancel);
     p.spawn((at(MAIN.min.x + BUTTONS.x - 10.0 - cw, by - 5.0, cw + 10.0, 40.0), RepairCancel, Pickable::default())).observe(on_cancel_click);
     // The rows: the item, then its parts.
     let rows: Vec<(&str, f32, bool)> = std::iter::once((o.name.as_str(), o.condition, o.extra.equipped)).chain(o.parts.iter().map(|q| (q.name.as_str(), q.condition, q.extra.equipped))).collect();

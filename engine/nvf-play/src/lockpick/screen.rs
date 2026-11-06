@@ -156,7 +156,7 @@ fn text_line(face: &Face, s: &str) -> Line {
 /// What the screen shows; drawn again when it changes.
 fn view_key(s: &Session, has_view: bool, view_w: f32) -> String {
     format!(
-        "{}:{}:{}:{:?}:{:?}:{}:{}:{}:{}:{view_w:.0}",
+        "{}:{}:{}:{:?}:{:?}:{}:{}:{}:{}:{view_w:.0}:{:?}",
         s.game.skill,
         s.game.pins,
         s.game.level.name(),
@@ -165,7 +165,8 @@ fn view_key(s: &Session, has_view: bool, view_w: f32) -> String {
         s.force_label(),
         has_view,
         s.help.is_some(),
-        s.leaving.is_some()
+        s.leaving.is_some(),
+        crate::pad::labels(),
     )
 }
 
@@ -336,7 +337,12 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&LockVi
             // documented: tutorial_menu.xml `no_click_past`).
             let usable = s.help.is_none() && s.leaving.is_none();
             let force_on = s.game.phase == Phase::Picking && s.ended.is_none();
-            let buttons = [(s.force_label(), &s.words.force_hint, LockpickInput::Force(None), force_on), (s.words.exit.clone(), &s.words.exit_hint, LockpickInput::Exit, true)];
+            // The game's PC hints, or the buttons that press their keys here: X (Force,
+            // `crate::pad::menu_buttons`) and B (Esc) [#1662].
+            let hint_at = crate::pad::at_menu(fnv_game::game::menus::LOCKPICK);
+            let force_hint = crate::pad::game_hint(&s.words.force_hint, &[KeyCode::KeyF], hint_at);
+            let exit_hint = crate::pad::game_hint(&s.words.exit_hint, &[KeyCode::KeyE, KeyCode::Escape], hint_at);
+            let buttons = [(s.force_label(), &force_hint, LockpickInput::Force(None), force_on), (s.words.exit.clone(), &exit_hint, LockpickInput::Exit, true)];
             let first = Node { position_type: PositionType::Absolute, right: u(BUTTONS_RIGHT), bottom: u(INFO_IN + INFO.y - BUTTONS_DOWN - 2.0 * BUTTON_H), width: u(0.0), height: u(2.0 * BUTTON_H), ..default() };
             m.spawn(first).with_children(|b| {
                 for (i, (label, hint, cmd, on)) in buttons.into_iter().enumerate() {

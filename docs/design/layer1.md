@@ -161,8 +161,7 @@ The records below stay hand-read because schema v1 cannot say their layout:
 
 Records the schema could express but has no entry for yet, read by hand at runtime
 [observed: `esm coverage` lists them unknown; readers in `crates/fnv-game/src/data.rs`,
-`crafting.rs`, `caravan.rs`]: RCPE, RCCT, CDCK, AVIF (ANAM), VTYP (DNAM); LSCT DATA is read
-by nothing. CSNO and CCRD have entries (`objects.json`) but `casino.rs` and `caravan.rs`
+`crafting.rs`, `caravan.rs`]: RCPE, RCCT, CDCK, AVIF (ANAM), VTYP (DNAM). CSNO and CCRD have entries (`objects.json`) but `casino.rs` and `caravan.rs`
 still slice their bytes. Each needs an xEdit-sourced entry where missing (schemas/README.md)
 and its reader switched to the decoded fields, as was done for CLAS; the masters' totals in
 `tools/smoke/expected/esm-coverage.toml` move with each new entry.

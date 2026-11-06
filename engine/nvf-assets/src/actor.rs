@@ -336,6 +336,10 @@ pub struct PartUse {
     pub part: Arc<PreparedPart>,
     /// Per shape, the material to draw it with (overrides already applied).
     pub materials: Vec<Handle<NifMaterial>>,
+    /// Per shape, a second material the shape is drawn with again, from an entity of its
+    /// own beside the first (the blended layer of a hair model over its solid core,
+    /// `nif_spawn::hair_model_layer`); empty or `None`: drawn once.
+    pub layers: Vec<Option<Handle<NifMaterial>>>,
     /// Per shape, a replacement mesh (e.g. FaceGen-morphed), or `None` for the prepared one.
     pub meshes: Vec<Option<Handle<Mesh>>>,
     /// Shape names not to draw (e.g. the hair's `Hat` shape when no headgear is worn).
@@ -1100,49 +1104,56 @@ pub fn spawn_parts(commands: &mut Commands, skel: &PreparedSkeleton, parts: &[Pa
             let material = u.materials.get(i).cloned().unwrap_or_else(|| s.material.clone());
             let joints: Option<Vec<Entity>> =
                 s.skin.as_ref().and_then(|(_, names)| names.iter().map(|n| skel.by_name.get(n).map(|&j| nodes[j])).collect());
-            let e = match (&s.skin, joints) {
-                (Some((binds, _)), Some(joints)) => {
-                    let e = commands
-                        .spawn((
-                            Mesh3d(mesh),
-                            MeshMaterial3d(material),
-                            Transform::IDENTITY,
-                            SkinnedMesh { inverse_bindposes: binds.clone(), joints },
-                            DynamicSkinnedMeshBounds,
-                        ))
-                        .id();
-                    commands.entity(nodes[0]).add_child(e);
-                    e
-                }
-                (Some((_, names)), None) => {
-                    // Bones missing from the skeleton: draw the bind pose at the root.
-                    out.unbound += 1;
-                    let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(s.transform)))).id();
-                    commands.entity(nodes[0]).add_child(e);
-                    skin_in_place(commands, e, names.len());
-                    e
-                }
-                (None, _) => {
-                    let (at, local) = match bone {
-                        _ if u.by_ancestor => {
-                            let (b, local) = creature_rigid_attach(skel, &u.part, s);
-                            (nodes[b], local)
-                        }
-                        Some(b) => (nodes[b], rigid_local(skel, b, &u.part.root, &s.transform)),
-                        None => (nodes[0], s.transform),
-                    };
-                    let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(local)))).id();
-                    commands.entity(at).add_child(e);
-                    e
-                }
-            };
-            if let Some(n) = &s.name {
-                commands.entity(e).insert((ShapeName(n.to_ascii_lowercase()), s.stored_look()));
+            if matches!((&s.skin, &joints), (Some(_), None)) {
+                out.unbound += 1;
             }
-            commands.entity(e).insert(limb);
-            out.drawn.push(e);
-            out.part_of.push(pi);
-            out.shape_of.push(i);
+            // The shape, and its second layer where it has one (`PartUse::layers`): the
+            // same mesh at the same place under the same bones.
+            let layer = u.layers.get(i).cloned().flatten();
+            for material in std::iter::once(material).chain(layer) {
+                let e = match (&s.skin, joints.clone()) {
+                    (Some((binds, _)), Some(joints)) => {
+                        let e = commands
+                            .spawn((
+                                Mesh3d(mesh.clone()),
+                                MeshMaterial3d(material),
+                                Transform::IDENTITY,
+                                SkinnedMesh { inverse_bindposes: binds.clone(), joints },
+                                DynamicSkinnedMeshBounds,
+                            ))
+                            .id();
+                        commands.entity(nodes[0]).add_child(e);
+                        e
+                    }
+                    (Some((_, names)), None) => {
+                        // Bones missing from the skeleton: draw the bind pose at the root.
+                        let e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(s.transform)))).id();
+                        commands.entity(nodes[0]).add_child(e);
+                        skin_in_place(commands, e, names.len());
+                        e
+                    }
+                    (None, _) => {
+                        let (at, local) = match bone {
+                            _ if u.by_ancestor => {
+                                let (b, local) = creature_rigid_attach(skel, &u.part, s);
+                                (nodes[b], local)
+                            }
+                            Some(b) => (nodes[b], rigid_local(skel, b, &u.part.root, &s.transform)),
+                            None => (nodes[0], s.transform),
+                        };
+                        let e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(local)))).id();
+                        commands.entity(at).add_child(e);
+                        e
+                    }
+                };
+                if let Some(n) = &s.name {
+                    commands.entity(e).insert((ShapeName(n.to_ascii_lowercase()), s.stored_look()));
+                }
+                commands.entity(e).insert(limb.clone());
+                out.drawn.push(e);
+                out.part_of.push(pi);
+                out.shape_of.push(i);
+            }
         }
     }
 }

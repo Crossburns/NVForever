@@ -143,9 +143,11 @@ mod sneaking;
 mod swimming;
 mod ssao;
 mod taa;
+mod fsr;
 mod speech_look;
 mod stress_sample;
 mod profile;
+mod occlusion;
 mod rooms;
 mod terrain;
 mod texture_swap;
@@ -154,6 +156,7 @@ mod effect_shaders;
 mod tree;
 mod treelod;
 mod underwater;
+mod vigor_view;
 mod water;
 mod window_icon;
 mod window_mode;
@@ -268,6 +271,13 @@ struct Args {
     /// Draw every room of an interior: no room and portal culling (rooms.rs).
     #[arg(long)]
     no_room_culling: bool,
+    /// Occlusion planes hide nothing (rooms.rs, occlusion.rs).
+    #[arg(long)]
+    no_occlusion_planes: bool,
+    /// Use the occlusion planes of exterior cells too (off by default: some poke out of
+    /// their walls and would hide what is seen over them; occlusion.rs).
+    #[arg(long)]
+    occlusion_planes_outdoors: bool,
     /// Seconds a streamed cell takes to fade in or out against the distant LOD; 0 swaps
     /// at once (fade.rs).
     #[arg(long, default_value_t = 1.0)]
@@ -424,6 +434,10 @@ struct Args {
     /// runs (--screenshot, --timelapse, --frame-json, --run-seconds) always default to it.
     #[arg(long, value_enum)]
     graphics: Option<graphics::Preset>,
+    /// FSR 3.1 upscaling (no frame generation). Replaces other anti-aliasing while on.
+    /// Saved Graphics settings take precedence in normal play, as for other switches.
+    #[arg(long, value_enum, default_value = "off")]
+    fsr: graphics::FsrMode,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
     /// water-reflections) and choices (fxaa, smaa or taa instead of --msaa;
@@ -682,6 +696,10 @@ struct Args {
     /// Accepted for older command lines; not coming back is the default now.
     #[arg(long, hide = true)]
     no_dialogue_recentre: bool,
+    /// With --play: in a conversation, do not narrow the view onto the speaker nor blur
+    /// what is behind them (docs/design/dialogue-play.md §8.8).
+    #[arg(long)]
+    no_dialogue_zoom: bool,
 }
 
 impl Args {
@@ -1214,6 +1232,7 @@ fn main() -> AppExit {
         },
         None => graphics::Graphics::preset(graphics_preset(&args)),
     };
+    graphics.fsr = args.fsr.quality();
     let frame_times = match (args.log_frame_times, args.graphics_cycle.as_deref()) {
         (None, _) => None,
         (Some(every), cycle) => {
@@ -1312,7 +1331,7 @@ fn main() -> AppExit {
     // Small objects far away cast no sun shadows (shadow_thin.rs).
     .add_plugins(shadow_thin::ShadowThinPlugin(args.shadow_thin))
     // Interiors draw the rooms seen through portals only (rooms.rs).
-    .add_plugins(rooms::RoomsPlugin { off: args.no_room_culling })
+    .add_plugins(rooms::RoomsPlugin { off: args.no_room_culling, planes_off: args.no_occlusion_planes, planes_outdoors: args.occlusion_planes_outdoors })
     .insert_resource(ClearColor(Color::srgb(0.62, 0.72, 0.85)))
     .insert_resource(GlobalAmbientLight { brightness: 600.0, ..default() })
     .insert_resource(sky_state)
@@ -1428,6 +1447,7 @@ fn main() -> AppExit {
     app.insert_resource(nvf_play::music::MusicSettings { play: !args.no_music, volume: args.music_volume });
     app.insert_resource(if args.menu_pause == "original" { nvf_play::pause::MenuPause::Original } else { nvf_play::pause::MenuPause::Living });
     app.insert_resource(nvf_play::dialogue_look::LookSettings { enabled: !args.no_dialogue_look, recentre_on_choices: args.dialogue_recentre && !args.no_dialogue_recentre });
+    app.insert_resource(nvf_play::dialogue_zoom::ZoomSettings { enabled: !args.no_dialogue_zoom });
     if let Some(p) = pending {
         app.insert_resource(p);
     }
@@ -1492,6 +1512,8 @@ fn main() -> AppExit {
         if play.is_some() {
             // The player's own body (player_body.rs): needs the actor records.
             app.add_plugins(creator_view::CreatorViewPlugin { light_scale: args.light_scale });
+            // The Vigor Tester's machine: its camera and lights, the room behind it.
+            app.add_plugins(vigor_view::VigorViewPlugin);
             app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin));
             app.insert_resource(nvf_play::aim_zoom::Scope3d { on: args.scope_3d, lens: false });
             app.add_plugins(decals::DecalsPlugin);

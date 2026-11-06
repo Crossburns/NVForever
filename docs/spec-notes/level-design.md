@@ -197,6 +197,43 @@ work in New Vegas.
   plane (0x000CD790) has a different height (504 against 384). Two REFRs carry `XMBP`
   "MultiBound Primitive Marker". Which references are multibounds in
   New Vegas is open (§13).
+- **Plane bounds are half extents** [observed, fnvtool `esm decode` of the 44 planes,
+  2026-11-06]: the five planes of RocketLabMid (0x000CD790–0x000CD794, all turned by a
+  multiple of 90° about z) tile the walls of one room edge to edge when their `XPRM` x
+  and z bounds are read as half extents, and leave gaps when read as full sizes: along
+  x = 3,328, 0x000CD790 spans y 576–1,152, 0x000CD792 (above a doorway, z 80–544) 1,152–1,408
+  and 0x000CD791 1,405–1,981; 0x000CD793 and 0x000CD794 run along y = 576 and y = 1,984
+  from x 2,752 to 3,328, meeting the first two at their ends. The planes of
+  OVWestSewers02 meet at their corners the same way (0x00178AA9 and 0x00178AAA at about
+  (−1,285, −3,570)). So `XOCP`'s sizes, equal to the bounds, are half sizes too.
+- **`XOCP`'s other fields** [observed, same decode]: its position is within a few units
+  of the reference's `DATA` position (0x001330BB: 28,724.1, 31,738.9 against 28,723.9,
+  31,741.1); its four rotation numbers read as an axis and an angle, not a unit
+  quaternion: `(0, 0, 1, a)` or `(0, 0, −1, 2π − a)` for a `DATA` z turn of `a`
+  (0x000CD793: z 3.14, `(0, 0, 1, 3.142)`; 0x000CD790: z 4.71, `(0, 0, −1, 1.571)`), and
+  `(1, 0, 0, 0)` unturned. All 44 planes are turned about z only and have scale 1.
+- **NVForever's rule** (#1434; `engine/nvforever/src/occlusion.rs`, `rooms.rs`): a plane
+  is the rectangle of its `DATA` position and rotation and `XPRM` half extents, thin axis
+  left out (as a portal's; `XOCP` and `XORD` are not read). Each frame, for each plane not
+  edge-on to the eye (within 1 unit), the volume it hides from the eye is built (beyond
+  the plane, inside the four planes through the eye and its edges). Multibounds are not
+  used: every placed object's and item's mesh is tested by its own axis-aligned bounds in
+  game space [engineering choice, while §13 question 8 is open], and hidden when all eight
+  corners lie in one plane's volume (the volume is convex, so the mesh is wholly behind
+  that plane); planes are not joined. A portal whose four corners lie in one plane's
+  volume is not followed (§3.1). Actors, dropped items, lights and effects are never
+  hidden, as with rooms. `--no-occlusion-planes` turns it off.
+- **Interiors only, by default** [engineering choice]: not every exterior plane lies
+  inside its wall. Primm's 0x00177B3D (x −57,480 to −53,480, z 5,776–6,256, half extents)
+  runs along a retaining wall (rwstraightstonenosidewalk02_nv, scale 0.75, base z 5,744)
+  whose mesh reaches z 6,168 [observed: the NIF's vertices], so 88 units of the plane
+  stand above the wall, and with per-mesh tests the letters of a roof sign seen over it
+  were hidden [observed: NVForever screenshots with and without, 2026-11-06]. Its length
+  matches the wall's corner stones only as half extents, so the reading is not in doubt.
+  The original tests multibounds only, so that sign would stay unless it belonged to
+  one; per-mesh tests are not safe outdoors. `--occlusion-planes-outdoors` uses the
+  exterior planes too (for measuring). In the interiors checked, the pictures with and
+  without were the same.
 
 ### 3.3 Distance, LOD and static collections
 
@@ -443,9 +480,9 @@ scripts, so picking one up is detected from a trigger with `GetHasNote`
 | T4 | Trigger scripts and cell loading | trigger scripts run only while their cell is loaded [Basic Quest] | candidates are scripted references of loaded cells | script_trigger.rs | agrees |
 | T5 | Trigger flags | ActorZone and Projectile flags on the primitive [Primitives] | not read anywhere; storage unknown (no `XTRI` in FalloutNV.esm) | `crates/fnv-phys/src/primitive.rs`, schemas/fnv/world.json | gap (data) |
 | T6 | "Physics sensors (5D)" | detection is the physics engine's collision | layer5.md §3.4 table already says physics sensors; the implementation is geometric | docs/design/layer5.md §3.4 vs layer5-play.md §3 | consistent with the plan, not with the interim code |
-| C1 | Room/portal culling | rooms, portals, unbounded space, portal frusta (§3.1) | built (#606): in interiors only the rooms seen through portals are drawn; membership by box overlap grown by 32 units, the narrower frustum a screen rectangle, everything drawn with the camera in no room (never the void); portals hidden by occlusion planes are still followed (C3); `--no-room-culling` turns it off | `engine/nvforever/src/rooms.rs`, smoke `rooms-repconn` | simplified (performance; the original can show "the void" where portals are missing, NVForever does not) |
+| C1 | Room/portal culling | rooms, portals, unbounded space, portal frusta (§3.1) | built (#606): in interiors only the rooms seen through portals are drawn; membership by box overlap grown by 32 units, the narrower frustum a screen rectangle, everything drawn with the camera in no room (never the void); portals wholly behind an occlusion plane are not followed (C3); `--no-room-culling` turns it off | `engine/nvforever/src/rooms.rs`, smoke `rooms-repconn` | simplified (performance; the original can show "the void" where portals are missing, NVForever does not) |
 | C2 | Moved objects and rooms | a settled object is drawn only with its original room [Optimization] | dropped items, actors and effects are never room-culled; moved objects are always drawn | `engine/nvf-play/src/dropped.rs`, world.rs | difference (fidelity edge case) |
-| C3 | Multibounds and occlusion planes | per-frame occlusion test of multibounds against plane frusta [Occlusion] | not implemented (#1434) | engine/nvforever | difference (performance only) |
+| C3 | Multibounds and occlusion planes | per-frame occlusion test of multibounds against plane frusta [Occlusion] | built (#1434): occlusion planes in interiors hide the placed objects' meshes wholly behind one plane, each by its own bounds, and stop portals wholly behind one; outdoors only with `--occlusion-planes-outdoors` (a Primm plane pokes above its wall, §3.2); multibounds are not used (§13 question 8); `--no-occlusion-planes` turns it off | `engine/nvforever/src/occlusion.rs`, `rooms.rs`, smoke `occlusion-planes-vault21` | simplified (performance only; per-mesh bounds instead of multibounds) |
 | C4 | XPRM bounds | (room edges must meet; portals snap to faces) | physics.md §4.1: half extents [hypothesis] | `crates/fnv-phys/src/primitive.rs`, physics.md §4.1 | **settled by our data**: 1,298 of 1,341 portal centres on a room face as half extents, 0 as full extents (§3.1) |
 | C5 | Object fade by bounds | objects fade in at a distance growing with their bounds [Static Collections] | all objects of loaded cells are drawn at any distance; fades exist only per cell and for LOD | `engine/nvforever/src/fade.rs`, layer3.md §2.2 | difference |
 | L1 | Light radius | radius set per reference [Lighting] | range = base radius + `XRDS` (`placed_light_radius`); SSIM up on all seven interior frames (world.md §8) | `engine/nvforever/src/lights.rs`, `crates/fnv-world/src/lighting.rs`, world.md §8 | **settled** (2026-10-09) |

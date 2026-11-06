@@ -189,7 +189,7 @@ pub fn build(mut review: ResMut<Review>, mut parts: ResMut<ActorParts>, mut mode
     let body: Vec<PartUse> = BODY
         .iter()
         .filter_map(|p| ctx.part(p))
-        .map(|part| PartUse { part, materials: Vec::new(), meshes: Vec::new(), hidden_shapes: Vec::new(), by_ancestor: false })
+        .map(|part| PartUse { part, materials: Vec::new(), layers: Vec::new(), meshes: Vec::new(), hidden_shapes: Vec::new(), by_ancestor: false })
         .collect();
     let root = commands.spawn((NifRoot, Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)), Visibility::default())).id();
     let actor = spawn_actor(&mut commands, root, Transform::IDENTITY, &skel, &body);

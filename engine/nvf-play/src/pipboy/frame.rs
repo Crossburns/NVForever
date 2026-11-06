@@ -241,6 +241,12 @@ pub fn heading(p: &mut ChildSpawnerCommands, c: &mut Ctx, title: &str, cards: &[
     }
 }
 
+/// Where the heading's lead line ends: where the line runs on from in the screen menu, which
+/// has no title ([`heading_title`]).
+pub fn lead_line_end() -> f32 {
+    MAIN.min.x + LEAD_LINE
+}
+
 /// A page's title in its heading (font 4, 70 in, on the heading's line); where the line
 /// goes on after it. In the screen menu the title is left out, the header of page names
 /// standing on the line in its place ([`header`]), and the line runs on from the lead line
@@ -394,7 +400,8 @@ fn on_tab_out(out: On<PointerOut>, nodes: Query<&Clickable>, mut pip: ResMut<Pip
 pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut Visibility)>) {
     // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
     let _canvas = crate::interface::original_units();
-    if !pip.open() && pip.hover_tab.is_some() {
+    // A page drawn from its tiles has no hand-built tabs for this to be left over from.
+    if (!pip.open() || boxes.is_empty()) && pip.hover_tab.is_some() {
         pip.hover_tab = None;
     }
     for (b, mut v) in &mut boxes {
@@ -406,7 +413,10 @@ pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut
 }
 
 /// Rebuild the frame (and with it every page's body) when the Pip-Boy's page or tab
-/// changed, or it came up.
+/// changed, or it came up, or a page went over to its tiles or back. A page drawn from its
+/// file (`crate::tiles::stats_menu::StatsTiles::ready`, the one decision) keeps the shell and
+/// the screen menu's header, and has none of the hand-built page: its heading and tab line are
+/// the tiles', once. The device's background and scanlines are `device_screen.rs`'s either way.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut commands: Commands,
@@ -417,12 +427,14 @@ pub fn draw(
     data: Option<Res<GameData>>,
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
-    mut shown: Local<Option<(Page, usize, Frame)>>,
+    tiles: Option<Res<crate::tiles::stats_menu::StatsTiles>>,
+    mut shown: Local<Option<(Page, usize, Frame, bool)>>,
 ) {
     // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
     let _canvas = crate::interface::original_units();
     let Some(screen) = screen else { return };
-    let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame));
+    let tiled = tiles.is_some_and(|t| t.ready.is_some());
+    let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame, tiled));
     if want == *shown && (want.is_none() || !roots.is_empty()) {
         return;
     }
@@ -430,7 +442,7 @@ pub fn draw(
     for e in &roots {
         commands.entity(e).despawn();
     }
-    let Some((page, tab, frame)) = want else { return };
+    let Some((page, tab, frame, tiled)) = want else { return };
     // The screen menu is plain, as the barter menu is: the device's own screen around the
     // pages is `device_screen.rs`'s, on the device only (docs/design/screen-menu.md §2).
     let device = frame == Frame::Device;
@@ -438,12 +450,20 @@ pub fn draw(
     c.kit.screen = !device;
     let root = Node { overflow: Overflow::clip(), ..at(0.0, 0.0, CANVAS.x, CANVAS.y) };
     commands.spawn((PipBoyRoot, root, UiTargetCamera(screen.camera), Name::new("Pip-Boy menus"))).with_children(|r| {
+        // The shell every view of a page keeps: the screen menu's header.
         if !device {
             header(r, &mut c, page);
         }
-        tab_line(r, &mut c, page, tab);
-        r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), PageBody { page, tab }, Pickable::IGNORE));
+        if !tiled {
+            hand_built_page(r, &mut c, page, tab);
+        }
     });
+}
+
+/// What a hand-built page has inside the shell: the tab line and the body its module fills.
+fn hand_built_page(r: &mut ChildSpawnerCommands, c: &mut Ctx, page: Page, tab: usize) {
+    tab_line(r, c, page, tab);
+    r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), PageBody { page, tab }, Pickable::IGNORE));
 }
 
 // ---- The screen menu's header (docs/design/screen-menu.md §3.1) ---------------------
