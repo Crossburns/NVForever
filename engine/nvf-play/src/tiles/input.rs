@@ -44,6 +44,10 @@
 //!   scrollbar's arrows, page areas and marker move the list's view, no
 //!   command of the model's. Under the "How many?" prompt it takes nothing. The wheel stays
 //!   `crate::menu::menu_mouse`'s, told which heading the pointer is over.
+//! - **The dialogue menu** (`super::dialog_menu`): while drawn from its tiles with nothing over
+//!   it and no pause menu; what it asks goes to `crate::dialogue::input` through
+//!   `crate::dialogue::ViewInput`, the same commands as the keys. It takes the input as drawn
+//!   the frame before, so a click is on what was on screen.
 //! - **Units**: the cursor's logical pixels to interface units, 960 to the view's height,
 //!   as the tile renderer draws (`super::draw`, `crate::interface::u`) [design].
 //! - **Keys**: A to Z as `_PCButton_<letter>` [documented: the vanilla files' letters;
@@ -197,6 +201,10 @@ pub(crate) struct MenuInputs<'w, 's> {
     last_at: Local<'s, Option<(f64, f64)>>,
     hold: Option<Res<'w, crate::menu::WheelHold>>,
     wheel_title: ResMut<'w, super::container_menu::TileWheelTitle>,
+    /// The dialogue menu's one decision, what it asks of the conversation, and its scroll.
+    dialog: Option<Res<'w, super::dialog_menu::DialogTiles>>,
+    view_input: Option<ResMut<'w, crate::dialogue::ViewInput>>,
+    dialog_written: Option<Res<'w, super::dialog_menu::SharedWritten>>,
 }
 
 impl MenuInputs<'_, '_> {
@@ -536,6 +544,9 @@ pub(crate) fn feed(
     if rt.game.ui_files.is_none() {
         return;
     }
+    if let Some(v) = inputs.view_input.as_deref_mut() {
+        *v = Default::default();
+    }
     // The test aid's pointer, moved on its clock.
     let mut aid_click = false;
     let mut aid_at = None;
@@ -565,6 +576,9 @@ pub(crate) fn feed(
     if aid_at.is_some() && menus.hud {
         taking.extend(rt.game.ui_tree.menu(super::draw::HUD_MENU));
     }
+    // The dialogue menu, under anything over the conversation (it does not take with one up).
+    let dialog_menu = inputs.dialog.as_ref().and_then(|d| d.taking(&rt.game, paused.as_ref().is_some_and(|p| p.0)));
+    taking.extend(dialog_menu);
     taking.extend(inputs.taking(*menus, &rt.game));
     // T11: the pause menu's Mods page takes the pointer and keys for the start menu's
     // tiles (`super::mods`).
@@ -638,10 +652,23 @@ pub(crate) fn feed(
             }
         }
     }
+    // The dialogue menu's pointer decides on what was drawn (`super::dialog_menu`).
+    if let (Some(_), [_], Some(d)) = (dialog_menu, taking.as_slice(), inputs.dialog.as_ref()) {
+        input.resolved = Some(d.hits().to_vec());
+    }
+    // A frame's own clicks are for the screen up now; a script's kept theirs when queued.
+    rt.game.ui_pointer.stamp = crate::dialogue::stamp_now(&rt.game);
     let report = fnv_game::ui_input::step(&mut rt.game, &taking, &input, &no_measure);
     let over = rt.game.ui_pointer.active(&rt.game.ui_tree);
     let ui = &rt.game.ui_tree;
     let slider = inputs.follow(ui, &report, at, over, held, input.shift, &physical, tutorial);
+    if let (Some(menu), Some(v)) = (dialog_menu, inputs.view_input.as_deref_mut()) {
+        let mut steps = 0;
+        super::dialog_menu::follow(ui, &report, &physical, menu, inputs.dialog.as_ref().and_then(|d| d.list()), v, &mut steps);
+        if let Some(shared) = inputs.dialog_written.as_ref() {
+            shared.scroll(steps);
+        }
+    }
     if let Some((_, to)) = report.over {
         match to.filter(|&t| ui.is_live(t)) {
             Some(t) => {

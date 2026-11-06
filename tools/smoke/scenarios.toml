@@ -19888,6 +19888,229 @@ expect = [
 ]
 order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]
 
+# ------------------------------------------------------------------ the dialogue menu from its file
+# What these prove: the pieces handed to the tile renderer (`tiles: DialogMenu painted`), the tile
+# hits and the commands accepted with their origin. How the pieces look is for the shots. Not
+# covered here, unit tests only (tiles/dialog_menu.rs): a red frame, a stale script click, a key
+# or controller press acting twice, a missing file or template. Not covered at all: a refused Tab.
+
+[[scenario]]
+name = "tiles-dialog-on"
+source = "[design] docs/spec-notes/dialogue-menu.md §6 (issue #1518): with [UI] TileMenus=DialogMenu the renderer is given the band, name and line, then the band, name, rows, frame, brackets and hint, from the game's DialogMenu tiles; the hand-built menu says nothing of its hint; the tree drops with the conversation"
+note = "dialogue-menu.md §5: Sunny Smiles offers six choices of one and two lines. tiles_dialog_line.png the greeting; tiles_dialog_choices.png the list and the hint: the greeting takes about 5 s from 8 s and the aid leaves 15 s after the list, and the order below ties the shot to the list on the log"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "15", NVF_PLAY_TEST_SHOTS = "9:tiles_dialog_line.png,20:tiles_dialog_choices.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 55
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=DialogMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): DialogMenu drawn from tiles', label = "the switch is read from the test aid" },
+  { re = 'ui: built DialogMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', label = "the conversation builds the menu" },
+  { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', label = "the renderer takes the menu, with NVForever's own code tiles" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 1, rows 0, dim 0, frame 0 plain, fill 0, bar 0, brackets 0, hint 0', label = "pieces of a line: band, name, line, nothing of the list" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]\d*, dim \d+, frame 0 plain, fill 0, bar 3, brackets 6, hint 1', label = "pieces of the list at open: band, name, rows in the window, nothing framed [observed: the original's], the bar's arrows and marker, the brackets, the hint" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 0, label = "the hand-built menu's hint line is never logged" },
+  { re = 'DialogMenu drawn by hand', count = 0, label = "the whole file was ready" },
+  { re = 'ui: dropped DialogMenu', label = "the conversation's end drops the tree" },
+]
+order = [[
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 1' },
+  "test aid: screenshot tiles_dialog_line.png",
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]' },
+  "test aid: screenshot tiles_dialog_choices.png",
+  { re = 'dialogue: choose Some\(\d+\) by test aid' },
+  "ui: dropped DialogMenu",
+]]
+
+[[scenario]]
+name = "tiles-dialog-off"
+source = "[design] docs/spec-notes/dialogue-menu.md §6: off by default: the hand-built menu draws the conversation and no tile of the dialogue menu is written or drawn"
+areas = ["ui", "dialogue"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "6" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 40
+expect = [
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", min = 1, label = "the hand-built menu with its hint" },
+  { re = 'tiles: DialogMenu', count = 0, label = "nothing of the tile view" },
+]
+
+[[scenario]]
+name = "tiles-dialog-scroll"
+source = "[design: owner choice 2026-11-05, whole rows, dialogue-menu.md §6.3; the bar and the first Down as the capture of the original read them, §6.6] a list of wrapped and one-line choices that overflows is painted with the bar; the first Down frames the first choice, and the list then scrolls by whole rows, as few as show the framed row whole"
+note = "the aid holds off with a delay longer than the run; the keys go down the list and back; the heights differ when a row wraps; at 1280 x 720 Sunny Smiles's six rows are 96, 58, 96, 58, 58, 58 and the list 250 high at 619 (round 1's logs). The log's scroll is 'scroll <first row shown> of <last first row>': 0 of 3 at the top; Down to choice 3 makes it 1 of 3, choice 4 2 of 3; back up it holds 2 of 3 to choice 2, then 1 of 3 at choice 1 (until 2026-11-05 it counted the original's 56-unit steps; the regexes hold for both)"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "60", NVF_PLAY_TEST_KEYS = "26:down,27:down,28:down,29:down,30:down,31:up,32:up,33:up,34:up,35:up", NVF_PLAY_TEST_SHOTS = "30.5:tiles_dialog_scrolled.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 45
+expect = [
+  { re = 'tiles: DialogMenu drawn from tiles: .* row heights \[(\d+), (?:\d+, )*(?!\1\b)\d+', label = "rows of different heights: one wrapped" },
+  { re = 'tiles: DialogMenu painted: .* rows [1-5], dim \d+, frame 4 (plain|red), fill 1, bar 3, ', label = "rows in the window painted, framed, with the bar's arrows and marker" },
+  { re = 'tiles: DialogMenu drawn from tiles: .* selected none, .* scroll 0 of [1-9]\d*, bar true', label = "more than fit, at the top, nothing framed" },
+  { re = 'tiles: DialogMenu drawn from tiles: .* selected 0, .* scroll 0 of [1-9]', label = "the first Down frames the first choice" },
+  { re = 'tiles: DialogMenu drawn from tiles: .* selected [1-5], .* scroll [1-9]\d* of [1-9]\d*, bar true', label = "the list scrolled by rows to the framed row" },
+]
+
+[[scenario]]
+name = "tiles-dialog-pointer"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.3, §6.6: the pointer on a row selects it, a press picks it, accepted once as a tile click through the conversation's own command, and the bar's arrow scrolls one row"
+note = "the aid holds off with a delay longer than the run, so only the pointer picks. At 1280 x 720 the screen is 1706.7 wide; the list is centred on y 744 and its rows run from x 365, so x 853, y 744 stands on a row (dialogue-menu.md §2-§3). The bar's down arrow is at x 349, y 861: the list's bottom less 8 from the describe line, list y 619 height 250, and its click was logged there. One row (the first, 96) brings choice 3 (rows 96, 58, 96, 58) to 154-212 in the list, so y 800 is on it (until 2026-11-05 one step of 56 took it to 194-252 and the point was y 840, which a row's scroll puts on choice 4): fnvtool dialogue talk says that choice's list comes back with it darkened, about 12 s later, and the second arrow click shows it in the window, as the list starts at its top"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_POINTER = "25:853:744,27:349:861:click,29:853:800:click,31:off,47:349:861:click,48:off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 60
+expect = [
+  { re = 'tiles: pointer over DialogMenu/.*DM_Topic', label = "the pointer finds a row" },
+  { re = 'tiles: clicked DialogMenu/.*/DM_Topic \(', count = 1, label = "the press hits the row's tile" },
+  { re = 'tiles: DialogMenu list scrolled 1 on its tiles', count = 2, label = "the bar's arrow scrolls one row, each list" },
+  { re = 'tiles: DialogMenu choice \d+ picked on its tiles', count = 1, label = "the row picks its choice, once" },
+  { re = 'dialogue: choose Some\(3\) by tile click', count = 1, label = "the choice under the point, accepted once, as a tile click" },
+  { re = 'dialogue: choose Some\(\d+\) by (click|test aid|number key|Enter)', count = 0, label = "by nothing else" },
+  { re = 'tiles: DialogMenu painted: .* dim [1-9]\d*, ', label = "the list again, a dim row painted" },
+]
+order = [[
+  { re = 'tiles: DialogMenu choice \d+ picked on its tiles' },
+  { re = 'dialogue: choose Some\(\d+\) by tile click' },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 1' },
+  { re = 'tiles: DialogMenu painted: .* dim [1-9]\d*, ' },
+]]
+
+[[scenario]]
+name = "tiles-dialog-skip"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.2: while the actor speaks a click on the file's click area skips what is being said, accepted once as a tile click"
+note = "the pointer aid presses no real button, so the skip can only come from the tile; the greeting is said from 8 s"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_POINTER = "9:853:300:click,9.5:off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 30
+expect = [
+  { re = 'tiles: clicked DialogMenu/.*DM_(ClickRect|SpeakerText)', count = 1, label = "the press hits the click area" },
+  { re = 'tiles: DialogMenu line skipped on its tiles', count = 1, label = "asked once" },
+  { re = 'dialogue: skip None by tile click', count = 1, label = "accepted once, as a tile click" },
+]
+
+[[scenario]]
+name = "tiles-dialog-tab"
+source = "[design] docs/spec-notes/dialogue-menu.md §4, §6.3: Tab picks the offered Goodbye choice with the menu drawn from tiles, accepted as Tab; this does not test a refused Tab, as no conversation that offers no Goodbye was found in Goodsprings"
+note = "no steps and a delay longer than the run: the aid does not leave by itself, and nothing else can end the conversation"
+areas = ["ui", "dialogue"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_KEYS = "28:tab" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 50
+expect = [
+  { re = 'dialogue: choose Some\(\d+\) by Tab', count = 1, label = "Tab picks the Goodbye choice" },
+  { re = 'test aid NVF_PLAY_TEST_TALK: no steps left', count = 0, label = "the aid's own leave never ran" },
+  { re = 'dialogue: choose Some\(\d+\) by test aid', count = 0, label = "nor any choice of the aid's" },
+  { re = 'dialogue: conversation with SunnyRef ended \(goodbye', label = "the conversation ends as the data ends it" },
+]
+
+[[scenario]]
+name = "tiles-dialog-pause"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.3: under the pause menu the tile input takes nothing; after it the same press is accepted"
+areas = ["ui", "dialogue", "menus"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/pause.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_PAUSE = "24:27", NVF_PLAY_TEST_POINTER = "25:853:744:click,26:off,29:853:744:click,30:off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 45
+expect = [
+  { re = 'tiles: DialogMenu choice \d+ picked on its tiles', count = 1, label = "only the press after the pause picks" },
+  { re = 'dialogue: choose Some\(\d+\) by tile click', count = 1, label = "accepted once, as a tile click" },
+]
+
+[[scenario]]
+name = "tiles-dialog-overlay"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.3: a two-button message box over the conversation keeps the input through its closing frame: Enter answers it and a press in that second is not also a choice; a later press on the list is accepted"
+note = "the script aid opens the box, as the console does not open during a conversation; two buttons, as --no-messages closes a box that asks nothing. NVF_PLAY_TEST_SCRIPT_MENUS is far later than Enter. The key and the pointer fire on the first frame at or after 28 s on the aids' clocks, so the same frame is what is meant, not proved by the log; the delay keeps the aid from choosing"
+areas = ["ui", "dialogue"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/script_hud.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "30", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_SCRIPT = "25:call:-:MessageBoxEx:\"nvf over|Yes|No\"", NVF_PLAY_TEST_KEYS = "28:enter", NVF_PLAY_TEST_POINTER = "26:853:744:click,27:853:744,28:853:744:click,29:off,32:853:744:click,33:off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 45
+expect = [
+  { re = 'script: test aid calls MessageBoxEx', label = "the box opens over the conversation" },
+  { re = 'dialogue: choose Some\(\d+\) by tile click', count = 1, label = "of the three presses only the one after the box closed" },
+  { re = 'dialogue: choose Some\(\d+\) by (Enter|click)', count = 0, label = "Enter answered the box, not the list" },
+]
+order = [[
+  { re = 'script: test aid calls MessageBoxEx' },
+  { re = 'script: menu 1001 .*answered' },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]' },
+  { re = 'dialogue: choose Some\(\d+\) by tile click' },
+]]
+
+[[scenario]]
+name = "tiles-dialog-reopen"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.1: the menu lives as long as the conversation: a second conversation builds it again, whole, with its own rows"
+areas = ["ui", "dialogue"]
+paths = [
+  "engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/dialogue.rs", "engine/nvf-play/src/dialogue_menu.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave;36:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "2" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 60
+expect = [
+  { re = 'ui: built DialogMenu', min = 2, label = "built for each conversation" },
+  { re = 'ui: dropped DialogMenu', min = 2, label = "and dropped after each" },
+  { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', min = 2, label = "the renderer takes a new tree each time" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 1', min = 2, label = "pieces both times" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", count = 0, label = "the hand-built menu's hint line is never logged" },
+]
+
+[[scenario]]
+name = "tiles-dialog-cut-down"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.5: a tree that lacks a tile the model needs gives the hand-built menu, a warning once, and a later conversation that builds the whole file is drawn from it again"
+note = "the script aid unloads the line's tile from the built menu at 24 s, as the console does not open during a conversation, standing in for a mod's cut-down file: a smoke run has no such mod folder. A file missing altogether or a template lacking a piece is the unit tests'"
+areas = ["ui", "dialogue"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/tiles/draw.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "8:SunnyRef=leave;55:SunnyRef=leave", NVF_PLAY_TEST_TALK_DELAY = "22", NVF_PLAY_TEST_SCRIPT = "24:call:-:UnloadUIComponent:\"DialogMenu/NOGLOW_BRANCH/DM_SpeakerText\"", NVF_PLAY_TEST_SHOTS = "26:tiles_dialog_by_hand.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 85
+expect = [
+  { re = 'script: test aid calls UnloadUIComponent', label = "the tile goes" },
+  { text = "DialogMenu drawn by hand: DialogMenu/NOGLOW_BRANCH/DM_SpeakerText missing", count = 1, label = "said once" },
+  { text = "dialogue menu: [Tab] Goodbye shown at the left of the choices", min = 1, label = "the hand-built menu takes over" },
+  { re = 'tiles: DialogMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', min = 2, label = "before it, and in the next conversation from a new tree" },
+]
+
+[[scenario]]
+name = "tiles-dialog-hint-off"
+source = "[design] docs/spec-notes/dialogue-menu.md §6.4: the Goodbye hint switch (#1517) holds for the menu drawn from tiles too: its list is painted with no hint, and Tab still says goodbye"
+note = "as dialogue-goodbye-hint-off, the settings page flips the switch at 3 s, before the talk aid's 11 s of world clock. A flip while a conversation is open is the unit test's (the_hint_setting_hides_only_the_hint_at_once); this is what proves write_system reads the resource"
+areas = ["ui", "dialogue", "menus"]
+paths = ["engine/nvf-play/src/tiles/dialog_menu.rs", "engine/nvf-play/src/dialogue_menu.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "DialogMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "1:4", NVF_PLAY_TEST_SETTINGS = "2:page,3:dialogue-goodbye-hint", NVF_PLAY_TEST_TALK = "11:SunnyRef=", NVF_PLAY_TEST_TALK_DELAY = "90", NVF_PLAY_TEST_KEYS = "34:tab" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 50
+expect = [
+  { text = "settings: dialogue-goodbye-hint off", label = "the settings page turned the Goodbye hint off" },
+  { re = 'tiles: DialogMenu painted: band 1, name 1, line 0, rows [1-9]\d*, dim \d+, frame 0 plain, fill 0, bar 3, brackets 6, hint 0', label = "the list from its tiles, with no hint" },
+  { re = 'tiles: DialogMenu painted: .*, hint [1-9]', count = 0, label = "the hint is never painted" },
+  { re = 'DialogMenu drawn by hand', count = 0, label = "the whole file was ready" },
+  { re = 'dialogue: choose Some\(\d+\) by Tab', count = 1, label = "Tab still says goodbye with the hint hidden" },
+]
+
 [[scenario]]
 name = "language-choice"
 source = "#1443: the settings page's Language row lists the languages found in the lang folders (NVF_LANG_DIR here, a made-up one), takes one at once and draws the page again; a broken language file is skipped with a warning"
