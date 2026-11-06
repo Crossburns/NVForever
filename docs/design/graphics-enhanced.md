@@ -188,6 +188,21 @@ runs keep `--msaa`, so `--graphics vanilla` draws as before.
   choice]. Sharper than FXAA, a little dearer; the same limit on the cut-outs.
 - **TAA**: ours, as follows.
 
+What the multisampling levels cost (#1379; the settings page's note gives the first two rows'
+figures in its own words) [observed 2026-11-02: plain release build, i9-14900K, RTX 4070
+(driver 616.56, Vulkan), 1920 × 1080, `--graphics enhanced`, vsync off (`--log-frame-times
+10`), `--play` standing still, `NVFOREVER_HOME` without stored settings, `--msaa N`, 45 s runs]:
+
+| Place | Off | 2x | 4x | 8x |
+|---|---|---|---|---|
+| Novac 12:00 | 10.36 ms | 11.19 | 11.63 | 12.76 |
+| Goodsprings 12:00 | 7.15 ms | 7.92 | 8.45 | 9.37 |
+| Strip 22:00 (the CPU sets the frame) | 6.26 ms | 6.23 | 6.30 | 6.31 |
+
+So 2x adds about 0.8 ms, 4x about 1.3 ms and 8x about 2.3 ms where the GPU sets the frame.
+The steps and the 4x default stay (#1379, a note only): the note tells a player turning
+everything up what 8x costs and names FXAA, SMAA and TAA as the cheaper choices.
+
 #### Temporal anti-aliasing
 
 The other choice to multisampling, not on top of it: while it is on the main view is drawn
