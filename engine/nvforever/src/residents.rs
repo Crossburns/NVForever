@@ -761,6 +761,36 @@ struct Resident {
     /// script keeps in a holding cell (Malcolm Holmes in RandomEncounterNPCs) never was,
     /// so its cell is not buffered and it stays at the Low level.
     been_loaded: bool,
+    /// Seen joined but not present (disabled): drawn again, it was enabled.
+    absent: bool,
+    /// The clips it plays in its first second drawn after a script made it, enabled it or
+    /// put it somewhere ([`FirstSteps`]).
+    first_steps: Option<FirstSteps>,
+}
+
+/// How long [`FirstSteps`] watches an actor's clips, seconds of it being drawn.
+const FIRST_STEPS_SECONDS: f32 = 1.0;
+
+/// The walk and run frames of an actor in its first [`FIRST_STEPS_SECONDS`] drawn after
+/// a script created it (PlaceAtMe), enabled it or put it somewhere (MoveTo,
+/// MoveToMarkerWithFade): it fades in meanwhile, and its package's gait holds from its
+/// first frame (#1473). Logged at the end when it moved: `ai [hh:mm] <label>: first
+/// second drawn after <why>: <n> walk frames, <n> run frames (walker at <s> units/s, drawn
+/// up to <s>)`.
+struct FirstSteps {
+    why: &'static str,
+    left: f32,
+    walk: u32,
+    run: u32,
+    speed: f32,
+    /// The fastest its body was drawn moving (`Locomotion::velocity`), units/s.
+    drawn: f32,
+}
+
+impl FirstSteps {
+    fn new(why: &'static str) -> FirstSteps {
+        FirstSteps { why, left: FIRST_STEPS_SECONDS, walk: 0, run: 0, speed: 0.0, drawn: 0.0 }
+    }
 }
 
 /// A fighter locked on its target (`npc_combat::Fighters::lock_on`) and turned within
@@ -1293,6 +1323,9 @@ impl Core {
             let label = format!("{} {id}", game.data.name(base));
             info!("ai [{}] {label}: created by a script (PlaceAtMe) at ({:.0}, {:.0}, {:.0}): a resident from there", self.clock_text, pos[0], pos[1], pos[2]);
             self.add_resident(id, base.0, creature, 1.0, pos, label, true);
+            if let Some(r) = self.list.last_mut().filter(|r| r.actor == id) {
+                r.first_steps = Some(FirstSteps::new("its creation by a script"));
+            }
         }
     }
 
@@ -1360,6 +1393,8 @@ impl Core {
             lock_held: None,
             posed_heading: None,
             been_loaded: false,
+            absent: false,
+            first_steps: None,
         });
     }
 
@@ -2114,7 +2149,13 @@ impl Core {
             if tactics.flights.contains_key(&r.actor) {
                 continue;
             }
-            let Some((target, _)) = game.awareness.get(r.actor).filter(|x| x.state == fnv_game::awareness::State::Combat).and_then(|x| x.combat_target()) else { continue };
+            let aw = game.awareness.get(r.actor).filter(|x| x.state == fnv_game::awareness::State::Combat);
+            // Just gone into Combat it stands a moment on its heading (`fnv_ai::alert::reacting`;
+            // nor is it locked on its target then, `npc_combat`).
+            if fnv_ai::alert::reacting(game, r.actor) {
+                continue;
+            }
+            let Some((target, _)) = aw.and_then(|x| x.combat_target()) else { continue };
             if let Some(p) = fnv_ai::goal::place_of_ref(game, target).filter(|p| p.space == a.walker.space) {
                 self.aims.insert(r.actor, p.pos);
                 if tactics.posts.get(&r.actor).is_some_and(|p| p.kind == fnv_game::combat_group::PostKind::Cover) {
@@ -2291,6 +2332,11 @@ impl Core {
         let hour = clock_text(game);
         for r in self.list.iter_mut() {
             r.present = r.joined && !r.failed && game.present(r.actor);
+            if r.joined && !r.failed && !r.present {
+                r.absent = true;
+            } else if r.present && std::mem::take(&mut r.absent) {
+                r.first_steps = Some(FirstSteps::new("being enabled"));
+            }
             let Some(agent) = self.ai.agents.get(&r.actor) else { continue };
             // A perched bird is in nobody's way (actor-behaviour.md §5.8).
             if let (Some(b), true) = (blocks.as_deref_mut(), r.perched) {
@@ -2824,6 +2870,9 @@ pub fn drive(
         // has it elsewhere: it is off its furniture at once (the AI has walked or put it
         // on already).
         let moved = std::mem::take(&mut r.moved);
+        if moved {
+            r.first_steps = Some(FirstSteps::new("its move by a script"));
+        }
         if let (true, Some(f)) = (waited > 0 || moved, r.seat.furniture()) {
             if wants != Some(f) {
                 r.seat = Seat::None;
@@ -2983,9 +3032,12 @@ pub fn drive(
             (Some(t), from) => {
                 let want = heading_of([t[0] - feet[0], t[1] - feet[1]]);
                 let from = from.unwrap_or(w.heading);
-                // Standing, at the rate the AI turns a fighter (`fnv_ai::alert`), so one
-                // that never moves is drawn as its walker turns.
-                let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE * 2.0 } else { fnv_nav::follow::SPOT_TURN_RATE * fnv_ai::alert::COMBAT_TURN };
+                // Standing, at the rate the AI turns a fighter (`fnv_ai::alert::combat_turn_rate`),
+                // so one that never moves is drawn as its walker turns; on the move, at the
+                // walking turn rate: the original's trooper turned slower from the moment it
+                // stepped off (275 down to about 90°/s) [observed 2026-11-06, capture
+                // o25_turn, docs/spec-notes/actors.md §8.9].
+                let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE } else { fnv_ai::alert::combat_turn_rate(heading_delta(from, want)) };
                 let hold = lock.is_some() && (held || heading_delta(from, want).abs() <= LOCK_HOLD);
                 let h = if hold { want } else { turn_towards(from, want, rate * dt) };
                 if hold {
@@ -3036,11 +3088,35 @@ pub fn drive(
             }
         }
         let stage = (&mut r.spawned, &mut r.root);
-        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), equipment_world, &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some() }, stage, (feet, heading), moving, dt) {
+        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), equipment_world, &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some(), jumped: moved }, stage, (feet, heading), moving, dt) {
             if r.named {
                 warn!("ai: {} could not be drawn ({e})", r.label);
             }
             r.failed = true;
+        }
+        // Its first second drawn after a script made, enabled or moved it: the clips it
+        // walks or runs with (`FirstSteps`).
+        if let (Some(fs), true) = (r.first_steps.as_mut(), visible && r.spawned) {
+            if let Some(lo) = r.root.and_then(|e| actors.get(e).ok()).and_then(|(_, lo)| lo) {
+                use fnv_actor::locomotion::Move;
+                let mv = lo.blend.cur.mv;
+                if matches!(mv, Move::FastForward | Move::FastBackward | Move::FastLeft | Move::FastRight) {
+                    fs.run += 1;
+                } else if mv.is_moving() {
+                    fs.walk += 1;
+                }
+                if moving {
+                    fs.speed = fs.speed.max(agent.walker.moving_speed());
+                }
+                fs.drawn = fs.drawn.max(lo.velocity[0].hypot(lo.velocity[1]));
+                fs.left -= dt;
+            }
+            if fs.left <= 0.0 {
+                if fs.walk + fs.run > 0 {
+                    info!("ai [{}] {}: first second drawn after {}: {} walk frames, {} run frames (walker at {:.0} units/s, drawn up to {:.0})", core.clock_text, r.label, fs.why, fs.walk, fs.run, fs.speed, fs.drawn);
+                }
+                r.first_steps = None;
+            }
         }
     }
     crate::profile::actor_spawns(spawn_stats.equipment_spawns, spawn_stats.record_spawns);

@@ -348,6 +348,8 @@ fn draw(
     texts: Query<Entity, With<Texts>>,
     mut pointer: Query<&mut Node, With<Pointer>>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     // Shown while rads are taken; the number is the level after Rad Resistance, as
     // GetRadiationLevel's (`Exposure::resisted`, untouched by fRadiationAccumulationRate).
     let (rate, resisted) = script.as_deref().and_then(|s| s.rt.as_ref()).map_or((0.0, 0.0), |rt| (rt.game.radiation().rate, rt.game.radiation().resisted));

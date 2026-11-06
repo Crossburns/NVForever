@@ -344,6 +344,8 @@ fn draw(
     (state, script, driven, kill_cam): (Option<Res<State<crate::PlayState>>>, Option<Res<crate::script::ScriptState>>, Option<Res<crate::player::ViewDriven>>, Option<Res<crate::kill_cam::KillCam>>),
     mut sound_forms: Local<HashMap<&'static str, Option<FormId>>>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     let hold = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.player.auto_objectives);
     if quests.hold_objectives != hold {
         info!("quest messages: objectives {} (AutoDisplayObjectives)", if hold { "held on screen" } else { "go after their time" });

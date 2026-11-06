@@ -102,14 +102,6 @@ the spec it links to.
     formula's base force). Our reading of the formula, not measured in the original:
     more, less, only on power attacks, and should a block take the push too?
     ([combat-rules, Knockback](spec-notes/combat-rules.md))
-41. **Explosions hit every limb in full (#1338).** A blast that leaves its target alive
-    takes its damage after armour (× the weapon's Limb Dmg Mult) off every limb at once,
-    so nearly any frag mine or grenade cripples most of an NPC's limbs, head included;
-    the player's limbs take half. The original does damage limbs with blasts, but how it
-    shares the damage is not known yet (observer check 74). Until then: keep it, or
-    spread a share (say a sixth) over the limbs? A crippling blast staggers once (no
-    stagger when it knocks the actor down) and a crippled arm disarms.
-    ([crippled-limbs §5](spec-notes/crippled-limbs.md))
 46. **NPC automatic fire comes in bursts (#1448).** An NPC's automatic gun (Securitrons'
     and other embedded weapons too) fires a V.A.T.S.-sized burst (0.4 s of its fire rate,
     3 to 8 rounds), then lets go for 0.5–1.5 s (scaled by the combat style's semi-auto
@@ -280,11 +272,6 @@ the spec it links to.
     unanswered ([observer check 86](handoff/observer-checks.md)). If you want people choosing
     crosses again, the exclusion can apply to creatures alone.
     ([furniture.md §9](spec-notes/furniture.md))
-48. **A new Speed Mult waits for an equipment change (#1742).** The player's run speed now
-    copies the original's lag: `setav speedmult`, ModAV, chems and abilities change it only
-    once an item is equipped or taken off, or a game loads. If you rule it a quirk not
-    worth keeping, the speed follows Speed Mult at once again.
-    ([actors.md §8.10, The player](spec-notes/actors.md))
 
 ## Not a gameplay decision: what the extender work needs from you (2026-10-25)
 

@@ -1163,6 +1163,17 @@ All rules here are engine choices unless tagged otherwise. Layer 6 replaces the 
   `Enum: Right` at 0.57 s), so they are not used]. During such a fade both clips advance
   at the weight-blended cycle rate so the feet stay in step. Idle and turns start at
   phase 0, except an actor's first idle, which starts at its spread phase (§7.3).
+- **Jumps are not steps** (#1473): a drawn actor's velocity is its drawn step over the
+  frame, so a script's MoveTo or MoveToMarkerWithFade (the Strip travellers sent to
+  another port, the crowd the Freeside gate's script places) read as thousands of units
+  per second; the smoothed gait speed then took about a second to fall under the
+  walk/run switch, and the actor ran while it faded in, though its package does not run
+  [observed: owner playtest 2026-11-03; the travellers' packages have no Always Run,
+  `fnvtool ai show`]. A frame in which a script put the actor somewhere, or whose step
+  is longer than 512 units (`nav::JUMP_STEP`), keeps last frame's velocity and turn
+  [design]. Log (actors a script created, enabled or moved, their first second drawn):
+  `ai [hh:mm] <label>: first second drawn after <why>: N walk frames, M run frames
+  (walker at S units/s)`; smoke `strip-fade-in-walk`.
 - **Body**: female actors use `locomotion\female\`, others `locomotion\male\`
   (`fnv_actor::locomotion::clip_candidates`; a missing file falls back to `male\`).
   Children (`child\`) need the race's child flag, which the records reader does not take
@@ -1314,6 +1325,20 @@ only in the walk test and on the player's body. All rules here are engine choice
   0.12 s, 128 to 98° in 0.27 s (it stepped about 125 units/s meanwhile); a trooper
   spawned 14° off turned it at 225°/s. So a person's combat turn starts near 270°/s and
   eases out, faster than ours (120°/s standing) [issue #1352].
+  Measured again 2026-11-06 (capture o25_turn, nvfairport runway, an LvlNCRTrooper with
+  a 10mm spawned 400 units north of the player, SetAngle Z to 45°, 90° or 135° off its
+  bearing to the player, then StartCombat; heading every game loop, about 64 a second)
+  [observed]: the trooper stood still on its first heading for about 1.1 s after
+  StartCombat (in combat at once, GetAnimAction −1), then turned. Off by 45° and by
+  90° (two runs each, the same to the tenth of a degree), it turned 3.5° a game loop,
+  about 225°/s, at a steady rate to within 2° of the bearing and stopped on it,
+  standing; it set off only after. Off by 135°, it turned 4.3° a loop (about 275°/s,
+  the rate seen at 180°) while standing, then slower (3.0, 2.5, then 1.4° a loop) from
+  the moment it began to step forward, 0.13 s into the turn. So there is no ease-out
+  by angle or time: the rate is set when the turn begins (about 225°/s up to 90°, 275°/s
+  beyond [hypothesis: a threshold between 90° and 135°]) and falls while the actor
+  moves. Ours: 240°/s flat standing in combat (`SPOT_TURN_RATE` × `COMBAT_TURN`), with
+  no delay before the turn.
 - **Before walking** (`fnv_nav::Walker`): a walker that stands (it did not move in its
   last update: at the start of a path, after waiting at a door, after arriving through a
   teleport door) and whose way lies more than 20° off its heading
@@ -1644,8 +1669,8 @@ stopped and started, as Victor's walk had before #258). Code:
     multiplied by its Speed Mult over 100 (SetAV's base, ModAV's and effects' modifiers
     and damage, as GetActorValue reads it; 0 at the least) and by its body armour's
     share (1, 0.925, 0.85 as above), on top of the crippled legs, the two-handed run, the
-    Modify Run Speed perks and the reload; but that product is the one last taken, not
-    the one now (below).
+    Modify Run Speed perks and the reload; in the original that product is the one last
+    taken, not the one now (below), which NVForever does not copy.
     Measured 2026-11-06 (capture o25_speed, `nvfairport`, the player running about 1,200
     units along the runway by the observer's walk, holstered, one game load for all six
     in this order) [observed]: at `setav speedmult` 100 the run was 339.7 units/s (median
@@ -1659,19 +1684,12 @@ stopped and started, as Victor's walk had before #258). Code:
     is taken again only when the equipment changes, or whether ModAV applies at once and
     SetAV never does, is open; a ModAV with no equipment change would tell. The run
     clip's rate at 150 was not looked at (no frames).
-    Rule built (issue #1742) [hypothesis, the simplest one that fits every run above]:
-    the factor (Speed Mult over 100 times the armour's share) is kept and taken again
-    only when the player's equipment changes, which is an item equipped or unequipped
-    (OnEquip / OnUnequip sent: EquipItem, UnequipItem, the Pip-Boy, the inventory) or the
-    set of items it wears differing from the last time it was taken, and after a game
-    load or a new game (the cache is not saved). Any item counts, not only body armour
-    (only body armour was seen); an aid item used up does not. SetAV, ModAV, ForceAV,
-    DamageAV and effects (chems, abilities) all wait for it, as SetAV did; the
-    alternative (ModAV at once, SetAV never) would be told apart by the capture above.
-    SetScale's share is not cached (it counts at once). `Game::player_move_speed_mult`
-    (the cache: `Game::player_speed`, `Game::player_equips`), nvf-play `StatSpeed`
-    (asked every frame; smoke `player-speedmult`). People (`creature_pace`, the base
-    value) are unchanged: nothing measured on them waited.
+    Rule built (issue #1742) [design, owner 2026-11-06: the lag is a bug in the original,
+    not copied]: the factor is taken every frame, so SetAV, ModAV, ForceAV, DamageAV and
+    effects (chems, abilities) change the player's speed at once, as they do people's;
+    an equipment change is not needed. `Game::move_speed_mult`, nvf-play `StatSpeed`
+    (asked every frame; smoke `player-speedmult`). (#1756 had copied the lag with a cache
+    taken again on an equip; this replaced it.)
 - **Alert stance** [observed: the owner, 2026-10-16: "the cazadors scurry along the
   ground when not alert and fly when they are alert/in combat"]: the cazador's folder
   has `h2hforward.kf` (298.15 units/s), `h2hfastforward.kf` (545.54) and `h2hidle.kf`

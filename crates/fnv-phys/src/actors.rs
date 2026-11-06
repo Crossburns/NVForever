@@ -29,13 +29,12 @@
 //!   Switched off, the capsules are attached to the body as before.
 //!
 //! Exact ties (docs/spec-notes/physics.md §5.1): a first-hit `ray`/`sweep` whose two
-//! candidates have the same time of impact (coincident or mirrored capsules) returns the
-//! first in tree-traversal order, and the two representations shape the tree differently,
-//! so they can pick different winners (another actor or part). Which one wins was already
-//! history-dependent with attached capsules. The differential tests (`hitvol_diff_*` /
-//! `hitvol_ties_*`, `tests/synthetic.rs`) saw differences only on exact ties: the winner,
-//! its sweep witness point and normal, and `ray_all` order among equal distances
-//! [observed: `cargo test -p fnv-phys --test synthetic hitvol`, 2026-11-03].
+//! candidates have the same time of impact (coincident or mirrored capsules) used to return
+//! the first in tree-traversal order, so the two representations could pick different
+//! winners [observed: `cargo test -p fnv-phys --test synthetic hitvol`, 2026-11-03]. Since
+//! #1459 ties are broken by owner (form id, layer, part), then segment (the capsule's index
+//! in the parts list, stored with `Owner::encode_segment`), then the hit's geometry, so
+//! both representations, and any tree history, give the same answer [design, #1459].
 
 use crate::world::{Owner, PhysWorld};
 use crate::{layers, BodyState};
@@ -266,7 +265,7 @@ impl PhysWorld {
             a.colliders[i].2 = half;
             a.colliders[i].3 = p.radius;
             if let Some(co) = self.w.colliders.get_mut(h) {
-                co.user_data = Owner::Actor { form_id, layer, part: p.part }.encode();
+                co.user_data = Owner::Actor { form_id, layer, part: p.part }.encode_segment(i as u16);
                 if standalone {
                     self.hitvol_pending.push((h, body, local));
                 } else {

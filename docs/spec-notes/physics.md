@@ -781,7 +781,37 @@ decides what the next query refresh costs.
       rejects non-ties. All 400 such differences, in the six relaxed scenarios that
       have them pass [observed: `cargo test -p fnv-phys --test synthetic hitvol`,
       2026-11-03].
-    - Canonical tie-break (time of impact, then owner): not done; issue #1459.
+    - Canonical tie-break (time of impact, then owner): not done; issue #1459. Done
+      since, see the next item.
+- **Canonical tie-break** [design, #1459]. First-hit `ray` and `sweep` now return, of all
+  candidates, the one with the smallest time of impact and, among exactly equal times
+  (the same f32), the smallest by:
+  1. owner (`Owner`'s order: kind, then for an actor's capsule form id, layer, part);
+  2. segment: which of the owner's colliders it is, stored in `user_data` bits 104..120
+     (`Owner::encode_segment`): the index of the part capsule in the list given to
+     `set_actor_parts`, or of the leaf in its collision object; 0 elsewhere (terrain,
+     characters, whole-actor capsules, ragdolls, gore);
+  3. the hit's own geometry, as bits: for a ray the normal then the sub-shape (triangle),
+     for a sweep the witness point then the normal on the hit collider. Two candidates
+     equal in all of these give the same answer, so which collider it came from no longer
+     shows.
+  - `ray_all` sorts equal distances by the same keys (owner, segment, normal, sub-shape).
+  - How: a custom leaf cost over parry's `Bvh::find_best`, not collect-all-then-sort
+    (`first_hit`, `crates/fnv-phys/src/world.rs`). The best (time, key) is kept beside the
+    traversal; a leaf the rule takes reports the next float above its time to
+    `find_best`, so nodes whose bound equals the best time are still visited and each
+    collider is asked with that bound (a tie is returned, not cut off). The key is worked
+    out only on exact ties. A sweep casts each collider with the full options, as parry's
+    composite cast does [design: parry3d 0.31.1
+    `query/shape_cast/shape_cast_composite_shape_shape.rs:15-60`], so every answer without
+    a tie is the one parry gave before.
+  - The answer no longer depends on the tree's history: the six exact tests above pass
+    without `#[ignore]` (attached and standalone capsules, skipped and forced writes,
+    snapshots, coincident twins in a crowd) [observed: `cargo test -p fnv-phys --test
+    synthetic hitvol`, 2026-11-06].
+  - Combat: with coincident actors the hit now goes to the lower form id, and inside two
+    overlapping parts to the lower part index (then the earlier segment), always. Before,
+    either could win depending on the tree.
 
 ## 6. Character controller and capture questions
 
