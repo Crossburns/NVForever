@@ -131,7 +131,7 @@ read with JIP]. Assumptions below are not observations.
   whether it has locked tags [hypothesis: follows the sheet's AddTagSkills semantics;
   the file's runtime meaning awaits the capture]. The title, description and counter get
   `string`; the icon gets `filename` and `visible`; the list gets `visible` and its code-set
-  `y` of 65. Rows come from `CGM_SelectItemTemplate`, row `CGM_SelectItem`, with
+  `y` of 65 and `height` of 728, which the file leaves to code [observed: `ov_tags`]. Rows come from `CGM_SelectItemTemplate`, row `CGM_SelectItem`, with
   `ListItemText`, `CGM_Template_ItemValue`, and `CGM_Template_ItemMarker`. They get `string`,
   the value child's `string`, `_selected`, `_TextAlpha`, `id`, `listindex`, `_y`, and measured
   `height`. The list's highlight and its `lb_scrollbar` counts and value follow §4.1. Done's
