@@ -485,7 +485,10 @@ All of it is in `GameSnapshot`.
   player, or in another space, records a walk-up (`Game::walk_up_greet`). The AI runs it
   to the player, planning the way again as the player moves, and opens the conversation
   within 150 units (`Ai::walk_up_step`). With no way there, or at the end of its way, it
-  opens it where it is. Its package waits meanwhile. Without the AI (headless runners) the
+  opens it where it is. Its package waits meanwhile, and a change of package plans the
+  walk-up again. A speaker the AI does not walk (its cell not loaded) talks once it is
+  within 300 units of the player, never from afar; out of the loaded area (the low
+  process) the walk-up waits. Without the AI (headless runners) the
   conversation opens at once, as before [design: the distances and the run].
   [observed 2026-11-05] The Legion explorers about Nelson (nvNelsonExplorerBarkSCRIPT
   calls StartConversation Player once its GameMode runs) greeted from 10,099 units off.
