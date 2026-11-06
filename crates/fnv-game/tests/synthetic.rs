@@ -487,6 +487,21 @@ fn data_reads_quest_stages_conditions_and_units() {
     assert_eq!(d.messages[&FormId(MESSAGE)].buttons, vec!["Yes", "No"]);
 }
 
+/// An answered box its script never reads stays in `message_box` but no longer waits
+/// (#1649: saving was refused for a whole session after a mod's start-up warning box).
+#[test]
+fn an_answered_box_no_longer_waits_though_its_button_is_unread() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert!(g.message_box.as_ref().is_some_and(|b| b.waiting()));
+    g.press_button(0).unwrap();
+    let b = g.message_box.as_ref().expect("kept for its script's GetButtonPressed");
+    assert_eq!(b.pressed, Some(0));
+    assert!(!b.waiting());
+}
+
 #[test]
 fn hand_activation_runs_on_activate_instead_of_the_default() {
     let f = fixture();
@@ -2355,6 +2370,24 @@ fn a_scripts_call_on_an_empty_reference_is_traced_once() {
         g.run_source("ref r\nr.Disable", Default::default()).expect("compiles");
     }
     assert_eq!(failed(&g), 3);
+}
+
+#[test]
+fn a_call_on_an_empty_reference_gives_0_and_the_script_goes_on() {
+    // [observed: o5_00, a function script went on to its next line; the Nellis artillery
+    // (issue #1600) fires in the original although its script calls GetDead on an unset
+    // reference every frame]. Until 2026-11-05 the call stopped the script.
+    let f = udf_fixture();
+    assert_eq!(global_after(&f, "ref r
+r.Disable
+let TestGlobal := 7"), 7.0);
+    assert_eq!(global_after(&f, "ref r
+if r.GetDisabled == 0
+  let TestGlobal := 8
+endif"), 8.0);
+    // Behind a classic `&&` (EDEScript's shape), the line after it runs too.
+    assert_eq!(global_after(&f, "let TestGlobal := Call TestEmpty 1
+let TestGlobal := 9"), 9.0);
 }
 
 #[test]

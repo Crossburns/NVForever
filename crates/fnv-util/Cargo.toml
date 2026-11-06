@@ -9,6 +9,8 @@ license.workspace = true
 encoding_rs = "0.8"
 hex = "0.4"
 sha2 = "0.10"
+serde.workspace = true
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -27,14 +27,15 @@ pub const ATTEMPTS: u8 = 4;
 pub const FILLER: &[u8] = b"!\"#$%'()*+,-./:;<=>?@[\\]^_{|}";
 
 /// The character a removed dud's letters become [hypothesis, hacking.md §5].
-pub const REMOVED: u8 = b'.';
+pub const REMOVED: char = '.';
 
 /// Characters of one log line after its `>` [observed: the wait message is shown on
 /// three lines of at most 12, broken between words, hacking.md §2].
 pub const LOG_CHARS: usize = 12;
 
 /// The log's words. None is in the plugins or the menu files, so they are NVForever's
-/// own (LEGAL.md, hacking.md §8); only where each appears follows the original.
+/// own (LEGAL.md, hacking.md §8); only where each appears follows the original. They are
+/// the English keys of `fnv_util::words`: the log says them in the chosen language.
 pub mod words {
     /// After the password.
     pub const GRANTED: &str = "Accepted.";
@@ -51,11 +52,15 @@ pub mod words {
 
     /// After [`DENIED`]: how many letters of the guess stand where the password has them.
     pub fn likeness(n: usize, len: usize) -> String {
-        format!("{n} of {len} right")
+        fnv_util::words::trf(LIKENESS, &[("n", &n), ("len", &len)])
     }
+
+    /// [`likeness`]'s text, `{n}` and `{len}` its places.
+    pub const LIKENESS: &str = "{n} of {len} right";
 }
 
-/// The game's word list, by length: upper-case words of letters only.
+/// The game's word list, by length in characters: upper-case words of letters only, in
+/// any script (a localized list's words are not ASCII, #1443).
 #[derive(Debug, Clone, Default)]
 pub struct Dictionary {
     by_len: BTreeMap<usize, Vec<String>>,
@@ -64,17 +69,19 @@ pub struct Dictionary {
 impl Dictionary {
     /// Read `menus\falloutdict.txt`: one line of upper-case words separated by spaces
     /// [observed: 4,710 words, 4,709 different, letters only, hacking.md §3]. Anything
-    /// that is not a word of letters is left out; each word is kept once.
+    /// that is not a word of letters (of any script) is left out; each word is kept once.
+    /// A letter whose capital is more than one character keeps its own form, so a word's
+    /// length is the same before and after [design].
     pub fn parse(text: &str) -> Dictionary {
         let mut by_len: BTreeMap<usize, Vec<String>> = BTreeMap::new();
         let mut seen = std::collections::HashSet::new();
         for w in text.split_whitespace() {
-            if !w.bytes().all(|b| b.is_ascii_alphabetic()) {
+            if !w.chars().all(char::is_alphabetic) {
                 continue;
             }
-            let w = w.to_ascii_uppercase();
+            let w: String = w.chars().map(upper).collect();
             if seen.insert(w.clone()) {
-                by_len.entry(w.len()).or_default().push(w);
+                by_len.entry(w.chars().count()).or_default().push(w);
             }
         }
         Dictionary { by_len }
@@ -90,6 +97,15 @@ impl Dictionary {
 
     pub fn is_empty(&self) -> bool {
         self.by_len.is_empty()
+    }
+}
+
+/// A letter's capital where it is one character (`ß` stays `ß`).
+fn upper(c: char) -> char {
+    let mut u = c.to_uppercase();
+    match (u.next(), u.next()) {
+        (Some(one), None) => one,
+        _ => c,
     }
 }
 
@@ -202,13 +218,15 @@ pub fn word_count(science: f32, difficulty: Difficulty, s: &Settings) -> u32 {
 /// Letters of `guess` that stand in `password` at the same place [observed: LOOTING
 /// against MEETING shows a likeness of 4 of 7, the shared "TING", hacking.md §2].
 pub fn likeness(guess: &str, password: &str) -> usize {
-    guess.bytes().zip(password.bytes()).filter(|(a, b)| a == b).count()
+    guess.chars().zip(password.chars()).filter(|(a, b)| a == b).count()
 }
 
 /// A word in the dump.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Word {
     pub text: String,
+    /// Its length in characters (places in the dump).
+    pub len: usize,
     /// Index of its first character in the dump (it may run on into the next row).
     pub start: usize,
     /// A dud taken out by a bracket pair: its letters are now [`REMOVED`].
@@ -217,7 +235,7 @@ pub struct Word {
 
 impl Word {
     pub fn range(&self) -> std::ops::Range<usize> {
-        self.start..self.start + self.text.len()
+        self.start..self.start + self.len
     }
 }
 
@@ -261,7 +279,7 @@ pub enum State {
 #[derive(Debug, Clone)]
 pub struct Puzzle {
     /// The dump, column 1 then column 2, each row after row.
-    pub chars: Vec<u8>,
+    pub chars: Vec<char>,
     /// The address of the first row; each row is 12 on [observed: 0xF650, 0xF65C, …;
     /// column 2 goes on from column 1, 0xF71C].
     pub address: u16,
@@ -290,12 +308,12 @@ fn shuffle<T>(v: &mut [T], rng: &mut impl RngCore) {
     }
 }
 
-fn closing(open: u8) -> Option<u8> {
+fn closing(open: char) -> Option<char> {
     match open {
-        b'(' => Some(b')'),
-        b'[' => Some(b']'),
-        b'{' => Some(b'}'),
-        b'<' => Some(b'>'),
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '<' => Some('>'),
         _ => None,
     }
 }
@@ -306,7 +324,7 @@ pub fn log_lines(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut line = String::new();
     for w in text.split_whitespace() {
-        if !line.is_empty() && line.len() + 1 + w.len() > LOG_CHARS {
+        if !line.is_empty() && line.chars().count() + 1 + w.chars().count() > LOG_CHARS {
             out.push(format!(">{line}"));
             line.clear();
         }
@@ -354,9 +372,9 @@ impl Puzzle {
         (column * ROWS + row) * ROW_CHARS + col
     }
 
-    pub fn row_text(&self, column: usize, row: usize) -> &str {
+    pub fn row_text(&self, column: usize, row: usize) -> String {
         let i = Self::index(column, row, 0);
-        std::str::from_utf8(&self.chars[i..i + ROW_CHARS]).unwrap_or("")
+        self.chars[i..i + ROW_CHARS].iter().collect()
     }
 
     pub fn password(&self) -> &str {
@@ -371,7 +389,7 @@ impl Puzzle {
         let row_end = (index / ROW_CHARS + 1) * ROW_CHARS;
         for j in index + 1..row_end {
             let c = self.chars[j];
-            if c.is_ascii_alphabetic() {
+            if c.is_alphabetic() {
                 return None;
             }
             if c == close {
@@ -405,7 +423,7 @@ impl Puzzle {
 
     /// The text a target enters at the prompt.
     pub fn text(&self, t: Target) -> String {
-        String::from_utf8_lossy(&self.chars[self.span(t)]).into_owned()
+        self.chars[self.span(t)].iter().collect()
     }
 
     /// Every unused bracket pair now in the dump.
@@ -415,6 +433,11 @@ impl Puzzle {
 
     fn say(&mut self, text: &str) {
         self.log.extend(log_lines(text));
+    }
+
+    /// Say one of NVForever's own words ([`words`]) in the chosen language.
+    fn say_own(&mut self, en: &'static str) {
+        self.say(fnv_util::words::tr(en));
     }
 
     /// The player picks the character at `index`.
@@ -428,15 +451,15 @@ impl Puzzle {
         match t {
             Target::Word(w) if w == self.password => {
                 self.state = State::Granted;
-                self.say(words::GRANTED);
-                self.say(words::WAIT);
+                self.say_own(words::GRANTED);
+                self.say_own(words::WAIT);
                 Outcome::Granted
             }
             Target::Word(w) => {
                 let n = likeness(&self.words[w].text, self.password());
                 self.attempts -= 1;
-                self.say(words::DENIED);
-                self.say(&words::likeness(n, self.password().len()));
+                self.say_own(words::DENIED);
+                self.say(&words::likeness(n, self.words[self.password].len));
                 if self.attempts == 0 {
                     self.state = State::LockedOut;
                     Outcome::LockedOut
@@ -451,7 +474,7 @@ impl Puzzle {
                 // the others remove a dud, or give the attempts back once no dud is left.
                 if duds.is_empty() || below(rng, 5) == 0 {
                     self.attempts = ATTEMPTS;
-                    self.say(words::REPLENISHED);
+                    self.say_own(words::REPLENISHED);
                     Outcome::Replenished
                 } else {
                     let w = duds[below(rng, duds.len())];
@@ -459,12 +482,12 @@ impl Puzzle {
                     for i in self.words[w].range() {
                         self.chars[i] = REMOVED;
                     }
-                    self.say(words::DUD_REMOVED);
+                    self.say_own(words::DUD_REMOVED);
                     Outcome::DudRemoved
                 }
             }
             Target::Char(_) => {
-                self.say(words::ERROR);
+                self.say_own(words::ERROR);
                 Outcome::Error
             }
         }
@@ -476,7 +499,7 @@ impl Puzzle {
 /// to the owner's screenshot: the 19 duds shared 1 to 5 of 7 letters, 3 to 5 at each
 /// count]. Words sharing none fill in when there are too few.
 fn pick_duds(pool: &[String], password: &str, n: usize, rng: &mut impl RngCore) -> Vec<String> {
-    let len = password.len();
+    let len = password.chars().count();
     let mut buckets: Vec<Vec<&String>> = vec![Vec::new(); len];
     for w in pool {
         let l = likeness(w, password);
@@ -509,19 +532,20 @@ fn pick_duds(pool: &[String], password: &str, n: usize, rng: &mut impl RngCore) 
 /// before and after it; everything else random symbols [design: the owner's screenshot
 /// shows the words about evenly spread, about one in every 20 characters with 20 words,
 /// and running on across rows and from column 1 into column 2].
-fn place(words: &[String], rng: &mut impl RngCore) -> Option<(Vec<u8>, Vec<Word>)> {
-    let mut chars: Vec<u8> = (0..DUMP_CHARS).map(|_| FILLER[below(rng, FILLER.len())]).collect();
+fn place(words: &[String], rng: &mut impl RngCore) -> Option<(Vec<char>, Vec<Word>)> {
+    let mut chars: Vec<char> = (0..DUMP_CHARS).map(|_| FILLER[below(rng, FILLER.len())] as char).collect();
     let n = words.len();
     let stretch = DUMP_CHARS / n.max(1);
     let mut out = Vec::with_capacity(n);
     for (k, w) in words.iter().enumerate() {
-        let len = w.len();
+        let letters: Vec<char> = w.chars().collect();
+        let len = letters.len();
         if len + 2 > stretch {
             return None;
         }
         let start = k * stretch + 1 + below(rng, stretch - len - 1);
-        chars[start..start + len].copy_from_slice(w.as_bytes());
-        out.push(Word { text: w.clone(), start, removed: false });
+        chars[start..start + len].copy_from_slice(&letters);
+        out.push(Word { text: w.clone(), len, start, removed: false });
     }
     Some((chars, out))
 }
@@ -618,7 +642,7 @@ mod tests {
             assert!((6..=8).contains(&len));
             for (i, w) in p.words.iter().enumerate() {
                 assert_eq!(w.text.len(), len);
-                assert_eq!(&p.chars[w.range()], w.text.as_bytes());
+                assert_eq!(p.chars[w.range()].iter().collect::<String>(), w.text);
                 // At least one symbol either side; words never touch.
                 assert!(!p.chars[w.start - 1].is_ascii_alphabetic());
                 assert!(!p.chars[w.range().end].is_ascii_alphabetic());
@@ -629,7 +653,7 @@ mod tests {
             // Every letter of the dump belongs to a word.
             let letters = p.chars.iter().filter(|c| c.is_ascii_alphabetic()).count();
             assert_eq!(letters, 20 * len);
-            assert!(p.chars.iter().all(|c| c.is_ascii_alphabetic() || FILLER.contains(c)));
+            assert!(p.chars.iter().all(|&c| c.is_ascii_alphabetic() || (c.is_ascii() && FILLER.contains(&(c as u8)))));
             assert!(p.row_address(1, 16) as usize + ROW_CHARS <= 0x10000);
         }
     }
@@ -643,20 +667,27 @@ mod tests {
         assert_eq!(p.row_address(0, 16), 0xF710);
         assert_eq!(p.row_address(1, 0), 0xF71C);
         assert_eq!(Puzzle::index(1, 0, 0), 17 * 12);
-        assert_eq!(p.row_text(1, 0).len(), 12);
+        assert_eq!(p.row_text(1, 0).chars().count(), 12);
+    }
+
+    /// Write `text` into the dump from `at`.
+    fn put(chars: &mut [char], at: usize, text: &str) {
+        for (k, c) in text.chars().enumerate() {
+            chars[at + k] = c;
+        }
     }
 
     /// A puzzle laid out by hand: the screenshot's row "\.,@\:|{[_})" and words.
     fn by_hand() -> Puzzle {
-        let mut chars = vec![b'.'; DUMP_CHARS];
-        chars[..12].copy_from_slice(b"\\.,@\\:|{[_})");
-        chars[12..24].copy_from_slice(b"+(LOOTING%.)");
-        chars[24..36].copy_from_slice(b"<.MEETING.>.");
-        chars[36..48].copy_from_slice(b"..GETTING...");
+        let mut chars = vec!['.'; DUMP_CHARS];
+        put(&mut chars, 0, "\\.,@\\:|{[_})");
+        put(&mut chars, 12, "+(LOOTING%.)");
+        put(&mut chars, 24, "<.MEETING.>.");
+        put(&mut chars, 36, "..GETTING...");
         let words = vec![
-            Word { text: "LOOTING".into(), start: 14, removed: false },
-            Word { text: "MEETING".into(), start: 26, removed: false },
-            Word { text: "GETTING".into(), start: 38, removed: false },
+            Word { text: "LOOTING".into(), len: 7, start: 14, removed: false },
+            Word { text: "MEETING".into(), len: 7, start: 26, removed: false },
+            Word { text: "GETTING".into(), len: 7, start: 38, removed: false },
         ];
         Puzzle { chars, address: 0xF6EC, words, password: 1, attempts: ATTEMPTS, used: Vec::new(), log: Vec::new(), state: State::Guessing }
     }
@@ -767,5 +798,34 @@ mod tests {
             let p = Puzzle::new(&d, diff, word_count(science, diff, &s), &mut rng).expect("puzzle");
             assert!(diff.word_lengths().contains(&p.password().len()));
         }
+    }
+
+    /// A word list in another script (#1443): its words are counted, placed and scored by
+    /// characters, not bytes (each Cyrillic letter is two bytes of UTF-8).
+    #[test]
+    fn a_cyrillic_word_list_makes_a_puzzle() {
+        // 26 + 26 capitals (upper-cased from small letters), so 60 words of 6 letters.
+        const ABC: &[char] = &['А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З', 'И', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Э'];
+        let text: Vec<String> = (0..60u32)
+            .map(|i| (0..6u32).map(|k| ABC[((i / 26) * (k + 1) + (i % 26) * (k == 1) as u32 + k * 5 + i * k) as usize % 26]).collect::<String>().to_lowercase())
+            .collect();
+        let d = Dictionary::parse(&format!("{} 42 ПРИ-ВЕТ", text.join(" ")));
+        assert!(d.words(6).len() > 40 && d.words(6).iter().all(|w| w.chars().all(|c| ABC.contains(&c))));
+        assert!(d.words(12).is_empty(), "a word is counted by its letters, not its bytes");
+        assert_eq!(likeness("ПРИВЕТ", "ПРОВОД"), 3);
+        let mut rng = ChaCha8Rng::seed_from_u64(3);
+        let mut p = Puzzle::new(&d, Difficulty::Easy, 10, &mut rng).expect("puzzle");
+        for w in &p.words {
+            assert_eq!(w.len, 6);
+            assert_eq!(p.chars[w.range()].iter().collect::<String>(), w.text);
+            assert!(!p.chars[w.start - 1].is_alphabetic() && !p.chars[w.range().end].is_alphabetic());
+        }
+        assert!((0..ROWS).all(|r| p.row_text(0, r).chars().count() == ROW_CHARS));
+        // A wrong word scores its likeness out of six letters; the password opens.
+        let dud = (0..p.words.len()).find(|&w| w != p.password).unwrap();
+        let n = likeness(&p.words[dud].text, p.password());
+        assert_eq!(p.choose(p.words[dud].start, &mut rng), Outcome::Denied { likeness: n });
+        assert_eq!(p.log.last().unwrap(), &format!(">{n} of 6 right"));
+        assert_eq!(p.choose(p.words[p.password].start, &mut rng), Outcome::Granted);
     }
 }
