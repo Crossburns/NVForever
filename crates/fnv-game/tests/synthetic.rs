@@ -2373,6 +2373,24 @@ fn a_scripts_call_on_an_empty_reference_is_traced_once() {
 }
 
 #[test]
+fn a_call_on_an_empty_reference_gives_0_and_the_script_goes_on() {
+    // [observed: o5_00, a function script went on to its next line; the Nellis artillery
+    // (issue #1600) fires in the original although its script calls GetDead on an unset
+    // reference every frame]. Until 2026-11-05 the call stopped the script.
+    let f = udf_fixture();
+    assert_eq!(global_after(&f, "ref r
+r.Disable
+let TestGlobal := 7"), 7.0);
+    assert_eq!(global_after(&f, "ref r
+if r.GetDisabled == 0
+  let TestGlobal := 8
+endif"), 8.0);
+    // Behind a classic `&&` (EDEScript's shape), the line after it runs too.
+    assert_eq!(global_after(&f, "let TestGlobal := Call TestEmpty 1
+let TestGlobal := 9"), 9.0);
+}
+
+#[test]
 fn deeper_than_thirty_calls_is_refused() {
     let f = udf_fixture();
     let mut g = game(&f);
