@@ -370,7 +370,7 @@ impl MenuInputs<'_, '_> {
                 }
                 return Some(());
             }
-            ContainerTile::Other => return Some(()),
+            ContainerTile::Focus(_) | ContainerTile::Other => return Some(()),
         };
         if let Some(guard) = guard {
             self.commands.write(MenuInput(Command::Expect(guard)));
@@ -748,6 +748,11 @@ pub(crate) fn feed(
     // The dialogue menu's pointer decides on what was drawn (`super::dialog_menu`).
     if let (Some(_), [_], Some(d)) = (dialog_menu, taking.as_slice(), inputs.dialog.as_ref()) {
         input.resolved = Some(d.hits().to_vec());
+    }
+    if let (Some(st), Some(at)) = (inputs.barter.as_ref(), at) {
+        if let Some(candidates) = super::barter_menu::pointer_candidates(&mut rt.game.ui_tree, st, &taking, at) {
+            input.resolved = Some(candidates);
+        }
     }
     // A frame's own clicks are for the screen up now; a script's kept theirs when queued.
     rt.game.ui_pointer.stamp = crate::dialogue::stamp_now(&rt.game);

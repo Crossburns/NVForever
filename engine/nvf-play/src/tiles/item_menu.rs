@@ -168,6 +168,8 @@ pub enum MenuTile {
     Row(Side, usize),
     Arrow(Side, i32),
     Title(Side),
+    /// [documented: barter_menu.xml] A hotrect over the list without focus.
+    Focus(Side),
     TakeAll,
     Accept,
     Exit,

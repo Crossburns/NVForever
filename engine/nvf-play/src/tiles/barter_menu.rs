@@ -1,7 +1,7 @@
 //! The barter view behind `[UI] TileMenus=BarterMenu` [design: barter-menu.md section 9].
 //! Commands, sounds and events remain `crate::menu`'s. Shared list state lives in
-//! `super::item_menu`; its measured container numbers are hypotheses for barter until
-//! compared with a barter capture. Off, this adapter does no work.
+//! `super::item_menu`; comparisons with the original are in section 9. Off, this adapter
+//! does no work.
 
 use super::item_menu::{self, on, set, MenuTile, MenuTiles, Paths, SIDES};
 use super::menus::Tiled;
@@ -39,6 +39,8 @@ const PATHS: Paths = Paths {
         ("BM_Container_RightFilterArrow", MenuTile::Arrow(Side::Container, 1)),
         ("BM_ItemsTitle", MenuTile::Title(Side::Player)),
         ("BM_ContainerTitle", MenuTile::Title(Side::Container)),
+        ("BM_Items_FocusRect", MenuTile::Focus(Side::Player)),
+        ("BM_Container_FocusRect", MenuTile::Focus(Side::Container)),
     ],
 };
 
@@ -119,7 +121,7 @@ impl Snapshot {
         Self {
             common,
             rows: SIDES.map(|side| m.list(side).rows.iter().map(|r| (r.price.map_or_else(|| "--".into(), barter::price_text), r.bartered)).collect()),
-            purses: SIDES.map(|side| format!("{caps}  {}", trade.map_or(0, |t| t.purse[side as usize]))),
+            purses: SIDES.map(|side| format!("{caps}   {}", trade.map_or(0, |t| t.purse[side as usize]))),
             caps, hints,
             balance: trade.map_or(0, |t| t.balance),
             chosen: trade.is_some_and(|t| !t.is_empty()),
@@ -133,10 +135,11 @@ impl Snapshot {
 pub struct BarterTiles {
     pub(super) view: MenuTiles,
     shown: Option<Snapshot>,
+    last_focus: Option<Side>,
 }
 
 impl Default for BarterTiles {
-    fn default() -> Self { Self { view: MenuTiles::new(&PATHS), shown: None } }
+    fn default() -> Self { Self { view: MenuTiles::new(&PATHS), shown: None, last_focus: None } }
 }
 
 impl BarterTiles {
@@ -145,11 +148,12 @@ impl BarterTiles {
     fn close(&mut self) {
         self.view.close();
         self.shown = None;
+        self.last_focus = None;
     }
 }
 
-/// [design] File places and textures stay in the tree. Numeric writes borrowed from the
-/// container are hypotheses for barter (section 9); selection and affordability are the model's.
+/// [design] File places and textures stay in the tree. Section 9 distinguishes measured
+/// barter writes from remaining container hypotheses; selection and affordability are the model's.
 fn write(ui: &mut Ui, s: &Snapshot, st: &mut BarterTiles) {
     item_menu::write_lists(ui, &s.common, &mut st.view);
     for side in SIDES {
@@ -166,18 +170,24 @@ fn write(ui: &mut Ui, s: &Snapshot, st: &mut BarterTiles) {
             }
         }
     }
-    set(ui, BARTER_MENU, "_IsContainerListSelected", on(s.common.focus == Side::Container));
-    // [hypothesis] Direction 0 buys and 1 sells; named textures in section 1 make the
-    // arrow explicit while the file uses the same direction for its placement.
-    set(ui, BARTER_MENU, "_ArrowDirection", on(s.balance > 0));
+    if s.common.lists[s.common.focus as usize].selected.is_some() {
+        st.last_focus = Some(s.common.focus);
+    }
+    set(ui, BARTER_MENU, "_IsContainerListSelected", st.last_focus.map_or(Value::Num(-1.0), |side| on(side == Side::Container)));
+    // [observed 2026-11-06: ov_barter] Selling is 2, buying 1; no balance is empty.
+    set(ui, BARTER_MENU, "_ArrowDirection", match s.balance.cmp(&0) {
+        std::cmp::Ordering::Greater => Value::Num(2.0),
+        std::cmp::Ordering::Less => Value::Num(1.0),
+        std::cmp::Ordering::Equal => Value::Str(String::new()),
+    });
     set(ui, FLOW, "visible", on(s.balance != 0));
     set(ui, FLOW, "_Value", Value::Num(s.balance.unsigned_abs() as f64));
     set(ui, AMOUNT, "string", Value::Str(s.balance.unsigned_abs().to_string()));
     set(ui, CAPS, "string", Value::Str(s.caps.clone()));
-    set(ui, FLOW_ICON, "filename", Value::Str(if s.balance > 0 { "interface\\barter\\barter_arrow_sell.dds" } else { "interface\\barter\\barter_arrow_buy.dds" }.into()));
-    // [design: owner's request, barter-menu.md section 5] Insufficient funds dim the flow.
-    for path in [FLOW_ICON, AMOUNT, CAPS] {
-        set(ui, path, "brightness", Value::Num(if s.affordable { 255.0 } else { 128.0 }));
+    // [observed 2026-11-06: ov_barter] The flow's alpha is 64 when unaffordable.
+    // [design: item_menu::mark_tiles] Texts use their own alpha; the file's icon copies FLOW.
+    for path in [FLOW, AMOUNT, CAPS] {
+        set(ui, path, "alpha", Value::Num(if s.affordable { 255.0 } else { 64.0 }));
     }
     set(ui, ACCEPT, "target", on(s.chosen));
     for (button, hint) in [ACCEPT, EXIT].into_iter().zip(&s.hints) {
@@ -260,6 +270,24 @@ pub(super) fn write_system(
 
 pub fn mark_tiles(ui: &mut Ui) { item_menu::mark_tiles(ui, &PATHS); }
 
+/// [design: tiles/input.rs, fnv_ui::input] A focus rect stands over disabled rows. Resolve
+/// this pointer step with that side enabled, then restore the written focus: the usual
+/// guarded Hover or row click changes the model, including a click that crosses sides.
+/// Only hit candidates are retained, so an empty area or a wheel-held selection cannot
+/// leave the tree's focus ahead of the model. Higher menus keep their pointer priority.
+pub(super) fn pointer_candidates(ui: &mut Ui, st: &BarterTiles, taking: &[fnv_ui::TileId], at: (f64, f64)) -> Option<Vec<fnv_ui::input::HitCandidate>> {
+    let hit = fnv_ui::input::hit(ui, taking, at, &fnv_ui::input::no_measure)?;
+    let MenuTile::Focus(side) = st.view.clicked(ui, hit.tile)? else { return None };
+    let menu = st.menu()?;
+    let previous = ui.tile(menu).get("_IsContainerListSelected")?.clone();
+    ui.set_trait(menu, "_IsContainerListSelected", on(side == Side::Container));
+    ui.update();
+    let candidates = fnv_ui::input::hit_candidates(ui, menu, &fnv_ui::input::no_measure);
+    ui.set_trait(menu, "_IsContainerListSelected", previous);
+    ui.update();
+    Some(candidates)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -290,7 +318,11 @@ pub(crate) mod tests {
         }).collect();
         let xml = format!(r#"<menu name="BarterMenu"><rect name="NOGLOW_BRANCH">
           <image name="BM_Background"/>{}{}
-          <rect name="BM_CapsFlow"><image name="BM_CapsFlowIcon"/><text name="BM_TransactionAmount"/><text name="BM_CapsLabel"/></rect>
+          <rect name="BM_CapsFlow"><image name="BM_CapsFlowIcon">
+            <_pic_1>test-buy.dds</_pic_1><_pic_2>test-sell.dds</_pic_2>
+            <filename>discarded.dds<copy src="BarterMenu" trait="_ArrowDirection"/><copy src="me()" trait="_pic_"/></filename>
+            <alpha><copy src="parent()" trait="alpha"/><mul>1</mul></alpha>
+          </image><text name="BM_TransactionAmount"/><text name="BM_CapsLabel"/></rect>
           <rect name="BM_ButtonRect"><image name="BM_ButtonX"><text name="button_text"><string>Trade</string></text><text name="PCShortcutLabel"/></image>
           <image name="BM_ButtonB"><text name="button_text"><string>Leave</string></text><text name="PCShortcutLabel"/></image></rect>
           <image name="BM_ItemIcon"/><rect name="BM_ItemData"><user1>25</user1>{cards}</rect>
@@ -320,7 +352,7 @@ pub(crate) mod tests {
                 icon: None, take_all: false, take_all_hint: String::new(), note: None,
             },
             rows: [vec![("0.9".into(), true)], vec![("--".into(), false), ("18".into(), false), ("2".into(), false), ("3".into(), false)]],
-            purses: ["Coins  200".into(), "Coins  40".into()], caps: "Coins".into(), hints: ["[A]".into(), "[X]".into()],
+            purses: ["Coins   200".into(), "Coins   40".into()], caps: "Coins".into(), hints: ["[A]".into(), "[X]".into()],
             balance: 18, chosen: true, affordable: true,
         }
     }
@@ -367,7 +399,7 @@ pub(crate) mod tests {
         assert_eq!(ui.tile(child(offered, MARK)).get("filename").unwrap().text(), "interface\\shared\\marker\\square.dds");
         assert_eq!(ui.tile(child(equipped, MARK)).get("filename").unwrap().text(), "interface\\shared\\marker\\square_filled.dds");
         assert!(ui.tile(child(offered, MARK)).get("visible").unwrap().truthy());
-        assert_eq!(string(&ui, PURSES[1], "string"), "Coins  40");
+        assert_eq!(string(&ui, PURSES[1], "string"), "Coins   40");
         assert_eq!(string(&ui, CARD, "WeightInfo/_Value"), "2.50");
         assert_eq!(string(&ui, CARD, "ValueInfo/_Value"), "8");
         assert_eq!(string(&ui, CARD, "WeightInfo/_Title"), "Own label");
@@ -379,25 +411,112 @@ pub(crate) mod tests {
     fn balance_direction_affordability_and_empty_accept_are_distinct() {
         let (mut ui, mut st, mut s) = (fixture(|s| s), BarterTiles::default(), snapshot());
         frame(&mut ui, &s, &mut st);
-        assert_eq!(number(&ui, BARTER_MENU, "_ArrowDirection"), 1.0);
-        assert!(string(&ui, FLOW_ICON, "filename").ends_with("barter_arrow_sell.dds"));
-        s.balance = -37;
+        assert_eq!(number(&ui, BARTER_MENU, "_ArrowDirection"), 2.0);
+        assert_eq!(string(&ui, FLOW_ICON, "filename"), "test-sell.dds");
+        assert_eq!(number(&ui, FLOW, "alpha"), 255.0);
+        s.balance = 37;
         s.affordable = false;
         s.common.focus = Side::Container;
+        s.common.lists[0].selected = Some(0);
+        s.common.lists[1].selected = None;
         frame(&mut ui, &s, &mut st);
-        assert_eq!(number(&ui, BARTER_MENU, "_ArrowDirection"), 0.0);
         assert_eq!(number(&ui, BARTER_MENU, "_IsContainerListSelected"), 1.0);
-        assert_eq!(number(&ui, FLOW_ICON, "brightness"), 128.0);
+        assert_eq!(number(&ui, FLOW, "alpha"), 64.0);
+        let drawn = super::super::layout::layout(&ui, st.menu().unwrap(), &super::super::list::lines_size, true);
+        for path in [FLOW_ICON, AMOUNT, CAPS] {
+            let tile = ui.find_tile(path).unwrap();
+            assert_eq!(drawn.iter().find(|d| d.tile == tile).unwrap().alpha, 64.0, "{path}");
+            assert!(ui.tile(tile).get("brightness").is_none(), "{path}");
+        }
         assert_eq!(string(&ui, AMOUNT, "string"), "37");
         assert_eq!(number(&ui, ACCEPT, "brightness"), 255.0, "a chosen trade stays bright even if unaffordable");
+        s.balance = -37;
+        s.affordable = true;
+        frame(&mut ui, &s, &mut st);
+        assert_eq!(number(&ui, BARTER_MENU, "_ArrowDirection"), 1.0);
+        assert_eq!(string(&ui, FLOW_ICON, "filename"), "test-buy.dds");
+        for path in [FLOW, FLOW_ICON, AMOUNT, CAPS] {
+            assert_eq!(number(&ui, path, "alpha"), 255.0, "{path}");
+        }
         s.balance = 0;
         frame(&mut ui, &s, &mut st);
+        assert_eq!(string(&ui, BARTER_MENU, "_ArrowDirection"), "");
         assert_eq!(number(&ui, FLOW, "visible"), 0.0);
         assert_eq!(number(&ui, ACCEPT, "target"), 1.0, "a zero-net trade can still be accepted");
         s.chosen = false;
         frame(&mut ui, &s, &mut st);
         assert_eq!(number(&ui, ACCEPT, "target"), 0.0);
         assert_eq!(number(&ui, ACCEPT, "button_text/brightness"), 128.0);
+    }
+
+    #[test]
+    fn focus_starts_unselected_and_retains_the_last_selected_side_until_close() {
+        let (mut ui, mut st, mut s) = (fixture(|s| s), BarterTiles::default(), snapshot());
+        s.common.lists[1].selected = None;
+        frame(&mut ui, &s, &mut st);
+        assert_eq!(number(&ui, BARTER_MENU, "_IsContainerListSelected"), -1.0);
+        for side in [Side::Player, Side::Container] {
+            s.common.focus = side;
+            s.common.lists[side as usize].selected = Some(0);
+            frame(&mut ui, &s, &mut st);
+            let expected = if side == Side::Player { 0.0 } else { 1.0 };
+            assert_eq!(number(&ui, BARTER_MENU, "_IsContainerListSelected"), expected);
+            s.common.lists[side as usize].selected = None;
+            frame(&mut ui, &s, &mut st);
+            assert_eq!(number(&ui, BARTER_MENU, "_IsContainerListSelected"), expected);
+        }
+        st.close();
+        frame(&mut ui, &s, &mut st);
+        assert_eq!(number(&ui, BARTER_MENU, "_IsContainerListSelected"), -1.0);
+    }
+
+    #[test]
+    fn pointer_crosses_focus_rects_to_disabled_rows_and_clicks_the_row_under_it() {
+        use fnv_ui::input::{hit, no_measure, Input, Pointer};
+        use crate::menu::model::Command;
+        let mut ui = fixture(|mut xml| {
+            for (prefix, active) in [("BM_Items", 0), ("BM_Container", 1)] {
+                // [design] Synthetic equality gates, geometry and IDs for this test.
+                let selected = format!(r#"<copy src="BarterMenu" trait="_IsContainerListSelected"/><eq>{active}</eq>"#);
+                xml = xml.replace(&format!(r#"<hotrect name="{prefix}_InventoryList">"#), &format!(r#"<hotrect name="{prefix}_InventoryList"><_enabled>{selected}</_enabled>"#));
+                xml = xml.replace(&format!(r#"<text name="{prefix}Title"/>"#), &format!(r#"<hotrect name="{prefix}_FocusRect"><id>{}</id><width>240</width><height>95</height><target><copy>1</copy><sub>{selected}</sub></target></hotrect><text name="{prefix}Title"/>"#, active + 30));
+            }
+            xml.replace("<target>1</target>", r#"<target><copy src="parent()" trait="_enabled"/></target>"#)
+        });
+        let (mut st, mut s, mut pointer) = (BarterTiles::default(), snapshot(), Pointer::default());
+        frame(&mut ui, &s, &mut st);
+        let menu = st.menu().unwrap();
+        let step = |ui: &mut Ui, st: &BarterTiles, pointer: &mut Pointer, at, press| {
+            let resolved = pointer_candidates(ui, st, &[menu], at);
+            pointer.step(ui, &[menu], &Input { at: Some(at), press, resolved, ..Default::default() }, &no_measure)
+        };
+        let at = (480.0, 10.0);
+        let rect = hit(&ui, &[menu], at, &no_measure).unwrap().tile;
+        assert_eq!(st.view.clicked(&ui, rect), Some(MenuTile::Focus(Side::Container)));
+        let report = step(&mut ui, &st, &mut pointer, at, false);
+        let to = report.over.unwrap().1.unwrap();
+        assert_eq!(st.view.clicked(&ui, to), Some(MenuTile::Row(Side::Container, 0)));
+        assert_eq!(number(&ui, BARTER_MENU, "_IsContainerListSelected"), 0.0, "the model still owns focus until Hover applies");
+        s.common.focus = Side::Container;
+        s.common.lists[0].selected = Some(0);
+        s.common.lists[1].selected = None;
+        frame(&mut ui, &s, &mut st);
+        // [design] A direct click across sides, without a hover frame, must act on row 1.
+        let report = step(&mut ui, &st, &mut pointer, (80.0, 50.0), true);
+        let click = report.clicks.first().unwrap();
+        assert_eq!(st.view.clicked(&ui, click.tile), Some(MenuTile::Row(Side::Player, 1)));
+        assert_eq!(item_menu::row_commands(Side::Player, 1, false, false), vec![Command::Hover(Side::Player, 1), Command::One]);
+        let guard = st.view.guard(Mode::Barter(FormId(77)), Side::Player, 1, false, 2).unwrap();
+        assert_eq!(guard.key, s.common.lists[1].rows[1].key);
+        // [design] The focus rect reaches beyond row width, and cannot select a clipped row.
+        for at in [(290.0, 10.0), (80.0, 100.0)] {
+            let report = step(&mut ui, &st, &mut pointer, at, true);
+            assert!(report.clicks.iter().all(|c| !matches!(st.view.clicked(&ui, c.tile), Some(MenuTile::Row(..)))));
+        }
+        assert!(pointer_candidates(&mut ui, &st, &[], (80.0, 10.0)).is_none(), "a prompt excludes barter from taking input");
+        let overlay = ui.load_menu(&MemSource::default().with("overlay.xml", r#"<menu name="Overlay"><hotrect name="Cover"><width>900</width><height>400</height><target>1</target></hotrect></menu>"#), "overlay.xml").unwrap();
+        ui.update();
+        assert!(pointer_candidates(&mut ui, &st, &[menu, overlay], (80.0, 10.0)).is_none(), "a higher menu keeps the pointer");
     }
 
     #[test]

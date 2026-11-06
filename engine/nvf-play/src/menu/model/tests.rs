@@ -565,7 +565,7 @@ fn barter_tiles_show_the_models_sale_first_and_use_their_own_headings() {
     let before = of_model(&m);
     let root = "BarterMenu/NOGLOW_BRANCH";
     assert_eq!(before.get_string(&format!("{root}/BM_ItemsRect/BM_ItemsTitle/string")).as_deref(), Some("Personal items"));
-    assert_eq!(before.get_string(&format!("{root}/BM_ItemsRect/BM_Items_CapsLabel/string")).as_deref(), Some("Coins  5"));
+    assert_eq!(before.get_string(&format!("{root}/BM_ItemsRect/BM_Items_CapsLabel/string")).as_deref(), Some("Coins   5"));
     assert_eq!(before.get_float(&format!("{root}/BM_ButtonRect/BM_ButtonX/target")), Some(0.0));
     select(&mut m, Side::Player, "Pistol");
     m.apply(&mut w, Command::One);
@@ -579,7 +579,7 @@ fn barter_tiles_show_the_models_sale_first_and_use_their_own_headings() {
     assert_eq!(sold.get_float(&format!("{root}/BM_ButtonRect/BM_ButtonX/target")), Some(1.0));
     m.apply(&mut w, Command::Accept);
     let accepted = of_model(&m);
-    assert_eq!(accepted.get_string(&format!("{root}/BM_ItemsRect/BM_Items_CapsLabel/string")).as_deref(), Some("Coins  95"));
+    assert_eq!(accepted.get_string(&format!("{root}/BM_ItemsRect/BM_Items_CapsLabel/string")).as_deref(), Some("Coins   95"));
     assert_eq!(accepted.get_float(&format!("{root}/BM_ButtonRect/BM_ButtonX/target")), Some(0.0));
 }
 
