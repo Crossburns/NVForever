@@ -59,7 +59,7 @@ use fnv_game::GameData;
 use fnv_nav::follow::{arc_step, heading_delta, heading_of, turn_towards, Advice, Unstuck};
 use fnv_nav::{NavGraph, Space, Steer, WalkEvent, Walker};
 use nvf_play::blocking::ActorBlocks;
-use nvf_play::phys::PhysState;
+use nvf_play::phys::{NpcSpotRefused, PhysState};
 use fnv_sim::{clock, FormId, FormStore, RefTable, SimConfig, World};
 use nvf_assets::actor::ActorParts;
 use nvf_assets::model::ModelCtx;
@@ -88,6 +88,95 @@ const PHYSICS_RETRY: f32 = 8.0;
 /// A stuck actor is moved on this far along its path (game units) [our choice: more than
 /// a brahmin's length, the longest of the common actors].
 const SKIP_AHEAD: f32 = 160.0;
+
+/// How far on along its path a stuck actor may be put down, from the first choice to the
+/// nearest place that still helps (0: back onto the path, for feet off it), the first
+/// that has ground and room for it [design, docs/design/navmesh.md §4: the same length of
+/// path each time, not a search].
+const SKIP_LADDER: [f32; 5] = [SKIP_AHEAD, 120.0, 80.0, 40.0, 0.0];
+
+/// After this many rounds in a row with nowhere to put a stuck actor, it is left to the
+/// navmesh surface for [`PHYSICS_RETRY`] as one that cannot be moved on at all is
+/// [design: as many as `Unstuck::max_replans` allows skips, about a second apart, so what
+/// only stood in the way for a moment (the player, another actor walking past) is
+/// waited out, and a place that never fits costs an actor about four more seconds after
+/// the first refused round and no more].
+const SKIP_REFUSED_ROUNDS: u32 = 5;
+
+/// A refused round this long after the last one starts the count again, seconds [design:
+/// the actor has been walking since]. Not a new path: Follow packages plan one every half
+/// second, and five rounds would never add up.
+const SKIP_REFUSED_FORGET: f32 = 8.0;
+
+/// Stuck actors the places of [`SKIP_LADDER`] were all refused for.
+#[derive(Default)]
+struct SkipRefusals {
+    /// Per actor: rounds in a row and when the last one was (elapsed seconds).
+    rounds: HashMap<u32, (u32, f32)>,
+    /// Rounds refused, in all.
+    total: usize,
+}
+
+impl SkipRefusals {
+    /// One more round for `id` at `now`: how many in a row.
+    fn note(&mut self, id: u32, now: f32) -> u32 {
+        self.total += 1;
+        let r = self.rounds.entry(id).or_insert((0, now));
+        if now - r.1 > SKIP_REFUSED_FORGET {
+            r.0 = 0;
+        }
+        *r = (r.0 + 1, now);
+        r.0
+    }
+
+    /// `id`'s blocked episode is over: moved on, or its body made again, moved or dropped.
+    fn forget(&mut self, id: u32) {
+        self.rounds.remove(&id);
+    }
+}
+
+/// That actor `id` has a character, made at `feet` if it had none; false when none could
+/// be. Every character the residents make is made here: a new body is a new blocked
+/// episode, so what the actor's last one found stuck and refused goes with it (a stuck rule
+/// starts afresh at its next walk). A body made to coast or be carried is walked on later
+/// without passing through here again.
+fn ensure_body(phys: &mut PhysState, unstuck: &mut HashMap<u32, Unstuck>, refusals: &mut SkipRefusals, id: u32, feet: [f32; 3]) -> bool {
+    if phys.npcs.contains_key(&id) {
+        return true;
+    }
+    if !phys.add_npc(id, feet) {
+        return false;
+    }
+    unstuck.remove(&id);
+    refusals.forget(id);
+    true
+}
+
+/// The first place of [`SKIP_LADDER`] that actor `id` at `feet` can be put down at, and its
+/// feet there; else how many were refused for having no navmesh surface, no collision
+/// loaded, nothing to stand on and no room. Changes nothing.
+fn skip_spot(phys: &mut PhysState, nav: &NavGraph, f: &fnv_nav::Follower, id: u32, space: Space, feet: [f32; 3]) -> Result<(fnv_nav::SkipCandidate, [f32; 3]), [usize; 4]> {
+    let mut refused = [0; 4];
+    let Some(leg) = f.path.legs.get(f.leg) else { return Err(refused) };
+    // The leg is not in the space whose collision is loaded.
+    if leg.space != space {
+        refused[1] = 1;
+        return Err(refused);
+    }
+    for c in f.skip_candidates(feet, &SKIP_LADDER) {
+        let Some(surface) = nav.skip_surface(leg, &c) else {
+            refused[0] += 1;
+            continue;
+        };
+        match phys.npc_spot(id, surface) {
+            Ok(spot) => return Ok((c, spot)),
+            Err(NpcSpotRefused::NotLoaded) => refused[1] += 1,
+            Err(NpcSpotRefused::NoSupport) => refused[2] += 1,
+            Err(NpcSpotRefused::NoRoom) => refused[3] += 1,
+        }
+    }
+    Err(refused)
+}
 
 /// The stuck rule for actors moved by physics: detours, then moved on along the path.
 fn unstuck(speed: f32) -> Unstuck {
@@ -212,6 +301,8 @@ struct PhysMover<'a> {
     stats: &'a mut [usize; 6],
     /// Actors on furniture, or getting off it: they do not walk yet.
     held: &'a HashSet<u32>,
+    /// Stuck actors there was nowhere to move on to ([`skip_spot`]).
+    refusals: &'a mut SkipRefusals,
     /// Actors walking on with their AI off ([`Mover::coast`]).
     coasting: &'a mut HashMap<u32, Coasting>,
     /// People in combat (`Core::aims`, from the last update): physics walks them to the
@@ -280,18 +371,8 @@ impl Mover for PhysMover<'_> {
             phys.remove_npc(id);
             return None;
         }
-        if !phys.npcs.contains_key(&id) {
-            if !phys.add_npc(id, walker.feet) {
-                return None;
-            }
-            // Put down where it was moved on to: stuck again there, it is moved on again
-            // without the detours that failed already (`Unstuck::after_skip`).
-            let moved_on = self.unstuck.remove(&id).is_some_and(|u| u.skipped);
-            let mut u = unstuck(walker.speed);
-            if moved_on {
-                u.after_skip();
-            }
-            self.unstuck.insert(id, u);
+        if !ensure_body(phys, self.unstuck, self.refusals, id, walker.feet) {
+            return None;
         }
         let feet = phys.npcs[&id].ch.feet;
         // A goal's height is judged on the ground only: in the air or in the water every
@@ -403,23 +484,59 @@ impl Mover for PhysMover<'_> {
                     (WalkEvent::Moved, v)
                 }
                 // Stuck where detours did not help: moved on along the path, past what
-                // blocks it, to be put down there by physics again.
-                Advice::Skip if let Some(to) = f.skip_ahead(feet, SKIP_AHEAD) => {
-                    info!(
-                        "actor {id:08X} stuck at ({:.0}, {:.0}, {:.0}): moved on along its path to ({:.0}, {:.0}, {:.0})",
-                        feet[0], feet[1], feet[2], to[0], to[1], to[2]
-                    );
-                    self.stats[2] += 1;
-                    let dir = [to[0] - feet[0], to[1] - feet[1]];
-                    if dir != [0.0, 0.0] {
-                        walker.heading = heading_of(dir);
+                // blocks it, to the first place with ground and room for it.
+                Advice::Skip if f.skip_candidate(feet, SKIP_AHEAD).is_some() => match skip_spot(phys, nav, &f, id, walker.space, feet) {
+                    Ok((c, to)) => {
+                        info!(
+                            "actor {id:08X} stuck at ({:.0}, {:.0}, {:.0}): moved on along its path to ({:.0}, {:.0}, {:.0})",
+                            feet[0], feet[1], feet[2], to[0], to[1], to[2]
+                        );
+                        self.stats[2] += 1;
+                        self.refusals.forget(id);
+                        f.commit_skip(&c);
+                        let dir = [to[0] - feet[0], to[1] - feet[1]];
+                        if dir != [0.0, 0.0] {
+                            walker.heading = heading_of(dir);
+                        }
+                        walker.travelled += dir[0].hypot(dir[1]);
+                        walker.feet = to;
+                        walker.turning = false;
+                        walker.tri = fnv_nav::graph::NONE;
+                        walker.follower = Some(f);
+                        phys.place_npc(id, to);
+                        // Stuck again where it was put down, it is moved on again without
+                        // the detours that failed already (`Unstuck::after_skip`).
+                        let mut u = unstuck(walker.speed);
+                        u.after_skip();
+                        self.unstuck.insert(id, u);
+                        return Some(WalkEvent::Moved);
                     }
-                    walker.travelled += dir[0].hypot(dir[1]);
-                    walker.feet = to;
-                    walker.turning = false;
-                    give_up(phys, walker, f);
-                    return Some(WalkEvent::Moved);
-                }
+                    // Nowhere to put it: it stays as it is, body, feet and place on the
+                    // path, and tries again after a second, for a while.
+                    Err(why) => {
+                        let rounds = self.refusals.note(id, self.now);
+                        if rounds == 1 {
+                            info!(
+                                "actor {id:08X} stuck at ({:.0}, {:.0}, {:.0}): nowhere to move it on to ({} places with no navmesh, {} not loaded, {} with nothing to stand on, {} with no room)",
+                                feet[0], feet[1], feet[2], why[0], why[1], why[2], why[3]
+                            );
+                        }
+                        if rounds >= SKIP_REFUSED_ROUNDS {
+                            info!("actor {id:08X} still has nowhere to be moved on to after {rounds} tries: on the navmesh surface for a while");
+                            self.refusals.forget(id);
+                            self.skip_until.insert(id, self.now + PHYSICS_RETRY);
+                            self.unstuck.remove(&id);
+                            self.stats[1] += 1;
+                            walker.feet = feet;
+                            give_up(phys, walker, f);
+                            return None;
+                        }
+                        if let Some(u) = self.unstuck.get_mut(&id) {
+                            u.skip_refused();
+                        }
+                        (WalkEvent::Moved, [0.0, 0.0])
+                    }
+                },
                 // Stuck: the navmesh surface from here, for a while.
                 _ => {
                     self.skip_until.insert(id, self.now + PHYSICS_RETRY);
@@ -459,7 +576,7 @@ impl Mover for PhysMover<'_> {
             phys.remove_npc(id);
             return false;
         }
-        if !phys.npcs.contains_key(&id) && !phys.add_npc(id, walker.feet) {
+        if !ensure_body(phys, self.unstuck, self.refusals, id, walker.feet) {
             return false;
         }
         let feet = phys.npcs[&id].ch.feet;
@@ -722,6 +839,7 @@ struct Core {
     skip_until: HashMap<u32, f32>,
     hopped: HashMap<u32, (usize, usize)>,
     coasting: HashMap<u32, Coasting>,
+    skip_refusals: SkipRefusals,
     /// Updates in which an actor was moved by physics; times physics gave up; the most
     /// actors moved by physics in one frame; stuck actors moved on along their paths.
     physics: [usize; 4],
@@ -958,6 +1076,11 @@ impl Residents {
         self.core.ai.cfg.keep_apart = on;
     }
 
+    /// What the assets say about who can use which furniture (`fnv_ai::furniture`).
+    pub fn set_furniture_facts(&mut self, facts: std::sync::Arc<dyn fnv_sim::furniture_facts::FurnitureFacts>) {
+        self.core.ai.set_furniture_facts(facts);
+    }
+
     /// Whether the AI runs this reference (it turns and moves its body).
     pub fn runs(&self, reference: u32) -> bool {
         self.core.ai.agents.contains_key(&FormId(reference))
@@ -985,6 +1108,7 @@ impl Residents {
             skip_until: HashMap::new(),
             hopped: HashMap::new(),
             coasting: HashMap::new(),
+            skip_refusals: SkipRefusals::default(),
             physics: [0; 4],
             jumps: [0; 3],
             seats: [0; 2],
@@ -1312,6 +1436,7 @@ impl Core {
                 }
                 self.unstuck.remove(&id.0);
                 self.skip_until.remove(&id.0);
+                self.skip_refusals.forget(id.0);
                 if let Some(r) = self.list.iter_mut().find(|r| r.actor == id) {
                     r.moved = true;
                     info!("ai [{}] {}: put at ({:.0}, {:.0}, {:.0}) in {cell} {why}: goes on from there", self.clock_text, r.label, pos[0], pos[1], pos[2]);
@@ -1541,6 +1666,7 @@ impl Core {
             }
             self.unstuck.remove(&r.actor.0);
             self.skip_until.remove(&r.actor.0);
+            self.skip_refusals.forget(r.actor.0);
             if let Some(f) = arr.furniture {
                 // Sat down at once, as found sitting (no walk up, no sitting-down clip).
                 r.wants = Some(f.0);
@@ -1753,7 +1879,7 @@ impl Core {
         }
         for (id, by) in travel {
             let carried = self.ai.agents.get(&FormId(id)).filter(|_| !game.extra.get(&FormId(id)).is_some_and(|e| e.dead || e.restrained || e.out_cold())).is_some_and(|a| {
-                in_loaded_space(&a.walker, phys) && phys.ready_at(a.walker.feet) && (phys.npcs.contains_key(&id) || phys.add_npc(id, a.walker.feet))
+                in_loaded_space(&a.walker, phys) && phys.ready_at(a.walker.feet) && ensure_body(phys, &mut self.unstuck, &mut self.skip_refusals, id, a.walker.feet)
             });
             let Some(b) = phys.npcs.get_mut(&id).filter(|_| carried && dt > 0.0) else {
                 self.carries[1] += 1;
@@ -1871,7 +1997,7 @@ impl Core {
             );
         }
         let mut moved = [0usize; 6];
-        let mut mover = PhysMover { doors, phys: phys.as_deref_mut(), unstuck: &mut self.unstuck, skip_until: &mut self.skip_until, hopped: &mut self.hopped, now, stats: &mut moved, held: &held, coasting: &mut self.coasting, fighting: &self.aims };
+        let mut mover = PhysMover { doors, phys: phys.as_deref_mut(), unstuck: &mut self.unstuck, skip_until: &mut self.skip_until, hopped: &mut self.hopped, now, stats: &mut moved, held: &held, refusals: &mut self.skip_refusals, coasting: &mut self.coasting, fighting: &self.aims };
         {
             // Every high-process actor's update and the low-process ones due (package,
             // goal and walk; path searches are `nav::find_path` inside).
@@ -1950,6 +2076,7 @@ impl Core {
             for id in idle {
                 p.remove_npc(id);
                 self.unstuck.remove(&id);
+                self.skip_refusals.forget(id);
             }
             // Nor does one go on while it staggers, whether or not the AI walked it this
             // frame.
@@ -2030,6 +2157,7 @@ impl Core {
         }
         self.unstuck.clear();
         self.skip_until.clear();
+        self.skip_refusals.rounds.clear();
         self.clock_text = clock_text(game);
         self.note(game, None, held, now);
     }
@@ -2038,6 +2166,11 @@ impl Core {
     fn tell(&mut self, game: &Game, world: &WorldData) {
         let hour = clock_text(game);
         for e in &self.ai.events {
+            // For anyone, not only those told in full; once per actor and piece.
+            if let AiEvent::FurnitureEligibility { furniture, decision, reason } = e.event {
+                info!("ai furniture eligibility: actor={:08X} furniture={:08X} decision={decision} reason={reason}", e.actor.0, furniture.0);
+                continue;
+            }
             match e.event {
                 AiEvent::Trip { .. } => self.counts[0] += 1,
                 AiEvent::Arrived { .. } => self.counts[1] += 1,
@@ -2082,6 +2215,8 @@ impl Core {
                 | AiEvent::Talk { .. }
                 | AiEvent::NoTalk { .. }
                 | AiEvent::TalkUnseen { .. }
+                | AiEvent::WalkUp { .. }
+                | AiEvent::WalkedUp { .. }
                 | AiEvent::PushedBack { .. }
                 | AiEvent::Hello { .. }
                 | AiEvent::IdleChatter { .. }
@@ -2247,6 +2382,7 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         AiEvent::NotCarriedOut { package, why } => format!("stays: {} is {why}, not carried out yet", n(package)),
         AiEvent::Furniture { furniture: Some(f) } => format!("is to use furniture {f}"),
         AiEvent::Furniture { furniture: None } => "leaves its furniture".into(),
+        AiEvent::FurnitureEligibility { furniture, decision, reason } => format!("furniture {furniture}: {decision} ({reason})"),
         AiEvent::Sandbox { doing, walk } => {
             let what = match doing {
                 Doing::Standing => "stands".to_string(),
@@ -2272,6 +2408,12 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         AiEvent::Talk { package, target, line, away, say_to: false, greeting: true } => format!("greets {} from {away:.0} units without a conversation ({}), line {line}", n(target), n(package)),
         AiEvent::Talk { package, target, line, away, say_to: true, .. } => format!("says line {line} to {} from {away:.0} units ({})", n(target), n(package)),
         AiEvent::TalkOver { package } => format!("has talked ({})", n(package)),
+        AiEvent::WalkUp { away, length } => format!("walks up to the player for a script's StartConversation: {} units away, {length:.0} units to go", away.map_or("in another space".to_string(), |d| format!("{d:.0}"))),
+        AiEvent::WalkedUp { away, reached, line } => format!(
+            "{} the player ({away:.0} units) and starts the conversation{}",
+            if *reached { "has walked up to" } else { "gets no nearer to" },
+            line.map_or(" (nothing to say)".to_string(), |l| format!(", line {l}"))
+        ),
         AiEvent::Follow { package, target, away, length, doors, running } => format!(
             "{} after {} ({}): {}{length:.0} units to go, {} doors",
             if *running { "runs" } else { "walks" },
@@ -2953,7 +3095,7 @@ pub fn report(
         core.standing_by[5]
     );
     info!(
-        "ai summary at {}: {} residents, {} packages chosen, {} trips, {} arrivals, {} unreachable; {} there, {} on their way, {} staying, {} drawn; {} told to use furniture, {} to get up, {} on furniture now; sandbox: {} wanders, {} seats, {} idle markers, {} sleeps, {} meals, {} times nothing to do; {} talks started by dialogue packages; physics moved actors in {} updates (at most {} at once), gave up {} times, moved {} stuck actors on; standing actors pushed aside {} times ({:.0} units in all, {} times no room); {} hours passed in the wait menu ({} walks in them); {}",
+        "ai summary at {}: {} residents, {} packages chosen, {} trips, {} arrivals, {} unreachable; {} there, {} on their way, {} staying, {} drawn; {} told to use furniture, {} to get up, {} on furniture now; sandbox: {} wanders, {} seats, {} idle markers, {} sleeps, {} meals, {} times nothing to do; {} talks started by dialogue packages; physics moved actors in {} updates (at most {} at once), gave up {} times, moved {} stuck actors on, {} times nowhere to move one to; standing actors pushed aside {} times ({:.0} units in all, {} times no room); {} hours passed in the wait menu ({} walks in them); {}",
         core.clock_text,
         core.list.len(),
         core.counts[3],
@@ -2978,6 +3120,7 @@ pub fn report(
         core.physics[2],
         core.physics[1],
         core.physics[3],
+        core.skip_refusals.total,
         core.pushes[0],
         core.pushed_units,
         core.pushes[1],
@@ -3046,6 +3189,22 @@ mod tests {
     use fnv_ai::ProcessLevel;
     use fnv_sim::FormId;
     use std::collections::HashMap;
+
+    #[test]
+    fn refused_skips_add_up_over_one_blocked_episode_only() {
+        use super::{SkipRefusals, SKIP_REFUSED_FORGET};
+        let mut r = SkipRefusals::default();
+        // A second apart, whatever paths were planned meanwhile.
+        assert_eq!((r.note(1, 10.0), r.note(1, 11.0), r.note(1, 12.0)), (1, 2, 3));
+        assert_eq!(r.note(2, 12.0), 1, "each actor its own");
+        // Its body made again or moved, or moved on: a new episode. The summary's count stays.
+        r.forget(1);
+        assert_eq!(r.note(1, 13.0), 1);
+        // Walking long enough since the last one: a new episode too.
+        assert_eq!(r.note(1, 14.0), 2);
+        assert_eq!(r.note(1, 14.0 + SKIP_REFUSED_FORGET + 1.0), 1);
+        assert_eq!(r.total, 7);
+    }
 
     #[test]
     fn private_world_prefetch_matches_resident_spawn_even_with_a_shared_world() {

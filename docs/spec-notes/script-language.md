@@ -284,8 +284,9 @@ Where the documentation and a capture disagree, the capture wins; every differen
 - **Failures are silent**: a `set` whose assignment fails stops the script without a
   message [documented: Let]; an `if` that calls a function on an empty `ref` fails the
   same way [documented: Eval]; a reference function called on an unset `ref` variable
-  stops the script [documented: Ref Variable]. Runtime: the call stops the script for
-  this run, with a `call_failed` trace event (§7.3 row 1, scripts.md §4.2).
+  stops the script [documented: Ref Variable]. Runtime: a call on an empty `ref` is
+  skipped and gives 0, and the script goes on, with a `call_failed` trace event (§7.3
+  row 1, scripts.md §4.2) [observed: the original does so, §7.3 row 1].
 - A source line is limited to 512 characters [documented: Inline Expression; Lambda].
   A compiler limit; the runtime reads bytecode only.
 
@@ -363,7 +364,7 @@ function results as arguments.
 
 | # | Documented | Runtime |
 |---|---|---|
-| 1 | A reference function on an unset `ref`, a failed `set` or a failed call in an `if` stops the script silently (Ref Variable; Let; Eval) | the call stops the script for this run (`call_failed`, game.rs `stop_run`; scripts.md §4.2). In the original with xNVSE 6.4.9 a function script run through CallFunction went on after such a call, alone and in an `if` [observed: o5_00, 2026-10-31]; not yet captured in a quest or object script. Failed calls that are not on an empty ref did stop it: SetReputation axis 2 (o5_00), an `if` leaving two values (#908) |
+| 1 | A reference function on an unset `ref`, a failed `set` or a failed call in an `if` stops the script silently (Ref Variable; Let; Eval) | since 2026-11-05 a call on an empty `ref` is skipped, gives 0, and the script goes on (`call_failed` traced, game.rs `Exec::call`; scripts.md §4.2). In the original with xNVSE 6.4.9 a function script run through CallFunction went on after such a call, alone and in an `if` [observed: o5_00, 2026-10-31]. An object script run by the game does too: NellisArtilleryScript's GameMode calls `CurrentActor2.GetDead` on an unset `ref` every frame one actor is in its trigger, and its barrage fires in the original (owner, issue #1600); ours stopped there and never fired [observed: showvars, Boom 0 and timer1 0 while ActiveTime counted]. Failed calls that are not on an empty ref did stop it: SetReputation axis 2 (o5_00), an `if` leaving two values (#908) |
 | 2 | Return ends the script for this frame (Adding an Options Menu) | ends the current block only. 12 SCPT units have a Return in an earlier block of an event that has a later block of the same event [observed: `fnvtool script decode`]. Both blocks can run in one frame in five: LonesomeRoad 0x0400DEBA and 0x0400DEBB (two GameMode blocks), FalloutNV 0x00143E27 (two OnActivate blocks), 0x001347D1 (OnHit for one reference, then OnHit for any) and 0x00125AEF (OnDeath for any, then for one killer). In the other seven the blocks' parameters differ (MenuMode 1 and 1056 in 0x00104C01 and 0x00059C86; OnTriggerEnter for two different references in 0x00154219–0x0015421C and 0x00127467) |
 | 3 | Result-script locals overwrite the quest script's variable of the same index (Category:Dialogue) | fresh temporary locals; 150 embedded units of the masters declare locals (§2.5) |
 | 4 | Constant globals reset on load; plugin values apply only on first load (Globals) | not modelled (Layer 7) |

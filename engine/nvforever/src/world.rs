@@ -626,7 +626,7 @@ fn cell_models(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], hide: &[String]
     let mut out = Vec::new();
     for &r in refs {
         let Some(p) = placement(lo, schema, r) else { continue };
-        if p.imposter || !enabled(lo, schema, &p, 0) {
+        if p.imposter || !p.draws_base_model() || !enabled(lo, schema, &p, 0) {
             continue;
         }
         let Some(base) = p.base.and_then(|b| base_object(lo, schema, b)) else { continue };
@@ -972,6 +972,13 @@ fn spawn_ref(
         stats.refs_imposters += 1;
         return;
     }
+    // A primitive (a trigger volume, room bounds, a portal) is seen only in the editor,
+    // even where its activator was copied from one with a model (level-design.md §4.1).
+    if !p.draws_base_model() {
+        stats.refs_skipped_type += 1;
+        *stats.skipped_types.entry("primitive".into()).or_default() += 1;
+        return;
+    }
     if manage_actors && p.base.and_then(|b| base_object(world.lo, world.schema, b)).is_some_and(|b| matches!(&b.sig, b"NPC_" | b"CREA")) {
         return;
     }
@@ -1289,7 +1296,7 @@ fn random_anim_start(world: &WorldData, fid: u32) -> bool {
 /// `SpawnedDisabled`; docs/design/layer5-play.md §4). The light's model is drawn by
 /// nvf-play's `script_draw.rs` when enabled.
 #[allow(clippy::too_many_arguments)]
-fn spawn_dormant(
+pub(crate) fn spawn_dormant(
     commands: &mut Commands,
     cell_e: Entity,
     world: &WorldData,

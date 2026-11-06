@@ -182,6 +182,14 @@ float (median bottom 160 units *above* it), which would leave walls the player c
 under. Still a [hypothesis] until checked in game (§6). Reproduce:
 `cargo run --release -p fnv-phys --example primitive_bounds -- <Data> schemas/fnv`.
 
+**Layer** (issue #1545, 2026-11-05) [hypothesis: what a CollisionMarker is for]: a
+CollisionMarker primitive without XTRI is on the **Invisible Wall** layer (27), not
+Unidentified (0). Characters collide with it, as before. Shots, VATS mode's line of fire
+and the aim ray pass it (`layers::shot_ignores`, the character's layers plus Invisible
+Wall), and so do sight (`detection.rs` `see_through`) and blast cover lines, which already
+passed layer 27. Before the change, a 10mm round fired at the box 0x00176AD0 in Goodsprings
+stopped on it (smoke `shot-passes-collision-marker`).
+
 ### 4.2 Collision layer matrix (B11): design and predictions
 
 Which collision layers stop the player is unknown (§4); `layers::character_ignores` is a
@@ -2442,7 +2450,8 @@ gains `water_volume` for references whose model holds one); probes report `swimm
 `initially_disabled`, `disabled_by_parent` (enabled itself but disabled at the start by
 its enable-parent chain, §4), `no_base`, `actor` (placed NPCs and creatures, which get no
 collision here, §4), `no_model`, `collision_primitive` (CollisionMarker
-primitives added), `bad_primitive`, `speedtree`, `model_without_collision`,
+primitives added), `bad_primitive`, `primitive_model` (a primitive, a trigger, whose
+base names a model: the model is left out, level-design.md §4.1), `speedtree`, `model_without_collision`,
 `model_unreadable`, `awaiting_collision` (meshes not loaded), `with_collision`
 (references added to the world), `colliders` (their collider count) and `object_errors`.
 `by_base_type` counts references with a readable base by its record type.
