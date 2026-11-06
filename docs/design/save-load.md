@@ -98,6 +98,7 @@ original lacks it); **Save?**: *yes* (must be saved), *have* (already in the sna
 | Trespass warnings | `crimes.warnings/trespassing` | not found | drop |
 | Request queues, animations, detection values, detection events, Wait/Sleep in progress | marked "Not saved" in `Game` | none | drop |
 | Detection states: each actor's state (Normal/Alert/Combat/Lost), alert and target lists, the target fought; StartCombat's forced pairs | `awareness` (`awareness.actors`, `awareness.forced`) | not found | **saved since 2026-11-01** (#971): a fight goes on after a load, and IsInCombat on the player reads the same before the first detection round; the next round measures again as before. Combat groups' tactics, barks and the engine's engage/aim/crouch hints are rebuilt |
+| Who has had OnStartCombat and not yet OnCombatEnd | `fighting` | not found | **saved** (#1578): a load runs no OnStartCombat for a fight the save holds [documented: spec-notes/ext-save.md §4], a start still due at the save runs once, and the fight's OnCombatEnd runs when it ends. A created reference dropped on a load (§4.1) leaves it with its detection state. Saves from before this field did not record it, and that history cannot be recovered: their actors in Combat or Lost count as started, Alert does not, so a start still due in such a save does not run [design: `Game::restore`] |
 | Config | `cfg: GameConfig` | none | rebuild from settings (seed: see §5) |
 
 ### 3.3 AI (fnv-ai, used by `engine/nvforever`)

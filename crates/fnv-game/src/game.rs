@@ -1459,9 +1459,9 @@ pub struct Game<'a> {
     /// engine to draw at their new angle and size. Not saved.
     pub turned: BTreeSet<FormId>,
     /// Actors whose OnStartCombat block was fired and whose OnCombatEnd was not yet
-    /// (`Game::combat_blocks`). Not saved, as the combat states are not [documented:
-    /// GECK wiki event handler table, OnStartCombat does not run again on loading a save
-    /// with combat already going].
+    /// (`Game::combat_blocks`). Saved with the combat states, so that a load runs no block
+    /// for a fight already going [documented: GECK wiki event handler table, OnStartCombat
+    /// does not run again on loading a save with combat already going].
     pub fighting: BTreeSet<FormId>,
     /// The target of the condition list being evaluated ([`Game::conditions_pass`]), for
     /// the functions that ask for it (Exists). Not saved.
@@ -1783,6 +1783,11 @@ pub struct GameSnapshot {
     /// before the first detection round (#971; save-load.md §3.2).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub awareness: BTreeMap<FormId, crate::awareness::Awareness>,
+    /// Who has had OnStartCombat and not yet OnCombatEnd (`Game::fighting`), written when
+    /// empty too: a start still due when the save was made still runs. `None` in saves
+    /// made before this field, which did not record it (`Game::restore`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fighting: Option<BTreeSet<FormId>>,
     /// (actor, target) pairs StartCombat made hostile until StopCombat.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub forced_combat: BTreeSet<(FormId, FormId)>,
@@ -1804,14 +1809,20 @@ impl GameSnapshot {
     /// dropped), script instances whose key or script is gone, magic effects whose effect,
     /// source, target or script is gone (and their effect scripts; a co-op player's
     /// likewise), NX form variables naming a gone form, and the radio station
-    /// or weather shown. Other fields keep the gone ID, which names no form: a lookup of it
+    /// or weather shown. A dropped reference's detection state and place among the fighters
+    /// go with it: in Combat and not among them, it would start a fight on the next tick.
+    /// Other fields keep the gone ID, which names no form: a lookup of it
     /// fails as one of any form that does not exist [hypothesis: the original's behaviour
     /// with a missing plugin is not documented]. Returns how many were dropped.
     pub fn drop_gone(&mut self, gone: impl Fn(FormId) -> bool) -> usize {
         let mut n = 0;
-        let before = self.sim.refs.len();
-        self.sim.refs.retain(|_, r| !gone(r.base) && !r.cell.is_some_and(&gone));
-        n += before - self.sim.refs.len();
+        let dropped: BTreeSet<FormId> = self.sim.refs.iter().filter(|(_, r)| gone(r.base) || r.cell.is_some_and(&gone)).map(|(&id, _)| id).collect();
+        self.sim.refs.retain(|id, _| !dropped.contains(id));
+        n += dropped.len();
+        self.awareness.retain(|id, _| !dropped.contains(id));
+        if let Some(fighting) = &mut self.fighting {
+            fighting.retain(|id| !dropped.contains(id));
+        }
         let before = self.sim.deleted_created.len();
         self.sim.deleted_created.retain(|_, &mut b| !gone(b));
         n += before - self.sim.deleted_created.len();
@@ -5145,6 +5156,7 @@ impl<'a> Game<'a> {
             queued_ref_events: self.queued_ref_events.clone(),
             door_open_seen: self.door_open_seen.iter().filter(|&(&r, &seen)| self.world.peek(r).is_some_and(|s| s.open != seen)).map(|(&r, &seen)| (r, seen)).collect(),
             awareness: self.awareness.actors.iter().filter(|(_, a)| a.state.in_combat() || !a.targets.is_empty() || !a.alarms.is_empty() || a.fighting.is_some()).map(|(&r, a)| (r, a.clone())).collect(),
+            fighting: Some(self.fighting.clone()),
             forced_combat: self.awareness.forced.clone(),
             form_instances: self.pp.instances.iter().map(|(k, v)| (*k, v.clone())).collect(),
             object_groups: self.anims.asked_all().clone(),
@@ -5221,6 +5233,10 @@ impl<'a> Game<'a> {
         g.anims.restore_asked(s.object_groups.clone());
         g.awareness.actors = s.awareness.clone();
         g.awareness.forced = s.forced_combat.clone();
+        // A save from before `fighting` was saved cannot say which starts had run: everyone
+        // in Combat or Lost counts as started, Alert (no fight yet) does not [design:
+        // docs/design/save-load.md §3.2]. A start still due in such a save does not run.
+        g.fighting = s.fighting.clone().unwrap_or_else(|| s.awareness.iter().filter(|(_, a)| matches!(a.state, crate::awareness::State::Combat | crate::awareness::State::Lost)).map(|(&r, _)| r).collect());
         g.coop =crate::coop::checked(s.coop.clone()).map_err(|e| e.to_string())?;
         for (&on, texture) in &s.securitron_faces {
             g.texture_swaps.set_securitron(on, texture.clone());

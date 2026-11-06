@@ -6727,6 +6727,34 @@ expect = [
 ]
 
 [[scenario]]
+name = "d2-combat-write"
+source = "#1578: a nightkin (CrSuperMutant1NightkinGunA, CrNightkinGunScript with an OnStartCombat block) is placed by the player, fights, and the game is saved in the fight; d2-combat-load reads the save"
+areas = ["save", "scripts"]
+paths = ["crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/game.rs"]
+env = { NVFOREVER_HOME = "d2-combat-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "14:call:player:PlaceAtMe:CrSuperMutant1NightkinGunA:1:400:0", NVF_PLAY_TEST_CONSOLE = "26:player.isincombat;save bh-d2;27:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 31
+expect = [
+  { text = "script: OnStartCombat of FalloutNV.esm|SCPT 0x000EAAFF ran on Some(0xFF000000)", count = 1, label = "the combat-start block runs once in the first fight" },
+  { re = 'console: IsInCombat on player >> 1\.00', label = "the player is in the fight when saving" },
+  { re = 'save: wrote .*bh-d2\.nvfsave', label = "the mid-fight save is written" },
+]
+
+[[scenario]]
+name = "d2-combat-load"
+source = "#1578: load d2-combat-write's mid-fight save: the fight goes on and OnStartCombat does not run again for it"
+areas = ["save", "scripts"]
+paths = ["crates/fnv-game/src/awareness.rs", "crates/fnv-game/src/game.rs"]
+env = { NVFOREVER_HOME = "d2-combat-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:player.isincombat;15:close" }
+args = ["--play", "--load", "bh-d2", "--no-voice"]
+run_seconds = 20
+expect = [
+  { re = 'load: restored .*bh-d2\.nvfsave', label = "the mid-fight save is loaded" },
+  { re = 'console: IsInCombat on player >> 1\.00', label = "the fight goes on after the load" },
+  { text = "script: OnStartCombat of FalloutNV.esm|SCPT 0x000EAAFF", count = 0, label = "the nightkin's block does not run again" },
+]
+
+[[scenario]]
 name = "save-high-write"
 source = "#1103 (owner playtest 2026-10-31): a save made up high loads at its height; the first half: start on the Bison Steve rollercoaster track (ElDiabloCoaster 000E538D, placed in square -13,-13) where it runs over square -13,-14, about 860 units above the terrain [observed: fnvtool phys cell rays, track z 6672 at (-50100, -55200), terrain 5808], and save there; save-high-load reads the save"
 note = "the start's own square goes in first and the track's square next door later: placed before it, the start found only the terrain (the bug), so this half checks the fix too"
