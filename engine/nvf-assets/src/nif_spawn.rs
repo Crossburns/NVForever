@@ -168,6 +168,9 @@ pub(crate) struct Props {
     pub(crate) animated_emissive: bool,
     /// A clip of the model drives the shape's material alpha ([`shape_alpha_mode`]).
     pub(crate) animated_alpha: bool,
+    /// An actor's part whose material carries an NiAlphaController for the actor's
+    /// clips to drive ([`shape_alpha_mode`], [`material_alpha_controlled`]).
+    pub(crate) alpha_gated: bool,
     /// Some property is attached (to the shape or an ancestor).
     has_properties: bool,
     /// One of them derives from BSShaderProperty.
@@ -446,16 +449,52 @@ pub(crate) const LOD_BUILDING_CUT: f32 = 128.5 / 255.0;
 /// of `explosionincendiarygrenade.nif`, and both are faded in and out by alpha tracks
 /// from a stored alpha of 0; drawn opaque the mushroom stood whole for 5 s (owner,
 /// 2026-10-20). In the base mesh archives 29 more shapes have such a shader and no
-/// NiAlphaProperty (Lucky 38's light glows, terminal screens, Mr. House's screens), whose
-/// alpha no clip fades; they stay as they were checked, opaque]. Everything else without
-/// the property is opaque.
+/// NiAlphaProperty (Lucky 38's light glows, terminal screens), whose alpha no clip fades;
+/// they stay as they were checked, opaque]. Such a shape of an actor's part whose
+/// material carries an NiAlphaController, the target of the actor's own `.kf` clips
+/// ([`material_alpha_controlled`]), is drawn opaque where its material alpha is 1/2 or
+/// more and not at all below [observed: in the actor folders of all the archives, 9
+/// such unlit shapes, all Mr. House's three stacked screens in the three
+/// `nvpenthouemaincomputer` screen files, each with an alpha controller and an opaque
+/// texture; `crates/fnv-nif/examples/actor_alpha_survey.rs`. They lie a few units apart,
+/// Yes Man's face in front, House's behind it, Connection Lost at the back, and the
+/// clips set their alpha to 0 or 1: `mtidle.kf` shows Connection Lost alone,
+/// `DynamicIdle_MrHouse.kf` House alone, `DynamicIdle_YesMan.kf` Yes Man over Connection
+/// Lost. Drawn opaque whatever the alpha, Yes Man's face covered House's before Yes Man
+/// was uploaded (#1542). Hypothesis: the original skips geometry at material alpha 0 and
+/// draws the rest by depth, as the clips' alphas of 0 and 1 suggest; blending is not
+/// needed for them]. Everything else without the property is opaque.
 pub(crate) fn shape_alpha_mode(props: &Props) -> AlphaMode {
     match props.alpha {
         Some((flags, threshold)) => alpha_mode(flags, threshold),
         None if props.lod_building => AlphaMode::Mask(LOD_BUILDING_CUT),
         None if props.unlit && props.dynamic_alpha && props.animated_alpha => AlphaMode::Blend,
+        None if props.unlit && props.dynamic_alpha && props.alpha_gated => AlphaMode::Mask(0.5),
         None => AlphaMode::Opaque,
     }
+}
+
+/// Whether the NiMaterialProperty that shape block `shape` lists carries an
+/// NiAlphaController in its controller chain: the material alpha a `.kf` clip can drive
+/// (a sequence's controlled block names the shape and the property type, and drives the
+/// controller of that type on it [documented: nif.xml ControlledBlock "Node Name",
+/// "Property Type", "Controller Type"]).
+pub(crate) fn material_alpha_controlled(file: &NifFile, dec: &Decoded, shape: usize) -> bool {
+    let Some(s) = dec.blocks.get(shape).and_then(|b| b.as_ref().ok()) else { return false };
+    s.refs("properties").unwrap_or_default().iter().any(|&r| {
+        if !file.blocks.get(r as usize).is_some_and(|p| p.type_name == "NiMaterialProperty") {
+            return false;
+        }
+        let mut c = dec.get(r).and_then(|m| m.block_ref("controller"));
+        for _ in 0..64 {
+            let Some(cr) = c.filter(|&x| x >= 0) else { return false };
+            if file.blocks.get(cr as usize).is_some_and(|b| b.type_name == "NiAlphaController") {
+                return true;
+            }
+            c = dec.get(cr).and_then(|b| b.block_ref("next_controller"));
+        }
+        false
+    })
 }
 
 /// The cut of a shape that is drawn blended although its alpha test would make it an
@@ -1171,7 +1210,12 @@ mod tests {
         assert!(matches!(shape_alpha_mode(&card), AlphaMode::Blend));
         assert!(matches!(shape_alpha_mode(&Props { animated_alpha: false, ..card.clone() }), AlphaMode::Opaque));
         assert!(matches!(shape_alpha_mode(&Props { dynamic_alpha: false, ..card.clone() }), AlphaMode::Opaque));
-        assert!(matches!(shape_alpha_mode(&Props { unlit: false, ..card }), AlphaMode::Opaque));
+        assert!(matches!(shape_alpha_mode(&Props { unlit: false, ..card.clone() }), AlphaMode::Opaque));
+        // An actor's screen whose material its clips fade is shown or not by its alpha
+        // (Mr. House's screens, #1542).
+        let screen = Props { animated_alpha: false, alpha_gated: true, ..card };
+        assert!(matches!(shape_alpha_mode(&screen), AlphaMode::Mask(t) if t == 0.5));
+        assert!(matches!(shape_alpha_mode(&Props { dynamic_alpha: false, ..screen }), AlphaMode::Opaque));
     }
 
     #[test]

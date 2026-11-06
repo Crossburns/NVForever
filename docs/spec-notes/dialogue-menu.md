@@ -160,7 +160,8 @@ From these, all [hypothesis] fitted to the pictures:
     set up to keep the band inside the safe zone's bottom: **at the list's maximum height,
     turning the hint on moves the list up** (by up to the growth: 19 units for the stand-in ink), and turning it off
     moves it back. At the side, and for shorter lists, nothing else moves.
-  Tab picks that choice (dialogue-play.md §2).
+  Tab picks that choice (dialogue-play.md §2); a Goodbye choice closes the menu at once and
+  the actor finishes its line in the world (dialogue.md §5, issue #1606).
 - The settings page's Gameplay group has a "Goodbye hint" switch (key `dialogue-goodbye-hint`,
   on by default): off removes the words, their backing and, inside the band, the strip made
   for them (so the band is its own height again); Tab says goodbye as before [design]. The

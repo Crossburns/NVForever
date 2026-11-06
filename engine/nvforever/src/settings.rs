@@ -132,6 +132,26 @@ pub fn register(app: &mut App) {
             slider: None,
         },
     );
+    add_choice_list(
+        app,
+        Setting {
+            key: "monitor",
+            group: GROUP_PICTURE,
+            label: "Monitor",
+            note: "The display the game opens on in full screen (the first display until you pick one). (--window borderless)",
+            get: |_| false,
+            set: |_, _| {},
+            slider: None,
+        },
+        ChoiceList {
+            names: window_mode::monitor_names,
+            chosen: window_mode::monitor_chosen,
+            pick: window_mode::monitor_pick,
+            save: window_mode::monitor_save,
+            load: window_mode::monitor_load,
+            ask_keep: false,
+        },
+    );
     if has_body {
         add_setting(
             app,

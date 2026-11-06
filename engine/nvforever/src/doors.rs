@@ -2,8 +2,9 @@
 //! "Open" and "Close" sequences is spawned with its node hierarchy (world.rs) and posed
 //! every frame its state changes from `nvf_play::doors::Doors`, the clock the physics
 //! and waiting actors follow too (docs/design/navmesh.md §6.1, docs/spec-notes/doors.md).
-//! At rest a door holds the end of its last sequence: "Close" when closed, whose end is
-//! the stored pose for 606 of 610 keyframed door bodies [observed, doors.md §1].
+//! At rest a door holds the end of "Open" when open, and its stored pose when closed,
+//! which is the end of "Close" for 606 of 610 keyframed door bodies [observed, doors.md
+//! §1]; the Lucky 38's outer door's "Close" holds it open (`DoorMotion::closed`, #1541).
 
 use bevy::prelude::*;
 use nvf_assets::anim_play::Playing;
@@ -62,6 +63,19 @@ pub fn pose(doors: Res<Doors>, mut rigs: Query<&mut DoorRig>, mut transforms: Qu
             continue;
         }
         let Some(clips) = rig.model.rig.as_ref().and_then(|r| r.door.as_ref()) else { continue };
+        if doors.get(rig.form_id).is_some_and(|d| d.motion.closed()) {
+            // Closed: the nodes the sequences move go back to their stored pose.
+            let stored = rig.model.rig.as_ref().map(|r| r.nodes.as_slice()).unwrap_or_default();
+            for (name, &e) in &rig.nodes {
+                let moved = [&clips.open, &clips.close].iter().any(|c| c.tracks.iter().any(|(n, _)| n == name));
+                let Some(node) = stored.iter().find(|n| n.name.as_deref() == Some(name.as_str())).filter(|_| moved) else { continue };
+                if let Ok(mut t) = transforms.get_mut(e) {
+                    *t = node.local;
+                }
+            }
+            rig.shown = Some(want);
+            continue;
+        }
         let clip = if want.0 { &clips.open } else { &clips.close };
         let mut p = Playing::new(&rig.source, clip, |n| rig.nodes.get(n).copied());
         p.time = clip.start + want.1;

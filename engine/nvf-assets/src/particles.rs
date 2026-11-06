@@ -490,6 +490,9 @@ pub struct Gravity {
     pub direction: Vec3,
     pub origin: Vec3,
     pub strength: f32,
+    /// How fast the pull dies away with the distance from the gravity object, per unit
+    /// of the model's file ([`Gravity::falloff`]); 0: the same everywhere.
+    pub decay: f32,
     /// The strength keyed over the emitter's time (`NiPSysGravityStrengthCtlr`).
     pub strength_keys: Option<FloatKeys>,
     pub spherical: bool,
@@ -502,6 +505,18 @@ impl Gravity {
     pub fn strength_at(&self, t: f32) -> f32 {
         self.strength_keys.as_ref().and_then(|k| k.at(t)).unwrap_or(self.strength)
     }
+
+    /// The share of the pull left `d` file units from the gravity object: e^(-decay·d)
+    /// [hypothesis: the bomb modifier's exponential decay (decay type 2) with `decay` as a
+    /// rate, since 0.001 (the Ultra-Luxe fountain's sideways pull, 0x0016566E) leaves a
+    /// third of the pull a thousand units off; particles.md §7.7].
+    pub fn falloff(&self, d: f32) -> f32 {
+        if self.decay > 0.0 && d.is_finite() {
+            (-self.decay * d.max(0.0)).exp()
+        } else {
+            1.0
+        }
+    }
 }
 
 /// `NiPSysDragModifier`: the share of the velocity along `axis` lost per step.
@@ -509,8 +524,35 @@ impl Gravity {
 pub struct Drag {
     pub axis: Vec3,
     pub percentage: f32,
+    /// The drag object's place in the file, and how far from it the drag acts in full
+    /// (`range`) and fades out to nothing (`range_falloff`), file units ([`Drag::reach`]).
+    pub origin: Vec3,
+    pub range: f32,
+    pub range_falloff: f32,
     /// When it acts ([`ModifierActive`]).
     pub active: ModifierActive,
+}
+
+impl Drag {
+    /// The share of the drag acting `d` file units from its object: all of it within
+    /// `range`, falling linearly to none at `range_falloff`, none beyond; everywhere when
+    /// the file gives no range [hypothesis: nif.xml names the fields Range and Range
+    /// Falloff. The Ultra-Luxe fountain's drag, 200 and 300 about a node 500 units above
+    /// its emitter, holds the spray at the top of the jet, as the original shows it
+    /// (owner's frame, 2026-11-05; particles.md §7.7)].
+    pub fn reach(&self, d: f32) -> f32 {
+        let (r, f) = (self.range, self.range_falloff.max(self.range));
+        if !(r > 0.0 && r < 1e30) || !d.is_finite() {
+            return 1.0;
+        }
+        if d <= r {
+            1.0
+        } else if d >= f || f <= r {
+            0.0
+        } else {
+            1.0 - (d - r) / (f - r)
+        }
+    }
 }
 
 /// A modifier switched on and off over time by a `NiPSysModifierActiveCtlr` (its own
@@ -579,6 +621,11 @@ pub struct ParticleSystemDef {
     pub grow_time: f32,
     pub fade_time: f32,
     pub base_scale: f32,
+    /// The particle system node's scale in the file (its own and its parents' up to the
+    /// root): the emitter's speed and radius, the gravity's strength and the volume are in
+    /// that node's units (particles.md §7.7). The Ultra-Luxe fountain's SuperSpray01 is at
+    /// 0.184 with a radius of 2,200 and a speed of 2,250 [observed: `fnvtool nif decode`].
+    pub system_scale: f32,
     pub color: Option<SimpleColor>,
     /// `NiPSysColorModifier`: colour keys over the share of its life a particle has lived.
     pub color_keys: Option<Keys<4>>,
@@ -720,6 +767,9 @@ impl ParticleSystemDef {
         }
         if self.soft > 0.0 {
             s += &format!(", soft over {:.1}", self.soft);
+        }
+        if (self.system_scale - 1.0).abs() > 1e-3 {
+            s += &format!(", at scale {:.3}", self.system_scale);
         }
         if let Some(m) = &self.mover {
             s += &format!(", moved by {} ({:.1} s)", m.node, m.cycle.stop);
@@ -1241,6 +1291,14 @@ impl ModelCtx<'_> {
                 grow_time: 0.0,
                 fade_time: 0.0,
                 base_scale: 1.0,
+                // Its own scale times its parents' (`place` leaves the root out, as the
+                // root's transform is the reference's).
+                system_scale: {
+                    let own = ps.float("scale").filter(|v| v.is_finite() && *v > 0.0).unwrap_or(1.0);
+                    let up = parent.map_or(Affine3A::IDENTITY, |p| place(p as i32)).matrix3;
+                    let k = own * (up.x_axis.length() + up.y_axis.length() + up.z_axis.length()) / 3.0;
+                    if k.is_finite() && k > 0.0 { k } else { 1.0 }
+                },
                 color: None,
                 color_keys: None,
                 rotation: None,
@@ -1474,6 +1532,7 @@ impl ModelCtx<'_> {
                             direction: frame.transform_vector3(axis).normalize_or_zero(),
                             origin: frame.translation.into(),
                             strength: f("strength"),
+                            decay: f("decay"),
                             strength_keys: m.text("name").and_then(|n| floats.get(&("NiPSysGravityStrengthCtlr".to_string(), n.to_string()))).cloned(),
                             spherical: m.int("force_type").unwrap_or(0) == 1,
                             active: modifier_active(m),
@@ -1482,7 +1541,14 @@ impl ModelCtx<'_> {
                     "NiPSysDragModifier" => {
                         let frame = place(m.block_ref("drag_object").unwrap_or(-1));
                         let axis = m.floats("drag_axis").filter(|a| a.len() >= 3).map_or(Vec3::X, |a| Vec3::new(a[0], a[1], a[2]));
-                        def.drag.push(Drag { axis: frame.transform_vector3(axis).normalize_or_zero(), percentage: f("percentage"), active: modifier_active(m) });
+                        def.drag.push(Drag {
+                            axis: frame.transform_vector3(axis).normalize_or_zero(),
+                            percentage: f("percentage"),
+                            origin: frame.translation.into(),
+                            range: f("range"),
+                            range_falloff: f("range_falloff"),
+                            active: modifier_active(m),
+                        });
                     }
                     // Ageing, moving and bounds are what any simulation does; a spawn
                     // modifier only acts when the age-death modifier spawns on death.
@@ -1568,7 +1634,9 @@ impl ModelCtx<'_> {
             if material.extension.soft.x > 0.0 {
                 // A keyed radius as it starts, or the field's own if that is larger.
                 let v = def.emitter.values(0.0);
-                let v = EmitterValues { radius: v.radius.max(def.emitter.radius), radius_variation: v.radius_variation.abs().max(def.emitter.radius_variation.abs()), ..v };
+                // In the system node's units, as drawn (`system_scale`).
+                let k = def.system_scale;
+                let v = EmitterValues { radius: v.radius.max(def.emitter.radius) * k, radius_variation: v.radius_variation.abs().max(def.emitter.radius_variation.abs()) * k, ..v };
                 material.extension.soft.x = particle_soft_distance(&v);
                 def.soft = material.extension.soft.x;
             }
@@ -1608,6 +1676,7 @@ mod tests {
             grow_time: 0.5,
             fade_time: 0.25,
             base_scale: 0.2,
+            system_scale: 1.0,
             color: None,
             color_keys: None,
             rotation: None,
@@ -1757,6 +1826,24 @@ mod tests {
     }
 
     const I: Affine3A = Affine3A::IDENTITY;
+
+    #[test]
+    fn a_drag_acts_within_its_range_and_fades_to_its_falloff() {
+        let d = Drag { axis: Vec3::Z, percentage: 0.06, origin: Vec3::ZERO, range: 200.0, range_falloff: 300.0, active: ModifierActive::default() };
+        assert_eq!((d.reach(0.0), d.reach(200.0), d.reach(300.0), d.reach(1000.0)), (1.0, 1.0, 0.0, 0.0));
+        assert!((d.reach(250.0) - 0.5).abs() < 1e-6);
+        // The usual float-maximum range: everywhere.
+        let all = Drag { range: f32::MAX, range_falloff: f32::MAX, ..d.clone() };
+        assert_eq!(all.reach(1e9), 1.0);
+    }
+
+    #[test]
+    fn a_gravitys_decay_weakens_it_with_the_distance() {
+        let g = Gravity { direction: Vec3::NEG_Z, origin: Vec3::ZERO, strength: 225.0, decay: 0.001, strength_keys: None, spherical: false, active: ModifierActive::default() };
+        assert_eq!(g.falloff(0.0), 1.0);
+        assert!((g.falloff(1000.0) - (-1.0f32).exp()).abs() < 1e-6);
+        assert_eq!(Gravity { decay: 0.0, ..g }.falloff(1e6), 1.0);
+    }
 
     #[test]
     fn the_bomb_pushes_away_less_with_distance() {

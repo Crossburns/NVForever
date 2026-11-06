@@ -406,8 +406,10 @@ A speaker **can say** a line when:
   to hold across actors: the Yes Man mainframe skipped the greeting 0x001164F1 the Tops
   Yes Man had said [observed 2026-10-31, observer check 31; one case, and the two may
   count as one speaker]. Ours holds a Say Once line back from every actor once any has
-  said it (#1113); Say Once a Day stays per actor. The clock is GameDaysPassed × 24 + GameHour
-  [hypothesis];
+  said it (#1113); Say Once a Day stays per actor. The clock is GameDaysPassed × 24
+  [design: `Game::game_hours`], which moves one per game hour as GameDaysPassed already
+  grows by the fraction of the day (simulation.md §5b); that the timer runs on game time
+  at all is [hypothesis];
 - it is the line's fixed speaker, if the line has one [documented: Category:Dialogue] —
   unless the line has its own GetIsID condition on the speaker, which then decides
   [observed 2026-10-31: the Lucky 38 elevator Victor said 0x00165102, whose fixed
@@ -479,6 +481,21 @@ All of it is in `GameSnapshot`.
   the statement is about GREETING]. Through a talking activator the greeting opens a
   conversation that the line ends, as below [owner statement 2026-10-22, of the REPCONN
   intercom; talking-activators.md §2].
+- **StartConversation from afar walks up first** (issue #1544, 2026-11-05). "The actor
+  will walk to the target" before the conversation [documented: GECK wiki
+  StartConversation]. With the AI running, a speaker more than 300 units from the
+  player, or in another space, records a walk-up (`Game::walk_up_greet`). The AI runs it
+  to the player, planning the way again as the player moves, and opens the conversation
+  within 150 units (`Ai::walk_up_step`). With no way there, or at the end of its way, it
+  opens it where it is. Its package waits meanwhile, and a change of package plans the
+  walk-up again. A speaker the AI does not walk (its cell not loaded) talks once it is
+  within 300 units of the player, never from afar; out of the loaded area (the low
+  process) the walk-up waits. Without the AI (headless runners) the
+  conversation opens at once, as before [design: the distances and the run].
+  [observed 2026-11-05] The Legion explorers about Nelson (nvNelsonExplorerBarkSCRIPT
+  calls StartConversation Player once its GameMode runs) greeted from 10,099 units off.
+  Now explorer 01 runs over and greets from 147 units (smoke
+  `start-conversation-walks-up`).
 - **The rule above is for the player talking to the actor. When the actor starts the
   conversation** (a force greet: StartConversation with the player, or the actor's
   Dialogue package that is not Say To), a greeting with the Goodbye flag **opens a
@@ -520,6 +537,39 @@ All of it is in `GameSnapshot`.
   lines, e.g. Anders' thanks in VMS46, INFO 0x00142A9C; the other 4 lines have neither
   the flag nor choices [observed: `fnvtool dialogue lines --all`]; observer check 39]. A
   conversation the end script ends some other way does not start it [design].
+- **A Goodbye line the player chooses ends the conversation at once** (`Game::choose`,
+  issue #1606): the dialogue menu closes as the line starts, the game is no longer
+  paused, and the actor finishes the line in the world, said at the player
+  [observed: owner's playtest 2026-11-05, against the original: choosing a Goodbye
+  closes the menu at once and the actor finishes the line as the player walks away].
+  In the runtime the line moves to `Game::speech` as a farewell (`Speech::farewell`)
+  with the time it has left (the rest of the response being said and the responses
+  after it), and `dialogue_ended` (`goodbye`, the line counted) comes before its
+  `line_ended` (not cut). Its begin result, `line_started` and Say Once came as it was
+  chosen and do not come again; with Run Immediately its end result ran then and does
+  not run again. When the line ends it ends as above: end result, Add Topics, and a
+  `StartConversation player` from that end result starts after them
+  (`Game::hold_force_greet`) [design: the order of a Goodbye line that ends in its
+  conversation]; no SayToDone block runs [hypothesis, as for a Goodbye greeting]. It is
+  heard and subtitled where the actor stands, like a SayTo line, and it does not hold
+  the actor in place: the actor goes about its package while it speaks [design, from the
+  statement: the player walks away]. It is never cut: another line of the actor, the
+  actor disabled, dead or deleted, or a fight ends it as if said to the end, as a
+  Goodbye greeting at the player [hypothesis: a Goodbye line's end result sets quest
+  stages and must not be lost; the owner's catch-all statement of 2026-10-27 was about
+  the greeting]. Game time and GameMode scripts run while it is said, as for any line
+  said in the world. Not changed, as they are not chosen: a Goodbye greeting that opens
+  a conversation (a force greet, above), a Goodbye line of a topic named by
+  StartConversation, and a Goodbye follow-up; each ends its conversation when it is
+  over. Nor does a chosen Goodbye line whose begin result made the actor say another
+  line (Say) leave its conversation: it ends it when it is over, and the other line is
+  not cut [design: a begin script that makes the actor say another line keeps today's
+  behaviour]; a begin result that ended or replaced the conversation leaves nothing to
+  move. **Open:** a conversation through a talking activator keeps a chosen Goodbye line
+  in the conversation until it is over, as before [hypothesis: the statement was face to
+  face; a farewell is heard from its speaker, and the activator it went through is not
+  carried by `Speech`]; whether the original closes that menu at once too is a question
+  for the observer (§7 item 18).
 - **Choices** (`Game::build_choices`). After a line with choices: those topics and
   nothing else [documented; owner statement 2026-10-11: a line linked by choices offers
   only the topics given as its choices]. Otherwise the top-level topics plus the known
@@ -627,10 +677,13 @@ Joe Cobb and Trudy (below).
   Allow Repeated Conversation Topics]. The next line's linked topics leave out one the
   conversation has used already unless the candidate line's quest has the flag (QUST DATA
   bit 2; 118 quests in the masters [observed]). Choices that name an INFO directly
-  (follow-ups) are not filtered. Radio programmes are not filtered either: their quests
+  (follow-ups) are not filtered, but they carry the conversation's used topics on to the
+  lines after them, their own topic added [design: `Game::next_conversation_line`, #1592].
+  Radio programmes are not filtered either: their quests
   set the flag, as the wiki asks for radio stations [documented: Creating Radio
-  Stations]. Test: `dialogue.rs`
-  `a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats`.
+  Stations]. Tests: `dialogue.rs`
+  `a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats`,
+  `a_follow_up_between_actors_keeps_the_topics_of_the_conversation`.
 - **The next line** (`Game::next_conversation_line`), when a line has ended and its end
   result has run: a Goodbye line ends the conversation [documented]; so does either
   side being gone [hypothesis]. Otherwise the line's next speaker says the next line:
@@ -870,6 +923,12 @@ up to C and F):
     they talk from; how long the starter tries); whether the player's presence matters for
     random conversations; general bit 12 as the switch between the default and the
     package's own Fallout behaviour (packages.md §1).
+18. A chosen Goodbye line said on in the world (§5, issue #1606): whether the original
+    closes the menu at once also for a conversation through a talking activator; whether
+    the end result runs when the line ends or as the menu closes; whether the actor stops
+    to finish the line or walks on; what ends the line early (another line, a fight, the
+    player out of earshot); whether a StartConversation from its end result waits for the
+    line.
 
 ## 8. Tool contracts
 
@@ -949,13 +1008,19 @@ gains `dialogue`.
   has begun; end: `bGiveTest` 0), and fourteen `choose` steps answer six word
   associations, five statements and three inkblots; each answer's begin script adds to
   the scores; the last line (Goodbye) sets `bDoFinalCalculation` at its start and stage
-  85 at its end. 15 lines; tag skills Guns, Science, Sneak as before. The whole test
-  happens in paused time (real time passes for the lines, script time does not). One script used to lean on GameMode running meanwhile: VCG01Test's quest
-  script does the tag-skill calculation in GameMode once `bDoFinalCalculation` is 1,
-  which the last line's begin script sets. It ran while that line was being said, as long as
-  conversations did not pause; now it runs in the first GameMode frames after the
-  Goodbye line, still well before stage 90 opens the tag-skill menu 1 s later. The
-  result is the same.
+  85 at its end. 15 lines; tag skills Guns, Science, Sneak as before. The test up to
+  the last answer happens in paused time (real time passes for the lines, script time
+  does not). That last line is the fourteenth `choose` (15 lines: the opening line and
+  fourteen answers), a chosen Goodbye line, so since issue #1606 it closes the
+  conversation at once (§5) and Doc finishes it in the world, in game time. VCG01Test's
+  quest script does the tag-skill calculation in GameMode once `bDoFinalCalculation`
+  is 1, which that line's begin script sets: the calculation runs in the first GameMode
+  frames while Doc finishes the line, and stage 85 is set by its end script when the
+  line ends, still before stage 90 opens the tag-skill menu 1 s later [design; the
+  real-data test `dialogue_data.rs` checks the tag skills and stages]. (While the
+  conversation paused the game up to its end, before #1606, the calculation ran in the
+  first GameMode frames after the line; as long as conversations did not pause, while
+  it was being said. The result is the same.)
 - **The farewell.** Stand-in: `talk` for Doc's dialogue package after stage 115 (and 4 s
   for his walk). Then the game's: the greeting that returns the player's things,
   two follow-up lines (the Pip-Boy with its message, the suit by the player's sex), the
