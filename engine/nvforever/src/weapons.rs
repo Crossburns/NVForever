@@ -495,6 +495,9 @@ pub fn spawn_model(
         let bone = names().find_map(|n| skel.by_name.get(bones.get(n)?.trim()).copied());
         let tr = Transform::from_matrix(Mat4::from(part.root * s.transform));
         let e = commands.spawn((Mesh3d(s.mesh.clone()), MeshMaterial3d(s.material.clone()), tr)).id();
+        if let Some((_, names)) = &s.skin {
+            nvf_assets::actor::skin_in_place(commands, e, names.len());
+        }
         // Named, so the holder's clips can drive its glow (`##FrontBulbs:0` in
         // `1hpattack3.kf`; actor_materials.rs).
         if let Some(n) = &s.name {

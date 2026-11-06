@@ -941,6 +941,26 @@ pub fn creature_rigid_attach(skel: &PreparedSkeleton, part: &PreparedPart, s: &P
     }
 }
 
+/// Make a skinned shape that is drawn rigidly (a weapon's or a held object's shape hung
+/// from a bone, or a part whose bones the skeleton lacks) a valid skinned draw: a skin of
+/// `joints` joints that are all the shape's own entity `e`, with identity inverse bind
+/// poses, so each vertex lands where the rigid entity puts it and follows its transform.
+/// Its mesh keeps the skin's joint attributes, and Bevy draws such a mesh through the
+/// skinned pipeline; with no skin the see-through (blended) pass bound the model-only
+/// mesh group to it, a GPU validation error each frame that stopped the run (#1424: the
+/// Sierra Madre lobby hologram's boxing tape, drawn see-through by its effect shader)
+/// [observed 2026-11-06; bevy_pbr 0.20.1 `SetMeshBindGroup` chooses the blended pass's
+/// group by the entity's skin, the pipeline by the mesh's attributes].
+pub fn skin_in_place(commands: &mut Commands, e: Entity, joints: usize) {
+    let n = joints.max(1);
+    commands.queue(move |world: &mut World| {
+        let binds = world.resource_mut::<Assets<SkinnedMeshInverseBindposes>>().add(SkinnedMeshInverseBindposes::from(vec![Mat4::IDENTITY; n]));
+        if let Ok(mut ent) = world.get_entity_mut(e) {
+            ent.insert(SkinnedMesh { inverse_bindposes: binds, joints: vec![e; n] });
+        }
+    });
+}
+
 /// What [`spawn_actor`] spawned.
 #[derive(Debug)]
 pub struct SpawnedActor {
@@ -1094,11 +1114,12 @@ pub fn spawn_parts(commands: &mut Commands, skel: &PreparedSkeleton, parts: &[Pa
                     commands.entity(nodes[0]).add_child(e);
                     e
                 }
-                (Some(_), None) => {
+                (Some((_, names)), None) => {
                     // Bones missing from the skeleton: draw the bind pose at the root.
                     out.unbound += 1;
                     let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(s.transform)))).id();
                     commands.entity(nodes[0]).add_child(e);
+                    skin_in_place(commands, e, names.len());
                     e
                 }
                 (None, _) => {
