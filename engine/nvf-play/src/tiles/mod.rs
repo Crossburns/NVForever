@@ -37,6 +37,7 @@
 //! anyway ([`fnv_ui::Ui::trait_write_counts`]).
 
 pub mod container_menu;
+mod item_menu;
 pub mod dialog_menu;
 pub mod draw;
 pub mod input;

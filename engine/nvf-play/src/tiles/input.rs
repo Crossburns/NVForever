@@ -320,7 +320,7 @@ impl MenuInputs<'_, '_> {
     /// row click that acts: the commands are applied later in the frame, so a second row
     /// click would be on rows the first may change.
     fn follow_container(&mut self, ui: &fnv_ui::Ui, c: &fnv_ui::input::Click, at: Option<(f64, f64)>, inputs: Pressed<'_>, row_acted: &mut bool) -> Option<()> {
-        use super::container_menu::{row_commands, ContainerTile, ContainerTiles, CONTAINER_MENU};
+        use super::container_menu::{row_commands, ContainerTile, CONTAINER_MENU};
         use crate::menu::{model::Command, MenuInput};
         use fnv_ui::input::By;
         let what = self.container.clicked(ui, c.tile)?;
@@ -353,13 +353,13 @@ impl MenuInputs<'_, '_> {
             ContainerTile::Exit => vec![Command::Close],
             ContainerTile::Bar(side, list::BarPiece::Marker) => {
                 let menu = self.container.menu;
-                let list_tile = ContainerTiles::list_tile(ui, side);
+                let list_tile = self.container.list_tile(ui, side);
                 self.container.drag = at.filter(|_| inputs.held && matches!(c.by, By::Pointer)).zip(menu).zip(list_tile).and_then(|(((_, y), menu), l)| list::marker_grab(ui, menu, l, y));
                 return Some(());
             }
             ContainerTile::Bar(side, piece) => {
                 let value = self.container.value(side);
-                if let Some(v) = ContainerTiles::list_tile(ui, side).and_then(|l| list::after_piece(ui, l, piece, value)) {
+                if let Some(v) = self.container.list_tile(ui, side).and_then(|l| list::after_piece(ui, l, piece, value)) {
                     info!("tiles: {CONTAINER_MENU} {piece:?} on its tiles");
                     self.container.scroll_to(side, v);
                 }
@@ -380,10 +380,10 @@ impl MenuInputs<'_, '_> {
     /// T15c: the pointer's part besides clicks: a drag on a scroll marker, the row it came
     /// onto, the heading under it for the hand-built wheel.
     fn follow_container_pointer(&mut self, ui: &fnv_ui::Ui, report: &fnv_ui::input::Report, over: Option<fnv_ui::TileId>, at: Option<(f64, f64)>, moved: bool, row_acted: bool) {
-        use super::container_menu::{hover_selects, ContainerTile, ContainerTiles};
+        use super::container_menu::{hover_selects, ContainerTile};
         use crate::menu::{model::Command, MenuInput};
         if let (Some(drag), Some((_, y))) = (self.container.drag, at) {
-            let side = [Side::Container, Side::Player].into_iter().find(|&s| ContainerTiles::list_tile(ui, s) == Some(drag.list));
+            let side = [Side::Container, Side::Player].into_iter().find(|&s| self.container.list_tile(ui, s) == Some(drag.list));
             if let (Some(side), Some(v)) = (side, list::value_under(ui, drag, y)) {
                 self.container.scroll_to(side, v);
             }
