@@ -608,6 +608,40 @@ order = [[
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while the multisampling changes" }]
 
 [[scenario]]
+name = "ui-scale-write"
+source = "issue #1631: the settings page's Display row UI scale (ui-scale) sets the HUD's size, kept in NVForever.ini; the first half of the round trip, ui-scale-read starts with what this run keeps"
+note = "The home's INI may hold any scale from an earlier run, so the row is set to 100% first and then to 75%: the second is always a change and is written"
+areas = ["hud", "settings"]
+paths = ["engine/nvf-play/src/interface.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs"]
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:ui-scale=0.5,12:ui-scale=0.25" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 16
+expect = [
+  { re = 'interface: UI scale \d+% ', count = 1, label = "the run's UI scale is fixed once, at the start" },
+  { text = "settings: ui-scale 75%", label = "the row is set to 75%" },
+]
+
+[[scenario]]
+name = "ui-scale-read"
+source = "issue #1631: the second half of the UI scale round trip: the next start reads ui-scale 75% from the home ui-scale-write kept it in and draws the HUD at that size, each piece kept at its edge"
+areas = ["hud", "settings"]
+paths = [
+  "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs",
+  "engine/nvf-play/src/hud*.rs", "engine/nvf-play/src/script_hud.rs", "engine/nvf-play/src/reticle.rs",
+  "engine/nvf-play/src/xp_meter.rs", "engine/nvf-play/src/radiation.rs", "engine/nvf-play/src/compass.rs",
+  "engine/nvf-play/src/tiles/draw.rs", "crates/fnv-game/src/ui_hud.rs", "crates/fnv-game/src/ui_hud/**",
+]
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:ui_scale_75.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 16
+expect = [
+  { re = 'settings: .* read from .*ui-scale 75%', label = "the INI's 75% is read at the start" },
+  { text = "interface: UI scale 75% (the HUD drawn at 75% of the original's size)", label = "the run's HUD is drawn at 75%" },
+  { re = 'compass: heading at x ', label = "the HUD is drawn" },
+]
+manual = "ui_scale_75.png: the HUD three quarters of its 100% size, the health and compass corner at the bottom left, the action points at the bottom right, the sneak word and other top pieces at the top; the text readable"
+
+[[scenario]]
 name = "draw-distance-sliders"
 source = "engine/nvforever/src/draw_distance.rs (owner request 2026-10-16): the settings page's Display sliders set how far objects, actors and items are drawn and how far shadows and grass reach, while the game runs, without a rendering error"
 areas = ["renderer", "settings"]

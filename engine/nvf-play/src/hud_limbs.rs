@@ -219,6 +219,8 @@ fn draw(
     mut pieces: Query<(&Piece, &mut Visibility, &mut ImageNode), (Without<LimbRoot>, Without<FacePiece>)>,
     mut face_node: Query<&mut ImageNode, (With<FacePiece>, Without<Piece>)>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     let wanted = view.shown && ind.shown();
     if faces.is_none() {
         // The first time the picture is wanted: read the game's pictures and set it up.
