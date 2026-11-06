@@ -269,6 +269,14 @@ fn jippp_runtime_nodes_effects_and_wear() {
     }
     assert_eq!(g.take_clamp_requests(), vec![FormId(BOX_REF)]);
     assert_eq!(g.take_clamp_requests(), Vec::<FormId>::new());
+    // On a base form (a weapon is its own base) the call stops the script, in a
+    // non-strict run too [observed: jipppln clamp.base, "script call failed"].
+    let base = "Begin Function { }\nref r\nlet r := TestGun\nSetFunctionValue (r.ClampToGround)\nEnd\n";
+    let mut loose = Game::new(&f.data, World::new(&f.forms, &f.refs, SimConfig::default()), GameConfig::default());
+    for g in [&mut g, &mut loose] {
+        assert_eq!(g.run_query(base, Default::default()).unwrap_err(), "clamptoground called on no reference");
+    }
+    assert_eq!(g.take_clamp_requests(), Vec::<FormId>::new());
     // Mode 2 removes [documented: InsertNode's addOrRemove table]: off the runtime list,
     // and nothing added to the list or the scene; a spec without `|` is not kept.
     q(&mut g, "InsertNode TestBox 2 \"Weapon\\BarrelDevice|Second_Barrel\"");

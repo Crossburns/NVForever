@@ -374,10 +374,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // ClampToGround]: the game knows no ground, so the call waits for the engine
         // (`Game::take_clamp_requests`; follow-up: the engine does not take it yet).
         "clamptoground" => {
-            // A base form as the calling object fails the call [observed: jipppln,
-            // "script call failed"].
-            let Some(r) = subject.filter(|&r| crate::functions::base_of(g, r).is_some()) else {
-                return Some(Err("ClampToGround needs a reference".into()));
+            // A base form as the calling object stops the script [observed: jipppln
+            // clamp.base, "script call failed"]: worded as the VM's NoReference, which
+            // stops non-strict runs too. A weapon is its own base (`base_of`), so the
+            // base must differ from the form.
+            let Some(r) = subject.filter(|&r| crate::functions::base_of(g, r).is_some_and(|b| b != r)) else {
+                return Some(Err(fnv_script::vm::VmError::NoReference(name.to_string()).to_string()));
             };
             crate::nvse_vheyes::queue_once(&mut g.jippp.clamp, r);
             zero
