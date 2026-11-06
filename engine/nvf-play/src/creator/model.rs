@@ -84,10 +84,13 @@ pub struct Framing {
     pub aim: f32,
 }
 
-/// How far the camera steps left, as a part of its distance from the player: the player
-/// stands in the clear part of the picture, right of the panel [design; observed on the
-/// smoke run's screenshots at 16:10].
-const SHIFT: f32 = 0.33;
+/// How far the camera steps left, as a part of its distance from the player: negative, so
+/// it steps right and the player stands in the clear part of the picture, left of the
+/// panel [design: at the default field of view (75 degrees at 4:3) this size puts the
+/// point looked at 275 units off the view's middle on any aspect, near the 256 that is
+/// the clear part's middle; the size itself observed on the smoke run's screenshots at
+/// 16:10, with the panel on the other side].
+const SHIFT: f32 = -0.33;
 /// The face framing's distance and the whole body's, game units [design].
 pub const NEAR: f32 = 42.0;
 pub const FAR: f32 = 175.0;
@@ -230,13 +233,14 @@ impl Action {
         }
     }
 
-    /// The key and the controller button, as the hint shows them.
+    /// The key and the controller button, as the hint shows them: in the form the other
+    /// menus give a button's key ("Take All R)", `crate::menu::look`).
     pub fn hint(self) -> &'static str {
         match self {
-            Action::Randomise => "Space / X",
-            Action::Undo => "Z / Y",
-            Action::Reset => "R / Back",
-            Action::Done => "Enter / Start",
+            Action::Randomise => "Space) X)",
+            Action::Undo => "Z) Y)",
+            Action::Reset => "R) Back)",
+            Action::Done => "Enter) Start)",
         }
     }
 }
@@ -1099,6 +1103,17 @@ mod tests {
         // Back on Basics after another tab: its own framing, the whole body.
         m.set_tab(Tab::Basics);
         assert_eq!(m.camera().distance, FAR);
+    }
+
+    #[test]
+    fn the_player_stands_left_of_the_panel() {
+        // The camera steps to its right, so the player stands left of the picture's middle.
+        let mut m = Model::new(data(), look());
+        assert!(m.camera().shift < 0.0);
+        // Panning the picture right moves the camera left, on top of that step.
+        let before = m.camera().shift;
+        m.view.pan_by(3.0, 0.0);
+        assert!((m.camera().shift - before - 3.0).abs() < 1e-4);
     }
 
     #[test]

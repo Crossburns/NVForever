@@ -110,8 +110,8 @@ pub struct Portrait {
     pub drop: f32,
     /// Looking down (positive) or up, radians.
     pub pitch: f32,
-    /// The camera stepped this far to its left, game units, so the player stands right
-    /// of the picture's middle (clear of the creator's panel).
+    /// The camera stepped this far to its left, game units (to its right when negative,
+    /// so the player stands left of the picture's middle, clear of the creator's panel).
     pub shift: f32,
 }
 
