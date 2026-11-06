@@ -16,8 +16,8 @@
 //!   held weapon is available.
 //! - **When**: holding it, not fleeing, ready on a target it sees, first [`FIRST_AFTER`]
 //!   seconds into seeing it, then every
-//!   [`BETWEEN`] seconds; only at a target beyond [`MIN_BLAST_SHARE`] times the blast's
-//!   radius (it keeps clear of its own blast) and its throw's reach (the low arc's, under
+//!   [`BETWEEN`] seconds (both from observer check 20); only at a target beyond
+//!   [`MIN_THROW`] and within its throw's reach (the low arc's, under
 //!   the projectile's gravity, no farther than [`MAX_THROW`]); held, as an explosive shot
 //!   is, when a comrade or a bystander would be caught (combat-ai.md §17.6).
 //! - **How**: from its eyes on the low arc that lands on the target's feet (as VATS
@@ -32,13 +32,19 @@ use fnv_sim::FormId;
 /// The animation type of grenades [documented: GECK wiki Weapons, Animation Type].
 pub const GRENADE_ANIM: &str = "Grenade Throw (1 Hand)";
 /// The first throw of a fight comes this many seconds (lowest, highest) into seeing the
-/// target [design].
-pub const FIRST_AFTER: (f32, f32) = (4.0, 10.0);
-/// Then one every this many seconds (lowest, highest) [design].
-pub const BETWEEN: (f32, f32) = (12.0, 25.0);
-/// No throw at a target nearer than this many times the blast's radius [design: a frag
-/// grenade's blast is 900 units, so 990; the thrower stays outside its own blast].
-pub const MIN_BLAST_SHARE: f32 = 1.1;
+/// target [observed: observer check 20, captures o18_air and o24_air 2026-11-01: an NCR
+/// trooper holding a frag grenade threw within a second of combat, from 800 and from
+/// 1,200 units (#1351). It was 4 to 10 s, a design number].
+pub const FIRST_AFTER: (f32, f32) = (0.0, 1.0);
+/// Then one every this many seconds (lowest, highest) [observed: the same captures, throws
+/// at 1.8, 5.4, 7.2 and 9.2 s, and at 0, 1.6, 4.0, 5.7 and 9.3 s: 1.6 to 3.6 s apart. It
+/// was 12 to 25 s].
+pub const BETWEEN: (f32, f32) = (1.6, 3.6);
+/// No throw at a target nearer than this, game units [design, between the observed: the
+/// trooper threw from 800 units, and two troopers 300 units off threw none and closed in
+/// to strike (observer check 20); the original's own floor is not pinned. It was 1.1 times
+/// the blast's radius (990 for a frag), which kept ours from the 800-unit throws].
+pub const MIN_THROW: f32 = 550.0;
 /// No throw farther than this, game units (about 21 m) [design].
 pub const MAX_THROW: f32 = 1500.0;
 
@@ -77,10 +83,10 @@ pub fn reach(g: &Grenade, gravity: f32) -> f32 {
     fnv_combat::vats::throw_reach(g.speed, g.gravity_mult * gravity).min(MAX_THROW)
 }
 
-/// Whether a target `distance` away is one to throw `g` at: clear of the blast, within
+/// Whether a target `distance` away is one to throw `g` at: beyond [`MIN_THROW`], within
 /// the throw's reach.
 pub fn in_band(g: &Grenade, distance: f32, gravity: f32) -> bool {
-    distance > g.blast * MIN_BLAST_SHARE && distance <= reach(g, gravity)
+    distance > MIN_THROW && distance <= reach(g, gravity)
 }
 
 /// The seconds until the next throw, from `lo`..`hi` by `u` in [0, 1).
@@ -193,25 +199,25 @@ mod tests {
         assert_eq!(plan(&mut deadline, ThrowInput { ready: false, ..input(5.0) }, &mut (), |_| panic!("not ready"), |_, _| panic!("not ready"), || panic!("not ready")), Decision::Waiting);
         assert_eq!(deadline, None);
         assert_eq!(plan(&mut deadline, input(10.0), &mut (), |_| panic!("before first deadline"), |_, _| panic!("before first deadline"), || 0.5), Decision::Waiting);
-        assert_eq!(deadline, Some((FormId(9), 17.0)));
-        for clock in [10.0, 11.0, 16.999] {
+        assert_eq!(deadline, Some((FormId(9), 10.5)));
+        for clock in [10.0, 10.25, 10.499] {
             assert_eq!(plan(&mut deadline, input(clock), &mut (), |_| panic!("before deadline"), |_, _| panic!("before deadline"), || panic!("must not reroll")), Decision::Waiting);
-            assert_eq!(deadline, Some((FormId(9), 17.0)));
+            assert_eq!(deadline, Some((FormId(9), 10.5)));
         }
-        assert!(matches!(plan(&mut deadline, input(17.0), &mut (), |_| Some(frag()), |_, _| None, || 0.0), Decision::Throw(_)));
-        assert_eq!(deadline, Some((FormId(9), 29.0)));
+        assert!(matches!(plan(&mut deadline, input(10.5), &mut (), |_| Some(frag()), |_, _| None, || 0.0), Decision::Throw(_)));
+        assert_eq!(deadline, Some((FormId(9), 12.1)));
         // A new target rolls its first wait; a temporary hold does not erase a wait.
         assert_eq!(plan(&mut deadline, ThrowInput { target: FormId(8), ..input(20.0) }, &mut (), |_| panic!("new target wait"), |_, _| None, || 1.0), Decision::Waiting);
-        assert_eq!(deadline, Some((FormId(8), 30.0)));
+        assert_eq!(deadline, Some((FormId(8), 21.0)));
         assert_eq!(plan(&mut deadline, ThrowInput { ready: false, ..input(40.0) }, &mut (), |_| panic!("held"), |_, _| None, || panic!("held")), Decision::Waiting);
-        assert_eq!(deadline, Some((FormId(8), 30.0)));
+        assert_eq!(deadline, Some((FormId(8), 21.0)));
     }
 
     #[test]
     fn held_grenade_denials_keep_their_existing_retry_delays() {
         let mut deadline = Some((FormId(9), 1.0));
         assert_eq!(plan(&mut deadline, input(1.0), &mut (), |_| None, |_, _| panic!("no item"), || 1.0), Decision::Empty);
-        assert_eq!(deadline, Some((FormId(9), 26.0)));
+        assert_eq!(deadline, Some((FormId(9), 4.6)));
         for target_at in [[100.0, 0.0, 0.0], [2000.0, 0.0, 0.0]] {
             deadline = Some((FormId(9), 1.0));
             assert_eq!(plan(&mut deadline, ThrowInput { target_at, ..input(1.0) }, &mut (), |_| Some(frag()), |_, _| panic!("out of band"), || panic!("range retry has no roll")), Decision::OutOfBand(frag()));
@@ -219,24 +225,24 @@ mod tests {
         }
         deadline = Some((FormId(9), 1.0));
         assert_eq!(plan(&mut deadline, input(1.0), &mut (), |_| Some(frag()), |_, _| Some(FormId(7)), || 0.0), Decision::Held { grenade: frag(), by: FormId(7) });
-        assert_eq!(deadline, Some((FormId(9), 13.0)));
+        assert_eq!(deadline, Some((FormId(9), 2.6)));
     }
 
     #[test]
     fn held_grenade_callbacks_borrow_one_context_only_when_needed() {
         let mut calls = Vec::new();
         let mut deadline = None;
-        for (clock, ready) in [(0.0, false), (0.0, true), (3.0, true)] {
+        for (clock, ready) in [(0.0, false), (0.0, true), (0.4, true)] {
             assert_eq!(plan(
                 &mut deadline, ThrowInput { ready, ..input(clock) }, &mut calls,
                 |calls| { calls.push("select"); Some(frag()) },
                 |calls, _| { calls.push("protect"); None },
-                || 0.0,
+                || 0.5,
             ), Decision::Waiting);
             assert!(calls.is_empty());
         }
         assert!(matches!(plan(
-            &mut deadline, input(4.0), &mut calls,
+            &mut deadline, input(0.5), &mut calls,
             |calls| { calls.push("select"); Some(frag()) },
             |calls, _| { assert_eq!(calls.as_slice(), ["select"]); calls.push("protect"); None },
             || 0.0,
@@ -315,7 +321,8 @@ mod tests {
                 fired.push((clock, throw.grenade.weapon));
             }
         }
-        assert_eq!(fired, [(4, FormId(1)), (16, FormId(1))]);
+        // The first at once, the second 1.6 s on (the next whole second).
+        assert_eq!(fired, [(0, FormId(1)), (2, FormId(1))]);
         assert_eq!(inventory.count(FormId(1)), 0);
     }
 
@@ -344,13 +351,13 @@ mod tests {
     }
 
     #[test]
-    fn a_grenade_is_thrown_clear_of_its_blast_and_within_its_reach() {
+    fn a_grenade_is_thrown_beyond_the_floor_and_within_its_reach() {
         let g = frag();
         let gravity = 686.0;
         // 1000² / 686 ≈ 1458: within MAX_THROW.
         assert!((reach(&g, gravity) - 1457.7).abs() < 1.0);
-        assert!(!in_band(&g, 270.0, gravity), "within 1.1 x its blast");
-        assert!(in_band(&g, 300.0, gravity));
+        assert!(!in_band(&g, 300.0, gravity), "the observed 300 units: no throw");
+        assert!(in_band(&g, 800.0, gravity), "the observed 800 units: thrown");
         assert!(in_band(&g, 1400.0, gravity));
         assert!(!in_band(&g, 1500.0, gravity), "beyond its arc");
         // A fast one is held to MAX_THROW.
@@ -362,6 +369,6 @@ mod tests {
     fn waits_fall_within_their_range() {
         assert_eq!(wait(BETWEEN, 0.0), BETWEEN.0);
         assert_eq!(wait(BETWEEN, 1.0), BETWEEN.1);
-        assert!((wait(FIRST_AFTER, 0.5) - 7.0).abs() < 1e-5);
+        assert!((wait(FIRST_AFTER, 0.5) - 0.5).abs() < 1e-5);
     }
 }
