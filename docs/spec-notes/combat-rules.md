@@ -488,7 +488,8 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   on first touch, so the engine reads it through `World::inventory_mut`.
 - **In play** (`engine/nvf-play/src/combat.rs`). Every projectile hit and blast goes
   through `Game::hit` inside the script runtime's world swap.
-  - Blasts use location −1 and the same armour rule as bullets.
+  - Blasts use location −1 and the same armour rule as bullets, with the damage and DT
+    perk entries and none of the weapon formula (perk-entry-points.md §2, "Blasts").
   - An `ActorHit` message goes out with each hit.
   - Without the script runtime, hits are only logged.
 - **On screen** (`engine/nvforever/src/deaths.rs`, `locomotion.rs`):
@@ -781,7 +782,9 @@ module notes).
   - Ranged weapons without a projectile (the detonator, binoculars) cycle without ammo.
 - **Explosions** (`fly`). A queue of up to 64 per frame takes impacts, detonations and
   destruction stages [design]. Each explosion:
-  - damages actors in its radius, with line of sight and armour;
+  - damages actors in its radius, with line of sight, armour and the cause's and target's
+    damage and DT perks (perk-entry-points.md §2, "Blasts"; with no cause, the target's
+    with no condition on the attacker or the weapon [hypothesis: as the original]);
   - rolls knockdown: always with "Knock Down - Always", by the documented formula with
     "By Formula". A knockdown is counted and logged; it is not animated yet;
   - damages destructible objects whose collision overlaps its radius;

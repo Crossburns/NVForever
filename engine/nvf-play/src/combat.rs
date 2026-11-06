@@ -2494,6 +2494,28 @@ fn hit_perks(script: Option<&mut ScriptState>, sim: &mut SimState, attacker: For
     })
 }
 
+/// The perk entries of one blast on `target` (docs/spec-notes/perk-entry-points.md §2): of
+/// [`hit_perks`], those a blast can use, the cause's weapon damage and the DT its hit
+/// ignores, and the target's own DT. A blast with no cause has no attacker and no weapon
+/// on those tabs, and nobody's stands in for them: what has no condition on them still
+/// applies (Toughness), what has one does not (Hit the Deck) [design; hypothesis: that the
+/// original does the same for a placed mine].
+fn blast_entry_ops(g: &mut fnv_game::Game, cause: Option<Cause>, target: FormId) -> (damage::EntryOps, damage::EntryOps) {
+    use fnv_game::perks as p;
+    let a = cause.map_or_else(damage::EntryOps::default, |k| {
+        entry_ops(g, k.actor, &[p::CALCULATE_WEAPON_DAMAGE, p::MODIFY_DAMAGE_THRESHOLD_ATTACKER], &[Some(k.weapon), Some(target)], Some(target))
+    });
+    let by = cause.map(|k| k.actor);
+    let t = entry_ops(g, target, &[p::MODIFY_DAMAGE_THRESHOLD_DEFENDER], &[by, cause.map(|k| k.weapon)], by);
+    (a, t)
+}
+
+/// [`blast_entry_ops`] in the played world; without a script runtime, none.
+fn blast_perks(script: Option<&mut ScriptState>, sim: &mut SimState, cause: Option<Cause>, target: FormId) -> (damage::EntryOps, damage::EntryOps) {
+    let Some(rt) = script.and_then(|s| s.rt.as_mut()) else { return Default::default() };
+    with_world(rt, sim, |rt| blast_entry_ops(&mut rt.game, cause, target))
+}
+
 /// The player's value of entry point `point` with weapon `weapon` (the one argument tab
 /// of spread, AP cost and the weapon's other figures) [documented: GECK wiki
 /// GetPerkModifier], and the perks that changed it.
@@ -2558,6 +2580,23 @@ fn log_hit_perks(attacker: FormId, target: Option<FormId>, a: &damage::EntryOps,
         d.crit_chance,
         if d.critical { " (critical)" } else { "" },
         d.crit_bonus,
+        d.dt,
+        d.dealt
+    );
+}
+
+/// Logs what the perks of a blast changed, when they changed anything.
+fn log_blast_perks(cause: Option<Cause>, target: FormId, a: &damage::EntryOps, t: &damage::EntryOps, d: &damage::BlastHit) {
+    if a.is_empty() && t.is_empty() {
+        return;
+    }
+    info!(
+        "combat: perks on {}'s blast on {target}: attacker [{}], target [{}]: damage {:.2} -> {:.2}, DT {:.1}, dealt {:.2}",
+        cause.map_or("no one".to_string(), |k| k.actor.to_string()),
+        a.names().join(", "),
+        t.names().join(", "),
+        d.base,
+        d.modified,
         d.dt,
         d.dealt
     );
@@ -4390,7 +4429,10 @@ fn fly(
             let (dt_v, dr) = target_armor(c, script.as_deref_mut(), &mut sim, target);
             // ShowOff:OnExplosionHit's handlers may change the blast's damage first.
             let raw = script.as_deref_mut().and_then(|s| s.rt.as_mut()).map_or(b.damage, |rt| rt.game.explosion_hit(target, f64::from(b.damage)) as f32);
-            let dealt = (raw - dt_v).max(raw * c.tuning.dt_floor) * (1.0 - dr.clamp(0.0, c.rules.max_armor_rating) / 100.0);
+            let (ap, tp) = blast_perks(script.as_deref_mut(), &mut sim, cause, target);
+            let d = damage::blast_hit(&c.rules, &c.tuning, raw, dt_v, dr, &ap, &tp);
+            log_blast_perks(cause, target, &ap, &tp, &d);
+            let dealt = d.dealt;
             let info = blast_hit_info(cause);
             // The blast's object effect on those it catches (hit-effects.md §1).
             let items: Vec<FormId> = x.enchantment.into_iter().collect();
@@ -5034,5 +5076,176 @@ mod tests {
         assert_eq!(water_thrown_up([0.0, 0.0, 100.0 - r - 1.0], Some(100.0), None, r), None);
         assert_eq!(water_thrown_up([0.0, 0.0, 120.0], None, Some(0.0), r), None);
         assert_eq!(water_thrown_up([0.0, 0.0, 130.0], Some(100.0), Some(110.0), r), None);
+    }
+
+    /// A game over a plugin with a launcher and a rifle, an explosives list, and the
+    /// perks of a blast as the masters' entries have them: the damage perk's condition on
+    /// the Weapon tab, Hit the Deck's on the attacker's weapon's, Toughness none.
+    mod blast_perks {
+        use super::*;
+        use fnv_esm::raw::{write_subrecords, Subrecord};
+        use fnv_esm::{LoadOrder, Plugin, Schema};
+        use fnv_game::perks as p;
+        use fnv_game::{Game, GameConfig, GameData};
+        use fnv_sim::{FormStore, RefTable, SimConfig, World};
+
+        const CELL: u32 = 0x200;
+        const NPC: u32 = 0x400;
+        const NPC_REF: u32 = 0x500;
+        const LAUNCHER: u32 = 0x600;
+        const RIFLE: u32 = 0x601;
+        const EXPLOSIVES: u32 = 0x650;
+        const DEMOLITION: u32 = 0x700;
+        const DECK: u32 = 0x701;
+        const TOUGHNESS: u32 = 0x702;
+        const IS_IN_LIST: u16 = 372;
+
+        fn sub(sig: &[u8; 4], data: Vec<u8>) -> Subrecord {
+            Subrecord { sig: *sig, data, extended: false }
+        }
+
+        fn z(s: &str) -> Vec<u8> {
+            [s.as_bytes(), &[0]].concat()
+        }
+
+        fn record(sig: &[u8; 4], flags: u32, fid: u32, subs: &[Subrecord]) -> Vec<u8> {
+            let payload = write_subrecords(subs);
+            [&sig[..], &(payload.len() as u32).to_le_bytes(), &flags.to_le_bytes(), &fid.to_le_bytes(), &[0; 4], &15u16.to_le_bytes(), &[0; 2], &payload].concat()
+        }
+
+        fn group(label: [u8; 4], gtype: i32, body: &[u8]) -> Vec<u8> {
+            [&b"GRUP"[..], &((24 + body.len()) as u32).to_le_bytes(), &label, &gtype.to_le_bytes(), &[0; 8], body].concat()
+        }
+
+        /// IsInList Explosives == 1.
+        fn in_explosives() -> Subrecord {
+            let d = [&[0u8, 0, 0, 0][..], &1f32.to_le_bytes(), &IS_IN_LIST.to_le_bytes(), &[0, 0], &EXPLOSIVES.to_le_bytes(), &[0; 12]].concat();
+            sub(b"CTDA", d)
+        }
+
+        /// A perk of one entry: entry point, function, number, the tab of the condition.
+        fn perk(fid: u32, edid: &str, point: u8, function: u8, value: f32, tab: Option<u8>) -> Vec<u8> {
+            let mut s = vec![sub(b"EDID", z(edid)), sub(b"FULL", z(edid)), sub(b"DATA", vec![0, 1, 1, 1, 0]), sub(b"PRKE", vec![2, 0, 0]), sub(b"DATA", vec![point, function, 1])];
+            if let Some(tab) = tab {
+                s.push(sub(b"PRKC", vec![tab]));
+                s.push(in_explosives());
+            }
+            s.push(sub(b"EPFT", vec![1]));
+            s.push(sub(b"EPFD", value.to_le_bytes().to_vec()));
+            s.push(sub(b"PRKF", vec![]));
+            record(b"PERK", 0, fid, &s)
+        }
+
+        fn plugin_bytes() -> Vec<u8> {
+            let top = |sig: &[u8; 4], body: &[u8]| group(*sig, 0, body);
+            let perks = [
+                perk(DEMOLITION, "DemolitionExpert", p::CALCULATE_WEAPON_DAMAGE, p::MULTIPLY_VALUE, 1.2, Some(1)),
+                perk(DECK, "HitTheDeck", p::MODIFY_DAMAGE_THRESHOLD_DEFENDER, p::ADD_VALUE, 25.0, Some(2)),
+                perk(TOUGHNESS, "Toughness", p::MODIFY_DAMAGE_THRESHOLD_DEFENDER, p::ADD_VALUE, 6.0, None),
+            ]
+            .concat();
+            let npcs = [record(b"NPC_", 0, 0x7, &[sub(b"EDID", z("Player"))]), record(b"NPC_", 0, NPC, &[sub(b"EDID", z("Grenadier"))])].concat();
+            let weapons = [record(b"WEAP", 0, LAUNCHER, &[sub(b"EDID", z("Launcher"))]), record(b"WEAP", 0, RIFLE, &[sub(b"EDID", z("Rifle"))])].concat();
+            let list = record(b"FLST", 0, EXPLOSIVES, &[sub(b"EDID", z("Explosives")), sub(b"LNAM", LAUNCHER.to_le_bytes().to_vec())]);
+            let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", z("TestCell"))]);
+            let achr = record(b"ACHR", 0, NPC_REF, &[sub(b"NAME", NPC.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
+            let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &achr));
+            let hedr = [1.34f32.to_le_bytes(), 0i32.to_le_bytes(), 0x800u32.to_le_bytes()].concat();
+            [
+                record(b"TES4", 1, 0, &[sub(b"HEDR", hedr)]),
+                top(b"PERK", &perks),
+                top(b"NPC_", &npcs),
+                top(b"WEAP", &weapons),
+                top(b"FLST", &list),
+                top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
+            ]
+            .concat()
+        }
+
+        struct Fixture {
+            data: GameData,
+            forms: FormStore,
+            refs: RefTable,
+        }
+
+        fn fixture() -> Fixture {
+            let plugins = vec![Plugin::parse(&plugin_bytes(), "BlastPerks.esm".into()).unwrap()];
+            let lo = LoadOrder::new(&plugins).unwrap();
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
+            let schema = Schema::load_dir(root.join("fnv")).unwrap();
+            let functions = root.join("script/functions.json");
+            let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&functions).unwrap()).unwrap();
+            let (forms, refs) = (FormStore::build(&lo, &schema), RefTable::build(&lo, &schema));
+            let data = GameData::build(&lo, &schema, fnv_script::FunctionTable::load(&functions).unwrap(), &json, &refs);
+            Fixture { data, forms, refs }
+        }
+
+        fn game<'a>(f: &'a Fixture, perks: &[u32]) -> Game<'a> {
+            let mut g = Game::new(&f.data, World::new(&f.forms, &f.refs, SimConfig::default()), GameConfig { strict: true, ..GameConfig::default() });
+            g.new_game();
+            g.player_entered(Some(FormId(CELL)));
+            for &perk in perks {
+                g.player.perks.insert(FormId(perk), 1);
+            }
+            g
+        }
+
+        /// A blast of 100 on `target`, in no armour, with the perks its cause and target hold.
+        fn blast_on(g: &mut Game<'_>, cause: Option<Cause>, target: FormId) -> damage::BlastHit {
+            let (a, t) = blast_entry_ops(g, cause, target);
+            damage::blast_hit(&Rules::defaults(), &CombatTuning::default(), 100.0, 0.0, 0.0, &a, &t)
+        }
+
+        fn close(a: f32, b: f32) -> bool {
+            (a - b).abs() < 1e-3
+        }
+
+        #[test]
+        fn the_causes_weapon_decides_the_conditioned_entries() {
+            let f = fixture();
+            let mut g = game(&f, &[DEMOLITION, DECK]);
+            let (player, npc) = (FormId::PLAYER_REF, FormId(NPC_REF));
+            let mine = |weapon: u32| Some(Cause { actor: player, weapon: FormId(weapon) });
+            // The player's grenade on an NPC: the damage perk alone.
+            assert!(close(blast_on(&mut g, mine(LAUNCHER), npc).dealt, 120.0));
+            // On the player too: 100 x 1.2 - 25, each entry once.
+            assert!(close(blast_on(&mut g, mine(LAUNCHER), player).dealt, 95.0));
+            // A blast with another weapon behind it (a Meltdown's) answers neither condition.
+            assert!(close(blast_on(&mut g, mine(RIFLE), player).dealt, 100.0));
+            // An NPC's grenade: Hit the Deck runs on its weapon; the damage perk is the player's.
+            assert!(close(blast_on(&mut g, Some(Cause { actor: npc, weapon: FormId(LAUNCHER) }), player).dealt, 75.0));
+            // Nobody on either side holds perks.
+            let (a, t) = blast_entry_ops(&mut g, Some(Cause { actor: npc, weapon: FormId(LAUNCHER) }), npc);
+            assert!(a.is_empty() && t.is_empty());
+        }
+
+        /// A placed mine nobody put down: Toughness applies, Hit the Deck has no weapon to
+        /// look at, and the player's weapon does not stand in for one.
+        #[test]
+        fn a_blast_with_no_cause_has_only_the_unconditioned_defence() {
+            let f = fixture();
+            let mut g = game(&f, &[DEMOLITION, DECK, TOUGHNESS]);
+            let (a, t) = blast_entry_ops(&mut g, None, FormId::PLAYER_REF);
+            assert!(a.is_empty(), "no attacker's perks");
+            assert_eq!(t.names(), ["Toughness"]);
+            assert!(close(blast_on(&mut g, None, FormId::PLAYER_REF).dealt, 94.0));
+        }
+
+        /// A grenade that strikes an actor deals its weapon's hit and its explosion's blast;
+        /// the damage perk multiplies each of them once.
+        #[test]
+        fn a_direct_hit_and_its_blast_are_each_modified_once() {
+            let f = fixture();
+            let mut g = game(&f, &[DEMOLITION]);
+            let (player, npc) = (FormId::PLAYER_REF, FormId(NPC_REF));
+            let (launcher, target) = (FormId(LAUNCHER), Some(npc));
+            let w = WeaponStats { base_damage: 40, anim_type: Some("Grenade Launcher".into()), ..WeaponStats::default() };
+            let h = HitInput { weapon: &w, projectiles: 1, condition: 1.0, ammo_effects: &[], part: HitPart::default(), power: 1.0 };
+            let ap = entry_ops(&mut g, player, &[p::CALCULATE_WEAPON_DAMAGE], &[Some(launcher), target], target);
+            let direct = damage::hit(&Rules::defaults(), &CombatTuning::default(), &h, &Attacker::default(), &Target::default(), &ap, &NoPerks, 1.0);
+            let blasted = blast_on(&mut g, Some(Cause { actor: player, weapon: launcher }), npc);
+            assert!(direct.base > 0.0 && close(direct.modified, direct.base * 1.2), "{direct:?}");
+            assert!(close(blasted.base, 100.0) && close(blasted.modified, 120.0), "{blasted:?}");
+        }
     }
 }
