@@ -1109,6 +1109,10 @@ pub struct IdleDef {
     /// 20 Whole Body, 21 Upper Body, ...) [documented: xEdit IDLE DATA, wbIdleAnam;
     /// `fnv_actor::idle::SECTIONS`].
     pub section: u8,
+    /// DATA byte 0 bit 0x40, which xEdit labels "Loose Idle" [documented: xEdit
+    /// wbIdleAnam]: an idle for scripts to play by name (`LooseNVPHMCYesMan`), not one the
+    /// tree's walk gives [hypothesis].
+    pub loose: bool,
 }
 
 /// The "Upper Body" animation group section ([`IdleDef::section`]) [documented: xEdit
@@ -1123,7 +1127,7 @@ impl IdleDef {
         let model = model.map(|m| m.trim().to_string()).filter(|s| !s.is_empty());
         let n = |k: &str| data.and_then(|d| d.get(k)).and_then(Json::as_i64).unwrap_or(0);
         let no_attacking = flag_bits(data.and_then(|d| d.get("flags"))) & 1 != 0;
-        IdleDef { model, loop_min: n("loop_min") as u8, loop_max: n("loop_max") as u8, conditions: Some(Vec::new()), parent: None, previous: None, replay_delay: n("replay_delay") as i16, no_attacking, section: n("animation_group_section") as u8 & 0x3F }
+        IdleDef { model, loop_min: n("loop_min") as u8, loop_max: n("loop_max") as u8, conditions: Some(Vec::new()), parent: None, previous: None, replay_delay: n("replay_delay") as i16, no_attacking, section: n("animation_group_section") as u8 & 0x3F, loose: n("animation_group_section") as u8 & 0x40 != 0 }
     }
 
     /// Whether the record names an animation file.

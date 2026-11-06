@@ -51,6 +51,8 @@ const IDLE_COWER: u32 = 0xA06;
 /// Two leaves under `IDLE_FOLDER`: one for Somebody only, then one for anybody.
 const IDLE_LEAF_OWN: u32 = 0xA07;
 const IDLE_LEAF_ANY: u32 = 0xA08;
+/// A third leaf, of the Idle section (DATA section 0): a standing look.
+const IDLE_LEAF_LOOK: u32 = 0xA09;
 const P_FIRST: u32 = 0xB01;
 const P_SECOND: u32 = 0xB02;
 const P_PLAIN: u32 = 0xB03;
@@ -92,9 +94,14 @@ const GET_IS_ID: u16 = 72;
 
 /// An IDLE with a file below `parent` in the tree, after `previous` (ANAM), with conditions.
 fn leaf(fid: u32, edid: &str, parent: u32, previous: u32, conds: Vec<Subrecord>) -> Vec<u8> {
+    leaf_in(fid, edid, parent, previous, conds, 7)
+}
+
+/// As [`leaf`], of animation group section `section` (DATA's first byte).
+fn leaf_in(fid: u32, edid: &str, parent: u32, previous: u32, conds: Vec<Subrecord>, section: u8) -> Vec<u8> {
     let mut subs = vec![sub(b"EDID", z(edid)), sub(b"MODL", z("Characters\\_Male\\IdleAnims\\Leaf.kf"))];
     subs.extend(conds);
-    subs.extend([sub(b"ANAM", [parent.to_le_bytes(), previous.to_le_bytes()].concat()), sub(b"DATA", vec![7, 0, 0, 0, 0, 0, 0, 0])]);
+    subs.extend([sub(b"ANAM", [parent.to_le_bytes(), previous.to_le_bytes()].concat()), sub(b"DATA", vec![section, 0, 0, 0, 0, 0, 0, 0])]);
     record(b"IDLE", fid, &subs)
 }
 
@@ -149,6 +156,7 @@ fn plugin_bytes() -> Vec<u8> {
         idle_if(IDLE_COWER, "Cower", vec![ctda_eq(IS_MOVING, 0.0, false), ctda_eq(GET_CURRENT_AI_PROCEDURE, 16.0, true), ctda_eq(GET_CURRENT_AI_PROCEDURE, 34.0, false)]),
         leaf(IDLE_LEAF_OWN, "LeafOwn", IDLE_FOLDER, 0, vec![ctda(GET_IS_ID, NPC)]),
         leaf(IDLE_LEAF_ANY, "LeafAny", IDLE_FOLDER, IDLE_LEAF_OWN, vec![]),
+        leaf_in(IDLE_LEAF_LOOK, "LeafLook", IDLE_FOLDER, IDLE_LEAF_ANY, vec![ctda(GET_IS_ID, NPC)], 0),
     ]
     .concat();
     let packs = [
@@ -215,7 +223,7 @@ fn asked(g: &mut Game) -> Vec<(u32, u32, IdleSource)> {
 fn idle_records_and_package_idle_data_are_read() {
     let f = fixture();
     let d = &f.data;
-    assert_eq!(d.idles.len(), 8);
+    assert_eq!(d.idles.len(), 9);
     let wake = &d.idles[&FormId(IDLE_WAKE)];
     assert_eq!((wake.model.as_deref(), wake.loop_min, wake.loop_max, wake.has_file()), (Some("Characters\\_Male\\IdleAnims\\Wake.kf"), 255, 255, true));
     assert!(!d.idles[&FormId(IDLE_FOLDER)].has_file());
@@ -373,4 +381,16 @@ fn pick_idle_walks_the_tree() {
     assert_eq!(g.pick_idle(FormId::PLAYER_REF, folder, &|_| false), Some(FormId(IDLE_LEAF_ANY)), "the player is not Somebody");
     assert_eq!(g.pick_idle(actor, folder, &|i| i == FormId(IDLE_LEAF_OWN)), Some(FormId(IDLE_LEAF_ANY)), "held back");
     assert_eq!(g.pick_idle(actor, "creatures\\dog", &|_| false), None, "another folder: nothing");
+}
+
+/// A standing look: the tree walked as for PickIdle, only the Idle section's leaves
+/// counted (#1542).
+#[test]
+fn standing_idle_takes_only_idle_section_leaves() {
+    let f = fixture();
+    let mut g = game(&f);
+    let folder = "characters\\_male";
+    assert_eq!(g.standing_idle(FormId(ACTOR), folder), Some(FormId(IDLE_LEAF_LOOK)), "the special idles before it are passed over");
+    assert_eq!(g.standing_idle(FormId::PLAYER_REF, folder), None, "its conditions fail: no look");
+    assert_eq!(g.standing_idle(FormId(ACTOR), "creatures\\dog"), None, "another folder: nothing");
 }
