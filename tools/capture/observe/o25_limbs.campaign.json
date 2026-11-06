@@ -1,0 +1,170 @@
+{
+ "format": "fnv.observe.campaign/1",
+ "name": "o25_limbs",
+ "title": "Observer check 74: limb conditions after MineFragExplosion on Ringo at 0, 64 front, 128 front, 64 right, then GrenadeFragExplosion at 0; Health raised to 5000, restored between",
+ "save": "nvftest",
+ "defaults": {
+  "fields": "fight",
+  "events": "fight",
+  "more": true,
+  "every": 1,
+  "depth": 0,
+  "settle_frames": 120,
+  "close_menus_after": 300,
+  "track": [
+   "0x00104C7D"
+  ],
+  "hours": 0.45
+ },
+ "sessions": [
+  {
+   "name": "blasts",
+   "console_first": [
+    "CloseAllMenus",
+    "tgm"
+   ],
+   "do": [
+    [
+     "{0}.SetAV Health 5000",
+     "0x00104C7D"
+    ],
+    [
+     "player.MoveTo {0} 900 0 0",
+     "0x00104C7D"
+    ]
+   ],
+   "timed": [
+    {
+     "after": 60,
+     "do": [
+      "{0}.PlaceAtMe {1} 1 0 0",
+      "0x00104C7D",
+      "0x0007078B"
+     ]
+    },
+    {
+     "after": 420,
+     "script": {
+      "names": [
+       "0x00104C7D"
+      ],
+      "lines": [
+       "{0}.RestoreAV Health 5000",
+       "{0}.RestoreAV PerceptionCondition 100",
+       "{0}.RestoreAV EnduranceCondition 100",
+       "{0}.RestoreAV LeftAttackCondition 100",
+       "{0}.RestoreAV RightAttackCondition 100",
+       "{0}.RestoreAV LeftMobilityCondition 100",
+       "{0}.RestoreAV RightMobilityCondition 100",
+       "{0}.RestoreAV BrainCondition 100"
+      ]
+     }
+    },
+    {
+     "after": 460,
+     "do": [
+      "{0}.PlaceAtMe {1} 1 64 0",
+      "0x00104C7D",
+      "0x0007078B"
+     ]
+    },
+    {
+     "after": 820,
+     "script": {
+      "names": [
+       "0x00104C7D"
+      ],
+      "lines": [
+       "{0}.RestoreAV Health 5000",
+       "{0}.RestoreAV PerceptionCondition 100",
+       "{0}.RestoreAV EnduranceCondition 100",
+       "{0}.RestoreAV LeftAttackCondition 100",
+       "{0}.RestoreAV RightAttackCondition 100",
+       "{0}.RestoreAV LeftMobilityCondition 100",
+       "{0}.RestoreAV RightMobilityCondition 100",
+       "{0}.RestoreAV BrainCondition 100"
+      ]
+     }
+    },
+    {
+     "after": 860,
+     "do": [
+      "{0}.PlaceAtMe {1} 1 128 0",
+      "0x00104C7D",
+      "0x0007078B"
+     ]
+    },
+    {
+     "after": 1220,
+     "script": {
+      "names": [
+       "0x00104C7D"
+      ],
+      "lines": [
+       "{0}.RestoreAV Health 5000",
+       "{0}.RestoreAV PerceptionCondition 100",
+       "{0}.RestoreAV EnduranceCondition 100",
+       "{0}.RestoreAV LeftAttackCondition 100",
+       "{0}.RestoreAV RightAttackCondition 100",
+       "{0}.RestoreAV LeftMobilityCondition 100",
+       "{0}.RestoreAV RightMobilityCondition 100",
+       "{0}.RestoreAV BrainCondition 100"
+      ]
+     }
+    },
+    {
+     "after": 1260,
+     "do": [
+      "{0}.PlaceAtMe {1} 1 64 3",
+      "0x00104C7D",
+      "0x0007078B"
+     ]
+    },
+    {
+     "after": 1620,
+     "script": {
+      "names": [
+       "0x00104C7D"
+      ],
+      "lines": [
+       "{0}.RestoreAV Health 5000",
+       "{0}.RestoreAV PerceptionCondition 100",
+       "{0}.RestoreAV EnduranceCondition 100",
+       "{0}.RestoreAV LeftAttackCondition 100",
+       "{0}.RestoreAV RightAttackCondition 100",
+       "{0}.RestoreAV LeftMobilityCondition 100",
+       "{0}.RestoreAV RightMobilityCondition 100",
+       "{0}.RestoreAV BrainCondition 100"
+      ]
+     }
+    },
+    {
+     "after": 1660,
+     "do": [
+      "{0}.PlaceAtMe {1} 1 0 0",
+      "0x00104C7D",
+      "0x000179DA"
+     ]
+    },
+    {
+     "after": 2020,
+     "script": {
+      "names": [
+       "0x00104C7D"
+      ],
+      "lines": [
+       "{0}.RestoreAV Health 5000",
+       "{0}.RestoreAV PerceptionCondition 100",
+       "{0}.RestoreAV EnduranceCondition 100",
+       "{0}.RestoreAV LeftAttackCondition 100",
+       "{0}.RestoreAV RightAttackCondition 100",
+       "{0}.RestoreAV LeftMobilityCondition 100",
+       "{0}.RestoreAV RightMobilityCondition 100",
+       "{0}.RestoreAV BrainCondition 100"
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

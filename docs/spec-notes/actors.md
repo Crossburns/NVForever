@@ -1314,6 +1314,20 @@ only in the walk test and on the player's body. All rules here are engine choice
   0.12 s, 128 to 98° in 0.27 s (it stepped about 125 units/s meanwhile); a trooper
   spawned 14° off turned it at 225°/s. So a person's combat turn starts near 270°/s and
   eases out, faster than ours (120°/s standing) [issue #1352].
+  Measured again 2026-11-06 (capture o25_turn, nvfairport runway, an LvlNCRTrooper with
+  a 10mm spawned 400 units north of the player, SetAngle Z to 45°, 90° or 135° off its
+  bearing to the player, then StartCombat; heading every game loop, about 64 a second)
+  [observed]: the trooper stood still on its first heading for about 1.1 s after
+  StartCombat (in combat at once, GetAnimAction −1), then turned. Off by 45° and by
+  90° (two runs each, the same to the tenth of a degree), it turned 3.5° a game loop,
+  about 225°/s, at a steady rate to within 2° of the bearing and stopped on it,
+  standing; it set off only after. Off by 135°, it turned 4.3° a loop (about 275°/s,
+  the rate seen at 180°) while standing, then slower (3.0, 2.5, then 1.4° a loop) from
+  the moment it began to step forward, 0.13 s into the turn. So there is no ease-out
+  by angle or time: the rate is set when the turn begins (about 225°/s up to 90°, 275°/s
+  beyond [hypothesis: a threshold between 90° and 135°]) and falls while the actor
+  moves. Ours: 240°/s flat standing in combat (`SPOT_TURN_RATE` × `COMBAT_TURN`), with
+  no delay before the turn.
 - **Before walking** (`fnv_nav::Walker`): a walker that stands (it did not move in its
   last update: at the start of a path, after waiting at a door, after arriving through a
   teleport door) and whose way lies more than 20° off its heading
