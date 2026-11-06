@@ -185,6 +185,23 @@ fn seeded_randomizer_follows_the_mersenne_twister() {
     assert_eq!(n(&mut g, "GetRandomizerSeed"), f64::from(DEFAULT_SEED));
 }
 
+/// A huge or garbage AdvanceSeed count is capped (`ADVANCE_SEED_MAX`), so it returns at
+/// once instead of holding the frame.
+#[test]
+fn advance_seed_caps_a_huge_count() {
+    let f = fixture();
+    let mut g = game(&f);
+    q(&mut g, "SetRandomizerSeed 20");
+    let t = std::time::Instant::now();
+    assert_eq!(n(&mut g, "AdvanceSeed 1000000000000"), 1.0);
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "capped, not 1e12 draws");
+    let mut m = Mt19937::new(20);
+    for _ in 0..1_000_000 {
+        m.next_u32();
+    }
+    assert_eq!(n(&mut g, "GetRandomPercentSeeded"), f64::from(1 + m.next_u32() % 100));
+}
+
 #[test]
 fn easing_codes_flags_and_factions() {
     let f = fixture();

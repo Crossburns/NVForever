@@ -360,7 +360,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // `n`: n draws thrown away; 0 when the mod has no seed [documented: AdvanceSeed].
         "advanceseed" => {
             let m = g.other.plugin.to_ascii_lowercase();
-            let n = num(args, 0, 0.0).max(0.0) as u64;
+            // At most ADVANCE_SEED_MAX draws a call [design]: the page gives no limit, and a
+            // huge or garbage count (1e12) would hold the frame for hours.
+            let n = (num(args, 0, 0.0).max(0.0) as u64).min(ADVANCE_SEED_MAX);
             match g.showoff.seeds.get_mut(&m) {
                 Some(s) => {
                     for _ in 0..n {
@@ -565,3 +567,7 @@ mod tests {
         assert_eq!(last, 4_123_659_995);
     }
 }
+
+/// The most draws one `AdvanceSeed` throws away [design]: about 10 ms of MT19937, so a
+/// script's huge or garbage count cannot freeze the game.
+const ADVANCE_SEED_MAX: u64 = 1_000_000;
