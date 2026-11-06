@@ -63,9 +63,11 @@ pub const HEAD_HEIGHT: f32 = 15.5;
 /// The head's share of the view's height [observed: about 215 of 720 px in the original,
 /// near and far].
 pub const HEAD_SHARE: f32 = 0.30;
-/// The face's centre, as a share of the view's height from the top [observed: about 0.32
-/// in the original].
-pub const FACE_FROM_TOP: f32 = 0.32;
+/// Where the point the view aims at (`SpeakerFace`, the head bone as drawn) lands, as a share
+/// of the view's height from the top. The original has the face's centre at about 0.32
+/// [observed: captures of 2026-11-06]; the bone lies about 0.06 of the view under that centre
+/// at this framing [observed: Chet at 0.32 showed the face's centre at 0.26], hence 0.38.
+pub const FACE_FROM_TOP: f32 = 0.38;
 /// Seconds of the ease in [observed: fitted, rough; settled in about 0.6-1 s in the
 /// original at samples every 4 frames].
 pub const IN_SECONDS: f32 = 0.8;
