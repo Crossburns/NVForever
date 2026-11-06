@@ -2062,6 +2062,18 @@ pub(crate) fn player_count(sim: &SimState, item: Option<FormId>) -> u32 {
     item.and_then(|i| inv.map(|inv| inv.count(i))).unwrap_or(0).max(0) as u32
 }
 
+/// The rounds left in the magazine with `carried` of its ammo in the inventory, the
+/// magazine's own among them: rounds dropped, sold or taken by a script are gone from the
+/// gun too. A weapon that uses no ammo item, a regenerating one and god mode's full
+/// magazine have no rounds in the inventory to follow.
+fn magazine_in_hand(magazine: u32, carried: u32, no_ammo: bool, regenerates: bool, god: bool) -> u32 {
+    if no_ammo || regenerates || god {
+        magazine
+    } else {
+        magazine.min(carried)
+    }
+}
+
 /// Follow the equipped weapon: a new weapon gets a new cycle, loaded from what is carried.
 fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut<WeaponAnim>) {
     let c = &mut *c;
@@ -2642,6 +2654,9 @@ pub(crate) fn fire(
         return;
     };
     let (Some(id), Some(cycle)) = (c.weapon, c.cycle.as_mut()) else { return };
+    let god = god_mode();
+    // Before the weapon's readiness: a holstered gun, the HUD and VATS mode see the same count.
+    cycle.magazine = magazine_in_hand(cycle.magazine, player_count(&sim, c.ammo), cycle.no_ammo, cycle.regen.is_some(), god);
     if !anim.ready {
         if vats_shot.is_some() {
             info!("combat: the VATS mode shot could not leave (the weapon is not out)");
@@ -2682,14 +2697,15 @@ pub(crate) fn fire(
         }
     }
     // Ammo Swap: the next carried type down the list, then a reload [design].
-    let mut reload = reload;
     if swap {
         if let Some(cur) = c.ammo {
             let next = c.forms.next_ammo(id, cur, |a| player_count(&sim, Some(a)) > 0);
             if next.is_some_and(|n| n != cur) {
                 c.ammo = next;
-                cycle.magazine = 0;
-                reload = true;
+                // God mode's magazine stays full: its shot goes on and nothing reloads.
+                if !god {
+                    cycle.swap_ammo();
+                }
                 info!("combat: ammo swapped to {}", next.and_then(|a| c.forms.ammo.get(&a)).and_then(|a| a.edid.clone()).unwrap_or_default());
             }
         }
@@ -2697,7 +2713,6 @@ pub(crate) fn fire(
     // God mode: no ammo is used and nothing needs reloading (the owner's playtest list 5
     // item 49) [design]: the magazine stays full and shots take nothing from the
     // inventory.
-    let god = god_mode();
     if god && !cycle.no_ammo && cycle.regen.is_none() && !c.self_ammo {
         cycle.magazine = cycle.clip_size;
     }
@@ -4842,6 +4857,19 @@ fn sound_edid(sfx: Option<&Sfx>, sound: FormId) -> String {
 mod tests {
     use super::*;
     use crate::phys::NpcBody;
+
+    #[test]
+    fn the_magazine_never_holds_more_than_is_carried() {
+        assert_eq!(magazine_in_hand(30, 0, false, false, false), 0, "every round removed");
+        assert_eq!(magazine_in_hand(30, 12, false, false, false), 12);
+        // Fewer loaded than carried stay so: VATS mode counts the rounds loaded, and
+        // a reload (whole or round by round) is what tops the magazine up.
+        assert_eq!(magazine_in_hand(2, 20, false, false, false), 2);
+        // No rounds in the inventory to follow: no ammo item, regenerating, god mode.
+        assert_eq!(magazine_in_hand(1, 0, true, false, false), 1);
+        assert_eq!(magazine_in_hand(5, 0, false, true, false), 5);
+        assert_eq!(magazine_in_hand(30, 0, false, false, true), 30);
+    }
 
     #[test]
     fn a_reload_or_a_jam_holds_the_sights_down() {

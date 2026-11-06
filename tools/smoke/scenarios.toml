@@ -1714,6 +1714,79 @@ expect = [
   { text = "script: test aid calls GetSitting on EasyPeteRef = 3", min = 5, label = "sitting at every probe" },
 ]
 
+[[scenario]]
+name = "magazine-follows-inventory"
+source = "#1612: the 10mm SMG loaded, every round taken by RemoveItem, then two pulls: two clicks, no shot"
+note = "fire presses toggle the trigger, so each pull is a pair. The player starts with 50 rounds and is given 60"
+areas = ["combat"]
+paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/attack.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "00004321", NVF_PLAY_TEST_GIVE = "00004241:60", NVF_PLAY_TEST_CONSOLE = "6:player.removeitem 00004241 500;player.getitemcount 00004241;6.9:close", NVF_PLAY_TEST_CONTROL = "4:weapon,8:fire,8.4:fire,11:fire,11.4:fire" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--pitch", "60", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'console: GetItemCount on player >> 0\.00', label = "no rounds carried" },
+  { re = 'combat: click \(no ammo\)', count = 2, label = "each pull clicks" },
+  { re = 'combat: (?P<n>\d+) shots \(', range = [0, 0], all = true, label = "no shot left" },
+]
+
+[[scenario]]
+name = "magazine-god-mode-stays-full"
+source = "owner's playtest list 5 item 49: god mode's magazine stays full and shots take nothing from the inventory, also with no round carried (magazine-follows-inventory's check leaves god mode out)"
+note = "two pulls of the 10mm SMG (30 rounds: vats-mode-burst reads 30 loaded, in god mode too), about four shots each. After the first the magazine reads 30 and the 110 carried are all there; the rounds are then removed and after the second it still reads 30. Without the refill the first read is 30 less the shots. The magazine's count comes by PrintC, since the console's own reply to an extender function shows no value"
+areas = ["combat"]
+paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/attack.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "00004321", NVF_PLAY_TEST_GIVE = "00004241:60", NVF_PLAY_TEST_CONSOLE = "6:player.getitemcount 00004241;6.5:close;10:player.getitemcount 00004241;10.2:PrintC \"nvf rounds %g\", (GetPlayerCurrentAmmoRounds);10.4:player.removeitem 00004241 500;player.getitemcount 00004241;10.9:close;14:PrintC \"nvf rounds %g\", (GetPlayerCurrentAmmoRounds);14.2:player.getitemcount 00004241;14.6:close", NVF_PLAY_TEST_CONTROL = "4:weapon,8:fire,8.4:fire,12:fire,12.4:fire" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--pitch", "60", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 18
+expect = [
+  { re = 'combat: click \(no ammo\)', count = 0, label = "no pull clicks" },
+  { re = 'combat: (?P<n>\d+) shots \(', range = [2, 100], all = true, label = "both pulls fire" },
+  { re = 'script: print "nvf rounds ', count = 2, label = "the magazine is read after each pull" },
+  { re = 'script: print "nvf rounds 30"', count = 2, label = "the full 30 rounds both times" },
+]
+order = [[
+  { re = 'console: GetItemCount on player >> 110\.00', label = "110 rounds carried before the first pull" },
+  { re = 'combat: kick: shot \d+ in a row', label = "the first pull fires" },
+  { re = 'console: GetItemCount on player >> 110\.00', label = "the shots took nothing from the inventory" },
+  { re = 'script: print "nvf rounds 30"', label = "the magazine is full after the first pull" },
+  { re = 'console: GetItemCount on player >> 0\.00', label = "every round then removed" },
+  { re = 'combat: kick: shot \d+ in a row', label = "the second pull fires with none carried" },
+  { re = 'script: print "nvf rounds 30"', label = "the magazine is full after the second pull" },
+  { re = 'console: GetItemCount on player >> 0\.00', label = "still none carried" },
+]]
+
+[[scenario]]
+name = "ammo-swap-in-spin-up"
+source = "#1613: the minigun with five 5mm and five armour-piercing rounds, Ammo Swap 0.05 s into the spin-up: a reload into the armour-piercing ones, those five shots, then a click on the next pull; the plain rounds stay carried"
+note = "the plain rounds are never fired: the swap comes before the first shot and nothing swaps back, so five shots in all, not ten. The trigger is held from 6 to 16 s; the pull at 17 s is the one that clicks"
+areas = ["combat"]
+paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/attack.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "0000433F", NVF_PLAY_TEST_GIVE = "0006B53D:5,0013E43F:5", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire,6.05:swap,16:fire,17:fire,17.4:fire", NVF_PLAY_TEST_CONSOLE = "24:player.getitemcount 0006B53D;player.getitemcount 0013E43F;24.4:close" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--pitch", "60", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 28
+expect = [
+  "combat: ammo swapped to Ammo5mmArmorPiercing",
+  { re = 'combat: reloaded 5, magazine 5\b', count = 1, label = "one reload takes the five armour-piercing rounds" },
+  { re = 'combat: (?P<n>\d+) shots \(', range = [5, 5], all = true, label = "five shots" },
+  { re = 'combat: click \(no ammo\)', count = 1, label = "empty on the next pull" },
+]
+order = [["combat: ammo swapped to", { re = 'console: GetItemCount on player >> 5\.00' }, { re = 'console: GetItemCount on player >> 0\.00' }]]
+
+[[scenario]]
+name = "ammo-swap-between-shots"
+source = "#1613: the 9mm pistol with both its ammo types, one shot, Ammo Swap in the time before the next (0.32 s, combat-rules.md §4) with the trigger let go: the reload follows without another pull"
+note = "both types 50, so the swap's reload fills the 13-round magazine"
+areas = ["combat"]
+paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/attack.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50,0013E43A:50", NVF_PLAY_TEST_CONTROL = "4:weapon,8:fire,8.05:fire,8.15:swap" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--pitch", "60", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'combat: (?P<n>\d+) shots \(', range = [1, 1], all = true, label = "the one shot" },
+  { re = 'combat: reloaded 13, magazine 13\b', count = 1, label = "the swap's reload fills the magazine" },
+]
+order = [["combat: ammo swapped to", "combat: reloaded 13, magazine 13"]]
+
 # ------------------------------------------------------------------ texture swaps
 
 [[scenario]]
