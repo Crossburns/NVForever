@@ -19007,6 +19007,20 @@ expect = [
 order = [["nvf mcm install check 1", "tiles: a mod's tiles in StartMenu", "pause menu: mods page", "scripts: MenuMode 1013 blocks run", "pause menu: mods page closed", "nvf mcm install check 0"]]
 
 [[scenario]]
+name = "shot-passes-collision-marker"
+source = "issue #1545 (owner): collision markers act as invisible walls; they must stop actors but let shots through. CollisionMarker primitives without XTRI are on the Invisible Wall layer, which characters collide with and shots pass (crates/fnv-phys/src/primitive.rs, layers::shot_ignores; physics.md §4.1)"
+note = "Goodsprings: the player stands 250 units south of the CollisionMarker box 0x00176AD0 (-69349, 7330, 8682; 87 x 34 x 138 units), facing north with the view level (the eye inside the box's height), and fires the 10mm pistol once at 12 s. Before the change the shot stopped on the box: 'dirt 1 (1 on collision without a material)'"
+areas = ["combat", "physics"]
+paths = ["crates/fnv-phys/src/primitive.rs", "crates/fnv-phys/src/layers.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_LOOK = "9:0:0", NVF_PLAY_TEST_CONTROL = "8:weapon,12:fire,12.2:fire" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-69349,7080,8650", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'combat: 1 shots .*, 1 world hits', label = "one shot, which strikes the world" },
+  { text = "impacts by material: dirt 1 (0 on collision without a material)", label = "it passes the collision marker and strikes the dirt behind it" },
+]
+
+[[scenario]]
 name = "dropped-clothes-fall"
 source = "issue #1604: clothing dropped from the inventory hung in the air: its folded ground model (armour MOD2, GO.NIF) is 2-4 dynamic bodies on hinges, and the drawn item follows one body only. Created references whose model's bodies are all dynamic now get one body (engine/nvf-play/src/phys.rs one_dynamic_body; simulation.md §5)"
 note = "Goodsprings, by the player: the Pre-War Spring Outfit, Leather Armor, Merc Charmer Outfit and Vault 21 Jumpsuit dropped from 8 s to 11 s from chest height, then the 10mm pistol at 12 s as a control; the ground is about 85 units below the drop point"
