@@ -66,11 +66,46 @@ use fnv_nav::{NavGraph, Place, Space};
 use fnv_sim::FormId;
 use serde::Serialize;
 
-/// A fighter turns to face its target this many times faster than the standing turn
-/// rate (240 degrees a second): the engine's gunmen fire only facing their target
-/// (nvforever npc_combat, owner's playtest list 5 item 33), and at the standing rate a
-/// turn to a new target held their fire for up to 1.5 s [design].
-pub const COMBAT_TURN: f32 = 2.0;
+/// A person standing in combat turns to face its target at this rate, radians a second,
+/// while the target is within a quarter turn of its heading (225 degrees a second), and
+/// at [`COMBAT_TURN_WIDE`] beyond: an NCR trooper given StartCombat 45° and 90° off its
+/// bearing to the player turned 3.5° a game loop, steadily up to the bearing, and 135°
+/// (and 180°) off, 4.3° a loop [observed 2026-11-06, capture o25_turn,
+/// docs/spec-notes/actors.md §8.9; hypothesis: the threshold between 90° and 135° lies at
+/// 90°, and the rate goes by the angle still to turn]. No ease-out: the slower end of a
+/// long turn came from stepping off while turning (the walk's own turn rate).
+pub const COMBAT_TURN_NEAR: f32 = 225.0 * std::f32::consts::PI / 180.0;
+/// The combat turn rate with the target more than a quarter turn off (275 degrees a
+/// second), [`COMBAT_TURN_NEAR`].
+pub const COMBAT_TURN_WIDE: f32 = 275.0 * std::f32::consts::PI / 180.0;
+/// Seconds a fighter stands on its heading after it goes into Combat (from Normal or
+/// Alert) before it turns to its target and sets off: the trooper above stood still on
+/// its first heading for about 1.1 s after StartCombat, already in combat [observed
+/// 2026-11-06, capture o25_turn; hypothesis: the same when it goes into combat by
+/// detecting its target].
+pub const COMBAT_REACTION_SECONDS: f64 = 1.1;
+
+/// The combat turn rate ([`COMBAT_TURN_NEAR`], [`COMBAT_TURN_WIDE`]) with `off` radians
+/// still to turn.
+pub fn combat_turn_rate(off: f32) -> f32 {
+    if off.abs() > std::f32::consts::FRAC_PI_2 {
+        COMBAT_TURN_WIDE
+    } else {
+        COMBAT_TURN_NEAR
+    }
+}
+
+/// The combat turn as a share of the standing turn rate ([`fnv_nav::follow::SPOT_TURN_RATE`];
+/// a walker's own standing rate, a creature's × 1.25, scales with it).
+pub fn combat_turn(off: f32) -> f32 {
+    combat_turn_rate(off) / fnv_nav::follow::SPOT_TURN_RATE
+}
+
+/// Whether a fighter is still in its moment after going into Combat
+/// ([`COMBAT_REACTION_SECONDS`]): it stands on its heading.
+pub fn reacting(aw: &fnv_game::awareness::Awareness, now: f64) -> bool {
+    aw.state == State::Combat && aw.combat_began.is_some_and(|t| now - t < COMBAT_REACTION_SECONDS)
+}
 
 /// Seconds an actor looks about where it searched before it searches on
 /// [engineering choice].
@@ -213,6 +248,16 @@ impl Ai {
         let a = &self.agents[&actor];
         let space = a.walker.space;
         if state == State::Combat {
+            // Just in combat it stands a moment on its heading before it turns and sets
+            // off ([`COMBAT_REACTION_SECONDS`]).
+            if reacting(aw, now) {
+                let a = self.agents.get_mut(&actor).expect("listed");
+                if a.activity == Activity::Travelling {
+                    a.walker.follower = None;
+                    a.activity = Activity::There;
+                }
+                return true;
+            }
             // The target it detects; just after losing it, the one detected last.
             let latest = aw.targets.iter().filter(|(_, t)| t.detected.is_some()).max_by(|x, y| x.1.detected.unwrap_or(0.0).total_cmp(&y.1.detected.unwrap_or(0.0)));
             let Some((target, at)) = aw.combat_target().or(latest.map(|(id, t)| (*id, t))).map(|(id, t)| (id, t.at)) else { return true };
@@ -271,7 +316,7 @@ impl Ai {
                 }
             }
             if self.agents[&actor].activity != Activity::Travelling {
-                self.face(game, actor, Place { space, pos: at }, dt * COMBAT_TURN);
+                self.combat_face(game, actor, Place { space, pos: at }, dt);
             }
             return true;
         }
@@ -478,7 +523,7 @@ impl Ai {
             }
             // Moved off it (shoved, say), it goes back: the way below ends here or fails.
             Some(Search::AtPost { kind, at: here, .. }) if kind == post.kind && flat(here, post.at) < POST_SLACK && flat(a.walker.feet, post.at) < POST_RETAINED => {
-                self.face(game, actor, Place { space, pos: at }, dt * COMBAT_TURN);
+                self.combat_face(game, actor, Place { space, pos: at }, dt);
                 return true;
             }
             _ => {}

@@ -935,6 +935,10 @@ struct Core {
     /// and step sideways or back as they go, so they can fire on the move (owner's
     /// playtest list 5 item 33; owner 2026-10-16, strafing and backing away) [design].
     aims: HashMap<FormId, [f32; 3]>,
+    /// People just gone into Combat, standing on their heading a moment before they turn
+    /// to their target (`fnv_ai::alert::reacting`): drawn as their walker stands, not
+    /// locked on their target.
+    reacting: HashSet<FormId>,
     /// The player's trip behind a loading screen under way (a fast travel, a load door):
     /// the actors coming into the loaded area are put at their package's place
     /// ([`Core::arrive`], issue #1208).
@@ -1145,6 +1149,7 @@ impl Residents {
             knocked: (0, 0.0),
             door_uses: Vec::new(),
             aims: HashMap::new(),
+            reacting: HashSet::new(),
             trip: None,
             loaded_at: HashMap::new(),
             clock_hours: 0.0,
@@ -2108,13 +2113,19 @@ impl Core {
         // its cover it strafes (`PostKind::Duck`).
         self.aims.clear();
         self.to_cover.clear();
+        self.reacting.clear();
         for r in self.list.iter().filter(|r| !r.creature) {
             let Some(a) = self.ai.agents.get(&r.actor) else { continue };
             let tactics = &game.awareness.tactics;
             if tactics.flights.contains_key(&r.actor) {
                 continue;
             }
-            let Some((target, _)) = game.awareness.get(r.actor).filter(|x| x.state == fnv_game::awareness::State::Combat).and_then(|x| x.combat_target()) else { continue };
+            let aw = game.awareness.get(r.actor).filter(|x| x.state == fnv_game::awareness::State::Combat);
+            if aw.is_some_and(|x| fnv_ai::alert::reacting(x, game.time)) {
+                self.reacting.insert(r.actor);
+                continue;
+            }
+            let Some((target, _)) = aw.and_then(|x| x.combat_target()) else { continue };
             if let Some(p) = fnv_ai::goal::place_of_ref(game, target).filter(|p| p.space == a.walker.space) {
                 self.aims.insert(r.actor, p.pos);
                 if tactics.posts.get(&r.actor).is_some_and(|p| p.kind == fnv_game::combat_group::PostKind::Cover) {
@@ -2974,7 +2985,7 @@ pub fn drive(
         // frame, not where the AI last placed it (a charging Fiend was drawn 110 units
         // from its AI place, and the trooper shooting at it faced 16° off), and once
         // turned to it, it stays on it.
-        let lock = fighters.as_deref().and_then(|f| f.lock_on(r.actor.0));
+        let lock = fighters.as_deref().and_then(|f| f.lock_on(r.actor.0)).filter(|_| !core.reacting.contains(&r.actor));
         let lock_target = lock.map(|(t, _)| t);
         let held = lock_target.is_some() && r.lock_held == lock_target;
         let lock = lock.map(|(_, at)| at);
@@ -2983,9 +2994,12 @@ pub fn drive(
             (Some(t), from) => {
                 let want = heading_of([t[0] - feet[0], t[1] - feet[1]]);
                 let from = from.unwrap_or(w.heading);
-                // Standing, at the rate the AI turns a fighter (`fnv_ai::alert`), so one
-                // that never moves is drawn as its walker turns.
-                let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE * 2.0 } else { fnv_nav::follow::SPOT_TURN_RATE * fnv_ai::alert::COMBAT_TURN };
+                // Standing, at the rate the AI turns a fighter (`fnv_ai::alert::combat_turn_rate`),
+                // so one that never moves is drawn as its walker turns; on the move, at the
+                // walking turn rate: the original's trooper turned slower from the moment it
+                // stepped off (275 down to about 90°/s) [observed 2026-11-06, capture
+                // o25_turn, docs/spec-notes/actors.md §8.9].
+                let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE } else { fnv_ai::alert::combat_turn_rate(heading_delta(from, want)) };
                 let hold = lock.is_some() && (held || heading_delta(from, want).abs() <= LOCK_HOLD);
                 let h = if hold { want } else { turn_towards(from, want, rate * dt) };
                 if hold {

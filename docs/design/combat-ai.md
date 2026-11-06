@@ -1979,7 +1979,8 @@ target through every phase of the attack and fired only once turned to it
 - **The lock** (`npc_combat::Fighters::lock_on`): each frame, a person the AI runs, in combat,
   that sees its target and does not run from it (a flight away or by a door; a flight to cover keeps
   it) is locked on where that target is drawn this frame. `residents` draws it facing that
-  place, turning at the combat turn rate (240° a second standing, 360° walking) and, once
+  place, turning at the combat turn rate (standing 225° a second with its target within a
+  quarter turn, 275° beyond; walking 180°; #1352, below) and, once
   within 10° (`LOCK_HOLD`), following it exactly; once held it stays on that target even
   when the target sweeps more than 10° in one frame (2026-11-01, #1162 [design]: melee
   Fiends circling troopers 70–340 units away, and long frames, slipped out of the hold and
@@ -1987,6 +1988,16 @@ target through every phase of the attack and fired only once turned to it
   [observed: smoke logs of #1292]); a new target is still turned to at the turn rate. On its way to cover, a post or a flee
   spot it strafes or backs away with its target in front. Out of sight it faces the
   target's AI place as before (`Core::aims`).
+- **The turn onto a target** (#1352, built 2026-11-06 from capture o25_turn,
+  docs/spec-notes/actors.md §8.9 [observed]): a person going into Combat from Normal or
+  Alert stands on its heading for 1.1 s (`fnv_ai::alert::COMBAT_REACTION_SECONDS`;
+  `Awareness::combat_began`), neither turning, setting off nor locked on, then turns at
+  225°/s while its target is within 90° of its heading and 275°/s beyond
+  (`combat_turn_rate`), steadily with no ease-out, and walking at the walk's own turn
+  rate (180°/s). Before, it turned at once at 240°/s standing and 360°/s walking. Back in
+  Combat from Lost it does not stand again, and a creature's combat turn keeps its × 1.25
+  [hypothesis: neither measured; nor is the delay when combat starts by detection rather
+  than StartCombat].
 - **Why it slipped**: the drawn facing used the target's AI place, which for a charging
   Fiend was 110 units from where it was drawn; a trooper shooting at it faced 16° off.
   Flights to cover were not turned to the target at all.

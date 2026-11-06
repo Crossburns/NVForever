@@ -1647,6 +1647,41 @@ fn an_actor_in_combat_stops_and_faces_its_target() {
 }
 
 #[test]
+fn an_actor_going_into_combat_stands_a_moment_then_turns_at_the_combat_rate() {
+    // `crate::alert::COMBAT_REACTION_SECONDS` and `combat_turn_rate` (#1352, capture
+    // o25_turn): it stands on its heading for 1.1 s, then turns 275°/s with its target
+    // more than a quarter turn off and 225°/s within it.
+    use fnv_ai::alert::{combat_turn_rate, COMBAT_TURN_NEAR, COMBAT_TURN_WIDE};
+    assert_eq!(combat_turn_rate(0.2), COMBAT_TURN_NEAR);
+    assert_eq!(combat_turn_rate(-1.5), COMBAT_TURN_NEAR);
+    assert_eq!(combat_turn_rate(2.0), COMBAT_TURN_WIDE);
+    let f = fixture();
+    let mut s = sim(&f, &[R_TRAVEL]);
+    s.run(1.0);
+    assert_eq!(s.ai.agents[&FormId(R_TRAVEL)].activity, Activity::Travelling);
+    let (now, t) = (s.game.time, Timers::default());
+    let at = s.feet(R_TRAVEL);
+    let target = [at[0] + 300.0, at[1], at[2]];
+    let a = s.game.awareness.actors.entry(FormId(R_TRAVEL)).or_default();
+    a.observe(FormId::PLAYER_REF, &Detection { value: 5.0, band: Band::Detected, ..Default::default() }, target, now, &t);
+    a.settle(FormId(R_TRAVEL), now, &t, true);
+    assert_eq!(a.combat_began, Some(now));
+    let want = fnv_nav::follow::heading_of([300.0, 0.0]);
+    s.ai.agents.get_mut(&FormId(R_TRAVEL)).unwrap().walker.heading = want + 3.0;
+    let off = |s: &Sim| fnv_nav::follow::heading_delta(want, s.ai.agents[&FormId(R_TRAVEL)].walker.heading);
+    // A second in: it stands where it was, on its heading.
+    s.run(1.0);
+    assert_eq!(s.ai.agents[&FormId(R_TRAVEL)].activity, Activity::There);
+    assert!(dist(s.feet(R_TRAVEL), at) < 1.0, "it stands");
+    assert!((off(&s) - 3.0).abs() < 1e-4, "{}", off(&s));
+    // Then half a second at the wide rate, and on to face it at the near one.
+    s.run(0.5);
+    assert!((off(&s) - (3.0 - COMBAT_TURN_WIDE * 0.5)).abs() < 1e-3, "{}", off(&s));
+    s.run(0.5);
+    assert!(off(&s).abs() < 1e-3, "{}", off(&s));
+}
+
+#[test]
 fn an_actor_in_combat_closes_in_on_a_target_it_cannot_see() {
     let f = fixture();
     let mut s = sim(&f, &[R_TRAVEL]);

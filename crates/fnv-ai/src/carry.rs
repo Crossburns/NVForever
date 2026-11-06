@@ -1762,7 +1762,14 @@ impl Ai {
         };
         let Some(at) = at else { return };
         let space = self.agents[&actor].walker.space;
-        self.face(game, actor, Place { space, pos: at }, dt * crate::alert::COMBAT_TURN);
+        self.combat_face(game, actor, Place { space, pos: at }, dt);
+    }
+
+    /// [`Self::face`] at the combat turn rate (`crate::alert::combat_turn`).
+    pub(crate) fn combat_face(&mut self, game: &mut Game, actor: FormId, to: Place, dt: f32) {
+        let w = &self.agents[&actor].walker;
+        let off = fnv_nav::follow::heading_delta(w.heading, heading_of([to.pos[0] - w.feet[0], to.pos[1] - w.feet[1]]));
+        self.face(game, actor, to, dt * crate::alert::combat_turn(off));
     }
 
     pub(crate) fn face(&mut self, game: &mut Game, actor: FormId, to: Place, dt: f32) {
