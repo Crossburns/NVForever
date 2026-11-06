@@ -5801,10 +5801,10 @@ expect = [
 [[scenario]]
 name = "stagger-holds-attack"
 source = "playtest list 4 item 21 (npc_combat.rs, residents.rs): an actor playing a crippled stagger neither attacks nor walks until it ends"
-note = "Chet (GSChetRef) is shot in the legs with a 10mm pistol from 18 s (as provoked-yield): he fights back, and a crippled leg staggers him"
+note = "Chet (GSChetRef) is shot in the right leg (DefaultBodyPartData part 4) with a 10mm pistol from 18 s (as provoked-yield): he fights back, and a crippled leg staggers him. He is moved 150 units from the player at 17 s: left where he walked, he stood about 400 units off behind the counter, and shots at 20 % of his height went between his legs, one to each leg and none crippled (#1483, #1685)"
 areas = ["combat"]
 paths = ["engine/nvforever/src/npc_combat.rs", "engine/nvforever/src/deaths.rs", "engine/nvforever/src/residents.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_CONTROL = "9:weapon,18:aimnpc=0.2,18.1:fire,18.4:fire,19:aimnpc=0.2,19.1:fire,19.4:fire,20:aimnpc=0.2,20.1:fire,20.4:fire,21:aimnpc=0.2,21.1:fire,22:aimnpc=0.2,22.1:fire,23:aimnpc=0.2,23.1:fire" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_SCRIPT = "17:moveto:GSChetRef:player:0:150:0", NVF_PLAY_TEST_CONTROL = "9:weapon,18:aimpart=4,18.1:fire,18.4:fire,19:aimpart=4,19.1:fire,19.4:fire,20:aimpart=4,20.1:fire,20.4:fire,21:aimpart=4,21.1:fire,22:aimpart=4,22.1:fire,23:aimpart=4,23.1:fire" }
 args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 32
 expect = [
