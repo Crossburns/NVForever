@@ -306,7 +306,7 @@ pub fn subtitle(g: &Game, sim: &SimState) -> Option<String> {
 fn offers(g: &Game, choices: &[Choice]) -> Vec<Offer> {
     choices
         .iter()
-        .map(|c| Offer { topic: c.topic, edid: g.data.edid_of.get(&c.topic).cloned(), text: shown_text(g.choice_text(c)), goodbye: c.goodbye })
+        .map(|c| Offer { topic: c.topic, edid: g.data.edid_of.get(&c.topic).cloned(), text: shown_text(&g.shown_choice_text(c)), goodbye: c.goodbye })
         .collect()
 }
 
@@ -367,7 +367,7 @@ pub(crate) fn view_named(g: &Game, speaker: String) -> Option<MenuView> {
             let fallback = g.data.name(ch.topic);
             let tag = ch.challenge.as_ref().map(|t| tag_of(g, t));
             let short = ch.challenge.as_ref().is_some_and(|t| matches!((t.needed, t.have), (Some(n), Some(h)) if h < n));
-            ChoiceRow { label: row_label(g.choice_text(ch), &fallback, tag), darkened: ch.darkened, short }
+            ChoiceRow { label: row_label(&g.shown_choice_text(ch), &fallback, tag), darkened: ch.darkened, short }
         })
         .collect();
     // The hint stands where Tab leaves: a Goodbye choice, or a topic list (`resolve`).

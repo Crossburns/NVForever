@@ -300,7 +300,7 @@ fn subtitles(hud: &ScriptHud, g: &fnv_game::Game<'_>, sim: &SimState, player: Op
         let i = crate::voice::speech_response(g, sim, s);
         let Some(text) = texts.get(i).or_else(|| texts.last()) else { continue };
         let who = sim.ref_name(Some(g), s.speaker.0).map(str::to_string).unwrap_or_else(|| g.data.name(s.speaker));
-        let text = crate::dialogue::shown_text(text);
+        let text = crate::dialogue::shown_text(&g.expand_codes(text));
         if text.is_empty() {
             continue;
         }
