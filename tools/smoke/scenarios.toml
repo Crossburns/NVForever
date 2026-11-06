@@ -21191,3 +21191,126 @@ expect = [
   { re = 'actor alpha: NVDLC01StarLobby', label = "the hologram is drawn see-through" },
 ]
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error" }]
+
+[[scenario]]
+name = "fsr-quality"
+source = "docs/design/fsr-upscaling.md: real FSR dispatch with skinned/alpha-tested inputs, full-resolution postprocessing and HUD"
+areas = ["graphics"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvf-assets/src/nif_prepass.wesl", "engine/nvforever/src/grass*", "engine/nvforever/src/tree*", "engine/vendor/wgpu-ffx/**"]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--cell", "Goodsprings", "--size", "1280x720", "--fsr", "quality", "--graphics", "enhanced", "--no-voice", "--no-lodgen"]
+run_seconds = 18
+expect = ["FSR 3.1.4: Quality, 853x480 -> 1280x720, frame generation off", "FSR dispatch active: 3.1.4, 853x480 -> 1280x720"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-settings"
+source = "docs/design/fsr-upscaling.md: live native AA, quality, performance and off transitions; rebuild histories without stacking AA"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs"]
+env = { WGPU_BACKEND = "vulkan", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:18", NVF_PLAY_TEST_SETTINGS = "11:fsr-upscaling=Native AA,12:fsr-upscaling=Quality,13:fsr-upscaling=Performance,14:fsr-upscaling=Off,15:fsr-upscaling=Quality" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "off", "--no-voice", "--no-lodgen"]
+run_seconds = 20
+expect = ["FSR 3.1.4: NativeAa", "FSR 3.1.4: Quality", "FSR 3.1.4: Performance"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-water"
+source = "docs/design/fsr-upscaling.md: render-scale transmission and water screen/depth coordinates, reactive inputs"
+areas = ["graphics", "water"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/water.wesl", "engine/vendor/bevy_pbr/src/transmission/node.rs"]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--pos=59500,38500,2350", "--heading", "90", "--pitch", "-15", "--hour", "12", "--size", "1280x720", "--fsr", "balanced", "--graphics", "enhanced", "--no-lodgen", "--radius", "1"]
+run_seconds = 16
+expect = ["FSR 3.1.4: Balanced", "FSR dispatch active: 3.1.4"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-resize"
+source = "docs/design/fsr-upscaling.md: window resize and Ultra Performance recreate histories and output-sized resources"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/window_mode.rs"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-resize-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:21", NVF_PLAY_TEST_SETTINGS = "11:resolution=1600x900,15:fsr-upscaling=Ultra Performance,17:fsr-upscaling=Quality", NVF_PLAY_TEST_PAUSE_MENU = "13:keep" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "quality", "--no-voice", "--no-lodgen"]
+run_seconds = 23
+expect = ["FSR 3.1.4: Quality, 853x480 -> 1280x720", "FSR 3.1.4: Quality, 1066x600 -> 1600x900", "FSR 3.1.4: UltraPerformance, 533x300 -> 1600x900", "FSR dispatch active: 3.1.4"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-restart"
+source = "docs/design/fsr-upscaling.md: a cold process restores Quality and the kept resolution from fsr-resize; no --size or --fsr is given, as in a test run a given switch wins over the INI (#1382)"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/settings.rs"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-resize-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-lodgen"]
+run_seconds = 12
+expect = ["FSR 3.1.4: Quality, 1066x600 -> 1600x900", "FSR dispatch active: 3.1.4, 1066x600 -> 1600x900"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-dropdown"
+source = "docs/design/fsr-upscaling.md: the native dropdown presents all six FSR choices and keyboard selection applies Balanced"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/settings.rs", "engine/nvforever/src/graphics.rs"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-dropdown-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:19", NVF_PLAY_TEST_SETTINGS = "11:fsr-upscaling=Quality", NVF_PLAY_TEST_PAUSE_MENU = "12:pick,13:down,14:shot,15:pick" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "off", "--no-voice", "--no-lodgen"]
+run_seconds = 21
+expect = ["pause menu: the list of 6 choice(s) open", "pause menu: screenshot pause_settings.png", "settings: fsr-upscaling Balanced", "FSR 3.1.4: Balanced"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-night-lights"
+ends = "Screenshot saved to fsr-night-lights.png"
+source = "docs/design/fsr-upscaling.md: clustered point/spot lights use normalized main-pass viewport coordinates at reduced render resolution"
+areas = ["graphics", "lights"]
+paths = ["engine/vendor/bevy_pbr/src/render/clustered_forward.wesl", "engine/nvforever/src/fsr*", "engine/nvforever/src/lights.rs"]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--world", "TheStripWorldNew", "--pos=-250,8600,1150", "--heading", "185", "--pitch", "0", "--hour", "21", "--graphics", "enhanced", "--size", "1280x720", "--fsr", "quality", "--no-voice", "--no-lodgen", "--screenshot", "fsr-night-lights.png", "--screenshot-delay", "6"]
+run_seconds = 20
+expect = ["FSR dispatch active: 3.1.4, 853x480 -> 1280x720"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-aa-lock"
+source = "docs/design/fsr-upscaling.md: Native AA explicitly disables the engine AA row, ignores edits while locked, and restores saved 8x when FSR is disabled"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings.rs", "engine/nvf-play/src/pause.rs"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-aa-lock-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:19", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=0,14:fsr-upscaling=Off", NVF_PLAY_TEST_PAUSE_MENU = "12:shot" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--msaa", "8", "--fsr", "native-aa", "--no-voice", "--no-lodgen"]
+run_seconds = 21
+expect = ["graphics: FSR NativeAa active; native anti-aliasing off", "FSR dispatch active: 3.1.4, 1280x720 -> 1280x720", "pause menu: screenshot pause_settings.png", "settings: fsr-upscaling Off", "graphics: multisampling 8x"]
+forbid = ["settings: anti-aliasing Off", "FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-moving-weapon"
+source = "docs/design/fsr-upscaling.md revision 2: moving camera, animated first-person weapon and NPC rigs exercise real temporal inputs after correcting the motion-buffer binding"
+areas = ["graphics", "player-body", "animation"]
+paths = ["engine/vendor/wgpu-ffx/wgpu-ffx/src/pass.rs", "engine/nvf-assets/src/nif_prepass.wesl", "engine/nvforever/src/fsr*"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-moving-weapon-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "8:weapon,11:fire,13:reload,17:view,19:fire", NVF_PLAY_TEST_LOOK = "9:0:-10,9.1:5:-10,9.2:10:-10,9.3:15:-10,9.4:20:-10,9.5:25:-10,9.6:30:-10", NVF_PLAY_TEST_MOVE = "10:0:1,12:0:0", NVF_PLAY_TEST_SHOTS = "14:fsr-moving-weapon.png" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages", "--no-lodgen", "--actor-weapons", "drawn", "--fsr", "quality", "--size", "1280x720"]
+run_seconds = 24
+expect = ["FSR dispatch active: 3.1.4, 853x480 -> 1280x720", "graphics: FSR Quality active; native anti-aliasing off", { re = 'player First rig: .*1hpreloadl\.kf moves the weapon.s \[.*"##nmClip", "##nmClip"' }]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-foliage"
+source = "docs/design/fsr-upscaling.md revision 3 and after revision 4: the reactive mask's opaque reference includes the terrain's blended texture layers and the sky's blended parts, so FSR keeps history on the ground under grass, bushes and trees, and against the sky"
+areas = ["graphics", "world"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/terrain.rs", "engine/nvforever/src/sky.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvforever/src/grass*", "engine/nvforever/src/tree*"]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--cell", "Goodsprings", "--heading", "0", "--pitch=-8", "--hour", "12", "--size", "1280x720", "--fsr", "native-aa", "--no-voice", "--no-lodgen"]
+run_seconds = 16
+expect = ["FSR dispatch active: 3.1.4, 1280x720 -> 1280x720", { re = 'FSR reactive reference: (\d+) terrain layer draws over the opaque copy', range = [1, 100000], label = "terrain layers drawn into the reactive reference" }, { re = 'FSR reactive reference: (\d+) sky draws over the opaque copy', range = [1, 1000], label = "the sky's blended parts drawn into the reactive reference" }]
+forbid = ["FSR reactive reference: terrain layers not drawn", "FSR reactive reference: sky parts not drawn", "FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-corn-cutouts"
+source = "docs/design/fsr-upscaling.md revision 3: Goodsprings' corn rows (blended, cut-out alpha) are drawn alpha-tested while FSR is on and blended again when it is off"
+areas = ["graphics", "world"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/graphics.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/texture.rs"]
+env = { WGPU_BACKEND = "vulkan", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:fsr-upscaling=Native AA,14:fsr-upscaling=Off" }
+args = ["--cell", "Goodsprings", "--pos=-69814,774,8451", "--heading", "205.5", "--pitch=-6.4", "--play", "--hour", "12", "--size", "1280x720", "--fsr", "off", "--no-voice", "--no-messages", "--no-lodgen"]
+run_seconds = 18
+expect = ["FSR 3.1.4: NativeAa", { re = 'blended cut-outs: drawn alpha-tested for FSR \((\d+) materials changed\)', range = [1, 100000], label = "the corn rows' material cut when FSR comes on" }, { re = 'blended cut-outs: drawn blended \((\d+) materials changed\)', range = [1, 100000], label = "and blended again when it goes off" }]
+order = [["blended cut-outs: drawn alpha-tested", "blended cut-outs: drawn blended"]]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
