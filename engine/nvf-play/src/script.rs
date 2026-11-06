@@ -245,6 +245,10 @@ pub struct ScriptState {
     pub console_out: Vec<crate::console::ConsoleReply>,
     /// A save to restore when the runtime is made (`crate::save`, nvforever `--load`).
     pending_game: Option<PendingGame>,
+    /// The runtime is not made (nor the save put back) while this is set: a load while
+    /// playing holds it until the old run has ended (nvforever `handoff`; owner
+    /// 2026-11-01, #1357, #1651).
+    pub held: bool,
 }
 
 /// A save's game snapshot for the runtime to restore when it is made (`crate::save`).
@@ -373,7 +377,7 @@ impl ScriptState {
         let write = (!unattended || own_home).then(|| fnv_install::EngineHome::default_root().map(|r| fnv_install::EngineHome::new(r).mods())).flatten();
         fnv_game::mod_files::update_roots(|r| r.write = write);
         let loader = off.is_none().then(|| Mutex::new(start_loading(d, refs)));
-        ScriptState { loader, rt: None, off, trace, aids, aids_started: false, gates: HashMap::new(), auto_close, no_messages, on_screen: None, walks: Vec::new(), new_game, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None }
+        ScriptState { loader, rt: None, off, trace, aids, aids_started: false, gates: HashMap::new(), auto_close, no_messages, on_screen: None, walks: Vec::new(), new_game, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None, held: false }
     }
 
     /// The player answers the script's open menu: `Some(b)` picks button b (0 = first) of
@@ -775,11 +779,14 @@ impl Runtime {
             debug!("script: {n} x {item} reached the player's inventory outside scripts");
             g.item_event(FormId::PLAYER_REF, *item, event::ON_ADD, player);
         }
-        for item in &changes.equipped {
-            g.equip_events(FormId::PLAYER_REF, *item, false);
-        }
+        // What was taken off before what was put on, as the other equip paths do
+        // (docs/spec-notes/ext-events.md; #1616): on a swap the old item's OnUnequip
+        // must not undo what the new item's OnEquip has set.
         for item in &changes.unequipped {
             g.item_event(FormId::PLAYER_REF, *item, event::ON_UNEQUIP, player);
+        }
+        for item in &changes.equipped {
+            g.equip_events(FormId::PLAYER_REF, *item, false);
         }
         for (item, _) in changes.removed.iter().filter(|(i, _)| dropped.contains(i)) {
             g.item_event(FormId::PLAYER_REF, *item, event::ON_DROP, player);
@@ -1700,6 +1707,9 @@ pub(crate) fn run_scripts(
     let st = &mut *script;
     st.used.extend(used.read().map(|u| (FormId(u.item), u.limb)));
     if st.rt.is_none() {
+        if st.held {
+            return;
+        }
         let Some(rx) = st.loader.as_ref() else { return };
         let got = rx.lock().ok().and_then(|r| r.try_recv().ok());
         match got {
@@ -2322,7 +2332,7 @@ impl ScriptState {
             choices_passed: None,
             activate_pick: None,
         };
-        ScriptState { loader: None, rt: Some(rt), off: None, trace: None, aids: Vec::new(), aids_started: false, gates: HashMap::new(), auto_close: None, no_messages: false, on_screen: None, walks: Vec::new(), new_game: false, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None }
+        ScriptState { loader: None, rt: Some(rt), off: None, trace: None, aids: Vec::new(), aids_started: false, gates: HashMap::new(), auto_close: None, no_messages: false, on_screen: None, walks: Vec::new(), new_game: false, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None, held: false }
     }
 
     /// The player answered the open menu: it closes after this frame's scripts.

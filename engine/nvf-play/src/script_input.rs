@@ -120,7 +120,7 @@ fn tell_magazine(mut combat: Option<ResMut<crate::combat::Combat>>, mut script: 
     // SetPlayerCurrentAmmoRounds: the rounds go in the weapon in hand.
     if let (Some(n), Some(c)) = (rt.game.other.set_magazine.take(), combat.as_deref_mut()) {
         if let Some((w, _)) = c.magazine_for_save() {
-            c.restore_magazine((w, n));
+            c.restore_magazine((w, n), None);
         }
     }
     rt.game.player_magazine = combat.and_then(|c| c.magazine_for_save()).map(|m| m.1);

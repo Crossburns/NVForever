@@ -884,6 +884,14 @@ impl MessageBox {
         }
         Ok(())
     }
+
+    /// Whether the box still waits for the player's click. An answered box stays in
+    /// [`Game::message_box`] until its script reads the button, which a fire-and-forget
+    /// box (a mod's MessageBoxEx warning at start) never does: it is off the screen all
+    /// the same, and must not count as open (saving was refused for a whole session, #1649).
+    pub fn waiting(&self) -> bool {
+        self.pressed.is_none()
+    }
 }
 
 /// Menu codes (`MenuMode <code>`) of the menus scripts open [observed: each code was
@@ -5373,15 +5381,19 @@ impl Host for Exec<'_, '_> {
             Some(v) => match v.as_form() {
                 Some(f) => Some(FormId(f)),
                 None => {
-                    // A call on an empty reference variable stops the script silently
-                    // for this run [documented: GECK wiki Ref Variable, Eval and Let
-                    // pages, owner export; docs/spec-notes/script-language.md §7.3 row
-                    // 1]; traced as `call_failed`. Classic `&&` and `||` evaluate both
-                    // sides, so a reference guarded by `&&` (EDEScript) still makes this
-                    // call every frame, in the original too [observed: o5_01,
-                    // observer-checks.md check 51; script-language.md §4]. A script
-                    // record's failure is traced once per function, not every frame.
-                    self.game.stop_run = true;
+                    // A call on an empty reference variable is skipped: it gives 0 and
+                    // the script goes on [observed: o5_00, a function script went on to
+                    // its next line, alone and in an `if`; the Nellis artillery's trigger
+                    // script (NellisArtilleryScript) calls CurrentActor2.GetDead with the
+                    // variable unset every frame one actor is inside, and the original's
+                    // barrage fires (owner, issue #1600). The GECK wiki's Ref Variable,
+                    // Eval and Let pages say it stops the script: until 2026-11-05 it did
+                    // here, and the barrage never came; script-language.md §7.3 row 1].
+                    // Traced as `call_failed`. Classic `&&` and `||` evaluate both sides,
+                    // so a reference guarded by `&&` (EDEScript) still makes this call
+                    // every frame, in the original too [observed: o5_01, observer-checks.md
+                    // check 51]. A script record's failure is traced once per function,
+                    // not every frame.
                     if let fnv_script::UnitOwner::Script { form } = self.unit.unit.owner {
                         if !self.game.empty_ref_traced.insert((form, opcode)) {
                             return Ok(Value::ZERO);
