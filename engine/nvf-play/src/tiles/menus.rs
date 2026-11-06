@@ -231,6 +231,8 @@ pub fn hand_built_takes(menu: &str, key: &str) -> bool {
         &super::container_menu::HAND_BUILT_KEYS
     } else if menu.eq_ignore_ascii_case(super::trait_menu::TRAIT_MENU) {
         &super::trait_menu::HAND_BUILT_KEYS
+    } else if menu.eq_ignore_ascii_case(super::dialog_menu::DIALOG_MENU) {
+        &super::dialog_menu::HAND_BUILT_KEYS
     } else {
         &[]
     };

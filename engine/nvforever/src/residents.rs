@@ -2215,6 +2215,8 @@ impl Core {
                 | AiEvent::Talk { .. }
                 | AiEvent::NoTalk { .. }
                 | AiEvent::TalkUnseen { .. }
+                | AiEvent::WalkUp { .. }
+                | AiEvent::WalkedUp { .. }
                 | AiEvent::PushedBack { .. }
                 | AiEvent::Hello { .. }
                 | AiEvent::IdleChatter { .. }
@@ -2406,6 +2408,12 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         AiEvent::Talk { package, target, line, away, say_to: false, greeting: true } => format!("greets {} from {away:.0} units without a conversation ({}), line {line}", n(target), n(package)),
         AiEvent::Talk { package, target, line, away, say_to: true, .. } => format!("says line {line} to {} from {away:.0} units ({})", n(target), n(package)),
         AiEvent::TalkOver { package } => format!("has talked ({})", n(package)),
+        AiEvent::WalkUp { away, length } => format!("walks up to the player for a script's StartConversation: {} units away, {length:.0} units to go", away.map_or("in another space".to_string(), |d| format!("{d:.0}"))),
+        AiEvent::WalkedUp { away, reached, line } => format!(
+            "{} the player ({away:.0} units) and starts the conversation{}",
+            if *reached { "has walked up to" } else { "gets no nearer to" },
+            line.map_or(" (nothing to say)".to_string(), |l| format!(", line {l}"))
+        ),
         AiEvent::Follow { package, target, away, length, doors, running } => format!(
             "{} after {} ({}): {}{length:.0} units to go, {} doors",
             if *running { "runs" } else { "walks" },

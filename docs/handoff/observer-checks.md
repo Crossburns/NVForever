@@ -321,8 +321,10 @@ engine if needed, and delete the item here.
     - A call on an empty ref is skipped — partly answered 2026-10-31 (o5_00): in a
       function script run through xNVSE's CallFunction, `rE.GetDisabled` on an unset
       `ref`, alone or as an `if` condition, let the script go on (the next line ran). Ours
-      stops the script (game.rs `stop_run`, scripts.md §4.2). Still open: the same in a
-      quest or object script run by the game itself, before ours changes.
+      stopped the script (scripts.md §4.2). An object script run by the game goes on too:
+      the Nellis artillery trigger's script makes such a call every frame and the
+      original's barrage fires (issue #1600). Ours goes on since 2026-11-05. Still open:
+      a quest script.
     - Return ends one block only.
     - Scripted items in other inventories don't run.
     - Message boxes don't freeze the player, and MenuMode 1002 is our guess.
@@ -1269,9 +1271,18 @@ The numbers above stay put so links to them hold; each item here gives its own p
     sandbox's choices [design]. If a creature does use furniture, say which, on what, and
     with which clip: the rule in §9 changes.
 
+## Added 2026-11-05 (placed particle scale, issue #1547)
+
+87. **Does a placed reference's scale size its particles?** (P2; particles.md §7.7.) The
+    Ultra-Luxe fountain's ULFountainFX (0x0016566E) is placed at scale 0.5. Take a frame of the
+    original at hour 12 from about (1176, -700, 1080), facing north, and the same frame in
+    NVForever. Check the size of the drops against the basin, how high the spray goes, and
+    whether it comes out of the spout. If the original's spray is the file's full size, the
+    rule in §7.7 is wrong and the cause of the misplaced spray lies elsewhere.
+
 ## Added 2026-11-04 (the container menu from its file, issue #1468)
 
-87. **The container menu: what the reads could not show.** (P3; barter-menu.md §8; the capture
+90. **The container menu: what the reads could not show.** (P3; barter-menu.md §8; the capture
     `hud_container_*`, parts c, d and g retaken since, with shots.) With a long list on both
     sides at 1280 x 720: (a) does a selected row show a faint fill beside its lines, and how
     faint against NVForever's `_NVFHotrectFill`? (b) DAM and DPS on a weapon's card: do they

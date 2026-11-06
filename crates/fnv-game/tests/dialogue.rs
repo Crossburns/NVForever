@@ -87,6 +87,18 @@ const P_PING: u32 = 0xF5A;
 const P_PONG: u32 = 0xF5B;
 const P_RPING: u32 = 0xF5C;
 const P_RPONG: u32 = 0xF5D;
+// Between actors: a line links to a topic whose line has a follow-up stored under the first
+// topic, and the follow-up links back. In QA (no repeated topics) and in QREP (repeats allowed).
+const T_HIST_A: u32 = 0x960;
+const T_HIST_B: u32 = 0x961;
+const T_RHIST_A: u32 = 0x962;
+const T_RHIST_B: u32 = 0x963;
+const H_A: u32 = 0xF62;
+const H_FOLLOW: u32 = 0xF63;
+const H_B: u32 = 0xF64;
+const H_RA: u32 = 0xF65;
+const H_RFOLLOW: u32 = 0xF66;
+const H_RB: u32 = 0xF67;
 // Follow-up lines stored under a topic of their own (dialogue.md §3.4).
 const T_FU_LEAD: u32 = 0x95D;
 const T_FU: u32 = 0x95E;
@@ -264,6 +276,9 @@ fn plugin_bytes() -> Vec<u8> {
         glob(G_GATE, "TestGate", 0.0),
         glob(0x802, "GameHour", 8.0),
         glob(G_DAYS, "GameDaysPassed", 0.0),
+        glob(0x806, "GameYear", 2281.0),
+        glob(0x807, "GameMonth", 9.0),
+        glob(0x808, "GameDay", 18.0),
         glob(G_TICKS, "TestTicks", 0.0),
         glob(G_MENU_TICKS, "TestMenuTicks", 0.0),
     ]
@@ -608,6 +623,32 @@ fn plugin_bytes() -> Vec<u8> {
         topic(T_PONG, "TestPong", "TestPong", topic_type::CONVERSATION, 0, 50.0, vec![L { id: P_PONG, quest: QA, ty: CONV, responses: one("Pong"), choices: vec![T_PING], ..L::default() }]),
         topic(T_RPING, "TestRPing", "TestRPing", topic_type::CONVERSATION, 0, 50.0, vec![L { id: P_RPING, quest: QREP, ty: CONV, responses: one("Ping"), choices: vec![T_RPONG], ..L::default() }]),
         topic(T_RPONG, "TestRPong", "TestRPong", topic_type::CONVERSATION, 0, 50.0, vec![L { id: P_RPONG, quest: QREP, ty: CONV, responses: one("Pong"), choices: vec![T_RPING], ..L::default() }]),
+        topic(
+            T_HIST_A,
+            "TestHistA",
+            "TestHistA",
+            topic_type::CONVERSATION,
+            0,
+            50.0,
+            vec![
+                L { id: H_A, quest: QA, ty: CONV, responses: one("Start"), choices: vec![T_HIST_B], ..L::default() },
+                L { id: H_FOLLOW, quest: QA, ty: CONV, responses: one("Follow-up"), choices: vec![T_HIST_B], ..L::default() },
+            ],
+        ),
+        topic(T_HIST_B, "TestHistB", "TestHistB", topic_type::CONVERSATION, 0, 50.0, vec![L { id: H_B, quest: QA, ty: CONV, responses: one("Linked"), follow: vec![H_FOLLOW], ..L::default() }]),
+        topic(
+            T_RHIST_A,
+            "TestRHistA",
+            "TestRHistA",
+            topic_type::CONVERSATION,
+            0,
+            50.0,
+            vec![
+                L { id: H_RA, quest: QREP, ty: CONV, responses: one("Start"), choices: vec![T_RHIST_B], ..L::default() },
+                L { id: H_RFOLLOW, quest: QREP, ty: CONV, responses: one("Follow-up"), choices: vec![T_RHIST_B], ..L::default() },
+            ],
+        ),
+        topic(T_RHIST_B, "TestRHistB", "TestRHistB", topic_type::CONVERSATION, 0, 50.0, vec![L { id: H_RB, quest: QREP, ty: CONV, responses: one("Linked"), follow: vec![H_RFOLLOW], ..L::default() }]),
         topic(
             T_HANDOFF,
             "TestHandoff",
@@ -1385,6 +1426,109 @@ fn say_once_a_day_lines_come_back_after_the_timer() {
     assert!(g.said_day[&actor()].contains_key(&FormId(E_DAY)));
 }
 
+/// At the topic list, `hours` game hours after the fixture's 08:00, the actor says the Say
+/// Once a Day line.
+fn daily_line_said_after(f: &Fixture, hours: f64) -> Game<'_> {
+    let mut g = at_topic_list(f);
+    g.world.advance_hours(hours).unwrap();
+    assert!(daily_line_free(&mut g));
+    assert_eq!(pick(&mut g, T_TOP), FormId(E_DAY));
+    listen(&mut g);
+    g
+}
+
+fn daily_line_free(g: &mut Game) -> bool {
+    g.can_say(actor(), Some(FormId::PLAYER_REF), FormId(E_DAY))
+}
+
+fn game_hour(g: &Game) -> f32 {
+    g.world.global(FormId(0x802)).unwrap()
+}
+
+/// Issue #1579: every hour through the clock counts once, whatever the time of day. On a
+/// clock adding GameHour to GameDaysPassed × 24, the line came back at 16:00.
+#[test]
+fn a_daily_line_said_in_the_morning_is_held_twelve_hours_of_the_clock() {
+    let f = fixture();
+    let mut g = daily_line_said_after(&f, 2.0);
+    assert!((game_hour(&g) - 10.0).abs() < 0.01);
+    g.world.advance_hours(6.0).unwrap();
+    assert!((game_hour(&g) - 16.0).abs() < 0.01);
+    assert!(!daily_line_free(&mut g), "six hours on");
+    g.world.advance_hours(5.99).unwrap();
+    assert!(!daily_line_free(&mut g), "just under twelve hours on");
+    g.world.advance_hours(0.02).unwrap();
+    assert!((game_hour(&g) - 22.01).abs() < 0.01);
+    assert!(daily_line_free(&mut g), "just over twelve hours on");
+}
+
+/// Issue #1579: midnight takes nothing off the clock. On a clock adding GameHour, the line
+/// said at 23:00 was held until 17:00.
+#[test]
+fn a_daily_line_said_before_midnight_is_held_twelve_hours_of_the_clock() {
+    let f = fixture();
+    let mut g = daily_line_said_after(&f, 15.0);
+    assert!((game_hour(&g) - 23.0).abs() < 0.01);
+    g.world.advance_hours(2.0).unwrap();
+    assert!((game_hour(&g) - 1.0).abs() < 0.01);
+    assert!(!daily_line_free(&mut g), "two hours on, past midnight");
+    g.world.advance_hours(9.99).unwrap();
+    assert!(!daily_line_free(&mut g), "just under twelve hours on");
+    g.world.advance_hours(0.02).unwrap();
+    assert!((game_hour(&g) - 11.01).abs() < 0.01);
+    assert!(daily_line_free(&mut g), "just over twelve hours on");
+    // The topic list says the same.
+    pick(&mut g, T_TOP2);
+    listen(&mut g);
+    assert!(offered(&g).contains(&T_TOP));
+}
+
+#[test]
+fn a_save_keeps_a_daily_line_held_on_the_same_clock() {
+    let f = fixture();
+    let mut g = daily_line_said_after(&f, 2.0);
+    g.world.advance_hours(6.0).unwrap();
+    let snap = g.snapshot();
+    assert!(snap.said_day_days_clock);
+    let back: GameSnapshot = serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+    assert_eq!(back, snap);
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert_eq!(h.said_day, g.said_day);
+    assert!(!daily_line_free(&mut h));
+    h.world.advance_hours(5.99).unwrap();
+    assert!(!daily_line_free(&mut h), "just under twelve hours from when it was said");
+    h.world.advance_hours(0.02).unwrap();
+    assert!(daily_line_free(&mut h));
+}
+
+/// A save from before #1579 holds hours of the old clock, which cannot be converted: its
+/// Say Once a Day holds end at the load, once, and its Say Once history stays.
+#[test]
+fn a_save_of_the_old_clock_drops_daily_holds_and_keeps_say_once() {
+    let f = fixture();
+    let g = daily_line_said_after(&f, 2.0);
+    let text = serde_json::to_string(&g.snapshot()).unwrap();
+    let older = text.replacen("\"said_day_days_clock\":true,", "", 1);
+    assert_ne!(older, text);
+    let back: GameSnapshot = serde_json::from_str(&older).unwrap();
+    assert!(!back.said_day_days_clock && !back.said_day.is_empty());
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert!(h.said_day.is_empty());
+    assert!(!h.said.is_empty());
+    assert_eq!(h.said, g.said);
+    assert!(daily_line_free(&mut h));
+    // Said again after the load, it is held on the new clock, and a save says so.
+    pick(&mut h, T_TOP2);
+    listen(&mut h);
+    assert_eq!(pick(&mut h, T_TOP), FormId(E_DAY));
+    listen(&mut h);
+    assert!(!daily_line_free(&mut h));
+    let next = h.snapshot();
+    assert!(next.said_day_days_clock && !next.said_day.is_empty());
+}
+
 #[test]
 fn a_skill_line_is_tagged_and_routed_by_its_conditions() {
     let f = fixture();
@@ -1801,6 +1945,32 @@ fn a_conversation_uses_a_topic_once_unless_its_quest_allows_repeats() {
     assert!(lines(&g) >= 4, "the repeating quest's ping-pong goes on: {} lines", lines(&g));
 }
 
+/// Issue #1592: a follow-up keeps the conversation's topics, so a link after it back to a
+/// topic already used is passed over unless the quest allows repeats. The follow-up itself
+/// is stored under a topic already used and is said all the same (dialogue.md §5.1).
+#[test]
+fn a_follow_up_between_actors_keeps_the_topics_of_the_conversation() {
+    let f = fixture();
+    let r = |id: u32| ArgValue::Value(Value::Ref(id));
+    let lines = |g: &Game| g.events.iter().filter_map(|e| if let EventKind::LineStarted { info, .. } = e.kind { Some(info.0) } else { None }).collect::<Vec<_>>();
+    let mut g = game(&f);
+    call(&mut g, 0x1056, NPC1_REF, &[r(NPC2_REF), r(T_HIST_A)]);
+    for _ in 0..20_000 {
+        if g.speech.is_empty() {
+            break;
+        }
+        g.tick();
+    }
+    assert_eq!(lines(&g), vec![H_A, H_B, H_FOLLOW], "the link back to the linked line's topic is passed over");
+    assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::ActorConversationEnded { reason: "no_links", lines: 3, .. })));
+    let mut g = game(&f);
+    call(&mut g, 0x1056, NPC1_REF, &[r(NPC2_REF), r(T_RHIST_A)]);
+    for _ in 0..2_000 {
+        g.tick();
+    }
+    assert_eq!(lines(&g).get(..4), Some(&[H_RA, H_RB, H_RFOLLOW, H_RB][..]), "the repeating quest's chain goes back: {:X?}", lines(&g));
+}
+
 /// Playing a Voice note runs its line's result scripts: the begin script as it starts,
 /// the end script as it ends (`Game::holotape_script`; Dead Money's Dog command tape is
 /// how its quest reaches NVDLC01MQ01a 40, docs/spec-notes/holotapes.md §3). The runner's
@@ -1918,4 +2088,53 @@ fn known_topics_newest_first() {
     assert_eq!(ids(&k), vec![0xC8, 0xCC, 0xCB, 0xCA, 0xC7]);
     let old: KnownTopics = serde_json::from_value(json!([FormId(1).to_string(), FormId(2).to_string(), FormId(3).to_string()])).unwrap();
     assert_eq!(ids(&old), vec![1, 2, 3]);
+}
+
+#[test]
+fn a_view_of_the_conversation_hears_before_its_result_scripts_run() {
+    use std::sync::{Arc, Mutex};
+    type Heard = Arc<Mutex<Vec<(f32, Option<u32>, usize)>>>;
+    fn listen_in(g: &mut Game) -> Heard {
+        let heard: Heard = Default::default();
+        let ears = heard.clone();
+        g.ui_dialogue_hook = Some(Box::new(move |g| {
+            let c = g.dialogue.as_ref().unwrap();
+            ears.lock().unwrap().push((out(g), c.line.as_ref().map(|l| l.info.0), c.choices.len()));
+        }));
+        heard
+    }
+    let f = fixture();
+    // At the conversation's start: the first line's begin script sets TestOut to 1, and the
+    // conversation and its line are up before it runs.
+    let mut g = game(&f);
+    let heard = listen_in(&mut g);
+    assert_eq!(g.start_dialogue(actor(), None), Ok(FormId(A_FIRST)));
+    assert_eq!(out(&g), 1.0);
+    assert_eq!(heard.lock().unwrap()[0], (0.0, Some(A_FIRST), 0));
+    // The next response; before the end script (it sets 2); the choices offered after it.
+    listen(&mut g);
+    let list = heard.lock().unwrap().clone();
+    assert_eq!(list[1], (1.0, Some(A_FIRST), 0), "{list:?}");
+    assert!(list.iter().any(|h| h.0 == 1.0 && h.2 == 0), "{list:?}");
+    assert_eq!(*list.last().unwrap(), (2.0, None, offered(&g).len()), "{list:?}");
+    // At a choice: E_NOW runs its result script as it starts; the runtime's choose reaches the
+    // hook with the new line up and the choices gone, before the script's value is there.
+    let mut g = at_topic_list(&f);
+    let before = out(&g);
+    let heard = listen_in(&mut g);
+    let said = pick(&mut g, T_TOP2);
+    assert_eq!(said, FormId(E_NOW));
+    assert_ne!(out(&g), before);
+    assert_eq!(heard.lock().unwrap()[0], (before, Some(E_NOW), 0));
+    // A line with no result script: told all the same, before the call that started it returns.
+    let mut g = game(&f);
+    g.said.insert((actor(), FormId(A_FIRST)));
+    let heard = listen_in(&mut g);
+    assert_eq!(g.start_dialogue(actor(), None), Ok(FormId(A_LATER)));
+    assert_eq!(heard.lock().unwrap().first().copied(), Some((0.0, Some(A_LATER), 0)));
+    // No conversation: nothing to tell.
+    let mut g = game(&f);
+    let heard = listen_in(&mut g);
+    g.dialogue_transition();
+    assert!(heard.lock().unwrap().is_empty());
 }

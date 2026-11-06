@@ -866,6 +866,8 @@ pub(crate) struct View<'w, 's> {
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     /// The container, barter or inventory menu, for whether its prompt is open (T15a).
     active: Option<Res<'w, crate::menu::ActiveMenu>>,
+    /// The dialogue menu's one decision (`super::dialog_menu`).
+    dialog: Option<Res<'w, super::dialog_menu::DialogTiles>>,
     /// The pause menu and its page, for the Mods page (T11, `super::mods`).
     paused: Option<Res<'w, crate::pause::Paused>>,
     page: Option<Res<'w, crate::pause::Page>>,
@@ -900,6 +902,7 @@ pub(crate) struct MenusDrawn {
     tutorial: Drawn,
     container: Drawn,
     traits: Drawn,
+    dialog: Drawn,
 }
 
 /// The stacking levels of the menus drawn from tiles besides the HUD: their hand-built
@@ -909,6 +912,8 @@ pub const MESSAGE_Z: i32 = 108;
 pub const QUANTITY_Z: i32 = 101;
 /// T15b: the Wait / Sleep menu's, its hand-built drawing's 105 (`crate::wait`) [design].
 pub const SLEEP_WAIT_Z: i32 = 105;
+/// The dialogue menu's, its hand-built drawing's 90 (`crate::dialogue_menu`) [design].
+pub const DIALOG_Z: i32 = 90;
 /// T15b: the tutorial menu's, over the other menus as its hand-built drawing is
 /// (`crate::tutorial_menu`) [design].
 pub const TUTORIAL_Z: i32 = 109;
@@ -938,6 +943,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
         (super::container_menu::CONTAINER_MENU, container_on, CONTAINER_Z, &mut others.container),
         // One decision with the hand-built menu's and, below, the blur's (`trait_menu::drawn`).
         (super::trait_menu::TRAIT_MENU, view.traits.as_ref().is_some_and(|t| super::trait_menu::drawn(t, view.chargen.as_ref().and_then(|c| c.traits_open()), game).is_some()), TRAIT_Z, &mut others.traits),
+        (super::dialog_menu::DIALOG_MENU, view.dialog.as_ref().is_some_and(|d| d.drawn()), DIALOG_Z, &mut others.dialog),
     ] {
         let ui = game.map(|g| &g.ui_tree);
         let menu = ui.filter(|_| on).and_then(|ui| ui.menu(name).map(|m| (ui, m)));
@@ -952,7 +958,11 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, view: View,
                     info!("tiles: {name} drawn from tiles ({file} file tiles, {code} code tiles)");
                     drawn.told_menu = Some(menu);
                 }
-                whole_pieces(ui, menu, &mut kit, super::interface_screen(switch))
+                let pieces = whole_pieces(ui, menu, &mut kit, super::interface_screen(switch));
+                if name == super::dialog_menu::DIALOG_MENU && pieces != drawn.pieces {
+                    info!("{}", super::dialog_menu::painted(ui, &pieces));
+                }
+                pieces
             }
             None => Vec::new(),
         };

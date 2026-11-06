@@ -28,6 +28,10 @@ use fnv_sim::{clock, FormId};
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
+/// How far from the player a StartConversation speaker may be and still talk at once,
+/// game units ([`Game::walk_up_greet`]) [design: twice the AI's standard talk distance].
+pub const WALK_UP_REACH: f32 = 300.0;
+
 /// The dialogue menu's code [documented: GECK wiki GetMenuTargetRef, owner export: menu
 /// 1009's target is the actor being spoken to; observed: one script of the masters
 /// tests `MenuMode 1009`].
@@ -136,6 +140,16 @@ pub struct Conversation {
     pub ending: bool,
 }
 
+/// Which screen of which conversation is up, as one number, for input queued on it: the
+/// conversation (`serial`, counted up for each started), the lines said so far, and the
+/// response being said, with choices or nothing being said as 0 [design: a stale click must
+/// not act on what replaced its screen, dialogue-menu.md §6.5]. 0 without a conversation.
+pub fn conversation_stamp(serial: u32, c: Option<&Conversation>) -> u64 {
+    let Some(c) = c else { return 0 };
+    let response = c.line.as_ref().map_or(0, |l| (l.response as u64 & 0xF_FFFF) + 1);
+    (u64::from(serial) << 40) | ((u64::from(c.lines) & 0xF_FFFF) << 20) | response | (1 << 63)
+}
+
 /// Whether a line may be said in a conversation between two actors: only Conversation
 /// lines (INFO DATA type Conversation, the Conversation tab), never the Topics tab's
 /// lines, which are said to the player [owner ruling 2026-10-11: "the dialogue between
@@ -211,11 +225,11 @@ fn is_own_id_condition(c: &crate::cond::Condition) -> bool {
 impl<'a> Game<'a> {
     // ---- which line ---------------------------------------------------------------
 
-    /// The game clock in hours (GameDaysPassed × 24 + GameHour), for Say Once a Day
-    /// [hypothesis: the timer runs on game time].
+    /// The game clock in hours, for Say Once a Day: GameDaysPassed × 24, as GameDaysPassed
+    /// already grows by the fraction of the day [design: simulation.md §5b; hypothesis: the
+    /// timer runs on game time]. Saved in `said_day`: `GameSnapshot::said_day_days_clock`.
     fn game_hours(&self) -> f64 {
-        let global = |name: &str| self.world.forms.global_by_edid(name).and_then(|(id, _)| self.world.global(id).ok()).unwrap_or(0.0) as f64;
-        global(clock::GAME_DAYS_PASSED) * 24.0 + global(clock::GAME_HOUR)
+        self.world.forms.global_by_edid(clock::GAME_DAYS_PASSED).and_then(|(id, _)| self.world.global(id).ok()).unwrap_or(0.0) as f64 * 24.0
     }
 
     fn say_once_a_day_hours(&self) -> f64 {
@@ -590,6 +604,7 @@ impl<'a> Game<'a> {
             self.say_line(actor, listener, topic, info, LineKind::Greeting);
             return Ok(info);
         }
+        self.dialogue_serial = self.dialogue_serial.wrapping_add(1);
         self.dialogue = Some(Conversation { actor, through, line: None, choices: Vec::new(), topic_list: false, lines: 0, then: None, ending: false });
         self.extra.entry(actor).or_default().talked_to_pc = true;
         self.emit(EventKind::DialogueStarted { actor, topic });
@@ -620,6 +635,8 @@ impl<'a> Game<'a> {
             c.choices.clear();
             c.lines += 1;
         }
+        // The line is up, whether or not a script of it runs: whoever started it reads it next.
+        self.dialogue_transition();
         self.emit_response(actor, def, info, 0);
         self.run_line_result(actor, def, false);
         if def.has(info_flag::RUN_IMMEDIATELY) {
@@ -639,6 +656,11 @@ impl<'a> Game<'a> {
     fn run_line_result(&mut self, actor: FormId, def: &InfoDef, end: bool) {
         let data = self.data;
         if let Some(u) = if end { def.end } else { def.begin } {
+            // An end script runs as the line goes: what it reads is up by then. A begin script
+            // comes right after the line's own transition.
+            if end {
+                self.dialogue_transition();
+            }
             self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(actor) });
             self.run_result(u, RunCtx { self_ref: Some(actor), action_ref: None, quest: def.quest });
         }
@@ -676,8 +698,25 @@ impl<'a> Game<'a> {
                 }
             }
         }
+        let moved = self.dialogue.as_ref().and_then(|c| c.line.as_ref()).is_some_and(|l| l.response != line.response);
         if let Some(c) = self.dialogue.as_mut() {
             c.line = Some(line);
+        }
+        if moved {
+            self.dialogue_transition();
+        }
+    }
+
+    /// Tell [`Game::ui_dialogue_hook`] of a conversation that has moved on: the line or
+    /// response begun or over, the choices offered. In the middle of the runtime's own work, as
+    /// a script that runs next is to read what is up already.
+    pub fn dialogue_transition(&mut self) {
+        if self.dialogue.is_none() {
+            return;
+        }
+        if let Some(mut hook) = self.ui_dialogue_hook.take() {
+            hook(self);
+            self.ui_dialogue_hook = Some(hook);
         }
     }
 
@@ -749,6 +788,57 @@ impl<'a> Game<'a> {
             c.choices = choices;
             c.topic_list = def.choices.is_empty();
         }
+        self.dialogue_transition();
+    }
+
+    /// StartConversation with the player from `speaker` farther than [`WALK_UP_REACH`]
+    /// while the AI runs packages (`GameConfig::package_interval`): the speaker walks up
+    /// to the player first and talks once there (`fnv_ai`), "the actor will walk to the
+    /// target" [documented: GECK wiki StartConversation; how fast and how near is our
+    /// choice]. Until 2026-11-05 the conversation opened at once from any distance: the
+    /// Legion explorers about Nelson, whose script calls it once as their cell loads,
+    /// greeted the player from 10,000 units off, halfway to Novac (issue #1544). Returns
+    /// whether the walk is recorded; otherwise the caller starts the conversation now
+    /// (headless runs without the AI, a speaker already near).
+    pub fn walk_up_greet(&mut self, speaker: FormId, topic: Option<FormId>) -> bool {
+        if self.cfg.package_interval.is_none() || self.dialogue.is_some() {
+            return false;
+        }
+        let far = self.walk_up_far(speaker);
+        if far {
+            self.walk_up_greets.insert(speaker, topic);
+        }
+        far
+    }
+
+    /// Whether `speaker` is too far from the player to talk at once
+    /// ([`Game::walk_up_greet`]): more than [`WALK_UP_REACH`] away, or in another space
+    /// (an interior and the world, two interiors). Not when either has no place.
+    pub fn walk_up_far(&self, speaker: FormId) -> bool {
+        // Its space: the worldspace of an exterior cell, else the interior cell itself.
+        // A reference nothing has changed yet is where it was placed.
+        let at = |r: FormId| {
+            let (cell, pos) = match self.world.peek(r) {
+                Some(s) => (s.cell, s.pos),
+                None => self.world.placed.get(r).map(|p| (p.cell, p.pos))?,
+            };
+            Some((self.world.placed.world_of(cell?).unwrap_or(cell?), pos))
+        };
+        let (Some((space, from)), Some((pspace, to))) = (at(speaker), at(FormId::PLAYER_REF)) else { return false };
+        let away = ((from[0] - to[0]).powi(2) + (from[1] - to[1]).powi(2) + (from[2] - to[2]).powi(2)).sqrt();
+        space != pspace || away > WALK_UP_REACH
+    }
+
+    /// The walk-up greeting of `speaker` ([`Game::walk_up_greet`]), still to be said.
+    pub fn walk_up_pending(&self, speaker: FormId) -> Option<Option<FormId>> {
+        self.walk_up_greets.get(&speaker).copied()
+    }
+
+    /// `speaker` has walked up (or cannot): its conversation starts now, as a force
+    /// greet. Returns the line it opens with.
+    pub fn walk_up_arrived(&mut self, speaker: FormId) -> Option<FormId> {
+        let topic = self.walk_up_greets.remove(&speaker)?;
+        self.force_greet(speaker, topic).ok()
     }
 
     /// `StartConversation player` while the player's conversation runs: inside the end
@@ -1171,18 +1261,22 @@ impl<'a> Game<'a> {
             _ => &[(listener, speaker)],
         };
         let next = LineKind::Conversation(lines + 1);
+        // "If this box is unchecked, conversations will never use the same topic twice
+        // (in the same conversation)" [documented: GECK wiki Quest Data Tab, Allow
+        // Repeated Conversation Topics]: a topic used already is passed over unless the
+        // line's quest allows it. A follow-up is named outright, so it is not passed over,
+        // but it carries the history on.
+        let earlier: Vec<FormId> = said.earlier_topics.iter().copied().chain(std::iter::once(said.topic)).collect();
         for &(who, to) in turns {
             if let Some(&f) = def.follow_ups.iter().find(|&&f| data.infos.get(&f).is_some_and(between_actors) && self.can_say(who, Some(to), f)) {
                 let topic = data.infos.get(&f).and_then(|d| d.topic).unwrap_or(FormId(0));
                 self.say_line(who, Some(to), topic, f, next);
                 self.set_line_look(who, said.look);
+                if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == who && s.info == f) {
+                    s.earlier_topics = earlier;
+                }
                 return;
             }
-            // "If this box is unchecked, conversations will never use the same topic twice
-            // (in the same conversation)" [documented: GECK wiki Quest Data Tab, Allow
-            // Repeated Conversation Topics]: a topic used already is passed over unless
-            // the line's quest allows it.
-            let earlier: Vec<FormId> = said.earlier_topics.iter().copied().chain(std::iter::once(said.topic)).collect();
             let mut linked: Vec<(FormId, FormId)> = Vec::new();
             for link in self.links_after(said.topic, def) {
                 if let Some(i) = self.link_line_where(who, Some(to), link, between_actors, Says::Actor) {
@@ -1254,6 +1348,24 @@ impl ListKey {
 
 #[cfg(test)]
 mod list_order_tests {
+    #[test]
+    fn the_conversation_stamp_tells_screens_apart() {
+        use super::{conversation_stamp, Conversation, Line};
+        use fnv_sim::FormId;
+        let line = |response| Line { topic: FormId(1), info: FormId(2), response, remaining: 1.0 };
+        let talk = |l: Option<Line>, lines| Conversation { actor: FormId(3), through: None, line: l, choices: Vec::new(), topic_list: false, lines, then: None, ending: false };
+        assert_eq!(conversation_stamp(7, None), 0);
+        let first = conversation_stamp(7, Some(&talk(Some(line(0)), 1)));
+        assert_ne!(first, 0);
+        assert_eq!(first, conversation_stamp(7, Some(&talk(Some(line(0)), 1))));
+        // The next response of the line; the choices after it; the next line; the same actor's
+        // next conversation at the same place.
+        assert_ne!(first, conversation_stamp(7, Some(&talk(Some(line(1)), 1))));
+        assert_ne!(first, conversation_stamp(7, Some(&talk(None, 1))));
+        assert_ne!(first, conversation_stamp(7, Some(&talk(Some(line(0)), 2))));
+        assert_ne!(first, conversation_stamp(8, Some(&talk(Some(line(0)), 1))));
+    }
+
     use super::ListKey;
 
     #[test]

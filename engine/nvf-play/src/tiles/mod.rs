@@ -37,6 +37,7 @@
 //! anyway ([`fnv_ui::Ui::trait_write_counts`]).
 
 pub mod container_menu;
+pub mod dialog_menu;
 pub mod draw;
 pub mod input;
 pub mod item_card;
@@ -102,13 +103,13 @@ impl MenuFiles<'_, '_> {
 }
 
 /// Whether `screen()` is written in interface units ([`write_screen`]): only while a T15
-/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`, `ContainerMenu`, `TraitMenu`) or the start menu's Mods page
+/// menu (`MessageMenu`, `QuantityMenu`, `SleepWaitMenu`, `TutorialMenu`, `ContainerMenu`, `TraitMenu`, `DialogMenu`) or the start menu's Mods page
 /// (T11, `mods`) is switched on, whose files centre their boxes by `screen()` (MCM's `x`
 /// and `y`, menu-xml.md §10). The default game and the tile HUD alone keep the window's
 /// pixels [design]. The original reports interface units [observed: hud_menus capture
 /// 2026-10-31, three window sizes]; applying them unconditionally is a follow-up.
 pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
-    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.container || menus.traits || menus.start
+    menus.message || menus.quantity || menus.sleep_wait || menus.tutorial || menus.container || menus.traits || menus.start || menus.dialog
 }
 
 /// Write `screen()`'s traits for a window `window_width` x `window_height` (logical
@@ -116,7 +117,7 @@ pub fn interface_screen(menus: vanilla::TileMenus) -> bool {
 /// ([`screen_size`]) and `resolutionconverter` ([`resolution_converter`]); otherwise the
 /// window's size, as fnvtool's `--screen`, and no converter, as before T15a [design:
 /// menu-xml.md §4.2, `screen()` row]. `cropx` and `cropy` stay unset until their units are
-/// known [design]. The HUD's places are worked out from the shape alone
+/// known, but while the dialogue menu's file reads them (`dialog_menu`) [design]. The HUD's places are worked out from the shape alone
 /// (`fnv_game::ui_hud::write`), so they are the same either way.
 pub fn write_screen(ui: &mut fnv_ui::Ui, window_width: f32, window_height: f32, interface_units: bool) {
     let id = ui.screen();
@@ -895,6 +896,8 @@ impl Plugin for TilesPlugin {
             .init_resource::<trait_menu::TraitTiles>()
             .insert_resource(trait_menu::aid_from_env())
             .init_resource::<menus::TileMenuBlur>()
+            .init_resource::<dialog_menu::DialogTiles>()
+            .init_resource::<dialog_menu::SharedWritten>()
             // T15b: after the tutorial menu's keys, in the scripts' chain, before they run.
             .add_systems(Update, write_tutorial.in_set(PlaySet::Scripts).after(crate::tutorial_menu::keys).before(crate::script::run_scripts))
             .add_systems(Update, write.after(PlaySet::Physics).after(crate::compass::place).before(PlaySet::Activation))
@@ -905,6 +908,13 @@ impl Plugin for TilesPlugin {
             // T8: the pointer and keys after the engine's writes, before scripts (§4.1 step 1).
             .add_systems(Update, input::feed.after(write).after(crate::menu::WheelHoldSet).before(PlaySet::Activation))
             .add_systems(Update, update.after(PlaySet::Scripts).before(PlaySet::Ui))
+            // The dialogue menu (`dialog_menu`): what the model says, at each of the runtime's
+            // transitions and before the frame's scripts; then what they left measured and
+            // placed, worked out by `update`, and what can be hit as it is then drawn.
+            .add_systems(Update, dialog_menu::install_hook.after(PlaySet::Physics).before(PlaySet::Activation))
+            .add_systems(Update, dialog_menu::publish_system.in_set(PlaySet::Scripts).after(crate::dialogue::input).before(crate::script::run_scripts))
+            .add_systems(Update, dialog_menu::write_system.after(PlaySet::Scripts).before(update))
+            .add_systems(Update, dialog_menu::snapshot_system.after(update).before(PlaySet::Ui))
             // After the character menus' sync, so the trait menu's decision reads this frame's.
             .add_systems(Update, (draw::draw, draw::scroll, model::animate).chain().in_set(PlaySet::Ui).after(crate::chargen::ChargenSet))
             .add_systems(PostUpdate, vanilla::hide_hand_built.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
@@ -966,6 +976,7 @@ mod tests {
         assert!(interface_screen(vanilla::TileMenus { tutorial: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { container: true, ..Default::default() }));
         assert!(interface_screen(vanilla::TileMenus { traits: true, ..Default::default() }));
+        assert!(interface_screen(vanilla::TileMenus { dialog: true, ..Default::default() }));
         write_screen(&mut ui, 1280.0, 720.0, true);
         ui.update();
         assert_eq!(ui.get_float("M/Box/x").map(|x| (x * 100.0).round() / 100.0), Some(803.33));

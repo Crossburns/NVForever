@@ -1296,7 +1296,7 @@ fn random_anim_start(world: &WorldData, fid: u32) -> bool {
 /// `SpawnedDisabled`; docs/design/layer5-play.md §4). The light's model is drawn by
 /// nvf-play's `script_draw.rs` when enabled.
 #[allow(clippy::too_many_arguments)]
-fn spawn_dormant(
+pub(crate) fn spawn_dormant(
     commands: &mut Commands,
     cell_e: Entity,
     world: &WorldData,

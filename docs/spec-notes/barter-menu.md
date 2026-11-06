@@ -376,18 +376,14 @@ What the tile path does with these, and where it differs:
   reads the same way, from `QuantityMenu`'s file: `sPCMenuHintA` and `sPCMenuHintE` after `sOK`
   and `sCancel` [design] (the hand-built prompt, kept for the frame it opens and for a fallback,
   keeps its own letters). The cards' titles read
-  settings no plugin defines [observed: menu-xml.md §2.4], so the file would show
-  `BUILT_IN`'s labels; those do not fit a card (`ConditionMeter` stands 62 in and a title 5 in
-  [documented]; the label of the weight measures 72 units [observed: our shot]). A title that
-  holds such a fallback by where it came from (`Ui::built_in_label`) takes the hand-built figures'
-  card words (`card_title` in `pipboy/items.rs`), so the two drawings agree. A plugin's setting, a
-  mod's file or a script keeps its title even in the very same words. `BUILT_IN` itself is not
-  changed.
-  **Open question for the maintainer: how these words may be derived.** pipboy.md §5 records them
-  as seen on the owner's screenshots, and the rule for labels (menu-xml.md, "The rule for the
-  text") does not allow a label looked up from a screenshot and has no exception for words already
-  in use. The hand-built menu having them does not answer this. Until the maintainer decides, the
-  words stay as they are, here and in the hand-built figures.
+  settings no plugin defines [observed: menu-xml.md §2.4], so the file shows `BUILT_IN`'s
+  labels, and the tile menu leaves them as they are [design: the string rule, LEGAL.md; the
+  short words the original shows on its cards are not in the data files and are not
+  transcribed]. A plugin's setting, a mod's file or a script sets its own title. Those labels
+  do not fit a card (`ConditionMeter` stands 62 in and a title 5 in [documented]; the label of
+  the weight measures 72 units [observed: our shot]); how the card makes room for them, or
+  what shorter words NVForever writes of its own, is open. The hand-built figures
+  (`pipboy/items.rs`) keep their words, which this menu does not change.
 - **Heading, filter**: a click on a heading steps its category on, as its right arrow
   [observed: `container__category_heading_click`, 2 to 3]. `_num_filtered` is written, the rows
   the category leaves out [observed: 10 of 15, 12 of 15, 15 of 16]; the original keeps those
