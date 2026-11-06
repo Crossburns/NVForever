@@ -2,7 +2,8 @@
 //! by `nvf_play::pause`; `--play` only): the on/off choices of the command line that can
 //! change while the game runs. Each reads and writes the state its module uses, so a
 //! switch starts as the command line left it, then as `NVForever.ini` stored it (kept by
-//! `nvf_play::settings` like every switch of the page).
+//! `nvf_play::settings` like every switch of the page), except that in a test run a
+//! switch given on the command line keeps its state (`given_switches`, #1382).
 //!
 //! Left on the command line: what is fixed when the game starts (`--no-npc-packages`,
 //! `--no-actors`, FaceGen, weapons, `--no-lodgen`), most numbers (`--radius`; the volumes
@@ -38,8 +39,26 @@ const GROUP_PICTURE: &str = "Display";
 const GROUP_DEVELOPER: &str = "Debug";
 const GROUP_GRAPHICS: &str = "Graphics";
 
+/// The settings switches this run's command line gave (`nvf_play::settings::GivenSwitches`):
+/// the `--name` of each argument, without the `--size` a run taking over a load is given
+/// (the window's size then, handoff.rs). They win over the INI in a test run: a timed,
+/// measured or pictured run, whose results must be those of its switches (#1382).
+fn given_switches(args: &Args, line: &[String]) -> nvf_play::settings::GivenSwitches {
+    let handoff = line.iter().any(|a| a == "--handoff" || a.starts_with("--handoff="));
+    let given = line
+        .iter()
+        .filter(|a| a.starts_with("--"))
+        .map(|a| a.split('=').next().unwrap_or(a).to_string())
+        .filter(|a| !(handoff && a == "--size"))
+        .collect();
+    let win = args.run_seconds.is_some() || args.log_frame_times.is_some() || args.screenshot.is_some() || args.timelapse.is_some() || args.frame_json.is_some();
+    nvf_play::settings::GivenSwitches { given, win }
+}
+
 /// List the renderer's switches: those whose module is part of this run.
 pub fn register(app: &mut App) {
+    let given = given_switches(app.world().resource::<Args>(), &crate::command_line());
+    app.insert_resource(given);
     let has_lips = app.world().contains_resource::<LipState>();
     let has_heads = app.world().contains_resource::<HeadLookSettings>();
     let has_feet = app.world().contains_resource::<FootIkSettings>();
@@ -508,7 +527,7 @@ fn register_graphics(app: &mut App) {
             "anti-aliasing",
             GROUP_GRAPHICS,
             "Anti-aliasing",
-            "How edges are smoothed: multisampling Off, 2x, 4x or 8x (--msaa; the cut-out edges of plants too), or the picture smoothed afterwards: FXAA (cheapest, softest), SMAA (sharper, a little dearer) or TAA (over the frames; plants too, soft while moving). Multisampling is the dearest, more at each step: at 1920x1080 on an RTX 4070, 2x added about 0.8 ms a frame, 4x about 1.3 ms and 8x about 2.3 ms (Goodsprings and Novac at noon); FXAA, SMAA and TAA cost less than 4x. Where the processor sets the pace (the Strip at night) the choice costs next to nothing.",
+            "How edges are smoothed: multisampling Off, 2x, 4x or 8x (--msaa; the cut-out edges of plants too), or the picture smoothed afterwards: FXAA (cheapest, softest), SMAA (sharper, a little dearer) or TAA (over the frames; plants too, soft while moving; --graphics-only fxaa, smaa or taa). Multisampling is the dearest, more at each step: at 1920x1080 on an RTX 4070, 2x added about 0.8 ms a frame, 4x about 1.3 ms and 8x about 2.3 ms (Goodsprings and Novac at noon); FXAA, SMAA and TAA cost less than 4x. Where the processor sets the pace (the Strip at night) the choice costs next to nothing.",
             Slider::choice(graphics::AA_CHOICES.len(), |w| choice_part(graphics::aa_choice(w), graphics::AA_CHOICES.len()), |w, v| graphics::set_aa_choice(w, choice_index(v, graphics::AA_CHOICES.len())), |v| {
                 graphics::AA_CHOICES[choice_index(v, graphics::AA_CHOICES.len())].0.to_string()
             }),
