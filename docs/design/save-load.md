@@ -152,7 +152,8 @@ body    u32 length + zstd(JSON or postcard) of SaveBody
 - Each snapshot keeps its own `format` string (`fnv.game.state/N`, `fnv.sim.state/N`).
   New fields use `#[serde(default)]` so older saves still load (already the pattern in
   both snapshots); a change that cannot default bumps N and adds a migration function
-  from N−1, so old saves stay loadable.
+  from N−1, so old saves stay loadable. `RefExtra::killing_hit` is one: the dead of an
+  older save have no killing hit, as nothing in the save tells it [design].
 - Encoding: JSON keeps saves inspectable and is what the tests already use; size is the
   question. Measure a long session's snapshot first: if compressed JSON stays in the low
   megabytes (the original's 61-hour save is 8 MB uncompressed), keep JSON; otherwise
@@ -287,14 +288,29 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   The body is
   `nvf.save.body/1` = game snapshot + engine snapshot.
 - **Loading**: `nvforever --load <name|path>` reads the header first (its worldspace,
-  cell, position, heading, pitch, hour and weather start the world there; the weather is
+  cell, position, heading, pitch, hour, day and weather start the world there; the weather is
   kept while the weather system lists it there, not pinned as `--weather` pins it,
   spec-notes/world.md §6), then the body
   once the load order is known (remapped if it differs, §4.1); the script runtime restores the
   game and the simulation as it is made, before its first frame, and sends `RefChanged`
   for every reference the save changed so the drawn world follows; the engine part is put
-  back next. Loading while playing (console `load`, F9, the pause and main menus) starts
-  NVForever again with the same arguments and `--load` (those the save decides left out),
+  back next. The game's clock stays the save's: the residents' start clock goes only into
+  a new game, so `--day` never changes a loaded game's GameDaysPassed [design:
+  `residents::Core::prepare`; smoke `save-days-write`, `save-days-load`]. The sky alone
+  starts on the header's `game_days_passed`, over `--day` (`start_days` in `main.rs`), so
+  its weather rolls see no hours pass at the load. A restore that fails goes on from the
+  plugins' game, on `--day` or the plugins' day and at the save's hour; its sky starts on
+  the failed save's day and takes the game's once the game's hour has moved half a game
+  minute (about a second of play at TimeScale 30, not while paused or at TimeScale 0).
+  Going back to a lower day makes no volatility check; going forward (a failed save on day
+  25 with `--day 30`) can. A save made before the header held the day leaves the sky on
+  `--day` or the plugins' day; it takes the game's day at the same step, with up to 24
+  volatility checks at once, which can make one weather roll and replace the weather kept
+  from the save [design: `SkyState::follow_climate`, `SkyState::follow_game_clock`]. The
+  sky does not follow the game under two flags: with
+  `--still-sky` its day stays the one it started on, with `--time-scale` its own clock
+  counts on from there. Loading while playing (console `load`, F9, the pause and
+  main menus) starts NVForever again with the same arguments and `--load` (those the save decides left out),
   so a save always lands in a world built fresh from the plugins and nothing of the run
   before carries over.
 - **The change of run is hidden** (`engine/nvforever/src/handoff.rs`) [design, owner

@@ -234,6 +234,9 @@ struct Args {
     /// lists it (not a pin, unlike --weather).
     #[arg(skip)]
     start_weather: Option<String>,
+    /// A loaded game's GameDaysPassed, for the sky alone ([`start_days`]).
+    #[arg(skip)]
+    sky_day: Option<f32>,
     /// Override the weather's fog distances: "near,far" in game units.
     #[arg(long)]
     fog: Option<String>,
@@ -274,7 +277,9 @@ struct Args {
     /// Generated terrain: mesh vertex step in landscape grid vertices (1, 2, 4, 8, 16 or 32).
     #[arg(long, default_value_t = 2)]
     lodgen_step: usize,
-    /// Game days passed, for the moon phase (default: the GameDaysPassed global).
+    /// Game days passed at the start of a new game, whole days (default: the GameDaysPassed
+    /// global). A loaded save keeps its own game day; only the sky of a save made before
+    /// saves held the day starts on this, until it follows the game.
     #[arg(long)]
     day: Option<f32>,
     /// Do not apply the image-space grade (the worldspace's image space and the weather's
@@ -554,8 +559,8 @@ struct Args {
     new_game: bool,
     /// With --play: load a save (a name in NVForever's saves folder, or a path to a
     /// .nvfsave): start at its place and put its state back (nvf_play::save,
-    /// docs/design/save-load.md); --cell, --pos, --heading, --pitch, --hour, --weather and
-    /// --world are taken from the save.
+    /// docs/design/save-load.md); --cell, --pos, --heading, --pitch, --hour, --day, --weather
+    /// and --world are taken from the save.
     #[arg(long, requires = "play", conflicts_with = "new_game")]
     load: Option<String>,
     /// With --play: open on the main menu (nvf_play::main_menu): Continue, New Game, Load
@@ -1024,7 +1029,8 @@ fn main() -> AppExit {
         None => None,
     };
     sky_state.time_scale = args.time_scale.max(0.0);
-    sky_state.days_passed = args.day.or_else(|| sky::find_global(&world, "GameDaysPassed")).unwrap_or(0.0).floor();
+    let (start_day, sky_day) = start_days(args.day, args.sky_day, sky::find_global(&world, "GameDaysPassed"));
+    sky_state.days_passed = sky_day;
     if let Some(dir) = &args.timelapse {
         if let Err(e) = fnv_install::guard_write(dir, None) {
             return fail(format!("--timelapse {}: {e}", dir.display()));
@@ -1149,7 +1155,7 @@ fn main() -> AppExit {
     } else {
         // Game hours per second: the sky's rate when it runs, else the NPCs' own.
         let rate = if sky_state.time_scale > 0.0 { sky_state.time_scale as f64 } else { args.npc_timescale.max(0.0) as f64 / 3600.0 };
-        let clock = residents::Clock { hour: sky_state.hour, days_passed: sky_state.days_passed, rate };
+        let clock = residents::Clock { hour: sky_state.hour, days_passed: start_day, rate };
         match residents::Residents::build(&world, &npc_packages, clock, args.npc_speed, args.play) {
             Ok(mut r) => {
                 r.set_keep_apart(!args.actors_pass_through);
@@ -1750,12 +1756,21 @@ fn start_from_save(name: &str, opened: &world::OpenedPlugins, args: &mut Args) -
     args.heading = pl.heading_deg;
     args.pitch = pl.pitch_deg;
     args.hour = header.game_hour;
+    args.sky_day = header.game_days_passed;
     if header.weather.is_some() && args.weather.is_none() {
         args.start_weather = header.weather.clone();
     }
     // Before the log is set up: straight to the output.
     eprintln!("load: {} ({}, level {}, {}): starting at {:?}", path.display(), header.player_name, header.level, header.location, pl);
     Ok(nvf_play::save::PendingLoad { path, body, order })
+}
+
+/// The whole days a run starts on: the game's start clock (`--day`, else the plugins'), and
+/// the sky's, which a save's day overrides. A save's day stays out of the start clock: a
+/// restore that fails goes on from the plugins' game, which is not on that save's day.
+fn start_days(day: Option<f32>, sky_day: Option<f32>, plugins: Option<f32>) -> (f32, f32) {
+    let game = day.or(plugins).unwrap_or(0.0).floor();
+    (game, sky_day.map_or(game, f32::floor))
 }
 
 /// The arguments of this run without those a save or the window decide (with their
@@ -2113,7 +2128,7 @@ fn screenshot_and_exit(
 
 #[cfg(test)]
 mod tests {
-    use super::{restart_args, vertical_fov, with_default_mode, with_schemas_beside, Args};
+    use super::{restart_args, start_days, vertical_fov, with_default_mode, with_schemas_beside, Args};
     use clap::Parser;
 
     fn parse(a: &[&str]) -> Args {
@@ -2147,6 +2162,17 @@ mod tests {
         let args = parse(&["--play", "--menu"]);
         assert!(args.play && args.menu);
         assert!(Args::try_parse_from(["nvforever", "--explore", "--play"]).is_err());
+    }
+
+    #[test]
+    fn a_saves_day_starts_the_sky_and_not_the_game() {
+        // A save's day, over --day for the sky, never in the game's start clock (#1607).
+        assert_eq!(start_days(None, Some(25.375), Some(5.0)), (5.0, 25.0));
+        assert_eq!(start_days(Some(30.0), Some(25.375), Some(5.0)), (30.0, 25.0));
+        // A save without the day, and a new game: both on --day, else the plugins' day.
+        assert_eq!(start_days(Some(30.5), None, Some(5.0)), (30.0, 30.0));
+        assert_eq!(start_days(None, None, Some(5.5)), (5.0, 5.0));
+        assert_eq!(start_days(None, None, None), (0.0, 0.0));
     }
 
     #[test]
