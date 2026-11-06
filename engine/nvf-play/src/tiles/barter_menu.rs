@@ -189,6 +189,10 @@ fn write(ui: &mut Ui, s: &Snapshot, st: &mut BarterTiles) {
     for path in [FLOW, AMOUNT, CAPS] {
         set(ui, path, "alpha", Value::Num(if s.affordable { 255.0 } else { 64.0 }));
     }
+    // The file leaves both buttons' `visible` to code, and Exit stands under Accept only while
+    // Accept's is set: both read 1 [observed 2026-11-06: ov_barter, Exit's y 47].
+    set(ui, ACCEPT, "visible", on(true));
+    set(ui, EXIT, "visible", on(true));
     set(ui, ACCEPT, "target", on(s.chosen));
     for (button, hint) in [ACCEPT, EXIT].into_iter().zip(&s.hints) {
         set(ui, button, "_PCButtonText", Value::Str(hint.clone()));
