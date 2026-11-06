@@ -536,12 +536,16 @@ pub fn part_uses(a: &Appearance, world: &ActorWorld, ctx: &mut ActorCtx, stats: 
                 }
             }
         }
-        // The hair model is drawn as a cut-out, solid like the original's
-        // (`nif_spawn::hair_model_cut_out`, #1454).
+        // The hair model is drawn as a solid cut-out core (`nif_spawn::hair_model_cut_out`,
+        // #1454) with its fainter texels blended over it from a second draw
+        // (`nif_spawn::hair_model_layer`, #1576): shaved sides stay see-through.
+        let mut layers = Vec::new();
         if p.role == "hair" {
+            layers = vec![None; part.shapes.len()];
             for (i, _) in part.shapes.iter().enumerate().filter(|(_, s)| !s.cap) {
                 let Some(mut m) = ctx.models.materials.get(&materials[i]).cloned() else { continue };
                 if matches!(m.base.alpha_mode, AlphaMode::Blend) {
+                    layers[i] = nvf_assets::nif_spawn::hair_model_layer(&m).map(|l| ctx.models.materials.add(l));
                     nvf_assets::nif_spawn::hair_model_cut_out(&mut m);
                     materials[i] = ctx.models.materials.add(m);
                 }
@@ -552,7 +556,7 @@ pub fn part_uses(a: &Appearance, world: &ActorWorld, ctx: &mut ActorCtx, stats: 
         // The Pip-Boy light's glow shows only with the light on, which is not built, and
         // outfits hold a left sleeve for wearing a Pip-Boy and one for not (actors.md §1.2).
         hidden_shapes.extend(part.shapes.iter().filter_map(|s| s.name.clone().filter(|n| fnv_actor::mesh::hidden_for_pipboy(n, pipboy))));
-        uses.push((pi, PartUse { meshes, part, materials, hidden_shapes, by_ancestor: false }));
+        uses.push((pi, PartUse { meshes, part, materials, layers, hidden_shapes, by_ancestor: false }));
     }
     uses
 }
@@ -704,7 +708,7 @@ pub fn spawn_creature(
         };
         let materials = part.shapes.iter().map(|s| s.material.clone()).collect();
         let meshes = vec![None; part.shapes.len()];
-        uses.push(PartUse { meshes, part, materials, hidden_shapes: Vec::new(), by_ancestor: true });
+        uses.push(PartUse { meshes, part, materials, layers: Vec::new(), hidden_shapes: Vec::new(), by_ancestor: true });
     }
     // The creature's base scale (BNAM) on top of the reference's [hypothesis, §10.1].
     let rt = rt * Affine3A::from_scale(Vec3::splat(c.base_scale as f32));

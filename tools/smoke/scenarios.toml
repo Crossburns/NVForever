@@ -20277,16 +20277,29 @@ expect = [
 
 [[scenario]]
 name = "hair-solid-chet"
-source = "issue #1454: Chet's hair (hairwavy.nif) drew as a see-through shell around his head against the general store's window; its outer layer is mapped onto the soft edge of the texture's alpha. Hair models are now cut-outs (nif_spawn::hair_model_cut_out, nif.md §6 'Hair models are cut-outs'); beards stay blended. The owner's frame of the original (2026-11-03) shows a solid cap and a thin beard"
+source = "issue #1454: Chet's hair (hairwavy.nif) drew as a see-through shell around his head against the general store's window; its outer layer is mapped onto the soft edge of the texture's alpha. Hair models are now a solid cut-out core (nif_spawn::hair_model_cut_out) with the fainter texels blended over it (hair_model_layer, #1576; nif.md §6 'Hair models: a solid core and a blended layer'); beards stay blended. The owner's frame of the original (2026-11-03) shows a solid cap and a thin beard"
 note = "Chet is moved in front of the south window (0x001057F3), the player stands facing him and talks to him; frame hair_solid_chet.png in target/smoke shows his head against the window: the hair must be solid to its edge, with no see-through band, and his beard thin"
 areas = ["actors", "render"]
-paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/actors.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl"]
+paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/actors.rs", "engine/nvf-assets/src/actor.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "5:moveto:GSChetRef:0x001057F3:0:75:-38", NVF_PLAY_TEST_GOTO = "6:-575:560:545", NVF_PLAY_TEST_TALK = "8:GSChetRef=leave", NVF_PLAY_TEST_TALK_DELAY = "6", NVF_PLAY_TEST_SHOTS = "11:hair_solid_chet.png" }
 args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-sound", "--no-music", "--hour", "8.5"]
 run_seconds = 16
 expect = [
   { re = 'ai \[\d\d:\d\d\] GSChetRef: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Chet stands in front of the window" },
   { re = 'dialogue: conversation with GSChetRef started', label = "the dialogue camera frames his head" },
+]
+
+[[scenario]]
+name = "hair-shaved-mohawk"
+source = "issue #1576: as a cut-out (#1458) the Mohawk's shaved sides drew as solid hair; hairraiderspike.nif maps them onto a plateau of texture alpha at 0.65-0.75 (hairraider01.dds). Hair models are now a solid cut-out core at 0.8 with the fainter texels blended over it (nif_spawn::hair_model_cut_out, hair_model_layer; nif.md §6 'Hair models: a solid core and a blended layer')"
+note = "Jessup (0x00101C9F, hairraiderspike.nif, the Warhawk; his bandana covers the head, so RemoveAllItems takes it off) is enabled and moved in front of the general store's south window where hair-solid-chet puts Chet; the player stands 70 units behind him looking south; frame hair_shaved_mohawk.png in target/smoke shows the back of his head: the shaved sides must show the scalp under a thin brown layer, the crest solid (before #1576 the sides were solid brown)"
+areas = ["actors", "render"]
+paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/actors.rs", "engine/nvf-assets/src/actor.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "4:enable:0x00101C9F,4.5:call:0x00101C9F:RemoveAllItems,5:moveto:0x00101C9F:0x001057F3:0:75:-38", NVF_PLAY_TEST_GOTO = "6:-575:505:545", NVF_PLAY_TEST_LOOK = "7:180:0", NVF_PLAY_TEST_SHOTS = "10:hair_shaved_mohawk.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-sound", "--no-music", "--no-messages", "--hour", "8.5"]
+run_seconds = 16
+expect = [
+  { re = 'ai \[\d\d:\d\d\] JessupREF: put at \(-575, 434, 544\) in GSGeneralStore by a script \(MoveTo\)', label = "Jessup stands in front of the window" },
 ]
 
 [[scenario]]
