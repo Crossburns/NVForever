@@ -6368,6 +6368,86 @@ expect = [
 ]
 
 [[scenario]]
+name = "active-quest-write"
+source = "issue #1610: the active quest a script forced is read by GetActiveQuest after a load; the first half: force VCG02, read it, save (active-quest-load reads this save, so run them together)"
+areas = ["save", "scripts"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/pipboy/data.rs", "crates/fnv-game/src/functions/ui.rs"]
+env = { NVFOREVER_HOME = "active-quest-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "20:ForceActiveQuest VCG02;21:printc \"activequest is VCG02: %g\" (GetActiveQuest == VCG02);21.5:save aq-roundtrip;22:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 25
+expect = [
+  "console: activequest is VCG02: 1",
+  { re = 'save: wrote .*aq-roundtrip\.nvfsave', label = "the save is written" },
+]
+
+[[scenario]]
+name = "active-quest-load"
+source = "issue #1610: the second half: --load the save active-quest-write made; GetActiveQuest still reads VCG02"
+areas = ["save", "scripts"]
+paths = ["engine/nvf-play/src/save.rs", "engine/nvf-play/src/pipboy/data.rs", "crates/fnv-game/src/functions/ui.rs"]
+env = { NVFOREVER_HOME = "active-quest-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "14:printc \"activequest is VCG02: %g\" (GetActiveQuest == VCG02);15:close" }
+args = ["--play", "--load", "aq-roundtrip", "--no-voice"]
+run_seconds = 18
+expect = [
+  { re = 'load: engine state of .*aq-roundtrip\.nvfsave put back', label = "the engine state is put back" },
+  "console: activequest is VCG02: 1",
+]
+order = [["load: engine state of", "console: activequest is VCG02: 1"]]
+
+[[scenario]]
+name = "marker-found-write"
+source = "issue #1571: a save made inside a found map marker's radius pays nothing for it on load; the first half: Goodsprings is found, then saved (marker-found-load reads this save, so run them together)"
+areas = ["save", "map"]
+paths = ["engine/nvf-play/src/compass.rs", "engine/nvf-play/src/pipboy/data.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "marker-found-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "18:save marker-found;19:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 22
+expect = [
+  { re = 'compass: discovered .*\+10 XP', label = "the town is found, 10 XP" },
+  { re = 'save: wrote .*marker-found\.nvfsave', label = "the save is written" },
+]
+order = [["compass: discovered", "save: wrote"]]
+
+[[scenario]]
+name = "marker-found-load"
+source = "issue #1571: the second half: --load the save marker-found-write made, at the same place; no second discovery and no XP"
+areas = ["save", "map"]
+paths = ["engine/nvf-play/src/compass.rs", "engine/nvf-play/src/pipboy/data.rs", "engine/nvf-play/src/save.rs"]
+env = { NVFOREVER_HOME = "marker-found-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05" }
+args = ["--play", "--load", "marker-found", "--no-voice"]
+run_seconds = 18
+expect = [
+  { re = 'load: engine state of .*marker-found\.nvfsave put back', label = "the engine state is put back" },
+  { re = 'compass: discovered ', count = 0, label = "the marker the save holds is not found again" },
+]
+
+[[scenario]]
+name = "seated-save-write"
+source = "issue #1573: after loading a save made while seated the player stands and GetSitting reads 0; the first half: sit (Goodsprings bench 0010634A), GetSitting reads 3, save (seated-save-load reads this save, so run them together)"
+areas = ["save", "furniture"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-game/src/functions/furniture.rs"]
+env = { NVFOREVER_HOME = "seated-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "14:activate:0x0010634A", NVF_PLAY_TEST_CONSOLE = "19:player.getsitting;save seated;20:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 23
+expect = [
+  { re = 'console: GetSitting on player >> 3\.00', label = "seated before the save" },
+  { re = 'save: wrote .*seated\.nvfsave', label = "the save is written" },
+]
+
+[[scenario]]
+name = "seated-save-load"
+source = "issue #1573: the second half: --load the save seated-save-write made; the player stands, and GetSitting reads 0"
+areas = ["save", "furniture"]
+paths = ["engine/nvf-play/src/script.rs", "engine/nvforever/src/furniture.rs", "crates/fnv-game/src/functions/furniture.rs"]
+env = { NVFOREVER_HOME = "seated-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "12:player.getsitting;13:close" }
+args = ["--play", "--load", "seated", "--no-voice"]
+run_seconds = 16
+expect = [
+  { re = 'load: restored .*seated\.nvfsave', label = "the save is restored" },
+  { re = 'console: GetSitting on player >> 0\.00', label = "standing after the load" },
+]
+
+[[scenario]]
 name = "ammo-type-save-write"
 source = "issue #1574: the ammo type swapped into the weapon comes back on load; the first half: 10mm Pistol (0000434F) with 10mm (00004241) and 10mm JHP (0013E43B): it loads 10mm, Ammo Swap to JHP, save (ammo-type-save-load reads this save, so run them together)"
 areas = ["save", "combat"]
@@ -18942,6 +19022,20 @@ order = [[
 ]]
 
 [[scenario]]
+name = "shot-passes-collision-marker"
+source = "issue #1545 (owner): collision markers act as invisible walls; they must stop actors but let shots through. CollisionMarker primitives without XTRI are on the Invisible Wall layer, which characters collide with and shots pass (crates/fnv-phys/src/primitive.rs, layers::shot_ignores; physics.md §4.1)"
+note = "Goodsprings: the player stands 250 units south of the CollisionMarker box 0x00176AD0 (-69349, 7330, 8682; 87 x 34 x 138 units), facing north with the view level (the eye inside the box's height), and fires the 10mm pistol once at 12 s. Before the change the shot stopped on the box: 'dirt 1 (1 on collision without a material)'"
+areas = ["combat", "physics"]
+paths = ["crates/fnv-phys/src/primitive.rs", "crates/fnv-phys/src/layers.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_LOOK = "9:0:0", NVF_PLAY_TEST_CONTROL = "8:weapon,12:fire,12.2:fire" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-69349,7080,8650", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'combat: 1 shots .*, 1 world hits', label = "one shot, which strikes the world" },
+  { text = "impacts by material: dirt 1 (0 on collision without a material)", label = "it passes the collision marker and strikes the dirt behind it" },
+]
+
+[[scenario]]
 name = "dropped-clothes-fall"
 source = "issue #1604: clothing dropped from the inventory hung in the air: its folded ground model (armour MOD2, GO.NIF) is 2-4 dynamic bodies on hinges, and the drawn item follows one body only. Created references whose model's bodies are all dynamic now get one body (engine/nvf-play/src/phys.rs one_dynamic_body; simulation.md §5)"
 note = "Goodsprings, by the player: the Pre-War Spring Outfit, Leather Armor, Merc Charmer Outfit and Vault 21 Jumpsuit dropped from 8 s to 11 s from chest height, then the 10mm pistol at 12 s as a control; the ground is about 85 units below the drop point"
@@ -18956,6 +19050,20 @@ expect = [
   { re = 'dropped 0xFF00000[0-3] came to rest at', count = 4, label = "each piece of clothing comes to rest" },
   { re = 'dropped 0xFF00000[0-4] came to rest at .*, (?P<n>[\d.]+) below where its collision was added', range = [60, 120], all = true, label = "on the ground, about 85 units below the drop point, as the pistol" },
 ]
+
+[[scenario]]
+name = "mccarran-monorail-arrival"
+source = "issue #1605 (owner): leaving Camp McCarran's Terminal Building by the door onto the monorail track put the player under and inside the building. The door 0x000F627D (CampMCTermInt02) leads to 0x001287F6 at (-9263, 70863, 4792) in WastelandNV, a platform about 460 units above the terrain; the arrival rule has to find that floor (crates/fnv-phys/src/arrival.rs, physics.md §6.2; the squares around an outdoor arrival load first since #1633)"
+note = "the player starts in the Terminal Building and takes the monorail door at 8 s"
+areas = ["physics", "loading"]
+paths = ["crates/fnv-phys/src/arrival.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/script.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "8:activate:0x000F627D" }
+args = ["--cell", "CampMCTermInt02", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 25
+order = [[
+  { re = '0x000F627D activated by 0x00000014: \{"result":"teleported","to_door":"0x001287F6"', label = "the player takes the monorail door" },
+  { re = 'travel to worldspace 000DA726 \(WastelandNV\): feet \(-9263, 70863, [\d.]+\), floor z (?P<n>[\d.]+)', range = [4700, 4850], label = "the arrival finds the platform's floor, about 460 units above the terrain (not the ground under it)" },
+]]
 
 [[scenario]]
 name = "nellis-artillery-fires"
@@ -19236,6 +19344,67 @@ order = [[
   "settings: language Smoke Language",
   "language: en",
   "settings: language English",
+]]
+
+[[scenario]]
+name = "lucky38-door-closed"
+source = "#1541: the Lucky 38's outer door (Lucky38EntranceDoorActor 0x00118E76) stands closed until Victor opens it: a closed door is drawn and collides in its model's stored pose, not at the end of its Close sequence, which for this model holds the panels slid aside (docs/spec-notes/doors.md §1)"
+note = "the player starts in front of the entrance on the Strip and walks at it for 5 s: before the fix it walked past Victor through the open panels to the casino's own door 0x0013BB17 and went in"
+areas = ["doors", "activation"]
+paths = ["crates/fnv-collide/src/anim.rs", "engine/nvforever/src/doors.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/doors.rs"]
+env = { NVF_PLAY_TEST_GOTO = "5:1300:5938:1100", NVF_PLAY_TEST_LOOK = "6:90:5", NVF_PLAY_TEST_SHOTS = "8:lucky38_door_closed.png", NVF_PLAY_TEST_MOVE = "9:1:0,14:0:0", NVF_PLAY_TEST_ACTIVATE = "14.5" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=3453,5400,1100", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+manual = "lucky38_door_closed.png: the four red panels with diamonds closed behind Victor"
+expect = [
+  { text = "Door (Open: Lucky 38 Casino)", count = 0, label = "the casino's door is not offered through the closed outer door" },
+  { text = '"result":"teleported","to_door":"0x00112078"', count = 0, label = "nobody goes in" },
+]
+
+[[scenario]]
+name = "lucky38-door-opened"
+source = "#1541: once Victor's scripts open the outer door (SetOpenState 1), it slides aside and the player can walk in through the casino's door"
+areas = ["doors", "activation"]
+paths = ["crates/fnv-collide/src/anim.rs", "engine/nvforever/src/doors.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/doors.rs"]
+env = { NVF_PLAY_TEST_GOTO = "5:1300:5938:1100", NVF_PLAY_TEST_LOOK = "6:90:5", NVF_PLAY_TEST_CONSOLE = "7:00118E76.setopenstate 1;7.5:close", NVF_PLAY_TEST_SHOTS = "22:lucky38_door_opened.png", NVF_PLAY_TEST_MOVE = "22.5:1:0.15,29:0:0", NVF_PLAY_TEST_ACTIVATE = "29.5" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=3453,5400,1100", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 33
+manual = "lucky38_door_opened.png: the panels slid aside, the glass doors behind Victor"
+order = [[
+  "door 0x00118E76 opening",
+  { re = 'target 0x0013BB17 Door \(Open: Lucky 38 Casino\)', label = "the casino's door is offered" },
+  { text = '"result":"teleported","to_door":"0x00112078"', label = "the player goes in" },
+]]
+
+[[scenario]]
+name = "house-screen-house-then-yes-man"
+source = "#1542: Mr. House's penthouse screen shows House's face until Yes Man is uploaded (VMQYesMan01 stage 70), then Yes Man's: the idle tree's Idle-section looks played as a creature's standing look, the actor's screens shown only at material alpha 1/2 or more, and an idle's material tracks over the base idle's at the same priority"
+note = "Lucky38MrHouseREF 0x001264C5 (base MrHouse, screens NVDefaultScreen.NIF); the tree's roots NVPHMCYesMan (GetStage VMQYesMan01 >= 70), LooseNVPHMCconnectionLost, NVPHMCHouse [observed: FalloutNV.esm]. Before the fix the screen showed Yes Man's face from the start"
+areas = ["idles", "actors"]
+paths = ["engine/nvf-assets/src/actor.rs", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/material_anim.rs", "engine/nvforever/src/idles.rs", "engine/nvforever/src/actor_materials.rs", "crates/fnv-game/src/idles.rs"]
+env = { NVF_PLAY_TEST_FACE = "6:001264C5", NVF_PLAY_TEST_GOTO = "7:-1290:5590:18905", NVF_PLAY_TEST_LOOK = "8:135:22", NVF_PLAY_TEST_SHOTS = "9:house_screen_house.png,13:house_screen_yes_man.png", NVF_PLAY_TEST_CONSOLE = "10:setstage VMQYesMan01 70" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 15
+manual = "house_screen_house.png: House's face on the big screen; house_screen_yes_man.png: Yes Man's face"
+order = [[
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCHouseIdle .*\(Standing\)', label = "House's face first" },
+  "console: > setstage VMQYesMan01 70",
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCYesManIdle .*\(Standing\)', label = "Yes Man's face once he is uploaded" },
+]]
+
+[[scenario]]
+name = "house-screen-connection-lost"
+source = "#1542, owner 2026-11-05: the screen says Connection Lost once House is neutralized (GetGlobalValue VStoryEventMrHouseNeutralized > 0) and before Yes Man is uploaded: the tree's root LooseNVPHMCconnectionLost, an Idle-section idle with no children, played as the standing look"
+areas = ["idles", "actors"]
+paths = ["engine/nvforever/src/idles.rs", "crates/fnv-game/src/idles.rs", "crates/fnv-game/src/data.rs"]
+env = { NVF_PLAY_TEST_FACE = "6:001264C5", NVF_PLAY_TEST_GOTO = "7:-1290:5590:18905", NVF_PLAY_TEST_LOOK = "8:135:22", NVF_PLAY_TEST_SHOTS = "13:house_screen_lost.png", NVF_PLAY_TEST_CONSOLE = "10:set VStoryEventMrHouseNeutralized to 1" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 15
+manual = "house_screen_lost.png: Connection Lost... on the big screen"
+order = [[
+  { re = 'idle: Lucky38MrHouseREF plays NVPHMCHouseIdle .*\(Standing\)', label = "House's face first" },
+  "console: > set VStoryEventMrHouseNeutralized to 1",
+  { re = 'idle: Lucky38MrHouseREF plays LooseNVPHMCconnectionLost .*\(Standing\)', label = "Connection Lost once House is neutralized" },
 ]]
 
 [[scenario]]

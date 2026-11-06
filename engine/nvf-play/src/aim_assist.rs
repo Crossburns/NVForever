@@ -266,12 +266,12 @@ impl Guards {
     }
 }
 
-/// The sight ray's filter: what a walking character passes (water, triggers, zones,
-/// `layers::character_ignores`), the player's character, and every NPC's walking capsule
+/// The sight ray's filter: what a shot passes (water, triggers, zones, invisible walls:
+/// `layers::shot_ignores`), the player's character, and every NPC's walking capsule
 /// (`Key::Character`): a capsule is not the body, its hit volumes are, as for shots
 /// (`crate::combat`'s rays).
 pub fn sight_filter(player: Option<Key>, npcs: impl Iterator<Item = u32>) -> Filter {
-    let mut f = Filter { exclude_layers: layers::character_ignores(), ..Default::default() };
+    let mut f = Filter { exclude_layers: layers::shot_ignores(), ..Default::default() };
     f.exclude.extend(player);
     f.exclude.extend(npcs.map(Key::Character));
     f
@@ -680,9 +680,9 @@ mod tests {
     }
 
     #[test]
-    fn the_sight_filter_passes_what_a_character_passes() {
+    fn the_sight_filter_passes_what_a_shot_passes() {
         let f = sight_filter(Some(Key::Character(1)), [7u32].into_iter());
-        assert_eq!(f.exclude_layers, layers::character_ignores());
+        assert_eq!(f.exclude_layers, layers::shot_ignores());
         assert!(f.exclude.contains(&Key::Character(1)) && f.exclude.contains(&Key::Character(7)));
         assert!(!f.exclude.contains(&Key::Actor(7)), "the hit volume is the body");
     }
