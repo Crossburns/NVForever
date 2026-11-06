@@ -55,10 +55,18 @@ pub fn highlight() -> Color {
 const PANEL: Color = Color::srgba(0.0, 0.0, 0.0, 0.8);
 /// The panel's backing: the Pip-Boy and terminal screens' picture, a grey vignette, in
 /// amber at the Pip-Boy page's brightness (`crate::pipboy::device_screen`), nearly opaque
-/// so that the text reads over a bright room [design; how it reads not yet seen].
+/// so that the text reads over a bright room [design]. Transparency mixes in linear light,
+/// so little of it goes a long way: at 0.9 a wall of 152 showed through as 58 and the wall
+/// could be read behind the text [observed: the first shots at 1280 x 800].
 const BACKING: &str = "interface\\shared\\background\\pipboy.dds";
 const BACKING_BRIGHTNESS: f32 = 120.0;
-const BACKING_ALPHA: f32 = 0.9;
+const BACKING_ALPHA: f32 = 0.98;
+
+/// The faintest text on the panel, and the line saying what a page is for: a contrast of
+/// about 4 with the text's background over a white wall [design: worked out from the
+/// backing above, not yet seen].
+const FAINT: f32 = 0.6;
+const FAINT_LINE: f32 = 0.75;
 
 /// The panel's place: this far in from the view's right and 480 wide, narrower than the
 /// 640 it was, so that the player has the picture [design]. The longest words fit
@@ -331,9 +339,14 @@ pub fn spawn(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, view_w: f32) ->
         h.rect[0] += left;
     }
     // Over the picture, at its bottom left: how to look round (the mouse, then the
-    // controller), in the form the menus' buttons give their keys ("Done A)").
-    for (k, line) in ["Turn Drag)    Pan Right-drag or Shift-drag)    Zoom Wheel)    Reset View C)", "Turn Right Stick)    Pan Left Stick)    Zoom Triggers)    Reset View RS)"].iter().enumerate() {
-        text(p, &kit.body, line, 40.0, 872.0 + 28.0 * k as f32, 0.6, Align::Left, bone(0.6));
+    // controller), on the panel's backing: the plain text was lost over a bright shirt
+    // [observed: the first shots]. Only a key or button takes the form the menus' buttons
+    // give theirs ("Done A)"); a drag or a stick is said in words.
+    let lines = ["Drag to turn    Right-drag or Shift-drag to pan    Wheel to zoom    Reset View C)", "Right stick to turn    Left stick to pan    Triggers to zoom    Reset View RS)"];
+    let wide = lines.iter().map(|l| width(&kit.body, l, 0.6)).fold(0.0, f32::max);
+    piece(p, &kit.pieces.backing, [28.0, 866.0, wide + 24.0, 60.0], amber(BACKING_BRIGHTNESS).with_alpha(BACKING_ALPHA), PANEL);
+    for (k, line) in lines.iter().enumerate() {
+        text(p, &kit.body, line, 40.0, 872.0 + 28.0 * k as f32, 0.6, Align::Left, bone(0.9));
     }
     hits
 }
@@ -347,7 +360,7 @@ fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit) -> Vec<Hit> {
     text(p, &kit.head, m.title(), LEFT, 46.0, 1.0, Align::Left, bone(1.0));
     text(p, &kit.body, &m.caption(), RIGHT, 54.0, 0.8, Align::Right, sand(0.9));
     fill(p, LEFT, 86.0, RIGHT - LEFT, 2.0, bone(0.18));
-    text(p, &kit.body, m.tab.blurb(), LEFT, 94.0, 0.66, Align::Left, bone(0.55));
+    text(p, &kit.body, m.tab.blurb(), LEFT, 94.0, 0.66, Align::Left, bone(FAINT_LINE));
     // The rows.
     let rows = m.rows();
     let views: Vec<RowView> = rows.iter().map(|&r| m.view(r)).collect();
@@ -375,10 +388,10 @@ fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit) -> Vec<Hit> {
                 text(p, &kit.body, label, LEFT, y + 10.0, 0.85, Align::Left, label_colour);
                 let count = if *of > 0 { format!("{n}/{of}") } else { String::new() };
                 let lw = width(&kit.body, label, 0.85);
-                text(p, &kit.body, &count, LEFT + lw + 10.0, y + 14.0, 0.62, Align::Left, bone(0.4));
+                text(p, &kit.body, &count, LEFT + lw + 10.0, y + 14.0, 0.62, Align::Left, bone(FAINT));
                 let (ax0, ax1) = (RIGHT - 228.0, RIGHT - 8.0);
-                text(p, &kit.body, "<", ax0, y + 10.0, 0.85, Align::Centre, if on { accent(1.0) } else { bone(0.5) });
-                text(p, &kit.body, ">", ax1, y + 10.0, 0.85, Align::Centre, if on { accent(1.0) } else { bone(0.5) });
+                text(p, &kit.body, "<", ax0, y + 10.0, 0.85, Align::Centre, if on { accent(1.0) } else { bone(FAINT) });
+                text(p, &kit.body, ">", ax1, y + 10.0, 0.85, Align::Centre, if on { accent(1.0) } else { bone(FAINT) });
                 text(p, &kit.body, value, (ax0 + ax1) / 2.0, y + 10.0, 0.85, Align::Centre, if on { sand(1.0) } else { sand(0.8) });
                 hits.push(Hit { rect: [ax0 - 24.0, y, 48.0, h], what: HitWhat::Arrow(i, -1) });
                 hits.push(Hit { rect: [ax1 - 24.0, y, 48.0, h], what: HitWhat::Arrow(i, 1) });
@@ -406,8 +419,8 @@ fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit) -> Vec<Hit> {
                 let (a, b) = if kx < mid { (kx, mid) } else { (mid, kx) };
                 fill(p, a, ty - 1.0, b - a, 4.0, accent(if on { 0.95 } else { 0.6 }));
                 fill(p, kx - 5.0, ty - 10.0, 10.0, 22.0, if on { bone(1.0) } else { bone(0.75) });
-                text(p, &kit.body, low, LEFT, ty + 12.0, 0.55, Align::Left, bone(0.45));
-                text(p, &kit.body, high, RIGHT, ty + 12.0, 0.55, Align::Right, bone(0.45));
+                text(p, &kit.body, low, LEFT, ty + 12.0, 0.55, Align::Left, bone(FAINT));
+                text(p, &kit.body, high, RIGHT, ty + 12.0, 0.55, Align::Right, bone(FAINT));
                 hits.push(Hit { rect: [TRACK_X0 - 12.0, ty - 16.0, span + 24.0, 34.0], what: HitWhat::Track(i) });
                 hits.push(Hit { rect: [LEFT - 8.0, ty - 16.0, ARROW.x + 9.0, 34.0], what: HitWhat::Arrow(i, -1) });
                 hits.push(Hit { rect: [RIGHT - ARROW.x - 1.0, ty - 16.0, ARROW.x + 9.0, 34.0], what: HitWhat::Arrow(i, 1) });
@@ -429,10 +442,10 @@ fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit) -> Vec<Hit> {
         y += h;
     }
     if first > 0 {
-        text(p, &kit.body, "more above", RIGHT, ROWS_TOP - 22.0, 0.55, Align::Right, bone(0.4));
+        text(p, &kit.body, "more above", RIGHT, ROWS_TOP - 22.0, 0.55, Align::Right, bone(FAINT));
     }
     if y < ROWS_BOTTOM && views.len() > first && heights[first..].iter().sum::<f32>() > ROWS_BOTTOM - ROWS_TOP {
-        text(p, &kit.body, "more below", RIGHT, ROWS_BOTTOM - 4.0, 0.55, Align::Right, bone(0.4));
+        text(p, &kit.body, "more below", RIGHT, ROWS_BOTTOM - 4.0, 0.55, Align::Right, bone(FAINT));
     }
     // The scrollbar, when the rows do not all fit: the thumb is the part shown.
     let total: f32 = heights.iter().sum();
@@ -457,7 +470,7 @@ fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit) -> Vec<Hit> {
     for (i, t) in tabs.iter().enumerate() {
         let x = LEFT + tab_w * i as f32;
         let on = *t == m.tab;
-        text(p, &kit.head, t.title(), x + tab_w / 2.0, TAB_TEXT_Y, TAB_SCALE, Align::Centre, if on { bone(1.0) } else { bone(0.45) });
+        text(p, &kit.head, t.title(), x + tab_w / 2.0, TAB_TEXT_Y, TAB_SCALE, Align::Centre, if on { bone(1.0) } else { bone(FAINT) });
         if on {
             fill(p, x + 4.0, TABS_Y + 32.0, tab_w - 8.0, 3.0, accent(1.0));
         }
@@ -475,7 +488,7 @@ fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit) -> Vec<Hit> {
         }
         outline(p, x, ACTIONS_Y, bw, 48.0, 2.0, if done || on { accent(1.0) } else { bone(0.35) });
         text(p, &kit.head, a.title(), x + bw / 2.0, ACTIONS_Y + 8.0, 0.7, Align::Centre, bone(if on || done { 1.0 } else { 0.8 }));
-        text(p, &kit.body, a.hint(), x + bw / 2.0, ACTIONS_Y + 54.0, 0.5, Align::Centre, bone(0.4));
+        text(p, &kit.body, a.hint(), x + bw / 2.0, ACTIONS_Y + 54.0, 0.5, Align::Centre, bone(FAINT));
         hits.push(Hit { rect: [x, ACTIONS_Y, bw, 48.0], what: HitWhat::Action(i) });
     }
     hits

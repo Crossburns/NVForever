@@ -194,9 +194,10 @@ The rules:
   tick and Done's outline at full brightness; the chosen row's band and button's fill dim amber (brightness 128) a quarter opaque, as the menus' highlight; dividers at 18%. The first version was bone white with a turquoise
   accent and sand values.
 - **Backing and frame**: `background\pipboy.dds`, the grey vignette behind the Pip-Boy's
-  and terminal's screens, in amber at brightness 120, 0.9 opaque so the text reads over a
-  bright room (a black 0.8 if the picture cannot be read); how it reads is for the first
-  screenshots to say [design]. The frame is the menus' brackets (`chargen::draw`,
+  and terminal's screens, in amber at brightness 120, 0.98 opaque so the text reads over a
+  bright room (a black 0.8 if the picture cannot be read) [design; at 0.9 a bright wall
+  could be read behind the text, observed on the first shots: transparency mixes in
+  linear light]. The frame is the menus' brackets (`chargen::draw`,
   top_bracket.xml and bottom_bracket.xml): a line along the top and the bottom, a line
   fading away from each of their ends, 50 down and 40 up.
 - **Layout** (interface units, 960 high): one panel on the right, 480 wide, 32 in from the
@@ -230,7 +231,9 @@ The rules:
   - Four buttons along the bottom: RANDOM, UNDO, RESET, DONE (outlined brighter), each
     with its key and button under it in the form the other menus give a button's key
     ("Done A)"): "Space) X)", "Z) Y)", "R) Back)", "Enter) Start)".
-  - A hint in the bottom left of the picture, in the same form: turning, panning, zooming.
+  - A hint in the bottom left of the picture, on the same backing: turning, panning and
+    zooming in words ("Drag to turn"), since a drag or a stick is not a key; the same form
+    only for the keys and buttons ("Reset View C)").
 - **Sounds**: the game's own UI sound records (`ui_sounds.rs`): rows and tabs
   `UIMenuFocus` / `UIMenuPrevNext`, Reset and Undo `UIMenuCancel`, Done `UIMenuOK`.
 
