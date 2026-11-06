@@ -666,9 +666,11 @@ pub fn drive(
                 c.play.stop();
             }
         }
-        // A collection's idle ends when its actor walks off [design].
+        // A collection's idle ends when its actor walks off or is drawn into a
+        // conversation, so it can turn to the other and gesture (idles.md §12) [design].
         let walking = lo.is_some_and(|l| l.velocity != [0.0; 2]) || !standing.contains_key(&v.0);
-        if let Some(c) = idle.0.cur.as_mut().filter(|c| walking && matches!(c.source, IdleSource::PackageIdles | IdleSource::MarkerIdles)) {
+        let talking = talk_parts.iter().any(|p| p.actor == FormId(v.0));
+        if let Some(c) = idle.0.cur.as_mut().filter(|c| (walking || talking) && matches!(c.source, IdleSource::PackageIdles | IdleSource::MarkerIdles)) {
             c.play.stop();
         }
         // A fidget ends when its actor moves or puts the weapon away [design].
@@ -772,7 +774,8 @@ pub fn drive(
             *c = Collection { key, picker: IdlePicker::default(), next: None, retry: 0.0 };
         }
         c.retry = (c.retry - dt).max(0.0);
-        if busy.get(&actor).copied().unwrap_or(false) || c.retry > 0.0 {
+        // In a conversation the collection waits; its gestures come from the tree.
+        if busy.get(&actor).copied().unwrap_or(false) || c.retry > 0.0 || talk_parts.iter().any(|p| p.actor == FormId(actor)) {
             continue;
         }
         if c.next.is_none() {
@@ -942,6 +945,8 @@ pub fn drive(
             continue;
         }
         let key = TalkKey { talking: part.talking, info: part.info, response: part.response };
+        // The first frame of a part counts as a change for the wait's log line.
+        let fresh = !st.gesturing.contains_key(&actor);
         let g = st.gesturing.entry(actor).or_insert(Gesturing { key, retry: 0.0 });
         let changed = g.key != key;
         if changed {
@@ -959,7 +964,7 @@ pub fn drive(
         // clips (they step the feet; the walker's heading noise is far below it).
         let busy_body = lo.is_some_and(|l| l.velocity != [0.0; 2] || l.turn.abs() > fnv_actor::locomotion::TURN_RATE);
         if other || busy_body || (gesture_on && !changed) || (g.retry > 0.0 && !changed) {
-            if changed && (other || busy_body) {
+            if (changed || fresh) && (other || busy_body) {
                 let why = if other { "another idle plays" } else if lo.is_some_and(|l| l.velocity != [0.0; 2]) { "it walks" } else { "it turns on the spot" };
                 info!("talk gesture: {} waits: {why}", game.data.name(part.actor));
             }
