@@ -132,6 +132,7 @@ fn object(motion: Motion, half: f32, body_transform: Iso) -> CollisionObject {
         shape: Shape::Box { half_extents: [half; 3] }.into(),
         shell: 0.0,
         material: None,
+        wind: false,
     }
 }
 

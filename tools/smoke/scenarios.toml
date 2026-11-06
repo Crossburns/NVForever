@@ -1336,7 +1336,7 @@ kind = "tool"
 source = "CLAUDE.md: after detection changes, fnvtool actor detect (docs/design/detection.md §4)"
 areas = ["detection"]
 paths = ["crates/fnv-game/src/detection.rs", "engine/nvforever/src/detection.rs", "crates/fnvtool/src/actor_detect.rs"]
-commands = [["actor", "detect", "--schema", "schemas/fnv", "{data}", "FalloutNV.esm", "--detector", "SunnyRef"]]
+commands = [["actor", "detect", "--schema", "schemas/fnv", "{data}", "FalloutNV.esm", "--detector", "SunnyRef", "--light", "90", "--dark", "10"]]
 # The table of detection.md §4 ("never" is null in the output).
 expect = [
   { json = "situations.?situation=standing, lit.detected_out_to", equals = 2590.0 },
@@ -11437,6 +11437,17 @@ expect = [
   { re = 'sneak gauges summary: on true, shown (?P<n>[\d.]+) s', range = [10, 30], label = "shown for the time sneaking" },
   { re = 'sneak gauges summary: .*most light (?P<n>\d+)', range = [30, 100], label = "noon light measured at the player" },
   { re = 'sneak gauges summary: .*most noise (?P<n>\d+)', range = [100, 1000], label = "the shot is loud" },
+]
+
+[[scenario]]
+name = "detection-light-night"
+source = "#970 (docs/design/detection.md §3): the light at the player follows the original's GetActorLightAmount; at midnight in Goodsprings under NVWastelandClear it read 82.35 (210/255, the night sunlight's blue) in o11_light and o27_light"
+areas = ["detection"]
+paths = ["engine/nvforever/src/detection.rs", "crates/fnv-world/src/sky.rs"]
+args = ["--cell", "Goodsprings", "--play", "--hour", "0", "--weather", "NVWastelandClear", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { re = 'detection summary: .*; light at the player (?P<n>[\d.]+) to', range = [80, 85], label = "the least light at the player is the night sunlight's 82.35" },
 ]
 
 [[scenario]]
