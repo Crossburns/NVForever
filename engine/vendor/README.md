@@ -51,8 +51,10 @@ commit `6fe7064064b396b30df97341c2ca957ca1b00884`. It is not on crates.io, so it
 `[patch]`: the engine uses its `wgpu-ffx` and `wgpu-ffx-shaders-spv` crates as path
 dependencies, and `engine/Cargo.toml` excludes the workspace. Its shaders are the SDK's
 GLSL (FidelityFX-SDK commit `c6efa6bf7f2027b3ec94f28578bb5965eabb9e55`, with AMD's MIT
-notices), compiled to the SPIR-V that `wgpu-ffx-shaders-spv` embeds; `shaders/` and
-`xtask/` are that SPIR-V's source and stay with it. `LICENSE.MIT` holds both copyright
+notices), compiled to the SPIR-V that `wgpu-ffx-shaders-spv` embeds. `xtask/` and the
+shaders it compiles are that SPIR-V's source and stay with it: `shaders/src/fsr3upscaler`
+and what it includes (`shaders/include` with `fsr3upscaler`, `spd` for the luma pyramid
+and `fsr1` for RCAS). `LICENSE.MIT` holds both copyright
 notices; `tools/release/third_party_licenses.py` takes it from the workspace root for the
 release's `THIRD-PARTY-LICENSES.txt`.
 
@@ -68,9 +70,14 @@ Changes:
   variants.
 - `wgpu-ffx/src/lib.rs`: the dispatch no longer pushes and pops a device-wide error scope,
   which raced Bevy's pipeline compilation on other threads.
-- Left out: the upstream repository's Git and CI files.
+- Left out: the upstream repository's Git and CI files, and the shader sources of the SDK's
+  other effects (blur, Brixelizer, CACAO, CAS, the denoiser, depth of field, FSR 2, frame
+  interpolation, optical flow, SSSR and the rest). Nothing here compiles them:
+  `cargo xtask compile-shaders` builds the effects with a `perm.toml` in
+  `wgpu-ffx-shaders-spv/src`, only FSR 3.1. Every `#include` of its shaders resolves among
+  the kept files.
 
-The shader files are unchanged. To rebuild the SPIR-V, install `glslc` (Vulkan SDK or
+The kept shader files are unchanged. To rebuild the SPIR-V, install `glslc` (Vulkan SDK or
 Shaderc) and run `cargo xtask compile-shaders` in `engine/vendor/wgpu-ffx`; `cargo xtask
 vendor` downloads the whole AMD SDK and is not needed. Not used: AMD's signed DLLs, frame
 generation, the SDK's samples and prebuilt binaries.
