@@ -141,7 +141,10 @@ none.
 - **What the program writes.** The file leaves these open to code: the menu's `_CurrPoints`
   and `_MaxPoints` (the capture: 0 and 2 at the opening; how they follow a taken trait
   [hypothesis]); `string` of the title (`LUM_Headline_Title`), the description
-  (`TM_DescriptionText`) and the counter (`LUM_PointCounter`); `filename` and `visible` of
+  (`TM_DescriptionText`) and the counter (`LUM_PointCounter`), which NVForever words itself
+  on this path ("Needs: …", "Most ranks: 1", "2 left to choose") [design: the string rule,
+  LEGAL.md; the masters hold no setting for these lines; the title is their
+  `sTraitMenuTitleText`]; `filename` and `visible` of
   the picture (`LUM_SelectionIcon`); the rows, made from the template `LUM_PerkTemplate`
   (row `LUM_Perk`, with `ListItemText` and `LUM_Template_ItemMarker`): `string`, `_selected`,
   `_TextAlpha`, `listindex`, `_y`, `height`; of the list (`LUM_PerkList`) its `visible`, which
@@ -204,7 +207,7 @@ none.
 - **Not known yet** (a retake is coming): how a trait is taken in the original: `_CurrPoints`,
   the marks, the counter; what Reset restores with traits taken; `_TextAlpha` and `_enabled` on
   a trait that cannot be taken; a real wheel; the description at value 8; why the capture's list
-  lacks two traits.
+  lacks two traits (observer-checks.md, 91).
 - **When it falls back** [design]: every frame the file's paths, each row and its children,
   the room and the measures are read from the tree. Short of any, the rows go and the
   hand-built menu draws its sheet as it stands, and the next frame tries again; a tile the

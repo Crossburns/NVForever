@@ -5,9 +5,9 @@
 //!   list of menu names, empty by default; `HUDMainMenu`, and since T15a `MessageMenu`
 //!   and `QuantityMenu` (`super::menus`; the prompt also follows a container menu drawn from
 //!   its tiles, `super::menus::quantity_tiled`), and since T11 `StartMenu` (the pause menu's
-//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), and `DialogMenu`
-//!   (`super::dialog_menu`) are acted on. It is
-//!   read once at start (`TraitMenu`, `super::trait_menu`, among them), from the INI the settings page uses
+//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), `TraitMenu` (`super::trait_menu`)
+//!   and `DialogMenu` (`super::dialog_menu`) are acted on. It is
+//!   read once at start, from the INI the settings page uses
 //!   (`crate::settings::SettingsFile`: an unattended run in the player's own home reads
 //!   none). The test aid `NVF_PLAY_TEST_TILE_MENUS=<list>` sets it instead, so a smoke
 //!   scenario never writes the player's INI. [`TileMenus`] holds it.

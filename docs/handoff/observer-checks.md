@@ -1292,3 +1292,11 @@ The numbers above stay put so links to them hold; each item here gives its own p
     (e) the wheel: does `_wheelmoved` move the list and not the selection, and by what? (f)
     the marker's drag: `dragstarty`, `dragy` and `dragoffsety` through a drag and after it.
     (g) how dark is the backing at 193.8 compared with NVForever's at that value?
+
+## Added 2026-11-06 (the trait menu from its file, issue #1519)
+
+91. **The trait menu: what the capture could not take.** (P3; chargen.md §4.1.) In character
+    creation at 1280 x 720: (a) take a trait, then a second: how do `_CurrPoints`, the row's mark
+    and the counter follow? (b) what does Reset restore with traits taken? (c) `_TextAlpha` and
+    `_enabled` on a trait that cannot be taken. (d) a real wheel over the list. (e) the
+    description scrolled to value 8. (f) why did the capture's list lack two traits?

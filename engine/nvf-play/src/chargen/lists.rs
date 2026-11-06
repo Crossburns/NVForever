@@ -230,6 +230,14 @@ impl ListMenu {
         }
     }
 
+    /// The selected trait's requirement line, ranks and description, on the trait menu: the
+    /// facts under the words, for a drawing that words them itself (`crate::tiles::trait_menu`).
+    pub fn trait_facts(&self, g: &Game) -> Option<(String, u8, String)> {
+        let t = *self.trait_sheet()?.traits.get(self.selected)?;
+        let p = g.data.perks.get(&t)?;
+        Some((chargen::requirement_line(g, t), p.ranks, p.description.clone()))
+    }
+
     /// The row of trait `key` in the sheet's own order, if it still has one.
     pub fn trait_row(&self, key: FormId) -> Option<usize> {
         self.trait_sheet()?.traits.iter().position(|&t| t == key)

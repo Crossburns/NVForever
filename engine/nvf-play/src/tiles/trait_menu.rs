@@ -7,6 +7,9 @@
 //!   module never makes a sheet (the constructors use up what scripts asked for): it reads the
 //!   open menu ([`Snapshot`]), writes the file's "set in code" traits, and says what a click
 //!   stands for ([`TileAct`], queued for `crate::chargen`'s `input` later in the frame).
+//! - **The words it writes are NVForever's**, not the hand-built menu's ([`own_counter`],
+//!   [`own_text`]) [design: the string rule, LEGAL.md, chargen.md §4.1]: the file leaves the
+//!   counter and the description to code, and no setting in the masters holds these lines.
 //! - **Readiness** ([`prepare`], every frame, whatever was written last): the file built with
 //!   every path, every row and its children live, and sizes that can be used. Otherwise the rows
 //!   made so far go and the hand-built menu stands, its sheet as it was: nothing reopens, and the
@@ -43,7 +46,7 @@ use fnv_sim::FormId;
 use fnv_ui::{TileId, Ui, Value};
 use std::collections::HashSet;
 
-/// The menu's name [observed: the vanilla file, chargen.md §4.1].
+/// The menu's name [documented: trait_menu.xml, chargen.md §4.1].
 pub const TRAIT_MENU: &str = "TraitMenu";
 
 const MAIN: &str = "TraitMenu/NOGLOW_BRANCH/LUM_MainRect";
@@ -148,8 +151,10 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// What the open menu shows: `view` is `ListMenu::view`, `sheet` its sheet.
-    pub fn of(view: &ListView, sheet: &TraitSheet, generation: u64, navigated: u32) -> Snapshot {
+    /// What the open menu shows: `view` is `ListMenu::view`, `sheet` its sheet, `facts`
+    /// `ListMenu::trait_facts`. The title and the rows are the view's, read from the data; the
+    /// counter and the text's lines are worded here.
+    pub fn of(view: &ListView, sheet: &TraitSheet, facts: Option<(String, u8, String)>, generation: u64, navigated: u32) -> Snapshot {
         let rows: Vec<RowShown> = sheet.traits.iter().zip(&view.rows).map(|(&key, r)| RowShown { key, name: r.text.clone(), taken: r.marked, faint: r.dim }).collect();
         Snapshot {
             generation,
@@ -157,14 +162,26 @@ impl Snapshot {
             selected: Some(view.selected).filter(|&s| s < rows.len()),
             rows,
             icon: view.icon.clone(),
-            info: view.info.clone(),
-            counter: view.counter.clone(),
+            info: facts.map_or_else(String::new, |(needs, ranks, description)| own_text(&needs, ranks, &description)),
+            counter: own_counter(sheet.left()),
             done: view.done,
             taken: sheet.chosen.len(),
             most: sheet.max,
             navigated,
         }
     }
+}
+
+/// The counter, in NVForever's words: no singular to get wrong, and not the original's
+/// [design: the string rule, LEGAL.md].
+fn own_counter(left: usize) -> String {
+    format!("{left} left to choose")
+}
+
+/// The description: what the trait needs, its most ranks, then the data's text, in NVForever's
+/// words [design: the string rule, LEGAL.md].
+fn own_text(needs: &str, ranks: u8, description: &str) -> String {
+    format!("Needs: {needs}\nMost ranks: {ranks}\n\n{}", description.trim())
 }
 
 /// Which scroll a bar moves.
@@ -779,7 +796,7 @@ pub fn mark_tiles(ui: &mut Ui) {
 
 /// The keys the hand-built menu acts on itself (`crate::chargen`'s `input`), by the tile input's
 /// names, with the controller buttons standing in for them there (`crate::pad::menu_buttons`,
-/// and the shared ones). The file binds R and A and Y [documented]: all stay the hand-built
+/// and the shared ones). The file binds R and A and Y [documented: trait_menu.xml]: all stay the hand-built
 /// keys, a script's MenuTapKey acting through the file.
 pub const HAND_BUILT_KEYS: [&str; 15] = ["A", "R", "W", "S", "xup", "xdown", "xleft", "xright", "xbuttona", "xbuttonx", "xbuttony", "xbuttonlb", "xbuttonrb", "xbuttonlt", "xbuttonrt"];
 
@@ -935,10 +952,11 @@ pub(super) fn write_system(
     // What the menu shows is read when it changed.
     let from = (open.menu.clone(), open.generation, open.navigated, aid.long);
     let new = if st.needs_snapshot(rt.game.ui_tree.menu(TRAIT_MENU), &from) {
-        let view = crate::chargen::with_game(&mut script, &mut sim, |g| open.menu.view(g));
+        let read = crate::chargen::with_game(&mut script, &mut sim, |g| (open.menu.view(g), open.menu.trait_facts(g)));
+        let (view, facts) = read.map_or((None, None), |(v, f)| (Some(v), f));
         let sheet = open.menu.trait_sheet();
         let made = view.as_ref().zip(sheet).map(|(v, sheet)| {
-            let mut s = Snapshot::of(v, sheet, open.generation, open.navigated);
+            let mut s = Snapshot::of(v, sheet, facts, open.generation, open.navigated);
             if aid.long {
                 s.info = [s.info.as_str(); 2].join("\n\n");
             }
@@ -1113,6 +1131,16 @@ mod tests {
         assert!(st.menu.is_none() && st.rows.is_empty());
         assert!(!frame(&mut ui, &snapshot(2, 0, "x"), &mut st).yes());
         assert!(st.menu.is_none(), "the hand-built menu stays");
+    }
+
+    #[test]
+    fn the_lines_are_worded_here_around_the_datas_facts() {
+        assert_eq!(own_counter(2), "2 left to choose");
+        assert_eq!(own_counter(1), "1 left to choose");
+        assert_eq!(own_text("PER < 10", 1, "  What it does. "), "Needs: PER < 10
+Most ranks: 1
+
+What it does.");
     }
 
     /// The counter cut, as a mod might, and made again from the layout's spare.
