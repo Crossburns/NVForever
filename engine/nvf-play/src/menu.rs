@@ -525,6 +525,9 @@ fn wheel_hold(mut wheel: MessageReader<MouseWheel>, mut moved: MessageReader<Cur
     }
 }
 
+/// [`menu_mouse`]'s view of the item menus drawn from their files.
+type MouseTiles<'w> = (Option<Res<'w, crate::tiles::container_menu::ContainerTiles>>, Option<Res<'w, crate::tiles::barter_menu::BarterTiles>>, Option<Res<'w, crate::tiles::container_menu::TileWheelTitle>>);
+
 /// The pointer selects the row it comes onto (the list's highlight follows it
 /// [documented: list_box.xml, the template's rows take the pointer]), unless the wheel
 /// holds the selection ([`WheelHold`]); a click acts on it, Shift+click on its whole
@@ -541,7 +544,7 @@ fn menu_mouse(
     mut wheel: MessageReader<MouseWheel>,
     mut lines: Local<f32>,
     mut out: MessageWriter<MenuInput>,
-    (tile_menu, barter_tiles, tile_title): (Option<Res<crate::tiles::container_menu::ContainerTiles>>, Option<Res<crate::tiles::barter_menu::BarterTiles>>, Option<Res<crate::tiles::container_menu::TileWheelTitle>>),
+    (tile_menu, barter_tiles, tile_title): MouseTiles,
 ) {
     let Some(m) = active.0.as_ref().filter(|m| m.mode != Mode::Inventory && m.quantity.is_none()) else {
         wheel.clear();
