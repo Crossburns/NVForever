@@ -76,9 +76,10 @@
 //! upside down, and a slider as the settings page's sets how fast the view turns as a
 //! percentage of the game's: Mouse Sensitivity with keyboard and mouse
 //! (`fMouseSensitivity`), Stick Sensitivity with a controller (the right stick's look
-//! speeds), each kept apart (Left/Right or the arrows a step of 5%, a press or drag on the
-//! meter the value under the pointer; `crate::bindings::SENSITIVITY_LEAST`..`SENSITIVITY_MOST`)
-//! [design: owner 2026-11-03, #1451]; with a controller Rumble comes last.
+//! speeds), each kept apart (Left/Right or the arrows a step of `crate::bindings::SENSITIVITY_STEPS`,
+//! about a tenth apart, a press or drag on the logarithmic meter the value under the
+//! pointer; `crate::bindings::SENSITIVITY_LEAST`..`SENSITIVITY_MOST`, 5%-300%)
+//! [design: owner 2026-11-03, #1451; #1632]; with a controller Rumble comes last.
 //!
 //! **Quit** asks first [observed: the original's question and its choices]: Main Menu
 //! (nvforever starts again with `--menu`, [`MainMenuRequest`]), Exit Game, Cancel.
@@ -1347,12 +1348,12 @@ fn controls_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
             "Enter or a click: look up and down the other way round (the mouse and the right stick). Kept as \"{INVERT_ROW}\" in [Controls] of NVForever.ini."
         ),
         None if selected == sensitivity_row() && controller => format!(
-            "Left/Right or a click on the meter: how fast the right stick turns the view, a step of 5% ({} to {} of the game's). Kept as \"Stick Sensitivity\" in [Controller] of NVForever.ini.",
+            "Left/Right or a click on the meter: how fast the right stick turns the view, a step of about a tenth ({} to {} of the game's). Kept as \"Stick Sensitivity\" in [Controller] of NVForever.ini.",
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_LEAST),
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_MOST)
         ),
         None if selected == sensitivity_row() => format!(
-            "Left/Right or a click on the meter: how far the view turns as the mouse moves, a step of 5% ({} to {} of the game's). Kept as \"Mouse Sensitivity\" (radians a mouse count) in [Controls] of NVForever.ini.",
+            "Left/Right or a click on the meter: how far the view turns as the mouse moves, a step of about a tenth ({} to {} of the game's). Kept as \"Mouse Sensitivity\" (radians a mouse count) in [Controls] of NVForever.ini.",
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_LEAST),
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_MOST)
         ),

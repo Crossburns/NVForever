@@ -13,9 +13,13 @@
 //!   mine goes off at its end. Its length is the PROJ's timer scaled by the Explosives
 //!   skill of whoever set it off, never below `fMinesDelayMin` (0.2 s) [owner
 //!   2026-10-19: "the player's explosive skill determines how long you have", 3 s
-//!   nominal; hypothesis: the scaling is linear, timer × skill / 100; it fits the capture
-//!   `cl_d_mines_live`, a mine that went off between 0.5 and 1.5 s after the player of
-//!   that save stepped on it, simulation.md §1].
+//!   nominal]. The curve is timer × ([`FUSE_BASE`] + (1 − [`FUSE_BASE`]) × skill / 100):
+//!   about a third of the timer at Explosives 0 (1.05 s for the frag mine), the whole
+//!   timer at 100 [design, #1659: the earlier linear timer × skill / 100, a hypothesis,
+//!   gave a starting character under half a second, too short to step back or crouch
+//!   and disarm; the capture `cl_d_mines_live`, a mine that went off between 0.5 and
+//!   1.5 s after the player of that save stepped on it (simulation.md §1), still fits at
+//!   Explosives up to 23, and that save's skill was not recorded].
 //! - **Who sets it off.** Anyone but its owner's side: not a member of the owning
 //!   faction nor of a faction allied or friendly to it; a mine the player put down is
 //!   never set off by the player [owner 2026-10-19]. The engine decides that
@@ -29,6 +33,11 @@ use crate::data::{CombatForms, ProjectileStats};
 
 /// How often a burning fuse ticks and its light changes, seconds [design].
 pub const TICK_SECS: f32 = 0.25;
+
+/// The share of the PROJ's timer a mine's fuse has at Explosives 0; the rest comes with
+/// the skill, up to the whole timer at 100 [design, #1659: 1.05 s for the frag mine,
+/// a human reaction and a step back].
+pub const FUSE_BASE: f32 = 0.35;
 
 /// The game settings the mines read, with FalloutNV.esm's values as defaults.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,9 +68,11 @@ impl MineRules {
         p.alt_trigger_proximity * if exterior { self.exterior_radius_mult } else { 1.0 }
     }
 
-    /// The fuse a mine gets when an actor with this Explosives skill sets it off.
+    /// The fuse a mine gets when an actor with this Explosives skill sets it off:
+    /// timer × (`FUSE_BASE` + (1 − `FUSE_BASE`) × skill / 100), at least `delay_min`.
     pub fn fuse(&self, p: &ProjectileStats, explosives: f32) -> f32 {
-        (p.alt_trigger_timer * explosives.clamp(0.0, 100.0) / 100.0).max(self.delay_min)
+        let share = FUSE_BASE + (1.0 - FUSE_BASE) * explosives.clamp(0.0, 100.0) / 100.0;
+        (p.alt_trigger_timer * share).max(self.delay_min)
     }
 }
 
@@ -141,12 +152,53 @@ mod tests {
     }
 
     #[test]
-    fn fuse_scales_with_explosives_and_has_a_floor() {
+    fn fuse_scales_with_explosives_from_a_third_of_the_timer() {
         let r = MineRules::default();
-        assert!((r.fuse(&frag(), 100.0) - 3.0).abs() < 1e-5);
-        assert!((r.fuse(&frag(), 50.0) - 1.5).abs() < 1e-5);
-        assert_eq!(r.fuse(&frag(), 0.0), 0.2);
-        assert!((r.fuse(&frag(), 250.0) - 3.0).abs() < 1e-5);
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(near(r.fuse(&frag(), 100.0), 3.0));
+        assert!(near(r.fuse(&frag(), 50.0), 2.025));
+        assert!(near(r.fuse(&frag(), 20.0), 1.44));
+        // A starting character has about a second to react (#1659).
+        assert!(near(r.fuse(&frag(), 0.0), 1.05));
+        assert!(near(r.fuse(&frag(), -10.0), 1.05));
+        assert!(near(r.fuse(&frag(), 250.0), 3.0));
+        // Rising with the skill all the way.
+        let fuses: Vec<f32> = (0..=100).step_by(10).map(|s| r.fuse(&frag(), s as f32)).collect();
+        assert!(fuses.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn fuse_never_below_delay_min() {
+        let r = MineRules::default();
+        // A short timer: the share of it falls under fMinesDelayMin at low skill.
+        let short = ProjectileStats { alt_trigger_timer: 0.3, ..frag() };
+        assert_eq!(r.fuse(&short, 0.0), 0.2);
+        assert!((r.fuse(&short, 100.0) - 0.3).abs() < 1e-5);
+        let long_floor = MineRules { delay_min: 2.0, ..r };
+        assert_eq!(long_floor.fuse(&frag(), 0.0), 2.0);
+    }
+
+    #[test]
+    fn fuse_blinks_all_the_way_down() {
+        // The light keeps blinking until the fuse is out, at the shortest and longest fuse.
+        let r = MineRules::default();
+        for skill in [0.0, 100.0] {
+            let secs = r.fuse(&frag(), skill);
+            let mut f = Fuse::new(secs);
+            let dt = 1.0 / 64.0;
+            let mut last_tick = 0.0;
+            let mut t = 0.0;
+            loop {
+                t += dt;
+                match f.step(dt) {
+                    FuseStep::Tick => last_tick = t,
+                    FuseStep::Done => break,
+                    FuseStep::Burning => {}
+                }
+            }
+            assert!(t + 1e-3 >= secs);
+            assert!(t - last_tick <= 2.0 * TICK_SECS + dt, "skill {skill}: last tick {last_tick} of {t}");
+        }
     }
 
     #[test]

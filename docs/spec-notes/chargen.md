@@ -129,6 +129,96 @@ the view's height, from the top left of a 1024 × 800 rectangle centred on the s
   and is drawn at half brightness [hypothesis: no screenshot shows one; the template's
   `_TextAlpha` allows a fainter row].
 
+### 4.1 The trait menu drawn from its file (`[UI] TileMenus=TraitMenu`)
+
+Off by default; the hand-built menu of §4 stays whole with the switch off and whenever
+this does not hold (`engine/nvf-play/src/tiles/trait_menu.rs`). Sources: the vanilla files
+[observed: by `fnvtool ui tree --menu menus\trait_menu.xml` and the shared pieces it
+includes, read privately]; the original running, its job `trait` at 1280 x 720 [observed:
+private capture, below "the capture"]. Taking a trait was not captured: the job's clicks took
+none.
+
+- **What the program writes.** The file leaves these open to code: the menu's `_CurrPoints`
+  and `_MaxPoints` (the capture: 0 and 2 at the opening; how they follow a taken trait
+  [hypothesis]); `string` of the title (`LUM_Headline_Title`), the description
+  (`TM_DescriptionText`) and the counter (`LUM_PointCounter`), which NVForever words itself
+  on this path ("Needs: …", "Most ranks: 1", "2 left to choose") [design: the string rule,
+  LEGAL.md; the masters hold no setting for these lines; the title is their
+  `sTraitMenuTitleText`]; `filename` and `visible` of
+  the picture (`LUM_SelectionIcon`); the rows, made from the template `LUM_PerkTemplate`
+  (row `LUM_Perk`, with `ListItemText` and `LUM_Template_ItemMarker`): `string`, `_selected`,
+  `_TextAlpha`, `listindex`, `_y`, `height`; of the list (`LUM_PerkList`) its `visible`, which
+  its `_enabled` follows (the capture: 1), `_highlight_y`, `_selected_height`, and of its
+  `lb_scrollbar` the counts and value. The buttons are `LUM_ResetButton` and
+  `LUM_ContinueButton` (the capture: both `target` 1).
+- **Rows** [observed: the capture]: named `LUM_Perk`, `id` 10, the active component's name
+  carrying an instance suffix (`LUM_Perk:1`, `LUM_Perk:8`, none) that is not the row's index;
+  52 apart; `_TextAlpha` 255 and `_enabled` 1 on all read, so a fainter row is
+  [hypothesis] (§4). The capture's list had **14 rows, not 16**: Fast Shot and Four Eyes were
+  not in it, with `_num_filtered` 0. Why is not known [hypothesis: traits of that save's
+  player, or its requirements]; here the sheet decides the rows, as §2.
+- **`_selected` is "taken"**, the mark the row draws [hypothesis: the capture took none]; the
+  row chosen is the highlight.
+- **The highlight and the text are apart** [observed: the capture]: the menu opens with row
+  0's picture and text and `_highlight_y` -1; on a row it is the row's place and
+  `_selected_height` 52; off the rows it is -1 and 0, and the text and picture stay. Here the
+  sheet's chosen row stands meanwhile, and the highlight comes back on a key's move [design].
+- **The list's scroll** [observed: the capture, 14 rows of 52 in a list 470 x 676 at -15, 60]:
+  `_scroll_delta` 52, the bar's `_number_of_items` 2, `_number_of_visible_items` 1, `_jump_size`
+  13, `_step_size` 1, its marker 322 high at 0: so a value is one row, the last row whole at
+  value 1. These are the container capture's counts (barter-menu.md §8) with whole rows,
+  `tiles::list::counts`; sixteen rows would be 4 items, three to scroll, with the same step
+  [design: the formula, not a read]. Up and Down move the highlight 52; Page Down took
+  value 0 to 1 and the highlight to 624, row 13, 13 rows on, and Page Up back. A first Down from
+  a row did nothing once in the capture, which is not understood and not modelled.
+- **The file has a scroll bar for the description**: `TM_DescriptionScrollbar` in the box
+  `TM_DescriptionBox`, moving `TM_DescriptionText` by its value times its own `_ScrollDelta`
+  [observed: the capture: 20; `y` 5, -15, -35 at 0, 1, 2]. No control of NVForever's is added.
+  Its `_number_of_items` read 9 on every row, short texts too, with `_number_of_visible_items`
+  1, `_show_always` 0, `visible` 1: the file's own count, which **does not follow the text's
+  length**, so the arrows and the marker always show, as on the capture's shots, and §4's
+  "arrows" left out the marker. Its arrows moved it one value, `wheelmoved` one value, its page
+  areas nothing (`_jump_size` 0). The box is 275 high, the texts read 207 to 277.
+- **What ends that scroll**: only the count, at value 8, 160 down [documented: the prefab's
+  upper bound; hypothesis: not driven there in the capture]. It does not stop at the text's
+  end: a short text can be scrolled away. So every text up to 430 high is read to its end
+  by the file's count alone, the capture's longest among them. A text longer than that (a
+  mod's, or an aid's) gets the count raised just as far as brings its end into the box, and the
+  count goes back for the next row [design: a description must be readable to its end; the
+  original is taken to cut it off].
+- The bar stands beside the box, outside its width, so that box's window does not crop it;
+  windows further up still do (`fnv_ui::input::OUTSIDE_CLIP`) [hypothesis: a window crops what has `clips`; the capture's
+  shots show the arrows and marker there].
+- **Backing** [observed: the capture]: `LUM_Background` `alpha` 193.80, `brightness` 128, 1144 x
+  1070 at 291.33, -45, written here as the container's; the world is blurred behind it by eye on
+  the opening shot [hypothesis: the radius, the other tile menus']. The whole-screen dark
+  sheet is the hand-built menu's only. §8's 0.4 was a reading of one screenshot's pixels.
+- **`stats_icon_badge`** [observed: the capture]: not visible, `Interface\Shared\empty.dds`;
+  nothing here writes it.
+- **Keys** stay the hand-built menu's (`crate::chargen`), so a press acts once, and R and A
+  through the file's `_PCButton_*` act only for a script's MenuTapKey or a controller not
+  standing in for them. In the capture Left and Right moved nothing. Here, with tiles only,
+  they scroll the description, NVForever's addition [design: the keyboard's and the
+  controller's route to a description's end]. Page Up/Down step by the rows the list shows
+  whole. The wheel over the description or its bar scrolls the text, elsewhere the list
+  [documented: the file's `wheelable`; the capture's synthetic wheel moved neither, so a real
+  wheel is unread]; scrolling never changes the chosen row, nor does the pointer resting on a
+  row that moved under it.
+- **Not known yet** (a retake is coming): how a trait is taken in the original: `_CurrPoints`,
+  the marks, the counter; what Reset restores with traits taken; `_TextAlpha` and `_enabled` on
+  a trait that cannot be taken; a real wheel; the description at value 8; why the capture's list
+  lacks two traits (observer-checks.md, 91).
+- **When it falls back** [design]: every frame the file's paths, each row and its children,
+  the room and the measures are read from the tree. Short of any, the rows go and the
+  hand-built menu draws its sheet as it stands, and the next frame tries again; a tile the
+  model needs coming back brings the tiles back. One opening keeps its scrolls through that; a
+  new opening starts from the top with no highlight; the counts the file gave are kept for as
+  long as its tree stands, so what the engine wrote is not taken for them. A menu the scripts
+  put in this one's place is drawn at once by its own drawing, tiles and blur gone that frame.
+- **Evidence**: the unit tests (`tiles::trait_menu`) use a small layout written for them,
+  which says nothing of the file's geometry; the smoke scenarios `tiles-trait-*` read the
+  vanilla file.
+
 ## 5. The name menu (1051)
 
 [documented: texteditmenu.xml unless tagged]
@@ -160,6 +250,9 @@ the view's height, from the top left of a 1024 × 800 rectangle centred on the s
 
 - Unit tests: the sheets' rules (`fnv_game::chargen`), the list model, the texts, the
   name box, the test aid (`nvf-play` `chargen`).
+- The trait menu's file, missing or cut down, without touching the game's folder:
+  `NVF_PLAY_TEST_TRAIT_TILES=<s>:missing`, `<s>:cut:<tile name>`; `<s>:long` makes a
+  description long enough to scroll (§4.1, `tiles::trait_menu`).
 - Open a menu without the opening: `NVF_PLAY_TEST_SCRIPT=<s>:menu:<code>`; play it with
   `NVF_PLAY_TEST_CHARGEN=<s>:pick:<row>,<s>:type:<text>,<s>:clear,<s>:reset,<s>:done`;
   set `NVF_PLAY_TEST_SCRIPT_MENUS=off` so the unattended runs' auto-close leaves it open.
@@ -170,8 +263,13 @@ the view's height, from the top left of a 1024 × 800 rectangle centred on the s
 
 ## 8. Not built, or guessed
 
-- The world behind is not blurred (the original blurs it); the dark picture is 0.4 alpha
-  [observed: 33 against 54 brightness inside and just outside it].
+- The world behind is not blurred (the original blurs it), except behind the trait menu
+  drawn from its file (§4.1); the dark picture is 0.4 alpha [observed: 33 against 54
+  brightness inside and just outside it, on one screenshot; the capture of §4.1 reads the
+  picture's `alpha` 193.80].
+- The hand-built trait menu's description is cropped at its box with no way to scroll it,
+  and the other two pages' can run over what is below [design: read from `lists.rs`, not
+  seen running]; §4.1 reads to the end, the hand-built drawing has its own fix to come.
 - Sounds (list 5 items 41, 42; `nvf_play::ui_sounds`, menus `tag skills` and `traits`):
   the chosen row moving and the pointer onto Reset or Done `UIMenuFocus`, a row taken or
   given back `UIMenuPrevNext`, a row refused `UIMenuCancel`, Reset `UIMenuCancel`, Done

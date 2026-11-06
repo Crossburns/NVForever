@@ -56,7 +56,7 @@ pub struct OutfitsPlugin;
 
 impl Plugin for OutfitsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<OutfitStats>().add_systems(Update, (follow_inventory, arm_creatures.after(crate::creature_stance::StanceAttach))).add_systems(Last, report);
+        app.init_resource::<OutfitStats>().add_systems(Update, (follow_inventory.after(crate::weapons::drop_broken), arm_creatures.after(crate::creature_stance::StanceAttach).after(crate::weapons::drop_broken))).add_systems(Last, report);
     }
 }
 
@@ -599,7 +599,7 @@ pub(crate) mod tests {
             let shape = (name != "skeleton").then_some(name);
             std::fs::write(dir.0.join("meshes").join(format!("{name}.nif")), model_nif(shape)).unwrap();
         }
-        for name in ["mtidle", "1hpholster", "2hrholster"] {
+        for name in ["mtidle", "1hpholster", "2hrholster", "h2hholster"] {
             std::fs::write(dir.0.join("meshes").join(format!("{name}.kf")), idle_kf()).unwrap();
         }
         let data = GameData {
@@ -681,6 +681,46 @@ pub(crate) mod tests {
         let stats = app.world().resource::<OutfitStats>();
         assert_eq!(stats.replacements, 0);
         assert_eq!((stats.armour_off, stats.armour_on, stats.weapons_off, stats.weapons_on, stats.parts_on), (0, 0, 0, 0, 0));
+    }
+
+    /// #1714: a disarmed NPC's outfit puts the fists on as its weapon leaves the
+    /// inventory; the drop's own message, read after that, must not take them away again
+    /// (it left the NPC running with its arms out in the bind pose).
+    #[test]
+    fn a_disarmed_npc_keeps_the_fists_its_outfit_gave_it() {
+        use nvf_play::combat::WeaponBroken;
+        let (mut app, actor, _files) = spawn_fixture(false);
+        let reference = app.world().get::<ActorRig>(actor).unwrap().reference;
+        app.add_message::<WeaponBroken>();
+        // The rules drop the weapon (`nvf_play::combat::disarm`); the outfit follows first.
+        app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(Inventory::new());
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        assert_eq!(app.world().get::<WeaponHold>(actor).unwrap().stance.prefix, "h2h");
+        app.world_mut().write_message(WeaponBroken { form_id: reference, weapon: WEAPON, dropped: None });
+        app.world_mut().run_system_once(crate::weapons::drop_broken).unwrap();
+        let w = app.world_mut();
+        assert_eq!(w.get::<WeaponHold>(actor).map(|h| h.stance.prefix.as_str()), Some("h2h"));
+        assert!(w.get::<BlendPlayer>(actor).unwrap().layers[2].is_some(), "the fists' clip was taken away");
+        assert_eq!(w.query::<&HeldWeapon>().iter(w).count(), 0);
+    }
+
+    /// The other order: the drop is read while the weapon is still in the hand. Its hold
+    /// goes; the outfit then puts the fists on.
+    #[test]
+    fn a_weapon_dropped_from_the_hand_gives_way_to_the_fists() {
+        use nvf_play::combat::WeaponBroken;
+        let (mut app, actor, _files) = spawn_fixture(false);
+        let reference = app.world().get::<ActorRig>(actor).unwrap().reference;
+        app.add_message::<WeaponBroken>();
+        app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(Inventory::new());
+        app.world_mut().write_message(WeaponBroken { form_id: reference, weapon: WEAPON, dropped: None });
+        app.world_mut().run_system_once(crate::weapons::drop_broken).unwrap();
+        assert!(app.world().get::<WeaponHold>(actor).is_none());
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        let w = app.world_mut();
+        assert_eq!(w.get::<WeaponHold>(actor).map(|h| h.stance.prefix.as_str()), Some("h2h"));
+        assert!(w.get::<BlendPlayer>(actor).unwrap().layers[2].is_some());
+        assert_eq!(w.query::<&HeldWeapon>().iter(w).count(), 0);
     }
 
     #[test]

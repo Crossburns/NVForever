@@ -5,8 +5,8 @@
 //!   list of menu names, empty by default; `HUDMainMenu`, and since T15a `MessageMenu`
 //!   and `QuantityMenu` (`super::menus`; the prompt also follows a container menu drawn from
 //!   its tiles, `super::menus::quantity_tiled`), and since T11 `StartMenu` (the pause menu's
-//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), `StatsMenu` (the Pip-Boy's
-//!   S.P.E.C.I.A.L. tab, `super::stats_menu`) and `DialogMenu`
+//!   Mods page, `crate::pause::ModsEntry`, `super::mods`), `TraitMenu` (`super::trait_menu`),
+//!   `StatsMenu` (the Pip-Boy's S.P.E.C.I.A.L. tab, `super::stats_menu`) and `DialogMenu`
 //!   (`super::dialog_menu`) are acted on. It is
 //!   read once at start, from the INI the settings page uses
 //!   (`crate::settings::SettingsFile`: an unattended run in the player's own home reads
@@ -64,6 +64,9 @@ pub struct TileMenus {
     /// (`crate::menu::look`) not spawned (`super::container_menu`), and its prompt from
     /// `QuantityMenu`'s while it is so drawn (`super::menus::quantity_tiled`).
     pub container: bool,
+    /// `TraitMenu`: the trait menu from its file, the hand-built one (`crate::chargen::lists`)
+    /// not spawned (`super::trait_menu`).
+    pub traits: bool,
     /// `DialogMenu`: the dialogue menu from its file, the hand-built drawing
     /// (`crate::dialogue_menu`) not spawned (`super::dialog_menu`).
     pub dialog: bool,
@@ -92,6 +95,8 @@ impl TileMenus {
                 menus.stats = true;
             } else if name.eq_ignore_ascii_case(super::container_menu::CONTAINER_MENU) {
                 menus.container = true;
+            } else if name.eq_ignore_ascii_case(super::trait_menu::TRAIT_MENU) {
+                menus.traits = true;
             } else if name.eq_ignore_ascii_case(super::dialog_menu::DIALOG_MENU) {
                 menus.dialog = true;
             } else {
@@ -130,12 +135,12 @@ pub(crate) fn setup(app: &mut App) {
 
 impl TileMenus {
     /// The menus the switch acts on, in its order.
-    pub const NAMES: [&str; 9] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::tutorial_menu::TUTORIAL_MENU, super::container_menu::CONTAINER_MENU, super::mods::START_MENU, super::stats_menu::STATS_MENU, super::dialog_menu::DIALOG_MENU];
+    pub const NAMES: [&str; 10] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::tutorial_menu::TUTORIAL_MENU, super::container_menu::CONTAINER_MENU, super::trait_menu::TRAIT_MENU, super::mods::START_MENU, super::stats_menu::STATS_MENU, super::dialog_menu::DIALOG_MENU];
 
     /// The start-up line's end: the menus drawn from tiles, or none, and that the container's
     /// prompt follows it when its own switch is off (`super::menus::quantity_tiled`).
     pub fn line(&self) -> String {
-        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.tutorial, self.container, self.start, self.stats, self.dialog]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
+        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.tutorial, self.container, self.traits, self.start, self.stats, self.dialog]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
         if on.is_empty() {
             "no menu drawn from tiles".into()
         } else if self.container && !self.quantity {
@@ -525,6 +530,10 @@ mod tests {
         let both = (TileMenus { container: true, quantity: true, ..TileMenus::default() }, vec!["BarterMenu".to_string()]);
         assert_eq!(TileMenus::parse("ContainerMenu,QuantityMenu,BarterMenu"), both);
         assert_eq!(both.0.line(), "QuantityMenu, ContainerMenu drawn from tiles");
+        // The trait menu; CharGenMenu, its neighbour, not built yet.
+        let traits = TileMenus { traits: true, ..TileMenus::default() };
+        assert_eq!(TileMenus::parse("traitmenu, CharGenMenu"), (traits, vec!["CharGenMenu".to_string()]));
+        assert_eq!(traits.line(), "TraitMenu drawn from tiles");
         // The dialogue menu, on its own and off unless named.
         let dialog = TileMenus { dialog: true, ..TileMenus::default() };
         assert_eq!(TileMenus::parse(" dialogmenu "), (dialog, Vec::new()));

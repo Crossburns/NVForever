@@ -433,6 +433,12 @@ pub fn spawn_muzzle(commands: &mut Commands, actor: &SpawnedActor, weapon_node: 
 /// A weapon that broke leaves its actor's hand (docs/spec-notes/combat-rules.md §17):
 /// its model is taken off the skeleton and the weapon clips stop. The weapon itself now
 /// lies on the ground as a dropped reference (`nvf_play::dropped` draws it).
+///
+/// Only while the actor still holds that weapon: an NPC's outfit follows its inventory
+/// (`outfits::follow_inventory`), which takes the dropped weapon off and puts the fists
+/// on. Taking the hold away after that left a disarmed NPC with no arm clips at all,
+/// running with its arms out in the bind pose (#1714). This runs before it, so a drop
+/// seen in the same frame is cleared first and the fists come after.
 pub fn drop_broken(
     mut commands: Commands,
     mut broken: MessageReader<WeaponBroken>,
@@ -440,6 +446,10 @@ pub fn drop_broken(
     mut holds: Query<(Entity, &crate::limbs::ActorRig, &mut BlendPlayer, &WeaponHold)>,
 ) {
     for b in broken.read() {
+        if !held.iter().any(|(_, h)| h.reference == b.form_id && h.weapon == b.weapon) {
+            info!("weapons: {:08X}'s {} is no longer in its hand: its hold now is left alone", b.form_id, b.weapon);
+            continue;
+        }
         for (e, _) in held.iter().filter(|(_, h)| h.reference == b.form_id) {
             commands.entity(e).despawn();
         }
@@ -495,6 +505,9 @@ pub fn spawn_model(
         let bone = names().find_map(|n| skel.by_name.get(bones.get(n)?.trim()).copied());
         let tr = Transform::from_matrix(Mat4::from(part.root * s.transform));
         let e = commands.spawn((Mesh3d(s.mesh.clone()), MeshMaterial3d(s.material.clone()), tr)).id();
+        if let Some((_, names)) = &s.skin {
+            nvf_assets::actor::skin_in_place(commands, e, names.len());
+        }
         // Named, so the holder's clips can drive its glow (`##FrontBulbs:0` in
         // `1hpattack3.kf`; actor_materials.rs).
         if let Some(n) = &s.name {

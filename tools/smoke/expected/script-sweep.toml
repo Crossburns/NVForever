@@ -33,9 +33,13 @@ run = 384
 with_problems = 50
 
 [summary.problems.call_failed]
+# +1 cause, +31 scripts since #1687: a call on an empty reference gives 0 and the script
+# goes on, as in the original (observer check 14), so terminal scripts that stopped at
+# their first such call meet their next ones (Activate +11, IsAnimPlaying 11 new,
+# SetUnconscious +9); no more scripts have problems.
 # +1 cause, +7 scripts since #1299 (AddReputation with axis 2 or 3).
-causes = 54
-scripts = 359
+causes = 55
+scripts = 390
 
 [summary.problems.script_error]
 causes = 1

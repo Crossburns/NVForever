@@ -140,12 +140,14 @@ pub struct TileMenuBlur {
     pub tutorial: bool,
     /// `ContainerMenu` is drawn from its tiles.
     pub container: bool,
+    /// `TraitMenu` is drawn from its tiles.
+    pub traits: bool,
 }
 
 impl TileMenuBlur {
     /// Any menu drawn from its tiles wants the world blurred.
     pub fn any(self) -> bool {
-        self.tutorial || self.container
+        self.tutorial || self.container || self.traits
     }
 }
 
@@ -229,6 +231,8 @@ pub fn hand_built_takes(menu: &str, key: &str) -> bool {
         &super::stats_menu::HAND_BUILT_KEYS
     } else if menu.eq_ignore_ascii_case(super::container_menu::CONTAINER_MENU) {
         &super::container_menu::HAND_BUILT_KEYS
+    } else if menu.eq_ignore_ascii_case(super::trait_menu::TRAIT_MENU) {
+        &super::trait_menu::HAND_BUILT_KEYS
     } else if menu.eq_ignore_ascii_case(super::dialog_menu::DIALOG_MENU) {
         &super::dialog_menu::HAND_BUILT_KEYS
     } else {

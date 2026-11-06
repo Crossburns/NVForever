@@ -63,6 +63,12 @@ per control by the game's control name, the key and mouse button by name
 Default`, `Invert Y` and `Mouse Sensitivity`. Each start reads them and writes any line
 an existing INI lacks, so the file lists every control to edit by hand; the settings
 page's Controls tab rebinds a control and writes the section again.
+`Mouse Sensitivity` is radians of turn a mouse count (the game's `fMouseSensitivity`
+0.0020 is 100%); the Controls tab's slider runs from 5% to 300% of it on a logarithmic
+meter with steps about a tenth apart (`bindings::SENSITIVITY_STEPS`) [design: #1451,
+floor lowered from 25% for 1600 dpi mice in #1632]. A hand-edited value under 5% (or a
+`[Controller]` `Stick Sensitivity` under 0.05) is raised to it when read, not refused;
+values above 300% are kept.
 
 What a new game starts with is kept under `[General]`, by the original's own key names so
 a mod's INI lines can be copied in (`nvf_play::game_start`): `sCharGenQuest` is the quest

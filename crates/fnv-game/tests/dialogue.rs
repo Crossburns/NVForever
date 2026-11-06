@@ -1142,6 +1142,22 @@ fn a_dim_players_choice_shows_the_topics_dumb_response() {
     assert_eq!(g.choice_text(&fnv_game::dialogue::Choice { dumb: true, ..c[1].clone() }), "Bye");
 }
 
+/// A choice shows the player string codes of its text as they read now ("The name's
+/// &PCName;." in FalloutNV.esm, issue #1720); a code that names nothing stays as written.
+#[test]
+fn a_choice_shows_the_players_name_for_its_code() {
+    let mut f = fixture();
+    f.data.infos.get_mut(&FormId(B_ASK)).unwrap().prompt = Some("The name's &PCName;. &NoSuchCode; &pcsexpronoun;".into());
+    let mut g = game(&f);
+    g.player.name = Some("Courier Six".into());
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    let c = g.dialogue_choices().to_vec();
+    assert_eq!(g.choice_text(&c[0]), "The name's &PCName;. &NoSuchCode; &pcsexpronoun;", "the data's text is kept");
+    assert_eq!(g.shown_choice_text(&c[0]), "The name's Courier Six. &NoSuchCode; he");
+    assert_eq!(g.shown_choice_text(&c[1]), "Bye");
+}
+
 #[test]
 fn a_choice_with_only_a_shared_line_is_offered_and_says_that_line() {
     let f = fixture();

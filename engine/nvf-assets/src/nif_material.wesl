@@ -33,7 +33,9 @@
 //
 // Holes (nif_material.rs "Holes"): where `surface.holes.x` is 0 or more, the holes
 // texture's alpha (0-255) at or above it leaves a hole and the band of `surface.holes.y`
-// below it is drawn in `surface.holes_edge`; at 255 or more there are none.
+// below it is drawn in `surface.holes_edge`; at 255 or more there are none. With
+// `surface.holes.z` 1 the test is turned round (a cut-out): alpha below it leaves a
+// hole, and there is no band.
 //
 // FACEGEN_TINT (an NPC's face and skin shapes, main pass; nif_material.rs "FaceGen tint"):
 // the `.egt` colour offset is added to the diffuse texture's stored sRGB value (0-255)
@@ -363,10 +365,11 @@ fn nif_fragment(
     var holes_band = 0.0;
     @if(VERTEX_UVS_A) if surface.holes.x >= 0.0 && surface.holes.x < 255.0 {
         let h = holes_alpha(in.instance_index, in.uv) * 255.0;
-        if h >= surface.holes.x {
+        let cut_out = (surface.holes.z > 0.5);
+        if select((h >= surface.holes.x), (h < surface.holes.x), cut_out) {
             discard;
         }
-        holes_band = select(0.0, 1.0, h >= surface.holes.x - surface.holes.y);
+        holes_band = select(select(0.0, 1.0, h >= surface.holes.x - surface.holes.y), 0.0, cut_out);
     }
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     @if(FACEGEN_TINT && VERTEX_UVS_A) if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
