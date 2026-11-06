@@ -114,8 +114,8 @@ their layer, the incoming page's turn and come to the front. Besides:
   scale 1 → 0.52). TurnLeft undoes it.
 - `AllDone_Btn` stays at z 0 in every sequence: no sequence shows it.
 
-So the pages run Attract, Strength … Luck, Review, and the menu opens on Attract
-[observed: the captures of 2026-11-06, §5].
+So the pages run Attract, Strength … Luck, Review, and the menu opens on Attract, turning
+to Strength by itself [observed: the captures of 2026-11-06, §5].
 
 ## 5. What the screenshots show [observed: the six screenshots]
 
@@ -135,8 +135,13 @@ So the pages run Attract, Strength … Luck, Review, and the menu opens on Attra
   room nearly black at this spot, a dark corner. On opening the machine is in place in the
   first frames, with no slow fade to speak of at 3-frame samples.
 - The captures' first page is Attract ("Rate Your…", "TRY IT NOW!"), with the → and no ←,
-  the lever's face turned away, and bulbs 1 to 5 lit on it. NVForever lights none there
-  (§6, not changed) [hypothesis: the first attribute's value, this save's not read].
+  the lever's face turned away, and bulbs 1 to 5 lit on it. With no click (none in the
+  capture's steps) it turns to Strength over the next 17 samples, 3 frames apart, the same
+  five bulbs lit throughout. Strength was 5 on that save (the review page reads 5 4 5 5 5
+  5 10), so they are taken for Strength's [hypothesis: a fixed five is not ruled out, four
+  other attributes being 5 too].
+- A lit bulb there: near white (255, 255, 229) with dark brown numbers (106, 95, 66); a dull
+  one (159, 143, 96) at the median [observed: measured on the captures].
 - The camera: fitted to ten points of 7.jpg and 10.jpg (label rows 1 and 10, their
   edges, the poster's edges, the lever's + and −, the two arrow buttons), 7 px RMS: an
   eye at model point (0, 78.4, 98.9) looking along −y, tipped 9.15° down, vertical
@@ -170,9 +175,10 @@ So the pages run Attract, Strength … Luck, Review, and the menu opens on Attra
   field of view comes back at once on closing. The sequences are not touched.
 - A page turn plays the sequence of §4 on the model (from its start; a turn asked during
   another starts at once).
-- The bulbs 1…value are lit on an attribute's page by showing their two glow shapes (`:5`
-  over white so that the numbers stay dark, `:4` the halo); none elsewhere. The view has
-  no bloom, so the halo is the sprite alone.
+- The bulbs 1…value are lit on an attribute's page, and Strength's on the first page, by
+  showing their two glow shapes (`:5`, `:4` the halo); none on the review page. The view
+  has no bloom, so the halo is the sprite alone. NVForever's first page waits for a click
+  and does not turn by itself as §5's captures do (not changed).
 - Numbers: each review row's value and the two digits of the points remaining show the
   `BBNumber<n>.dds` picture.
 - Review rows: ◄ hidden at 1, ► hidden at 10 or with no point left (the ◄ at 1 by
@@ -219,7 +225,10 @@ with the owner's.
 
 - The PC keys of the original menu (none in its file).
 - Does the ← work on the first page, where its button is not seen (§5)?
-- Do the bulbs on the first page show the first attribute's value (§5)?
+- Do the bulbs on the first page show Strength's value or a fixed five (§5)? A capture
+  with Strength other than 5 would tell.
+- Why does the first page turn to Strength by itself (§5), and does it always? No click
+  was sent, but the capture opens the menu by script.
 - Is the → on the review page Done, or does `AllDone_Btn` (which no sequence raises)
   replace it once every point is given out?
 - What do the `On` pictures of the buttons mean: dimmed (as the → in 10.jpg), pressed,

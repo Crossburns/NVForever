@@ -98,12 +98,15 @@ pub fn sequence(from: Page, to: Page) -> Option<&'static str> {
 /// The sequence whose end pose is the Attract page (the menu opens there).
 pub const ATTRACT_POSE: &str = "AimUp";
 
-/// The bulbs lit on a page: the attribute's value on its page, none elsewhere
-/// [observed: 7.jpg–9.jpg five lit at 5; 6.jpg, 10.jpg, 11.jpg none on the review page].
+/// The bulbs lit on a page: the attribute's value on its page, Strength's on the first page,
+/// none on the review page [observed: 7.jpg–9.jpg five lit at 5; 6.jpg, 10.jpg, 11.jpg none
+/// on the review page; the captures of 2026-11-06 five lit on the first page, the same five
+/// as it turns to Strength, 5 on that save; hypothesis: Strength's, not a fixed five].
 pub fn lit_bulbs(page: Page, sheet: &SpecialSheet) -> usize {
     match page {
+        Page::Attract => sheet.values[0].clamp(0, SPECIAL_MAX) as usize,
         Page::Stat(i) => sheet.values[i.min(6)].clamp(0, SPECIAL_MAX) as usize,
-        _ => 0,
+        Page::Review => 0,
     }
 }
 
@@ -191,12 +194,16 @@ pub const BOARD_TINT: [f32; 3] = [1.0, 1.0, 1.0];
 /// [design: in 10.jpg the cabinet is about 0.45 of the texture's brightness and the boards
 /// 0.85; to tune against the original's shots].
 pub const CABINET_TINT: [f32; 3] = [0.6, 0.6, 0.6];
-/// A dull bulb: warm gold under the rig's light [design: to tune against the original's
-/// shots].
-pub const BULB_DULL_TINT: [f32; 3] = [1.0, 0.92, 0.72];
-/// A lit bulb's unlit shape (`_GLOW:5`): over 1, so the pale texture goes to white and its
-/// dark numbers stay readable [design: to tune against the original's shots].
-pub const BULB_LIT_TINT: [f32; 3] = [1.5, 1.6, 2.0];
+/// A dull bulb under the rig's light: the gold is the shape's own vertex colour (1, 0.96,
+/// 0.72) [observed: decoded `P1_PointVal_05:3`] on a white texture, so this is little more
+/// than a trim [design: fitted to the captures' median (159, 143, 96)].
+pub const BULB_DULL_TINT: [f32; 3] = [1.05, 1.05, 0.93];
+/// A lit bulb's unlit shape (`_GLOW:5`): its texture is white with neutral grey numbers
+/// (70, 69, 65) under a warm vertex colour (1, 0.99, 0.91) [observed: the decoded shape and
+/// `NV_Vigor-Tester_Bulb.dds`]; a warm factor over 1 takes the numbers to the captures'
+/// dark brown (106, 95, 66) and leaves the bulb near white (255, 255, 229) [design: fitted to
+/// them]. More blue than red here turns the numbers blue.
+pub const BULB_LIT_TINT: [f32; 3] = [1.5, 1.4, 1.0];
 /// A lit bulb's additive sprite (`_GLOW:4`), the soft halo over the board [design: to tune
 /// against the original's shots; stronger hides the numbers].
 pub const BULB_HALO_TINT: [f32; 3] = [0.8, 0.75, 0.6];
@@ -482,7 +489,7 @@ mod tests {
         assert_eq!(lit_bulbs(Page::Stat(0), &s), 8);
         assert_eq!(lit_bulbs(Page::Stat(1), &s), 5);
         assert_eq!(lit_bulbs(Page::Review, &s), 0);
-        assert_eq!(lit_bulbs(Page::Attract, &s), 0);
+        assert_eq!(lit_bulbs(Page::Attract, &s), 8);
         assert_eq!(glow_shapes(3), ["P1_PointVal_03_GLOW:4".to_string(), "P1_PointVal_03_GLOW:5".to_string()]);
         assert_eq!(number_texture(7), "textures\\terminals\\BBNumber7.dds");
         assert_eq!(number_texture(12), "textures\\terminals\\BBNumber10.dds");
