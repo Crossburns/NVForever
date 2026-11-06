@@ -1304,3 +1304,16 @@ The numbers above stay put so links to them hold; each item here gives its own p
     standing at a negative Health, and GetDead); on the lone NPC, the player's XP and karma
     before and after (is the kill anyone's?). Also: does Health stay negative or stop at 0?
     The answer: the logs.
+
+## Added 2026-11-04 (the container menu from its file, issue #1468)
+
+90. **The container menu: what the reads could not show.** (P3; barter-menu.md §8; the capture
+    `hud_container_*`, parts c, d and g retaken since, with shots.) With a long list on both
+    sides at 1280 x 720: (a) does a selected row show a faint fill beside its lines, and how
+    faint against NVForever's `_NVFHotrectFill`? (b) DAM and DPS on a weapon's card: do they
+    fade into each other at one place, how fast, and is DPS ever above DAM? (c) what does
+    `CNDArrows` (`repair_meter_pips.dds`) show at a weapon's and armour's condition, and does it
+    move with it? (d) keys: do the arrow keys and W/S move a row, A the Take All only?
+    (e) the wheel: does `_wheelmoved` move the list and not the selection, and by what? (f)
+    the marker's drag: `dragstarty`, `dragy` and `dragoffsety` through a drag and after it.
+    (g) how dark is the backing at 193.8 compared with NVForever's at that value?

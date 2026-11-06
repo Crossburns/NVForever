@@ -454,10 +454,47 @@ pub enum Mode {
     Barter(FormId),
 }
 
+/// What a row stands for: its units, the reference a corpse's dropped weapon is, and which of
+/// rows alike it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowKey {
+    pub units: Units,
+    pub reference: Option<FormId>,
+    pub nth: u32,
+}
+
+impl RowKey {
+    /// The key of `rows[index]`.
+    pub fn at(rows: &[Row], index: usize) -> Option<RowKey> {
+        let row = rows.get(index)?;
+        let (units, reference) = (row.units(), row.reference);
+        let nth = rows[..index].iter().filter(|r| r.units() == units && r.reference == reference).count() as u32;
+        Some(RowKey { units, reference, nth })
+    }
+}
+
+/// [design] A row as the input that clicked or came onto it saw it: the commands after
+/// [`Command::Expect`] are for this row of this menu, and for no other row a command queued
+/// before them leaves at its index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowGuard {
+    pub mode: Mode,
+    pub side: Side,
+    pub index: usize,
+    pub key: RowKey,
+    /// The commands act on the row as the selected one.
+    pub selected: bool,
+    /// How many commands follow the guard.
+    pub then: u8,
+}
+
 /// What the player asks the menu to do (keys, mouse and the test aid all go through
 /// this).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
+    /// The next commands hold only if the row is still there ([`MenuModel::row_is`]);
+    /// `crate::menu::apply_input` drops them otherwise.
+    Expect(RowGuard),
     Up,
     Down,
     PageUp,
@@ -643,6 +680,11 @@ pub struct MenuModel {
     /// where they are (only the wheel and the keys scroll them; owner's playtest list 7,
     /// item 11). The menu keeps `scroll` at the rows it draws (`look::drawn_first`).
     pub pointer_pick: bool,
+    /// Counts the keys' and the wheel's moves of the selection, also one that ends on the same
+    /// row: asked to move, the tile menu shows the selected row again.
+    pub navigated: u32,
+    /// By column: the rows the category leaves out (the file's `_num_filtered`).
+    pub filtered: [usize; 2],
     /// Rows per column; the container column is empty in the inventory menu.
     pub lists: [Listing; 2],
     /// The category each column shows.
@@ -806,6 +848,8 @@ impl MenuModel {
             selected: [0; 2],
             scroll: [0; 2],
             pointer_pick: false,
+            navigated: 0,
+            filtered: [0; 2],
             lists: [Listing::default(), Listing::default()],
             category: [Category::All; 2],
             encumbrance: Err(String::new()),
@@ -869,7 +913,9 @@ impl MenuModel {
                     add_dropped_beside(world, holder, &mut l);
                 }
                 let forms = world.forms;
+                let all = l.rows.len();
                 l.rows.retain(|r| self.category[side as usize].holds_item(r.kind, forms.item(r.item)));
+                self.filtered[side as usize] = all - l.rows.len();
                 if side == Side::Container && self.steal.is_some() {
                     l.rows.retain(|r| !r.equipped);
                 }
@@ -1067,6 +1113,9 @@ impl MenuModel {
             return self.apply_quantity(world, cmd);
         }
         let page = self.page() as i64 - 1;
+        if matches!(cmd, Command::Up | Command::Down | Command::PageUp | Command::PageDown | Command::Scroll(_)) {
+            self.navigated = self.navigated.wrapping_add(1);
+        }
         match cmd {
             Command::Hover(..) => self.pointer_pick = true,
             Command::Up | Command::Down | Command::PageUp | Command::PageDown | Command::Scroll(_) | Command::Select(..) | Command::SetCategory(..) => {
@@ -1152,6 +1201,14 @@ impl MenuModel {
             }
         }
         out
+    }
+
+    /// Whether `g`'s row is still the row its input saw, in this menu and with no prompt over it.
+    pub fn row_is(&self, g: &RowGuard) -> bool {
+        self.mode == g.mode
+            && self.quantity.is_none()
+            && RowKey::at(&self.list(g.side).rows, g.index) == Some(g.key)
+            && (!g.selected || (self.focus == g.side && self.selected[g.side as usize] == g.index))
     }
 
     /// The prompt asked for by `cmd` on the selected row, if its stack is large enough.

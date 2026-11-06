@@ -55,6 +55,11 @@ pub trait Source {
     fn game_string(&self, _name: &str) -> Option<String> {
         None
     }
+    /// [design] Whether [`Source::game_string`] answers `name` from the built-in table, no
+    /// plugin defining it. A source that cannot tell says no: its text then counts as chosen.
+    fn game_string_is_built_in(&self, _name: &str) -> bool {
+        false
+    }
 }
 
 /// Files in memory, by path in lower case with `\`.
@@ -62,6 +67,8 @@ pub trait Source {
 pub struct MemSource {
     pub files: HashMap<String, Vec<u8>>,
     pub strings: HashMap<String, String>,
+    /// [design] The names in `strings` answering as the built-in table does, in lower case.
+    pub built_in_strings: HashSet<String>,
     /// [design] Loose-file provenance for synthetic sources, using normalized paths.
     pub loose_files: HashSet<String>,
     /// [design] The archived copies under synthetic loose files, by normalized path.
@@ -116,6 +123,10 @@ impl Source for MemSource {
     fn game_string(&self, name: &str) -> Option<String> {
         self.strings.get(name).or_else(|| self.strings.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v)).cloned()
     }
+
+    fn game_string_is_built_in(&self, name: &str) -> bool {
+        self.built_in_strings.contains(&name.to_ascii_lowercase())
+    }
 }
 
 /// [design] A source's archived copies alone ([`Source::read_archived`]): the menu files
@@ -128,6 +139,9 @@ impl Source for Archived<'_> {
     }
     fn game_string(&self, name: &str) -> Option<String> {
         self.0.game_string(name)
+    }
+    fn game_string_is_built_in(&self, name: &str) -> bool {
+        self.0.game_string_is_built_in(name)
     }
 }
 
@@ -197,6 +211,10 @@ pub struct Trait {
     pub changed: u64,
     /// The change count when the expression was last worked out (0: never).
     evaluated: u64,
+    /// [design] The lower-case setting whose built-in label this trait holds, as the file
+    /// wrote it (`&-sName;` alone, no plugin defining the name); none once anything writes it.
+    /// [`Ui::built_in_label`].
+    pub built_in_label: Option<String>,
     /// The traits (tile, index) the expression read when last worked out, valid while the
     /// tree's shape is still `seen` (0: not known): with none of them changed since
     /// `evaluated`, [`Ui::update`] skips it without working it out [design: #1039].
@@ -206,7 +224,7 @@ pub struct Trait {
 
 impl Trait {
     fn new(name: String, value: Value, expr: Option<Vec<Op>>, changed: u64) -> Trait {
-        Trait { name, value, expr, changed, evaluated: 0, sources: Vec::new(), seen: 0 }
+        Trait { name, value, expr, changed, evaluated: 0, built_in_label: None, sources: Vec::new(), seen: 0 }
     }
 }
 
@@ -729,7 +747,12 @@ impl Ui {
         } else {
             (expr::literal(&e.children, &string), None)
         };
-        for (name, found) in asked.into_inner() {
+        let asked = asked.into_inner();
+        let built_in_label = match asked.as_slice() {
+            [(name, true)] if expr.is_none() && src.game_string_is_built_in(name) && src.game_string(name).is_some_and(|t| t.trim() == value.text().trim()) => Some(name.clone()),
+            _ => None,
+        };
+        for (name, found) in asked {
             *self.game_strings_read.entry(name).or_insert(false) |= found;
         }
         for w in warns {
@@ -738,7 +761,8 @@ impl Ui {
         self.gen += 1;
         let gen = self.gen;
         let t = self.tile_mut(tile);
-        let new = Trait::new(e.name.clone(), value, expr, gen);
+        let mut new = Trait::new(e.name.clone(), value, expr, gen);
+        new.built_in_label = built_in_label;
         match t.trait_index(&e.name) {
             Some(k) => t.traits[k] = new,
             None => t.traits.push(new),
@@ -939,6 +963,13 @@ impl Ui {
         self.set_at(tile, k, v);
     }
 
+    /// [design] The setting whose built-in label `name` of `tile` still holds as the file wrote
+    /// it: a value a plugin, a mod's file or a script chose answers none.
+    pub fn built_in_label(&self, tile: TileId, name: &str) -> Option<&str> {
+        let t = self.tile(tile);
+        t.traits[t.trait_index(name)?].built_in_label.as_deref()
+    }
+
     /// Trait writes from outside so far ([`Ui::set_trait`] and the like) and how many of
     /// them changed the value, for measuring what a frame writes (the engine's
     /// `NVF_PLAY_TEST_TILE_COUNTS`).
@@ -957,6 +988,7 @@ impl Ui {
             self.trait_changes += 1;
         }
         tr.value = v;
+        tr.built_in_label = None;
         // A trait set from outside keeps its value until a source changes again. What it
         // read last may have changed before this write, so the next update works it out
         // to learn its sources again.

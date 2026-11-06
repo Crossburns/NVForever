@@ -1,6 +1,7 @@
 //! T15a: the message box and the "How many?" prompt drawn from their files, behind
-//! `[UI] TileMenus=MessageMenu,QuantityMenu` [design: ui-tile-tree.md §6.2 step 3;
-//! plan: docs/handoff/ui-tile-tree-tasks.md, T15a].
+//! `[UI] TileMenus=MessageMenu,QuantityMenu` (the prompt also over a container menu drawn from
+//! its tiles, `[UI] TileMenus=ContainerMenu`, [`quantity_tiled`]) [design: ui-tile-tree.md
+//! §6.2 step 3; plan: docs/handoff/ui-tile-tree-tasks.md, T15a].
 //!
 //! - **The switch** (`super::vanilla::TileMenus`): with a menu on and the game's menu files
 //!   read, its hand-built drawing is not spawned ([`message_tiled`], [`quantity_tiled`];
@@ -137,8 +138,7 @@ pub type Size<'a> = dyn Fn(f64, &str, Option<f64>) -> (f64, f64) + 'a;
 pub struct TileMenuBlur {
     /// `TutorialMenu` is drawn from its tiles.
     pub tutorial: bool,
-    /// `ContainerMenu` is drawn from its tiles. Not set yet: that menu's tile drawing is not
-    /// in `super::draw` so far, and sets it there beside `tutorial` when it comes.
+    /// `ContainerMenu` is drawn from its tiles.
     pub container: bool,
 }
 
@@ -159,13 +159,20 @@ pub fn message_tiled(on: bool, game: &fnv_game::Game<'_>) -> bool {
 }
 
 /// Whether the "How many?" prompt of the container, barter and inventory menus is drawn
-/// from `QuantityMenu`'s tiles: the switch on, the menu files read, the prompt `open` and
-/// its file built into the tree (`Game::ui_prompt`; a missing or failed file keeps the
-/// hand-built prompt, and the frame the prompt opens, before the tree builds it, draws the
-/// hand-built one once) [design]. The crafting menu's prompt (`crate::crafting`) stays
-/// hand-built.
-pub fn quantity_tiled(on: bool, game: &fnv_game::Game<'_>, open: bool) -> bool {
-    on && open && game.ui_files.is_some() && quantity_built(&game.ui_tree).yes()
+/// from `QuantityMenu`'s tiles: its switch `on` (any of the three), or `container_tiled`, the
+/// container menu under it being drawn from its tiles now (not merely switched on: a container
+/// menu that fell back keeps the hand-built prompt, as do the barter and inventory menus); the
+/// menu files read, the prompt `open` and its file built into the tree (`Game::ui_prompt`; a
+/// missing or failed file keeps the hand-built prompt, and the frame the prompt opens, before
+/// the tree builds it, draws the hand-built one once) [design]. The crafting menu's prompt
+/// (`crate::crafting`) stays hand-built.
+pub fn quantity_tiled(on: bool, game: &fnv_game::Game<'_>, open: bool, container_tiled: bool) -> bool {
+    prompt_tiled(on, container_tiled, open, game.ui_files.is_some(), &game.ui_tree)
+}
+
+/// [`quantity_tiled`]'s decision, `files` being whether the menu files were read.
+fn prompt_tiled(on: bool, container_tiled: bool, open: bool, files: bool, ui: &Ui) -> bool {
+    (on || container_tiled) && open && files && quantity_built(ui).yes()
 }
 
 /// What a prompt or box puts under the pointer: nothing (not shown), its hand-built
@@ -207,8 +214,8 @@ pub fn modal_sheet() -> impl bevy::prelude::Bundle {
 /// them (`super::input`): the prompt's A, E, Left, Right (`crate::menu`'s prompt keys) and
 /// the controller buttons that stand in for its Enter, Esc, Page Up and Page Down
 /// (`crate::pad::menu_key`); the box's Up, Down and the controller's A for its Enter
-/// (`crate::script_hud::menu_keys`); the Wait and tutorial menus' their own lists. Any other
-/// key a file binds is left to the file.
+/// (`crate::script_hud::menu_keys`); the Wait, tutorial and container menus' their own lists.
+/// Any other key a file binds is left to the file.
 pub fn hand_built_takes(menu: &str, key: &str) -> bool {
     let keys: &[&str] = if menu.eq_ignore_ascii_case(QUANTITY_MENU) {
         &["A", "E", "xleft", "xright", "xbuttona", "xbuttonb", "xbuttonlb", "xbuttonrb"]
@@ -218,6 +225,8 @@ pub fn hand_built_takes(menu: &str, key: &str) -> bool {
         &super::wait_menu::HAND_BUILT_KEYS
     } else if menu.eq_ignore_ascii_case(super::tutorial_menu::TUTORIAL_MENU) {
         &super::tutorial_menu::HAND_BUILT_KEYS
+    } else if menu.eq_ignore_ascii_case(super::container_menu::CONTAINER_MENU) {
+        &super::container_menu::HAND_BUILT_KEYS
     } else if menu.eq_ignore_ascii_case(super::dialog_menu::DIALOG_MENU) {
         &super::dialog_menu::HAND_BUILT_KEYS
     } else {
@@ -812,6 +821,40 @@ mod tests {
             write_quantity(&mut ui, Amount { amount: 5, most: 20 });
             assert_eq!(ui.get_float(&format!("{METER}/user0")), None);
         }
+    }
+
+    /// A prompt's file with every path the model writes.
+    fn whole_prompt() -> Ui {
+        let src = MemSource::default().with("q.xml", r#"<menu name="QuantityMenu"><rect name="NOGLOW_BRANCH"><image name="QM_Background"/><rect name="QM_MainRect"><rect name="QM_AmountMeter"/></rect></rect></menu>"#);
+        let mut ui = Ui::new();
+        ui.load_menu(&src, "q.xml").unwrap();
+        ui
+    }
+
+    #[test]
+    fn the_prompt_follows_a_container_drawn_from_tiles_or_its_own_switch() {
+        // [design] (switch, container drawn from tiles, prompt open, files read), a built file.
+        let ui = whole_prompt();
+        assert!(prompt_tiled(false, true, true, true, &ui), "the container's prompt, its switch off");
+        assert!(prompt_tiled(true, false, true, true, &ui), "the switch, with no container: barter, inventory");
+        assert!(prompt_tiled(true, true, true, true, &ui), "both");
+        assert!(!prompt_tiled(false, false, true, true, &ui), "neither, as a container that fell back: by hand");
+        assert!(!prompt_tiled(false, true, false, true, &ui), "no prompt open");
+        assert!(!prompt_tiled(true, false, false, true, &ui), "no prompt open, the switch on");
+        assert!(!prompt_tiled(false, true, true, false, &ui), "the menu files not read");
+    }
+
+    #[test]
+    fn a_container_drawn_from_tiles_keeps_the_hand_built_prompt_without_its_file() {
+        // [design] Never built (a missing or failed file: `Game::ui_prompt` leaves no menu).
+        assert!(!prompt_tiled(false, true, true, true, &Ui::new()));
+        assert!(!prompt_tiled(true, true, true, true, &Ui::new()));
+        // Built, but short of a path the model writes.
+        let src = MemSource::default().with("q.xml", r#"<menu name="QuantityMenu"><rect name="NOGLOW_BRANCH"><image name="QM_Background"/></rect></menu>"#);
+        let mut ui = Ui::new();
+        ui.load_menu(&src, "q.xml").unwrap();
+        assert_eq!(quantity_built(&ui), Tiled::No(format!("{METER} missing")));
+        assert!(!prompt_tiled(false, true, true, true, &ui));
     }
 
     #[test]

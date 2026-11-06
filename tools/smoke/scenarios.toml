@@ -19241,6 +19241,170 @@ order = [[
 ]]
 
 [[scenario]]
+name = "tiles-container"
+source = "[design] ui-tile-tree.md §6.2 step 3, barter-menu.md §8 (T15c, issue #1468): with [UI] TileMenus=ContainerMenu the container menu is drawn from container_menu.xml; rows come from the template and keep what they stand for, the lists scroll by the counts the capture reads, and clicks and keys go through the hand-built menu's commands: a store through the prompt (drawn from QuantityMenu's tiles with no switch of its own; cancelled, then accepted), focus, keyboard selection, the bar's arrows, page areas and marker, a heading's arrow and wheel, Take All and Exit"
+note = "positions at 1280 x 720 (screen 1706.67 x 960; CM_MainRect at 341.33, 80): left rows x 378-803, row n at y 160 + 52 n; right rows from x 938; left bar x 346-378, its arrows at y 160-176 and 509-525, the marker 6 wide at x 358-364, its area y 176-509; the left heading's left arrow at 391-408, y 90-125; Take All x 1259-1375, y 670-717; Exit x 1307-1375, y 715-762. the 20 rounds given join the start inventory's 50, so the first row reads '10mm Round (70)', and the prompt asks at 70; the box holds the mug alone until the stack goes in. The marker is 32 high with 22 items, 14.33 a value from y 176: at value 5 (after the bar's clicks) y 247.67-279.67, so the press at y 264 takes it, 136 down leaves it at value 14. Card shots: the selection walks 40mm Grenade, 9mm Pistol, Armored Vault 13 Jumpsuit, Binoculars, Bleak Venom at 22.2 s to 23 s. The aid's pointer moves no real cursor, so the wheel's hold stays on after 25 s (crate::menu::WheelHold) and no later row is hovered"
+areas = ["ui", "menu", "items"]
+paths = [
+  "engine/nvforever/src/imagespace.rs",
+  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/item_card.rs",
+  "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
+  "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/pad.rs",
+  "crates/fnv-game/src/ui_loading.rs", "crates/fnv-ui/src/tree.rs", "crates/fnv-ui/src/input.rs",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20,000E9C3B,0008F21A,0003307F,00015169:2,00022102,000E3778,00020423,00034045,0008C214,0008ED0B,0001519E", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_KEYS = "12:f10,17.5:e,18.5:a,20:a,20.5:d,22:a,22.2:down,22.4:down,22.6:down,22.8:down,23:down,23.2:down,23.4:down,23.6:down,25:wheel-down,25.5:wheel-up,30:mouse-left:1.2,32:wheel-down,35:f10", NVF_PLAY_TEST_POINTER = "14:600:186,16:600:186:click,18:600:186:click,19.5:1150:186,26:362:517:click,26.5:362:168:click,27:362:480:click,28:362:178:click,29.8:361:264,30.5:361:400,31.5:400:108:click,32.5:450:100:click,33:1320:690,33.2:1320:690:click,36.5:1340:738,36.7:1340:738:click,37:off", NVF_PLAY_TEST_SHOTS = "13:tiles_container_open.png,15:tiles_container_row.png,17:tiles_container_prompt.png,21:tiles_container_right.png,22.5:tiles_container_card_weapon.png,22.7:tiles_container_card_armour.png,23.1:tiles_container_card_aid.png,24:tiles_container_scrolled.png,27.5:tiles_container_paged.png,36:tiles_container_reopened.png" }
+args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 40
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=ContainerMenu \(from test aid NVF_PLAY_TEST_TILE_MENUS\): ContainerMenu drawn from tiles; its QuantityMenu prompt follows', label = "the switch is read from the test aid, and says the prompt follows" },
+  { re = 'ui: built ContainerMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', min = 2, label = "the open menu builds its file, and again when opened again" },
+  { re = 'tiles: ContainerMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', label = "the menu's tree draws, with its rows" },
+  { text = "tile menu blur: ContainerMenu radius 3", min = 1, label = "the world blurs behind the menu drawn from its tiles" },
+  { text = "tile menu blur: off", min = 1, label = "and clears when it closes" },
+  { re = 'tiles: ContainerMenu drawn from tiles: "ITEMS" \d+ rows, "[^"]+" \d+ rows, "Wg   \d+/\d+", player selected "10mm Round \(70\)", figures: .*WEIGHT', label = "the pointer's row: the model's rows, headings, weight and unit figures" },
+  { text = "tiles: ContainerMenu Hover(Player, 0) on its tiles", count = 1, label = "the pointer onto a row selects it, once; a resting pointer over changed rows does not" },
+  { text = "tiles: ContainerMenu Hover(Container, 0) on its tiles", count = 1, label = "a row of the list without the focus takes the pointer" },
+  { text = "tiles: ContainerMenu Select(Player, 0) on its tiles", count = 2, label = "a click on the selected row acts on it" },
+  { re = 'how many\? \(70 of 70\)', count = 2, label = "a stack of more than five asks, at the whole stack" },
+  { re = 'ui: built QuantityMenu \(menus\\[^,]+\.xml, [1-9]\d* tiles\)', min = 2, label = "each prompt builds its file while it shows (Game::ui_prompt)" },
+  { re = 'tiles: QuantityMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "with ContainerMenu alone, the prompt's tree draws" },
+  { text = "tiles: QuantityMenu drawn from tiles: amount 70 of 70", count = 2, label = "each prompt is written from the model, drawn from QuantityMenu's tiles" },
+  { re = 'tiles: QuantityMenu Amount', count = 0, label = "the keys answer it, once: a key's click on the tiles does not act too" },
+  { re = 'QuantityMenu drawn by hand', count = 0, label = "the vanilla file builds every path of the prompt" },
+  { re = 'ui: dropped QuantityMenu', min = 2, label = "the closed prompt drops its tiles" },
+  { text = "menu: AmountOk: Stored 10mm Round x70", count = 1, label = "Cancel moved nothing, Ok moved the stack" },
+  { re = 'drawn from tiles: "ITEMS" 28 rows, "Metal Box" 2 rows, .*player selected "20 Gauge Round', label = "the lists read the world after: a row less on the left, one more on the right" },
+  { re = 'drawn from tiles: "ITEMS" 28 rows, "Metal Box" 2 rows, .*container selected "10mm Round \(70\)"', label = "the box holds all 70" },
+  { re = 'drawn from tiles: "ITEMS" 30 rows, "Metal Box" 0 rows', label = "Take All left the box empty and the player both rows" },
+  { text = "tiles: ContainerMenu Category(Player, 1) on its tiles", count = 1, label = "a click on the heading steps it on" },
+  { text = "menu: AmountCancel: prompt closed", count = 1, label = "the first prompt is cancelled" },
+  { text = "tiles: ContainerMenu TakeAll on its tiles", count = 1, label = "only the pointer takes all: physical A focuses the player's list" },
+  { re = 'tiles: ContainerMenu player list scrolled to [1-9]', min = 3, label = "keys, arrows and the marker move the left list" },
+  { text = "tiles: ContainerMenu Down on its tiles", count = 1, label = "the bar's down arrow" },
+  { text = "tiles: ContainerMenu Up on its tiles", count = 1, label = "the bar's up arrow" },
+  { text = "tiles: ContainerMenu PageDown on its tiles", count = 1, label = "the bar's page area" },
+  { text = "tiles: ContainerMenu PageUp on its tiles", count = 1, label = "the other page area" },
+  { text = "tiles: ContainerMenu player list scrolled to 14 of 21", count = 1, label = "the marker held and moved" },
+  { re = 'tiles: ContainerMenu \S+ list drawn at \S+, not the \S+ written', count = 0, label = "the scroll never draws the file's own count of the clicks" },
+  { text = "tiles: ContainerMenu Category(Player, -1) on its tiles", count = 1, label = "the heading's arrow" },
+  { re = 'tiles: ContainerMenu drawn from tiles: "AMMO" ', label = "the category changes the list and its title" },
+  { text = "tiles: ContainerMenu Close on its tiles", count = 1, label = "Exit by the pointer" },
+  { text = "menu: close", count = 2, label = "Take All closes the menu, Exit closes it" },
+  { re = 'ui: dropped ContainerMenu', min = 2, label = "the closed menu drops its tiles" },
+  { re = 'ContainerMenu drawn by hand', count = 0, label = "the vanilla file builds every path" },
+]
+order = [[
+  "F10: nearest container",
+  "tiles: ContainerMenu Hover(Player, 0) on its tiles",
+  "tiles: ContainerMenu Select(Player, 0) on its tiles",
+  { re = 'how many\? \(70 of 70\)', label = "the prompt" },
+  { text = "tiles: QuantityMenu drawn from tiles: amount 70 of 70", label = "drawn from its tiles" },
+  { text = "menu: AmountCancel: prompt closed", label = "cancelled" },
+  { re = 'drawn from tiles: "ITEMS" 29 rows, "Metal Box" 1 rows, .*player selected "10mm Round \(70\)"', label = "Cancel left the lists" },
+  { re = 'how many\? \(70 of 70\)', label = "the whole stack is asked again" },
+  { text = "tiles: QuantityMenu drawn from tiles: amount 70 of 70", label = "drawn from its tiles again" },
+  { re = 'menu: AmountOk: Stored 10mm Round x70', label = "the stack moved" },
+  { re = 'drawn from tiles: "ITEMS" 28 rows, "Metal Box" 2 rows', label = "the lists after it" },
+  "tiles: ContainerMenu Hover(Container, 0) on its tiles",
+  { re = 'tiles: ContainerMenu player list scrolled to [1-9]', label = "the keys bring the row into view" },
+  "tiles: ContainerMenu Down on its tiles",
+  "tiles: ContainerMenu PageDown on its tiles",
+  { re = 'tiles: ContainerMenu drawn from tiles: "AMMO" ', label = "the heading's arrow" },
+  { re = 'tiles: ContainerMenu drawn from tiles: "ITEMS" ', label = "the wheel over the heading steps back" },
+  "tiles: ContainerMenu Category(Player, 1) on its tiles",
+  { re = 'tiles: ContainerMenu drawn from tiles: "WEAPONS" ', label = "the click on the heading steps ITEMS on to WEAPONS" },
+  "tiles: ContainerMenu TakeAll on its tiles",
+  "menu: close",
+  "tiles: ContainerMenu Close on its tiles",
+  "menu: close",
+], [
+  "tile menu blur: ContainerMenu radius 3",
+  "tile menu blur: off",
+  "tile menu blur: ContainerMenu radius 3",
+  "tile menu blur: off",
+]]
+
+[[scenario]]
+name = "tiles-container-quantity"
+source = "[design] barter-menu.md §8 (T15c, issue #1468): with [UI] TileMenus=ContainerMenu,QuantityMenu the prompt over the tiled container menu is drawn from its own file on top, and takes the pointer alone: a click on a row beside it acts on nothing, the decrease arrow and OK act once"
+note = "at 1280 x 720 the prompt's box stands at x 483.33: the decrease arrow at x 635-652, y 452-487; OK ends at x 1170, y 492-543; the row clicked under the prompt stands above its box; the pointer goes to the box's first row after OK, so the log reads what the box holds"
+areas = ["ui", "menu", "items"]
+paths = [
+  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu,QuantityMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_KEYS = "12:f10", NVF_PLAY_TEST_POINTER = "14:600:186,15:600:186:click,17:600:238:click,18:644:470,18.5:644:470:click,19.5:1155:515,20:1155:515:click,20.5:1150:186,21:off", NVF_PLAY_TEST_SHOTS = "16:tiles_container_quantity.png" }
+args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { re = 'how many\? \(70 of 70\)', count = 1, label = "the prompt asks once" },
+  "tiles: QuantityMenu drawn from tiles: amount 70 of 70",
+  { text = "tiles: ContainerMenu One on its tiles", count = 0, label = "no click goes past the prompt to a row" },
+  { text = "tiles: ContainerMenu Hover(Player, 1) on its tiles", count = 0, label = "nor the pointer" },
+  { text = "tiles: QuantityMenu AmountStep(-1) on its tiles", count = 1, label = "the decrease arrow" },
+  { text = "tiles: QuantityMenu AmountOk on its tiles", count = 1, label = "OK" },
+  { text = "menu: AmountOk: Stored 10mm Round x69", count = 1, label = "the amount moves" },
+  { re = 'drawn from tiles: .*"Metal Box" 2 rows, .*player selected "10mm Round"', label = "one stays with the player, a stack of one with no count, the rest in the box" },
+  { re = 'drawn from tiles: .*"Metal Box" 2 rows, .*container selected "10mm Round \(69\)"', label = "the box holds the 69" },
+]
+order = [[
+  "tiles: ContainerMenu Select(Player, 0) on its tiles",
+  "tiles: QuantityMenu drawn from tiles: amount 70 of 70",
+  "tiles: QuantityMenu AmountOk on its tiles",
+]]
+
+[[scenario]]
+name = "tiles-container-quantity-alone"
+source = "[design] barter-menu.md §7 and §8: with [UI] TileMenus=ContainerMenu alone the prompt over the tiled container menu is drawn from QuantityMenu's tiles, as with both switches on (tiles-container-quantity), and takes the pointer alone: a click on a row beside it acts on nothing, the decrease arrow and OK act once"
+note = "the run and pointer steps of tiles-container-quantity, its positions at 1280 x 720"
+areas = ["ui", "menu", "items"]
+paths = [
+  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**",
+]
+env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_KEYS = "12:f10", NVF_PLAY_TEST_POINTER = "14:600:186,15:600:186:click,17:600:238:click,18:644:470,18.5:644:470:click,19.5:1155:515,20:1155:515:click,20.5:1150:186,21:off", NVF_PLAY_TEST_SHOTS = "16:tiles_container_quantity_alone.png" }
+args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { re = 'how many\? \(70 of 70\)', count = 1, label = "the prompt asks once, with its switch off" },
+  "tiles: QuantityMenu drawn from tiles: amount 70 of 70",
+  { re = 'tiles: QuantityMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "the prompt's own tree draws, with its switch off" },
+  { text = "tiles: ContainerMenu One on its tiles", count = 0, label = "no click goes past the prompt that followed the container" },
+  { text = "tiles: ContainerMenu Hover(Player, 1) on its tiles", count = 0, label = "nor the pointer past it" },
+  { text = "tiles: QuantityMenu AmountStep(-1) on its tiles", count = 1, label = "its decrease arrow acts once" },
+  { text = "tiles: QuantityMenu AmountOk on its tiles", count = 1, label = "its OK acts once" },
+  { text = "menu: AmountOk: Stored 10mm Round x69", count = 1, label = "the amount chosen on its tiles moves" },
+  { re = 'drawn from tiles: .*"Metal Box" 2 rows, .*player selected "10mm Round"', label = "the player keeps one, a stack of one with no count" },
+  { re = 'drawn from tiles: .*"Metal Box" 2 rows, .*container selected "10mm Round \(69\)"', label = "the box holds the other 69" },
+]
+order = [[
+  "tiles: ContainerMenu Select(Player, 0) on its tiles",
+  "tiles: QuantityMenu drawn from tiles: amount 70 of 70",
+  "tiles: QuantityMenu AmountOk on its tiles",
+]]
+
+[[scenario]]
+name = "container-default-drawing"
+source = "barter-menu.md §5 and §8: without the switch the container menu is the hand-built drawing: nothing of the tile menu is written or drawn, and its keys act as before; the same views as tiles-container, for the pictures beside it"
+note = "the same give and times as tiles-container, by keys alone (the aid's pointer is the tiles'); the 20 rounds given join the start inventory's 50"
+areas = ["ui", "menu", "items"]
+paths = ["engine/nvforever/src/imagespace.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/pad.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20,000E9C3B,0008F21A,0003307F,00015169:2,00022102,000E3778,00020423,00034045,0008C214,0008ED0B,0001519E", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_KEYS = "12:f10,14:a,16:enter,17.5:e,18:enter,18.5:a,20:d,22:a,22.2:down,22.4:down,22.6:down,22.8:down,23:down,23.2:down,23.4:down,23.6:down,25:wheel-down,25.5:wheel-up,33:r,35:f10,36.5:e", NVF_PLAY_TEST_SHOTS = "13:default_container_open.png,15:default_container_row.png,17:default_container_prompt.png,21:default_container_right.png,22.5:default_container_card_weapon.png,22.7:default_container_card_armour.png,23.1:default_container_card_aid.png,24:default_container_scrolled.png,27.5:default_container_paged.png,36:default_container_reopened.png" }
+args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 40
+expect = [
+  { re = 'tiles: ContainerMenu', count = 0, label = "nothing of the tile menu runs without its switch" },
+  { re = 'tiles: QuantityMenu', count = 0, label = "nor is the prompt drawn from its tiles" },
+  { text = "tile menu blur:", count = 0, label = "and no tile menu's blur" },
+  { re = 'how many\? \(70 of 70\)', count = 2, label = "a stack of more than five asks" },
+  { text = "menu: AmountOk: Stored 10mm Round x70", count = 1, label = "Cancel moved nothing, Ok moved the stack" },
+  { text = "menu: TakeAll: Took everything (71 items)", count = 1, label = "the 70 and the mug come back" },
+  { text = "menu: close", count = 2, label = "R takes all and closes; E closes" },
+]
+order = [["F10: nearest container", { re = 'menu: AmountOk: ', label = "the stack moved" }, "menu: close", "menu: close"]]
+
+[[scenario]]
 name = "nvse-engine-events"
 source = "The extender's events that only the running engine raises (docs/handoff/nvse-next-batch.md §6): OnLoad of a placed unscripted item, OnHit/OnHitWith of a hit, OnMagicEffectHit of a stimpak, OnPackageStart, OnCombatEnd; handlers set from the console as one-line lambdas"
 areas = ["scripts", "actors"]
