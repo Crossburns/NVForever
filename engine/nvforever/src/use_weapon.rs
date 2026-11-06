@@ -43,7 +43,7 @@ use crate::attack_anims::{AttackTimes, Move, PlayAttack, SwingClip, SwingPick, D
 use crate::combat_tactics as tactics;
 use crate::limbs::ActorRig;
 use crate::locomotion::Dying;
-use crate::npc_combat::{creature_spacing, engage, facing_off, is_gun, melee_spacing, next_unit, CHEST, CREATURE_BODY_REACH, CREATURE_REACH, MUZZLE_AHEAD, STRIKE_SECONDS};
+use crate::npc_combat::{creature_reach, creature_spacing, engage, facing_off, is_gun, melee_spacing, next_unit, CHEST, CREATURE_REACH, MUZZLE_AHEAD, STRIKE_SECONDS};
 use crate::ragdoll::Corpse;
 use crate::weapons::{HeldWeapon, Muzzle, WeaponHold};
 use crate::world::bevy_to_game;
@@ -257,7 +257,7 @@ pub(crate) fn shoot(
                 Some(f) if c.forms.weapons.get(&f).is_some_and(|ws| is_gun(c, ws, f)) => Arm::Gun(f),
                 Some(f) => Arm::Melee(Some(f)),
                 None => match g.creature_attack(me) {
-                    Some((damage, reach)) => Arm::Creature(damage as f32, reach.filter(|r| *r > 0.0).map_or(CREATURE_REACH, |r| r as f32 + CREATURE_BODY_REACH) * scale),
+                    Some((damage, reach)) => Arm::Creature(damage as f32, creature_reach(reach, Some(&rig.skeleton), scale)),
                     None => Arm::Melee(None),
                 },
             };

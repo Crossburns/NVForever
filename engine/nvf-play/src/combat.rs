@@ -29,7 +29,9 @@
 //!   that direction's `fDamagePowerAttack…Bonus`. The body plays [`WeaponAnim::swing`]
 //!   and times it ([`WeaponAnim::timed`]); the swing strikes once at the clip's `Hit` key
 //!   [documented: NiTextKeyExtraData] with a fan of rays from the eye out to the reach
-//!   (`damage::melee_reach`), and at any actor whose centre is within that reach across
+//!   (`damage::melee_reach`, which reaches from the body: plus the player's capsule
+//!   radius from the eye [hypothesis, as the NPCs' 45 + 107 × Reach is read,
+//!   combat-rules.md §10]), and at any actor whose centre is within that reach across
 //!   the ground, low or high (`projectile::swing_reaching`: a gecko at the player's feet). With no weapon equipped the player fights with the
 //!   Fists (WEAP `Fists`) [hypothesis: the game's unarmed weapon form]. Knockback force
 //!   is computed (documented formula) and logged; living actors are not pushed until they
@@ -3616,7 +3618,8 @@ fn melee(
         // The special move chosen as the swing started (its clip is playing).
         let special = c.special_swing.take();
         let power_mult = power.map_or(1.0, |d| d.damage(&c.rules));
-        let reach = damage::melee_reach(&c.rules, &w, 1.0);
+        // The reach is from the body; the rays start at the eye, the capsule's middle.
+        let reach = damage::melee_reach(&c.rules, &w, 1.0) + phys.player.as_ref().map_or(0.0, |p| p.params.radius);
         let eye = player.eye();
         // A blow that meets no one but strikes the world within reach (a wall, the
         // ground ahead) shows its impact there.

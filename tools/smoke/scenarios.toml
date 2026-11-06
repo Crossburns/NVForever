@@ -1424,8 +1424,22 @@ run_seconds = 30
 expect = [
   { re = 'npc combat summary.*?(?P<n>\d+) blows', range = [15, 25], label = "about 20 blows in the npc combat summary", known_failing = "main 2026-10-23 (origin/main cd54601d+, 13 blows): the add-ons' load message boxes hold the game for about 8 s of the 30 (list 7 W4: 12 and 14 on its branch)" },
   { re = 'attack anims summary.*h2hattack' },
-  { re = 'npc melee spacing: \d+ blows began at .*\(median (?P<n>\d+), feet to feet\)', range = [100, 170], label = "the dogs bite from their reach and body, (RNAM 48 + 59) x 1.2 = 128 at most, not from inside the player (the original's dogs began a median 133 units away; ours 121 on 2026-10-17; npc-behaviour-compare.md §3)" },
+  { re = 'npc melee spacing: \d+ blows began at .*\(median (?P<n>\d+), feet to feet\)', range = [100, 170], label = "the dogs bite from their reach and body, (RNAM 48 + 62 for the Dog skeleton) x 1.2 = 132 at most, not from inside the player (the original's dogs began a median 133 units away; ours 121 on 2026-10-17; npc-behaviour-compare.md §3, #1334)" },
   { re = 'runs at |stops and faces ', max = 8, label = "only a few runs at / stops and faces lines" },
+]
+
+[[scenario]]
+name = "melee-reach-lead-pipe"
+source = "#1334 (part 1): NPC melee reach refit to the original's 45 + 107 x Reach (AI observer campaign o14_reach, 2026-11-01: NCR troopers with a lead pipe, Reach 1.25, began their swings a median 180 units from the player, centre to centre; docs/spec-notes/combat-rules.md §10)"
+note = "Violet (FiendVioletRef) is given a lead pipe (WeapLeadPipe 0x00004337) in place of her rifle and set on the god-mode player about 400 units east of her; only she is run on her packages. She holds her rifle's model (models are not swapped live), so the pipe's clips play with it. Ours: fCombatDistance 107 x 1.25 + two people's radii (44) = 178"
+areas = ["combat", "melee"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/damage.rs", "crates/fnv-combat/src/tuning.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "4:call:FiendVioletRef:RemoveAllItems,4:call:FiendVioletRef:AddItem:WeapLeadPipe:1,4:call:FiendVioletRef:EquipItem:WeapLeadPipe,5:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-46500,64897,7000", "--play", "--hour", "12", "--no-voice", "--npc-packages", "FiendVioletRef"]
+run_seconds = 35
+expect = [
+  { re = 'npc combat: FiendVioletRef \S+ fights the player with WeapLeadPipe \(melee\)', label = "Violet fights the player with the lead pipe" },
+  { re = 'npc melee spacing: \d+ blows began at .*\(median (?P<n>\d+), feet to feet\)', range = [160, 200], label = "her swings begin about 178 units from the player, as the original's lead-pipe troopers' 180 (o14_reach), not 209 as before #1334" },
 ]
 
 [[scenario]]

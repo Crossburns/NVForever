@@ -32,9 +32,12 @@ pub struct Rules {
     pub vats_crit_bonus: f32,
     // Armor
     pub max_armor_rating: f32,
-    /// Melee reach base (× actor scale × weapon reach). The wiki gives no default and the
-    /// masters lack the setting: 150 units is a placeholder [hypothesis: chosen so a
-    /// knife (reach 0.5) reaches 75 units and a sledgehammer (0.75) 112; tunable].
+    /// Melee reach base (× actor scale × weapon reach), from the attacker's body to its
+    /// target's. The wiki gives no default and the masters lack the setting: 107 units is
+    /// fitted to the original's NPCs, whose swings began about 45 + 107 × Reach units
+    /// centre to centre (knife 95 … lead pipe 180) [observed: AI observer campaign
+    /// o14_reach, 2026-11-01, #1076; that the 45 is the two bodies' radii, and so not
+    /// part of the setting, is a hypothesis; docs/spec-notes/combat-rules.md §10].
     pub combat_distance: f32,
     // Gun Spread Formula (New Vegas)
     pub spread_unaimed: f32,
@@ -119,7 +122,7 @@ const SETTINGS: &[(&str, f32)] = &[
     ("fAVDCritLuckMult", 1.0),
     ("fVATSCriticalChanceBonus", 15.0),
     ("fMaxArmorRating", 85.0),
-    ("fCombatDistance", 150.0),
+    ("fCombatDistance", 107.0),
     ("fUnaimedSpreadPenalty", 0.2),
     ("fWalkingSpreadPenalty", 0.1),
     ("fRunningSpreadPenalty", 0.2),
