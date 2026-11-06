@@ -1163,6 +1163,17 @@ All rules here are engine choices unless tagged otherwise. Layer 6 replaces the 
   `Enum: Right` at 0.57 s), so they are not used]. During such a fade both clips advance
   at the weight-blended cycle rate so the feet stay in step. Idle and turns start at
   phase 0, except an actor's first idle, which starts at its spread phase (§7.3).
+- **Jumps are not steps** (#1473): a drawn actor's velocity is its drawn step over the
+  frame, so a script's MoveTo or MoveToMarkerWithFade (the Strip travellers sent to
+  another port, the crowd the Freeside gate's script places) read as thousands of units
+  per second; the smoothed gait speed then took about a second to fall under the
+  walk/run switch, and the actor ran while it faded in, though its package does not run
+  [observed: owner playtest 2026-11-03; the travellers' packages have no Always Run,
+  `fnvtool ai show`]. A frame in which a script put the actor somewhere, or whose step
+  is longer than 512 units (`nav::JUMP_STEP`), keeps last frame's velocity and turn
+  [design]. Log (actors a script created, enabled or moved, their first second drawn):
+  `ai [hh:mm] <label>: first second drawn after <why>: N walk frames, M run frames
+  (walker at S units/s)`; smoke `strip-fade-in-walk`.
 - **Body**: female actors use `locomotion\female\`, others `locomotion\male\`
   (`fnv_actor::locomotion::clip_candidates`; a missing file falls back to `male\`).
   Children (`child\`) need the race's child flag, which the records reader does not take

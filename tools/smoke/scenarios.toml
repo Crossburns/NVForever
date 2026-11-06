@@ -991,6 +991,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "strip-fade-in-walk"
+source = "#1473 (engine/nvforever/src/nav.rs JUMP_STEP, residents.rs FirstSteps): an actor a script puts somewhere (the Strip crowd the gate's VFSVegasDoorSCRIPT places, the travellers' MoveToMarkerWithFade to another port) plays its package's gait from its first frame drawn there; the jump was read as speed and it ran for about a second while it faded in (owner playtest 2026-11-03)"
+note = "strip-crowd-evening's arrival through the Freeside gate at 20:06, cut to its first minute: the crowd is moved at about 20:07 and the travellers' walk packages (no Always Run) go on from where they were put"
+areas = ["ai"]
+paths = ["engine/nvforever/src/nav.rs", "engine/nvforever/src/residents.rs", "engine/nvforever/src/locomotion.rs", "engine/nvf-play/src/fade.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GIVE = "00119875:1", NVF_PLAY_TEST_SCRIPT = "1:activate:FreesideGateToStripREF", NVF_PLAY_TEST_GOTO = "30:847:8561:1019", NVF_PLAY_TEST_TALK = "0:*=leave" }
+args = ["--play", "--world", "FreesideWorld", "--pos=-6850,-10120,1040", "--heading", "220", "--hour", "20.1", "--no-voice", "--npc-packages", "all,VStreetTravelerAREF,VStreetTravelerBREF"]
+run_seconds = 60
+expect = [
+  { re = 'VStreetTraveler[AB]REF: put at .* by a script \(MoveTo\)', label = "a traveller is put at a port by a script" },
+  { re = 'first second drawn after its move by a script: [1-9]\d* walk frames, 0 run frames', label = "an actor a script moved walks from its first frame drawn there" },
+  { re = 'VStreetTraveler[AB]REF: first second drawn after its move by a script: \d+ walk frames, [1-9]\d* run frames', count = 0, label = "no traveller (walk packages, no Always Run) runs while it fades in after its move" },
+  "ai summary",
+]
+
+[[scenario]]
 name = "residents"
 source = "CLAUDE.md: after changes to fnv-ai or the engine's residents, the residents smoke test"
 areas = ["ai", "residents"]
