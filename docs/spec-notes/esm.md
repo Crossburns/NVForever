@@ -236,5 +236,10 @@ scenarios and goldens are untouched (parity-lab/AGENT.md).
    record (e.g. REGN 0x00174D19 → 0x000D705D, WTHR 0x00092BC4 → 0x000922EA) [observed];
    which subrecords they are in is not analysed yet (layouts from the sky workstream).
 5. Version-control fields and group stamp/unknown fields — preserved, not interpreted.
-6. Two QUST `DATA` subrecords in FalloutNV.esm (e.g. 0x0001E5CA) are 2 bytes long, while
-   the documented layout needs at least 4 [observed]; engine behaviour unknown.
+6. Two QUST `DATA` subrecords in FalloutNV.esm (0x0001E5CA RadioTenpenny, 0x0002242A
+   GenericSupMutBehemoth) are 2 bytes long [observed]: the documented flags and priority
+   bytes and nothing after [documented: xEdit QUST DATA; observed: flags 0x05 (Start game
+   enabled, Allow repeated conversation topics) and 0x01 (Start game enabled), priority 0].
+   The schema decodes them since #1001, so both now start with a new game; neither has a
+   script (only dialogue conditions). Whether the original reads a 2-byte DATA the same
+   way is [hypothesis].
