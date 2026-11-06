@@ -4581,6 +4581,36 @@ expect = [
 ]
 
 [[scenario]]
+name = "tops-13th-floor-hallway"
+source = "docs/spec-notes/world.md §8 \"Interior XCLW is not water\" (issues #1546, #1078; owner 2026-11-04/06: a circle of darkness round the player on the Tops' 13th floor and in the presidential suite): 2ETopsBennysFloor stores XCLW 14,095.9 above all its references, which the under-water fog read as a surface over the camera; the long hallway from its east end looking west, one frame in target/smoke (tops_13th_hall.png)"
+areas = ["rendering", "water"]
+paths = ["engine/nvforever/src/underwater.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:tops_13th_hall.png" }
+args = ["--play", "--cell", "2ETopsBennysFloor", "--pos=3300,2375,7240", "--heading", "270", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "tops_13th_hall.png: the hallway lit by its sconces to its far end (about 3,800 units), walls, carpet and ceiling readable all the way, no black past the nearest lamps"
+expect = [
+  { text = "interior lighting: fog 512..6000 power 1.00", label = "the 13th floor's own fog (XCLL), not the water's" },
+  { re = 'test aid: screenshot .*tops_13th_hall\.png', label = "the hallway frame is saved" },
+]
+forbid = [{ text = "underwater: the camera is under water", label = "the cell's XCLW taken for water over the camera" }]
+
+[[scenario]]
+name = "tops-suite-light"
+source = "docs/spec-notes/world.md §8 \"Interior XCLW is not water\" (issue #1078): 2ETopsPresidentialSuite, XCLW 14,095.9 above all its references; from the lift door (1990, 1216, 8040) looking east at 21:00, as the original's frame tops_suite_door_east (2026-11-06, private)"
+areas = ["rendering", "water"]
+paths = ["engine/nvforever/src/underwater.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:tops_suite_east.png" }
+args = ["--play", "--cell", "2ETopsPresidentialSuite", "--pos=1990,1216,8040", "--heading", "90", "--hour", "21", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "tops_suite_east.png against the original's tops_suite_door_east frame: bar, pillars, the far wall's bands and posters, the sofa and rug all readable; a little darker than the original is fine (interior brightness, owner 2026-10-27)"
+expect = [
+  { text = "interior lighting: fog 64..6500 power 0.80", label = "the suite's fog (template near/far, own power)" },
+  { re = 'test aid: screenshot .*tops_suite_east\.png', label = "the suite frame is saved" },
+]
+forbid = [{ text = "underwater: the camera is under water", label = "the cell's XCLW taken for water over the camera" }]
+
+[[scenario]]
 name = "smoke-blend-bison-steve"
 source = "docs/spec-notes/nif.md §6 \"Alpha blend of unlit shapes\" (owner 2026-10-23, screenshots of the Bison Steve Hotel's main entrance: ours drew far more smoke than the game): unlit alpha-blended shapes put colour × alpha^1.5 on the frame; the lobby (BisonSteve01) from the entrance marker, looking east over FXMistLow01 00172699 and FXSmokeWisps01 0017209E; one frame in target/smoke (bison_steve_smoke.png) to judge against the owner's game screenshot"
 areas = ["particles", "effects", "rendering"]

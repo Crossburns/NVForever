@@ -1385,6 +1385,42 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
   the colour, or ignoring LIGH targets all score within 0.03 SSIM of each other; ignoring
   them gives a lower mean colour error (0.008-0.028 against 0.033-0.049), but the near
   walls of the entry frame are warm in game, as with scaling [observed].
+- **Interior XCLW is not water** (issues #1546, #1078, 2026-11-06). The Tops' 13th floor
+  (`2ETopsBennysFloor`, 0x0010E429) and presidential suite (`2ETopsPresidentialSuite`,
+  0x0010E19B) set CELL DATA "Has water" with XCLW 14,095.9, while every reference in them
+  lies between z 7,228 and 9,284 [observed: `fnvtool world refs`]. The renderer's
+  under-water fog read that XCLW as a surface over the camera and drew the worldspace's
+  water (WastelandNV NAM2 Potomac, under fog −1,000..700, linear, deep colour
+  (27, 39, 24) × the light) round it: walls 59 % fogged at the camera and black past
+  about 700 units, the bulbs farther down the hall still showing [observed: our frame
+  from (3300, 2375, 7240) heading 270, 2026-11-06; the owner's "circle of darkness
+  around the player"]. Physics and audio had already stopped reading an interior's
+  XCLW as water (physics.md §6.6, `swim_h2o_drops` and `sw_guardian`: the original swims
+  at placed water objects, not XCLW; audio.md §15.2). The under-water fog now follows the
+  same rule: indoors the camera is under water only in physics' water (placed volumes),
+  coloured by the water type of the placed volume's base PWAT (DNAM, the type the renderer
+  draws that pool with), else the cell's (XCWT), else the worldspace's [hypothesis for the
+  colour]. Interiors with PWAT water but no XCLW (Vault 34, Vault 22, the Lake Mead and
+  Zion caves, among others, per a review of the install) get this fog for the first time;
+  coloured by XCWT or the worldspace they would take the wrong water (Vault 34's toxic
+  pools fogged as the Potomac) [observed: review of PR #1779]. Without physics
+  (`PhysState`: the viewer, no `--play`) an interior has no under-water fog. Twelve interiors store an XCLW above every reference they hold (the two Tops
+  cells, HooverDamIntPowerPlant01 and 01b at 15,067, the 3C boat rental and BS caves,
+  CampSearchlightHiddenCave, the OV sleep cells) [observed: `world cells` against
+  `world refs --interiors`, FalloutNV.esm]; all were fogged before. Both Tops cells' own
+  lighting is unchanged: ambient (46, 36, 27) from their template StatesmanHotelTemplate
+  (LNAM bit 0), the 13th floor's fog (74, 57, 43) 512..6,000 power 1 and clip 8,000, the
+  suite's fog (32, 47, 81) 64..6,500 (template) power 0.8 and clip 2,048 [observed: `esm
+  decode`]. Still drawn: the renderer's interior water plane at XCLW (above the ceiling
+  in these cells). Against the original [observed: capture `tops_suite_door`,
+  2026-11-06 21:55, save nvfairport, hour 21, from (1990, 1216, 8040) heading 90; frame
+  private]: the original lights the suite evenly to its far wall (bar, pillars, the
+  wall's bands of light, posters, sofa and rug); ours from the same spot showed the rug
+  and sofa only, black beyond, before the change, and the whole room after it, a little
+  darker on the right (kept: interior brightness, owner 2026-10-27). The 13th-floor
+  hallway (from (3300, 2375, 7240) heading 270) now reads to its far end; before, it was
+  black past about 700 units. The suite's clip distance (2,048) hid nothing visible in
+  our frame from that spot; not checked from the room's far corners.
 - **Interior reference frames** (2026-10-09, plugin v7, save nvfdoc, 1280 x 720,
   `fDefaultFOV=75`) [observed]: `capture_frames.py` cameras with a `cell` travel by `coc`.
   Seven frames exist (Doc Mitchell's house x 4, Prospector Saloon x 3). The Vault 21 and
