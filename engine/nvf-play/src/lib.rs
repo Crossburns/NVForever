@@ -44,6 +44,7 @@ pub mod effect_sounds;
 pub mod fade;
 pub mod drowning;
 pub mod falls;
+pub mod file_bytes;
 pub mod swing_traps;
 pub mod flashlight;
 pub mod free_cam;
