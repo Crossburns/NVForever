@@ -153,6 +153,7 @@ impl EquipmentCache {
         self.entries.retain(|_, c| frame - c.used <= keep);
     }
 
+    #[cfg(test)]
     pub fn computed(&self) -> usize {
         self.computed
     }
