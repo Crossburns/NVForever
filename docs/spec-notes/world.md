@@ -1398,8 +1398,13 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
   XCLW as water (physics.md §6.6, `swim_h2o_drops` and `sw_guardian`: the original swims
   at placed water objects, not XCLW; audio.md §15.2). The under-water fog now follows the
   same rule: indoors the camera is under water only in physics' water (placed volumes),
-  coloured by the cell's water type (XCWT, else the worldspace's) [hypothesis for the
-  colour]. Twelve interiors store an XCLW above every reference they hold (the two Tops
+  coloured by the water type of the placed volume's base PWAT (DNAM, the type the renderer
+  draws that pool with), else the cell's (XCWT), else the worldspace's [hypothesis for the
+  colour]. Interiors with PWAT water but no XCLW (Vault 34, Vault 22, the Lake Mead and
+  Zion caves, among others, per a review of the install) get this fog for the first time;
+  coloured by XCWT or the worldspace they would take the wrong water (Vault 34's toxic
+  pools fogged as the Potomac) [observed: review of PR #1779]. Without physics
+  (`PhysState`: the viewer, no `--play`) an interior has no under-water fog. Twelve interiors store an XCLW above every reference they hold (the two Tops
   cells, HooverDamIntPowerPlant01 and 01b at 15,067, the 3C boat rental and BS caves,
   CampSearchlightHiddenCave, the OV sleep cells) [observed: `world cells` against
   `world refs --interiors`, FalloutNV.esm]; all were fogged before. Both Tops cells' own
