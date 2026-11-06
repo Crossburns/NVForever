@@ -304,9 +304,12 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   `--size`, `--window-maximized`), and updates only 20 times a second while it waits. The
   new run opens its window hidden; as soon as its own loading screen (or the main menu)
   is up and drawn for 0.25 s, it shows its window over the old one, takes the focus and
-  writes the file, and loads behind its screen alone. The old run sees the file, writes
-  its exit logs and ends the process at once (not taking its world apart, which held its
-  memory about 2 s more). The pause menu's return to the main menu (`--menu`) goes the
+  writes the file, and loads behind its screen alone. The old run sees the file, takes it
+  away, writes its exit logs and ends the process at once (not taking its world apart,
+  which held its memory about 2 s more). The new run makes its game and puts the save
+  back only once the file is gone (or 2 s after writing it, for an old run that died):
+  on a busy machine the screen's first frames were slow enough for the save to go back
+  before the window was shown, the old run still holding its game (#1651). The pause menu's return to the main menu (`--menu`) goes the
   same way. If the new run ends before it is shown (it stops at the start), the screen
   comes down and the old game goes on; a new run that fails later is on its own (its
   crash report). Closing the old window while it waits ends the new run; a new run
