@@ -38,6 +38,17 @@ engine if needed, and delete the item here.
   `SetNumericINISetting "bGeneralSubtitles:Interface" 1` showed no subtitles; a timed
   cleanup by sample count can miss a session's end (samples run 15-60 a second) and
   `GameHour >= 10.13` fired at once (sessions start near 10.1, not 10.0).
+- **Observer notes from o26 (2026-11-06):** sessions of one campaign run in one game, one
+  after another: the save is loaded once, so each session starts where the last left
+  off (reset in a `timed` item). A `timed` script naming a ref variable `rW` or `rO`
+  did not compile ("script did not compile" for every hook), the same lines with
+  `rItem`, `rBase` did (like `fW` before). Values a script works out go to the header
+  through the player's `Variable01`-`Variable10` (`player.SetAV VariableNN x`, read as
+  `player.GetAV VariableNN`); they come back as whole numbers. Real time from a header:
+  `floor(days) × 24 + hour` (GameDaysPassed is fractional). `IsHardcore` and
+  `SetHardcore` need `player.` in a script. The capture job's `query` steps with a full
+  script all failed again (plugin version 10, o26_setav steps), so read through the
+  observer.
 - **Screenshots or video** (window in front, both locks): 7 (casino menus by key taps),
   12 (Ringo, Nash, Red Lucy, Doc Mitchell: nvftest/nvfdoc have them), 16, 17, 26, 27, 54.
 
@@ -145,7 +156,11 @@ engine if needed, and delete the item here.
      [observed, unexplained; one case].
    - `IsHardcore` read 0 in this Hardcore save, so it does not tell whether Hardcore is
      on. SetHardcore 1 on nvfairport still did nothing: the needs stayed 0 for two hours
-     (o6_00-01).
+     (o6_00-01). Explained 2026-11-06 (o26_stim): both need the player as calling
+     reference in a script. `IsHardcore` alone does not compile ("requires a calling
+     reference") and `SetHardcore 1` alone fails; `player.IsHardcore` reads 1 on
+     `nvfHardcore`, and `player.SetHardcore 1` / `0` switches it on `nvfairport` and
+     `nvfHardcore`. The needs-over-two-hours run could be redone that way.
    - Beer and Nuka-Cola, drunk by EquipItem, raised Dehydration by no more than the
      normal rate over 11 s (14, 14, 15 and 15, 15, 16) [observed]. The job had `tgm` on
      at the time (o7_00 steps 6 to 101; it went off before the Stimpak) [observed: the
@@ -1117,25 +1132,6 @@ The numbers above stay put so links to them hold; each item here gives its own p
     its stock Health (100–200) and once on the player, to tell condition points straight
     off the condition from a share of the limb's pool (of maximum Health), and whether the
     player's limbs take `fCombatPlayerLimbDamageMult`.
-
-## Added 2026-11-03 (a Stimpak's Hardcore effects outside Hardcore, issue #1438)
-
-76. **Does an aid effect whose conditions fail still count down its duration?** (P3;
-    aid-items.md §6.) The Stimpak's Health effects split by IsHardcore. NVForever now
-    holds a lasting effect whose conditions fail as inactive and lets its time run, so
-    outside Hardcore the Stimpak's 6 s heal over time is gone 6 s after the use
-    [hypothesis]. In the original (`nvfstrip`, Hardcore off): `player.damageav health
-    60`, use a Stimpak, wait 3 s, `SetHardcore 1` (or the settings switch), and log
-    `player.getav health` each second for 10 s: whether Health rises after Hardcore comes
-    on (the held effect taking hold) or not. Then again with 10 s between the use and
-    Hardcore on. Also whether STATS EFF lists the Stimpak at any point outside Hardcore.
-    The answer: the Health log and the EFF screenshots.
-    Tried 2026-11-06 (o25_stim, `nvfairport`), no answer: the observer's compiler refused
-    `IsHardcore` as a field ("Let fV := IsHardcore"), and the damage and the use ran
-    before the first sample (Health read 180 of 200 throughout both runs, before and after
-    `SetHardcore 1`). Next try: read Health in a `timed` script around the use, and check
-    that SetHardcore takes hold first (check 4 saw it do nothing on `nvfairport`), or start
-    from `nvfHardcore` and turn Hardcore off instead.
 
 ## Added 2026-11-03 (collision of animated objects, issue #1396)
 
