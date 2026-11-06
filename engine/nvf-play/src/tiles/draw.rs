@@ -930,6 +930,7 @@ pub(crate) struct View<'w, 's> {
     container: Option<Res<'w, super::container_menu::ContainerTiles>>,
     /// The trait menu, when this frame's writer has it drawn from its tiles.
     traits: Option<Res<'w, super::trait_menu::TraitTiles>>,
+    tags: Option<Res<'w, super::tag_menu::TagTiles>>,
     /// The open character menu, for the same decision as the hand-built trait menu's.
     chargen: Option<Res<'w, crate::chargen::ChargenMenus>>,
 }
@@ -959,6 +960,7 @@ pub(crate) struct MenusDrawn {
     stats: Drawn,
     container: Drawn,
     traits: Drawn,
+    tags: Drawn,
     dialog: Drawn,
 }
 
@@ -1004,6 +1006,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: V
         (super::container_menu::CONTAINER_MENU, container_on, CONTAINER_Z, &mut others.container),
         // One decision with the hand-built menu's and, below, the blur's (`trait_menu::drawn`).
         (super::trait_menu::TRAIT_MENU, view.traits.as_ref().is_some_and(|t| super::trait_menu::drawn(t, view.chargen.as_ref().and_then(|c| c.traits_open()), game).is_some()), TRAIT_Z, &mut others.traits),
+        (super::tag_menu::TAG_MENU, view.tags.as_ref().is_some_and(|t| super::tag_menu::drawn(t, view.chargen.as_ref().and_then(|c| c.tags_open()), game).is_some()), TRAIT_Z, &mut others.tags),
         (super::dialog_menu::DIALOG_MENU, view.dialog.as_ref().is_some_and(|d| d.drawn()), DIALOG_Z, &mut others.dialog),
     ] {
         let ui = game.map(|g| &g.ui_tree);
@@ -1012,6 +1015,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: V
         blur_now.tutorial |= name == super::tutorial_menu::TUTORIAL_MENU && menu.is_some();
         blur_now.container |= name == super::container_menu::CONTAINER_MENU && menu.is_some();
         blur_now.traits |= name == super::trait_menu::TRAIT_MENU && menu.is_some();
+        blur_now.tags |= name == super::tag_menu::TAG_MENU && menu.is_some();
         let pieces = match menu {
             Some((ui, menu)) => {
                 if drawn.told_menu != Some(menu) {

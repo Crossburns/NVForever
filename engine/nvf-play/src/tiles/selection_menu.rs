@@ -1,4 +1,4 @@
-//! Shared list selection drawing [design: trait_menu.rs and chargen.md ?4.1].
+//! Shared list selection drawing [design: trait_menu.rs and chargen.md §4.1].
 //! The path table varies; readiness, opening/tree/row lifetimes, layout, scrolls and input
 //! follow the trait menu's contract. Menu readers and wording stay beside their own sheets.
 #![allow(non_snake_case)]
@@ -33,6 +33,7 @@ pub(super) struct Paths {
 }
 
 pub(super) fn paths<const CODE: u16>() -> Paths {
+    if CODE == fnv_game::game::menus::TAG_SKILLS { return super::tag_menu::paths(); }
     use super::trait_menu::*;
     Paths {
         TRAIT_MENU,
@@ -98,6 +99,7 @@ pub fn built<const CODE: u16>(ui: &Ui) -> Tiled {
         DONE,
     ]
     .iter()
+    .filter(|s| !s.is_empty())
     .map(|s| (*s).to_string())
     .collect();
     paths.push(format!("{LIST}/{}", list::HIGHLIGHT));
@@ -109,8 +111,9 @@ pub fn built<const CODE: u16>(ui: &Ui) -> Tiled {
         list::PAGE_DOWN,
     ] {
         paths.push(format!("{LIST}/{}/{piece}", list::SCROLLBAR));
-        paths.push(format!("{TEXT_BAR}/{piece}"));
+        if !TEXT_BAR.is_empty() { paths.push(format!("{TEXT_BAR}/{piece}")); }
     }
+    if CODE == fnv_game::game::menus::TAG_SKILLS { paths.push(super::tag_menu::DIVIDER.into()); }
     for path in &paths {
         if ui.find_tile(path).is_none() {
             return Tiled::No(format!("{path} missing"));
@@ -138,7 +141,9 @@ pub fn built<const CODE: u16>(ui: &Ui) -> Tiled {
     let Some(row) = row else {
         return Tiled::No(format!("{TEMPLATE}/{ROW} missing"));
     };
-    for (kind, name) in [("text", ROW_TEXT), ("image", ROW_MARK)] {
+    let mut children = vec![("text", ROW_TEXT), ("image", ROW_MARK)];
+    if CODE == fnv_game::game::menus::TAG_SKILLS { children.push(("text", super::tag_menu::ROW_VALUE)); }
+    for (kind, name) in children {
         if !row
             .elements()
             .any(|e| e.is(kind) && e.attr("name").is_some_and(|n| n.eq_ignore_ascii_case(name)))
@@ -152,8 +157,11 @@ pub fn built<const CODE: u16>(ui: &Ui) -> Tiled {
 /// A row as shown.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RowShown {
+    /// [design] Trait FormID, or a skill actor-value code wrapped as an opaque row key.
+    /// The separate menu resources keep those two namespaces apart.
     pub key: FormId,
     pub name: String,
+    pub value: Option<String>,
     /// The file's `_selected`: the trait is taken. Not the highlight.
     pub taken: bool,
     /// The player does not meet its requirements.
@@ -175,6 +183,7 @@ pub struct Snapshot {
     pub done: bool,
     pub taken: usize,
     pub most: usize,
+    pub only_add: bool,
     /// `crate::chargen::TraitsOpen::navigated`.
     pub navigated: u32,
 }
@@ -230,15 +239,17 @@ pub(super) struct FileCounts {
     pub(super) list_step: f64,
     /// The description bar's `_number_of_items`.
     pub(super) text_items: f64,
+    pub(super) text_top: f64,
 }
 
 impl FileCounts {
     fn read<const CODE: u16>(ui: &Ui, menu: TileId) -> FileCounts {
-        let Paths { LIST, TEXT_BAR, .. } = paths::<CODE>();
+        let Paths { LIST, TEXT_BAR, TEXT, .. } = paths::<CODE>();
         FileCounts {
             menu,
             list_step: num(ui, LIST, "_scroll_delta"),
             text_items: num(ui, TEXT_BAR, "_number_of_items"),
+            text_top: num(ui, TEXT, "y"),
         }
     }
 }
@@ -309,6 +320,10 @@ pub fn write<const CODE: u16>(ui: &mut Ui, s: &Snapshot, st: &mut SelectionTiles
         {
             return false;
         }
+        if CODE == fnv_game::game::menus::TAG_SKILLS {
+            let Some(value) = list::child(ui, row.tile, super::tag_menu::ROW_VALUE) else { return false };
+            ui.set_trait(value, "string", Value::Str(shown.value.clone().unwrap_or_default()));
+        }
         ui.set_trait(row.tile, "id", Value::Num(ROW_ID));
         ui.set_trait(row.tile, "string", Value::Str(shown.name.clone()));
         ui.set_trait(row.tile, "_selected", flag(shown.taken));
@@ -321,6 +336,11 @@ pub fn write<const CODE: u16>(ui: &mut Ui, s: &Snapshot, st: &mut SelectionTiles
     // The list's `_enabled` follows its `visible`, which the file leaves to code; without it
     // the rows take no pointer and the highlight stays hidden.
     set(ui, LIST, "visible", flag(true));
+    if CODE == fnv_game::game::menus::TAG_SKILLS {
+        // [documented: chargen.md §3] The list's top is left to code.
+        set(ui, LIST, "y", Value::Num(66.0));
+        set(ui, TRAIT_MENU, "_OnlyAdd", flag(s.only_add));
+    }
     set(ui, TITLE, "string", Value::Str(s.title.clone()));
     set(ui, TEXT, "string", Value::Str(s.info.clone()));
     set(ui, COUNTER, "string", Value::Str(s.counter.clone()));
@@ -445,6 +465,7 @@ pub fn settle<const CODE: u16>(
             ui.set_trait(bar, "_number_of_items", Value::Num(file_items));
         }
     }
+    if TEXT_BAR.is_empty() { super::tag_menu::settle_text(ui, st); }
     st.rewrite(ui);
     ui.update();
 }
@@ -473,7 +494,7 @@ pub(super) fn usable<const CODE: u16>(ui: &Ui, s: &Snapshot, st: &SelectionTiles
     }
     if !room(num(ui, TEXT_BOX, "height"))
         || !room(num(ui, TEXT_BOX, "width"))
-        || !room(num(ui, TEXT_BAR, "_ScrollDelta"))
+        || (!TEXT_BAR.is_empty() && !room(num(ui, TEXT_BAR, "_ScrollDelta")))
     {
         return Tiled::No(format!("{TEXT_BOX} has no room or scroll step"));
     }
@@ -481,6 +502,9 @@ pub(super) fn usable<const CODE: u16>(ui: &Ui, s: &Snapshot, st: &SelectionTiles
         return Tiled::No("a row could not be made".into());
     }
     for r in &st.rows {
+        if CODE == fnv_game::game::menus::TAG_SKILLS && ui.is_live(r.tile) && list::child(ui, r.tile, super::tag_menu::ROW_VALUE).is_none() {
+            return Tiled::No("a row lost its skill value".into());
+        }
         if !ui.is_live(r.tile) || list::child(ui, r.tile, ROW_MARK).is_none() {
             return Tiled::No(format!("a row lost its tile or {ROW_MARK}"));
         }
@@ -652,12 +676,15 @@ impl<const CODE: u16> SelectionTiles<CODE> {
         }
         if let Some(bar) = ui.find_tile(TEXT_BAR) {
             list::write_bar_value(ui, bar, self.text.value);
-        }
+        } else if TEXT_BAR.is_empty() { super::tag_menu::rewrite_text(ui, self); }
     }
 
     /// Queue an act for `crate::chargen`'s `input`, as of the opening shown.
     pub(super) fn act(&mut self, act: TileAct) {
         if let Some(g) = self.generation {
+            let act = if CODE == fnv_game::game::menus::TAG_SKILLS {
+                match act { TileAct::Hover(key) => TileAct::SkillHover(key.0 as u16), TileAct::Click(key) => TileAct::SkillClick(key.0 as u16), other => other }
+            } else { act };
             self.acts.push((g, act));
         }
     }
@@ -704,12 +731,12 @@ impl<const CODE: u16> SelectionTiles<CODE> {
         } else {
             Scroll::List
         };
-        self.scroll_to(which, self.value(which) + by);
+        self.scroll_to(which, self.value(which) + by * if CODE == fnv_game::game::menus::TAG_SKILLS && which == Scroll::Text { super::tag_menu::TEXT_STEP } else { 1.0 });
     }
 
     /// The description's scroll by `by` values (the keys, `crate::chargen`).
     pub fn scroll_text(&mut self, by: f64) {
-        self.scroll_to(Scroll::Text, self.text.value + by);
+        self.scroll_to(Scroll::Text, self.text.value + by * if CODE == fnv_game::game::menus::TAG_SKILLS { super::tag_menu::TEXT_STEP } else { 1.0 });
     }
 
     /// A drag ends with its press or when the menu stops taking input.
@@ -791,19 +818,19 @@ impl<const CODE: u16> SelectionTiles<CODE> {
             TEXT,
             ..
         } = paths::<CODE>();
-        let (Some(l), Some(t)) = (ui.find_tile(LIST), ui.find_tile(TEXT_BAR)) else {
-            return;
-        };
-        let (Some(lv), Some(tv)) = (
-            list::value_shown(ui, l),
-            ui.tile(t).get("_current_value").map(Value::num),
-        ) else {
+        let Some(l) = ui.find_tile(LIST) else { return };
+        let text_value = if TEXT_BAR.is_empty() { self.file.map(|f| f.text_top - num(ui, TEXT, "y")) }
+            else { ui.find_tile(TEXT_BAR).and_then(|t| ui.tile(t).get("_current_value").map(Value::num)) };
+        let (Some(lv), Some(tv)) = (list::value_shown(ui, l), text_value) else {
             return;
         };
         let n = |x: f64| Value::Num(x).text();
         if self.drawn != Some((lv, tv)) {
             let end = num(ui, TEXT, "y") + num(ui, TEXT, "height");
             log(format!("tiles: {TRAIT_MENU} list scrolled to {} of {}, text scrolled to {} of {}, its end at {} in a box {} high", n(lv), n(self.list.most), n(tv), n(self.text.most), n(end), n(num(ui, TEXT_BOX, "height"))));
+            if TEXT_BAR.is_empty() && self.text.most > 0.0 && tv == self.text.most {
+                log(format!("tiles: {TRAIT_MENU} description end reached"));
+            }
             self.drawn = Some((lv, tv));
         }
         if lv != self.list.value {
@@ -1116,7 +1143,7 @@ impl<const CODE: u16> SelectionAid<CODE> {
 
 /// Read the test aid at start.
 pub(super) fn aid_from_env<const CODE: u16>() -> SelectionAid<CODE> {
-    let AID = super::trait_menu::AID;
+    let AID = if CODE == fnv_game::game::menus::TAG_SKILLS { super::tag_menu::AID } else { super::trait_menu::AID };
     let due = match std::env::var(AID) {
         Ok(v) => parse_aid(&v).unwrap_or_else(|e| {
             warn!("{AID}: {e}");
@@ -1145,12 +1172,12 @@ pub(super) fn write_system<const CODE: u16>(
     (mut st, mut aid): (ResMut<SelectionTiles<CODE>>, ResMut<SelectionAid<CODE>>),
 ) {
     let Paths { TRAIT_MENU, .. } = paths::<CODE>();
-    if !switch.traits {
+    if !(if CODE == fnv_game::game::menus::TAG_SKILLS { switch.tags } else { switch.traits }) {
         return;
     }
     let open = chargen
         .as_deref()
-        .and_then(crate::chargen::ChargenMenus::traits_open);
+        .and_then(|c| c.list_open(CODE));
     let game_open = script
         .rt
         .as_ref()
@@ -1165,7 +1192,7 @@ pub(super) fn write_system<const CODE: u16>(
     let Some(rt) = script.rt.as_mut() else { return };
     aid.step(&mut rt.game.ui_tree, time.world_secs());
     let status = if aid.missing {
-        Tiled::No("menus\\trait_menu.xml missing".into())
+        Tiled::No(if CODE == fnv_game::game::menus::TAG_SKILLS { "menus\\chargen\\char_gen_menu.xml missing" } else { "menus\\trait_menu.xml missing" }.into())
     } else {
         built::<CODE>(&rt.game.ui_tree)
     };
@@ -1184,14 +1211,12 @@ pub(super) fn write_system<const CODE: u16>(
             (open.menu.view(g), open.menu.trait_facts(g))
         });
         let (view, facts) = read.map_or((None, None), |(v, f)| (Some(v), f));
-        let sheet = open.menu.trait_sheet();
-        let made = view.as_ref().zip(sheet).map(|(v, sheet)| {
-            let mut s = Snapshot::of(v, sheet, facts, open.generation, open.navigated);
-            if aid.long {
-                s.info = [s.info.as_str(); 2].join("\n\n");
-            }
-            s
-        });
+        let mut made = if CODE == fnv_game::game::menus::TAG_SKILLS {
+            view.as_ref().zip(super::tag_menu::sheet(open.menu)).map(|(v, sheet)| super::tag_menu::snapshot(v, sheet, open.generation, open.navigated))
+        } else {
+            view.as_ref().zip(open.menu.trait_sheet()).map(|(v, sheet)| Snapshot::of(v, sheet, facts, open.generation, open.navigated))
+        };
+        if aid.long { if let Some(s) = made.as_mut() { s.info = vec![s.info.as_str(); if CODE == fnv_game::game::menus::TAG_SKILLS { 8 } else { 2 }].join("\n\n"); } }
         st.seen = Some(from);
         made
     } else {
@@ -1220,6 +1245,27 @@ pub(super) fn write_system<const CODE: u16>(
         st.told = true;
         if let Some(s) = st.shown.as_ref() {
             info!("{}", describe(ui, s, &st));
+            if CODE == fnv_game::game::menus::TAG_SKILLS {
+                let p = paths::<CODE>();
+                info!("tiles: {} Done target {}, only add {}", p.TRAIT_MENU, num(ui, p.DONE, "target"), num(ui, p.TRAIT_MENU, "_OnlyAdd"));
+            }
         }
     }
+}
+
+/// [design] The hand-built input's common access to either selection resource. The
+/// const-generic resources remain distinct, so their openings and queued acts cannot mix.
+pub(crate) trait SelectionInput {
+    fn takes(&self) -> Option<TileId>;
+    fn page_rows(&self) -> i32;
+    fn wheel(&mut self, by: f64);
+    fn scroll_text(&mut self, by: f64);
+    fn take_acts(&mut self, generation: u64) -> Vec<TileAct>;
+}
+impl<const CODE: u16> SelectionInput for SelectionTiles<CODE> {
+    fn takes(&self) -> Option<TileId> { self.takes() }
+    fn page_rows(&self) -> i32 { self.page_rows() }
+    fn wheel(&mut self, by: f64) { self.wheel(by); }
+    fn scroll_text(&mut self, by: f64) { self.scroll_text(by); }
+    fn take_acts(&mut self, generation: u64) -> Vec<TileAct> { self.take_acts(generation) }
 }

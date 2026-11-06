@@ -36,7 +36,9 @@
 
 #[cfg(test)]
 use super::list;
-use super::menus::{SizesWritten, Tiled};
+use super::menus::Tiled;
+#[cfg(test)]
+use super::menus::SizesWritten;
 use super::selection_menu::*;
 pub use super::selection_menu::{
     follow_click, follow_pointer, RowShown, Scroll, SelectionTile as TraitTile, Snapshot,
@@ -150,6 +152,7 @@ impl Snapshot {
             .map(|(&key, r)| RowShown {
                 key,
                 name: r.text.clone(),
+                value: None,
                 taken: r.marked,
                 faint: r.dim,
             })
@@ -167,6 +170,7 @@ impl Snapshot {
             done: view.done,
             taken: sheet.chosen.len(),
             most: sheet.max,
+            only_add: false,
             navigated,
         }
     }
@@ -263,7 +267,7 @@ mod tests {
         Snapshot {
             generation: 1,
             title: "PICK".into(),
-            rows: (0..rows as u32).map(|i| RowShown { key: FormId(100 + i), name: format!("Trait {i}"), taken: false, faint: false }).collect(),
+            rows: (0..rows as u32).map(|i| RowShown { key: FormId(100 + i), name: format!("Trait {i}"), value: None, taken: false, faint: false }).collect(),
             selected: Some(selected),
             icon: Some("x.dds".into()),
             info: info.into(),
@@ -271,6 +275,7 @@ mod tests {
             done: true,
             taken: 0,
             most: 2,
+            only_add: false,
             navigated: 0,
         }
     }
