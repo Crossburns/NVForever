@@ -196,6 +196,8 @@ enabled at the start of a game) are drawn by `script_draw.rs` while scripts run:
 form's model, at the reference's pose (the simulation's once it holds one), under the
 cell's `RenderCell` entity, with `RefVisual` on every mesh. Actors, SpeedTrees, markers
 and light sources are not; the enabled-at-start rule is a copy of render streaming's.
+A light source has its own `RefVisual` (`lights.rs` `spawn_light`, docs/spec-notes/model-lights.md
+§2), so it goes out and comes back with its reference [design].
 
 **Placed NPCs** carry `RefVisual(reference)` on their root and every mesh entity
 (`engine/nvforever/src/actors.rs`, `spawn`), so a script's Disable hides them and Enable
@@ -473,8 +475,6 @@ with identical observations with and without voice lengths.
 - Voice (§6.4): sounds are not placed in space, do not pause with menus, and the
   dialogue the test aids stand in for is not heard (it waits for the dialogue screen,
   docs/design/dialogue.md D4).
-- Lights a script enables or disables (e.g. the Strip gate's lamp 0x0011A1F9 by the hour)
-  keep their light source as streamed.
 - NPCs enabled at run time that render streaming skipped are not drawn (`actors.rs`
   would have to build them; coordination).
 - OnHit, OnDeath, combat, dialogue and AI package events wait for Layer 6.

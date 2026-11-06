@@ -13073,6 +13073,27 @@ expect = [
 manual = "on a failure, the chain's notes say what each step stands for; the stalls and their causes are in docs/handoff/mq-walkthrough-2026-10-27.md"
 
 [[scenario]]
+name = "lights-disable"
+source = "issue #1619: all 25 placed lights of Doc Mitchell's house disabled from the console, then enabled, each light source following its reference (docs/spec-notes/model-lights.md §2). The log can show only that the sources' entities were updated, by the entity counts; it cannot show the illumination went away, which takes comparing the saved frames (see manual)"
+areas = ["effects", "lights", "scripting"]
+paths = ["engine/nvforever/src/lights.rs", "engine/nvf-play/src/activate.rs", "engine/nvforever/src/detection.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "18:001731EB.disable;001731EA.disable;00108723.disable;00105CC8.disable;00103E6C.disable;00103E6D.disable;00103E6E.disable;00103E6F.disable;00103E73.disable;00104C15.disable;00124197.disable;00124198.disable;00124199.disable;0012419A.disable;0012419B.disable;0012419D.disable;0012419E.disable;0012419F.disable;001241A0.disable;001241A1.disable;001241A2.disable;001241A8.disable;001241B7.disable;001241B8.disable;001241B9.disable;001731EB.getdisabled;19:close;24:001731EB.enable 0;001731EA.enable 0;00108723.enable 0;00105CC8.enable 0;00103E6C.enable 0;00103E6D.enable 0;00103E6E.enable 0;00103E6F.enable 0;00103E73.enable 0;00104C15.enable 0;00124197.enable 0;00124198.enable 0;00124199.enable 0;0012419A.enable 0;0012419B.enable 0;0012419D.enable 0;0012419E.enable 0;0012419F.enable 0;001241A0.enable 0;001241A1.enable 0;001241A2.enable 0;001241A8.enable 0;001241B7.enable 0;001241B8.enable 0;001241B9.enable 0;001731EB.getdisabled;25:close", NVF_PLAY_TEST_SHOTS = "16:lights_disable_before.png,23:lights_disable_off.png,29:lights_disable_on.png" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--hour", "12", "--no-voice", "--size", "1280x720"]
+run_seconds = 32
+manual = "lights_disable_off.png against lights_disable_before.png: the lamps' light gone from walls and floor (the cell's ambient light and emissive shapes stay); lights_disable_on.png like the frame before"
+expect = [
+  { text = "console: GetDisabled on 0x001731EB >> 1.00", count = 1, label = "the lights read disabled" },
+  { text = "console: GetDisabled on 0x001731EB >> 0.00", count = 1, label = "the lights read enabled again" },
+  { re = 'reference 0x(?:001731EB|001731EA|00108723|00105CC8|00103E6C|00103E6D|00103E6E|00103E6F|00103E73|00104C15|00124197|00124198|00124199|0012419A|0012419B|0012419D|0012419E|0012419F|001241A0|001241A1|001241A2|001241A8|001241B7|001241B8|001241B9) gone: [1-9]\d* render entities updated', count = 25, label = "every light's entities go with it" },
+  { re = 'reference 0x(?:001731EB|001731EA|00108723|00105CC8|00103E6C|00103E6D|00103E6E|00103E6F|00103E73|00104C15|00124197|00124198|00124199|0012419A|0012419B|0012419D|0012419E|0012419F|001241A0|001241A1|001241A2|001241A8|001241B7|001241B8|001241B9) gone: 0 render entities updated', count = 0, label = "no light is left with nothing to hide" },
+  { text = "reference 0x0012419D gone: 1 render entities updated", count = 1, label = "a light without a model has its source hidden" },
+  { re = 'reference 0x(?:001731EB|001731EA|00108723|00105CC8|00103E6C|00103E6D|00103E6E|00103E6F|00103E73|00104C15|00124197|00124198|00124199|0012419A|0012419B|0012419D|0012419E|0012419F|001241A0|001241A1|001241A2|001241A8|001241B7|001241B8|001241B9) present: [1-9]\d* render entities updated', count = 25, label = "every light's entities come back" },
+  { re = 'test aid: screenshot lights_disable_before\.png', label = "the frame before is saved" },
+  { re = 'test aid: screenshot lights_disable_off\.png', label = "the frame with the lights off is saved" },
+  { re = 'test aid: screenshot lights_disable_on\.png', label = "the frame with the lights on again is saved" },
+]
+
+[[scenario]]
 name = "fire-barrel-light"
 source = "owner report 2026-10-27: the Abandoned Shack's fire barrel (GSAbandonedShack, Barrel02Fire128, radius 128) gave off very little light. Its light now sits on barrel02firelight.nif's AttachLight node (102 units up, docs/spec-notes/model-lights.md §4) and flickering lights reach 1.5x their radius and dim to 0.8 (lights.rs FLAME_REACH, FLICKER_LOW), fitted to the owner's frames of the original"
 areas = ["effects", "lights"]

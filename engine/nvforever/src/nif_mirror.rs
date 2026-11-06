@@ -36,10 +36,12 @@ struct Held {
     scale: Option<f32>,
 }
 
+type Visuals<'w, 's> = Query<'w, 's, (Entity, &'static RefVisual, Option<&'static ChildOf>), crate::lights::NotLightSource>;
+
 type NodeQuery<'w, 's> = Query<'w, 's, (Option<&'static Name>, &'static mut Transform, Option<&'static Children>, Has<NifHidden>)>;
 
 /// The root entity of a reference's drawing.
-fn root_of(r: u32, actors: &Query<(Entity, &ActorRig)>, visuals: &Query<(Entity, &RefVisual, Option<&ChildOf>)>) -> Option<Entity> {
+fn root_of(r: u32, actors: &Query<(Entity, &ActorRig)>, visuals: &Visuals) -> Option<Entity> {
     if let Some((e, _)) = actors.iter().find(|(_, a)| a.reference == r) {
         return Some(e);
     }
@@ -86,7 +88,7 @@ fn find(root: Entity, name: &str, nodes: &NodeQuery, rig: &HashMap<Entity, Strin
 fn mirror(
     mut script: Option<ResMut<ScriptState>>,
     actors: Query<(Entity, &ActorRig)>,
-    visuals: Query<(Entity, &RefVisual, Option<&ChildOf>)>,
+    visuals: Visuals,
     parents: Query<&ChildOf>,
     mut nodes: NodeQuery,
     mut commands: Commands,
@@ -203,5 +205,28 @@ fn mirror(
             info!("nif mirror: {:08X} told, {} nodes, first {:?}", r.0, tree.len(), tree.iter().take(4).map(|n| n.name.as_str()).collect::<Vec<_>>());
         }
         scene.set_tree(r, tree);
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn a_light_source_is_not_a_references_root() {
+        const R: u32 = 0x301;
+        fn root(world: &mut World) -> Option<Entity> {
+            world.run_system_once(|actors: Query<(Entity, &ActorRig)>, visuals: Visuals| root_of(R, &actors, &visuals)).unwrap()
+        }
+        // Without a parent, so that each entity passes the test on its parent and only the
+        // filter on light sources can leave it out.
+        let mut world = World::new();
+        world.spawn((PointLight::default(), RefVisual(R)));
+        world.spawn((SpotLight::default(), RefVisual(R)));
+        assert_eq!(root(&mut world), None, "its light sources alone");
+        let drawn = world.spawn((Transform::IDENTITY, RefVisual(R))).id();
+        assert_eq!(root(&mut world), Some(drawn), "not a light source beside it");
     }
 }

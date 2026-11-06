@@ -77,7 +77,7 @@ fn swap_models(
     mut streamer: ResMut<Streamer>,
     mut models: ModelCtx,
     mut emittance: ResMut<crate::emittance::EmittanceState>,
-    drawn: Query<(Entity, &RefVisual, &ChildOf)>,
+    drawn: Query<(Entity, &RefVisual, &ChildOf), crate::lights::NotLightSource>,
     cells: Query<&Transform, With<CellEntity>>,
 ) {
     *wait -= time.delta_secs();
