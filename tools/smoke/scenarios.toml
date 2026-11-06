@@ -8721,7 +8721,7 @@ expect = [
   { re = 'use weapon: FiendVioletRef 0x000F570B uses WeapHuntingRifle on the player \(a script\): 3 shots; always hit, no damage, crouch to reload', label = "Violet uses her hunting rifle on the player: 3 shots, always hit, no damage" },
   "use weapon: FiendVioletRef 0x000F570B has fired its 3 shots at the player",
   "has used its weapon: back to its package",
-  { re = 'use weapon summary: 1 actors used a weapon .*§3 shots \(3 always hit, 3 harmless; (?P<n>\d+) harmless hits\)', range = [1, 3], label = "3 shots, always hit and harmless, at least one lands" },
+  { re = 'use weapon summary: 1 actors used a weapon .*?3 shots \(3 always hit, 3 harmless; (?P<n>\d+) harmless hits\)', range = [1, 3], label = "3 shots, always hit and harmless, at least one lands" },
 ]
 forbid = [{ re = 'the player was hit [1-9]', label = "the player takes a hit" }]
 
@@ -11015,7 +11015,7 @@ order = [[
   "player controls: all enabled",
 ]]
 expect = [
-  { re = 'knockout: .*\b(0x)§00000014 knocked down \(pushed\)', label = "the rules knock the player down" },
+  { re = 'knockout: .*\b(0x)?00000014 knocked down \(pushed\)', label = "the rules knock the player down" },
   { re = 'player knockdown: the player falls \(pushed, first person, the view leaves first person\): ragdoll thrown at \(-?\d+, -?\d+, \d+\) units/s', label = "the body is thrown as a ragdoll and the view leaves first person" },
   "player controls: all held, the player is knocked down",
   { re = 'console: GetKnockedState on player >> 0\.00\b', label = "GetKnockedState reads 0 for the pushed player" },
@@ -12491,9 +12491,9 @@ run_seconds = 40
 expect = [
   { re = 'body weapons: \S+ \S+ fights with MisterHandyBuzzsaw, MisterHandyFlamer2HL', label = "Mister Handy's arms: buzzsaw and flamer" },
   { re = 'body weapons: \S+ \S+ fights with MisterGutsyPlasma1HP, MisterGutsyFlamer2HL', label = "Mister Gutsy's arms: plasma gun and flamer" },
-  { re = 'attack anims: \S+ plays meshes.creatures.mistergutsy.(specialanims.)§1hmattack\S+\.kf', label = "a buzzsaw blow plays a 1hm attack clip (specialanims)" },
-  { re = 'attack anims: \S+ plays meshes.creatures.mistergutsy.(specialanims.)§2hlattackspin\.kf', label = "a flamer shot plays the 2hl spin clip" },
-  { re = 'attack anims: \S+ plays meshes.creatures.mistergutsy.(specialanims.)§1hpattackright\.kf', label = "a plasma shot plays the 1hp attack clip" },
+  { re = 'attack anims: \S+ plays meshes.creatures.mistergutsy.(specialanims.)?1hmattack\S+\.kf', label = "a buzzsaw blow plays a 1hm attack clip (specialanims)" },
+  { re = 'attack anims: \S+ plays meshes.creatures.mistergutsy.(specialanims.)?2hlattackspin\.kf', label = "a flamer shot plays the 2hl spin clip" },
+  { re = 'attack anims: \S+ plays meshes.creatures.mistergutsy.(specialanims.)?1hpattackright\.kf', label = "a plasma shot plays the 1hp attack clip" },
   { re = 'body weapons: \S+ switches from MisterHandyBuzzsaw to MisterHandyFlamer2HL', label = "Mister Handy takes up its flamer at a distance" },
   { re = 'body weapons: \S+ switches from MisterGutsyPlasma1HP to MisterGutsyFlamer2HL', label = "Mister Gutsy takes up its flamer when brought close" },
   { re = 'npc combat summary: .*?(?P<n>\d+) shots \((?P<m>\d+) from a muzzle', label = "shots from the weapons' nodes" },
