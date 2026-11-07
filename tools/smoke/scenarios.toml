@@ -2625,6 +2625,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "tag-reset-clears"
+source = "[observed 2026-11-07] docs/spec-notes/chargen.md §3: Reset clears the tags the menu opened with, and Done is refused until three are tagged again"
+note = "[design] The second opening starts with the first's three tags, so the old rule (back to the opening state) would finish with those at the first Done."
+areas = ["chargen", "menus"]
+paths = ["engine/nvf-play/src/chargen.rs", "engine/nvf-play/src/chargen/lists.rs", "crates/fnv-game/src/chargen.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "3:menu:1048,8:menu:1048", NVF_PLAY_TEST_CHARGEN = "5:pick:Guns,5.1:pick:Speech,5.2:pick:Survival,6:done,10:reset,10.1:done,10.2:pick:Lockpick,10.3:pick:Medicine,10.4:pick:Repair,11:done" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice"]
+run_seconds = 14
+order = [[
+  "done, tag skills: Guns, Speech, Survival",
+  "chargen: reset",
+  "Done refused: 0 of 3 skills tagged",
+  "done, tag skills: Lockpick, Medicine, Repair",
+]]
+
+[[scenario]]
 name = "chargen-menus"
 source = "CLAUDE.md: after changes to the name, tag-skill or trait menus (docs/spec-notes/chargen.md §7)"
 areas = ["chargen", "menus"]
