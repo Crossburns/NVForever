@@ -22276,3 +22276,21 @@ expect = [
 ]
 forbid = ["pipboy: warm-up start", "pipboy: warm-up asked", "pipboy: first raise held", "menu request ignored"]
 manual = "This control must ask new pipelines at the first raise; otherwise the comparison is inconclusive. Compare its first_a through first_d with the warm run for the old screen fault. Pipeline compile durations and the last screen/glare ready lines determine the faulty interval; do not infer an unmeasured duration from the shot schedule. The shader-defs line for the last screen/glare pipeline to become ready identifies the candidate variant in the blue/brown depth fight; confirm against the corresponding shots."
+
+
+[[scenario]]
+name = "stress-comparison-inputs"
+source = "[design] docs/design/stress-comparisons.md: current frame-capture, profile and legacy stress log inputs used together by the comparison reader; log contract only, JSONL validation is in synthetic harness tests"
+areas = ["profiling"]
+paths = ["tools/stress/", "engine/nvforever/src/frame_telemetry/", "engine/nvforever/src/stress_sample.rs", "engine/nvforever/src/profile.rs"]
+env = { NVF_PLAY_TEST_FRAME_TELEMETRY = "18", NVF_PLAY_TEST_FRAME_TELEMETRY_RUN_ID = "stress_compare_smoke", NVF_PLAY_TEST_FRAME_TELEMETRY_SCENARIO_ID = "indoor_sample", NVF_PLAY_TEST_SAMPLE = "2", NVF_PLAY_TEST_PROFILE = "2" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 25
+expect = [
+  { re = 'frame telemetry: capturing 18 s to .* \(frames\)', count = 1, label = "one frames-only capture starts beside legacy sampling and profiling" },
+  { re = 'frame telemetry: .* complete \(duration_limit\), [1-9]\d* frames, gameplay p50 \d', count = 1, label = "the terminal summary confirms a complete gameplay capture" },
+  { re = 'frame telemetry: .*flush unconfirmed', max = 0, label = "the final flush is confirmed" },
+  { re = 'stress sample: t [\d.]+ s, frames [1-9]\d*, frame mean [\d.]+ ms, frame worst [\d.]+ ms, entities \d+', min = 1, label = "current coarse sample fields are present" },
+  { re = 'stress frames: [1-9]\d* frames, mean [\d.]+ ms, 1% low [\d.]+ ms \([\d.]+ fps\), worst [\d.]+ ms; \d+ behind loading screens left out', count = 1, label = "the unchanged release-budget population has its own exit summary" },
+  { re = 'profile: [\d.]+ s, [1-9]\d* frames, frame mean [\d.]+ ms(?:, cpu [\d.]+ ms a frame)?; ', min = 1, label = "current profile window format is present" },
+]
