@@ -8,14 +8,17 @@
 //!   near and far planes are depths below the surface [documented: GECK wiki
 //!   WaterType]), shallow to deep colour from the near to the far depth (-80 / 850 for
 //!   Lake Mead's NVCleanWater), and its opacity by the length of the view ray inside the
-//!   water over the same ramp, at most the above fog's amount (the deep plane's
-//!   transparency [documented: same page]; 0.75 for NVCleanWater). So the bed shows at
-//!   the waterline and fades out as it drops, and a pool shallower than the far depth
-//!   keeps its shallow colour, opaque at a grazing look (the Ultra-Luxe fountain, #1787;
-//!   before that the colour too followed the ray, which made small pools the deep
-//!   colour). Compared with the original: fogging by the distance from the camera
-//!   turned the water opaque right at the shore when seen from a few metres up; the
-//!   opacity by the depth alone showed the fountain's floor (world.md §6).
+//!   water over the same ramp, opaque beyond the far plane. Placed water (PWAT) only
+//!   reaches the above fog's amount (the deep plane's transparency [documented: same
+//!   page]); cell and distant water are not capped, as the cap left the lake bed showing
+//!   far out in Lake Mead (NVCleanWater, amount 0.75) [design, until a far-out Lake Mead
+//!   comparison is made]. So the bed shows at the waterline and fades out as it drops,
+//!   and a pool shallower than the far depth keeps its shallow colour, opaque at a
+//!   grazing look (the Ultra-Luxe fountain, #1787; before that the colour too followed
+//!   the ray, which made small pools the deep colour). Compared with the original:
+//!   fogging by the distance from the camera turned the water opaque right at the shore
+//!   when seen from a few metres up; the opacity by the depth alone showed the
+//!   fountain's floor (world.md §6).
 //! - Reflective types reflect the world (reflection.rs: a mirrored camera's image of
 //!   the scene above the water nearest the camera; the weather's sky gradient for water
 //!   at other heights), others their reflection colour, weighted by
@@ -178,11 +181,12 @@ impl Material for WaterMaterial {
     }
 }
 
-/// One material per water type FormID and whether it reflects (placed water whose PWAT
-/// does not: [`water_material`]), and the shared cell-sized plane.
+/// One material per water type FormID, whether it reflects (placed water whose PWAT
+/// does not: [`water_material`]) and whether it is placed water (its opacity capped at
+/// the above fog's amount), and the shared cell-sized plane.
 #[derive(Resource, Default)]
 pub struct WaterCache {
-    materials: HashMap<(u32, bool), Handle<WaterMaterial>>,
+    materials: HashMap<(u32, bool, bool), Handle<WaterMaterial>>,
     plane: Option<Handle<Mesh>>,
     /// The water-pixel counter ([`WaterMaterial::seen`]), made with the first material.
     seen: Option<Handle<ShaderBuffer>>,
@@ -270,10 +274,14 @@ impl WaterCtx<'_> {
 /// The material for water type `wid` (built on first use). `reflects` false (a placed
 /// water whose PWAT does not set "Reflects", `fnv_world::sky::placeable_water_reflects`)
 /// draws the type without any reflection: no world, sky or reflection colour and no sun
-/// highlight, only the water body [hypothesis, world.md §6 "Placed water"].
-pub fn water_material(world: &WorldData, wid: u32, reflects: bool, models: &mut ModelCtx, water: &mut WaterCtx) -> Option<Handle<WaterMaterial>> {
+/// highlight, only the water body [hypothesis, world.md §6 "Placed water"]. `placed`
+/// (placed water, PWAT) caps the body's opacity seen from above at the above fog's
+/// amount (`above_fog.w` = 1); cell and distant water stay opaque beyond the far plane,
+/// as the cap left the lake bed showing far out in Lake Mead [design, until a far-out
+/// Lake Mead comparison is made, world.md §6].
+pub fn water_material(world: &WorldData, wid: u32, reflects: bool, placed: bool, models: &mut ModelCtx, water: &mut WaterCtx) -> Option<Handle<WaterMaterial>> {
     let wid = water.remaps.as_ref().and_then(|r| r.0.get(&wid).copied()).unwrap_or(wid);
-    if let Some(m) = water.cache.materials.get(&(wid, reflects)) {
+    if let Some(m) = water.cache.materials.get(&(wid, reflects, placed)) {
         return Some(m.clone());
     }
     let w = fnv_world::sky::water(world.lo, world.schema, wid)?;
@@ -298,8 +306,11 @@ pub fn water_material(world: &WorldData, wid: u32, reflects: bool, models: &mut 
     if !reflects {
         params.surface.x = 0.0;
     }
+    if placed {
+        params.above_fog.w = 1.0;
+    }
     let m = water.materials.add(WaterMaterial { params, noise, reflection, ripples, seen });
-    water.cache.materials.insert((wid, reflects), m.clone());
+    water.cache.materials.insert((wid, reflects, placed), m.clone());
     Some(m)
 }
 
@@ -438,7 +449,7 @@ pub fn distant_water(
             continue;
         }
         let Some((height, wid)) = dw.surface(&world, c) else { continue };
-        let Some(mat) = water_material(&world, wid, true, &mut models, &mut water) else { continue };
+        let Some(mat) = water_material(&world, wid, true, false, &mut models, &mut water) else { continue };
         let mesh = water.plane(&mut models.meshes);
         let s = CELL_SIZE;
         let e = commands

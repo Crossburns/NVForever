@@ -36,7 +36,7 @@ struct WaterParams {
     reflection: vec4<f32>,
     sky_upper: vec4<f32>,
     sky_horizon: vec4<f32>,
-    // near, far, amount, unused
+    // near, far, amount, 1 when the amount caps the opacity (placed water)
     above_fog: vec4<f32>,
     under_fog: vec4<f32>,
     // reflectivity, fresnel amount, shininess, wave height (world units)
@@ -300,14 +300,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let fog = select(water.under_fog, water.above_fog, above);
     // The colour: shallow to deep by the fog depth (#1787). The opacity: by the length of
     // the view ray in the water over the same near to far ramp, at most the above fog's
-    // amount ("controls the transparency of the Deep Color water plane", 1.0 opaque
-    // [documented: GECK wiki WaterType]); under water opaque beyond the far distance.
+    // amount for placed water ("controls the transparency of the Deep Color water plane",
+    // 1.0 opaque [documented: GECK wiki WaterType]; above_fog.w = 1). Cell and distant
+    // water, and any water seen from below, are opaque beyond the far distance: capped,
+    // Lake Mead's bed showed through far out [design, until a far-out Lake Mead
+    // comparison is made, world.md §6].
     // [hypothesis, checked against the original at the Ultra-Luxe fountain, the
     // Goodsprings Source trough and Boulder Beach, world.md §6]: by the depth alone a
     // 14-unit pool under a 36-unit fog showed its floor where the original is opaque.
     let depth01 = clamp((fog_depth - fog.x) / max(fog.y - fog.x, 1.0), 0.0, 1.0);
     let ray01 = clamp((fog_distance - fog.x) / max(fog.y - fog.x, 1.0), 0.0, 1.0);
-    let body_alpha = select(ray01, ray01 * clamp(fog.z, 0.0, 1.0), above);
+    let body_alpha = select(ray01, ray01 * clamp(water.above_fog.z, 0.0, 1.0), above && water.above_fog.w > 0.5);
     let body_colour = mix(water.shallow.rgb, water.deep.rgb, depth01);
 
     // The water body is lit like a diffuse surface facing up (from either side).

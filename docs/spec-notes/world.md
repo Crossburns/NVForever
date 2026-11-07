@@ -961,9 +961,16 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   surface the opaque surface behind the pixel lies (the near and far planes are "the
   distance in game units below the surface of the water" of the shallow and the deep
   colour plane [documented: GECK wiki WaterType, Fog Properties tab]); its opacity goes
-  over the same near-to-far ramp by the length of the view ray inside the water, up to
-  the above fog's amount (Fog Amount "controls the transparency of the Deep Color water
-  plane", 0 transparent, 1 opaque [documented: same page]). Under water both follow
+  over the same near-to-far ramp by the length of the view ray inside the water, opaque
+  beyond the far plane; for placed water (PWAT) only up to the above fog's amount (Fog
+  Amount "controls the transparency of the Deep Color water plane", 0 transparent, 1
+  opaque [documented: same page]). Capping the fog at the amount left the lake bed
+  visible far out in Lake Mead (NVCleanWater, amount 0.75: about a fifth of the bed
+  shows through at any depth), unlike the game, so cell and distant water are not
+  capped [design, until a far-out Lake Mead comparison is made (§9 item 3); the
+  Ultra-Luxe fountain needs the cap, below, Placed water]. The depth-based colour is
+  used for all water (Boulder Beach's near-shore crop moves towards the original with
+  it, the table below). Under water both follow
   the distance from the camera (the under fog's planes are distances "from the player",
   its amount "does not appear to have any effect" [documented: same page]). Fogging by
   the distance from the camera made the water opaque right at the shoreline when seen
@@ -1046,7 +1053,8 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   | Boulder Beach, near water (-80 / 850 / 0.75) | 101,99,82 | 77,86,79 | 91,97,85 | 93,101,88 |
 
   By depth alone the fountain's pale floor disc showed through (alpha 14 / 36), where the
-  original is an even opaque olive. As built the fountain matches; Boulder Beach moves
+  original is an even opaque olive. As built the fountain matches; Boulder Beach (its
+  crop measured with the amount cap; cell water is now drawn without it, above) moves
   towards the original (its bed shows further out, as in the original's frame
   `lake_mead`, cell 13,9 looking east). The trough is still bluer and lighter than the
   original's dim grey-olive body (with a pale haze along its inside walls); what makes
@@ -1520,7 +1528,9 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
    grid orientation and the default texture are in §3.) Verify by comparing renders with
    in-game screenshots.
 3. XCLW sentinel 3.4028235e38: confirm that the worldspace water height applies.
-   Water drawing (§6): ANAM opacity, the trough's dimmer body (#1787), noise
+   Water drawing (§6): ANAM opacity, the trough's dimmer body (#1787), whether the fog
+   amount caps cell water's opacity too (compare Lake Mead far from shore, where the
+   bed is deep, with the original; ours draws only placed water capped, #1789), noise
    layer units; to settle with in-game captures at Lake Mead at several heights and
    distances from the shore.
 4. Weather selection rule and the meaning of WLST globals (see §6).
