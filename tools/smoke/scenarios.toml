@@ -11164,10 +11164,10 @@ expect = [
 [[scenario]]
 name = "intercom-voice-unfiltered"
 source = "issue #992 (docs/spec-notes/audio.md §15.5): the original plays a line said through a talking activator as its file, without a voice filter (observer batch o28, Benny through the Tops' security intercom)"
-note = "VTopsPresidentialIntercomREF (0x00129556) given BennyREF as its talking actor and activated, as its trigger's script does (observer-checks 47); Benny's GREETING through the intercom (0x00147865) needs only IsActorTalkingThroughActivator 1 and GetIsID Benny and has voice files"
+note = "VMQTops at stage 20, then VTopsPresidentialIntercomREF (0x00129556) activated: its OnActivate (SCPT 0x0012954B) sets Benny as its talking actor and activates itself while VMQTops 20 is done, objective 30 not shown and Benny is out of the suite (in a new game the script only says there is no response); Benny's GREETING through the intercom (0x00147865) needs only IsActorTalkingThroughActivator 1 and GetIsID Benny and has voice files"
 areas = ["dialogue", "audio"]
 paths = ["engine/nvf-play/src/voice_filter.rs", "engine/nvf-play/src/voice.rs", "crates/fnv-sim/src/forms.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "10:call:VTopsPresidentialIntercomREF:SetTalkingActivatorActor:BennyREF,12:activate:VTopsPresidentialIntercomREF" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "8", NVF_PLAY_TEST_SCRIPT = "5:stage:VMQTops:20,12:activate:VTopsPresidentialIntercomREF" }
 args = ["--cell", "2ETopsPresidentialSuite", "--play", "--pos=1990,1216,8040", "--heading", "0", "--hour", "20", "--no-messages"]
 run_seconds = 30
 expect = [
