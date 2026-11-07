@@ -309,18 +309,11 @@ each the identity by default. Reading PERK records is a later step.
 
     The round went off at its first ground hit; it did not bounce or roll. The launch
     angle was 1.2° above the aim at -15 and 0.3° at -30 [observed]. So speed and gravity
-    do not make NVForever's round fall short; what is left to compare is where and in
-    which direction ours leaves the launcher (issue #1471).
+    do not make NVForever's round fall short; the launch point did, and ours now leaves
+    the muzzle (above, PR #1788).
   - A thrown frag grenade (`GrenadeFragProjectile`, Lobber, speed 1,200, gravity 1.0;
-    the attack held 30 loops, aimed level) went **about 950 units/s across the ground**
-    over its first 0.35 s (952 by a straight-line fit; not 1,200), slowing to about 830
-    and then 660 units/s before it touched down; its height over those 0.61 s fits a
-    fall under about 490 units/s² from a slight downward start (a rough fit, less than
-    the 686.7 rule) [observed]; **first touched the
-    ground 534 units out after 0.61 s**, then bounced low (under 15 units) and **rolled
-    on to 1,206 units by 2.47 s**, still moving when the record ended [observed, same
-    campaign]. NVForever throws it at the PROJ speed (times the throwing perks); whether
-    ours rolls was not checked here.
+    the attack held 30 loops, aimed level; one run, o26_gl frag0): its figures are under
+    "A thrown grenade rolls" and "Throw speed" below.
 - **Explosions.**
   - Without Alt. Trigger, the explosion goes off on impact.
   - With it, a lobber bounces (× its bouncy multiplier, else `default_bounce`) and
@@ -334,10 +327,12 @@ each the identity by default. Reading PERK records is a later step.
     `grenade_roll_keep` (0.9) at the first landing, and the grenade goes on along the
     surface; on ground (a normal at least 0.7 up) it rolls, its speed falling as
     e^(−0.66 × t) (`grenade_roll_damping`), until it is slower than 40 units/s or its fuse
-    ends. Both shares are fitted to the original's frag grenade [observed: o26_gl frag0:
-    it touched down 513 units out after 0.58 s, rolled off at about 636 units/s and
-    slowed at 0.66 a second (rms 2.6 units), to 1,206 units by 2.47 s; the 0.9 is its
-    speed just after over just before]. `fGrenadeFriction` (5.0 in FalloutNV.esm) is
+    ends. Both shares are fitted to the original's frag grenade [observed: o26_gl frag0,
+    distances from where it left the hand: it touched down 513 units out after 0.58 s,
+    bounced under 15 units, rolled off at about 636 units/s and slowed at 0.66 a second
+    (rms 2.6 units), to 1,206 units by 2.47 s, still moving when the record ended; the
+    0.9 is its speed just after over just before]. Ours does the same since PR #1788
+    (smoke `frag-grenade-roll`). `fGrenadeFriction` (5.0 in FalloutNV.esm) is
     not used [hypothesis: a Havok friction; our grenade is no rigid body]. The grenade
     model's own body (`GrenadeFrag.NIF` bhkRigidBody: mass 5, friction 0.5, restitution
     0.4, linear damping 0.1, angular damping 0.05) is not used either [observed values].
@@ -345,12 +340,13 @@ each the identity by default. Reading PERK records is a later step.
     `GrenadeFragProjectile`) times the throwing perks. The original's left at about 950
     units/s across the ground (949-955 over its first 0.35 s, aimed level), slowed to
     about 650-770 in the last 0.2 s before touchdown, and touched down 513 units from where
-    it left (about 563 from the player) after 0.58 s [observed: o26_gl frag0; times from
-    the floor clock, floor(GameDaysPassed) × 24 + GameHour, on which JIP's projectile
-    lifetime reaches 1 at 1.00 s and the 40 mm round flies at 1,746-1,754 units/s].
-    "About 470 units/s" was first written for it; that figure counts the game hour twice
-    (GameDaysPassed already holds the hour as a fraction), which halves every speed: the 40
-    mm round reads 874 that way. Nothing in the data gives 950 (no throw setting in the
+    it left (about 563 from the player) after 0.58 s; its height over that flight fits a
+    fall under about 570 units/s² from a slight downward start (a rough fit, less than the
+    686.7 rule) [observed: o26_gl frag0; times from the floor clock, floor(GameDaysPassed)
+    × 24 + GameHour, on which JIP's projectile lifetime reaches 1 at 1.00 s and the 40 mm
+    round flies at 1,746-1,754 units/s; the 534 units after 0.61 s and the 490 units/s²
+    first written from the same run are replaced by these, read again from its samples].
+    Nothing in the data gives 950 (no throw setting in the
     masters but `fGrenadeFriction` and `fGrenadeRestitution`; the weapon's Animation
     Multiplier and Attack Multiplier are 1.0), so ours keeps the PROJ speed.
   - Detonating projectiles wait for `detonate()` (C-4).
@@ -1180,7 +1176,7 @@ From the ESM audit (gap 5). Code: `fnv_combat::data::ProjectileStats::lands_as_w
 ## 13. Open points
 
 - Every [design] number is a first guess for the owner to tune in play.
-- Projectile gravity and speed: the Grenade Launcher's round matches the PROJ speed × the 686.7 rule (§5, o26_gl); a thrown frag grenade went about 950 units/s across the ground, not its PROJ 1,200, and slowed in the air (§5).
+- Projectile gravity and speed: the Grenade Launcher's round matches the PROJ speed × the 686.7 rule (§5, o26_gl), and ours now leaves the muzzle (PR #1788). A thrown frag grenade went about 950 units/s across the ground, not its PROJ 1,200, and slowed in the air; ours still throws at the PROJ speed, and now rolls as the original's did (§5, PR #1788).
 - `fCombatDistance`, the melee reach base: not in the masters and not documented; 107
   is fitted to the NPCs' swings (§10). The player's own reach in the original is not
   measured.

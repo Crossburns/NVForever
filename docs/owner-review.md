@@ -272,7 +272,7 @@ the spec it links to.
     unanswered ([observer check 86](handoff/observer-checks.md)). If you want people choosing
     crosses again, the exclusion can apply to creatures alone.
     ([furniture.md §9](spec-notes/furniture.md))
-48. **Every thrown grenade with a fuse rolls (#1785).** You said only thrown frag
+50. **Every thrown grenade with a fuse rolls (#1785).** You said only thrown frag
     grenades roll. The rule takes every hand-thrown projectile with a fuse (a Lobber
     with an Alt. Trigger timer and no proximity), not mines, C-4 or launcher rounds, since
     nothing in the data sets the frag grenade apart. If you want the frag grenade alone, the rule can key on
