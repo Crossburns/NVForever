@@ -8539,6 +8539,19 @@ expect = [
 ]
 
 [[scenario]]
+name = "road-run-smooth"
+source = "owner 2026-11-07, issue #1805 (docs/spec-notes/physics.md §6.11): running east down the Goodsprings main street over the broken side of the road piece 0x00104FB5 (WastelandRoadStraightLongB), the body and camera followed every ripple of the road models' collision; the drawn height must be much smoother than the feet"
+areas = ["physics", "controls"]
+paths = ["engine/nvf-play/src/phys/step_lift.rs", "engine/nvf-play/src/player.rs", "crates/fnv-phys/src/character.rs"]
+env = { NVF_PLAY_TEST_MOVE = "8:1:0,18:0:0" }
+args = ["--play", "--pos=-72000,2152,8390", "--heading", "90", "--hour", "12", "--no-actors", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { re = 'physics: walking on the ground for (\d+) steps', range = [300, 2000], label = "ran down the road on the ground" },
+  { re = 'drawn/feet (\d+\.\d+)', range = [0.0, 0.5], label = "the drawn height's vertical acceleration at most half the feet's (road ripples smoothed)" },
+]
+
+[[scenario]]
 name = "repconn-catwalk-stairs"
 source = "owner's playtest 2026-10-23 (docs/spec-notes/physics.md §6.9.1): the REPCONN Facility's catwalk stairs up to Chris Haversam's and Jason Bright's intercom (RocketLabMid); walking east up the 312-448 flight (24-unit risers and treads), then left up the 450-504 flight onto the intercom catwalk, without a jump (the feral ghouls left out: they block the stairs and fight)"
 areas = ["physics", "controls"]

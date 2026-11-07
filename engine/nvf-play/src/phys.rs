@@ -1909,6 +1909,8 @@ fn report(mut exit: MessageReader<AppExit>, phys: Res<PhysState>, f: Res<FrameTi
         // Steps and bumps the drawn body and view climbed smoothly (`step_lift`).
         let l = &phys.player_lift;
         info!("physics: the player's drawn height took up {} steps and bumps, lifted {:.1} units at most", l.taken_up, l.most);
+        let (feet, drawn) = l.rough.rms();
+        info!("physics: walking on the ground for {} steps, vertical acceleration {feet:.0} units/s2 of the feet and {drawn:.0} of the drawn height (rms), drawn/feet {:.2}", l.rough.steps, drawn / feet.max(1.0));
     }
     // Loose items in water (`fnv_phys::buoyancy`): floating at the surface or sunk.
     let wet = phys.world.loose_in_water();
