@@ -206,17 +206,30 @@ fn jippp_runtime_nodes_effects_and_wear() {
     assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestBox \"Weapon\\BarrelDevice|Second_Barrel\" 1)"), n(1.0));
     assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestBox \"Weapon\\BarrelDevice|Second_Barrel\" 2)"), n(0.0));
     assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestBox \"Weapon|test\\scope.nif\" 2)"), n(1.0));
+    // Mode 0 reads the target path only, not the new node's name [observed: jipppln].
     assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestBox \"BarrelDevice\" 0)"), n(1.0));
-    // Copied (overwrite, then concatenate), attached as a whole form, cleared.
-    assert_eq!(q(&mut g, "SetFunctionValue (CopyRuntimeNodes TestGun TestBox 0)"), n(1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestBox \"Second_Barrel\" 0)"), n(0.0));
+    // A query belongs to no plugin: it copies and clears nothing [observed: jipppln].
+    assert_eq!(q(&mut g, "SetFunctionValue (CopyRuntimeNodes TestGun TestBox 0)"), n(0.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (ClearRuntimeNodes TestBox)"), n(0.0));
+    // A plugin's script: copied (overwrite, then concatenate), attached as a whole form,
+    // and only its own entries cleared.
+    let (gun, box_, light) = (Some(FormId(WEAPON)), XVal::Ref(BOX), XVal::Ref(LIGHT));
+    let as_mod = |g: &mut Game, name: &str, args: &[XVal]| fnv_game::nvse_jippp::call_as(g, "small.esp", name, None, args).unwrap().unwrap();
+    assert_eq!(as_mod(&mut g, "CopyRuntimeNodes", &[XVal::Ref(WEAPON), box_.clone(), n(0.0)]), n(1.0));
     assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestGun \"BarrelDevice\")"), n(1.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (AttachFormModel TestLight TestBox 1 \"Root|*_X*\")"), n(1.0));
+    assert_eq!(as_mod(&mut g, "InsertNode", &[XVal::Ref(WEAPON), n(1.0), s("Bip01|Mine")]), n(0.0));
+    assert_eq!(as_mod(&mut g, "AttachFormModel", &[light.clone(), box_.clone(), n(1.0), s("Root|*_X*")]), n(1.0));
     assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestLight \"Root|Test\\Box.nif\" 2)"), n(1.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestLight \"_X\")"), n(1.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (AttachFormModel TestLight TestBox 0 \"Root\")"), n(1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestLight \"Weapon\\BarrelDevice|Second_Barrel*_X*\" 1)"), n(1.0));
+    // A remove succeeds again with nothing left to remove [observed: jipppln].
+    assert_eq!(as_mod(&mut g, "AttachFormModel", &[light.clone(), box_.clone(), n(0.0), s("Root")]), n(1.0));
+    assert_eq!(as_mod(&mut g, "AttachFormModel", &[light, box_, n(0.0), s("Root")]), n(1.0));
     assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestLight \"Root|Test\\Box.nif\" 2)"), n(0.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (ClearRuntimeNodes TestGun)"), n(2.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestGun \"BarrelDevice\")"), n(0.0));
+    // The copied entries are the query's (no plugin), so only the mod's own one goes.
+    assert_eq!(fnv_game::nvse_jippp::call_as(&mut g, "small.esp", "ClearRuntimeNodes", gun, &[XVal::Ref(WEAPON)]).unwrap().unwrap(), n(1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestGun \"Bip01\")"), n(0.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (HasRuntimeNode TestGun \"BarrelDevice\")"), n(1.0));
     // Wear per shot: the record's override 0.5, times the ammunition's 3.
     assert_eq!(q(&mut g, "SetFunctionValue (GetCalculatedWeaponDegradation TestGun TestAmmo)"), n(1.5));
     // Active effects as maps, filtered and written back.
@@ -240,8 +253,9 @@ fn jippp_runtime_nodes_effects_and_wear() {
     let info = "array_var a\narray_var e\nlet a := PlayerREF.GetActiveEffectsInfo";
     assert_eq!(q(&mut g, &format!("{info}\nSetFunctionValue (ar_Size a)")), n(1.0));
     assert_eq!(q(&mut g, &format!("{info} 2\nlet e := a[0]\nSetFunctionValue e[\"TimeLeft\"]")), n(20.0));
-    assert_eq!(q(&mut g, &format!("{info} 3\nSetFunctionValue (ar_Size a)")), n(0.0));
-    assert_eq!(q(&mut g, &format!("{info} 0 0\nSetFunctionValue (ar_Size a)")), n(0.0));
+    // None to list: no array [observed: jipppln].
+    assert_eq!(q(&mut g, &format!("{info} 3\nSetFunctionValue (ar_Size a)")), n(-1.0));
+    assert_eq!(q(&mut g, &format!("{info} 0 0\nSetFunctionValue (ar_Size a)")), n(-1.0));
     assert_eq!(q(&mut g, &format!("{info} TestEffect\nlet e := a[0]\nSetFunctionValue e[\"MetaData\"]")), n(77.0));
     q(&mut g, &format!("{info}\nlet e := a[0]\nlet e[\"Magnitude\"] := 20\nlet e[\"TimeLeft\"] := 99\nPlayerREF.SetActiveEffectsInfo a"));
     let e = g.effects.iter().find(|e| e.id == 77).unwrap();
@@ -254,6 +268,14 @@ fn jippp_runtime_nodes_effects_and_wear() {
         q(&mut g, "TestBoxRef.ClampToGround");
     }
     assert_eq!(g.take_clamp_requests(), vec![FormId(BOX_REF)]);
+    assert_eq!(g.take_clamp_requests(), Vec::<FormId>::new());
+    // On a base form (a weapon is its own base) the call stops the script, in a
+    // non-strict run too [observed: jipppln clamp.base, "script call failed"].
+    let base = "Begin Function { }\nref r\nlet r := TestGun\nSetFunctionValue (r.ClampToGround)\nEnd\n";
+    let mut loose = Game::new(&f.data, World::new(&f.forms, &f.refs, SimConfig::default()), GameConfig::default());
+    for g in [&mut g, &mut loose] {
+        assert_eq!(g.run_query(base, Default::default()).unwrap_err(), "clamptoground called on no reference");
+    }
     assert_eq!(g.take_clamp_requests(), Vec::<FormId>::new());
     // Mode 2 removes [documented: InsertNode's addOrRemove table]: off the runtime list,
     // and nothing added to the list or the scene; a spec without `|` is not kept.

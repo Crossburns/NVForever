@@ -5289,6 +5289,64 @@ TMPL3_PROBES = [
      False, None, ""),
 ]
 
+# jipppln (#1019): JIP++ (JIP PP LN), the 10 functions it adds to JIP LN
+# (docs/spec-notes/ext-jippp.md). JIP++ replaces jip_nvse.dll, so the job runs with the
+# plugin swapped in for the run and base JIP LN put back afterwards (never left
+# installed). FalloutNV.esm forms [observed: fnvtool esm inventory]: the 10mm pistol and
+# its rounds, the combat knife, the .308 JSP hand loads, the .357 revolver and its
+# rounds. The runtime node lists start empty in a fresh session; every step that adds to
+# one clears it again (ClearRuntimeNodes) in the same step.
+JPP = {"pistol": "434F", "ammo10mm": "4241", "knife": "4326", "jsp308": "140AA0", "revolver": "8F216",
+       "ammo357": "8ED02"}
+
+
+def _jpp(pid, body, text=False):
+    return (f"jpp.{pid}", "ref rP\nref rDoc\nref rObj\nref rOther\nref rBox\nfloat fRes\nfloat fN\nstring_var sText\n"
+            "array_var aA\narray_var aE\nBegin Function { }\n"
+            + _form("rP", NF["player"]) + _form("rDoc", NF["docref"]) + body, text, None, "")
+
+
+_JPP_SPEC = '"Bip01|nvfNode"'
+JIPPPLN_PROBES = (
+    # ---- read-only ----
+    [_jpp("has.fresh", _form("rObj", JPP["pistol"]) + 'SetFunctionValue (HasRuntimeNode rObj "nvfNode")'),
+     _jpp("clear.fresh", _form("rObj", JPP["pistol"]) + "SetFunctionValue (ClearRuntimeNodes rObj)")]
+    + [_jpp(f"degrade.{w}.{a}", _form("rObj", JPP[w]) + _form("rOther", JPP[a]) + "SetFunctionValue (GetCalculatedWeaponDegradation rObj rOther)")
+       for w, a in (("pistol", "ammo10mm"), ("revolver", "ammo357"), ("pistol", "jsp308"))]
+    + [_jpp("degrade.pistol", _form("rObj", JPP["pistol"]) + "SetFunctionValue (GetCalculatedWeaponDegradation rObj)")]
+    + [_jpp(f"control.{c}.{t}", f"SetFunctionValue (GetControlCodeByID {c} {t})") for c in (0, 4, 5, 7) for t in (0, 1, 2, 3)]
+    + [_jpp("effects.player.ingest", "let aA := rP.GetActiveEffectsInfo 3\nSetFunctionValue (ar_Size aA)"),
+       _jpp("effects.doc", "let aA := rDoc.GetActiveEffectsInfo\nSetFunctionValue (ar_Size aA)"),
+       _jpp("effects.doc.temp", "let aA := rDoc.GetActiveEffectsInfo 0 1\nSetFunctionValue (ar_Size aA)"),
+       _jpp("refreshweight", "SetFunctionValue (rP.RefreshInventoryWeight)")]
+    # ---- writing, each put back in the same step ----
+    + [_jpp("insert.has", _form("rObj", JPP["pistol"]) + f"InsertNode rObj 1 {_JPP_SPEC}\n"
+            f'let sText := sv_Construct "%g %g %g %g" (HasRuntimeNode rObj {_JPP_SPEC} 1) (HasRuntimeNode rObj {_JPP_SPEC} 2) '
+            '(HasRuntimeNode rObj "nvfNode") (HasRuntimeNode rObj "nvfnode")\n'
+            'let fRes := ClearRuntimeNodes rObj\n'
+            'SetFunctionValue (sv_Construct "%z %g %g" sText fRes (HasRuntimeNode rObj "nvfNode"))', True),
+       _jpp("copy", _form("rObj", JPP["pistol"]) + _form("rOther", JPP["knife"]) + f"InsertNode rObj 1 {_JPP_SPEC}\n"
+            "let fRes := CopyRuntimeNodes rOther rObj 0\n"
+            'let sText := sv_Construct "%g %g" fRes (HasRuntimeNode rOther "nvfNode")\n'
+            "let fN := CopyRuntimeNodes rOther rObj 1\n"
+            'let sText := sv_Construct "%z %g %g" sText fN (ClearRuntimeNodes rOther)\n'
+            'SetFunctionValue (sv_Construct "%z %g %g" sText (ClearRuntimeNodes rObj) (HasRuntimeNode rOther "nvfNode"))', True),
+       _jpp("attachform", _form("rObj", JPP["pistol"]) + _form("rOther", JPP["knife"])
+            + 'let fRes := AttachFormModel rObj rOther 1 "Bip01"\n'
+            'let sText := sv_Construct "%g %g %g" fRes (HasRuntimeNode rObj "Bip01|") (HasRuntimeNode rObj "Bip01|" 2)\n'
+            'let fRes := AttachFormModel rObj rOther 0 "Bip01"\n'
+            'let sText := sv_Construct "%z %g %g" sText fRes (HasRuntimeNode rObj "Bip01|")\n'
+            'let fRes := AttachFormModel rObj rOther 0 "Bip01"\n'
+            'SetFunctionValue (sv_Construct "%z %g %g" sText fRes (ClearRuntimeNodes rObj))', True),
+       # SetActiveEffectsInfo with the array GetActiveEffectsInfo gave: nothing changes.
+       _jpp("effects.setsame", "let aA := rDoc.GetActiveEffectsInfo\nlet fRes := rDoc.SetActiveEffectsInfo aA\n"
+            'SetFunctionValue (sv_Construct "%g %g" fRes (ar_Size aA))', True),
+       # A placed pistol, clamped and taken away again.
+       _jpp("clamp", _form("rObj", JPP["pistol"]) + "let rBox := rP.PlaceAtMe rObj 1\nlet fRes := rBox.ClampToGround\n"
+            "rBox.Disable\nrBox.MarkForDelete\nSetFunctionValue fRes"),
+       _jpp("clamp.base", _form("rObj", JPP["pistol"]) + "SetFunctionValue (rObj.ClampToGround)")]
+)
+
 # itr (writes, session only, each change put back; #1011): the ITR plugin's functions
 # (docs/spec-notes/ext-itr.md) on FalloutNV.esm forms [observed: fnvtool esm inventory]:
 # Doc Mitchell's and Sunny's bases, the Caucasian race and eyes, the casinos, the Mojave
@@ -5577,6 +5635,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "sky-sound": SKY_SOUND_PROBES,
         "knvse-anim": KNVSE_PROBES,
         "knvse2": KNVSE2_PROBES,
+        "jipppln": JIPPPLN_PROBES,
         "nif-blocks": NIF_PROBES,
         "nvse-events": NVSE_EVENT_PROBES,
         "jip-events2": JIP_EVENT2_PROBES,
@@ -5631,7 +5690,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jip5", "tmpl3", "knvse2", "itr", "one111", "pp"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jip5", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln"}
 
 
 def script(body):

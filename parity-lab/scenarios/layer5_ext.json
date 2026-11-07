@@ -904,6 +904,20 @@
    "tags": ["ext", "johnnyguitar", "probes", "jg2"]
   },
   {
+   "id": "L5.ext.jipppln",
+   "layer": 5,
+   "description": "JIP++ (JIP PP LN, #1019; docs/spec-notes/ext-jippp.md): runtime node lists (HasRuntimeNode, CopyRuntimeNodes, ClearRuntimeNodes, AttachFormModel), weapon degradation, control codes, active effects, ClampToGround and RefreshInventoryWeight; set jipppln of tools/capture/jip_probes.py, captured with JIP++ swapped in for base JIP LN for the run only, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/jipppln.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/jipppln.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "jipppln", "probes"]
+  },
+  {
    "id": "L5.ext.one111",
    "layer": 5,
    "description": "The 1111 NVSE plugin (#1012; docs/spec-notes/ext-one111.md): condition lists of FormOne/Two/Three records read, added to, set, swapped and deleted (each step put back), the damage-calculation getters outside an event, weapons' additional vectors, armour totals, ammo effects, weapon mod effects and scope shaders; set one111 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",

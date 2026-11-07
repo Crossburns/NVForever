@@ -3198,6 +3198,10 @@ impl Vm<'_, '_> {
             });
         }
         match self.host.ext_call(lname, on, &args) {
+            // The host words a calling object that is no reference (a base form) as
+            // NoReference does: that stops the script too [observed: jipppln clamp.base,
+            // "script call failed"].
+            Some(Err(e)) if e == VmError::NoReference(lname.to_string()).to_string() => Err(VmError::NoReference(lname.to_string())),
             Some(r) => r.map(Some).map_err(VmError::Host),
             None => Ok(None),
         }
