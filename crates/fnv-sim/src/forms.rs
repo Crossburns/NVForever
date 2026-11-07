@@ -362,10 +362,9 @@ pub struct BaseForm {
     #[serde(skip)]
     pub prompt: Option<String>,
     /// A talking activator (TACT) without the record header flag "No Voice Filter"
-    /// ([`NO_VOICE_FILTER`]): its lines play through the voice filter (nvf-play
-    /// `voice_filter`) [hypothesis: the flag's name says the filter is the rule for
-    /// talking activators; 2 of FalloutNV.esm's 87 set it, both radios]. Not written to
-    /// JSON.
+    /// ([`NO_VOICE_FILTER`]; 2 of FalloutNV.esm's 87 set it, both radios). Read by
+    /// nothing in the engine: the original does not filter a talking activator's lines
+    /// (nvf-play `voice_filter`; observed 2026-11-06, issue #992). Not written to JSON.
     #[serde(skip)]
     pub voice_filter: bool,
     #[serde(flatten)]

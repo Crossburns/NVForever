@@ -1342,3 +1342,27 @@ The numbers above stay put so links to them hold; each item here gives its own p
     pipe swings still land (GetHealthPercentage or OnHit per swing, the player backing off
     5 units a swing). And a deathclaw (VCrTier4DeathClawMed) on the standing god-mode
     player again: o12_reach had one start at 88 units, far nearer than its RNAM 192 gives.
+
+## Added 2026-11-06 (observer batch o28, sound: issues #989, #990, #992)
+
+Answered in this batch (audio.md §15.5, §16.1): talking activators' lines are not
+filtered by the original and their files are already processed (#992); a creature's Idle,
+Aware and Attack sounds play only from clip keys, and the Securitrons' siren played in
+none of the five situations tried (#989); no shipped master sets an acoustic space's walla
+(#990). Tools for this batch (scratchpad, not committed): JIP `IsSoundPlaying <sound>
+<ref>` read every sample through the player's `Variable01`-`09`, and the WASAPI loopback
+recorded with Python `soundcard` (ffmpeg has no loopback device on this machine), fitted
+to the decoded file by cross-correlation and a per-band transfer estimate.
+
+96. **When does a Securitron sound its siren (`NPCSecuritronSiren`, CREA sound type 21)?**
+    (P3; audio.md §16.1.) Not on spawning, standing 20 s, `StartCombat`, an assault or
+    trespass alarm, nor while hurt to death (o28_creature_sounds, o28_creature_sounds2).
+    Left to try: a Strip Securitron reacting to a crime it sees for itself in `nvfstrip`
+    (the player shooting a Strip NPC by `FireWeapon`, IsSoundPlaying without a ref), a
+    Securitron switching to its Mk II (Lucky 38 upgrade), and the Hoover Dam battle's
+    Securitrons (VHDSecuritronBattle…). If none, it is unused data.
+97. **Does the original filter a helmet wearer's voice?** (P3; audio.md §15.5.) A line
+    said by an NPC given a power armour helmet (Modulates Voice) recorded on the loopback
+    beside the same line bare-headed, fitted to the file as o28_intercom was. Needs a
+    line the observer can make an NPC say with a known file (`SayTo player <topic>` with
+    a topic whose line has conditions only on the speaker).
