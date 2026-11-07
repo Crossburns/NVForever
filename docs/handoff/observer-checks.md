@@ -1339,21 +1339,34 @@ The numbers above stay put so links to them hold; each item here gives its own p
     5 units a swing). And a deathclaw (VCrTier4DeathClawMed) on the standing god-mode
     player again: o12_reach had one start at 88 units, far nearer than its RNAM 192 gives.
 
-## Added 2026-11-06 (exploding pants, issue #1640)
+## Added 2026-11-06 (observer batch o27: issues #970, #986, #1401)
 
-93. **A planted explosive: who dies, who panics, who sees.** (P3; pickpocket.md §5.)
-    Reverse-pickpocket while sneaking and unseen, each in its own run from a fresh load: (a)
-    a Pulse Grenade on an ordinary NPC (a Goodsprings settler): does it die? Note its
-    Health before and after; NVForever keeps it alive [hypothesis]. (b) The same on a
-    robot (a Protectron or Mister Handy): does it die? (c) A Frag Grenade on a child (Freeside
-    or Westside) and on an essential NPC (Sunny Smiles before Back in the Saddle, or Doc
-    Mitchell): does it go live (GetPlantedExplosive 1 after 0.1 s) and go off? Is it still
-    in their inventory afterwards? NVForever: neither goes live. (d) During the panic,
-    stand within 2 m in view with Sneak low: does the victim detect the player
-    (`GetDetected` on it, then hostility after the blast)? (e) The panic on a creature that
-    can be pickpocketed (a giant rat): does it play anything, does it stop, or does it go
-    on walking? (f) Seen by a third NPC halfway through the fuse, then hidden at the blast:
-    does that NPC turn hostile? NVForever counts it as a witness.
+Answered [observed, 2026-11-06, `nvfairport`]: the light at an actor (#970, o27_light:
+the brightest channel of the sunlight outdoors, of the cell's ambient indoors;
+detection.md §3) and the tumbleweeds (#1401, o27_tumble: awake after a load, rolling
+north-north-west until they rest; wind.md §2). Open:
+
+93. **The light at an actor where something shades it, and a lamp's share.** (P3;
+    detection.md §3.) `player.GetActorLightAmount` at noon under a roof outdoors (the
+    Goodsprings gas station's canopy, SCOLgsGasStation at (-75584, 4562)), and indoors
+    at set distances from one lamp of known radius (a dark interior such as
+    SLGoodspringsCaveINT, which reads 36.08 away from its lamps). NVForever gives a
+    shaded target the weather's ambient and adds the lamps' brightest channel ×
+    (1 − (d/r)²) [hypothesis].
+94. **Tumbleweeds against the wind's speed, and whether they start again.** (P3; wind.md
+    §4.) Force HVDustStorm (127) and then load the save (or `coc` away and back) so the
+    tumbleweeds wake under it; compare their speeds with o27_tumble's 150–210 units a
+    second under 50. Then watch one at rest for an hour of game time at TimeScale 30.
+95. **Holotapes: subtitles and the radio.** (P2; holotapes.md §3, #986.) Tried
+    2026-11-06 (o27_holotape, `nvfairport`): the job gives VMQ01BeagleJournalNote and
+    waits; the Pip-Boy was to be driven by hand (computer use) with the game's sound
+    recorded by loopback (the `soundcard` module records the default output device), but
+    the input was interrupted before the Pip-Boy opened, so the run was stopped. Still to
+    do: tune the Pip-Boy radio to Radio New Vegas, play the note from DATA > Misc, close
+    the Pip-Boy; screenshots during the tape show whether a subtitle is drawn (the
+    owner's INI has dialogue subtitles on, general subtitles off), and the recording
+    whether the radio goes quiet under the tape, ducks or plays on, and comes back
+    after. The plugin cannot pick a menu entry, so this needs the owner or hand input.
 
 ## Added 2026-11-06 (observer batch o28, sound: issues #989, #990, #992)
 
@@ -1378,3 +1391,19 @@ to the decoded file by cross-correlation and a per-band transfer estimate.
     beside the same line bare-headed, fitted to the file as o28_intercom was. Needs a
     line the observer can make an NPC say with a known file (`SayTo player <topic>` with
     a topic whose line has conditions only on the speaker).
+
+## Added 2026-11-06 (exploding pants, issue #1640)
+
+98. **A planted explosive: who dies, who panics, who sees.** (P3; pickpocket.md §5.)
+    Reverse-pickpocket while sneaking and unseen, each in its own run from a fresh load: (a)
+    a Pulse Grenade on an ordinary NPC (a Goodsprings settler): does it die? Note its
+    Health before and after; NVForever keeps it alive [hypothesis]. (b) The same on a
+    robot (a Protectron or Mister Handy): does it die? (c) A Frag Grenade on a child (Freeside
+    or Westside) and on an essential NPC (Sunny Smiles before Back in the Saddle, or Doc
+    Mitchell): does it go live (GetPlantedExplosive 1 after 0.1 s) and go off? Is it still
+    in their inventory afterwards? NVForever: neither goes live. (d) During the panic,
+    stand within 2 m in view with Sneak low: does the victim detect the player
+    (`GetDetected` on it, then hostility after the blast)? (e) The panic on a creature that
+    can be pickpocketed (a giant rat): does it play anything, does it stop, or does it go
+    on walking? (f) Seen by a third NPC halfway through the fuse, then hidden at the blast:
+    does that NPC turn hostile? NVForever counts it as a witness.
