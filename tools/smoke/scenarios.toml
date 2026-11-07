@@ -22305,9 +22305,9 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--siz
 run_seconds = 16
 expect = [
   { text = 'script: print "nvf cursor injected 1"', count = 1 },
-  { re = 'tiles: pointer over HUDMainMenu/NVFCursorProbe \(977\)', label = "the aid actually highlights the authored rect" },
+  { re = 'tiles: pointer over HUDMainMenu/NVFCursorProbe \(id 977\)', label = "the aid actually highlights the authored image" },
   { text = 'script: print "nvf cursor active HUDMainMenu/NVFCursorProbe"', count = 1 },
-  { text = 'script: print "nvf cursor types 2 1 1"', count = 1, label = "explicit image, missing-path rect, invalid-path rect" },
+  { text = 'script: print "nvf cursor types 2 2 2"', count = 1, label = "explicit image, missing-path probe image, invalid-path probe image" },
   { text = '[ Tilename ] : Explicit', count = 1, label = "DumpTileInfo retains path argument 1" },
   { text = '[ Tilename ] : NVFCursorProbe', count = 2, label = "both fallback dumps reach the cursor's tile" },
 ]
