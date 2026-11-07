@@ -876,14 +876,11 @@ fourth row, and a click on a row equips what it selects.
 
 ## 8. Open
 
-[observed: 2026-11-07, commit `8fa3f8a04`]
-One launch set of eight alternating fresh launches gave four of four clean first
-openings with warm-up enabled, and four of four blue or partial first openings with
-`NVF_PLAY_TEST_NO_PIPBOY_WARM=1`. Loading-screen-down times were 7.88, 8.65, 9.03 and
-10.06 seconds enabled (median 8.84), and 6.39, 7.74, 8.79 and 9.76 seconds disabled
-(median 8.27): about +0.57 seconds, with noisy timings. The same run reports that
-scenarios and tests pass. This set supports the combined fix; it does not isolate
-the necessity of the vendored retries or measure this review revision.
+[observed 2026-11-07, commit `4fbe5750d`, 8 alternating fresh launches, one machine] 4/4 clean first openings enabled and 4/4 blue or partial with `NVF_PLAY_TEST_NO_PIPBOY_WARM=1`. Screen-down medians 7.68 s enabled (7.38-7.98) and 6.81 s disabled (6.41-6.96): about +0.9 s in these launches. They support the combined fix.
+
+[observed: 2026-11-07, commit `8fa3f8a04`, superseded by the set above] An earlier set of
+eight alternating launches gave the same 4/4 and 4/4, with noisier screen-down medians
+(8.84 s enabled, 8.27 s disabled).
 
 [observed: earlier supplied `target/smoke/pipboy-first-open.log` and shots, 2026-11-07]
 The failed first attempt reached its three-second startup cap and asked zero new
@@ -891,23 +888,26 @@ pipelines during the raise, yet its first three shots were blue or partial. Its
 single enabled/disabled pair took 12.98/10.79 seconds on a busy machine; that pair
 was not a repeatable startup-cost estimate.
 
-[design: `engine/vendor/bevy_pbr/src/material.rs:1097`, `:1315`;
-Bevy 0.20.1 registry `bevy_render/src/camera.rs:910-1028`] Pipeline compilation and
-per-entity phase submission are different. Main-pass and prepass specialisation and
-pending queues are independent (`bevy_pbr/src/prepass/mod.rs:1086,1376`). The main
-pass formerly skipped an unavailable uploaded mesh or missing allocator slabs
-without preserving that entity for retry. A cached PSO could
-therefore be ready while an entity had no colour entry. Those two branches now
-preserve the pending entity. Before queueing, pending entities no longer visible to
-that view are discarded. Both retries cover distinct stages and remain. Hidden and
-raising rig meshes also mark themselves changed so retained bins are refreshed after
-visibility/material changes.
+[design: Bevy 0.20.1 registry `bevy_render/src/camera.rs:910-1028`,
+`bevy_pbr/src/material.rs`, `prepass/mod.rs:1086,1376`] Pipeline compilation and
+per-entity phase submission are different: a cached PSO can be ready while an entity
+has no colour entry yet. Upstream's main pass skips an entity whose uploaded mesh or
+allocator slabs are not there yet without keeping it for a retry. An earlier revision
+of this fix patched both branches to retry and dropped pending entries no longer
+visible; hidden and raising rig meshes also mark themselves changed so retained bins
+are refreshed after visibility/material changes.
 
-[hypothesis: the supplied run and the source paths above] A missed main-pass queue retry
-or stale retained entry accounts for depth without colour. It has **not** been established
-that the supplied run took one of these branches. Shader depth rejection, incorrect GPU
-instance data, or a draw-command skip remain possible if the new report shows complete
-submission/bindings while a shot is blue.
+[observed: 2026-11-07, `pipboy-first-open`, `-no-warm`, `pipboy-screen-menu`,
+`-unworn`, one machine, `bevy_pbr` rebuilt clean] With those retries and the visibility
+filter reverted (the probe kept), all four scenarios pass, the first raise held 61 ms
+for 0 pipelines and the first-open shots show the textured device with no blue or
+world-filled hole, so the retry patch was dropped. The warm-up and the first raise's
+own readiness wait are what the fix rests on.
+
+[hypothesis] Depth without colour came from the rig's main entries being missing or
+stale on the first raise. Shader depth rejection, incorrect GPU instance data, or a
+draw-command skip remain possible if a report shows complete submission/bindings
+while a shot is blue.
 
 [design: `engine/nvforever/src/pipboy_arm.rs`, `pipboy_ready.rs`] The fix normally
 waits for the observable submission conditions, with a bounded failure release;
@@ -986,8 +986,6 @@ shape prepared, bound and uploaded (shapes still out of view aren't queued yet),
 later report has at least 15 queued and all of those ready, and forbids the first-raise
 cap warning. If the cap ever releases, a partial rig can show; that's the chosen
 trade-off over a locked player.
-
-[observed 2026-11-07, commit `4fbe5750d`, 8 alternating fresh launches, one machine] 4/4 clean first openings enabled and 4/4 blue or partial with `NVF_PLAY_TEST_NO_PIPBOY_WARM=1`. Screen-down medians 7.68 s enabled (7.38-7.98) and 6.81 s disabled (6.41-6.96): about +0.9 s in these launches.
 Its shots should show a textured arm/device without blue, a world-filled hole or blur
 on the arm; during a hold the world stays unobstructed. The disabled twin remains a
 negative control. Unit checks cover Tab/Escape dispatch during a hold, bounded failure

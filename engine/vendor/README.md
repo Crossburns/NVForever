@@ -43,17 +43,14 @@ by a comment starting `NVForever FSR integration`:
 Without the override both do what upstream does. This is a new patch for Bevy 0.20.1, not
 the dropped 0.19.1 one below.
 
-[design: `bevy_pbr/src/material.rs`, #1803, 2026-11-07] The Pip-Boy patch also
-retains pending entities when main-pass specialisation lacks an uploaded mesh or
-queueing lacks allocator slabs. Both retries remain: they cover separate stages.
-Before queueing, pending entries no longer visible to that view are discarded, so
-hidden meshes cannot be requeued indefinitely or reinserted into retained bins.
-`MaterialQueueProbe` optionally records watched main-pass entries and pipeline IDs
-for `nvforever/src/pipboy_ready.rs`; no probe resource is installed by default.
-Reapply these changes on upgrades until upstream retries both branches and filters
-pending queue entries by view visibility. Remove the probe when an equivalent
-upstream observation API replaces its caller, or that readiness check is retired.
-The supplied launch comparison does not isolate either retry's necessity.
+Third change (#1803), in `src/material.rs`: `MaterialQueueProbe`, an optional resource
+that records watched main-pass entries and their pipeline IDs as `queue_material_meshes`
+queues them, for `nvforever/src/pipboy_ready.rs`; Bevy installs none, so without it the
+pass does what upstream does. Drop it when an upstream observation API replaces its
+caller or that readiness check is retired. Retries for meshes not yet uploaded and a
+per-view visibility filter of pending entries were tried with it and dropped: the
+`pipboy-first-open` scenarios passed with a clean first opening without them
+(2026-11-07).
 
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
