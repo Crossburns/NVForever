@@ -155,6 +155,17 @@ pub struct PreparedPart {
     pub prn: Option<String>,
     /// The root node's own transform (NIF space).
     pub root: Affine3A,
+    /// The part's `ProjectileNode…` nodes (where a creature's body weapon fires from)
+    /// with their transforms in the part's space, root transform included: read here so
+    /// that drawing a creature does not prepare the file again as a model to find them
+    /// (#1429: 23.8 ms in one frame for one creature [observed 2026-11-07, Sierra Madre
+    /// lobby]).
+    pub projectile_nodes: Vec<(String, Affine3A)>,
+}
+
+/// Whether a node is named as a projectile node (`ProjectileNode…`, WEAP NNAM).
+pub fn is_projectile_node(name: &str) -> bool {
+    name.get(..14).is_some_and(|p| p.eq_ignore_ascii_case("ProjectileNode"))
 }
 
 impl PreparedPart {
@@ -692,6 +703,7 @@ impl ActorCtx<'_, '_> {
         if let Some(m) = self.cache.materials.get(&key) {
             return m.clone();
         }
+        let _span = bevy::log::info_span!("actor::material_with_texture").entered();
         let s = &part.shapes[i];
         let mut props = s.props.clone();
         if props.textures.is_empty() {
@@ -728,6 +740,7 @@ impl ActorCtx<'_, '_> {
         if let Some(m) = self.cache.materials.get(&key) {
             return m.clone();
         }
+        let _span = bevy::log::info_span!("actor::material_with_texture_set").entered();
         let s = &part.shapes[i];
         let mut props = s.props.clone();
         props.use_texture_set(set);
@@ -772,6 +785,20 @@ impl ActorCtx<'_, '_> {
                 if let Some(x) = dec.get(e).filter(|x| x.text("name").is_some_and(|n| n.eq_ignore_ascii_case("Prn"))) {
                     out.prn = x.text("string_data").map(str::to_string);
                 }
+            }
+        }
+        if objects.iter().any(|o| o.is_node && o.name.as_deref().is_some_and(is_projectile_node)) {
+            let (nodes, _) = crate::model::model_nodes(&objects);
+            for (i, n) in nodes.iter().enumerate() {
+                let Some(name) = n.name.as_deref().filter(|n| is_projectile_node(n)) else { continue };
+                let mut path = Vec::new();
+                let mut at = Some(i);
+                while let Some(j) = at {
+                    path.push(j);
+                    at = nodes[j].parent;
+                }
+                let local = path.iter().rev().fold(out.root, |m, &j| m * nodes[j].local);
+                out.projectile_nodes.push((name.to_string(), local));
             }
         }
         let order = fnv_nif::scene::geometry_order(&objects);
