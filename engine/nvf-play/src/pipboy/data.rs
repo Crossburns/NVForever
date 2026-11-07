@@ -22,7 +22,8 @@
 //!   (found within their radius, made visible by ShowMap or by their flag), the active
 //!   quest's markers and the player's arrow; dragged to pan, the wheel zooms; the
 //!   highlight box follows the pointer and takes a marker's name when over one. A click
-//!   on a marker asks whether to fast travel there, in a box over the map ([`travel`],
+//!   on a marker — or the controller's A on one — asks whether to fast travel there, in
+//!   a box over the map ([`travel`],
 //!   docs/spec-notes/fast-travel.md).
 //! - **Local Map**: the doors leading elsewhere, the known map markers and the quest
 //!   markers around the player, with the player's arrow, over an outline of the place
