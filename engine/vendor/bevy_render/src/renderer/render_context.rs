@@ -33,6 +33,152 @@ enum PendingCommandBuffer {
         #[cfg(feature = "trace")]
         name: Cow<'static, str>,
     },
+    // NVForever early finish (#1427): an encoder whose system is done, already handed to
+    // the compute threads to finish while the render thread records the systems after it.
+    #[cfg(not(target_arch = "wasm32"))]
+    Early(alloc::sync::Arc<early::EarlyFinish>),
+}
+
+/// NVForever early finish (#1427). Upstream finishes every pending encoder at once, in
+/// `submit_pending_command_buffers`, while the render thread waits. Here an encoder is
+/// handed to the compute threads as soon as the system that recorded it is done
+/// ([`RenderContextState`]'s `queue`), so most are finished by the time the frame is
+/// submitted. Whichever of a compute thread or the submission reaches an encoder first
+/// finishes it; the submission waits only for one already being finished. The command
+/// buffers are submitted in the same order as upstream.
+#[cfg(not(target_arch = "wasm32"))]
+mod early {
+    use super::*;
+    use alloc::sync::Arc;
+    use std::sync::{Condvar, Mutex};
+
+    enum State {
+        Waiting {
+            encoder: CommandEncoder,
+            #[cfg(feature = "trace")]
+            name: Cow<'static, str>,
+        },
+        Running,
+        Done(CommandBuffer),
+        Taken,
+    }
+
+    pub(super) struct EarlyFinish {
+        state: Mutex<State>,
+        done: Condvar,
+    }
+
+    /// Marks the slot taken if the finishing thread unwinds, so the submission panics
+    /// instead of waiting for ever.
+    struct UnwindGuard<'a>(&'a EarlyFinish, bool);
+
+    impl Drop for UnwindGuard<'_> {
+        fn drop(&mut self) {
+            if !self.1 {
+                *self.0.state.lock().unwrap_or_else(|e| e.into_inner()) = State::Taken;
+                self.0.done.notify_all();
+            }
+        }
+    }
+
+    fn finish(
+        encoder: CommandEncoder,
+        #[cfg(feature = "trace")] name: &Cow<'static, str>,
+    ) -> CommandBuffer {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("finish_command_buffer", system = name.as_ref()).entered();
+        encoder.finish()
+    }
+
+    impl EarlyFinish {
+        /// Hands `encoder` to the compute threads.
+        pub(super) fn start(
+            encoder: CommandEncoder,
+            #[cfg(feature = "trace")] name: Cow<'static, str>,
+        ) -> Arc<Self> {
+            let slot = Arc::new(Self {
+                state: Mutex::new(State::Waiting {
+                    encoder,
+                    #[cfg(feature = "trace")]
+                    name,
+                }),
+                done: Condvar::new(),
+            });
+            let task_slot = slot.clone();
+            ComputeTaskPool::get()
+                .spawn(async move { task_slot.run() })
+                .detach();
+            slot
+        }
+
+        /// On a compute thread: finishes the encoder unless the submission took it first.
+        fn run(&self) {
+            let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if !matches!(*guard, State::Waiting { .. }) {
+                return;
+            }
+            let State::Waiting {
+                encoder,
+                #[cfg(feature = "trace")]
+                name,
+            } = core::mem::replace(&mut *guard, State::Running)
+            else {
+                unreachable!()
+            };
+            drop(guard);
+            let mut unwind = UnwindGuard(self, false);
+            let buffer = finish(
+                encoder,
+                #[cfg(feature = "trace")]
+                &name,
+            );
+            unwind.1 = true;
+            *self.state.lock().unwrap_or_else(|e| e.into_inner()) = State::Done(buffer);
+            self.done.notify_all();
+        }
+
+        /// The command buffer if a compute thread has finished it.
+        pub(super) fn try_take(&self) -> Option<CommandBuffer> {
+            let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if !matches!(*guard, State::Done(_)) {
+                return None;
+            }
+            let State::Done(buffer) = core::mem::replace(&mut *guard, State::Taken) else {
+                unreachable!()
+            };
+            Some(buffer)
+        }
+
+        /// The command buffer: finished here if no compute thread has started on it,
+        /// else waited for.
+        pub(super) fn wait(&self) -> CommandBuffer {
+            let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            loop {
+                match core::mem::replace(&mut *guard, State::Taken) {
+                    State::Waiting {
+                        encoder,
+                        #[cfg(feature = "trace")]
+                        name,
+                    } => {
+                        drop(guard);
+                        return finish(
+                            encoder,
+                            #[cfg(feature = "trace")]
+                            &name,
+                        );
+                    }
+                    State::Done(buffer) => return buffer,
+                    State::Running => {
+                        *guard = State::Running;
+                        guard = self.done.wait(guard).unwrap_or_else(|e| e.into_inner());
+                    }
+                    State::Taken => {
+                        panic!("finishing a command encoder failed on a compute thread")
+                    }
+                }
+            }
+        }
+    }
 }
 
 wgpu_wrapper!(struct WgpuPendingCommandBuffersInner(PendingCommandBuffersInner));
@@ -124,6 +270,11 @@ fn finish_parallel(
                 PendingCommandBuffer::Buffer(command_buffer) => {
                     command_buffers.push((index, command_buffer));
                 }
+                // NVForever early finish (#1427): most are done by now.
+                PendingCommandBuffer::Early(slot) => match slot.try_take() {
+                    Some(command_buffer) => command_buffers.push((index, command_buffer)),
+                    None => scope.spawn(async move { (index, slot.wait()) }),
+                },
                 PendingCommandBuffer::Encoder {
                     encoder,
                     #[cfg(feature = "trace")]
@@ -216,6 +367,28 @@ impl SystemBuffer for RenderContextState {
             if let PendingCommandBuffer::Encoder { name, .. } = command {
                 *name = _system_meta.name().clone().into();
             }
+        }
+
+        // NVForever early finish (#1427): the system is done recording, so its encoders
+        // can be finished now, on the compute threads.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            inner.commands = inner
+                .commands
+                .drain(..)
+                .map(|command| match command {
+                    PendingCommandBuffer::Encoder {
+                        encoder,
+                        #[cfg(feature = "trace")]
+                        name,
+                    } => PendingCommandBuffer::Early(early::EarlyFinish::start(
+                        encoder,
+                        #[cfg(feature = "trace")]
+                        name,
+                    )),
+                    other => other,
+                })
+                .collect();
         }
 
         if !inner.commands.is_empty() {
