@@ -142,10 +142,21 @@ engine if needed, and delete the item here.
    10mm Pistol, three runs to the player's death, 38 hits) [observed]: each body hit
    took 16.06 Health; the arm or leg hit lost the same 16.06 of its condition, the torso
    (EnduranceCondition) 6.69 (0.4167 of it); a head hit took 32.12 Health and 20.075
-   PerceptionCondition (0.625 of the Health lost, as on one larger 76.12 head hit). So
-   nothing halved arm and leg damage here; whether ours' `fCombatPlayerLimbDamageMult`
-   halving is cancelled by body-part multipliers is open (#1345). The lead-pipe trooper
-   never landed a blow in 0.15 h (no data).
+   PerceptionCondition (0.625 of the Health lost); one larger head hit took 76.12
+   Health and 47.575 PerceptionCondition. Maximum Health 200 remains [hypothesis]:
+   the run did not record base Health. At 200, with DefaultBodyPartData's shares
+   (arms and legs 25 %, torso 60 %, head 20 %, ×2 Health) and Limb Dmg Mult 1,
+   `damage before the part multiplier × 1 × 0.5 × 100 / (200 × part health % / 100)`
+   gives 16.06, 6.69, 20.075 and 47.575 [design: `Game::damage_limb`, `limb_hit`,
+   crippled-limbs.md §5]. The part ratios follow from the shares alone: nothing
+   cancels the halving, and the existing formula needs no change under that Health
+   hypothesis. Pinned by a synthetic 200-Health player test (#1345).
+   Still open: **how does the original choose the part on the player's capsule,
+   and what condition and Health do blows take?** Record base Health, hit point,
+   facing, GetHitLocation and all six conditions around shots and blows. NVForever's
+   capsule bands and unchanged melee Health multiplier are [hypothesis]
+   (combat-rules.md §12). The lead-pipe trooper never landed a blow in 0.15 h
+   [observed: o17_air], so that run gave no melee data.
 4. **Hardcore needs and waiting.** Partly answered 2026-10-31 (o7_00, o7_05, owner save
    nvfHardcore, TimeScale 30, about 59 frames a second):
    - The needs rise at our rates [observed]: Dehydration 2 every 0.168 game hours
