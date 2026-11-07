@@ -70,7 +70,7 @@ use crate::sky::{Sun, ARMS_LAYER, BODY_LAYER, SHADOW_LAYER};
 use crate::world::WorldRoot;
 use crate::view_sway::{SwayInput, SwayPose, ViewSway};
 use crate::weapon_lower::{LowerInput, WeaponLower};
-use bevy::camera::visibility::RenderLayers;
+use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::light::CascadeShadowConfigBuilder;
 use bevy::math::Affine3A;
 use bevy::mesh::VertexAttributeValues;
@@ -881,6 +881,11 @@ impl PlayerBody {
         self.body.as_ref().and_then(|b| b.first.as_ref()).is_some_and(|f| f.shown == Some(true))
     }
 
+    /// The real arms rig available for hidden draws [design: pipboy_arm.rs].
+    pub fn first_person_root(&self) -> Option<Entity> {
+        self.body.as_ref()?.first.as_ref().map(|f| f.root)
+    }
+
     /// The root entities of the rigs built (the body's, then the arms rig's).
     pub fn roots(&self) -> Vec<Entity> {
         let Some(b) = self.body.as_ref() else { return Vec::new() };
@@ -962,10 +967,113 @@ impl Plugin for PlayerBodyPlugin {
             .init_resource::<crate::furniture::BodyOverride>()
             .init_resource::<crate::furniture::PlayerUse>()
             .init_resource::<crate::weapon_lower::Ahead>()
-            .add_systems(Update, (crate::furniture::drive_player, ensure_body, crate::weapon_lower::sense, drive_body, drive_weapon_emitters, shade_light).chain().in_set(nvf_play::player::BodySet))
+            .init_resource::<WarmPose>()
+            .add_systems(Update, (restore_warm_pose, crate::furniture::drive_player, ensure_body, crate::weapon_lower::sense, drive_body, drive_weapon_emitters, shade_light, draw_warm_pose).chain().in_set(nvf_play::player::BodySet))
             .add_systems(PostUpdate, near_shade_casters.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
             .add_systems(Last, report);
     }
+}
+
+/// [design: this file] Only ECS transforms/visibility are borrowed for a render frame.
+#[derive(Resource, Default)]
+struct WarmPose {
+    transforms: Vec<(Entity, Transform)>,
+    visibility: Option<(Entity, Visibility)>,
+}
+
+/// [design: this file] Marks only culling overrides inserted by the warm-up.
+#[derive(Component)]
+struct WarmUnculled;
+
+fn restore_warm_pose(
+    mut commands: Commands,
+    mut saved: ResMut<WarmPose>,
+    mut transforms: Query<&mut Transform>,
+    mut visibility: Query<&mut Visibility>,
+    unculled: Query<Entity, With<WarmUnculled>>,
+) {
+    for (e, before) in saved.transforms.drain(..) {
+        if let Ok(mut t) = transforms.get_mut(e) {
+            *t = before;
+        }
+    }
+    if let Some((e, before)) = saved.visibility.take() {
+        if let Ok(mut v) = visibility.get_mut(e) {
+            *v = before;
+        }
+    }
+    for e in &unculled {
+        commands.entity(e).remove::<(NoFrustumCulling, WarmUnculled)>();
+    }
+}
+
+/// [design: this file] Pose after the normal body has supplied the eye, view and weapon
+/// state. Restore animator locals/layers immediately; restore ECS transforms before the
+/// next body tick, even if the body then returns early (death, furniture, a missing rig).
+#[allow(clippy::too_many_arguments)]
+fn draw_warm_pose(
+    mut commands: Commands,
+    mut pip: ResMut<nvf_play::pipboy::PipBoy>,
+    mut state: ResMut<PlayerBody>,
+    mut saved: ResMut<WarmPose>,
+    mut parts: ResMut<ActorParts>,
+    mut models: ModelCtx,
+    mut transforms: Query<&mut Transform>,
+    mut visibility: Query<&mut Visibility>,
+    children: Query<&Children>,
+    meshes: Query<Has<NoFrustumCulling>, With<Mesh3d>>,
+    cameras: Query<(&GlobalTransform, &Projection), With<nvf_play::PlayerCamera>>,
+) {
+    let Some(t) = pip.warm_clip() else { return };
+    let Ok((cam, projection)) = cameras.single() else { return };
+    // [design: world.rs::setup_root] The rig's parent is in game space, the camera is not.
+    let eye = crate::world::bevy_to_game(cam.translation());
+    let forward = crate::world::bevy_to_game(cam.forward().as_vec3());
+    let Some(body) = state.body.as_mut() else { return };
+    let female = body.female;
+    let Some(rig) = body.first.as_mut() else { return };
+    let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
+    let Some(clip) = rig.clip(&mut ctx, ClipKey::PipBoy(female)) else { return };
+    // [design: this file] Capture descendants, including extra weapon nodes and the lens.
+    let outer = rig.lens.map_or(rig.root, |l| l[0]);
+    for e in std::iter::once(outer).chain(children.iter_descendants(outer)) {
+        if let Ok(before) = transforms.get(e) {
+            saved.transforms.push((e, *before));
+        }
+        if let Ok(false) = meshes.get(e) {
+            commands.entity(e).insert((NoFrustumCulling, WarmUnculled));
+        }
+    }
+    if let Ok(mut v) = visibility.get_mut(rig.root) {
+        saved.visibility = Some((rig.root, *v));
+        *v = Visibility::Inherited;
+    }
+    let a = &mut rig.animator;
+    let layers = a.layers.clone();
+    let locals = a.locals.clone();
+    a.begin();
+    let i = a.want(&clip.clip, TAG_PIPBOY, 1.0, Mode::Once, 0.0);
+    a.layers[i].time = t;
+    a.layers[i].ease = 1.0;
+    a.end();
+    a.pose();
+    a.apply(&mut transforms);
+    a.layers = layers;
+    a.locals = locals;
+    // [design: this file] Covered draws use the normal lens. The backstop also places
+    // the rig behind the camera, so FOV/aspect cannot expose any of the down pose.
+    let covered = pip.warming.as_ref().is_some_and(|w| w.covered);
+    if !covered {
+        if let Ok(mut root) = transforms.get_mut(outer) {
+            root.translation = eye - forward * 10_000.0;
+        }
+    } else if let (Some([_, inner]), Projection::Perspective(p)) = (rig.lens, projection) {
+        if let Ok(mut lens) = transforms.get_mut(inner) {
+            let k = arms_magnification(p.fov, PIPBOY_FOV);
+            lens.scale = Vec3::new(k, 1.0, k);
+        }
+    }
+    pip.warming.as_mut().expect("warm pose").drawn = true;
 }
 
 /// The body's falls at exit (smoke tests read it).
@@ -2494,7 +2602,7 @@ fn drive_body(
         // The character stays where the scene plays (and collides with nothing there).
         seat.hold = Some(h.feet);
     }
-    let pipboy = pip.on_arm().then_some(pip.clip_time);
+    let pipboy = (pip.on_arm() && pip.warming.is_none()).then_some(pip.clip_time);
     // The arms sway in first person by themselves: not under the Pip-Boy or an idle.
     let sway = body.first.as_ref().map_or(SwayPose::NONE, |f| {
         m.sway.update(SwayInput {
@@ -2577,7 +2685,7 @@ fn drive_body(
         });
         // The console's `fov` can ask for another first-person field of view.
         let first_fov = first_fov.and_then(|f| f.0).unwrap_or(FIRST_PERSON_FOV);
-        let k = match (pip.on_arm(), vfov) {
+        let k = match (pip.on_arm() && pip.warming.is_none(), vfov) {
             (true, Some(v)) => {
                 let normal = arms_magnification(v, first_fov);
                 normal + (arms_magnification(v, PIPBOY_FOV) - normal) * pipboy_ease(pip.clip_time)
@@ -2725,6 +2833,24 @@ fn drive_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_pose_cleanup_restores_transforms_visibility_and_only_its_own_culling() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let original = Transform::from_xyz(1.0, 2.0, 3.0);
+        let rig = world.spawn((Transform::from_xyz(9.0, 9.0, 9.0), Visibility::Inherited)).id();
+        let borrowed = world.spawn((NoFrustumCulling, WarmUnculled)).id();
+        let existing = world.spawn(NoFrustumCulling).id();
+        world.insert_resource(WarmPose { transforms: vec![(rig, original)], visibility: Some((rig, Visibility::Hidden)) });
+        world.run_system_once(restore_warm_pose).unwrap();
+        assert_eq!(*world.get::<Transform>(rig).unwrap(), original);
+        assert_eq!(*world.get::<Visibility>(rig).unwrap(), Visibility::Hidden);
+        assert!(world.get::<NoFrustumCulling>(borrowed).is_none());
+        assert!(world.get::<WarmUnculled>(borrowed).is_none());
+        assert!(world.get::<NoFrustumCulling>(existing).is_some());
+        assert!(world.resource::<WarmPose>().transforms.is_empty());
+    }
 
     #[test]
     fn shade_casters_near_the_line_to_the_sun() {

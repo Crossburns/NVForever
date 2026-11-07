@@ -161,6 +161,8 @@ pub struct Loading {
     /// Pipelines the view still needs are compiling. Set by the renderer every frame
     /// (nvforever `loading_gate`, `pipeline_gate`); stays false without one.
     pub pipelines_busy: bool,
+    /// Hidden Pip-Boy draws or their teardown still need the cover [design: nvforever/pipboy_arm.rs].
+    pub pipboy_warming: bool,
     /// Since when only pipelines have been waited for (real time), and whether
     /// [`PIPELINE_CAP_SECS`] has passed this screen.
     pipelines_since: Option<f64>,
@@ -513,6 +515,9 @@ fn missing(loading: &Loading, phys: Option<&PhysState>, scripts: Option<&crate::
     if loading.pipelines_busy {
         out.push(PIPELINES);
     }
+    if loading.pipboy_warming {
+        out.push("the Pip-Boy warm-up");
+    }
     out
 }
 
@@ -614,6 +619,14 @@ fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_waits_for_pipboy_teardown_even_when_pipelines_are_quiet() {
+        let mut loading = Loading { pipboy_warming: true, ..default() };
+        assert!(missing(&loading, None, None, true).contains(&"the Pip-Boy warm-up"));
+        loading.pipboy_warming = false;
+        assert!(missing(&loading, None, None, true).is_empty());
+    }
 
     #[test]
     fn the_picture_covers_the_window() {

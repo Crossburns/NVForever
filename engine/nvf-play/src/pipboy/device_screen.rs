@@ -375,7 +375,10 @@ pub fn draw(
     }
     fx.swept = false;
     let shown = undercoat(kept).to_srgba().to_u8_array();
-    info!("pipboy: screen treatment on (scanlines {}, keeping {kept:.2} of the light; undercoat ({}, {}, {}))", if fx.scanlines.is_some() { "baked" } else { "none" }, shown[0], shown[1], shown[2]);
+    // [design: #1803, nvforever/pipboy_arm.rs] Hidden preparation is not a visible opening.
+    if pip.warming.is_none() {
+        info!("pipboy: screen treatment on (scanlines {}, keeping {kept:.2} of the light; undercoat ({}, {}, {}))", if fx.scanlines.is_some() { "baked" } else { "none" }, shown[0], shown[1], shown[2]);
+    }
 }
 
 /// Move the beam: shown and travelling for [`BEAM_TRAVEL`] of every [`BEAM_PERIOD`] on the

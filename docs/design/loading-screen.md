@@ -87,6 +87,42 @@ A travel asked for under it goes out behind it and is waited for too.
 - [hypothesis] The original never shows the world before its scripts run: it reads the
   plugins, scripts and all, before the main menu.
 
+[design: `engine/nvforever/src/pipboy_arm.rs`, `player_body.rs`,
+`engine/nvf-play/src/pipboy.rs`, `loading.rs`; #1803] Once the start's picture hold is
+released and the real first-person rig exists, one hidden Pip-Boy warm-up borrows that
+rig at the raise clip's hold pose, swaps the screen/glare materials and activates the
+existing image camera. Without a worn Pip-Boy it warms only that camera and page. It
+draws STATS Status under the cover, since ITEMS needs an open inventory, then restores
+the player's page and STATS tab (`pipboy/items.rs::draw`, `pipboy/stats/mod.rs`). It
+opens no inventory or script menu and borrows no player POV, weapon or input state.
+The temporary animator pose is applied only after the normal body has supplied those
+states. Transforms, root visibility and only the warm-up's culling overrides are restored
+before the next body tick; materials and the inactive image camera follow in that tick's
+UI pass. Loading waits explicitly for this teardown as well as its existing pipeline gate.
+
+[design: the same files] The floor is four completed render frames from the request,
+allowing the body/UI handoff before at least three hidden draws, then an unchanged pipeline
+count across two quiet render reports. A three-second wall-clock cap ends the hidden
+draws even if a rig part, shader or camera never arrives. The start's normal pipeline wait
+still applies after that cap. A later cold raise uses the same mechanism at clip time zero,
+with the rig behind the camera and `NoFrustumCulling`; it resumes after quiet or the cap.
+This covers a device first given during New Game without opening it behind the main menu.
+
+[design: `engine/nvforever/src/pipboy_arm.rs`, `pipeline_gate.rs`]
+`pipboy: warm-up start (covered=..., device=..., asked=..., frame=...)` and
+`pipboy: warm-up asked <n> pipelines, ready after <ms> ms (covered=..., capped=..., cancelled=...)`
+bound the hidden interval. The count is all gate requests during it, including concurrent
+world work. `pipboy: warm-up teardown complete (screen camera off)` precedes uncovering;
+`pipboy: first raise held <ms> ms for <n> pipelines` measures the backstop. Set
+`NVF_PLAY_TEST_NO_PIPBOY_WARM=1` to omit the warm-up system for comparison. It is checked
+once at plugin setup, with no per-frame environment lookup.
+
+[hypothesis: #1803 plan] Extra start time may overlap the world's existing work; it has
+not been measured for this change. Compare three enabled/disabled starts using both
+`loading screen down after` and `the world starts loading`, then repeat with
+`NVF_PLAY_TEST_ASYNC_THREADS=2`. Check save load, `--menu`, no device, and outfits without
+a model screen, plus a cold New Game raise at 16:9 and 4:3. No game run accompanied this edit.
+
 ## 2. What is on hold
 
 - Everything that runs only in `PlayState::Playing`: the player's input, movement and

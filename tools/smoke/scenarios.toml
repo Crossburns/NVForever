@@ -21724,3 +21724,41 @@ run_seconds = 18
 expect = ["FSR 3.1.4: NativeAa", { re = 'blended cut-outs: drawn alpha-tested for FSR \((\d+) materials changed\)', range = [1, 100000], label = "the corn rows' material cut when FSR comes on" }, { re = 'blended cut-outs: drawn blended \((\d+) materials changed\)', range = [1, 100000], label = "and blended again when it goes off" }]
 order = [["blended cut-outs: drawn alpha-tested", "blended cut-outs: drawn blended"]]
 forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+# [design: issue #1803] Compare identical first raises with and without hidden draws.
+[[scenario]]
+name = "pipboy-first-open"
+source = "issue #1803; docs/spec-notes/pipboy.md section 8: hidden start warm-up and the first visible raise"
+areas = ["pipboy", "loading", "pipelines"]
+paths = ["engine/nvforever/src/pipboy_arm.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/pipeline_gate.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/loading.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.25", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PIPBOY = "5:open,8:page=stats,10:close", NVF_PLAY_TEST_SHOTS = "4.9:first_down.png,5.3:first_a.png,5.8:first_b.png,6.5:first_c.png,8.5:first_d.png,10.8:first_closed.png" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--hour", "12", "--size", "1280x720"]
+run_seconds = 11
+expect = [
+  { re = 'pipboy: warm-up asked (\d+) pipelines', label = "the total gate asks during hidden drawing (includes concurrent world work)" },
+  { re = 'pipboy: up: (\d+) pipelines asked since the raise began', range = [0, 0], count = 1, label = "the first visible raise asks no new pipeline" },
+  "pipboy: STATS Status",
+  { text = "pipboy: screen camera off", count = 2, label = "camera off after warm-up and after the real close" },
+  "pipboy: down",
+]
+order = [["pipboy: warm-up start (covered=true", "pipboy: warm-up asked", "pipboy: warm-up teardown complete (screen camera off)", "loading screen down after", "pipboy: up, page ITEMS tab Weapons", "pipboy: raised"]]
+forbid = ["pipboy: first raise held", "loading screen: pipelines not ready after", "pipeline_cap", "still being retried after", "up, but the menus are not on the arm", "menu request ignored"]
+manual = "Compare first_a through first_d with the no-warm twin: no world showing through, blue/brown split, silhouette or blur on the arm. first_down must show the normal view without a device. Check that the final close restores the view and leaves the screen camera inactive. The 5 s open follows the supplied issue run; the proposed 1 s open has no measured support. Compare three start times and a two-thread start. Expected extra Pip-Boy keys are about 15; the warm-up count also includes concurrent world keys."
+
+[[scenario]]
+name = "pipboy-first-open-no-warm"
+source = "issue #1803 negative control: the same first raise with NVF_PLAY_TEST_NO_PIPBOY_WARM=1"
+areas = ["pipboy", "loading", "pipelines"]
+paths = ["engine/nvforever/src/pipboy_arm.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/pipeline_gate.rs", "engine/nvf-play/src/pipboy.rs", "engine/nvf-play/src/loading.rs"]
+env = { NVF_PLAY_TEST_NO_PIPBOY_WARM = "1", NVF_PLAY_TEST_PIPELINE_DEFS = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.25", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PIPBOY = "5:open,8:page=stats,10:close", NVF_PLAY_TEST_SHOTS = "4.9:first_down.png,5.3:first_a.png,5.8:first_b.png,6.5:first_c.png,8.5:first_d.png,10.8:first_closed.png" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--hour", "12", "--size", "1280x720"]
+run_seconds = 11
+expect = [
+  "test aid NVF_PLAY_TEST_NO_PIPBOY_WARM: hidden warm-up disabled",
+  { re = 'pipboy: up: (\d+) pipelines asked since the raise began', range = [1, 1000], count = 1, label = "the control exposes first-raise specialisation" },
+  { re = 'pipeline \d+ shader-defs: .*PIPBOY_SCREEN', label = "the screen variant can be identified in the cold control" },
+  "loading screen down after",
+  "pipboy: raised",
+]
+forbid = ["pipboy: warm-up start", "pipboy: warm-up asked", "pipboy: first raise held", "menu request ignored"]
+manual = "This control must ask new pipelines at the first raise; otherwise the comparison is inconclusive. Compare its first_a through first_d with the warm run for the old screen fault. Pipeline compile durations and the last screen/glare ready lines determine the faulty interval; do not infer an unmeasured duration from the shot schedule. The shader-defs line for the last screen/glare pipeline to become ready identifies the candidate variant in the blue/brown depth fight; confirm against the corresponding shots."

@@ -876,6 +876,40 @@ fourth row, and a click on a row equips what it selects.
 
 ## 8. Open
 
+[design: `engine/nvforever/src/pipboy_arm.rs`, `player_body.rs`,
+`engine/nvf-play/src/pipboy.rs`; #1803] The first visible raise is preceded by hidden
+draws of the real rig and the screen camera. The start does them under its loading
+screen after the world is released; a cold raise in play holds the clip at zero for
+at most three seconds, with the shapes forced through CPU visibility and placed behind
+the camera. Vendored `engine/vendor/bevy_pbr/src/material.rs::specialize_material_meshes`
+specialises from visible mesh entities before GPU occlusion; GPU clipping does not
+prevent requesting these pipelines. No warm-up opens an inventory or script menu.
+The warm state is reset for a replaced first-person rig, changed screen/glare source
+material or Use Pip-Boy turned on. A screen-only start leaves a later device cold.
+
+[design: `tools/smoke/scenarios.toml`, `engine/nvforever/src/pipeline_gate.rs`]
+Run `pipboy-first-open` and `pipboy-first-open-no-warm`: the visible raise must ask zero
+new pipelines with warming and at least one without it. The first screenshot precedes
+the raise to request the shot aid's own pipeline separately. The five-second open and
+quarter-second message dismissal follow the supplied issue log; the plan's one-second
+open is unmeasured. The warm-up count includes concurrent world requests, so the plan's
+10-30 interval is a measurement to investigate rather than an enforced attribution.
+The two scenarios also exercise the STATS page after ITEMS. Check the existing Pip-Boy,
+loading and save-load scenarios, and manually test the first device given in New Game,
+including closing it during the hold. Verify normal POV, weapon, HUD, sound and MenuMode
+after the hidden interval, and the camera's inactive state after close.
+
+[hypothesis: #1803 plan, supplied `pipboy-first/run1.txt` and shots] The blue/brown
+boundary's exact competing sheets remain unidentified. With both
+`NVF_PLAY_TEST_PIPELINE_LOG=1` and `NVF_PLAY_TEST_PIPELINE_DEFS=1`, the diagnostic line
+`pipeline <id> shader-defs: <defs>: <label>` for the last screen/glare variant to become
+ready distinguishes `PIPBOY_SCREEN`, `ADD_LINEAR`, `FIRST_PERSON_DEPTH`,
+`HAS_PREVIOUS_SKIN`, `PREPASS_PIPELINE` and `BLEND_*` candidates. Match its id to the
+`ready after` line and the boundary shots. The supplied run's ids 174/175 are candidates,
+not stable ids for a new run. This diagnostic is installed only with pipeline logging;
+definitions are inspected only when its second aid is enabled. No game run has confirmed
+which pair fights, the new start cost or clean shots at the backstop's three-second cap.
+
 - Whether the original holds the clip at `Hit` (the measurements say the screen faces
   the eye there).
 - The keys of the PC game for the pages and tabs.

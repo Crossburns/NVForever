@@ -40,6 +40,7 @@ struct Shared {
     busy: AtomicU32,
     screen_busy: AtomicU32,
     frames: AtomicU32,
+    asked: AtomicU32,
     list_next: AtomicBool,
 }
 
@@ -48,6 +49,11 @@ struct Shared {
 pub struct PipelineGate(Arc<Shared>);
 
 impl PipelineGate {
+    /// Total pipelines seen by `count`, including those already ready [design: this file].
+    pub fn asked(&self) -> u32 {
+        self.0.asked.load(Relaxed)
+    }
+
     /// Pipelines still to be ready, by the last render frame's count.
     pub fn busy(&self) -> u32 {
         self.0.busy.load(Relaxed)
@@ -142,6 +148,7 @@ fn count(gate: Res<PipelineGate>, cache: Res<PipelineCache>, mut failed: Local<H
         }
     }
     gate.0.busy.store(busy, Relaxed);
+    gate.0.asked.store(asked.len() as u32, Relaxed);
     gate.0.screen_busy.store(screen_busy, Relaxed);
     gate.0.frames.fetch_add(1, Relaxed);
     if gate.0.list_next.swap(false, Relaxed) {
@@ -154,12 +161,25 @@ fn count(gate: Res<PipelineGate>, cache: Res<PipelineCache>, mut failed: Local<H
 }
 
 /// `NVF_PLAY_TEST_PIPELINE_LOG` (module notes).
-fn log_each(cache: Res<PipelineCache>, mut seen: Local<Vec<(Instant, bool)>>) {
+fn log_each(cache: Res<PipelineCache>, mut seen: Local<Vec<(Instant, bool)>>, mut defs: Local<Option<bool>>) {
+    let defs = *defs.get_or_insert_with(|| std::env::var_os("NVF_PLAY_TEST_PIPELINE_DEFS").is_some());
     let now = Instant::now();
     for (i, p) in cache.pipelines().enumerate() {
         if i >= seen.len() {
             seen.push((now, false));
             info!("pipeline {i} asked: {}", label(&p.descriptor));
+            if defs {
+                if let PipelineDescriptor::RenderPipelineDescriptor(d) = &p.descriptor {
+                    let interesting = |s: &&bevy::shader::ShaderDefVal| {
+                        let name: &str = match s {
+                            bevy::shader::ShaderDefVal::Bool(s, _) | bevy::shader::ShaderDefVal::Int(s, _) | bevy::shader::ShaderDefVal::UInt(s, _) => s,
+                        };
+                        matches!(name, "PIPBOY_SCREEN" | "ADD_LINEAR" | "FIRST_PERSON_DEPTH" | "HAS_PREVIOUS_SKIN" | "PREPASS_PIPELINE") || name.starts_with("BLEND_")
+                    };
+                    let fragment: Vec<_> = d.fragment.iter().flat_map(|f| f.shader_defs.iter()).filter(interesting).collect();
+                    info!("pipeline {i} shader-defs: {fragment:?}: {}", label(&p.descriptor));
+                }
+            }
         }
         if !seen[i].1 && !waited_for(&p.state) {
             seen[i].1 = true;
@@ -172,6 +192,15 @@ fn log_each(cache: Res<PipelineCache>, mut seen: Local<Vec<(Instant, bool)>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asked_is_shared_with_the_main_world() {
+        let gate = PipelineGate::default();
+        assert_eq!(gate.asked(), 0);
+        let render = gate.clone();
+        render.0.asked.store(17, Relaxed);
+        assert_eq!(gate.asked(), 17);
+    }
 
     #[test]
     fn waits_for_what_bevy_will_still_finish_and_not_for_a_final_failure() {
