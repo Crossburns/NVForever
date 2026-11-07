@@ -2653,6 +2653,93 @@ expect = [
 order = [["menu: a script opens the barter menu with 0x00104C79", "menu: figures of 10mm Pistol", "menu: close"]]
 
 [[scenario]]
+name = "tiles-barter"
+source = "[design] barter-menu.md section 9, issue #1468: the barter view from its file, rows, prices, purses, offered squares, caps direction, Accept and Exit use the existing model and its sounds"
+note = "[hypothesis] Pointer coordinates borrow the container's measured geometry at 1280x720: first rows at y 186, left bar x 362, Accept at 1320:690 and Exit at 1340:738. Confirm against the barter capture. [design] At 14, 16 and 18 seconds the pointer crosses from the player's list to the merchant's and back before clicking, exercising the focus rects over disabled rows. The dialogue opens Chet's shop; the automatic barter aid is delayed beyond the run so tile input makes the trade. All aids use the start clock. Shots show empty Accept, an offered pistol, the returned pistol, the sale, the accepted trade, category, and scroll."
+areas = ["ui", "barter", "menus"]
+paths = ["engine/nvf-play/src/tiles/barter_menu.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/item_card.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvforever/src/imagespace.rs"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "BarterMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "9:call:0x00104C79:ShowBarterMenu", NVF_PLAY_TEST_GIVE = "0000000F:100,0000434F:1,00176AC4:3", NVF_PLAY_TEST_POINTER = "14:600:186,14.5:600:186:click,16:1150:186,16.5:1150:186:click,18:600:186,18.5:600:186:click,20:1320:690,20.5:1320:690:click,22:400:108:click,24:450:100:click,26:362:517:click,27:362:480:click,28:off,36:1340:738,36.5:1340:738:click,37:off", NVF_PLAY_TEST_KEYS = "29:down,30:pagedown,31:wheel-down,32:right", NVF_PLAY_TEST_SHOTS = "13:tiles_barter_open.png,15:tiles_barter_offered.png,17:tiles_barter_returned.png,19:tiles_barter_sale.png,21:tiles_barter_accepted.png,23:tiles_barter_category.png,30.5:tiles_barter_scrolled.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 42
+expect = [
+  { re = 'tiles: \[UI\] TileMenus=BarterMenu .*BarterMenu drawn from tiles; its QuantityMenu prompt follows', label = "opt-in switch" },
+  { re = 'tiles: BarterMenu drawn from tiles \(\d+ file tiles, [1-9]\d* code tiles\)', label = "file with code rows" },
+  { text = "BarterMenu drawn by hand:", count = 0, label = "complete file" },
+  { re = 'tiles: BarterMenu drawn from tiles: .*balance [1-9]\d*; offered true; affordable true', label = "selling pays the player" },
+  { re = 'tiles: BarterMenu drawn from tiles: .*balance 0; offered false', label = "nothing offered" },
+  { text = "tiles: BarterMenu Accept on its tiles", count = 1, label = "Accept once" },
+  { text = "tiles: BarterMenu Close on its tiles", count = 1, label = "Exit once" },
+  { re = 'tiles: BarterMenu player list scrolled to [1-9]', label = "bar or keys scroll" },
+  "tile menu blur: BarterMenu radius 3",
+  "tile menu blur: off",
+  "ui sounds: barter trade made:",
+  { re = 'selected "10mm Pistol" price "[1-9]\d*"; figures: .*', label = "priced row and card" },
+  { text = "tiles: BarterMenu Hover(Container, 0) on its tiles", label = "pointer crosses to merchant rows through the focus rect" },
+  { text = "tiles: BarterMenu Hover(Player, 0) on its tiles", label = "pointer crosses back to player rows through the focus rect" },
+  { text = "tiles: ContainerMenu", count = 0, label = "barter only" },
+]
+order = [["menu: a script opens the barter menu with 0x00104C79", "stock in 0x00104C7A", "tiles: BarterMenu Select(Player, 0) on its tiles", "Selling 10mm Pistol x1", "Took back 10mm Pistol x1", "tiles: BarterMenu Accept on its tiles", "menu: Accept: Traded", "tiles: BarterMenu Category(Player, -1) on its tiles", "tiles: BarterMenu Close on its tiles", "menu: close"]]
+
+[[scenario]]
+name = "barter-sale-beyond-merchant-caps"
+source = "[observed 2026-11-06] barter-menu.md section 9, issue #1468: a sale beyond the merchant's caps is dimmed, still accepted, and pays what the merchant holds"
+note = "[design] The console empties the merchant's container of caps first, so the sale asks more than it holds at any price. Otherwise the first pointer steps of tiles-barter."
+areas = ["ui", "barter", "menus"]
+paths = ["engine/nvf-play/src/tiles/barter_menu.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "BarterMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_CONSOLE = "5:00104C7A.removeitem 0000000F 100000;5.3:close", NVF_PLAY_TEST_SCRIPT = "9:call:0x00104C79:ShowBarterMenu", NVF_PLAY_TEST_GIVE = "0000000F:100,0000434F:1", NVF_PLAY_TEST_POINTER = "14:600:186,14.5:600:186:click,20:1320:690,20.5:1320:690:click,24:off" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 28
+expect = [
+  { re = 'tiles: BarterMenu drawn from tiles: .*balance [1-9]\d*; offered true; affordable false', label = "the sale is beyond the merchant's caps, and dims" },
+  { text = "tiles: BarterMenu Accept on its tiles", count = 1, label = "Accept once" },
+  { text = "ui sounds: barter trade made: UIMenuOK", label = "no caps moved, so no caps sound" },
+  { re = 'tiles: BarterMenu drawn from tiles: .*balance 0; offered false', label = "the trade went through" },
+]
+forbid = ["doesn't have enough caps"]
+
+[[scenario]]
+name = "tiles-barter-quantity"
+source = "[design] barter-menu.md sections 7 and 9, issue #1468: BarterMenu alone brings QuantityMenu, blocks underlying rows, cancels without a trade, then offers the chosen amount and accepts once"
+note = "[hypothesis] Container pointer coordinates at 1280x720: the second player row y 238 is 10mm Round (70) after the given pistol sorts first; the first row y 186 lies outside the prompt box but must remain blocked. Quantity decrease 644:470, OK 1155:515. Confirm positions on the first run. Shots show both prompt attempts, cancellation, decreased amount, and the offered stack."
+areas = ["ui", "barter", "menus", "items"]
+paths = ["engine/nvf-play/src/tiles/barter_menu.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "BarterMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "9:call:0x00104C79:ShowBarterMenu", NVF_PLAY_TEST_GIVE = "0000000F:100,0000434F:1,00176AC4:3,00004241:20", NVF_PLAY_TEST_POINTER = "14:600:238,14.5:600:238:click,16:600:186:click,18:600:238,18.5:600:238:click,19:600:186:click,20:644:470,20.5:644:470:click,21.5:1155:515,22:1155:515:click,23:off", NVF_PLAY_TEST_KEYS = "17:e,24.5:a,26:x", NVF_PLAY_TEST_SHOTS = "15:tiles_barter_quantity.png,17.5:tiles_barter_quantity_cancelled.png,19.5:tiles_barter_quantity_again.png,21:tiles_barter_quantity_decreased.png,23:tiles_barter_quantity_offered.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 34
+expect = [
+  { re = 'how many\? \(70 of 70\)', count = 2, label = "Cancel leaves the full stack" },
+  { text = "tiles: QuantityMenu drawn from tiles: amount 70 of 70", min = 2, label = "prompt follows with its switch off" },
+  { re = 'tiles: QuantityMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "prompt tree draws" },
+  { text = "tiles: BarterMenu Select(Player, 0) on its tiles", count = 0, label = "no click passes the prompt" },
+  { text = "tiles: BarterMenu Hover(Player, 0) on its tiles", count = 0, label = "nor hover" },
+  { text = "tiles: QuantityMenu AmountStep(-1) on its tiles", count = 1, label = "decrease once" },
+  { text = "tiles: QuantityMenu AmountOk on its tiles", count = 1, label = "OK once" },
+  "tiles: QuantityMenu drawn from tiles: amount 69 of 70",
+  "menu: AmountOk: Selling 10mm Round x69",
+  { text = "tiles: BarterMenu Accept on its tiles", count = 0, label = "physical A stays with the model" },
+  { text = "menu: Accept: Traded", count = 1, label = "the trade is accepted once" },
+]
+order = [["menu: a script opens the barter menu with 0x00104C79", "tiles: QuantityMenu drawn from tiles: amount 70 of 70", "menu: AmountCancel: prompt closed", "tiles: QuantityMenu drawn from tiles: amount 70 of 70", "tiles: QuantityMenu AmountStep(-1) on its tiles", "menu: AmountOk: Selling 10mm Round x69", "menu: Accept: Traded", "menu: close"]]
+
+[[scenario]]
+name = "barter-default-drawing"
+source = "[design] barter-menu.md sections 5 and 9: with the tile switch empty the hand-built barter view stays the default; sell, take back, Accept and Exit keep their existing behavior"
+note = "The barter-figures-currency recipe through Chet's dialogue, with the same timed shots and trade as tiles-barter but using the hand-built keys. No pointer aid. The automatic barter aid is delayed beyond the run. At 1280x720 these shots are the comparison set."
+areas = ["ui", "barter", "menus"]
+paths = ["engine/nvf-play/src/tiles/barter_menu.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/vanilla.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**"]
+env = { NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "off", NVF_PLAY_TEST_SCRIPT = "9:call:0x00104C79:ShowBarterMenu", NVF_PLAY_TEST_GIVE = "0000000F:100,0000434F:1,00176AC4:3", NVF_PLAY_TEST_KEYS = "14.5:enter,16:right,16.2:up,16.5:enter,18:left,18.5:enter,19:enter,20.5:a,22:bracketleft,24:bracketright,29:down,30:pagedown,31:wheel-down,32:right,36.5:x", NVF_PLAY_TEST_SHOTS = "13:default_barter_open.png,15:default_barter_offered.png,17:default_barter_returned.png,19:default_barter_sale.png,21:default_barter_accepted.png,23:default_barter_category.png,30.5:default_barter_scrolled.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 42
+expect = [
+  { text = "tiles: BarterMenu", count = 0, label = "no barter adapter runs" },
+  { text = "tiles: QuantityMenu", count = 0, label = "no prompt adapter runs" },
+  { text = "tile menu blur:", count = 0, label = "no tile blur" },
+  { re = 'menu: figures of 10mm Pistol: DAM \d+, WG [\d.]+, VAL \d+, .*DPS \d+, .*CND', label = "hand-built item card" },
+  { text = "menu: Accept: Traded", count = 1, label = "A accepts once" },
+]
+order = [["menu: a script opens the barter menu with 0x00104C79", "stock in 0x00104C7A", "Selling 10mm Pistol x1", "Took back 10mm Pistol x1", "menu: Accept: Traded", "menu: close"]]
+
+[[scenario]]
 name = "barter"
 note = "the player is given 100 caps at the start (NVF_PLAY_TEST_GIVE, caps 0x0000000F): the add-on packs' GameMode scripts that hand out caps and items first run about one quest delay after the scripts start, the time of the 10 s talk, and wait while the conversation is open, so the player had nothing to pay with ('You don't have enough caps.' instead of Traded: 1 of 2 runs on main 2026-10-12, every run on main 539a8e6c and #408 2026-10-17)"
 source = "CLAUDE.md: after changes to the container or barter menus (docs/spec-notes/barter-menu.md §6): the barter from Chet's dialogue"
@@ -19872,7 +19959,7 @@ note = "positions at 1280 x 720 (screen 1706.67 x 960; CM_MainRect at 341.33, 80
 areas = ["ui", "menu", "items"]
 paths = [
   "engine/nvforever/src/imagespace.rs",
-  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/item_card.rs",
+  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/item_card.rs",
   "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs",
   "engine/nvf-play/src/tiles/layout.rs", "engine/nvf-play/src/tiles/mod.rs", "engine/nvf-play/src/tiles/vanilla.rs",
   "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/pad.rs",
@@ -19956,7 +20043,7 @@ source = "[design] barter-menu.md §8 (T15c, issue #1468): with [UI] TileMenus=C
 note = "at 1280 x 720 the prompt's box stands at x 483.33: the decrease arrow at x 635-652, y 452-487; OK ends at x 1170, y 492-543; the row clicked under the prompt stands above its box; the pointer goes to the box's first row after OK, so the log reads what the box holds"
 areas = ["ui", "menu", "items"]
 paths = [
-  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs",
   "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**",
 ]
 env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu,QuantityMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_KEYS = "12:f10", NVF_PLAY_TEST_POINTER = "14:600:186,15:600:186:click,17:600:238:click,18:644:470,18.5:644:470:click,19.5:1155:515,20:1155:515:click,20.5:1150:186,21:off", NVF_PLAY_TEST_SHOTS = "16:tiles_container_quantity.png" }
@@ -19985,7 +20072,7 @@ source = "[design] barter-menu.md §7 and §8: with [UI] TileMenus=ContainerMenu
 note = "the run and pointer steps of tiles-container-quantity, its positions at 1280 x 720"
 areas = ["ui", "menu", "items"]
 paths = [
-  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs",
+  "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs",
   "engine/nvf-play/src/tiles/menus.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**",
 ]
 env = { NVF_PLAY_TEST_TILE_MENUS = "ContainerMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_KEYS = "12:f10", NVF_PLAY_TEST_POINTER = "14:600:186,15:600:186:click,17:600:238:click,18:644:470,18.5:644:470:click,19.5:1155:515,20:1155:515:click,20.5:1150:186,21:off", NVF_PLAY_TEST_SHOTS = "16:tiles_container_quantity_alone.png" }
@@ -20014,7 +20101,7 @@ name = "container-default-drawing"
 source = "barter-menu.md §5 and §8: without the switch the container menu is the hand-built drawing: nothing of the tile menu is written or drawn, and its keys act as before; the same views as tiles-container, for the pictures beside it"
 note = "the same give and times as tiles-container, by keys alone (the aid's pointer is the tiles'); the 20 rounds given join the start inventory's 50"
 areas = ["ui", "menu", "items"]
-paths = ["engine/nvforever/src/imagespace.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/pad.rs"]
+paths = ["engine/nvforever/src/imagespace.rs", "engine/nvf-play/src/menu.rs", "engine/nvf-play/src/menu/**", "engine/nvf-play/src/tiles/container_menu.rs", "engine/nvf-play/src/tiles/item_menu.rs", "engine/nvf-play/src/tiles/list.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/pad.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GIVE = "00004241:20,000E9C3B,0008F21A,0003307F,00015169:2,00022102,000E3778,00020423,00034045,0008C214,0008ED0B,0001519E", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_KEYS = "12:f10,14:a,16:enter,17.5:e,18:enter,18.5:a,20:d,22:a,22.2:down,22.4:down,22.6:down,22.8:down,23:down,23.2:down,23.4:down,23.6:down,25:wheel-down,25.5:wheel-up,33:r,35:f10,36.5:e", NVF_PLAY_TEST_SHOTS = "13:default_container_open.png,15:default_container_row.png,17:default_container_prompt.png,21:default_container_right.png,22.5:default_container_card_weapon.png,22.7:default_container_card_armour.png,23.1:default_container_card_aid.png,24:default_container_scrolled.png,27.5:default_container_paged.png,36:default_container_reopened.png" }
 args = ["--cell", "GSSchoolHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 40

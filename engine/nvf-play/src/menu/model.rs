@@ -648,13 +648,21 @@ impl PartialEq for Sells {
 }
 
 impl Trade {
-    /// Whether the side that pays holds the caps the balance asks of it.
+    /// Whether the side that pays holds the caps the balance asks of it. When it does not,
+    /// the figure dims; only a player who is short is refused ([`Trade::paid`]).
     pub fn affordable(&self) -> bool {
         let (player, merchant) = (Side::Player as usize, Side::Container as usize);
         match self.balance {
             b if b < 0 => self.purse[player] as i64 >= -b,
             b => self.purse[merchant] as i64 >= b,
         }
+    }
+
+    /// The caps the trade moves, positive when the player is paid: the balance, held at the
+    /// merchant's purse when it cannot pay all of it [observed 2026-11-06: barter-menu.md
+    /// section 9, the original completes such a sale at that amount].
+    pub fn paid(&self) -> i64 {
+        self.balance.min(i64::from(self.purse[Side::Container as usize]))
     }
 
     /// What one unit of value is worth when it comes from `from`.
@@ -1413,15 +1421,16 @@ impl MenuModel {
         }
     }
 
-    /// Barter: move what was put up and the caps it comes to, if the paying side can pay.
+    /// Barter: move what was put up and the caps it comes to, if the player can pay; a
+    /// merchant who cannot pays what it holds ([`Trade::paid`]).
     fn accept(&mut self, world: &mut World<'_>, out: &mut Applied) -> Result<String, SimError> {
         let Some(t) = self.trade.as_mut() else { return Ok(String::new()) };
         if t.is_empty() {
             return Ok("Nothing to trade".into());
         }
         let (player, merchant) = (Side::Player as usize, Side::Container as usize);
-        if !t.affordable() {
-            return Ok(if t.balance < 0 { "You don't have enough caps.".into() } else { format!("{} doesn't have enough caps.", self.title) });
+        if t.balance < 0 && !t.affordable() {
+            return Ok("You don't have enough caps.".into());
         }
         for (u, &n) in &t.offered[player] {
             world.transfer_at(PLAYER, t.stock, u.0, n, units_pick(u))?;
@@ -1429,7 +1438,7 @@ impl MenuModel {
         for (u, &n) in &t.offered[merchant] {
             world.transfer_at(t.stock, PLAYER, u.0, n, units_pick(u))?;
         }
-        let paid = t.balance;
+        let paid = t.paid();
         match paid {
             p if p > 0 => world.transfer(t.stock, PLAYER, t.caps, p as i32)?,
             p if p < 0 => world.transfer(PLAYER, t.stock, t.caps, (-p) as i32)?,
