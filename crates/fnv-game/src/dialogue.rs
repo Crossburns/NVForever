@@ -999,7 +999,6 @@ impl<'a> Game<'a> {
     /// The entries for the topics of `links` the actor has a line for ([`Game::link_line`]),
     /// in that order.
     fn offer(&mut self, actor: FormId, links: &[Link]) -> Vec<Choice> {
-        let data = self.data;
         let dv = self.dialogue_view();
         // A dim player's lines read as their topics' Dumb Responses ([`Game::player_dim`]).
         let dim = self.player_dim();
@@ -1022,7 +1021,8 @@ impl<'a> Game<'a> {
                 Some(_) => self.link_line_where(actor, listener, link, player_line, Says::Actor),
             };
             let Some(info) = found else { continue };
-            let def = &data.infos[&info];
+            // The script-edited line, so a flag or prompt set by SUP's setters shows here too.
+            let Some(def) = dv.info(&info) else { continue };
             let challenge = def.challenge_form.map(|form| {
                 let (needed, have, skill) = self.challenge_levels(def);
                 Challenge { form, difficulty: def.challenge_difficulty, needed, have, skill }

@@ -2,8 +2,8 @@
 //! functions that do the same; docs/spec-notes/ext-sup2.md): topic flags and priority,
 //! a line's flags, prompt, choices, Link From and follow-ups, its response texts and
 //! whether it has been said. The edits are the session's (`crate::dialogue_edits`) and
-//! the dialogue reads them. None of these plugins' setters is probed in the game yet, so
-//! nothing here is observed.
+//! the dialogue reads them. What the `sup2` probe saw in the game is tagged [observed]
+//! below; the rest follows the plugins' documentation pages.
 
 use crate::dialogue_edits::Related;
 use crate::game::{Game, RunCtx};

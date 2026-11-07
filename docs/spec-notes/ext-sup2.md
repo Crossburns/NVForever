@@ -27,8 +27,11 @@ What follows from an edit is worked out again when it is made [design]:
   record order);
 - a Link From added to a line: the topic is offered after the topic named
   (`GameData::linked_from`'s list for it, in record order);
-- a follow-up added: the line counts as a follow-up line when the player chooses its
-  topic (`GameData::follow_up_targets`).
+- a line's flags and prompt: the choice list reads them too (Goodbye, Always Darken, Info
+  Refusal, the prompt).
+
+Follow Ups (DialogResponseAddRelatedTopic type 2) take nothing [observed: sup2], so the
+records' own follow-ups are the only ones read.
 
 The edits ride across a load and a new game with the session's other state
 (`Game::take_session`, `Session::dialogue_edits`) [documented: "persistent throughout the
@@ -37,8 +40,8 @@ are the game's [hypothesis: the value lives on the line in the original and only
 change goes into the save].
 
 ITR's SetDialogueInfoFlags (ext-itr.md §2) wrote a map the dialogue never read; it is now
-the same edit as TopicInfoSetFlagsHigh/Low, so the dialogue's Say Once and Goodbye rules
-follow it (the follow-up ext-itr.md listed). It now also rides across a load, as SUP's
+the same edit as TopicInfoSetFlagsHigh/Low, so the dialogue's Say Once, Random and Goodbye
+rules follow it (the follow-up ext-itr.md listed). It now also rides across a load, as SUP's
 setters do [hypothesis: the same record in memory in the original].
 
 ## 2. Topics and lines

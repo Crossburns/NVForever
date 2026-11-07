@@ -2669,6 +2669,33 @@ mod edits {
     }
 
     #[test]
+    fn a_choices_edited_flags_and_prompt_reach_the_menu() {
+        let f = fixture();
+        // Unedited: LineB01 (TopicAsk) is a plain choice and the generic GOODBYE is offered.
+        let mut g = game(&f);
+        g.said.insert((actor(), FormId(A_FIRST)));
+        q(&mut g, "TopicInfoAddChoice LineA04 TopicAsk -1");
+        assert_eq!(g.start_dialogue(actor(), None), Ok(FormId(A_LATER)));
+        listen(&mut g);
+        let ask = g.dialogue_choices().iter().find(|c| c.topic == FormId(T_ASK)).cloned().expect("TopicAsk offered");
+        assert!(!ask.goodbye && !ask.darkened);
+        // Goodbye (high byte 1), Always Darken (low byte 2) and a prompt set by script
+        // [documented: the TopicInfoSetFlagsHigh and …Low tables; TopicInfoSetPrompt].
+        let mut h = game(&f);
+        h.said.insert((actor(), FormId(A_FIRST)));
+        q(&mut h, "TopicInfoAddChoice LineA04 TopicAsk -1");
+        q(&mut h, "TopicInfoSetFlagsHigh LineB01 1");
+        q(&mut h, "TopicInfoSetFlagsLow LineB01 2");
+        q(&mut h, "TopicInfoSetPrompt LineB01 \"Ask away\"");
+        assert_eq!(h.start_dialogue(actor(), None), Ok(FormId(A_LATER)));
+        listen(&mut h);
+        let ask = h.dialogue_choices().iter().find(|c| c.topic == FormId(T_ASK)).cloned().expect("TopicAsk offered");
+        assert!(ask.goodbye, "the edited Goodbye flag");
+        assert!(ask.darkened, "the edited Always Darken flag");
+        assert!(ask.prompt, "the prompt set by script");
+    }
+
+    #[test]
     fn related_topics_link_from_and_follow_ups() {
         let f = fixture();
         let mut g = game(&f);
