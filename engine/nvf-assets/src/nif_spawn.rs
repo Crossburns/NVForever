@@ -809,8 +809,28 @@ pub(crate) fn shape_material(
     shape_material_with(props, mesh, &mut StoreTextures { textures, data, images, formats })
 }
 
+/// [`shape_material`] for a copy of a mesh that went through it before (an actor part's
+/// kept CPU mesh, `actor::PartShape::cpu`): tangents it already has are the ones
+/// generating them again would give, so they are kept. The copy only serves to make the
+/// material; generating them again cost an actor 5 ms in the frame it was drawn
+/// [observed 2026-11-07, #1429, Sierra Madre lobby].
+pub(crate) fn shape_material_reusing_tangents(
+    props: &Props,
+    mesh: &mut Mesh,
+    textures: &mut TextureCache,
+    data: &GameData,
+    images: &mut Assets<Image>,
+    formats: Option<&CompressedImageFormatSupport>,
+) -> (NifMaterial, Option<String>) {
+    shape_material_inner(props, mesh, &mut StoreTextures { textures, data, images, formats }, true)
+}
+
 /// [`shape_material`] with its textures from `textures`.
 pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut impl TextureSource) -> (NifMaterial, Option<String>) {
+    shape_material_inner(props, mesh, textures, false)
+}
+
+fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl TextureSource, keep_tangents: bool) -> (NifMaterial, Option<String>) {
     fix_vertex_colors(mesh, props.vertex_alpha);
     if props.unlit {
         unlit_vertex_colors(mesh);
@@ -819,7 +839,7 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
     let normal = props.textures.get(1).filter(|t| !t.is_empty()).and_then(|t| textures.texture(t, false));
     let missing = if base.is_none() { props.textures.first().filter(|t| !t.is_empty()).cloned() } else { None };
     let has_uv = mesh.attribute(Mesh::ATTRIBUTE_UV_0).is_some();
-    let normal = normal.filter(|_| has_uv && mesh.generate_tangents().is_ok());
+    let normal = normal.filter(|_| has_uv && ((keep_tangents && mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some()) || mesh.generate_tangents().is_ok()));
     let cut = blend_cut(props, mesh);
     let alpha_mode = if cut.is_some() { AlphaMode::Blend } else { shape_alpha_mode(props) };
     let cutout = blended_cutout(props, cut, alpha_mode, || props.textures.first().is_some_and(|t| !t.is_empty() && textures.alpha_is_mask(t)));
