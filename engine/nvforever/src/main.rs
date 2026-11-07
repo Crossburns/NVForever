@@ -27,6 +27,7 @@ mod activators;
 mod nif_mirror;
 mod anim_paths;
 mod actor_feet;
+mod tumble;
 mod actor_jumps;
 mod actor_materials;
 mod anim_objects;
@@ -79,6 +80,7 @@ mod lights;
 mod limbs;
 mod lips;
 mod memory_budget;
+mod gpu_poll;
 mod pipeline_gate;
 mod lockpick_view;
 mod roulette_view;
@@ -1374,6 +1376,9 @@ fn main() -> AppExit {
     .add_plugins(nvf_assets::AssetReleasePlugin)
     // Their keep limits follow the machine's RAM and GPU memory budget (memory_budget.rs).
     .add_plugins(memory_budget::MemoryBudgetPlugin)
+    // wgpu's clean-up of finished GPU work on a thread of its own, not the render thread's
+    // queue submit (gpu_poll.rs, #1427).
+    .add_plugins(gpu_poll::GpuPollPlugin)
     .insert_resource(StartPose {
         position: start,
         heading: args.heading,
@@ -1543,6 +1548,8 @@ fn main() -> AppExit {
             app.add_plugins(speech_look::SpeechLookPlugin);
             // Who perceives whom (detection.rs): the drawn actors and the player.
             app.add_plugins(detection::DetectionPlugin);
+            // The weather's wind on the bodies that respond to it, the tumbleweeds (tumble.rs).
+            app.add_plugins(tumble::TumblePlugin);
             // Alerted actors draw their weapons and look at what alerted them (alert.rs).
             app.add_plugins(alert::AlertPlugin);
             // Fighters look angry (combat_face.rs; lips.rs draws the face).
