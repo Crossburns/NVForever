@@ -165,6 +165,15 @@ pub fn to_units(at: Vec2, window_height: f32) -> (f64, f64) {
     (f64::from(at.x) / per, f64::from(at.y) / per)
 }
 
+/// A window position (logical pixels from the top left, `window` the window's logical
+/// size) in the interface units of a tile menu drawn at the UI scale in a frame kept at
+/// `anchor` (`crate::interface::menu_frame`; `super::draw` draws the menus so): the
+/// point where the menu, drawn at the original's size, would have what the pointer is on
+/// [design: #1631]. [`to_units`] at the original's size.
+pub fn to_menu_units(at: Vec2, window: Vec2, anchor: Vec2) -> (f64, f64) {
+    to_units(crate::interface::from_menu_frame(at, window, anchor), window.y)
+}
+
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct Devices<'w, 's> {
     pub(super) keys: Res<'w, ButtonInput<KeyCode>>,
@@ -692,7 +701,13 @@ pub(crate) fn feed(
         t.hold_drag(held);
     }
     if let Some(t) = inputs.tags.as_mut().filter(|t| t.menu.is_some()) { t.hold_drag(held); }
-    let cursor = || aid_at.or_else(|| devices.windows.single().ok().and_then(|w| Some(to_units(w.cursor_position()?, w.height()))));
+    // The pointer on the menus as drawn at the UI scale (#1631): the dialogue menu keeps to
+    // the view's bottom when it takes input alone, the others to its middle (`super::draw`).
+    // The test aid's place is in the tree's units already and is read as given, through no
+    // frame: so the HUD, which takes input only under the aid and is drawn in none, is hit
+    // where its tiles stand.
+    let anchor = super::draw::menu_anchor(dialog_menu.is_some() && taking.len() == 1);
+    let cursor = || aid_at.or_else(|| devices.windows.single().ok().and_then(|w| Some(to_menu_units(w.cursor_position()?, Vec2::new(w.width(), w.height()), anchor))));
     let wait_tiled = super::wait_menu::tiled(menus.sleep_wait, &rt.game);
     inputs.wait_check.wrote = None;
     if !wait_tiled {
@@ -1032,4 +1047,45 @@ mod tests {
         }
     }
 
+    /// #1631: a tile menu drawn at the UI scale (its root `crate::interface::framed_root`,
+    /// its pieces placed with `crate::interface::at`, as `super::super::draw::paint` does)
+    /// takes a click on a piece's drawn middle as a click on the piece in the tree's units,
+    /// at 50% and 75% (the menus grow no larger, `crate::interface::menu_scale`), kept to the middle or (the dialogue menu) to the bottom; at 100% the
+    /// pointer reads as [`to_units`] does, bit for bit.
+    #[test]
+    fn a_click_lands_on_the_tile_drawn_under_it_at_any_ui_scale() {
+        let window = Vec2::new(1280.0, 720.0);
+        let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
+        let px = |v: Val, along: f32| match v {
+            Val::Percent(x) => x / 100.0 * along,
+            Val::Vh(x) => x / 100.0 * window.y,
+            other => panic!("{other:?}"),
+        };
+        {
+            let _s = crate::interface::units_at(1.0);
+            for at in [Vec2::new(640.0, 360.0), Vec2::new(3.5, 700.25)] {
+                assert_eq!(to_menu_units(at, window, crate::interface::MIDDLE), to_units(at, window.y));
+            }
+        }
+        for s in [0.5f32, 0.75] {
+            let _s = crate::interface::units_at(s);
+            for dialog in [false, true] {
+                let anchor = super::super::draw::menu_anchor(dialog);
+                let root = crate::interface::framed_root(full.clone(), anchor);
+                // A button tile at (900, 700) units, 120 x 30, in a 1280 x 720 window
+                // (1706.7 units wide).
+                let piece = crate::interface::at(900.0, 700.0, 120.0, 30.0);
+                let left = px(root.left, window.x) + px(piece.left, window.x);
+                let top = px(root.top, window.y) + px(piece.top, window.y);
+                let (w, h) = (px(piece.width, window.x), px(piece.height, window.y));
+                assert!((w - 120.0 * s * 0.75).abs() < 1e-3, "{s}: drawn {w} px wide");
+                let (x, y) = to_menu_units(Vec2::new(left + w / 2.0, top + h / 2.0), window, anchor);
+                assert!((x - 960.0).abs() < 1e-3 && (y - 715.0).abs() < 1e-3, "{s} {dialog}: ({x}, {y})");
+                // Just left of the drawn tile: left of the tile in units too.
+                let (x, _) = to_menu_units(Vec2::new(left - 0.5, top + h / 2.0), window, anchor);
+                assert!(x < 900.0, "{s} {dialog}: {x}");
+            }
+            assert_eq!(super::super::draw::menu_anchor(true), crate::interface::BOTTOM_MIDDLE);
+        }
+    }
 }

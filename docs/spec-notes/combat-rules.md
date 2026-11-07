@@ -12,8 +12,8 @@ them.
   (`Rules::from_forms`). A setting the masters lack takes the wiki page's default
   [documented default; that an absent setting means its default is a hypothesis,
   combat-data.md §3]. `Rules::defaulted` lists which came from defaults.
-  `fCombatDistance` has no documented default; 100 units is a placeholder
-  [hypothesis].
+  `fCombatDistance` has no documented default; 107 units is fitted to the original's
+  NPC swings (§10, Reach) [observed fit; hypothesis that the setting is that value].
 - `CombatTuning`: every [design] number below, in one place:
 
 | Value | Default | Shapes |
@@ -573,9 +573,25 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   - The strike is a fan of `melee_rays` rays over ±`melee_arc_deg` from the eye along
     the view, as long as the reach; each actor is hit once (`projectile::swing`).
 - **Reach** (`damage::melee_reach`) = `fCombatDistance` × scale × the WEAP Reach
-  [documented formula]. The masters lack `fCombatDistance`, and its placeholder is now
-  150 (a knife, reach 0.5, gets 75 units; a sledgehammer, 0.75, 112) [hypothesis,
-  tunable]. A Reach of 0 (the Fists) counts as 1 [hypothesis].
+  [documented formula]. The masters lack `fCombatDistance`; ours is **107**, fitted to
+  the measurement below (until #1334 a placeholder of 150) [hypothesis, tunable]. A
+  Reach of 0 (the Fists) counts as 1 [hypothesis]. The reach is counted from the
+  attacker's body [hypothesis: the reading of the 45 below]: an NPC strikes within its
+  reach plus the two bodies' radii centre to centre (`npc_combat::melee_spacing`; two
+  people, 22 + 22: knife 97.5, sledgehammer 124, super sledge 151, bumper sword 172,
+  lead pipe 178), and stops 6 units inside that (`MELEE_STOP_SHORT`, fitted to the knife
+  troopers' 96 start and 92 closest), closing in again beyond it; the bodies, until known,
+  are two people's (44). **Open:** ours mostly swings once stopped (a blow is rolled on
+  the style's attack chance; a failed roll holds it for the hold timer), and the AI's
+  walk ends `fnv_ai::alert::STOP_SHORT` (0.9) of its stop in, so its blows begin short of
+  the original's: Violet with a lead pipe at 170 on open ground (151-158 among her camp's
+  rocks) against 180 [observed: smoke melee-reach-lead-pipe, 2026-11-06]. Given its strike distance to stop at instead, she
+  swung at 176, but with no band between stopping and closing in again she stopped and
+  closed in again every frame as her body's radius moved with the swing (271 AI lines in
+  30 s); a knife, whose walk ends only 10 units inside, could stop outside its reach. The
+  fix belongs to the AI's walk (swing on the way in, or end the walk at the stop). The player's fan of rays
+  runs from the eye out to the reach plus the player's capsule radius (22: a knife 75.5,
+  as long as with the old 150 × 0.5).
   Measured 2026-11-01 (campaign o14_reach, `nvfairport` runway, god-mode player standing
   still, NCR troopers of the leveled list given one weapon each, every game loop) [observed]:
   the centre-to-centre distance at which a swing starts (GetAnimAction entering 2 or 3;
@@ -584,9 +600,13 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   (1.2) 175, lead pipe (1.25) 180. That fits **about 45 + 107 × Reach** within 5 units.
   Read as a body gap, the 45 is about the two capsules' radii, which would make
   `fCombatDistance` about 105-110 rather than 150 [hypothesis: the gap reading; the
-  capsules were not measured]. Creatures' starts (same run, centre to centre, median):
-  gecko 81, cazador (young) 80, night stalker (young) 102, radscorpion 97-129, feral
-  ghoul 135-140, giant mantis 101-163 (drifting out over the fight), bighorner bull 232.
+  capsules were not measured]. Ours takes 107 on that reading (#1334). Creatures' starts
+  (same run, centre to centre, median): gecko 81, cazador (young) 80, night stalker
+  (young) 102, radscorpion 97-129, feral ghoul 135-140, giant mantis 101-163 (drifting
+  out over the fight), bighorner bull 232; and in o12_reach (same ground, 2026-11-01)
+  coyotes 84-117 over 5 starts, a dog 172 and a deathclaw 88 (one start each, hits
+  landing at 69 and 108). Ours fits each measured skeleton's reach beyond its RNAM
+  (`npc_combat::creature_body_reach`, npc-behaviour-compare.md §3).
   Over 12-16 swings and about 13 landed hits each, the troopers' weapons stayed at
   GetWeaponHealthPerc 99.9 (§17).
 - **Damage.** The melee and unarmed forms of §2, with the target's worn armour. The
@@ -1088,7 +1108,9 @@ From the ESM audit (gap 5). Code: `fnv_combat::data::ProjectileStats::lands_as_w
 
 - Every [design] number is a first guess for the owner to tune in play.
 - Projectile gravity units and speeds: the owner's projectile capture round.
-- `fCombatDistance`, the melee reach base: not in the masters and not documented.
+- `fCombatDistance`, the melee reach base: not in the masters and not documented; 107
+  is fitted to the NPCs' swings (§10). The player's own reach in the original is not
+  measured.
 - Not here yet: weapon mods (Decrease Spread and the like), fatigue, reading perks,
   gore. All are later steps (combat.md §8).
 - Limb radii, the crippled-leg speeds and the arm-condition share are [design] (§12).

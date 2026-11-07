@@ -518,7 +518,8 @@ pub fn spawn_backdrop(commands: &mut Commands, under: Under) {
         Under::Monitor(_) => (false, SHADE),
     };
     // The flat picture's top is [`CANVAS_TOP`] down; the monitor's picture fills the window.
-    let top = if flat { u(CANVAS_TOP) } else { Val::ZERO };
+    // At the UI scale the flat picture keeps to the view's middle (#1631).
+    let top = if flat { crate::interface::from_top(CANVAS_TOP, 0.5) } else { Val::ZERO };
     let root = Node { justify_content: JustifyContent::Center, align_items: AlignItems::FlexStart, padding: UiRect::top(top), ..full.clone() };
     commands.spawn((Backdrop { flat }, Name::new("Terminal backdrop"), root, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, shade)), GlobalZIndex(106))).with_children(|r| match under {
         Under::Flat(image) => {

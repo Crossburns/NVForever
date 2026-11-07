@@ -155,18 +155,22 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view_w: f32) {
     let dim = if s.help.is_some() { 0.47 } else { 1.0 };
     commands.spawn((CaravanRoot, full.clone(), GlobalZIndex(106), BackgroundColor(Color::BLACK))).with_children(|r| {
         c.image(r, PLANKS, full.clone(), Color::srgb(0.78 * dim, 0.74 * dim, 0.68 * dim));
-        // A view narrower than 16:9 (16:10, 4:3) shows the whole frame, smaller.
-        let frame = Node { position_type: PositionType::Absolute, left: u((view_w - FRAME_W) / 2.0), top: u(0.0), width: u(FRAME_W), height: u(960.0), ..default() };
-        let fit = UiTransform { scale: Vec2::splat((view_w / FRAME_W).min(1.0)), ..default() };
-        r.spawn((frame, fit)).with_children(|f| match s.stage {
-            Stage::Bet => bet(f, c, s, dim),
-            Stage::Deck => deck(f, c, s, dim),
-            Stage::Play => play(f, c, s, dim),
-            Stage::Results => results(f, c, s, dim),
+        // The table at the UI scale, in the middle of the view (`crate::interface::menu_frame`,
+        // #1631); the planks fill the view.
+        crate::interface::in_menu_frame(r, crate::interface::MIDDLE, |r| {
+            // A view narrower than 16:9 (16:10, 4:3) shows the whole frame, smaller.
+            let frame = Node { position_type: PositionType::Absolute, left: u((view_w - FRAME_W) / 2.0), top: u(0.0), width: u(FRAME_W), height: u(960.0), ..default() };
+            let fit = UiTransform { scale: Vec2::splat((view_w / FRAME_W).min(1.0)), ..default() };
+            r.spawn((frame, fit)).with_children(|f| match s.stage {
+                Stage::Bet => bet(f, c, s, dim),
+                Stage::Deck => deck(f, c, s, dim),
+                Stage::Play => play(f, c, s, dim),
+                Stage::Results => results(f, c, s, dim),
         });
         if let Some(h) = &s.help {
             crate::lockpick::help::spawn(r, c, h, view_w);
         }
+        });
     });
 }
 

@@ -199,7 +199,10 @@ fn watch(
         return;
     }
     let Some(k) = knocked else {
-        kd.outside_before = control.third_person_view();
+        // The player's own view, not a dialogue close-up's (`talk_camera`), which reads as
+        // first person past its close point: a knockdown there gets up in the view the
+        // player chose.
+        kd.outside_before = PlayerControl { talk_camera: 0.0, ..*control }.third_person_view();
         return;
     };
     if rt.game.is_dead(me) || death.down() {

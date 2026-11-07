@@ -267,6 +267,24 @@ impl Game<'_> {
         self.senses.radiation.water.is_some_and(|w| self.data.water_damage.contains_key(&w.water))
     }
 
+    /// A space's markers with SetRadiationExtraData's levels: a marker's own level
+    /// replaced, and a reference of the space that had none given one at its XRDS radius
+    /// (0 without one, so it gives nothing); a level of 0 or less takes the marker away.
+    fn edited_markers(&self, list: &[RadMarker], space: FormId) -> Vec<RadMarker> {
+        let mut out: Vec<RadMarker> = list.iter().filter(|m| !self.showoff.radiation.contains_key(&m.id)).cloned().collect();
+        let mut set: Vec<(FormId, f32)> = self.showoff.radiation.iter().map(|(&r, &l)| (r, l)).collect();
+        set.sort_by_key(|x| x.0);
+        for (id, level) in set {
+            let Some(p) = self.world.placed.get(id) else { continue };
+            let Some(cell) = p.cell else { continue };
+            if level <= 0.0 || self.world.placed.world_of(cell).unwrap_or(cell) != space {
+                continue;
+            }
+            out.push(RadMarker { id, pos: p.pos, level, radius: p.radius.unwrap_or(0.0).max(0.0) });
+        }
+        out
+    }
+
     /// One frame of game-mode time: measure the player's exposure and add the rads.
     pub(crate) fn tick_radiation(&mut self, dt: f64) {
         let p = FormId::PLAYER_REF;
@@ -277,6 +295,14 @@ impl Game<'_> {
             Some((Some(cell), pos)) => {
                 let space = self.world.placed.world_of(cell).unwrap_or(cell);
                 let list = data.radiation_markers.get(&space).map(Vec::as_slice).unwrap_or_default();
+                // SetRadiationExtraData's levels over the records' (`nvse_showoff3`).
+                let edited;
+                let list = if self.showoff.radiation.is_empty() {
+                    list
+                } else {
+                    edited = self.edited_markers(list, space);
+                    edited.as_slice()
+                };
                 let world = &self.world;
                 let (m, marker) = marker_level(list, pos, |id| world.is_enabled(id).unwrap_or(true));
                 let (z, zone) = zone_level(&self.senses.rad_zones, space, pos);

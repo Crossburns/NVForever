@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["wgpu-ffx", "wgpu-ffx-shaders-spv", "xtask"]
+
+[workspace.package]
+authors = ["wgpu-ffx developers", "Advanced Micro Devices, Inc."]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+repository = "https://github.com/cwfitzgerald/wgpu-ffx"
+keywords = ["wgpu", "fsr", "fidelityfx", "upscaling", "graphics"]
+categories = ["graphics", "rendering"]
+
+[workspace.lints]
+
+[workspace.dependencies]
+wgpu-ffx-shaders-spv = { path = "wgpu-ffx-shaders-spv", version = "0.1.0" }
+
+anyhow = "1.0"
+bitflags = "2"
+bytemuck = "1.14"
+camino = { version = "1.1", features = ["serde1"] }
+indicatif = "0.18"
+pollster = "0.4"
+half = "2.7"
+pico-args = "0.5"
+rayon = "1.8"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2"
+toml = "1.0"
+log = "0.4"
+xshell = "0.2"
+# NVForever: use the same wgpu ABI as Bevy 0.20.1 (local change, 2026-11-05).
+wgpu = { version = "30", default-features = false }

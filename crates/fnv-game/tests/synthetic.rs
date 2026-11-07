@@ -1651,6 +1651,47 @@ fn a_line_said_for_its_fixed_speaker_is_timed_by_the_fixed_speakers_file() {
 }
 
 #[test]
+fn a_scripts_say_falls_back_to_a_fixed_speakers_line_when_no_line_passes_the_check() {
+    // Issue #965: Dead Money's narrator is told to SayTo topics whose only line names
+    // Elijah (or Vera) as fixed speaker, with no GetIsID condition. A script's Say or
+    // SayTo then says that line in the fixed speaker's stead; other Say callers (combat
+    // barks, package topics) keep the check (dialogue.md §4).
+    let speaker = FormId(NPC_REF);
+    let mut f = fixture();
+    for i in [INFO_A, INFO_B] {
+        f.data.infos.get_mut(&FormId(i)).unwrap().speaker = Some(FormId(NPC_AUTO));
+    }
+    let mut g = game(&f);
+    g.new_game();
+    assert!(!g.can_say(speaker, Some(FormId::PLAYER_REF), FormId(INFO_A)));
+    assert_eq!(g.say(speaker, None, FormId(TOPIC), false), None);
+    assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), true), Some(FormId(INFO_A)));
+    // A topic with a line the speaker passes the check for picks as before: the
+    // fixed speaker's line stored first is passed over.
+    let mut f = fixture();
+    f.data.infos.get_mut(&FormId(INFO_A)).unwrap().speaker = Some(FormId(NPC_AUTO));
+    let mut g = game(&f);
+    g.new_game();
+    assert_eq!(g.say_by_script(speaker, None, FormId(TOPIC), false), Some(FormId(INFO_B)));
+}
+
+#[test]
+fn a_scripts_say_does_not_fall_back_when_the_speakers_own_line_is_spent() {
+    // Review of #1767: the fallback is decided from the data, not from the run-time
+    // result. The speaker's own Say Once line, once said, leaves the topic with no line
+    // it can say; the other speaker's fixed line beside it is still not said in its
+    // mouth, and the SayTo goes unsaid as before (dialogue.md §4).
+    let speaker = FormId(NPC_REF);
+    let mut f = fixture();
+    f.data.infos.get_mut(&FormId(INFO_A)).unwrap().speaker = Some(FormId(NPC_AUTO));
+    f.data.infos.get_mut(&FormId(INFO_B)).unwrap().say_once = true;
+    let mut g = game(&f);
+    g.new_game();
+    assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), true), Some(FormId(INFO_B)));
+    assert_eq!(g.say_by_script(speaker, Some(FormId::PLAYER_REF), FormId(TOPIC), true), None);
+}
+
+#[test]
 fn an_actor_whose_traits_come_from_a_leveled_list_speaks_with_the_picked_entrys_voice() {
     // Issue #1051: generic actors take race, sex and voice type from a leveled list of
     // male and female entries (template flag "Traits"). The voice is the entry's, the
@@ -3907,4 +3948,187 @@ fn console_plm_clm_s1st_setvel_and_the_small_ones() {
     assert_eq!(g.ui.splatter.clears, 1);
     run(&mut g, "TestRaceSexTerimnal", &none, &[]).unwrap();
     assert_eq!(g.race_menu, fnv_game::game::RaceMenu::Creator);
+}
+
+// ---- TTW's extender functions (issue #1408, crate::nvse_ttw) -------------------------
+
+/// A cell with one reference of a scripted activator whose GameMode block waits
+/// (ScriptWait 3) halfway, and the global TestGlobal.
+fn wait_fixture() -> Fixture {
+    const GLOB: u32 = 0x800;
+    const SCPT: u32 = 0x801;
+    const ACTI: u32 = 0x802;
+    const CELL_: u32 = 0x803;
+    const REF: u32 = 0x804;
+    let (table, _) = catalogue();
+    struct Names;
+    impl fnv_script::compile::Env for Names {
+        fn form(&self, e: &str) -> Option<fnv_script::compile::FormInfo> {
+            (e.eq_ignore_ascii_case("testglobal")).then_some(fnv_script::compile::FormInfo { form: 0x800, sig: *b"GLOB" })
+        }
+        fn info(&self, _: u32) -> Option<fnv_script::compile::FormInfo> {
+            None
+        }
+        fn editor_id(&self, _: u32) -> Option<String> {
+            None
+        }
+        fn local_form(&self, _: u32) -> Option<u32> {
+            None
+        }
+        fn script_vars(&self, _: u32) -> Option<Vec<fnv_script::VarDecl>> {
+            None
+        }
+    }
+    let src = "scn TestWaitScript\nint n\nBegin GameMode\n  set n to n + 1\n  if n == 1\n    set TestGlobal to 10\n    ScriptWait 3\n    set TestGlobal to 20\n  endif\nEnd\n";
+    let c = fnv_script::compile::compile(src, &table, &Names, None);
+    assert!(c.errors().next().is_none(), "{:?}", c.diags);
+    let vars: Vec<(u32, String, u8)> = c.variables.iter().map(|v| (v.index, v.name.clone(), u8::from(v.ty == fnv_script::VarType::Int))).collect();
+    let vars: Vec<(u32, &str, u8)> = vars.iter().map(|(i, n, t)| (*i, n.as_str(), *t)).collect();
+    let refs: Vec<u32> = c.refs.iter().filter_map(|r| if let fnv_script::unit::RefSlot::Form(f) = r { Some(*f) } else { None }).collect();
+    let mut subs = unit(0, &c.bytes, &vars, &refs);
+    subs.push(sub(b"SCTX", src.as_bytes().to_vec()));
+    let scpt = record(b"SCPT", 0, SCPT, &[vec![sub(b"EDID", z("TestWaitScript"))], subs].concat());
+    let glob = record(b"GLOB", 0, GLOB, &[sub(b"EDID", z("TestGlobal")), sub(b"FNAM", vec![b'f']), sub(b"FLTV", 0f32.to_le_bytes().to_vec())]);
+    let acti = record(b"ACTI", 0, ACTI, &[sub(b"EDID", z("TestWaitActivator")), sub(b"SCRI", SCPT.to_le_bytes().to_vec())]);
+    let cell = record(b"CELL", 0, CELL_, &[sub(b"EDID", z("TestWaitCell"))]);
+    let refr = record(b"REFR", 0, REF, &[sub(b"EDID", z("TestWaitREF")), sub(b"NAME", ACTI.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
+    let children = group(CELL_.to_le_bytes(), 6, &group(CELL_.to_le_bytes(), 9, &refr));
+    let bytes = [
+        tes4(),
+        top(b"GLOB", &glob),
+        top(b"SCPT", &scpt),
+        top(b"ACTI", &acti),
+        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
+    ]
+    .concat();
+    let plugins = vec![Plugin::parse(&bytes, "Wait.esm".into()).unwrap()];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    let schema = schema();
+    let (table, j) = catalogue();
+    let forms = FormStore::build(&lo, &schema);
+    let refs = RefTable::build(&lo, &schema);
+    let data = GameData::build(&lo, &schema, table, &j, &refs);
+    Fixture { data, forms, refs }
+}
+
+#[test]
+fn script_wait_holds_the_rest_of_a_block_for_its_cycles() {
+    // [documented: ScriptWait; IsScriptWaiting]: the block stops at the call, is skipped
+    // while it waits (its first line does not run either), and goes on after the call in
+    // the third cycle after it.
+    let f = wait_fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.set_loaded([FormId(0x803)].into_iter().collect());
+    let global = |g: &Game| g.world.global(FormId(0x800)).unwrap();
+    let key = InstKey::Ref { reference: FormId(0x804) };
+    g.tick();
+    assert_eq!(global(&g), 10.0);
+    assert_eq!(g.var(key, 1), Value::Num(1.0));
+    let waiting = |g: &mut Game| {
+        g.run_source("let TestGlobal := TestWaitREF.IsScriptWaiting", Default::default()).unwrap();
+        global(g)
+    };
+    assert_eq!(waiting(&mut g), 1.0);
+    g.run_source("set TestGlobal to 10", Default::default()).unwrap();
+    g.tick();
+    g.tick();
+    assert_eq!(global(&g), 10.0, "still waiting");
+    assert_eq!(g.var(key, 1), Value::Num(1.0), "the waiting block is skipped whole");
+    g.tick();
+    assert_eq!(global(&g), 20.0, "the rest of the block ran");
+    assert_eq!(g.var(key, 1), Value::Num(1.0));
+    assert_eq!(waiting(&mut g), 0.0);
+    // The block runs from its start again.
+    g.tick();
+    assert_eq!(g.var(key, 1), Value::Num(2.0));
+    // A result script does not wait [documented: not in result scripts].
+    g.run_source("set TestGlobal to 1\nScriptWait 5\nset TestGlobal to 2", Default::default()).unwrap();
+    assert_eq!(global(&g), 2.0);
+}
+
+#[test]
+fn ash_pile_activators_must_be_marked_before_attach_ash_pile_ex() {
+    // [documented: MarkActivatorAshPile; AttachAshPileEx]
+    let f = wait_fixture();
+    let mut g = game(&f);
+    g.new_game();
+    let pile = |g: &Game| g.extra.get(&FormId(0x804)).and_then(|e| e.ash_pile);
+    g.run_source("TestWaitREF.AttachAshPileEx TestWaitActivator", Default::default()).unwrap();
+    assert_eq!(pile(&g), None, "not marked: no pile");
+    g.run_source("MarkActivatorAshPile TestWaitActivator\nTestWaitREF.AttachAshPileEx TestWaitActivator", Default::default()).unwrap();
+    let p = pile(&g).expect("a pile");
+    assert_eq!(g.ash_pile_source(p), Some(FormId(0x804)));
+    // The mark lasts the session, across a load.
+    let s = g.take_session();
+    let mut g2 = game(&f);
+    g2.new_game();
+    g2.put_session(s);
+    g2.run_source("TestWaitREF.AttachAshPileEx TestWaitActivator", Default::default()).unwrap();
+    assert!(g2.extra.get(&FormId(0x804)).and_then(|e| e.ash_pile).is_some());
+}
+
+#[test]
+fn jip_menu_key_crafting_and_discovery_events_reach_their_handlers() {
+    // [documented: SetOnMenuOpenEventHandler, SetOnMenuCloseEventHandler (a menu ID, or
+    // any menu), SetOnKeyUpEventHandler, SetOnCraftingEventHandler,
+    // SetOnLocationDiscoverEventHandler]
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let run = |g: &mut Game<'_>, src: &str| g.run_source(src, Default::default()).expect("compiles");
+    let global = |g: &Game| g.world.global(FormId(0x0000_0800)).unwrap();
+    run(&mut g, "SetOnMenuOpenEventHandler (begin function {int i}\nlet TestGlobal := i\nend) 1 1060");
+    g.open_menu(1002);
+    assert_eq!(global(&g), 0.0, "another menu");
+    g.close_menu();
+    g.open_menu(1060);
+    assert_eq!(global(&g), 1060.0);
+    run(&mut g, "SetOnMenuCloseEventHandler (begin function {int i}\nlet TestGlobal := i + 1\nend) 1");
+    g.close_menu();
+    assert_eq!(global(&g), 1061.0, "any menu that closes");
+    run(&mut g, "SetOnKeyUpEventHandler (begin function {int k}\nlet TestGlobal := k * 100\nend) 1 3");
+    g.input.held.insert(3);
+    g.tick();
+    assert_eq!(global(&g), 1061.0, "pressed, not let go");
+    g.input.held.remove(&3);
+    g.tick();
+    assert_eq!(global(&g), 300.0);
+    run(&mut g, "SetOnCraftingEventHandler (begin function {ref r, int q}\nlet TestGlobal := q\nend) 1");
+    g.item_crafted(FormId(0x0000_0800), 25);
+    assert_eq!(global(&g), 25.0);
+    run(&mut g, "SetOnLocationDiscoverEventHandler (begin function {ref m}\nlet TestGlobal := 77\nend) 1");
+    g.challenge_marker_found(FormId(0x0000_0800));
+    assert_eq!(global(&g), 77.0);
+}
+
+#[test]
+fn extra_misc_stats_music_states_eaten_corpses_and_terminal_art() {
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let run = |g: &mut Game<'_>, src: &str| g.run_source(src, Default::default()).expect("compiles");
+    let global = |g: &Game| g.world.global(FormId(0x0000_0800)).unwrap();
+    // A stat must be initialised first [documented: InitExtraMiscStat; observed: -1 after
+    // ModExtraMiscStat alone].
+    run(&mut g, "ModExtraMiscStat \"Bobbleheads Found\" 1\nlet TestGlobal := GetExtraMiscStat \"Bobbleheads Found\"");
+    assert_eq!(global(&g), -1.0);
+    run(&mut g, "InitExtraMiscStat \"Bobbleheads Found\"\nlet TestGlobal := GetExtraMiscStat \"Bobbleheads Found\"");
+    assert_eq!(global(&g), 0.0);
+    run(&mut g, "ModExtraMiscStat \"Bobbleheads Found\" 2\nInitExtraMiscStat \"Bobbleheads Found\"\nlet TestGlobal := GetExtraMiscStat \"Bobbleheads Found\"");
+    assert_eq!(global(&g), 2.0);
+    // Kept in the save [documented: ModExtraMiscStat].
+    assert_eq!(g.snapshot().extra_misc_stats.get("bobbleheads found"), Some(&2.0));
+    // SetMusicState's requests reach the engine; other numbers do nothing.
+    run(&mut g, "SetMusicState 1\nSetMusicState 7\nSetMusicState 0");
+    assert_eq!(g.take_music_states(), vec![1, 0]);
+    // DonnerReedKuruParty marks the calling actor's corpse eaten and back.
+    let on = fnv_game::game::RunCtx { self_ref: Some(FormId(0x0000_0901)), ..Default::default() };
+    g.run_source("DonnerReedKuruParty 1", on).unwrap();
+    assert!(g.extra[&FormId(0x0000_0901)].eaten);
+    g.run_source("DonnerReedKuruParty 0", on).unwrap();
+    assert!(!g.extra[&FormId(0x0000_0901)].eaten);
+    // SetTerminalUIModel: a path, and back to the default without one.
+    run(&mut g, "SetTerminalUIModel TestAdd \"Terminals\\TerminalInterface02.NIF\"");
+    assert_eq!(g.terminal_ui_model(FormId(0x0000_0901)), Some("Terminals\\TerminalInterface02.NIF"));
+    run(&mut g, "SetTerminalUIModel TestAdd");
+    assert_eq!(g.terminal_ui_model(FormId(0x0000_0901)), None);
 }

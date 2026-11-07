@@ -27,6 +27,61 @@ single slow frame charged to a render system that only writes a buffer
 (`upload_light_probes`, `write_binned_instance_buffers`) can be matched to a new memory
 block. `std` is linked for the clock (wgpu-hal turns the crate's `std` feature off).
 
+## bevy_pbr 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
+
+Bevy's 3D passes, for FSR upscaling (docs/design/fsr-upscaling.md), which draws the main
+passes at a lower resolution through `MainPassResolutionOverride`. Two changes, each marked
+by a comment starting `NVForever FSR integration`:
+
+- `src/transmission/node.rs`: the stepped transmission pass (refraction, water) takes the
+  override's size, as the opaque and transparent passes do; upstream it takes the whole
+  target's.
+- `src/render/clustered_forward.wesl`: a fragment's position is mapped through the
+  main-pass viewport before it picks a light cluster, as the clusters are laid out for the
+  display size, so point and spot lights stay where they belong below 1:1.
+
+Without the override both do what upstream does. This is a new patch for Bevy 0.20.1, not
+the dropped 0.19.1 one below.
+
+## wgpu-ffx 0.1.0 (MIT, the wgpu-ffx developers and Advanced Micro Devices)
+
+The FSR 3.1.4 upscaler (docs/design/fsr-upscaling.md): a Rust/wgpu port of AMD FidelityFX
+SDK 1.1.4's upscaler, [cwfitzgerald/wgpu-ffx](https://github.com/cwfitzgerald/wgpu-ffx) at
+commit `6fe7064064b396b30df97341c2ca957ca1b00884`. It is not on crates.io, so it is not a
+`[patch]`: the engine uses its `wgpu-ffx` and `wgpu-ffx-shaders-spv` crates as path
+dependencies, and `engine/Cargo.toml` excludes the workspace. Its shaders are the SDK's
+GLSL (FidelityFX-SDK commit `c6efa6bf7f2027b3ec94f28578bb5965eabb9e55`, with AMD's MIT
+notices), compiled to the SPIR-V that `wgpu-ffx-shaders-spv` embeds. `xtask/` and the
+shaders it compiles are that SPIR-V's source and stay with it: `shaders/src/fsr3upscaler`
+and what it includes (`shaders/include` with `fsr3upscaler`, `spd` for the luma pyramid
+and `fsr1` for RCAS). `LICENSE.MIT` holds both copyright
+notices; `tools/release/third_party_licenses.py` takes it from the workspace root for the
+release's `THIRD-PARTY-LICENSES.txt`.
+
+Changes:
+
+- wgpu 29 → 30 (the version Bevy 0.20.1 uses); the runtime crate's manifest names this
+  workspace (`..`).
+- `wgpu-ffx/src/pass.rs`: wgpu 30's entry-point metadata for SPIR-V passthrough modules.
+  The accumulation pass's motion inputs were reversed upstream: the low-resolution variants
+  now read the converted, dilated motion and the display-resolution variants the input
+  motion, as AMD's shader bindings declare. With them reversed, moving things left trails
+  at every quality, Native AA included [observed]. A binding test covers both sharpening
+  variants.
+- `wgpu-ffx/src/lib.rs`: the dispatch no longer pushes and pops a device-wide error scope,
+  which raced Bevy's pipeline compilation on other threads.
+- Left out: the upstream repository's Git and CI files, and the shader sources of the SDK's
+  other effects (blur, Brixelizer, CACAO, CAS, the denoiser, depth of field, FSR 2, frame
+  interpolation, optical flow, SSSR and the rest). Nothing here compiles them:
+  `cargo xtask compile-shaders` builds the effects with a `perm.toml` in
+  `wgpu-ffx-shaders-spv/src`, only FSR 3.1. Every `#include` of its shaders resolves among
+  the kept files.
+
+The kept shader files are unchanged. To rebuild the SPIR-V, install `glslc` (Vulkan SDK or
+Shaderc) and run `cargo xtask compile-shaders` in `engine/vendor/wgpu-ffx`; `cargo xtask
+vendor` downloads the whole AMD SDK and is not needed. Not used: AMD's signed DLLs, frame
+generation, the SDK's samples and prebuilt binaries.
+
 ## Dropped
 
 - bevy_pbr 0.19.1 (#903, PR #905): the bindless index-table comparator in

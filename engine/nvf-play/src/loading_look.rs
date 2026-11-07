@@ -166,6 +166,8 @@ pub fn fit_tip(
     mut look: ResMut<Look>,
     mut tips: Query<(Entity, &mut Tip)>,
 ) {
+    // The loading screen fills the view: at the original's size whatever the UI scale (#1631).
+    let _view = crate::interface::original_units();
     let Ok(window) = windows.single() else { return };
     let Some(mut images) = images else { return };
     let size = Vec2::new(window.width(), window.height());
@@ -351,6 +353,8 @@ pub struct EmblemPart {
 
 /// Put the emblem on the screen `root`; nothing when its model cannot be read.
 pub fn spawn_emblem(commands: &mut Commands, root: Entity, look: &mut Look, data: &GameData, images: &mut Assets<Image>, bc: bool) {
+    // The loading screen fills the view: at the original's size whatever the UI scale (#1631).
+    let _view = crate::interface::original_units();
     let Some(emblem) = look.emblem(data) else { return };
     let mut read = |path: &str| look.pictures.file(path, data, images, bc);
     let node = Node {
@@ -370,6 +374,8 @@ pub fn spawn_emblem(commands: &mut Commands, root: Entity, look: &mut Look, data
 
 /// Turn the emblem's pieces by the real clock (module notes).
 pub fn turn_emblem(real: Res<Time<Real>>, mut boxes: Query<&mut EmblemBox>, mut parts: Query<(&EmblemPart, &mut UiTransform)>) {
+    // The loading screen fills the view: at the original's size whatever the UI scale (#1631).
+    let _view = crate::interface::original_units();
     let Some(mut emblem_box) = boxes.iter_mut().next() else { return };
     let now = real.elapsed_secs_f64();
     let began = *emblem_box.began.get_or_insert(now);
