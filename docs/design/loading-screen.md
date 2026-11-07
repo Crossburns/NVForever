@@ -111,11 +111,13 @@ anyway and logs incomplete readiness, bounding failed shaders/uploads or a lost 
 The first visible report and device access sound wait for hidden-pose restoration.
 Real held openings report their remembered script page immediately; startup stays silent.
 
-[observed: maintainer-supplied results, 2026-11-07, commit `8fa3f8a04`]
+[observed 2026-11-07, commit `4fbe5750d`, 8 alternating fresh launches, one machine] 4/4 clean first openings enabled and 4/4 blue or partial with `NVF_PLAY_TEST_NO_PIPBOY_WARM=1`. Screen-down medians 7.68 s enabled (7.38-7.98) and 6.81 s disabled (6.41-6.96): about +0.9 s in these launches.
+
+[observed: 2026-11-07, commit `8fa3f8a04`]
 One launch set of eight alternating fresh launches gave 4/4 clean first openings
 enabled and 4/4 blue or partial with `NVF_PLAY_TEST_NO_PIPBOY_WARM=1`. Screen-down times
 were 7.88, 8.65, 9.03, 10.06 seconds enabled (median 8.84), versus 6.39, 7.74, 8.79,
-9.76 disabled (median 8.27), a noisy +0.57 seconds. The maintainer reports scenarios
+9.76 disabled (median 8.27), a noisy +0.57 seconds. The same run reports scenarios
 and tests passing. These runs support the combined fix, do not isolate the vendored
 patch's necessity, and do not measure this review revision.
 

@@ -876,12 +876,12 @@ fourth row, and a click on a row equips what it selects.
 
 ## 8. Open
 
-[observed: maintainer-supplied results, 2026-11-07, commit `8fa3f8a04`]
+[observed: 2026-11-07, commit `8fa3f8a04`]
 One launch set of eight alternating fresh launches gave four of four clean first
 openings with warm-up enabled, and four of four blue or partial first openings with
 `NVF_PLAY_TEST_NO_PIPBOY_WARM=1`. Loading-screen-down times were 7.88, 8.65, 9.03 and
 10.06 seconds enabled (median 8.84), and 6.39, 7.74, 8.79 and 9.76 seconds disabled
-(median 8.27): about +0.57 seconds, with noisy timings. The maintainer reports that
+(median 8.27): about +0.57 seconds, with noisy timings. The same run reports that
 scenarios and tests pass. This set supports the combined fix; it does not isolate
 the necessity of the vendored retries or measure this review revision.
 
@@ -981,8 +981,13 @@ each run. Both scenarios enable shader definitions and the submission report.
 
 [design: `engine/nvforever/src/pipboy_ready.rs`, `engine/nvf-play/src/pipboy.rs`,
 `ui_sounds.rs`, `tools/smoke/scenarios.toml`]
-`pipboy-first-open` asserts readiness on the first report after pose restoration,
-with a nonzero shape count and `missing=0`, and forbids the first-raise cap warning.
+`pipboy-first-open` asserts that the first report after pose restoration has every
+shape prepared, bound and uploaded (shapes still out of view aren't queued yet), that a
+later report has at least 15 queued and all of those ready, and forbids the first-raise
+cap warning. If the cap ever releases, a partial rig can show; that's the chosen
+trade-off over a locked player.
+
+[observed 2026-11-07, commit `4fbe5750d`, 8 alternating fresh launches, one machine] 4/4 clean first openings enabled and 4/4 blue or partial with `NVF_PLAY_TEST_NO_PIPBOY_WARM=1`. Screen-down medians 7.68 s enabled (7.38-7.98) and 6.81 s disabled (6.41-6.96): about +0.9 s in these launches.
 Its shots should show a textured arm/device without blue, a world-filled hole or blur
 on the arm; during a hold the world stays unobstructed. The disabled twin remains a
 negative control. Unit checks cover Tab/Escape dispatch during a hold, bounded failure

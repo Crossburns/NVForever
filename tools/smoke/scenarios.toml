@@ -22078,7 +22078,7 @@ expect = [
   { re = 'pipboy: warm-up asked (\d+) pipelines', label = "the total gate asks during hidden drawing (includes concurrent world work)" },
   { re = 'pipboy: up: (\d+) pipelines asked since the raise began', range = [0, 0], count = 1, label = "the first visible raise asks no new pipeline" },
   { re = 'pipboy draw: first=true, shapes=([1-9]\d*), queued=[1-9]\d*, opaque=[1-9]\d*, prepared=\1, bound=\1, ready=[1-9]\d*, missing=\d+ gpu_meshes=\1, slabs=\1', count = 1, label = "the first restored-pose frame has every rig shape prepared, bound and uploaded; shapes still out of view are not queued" },
-  { re = 'pipboy draw: first=false, shapes=([1-9]\d*), queued=1[5-9], opaque=[1-9]\d*, prepared=\1, bound=\1, ready=1[5-9]', min = 1, label = "as the arm comes into view, the shapes are queued and ready" },
+  { re = 'pipboy draw: first=false, shapes=([1-9]\d*), queued=(1[5-9]|[2-9]\d), opaque=[1-9]\d*, prepared=\1, bound=\1, ready=\2,', min = 1, label = "as the arm comes into view, the shapes are queued and ready" },
   { re = 'pipboy: own rig pipelines \[', label = "the rig pipeline IDs, excluding concurrent world requests" },
   { re = 'pipboy: first raise held \d+ ms for \d+ pipelines', count = 1, label = "the first real submission is checked after hidden teardown" },
   "pipboy: STATS Status",
