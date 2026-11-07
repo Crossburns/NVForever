@@ -21737,7 +21737,7 @@ run_seconds = 11
 expect = [
   { re = 'pipboy: warm-up asked (\d+) pipelines', label = "the total gate asks during hidden drawing (includes concurrent world work)" },
   { re = 'pipboy: up: (\d+) pipelines asked since the raise began', range = [0, 0], count = 1, label = "the first visible raise asks no new pipeline" },
-  { re = 'pipboy draw: first=true, shapes=[1-9]\d*, queued=[1-9]\d*, opaque=[1-9]\d*, prepared=[1-9]\d*, bound=[1-9]\d*, ready=[1-9]\d*, missing=0 ', count = 1, label = "the first visible render frame submits every rig shape with ready bindings and pipelines" },
+  { re = 'pipboy draw: first=true, shapes=[1-9]\d*, queued=[1-9]\d*, opaque=[1-9]\d*, prepared=[1-9]\d*, bound=[1-9]\d*, ready=[1-9]\d*, missing=0 ', count = 1, label = "the first restored-pose render frame submits every rig shape with ready bindings and pipelines" },
   { re = 'pipboy: own rig pipelines \[', label = "the rig pipeline IDs, excluding concurrent world requests" },
   { re = 'pipboy: first raise held \d+ ms for \d+ pipelines', count = 1, label = "the first real submission is checked after hidden teardown" },
   "pipboy: STATS Status",
@@ -21745,8 +21745,8 @@ expect = [
   "pipboy: down",
 ]
 order = [["pipboy: warm-up start (covered=true", "pipboy: warm-up asked", "pipboy: warm-up teardown complete (screen camera off)", "loading screen down after", "pipboy: up, page ITEMS tab Weapons", "pipboy: raised"]]
-forbid = ["loading screen: pipelines not ready after", "pipeline_cap", "still being retried after", "up, but the menus are not on the arm", "menu request ignored"]
-manual = "Queue membership and bindings do not prove correct pixels. The first real raise has a short submission check (four render reports; about 70-100 ms at 60 Hz). Compare first_a through first_d with the no-warm twin: no world showing through, blue/brown split, silhouette or blur on the arm. first_down must show the normal view without a device. Check that the final close restores the view and leaves the screen camera inactive. The 5 s open follows the supplied issue run; the proposed 1 s open has no measured support. Compare three start times and a two-thread start. The start warm-up has a 250 ms budget plus teardown; the existing loading wait handles compilation. The own rig pipelines line names its actual IDs; the total count includes concurrent world keys. If the first hold lasts longer, inspect prepared/bound/queued and pipeline readiness, then the shots."
+forbid = ["pipboy: first raise cap reached", "loading screen: pipelines not ready after", "pipeline_cap", "still being retried after", "up, but the menus are not on the arm", "menu request ignored"]
+manual = "Queue membership and bindings do not prove correct pixels. The assertion observes the first render after pose restoration. The first real raise has a short submission check (four render reports; about 70-100 ms at 60 Hz). Compare first_a through first_d with the no-warm twin: no world showing through, blue/brown split, silhouette or blur on the arm. first_down must show the normal view without a device. Check that the final close restores the view and leaves the screen camera inactive. The 5 s open follows the supplied issue run; the proposed 1 s open has no measured support. Compare three start times and a two-thread start. The start warm-up has a 250 ms budget plus teardown; the existing loading wait handles compilation. The own rig pipelines line names its actual IDs; the total count includes concurrent world keys. If the first hold lasts longer, inspect prepared/bound/queued and pipeline readiness, then the shots."
 
 [[scenario]]
 name = "pipboy-first-open-no-warm"

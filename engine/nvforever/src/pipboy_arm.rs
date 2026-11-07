@@ -48,6 +48,7 @@ use crate::stealth_field::StealthField;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
+use bevy::ecs::system::SystemParam;
 use bevy::window::PrimaryWindow;
 use nvf_assets::nif_material::{Falloff, NifMaterial};
 use nvf_play::pipboy::device_screen::{GLARE_LINEAR_SCALE, SCREEN_TINT};
@@ -124,6 +125,8 @@ impl Plugin for PipBoyArmPlugin {
 /// [design: this file] A render-frame floor covers extraction and the second skin variant.
 const WARM_FRAMES: u32 = 4;
 const START_WARM_CAP_SECS: f64 = 0.25;
+/// [design: this file] Allow cold preparation, but bound a failed shader/upload or lost rig.
+const FIRST_RAISE_CAP_SECS: f64 = 3.0;
 
 #[derive(Default)]
 struct WarmState {
@@ -131,21 +134,29 @@ struct WarmState {
     start_done: bool,
     teardown: bool,
     first_open_done: bool,
+    raise_released: bool,
+}
+
+#[derive(SystemParam)]
+struct WarmUp<'w, 's> {
+    pip: ResMut<'w, PipBoy>,
+    loading: ResMut<'w, nvf_play::loading::Loading>,
+    gate: Res<'w, crate::pipeline_gate::PipelineGate>,
+    render: Res<'w, crate::pipboy_ready::PipBoyReady>,
+    body: Res<'w, PlayerBody>,
+    screen: Option<Res<'w, PipBoyScreen>>,
+    cams: Query<'w, 's, &'static Camera>,
+    use_pipboy: Res<'w, nvf_play::pipboy::UsePipBoy>,
+    sim: Option<Res<'w, nvf_play::sim::SimState>>,
+    state: Local<'s, WarmState>,
 }
 
 /// [design: this file, player_body.rs] Only the renderer borrows the rig: no menu or POV change.
-fn warm_up(
-    mut pip: ResMut<PipBoy>,
-    mut loading: ResMut<nvf_play::loading::Loading>,
-    gate: Res<crate::pipeline_gate::PipelineGate>,
-    render: Res<crate::pipboy_ready::PipBoyReady>,
-    body: Res<PlayerBody>,
-    screen: Option<Res<PipBoyScreen>>,
-    cams: Query<&Camera>,
-    use_pipboy: Res<nvf_play::pipboy::UsePipBoy>,
-    sim: Option<Res<nvf_play::sim::SimState>>,
-    mut state: Local<WarmState>,
-) {
+fn warm_up(params: WarmUp) {
+    let WarmUp { mut pip, mut loading, gate, render, body, screen, cams, use_pipboy, sim, mut state } = params;
+    if pip.phase != Phase::Raising {
+        state.raise_released = false;
+    }
     let root = body.first_person_root();
     if root != state.root {
         state.root = root;
@@ -178,7 +189,7 @@ fn warm_up(
         let ready = submitted && posed && gate.frames().wrapping_sub(w.frames) >= WARM_FRAMES;
         // [design: this file] Closing a held raise cancels without playing the lowering clip.
         let cancelled = !w.covered && pip.phase != Phase::Raising;
-        let capped = w.covered && elapsed >= START_WARM_CAP_SECS;
+        let capped = elapsed >= if w.covered { START_WARM_CAP_SECS } else { FIRST_RAISE_CAP_SECS };
         if ready || capped || cancelled {
             let w = pip.warming.take().expect("warming");
             let asked = gate.asked().saturating_sub(w.asked_at);
@@ -186,6 +197,10 @@ fn warm_up(
             info!("pipboy: warm-up asked {asked} pipelines, ready after {ms:.0} ms (covered={}, capped={}, cancelled={cancelled})", w.covered, !ready && !cancelled);
             info!("pipboy: own rig pipelines {:?}; submitted={}, prepared={}, bound={}, shapes={}", own.pipelines, own.queued, own.prepared, own.bound, own.shapes);
             if !w.covered {
+                state.raise_released = !cancelled;
+                if capped && !ready && !cancelled {
+                    warn!("pipboy: first raise cap reached after {ms:.0} ms; raising with incomplete readiness");
+                }
                 info!("pipboy: first raise held {ms:.0} ms for {asked} pipelines");
             }
             if !cancelled {
@@ -212,7 +227,7 @@ fn warm_up(
     let covered = loading.starting() && !loading.world_held() && !state.start_done && root.is_some();
     // [design: #1803] Teardown removes the hidden rig from retained phases. Verify
     // the first real submission too, even when its pipelines were warmed at start.
-    let cold = root.is_some() && pip.phase == Phase::Raising && pip.frame == Frame::Device && (!pip.warmed || !state.first_open_done);
+    let cold = !state.raise_released && root.is_some() && pip.phase == Phase::Raising && pip.frame == Frame::Device && (!pip.warmed || !state.first_open_done);
     if state.teardown || screen.is_none() || (!covered && !cold) {
         return;
     }
@@ -676,12 +691,22 @@ mod tests {
     }
 
     #[test]
-    fn a_cold_raise_never_releases_unsubmitted_shapes_at_the_old_cap_and_can_cancel() {
+    fn a_cold_raise_releases_at_the_cap_even_without_a_rig_and_does_not_hold_again() {
         let mut app = capped_warm_app(false, true);
         app.update();
         let pip = app.world().resource::<PipBoy>();
-        assert!(pip.warming.is_some() && !pip.warmed);
+        assert!(pip.warming.is_none() && !pip.warmed);
         assert_eq!((pip.phase, pip.clip_time), (Phase::Raising, 0.0));
+        app.update();
+        assert!(app.world().resource::<PipBoy>().warming.is_none());
+    }
+
+    #[test]
+    fn a_cold_raise_can_cancel_before_the_cap() {
+        let mut app = capped_warm_app(false, true);
+        app.world_mut().resource_mut::<PipBoy>().warming.as_mut().unwrap().since = std::time::Instant::now();
+        app.update();
+        assert!(app.world().resource::<PipBoy>().warming.is_some());
         app.world_mut().resource_mut::<PipBoy>().lower();
         app.update();
         let pip = app.world().resource::<PipBoy>();

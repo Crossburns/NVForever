@@ -987,6 +987,7 @@ struct WarmUnculled;
 
 fn restore_warm_pose(
     mut commands: Commands,
+    mut pip: ResMut<nvf_play::pipboy::PipBoy>,
     mut saved: ResMut<WarmPose>,
     mut transforms: Query<&mut Transform>,
     mut visibility: Query<&mut Visibility>,
@@ -1005,6 +1006,7 @@ fn restore_warm_pose(
     for e in &unculled {
         commands.entity(e).remove::<(NoFrustumCulling, WarmUnculled)>();
     }
+    pip.pose_hidden = false;
 }
 
 /// [design: this file] Pose after the normal body has supplied the eye, view and weapon
@@ -1079,6 +1081,7 @@ fn draw_warm_pose(
         }
     }
     pip.warming.as_mut().expect("warm pose").drawn = true;
+    pip.pose_hidden = true;
 }
 
 /// The body's falls at exit (smoke tests read it).
@@ -2848,6 +2851,9 @@ mod tests {
         let borrowed = world.spawn((NoFrustumCulling, WarmUnculled)).id();
         let existing = world.spawn(NoFrustumCulling).id();
         world.insert_resource(WarmPose { transforms: vec![(rig, original)], visibility: Some((rig, Visibility::Hidden)) });
+        let mut pip = nvf_play::pipboy::PipBoy::default();
+        pip.pose_hidden = true;
+        world.insert_resource(pip);
         world.run_system_once(restore_warm_pose).unwrap();
         assert_eq!(*world.get::<Transform>(rig).unwrap(), original);
         assert_eq!(*world.get::<Visibility>(rig).unwrap(), Visibility::Hidden);
@@ -2855,6 +2861,7 @@ mod tests {
         assert!(world.get::<WarmUnculled>(borrowed).is_none());
         assert!(world.get::<NoFrustumCulling>(existing).is_some());
         assert!(world.resource::<WarmPose>().transforms.is_empty());
+        assert!(!world.resource::<nvf_play::pipboy::PipBoy>().pose_hidden);
     }
 
     #[test]

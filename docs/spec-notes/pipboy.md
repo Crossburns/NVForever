@@ -876,14 +876,20 @@ fourth row, and a click on a row equips what it selects.
 
 ## 8. Open
 
-[observed: supplied `target/smoke/pipboy-first-open.log`, `first_a.png` through
-`first_d.png`, 2026-11-07] The earlier pipeline-only diagnosis was incomplete. The
-warm-up asked 55 pipelines including the world, reached its three-second cap, and the
-first raise asked zero. Nevertheless the arm/device was clear-colour blue at 5.3,
-5.8 and 6.5 seconds; the screen hole showed the world. At 8.5 seconds it was drawn.
-The enabled start took 12.98 seconds against 10.79 in the disabled twin, one launch
-each on a busy machine. Those runs do not measure a repeatable cost or identify the
-missing colour draw's precise branch.
+[observed: maintainer-supplied results, 2026-11-07, commit `8fa3f8a04`]
+One launch set of eight alternating fresh launches gave four of four clean first
+openings with warm-up enabled, and four of four blue or partial first openings with
+`NVF_PLAY_TEST_NO_PIPBOY_WARM=1`. Loading-screen-down times were 7.88, 8.65, 9.03 and
+10.06 seconds enabled (median 8.84), and 6.39, 7.74, 8.79 and 9.76 seconds disabled
+(median 8.27): about +0.57 seconds, with noisy timings. The maintainer reports that
+scenarios and tests pass. This set supports the combined fix; it does not isolate
+the necessity of the vendored retries or measure this review revision.
+
+[observed: earlier supplied `target/smoke/pipboy-first-open.log` and shots, 2026-11-07]
+The failed first attempt reached its three-second startup cap and asked zero new
+pipelines during the raise, yet its first three shots were blue or partial. Its
+single enabled/disabled pair took 12.98/10.79 seconds on a busy machine; that pair
+was not a repeatable startup-cost estimate.
 
 [design: `engine/vendor/bevy_pbr/src/material.rs:1097`, `:1315`;
 Bevy 0.20.1 registry `bevy_render/src/camera.rs:910-1028`] Pipeline compilation and
@@ -892,15 +898,20 @@ pending queues are independent (`bevy_pbr/src/prepass/mod.rs:1086,1376`). The ma
 pass formerly skipped an unavailable uploaded mesh or missing allocator slabs
 without preserving that entity for retry. A cached PSO could
 therefore be ready while an entity had no colour entry. Those two branches now
-preserve the pending entity. Hidden and raising rig meshes also mark themselves changed
-so retained bins are refreshed after visibility/material changes.
+preserve the pending entity. Before queueing, pending entities no longer visible to
+that view are discarded. Both retries cover distinct stages and remain. Hidden and
+raising rig meshes also mark themselves changed so retained bins are refreshed after
+visibility/material changes.
 
 [hypothesis: the supplied run and the source paths above] A missed main-pass queue retry
 or stale retained entry accounts for depth without colour. It has **not** been established
 that the supplied run took one of these branches. Shader depth rejection, incorrect GPU
 instance data, or a draw-command skip remain possible if the new report shows complete
-submission/bindings while a shot is blue. The fix below prevents revealing a rig that has
-not met the observable submission conditions; it is not proof of correct pixels.
+submission/bindings while a shot is blue.
+
+[design: `engine/nvforever/src/pipboy_arm.rs`, `pipboy_ready.rs`] The fix normally
+waits for the observable submission conditions, with a bounded failure release;
+those conditions are not proof of correct pixels.
 
 [design: `engine/nvforever/src/player_body.rs:1441,2189`,
 `engine/nvforever/src/pipboy_arm.rs::copy_of`, `::wear_materials`;
@@ -934,17 +945,27 @@ The existing loading gate waits for the pipelines already requested. If the rig 
 not be submitted in that budget it remains cold. The first real device raise verifies
 submission again, behind the camera with CPU culling disabled, even following a start
 warm-up. It releases only after its own main/prepass pipelines and material bindings
-are ready; there is no three-second release of an incomplete rig. Closing cancels the
-hold. Later opens reuse the prepared rig; a new rig/material resets readiness. A permanently failing shader can consequently require cancelling a cold opening.
+are ready, or releases at a three-second wall-clock cap with a warning that readiness
+is incomplete. The cap allows cold preparation while bounding failure from a shader,
+upload or lost rig; scheduling and pose restoration can add a frame. A released raise
+does not hold again during that opening. Tab/Escape dispatch Close through the normal
+key handler during the hold; cancellation skips the lowering clip. Later opens reuse
+the prepared rig; a new rig/material resets readiness.
 A missing rig keeps the existing flat-image fallback.
 A screen-menu warm-up draws only its page/image camera; it neither borrows the arm nor
-creates device treatment. No hidden warm-up opens a script menu or announces a raise.
+creates device treatment. Only the startup warm-up stays script-silent: a held real
+opening reports its remembered
+STATS/ITEMS/DATA page immediately. The device access sound waits until the borrowed
+pose has been restored and the visible raise begins; ordinary openings, screen menus
+and the disabled-warm path keep their opening-frame sound. A cancelled hidden opening
+has no access sound.
 The treatment's visible log is independent of when its layers were prepared.
 
 [design: `tools/smoke/scenarios.toml`, `engine/nvforever/src/pipboy_ready.rs`]
 Run `pipboy-first-open` and `pipboy-first-open-no-warm`, then the unchanged
 `pipboy-screen-menu` and `pipboy-screen-menu-unworn`. `NVF_PLAY_TEST_PIPBOY_DRAW=1`
-installs the logging system only for the aid. Its first visible render report gives
+installs the logging system only for the aid. Its first visible render report is
+marked only after pose restoration and gives
 `shapes`, actual colour `queued`/`opaque`, `prepared`, `bound`, `ready`, `missing`, `gpu_meshes`, `slabs` and `specialized`.
 `missing=0` with a nonzero shape count means every watched shape has a main entry,
 an uploaded mesh and allocator slabs, a GPU material bind group and compiled
@@ -955,22 +976,19 @@ identifies mesh upload/allocation; `specialized < shapes` identifies a missing m
 specialisation. With those prerequisites complete, `ready < bound` indicates compilation.
 `missing=0` with a wrong shot rules out those prerequisites, and requires draw/GPU/depth
 investigation. The log cannot certify pixels. The own-rig pipeline IDs come from its
-actual queued main entries and prepass cache, excluding the world's; the earlier 55
-cannot be divided exactly retrospectively because the enabled run omitted shader defs.
-Its 98-101 were the image camera's sprite/UI/postprocessing/tonemapping requests;
-the disabled twin identifies first-person colour keys 157,160-162,164-165 by shader defs.
-IDs are local to each run. Both scenarios now enable defs and the submission report.
+actual queued main entries and prepass cache, excluding the world's. IDs are local to
+each run. Both scenarios enable shader definitions and the submission report.
 
-[hypothesis: the new 250 ms budget, not a measured run] Most or all hidden submission
-should overlap the existing start wait, with no additional compilation wait here. The
-old +2.19 second single-pair delta is not an estimate for this revision. The first real
-submission check should take about 70-100 ms at 60 Hz when warmed (four render reports
-plus schedule handoff); a cold cache/upload can take longer. At 5.3 seconds expect a
-textured arm rising, and at 5.8, 6.5 and 8.5 seconds the whole textured device and menus,
-without blue, a world-filled hole or blur on the arm. If the hold outlasts a shot it should
-show the unobstructed world, never a partial rig. Measure three starts and a two-thread
-start; inspect these shots and a cold New Game first gift. No game or smoke run was made
-for this revision.
+[design: `engine/nvforever/src/pipboy_ready.rs`, `engine/nvf-play/src/pipboy.rs`,
+`ui_sounds.rs`, `tools/smoke/scenarios.toml`]
+`pipboy-first-open` asserts readiness on the first report after pose restoration,
+with a nonzero shape count and `missing=0`, and forbids the first-raise cap warning.
+Its shots should show a textured arm/device without blue, a world-filled hole or blur
+on the arm; during a hold the world stays unobstructed. The disabled twin remains a
+negative control. Unit checks cover Tab/Escape dispatch during a hold, bounded failure
+release, remembered page reporting, pose cleanup, and access-sound deferral/cancellation.
+Cold New Game, save load, screen menu, no device, interruption combinations and 16:9/4:3
+still need runtime checks after this review revision.
 
 - Whether the original holds the clip at `Hit` (the measurements say the screen faces
   the eye there).

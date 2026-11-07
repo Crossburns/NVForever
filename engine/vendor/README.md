@@ -43,6 +43,18 @@ by a comment starting `NVForever FSR integration`:
 Without the override both do what upstream does. This is a new patch for Bevy 0.20.1, not
 the dropped 0.19.1 one below.
 
+[design: `bevy_pbr/src/material.rs`, #1803, 2026-11-07] The Pip-Boy patch also
+retains pending entities when main-pass specialisation lacks an uploaded mesh or
+queueing lacks allocator slabs. Both retries remain: they cover separate stages.
+Before queueing, pending entries no longer visible to that view are discarded, so
+hidden meshes cannot be requeued indefinitely or reinserted into retained bins.
+`MaterialQueueProbe` optionally records watched main-pass entries and pipeline IDs
+for `nvforever/src/pipboy_ready.rs`; no probe resource is installed by default.
+Reapply these changes on upgrades until upstream retries both branches and filters
+pending queue entries by view visibility. Remove the probe when an equivalent
+upstream observation API replaces its caller, or that readiness check is retired.
+The supplied launch comparison does not isolate either retry's necessity.
+
 ## wgpu-ffx 0.1.0 (MIT, the wgpu-ffx developers and Advanced Micro Devices)
 
 The FSR 3.1.4 upscaler (docs/design/fsr-upscaling.md): a Rust/wgpu port of AMD FidelityFX

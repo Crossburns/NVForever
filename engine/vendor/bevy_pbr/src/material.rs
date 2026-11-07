@@ -1272,6 +1272,11 @@ pub fn queue_material_meshes(
                  `specialize_material_meshes`",
             );
 
+        // [design: #1803] Pending retries must not reinsert meshes hidden from this view.
+        view_pending_mesh_material_queues.prev_frame.retain(|&(entity, main_entity)| {
+            render_visible_mesh_entities.entity_pair_is_visible(entity, main_entity)
+        });
+
         // Now iterate through all newly-visible entities and those needing respecialization.
         for (render_entity, visible_entity) in dirty_specializations.iter_to_queue(
             view.retained_view_entity,

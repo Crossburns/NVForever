@@ -262,9 +262,11 @@ pub struct PipBoy {
     saved_pov: Option<Pov>,
     /// The tab of the tab line under the pointer ([`frame::hover_boxes`]).
     pub hover_tab: Option<usize>,
-    /// Hidden render-only pose; never a script menu [design: nvforever/pipboy_arm.rs].
+    /// Hidden rendering interval; a real opening still reports its page [design: pipboy_arm.rs].
     pub warming: Option<Warming>,
     pub warmed: bool,
+    /// [design: nvforever/player_body.rs] True until the borrowed pose is restored.
+    pub pose_hidden: bool,
 }
 
 /// One hidden draw interval [design: nvforever/pipboy_arm.rs].
@@ -289,6 +291,11 @@ impl PipBoy {
     /// Whether the menus take input (coming up or up, after hidden warming) [design: this file].
     pub fn open(&self) -> bool {
         self.warming.is_none() && matches!(self.phase, Phase::Raising | Phase::Up)
+    }
+
+    /// [design: this file] A real opening reports its page and accepts Close during a hold.
+    pub fn opening(&self) -> bool {
+        matches!(self.phase, Phase::Raising | Phase::Up) && !self.warming.as_ref().is_some_and(|w| w.covered)
     }
 
     /// Whether to draw the device on the arm, including hidden warming [design: this file].
@@ -487,6 +494,7 @@ impl Plugin for PipBoyPlugin {
                 (
                     (apply_use, follow_menu.after(crate::menu::MenuSystems), follow_frame).chain(),
                     reset_manager,
+                    close_keys.run_if(|pip: Res<PipBoy>| pip.opening()).run_if(takes_keys),
                     (keys, apply_input).chain().run_if(pipboy_open).run_if(takes_keys),
                     repair::keys.run_if(takes_keys),
                     item_mod::keys.run_if(takes_keys),
@@ -559,7 +567,7 @@ pub fn menu_code(page: Page, repairing: bool, modding: bool) -> u16 {
 /// it opens as the inventory, 1002, `crate::script::engine_menu_opened`). Logged:
 /// `pipboy: menu code <code>`.
 fn report_menu(pip: Res<PipBoy>, repair: Res<repair::PipRepair>, modding: Res<item_mod::PipItemMod>, script: Option<ResMut<crate::script::ScriptState>>) {
-    if !pip.open() {
+    if !pip.opening() {
         return;
     }
     let Some(rt) = script.and_then(|s| s.into_inner().rt.as_mut()) else { return };
@@ -783,13 +791,12 @@ fn camera_on(pip: Res<PipBoy>, screen: Option<Res<PipBoyScreen>>, fx: Res<device
 /// Keys of the Pip-Boy: Tab, Esc and E close it; F1–F3 the pages; A/D and Left/Right
 /// the tabs; none while the menus' "How many?" prompt is open. The ITEMS page's own keys
 /// are in [`items`].
-fn keys(
+fn close_keys(
     keys: Res<ButtonInput<KeyCode>>,
     prompt: Res<crate::menu::PromptKeys>,
     active: Res<crate::menu::ActiveMenu>,
     repair: Res<repair::PipRepair>,
     modding: Res<item_mod::PipItemMod>,
-    mut out: MessageWriter<PipBoyInput>,
     mut menu: MessageWriter<crate::menu::MenuInput>,
 ) {
     use KeyCode::*;
@@ -801,6 +808,12 @@ fn keys(
     // still puts the Pip-Boy away.
     if keys.just_pressed(Tab) || (keys.just_pressed(Escape) && !repair.is_open() && !modding.is_open()) {
         menu.write(crate::menu::MenuInput(crate::menu::model::Command::Close));
+    }
+}
+
+fn keys(keys: Res<ButtonInput<KeyCode>>, prompt: Res<crate::menu::PromptKeys>, active: Res<ActiveMenu>, mut out: MessageWriter<PipBoyInput>) {
+    use KeyCode::*;
+    if prompt.held(&active) || keys.any_just_pressed([Tab, Escape]) {
         return;
     }
     for (k, p) in [(F1, Page::Stats), (F2, Page::Items), (F3, Page::Data)] {
@@ -1052,6 +1065,46 @@ mod tests {
         p.warming = Some(warming(true, false));
         assert!(!p.on_arm());
         assert_eq!(p.warm_clip(), None);
+    }
+
+    #[test]
+    fn tab_and_escape_dispatch_close_through_the_held_raise_key_path() {
+        for key in [KeyCode::Tab, KeyCode::Escape] {
+            let mut app = App::new();
+            app.init_resource::<ButtonInput<KeyCode>>()
+                .init_resource::<crate::menu::PromptKeys>()
+                .init_resource::<ActiveMenu>()
+                .init_resource::<repair::PipRepair>()
+                .init_resource::<item_mod::PipItemMod>()
+                .add_message::<crate::menu::MenuInput>()
+                .insert_resource(PipBoy { phase: Phase::Raising, warming: Some(warming(false, true)), ..default() })
+                .add_systems(Update, close_keys.run_if(|pip: Res<PipBoy>| pip.opening()).run_if(takes_keys));
+            app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
+            app.update();
+            let messages: Vec<_> = app.world_mut().resource_mut::<Messages<crate::menu::MenuInput>>().drain().collect();
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].0, crate::menu::model::Command::Close);
+        }
+    }
+
+    #[test]
+    fn a_held_opening_reports_the_real_page_but_startup_is_silent() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(repair::PipRepair::default());
+        world.insert_resource(item_mod::PipItemMod::default());
+        world.insert_resource(crate::script::ScriptState::over_no_plugins());
+        for page in [Page::Stats, Page::Data] {
+            world.resource_mut::<crate::script::ScriptState>().rt.as_mut().unwrap().game.open_menu(menus::INVENTORY);
+            world.insert_resource(PipBoy { page, phase: Phase::Raising, warming: Some(warming(false, true)), ..default() });
+            world.run_system_once(report_menu).unwrap();
+            assert_eq!(world.resource::<crate::script::ScriptState>().rt.as_ref().unwrap().game.menu,
+                Some(if page == Page::Stats { menus::STATS } else { menus::MAP }));
+            world.resource_mut::<crate::script::ScriptState>().rt.as_mut().unwrap().game.close_menu();
+            world.resource_mut::<PipBoy>().warming.as_mut().unwrap().covered = true;
+            world.run_system_once(report_menu).unwrap();
+            assert_eq!(world.resource::<crate::script::ScriptState>().rt.as_ref().unwrap().game.menu, None);
+        }
     }
 
     #[test]

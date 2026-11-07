@@ -106,15 +106,23 @@ budget, followed by teardown. It waits for submission, not the global busy pipel
 count: this screen already owns the compilation wait. If submission is incomplete at
 the budget, the rig stays cold. A first visible device opening verifies its own main
 queue, prepared materials, bind groups and main/prepass pipelines behind the camera;
-it can be cancelled and does not expose incomplete draws at a timeout. A normal warmed
-submission check is expected to take about 70-100 ms at 60 Hz [hypothesis, unmeasured].
+Tab/Escape can cancel it through the normal key handler. At three seconds it raises
+anyway and logs incomplete readiness, bounding failed shaders/uploads or a lost rig.
+The first visible report and device access sound wait for hidden-pose restoration.
+Real held openings report their remembered script page immediately; startup stays silent.
 
-[observed: supplied `target/smoke/pipboy-first-open.log` and disabled twin, 2026-11-07]
-The previous three-second warm-up capped at 3011 ms; startup was 12.98 against 10.79
-seconds, one launch each on a busy machine. Zero pipeline requests at the visible raise
-did not prevent blue silhouettes in its first three shots. Pipeline readiness is therefore
-insufficient evidence of a successful first open. See `docs/spec-notes/pipboy.md` section 8
-for the queue retry fixes, unresolved diagnosis and the new submission report.
+[observed: maintainer-supplied results, 2026-11-07, commit `8fa3f8a04`]
+One launch set of eight alternating fresh launches gave 4/4 clean first openings
+enabled and 4/4 blue or partial with `NVF_PLAY_TEST_NO_PIPBOY_WARM=1`. Screen-down times
+were 7.88, 8.65, 9.03, 10.06 seconds enabled (median 8.84), versus 6.39, 7.74, 8.79,
+9.76 disabled (median 8.27), a noisy +0.57 seconds. The maintainer reports scenarios
+and tests passing. These runs support the combined fix, do not isolate the vendored
+patch's necessity, and do not measure this review revision.
+
+[observed: earlier supplied first-open log and disabled twin, 2026-11-07]
+The failed first attempt capped its startup warm-up at 3011 ms and took 12.98/10.79
+seconds in one enabled/disabled pair. Zero new pipelines during the raise still left
+blue silhouettes in the first three shots. See `docs/spec-notes/pipboy.md` section 8.
 
 [design: `engine/nvforever/src/pipboy_arm.rs`, `pipboy_ready.rs`, `pipeline_gate.rs`]
 The warm-up log's total requests still include concurrent world work. `own rig pipelines`
@@ -124,12 +132,11 @@ compilations. `NVF_PLAY_TEST_PIPBOY_DRAW=1` logs the first visible submission an
 thereafter, including opaque entries and material/binding readiness; no logging system
 is registered by default. `NVF_PLAY_TEST_NO_PIPBOY_WARM=1` remains the disabled twin.
 
-[hypothesis: the new budget, unmeasured] The short hidden submission should fit within
-the start's existing world/pipeline wait, so it should usually add no screen time. Its
-own hold is bounded by 250 ms plus one-frame teardown and scheduling latency. Compare
-three starts and a two-thread start, then the four first-open shots. A cold first-open
-hold moves any remaining cost to that first device use instead of every start. Check
-save load, no device, screen-menu frame, and a cold New Game gift at 16:9 and 4:3.
+[design: `tools/smoke/scenarios.toml`, `engine/nvforever/src/pipboy_arm.rs`]
+Compare the four first-open shots and the restored-pose readiness report. The startup
+hold is bounded by 250 ms plus teardown and scheduling; a cold first device opening
+has a separate three-second cap. Check save load, no device, screen-menu frame, key
+cancellation and a cold New Game gift at 16:9 and 4:3 after this review revision.
 
 ## 2. What is on hold
 

@@ -2,6 +2,7 @@
 //! global pipeline count. Queue membership is evidence of submission, not pixels.
 
 use bevy::prelude::*;
+use bevy::ecs::system::SystemParam;
 use bevy::pbr::{MaterialQueueProbe, PreparedMaterial, RenderMaterialInstances, RenderMeshInstances, SpecializedMaterialPipelineCache, SpecializedPrepassMaterialPipelineCache};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use bevy::camera::visibility::ViewVisibility;
@@ -85,7 +86,7 @@ fn extract(
     shapes: Extract<Query<(Entity, &ViewVisibility), With<PipBoyShape>>>,
     camera: Extract<Query<Entity, With<nvf_play::PlayerCamera>>>,
 ) {
-    input.visible = pip.warming.is_none() && pip.on_arm() && matches!(pip.phase, Phase::Raising | Phase::Up);
+    input.visible = !pip.pose_hidden && pip.warming.is_none() && pip.on_arm() && matches!(pip.phase, Phase::Raising | Phase::Up);
     input.entities.clear();
     input.camera = camera.single().ok().map(MainEntity::from);
     if pip.on_arm() && (pip.warming.is_some() || pip.phase == Phase::Raising || input.diagnostic) {
@@ -107,20 +108,24 @@ fn extract(
     }
 }
 
-fn observe(
-    input: Res<Input>,
-    shared: Res<PipBoyReady>,
-    probe: Option<Res<MaterialQueueProbe>>,
-    instances: Res<RenderMaterialInstances>,
-    materials: Res<ErasedRenderAssets<PreparedMaterial>>,
-    allocators: Res<MaterialBindGroupAllocators>,
-    prepass: Res<SpecializedPrepassMaterialPipelineCache>,
-    cache: Res<PipelineCache>,
-    mesh_instances: Res<RenderMeshInstances>,
-    meshes: Res<RenderAssets<RenderMesh>>,
-    allocator: Res<MeshAllocator>,
-    main: Res<SpecializedMaterialPipelineCache>,
-) {
+#[derive(SystemParam)]
+struct Observe<'w> {
+    input: Res<'w, Input>,
+    shared: Res<'w, PipBoyReady>,
+    probe: Option<Res<'w, MaterialQueueProbe>>,
+    instances: Res<'w, RenderMaterialInstances>,
+    materials: Res<'w, ErasedRenderAssets<PreparedMaterial>>,
+    allocators: Res<'w, MaterialBindGroupAllocators>,
+    prepass: Res<'w, SpecializedPrepassMaterialPipelineCache>,
+    cache: Res<'w, PipelineCache>,
+    mesh_instances: Res<'w, RenderMeshInstances>,
+    meshes: Res<'w, RenderAssets<RenderMesh>>,
+    allocator: Res<'w, MeshAllocator>,
+    main: Res<'w, SpecializedMaterialPipelineCache>,
+}
+
+fn observe(params: Observe) {
+    let Observe { input, shared, probe, instances, materials, allocators, prepass, cache, mesh_instances, meshes, allocator, main } = params;
     let mut status = Status { shapes: input.entities.len(), ..default() };
     let mut pipelines = HashSet::<CachedRenderPipelineId>::new();
     for &e in &input.entities {
@@ -161,6 +166,20 @@ fn observe(
     *shared.0.lock().expect("Pip-Boy render status") = status;
 }
 
+fn report(input: Res<Input>, shared: Res<PipBoyReady>, mut last: Local<Option<Status>>) {
+    if !input.visible {
+        *last = None;
+        return;
+    }
+    let status = shared.status();
+    if last.as_ref() == Some(&status) {
+        return;
+    }
+    let first = last.is_none();
+    info!("pipboy draw: first={first}, shapes={}, queued={}, opaque={}, prepared={}, bound={}, ready={}, missing={} gpu_meshes={}, slabs={}, specialized={} pipelines={:?}", status.shapes, status.queued, status.opaque, status.prepared, status.bound, status.ready, status.shapes.saturating_sub(status.ready), status.gpu_meshes, status.slabs, status.specialized, status.pipelines);
+    *last = Some(status);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,18 +196,4 @@ mod tests {
         assert!(s.submitted() && !s.complete());
         assert!(!Status::default().complete());
     }
-}
-
-fn report(input: Res<Input>, shared: Res<PipBoyReady>, mut last: Local<Option<Status>>) {
-    if !input.visible {
-        *last = None;
-        return;
-    }
-    let status = shared.status();
-    if last.as_ref() == Some(&status) {
-        return;
-    }
-    let first = last.is_none();
-    info!("pipboy draw: first={first}, shapes={}, queued={}, opaque={}, prepared={}, bound={}, ready={}, missing={} gpu_meshes={}, slabs={}, specialized={} pipelines={:?}", status.shapes, status.queued, status.opaque, status.prepared, status.bound, status.ready, status.shapes.saturating_sub(status.ready), status.gpu_meshes, status.slabs, status.specialized, status.pipelines);
-    *last = Some(status);
 }
