@@ -746,6 +746,32 @@ expect = [
 ]
 
 [[scenario]]
+name = "head-bob-first-person"
+source = "owner 2026-11-07 (engine/nvforever/src/head_bob.rs): a head bob in first person, none in third; running in first person the camera and arms dip at each footfall"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/head_bob.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,10:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 12
+expect = [
+  { re = 'player body summary: head bob on, deepest first-person dip (?P<n>[\d.]+) units', range = [1.0, 1.61], label = "running bobs the first-person view, within the 1.6 unit dip" },
+]
+
+[[scenario]]
+name = "head-bob-third-person"
+source = "owner 2026-11-07 (engine/nvforever/src/head_bob.rs): no head bob in third person; running after switching to third person, the camera's pivot leaves out the head's rise and fall"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_CONTROL = "3:view", NVF_PLAY_TEST_MOVE = "5:1:0,10:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 12
+expect = [
+  { re = 'third-person pivot over (?P<n>\d+) frames', range = [150, 1e9], label = "the view was third person while running" },
+  { re = 'pivot/head (?P<n>[\d.]+)', range = [0, 0.35], label = "the pivot moves at most about a third as much as the head frame to frame" },
+  { re = 'deepest first-person dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "no first-person bob in third person" },
+]
+
+[[scenario]]
 name = "graphics-glow-switches"
 source = "docs/spec-notes/world.md §6 \"HDR and bloom\", \"Eye adaptation\" (owner 2026-10-25: the HDR effects as settings switches): the settings page's Eye adaptation and Neon glow switches, and the light glow (HDR) they need, change while the game runs, without a rendering error"
 areas = ["renderer", "graphics", "settings"]
