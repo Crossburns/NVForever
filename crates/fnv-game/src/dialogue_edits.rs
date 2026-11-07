@@ -163,11 +163,13 @@ impl<'a> Game<'a> {
     pub(crate) fn edit_topic(&mut self, topic: FormId, f: impl FnOnce(&mut TopicDef)) -> bool {
         let data = self.data;
         let recs = Arc::make_mut(&mut self.dialogue_edits.recs);
-        if !recs.topics.contains_key(&topic) {
-            let Some(base) = data.topic_defs.get(&topic) else { return false };
-            recs.topics.insert(topic, base.clone());
-        }
-        let def = recs.topics.get_mut(&topic).expect("inserted above");
+        let def = match recs.topics.entry(topic) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let Some(base) = data.topic_defs.get(&topic) else { return false };
+                e.insert(base.clone())
+            }
+        };
         f(def);
         // [`GameData::top_level`]'s rule, with the edited topics in place of theirs.
         let topics = &recs.topics;
