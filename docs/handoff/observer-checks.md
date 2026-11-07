@@ -1442,3 +1442,17 @@ to the decoded file by cross-correlation and a per-band transfer estimate.
     Answered in part 2026-11-06 (private job ov_burn, the Prospector Saloon) [observed]: with
     the weapon holstered first person shows nothing of the burn, third person shows flames at
     the head, and back in first person nothing again. The raised weapon's arms are still open.
+
+## Added 2026-11-07 (interior light direction, issue #1645)
+
+101. **Interior lighting: which way does the cell's directional light point, and does it
+    cast shadows?** (P3; world.md §8 "Interior cells".) NVForever reads XCLL's pitch as
+    the direction the light shines in (270 straight down) [hypothesis, from the templates'
+    values]; the azimuth's zero and sense are unknown, and whether the original draws
+    shadows from it at all is too (outdoors it casts no sun shadows from the world, world.md
+    §6). Capture GSGasStation (azimuth 180, pitch 250) at hour 12 from the door, looking
+    down at the tiled floor under the hanging lamps, then up at the ceiling: (a) are there
+    shadows under the lamps, the crates and the counter, or on the ceiling beside the
+    lamps, or none; (b) which side of the crates and counter is lit brighter (that gives
+    the azimuth). The same frame of a cell with azimuth 0 and pitch 270 (a cave on
+    CavesDefaultTemplate) shows whether straight down holds.
