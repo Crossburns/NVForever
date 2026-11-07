@@ -5615,6 +5615,127 @@ ONE111_PROBES = (
 )
 
 
+# sup2 (writes, session only; #1008): the dialogue setters of SUP batch 2 with the
+# JohnnyGuitar, ShowOff and ITR functions that edit the same records
+# (docs/spec-notes/ext-sup2.md), on FalloutNV.esm forms [observed: fnvtool esm decode]:
+# Sunny Smiles's first greeting (INFO 104E7E: Say Once, ten choices, one response), her
+# goodbye (INFO 15CB5B: Goodbye, one response) and the topic of her "What kind of creatures
+# are out there?" (DIAL 1055D2: priority 50, no flags), the examples the pages use; GREETING
+# (C8) and GOODBYE (D4). Flags and priorities are put back; the choice and related-topic
+# lists only grow (no function takes an entry out), so those rows run in order and later
+# rows read the lists the earlier ones left.
+SUP2 = {"greet": "104E7E", "bye": "15CB5B", "topic": "1055D2", "greeting": "C8", "goodbye": "D4", "quest": "104C66"}
+
+
+def _sup2(pid, body, text=True):
+    return (f"sup2.{pid}", "ref rObj\nref rOther\nref rTopic\nfloat fRes\nfloat fSave\nstring_var sText\nstring_var sSave\n"
+            "array_var aList\nBegin Function { }\n" + body, text, None, "")
+
+
+def _sup2_forms(*keys):
+    return "".join(_form(v, SUP2[k]) for v, k in zip(("rObj", "rTopic", "rOther"), keys))
+
+
+def _sup2_list(expr):
+    """The list's size, first and last entries (GetFormIDString), as one text."""
+    return (f"let aList := {expr}\nlet fRes := ar_Size aList\nlet sText := sv_Construct \"%g\" fRes\nif fRes > 0\n"
+            "let rOther := aList[0]\nlet sText := sv_Construct \"%z %z\" sText (GetFormIDString rOther)\n"
+            "let rOther := aList[fRes - 1]\nlet sText := sv_Construct \"%z %z\" sText (GetFormIDString rOther)\nendif\n"
+            "SetFunctionValue sText")
+
+
+def _sup2_set(pid, keys, getter, value, setter=None):
+    """Save the getter's value, set `value`, read it back, put the saved value back."""
+    setter = setter or getter
+    return _sup2(pid, _sup2_forms(*keys) + f"let fSave := {getter}\nlet fRes := {setter} {value}\n"
+                 f"let sText := sv_Construct \"%g %g %g\" fSave fRes ({getter})\n{setter} fSave\n"
+                 f"SetFunctionValue (sv_Construct \"%z %g\" sText ({getter}))")
+
+
+SUP2_PROBES = (
+    # Topic flags and priority [documented: TopicSetFlags, TopicSetPriority].
+    [_sup2("topic.flags", _sup2_forms("greet", "topic") + "SetFunctionValue (TopicSetFlags rTopic)", False),
+     _sup2("topic.flags.greeting", _form("rTopic", SUP2["greeting"]) + "SetFunctionValue (TopicSetFlags rTopic)", False),
+     _sup2_set("topic.flags.set", ("greet", "topic"), "TopicSetFlags rTopic", 3),
+     _sup2_set("topic.flags.wide", ("greet", "topic"), "TopicSetFlags rTopic", 511),
+     _sup2("topic.priority", _sup2_forms("greet", "topic") + "SetFunctionValue (TopicSetPriority rTopic)", False),
+     _sup2_set("topic.priority.set", ("greet", "topic"), "TopicSetPriority rTopic", 75.5)]
+    # A line's flag bytes [documented: TopicInfoSetFlagsHigh, …Low; GetDialogueInfoFlags].
+    + [_sup2(f"info.{w}.{k}", _sup2_forms(k) + f"SetFunctionValue (TopicInfoSetFlags{w.title()} rObj)", False)
+       for k in ("greet", "bye") for w in ("high", "low")]
+    + [_sup2("info.itr.greet", _sup2_forms("greet") + "SetFunctionValue (GetDialogueInfoFlags rObj)", False),
+       _sup2("info.high.set", _sup2_forms("greet") + "let fSave := TopicInfoSetFlagsHigh rObj\nlet fRes := TopicInfoSetFlagsHigh rObj 5\n"
+             "let sText := sv_Construct \"%g %g %g %g\" fSave fRes (TopicInfoSetFlagsHigh rObj) (GetDialogueInfoFlags rObj)\n"
+             "TopicInfoSetFlagsHigh rObj fSave\nSetFunctionValue (sv_Construct \"%z %g\" sText (GetDialogueInfoFlags rObj))"),
+       _sup2("info.low.set", _sup2_forms("greet") + "let fSave := TopicInfoSetFlagsLow rObj\nlet fRes := TopicInfoSetFlagsLow rObj 1\n"
+             "let sText := sv_Construct \"%g %g %g %g\" fSave fRes (TopicInfoSetFlagsHigh rObj) (GetDialogueInfoFlags rObj)\n"
+             "TopicInfoSetFlagsLow rObj fSave\nSetFunctionValue (sv_Construct \"%z %g\" sText (GetDialogueInfoFlags rObj))"),
+       _sup2("info.high.wide", _sup2_forms("greet") + "let fSave := TopicInfoSetFlagsHigh rObj\nlet fRes := TopicInfoSetFlagsHigh rObj 511\n"
+             "let sText := sv_Construct \"%g %g %g\" fRes (TopicInfoSetFlagsLow rObj) (GetDialogueInfoFlags rObj)\n"
+             "TopicInfoSetFlagsHigh rObj fSave\nSetFunctionValue (sv_Construct \"%z %g\" sText (GetDialogueInfoFlags rObj))"),
+       _sup2("info.itr.set", _sup2_forms("bye") + "let fSave := GetDialogueInfoFlags rObj\nlet fRes := SetDialogueInfoFlags rObj 260\n"
+             "let sText := sv_Construct \"%g %g %g\" fRes (TopicInfoSetFlagsHigh rObj) (TopicInfoSetFlagsLow rObj)\n"
+             "SetDialogueInfoFlags rObj fSave\nSetFunctionValue (sv_Construct \"%z %g\" sText (GetDialogueInfoFlags rObj))")]
+    # The prompt [documented: TopicInfoSetPrompt]: set, then an empty one.
+    + [_sup2("prompt.set", _sup2_forms("bye") + "let sText := TopicInfoSetPrompt rObj \"My custom prompt\"\n"
+             "let sSave := TopicInfoSetPrompt rObj \"\"\nSetFunctionValue (sv_Construct \"%z|%z\" sText sSave)"),
+       _sup2("prompt.get", _sup2_forms("bye") + "let sText := TopicInfoSetPrompt rObj\nSetFunctionValue sText")]
+    # Choices, in order: the end, a topic already there, the middle, past the end, then
+    # replacing [documented: TopicInfoAddChoice, TopicInfoReplaceChoice].
+    + [_sup2("choices.count", _sup2_forms("greet") + "SetFunctionValue (TopicInfoGetChoiceCount rObj)", False),
+       _sup2("choices.add.end", _sup2_forms("greet", "topic") + "TopicInfoAddChoice rObj rTopic -1\n"
+             + _sup2_list("TopicInfoGetAllChoices rObj")),
+       _sup2("choices.add.again", _sup2_forms("greet", "topic") + "TopicInfoAddChoice rObj rTopic 0\n"
+             + _sup2_list("TopicInfoGetAllChoices rObj")),
+       _sup2("choices.add.middle", _sup2_forms("greet", "greeting") + "TopicInfoAddChoice rObj rTopic 3\n"
+             "let aList := TopicInfoGetAllChoices rObj\nlet rOther := aList[3]\n"
+             "SetFunctionValue (sv_Construct \"%g %z\" (ar_Size aList) (GetFormIDString rOther))"),
+       _sup2("choices.add.past", _sup2_forms("greet", "goodbye") + "TopicInfoAddChoice rObj rTopic 99\n"
+             + _sup2_list("TopicInfoGetAllChoices rObj")),
+       _sup2("choices.replace", _sup2_forms("greet", "greeting") + "TopicInfoReplaceChoice rObj rTopic 1\n"
+             "let aList := TopicInfoGetAllChoices rObj\nlet rOther := aList[1]\n"
+             "SetFunctionValue (sv_Construct \"%g %z\" (ar_Size aList) (GetFormIDString rOther))"),
+       _sup2("choices.replace.past", _sup2_forms("greet", "greeting") + "TopicInfoReplaceChoice rObj rTopic 99\n"
+             + _sup2_list("TopicInfoGetAllChoices rObj")),
+       _sup2("choices.has", _sup2_forms("greet", "goodbye") + "SetFunctionValue (TopicInfoHasChoice rObj rTopic)", False)]
+    # JohnnyGuitar's related topics: 0 Link From, 1 Choices, 2 Follow Ups
+    # [documented: DialogResponseAddRelatedTopic, DialogResponseRelatedGetAll].
+    + [_sup2(f"related.get.{t}", _sup2_forms("greet") + _sup2_list(f"DialogResponseRelatedGetAll rObj {t}")) for t in (0, 1, 2)]
+    + [_sup2("related.get.notype", _sup2_forms("greet") + _sup2_list("DialogResponseRelatedGetAll rObj")),
+       _sup2("related.add.linkfrom", _sup2_forms("bye", "topic") + "DialogResponseAddRelatedTopic rObj rTopic 0 0\n"
+             + _sup2_list("DialogResponseRelatedGetAll rObj 0")),
+       _sup2("related.add.choices", _sup2_forms("bye", "topic") + "DialogResponseAddRelatedTopic rObj rTopic 1 0\n"
+             + _sup2_list("DialogResponseRelatedGetAll rObj 1")),
+       _sup2("related.add.followtopic", _sup2_forms("bye", "topic") + "DialogResponseAddRelatedTopic rObj rTopic 2 -1\n"
+             + _sup2_list("DialogResponseRelatedGetAll rObj 2")),
+       _sup2("related.add.followinfo", _form("rObj", SUP2["bye"]) + _form("rTopic", SUP2["greet"])
+             + "DialogResponseAddRelatedTopic rObj rTopic 2 -1\n" + _sup2_list("DialogResponseRelatedGetAll rObj 2"))]
+    # Said once [documented: GetSaidOnce, SetSaidOnce, TopicInfoSetSaidOnce]; put back
+    # unsaved.
+    + [_sup2("said.get", _sup2_forms("greet") + _form("rOther", SUP2["bye"])
+             + "SetFunctionValue (sv_Construct \"%g %g\" (GetSaidOnce rObj) (GetSaidOnce rOther))"),
+       _sup2("said.sup", _sup2_forms("bye") + "let fRes := TopicInfoSetSaidOnce rObj 1\n"
+             "let sText := sv_Construct \"%g %g %g\" fRes (GetSaidOnce rObj) (TopicInfoSetSaidOnce rObj)\n"
+             "let fRes := TopicInfoSetSaidOnce rObj 0\nSetFunctionValue (sv_Construct \"%z %g %g\" sText fRes (GetSaidOnce rObj))"),
+       _sup2("said.jg", _sup2_forms("bye") + "let fRes := SetSaidOnce rObj 1 0\nlet sText := sv_Construct \"%g %g\" fRes (GetSaidOnce rObj)\n"
+             "let fRes := SetSaidOnce rObj 0 0\nSetFunctionValue (sv_Construct \"%z %g %g\" sText fRes (GetSaidOnce rObj))")]
+    # Topics and their lines [documented: GetParentTopic, GetTopicInfo].
+    + [_sup2("parent", _sup2_forms("greet") + "SetFunctionValue (GetFormIDString (GetParentTopic rObj))"),
+       _sup2("topicinfo", _sup2_forms("greet", "topic") + _sup2_list("GetTopicInfo rTopic")),
+       _sup2("topicinfo.quest", _form("rTopic", SUP2["greeting"]) + _form("rOther", SUP2["quest"])
+             + "SetFunctionValue (ar_Size (GetTopicInfo rTopic rOther))", False)]
+    # Response texts [documented: TopicInfoSetNthResponseString, TopicInfoSetResponseStrings],
+    # the original text put back from the getter's array.
+    + [_sup2("responses", _sup2_forms("bye") + "let aList := TopicInfoGetResponseStrings rObj\nlet sSave := aList[0]\n"
+             "let fRes := TopicInfoSetNthResponseString rObj 0 \"Changed\"\nlet aList := TopicInfoGetResponseStrings rObj\n"
+             "let sText := aList[0]\nlet sText := sv_Construct \"%g %z %g\" fRes sText (TopicInfoSetNthResponseString rObj 1 \"None\")\n"
+             "let aList := ar_List \"First\", \"Second\"\nlet fRes := TopicInfoSetResponseStrings rObj aList\n"
+             "let aList := TopicInfoGetResponseStrings rObj\nlet sText := sv_Construct \"%z|%g %g\" sText fRes (ar_Size aList)\n"
+             "let sText := sv_Construct \"%z %z\" sText (aList[0])\nTopicInfoSetNthResponseString rObj 0 sSave\n"
+             "let aList := TopicInfoGetResponseStrings rObj\nlet sSave := aList[0]\nSetFunctionValue (sv_Construct \"%z|%z\" sText sSave)")]
+)
+
+
 # sup3 (writes, session only; #1008): SUP batch 3 (docs/spec-notes/ext-sup3.md): the free
 # (TFC) camera's position, angles and raw rotation, the calculated angles and positions,
 # and the INI readers. One step per game frame: the camera is turned on by Con_TFC in one
@@ -5791,11 +5912,12 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "tmpl2": TMPL2_PROBES,
         "tmpl3": TMPL3_PROBES,
         "itr": ITR_PROBES,
+        "sup2": SUP2_PROBES,
         "sup3": SUP3_PROBES}
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jip5", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup3"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jip5", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
 
 
 def script(body):
