@@ -377,7 +377,7 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &MenuModel, note: Option<&str>,
         match (m.mode, &m.trade) {
             (Mode::Barter(_), Some(t)) => {
                 if let Some(flow) = barter::flow(t.balance) {
-                    caps_flow(p, &mut c, flow, t.balance.unsigned_abs(), t.affordable());
+                    caps_flow(p, &mut c, flow, t.paid().unsigned_abs(), t.affordable());
                 }
             }
             (Mode::Container(_), _) if m.selected_row(m.focus).is_some() => {

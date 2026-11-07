@@ -102,6 +102,8 @@ pub struct Snapshot {
     caps: String,
     hints: [String; 2],
     balance: i64,
+    /// The figure: what the trade moves, held at a merchant's purse (`Trade::paid`).
+    amount: u64,
     chosen: bool,
     affordable: bool,
 }
@@ -124,6 +126,7 @@ impl Snapshot {
             purses: SIDES.map(|side| format!("{caps}   {}", trade.map_or(0, |t| t.purse[side as usize]))),
             caps, hints,
             balance: trade.map_or(0, |t| t.balance),
+            amount: trade.map_or(0, |t| t.paid().unsigned_abs()),
             chosen: trade.is_some_and(|t| !t.is_empty()),
             affordable: trade.is_none_or(|t| t.affordable()),
         }
@@ -181,8 +184,8 @@ fn write(ui: &mut Ui, s: &Snapshot, st: &mut BarterTiles) {
         std::cmp::Ordering::Equal => Value::Str(String::new()),
     });
     set(ui, FLOW, "visible", on(s.balance != 0));
-    set(ui, FLOW, "_Value", Value::Num(s.balance.unsigned_abs() as f64));
-    set(ui, AMOUNT, "string", Value::Str(s.balance.unsigned_abs().to_string()));
+    set(ui, FLOW, "_Value", Value::Num(s.amount as f64));
+    set(ui, AMOUNT, "string", Value::Str(s.amount.to_string()));
     set(ui, CAPS, "string", Value::Str(s.caps.clone()));
     // [observed 2026-11-06: ov_barter] The flow's alpha is 64 when unaffordable.
     // [design: item_menu::mark_tiles] Texts use their own alpha; the file's icon copies FLOW.
@@ -357,7 +360,7 @@ pub(crate) mod tests {
             },
             rows: [vec![("0.9".into(), true)], vec![("--".into(), false), ("18".into(), false), ("2".into(), false), ("3".into(), false)]],
             purses: ["Coins   200".into(), "Coins   40".into()], caps: "Coins".into(), hints: ["[A]".into(), "[X]".into()],
-            balance: 18, chosen: true, affordable: true,
+            balance: 18, amount: 18, chosen: true, affordable: true,
         }
     }
 
@@ -419,6 +422,7 @@ pub(crate) mod tests {
         assert_eq!(string(&ui, FLOW_ICON, "filename"), "test-sell.dds");
         assert_eq!(number(&ui, FLOW, "alpha"), 255.0);
         s.balance = 37;
+        s.amount = 25;
         s.affordable = false;
         s.common.focus = Side::Container;
         s.common.lists[0].selected = Some(0);
@@ -432,9 +436,10 @@ pub(crate) mod tests {
             assert_eq!(drawn.iter().find(|d| d.tile == tile).unwrap().alpha, 64.0, "{path}");
             assert!(ui.tile(tile).get("brightness").is_none(), "{path}");
         }
-        assert_eq!(string(&ui, AMOUNT, "string"), "37");
+        assert_eq!(string(&ui, AMOUNT, "string"), "25", "a sale beyond the merchant's purse shows that purse");
         assert_eq!(number(&ui, ACCEPT, "brightness"), 255.0, "a chosen trade stays bright even if unaffordable");
         s.balance = -37;
+        s.amount = 37;
         s.affordable = true;
         frame(&mut ui, &s, &mut st);
         assert_eq!(number(&ui, BARTER_MENU, "_ArrowDirection"), 1.0);
@@ -443,6 +448,7 @@ pub(crate) mod tests {
             assert_eq!(number(&ui, path, "alpha"), 255.0, "{path}");
         }
         s.balance = 0;
+        s.amount = 0;
         frame(&mut ui, &s, &mut st);
         assert_eq!(string(&ui, BARTER_MENU, "_ArrowDirection"), "");
         assert_eq!(number(&ui, FLOW, "visible"), 0.0);

@@ -146,8 +146,9 @@ screen's height):
   or its class's): the other items of its stock are held back; it buys anything
   [documented: GECK wiki Class; the categories: vendor-services.md §2].
 - **The total** is the sum of each line's rounded price times its count [hypothesis].
-  Accept is refused when the side that pays has too few caps [hypothesis; the wording is
-  ours: "You don't have enough caps." / "<merchant> doesn't have enough caps."].
+  Accept is refused when the player has too few caps [hypothesis; the wording is ours:
+  "You don't have enough caps."]. A sale beyond the merchant's caps goes through at the
+  caps it holds, and the figure shows that amount [observed 2026-11-06: section 9].
 - **Quest items** cannot be sold [documented: GECK wiki Category:Items]; they are not
   listed [hypothesis].
 - **Restocking** on two days of the week [documented: "Merchant Restocking"] is the
@@ -188,8 +189,9 @@ screen's height):
   of the MISC records of the same names [observed: FalloutNV.esm; playtest list 7 item
   7].
 - The caps arrow and its figure are drawn at half brightness, as a disabled button is,
-  while the side that pays holds fewer caps than the balance (Accept is then refused)
-  [design: the owner's request].
+  while the side that pays holds fewer caps than the balance [design: the owner's
+  request; it dimmed where Accept was refused, and a sale beyond the merchant's caps is
+  no longer refused].
 - The container menu's note shows for a container whose record has the Respawns flag
   [hypothesis: every such container]; a refused trade's words show in the same place
   [design].
@@ -470,9 +472,10 @@ for it, a filled square for an equipped row. Accept is dim and untargetable with
 items offered, bright with an offer, including a zero-net trade. The flow is hidden
 with a zero balance. A positive balance pays the player and uses
 `barter_arrow_sell.dds`; a negative balance uses `barter_arrow_buy.dds` [documented:
-section 1 names the two textures]. The amount is the absolute balance. The flow's
-picture and texts dim when the payer cannot afford it; Accept still sends the model's
-command, which refuses that trade [design: the maintainer's request in section 5].
+section 1 names the two textures]. The amount is what the trade moves
+(`Trade::paid`). The flow's picture and texts dim when the payer cannot afford it;
+Accept still sends the model's command, which refuses only a player who is short
+[design: the maintainer's request in section 5 for the dimming].
 
 [observed 2026-11-06: private job `ov_barter`, the original at 1280 x 720,
 Chet, read with JIP] `BM_CapsFlow` is invisible (0) with no trade, visible (1)
@@ -535,10 +538,9 @@ held selection cannot leave the tree's focus ahead of the model.
 [observed 2026-11-06: private job `ov_barter`, the original at 1280 x 720,
 Chet, read with JIP] A sale beyond the merchant's caps holds the displayed amount
 at that purse, dimmed; Accept still takes it and completes at that amount. The
-merchant's 815 caps become 0 and the player's 900 become 1715. [design:
-`menu/model.rs::accept`, the maintainer's request in section 5] NVForever continues
-to refuse that trade. Capping the payment is a difference for the owner to decide,
-not implemented here. Filtered category headings remain NVForever's own words
+merchant's 815 caps become 0 and the player's 900 become 1715. Both menus do the same
+[design: `Trade::paid`]; they used to refuse it, a hypothesis in section 5, not a
+request. Filtered category headings remain NVForever's own words
 under LEGAL.md; the capture's category wording has no source in the data files.
 
 [hypothesis: container measurements in section 8; comparisons still outstanding]

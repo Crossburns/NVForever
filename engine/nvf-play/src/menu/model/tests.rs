@@ -584,7 +584,7 @@ fn barter_tiles_show_the_models_sale_first_and_use_their_own_headings() {
 }
 
 #[test]
-fn a_merchant_without_enough_caps_cannot_buy() {
+fn a_merchant_without_enough_caps_pays_what_it_has() {
     let f = fixture();
     let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
     w.add_item(PLAYER, FormId(RIFLE), 1).unwrap();
@@ -592,10 +592,17 @@ fn a_merchant_without_enough_caps_cannot_buy() {
     let mut m = barter(&mut w);
     select(&mut m, Side::Player, "Varmint Rifle");
     m.apply(&mut w, Command::One);
-    assert!(!m.trade.as_ref().unwrap().affordable());
+    let t = m.trade.as_ref().unwrap();
+    let held = i64::from(t.purse[Side::Container as usize]);
+    assert!(!t.affordable(), "the figure dims");
+    assert!(t.balance > held, "the sale asks more than the merchant holds");
+    assert_eq!(t.paid(), held, "the figure is held at the merchant's purse");
+    let before = count(&mut w, 0x14, CAPS);
     m.apply(&mut w, Command::Accept);
-    assert_eq!(m.status.as_deref(), Some("Cash Box doesn't have enough caps."));
-    assert_eq!(count(&mut w, 0x14, RIFLE), 1);
+    assert_eq!(m.status.as_deref(), Some(format!("Traded: received {held} caps").as_str()));
+    assert_eq!(count(&mut w, 0x14, RIFLE), 0);
+    assert_eq!(i64::from(count(&mut w, 0x14, CAPS)), i64::from(before) + held);
+    assert_eq!(m.trade.as_ref().unwrap().purse[Side::Container as usize], 0);
 }
 
 #[test]
