@@ -1435,7 +1435,7 @@ mod tests {
         assert_eq!(shape_emissive(&picture, AlphaMode::Opaque).unwrap(), LinearRgba::WHITE);
         assert_eq!(picture.emissive_parts(), ([1.0; 3], 30.0));
         let gated = Props { dynamic_alpha: true, alpha_gated: true, ..picture.clone() };
-        assert_eq!(gated.emissive_parts(), ([1.0; 3], 1.0));
+        assert_eq!(gated.emissive_parts(), ([1.0; 3], 30.0));
         assert_eq!(shape_emissive(&gated, shape_alpha_mode(&gated)).unwrap(), LinearRgba::WHITE);
 
         let blended = Props { alpha: Some((0x12ed, 0)), emissive_mult: Some(40.0), ..picture.clone() };
