@@ -140,7 +140,7 @@ Read here as [hypothesis where marked]:
   [observed 2026-11-06: private capture ov_burn, the Prospector Saloon, 1280 x 720]. So in that
   run a shader started in first person was seen in third.
 - What the original draws on the first-person arms during burning remains unconfirmed, as
-  no arms were in view in that capture [hypothesis]; observer-checks.md item 93 asks. The regression scenario
+  no arms were in view in that capture [hypothesis]; observer-checks.md item 100 asks. The regression scenario
   `burn-first-person` starts Flames01 in first person, then switches to third person;
   `effect shader: ... on the player: the camera sees N of M covered meshes` reports
   changes in the camera's coverage [design: `tools/smoke/scenarios.toml`,
