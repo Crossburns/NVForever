@@ -294,8 +294,11 @@ each the identity by default. Reading PERK records is a later step.
     do not make NVForever's round fall short; what is left to compare is where and in
     which direction ours leaves the launcher (issue #1471).
   - A thrown frag grenade (`GrenadeFragProjectile`, Lobber, speed 1,200, gravity 1.0;
-    the attack held 30 loops, aimed level) left at about **470 units/s** level (not
-    1,200), fell about as under the 686.7 rule (a rough fit), **first touched the
+    the attack held 30 loops, aimed level) went **about 950 units/s across the ground**
+    over its first 0.35 s (952 by a straight-line fit; not 1,200), slowing to about 830
+    and then 660 units/s before it touched down; its height over those 0.61 s fits a
+    fall under about 490 units/s² from a slight downward start (a rough fit, less than
+    the 686.7 rule) [observed]; **first touched the
     ground 534 units out after 0.61 s**, then bounced low (under 15 units) and **rolled
     on to 1,206 units by 2.47 s**, still moving when the record ended [observed, same
     campaign]. NVForever throws it at the PROJ speed (times the throwing perks); whether
@@ -1133,7 +1136,7 @@ From the ESM audit (gap 5). Code: `fnv_combat::data::ProjectileStats::lands_as_w
 ## 13. Open points
 
 - Every [design] number is a first guess for the owner to tune in play.
-- Projectile gravity and speed: the Grenade Launcher's round matches the PROJ speed × the 686.7 rule (§5, o26_gl); a thrown frag grenade left at about 470 units/s, not its PROJ 1,200 (§5).
+- Projectile gravity and speed: the Grenade Launcher's round matches the PROJ speed × the 686.7 rule (§5, o26_gl); a thrown frag grenade went about 950 units/s across the ground, not its PROJ 1,200, and slowed in the air (§5).
 - `fCombatDistance`, the melee reach base: not in the masters and not documented; 107
   is fitted to the NPCs' swings (§10). The player's own reach in the original is not
   measured.
