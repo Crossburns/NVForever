@@ -970,7 +970,7 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
         player.layers[0] = Some(Layer { clip, phase, weight: 1.0 });
         // A weapon still on the body stays where its stance hung it.
         if let Some(w) = weapon.as_deref() {
-            w.weapon_layers(&mut **player);
+            w.weapon_layers(player);
         }
         // The layers stay on the player for those who read them (`actor_materials`,
         // `anim_sounds`); the bones are sampled only if that makes a different pose.
@@ -999,10 +999,10 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
             if !w.hold {
                 w.step(dt);
             }
-            w.weapon_layers(&mut **player);
+            w.weapon_layers(player);
         }
         if let Some(i) = idle {
-            i.layers(&mut **player);
+            i.layers(player);
         }
         cost.tracks += player.sample_into(scratch, out) as u64;
         cost.actor_frames += 1;
@@ -1018,7 +1018,7 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
         }
     }
     cost.turn_frames += u64::from(lo.blend.cur.mv.is_turn());
-    lo.layers(&mut **player);
+    lo.layers(player);
     cost.under_frames += u64::from(player.layers[UNDER_LAYER].is_some());
     let drawn = crate::attack_anims::drawn(weapon.as_deref());
     if let Some(w) = weapon.as_mut() {
@@ -1031,19 +1031,19 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
                 info!("crouched weapon: {} {} {clip:?} plays {path}", name.map_or("actor", |n| n.as_str()), w.stance.prefix);
             }
         }
-        w.layers(&mut **player);
+        w.layers(player);
     }
     // A creature's unarmed stance (`creature_stance.rs`) on the same layers.
     if let Some(c) = creature.as_mut() {
         if !lo.hold {
             c.step(dt);
         }
-        c.layers(&mut **player);
+        c.layers(player);
     }
     let idles = crate::idles::IDLE_LAYER;
     (player.layers[idles], player.layers[idles + 1]) = (None, None);
     if let Some(i) = idle {
-        i.layers(&mut **player);
+        i.layers(player);
     }
     if let Some(f) = flinch {
         let (len, t) = (f.clip.clip.length().max(1e-3), now - f.at);
@@ -1056,7 +1056,7 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
     let moving = lo.velocity[0].hypot(lo.velocity[1]) >= fnv_actor::locomotion::STAND_SPEED;
     if let Some(p) = pose.as_mut() {
         p.moving = moving;
-        p.layers(&mut **player, drawn, dt);
+        p.layers(player, drawn, dt);
         if moving {
             let blow = p.attack.as_ref().filter(|a| a.melee && player.layers[crate::attack_anims::ATTACK_LAYER].is_some());
             if blow.is_some_and(|a| a.head_blow == Some(true)) {
@@ -1073,11 +1073,11 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
     }
     // A stimpak's upper-body idle over the fight's pose too (`npc_stimpaks.rs`).
     if let Some(i) = idle.filter(|i| i.over_pose()) {
-        i.layers(&mut **player);
+        i.layers(player);
     }
     // A robot's `Talking` while it says a line (`talk_clips.rs`).
     if let Some(t) = talk {
-        t.layers(&mut **player);
+        t.layers(player);
     }
     let layers = player.layers.iter().flatten().count() as u64;
     cost.layer_frames += layers;
