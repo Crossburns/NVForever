@@ -33,7 +33,7 @@ use crate::anim_play::{BlendPlayer, BoundClip, Clip};
 use crate::data::GameData;
 use crate::model::ModelCtx;
 use crate::nif_material::NifMaterial;
-use crate::nif_spawn::{affine, build_mesh, is_editor_marker, shape_material, shape_props, shape_skin, to_bevy, Props};
+use crate::nif_spawn::{affine, build_mesh, is_editor_marker, shape_material, shape_material_reusing_tangents, shape_props, shape_skin, to_bevy, Props};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::DynamicSkinnedMeshBounds;
 use bevy::math::Affine3A;
@@ -194,6 +194,12 @@ pub struct ActorParts {
     fetching: HashMap<String, Task<Fetched>>,
     /// KF clips being read on a worker thread ([`ActorCtx::clip_ready`]).
     clip_reads: HashMap<String, Task<Result<Clip, String>>>,
+    /// Textures an actor's materials name beyond its parts' own (a part's or the race's
+    /// skin texture and the normal map beside it) being read on a worker thread
+    /// ([`ActorCtx::textures_ready`]), by resolved path; and those whose read gave
+    /// nothing (so an actor does not wait for them).
+    texture_reads: HashMap<String, Task<TextureFiles>>,
+    textures_unread: std::collections::HashSet<String>,
     pub failures: Vec<String>,
 }
 
@@ -257,6 +263,9 @@ type Nif = Result<(NifFile, Vec<u8>, Decoded), String>;
 
 /// A part read off the main thread, with the bytes of the textures its texture sets name
 /// (for [`TextureCache::offer`]).
+/// Texture files read on a worker thread: (resolved path, bytes).
+type TextureFiles = Vec<(String, Vec<u8>)>;
+
 struct Fetched {
     nif: Nif,
     textures: Vec<(String, Vec<u8>)>,
@@ -306,6 +315,22 @@ impl ActorParts {
             self.fetched.insert(path, (f.nif, now));
         }
         self.fetched.retain(|_, (_, at)| now - *at < FETCHED_KEEP_SECS);
+        let mut read = Vec::new();
+        self.texture_reads.retain(|path, task| match check_ready(task) {
+            Some(files) => {
+                read.push((path.clone(), files));
+                false
+            }
+            None => true,
+        });
+        for (path, files) in read {
+            if !files.iter().any(|(p, _)| *p == path) {
+                self.textures_unread.insert(path);
+            }
+            for (t, bytes) in files {
+                textures.offer(t, bytes, now);
+            }
+        }
         n
     }
 
@@ -589,6 +614,32 @@ impl ActorCtx<'_, '_> {
         ready
     }
 
+    /// Whether the textures at the NIF texture paths `paths` are loaded or read ahead, so
+    /// that a material made with one ([`Self::material_with_texture`]) reads no file on this
+    /// thread. The rest are read, with the normal map beside each, on a worker thread
+    /// (once), taken in by [`ActorParts::take_fetched`]. Missing files count as ready.
+    /// Reading a race's skin texture there cost an NPC 5-6 ms in the frame it was drawn
+    /// [observed 2026-11-07, #1429, Sierra Madre lobby].
+    pub fn textures_ready<'p>(&mut self, paths: impl IntoIterator<Item = &'p str>) -> bool {
+        let mut ready = true;
+        for raw in paths {
+            let vfs = &self.models.data.vfs;
+            let path = crate::texture::resolved_path(raw, |p| vfs.exists(p));
+            if !vfs.exists(&path) || self.cache.textures_unread.contains(&path) || self.models.textures.has_or_ahead(&path) {
+                continue;
+            }
+            ready = false;
+            if self.cache.texture_reads.contains_key(&path) {
+                continue;
+            }
+            let normal = fnv_vfs::normal_map_beside(&path).filter(|n| vfs.exists(n) && !self.models.textures.has_or_ahead(n));
+            let (data, job) = ((*self.models.data).clone(), path.clone());
+            let task = crate::read_pool::read_pool().spawn(async move { [Some(job), normal].into_iter().flatten().filter_map(|p| data.read(&p).map(|b| (p, b))).collect() });
+            self.cache.texture_reads.insert(path, task);
+        }
+        ready
+    }
+
     /// The prepared part at `path` (loaded on first use).
     pub fn part(&mut self, path: &str) -> Option<Arc<PreparedPart>> {
         let key = fnv_vfs::normalize(path);
@@ -717,9 +768,11 @@ impl ActorCtx<'_, '_> {
             }
             props.textures[1] = normal;
         }
+        let mesh_span = bevy::log::info_span!("actor::material_mesh_copy").entered();
         let mut mesh = (*s.cpu).clone();
+        drop(mesh_span);
         let m = &mut *self.models;
-        let (material, missing) = shape_material(&props, &mut mesh, &mut m.textures, &m.data, &mut m.images, m.formats.as_deref());
+        let (material, missing) = shape_material_reusing_tangents(&props, &mut mesh, &mut m.textures, &m.data, &mut m.images, m.formats.as_deref());
         let handle = match missing {
             // Keep the model's own texture when the replacement cannot be loaded.
             Some(t) => {
@@ -746,7 +799,7 @@ impl ActorCtx<'_, '_> {
         props.use_texture_set(set);
         let mut mesh = (*s.cpu).clone();
         let m = &mut *self.models;
-        let (material, missing) = shape_material(&props, &mut mesh, &mut m.textures, &m.data, &mut m.images, m.formats.as_deref());
+        let (material, missing) = shape_material_reusing_tangents(&props, &mut mesh, &mut m.textures, &m.data, &mut m.images, m.formats.as_deref());
         let handle = match missing {
             Some(t) => {
                 self.cache.failures.push(format!("{}: texture {t} not loaded", key.0));
