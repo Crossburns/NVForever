@@ -41,6 +41,10 @@
 //!   [`water_material`] builds the remapped type's material. Water already drawn keeps
 //!   its material until its cell is drawn again [design].
 //!
+//! - Placed water (PWAT) is drawn with its own water type; one whose PWAT does not set
+//!   "Reflects" (bit 0) reflects nothing, only its water body shows
+//!   (`fnv_world::sky::placeable_water_reflects`; the Ultra-Luxe fountain, #1780).
+//!
 //! Not done: the ANAM opacity (the GECK wiki names it without a meaning), distortion,
 //! light radius and brightness.
 
@@ -169,10 +173,11 @@ impl Material for WaterMaterial {
     }
 }
 
-/// One material per water type FormID, and the shared cell-sized plane.
+/// One material per water type FormID and whether it reflects (placed water whose PWAT
+/// does not: [`water_material`]), and the shared cell-sized plane.
 #[derive(Resource, Default)]
 pub struct WaterCache {
-    materials: HashMap<u32, Handle<WaterMaterial>>,
+    materials: HashMap<(u32, bool), Handle<WaterMaterial>>,
     plane: Option<Handle<Mesh>>,
     /// The water-pixel counter ([`WaterMaterial::seen`]), made with the first material.
     seen: Option<Handle<ShaderBuffer>>,
@@ -257,10 +262,13 @@ impl WaterCtx<'_> {
     }
 }
 
-/// The material for water type `wid` (built on first use).
-pub fn water_material(world: &WorldData, wid: u32, models: &mut ModelCtx, water: &mut WaterCtx) -> Option<Handle<WaterMaterial>> {
+/// The material for water type `wid` (built on first use). `reflects` false (a placed
+/// water whose PWAT does not set "Reflects", `fnv_world::sky::placeable_water_reflects`)
+/// draws the type without any reflection: no world, sky or reflection colour and no sun
+/// highlight, only the water body [hypothesis, world.md §6 "Placed water"].
+pub fn water_material(world: &WorldData, wid: u32, reflects: bool, models: &mut ModelCtx, water: &mut WaterCtx) -> Option<Handle<WaterMaterial>> {
     let wid = water.remaps.as_ref().and_then(|r| r.0.get(&wid).copied()).unwrap_or(wid);
-    if let Some(m) = water.cache.materials.get(&wid) {
+    if let Some(m) = water.cache.materials.get(&(wid, reflects)) {
         return Some(m.clone());
     }
     let w = fnv_world::sky::water(world.lo, world.schema, wid)?;
@@ -281,8 +289,12 @@ pub fn water_material(world: &WorldData, wid: u32, models: &mut ModelCtx, water:
             buffers.add(b)
         })
         .clone();
-    let m = water.materials.add(WaterMaterial { params: water_params(&w), noise, reflection, ripples, seen });
-    water.cache.materials.insert(wid, m.clone());
+    let mut params = water_params(&w);
+    if !reflects {
+        params.surface.x = 0.0;
+    }
+    let m = water.materials.add(WaterMaterial { params, noise, reflection, ripples, seen });
+    water.cache.materials.insert((wid, reflects), m.clone());
     Some(m)
 }
 
@@ -421,7 +433,7 @@ pub fn distant_water(
             continue;
         }
         let Some((height, wid)) = dw.surface(&world, c) else { continue };
-        let Some(mat) = water_material(&world, wid, &mut models, &mut water) else { continue };
+        let Some(mat) = water_material(&world, wid, true, &mut models, &mut water) else { continue };
         let mesh = water.plane(&mut models.meshes);
         let s = CELL_SIZE;
         let e = commands

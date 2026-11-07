@@ -115,6 +115,7 @@ pub mod nvse_jip7;
 pub mod nvse_pp;
 pub mod nvse_rest;
 pub mod nvse_showoff2;
+pub mod nvse_showoff3;
 pub mod nvse_leveled;
 pub mod nvse_jip2;
 pub mod nvse_gaps;

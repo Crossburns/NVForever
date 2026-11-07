@@ -1140,58 +1140,63 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
                 root.spawn((full(), BackgroundColor(Color::srgba(0.30, 0.24, 0.14, SCREEN_ALPHA))));
             }
         }
-        // The band behind a page's list.
-        match d.page {
-            Page::Settings { .. } | Page::Controls { .. } => {
-                band(root, look, Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(left - BAND_MARGIN, 0.0, OPTIONS_WIDTH + 2.0 * BAND_MARGIN + BAR_GAP + BAR_W, 0.0) })
+        // The page at the UI scale, in the middle of the view (`crate::interface::menu_frame`,
+        // #1631); the sheet and the screen above keep to the view.
+        crate::interface::in_menu_frame(root, crate::interface::MIDDLE, |root| {
+            // The band behind a page's list, from the view's top to its bottom.
+            let tall = |n: Node| crate::interface::over_view(n, crate::interface::MIDDLE, false);
+            match d.page {
+                Page::Settings { .. } | Page::Controls { .. } => {
+                    band(root, look, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(left - BAND_MARGIN, 0.0, OPTIONS_WIDTH + 2.0 * BAND_MARGIN + BAR_GAP + BAR_W, 0.0) }))
+                }
+                Page::Load { .. } => band(root, look, tall(Node { height: Val::Percent(100.0), ..from_right(RIGHT + COLUMN, 0.0, LOAD_WIDTH + BAND_MARGIN, 0.0) })),
+                // The mod's page is drawn from its tiles over this one (`crate::tiles::draw`).
+                Page::Main | Page::Mods => {}
             }
-            Page::Load { .. } => band(root, look, Node { height: Val::Percent(100.0), ..from_right(RIGHT + COLUMN, 0.0, LOAD_WIDTH + BAND_MARGIN, 0.0) }),
-            // The mod's page is drawn from its tiles over this one (`crate::tiles::draw`).
-            Page::Main | Page::Mods => {}
-        }
-        // The column: the keys' list on the first page, else half bright but for the page's entry.
-        let top = (960.0 - d.column.len() as f32 * ITEM) / 2.0;
-        let on_column = d.page == Page::Main && d.confirm.is_none();
-        let lit = d.page_entry();
-        for (i, (label, ok)) in d.column.iter().enumerate() {
-            let shade = if (on_column && *ok) || (!on_column && i == lit) { Shade::Bright } else { Shade::Dim };
-            right_entry(root, &f.entry, label, from_right(RIGHT, top + i as f32 * ITEM, COLUMN - 5.0, ITEM), COLUMN - 5.0, shade, on_column && i == d.main_selected, PauseButton::Column(i));
-        }
-        match d.page {
-            Page::Main => {
-                if let Some(sel) = d.confirm {
-                    // The question: its lines end left of the choices [observed: the owner's screenshot].
-                    let qw = f.entry.font.width(QUESTION);
-                    let at = 280.0;
-                    root.spawn(from_middle(at - 20.0 - qw, 480.0 - ITEM, 900.0, ITEM)).with_children(|t| sm_text(t, &f.entry, WARNING, 0.0, BASE, color(Shade::Bright)));
-                    root.spawn(from_middle(at - 20.0 - qw, 480.0, qw, ITEM)).with_children(|t| sm_text(t, &f.entry, QUESTION, 0.0, BASE, color(Shade::Bright)));
-                    let width = CONFIRM.iter().map(|c| f.entry.font.width(c)).fold(0.0, f32::max) + 30.0;
-                    for (i, c) in CONFIRM.iter().enumerate() {
-                        root.spawn((Button, PauseButton::Confirm(i), boxed(from_middle(at, 480.0 + i as f32 * ITEM, width, ITEM), i == sel)))
-                        .with_children(|t| sm_text(t, &f.entry, c, 10.0, BASE, color(Shade::Bright)));
+            // The column: the keys' list on the first page, else half bright but for the page's entry.
+            let top = (960.0 - d.column.len() as f32 * ITEM) / 2.0;
+            let on_column = d.page == Page::Main && d.confirm.is_none();
+            let lit = d.page_entry();
+            for (i, (label, ok)) in d.column.iter().enumerate() {
+                let shade = if (on_column && *ok) || (!on_column && i == lit) { Shade::Bright } else { Shade::Dim };
+                right_entry(root, &f.entry, label, from_right(RIGHT, top + i as f32 * ITEM, COLUMN - 5.0, ITEM), COLUMN - 5.0, shade, on_column && i == d.main_selected, PauseButton::Column(i));
+            }
+            match d.page {
+                Page::Main => {
+                    if let Some(sel) = d.confirm {
+                        // The question: its lines end left of the choices [observed: the owner's screenshot].
+                        let qw = f.entry.font.width(QUESTION);
+                        let at = 280.0;
+                        root.spawn(from_middle(at - 20.0 - qw, 480.0 - ITEM, 900.0, ITEM)).with_children(|t| sm_text(t, &f.entry, WARNING, 0.0, BASE, color(Shade::Bright)));
+                        root.spawn(from_middle(at - 20.0 - qw, 480.0, qw, ITEM)).with_children(|t| sm_text(t, &f.entry, QUESTION, 0.0, BASE, color(Shade::Bright)));
+                        let width = CONFIRM.iter().map(|c| f.entry.font.width(c)).fold(0.0, f32::max) + 30.0;
+                        for (i, c) in CONFIRM.iter().enumerate() {
+                            root.spawn((Button, PauseButton::Confirm(i), boxed(from_middle(at, 480.0 + i as f32 * ITEM, width, ITEM), i == sel)))
+                            .with_children(|t| sm_text(t, &f.entry, c, 10.0, BASE, color(Shade::Bright)));
+                        }
+                    } else if !d.status.is_empty() {
+                        root.spawn((PauseStatusText, from_right(RIGHT, top + d.column.len() as f32 * ITEM + 10.0, 700.0, ITEM))).with_children(|t| {
+                            let w = f.small.font.width(&d.status);
+                            sm_text(t, &f.small, &d.status, 700.0 - w - 10.0, 30.0, color(Shade::Bright));
+                        });
                     }
-                } else if !d.status.is_empty() {
-                    root.spawn((PauseStatusText, from_right(RIGHT, top + d.column.len() as f32 * ITEM + 10.0, 700.0, ITEM))).with_children(|t| {
-                        let w = f.small.font.width(&d.status);
-                        sm_text(t, &f.small, &d.status, 700.0 - w - 10.0, 30.0, color(Shade::Bright));
-                    });
+                }
+                Page::Settings { selected } => settings_page(root, d, look, settings, selected, top, left),
+                Page::Controls { selected, listening } => controls_page(root, d, look, settings, selected, listening, top, left),
+                Page::Load { selected } => load_page(root, d, look, list, selected),
+                Page::Mods => {}
+            }
+            // Back (and Defaults) at the bottom right.
+            if d.page != Page::Main {
+                right_entry(root, &f.entry, "Back", from_right(RIGHT, BACK_TOP, 200.0, ITEM), 200.0, Shade::Bright, false, PauseButton::Back);
+                if matches!(d.page, Page::Settings { .. } | Page::Controls { .. }) {
+                    right_entry(root, &f.entry, "Defaults", from_right(RIGHT, BACK_TOP - ITEM, 200.0, ITEM), 200.0, Shade::Bright, false, PauseButton::Defaults);
                 }
             }
-            Page::Settings { selected } => settings_page(root, d, look, settings, selected, top, left),
-            Page::Controls { selected, listening } => controls_page(root, d, look, settings, selected, listening, top, left),
-            Page::Load { selected } => load_page(root, d, look, list, selected),
-            Page::Mods => {}
-        }
-        // Back (and Defaults) at the bottom right.
-        if d.page != Page::Main {
-            right_entry(root, &f.entry, "Back", from_right(RIGHT, BACK_TOP, 200.0, ITEM), 200.0, Shade::Bright, false, PauseButton::Back);
-            if matches!(d.page, Page::Settings { .. } | Page::Controls { .. }) {
-                right_entry(root, &f.entry, "Defaults", from_right(RIGHT, BACK_TOP - ITEM, 200.0, ITEM), 200.0, Shade::Bright, false, PauseButton::Defaults);
+            if let Some((label, left, sel)) = d.keep {
+                keep_question(root, f, label, left, sel);
             }
-        }
-        if let Some((label, left, sel)) = d.keep {
-            keep_question(root, f, label, left, sel);
-        }
+        });
     });
 }
 
@@ -1199,7 +1204,7 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
 /// seconds left, Keep and Revert.
 fn keep_question(root: &mut ChildSpawnerCommands, f: &Faces, label: &str, left: u32, sel: usize) {
     // A sheet over the page that takes the pointer, so only the answers can be clicked.
-    root.spawn((full(), BackgroundColor(Color::BLACK.with_alpha(0.6)), Button, GlobalZIndex(112)));
+    root.spawn((crate::interface::over_view(full(), crate::interface::MIDDLE, true), BackgroundColor(Color::BLACK.with_alpha(0.6)), Button, GlobalZIndex(112)));
     let (w, h) = (640.0, 4.0 * ITEM + 40.0);
     let (line, _) = highlight_colors();
     let question = format!("Keep this {}?", label.to_lowercase());
