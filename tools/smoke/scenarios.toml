@@ -523,6 +523,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "stress-sample-phases"
+source = "issue #1415 (docs/design/stress-tests.md §2, engine/nvforever/src/stress_sample.rs): each frame is timed and judged at the same two boundaries (the sampler's own instants in First), frames that cross a loading screen's coming or going are kept apart, and every sample window says what it held"
+note = "log-format checks only: the sample line keeps its fields and place and gains the window's counts before the place; the exit's frames line adds the frames across a phase change. Does not check how many frames crossed (that depends on when the start's screen comes down against start-up's end); the timing itself is checked by the unit tests in stress_sample.rs"
+areas = ["performance", "profiling"]
+paths = ["engine/nvforever/src/stress_sample.rs"]
+env = { NVF_PLAY_TEST_SAMPLE = "2" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { re = 'stress start-up: \d+ frames, \d+ ms, slowest [\d.]+ ms', count = 1, label = "start-up is logged once" },
+  { re = 'stress sample: t [\d.]+ s, frames \d+, frame mean [\d.]+ ms, frame worst [\d.]+ ms, entities \d+, .*, startup frames \d+, hidden frames \d+, phase changes \d+, window \d+ ms, at ', min = 3, label = "sample lines carry the window's counts before the place" },
+  { re = 'stress frames: \d+ frames, mean [\d.]+ ms, 1% low [\d.]+ ms \([\d.]+ fps\), worst [\d.]+ ms; \d+ behind loading screens left out, \d+ across a phase change left out', count = 1, label = "the exit's frames line counts the frames left out" },
+]
+
+[[scenario]]
 name = "render-diagnostics-profile"
 source = "docs/design/frame-rate-audit.md §1 (profiling options together) and issue #1275: NVF_PLAY_TEST_PROFILE enables the profile reporting path and its render diagnostics registration"
 note = "Source-reviewed on pinned Bevy 0.20.1; profile-build startup/output verification passes; broader profiling validation remains"
