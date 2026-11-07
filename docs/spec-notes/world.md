@@ -755,16 +755,30 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   is not documented. The renderer's light glow (docs/design/graphics-enhanced.md §3.11)
   uses Bevy's bloom on an HDR view, its strength scaled by Bright Scale / 2
   [engineering choice]; eye adaptation: next item. Above the Mojave's Bright Scale 2 a
-  bright pass is added (2026-10-25, `post.rs` `BrightPass`): on the HDR picture before
-  the tonemapper, what is over 1.0 (each pixel held to 16) is taken at a quarter of the
-  size, blurred (a Gaussian about 8 quarter-size texels wide) and added back, 0.08 per
-  unit of Bright Scale over 2 (0.4 on the Strip at night, where NVTheStripNightIS sets 7
-  and Bright Clamp 0.5) [engineering choice, fitted to the owner's frames and
-  `fx_strip_b`]. Bevy's energy-conserving bloom made stronger spread every pixel's light
-  (sky 18 → 33), and the enhanced Bloom pass works after the tonemapper, where Gomorrah's
-  tube (36 short quads at white × 25) averages under its threshold: the original merges
-  them into one white-cored line with an orange halo. The enhanced Bloom now adds to the
+  bright pass is added (`post.rs` `BrightPass`): on the HDR picture before the tonemapper,
+  what is over its threshold (each pixel held to 16) is taken at a quarter of the size,
+  blurred and added back [engineering choice]. Bevy's energy-conserving bloom made stronger
+  spread every pixel's light, and the enhanced Bloom pass works after the tonemapper, where
+  Gomorrah's tube (36 short quads at white × 25) averages under its threshold: the original
+  merges them into one white-cored line with an orange halo. The enhanced Bloom adds to the
   light glow instead of replacing it (and with it the HDR view and eye adaptation).
+
+  Settings since 2026-11-07 (#1540), fitted to the original's frames at 1280×720 with the
+  street lights settled [engineering choice]: the light glow at 0.09 and no boost of its
+  widest blur levels; the bright pass over 7, not 1, at 0.4 per unit of Bright Scale over 2
+  (2 on the Strip at night, where NVTheStripNightIS sets 7), with a Gaussian about 17
+  quarter-size texels wide. With the glow off the Lucky 38's and the Tops' letters read and
+  the sky is dark [observed], so the old settings (0.15, 0.7, over 1, 0.08 per unit, 8
+  texels wide) were what ran them together and hazed the sky. Only tubes pass the threshold;
+  cut-out signs are under it ([nif.md §6 "Unlit shapes that are pictures, and cut-out
+  signs"](nif.md#6-conventions-verified-on-the-data)). Share of pure white on the Lucky sign,
+  original 9.5 %, old settings 27.4 %, these 10.7 %; on the Tops sign 8.2 %, 19.3 %, 9.7 %
+  [observed]. Gomorrah's tubes gain width (share at full brightness in a channel: original
+  28.9 %, old 18.7 %, these 28.7 %) and its walls lose most of the old settings' red wash; it
+  has no white core in either, where the original does: the tonemapper holds the colour,
+  and the plain path of blended shapes skips `hot_light` [design]. A modifier that lowers
+  Bright Clamp (the birth scene) keeps a threshold of 1, 0.08 per unit and the narrower blur,
+  for lamps blooming over a sharp picture (`post.rs` `modified_bright_pass`).
 - **Eye adaptation** (2026-10-23). The HDR tab's Eye Adapt Speed "controls how quickly
   the adapted scene lum chases the actual lum", and Target LUM exists ("changing this
   just seems to break everything") [documented: GECK wiki ImageSpace, HDR tab]; what the

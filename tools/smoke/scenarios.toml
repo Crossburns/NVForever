@@ -5086,6 +5086,45 @@ expect = [
   { re = 'emittance: shapes drawn by scripts take source 0x0012762b', label = "the beams take the street light's colour" },
 ]
 
+[[scenario]]
+name = "strip-signs-read"
+source = "#1540; docs/spec-notes/world.md section 6 \"HDR and bloom\": the Lucky 38's and the Tops' letters read at night, with the light glow on, and the sky is dark"
+areas = ["renderer", "effects", "lights"]
+paths = ["engine/nvforever/src/post.rs", "engine/nvforever/src/post.wesl", "engine/nvf-assets/src/nif_material*", "engine/nvf-assets/src/nif_spawn.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "70:strip_signs_read.png" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=-250,8600,1037", "--heading", "185", "--pitch", "0", "--hour", "22", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 72
+expect = [{ re = 'light glow: bright pass (1\.9\d|2\.00) ', label = "the Strip's night bright pass" }]
+manual = "strip_signs_read.png: \"Lucky\" and \"38\" read as letters, and T O P S; the sky is near black, with no grey haze around the signs"
+
+[[scenario]]
+name = "securitron-face-bright"
+source = "#1540; docs/spec-notes/nif.md section 6: a Securitron's screen shows its face at the texture's brightness (grey 0.05 x 30, its colour times multiplier held to 1)"
+areas = ["renderer", "actors"]
+paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_material*"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "20:securitron_face_bright.png" }
+args = ["--cell", "Lucky38CasinoFloor01", "--play", "--pos=1087,-2290,7690", "--heading", "50", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 22
+expect = [{ re = 'actor materials: reference [0-9A-F]+ shape screen01:0 driven by its clips', label = "Victor's screen is drawn and its clips drive it" }]
+manual = "securitron_face_bright.png: Victor's cowboy face plain and bright on his screen, not burnt white and not dim"
+
+[[scenario]]
+name = "strip-bright-views"
+source = "#1540; docs/spec-notes/nif.md §6 \"Unlit shapes that are pictures, and cut-out signs\": the Tops marquee and Lucky 38 stair lights at night, with the light glow on"
+areas = ["renderer", "effects", "lights"]
+paths = [
+  "engine/nvf-assets/src/nif_material*", "engine/nvf-assets/src/nif_prepass.wesl", "engine/nvforever/src/emittance.rs",
+  "engine/nvf-play/src/script_draw.rs", "engine/nvforever/src/post.rs", "crates/fnv-world/src/imagespace.rs",
+  "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:strip_tops_marquee.png" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=-400,2400,1014", "--heading", "270", "--pitch", "0", "--hour", "22", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 16
+manual = "strip_tops_marquee.png: the Tops marquee keeps distinct bright stripes with a small halo; the sky stays dark. The Lucky 38 rails may remain brighter and wider than the original at this view."
+expect = [
+  { re = 'graphics: light glow$', label = "the light glow is on by default" },
+]
+
 # ------------------------------------------------------------------ aid items (docs/spec-notes/aid-items.md)
 
 [[scenario]]
