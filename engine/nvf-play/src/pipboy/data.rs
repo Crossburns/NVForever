@@ -901,6 +901,13 @@ fn take_input(st: &mut DataState, tab: usize, l: &Lists, game: &mut Game, input:
     } else {
         st.press = None;
     }
+    // The controller's A (the confirm button) on a highlighted marker asks to travel
+    // there, as a click does [observed: the original; docs/design/controller.md §3].
+    if tab == WORLD && crate::pad::menu_button(&input.pads, input.bindings.as_deref(), GamepadButton::South) {
+        if let Some(m) = st.cursor_marker {
+            input.ask.write(FastTravelAsk(m));
+        }
+    }
     // Dragging a map moves the point at its middle: the left button held down on it, the
     // pointer moving (or the test aid's drag).
     let held = input.buttons.pressed(MouseButton::Left);
