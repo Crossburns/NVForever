@@ -3595,10 +3595,10 @@ order = [[
 [[scenario]]
 name = "traps-bear"
 source = "queue item 25 (traps): a bear trap's model holds a Trigger-layer box that sets off its OnTriggerEnter; another is disarmed by hand (docs/spec-notes/traps.md)"
-note = "South of Goodsprings, by three bear traps (0x00165495, 0x0015834D, 0x0015834C). trapbearskillreq01 set to 0; the player activates 0x00165495 at 15 s and picks Disarm; at 17 s the player is put on 0x0015834D, whose trigger box the player's capsule enters: its OnTriggerEnter plays Forward, damages the player 45 and a leg"
+note = "South of Goodsprings, by three bear traps (0x00165495, 0x0015834D, 0x0015834C). The gecko hunters 0x00165185-0x00165187 and the geckos 0x00157B3D/E are disabled at 1 s, as in bear-trap: since the aids' clock starts when the start's loading screen comes down (b8aa64a4f) they have 15 s to reach the player, and one sprang 0x00165495 at 11.5 s, so the player's hand got its rearm box and not the disarm box (2026-11-07). trapbearskillreq01 set to 0; the player activates 0x00165495 at 15 s and picks Disarm; at 17 s the player is put on 0x0015834D, whose trigger box the player's capsule enters: its OnTriggerEnter plays Forward, damages the player 45 and a leg"
 areas = ["traps", "scripts"]
 paths = ["engine/nvf-play/src/script_trigger.rs", "engine/nvf-play/src/phys/prepare.rs", "crates/fnv-game/src/traps.rs"]
-env = { NVF_PLAY_TEST_SCRIPT = "11:var:0x0002012B:trapbearskillreq01:0,15:activate:0x00165495,15.1:button:1,17:moveto:player:0x0015834D" }
+env = { NVF_PLAY_TEST_SCRIPT = "1:call:0x00165185:Disable,1:call:0x00165186:Disable,1:call:0x00165187:Disable,1:call:0x00157B3D:Disable,1:call:0x00157B3E:Disable,11:var:0x0002012B:trapbearskillreq01:0,15:activate:0x00165495,15.1:button:1,17:moveto:player:0x0015834D" }
 args = ["--play", "--pos=-68124,-17000,9100", "--hour", "12", "--no-voice"]
 run_seconds = 22
 expect = [
@@ -7854,11 +7854,11 @@ expect = [
 [[scenario]]
 name = "impact-decals-bullets"
 source = "owner 2026-10-20: audit of shot effects, impact decals not built (docs/spec-notes/impact-decals.md): 9mm pistol shots at a rock by the Prospector Saloon leave bullet holes"
-note = "the rock NVNRockCanyon12 (00106B0C) stands 143 units east of the start: two shots without spread at it, two at the ground to the north-east (dirt), more than the IPCT's placement radius (16) apart; frames of the ground at 10.2 s and of the rock at 11.2 s"
+note = "the rock NVNRockCanyon12 (00106B0C) stands 143 units east of the start: two shots without spread at it, two at the ground to the north-east (dirt), more than the IPCT's placement radius (16) apart; frames of the ground at 10.2 s and of the rock at 11.2 s. --no-messages: since the aids' clock starts when the start's loading screen comes down (b8aa64a4f) the add-ons' OK-only start-up boxes stand from 5 s to 8.5 s, over the shots, and held all but one (2026-11-07)"
 areas = ["combat", "effects"]
 paths = ["engine/nvforever/src/decals.rs", "crates/fnv-combat/src/fx.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:30", NVF_PLAY_TEST_LOOK = "2:97:-4,6.8:93:-1,7.6:60:-30,8.4:75:-30,9.6:68:-26,10.6:96:-3", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire,6.2:fire,7:fire,7.2:fire,7.8:fire,8:fire,8.6:fire,8.8:fire", NVF_PLAY_TEST_SHOTS = "10.2:decals_bullets_ground.png,11.2:decals_bullets_rock.png" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--pos=-67900,1400,8500", "--hour", "12"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
 run_seconds = 13
 expect = [
   { re = 'decals: Ballistic\w*Impact leaves Decal\w+Ballistic \(Decals\\ImpactDecal\w+\.dds\) on the world', label = "a bullet hole" },
@@ -7868,11 +7868,11 @@ expect = [
 [[scenario]]
 name = "impact-decals-flamer"
 source = "owner 2026-10-20: audit of shot effects, impact decals not built (docs/spec-notes/impact-decals.md): the flamer's stream scorches the ground (FlamerScorchBigImpact, texture set DecalDirtScorch 00019073)"
-note = "the flamer held at the ground by the Prospector Saloon from 6 s to 8 s; the stream lands every frame, so most impacts fall within the placement radius (16) of a live scorch and leave none; the frame at 8.5 s shows the scorches"
+note = "the flamer held at the ground by the Prospector Saloon from 6 s to 8 s; the stream lands every frame, so most impacts fall within the placement radius (16) of a live scorch and leave none; the frame at 8.5 s shows the scorches. --no-messages: since the aids' clock starts when the start's loading screen comes down (b8aa64a4f) the add-ons' OK-only start-up boxes stand from 5 s to 8 s, over the stream, and held all but one shot (2026-11-07)"
 areas = ["combat", "effects"]
 paths = ["engine/nvforever/src/decals.rs", "crates/fnv-combat/src/fx.rs"]
 env = { NVF_PLAY_TEST_EQUIP = "0000432D", NVF_PLAY_TEST_GIVE = "00029371:300", NVF_PLAY_TEST_LOOK = "2:46:-30,7:60:-30", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire,8:fire", NVF_PLAY_TEST_SHOTS = "8.5:decals_flamer.png" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--pos=-67900,1400,8500", "--hour", "12"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
 run_seconds = 12
 expect = [
   { re = 'decals: FlamerScorchBigImpact leaves DecalDirtScorch \(Decals\\ImpactDecalScorch01\.dds\) on the world: side \d+ of 150-250, depth 96', label = "the flamer's scorch on the ground" },
@@ -12461,10 +12461,10 @@ expect = [
 [[scenario]]
 name = "car-not-pushed"
 source = "owner's playtest list 7 item 37 (docs/spec-notes/physics.md §6.10): cars (MSTT Car01-Car03, Havok mass 600-1000) moved when the player ran into them; a character no longer pushes a body heavier than 250"
-note = "the Car02 0x0015206B south of Primm; the player 250 units west of it runs east into it for 3 s and slides round it. The car rises 3.4 and slides 2.5 units (4.1 in all) as it wakes and comes out of the ground it is placed a little into, the same with the character's contacts off (2026-10-23): something else wakes it, likely the raven 0x0017467E perched on it; a push moves it further"
+note = "the Car02 0x0015206B south of Primm; the player 250 units west of it runs east into it for 2.5 s and slides round it. The six radscorpions near it (0x00174BD9-0x00174BDE) are disabled at 1 s: since the aids' clock starts when the start's loading screen comes down (b8aa64a4f) they reach the player before the run ends, and a blow's knockback (124 units) carried the feet past the place the check reads (2026-11-07); 2.5 s and not the first 3 s because 3 s is reckoned to end about at that place's eastern edge (the feet at exit less the knockback, not measured apart). The car rises 3.4 and slides 2.5 units (4.1 in all) as it wakes and comes out of the ground it is placed a little into, the same with the character's contacts off (2026-10-23): something else wakes it, likely the raven 0x0017467E perched on it; a push moves it further"
 areas = ["physics"]
 paths = ["crates/fnv-phys/src/character.rs", "crates/fnv-phys/src/world.rs"]
-env = { NVF_PLAY_TEST_MOVE = "8:1:0,11:0:0" }
+env = { NVF_PLAY_TEST_MOVE = "8:1:0,10.5:0:0", NVF_PLAY_TEST_SCRIPT = "1:call:0x00174BD9:Disable,1:call:0x00174BDA:Disable,1:call:0x00174BDB:Disable,1:call:0x00174BDC:Disable,1:call:0x00174BDD:Disable,1:call:0x00174BDE:Disable" }
 args = ["--play", "--pos=-70720,-85587,6500", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 14
 expect = [
