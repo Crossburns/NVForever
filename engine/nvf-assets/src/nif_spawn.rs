@@ -193,7 +193,7 @@ impl Props {
     /// for unlit pictures by [`shape_emissive_mult`] [hypothesis, nif.md §6
     /// "Unlit shapes that are pictures, and cut-out signs"].
     pub(crate) fn emissive_parts(&self) -> ([f32; 3], f32) {
-        (self.emissive.unwrap_or([0.0; 3]), shape_emissive_mult(self, shape_alpha_mode(self)))
+        (self.emissive.unwrap_or([0.0; 3]), self.emissive_mult.unwrap_or(1.0).max(0.0))
     }
 
     /// The stored refraction strength (0 when the shape does not refract).
@@ -647,8 +647,10 @@ pub(crate) fn burns(props: &Props) -> bool {
 /// authored opaque screen drawn with an actor alpha gate (`shape_alpha_mode`): its colour
 /// times its multiplier is held to 1, so a Securitron's face (grey 0.05 x 30) and House's
 /// screen show their texture and no more. Blended and additive effects and authored
-/// cut-outs keep their authored multipliers [hypothesis, fitted to the original's frames
-/// of 2026-11-06; nif.md section 6 "Unlit shapes that are pictures, and cut-out signs"].
+/// cut-outs keep their authored multipliers, and a material track's keys multiply the
+/// stored multiplier, as authored (`Props::emissive_parts`) [hypothesis, fitted to the
+/// original's frames of 2026-11-06; nif.md section 6 "Unlit shapes that are pictures, and
+/// cut-out signs"].
 pub(crate) fn shape_emissive_mult(props: &Props, alpha_mode: AlphaMode) -> f32 {
     let mult = props.emissive_mult.unwrap_or(1.0).max(0.0);
     let opaque = matches!(alpha_mode, AlphaMode::Opaque)
@@ -1427,11 +1429,11 @@ mod tests {
     }
 
     #[test]
-    fn unlit_picture_multiplier_is_held_for_material_tracks_too() {
+    fn an_unlit_pictures_tracks_multiply_the_stored_multiplier_not_the_held_one() {
         let picture = Props { unlit: true, emissive: Some([1.0; 3]), emissive_mult: Some(30.0), ..Default::default() };
         assert_eq!(shape_emissive_mult(&picture, AlphaMode::Opaque), 1.0);
         assert_eq!(shape_emissive(&picture, AlphaMode::Opaque).unwrap(), LinearRgba::WHITE);
-        assert_eq!(picture.emissive_parts(), ([1.0; 3], 1.0));
+        assert_eq!(picture.emissive_parts(), ([1.0; 3], 30.0));
         let gated = Props { dynamic_alpha: true, alpha_gated: true, ..picture.clone() };
         assert_eq!(gated.emissive_parts(), ([1.0; 3], 1.0));
         assert_eq!(shape_emissive(&gated, shape_alpha_mode(&gated)).unwrap(), LinearRgba::WHITE);
@@ -1455,7 +1457,8 @@ mod tests {
     fn a_picture_holds_its_colour_times_its_multiplier() {
         // A Securitron's screen: grey 0.05 x 30 shows its texture, not a twentieth of it.
         let face = Props { unlit: true, emissive: Some([0.05; 3]), emissive_mult: Some(30.0), ..Default::default() };
-        assert!((face.emissive_parts().1 * 0.05 - 1.0).abs() < 1e-5);
+        // Its idle track keys 0.032 x 30, about 1, on the stored multiplier.
+        assert_eq!(face.emissive_parts().1, 30.0);
         assert!((shape_emissive(&face, AlphaMode::Opaque).unwrap().red - 1.0).abs() < 1e-5);
         // Under 1 it is left alone; with the flag it is no picture.
         let dim = Props { emissive_mult: Some(4.0), ..face.clone() };

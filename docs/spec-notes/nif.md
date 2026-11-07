@@ -507,8 +507,9 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   to one neutral white.
 
   [design: `nif_spawn.rs` `shape_emissive_mult`, `shape_emissive_rule`]: the picture
-  hold applies both in `shape_emissive` and `Props::emissive_parts`, so the stored
-  multiplier passed to material animation's `Look` is held too. `NifSurface` and
+  hold applies in `shape_emissive`, to the look a shape is built with; `Props::emissive_parts`
+  gives material animation's `Look` the stored multiplier, so a Securitron's idle track
+  (0.032 × 30) and its screen-change flash (0.99 × 30) draw as authored. `NifSurface` and
   `NifSurfaceUniform` carry `emissive_rule` (x 1 skips the image-space scale; y 1 takes
   the plain path). Both shaders read the same struct from
   `nif_surface_bindings.wesl`, in the Rust uniform's field order. Materials built by

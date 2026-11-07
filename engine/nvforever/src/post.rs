@@ -137,7 +137,8 @@ pub fn bright_pass(scale: f32) -> f32 {
 /// The bright pass of the light glow's HDR view: what is brighter than a threshold, blurred
 /// wide and added back before the tonemapper (`bright_pass_hdr`), so a thin neon tube far
 /// over white still throws a halo. Same layout as [`PostEffects`]: x threshold, y knee,
-/// z strength (0 none), w the blur's step in quarter-size texels ([`BRIGHT_PASS_STEP`]).
+/// z strength (0 none), w minus the blur's step in quarter-size texels ([`BRIGHT_PASS_STEP`]):
+/// negative because the composite this shares with [`PostEffects`] sharpens by a positive w.
 #[derive(Component, ExtractComponent, Clone, Copy, ShaderType)]
 #[extract_app(bevy::render::RenderApp)]
 pub struct BrightPass {
@@ -146,7 +147,7 @@ pub struct BrightPass {
 
 impl Default for BrightPass {
     fn default() -> Self {
-        BrightPass { params: Vec4::new(BRIGHT_PASS_THRESHOLD, BRIGHT_PASS_KNEE, 0.0, BRIGHT_PASS_STEP) }
+        BrightPass { params: Vec4::new(BRIGHT_PASS_THRESHOLD, BRIGHT_PASS_KNEE, 0.0, -BRIGHT_PASS_STEP) }
     }
 }
 
@@ -214,7 +215,7 @@ fn image_space_glow(
             b.intensity = intensity;
         }
         if let Some(mut e) = effects {
-            let params = Vec4::new(pass.threshold, e.params.y, pass.strength, pass.step);
+            let params = Vec4::new(pass.threshold, e.params.y, pass.strength, -pass.step);
             if e.params != params {
                 e.params = params;
             }

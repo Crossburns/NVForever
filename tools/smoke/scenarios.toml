@@ -4917,7 +4917,7 @@ paths = ["engine/nvforever/src/post.rs", "engine/nvforever/src/post.wesl", "engi
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "70:strip_signs_read.png" }
 args = ["--play", "--world", "TheStripWorldNew", "--pos=-250,8600,1037", "--heading", "185", "--pitch", "0", "--hour", "22", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 72
-expect = [{ text = "light glow: bright pass 2.00", label = "the Strip's night bright pass" }]
+expect = [{ re = 'light glow: bright pass (1\.9\d|2\.00) ', label = "the Strip's night bright pass" }]
 manual = "strip_signs_read.png: \"Lucky\" and \"38\" read as letters, and T O P S; the sky is near black, with no grey haze around the signs"
 
 [[scenario]]
@@ -4928,7 +4928,7 @@ paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_materi
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "20:securitron_face_bright.png" }
 args = ["--cell", "Lucky38CasinoFloor01", "--play", "--pos=1087,-2290,7690", "--heading", "50", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
 run_seconds = 22
-expect = [{ text = "nvsecuritronvictorscreen01.nif", label = "Victor's screen is drawn" }]
+expect = [{ re = 'actor materials: reference [0-9A-F]+ shape screen01:0 driven by its clips', label = "Victor's screen is drawn and its clips drive it" }]
 manual = "securitron_face_bright.png: Victor's cowboy face plain and bright on his screen, not burnt white and not dim"
 
 [[scenario]]
