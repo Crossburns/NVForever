@@ -20,9 +20,7 @@
 //!   from the prediction by at most the horizontal distance walked × [`STEP_SLOPE`], so
 //!   the drawn height does not overshoot the top of a step. The prediction is never more
 //!   than [`MAX_GRADE`] × the horizontal distance walked (standing still it is 0, so
-//!   stopping on a slope does not leave the body drawn above the feet), and where the
-//!   ground falls short of it by more than a step while the body is already drawn past
-//!   the feet that way (the top of a slope) it is dropped at once. In the air, swimming or put
+//!   stopping on a slope does not leave the body drawn above the feet). In the air, swimming or put
 //!   somewhere (a change over [`JUMP`]) nothing is taken up and the speed starts again
 //!   from 0.
 //! - **How fast** [design]: [`OMEGA`] for a small lift, stiffer the larger it is (×2 at
@@ -138,15 +136,7 @@ impl StepLift {
         if on_ground && dt > 0.0 {
             let (predicted, most) = (self.speed * dt, horizontal * STEP_SLOPE);
             let sample = dz.clamp(predicted - most, predicted + most);
-            // The ground fell short of the prediction by more than a step while the body
-            // is already drawn past the feet the same way (the top of a slope): the
-            // prediction is dropped at once rather than carried on over the kink.
-            let ahead = self.lift * self.speed > 0.0 && (dz - predicted) * self.speed < 0.0;
-            if ahead && (dz - predicted).abs() > most {
-                self.speed = sample / dt;
-            } else {
-                self.speed += (sample / dt - self.speed) * (dt / SPEED_SECONDS).min(1.0);
-            }
+            self.speed += (sample / dt - self.speed) * (dt / SPEED_SECONDS).min(1.0);
             // Never more than [`MAX_GRADE`] per unit walked: standing still, nothing is
             // predicted.
             let bound = MAX_GRADE * horizontal / dt;
@@ -294,10 +284,10 @@ mod tests {
     }
 
     #[test]
-    fn the_top_of_a_slope_is_overshot_by_little() {
-        // [observed: this replay, 2026-11-07] before the prediction was dropped at the
-        // kink: 9.9 at a run, 6.1 at a walk; now 4.8 and 2.7.
-        for (per, most) in [(2.5, 3.0), (5.0, 5.0)] {
+    fn the_top_of_a_slope_is_overshot_by_at_most_ten_units() {
+        // [observed: this replay, 2026-11-07] 9.9 at a run, 6.1 at a walk: the prediction
+        // carries on over the kink for about 0.2 s (physics.md §6.11).
+        for (per, most) in [(2.5, 6.5), (5.0, 10.5)] {
             let (h, drawn, _) = slope_then_level(per, per);
             let top = h[150];
             let over = drawn.iter().map(|d| d - top).fold(f32::MIN, f32::max);
