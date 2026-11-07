@@ -48,6 +48,7 @@ mod ui_cmd;
 mod voice_cmd;
 mod world_alt_textures;
 mod world_audio;
+mod world_posed_clutter;
 mod world_radio;
 mod world_terminals;
 mod world_cmd;
@@ -774,6 +775,18 @@ pub enum WorldCmd {
         /// Function catalogue (default: ../script/functions.json next to --schema).
         #[arg(long)]
         functions: Option<PathBuf>,
+    },
+    /// Every placed reference whose model is ragdoll-like or which carries XRGD, with the
+    /// branch NVForever takes (fnv.world.posed_clutter/1; dead-on-spawn.md §5.2).
+    PosedClutter {
+        #[command(flatten)]
+        w: WorldArgs,
+        /// NIF schema directory (default: `<schema>/../nif`).
+        #[arg(long)]
+        nif_schema: Option<PathBuf>,
+        /// Leave out the per-reference rows (summary counts only).
+        #[arg(long)]
+        summary: bool,
     },
     /// One terminal hacking game (fnv.world.hack/1) from the game's word list: the dump
     /// as the screen shows it, the words and their likeness, and the log after `--pick`s.

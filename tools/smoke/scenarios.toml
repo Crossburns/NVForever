@@ -8583,6 +8583,31 @@ expect = [
 ]
 
 [[scenario]]
+name = "posed-clutter-torso"
+source = "issue #1400 (docs/spec-notes/dead-on-spawn.md §5.2): a skeleton torso copied with the whole clothed skeleton's 15-entry XRGD poses from its first five entries, and a single body with more entries than it holds is refused and logged once per model"
+areas = ["world", "ragdoll", "physics"]
+paths = ["engine/nvforever/src/clutter_pose.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/phys/prepare.rs", "crates/fnv-world/src/xrgd.rs"]
+args = ["--cell", "BisonSteve02", "--play", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'clutter pose: 0x000EA2D1 \S*skeletontorsonaked\.nif drawn in its stored pose \(5 bodies\)', label = "the torso poses from the first five entries" },
+  { re = 'phys: 0x000EA2D1 \S*skeletontorsonaked\.nif: collision posed from XRGD \(5 bodies\)', label = "its collision lies with the drawing" },
+  { re = 'clutter pose: \S*offrmlighthangingoff01\.nif: its XRGD does not fit \(one body, but more XRGD entries than it can hold; 3 entries, 1 body\); left in the file.s pose', label = "a single body with more entries is refused once per model" },
+]
+
+[[scenario]]
+name = "posed-clutter-container-skeleton"
+source = "issue #1400 (docs/spec-notes/dead-on-spawn.md §5.2): a whole clothed skeleton placed as a CONT (container) poses from its XRGD now that CONT is a posable type"
+areas = ["world", "ragdoll", "physics"]
+paths = ["engine/nvforever/src/clutter_pose.rs", "engine/nvforever/src/world.rs", "engine/nvf-play/src/phys/prepare.rs", "crates/fnv-world/src/xrgd.rs"]
+args = ["--cell", "NVDLC01Vault", "--play", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'clutter pose: 0x0100DA28 \S*skeletonwholebodyclothed\.nif drawn in its stored pose \(15 bodies\)', label = "the whole clothed skeleton (a CONT) poses" },
+  { re = 'phys: 0x0100DA28 \S*skeletonwholebodyclothed\.nif: collision posed from XRGD \(15 bodies\)', label = "its collision lies with the drawing" },
+]
+
+[[scenario]]
 name = "combat-bloom-recoil"
 source = "owner 2026-10-24 (docs/spec-notes/combat-rules.md §3, fnv_combat::spread::Kick): the 10mm Pistol (0000434F) pulled and let go eight times, 0.55 s apart (about its fastest), from the hip: the bloom builds shot by shot and the crosshair's arrows open wide; each shot climbs the view; once the trigger rests the bloom settles and the arrows close again, while the climb stays for the player to pull down"
 areas = ["combat", "hud"]
