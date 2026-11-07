@@ -113,22 +113,28 @@ pub fn choices(s: &Session) -> Vec<(String, PokerInput, bool)> {
     let turn = s.players_turn();
     let legal = s.table.legal(PLAYER);
     let mut out = Vec::new();
+    // The keys, with a controller the buttons that press them (`crate::pad::menu_buttons`)
+    // [#1662].
+    let at = s.hint_at();
+    let h = |k: KeyCode| crate::pad::hint(&[k], at);
     if s.table.street != Street::Over {
-        let call = if legal.to_call == 0 { "E) CHECK".to_string() } else { format!("E) CALL {}", legal.to_call) };
+        let e = h(KeyCode::KeyE);
+        let call = if legal.to_call == 0 { format!("{e} CHECK") } else { format!("{e} CALL {}", legal.to_call) };
         out.push((call, PokerInput::CheckCall, turn));
         // The amount as the raise would be made: never below the least raise.
+        let r = h(KeyCode::KeyR);
         let raise = match legal.raise.map(|(lo, hi)| s.raise_to.clamp(lo, hi)) {
-            Some(to) if s.table.current_bet == 0 => format!("R) BET {to}"),
-            Some(to) => format!("R) RAISE TO {to}"),
-            None => "R) RAISE".to_string(),
+            Some(to) if s.table.current_bet == 0 => format!("{r} BET {to}"),
+            Some(to) => format!("{r} RAISE TO {to}"),
+            None => format!("{r} RAISE"),
         };
         out.push((raise, PokerInput::Raise(None), turn && legal.raise.is_some()));
-        out.push(("A) ALL IN".to_string(), PokerInput::AllIn, turn));
-        out.push(("F) FOLD".to_string(), PokerInput::Fold, turn));
+        out.push((format!("{} ALL IN", h(KeyCode::KeyA)), PokerInput::AllIn, turn));
+        out.push((format!("{} FOLD", h(KeyCode::KeyF)), PokerInput::Fold, turn));
     } else if s.ended.is_none() {
-        out.push(("SPACE) NEXT HAND".to_string(), PokerInput::Next, s.leaving.is_none()));
+        out.push((format!("{} NEXT HAND", h(KeyCode::Space).to_uppercase()), PokerInput::Next, s.leaving.is_none()));
     }
-    out.push(("TAB) LEAVE".to_string(), PokerInput::Exit, s.leaving.is_none()));
+    out.push((format!("{} LEAVE", crate::pad::hint(&[KeyCode::Tab, KeyCode::Escape], at).to_uppercase()), PokerInput::Exit, s.leaving.is_none()));
     out
 }
 
@@ -192,7 +198,8 @@ fn spawn(commands: &mut Commands, c: &Ctx, s: &Session, view: Option<&PokerView>
         });
     }
     let t = &s.table;
-    root.with_children(|r| {
+    // The menu at the UI scale, in the middle of the view (`crate::interface::menu_frame`, #1631).
+    root.with_children(|r| crate::interface::in_menu_frame(r, crate::interface::MIDDLE, |r| {
         // The heading, top left; the pot, top right.
         let title = format!("{}  -  TEXAS HOLD'EM", s.casino.title().to_uppercase());
         c.text(r, Font::Glow, &title, EDGE, EDGE, 0.0, bright);
@@ -235,7 +242,7 @@ fn spawn(commands: &mut Commands, c: &Ctx, s: &Session, view: Option<&PokerView>
             }
             x -= w + CHOICE_GAP;
         }
-    });
+    }));
 }
 
 /// Seat labels without the engine's picture: round the top of the view [design].

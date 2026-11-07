@@ -450,6 +450,25 @@ fn the_archived_copy_under_a_loose_file_gives_the_names_compared_with() {
 }
 
 #[test]
+fn a_trait_knows_it_holds_a_built_in_label() {
+    let xml = r#"<menu name="M"><rect name="Label"><_T>&-sNvfLabel;</_T></rect><rect name="Plugin"><_T>&-sNvfPlugin;</_T></rect><rect name="Literal"><_T>word</_T></rect><rect name="Mixed"><_T>&-sNvfLabel; more</_T></rect></menu>"#;
+    let mut src = MemSource::default().with("menus/l.xml", xml);
+    src.strings.insert("sNvfLabel".into(), "word".into());
+    src.strings.insert("sNvfPlugin".into(), "word".into());
+    src.built_in_strings.insert("snvflabel".into());
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "menus/l.xml").unwrap();
+    let label = |ui: &Ui, name: &str| ui.built_in_label(ui.find_tile(&format!("M/{name}")).unwrap(), "_T").map(str::to_owned);
+    assert_eq!(label(&ui, "Label").as_deref(), Some("snvflabel"));
+    assert_eq!(label(&ui, "Plugin"), None, "the same words from a plugin");
+    assert_eq!(label(&ui, "Literal"), None, "the same words from a file");
+    assert_eq!(label(&ui, "Mixed"), None);
+    let t = ui.find_tile("M/Label").unwrap();
+    ui.set_trait(t, "_T", Value::Str("word".into()));
+    assert_eq!(label(&ui, "Label"), None, "a script's write");
+}
+
+#[test]
 fn game_strings_resolve_from_the_load_order_then_the_built_in_table() {
     // menu-xml.md §2.4 (T10): `&-sName;` reads the load order's GMST, then the built-in
     // table; a name in neither reads empty. Synthetic names and text only.
@@ -846,6 +865,64 @@ fn a_trait_name_ending_in_an_underscore_after_a_constant_reads_its_number() {
     // A constant without a known number names no suffix: `_pic_` itself is read, and it
     // is absent, so the copy reads the default value (0, as a string "0").
     assert_eq!(ui.get_string("Flags/Unknown/filename").as_deref(), Some("0"));
+}
+
+#[test]
+fn a_trait_taken_off_a_tile_reads_as_never_set() {
+    let src = MemSource::default().with("m.xml", r#"<menu name="M"><rect name="R"><_read><copy>5</copy><add src="screen()" trait="cropy"/></_read></rect></menu>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "m.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("M/R/_read"), Some(5.0));
+    let screen = ui.screen();
+    assert!(!ui.remove_trait(screen, "cropy"), "nothing to take");
+    ui.set_trait(screen, "cropy", Value::Num(15.0));
+    ui.update();
+    assert_eq!(ui.get_float("M/R/_read"), Some(20.0));
+    assert!(ui.remove_trait(screen, "cropy"));
+    assert!(ui.tile(screen).get("cropy").is_none());
+    ui.update();
+    assert_eq!(ui.get_float("M/R/_read"), Some(5.0));
+}
+
+#[test]
+fn traits_taken_off_one_after_another_each_tell_their_own_readers() {
+    // Three traits on one tile and a reader of each, all worked out; the first two go with no
+    // update between. Each reader of a gone trait reads nothing again; the third keeps reading
+    // its trait, which moved down two places, and hears of its next change.
+    let src = MemSource::default().with(
+        "m.xml",
+        r#"<menu name="M"><rect name="R">
+          <_a><copy>1</copy><add src="screen()" trait="one"/></_a>
+          <_b><copy>2</copy><add src="screen()" trait="two"/></_b>
+          <_c><copy>3</copy><add src="screen()" trait="three"/></_c></rect></menu>"#,
+    );
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "m.xml").unwrap();
+    let screen = ui.screen();
+    for (name, v) in [("one", 10.0), ("two", 20.0), ("three", 30.0)] {
+        ui.set_trait(screen, name, Value::Num(v));
+    }
+    ui.update();
+    let read = |ui: &Ui| ["_a", "_b", "_c"].map(|n| ui.get_float(&format!("M/R/{n}")).unwrap());
+    assert_eq!(read(&ui), [11.0, 22.0, 33.0]);
+    assert!(ui.remove_trait(screen, "one"));
+    assert!(ui.remove_trait(screen, "two"));
+    ui.update();
+    assert_eq!(read(&ui), [1.0, 2.0, 33.0]);
+    ui.set_trait(screen, "three", Value::Num(40.0));
+    ui.update();
+    assert_eq!(read(&ui), [1.0, 2.0, 43.0]);
+    // Back again, in the other order of going.
+    ui.set_trait(screen, "one", Value::Num(5.0));
+    ui.set_trait(screen, "two", Value::Num(6.0));
+    ui.update();
+    assert_eq!(read(&ui), [6.0, 8.0, 43.0]);
+    assert!(ui.remove_trait(screen, "two"));
+    assert!(ui.remove_trait(screen, "one"));
+    assert!(ui.remove_trait(screen, "three"));
+    ui.update();
+    assert_eq!(read(&ui), [1.0, 2.0, 3.0]);
 }
 
 #[test]

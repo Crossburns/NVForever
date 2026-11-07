@@ -48,7 +48,8 @@ pub struct Lock {
 /// level class: Very Easy 0, Easy 25, Average 50, Hard 75, Very Hard 100) [hypothesis:
 /// a leveled lock "will start at the base level specified and become harder as the
 /// player levels" (documented: GECK wiki Reference, Lock tab); by how much is not
-/// documented; docs/spec-notes/simulation.md §5, docs/owner-review.md].
+/// documented; whether the original hardens at all is not known either, the GECK tutorial
+/// calls the checkbox deprecated; docs/spec-notes/simulation.md §5].
 pub const LEVELED_LOCK_LEVELS_PER_STEP: u16 = 10;
 pub const LEVELED_LOCK_STEP: u8 = 25;
 /// The hardest a leveled lock gets: Very Hard; it never becomes Requires Key (255)
@@ -56,11 +57,11 @@ pub const LEVELED_LOCK_STEP: u8 = 25;
 pub const LEVELED_LOCK_MAX: u8 = 100;
 
 impl Lock {
-    /// The lock's level for a reference of level `level` (its encounter zone's level, else
-    /// the player's: `World::item_level`): the authored level, raised for a leveled lock by
-    /// [`LEVELED_LOCK_STEP`] for every [`LEVELED_LOCK_LEVELS_PER_STEP`] levels past the
-    /// first, up to [`LEVELED_LOCK_MAX`]; a lock that needs a key (above Very Hard) and a
-    /// lock not leveled keep theirs [hypothesis, see the constants].
+    /// The lock's level read at `level` (`World::lock_read_level`: the level fixed when its
+    /// cell loaded, else the configured one, 1 in play): the authored level, raised for a
+    /// leveled lock by [`LEVELED_LOCK_STEP`] for every [`LEVELED_LOCK_LEVELS_PER_STEP`]
+    /// levels past the first, up to [`LEVELED_LOCK_MAX`]; a lock that needs a key (above
+    /// Very Hard) and a lock not leveled keep theirs [hypothesis, see the constants].
     pub fn level_at(&self, level: u16) -> u8 {
         if !self.leveled || self.level > LEVELED_LOCK_MAX {
             return self.level;

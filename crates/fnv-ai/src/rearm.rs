@@ -3,7 +3,9 @@
 //! are **[design]**.
 //!
 //! - Every [`LOOK_SECONDS`] an actor that rearms (`Game::rearms`) and is not fetching
-//!   first, holding no usable weapon, holds the best one it carries; then it
+//!   first swaps a held weapon its combat style rules out (`Game::arm_restricted_by_style`,
+//!   `fnv_game::style_weapon`), then, holding no usable weapon, holds the best one it
+//!   carries; then it
 //!   looks within [`ARMED_REACH`] ([`UNARMED_REACH`] with no usable weapon) for a better
 //!   one: on the ground or carried by a dead actor, with ammunition for a gun carried or
 //!   found within the same reach (on the ground, on a body, in an unlocked container).
@@ -69,6 +71,9 @@ impl Ai {
             return false;
         }
         game.rearms.next_look.insert(actor, now + LOOK_SECONDS);
+        // A held weapon its combat style rules out is the style rule's to swap
+        // (`fnv_game::style_weapon`, #1721); then an empty hand takes the best carried.
+        game.arm_restricted_by_style(actor);
         if let Some(weapon) = game.take_up_best_carried(actor) {
             self.log(game, actor, AiEvent::Rearmed { weapon, from: None });
         }

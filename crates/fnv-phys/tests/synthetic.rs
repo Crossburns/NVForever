@@ -34,6 +34,7 @@ fn object(shape: Shape, motion: Motion) -> CollisionObject {
         shape: shape.into(),
         shell: 0.0,
         material: None,
+        wind: false,
     }
 }
 
@@ -255,6 +256,30 @@ fn clutter_on_the_terrain_shell_falls_asleep() {
     }
     let bike = w.ref_bodies(1)[0];
     assert!((bike.translation[2] - (30.0 + shell)).abs() < 0.5, "{bike:?}");
+}
+
+/// A body that responds to the wind starts awake even when placed asleep, and the wind
+/// rolls it downwind; one that does not is not blown (docs/spec-notes/wind.md).
+#[test]
+fn the_wind_blows_the_bodies_that_respond_to_it() {
+    let mut w = ground();
+    let shell = fnv_phys::TERRAIN_SHELL;
+    let ball = |wind| CollisionObject { mass: 2.0, wind, ..object(Shape::Sphere { radius: 30.0 }, Motion::Dynamic) };
+    let params = w.params;
+    w.insert_ref(PreparedRef::new(&params, &at(1, [0.0, 0.0, 30.0 + shell]), &[ball(true)]).asleep());
+    w.insert_ref(PreparedRef::new(&params, &at(2, [-400.0, 0.0, 30.0 + shell]), &[ball(false)]).asleep());
+    assert_eq!(w.wind_refs().iter().map(|r| r.0).collect::<Vec<_>>(), vec![1]);
+    assert!(!w.ref_bodies(1)[0].sleeping && w.ref_bodies(2)[0].sleeping);
+    let dt = params.dt;
+    for _ in 0..120 {
+        assert_eq!(w.blow(2, [200.0, 0.0], 300.0, dt), 0);
+        w.blow(1, [200.0, 0.0], 300.0, dt);
+        w.step();
+    }
+    let b = w.ref_bodies(1)[0];
+    assert!(b.translation[0] > 100.0 && b.translation[1].abs() < 20.0, "{b:?}");
+    assert!(b.linvel[0] > 100.0 && b.linvel[0] < 230.0, "{b:?}");
+    assert_eq!(w.ref_bodies(2)[0].translation[0], -400.0);
 }
 
 #[test]
@@ -1877,19 +1902,18 @@ fn loose_items_float_or_sink_by_material() {
 //
 // Each scenario drives a world with attached part capsules and one with standalone ones
 // (`PhysWorld::set_standalone_hit_volumes`, both set explicitly) through the same script and
-// compares every answer. Exact ties are built on purpose: first-hit `ray`/`sweep` keep the
-// first of equal costs in tree-traversal order [design: parry3d 0.31.1
-// `partitioning/bvh/bvh_traverse.rs:393`], `ray_all` breaks equal distances only by owner
-// [design: crates/fnv-phys/src/world.rs:1226], and several segments can share a part id
-// [design: engine/nvforever/src/limbs.rs:334].
+// compares every answer. Exact ties are built on purpose: before #1459 first-hit `ray`/`sweep`
+// kept the first of equal costs in tree-traversal order [design: parry3d 0.31.1
+// `partitioning/bvh/bvh_traverse.rs:393`] and `ray_all` broke equal distances only by owner;
+// several segments can share a part id [design: engine/nvforever/src/limbs.rs:334]. Now all
+// three break ties by owner, segment and hit geometry (`first_hit`, physics.md §5.1).
 //
 // Every scenario runs twice: `hitvol_diff_*` compares to the bit (owner, part, normal,
 // point, distance, hit order); `hitvol_ties_*` compares what a tie cannot change (a ray's
 // distance and point, the set of `ray_all` hits, a sweep's fraction, overlaps, aim points,
 // body states, the character), and every answer it lets through that differs to the bit
-// must be an exact tie shown in both worlds (`tied`). A `hitvol_diff_*` marked `#[ignore]`
-// is a divergence found (the observed values are in its comment), kept as the record, not
-// loosened.
+// must be an exact tie shown in both worlds (`tied`). The comments above six `hitvol_diff_*`
+// keep the divergences observed before #1459, when they were `#[ignore]`d.
 
 /// One query answer: what was asked, the answer as printed, every float in it to the bit,
 /// the part of it no exact tie can change (`loose`), and what shows that a difference
@@ -2294,7 +2318,7 @@ fn one_actor_ties(exact: bool) {
     p.finish();
 }
 
-// Observed 2026-11-03: 29 of 105 answers differ (ray 16, ray_all 12, sweep 1), none on the
+// Observed 2026-11-03 (before #1459): 29 of 105 answers differ (ray 16, ray_all 12, sweep 1), none on the
 // first write, all from the first move on (and after the step). Inside parts 0 and 7
 // (distance 0) the attached world answers part 0, the standalone one part 7 (after the move;
 // after the step these agree); the sweep from there returns
@@ -2302,9 +2326,9 @@ fn one_actor_ties(exact: bool) {
 // the attached world gives normal y +0.3 first, the standalone one -0.3, in `ray` and in
 // `ray_all`'s order; on the part 3 / part 4 pair (d 20.460594) attached part 4, standalone
 // part 3. Distances, points, hit sets and fractions agree (`hitvol_ties_*` passes).
-// Tie: an exact-TOI tie between coincident (parts 0/7) or mirrored (part 2, parts 3/4) capsules, whose winner was already traversal-order dependent before this change.
+// Tie: an exact-TOI tie (coincident or mirrored capsules); kept `#[ignore]`d until #1459, whose
+// canonical tie-break (owner, segment, hit geometry; physics.md §5.1) makes both worlds agree.
 #[test]
-#[ignore = "diverges on exact ties: first hit and ray_all order (part 0 vs 7, part-2 normal +-0.3, part 4 vs 3); see comment"]
 fn hitvol_diff_overlapping_and_equidistant_parts_of_one_actor() {
     one_actor_ties(true);
 }
@@ -2312,6 +2336,50 @@ fn hitvol_diff_overlapping_and_equidistant_parts_of_one_actor() {
 #[test]
 fn hitvol_ties_overlapping_and_equidistant_parts_of_one_actor() {
     one_actor_ties(false);
+}
+
+/// The canonical tie-break (#1459, physics.md §5.1): coincident actors written in either
+/// order answer the same, the lower form id, then the lower part, then the earlier segment.
+#[test]
+fn first_hit_ties_break_by_owner_then_segment_whatever_the_order() {
+    let make = |order: &[u32]| {
+        let mut w = ground();
+        for &id in order {
+            let mut parts = tie_parts(0.0);
+            if id == 0x11 {
+                // Part 7 listed first, so the tree and the handles differ between the worlds.
+                parts.reverse();
+            }
+            w.set_actor_parts(id, person([200.0, 0.0, 0.0], false), &parts);
+        }
+        w
+    };
+    let (mut w1, mut w2) = (make(&[0x10, 0x11]), make(&[0x11, 0x10]));
+    let f = Filter::default();
+    let ball = Shape::Sphere { radius: 4.0 };
+    for w in [&mut w1, &mut w2] {
+        let q = w.queries();
+        // Inside parts 0 and 7 of both actors: four candidates at distance 0.
+        let h = q.ray([200.0, 0.0, 85.0], [1.0, 0.0, 0.0], 1000.0, &f).unwrap();
+        assert_eq!((h.owner, h.distance), (Owner::Actor { form_id: 0x10, layer: layers::BIPED, part: 0 }, 0.0));
+        // The two part-2 segments of 0x10 at one distance: the first listed (y = +3, so the
+        // ray at y = 0 meets it on its -y side).
+        let h = q.ray([230.0, 0.0, 60.0], [1.0, 0.0, 0.0], 1000.0, &f).unwrap();
+        assert_eq!(h.owner, Owner::Actor { form_id: 0x10, layer: layers::BIPED, part: 2 });
+        assert!(h.normal[1] < 0.0, "{h:?}");
+        let s = q.sweep(&ball, &place([200.0, 0.0, 85.0]), [50.0, 0.0, 0.0], &f).unwrap().unwrap();
+        assert_eq!(s.owner, Owner::Actor { form_id: 0x10, layer: layers::BIPED, part: 0 });
+    }
+    let q1 = w1.queries();
+    let q2 = w2.queries();
+    for (o, d) in tie_probe(0.0, &[]).rays {
+        let (a, b) = (q1.ray(o, d, 1000.0, &f), q2.ray(o, d, 1000.0, &f));
+        assert_eq!(format!("{a:?}"), format!("{b:?}"), "ray {o:?} {d:?}");
+        assert_eq!(format!("{:?}", q1.ray_all(o, d, 1000.0, &f)), format!("{:?}", q2.ray_all(o, d, 1000.0, &f)), "ray_all {o:?} {d:?}");
+    }
+    for (s, from, m, filter) in tie_probe(0.0, &[]).sweeps {
+        assert_eq!(format!("{:?}", q1.sweep(&s, &from, m, &filter).unwrap()), format!("{:?}", q2.sweep(&s, &from, m, &filter).unwrap()), "sweep {from:?}");
+    }
 }
 
 /// Scenario 2: Two actors whose capsules coincide exactly.
@@ -2340,16 +2408,16 @@ fn two_actors_coincide(exact: bool) {
     p.finish();
 }
 
-// Observed 2026-11-03: 29 of 148 answers differ (ray 16, ray_all 12, sweep 1), none after the
+// Observed 2026-11-03 (before #1459): 29 of 148 answers differ (ray 16, ray_all 12, sweep 1), none after the
 // first write or the -0.0 rewrite, all from the move on. Inside parts 0 and 7 (distance 0):
 // attached 0x11 part 0, standalone 0x10 part 7. On the part-2 segments (d 20.460611):
 // attached 0x11 normal y +0.3, standalone 0x10 normal y -0.3; `ray_all` lists 0x10's two
 // part-2 hits (same owner, same distance) in opposite orders. On the part 3 / 4 pair
 // (d 20.460594): attached 0x11 part 4, standalone 0x10 part 3. The sweep from inside part 0/7
 // picks a different capsule. Overlaps agree; `hitvol_ties_*` passes.
-// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+// Tie: an exact-TOI tie (coincident or mirrored capsules); kept `#[ignore]`d until #1459, whose
+// canonical tie-break (owner, segment, hit geometry; physics.md §5.1) makes both worlds agree.
 #[test]
-#[ignore = "diverges on exact ties between coincident actors: first hit owner (0x10 vs 0x11), sweep winner; see comment"]
 fn hitvol_diff_two_actors_coincide() {
     two_actors_coincide(true);
 }
@@ -2411,14 +2479,14 @@ fn pending_into_step(exact: bool) {
     p.finish();
 }
 
-// Observed 2026-11-03: 10 of 148 answers differ, none on the first write stepped and none
+// Observed 2026-11-03 (before #1459): 10 of 148 answers differ, none on the first write stepped and none
 // after three writes and three steps; after "move stepped" and "two writes stepped" the ray
 // starting inside parts 0 and 7 (4 directions, distance 0) answers part 0 attached vs part 7
 // standalone, and the sweep from there part 0 (witness z 85.9849) vs part 7 (85.729836).
 // Boxes and state digest agree on every step.
-// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+// Tie: an exact-TOI tie (coincident or mirrored capsules); kept `#[ignore]`d until #1459, whose
+// canonical tie-break (owner, segment, hit geometry; physics.md §5.1) makes both worlds agree.
 #[test]
-#[ignore = "diverges on the zero-distance tie after a write flushed into step: part 0 vs part 7; see comment"]
 fn hitvol_diff_pending_pose_flushed_straight_into_step() {
     pending_into_step(true);
 }
@@ -2462,16 +2530,16 @@ fn snapshot_pending(exact: bool) {
     p.finish();
 }
 
-// Observed 2026-11-03: 66 of 187 answers differ (ray 34, ray_all 24, sweep 8), none on the
+// Observed 2026-11-03 (before #1459): 66 of 187 answers differ (ray 34, ray_all 24, sweep 8), none on the
 // first write or in the copy stepped while pending; in the originals after the snapshot, in
 // the restored copies and after their step. Restored, the ray from (213.5, 0, 85) along +x:
 // attached 0x10 part 7, standalone 0x10 part 0 (d 0); from (0, 0, 60) along +x: attached
 // 0x11 part 0, standalone 0x10 part 0 (d 198.5); the controller-capsule sweep from
 // (113.5, 0, 0.5): attached 0x11, standalone 0x10 (f 0.22333331). Boxes and digest agree;
 // `hitvol_ties_*` passes.
-// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+// Tie: an exact-TOI tie (coincident or mirrored capsules); kept `#[ignore]`d until #1459, whose
+// canonical tie-break (owner, segment, hit geometry; physics.md §5.1) makes both worlds agree.
 #[test]
-#[ignore = "diverges on exact ties before and after restoring a snapshot taken with poses pending; see comment"]
 fn hitvol_diff_snapshot_taken_with_poses_pending() {
     snapshot_pending(true);
 }
@@ -2668,13 +2736,13 @@ fn hitvol_ties_crowd_of_twenty_over_fifty_frames() {
     crowd(false, false);
 }
 
-// Observed 2026-11-03: 205 of 7350 answers differ (ray 173, sweep 32), all first hits and winners
+// Observed 2026-11-03 (before #1459): 205 of 7350 answers differ (ray 173, sweep 32), all first hits and winners
 // that pick the other twin at the same distance (e.g. frame 1, ray from (0, -150, 30) along
 // +x: attached 0x100 part 5, standalone 0x112 part 5, both d 127.61765); boxes, digest,
 // character, overlaps and ray_all agree.
-// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+// Tie: an exact-TOI tie (coincident or mirrored capsules); kept `#[ignore]`d until #1459, whose
+// canonical tie-break (owner, segment, hit geometry; physics.md §5.1) makes both worlds agree.
 #[test]
-#[ignore = "diverges on coincident twins in a full tree: first hit / sweep winner picks the other twin; see comment"]
 fn hitvol_diff_crowd_with_coincident_twins() {
     crowd(true, true);
 }
@@ -2763,7 +2831,7 @@ fn skipped_vs_forced(exact: bool) {
     println!("{asked} answers, all equal{}", if exact { " to the bit".to_string() } else { format!(" modulo {ties} exact ties, each shown") });
 }
 
-// Observed 2026-11-03: 61 of 585 answers differ (ray 46, sweep 15), all of them "attached
+// Observed 2026-11-03 (before #1459): 61 of 585 answers differ (ray 46, sweep 15), all of them "attached
 // forced" against "attached skipped" (standalone skipped and standalone forced both answer as
 // attached skipped, to the bit): from frame 1
 // on, the first hits on every tie pick the other coincident actor, e.g. the ray from
@@ -2771,9 +2839,9 @@ fn skipped_vs_forced(exact: bool) {
 // (0, 0, 60) along +x: skipped 0x11 part 0, forced 0x10 part 0, both d 185.00002; sweeps
 // likewise. So the skip (A) changes which of two exactly tied hits wins compared with the
 // old always-write behaviour: not a zero change on exact ties.
-// Tie: an exact-TOI tie between coincident capsules, whose winner was already traversal-order dependent before this change.
+// Tie: an exact-TOI tie (coincident or mirrored capsules); kept `#[ignore]`d until #1459, whose
+// canonical tie-break (owner, segment, hit geometry; physics.md §5.1) makes both worlds agree.
 #[test]
-#[ignore = "diverges: attached forced vs attached skipped pick different tie winners (0x10 vs 0x11); standalone matches skipped; see comment"]
 fn hitvol_diff_skipped_write_answers_as_a_forced_one() {
     skipped_vs_forced(true);
 }
@@ -3008,4 +3076,86 @@ fn a_character_put_over_light_clutter_pinned_against_a_wall_walks_on() {
     walk(&mut w, &mut c, [0.0, 150.0], 120);
     assert!(c.feet[1] - from[1] > 50.0, "{:?} from {from:?}", c.feet);
     assert!((c.feet[2] - from[2]).abs() < 40.0, "{:?} from {from:?}", c.feet);
+}
+
+/// A groove of two planes rising at `deg` from level either side of the line x = 0,
+/// z = 100, 800 long in y: walls steeper than walkable meeting at its bottom, the crease a
+/// character stuck in for the controller's every sweep (issue #1797).
+fn groove(deg: f32) -> PhysWorld {
+    let mut w = ground();
+    let (h, d) = (300.0, 300.0 / deg.to_radians().tan());
+    let vertices = vec![[-d, -400.0, 100.0 + h], [-d, 400.0, 100.0 + h], [0.0, -400.0, 100.0], [0.0, 400.0, 100.0], [d, -400.0, 100.0 + h], [d, 400.0, 100.0 + h]];
+    let triangles = vec![[0, 2, 1], [1, 2, 3], [2, 4, 3], [3, 4, 5]];
+    w.add_ref(&at(1, [0.0, 0.0, 0.0]), &[object(Shape::TriMesh { vertices, triangles, materials: vec![0; 4] }, Motion::Static)]);
+    w
+}
+
+#[test]
+fn a_stuck_character_is_held_with_the_steps_it_would_have_had() {
+    // Dropped into the groove and walked: along it a character gets some way and sticks,
+    // into a wall it sticks at once [observed: this test, rapier 0.36.0]. Held, it makes the
+    // same steps without sweeping again.
+    let mut held = 0;
+    for deg in [50.0f32, 60.0, 70.0, 80.0] {
+        for v in [[0.0, 0.0], [150.0, 0.0], [150.0, 150.0], [0.0, 150.0], [-150.0, 30.0]] {
+            let run = |hold: bool| {
+                let mut w = groove(deg);
+                let mut c = w.add_character(1, CharacterParams::default(), [0.0, 0.0, 400.0]);
+                c.hold_when_stuck = hold;
+                settle(&mut w, &mut c, 120);
+                let steps: Vec<_> = walk(&mut w, &mut c, v, 120).into_iter().map(|s| (s.feet, s.grounded, s.landed_speed, s.swimming)).collect();
+                (steps, c.held_steps)
+            };
+            let ((free, none), (kept, n)) = (run(false), run(true));
+            assert_eq!(none, 0);
+            assert_eq!(free, kept, "{deg} degrees, {v:?}");
+            held += n;
+        }
+    }
+    assert!(held > 1000, "held {held} steps");
+}
+
+#[test]
+fn a_held_character_moves_on_when_the_way_is_free() {
+    let mut w = groove(70.0);
+    let mut c = w.add_character(1, CharacterParams::default(), [0.0, 0.0, 400.0]);
+    c.hold_when_stuck = true;
+    settle(&mut w, &mut c, 120);
+    walk(&mut w, &mut c, [150.0, 0.0], 30);
+    assert!(c.held_steps > 0);
+    let z = c.feet[2];
+    // The groove gone, it falls to the ground within a retry's steps.
+    w.remove_ref(1);
+    let steps = walk(&mut w, &mut c, [150.0, 0.0], STUCK_RETRY as usize + 60);
+    assert!(steps[..STUCK_RETRY as usize].iter().any(|s| s.feet[2] < z - 1.0), "{:?}", c.feet);
+    assert!(c.grounded && c.feet[2] < TERRAIN_SHELL + 1.0 && c.feet[0] > 50.0, "{:?}", c.feet);
+}
+
+#[test]
+fn holding_changes_nothing_for_characters_that_are_not_stuck() {
+    // Steps, a wall to slide along, a ramp too steep and a corner: the hold never comes.
+    type Scene = (fn(&mut PhysWorld), [f32; 2]);
+    let scenes: Vec<Scene> = vec![
+        (|w| { w.add_ref(&at(1, [300.0, 0.0, 7.0]), &[object(boxed([200.0, 200.0, 7.0]), Motion::Static)]); }, [150.0, 0.0]),
+        (|w| { w.add_ref(&at(1, [300.0, 0.0, 50.0]), &[object(boxed([200.0, 200.0, 50.0]), Motion::Static)]); }, [150.0, 60.0]),
+        (|w| ramp(w, 60.0), [150.0, 10.0]),
+        (|w| {
+            w.add_ref(&at(1, [150.0, 0.0, 50.0]), &[object(boxed([10.0, 200.0, 50.0]), Motion::Static)]);
+            w.add_ref(&at(2, [0.0, 150.0, 50.0]), &[object(boxed([200.0, 10.0, 50.0]), Motion::Static)]);
+        }, [150.0, 150.0]),
+    ];
+    for (i, (build, v)) in scenes.into_iter().enumerate() {
+        let run = |hold: bool| {
+            let mut w = ground();
+            build(&mut w);
+            let mut c = w.add_character(1, CharacterParams::default(), [0.0, 0.0, 1.0]);
+            c.hold_when_stuck = hold;
+            settle(&mut w, &mut c, 30);
+            let steps: Vec<_> = walk(&mut w, &mut c, v, 120).into_iter().map(|s| (s.feet, s.grounded)).collect();
+            (steps, c.held_steps)
+        };
+        let ((free, _), (kept, n)) = (run(false), run(true));
+        assert_eq!(free, kept, "scene {i}");
+        assert_eq!(n, 0, "scene {i}");
+    }
 }

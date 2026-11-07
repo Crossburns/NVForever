@@ -114,9 +114,10 @@ impl WorldData {
         self.index.cells.get(w.grid.get(&g)?)
     }
 
-    /// Whether a reference is enabled at the start of a game: not initially disabled,
-    /// and its enable parent (if any) in the required state [documented: XESP; the
-    /// parent chain is followed, cycles count as disabled].
+    /// Whether a reference is enabled at the start of a game: not deleted, and its enable
+    /// parent in the required state, or with no parent not initially disabled [documented:
+    /// XESP; the parent chain is followed, cycles count as disabled]. Under a parent its
+    /// own flag does not count, as `fnv_sim::World::is_enabled` has it (simulation.md §1).
     pub fn enabled(&self, p: &Placement, depth: usize) -> bool {
         enabled(self.lo, self.schema, p, depth)
     }
@@ -124,15 +125,15 @@ impl WorldData {
 
 /// [`WorldData::enabled`] from the load order (for worker threads).
 pub fn enabled(lo: &LoadOrder, schema: &EsmSchema, p: &Placement, depth: usize) -> bool {
-    if p.deleted() || p.initially_disabled() {
+    if p.deleted() {
         return false;
     }
     match p.enable_parent {
-        None => true,
+        None => !p.initially_disabled(),
         Some(_) if depth > 16 => false,
         Some((parent, opposite)) => match placement(lo, schema, parent) {
             Some(pp) => enabled(lo, schema, &pp, depth + 1) != opposite,
-            None => !opposite,
+            None => !opposite && !p.initially_disabled(),
         },
     }
 }
@@ -757,13 +758,34 @@ pub fn report(mut exit: MessageReader<AppExit>, streamer: Res<Streamer>, models:
 /// the window still answers, and fewer frames are drawn while the screen is up].
 const LOADING_SCREEN_FRAME: std::time::Duration = std::time::Duration::from_millis(200);
 
+/// Whether cells and actors may start loading: not yet under the start's screen until it
+/// has been drawn (`nvf_play::loading::Loading::world_held`). Before its first frame the
+/// screen is only asked for.
+pub fn world_not_held(loading: Option<Res<nvf_play::loading::Loading>>, cover: Option<Res<nvf_play::loading::StartCover>>) -> bool {
+    cover.is_none() && !loading.is_some_and(|l| l.world_held())
+}
+
 /// Tell the loading screen whether cells around the camera are still to be drawn (runs
 /// after [`stream`]; `travel` has run before it, so a travel sent this frame counts).
-pub fn loading_gate(streamer: Res<Streamer>, mut loading: ResMut<nvf_play::loading::Loading>) {
+pub fn loading_gate(
+    streamer: Res<Streamer>,
+    mut loading: ResMut<nvf_play::loading::Loading>,
+    gate: Res<crate::pipeline_gate::PipelineGate>,
+) {
     let busy = !streamer.settled;
     if loading.render_busy != busy {
         loading.render_busy = busy;
     }
+    // Pipelines not ready: what they would draw is missing from the view, which keeps the
+    // clear colour (`pipeline_gate`). Before the first render frame nothing has asked yet.
+    let pipelines = gate.frames() == 0 || gate.busy() > 0;
+    if loading.pipelines_busy != pipelines {
+        loading.pipelines_busy = pipelines;
+    }
+    if std::mem::take(&mut loading.pipeline_cap_note) {
+        gate.list_busy();
+    }
+    loading.release_picture_hold(gate.frames() >= nvf_play::loading::PICTURE_FRAMES && gate.screen_busy() == 0, std::time::Instant::now());
     // Actors around the player not drawn yet: a loading screen waits for them too, so
     // they are not seen appearing after it comes down (`readahead::actors_waiting`).
     let actors = crate::readahead::actors_waiting() > 0;
@@ -1076,7 +1098,11 @@ fn spawn_placed_water(
     let Some(wid) = fnv_world::sky::placeable_water_type(world.lo, world.schema, base.form_id) else { return false };
     let Some(path) = base.world_model_path() else { return false };
     let Some(model) = models.model(&path) else { return false };
-    let Some(mat) = water_material(world, wid, models, water) else { return false };
+    let reflects = fnv_world::sky::placeable_water_reflects(world.lo, world.schema, base.form_id);
+    let Some(mat) = water_material(world, wid, reflects, true, models, water) else { return false };
+    if !reflects {
+        info!("placed water {r:08X}: its PWAT {:08X} does not set Reflects, drawn without reflection", base.form_id);
+    }
     for s in &model.shapes {
         commands.entity(cell_e).with_child((
             Mesh3d(s.mesh.clone()),
@@ -1296,7 +1322,7 @@ fn random_anim_start(world: &WorldData, fid: u32) -> bool {
 /// `SpawnedDisabled`; docs/design/layer5-play.md §4). The light's model is drawn by
 /// nvf-play's `script_draw.rs` when enabled.
 #[allow(clippy::too_many_arguments)]
-fn spawn_dormant(
+pub(crate) fn spawn_dormant(
     commands: &mut Commands,
     cell_e: Entity,
     world: &WorldData,
@@ -1411,7 +1437,7 @@ fn spawn_water(
     // The same surface the physics swims in (`Cell::water_surface`, physics.md §6.6).
     let Some(height) = c.water_surface(ws.default_water_height) else { return };
     let Some(wid) = c.water_type.or(ws.water) else { return };
-    let Some(mat) = water_material(world, wid, models, water) else { return };
+    let Some(mat) = water_material(world, wid, true, false, models, water) else { return };
     let s = CELL_SIZE;
     let mesh = water.plane(&mut models.meshes);
     commands.entity(cell_e).with_child((
@@ -1507,5 +1533,64 @@ mod tests {
     fn markers() {
         assert!(is_marker("meshes\\marker_x.nif"));
         assert!(!is_marker("meshes\\clutter\\junk\\can.nif"));
+    }
+
+    /// Issue #1620, over a synthetic plugin (`nvf_play::script_draw`'s copy of the rule is
+    /// tested the same way): under an enable parent a reference's own Initially Disabled
+    /// flag does not count.
+    #[test]
+    fn under_an_enable_parent_a_references_own_flag_does_not_count() {
+        use fnv_esm::raw::{write_subrecords, Subrecord};
+        const FLAGGED: u32 = 0x800;
+        const DELETED: u32 = 0x20;
+        const ON: u32 = 0x301;
+        const OFF: u32 = 0x302;
+        const CELL: u32 = 0x200;
+        let sub = |sig: &[u8; 4], data: Vec<u8>| Subrecord { sig: *sig, data, extended: false };
+        let record = |sig: &[u8; 4], flags: u32, fid: u32, subs: &[Subrecord]| {
+            let payload = write_subrecords(subs);
+            [&sig[..], &(payload.len() as u32).to_le_bytes(), &flags.to_le_bytes(), &fid.to_le_bytes(), &[0; 4], &15u16.to_le_bytes(), &[0; 2], &payload].concat()
+        };
+        let group = |label: [u8; 4], kind: i32, body: &[u8]| [&b"GRUP"[..], &((24 + body.len()) as u32).to_le_bytes(), &label, &kind.to_le_bytes(), &[0; 8], body].concat();
+        let refr = |fid: u32, flags: u32, parent: Option<(u32, bool)>| {
+            let mut subs = vec![sub(b"NAME", 0x100u32.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])];
+            if let Some((p, opposite)) = parent {
+                subs.push(sub(b"XESP", [&p.to_le_bytes()[..], &[opposite as u8, 0, 0, 0]].concat()));
+            }
+            record(b"REFR", flags, fid, &subs)
+        };
+        // (reference, its flags, its parent, enabled at the start)
+        let cases = [
+            (ON, 0, None, true),
+            (OFF, FLAGGED, None, false),
+            (0x310, FLAGGED, Some((ON, false)), true),
+            (0x311, FLAGGED, Some((ON, true)), false),
+            (0x312, FLAGGED, Some((OFF, false)), false),
+            (0x313, FLAGGED, Some((OFF, true)), true),
+            (0x314, 0, Some((ON, false)), true),
+            (0x315, 0, Some((OFF, false)), false),
+            (0x316, 0, Some((OFF, true)), true),
+            // Two deep, flagged all the way down.
+            (0x317, FLAGGED, Some((0x310, false)), true),
+            // Deleted stays out; a parent that does not exist leaves the flag as it was.
+            (0x318, DELETED | FLAGGED, Some((ON, false)), false),
+            (0x319, FLAGGED, Some((0x999, false)), false),
+            (0x31A, 0, Some((0x999, false)), true),
+            (0x31B, 0, Some((0x999, true)), false),
+        ];
+        let refs: Vec<u8> = cases.iter().flat_map(|&(id, flags, parent, _)| refr(id, flags, parent)).collect();
+        let label = CELL.to_le_bytes();
+        let children = group(label, 6, &group(label, 9, &refs));
+        let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", b"TestCell\0".to_vec())]);
+        let cells = group(*b"CELL", 0, &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat())));
+        let hedr = [&1.34f32.to_le_bytes()[..], &0i32.to_le_bytes(), &0x800u32.to_le_bytes()].concat();
+        let bytes = [record(b"TES4", 1, 0, &[sub(b"HEDR", hedr)]), cells].concat();
+        let plugins = vec![EsmPlugin::parse(&bytes, "Test.esm".into()).unwrap()];
+        let lo = LoadOrder::new(&plugins).unwrap();
+        let schema = EsmSchema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+        for (id, _, _, want) in cases {
+            let p = placement(&lo, &schema, id).unwrap();
+            assert_eq!(enabled(&lo, &schema, &p, 0), want, "0x{id:X}");
+        }
     }
 }

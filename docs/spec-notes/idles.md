@@ -206,7 +206,9 @@ below 30).
   else to do (not walking, not on furniture, not talking) and plays no other idle; the
   idles of the marker it stands at come before its package's. The player's collection
   plays while they have a script package. A package flagged No Idle Anims plays none.
-  A collection idle ends when its actor walks off.
+  A collection idle ends when its actor walks off or is drawn into a conversation (the
+  conversation's gestures, §12, take its place; before #1745 Chet's marker sweep played on
+  and held him from turning to the player).
 - **A package's idles end with the package** [design]: an idle that loops for ever and
   was asked for by a package or marker leaves its loop (plays out to the end of its clip)
   when that is no longer the actor's package or marker. A one-shot idle plays to its end

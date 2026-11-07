@@ -32,9 +32,12 @@ pub struct Rules {
     pub vats_crit_bonus: f32,
     // Armor
     pub max_armor_rating: f32,
-    /// Melee reach base (× actor scale × weapon reach). The wiki gives no default and the
-    /// masters lack the setting: 150 units is a placeholder [hypothesis: chosen so a
-    /// knife (reach 0.5) reaches 75 units and a sledgehammer (0.75) 112; tunable].
+    /// Melee reach base (× actor scale × weapon reach), from the attacker's body to its
+    /// target's. The wiki gives no default and the masters lack the setting: 107 units is
+    /// fitted to the original's NPCs, whose swings began about 45 + 107 × Reach units
+    /// centre to centre (knife 95 … lead pipe 180) [observed: AI observer campaign
+    /// o14_reach, 2026-11-01, #1076; that the 45 is the two bodies' radii, and so not
+    /// part of the setting, is a hypothesis; docs/spec-notes/combat-rules.md §10].
     pub combat_distance: f32,
     // Gun Spread Formula (New Vegas)
     pub spread_unaimed: f32,
@@ -119,7 +122,7 @@ const SETTINGS: &[(&str, f32)] = &[
     ("fAVDCritLuckMult", 1.0),
     ("fVATSCriticalChanceBonus", 15.0),
     ("fMaxArmorRating", 85.0),
-    ("fCombatDistance", 150.0),
+    ("fCombatDistance", 107.0),
     ("fUnaimedSpreadPenalty", 0.2),
     ("fWalkingSpreadPenalty", 0.1),
     ("fRunningSpreadPenalty", 0.2),
@@ -320,6 +323,15 @@ pub struct CombatTuning {
     pub explosion_edge: f32,
     /// The share of its speed a lobber keeps at a bounce, before its PROJ's Bouncy Mult.
     pub default_bounce: f32,
+    /// A thrown grenade's contacts (combat-rules.md §5): the share of the speed into a
+    /// surface it keeps, out of it (the game setting `fGrenadeRestitution`, 0.01 in
+    /// FalloutNV.esm [observed]; its meaning [hypothesis: from its name]); the share of the
+    /// speed along the surface it keeps when it first lands; and how fast its roll slows,
+    /// per second (the speed falls by e^(-rate × time)) [observed: both fitted to the
+    /// original's frag grenade, o26_gl frag0].
+    pub grenade_restitution: f32,
+    pub grenade_roll_keep: f32,
+    pub grenade_roll_damping: f32,
     /// Reload when the trigger is pulled on an empty magazine and ammo is carried.
     pub auto_reload: bool,
     /// Reload time when no reload clip length is known, seconds.
@@ -389,6 +401,9 @@ impl Default for CombatTuning {
             melee_arc_deg: 35.0,
             explosion_edge: 0.25,
             default_bounce: 0.3,
+            grenade_restitution: 0.01,
+            grenade_roll_keep: 0.9,
+            grenade_roll_damping: 0.66,
             auto_reload: true,
             fallback_reload: 2.0,
             power_hold: 0.4,

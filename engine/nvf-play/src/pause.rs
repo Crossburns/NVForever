@@ -76,9 +76,10 @@
 //! upside down, and a slider as the settings page's sets how fast the view turns as a
 //! percentage of the game's: Mouse Sensitivity with keyboard and mouse
 //! (`fMouseSensitivity`), Stick Sensitivity with a controller (the right stick's look
-//! speeds), each kept apart (Left/Right or the arrows a step of 5%, a press or drag on the
-//! meter the value under the pointer; `crate::bindings::SENSITIVITY_LEAST`..`SENSITIVITY_MOST`)
-//! [design: owner 2026-11-03, #1451]; with a controller Rumble comes last.
+//! speeds), each kept apart (Left/Right or the arrows a step of `crate::bindings::SENSITIVITY_STEPS`,
+//! about a tenth apart, a press or drag on the logarithmic meter the value under the
+//! pointer; `crate::bindings::SENSITIVITY_LEAST`..`SENSITIVITY_MOST`, 5%-300%)
+//! [design: owner 2026-11-03, #1451; #1632]; with a controller Rumble comes last.
 //!
 //! **Quit** asks first [observed: the original's question and its choices]: Main Menu
 //! (nvforever starts again with `--menu`, [`MainMenuRequest`]), Exit Game, Cancel.
@@ -875,6 +876,8 @@ struct Drawn {
     confirm: Option<usize>,
     /// Every row's state (`Setting::value`).
     states: Vec<f32>,
+    /// Explanations replacing disabled rows' saved values.
+    disabled: Vec<Option<&'static str>>,
     status: String,
     /// The column's labels and whether each can be taken.
     column: Vec<(&'static str, bool)>,
@@ -1137,58 +1140,63 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
                 root.spawn((full(), BackgroundColor(Color::srgba(0.30, 0.24, 0.14, SCREEN_ALPHA))));
             }
         }
-        // The band behind a page's list.
-        match d.page {
-            Page::Settings { .. } | Page::Controls { .. } => {
-                band(root, look, Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(left - BAND_MARGIN, 0.0, OPTIONS_WIDTH + 2.0 * BAND_MARGIN + BAR_GAP + BAR_W, 0.0) })
+        // The page at the UI scale, in the middle of the view (`crate::interface::menu_frame`,
+        // #1631); the sheet and the screen above keep to the view.
+        crate::interface::in_menu_frame(root, crate::interface::MIDDLE, |root| {
+            // The band behind a page's list, from the view's top to its bottom.
+            let tall = |n: Node| crate::interface::over_view(n, crate::interface::MIDDLE, false);
+            match d.page {
+                Page::Settings { .. } | Page::Controls { .. } => {
+                    band(root, look, tall(Node { top: u(0.0), height: Val::Percent(100.0), ..from_middle(left - BAND_MARGIN, 0.0, OPTIONS_WIDTH + 2.0 * BAND_MARGIN + BAR_GAP + BAR_W, 0.0) }))
+                }
+                Page::Load { .. } => band(root, look, tall(Node { height: Val::Percent(100.0), ..from_right(RIGHT + COLUMN, 0.0, LOAD_WIDTH + BAND_MARGIN, 0.0) })),
+                // The mod's page is drawn from its tiles over this one (`crate::tiles::draw`).
+                Page::Main | Page::Mods => {}
             }
-            Page::Load { .. } => band(root, look, Node { height: Val::Percent(100.0), ..from_right(RIGHT + COLUMN, 0.0, LOAD_WIDTH + BAND_MARGIN, 0.0) }),
-            // The mod's page is drawn from its tiles over this one (`crate::tiles::draw`).
-            Page::Main | Page::Mods => {}
-        }
-        // The column: the keys' list on the first page, else half bright but for the page's entry.
-        let top = (960.0 - d.column.len() as f32 * ITEM) / 2.0;
-        let on_column = d.page == Page::Main && d.confirm.is_none();
-        let lit = d.page_entry();
-        for (i, (label, ok)) in d.column.iter().enumerate() {
-            let shade = if (on_column && *ok) || (!on_column && i == lit) { Shade::Bright } else { Shade::Dim };
-            right_entry(root, &f.entry, label, from_right(RIGHT, top + i as f32 * ITEM, COLUMN - 5.0, ITEM), COLUMN - 5.0, shade, on_column && i == d.main_selected, PauseButton::Column(i));
-        }
-        match d.page {
-            Page::Main => {
-                if let Some(sel) = d.confirm {
-                    // The question: its lines end left of the choices [observed: the owner's screenshot].
-                    let qw = f.entry.font.width(QUESTION);
-                    let at = 280.0;
-                    root.spawn(from_middle(at - 20.0 - qw, 480.0 - ITEM, 900.0, ITEM)).with_children(|t| sm_text(t, &f.entry, WARNING, 0.0, BASE, color(Shade::Bright)));
-                    root.spawn(from_middle(at - 20.0 - qw, 480.0, qw, ITEM)).with_children(|t| sm_text(t, &f.entry, QUESTION, 0.0, BASE, color(Shade::Bright)));
-                    let width = CONFIRM.iter().map(|c| f.entry.font.width(c)).fold(0.0, f32::max) + 30.0;
-                    for (i, c) in CONFIRM.iter().enumerate() {
-                        root.spawn((Button, PauseButton::Confirm(i), boxed(from_middle(at, 480.0 + i as f32 * ITEM, width, ITEM), i == sel)))
-                        .with_children(|t| sm_text(t, &f.entry, c, 10.0, BASE, color(Shade::Bright)));
+            // The column: the keys' list on the first page, else half bright but for the page's entry.
+            let top = (960.0 - d.column.len() as f32 * ITEM) / 2.0;
+            let on_column = d.page == Page::Main && d.confirm.is_none();
+            let lit = d.page_entry();
+            for (i, (label, ok)) in d.column.iter().enumerate() {
+                let shade = if (on_column && *ok) || (!on_column && i == lit) { Shade::Bright } else { Shade::Dim };
+                right_entry(root, &f.entry, label, from_right(RIGHT, top + i as f32 * ITEM, COLUMN - 5.0, ITEM), COLUMN - 5.0, shade, on_column && i == d.main_selected, PauseButton::Column(i));
+            }
+            match d.page {
+                Page::Main => {
+                    if let Some(sel) = d.confirm {
+                        // The question: its lines end left of the choices [observed: the owner's screenshot].
+                        let qw = f.entry.font.width(QUESTION);
+                        let at = 280.0;
+                        root.spawn(from_middle(at - 20.0 - qw, 480.0 - ITEM, 900.0, ITEM)).with_children(|t| sm_text(t, &f.entry, WARNING, 0.0, BASE, color(Shade::Bright)));
+                        root.spawn(from_middle(at - 20.0 - qw, 480.0, qw, ITEM)).with_children(|t| sm_text(t, &f.entry, QUESTION, 0.0, BASE, color(Shade::Bright)));
+                        let width = CONFIRM.iter().map(|c| f.entry.font.width(c)).fold(0.0, f32::max) + 30.0;
+                        for (i, c) in CONFIRM.iter().enumerate() {
+                            root.spawn((Button, PauseButton::Confirm(i), boxed(from_middle(at, 480.0 + i as f32 * ITEM, width, ITEM), i == sel)))
+                            .with_children(|t| sm_text(t, &f.entry, c, 10.0, BASE, color(Shade::Bright)));
+                        }
+                    } else if !d.status.is_empty() {
+                        root.spawn((PauseStatusText, from_right(RIGHT, top + d.column.len() as f32 * ITEM + 10.0, 700.0, ITEM))).with_children(|t| {
+                            let w = f.small.font.width(&d.status);
+                            sm_text(t, &f.small, &d.status, 700.0 - w - 10.0, 30.0, color(Shade::Bright));
+                        });
                     }
-                } else if !d.status.is_empty() {
-                    root.spawn((PauseStatusText, from_right(RIGHT, top + d.column.len() as f32 * ITEM + 10.0, 700.0, ITEM))).with_children(|t| {
-                        let w = f.small.font.width(&d.status);
-                        sm_text(t, &f.small, &d.status, 700.0 - w - 10.0, 30.0, color(Shade::Bright));
-                    });
+                }
+                Page::Settings { selected } => settings_page(root, d, look, settings, selected, top, left),
+                Page::Controls { selected, listening } => controls_page(root, d, look, settings, selected, listening, top, left),
+                Page::Load { selected } => load_page(root, d, look, list, selected),
+                Page::Mods => {}
+            }
+            // Back (and Defaults) at the bottom right.
+            if d.page != Page::Main {
+                right_entry(root, &f.entry, "Back", from_right(RIGHT, BACK_TOP, 200.0, ITEM), 200.0, Shade::Bright, false, PauseButton::Back);
+                if matches!(d.page, Page::Settings { .. } | Page::Controls { .. }) {
+                    right_entry(root, &f.entry, "Defaults", from_right(RIGHT, BACK_TOP - ITEM, 200.0, ITEM), 200.0, Shade::Bright, false, PauseButton::Defaults);
                 }
             }
-            Page::Settings { selected } => settings_page(root, d, look, settings, selected, top, left),
-            Page::Controls { selected, listening } => controls_page(root, d, look, settings, selected, listening, top, left),
-            Page::Load { selected } => load_page(root, d, look, list, selected),
-            Page::Mods => {}
-        }
-        // Back (and Defaults) at the bottom right.
-        if d.page != Page::Main {
-            right_entry(root, &f.entry, "Back", from_right(RIGHT, BACK_TOP, 200.0, ITEM), 200.0, Shade::Bright, false, PauseButton::Back);
-            if matches!(d.page, Page::Settings { .. } | Page::Controls { .. }) {
-                right_entry(root, &f.entry, "Defaults", from_right(RIGHT, BACK_TOP - ITEM, 200.0, ITEM), 200.0, Shade::Bright, false, PauseButton::Defaults);
+            if let Some((label, left, sel)) = d.keep {
+                keep_question(root, f, label, left, sel);
             }
-        }
-        if let Some((label, left, sel)) = d.keep {
-            keep_question(root, f, label, left, sel);
-        }
+        });
     });
 }
 
@@ -1196,7 +1204,7 @@ fn spawn_page(commands: &mut Commands, d: &Drawn, look: &PauseLook, settings: &[
 /// seconds left, Keep and Revert.
 fn keep_question(root: &mut ChildSpawnerCommands, f: &Faces, label: &str, left: u32, sel: usize) {
     // A sheet over the page that takes the pointer, so only the answers can be clicked.
-    root.spawn((full(), BackgroundColor(Color::BLACK.with_alpha(0.6)), Button, GlobalZIndex(112)));
+    root.spawn((crate::interface::over_view(full(), crate::interface::MIDDLE, true), BackgroundColor(Color::BLACK.with_alpha(0.6)), Button, GlobalZIndex(112)));
     let (w, h) = (640.0, 4.0 * ITEM + 40.0);
     let (line, _) = highlight_colors();
     let question = format!("Keep this {}?", label.to_lowercase());
@@ -1237,9 +1245,17 @@ fn settings_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
     for (n, i) in (first..rows.end).take(OPTION_ROWS).enumerate() {
         let s = &list[i];
         let v = d.states.get(i).copied().unwrap_or(0.0);
+        let disabled = d.disabled.get(i).copied().flatten();
         root.spawn((Button, PauseButton::Switch(i), boxed(from_middle(left, top + n as f32 * OPTION_ROW, OPTIONS_WIDTH, OPTION_ROW), i == selected)))
         .with_children(|r| {
-            sm_text(r, &f.entry, tr(s.label), 10.0, BASE + 2.0, color(Shade::Bright));
+            sm_text(r, &f.entry, tr(s.label), 10.0, BASE + 2.0, color(if disabled.is_some() { Shade::Dim } else { Shade::Bright }));
+            if let Some(reason) = disabled {
+                let reason = tr(reason);
+                r.spawn((SwitchState(i), Text::new(reason), Node { display: Display::None, ..default() }));
+                let vw = f.entry.font.width(reason);
+                sm_text(r, &f.entry, reason, VALUE_AT - vw / 2.0, BASE + 2.0, color(Shade::Dim));
+                return;
+            }
             if let Some(slider) = &s.slider {
                 slider_row(r, look, i, v, &slider.text(v));
                 return;
@@ -1347,12 +1363,12 @@ fn controls_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
             "Enter or a click: look up and down the other way round (the mouse and the right stick). Kept as \"{INVERT_ROW}\" in [Controls] of NVForever.ini."
         ),
         None if selected == sensitivity_row() && controller => format!(
-            "Left/Right or a click on the meter: how fast the right stick turns the view, a step of 5% ({} to {} of the game's). Kept as \"Stick Sensitivity\" in [Controller] of NVForever.ini.",
+            "Left/Right or a click on the meter: how fast the right stick turns the view, a step of about a tenth ({} to {} of the game's). Kept as \"Stick Sensitivity\" in [Controller] of NVForever.ini.",
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_LEAST),
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_MOST)
         ),
         None if selected == sensitivity_row() => format!(
-            "Left/Right or a click on the meter: how far the view turns as the mouse moves, a step of 5% ({} to {} of the game's). Kept as \"Mouse Sensitivity\" (radians a mouse count) in [Controls] of NVForever.ini.",
+            "Left/Right or a click on the meter: how far the view turns as the mouse moves, a step of about a tenth ({} to {} of the game's). Kept as \"Mouse Sensitivity\" (radians a mouse count) in [Controls] of NVForever.ini.",
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_LEAST),
             crate::bindings::sensitivity_text(crate::bindings::SENSITIVITY_MOST)
         ),
@@ -1365,7 +1381,7 @@ fn controls_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, l
         Some(c) if listening && controller => format!("Press the new controller button for {}. Start cancels.", label(c)),
         Some(c) if listening => format!("Press the new key or mouse button for {}. Esc cancels.", label(c)),
         Some(c) if controller => format!(
-            "A or a click: bind a new controller button to {} (a control that had it gets the old one). Delete clears it. Kept as \"{}\" in [Controller] of NVForever.ini.",
+            "A or a click: bind a new controller button to {} (a control that had it gets the old one). X or Delete clears it. Kept as \"{}\" in [Controller] of NVForever.ini.",
             label(c),
             Bindings::name(c)
         ),
@@ -1531,15 +1547,16 @@ fn load_page(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list:
     let side = |top: f32, height: f32| from_right(RIGHT + COLUMN, top, DELETE_WIDTH, height);
     let top = DETAILS_TOP - THUMB_DRAWN.y - 10.0;
     match d.delete_ask.filter(|r| *r == selected) {
-        None => right_entry(root, &f.small, "Delete  Del)", side(top, ITEM), DELETE_WIDTH, Shade::Bright, false, PauseButton::Delete),
+        None => right_entry(root, &f.small, &format!("Delete  {}", crate::pad::hint(&[KeyCode::Delete], crate::pad::PAUSE_AT)), side(top, ITEM), DELETE_WIDTH, Shade::Bright, false, PauseButton::Delete),
         Some(_) => {
             root.spawn((DetailLine, Text::new("Delete this save?"), Node { display: Display::None, ..default() }));
             root.spawn(side(top, ITEM)).with_children(|t| {
                 let w = f.small.font.width("Delete this save?");
                 sm_text(t, &f.small, "Delete this save?", DELETE_WIDTH - w - 10.0, BASE, color(Shade::Bright));
             });
-            right_entry(root, &f.small, "Yes  Y)", side(top + ITEM, ITEM), DELETE_WIDTH, Shade::Bright, true, PauseButton::DeleteAnswer(true));
-            right_entry(root, &f.small, "No  N)", side(top + 2.0 * ITEM, ITEM), DELETE_WIDTH, Shade::Bright, false, PauseButton::DeleteAnswer(false));
+            let (yes, no) = (crate::pad::hint(&[KeyCode::KeyY, KeyCode::Enter], crate::pad::PAUSE_AT), crate::pad::hint(&[KeyCode::KeyN, KeyCode::Escape], crate::pad::PAUSE_AT));
+            right_entry(root, &f.small, &format!("Yes  {yes}"), side(top + ITEM, ITEM), DELETE_WIDTH, Shade::Bright, true, PauseButton::DeleteAnswer(true));
+            right_entry(root, &f.small, &format!("No  {no}"), side(top + 2.0 * ITEM, ITEM), DELETE_WIDTH, Shade::Bright, false, PauseButton::DeleteAnswer(false));
         }
     }
     // With the scroll bar the rows leave room for it at their right.
@@ -2429,23 +2446,27 @@ fn choose(
         sounds.write(UiSound { menu: UiMenu::Pause, event: UiEvent::Focus });
     }
     for i in flips {
+        if view_disabled(&view, i) { continue; }
         sounds.write(UiSound { menu: UiMenu::Settings, event: UiEvent::Flipped });
         commands.queue(move |world: &mut World| {
             crate::settings::flip(world, i);
         });
     }
     for (i, n) in steps {
+        if view_disabled(&view, i) { continue; }
         sounds.write(UiSound { menu: UiMenu::Settings, event: UiEvent::Flipped });
         commands.queue(move |world: &mut World| {
             crate::settings::step_slider(world, i, n);
         });
     }
     for (i, v) in sets {
+        if view_disabled(&view, i) { continue; }
         commands.queue(move |world: &mut World| {
             crate::settings::set_slider(world, i, v);
         });
     }
     for (i, name) in picks {
+        if view_disabled(&view, i) { continue; }
         pick_choice(&mut commands, &mut sounds, i, name);
     }
 }
@@ -2461,6 +2482,7 @@ fn pick_choice(commands: &mut Commands, sounds: &mut MessageWriter<crate::ui_sou
 
 /// Open list row `i`'s dropdown on its chosen one.
 fn open_dropdown(view: &mut PauseView, i: usize) {
+    if view_disabled(view, i) { return; }
     let Some((names, chosen)) = view.drawn.as_ref().and_then(|d| d.list(i)) else { return };
     let at = names.iter().position(|n| n == chosen).unwrap_or(0);
     let first = (at + 1).saturating_sub(DROP_ROWS).min(names.len().saturating_sub(DROP_ROWS));
@@ -2470,9 +2492,15 @@ fn open_dropdown(view: &mut PauseView, i: usize) {
 
 /// The choice `step` (-1 or 1) from list row `i`'s chosen one, not past the ends.
 fn neighbour(view: &PauseView, i: usize, step: i32) -> Option<String> {
+    if view_disabled(view, i) { return None; }
     let (names, chosen) = view.drawn.as_ref()?.list(i)?;
     let at = names.iter().position(|n| n == chosen)? as i32 + step;
     names.get(usize::try_from(at).ok()?).cloned()
+}
+
+/// Whether row `i` was disabled when the page was last drawn.
+fn view_disabled(view: &PauseView, i: usize) -> bool {
+    view.drawn.as_ref().and_then(|d| d.disabled.get(i)).is_some_and(Option::is_some)
 }
 
 /// Row `i`'s value as the page last drew it.
@@ -2500,6 +2528,7 @@ fn drawn_now(world: &mut World) -> Drawn {
     let page = *world.resource::<Page>();
     let list = world.resource::<Settings>().list().to_vec();
     let states: Vec<f32> = world.resource::<Settings>().values(world);
+    let disabled: Vec<_> = (0..list.len()).map(|i| world.resource::<Settings>().disabled_status(world, i)).collect();
     let lists: Vec<(usize, Vec<String>, String)> = {
         let settings = world.resource::<Settings>();
         (0..list.len()).filter_map(|i| settings.choices(i).map(|c| (i, (c.names)(world), (c.chosen)(world)))).collect()
@@ -2520,6 +2549,7 @@ fn drawn_now(world: &mut World) -> Drawn {
         main_selected: view.main_selected,
         confirm: view.confirm,
         states,
+        disabled,
         status: world.resource::<PauseStatus>().line.clone(),
         under_main: main.is_some(),
         column: main.unwrap_or_else(|| entries(world.get_resource::<ModsEntry>().is_some_and(|m| m.0)).iter().map(|e| (e.label(), true)).collect()),
@@ -2818,7 +2848,7 @@ mod tests {
             list.saves.push((PathBuf::from(format!("{name}.nvfsave")), h));
         }
         app.insert_resource(list);
-        let drawn = Drawn { page: Page::Load { selected: 1 }, main_selected: 0, confirm: None, states: vec![], status: String::new(), column: entries(false).iter().map(|e| (e.label(), true)).collect(), under_main: false, thumb: None, controls: vec![], device: ("Keyboard and Mouse", false), rumble: true, invert_y: false, sensitivity: 1.0, scroll: 0, lists: vec![], dropdown: None, keep: None, delete_ask: None, view_w: VIEW_W as u32, language: 0 };
+        let drawn = Drawn { page: Page::Load { selected: 1 }, main_selected: 0, confirm: None, states: vec![], disabled: vec![], status: String::new(), column: entries(false).iter().map(|e| (e.label(), true)).collect(), under_main: false, thumb: None, controls: vec![], device: ("Keyboard and Mouse", false), rumble: true, invert_y: false, sensitivity: 1.0, scroll: 0, lists: vec![], dropdown: None, keep: None, delete_ask: None, view_w: VIEW_W as u32, language: 0 };
         app.world_mut().run_system_cached_with(|In(d): In<Drawn>, mut commands: Commands, list: Res<LoadList>| spawn_page(&mut commands, &d, &PauseLook::plain(), &[], &list), drawn).unwrap();
         let world = app.world_mut();
         let mut rows = world.query::<(&PauseButton, &BorderColor)>();
@@ -2866,6 +2896,34 @@ mod tests {
 
     #[derive(Resource)]
     struct Reach(f32);
+
+    #[test]
+    fn a_disabled_slider_shows_its_reason_without_controls_and_restores_its_saved_value() {
+        let mut app = App::new();
+        app.insert_resource(Reach(0.5)).insert_resource(Lamp(true)).init_resource::<Paused>().insert_resource(Page::Settings { selected: 0 });
+        let slider = crate::settings::Slider { get: |w| w.resource::<Reach>().0, set: |w, v| w.resource_mut::<Reach>().0 = v, min: 0.1, step: 0.05, shown: None };
+        add_setting(&mut app, Setting::slider("reach", "Test", "Reach", "How far.", slider));
+        crate::settings::set_disabled_status(&mut app, "reach", |w| w.resource::<Lamp>().0.then_some("Off (FSR active)"));
+        app.init_resource::<PauseView>().init_resource::<LoadList>().init_resource::<PauseStatus>().insert_resource(PauseLook::plain());
+        app.world_mut().resource_mut::<Paused>().0 = true;
+        app.add_systems(Update, draw);
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<(&SwitchState, &Text)>().single(world).unwrap().1.0, "Off (FSR active)");
+        let buttons: Vec<PauseButton> = world.query::<&PauseButton>().iter(world).copied().collect();
+        assert!(!buttons.iter().any(|b| matches!(b, PauseButton::Meter(0) | PauseButton::SliderStep(0, _))), "disabled sliders have no clickable adjustment controls");
+        assert!(view_disabled(world.resource::<PauseView>(), 0));
+        assert!(crate::settings::step_slider(world, 0, 1).is_none());
+        assert_eq!(world.resource::<Reach>().0, 0.5);
+
+        world.resource_mut::<Lamp>().0 = false;
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(world.query::<(&SwitchState, &Text)>().single(world).unwrap().1.0, "50%");
+        assert!(!view_disabled(world.resource::<PauseView>(), 0));
+        assert!(world.query::<&PauseButton>().iter(world).any(|b| *b == PauseButton::Meter(0)));
+        assert_eq!(crate::settings::step_slider(world, 0, 1), Some(0.55));
+    }
 
     #[test]
     fn a_slider_row_shows_its_value_as_a_meter_and_a_percentage() {

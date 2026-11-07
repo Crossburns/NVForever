@@ -90,7 +90,7 @@ pub(crate) fn land(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut stats: 
         match sim.world.place(l.weapon, cell, at, [0.0, 0.0, heading(l.dir)], 1) {
             Ok(id) => {
                 stats.landed += 1;
-                changed.write(RefChanged { form_id: id.0 });
+                changed.write(RefChanged::new(id.0));
                 info!("thrown: {name} ({}) thrown by {} landed at ({:.0}, {:.0}, {:.0}) as reference {id}, to be picked up", l.proj, l.by, at[0], at[1], at[2]);
             }
             Err(e) => {

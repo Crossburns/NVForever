@@ -224,7 +224,7 @@ pub fn menu_mode(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
 pub fn say_to(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let speaker = ctx.subject()?;
     let (target, topic) = (a.form(0)?, a.form(1)?);
-    if g.say(speaker, Some(target), topic, true).is_some() {
+    if g.say_by_script(speaker, Some(target), topic, true).is_some() {
         if a.num_or(3, 0.0) != 0.0 {
             g.set_line_look(speaker, LineLook::Speaker);
         }
@@ -246,7 +246,7 @@ pub fn say_to(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
 pub fn say(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let speaker = ctx.subject()?;
     let topic = a.form(0)?;
-    if g.say(speaker, None, topic, false).is_some() {
+    if g.say_by_script(speaker, None, topic, false).is_some() {
         g.set_line_flags(speaker, a.num_or(1, 0.0) != 0.0, a.num_or(3, 0.0) != 0.0);
     }
     none()
@@ -256,8 +256,8 @@ pub fn say(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
 /// [headTrack] [allowMovement]`: with the player as the target, the speaker starts a
 /// conversation with the named topic, GREETING without one [documented: GECK wiki
 /// StartConversation, owner export: a "force greet"; nothing happens when either actor
-/// is disabled]. In the game the speaker first walks up to the target; that needs AI
-/// packages, so here the conversation starts at once [stand-in]. A call while a
+/// is disabled]. The speaker first walks up to the player when it is not near and the AI
+/// runs (`Game::walk_up_greet`); without the AI the conversation starts at once. A call while a
 /// conversation is running (except from the end script of the line that closes it:
 /// `Game::hold_force_greet`), or when the speaker has no line to say, does nothing
 /// [hypothesis]. With another actor as the target the two talk to each other and the
@@ -296,7 +296,7 @@ pub fn start_conversation(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, St
     // also for a Goodbye greeting (`Game::force_greet`). Called from the end script of
     // the line that closes the running conversation, it starts once that has closed
     // (`Game::hold_force_greet`).
-    if !g.hold_force_greet(speaker, a.opt_form(1)) {
+    if !g.hold_force_greet(speaker, a.opt_form(1)) && !g.walk_up_greet(speaker, a.opt_form(1)) {
         let _ = g.force_greet(speaker, a.opt_form(1));
     }
     none()

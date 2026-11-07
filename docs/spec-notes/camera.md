@@ -83,6 +83,8 @@ is not covered: the frames show no weapon.
   of view zoom [hypothesis]. Scoped weapons (Has Scope) use the same angle for now; their
   scope overlay is not built.
 - Built in `engine/nvf-play/src/aim_zoom.rs`; smoke scenario `aim-zoom`.
+- A conversation narrows the view too, and lays that over this angle without becoming its
+  base: docs/design/dialogue-play.md §8.8.
 
 ### 4.1 True iron sights
 

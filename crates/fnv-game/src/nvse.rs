@@ -154,7 +154,7 @@ impl Game<'_> {
 
 /// An xNVSE function by catalogue name (lower case); `None` when it is not built here.
 /// `on` is the reference it was called on, else the calling reference.
-pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[XVal]) -> Option<Result<XVal, String>> {
+pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[XVal]) -> Option<Result<XVal, String>> {
     if let Some(r) = crate::delayed::call(g, ctx, name, on, args) {
         return Some(r);
     }
@@ -170,6 +170,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
         return Some(Ok(v));
     }
     let subject = on.or(ctx.self_ref);
+    if let Some(r) = crate::nvse_lutana::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_ttw::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
     if let Some(r) = crate::nvse_refs::call(g, name, subject, args) {
         return Some(r);
     }
@@ -228,6 +234,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
         return Some(r);
     }
     if let Some(r) = crate::nvse_showoff2::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
+    if let Some(r) = crate::nvse_showoff3::call(g, ctx, name, subject, args) {
         return Some(r);
     }
     if let Some(r) = crate::nvse_anh::call(g, ctx, name, subject, args) {

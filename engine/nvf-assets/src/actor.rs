@@ -336,6 +336,10 @@ pub struct PartUse {
     pub part: Arc<PreparedPart>,
     /// Per shape, the material to draw it with (overrides already applied).
     pub materials: Vec<Handle<NifMaterial>>,
+    /// Per shape, a second material the shape is drawn with again, from an entity of its
+    /// own beside the first (the blended layer of a hair model over its solid core,
+    /// `nif_spawn::hair_model_layer`); empty or `None`: drawn once.
+    pub layers: Vec<Option<Handle<NifMaterial>>>,
     /// Per shape, a replacement mesh (e.g. FaceGen-morphed), or `None` for the prepared one.
     pub meshes: Vec<Option<Handle<Mesh>>>,
     /// Shape names not to draw (e.g. the hair's `Hat` shape when no headgear is worn).
@@ -797,10 +801,12 @@ impl ActorCtx<'_, '_> {
             }
             let Ok(shape) = &dec.blocks[o.block] else { continue };
             let Some(data) = shape.block_ref("data").and_then(|r| dec.get(r)) else { continue };
-            let props = shape_props(&file, &dec, o, &by_block);
+            let mut props = shape_props(&file, &dec, o, &by_block);
             if props.is_helper() {
                 continue;
             }
+            // The actor's clips may fade this shape's material alpha (Mr. House's screens).
+            props.alpha_gated = crate::nif_spawn::material_alpha_controlled(&file, &dec, o.block);
             let Some((mut mesh, _tris)) = build_mesh(data) else { continue };
             // Hair-shader shapes (hair, beards, eyebrows) carry a mask in their vertex
             // colours, not a colour [observed: red 0.04–0.39 with green and blue at 1 in
@@ -937,6 +943,26 @@ pub fn creature_rigid_attach(skel: &PreparedSkeleton, part: &PreparedPart, s: &P
         Some(&b) => (b, part.root * s.transform),
         None => (0, s.transform),
     }
+}
+
+/// Make a skinned shape that is drawn rigidly (a weapon's or a held object's shape hung
+/// from a bone, or a part whose bones the skeleton lacks) a valid skinned draw: a skin of
+/// `joints` joints that are all the shape's own entity `e`, with identity inverse bind
+/// poses, so each vertex lands where the rigid entity puts it and follows its transform.
+/// Its mesh keeps the skin's joint attributes, and Bevy draws such a mesh through the
+/// skinned pipeline; with no skin the see-through (blended) pass bound the model-only
+/// mesh group to it, a GPU validation error each frame that stopped the run (#1424: the
+/// Sierra Madre lobby hologram's boxing tape, drawn see-through by its effect shader)
+/// [observed 2026-11-06; bevy_pbr 0.20.1 `SetMeshBindGroup` chooses the blended pass's
+/// group by the entity's skin, the pipeline by the mesh's attributes].
+pub fn skin_in_place(commands: &mut Commands, e: Entity, joints: usize) {
+    let n = joints.max(1);
+    commands.queue(move |world: &mut World| {
+        let binds = world.resource_mut::<Assets<SkinnedMeshInverseBindposes>>().add(SkinnedMeshInverseBindposes::from(vec![Mat4::IDENTITY; n]));
+        if let Ok(mut ent) = world.get_entity_mut(e) {
+            ent.insert(SkinnedMesh { inverse_bindposes: binds, joints: vec![e; n] });
+        }
+    });
 }
 
 /// What [`spawn_actor`] spawned.
@@ -1078,48 +1104,56 @@ pub fn spawn_parts(commands: &mut Commands, skel: &PreparedSkeleton, parts: &[Pa
             let material = u.materials.get(i).cloned().unwrap_or_else(|| s.material.clone());
             let joints: Option<Vec<Entity>> =
                 s.skin.as_ref().and_then(|(_, names)| names.iter().map(|n| skel.by_name.get(n).map(|&j| nodes[j])).collect());
-            let e = match (&s.skin, joints) {
-                (Some((binds, _)), Some(joints)) => {
-                    let e = commands
-                        .spawn((
-                            Mesh3d(mesh),
-                            MeshMaterial3d(material),
-                            Transform::IDENTITY,
-                            SkinnedMesh { inverse_bindposes: binds.clone(), joints },
-                            DynamicSkinnedMeshBounds,
-                        ))
-                        .id();
-                    commands.entity(nodes[0]).add_child(e);
-                    e
-                }
-                (Some(_), None) => {
-                    // Bones missing from the skeleton: draw the bind pose at the root.
-                    out.unbound += 1;
-                    let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(s.transform)))).id();
-                    commands.entity(nodes[0]).add_child(e);
-                    e
-                }
-                (None, _) => {
-                    let (at, local) = match bone {
-                        _ if u.by_ancestor => {
-                            let (b, local) = creature_rigid_attach(skel, &u.part, s);
-                            (nodes[b], local)
-                        }
-                        Some(b) => (nodes[b], rigid_local(skel, b, &u.part.root, &s.transform)),
-                        None => (nodes[0], s.transform),
-                    };
-                    let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(local)))).id();
-                    commands.entity(at).add_child(e);
-                    e
-                }
-            };
-            if let Some(n) = &s.name {
-                commands.entity(e).insert((ShapeName(n.to_ascii_lowercase()), s.stored_look()));
+            if matches!((&s.skin, &joints), (Some(_), None)) {
+                out.unbound += 1;
             }
-            commands.entity(e).insert(limb);
-            out.drawn.push(e);
-            out.part_of.push(pi);
-            out.shape_of.push(i);
+            // The shape, and its second layer where it has one (`PartUse::layers`): the
+            // same mesh at the same place under the same bones.
+            let layer = u.layers.get(i).cloned().flatten();
+            for material in std::iter::once(material).chain(layer) {
+                let e = match (&s.skin, joints.clone()) {
+                    (Some((binds, _)), Some(joints)) => {
+                        let e = commands
+                            .spawn((
+                                Mesh3d(mesh.clone()),
+                                MeshMaterial3d(material),
+                                Transform::IDENTITY,
+                                SkinnedMesh { inverse_bindposes: binds.clone(), joints },
+                                DynamicSkinnedMeshBounds,
+                            ))
+                            .id();
+                        commands.entity(nodes[0]).add_child(e);
+                        e
+                    }
+                    (Some((_, names)), None) => {
+                        // Bones missing from the skeleton: draw the bind pose at the root.
+                        let e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(s.transform)))).id();
+                        commands.entity(nodes[0]).add_child(e);
+                        skin_in_place(commands, e, names.len());
+                        e
+                    }
+                    (None, _) => {
+                        let (at, local) = match bone {
+                            _ if u.by_ancestor => {
+                                let (b, local) = creature_rigid_attach(skel, &u.part, s);
+                                (nodes[b], local)
+                            }
+                            Some(b) => (nodes[b], rigid_local(skel, b, &u.part.root, &s.transform)),
+                            None => (nodes[0], s.transform),
+                        };
+                        let e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material), Transform::from_matrix(Mat4::from(local)))).id();
+                        commands.entity(at).add_child(e);
+                        e
+                    }
+                };
+                if let Some(n) = &s.name {
+                    commands.entity(e).insert((ShapeName(n.to_ascii_lowercase()), s.stored_look()));
+                }
+                commands.entity(e).insert(limb.clone());
+                out.drawn.push(e);
+                out.part_of.push(pi);
+                out.shape_of.push(i);
+            }
         }
     }
 }

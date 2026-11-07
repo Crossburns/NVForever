@@ -157,6 +157,45 @@ pub const RIGHT_ARM: u16 = 28;
 pub const LEFT_MOBILITY: u16 = 29;
 pub const RIGHT_MOBILITY: u16 = 30;
 
+/// The share of a blast's Health damage the torso loses, in condition points
+/// (docs/spec-notes/crippled-limbs.md §5) [observed 2026-11-06, o25_limbs: 1/30 for five
+/// frag mine and grenade blasts].
+pub const BLAST_TORSO_SHARE: f64 = 1.0 / 30.0;
+/// The share of a blast's Health damage the legs lose together, in condition points
+/// [observed: 0.24 for the same five blasts].
+pub const BLAST_LEGS_SHARE: f64 = 0.24;
+
+/// An explosion's limb damage (docs/spec-notes/crippled-limbs.md §5) on an actor whose
+/// body part data names the limb conditions `conditions`, for `damage` (the blast's
+/// damage to Health): condition points, as a fall's leg ([`LimbHit::points`]). The torso
+/// takes [`BLAST_TORSO_SHARE`] of it and the legs [`BLAST_LEGS_SHARE`] together, the left
+/// leg two thirds of that and the right one third (all of it on the one leg when the data
+/// has one); the head, arms and brain take nothing [observed: the shares and the
+/// untouched parts, frag mines and a grenade at a human's feet; hypothesis: the
+/// left/right split, which the original varied between all-left and 2:1, and that a
+/// blast at any height or on any body does the same]. The points come straight off the
+/// condition, not as a share of a pool, at any maximum Health and with no player limb
+/// multiplier [hypothesis: measured only on one NPC at 5000 Health; a share of the
+/// limb's pool fits the same numbers, observer check 74].
+pub fn blast_limb_shares(conditions: &[u16], damage: f64) -> Vec<LimbHit> {
+    if damage <= 0.0 {
+        return Vec::new();
+    }
+    let has = |c: u16| conditions.contains(&c);
+    let legs = match (has(LEFT_MOBILITY), has(RIGHT_MOBILITY)) {
+        (true, true) => vec![(LEFT_MOBILITY, BLAST_LEGS_SHARE * 2.0 / 3.0), (RIGHT_MOBILITY, BLAST_LEGS_SHARE / 3.0)],
+        (true, false) => vec![(LEFT_MOBILITY, BLAST_LEGS_SHARE)],
+        (false, true) => vec![(RIGHT_MOBILITY, BLAST_LEGS_SHARE)],
+        (false, false) => Vec::new(),
+    };
+    has(TORSO)
+        .then_some((TORSO, BLAST_TORSO_SHARE))
+        .into_iter()
+        .chain(legs)
+        .map(|(condition, share)| LimbHit { condition, health_percent: 0.0, damage: damage * share, points: true })
+        .collect()
+}
+
 /// `fCombatPlayerLimbDamageMult` when the load order lacks it [observed: FalloutNV.esm].
 pub const PLAYER_LIMB_DAMAGE_MULT: f64 = 0.5;
 /// `fMoveOneCrippledLegSpeedMult` and `fMoveTwoCrippledLegsSpeedMult` when the load
@@ -330,14 +369,21 @@ impl Game<'_> {
         Some((damage, d.attack_reach.map(f64::from)))
     }
 
-    /// The actor dies: dead flag, killer, GetDeadCount, OnDeath (KillActor's effect).
-    /// False when it was already dead.
+    /// The actor dies, of no hit: dead flag, killer, GetDeadCount, OnDeath (KillActor's
+    /// effect). False when it was already dead.
     pub fn kill(&mut self, r: FormId, killer: Option<FormId>) -> bool {
+        self.die(r, killer, None)
+    }
+
+    /// [`Game::kill`], with the hit that killed if one did (`RefExtra::killing_hit`, set
+    /// before anything of the death runs). The player's own death is no kill to count, by
+    /// anyone's hand [design: nobody has looked at what the original counts].
+    fn die(&mut self, r: FormId, killer: Option<FormId>, fatal: Option<crate::game::LastHit>) -> bool {
         if self.is_dead(r) {
             return false;
         }
         // Karma and murder are judged while the victim still lives (`crate::crime`).
-        if killer == Some(FormId::PLAYER_REF) {
+        if killer == Some(FormId::PLAYER_REF) && r != FormId::PLAYER_REF {
             self.player_kills(r);
             self.count_kill(r);
             self.challenge_kill(r);
@@ -345,6 +391,7 @@ impl Game<'_> {
         let e = self.extra.entry(r).or_default();
         e.dead = true;
         e.killer = killer;
+        e.killing_hit = fatal;
         if let Some(b) = base_of(self, r) {
             *self.player.dead_count.entry(b).or_default() += 1;
         }
@@ -400,8 +447,18 @@ impl Game<'_> {
     /// blast's, an actor's unarmed attack effect (docs/spec-notes/hit-effects.md §1). A
     /// dead or unharmable target takes none. The target's resistances cut the harmful
     /// magnitudes, a fully resisted effect does not start, and a hit with the same item
-    /// while its effect lasts starts that effect's time again (§2, §3).
+    /// while its effect lasts starts that effect's time again (§2, §3). The hit's damage
+    /// comes next, and it decides a death by a Script effect's damage
+    /// ([`Game::health_lowered`]).
     pub fn apply_hit_effect(&mut self, target: FormId, item: FormId, caster: Option<FormId>) -> Vec<crate::aid::Applied> {
+        self.hits_running.push(target);
+        let applied = self.start_hit_effect(target, item, caster);
+        self.hits_running.pop();
+        applied
+    }
+
+    /// [`Game::apply_hit_effect`] with no hit to come: a Script effect's damage kills at once.
+    pub(crate) fn start_hit_effect(&mut self, target: FormId, item: FormId, caster: Option<FormId>) -> Vec<crate::aid::Applied> {
         if self.is_dead(target) || self.is_immune(target) {
             return Vec::new();
         }
@@ -462,6 +519,33 @@ impl Game<'_> {
         }
     }
 
+    /// A script lowered `r`'s Health (DamageActorValue): at 0 or less it dies, an essential
+    /// actor is knocked out [hypothesis: unconscious.md §2.2, observer-checks.md check 89].
+    /// Nobody is credited, so no XP, karma or challenge. A god-mode player stands [design], and so does an actor whose record gives
+    /// no Health, as its Health is only `max_health`'s stand-in of 1. During a hit on `r`
+    /// the hit decides, so that a kill finished by an OnHit script or by a Script effect the
+    /// hit brings is still the attacker's (the boxing gloves' `DamageAV Health 10`,
+    /// unconscious.md §1).
+    pub(crate) fn health_lowered(&mut self, r: FormId) {
+        if self.is_dead(r) || self.is_immune(r) || self.hits_running.contains(&r) {
+            return;
+        }
+        let player = r == FormId::PLAYER_REF;
+        // Only actors whose record gives a Health have one to run out of.
+        let has_health = self.stats_def(r).is_some_and(|d| d.base_health != 0 || d.zero_health);
+        if (player && self.toggles.god_mode) || (!player && !has_health) {
+            return;
+        }
+        if !actor::actor_value(self, r, HEALTH).is_ok_and(|v| v <= 0.0) {
+            return;
+        }
+        if self.is_essential(r) && !player {
+            self.knock_out(r, crate::unconscious::Cause::Essential, None);
+        } else {
+            self.kill(r, None);
+        }
+    }
+
     /// Apply `damage` health damage to `target` (see the module notes).
     pub fn hit(&mut self, target: FormId, damage: f64, mut info: HitInfo) -> HitResult {
         // The difficulty scales the player's hits and the hits on the player, limb damage
@@ -485,6 +569,7 @@ impl Game<'_> {
         // SetOnHitEventHandler; observed: jip-hits, Health in the handler is the value
         // before the hit] (jip-hit-info.md).
         let fatal = before - dealt <= floor;
+        self.hits_running.push(target);
         let flags = (u16::from(info.critical) << 1) | (u16::from(fatal) << 2);
         let limb_damage = info.limb.map_or(0.0, |l| l.damage);
         let rec = crate::jip_events::JipHit { attacker: info.attacker, weapon: info.weapon, health_damage: dealt, limb_damage, location: info.location, flags };
@@ -492,9 +577,10 @@ impl Game<'_> {
         self.jip_event("hit", Some(target), Vec::new());
         actor::add_damage(self, target, HEALTH, dealt);
         let players_side = info.attacker.is_some_and(|a| self.kill_earns_xp(a));
+        let this_hit = crate::game::LastHit { attacker: info.attacker, weapon: info.weapon, location: info.location, critical: info.critical };
         {
             let e = self.extra.entry(target).or_default();
-            e.last_hit = Some(crate::game::LastHit { attacker: info.attacker, weapon: info.weapon, location: info.location, critical: info.critical });
+            e.last_hit = Some(this_hit);
             if players_side {
                 e.player_damage += dealt;
             }
@@ -518,6 +604,7 @@ impl Game<'_> {
             self.item_event(a, w, event::ON_HIT, Some(Value::Ref(target.0)));
         }
         let health = actor::actor_value(self, target, HEALTH).unwrap_or(before - dealt);
+        self.hits_running.pop();
         let mut out = HitResult { dealt, health, max_health, ..HitResult::default() };
         if let Some(l) = info.limb {
             let (condition, crippled) = self.hit_limb(target, l, max_health);
@@ -534,7 +621,9 @@ impl Game<'_> {
                 // Said its KOed line when knocked out now (`Game::knock_out`).
                 out.knocked_out = self.knock_out(target, crate::unconscious::Cause::Essential, info.attacker);
             } else {
-                out.died = self.kill(target, info.attacker);
+                // Also when an OnHit script or the hit's Script effect took the last of the
+                // Health ([`Game::health_lowered`]): this hit decides, so it is the killing one.
+                out.died = self.die(target, info.attacker, Some(this_hit));
                 if out.died {
                     out.overkill = (damage - dealt).max(0.0);
                 }
@@ -549,6 +638,7 @@ impl Game<'_> {
         if info.attacker == Some(FormId::PLAYER_REF) && !out.died && self.vats.mode == crate::vats::MODE_PLAYBACK {
             let roll = crate::magic_archetypes::hash_roll(self.time, target);
             self.paralyzing_palm(target, info.weapon, roll);
+            out.health = actor::actor_value(self, target, HEALTH).unwrap_or(out.health);
         }
         // What the target says (`crate::combat_lines`): Death was said by `kill`, KOed by
         // `knock_out`; nothing more from one lying knocked out.
@@ -636,8 +726,9 @@ impl Game<'_> {
     }
 
     /// An explosion's limb damage on the actor it caught (docs/spec-notes/crippled-limbs.md
-    /// §5): every limb in `limbs` at once, after its health damage ([`Game::hit`], whose
-    /// hit record this marks crippled), scaled by the difficulty as a hit's. Nothing on a
+    /// §5): every limb in `limbs` ([`blast_limb_shares`]) at once, after its health damage
+    /// ([`Game::hit`], whose hit record this marks crippled), scaled by the difficulty as
+    /// a hit's, so the shares hold of the Health it lost. Nothing on a
     /// dead or immune actor. Returns each limb's condition code, its condition after and
     /// whether this blast crippled it.
     pub fn blast_limbs(&mut self, target: FormId, attacker: Option<FormId>, limbs: &[LimbHit]) -> Vec<(u16, f64, bool)> {
@@ -712,8 +803,10 @@ impl Game<'_> {
     /// [documented: GECK wiki Stats Tab - NPC, "The Player Character would have a Speed of
     /// 100%"; observed for people: SetAV SpeedMult 150 ran 1.5 times as fast,
     /// actors.md §8.10], times its body armour's share ([`Game::armor_speed_mult`]).
-    /// The player's walk and run take it (issue #1364) [hypothesis: the player follows
-    /// the people's rule; not measured on the player].
+    /// The player's walk and run take it every frame (issues #1364, #1742) [observed on
+    /// the player: capture o25_speed, the armour shares and Speed Mult 150 = 1.5 times the
+    /// run]. A new Speed Mult counts at once, by design: the original waited for an
+    /// equipment change, which the owner ruled a bug (actors.md §8.10, The player).
     pub fn move_speed_mult(&mut self, r: FormId) -> f64 {
         let mult = actor::actor_value(self, r, crate::actor_values::SPEED_MULTIPLIER).unwrap_or(100.0);
         (mult / 100.0).clamp(0.0, 10.0) * self.armor_speed_mult(r)
@@ -894,8 +987,12 @@ impl Game<'_> {
         self.item_event(actor, weapon, event::ON_FIRE, None)
     }
 
-    /// The XP the player earns for killing `target` (see the module notes).
+    /// The XP the player earns for killing `target` (see the module notes): none for the
+    /// player's own death, by the player's or a companion's hand [design].
     pub fn kill_xp(&self, target: FormId) -> f64 {
+        if target == FormId::PLAYER_REF {
+            return 0.0;
+        }
         let e = self.extra.get(&target);
         let (by_player, total) = e.map_or((0.0, 0.0), |e| (e.player_damage, e.total_damage));
         if total > 0.0 && by_player / total * 100.0 < setting(self, "iXPDeathRewardHealthThreshold", 40.0) {

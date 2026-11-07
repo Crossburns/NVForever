@@ -110,7 +110,9 @@ pub fn primitive_object(p: &Primitive, meaning: BoundsMeaning) -> Option<Collisi
         node_transform: Iso::IDENTITY,
         body_transform: Iso::IDENTITY,
         motion: Motion::Static,
-        layer: p.layer.map_or(0, |l| l.min(255) as u8),
+        // No XTRI (all but 3 of the masters' 8,819 primitives): an invisible wall
+        // (physics.md §4.1) [hypothesis: what a CollisionMarker is for].
+        layer: p.layer.map_or(crate::layers::INVISIBLE_WALL, |l| l.min(255) as u8),
         mass: 0.0,
         friction: 0.5,
         restitution: 0.0,
@@ -118,6 +120,7 @@ pub fn primitive_object(p: &Primitive, meaning: BoundsMeaning) -> Option<Collisi
         // No Havok radius is known for placed primitives [hypothesis: 0].
         shell: 0.0,
         material: None,
+        wind: false,
     })
 }
 
@@ -144,6 +147,7 @@ mod tests {
         let o = primitive_object(&p, BoundsMeaning::FullExtents).unwrap();
         assert_eq!(*o.shape, Shape::Box { half_extents: [5.0, 10.0, 15.0] });
         let s = Primitive { bounds: [8.0, 8.0, 8.0], kind: PrimitiveKind::Sphere, layer: None };
+        assert_eq!(primitive_object(&s, BoundsMeaning::HalfExtents).unwrap().layer, crate::layers::INVISIBLE_WALL);
         assert_eq!(*primitive_object(&s, BoundsMeaning::HalfExtents).unwrap().shape, Shape::Sphere { radius: 8.0 });
         let none = Primitive { bounds: [1.0; 3], kind: PrimitiveKind::None, layer: None };
         assert!(primitive_object(&none, BoundsMeaning::HalfExtents).is_none());

@@ -55,6 +55,17 @@
 //!   196 and 217 of 500 at once; the guard at 32 and 62 of 128 after about 3 s]. Open: the
 //!   cash-room guard warned at 98-121 units (inside his 128) and never attacked in 68 s,
 //!   while the geckos at 0.78 of their radius did; not built.
+//! - **Spawned actors do not warn** [observed, original game, capture `o25_coyote`
+//!   2026-11-06, docs/handoff/observer-checks.md item 2, #1341]: a CrCoyote PlaceAtMe'd at
+//!   the spot of the placed VERGSCoyote6REF, the player 700 units off (inside its 1,024),
+//!   was in combat at the first sample with no warning, where the placed coyote warned for
+//!   14.9 s first; the base has the same aggro radius and packages. Spawned coyotes on the
+//!   airport runway (o16_air) did the same at 250 and 700 units. So an actor created at
+//!   run time (a dynamic reference, [`FormId::is_dynamic`]) inside its aggro radius attacks
+//!   at once, as one inside half of it does; the other rules (who, the package, the
+//!   radius) stay [hypothesis: why: a PlaceAtMe'd actor has no editor location for the
+//!   radius to be kept around, or it starts alerted; the rule covers every created actor,
+//!   people too, which no capture tried].
 //! - **Guard packages do not warn** [observed: `warnings2` g_room*, Gomorrah's room
 //!   guards on vGomorrahGuardPackage, with no aggro radius of their own, neither warned
 //!   nor fought a player 15 units from the door each guards or 60 units from them;
@@ -92,10 +103,12 @@ pub const PERSON_ATTACK_SECONDS: f64 = 21.0;
 pub const AGGRO_ATTACK_SHARE: f64 = 0.5;
 
 impl Game<'_> {
-    /// `actor`'s aggro radius in game units when its AI data turns the behaviour on.
+    /// `actor`'s aggro radius in game units when its AI data turns the behaviour on
+    /// (LNSetAggroRadius's radius first, `nvse_lutana`).
     pub fn aggro_radius(&self, actor: FormId) -> Option<f64> {
-        let d = self.def_following(actor, |d| d.template_ai)?;
-        (d.aggro_radius_behavior && d.aggro_radius > 0).then_some(d.aggro_radius as f64)
+        let (id, d) = self.template_source(crate::functions::base_of(self, actor)?, actor, |d| d.template_ai)?;
+        let r = self.other.lutana.aggro_radius.get(&id).copied().unwrap_or(d.aggro_radius);
+        (d.aggro_radius_behavior && r > 0).then_some(r as f64)
     }
 
     /// Whether `actor`'s current package allows aggro radius behaviour (module notes).
@@ -150,7 +163,8 @@ impl Game<'_> {
             let (level, last) = self.provocations.aggro_warnings.get(&w).copied().unwrap_or((0, f64::NEG_INFINITY));
             // Inside a share of its aggro radius it attacks at once (module notes, "The
             // timing").
-            let close = distance <= radius * AGGRO_ATTACK_SHARE;
+            // So does one created at run time (module notes, "Spawned actors do not warn").
+            let close = distance <= radius * AGGRO_ATTACK_SHARE || w.is_dynamic();
             let warned_out = (level as f64) >= s.guard_warnings;
             // The attack comes so long after the first warning: the time left after the
             // warnings already given.

@@ -133,7 +133,8 @@ conditions are run on.
   switches it [hypothesis: from these scripts' names and shape; the default action of a
   receiver is not described in the wiki], and these scripts make their radios "start on".
   Receivers without a script (the jukeboxes `JukeBoxDirty01`, `NewVegasRadio`, …) stay
-  silent until the player switches them on [hypothesis].
+  silent until the player switches them on [hypothesis]; the player's own activation
+  counts as a switch as a script's does (`Game::default_activation_by_hand`) [design].
 - `GoodspringsRadioScript` (the Prospector Saloon's radio `00109087`): OnLoad calls
   `SetDestroyed 1` unless the player knows about the radio; OnActivate by the player
   shows a message unless fixed; fixing it sets `bfixed` and activates it [observed:

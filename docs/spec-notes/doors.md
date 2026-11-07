@@ -56,7 +56,20 @@ Design: docs/design/navmesh.md §6.1 (doors and actors following paths). Code:
   end moves every one of them, and "Close" at its end equals the stored (bind) pose for
   606; the 4 bodies of `Lucky38ExtDoorDUPLICATE000` differ [observed]. So the stored
   pose is the closed door, and keyframed collision is meant to follow the animated nodes
-  [hypothesis from the motion type, consistent with these poses].
+  [hypothesis from the motion type, consistent with these poses]. NVForever draws and
+  collides a closed door at rest in its stored pose, not at the end of "Close" (#1541).
+- **The Lucky 38's outer door** (`Lucky38EntranceDoorActor` 0x00118E76, base
+  `Lucky38ExtDoorDUPLICATE000`, `architecture\strip\Lucky38ExtDoor.NIF`, nameless): four
+  panels `DoorE01`–`DoorE04` whose pivots are the model's origin, the tower's centre,
+  about 1,700 units away; in the stored pose they close the entrance as one curved wall
+  some 500 units before the casino's own door 0x0013BB17 (a teleport door, glass
+  `Lucky38Door.NIF`). "Open" (13.27 s) turns them 0 → ±0.17 and ±0.349 radians about z,
+  sliding them aside round the façade; "Close" (0.03 s) holds ±0.17/±0.349, the open
+  pose [observed: FalloutNV.esm, the model]. Its script (`Lucky38EntranceScript`) is all
+  comment; Victor's dialogue and quest scripts open it with `SetOpenState 1` (INFO
+  0x00117B13, 0x0016510E, 0x00157259, SCPT 0x00165E64, 0x001629AA) [observed]. Held at
+  "Close"'s end, it stood open from the start and the player walked in without Victor
+  (owner playtest 2026-11-04, #1541).
 - **Locks**: 244 placed doors without XTEL carry XLOC (241 on Open/Close models); 203
   carry ONAM [observed].
 
@@ -77,6 +90,11 @@ Design: docs/design/navmesh.md §6.1 (doors and actors following paths). Code:
   (`RefCollisionOptions::posed_doors`).
 - A door told to close while opening (or the reverse) turns back from the same fraction
   of the other sequence [engine choice; not observed].
+- A load stands every door at rest as the save has it, open or closed, with no animation
+  and no sound; a door that a load script or anything later changes moves as any other
+  change does [design: `Doors::rest_as_restored`, called by `script::run_scripts` before
+  the load's scripts; engine choice, what the original shows for a door saved open is not
+  captured; smoke `save-door-write`, `save-door-load`].
 - While a door swings (opening or closing), its moving parts are not solid: the leaf
   passes through actors instead of hitting or pushing them, and rays miss it; at rest,
   open or closed, it is solid again [engine choice, owner request 2026-10-09; whether

@@ -401,6 +401,9 @@ pub fn hit(
 
 /// Melee reach in game units: `fCombatDistance` × the actor's scale × the weapon's Reach
 /// [documented: GECK wiki Weapons]; a Reach of 0 (the Fists) counts as 1 [hypothesis].
+/// It reaches from the attacker's body, not its centre: the original's NPCs began their
+/// swings about the two bodies' radii (45) plus 107 × Reach centre to centre [observed:
+/// o14_reach, 2026-11-01; the body reading is a hypothesis, combat-rules.md §10].
 pub fn melee_reach(r: &Rules, w: &WeaponStats, scale: f32) -> f32 {
     let reach = if w.reach > 0.0 { w.reach } else { 1.0 };
     r.combat_distance * scale * reach
@@ -492,5 +495,31 @@ pub fn explosion_damage(t: &CombatTuning, damage: f32, radius: f32, distance: f3
     }
     let k = (distance / radius).clamp(0.0, 1.0);
     damage * (1.0 - k * (1.0 - t.explosion_edge))
+}
+
+/// The breakdown of one blast on one actor ([`blast_hit`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlastHit {
+    /// The blast's damage as it reached the actor.
+    pub base: f32,
+    /// After the cause's "Calculate Weapon Damage" perks.
+    pub modified: f32,
+    pub dt: f32,
+    pub dr: f32,
+    /// Health damage dealt.
+    pub dealt: f32,
+}
+
+/// What a blast of `damage` (after its falloff) deals through the target's `dt` and `dr`:
+/// the entry points and the armour steps of [`hit`], in its order, and none of the weapon
+/// formula's: an explosion has its own damage, so no skill, condition, critical or body
+/// part (docs/spec-notes/perk-entry-points.md §2) [design; hypothesis: that the original
+/// runs these entries in this order].
+pub fn blast_hit(r: &Rules, t: &CombatTuning, damage: f32, dt: f32, dr: f32, attacker: &dyn PerkHooks, target: &dyn PerkHooks) -> BlastHit {
+    let modified = attacker.weapon_damage(damage).max(0.0);
+    let dt = (target.dt_defender(dt) - attacker.dt_attacker(0.0)).max(0.0);
+    let dr = dr.clamp(0.0, r.max_armor_rating);
+    let dealt = (modified - dt).max(modified * t.dt_floor) * (1.0 - dr / 100.0);
+    BlastHit { base: damage, modified, dt, dr, dealt }
 }
 

@@ -288,6 +288,11 @@ pub struct Awareness {
     /// forgotten (docs/spec-notes/combat-groups.md §3).
     #[serde(default)]
     pub shared: BTreeMap<FormId, f64>,
+    /// `Game::time` it went into Combat from Normal or Alert (not back from Lost): a
+    /// fighter stands on its heading a moment before it turns to its target
+    /// (`fnv_ai::alert::COMBAT_REACTION_SECONDS`, docs/spec-notes/actors.md §8.9).
+    #[serde(default)]
+    pub combat_began: Option<f64>,
 }
 
 /// A fighter keeps its target while it detects it, unless another detected one is more
@@ -459,6 +464,9 @@ impl Awareness {
         self.state = to;
         self.since = now;
         self.next_idle_bark = None;
+        if to == State::Combat && from != State::Lost {
+            self.combat_began = Some(now);
+        }
         if to == State::Normal {
             self.targets.clear();
             self.alarms.clear();

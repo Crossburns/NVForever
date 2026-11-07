@@ -51,6 +51,8 @@ const IDLE_COWER: u32 = 0xA06;
 /// Two leaves under `IDLE_FOLDER`: one for Somebody only, then one for anybody.
 const IDLE_LEAF_OWN: u32 = 0xA07;
 const IDLE_LEAF_ANY: u32 = 0xA08;
+/// A third leaf, of the Idle section (DATA section 0): a standing look.
+const IDLE_LEAF_LOOK: u32 = 0xA09;
 const P_FIRST: u32 = 0xB01;
 const P_SECOND: u32 = 0xB02;
 const P_PLAIN: u32 = 0xB03;
@@ -89,12 +91,22 @@ fn idle_if(fid: u32, edid: &str, conds: Vec<Subrecord>) -> Vec<u8> {
 }
 
 const GET_IS_ID: u16 = 72;
+/// GetPlantedExplosive (condition function index).
+const GET_PLANTED_EXPLOSIVE: u16 = 0x1AC;
+const IDLE_PANIC: u32 = 0xC40;
+const IDLE_PANIC_PA: u32 = 0xC41;
+const IDLE_PANIC_PLAIN: u32 = 0xC42;
 
 /// An IDLE with a file below `parent` in the tree, after `previous` (ANAM), with conditions.
 fn leaf(fid: u32, edid: &str, parent: u32, previous: u32, conds: Vec<Subrecord>) -> Vec<u8> {
+    leaf_in(fid, edid, parent, previous, conds, 7)
+}
+
+/// As [`leaf`], of animation group section `section` (DATA's first byte).
+fn leaf_in(fid: u32, edid: &str, parent: u32, previous: u32, conds: Vec<Subrecord>, section: u8) -> Vec<u8> {
     let mut subs = vec![sub(b"EDID", z(edid)), sub(b"MODL", z("Characters\\_Male\\IdleAnims\\Leaf.kf"))];
     subs.extend(conds);
-    subs.extend([sub(b"ANAM", [parent.to_le_bytes(), previous.to_le_bytes()].concat()), sub(b"DATA", vec![7, 0, 0, 0, 0, 0, 0, 0])]);
+    subs.extend([sub(b"ANAM", [parent.to_le_bytes(), previous.to_le_bytes()].concat()), sub(b"DATA", vec![section, 0, 0, 0, 0, 0, 0, 0])]);
     record(b"IDLE", fid, &subs)
 }
 
@@ -149,6 +161,22 @@ fn plugin_bytes() -> Vec<u8> {
         idle_if(IDLE_COWER, "Cower", vec![ctda_eq(IS_MOVING, 0.0, false), ctda_eq(GET_CURRENT_AI_PROCEDURE, 16.0, true), ctda_eq(GET_CURRENT_AI_PROCEDURE, 34.0, false)]),
         leaf(IDLE_LEAF_OWN, "LeafOwn", IDLE_FOLDER, 0, vec![ctda(GET_IS_ID, NPC)]),
         leaf(IDLE_LEAF_ANY, "LeafAny", IDLE_FOLDER, IDLE_LEAF_OWN, vec![]),
+        leaf_in(IDLE_LEAF_LOOK, "LeafLook", IDLE_FOLDER, IDLE_LEAF_ANY, vec![ctda(GET_IS_ID, NPC)], 0),
+        // As FalloutNV.esm's PanicExplosivePlanted: a root of the folder that wants
+        // GetPlantedExplosive == 1, its power armour leaf (here: never) before the plain one.
+        record(
+            b"IDLE",
+            IDLE_PANIC,
+            &[
+                sub(b"EDID", z("PanicExplosivePlanted")),
+                sub(b"MODL", z("Characters\\_Male\\IdleAnims")),
+                ctda_eq(GET_PLANTED_EXPLOSIVE, 1.0, false),
+                sub(b"ANAM", [0u32.to_le_bytes(), IDLE_FOLDER.to_le_bytes()].concat()),
+                sub(b"DATA", vec![7, 0, 0, 0, 0, 0, 0, 0]),
+            ],
+        ),
+        leaf(IDLE_PANIC_PA, "PanicGrenadePlantPA", IDLE_PANIC, 0, vec![ctda(GET_IS_ID, 0xBAD)]),
+        leaf(IDLE_PANIC_PLAIN, "PanicGrenadePlant", IDLE_PANIC, IDLE_PANIC_PA, vec![]),
     ]
     .concat();
     let packs = [
@@ -215,7 +243,7 @@ fn asked(g: &mut Game) -> Vec<(u32, u32, IdleSource)> {
 fn idle_records_and_package_idle_data_are_read() {
     let f = fixture();
     let d = &f.data;
-    assert_eq!(d.idles.len(), 8);
+    assert_eq!(d.idles.len(), 12);
     let wake = &d.idles[&FormId(IDLE_WAKE)];
     assert_eq!((wake.model.as_deref(), wake.loop_min, wake.loop_max, wake.has_file()), (Some("Characters\\_Male\\IdleAnims\\Wake.kf"), 255, 255, true));
     assert!(!d.idles[&FormId(IDLE_FOLDER)].has_file());
@@ -373,4 +401,39 @@ fn pick_idle_walks_the_tree() {
     assert_eq!(g.pick_idle(FormId::PLAYER_REF, folder, &|_| false), Some(FormId(IDLE_LEAF_ANY)), "the player is not Somebody");
     assert_eq!(g.pick_idle(actor, folder, &|i| i == FormId(IDLE_LEAF_OWN)), Some(FormId(IDLE_LEAF_ANY)), "held back");
     assert_eq!(g.pick_idle(actor, "creatures\\dog", &|_| false), None, "another folder: nothing");
+}
+
+/// The panic of a victim of a planted explosive: the root naming GetPlantedExplosive,
+/// its first leaf whose conditions pass, only while the explosive is live
+/// (pickpocket.md §5).
+#[test]
+fn the_panic_idle_is_the_root_naming_get_planted_explosive() {
+    let f = fixture();
+    let mut g = game(&f);
+    let actor = FormId(ACTOR);
+    let folder = "characters\\_male";
+    assert_eq!(g.panic_idle(actor, folder, &|_| false), None, "nothing planted");
+    let start = g.time;
+    g.plant_explosive(actor, FormId(0x4330), fnv_game::pickpocket::Explosive { damage: 125.0, ..Default::default() }).unwrap();
+    assert_eq!(g.panic_idle(actor, folder, &|_| false), None, "before the freak-out time");
+    g.time = start + 0.2;
+    assert_eq!(g.panic_idle(actor, folder, &|_| false), Some(FormId(IDLE_PANIC_PLAIN)), "the power armour leaf's conditions fail");
+    assert_eq!(g.panic_idle(actor, "creatures\\dog", &|_| false), None, "a creature's folder has none");
+    // The tree's other walks pass the panic root by.
+    assert_eq!(g.pick_idle(FormId::PLAYER_REF, folder, &|_| false), Some(FormId(IDLE_LEAF_ANY)));
+    g.time = start + 2.1;
+    g.tick_planted();
+    assert_eq!(g.panic_idle(actor, folder, &|_| false), None, "gone off");
+}
+
+/// A standing look: the tree walked as for PickIdle, only the Idle section's leaves
+/// counted (#1542).
+#[test]
+fn standing_idle_takes_only_idle_section_leaves() {
+    let f = fixture();
+    let mut g = game(&f);
+    let folder = "characters\\_male";
+    assert_eq!(g.standing_idle(FormId(ACTOR), folder), Some(FormId(IDLE_LEAF_LOOK)), "the special idles before it are passed over");
+    assert_eq!(g.standing_idle(FormId::PLAYER_REF, folder), None, "its conditions fail: no look");
+    assert_eq!(g.standing_idle(FormId(ACTOR), "creatures\\dog"), None, "another folder: nothing");
 }

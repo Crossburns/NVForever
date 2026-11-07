@@ -864,6 +864,21 @@ pub struct PlayerBody {
 }
 
 impl PlayerBody {
+    /// [design: show_rigs] Add-ons follow the part at their attachment, with the body
+    /// as the fallback for an attachment outside the known skeleton.
+    pub(crate) fn effect_part(&self, attachment: Entity) -> EffectPart {
+        let Some(rig) = self.body.as_ref().map(|b| &b.third) else { return EffectPart::Body };
+        if let Some(d) = rig.drawn.iter().find(|d| d.entity == attachment) {
+            return if d.head { EffectPart::Head } else if d.arm { EffectPart::Arms } else { EffectPart::Body };
+        }
+        rig.animator.nodes.iter().position(|e| *e == attachment).map_or(EffectPart::Body, |i| effect_bone_part(&rig.animator.skel, i))
+    }
+
+    /// [design: show_rigs] The camera's current decision, including the headless body.
+    pub(crate) fn sees_effect(&self, part: EffectPart) -> bool {
+        self.body.as_ref().and_then(|b| b.third.seen).is_some_and(|s| s.effect_part(part))
+    }
+
     /// The landing clip after a jump or fall is playing (GetAnimAction 12, `anim_state`).
     pub fn landing(&self) -> bool {
         self.body.as_ref().is_some_and(|b| b.third.animator.layers.iter().any(|l| l.tag == TAG_LAND && !l.finished()))
@@ -986,7 +1001,9 @@ fn equipped(sim: &SimState, world: &ActorWorld) -> (Vec<FormId>, Option<FormId>,
     let weapon = eq.iter().copied().find(|id| world.actors.weapons.contains_key(id));
     // A weapon with "Hide Backpack" goes with the armour: while it is equipped the body is
     // dressed without the pieces in the Backpack slot (`Resolver::resolve_wearing`).
-    worn.extend(weapon.filter(|w| world.actors.weapons.get(w).is_some_and(|x| x.hide_backpack)));
+    // So does one with armour addons of its own (WEAP BIPL: a hand-to-hand weapon's hand
+    // model, `Resolver::resolve_wearing`), for the third-person body ([`build`]).
+    worn.extend(weapon.filter(|w| world.actors.weapons.get(w).is_some_and(|x| x.hide_backpack || !x.addons.is_empty())));
     (worn, weapon, weapon.map_or(0, |w| inv.equipped_mods(w)))
 }
 
@@ -1268,7 +1285,12 @@ fn build(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &mut 
     let scale = a.race_height as f32;
     let third = build_rig(commands, parent, world, ctx, &a, View::Third, None)?;
     let vfs = ctx.models.data.vfs.clone();
-    let (fa, shows) = first_person::appearance(&world.actors, &a, |p| vfs.exists(p));
+    // The first-person arms keep the bare hand: a held weapon's own addons (the power
+    // fist's metal hand, `equipped`) are for the third-person body only [hypothesis: the
+    // first-person weapon models are drawn over the arms' hands as before].
+    let first_worn: Vec<FormId> = worn.iter().copied().filter(|w| world.actors.weapons.get(w).is_none_or(|x| x.addons.is_empty())).collect();
+    let first_a = if first_worn.len() == worn.len() { None } else { Some(world.resolve_as(FormId::PLAYER_BASE.0, FormId::PLAYER_REF.0, Some(&first_worn), look)?) };
+    let (fa, shows) = first_person::appearance(&world.actors, first_a.as_ref().unwrap_or(&a), |p| vfs.exists(p));
     let first = match build_rig(commands, parent, world, ctx, &fa, View::First, Some(&shows)) {
         Ok(r) => Some(r),
         Err(e) => {
@@ -2046,7 +2068,38 @@ struct Seen {
     weapon: bool,
 }
 
+/// [design: show_rigs] The independently hidden parts of the third-person body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EffectPart {
+    Body,
+    Head,
+    Arms,
+}
+
+/// [design: build_rig] Descendants follow their head or arm branch. Unclassified
+/// bones follow the body; the names select branches, not individual finger bones.
+fn effect_bone_part(skel: &PreparedSkeleton, mut bone: usize) -> EffectPart {
+    for _ in 0..skel.parents.len() {
+        match skel.names.get(bone).and_then(|n| n.as_deref()) {
+            Some("Bip01 Head") => return EffectPart::Head,
+            Some("Bip01 L UpperArm" | "Bip01 R UpperArm") => return EffectPart::Arms,
+            _ => {}
+        }
+        let Some(parent) = skel.parents.get(bone).copied().flatten() else { break };
+        bone = parent;
+    }
+    EffectPart::Body
+}
+
 impl Seen {
+    fn effect_part(self, part: EffectPart) -> bool {
+        self.body && match part {
+            EffectPart::Body => true,
+            EffectPart::Head => self.head,
+            EffectPart::Arms => self.arms,
+        }
+    }
+
     /// The render layer of a drawn entity: the seen body's when the camera sees it, else
     /// the one only the sun's shadows are cast from. Neither is the world's, so the
     /// flashlight casts no shadow from the player (`flashlight.rs`).
@@ -2718,6 +2771,30 @@ fn drive_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effect_bones_follow_their_branch_and_unknown_bones_follow_the_body() {
+        let skel = PreparedSkeleton {
+            names: ["Bip01", "Bip01 Head", "eye", "Bip01 L UpperArm", "finger", "Bip01 R UpperArm", "hand", "extra"].map(|n| Some(n.to_string())).to_vec(),
+            parents: vec![None, Some(0), Some(1), Some(0), Some(3), Some(0), Some(5), None],
+            ..default()
+        };
+        for (bone, part) in [(0, EffectPart::Body), (1, EffectPart::Head), (2, EffectPart::Head), (3, EffectPart::Arms), (4, EffectPart::Arms), (5, EffectPart::Arms), (6, EffectPart::Arms), (7, EffectPart::Body), (99, EffectPart::Body)] {
+            assert_eq!(effect_bone_part(&skel, bone), part);
+        }
+    }
+
+    #[test]
+    fn effect_addons_follow_first_person_headless_and_third_person_parts() {
+        let parts = [EffectPart::Body, EffectPart::Head, EffectPart::Arms];
+        let first = Seen { body: false, head: true, arms: true, weapon: true };
+        assert_eq!(parts.map(|p| first.effect_part(p)), [false, false, false]);
+        let headless = Seen { body: true, head: false, arms: false, weapon: false };
+        assert_eq!(parts.map(|p| headless.effect_part(p)), [true, false, false]);
+        let third = Seen { body: true, head: true, arms: true, weapon: true };
+        assert_eq!(parts.map(|p| third.effect_part(p)), [true, true, true]);
+        assert!(!PlayerBody::default().sees_effect(EffectPart::Body));
+    }
 
     #[test]
     fn shade_casters_near_the_line_to_the_sun() {

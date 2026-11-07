@@ -43,7 +43,7 @@ use crate::attack_anims::{AttackTimes, Move, PlayAttack, SwingClip, SwingPick, D
 use crate::combat_tactics as tactics;
 use crate::limbs::ActorRig;
 use crate::locomotion::Dying;
-use crate::npc_combat::{creature_spacing, engage, facing_off, is_gun, melee_spacing, next_unit, CHEST, CREATURE_BODY_REACH, CREATURE_REACH, MUZZLE_AHEAD, STRIKE_SECONDS};
+use crate::npc_combat::{creature_reach, creature_spacing, engage, facing_off, is_gun, melee_spacing, next_unit, CHEST, CREATURE_REACH, MUZZLE_AHEAD, STRIKE_SECONDS};
 use crate::ragdoll::Corpse;
 use crate::weapons::{HeldWeapon, Muzzle, WeaponHold};
 use crate::world::bevy_to_game;
@@ -165,6 +165,13 @@ struct Stats {
     chained: usize,
 }
 
+/// The bones a shot aims at, in order of preference: the target's chest as it is posed,
+/// so a kneeling or seated target is aimed at where its body is, not at a standing
+/// actor's chest height above it. The Silver Rush volunteer kneels restrained
+/// (`DynamicIdle_RestrainedSit`) for Jean-Baptiste's Always Hit shot, which went over
+/// him into the wall and left the scene waiting for its OnHit (#1550) [design].
+const CHEST_BONES: [&str; 3] = ["Bip01 Spine1", "Bip01 Spine", "Bip01 Pelvis"];
+
 type Shooting<'w> = (&'w ActorRig, &'w GlobalTransform, &'w InheritedVisibility, Option<&'w WeaponHold>, Has<Dying>, Has<Corpse>);
 
 #[allow(clippy::too_many_arguments)]
@@ -181,6 +188,7 @@ pub(crate) fn shoot(
     (mut fire, mut strike, mut anims): (MessageWriter<ActorFire>, MessageWriter<ActorStrike>, MessageWriter<PlayAttack>),
     mut times: ResMut<AttackTimes>,
     (blocks, phys): (Option<Res<ActorBlocks>>, Option<Res<PhysState>>),
+    bones: Query<&GlobalTransform>,
 ) {
     let dt = time.delta_secs();
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
@@ -190,13 +198,19 @@ pub(crate) fn shoot(
     let c = &*combat;
     let weapons: HashMap<u32, FormId> = held.iter().map(|h| (h.reference, h.weapon)).collect();
     let muzzle_at: HashMap<u32, V3> = muzzles.iter().map(|(m, g)| (m.reference, bevy_to_game(g.translation()).to_array())).collect();
-    // Feet and eyes (game space) of everyone standing.
+    // Feet and eyes (game space) of everyone standing, and where each one's chest is as
+    // posed now ([`CHEST_BONES`]).
     let mut places: HashMap<u32, (V3, V3)> = HashMap::new();
+    let mut chests: HashMap<u32, V3> = HashMap::new();
     for (rig, g, vis, _, dying, corpse) in &actors {
         if vis.get() && !dying && !corpse {
             let feet = bevy_to_game(g.translation()).to_array();
             let scale = g.affine().transform_vector3(Vec3::Z).length().max(0.1);
             places.insert(rig.reference, (feet, [feet[0], feet[1], feet[2] + EYE_HEIGHT * scale]));
+            let bone = CHEST_BONES.iter().find_map(|n| rig.skel.by_name.get(*n)).and_then(|&i| rig.nodes.get(i)).and_then(|&e| bones.get(e).ok());
+            if let Some(b) = bone {
+                chests.insert(rig.reference, bevy_to_game(b.translation()).to_array());
+            }
         }
     }
     if let Some(p) = player.as_deref() {
@@ -210,6 +224,11 @@ pub(crate) fn shoot(
         let mine = body(me)?;
         let radius = if target == FormId::PLAYER_REF.0 { player_radius? } else { body(target)?.radius };
         Some(mine.room([tfeet[0], tfeet[1]], radius))
+    };
+    // The two bodies' radii summed (`npc_combat::melee_spacing`).
+    let radii = |me: u32, target: u32| -> Option<f32> {
+        let radius = if target == FormId::PLAYER_REF.0 { player_radius? } else { body(target)?.radius };
+        Some(body(me)?.radius + radius)
     };
     let s = &mut *shooters;
     let mut still: Vec<u32> = Vec::new();
@@ -243,7 +262,7 @@ pub(crate) fn shoot(
                 Some(f) if c.forms.weapons.get(&f).is_some_and(|ws| is_gun(c, ws, f)) => Arm::Gun(f),
                 Some(f) => Arm::Melee(Some(f)),
                 None => match g.creature_attack(me) {
-                    Some((damage, reach)) => Arm::Creature(damage as f32, reach.filter(|r| *r > 0.0).map_or(CREATURE_REACH, |r| r as f32 + CREATURE_BODY_REACH) * scale),
+                    Some((damage, reach)) => Arm::Creature(damage as f32, creature_reach(reach, Some(&rig.skeleton), scale)),
                     None => Arm::Melee(None),
                 },
             };
@@ -252,7 +271,7 @@ pub(crate) fn shoot(
                 melee => {
                     still.push(id);
                     let x = MeleeCtx { c, me, name: &name, target_name: &target_name, global, hold, feet, eyes, tfeet, teyes, places: &places, dt, scale };
-                    let room = gap(id, w.target.0, tfeet);
+                    let room = gap(id, w.target.0, tfeet).zip(radii(id, w.target.0));
                     swing(g, s, &mut times, &x, &w, melee, room, (&mut strike, &mut anims));
                     continue;
                 }
@@ -287,7 +306,7 @@ pub(crate) fn shoot(
             }
             let shooter = s.by.get_mut(&id).expect("inserted");
             shooter.wait = (shooter.wait - dt).max(0.0);
-            let tchest = [tfeet[0], tfeet[1], tfeet[2] + (teyes[2] - tfeet[2]) * CHEST];
+            let tchest = chests.get(&w.target.0).copied().unwrap_or([tfeet[0], tfeet[1], tfeet[2] + (teyes[2] - tfeet[2]) * CHEST]);
             // What holds its fire this frame.
             let restrained = g.extra.get(&me).is_some_and(|e| e.restrained);
             let away = w.target_here.and_then(|r| fnv_ai::goal::place_of_ref(g, r)).is_some_and(|p| (p.pos[0] - tfeet[0]).hypot(p.pos[1] - tfeet[1]) > TARGET_HERE_RADIUS);
@@ -425,7 +444,7 @@ fn swing(
     x: &MeleeCtx,
     w: &fnv_game::use_weapon::WeaponUse,
     arm: Arm,
-    room: Option<f32>,
+    room: Option<(f32, f32)>,
     (strike, anims): (&mut MessageWriter<ActorStrike>, &mut MessageWriter<PlayAttack>),
 ) {
     let (c, me, id) = (x.c, x.me, x.me.0);
@@ -437,8 +456,8 @@ fn swing(
     let away = (x.feet[0] - x.tfeet[0]).hypot(x.feet[1] - x.tfeet[1]);
     // How near it closes, and within what its blows land (`npc_combat`'s spacing).
     let (stop, within) = match (creature_damage, room) {
-        (Some(_), room) => creature_spacing(room.map(|r| away - r), reach),
-        (None, Some(r)) => melee_spacing(away - r, reach),
+        (Some(_), room) => creature_spacing(room.map(|(r, _)| away - r), reach),
+        (None, Some((r, radii))) => melee_spacing(away - r, radii, reach),
         (None, None) => engage(Some(reach), None),
     };
     if let Some(u) = g.weapon_uses.get_mut(&me) {

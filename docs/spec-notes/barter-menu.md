@@ -113,7 +113,7 @@ screen's height):
   list with the open square (second screenshot: Gold Bar, value 9492); the arrow points
   at the player with "9492 Caps".
 - The key hints read "Accept A)", "Exit X)" (barter) and "Take All R)", "Exit E)"
-  (container); the hint stands about 16 after its button's text. Accept is dim with
+  (container; "Take All A)" on the 2026-11 launchtest shot, §8); the hint stands about 16 after its button's text. Accept is dim with
   nothing chosen and bright with a trade.
 - The picture behind darkens the world by about a third at its left edge, with a soft
   edge about 25 wide; the world behind is blurred (second screenshot).
@@ -146,8 +146,9 @@ screen's height):
   or its class's): the other items of its stock are held back; it buys anything
   [documented: GECK wiki Class; the categories: vendor-services.md §2].
 - **The total** is the sum of each line's rounded price times its count [hypothesis].
-  Accept is refused when the side that pays has too few caps [hypothesis; the wording is
-  ours: "You don't have enough caps." / "<merchant> doesn't have enough caps."].
+  Accept is refused when the player has too few caps [hypothesis; the wording is ours:
+  "You don't have enough caps."]. A sale beyond the merchant's caps goes through at the
+  caps it holds, and the figure shows that amount [observed 2026-11-06: section 9].
 - **Quest items** cannot be sold [documented: GECK wiki Category:Items]; they are not
   listed [hypothesis].
 - **Restocking** on two days of the week [documented: "Merchant Restocking"] is the
@@ -188,8 +189,8 @@ screen's height):
   of the MISC records of the same names [observed: FalloutNV.esm; playtest list 7 item
   7].
 - The caps arrow and its figure are drawn at half brightness, as a disabled button is,
-  while the side that pays holds fewer caps than the balance (Accept is then refused)
-  [design: the owner's request].
+  while the side that pays holds fewer caps than the balance [design: the owner's
+  request].
 - The container menu's note shows for a container whose record has the Respawns flag
   [hypothesis: every such container]; a refused trade's words show in the same place
   [design].
@@ -200,10 +201,9 @@ screen's height):
   waits under it and goes on when it closes [hypothesis: the original returns to the
   conversation].
 
-Not built: the quantity menu, the BarterExit lines merchants say when the menu closes
-(GECK wiki Service Tab), the blur, the mods tile, the
-"Calculate Buy Price" perk entry point, repair at merchants, companions' inventories
-(OpenTeammateContainer).
+Not built: the BarterExit lines merchants say when the menu closes (GECK wiki Service Tab),
+the blur, the mods tile, the "Calculate Buy Price" perk entry point, repair at merchants. The
+menus from their files: §8.
 
 ## 6. Looking at one
 
@@ -269,9 +269,12 @@ leaves it open for a screenshot.
 container, barter and inventory menus is drawn from the game's `QuantityMenu` tiles
 (`engine/nvf-play/src/tiles/menus.rs`), the code above not spawned once the tree has the
 file (the frame the prompt opens draws it by hand once; a missing file keeps it hand-built);
-the crafting menu's prompt stays drawn by it. The tree builds the file while the prompt
+the crafting menu's prompt stays drawn by it. With `[UI] TileMenus=ContainerMenu` alone only
+the prompt over a container menu actually drawn from its tiles is (§8) [design]: a container
+menu that fell back to its hand-built drawing, and the barter and inventory menus, keep the
+hand-built prompt. The tree builds the file while the prompt
 shows, whatever the switch (`Game::ui_prompt`, as the open menus build; MenuMode does not
-report it): with the switch off its tiles are readable by scripts but nothing writes or
+report it): with neither switch on its tiles are readable by scripts but nothing writes or
 draws them. The code writes the meter's `user0`
 (the stack) and `user2` (the amount) and the step sizes `user3`/`user4` (1 and 10, ours)
 [documented: the file's comments on them]; the file works out the meter's value, its
@@ -281,6 +284,327 @@ per tick) and the amount's text. The words are the game strings `sHowMany`, `sOK
 when the load order has none). A pointer click on OK, Cancel or an arrow does what the
 keys do; a press on the meter, held as it drags, sets the amount under the pointer; the
 keys stay the ones above (the file's bindings act for a script's MenuTapKey and for the
-controller's buttons that stand in for no key). Smoke `tiles-quantity`; the drop aid's
+controller's buttons that stand in for no key). Smoke `tiles-quantity`,
+`tiles-container-quantity-alone`; the drop aid's
 `ask` now holds the prompt open until it is answered.
 
+## 8. The container menu from its file (T15c)
+
+Behind `[UI] TileMenus=ContainerMenu` (`engine/nvf-play/src/tiles/container_menu.rs`,
+`tiles/list.rs`, `tiles/item_card.rs`, issue #1468) the open menu (1008) is drawn from
+`menus\container_menu.xml` and the hand-built drawing gives way to a sheet taking the pointer
+at its stacking level (100). The model, its keys and the wheel stay the hand-built menu's
+(§5). The prompt draws over it from `QuantityMenu`'s file, with no switch of its own, or by
+hand when that file is missing or short of a path (§7) [design], and takes the pointer alone
+[documented: `&no_click_past;`]. Smoke: `tiles-container`, `tiles-container-quantity`,
+`tiles-container-quantity-alone`, `container-default-drawing`. Not the default; what still differs from the original closes this
+section.
+
+The original's values [observed: the private `hud_container_*` capture at 1280 x 720, read
+with JIP on a footlocker; interface units; parts a to g, with their shots in the latest run]:
+
+- **The rows**: a row is `height` = its text's and 20: 32 and 52 for one line, 67 and 87 for
+  two, 102 and 122 for three. `_y` the sum above it. `_selected` stays 0 on the selected row.
+  `target` 1 on the rows of both lists. Text x 40, y 20, wrap 370, font 2. A row's tile has
+  its item's name, without the count (`GetActiveUIComponentName`); the tree's order is not
+  the list's, `listindex` is.
+- **Both lists have `_enabled` 1** at every read, against the prefab's comment. The list
+  without the selection reads `_highlight_y` -1 and `_selected_height` 0 and shows no
+  highlight; so does a list when the pointer leaves all rows (no selection at the opening
+  either: `sel none`). The highlight box is 1 less than the row high, at the row's `y` after
+  the scroll (a row at `_y` 208 with value 4: -23.11), hudmain at brightness 128, alpha 40
+  (message-menu.md).
+- **The scrollbar**: `_number_of_visible_items` is always 1. A list that fits reads 1 item; a
+  right list with nothing filtered read the file's `_scroll_delta` 26, one with 15 of 16 rows
+  filtered 57.2 (below, "Heading, filter"). Longer ones:
+
+  | rows | total height | list | `_number_of_items` | `_scroll_delta` | `_jump_size` | marker height, `_step_height` |
+  |---|---|---|---|---|---|---|
+  | 15 | 885 | 365 | 10 | 57.78 | 6 | 33.30, 33.30 |
+  | 16 | 937 | 365 | 11 | 57.20 | 6 | 32, 30.10 |
+
+  [hypothesis] That is: the value's range is the rows less those that fit whole from the top
+  (6 here), and `_scroll_delta` what is left over by that range, so a value's move is not a
+  row's. A row's `y` is `_y` less value x `_scroll_delta` (-231.11 at value 4 of 57.78), by
+  the file [documented].
+- **What moves it**: `ClickMenuTile` on the down arrow: +1, kept every frame after; on a page
+  area: 6 up to the end (4 to 9, 8 to 2). The rows move under a resting pointer, and the row
+  now there takes the highlight in the original. `SetInCode` read 0 through those.
+- **The clip**: at y 390 pixels the pointer is on a row, at 399 on nothing: the list's bottom
+  is at 525 units (393.75 pixels). So `clipwindow` crops the pointer too, as the drawing's
+  reading has it (menu-xml.md §3.1.1).
+- **The alpha of containers**: the scrollbar image reads `alpha` 0, its marker 255, and the
+  arrows show [observed: launchtest shot]. `CM_TakeAllButton` and `CM_ExitButton` are images
+  and `CM_Subtitle` a rect with `alpha` 0 from `text_box.xml`, and the words show.
+  `StrengthReqInfo` at the opening is shown at `alpha` 0: its words do not show, and its top
+  line and fading side line do, at about (782, 447) to (912, 470) pixels [observed: launchtest
+  shot]; its value text copies its `alpha`, its lines their own `_line_alpha`. So in this
+  menu an `alpha` is not passed down to children [hypothesis: elsewhere].
+- **The backing**: `CM_Background` `alpha` 193.8 (the file's global is 32), 1144 x 970,
+  brightness 128.
+- **The card** (`CM_ItemData`): `_Value` and `visible` per card; `--` for no weight; DAM's
+  `alpha` reads 0, 8.25, 98, 121.5, 238.75 and 255 between reads of weapons, DPS's title 255,
+  both at one place by the file, so it seems they fade into each other [hypothesis]. STR
+  `alpha` 255 once anything was selected. `AmmoInfo`'s `_Title` the ammunition `name (n/m)` or
+  armour's class, `_Value` empty. `ConditionInfo`'s `user5` the condition, `user6` 1 for
+  weapons, 0 for armour; its `CNDArrows` x 140.5 (114.33 with `user6` 0), y 15, 16 x 20 once
+  selected, y 17, 16 high before. After the pointer leaves all rows the card keeps its last
+  item while the icon and arrow hide.
+- **The picture and the arrow**: `CM_ItemIcon` `filename` the item's, a missing one
+  `missing_image.dds`; `CM_ArrowIcon` `user0` 1 (the left list's row), 2 (the right's), hidden
+  without a selection.
+- **The buttons**: Take All 116 x 47 at -116, 0 of `CM_ButtonRect`, Exit 68 x 47 at -68, 45,
+  hints "A)" and "E)" [observed: launchtest shot, which reads "Take All A)", unlike §3's
+  earlier reading "R)"]. `ClickMenuTile` on Take All takes all and closes, no prompt, no
+  message after. The weight label "Wg   52/200", three spaces.
+
+What the tile path does with these, and where it differs:
+
+- **Follows the file and the capture**: places, rows, counts, scroll, highlight and its fill,
+  bar pieces, backing alpha 193.8, every tile's own alpha, card fields, arrow, icon.
+- **Stays the hand-built menu's on purpose**: a row always selected in a list that has rows
+  (no "no selection" state); the pointer leaving keeps the selection; the wheel moves the
+  selection [owner 2026-10-22, #1192], a list moved under a resting pointer does not take the
+  highlight, hover does not scroll [owner's playtest list 7, item 11]; more than five asks
+  how many [owner 2026-10-15]; Take All closes [owner, list 5 item 60]; DPS a card above DAM,
+  no fade [owner's playtest list 7, item 25]. The keys: physical A focuses the player's list
+  and R takes all, [design: `crate::menu`, tagged there as the owner's screenshot's "R)" and
+  our own keys, no owner decision]; the file's A acts only for a script's MenuTapKey.
+- **The words on the tiles**: the hints come from the strings table, as every key hint of the
+  files does: Exit's `sPCMenuHintE` from the file, Take All's `sPCMenuHintR` written in code for
+  the key that works; a GMST wins, else `fnv_ui::strings::BUILT_IN`'s label in its bracket form
+  (so not the original's or the hand-built menu's letter and bracket). The prompt over the menu
+  reads the same way, from `QuantityMenu`'s file: `sPCMenuHintA` and `sPCMenuHintE` after `sOK`
+  and `sCancel` [design] (the hand-built prompt, kept for the frame it opens and for a fallback,
+  keeps its own letters). The cards' titles read
+  settings no plugin defines [observed: menu-xml.md §2.4], so the file shows `BUILT_IN`'s
+  labels, and the tile menu leaves them as they are [design: the string rule, LEGAL.md; the
+  short words the original shows on its cards are not in the data files and are not
+  transcribed]. A plugin's setting, a mod's file or a script sets its own title. Those labels
+  do not fit a card (`ConditionMeter` stands 62 in and a title 5 in [documented]; the label of
+  the weight measures 72 units [observed: our shot]); how the card makes room for them, or
+  what shorter words NVForever writes of its own, is open. The hand-built figures
+  (`pipboy/items.rs`) keep their words, which this menu does not change.
+- **Heading, filter**: a click on a heading steps its category on, as its right arrow
+  [observed: `container__category_heading_click`, 2 to 3]. `_num_filtered` is written, the rows
+  the category leaves out [observed: 10 of 15, 12 of 15, 15 of 16]; the original keeps those
+  rows' tiles at `listindex` -1 with stale `y`s and this menu unloads them [design], so a mod
+  looking for a filtered row's tile finds none. A list that comes to fit keeps its last
+  `_scroll_delta`, and has 26 only before it ever overflowed: [observed] once, 57.2 with 15 of 16
+  filtered; [hypothesis] for every list, from that one case.
+- **The scroll follows** the selected row on a key's or the wheel's move (also one ending on the
+  same row) and when the row's place, the list's height or the scroll's scale (a wrap below the
+  row) changes under a key's pick; never on a
+  pointer's pick [owner's playtest list 7, item 11], and the bar and marker stay free otherwise.
+- **The weight** cuts off to whole units [observed: 289.50 reads "Wg   289/200", 49.50 "Wg
+  49/200"]; the hand-built label rounds (`look::half_figure`), left as it is.
+- **Against the original's shots** [observed: pixels at 1280 x 720, the file's numbers drawn;
+  bounding boxes of the amber above a threshold, the same item's card on both sides]: the card's
+  lines 641-774 and 781-914 at y 476 against 642-774 and 782-914 at y 477; the picture
+  307-426 x 482-571 against 309-426 x 483-571 (`CM_ItemIcon`, 256 square at &scale;, 22 and 472
+  from the half: places and size agree); the arrow 626-669 x 192-287 pointing left, 632-674 x
+  191-284 right; Take All's words 953-1052 x 512-532 in both; the headings and the weight within
+  1 pixel; text colour (198, 141, 49) against (198, 142, 51); list rows, the wrapped row's 66
+  pixels, the clip at the list's foot and the highlight box 704-1024 agree. The empty container's
+  STR lines 781-913 x 447-470 agree. A bar shows only on a list that overflows, on either side, in
+  both.
+- **Still different, and why**:
+  - The backing reads darker here against the world; the world differs between the shots too,
+    so 193.8 stands unchecked. The world now blurs behind the menu (image-modifiers.md, issue
+    #1484); these shots were taken before it did.
+  - The picture and the fading side lines are brighter here, in both our drawings, one
+    picture peaking at red 227 against 197 [observed]. 197 / 254 through the
+    sRGB curve is 227 / 254, so the picture's mid-tones may be read as linear [hypothesis]; a
+    matter of the shared texture path, for every interface picture, not of this menu.
+  - The opening shows a selected row, its highlight, arrow, picture and card; the original shows
+    none until the pointer is on a row (`sel none`, `_highlight_y` -1), and hides them again when
+    it leaves. This menu keeps a row selected (above); the keys act on it. A question for the
+    owner, not changed here.
+  - Take All on an empty list is dimmed, its `target` 0; the original's words stay at full
+    brightness and the click closes the menu (`container__empty_takeall`). Empty Take All not
+    closing is the hand-built menu's rule (§5), and the dim says so.
+  - DPS a card above DAM, no fade [owner]; the original's DPS stands in DAM's place, as the shots
+    show.
+  - Words: the hints, as above.
+  - DAM/DPS's fade, `_wheelmoved` and the marker's own drag traits are not built. The tile path's
+    `ConditionMeter` and `CNDArrows` follow the numbers read (meter 104.67 wide, image the
+    condition's part, arrows x 140.5 or 114.33, y 15, 16 x 20) and are not yet compared by eye:
+    `tiles-container`'s `card_*` shots hold them (a weapon, armour, an aid item).
+
+
+## 9. The barter menu from its file (issue #1468)
+
+[design: `engine/nvf-play/src/tiles/barter_menu.rs`, `tiles/vanilla.rs`] With
+`[UI] TileMenus=BarterMenu`, the open barter menu (1053) draws from
+`menus\barter_menu.xml`. The hand-built view stays the default. The adapter writes
+nothing with its switch off. A missing file, missing required path, or row template
+without its name, price or marker child keeps the whole hand-built view. The writer's
+single decision supplies drawing, input, and the prompt's drawing; the modal sheet
+stands at the hand-built menu's level, 100, beneath its prompt at 101.
+
+[design: `tiles/item_menu.rs`, `tiles/container_menu.rs`] The first commit extracts the
+container's row reconciliation, template validation, text measuring, row placement,
+counts, scroll, highlight, marker drag state, click meanings, row guards, and alpha/clip
+marks. Both adapters use that state with a table of paths and click meanings. The
+container's snapshot constructor, weight, subtitle, arrow and Take All writes remain
+separate, as do barter's caps and buttons: putting those in one conditional writer
+would obscure their different purposes. The container's existing synthetic tests stay
+in `container_menu.rs`.
+
+[design: `tiles/input.rs`, `menu.rs`, `menu/model.rs`, `ui_sounds.rs`] Every row,
+heading, Accept and Exit action goes through `MenuInput` and `apply_input`, including
+its sounds and events. At most one row click acts per frame; a guard checks the row's
+identity again when queued commands apply. The pointer selects only after moving,
+does not scroll the list, and yields to the wheel's held selection. The wheel still
+moves the selected row, or the category over a heading. Physical A accepts and X exits;
+the arrow keys change sides, W/S and Up/Down select, Enter/Space act, brackets change
+category, and Page Up/Down move the selection. Controller mappings remain `pad.rs`'s.
+The adapter suppresses a second tile action for keys already handled by the model;
+a script's MenuTapKey still follows the file's bindings. Exit sends only Close, so
+it cannot bypass the model's prompt cancellation or menu closing rules.
+
+[design: `tiles/barter_menu.rs::Snapshot::of`, `menu/model.rs::refresh_trade`]
+Prices use the model's existing `barter::price_text`, including `--` for no worth
+and a tenth for a price below one cap. Caps come from each side's purse. The model
+moves an offered row to the opposite list, first, and the adapter shows an open square
+for it, a filled square for an equipped row. Accept is dim and untargetable with no
+items offered, bright with an offer, including a zero-net trade. The flow is hidden
+with a zero balance. A positive balance pays the player and uses
+`barter_arrow_sell.dds`; a negative balance uses `barter_arrow_buy.dds` [documented:
+section 1 names the two textures]. The amount is what the trade moves
+(`Trade::paid`). The flow's picture and texts dim when the payer cannot afford it;
+Accept still sends the model's command, which refuses only a player who is short
+[design: the maintainer's request in section 5 for the dimming].
+
+[observed 2026-11-06: private job `ov_barter`, the original at 1280 x 720,
+Chet, read with JIP] `BM_CapsFlow` is invisible (0) with no trade, visible (1)
+with one, at y 260. Accept's `target` is 0 and 1 the same way. The list without
+the selection reads `_highlight_y` -1 and `_selected_height` 0; the other reads
+the row's `_y` and height (52, or 87 for two lines). Titles read x 50, y -10,
+height 38, font 6. `BM_Items_CapsLabel` reads x 449, y 20, height 32, font 2,
+justify 4. These match the adapter and the file's layout; no title or purse-label
+geometry writes are needed [design: `tiles/barter_menu.rs`, `tiles/list.rs`].
+
+[observed 2026-11-06: private job `ov_barter`, the original at 1280 x 720,
+Chet, read with JIP] Selling, with caps coming to the player, reads
+`_ArrowDirection` 2 and `BM_CapsFlow/x` 830.33; 1 or no direction gives x 810.33.
+The purses show the setting's Caps word, three spaces, and the number (`Caps   900`).
+The normal flow alpha is 255; a sale beyond the merchant's purse reads 64 and dims
+its icon, amount and Caps word. [documented: `barter_menu.xml`, read privately from the user's
+install] Direction 1 selects the icon's `_filename_1`
+(`barter_arrow_buy.dds`), direction 2 its `_filename_2` (`barter_arrow_sell.dds`),
+through successive copies of the direction and `_filename_`. The flow, icon and
+amount shift conditionally for direction 2; the flow's alpha is set in code and
+the icon's alpha copies it.
+
+[design: `tiles/barter_menu.rs::write`, `crates/fnv-ui/src/tree.rs::eval_reading`,
+`expr.rs::ops_of`] The writer now uses direction 2 for positive balance, 1 for
+negative balance and an empty string for zero. A copy replaces the preceding value,
+including a leading string; after a number, a copy of a trait ending in `_` looks up
+that trait with the number appended. The tree therefore selects the icon's filename;
+the adapter no longer writes it. `BM_CapsFlow/_Value` receives the unsigned amount
+and the amount text is also written. The writer sets flow alpha to 255 or 64 and
+writes that same alpha to the amount and Caps text, since `item_menu::mark_tiles`
+marks every tile to take only its own alpha. The icon keeps the file's parent-alpha
+copy. None of these three children receives a brightness write. Accept's existing
+128/255 brightness writes remain separate.
+
+[observed 2026-11-06: private job `ov_barter`, the original at 1280 x 720,
+Chet, read with JIP] `_IsContainerListSelected` is -1 on opening without a selection,
+0 with a player row selected and 1 with a merchant row selected; leaving all rows
+retains the last value. Moving the pointer onto a row of the other list selects it
+and moves focus (`left_selected`, `right_selected_cursor`). [documented:
+`barter_menu.xml`, read privately from the user's install]
+`BM_Items_FocusRect` (id 0) and `BM_Container_FocusRect` (id 1) are hotrects with
+targets following the merchant-focus trait and its inverse. The lists' `_enabled`
+follow its inverse for the player and its copy for the merchant. This differs from
+the container file's two enabled lists in section 8.
+
+[design: `tiles/barter_menu.rs::write`, `pointer_candidates`, `tiles/input.rs`,
+`tiles/item_menu.rs`, `tiles/list.rs`, `menu/model.rs`] The adapter retains the last
+side whose snapshot has a selection, starts at -1 when neither has one, and clears
+that memory on close. The current model preselects row zero and cannot distinguish
+an untouched opening with rows from an explicit selection; the adapter uses that
+snapshot selection, so such an opening still reads 0. No model selection rule changes
+in this review. `_enabled` is a file trait; row `target` expressions use it, and the
+generic pointer reads `target`. The two focus rects now have click meanings. When
+one takes the pointer, input resolves hit candidates with that side temporarily
+enabled and restores the written focus before stepping the pointer. Thus the row
+under it supplies the normal guarded Hover or click, even on a direct click across
+sides. Clipping and higher menus still govern hits, and empty space or the wheel's
+held selection cannot leave the tree's focus ahead of the model.
+
+[observed 2026-11-06: private job `ov_barter`, the original at 1280 x 720,
+Chet, read with JIP] A sale beyond the merchant's caps holds the displayed amount
+at that purse, dimmed; Accept still takes it and completes at that amount. The
+merchant's 815 caps become 0 and the player's 900 become 1715. Both menus do the same
+[design: `Trade::paid`]; they used to refuse it. Filtered category headings remain NVForever's own words
+under LEGAL.md; the capture's category wording has no source in the data files.
+
+[hypothesis: container measurements in section 8; comparisons still outstanding]
+The shared counts formula, retained scroll delta, row measuring and spacing, clip
+handling and backing alpha 193.8 remain borrowed from the container. The card uses
+`item_card.rs` unchanged, including the container's condition-arrow y 15 and height
+20 and the owner's separate DPS placement; those numbers still need comparison.
+No row width, wrapping width, button place or arrow offset is copied into the adapter:
+those remain the file's [design: `tiles/barter_menu.rs`].
+
+[design: `tiles/menus.rs`, `tiles/mod.rs`, `menu.rs`] The quantity prompt follows an
+actually tiled barter view even with only BarterMenu switched on. With a missing or
+short QuantityMenu file it stays hand-built, including the frame before its tree
+builds. Either prompt blocks the underlying rows, headings, buttons and marker drag.
+A barter view that fell back does not implicitly turn its prompt into tiles; the
+explicit QuantityMenu switch still works independently.
+
+[design: LEGAL.md, `tiles/barter_menu.rs`, `tiles/item_card.rs`] String audit:
+
+- All-items heading: `sInventoryItems` through `ui_loading::game_string`, with the
+  load order's GMST winning over `fnv_ui::strings`. Merchant heading: the model's
+  record or script name. Filtered categories use our own words: Weapons, Clothing,
+  Consumables, Other items, Ammunition. `look::half_title`'s transcribed uppercase
+  headings are replaced before anything is written.
+- Purse labels and the flow label: `sInventoryCaps` through the same setting lookup;
+  the three spaces and purse digits are formatting. `look::half_figure` is not used.
+  Amounts and prices are model numbers, with `--` as our no-value notation.
+- Row names: the model's record or script names, its mod marker and count formatting
+  (`look::row_text` formats only the name and count). The model's separate condition
+  suffix helper is not used by this view. No category abbreviation is transcribed.
+- Item-card titles, Accept and Exit: left to the files' settings, with the strings
+  table's own fallback labels (`sAccept`, `sExit`, and the inventory card settings).
+  Hints written by the adapter: `sPCMenuHintA` and `sPCMenuHintX`, adjusted by
+  `pad::game_hint` for the controller's existing mapping and label style.
+- Card values: `look::item_figures` supplies numbers, condition and one-unit weight
+  and value. `pipboy::items::info_of` supplies ammunition names from AMMO records,
+  clip/carried numbers, armor-class enum labels (our functional words), and effects
+  named by AVIF ANAM/FULL or the engine's actor-value names. `item_card::write` uses
+  the DAM/DT identifiers only to choose cards; it leaves their visible titles to the
+  settings. Empty strings clear absent data; `--` is our no-value notation. Icon,
+  marker and flow filenames identify installed assets, rather than displayed wording.
+
+[design: synthetic tests beside `tiles/barter_menu.rs` and `menu/model/tests.rs`]
+Tests cover short files and missing price children, prices/purses/open and filled
+marks, unit card figures and untouched titles, both flow directions, insufficient
+funds, a zero-net trade, empty Accept, child click meanings, stale rows/guards,
+scroll rewrite, pointer picks across disabled lists and focus rects, retained focus
+and its reset on close, rendered flow alpha, physical/script key arbitration, prompt fallback,
+and a real model sale appearing first on the merchant's side before acceptance.
+The fixtures use their own dimensions and expressions, never the game file's (#1512).
+
+[design: `tools/smoke/scenarios.toml`] New scenarios: `tiles-barter`,
+`tiles-barter-quantity` (BarterMenu alone, including Cancel and blocked underlying
+clicks), and `barter-default-drawing`, through Chet's dialogue in GSGeneralStore
+using section 6's talk/barter aids and the currency/pistol recipe. They take 1280x720
+shots of empty Accept, offered and returned items, the caps flow, acceptance, category,
+scroll and quantity states. The automatic trade aid is delayed beyond the runs so
+that the actual tile or hand-built input makes each trade. The input aid now names
+Page Up/Down and the bracket keys for those checks. Pointer places and timing are
+hypotheses borrowed from the container runs. The file has no
+subtitle tile, so the model's own refusal note stays as a small hand-built overlay
+at its existing place (`menu/look.rs::spawn_note`), alongside the dimmed flow
+[design: the contract's paths and `menu::note`]. Those words are the model's own
+functional error message "You don't have enough caps." (`menu/model.rs::accept`),
+or the engine's
+"Cannot..." errors (`plain_error`). They are not transcribed lines. This piece remains separate to
+preserve the feedback without inventing a tile in the file. Blur uses the existing
+tile-menu blur path at radius 3
+[hypothesis for barter: the same shared presentation as the container].

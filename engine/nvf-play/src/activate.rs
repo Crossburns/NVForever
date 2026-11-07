@@ -28,7 +28,7 @@
 pub mod outcome;
 pub mod pick;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::phys::PhysState;
 use crate::player::Player;
@@ -130,7 +130,7 @@ pub fn describe(sim: &SimState, index: &fnv_world::WorldIndex, form_id: u32) -> 
     if placed.is_some_and(|p| p.primitive.is_some()) {
         return None;
     }
-    // A reference with lock data starts locked, a leveled lock at the reference's level
+    // A reference with lock data starts locked, a leveled lock at its fixed level
     // [hypothesis, as fnv_sim::World does: `World::lock_of`].
     let lock = sim.world.lock_of(id).filter(|l| l.locked).map(|l| (l.level, l.key));
     let carried = |k: FormId| {
@@ -659,7 +659,7 @@ pub(crate) fn activate(
     for e in effects {
         match e {
             Effect::RefChanged(form_id) => {
-                changed.write(RefChanged { form_id });
+                changed.write(RefChanged::new(form_id));
             }
             Effect::Travel { world, interior, feet, heading_deg } => {
                 let to = match (interior, world) {
@@ -702,7 +702,7 @@ pub(crate) fn drawn(sim: &SimState, script: Option<&crate::script::ScriptState>,
 /// Hide or show `RefVisual` entities from the simulation's state ([`drawn`]): every entity
 /// of a reference named by `RefChanged`, and new entities as cells stream in (a taken item
 /// must not come back when its cell reloads).
-pub(crate) fn sync_visuals(
+pub fn sync_visuals(
     sim: Res<SimState>,
     script: Option<Res<crate::script::ScriptState>>,
     mut changes: MessageReader<RefChanged>,

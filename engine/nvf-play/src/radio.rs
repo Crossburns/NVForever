@@ -400,7 +400,7 @@ pub struct Radio {
     clock: f64,
     programmes: HashMap<u32, Programme>,
     playing: HashMap<u32, Playing>,
-    files: HashMap<String, Option<Arc<[u8]>>>,
+    pub files: crate::file_bytes::FileBytes,
     lengths: HashMap<String, f64>,
     reported: HashSet<String>,
     space: Option<Space>,
@@ -443,17 +443,14 @@ impl Radio {
     }
 
     fn bytes(&mut self, vfs: &fnv_vfs::Vfs, path: &str) -> Option<Arc<[u8]>> {
-        self.files
-            .entry(path.to_string())
-            .or_insert_with(|| match vfs.read(path) {
-                Some(Ok(b)) => Some(b.into()),
-                Some(Err(e)) => {
-                    warn!("radio: {path}: {e}");
-                    None
-                }
-                None => None,
-            })
-            .clone()
+        self.files.get_or_read(path, || match vfs.read(path) {
+            Some(Ok(b)) => Some(b.into()),
+            Some(Err(e)) => {
+                warn!("radio: {path}: {e}");
+                None
+            }
+            None => None,
+        })
     }
 
     /// Seconds a file lasts: from the Ogg or WAV headers, else by decoding it.
@@ -1154,6 +1151,13 @@ fn load_aids(mut radio: ResMut<Radio>) {
 
 pub struct RadioPlugin;
 
+/// Let go of the radio's files nothing plays ([`crate::file_bytes`]).
+fn release_files(real: Res<Time<Real>>, limits: Option<Res<nvf_assets::KeepLimits>>, x: Option<ResMut<Radio>>) {
+    if let Some(mut x) = x {
+        x.files.sweep(real.elapsed_secs_f64(), crate::file_bytes::limits(limits));
+    }
+}
+
 impl Plugin for RadioPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Radio>()
@@ -1162,7 +1166,7 @@ impl Plugin for RadioPlugin {
             .add_audio_source::<Panned<RadioSound>>()
             .add_systems(Startup, (init, load_aids))
             .add_systems(Update, (pipboy_controls, play).chain().after(crate::PlaySet::Scripts))
-            .add_systems(Last, report);
+            .add_systems(Last, (release_files, report));
     }
 }
 

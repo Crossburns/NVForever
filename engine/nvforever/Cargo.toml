@@ -40,6 +40,8 @@ half = "2"
 # GPU memory budget (memory_budget.rs): VK_EXT_memory_budget through wgpu's Vulkan device
 # (`Device::as_hal`); the versions Bevy already uses (MIT/Apache-2.0).
 wgpu = { version = "30", default-features = false, features = ["vulkan"] }
+# MIT FSR 3.1.4 source port, pinned and vendored with shaders/build sources/notices.
+wgpu-ffx = { path = "../vendor/wgpu-ffx/wgpu-ffx" }
 ash = { version = "0.38", default-features = false }
 # Only with the `tracy` feature: the Tracy client Bevy's trace_tracy uses, the version Bevy
 # already pins, made to record only while a viewer is connected (`ondemand`: no data piles
@@ -51,9 +53,9 @@ tracy-client = { version = "0.19", optional = true, default-features = false, fe
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "0.15", default-features = false }
 # The generated-terrain bake threads' priority (lodgen.rs) and the span profile's processor time
-# (profile.rs), and the machine's RAM (memory_budget.rs); a version already in the build;
-# MIT/Apache-2.0.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_SystemInformation"] }
+# (profile.rs), the machine's RAM (memory_budget.rs) and the frame rate counter's CPU/GPU use
+# (fps_counter.rs, performance counters); a version already in the build; MIT/Apache-2.0.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_System_Performance"] }
 
 [build-dependencies]
 # The program icon in the Windows executable (build.rs); MIT.
@@ -66,7 +68,7 @@ default = ["intro-video"]
 intro-video = ["nvf-play/intro-video"]
 # Bevy's spans for the in-engine span profile (profile.rs, NVF_PLAY_TEST_PROFILE); not for
 # release builds.
-profile = ["bevy/trace"]
+profile = ["bevy/trace", "fnv-phys/solver-timers"]
 # The same spans sent live to the Tracy profiler (docs/design/frame-rate-audit.md §1: the
 # viewer's version must match the tracy-client in Cargo.lock); not for release builds.
 tracy = ["profile", "bevy/trace_tracy", "dep:tracy-client"]

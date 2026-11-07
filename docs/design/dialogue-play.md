@@ -65,7 +65,17 @@ original unless it carries a tag.
    when the player falls short [documented: Category:Dialogue "AV/Perk"; where the two
    numbers come from is the runtime's hypothesis, dialogue.md §3.3]; the frame of one
    the player falls short of is red (dialogue-menu.md §3).
-4. **The end.** A Goodbye line ends the conversation when it has been said; so does an
+4. **The end.** A Goodbye choice ends the conversation at once and the actor finishes
+   the line [observed: owner's playtest 2026-11-05, against the original: choosing a
+   Goodbye closes the menu at once and the actor finishes the line as the player walks
+   away; the runtime's rule, `Game::choose`, dialogue.md §5; issue #1606]. The screen
+   goes as the line starts, the player is free and the game runs again; the line is
+   heard where the actor stands and its subtitle drawn as a SayTo line's [design: a line
+   said in the world], and its end script runs when it is over [hypothesis,
+   dialogue.md §7 item 18]. The log says `dialogue: the conversation ends on the Goodbye choice; <actor>
+   finishes the line <line> in the world`. A Goodbye line the player did not choose (a
+   force greet's Goodbye greeting, a Goodbye follow-up) and any Goodbye line through a
+   talking activator still end the conversation when they have been said; so does an
    actor with nothing more to offer (the runtime's rules).
 
 ## 2. Keys
@@ -78,7 +88,7 @@ original unless it carries a tag.
 | | Up / Down, W / S, mouse wheel | move the selection |
 | | Enter, Space, Activate (E) | pick the selected choice |
 | | left click on a choice (hovering selects it) | picks it |
-| | Tab | says goodbye: picks the offered Goodbye choice, so the actor says its goodbye line and the conversation ends as the data ends it; at a topic list (the top level) without one, leaves it (#1595); refused at a line's own choices without one |
+| | Tab | says goodbye: picks the offered Goodbye choice; the conversation ends at once and the actor finishes its goodbye line in the world (§1 item 4); at a topic list (the top level) without one, leaves it (#1595); refused at a line's own choices without one; refused when no Goodbye choice is offered |
 | Any time | Esc | the pause menu (Resume goes back to the conversation) |
 
 - The original leaves a conversation with Tab [hypothesis: the coordinator's brief of
@@ -191,6 +201,7 @@ dialogue: <actor> offers N choices: 0) "<text>" [<topic>]; 1) … (goodbye) (dim
 dialogue: choice <index> made: "<text>" [<topic>], <actor> answers with <line>
 dialogue: topic <topic> added by line <line>
 dialogue: conversation with <actor> ended (<goodbye|no_choices|left|actor_gone>, N lines)
+dialogue: the conversation ends on the Goodbye choice; <actor> finishes the line <line> in the world
 ```
 
 The aid's own lines start `test aid NVF_PLAY_TEST_TALK:`. With `NVF_PLAY_SCRIPT_TRACE`
@@ -342,9 +353,8 @@ shown one after the other, so the picture moves by that much between them (§7).
 - **Played by hand: not done by this session** (the unattended runs cannot hold the
   cursor, so free look and mouse clicks on choices were not exercised; keys and clicks
   go through the same code path as the aid from `Act` on). Owner item.
-- The actor and the player's view turn to each other since step D7 (§8). No dialogue
-  camera (no zoom, no change of the field of view; §8.5), and the eyes do not move in
-  the head. The mouth moves since step D6 (docs/spec-notes/lipsync.md); the head turns
+- The actor and the player's view turn to each other since step D7 (§8), and the view
+  closes in on the speaker (§8.8). The eyes do not move in the head. The mouth moves since step D6 (docs/spec-notes/lipsync.md); the head turns
   a `.lip` file asks for are still not applied (their unit is unknown, lipsync.md §3.3).
 - The menu does not show the player's own line being said, nor the actor's last line
   while choosing.
@@ -507,6 +517,7 @@ original's values, unless a line carries another tag. What is known of the origi
 - `nvforever --dialogue-recentre`: the view comes back onto the actor each time the
   choices appear (off by default; `--no-dialogue-recentre` is still accepted and does
   nothing).
+- `nvforever --no-dialogue-zoom`: no close-up and no blur (§8.8).
 - Test aid `NVF_PLAY_TEST_TALK_HEAD_ONLY=1`: no actor turns its body (as if all were
   `BodyHeld`), to see the head at its limit. Not a game behaviour.
 - Log, each line starting `dialogue look:`:
@@ -562,11 +573,22 @@ From the owner's GECK wiki export unless tagged otherwise; nothing here was capt
 - **The dialogue camera.** The export does not describe what the original's camera does
   in a conversation. Its only trace is a third-party plugin's page (itr-nvse,
   "SetDialogueCameraEnabled") that says the plugin replaces "the vanilla
-  over-the-shoulder dialogue view". [hypothesis: in first person the original narrows
-  the field of view onto the speaker; to be captured or told by the owner.] Nothing of
-  the kind is built: no zoom, no change of the field of view, no cinematic camera.
-  Follow-up, once it is described: a field-of-view ease onto the speaker in first
-  person, and what the third-person camera does.
+  over-the-shoulder dialogue view". Captures of the original (2026-11-06) show what it
+  does [observed, the shots stay private]:
+  - The view eases onto the speaker while the HUD goes and the subtitle appears, settled
+    in about 0.6-1 s (samples every 4 frames: fitted, rough); closing, it is back in
+    about 0.3 s, the HUD back at the first frame of it.
+  - The head comes out the same size from any distance, so it is a framing and not a
+    fixed zoom: from about 90 units and from about 300 (Doc Mitchell), crown to chin is
+    about 0.30 of the view's height, the face's centre about 0.32 of it from the top,
+    centred across.
+  - From third person it ends in the same close-up with no player body, the camera having
+    travelled from behind the player, and returns on closing.
+  - The far background is strongly blurred when it is far behind the speaker, a little
+    when it is close behind him; the speaker stays sharp. That fits a depth of field
+    focused on the speaker [hypothesis]. In one view the whole picture also looks dimmer;
+    not explained, left out.
+  What NVForever does with this: §8.8.
 
 ### 8.6 Checks (2026-10-10)
 
@@ -672,7 +694,8 @@ and turned away by `NVF_PLAY_TEST_LOOK`.
 - The eyes do not move in the head: at the head's limit (a player far to the side of
   an actor that keeps its body) the face is turned towards the player but the eyes look
   straight out of it.
-- No dialogue camera (§8.5).
+- The close-up is unplayed (§8.8): its numbers are fitted and its checks are logs and
+  unit tests.
 - The turn clips are asked for while a body turns, but not checked in a picture, and
   their length is not matched to the turn: a turn takes 0.5 to 1.4 s whatever the
   clip's own pace is.
@@ -705,6 +728,85 @@ and turned away by `NVF_PLAY_TEST_LOOK`.
   docs/status.md §3 Animation).
 - The `.lip` files' own head and look channels are still not applied (lipsync.md §3.3).
 
+### 8.8 The close-up (2026-11-06)
+
+`engine/nvf-play/src/dialogue_zoom.rs`; the original's side is §8.5. Setting
+`dialogue-zoom` (Gameplay, on by default), `--no-dialogue-zoom`; it does not need
+`dialogue-look`, whose turning it only aims (with that off the renderer still says where
+the face is, and the view narrows where it looks).
+
+- **Field of view.** The vertical angle in which a head of `HEAD_HEIGHT`, 15.5 units, at
+  the distance to the face fills 0.30 of the view's height: `2 atan(15.5 / (0.6 d))`, so the
+  aspect ratio does not enter [observed: 0.30 in the original; 15.5 from Chet's head as
+  drawn in our run, about 185 of 720 px from 394 units at 8.7°]. About 32° from 90 units,
+  10° from 300. Never wider than the view the player has (nearer than about 45 units at the
+  default, the view stays), never narrower than 6° [design]. It follows a speaker walking
+  up over 0.5 s, not the mouse.
+- **Times.** In 0.8 s, out 0.3 s [observed: fitted, rough]; smoothstep.
+- **Framing.** The opening turn (and `--dialogue-recentre`'s) aims under the face so that
+  the head bone sits 0.38 of the height from the top, which puts the face's centre at about 0.32: `atan(0.24 tan(v/2))` below it. Nothing after
+  that: free look stays and the view is the player's [owner decision 2026-10-10, §8.2].
+  The turn takes its 0.4 s and then stays on the face until 1.6 s from its start
+  (`ZOOM_HOLD_SECONDS`), as the speaker's body may still be coming round: at 8.7° a body
+  turn of 163° had moved Chet's face 2.5° off, far right of the picture's centre [observed:
+  our run, 2026-11-06]. A mouse move at any time in it drops it as before, framing and all.
+- **Looking around** while zoomed is scaled by the zoom (`tan(v/2)` against the unzoomed
+  view's), mouse and stick, so the picture moves as far as it does unzoomed, and is back
+  to the usual rate as the zoom goes [design].
+- **Who owns the field of view.** The zoom keeps what is on the camera underneath and
+  gives it back. A value it did not write is someone else's (the settings slider, the
+  console's SetCameraFOV, the sights' zoom) and the new base. The sights' zoom, the console
+  and the Vigor Tester ask for the value underneath before keeping one, so a zoomed angle
+  never becomes a base. The zoom runs after the sights' in the frame.
+- **Third person.** The camera travels from its place behind the player to the first-person
+  eye with the zoom and the body goes at 0.85 of the way (`TALK_CAMERA_CLOSE`, before the
+  camera is in the head; [design]); closing, the same back. `PlayerControl::pov` is not
+  touched, so a script's IsPC1stPerson and a save see the player's own view. The detached
+  camera (`control.rs`) gives its angle to the heading first, and the mouse turns the view.
+- **No zoom**: through a talking activator (not in this version; logged once), a dead
+  speaker, one that is not drawn, the free camera, the character creator, a kill camera.
+  The Vigor Tester sets its own field of view: the zoom lets go at once. All else eases out.
+- **Pausing.** On the virtual clock: the Esc pause menu holds it. With `--menu-pause
+  original` both eases complete at once.
+- **Blur.** A depth of field on the face's distance (image-modifiers.md §8.4), behind the
+  speaker only, faded with the zoom, following the setting. No dimming.
+- Log: `dialogue zoom: in on <actor> (<what the face point is>): <d> units, vertical <a>° to
+  <b>°, over 0.80 s; view <v> units tall (<a human-style actor | drawn <h> tall>), the point <s> from its top[; third person: the camera at the eye, no body]` as the ease in ends;
+  `dialogue zoom: out from <d> units: the view is back at vertical <a>°, over 0.30 s` as
+  the ease out ends; `dialogue zoom: no zoom in the conversation with <actor>: <why>`;
+  `dialogue zoom is off (--no-dialogue-zoom)`.
+- Smoke: `dialogue-zoom`, `dialogue-zoom-off`, `dialogue-zoom-no-look`,
+  `dialogue-zoom-third`, `dialogue-zoom-frozen`, `dialogue-zoom-victor`, `dialogue-zoom-marcus`, `dialogue-zoom-house`, and `talking-activator-intercom` for the
+  activator's line.
+- **Creatures and robots** (ACRE; `creature_framing`). Every actor's head here is a head
+  bone, `Bip01 Head`, on the securitron and the super mutant skeletons too, so a robot was
+  aimed at sensibly but framed as a human head: 52 units of view for a machine 187 tall.
+  From the original's shots, measured against the meshes in the data [observed, 2026-11-06]:
+
+  | Speaker | Drawn height | View's height | Head or face share | Point from the top |
+  |---|---|---|---|---|
+  | Human (Doc Mitchell, Chet) | about 128 | 51.7 | head 0.30 | 0.38 (bone + face offset) |
+  | Marcus (super mutant) | 173 | about 97 | head 0.25, face's centre 0.325 | bone about 0.31 |
+  | Victor (securitron) | 187 | about 125 | screen 0.22, its centre 0.44 | bone 0.457, antenna 0.055 |
+  | Mr. House (a screen) | 300 | about 150 (vertical 18.3° from about 466) | face well over half | bone about 0.55 |
+
+  The view is `51.7 + 7.5 sqrt(height - 128)`, which gives 102 (+5 %), 109 (-13 %) and 150,
+  with a creature's point at `0.9 * top above it / view`, held to 0.31 to 0.55: Marcus's at
+  0.31, Victor's 0.46, House's 0.55. One rule over three big speakers, no table and no
+  exception for House (his head bone is low on his machine, in front of the screen, and the
+  rule puts it low in the view), and a fit, not the original's: a proportion to height or a
+  power of it fits none of the three together. Height is the hit volume's, the union of the
+  drawn meshes' boxes (`crate::hitvol`); 173, 187 and 300 are worked out from the meshes in the
+  bind pose, the `in on` line logs what a run has. A creature no taller than a human
+  gets a human's view. Human-style actors (ACHR) keep the numbers above, whatever their hit
+  volume says, as a hat or a seat changes that and not their framing: in the original Raul,
+  a ghoul seated, shows a head about 0.24, not looked into. A creature with no head bone
+  aims at 0.9 of its hit volume's height (`face_point`), under the same rule; one with no
+  hit volume is not drawn and gets no zoom.
+- Open: not compared with
+  the shots yet: the times, the blur's strength and range (its picture is the fixed radius of
+  image-modifiers.md §8.5, which may be too little for the far hall view).
+
 ## 9. Turning to whom a line is said (2026-10-11, `claude/sayto-facing`)
 
 Owner request 2026-10-11: "when an actor is saying something to an npc or character i
@@ -732,8 +834,8 @@ nobody (Say).
 ### 9.2 The rule (`fnv_game::game::Game::facings`)
 
 For each line being said outside a conversation with the player that has a listener
-(SayTo, a hello to the player, a Goodbye greeting at the player, a line of a
-conversation between actors):
+(SayTo, a hello to the player, a Goodbye greeting at the player, the rest of a Goodbye
+line the player chose (§1 item 4), a line of a conversation between actors):
 
 - the **speaker** turns its head and body to the listener [owner decision 2026-10-11];
 - the **listener** looks at the speaker [documented for SayTo, §9.1]: head only for a

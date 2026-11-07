@@ -205,10 +205,15 @@ const SAVE_HOOK: SaveHook = SaveHook {
 };
 
 /// Markers found since the last frame: the message, the experience, the log.
-pub(crate) fn discover(state: Option<ResMut<DataState>>, mut script: Option<ResMut<ScriptState>>, sim: Res<SimState>, messages: Option<ResMut<QuestMessages>>) {
+pub(crate) fn discover(state: Option<ResMut<DataState>>, mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, messages: Option<ResMut<QuestMessages>>, loading_save: Option<Res<crate::save::PendingEngine>>) {
     let Some(mut state) = state else { return };
     // Found before the game runs (the first frames): kept until it does, for the XP.
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
+    // A save is loading: its found markers are not back yet and drop from the queue
+    // what the save already holds (`DataState::restore_discovered`; #1571).
+    if loading_save.is_some() {
+        return;
+    }
     // The rules hear which markers are found (GetMapMarkerVisible), also after a load.
     if rt.game.player.found_markers.len() != state.discovered().len() {
         rt.game.set_found_markers(state.discovered().iter().map(|&f| FormId(f)));
@@ -221,8 +226,9 @@ pub(crate) fn discover(state: Option<ResMut<DataState>>, mut script: Option<ResM
     let xp = sim.forms.setting_f32("iXPRewardDiscoverMapMarker").map_or(DISCOVER_XP, |v| v as f64);
     for (form, name) in found {
         let gained = fnv_game::experience::award(&mut rt.game, fnv_game::experience::Source::Discovery, xp);
-        // Discovery challenges and Locations Discovered ones (`fnv_game::challenges`).
-        rt.game.challenge_marker_found(FormId(form));
+        // Discovery challenges and Locations Discovered ones (`fnv_game::challenges`), and
+        // JIP's location-discover event, whose handlers see the world.
+        with_world(rt, &mut sim, |rt| rt.game.challenge_marker_found(FormId(form)));
         info!("compass: discovered {name} ({}), +{gained} XP", FormId(form));
         if let (Some(m), false) = (messages.as_deref_mut(), name.trim().is_empty()) {
             m.push(QuestNotice::Discovered(name));
@@ -456,6 +462,8 @@ fn draw(
     mut art: Local<Option<Art>>,
     mut spawned: Local<Spawned>,
 ) {
+    // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
+    let _hud = crate::interface::hud_units();
     let Ok(layer) = layers.single() else { return };
     let fresh = added.get(layer).is_ok();
     if !view.is_changed() && !fresh {

@@ -620,3 +620,20 @@ End
     assert_eq!(q("SetFunctionValue ((GetBaseSpellListSpells RobotCopy)[0])"), XVal::Ref(DT_ABILITY));
     assert_eq!(q("SetFunctionValue ((GetBaseSpellListSpells RobotCopy)[3])"), XVal::Ref(GHOUL_RAD));
 }
+
+/// The player's speed follows Speed Mult at once: SetAV and ModAV count without an
+/// equipment change (issue #1742: the original waited for one, which the owner ruled a
+/// bug; actors.md §8.10, The player).
+#[test]
+fn player_speed_follows_speed_mult_at_once() {
+    const SET_AV: u16 = 0x100F;
+    const MOD_AV: u16 = 0x1010;
+    let speed = code(fnv_game::actor_values::SPEED_MULTIPLIER);
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(g.move_speed_mult(P), 1.0);
+    call(&mut g, P, SET_AV, &[speed.clone(), ArgValue::Value(Value::Num(150.0))]);
+    assert_eq!(g.move_speed_mult(P), 1.5);
+    call(&mut g, P, MOD_AV, &[speed, ArgValue::Value(Value::Num(-100.0))]);
+    assert_eq!(g.move_speed_mult(P), 0.5);
+}

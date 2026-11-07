@@ -283,9 +283,15 @@ pub fn set_actor_value(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, Strin
     }
     // The player's skill keeps its part from the attributes: SetActorValue sets the rest
     // [observed: gaps6, Guns 17 (all from the attributes at level 1, untagged) reads 67
-    // after SetActorValue Guns 50, and 117 after 100, GetBaseActorValue the same].
+    // after SetActorValue Guns 50, and 117 after 100, GetBaseActorValue the same;
+    // o26_setav 2026-11-06, nvfdoc: `player.setav repair 35` from the console and from a
+    // script read 52 with Repair 17 from the attributes, issue #1575].
     let v = a.num(1)?;
-    let v = if r == FormId::PLAYER_REF && crate::actor_values::SKILLS.contains(&code) { v + g.derived_skill(r, code) } else { v };
+    // The tag bonus stays too, the points spent go [observed: o26_setav, nvfLanius at
+    // level 50, 27 from the attributes: Repair 127 read 62 after SetAV 35 and Science 127
+    // read 27 after SetAV 0, Guns 142 read 92 after SetAV 50, 15 above; that the 15 is
+    // Guns' tag bonus (fAVDTagSkillBonus) is a hypothesis, the save's tags were not read].
+    let v = if r == FormId::PLAYER_REF && crate::actor_values::SKILLS.contains(&code) { v + g.derived_skill(r, code) + g.tag_bonus(code) } else { v };
     set_base(g, r, code, v)?;
     none()
 }
@@ -374,6 +380,8 @@ pub fn damage_actor_value(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, St
     // SetOnHealthDamageEventHandler; observed: ev.amount -1, ev.source.type].
     if code == crate::actor_values::HEALTH && amount > 0.0 {
         g.jip_event("healthdamage", Some(r), vec![fnv_script::vm::XVal::Num(-amount), fnv_script::vm::XVal::Ref(0)]);
+        // Out of health: dead, or knocked out (docs/spec-notes/unconscious.md §2.2).
+        g.health_lowered(r);
     }
     // Out of fatigue: knocked out (docs/spec-notes/unconscious.md §2.3).
     if code == crate::actor_values::FATIGUE {
@@ -842,6 +850,10 @@ fn factions_now(g: &Game, r: FormId) -> Vec<FormId> {
 /// else FACT XNAM, else neutral (0) [documented: catalogue notes of
 /// GetFactionCombatReaction: 0 neutral for unlisted pairs, 1 enemy, 2 ally, 3 friend].
 pub fn reaction(g: &Game, a: FormId, b: FormId) -> i64 {
+    // SetAllyTemp's and SetEnemyTemp's first (`nvse_showoff3`).
+    if let Some(&v) = g.showoff.temp_reactions.get(&(a, b)) {
+        return v;
+    }
     if let Some(&v) = g.forms.faction_reactions.get(&a).and_then(|m| m.get(&b)) {
         return v;
     }
@@ -931,6 +943,8 @@ pub fn get_faction_relation(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, 
 /// or neutral (1) [documented: catalogue notes].
 pub fn set_enemy(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let (f1, f2) = (a.form(0)?, a.form(1)?);
+    g.showoff.temp_reactions.remove(&(f1, f2));
+    g.showoff.temp_reactions.remove(&(f2, f1));
     let v = |x: f64| if x != 0.0 { 0 } else { 1 };
     let (r12, r21) = (v(a.num_or(2, 0.0)), v(a.num_or(3, 0.0)));
     g.forms.faction_reactions.entry(f1).or_default().insert(f2, r12);
@@ -943,6 +957,8 @@ pub fn set_enemy(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
 /// or friend (1) [documented: catalogue notes].
 pub fn set_ally(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let (f1, f2) = (a.form(0)?, a.form(1)?);
+    g.showoff.temp_reactions.remove(&(f1, f2));
+    g.showoff.temp_reactions.remove(&(f2, f1));
     let v = |x: f64| if x != 0.0 { 3 } else { 2 };
     let (r12, r21) = (v(a.num_or(2, 0.0)), v(a.num_or(3, 0.0)));
     g.forms.faction_reactions.entry(f1).or_default().insert(f2, r12);
@@ -1021,6 +1037,7 @@ pub fn set_level(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
             return none();
         }
         g.player.level = Some(level);
+        g.sync_player_level();
         return none();
     }
     if a.num_or(1, 0.0) != 0.0 {

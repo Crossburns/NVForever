@@ -35,11 +35,23 @@ behind the screen).
    (`Streamer::settled`, reported through `Loading::render_busy`) and no actor in view is
    still waiting for its parts to be read (`readahead::actors_waiting`, reported through
    `Loading::actors_busy`; owner 2026-10-24: NPCs were seen being drawn in after the
-   screen), and that has been so
+   screen), the pipelines they are drawn with are ready (`pipeline_gate.rs`, reported
+   through `Loading::pipelines_busy`, #1520), and that has been so
    for 0.25 s and 3 frames (`SETTLE_SECS`, `SETTLE_FRAMES`: time for textures and meshes
    to reach the graphics card). `PlayState` returns to `Playing`, the clock runs again.
 6. If loading has not finished after 120 s (`TIMEOUT_SECS`) the screen comes down with a
    warning, so an unattended run cannot hang there.
+   Pipelines have a shorter limit of their own: 15 s (`PIPELINE_CAP_SECS`) once they alone
+   are waited for, with a warning naming those still waiting. One that has failed for good,
+   or is still being retried 15 s after it was asked for, is logged with its label and not
+   waited for again.
+
+   Without this wait the view stayed flat under the HUD for 1-2 s after a start's screen
+   came down, then the world appeared in one frame, with 104-125 pipelines still waiting as
+   it came down [observed: Goodsprings, main e2517687 and the same with logging, all 19 starts with shots, across
+   pool sizes]. A task holds Bevy's shader cache lock while it composes a shader [design:
+   bevy_render 0.20.1 `pipeline_cache.rs`], and more threads did not shorten the wait
+   [observed: 1 to 16 threads, about 3.7-4.1 s to clear in all but one batch]. Objects first seen after the screen is down are not covered.
 
 The player arrives standing: physics puts the character on the support the arrival rule
 found and counts it as on the ground until its first step, so the body does not play the
@@ -60,6 +72,13 @@ A travel asked for under it goes out behind it and is waited for too.
   14 s comes 14 s after the world can be played, with the world and the scripts run for
   14 s; the world aids' late-start rule (`pause::WorldAidClock`, `SCRIPTS_START_SECONDS`)
   then never holds them back. A run lasts its seconds plus its start.
+- **The picture first.** The first render frame blocks on a blit pipeline [design:
+  bevy_core_pipeline 0.20.1 `prepare_view_upscaling_pipelines`], compiled on the pool that
+  also reads models and cells, so the world's reads delayed the screen: its picture showed
+  in at most one capture of three starts [observed]. So under the start's screen cells and
+  actors start loading only once the screen has had `PICTURE_FRAMES` render frames with the
+  pipelines it is drawn with ready, or after `PICTURE_CAP_SECS` (`Loading::world_held`). Log: `loading
+  screen: the world starts loading <s> s after the screen (drawn)`.
 - Log: `loading screen: the start is held until the world can be played`, `loading
   screen down after <s> s (the start: cells, actors and scripts ready); …`, or after
   120 s `the start still waits for <what> after <s> s; going on without it`.
@@ -95,12 +114,22 @@ A travel asked for under it goes out behind it and is waited for too.
   destination has its own, one of them is taken every other time. Both rules are
   hypotheses (spec note §3).
 - The picture: the record's ICON, read through the texture cache like any other
-  texture. Scaled to cover the window without changing its shape; what does not fit is
-  cropped evenly (`loading::cover`). A record without a picture, or one whose texture
-  is missing, gives a black screen with the text.
-- The text: the record's DESC in a band along the bottom, with "Loading...".
-- The layout is NVForever's own. The original's roulette wheel, level progress and text
-  box (LSCT) are not drawn.
+  texture. Stretched to the window, as the original's (spec note §4). A record without a
+  picture, or one whose texture is missing, gives a black screen with the rest. The whole
+  screen is over black from its first frame.
+- The tip (`loading_look::fit_tip`): the record's DESC at the top, set by the LSCT its WMI1
+  names: box, font, colour and alignment (`fnv_world::loadscreen::TipStyle`; without an LSCT
+  of the tip type, the values of the base game's one). x and width follow the window's width
+  as pixels of a window 1280 wide, y and the text's size its height as parts of 960. It lies
+  on `loading_text_bar.dds` across the window, as high as the text. No text, no band. Drawn
+  again when the window's size changes, since the wrapping follows its shape.
+- The emblem (`loading_look::Emblem`): `meshes\interface\circular loading\loading01.nif`,
+  the wheel's centre at (0.5 W, 0.794 H) and the wheel 0.172 H across, its nodes turned by
+  the sequence `Idle` on real time, since the virtual clock is paused behind the screen. By
+  elapsed time, so a long frame makes it jump to where it should be. Without the model (or
+  with one that does not read) no emblem and one log line; nothing waits for it.
+- Read once and kept (`loading_look::Look`): the emblem, its textures, the band and the font.
+- The original's picture stage, objective, stats and level bar are not built (spec note §4).
 
 ## 4. Scope and open points
 
@@ -108,15 +137,18 @@ A travel asked for under it goes out behind it and is waited for too.
   menu still loads behind the menu and the intro film.
 - Travel without `--play` (the free camera following `--npc-travel` NPCs) is unchanged:
   no loading screen.
-- The game's rules for choosing a screen and its layout are open (spec note §3, §4).
+- The game's rules for choosing a screen are open (spec note §3).
 - Test aid: `NVF_PLAY_TEST_LOADING_SHOT=<png>` saves the window when the travel goes out
   (the screen is up); later screens of the run go to `<name>-2.png`, and so on.
 
 ## 5. Checks
 
-- `fnv-world`: `loadscreen::tests` (locations, choice).
-- `nvf-play`: `loading::tests` (cover, destination, and the sequence: screen up and
-  clock paused before the travel goes out, held while the renderer is busy, down and
-  playing again after; held while actors are read; the start's screen and its clock;
-  a travel under the start's screen).
+- `fnv-world`: `loadscreen::tests` (locations, choice), `tests/load_screen_type.rs` (LSCT
+  on a plugin written for the test).
+- `nvf-play`: `loading::tests` (cover, destination, a tip only with text, and the sequence:
+  screen up and clock paused before the travel goes out, held while the renderer is busy,
+  down and playing again after; held while actors are read; the start's screen and its
+  clock; a travel under the start's screen), `loading_look::tests` (the tip's box and band
+  and the emblem's place at 1280x720 and 1280x1024, its turning).
+- Smoke: `loading-screen-look`.
 - In the game (owner's data): Doc Mitchell's front door, both ways; see the pull request.

@@ -447,6 +447,23 @@ impl PcmSound {
         self.samples.len() as f64 / (self.channels.max(1) as f64 * self.rate.max(1) as f64)
     }
 
+    /// Interleaved samples (`channels` per frame, `rate` frames per second), unplaced.
+    pub fn from_samples(samples: Vec<f32>, channels: u16, rate: u32) -> PcmSound {
+        PcmSound { samples: samples.into(), channels, rate, pan: None, reverb: None }
+    }
+
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
     /// Decode a whole file of another encoding (Ogg Vorbis) with rodio.
     pub fn from_encoded(bytes: Vec<u8>) -> Result<PcmSound, String> {
         let d = rodio::Decoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
@@ -595,6 +612,11 @@ pub struct Sfx {
     pub voice_stolen: u32,
     /// Per SOUN: one-shots started, those started over its oldest voice, refused.
     per_sound: HashMap<FormId, [u32; 3]>,
+    /// Decoded files nothing plays, and when each was first seen so ([`release_files`]).
+    unused: nvf_assets::release::Unused<String>,
+    /// Real seconds of the last [`release_files`] sweep, and the files it has let go of.
+    swept_at: f64,
+    pub files_released: u64,
 }
 
 impl Sfx {
@@ -631,6 +653,9 @@ impl Sfx {
             voice_limited: 0,
             voice_stolen: 0,
             per_sound: HashMap::new(),
+            unused: nvf_assets::release::Unused::default(),
+            swept_at: 0.0,
+            files_released: 0,
         }
     }
 }
@@ -968,6 +993,58 @@ fn file_now(sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, path: &str, name: &str) -> F
         Some(FileState::Decoding(..)) => FileNow::Pending,
         Some(FileState::Broken) | None => FileNow::Broken,
     }
+}
+
+/// Whether a decoded file is in use: a playing holds its handle or shares its samples
+/// (a placed or reverbed playing is an asset of its own over the same samples).
+fn file_in_use(h: &Handle<PcmSound>, assets: &Assets<PcmSound>) -> bool {
+    nvf_assets::release::held_beyond(h, 1) || assets.get(h).is_some_and(|p| Arc::strong_count(&p.samples) > 1)
+}
+
+impl Sfx {
+    /// The decoded files kept: (files, those nothing plays, their samples' bytes).
+    pub fn file_share(&self, assets: &Assets<PcmSound>) -> (usize, usize, u64) {
+        let (mut n, mut idle, mut bytes) = (0, 0, 0u64);
+        for state in self.files.values() {
+            if let FileState::Ready(h) = state {
+                n += 1;
+                idle += usize::from(!file_in_use(h, assets));
+                bytes += assets.get(h).map_or(0, |p| (p.samples.len() * size_of::<f32>()) as u64);
+            }
+        }
+        (n, idle, bytes)
+    }
+}
+
+/// Let go of decoded sound files nothing has played for a while, as the asset caches do
+/// with models and textures (nvf_assets `release.rs`, the same [`KeepLimits`]). Without
+/// it every file heard stayed decoded for the whole session: decoded samples are 32-bit,
+/// about 170 KB a second of mono 44.1 kHz sound, and the RAM a long session used only
+/// grew [observed 2026-11-06, the stress tour; design]. A file asked for again is decoded
+/// again; a playing keeps its own samples, so dropping the cache's entry never cuts one.
+///
+/// [`KeepLimits`]: nvf_assets::KeepLimits
+fn release_files(real: Res<Time<Real>>, limits: Option<Res<nvf_assets::KeepLimits>>, sfx: Option<ResMut<Sfx>>, assets: Res<Assets<PcmSound>>) {
+    let Some(mut sfx) = sfx else { return };
+    let now = real.elapsed_secs_f64();
+    if now - sfx.swept_at < nvf_assets::release::SWEEP_SECS as f64 {
+        return;
+    }
+    sfx.swept_at = now;
+    let limits = limits.map_or_else(nvf_assets::KeepLimits::default, |l| *l);
+    let Sfx { files, unused, .. } = &mut *sfx;
+    let entries: Vec<(String, bool)> = files
+        .iter()
+        .filter_map(|(path, state)| match state {
+            FileState::Ready(h) => Some((path.clone(), file_in_use(h, &assets))),
+            _ => None,
+        })
+        .collect();
+    let drop = unused.sweep(now, entries, limits.secs, limits.max);
+    for path in &drop {
+        files.remove(path);
+    }
+    sfx.files_released += drop.len() as u64;
 }
 
 /// Take in the decodes the worker threads have finished: a sound ready to play, or a
@@ -1531,7 +1608,7 @@ impl Plugin for SfxPlugin {
             .configure_sets(Update, (SfxStep::Prepare, SfxStep::Ambient, SfxStep::Play).chain().in_set(SfxSet))
             .add_systems(Update, (listener_submerged, prepare).chain().in_set(SfxStep::Prepare))
             .add_systems(Update, (play, pan_sounds).chain().in_set(SfxStep::Play))
-            .add_systems(Last, report);
+            .add_systems(Last, (release_files, report));
         add_late_start(app);
         crate::reverb::build(app);
     }

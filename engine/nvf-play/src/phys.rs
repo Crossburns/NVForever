@@ -393,16 +393,17 @@ pub struct PosedDoor {
 }
 
 impl PosedDoor {
-    /// Pose the door's keyframed bodies for `seq` ("Open" when true) at `time` seconds.
-    fn pose(&mut self, world: &mut PhysWorld, open: bool, time: f32) {
+    /// Pose the door's keyframed bodies for `seq` ("Open" when true) at `time` seconds,
+    /// or in the model's stored pose when `stored` (a closed door, `DoorMotion::closed`).
+    fn pose(&mut self, world: &mut PhysWorld, open: bool, time: f32, stored: bool) {
         if self.shown == Some((open, time)) {
             return;
         }
         let anim = &self.bodies.anim;
         let Some((o, c)) = anim.door() else { return };
-        let seq = if open { o } else { c };
+        let seq = (!stored).then_some(if open { o } else { c });
         for (object, block, body) in &self.bodies.objects {
-            if let Some(node) = anim.node_to_root(Some(seq), time, *block) {
+            if let Some(node) = anim.node_to_root(seq, time, *block) {
                 world.pose_ref_object(&self.pose, *object, &node.iso, body);
             }
         }
@@ -639,18 +640,13 @@ pub struct LoadCtx<'a> {
 }
 
 /// Whether a placed reference is in the world now: not deleted in the plugins, and
-/// present for the simulation. A reference the simulation has not touched also needs to
-/// be enabled by its own flag, as render streaming and `fnvtool phys` require; once the
-/// simulation holds state for it, the simulation alone decides (so a reference enabled
-/// at run time gets its collision).
+/// present for the simulation, whether or not it holds state for the reference (under an
+/// enable parent `World::is_enabled` ignores the reference's own Initially Disabled flag;
+/// nothing sends a `RefChanged` for a reference whose state never changed, so this is
+/// its only chance). A placed type the simulation's table leaves out, which
+/// `SimState::present` takes for enabled, goes by its own flag.
 pub fn in_world(sim: &SimState, pl: &Placement) -> bool {
-    if pl.deleted() {
-        return false;
-    }
-    match sim.world.peek(FormId(pl.form_id)) {
-        Some(_) => sim.present(pl.form_id),
-        None => !pl.initially_disabled() && sim.present(pl.form_id),
-    }
+    !pl.deleted() && sim.present(pl.form_id) && sim.world.is_enabled(FormId(pl.form_id)).unwrap_or(!pl.initially_disabled())
 }
 
 impl PhysState {
@@ -1501,6 +1497,8 @@ impl PhysState {
         let start = [feet[0], feet[1], hit.point[2] + params.rest_gap(hit.shell)];
         let mut ch = self.world.add_character(id, params, start);
         ch.ignore_layers = fnv_phys::layers::character_ignores().union(fnv_phys::layers::actor_volumes());
+        // A stuck actor's move is not swept again every step (`fnv_phys` `Held`, issue #1797).
+        ch.hold_when_stuck = true;
         let mut b = NpcBody { prev_feet: ch.feet, ch, velocity: [0.0, 0.0], jump: false, sink: 0.0, lift: Default::default() };
         b.sink = drawn_sink(&b.ch, self.drawn_ground(&b.ch));
         self.npcs.insert(id, b);
@@ -1940,7 +1938,7 @@ fn pose_doors(sim: Res<SimState>, mut doors: ResMut<crate::doors::Doors>, mut ph
         }
         let Some(door) = doors.get(id) else { continue };
         let (open, time) = door.motion.pose();
-        d.pose(&mut phys.world, open, time);
+        d.pose(&mut phys.world, open, time, door.motion.closed());
         // The moving parts are not solid while the door swings (`DoorMotion::swinging`).
         let solid = !door.motion.swinging();
         if d.solid != Some(solid) {

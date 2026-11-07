@@ -48,6 +48,7 @@
 //!   fills the [`PageBody`] node with its own system, so a page can read what it needs.
 
 pub mod data;
+pub mod device_screen;
 pub mod frame;
 pub mod hotkey_panel;
 pub mod items;
@@ -106,6 +107,32 @@ const SHADE: f32 = 0.98;
 
 /// The pointer on the Pip-Boy's screen, for Bevy's picking.
 pub const PIPBOY_POINTER: PointerId = PointerId::Custom(Uuid::from_u128(0x6e76_665f_7069_7062_6f79_5f70_6f69_6e74));
+
+/// Where the pointer on the screen is found for the frame ([`PipBoyScreen::pointer`]): after
+/// the body is posed and before the tile input (`crate::tiles::stats_menu::feed`), which takes
+/// this frame's button with it, so a move and a press in one frame act at the new place. The
+/// device's system is nvforever's `pipboy_arm`; the flat image's is here.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PointerSet;
+
+/// Which system finds the pointer this frame ([`pointer_source`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerSource {
+    Device,
+    Flat,
+}
+
+/// One producer of [`PipBoyScreen::pointer`] for the frame, from the frame in use and whether
+/// the model shows the image: the device only while both say so. The two can disagree for a
+/// moment (`follow_frame` changes the frame before the body gives the model's screen up), and
+/// the flat image then has it, so the two systems can never overwrite each other.
+pub fn pointer_source(frame: Frame, on_model: bool) -> PointerSource {
+    if frame == Frame::Device && on_model {
+        PointerSource::Device
+    } else {
+        PointerSource::Flat
+    }
+}
 
 /// The three pages, in the order of the device's buttons.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
@@ -390,7 +417,7 @@ pub struct PipBoyRoot;
 
 /// The flat image in the window (no model screen).
 #[derive(Component)]
-struct FlatScreen;
+pub struct FlatScreen;
 
 /// The screen menu's black shade over the window, which holds the header and the image.
 #[derive(Component)]
@@ -404,6 +431,8 @@ impl Plugin for PipBoyPlugin {
             .init_resource::<UsePipBoy>()
             .init_resource::<PipBoyAid>()
             .init_resource::<frame::Kit>()
+            .init_resource::<stats::Prepared>()
+            .init_resource::<device_screen::ScreenFx>()
             .init_resource::<repair::PipRepair>()
             .add_message::<repair::RepairInput>()
             .init_resource::<item_mod::PipItemMod>()
@@ -431,7 +460,9 @@ impl Plugin for PipBoyPlugin {
                     advance,
                     camera_on,
                     (image_scale, flat_screen),
+                    stats::prepare,
                     frame::draw,
+                    (device_screen::draw, device_screen::sweep).chain(),
                     (stats::draw, items::draw, data::draw),
                     data::wave_moves,
                     stats::use_hints,
@@ -441,6 +472,8 @@ impl Plugin for PipBoyPlugin {
                     .chain()
                     .in_set(PlaySet::Ui),
             )
+            .configure_sets(Update, PointerSet.after(crate::player::BodySet).before(PlaySet::Activation))
+            .add_systems(Update, flat_pointer.in_set(PointerSet))
             .add_systems(First, drive_pointer.in_set(PickingSystems::Input));
         test_aid::setup(app);
         crate::settings::add_setting(
@@ -464,9 +497,11 @@ pub fn pipboy_open(pip: Res<PipBoy>) -> bool {
 }
 
 /// Whether the Pip-Boy's keys are its own: not while the tutorial menu is open over it
-/// (`crate::tutorial_menu`, whose A, S and E are Next, Previous and Close).
-fn takes_keys(script: Option<Res<crate::script::ScriptState>>) -> bool {
-    !script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.menu == Some(menus::TUTORIAL))
+/// (`crate::tutorial_menu`, whose A, S and E are Next, Previous and Close), and with the
+/// page drawn from its tiles not in the frame a menu over it closes either: that key was the
+/// menu's (`crate::tiles::stats_menu::StatsTiles::modal`).
+fn takes_keys(script: Option<Res<crate::script::ScriptState>>, tiles: Option<Res<crate::tiles::stats_menu::StatsTiles>>) -> bool {
+    !script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.menu == Some(menus::TUTORIAL)) && !tiles.is_some_and(|t| t.modal)
 }
 
 /// The menu code the Pip-Boy shows (`MenuMode`): its page's, or the repair list's or the
@@ -678,14 +713,15 @@ fn advance(time: crate::pause::AidTime, mut pip: ResMut<PipBoy>, mut control: Re
 }
 
 /// The screen camera draws only while the Pip-Boy shows; in the screen menu onto a clear
-/// image, so the menus lie on the shade behind them and not on a black box.
-fn camera_on(pip: Res<PipBoy>, screen: Option<Res<PipBoyScreen>>, mut cams: Query<&mut Camera>) {
+/// image, so the menus lie on the shade behind them and not on a black box; on the device
+/// onto the screen's undercoat (`device_screen.rs`).
+fn camera_on(pip: Res<PipBoy>, screen: Option<Res<PipBoyScreen>>, fx: Res<device_screen::ScreenFx>, mut cams: Query<&mut Camera>) {
     let Some(screen) = screen else { return };
     if let Ok(mut c) = cams.get_mut(screen.camera) {
         if c.is_active != pip.shown() {
             c.is_active = pip.shown();
         }
-        let clear = if pip.frame == Frame::Screen { Color::NONE } else { Color::BLACK };
+        let clear = if pip.frame == Frame::Screen { Color::NONE } else { device_screen::undercoat(fx.kept) };
         if !matches!(c.clear_color, ClearColorConfig::Custom(now) if now == clear) {
             c.clear_color = ClearColorConfig::Custom(clear);
         }
@@ -769,24 +805,22 @@ fn image_scale(pip: Res<PipBoy>, screen: Option<ResMut<PipBoyScreen>>, windows: 
 
 /// Where nothing shows the model's screen, and always in the screen menu, the image is
 /// drawn flat in the middle of the window over the world blacked out, under the header's
-/// strip (docs/design/screen-menu.md §3); the pointer on it is found here.
+/// strip (docs/design/screen-menu.md §3); [`flat_pointer`] finds the pointer on it.
 fn flat_screen(
     mut commands: Commands,
     pip: Res<PipBoy>,
-    screen: Option<ResMut<PipBoyScreen>>,
-    flat: Query<(Entity, &ComputedNode, &UiGlobalTransform, &FlatCrop), With<FlatScreen>>,
+    screen: Option<Res<PipBoyScreen>>,
+    flat: Query<&FlatCrop, With<FlatScreen>>,
     shades: Query<Entity, With<ScreenShade>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
-    aid: Res<PipBoyAid>,
 ) {
-    let Some(mut screen) = screen else { return };
+    let Some(screen) = screen else { return };
     // Only once the arm is all the way up: the body takes the screen a frame or more after
     // the Pip-Boy starts up (later still from third person, the first-person body not yet
     // drawn), and the flat image flashed in the middle of the window until it did (the
     // owner's playtest list 5, item 2).
     let want = pip.phase == Phase::Up && (pip.frame == Frame::Screen || !screen.on_model);
     // A change of the image's scale needs the image node's crop made again.
-    let stale = flat.iter().next().is_some_and(|(_, _, _, crop)| crop.0 != screen.scale);
+    let stale = flat.iter().next().is_some_and(|crop| crop.0 != screen.scale);
     match (want && !stale, flat.iter().next()) {
         (true, None) => {
             for e in &shades {
@@ -813,20 +847,46 @@ fn flat_screen(
                 commands.entity(e).despawn();
             }
         }
-        (true, Some((_, computed, at, _))) => {
-            if let Some(AidTarget::Canvas(p)) = aid.target {
-                screen.pointer = Some(p);
-                return;
-            }
-            let cursor = windows.single().ok().and_then(|w| w.physical_cursor_position());
-            let size = computed.size();
-            screen.pointer = cursor.and_then(|c| {
-                let local = c - (at.translation - size / 2.0);
-                let p = local / size * SCREEN_CROP;
-                (p.x >= 0.0 && p.y >= 0.0 && p.x < SCREEN_CROP.x && p.y < SCREEN_CROP.y).then_some(p)
-            });
-        }
-        (false, None) => {}
+        (true, Some(_)) | (false, None) => {}
+    }
+}
+
+/// Where a cursor in physical pixels lies on the canvas shown in a node of `size` around
+/// `centre`, if on it.
+pub fn crop_point(cursor: Vec2, centre: Vec2, size: Vec2) -> Option<Vec2> {
+    let p = (cursor - (centre - size / 2.0)) / size * SCREEN_CROP;
+    (p.x >= 0.0 && p.y >= 0.0 && p.x < SCREEN_CROP.x && p.y < SCREEN_CROP.y).then_some(p)
+}
+
+/// The pointer on the flat image: the test aid's point, else the window's cursor.
+fn flat_point(aid: &PipBoyAid, windows: &Query<&Window, With<PrimaryWindow>>, computed: &ComputedNode, at: &UiGlobalTransform) -> Option<Vec2> {
+    if let Some(AidTarget::Canvas(p)) = aid.target {
+        return Some(p);
+    }
+    let cursor = windows.single().ok().and_then(|w| w.physical_cursor_position())?;
+    crop_point(cursor, at.translation, computed.size())
+}
+
+/// The flat image's pointer for this frame's tile input ([`PointerSet`]), from the cursor now
+/// and the image's place as last laid out. Nothing while the device has the pointer
+/// ([`pointer_source`]). Until the image stands up the last place stays: the hand-built page
+/// compares it with a row's hover, so a reopening under a resting cursor selects nothing
+/// (`stats::View::drawn_at`).
+pub fn flat_pointer(
+    pip: Res<PipBoy>,
+    screen: Option<ResMut<PipBoyScreen>>,
+    flat: Query<(&ComputedNode, &UiGlobalTransform), With<FlatScreen>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    aid: Res<PipBoyAid>,
+) {
+    let Some(mut screen) = screen else { return };
+    if pointer_source(pip.frame, screen.on_model) != PointerSource::Flat {
+        return;
+    }
+    let Some((computed, at)) = flat.iter().next().filter(|_| pip.phase == Phase::Up) else { return };
+    let now = flat_point(&aid, &windows, computed, at);
+    if screen.pointer != now {
+        screen.pointer = now;
     }
 }
 
@@ -910,6 +970,39 @@ pub fn on_click(click: On<PointerClick>, nodes: Query<&Clickable>, mut out: Mess
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_system_finds_the_pointer_whatever_the_frame_and_the_model_say() {
+        assert_eq!(pointer_source(Frame::Device, true), PointerSource::Device);
+        assert_eq!(pointer_source(Frame::Device, false), PointerSource::Flat, "nothing shows the model's screen");
+        assert_eq!(pointer_source(Frame::Screen, true), PointerSource::Flat, "the frame changed, the body has not let go yet");
+        assert_eq!(pointer_source(Frame::Screen, false), PointerSource::Flat);
+    }
+
+    #[test]
+    fn the_flat_pointer_keeps_its_last_place_while_the_image_is_not_up() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(PipBoy::default());
+        world.insert_resource(PipBoyAid::default());
+        let camera = world.spawn_empty().id();
+        let last = Some(Vec2::new(200.0, 240.0));
+        world.insert_resource(PipBoyScreen { image: Handle::default(), camera, on_model: false, pointer: last, scale: 1.0 });
+        assert_ne!(world.resource::<PipBoy>().phase, Phase::Up);
+        world.run_system_once(flat_pointer).unwrap();
+        assert_eq!(world.resource::<PipBoyScreen>().pointer, last, "down, with no image");
+    }
+
+    #[test]
+    fn a_cursor_is_found_on_the_flat_image_by_its_crop() {
+        // An image twice the crop's size, its middle at 1000, 800.
+        let size = SCREEN_CROP * 2.0;
+        let centre = Vec2::new(1000.0, 800.0);
+        assert_eq!(crop_point(centre, centre, size), Some(SCREEN_CROP / 2.0));
+        assert_eq!(crop_point(centre - size / 2.0, centre, size), Some(Vec2::ZERO));
+        assert_eq!(crop_point(centre - size / 2.0 - Vec2::X, centre, size), None);
+        assert_eq!(crop_point(centre + size / 2.0, centre, size), None);
+    }
 
     #[test]
     fn each_page_has_its_menu_code() {

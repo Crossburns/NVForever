@@ -14,15 +14,18 @@ use fnv_game::unconscious::{Cause, GETUP_MAX, KNOCKDOWN_DOWN, PUSH_RISE, PUSH_SP
 use fnv_game::GameData;
 use fnv_script::vm::{ArgValue, Value};
 use fnv_script::FunctionTable;
+use fnv_sim::world::Outcome;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde_json::Value as Json;
 
 const HERO: u32 = 0x800;
 const THUG: u32 = 0x801;
 const ROCK: u32 = 0x802;
+const THUGS: u32 = 0x803;
 const HERO_REF: FormId = FormId(0x300);
 const THUG_REF: FormId = FormId(0x301);
 const ROCK_REF: FormId = FormId(0x302);
+const LEVELED_REF: FormId = FormId(0x303);
 const CELL: u32 = 0x200;
 /// ACBS flags [documented: xEdit]: Essential, No Knockdowns.
 const ESSENTIAL: u32 = 0x2;
@@ -55,10 +58,12 @@ fn placed(fid: FormId, base: u32, x: f32) -> Vec<u8> {
 
 fn plugin_bytes() -> Vec<u8> {
     let npcs = [npc(HERO, "TestHero", ESSENTIAL), npc(THUG, "TestThug", 0), npc(ROCK, "TestRock", NO_KNOCKDOWNS)].concat();
-    let refs = [placed(HERO_REF, HERO, 0.0), placed(THUG_REF, THUG, 300.0), placed(ROCK_REF, ROCK, 600.0)].concat();
+    let refs = [placed(HERO_REF, HERO, 0.0), placed(THUG_REF, THUG, 300.0), placed(ROCK_REF, ROCK, 600.0), placed(LEVELED_REF, THUGS, 900.0)].concat();
+    let lvlo = [1i16.to_le_bytes().to_vec(), vec![0; 2], THUG.to_le_bytes().to_vec(), 1i16.to_le_bytes().to_vec(), vec![0; 2]].concat();
+    let thugs = record(b"LVLN", 0, THUGS, &[sub(b"EDID", z("TestThugs")), sub(b"LVLD", vec![0]), sub(b"LVLF", vec![0]), sub(b"LVLO", lvlo)]);
     let c = record(b"CELL", 0, CELL, &[sub(b"EDID", z("TestCell"))]);
     let cells = [c, group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &refs))].concat();
-    [tes4(), top(b"NPC_", &npcs), top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cells)))].concat()
+    [tes4(), top(b"NPC_", &npcs), top(b"LVLN", &thugs), top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cells)))].concat()
 }
 
 struct Fixture {
@@ -144,6 +149,29 @@ fn push_actor_away_lays_an_actor_down_and_throws_it_away_from_the_source() {
     assert!(!opened_container(&mut g, THUG_REF), "getting up: no longer searchable");
     wait(&mut g, GETUP_MAX + 0.1);
     assert!(g.knockout(THUG_REF).is_none() && !g.is_out_cold(THUG_REF));
+}
+
+/// #1615: the player's own hand opens a pushed-down actor's inventory, as a script's
+/// activation does [documented: GECK wiki PushActorAway notes].
+#[test]
+fn the_players_own_hand_searches_a_pushed_down_actor() {
+    let f = fixture();
+    let mut g = game(&f);
+    push(&mut g, Some(HERO_REF), THUG_REF, 10.0);
+    let done = g.default_activation_by_hand(THUG_REF).unwrap().expect("not refused");
+    assert_eq!(done.activation.outcome, Outcome::OpenedContainer { container: THUG_REF });
+}
+
+/// The body of an actor placed through a leveled list is searched like any other's, by the
+/// player's own hand and by a script's activation.
+#[test]
+fn a_dead_actor_placed_through_a_leveled_list_opens_its_inventory() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(g.kill(LEVELED_REF, None));
+    let done = g.default_activation_by_hand(LEVELED_REF).unwrap().expect("not refused");
+    assert_eq!(done.activation.outcome, Outcome::OpenedContainer { container: LEVELED_REF });
+    assert!(opened_container(&mut g, LEVELED_REF));
 }
 
 #[test]

@@ -60,9 +60,9 @@ pub struct DrawnAlpha(f32);
 
 /// What the screen shows; drawn again when it changes.
 fn view_key(s: &Session, now: f32, has_view: bool, view_w: f32) -> String {
-    let labels: Vec<&str> = s.buttons().iter().map(|b| b.map_or("-", |b| b.0)).collect();
+    let labels: Vec<&str> = s.buttons().iter().map(|b| b.as_ref().map_or("-", |b| b.0)).collect();
     format!(
-        "{}:{}:{}:{:?}:{}:{}:{}:{}:{view_w:.0}",
+        "{}:{}:{}:{:?}:{}:{}:{}:{}:{view_w:.0}:{:?}",
         shown_bet(s),
         s.chips,
         s.earnings,
@@ -71,6 +71,7 @@ fn view_key(s: &Session, now: f32, has_view: bool, view_w: f32) -> String {
         s.busy(now),
         has_view,
         s.help.is_some(),
+        crate::pad::labels(),
     )
 }
 
@@ -133,7 +134,8 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Blackj
             root.insert(BackgroundColor(Color::srgba(0.0, 0.0, 0.0, SHADE_WITHOUT_VIEW)));
         }
     }
-    root.with_children(|r| {
+    // The menu at the UI scale, in the middle of the view (`crate::interface::menu_frame`, #1631).
+    root.with_children(|r| crate::interface::in_menu_frame(r, crate::interface::MIDDLE, |r| {
         let main = Node { position_type: PositionType::Absolute, left: u(EDGE), right: u(EDGE), top: u(EDGE), bottom: u(EDGE), ..default() };
         r.spawn(main).with_children(|m| {
             // The information box.
@@ -157,7 +159,7 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Blackj
                         let Some((label, hint, cmd)) = button else { continue };
                         let y = i as f32 * BUTTON_H;
                         let w = c.text_in(b, FontKind::Menu, label, 0.0, y + 9.0, true, bright);
-                        c.text_in(b, FontKind::Menu, hint, HINT_GAP, y + 9.0, false, bright);
+                        c.text_in(b, FontKind::Menu, &hint, HINT_GAP, y + 9.0, false, bright);
                         b.spawn((Button, BlackjackButton(cmd), at(-w - 10.0, y, w + 20.0 + HINT_GAP + 30.0, BUTTON_H)));
                     }
                 });
@@ -172,7 +174,7 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Blackj
         if let Some(h) = &s.help {
             crate::lockpick::help::spawn(r, c, h, view_w);
         }
-    });
+    }));
 }
 
 type Faded = (Option<&'static mut ImageNode>, Option<&'static mut BackgroundColor>, Option<&'static mut TextColor>, Option<&'static DrawnAlpha>);

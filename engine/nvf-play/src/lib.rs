@@ -33,6 +33,7 @@ pub mod cursor;
 pub mod crime;
 pub mod dialogue;
 pub mod dialogue_look;
+pub mod dialogue_zoom;
 pub mod dialogue_menu;
 pub mod difficulty;
 pub mod hardcore;
@@ -44,6 +45,7 @@ pub mod effect_sounds;
 pub mod fade;
 pub mod drowning;
 pub mod falls;
+pub mod file_bytes;
 pub mod swing_traps;
 pub mod flashlight;
 pub mod free_cam;
@@ -64,6 +66,7 @@ pub mod hud_target;
 pub mod aim_assist;
 pub mod knockouts;
 pub mod loading;
+pub mod loading_look;
 pub mod main_menu;
 pub mod location_markers;
 pub mod lockpick;
@@ -282,14 +285,28 @@ pub struct OpenContainer {
 /// disabled): visuals and collision must follow. Sent for placed references and for
 /// references the simulation creates (a drop from the inventory sends one per new
 /// reference; taking a dropped item back sends one for it).
+///
+/// `restored`: sent by a load for a reference as the save has it, not for anything that
+/// happened now. Visuals and collision follow it all the same; what reads a change as a
+/// deed of this moment (`crate::crime`, `crate::world_sounds`) must not.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct RefChanged {
     pub form_id: u32,
+    pub restored: bool,
 }
 
-/// A script moved or turned a placed or created reference (SetPos, SetAngle, Rotate,
-/// SetScale: `fnv_game::Game::turned`): its collision follows when the settle write-back
-/// would otherwise undo the move (`crate::phys::PhysState::repose_ref`).
+impl RefChanged {
+    /// A change happening now.
+    pub fn new(form_id: u32) -> RefChanged {
+        RefChanged { form_id, restored: false }
+    }
+}
+
+/// A script or the console moved or turned a placed or created reference (SetPos, SetAngle,
+/// Rotate, SetScale: `fnv_game::Game::turned`, and what it held before the tick cleared it):
+/// its collision follows when the settle write-back would otherwise undo the move
+/// (`crate::phys::PhysState::repose_ref`), and its drawn model follows (`crate::moved`,
+/// `crate::script_draw`).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct RefRepose {
     pub form_id: u32,

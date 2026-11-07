@@ -1,6 +1,7 @@
 //! What every Pip-Boy page shares, drawn into the screen's image
-//! (docs/spec-notes/pipboy.md §2): the background, the heading (the page's title and its
-//! cards of figures) and the tab line along the foot, and the tools the pages draw with.
+//! (docs/spec-notes/pipboy.md §2): the heading (the page's title and its cards of figures)
+//! and the tab line along the foot, and the tools the pages draw with. The screen around
+//! them (background, scanlines) is `device_screen.rs`'s.
 //! Lengths are the canvas's units (1024 × 768), from its top left corner.
 //!
 //! The numbers are the menu files' [documented: `menus\main\inventory_menu.xml` and the
@@ -25,9 +26,6 @@ pub const LINE: f32 = 200.0;
 pub const TEXT: f32 = 255.0;
 pub const DIMMED: f32 = 128.0;
 pub const FILL: (f32, f32) = (128.0, 32.0);
-/// The background picture, drawn at brightness 90 over the whole canvas.
-const BACKGROUND: &str = "Interface\\Shared\\Background\\pipboy.dds";
-const BACKGROUND_BRIGHTNESS: f32 = 90.0;
 /// A vertical fade line is 60 long.
 pub const FADE: f32 = 60.0;
 /// The heading: the title (font 4) 70 in, a line of 50 before it and one from 20 after
@@ -53,14 +51,6 @@ const TAB_HORBUF: f32 = 35.0;
 const TAB_VERBUF: f32 = 15.0;
 /// A text sits 3 under the middle of its box.
 const BOX_TEXT_DROP: f32 = 3.0;
-/// The screen's scanlines: the texture's one dark band, again every 9.5 of the canvas
-/// [observed: the file is 64 × 64 DXT1, white at its top fading to about 0.8 at the
-/// bottom; on the owner's ITEMS screenshot the solid CND bar's rows are bright and dim
-/// by about 15% every 6 pixels, of a menu 379 high for the canvas's 600]; it darkens
-/// what is under it by its texels' shortfall from white [hypothesis: drawn over the
-/// menus, multiplied in].
-const SCANLINES: &str = "textures\\pipboy3000\\pipboyscanlines.dds";
-const SCANLINE_PITCH: f32 = 9.5;
 
 /// The fonts' files by the number the menu files give them [documented:
 /// `Fallout_default.ini`, fonts.md §4].
@@ -86,8 +76,6 @@ pub fn base(font: &Font) -> f32 {
 pub struct Kit {
     faces: Vec<Face>,
     pictures: Option<Pictures>,
-    /// The scanlines: a column of black whose alpha is the band's darkening.
-    scanlines: Option<Handle<Image>>,
     /// The menus are the screen menu: the pages leave out their title, the header of page
     /// names stands in its place ([`heading_title`], [`header`]).
     pub screen: bool,
@@ -98,15 +86,6 @@ impl Kit {
         if self.faces.is_empty() {
             self.faces = FONTS.iter().map(|f| face(f, plain_font(31.0, 13.0), data, images, bc)).collect();
             self.pictures = Some(Pictures::load(data));
-            self.scanlines = data.and_then(|d| d.read(SCANLINES)).and_then(|b| scanline_column(&b)).and_then(|column| {
-                let rgba: Vec<u8> = column.iter().flat_map(|&l| [0, 0, 0, ((1.0 - l).clamp(0.0, 1.0) * 255.0).round() as u8]).collect();
-                // A broken file's size (0 rows, too many) gives no scanlines, not a GPU error.
-                let format = bevy::render::render_resource::TextureFormat::Rgba8Unorm;
-                let mut image = nvf_assets::texture::checked_image(1, column.len() as u32, 1, format, rgba).map_err(|e| warn!("pipboy: {SCANLINES}: {e}")).ok()?;
-                image.asset_usage = bevy::asset::RenderAssetUsages::default();
-                image.sampler = bevy::image::ImageSampler::linear();
-                Some(images.add(image))
-            });
         }
     }
 
@@ -262,6 +241,12 @@ pub fn heading(p: &mut ChildSpawnerCommands, c: &mut Ctx, title: &str, cards: &[
     }
 }
 
+/// Where the heading's lead line ends: where the line runs on from in the screen menu, which
+/// has no title ([`heading_title`]).
+pub fn lead_line_end() -> f32 {
+    MAIN.min.x + LEAD_LINE
+}
+
 /// A page's title in its heading (font 4, 70 in, on the heading's line); where the line
 /// goes on after it. In the screen menu the title is left out, the header of page names
 /// standing on the line in its place ([`header`]), and the line runs on from the lead line
@@ -413,7 +398,10 @@ fn on_tab_out(out: On<PointerOut>, nodes: Query<&Clickable>, mut pip: ResMut<Pip
 
 /// Show the hover box of the tab under the pointer (none while the Pip-Boy is down).
 pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut Visibility)>) {
-    if !pip.open() && pip.hover_tab.is_some() {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
+    // A page drawn from its tiles has no hand-built tabs for this to be left over from.
+    if (!pip.open() || boxes.is_empty()) && pip.hover_tab.is_some() {
         pip.hover_tab = None;
     }
     for (b, mut v) in &mut boxes {
@@ -425,7 +413,10 @@ pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut
 }
 
 /// Rebuild the frame (and with it every page's body) when the Pip-Boy's page or tab
-/// changed, or it came up.
+/// changed, or it came up, or a page went over to its tiles or back. A page drawn from its
+/// file (`crate::tiles::stats_menu::StatsTiles::ready`, the one decision) keeps the shell and
+/// the screen menu's header, and has none of the hand-built page: its heading and tab line are
+/// the tiles', once. The device's background and scanlines are `device_screen.rs`'s either way.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     mut commands: Commands,
@@ -436,10 +427,14 @@ pub fn draw(
     data: Option<Res<GameData>>,
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
-    mut shown: Local<Option<(Page, usize, Frame)>>,
+    tiles: Option<Res<crate::tiles::stats_menu::StatsTiles>>,
+    mut shown: Local<Option<(Page, usize, Frame, bool)>>,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     let Some(screen) = screen else { return };
-    let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame));
+    let tiled = tiles.is_some_and(|t| t.ready.is_some());
+    let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame, tiled));
     if want == *shown && (want.is_none() || !roots.is_empty()) {
         return;
     }
@@ -447,32 +442,28 @@ pub fn draw(
     for e in &roots {
         commands.entity(e).despawn();
     }
-    let Some((page, tab, frame)) = want else { return };
-    // The screen menu is plain, as the barter menu is: no device background, no
-    // scanlines (docs/design/screen-menu.md §2).
+    let Some((page, tab, frame, tiled)) = want else { return };
+    // The screen menu is plain, as the barter menu is: the device's own screen around the
+    // pages is `device_screen.rs`'s, on the device only (docs/design/screen-menu.md §2).
     let device = frame == Frame::Device;
     let mut c = Ctx::new(&mut kit, data.as_deref(), &mut images, formats.as_deref());
     c.kit.screen = !device;
     let root = Node { overflow: Overflow::clip(), ..at(0.0, 0.0, CANVAS.x, CANVAS.y) };
     commands.spawn((PipBoyRoot, root, UiTargetCamera(screen.camera), Name::new("Pip-Boy menus"))).with_children(|r| {
+        // The shell every view of a page keeps: the screen menu's header.
         if !device {
             header(r, &mut c, page);
         }
-        if device && c.image(r, BACKGROUND, at(0.0, 0.0, CANVAS.x, CANVAS.y), amber(BACKGROUND_BRIGHTNESS)).is_none() {
-            r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), BackgroundColor(amber(BACKGROUND_BRIGHTNESS).with_alpha(0.1))));
-        }
-        tab_line(r, &mut c, page, tab);
-        r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), PageBody { page, tab }, Pickable::IGNORE));
-        if let Some(lines) = c.kit.scanlines.clone().filter(|_| device) {
-            let stretch = SCANLINE_PITCH / c.images.get(&lines).map_or(64.0, |i| i.height() as f32);
-            r.spawn((
-                at(0.0, 0.0, CANVAS.x, CANVAS.y),
-                ImageNode { image_mode: NodeImageMode::Tiled { tile_x: true, tile_y: true, stretch_value: stretch }, ..ImageNode::new(lines) },
-                ZIndex(10),
-                Pickable::IGNORE,
-            ));
+        if !tiled {
+            hand_built_page(r, &mut c, page, tab);
         }
     });
+}
+
+/// What a hand-built page has inside the shell: the tab line and the body its module fills.
+fn hand_built_page(r: &mut ChildSpawnerCommands, c: &mut Ctx, page: Page, tab: usize) {
+    tab_line(r, c, page, tab);
+    r.spawn((at(0.0, 0.0, CANVAS.x, CANVAS.y), PageBody { page, tab }, Pickable::IGNORE));
 }
 
 // ---- The screen menu's header (docs/design/screen-menu.md §3.1) ---------------------

@@ -308,6 +308,11 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   - A loaded game shows its saved weather and keeps it, without a roll, while the list
     followed at its place lists it; `--weather` pins one weather for the whole run (the
     parity lab passes it for every exterior frame; interior frames do not use the sky).
+    A weather a script held when the game was saved is held again from the first frame,
+    listed there or not: the list's roll at the start is still made, and only decides
+    what shows after the release and the next roll [design: `SkyState::restore_saved`].
+    A script's weather not held is not kept: at the start's roll the list's weather
+    replaces it, unless the list holds it.
 - **Weather sound, precipitation and lightning** (`fnv_world::sky::Weather::{sounds,
   precipitation_model, lightning}`, engine `weather_fx.rs`; built 2026-10-21, ESM gap
   audit row 9). The fields [documented: xEdit wbDefinitionsFNV WTHR, wbWeatherSounds]:
@@ -949,13 +954,29 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   (autocorrelation at a 16-texel lag 0.56 / 0.77 / 0.92). Read as three height layers,
   one per noise layer, R = layer 1 [hypothesis]; it is not a normal map (the RGB
   vectors average length 0.52).
-- **How the engine draws water** [hypothesis, the renderer's model; compared by eye with
-  an in-game screenshot at Boulder Beach]: what lies behind the surface is fogged by the
-  length of the view ray inside the water, linearly from the above-fog near to far
-  distance, to opaque, shading from the shallow to the deep colour. Capping the fog at
-  the "amount" left the lake bed visible far out; fogging by the distance from the
-  camera made the water opaque right at the shoreline when seen from a few metres up
-  (an abrupt clear-to-opaque edge); both unlike the game. The water reflects the world when reflective
+- **How the engine draws water** [hypothesis, the renderer's model; compared with
+  in-game frames at Boulder Beach, the Ultra-Luxe fountain and the Goodsprings Source
+  trough, #1787]: seen from above, the water body's colour goes from the shallow to the
+  deep colour, linearly from the above-fog near to far plane, by how far below the
+  surface the opaque surface behind the pixel lies (the near and far planes are "the
+  distance in game units below the surface of the water" of the shallow and the deep
+  colour plane [documented: GECK wiki WaterType, Fog Properties tab]); its opacity goes
+  over the same near-to-far ramp by the length of the view ray inside the water, opaque
+  beyond the far plane; for placed water (PWAT) only up to the above fog's amount (Fog
+  Amount "controls the transparency of the Deep Color water plane", 0 transparent, 1
+  opaque [documented: same page]). Capping the fog at the amount left the lake bed
+  visible far out in Lake Mead (NVCleanWater, amount 0.75: about a fifth of the bed
+  shows through at any depth), unlike the game, so cell and distant water are not
+  capped [design, until a far-out Lake Mead comparison is made (§9 item 3); the
+  Ultra-Luxe fountain needs the cap, below, Placed water]. The depth-based colour is
+  used for all water (Boulder Beach's near-shore crop moves towards the original with
+  it, the table below). Under water both follow
+  the distance from the camera (the under fog's planes are distances "from the player",
+  its amount "does not appear to have any effect" [documented: same page]). Fogging by
+  the distance from the camera made the water opaque right at the shoreline when seen
+  from a few metres up (an abrupt clear-to-opaque edge), unlike the game. Until #1787
+  the colour followed the view ray too, and the amount was unused: a grazing look into
+  a shallow pool then gave the deep colour (below, Placed water). The water reflects the world when reflective
   (otherwise its reflection colour): the renderer mirrors the camera in the water plane
   nearest it, renders what lies above that plane into a texture and samples it at the
   fragment's screen position, offset along the wave-perturbed reflected ray; water at
@@ -973,8 +994,8 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   the camera's distance fog becomes the water's under fog (near / far, -2500 / 5500 for
   NVCleanWater) in its deep colour lit by the sun and ambient light; looking up, the sky
   shows only within Snell's window (refractive index 1.33) and the surface reflects the
-  water body outside it. The under fog "amount" is unused like the above one. Unknown: the roles of ANAM
-  opacity, the fog amounts, sun power and the four unnamed leading DNAM floats.
+  water body outside it. The under fog "amount" is unused. Unknown: the roles of ANAM
+  opacity, sun power and the four unnamed leading DNAM floats.
 - **Depth falloff** (2026-10-24, ESM audit gap 27): DNAM "Depth Falloff Start" and
   "End", "where the alpha fadeoff begins (used for edges of the water, to blend it
   smoothly with the land)" and "where the alpha fadeoff ends" [documented: GECK wiki
@@ -989,6 +1010,56 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   ray, so the reflecting surface meets the shore without a seam
   (`fnv_world::sky::Water::edge_falloff`, water.wesl). The refraction's 200-unit ramp is
   another thing and stays; distortion, light radius and brightness are still unused.
+- **Placed water** (2026-11-06, #1780): a placeable water (PWAT) names its own water type
+  in DNAM "Water" and is drawn with that WATR, not the cell's or the worldspace's
+  [documented: xEdit PWAT]. The Ultra-Luxe fountain (REFR 0x00165AD0, PWAT
+  DupontCircle01Water 0x000A1A9D) uses VStripULFountain (0x0016663E): FNAM Reflective,
+  shallow (53,79,49), deep (10,33,24), reflection (58,116,95), reflectivity 1.0, fresnel
+  0.23, above fog 0 / 36 / 1.0, noise normals scale 0.7, layer UV scales 100 [observed:
+  FalloutNV.esm]. Its PWAT DNAM flags are Reflects - Land, Reflects - Sky, the refracts
+  bits and Depth, but not bit 0 "Reflects" [observed]. In the original, from the
+  observer-checks item 87 spot at noon, the pool is an even, dull olive green
+  (about sRGB 61,77,39 across the surface) with no reflection of the obelisk, the
+  buildings or the sky and no visible waves [observed: capture `ul_fountain`,
+  2026-11-06]; drawn with the type's reflection weight (1.0 × mix(1, Schlick, 0.23), at
+  least 0.77) it was the pale sky (about 170,190,193). Rule [hypothesis]: PWAT bit 0
+  "Reflects" switches the whole reflection; a placed water without it shows only its
+  water body (fogged shallow to deep colour, lit; refraction where it is thin), with no
+  world, sky or reflection colour and no sun highlight, whatever its WATR's
+  reflectivity and the other "Reflects - …" bits say (the GECK dialog's "Reflects" group
+  "determines which objects can be reflected in this water object" [documented: GECK
+  wiki PlaceableWater]; what each sub-bit adds is not documented and unused). Cell water
+  has no such flags and always uses its type's reflection settings. In the masters 3 of
+  the 29 PWAT lack bit 0: the fountain's, NVCleanWater1x402 (NVCleanWaterGS; the
+  Goodsprings Source troughs, cells -16,-5 and -16,-4) and NVCleanWater1x1
+  (NVCleanWater03) [observed]. The Goodsprings Source trough (REFR 0x000E38C7) in the
+  original at noon shows no reflection either, not of the sky nor of the pipe above it,
+  only a dim grey-olive body (about sRGB 70,69,54) [observed: capture `gs_source`,
+  2026-11-06], which fits the rule. Since the change both are drawn without reflection.
+  Still different, and not this rule's: the body colour. The fountain is darker in ours
+  (about 17,40,21, the deep colour lit, against the original's 61,77,39, about the
+  shallow colour lit) and the trough bluer (about 70,82,83, NVCleanWaterGS's shallow
+  colour 91,102,145 through thin fog). The view ray reaches the fountain's far distance
+  (36 units) at a grazing look into a pool about 14 units deep [observed: the fountain
+  model's pool floor disc ULFountainCC at model z 68, scale 0.5, so z 1046 under the
+  water at 1060]. Settled in #1787 (the measures in "How the engine draws water"
+  above). Mean sRGB of one crop of the water per place, at noon, original against the
+  renderer [observed, 2026-11-07; the renderer's camera is not exactly the original's]:
+
+  | place | original | ray for both (before) | depth for both | depth colour, ray × amount opacity (as built) |
+  |---|---|---|---|---|
+  | Ultra-Luxe fountain (fog 0 / 36 / 1.0) | 64,80,41 | 36,52,27 | 173,156,107 | 67,87,41 |
+  | Goodsprings Source trough (7 / 58 / 0.72) | 66,65,54 | 70,85,89 | 73,78,83 | 90,96,110 |
+  | Boulder Beach, near water (-80 / 850 / 0.75) | 101,99,82 | 77,86,79 | 91,97,85 | 93,101,88 |
+
+  By depth alone the fountain's pale floor disc showed through (alpha 14 / 36), where the
+  original is an even opaque olive. As built the fountain matches; Boulder Beach (its
+  crop measured with the amount cap; cell water is now drawn without it, above) moves
+  towards the original (its bed shows further out, as in the original's frame
+  `lake_mead`, cell 13,9 looking east). The trough is still bluer and lighter than the
+  original's dim grey-olive body (with a pale haze along its inside walls); what makes
+  it dimmer is open (the body's lighting, or ANAM opacity 84, are candidates
+  [hypothesis]).
 - **Ripples** [hypothesis, the renderer's model]: DNAM's "rain" and "displacement"
   groups (starting size, force, velocity, falloff, dampner; NVCleanWater: rain 0.05 /
   0.1 / 0.6 / 0.985 / 2.0, displacement 0.01 / 0.4 / 0.6 / 0.985 / 10.0) are read as two
@@ -1380,6 +1451,42 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
   the colour, or ignoring LIGH targets all score within 0.03 SSIM of each other; ignoring
   them gives a lower mean colour error (0.008-0.028 against 0.033-0.049), but the near
   walls of the entry frame are warm in game, as with scaling [observed].
+- **Interior XCLW is not water** (issues #1546, #1078, 2026-11-06). The Tops' 13th floor
+  (`2ETopsBennysFloor`, 0x0010E429) and presidential suite (`2ETopsPresidentialSuite`,
+  0x0010E19B) set CELL DATA "Has water" with XCLW 14,095.9, while every reference in them
+  lies between z 7,228 and 9,284 [observed: `fnvtool world refs`]. The renderer's
+  under-water fog read that XCLW as a surface over the camera and drew the worldspace's
+  water (WastelandNV NAM2 Potomac, under fog −1,000..700, linear, deep colour
+  (27, 39, 24) × the light) round it: walls 59 % fogged at the camera and black past
+  about 700 units, the bulbs farther down the hall still showing [observed: our frame
+  from (3300, 2375, 7240) heading 270, 2026-11-06; the owner's "circle of darkness
+  around the player"]. Physics and audio had already stopped reading an interior's
+  XCLW as water (physics.md §6.6, `swim_h2o_drops` and `sw_guardian`: the original swims
+  at placed water objects, not XCLW; audio.md §15.2). The under-water fog now follows the
+  same rule: indoors the camera is under water only in physics' water (placed volumes),
+  coloured by the water type of the placed volume's base PWAT (DNAM, the type the renderer
+  draws that pool with), else the cell's (XCWT), else the worldspace's [hypothesis for the
+  colour]. Interiors with PWAT water but no XCLW (Vault 34, Vault 22, the Lake Mead and
+  Zion caves, among others, per a review of the install) get this fog for the first time;
+  coloured by XCWT or the worldspace they would take the wrong water (Vault 34's toxic
+  pools fogged as the Potomac) [observed: review of PR #1779]. Without physics
+  (`PhysState`: the viewer, no `--play`) an interior has no under-water fog. Twelve interiors store an XCLW above every reference they hold (the two Tops
+  cells, HooverDamIntPowerPlant01 and 01b at 15,067, the 3C boat rental and BS caves,
+  CampSearchlightHiddenCave, the OV sleep cells) [observed: `world cells` against
+  `world refs --interiors`, FalloutNV.esm]; all were fogged before. Both Tops cells' own
+  lighting is unchanged: ambient (46, 36, 27) from their template StatesmanHotelTemplate
+  (LNAM bit 0), the 13th floor's fog (74, 57, 43) 512..6,000 power 1 and clip 8,000, the
+  suite's fog (32, 47, 81) 64..6,500 (template) power 0.8 and clip 2,048 [observed: `esm
+  decode`]. Still drawn: the renderer's interior water plane at XCLW (above the ceiling
+  in these cells). Against the original [observed: capture `tops_suite_door`,
+  2026-11-06 21:55, save nvfairport, hour 21, from (1990, 1216, 8040) heading 90; frame
+  private]: the original lights the suite evenly to its far wall (bar, pillars, the
+  wall's bands of light, posters, sofa and rug); ours from the same spot showed the rug
+  and sofa only, black beyond, before the change, and the whole room after it, a little
+  darker on the right (kept: interior brightness, owner 2026-10-27). The 13th-floor
+  hallway (from (3300, 2375, 7240) heading 270) now reads to its far end; before, it was
+  black past about 700 units. The suite's clip distance (2,048) hid nothing visible in
+  our frame from that spot; not checked from the room's far corners.
 - **Interior reference frames** (2026-10-09, plugin v7, save nvfdoc, 1280 x 720,
   `fDefaultFOV=75`) [observed]: `capture_frames.py` cameras with a `cell` travel by `coc`.
   Seven frames exist (Doc Mitchell's house x 4, Prospector Saloon x 3). The Vault 21 and
@@ -1457,7 +1564,9 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
    grid orientation and the default texture are in §3.) Verify by comparing renders with
    in-game screenshots.
 3. XCLW sentinel 3.4028235e38: confirm that the worldspace water height applies.
-   Water drawing (§6): fog distance measure, the fog amounts and ANAM opacity, noise
+   Water drawing (§6): ANAM opacity, the trough's dimmer body (#1787), whether the fog
+   amount caps cell water's opacity too (compare Lake Mead far from shore, where the
+   bed is deep, with the original; ours draws only placed water capped, #1789), noise
    layer units; to settle with in-game captures at Lake Mead at several heights and
    distances from the shore.
 4. Weather selection rule and the meaning of WLST globals (see §6).

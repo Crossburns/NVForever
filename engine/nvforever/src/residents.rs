@@ -609,7 +609,8 @@ impl Mover for PhysMover<'_> {
     }
 }
 
-/// Where the residents' clock starts and how fast it runs.
+/// Where the residents' clock starts and how fast it runs. A game restored from a save
+/// keeps its own hour and day; after the start, everyone reads the game's calendar.
 #[derive(Clone, Copy)]
 pub struct Clock {
     pub hour: f32,
@@ -760,6 +761,36 @@ struct Resident {
     /// script keeps in a holding cell (Malcolm Holmes in RandomEncounterNPCs) never was,
     /// so its cell is not buffered and it stays at the Low level.
     been_loaded: bool,
+    /// Seen joined but not present (disabled): drawn again, it was enabled.
+    absent: bool,
+    /// The clips it plays in its first second drawn after a script made it, enabled it or
+    /// put it somewhere ([`FirstSteps`]).
+    first_steps: Option<FirstSteps>,
+}
+
+/// How long [`FirstSteps`] watches an actor's clips, seconds of it being drawn.
+const FIRST_STEPS_SECONDS: f32 = 1.0;
+
+/// The walk and run frames of an actor in its first [`FIRST_STEPS_SECONDS`] drawn after
+/// a script created it (PlaceAtMe), enabled it or put it somewhere (MoveTo,
+/// MoveToMarkerWithFade): it fades in meanwhile, and its package's gait holds from its
+/// first frame (#1473). Logged at the end when it moved: `ai [hh:mm] <label>: first
+/// second drawn after <why>: <n> walk frames, <n> run frames (walker at <s> units/s, drawn
+/// up to <s>)`.
+struct FirstSteps {
+    why: &'static str,
+    left: f32,
+    walk: u32,
+    run: u32,
+    speed: f32,
+    /// The fastest its body was drawn moving (`Locomotion::velocity`), units/s.
+    drawn: f32,
+}
+
+impl FirstSteps {
+    fn new(why: &'static str) -> FirstSteps {
+        FirstSteps { why, left: FIRST_STEPS_SECONDS, walk: 0, run: 0, speed: 0.0, drawn: 0.0 }
+    }
 }
 
 /// A fighter locked on its target (`npc_combat::Fighters::lock_on`) and turned within
@@ -1292,6 +1323,9 @@ impl Core {
             let label = format!("{} {id}", game.data.name(base));
             info!("ai [{}] {label}: created by a script (PlaceAtMe) at ({:.0}, {:.0}, {:.0}): a resident from there", self.clock_text, pos[0], pos[1], pos[2]);
             self.add_resident(id, base.0, creature, 1.0, pos, label, true);
+            if let Some(r) = self.list.last_mut().filter(|r| r.actor == id) {
+                r.first_steps = Some(FirstSteps::new("its creation by a script"));
+            }
         }
     }
 
@@ -1359,6 +1393,8 @@ impl Core {
             lock_held: None,
             posed_heading: None,
             been_loaded: false,
+            absent: false,
+            first_steps: None,
         });
     }
 
@@ -1893,7 +1929,7 @@ impl Core {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn think(&mut self, game: &mut Game, own: bool, nav: &NavState, world: &WorldData, doors: &mut nvf_play::doors::Doors, mut phys: Option<&mut PhysState>, mut blocks: Option<&mut ActorBlocks>, dt: f32, now: f32, waited: u32) {
+    fn think(&mut self, game: &mut Game, own: bool, restored: bool, nav: &NavState, world: &WorldData, doors: &mut nvf_play::doors::Doors, mut phys: Option<&mut PhysState>, mut blocks: Option<&mut ActorBlocks>, dt: f32, now: f32, waited: u32) {
         crate::profile::ai_count(crate::profile::AiCount::Think, 1);
         // Who a walker pushed since the last frame, and (below) who may be pushed in
         // the next: nobody while the game is held.
@@ -1922,15 +1958,17 @@ impl Core {
         // [design: owner 2026-10-31].
         self.breaking = self.posed.iter().copied().filter(|id| !held.contains(id) && self.ai.agents.get(&FormId(*id)).is_some_and(|a| a.activity == Activity::Travelling)).collect();
         held.extend(self.posed.iter().copied());
-        if !self.prepared {
-            self.prepared = true;
-            game.cfg.package_interval = Some(PACKAGE_INTERVAL);
-            for (edid, v) in [(clock::GAME_HOUR, self.clock.hour.rem_euclid(24.0)), (clock::GAME_DAYS_PASSED, self.clock.days_passed)] {
-                if let Err(e) = set_global(game, edid, v) {
-                    warn!("ai: {e}");
-                }
-            }
-        }
+        // The victim of a planted explosive stands where it is from its panic to the blast
+        // (`GetPlantedExplosive`; docs/spec-notes/pickpocket.md §5) [hypothesis: the issue
+        // reads "slows or stops"; stopping is the plainer of the two].
+        let panicking: Vec<u32> = if game.pickpocket.planted.is_empty() {
+            Vec::new()
+        } else {
+            let actors: Vec<FormId> = self.list.iter().map(|r| r.actor).collect();
+            actors.into_iter().filter(|&a| game.has_planted_explosive(a)).map(|a| a.0).collect()
+        };
+        held.extend(panicking.iter().copied());
+        self.prepare(game, restored);
         // A menu, a conversation or a loading screen holds the game: nobody moves.
         self.held_now = game.menu.is_some() || game.loading || game.dialogue.is_some();
         if self.held_now {
@@ -2094,6 +2132,13 @@ impl Core {
                     info!("ai [{}] {} {id:08X}: its character stops while an idle holds it (was walking at {was:.0} units/s)", self.clock_text, game.data.name(FormId(id)));
                 }
             }
+            // Nor one panicking with a live explosive in its pocket.
+            for &id in panicking.iter().filter(|id| !self.carried.contains_key(id)) {
+                let was = stop_body(Some(&mut *p), id);
+                if was > 0.0 {
+                    info!("ai [{}] {} {id:08X}: its character stops: a live explosive in its pocket (was walking at {was:.0} units/s)", self.clock_text, game.data.name(FormId(id)));
+                }
+            }
         }
         if own {
             game.events.clear();
@@ -2121,7 +2166,13 @@ impl Core {
             if tactics.flights.contains_key(&r.actor) {
                 continue;
             }
-            let Some((target, _)) = game.awareness.get(r.actor).filter(|x| x.state == fnv_game::awareness::State::Combat).and_then(|x| x.combat_target()) else { continue };
+            let aw = game.awareness.get(r.actor).filter(|x| x.state == fnv_game::awareness::State::Combat);
+            // Just gone into Combat it stands a moment on its heading (`fnv_ai::alert::reacting`;
+            // nor is it locked on its target then, `npc_combat`).
+            if fnv_ai::alert::reacting(game, r.actor) {
+                continue;
+            }
+            let Some((target, _)) = aw.and_then(|x| x.combat_target()) else { continue };
             if let Some(p) = fnv_ai::goal::place_of_ref(game, target).filter(|p| p.space == a.walker.space) {
                 self.aims.insert(r.actor, p.pos);
                 if tactics.posts.get(&r.actor).is_some_and(|p| p.kind == fnv_game::combat_group::PostKind::Cover) {
@@ -2131,6 +2182,28 @@ impl Core {
         }
         self.no_room.retain(|_, until| now < *until);
         self.note(game, blocks, &held, now);
+    }
+
+    /// The first think with a game: the package interval, and the start clock (`--hour`,
+    /// `--day`, which reach a new game only here). A game `restored` from a save has the
+    /// save's clock and keeps it (#1607).
+    fn prepare(&mut self, game: &mut Game, restored: bool) {
+        if self.prepared {
+            return;
+        }
+        self.prepared = true;
+        game.cfg.package_interval = Some(PACKAGE_INTERVAL);
+        if !restored {
+            for (edid, v) in [(clock::GAME_HOUR, self.clock.hour.rem_euclid(24.0)), (clock::GAME_DAYS_PASSED, self.clock.days_passed)] {
+                if let Err(e) = set_global(game, edid, v) {
+                    warn!("ai: {e}");
+                }
+            }
+        }
+        if let Ok(c) = game.world.calendar() {
+            let whose = if restored { "the save's" } else { "the start clock's" };
+            info!("ai: the game's clock is {whose}: GameHour {:.3}, GameDaysPassed {:.3}", c.hour, c.days_passed);
+        }
     }
 
     /// `hours` passed in the Wait menu (the calendar is already there): for each, every
@@ -2215,6 +2288,8 @@ impl Core {
                 | AiEvent::Talk { .. }
                 | AiEvent::NoTalk { .. }
                 | AiEvent::TalkUnseen { .. }
+                | AiEvent::WalkUp { .. }
+                | AiEvent::WalkedUp { .. }
                 | AiEvent::PushedBack { .. }
                 | AiEvent::Hello { .. }
                 | AiEvent::IdleChatter { .. }
@@ -2274,6 +2349,11 @@ impl Core {
         let hour = clock_text(game);
         for r in self.list.iter_mut() {
             r.present = r.joined && !r.failed && game.present(r.actor);
+            if r.joined && !r.failed && !r.present {
+                r.absent = true;
+            } else if r.present && std::mem::take(&mut r.absent) {
+                r.first_steps = Some(FirstSteps::new("being enabled"));
+            }
             let Some(agent) = self.ai.agents.get(&r.actor) else { continue };
             // A perched bird is in nobody's way (actor-behaviour.md §5.8).
             if let (Some(b), true) = (blocks.as_deref_mut(), r.perched) {
@@ -2406,6 +2486,12 @@ fn describe(data: &GameData, world: &WorldData, e: &AiEvent) -> String {
         AiEvent::Talk { package, target, line, away, say_to: false, greeting: true } => format!("greets {} from {away:.0} units without a conversation ({}), line {line}", n(target), n(package)),
         AiEvent::Talk { package, target, line, away, say_to: true, .. } => format!("says line {line} to {} from {away:.0} units ({})", n(target), n(package)),
         AiEvent::TalkOver { package } => format!("has talked ({})", n(package)),
+        AiEvent::WalkUp { away, length } => format!("walks up to the player for a script's StartConversation: {} units away, {length:.0} units to go", away.map_or("in another space".to_string(), |d| format!("{d:.0}"))),
+        AiEvent::WalkedUp { away, reached, line } => format!(
+            "{} the player ({away:.0} units) and starts the conversation{}",
+            if *reached { "has walked up to" } else { "gets no nearer to" },
+            line.map_or(" (nothing to say)".to_string(), |l| format!(", line {l}"))
+        ),
         AiEvent::Follow { package, target, away, length, doors, running } => format!(
             "{} after {} ({}): {}{length:.0} units to go, {} doors",
             if *running { "runs" } else { "walks" },
@@ -2716,7 +2802,7 @@ pub fn drive(
             res.core.arrive(game, &nav, &world, &streamer, None);
             res.core.switch_navmeshes(game, &mut nav);
             let _span = info_span!("ai::think").entered();
-            res.core.think(game, true, &nav, &world, &mut doors, None, None, dt, now, 0);
+            res.core.think(game, true, false, &nav, &world, &mut doors, None, None, dt, now, 0);
         }
         (None, Some(mut script), Some(sim)) => {
             let script = &mut *script;
@@ -2756,7 +2842,8 @@ pub fn drive(
                 core.switch_navmeshes(&mut rt.game, &mut nav);
                 drop(span);
                 let _span = info_span!("ai::think").entered();
-                core.think(&mut rt.game, false, &nav, &world, &mut doors, phys, blocks, dt, now, waited)
+                let restored = rt.restored_from_save;
+                core.think(&mut rt.game, false, restored, &nav, &world, &mut doors, phys, blocks, dt, now, waited)
             });
         }
         _ => return,
@@ -2800,6 +2887,9 @@ pub fn drive(
         // has it elsewhere: it is off its furniture at once (the AI has walked or put it
         // on already).
         let moved = std::mem::take(&mut r.moved);
+        if moved {
+            r.first_steps = Some(FirstSteps::new("its move by a script"));
+        }
         if let (true, Some(f)) = (waited > 0 || moved, r.seat.furniture()) {
             if wants != Some(f) {
                 r.seat = Seat::None;
@@ -2959,9 +3049,12 @@ pub fn drive(
             (Some(t), from) => {
                 let want = heading_of([t[0] - feet[0], t[1] - feet[1]]);
                 let from = from.unwrap_or(w.heading);
-                // Standing, at the rate the AI turns a fighter (`fnv_ai::alert`), so one
-                // that never moves is drawn as its walker turns.
-                let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE * 2.0 } else { fnv_nav::follow::SPOT_TURN_RATE * fnv_ai::alert::COMBAT_TURN };
+                // Standing, at the rate the AI turns a fighter (`fnv_ai::alert::combat_turn_rate`),
+                // so one that never moves is drawn as its walker turns; on the move, at the
+                // walking turn rate: the original's trooper turned slower from the moment it
+                // stepped off (275 down to about 90°/s) [observed 2026-11-06, capture
+                // o25_turn, docs/spec-notes/actors.md §8.9].
+                let rate = if agent.activity == Activity::Travelling { fnv_nav::follow::WALK_TURN_RATE } else { fnv_ai::alert::combat_turn_rate(heading_delta(from, want)) };
                 let hold = lock.is_some() && (held || heading_delta(from, want).abs() <= LOCK_HOLD);
                 let h = if hold { want } else { turn_towards(from, want, rate * dt) };
                 if hold {
@@ -3012,11 +3105,35 @@ pub fn drive(
             }
         }
         let stage = (&mut r.spawned, &mut r.root);
-        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), equipment_world, &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some() }, stage, (feet, heading), moving, dt) {
+        if let Err(e) = nav::show_actor(&mut commands, root, visible, actor_world.as_deref(), equipment_world, &mut ahead, &mut spawn_stats, &mut parts, &mut models, &roots, &mut actors, nav::Who { reference: r.actor.0, base: r.base, creature: r.creature, scale: r.scale, strafe, air: agent.walker.air.is_some(), jumped: moved }, stage, (feet, heading), moving, dt) {
             if r.named {
                 warn!("ai: {} could not be drawn ({e})", r.label);
             }
             r.failed = true;
+        }
+        // Its first second drawn after a script made, enabled or moved it: the clips it
+        // walks or runs with (`FirstSteps`).
+        if let (Some(fs), true) = (r.first_steps.as_mut(), visible && r.spawned) {
+            if let Some(lo) = r.root.and_then(|e| actors.get(e).ok()).and_then(|(_, lo)| lo) {
+                use fnv_actor::locomotion::Move;
+                let mv = lo.blend.cur.mv;
+                if matches!(mv, Move::FastForward | Move::FastBackward | Move::FastLeft | Move::FastRight) {
+                    fs.run += 1;
+                } else if mv.is_moving() {
+                    fs.walk += 1;
+                }
+                if moving {
+                    fs.speed = fs.speed.max(agent.walker.moving_speed());
+                }
+                fs.drawn = fs.drawn.max(lo.velocity[0].hypot(lo.velocity[1]));
+                fs.left -= dt;
+            }
+            if fs.left <= 0.0 {
+                if fs.walk + fs.run > 0 {
+                    info!("ai [{}] {}: first second drawn after {}: {} walk frames, {} run frames (walker at {:.0} units/s, drawn up to {:.0})", core.clock_text, r.label, fs.why, fs.walk, fs.run, fs.speed, fs.drawn);
+                }
+                r.first_steps = None;
+            }
         }
     }
     crate::profile::actor_spawns(spawn_stats.equipment_spawns, spawn_stats.record_spawns);
@@ -3229,6 +3346,32 @@ mod tests {
         residents.own = None;
         assert!(std::ptr::eq(residents.prefetch_world(id.0, Some(&shared)).unwrap(), &shared));
         assert!(residents.prefetch_world(id.0, None).is_none());
+    }
+
+    /// A game restored from a save keeps the save's clock; a new game takes the start
+    /// clock, which is how `--hour` and `--day` reach it. The package interval is set for
+    /// both (#1607).
+    #[test]
+    fn only_a_new_game_takes_the_start_clock() {
+        use super::{clock, set_global, Clock, Residents, PACKAGE_INTERVAL};
+        use crate::outfits::tests::{actor_forms, empty_world_data, game};
+        let mut forms = actor_forms(vec![]);
+        for (id, edid) in [(0x200, clock::GAME_HOUR), (0x201, clock::GAME_DAYS_PASSED)] {
+            forms.edids.insert(edid.to_ascii_lowercase(), FormId(id));
+            forms.globals.insert(FormId(id), 0.0);
+        }
+        let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(forms));
+        let refs: &'static fnv_sim::RefTable = Box::leak(Box::new(fnv_sim::RefTable::default()));
+        for (restored, hour, days) in [(true, 20.0, 25.0), (false, 9.0, 5.0)] {
+            let mut g = game(fnv_sim::World::new(forms, refs, Default::default()));
+            set_global(&mut g, clock::GAME_HOUR, 20.0).unwrap();
+            set_global(&mut g, clock::GAME_DAYS_PASSED, 25.0).unwrap();
+            let mut residents = Residents::build(&empty_world_data(), &[], Clock { hour: 9.0, days_passed: 5.0, rate: 0.0 }, 100.0, true).unwrap();
+            residents.core.prepare(&mut g, restored);
+            assert_eq!(g.world.global(FormId(0x200)).unwrap(), hour);
+            assert_eq!(g.world.global(FormId(0x201)).unwrap(), days);
+            assert_eq!(g.cfg.package_interval, Some(PACKAGE_INTERVAL));
+        }
     }
 
     /// Out of a house and straight back: the residents seen in the street before are not

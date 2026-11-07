@@ -8,7 +8,8 @@
 //!   [observed: the owner's screenshots, C:\fnv-private\repairmenuPlayer; documented: the
 //!   inventory file's `IM_RepairButton` at (855, 45), `sInventoryRepair`, PC key R]. An
 //!   item at full condition cannot be repaired [owner's rule]: its hint is dim and R does
-//!   nothing.
+//!   nothing. Full is `SHOWN_FULL`, as for the vendor, so the 99.9 % that AddItem gives
+//!   counts as full [design: `fnv_game::repair::vendor_lists`].
 //! - The repair list [documented: `menus\repair_menu.xml`, in the menus' rectangle]: the
 //!   heading "ITEMS" with "Repair Skill" as a card 220 wide at the right; the list 15 left
 //!   and 75 down, 430 wide, its rows 32 in and 393 wide, the name in font 2 at 40, 20
@@ -42,7 +43,7 @@ use crate::script::ScriptState;
 use crate::sim::SimState;
 use crate::ui_sounds::{UiEvent, UiMenu, UiSound};
 use bevy::prelude::*;
-use fnv_game::repair::{gain_percent, hint, merged_condition, repairs_with, Gear, MergeSettings};
+use fnv_game::repair::{gain_percent, hint, merged_condition, repairs_with, Gear, MergeSettings, SHOWN_FULL};
 use fnv_sim::forms::{BaseData, FormStore, ItemKind};
 use fnv_sim::inventory::{Extra, Pick};
 use fnv_sim::FormId;
@@ -179,7 +180,7 @@ pub struct Offer {
 impl Offer {
     /// Whether R does anything: below full condition, with something to use.
     pub fn usable(&self) -> bool {
-        self.condition < 1.0 && !self.parts.is_empty()
+        self.condition < SHOWN_FULL && !self.parts.is_empty()
     }
 }
 
@@ -206,7 +207,7 @@ pub fn offer(groups: &[(FormId, Extra, i32)], forms: &FormStore, repair_list: &[
         // The unit being repaired is not a part of itself; neither are worn units
         // [design] or units at full condition [owner's rule].
         let spare = if i == item && extra == target { count - 1 } else { count };
-        if spare <= 0 || extra.equipped || extra.condition_or_whole() >= 1.0 || gear_of(forms, i).is_none() || !repairs_with(item, i, repair_list) {
+        if spare <= 0 || extra.equipped || extra.condition_or_whole() >= SHOWN_FULL || gear_of(forms, i).is_none() || !repairs_with(item, i, repair_list) {
             continue;
         }
         let name = crate::menu::model::modded_name(crate::menu::model::display_name(forms, i), extra.mods);
@@ -221,7 +222,7 @@ pub fn offer(groups: &[(FormId, Extra, i32)], forms: &FormStore, repair_list: &[
 /// nothing is left to repair it with [owner's rule, playtest list 7 item 16: the list
 /// stays open for repeated repairs of the item; it also closes on Cancel].
 pub fn after_repair(groups: &[(FormId, Extra, i32)], forms: &FormStore, repair_list: &[FormId], o: &Offer, to: f32) -> Option<Offer> {
-    if to >= 1.0 {
+    if to >= SHOWN_FULL {
         return None;
     }
     offer(groups, forms, repair_list, o.item, Pick::row(Some(to), o.extra.mods), o.extra.equipped).filter(Offer::usable)
@@ -253,6 +254,8 @@ pub fn keys(
     prompt: Res<crate::menu::PromptKeys>,
     modding: Res<super::item_mod::PipItemMod>,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     use KeyCode::*;
     let mut steps: Vec<RepairInput> = aid.read().copied().collect();
     let items = pip.open() && pip.page == Page::Items && active.0.as_ref().is_some_and(|m| m.mode == Mode::Inventory);
@@ -281,7 +284,7 @@ pub fn keys(
             (None, RepairInput::Open) => {
                 let Some(o) = current(&active, &mut sim, script.as_deref()) else { continue };
                 if !o.usable() {
-                    info!("pipboy repair: {} at {}%: nothing to repair it with{}", o.name, fnv_combat::condition::percent(o.condition), if o.condition >= 1.0 { " (full condition)" } else { "" });
+                    info!("pipboy repair: {} at {}%: nothing to repair it with{}", o.name, fnv_combat::condition::percent(o.condition), if o.condition >= SHOWN_FULL { " (full condition)" } else { "" });
                     sounds.write(UiSound { menu: UiMenu::Repair, event: UiEvent::Refused });
                     continue;
                 }
@@ -333,7 +336,7 @@ pub fn keys(
                     let after = after_repair(&groups, sim.forms, &list, o, to);
                     match &after {
                         Some(n) => info!("pipboy repair: stays open: {} at {}%, {} part(s) left", n.name, fnv_combat::condition::percent(n.condition), n.parts.len()),
-                        None if to >= 1.0 => info!("pipboy repair: closed: {} is at full condition", o.name),
+                        None if to >= SHOWN_FULL => info!("pipboy repair: closed: {} is at full condition", o.name),
                         None => info!("pipboy repair: closed: nothing left to repair {} with", o.name),
                     }
                     next = after;
@@ -361,7 +364,8 @@ pub fn keys(
 /// The ITEMS page's Repair or Maintain hint for the selected row.
 pub fn draw_hint(p: &mut ChildSpawnerCommands, c: &mut Ctx, o: Option<&Offer>) {
     let Some(o) = o else { return };
-    let label = format!("{} R)", hint(o.gear, o.condition));
+    // R, with a controller Y (`inventory_menu.xml`'s Repair, `crate::pad::menu_buttons`).
+    let label = format!("{} {}", hint(o.gear, o.condition), crate::pad::hint(&[KeyCode::KeyR], crate::pad::at_menu(fnv_game::game::menus::INVENTORY)));
     info!("pipboy items: {} {label}{}", o.name, if o.usable() { "" } else { " (dim)" });
     let color = amber(if o.usable() { TEXT } else { frame::DIMMED });
     c.text(p, 2, &label, MAIN.min.x + HINT.x - 10.0, MAIN.min.y + HINT.y + frame::BUTTON_TEXT_Y, Align::Right, color);
@@ -389,8 +393,9 @@ pub fn draw_list(p: &mut ChildSpawnerCommands, c: &mut Ctx, s: &Session, combat:
     let o = &s.offer;
     frame::heading(p, c, Page::Items.title(), &[Card::new(MAIN.width() - SKILL_W, SKILL_W, "Repair Skill", format!("{:.0}", s.skill.max(0.0).floor()))]);
     let by = MAIN.min.y + BUTTONS.y + frame::BUTTON_TEXT_Y;
-    c.text(p, 2, "Cancel E)", MAIN.min.x + BUTTONS.x - 10.0, by, Align::Right, bright);
-    let cw = c.width(2, "Cancel E)");
+    let cancel = format!("Cancel {}", crate::pad::hint(&[KeyCode::KeyE, KeyCode::Escape], crate::pad::at_menu(fnv_game::game::menus::INVENTORY)));
+    c.text(p, 2, &cancel, MAIN.min.x + BUTTONS.x - 10.0, by, Align::Right, bright);
+    let cw = c.width(2, &cancel);
     p.spawn((at(MAIN.min.x + BUTTONS.x - 10.0 - cw, by - 5.0, cw + 10.0, 40.0), RepairCancel, Pickable::default())).observe(on_cancel_click);
     // The rows: the item, then its parts.
     let rows: Vec<(&str, f32, bool)> = std::iter::once((o.name.as_str(), o.condition, o.extra.equipped)).chain(o.parts.iter().map(|q| (q.name.as_str(), q.condition, q.extra.equipped))).collect();
@@ -508,6 +513,48 @@ mod tests {
         // Full condition: the list closes though parts are left.
         let full = vec![(a, Extra { equipped: true, ..Extra::default() }, 1), (b, at(0.4), 1)];
         assert_eq!(after_repair(&full, &forms, &[b], &n, 1.0), None);
+    }
+
+    /// What AddItem gives a weapon or armour (`fnv_game::functions::items::ADDED_CONDITION`).
+    const ADDED: f32 = 0.999;
+    const JUST_BELOW: f32 = 0.994;
+
+    #[test]
+    fn an_item_shown_as_full_is_not_repaired() {
+        let (a, b) = (FormId(1), FormId(2));
+        let forms = store(&[(1, ItemKind::Armor), (2, ItemKind::Armor)]);
+        // AddItem's 99.9 %, with a worn part to hand: full, R does nothing.
+        let added = offer(&[(a, at(ADDED), 1), (b, at(0.5), 1)], &forms, &[b], a, Pick::at(Some(ADDED)), false).unwrap();
+        assert_eq!(added.parts.len(), 1);
+        assert!(!added.usable());
+        assert!(!offer(&[(a, at(SHOWN_FULL), 1), (b, at(0.5), 1)], &forms, &[b], a, Pick::at(Some(SHOWN_FULL)), false).unwrap().usable());
+        // Just below the line it can still be repaired.
+        assert!(offer(&[(a, at(JUST_BELOW), 1), (b, at(0.5), 1)], &forms, &[b], a, Pick::at(Some(JUST_BELOW)), false).unwrap().usable());
+    }
+
+    #[test]
+    fn an_item_shown_as_full_is_not_a_part() {
+        let (a, b, c) = (FormId(1), FormId(2), FormId(3));
+        let forms = store(&[(1, ItemKind::Armor), (2, ItemKind::Armor), (3, ItemKind::Armor)]);
+        let groups = vec![(a, at(0.5), 1), (b, at(ADDED), 1), (b, at(SHOWN_FULL), 1), (c, at(JUST_BELOW), 1)];
+        let o = offer(&groups, &forms, &[b, c], a, Pick::at(Some(0.5)), false).unwrap();
+        assert_eq!(o.parts.iter().map(|p| (p.item, p.condition)).collect::<Vec<_>>(), vec![(c, JUST_BELOW)]);
+        // The two AddItem units of one group: neither the item nor the part is repairable.
+        let pair = offer(&[(a, at(ADDED), 2)], &forms, &[], a, Pick::at(Some(ADDED)), false).unwrap();
+        assert!(pair.parts.is_empty());
+        assert!(!pair.usable());
+    }
+
+    #[test]
+    fn the_list_closes_on_reaching_what_shows_as_full() {
+        let (a, b) = (FormId(1), FormId(2));
+        let forms = store(&[(1, ItemKind::Armor), (2, ItemKind::Armor)]);
+        let o = offer(&[(a, at(0.5), 1), (b, at(0.4), 3)], &forms, &[b], a, Pick::at(Some(0.5)), false).unwrap();
+        // Parts are left in both: only the item's condition closes the list.
+        let below = vec![(a, at(JUST_BELOW), 1), (b, at(0.4), 2)];
+        assert_eq!(after_repair(&below, &forms, &[b], &o, JUST_BELOW).map(|n| n.condition), Some(JUST_BELOW));
+        let shown_full = vec![(a, at(SHOWN_FULL), 1), (b, at(0.4), 2)];
+        assert_eq!(after_repair(&shown_full, &forms, &[b], &o, SHOWN_FULL), None);
     }
 
     #[test]

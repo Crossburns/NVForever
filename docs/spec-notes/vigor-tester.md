@@ -4,7 +4,8 @@ Tags as in `nif.md`: `[documented]` cites a page or file, `[observed]` says what
 looked at, `[hypothesis]` is a reading that nothing has confirmed yet. `[design]` marks
 what is NVForever's own. Implementation: `engine/nvf-play/src/chargen/vigor.rs` (opening,
 keys, clicks, drawing), `chargen/vigor/model.rs` (pages, controls, which part shows
-what), `chargen/vigor/view.rs` (where the machine sits before the camera); the rules
+what), `chargen/vigor/view.rs` (where the machine sits before the camera),
+`engine/nvforever/src/vigor_view.rs` (its camera and lights, the room behind); the rules
 (40 points, 1 to 10, Done only at 0 left) are `crates/fnv-game/src/chargen.rs`
 `SpecialSheet`.
 
@@ -15,6 +16,8 @@ what), `chargen/vigor/view.rs` (where the machine sits before the camera); the r
   pages at 05 points to go. The owner: every attribute starts at 5 with 5 more to give
   out; an attribute goes no lower than 1 and no higher than 10; every point must be
   given out before going on.
+- **Captures of the original**, 2026-11-06 (1280 × 720, kept privately): the Attract and
+  Review pages of one save, sampled every 3 frames on opening and during a turn.
 - **The menu file** `menus\chargen\love_tester_menu.xml` (`Fallout - Misc.bsa`; read,
   not shipped).
 - **The models** in `Fallout - Meshes.bsa`, `meshes\architecture\goodsprings\`:
@@ -111,9 +114,8 @@ their layer, the incoming page's turn and come to the front. Besides:
   scale 1 → 0.52). TurnLeft undoes it.
 - `AllDone_Btn` stays at z 0 in every sequence: no sequence shows it.
 
-So the pages run Attract, Strength … Luck, Review, and the menu opens on Attract
-[hypothesis: the stored pose and the chain start there; the owner's screenshots begin at
-the attribute pages].
+So the pages run Attract, Strength … Luck, Review, and the menu opens on Attract, turning
+to Strength by itself [observed: the captures of 2026-11-06, §5].
 
 ## 5. What the screenshots show [observed: the six screenshots]
 
@@ -127,6 +129,19 @@ the attribute pages].
   every ► is gone (6.jpg); the circle at the bottom reads the points remaining; no bulb
   lit; blank boards. The → is grey at 05 and 02 remaining and black at 00.
 - The mouse pointer over a row or the → changes nothing seen.
+- The captures of 2026-11-06: the machine shaded with warm light, falling off a little
+  towards its edges: cream poster, dark wood, brass. Lit bulbs bright white with a soft
+  halo that spills on the board, their numbers still legible; dull bulbs warm gold. The
+  room nearly black at this spot, a dark corner. On opening the machine is in place in the
+  first frames, with no slow fade to speak of at 3-frame samples.
+- The captures' first page is Attract ("Rate Your…", "TRY IT NOW!"), with the → and no ←,
+  the lever's face turned away, and bulbs 1 to 5 lit on it. With no click (none in the
+  capture's steps) it turns to Strength over the next 17 samples, 3 frames apart, the same
+  five bulbs lit throughout. Strength was 5 on that save (the review page reads 5 4 5 5 5
+  5 10), so they are taken for Strength's [hypothesis: a fixed five is not ruled out, four
+  other attributes being 5 too].
+- A lit bulb there: near white (255, 255, 229) with dark brown numbers (106, 95, 66); a dull
+  one (159, 143, 96) at the median [observed: measured on the captures].
 - The camera: fitted to ten points of 7.jpg and 10.jpg (label rows 1 and 10, their
   edges, the poster's edges, the lever's + and −, the two arrow buttons), 7 px RMS: an
   eye at model point (0, 78.4, 98.9) looking along −y, tipped 9.15° down, vertical
@@ -135,15 +150,35 @@ the attribute pages].
 ## 6. NVForever's menu [design unless tagged]
 
 - Drawn as the two models (`…_cabinet.nif` and `…_activate.nif`) below the player's
-  camera, scaled by 0.13 about the eye so that the machine is nearer than the walls,
-  with the camera's field of view set to the fitted 48.4° while the menu is open and
-  given back after. All parts unlit, each part's colour scaled towards the screenshots'
-  lit look (boards and posters × 0.85, cabinet and lever × 0.45, unlit bulbs a dull
-  gold). A black sheet at 45 % behind the machine darkens the room; no blur.
+  camera, scaled by 0.13 about the eye, with the camera's field of view set to the fitted
+  48.4° while the menu is open and given back after.
+- The machine, a camera on the player's with its field of view, and that camera's lights
+  share a render layer no other view has (`VIGOR_LAYER`): a view takes every light whose
+  layers meet its own and there is no list per mesh, so this is what keeps the room's
+  lights off the machine and the rig's off the room. The camera draws into an image the
+  size of the window, shown as a full-screen image under every other UI node. As with the
+  other menus' cameras (lockpicking, terminals), what asks for the one `Camera3d` (level
+  of detail, grass, streaming) waits while the menu is open.
+- Lit: a warm key above and to the left of the eye, a dimmer fill low to the right, a warm
+  ambient light, no shadows; not scaled by `--light-scale`. Each part's colour has a tint
+  (`model::shade`): boards and posters as they are, the cabinet darker, dull bulbs warm
+  gold. The model says which shapes are unlit. All to be tuned against the captures (§5):
+  `vigor_view.rs` `KEY`, `FILL`, `AMBIENT`, their colours and places, `LIGHT_RANGE`;
+  `model.rs` `BOARD_TINT`, `CABINET_TINT`, `BULB_DULL_TINT`, `BULB_LIT_TINT`,
+  `BULB_HALO_TINT`.
+- The room behind: the image-space blur at radius 3 (`ROOM_BLUR`, the wait menu's) and
+  black over it at 45 % (`ROOM_DARK`, what the earlier sheet had, matched by eye to the
+  six screenshots' margins). The machine is drawn after that, so it stays sharp.
+- The fade [documented: 0.25 s, §2; design: how]: the picture and the room's blur and
+  darkening come in over 0.25 s from 60 % (`FADE_FROM`, because of §5's first frames) and
+  go out to nothing over 0.25 s, the picture holding the machine's last frame. The world's
+  field of view comes back at once on closing. The sequences are not touched.
 - A page turn plays the sequence of §4 on the model (from its start; a turn asked during
   another starts at once).
-- The bulbs 1…value are lit on an attribute's page by showing their two glow shapes;
-  none elsewhere.
+- The bulbs 1…value are lit on an attribute's page, and Strength's on the first page, by
+  showing their two glow shapes (`:5`, `:4` the halo); none on the review page. The view
+  has no bloom, so the halo is the sprite alone. NVForever's first page waits for a click
+  and does not turn by itself as §5's captures do (not changed).
 - Numbers: each review row's value and the two digits of the points remaining show the
   `BBNumber<n>.dds` picture.
 - Review rows: ◄ hidden at 1, ► hidden at 10 or with no point left (the ◄ at 1 by
@@ -189,8 +224,11 @@ with the owner's.
 ## 8. Open questions
 
 - The PC keys of the original menu (none in its file).
-- Does the menu open on the "Rate Your… TRY IT NOW!" page, as the model's stored pose
-  suggests, and does the ← work there (its button sits lower)?
+- Does the ← work on the first page, where its button is not seen (§5)?
+- Do the bulbs on the first page show Strength's value or a fixed five (§5)? A capture
+  with Strength other than 5 would tell.
+- Why does the first page turn to Strength by itself (§5), and does it always? No click
+  was sent, but the capture opens the menu by script.
 - Is the → on the review page Done, or does `AllDone_Btn` (which no sequence raises)
   replace it once every point is given out?
 - What do the `On` pictures of the buttons mean: dimmed (as the → in 10.jpg), pressed,
@@ -206,9 +244,11 @@ with the owner's.
   `OBJBookSpecialNumberDown`, a review row chosen `OBJBookSpecialFocus`, Done
   `OBJBookSpecialNumberFinished`, a refusal `UIMenuCancel` (`nvf_play::ui_sounds`, menu
   `vigor tester`).
-- Not built: the menu's fade (0.25 s in its file), any sounds of the lever and the bulbs
+- Not built: any sounds of the lever and the bulbs
   of their own, and the repeat of a held Left/Right (`repeathorizontal`); a turn asked
   during another does not wait for it.
-- The original lights the machine (shaded cabinet, golden unlit bulbs, a strong glow on
-  lit ones) and blurs the room; NVForever's unlit approximation and dark sheet are
-  stand-ins.
+- The original lights the machine and blurs the room [observed: §5]; what light it uses
+  is not known, and NVForever's rig (§6) is a stand-in tuned by eye. So are the strength of
+  the blur and of the darkening: the captures' spot was too dark to judge them.
+- Does the original fade its menu at all, and from what? The file says 0.25 s, the first
+  frames of the capture show none to speak of.

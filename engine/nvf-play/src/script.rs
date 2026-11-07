@@ -245,6 +245,10 @@ pub struct ScriptState {
     pub console_out: Vec<crate::console::ConsoleReply>,
     /// A save to restore when the runtime is made (`crate::save`, nvforever `--load`).
     pending_game: Option<PendingGame>,
+    /// The runtime is not made (nor the save put back) while this is set: a load while
+    /// playing holds it until the old run has ended (nvforever `handoff`; owner
+    /// 2026-11-01, #1357, #1651).
+    pub held: bool,
 }
 
 /// A save's game snapshot for the runtime to restore when it is made (`crate::save`).
@@ -280,6 +284,10 @@ pub struct Runtime {
     /// `MenuMode 1001` block still runs once with the button pressed). The menu and the
     /// box that was in front.
     closing: Option<(u16, Option<FormId>)>,
+    /// The game in place is a save's, not a new game's: its clock is the save's (the
+    /// residents leave it alone, `Core::prepare` in `nvforever::residents`). A restore that
+    /// fails installs no runtime ([`run_scripts`]), so `false` is always a new game.
+    pub restored_from_save: bool,
     /// `--new-game`: the opening starts on the first frame scripts run.
     opening_pending: bool,
     /// A run without a save: the Script Runner's new-game files (`gn_`, `ln_`) run on the
@@ -373,7 +381,7 @@ impl ScriptState {
         let write = (!unattended || own_home).then(|| fnv_install::EngineHome::default_root().map(|r| fnv_install::EngineHome::new(r).mods())).flatten();
         fnv_game::mod_files::update_roots(|r| r.write = write);
         let loader = off.is_none().then(|| Mutex::new(start_loading(d, refs)));
-        ScriptState { loader, rt: None, off, trace, aids, aids_started: false, gates: HashMap::new(), auto_close, no_messages, on_screen: None, walks: Vec::new(), new_game, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None }
+        ScriptState { loader, rt: None, off, trace, aids, aids_started: false, gates: HashMap::new(), auto_close, no_messages, on_screen: None, walks: Vec::new(), new_game, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None, held: false }
     }
 
     /// The player answers the script's open menu: `Some(b)` picks button b (0 = first) of
@@ -625,6 +633,7 @@ impl Runtime {
             marked: BTreeSet::new(),
             skip: BTreeSet::new(),
             closing: None,
+            restored_from_save: false,
             opening_pending: new_game,
             new_game_files: false,
             wake_talk: None,
@@ -654,7 +663,7 @@ impl Runtime {
     /// Put a save's game state in place of the new game's (`crate::save`): the
     /// simulation's world and the game's own state. The random numbers start from a
     /// fresh position unless `NVF_PLAY_TEST_SAVE_SAME_ROLLS=1` (docs/design/save-load.md
-    /// §5 q3). Returns the references the save changed (to redraw).
+    /// §5 q3). Returns the references the save changed or a saved fade move moved (to redraw).
     pub(crate) fn restore_save(&mut self, sim: &mut SimState, mut s: fnv_game::game::GameSnapshot) -> Result<Vec<FormId>, String> {
         if std::env::var_os("NVF_PLAY_TEST_SAVE_SAME_ROLLS").is_none_or(|v| v == "0") {
             let jump = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()) << 16;
@@ -664,25 +673,41 @@ impl Runtime {
             }
         }
         let world = World::restore(sim.forms, sim.refs, &s.sim)?;
-        let changed: Vec<FormId> = s.sim.refs.keys().copied().collect();
+        // Moves the save caught during their fade are made as the game restores: those
+        // references are redrawn too, changed by the save or not.
+        let changed: Vec<FormId> = s.sim.refs.keys().chain(s.fade_moves.keys()).copied().collect::<BTreeSet<_>>().into_iter().collect();
         let data = self.game.data;
         let cfg = self.game.cfg;
         let session = self.game.take_session();
-        self.game = Game::restore(data, World::new(sim.forms, sim.refs, world.config()), cfg, &s)?;
+        // The game restores on the played world, so that what it does there stays (the
+        // moves above), and hands it back for `sim`; it keeps a stand-in between turns
+        // (`with_world`).
+        let stand_in = World::new(sim.forms, sim.refs, world.config());
+        self.game = Game::restore(data, world, cfg, &s)?;
         self.game.put_session(session);
+        // The engine's seat is not saved, so a load stands the player up
+        // (docs/design/save-load.md §3.4); the saved furniture use goes with it, or
+        // GetSitting and its kin go on reading the seat (#1573).
+        self.game.set_furniture_use(FormId::PLAYER_REF, None);
+        let mut world = std::mem::replace(&mut self.game.world, stand_in);
         // The world's session edits (game settings, leveled lists, base containers changed
         // by script) last for the run, not in the save (`fnv_sim::world::WorldSession`).
         // Empty here as the game's session is: a load while playing starts a new run
         // (`crate::save` module notes), where GetGameRestarted is true again and scripts
         // make their session edits anew; kept for a restore within a run.
-        let mut world = world;
         world.put_session(sim.world.take_session());
         sim.world = world;
         sim.world.set_inventory_sources(inventory_sources(data, sim, &self.game));
         self.opening_pending = false;
         self.new_game_files = false;
         self.player_cell = None;
-        with_world(self, sim, |rt| rt.snapshot_inventory());
+        self.restored_from_save = true;
+        with_world(self, sim, |rt| {
+            // `Game::restore` above reached only the stand-in, and the Script Runner's files
+            // and the LoadGame events run ahead of the first tick.
+            rt.game.sync_player_level();
+            rt.snapshot_inventory();
+        });
         Ok(changed)
     }
 
@@ -884,63 +909,21 @@ impl Runtime {
         let r = if has_block {
             info!("script: activating {target} runs its OnActivate block instead of the default action");
             g.activate(player, target, ActMode::Hand).map(|_| ByHand::Script)
-        } else if let Some(body) = g.ash_pile_source(target) {
-            // An ash or goo pile opens the inventory of the actor it came from
-            // (`fnv_game::ash_piles`, docs/spec-notes/ash-piles.md §3).
-            let a = fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: body }, unlocked_with: None, script: None };
-            self.skip.insert(g.events.len());
-            g.emit(EventKind::Activated { reference: target, by: player, outcome: serde_json::to_value(&a).ok() });
-            info!("activate: the pile {target} opens the inventory of {body}");
-            Ok(ByHand::Default(a))
-        } else if g.is_dead(target) {
-            // A dead actor opens its inventory (the loot menu), `fnv_game`'s default
-            // activation rule (combat C5).
-            let a = fnv_sim::world::Activation { outcome: Outcome::OpenedContainer { container: target }, unlocked_with: None, script: None };
-            self.skip.insert(g.events.len());
-            g.emit(EventKind::Activated { reference: target, by: player, outcome: serde_json::to_value(&a).ok() });
-            Ok(ByHand::Default(a))
         } else {
-            let from = g.world.peek(player).map(|p| (p.cell, p.pos));
-            match g.world.activate(player, target) {
-                Ok(mut a) => {
-                    self.skip.insert(g.events.len());
-                    g.emit(EventKind::Activated { reference: target, by: player, outcome: serde_json::to_value(&a).ok() });
-                    // Its activate children go off (`fnv_game::traps`).
-                    g.set_off_children(target);
-                    // An activator that gives water: the player drinks it, as
-                    // `Game::default_activation` has it drunk (its actor effect, the
-                    // Adjust Drinking Radiation perks); this path (the player's hand) never
-                    // did (perk-entry-points.md §9).
-                    if matches!(a.outcome, Outcome::Activated) && g.drink_water(target).is_some() {
-                        g.drink_from(player, target);
-                    }
-                    if let Outcome::PickedUp { item, count, .. } = a.outcome {
-                        self.skip.insert(g.events.len());
-                        g.emit(EventKind::ItemAdded { to: player, item, count, silent: false });
-                        g.item_event(player, item, event::ON_ADD, Some(Value::Ref(player.0)));
-                    }
-                    // A placed mine disarmed: its XP and the statistic, as
-                    // `Game::default_activation` gives them; this path (the player's
-                    // hand) gave neither (the owner's playtest list 7 item 23).
-                    if matches!(a.outcome, Outcome::Disarmed { .. }) {
-                        g.count_stat(fnv_game::misc_stats::MINES_DISARMED, 1.0);
-                        let x = fnv_game::experience::mine_disarm_xp(g);
-                        fnv_game::experience::award(g, fnv_game::experience::Source::DisarmMine, x);
-                    }
-                    // Through a load door: the player's teammates and followers come
-                    // along (`fnv_game::followers`).
-                    if matches!(a.outcome, Outcome::Teleported { .. }) {
-                        let brought = g.bring_teammates(from);
-                        if !brought.is_empty() {
-                            info!("script: {} teammate(s) or follower(s) come along through the door", brought.len());
-                        }
-                    }
-                    // A script without OnActivate does not run on activation; the
-                    // default action was all there is.
+            // The shared default action; what is this path's own is that `activate.rs`
+            // applies the outcome, so these events do not become effects as well.
+            match g.default_activation_by_hand(target) {
+                Ok(Some(done)) => {
+                    self.skip.insert(done.activated_event);
+                    self.skip.extend(done.item_added_event);
+                    // A script without OnActivate does not run on activation; the default
+                    // action was all there is.
+                    let mut a = done.activation;
                     a.script = None;
                     Ok(ByHand::Default(a))
                 }
-                Err(e) => Err(e.to_string()),
+                Ok(None) => Ok(ByHand::Refused),
+                Err(e) => Err(e),
             }
         };
         // An actor whose default action ran (no OnActivate block, or its block called
@@ -1211,8 +1194,49 @@ impl Runtime {
                 }
             }
             ScriptAid::Call(on, func, args) => {
-                let opcode = g.data.table.by_name(func).ok_or_else(|| format!("{func} is not a script function"))?;
                 let on = if on == "-" { None } else { Some(resolve(g, on)?) };
+                let Some(opcode) = g.data.table.by_name(func) else {
+                    // An extender's function has no number in the table: called by name, as a
+                    // compiled script's does (`fnv_game::nvse::call`, in lower case). Numbers and
+                    // quoted strings as below, anything else a reference.
+                    use fnv_script::vm::XVal;
+                    let mut values = Vec::new();
+                    for a in args {
+                        values.push(match a.parse::<f64>() {
+                            Ok(n) => XVal::Num(n),
+                            Err(_) if a.len() >= 2 && a.starts_with('"') && a.ends_with('"') => XVal::Str(a[1..a.len() - 1].to_string()),
+                            Err(_) => XVal::Ref(resolve(g, a)?.0),
+                        });
+                    }
+                    let ctx = fnv_game::game::RunCtx { self_ref: on, ..Default::default() };
+                    return match fnv_game::nvse::call(g, &ctx, &func.to_ascii_lowercase(), on, &values) {
+                        Some(Ok(value)) => {
+                            info!("script: test aid calls {func}{} = {value:?}", on.map(|r| format!(" on {}", g.data.name(r))).unwrap_or_default());
+                            Ok(())
+                        }
+                        Some(Err(error)) => Err(format!("{func}: {error}")),
+                        // One the script machine holds itself (MessageBoxEx): a line of script,
+                        // as the console's. A line that compiles but stops on an error when it
+                        // runs (a `ScriptError` in the trace) fails the aid, so a scenario's
+                        // `call:` cannot pass on a line that did nothing.
+                        None => {
+                            let from = g.events.len();
+                            match g.run_source(&format!("{func} {}", args.join(" ")), ctx) {
+                                Ok(_) => match g.events[from..].iter().find_map(|e| match &e.kind {
+                                    EventKind::ScriptError { error, .. } => Some(error.clone()),
+                                    _ => None,
+                                }) {
+                                    Some(error) => Err(format!("{func}: {error}")),
+                                    None => {
+                                        info!("script: test aid calls {func}{}", on.map(|r| format!(" on {}", g.data.name(r))).unwrap_or_default());
+                                        Ok(())
+                                    }
+                                },
+                                Err(e) => Err(format!("{func} is not a script function: {e}")),
+                            }
+                        }
+                    };
+                };
                 let mut values = Vec::new();
                 for a in args {
                     values.push(match a.parse::<f64>() {
@@ -1353,7 +1377,7 @@ impl EffectCtx for PlayCtx<'_> {
     }
 
     fn objective_text(&self, quest: FormId, index: i32) -> Option<String> {
-        self.data.quests.get(&quest)?.objectives.get(&index)?.text.clone()
+        self.data.quests.get(&quest)?.objectives.get(&index)?.text.as_deref().map(|t| self.game.expand_codes(t))
     }
 
     fn quest_title(&self, quest: FormId) -> Option<String> {
@@ -1694,7 +1718,7 @@ pub(crate) fn run_scripts(
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
-    (mut sit, mut terminals): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>),
+    (mut sit, mut terminals, mut doors, mut refused): (MessageWriter<crate::furniture::UseFurniture>, MessageWriter<crate::terminal::OpenTerminal>, Option<ResMut<crate::doors::Doors>>, MessageWriter<crate::save::LoadRefused>),
     paused: Res<crate::pause::Paused>,
     (mut screen, bindings, tiles, page, mut mods_ticks): ScreenAndMenus,
 ) {
@@ -1703,6 +1727,9 @@ pub(crate) fn run_scripts(
     let st = &mut *script;
     st.used.extend(used.read().map(|u| (FormId(u.item), u.limb)));
     if st.rt.is_none() {
+        if st.held {
+            return;
+        }
         let Some(rx) = st.loader.as_ref() else { return };
         let got = rx.lock().ok().and_then(|r| r.try_recv().ok());
         match got {
@@ -1719,10 +1746,15 @@ pub(crate) fn run_scripts(
                 rt.start = st.start.clone();
                 let mut restored = false;
                 if let Some(PendingGame(snap, path)) = st.pending_game.take() {
-                    match rt.restore_save(&mut sim, *snap) {
+                    // Test aid: `save::read_for_load` lets no save through that fails here.
+                    let restore = if std::env::var_os("NVF_PLAY_TEST_LOAD_FAILS_LATE").is_some() { Err("test aid NVF_PLAY_TEST_LOAD_FAILS_LATE".to_string()) } else { rt.restore_save(&mut sim, *snap) };
+                    match restore {
                         Ok(changed_refs) => {
                             info!("load: restored {}: {} changed references, {} quests, {} script instances", path.display(), changed_refs.len(), rt.game.quests.len(), rt.game.instances.len());
                             restored = true;
+                            if let Some(doors) = doors.as_deref_mut() {
+                                doors.rest_as_restored(&sim);
+                            }
                             tiles.load(&mut rt.game, &sim.world);
                             // The Script Runner's files after the save is in place (the
                             // restore takes the game's state, lambdas included, from the
@@ -1736,10 +1768,18 @@ pub(crate) fn run_scripts(
                             rt.frozen_frames = 2;
                             // The drawn world follows the restored simulation.
                             for id in changed_refs {
-                                changed.write(RefChanged { form_id: id.0 });
+                                changed.write(RefChanged { form_id: id.0, restored: true });
                             }
                         }
-                        Err(e) => warn!("load: {}: {e}; the game goes on from the plugins", path.display()),
+                        Err(e) => {
+                            // No game goes on: without a runtime no script runs, the engine
+                            // part is not put back, nothing can be saved and the loading
+                            // screen stays up until the next run has the main menu.
+                            let why = format!("{}: {e}", path.display());
+                            warn!("load: {why}; starting again on the main menu");
+                            refused.write(crate::save::LoadRefused(why));
+                            return;
+                        }
                     }
                 }
                 if rt.game.ui_files.is_none() {
@@ -2001,6 +2041,7 @@ pub(crate) fn run_scripts(
     let gt = rt.game.time;
     for e in &events {
         log_event(rt.game.data, e);
+        crate::dialogue::log_farewell(&mut rt.game, e);
         if let EventKind::LineStarted { info, .. } = &e.kind {
             if !hud.knows_line(*info) {
                 hud.remember_line(*info, responses(&play, *info));
@@ -2033,7 +2074,7 @@ pub(crate) fn run_scripts(
         match e {
             ScriptEffect::RefChanged(id) => {
                 if sent.insert(id) {
-                    changed.write(RefChanged { form_id: id });
+                    changed.write(RefChanged::new(id));
                 }
             }
             ScriptEffect::Fade { form_id, fade_in } => {
@@ -2067,6 +2108,9 @@ pub(crate) fn run_scripts(
                 open.write(OpenContainer { container: c });
             }
             ScriptEffect::Notify(mut note) => {
+                // The player string codes (`&PCName;`) as they read now; ShowMessage's
+                // text has them already, MessageEx's and the notes' not (`fnv_game::text_codes`).
+                note.text = rt.game.expand_codes(&note.text);
                 // Key strings (`&sUActnVats;`) name the keys bound now.
                 if let Some(b) = bindings.as_deref() {
                     note.text = crate::lockpick::help::expand_keys(&note.text, b);
@@ -2079,6 +2123,9 @@ pub(crate) fn run_scripts(
                 quest_lines.push(n);
             }
             ScriptEffect::MessageBox(mut b) => {
+                // The player string codes in the text and the buttons (`fnv_game::text_codes`).
+                b.text = rt.game.expand_codes(&b.text);
+                b.buttons = b.buttons.iter().map(|t| rt.game.expand_codes(t)).collect();
                 if let Some(k) = bindings.as_deref() {
                     b.text = crate::lockpick::help::expand_keys(&b.text, k);
                 }
@@ -2292,13 +2339,18 @@ impl ScriptState {
     /// A runtime over an empty load order, for tests of what works the open menu: nothing
     /// has run, no menu is open.
     pub(crate) fn over_no_plugins() -> ScriptState {
+        Self::over_plugins(&[])
+    }
+
+    /// As [`ScriptState::over_no_plugins`], over these plugins.
+    pub(crate) fn over_plugins(plugins: &[fnv_esm::Plugin]) -> ScriptState {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas");
-        let lo = fnv_esm::LoadOrder::new(&[]).unwrap();
+        let lo = fnv_esm::LoadOrder::new(plugins).unwrap();
         let schema = fnv_esm::Schema::load_dir(root.join("fnv")).unwrap();
         let functions = root.join("script/functions.json");
         let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&functions).unwrap()).unwrap();
         let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(fnv_sim::FormStore::build(&lo, &schema)));
-        let refs: &'static RefTable = Box::leak(Box::new(RefTable::default()));
+        let refs: &'static RefTable = Box::leak(Box::new(RefTable::build(&lo, &schema)));
         let data: &'static GameData = Box::leak(Box::new(GameData::build(&lo, &schema, FunctionTable::load(&functions).unwrap(), &json, refs)));
         let game = Game::new(data, World::new(forms, refs, fnv_sim::SimConfig::default()), GameConfig::default());
         let rt = Runtime {
@@ -2309,6 +2361,7 @@ impl ScriptState {
             marked: BTreeSet::new(),
             skip: BTreeSet::new(),
             closing: None,
+            restored_from_save: false,
             opening_pending: false,
             new_game_files: false,
             wake_talk: None,
@@ -2325,12 +2378,89 @@ impl ScriptState {
             choices_passed: None,
             activate_pick: None,
         };
-        ScriptState { loader: None, rt: Some(rt), off: None, trace: None, aids: Vec::new(), aids_started: false, gates: HashMap::new(), auto_close: None, no_messages: false, on_screen: None, walks: Vec::new(), new_game: false, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None }
+        ScriptState { loader: None, rt: Some(rt), off: None, trace: None, aids: Vec::new(), aids_started: false, gates: HashMap::new(), auto_close: None, no_messages: false, on_screen: None, walks: Vec::new(), new_game: false, start: GameStart::default(), used: Vec::new(), console: Vec::new(), console_out: Vec::new(), pending_game: None, held: false }
     }
 
     /// The player answered the open menu: it closes after this frame's scripts.
     pub(crate) fn answered(&self) -> bool {
         self.rt.as_ref().is_some_and(|rt| rt.closing.is_some())
+    }
+}
+
+#[cfg(test)]
+#[path = "script_hand_tests.rs"]
+mod hand_tests;
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use crate::activate::tests::placed;
+
+    const ACTOR: FormId = FormId(0x100);
+    const MARKER: FormId = FormId(0x200);
+    const MARKER_CELL: FormId = FormId(0x301);
+    const SAVED_AT: [f32; 3] = [100.0, 200.0, 300.0];
+
+    /// A runtime and a played world over two placed references: an actor no save changed
+    /// and a marker. The snapshot: the marker moved by the save, so a world without the
+    /// save's changes sends the actor to the wrong place, and the actor in its fade.
+    fn in_fade() -> (Runtime, SimState, fnv_game::game::GameSnapshot) {
+        let mut rt = ScriptState::over_no_plugins().rt.unwrap();
+        let mut refs = RefTable::default();
+        refs.refs.insert(ACTOR, placed(ACTOR.0, 0x300, 0x302));
+        refs.refs.insert(MARKER, placed(MARKER.0, 0x300, MARKER_CELL.0));
+        let refs: &'static RefTable = Box::leak(Box::new(refs));
+        let forms = rt.game.world.forms;
+        let plugins = || World::new(forms, refs, fnv_sim::SimConfig::default());
+        let mut sim = SimState { forms, refs, world: plugins() };
+        let mut s = with_world(&mut rt, &mut sim, |rt| {
+            rt.game.world.get(MARKER).unwrap().pos = SAVED_AT;
+            rt.game.snapshot()
+        });
+        s.fade_moves.insert(ACTOR, fnv_game::functions::misc::FadeMove { marker: MARKER, offset: [1.0, 0.0, 0.0], at: s.time + 1.0 });
+        sim.world = plugins();
+        (rt, sim, s)
+    }
+
+    /// #1589: the move a save caught during its fade is on the played world from the
+    /// restore, before any tick, and is redrawn though the save did not change the actor.
+    #[test]
+    fn a_fade_move_in_a_save_is_made_on_the_played_world() {
+        let (mut rt, mut sim, s) = in_fade();
+        let changed = rt.restore_save(&mut sim, s).unwrap();
+        assert_eq!(changed, [ACTOR, MARKER], "the actor once, with what the save changed");
+        let there = [SAVED_AT[0] + 1.0, SAVED_AT[1], SAVED_AT[2]];
+        let moved = sim.world.peek(ACTOR).expect("on the played world");
+        assert_eq!((moved.pos, moved.cell), (there, Some(MARKER_CELL)));
+        assert!(rt.game.world.peek(ACTOR).is_none(), "the game holds its stand-in between turns");
+        assert!(rt.game.script_looks.fade_moves.is_empty(), "nothing is left to make it again");
+        // What a script reads in its turn.
+        with_world(&mut rt, &mut sim, |rt| assert_eq!(rt.game.world.peek(ACTOR).unwrap().pos, there));
+    }
+
+    /// #1590: a refused restore touches neither world.
+    #[test]
+    fn a_refused_restore_leaves_the_played_world_as_it_was() {
+        let (mut rt, mut sim, mut s) = in_fade();
+        s.format = "fnv.game.state/2".into();
+        let e = rt.restore_save(&mut sim, s).unwrap_err();
+        assert!(e.contains("unsupported snapshot format"), "{e}");
+        assert!(sim.world.peek(ACTOR).is_none() && sim.world.peek(MARKER).is_none());
+        assert!(!rt.restored_from_save);
+    }
+
+    #[test]
+    fn a_loaded_game_rolls_at_the_players_level_before_any_tick() {
+        let mut state = ScriptState::over_no_plugins();
+        let rt = state.rt.as_mut().unwrap();
+        let (forms, refs) = (rt.game.world.forms, rt.game.world.placed);
+        let mut sim = SimState { forms, refs, world: World::new(forms, refs, fnv_sim::SimConfig::default()) };
+        rt.game.player.level = Some(20);
+        let save = rt.game.snapshot();
+        assert_eq!(save.sim.config.player_level, 1);
+        rt.restore_save(&mut sim, save).unwrap();
+        assert_eq!(sim.world.roll_level(), 20);
+        assert_eq!(sim.world.config().player_level, 1);
     }
 }
 

@@ -69,9 +69,60 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   `PipBoyButton01`–`03` at the glows `StatsGlow`, `ItemsGlow`, `DataGlow` (STATS, ITEMS,
   DATA from the elbow out); the glass: `ScreenLit:8` (a lit, glossy copy of the screen in
   the same place, `screen.dds` with a normal map) and `glare:0` (`ScreenGlare.dds`, added
-  over it, unlit). Also `RadNeedle`, `TabKnob`, `ScrollKnob`, `PipboyLightEffect`.
+  over it, unlit, 0.47 units in front of the screen; NiAlphaProperty flags 4109, blend on,
+  SRC_ALPHA / ONE; both shapes vertex colour 0.81; `fnvtool nif decode`). Also `RadNeedle`, `TabKnob`, `ScrollKnob`, `PipboyLightEffect`.
 - **The page's button** glows alone while the Pip-Boy is up [observed: the screenshots];
-  down, all three glow (owner, 2026-10-10).
+  down, all three glow (owner, 2026-10-10). The pointer on a button lights nothing: a
+  player comparing the two reports that the original's buttons do not light under it
+  (#1516; not observed again here).
+- **The needle and knobs** (nvforever `pipboy_controls.rs`, all the numbers there). The
+  needle, the wheel and the knob turn through their own origins, their nodes' in the model
+  [observed: `fnvtool nif decode`; the model has no controllers on them and `pipboy.kf` does
+  not name them]:
+  - `RadNeedle` (two shapes), about its local Z, out of the dial: total rads, not the rate,
+    linear, 18° per 100, the bind pose at 500: 0 straight down, 500 to the right, 1000 straight
+    up [observed: private job pipboy_special_device_motion: shots at 0 to 990 within a few
+    degrees; 58 rads with a rate of 9 reads 58]. It moves slowly, the same speed for a long
+    way as a short one: about 0.6° a game loop, a drop of 690 rads still on its way two
+    seconds on [observed]; the capture has neither a fine clock nor the loops' rate, so 30° a
+    second is [hypothesis], within about 20 to 40. No start-up delay can be told from the
+    shots' own stalls. Held at the dial's ends above 1000 [hypothesis]. While the Pip-Boy is
+    up it quivers a little about where it rests, a small shiver [observed: playtest 2026-11-05,
+    against the original]; two sines of unrelated rates, about 2° in all at 3.7 and 6 a second,
+    are [hypothesis], judged by eye. The travel and the log are without the quiver.
+  - `TabKnob`, about the Z of its node `TabKnob`, through the origin, the whole knob leaned.
+    In that node's frame the knob is straight: its base flat (within 0.02), its two fins 180°
+    apart and the dial's disc centred on the origin [observed: `fnvtool nif decode` of both
+    arms, the plate's faces and UVs onto `PipBoyArm01.dds`, 2026-11-05]. The shape's own local Z
+    leans 28° off that shaft. Stood square to the plate it was seen tilted too far against the
+    original (playtest 2026-11-05), so it leans 17.6° with its top towards the top of the
+    device, which is what dropping the node's own tilt would give (`pipboy_controls.rs`
+    `KNOB_SHAFT`, `KNOB_LEAN_AXIS`). That the original does so is [hypothesis]: silhouettes
+    against the private job's five tabs do not settle it (0.145 against 0.147 for square),
+    though a free fit of the lean landed within 3° of it. The turn itself: the page's tab, not
+    the page (tab 0 of STATS, ITEMS and DATA look the same, and the wrap comes back), five
+    detents at the dial's five marks. Bringing the fin's tip onto each mark on the screen, by a
+    camera fitted to the private job, takes 67°, 37°, 10°, −16°, −49° [observed]; a constant 28°
+    a tab, 66° at tab 0 and −46° at tab 4, is within 3° of those, and that the step is constant
+    is [hypothesis]. A step is over in about 8 game loops [observed]; 180° a second, and the wrap swinging back at that speed,
+    are [hypothesis].
+  - `ScrollKnob`, about its local X, its axle: the list's selected row, one ridge a row (the
+    wheel has 26 ridges, its outermost vertices every 13.85° [observed: `fnvtool nif decode`]),
+    200° a second. It comes back to the same place at the top of a list [observed: private job
+    pipboy_special_device_motion: its ridges to within 0.3 pixels]; the rest is [hypothesis]:
+    that it follows the selected row and not the list's scroll, which the capture does not
+    separate; the ridges' 17 pixels hide whole ridges moved between shots, so the step is not
+    in the capture (a first reading of 2° a row was far too little against the original,
+    playtest 2026-11-05), and the sign is not resolved. The mouse wheel at the top of
+    the list moved neither. Following the row means the pointer on a row turns it too [design].
+  - Absolute `bind × rotation` on the shape's own transform, after the arm is posed; a rebuilt
+    rig's shapes take a bind of their own. Only rigid shapes of the size of the game's own
+    male and female arm turn: a replacement model can share the names with other pivots,
+    axes or skinning, so others are left still, said once ("pipboy: needle left still: …").
+    Only the arms rig: the third-person model's controls stay still and NPCs' arms are not
+    touched [design]. Off the arm a control finishes travelling to the last reading, then
+    holds [hypothesis]; the first reading is taken at once. Logged "pipboy: needle settled at …",
+    "pipboy: tab knob settled at …", "pipboy: scroll wheel settled at …".
 - **The view** is first person while it is up and goes back to what it was [hypothesis].
 - **The world behind** is blurred by `fBlurRadiusPipboy` (3.5) in the image space
   modifiers' blur units [hypothesis: the same units], eased with the clip; what is
@@ -89,21 +140,88 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
   left of a 1280 × 960 image. So the screen shows the canvas to about 964 across and 731
   down. NVForever draws the menus into such an image (interface lengths are its pixels)
   and puts it on the screen as it is.
-- **Colour** [observed: fitted]: the solid amber of the CND bar on the screenshot is
-  about (220, 180, 64); unlit and unscaled our brightest text came out (237, 167, 53)
-  through the view's tone mapping; multiplied by (0.83, 1.17, 1.27) it is
-  (221, 179, 59). `fBrightenPipboy` is not applied as such.
-- **The glass** is not drawn while the menus are on the screen: drawn, the glare lay
-  over them as a pale grey-blue haze. The screenshots show only a faint lighter patch at
-  the top right, and an empty screen of about (31, 27, 15) where ours is (15, 9, 0)
-  [observed]: the original draws the glare far more weakly [hypothesis; open, §8].
+- **Colour** [observed: private job pipboy_special_device_base]: a filled bar in the
+  original at noon in Goodsprings, level view, is about (177, 133, 47), dimmer than the
+  playtest shots below, about (206, 163, 57) indoors and (201, 161, 54) at dusk. Whether the
+  hour or the capture's own settings make the difference is not established. `SCREEN_TINT`
+  is fitted to the playtest shots (the static treatment below). `fBrightenPipboy` is not
+  applied as such.
+- **The glass** [observed: private job pipboy_special_device_base, 11 × 11 means at 1280 ×
+  720]: at eight empty places the original runs from (7, 6, 2) at the far left edge, (15,
+  11, 3) at the far right and about (20, 15, 4) beside the figure on the left, to (30, 25,
+  11) lower right and (79, 77, 49) at the top middle above the figure: a strong falloff to
+  the edges, warm, and brighter across the top. Through the engine's display-value add
+  (nif.md §6) the glare lay over the menus as a pale grey-blue haze, so it was hidden.
+- **The original's screen in playtest shots** [observed: 1920 × 1080 shots of the original,
+  2026-11-05]: a filled bar reads about (206, 163, 57) indoors and (201, 161, 54) at dusk, the
+  same screen in both. Across a scanline red stays almost flat (201 to 211) while green runs
+  145 to 183 and blue 48 to 66, so the stripes read yellow and orange, not grey. Below the
+  bars the ink is yellower than amber's own ratio: green about 0.74 of red and blue about 0.3
+  at every mid brightness. The empty screen is about (35, 27, 15) beside the figure and (22,
+  17, 7) at the left, the glare at the top about (80, 73, 50). These shots are brighter than the
+  private job's above; the numbers below are fitted to them.
+- **The static treatment** (nvf-play `pipboy/device_screen.rs`, all its numbers in that
+  file): image × `SCREEN_TINT` × the shapes' vertex colour (0.624 in linear light), plus the
+  glare, with red stopped at a ceiling, through Bevy's TonyMcMapface table. The scene's
+  image-space grade leaves the screen alone: the shape marks its pixels in alpha
+  (`NifSurface::pipboy_screen`, `imagespace.wesl` `SCREEN_MARK`), because the grade at noon
+  brightens by 1.3 and the original's screen does not follow it; the fade and VATS still cover
+  it [design]. In this engine at 1920 × 1080 a filled bar reads (207, 169, 64) indoors, red
+  206 to 208, green 154 to 189, blue 58 to 73, and (200, 163, 62) at noon in Goodsprings; the ink
+  has green at 0.73 and blue at 0.28 of red at mid brightness, the empty screen is (35, 28, 13)
+  beside the figure and (25, 19, 8) at the left, the glare (79, 72, 49) [observed: this engine's
+  shots, 2026-11-05]. Custom colours and other hours are not measured.
+  The ceiling is [hypothesis] for how the original comes by its flat red; it is fitted, and
+  the original's own path is not established:
+  - The falloff is the background picture's vignette: `pipboy.dds` runs from about 9 at its
+    corners to 93 near the top of its middle [observed: the file]. Drawn over a large
+    undercoat, as the first fit had it, the vignette was lost. The picture is at brightness
+    120 (the menu file's 90 at the first tint [documented: inventory_menu.xml]), its red in
+    linear light at 0.7 of amber's as the original's empty screen is less red, covering
+    the undercoat at alpha 0.4 and adding what it would over black.
+  - The undercoat, the screen camera's clear colour, is next to nothing: (0.00047, 0.00055,
+    0.00054) of light in the view.
+  - The glow across the top and the patch on the right are `glare:0`'s: its texture's
+    brightest band and patch lie there [observed: the file]. It is drawn over the menus on a
+    copy of its material, unlit, added in linear light as the terminal's glare is (hacking.md
+    §7), at a linear scale of (3.2, 1.4, 0.75) on the texture, warmer than the texture.
+    The copy keeps the shape's squeezed first-person depth, which Bevy's plain additive
+    material would not, and the sheet's soft intersection is off.
+  - `ScreenLit:8` stays hidden: `screen.dds` is black, `Screen_n.dds` is flat and its
+    specular colour black [observed: the files; `fnvtool nif decode`], so it carries no
+    falloff. Both shapes used are unlit, so nothing here is lit by the world [design]; the
+    hour does not move it here, the grade being left off.
+  - One baked column of scanlines over the canvas, a value per row (no tiling): the band
+    of `pipboyscanlines.dds`, rescaled to dim display values by 20% at its dark end, every
+    9.5 of the canvas: about 22% on the empty screen (the original 16 to 22%) and about 18% in
+    green on a filled bar (the original 21%). The undercoat and the picture are raised by what the lines take
+    away on average, as the terminal's are; the ink is not, its bright rows keeping their
+    value.
+  - One owner around the shared image: the layers are not part of the pages' tree, so
+    any painter of the pages gets them, once. The owner retints the picture itself when
+    the Pip-Boy colour changes, and the generic recolouring leaves its nodes alone; the
+    undercoat is the glass and keeps its colour [hypothesis]. Not in the screen menu (no background, no
+    scanlines, no glass, docs/design/screen-menu.md §2). The device's image shown flat
+    because the model is missing keeps the layers and has no glare.
 - **Scanlines** [observed]: `pipboyscanlines.dds` is 64 × 64 DXT1, one soft dark band
   (white at the top to about 0.8 at the bottom). On the screenshot the solid bar's rows
-  are bright and dim by about 15% every 6 pixels, which is 9.5 of the canvas. NVForever
-  tiles the band over the menus at that pitch, darkening by its shortfall from white
-  [hypothesis]. Flicker, vertical hold and shudder (the INI's transitions) are not built.
+  are bright and dim by about 15% every 6 pixels, which is 9.5 of the canvas. Flicker,
+  vertical hold and shudder (the INI's transitions) are not built.
+- **The beam**: a wave of light travels down the screen, its leading edge hard at the foot and
+  a long fade behind it [observed: private job pipboy_special_device_motion, the same empty
+  stretch of the screen frame by frame; playtest 2026-11-05]. Edges at the same place come 5 s
+  apart. On those frames the light rises about straight over 95 rows of the 720 to about +14
+  in display red, then drops within about 12 rows, the measure's smoothing included; it adds
+  about (1, 0.58, 0.17) in linear light. The playtest shots of the original show the same step
+  of 13 to 14. Frames go by at about 7 rows a frame, and at least 190 rows went by within one
+  clock second, so the time is [hypothesis] within about 1 to 2 s. NVForever draws one column
+  (`device_screen.rs`): 224 canvas units high with an edge of 24, the Pip-Boy's colour lightened
+  0.2 towards white at a fitted alpha of 0.016 at the peak, over the pages and under the
+  scanlines, 1.3 s from above the top edge to off the foot on the real clock, hidden between
+  sweeps and held with the pause menu. Not in the screen menu.
 - **Background**: `Interface\Shared\Background\pipboy.dds` over the whole canvas at
-  brightness 90 [documented: inventory_menu.xml].
+  brightness 90 [documented: inventory_menu.xml]; `ScreenGlare.dds` and this picture are
+  512 × 512 DXT1, alpha 1 throughout [observed].
 
 ## 4. What every page shares [documented unless marked]
 
@@ -345,6 +463,184 @@ is the top left 85 × 92 of `head.dds`) [observed].
   highlight box's rule; General's list height, order and right buffer, the reputation
   list's rule and second line, the karma titles. (The misc statistics' codes: misc-stats.md §1.)
 
+### 5.1.1 STATS: S.P.E.C.I.A.L. from its file: what the code writes
+
+The contract for the first slice of issue #1513 (`[UI] TileMenus=StatsMenu`,
+`tiles/stats_menu.rs`): what code writes into the tree of `menus\main\stats_menu.xml` for page 1
+to show. **Implemented, not verified**: every write below is our design and no finding about the
+original, and no comparison with the original has closed it. Where runtime expressions place or show something, this note says only "the file works
+this out at run time"; numbers appear only where they explain an incompatibility. Sources, as
+tagged: the tree by `fnvtool ui tree` (values, tile names, template names); the file and its
+includes by `fnvtool bsa extract`, read privately; and a private copy of those files laid over
+Data with `--overlay` and read back with `fnvtool ui tree`, called "the overlay". What the overlay
+shows is that authored overlay under **NVForever's evaluator**: it is no reading of the original
+and does not check the evaluator. `NOGLOW_BRANCH` is empty.
+
+**What the original was seen to do** [observed: private job pipboy_special_a, the original
+running at 1280 x 720, the Pip-Boy open on this page; one character, one window size]:
+
+- `screen()` is 1706.67 x 960, its converter 1.33 and the line thickness 2.67, which agrees at this
+  one size with what the shared tree holds here (960 / window height). One size does not establish
+  that rule in general; hud_menus' three sizes [observed: `tiles::resolution_converter`] are the HUD's.
+- The list stands at x 35.33 and is 325 x 468. A row of 52 is derived from that height and nine
+  visible rows [design: the arithmetic; one resolution], not read. The display stands at x 360.33, 544.67
+  wide. The LVL card is at x 270, the XP card at x 690, and the tail line at y 652.
+- The tabs stand at x 84.50, 220.50, 423, 591.50 and 746, y 626, 116, 179, 109, 107 and 133 wide,
+  their parent line at y 652; their `_selected` read 0, 1, 0, 0, 0.
+- The root's `user0` reads 0 on opening, then 1. A click on id 1 sets it by `ClickMenuButton`.
+- The root's `user5` to `user7` read as text. `user8` reads empty on a level 1 character, while the
+  LVL card shows on screen. **How `user8` came to be empty is open**. This slice's write of the
+  model's level there is an explicit provisional choice behind the switch [design], so the card
+  shows the level; it is not blanked to imitate that read. Parity on it stays open.
+- A row's tile carries its AVIF name and id -1, read with `GetActiveUIComponentName` under the
+  pointer. This slice gives its rows both, and knows them itself by actor value [design].
+
+This is what was read, not yet compared with what this slice draws; other sizes are not covered.
+
+Three different `user0`s are in play: the root's picks the page, the list's says a row is
+marked, a row's shows its mark.
+
+**The root** [observed: the vanilla files, by fnvtool bsa extract; the file's comments say
+what each trait holds]:
+
+| Trait | Code writes | From [design] |
+|---|---|---|
+| `StatsMenu/user0` | the tab, 0 to 4; here 1 | `PipBoy::tab` (`pipboy.rs`), the order of `Page::tabs` |
+| `StatsMenu/user8` | the level, as text | `Snapshot::level` (`stats/model.rs`, filled in `stats/read.rs`) |
+| `StatsMenu/user5` | HP, as text | `Snapshot::hp`, formatted as the hand-built page's card |
+| `StatsMenu/user6` | AP, as text | `Snapshot::ap` |
+| `StatsMenu/user7` | XP, as text | `Snapshot::xp` |
+
+The numbering is the file's: the level is `user8`. The root's other code traits are Status's and
+stay unwritten here. The root's `_PCButton_*` traits name buttons of Status and General, hidden on
+this page, so they should not fire [hypothesis: menu-xml.md §3.2, the tile "must be shown and a
+target"]. The page's keys stay code's: Up/Down, W/S, Page Up/Down in `stats::prepare`; A/D and
+Left/Right in `pipboy::keys` [design].
+
+**The list**, `stats_special_container`, a `list_box.xml` [observed: by fnvtool bsa extract: the
+prefab's comments give `_highlight_y`, `_selected_height`, `_scroll_delta`, `_num_filtered` and
+the scroll bar's `_number_of_items` to code, and say that with `_number_of_visible_items` set
+code overwrites `height` and `_scroll_delta`]:
+
+| Trait | Code writes | From [design] |
+|---|---|---|
+| `height` | the file's visible rows times a row's measured height. **Required**: the tree reads it empty, and the list has `clipwindow` on | the rows' `height`, below. Not the hand-built list's height: `list_rect` multiplies by a caller's row height, the hand-built caller's being the font's size + 20 (`Ctx::line_height`), and a tile's text measures its tallest glyph (`tiles::draw::measure`), a different figure |
+| `user0` | true when any row has a mark | any `Row::mark` |
+| `_highlight_y`, `_selected_height` | the selected row's `y` and height while it is boxed, else -1 and 0 | `StatsView::selected[1]`, `StatsView::highlight` |
+
+The scroll bar's `_number_of_items`, `_scroll_delta` and `_num_filtered` stay the file's: nothing
+scrolls with seven rows of the file's visible count. That a list which fits keeps its bar hidden
+is a [hypothesis]: what the original writes to these on this page is not known, and what a
+container list does says nothing certain about it. A row count that does not fit (a replacement's
+taller rows, fewer visible rows) is not handled: list scrolling is not in this slice, so the page
+falls back to the hand-built one [design].
+
+**The rows**: template `stats_list_template` [observed: the vanilla files, by fnvtool ui tree,
+`templates`], one per row under `stats_special_container`. Its hotrect `stats_list_template_item`
+has the children `ListItemText`, `stats_list_template_number` and `stats_list_template_extra`
+[observed: by fnvtool bsa extract]. Seven rows, `SPECIALS` in order: `Snapshot::special`
+(`stats/read.rs`).
+
+| Row trait | Code writes | From [design] |
+|---|---|---|
+| `listindex` | 0 to 6 | the row's place |
+| `string` | the name | `Row::name` (AVIF FULL) |
+| `user1` | the value as text, or the template's -1 for none | `Row::value` (`model::whole`). "--" without the scripts' game: a text value keeps it (`fnv_ui::Value::text`) though it compares as 0 (`Value::num`), so a numeric write would lose it |
+| `user0`, `user2` | whether the mark shows, and the mark | `Row::mark` (`model::modified_mark`) |
+| `height` | a height the template gives is kept; otherwise the text's measured height + the row's `_VerticalSpacing`, or 20 where that reads 0 [hypothesis: the prefab's comment; the derived 52 above agrees at one size] | the row's text as measured |
+| `_y` | the height of the rows above | the same |
+
+Everything else about a row, the list and the highlight box: the file works this out at run time.
+The hand-built constants are not transplanted. The template gives a row no `id` and no `xup` or
+`xdown` [observed: by fnvtool ui tree]; the running original's rows have the id and name above, and
+how its code tells a row's click is not known. A tab's prefab has its
+own hover sound and `pipboy/sounds`' `TabHovered` is ours: one must stay silent [design].
+
+**The display**, `stats_display_rect`: place and size, the file works this out at run time.
+
+| Tile and trait | Code writes | From [design] |
+|---|---|---|
+| `stats_icon/filename` | the picture | `Row::icon` (AVIF ICON) |
+| `stats_icon/visible` | true while a row is selected. **Trap**: `stats_icon_separator` copies it and `stats_description_rect` copies that [observed: by fnvtool bsa extract], so a row without a picture must keep it true with an empty `filename`; the hand-built page draws line and text without a picture (`listed`) | `listed` in `stats/mod.rs` |
+| `stats_description/string` | the text | `Row::description` (AVIF DESC) |
+| `stats_description_scrollbar/_number_of_items` | one more than the scroll steps the tile's own text overflows by (font, wrap and window as the tile has them, not the hand-built page's pitch). **Required**: the prefab's value shows the bar on every row [observed: `visible` 1 in the tree and under the overlay]. The +1 is our adaptation, no capture of the original | a bound the tile view supplies through `StatsView::set_desc_bound`, as `listed` does its own |
+| the same tile, `_current_value`, `_SetInCode` | `StatsView::desc`, then a poke of `_SetInCode`, which the prefab asks for when code sets the value | `StatsView::select` zeroes it on a new row |
+
+`stats_icon_badge` stays hidden: what it shows on this page is not known; capture. The
+description's value has one owner: the file adds its own arrow clicks and `wheelmoved` to
+`_current_value`, and the model moves it too. So tile controls become `StatsView::scroll_desc`
+commands, the value is written back after input on every tiled frame, and `wheelmoved` is not
+written [design].
+
+**A tab's inner rect**, `stb_text_box`, repeats the tab's own place, the tab's being read from it,
+and has `alpha` 0 over words and lines of their own `alpha` [observed: by fnvtool ui tree; a tab has
+no `locus`, the rect has]. So the two places are not added and the rect's `alpha` is not passed down
+in the original, going by where its tabs stand [hypothesis]. `tiles/layout.rs` and the tile input
+read no `locus` and multiply a rect's `alpha`, for every menu, so unchanged they lost the tab line
+here, words and box. Writing either place collapses the other, standing every tab at the line's
+start [observed: fnvtool's tree with a test write]. So this slice alone writes marks, the file's
+places untouched: the tab gives its children no place (`_NVFNoOrigin`), and what is under the rect
+keeps its own `alpha` (`_NVFOwnAlpha`) (`write_tabs`) [design]. Whether to read `locus` in general is
+a separate decision. The selected tab's fill stays undrawn: a hotrect, whose `alpha` the file
+changes there, draws nothing in this renderer [design].
+
+**Ids** [observed: the vanilla files, by fnvtool ui tree, `id`]: `stats_tailline_status` 0,
+`stats_tailline_SPECIAL` 1, `stats_tailline_skills` 2, `stats_tailline_perks` 3,
+`stats_tailline_general` 4. Each tab's `_selected` asks whether the root's `user0` equals the same
+number, and nothing in the file writes `user0`: a click on id 1 setting it was seen, above; the same
+for the other ids is a [hypothesis]. The hand-built `PipBoyInput::Tab(i)` uses the same numbers (`tab_line` in
+`frame.rs`). Also `stats_special_container` 6, `stats_icon` 25, `stats_description_rect` 26,
+`stats_icon_badge` 52, `stats_title` 39, the cards 40 to 43; the scroll pieces are all `&generic;`.
+
+**The title**: the `string` of `stats_title` is an entity without its closing `;`, which the
+reader keeps as plain text (menu-xml.md §2.4) [observed: the vanilla files, by fnvtool ui tree].
+The tile would show those characters, and neither the masters nor `BUILT_IN` have a setting of that
+name. Code replaces them with `Page::title`, the hand-built page's own word, only while the string
+still is such an unresolved name, and leaves a replacement's or a script's text alone [design: the
+string rule, LEGAL.md: a word NVForever writes, none taken from the original's screen].
+What the original does with it: not known; capture.
+
+**What the page needs of `screen()`**, the question menu-xml.md §4.2 leaves open for the Pip-Boy.
+Neither `stats_menu.xml` nor any file it includes reads `screen()`; only `globals.xml` does, for
+`_line_thickness`: 2 on a PC, times `resolutionconverter`. The canvas comes from that file's
+`_pipboy_width` and `_pipboy_height` [observed: by fnvtool bsa extract, every include searched].
+With `--screen` at five sizes none of the tree's traits changes [observed: by fnvtool ui tree], but
+the tool writes no converter, so that run cannot say which converter is right: it reads thickness
+0 and lines without height. The renderer's target stays its own matter, and a 1024 x 768 canvas is
+not written into `screen()`, because other menus share the tree [design].
+
+- `tiles::interface_screen` is true with `StatsMenu` [design]: the file's lines need a converter,
+  and the same gate lets a hotrect's `alpha` 0 pass (`Context` in `tiles/layout.rs`), so the list's
+  rows draw. The gate is global, not Stats's own. With only the tile HUD on, adding `StatsMenu`
+  changes the shared screen traits and the HUD's hotrect-alpha handling, as the other T15 menus do;
+  with another T15 switch already on, adding it changes no gate. This effect is tested and stated,
+  not isolated.
+- 960 / window height (`resolution_converter`) is what the shared tree holds, and the original
+  reads the same with the Pip-Boy open, above. So lines differ from the hand-built `THICK` of 2
+  behind the switch.
+
+**Hand-built value, tile target, what must stay** [design: values come from `Snapshot` and
+`StatsView`; a writer works no figure out again]:
+
+| Hand-built | Tile target | Stays? |
+|---|---|---|
+| A value with worn apparel's changes, kept in range (`shown_and_permanent`, `av::capped`) | row `user1` | yes (§5.1) |
+| "(+)" and "(-)" (`modified_mark`) | row `user0`, `user2`; list `user0` | yes |
+| A row always selected, boxed only after a key or under the pointer (`StatsView::highlight`, fitted to the owner's screenshots) | `_highlight_y`, `_selected_height`; the display always filled | yes |
+| Screen menu: no title, the line running on from the lead line, the page names as a header [design: the owner, 2026-10-31, `heading_title` and `header` in `frame.rs`] | hide `stats_title`; write `x` and `_length` of `stats_headline_h2` to close the gap; the header stays the shell's, clickable, no tile | yes `[owner 2026-10-31]` |
+| The page's background and scanlines, on the device; neither in the screen menu (`device_screen.rs`, screen-menu.md) | none: `background_layout` stays hidden in both frames, so the tiles are page content only; the file has no scanline tile, so they stay the shell's, with the scanlines over the tiles | yes |
+| Keys, wheel; A/D [design: `pipboy::keys`]; the controller's D-pad [design: owner 2026-11-02] | none: `stats`, `pipboy.rs` | yes `[owner 2026-11-02]` |
+| The words "S.P.E.C.I.A.L." and "STATS" (`Page::tabs`, `Page::title`) | the tab reads `sStatsSpecial` (`fnv_ui::strings::BUILT_IN`'s "S.P.E.C.I.A.L." unless a plugin sets it, the name as FalloutNV.esm's own text spells it), left alone: code does not overwrite a plugin's or the built-in label | yes `[owner 2026-11-06, #1740]`: both pages read "S.P.E.C.I.A.L." |
+| Tabs, cards, row pitch (`tab_boxes`, `heading`, `card`, `list`) | the file works these out at run time | not a choice; may differ behind the switch. The places read above are the original's; the comparison at 1280 x 720 lists the differences |
+| The log lines and `NVF_PLAY_TEST_PIPBOY_STATS` | none | yes: the smoke scenarios read them; `stats::prepare` keeps them whichever view draws |
+
+**Not known; capture**: how `user8` came to be empty, and where the LVL card's value then comes
+from; a row's `_selected`; the list's `_scroll_delta` and scroll bar count; `stats_icon_badge`; the
+description scroll bar's count; whether the other tabs' ids act as id 1's does; whether a tab's
+words and the title show at all before code writes them; any of the above at other window sizes.
+None of these stops a first working slice with a complete fallback; they cannot be called verified
+when parity is declared.
+
 ### 5.3 DATA
 
 `data.rs` (the page: state, input, what is shown and its drawing), `data/model.rs` (plain
@@ -537,7 +833,8 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
   the screen's and the buttons' meshes (nvforever `pipboy_arm.rs`, `Posed`) [design].
   Until 2026-10-11 Bevy's mesh ray cast was used, which sees neither the skinning nor a
   mesh kept on the GPU only, so no click on the model did anything (the owner's
-  playtest). The button under the pointer glows as the page shown's does [design].
+  playtest). The pointer on a button does not light it (§2); a click still shows its
+  page. `show_screen` logs "pipboy: buttons lit: <pages>" on each change.
 
 ## 6.1 Sounds [observed: the SOUN records, FalloutNV.esm; the owner's list 5]
 
@@ -558,7 +855,8 @@ logged "pipboy sound: <EditorID>" (the focus sound at debug level).
 `page=stats|items|data`, `tab=<0-4>`, `key=down|up|use|drop`, and for the pointer
 `point=<x>:<y>` (the pointer on that canvas point, through the model's screen),
 `point=off`, `click=<x>:<y>` and `click=stats|items|data` (a click on the device's
-button; logged "pipboy: the STATS button pressed"); screenshots with
+button; logged "pipboy: the STATS button pressed"), `point=stats|items|data` (the pointer
+on that button, no click; logged "test aid: the pointer on the STATS button"); screenshots with
 `NVF_PLAY_TEST_SHOTS`. A new game's add-on message boxes come first: answer them with
 `NVF_PLAY_TEST_SCRIPT_MENUS=0.05` and open after about 12 s:
 
@@ -567,7 +865,8 @@ NVF_PLAY_TEST_SCRIPT_MENUS=0.05 NVF_PLAY_TEST_PIPBOY="12:open,15:page=stats,17:c
 ```
 
 Expect "pipboy: up, page ITEMS tab Weapons", "pipboy: the menus are on the model's
-screen", "pipboy: STATS Status", "pipboy: down". Compare at 1280 × 720 with the owner's
+screen", "pipboy: the glare is over the menus", "pipboy: screen treatment on (…)",
+"pipboy: STATS Status", "pipboy: down". Compare at 1280 × 720 with the owner's
 pictures.
 
 The mouse (2026-10-11): `NVF_PLAY_TEST_PIPBOY="12:open,14:click=320:650,16:click=stats,18:click=600:650"`
@@ -580,7 +879,12 @@ fourth row, and a click on a row equips what it selects.
 - Whether the original holds the clip at `Hit` (the measurements say the screen faces
   the eye there).
 - The keys of the PC game for the pages and tabs.
-- The glare: how strongly the original draws it.
+- The needle's and knobs' speeds in time (the capture counts game loops at no known rate),
+  the wheel's step and sign, whether the mouse wheel turns it off the top of a list, how the
+  knob swings back at the wrap, and whether anything moves down (§2).
+- The glass: the static treatment (§3) is fitted at noon, level view, one page. Whether
+  the original's screen moves with the hour, the pose and the page beyond what the grade
+  does here is not fitted.
 - `fDefault1stPersonFOV=55` for the arms outside the Pip-Boy.
 - What `fBlurIntensityPipboy`, `fScanlineScalePipboy` and `fBrightenPipboy` scale.
 - The mouse pointer: the screenshots show an amber arrow (`interface\icons\misc\

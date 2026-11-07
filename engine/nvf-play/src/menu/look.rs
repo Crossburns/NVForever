@@ -377,7 +377,7 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &MenuModel, note: Option<&str>,
         match (m.mode, &m.trade) {
             (Mode::Barter(_), Some(t)) => {
                 if let Some(flow) = barter::flow(t.balance) {
-                    caps_flow(p, &mut c, flow, t.balance.unsigned_abs(), t.affordable());
+                    caps_flow(p, &mut c, flow, t.paid().unsigned_abs(), t.affordable());
                 }
             }
             (Mode::Container(_), _) if m.selected_row(m.focus).is_some() => {
@@ -394,6 +394,15 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &MenuModel, note: Option<&str>,
         if let Some(n) = note.filter(|n| !n.is_empty()) {
             c.text(p, false, n, MAIN.x / 2.0, NOTE_Y + (31.0 + 20.0) / 2.0 + 20.0, Align::Centre, bright);
         }
+    });
+}
+
+/// [design: barter-menu.md section 9] Keep the model's own refusal note over the tiled
+/// barter view, whose file has no subtitle tile, at the existing hand-built place.
+pub fn spawn_note(root: &mut ChildSpawnerCommands, note: &str, kit: &mut Kit, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) {
+    let mut c = Ctx { kit, data, images, bc };
+    root.spawn(Node { width: crate::interface::u(MAIN.x), height: crate::interface::u(MAIN.y), ..default() }).with_children(|p| {
+        c.text(p, false, note, MAIN.x / 2.0, NOTE_Y + (31.0 + 20.0) / 2.0 + 20.0, Align::Centre, amber(255.0));
     });
 }
 
@@ -503,16 +512,19 @@ fn caps_flow(p: &mut ChildSpawnerCommands, c: &mut Ctx, flow: Flow, caps: u64, a
 }
 
 fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel) {
-    let list: Vec<(&str, &str, Command, bool)> = match (m.mode, &m.trade) {
-        (Mode::Barter(_), Some(t)) => vec![("Accept", "A)", Command::Accept, !t.is_empty()), ("Exit", "X)", Command::Close, true)],
-        _ => vec![("Take All", "R)", Command::TakeAll, !m.list(Side::Container).rows.is_empty()), ("Exit", "E)", Command::Close, true)],
+    use crate::pad::{at_menu, hint};
+    use KeyCode::*;
+    let (barter, container) = (at_menu(fnv_game::game::menus::BARTER), at_menu(crate::script::MENU_CONTAINER));
+    let list: Vec<(&str, String, Command, bool)> = match (m.mode, &m.trade) {
+        (Mode::Barter(_), Some(t)) => vec![("Accept", hint(&[KeyA], barter), Command::Accept, !t.is_empty()), ("Exit", hint(&[KeyX, Escape], barter), Command::Close, true)],
+        _ => vec![("Take All", hint(&[KeyR], container), Command::TakeAll, !m.list(Side::Container).rows.is_empty()), ("Exit", hint(&[KeyE, Escape], container), Command::Close, true)],
     };
     let h = 31.0 + BUTTON_PAD;
     for (i, (label, hint, cmd, on)) in list.into_iter().enumerate() {
         let color = amber(255.0).with_alpha(if on { 1.0 } else { DIM });
         let y = BUTTONS_Y + i as f32 * h;
         let w = c.text(p, false, label, BUTTONS_RIGHT, y + BUTTON_PAD, Align::Right, color);
-        c.text(p, false, hint, BUTTONS_RIGHT + HINT_GAP, y + BUTTON_PAD, Align::Left, color);
+        c.text(p, false, &hint, BUTTONS_RIGHT + HINT_GAP, y + BUTTON_PAD, Align::Left, color);
         p.spawn((Button, CmdButton(cmd), at(BUTTONS_RIGHT - w - 10.0, y, w + 20.0 + HINT_GAP + 30.0, h)));
     }
 }
@@ -531,12 +543,7 @@ fn item_data(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, r: &Row, 
         c.image(p, icon, at(ICON_AT.x, ICON_AT.y, ICON, ICON), bright);
     }
     let x0 = if matches!(m.mode, Mode::Barter(_)) { DATA_X_BARTER } else { DATA_X_CONTAINER };
-    let prices = m.trade.as_ref().map(|t| t.prices).unwrap_or_default();
-    let value = r.value.map(|v| prices.value_at(v, r.condition).round() as i64);
-    let condition = r.condition.filter(|_| matches!(r.kind, Some(ItemKind::Weapon | ItemKind::Armor)));
-    let mut i = info.cloned().unwrap_or_else(|| Info { condition, ..Info::default() });
-    i.weight = r.weight.filter(|w| *w > 0.0).map(|w| format!("{w:.2}"));
-    i.value = value.filter(|v| *v > 0).map(|v| v.to_string());
+    let i = item_figures(m, r, info);
     let tiles = tiles_in(&i, Vec2::new(3.0 * TILE.x, 3.0 * TILE.y));
     let shown: Vec<String> = tiles.iter().map(|t| if t.value.is_empty() { t.title.clone() } else { format!("{} {}", t.title, t.value) }).collect();
     info!("menu: figures of {}: {}", r.name, shown.join(", "));
@@ -550,6 +557,20 @@ fn item_data(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, r: &Row, 
             p.spawn((at(mx, my, mw * fill, 20.0), BackgroundColor(bright)));
         }
     }
+}
+
+/// The figures of the selected row in these menus: the Pip-Boy's ([`Info`]), with the weight
+/// and value of one unit, the value at its condition and before the trade's multiplier
+/// [owner's playtest list 7 item 25]. The hand-built drawing and the tiles
+/// (`crate::tiles::item_card`) both read these.
+pub fn item_figures(m: &MenuModel, r: &Row, info: Option<&Info>) -> Info {
+    let prices = m.trade.as_ref().map(|t| t.prices).unwrap_or_default();
+    let value = r.worth(&prices).map(|v| v.round() as i64);
+    let condition = r.condition.filter(|_| matches!(r.kind, Some(ItemKind::Weapon | ItemKind::Armor)));
+    let mut i = info.cloned().unwrap_or_else(|| Info { condition, ..Info::default() });
+    i.weight = r.weight.filter(|w| *w > 0.0).map(|w| format!("{w:.2}"));
+    i.value = value.filter(|v| *v > 0).map(|v| v.to_string());
+    i
 }
 
 /// A tile of figures `w` wide: a line along its top and one fading down its right side,
@@ -660,9 +681,12 @@ pub fn spawn_quantity(root: &mut ChildSpawnerCommands, q: &Quantity, words: &[St
             }
             c.text(p, true, &q.amount.to_string(), Q_CENTRE, Q_AMOUNT_Y, Align::Centre, bright);
             let h = 31.0 + BUTTON_PAD;
-            for ((label, hint, cmd), y) in [(words[0].as_str(), "A)", Command::AmountOk), (words[1].as_str(), "E)", Command::AmountCancel)].into_iter().zip(Q_BUTTONS_Y) {
+            // The prompt's own keys over any menu: A (Enter) and B (Esc) on a controller.
+            let any = crate::pad::MenuAt::default();
+            let (ok, cancel) = (crate::pad::hint(&[KeyCode::KeyA, KeyCode::Enter], any), crate::pad::hint(&[KeyCode::KeyE, KeyCode::Escape], any));
+            for ((label, hint, cmd), y) in [(words[0].as_str(), ok, Command::AmountOk), (words[1].as_str(), cancel, Command::AmountCancel)].into_iter().zip(Q_BUTTONS_Y) {
                 let w = c.text(p, false, label, Q_BUTTONS_RIGHT, y + BUTTON_PAD, Align::Right, bright);
-                c.text(p, false, hint, Q_BUTTONS_RIGHT + HINT_GAP, y + BUTTON_PAD, Align::Left, bright);
+                c.text(p, false, &hint, Q_BUTTONS_RIGHT + HINT_GAP, y + BUTTON_PAD, Align::Left, bright);
                 p.spawn((Button, CmdButton(cmd), at(Q_BUTTONS_RIGHT - w - 10.0, y, w + 20.0 + HINT_GAP + 30.0, h)));
             }
         });

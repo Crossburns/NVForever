@@ -11,6 +11,7 @@ use bevy::prelude::*;
 use bevy::shader::Shader;
 use fnv_world::lighting::{light_data, light_flags, placed_light_radius, ref_xrds};
 use fnv_world::placed::Placement;
+use nvf_play::RefVisual;
 use std::f32::consts::PI;
 
 use crate::world::WorldData;
@@ -348,6 +349,11 @@ fn noise(x: f32) -> f32 {
     hash(i) + (hash(i + 1.0) - hash(i)) * f
 }
 
+/// Leaves out a reference's light sources: they carry its [`RefVisual`] to follow its
+/// enabled state ([`spawn_light`]), but are no part of its model, neither its root nor a
+/// shape to swap for another model's.
+pub type NotLightSource = (Without<PointLight>, Without<SpotLight>);
+
 /// On a placed light that flickers or pulses: its motion, full intensity and phase.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct MovingLight {
@@ -525,7 +531,9 @@ pub fn lumens(brightness: f32, unit: f32) -> f32 {
 /// the colour of the light inside the LIGH's model (`model`, as stored under `meshes\`)
 /// when it has one (world.md §8 "Black LIGH colours"). A light whose model drives its
 /// colour by a sequence gets [`ModelDrivenLight`] (docs/spec-notes/model-lights.md) and is
-/// drawn even when both colours are black: its keys light it.
+/// drawn even when both colours are black: its keys light it. The source carries
+/// [`RefVisual`], so `RefVisual` sync puts it out and lights it again with the reference
+/// (docs/spec-notes/model-lights.md §2).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_light(
     commands: &mut Commands,
@@ -573,6 +581,7 @@ pub fn spawn_light(
         let mut e = commands.spawn((
             SpotLight { color, intensity, range: radius, outer_angle: a, inner_angle: a * 0.8, shadow_maps_enabled: false, ..default() },
             t.looking_to(-Vec3::Z, Vec3::Y),
+            RefVisual(placed.form_id),
             ChildOf(cell_e),
         ));
         if let Some(d) = driven {
@@ -585,7 +594,7 @@ pub fn spawn_light(
             e.insert(m);
         }
     } else {
-        let mut e = commands.spawn((PointLight { color, intensity, range: radius, shadow_maps_enabled: false, ..default() }, t, ChildOf(cell_e)));
+        let mut e = commands.spawn((PointLight { color, intensity, range: radius, shadow_maps_enabled: false, ..default() }, t, RefVisual(placed.form_id), ChildOf(cell_e)));
         if let Some(d) = driven {
             e.insert(d);
         }
@@ -649,5 +658,220 @@ mod tests {
         let unit = 1000.0;
         let b = lumens(2.2, unit) / (4.0 * PI) / PI / unit;
         assert!((b - 2.2).abs() < 1e-5);
+    }
+
+    // A placed light's source and the reference's enabled state (#1619), on a synthetic
+    // plugin decoded through the repository schemas, as `crates/fnv-sim/tests/synthetic.rs`.
+    mod follows_its_reference {
+        use super::*;
+        use crate::emittance::EmittanceState;
+        use crate::outfits::tests::{asset_fixture, TestFiles};
+        use crate::world::{spawn_dormant, StreamStats, WorldData};
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::math::Affine3A;
+        use fnv_esm::raw::{write_subrecords, Subrecord};
+        use fnv_esm::{LoadOrder, Plugin, Schema};
+        use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
+        use fnv_world::placed::{placement, ref_flags};
+        use nvf_assets::model::ModelCtx;
+        use nvf_play::sim::SimState;
+        use nvf_play::RefChanged;
+
+        const POINT: u32 = 0x100;
+        const SPOT: u32 = 0x101;
+        const CELL: u32 = 0x200;
+        const POINT_REF: u32 = 0x301;
+        const SPOT_REF: u32 = 0x302;
+        const PARENT_REF: u32 = 0x303;
+        const CHILD_REF: u32 = 0x304; // XESP -> PARENT_REF
+        const OPPOSITE_REF: u32 = 0x305; // XESP -> PARENT_REF, opposite
+        const DORMANT_REF: u32 = 0x306; // Initially Disabled
+
+        fn sub(sig: &[u8; 4], data: Vec<u8>) -> Subrecord {
+            Subrecord { sig: *sig, data, extended: false }
+        }
+
+        fn cat(parts: &[&[u8]]) -> Vec<u8> {
+            parts.concat()
+        }
+
+        fn record(sig: &[u8; 4], flags: u32, fid: u32, subs: &[Subrecord]) -> Vec<u8> {
+            let payload = write_subrecords(subs);
+            cat(&[sig, &(payload.len() as u32).to_le_bytes(), &flags.to_le_bytes(), &fid.to_le_bytes(), &[0; 4], &15u16.to_le_bytes(), &[0; 2], &payload])
+        }
+
+        fn group(label: [u8; 4], gtype: i32, body: &[u8]) -> Vec<u8> {
+            cat(&[b"GRUP", &((24 + body.len()) as u32).to_le_bytes(), &label, &gtype.to_le_bytes(), &[0; 8], body])
+        }
+
+        /// LIGH DATA: time, radius, colour, flags, falloff exponent, fov, value, weight.
+        fn ligh(fid: u32, flags: u32) -> Vec<u8> {
+            let data = cat(&[&0i32.to_le_bytes(), &300u32.to_le_bytes(), &[255, 200, 100, 0], &flags.to_le_bytes(), &1f32.to_le_bytes(), &90f32.to_le_bytes(), &0u32.to_le_bytes(), &0f32.to_le_bytes()]);
+            record(b"LIGH", 0, fid, &[sub(b"DATA", data), sub(b"FNAM", 1f32.to_le_bytes().to_vec())])
+        }
+
+        fn refr(fid: u32, flags: u32, base: u32, parent: Option<(u32, bool)>) -> Vec<u8> {
+            let data: Vec<u8> = [0f32; 6].iter().flat_map(|f| f.to_le_bytes()).collect();
+            let mut subs = vec![sub(b"NAME", base.to_le_bytes().to_vec()), sub(b"DATA", data)];
+            subs.extend(parent.map(|(p, opposite)| sub(b"XESP", cat(&[&p.to_le_bytes(), &[opposite as u8, 0, 0, 0]]))));
+            record(b"REFR", flags, fid, &subs)
+        }
+
+        fn plugin_bytes() -> Vec<u8> {
+            let tes4 = record(b"TES4", 1, 0, &[sub(b"HEDR", cat(&[&1.34f32.to_le_bytes(), &0i32.to_le_bytes(), &0x800u32.to_le_bytes()]))]);
+            let lights = group(*b"LIGH", 0, &cat(&[&ligh(POINT, 0), &ligh(SPOT, light_flags::SPOT)]));
+            let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", b"TestCell\0".to_vec())]);
+            let refs = cat(&[
+                &refr(POINT_REF, 0, POINT, None),
+                &refr(SPOT_REF, 0, SPOT, None),
+                &refr(PARENT_REF, 0, POINT, None),
+                &refr(CHILD_REF, 0, POINT, Some((PARENT_REF, false))),
+                &refr(OPPOSITE_REF, 0, POINT, Some((PARENT_REF, true))),
+                &refr(DORMANT_REF, ref_flags::INITIALLY_DISABLED, POINT, None),
+            ]);
+            let label = CELL.to_le_bytes();
+            let children = group(label, 6, &group(label, 9, &refs));
+            let cells = group(*b"CELL", 0, &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cat(&[&cell, &children]))));
+            cat(&[&tes4, &lights, &cells])
+        }
+
+        fn light_app() -> (App, TestFiles) {
+            let (mut app, files) = asset_fixture();
+            let plugins: &'static [Plugin] = Box::leak(vec![Plugin::parse(&plugin_bytes(), "Test.esm".into()).unwrap()].into_boxed_slice());
+            let lo: &'static LoadOrder<'static> = Box::leak(Box::new(LoadOrder::new(plugins).unwrap()));
+            let schema: &'static Schema = Box::leak(Box::new(Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap()));
+            let forms: &'static FormStore = Box::leak(Box::new(FormStore::build(lo, schema)));
+            let refs: &'static RefTable = Box::leak(Box::new(RefTable::build(lo, schema)));
+            app.insert_resource(WorldData { lo, schema, ..crate::outfits::tests::empty_world_data() })
+                .insert_resource(SimState { forms, refs, world: World::new(forms, refs, SimConfig::default()) })
+                .init_resource::<EmittanceState>()
+                .add_message::<RefChanged>()
+                .add_systems(Update, nvf_play::activate::sync_visuals);
+            (app, files)
+        }
+
+        fn cell(app: &mut App) -> Entity {
+            app.world_mut().spawn((Transform::IDENTITY, Visibility::Inherited)).id()
+        }
+
+        /// The light source of enabled-at-start reference `r`, spawned under `cell` as
+        /// render streaming does (`world.rs` `spawn_ref`).
+        fn spawn(app: &mut App, cell: Entity, r: u32) -> Entity {
+            app.world_mut()
+                .run_system_once(move |mut commands: Commands, world: Res<WorldData>, mut models: ModelCtx, mut emittance: ResMut<EmittanceState>| {
+                    let p = placement(world.lo, world.schema, r).unwrap();
+                    assert!(spawn_light(&mut commands, cell, &world, p.base.unwrap(), None, &mut models, Affine3A::IDENTITY, 1.0, &p, &mut emittance));
+                })
+                .unwrap();
+            *app.world().get::<Children>(cell).unwrap().last().unwrap()
+        }
+
+        /// The holder and light source of reference `r`, not enabled at the start of a game
+        /// (`world.rs` `spawn_dormant`).
+        fn spawn_not_enabled(app: &mut App, cell: Entity, r: u32) -> (Entity, Entity) {
+            app.world_mut()
+                .run_system_once(move |mut commands: Commands, world: Res<WorldData>, mut models: ModelCtx, mut emittance: ResMut<EmittanceState>| {
+                    let p = placement(world.lo, world.schema, r).unwrap();
+                    let mut stats = StreamStats::default();
+                    spawn_dormant(&mut commands, cell, &world, &p, r, Affine3A::IDENTITY, &mut models, &mut None, 1.0, &mut emittance, &mut stats, None);
+                    assert_eq!(stats.lights_hidden, 1);
+                })
+                .unwrap();
+            let holder = *app.world().get::<Children>(cell).unwrap().last().unwrap();
+            (holder, app.world().get::<Children>(holder).unwrap()[0])
+        }
+
+        /// What Bevy's visibility propagation makes of an entity and its ancestors: the
+        /// `InheritedVisibility` that its light clustering and `detection.rs` read. The
+        /// propagation itself takes the renderer's plugins; `lights-disable` runs it.
+        fn shines(app: &App, e: Entity) -> bool {
+            let mut at = e;
+            loop {
+                match app.world().get::<Visibility>(at) {
+                    Some(Visibility::Hidden) => return false,
+                    Some(Visibility::Visible) => return true,
+                    _ => {}
+                }
+                match app.world().get::<ChildOf>(at) {
+                    Some(parent) => at = parent.parent(),
+                    None => return true,
+                }
+            }
+        }
+
+        /// `r` set enabled or not, and the frame's `RefChanged` for each of `told`.
+        fn set_enabled(app: &mut App, r: u32, enabled: bool, told: &[u32]) {
+            app.world_mut().resource_mut::<SimState>().world.set_enabled(FormId(r), enabled).unwrap();
+            for &form_id in told {
+                app.world_mut().write_message(RefChanged::new(form_id));
+            }
+            app.update();
+        }
+
+        #[test]
+        fn point_and_spot_sources_go_out_and_come_back() {
+            let (mut app, _files) = light_app();
+            for r in [POINT_REF, SPOT_REF] {
+                let cell = cell(&mut app);
+                let source = spawn(&mut app, cell, r);
+                assert_eq!(app.world().get::<SpotLight>(source).is_some(), r == SPOT_REF);
+                app.update();
+                assert!(shines(&app, source), "{r:X} is on at the start");
+                set_enabled(&mut app, r, false, &[r]);
+                assert!(!shines(&app, source), "{r:X} disabled");
+                set_enabled(&mut app, r, true, &[r]);
+                assert!(shines(&app, source), "{r:X} enabled again");
+            }
+        }
+
+        #[test]
+        fn a_source_follows_its_enable_parent() {
+            let (mut app, _files) = light_app();
+            let cell = cell(&mut app);
+            let child = spawn(&mut app, cell, CHILD_REF);
+            let (holder, opposite) = spawn_not_enabled(&mut app, cell, OPPOSITE_REF);
+            app.update();
+            assert!(shines(&app, child));
+            assert!(!shines(&app, opposite) && !shines(&app, holder));
+            // A parent's change names its children too (`script_events.rs`).
+            let family = [PARENT_REF, CHILD_REF, OPPOSITE_REF];
+            set_enabled(&mut app, PARENT_REF, false, &family);
+            assert!(!shines(&app, child));
+            assert!(shines(&app, opposite));
+            set_enabled(&mut app, PARENT_REF, true, &family);
+            assert!(shines(&app, child));
+            assert!(!shines(&app, opposite));
+        }
+
+        #[test]
+        fn a_source_stays_out_when_its_cell_loads_again() {
+            let (mut app, _files) = light_app();
+            let first = cell(&mut app);
+            let source = spawn(&mut app, first, POINT_REF);
+            app.update();
+            set_enabled(&mut app, POINT_REF, false, &[POINT_REF]);
+            app.world_mut().entity_mut(first).despawn();
+            assert!(app.world().get_entity(source).is_err());
+            // Render streaming goes by the plugins' flags: the light is spawned again.
+            let again = cell(&mut app);
+            let source = spawn(&mut app, again, POINT_REF);
+            app.update();
+            assert!(!shines(&app, source), "no script tells it again");
+            set_enabled(&mut app, POINT_REF, true, &[POINT_REF]);
+            assert!(shines(&app, source));
+        }
+
+        #[test]
+        fn a_source_spawned_disabled_still_waits_for_enable() {
+            let (mut app, _files) = light_app();
+            let cell = cell(&mut app);
+            let (holder, source) = spawn_not_enabled(&mut app, cell, DORMANT_REF);
+            app.update();
+            assert!(!shines(&app, source));
+            set_enabled(&mut app, DORMANT_REF, true, &[DORMANT_REF]);
+            assert!(shines(&app, holder) && shines(&app, source));
+            set_enabled(&mut app, DORMANT_REF, false, &[DORMANT_REF]);
+            assert!(!shines(&app, source));
+        }
     }
 }

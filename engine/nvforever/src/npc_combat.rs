@@ -84,7 +84,7 @@
 //!   [design; owner 2026-10-11: a dog gets into range and bites, it does not push the
 //!   player around]. Without bodies to measure, its reach from its feet counts. A
 //!   creature keeps its own reach and body from its target's centre instead
-//!   ([`creature_spacing`], [`CREATURE_BODY_REACH`]).
+//!   ([`creature_spacing`], [`creature_reach`]).
 //! - **Creatures' power attacks** (a radscorpion's sting): a creature's blow is a power
 //!   attack by its combat style's Power Attack % Chance [documented: GECK wiki Combat
 //!   Style], or [`FALLBACK_POWER_CHANCE`] where the style gives none [design: owner
@@ -248,20 +248,35 @@ pub const MELEE_ENGAGE_SHARE: f32 = 0.8;
 /// blows land and beyond which it closes in again, game units [design].
 pub const MELEE_STOP_GAP: f32 = 6.0;
 pub const MELEE_HIT_GAP: f32 = 24.0;
-/// Melee with bodies to measure: an attacker also keeps its weapon's reach between its
-/// centre and the target's body: it stops closing at this share of its reach plus half
-/// the two bodies' radii, and its blows begin and land within its reach plus half the
-/// radii (centre to centre), never nearer than the gaps above. In the original a
-/// trooper with a knife or a machete (Reach 0.5: 75 units) began its swings a median 96
-/// and 95 units from its target, the closest during a swing a median 92 and 91
-/// [observed 2026-10-17, AI observer campaign melee_spacing; the rule is fitted to that,
-/// docs/spec-notes/npc-behaviour-compare.md §3]; ours, by the gaps alone, began them a
-/// median 14 to 36 units away and came to 0 (inside the target).
+/// Melee with bodies to measure: an attacker also keeps its weapon's reach between the
+/// two bodies: its blows begin and land within its reach plus the two bodies' radii
+/// (centre to centre), and it stops closing [`MELEE_STOP_SHORT`] inside that, never
+/// nearer than the gaps above. In the original NCR troopers began their swings,
+/// centre to centre, a median 95 units from the player with a knife (Reach 0.5), 120
+/// with a sledgehammer (0.75), 150 a super sledge (1.0), 175 a bumper sword (1.2) and
+/// 180 a lead pipe (1.25): about 45 + 107 × Reach [observed 2026-11-01, AI observer
+/// campaign o14_reach, #1076]; with `fCombatDistance` 107 and two people's radii (22 +
+/// 22) this gives 97.5, 124, 151, 172 and 178 [hypothesis: that the 45 is the bodies'
+/// radii; docs/spec-notes/combat-rules.md §10]. Before, with half the radii and a
+/// reach of 150 × Reach, a lead pipe began at 209.
+/// Without bodies to measure, it stops at this share of its reach [design].
 pub const MELEE_SPACING_SHARE: f32 = 0.9;
+/// How far inside its strike distance a melee attacker stops closing, game units: the
+/// original's knife and machete troopers began their swings a median 96 and 95 units
+/// from their target and came no nearer than 92 and 91 during them [observed
+/// 2026-10-17, AI observer campaign melee_spacing, docs/spec-notes/npc-behaviour-compare.md
+/// §3]. With a share of the reach (0.9, before #1334) Violet's dogs began at 115 against
+/// the original's 133, with this at 133-134 [observed: smoke combat-dogs, 2026-11-06].
+pub const MELEE_STOP_SHORT: f32 = 6.0;
+/// Two people's radii summed as `nvf_play::blocking` has them (22 each), for a melee
+/// fighter's stop while the bodies are not known yet [design: a plan made then held:
+/// Violet, teleported beside the player, stopped at 106 units with a lead pipe].
+pub const PEOPLE_RADII: f32 = 44.0;
 /// A creature without a reach of its own reaches this far, game units [design].
 pub const CREATURE_REACH: f32 = 96.0;
 /// A creature's blows reach this much beyond its own Attack Reach (CREA RNAM), before
-/// its scale, centre to centre: its spacing is (RNAM + this) × scale ([`creature_spacing`]).
+/// its scale, centre to centre: its spacing is (RNAM + this) × scale ([`creature_spacing`]),
+/// for a skeleton without a measured row of its own ([`creature_body_reach`]).
 /// In the original the creatures began their swings a median 133 units from their
 /// target (Violet's dogs, RNAM 48 × 1.2), 109 (coyotes, 48 × 1.0), 163 (giant mantises,
 /// 100 × 1.0) and 84 (a giant rat, 25 × 1.1, 2 swings) [observed 2026-10-17, AI observer
@@ -272,6 +287,45 @@ pub const CREATURE_REACH: f32 = 96.0;
 /// or shorter than these is not covered]. Ours, by the weapon rule, began them at 54
 /// (the dogs).
 pub const CREATURE_BODY_REACH: f32 = 59.0;
+
+/// How far a creature's blows reach beyond its Attack Reach (RNAM), before its scale,
+/// centre to centre, by its skeleton's folder: each fitted to the original's median
+/// swing start against the standing god-mode player on the airport runway (start ÷
+/// scale − RNAM, the creatures' leveled-list forms as `fnvtool esm decode` reads them)
+/// [observed 2026-11-01, AI observer campaigns o14_reach and o12_reach, #1076;
+/// docs/spec-notes/npc-behaviour-compare.md §3]; any other skeleton gets
+/// [`CREATURE_BODY_REACH`] [hypothesis: that the reach beyond RNAM belongs to the
+/// skeleton and grows with the creature's scale, as RNAM's does].
+pub fn creature_body_reach(skeleton: Option<&str>) -> f32 {
+    let Some(path) = skeleton else { return CREATURE_BODY_REACH };
+    let path = path.to_ascii_lowercase().replace('/', "\\");
+    let folder = path.rsplit('\\').nth(1).unwrap_or("");
+    match folder {
+        // Gecko (VCrTier2GeckoMed, RNAM 35 × 0.8): 81.
+        "nvgecko" => 66.0,
+        // Young cazador (VCrTier3CazadorSmall, 100 × 0.5): 80.
+        "nvcazadores" => 60.0,
+        // Young night stalker (VCrTier2NightStalkerSmall, 48 × 0.75): 102.
+        "nightstalker" => 88.0,
+        // Radscorpion (VCrTier2RadscorpionMed, 64 × 0.6): 97-129, the middle 113.
+        "radscorpion" => 124.0,
+        // Feral ghoul (VCrTier1FeralGhoul1A, 96 × 1.0): 135-140.
+        "ghoul" => 42.0,
+        // Bighorner bull (VCrTier3BigHornerLarge, 50 × 1.7): 232.
+        "nvbighorner" => 86.0,
+        // Coyotes (48 × 1.0) 109 (campaign melee_spacing; o12_reach 84-117) and Violet's
+        // dogs (48 × 1.2) 133.
+        "dog" => 62.0,
+        _ => CREATURE_BODY_REACH,
+    }
+}
+
+/// A creature's reach with its body in, centre to centre ([`creature_spacing`]): (its
+/// Attack Reach + [`creature_body_reach`]) × its scale, or [`CREATURE_REACH`] × scale
+/// without an Attack Reach.
+pub fn creature_reach(rnam: Option<f64>, skeleton: Option<&str>, scale: f32) -> f32 {
+    rnam.filter(|r| *r > 0.0).map_or(CREATURE_REACH, |r| r as f32 + creature_body_reach(skeleton)) * scale
+}
 /// A fleeing person hiding at its flee spot that its enemy has seen this long runs on
 /// to another spot, at most [`HIDE_MOVES`] times a flight (§12.2.1) [design].
 pub const HIDE_SEEN_SECONDS: f32 = 4.0;
@@ -967,20 +1021,23 @@ fn player_arm(c: &Combat) -> Arm {
 /// how far its target may be before it closes in again (module notes): a gun stops at
 /// [`GUN_RANGE_SHARE`] of its range and goes again beyond its range; melee stops at
 /// [`MELEE_ENGAGE_SHARE`] of its reach and goes again beyond its reach [design].
-/// A melee attacker's (stop, strike) distances, centre to centre, from the two bodies'
-/// radii summed (`bodies`) and its reach ([`MELEE_SPACING_SHARE`]).
-pub fn melee_spacing(bodies: f32, reach: f32) -> (f32, f32) {
-    let half = bodies * 0.5;
-    ((bodies + MELEE_STOP_GAP).max(reach * MELEE_SPACING_SHARE + half), (bodies + MELEE_HIT_GAP).max(reach + half))
+/// A melee attacker's (stop, strike) distances, centre to centre, from how far apart the
+/// two bodies' blocks keep their centres (`bodies`: the distance less the gap, shorter
+/// than `radii` when a torso leans or a long body reaches ahead), the two bodies' radii
+/// summed (`radii`), and its reach ([`MELEE_STOP_SHORT`]): the reach counts beyond
+/// the radii, the gaps beyond the blocks.
+pub fn melee_spacing(bodies: f32, radii: f32, reach: f32) -> (f32, f32) {
+    let strike = reach + radii;
+    ((bodies + MELEE_STOP_GAP).max(strike - MELEE_STOP_SHORT), (bodies + MELEE_HIT_GAP).max(strike))
 }
 
 /// A creature's (stop, strike) distances, centre to centre, from its reach with its body
-/// already in ([`CREATURE_BODY_REACH`]): it stops at [`MELEE_SPACING_SHARE`] of it and
+/// already in ([`creature_reach`]): it stops [`MELEE_STOP_SHORT`] inside it and
 /// strikes within it, never nearer than the bodies' gaps when the two bodies (`bodies`,
 /// their radii summed as in [`melee_spacing`]) are known.
 pub fn creature_spacing(bodies: Option<f32>, reach: f32) -> (f32, f32) {
     let b = bodies.unwrap_or(0.0);
-    ((b + MELEE_STOP_GAP).max(reach * MELEE_SPACING_SHARE), (b + MELEE_HIT_GAP).max(reach))
+    ((b + MELEE_STOP_GAP).max(reach - MELEE_STOP_SHORT), (b + MELEE_HIT_GAP).max(reach))
 }
 
 /// What a gun reaches and how near it is safe to fire (docs/design/combat-ai.md §16).
@@ -1219,6 +1276,11 @@ pub(crate) fn fight(
         let radius = if target == FormId::PLAYER_REF.0 { player_radius? } else { body(target)?.radius };
         Some(mine.room([tfeet[0], tfeet[1]], radius))
     };
+    // The two bodies' radii summed, which a melee reach is counted beyond (`melee_spacing`).
+    let radii = |me: u32, target: u32| -> Option<f32> {
+        let radius = if target == FormId::PLAYER_REF.0 { player_radius? } else { body(target)?.radius };
+        Some(body(me)?.radius + radius)
+    };
     let f = &mut *fighters;
     f.poses.clear();
     f.drawn_locks = std::mem::take(&mut f.locks);
@@ -1332,14 +1394,14 @@ pub(crate) fn fight(
             // A creature with nothing in its hands fights with an embedded gun whose node its
             // skeleton has (WEAP NNAM; module notes).
             let held = weapons.get(&id).copied().or_else(|| rigs.get(&id).and_then(|rig| embedded_gun(c, &g.world, me, &rig.skel.names)));
-            let arm = arm_of(c, g, held, me, scale, melee_only);
+            let arm = arm_of(c, g, held, me, scale, melee_only, rigs.get(&id).map(|r| r.skeleton.as_str()));
             // Its strength, and its target's, for the threat ratios.
             let (health, full) = g.health_now_and_full(me);
             // How spent it is, for its dodges and power attacks (§17.1, §17.3).
             let fatigue = g.fatigue_share(me);
             g.awareness.tactics.strengths.insert(me, Strength { health, dps: dps(c, &arm) as f64 });
             // What its target fights with: close combat or a gun (§14).
-            let tarm = if target == FormId::PLAYER_REF { player_arm(c) } else { f.fighters.get(&target.0).map(|x| x.arm.clone()).unwrap_or_else(|| arm_of(c, g, weapons.get(&target.0).copied(), target, 1.0, false)) };
+            let tarm = if target == FormId::PLAYER_REF { player_arm(c) } else { f.fighters.get(&target.0).map(|x| x.arm.clone()).unwrap_or_else(|| arm_of(c, g, weapons.get(&target.0).copied(), target, 1.0, false, rigs.get(&target.0).map(|r| r.skeleton.as_str()))) };
             let target_close = !matches!(tarm, Arm::Gun(_));
             // People only crouch, block and bound (owner 2026-10-16: "only affect human
             // enemies not creatures").
@@ -1595,10 +1657,18 @@ pub(crate) fn fight(
             };
             let reach = reach_of(c, &arm, scale);
             let gap = gap(id, target.0, tfeet);
+            let radii = radii(id, target.0);
             let want = match (&arm, gap) {
                 // Melee with bodies to measure: from where its feet are, as far as the
                 // bodies' gap allows.
-                (Arm::Melee(_), Some(gap)) => melee_spacing(away - gap, reach),
+                // Bodies not known yet (the frame after a teleport, say): two people's.
+                // (Given its strike distance to stop at, with no band to hold in, a
+                // person stopped and closed in again every frame as its body's radius
+                // moved with its swing: combat-rules.md §10.)
+                (Arm::Melee(_), gap) => {
+                    let bodies = gap.map_or(PEOPLE_RADII, |gap| away - gap);
+                    melee_spacing(bodies, radii.unwrap_or(bodies), reach)
+                }
                 (Arm::Creature(..), gap) => creature_spacing(gap.map(|gap| away - gap), reach),
                 _ => engage((!matches!(arm, Arm::Gun(_))).then_some(reach), gun),
             };
@@ -2087,7 +2157,14 @@ pub(crate) fn fight(
                 _ => FIRE_FACING,
             };
             let facing = off <= arc || !matches!(arm, Arm::Gun(_)) || residents.as_deref().is_none_or(|r| !r.runs(id));
-            if !facing && sees && fighter.seen_for >= REACTION_SECONDS {
+            // Just in combat, a fighter stands a moment on its heading before it turns
+            // (`fnv_ai::alert::reacting`, #1352): not locked on its target meanwhile, and
+            // the time it is given to turn to it counts from the end of that moment.
+            // People only: a creature does not stand (`fnv_ai::alert::combat_began`).
+            let reacting = fnv_ai::alert::reacting(g, me);
+            let turning_for = fnv_ai::alert::combat_began(g, me).map_or(f64::INFINITY, |t| g.time - t - fnv_ai::alert::COMBAT_REACTION_SECONDS);
+            let settled = fighter.seen_for >= REACTION_SECONDS && turning_for >= f64::from(REACTION_SECONDS);
+            if !facing && sees && settled {
                 f.stats.unfaced += 1;
             }
             // Locked on its target (owner 2026-10-25: "if they have a target in sight they
@@ -2099,7 +2176,7 @@ pub(crate) fn fight(
             // its target away or by a door.
             let running_off = flight.is_some_and(|fl| !matches!(fl.spot, Some((_, fnv_game::combat_group::FleeBy::Cover))));
             // Who the AI does not run stands as it was put (and fires as it stands, above).
-            if person && sees && !running_off && residents.as_deref().is_some_and(|r| r.runs(id)) {
+            if person && sees && !running_off && !reacting && residents.as_deref().is_some_and(|r| r.runs(id)) {
                 f.locks.insert(id, (target.0, tfeet));
                 // Measured against where it was drawn facing (last frame's lock on the same
                 // target, `residents`): this frame's place of a target in contact range
@@ -2110,7 +2187,7 @@ pub(crate) fn fight(
                     Some((t, at)) if *t == target.0 => facing_off(global, feet, *at),
                     _ => off,
                 };
-                if fighter.seen_for >= REACTION_SECONDS {
+                if settled {
                     f.stats.seen_offs.push(off.to_degrees());
                     if off.to_degrees() > 10.0 && f.stats.seen_offs.iter().filter(|o| **o > 10.0).count() <= 40 {
                         info!(
@@ -2347,7 +2424,7 @@ pub(crate) fn fight(
                         Decision::Waiting => {}
                         Decision::Empty => debug!("npc combat: {me_name} has no grenade to throw"),
                         Decision::OutOfBand(gr) => {
-                            debug!("npc combat: {me_name} keeps its {}: {target_name} is {away_feet:.0} units away (throws between {:.0} and {:.0})", g.data.name(gr.weapon), gr.blast * npc_grenades::MIN_BLAST_SHARE, npc_grenades::reach(&gr, gravity));
+                            debug!("npc combat: {me_name} keeps its {}: {target_name} is {away_feet:.0} units away (throws between {:.0} and {:.0})", g.data.name(gr.weapon), npc_grenades::MIN_THROW, npc_grenades::reach(&gr, gravity));
                         }
                         Decision::Held { grenade: gr, by } => {
                             f.stats.grenade_holds += 1;
@@ -2552,7 +2629,7 @@ pub(crate) fn fight(
                     // Where its walk stops short of the target: a lunge carries it no nearer.
                     let stop = match (&arm, gap) {
                         (Arm::Creature(..), gap) => creature_spacing(gap.map(|gap| away - gap), reach).0,
-                        (_, Some(gap)) => melee_spacing(away - gap, reach).0,
+                        (_, Some(gap)) => melee_spacing(away - gap, radii.unwrap_or(away - gap), reach).0,
                         (_, None) => reach * MELEE_SPACING_SHARE,
                     };
                     if let Some(p) = f.poses.get_mut(&id) {
@@ -2563,7 +2640,7 @@ pub(crate) fn fight(
                     fighter.strike_in = (fighter.strike_in - dt).max(0.0);
                     let near = match (&arm, gap) {
                         (Arm::Creature(..), gap) => away <= creature_spacing(gap.map(|gap| away - gap), reach).1,
-                        (_, gap) => gap.map_or(away <= reach, |gap| away <= melee_spacing(away - gap, reach).1),
+                        (_, gap) => gap.map_or(away <= reach, |gap| away <= melee_spacing(away - gap, radii.unwrap_or(away - gap), reach).1),
                     };
                     // The last blow's clip, once started: its blow lands at its own `Hit`
                     // key, and the next decision comes at its `a:` key (module notes).
@@ -2816,7 +2893,7 @@ pub(crate) fn fight(
                         f.stats.strikes += 1;
                         f.stats.swing_distances.push(away);
                         info!("npc combat: {me_name} swings at {target_name} from {away:.0} units (feet to feet, {})",
-                              gap.map_or_else(|| format!("reach {reach:.0}"), |x| format!("bodies' gap {x:.0}")));
+                              gap.map_or_else(|| format!("reach {reach:.0}"), |x| format!("bodies' gap {x:.0}, reach {reach:.0}")));
                         fighter.blows_begun += 1;
                         g.attack_line(me, Some(target), people.is_some(), false);
                     }
@@ -2855,13 +2932,13 @@ fn melee_prefix(c: &Combat, arm: &Arm) -> &'static str {
 
 /// What an actor fights with: the weapon drawn on it (a gun, unless its style keeps it to
 /// melee), else a creature's own attack, else its fists.
-fn arm_of(c: &Combat, g: &fnv_game::game::Game, weapon: Option<FormId>, me: FormId, scale: f32, melee_only: bool) -> Arm {
+fn arm_of(c: &Combat, g: &fnv_game::game::Game, weapon: Option<FormId>, me: FormId, scale: f32, melee_only: bool, skeleton: Option<&str>) -> Arm {
     match weapon {
         Some(w) if melee_only && c.forms.weapons.get(&w).is_some_and(|ws| is_gun(c, ws, w)) => Arm::Melee(None),
         Some(w) if c.forms.weapons.get(&w).is_some_and(|ws| is_gun(c, ws, w)) => Arm::Gun(w),
         Some(w) => Arm::Melee(Some(w)),
         None => match g.creature_attack(me) {
-            Some((damage, reach)) => Arm::Creature(damage as f32, reach.filter(|r| *r > 0.0).map_or(CREATURE_REACH, |r| r as f32 + CREATURE_BODY_REACH) * scale),
+            Some((damage, reach)) => Arm::Creature(damage as f32, creature_reach(reach, skeleton, scale)),
             None => Arm::Melee(None),
         },
     }
@@ -3095,22 +3172,44 @@ mod tests {
 
     #[test]
     fn melee_keeps_its_reach_from_the_target() {
-        // Two people (radii 22 + 22) with a knife (Reach 0.5 of fCombatDistance 150): the
-        // original began its swings a median 96 units away (melee_spacing campaign).
-        let (stop, strike) = melee_spacing(44.0, 75.0);
-        assert!((stop - 89.5).abs() < 0.01 && (strike - 97.0).abs() < 0.01, "{stop} {strike}");
+        // Two people (radii 22 + 22), fCombatDistance 107: the original's troopers began
+        // their swings about 45 + 107 x Reach away (o14_reach): knife (0.5) 95,
+        // sledgehammer (0.75) 120, super sledge (1.0) 150, bumper sword (1.2) 175, lead
+        // pipe (1.25) 180.
+        for (reach, original) in [(0.5, 95.0), (0.75, 120.0), (1.0, 150.0), (1.2, 175.0), (1.25, 180.0)] {
+            let (stop, strike) = melee_spacing(44.0, 44.0, 107.0 * reach);
+            // A torso leaning forward (its block 20 units ahead) changes nothing.
+            assert_eq!(melee_spacing(24.0, 44.0, 107.0 * reach), (stop, strike));
+            assert!(stop < strike && (strike - original).abs() <= 5.0, "{reach} {strike} {original}");
+        }
         // A short reach still keeps the bodies' gaps.
-        assert_eq!(melee_spacing(44.0, 10.0), (44.0 + MELEE_STOP_GAP, 44.0 + MELEE_HIT_GAP));
+        assert_eq!(melee_spacing(44.0, 44.0, 0.0), (44.0 + MELEE_STOP_GAP, 44.0 + MELEE_HIT_GAP));
+        // A long target's body ahead of its centre keeps the gaps from it.
+        assert_eq!(melee_spacing(150.0, 44.0, 53.5), (150.0 + MELEE_STOP_GAP, 150.0 + MELEE_HIT_GAP));
     }
 
     #[test]
     fn creatures_keep_their_reach_and_body_from_the_target() {
-        // Violet's dogs (RNAM 48, scale 1.2): the original began its swings a median 133
-        // units away, coyotes (48, 1.0) 109, giant mantises (100, 1.0) 163.
-        for (rnam, scale, original) in [(48.0, 1.2, 133.0), (48.0, 1.0, 109.0), (100.0, 1.0, 163.0)] {
-            let (stop, strike) = creature_spacing(None, (rnam + CREATURE_BODY_REACH) * scale);
-            assert!(stop < strike && (strike - original).abs() < 0.05 * original, "{rnam} {strike} {original}");
+        // The original's median swing starts (o14_reach, o12_reach, melee_spacing), by
+        // skeleton, RNAM and scale.
+        let rows = [
+            ("creatures/nvgecko/skeleton.nif", 35.0, 0.8, 81.0),
+            ("creatures/nvcazadores/skeleton.nif", 100.0, 0.5, 80.0),
+            ("creatures/nightstalker/skeleton.nif", 48.0, 0.75, 102.0),
+            (r"Creatures\Radscorpion\Skeleton.nif", 64.0, 0.6, 113.0),
+            ("creatures/ghoul/skeleton.nif", 96.0, 1.0, 137.5),
+            ("creatures/nvbighorner/skeleton.nif", 50.0, 1.7, 232.0),
+            ("creatures/dog/skeleton.nif", 48.0, 1.2, 133.0),
+            ("creatures/dog/skeleton.nif", 48.0, 1.0, 109.0),
+            // No row of its own: the giant mantis (100, 1.0) 163.
+            ("creatures/nvmantis/skeleton.nif", 100.0, 1.0, 163.0),
+        ];
+        for (skel, rnam, scale, original) in rows {
+            let (stop, strike) = creature_spacing(None, creature_reach(Some(rnam), Some(skel), scale));
+            assert!(stop < strike && (strike - original).abs() < 0.05 * original, "{skel} {strike} {original}");
         }
+        assert_eq!(creature_reach(None, Some("creatures/dog/skeleton.nif"), 2.0), CREATURE_REACH * 2.0);
+        assert_eq!(creature_body_reach(None), CREATURE_BODY_REACH);
         // Big bodies still keep their gaps.
         assert_eq!(creature_spacing(Some(150.0), 100.0), (150.0 + MELEE_STOP_GAP, 150.0 + MELEE_HIT_GAP));
     }

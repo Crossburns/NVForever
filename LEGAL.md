@@ -65,7 +65,12 @@ to plain functional words and are tagged where they are defined (for the termina
 [docs/spec-notes/hacking.md](docs/spec-notes/hacking.md) §8). Where the original's
 wording names a brand from the game's fiction, NVForever uses its own wording instead,
 and built-in labels the data files lack are written by the project, not transcribed
-from the original. The
+from the original. A built-in label may be a name or term that the data files' own shown
+text already uses, such as "S.P.E.C.I.A.L.", which FalloutNV.esm writes in perk
+descriptions and messages; it is spelled as the data spells it and the record is cited
+where the label is defined. It is then taken from the player's own files, not from the
+original's screen or executable. Abbreviations or phrases found only on the original's
+screen are not covered and still get the project's own words. The
 game's own dialogue, quest text, messages, names, notes and menu layouts are read at run
 time from your game's files and are not in this repository.
 

@@ -51,10 +51,16 @@ impl Game<'_> {
     /// [hypothesis]. When the player killed the actor, Disintegrations counts one
     /// [hypothesis: the statistic's name; misc-stats.md]. Returns the pile.
     pub fn attach_ash_pile(&mut self, actor: FormId, kind: i64) -> Result<FormId, String> {
+        let base = self.ash_pile_base(kind);
+        self.attach_ash_pile_of(actor, base)
+    }
+
+    /// [`Game::attach_ash_pile`] with the pile activator `base` (JIP's AttachAshPileEx,
+    /// `crate::nvse_ttw`).
+    pub fn attach_ash_pile_of(&mut self, actor: FormId, base: FormId) -> Result<FormId, String> {
         if let Some(p) = self.extra.get(&actor).and_then(|e| e.ash_pile) {
             return Ok(p);
         }
-        let base = self.ash_pile_base(kind);
         let s = self.world.get(actor).map_err(|e| e.to_string())?;
         let (cell, pos, rot) = (s.cell, s.pos, [0.0, 0.0, s.rot[2]]);
         let pile = self.create_at(base, cell, pos, rot)?;

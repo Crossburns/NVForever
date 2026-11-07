@@ -532,6 +532,17 @@ fn remove_item_of_none_is_a_no_op() {
     assert!(!g.events.iter().any(|e| matches!(e.kind, EventKind::ItemRemoved { .. })));
 }
 
+/// No DATA in the record: its Health is only `max_health`'s stand-in of 1, nothing to run
+/// out of.
+#[test]
+fn damage_actor_value_does_not_kill_an_actor_whose_record_gives_no_health() {
+    let f = fixture();
+    let mut g = game(&f);
+    call(&mut g, 0x1181, Some(ADULT_REF), &[ArgValue::Enum(16), n(5.0)]);
+    assert!(!g.is_dead(FormId(ADULT_REF)));
+    assert_eq!(call(&mut g, 0x102E, Some(ADULT_REF), &[]), 0.0);
+}
+
 /// Damage and restore [documented: catalogue; observed: layer5-captures.md §9.3 b].
 #[test]
 fn resurrect_generates_a_dead_actor_again_where_it_lies() {
@@ -2170,4 +2181,17 @@ fn fallout_3_functions_cells_screen_and_faces() {
     assert_eq!(g.player.look.as_ref().unwrap().fggs, before);
     // The blend: halfway, a missing coefficient counting as 0.
     assert_eq!(fnv_game::appearance::blend_coefficients(&[0.0, 2.0], &[2.0], 50.0), [1.0, 1.0]);
+}
+
+/// A grenade placed in a child's pocket does not go live: it stays an ordinary item
+/// [documented: Fallout Wiki, Fallout 3 Pickpocket; hypothesis for New Vegas]
+/// (docs/spec-notes/pickpocket.md §5).
+#[test]
+fn a_planted_explosive_stays_an_item_on_a_child() {
+    let f = fixture();
+    let mut g = game(&f);
+    let frag = fnv_game::pickpocket::Explosive { damage: 125.0, ..Default::default() };
+    assert_eq!(g.plant_explosive(FormId(CHILD_REF), FormId(0x4330), frag), Err(fnv_game::pickpocket::NotLive::Child));
+    assert!(g.pickpocket.planted.is_empty());
+    assert_eq!(g.plant_explosive(FormId(ADULT_REF), FormId(0x4330), frag), Ok(()));
 }

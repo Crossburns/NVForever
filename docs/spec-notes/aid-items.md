@@ -211,6 +211,12 @@ Food:      fMagicSurvivalSkillBase + fMagicSurvivalSkillMult × Survival / 100  
   conditions fail then is not started; one that started has them checked again every
   second as an ability's (§13), and is held while they fail [hypothesis; since
   2026-10-18, for the player's `PlayerConcussed`, crippled-limbs.md §2].
+- An effect held by its conditions changes nothing when the chem starts or ends. When they
+  pass it looks at the chem then: held back if the chem is active, otherwise applied, once.
+  A cure gives back what the effect holds, so nothing while it is held or held back
+  [design: `crates/fnv-game/src/aid.rs` `refresh_suspended`, `start_change`; #1580]. A point
+  a save lost to the double application of #1580 stays lost: nothing in the save records it
+  [design].
 - Addictions do not wear off with time here [hypothesis: nothing in the export says they
   do].
 
@@ -239,9 +245,17 @@ Food:      fMagicSurvivalSkillBase + fMagicSurvivalSkillMult × Survival / 100  
   Hardcore heal over time used outside Hardcore) is held inactive, as a spell's is
   (§5.3), and its time runs all the same: it goes when its duration has passed, with no
   update or finish of its own, and does not take hold later if its conditions come to
-  pass after that (#1438) [hypothesis; before 2026-11-03 an inactive effect's time stood
-  still, so the Stimpak's Hardcore effects stayed listed on STATS EFF for good and would
-  heal whenever Hardcore was turned on].
+  pass after that (#1438). If they come to pass inside its duration it takes hold at
+  the next condition check (once a second, `CONDITION_INTERVAL`) for the time left
+  [observed: o26_stim, 2026-11-06, `nvfairport`, Hardcore turned on with
+  `player.SetHardcore 1` (without a reference the call fails in a script): a Stimpak used
+  outside Hardcore healed 40 at once; with Hardcore on 2.8 s after the use, Health rose
+  from 0.9 s later at the Hardcore rate (36 over 6 s, as when used in Hardcore) until
+  5.9 s after the use, 12 in all; with Hardcore on 9.3 s after, Health did not move;
+  issue #1743]. Before 2026-11-03 an inactive effect's time stood still here, so the
+  Stimpak's Hardcore effects stayed listed on STATS EFF for good and would heal whenever
+  Hardcore was turned on. Whether STATS EFF lists the held effect in the original was
+  not looked at (no screenshot).
 - The same item used again while its effect is active extends that effect (one effect,
   one end) [observed: scripts.md §7.6]; a modifier is therefore not doubled by a second
   dose [hypothesis follows from it].

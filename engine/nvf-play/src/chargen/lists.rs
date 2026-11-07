@@ -19,6 +19,7 @@ use fnv_game::chargen::{self, SpecialSheet, TagSheet, TraitSheet};
 use fnv_game::functions::ui::SpecialMenu;
 use fnv_game::game::menus;
 use fnv_game::Game;
+use fnv_sim::FormId;
 
 // ---- the menu files' numbers [documented: §3, §4] -----------------------------------------
 
@@ -119,7 +120,7 @@ fn shape(code: u16, attributes: bool) -> Shape {
 
 // ---- the model -------------------------------------------------------------------------------
 
-/// The sheet the menu edits, and the one Reset goes back to.
+/// The sheet the menu edits, and the one it opened with, which Reset works from.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Sheet {
     Tags { now: TagSheet, start: TagSheet },
@@ -173,6 +174,8 @@ pub struct RowView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListView {
     pub code: u16,
+    /// The names the hints use (`crate::pad::labels`).
+    pub labels: crate::pad::Labels,
     /// The attributes page of the tag-skill menu's file.
     pub attributes: bool,
     pub title: String,
@@ -219,6 +222,32 @@ impl ListMenu {
 
     pub fn visible(&self) -> usize {
         shape(self.code, self.attributes()).visible
+    }
+
+    /// The trait sheet, on the trait menu: what the tile drawing reads (`crate::tiles::trait_menu`).
+    pub fn trait_sheet(&self) -> Option<&TraitSheet> {
+        match &self.sheet {
+            Sheet::Traits { now, .. } => Some(now),
+            _ => None,
+        }
+    }
+
+    /// The selected trait's requirement line, ranks and description, on the trait menu: the
+    /// facts under the words, for a drawing that words them itself (`crate::tiles::trait_menu`).
+    pub fn trait_facts(&self, g: &Game) -> Option<(String, u8, String)> {
+        let t = *self.trait_sheet()?.traits.get(self.selected)?;
+        let p = g.data.perks.get(&t)?;
+        Some((chargen::requirement_line(g, t), p.ranks, p.description.clone()))
+    }
+
+    /// The row of trait `key` in the sheet's own order, if it still has one.
+    pub fn trait_row(&self, key: FormId) -> Option<usize> {
+        self.trait_sheet()?.traits.iter().position(|&t| t == key)
+    }
+
+    /// [design] A skill row still on the tag sheet; attribute and trait sheets have none.
+    pub fn tag_row(&self, key: u16) -> Option<usize> {
+        match &self.sheet { Sheet::Tags { now, .. } => now.skills.iter().position(|&s| s == key), _ => None }
     }
 
     /// Choose row `i` (pointer or keys), scrolling it into the list.
@@ -281,11 +310,13 @@ impl ListMenu {
         }
     }
 
-    /// Reset: the sheet as the menu opened with it [hypothesis: the original's Reset
-    /// may clear every choice instead; not captured].
+    /// Reset: the tag-skill sheet clears every tag but the locked ones, whatever it opened
+    /// with [observed 2026-11-06: docs/spec-notes/chargen.md §3; hypothesis: the locked
+    /// ones, which no capture has seen]. The others go back to the sheet as the menu opened
+    /// with it [hypothesis: not captured].
     pub fn reset(&mut self) {
         match &mut self.sheet {
-            Sheet::Tags { now, start } => *now = start.clone(),
+            Sheet::Tags { now, start } => now.tagged = start.locked.clone(),
             Sheet::Traits { now, start, .. } => *now = start.clone(),
             Sheet::Special { now, start } => *now = *start,
         }
@@ -392,7 +423,7 @@ impl ListMenu {
                 )
             }
         };
-        ListView { code: self.code, attributes: self.attributes(), title, rows, selected: self.selected, scroll: self.scroll, icon, info, counter, done: self.can_finish(), hover: self.hover }
+        ListView { code: self.code, labels: crate::pad::labels(), attributes: self.attributes(), title, rows, selected: self.selected, scroll: self.scroll, icon, info, counter, done: self.can_finish(), hover: self.hover }
     }
 }
 
@@ -590,7 +621,8 @@ fn info(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
 }
 
 fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
-    let list = [(ListButton::Reset, "Reset", "R)", 0.0, true), (ListButton::Done, "Done", "A)", s.done_y, v.done)];
+    let h = |k: KeyCode| crate::pad::hint_as(&[k], crate::pad::at_menu(v.code), v.labels);
+    let list = [(ListButton::Reset, "Reset", h(KeyCode::KeyR), 0.0, true), (ListButton::Done, "Done", h(KeyCode::KeyA), s.done_y, v.done)];
     for (b, label, hint, dy, on) in list {
         let color = amber(255.0).with_alpha(if on { 1.0 } else { DIM });
         let y = BUTTONS.y + dy;
@@ -601,7 +633,7 @@ fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
             c.outline(p, BUTTONS.x - bw, y, bw, bh, amber(200.0));
         }
         c.text(p, Which::Body, label, BUTTONS.x - BUTTON_PAD, y + BUTTON_PAD, Align::Right, color);
-        c.text(p, Which::Body, hint, BUTTONS.x + HINT_X, y + BUTTON_PAD, Align::Left, color);
+        c.text(p, Which::Body, &hint, BUTTONS.x + HINT_X, y + BUTTON_PAD, Align::Left, color);
         p.spawn((Button, b, at(BUTTONS.x - bw, y, bw + 40.0, bh)));
     }
 }
@@ -609,7 +641,6 @@ fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fnv_sim::FormId;
     use std::collections::BTreeSet;
 
     fn traits(n: usize) -> ListMenu {
@@ -666,6 +697,27 @@ mod tests {
         assert!(!m.can_finish());
         assert_eq!((special_title(0, 1), special_title(1, 1)), ("ATTRIBUTES: 0/1 Points Assigned".to_string(), "ATTRIBUTES: 1/1 Points Assigned".to_string()));
         assert_eq!((special_counter(1), special_counter(0)), ("Distribute 1 Point".to_string(), String::new()));
+    }
+
+    fn tags(tagged: &[u16], locked: &[u16]) -> ListMenu {
+        let sheet = TagSheet { skills: vec![1, 2, 3, 4], tagged: tagged.iter().copied().collect(), count: 3, locked: locked.iter().copied().collect() };
+        ListMenu { code: menus::TAG_SKILLS, sheet: Sheet::Tags { now: sheet.clone(), start: sheet }, ..traits(0) }
+    }
+
+    #[test]
+    fn reset_clears_the_tags_it_opened_with_but_not_the_locked_ones() {
+        let tagged = |m: &ListMenu| match &m.sheet {
+            Sheet::Tags { now, .. } => now.tagged.iter().copied().collect::<Vec<_>>(),
+            _ => unreachable!(),
+        };
+        let mut m = tags(&[1, 2, 3], &[]);
+        assert!(m.can_finish());
+        m.reset();
+        assert_eq!(tagged(&m), Vec::<u16>::new());
+        assert!(!m.can_finish(), "Done dims at 0 of 3");
+        let mut m = tags(&[1, 2, 3], &[1, 2]);
+        m.reset();
+        assert_eq!(tagged(&m), vec![1, 2]);
     }
 
     #[test]

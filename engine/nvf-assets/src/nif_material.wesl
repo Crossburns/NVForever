@@ -33,7 +33,9 @@
 //
 // Holes (nif_material.rs "Holes"): where `surface.holes.x` is 0 or more, the holes
 // texture's alpha (0-255) at or above it leaves a hole and the band of `surface.holes.y`
-// below it is drawn in `surface.holes_edge`; at 255 or more there are none.
+// below it is drawn in `surface.holes_edge`; at 255 or more there are none. With
+// `surface.holes.z` 1 the test is turned round (a cut-out): alpha below it leaves a
+// hole, and there is no band.
 //
 // FACEGEN_TINT (an NPC's face and skin shapes, main pass; nif_material.rs "FaceGen tint"):
 // the `.egt` colour offset is added to the diffuse texture's stored sRGB value (0-255)
@@ -64,7 +66,7 @@ import bevy_pbr::{
     render::pbr_lighting::{EnvBRDFApprox, F_AB},
     render::mesh_view_bindings::{lights, view, globals, view_transmission_texture, view_transmission_sampler, fog},
     render::mesh_view_types::FOG_MODE_ATMOSPHERIC,
-    render::view_transformations::{frag_coord_to_uv, frag_coord_to_ndc, position_ndc_to_world, depth_ndc_to_view_z},
+    render::view_transformations::{position_ndc_to_world, depth_ndc_to_view_z},
 };
 @if(!PREPASS_PIPELINE && DEPTH_PREPASS) import bevy_pbr::prepass::utils as prepass_utils;
 @if(!PREPASS_PIPELINE) import nvf_assets::first_person_depth;
@@ -77,6 +79,22 @@ import bevy_pbr::{
 };
 
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, normal_map_texel};
+
+// Main-pass geometry uses the render viewport, which can be smaller than the
+// display attachment when FSR is enabled. Transmission remains a full-size texture.
+@if(!PREPASS_PIPELINE) fn frag_coord_to_uv(fc: vec2<f32>) -> vec2<f32> {
+    return (fc - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
+}
+@if(!PREPASS_PIPELINE) fn frag_coord_to_ndc(fc: vec4<f32>) -> vec3<f32> {
+    let uv = frag_coord_to_uv(fc.xy);
+    return vec3(uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), fc.z);
+}
+@if(!PREPASS_PIPELINE) fn transmission_uv(uv: vec2<f32>) -> vec2<f32> {
+    let pixel = view.main_pass_viewport.xy + uv * view.main_pass_viewport.zw;
+    return clamp(pixel, view.main_pass_viewport.xy + 0.5,
+        view.main_pass_viewport.xy + view.main_pass_viewport.zw - 0.5)
+        / vec2<f32>(textureDimensions(view_transmission_texture));
+}
 
 // The FaceGen offset at texture coordinate `uv` (CPU: fnv_actor::facegen::add_offset):
 // the offset image stretched over the texture, flipped vertically (its first row is the
@@ -363,10 +381,11 @@ fn nif_fragment(
     var holes_band = 0.0;
     @if(VERTEX_UVS_A) if surface.holes.x >= 0.0 && surface.holes.x < 255.0 {
         let h = holes_alpha(in.instance_index, in.uv) * 255.0;
-        if h >= surface.holes.x {
+        let cut_out = (surface.holes.z > 0.5);
+        if select((h >= surface.holes.x), (h < surface.holes.x), cut_out) {
             discard;
         }
-        holes_band = select(0.0, 1.0, h >= surface.holes.x - surface.holes.y);
+        holes_band = select(select(0.0, 1.0, h >= surface.holes.x - surface.holes.y), 0.0, cut_out);
     }
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     @if(FACEGEN_TINT && VERTEX_UVS_A) if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
@@ -397,7 +416,7 @@ fn nif_fragment(
     }
     @if(REFRACT) let shifted = clamp(frag_coord_to_uv(in.position.xy) + vec2(tilt.x, -tilt.y) * surface.refraction, vec2(0.0), vec2(1.0));
     @if(REFRACT) var refracted: FragmentOutput;
-    @if(REFRACT) refracted.color = vec4(textureSampleLevel(view_transmission_texture, view_transmission_sampler, shifted, 0.0).rgb, 1.0);
+    @if(REFRACT) refracted.color = vec4(textureSampleLevel(view_transmission_texture, view_transmission_sampler, transmission_uv(shifted), 0.0).rgb, 1.0);
     @if(REFRACT) return refracted;
     // |N·V|: the normal is already flipped towards the viewer on back faces of double-sided
     // shapes; abs() also covers single-sided ones seen edge-on.
@@ -499,16 +518,25 @@ fn nif_fragment(
         // faded only by the view-angle falloff.
         let add_a = select(out.color.a, falloff, surface.add_whole > 0.5);
         let fogged = main_pass_post_lighting_processing(pbr_input, vec4(out.color.rgb, 1.0));
-        let behind = textureSampleLevel(view_transmission_texture, view_transmission_sampler, frag_coord_to_uv(in.position.xy), 0.0).rgb;
-        out.color = vec4(add_display(fogged.rgb, add_a, behind), 0.0);
+        @if(!ADD_LINEAR) let behind = textureSampleLevel(view_transmission_texture, view_transmission_sampler, transmission_uv(frag_coord_to_uv(in.position.xy)), 0.0).rgb;
+        @if(!ADD_LINEAR) out.color = vec4(add_display(fogged.rgb, add_a, behind), 0.0);
+        // NifSurface::add_linear: the colour added as it is, in linear light.
+        @if(ADD_LINEAR) out.color = vec4(fogged.rgb * saturate(add_a), 0.0);
     } else {
         out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     }
+    // NifSurface::pipboy_screen: linear red's ceiling, fitted so a bar's red stays near the
+    // original's 206 (nvf-play pipboy/device_screen.rs). Before the post-lighting step, which
+    // tone maps here when the view has no HDR (the Glow setting off).
+    @if(PIPBOY_SCREEN) out.color.r = min(out.color.r, 0.67);
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY && !BLEND_PREMULTIPLIED_ALPHA) out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY) let blend_mode = pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS;
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY) if blend_mode == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND && (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_UNLIT_BIT) != 0u {
         out.color = vec4(out.color.rgb * blend_colour_scale(out.color.a), out.color.a);
     }
+    // NifSurface::pipboy_screen: the mark that keeps these pixels out of the image-space grade
+    // (imagespace.wesl SCREEN_MARK).
+    @if(PIPBOY_SCREEN) out.color.a = 0.25;
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY && SOFT_EDGES) out.color.a = edge;
     return out;
 }

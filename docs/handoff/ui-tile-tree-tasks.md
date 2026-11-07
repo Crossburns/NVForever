@@ -774,6 +774,16 @@ owner to add to its pull request or issue (owner, 2026-10-29).
       hand-built keys stay, W presses Wait through the file. Interface `screen()` units
       while it is switched on (`interface_screen`). Tests: `tiles::wait_menu`,
       `tiles::vanilla` (the switch). Smoke: `tiles-sleep-wait`.
+    - **Pip-Boy, first slice built** 2026-11-04, checked 2026-11-06 (`pipboy-tiles-1513`, part of issue #1513): STATS'
+      S.P.E.C.I.A.L. tab from `stats_menu.xml` behind `[UI] TileMenus=StatsMenu`
+      (`tiles/stats_menu.rs`, pipboy.md §5.1.1). The first tile menu not in the window: `paint`
+      takes a `Target` (camera, canvas, scales, level). The other STATS tabs stay fully hand-built.
+      `stats::prepare` holds the page's model, so a page with no hand-built body keeps its keys,
+      test aid and log lines. `StatsTiles::ready` is the one decision for painting, hand-built
+      suppression and input. Left out on purpose: the other tabs, ITEMS, DATA, list scrolling,
+      compositing. Unit fixtures are synthetic; the `tiles-stats-special*` smoke scenarios check
+      structure and hits on the real file, and their logs cannot prove pixels. Not closed: the
+      capture list at the end of pipboy.md §5.1.1.
     - **T15b, part 2 built** 2026-11-04 (`tutorial-menu-978`, issue #978): the tutorial menu
       from `tutorial_menu.xml` behind `[UI] TileMenus=TutorialMenu`, in the same shape
       (`tiles/tutorial_menu.rs`, tutorial-menu.md §5). Its text scrolls inside
@@ -788,3 +798,44 @@ owner to add to its pull request or issue (owner, 2026-10-29).
       measured text; clicks are the hand-built menu's commands
       (`crate::tutorial_menu::TutorialInput`). Tests: `tiles::tutorial_menu`, `tiles::input`,
       `tiles::layout`, `fnv_ui::input`. Smoke: `tiles-tutorial`, `tutorial-default-drawing`.
+    - **T15c, the first of the template lists: the container menu built as a candidate**
+      2026-11-04 (`tile-container-menu`, issue #1468), behind `[UI] TileMenus=ContainerMenu`,
+      not the default. `tiles/container_menu.rs` (the view),
+      `tiles/list.rs` (rows by what they stand for, counts, scroll, highlight, bar pieces, the
+      marker's drag; for the barter, inventory, recipe and repair lists next),
+      `tiles/item_card.rs` (`item_stats_display.xml`), the marks `_NVFOwnAlpha` and
+      `_NVFHotrectFill`. The model, keys and wheel stay the hand-built menu's. Notes and the
+      captured numbers: barter-menu.md §8. Smoke: `tiles-container`,
+      `tiles-container-quantity`, `container-default-drawing`. **Left**: the comparison with
+      the original's shots (parts b to g of the capture retaken), DAM/DPS's fade, then the
+      barter comparison (candidate below) and the tag-skill list on the same pieces.
+
+    - **T15, barter built as a candidate** 2026-11-06 (issue #1468), behind
+      `[UI] TileMenus=BarterMenu`, hand-built drawing still the default [design:
+      `tiles/barter_menu.rs`, barter-menu.md section 9]. A first refactor commit shares
+      row identity, measuring, counts, scroll, guards and marks through `tiles/item_menu.rs`
+      with the container; its existing tests stay in place. Barter adds prices, caps,
+      flow direction, offered squares and Accept/Exit, with all commands and sounds
+      still the model's. Its quantity prompt follows automatically, or stays hand-built
+      when its file is missing or short. Strings are audited in section 9: settings,
+      record text, numbers or our own words. The container numbers reused for barter
+      and root arrow direction were checked against a capture of the original at 1280 x 720
+      (barter-menu.md section 9). Synthetic tests cover the adapter and a model sale. Smoke
+      `tiles-barter`, `tiles-barter-quantity`, `barter-default-drawing` includes 1280x720 shots.
+
+    - **T15, tag-skill candidate built** 2026-11-06 (issue #1519), behind
+      `[UI] TileMenus=CharGenMenu` [design: `tiles/tag_menu.rs`, chargen.md §3.1].
+      The preceding behavior-preserving refactor shares the trait menu's readiness,
+      three lifetimes, frame order, hand-over, list scroll/input, logging and test aids in
+      `tiles/selection_menu.rs`; trait snapshot wording remains separate. Tag rows use
+      `CGM_SelectItemTemplate` and the existing open sheet, with variable totals and locked
+      AddTagSkills tags. SpecialSheet remains hand-built. Title/counter use the project's
+      own words, AVIF supplies names/descriptions/icons, and the sheet supplies values.
+      A measured text scroll reaches long descriptions without adding a visible bar.
+      Uncaptured numbers and behavior follow TraitMenu as hypotheses. All 22 existing
+      trait tests compile; added tests cover tag rules, fallback, input, lifetimes and text.
+      Smoke: `tiles-tag-menu`, `tiles-tag-pointer-done`, `tiles-tag-default-drawing`,
+      `tiles-tag-missing-file`, `tiles-tag-cut-file`, `tiles-tag-stage-handover`,
+      `tiles-tag-add-skills`, `tiles-tag-special-fallback`, `tiles-tag-long-description`,
+      `tiles-tag-falls-back-open`. Compared with a capture of the original's tag menu at
+      1280 x 720 (chargen.md §3.1).
