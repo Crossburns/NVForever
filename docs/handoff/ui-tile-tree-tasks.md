@@ -824,5 +824,5 @@ owner to add to its pull request or issue (owner, 2026-10-29).
       Smoke: `tiles-tag-menu`, `tiles-tag-pointer-done`, `tiles-tag-default-drawing`,
       `tiles-tag-missing-file`, `tiles-tag-cut-file`, `tiles-tag-stage-handover`,
       `tiles-tag-add-skills`, `tiles-tag-special-fallback`, `tiles-tag-long-description`,
-      `tiles-tag-falls-back-open`. **Left**: supervisor engine tests and game runs, shot
-      inspection at 1280 x 720, and comparison with tonight's original tag capture.
+      `tiles-tag-falls-back-open`. Compared with a capture of the original's tag menu at
+      1280 x 720 (chargen.md §3.1).
