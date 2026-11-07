@@ -366,7 +366,7 @@ pub struct NifSurfaceUniform {
     pub add_whole: f32,
     pub refraction: f32,
     pub fire_period: f32,
-    /// The image-space bypass and per-channel hold of [`NifSurface::emissive_rule`].
+    /// The image-space bypass and plain path of [`NifSurface::emissive_rule`].
     pub emissive_rule: Vec4,
     pub holes: Vec4,
     pub holes_edge: Vec4,

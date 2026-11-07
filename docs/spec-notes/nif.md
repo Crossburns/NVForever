@@ -481,10 +481,10 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   [observed: bevy_pbr 0.19 `pbr_fragment.wgsl`], so an unlit shape's stayed black. The
   shader now reads the material's emissive light for unlit shapes itself.
 - **Unlit shapes that are pictures, and cut-out signs** (2026-11-06, #1540).
-  [observed: the supervisor compared the original and NVForever at matching 1280×720
+  [observed: the original and NVForever compared at matching 1280×720
   views, private jobs `ov_strip_n`, `ov_strip_d`, `ui_talk_house`]: House's screen and
   the Securitrons' faces retain detail in the original, while main burns them into a
-  white-green blur; holding their multipliers to 1 matches those frames. Their
+  white-green blur; holding their colour times multiplier to 1 matches those frames. Their
   BSShaderNoLightingProperty shapes are opaque, store multipliers 10–45 and lack
   External Emittance (shader flag bit 29); the Strip neon that must burn has the flag.
   The Tops marquee (`nv_thetops-casino_neon.nif`, `Yellow_Neon1`, cut-out, yellow ×4,
@@ -494,93 +494,29 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   main at the Strip's night emissive scale, 2.67 over the worldspace's.
 
   Rules [hypothesis, fitted to those frames], only for unlit shapes:
-  an opaque surface without External Emittance is a picture, with its multiplier
-  held to at most 1; House's authored opaque screen remains a picture when its actor
+  an opaque surface without External Emittance is a picture, with its colour times
+  multiplier held to at most 1 (a Securitron's screen stores grey 0.05 × 30, and shows
+  its face at the texture's brightness, as the original does); House's authored opaque screen remains a picture when its actor
   alpha gate selects a mask [design: `nif_spawn.rs` `shape_alpha_mode`].
   Blended and additive surfaces keep their multipliers: laser sights at ×40, muzzle
   flashes and beams without the flag must retain their light. Unlit shapes without
   the flag skip the image space's Emissive Mult, as additive shapes already do.
-  A cut-out unlit surface whose stored multiplier is below `SOFT_UNLIT_CUTOUT_MULT`
-  (5) also skips that scale and uses the soft path, with each channel held to
-  `SOFT_UNLIT_CUTOUT_HOLD` (1.5), instead of `hot_light`. At 5 or more it keeps the
-  previous path: the bulb signs at 6, 7.5 and 14 (Lucky 38, Prospector Saloon,
-  Freeside) were not compared and are treated as authored to burn [hypothesis].
+  An authored cut-out unlit surface, whatever its multiplier and flag, also skips that
+  scale and is drawn on the plain path of blended shapes instead of `hot_light`, which
+  clips each channel and would turn the Lucky 38's pink letters (`L38sign_anim:0`, × 6)
+  to one neutral white.
 
   [design: `nif_spawn.rs` `shape_emissive_mult`, `shape_emissive_rule`]: the picture
   hold applies both in `shape_emissive` and `Props::emissive_parts`, so the stored
   multiplier passed to material animation's `Look` is held too. `NifSurface` and
-  `NifSurfaceUniform` carry `emissive_rule` (x 1 skips the image-space scale; y the
-  per-channel hold, 0 for none). Both shaders read the same struct from
+  `NifSurfaceUniform` carry `emissive_rule` (x 1 skips the image-space scale; y 1 takes
+  the plain path). Both shaders read the same struct from
   `nif_surface_bindings.wesl`, in the Rust uniform's field order. Materials built by
   hand, including overlays, default to zero and keep their previous behaviour.
 
-  [observed: the same supervisor comparisons]: the Lucky 38 rails remain brighter
-  and wider than the original's, and its walls darker at that view. The bright pass
-  and light glow strengths stay unchanged because Gomorrah's halo depends on them
-  [design: `nvforever/src/post.rs`; the maintainer's PR #731 choice to keep its look].
-- **Emitted light on screen** (2026-10-23). In the original's frames of Dead Money's wall
-  lantern (front and three-quarter, private `dm_lamp_front.png`, `dm_lamp_side.png`) the
-  glass (lit shape, emissive (0.76, 0.55, 0.20) × 10 × the image space's Emissive Mult)
-  burns white-yellow with an orange edge, as light clipped per channel on screen. The
-  renderer's tonemapper (Bevy's Tony McMapface, HDR view) rolled the same light off to a
-  flat cream, so the lamp did not read as a light source (owner: "the base game's lamp is
-  literally glowing really bright compared to ours"). Rule [hypothesis from those
-  frames]: where a shape emits light (lit shapes' emissive × glow map, unlit shapes'
-  emissive light), the lit colour plus the emitted light is held to 0.95 per channel and
-  passed through the inverse of the tonemapper's grey response (the sky's table, world.md
-  §6), so after the tonemapper it lands where clipping would put it. Only light past
-  white counts: the mapping is blended in as the emitted light's brightest channel rises
-  from 0.8 to 1.5, so faint effect shapes keep the tonemapper (Doc Mitchell's window
-  light rays, `indfxlightrays*.nif`, white × 1 under NVInteriorRegion's warm emittance,
-  turned into orange-red beams when every emitter was mapped; in the original they are
-  barely visible), as do the dark parts of a glow map and surfaces that emit nothing.
-  Unlit shapes that blend or add (glow cards, beams) are never hot sources: under Dead
-  Money's Emissive Mult the lantern's glow card passed white and burned into a hard
-  yellow disc on an unlit wall (owner: "looking really unnatural"); kept soft it is a
-  warm haze. Solid unlit emitters (neon tubes, opaque or cut-out) are (the owner wants the natural look kept: "I don't want all
-  the walls glowing"), except the soft cut-out signs described above [hypothesis,
-  2026-11-06]. The light glow (Bevy bloom) then catches only those hot pixels,
-  so the lantern gets a local halo. The lab's 15 frames move by under 0.01. Tried and
-  left out: per-channel clipping of the whole picture (glass right, saloon −0.03), and
-  placed lights summed in display values, (fade × falloff)^2.2 or fade^2.2 alone (the
-  lantern's wall brighter, but Doc Mitchell's living room −0.04, the saloon up to −0.15
-  with clipping). The lantern's wall still lacks the original's saturated yellow; the
-  weather grade's tint (world.md §6, adapter tint amount) is the open lead.
-- **Soft intersections of small shapes** (2026-10-23). Dead Money's lantern glow
-  (`SconceON:4` above) is three crossed octagonal discs, 58 units across, through the
-  centre of the 14-unit glass box, vertex alpha 0.93 at the centre and 0 at the rim
-  [observed, `fnvtool nif decode`]. Each disc comes out of two opposite panes at their
-  middle, so the half-disc in front of a pane showed against the pane with a hard
-  vertical edge where it leaves the glass (owner's screenshots, twice: "the base game's
-  is seamless"). Two causes, both fixed by rule: the shape's shader flags (0xAE000148)
-  set both decal bits, and decals were left out of the soft intersections; and the
-  160-unit fade is far larger than such a shape. Now decal-flagged shapes fade like the
-  others (a decal laid on a surface lies along it and keeps its look; 738 unlit blended
-  base-game shapes and 32 in Dead Money carry the decal bits [observed, `fx_audit.rs`],
-  mostly light pools and grime cards on walls), and the fade distance is a quarter of the
-  shape's largest side when that is less than 160 units (`nif_material.rs`
-  `soft_distance`; 14.6 for the lantern glow) [engineering choice]; particle systems
-  take the same rule from their particles' size (next item). In the original's frame the glass also burns
-  near white ((255, 252, 235)), which hides any step; ours does since the image space's
-  Emissive Mult is applied (world.md §6 "Emissive mult").
-- **Soft intersections of particles** (2026-11-01, #1074). A particle system's mesh
-  is a unit quad per particle, so it had been given the full 160 units. Blood on an
-  actor never showed: `MPSBloodSplat01`'s mist (DustCloud01, radius 50 ± 10, colour
-  (0.38, 0.05, 0.05) at alpha 0.6, alpha-blended) and drops (FluidDrops, radius
-  1.25 ± 0.5) are born within a few units of the body [observed, `fnvtool nif decode`,
-  NVForever particle log], and over 160 units a puff 5 units off the body kept about 3 %
-  of its alpha. Particles now fade over a quarter of their largest width,
-  2 × (emitter radius + radius variation), at most 160 and at least 1 (`nvf_assets::
-  particles::particle_soft_distance`): 30 units for the mist, 1 for the drops, and
-  smoke puffs of radius 320 or more keep 160 [engineering choice: the shapes' rule
-  applied to the particle; the game's own rule is not known]. The system's log line
-  says `soft over N` [observed, smoke `blood-spray`: drops 1.0, mist 30.0, splat
-  12.1; the dismemberment's `bloodspraylimb01.nif` spray 1.2 and
-  `fxgorepophead01.nif` mist 48.0].
-- **Multiply blend** (NiAlphaProperty with the blend bit, source factor ZERO and
-  destination factor SRC_COLOR): the frame behind the shape is multiplied by the shape's
-  colour, channel by channel, and the shape adds no light of its own [documented:
-  nif.xml AlphaFlags and AlphaFunction]. It can only darken or tint.
+  [observed 2026-11-07: the same views, with the light glow off]: the Lucky 38's and the
+  Tops' letters read and the night sky is dark, so what ran them together was the glow;
+  its settings are in world.md section 6 "HDR and bloom".
 
   Survey of the 7,121 visible shapes with the blend bit in `Fallout - Meshes.bsa`
   [observed, `crates/fnv-nif/examples/blend_survey.rs`], by source / destination factor:
