@@ -124,10 +124,10 @@ read with JIP]. Assumptions below are not observations.
   and text keep the last row when it leaves. A tagged row reads `_selected` 1 and shows its
   marker. `CGM_SelectionText` is at 20, 20, wrapping at 540; the counter is at 20, 317.33, 32
   high. At 3/3 the counter is empty and hidden and Done's `target` is 1; at 0/3 it is shown and
-  Done's `target` is 0. **Reset took 3/3 to 0/3** with the save's three tags on the list, against
-  §3's reading that it goes back to the opening state. `ClickMenuTile` on `*:k` moved nothing in this
-  job, so taking and giving back by the pointer was not seen. This view keeps the hand-built
-  rule for Reset, whose sheet it does not own.
+  Done's `target` is 0. **Reset took 3/3 to 0/3** with the save's three tags on the list, as §3
+  says. `ClickMenuTile` on `*:k` moved nothing in this job, so taking and giving back by the
+  pointer was not seen. This view's Reset is the open sheet's own (`ListMenu::reset`), which
+  clears every tag except the locked ones, as §3 does; the view does not own the sheet.
 
 - **What the program writes** [design: `tag_menu::snapshot`, `selection_menu::write`].
   `_CurrPoints` is the sheet's number tagged, `_MaxPoints` its `count`, and `_OnlyAdd` says
@@ -154,11 +154,11 @@ read with JIP]. Assumptions below are not observations.
   description with no highlight. Leaving the rows removes the highlight and keeps the text;
   a key move reveals its row, while a pointer choice or scrollbar move does not move the
   other. The list's counts, row measurement and pointer/key arbitration follow the shared
-  trait machinery. These are candidates for comparison with tonight's capture.
+  trait machinery. These are candidates for comparison with the 2026-11-06 capture.
 - **Counts and other uses of 1048** [design: `fnv_game::chargen::TagSheet`, `lists.rs::open`].
   Nothing assumes three: SetTagSkills supplies its total, and AddTagSkills supplies the
   old tags plus its request. Locked old tags remain locked, extra choices obey that total,
-  and Reset restores the opening sheet. The same applies when a perk opens this sheet.
+  and Reset clears every tag except the locked ones (§3). The same applies when a perk opens this sheet.
   `Sheet::Special`, including AddSPECIALPoints from Intense Training and the revision's
   SetSPECIALPoints, is excluded before readiness: its attribute template and hand-built
   drawing stay in place. No candidate tag rows, warning or tag blur run for that page.
