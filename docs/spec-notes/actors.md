@@ -2167,10 +2167,13 @@ Per prefix (length of equip / unequip in seconds; where the weapon hangs, §9.2)
   NVForever puts it [observed: capture `pf_h2h_rest3`, 2026-11-06, nvfairport save, her
   placed spot at the 188, first-person camera 110 units in front and to her side, frames
   private]. Rule (`fnv_actor::Resolver`): a held weapon's addons are worn like an outfit's.
-  They cover their slots (the race's right hand is not drawn), and a worn addon whose
-  every slot they take (an outfit's right glove) gives way to them, one hand model per
-  hand [observed for the drawn power fist; hypothesis: the same while it is holstered,
-  since h2h weapons hang on the forearm either way]. The player's third-person body
+  They cover their slots (the race's right hand is not drawn), and a worn addon that
+  shares any slot with them (an outfit's right glove, or one glove model for both hands)
+  gives way to them, one hand model per hand; the race's bare hand shows in a slot the
+  given-way addon left [observed for the drawn power fist; hypothesis: the same while it
+  is holstered, since h2h weapons hang on the forearm either way; hypothesis: the
+  both-hands case, no such addon checked]. An NPC is dressed again when its weapon
+  changes to one with other addons (`outfits::same_worn`). The player's third-person body
   wears them too. The first-person arms keep the bare hand [hypothesis: the first-person
   weapon model is drawn over it, as before]. The placement was left as it was: the
   frames show the gauntlet in the same place in both.
