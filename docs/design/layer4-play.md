@@ -397,7 +397,7 @@ keep the positions. Changed in `nvf-play` (`player.rs` `keys`, `read_keys`):
     plugins, nvforever the renderer's in `nvforever/src/settings.rs`.
   - The switches: `menu-pause` (the picture stands still in dialogue and menus,
     `--menu-pause`), `voice` (`--no-voice`), `dialogue-look` (`--no-dialogue-look`),
-    `dialogue-recentre` (`--dialogue-recentre`), `lip-sync` (`--no-lip`),
+    `dialogue-recentre` (`--dialogue-recentre`), `dialogue-zoom` (`--no-dialogue-zoom`), `lip-sync` (`--no-lip`),
     `head-tracking` (`--no-head-tracking`), `sky-clock` (`--still-sky`),
     `first-person-body` (`--first-person-body`, player-body.md §1.5), `weapon-sway`
     (`--no-weapon-sway`, player-body.md §1.4a), `sun-shadows`

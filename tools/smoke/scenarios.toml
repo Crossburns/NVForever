@@ -636,10 +636,46 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 16
 expect = [
   { re = 'settings: .* read from .*ui-scale 75%', label = "the INI's 75% is read at the start" },
-  { text = "interface: UI scale 75% (the HUD drawn at 75% of the original's size)", label = "the run's HUD is drawn at 75%" },
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run's HUD is drawn at 75%" },
   { re = 'compass: heading at x ', label = "the HUD is drawn" },
 ]
 manual = "ui_scale_75.png: the HUD three quarters of its 100% size, the health and compass corner at the bottom left, the action points at the bottom right, the sneak word and other top pieces at the top; the text readable"
+
+[[scenario]]
+name = "ui-scale-menus"
+source = "issue #1631: at the UI scale ui-scale-write kept (75%) the menus are drawn three quarters of their size, in the middle of the view, and a real pointer press lands on what is drawn: the wait-pointer-press presses moved to where the 75% wait menu draws the slider and Accept still choose about 18 hours"
+note = "Runs after ui-scale-write and ui-scale-read in their home. The points are wait-pointer-press's, moved toward the middle of the 1280 x 720 view: 0.5 + (p - 0.5) x 0.75 (the slider 0.584:0.47 to 0.563:0.4775, Accept 0.677:0.576 to 0.63275:0.557); at 100% they would miss the slider's 72%"
+areas = ["menus", "settings", "wait"]
+paths = [
+  "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/wait.rs", "engine/nvf-play/src/ui_pointer.rs",
+  "engine/nvf-play/src/main_menu.rs", "engine/nvf-play/src/start_menu.rs",
+]
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page", NVF_PLAY_TEST_SHOTS = "12.5:ui_scale_75_settings.png,17:ui_scale_75_wait.png", NVF_PLAY_TEST_WAIT = "16:open,17.5:point=0.563:0.4775,18:press,18.5:release,19:point=0.63275:0.557,19.5:press,20.5:release" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run draws the menus at 75%" },
+  "pause menu: open",
+  "wait menu: open",
+  { re = 'wait menu: waiting (?P<n>\d+) hour', range = [17, 19], label = "the press on the 75% slider's drawn 72% chose about 18 hours, and the press on the drawn Accept took it" },
+]
+manual = "ui_scale_75_settings.png: the pause menu's settings page three quarters of its 100% size (pause_settings pictures of other runs), centred: the categories, the rows and the band behind them, the column and Back and Defaults moved toward the middle, the sheet and the screen picture still over the whole view. ui_scale_75_wait.png: the wait menu's box three quarters of its size, in the middle"
+
+[[scenario]]
+name = "ui-scale-tile-menus"
+source = "issue #1631: at 75% a tile-drawn menu ([UI] TileMenus=SleepWaitMenu) is drawn three quarters of its size in the middle of the view and a real pointer press on its drawn slider page area is read as one on its tiles (tiles/input.rs to_menu_units), as tiles-sleep-wait's aid press at 1100:457 units is"
+note = "Runs after ui-scale-write in its home. 1100:457 units is 825:342.75 pixels of the 1280 x 720 view at 100%; at 75% in the middle that is 778.75:347.06, the window's 0.6084:0.4821"
+areas = ["menus", "tiles", "wait"]
+paths = ["engine/nvf-play/src/interface.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/wait_menu.rs"]
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_TILE_MENUS = "SleepWaitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_WAIT = "10:open,11:point=0.6084:0.4821,11.5:press,12:release", NVF_PLAY_TEST_SHOTS = "13:ui_scale_75_tiles_wait.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 16
+expect = [
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run draws the menus at 75%" },
+  { re = 'tiles: SleepWaitMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "the menu's tree draws" },
+  { text = "tiles: SleepWaitMenu Step(6) on its tiles", count = 1, label = "the real press on the drawn page area pages the slider" },
+]
+manual = "ui_scale_75_tiles_wait.png: the tile-drawn wait menu three quarters of the size of tiles_sleep_wait.png, in the middle of the view, the slider at 7 hours"
 
 [[scenario]]
 name = "draw-distance-sliders"
@@ -1508,8 +1544,23 @@ run_seconds = 30
 expect = [
   { re = 'npc combat summary.*?(?P<n>\d+) blows', range = [15, 25], label = "about 20 blows in the npc combat summary", known_failing = "main 2026-10-23 (origin/main cd54601d+, 13 blows): the add-ons' load message boxes hold the game for about 8 s of the 30 (list 7 W4: 12 and 14 on its branch)" },
   { re = 'attack anims summary.*h2hattack' },
-  { re = 'npc melee spacing: \d+ blows began at .*\(median (?P<n>\d+), feet to feet\)', range = [100, 170], label = "the dogs bite from their reach and body, (RNAM 48 + 59) x 1.2 = 128 at most, not from inside the player (the original's dogs began a median 133 units away; ours 121 on 2026-10-17; npc-behaviour-compare.md §3)" },
+  { re = 'npc melee spacing: \d+ blows began at .*\(median (?P<n>\d+), feet to feet\)', range = [100, 170], label = "the dogs bite from their reach and body, (RNAM 48 + 62 for the Dog skeleton) x 1.2 = 132 at most, not from inside the player (the original's dogs began a median 133 units away; ours 121 on 2026-10-17; npc-behaviour-compare.md §3, #1334)" },
   { re = 'runs at |stops and faces ', max = 8, label = "only a few runs at / stops and faces lines" },
+]
+
+[[scenario]]
+name = "melee-reach-lead-pipe"
+source = "#1334 (part 1): NPC melee reach refit to the original's 45 + 107 x Reach (AI observer campaign o14_reach, 2026-11-01: NCR troopers with a lead pipe, Reach 1.25, began their swings a median 180 units from the player, centre to centre; docs/spec-notes/combat-rules.md §10)"
+note = "Violet (FiendVioletRef) is given a lead pipe (WeapLeadPipe 0x00004337) in place of her rifle and set on the god-mode player: she is put 300 units from the player at 3 s, on the open ground where combat-dogs is (by her camp's rocks her way round them ended 150 units off; on Goodsprings' street she went for the brahmin); only she is run on her packages. She holds her rifle's model (models are not swapped live), so the pipe's clips play with it. Ours: fCombatDistance 107 x 1.25 + two people's radii (44) = 178"
+areas = ["combat", "melee"]
+paths = ["engine/nvforever/src/npc_combat.rs", "crates/fnv-combat/src/damage.rs", "crates/fnv-combat/src/tuning.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:FiendVioletRef:player:300:0:0,4:call:FiendVioletRef:RemoveAllItems,4:call:FiendVioletRef:AddItem:WeapLeadPipe:1,4:call:FiendVioletRef:EquipItem:WeapLeadPipe,5:combat:FiendVioletRef:player" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "FiendVioletRef"]
+run_seconds = 35
+expect = [
+  { re = 'npc combat: FiendVioletRef \S+ fights the player with WeapLeadPipe \(melee\)', label = "Violet fights the player with the lead pipe" },
+  { re = 'npc melee spacing: \d+ blows began at .*\(median (?P<n>\d+), feet to feet\)', range = [140, 182], label = "her swings begin within her strike distance (107 x 1.25 + the radii, about 180, as the original's lead-pipe troopers' 180, o14_reach), mostly where her walk ends, inside her stop (174): 170 on 2026-11-06 (combat-rules.md §10, open); not 209 as before #1334" },
+  { re = 'FiendVioletRef: (stops and faces|runs at) the player', max = 12, label = "she does not stop and close in again over and over at her reach's edge" },
 ]
 
 [[scenario]]
@@ -3233,6 +3284,137 @@ expect = [
 ]
 
 [[scenario]]
+name = "dialogue-zoom"
+source = "docs/design/dialogue-play.md §8.8: a conversation narrows the view onto the speaker, the head about 0.30 of the view's height wherever the speaker stands, and gives the field of view back"
+note = "Chet in the general store at 1280x720; the talk aid starts the conversation at 11 s and says goodbye after his greeting and 4 s of choices. Vertical 59.8 is --fov 75. Shot zoom_settled.png to compare with the original's framing"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/dialogue_look.rs", "engine/nvf-play/src/aim_zoom.rs", "engine/nvf-play/src/free_cam.rs", "engine/nvforever/src/imagespace.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "14:zoom_settled.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): (?P<n>\d+) units, vertical 59\.8° to', range = [10, 3000], label = "the view narrows on the drawn head" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back exactly" },
+], [
+  { re = 'depth of field: strength 1\.0, distance 32, range 512, focus \d+, back \(dialogue\)', label = "what is behind the speaker is out of focus at full zoom" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends, with the blur on" },
+  { text = "depth of field: off", label = "and the blur has gone" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-victor"
+source = "docs/design/dialogue-play.md §8.8: a robot is framed by its drawn height, not a human's head: in the original the whole upper machine is in view, the screen about 0.25 of the height with its centre at 0.44"
+note = "Goodsprings' Victor (GSVictorRef 0x001073E8) is put 150 units in front of the player at 3 s, faced at 5 s and talked to at 7 s. Shot victor_settled.png to compare with the original's. The view's range is the rule's for his meshes, 187 tall in the bind pose: a run outside it first asks what the hit volume says (the 'drawn N tall' in the line)"
+areas = ["dialogue", "camera", "creatures"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:0x001073E8:player:150:0:0", NVF_PLAY_TEST_FACE = "5:001073E8", NVF_PLAY_TEST_TALK = "7:0x001073E8=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "10:victor_settled.png" }
+args = ["--cell", "Goodsprings", "--pos=-71400,3600,8352", "--play", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 34
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): .*; view (?P<n>\d+) units tall \(drawn \d+ tall\)', range = [100, 135], label = "Victor is framed by his height, on his head bone" },
+  { re = 'dialogue: conversation with \S+ ended', label = "the conversation with Victor ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back after Victor" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-marcus"
+source = "docs/design/dialogue-play.md §8.8: a big creature's head fills less of the view than a human's: in the original Marcus's head is about 0.25 of the height, its centre at 0.325"
+note = "Marcus (MarcusRef 0x0013AFDE) in Jacobstown, faced at 5 s and talked to at 7 s from about where he stands; he may greet first, then the aid's steps wait on that conversation. Shot marcus_settled.png to compare with the original's. The view's range is the rule's for his meshes, 173 tall in the bind pose: see dialogue-zoom-victor"
+areas = ["dialogue", "camera", "creatures"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_FACE = "5:0013AFDE", NVF_PLAY_TEST_TALK = "7:0x0013AFDE=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "10:marcus_settled.png" }
+args = ["--play", "--pos=-103557,94176,12000", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 34
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): .*; view (?P<n>\d+) units tall \(drawn \d+ tall\)', range = [85, 115], label = "Marcus is framed by his height, on his head bone" },
+  { re = 'dialogue: conversation with \S+ ended', label = "the conversation with Marcus ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back after Marcus" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-house"
+source = "docs/design/dialogue-play.md §8.8: Mr. House, a screen 300 tall, is framed by the same rule as Victor and Marcus: in the original vertical 18.3° from about 466 units, his face well over half of the view"
+note = "Lucky38MrHouseREF 0x001264C5 in the penthouse: the player is put 450 units in front of his screen at 5 s (his front is local -y, on heading 315 from him; the stairs are under that spot) and talks to him at 9 s. A greeting his dialogue's conditions refuse here would show as the first order step missing: read the dialogue lines first. Shot house_settled.png to compare with the original's"
+areas = ["dialogue", "camera", "creatures"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "5:-1357:5653:19100", NVF_PLAY_TEST_LOOK = "7:135:15", NVF_PLAY_TEST_TALK = "9:0x001264C5=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "12:house_settled.png" }
+args = ["--play", "--world", "Lucky38World", "--pos=-2376,6057,19200", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\): .*; view (?P<n>\d+) units tall \(drawn \d+ tall\)', range = [130, 170], label = "House is framed by his height, on his head bone" },
+  { re = 'dialogue: conversation with \S+ ended', label = "the conversation with House ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back after House" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-off"
+source = "docs/design/dialogue-play.md §8.8: the dialogue-zoom setting off (--no-dialogue-zoom)"
+note = "As dialogue-zoom: the turn still happens, the field of view is left alone and nothing is blurred"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/dialogue_look.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--no-dialogue-zoom"]
+run_seconds = 40
+expect = [
+  { text = "dialogue zoom is off (--no-dialogue-zoom)", label = "the switch is read" },
+  { re = 'dialogue look: the view turns to', label = "the opening turn still happens" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends" },
+  { re = 'dialogue zoom: (in on|out from)', count = 0, label = "no close-up" },
+  { re = 'depth of field: .*\(dialogue\)', count = 0, label = "no blur" },
+]
+
+[[scenario]]
+name = "dialogue-zoom-no-look"
+source = "docs/design/dialogue-play.md §8.8: the close-up does not need dialogue-look; with the turning off the renderer still says where the head is (nvforever dialogue_look.rs)"
+note = "As dialogue-zoom with --no-dialogue-look: nobody turns, and the view narrows where it looks, from the head's distance and not the hit volume's"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvforever/src/dialogue_look.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--no-dialogue-look", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue zoom: in on \S+ \(its head as drawn\)', label = "the close-up finds the drawn head with the turning off" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back" },
+]]
+expect = [
+  { re = 'dialogue look: the view turns to', count = 0, label = "nobody turns" },
+]
+
+[[scenario]]
+name = "dialogue-zoom-third"
+source = "docs/design/dialogue-play.md §8.8: from third person the original ends in the same close-up with no player body, the camera having travelled from behind the player, and returns (observed, dialogue-play.md §8.5)"
+note = "As dialogue-zoom with the view in third person from 6 s. The crosshair's line says which view the camera is in. Shots: third_settled.png has no body, third_after.png has it again"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/control.rs", "engine/nvf-play/src/player.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONTROL = "6:view", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4", NVF_PLAY_TEST_SHOTS = "14:third_settled.png,38:third_after.png" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { text = "crosshair: the third-person camera's line", label = "third person before the conversation" },
+  { text = "crosshair: the eye's view", label = "the camera comes to the eye" },
+  { re = 'dialogue zoom: in on .*third person: the camera at the eye, no body', label = "in the same close-up" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends" },
+  { text = "crosshair: the third-person camera's line", label = "third person again" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back" },
+]]
+
+[[scenario]]
+name = "dialogue-zoom-frozen"
+source = "docs/design/dialogue-play.md §8.8: with --menu-pause original the picture stands still, so the close-up's eases complete at once"
+note = "As dialogue-zoom under --menu-pause original. Nothing proves here that the eases took no time beyond their lines' order; unit test a_frozen_picture_gets_the_end_of_the_ease_at_once does"
+areas = ["dialogue", "camera"]
+paths = ["engine/nvf-play/src/dialogue_zoom.rs", "engine/nvf-play/src/pause.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TALK = "11:GSChetRef=", NVF_PLAY_TEST_TALK_DELAY = "4" }
+args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--menu-pause", "original", "--fov", "75"]
+run_seconds = 40
+order = [[
+  { re = 'dialogue zoom: in on ', label = "the close-up is on" },
+  { re = 'dialogue: conversation with GSChetRef ended', label = "the conversation ends" },
+  { re = 'dialogue zoom: out from \d+ units: the view is back at vertical (?P<n>[\d.]+)°', range = [59.8, 59.8], label = "the field of view is given back" },
+]]
+
+[[scenario]]
 name = "dialogue-goodbye-hint-off"
 note = "As dialogue-goodbye-hint with the Goodbye hint switched off first: the pause menu's settings page flips dialogue-goodbye-hint at 3 s (the aids that act on the world, the talk among them, wait for 11 s of the world clock, which never runs ahead of the real one, so the flip comes first on any machine). The hint is held back, the real Tab at 36 s still says goodbye. Shots hint_off_*.png. Does not cover the flip while a conversation is open (unit test of the cache key) or a refused Tab"
 source = "docs/spec-notes/dialogue-menu.md §4: the Goodbye hint switch (#1517)"
@@ -4467,6 +4649,36 @@ expect = [
   { re = 'particles: 0008D36C \S*repbay\.nif emits as its Right says: 56 of 56 systems', label = "and then Right" },
   { re = 'particles: born in \S*repbay\.nif: .*\bPFire01 (?P<n>\d+)', range = [300, 1200], label = "PFire01 burns for Right's 0.5 s only (about 600), not all the time" },
 ]
+
+[[scenario]]
+name = "tops-13th-floor-hallway"
+source = "docs/spec-notes/world.md §8 \"Interior XCLW is not water\" (issues #1546, #1078; owner 2026-11-04/06: a circle of darkness round the player on the Tops' 13th floor and in the presidential suite): 2ETopsBennysFloor stores XCLW 14,095.9 above all its references, which the under-water fog read as a surface over the camera; the long hallway from its east end looking west, one frame in target/smoke (tops_13th_hall.png)"
+areas = ["rendering", "water"]
+paths = ["engine/nvforever/src/underwater.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:tops_13th_hall.png" }
+args = ["--play", "--cell", "2ETopsBennysFloor", "--pos=3300,2375,7240", "--heading", "270", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "tops_13th_hall.png: the hallway lit by its sconces to its far end (about 3,800 units), walls, carpet and ceiling readable all the way, no black past the nearest lamps"
+expect = [
+  { text = "interior lighting: fog 512..6000 power 1.00", label = "the 13th floor's own fog (XCLL), not the water's" },
+  { re = 'test aid: screenshot .*tops_13th_hall\.png', label = "the hallway frame is saved" },
+]
+forbid = [{ text = "underwater: the camera is under water", label = "the cell's XCLW taken for water over the camera" }]
+
+[[scenario]]
+name = "tops-suite-light"
+source = "docs/spec-notes/world.md §8 \"Interior XCLW is not water\" (issue #1078): 2ETopsPresidentialSuite, XCLW 14,095.9 above all its references; from the lift door (1990, 1216, 8040) looking east at 21:00, as the original's frame tops_suite_door_east (2026-11-06, private)"
+areas = ["rendering", "water"]
+paths = ["engine/nvforever/src/underwater.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:tops_suite_east.png" }
+args = ["--play", "--cell", "2ETopsPresidentialSuite", "--pos=1990,1216,8040", "--heading", "90", "--hour", "21", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "tops_suite_east.png against the original's tops_suite_door_east frame: bar, pillars, the far wall's bands and posters, the sofa and rug all readable; a little darker than the original is fine (interior brightness, owner 2026-10-27)"
+expect = [
+  { text = "interior lighting: fog 64..6500 power 0.80", label = "the suite's fog (template near/far, own power)" },
+  { re = 'test aid: screenshot .*tops_suite_east\.png', label = "the suite frame is saved" },
+]
+forbid = [{ text = "underwater: the camera is under water", label = "the cell's XCLW taken for water over the camera" }]
 
 [[scenario]]
 name = "smoke-blend-bison-steve"
@@ -10184,6 +10396,23 @@ order = [[
 forbid = [{ re = 'combat: hit 0x000F573F on ', label = "the missed shot hits its mark" }]
 
 [[scenario]]
+name = "vats-mode-preview"
+source = "issue #1384 (owner): in VATS mode every body part's hit chance is shown on the target before marking, the part under the crosshair set apart (docs/design/vats-mode.md §17.5)"
+note = "vats-mode-miss' setup without the forced roll (a .357 among the Goodsprings dogs on their packages, god mode, Violetta killed at 3 s so the nearest living actor is the Fiend Guard Dog): V at 10 s, aimvats turns the crosshair on the dog, the preview logs each part's chance; the click marks the part under the crosshair and the mark line carries the figure the preview showed for it, which must be its own chance; V again leaves without firing. Frame vats_preview.png (10.33 s game time, about 0.6 s real after the aim) shows the dog's parts' labels, the one under the crosshair in brackets and brighter"
+areas = ["combat", "vats"]
+paths = ["engine/nvf-play/src/vats_mode.rs", "crates/fnv-combat/src/vats.rs", "crates/fnv-game/src/vats.rs", "engine/nvf-play/src/hitvol.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:kill:0x0013E5BB", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,10.3:aimvats", NVF_PLAY_TEST_KEYS = "10:v,10.36:mouse-left,10.4:v", NVF_PLAY_TEST_SHOTS = "10.33:vats_preview.png" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "000F573F,0013E5BB"]
+run_seconds = 16
+order = [[
+  { re = 'vats mode: on \(WeapNV357Revolver, 26 AP a shot', label = "V enters VATS mode with the .357" },
+  { re = 'vats mode: preview Fiend Guard Dog 000F573F: \S.* \d+%, .* \d+%', label = "before marking, the dog's parts each show a chance (more than one part)" },
+  { re = 'vats mode: marked Fiend Guard Dog 000F573F .* mark 1; .* AP left; (\d+)% to hit \(base .*; previewed \1%', label = "the mark's chance is the figure the preview showed for that part" },
+  { re = 'vats mode: off \(0 shots fired, 0 AP spent; V pressed again\)', label = "V leaves without firing" },
+]]
+manual = "vats_preview.png: amber 'part NN%' labels on the dog's head, torso and legs before any mark; the one under the crosshair in brackets and brighter"
+
+[[scenario]]
 name = "vats-kill-cam"
 source = "ESM full audit gap 10 (2026-10-24): the masters' camera paths and shots (CPTH, CAMS) play as VATS mode's kill cameras (docs/design/vats-mode.md §19); owner's playtest requests #1034 (the HUD hidden while it plays) and #1036 (the player's input held)"
 note = "vats-mode-miss' setup (a .357 among the Goodsprings dogs on their packages, god mode) with both dogs left at 1 health (set_av) and every roll forced to hit: one mark, E; Violet, her two Fiends and the other dog are killed at 3 s (they fight the player, and the camera plays only for the last enemy, #1035); the shot kills the dog, the camera path tree picks a path whose hit shots play (each its Max Time in real seconds at its Global time multiplier), then the view is the player's again. Which path and shots is the tree's choice (GetRandomPercent varies it), so only their form is checked; a shot whose model fails to load would leave the view where it is. While it plays the HUD is hidden and comes back after it; W held from 10.4 s and a look at 10.45 s (test aids standing in for the keys and the mouse) are held by it. The world aids' clock runs at the world's speed, which VATS mode and the kill camera slow (FirstPersonCam: 0.12), so the aids sit just after the shot (10.36 s) to land within the camera whatever shot the tree picks; at 10.8/10.9 they came after a slowed 3 s camera had ended (#1666)"
@@ -11027,6 +11256,8 @@ run_seconds = 26
 expect = [
   { re = 'You hear nothing', label = "Ramos's line through the intercom is said" },
   { re = 'dialogue look: the view turns to', label = "the view turns to the intercom, not to Ramos" },
+  { re = 'dialogue zoom: no zoom in the conversation with .*talking activator', count = 1, label = "no close-up through an activator, said once" },
+  { re = 'dialogue zoom: in on', count = 0, label = "and the view does not narrow" },
 ]
 
 [[scenario]]
@@ -14235,6 +14466,7 @@ expect = [
   { json = "observations.?label=milestone: NVDLC01MQ02 100 (Trigger the Gala Event done).stage", equals = 100, label = "milestone: NVDLC01MQ02 100 (Trigger the Gala Event done): stage = 100" },
   { json = "observations.?label=milestone: Act 3 begins (MQ03a 5).done.5", equals = true, label = "milestone: Act 3 begins (MQ03a 5): done.5 = true" },
   { json = "observations.?label=milestone: Act 3 begins (MQ03a 5).stage", equals = 5, label = "milestone: Act 3 begins (MQ03a 5): stage = 5" },
+  { json = "events.?info=0x01013C60.speaker", equals = "0x01010A0E", label = "the narrator says the second opening slide (INFO 0x01013C60, fixed speaker Elijah, no GetIsID; #965)" },
 ]
 manual = "on a failure, the chain's notes say what each step stands for; the stalls and their causes are in the Dead Money walkthrough report (addon-dm-report.md)"
 
@@ -14269,6 +14501,7 @@ expect = [
   { json = "observations.?label=milestone: the end slides said, bunker transition started.found", equals = true, label = "milestone: the end slides said, bunker transition started: found = true" },
   { json = "observations.?label=final: the end slides over, the player back at the bunker (NVDLC01BunkerTransitionTimer faded out).running", equals = false, label = "final: the end slides over, the player back at the bunker (NVDLC01BunkerTransitionTimer faded out): running = false" },
   { json = "observations.?label=final: the end slides over, the player back at the bunker (NVDLC01BunkerTransitionTimer faded out).var.bfadeoutdone", equals = 1.0, label = "final: the end slides over, the player back at the bunker (NVDLC01BunkerTransitionTimer faded out): var.bfadeoutdone = 1.0" },
+  { json = "events.?info=0x01011DE9.speaker", equals = "0x01010A0E", label = "the narrator says Elijah's ending intro (INFO 0x01011DE9, fixed speaker Elijah, no GetIsID; #965)" },
 ]
 manual = "on a failure, the chain's notes say what each step stands for; the stalls and their causes are in the Dead Money walkthrough report (addon-dm-report.md)"
 
@@ -20581,6 +20814,20 @@ expect = [
 ]
 
 [[scenario]]
+name = "ttw-functions-console"
+source = "[documented + hypothesis] docs/spec-notes/jip-ttw-functions.md (issue #1408): SetMusicState 1 and 2 reach the engine's music (paused, then not), InitExtraMiscStat makes a stat ModExtraMiscStat adds to; TTW's own data is not a smoke data dir, so the console runs them in Goodsprings"
+areas = ["scripts", "console", "extender"]
+paths = ["crates/fnv-game/src/nvse_ttw.rs", "engine/nvf-play/src/music.rs"]
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:SetMusicState 1;10.5:SetMusicState 2;11:InitExtraMiscStat \"nvf ttw\";11.5:ModExtraMiscStat \"nvf ttw\" 3;12:PrintC \"nvf ttw stat %g\", (GetExtraMiscStat \"nvf ttw\");12.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 16
+expect = [
+  { re = 'music: SetMusicState 1, paused', label = "SetMusicState 1 pauses the music" },
+  { re = 'music: SetMusicState 2(?!, paused)', label = "SetMusicState 2 resumes it" },
+  { re = 'script: print "nvf ttw stat 3(?:\.0+)?"', label = "an initialised extra misc stat adds" },
+]
+
+[[scenario]]
 name = "script-runner-tool"
 kind = "tool"
 source = "issue #1460, docs/spec-notes/ext-script-runner.md: JIP's Script Runner files of the fixture home's mods layer compiled and run headless (game restart, new game)"
@@ -21225,3 +21472,176 @@ expect = [
   { re = 'actor alpha: NVDLC01StarLobby', label = "the hologram is drawn see-through" },
 ]
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error" }]
+
+[[scenario]]
+name = "occlusion-planes-sewers"
+source = "issue #1434 (docs/spec-notes/level-design.md §3.2, row C3): occlusion planes hide the placed meshes wholly behind them, in interiors"
+note = "OVWestSewers02 has 8 occlusion planes and no rooms. From the start (heading 0) 1,549 of 3,600 meshes are behind a plane; screenshots with and without (occlusion-planes-sewers-off) were the same on 2026-11-06 apart from the HUD's messages. The frame `occl_sewers_on.png` is kept for comparing with that scenario's"
+areas = ["renderer", "performance"]
+paths = ["engine/nvforever/src/occlusion.rs", "engine/nvforever/src/rooms.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SHOT_FLATNESS = "1", NVF_PLAY_TEST_SHOTS = "4:occl_sewers_on.png" }
+args = ["--cell", "OVWestSewers02", "--play", "--no-voice", "--no-messages"]
+run_seconds = 6
+expect = [
+  "occlusion: 0012BE13: 8 planes",
+  { re = 'occlusion: 8 planes in front, (?P<n>\d+) of \d+ meshes hidden by planes', range = [500, 3000], label = "meshes behind the planes are hidden, not all" },
+  { re = 'occl_sewers_on.png: (?P<n>\d+) % of the view is one colour', range = [0, 80], label = "the frame is drawn, not empty (45 % in the dark sewer, with or without the planes)" },
+  { re = 'occlusion summary: \d+ frames with occlusion planes in front, at most (?P<n>\d+) meshes hidden by planes', range = [500, 3000], label = "the summary" },
+]
+
+[[scenario]]
+name = "occlusion-planes-sewers-off"
+source = "issue #1434: --no-occlusion-planes turns the occlusion planes off"
+note = "as occlusion-planes-sewers with the switch; its frame `occl_sewers_off.png` is the one to compare with `occl_sewers_on.png`"
+areas = ["renderer", "performance"]
+paths = ["engine/nvforever/src/occlusion.rs", "engine/nvforever/src/rooms.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SHOT_FLATNESS = "1", NVF_PLAY_TEST_SHOTS = "4:occl_sewers_off.png" }
+args = ["--cell", "OVWestSewers02", "--play", "--no-voice", "--no-messages", "--no-occlusion-planes"]
+run_seconds = 6
+expect = [
+  "occlusion: --no-occlusion-planes: occlusion planes hide nothing",
+  "occlusion: 0012BE13: 8 planes",
+  { re = 'occl_sewers_off.png: (?P<n>\d+) % of the view is one colour', range = [0, 80], label = "the frame is drawn" },
+]
+forbid = [
+  { re = 'occlusion: [1-9]\d* planes in front', label = "no plane is used" },
+  { re = '[1-9]\d* of \d+ meshes hidden by planes', label = "nothing is hidden by planes" },
+]
+
+[[scenario]]
+name = "occlusion-planes-vault21"
+source = "issue #1434 (docs/spec-notes/level-design.md §3.1-3.2): a portal wholly behind an occlusion plane is not followed"
+note = "2EOVault21 (Vault 21 hotel) has 16 rooms, 40 portals and 9 occlusion planes; from the start 1,127 meshes are behind planes and 8 portals lie wholly behind one (2026-11-06); screenshots with and without the planes at four headings were the same apart from the HUD"
+areas = ["renderer", "performance"]
+paths = ["engine/nvforever/src/occlusion.rs", "engine/nvforever/src/rooms.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1" }
+args = ["--cell", "2EOVault21", "--play", "--no-voice", "--no-messages"]
+run_seconds = 6
+expect = [
+  "occlusion: 0010FDEB: 9 planes",
+  { re = 'occlusion: 9 planes in front, (?P<n>\d+) of \d+ meshes hidden by planes', range = [200, 4000], label = "meshes behind the planes are hidden" },
+  { re = 'occlusion summary: .*, at most (?P<n>\d+) portals not followed', range = [1, 40], label = "portals behind a plane are not followed" },
+]
+
+[[scenario]]
+name = "fsr-quality"
+source = "docs/design/fsr-upscaling.md: real FSR dispatch with skinned/alpha-tested inputs, full-resolution postprocessing and HUD"
+areas = ["graphics"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvf-assets/src/nif_prepass.wesl", "engine/nvforever/src/grass*", "engine/nvforever/src/tree*", "engine/vendor/wgpu-ffx/**"]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--cell", "Goodsprings", "--size", "1280x720", "--fsr", "quality", "--graphics", "enhanced", "--no-voice", "--no-lodgen"]
+run_seconds = 18
+expect = ["FSR 3.1.4: Quality, 853x480 -> 1280x720, frame generation off", "FSR dispatch active: 3.1.4, 853x480 -> 1280x720"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-settings"
+source = "docs/design/fsr-upscaling.md: live native AA, quality, performance and off transitions; rebuild histories without stacking AA"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs"]
+env = { WGPU_BACKEND = "vulkan", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:18", NVF_PLAY_TEST_SETTINGS = "11:fsr-upscaling=Native AA,12:fsr-upscaling=Quality,13:fsr-upscaling=Performance,14:fsr-upscaling=Off,15:fsr-upscaling=Quality" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "off", "--no-voice", "--no-lodgen"]
+run_seconds = 20
+expect = ["FSR 3.1.4: NativeAa", "FSR 3.1.4: Quality", "FSR 3.1.4: Performance"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-water"
+source = "docs/design/fsr-upscaling.md: render-scale transmission and water screen/depth coordinates, reactive inputs"
+areas = ["graphics", "water"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/water.wesl", "engine/vendor/bevy_pbr/src/transmission/node.rs"]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--pos=59500,38500,2350", "--heading", "90", "--pitch", "-15", "--hour", "12", "--size", "1280x720", "--fsr", "balanced", "--graphics", "enhanced", "--no-lodgen", "--radius", "1"]
+run_seconds = 16
+expect = ["FSR 3.1.4: Balanced", "FSR dispatch active: 3.1.4"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-resize"
+source = "docs/design/fsr-upscaling.md: window resize and Ultra Performance recreate histories and output-sized resources"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/window_mode.rs"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-resize-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:21", NVF_PLAY_TEST_SETTINGS = "11:resolution=1600x900,15:fsr-upscaling=Ultra Performance,17:fsr-upscaling=Quality", NVF_PLAY_TEST_PAUSE_MENU = "13:keep" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "quality", "--no-voice", "--no-lodgen"]
+run_seconds = 23
+expect = ["FSR 3.1.4: Quality, 853x480 -> 1280x720", "FSR 3.1.4: Quality, 1066x600 -> 1600x900", "FSR 3.1.4: UltraPerformance, 533x300 -> 1600x900", "FSR dispatch active: 3.1.4"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-restart"
+source = "docs/design/fsr-upscaling.md: a cold process restores Quality and the kept resolution from fsr-resize; no --size or --fsr is given, as in a test run a given switch wins over the INI (#1382)"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/settings.rs"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-resize-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-lodgen"]
+run_seconds = 12
+expect = ["FSR 3.1.4: Quality, 1066x600 -> 1600x900", "FSR dispatch active: 3.1.4, 1066x600 -> 1600x900"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-dropdown"
+source = "docs/design/fsr-upscaling.md: the native dropdown presents all six FSR choices and keyboard selection applies Balanced"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/settings.rs", "engine/nvforever/src/graphics.rs"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-dropdown-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:19", NVF_PLAY_TEST_SETTINGS = "11:fsr-upscaling=Quality", NVF_PLAY_TEST_PAUSE_MENU = "12:pick,13:down,14:shot,15:pick" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--fsr", "off", "--no-voice", "--no-lodgen"]
+run_seconds = 21
+expect = ["pause menu: the list of 6 choice(s) open", "pause menu: screenshot pause_settings.png", "settings: fsr-upscaling Balanced", "FSR 3.1.4: Balanced"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-night-lights"
+ends = "Screenshot saved to fsr-night-lights.png"
+source = "docs/design/fsr-upscaling.md: clustered point/spot lights use normalized main-pass viewport coordinates at reduced render resolution"
+areas = ["graphics", "lights"]
+paths = ["engine/vendor/bevy_pbr/src/render/clustered_forward.wesl", "engine/nvforever/src/fsr*", "engine/nvforever/src/lights.rs"]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--world", "TheStripWorldNew", "--pos=-250,8600,1150", "--heading", "185", "--pitch", "0", "--hour", "21", "--graphics", "enhanced", "--size", "1280x720", "--fsr", "quality", "--no-voice", "--no-lodgen", "--screenshot", "fsr-night-lights.png", "--screenshot-delay", "6"]
+run_seconds = 20
+expect = ["FSR dispatch active: 3.1.4, 853x480 -> 1280x720"]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-aa-lock"
+source = "docs/design/fsr-upscaling.md: Native AA explicitly disables the engine AA row, ignores edits while locked, and restores saved 8x when FSR is disabled"
+areas = ["graphics", "ui"]
+paths = ["engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvf-play/src/settings.rs", "engine/nvf-play/src/pause.rs"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-aa-lock-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:19", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=0,14:fsr-upscaling=Off", NVF_PLAY_TEST_PAUSE_MENU = "12:shot" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--msaa", "8", "--fsr", "native-aa", "--no-voice", "--no-lodgen"]
+run_seconds = 21
+expect = ["graphics: FSR NativeAa active; native anti-aliasing off", "FSR dispatch active: 3.1.4, 1280x720 -> 1280x720", "pause menu: screenshot pause_settings.png", "settings: fsr-upscaling Off", "graphics: multisampling 8x"]
+forbid = ["settings: anti-aliasing Off", "FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-moving-weapon"
+source = "docs/design/fsr-upscaling.md revision 2: moving camera, animated first-person weapon and NPC rigs exercise real temporal inputs after correcting the motion-buffer binding"
+areas = ["graphics", "player-body", "animation"]
+paths = ["engine/vendor/wgpu-ffx/wgpu-ffx/src/pass.rs", "engine/nvf-assets/src/nif_prepass.wesl", "engine/nvforever/src/fsr*"]
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "fsr-moving-weapon-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "8:weapon,11:fire,13:reload,17:view,19:fire", NVF_PLAY_TEST_LOOK = "9:0:-10,9.1:5:-10,9.2:10:-10,9.3:15:-10,9.4:20:-10,9.5:25:-10,9.6:30:-10", NVF_PLAY_TEST_MOVE = "10:0:1,12:0:0", NVF_PLAY_TEST_SHOTS = "14:fsr-moving-weapon.png" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages", "--no-lodgen", "--actor-weapons", "drawn", "--fsr", "quality", "--size", "1280x720"]
+run_seconds = 24
+expect = ["FSR dispatch active: 3.1.4, 853x480 -> 1280x720", "graphics: FSR Quality active; native anti-aliasing off", { re = 'player First rig: .*1hpreloadl\.kf moves the weapon.s \[.*"##nmClip", "##nmClip"' }]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-foliage"
+source = "docs/design/fsr-upscaling.md revision 3 and after revision 4: the reactive mask's opaque reference includes the terrain's blended texture layers and the sky's blended parts, so FSR keeps history on the ground under grass, bushes and trees, and against the sky"
+areas = ["graphics", "world"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/terrain.rs", "engine/nvforever/src/sky.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvforever/src/grass*", "engine/nvforever/src/tree*"]
+env = { WGPU_BACKEND = "vulkan" }
+args = ["--cell", "Goodsprings", "--heading", "0", "--pitch=-8", "--hour", "12", "--size", "1280x720", "--fsr", "native-aa", "--no-voice", "--no-lodgen"]
+run_seconds = 16
+expect = ["FSR dispatch active: 3.1.4, 1280x720 -> 1280x720", { re = 'FSR reactive reference: (\d+) terrain layer draws over the opaque copy', range = [1, 100000], label = "terrain layers drawn into the reactive reference" }, { re = 'FSR reactive reference: (\d+) sky draws over the opaque copy', range = [1, 1000], label = "the sky's blended parts drawn into the reactive reference" }]
+forbid = ["FSR reactive reference: terrain layers not drawn", "FSR reactive reference: sky parts not drawn", "FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]
+
+[[scenario]]
+name = "fsr-corn-cutouts"
+source = "docs/design/fsr-upscaling.md revision 3: Goodsprings' corn rows (blended, cut-out alpha) are drawn alpha-tested while FSR is on and blended again when it is off"
+areas = ["graphics", "world"]
+paths = ["engine/nvforever/src/fsr*", "engine/nvforever/src/graphics.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/texture.rs"]
+env = { WGPU_BACKEND = "vulkan", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:fsr-upscaling=Native AA,14:fsr-upscaling=Off" }
+args = ["--cell", "Goodsprings", "--pos=-69814,774,8451", "--heading", "205.5", "--pitch=-6.4", "--play", "--hour", "12", "--size", "1280x720", "--fsr", "off", "--no-voice", "--no-messages", "--no-lodgen"]
+run_seconds = 18
+expect = ["FSR 3.1.4: NativeAa", { re = 'blended cut-outs: drawn alpha-tested for FSR \((\d+) materials changed\)', range = [1, 100000], label = "the corn rows' material cut when FSR comes on" }, { re = 'blended cut-outs: drawn blended \((\d+) materials changed\)', range = [1, 100000], label = "and blended again when it goes off" }]
+order = [["blended cut-outs: drawn alpha-tested", "blended cut-outs: drawn blended"]]
+forbid = ["FSR dispatch failed", "FSR 3.1 unavailable", "Shader validation error", "Validation Error"]

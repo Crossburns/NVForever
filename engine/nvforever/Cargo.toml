@@ -40,6 +40,8 @@ half = "2"
 # GPU memory budget (memory_budget.rs): VK_EXT_memory_budget through wgpu's Vulkan device
 # (`Device::as_hal`); the versions Bevy already uses (MIT/Apache-2.0).
 wgpu = { version = "30", default-features = false, features = ["vulkan"] }
+# MIT FSR 3.1.4 source port, pinned and vendored with shaders/build sources/notices.
+wgpu-ffx = { path = "../vendor/wgpu-ffx/wgpu-ffx" }
 ash = { version = "0.38", default-features = false }
 # Only with the `tracy` feature: the Tracy client Bevy's trace_tracy uses, the version Bevy
 # already pins, made to record only while a viewer is connected (`ondemand`: no data piles

@@ -19,7 +19,8 @@ engine if needed, and delete the item here.
 - **Unattended, from the saves we have** (a session can run them): 1, 2, the rest of 3,
   5 (weapon health around scripted shots), 6 (nvftest, Sunny), the rest of 8, 11 (72 h at a raised
   TimeScale), 13, 15, 20, 21, 22 (dialogue events), the rest of 33, 35, 36, 52, 53, and
-  #1076 (melee reach; measured 2026-11-01, o14_reach: combat-rules §8).
+  #1076 (melee reach; measured 2026-11-01, o14_reach: combat-rules §10; built in #1334),
+  92.
 - **A save from the owner** (quest or character state no save has yet):
   - Hardcore on: done (nvfHardcore).
   - Boone, Rex and ED-E hired (19, 22's complaints, 18's wheel): Boone done (nvfBoone).
@@ -627,7 +628,11 @@ The numbers above stay put so links to them hold; each item here gives its own p
     High-Roller Suite", whose fixed speaker is the entrance Victor (Lucky38VictorEntrance)
     [observed]; later talks to him open with his usual elevator greeting, as a Say
     Once line should. Ours does the same (dialogue.rs `can_say_as`). Still open: lines with a
-    fixed speaker and no GetIsID condition (the Dead Money end slides, #965). The
+    fixed speaker and no GetIsID condition (the Dead Money intro and end slides, #965);
+    ours lets a script's Say/SayTo say them when no line of the topic passes the check
+    (dialogue.md §4, [hypothesis]); finishing Dead Money (and starting it, IntroSlide02)
+    and seeing whether Elijah's and Vera's narration plays, and in whose voice, would
+    settle it. The
     Boomers' end slide (VEndingBoomers, ANAM NellisPete, GetIsID Narrator) plays in the
     child Pete's voice, not the narrator's (owner, nvfSlides) [observed]; ours says it
     as the narrator with the fixed speaker's file (voice.rs), which matches. Also: the penthouse elevator can only be
@@ -1340,3 +1345,11 @@ The numbers above stay put so links to them hold; each item here gives its own p
     and the counter follow? (b) what does Reset restore with traits taken? (c) `_TextAlpha` and
     `_enabled` on a trait that cannot be taken. (d) a real wheel over the list. (e) the
     description scrolled to value 8. (f) why did the capture's list lack two traits?
+92. **The player's melee reach, and the deathclaw's.** (P2; combat-rules.md §10,
+    npc-behaviour-compare.md §3.) Ours now reaches `fCombatDistance` 107 × Reach from the
+    player's body (fitted to the NPCs' swings), so long weapons reach less than before (a
+    lead pipe 156 units from the eye, was 188). In `nvfairport`, a standing settler: the
+    farthest centre-to-centre distance at which the player's knife, sledgehammer and lead
+    pipe swings still land (GetHealthPercentage or OnHit per swing, the player backing off
+    5 units a swing). And a deathclaw (VCrTier4DeathClawMed) on the standing god-mode
+    player again: o12_reach had one start at 88 units, far nearer than its RNAM 192 gives.

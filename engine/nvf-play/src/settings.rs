@@ -252,10 +252,12 @@ impl Setting {
     }
 }
 
+type DisabledStatus = fn(&World) -> Option<&'static str>;
+
 /// The switches in the order the page lists them: by group, each group in the order its
 /// switches were added.
 #[derive(Resource, Default)]
-pub struct Settings(Vec<Setting>, Vec<(&'static str, ChoiceList)>);
+pub struct Settings(Vec<Setting>, Vec<(&'static str, ChoiceList)>, Vec<(&'static str, DisabledStatus)>);
 
 impl Settings {
     /// Add a switch, after the last one of its group. A key added twice is kept once.
@@ -282,6 +284,13 @@ impl Settings {
         self.1.iter().find(|(k, _)| *k == key).map(|(_, c)| *c)
     }
 
+    /// A disabled row's explanation, shown instead of its saved value. The saved
+    /// value is kept intact and is still read/written by the settings file.
+    pub fn disabled_status(&self, world: &World, i: usize) -> Option<&'static str> {
+        let key = self.0.get(i)?.key;
+        (self.2.iter().find(|(k, _)| *k == key)?.1)(world)
+    }
+
     /// Every row's state as a number: [`Setting::value`], a list's chosen index (-1: not
     /// listed).
     pub fn values(&self, world: &World) -> Vec<f32> {
@@ -305,6 +314,15 @@ pub fn add_setting(app: &mut App, s: Setting) {
     app.world_mut().resource_mut::<Settings>().add(s);
 }
 
+/// Disable a row while `status` returns an explanation. Inputs cannot change its
+/// saved value during that time; returning `None` makes it editable again.
+pub fn set_disabled_status(app: &mut App, key: &'static str, status: fn(&World) -> Option<&'static str>) {
+    app.init_resource::<Settings>();
+    let mut settings = app.world_mut().resource_mut::<Settings>();
+    settings.2.retain(|(k, _)| *k != key);
+    settings.2.push((key, status));
+}
+
 /// Register a row of named choices (a dropdown) with its [`Setting`] (`slider` `None`).
 pub fn add_choice_list(app: &mut App, s: Setting, list: ChoiceList) {
     app.init_resource::<Settings>();
@@ -319,7 +337,11 @@ pub fn add_choice_list(app: &mut App, s: Setting, list: ChoiceList) {
 /// (not a list, not one of its choices, or chosen already). A list that asks to be kept
 /// waits for it ([`keep`]).
 pub fn pick(world: &mut World, i: usize, name: &str) -> bool {
-    let Some(c) = world.get_resource::<Settings>().and_then(|s| s.choices(i)) else { return false };
+    let Some(settings) = world.get_resource::<Settings>() else { return false };
+    if settings.disabled_status(world, i).is_some() {
+        return false;
+    }
+    let Some(c) = settings.choices(i) else { return false };
     if (c.chosen)(world) == name {
         return false;
     }
@@ -384,7 +406,7 @@ fn revert_unkept(world: &mut World) {
 pub fn flip(world: &mut World, i: usize) -> Option<bool> {
     let settings = world.get_resource::<Settings>()?;
     let s = *settings.list().get(i)?;
-    if s.slider.is_some() || settings.choices(i).is_some() {
+    if s.slider.is_some() || settings.choices(i).is_some() || settings.disabled_status(world, i).is_some() {
         return None;
     }
     let on = !(s.get)(world);
@@ -405,7 +427,11 @@ pub fn step_slider(world: &mut World, i: usize, steps: i32) -> Option<f32> {
 /// Set slider `i` to `v` (fitted to its range and steps) and keep every row in the INI;
 /// the new value. Nothing is written when the value stays.
 pub fn set_slider(world: &mut World, i: usize, v: f32) -> Option<f32> {
-    let s = *world.get_resource::<Settings>()?.list().get(i)?;
+    let settings = world.get_resource::<Settings>()?;
+    if settings.disabled_status(world, i).is_some() {
+        return None;
+    }
+    let s = *settings.list().get(i)?;
     let slider = s.slider?;
     let v = slider.fit(v);
     if (slider.get)(world) != v {
@@ -421,6 +447,9 @@ pub fn set_slider(world: &mut World, i: usize, v: f32) -> Option<f32> {
 /// list's choice of that index.
 pub fn restore(world: &mut World, i: usize, v: f32) {
     let Some(settings) = world.get_resource::<Settings>() else { return };
+    if settings.disabled_status(world, i).is_some() {
+        return;
+    }
     let Some(s) = settings.list().get(i).copied() else { return };
     if settings.value(world, i) == v && settings.choices(i).is_none() {
         return;
@@ -656,6 +685,29 @@ mod tests {
 
     fn slider(key: &'static str) -> Setting {
         Setting::slider(key, "Test", key, "", Slider { get: |w| w.resource::<Reach>().0, set: |w, v| w.resource_mut::<Reach>().0 = v, min: 0.1, step: 0.05, shown: None })
+    }
+
+    #[test]
+    fn disabled_rows_block_edits_but_keep_values_for_saving_and_loading() {
+        let mut app = App::new();
+        app.init_resource::<Lamp>().insert_resource(Reach(0.5)).insert_resource(Size("1280x800".into()));
+        add_setting(&mut app, setting("lamp", "Test"));
+        add_setting(&mut app, slider("reach"));
+        add_choice_list(&mut app, setting("size", "Test"), sizes());
+        for key in ["lamp", "reach", "size"] {
+            set_disabled_status(&mut app, key, |_| Some("Controlled by another setting"));
+        }
+        let world = app.world_mut();
+        assert_eq!(flip(world, 0), None);
+        assert_eq!(set_slider(world, 1, 0.8), None);
+        assert!(!pick(world, 2, "1920x1080"));
+        restore(world, 1, 0.8);
+        assert_eq!(world.resource::<Settings>().values(world), [0.0, 0.5, 1.0]);
+        let slider = world.resource::<Settings>().list()[1];
+        assert_eq!(slider.stored_text(slider.value(world)), "0.50");
+        // Loading a saved native preference is independent of whether its UI is editable.
+        slider.put(world, 0.7);
+        assert_eq!(world.resource::<Reach>().0, 0.7);
     }
 
     #[test]

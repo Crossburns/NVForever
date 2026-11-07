@@ -327,7 +327,8 @@ fn view_width(window: &Window) -> f32 {
 
 /// The pointer's place in the interface's units.
 fn pointer(window: &Window) -> Option<Vec2> {
-    let p = window.cursor_position()?;
+    // Where the pointer is on the menu as drawn at the UI scale (#1631).
+    let p = crate::interface::from_menu_frame(window.cursor_position()?, Vec2::new(window.width(), window.height()), crate::interface::MIDDLE);
     let k = 960.0 / window.height().max(1.0);
     Some(p * k)
 }
@@ -802,7 +803,8 @@ fn draw(
     let kit = st.kit.get_or_insert_with(|| view::Kit::load(data.as_deref(), &mut images, bc));
     let root = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     let mut hits = Vec::new();
-    commands.spawn((root, GlobalZIndex(30), CreatorRoot)).with_children(|r| hits = view::spawn(r, m, kit, view_w));
+    // At the UI scale the menu keeps to the view's middle (#1631).
+    commands.spawn((crate::interface::framed_root(root, crate::interface::MIDDLE), GlobalZIndex(30), CreatorRoot)).with_children(|r| hits = view::spawn(r, m, kit, view_w));
     st.hits = hits;
 }
 

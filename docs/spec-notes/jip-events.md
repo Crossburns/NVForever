@@ -113,3 +113,22 @@ Still open:
 - More events by lambda, each with a harmless trigger inside the session: quest stage
   (SetStage with skipScript), use aid item (a stimpak added and used), fire and reload
   (an NPC's AI makes these slow to trigger by script).
+
+## 5. Where NVForever fires them
+
+Registration is one rule for every `SetOn…EventHandler` (`fnv_script::vm::jip`); an event
+runs only where the game fires it (`Game::jip_event`):
+
+| Event | Fired | Since |
+|---|---|---|
+| hit, healthdamage, crippledlimb | the hit and its damage (`combat.rs`); DamageAV for health damage | J6 |
+| useaiditem | an actor consumes an ingestible (`aid.rs`) | J6 |
+| noteadded, queststage, mouseoverchange, menuclick | the note, SetStage, the menus' tiles | J6, T8 |
+| projectileimpact | a shot in flight hits anything, terrain included: `Game::projectile_impact`, on the shot's temporary reference; the filter is matched against its PROJ base | #1408 |
+| menuopen, menuclose | `Game::open_menu`, `Game::close_menu`, the menu under the tutorial menu closing, and a Pip-Boy page left for another [hypothesis: each page is a menu of its own code]. The dialogue menu (1009) is not reported | #1408 |
+| keydown, keyup | each frame, the keys and mouse buttons (256 + n) held by the player that changed since the last (`Game::jip_keys`), disabled keys included [documented] | #1408 |
+| crafting | the recipe menu made an item: once per output, with all of it (`Game::item_crafted`) [hypothesis: the page does not say how a recipe made several times is reported] | #1408 |
+| locationdiscover | the engine found a map marker, with the marker reference (`Game::challenge_marker_found`) | #1408 |
+
+Not fired yet: criticalhit, fireweapon, reloadweapon, ragdoll, animaction, playgroup,
+dialogtopic, fasttravel, pctargetchange, controldown/up, triggerdown/up.

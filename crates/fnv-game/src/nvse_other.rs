@@ -65,6 +65,8 @@ pub struct OtherState {
     pub cell_zones: HashMap<FormId, Option<FormId>>,
     /// LandTextureAddGrass's and LandTextureRemoveGrass's grass lists (`nvse_jip5`).
     pub ltex_grasses: HashMap<FormId, Vec<FormId>>,
+    /// Lutana batch 1's record changes (`nvse_lutana`).
+    pub lutana: crate::nvse_lutana::LutanaState,
     /// SetCasinoChip's chips, by casino (`nvse_jg3`, read through `crate::casino::chip`).
     pub casino_chips: HashMap<FormId, FormId>,
     /// The Set…TerminalMenuItem… changes, by terminal and item (`nvse_jg3`, read through
