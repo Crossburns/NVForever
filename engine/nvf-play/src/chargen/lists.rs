@@ -245,6 +245,11 @@ impl ListMenu {
         self.trait_sheet()?.traits.iter().position(|&t| t == key)
     }
 
+    /// [design] A skill row still on the tag sheet; attribute and trait sheets have none.
+    pub fn tag_row(&self, key: u16) -> Option<usize> {
+        match &self.sheet { Sheet::Tags { now, .. } => now.skills.iter().position(|&s| s == key), _ => None }
+    }
+
     /// Choose row `i` (pointer or keys), scrolling it into the list.
     pub fn select(&mut self, i: usize) {
         if i >= self.rows() {
