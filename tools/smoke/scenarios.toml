@@ -7798,7 +7798,7 @@ args = ["--cell", "Goodsprings", "--pos=37000,-117160,6180", "--play", "--hour",
 run_seconds = 13
 expect = [
   { re = 'combat: projectile GrenadeFragProjectile left .*first touched .* after (?P<n>[\d.]+) s', range = [0.5, 0.7], label = "it lands after about as long as the original's (0.58 s)" },
-  { re = 'combat: projectile GrenadeFragProjectile went off after 2\.\d+ s .*, (?P<n>\d+) units across the ground from where it left, after rolling', range = [1000, 100000], label = "it rolls on and goes off on its fuse (ours throws at the PROJ's 1,200 units/s, the original's about 1,030: the distance is not the original's 1,206, issue #1785)" },
+  { re = 'combat: projectile GrenadeFragProjectile went off after 2\.\d+ s .*, (?P<n>\d+) units across the ground from where it left, after rolling', range = [1000, 100000], label = "it rolls on and goes off on its fuse (ours throws at the PROJ's 1,200 units/s, the original's about 950: the distance is not the original's 1,206, issue #1785)" },
 ]
 
 [[scenario]]
