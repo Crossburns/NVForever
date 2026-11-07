@@ -1403,6 +1403,22 @@ to the decoded file by cross-correlation and a per-band transfer estimate.
     line the observer can make an NPC say with a known file (`SayTo player <topic>` with
     a topic whose line has conditions only on the speaker).
 
+## Added 2026-11-06 (exploding pants, issue #1640)
+
+98. **A planted explosive: who dies, who panics, who sees.** (P3; pickpocket.md §5.)
+    Reverse-pickpocket while sneaking and unseen, each in its own run from a fresh load: (a)
+    a Pulse Grenade on an ordinary NPC (a Goodsprings settler): does it die? Note its
+    Health before and after; NVForever keeps it alive [hypothesis]. (b) The same on a
+    robot (a Protectron or Mister Handy): does it die? (c) A Frag Grenade on a child (Freeside
+    or Westside) and on an essential NPC (Sunny Smiles before Back in the Saddle, or Doc
+    Mitchell): does it go live (GetPlantedExplosive 1 after 0.1 s) and go off? Is it still
+    in their inventory afterwards? NVForever: neither goes live. (d) During the panic,
+    stand within 2 m in view with Sneak low: does the victim detect the player
+    (`GetDetected` on it, then hostility after the blast)? (e) The panic on a creature that
+    can be pickpocketed (a giant rat): does it play anything, does it stop, or does it go
+    on walking? (f) Seen by a third NPC halfway through the fuse, then hidden at the blast:
+    does that NPC turn hostile? NVForever counts it as a witness.
+
 ## Added 2026-11-06 (the power fist's hand, issue #1586)
 
 99. **The power fist's hand on Veronica: what is left open.** (P3; actors.md §9.2.) Capture
