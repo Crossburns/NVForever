@@ -2631,7 +2631,7 @@ run_seconds = 28
 expect = [
   { re = 'tiles: BarterMenu drawn from tiles: .*balance [1-9]\d*; offered true; affordable false', label = "the sale is beyond the merchant's caps, and dims" },
   { text = "tiles: BarterMenu Accept on its tiles", count = 1, label = "Accept once" },
-  "ui sounds: barter trade made:",
+  { text = "ui sounds: barter trade made: UIMenuOK", label = "no caps moved, so no caps sound" },
   { re = 'tiles: BarterMenu drawn from tiles: .*balance 0; offered false', label = "the trade went through" },
 ]
 forbid = ["doesn't have enough caps"]

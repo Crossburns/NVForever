@@ -422,12 +422,12 @@ pub struct MenuBefore {
     selected: [usize; 2],
     category: [Category; 2],
     row: Option<Row>,
-    balance: Option<i64>,
+    paid: Option<i64>,
 }
 
 impl MenuBefore {
     pub fn of(m: &MenuModel) -> MenuBefore {
-        MenuBefore { focus: m.focus, selected: m.selected, category: m.category, row: m.selected_row(m.focus).cloned(), balance: m.trade.as_ref().map(|t| t.balance) }
+        MenuBefore { focus: m.focus, selected: m.selected, category: m.category, row: m.selected_row(m.focus).cloned(), paid: m.trade.as_ref().map(|t| t.paid()) }
     }
 }
 
@@ -445,7 +445,7 @@ pub fn menu_event(cmd: Command, before: &MenuBefore, after: &MenuModel, a: &Appl
         // Ok on "How many?": what asked is done now (a drop sounds when it lands).
         Command::AmountOk if !matches!(after.mode, Mode::Inventory) => act(after, before, a),
         Command::TakeAll if matches!(after.mode, Mode::Container(_)) => Some(if a.changed { UiEvent::TakeAll } else { UiEvent::Refused }),
-        Command::Accept if matches!(after.mode, Mode::Barter(_)) => Some(if a.changed { UiEvent::Traded { caps: before.balance.unwrap_or(0) } } else { UiEvent::Refused }),
+        Command::Accept if matches!(after.mode, Mode::Barter(_)) => Some(if a.changed { UiEvent::Traded { caps: before.paid.unwrap_or(0) } } else { UiEvent::Refused }),
         _ => None,
     }
 }
