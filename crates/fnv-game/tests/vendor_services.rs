@@ -5,7 +5,7 @@
 use fnv_esm::raw::{write_subrecords, Subrecord};
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::functions::Ctx;
-use fnv_game::game::{Game, GameConfig};
+use fnv_game::game::{Game, GameConfig, RunCtx};
 use fnv_game::package::flags;
 use fnv_game::services;
 use fnv_game::GameData;
@@ -247,4 +247,18 @@ fn get_offers_services_now_follows_the_package() {
     // The trader's only package has no flag; the player never offers.
     assert_eq!(offers(&mut g, R_TRADER), 0.0);
     assert_eq!(offers(&mut g, 0x14), 0.0);
+}
+
+#[test]
+fn set_service_flag_changes_the_ai_data_not_the_autocalc_class() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.run_query("Begin Function { }
+SetServiceFlag Trader 131072 1
+SetServiceFlag Barkeep 131072 1
+End
+", RunCtx::default()).unwrap();
+    assert_eq!(g.services(FormId(R_TRADER)), services::WEAPONS | services::MISC, "Autocalc Service keeps the class's");
+    assert!(g.sells(FormId(R_TRADER), FormId(PISTOL)));
+    assert_eq!(g.services(FormId(R_BARKEEP)), services::ALCOHOL | services::FOOD | services::REPAIR, "the AI data's gain the flag");
 }

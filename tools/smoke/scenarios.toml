@@ -651,10 +651,46 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hou
 run_seconds = 16
 expect = [
   { re = 'settings: .* read from .*ui-scale 75%', label = "the INI's 75% is read at the start" },
-  { text = "interface: UI scale 75% (the HUD drawn at 75% of the original's size)", label = "the run's HUD is drawn at 75%" },
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run's HUD is drawn at 75%" },
   { re = 'compass: heading at x ', label = "the HUD is drawn" },
 ]
 manual = "ui_scale_75.png: the HUD three quarters of its 100% size, the health and compass corner at the bottom left, the action points at the bottom right, the sneak word and other top pieces at the top; the text readable"
+
+[[scenario]]
+name = "ui-scale-menus"
+source = "issue #1631: at the UI scale ui-scale-write kept (75%) the menus are drawn three quarters of their size, in the middle of the view, and a real pointer press lands on what is drawn: the wait-pointer-press presses moved to where the 75% wait menu draws the slider and Accept still choose about 18 hours"
+note = "Runs after ui-scale-write and ui-scale-read in their home. The points are wait-pointer-press's, moved toward the middle of the 1280 x 720 view: 0.5 + (p - 0.5) x 0.75 (the slider 0.584:0.47 to 0.563:0.4775, Accept 0.677:0.576 to 0.63275:0.557); at 100% they would miss the slider's 72%"
+areas = ["menus", "settings", "wait"]
+paths = [
+  "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/wait.rs", "engine/nvf-play/src/ui_pointer.rs",
+  "engine/nvf-play/src/main_menu.rs", "engine/nvf-play/src/start_menu.rs",
+]
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page", NVF_PLAY_TEST_SHOTS = "12.5:ui_scale_75_settings.png,17:ui_scale_75_wait.png", NVF_PLAY_TEST_WAIT = "16:open,17.5:point=0.563:0.4775,18:press,18.5:release,19:point=0.63275:0.557,19.5:press,20.5:release" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 24
+expect = [
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run draws the menus at 75%" },
+  "pause menu: open",
+  "wait menu: open",
+  { re = 'wait menu: waiting (?P<n>\d+) hour', range = [17, 19], label = "the press on the 75% slider's drawn 72% chose about 18 hours, and the press on the drawn Accept took it" },
+]
+manual = "ui_scale_75_settings.png: the pause menu's settings page three quarters of its 100% size (pause_settings pictures of other runs), centred: the categories, the rows and the band behind them, the column and Back and Defaults moved toward the middle, the sheet and the screen picture still over the whole view. ui_scale_75_wait.png: the wait menu's box three quarters of its size, in the middle"
+
+[[scenario]]
+name = "ui-scale-tile-menus"
+source = "issue #1631: at 75% a tile-drawn menu ([UI] TileMenus=SleepWaitMenu) is drawn three quarters of its size in the middle of the view and a real pointer press on its drawn slider page area is read as one on its tiles (tiles/input.rs to_menu_units), as tiles-sleep-wait's aid press at 1100:457 units is"
+note = "Runs after ui-scale-write in its home. 1100:457 units is 825:342.75 pixels of the 1280 x 720 view at 100%; at 75% in the middle that is 778.75:347.06, the window's 0.6084:0.4821"
+areas = ["menus", "tiles", "wait"]
+paths = ["engine/nvf-play/src/interface.rs", "engine/nvf-play/src/tiles/draw.rs", "engine/nvf-play/src/tiles/input.rs", "engine/nvf-play/src/tiles/wait_menu.rs"]
+env = { NVFOREVER_HOME = "ui-scale-home", NVF_PLAY_TEST_TILE_MENUS = "SleepWaitMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_WAIT = "10:open,11:point=0.6084:0.4821,11.5:press,12:release", NVF_PLAY_TEST_SHOTS = "13:ui_scale_75_tiles_wait.png" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 16
+expect = [
+  { text = "interface: UI scale 75% (the HUD drawn at 75%, the menus at 75% of the original's size)", label = "the run draws the menus at 75%" },
+  { re = 'tiles: SleepWaitMenu drawn from tiles \(\d+ file tiles, 0 code tiles\)', label = "the menu's tree draws" },
+  { text = "tiles: SleepWaitMenu Step(6) on its tiles", count = 1, label = "the real press on the drawn page area pages the slider" },
+]
+manual = "ui_scale_75_tiles_wait.png: the tile-drawn wait menu three quarters of the size of tiles_sleep_wait.png, in the middle of the view, the slider at 7 hours"
 
 [[scenario]]
 name = "draw-distance-sliders"
@@ -3417,15 +3453,16 @@ expect = [
 
 [[scenario]]
 name = "creature-sounds-aware"
-source = "playtest list 7 item 46 (docs/spec-notes/audio.md §14.1): a creature that becomes aware plays its Aware sound"
-note = "three radscorpions (CrRadscorpion1Small 0x0001CF9D; its AudioTemplateRadScorpion lists Aware at a 75 % chance (CSDC 75), no clip has an Aware key) placed at the player in Goodsprings at 3, 6 and 9 s, each its own roll; god mode; they notice the player and fight"
+source = "issue #989 (docs/spec-notes/audio.md §16.1): a creature that becomes aware plays no Aware sound unless a clip key names it; the original's radscorpions and lakelurk kings played none (observer batch o28). Until then (playtest list 7 item 46) it was played on becoming aware"
+note = "three radscorpions (CrRadscorpion1Small 0x0001CF9D; its AudioTemplateRadScorpion lists Aware at a 75 % chance (CSDC 75), no clip has an Aware key) placed at the player in Goodsprings at 3, 6 and 9 s; god mode; they notice the player and fight without an Aware sound"
 areas = ["creature-sounds", "audio"]
 paths = ["engine/nvforever/src/anim_sounds.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:CrRadscorpion1Small:1,6:call:player:PlaceAtMe:CrRadscorpion1Small:1,9:call:player:PlaceAtMe:CrRadscorpion1Small:1" }
 args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 20
 expect = [
-  { re = 'anim sounds summary:.*creatures: \d+ sounds \([^)]*\bAware [1-9]', label = "its Aware sound on noticing the player" },
+  { re = 'anim sounds summary:.*creatures: [1-9]\d* sounds', label = "the radscorpions sound their keys" },
+  { re = 'anim sounds summary:.*creatures: \d+ sounds \([^)]*\bAware [1-9]', count = 0, label = "no Aware sound on noticing the player" },
 ]
 
 [[scenario]]
@@ -4594,6 +4631,36 @@ expect = [
   { re = 'particles: 0008D36C \S*repbay\.nif emits as its Right says: 56 of 56 systems', label = "and then Right" },
   { re = 'particles: born in \S*repbay\.nif: .*\bPFire01 (?P<n>\d+)', range = [300, 1200], label = "PFire01 burns for Right's 0.5 s only (about 600), not all the time" },
 ]
+
+[[scenario]]
+name = "tops-13th-floor-hallway"
+source = "docs/spec-notes/world.md §8 \"Interior XCLW is not water\" (issues #1546, #1078; owner 2026-11-04/06: a circle of darkness round the player on the Tops' 13th floor and in the presidential suite): 2ETopsBennysFloor stores XCLW 14,095.9 above all its references, which the under-water fog read as a surface over the camera; the long hallway from its east end looking west, one frame in target/smoke (tops_13th_hall.png)"
+areas = ["rendering", "water"]
+paths = ["engine/nvforever/src/underwater.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:tops_13th_hall.png" }
+args = ["--play", "--cell", "2ETopsBennysFloor", "--pos=3300,2375,7240", "--heading", "270", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "tops_13th_hall.png: the hallway lit by its sconces to its far end (about 3,800 units), walls, carpet and ceiling readable all the way, no black past the nearest lamps"
+expect = [
+  { text = "interior lighting: fog 512..6000 power 1.00", label = "the 13th floor's own fog (XCLL), not the water's" },
+  { re = 'test aid: screenshot .*tops_13th_hall\.png', label = "the hallway frame is saved" },
+]
+forbid = [{ text = "underwater: the camera is under water", label = "the cell's XCLW taken for water over the camera" }]
+
+[[scenario]]
+name = "tops-suite-light"
+source = "docs/spec-notes/world.md §8 \"Interior XCLW is not water\" (issue #1078): 2ETopsPresidentialSuite, XCLW 14,095.9 above all its references; from the lift door (1990, 1216, 8040) looking east at 21:00, as the original's frame tops_suite_door_east (2026-11-06, private)"
+areas = ["rendering", "water"]
+paths = ["engine/nvforever/src/underwater.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:tops_suite_east.png" }
+args = ["--play", "--cell", "2ETopsPresidentialSuite", "--pos=1990,1216,8040", "--heading", "90", "--hour", "21", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "tops_suite_east.png against the original's tops_suite_door_east frame: bar, pillars, the far wall's bands and posters, the sofa and rug all readable; a little darker than the original is fine (interior brightness, owner 2026-10-27)"
+expect = [
+  { text = "interior lighting: fog 64..6500 power 0.80", label = "the suite's fog (template near/far, own power)" },
+  { re = 'test aid: screenshot .*tops_suite_east\.png', label = "the suite frame is saved" },
+]
+forbid = [{ text = "underwater: the camera is under water", label = "the cell's XCLW taken for water over the camera" }]
 
 [[scenario]]
 name = "smoke-blend-bison-steve"
@@ -11173,6 +11240,20 @@ expect = [
   { re = 'dialogue look: the view turns to', label = "the view turns to the intercom, not to Ramos" },
   { re = 'dialogue zoom: no zoom in the conversation with .*talking activator', count = 1, label = "no close-up through an activator, said once" },
   { re = 'dialogue zoom: in on', count = 0, label = "and the view does not narrow" },
+]
+
+[[scenario]]
+name = "intercom-voice-unfiltered"
+source = "issue #992 (docs/spec-notes/audio.md §15.5): the original plays a line said through a talking activator as its file, without a voice filter (observer batch o28, Benny through the Tops' security intercom)"
+note = "VMQTops at stage 20, then VTopsPresidentialIntercomREF (0x00129556) activated: its OnActivate (SCPT 0x0012954B) sets Benny as its talking actor and activates itself while VMQTops 20 is done, objective 30 not shown and Benny is out of the suite (in a new game the script only says there is no response); Benny's GREETING through the intercom (0x00147865) needs only IsActorTalkingThroughActivator 1 and GetIsID Benny and has voice files"
+areas = ["dialogue", "audio"]
+paths = ["engine/nvf-play/src/voice_filter.rs", "engine/nvf-play/src/voice.rs", "crates/fnv-sim/src/forms.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "8", NVF_PLAY_TEST_SCRIPT = "5:stage:VMQTops:20,12:activate:VTopsPresidentialIntercomREF" }
+args = ["--cell", "2ETopsPresidentialSuite", "--play", "--pos=1990,1216,8040", "--heading", "0", "--hour", "20", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = 'voice: playing \S+\.ogg \([\d.]+ s\) .*line \S*00147865', label = "Benny's intercom line plays from its file" },
+  { re = 'voice: playing .* through the voice filter', count = 0, label = "and not through the voice filter" },
 ]
 
 [[scenario]]

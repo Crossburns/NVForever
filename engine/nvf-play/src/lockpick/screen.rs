@@ -181,6 +181,8 @@ pub fn in_detect_area(p: Vec2, size: Vec2) -> bool {
     if size.y <= 0.0 {
         return false;
     }
+    // The area is the interface's: where it is drawn at the UI scale (#1631).
+    let p = crate::interface::from_menu_frame(p, size, crate::interface::MIDDLE);
     let k = 960.0 / size.y;
     let (x, y, view_w) = (p.x * k, p.y * k, size.x * k);
     let left = EDGE + DETECT_X;
@@ -308,7 +310,9 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&LockVi
             root.insert(BackgroundColor(Color::srgba(0.0, 0.0, 0.0, SHADE)));
         }
     }
-    root.with_children(|r| {
+    // The rectangle and the help at the UI scale, in the middle of the view
+    // (`crate::interface::menu_frame`, #1631); the lock's picture fills the view.
+    root.with_children(|r| crate::interface::in_menu_frame(r, crate::interface::MIDDLE, |r| {
         // The main rectangle.
         let main = Node { position_type: PositionType::Absolute, left: u(EDGE), right: u(EDGE), top: u(EDGE), bottom: u(EDGE), ..default() };
         r.spawn(main).with_children(|m| {
@@ -362,7 +366,7 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&LockVi
         if let Some(h) = &s.help {
             super::help::spawn(r, c, h, view_w);
         }
-    });
+    }));
 }
 
 /// What the debug displays show, rounded so they are not drawn again every frame.
@@ -407,7 +411,7 @@ pub fn draw_debug(
         Node { position_type: PositionType::Absolute, left: pct(a), width: pct(b - a), top: u(0.0), height: u(METER_H), ..default() }
     };
     let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
-    commands.spawn((LockpickDebugRoot, full, GlobalZIndex(107))).with_children(|r| {
+    commands.spawn((LockpickDebugRoot, crate::interface::framed_root(full, crate::interface::MIDDLE), GlobalZIndex(107))).with_children(|r| {
         let main = Node { position_type: PositionType::Absolute, left: u(EDGE), right: u(EDGE), top: u(EDGE), bottom: u(EDGE), ..default() };
         r.spawn(main).with_children(|m| {
             let meter = Node { position_type: PositionType::Absolute, left: u(0.0), right: u(0.0), top: u(METER_Y), height: u(METER_H), ..default() };

@@ -134,7 +134,8 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Blackj
             root.insert(BackgroundColor(Color::srgba(0.0, 0.0, 0.0, SHADE_WITHOUT_VIEW)));
         }
     }
-    root.with_children(|r| {
+    // The menu at the UI scale, in the middle of the view (`crate::interface::menu_frame`, #1631).
+    root.with_children(|r| crate::interface::in_menu_frame(r, crate::interface::MIDDLE, |r| {
         let main = Node { position_type: PositionType::Absolute, left: u(EDGE), right: u(EDGE), top: u(EDGE), bottom: u(EDGE), ..default() };
         r.spawn(main).with_children(|m| {
             // The information box.
@@ -173,7 +174,7 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Blackj
         if let Some(h) = &s.help {
             crate::lockpick::help::spawn(r, c, h, view_w);
         }
-    });
+    }));
 }
 
 type Faded = (Option<&'static mut ImageNode>, Option<&'static mut BackgroundColor>, Option<&'static mut TextColor>, Option<&'static DrawnAlpha>);

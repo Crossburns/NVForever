@@ -23,6 +23,22 @@ pub struct ShowOffState {
     /// SetOnAuxTimerStopHandler's handlers: (the function, the timer's name lower case,
     /// its owner).
     pub timer_stops: Vec<(XVal, String, FormId)>,
+    /// SetOnAuxTimerStartHandler's and SetOnAuxTimerUpdateHandler's handlers, as
+    /// `timer_stops` (`nvse_showoff3`).
+    pub timer_starts: Vec<(XVal, String, FormId)>,
+    pub timer_updates: Vec<(XVal, String, FormId)>,
+    /// Each running aux timer's countdown and flags as AuxTimerStart gave them, by owner
+    /// and name lower case (AuxTimerTimeToCountdown; the update flag 256).
+    pub countdowns: std::collections::HashMap<(FormId, String), (f64, u32)>,
+    /// The game time of the last aux timer update (`Game::aux_timer_updates`).
+    pub last_update: Option<f64>,
+    /// The seeded randomizer's seeds, by the calling plugin lower case.
+    pub seeds: std::collections::HashMap<String, crate::nvse_showoff3::Seeded>,
+    /// SetAllyTemp's and SetEnemyTemp's reactions: (faction, other) to 0 neutral, 1 enemy,
+    /// 2 ally, 3 friend (`functions::actor::reaction`).
+    pub temp_reactions: std::collections::HashMap<(FormId, FormId), i64>,
+    /// SetRadiationExtraData's levels, by reference (`Game::tick_radiation`).
+    pub radiation: std::collections::HashMap<FormId, f32>,
 }
 
 fn num(args: &[XVal], k: usize, dflt: f64) -> f64 {

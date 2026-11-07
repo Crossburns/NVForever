@@ -398,6 +398,8 @@ fn on_tab_out(out: On<PointerOut>, nodes: Query<&Clickable>, mut pip: ResMut<Pip
 
 /// Show the hover box of the tab under the pointer (none while the Pip-Boy is down).
 pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut Visibility)>) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     // A page drawn from its tiles has no hand-built tabs for this to be left over from.
     if (!pip.open() || boxes.is_empty()) && pip.hover_tab.is_some() {
         pip.hover_tab = None;
@@ -428,6 +430,8 @@ pub fn draw(
     tiles: Option<Res<crate::tiles::stats_menu::StatsTiles>>,
     mut shown: Local<Option<(Page, usize, Frame, bool)>>,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     let Some(screen) = screen else { return };
     let tiled = tiles.is_some_and(|t| t.ready.is_some());
     let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame, tiled));

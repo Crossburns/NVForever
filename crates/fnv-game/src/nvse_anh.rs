@@ -24,25 +24,29 @@ fn num(args: &[XVal], k: usize) -> f64 {
 }
 
 impl Game<'_> {
-    /// An encounter zone's record (ECZN DATA) with SetZoneMinLevel's and SetZoneOwner's
-    /// changes.
-    fn zone(&self, z: FormId) -> Option<fnv_sim::forms::ZoneDef> {
+    /// An encounter zone's record (ECZN DATA) with SetZoneMinLevel's, SetZoneOwner's and
+    /// SetZoneFlag's (`nvse_lutana`) changes.
+    pub(crate) fn zone(&self, z: FormId) -> Option<fnv_sim::forms::ZoneDef> {
         let mut d = *self.world.forms.zones.get(&z)?;
         if let Some(c) = self.other.zone_changes.get(&z) {
             d.min_level = c.min_level.unwrap_or(d.min_level);
             if let Some(o) = c.owner {
                 d.owner = (o.0 != 0).then_some(o);
             }
+            d.never_resets = c.never_resets.unwrap_or(d.never_resets);
+            d.match_pc_below_min = c.match_pc_below_min.unwrap_or(d.match_pc_below_min);
         }
         Some(d)
     }
 }
 
-/// SetZoneMinLevel's and SetZoneOwner's changes to a zone.
+/// SetZoneMinLevel's, SetZoneOwner's and SetZoneFlag's (`nvse_lutana`) changes to a zone.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ZoneChange {
     pub min_level: Option<i8>,
     pub owner: Option<FormId>,
+    pub never_resets: Option<bool>,
+    pub match_pc_below_min: Option<bool>,
 }
 
 /// The functions of this file; `None` for any other name.
