@@ -31,6 +31,7 @@ use crate::crime::{Kind, Note, Ownership};
 use crate::functions::{actor, base_of};
 use crate::game::Game;
 use fnv_sim::FormId;
+use serde::{Deserialize, Serialize};
 
 /// The pickpocket settings, with the wiki's defaults (FalloutNV.esm sets all but the two
 /// bases and the bounds to these values [observed]).
@@ -109,7 +110,7 @@ pub enum Refusal {
 /// What the engine knows of a planted explosive's blast: its explosion's damage (EXPL
 /// Damage), the weapon's damage type (WEAP DNAM Resist, as an actor value code; `None`
 /// for None and Damage Resistance) and the explosion's object effect (EXPL EITM).
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Explosive {
     pub damage: f64,
     pub resist: Option<u16>,
@@ -117,7 +118,7 @@ pub struct Explosive {
 }
 
 /// A live explosive placed in an actor's inventory.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Planted {
     pub victim: FormId,
     pub item: FormId,

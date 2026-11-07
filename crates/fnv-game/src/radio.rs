@@ -162,7 +162,8 @@ impl Game<'_> {
     }
 
     /// The station starts saying `info`: Say Once remembers it and its begin result
-    /// script runs, with the station as the script's reference.
+    /// script runs, then its Run Immediately end result, with the station as the script's
+    /// reference (dialogue.md section 3.6 [design]).
     pub fn radio_line_begins(&mut self, station: FormId, info: FormId) {
         let data = self.data;
         let Some(def) = data.infos.get(&info) else { return };
@@ -171,14 +172,18 @@ impl Game<'_> {
         if let Some(u) = def.begin {
             self.run_result(u, RunCtx { self_ref: Some(station), action_ref: None, quest: def.quest });
         }
+        if let Some(u) = def.end.filter(|_| def.has(crate::data::info_flag::RUN_IMMEDIATELY)) {
+            self.run_result(u, RunCtx { self_ref: Some(station), action_ref: None, quest: def.quest });
+        }
     }
 
-    /// The station finished saying `info`: its end result script runs.
+    /// The station finished saying `info`: its end result runs unless Run Immediately
+    /// already ran it at the start (dialogue.md section 3.6 [design]).
     pub fn radio_line_ends(&mut self, station: FormId, info: FormId) {
         self.itr_radio_line(station, info, false);
         let data = self.data;
         let Some(def) = data.infos.get(&info) else { return };
-        if let Some(u) = def.end {
+        if let Some(u) = def.end.filter(|_| !def.has(crate::data::info_flag::RUN_IMMEDIATELY)) {
             self.run_result(u, RunCtx { self_ref: Some(station), action_ref: None, quest: def.quest });
         }
     }

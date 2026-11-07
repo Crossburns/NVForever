@@ -814,7 +814,11 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let plugins = vec![Plugin::parse(&plugin_bytes(), "Talk.esm".into()).unwrap()];
+    fixture_bytes(&plugin_bytes())
+}
+
+fn fixture_bytes(bytes: &[u8]) -> Fixture {
+    let plugins = vec![Plugin::parse(bytes, "Talk.esm".into()).unwrap()];
     let lo = LoadOrder::new(&plugins).unwrap();
     let schema = Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
     let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
@@ -1828,10 +1832,11 @@ fn random_lines_form_a_stack_from_which_one_is_picked() {
 
 #[test]
 fn run_immediately_runs_both_results_when_the_line_is_picked() {
-    let f = fixture();
+    let f = ordered_fixture(E_NOW, None);
     let mut g = at_topic_list(&f);
+    set_global(&mut g, G_OUT, 0.0);
     assert_eq!(pick(&mut g, T_TOP2), FormId(E_NOW));
-    assert_eq!(out(&g), 21.0);
+    assert_eq!(out(&g), 12.0);
     set_global(&mut g, G_OUT, 0.0);
     listen(&mut g);
     assert_eq!(out(&g), 0.0);
@@ -2572,4 +2577,131 @@ fn a_view_of_the_conversation_hears_before_its_result_scripts_run() {
     let heard = listen_in(&mut g);
     g.dialogue_transition();
     assert!(heard.lock().unwrap().is_empty());
+}
+
+/// Authored results append digits: 0 -> 1 -> 12 proves order and counts executions.
+fn ordered_fixture(line: u32, begin: Option<Vec<Subrecord>>) -> Fixture {
+    let digit = |n: &str| unit(0, &set(var(b'G', 1), ex(&[var(b'G', 1), a("10"), a("*"), a(n), a("+")])), &[], &[G_OUT]);
+    let extra = topic(0x980, "OrderTopic", "Order", topic_type::TOPIC, 0, 50.0, vec![L {
+        id: 0xF80, quest: QA, begin_raw: Some(begin.unwrap_or_else(|| digit("1"))), end_raw: Some(digit("2")), ..L::default()
+    }]);
+    let mut f = fixture_bytes(&[plugin_bytes(), top(b"DIAL", &extra)].concat());
+    let scripts = f.data.infos[&FormId(0xF80)].clone();
+    let def = f.data.infos.get_mut(&FormId(line)).unwrap();
+    def.flags |= info_flag::RUN_IMMEDIATELY;
+    def.begin = scripts.begin;
+    def.end = scripts.end;
+    f
+}
+
+fn finish_speech(g: &mut Game) {
+    for _ in 0..20_000 {
+        if g.speech.is_empty() {
+            return;
+        }
+        g.tick();
+    }
+    panic!("speech never ended");
+}
+
+#[test]
+fn immediate_actor_conversation_results_run_in_order_once() {
+    let mut f = ordered_fixture(K_OPEN, None);
+    // End this authored exchange after its opener.
+    f.data.infos.get_mut(&FormId(K_OPEN)).unwrap().goodbye = true;
+    for interrupt in [false, true] {
+        let mut g = game(&f);
+        call(&mut g, 0x1056, NPC1_REF, &[ArgValue::Value(Value::Ref(NPC2_REF)), ArgValue::Value(Value::Ref(T_ARGUE))]);
+        assert_eq!(out(&g), 12.0);
+        assert!(g.speech[0].end_ran && g.speech[0].conversation.is_some());
+        if interrupt {
+            g.world.set_enabled(actor(), false).unwrap();
+        }
+        finish_speech(&mut g);
+        assert_eq!(out(&g), 12.0);
+        assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { info, cut, .. } if info == FormId(K_OPEN) && cut == interrupt)));
+    }
+}
+
+#[test]
+fn immediate_say_to_and_hello_results_survive_completion_interruption_and_load() {
+    for hello in [false, true] {
+        let line = if hello { K_HELLO } else { A_FIRST };
+        let f = ordered_fixture(line, None);
+        for interrupt in [false, true] {
+            let mut g = game(&f);
+            let said = if hello { g.say_hello(actor()) } else { g.say(actor(), Some(FormId::PLAYER_REF), FormId(GREETING), true) };
+            assert_eq!(said, Some(FormId(line)));
+            assert_eq!(out(&g), 12.0);
+            assert!(g.speech[0].end_ran);
+            let snap: GameSnapshot = serde_json::from_str(&serde_json::to_string(&g.snapshot()).unwrap()).unwrap();
+            let world = World::restore(&f.forms, &f.refs, &snap.sim).unwrap();
+            let mut h = Game::restore(&f.data, world, g.cfg, &snap).unwrap();
+            assert_eq!(h.speech, g.speech);
+            for game in [&mut g, &mut h] {
+                if interrupt {
+                    game.world.set_enabled(actor(), false).unwrap();
+                }
+                finish_speech(game);
+                assert_eq!(out(game), 12.0);
+                assert!(game.events.iter().any(|e| matches!(e.kind, EventKind::LineEnded { info, cut, .. } if info == FormId(line) && cut == interrupt)));
+                game.frames(3);
+                assert_eq!(out(game), 12.0);
+            }
+        }
+    }
+}
+
+#[test]
+fn immediate_results_do_not_mark_a_replacement_speech() {
+    // The begin script replaces its own line. The original end still runs now, while
+    // the replacement's ordinary end must remain due at completion.
+    let f = ordered_fixture(A_FIRST, Some(say_result(NPC1_REF, T_BYE)));
+    let mut g = game(&f);
+    assert_eq!(g.say(actor(), Some(FormId::PLAYER_REF), FormId(GREETING), true), Some(FormId(A_FIRST)));
+    assert_eq!(out(&g), 2.0);
+    assert_eq!(g.speech.len(), 1);
+    assert_eq!(g.speech[0].info, FormId(C_BYE));
+    assert!(!g.speech[0].end_ran);
+    finish_speech(&mut g);
+    assert_eq!(out(&g), 9.0);
+}
+
+#[test]
+fn immediate_radio_results_run_in_order_at_start_even_if_interrupted() {
+    let mut f = ordered_fixture(E_NOW, None);
+    f.data.infos.get_mut(&FormId(E_NOW)).unwrap().info_type = topic_type::RADIO;
+    for complete in [false, true] {
+        let mut g = game(&f);
+        g.radio_line_begins(actor(), FormId(E_NOW));
+        assert_eq!(out(&g), 12.0);
+        // An interrupted engine broadcast discards on_air without an end call.
+        if complete {
+            g.radio_line_ends(actor(), FormId(E_NOW));
+        }
+        assert_eq!(out(&g), 12.0);
+    }
+    f.data.infos.get_mut(&FormId(E_NOW)).unwrap().flags &= !info_flag::RUN_IMMEDIATELY;
+    let mut g = game(&f);
+    g.radio_line_begins(actor(), FormId(E_NOW));
+    assert_eq!(out(&g), 1.0);
+    g.radio_line_ends(actor(), FormId(E_NOW));
+    assert_eq!(out(&g), 12.0);
+    let mut interrupted = game(&f);
+    interrupted.radio_line_begins(actor(), FormId(E_NOW));
+    assert_eq!(out(&interrupted), 1.0);
+}
+
+#[test]
+fn immediate_goodbye_greeting_marks_its_end_before_a_begin_callback_finishes_it() {
+    let f = ordered_fixture(A_BARK, Some(say_result(NPC1_REF, T_BYE)));
+    let mut g = game(&f);
+    set_global(&mut g, G_GATE, 7.0);
+    assert_eq!(g.start_dialogue(actor(), None).unwrap(), FormId(A_BARK));
+    assert!(g.dialogue.is_none());
+    assert_eq!(out(&g), 2.0, "the greeting ended inside begin; its immediate end runs once");
+    assert_eq!(g.speech[0].info, FormId(C_BYE));
+    assert!(!g.speech[0].end_ran);
+    finish_speech(&mut g);
+    assert_eq!(out(&g), 9.0);
 }
