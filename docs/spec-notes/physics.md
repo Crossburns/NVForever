@@ -2393,19 +2393,40 @@ feet (`drawn_sink`, floating-actors.md §6-7) changes height from one step to th
 over models with drawn floors; the body, and the view that is the body's eye, were drawn
 there at once.
 
+**First rule** (2026-10-23, PR #600): the change of the feet's height beyond the
+horizontal distance walked × the slope walked lately (the size of the recent changes,
+filtered over 0.25 s, at least 0.35) went into the lift, which sprang back with
+ω = 25/s. The owner found walking down a road still rough: the body and camera "dropping/
+raising far too often" (2026-11-07) [observed: owner]. Traced, the feet follow every
+facet of the road models' collision: the height runs in straight lines with a kink at
+each edge, ±0.05 per unit along the Goodsprings road, and drops 5.5 units over two steps
+where the road piece 0x00104FB6 meets the ground [observed: `fnvtool phys walk` along y
+2312 from x −71900, 2026-11-07]. Running at 300 units/s a step covers 5 units, so up to
+1.75 units a step passed as "slope", and the slope measure (sizes, not signs) grew on
+the ripples themselves: on the road the first rule smoothed nothing. Over rough ground
+the controller also snaps the feet down 4-6 units in a step (§6.4.2) and climbs steep
+rock (0x00107B90) in 3-unit steps every other fixed step.
+
 **Now** [design; `engine/nvf-play/src/phys/step_lift.rs`]: every character (the player
 and the actors the controller walks) has a drawn lift. In each fixed step on the ground,
-the change of the feet's height beyond the horizontal distance walked × the slope
-walked lately (filtered over 0.25 s, at least 0.35, about 19°) is taken into the lift
-with the opposite sign, so the drawn height does not jump; a change of the drawn ground
-is taken in whole. The lift goes back to 0 as a critically damped spring (ω = 25/s: a
-step is 95 % climbed after about 0.19 s), at most 24 units either way; a change over 48
-units in a step (a placement), the air and swimming take nothing in. The feet, the
-capsule, the reference's position and every query stay where the controller has them;
-the player's body, its first- and third-person view and the actors' drawn bodies use
-the lift (`PhysState::drawn_lift_of`, `npc_drawn_feet`). A long hill is drawn as walked
-(the slope filter); the first quarter second of a steep climb lags a few units. The exit
-report says how many steps the player's lift took in and its largest value; smoke
+the change of the feet's height beyond what the predicted vertical speed gives is taken
+into the lift with the opposite sign; the prediction is the vertical speed on the ground
+filtered over 0.2 s, each sample kept within 0.4 × the distance walked of the prediction,
+so a step does not feed it and is not overshot. A change of the drawn ground is taken in
+whole. The lift goes back to 0 as a critically damped spring, ω = 8/s for a small lift
+and stiffer the larger it is (ω × (1 + |lift| / 6)), at most 24 units either way; a
+change over 48 units in a step (a placement), the air and swimming take nothing in and
+restart the prediction from 0. The feet, the capsule, the reference's position and every
+query stay where the controller has them; the player's body, its first- and third-person
+view and the actors' drawn bodies use the lift (`PhysState::drawn_lift_of`,
+`npc_drawn_feet`). A long hill is drawn as walked once the prediction has caught up;
+running onto a 30° slope the body is drawn up to 8 units below the feet for a moment.
+Replayed on the traces [observed: `fnvtool phys walk` traces through the filter,
+2026-11-07], the RMS vertical acceleration of the drawn height (feet / first rule / now,
+units/s²): road run 741 / 741 / 284, road walk 239 / 206 / 85, rough desert run
+2621 / 1072 / 504, the hill run `move_hill_run` 787 / 660 / 334, Doc Mitchell's porch
+steps 2078 / 1690 / 629; largest lift 6.6, 4.2, 16, 7.9 and 9.9 units. The exit report
+says how many steps the player's lift took in and its largest value; smoke
 `camper-steps`.
 ### 6.12 Fall damage (playtest list 7 item 21, 2026-10-23; `engine/nvf-play/src/falls.rs`)
 
