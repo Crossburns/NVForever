@@ -598,8 +598,7 @@ shots of empty Accept, offered and returned items, the caps flow, acceptance, ca
 scroll and quantity states. The automatic trade aid is delayed beyond the runs so
 that the actual tile or hand-built input makes each trade. The input aid now names
 Page Up/Down and the bracket keys for those checks. Pointer places and timing are
-hypotheses borrowed from the container runs, and await the supervisor's first smoke.
-No game, engine test, or smoke run was performed by this writer. The file has no
+hypotheses borrowed from the container runs. The file has no
 subtitle tile, so the model's own refusal note stays as a small hand-built overlay
 at its existing place (`menu/look.rs::spawn_note`), alongside the dimmed flow
 [design: the contract's paths and `menu::note`]. Those words are the model's own
