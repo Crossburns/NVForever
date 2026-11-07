@@ -954,13 +954,29 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   (autocorrelation at a 16-texel lag 0.56 / 0.77 / 0.92). Read as three height layers,
   one per noise layer, R = layer 1 [hypothesis]; it is not a normal map (the RGB
   vectors average length 0.52).
-- **How the engine draws water** [hypothesis, the renderer's model; compared by eye with
-  an in-game screenshot at Boulder Beach]: what lies behind the surface is fogged by the
-  length of the view ray inside the water, linearly from the above-fog near to far
-  distance, to opaque, shading from the shallow to the deep colour. Capping the fog at
-  the "amount" left the lake bed visible far out; fogging by the distance from the
-  camera made the water opaque right at the shoreline when seen from a few metres up
-  (an abrupt clear-to-opaque edge); both unlike the game. The water reflects the world when reflective
+- **How the engine draws water** [hypothesis, the renderer's model; compared with
+  in-game frames at Boulder Beach, the Ultra-Luxe fountain and the Goodsprings Source
+  trough, #1787]: seen from above, the water body's colour goes from the shallow to the
+  deep colour, linearly from the above-fog near to far plane, by how far below the
+  surface the opaque surface behind the pixel lies (the near and far planes are "the
+  distance in game units below the surface of the water" of the shallow and the deep
+  colour plane [documented: GECK wiki WaterType, Fog Properties tab]); its opacity goes
+  over the same near-to-far ramp by the length of the view ray inside the water, opaque
+  beyond the far plane; for placed water (PWAT) only up to the above fog's amount (Fog
+  Amount "controls the transparency of the Deep Color water plane", 0 transparent, 1
+  opaque [documented: same page]). Capping the fog at the amount left the lake bed
+  visible far out in Lake Mead (NVCleanWater, amount 0.75: about a fifth of the bed
+  shows through at any depth), unlike the game, so cell and distant water are not
+  capped [design, until a far-out Lake Mead comparison is made (§9 item 3); the
+  Ultra-Luxe fountain needs the cap, below, Placed water]. The depth-based colour is
+  used for all water (Boulder Beach's near-shore crop moves towards the original with
+  it, the table below). Under water both follow
+  the distance from the camera (the under fog's planes are distances "from the player",
+  its amount "does not appear to have any effect" [documented: same page]). Fogging by
+  the distance from the camera made the water opaque right at the shoreline when seen
+  from a few metres up (an abrupt clear-to-opaque edge), unlike the game. Until #1787
+  the colour followed the view ray too, and the amount was unused: a grazing look into
+  a shallow pool then gave the deep colour (below, Placed water). The water reflects the world when reflective
   (otherwise its reflection colour): the renderer mirrors the camera in the water plane
   nearest it, renders what lies above that plane into a texture and samples it at the
   fragment's screen position, offset along the wave-perturbed reflected ray; water at
@@ -978,8 +994,8 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   the camera's distance fog becomes the water's under fog (near / far, -2500 / 5500 for
   NVCleanWater) in its deep colour lit by the sun and ambient light; looking up, the sky
   shows only within Snell's window (refractive index 1.33) and the surface reflects the
-  water body outside it. The under fog "amount" is unused like the above one. Unknown: the roles of ANAM
-  opacity, the fog amounts, sun power and the four unnamed leading DNAM floats.
+  water body outside it. The under fog "amount" is unused. Unknown: the roles of ANAM
+  opacity, sun power and the four unnamed leading DNAM floats.
 - **Depth falloff** (2026-10-24, ESM audit gap 27): DNAM "Depth Falloff Start" and
   "End", "where the alpha fadeoff begins (used for edges of the water, to blend it
   smoothly with the land)" and "where the alpha fadeoff ends" [documented: GECK wiki
@@ -1023,13 +1039,27 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   Still different, and not this rule's: the body colour. The fountain is darker in ours
   (about 17,40,21, the deep colour lit, against the original's 61,77,39, about the
   shallow colour lit) and the trough bluer (about 70,82,83, NVCleanWaterGS's shallow
-  colour 91,102,145 through thin fog). The GECK wiki gives the above-water fog near and
-  far as "the distance in game units below the surface" of the shallow and deep colour
-  planes [documented: GECK wiki WaterType], where the renderer fogs by the length of the
-  view ray in the water (above), which reaches the far distance (36 units) at a grazing
-  look into a pool about 14 units deep [observed: the fountain model's pool floor ring
-  at model z 68, scale 0.5, so z 1046 under the water at 1060]; a depth-below-surface
-  measure is a candidate, open (#1787).
+  colour 91,102,145 through thin fog). The view ray reaches the fountain's far distance
+  (36 units) at a grazing look into a pool about 14 units deep [observed: the fountain
+  model's pool floor disc ULFountainCC at model z 68, scale 0.5, so z 1046 under the
+  water at 1060]. Settled in #1787 (the measures in "How the engine draws water"
+  above). Mean sRGB of one crop of the water per place, at noon, original against the
+  renderer [observed, 2026-11-07; the renderer's camera is not exactly the original's]:
+
+  | place | original | ray for both (before) | depth for both | depth colour, ray × amount opacity (as built) |
+  |---|---|---|---|---|
+  | Ultra-Luxe fountain (fog 0 / 36 / 1.0) | 64,80,41 | 36,52,27 | 173,156,107 | 67,87,41 |
+  | Goodsprings Source trough (7 / 58 / 0.72) | 66,65,54 | 70,85,89 | 73,78,83 | 90,96,110 |
+  | Boulder Beach, near water (-80 / 850 / 0.75) | 101,99,82 | 77,86,79 | 91,97,85 | 93,101,88 |
+
+  By depth alone the fountain's pale floor disc showed through (alpha 14 / 36), where the
+  original is an even opaque olive. As built the fountain matches; Boulder Beach (its
+  crop measured with the amount cap; cell water is now drawn without it, above) moves
+  towards the original (its bed shows further out, as in the original's frame
+  `lake_mead`, cell 13,9 looking east). The trough is still bluer and lighter than the
+  original's dim grey-olive body (with a pale haze along its inside walls); what makes
+  it dimmer is open (the body's lighting, or ANAM opacity 84, are candidates
+  [hypothesis]).
 - **Ripples** [hypothesis, the renderer's model]: DNAM's "rain" and "displacement"
   groups (starting size, force, velocity, falloff, dampner; NVCleanWater: rain 0.05 /
   0.1 / 0.6 / 0.985 / 2.0, displacement 0.01 / 0.4 / 0.6 / 0.985 / 10.0) are read as two
@@ -1534,7 +1564,9 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
    grid orientation and the default texture are in §3.) Verify by comparing renders with
    in-game screenshots.
 3. XCLW sentinel 3.4028235e38: confirm that the worldspace water height applies.
-   Water drawing (§6): fog distance measure, the fog amounts and ANAM opacity, noise
+   Water drawing (§6): ANAM opacity, the trough's dimmer body (#1787), whether the fog
+   amount caps cell water's opacity too (compare Lake Mead far from shore, where the
+   bed is deep, with the original; ours draws only placed water capped, #1789), noise
    layer units; to settle with in-game captures at Lake Mead at several heights and
    distances from the shore.
 4. Weather selection rule and the meaning of WLST globals (see §6).

@@ -1739,6 +1739,18 @@ expect = [
 ]
 
 [[scenario]]
+name = "h2h-weapon-hand"
+source = "#1586 (owner's report 2026-11-04): Veronica's bare hand stuck out of her power fist. A hand-to-hand weapon's BIPL names its own hand model (WeapPowerFistVeronica: WeaponPowerfist -> ARMAPowerfist, Right Hand, PowerFist.NIF), worn in place of the bare hand as an outfit's glove is [observed: the original shows the metal hand, capture pf_h2h_rest3 2026-11-06] (docs/spec-notes/actors.md §9.2, crates/fnv-actor/src/resolve.rs)"
+note = "at the 188 Trading Post at noon with every NPC's weapon out (--actor-weapons drawn); Veronica (VeronicaREF 0x000E32A9) stands 180 units south of the camera with her power fist"
+areas = ["actors"]
+paths = ["crates/fnv-actor/src/resolve.rs", "crates/fnv-actor/src/records.rs", "engine/nvforever/src/player_body.rs", "engine/nvforever/src/outfits.rs"]
+args = ["--play", "--pos=30941,31711,5531", "--heading", "180", "--hour", "12", "--no-voice", "--actor-weapons", "drawn"]
+run_seconds = 15
+expect = [
+  { re = '(?i)actor weapons: 000E32A9 \S*powerfistrigid\.nif: worn with its hand model\(s\) \[.*powerfist\.nif.*\] in place of the bare hand', label = "Veronica's power fist comes with its metal hand" },
+]
+
+[[scenario]]
 name = "crouched-npc-weapon"
 source = "docs/outstanding.md §2 Animation (2026-10-20): a sneaking NPC with a weapon out uses the weapon type's crouched equip, aim and unequip clips (sneak1hpaim.kf …); the standing aim's upright legs (priority 25) outranked the crouched idle's (20) (docs/spec-notes/actors.md §9.4, engine/nvforever/src/weapons.rs WeaponHold::set_crouched)"
 note = "in Goodsprings at noon every NPC's weapon is out (--actor-weapons drawn); Ringo (GSRingo, 9mm pistol: 1hp) is brought 300 units north of the player at 3 s, forced to sneak at 5 s (SetForceSneak 1) and let up at 15 s (SetForceSneak 0). The 1hp stance has all three crouched clips [observed: the base meshes archive], so his aim is sneak1hpaim.kf while he sneaks"
@@ -7854,6 +7866,36 @@ expect = [
 ]
 
 [[scenario]]
+name = "grenade-launcher-arc"
+source = "#1471: the Grenade Launcher's round on the Searchlight Airport runway, first person, along the runway (heading 75), aimed level, 15 and 30 degrees up; the original's (o26_gl, combat-rules.md §5) left 110-140 units above the ground at 1,750 units/s and first hit the ground 793 / 1,944 / 2,815 units out after 0.45 / 1.16 / 1.86 s, going off there"
+note = "the radscorpions about are killed first (killall, as the original's save had them); no spread (NVF_PLAY_TEST_NO_SPREAD), so each round leaves along the aim; the view is set again before each shot (the kick lifts it); each `fire` press is let go 0.1 s later"
+areas = ["combat"]
+paths = ["crates/fnv-combat/src/projectile.rs", "crates/fnv-combat/src/shot.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0007EA25", NVF_PLAY_TEST_GIVE = "0007EA26:8", NVF_PLAY_TEST_CONSOLE = "1:killall;1.3:close", NVF_PLAY_TEST_LOOK = "2:75:0,10:75:15,15:75:30", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire,6.1:fire,11:fire,11.1:fire,16:fire,16.1:fire" }
+args = ["--cell", "Goodsprings", "--pos=37000,-117160,6180", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 22
+expect = [
+  { re = 'combat: projectile 40mmGrenLaunchProjectile left .* at 1750 units/s, -?0\.\d deg up; first touched .*, (?P<n>\d+) units across the ground', range = [760, 860], label = "aimed level it lands about as far as the original's 793 units" },
+  { re = 'combat: projectile 40mmGrenLaunchProjectile left .* at 1750 units/s, 15\.\d deg up; first touched .*, (?P<n>\d+) units across the ground', range = [1860, 2030], label = "15 degrees up: the original's 1,944 units" },
+  { re = 'combat: projectile 40mmGrenLaunchProjectile left .* at 1750 units/s, 30\.\d deg up; first touched .*, (?P<n>\d+) units across the ground', range = [2700, 2930], label = "30 degrees up: the original's 2,815 units" },
+  { re = 'combat: projectile 40mmGrenLaunchProjectile went off after [\d.]+ s at .*units across the ground from where it left$', count = 3, label = "each round goes off where it first lands, without rolling" },
+]
+
+[[scenario]]
+name = "frag-grenade-roll"
+source = "#1785: a thrown frag grenade on the Searchlight Airport runway, aimed level along the runway; the original's (o26_gl frag0, combat-rules.md §5) landed 513 units out after 0.58 s and rolled on to about 1,200 units by its fuse (2.5 s); launcher rounds do not roll (owner)"
+note = "the radscorpions about are killed first (killall); first person; one grenade thrown at 6 s (the attack held 0.5 s, the original's 30 loops)"
+areas = ["combat"]
+paths = ["crates/fnv-combat/src/projectile.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "00004330", NVF_PLAY_TEST_GIVE = "00004330:3", NVF_PLAY_TEST_CONSOLE = "1:killall;1.3:close", NVF_PLAY_TEST_LOOK = "2:75:0", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire,6.5:fire" }
+args = ["--cell", "Goodsprings", "--pos=37000,-117160,6180", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 13
+expect = [
+  { re = 'combat: projectile GrenadeFragProjectile left .*first touched .* after (?P<n>[\d.]+) s', range = [0.5, 0.7], label = "it lands after about as long as the original's (0.58 s)" },
+  { re = 'combat: projectile GrenadeFragProjectile went off after 2\.\d+ s .*, (?P<n>\d+) units across the ground from where it left, after rolling', range = [1000, 2500], label = "it rolls on and goes off on its fuse (ours throws at the PROJ's 1,200 units/s, the original's about 950: the distance is not the original's 1,206, issue #1785; about 1,880 expected: at most 1,200 x 0.7 s in the air plus 0.9 x 1,200 / 0.66 rolling is under 2,500)" },
+]
+
+[[scenario]]
 name = "grenade-blast-big-creature"
 source = "owner 2026-10-27: 40 mm grenades fired beside giant radscorpions often did them no harm; a blast now reaches every body within its radius by its nearest part, seen from the blast or just above it, and only walls, rocks, the ground and wrecks shield (projectile.rs blast, combat.rs cover_ray)"
 note = "a large radscorpion (CrRadscorpion2Large) placed 500 units from the player (GOD, UNSEEN) at 3 s and held (SetRestrained); the player fires two 40 mm grenades at it at 9.1 and 11.1 s"
@@ -11945,10 +11987,10 @@ expect = [
 [[scenario]]
 name = "blast-perks-grenade-demolition"
 source = "#1569 (docs/spec-notes/perk-entry-points.md §2): the player's own 40 mm grenade at their feet: Demolition Expert changes the damage, with the weapon behind the blast, and no DT comes in"
-note = "The damage falls off with where the blast lands, so the check reads the perks line. Its factor is not read here (a log line cannot divide): fnv-combat a_blast_passes_the_damage_and_dt_entry_points and nvf-play combat::tests::blast_perks have the arithmetic. the shot catches the player in about 6 runs of 10 (#1581): a missing blast line fails this scenario, so rerun it before reading more into that"
+note = "Aimed 70 degrees down, not 75: since the round leaves the muzzle (#1471) a shot at 75 lands about 10 units off its old spot, where the blast's line-of-sight rays to the player were blocked in both runs (the Hit the Deck runs, same aim, were caught); The damage falls off with where the blast lands, so the check reads the perks line. Its factor is not read here (a log line cannot divide): fnv-combat a_blast_passes_the_damage_and_dt_entry_points and nvf-play combat::tests::blast_perks have the arithmetic. the shot catches the player in about 6 runs of 10 (#1581): a missing blast line fails this scenario, so rerun it before reading more into that"
 areas = ["combat", "perks"]
 paths = ["engine/nvf-play/src/combat.rs", "crates/fnv-combat/src/damage.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0007EA25", NVF_PLAY_TEST_GIVE = "0007EA26:8", NVF_PLAY_TEST_CONSOLE = "4:player.addperk DemolitionExpert;player.getav health;4.6:close;14:player.getav health;14.4:close", NVF_PLAY_TEST_LOOK = "6:46:-75", NVF_PLAY_TEST_CONTROL = "7:weapon,10:fire" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0007EA25", NVF_PLAY_TEST_GIVE = "0007EA26:8", NVF_PLAY_TEST_CONSOLE = "4:player.addperk DemolitionExpert;player.getav health;4.6:close;14:player.getav health;14.4:close", NVF_PLAY_TEST_LOOK = "6:46:-70", NVF_PLAY_TEST_CONTROL = "7:weapon,10:fire" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
 run_seconds = 18
 expect = [

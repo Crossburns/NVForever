@@ -1407,3 +1407,13 @@ to the decoded file by cross-correlation and a per-band transfer estimate.
     can be pickpocketed (a giant rat): does it play anything, does it stop, or does it go
     on walking? (f) Seen by a third NPC halfway through the fuse, then hidden at the blast:
     does that NPC turn hostile? NVForever counts it as a witness.
+
+## Added 2026-11-06 (the power fist's hand, issue #1586)
+
+99. **The power fist's hand on Veronica: what is left open.** (P3; actors.md §9.2.) Capture
+    `pf_h2h_rest3` (nvfairport, Veronica at her placed spot at the 188, power fist drawn
+    with SetAlert, AI off, first-person camera 110 units off in front, to her right and to
+    her side; brass knuckles the same way): the gauntlet sits on the forearm where
+    NVForever puts it. At its front the original shows the weapon's metal hand (the WEAP's
+    BIPL addon `ARMAPowerfist`), not her bare hand. Still to look at: the same with the
+    weapon holstered, and in the player's first person.
