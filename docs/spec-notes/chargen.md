@@ -100,7 +100,7 @@ the view's height, from the top left of a 1024 × 800 rectangle centred on the s
   it; an untagged one is tagged while fewer than three are [observed: the owner's
   screenshots, 2/3 then 3/3]. Reset clears every tag, those it opened with too: opened
   at 3/3 with the save's three tags (`SetTagSkills 3`), it reads 0/3, the skills' figures
-  drop back and Done dims [observed 2026-11-07: private job ov_tags, 1280x720]. Tags an
+  drop back and Done dims [observed 2026-11-06: private job ov_tags, 1280x720]. Tags an
   AddTagSkills opening locks stay [hypothesis: not captured; they may not be un-tagged].
 
 - **The attributes page**: the same file's attribute rows, which AddSPECIALPoints opens

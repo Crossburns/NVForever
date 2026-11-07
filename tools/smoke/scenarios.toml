@@ -2626,7 +2626,7 @@ expect = [
 
 [[scenario]]
 name = "tag-reset-clears"
-source = "[observed 2026-11-07] docs/spec-notes/chargen.md §3: Reset clears the tags the menu opened with, and Done is refused until three are tagged again"
+source = "[observed 2026-11-06] docs/spec-notes/chargen.md §3: Reset clears the tags the menu opened with, and Done is refused until three are tagged again"
 note = "[design] The second opening starts with the first's three tags, so the old rule (back to the opening state) would finish with those at the first Done."
 areas = ["chargen", "menus"]
 paths = ["engine/nvf-play/src/chargen.rs", "engine/nvf-play/src/chargen/lists.rs", "crates/fnv-game/src/chargen.rs"]

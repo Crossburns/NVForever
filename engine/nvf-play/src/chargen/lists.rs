@@ -306,7 +306,7 @@ impl ListMenu {
     }
 
     /// Reset: the tag-skill sheet clears every tag but the locked ones, whatever it opened
-    /// with [observed 2026-11-07: docs/spec-notes/chargen.md §3; hypothesis: the locked
+    /// with [observed 2026-11-06: docs/spec-notes/chargen.md §3; hypothesis: the locked
     /// ones, which no capture has seen]. The others go back to the sheet as the menu opened
     /// with it [hypothesis: not captured].
     pub fn reset(&mut self) {
