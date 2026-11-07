@@ -411,6 +411,62 @@ What it found, each with its issue:
 The scenario logs are game-derived and stay private, under `target/profile-campaign/` (not
 committed).
 
+### The ragdoll solver in the 50-a-side battle (#1798, 2026-11-07)
+
+Measured on the bench machine (i9-14900K), `battle-50`, profile builds; logs private in
+`C:/fnv-private/ragsolve-1798/`.
+
+- **Where the time goes** [observed]. The stress sample now prints the solver's load
+  (`bodies awake`, `contact pairs`, `manifolds`, `solver contacts`, `joints`) and, in the
+  profile build, rapier's stage timers summed since the start (`solver ms`, feature
+  `fnv-phys/solver-timers`, turned on by `nvforever/profile`). Over the battle rapier's
+  steps took 14.1 s: 11.9 s in the solve (velocity resolution: the constraint iterations
+  and writeback), 1.2 s in collision detection, 0.08 s in the serial set-up, 0 in CCD. At
+  the peak (45–65 s) about 6–7 ragdolls are moving at once: 70–190 joints, 380–610
+  touching pairs, 1,300–1,500 contact points; the solve takes 3–5 ms a step, at 2.4
+  steps a frame.
+- **Why the ragdolls are moving** [observed: the exit report]. 62 ragdolls came to rest
+  141 times: 79 of the rests followed a shove that woke a corpse already at rest (248
+  shoves by hits), and 92 of the 141 were the 3 s hold (`MAX_AWAKE`) on a corpse still
+  moving. So about half the solver's ragdoll time is corpses woken again by stray shots.
+  That is a look decision ([owner-review](../owner-review.md) item 51).
+- **Lead 1, rapier's `parallel` feature: results unchanged, no gain in the game; not
+  taken.** [observed] With `parallel` (and a 4-thread pool of its own), a pile of 42
+  jointed figures, and 14 or 30 human skeletons (`_male\skeleton.nif`, 18 bodies, 17
+  joints) on flat ground, gave the same state digest bit for bit as the build without
+  it, on 1 to 32 threads; all fnv-phys tests passed. Off the game the step got 1.5–2.2×
+  faster on 4–8 threads (14 skeletons: 1.64 → 0.80 ms a step). In the battle it did
+  not: per frame at 25–75 s `init_and_solve` was 1.9–13.7 ms on main, 2.8–21 ms on
+  1 thread and 1.8–21.7 ms in two runs on 4 threads, following how many ragdolls moved
+  (frames 31–40, 31–53, 27–53 ms); per step in the slow frames 3.5–6.4 ms on 1 thread,
+  2–8.9 ms on 4. [hypothesis] The same load costs about 10× more a step in the game than
+  off it (one or two moving skeletons: about 0.8 ms of solve a step in the game, 0.07 ms
+  off it, 0.16 ms with 200 moving kinematic actor bodies added), which points at the
+  machine (the step's and the pool's threads on efficiency
+  cores, or sharing cores with the render and task-pool threads) more than at the
+  solver's work; not measured (no sampling profiler without administrator rights).
+- **Lead 2, settling settings: not changed.** Solver iterations are global (every
+  physics trace and the character controller's pushes would change), and halving them
+  bought only 10–35 % off the game; joint count and damping did not stop the shiver
+  before ([ragdoll §4](../spec-notes/ragdoll.md)). Shorter wakes and holds change the
+  look, so they are the owner's.
+- **Lead 3, the step off the frame's chain: a design, not built.** The rapier step
+  (`PhysWorld::step` inside `player::step`) would start on a thread of its own once the
+  frame's last fixed step has its inputs (the player's and NPCs' moves, `move_npcs`), and
+  be joined by the first system that reads the world after it (ragdoll bone writes,
+  detection rays, projectile casts, the next frame's character steps). For that:
+  1. `player::step`'s loop hands the last step's world to a task (the `PhysWorld` moved
+     into it and back), so nothing can touch the world before the join.
+  2. Between the start and the join only work that does not read physics can run:
+     animation, audio, UI, render extraction. Today detection, residents, AI and combat
+     all cast rays right after `player::step` and would wait at once, so the gain needs
+     them to read last step's world (a query copy: broad phase and colliders cloned
+     after the previous step, as `PhysWorld::snapshot` does for the whole world) or to
+     run after the join.
+  3. Results stay bit-identical (the same steps in the same order); only when they are
+     read changes. Worth building only if the ragdolls' share is still large after the
+     owner rules on item 51.
+
 ### What the submission costs (#1427)
 
 [documented: bevy_core_pipeline 0.20.1 `schedule.rs`, bevy_render 0.20.1
