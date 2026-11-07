@@ -269,6 +269,20 @@ order = [[
 ]]
 
 [[scenario]]
+name = "read-pool-one-thread"
+source = "#1732: cell, model and actor reads have their own pool (nvf_assets::read_pool); at one thread on it and one on the async compute pool, as a 4-thread machine has, nothing waits on anything else in its pool"
+note = "The cell-streaming flight at the smallest sizes. A task that waited on another on the same pool would stop the flight's cells here. Only the count is checked: at one thread the flight outruns the read-ahead more often than cell-streaming allows."
+areas = ["renderer"]
+paths = ["engine/nvf-assets/src/read_pool.rs"]
+env = { NVF_PLAY_TEST_READ_THREADS = "1", NVF_PLAY_TEST_ASYNC_THREADS = "1" }
+args = ["--cell", "Goodsprings", "--auto-fly", "3000"]
+run_seconds = 40
+expect = [
+  "read pool threads: 1",
+  { re = 'streaming summary: (\d+) cells loaded', range = [40, 100000], label = "cells streamed in" },
+]
+
+[[scenario]]
 name = "cell-streaming"
 source = "docs/design/streaming-hitches.md §2 Cells: cells read ahead on worker threads, spawned over frames, faded in once whole"
 note = "A fast flight over the Mojave without --play: once the start square is in, cells load through the read-ahead and the spawning budget (world.rs CellSpawn, ReadAhead); the summary at the exit counts them. The flight outruns the read-ahead now and then, so cells drawn before theirs was done are allowed, a few"
@@ -743,6 +757,32 @@ expect = [
   { re = 'player body summary: weapon sway on, most turn lag (?P<n>[\d.]+) degrees sideways', range = [1.5, 5.01], label = "a quick turn leaves the arms behind, within the 5 degree limit" },
   { re = 'player body summary: weapon sway on, most turn lag [\d.]+ degrees sideways and (?P<n>[\d.]+) up or down', range = [0, 3.51], label = "up or down within the 3.5 degree limit" },
   { re = 'player body summary: weapon sway on, .*deepest bob (?P<n>[\d.]+) units', range = [0.3, 0.91], label = "running bobs the arms, within the 0.9 unit dip" },
+]
+
+[[scenario]]
+name = "head-bob-first-person"
+source = "owner 2026-11-07 (engine/nvforever/src/head_bob.rs): a head bob in first person, none in third; running in first person the camera and arms dip at each footfall"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/head_bob.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,10:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 12
+expect = [
+  { re = 'player body summary: head bob on, deepest first-person dip (?P<n>[\d.]+) units', range = [1.0, 1.61], label = "running bobs the first-person view, within the 1.6 unit dip" },
+]
+
+[[scenario]]
+name = "head-bob-third-person"
+source = "owner 2026-11-07 (engine/nvforever/src/head_bob.rs): no head bob in third person; running after switching to third person, the camera's pivot leaves out the head's rise and fall"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/head_bob.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_CONTROL = "3:view", NVF_PLAY_TEST_MOVE = "5:1:0,10:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 12
+expect = [
+  { re = 'third-person pivot over (?P<n>\d+) frames', range = [150, 1e9], label = "the view was third person while running" },
+  { re = 'pivot/head (?P<n>[\d.]+)', range = [0, 0.35], label = "the pivot moves at most about a third as much as the head frame to frame" },
+  { re = 'deepest first-person dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "no first-person bob in third person" },
 ]
 
 [[scenario]]
@@ -3760,10 +3800,10 @@ order = [[
 [[scenario]]
 name = "traps-bear"
 source = "queue item 25 (traps): a bear trap's model holds a Trigger-layer box that sets off its OnTriggerEnter; another is disarmed by hand (docs/spec-notes/traps.md)"
-note = "South of Goodsprings, by three bear traps (0x00165495, 0x0015834D, 0x0015834C). trapbearskillreq01 set to 0; the player activates 0x00165495 at 15 s and picks Disarm; at 17 s the player is put on 0x0015834D, whose trigger box the player's capsule enters: its OnTriggerEnter plays Forward, damages the player 45 and a leg"
+note = "South of Goodsprings, by three bear traps (0x00165495, 0x0015834D, 0x0015834C). The gecko hunters 0x00165185-0x00165187 and the geckos 0x00157B3D/E are disabled at 1 s, as in bear-trap: since the aids' clock starts when the start's loading screen comes down (b8aa64a4f) they have 15 s to reach the player, and one sprang 0x00165495 at 11.5 s, so the player's hand got its rearm box and not the disarm box (2026-11-07). trapbearskillreq01 set to 0; the player activates 0x00165495 at 15 s and picks Disarm; at 17 s the player is put on 0x0015834D, whose trigger box the player's capsule enters: its OnTriggerEnter plays Forward, damages the player 45 and a leg"
 areas = ["traps", "scripts"]
 paths = ["engine/nvf-play/src/script_trigger.rs", "engine/nvf-play/src/phys/prepare.rs", "crates/fnv-game/src/traps.rs"]
-env = { NVF_PLAY_TEST_SCRIPT = "11:var:0x0002012B:trapbearskillreq01:0,15:activate:0x00165495,15.1:button:1,17:moveto:player:0x0015834D" }
+env = { NVF_PLAY_TEST_SCRIPT = "1:call:0x00165185:Disable,1:call:0x00165186:Disable,1:call:0x00165187:Disable,1:call:0x00157B3D:Disable,1:call:0x00157B3E:Disable,11:var:0x0002012B:trapbearskillreq01:0,15:activate:0x00165495,15.1:button:1,17:moveto:player:0x0015834D" }
 args = ["--play", "--pos=-68124,-17000,9100", "--hour", "12", "--no-voice"]
 run_seconds = 22
 expect = [
@@ -5044,6 +5084,45 @@ expect = [
   { re = 'graphics: light glow$', label = "the light glow is on by default" },
   { re = 'drawn \(enabled at run time\): meshes.effects.ambient.fxlightbeamnvstrip\.nif', label = "the scripts switch the street lamp beams on" },
   { re = 'emittance: shapes drawn by scripts take source 0x0012762b', label = "the beams take the street light's colour" },
+]
+
+[[scenario]]
+name = "strip-signs-read"
+source = "#1540; docs/spec-notes/world.md section 6 \"HDR and bloom\": the Lucky 38's and the Tops' letters read at night, with the light glow on, and the sky is dark"
+areas = ["renderer", "effects", "lights"]
+paths = ["engine/nvforever/src/post.rs", "engine/nvforever/src/post.wesl", "engine/nvf-assets/src/nif_material*", "engine/nvf-assets/src/nif_spawn.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "70:strip_signs_read.png" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=-250,8600,1037", "--heading", "185", "--pitch", "0", "--hour", "22", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 72
+expect = [{ re = 'light glow: bright pass (1\.9\d|2\.00) ', label = "the Strip's night bright pass" }]
+manual = "strip_signs_read.png: \"Lucky\" and \"38\" read as letters, and T O P S; the sky is near black, with no grey haze around the signs"
+
+[[scenario]]
+name = "securitron-face-bright"
+source = "#1540; docs/spec-notes/nif.md section 6: a Securitron's screen shows its face at the texture's brightness (grey 0.05 x 30, its colour times multiplier held to 1)"
+areas = ["renderer", "actors"]
+paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_material*"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "20:securitron_face_bright.png" }
+args = ["--cell", "Lucky38CasinoFloor01", "--play", "--pos=1087,-2290,7690", "--heading", "50", "--hour", "12", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 22
+expect = [{ re = 'actor materials: reference [0-9A-F]+ shape screen01:0 driven by its clips', label = "Victor's screen is drawn and its clips drive it" }]
+manual = "securitron_face_bright.png: Victor's cowboy face plain and bright on his screen, not burnt white and not dim"
+
+[[scenario]]
+name = "strip-bright-views"
+source = "#1540; docs/spec-notes/nif.md §6 \"Unlit shapes that are pictures, and cut-out signs\": the Tops marquee and Lucky 38 stair lights at night, with the light glow on"
+areas = ["renderer", "effects", "lights"]
+paths = [
+  "engine/nvf-assets/src/nif_material*", "engine/nvf-assets/src/nif_prepass.wesl", "engine/nvforever/src/emittance.rs",
+  "engine/nvf-play/src/script_draw.rs", "engine/nvforever/src/post.rs", "crates/fnv-world/src/imagespace.rs",
+  "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "14:strip_tops_marquee.png" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=-400,2400,1014", "--heading", "270", "--pitch", "0", "--hour", "22", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 16
+manual = "strip_tops_marquee.png: the Tops marquee keeps distinct bright stripes with a small halo; the sky stays dark. The Lucky 38 rails may remain brighter and wider than the original at this view."
+expect = [
+  { re = 'graphics: light glow$', label = "the light glow is on by default" },
 ]
 
 # ------------------------------------------------------------------ aid items (docs/spec-notes/aid-items.md)
@@ -8049,11 +8128,11 @@ expect = [
 [[scenario]]
 name = "impact-decals-bullets"
 source = "owner 2026-10-20: audit of shot effects, impact decals not built (docs/spec-notes/impact-decals.md): 9mm pistol shots at a rock by the Prospector Saloon leave bullet holes"
-note = "the rock NVNRockCanyon12 (00106B0C) stands 143 units east of the start: two shots without spread at it, two at the ground to the north-east (dirt), more than the IPCT's placement radius (16) apart; frames of the ground at 10.2 s and of the rock at 11.2 s"
+note = "the rock NVNRockCanyon12 (00106B0C) stands 143 units east of the start: two shots without spread at it, two at the ground to the north-east (dirt), more than the IPCT's placement radius (16) apart; frames of the ground at 10.2 s and of the rock at 11.2 s. --no-messages: since the aids' clock starts when the start's loading screen comes down (b8aa64a4f) the add-ons' OK-only start-up boxes stand from 5 s to 8.5 s, over the shots, and held all but one (2026-11-07)"
 areas = ["combat", "effects"]
 paths = ["engine/nvforever/src/decals.rs", "crates/fnv-combat/src/fx.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:30", NVF_PLAY_TEST_LOOK = "2:97:-4,6.8:93:-1,7.6:60:-30,8.4:75:-30,9.6:68:-26,10.6:96:-3", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire,6.2:fire,7:fire,7.2:fire,7.8:fire,8:fire,8.6:fire,8.8:fire", NVF_PLAY_TEST_SHOTS = "10.2:decals_bullets_ground.png,11.2:decals_bullets_rock.png" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--pos=-67900,1400,8500", "--hour", "12"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
 run_seconds = 13
 expect = [
   { re = 'decals: Ballistic\w*Impact leaves Decal\w+Ballistic \(Decals\\ImpactDecal\w+\.dds\) on the world', label = "a bullet hole" },
@@ -8063,11 +8142,11 @@ expect = [
 [[scenario]]
 name = "impact-decals-flamer"
 source = "owner 2026-10-20: audit of shot effects, impact decals not built (docs/spec-notes/impact-decals.md): the flamer's stream scorches the ground (FlamerScorchBigImpact, texture set DecalDirtScorch 00019073)"
-note = "the flamer held at the ground by the Prospector Saloon from 6 s to 8 s; the stream lands every frame, so most impacts fall within the placement radius (16) of a live scorch and leave none; the frame at 8.5 s shows the scorches"
+note = "the flamer held at the ground by the Prospector Saloon from 6 s to 8 s; the stream lands every frame, so most impacts fall within the placement radius (16) of a live scorch and leave none; the frame at 8.5 s shows the scorches. --no-messages: since the aids' clock starts when the start's loading screen comes down (b8aa64a4f) the add-ons' OK-only start-up boxes stand from 5 s to 8 s, over the stream, and held all but one shot (2026-11-07)"
 areas = ["combat", "effects"]
 paths = ["engine/nvforever/src/decals.rs", "crates/fnv-combat/src/fx.rs"]
 env = { NVF_PLAY_TEST_EQUIP = "0000432D", NVF_PLAY_TEST_GIVE = "00029371:300", NVF_PLAY_TEST_LOOK = "2:46:-30,7:60:-30", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire,8:fire", NVF_PLAY_TEST_SHOTS = "8.5:decals_flamer.png" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--pos=-67900,1400,8500", "--hour", "12"]
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12"]
 run_seconds = 12
 expect = [
   { re = 'decals: FlamerScorchBigImpact leaves DecalDirtScorch \(Decals\\ImpactDecalScorch01\.dds\) on the world: side \d+ of 150-250, depth 96', label = "the flamer's scorch on the ground" },
@@ -12693,10 +12772,10 @@ expect = [
 [[scenario]]
 name = "car-not-pushed"
 source = "owner's playtest list 7 item 37 (docs/spec-notes/physics.md §6.10): cars (MSTT Car01-Car03, Havok mass 600-1000) moved when the player ran into them; a character no longer pushes a body heavier than 250"
-note = "the Car02 0x0015206B south of Primm; the player 250 units west of it runs east into it for 3 s and slides round it. The car rises 3.4 and slides 2.5 units (4.1 in all) as it wakes and comes out of the ground it is placed a little into, the same with the character's contacts off (2026-10-23): something else wakes it, likely the raven 0x0017467E perched on it; a push moves it further"
+note = "the Car02 0x0015206B south of Primm; the player 250 units west of it runs east into it for 2.5 s and slides round it. The six radscorpions near it (0x00174BD9-0x00174BDE) are disabled at 1 s: since the aids' clock starts when the start's loading screen comes down (b8aa64a4f) they reach the player before the run ends, and a blow's knockback (124 units) carried the feet past the place the check reads (2026-11-07); 2.5 s and not the first 3 s because 3 s is reckoned to end about at that place's eastern edge (the feet at exit less the knockback, not measured apart). The car rises 3.4 and slides 2.5 units (4.1 in all) as it wakes and comes out of the ground it is placed a little into, the same with the character's contacts off (2026-10-23): something else wakes it, likely the raven 0x0017467E perched on it; a push moves it further"
 areas = ["physics"]
 paths = ["crates/fnv-phys/src/character.rs", "crates/fnv-phys/src/world.rs"]
-env = { NVF_PLAY_TEST_MOVE = "8:1:0,11:0:0" }
+env = { NVF_PLAY_TEST_MOVE = "8:1:0,10.5:0:0", NVF_PLAY_TEST_SCRIPT = "1:call:0x00174BD9:Disable,1:call:0x00174BDA:Disable,1:call:0x00174BDB:Disable,1:call:0x00174BDC:Disable,1:call:0x00174BDD:Disable,1:call:0x00174BDE:Disable" }
 args = ["--play", "--pos=-70720,-85587,6500", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 14
 expect = [
@@ -20769,6 +20848,23 @@ expect = [
 order = [["nvf mcm install check 1", "tiles: a mod's tiles in StartMenu", "pause menu: mods page", "scripts: MenuMode 1013 blocks run", "pause menu: mods page closed", "nvf mcm install check 0"]]
 
 [[scenario]]
+name = "travel-skip-sun-shadows"
+source = "#1732: test aid NVF_PLAY_TEST_TRAVEL_SKIP_SUN_SHADOWS has a travel's screen not wait for the sun's shadow pipelines (engine/nvforever/src/pipeline_gate.rs), to compare both ways by measuring; their label alone cannot tell them from a camera's prepass, so this also checks that the test finds some"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/pipeline_gate.rs"]
+env = { NVF_PLAY_TEST_TRAVEL_SKIP_SUN_SHADOWS = "1", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "2:cow WastelandNV -6 3;2.3:close" }
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 12
+expect = [
+  { text = "test aid NVF_PLAY_TEST_TRAVEL_SKIP_SUN_SHADOWS: a travel's screen does not wait", label = "the aid is on" },
+  { re = 'pipeline \d+ asked: (pbr_)?prepass_pipeline \(sun shadow\)', label = "pipelines are found to be the sun's shadows" },
+  { re = 'pipeline \d+ asked: (pbr_)?prepass_pipeline$', label = "and the camera's prepass pipelines are not taken for them" },
+  { re = 'loading screen down after [\d.]+ s \(the start', label = "the start's screen comes down" },
+  { re = 'loading screen down after [\d.]+ s\s*$', label = "the travel's screen comes down" },
+]
+forbid = [{ text = "pipelines not ready after", label = "the pipelines' cap" }]
+
+[[scenario]]
 name = "start-conversation-walks-up"
 source = "issue #1544 (owner): the Legion explorers about Nelson greeted the player halfway to Novac. Their script (nvNelsonExplorerBarkSCRIPT) calls StartConversation Player once its GameMode runs, and the conversation opened at once from 10,099 units off. With the AI running, StartConversation's speaker now walks up first (fnv_game Game::walk_up_greet, fnv_ai Ai::walk_up_step)"
 note = "the player stands near Ranger Milo's post at (42000, -38000), noon; explorer 01 (0x0014F408) is placed at (51986, -38898). It runs over and opens the conversation once within 150 units, about 18 game minutes later"
@@ -20811,6 +20907,24 @@ expect = [
   { re = 'collision of dropped 0xFF00000[0-3] added: meshes.armor.\S+.go\.nif, 1 bodies \(dynamic\).*: the model.s [24] dynamic bodies joined into one', count = 4, label = "their bodies are joined into one" },
   { re = 'dropped 0xFF00000[0-3] came to rest at', count = 4, label = "each piece of clothing comes to rest" },
   { re = 'dropped 0xFF00000[0-4] came to rest at .*, (?P<n>[\d.]+) below where its collision was added', range = [60, 120], all = true, label = "on the ground, about 85 units below the drop point, as the pistol" },
+]
+
+[[scenario]]
+name = "wait-greeter-stops-short"
+source = "issue #1597 (owner): waiting while a force-greeter walks up put him inside the player (Malcolm Holmes). The wait walks the approach to its end, and its end was the player's own spot. The approach's way now ends within three quarters of the talking distance (fnv_ai approach: goal radius), and the walker stops at a widened goal radius however long its step (fnv_nav Walker)"
+note = "the first star cap enables Holmes and gives him his Dialogue package (the player, distance 100); at 4 s the console moves him 1,500 units east of the player; at 7-9 s the player waits one hour. Before the change he stood 30 units off when the wait ended (inside the player, then pushed aside)"
+areas = ["ai", "dialogue", "wait"]
+paths = ["crates/fnv-nav/src/follow.rs", "crates/fnv-ai/src/carry.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "1:call:player:AddItem:NVStarBottleCap:1", NVF_PLAY_TEST_CONSOLE = "4:sshqmalcolmholmesref.moveto player 1500 0 0;4.3:close", NVF_PLAY_TEST_WAIT = "7:open,8:hours=1,9:accept" }
+args = ["--play", "--pos=21000,-14450,7500", "--heading", "90", "--hour", "12", "--no-voice"]
+run_seconds = 30
+order = [[
+  { re = 'SSHQMalcolmHolmesREF: runs up to 0x00000014 to talk .*: 1500 units away', label = "Holmes runs at the player from 1,500 units" },
+  { re = 'an hour passed in the wait menu', label = "the player waits an hour" },
+  { re = 'SSHQMalcolmHolmesREF: starts a conversation with 0x00000014 from (?P<n>\d+) units', range = [50, 150], label = "after the wait he talks from his talking distance, not from inside the player" },
+]]
+forbid = [
+  { re = 'SSHQMalcolmHolmesREF: was pushed aside', label = "he was never on the player's spot to be pushed off it" },
 ]
 
 [[scenario]]
@@ -21326,8 +21440,10 @@ expect = [
   { text = "script runner: gr_nvfsmoke.txt ran (game restart)", count = 1 },
   "main menu: New Game",
   { text = "script runner: ln_nvfsmoke.txt ran (new game)", count = 1, label = "the ln_ file runs once the new game begins" },
+  { text = "main menu: open", label = "the menu opens" },
+  { text = "scripts ready in", label = "the script data is taken in" },
 ]
-order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"]]
+order = [["script runner: gr_nvfsmoke.txt ran", "main menu: New Game", "script runner: ln_nvfsmoke.txt ran (new game)"], ["main menu: open", "scripts ready in"]]
 
 # ------------------------------------------------------------------ the dialogue menu from its file
 # What these prove: the pieces handed to the tile renderer (`tiles: DialogMenu painted`), the tile
@@ -21694,6 +21810,22 @@ expect = [
   { re = 'flat_[abcd]\.png: (\d+) % of the view is one colour', range = [0, 60], all = true, label = "no shot after the screen is flat" },
 ]
 forbid = [{ text = "pipelines not ready after", label = "the pipelines' cap" }, { text = "failed and will not be tried again", label = "a pipeline that failed for good" }, { text = "and no longer waited for", label = "a pipeline over the cap" }]
+
+[[scenario]]
+name = "start-times"
+source = "#1732: where a start's first seconds go, logged (engine/nvforever/src/start_times.rs); the radio's and the audio places' reads left the Startup schedule for threads of their own (engine/nvf-play/src/start_read.rs) and still arrive, with Goodsprings' music found from them"
+areas = ["renderer", "sound"]
+paths = ["engine/nvforever/src/start_times.rs", "engine/nvf-play/src/start_read.rs"]
+args = ["--play", "--cell", "Goodsprings", "--no-voice", "--no-messages", "--pos=-67900,1400,8500"]
+run_seconds = 2
+expect = [
+  { re = 'start: Startup [\d.]+ s; frame 1 [\d.]+ s: [\d.]+ s before Update, [\d.]+ s in Update, [\d.]+ s after it', count = 1, label = "the first frame's parts are timed" },
+  { re = 'start: first render frame finished [\d.]+ s after frame 1 ended', count = 1, label = "and the first render frame" },
+  { re = 'radio: \d+ stations .* read in \d+ ms', count = 1, label = "the radio's read arrives from its thread" },
+  { re = 'music: \d+ media sets, .* read in \d+ ms', count = 1, label = "the audio places' read arrives from its thread" },
+  { text = "music: in marker", label = "the music finds its place from them" },
+]
+forbid = [{ text = "a start-up read stopped with a panic", label = "a read that failed" }]
 
 [[scenario]]
 name = "sierra-madre-lobby-hologram"

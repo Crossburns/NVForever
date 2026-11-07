@@ -131,6 +131,7 @@ mod script_look;
 mod ripples;
 mod settings;
 mod iron_sights;
+mod head_bob;
 mod view_sway;
 mod weapon_lower;
 mod setup;
@@ -140,6 +141,7 @@ mod shafts;
 mod imagespace;
 mod imposters;
 mod sky;
+mod start_times;
 mod weather_fx;
 mod limping;
 mod sneaking;
@@ -659,6 +661,10 @@ struct Args {
     /// bob (view_sway.rs); a switch of the settings page.
     #[arg(long, requires = "play")]
     no_weapon_sway: bool,
+    /// No head bob in first person: the camera stays still while walking and running
+    /// (head_bob.rs); a switch of the settings page.
+    #[arg(long, requires = "play")]
+    no_head_bob: bool,
     /// Keep the first-person weapon up against walls and friendly actors close ahead
     /// (weapon_lower.rs); a switch of the settings page.
     #[arg(long, requires = "play")]
@@ -834,7 +840,9 @@ fn command_line() -> Vec<String> {
 
 /// Bevy's task pools. Test aid `NVF_PLAY_TEST_ASYNC_THREADS=<n>` sets the async compute
 /// pool's size, which is 25 % of the cores and 1 to 4 threads otherwise [documented:
-/// bevy_app 0.20.1 `task_pool_plugin.rs`], to compare with a smaller machine's.
+/// bevy_app 0.20.1 `task_pool_plugin.rs`], to compare with a smaller machine's. Pipelines
+/// compile there; the game's file reads have a pool of their own, with an aid of its own
+/// (`nvf_assets::read_pool`).
 fn task_pools() -> TaskPoolPlugin {
     let mut task_pool_options = bevy::app::TaskPoolOptions::default();
     if let Some(n) = std::env::var("NVF_PLAY_TEST_ASYNC_THREADS").ok().and_then(|v| v.parse::<usize>().ok()) {
@@ -1429,6 +1437,7 @@ fn main() -> AppExit {
     .add_systems(PostUpdate, sky::sun_casters_over_slice.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
     .add_systems(PostUpdate, sky::reach_toward_sun.after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades).before(bevy::light::SimulationLightSystems::UpdateLightFrusta))
     .add_systems(Startup, (crash::report_start, report_archives))
+    .add_plugins(start_times::StartTimesPlugin)
     .add_systems(Last, (crash::note_place, crash::report_exit, stray_commands::report));
     if let Some(probe) = actor_feet::from_env() {
         app.insert_resource(probe).add_systems(Last, actor_feet::probe);
@@ -1520,7 +1529,7 @@ fn main() -> AppExit {
             app.add_plugins(creator_view::CreatorViewPlugin { light_scale: args.light_scale });
             // The Vigor Tester's machine: its camera and lights, the room behind it.
             app.add_plugins(vigor_view::VigorViewPlugin);
-            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin));
+            app.add_plugins((player_body::PlayerBodyPlugin { first_person_body: args.first_person_body, weapon_sway: !args.no_weapon_sway, head_bob: !args.no_head_bob, weapon_lower: !args.no_weapon_lower, true_iron_sights: !args.no_true_iron_sights }, stealth_field::StealthFieldPlugin, pipboy_arm::PipBoyArmPlugin, deaths::DeathsPlugin, limbs::LimbsPlugin, ragdoll::RagdollPlugin, swing_traps::SwingTrapsPlugin, wrecks::WrecksPlugin, shot_fx::ShotFxPlugin, particles::ParticlesPlugin, dismember::DismemberPlugin));
             app.insert_resource(nvf_play::aim_zoom::Scope3d { on: args.scope_3d, lens: false });
             app.add_plugins(decals::DecalsPlugin);
             app.add_plugins(knockouts::KnockoutsPlugin);

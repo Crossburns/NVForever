@@ -188,6 +188,9 @@ cancellation and a cold New Game gift at 16:9 and 4:3 after this review revision
 - Travel without `--play` (the free camera following `--npc-travel` NPCs) is unchanged:
   no loading screen.
 - The game's rules for choosing a screen are open (spec note §3).
+- Whether a travel's screen should wait for the sun's shadow pipelines is open (#1732): test
+  aid `NVF_PLAY_TEST_TRAVEL_SKIP_SUN_SHADOWS=1` has it not wait, so that both can be measured
+  (`engine/nvforever/src/pipeline_gate.rs`, `sun_shadow`). The start's screen always waits.
 - Test aid: `NVF_PLAY_TEST_LOADING_SHOT=<png>` saves the window when the travel goes out
   (the screen is up); later screens of the run go to `<name>-2.png`, and so on.
 
@@ -202,3 +205,8 @@ cancellation and a cold New Game gift at 16:9 and 4:3 after this review revision
   and the emblem's place at 1280x720 and 1280x1024, its turning).
 - Smoke: `loading-screen-look`.
 - In the game (owner's data): Doc Mitchell's front door, both ways; see the pull request.
+- Where a start's first seconds go (`engine/nvforever/src/start_times.rs`, every run): `start:
+  Startup <s> s; frame 1 <s> s: <s> s before Update, <s> s in Update, <s> s after it` and
+  `start: first render frame finished <s> s after frame 1 ended`. For the systems inside
+  them: a `--features profile` build with `NVF_PLAY_TEST_PROFILE=1`, whose first `profile:`
+  line covers the first frames.

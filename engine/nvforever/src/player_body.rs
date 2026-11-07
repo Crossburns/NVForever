@@ -776,6 +776,9 @@ struct Motion {
     velocity: Vec2,
     /// The first-person arms' sway (`view_sway.rs`).
     sway: ViewSway,
+    /// The camera's bob: first person's, and the third-person pivot's smoothing
+    /// (`head_bob.rs`).
+    head: crate::head_bob::HeadBob,
     /// The first-person weapon lowered against a wall or a friend (`weapon_lower.rs`).
     lower: WeaponLower,
     /// The true iron sights were last reported on the eye (a smoke check).
@@ -829,6 +832,7 @@ impl Default for Motion {
             names: HashMap::new(),
             velocity: Vec2::ZERO,
             sway: ViewSway::default(),
+            head: crate::head_bob::HeadBob::default(),
             lower: WeaponLower::default(),
             sights_told: false,
             lower_told: false,
@@ -844,6 +848,9 @@ pub struct PlayerBody {
     /// Sway and bob the first-person arms and weapon (`view_sway.rs`; off with
     /// `--no-weapon-sway`, the settings page).
     pub weapon_sway: bool,
+    /// Bob the first-person camera while walking (`head_bob.rs`; off with
+    /// `--no-head-bob`, the settings page).
+    pub head_bob: bool,
     /// Lower the first-person weapon against a wall or a friendly actor close ahead
     /// (`weapon_lower.rs`; off with `--no-weapon-lower`, the settings page).
     pub weapon_lower: bool,
@@ -969,6 +976,8 @@ pub struct PlayerBodyPlugin {
     pub first_person_body: bool,
     /// Not `--no-weapon-sway`.
     pub weapon_sway: bool,
+    /// Not `--no-head-bob`.
+    pub head_bob: bool,
     /// Not `--no-weapon-lower`.
     pub weapon_lower: bool,
     /// Not `--no-true-iron-sights`.
@@ -978,7 +987,7 @@ pub struct PlayerBodyPlugin {
 impl Plugin for PlayerBodyPlugin {
     fn build(&self, app: &mut App) {
         // Furniture (`furniture.rs`) says what the body plays before it is posed.
-        app.insert_resource(PlayerBody { first_person_body: self.first_person_body, weapon_sway: self.weapon_sway, weapon_lower: self.weapon_lower, true_iron_sights: self.true_iron_sights, ..default() })
+        app.insert_resource(PlayerBody { first_person_body: self.first_person_body, weapon_sway: self.weapon_sway, head_bob: self.head_bob, weapon_lower: self.weapon_lower, true_iron_sights: self.true_iron_sights, ..default() })
             .init_resource::<crate::furniture::BodyOverride>()
             .init_resource::<crate::furniture::PlayerUse>()
             .init_resource::<crate::weapon_lower::Ahead>()
@@ -1105,6 +1114,8 @@ fn report(mut exit: MessageReader<AppExit>, body: Res<PlayerBody>) {
         let m = &body.motion;
         info!("player body summary: {} falls (the jump loop), {} landings", m.falls, m.landings);
         info!("player body summary: weapon sway {}, most turn lag {:.2} degrees sideways and {:.2} up or down, deepest bob {:.2} units", if body.weapon_sway { "on" } else { "off" }, m.sway.peak_lag.x.to_degrees(), m.sway.peak_lag.y.to_degrees(), m.sway.peak_dip);
+        let (head, pivot) = m.head.pivot_rms();
+        info!("player body summary: head bob {}, deepest first-person dip {:.2} units; third-person pivot over {} frames moved {pivot:.3} units a frame (rms) against the head's {head:.3}, pivot/head {:.2}", if body.head_bob { "on" } else { "off" }, m.head.peak_dip, m.head.frames, pivot / head.max(1e-3));
         info!("player body summary: weapon lowering {}, lowered {} times, most {:.2}", if body.weapon_lower { "on" } else { "off" }, m.lower.times, m.lower.peak);
     }
 }
@@ -2468,6 +2479,7 @@ fn drive_body(
         // back, the higher, clear of the bed.
         let lift = lying.map_or(0.0, |frame| LYING_PIVOT_UP * (1.0 - (frame * Vec3::Z).z).clamp(0.0, 1.0));
         view.pivot = eye.map(|e| [o.pos[0], o.pos[1], e.z + 5.0 + lift]);
+        m.head.pivot_reset();
         anim.ready = false;
         anim.muzzle = None;
         anim.casing = None;
@@ -2651,7 +2663,7 @@ fn drive_body(
         }
         lunge.carrying = true;
     }
-    let (held, pitch, at) = idles.held.map_or((player.heading, player.pitch, feet), |h| (h.heading, player.pitch - h.pitch, h.feet));
+    let (held, pitch, mut at) = idles.held.map_or((player.heading, player.pitch, feet), |h| (h.heading, player.pitch - h.pitch, h.feet));
     if let Some(h) = idles.held {
         // The character stays where the scene plays (and collides with nothing there).
         seat.hold = Some(h.feet);
@@ -2671,6 +2683,21 @@ fn drive_body(
             on: state.weapon_sway && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         })
     });
+    // The head bob in first person moves the whole arms rig, camera node, arms and
+    // weapon together (`head_bob.rs`).
+    if let Some(f) = body.first.as_ref() {
+        let o = m.head.first_person(crate::head_bob::BobInput {
+            dt,
+            speed: m.speed,
+            phase: f.animator.phase,
+            heading: player.heading,
+            sights: control.aiming,
+            sneaking: stance == Stance::Sneak,
+            airborne: m.falling,
+            on: state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
+        });
+        at = [at[0] + o.x, at[1] + o.y, at[2] + o.z];
+    }
     // Lowered against a wall or a friend ahead (`weapon_lower.rs`): a drawn weapon, not
     // fists; aiming, the trigger, an attack or a reload bring it up.
     let lowered = m.lower.update(LowerInput {
@@ -2781,7 +2808,16 @@ fn drive_body(
     });
     player.body_eye = eye.map(|e| e.to_array());
     state.head_eye = third_eye.filter(|_| third_view).map(|e| e.to_array());
-    view.pivot = third_eye.or(eye).map(|e| [feet[0], feet[1], e.z + 5.0]);
+    // The third-person pivot: the head's height above the feet without the stride's
+    // rise and fall (`head_bob.rs`).
+    view.pivot = third_eye.or(eye).map(|e| {
+        let up = e.z - feet[2];
+        let up = if third_view { m.head.pivot_height(up, dt) } else { up };
+        [feet[0], feet[1], feet[2] + up + 5.0]
+    });
+    if !third_view {
+        m.head.pivot_reset();
+    }
 
     // The body in first person stands where its eyes are under the camera (and a little
     // behind), feet on the ground: the view is the arms rig's, the body is moved to it.
