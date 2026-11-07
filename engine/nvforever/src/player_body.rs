@@ -1021,7 +1021,7 @@ fn draw_warm_pose(
     mut transforms: Query<&mut Transform>,
     mut visibility: Query<&mut Visibility>,
     children: Query<&Children>,
-    meshes: Query<Has<NoFrustumCulling>, With<Mesh3d>>,
+    mut meshes: Query<(Has<NoFrustumCulling>, &mut Mesh3d)>,
     cameras: Query<(&GlobalTransform, &Projection), With<nvf_play::PlayerCamera>>,
 ) {
     let Some(t) = pip.warm_clip() else { return };
@@ -1040,8 +1040,13 @@ fn draw_warm_pose(
         if let Ok(before) = transforms.get(e) {
             saved.transforms.push((e, *before));
         }
-        if let Ok(false) = meshes.get(e) {
-            commands.entity(e).insert((NoFrustumCulling, WarmUnculled));
+        if let Ok((unculled, mut mesh)) = meshes.get_mut(e) {
+            // [design: #1803] Rebuild retained colour bins after borrowing visibility
+            // and swapping materials, including retries delayed by an upload.
+            mesh.set_changed();
+            if !unculled {
+                commands.entity(e).insert((NoFrustumCulling, WarmUnculled));
+            }
         }
     }
     if let Ok(mut v) = visibility.get_mut(rig.root) {
@@ -1456,7 +1461,7 @@ fn build_rig(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &
         // The arms rig casts no shadow on the world: the third-person body casts the
         // player's.
         for e in &spawned.drawn {
-            commands.entity(*e).insert(RenderLayers::layer(ARMS_LAYER));
+            commands.entity(*e).insert((RenderLayers::layer(ARMS_LAYER), crate::pipboy_ready::PipBoyShape));
         }
         for ((&e, &p), &s) in spawned.drawn.iter().zip(&spawned.part_of).zip(&spawned.shape_of) {
             let shape = &uses[p].part.shapes[s];

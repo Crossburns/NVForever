@@ -100,28 +100,36 @@ states. Transforms, root visibility and only the warm-up's culling overrides are
 before the next body tick; materials and the inactive image camera follow in that tick's
 UI pass. Loading waits explicitly for this teardown as well as its existing pipeline gate.
 
-[design: the same files] The floor is four completed render frames from the request,
-allowing the body/UI handoff before at least three hidden draws, then an unchanged pipeline
-count across two quiet render reports. A three-second wall-clock cap ends the hidden
-draws even if a rig part, shader or camera never arrives. The start's normal pipeline wait
-still applies after that cap. A later cold raise uses the same mechanism at clip time zero,
-with the rig behind the camera and `NoFrustumCulling`; it resumes after quiet or the cap.
-This covers a device first given during New Game without opening it behind the main menu.
+[design: `engine/nvforever/src/pipboy_arm.rs`, `pipboy_ready.rs`; #1803]
+The start's hidden interval has a four-render-report floor and a 250 ms wall-clock
+budget, followed by teardown. It waits for submission, not the global busy pipeline
+count: this screen already owns the compilation wait. If submission is incomplete at
+the budget, the rig stays cold. A first visible device opening verifies its own main
+queue, prepared materials, bind groups and main/prepass pipelines behind the camera;
+it can be cancelled and does not expose incomplete draws at a timeout. A normal warmed
+submission check is expected to take about 70-100 ms at 60 Hz [hypothesis, unmeasured].
 
-[design: `engine/nvforever/src/pipboy_arm.rs`, `pipeline_gate.rs`]
-`pipboy: warm-up start (covered=..., device=..., asked=..., frame=...)` and
-`pipboy: warm-up asked <n> pipelines, ready after <ms> ms (covered=..., capped=..., cancelled=...)`
-bound the hidden interval. The count is all gate requests during it, including concurrent
-world work. `pipboy: warm-up teardown complete (screen camera off)` precedes uncovering;
-`pipboy: first raise held <ms> ms for <n> pipelines` measures the backstop. Set
-`NVF_PLAY_TEST_NO_PIPBOY_WARM=1` to omit the warm-up system for comparison. It is checked
-once at plugin setup, with no per-frame environment lookup.
+[observed: supplied `target/smoke/pipboy-first-open.log` and disabled twin, 2026-11-07]
+The previous three-second warm-up capped at 3011 ms; startup was 12.98 against 10.79
+seconds, one launch each on a busy machine. Zero pipeline requests at the visible raise
+did not prevent blue silhouettes in its first three shots. Pipeline readiness is therefore
+insufficient evidence of a successful first open. See `docs/spec-notes/pipboy.md` section 8
+for the queue retry fixes, unresolved diagnosis and the new submission report.
 
-[hypothesis: #1803 plan] Extra start time may overlap the world's existing work; it has
-not been measured for this change. Compare three enabled/disabled starts using both
-`loading screen down after` and `the world starts loading`, then repeat with
-`NVF_PLAY_TEST_ASYNC_THREADS=2`. Check save load, `--menu`, no device, and outfits without
-a model screen, plus a cold New Game raise at 16:9 and 4:3. No game run accompanied this edit.
+[design: `engine/nvforever/src/pipboy_arm.rs`, `pipboy_ready.rs`, `pipeline_gate.rs`]
+The warm-up log's total requests still include concurrent world work. `own rig pipelines`
+now names the actual main/prepass IDs for this rig. The existing image camera requests
+four compatible UI/sprite/postprocessing/tonemapping keys; shared IDs are not extra
+compilations. `NVF_PLAY_TEST_PIPBOY_DRAW=1` logs the first visible submission and changes
+thereafter, including opaque entries and material/binding readiness; no logging system
+is registered by default. `NVF_PLAY_TEST_NO_PIPBOY_WARM=1` remains the disabled twin.
+
+[hypothesis: the new budget, unmeasured] The short hidden submission should fit within
+the start's existing world/pipeline wait, so it should usually add no screen time. Its
+own hold is bounded by 250 ms plus one-frame teardown and scheduling latency. Compare
+three starts and a two-thread start, then the four first-open shots. A cold first-open
+hold moves any remaining cost to that first device use instead of every start. Check
+save load, no device, screen-menu frame, and a cold New Game gift at 16:9 and 4:3.
 
 ## 2. What is on hold
 
