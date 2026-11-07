@@ -3,14 +3,19 @@
 //! what is documented (xEdit names); how the engine combines them is a hypothesis
 //! (docs/spec-notes/world.md §6), checked against in-game screenshots:
 //!
-//! - Seen from above, the surface fogs what lies behind it by the length of the view ray
-//!   inside the water (from the camera's depth prepass): linear from the above-fog near
-//!   to far distance (-80 / 850 for Lake Mead's NVCleanWater) to opaque, shading from the
-//!   shallow to the deep colour. So the bed shows at the waterline and fades out as it
-//!   drops. Compared by eye with in-game screenshots at Boulder Beach: capping the fog
-//!   at the above-fog amount left the lake bed visible far out; fogging by the distance
-//!   from the camera instead turned the water opaque right at the shore when seen from
-//!   a few metres up.
+//! - Seen from above, the water body takes its colour by how far below the surface the
+//!   opaque surface behind it lies (from the camera's depth prepass; the above fog's
+//!   near and far planes are depths below the surface [documented: GECK wiki
+//!   WaterType]), shallow to deep colour from the near to the far depth (-80 / 850 for
+//!   Lake Mead's NVCleanWater), and its opacity by the length of the view ray inside the
+//!   water over the same ramp, at most the above fog's amount (the deep plane's
+//!   transparency [documented: same page]; 0.75 for NVCleanWater). So the bed shows at
+//!   the waterline and fades out as it drops, and a pool shallower than the far depth
+//!   keeps its shallow colour, opaque at a grazing look (the Ultra-Luxe fountain, #1787;
+//!   before that the colour too followed the ray, which made small pools the deep
+//!   colour). Compared with the original: fogging by the distance from the camera
+//!   turned the water opaque right at the shore when seen from a few metres up; the
+//!   opacity by the depth alone showed the fountain's floor (world.md §6).
 //! - Reflective types reflect the world (reflection.rs: a mirrored camera's image of
 //!   the scene above the water nearest the camera; the weather's sky gradient for water
 //!   at other heights), others their reflection colour, weighted by
