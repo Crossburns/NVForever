@@ -1232,18 +1232,20 @@ pub fn spawn_model(
         stats.refs_animated += 1;
         return;
     }
-    // A jointed object left posed by its designer (`XRGD`, clutter_pose.rs).
-    let posed = (crate::clutter_pose::posable(&base.sig) && model.nodes.len() > 1)
+    // A jointed object left posed by its designer (`XRGD`, clutter_pose.rs). Whether it
+    // poses is decided by `clutter_pose::pose` (the matching rule and every body on a
+    // named node below the model's root), the same condition the collision uses.
+    let posed = crate::clutter_pose::posable(&base.sig)
         .then(|| crate::clutter_pose::stored(world.lo, r))
         .flatten()
         .and_then(|bones| {
             let bodies = crate::clutter_pose::body_nodes(&models.data, &path)?;
             let posed = crate::clutter_pose::pose(&model.nodes, &bodies, &bones);
-            match posed {
-                Some(_) => info!("clutter pose: 0x{r:08X} {path} drawn in its stored pose ({} bodies)", bodies.len()),
-                None => debug!("clutter pose: 0x{r:08X} {path}: {} entries do not fit {} bodies", bones.len(), bodies.len()),
+            match &posed {
+                Ok(_) => info!("clutter pose: 0x{r:08X} {path} drawn in its stored pose ({} bodies)", bodies.len()),
+                Err(why) => crate::clutter_pose::log_refused(&path, why, &bones, &bodies),
             }
-            posed
+            posed.ok()
         });
     stats.refs_posed += usize::from(posed.is_some());
     for s in &model.shapes {

@@ -677,6 +677,27 @@ fn stored_pose_lays_the_collision_down() {
     assert_eq!(objects, standing);
 }
 
+/// A skeleton part copied with the whole skeleton's `XRGD` poses its bodies from the
+/// first entries, the extra entries ignored (issue #1400).
+#[test]
+fn a_skeleton_part_poses_its_collision_from_the_first_entries() {
+    use fnv_collide::nif::{NodeTree, Similarity};
+    use fnv_world::xrgd::Bone;
+    let at = |t: [f32; 3]| Similarity { iso: Iso { translation: t, rotation: Iso::IDENTITY.rotation }, scale: 1.0 };
+    let tree = NodeTree::from_nodes([(0, None, Similarity::IDENTITY), (1, Some(0), at([40.0, 0.0, 0.0])), (2, Some(1), at([23.0, 0.0, 0.0]))]);
+    let body = |block: usize| CollisionObject { node: Some(format!("n{block}")), node_block: block, node_transform: Iso::IDENTITY, ..object(4.0, Motion::Dynamic) };
+    let standing = vec![body(1), body(2)];
+    // Three entries (a whole skeleton's), the first two for the two bodies, the third spare.
+    let bones = [Bone { position: [5.0, 0.0, 0.0], angles: [0.0; 3] }, Bone { position: [10.0, 0.0, 0.0], angles: [0.0; 3] }, Bone { position: [999.0; 3], angles: [0.0; 3] }];
+    let mut objects = standing.clone();
+    assert!(prepare::pose_stored(&tree, &bones, &mut objects));
+    assert_eq!(objects[0].node_transform.translation, [5.0, 0.0, 0.0], "entry 0");
+    assert_eq!(objects[1].node_transform.translation, [15.0, 0.0, 0.0], "entry 0 + entry 1");
+    // A single body with several entries is refused (which one is meant is ambiguous).
+    let mut one = vec![standing[0].clone()];
+    assert!(!prepare::pose_stored(&tree, &bones, &mut one));
+}
+
 /// A small creature's character is its own size, a person's the player's (playtest list
 /// 7 item 35: the mantis nymphs, drawn about 30 units tall, had the player's capsule).
 #[test]

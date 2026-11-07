@@ -618,10 +618,12 @@ impl NodeTree {
     /// file's, and each object's node transform is worked out again along the chain (its
     /// body offset and shapes unchanged; node scales are not touched, so the shapes' baked
     /// scale still holds). Nothing changes and `false` is returned when the counts differ,
-    /// there are none, or an object's node is unnamed or not in the tree (the drawing's
-    /// rule: `clutter_pose.rs`).
+    /// there are none, or an object's node is unnamed, not in the tree, or the mesh root
+    /// itself (the drawing's rule: `clutter_pose.rs`, whose `pose` only finds a body's node
+    /// among the nodes below the root).
     pub fn pose_objects(&self, objects: &mut [crate::shape::CollisionObject], locals: &[Iso]) -> bool {
-        if objects.is_empty() || objects.len() != locals.len() || objects.iter().any(|o| o.node.is_none()) {
+        let on_a_root = |o: &crate::shape::CollisionObject| self.nodes.get(&o.node_block).is_none_or(|(parent, _)| parent.is_none());
+        if objects.is_empty() || objects.len() != locals.len() || objects.iter().any(|o| o.node.is_none() || on_a_root(o)) {
             return false;
         }
         let by_node: HashMap<usize, Iso> = objects.iter().zip(locals).map(|(o, l)| (o.node_block, *l)).collect();
@@ -867,6 +869,15 @@ mod tests {
         let moved = Iso { translation: [0.0, 20.0, 0.0], rotation: Iso::IDENTITY.rotation };
         assert!(tree.pose_objects(&mut objs, &[moved]));
         assert_eq!(objs[0].node_transform.translation, [0.0, 10.0, 0.0]);
+    }
+
+    #[test]
+    fn a_body_on_the_mesh_root_is_not_posed() {
+        // A single body hung on the mesh root itself: the drawing's nodes (below the root)
+        // have no entry for it, so the collision must refuse it too (issue #1400).
+        let tree = NodeTree::from_nodes([(0, None, Similarity::IDENTITY)]);
+        let mut objs = vec![object(0, [0.0; 3])];
+        assert!(!tree.pose_objects(&mut objs, &[Iso::IDENTITY]));
     }
 
     #[test]
