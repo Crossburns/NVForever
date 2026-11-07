@@ -60,6 +60,43 @@ pub struct StepLift {
     /// lift (either way) since the start (for the exit report).
     pub taken_up: u32,
     pub most: f32,
+    /// How rough the feet's and the drawn height were while walking on the ground (for
+    /// the exit report).
+    pub rough: Roughness,
+}
+
+/// The vertical acceleration of the feet and of the drawn height over consecutive fixed
+/// steps on the ground while walking (moving over half a unit a step).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Roughness {
+    /// Last step's change of the feet's and the drawn height, while counting.
+    last: Option<(f32, f32)>,
+    feet: f64,
+    drawn: f64,
+    /// Steps counted.
+    pub steps: u32,
+}
+
+impl Roughness {
+    fn step(&mut self, feet_dz: f32, drawn_dz: f32, walking: bool, dt: f32) {
+        if !walking || dt <= 0.0 {
+            self.last = None;
+            return;
+        }
+        if let Some((f, d)) = self.last {
+            let per = 1.0 / f64::from(dt * dt);
+            self.feet += (f64::from(feet_dz - f) * per).powi(2);
+            self.drawn += (f64::from(drawn_dz - d) * per).powi(2);
+            self.steps += 1;
+        }
+        self.last = Some((feet_dz, drawn_dz));
+    }
+
+    /// RMS vertical acceleration of the feet and of the drawn height, units/s².
+    pub fn rms(&self) -> (f32, f32) {
+        let n = f64::from(self.steps.max(1));
+        ((self.feet / n).sqrt() as f32, (self.drawn / n).sqrt() as f32)
+    }
 }
 
 impl StepLift {
@@ -96,12 +133,14 @@ impl StepLift {
             let sample = dz.clamp(predicted - most, predicted + most);
             self.speed += (sample / dt - self.speed) * (dt / SPEED_SECONDS).min(1.0);
         }
+        self.rough.step(dz, dz + self.lift - self.prev, on_ground && horizontal > 0.5, dt);
         self.most = self.most.max(self.prev.abs());
     }
 
     /// Back to no lift (a placement), the tallies kept.
     pub fn reset(&mut self) {
-        *self = StepLift { taken_up: self.taken_up, most: self.most, ..StepLift::default() };
+        let rough = Roughness { last: None, ..self.rough };
+        *self = StepLift { taken_up: self.taken_up, most: self.most, rough, ..StepLift::default() };
     }
 
     /// The drawn ground under the feet moved by `dz` without the feet moving (after the
@@ -193,6 +232,8 @@ mod tests {
         let drawn = walk(&mut lift, &h, 5.0);
         let (feet, drawn) = (sharpest(&h[1..]), sharpest(&drawn));
         assert!(drawn < feet / 3.0, "sharpest change of speed: feet {feet}, drawn {drawn}");
+        let (feet, drawn) = lift.rough.rms();
+        assert!(lift.rough.steps > 80 && drawn < feet / 2.0, "rms feet {feet}, drawn {drawn} over {} steps", lift.rough.steps);
     }
 
     #[test]

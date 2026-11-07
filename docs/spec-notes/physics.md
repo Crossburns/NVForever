@@ -2425,9 +2425,15 @@ Replayed on the traces [observed: `fnvtool phys walk` traces through the filter,
 2026-11-07], the RMS vertical acceleration of the drawn height (feet / first rule / now,
 units/s²): road run 741 / 741 / 284, road walk 239 / 206 / 85, rough desert run
 2621 / 1072 / 504, the hill run `move_hill_run` 787 / 660 / 334, Doc Mitchell's porch
-steps 2078 / 1690 / 629; largest lift 6.6, 4.2, 16, 7.9 and 9.9 units. The exit report
-says how many steps the player's lift took in and its largest value; smoke
-`camper-steps`.
+steps 2078 / 1690 / 629; largest lift 6.6, 4.2, 16, 7.9 and 9.9 units. The broken
+side of the road piece (WastelandRoadStraightLongB 0x00104FB5, lanes 160-240 units off
+its centre line) is the roughest: the feet move 2-3.4 units in single steps over its
+broken parts; there 2093 / 1367 / 260 and 2477 / 1965 / 388. In game on that lane
+[observed: smoke `road-run-smooth`, 2026-11-07] the exit report gave 2081 for the feet
+and 427 for the drawn height over 597 steps. The exit report says how many steps the
+player's lift took in, its largest value, and the RMS vertical acceleration of the feet
+and of the drawn height while walking on the ground (`StepLift::rough`); smoke
+`camper-steps`, `road-run-smooth`.
 ### 6.12 Fall damage (playtest list 7 item 21, 2026-10-23; `engine/nvf-play/src/falls.rs`)
 
 - **Settings** [observed: FalloutNV.esm GMST]: `fJumpFallHeightMin` 600,
