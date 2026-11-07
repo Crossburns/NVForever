@@ -1759,6 +1759,7 @@ pub(crate) fn run_scripts(
                 st.loader = None;
                 let mut rt = Runtime::new(data, &mut sim, st.new_game, play.0.packages);
                 rt.start = st.start.clone();
+                tiles.install_measure(&mut rt.game);
                 let mut restored = false;
                 if let Some(PendingGame(snap, path)) = st.pending_game.take() {
                     // Test aid: `save::read_for_load` lets no save through that fails here.

@@ -1,0 +1,4 @@
+PrintC "nvf type injected %g", (InjectUIXML "HUDMainMenu" "menus/prefabs/nvf_typewriter_probe.xml")
+SetTileScript "HUDMainMenu/NVFTypewriter/_flag" (CompileScript "nvf_type_original.txt")
+SetTileScript "HUDMainMenu/NVFTypewriter/_controller" (CompileScript "nvf_type_controller.txt")
+SetUITypewriter "HUDMainMenu/NVFTypewriter" "A" 2 6

@@ -1,0 +1,3 @@
+; The frame callback queries while the pointer aid keeps the HUD active.
+PrintC "nvf cursor injected %g", (InjectUIXML "HUDMainMenu" "menus/prefabs/nvf_cursor_probe.xml")
+SetTileScript "HUDMainMenu/NVFCursorProbe/_probe" (CompileScript "nvf_cursor_probe.txt")
