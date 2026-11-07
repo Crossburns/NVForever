@@ -190,8 +190,7 @@ screen's height):
   7].
 - The caps arrow and its figure are drawn at half brightness, as a disabled button is,
   while the side that pays holds fewer caps than the balance [design: the owner's
-  request; it dimmed where Accept was refused, and a sale beyond the merchant's caps is
-  no longer refused].
+  request].
 - The container menu's note shows for a container whose record has the Respawns flag
   [hypothesis: every such container]; a refused trade's words show in the same place
   [design].
@@ -539,8 +538,7 @@ held selection cannot leave the tree's focus ahead of the model.
 Chet, read with JIP] A sale beyond the merchant's caps holds the displayed amount
 at that purse, dimmed; Accept still takes it and completes at that amount. The
 merchant's 815 caps become 0 and the player's 900 become 1715. Both menus do the same
-[design: `Trade::paid`]; they used to refuse it, a hypothesis in section 5, not a
-request. Filtered category headings remain NVForever's own words
+[design: `Trade::paid`]; they used to refuse it. Filtered category headings remain NVForever's own words
 under LEGAL.md; the capture's category wording has no source in the data files.
 
 [hypothesis: container measurements in section 8; comparisons still outstanding]
