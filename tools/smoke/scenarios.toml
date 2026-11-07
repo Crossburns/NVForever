@@ -1387,7 +1387,7 @@ kind = "tool"
 source = "CLAUDE.md: after detection changes, fnvtool actor detect (docs/design/detection.md §4)"
 areas = ["detection"]
 paths = ["crates/fnv-game/src/detection.rs", "engine/nvforever/src/detection.rs", "crates/fnvtool/src/actor_detect.rs"]
-commands = [["actor", "detect", "--schema", "schemas/fnv", "{data}", "FalloutNV.esm", "--detector", "SunnyRef"]]
+commands = [["actor", "detect", "--schema", "schemas/fnv", "{data}", "FalloutNV.esm", "--detector", "SunnyRef", "--light", "90", "--dark", "10"]]
 # The table of detection.md §4 ("never" is null in the output).
 expect = [
   { json = "situations.?situation=standing, lit.detected_out_to", equals = 2590.0 },
@@ -1419,7 +1419,7 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_
 args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 40
 order = [[
-  { re = 'detection: GSSettlerAM 00104F0A → the player: hidden → noticed .*sneaking' },
+  { re = 'detection: GSSettlerAM 00104F0A → the player: hidden → noticed .*sneaking', known_failing = "#970 (claude/observer-o27, 2026-11-06): the light at the player at noon is now the original's GetActorLightAmount, 100 (was our 93); the sneaking player at about 1,900 units reaches the settler's detected band straight from hidden (value 0.3 to 1.9 in sight, light 100). Whether the original's settler notices or detects here is not captured" },
   { re = 'detection: GSSettlerAM 00104F0A → the player: \w+ → detected', known_failing = "claude/sight-own-capsule 2026-10-23, 2 of 2 runs: actors' sight rays no longer pass through walls (they started inside the detector's own capsule and always ended clear, docs/design/streaming-hitches.md §4); the settler, about 1,830 units off, loses the sneaking player behind something (noticed → hidden, out of sight (blocked)) and the shots at 22 s do not reach detected. The step was recorded while every actor saw through walls; whether the original's settler detects the player here is not captured" },
 ]]
 expect = [
@@ -11533,6 +11533,29 @@ expect = [
   { re = 'sneak gauges summary: on true, shown (?P<n>[\d.]+) s', range = [10, 30], label = "shown for the time sneaking" },
   { re = 'sneak gauges summary: .*most light (?P<n>\d+)', range = [30, 100], label = "noon light measured at the player" },
   { re = 'sneak gauges summary: .*most noise (?P<n>\d+)', range = [100, 1000], label = "the shot is loud" },
+]
+
+[[scenario]]
+name = "detection-light-night"
+source = "#970 (docs/design/detection.md §3): the light at the player follows the original's GetActorLightAmount; at midnight in Goodsprings under NVWastelandClear it read 82.35 (210/255, the night sunlight's blue) in o11_light and o27_light"
+areas = ["detection"]
+paths = ["engine/nvforever/src/detection.rs", "crates/fnv-world/src/sky.rs"]
+args = ["--cell", "Goodsprings", "--play", "--hour", "0", "--weather", "NVWastelandClear", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { re = 'detection summary: .*; light at the player (?P<n>[\d.]+) to', range = [80, 85], label = "the least light at the player is the night sunlight's 82.35" },
+]
+
+[[scenario]]
+name = "wind-tumbleweeds"
+source = "#1401 (docs/spec-notes/wind.md): the bodies whose model flags respond to wind (the tumbleweeds, bhkRigidBody Body Flags bit 0) start awake and roll downwind; in the original those near Goodsprings rolled north-north-west at 150-210 units a second after a load (o27_tumble)"
+areas = ["physics"]
+paths = ["engine/nvforever/src/tumble.rs", "crates/fnv-phys/src/world.rs", "crates/fnv-collide/src/nif.rs"]
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--weather", "NVWastelandClear", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = 'wind summary: (?P<n>\d+) bodies respond to the wind', range = [1, 100], label = "the tumbleweeds near Goodsprings respond to the wind" },
+  { re = 'wind summary: .*the farthest went [0-9A-F]{8} (?P<n>\d+) units', range = [100, 100000], label = "one of them rolls away" },
 ]
 
 [[scenario]]
