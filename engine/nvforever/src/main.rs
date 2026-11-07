@@ -139,6 +139,7 @@ mod shafts;
 mod imagespace;
 mod imposters;
 mod sky;
+mod start_times;
 mod weather_fx;
 mod limping;
 mod sneaking;
@@ -833,7 +834,9 @@ fn command_line() -> Vec<String> {
 
 /// Bevy's task pools. Test aid `NVF_PLAY_TEST_ASYNC_THREADS=<n>` sets the async compute
 /// pool's size, which is 25 % of the cores and 1 to 4 threads otherwise [documented:
-/// bevy_app 0.20.1 `task_pool_plugin.rs`], to compare with a smaller machine's.
+/// bevy_app 0.20.1 `task_pool_plugin.rs`], to compare with a smaller machine's. Pipelines
+/// compile there; the game's file reads have a pool of their own, with an aid of its own
+/// (`nvf_assets::read_pool`).
 fn task_pools() -> TaskPoolPlugin {
     let mut task_pool_options = bevy::app::TaskPoolOptions::default();
     if let Some(n) = std::env::var("NVF_PLAY_TEST_ASYNC_THREADS").ok().and_then(|v| v.parse::<usize>().ok()) {
@@ -1428,6 +1431,7 @@ fn main() -> AppExit {
     .add_systems(PostUpdate, sky::sun_casters_over_slice.after(bevy::light::SimulationLightSystems::CheckLightVisibility))
     .add_systems(PostUpdate, sky::reach_toward_sun.after(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades).before(bevy::light::SimulationLightSystems::UpdateLightFrusta))
     .add_systems(Startup, (crash::report_start, report_archives))
+    .add_plugins(start_times::StartTimesPlugin)
     .add_systems(Last, (crash::note_place, crash::report_exit, stray_commands::report));
     if let Some(probe) = actor_feet::from_env() {
         app.insert_resource(probe).add_systems(Last, actor_feet::probe);

@@ -6,7 +6,7 @@ use crate::terrain::{prepare_terrain, spawn_terrain, TerrainCtx, TerrainMaterial
 use crate::water::{water_material, WaterCtx};
 use bevy::math::Affine3A;
 use bevy::prelude::*;
-use bevy::tasks::{futures::check_ready, AsyncComputeTaskPool, Task, TaskPool};
+use bevy::tasks::{futures::check_ready, Task};
 use fnv_esm::{LoadOrder, Plugin as EsmPlugin, Schema as EsmSchema};
 use fnv_world::imposter::ImposterRegions;
 use fnv_world::placed::{base_object, placement, BaseObject, Placement};
@@ -583,7 +583,7 @@ fn read_ahead(world: &WorldData, streamer: &mut Streamer, centre: (i32, i32), ri
             refs.extend(world.persistent_by_grid.get(&c).into_iter().flatten());
             let land = cell.land;
             let (lo, schema, hide) = (world.lo, world.schema, hide.clone());
-            let task = AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move {
+            let task = nvf_assets::read_pool::read_pool().spawn(async move {
                 CellAhead {
                     models: cell_models(lo, schema, &refs, &hide),
                     terrain: land.and_then(|l| prepare_terrain(lo, schema, l, c, tile)),
@@ -778,7 +778,9 @@ pub fn loading_gate(
     }
     // Pipelines not ready: what they would draw is missing from the view, which keeps the
     // clear colour (`pipeline_gate`). Before the first render frame nothing has asked yet.
-    let pipelines = gate.frames() == 0 || gate.busy() > 0;
+    // The start's screen waits for all of them, a travel under it included.
+    let busy_now = if loading.travelling() && !loading.starting() { gate.busy_for_travel() } else { gate.busy() };
+    let pipelines = gate.frames() == 0 || busy_now > 0;
     if loading.pipelines_busy != pipelines {
         loading.pipelines_busy = pipelines;
     }
