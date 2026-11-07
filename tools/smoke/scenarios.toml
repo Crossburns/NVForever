@@ -20871,6 +20871,24 @@ expect = [
 ]
 
 [[scenario]]
+name = "wait-greeter-stops-short"
+source = "issue #1597 (owner): waiting while a force-greeter walks up put him inside the player (Malcolm Holmes). The wait walks the approach to its end, and its end was the player's own spot. The approach's way now ends within three quarters of the talking distance (fnv_ai approach: goal radius), and the walker stops at a widened goal radius however long its step (fnv_nav Walker)"
+note = "the first star cap enables Holmes and gives him his Dialogue package (the player, distance 100); at 4 s the console moves him 1,500 units east of the player; at 7-9 s the player waits one hour. Before the change he stood 30 units off when the wait ended (inside the player, then pushed aside)"
+areas = ["ai", "dialogue", "wait"]
+paths = ["crates/fnv-nav/src/follow.rs", "crates/fnv-ai/src/carry.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT = "1:call:player:AddItem:NVStarBottleCap:1", NVF_PLAY_TEST_CONSOLE = "4:sshqmalcolmholmesref.moveto player 1500 0 0;4.3:close", NVF_PLAY_TEST_WAIT = "7:open,8:hours=1,9:accept" }
+args = ["--play", "--pos=21000,-14450,7500", "--heading", "90", "--hour", "12", "--no-voice"]
+run_seconds = 30
+order = [[
+  { re = 'SSHQMalcolmHolmesREF: runs up to 0x00000014 to talk .*: 1500 units away', label = "Holmes runs at the player from 1,500 units" },
+  { re = 'an hour passed in the wait menu', label = "the player waits an hour" },
+  { re = 'SSHQMalcolmHolmesREF: starts a conversation with 0x00000014 from (?P<n>\d+) units', range = [50, 150], label = "after the wait he talks from his talking distance, not from inside the player" },
+]]
+forbid = [
+  { re = 'SSHQMalcolmHolmesREF: was pushed aside', label = "he was never on the player's spot to be pushed off it" },
+]
+
+[[scenario]]
 name = "i2-setpos-console"
 source = "issue #1618: a reference moved from the console kept its collision's new place but was drawn at its old one: the tick clears Game::turned before the drawing reads it. The drawing followers now also read RefRepose (engine/nvf-play/src/moved.rs, script_draw.rs)"
 note = "The Goodsprings Mojave Express box (0x0015F22D), seen from 250 units away, raised 150 units with a console SetPos at 21 s. The log lines show only that the simulation moved it, which they showed before the fix too: a PASS here does not show the box moved. Compare by eye, in target/smoke: i2_before.png (19.5 s) and i2_after.png (26 s), same view; the box must stand about 150 units higher in i2_after.png"

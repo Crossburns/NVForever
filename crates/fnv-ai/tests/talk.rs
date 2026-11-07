@@ -798,6 +798,26 @@ fn far_away_a_dialogue_package_with_a_wait_location_keeps_its_actor_there() {
     assert_eq!(s.talks(), 0);
 }
 
+/// A wait while an actor is on its way to talk (issue #1597, Malcolm Holmes): the walk led
+/// to the player's own spot and ran to its end, so the actor stood inside the player. It
+/// now stops at its talking distance, says nothing while time passes, and talks once the
+/// game goes on.
+#[test]
+fn a_wait_during_an_approach_leaves_the_actor_at_talking_distance() {
+    let f = fixture();
+    let player = [1100.0, 1100.0, 0.0];
+    let mut s = sim(&f, R_COME, player);
+    s.run(0.5);
+    assert!(matches!(s.agent(R_COME).talk, Some(Talking::Approaching { .. })), "{:?}", s.agent(R_COME).talk);
+    s.ai.pass_time(&mut s.game, &s.nav, 60.0, 0.5);
+    let away = flat(s.agent(R_COME).walker.feet, player);
+    assert!(away > 50.0 && away <= fnv_ai::goal::STANDARD_TALK_DISTANCE + 1.0, "{away} units from the player");
+    assert_eq!(s.talks(), 0, "nobody talks in a wait");
+    s.run(1.0);
+    assert_eq!(s.talks(), 1, "{:?}", s.events());
+    assert!(flat(s.agent(R_COME).walker.feet, player) > 50.0, "not inside the player");
+}
+
 /// A script's StartConversation from afar (issue #1544, `Game::walk_up_greet`): with the AI
 /// running, the speaker runs to the player and opens the conversation there, not from
 /// where it stood (the Legion explorers about Nelson greeted from 10,000 units off).
