@@ -117,7 +117,8 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Roulet
             r.spawn((full.clone(), ImageNode { color: Color::srgb(light, light, light), ..ImageNode::new(v.image.clone()) }));
         });
     }
-    root.with_children(|r| {
+    // The menu at the UI scale, in the middle of the view (`crate::interface::menu_frame`, #1631).
+    root.with_children(|r| crate::interface::in_menu_frame(r, crate::interface::MIDDLE, |r| {
         // The status lines.
         let lines = s.status.clone().unwrap_or_else(|| if s.phase == Phase::Betting { s.bet_lines() } else { [String::new(), String::new()] });
         let status = Node { position_type: PositionType::Absolute, left: u(STATUS.x), top: u(STATUS.y), width: u(800.0), height: u(2.0 * STATUS_STEP), ..default() };
@@ -174,5 +175,5 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Roulet
         if let Some(h) = &s.help {
             crate::lockpick::help::spawn(r, c, h, view_w);
         }
-    });
+    }));
 }

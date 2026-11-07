@@ -136,6 +136,7 @@ impl Game<'_> {
     /// fires its stop handlers [observed: showoff1, a 0.1 s timer reads time left -1 and
     /// its handler had run 30 frames later].
     pub(crate) fn expire_aux_timers(&mut self) {
+        self.aux_timer_updates();
         if self.jip2.timers.is_empty() {
             return;
         }
@@ -144,6 +145,7 @@ impl Game<'_> {
         done.sort();
         for k in done {
             self.jip2.timers.remove(&k);
+            self.showoff.countdowns.remove(&k);
             self.aux_timer_stopped(k.0, &k.1);
         }
     }
@@ -432,7 +434,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getpipboymode" => zero,
         // [observed: an unknown stat is -1, and ModExtraMiscStat did not create one]
         "getextramiscstat" => XVal::Num(g.jip2.misc_stats.get(&text(args, 0).to_ascii_lowercase()).copied().unwrap_or(-1.0)),
-        "modextramiscstat" => zero,
+        // ModExtraMiscStat and InitExtraMiscStat: `crate::nvse_ttw`.
         "setcamerashakenohudshudder" => zero,
         // Aux timers: per owner (the player when none), counting down in game seconds
         // [observed: plugin-odds].
@@ -443,7 +445,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let left = |t: &(f64, f64, bool)| if t.2 { t.0 } else { (t.0 - (now - t.1)).max(0.0) };
             match name {
                 "auxtimerstart" => {
-                    g.jip2.timers.insert(key, (num(args, 1, 0.0), now, false));
+                    g.jip2.timers.insert(key.clone(), (num(args, 1, 0.0), now, false));
+                    // The countdown and flags (default 1 + 2 + 4) for
+                    // AuxTimerTimeToCountdown and the update handlers, then the start
+                    // handlers [documented: AuxTimerStart; SetOnAuxTimerStartHandler].
+                    g.showoff.countdowns.insert(key.clone(), (num(args, 1, 0.0), num(args, 2, 7.0) as i64 as u32));
+                    g.aux_timer_started(key.0, &key.1);
                     XVal::Num(1.0)
                 }
                 // [documented: AuxTimerStop fires the stop event only with fireEvent non-0]

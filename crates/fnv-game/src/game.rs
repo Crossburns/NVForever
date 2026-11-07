@@ -1668,7 +1668,7 @@ pub struct Game<'a> {
     pub image_modifiers: Vec<ActiveImageModifier>,
     /// ScriptEffectElapsedSeconds inside a ScriptEffectUpdate block (0 elsewhere).
     pub effect_elapsed: f64,
-    depth: u32,
+    pub(crate) depth: u32,
     /// A function asked the running script to stop as `Return` does (RemoveMe).
     stop_run: bool,
     /// The (script record, opcode) pairs whose call on an empty reference was already
@@ -1851,6 +1851,10 @@ pub struct GameSnapshot {
     /// `crate::anims::ObjectAnims::asked`): a gate left open shows and collides open.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub object_groups: BTreeMap<FormId, (u16, String)>,
+    /// JohnnyGuitar's extra misc stats, by name in lower case [documented:
+    /// ModExtraMiscStat, "Stats and their values are stored in the save"].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra_misc_stats: BTreeMap<String, f64>,
 }
 
 impl GameSnapshot {
@@ -2028,6 +2032,8 @@ pub struct Session {
     itr_kept: crate::nvse_itr1::ItrKept,
     /// The Script Runner files RegisterSRScript added (`crate::script_runner`).
     sr_registered: Vec<String>,
+    /// JIP's session settings (ash-pile activators, terminal art).
+    jip_kept: crate::jip_events::JipKept,
 }
 
 /// An event handler: the event (lower case), the function or lambda, the filters by
@@ -2627,25 +2633,36 @@ impl<'a> Game<'a> {
     /// Run statements; returns whether the run ended with `Return` (or a function that
     /// acts as one).
     fn exec(&mut self, unit: &'a Compiled, stmts: &'a [Stmt], locals: Locals, ctx: RunCtx) -> bool {
+        self.exec_at(unit, stmts, locals, ctx, None).0
+    }
+
+    /// [`Game::exec`], from the start or (`resume`) after the place a ScriptWait left;
+    /// with the wait the run ended on, if it did.
+    fn exec_at(&mut self, unit: &'a Compiled, stmts: &'a [Stmt], locals: Locals, ctx: RunCtx, resume: Option<&[(usize, usize)]>) -> (bool, Option<(u32, fnv_script::vm::WaitPoint)>) {
         if self.depth >= MAX_DEPTH {
             self.emit(EventKind::ScriptError { unit: unit.key(), error: format!("nesting deeper than {MAX_DEPTH}") });
-            return false;
+            return (false, None);
         }
         self.depth += 1;
         let opts = self.opts();
         let data = self.data;
         let table = &data.table;
         let mut ex = Exec { game: self, unit, locals, ctx };
-        let r = Vm::new(table, &mut ex, opts).run(stmts);
+        let mut vm = Vm::new(table, &mut ex, opts);
+        let r = match resume {
+            Some(at) => vm.resume(stmts, at),
+            None => vm.run(stmts),
+        };
+        let wait = vm.take_wait();
         self.depth -= 1;
         if self.depth == 0 {
             self.run_deferred_deaths();
         }
         match r {
-            Ok(exit) => exit == fnv_script::vm::Exit::Returned,
+            Ok(exit) => (exit == fnv_script::vm::Exit::Returned, wait),
             Err(e) => {
                 self.emit(EventKind::ScriptError { unit: unit.key(), error: e.to_string() });
-                false
+                (false, None)
             }
         }
     }
@@ -3100,7 +3117,7 @@ impl<'a> Game<'a> {
             .collect();
         let pp = self.pp_take_session();
         let sr_registered = self.sr.take_registered();
-        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered }
+        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept) }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3112,6 +3129,7 @@ impl<'a> Game<'a> {
         self.pp_put_session(s.pp);
         self.other.itr.kept = s.itr_kept;
         self.sr.put_registered(s.sr_registered);
+        self.jip.kept = s.jip_kept;
     }
 
     /// Run every handler registered for `event` whose filters match, highest priority
@@ -3223,13 +3241,33 @@ impl<'a> Game<'a> {
             if !self.block_accepts(unit, key, b, subject) {
                 continue;
             }
+            // A block that waits (JIP's ScriptWait) is skipped, the rest of the script
+            // runs, and once its cycles are over it goes on from the wait [documented:
+            // ScriptWait]. A cycle is one run of the block's event (every frame for an
+            // object script's GameMode, the processing delay for a quest's) [documented];
+            // `ScriptWait n` goes on in the n-th cycle after it, 0 as 1 [hypothesis].
+            let mut resume = None;
+            if let Some(w) = self.jip.waits.get_mut(&key).filter(|w| w.script == script && w.block == i) {
+                w.left = w.left.saturating_sub(1);
+                if w.left > 0 {
+                    continue;
+                }
+                resume = self.jip.waits.remove(&key).map(|w| w.at);
+            }
             self.instance(key, Some(script));
             self.cover_block(|| unit.key(), i);
             ran = true;
+            let outer = self.jip.wait_depth.replace(self.depth + 1);
+            let (returned, wait) = self.exec_at(unit, &b.body, Locals::Instance(key), ctx, resume.as_deref());
+            self.jip.wait_depth = outer;
+            // One waiting block per script: a new wait ends the old one [documented].
+            if let Some((n, at)) = wait {
+                self.jip.waits.insert(key, crate::jip_events::Waiting { script, block: i, left: n.max(1), at });
+            }
             // Return ends the script for this run, not just its block: a later block
             // of the same event does not run [documented: GECK wiki Adding an Options
             // Menu, owner export; docs/spec-notes/script-language.md §7.3 row 2].
-            if self.exec(unit, &b.body, Locals::Instance(key), ctx) {
+            if returned {
                 break;
             }
         }
@@ -3407,6 +3445,8 @@ impl<'a> Game<'a> {
         // JIP's SetGameMainLoopCallback functions due this frame (task J6), then xNVSE's
         // delayed calls.
         self.run_main_loop();
+        // JIP's key-down and key-up events of the keys the engine says are held.
+        self.jip_keys();
         self.run_delayed();
         // CacheUI's loops, tile scripts and typewriters; vheyes-nvse's moon fade, deferred
         // 3D refreshes and queued console command; kNVSE's SetAnimCurrentTime calls.
@@ -3772,7 +3812,15 @@ impl<'a> Game<'a> {
         if self.menu != Some(code) {
             self.menu = Some(code);
             self.emit(EventKind::MenuOpened { menu: code });
+            self.jip_menu_event("menuopen", code);
         }
+    }
+
+    /// JIP's menu-open and menu-close events, with the menu's code [documented:
+    /// SetOnMenuOpenEventHandler, SetOnMenuCloseEventHandler: the handler gets the menu
+    /// ID; without one it runs for any menu].
+    fn jip_menu_event(&mut self, event: &str, code: u16) {
+        self.jip_event(event, None, vec![fnv_script::vm::XVal::Num(f64::from(code))]);
     }
 
     /// `ShowMessage` of a message box: it opens at once when no menu is open, otherwise
@@ -3856,8 +3904,9 @@ impl<'a> Game<'a> {
         if self.menu.is_some_and(|m| menus::same_menu(m, code)) {
             self.close_menu();
             true
-        } else if self.menu_under.is_some_and(|m| menus::same_menu(m, code)) {
+        } else if let Some(m) = self.menu_under.filter(|&m| menus::same_menu(m, code)) {
             self.menu_under = None;
+            self.jip_menu_event("menuclose", m);
             true
         } else {
             false
@@ -3869,6 +3918,11 @@ impl<'a> Game<'a> {
     pub fn set_pipboy_menu(&mut self, code: u16) -> bool {
         match self.menu {
             Some(m) if menus::is_pipboy(m) && menus::is_pipboy(code) => {
+                // The page left closes [hypothesis: each page is a menu of its own code,
+                // so JIP's menu-close event sees it go].
+                if m != code {
+                    self.jip_menu_event("menuclose", m);
+                }
                 self.open_menu(code);
                 true
             }
@@ -3886,6 +3940,7 @@ impl<'a> Game<'a> {
             // The menu under it is the open one again (`Game::show_tutorial`).
             self.tutorial.clear();
             self.emit(EventKind::MenuClosed { menu: m });
+            self.jip_menu_event("menuclose", m);
             if let Some(under) = self.menu_under.take() {
                 self.open_menu(under);
             } else if !self.boxes.is_empty() {
@@ -3902,6 +3957,7 @@ impl<'a> Game<'a> {
             }
         }
         self.emit(EventKind::MenuClosed { menu: m });
+        self.jip_menu_event("menuclose", m);
         if !self.boxes.is_empty() {
             self.open_menu(menus::MESSAGE);
         }
@@ -5300,6 +5356,7 @@ impl<'a> Game<'a> {
             forced_combat: self.awareness.forced.clone(),
             form_instances: self.pp.instances.iter().map(|(k, v)| (*k, v.clone())).collect(),
             object_groups: self.anims.asked_all().clone(),
+            extra_misc_stats: self.jip2.misc_stats.iter().map(|(k, v)| (k.clone(), *v)).collect(),
         }
     }
 
@@ -5371,6 +5428,7 @@ impl<'a> Game<'a> {
         g.door_open_seen = s.door_open_seen.clone();
         g.pp_restore_instances(&s.form_instances);
         g.anims.restore_asked(s.object_groups.clone());
+        g.jip2.misc_stats = s.extra_misc_stats.iter().map(|(k, v)| (k.clone(), *v)).collect();
         g.awareness.actors = s.awareness.clone();
         g.awareness.forced = s.forced_combat.clone();
         // A save from before `fighting` was saved cannot say which starts had run: everyone
@@ -5650,6 +5708,10 @@ impl Host for Exec<'_, '_> {
 
     fn take_return(&mut self) -> bool {
         std::mem::take(&mut self.game.stop_run)
+    }
+
+    fn take_wait(&mut self) -> Option<u32> {
+        self.game.jip.wait_request.take()
     }
 
     fn print(&mut self, text: &str) {

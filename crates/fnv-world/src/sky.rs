@@ -783,6 +783,24 @@ pub fn placeable_water_type(lo: &LoadOrder, schema: &Schema, pwat: u32) -> Optio
     global(lo, pi, formid_of(f.get(b"DNAM")?.get("water")?)?)
 }
 
+/// Whether a placeable water (PWAT) reflects at all: its `DNAM` flags bit 0 "Reflects"
+/// [documented: xEdit PWAT; the GECK's PlaceableWater dialog has a "Reflects" group that
+/// "determines which objects can be reflected in this water object"]. Taken as the
+/// switch for the whole reflection, the sky's and the sun's highlight included, whatever
+/// the other "Reflects - …" bits say [hypothesis, world.md §6 "Placed water": the
+/// Ultra-Luxe fountain's PWAT sets "Reflects - Land" and "Reflects - Sky" without it and
+/// shows no reflection in the original]. True when the record has no flags to read.
+pub fn placeable_water_reflects(lo: &LoadOrder, schema: &Schema, pwat: u32) -> bool {
+    let Some((pi, r)) = winner(lo, pwat) else { return true };
+    let Ok(f) = Fields::new(r, pi, schema) else { return true };
+    pwat_reflects(f.get(b"DNAM").as_ref())
+}
+
+/// [`placeable_water_reflects`] from a decoded PWAT `DNAM`.
+fn pwat_reflects(dnam: Option<&Value>) -> bool {
+    dnam.and_then(|d| d.get("flags")).and_then(|v| num(v, "value")).is_none_or(|v| (v as u64) & 1 != 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -823,6 +841,16 @@ mod tests {
         let got = w.color_bytes(&c, ColorType::Sunlight, 19.0);
         assert!((0..3).all(|i| (got[i] - want[i]).abs() < 1e-3), "{got:?} {want:?}");
         assert_eq!(w.color_bytes(&c, ColorType::Ambient, 12.0), [0.0; 3]);
+    }
+
+    #[test]
+    fn pwat_reflects_bit_0() {
+        // The Ultra-Luxe fountain's DupontCircle01Water: Reflects - Land, Reflects - Sky,
+        // the refracts bits and Depth, not Reflects [observed: FalloutNV.esm].
+        let fountain = serde_json::json!({ "flags": { "value": 268635716u64 }, "water": "0x0016663E" });
+        assert!(!pwat_reflects(Some(&fountain)));
+        assert!(pwat_reflects(Some(&serde_json::json!({ "flags": { "value": 0x201u64 } }))));
+        assert!(pwat_reflects(None));
     }
 
     #[test]
