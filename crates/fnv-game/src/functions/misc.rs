@@ -224,7 +224,7 @@ pub fn menu_mode(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
 pub fn say_to(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let speaker = ctx.subject()?;
     let (target, topic) = (a.form(0)?, a.form(1)?);
-    if g.say(speaker, Some(target), topic, true).is_some() {
+    if g.say_by_script(speaker, Some(target), topic, true).is_some() {
         if a.num_or(3, 0.0) != 0.0 {
             g.set_line_look(speaker, LineLook::Speaker);
         }
@@ -246,7 +246,7 @@ pub fn say_to(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
 pub fn say(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let speaker = ctx.subject()?;
     let topic = a.form(0)?;
-    if g.say(speaker, None, topic, false).is_some() {
+    if g.say_by_script(speaker, None, topic, false).is_some() {
         g.set_line_flags(speaker, a.num_or(1, 0.0) != 0.0, a.num_or(3, 0.0) != 0.0);
     }
     none()

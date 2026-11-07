@@ -504,6 +504,8 @@ fn image(p: Option<&Picture>, color: Color) -> Option<ImageNode> {
 
 fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize, on_screen: Option<&ListId>) {
     let screen = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
+    // At the UI scale the menu keeps to the view's bottom, in its middle (#1631).
+    let screen = crate::interface::framed_root(screen, crate::interface::BOTTOM_MIDDLE);
     let bright = amber(255.0);
     commands.spawn((MenuRoot, screen, GlobalZIndex(90))).with_children(|s| {
         if let Some([x, y, w, h]) = l.band {

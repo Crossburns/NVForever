@@ -476,7 +476,7 @@ fn window(look: &RepairLook, v: &View) -> std::ops::Range<usize> {
 }
 
 fn spawn(commands: &mut Commands, look: &mut RepairLook, v: &View, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) {
-    let node = Node { position_type: PositionType::Absolute, left: Val::Percent(50.0), margin: UiRect::left(u(-MAIN.x / 2.0)), top: u((960.0 - MAIN.y) / 2.0), width: u(MAIN.x), height: u(MAIN.y), ..default() };
+    let node = Node { position_type: PositionType::Absolute, left: Val::Percent(50.0), margin: UiRect::left(u(-MAIN.x / 2.0)), top: crate::interface::from_top((960.0 - MAIN.y) / 2.0, 0.5), width: u(MAIN.x), height: u(MAIN.y), ..default() };
     let bright = color(Shade::Bright);
     let dim = amber(DIM);
     let marker = look.pictures.picture("interface\\shared\\marker\\square_filled.dds", data, images, bc);

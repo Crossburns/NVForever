@@ -30,6 +30,9 @@ struct TestHost {
     /// reference in the game host).
     stops: Option<u16>,
     stop: bool,
+    /// A call of this opcode asks the block to wait (JIP's ScriptWait) four cycles.
+    waits_on: Option<u16>,
+    wait: Option<u32>,
 }
 
 impl Host for TestHost {
@@ -60,6 +63,9 @@ impl Host for TestHost {
         if self.stops == Some(opcode) {
             self.stop = true;
         }
+        if self.waits_on == Some(opcode) {
+            self.wait = Some(4);
+        }
         match opcode {
             GET_STAGE => Ok(Value::Num(7.0)),
             SET_STAGE if self.recurse => Err("recursion".into()),
@@ -71,6 +77,9 @@ impl Host for TestHost {
     }
     fn take_return(&mut self) -> bool {
         std::mem::take(&mut self.stop)
+    }
+    fn take_wait(&mut self) -> Option<u32> {
+        self.wait.take()
     }
 }
 
@@ -441,4 +450,42 @@ fn a_call_that_stops_the_script_inside_a_set_leaves_the_variable() {
     assert_eq!(exit, Exit::Returned);
     assert_eq!(h.locals[&1], Value::Num(5.0));
     assert!(!h.locals.contains_key(&2));
+}
+
+#[test]
+fn a_wait_stops_the_run_and_resume_goes_on_after_it() {
+    // JIP's ScriptWait [documented: ScriptWait, "When the time expires, the script will
+    // continue from the wait point"]: the run stops after the call; resuming goes on with
+    // the next statement inside the arm taken and then after the If, without testing the
+    // arms again or running what came before.
+    let t = table();
+    let mut h = TestHost { waits_on: Some(DISABLE), ..TestHost::default() };
+    let body = vec![
+        set(short(1), vec![var(short(1)), num(1.0), op(Op::Add)]),
+        if_(
+            vec![(vec![var(short(9))], vec![set(short(2), vec![num(5.0)])])],
+            Some(vec![set(short(2), vec![num(1.0)]), call(DISABLE, vec![]), set(short(2), vec![num(2.0)])]),
+        ),
+        set(short(3), vec![num(3.0)]),
+    ];
+    let mut vm = Vm::new(&t, &mut h, RunOpts { strict: true, max_steps: 1000 });
+    assert_eq!(vm.run(&body).unwrap(), Exit::Waiting);
+    let (cycles, at) = vm.take_wait().expect("a wait");
+    assert_eq!(cycles, 4);
+    // The If at 1, its Else (the arm after its one ElseIf-less arm), the call at 1.
+    assert_eq!(at, vec![(1, 1), (1, 0)]);
+    assert_eq!(h.locals[&1], Value::Num(1.0));
+    assert_eq!(h.locals[&2], Value::Num(1.0));
+    assert!(!h.locals.contains_key(&3));
+    // The arm's condition now holds, but the run goes on in the Else it took.
+    h.locals.insert(9, Value::Num(1.0));
+    let mut vm = Vm::new(&t, &mut h, RunOpts { strict: true, max_steps: 1000 });
+    assert_eq!(vm.resume(&body, &at).unwrap(), Exit::Finished);
+    assert_eq!(h.locals[&1], Value::Num(1.0), "nothing before the wait runs again");
+    assert_eq!(h.locals[&2], Value::Num(2.0));
+    assert_eq!(h.locals[&3], Value::Num(3.0));
+    // A host that never asks to wait: the same run finishes.
+    let mut h = TestHost::default();
+    assert_eq!(run(&body, &mut h).unwrap(), Exit::Finished);
+    assert_eq!(h.locals[&2], Value::Num(2.0));
 }
