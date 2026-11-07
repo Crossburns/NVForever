@@ -211,6 +211,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "placed-water-no-reflect"
+source = "issue #1780: the Ultra-Luxe fountain's placed water (PWAT DupontCircle01Water, which does not set DNAM bit 0 Reflects) is a dull green pool in the original, no reflection; it is drawn with its water type's body alone (fnv_world::sky::placeable_water_reflects, engine/nvforever/src/water.rs, docs/spec-notes/world.md §6 Placed water)"
+note = "the observer-checks item 87 spot, facing north at noon (capture ul_fountain, 2026-11-06). Before the fix the pool was the pale sky with waves (about sRGB 170,190,193)"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/water.rs", "engine/nvforever/src/water.wesl", "crates/fnv-world/src/sky.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "3:0:0", NVF_PLAY_TEST_SHOTS = "8:ul_fountain_water.png" }
+args = ["--play", "--world", "TheStripWorldNew", "--pos=1176,-700,1080", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "ul_fountain_water.png against the original's frame from the same spot (kept privately): an even dull olive-green pool, no sky, obelisk or building reflection, no bright waves"
+expect = [
+  { text = "placed water 00165AD0: its PWAT 000A1A9D does not set Reflects, drawn without reflection", label = "the fountain's water is drawn without reflection" },
+  { re = 'test aid: screenshot .*ul_fountain_water\.png', label = "the frame is saved" },
+]
+
+[[scenario]]
 name = "reflection-lake"
 source = "issue #1042: at Lake Mead the reflection camera switches on with the lake in view and off looking at the sky, where Bevy's box test of the water planes still passed them (engine/nvforever/src/reflection.rs)"
 note = "Boulder Beach shore (as wade-in-swim), the lakelurks kept unaware (NVF_PLAY_TEST_UNSEEN); looking at the lake, then 70 degrees up. Since #1060 the camera comes on only when the water shader counted drawn water pixels, so this is also the positive check of that count (water.wesl), the one reflection-off-unseen (camera stays off) cannot give"

@@ -994,6 +994,42 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   ray, so the reflecting surface meets the shore without a seam
   (`fnv_world::sky::Water::edge_falloff`, water.wesl). The refraction's 200-unit ramp is
   another thing and stays; distortion, light radius and brightness are still unused.
+- **Placed water** (2026-11-06, #1780): a placeable water (PWAT) names its own water type
+  in DNAM "Water" and is drawn with that WATR, not the cell's or the worldspace's
+  [documented: xEdit PWAT]. The Ultra-Luxe fountain (REFR 0x00165AD0, PWAT
+  DupontCircle01Water 0x000A1A9D) uses VStripULFountain (0x0016663E): FNAM Reflective,
+  shallow (53,79,49), deep (10,33,24), reflection (58,116,95), reflectivity 1.0, fresnel
+  0.23, above fog 0 / 36 / 1.0, noise normals scale 0.7, layer UV scales 100 [observed:
+  FalloutNV.esm]. Its PWAT DNAM flags are Reflects - Land, Reflects - Sky, the refracts
+  bits and Depth, but not bit 0 "Reflects" [observed]. In the original, from the
+  observer-checks item 87 spot at noon, the pool is an even, dull olive green
+  (about sRGB 61,77,39 across the surface) with no reflection of the obelisk, the
+  buildings or the sky and no visible waves [observed: capture `ul_fountain`,
+  2026-11-06]; drawn with the type's reflection weight (1.0 × mix(1, Schlick, 0.23), at
+  least 0.77) it was the pale sky (about 170,190,193). Rule [hypothesis]: PWAT bit 0
+  "Reflects" switches the whole reflection; a placed water without it shows only its
+  water body (fogged shallow to deep colour, lit; refraction where it is thin), with no
+  world, sky or reflection colour and no sun highlight, whatever its WATR's
+  reflectivity and the other "Reflects - …" bits say (the GECK dialog's "Reflects" group
+  "determines which objects can be reflected in this water object" [documented: GECK
+  wiki PlaceableWater]; what each sub-bit adds is not documented and unused). Cell water
+  has no such flags and always uses its type's reflection settings. In the masters 3 of
+  the 29 PWAT lack bit 0: the fountain's, NVCleanWater1x402 (NVCleanWaterGS; the
+  Goodsprings Source troughs, cells -16,-5 and -16,-4) and NVCleanWater1x1
+  (NVCleanWater03) [observed]. The Goodsprings Source trough (REFR 0x000E38C7) in the
+  original at noon shows no reflection either, not of the sky nor of the pipe above it,
+  only a dim grey-olive body (about sRGB 70,69,54) [observed: capture `gs_source`,
+  2026-11-06], which fits the rule. Since the change both are drawn without reflection.
+  Still different, and not this rule's: the body colour. The fountain is darker in ours
+  (about 17,40,21, the deep colour lit, against the original's 61,77,39, about the
+  shallow colour lit) and the trough bluer (about 70,82,83, NVCleanWaterGS's shallow
+  colour 91,102,145 through thin fog). The GECK wiki gives the above-water fog near and
+  far as "the distance in game units below the surface" of the shallow and deep colour
+  planes [documented: GECK wiki WaterType], where the renderer fogs by the length of the
+  view ray in the water (above), which reaches the far distance (36 units) at a grazing
+  look into a pool about 14 units deep [observed: the fountain model's pool floor ring
+  at model z 68, scale 0.5, so z 1046 under the water at 1060]; a depth-below-surface
+  measure is a candidate, open (#1787).
 - **Ripples** [hypothesis, the renderer's model]: DNAM's "rain" and "displacement"
   groups (starting size, force, velocity, falloff, dampner; NVCleanWater: rain 0.05 /
   0.1 / 0.6 / 0.985 / 2.0, displacement 0.01 / 0.4 / 0.6 / 0.985 / 10.0) are read as two
