@@ -313,14 +313,17 @@ each the identity by default. Reading PERK records is a later step.
     model's own body (`GrenadeFrag.NIF` bhkRigidBody: mass 5, friction 0.5, restitution
     0.4, linear damping 0.1, angular damping 0.05) is not used either [observed values].
   - **Throw speed, open** (issue #1785). Ours throws at the PROJ speed (1,200 for
-    `GrenadeFragProjectile`) times the throwing perks. The original's left at about
-    1,030 units/s and slowed in flight (a fit with damping 0.40 a second, gravity 686.7,
-    rms 3 units; without damping 923 units/s, rms 4.4) [observed: o26_gl frag0, times
-    from GameHour, which ran at half the real rate in that campaign: the 40 mm round's
-    1,750 units/s and 1.5 × 686.7 both come out at half and a quarter on it; the "about
-    470 units/s" first written for the frag is that clock's figure]. Nothing in the data
-    gives 1,030 or the slowing (no throw GMST in the masters but `fGrenadeFriction` and
-    `fGrenadeRestitution`), so ours keeps the PROJ speed.
+    `GrenadeFragProjectile`) times the throwing perks. The original's left at about 950
+    units/s across the ground (949-955 over its first 0.35 s, aimed level), slowed to
+    about 650-770 in the last 0.2 s before touchdown, and touched down 513 units from where
+    it left (about 563 from the player) after 0.58 s [observed: o26_gl frag0; times from
+    the floor clock, floor(GameDaysPassed) × 24 + GameHour, on which JIP's projectile
+    lifetime reaches 1 at 1.00 s and the 40 mm round flies at 1,746-1,754 units/s].
+    "About 470 units/s" was first written for it; that figure counts the game hour twice
+    (GameDaysPassed already holds the hour as a fraction), which halves every speed: the 40
+    mm round reads 874 that way. Nothing in the data gives 950 (no throw setting in the
+    masters but `fGrenadeFriction` and `fGrenadeRestitution`; the weapon's Animation
+    Multiplier and Attack Multiplier are 1.0), so ours keeps the PROJ speed.
   - Detonating projectiles wait for `detonate()` (C-4).
   - Anything else ends after 60 s [design].
 - **Melee swing.** A fan of `melee_rays` rays over ±`melee_arc_deg` at the eye, as
