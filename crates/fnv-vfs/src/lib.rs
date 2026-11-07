@@ -86,11 +86,20 @@ pub fn parse_archive_list(list: &str) -> Vec<String> {
     list.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect()
 }
 
-/// Normalised form of a game path: lower case, backslashes, no leading separator.
+/// Normalised form of a game path: lower case, backslashes, no leading separator, and a
+/// run of separators taken as one. [observed: the Classic Fallout Weapons mod's
+/// `Colt6520.nif` names `textures\\weapons\1handpistol\colt6520_anim.dds`, the file lies at
+/// `textures\weapons\1handpistol\`, and the owner sees the gun textured in the original
+/// game; hypothesis: the game reads the path through Windows' file calls, which take a
+/// doubled separator as one (#1705)]
 pub fn normalize(path: &str) -> String {
-    let mut s = path.replace('/', "\\").to_ascii_lowercase();
-    while s.starts_with('\\') {
-        s.remove(0);
+    let mut s = String::with_capacity(path.len());
+    for c in path.chars() {
+        let c = if c == '/' { '\\' } else { c.to_ascii_lowercase() };
+        if c == '\\' && (s.is_empty() || s.ends_with('\\')) {
+            continue;
+        }
+        s.push(c);
     }
     s
 }
@@ -416,6 +425,10 @@ mod tests {
         assert_eq!(texture_path("data\\textures\\a.dds"), "textures\\a.dds");
         assert_eq!(texture_path("c:\\proj\\data\\textures\\b\\a.dds"), "textures\\b\\a.dds");
         assert_eq!(texture_path("clutter\\a.dds"), "textures\\clutter\\a.dds");
+        // A doubled separator is one (#1705): mod meshes name such paths.
+        assert_eq!(texture_path("textures\\\\weapons\\1HandPistol\\a.dds"), "textures\\weapons\\1handpistol\\a.dds");
+        assert_eq!(normalize("\\\\Meshes//Clutter\\/X.NIF"), "meshes\\clutter\\x.nif");
+        assert_eq!(texture_path("data\\\\textures\\\\b\\a.dds"), "textures\\b\\a.dds");
     }
 
     #[test]

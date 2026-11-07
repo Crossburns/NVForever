@@ -7,8 +7,9 @@
 //! looking along −y, tipped 9.15° down, with a vertical field of view of 48.4°. The
 //! model's +z is up and its −x is the screen's right.
 //!
-//! NVForever draws the machine with the player's own camera, given the fitted field of
-//! view while the menu is open (`super`). Should the camera have another one, the
+//! NVForever places the machine below the player's own camera, given the fitted field of
+//! view while the menu is open (`super`); the view's camera (nvforever `vigor_view.rs`)
+//! sits on it and takes its field of view. Should the camera have another one, the
 //! machine is moved along the view line until the board plane fills the same part of the
 //! screen (the lever, nearer the eye, then comes out slightly smaller than in the
 //! original when the view is wider). Then the whole is scaled down about
@@ -45,7 +46,7 @@ pub fn model_in_camera(vfov: f32) -> Transform {
     Transform { translation: -SCALE * (m * eye), rotation: Quat::from_mat3(&m).normalize(), scale: Vec3::splat(SCALE) }
 }
 
-/// How far in front of the camera the board plane is drawn (for the shade behind it).
+/// How far in front of the camera the board plane is drawn (the lights stand before it).
 pub fn board_depth(vfov: f32) -> f32 {
     let ratio = (FIT_VFOV_DEG.to_radians() / 2.0).tan() / (vfov.clamp(0.2, 3.0) / 2.0).tan();
     BOARD_DISTANCE * ratio * SCALE

@@ -8,10 +8,26 @@ import bevy_pbr::{
     render::mesh_view_bindings::{view, globals, lights, view_transmission_texture, view_transmission_sampler},
     render::pbr_types,
     render::pbr_functions,
-    render::view_transformations::{frag_coord_to_ndc, frag_coord_to_uv, ndc_to_uv, position_ndc_to_world},
+    render::view_transformations::{ndc_to_uv, position_ndc_to_world},
 };
 @if(DEPTH_PREPASS) import bevy_pbr::prepass::utils as prepass_utils;
 @if(DEPTH_PREPASS) import bevy_pbr::render::mesh_view_bindings::depth_prepass_texture;
+
+// During temporal upscaling, the main pass occupies only the render-sized region
+// of full-sized attachments. Geometry UVs and texture UVs are distinct.
+fn frag_coord_to_uv(fc: vec2<f32>) -> vec2<f32> {
+    return (fc - view.main_pass_viewport.xy) / view.main_pass_viewport.zw;
+}
+fn frag_coord_to_ndc(fc: vec4<f32>) -> vec3<f32> {
+    let uv = frag_coord_to_uv(fc.xy);
+    return vec3(uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), fc.z);
+}
+fn transmission_uv(uv: vec2<f32>) -> vec2<f32> {
+    let pixel = view.main_pass_viewport.xy + uv * view.main_pass_viewport.zw;
+    let bounded = clamp(pixel, view.main_pass_viewport.xy + 0.5,
+        view.main_pass_viewport.xy + view.main_pass_viewport.zw - 0.5);
+    return bounded / vec2<f32>(textureDimensions(view_transmission_texture));
+}
 
 struct WaterParams {
     shallow: vec4<f32>,
@@ -20,7 +36,7 @@ struct WaterParams {
     reflection: vec4<f32>,
     sky_upper: vec4<f32>,
     sky_horizon: vec4<f32>,
-    // near, far, amount, unused
+    // near, far, amount, 1 when the amount caps the opacity (placed water)
     above_fog: vec4<f32>,
     under_fog: vec4<f32>,
     // reflectivity, fresnel amount, shininess, wave height (world units)
@@ -129,7 +145,7 @@ const SSR_GROWTH: f32 = 1.16;
 fn ssr(pos: vec3<f32>, R: vec3<f32>) -> vec4<f32> {
     @if(DEPTH_PREPASS) let o = (view.view_from_world * vec4(pos, 1.0)).xyz;
     @if(DEPTH_PREPASS) let d = normalize((view.view_from_world * vec4(R, 0.0)).xyz);
-    @if(DEPTH_PREPASS) let size = view.viewport.zw;
+    @if(DEPTH_PREPASS) let size = view.main_pass_viewport.zw;
     @if(DEPTH_PREPASS) var t0 = 0.0;
     @if(DEPTH_PREPASS) var t = SSR_FIRST;
     @if(DEPTH_PREPASS) var stride = SSR_FIRST;
@@ -143,7 +159,7 @@ fn ssr(pos: vec3<f32>, R: vec3<f32>) -> vec4<f32> {
         if any(uv < vec2(0.0)) || any(uv > vec2(1.0)) {
             return vec4(0.0);
         }
-        let scene = prepass_utils::prepass_depth(vec4(view.viewport.xy + uv * size, 0.0, 1.0), 0u);
+        let scene = prepass_utils::prepass_depth(vec4(view.main_pass_viewport.xy + uv * size, 0.0, 1.0), 0u);
         // Distance along the view axis of the ray's point and of the scene there
         // (reverse infinite z: distance = near / depth; the sky, depth 0, is never hit).
         let ray_z = -p.z;
@@ -160,7 +176,7 @@ fn ssr(pos: vec3<f32>, R: vec3<f32>) -> vec4<f32> {
                 let pm = o + d * m;
                 let cm = view.clip_from_view * vec4(pm, 1.0);
                 let um = ndc_to_uv(cm.xy / cm.w);
-                let sm = prepass_utils::prepass_depth(vec4(view.viewport.xy + um * size, 0.0, 1.0), 0u);
+                let sm = prepass_utils::prepass_depth(vec4(view.main_pass_viewport.xy + um * size, 0.0, 1.0), 0u);
                 if sm > 0.0 && -pm.z > near / sm {
                     hi = m;
                 } else {
@@ -170,7 +186,7 @@ fn ssr(pos: vec3<f32>, R: vec3<f32>) -> vec4<f32> {
             let ph = o + d * hi;
             let ch = view.clip_from_view * vec4(ph, 1.0);
             let uh = ndc_to_uv(ch.xy / ch.w);
-            let c = textureSampleLevel(view_transmission_texture, view_transmission_sampler, uh, 0.0).rgb;
+            let c = textureSampleLevel(view_transmission_texture, view_transmission_sampler, transmission_uv(uh), 0.0).rgb;
             // Less trust near the picture's edges and towards the end of the march.
             let edge = min(min(uh.x, 1.0 - uh.x), min(uh.y, 1.0 - uh.y));
             let trust = smoothstep(0.0, 0.08, edge) * (1.0 - smoothstep(0.6, 1.0, f32(i) / f32(SSR_STEPS)));
@@ -240,15 +256,26 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         up = -up;
     }
 
-    // Fog distance: the length of the view ray inside the water. From above, from the
-    // surface to the opaque surface behind it (depth prepass), so 0 at the waterline;
-    // from below, from the camera to the surface.
-    let size = view.viewport.zw;
+    // The length of the view ray inside the water: from above, from the surface to the
+    // opaque surface behind it (depth prepass), so 0 at the waterline; from below, from
+    // the camera to the surface. It sets the body's opacity, the refraction and the shore
+    // fade.
+    //
+    // The fog depth: from above, how far below the surface that opaque surface lies
+    // (the above fog's near and far planes are "the distance in game units below the
+    // surface of the water" of the shallow and the deep colour plane [documented: GECK
+    // wiki WaterType]); it sets the body's colour, so a shallow pool keeps its shallow
+    // colour at a grazing look;
+    // from below, the distance from the camera (the under fog's planes are distances
+    // "from the player" [documented: same page]). Nothing behind: the far end of both.
+    let size = view.main_pass_viewport.zw;
     let uv0 = frag_coord_to_uv(in.position.xy);
     let behind0 = scene_point(in.position.xy);
     var fog_distance = 1.0e7;
+    var fog_depth = 1.0e7;
     if behind0.w > 0.5 {
         fog_distance = distance(behind0.xyz, pos);
+        fog_depth = max(pos.y - behind0.y, 0.0);
     }
     // Refraction: shift the sample by the wave normal's tilt in view space, more through
     // deeper water; keep the unshifted sample where the shifted one lands on something in
@@ -257,22 +284,33 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let depth_scale = clamp(min(fog_distance, dist) / REFRACTION_DEPTH, 0.0, 1.0);
     var uv = clamp(uv0 + vec2(tilt.x, -tilt.y) * REFRACTION_STRENGTH * depth_scale, vec2(0.0), vec2(1.0));
     if above {
-        let behind = scene_point(view.viewport.xy + uv * size);
+        let behind = scene_point(view.main_pass_viewport.xy + uv * size);
         if behind.w > 0.5 && distance(behind.xyz, view.world_position.xyz) < dist {
             uv = uv0;
         } else if behind.w > 0.5 {
             fog_distance = distance(behind.xyz, pos);
+            fog_depth = max(pos.y - behind.y, 0.0);
         }
     }
     if !above {
         fog_distance = dist;
+        fog_depth = dist;
     }
-    let refracted = textureSampleLevel(view_transmission_texture, view_transmission_sampler, uv, 0.0).rgb;
+    let refracted = textureSampleLevel(view_transmission_texture, view_transmission_sampler, transmission_uv(uv), 0.0).rgb;
     let fog = select(water.under_fog, water.above_fog, above);
-    let depth01 = clamp((fog_distance - fog.x) / max(fog.y - fog.x, 1.0), 0.0, 1.0);
-    // Opaque beyond the far distance; the fog "amount" is not used (its role is unknown:
-    // as a cap it left the lake bed showing through far out).
-    let body_alpha = depth01;
+    // The colour: shallow to deep by the fog depth (#1787). The opacity: by the length of
+    // the view ray in the water over the same near to far ramp, at most the above fog's
+    // amount for placed water ("controls the transparency of the Deep Color water plane",
+    // 1.0 opaque [documented: GECK wiki WaterType]; above_fog.w = 1). Cell and distant
+    // water, and any water seen from below, are opaque beyond the far distance: capped,
+    // Lake Mead's bed showed through far out [design, until a far-out Lake Mead
+    // comparison is made, world.md §6].
+    // [hypothesis, checked against the original at the Ultra-Luxe fountain, the
+    // Goodsprings Source trough and Boulder Beach, world.md §6]: by the depth alone a
+    // 14-unit pool under a 36-unit fog showed its floor where the original is opaque.
+    let depth01 = clamp((fog_depth - fog.x) / max(fog.y - fog.x, 1.0), 0.0, 1.0);
+    let ray01 = clamp((fog_distance - fog.x) / max(fog.y - fog.x, 1.0), 0.0, 1.0);
+    let body_alpha = select(ray01, ray01 * clamp(water.above_fog.z, 0.0, 1.0), above && water.above_fog.w > 0.5);
     let body_colour = mix(water.shallow.rgb, water.deep.rgb, depth01);
 
     // The water body is lit like a diffuse surface facing up (from either side).
@@ -302,9 +340,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         fr = clamp(water.surface.x * mix(1.0, schlick, water.surface.y), 0.0, 1.0);
         // Sampled unconditionally (uniform control flow), used when it shows this plane.
         // The mirror image of the wavy reflected ray's point, seen from the camera; for a
-        // flat surface that is this very pixel.
+        // flat surface that is this very pixel. Projected without the view's temporal
+        // jitter (FSR, TAA): the reflection camera draws without it, so the jittered
+        // projection put each lookup up to half a render pixel off, differently in every
+        // frame, and the reflections wobbled. Without jitter the two are the same.
         let mirrored = pos + vec3(R.x, -R.y, R.z) * REFLECTION_SAMPLE_DISTANCE;
-        let clip = view.clip_from_world * vec4(mirrored, 1.0);
+        let clip = view.unjittered_clip_from_world * vec4(mirrored, 1.0);
         var uv = frag_coord_to_uv(in.position.xy);
         if clip.w > 0.0 {
             uv = ndc_to_uv(clip.xy / clip.w);

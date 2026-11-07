@@ -56,7 +56,7 @@ pub struct OutfitsPlugin;
 
 impl Plugin for OutfitsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<OutfitStats>().add_systems(Update, (follow_inventory, arm_creatures.after(crate::creature_stance::StanceAttach))).add_systems(Last, report);
+        app.init_resource::<OutfitStats>().add_systems(Update, (follow_inventory.after(crate::weapons::drop_broken), arm_creatures.after(crate::creature_stance::StanceAttach).after(crate::weapons::drop_broken))).add_systems(Last, report);
     }
 }
 
@@ -74,7 +74,7 @@ pub struct Dressed {
 /// The simulation's drawable equipment, shared by spawning, prefetch and reconciliation.
 /// `None` means no simulated inventory yet; an empty or partial set is authoritative
 /// [design: `fnv_sim::World::equipment`], including after looting or UnequipItem.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Equipment {
     pub worn: Vec<FormId>,
     pub weapon: Option<FormId>,
@@ -99,6 +99,63 @@ impl Equipment {
         }
         let weapon = items.iter().copied().find(|i| actors.weapons.contains_key(i));
         Some(Self { worn, weapon, weapon_mods: weapon.map_or(0, mods) })
+    }
+}
+
+/// [`Equipment::of`] kept per actor until its inventory changes (#1359): readiness
+/// (`readahead::ready_to_draw`) asks every frame while an actor waits to be drawn, and
+/// before its outfitting the simulation's answer sorts the whole inventory
+/// (`fnv_sim::World::equipment`). The answer depends only on the actor's inventory, on
+/// whether it was outfitted, and on the load order's forms, so an equal inventory and
+/// flag give the same answer [design]. Comparing the inventory with the copy kept is a
+/// walk of its stacks, without sorting or allocating.
+#[derive(Default)]
+pub struct EquipmentCache {
+    entries: std::collections::HashMap<u32, CachedEquipment>,
+    /// Frames counted by [`EquipmentCache::next_frame`], and computations (for tests).
+    frame: u64,
+    computed: usize,
+}
+
+struct CachedEquipment {
+    inventory: fnv_sim::Inventory,
+    outfitted: bool,
+    equipment: Option<Equipment>,
+    used: u64,
+}
+
+impl EquipmentCache {
+    /// [`Equipment::of`], from the copy kept while `reference`'s inventory and outfitted
+    /// flag are what they were when it was computed.
+    pub fn of(&mut self, world: &ActorWorld, sim: Option<&fnv_sim::World<'_>>, reference: u32) -> Option<Equipment> {
+        let state = sim?.peek(FormId(reference))?;
+        let Some(inventory) = state.inventory.as_ref() else {
+            self.entries.remove(&reference);
+            return None;
+        };
+        if let Some(c) = self.entries.get_mut(&reference) {
+            if c.outfitted == state.outfitted && c.inventory == *inventory {
+                c.used = self.frame;
+                return c.equipment.clone();
+            }
+        }
+        self.computed += 1;
+        let equipment = Equipment::of(world, sim, reference);
+        self.entries.insert(reference, CachedEquipment { inventory: inventory.clone(), outfitted: state.outfitted, equipment: equipment.clone(), used: self.frame });
+        equipment
+    }
+
+    /// A new frame: actors not asked for in the last `keep` frames are forgotten (drawn,
+    /// or out of view).
+    pub fn next_frame(&mut self, keep: u64) {
+        self.frame += 1;
+        let frame = self.frame;
+        self.entries.retain(|_, c| frame - c.used <= keep);
+    }
+
+    #[cfg(test)]
+    pub fn computed(&self) -> usize {
+        self.computed
     }
 }
 
@@ -162,6 +219,8 @@ pub struct OutfitStats {
     /// no stance for the weapon they hold.
     pub creatures_armed: usize,
     pub creatures_no_stance: usize,
+    /// Times an actor's redress waited for a later frame ([`REDRESS_PER_FRAME`]).
+    pub deferred: usize,
 }
 
 /// On a drawn creature [`arm_creatures`] has looked at: the weapon it was given (or
@@ -174,6 +233,25 @@ pub struct CreatureArms {
 /// A drawn NPC whose outfit follows the rules: its root, rig, outfit, clips (none in the
 /// bind pose) and whether it is a corpse.
 type Followed<'w> = (Entity, &'w ActorRig, &'w mut Dressed, Option<&'w mut BlendPlayer>, Has<Corpse>);
+
+/// At most this many drawn NPCs are dressed again in one frame (#1359): a mass change
+/// of equipment (a script equipping a crowd, a battle's looting) spreads over frames,
+/// each redress putting parts on synchronously. The others keep their old outfit for
+/// a frame or a few and are dressed in the next frames, since what they are drawn
+/// wearing still differs from what the rules say [engineering choice: a frame's worth
+/// of part preparation, as `readahead::PREPARE_BUDGET` bounds the read-ahead's].
+pub const REDRESS_PER_FRAME: usize = 4;
+
+/// Whether `worn` with `weapon` dresses the body as `dressed_worn` with `dressed_weapon`
+/// did. A weapon changes the body when it has "Hide Backpack" or armour addons of its own
+/// (WEAP BIPL: a hand-to-hand weapon's hand model), so one taken up, put away or swapped
+/// for a weapon that differs in either dresses the body again (`Resolver::resolve_wearing`):
+/// an NPC that loses its power fist gets its bare hand back, and one given brass knuckles
+/// their hand.
+fn same_worn(actors: &fnv_actor::ActorForms, worn: &[FormId], weapon: Option<FormId>, dressed_worn: &[FormId], dressed_weapon: Option<FormId>) -> bool {
+    let body = |w: Option<FormId>| w.and_then(|w| actors.weapons.get(&w)).map_or((false, &[][..]), |w| (w.hide_backpack, w.addons.as_slice()));
+    worn.len() == dressed_worn.len() && worn.iter().all(|w| dressed_worn.contains(w)) && body(weapon) == body(dressed_weapon)
+}
 
 #[allow(clippy::too_many_arguments)]
 fn follow_inventory(
@@ -190,16 +268,18 @@ fn follow_inventory(
     let (Some(world), Some(sim)) = (world, sim) else { return };
     let profiling = crate::profile::interval().is_some();
     let (mut replacements, mut replacement_ms) = (0, 0.0);
+    let mut deferred = 0;
     for (entity, rig, mut dressed, mut player, dead) in &mut actors {
         let Some(equipment) = Equipment::of(&world, Some(&sim.world), rig.reference) else { continue };
         let Equipment { ref worn, weapon, weapon_mods: mods } = equipment;
         let dressed = &mut *dressed;
-        // A weapon with "Hide Backpack" taken up or put away dresses the body again
-        // (`Resolver::resolve_wearing`).
-        let hides = |w: Option<FormId>| w.and_then(|w| world.actors.weapons.get(&w)).is_some_and(|w| w.hide_backpack);
-        let same_worn = worn.len() == dressed.worn.len() && worn.iter().all(|w| dressed.worn.contains(w)) && hides(weapon) == hides(dressed.weapon);
+        let same_worn = same_worn(&world.actors, worn, weapon, &dressed.worn, dressed.weapon);
         let same_weapon = weapon == dressed.weapon && mods == dressed.weapon_mods;
         if same_worn && same_weapon {
+            continue;
+        }
+        if replacements >= REDRESS_PER_FRAME {
+            deferred += 1;
             continue;
         }
         let who = format!("{:08X}", rig.reference);
@@ -295,6 +375,10 @@ fn follow_inventory(
         dressed.worn = worn.clone();
         replacements += 1;
         replacement_ms += started.map_or(0.0, |s| s.elapsed().as_secs_f64() * 1000.0);
+    }
+    if deferred > 0 {
+        stats.deferred += deferred;
+        debug!("outfit: {deferred} actor(s) left to dress in a later frame ({REDRESS_PER_FRAME} a frame)");
     }
     stats.replacements += replacements;
     crate::profile::outfit_replacements(replacements, replacement_ms);
@@ -408,7 +492,7 @@ pub(crate) mod tests {
             explosion_damage: 0.0, skill: None, embedded: false, non_playable: false, not_for_npcs: false,
             first_person: None, first_person_model: None, mod_models: Default::default(),
             mod_first_person: Default::default(), mod_first_person_models: Default::default(),
-            held_world_model: None, grip: None, hide_backpack: true,
+            held_world_model: None, grip: None, hide_backpack: true, addons: Vec::new(),
         });
         actors
     }
@@ -465,6 +549,30 @@ pub(crate) mod tests {
         inv.add_extra(WEAPON, 1, Extra { mods: 5, ..Default::default() });
         inv.set_equipped(WEAPON);
         inv
+    }
+
+    #[test]
+    fn a_weapon_with_its_own_hand_model_dresses_the_body_again() {
+        // #1783: the power fist's BIPL hand comes off with the fist and goes on with it.
+        let mut actors = forms();
+        let fist = FormId(10);
+        let mut w = actors.weapons[&WEAPON].clone();
+        w.hide_backpack = false;
+        let plain = w.clone();
+        w.addons = vec![FormId(11)];
+        actors.weapons.insert(fist, w);
+        let other = FormId(12);
+        actors.weapons.insert(other, plain);
+        let worn = [ARMOUR];
+        // Fist → none, and back.
+        assert!(!same_worn(&actors, &worn, None, &worn, Some(fist)));
+        assert!(!same_worn(&actors, &worn, Some(fist), &worn, None));
+        // Fist → a weapon without addons, and back.
+        assert!(!same_worn(&actors, &worn, Some(other), &worn, Some(fist)));
+        assert!(!same_worn(&actors, &worn, Some(fist), &worn, Some(other)));
+        // Neither changes the body: the held weapon alone is swapped.
+        assert!(same_worn(&actors, &worn, Some(other), &worn, None));
+        assert!(same_worn(&actors, &worn, Some(fist), &worn, Some(fist)));
     }
 
     #[test]
@@ -599,7 +707,7 @@ pub(crate) mod tests {
             let shape = (name != "skeleton").then_some(name);
             std::fs::write(dir.0.join("meshes").join(format!("{name}.nif")), model_nif(shape)).unwrap();
         }
-        for name in ["mtidle", "1hpholster", "2hrholster"] {
+        for name in ["mtidle", "1hpholster", "2hrholster", "h2hholster"] {
             std::fs::write(dir.0.join("meshes").join(format!("{name}.kf")), idle_kf()).unwrap();
         }
         let data = GameData {
@@ -681,6 +789,46 @@ pub(crate) mod tests {
         let stats = app.world().resource::<OutfitStats>();
         assert_eq!(stats.replacements, 0);
         assert_eq!((stats.armour_off, stats.armour_on, stats.weapons_off, stats.weapons_on, stats.parts_on), (0, 0, 0, 0, 0));
+    }
+
+    /// #1714: a disarmed NPC's outfit puts the fists on as its weapon leaves the
+    /// inventory; the drop's own message, read after that, must not take them away again
+    /// (it left the NPC running with its arms out in the bind pose).
+    #[test]
+    fn a_disarmed_npc_keeps_the_fists_its_outfit_gave_it() {
+        use nvf_play::combat::WeaponBroken;
+        let (mut app, actor, _files) = spawn_fixture(false);
+        let reference = app.world().get::<ActorRig>(actor).unwrap().reference;
+        app.add_message::<WeaponBroken>();
+        // The rules drop the weapon (`nvf_play::combat::disarm`); the outfit follows first.
+        app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(Inventory::new());
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        assert_eq!(app.world().get::<WeaponHold>(actor).unwrap().stance.prefix, "h2h");
+        app.world_mut().write_message(WeaponBroken { form_id: reference, weapon: WEAPON, dropped: None });
+        app.world_mut().run_system_once(crate::weapons::drop_broken).unwrap();
+        let w = app.world_mut();
+        assert_eq!(w.get::<WeaponHold>(actor).map(|h| h.stance.prefix.as_str()), Some("h2h"));
+        assert!(w.get::<BlendPlayer>(actor).unwrap().layers[2].is_some(), "the fists' clip was taken away");
+        assert_eq!(w.query::<&HeldWeapon>().iter(w).count(), 0);
+    }
+
+    /// The other order: the drop is read while the weapon is still in the hand. Its hold
+    /// goes; the outfit then puts the fists on.
+    #[test]
+    fn a_weapon_dropped_from_the_hand_gives_way_to_the_fists() {
+        use nvf_play::combat::WeaponBroken;
+        let (mut app, actor, _files) = spawn_fixture(false);
+        let reference = app.world().get::<ActorRig>(actor).unwrap().reference;
+        app.add_message::<WeaponBroken>();
+        app.world_mut().resource_mut::<SimState>().world.get(FormId(reference)).unwrap().inventory = Some(Inventory::new());
+        app.world_mut().write_message(WeaponBroken { form_id: reference, weapon: WEAPON, dropped: None });
+        app.world_mut().run_system_once(crate::weapons::drop_broken).unwrap();
+        assert!(app.world().get::<WeaponHold>(actor).is_none());
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        let w = app.world_mut();
+        assert_eq!(w.get::<WeaponHold>(actor).map(|h| h.stance.prefix.as_str()), Some("h2h"));
+        assert!(w.get::<BlendPlayer>(actor).unwrap().layers[2].is_some());
+        assert_eq!(w.query::<&HeldWeapon>().iter(w).count(), 0);
     }
 
     #[test]
@@ -939,5 +1087,87 @@ pub(crate) mod tests {
         assert!(plan.parts.iter().any(|p| p.ends_with("armour.nif")));
         assert!(plan.parts.iter().any(|p| p.ends_with("modded.nif")));
         assert!(!plan.parts.iter().any(|p| p.ends_with("bare.nif") || p.ends_with("pack.nif")));
+    }
+    #[test]
+    fn equipment_is_kept_until_the_inventory_or_outfitting_changes() {
+        let mut world = appearance_world();
+        world.forms = actor_forms(vec![]);
+        let refs = fnv_sim::RefTable::default();
+        let mut sim = fnv_sim::World::new(&world.forms, &refs, Default::default());
+        let id = sim.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap();
+        sim.get(id).unwrap().inventory = Some(equipped());
+        let mut cache = EquipmentCache::default();
+        let first = cache.of(&world, Some(&sim), id.0);
+        assert_eq!(first, Equipment::of(&world, Some(&sim), id.0));
+        assert!(first.is_some());
+        for _ in 0..3 {
+            assert_eq!(cache.of(&world, Some(&sim), id.0), first);
+        }
+        assert_eq!(cache.computed(), 1, "an unchanged inventory is not looked at again");
+        // The weapon leaves the inventory: asked again, and the answer follows.
+        sim.get(id).unwrap().inventory.as_mut().unwrap().remove(WEAPON, 1);
+        let unarmed = cache.of(&world, Some(&sim), id.0);
+        assert_eq!(cache.computed(), 2);
+        assert_eq!(unarmed, Equipment::of(&world, Some(&sim), id.0));
+        assert_eq!(unarmed.as_ref().and_then(|e| e.weapon), None);
+        // Outfitting changes the answer's source (equipped items or the outfit's choice).
+        let state = sim.get(id).unwrap();
+        state.outfitted = !state.outfitted;
+        assert_eq!(cache.of(&world, Some(&sim), id.0), Equipment::of(&world, Some(&sim), id.0));
+        assert_eq!(cache.computed(), 3);
+        // No inventory: nothing kept.
+        sim.get(id).unwrap().inventory = None;
+        assert_eq!(cache.of(&world, Some(&sim), id.0), None);
+        // An actor not asked for in `keep` frames is forgotten.
+        sim.get(id).unwrap().inventory = Some(equipped());
+        cache.of(&world, Some(&sim), id.0);
+        cache.next_frame(1);
+        cache.of(&world, Some(&sim), id.0);
+        assert_eq!(cache.computed(), 4);
+        cache.next_frame(1);
+        cache.next_frame(1);
+        cache.of(&world, Some(&sim), id.0);
+        assert_eq!(cache.computed(), 5);
+    }
+
+    /// A mass change of equipment is spread over frames, [`REDRESS_PER_FRAME`] a frame.
+    #[test]
+    fn a_mass_equipment_change_is_dressed_over_several_frames() {
+        const N: usize = REDRESS_PER_FRAME + 2;
+        let (mut app, _files) = asset_fixture();
+        let forms: &'static fnv_sim::FormStore = Box::leak(Box::new(actor_forms(vec![])));
+        let refs: &'static fnv_sim::RefTable = Box::leak(Box::default());
+        let mut sim = fnv_sim::World::new(forms, refs, Default::default());
+        let ids: Vec<FormId> = (0..N).map(|_| {
+            let id = sim.place(OTHER, None, [0.0; 3], [0.0; 3], 1).unwrap();
+            sim.get(id).unwrap().inventory = Some(equipped());
+            id
+        }).collect();
+        app.insert_resource(SimState { forms, refs, world: sim });
+        let parent = app.world_mut().spawn_empty().id();
+        let spawn = ids.iter().map(|i| i.0).collect::<Vec<_>>();
+        app.world_mut().run_system_once(move |mut commands: Commands, world: Res<ActorWorld>, sim: Res<SimState>, mut parts: ResMut<ActorParts>, mut models: ModelCtx| {
+            let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
+            let mut stats = ActorStats::default();
+            for &r in &spawn {
+                assert!(crate::actors::spawn(&mut commands, parent, bevy::math::Affine3A::IDENTITY, Vec3::ZERO, r, OTHER.0, &world, Some(&sim.world), &mut ctx, &mut stats, false));
+            }
+        }).unwrap();
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        assert_eq!(app.world().resource::<OutfitStats>().replacements, 0, "spawned as the rules dress them");
+        // Every one of them is disarmed at once.
+        for id in &ids {
+            app.world_mut().resource_mut::<SimState>().world.get(*id).unwrap().inventory = Some(Inventory::new());
+        }
+        let unarmed = |app: &mut App| { let w = app.world_mut(); w.query::<&Dressed>().iter(w).filter(|d| d.weapon.is_none()).count() };
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        assert_eq!(app.world().resource::<OutfitStats>().replacements, REDRESS_PER_FRAME);
+        assert_eq!(app.world().resource::<OutfitStats>().deferred, N - REDRESS_PER_FRAME);
+        assert_eq!(unarmed(&mut app), REDRESS_PER_FRAME);
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        assert_eq!(app.world().resource::<OutfitStats>().replacements, N);
+        assert_eq!(unarmed(&mut app), N);
+        app.world_mut().run_system_once(follow_inventory).unwrap();
+        assert_eq!(app.world().resource::<OutfitStats>().replacements, N, "nothing left to do");
     }
 }

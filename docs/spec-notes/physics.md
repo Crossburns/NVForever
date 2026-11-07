@@ -612,7 +612,8 @@ world-sounds test knocked Sunny's three bottles 117–128 units ("impacts by mat
 
 The three motorcycles outside the Goodsprings saloon could be pushed by the player; in the
 game they do not move, while tumbleweeds and Sarsaparilla crates do [observed: owner,
-playtest list 5 item 59].
+playtest list 5 item 59]. The tumbleweeds roll with the weather's wind: [wind](wind.md)
+(their model's body flag, issue #1401).
 
 - They are STAT references (`Motorcycle01Static`, 0x00106341, 0x00106342, 0x0010750C)
   [observed: `fnvtool world refs --world WastelandNV`]. Their model,
@@ -781,7 +782,37 @@ decides what the next query refresh costs.
       rejects non-ties. All 400 such differences, in the six relaxed scenarios that
       have them pass [observed: `cargo test -p fnv-phys --test synthetic hitvol`,
       2026-11-03].
-    - Canonical tie-break (time of impact, then owner): not done; issue #1459.
+    - Canonical tie-break (time of impact, then owner): not done; issue #1459. Done
+      since, see the next item.
+- **Canonical tie-break** [design, #1459]. First-hit `ray` and `sweep` now return, of all
+  candidates, the one with the smallest time of impact and, among exactly equal times
+  (the same f32), the smallest by:
+  1. owner (`Owner`'s order: kind, then for an actor's capsule form id, layer, part);
+  2. segment: which of the owner's colliders it is, stored in `user_data` bits 104..120
+     (`Owner::encode_segment`): the index of the part capsule in the list given to
+     `set_actor_parts`, or of the leaf in its collision object; 0 elsewhere (terrain,
+     characters, whole-actor capsules, ragdolls, gore);
+  3. the hit's own geometry, as bits: for a ray the normal then the sub-shape (triangle),
+     for a sweep the witness point then the normal on the hit collider. Two candidates
+     equal in all of these give the same answer, so which collider it came from no longer
+     shows.
+  - `ray_all` sorts equal distances by the same keys (owner, segment, normal, sub-shape).
+  - How: a custom leaf cost over parry's `Bvh::find_best`, not collect-all-then-sort
+    (`first_hit`, `crates/fnv-phys/src/world.rs`). The best (time, key) is kept beside the
+    traversal; a leaf the rule takes reports the next float above its time to
+    `find_best`, so nodes whose bound equals the best time are still visited and each
+    collider is asked with that bound (a tie is returned, not cut off). The key is worked
+    out only on exact ties. A sweep casts each collider with the full options, as parry's
+    composite cast does [design: parry3d 0.31.1
+    `query/shape_cast/shape_cast_composite_shape_shape.rs:15-60`], so every answer without
+    a tie is the one parry gave before.
+  - The answer no longer depends on the tree's history: the six exact tests above pass
+    without `#[ignore]` (attached and standalone capsules, skipped and forced writes,
+    snapshots, coincident twins in a crowd) [observed: `cargo test -p fnv-phys --test
+    synthetic hitvol`, 2026-11-06].
+  - Combat: with coincident actors the hit now goes to the lower form id, and inside two
+    overlapping parts to the lower part index (then the earlier segment), always. Before,
+    either could win depending on the tree.
 
 ## 6. Character controller and capture questions
 
@@ -947,6 +978,27 @@ motion of the step is dropped: once in 60 steps of a walk along a terrain cell s
 character moved 0.06 units instead of 1.28. `move_character` continues such a step with
 the horizontal motion it lost, only when every hit of the step was level (test
 `walking_on_level_ground_loses_no_step`). Re-check both when upgrading rapier.
+
+A third, about cost (issue #1797) [observed: rapier 0.36.0 source and a per-move timer in
+the 50-a-side battle at Goodsprings, 2026-11-07]: the controller's move sweeps the shape at
+most 20 times, sliding along what each sweep meets, with the autostep's casts and a
+contact pass for the ground after each; pressed into a crease between two meshes every
+slide meets the other surface and the normal nudge keeps the motion left over above the
+stop threshold, so the move used all 20 and went nowhere. One actor between the terrain
+and a canyon rock's mesh (NVNRockCanyon02) took 3 ms a step, one perched between two
+yuccas' meshes 22 ms, against about 0.1 ms for the others, every step, the feet exactly
+where they were; with up to 8 steps a long frame the battle fell into frames of 400 ms.
+A groove of two planes steeper than walkable reproduces it (test
+`a_stuck_character_is_held_with_the_steps_it_would_have_had`). **Rule**
+(`Character::hold_when_stuck`, on for the actors the game walks, off for the player and
+the tools' probes) [engineering choice]: a move whose first controller move met something
+on all 20 sweeps and left the feet exactly where they were holds the character there; the
+next 19 steps return the same standing step without sweeping, the 20th is a full move
+again (which holds it again, or moves it on). A character in the same place with the same
+input gets the same step from the controller, so the hold only differs when the input or
+the world changed during the third of a second; the test shows the same steps held and
+not held in the groove, and none held walking up steps, along a wall, into a steep ramp
+and into a corner.
 
 ### 6.2 Rest height after a teleport (arrival rule)
 

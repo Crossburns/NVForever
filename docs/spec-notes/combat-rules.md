@@ -12,8 +12,8 @@ them.
   (`Rules::from_forms`). A setting the masters lack takes the wiki page's default
   [documented default; that an absent setting means its default is a hypothesis,
   combat-data.md §3]. `Rules::defaulted` lists which came from defaults.
-  `fCombatDistance` has no documented default; 100 units is a placeholder
-  [hypothesis].
+  `fCombatDistance` has no documented default; 107 units is fitted to the original's
+  NPC swings (§10, Reach) [observed fit; hypothesis that the setting is that value].
 - `CombatTuning`: every [design] number below, in one place:
 
 | Value | Default | Shapes |
@@ -266,6 +266,24 @@ each the identity by default. Reading PERK records is a later step.
   `actors_near(point, radius)`.
 - **A shot.** `shot::fire` spawns the chain's projectiles per shot, each with its own
   direction in the cone.
+- **Where an arcing round leaves** (issue #1471). The player's shots leave the eye along
+  the view, except an arcing explosive missile (a PROJ of type Missile with gravity and
+  an explosion: the grenade launchers' rounds), which leaves the weapon's muzzle along the
+  view when nothing stands between the eye and the muzzle. The original's 40 mm round
+  started 110 / 125 / 138 units above the feet and 51-55 units ahead at aim 0 / 15 / 30
+  degrees up [observed: o26_gl, 2026-11-06, the first positions of its projectile
+  reference]; our Grenade Launcher's muzzle is 110 / 126 / 142 above the feet and 60-64
+  ahead [observed: smoke `grenade-launcher-arc`, debug log], while the eye stays about
+  118 above. From the eye ours first hit the ground 840 / 1,841 / 2,763 units out after
+  0.48 / 1.09 / 1.82 s, against the original's 793 / 1,944 / 2,815 after 0.45 / 1.16 /
+  1.86 s: speed (1,750) and gravity (1.5 × 686.7) were the same, the launch point was not
+  [observed]. From the muzzle ours lands 812 / 1,864 / 2,801 units out after 0.46 / 1.10 /
+  1.85 s [observed: smoke `grenade-launcher-arc`, no spread]. The rest of the gap at 15
+  degrees is the launch angle: the original's left 1.2 degrees above the aim there (0.3
+  below at 0, 0.3 above at 30) [observed]; ours leaves along the aim [hypothesis: the
+  original's small offsets are its aim spread]. Thrown weapons (lobbers) still leave the eye: the original's frag
+  grenade started 118 above the feet and 52 ahead [observed: o26_gl frag0], as high as our
+  eye.
 - **Flight.**
   - Beams and hitscan projectiles trace at once. The hit is delivered after distance ÷
     speed; beams deliver at once.
@@ -273,13 +291,64 @@ each the identity by default. Reading PERK records is a later step.
     A flame goes on through actors, hitting each once.
   - Projectiles flagged to pass small-transparent colliders go through them.
   - Gravity is the PROJ value × the world's 9.81 m/s² at 70 units per metre
-    [hypothesis; the owner plans projectile captures to tune this].
+    [observed for a missile: o26_gl below].
+  - **Measured in the original (o26_gl, 2026-11-06, `nvfairport`, the runway, first
+    person; the newest live projectile's position every game loop by `GetFirstRef 51`,
+    times from GameHour at TimeScale 30; issue #1471).** The Grenade Launcher's
+    `40mmGrenLaunchProjectile` (Missile, speed 1,750, gravity 1.5) flew at **1,750
+    units/s** (1,750-1,753 in all four shots) under **1,030-1,039 units/s²**, that is 1.5
+    × 686.7 [observed]: the PROJ speed and the gravity rule above, as built. The shots,
+    from 110-140 units above the ground and 55 units ahead of the player:
+
+    | Aim (GetAngle X) | Launch angle | First ground hit | Flight |
+    |---|---|---|---|
+    | 0 (attack key held 4 loops) | -0.3° | 793 units | 0.45 s |
+    | -15 | 16.2° | 1,944 units | 1.16 s |
+    | -30 | 30.3° | 2,815 units | 1.86 s |
+    | 0, `player.FireWeapon` | 0.3° | 821 units | 0.47 s |
+
+    The round went off at its first ground hit; it did not bounce or roll. The launch
+    angle was 1.2° above the aim at -15 and 0.3° at -30 [observed]. So speed and gravity
+    do not make NVForever's round fall short; the launch point did, and ours now leaves
+    the muzzle (above, PR #1788).
+  - A thrown frag grenade (`GrenadeFragProjectile`, Lobber, speed 1,200, gravity 1.0;
+    the attack held 30 loops, aimed level; one run, o26_gl frag0): its figures are under
+    "A thrown grenade rolls" and "Throw speed" below.
 - **Explosions.**
   - Without Alt. Trigger, the explosion goes off on impact.
   - With it, a lobber bounces (× its bouncy multiplier, else `default_bounce`) and
-    settles. It explodes when its timer runs out, or, when it has a proximity radius,
+    settles; a thrown grenade (a fuse, no proximity, not Detonates) rolls instead, below. It explodes when its timer runs out, or, when it has a proximity radius,
     once armed (after the timer) when an actor other than the thrower comes within
     the radius.
+  - **A thrown grenade rolls** (issue #1785; owner 2026-11-06: only thrown grenades
+    roll, launcher rounds go off where they first land). At a contact the speed into the
+    surface keeps `fGrenadeRestitution` of itself, out of it (0.01 in FalloutNV.esm
+    [observed]; its meaning [hypothesis: from its name]), the speed along it keeps
+    `grenade_roll_keep` (0.9) at the first landing, and the grenade goes on along the
+    surface; on ground (a normal at least 0.7 up) it rolls, its speed falling as
+    e^(−0.66 × t) (`grenade_roll_damping`), until it is slower than 40 units/s or its fuse
+    ends. Both shares are fitted to the original's frag grenade [observed: o26_gl frag0,
+    distances from where it left the hand: it touched down 513 units out after 0.58 s,
+    bounced under 15 units, rolled off at about 636 units/s and slowed at 0.66 a second
+    (rms 2.6 units), to 1,206 units by 2.47 s, still moving when the record ended; the
+    0.9 is its speed just after over just before]. Ours does the same since PR #1788
+    (smoke `frag-grenade-roll`). `fGrenadeFriction` (5.0 in FalloutNV.esm) is
+    not used [hypothesis: a Havok friction; our grenade is no rigid body]. The grenade
+    model's own body (`GrenadeFrag.NIF` bhkRigidBody: mass 5, friction 0.5, restitution
+    0.4, linear damping 0.1, angular damping 0.05) is not used either [observed values].
+  - **Throw speed, open** (issue #1785). Ours throws at the PROJ speed (1,200 for
+    `GrenadeFragProjectile`) times the throwing perks. The original's left at about 950
+    units/s across the ground (949-955 over its first 0.35 s, aimed level), slowed to
+    about 650-770 in the last 0.2 s before touchdown, and touched down 513 units from where
+    it left (about 563 from the player) after 0.58 s; its height over that flight fits a
+    fall under about 570 units/s² from a slight downward start (a rough fit, less than the
+    686.7 rule) [observed: o26_gl frag0; times from the floor clock, floor(GameDaysPassed)
+    × 24 + GameHour, on which JIP's projectile lifetime reaches 1 at 1.00 s and the 40 mm
+    round flies at 1,746-1,754 units/s; the 534 units after 0.61 s and the 490 units/s²
+    first written from the same run are replaced by these, read again from its samples].
+    Nothing in the data gives 950 (no throw setting in the
+    masters but `fGrenadeFriction` and `fGrenadeRestitution`; the weapon's Animation
+    Multiplier and Attack Multiplier are 1.0), so ours keeps the PROJ speed.
   - Detonating projectiles wait for `detonate()` (C-4).
   - Anything else ends after 60 s [design].
 - **Melee swing.** A fan of `melee_rays` rays over ±`melee_arc_deg` at the eye, as
@@ -573,9 +642,25 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   - The strike is a fan of `melee_rays` rays over ±`melee_arc_deg` from the eye along
     the view, as long as the reach; each actor is hit once (`projectile::swing`).
 - **Reach** (`damage::melee_reach`) = `fCombatDistance` × scale × the WEAP Reach
-  [documented formula]. The masters lack `fCombatDistance`, and its placeholder is now
-  150 (a knife, reach 0.5, gets 75 units; a sledgehammer, 0.75, 112) [hypothesis,
-  tunable]. A Reach of 0 (the Fists) counts as 1 [hypothesis].
+  [documented formula]. The masters lack `fCombatDistance`; ours is **107**, fitted to
+  the measurement below (until #1334 a placeholder of 150) [hypothesis, tunable]. A
+  Reach of 0 (the Fists) counts as 1 [hypothesis]. The reach is counted from the
+  attacker's body [hypothesis: the reading of the 45 below]: an NPC strikes within its
+  reach plus the two bodies' radii centre to centre (`npc_combat::melee_spacing`; two
+  people, 22 + 22: knife 97.5, sledgehammer 124, super sledge 151, bumper sword 172,
+  lead pipe 178), and stops 6 units inside that (`MELEE_STOP_SHORT`, fitted to the knife
+  troopers' 96 start and 92 closest), closing in again beyond it; the bodies, until known,
+  are two people's (44). **Open:** ours mostly swings once stopped (a blow is rolled on
+  the style's attack chance; a failed roll holds it for the hold timer), and the AI's
+  walk ends `fnv_ai::alert::STOP_SHORT` (0.9) of its stop in, so its blows begin short of
+  the original's: Violet with a lead pipe at 170 on open ground (151-158 among her camp's
+  rocks) against 180 [observed: smoke melee-reach-lead-pipe, 2026-11-06]. Given its strike distance to stop at instead, she
+  swung at 176, but with no band between stopping and closing in again she stopped and
+  closed in again every frame as her body's radius moved with the swing (271 AI lines in
+  30 s); a knife, whose walk ends only 10 units inside, could stop outside its reach. The
+  fix belongs to the AI's walk (swing on the way in, or end the walk at the stop). The player's fan of rays
+  runs from the eye out to the reach plus the player's capsule radius (22: a knife 75.5,
+  as long as with the old 150 × 0.5).
   Measured 2026-11-01 (campaign o14_reach, `nvfairport` runway, god-mode player standing
   still, NCR troopers of the leveled list given one weapon each, every game loop) [observed]:
   the centre-to-centre distance at which a swing starts (GetAnimAction entering 2 or 3;
@@ -584,9 +669,13 @@ Examples [observed, seed 1, skill 50, 100 HP target]:
   (1.2) 175, lead pipe (1.25) 180. That fits **about 45 + 107 × Reach** within 5 units.
   Read as a body gap, the 45 is about the two capsules' radii, which would make
   `fCombatDistance` about 105-110 rather than 150 [hypothesis: the gap reading; the
-  capsules were not measured]. Creatures' starts (same run, centre to centre, median):
-  gecko 81, cazador (young) 80, night stalker (young) 102, radscorpion 97-129, feral
-  ghoul 135-140, giant mantis 101-163 (drifting out over the fight), bighorner bull 232.
+  capsules were not measured]. Ours takes 107 on that reading (#1334). Creatures' starts
+  (same run, centre to centre, median): gecko 81, cazador (young) 80, night stalker
+  (young) 102, radscorpion 97-129, feral ghoul 135-140, giant mantis 101-163 (drifting
+  out over the fight), bighorner bull 232; and in o12_reach (same ground, 2026-11-01)
+  coyotes 84-117 over 5 starts, a dog 172 and a deathclaw 88 (one start each, hits
+  landing at 69 and 108). Ours fits each measured skeleton's reach beyond its RNAM
+  (`npc_combat::creature_body_reach`, npc-behaviour-compare.md §3).
   Over 12-16 swings and about 13 landed hits each, the troopers' weapons stayed at
   GetWeaponHealthPerc 99.9 (§17).
 - **Damage.** The melee and unarmed forms of §2, with the target's worn armour. The
@@ -856,11 +945,19 @@ the player puts down. Code: `fnv_combat::mine` (rules), `nvf_play::mines` (in pl
   which is a hypothesis: they are the player's side. `iProjectileMineShooterCanTrigger` is
   1 in the data, which the owner's rule overrides; what the setting does is open.
 - **Fuse** [owner 2026-10-19: the player's Explosives skill sets how long you have, about
-  3 s nominal]: the PROJ timer × the Explosives of whoever set it off ÷ 100, never below
-  `fMinesDelayMin` [hypothesis: linear]. That gives 3 s at 100 and 0.6 s at 20. It fits the
-  capture `cl_d_mines_live` (simulation.md §1), where a mine went off between 0.5 and
-  1.5 s after the player stepped on it. Once started, the fuse burns even if the actor
-  leaves [design].
+  3 s nominal]: the PROJ timer × (0.35 + 0.65 × the Explosives of whoever set it off ÷
+  100), never below `fMinesDelayMin` [design, #1659]. For the frag mine (timer 3) that is
+  1.05 s at Explosives 0, 1.44 s at 20, 2.03 s at 50 and 3 s at 100.
+  - Why: the curve before, timer × Explosives ÷ 100 [hypothesis: linear], gave a starting
+    character (Explosives 10–20) 0.3–0.6 s, about two blinks of the light: less than a
+    human reaction and a step back, so a mine could not be escaped or disarmed once it
+    beeped. A third of the timer at 0 gives about a second; the skill still adds the rest,
+    up to the whole timer at 100. How the original scales it is not known.
+  - The capture `cl_d_mines_live` (simulation.md §1), where a mine went off between 0.5
+    and 1.5 s after the player stepped on it, still fits at Explosives up to 23. That
+    save's Explosives was not recorded.
+  - Once started, the fuse burns even if the actor leaves [design], and the light blinks
+    and the countdown ticks for all of it.
 - **Tick and light** [owner 2026-10-19: live mines show the red-orange light; it blinks
   once a mine is set off]:
   - A live mine shows `##LightOn`. A loose or disarmed mine item shows `##LightOff`
@@ -899,7 +996,8 @@ the player puts down. Code: `fnv_combat::mine` (rules), `nvf_play::mines` (in pl
     fuse. Aimed at and activated while it ticked, it was disarmed into a Frag Mine lying
     in its place (0xFF000000), and the next activation took it.
   - The 10mm pistol's shot took 0x00172DDA to its destruction stage, and it blew up.
-  - Stood on at Explosives 20, a mine went off after 0.6 s with `MineFragExplosion`.
+  - Stood on at Explosives 20, a mine went off after 0.6 s with `MineFragExplosion` (the
+    linear fuse of the time; 1.44 s since #1659).
   - A thrown frag mine came to rest, was drawn lit and was not set off by the player
     walking over it.
 - Not built: NPCs putting mines down, NPCs seeing and avoiding mines, the HUD's mine
@@ -983,7 +1081,18 @@ From the ESM audit (gap 5). Code: `fnv_combat::data::ProjectileStats::lands_as_w
   joints. Without this, the torso's top cap covered the lower head and took head shots
   [observed]. The torso's lower end is not pulled in: pulled, it left a band at the hips
   that no capsule covered [observed].
-- **Damage** (`nvf-play` combat; projectiles and melee alike):
+- **The player's capsule** (`nvf_play::combat::player_hit_condition`, issue #1345)
+  [design]: first and third person use the character controller's feet, height and
+  radius, and the player's heading. A hit above 86 % of its height selects the head;
+  below 50 % it selects a leg. Between them, more than 60 % of the radius sideways
+  from the facing selects an arm; otherwise the torso. Left and right follow the
+  player's facing. Height clamps to the capsule; a leg hit exactly on the centre line
+  chooses the right leg. The named thresholds follow human skeleton proportions
+  [design]; how the original chooses a player's part remains [hypothesis], observer
+  check 3. The selected condition actor value finds the part in
+  `body_parts_for(PLAYER_BASE, HUMAN_SKELETON)`, the same data the player's limbs
+  already follow [design: `combat.rs`]. Missing data keeps location 0 and no limb.
+- **Damage** (`nvf-play` combat):
   - The hit's part gives the damage multiplier (`BodyPart::hit_part`; head hits count
     for the unaware-headshot critical).
   - The part gives the `GetHitLocation` number (`BodyPart::location`, the BodyLocation
@@ -999,8 +1108,18 @@ From the ESM audit (gap 5). Code: `fnv_combat::data::ProjectileStats::lands_as_w
     Until 2026-10-25 the multiplier stayed in, so head hits crippled twice as fast.
     Guns only: two machete hits did not fit (×4 on the head, ×2 on a leg), so melee is
     open.
-  - Hits on the single capsule stay location 0 (torso); explosions are −1, with no
-    limb [design].
+  - Player shots missing a part use the capsule rule above, then `BodyPart::hit_part`,
+    `BodyPart::location` and `limb_hit`, including the head's ×2 Health multiplier
+    [design: `combat.rs`]. NPC blows on the player use the same rule for location and
+    limb, with `HitPart::default()` for Health [hypothesis: melee is open]. Creature
+    blows keep their weapon's Limb Dmg Mult, or the Fists' when that path supplies
+    them [hypothesis: the unmeasured creature multiplier]. NPC-on-NPC blows keep
+    location 0, no limb and their existing Health damage [design: `actor_attacks`].
+    Blocked blows use the damage left after blocking; zero damage gives no limb
+    loss. God mode stops Health and limb loss [design: `limb_hit`, `hit_player`].
+  - Other single capsules without part data keep location 0. Explosions keep
+    location −1 and their own limb shares; falls keep their own leg damage
+    [design: `combat.rs`, crippled-limbs.md §5, physics.md §6.12].
 - **Limb condition** (`Game::hit`, `Game::damage_limb`):
   - The part's condition actor value (25–31, starting at 100) loses
     `limb damage ÷ (max health × health % ÷ 100) × 100`, and stops at 0.
@@ -1018,7 +1137,8 @@ From the ESM audit (gap 5). Code: `fnv_combat::data::ProjectileStats::lands_as_w
   - the HUD's health line lists crippled limbs.
   - What every crippled limb does, to the player and to NPCs: crippled-limbs.md.
 
-  Nothing hurts the player yet (no NPC attacks); scripts can (`DamageActorValue`).
+  Ordinary NPC shots and blows now damage the player's limbs by default, as well as
+  explosions, falls and scripts [design: `combat.rs`, issue #1345].
 - **Hit reactions** (`damage::staggers`, `deaths.rs`) [design: the owner's rule,
   2026-10-11; before it every hit played one, and fast hits held an actor in it]:
   - The hit that cripples a body part always plays one.
@@ -1078,8 +1198,10 @@ From the ESM audit (gap 5). Code: `fnv_combat::data::ProjectileStats::lands_as_w
 ## 13. Open points
 
 - Every [design] number is a first guess for the owner to tune in play.
-- Projectile gravity units and speeds: the owner's projectile capture round.
-- `fCombatDistance`, the melee reach base: not in the masters and not documented.
+- Projectile gravity and speed: the Grenade Launcher's round matches the PROJ speed × the 686.7 rule (§5, o26_gl), and ours now leaves the muzzle (PR #1788). A thrown frag grenade went about 950 units/s across the ground, not its PROJ 1,200, and slowed in the air; ours still throws at the PROJ speed, and now rolls as the original's did (§5, PR #1788).
+- `fCombatDistance`, the melee reach base: not in the masters and not documented; 107
+  is fitted to the NPCs' swings (§10). The player's own reach in the original is not
+  measured.
 - Not here yet: weapon mods (Decrease Spread and the like), fatigue, reading perks,
   gore. All are later steps (combat.md §8).
 - Limb radii, the crippled-leg speeds and the arm-condition share are [design] (§12).
@@ -1488,10 +1610,12 @@ Owner's request, 2026-10-11. Code: `fnv_combat::condition`, `fnv_sim::inventory`
     Flamer, Heavy Incinerator and Incinerator (health 200), the grenade machineguns,
     the chainsaw, the Rippers, the Thermic Lance and Euclid's C-Finder at 0.005, the
     binoculars and the BB gun at 0 [observed: `fnvtool esm decode`, every WEAP].
-  - It applies to every actor's weapon, the player's and an NPC's (an NPC's own shots and
-    landed blows since 2026-10-20, `nvf_play::combat::actor_attacks`) [hypothesis: the
-    documentation names no actor; the original's NPC weapons do wear, below]. A shot from
-    a scripted FireWeapon wears nothing [design].
+  - It applies to the player's weapon. An NPC's own shots and landed blows wear its
+    weapon only when the weapon's record sets its own Damage to Weapon Mult (since
+    2026-11-06, #1334; `nvf_play::combat::npc_weapon_wears`) [observed: the weapons
+    without it did not wear (o14_reach, o15_round, below), Cook-Cook's Incinerator, which
+    has it, did; hypothesis: that the override is what decides]. A shot from a scripted
+    FireWeapon wears nothing [design].
   - [hypothesis: the setting's role.] It fits the published figure the owner quoted:
     "about 395 standard rounds, the equivalent of 33 reloads" for the 10mm Pistol from
     full condition. Its record has health 80 and 12 rounds [observed]: 80 ÷ 0.2 = 400
@@ -1533,7 +1657,8 @@ Owner's request, 2026-10-11. Code: `fnv_combat::condition`, `fnv_sim::inventory`
     weapons' GetEquippedCurrentHealth 5 did not move at all: lead pipe 49.95 over 10
     swings, sledgehammer 149.85 over 12, and an NPC 10mm Pistol 79.92 over 42 shots, a
     Hunting Rifle 299.7 over 15 [observed]. So these NPCs' weapons do not wear from
-    their own attacks; ours wears them (`actor_attacks`) — #1334.
+    their own attacks; ours wore them until #1334 and now wears only weapons with the
+    override, as the Incinerator.
 - **A weapon that is hit** [design: the owner's rule]. An actor holding its weapon
   drawn has a hit volume along the weapon (`hitvol::WEAPON_PART`: one capsule along the
   longest side of the model's bounds, `nvforever::limbs::weapon_segment`).

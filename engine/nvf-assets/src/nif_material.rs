@@ -77,7 +77,8 @@
 //! texture's alpha (0–255, read at the shape's own texture coordinates) is at or above
 //! [`NifSurface::holes`]`.x` nothing is drawn, in every pass, and the band of `.y` units
 //! below it is drawn in [`NifSurface::holes_edge`]; `.x` negative (every other shape): no
-//! holes. A shape with holes is drawn alpha-tested, so the depth-only passes run the
+//! holes. With `.z` 1 the test is turned round: alpha below `.x` leaves a hole and there
+//! is no band (an effect shader's overlay cut by an alpha-tested mesh's own texture). A shape with holes is drawn alpha-tested, so the depth-only passes run the
 //! same test (`nif_prepass.wesl`).
 //!
 //! Depth of blended hair: hair-shader shapes (hair, beards, brows) are blended
@@ -172,15 +173,15 @@ fn nif_prepass(descriptor: &mut RenderPipelineDescriptor, mesh_key: MeshPipeline
     depth_prepass_fragment(descriptor, NIF_PREPASS_SHADER);
 }
 
-/// Give a depth-only prepass pipeline (the shadow passes included) `shader` as its
-/// fragment stage; other pipelines are left alone.
+/// Give a depth-only or motion-vector prepass pipeline `shader` as its fragment stage.
+/// NIF alpha/holes and first-person depth must be identical with and without FSR.
 fn depth_prepass_fragment(descriptor: &mut RenderPipelineDescriptor, shader: Handle<Shader>) {
     let defs = &descriptor.vertex.shader_defs;
     let has = |d: &'static str| defs.contains(&ShaderDefVal::from(d));
-    // Prepasses with colour targets (or unclipped depth) run Bevy's full prepass
-    // fragment, which already dithers (and tests without the vertex alpha: the
-    // renderers use no such prepass).
-    if !has("PREPASS_PIPELINE") || has("PREPASS_FRAGMENT") {
+    // The fade-only shader is depth-only; Bevy already handles its dither with colour
+    // targets. NIF's motion variant also preserves its custom alpha and squeezed depth.
+    let nif_motion = shader == NIF_PREPASS_SHADER && has("MOTION_VECTOR_PREPASS") && !has("NORMAL_PREPASS") && !has("DEFERRED_PREPASS");
+    if !has("PREPASS_PIPELINE") || (has("PREPASS_FRAGMENT") && !nif_motion) {
         return;
     }
     let (shader_defs, targets) = match descriptor.fragment.take() {
@@ -195,7 +196,7 @@ fn depth_prepass_fragment(descriptor: &mut RenderPipelineDescriptor, shader: Han
 /// `FIRST_PERSON_DEPTH` and writes its depth squeezed; the prepass gets the NIF prepass
 /// fragment whatever the shape's alpha, to write it. Orthographic views (the
 /// [`NifSurface::shade_light`] light's shadow cascade, which the arms cast into) and
-/// prepasses with colour targets are left alone.
+/// normal/deferred prepasses are left alone; the motion-vector prepass is supported.
 fn first_person_depth(descriptor: &mut RenderPipelineDescriptor, mesh_key: MeshPipelineKey) {
     if mesh_key & MeshPipelineKey::VIEW_PROJECTION_RESERVED_BITS != MeshPipelineKey::VIEW_PROJECTION_PERSPECTIVE {
         return;
@@ -203,7 +204,11 @@ fn first_person_depth(descriptor: &mut RenderPipelineDescriptor, mesh_key: MeshP
     let defs = &descriptor.vertex.shader_defs;
     let prepass = defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE"));
     if prepass {
-        if defs.contains(&ShaderDefVal::from("PREPASS_FRAGMENT")) {
+        if defs.contains(&ShaderDefVal::from("PREPASS_FRAGMENT"))
+            && (!defs.contains(&ShaderDefVal::from("MOTION_VECTOR_PREPASS"))
+                || defs.contains(&ShaderDefVal::from("NORMAL_PREPASS"))
+                || defs.contains(&ShaderDefVal::from("DEFERRED_PREPASS")))
+        {
             return;
         }
         depth_prepass_fragment(descriptor, NIF_PREPASS_SHADER);
@@ -317,9 +322,16 @@ pub struct NifSurface {
     /// pixels are marked in alpha so the image-space grade leaves them alone
     /// (`imagespace.wesl`, `SCREEN_MARK`).
     pub pipboy_screen: bool,
+    /// A blended shape that draws the same as a cut-out (`nif_spawn::blended_cutout`): its
+    /// alpha is a texture's cut-out mask and nothing else. Where [`BlendedCutouts`] is on
+    /// (FSR's temporal upscaling) it is drawn alpha-tested at this cut, so it has depth
+    /// and motion and is not translucent to the upscaler; otherwise blended. CPU only.
+    pub blended_cutout: Option<f32>,
     /// Holes (module notes, "Holes"): x the value in alpha units (0–255) at and above
     /// which the holes texture's alpha leaves a hole, negative for none; y the width of
-    /// the edge band below it; z, w unused.
+    /// the edge band below it; z 1 turns the test round (a hole where the alpha is
+    /// below x, no band: an effect shader's overlay on an alpha-tested mesh, cut by the
+    /// mesh's own texture), 0 otherwise; w unused.
     pub holes: Vec4,
     /// The colour of the holes' edge band (linear, alpha unused).
     pub holes_edge: Vec4,
@@ -424,6 +436,7 @@ impl Default for NifSurface {
             first_person: false,
             add_linear: false,
             pipboy_screen: false,
+            blended_cutout: None,
             holes: NO_HOLES,
             holes_edge: Vec4::ONE,
             soft: Vec4::ZERO,
@@ -555,6 +568,14 @@ pub const SORT_FIRST_BIAS: f32 = -5.0e5;
 /// painted over by it wherever the layer sorts as the nearer of the two.
 pub fn sort_first(bias: f32) -> f32 {
     SORT_FIRST_BIAS + bias
+}
+
+/// Whether a blended mesh's transparent sort key (view distance plus material depth bias,
+/// as Bevy sorts them) lies in the [`sort_first`] band: after the sky's −1e6 and before
+/// every other blended mesh. Half the bias on either side leaves room for every view
+/// distance in the loaded world; the same half marks the band in [`raster_bias`].
+pub fn sorts_first(sort_key: f32) -> bool {
+    sort_key > SORT_FIRST_BIAS * 1.5 && sort_key <= SORT_FIRST_BIAS / 2.0
 }
 
 /// The rasteriser's depth bias for a material depth bias: Bevy uses one number for the
@@ -724,8 +745,9 @@ impl Plugin for NifMaterialPlugin {
         // (nvforever water.rs) read it, and their shaders bind it unconditionally.
         app.register_required_components::<Camera3d, bevy::pbr::ScreenSpaceTransmission>();
         app.add_plugins(MaterialPlugin::<NifMaterial>::default())
+            .init_resource::<BlendedCutouts>()
             .add_systems(Startup, spawn_transmission_anchor)
-            .add_systems(PostUpdate, see_through_casts_no_shadow);
+            .add_systems(PostUpdate, (apply_blended_cutouts, see_through_casts_no_shadow));
     }
 }
 
@@ -774,10 +796,78 @@ fn spawn_transmission_anchor(mut commands: Commands, mut meshes: ResMut<Assets<M
 /// it (glass, light rays, glows, smoke, hair), and not an alpha-tested cut-out with soft
 /// edges (`NifSurface::alpha_cut`), which is solid where it is drawn. Hair's cut only
 /// keeps faint fragments out of its depth ([`NifSurface::depth_write`]); it stays
-/// see-through, as before that cut.
+/// see-through, as before that cut. A blended cut-out ([`NifSurface::blended_cutout`])
+/// stays see-through while [`BlendedCutouts`] draws it alpha-tested, so its shadows do
+/// not change with the upscaler.
 pub fn see_through(m: &NifMaterial) -> bool {
-    matches!(m.base.alpha_mode, AlphaMode::Blend | AlphaMode::Add | AlphaMode::Multiply | AlphaMode::Premultiplied)
-        && (m.extension.alpha_cut <= 0.0 || m.extension.depth_write)
+    m.extension.blended_cutout.is_some()
+        || matches!(m.base.alpha_mode, AlphaMode::Blend | AlphaMode::Add | AlphaMode::Multiply | AlphaMode::Premultiplied)
+            && (m.extension.alpha_cut <= 0.0 || m.extension.depth_write)
+}
+
+/// Whether blended cut-outs ([`NifSurface::blended_cutout`]) are drawn alpha-tested: set by
+/// the renderer while FSR upscales the main view (nvforever `graphics.rs`). Temporal
+/// upscaling needs the depth and motion of what it accumulates; a blended mesh has
+/// neither and its whole area counts as translucent, so FSR kept almost no history of the
+/// corn rows and redrew them from each jittered frame: they flickered (owner, 2026-11-05;
+/// docs/design/fsr-upscaling.md "Blended cut-outs").
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlendedCutouts(pub bool);
+
+/// The alpha mode of a blended cut-out material while [`BlendedCutouts`] is `on`, or
+/// `None` when the material is not one in its own state: copies whose alpha a fade, an
+/// effect or a clip drives (their alpha cut or opacity set) are left as they are.
+fn blended_cutout_mode(m: &NifMaterial, on: bool) -> Option<AlphaMode> {
+    let cut = m.extension.blended_cutout?;
+    let own = m.base.base_color.alpha() >= 1.0
+        && match m.base.alpha_mode {
+            AlphaMode::Blend => m.extension.alpha_cut <= 0.0,
+            AlphaMode::Mask(c) => c == cut,
+            _ => false,
+        };
+    own.then_some(if on { AlphaMode::Mask(cut) } else { AlphaMode::Blend })
+}
+
+/// Draw the blended cut-outs as [`BlendedCutouts`] says: all of them when it changes, and
+/// each material as it is added (models prepared on worker threads come in later).
+fn apply_blended_cutouts(
+    state: Res<BlendedCutouts>,
+    mut added: MessageReader<AssetEvent<NifMaterial>>,
+    mut materials: ResMut<Assets<NifMaterial>>,
+    mut applied: Local<bool>,
+    mut flipped: Local<usize>,
+) {
+    let on = state.0;
+    let toggled = *applied != on;
+    let ids: Vec<AssetId<NifMaterial>> = if toggled {
+        *applied = on;
+        added.clear();
+        materials.iter().filter(|(_, m)| m.extension.blended_cutout.is_some()).map(|(id, _)| id).collect()
+    } else {
+        added.read().filter_map(|e| match e {
+            AssetEvent::Added { id } => Some(*id),
+            _ => None,
+        }).collect()
+    };
+    let mut changed = 0;
+    for id in ids {
+        // Read first: taking the asset mutably marks it changed.
+        let Some(mode) = materials.get(id).and_then(|m| blended_cutout_mode(m, on)) else { continue };
+        if materials.get(id).is_some_and(|m| m.base.alpha_mode != mode) {
+            if let Some(mut m) = materials.get_mut(id) {
+                m.base.alpha_mode = mode;
+                changed += 1;
+            }
+        }
+    }
+    if toggled {
+        *flipped = 0;
+        info!("blended cut-outs: {} ({changed} materials changed)", if on { "drawn alpha-tested for FSR" } else { "drawn blended" });
+    }
+    if on && *flipped == 0 && changed > 0 && !toggled {
+        info!("blended cut-outs: models loaded since are drawn alpha-tested for FSR (first {changed})");
+    }
+    *flipped += changed;
 }
 
 /// Marks a mesh [`see_through_casts_no_shadow`] took the shadow from.
@@ -813,6 +903,38 @@ fn see_through_casts_no_shadow(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nif_motion_prepass_preserves_targets_alpha_and_first_person_depth() {
+        let mut descriptor = RenderPipelineDescriptor {
+            vertex: bevy::render::render_resource::VertexState {
+                shader_defs: vec!["PREPASS_PIPELINE".into(), "PREPASS_FRAGMENT".into(), "MOTION_VECTOR_PREPASS".into(), "MAY_DISCARD".into()],
+                ..default()
+            },
+            ..default()
+        };
+        let targets = vec![None, Some(bevy::render::render_resource::ColorTargetState {
+            format: bevy::render::render_resource::TextureFormat::Rg16Float,
+            blend: None,
+            write_mask: bevy::render::render_resource::ColorWrites::ALL,
+        })];
+        descriptor.fragment = Some(FragmentState { shader_defs: descriptor.vertex.shader_defs.clone(), targets: targets.clone(), ..default() });
+        nif_prepass(&mut descriptor, MeshPipelineKey::MAY_DISCARD);
+        let fragment = descriptor.fragment.as_ref().unwrap();
+        assert_eq!(fragment.shader, NIF_PREPASS_SHADER);
+        assert_eq!(fragment.targets, targets);
+        first_person_depth(&mut descriptor, MeshPipelineKey::VIEW_PROJECTION_PERSPECTIVE);
+        let fragment = descriptor.fragment.as_ref().unwrap();
+        assert!(fragment.shader_defs.contains(&"FIRST_PERSON_DEPTH".into()));
+        assert_eq!(fragment.targets, targets);
+        // A shadow cascade remains unsqueezed, even for the same first-person mesh.
+        let mut shadow = RenderPipelineDescriptor {
+            vertex: bevy::render::render_resource::VertexState { shader_defs: vec!["PREPASS_PIPELINE".into()], ..default() },
+            ..default()
+        };
+        first_person_depth(&mut shadow, MeshPipelineKey::VIEW_PROJECTION_ORTHOGRAPHIC);
+        assert!(shadow.fragment.is_none());
+    }
 
     #[test]
     fn see_through_shapes_are_the_blended_ones_without_a_cut() {
@@ -853,6 +975,31 @@ mod tests {
     }
 
     #[test]
+    fn blended_cutouts_flip_only_in_their_own_state_and_keep_their_shadows() {
+        let mut corn = nif_material(StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() });
+        corn.extension.blended_cutout = Some(0.5);
+        assert_eq!(blended_cutout_mode(&corn, true), Some(AlphaMode::Mask(0.5)));
+        assert_eq!(blended_cutout_mode(&corn, false), Some(AlphaMode::Blend));
+        assert!(see_through(&corn), "casts no shadow, as before");
+        corn.base.alpha_mode = AlphaMode::Mask(0.5);
+        assert_eq!(blended_cutout_mode(&corn, false), Some(AlphaMode::Blend));
+        assert!(see_through(&corn), "nor while drawn alpha-tested");
+        // Copies a fade or an effect drives: left alone.
+        let mut fading = corn.clone();
+        fading.base.alpha_mode = AlphaMode::Blend;
+        fading.extension.alpha_cut = 0.25;
+        assert_eq!(blended_cutout_mode(&fading, true), None);
+        let mut faded = nif_material(StandardMaterial { alpha_mode: AlphaMode::Blend, base_color: Color::srgba(1.0, 1.0, 1.0, 0.4), ..default() });
+        faded.extension.blended_cutout = Some(0.5);
+        assert_eq!(blended_cutout_mode(&faded, true), None);
+        let mut other_cut = corn.clone();
+        other_cut.base.alpha_mode = AlphaMode::Mask(0.3);
+        assert_eq!(blended_cutout_mode(&other_cut, false), None);
+        // Unmarked materials are never touched.
+        assert_eq!(blended_cutout_mode(&nif_material(StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() }), true), None);
+    }
+
+    #[test]
     fn sort_first_bias() {
         // Terrain layers: drawn before a blended mesh thousands of units farther away
         // (Bevy sorts by distance + bias, ascending), in rank order among themselves, and
@@ -864,6 +1011,15 @@ mod tests {
             assert!(m > -1.0e6 + 100.0, "after the sky");
             assert!(sort_first(bias + 2.0) > m);
             assert_eq!(raster_bias(m as i32), bias as i32);
+            // Seen from anywhere in the loaded cells, nearer or farther than the mesh's centre.
+            for distance in [-60_000.0, -4_096.0, 0.0, 4_096.0, 60_000.0] {
+                assert!(sorts_first(m + distance));
+            }
+        }
+        // The sky (sky.rs SKY_SORT_BIAS and its layers) and ordinary blended meshes are not
+        // in the band.
+        for key in [-1.0e6 - 30.0, -1.0e6, -1.0e6 + 60_000.0, -60_000.0, 0.0, 16.0, 60_000.0] {
+            assert!(!sorts_first(key), "{key}");
         }
         // Other materials keep their bias (LOD meshes use −50).
         for b in [0, 2, 16, -50, -1000] {

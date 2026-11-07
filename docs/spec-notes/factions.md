@@ -157,7 +157,10 @@ the drawn actor), actor-values.md (Stats and AI Data from templates).
   player walks up would settle it. **2026-10-13:** most of them have Aggro Radius
   Behavior with a radius (giant rats 700, coyotes 1,024, bighorners 500–700, ants 512,
   bloatflies 1,000, bark scorpions 400, mole rats 700) [observed]: they now warn and then
-  attack a player who comes inside it (combat-ai.md §13.1).
+  attack a player who comes inside it (combat-ai.md §13.1). **2026-11-06:**
+  ones created at run time (PlaceAtMe) attack inside it at once, without warning
+  [observed: capture o25_coyote, a spawned CrCoyote against the placed coyote at the
+  same spot; #1341].
   **2026-11-01 (o16_air, nvfairport):** two spawned CrCoyote (GetAV Aggression 1) 700
   units from a still player were in combat with it at once and about 1 s in, with no
   10 s of warnings first, and bit it; two at 250 units the same [observed]. Two

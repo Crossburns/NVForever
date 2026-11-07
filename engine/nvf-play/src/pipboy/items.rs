@@ -306,6 +306,8 @@ pub fn keys(
     (mut hold, mut hotkeys): (ResMut<HotkeyHold>, ResMut<Hotkeys>),
     (pads, bindings): (Query<&Gamepad>, Option<Res<crate::bindings::Bindings>>),
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     use KeyCode::*;
     // The repair list and the mod menu have the keys while one is shown (`super::repair`,
     // `super::item_mod`, which opens on X before this runs).
@@ -424,6 +426,8 @@ pub fn draw(
     (repair, modding, mut script): (Res<super::repair::PipRepair>, Res<super::item_mod::PipItemMod>, Option<ResMut<crate::script::ScriptState>>),
     (hold, hotkeys): (Res<HotkeyHold>, Res<Hotkeys>),
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     let Some((body, _)) = bodies.iter().find(|(_, b)| b.page == Page::Items) else { return };
     if added.get(body).is_err() && !active.is_changed() && !repair.is_changed() && !modding.is_changed() && !hold.is_changed() && !hotkeys.is_changed() {
         return;
@@ -499,8 +503,10 @@ pub fn draw(
                 item_info(p, &mut c, icon.as_deref(), i);
             }
             if let (false, true, Some(r)) = (panel, i.mod_hint, selected) {
-                info!("pipboy items: {} Mod X)", r.name);
-                c.text(p, 2, "Mod X)", MAIN.min.x + MOD_HINT.x - 10.0, MAIN.min.y + MOD_HINT.y + frame::BUTTON_TEXT_Y, Align::Right, amber(TEXT));
+                // X, with a controller LB (`inventory_menu.xml`'s, `crate::pad::menu_buttons`).
+                let hint = format!("Mod {}", crate::pad::hint(&[KeyCode::KeyX], crate::pad::at_menu(fnv_game::game::menus::INVENTORY)));
+                info!("pipboy items: {} {hint}", r.name);
+                c.text(p, 2, &hint, MAIN.min.x + MOD_HINT.x - 10.0, MAIN.min.y + MOD_HINT.y + frame::BUTTON_TEXT_Y, Align::Right, amber(TEXT));
             }
         }
     });
@@ -634,6 +640,7 @@ mod tests {
             price: None,
             bartered: false,
             mods: 0,
+            mods_value: 0,
             folder: None,
             reference: None,
         };

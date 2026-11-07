@@ -122,6 +122,8 @@ pub struct CreatorMenu {
     camera_drag: Option<CameraDrag>,
     camera_button: Option<MouseButton>,
     kit: Option<view::Kit>,
+    /// The view's width the panel was last drawn for: it stands at the view's right.
+    drawn_w: f32,
     /// The look last written into the game.
     written: Option<fnv_actor::Look>,
 }
@@ -318,9 +320,15 @@ fn sync(mut st: ResMut<CreatorMenu>, data: Option<Res<CreatorData>>, script: Opt
     st.dirty = true;
 }
 
+/// The view's width in the interface's units.
+fn view_width(window: &Window) -> f32 {
+    960.0 * window.width() / window.height().max(1.0)
+}
+
 /// The pointer's place in the interface's units.
 fn pointer(window: &Window) -> Option<Vec2> {
-    let p = window.cursor_position()?;
+    // Where the pointer is on the menu as drawn at the UI scale (#1631).
+    let p = crate::interface::from_menu_frame(window.cursor_position()?, Vec2::new(window.width(), window.height()), crate::interface::MIDDLE);
     let k = 960.0 / window.height().max(1.0);
     Some(p * k)
 }
@@ -486,7 +494,8 @@ fn input(
         }
         if let Some(i) = st_ref.drag {
             if mouse.pressed(MouseButton::Left) {
-                ops.push((Op::Track(i, view::track_fraction(p.x)), "drag"));
+                let left = windows.single().map_or(0.0, |w| view::panel_left(view_width(w)));
+                ops.push((Op::Track(i, view::track_fraction(p.x - left)), "drag"));
             } else {
                 st_ref.drag = None;
             }
@@ -776,10 +785,12 @@ fn draw(
     formats: Option<Res<CompressedImageFormatSupport>>,
     windows: Query<&Window, With<PrimaryWindow>>,
 ) {
-    if !st.dirty {
+    let view_w = windows.single().map_or(1707.0, view_width);
+    if !st.dirty && st.drawn_w == view_w {
         return;
     }
     st.dirty = false;
+    st.drawn_w = view_w;
     for e in &roots {
         commands.entity(e).despawn();
     }
@@ -790,10 +801,10 @@ fn draw(
     };
     let bc = crate::interface::bc_supported(formats.as_deref());
     let kit = st.kit.get_or_insert_with(|| view::Kit::load(data.as_deref(), &mut images, bc));
-    let view_w = windows.single().map_or(1707.0, |w| 960.0 * w.width() / w.height().max(1.0));
     let root = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     let mut hits = Vec::new();
-    commands.spawn((root, GlobalZIndex(30), CreatorRoot)).with_children(|r| hits = view::spawn(r, m, kit, view_w));
+    // At the UI scale the menu keeps to the view's middle (#1631).
+    commands.spawn((crate::interface::framed_root(root, crate::interface::MIDDLE), GlobalZIndex(30), CreatorRoot)).with_children(|r| hits = view::spawn(r, m, kit, view_w));
     st.hits = hits;
 }
 

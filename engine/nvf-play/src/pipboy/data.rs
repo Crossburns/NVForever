@@ -373,7 +373,7 @@ enum Right {
 #[derive(Debug, Clone, PartialEq)]
 struct Button {
     text: String,
-    key: Option<&'static str>,
+    key: Option<String>,
     kind: ButtonKind,
 }
 
@@ -486,6 +486,8 @@ pub fn draw(
     mut input: Input,
     mut tools: Tools,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     let Some(mut state) = state else {
         commands.init_resource::<DataState>();
         return;
@@ -711,7 +713,13 @@ fn lists(st: &mut DataState, game: &Game) -> Lists {
             let note = st.notes.entry(n.0).or_insert_with(|| read::note(w.lo, w.schema, n.0));
             if let Some(note) = note {
                 if !st.notes_of_active || (note.quest.is_some() && note.quest == st.active_quest) {
-                    out.notes.push(note.clone());
+                    // The player string codes as they read now (the bounty notices'
+                    // "&PCName;", "&PCRace;" [observed: FalloutNV.esm]); the cache keeps
+                    // the record's text.
+                    let mut note = note.clone();
+                    note.name = g.expand_codes(&note.name);
+                    note.text = note.text.map(|t| g.expand_codes(&t));
+                    out.notes.push(note);
                 }
             }
         }
@@ -1074,7 +1082,7 @@ fn build(st: &mut DataState, tab: usize, l: &Lists, game: &Game, pointer: Option
         NOTES if l.challenges.is_some() => {
             // The challenges in place of the notes; R goes back [hypothesis: the button's
             // word then].
-            buttons.push(Button { text: "Notes".into(), key: Some("R)"), kind: ButtonKind::Challenges });
+            buttons.push(Button { text: "Notes".into(), key: Some(challenges_hint()), kind: ButtonKind::Challenges });
             let list = l.challenges.as_deref().unwrap_or_default();
             let rows = list.iter().map(|c| Row { text: c.name.clone(), mark: Mark::None, done: c.completed }).collect();
             let right = list.get(st.sel[NOTES]).map_or(Right::None, |c| {
@@ -1088,7 +1096,7 @@ fn build(st: &mut DataState, tab: usize, l: &Lists, game: &Game, pointer: Option
             if !l.notes.is_empty() || st.notes_of_active {
                 buttons.push(Button { text: text.into(), key: None, kind: ButtonKind::NotesFilter });
             }
-            buttons.push(Button { text: "Challenges".into(), key: Some("R)"), kind: ButtonKind::Challenges });
+            buttons.push(Button { text: "Challenges".into(), key: Some(challenges_hint()), kind: ButtonKind::Challenges });
             let rows = l.notes.iter().map(|n| Row { text: n.name.clone(), mark: Mark::None, done: false }).collect();
             let right = match l.notes.get(st.sel[NOTES]) {
                 Some(n) if n.kind == 1 => Right::Text { text: n.text.clone().unwrap_or_default(), first: st.text_first },
@@ -1122,7 +1130,7 @@ fn objectives(game: &Game, q: u32) -> Vec<Row> {
         .iter()
         .filter(|(_, o)| o.displayed || o.completed)
         .filter_map(|(i, o)| {
-            let text = def.objectives.get(i)?.text.clone()?;
+            let text = rt.game.expand_codes(def.objectives.get(i)?.text.as_deref()?);
             (!text.trim().is_empty()).then(|| ObjectiveLine { index: *i, text: text.trim().to_string(), done: o.completed })
         })
         .collect();
@@ -1652,6 +1660,12 @@ fn button_height(c: &Ctx) -> f32 {
     c.line_height(2) + BUTTON_VERBUF
 }
 
+/// The Challenges button's key: R, with a controller Y (`map_menu.xml`'s, as
+/// `crate::pad::menu_buttons` has it) [#1662].
+fn challenges_hint() -> String {
+    crate::pad::hint(&[KeyCode::KeyR], crate::pad::at_menu(fnv_game::game::menus::MAP))
+}
+
 /// The buttons at the right, one under the other.
 fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, list: &[Button]) {
     let bright = amber(TEXT);
@@ -1662,7 +1676,7 @@ fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, list: &[Button]) {
         let top = MAIN.min.y + BUTTONS.y + h * k as f32;
         let text_top = top + (h - c.line_height(2)) / 2.0 + BUTTON_TEXT_DROP;
         c.text(p, 2, &b.text, right - BUTTON_HORBUF / 2.0, text_top, Align::Right, bright);
-        if let Some(key) = b.key {
+        if let Some(key) = &b.key {
             c.text(p, 2, key, right + KEY_GAP, text_top, Align::Left, bright);
         }
         p.spawn((at(right - w, top, w, h), ButtonHit(b.kind), Pickable::default())).observe(on_button_click);
@@ -1870,6 +1884,8 @@ fn knotted(n: u64, stream: u64) -> f32 {
 /// Move the waveform panel's trace while it is shown: the Pip-Boy radio's loudness
 /// (`crate::radio`) or a holotape's steady one.
 pub fn wave_moves(time: Res<Time<Real>>, radio: Option<Res<Radio>>, mut scope: ResMut<WaveScope>, mut pieces: Query<(&WaveSegment, &mut Node, &mut UiTransform)>) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     if pieces.is_empty() {
         return;
     }

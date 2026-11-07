@@ -44,12 +44,19 @@
 //!   `NVF_PLAY_TEST_UNSEEN` leave it measuring; 0 for Ringo out of view and at 6,682
 //!   units, capture detection-1; hypothesis: the same formula]. It feeds
 //!   GetDetected / GetLineOfSight only: no detection state.
-//! - **Light at the target** (0–100) [hypothesis, no source gives the game's measure]:
-//!   100 × the luminance of the ambient light, plus the sunlight's times daylight outdoors
-//!   or the cell's directional light indoors, plus each point light that reaches the
-//!   target with the game's falloff 1 − (d/r)²; capped at 100. Outdoors the sunlight
-//!   counts only when a ray from the target's chest towards the sun meets nothing within
-//!   [`SUN_REACH`] (where the target is in the loaded collision; elsewhere it counts)
+//! - **Light at the target** (0–100), fitted to the original's GetActorLightAmount
+//!   (docs/design/detection.md §3) [observed: o11_light 2026-11-01, o27_light
+//!   2026-11-06]: outdoors 100 × the brightest channel of the weather's sunlight colour
+//!   ÷ 255 (its times of day blended on the stored bytes), day or night, nothing for the
+//!   ambient (Goodsprings 100 at noon and 82.35 = 210/255 at midnight, the night
+//!   sunlight (166, 191, 210); NVWastelandHazy 99.2 and 64.3; HVDustStorm, black
+//!   sunlight, 0); indoors the brightest channel of the cell's ambient colour (the
+//!   Goodsprings cave 36.08 = 92/255, ambient (73, 92, 83)); plus each point light that
+//!   reaches the target, its brightest channel with the game's falloff 1 − (d/r)²
+//!   [hypothesis: the rooms with lamps read 99–100]; capped at 100. Outdoors the
+//!   sunlight counts only when a ray from the target's chest towards the sun meets
+//!   nothing within [`SUN_REACH`] (where the target is in the loaded collision;
+//!   elsewhere it counts); a shaded target gets the weather's ambient instead, as indoors
 //!   [hypothesis, docs/design/detection.md §8]. While the player's flashlight (the Pip-Boy
 //!   light, flashlight.rs) is on, the game's Pip-Boy light counts as a point light at the
 //!   player's chest: the LIGH [`PIPBOY_LIGHT`] with its own radius and colour
@@ -190,6 +197,8 @@ struct Stats {
     /// Measurements with the Pip-Boy light on, and the most light at the player then.
     pip_light_on: usize,
     pip_light_most: f64,
+    /// The least and most light measured at the player.
+    player_light: Option<(f64, f64)>,
     /// What the lines of sight cost.
     sight: SightCounts,
 }
@@ -221,7 +230,7 @@ pub struct DetectionState {
     land: LandCache,
     /// The pairs' lines of sight at the last measurement, for still pairs.
     kept: KeptSights,
-    /// The Pip-Boy light's radius and luminance, read from its LIGH once (`None` inside:
+    /// The Pip-Boy light's radius and strength, read from its LIGH once (`None` inside:
     /// not in the load order).
     pip_light: Option<Option<(f32, f32)>>,
     stats: Stats,
@@ -280,22 +289,21 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
 
-fn luminance(c: [f32; 3]) -> f32 {
-    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+/// A light's strength for the light level: its brightest channel, 0–1 (the original's
+/// light level at an actor follows it: detection.md §3).
+fn strength(c: [f32; 3]) -> f32 {
+    c[0].max(c[1]).max(c[2])
 }
 
 /// The light level at a point, 0–100 (see the module notes).
 fn light_at(sky: Option<&SkyState>, lights: &[([f32; 3], f32, f32)], at: [f32; 3], sunlit: bool) -> f64 {
+    use fnv_world::sky::ColorType;
+    let bytes = |c: [f32; 3]| strength(c) / 255.0;
     let mut l = match sky {
         Some(s) => match &s.interior {
-            Some(c) => {
-                let u = |c: [u8; 3]| c.map(|v| v as f32 / 255.0);
-                luminance(u(c.ambient)) + luminance(u(c.directional))
-            }
-            None => {
-                let sun = if sunlit { luminance(s.color(fnv_world::sky::ColorType::Sunlight)) * s.daylight() } else { 0.0 };
-                luminance(s.color(fnv_world::sky::ColorType::Ambient)) + sun
-            }
+            Some(c) => bytes(c.ambient.map(f32::from)),
+            None if sunlit => bytes(s.color_bytes(ColorType::Sunlight)),
+            None => bytes(s.color_bytes(ColorType::Ambient)),
         },
         None => 0.5,
     };
@@ -515,6 +523,11 @@ struct SightCounts {
     shared_differs: usize,
     kept_would: usize,
     kept_differs: usize,
+    /// Lines of sight over a measurement's [`SIGHT_BUDGET`]: answered from their last
+    /// measurement, or out of sight when there is none, and how many measurements had any.
+    deferred: usize,
+    deferred_new: usize,
+    over_budget: usize,
 }
 
 /// Two points as bits, the same whichever comes first: the key of a line of sight that
@@ -614,6 +627,8 @@ struct KeptSight {
     eyes: [f32; 3],
     clear: bool,
     cast: bool,
+    /// Measurements since it was cast (0: cast at this one).
+    age: u32,
 }
 
 /// A pair's line of sight is kept for the next measurement when neither the detector's
@@ -623,6 +638,17 @@ struct KeptSight {
 /// between two shows at most one measurement late [design: 4 units, about 6 cm, less
 /// than a step].
 const STILL: f32 = 4.0;
+
+/// The most lines of sight a measurement casts besides the always-cast pairs below
+/// [design, #1426: at 118 actors (the stress battle at 50 a side) every pair's line was
+/// cast in one measurement, about 6,900, and `detection::measure` took 140-166 ms in its
+/// slow frames, 21.6 ms a frame on average; with 1,024 it took 7.3 ms on average and
+/// about 70 in a measurement's frame, with 512 5.0 ms and at most 39, no longer among the
+/// slow frames' causes (profile build, battle-50, 2026-11-06)]. The pairs with the player and those whose
+/// detector fights the target are always cast; over the budget the others are cast oldest
+/// answer first, and the rest keep their last answer for this measurement (out of sight
+/// when they have none). Under it nothing changes.
+const SIGHT_BUDGET: usize = 512;
 
 impl KeptSight {
     fn still(&self, from: [f32; 3], chest: [f32; 3], eyes: [f32; 3]) -> bool {
@@ -824,16 +850,16 @@ fn measure(
     state.last.retain(|_, (_, t)| now - *t < 5.0);
     state.headings.retain(|_, (_, t)| now - *t < 5.0);
 
-    // The light sources that are on: game-space centre, radius, luminance.
+    // The light sources that are on: game-space centre, radius, strength.
     let mut lights = Vec::new();
     for (l, g, v) in &point_lights {
         if v.get() {
-            lights.push((bevy_to_game(g.translation()).to_array(), l.range, luminance(l.color.to_srgba().to_f32_array_no_alpha())));
+            lights.push((bevy_to_game(g.translation()).to_array(), l.range, strength(l.color.to_srgba().to_f32_array_no_alpha())));
         }
     }
     for (l, g, v) in &spot_lights {
         if v.get() {
-            lights.push((bevy_to_game(g.translation()).to_array(), l.range, luminance(l.color.to_srgba().to_f32_array_no_alpha())));
+            lights.push((bevy_to_game(g.translation()).to_array(), l.range, strength(l.color.to_srgba().to_f32_array_no_alpha())));
         }
     }
     // The Pip-Boy light, on the player while it is on (the module notes).
@@ -842,7 +868,7 @@ fn measure(
         let pip = *state.pip_light.get_or_insert_with(|| {
             let w = world.as_deref()?;
             let l = fnv_world::lighting::light_data(w.lo, w.schema, PIPBOY_LIGHT)?;
-            Some((l.radius, luminance(l.color.map(|b| b as f32 / 255.0))))
+            Some((l.radius, strength(l.color.map(|b| b as f32 / 255.0))))
         });
         if let (Some((radius, lum)), Some(p)) = (pip, people.first()) {
             lights.push((p.chest(), radius, lum));
@@ -871,6 +897,10 @@ fn measure(
     if let Some(g) = gauges.as_deref_mut() {
         g.light = light.first().copied().unwrap_or(0.0) as f32;
     }
+    if let Some(&l) = light.first() {
+        let (lo, hi) = state.stats.player_light.unwrap_or((l, l));
+        state.stats.player_light = Some((lo.min(l), hi.max(l)));
+    }
     if pip_on {
         state.stats.pip_light_on += 1;
         state.stats.pip_light_most = state.stats.pip_light_most.max(light.first().copied().unwrap_or(0.0));
@@ -887,9 +917,14 @@ fn measure(
     let (mut pairs, mut far_pairs, mut far_detected) = (0, 0, 0);
     let land = &mut state.land;
     let mut counts = state.stats.sight;
-    let kept_before = std::mem::take(&mut state.kept);
-    // Kept lines of sight serve the measurement right after theirs only.
-    let kept_before = if now - kept_before.at <= INTERVAL * 1.5 { kept_before.sights } else { HashMap::new() };
+    let kept_all = std::mem::take(&mut state.kept);
+    // Kept lines of sight serve still pairs at the measurement right after theirs only;
+    // over the budget ([`SIGHT_BUDGET`]) a pair keeps its last answer however old, or
+    // after a slow frame every pair would read as never measured and be out of sight.
+    let fresh = now - kept_all.at <= INTERVAL * 1.5;
+    let last_answers = kept_all.sights;
+    let empty = HashMap::new();
+    let kept_before = if fresh { &last_answers } else { &empty };
     let mut kept_now: HashMap<(u32, u32, bool), KeptSight> = HashMap::new();
     let check = sight_check();
     let world = world.as_deref();
@@ -940,6 +975,13 @@ fn measure(
         // chest, else its eyes; for the player also the camera's, where the target is in
         // the camera's view.
         // A still pair's line of sight of the last measurement serves again ([`STILL`]).
+        // Pairs whose line is cast first when a measurement has more than its budget: the
+        // player's, and a fighter's on its combat target ([`SIGHT_BUDGET`]).
+        let first: Vec<bool> = ordered
+            .iter()
+            .map(|&(i, j)| i == 0 || j == 0 || g.awareness.get(FormId(people[i].id)).is_some_and(|a| a.state.in_combat() && a.targets.contains_key(&FormId(people[j].id))))
+            .collect();
+        let mut budget = SIGHT_BUDGET;
         let mut look = |asked: Vec<(usize, [f32; 3], bool)>, answers: &mut Vec<bool>| {
             let mut cast = Vec::new();
             let mut would = Vec::new();
@@ -951,7 +993,7 @@ fn measure(
                     Some(s) if !check => {
                         answers[k] = s.clear;
                         counts.kept += 1;
-                        kept_now.insert(key, KeptSight { cast: false, ..*s });
+                        kept_now.insert(key, KeptSight { cast: false, age: s.age + 1, ..*s });
                     }
                     kept => {
                         if let Some(s) = kept {
@@ -961,10 +1003,33 @@ fn measure(
                     }
                 }
             }
+            // Over the budget: the first pairs, then the oldest answers, are cast; the
+            // others keep their last answer (out of sight without one) and are older next
+            // time, so every pair is cast in turn.
+            let firsts = cast.iter().filter(|c| first[c.0]).count();
+            if cast.len() > budget.max(firsts) {
+                counts.over_budget += 1;
+                let age = |key: &(u32, u32, bool)| last_answers.get(key).map_or(u32::MAX, |s| s.age);
+                cast.sort_by_key(|&(k, _, key, ..)| (!first[k], std::cmp::Reverse(age(&key))));
+                for (k, _, key, ..) in cast.split_off(budget.max(firsts)) {
+                    match last_answers.get(&key) {
+                        Some(s) => {
+                            answers[k] = s.clear;
+                            kept_now.insert(key, KeptSight { cast: false, age: s.age.saturating_add(1), ..*s });
+                        }
+                        None => {
+                            answers[k] = false;
+                            counts.deferred_new += 1;
+                        }
+                    }
+                    counts.deferred += 1;
+                }
+            }
+            budget = budget.saturating_sub(cast.len());
             let asks: Vec<_> = cast.iter().map(|&(_, from, _, chest, eyes)| (from, [chest, eyes])).collect();
             for (&(k, from, key, chest, eyes), clear) in cast.iter().zip(sights(phys.as_deref_mut(), land, world, exterior, &asks, &mut counts)) {
                 answers[k] = clear;
-                kept_now.insert(key, KeptSight { from, chest, eyes, clear, cast: true });
+                kept_now.insert(key, KeptSight { from, chest, eyes, clear, cast: true, age: 0 });
             }
             counts.kept_would += would.len();
             counts.kept_differs += would.iter().filter(|&&(k, clear)| answers[k] != clear).count();
@@ -1239,7 +1304,7 @@ fn report(mut exit: MessageReader<AppExit>, state: Res<DetectionState>) {
     let bands = |c: [usize; 3]| format!("{} to hidden, {} to noticed, {} to detected", c[0], c[1], c[2]);
     info!(
         "detection summary: {} measurements, {} pairs ({} at most at once), {} actors measured the player, {} had it noticed, {} detected; \
-         the player's changes: {}; between actors: {}; the player was hidden {:.1} s, CAUTION {:.1} s, DANGER {:.1} s; {} shots heard; values {}; {} of {} measured under the sun in shade; the Pip-Boy light on at {} measurements, the player lit up to {:.0}",
+         the player's changes: {}; between actors: {}; the player was hidden {:.1} s, CAUTION {:.1} s, DANGER {:.1} s; {} shots heard; values {}; {} of {} measured under the sun in shade; the Pip-Boy light on at {} measurements, the player lit up to {:.0}; light at the player {}",
         s.measurements,
         s.pairs,
         s.most_pairs,
@@ -1257,6 +1322,7 @@ fn report(mut exit: MessageReader<AppExit>, state: Res<DetectionState>) {
         s.sun_measured,
         s.pip_light_on,
         s.pip_light_most,
+        s.player_light.map_or("none".into(), |(lo, hi)| format!("{lo:.1} to {hi:.1}")),
     );
     info!(
         "detection summary, out of the player's reach: {} pairs, {} measured detected; the player as a detector: {}; {} actors detected by the player",
@@ -1267,11 +1333,14 @@ fn report(mut exit: MessageReader<AppExit>, state: Res<DetectionState>) {
     );
     let c = &s.sight;
     info!(
-        "detection summary, lines of sight: {} asked through the collision world, {} answered by a line cast for another asker, {} kept for still pairs; {} rays cast{}",
+        "detection summary, lines of sight: {} asked through the collision world, {} answered by a line cast for another asker, {} kept for still pairs; {} rays cast; {} over the budget of {SIGHT_BUDGET} a measurement ({} without a last answer, in {} measurements){}",
         c.asked,
         c.shared,
         c.kept,
         c.rays,
+        c.deferred,
+        c.deferred_new,
+        c.over_budget,
         if sight_check() {
             format!(
                 "; sight check: the old way cast {} rays, {} answers differ from it, {} shared answers differ from the asker's own ray; {} still pairs could have been kept, {} of them would have answered otherwise",
@@ -1306,7 +1375,7 @@ mod tests {
     fn light_adds_point_lights_with_the_game_falloff_and_caps_at_100() {
         let lamp = ([0.0, 0.0, 0.0], 200.0, 1.0);
         assert!((light_at(None, &[], [0.0; 3], true) - 50.0).abs() < 1e-6);
-        // Half the radius away: 1 − 0.25 of the lamp's luminance.
+        // Half the radius away: 1 − 0.25 of the lamp's strength.
         assert!((light_at(None, &[lamp], [100.0, 0.0, 0.0], true) - 100.0).abs() < 1e-6);
         let dim = ([0.0, 0.0, 0.0], 200.0, 0.2);
         assert!((light_at(None, &[dim], [100.0, 0.0, 0.0], true) - 65.0).abs() < 1e-4);

@@ -109,7 +109,7 @@ pub struct PipBoyArmPlugin;
 impl Plugin for PipBoyArmPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<crate::pipboy_controls::ControlAngles>()
-            .add_systems(Update, (follow_pointer, show_screen, crate::pipboy_controls::turn_controls).chain().after(nvf_play::player::BodySet).before(nvf_play::PlaySet::Ui));
+            .add_systems(Update, (follow_pointer.in_set(nvf_play::pipboy::PointerSet).before(nvf_play::pipboy::flat_pointer), (show_screen, crate::pipboy_controls::turn_controls).chain().after(follow_pointer).after(nvf_play::player::BodySet).before(nvf_play::PlaySet::Ui)));
     }
 }
 
@@ -434,7 +434,8 @@ fn follow_pointer(
 ) {
     let Some(mut screen) = screen else { return };
     let was_over = aid_over.take();
-    if !screen.on_model {
+    // The flat image has the pointer otherwise: never both (`pipboy::pointer_source`).
+    if nvf_play::pipboy::pointer_source(pip.frame, screen.on_model) != nvf_play::pipboy::PointerSource::Device {
         return;
     }
     screen.pointer = None;

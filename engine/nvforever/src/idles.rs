@@ -64,6 +64,13 @@
 //!   the actor next stands still. Flee Not Combat packages (procedure 34) are not
 //!   carried out (`fnv_ai::goal`), so only combat flights cower.
 //!
+//! - **Panic** (pickpocket.md §5). An NPC with a live explosive planted in its pocket
+//!   (`GetPlantedExplosive` 1: from `fProjectileInventoryGrenadeFreakoutTime` to the
+//!   blast) is given the idle tree's panic idle once (`Game::panic_idle`: the roots whose
+//!   conditions name GetPlantedExplosive, `PanicGrenadePlant.kf` or its power armour
+//!   form); one whose folder has none (every creature) plays nothing. Either way it
+//!   stands where it is until the blast (`residents.rs`).
+//!
 //! - **PickIdle**. A script's `PickIdle` asks for the tree's pick for its actor
 //!   (`Game::idle_picks`); the actor's folder walked as for its fidgets, with no branch
 //!   kept out (`Game::pick_idle`), and the pick played as a script's idle.
@@ -464,6 +471,10 @@ pub struct Stats {
     pub no_gesture: u32,
     /// Cower idles started on fleeing actors.
     pub cowers: u32,
+    /// Panic idles started on actors with a live explosive in the pocket, and such
+    /// actors whose folder has none.
+    pub panics: u32,
+    pub no_panic: u32,
     /// Idles that waited for their clip to be read on a worker thread, the longest wait
     /// (milliseconds), and those whose clip was read in the frame they started after
     /// [`CLIP_WAIT`].
@@ -508,6 +519,8 @@ pub struct Idles {
     /// Seconds until each actor's next look for a fidget, and for its cower idle.
     fidget_check: HashMap<u32, f32>,
     cower_check: HashMap<u32, f32>,
+    /// The actors with a live explosive whose panic was looked for (`GetPlantedExplosive`).
+    panicked: HashSet<u32>,
     /// Seconds until each creature's next look for its standing look.
     standing_check: HashMap<u32, f32>,
     /// When each actor last started each fidget or gesture (seconds of `clock`), for
@@ -532,6 +545,7 @@ impl Default for Idles {
             collections: HashMap::new(),
             fidget_check: HashMap::new(),
             cower_check: HashMap::new(),
+            panicked: HashSet::new(),
             standing_check: HashMap::new(),
             fidget_last: HashMap::new(),
             gesturing: HashMap::new(),
@@ -666,9 +680,11 @@ pub fn drive(
                 c.play.stop();
             }
         }
-        // A collection's idle ends when its actor walks off [design].
+        // A collection's idle ends when its actor walks off or is drawn into a
+        // conversation, so it can turn to the other and gesture (idles.md §12) [design].
         let walking = lo.is_some_and(|l| l.velocity != [0.0; 2]) || !standing.contains_key(&v.0);
-        if let Some(c) = idle.0.cur.as_mut().filter(|c| walking && matches!(c.source, IdleSource::PackageIdles | IdleSource::MarkerIdles)) {
+        let talking = talk_parts.iter().any(|p| p.actor == FormId(v.0));
+        if let Some(c) = idle.0.cur.as_mut().filter(|c| (walking || talking) && matches!(c.source, IdleSource::PackageIdles | IdleSource::MarkerIdles)) {
             c.play.stop();
         }
         // A fidget ends when its actor moves or puts the weapon away [design].
@@ -772,7 +788,8 @@ pub fn drive(
             *c = Collection { key, picker: IdlePicker::default(), next: None, retry: 0.0 };
         }
         c.retry = (c.retry - dt).max(0.0);
-        if busy.get(&actor).copied().unwrap_or(false) || c.retry > 0.0 {
+        // In a conversation the collection waits; its gestures come from the tree.
+        if busy.get(&actor).copied().unwrap_or(false) || c.retry > 0.0 || talk_parts.iter().any(|p| p.actor == FormId(actor)) {
             continue;
         }
         if c.next.is_none() {
@@ -808,6 +825,40 @@ pub fn drive(
     }
 
     st.clock += dt;
+    // Panic: a live explosive in the pocket (pickpocket.md §5); once per explosive,
+    // before anything else is picked.
+    let mut panics: Vec<(u32, FormId)> = Vec::new();
+    let mut live_now: HashSet<u32> = HashSet::new();
+    if !game.pickpocket.planted.is_empty() {
+        for (_, v, rig, ..) in &actors {
+            if game.is_dead(FormId(v.0)) || !game.has_planted_explosive(FormId(v.0)) {
+                continue;
+            }
+            live_now.insert(v.0);
+            if !st.panicked.insert(v.0) {
+                continue;
+            }
+            let mut pick = None;
+            if let Some(folder) = skeleton_folder(&rig.skeleton) {
+                with_world(game, &mut |game| pick = game.panic_idle(FormId(v.0), &folder, &|_| false));
+            }
+            match pick {
+                Some(idle) => {
+                    panics.push((v.0, idle));
+                    busy.insert(v.0, true);
+                }
+                None => {
+                    st.stats.no_panic += 1;
+                    info!("idle: {} ({:08X}) has a live explosive and no panic idle for its kind: it stands", game.data.name(FormId(v.0)), v.0);
+                }
+            }
+        }
+    }
+    st.panicked.retain(|a| live_now.contains(a));
+    for (actor, idle) in panics {
+        st.stats.panics += 1;
+        game.ask_idle(FormId(actor), idle, IdleSource::Panic);
+    }
     // Cowering: fleeing NPCs standing still (idles.md §13); before their fidgets.
     let cowering: Vec<(u32, String)> = actors
         .iter()
@@ -942,6 +993,8 @@ pub fn drive(
             continue;
         }
         let key = TalkKey { talking: part.talking, info: part.info, response: part.response };
+        // The first frame of a part counts as a change for the wait's log line.
+        let fresh = !st.gesturing.contains_key(&actor);
         let g = st.gesturing.entry(actor).or_insert(Gesturing { key, retry: 0.0 });
         let changed = g.key != key;
         if changed {
@@ -959,7 +1012,7 @@ pub fn drive(
         // clips (they step the feet; the walker's heading noise is far below it).
         let busy_body = lo.is_some_and(|l| l.velocity != [0.0; 2] || l.turn.abs() > fnv_actor::locomotion::TURN_RATE);
         if other || busy_body || (gesture_on && !changed) || (g.retry > 0.0 && !changed) {
-            if changed && (other || busy_body) {
+            if (changed || fresh) && (other || busy_body) {
                 let why = if other { "another idle plays" } else if lo.is_some_and(|l| l.velocity != [0.0; 2]) { "it walks" } else { "it turns on the spot" };
                 info!("talk gesture: {} waits: {why}", game.data.name(part.actor));
             }
@@ -1055,7 +1108,7 @@ pub fn drive(
                     IdleSource::PackageBegin | IdleSource::PackageEnd | IdleSource::PackageChange => st.stats.package += 1,
                     IdleSource::PackageIdles | IdleSource::MarkerIdles => st.stats.collection += 1,
                     IdleSource::Speaker | IdleSource::Listener => st.stats.dialogue += 1,
-                    IdleSource::Fidget | IdleSource::FurnitureFidget | IdleSource::CombatIdle | IdleSource::Gesture | IdleSource::Cower | IdleSource::Stimpak | IdleSource::PickUp | IdleSource::Standing => {}
+                    IdleSource::Fidget | IdleSource::FurnitureFidget | IdleSource::CombatIdle | IdleSource::Gesture | IdleSource::Cower | IdleSource::Stimpak | IdleSource::PickUp | IdleSource::Standing | IdleSource::Panic => {}
                 }
             }
             let name = game.data.name(actor);
@@ -1262,6 +1315,9 @@ pub fn report(mut exit: MessageReader<AppExit>, st: Res<Idles>) {
     info!("furniture fidget summary: {} fidgets on furniture started on actors, {} on the player", s.actor_furniture_fidgets, s.player_furniture_fidgets);
     info!("talk gesture summary: {} gestures picked while talking, {} while listening; {} walks of the tree gave none", s.talk_gestures, s.listen_gestures, s.no_gesture);
     info!("cower summary: {} cower idles started on fleeing actors", s.cowers);
+    if s.panics + s.no_panic > 0 {
+        info!("panic summary: {} panic idles started on actors with a live explosive, {} with none for their kind", s.panics, s.no_panic);
+    }
 }
 
 #[cfg(test)]

@@ -1142,6 +1142,22 @@ fn a_dim_players_choice_shows_the_topics_dumb_response() {
     assert_eq!(g.choice_text(&fnv_game::dialogue::Choice { dumb: true, ..c[1].clone() }), "Bye");
 }
 
+/// A choice shows the player string codes of its text as they read now ("The name's
+/// &PCName;." in FalloutNV.esm, issue #1720); a code that names nothing stays as written.
+#[test]
+fn a_choice_shows_the_players_name_for_its_code() {
+    let mut f = fixture();
+    f.data.infos.get_mut(&FormId(B_ASK)).unwrap().prompt = Some("The name's &PCName;. &NoSuchCode; &pcsexpronoun;".into());
+    let mut g = game(&f);
+    g.player.name = Some("Courier Six".into());
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    let c = g.dialogue_choices().to_vec();
+    assert_eq!(g.choice_text(&c[0]), "The name's &PCName;. &NoSuchCode; &pcsexpronoun;", "the data's text is kept");
+    assert_eq!(g.shown_choice_text(&c[0]), "The name's Courier Six. &NoSuchCode; he");
+    assert_eq!(g.shown_choice_text(&c[1]), "Bye");
+}
+
 #[test]
 fn a_choice_with_only_a_shared_line_is_offered_and_says_that_line() {
     let f = fixture();
@@ -2507,4 +2523,53 @@ fn known_topics_newest_first() {
     assert_eq!(ids(&k), vec![0xC8, 0xCC, 0xCB, 0xCA, 0xC7]);
     let old: KnownTopics = serde_json::from_value(json!([FormId(1).to_string(), FormId(2).to_string(), FormId(3).to_string()])).unwrap();
     assert_eq!(ids(&old), vec![1, 2, 3]);
+}
+
+#[test]
+fn a_view_of_the_conversation_hears_before_its_result_scripts_run() {
+    use std::sync::{Arc, Mutex};
+    type Heard = Arc<Mutex<Vec<(f32, Option<u32>, usize)>>>;
+    fn listen_in(g: &mut Game) -> Heard {
+        let heard: Heard = Default::default();
+        let ears = heard.clone();
+        g.ui_dialogue_hook = Some(Box::new(move |g| {
+            let c = g.dialogue.as_ref().unwrap();
+            ears.lock().unwrap().push((out(g), c.line.as_ref().map(|l| l.info.0), c.choices.len()));
+        }));
+        heard
+    }
+    let f = fixture();
+    // At the conversation's start: the first line's begin script sets TestOut to 1, and the
+    // conversation and its line are up before it runs.
+    let mut g = game(&f);
+    let heard = listen_in(&mut g);
+    assert_eq!(g.start_dialogue(actor(), None), Ok(FormId(A_FIRST)));
+    assert_eq!(out(&g), 1.0);
+    assert_eq!(heard.lock().unwrap()[0], (0.0, Some(A_FIRST), 0));
+    // The next response; before the end script (it sets 2); the choices offered after it.
+    listen(&mut g);
+    let list = heard.lock().unwrap().clone();
+    assert_eq!(list[1], (1.0, Some(A_FIRST), 0), "{list:?}");
+    assert!(list.iter().any(|h| h.0 == 1.0 && h.2 == 0), "{list:?}");
+    assert_eq!(*list.last().unwrap(), (2.0, None, offered(&g).len()), "{list:?}");
+    // At a choice: E_NOW runs its result script as it starts; the runtime's choose reaches the
+    // hook with the new line up and the choices gone, before the script's value is there.
+    let mut g = at_topic_list(&f);
+    let before = out(&g);
+    let heard = listen_in(&mut g);
+    let said = pick(&mut g, T_TOP2);
+    assert_eq!(said, FormId(E_NOW));
+    assert_ne!(out(&g), before);
+    assert_eq!(heard.lock().unwrap()[0], (before, Some(E_NOW), 0));
+    // A line with no result script: told all the same, before the call that started it returns.
+    let mut g = game(&f);
+    g.said.insert((actor(), FormId(A_FIRST)));
+    let heard = listen_in(&mut g);
+    assert_eq!(g.start_dialogue(actor(), None), Ok(FormId(A_LATER)));
+    assert_eq!(heard.lock().unwrap().first().copied(), Some((0.0, Some(A_LATER), 0)));
+    // No conversation: nothing to tell.
+    let mut g = game(&f);
+    let heard = listen_in(&mut g);
+    g.dialogue_transition();
+    assert!(heard.lock().unwrap().is_empty());
 }

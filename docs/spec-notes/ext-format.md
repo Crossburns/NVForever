@@ -132,4 +132,15 @@ text of messages, terminals, dialogue and notes show a trait of the player chara
 They cannot be used in scripts: the compiler takes the `;` as the start of a comment;
 scripts use string formatting instead (§1–3) [documented]. A code that names nothing is
 left as written [hypothesis]. NVForever expands them where the text is shown
-(`fnv_game::text_codes`).
+(`fnv_game::text_codes`): the dialogue menu's choices and lines, world subtitles,
+corner messages, message boxes and their buttons, terminals (welcome, items, results,
+notes on screen), the Pip-Boy's notes and quest objectives, the HUD's objective and
+note notices. The data keeps the codes; `fnvtool dialogue` shows and matches the
+data's text.
+
+Where the official data uses them [observed: every `&…;` in the text fields of the ten
+official .esm files, 2026-11-06, issue #1720]: `&PCName;` in topic names (DIAL FULL, 2:
+"The name's &PCName;.") and notes (NOTE FULL 2, TNAM 3); `&PCRace;` and `&PCSex;` in
+note texts (2 each); the key codes of the table above (`&sUActn…;`, `&-sUActn…;`,
+`&sKB…;`, `&sMouse…;`, `&sDeviceMouse;`, `&sXB…;`) only in message texts (MESG DESC).
+No INFO prompt or response carries one.

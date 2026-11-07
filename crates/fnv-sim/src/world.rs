@@ -424,6 +424,21 @@ pub type DeathItemRoll = (u16, Vec<(FormId, i32)>);
 
 pub const SNAPSHOT_FORMAT: &str = "fnv.sim.state/1";
 
+impl Snapshot {
+    /// Whether [`World::restore`] can take this snapshot: a load asks before it starts
+    /// anything from the save (docs/design/save-load.md §6).
+    pub fn check(&self) -> Result<(), String> {
+        if self.format != SNAPSHOT_FORMAT {
+            return Err(format!("unsupported snapshot format {:?}", self.format));
+        }
+        self.word_pos().map(|_| ())
+    }
+
+    fn word_pos(&self) -> Result<u128, String> {
+        self.rng_word_pos.parse().map_err(|_| format!("bad rng_word_pos {:?}", self.rng_word_pos))
+    }
+}
+
 /// A starting [`World::lock_serial`] no other world of this process used.
 fn next_world_serial() -> u64 {
     static WORLDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -2129,10 +2144,8 @@ impl<'a> World<'a> {
     }
 
     pub fn restore(forms: &'a FormStore, placed: &'a RefTable, s: &Snapshot) -> Result<World<'a>, String> {
-        if s.format != SNAPSHOT_FORMAT {
-            return Err(format!("unsupported snapshot format {:?}", s.format));
-        }
-        let pos: u128 = s.rng_word_pos.parse().map_err(|_| format!("bad rng_word_pos {:?}", s.rng_word_pos))?;
+        s.check()?;
+        let pos = s.word_pos()?;
         let mut w = World::new(forms, placed, s.config);
         w.rng.set_word_pos(pos);
         w.next_dynamic = s.next_dynamic;

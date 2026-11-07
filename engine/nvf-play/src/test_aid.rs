@@ -19,6 +19,8 @@
 //! the world too) and `_AUDIO_REOPEN`; `_VIGOR` counts from its menu's first frame and
 //! `_RADIO` on the radio's own clock. Without the switch every aid counts from the start.
 //!
+//! - `NVF_PLAY_TEST_SHOT_FLATNESS=1`: each of those shots also logs how much of the view is
+//!   one colour ([`one_colour_percent`]), for a scenario to check without reading the file.
 //! - `NVF_PLAY_TEST_SHOTS=<seconds>[:<path.png>][,...]`: save a screenshot at each time,
 //!   to the path given, else as `play-<seconds>s.png` in `NVF_PLAY_TEST_SHOT_DIR`
 //!   (default: the current folder).
@@ -58,7 +60,9 @@
 //!   object, e.g. a bottle to shoot), `equip=<FormID hex>` (give one unless carried and
 //!   equip it, as `NVF_PLAY_TEST_EQUIP`) and `condition=<percent>` (set the condition of
 //!   everything the player has equipped, e.g. a weapon about to break). `aimpart=254`
-//!   aims at the weapon the nearest NPC holds drawn (`hitvol::WEAPON_PART`). The `aim…`
+//!   aims at the weapon the nearest NPC holds drawn (`hitvol::WEAPON_PART`);
+//!   `aimcreaturepart=<n>` aims at the nearest creature's body part `n` (its BPTD index,
+//!   e.g. a bighorner's calf, which its head does not hide when it faces the player). The `aim…`
 //!   presses put the point under the crosshair: in third person the view turns so the
 //!   over-the-shoulder camera's line passes through it (`control::Crosshair::aim_at`).
 //!   `flashlight` switches the flashlight as a hold of Menu Mode does (`crate::flashlight`).
@@ -118,7 +122,7 @@ use crate::player::{MoveIntent, Player};
 use crate::sim::SimState;
 use crate::PlaySet;
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use fnv_sim::FormId;
 use std::path::{Path, PathBuf};
 
@@ -203,6 +207,8 @@ enum Press {
     /// A share of the NPC's height, over a body part's centre.
     AimNpcOver(f32, u8),
     AimPart(u8),
+    /// `aimcreaturepart=<n>`: the nearest creature's body part `n` (its BPTD index).
+    AimCreaturePart(u8),
     AimRef(u32),
     Equip(FormId),
     Condition(f32),
@@ -238,6 +244,8 @@ fn press(rest: &str) -> Result<Press, String> {
                 Press::AimNpcOver(h, n)
             } else if let Some(Ok(h)) = rest.strip_prefix("aimnpc=").map(|h| h.trim().parse::<f32>()) {
                 Press::AimNpcAt(h)
+            } else if let Some(Ok(n)) = rest.strip_prefix("aimcreaturepart=").map(|n| n.trim().parse::<u8>()) {
+                Press::AimCreaturePart(n)
             } else if let Some(Ok(n)) = rest.strip_prefix("aimpart=").map(|n| n.trim().parse::<u8>()) {
                 Press::AimPart(n)
             } else if let Some(Ok(id)) = rest.strip_prefix("aimref=").map(|h| u32::from_str_radix(h.trim().trim_start_matches("0x"), 16)) {
@@ -292,6 +300,11 @@ pub fn real_input(rest: &str) -> Result<(RealInput, f32), String> {
         "down" => RealInput::Key(KeyCode::ArrowDown),
         "left" => RealInput::Key(KeyCode::ArrowLeft),
         "right" => RealInput::Key(KeyCode::ArrowRight),
+        // [design] Names for the item-menu smoke scenarios' existing keyboard controls.
+        "pageup" => RealInput::Key(KeyCode::PageUp),
+        "pagedown" => RealInput::Key(KeyCode::PageDown),
+        "bracketleft" => RealInput::Key(KeyCode::BracketLeft),
+        "bracketright" => RealInput::Key(KeyCode::BracketRight),
         "wheel-up" => RealInput::Wheel(1.0),
         "wheel-down" => RealInput::Wheel(-1.0),
         "mouse-left" => RealInput::Mouse(MouseButton::Left),
@@ -573,6 +586,7 @@ fn keys_and_controls(
             Press::AimNpcAt(h) => aim_at_nearest_actor(&phys, &mut player, cross.as_ref(), |id| play.index.refs.get(&id).is_some_and(|e| &e.sig == b"ACHR"), Some(Aim::Share(h))),
             Press::AimNpcOver(h, n) => aim_at_nearest_actor(&phys, &mut player, cross.as_ref(), |id| play.index.refs.get(&id).is_some_and(|e| &e.sig == b"ACHR"), Some(Aim::ShareOver(h, n))),
             Press::AimPart(n) => aim_at_nearest_actor(&phys, &mut player, cross.as_ref(), |id| play.index.refs.get(&id).is_some_and(|e| &e.sig == b"ACHR"), Some(Aim::Part(n))),
+            Press::AimCreaturePart(n) => aim_at_nearest_actor(&phys, &mut player, cross.as_ref(), |id| play.index.refs.get(&id).is_some_and(|e| &e.sig == b"ACRE"), Some(Aim::Part(n))),
             Press::AimRef(id) => aim_at_ref(&phys, &mut player, cross.as_ref(), id),
             Press::AimVats => {
                 let marked = vats.marked();
@@ -677,8 +691,35 @@ fn take_shots(time: crate::pause::AidTime, mut aids: ResMut<Aids>, mut commands:
             let _ = std::fs::create_dir_all(dir);
         }
         info!("test aid: screenshot {}", path.display());
-        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut shot = commands.spawn(Screenshot::primary_window());
+        shot.observe(save_to_disk(path));
+        if std::env::var_os("NVF_PLAY_TEST_SHOT_FLATNESS").is_some() {
+            shot.observe(move |ev: On<ScreenshotCaptured>| {
+                let size = ev.image.texture_descriptor.size;
+                if let Some(data) = ev.image.data.as_deref() {
+                    info!("test aid: {name}: {} % of the view is one colour", one_colour_percent(data, size.width as usize, size.height as usize));
+                }
+            });
+        }
     }
+}
+
+/// Test aid `NVF_PLAY_TEST_SHOT_FLATNESS`: the share of the view, its lower fifth left out
+/// (the HUD), taken by its commonest colour at 32 levels a channel. A view the world has not
+/// been drawn into is one colour (#1520). `pixels`: four bytes each, row by row.
+fn one_colour_percent(pixels: &[u8], width: usize, height: usize) -> u32 {
+    let mut counts = std::collections::HashMap::<[u8; 3], u32>::new();
+    let mut seen = 0u32;
+    for y in (0..height * 4 / 5).step_by(4) {
+        for x in (0..width).step_by(4) {
+            if let Some(p) = pixels.get((y * width + x) * 4..(y * width + x) * 4 + 3) {
+                *counts.entry([p[0] >> 3, p[1] >> 3, p[2] >> 3]).or_default() += 1;
+                seen += 1;
+            }
+        }
+    }
+    counts.values().max().map_or(0, |n| n * 100 / seen.max(1))
 }
 
 fn face_reference(time: crate::pause::AidTime, mut aids: ResMut<Aids>, sim: Res<SimState>, mut phys: ResMut<PhysState>, mut player: ResMut<Player>) {
@@ -765,11 +806,27 @@ fn goto_and_look(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_flat_view_is_one_colour_and_a_varied_one_is_not() {
+        let (w, h) = (64, 40);
+        let flat = [92u8, 116, 148, 255].repeat(w * h);
+        assert_eq!(one_colour_percent(&flat, w, h), 100);
+        let varied: Vec<u8> = (0..w * h).flat_map(|i| [(i % 251) as u8, (i % 127) as u8 * 2, (i % 61) as u8 * 4, 255]).collect();
+        assert!(one_colour_percent(&varied, w, h) < 10);
+        // The lower fifth is the HUD's: not counted.
+        let mut hud = flat.clone();
+        hud[(h * 4 / 5) * w * 4..].fill(0);
+        assert_eq!(one_colour_percent(&hud, w, h), 100);
+    }
+
     use super::*;
 
     #[test]
     fn the_key_aid_names_arrows_and_wheel_notches() {
         assert_eq!(real_input("down"), Ok((RealInput::Key(KeyCode::ArrowDown), 0.0)));
+        for (name, key) in [("pageup", KeyCode::PageUp), ("pagedown", KeyCode::PageDown), ("bracketleft", KeyCode::BracketLeft), ("bracketright", KeyCode::BracketRight)] {
+            assert_eq!(real_input(name), Ok((RealInput::Key(key), 0.0)));
+        }
         assert_eq!(real_input("left:0.5"), Ok((RealInput::Key(KeyCode::ArrowLeft), 0.5)));
         assert_eq!(real_input("wheel-down"), Ok((RealInput::Wheel(-1.0), 0.0)));
         assert_eq!(real_input("wheel-up"), Ok((RealInput::Wheel(1.0), 0.0)));
@@ -831,6 +888,7 @@ mod tests {
         assert_eq!(press("aimnpc=0.95@0").unwrap(), Press::AimNpcOver(0.95, 0));
         assert_eq!(press("aimref=0010A202").unwrap(), Press::AimRef(0x10A202));
         assert_eq!(press("aimpart=4").unwrap(), Press::AimPart(4));
+        assert_eq!(press("aimcreaturepart=1").unwrap(), Press::AimCreaturePart(1));
         assert_eq!(press("condition=2.5").unwrap(), Press::Condition(2.5));
         assert!(press("shoot").is_err());
         assert_eq!(press("orbit=180:0").unwrap(), Press::Orbit(std::f32::consts::PI, 0.0));

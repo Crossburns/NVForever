@@ -843,9 +843,10 @@ const MARKER_GAP: f32 = 17.0;
 /// A button's width: room for its label, which ends at its right [design].
 const BUTTON_WIDTH: f32 = 200.0;
 
-/// A length of the screenshot (720 pixels high) as a part of the view's height.
+/// A length of the screenshot (720 pixels high) as a part of the view's height, at the UI
+/// scale (`crate::interface::unit_scale`, #1631; at 100% `px / 7.2` exactly).
 fn u(px: f32) -> Val {
-    Val::Vh(px / 7.2)
+    Val::Vh(px * crate::interface::unit_scale() / 7.2)
 }
 
 fn shade(part: f32) -> Color {
@@ -1049,9 +1050,10 @@ fn set_glyphs(
             continue;
         }
         let Some(face) = faces.get(g.font) else { continue };
-        // The node's size in interface units (960 to the view's height).
+        // The node's size in interface units (960 to the view's height), at the original's
+        // size: the text's own lengths take the UI scale again.
         let size = |v: Val| match v {
-            Val::Vh(x) => x * 9.6,
+            Val::Vh(x) => x * 9.6 / crate::interface::unit_scale(),
             _ => 0.0,
         };
         let (w, h) = (size(node.width), size(node.height));

@@ -12,6 +12,7 @@ import bevy_pbr::{
 };
 @if(VISIBILITY_RANGE_DITHER) import bevy_pbr::render::pbr_functions::visibility_range_dither;
 @if(FIRST_PERSON_DEPTH) import nvf_assets::first_person_depth::squeeze;
+@if(MOTION_VECTOR_PREPASS) import bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector;
 @if(MAY_DISCARD) import bevy_pbr::{
     render::pbr_types,
     render::mesh_view_bindings::view,
@@ -23,15 +24,34 @@ import bevy_pbr::{
 
 // A first-person shape (nif_material.rs "First-person depth") writes its depth squeezed
 // in front of the world, as the main pass does.
-@if(FIRST_PERSON_DEPTH) @fragment
+@if(FIRST_PERSON_DEPTH && !MOTION_VECTOR_PREPASS) @fragment
 fn fragment(in: VertexOutput) -> @builtin(frag_depth) f32 {
     test_fragment(in);
     return squeeze(in.position.z);
 }
 
-@if(!FIRST_PERSON_DEPTH) @fragment
+@if(!FIRST_PERSON_DEPTH && !MOTION_VECTOR_PREPASS) @fragment
 fn fragment(in: VertexOutput) {
     test_fragment(in);
+}
+
+// Motion uses Bevy's previous model/skin/morph and unjittered camera matrices. Depth
+// squeezing changes only z; the hands retain their real screen-space motion.
+@if(MOTION_VECTOR_PREPASS)
+struct MotionOutput {
+    @location(1) motion_vector: vec2<f32>,
+    @if(FIRST_PERSON_DEPTH || UNCLIPPED_DEPTH_ORTHO_EMULATION)
+    @builtin(frag_depth) depth: f32,
+}
+
+@if(MOTION_VECTOR_PREPASS) @fragment
+fn fragment(in: VertexOutput) -> MotionOutput {
+    test_fragment(in);
+    var out: MotionOutput;
+    out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);
+    @if(FIRST_PERSON_DEPTH) out.depth = squeeze(in.position.z);
+    @if(!FIRST_PERSON_DEPTH && UNCLIPPED_DEPTH_ORTHO_EMULATION) out.depth = in.unclipped_depth;
+    return out;
 }
 
 // The dither and the alpha test, which discard the fragment.
@@ -53,7 +73,8 @@ fn test_fragment(in: VertexOutput) {
     }
     // The holes of the main pass (nif_material.rs "Holes").
     @if(MAY_DISCARD && VERTEX_UVS_A) if surface.holes.x >= 0.0 && surface.holes.x < 255.0 {
-        if holes_alpha(in.instance_index, in.uv) * 255.0 >= surface.holes.x {
+        let h = holes_alpha(in.instance_index, in.uv) * 255.0;
+        if select((h >= surface.holes.x), (h < surface.holes.x), (surface.holes.z > 0.5)) {
             discard;
         }
     }

@@ -184,6 +184,9 @@ pub fn hold(
                     let local = rigid_local(&rig.skel, b, &part.root, &s.transform);
                     let x = commands.spawn((Mesh3d(s.mesh.clone()), MeshMaterial3d(s.material.clone()), Transform::from_matrix(Mat4::from(local)))).id();
                     commands.entity(rig.nodes[b]).add_child(x);
+                    if let Some((_, names)) = &s.skin {
+                        nvf_assets::actor::skin_in_place(&mut commands, x, names.len());
+                    }
                     entities.push(x);
                     continue;
                 };
@@ -205,6 +208,9 @@ pub fn hold(
                 let below = s.ancestors[..k].iter().rev().fold(Affine3A::IDENTITY, |acc, (_, t)| acc * *t) * s.own;
                 let x = commands.spawn((Mesh3d(s.mesh.clone()), MeshMaterial3d(s.material.clone()), Transform::from_matrix(Mat4::from(below)))).id();
                 commands.entity(node).add_child(x);
+                if let Some((_, names)) = &s.skin {
+                    nvf_assets::actor::skin_in_place(&mut commands, x, names.len());
+                }
             }
             objects.stats.drawn += 1;
             info!("anim object: {:08X} holds {model} on {bone_name} ({edid}, idle {idle:08X})", rig.reference);

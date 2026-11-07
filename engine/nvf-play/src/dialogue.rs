@@ -56,6 +56,10 @@
 //!   without a Goodbye choice, Tab leaves it and a log line names the actor (#1595: Julie
 //!   Farkas's top level has no Goodbye in the data) [design]; at a line's own choices
 //!   without one Tab is refused (a forced conversation; a log line says so).
+//! - **The views.** The rules are here; a view only shows them and asks. The hand-built
+//!   menu's buttons and the menu drawn from its file (`crate::tiles::dialog_menu`) both come
+//!   back through [`ViewInput`]: hover, pick, a step and skip, held to the list they were for
+//!   ([`ListId`]), so a click still queued cannot choose from the list that replaced it.
 //!
 //! Debug switch `NVF_PLAY_DEBUG_TALK_BREAK=1` (off unless set; a development tool, not
 //! for a release [owner decision 2026-10-10]): Shift+Tab breaks the conversation off at
@@ -302,7 +306,7 @@ pub fn subtitle(g: &Game, sim: &SimState) -> Option<String> {
 fn offers(g: &Game, choices: &[Choice]) -> Vec<Offer> {
     choices
         .iter()
-        .map(|c| Offer { topic: c.topic, edid: g.data.edid_of.get(&c.topic).cloned(), text: shown_text(g.choice_text(c)), goodbye: c.goodbye })
+        .map(|c| Offer { topic: c.topic, edid: g.data.edid_of.get(&c.topic).cloned(), text: shown_text(&g.shown_choice_text(c)), goodbye: c.goodbye })
         .collect()
 }
 
@@ -334,16 +338,25 @@ pub(crate) fn challenge_name(data: &GameData, form: FormId) -> String {
     }
 }
 
-/// What the menu shows.
-fn view(g: &Game, sim: &SimState) -> Option<MenuView> {
+/// What the menu shows, in whichever view draws it.
+pub(crate) fn view(g: &Game, sim: &SimState) -> Option<MenuView> {
+    let c = g.dialogue.as_ref()?;
+    view_named(g, speaker_name(g, sim, speaker_form(c)))
+}
+
+/// Who the menu names: through a talking activator the activator ("Intercom", not Chris
+/// Haversam: owner screenshot 2026-10-22 of the REPCONN intercom).
+pub(crate) fn speaker_form(c: &fnv_game::dialogue::Conversation) -> FormId {
+    c.through.unwrap_or(c.actor)
+}
+
+/// [`view`] with the speaker's name given.
+pub(crate) fn view_named(g: &Game, speaker: String) -> Option<MenuView> {
     let c = g.dialogue.as_ref()?;
     // A message box or menu over the conversation takes the input: the menu goes.
     if held(g) {
         return None;
     }
-    // Through a talking activator the menu names the activator ("Intercom", not Chris
-    // Haversam: owner screenshot 2026-10-22 of the REPCONN intercom).
-    let speaker = speaker_name(g, sim, c.through.unwrap_or(c.actor));
     if c.line.is_some() || c.choices.is_empty() {
         return Some(MenuView { speaker, line: response_text(g), choices: Vec::new(), goodbye: false });
     }
@@ -354,7 +367,7 @@ fn view(g: &Game, sim: &SimState) -> Option<MenuView> {
             let fallback = g.data.name(ch.topic);
             let tag = ch.challenge.as_ref().map(|t| tag_of(g, t));
             let short = ch.challenge.as_ref().is_some_and(|t| matches!((t.needed, t.have), (Some(n), Some(h)) if h < n));
-            ChoiceRow { label: row_label(g.choice_text(ch), &fallback, tag), darkened: ch.darkened, short }
+            ChoiceRow { label: row_label(&g.shown_choice_text(ch), &fallback, tag), darkened: ch.darkened, short }
         })
         .collect();
     // The hint stands where Tab leaves: a Goodbye choice, or a topic list (`resolve`).
@@ -485,6 +498,10 @@ impl TalkAid {
 pub struct DialogueScreen {
     /// The selected choice.
     selected: usize,
+    /// See [`DialogueScreen::framed`].
+    framed: bool,
+    /// See [`DialogueScreen::keyed`].
+    keyed: u64,
     /// The offered list the selection belongs to: the actor and the lines said so far.
     list: Option<(FormId, u32)>,
     aid: TalkAid,
@@ -511,13 +528,29 @@ impl DialogueScreen {
         DialogueScreen { aid: TalkAid { waiting: talks, ..default() }, unattended, aid_delay, debug_break, ..default() }
     }
 
+    /// The selected choice, for a view that draws it.
+    pub(crate) fn selected(&self) -> usize {
+        self.selected
+    }
+
+    /// Something chose on this list: the tile view frames nothing until then.
+    pub(crate) fn framed(&self) -> bool {
+        self.framed
+    }
+
+    /// How many times the keys have moved the selection: the tile view scrolls to the choice
+    /// they moved it to, and not to a choice the pointer came onto.
+    pub(crate) fn keyed(&self) -> u64 {
+        self.keyed
+    }
+
     fn conversation_over(&mut self) {
         if let Some(d) = self.aid.driver.take() {
             if !d.steps.is_empty() {
                 warn!("test aid NVF_PLAY_TEST_TALK: the conversation ended with {} steps unused: {:?}", d.steps.len(), d.steps);
             }
         }
-        (self.selected, self.list) = (0, None);
+        (self.selected, self.list, self.framed) = (0, None, false);
         (self.talk_since, self.choosing_since, self.speaking) = (None, None, None);
     }
 }
@@ -552,6 +585,87 @@ fn resolve(act: Act, goodbye: Option<usize>, topic_list: bool) -> Act {
         (Act::Leave { .. }, None) if topic_list => Act::LeaveTopicList,
         (Act::Leave { force: true }, None) => Act::BreakOff,
         (a, _) => a,
+    }
+}
+
+/// Which screen of the conversation a view's input was for: its actor, its generation
+/// (`fnv_game::dialogue::conversation_stamp`: the conversation, the lines said, the response)
+/// and the topics offered (none while a line is being said). A conversation that goes on, a
+/// next response, or the same actor's next conversation has another [`ListId`] [design].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListId {
+    actor: FormId,
+    stamp: u64,
+    topics: Vec<FormId>,
+}
+
+impl ListId {
+    /// The generation, as input queued on this screen is stamped with.
+    pub fn stamp(&self) -> u64 {
+        self.stamp
+    }
+}
+
+#[cfg(test)]
+impl ListId {
+    /// A list for a test.
+    pub(crate) fn for_test(stamp: u32, topics: &[u32]) -> ListId {
+        ListId { actor: FormId(0x10), stamp: u64::from(stamp), topics: topics.iter().map(|&t| FormId(t)).collect() }
+    }
+}
+
+/// The running conversation's generation, 0 without one.
+pub fn stamp_now(g: &Game) -> u64 {
+    fnv_game::dialogue::conversation_stamp(g.dialogue_serial, g.dialogue.as_ref())
+}
+
+/// The running conversation's [`ListId`].
+pub fn list_id(g: &Game) -> Option<ListId> {
+    let c = g.dialogue.as_ref()?;
+    let topics = if c.line.is_some() { Vec::new() } else { c.choices.iter().map(|ch| ch.topic).collect() };
+    Some(ListId { actor: c.actor, stamp: stamp_now(g), topics })
+}
+
+/// What a view of the menu asks of the conversation this frame, for [`input`] to turn into
+/// the same commands the keys give. Empty unless a view filled it.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct ViewInput {
+    /// The list on screen when this was read: anything else finds this input void.
+    pub list: Option<ListId>,
+    /// The pointer came onto this choice.
+    pub hover: Option<usize>,
+    /// This choice was clicked.
+    pub pick: Option<usize>,
+    /// A click meant to skip the line being said.
+    pub skip: bool,
+}
+
+impl ViewInput {
+    /// This input if it was for the list `now`, else nothing: the list on screen was replaced
+    /// after the view read it.
+    fn for_list(self, now: Option<&ListId>) -> ViewInput {
+        if self.list.as_ref() == now {
+            self
+        } else {
+            ViewInput::default()
+        }
+    }
+
+    /// The selection after a frame's Up (`up`) and Down (`down`) and this input, over `len`
+    /// choices: the keys, the step, then the pointer's choice, each kept in the list.
+    fn selection(&self, selected: usize, len: usize, up: bool, down: bool) -> usize {
+        let last = len.saturating_sub(1);
+        let mut s = selected.min(last);
+        if up {
+            s = s.saturating_sub(1);
+        }
+        if down {
+            s = (s + 1).min(last);
+        }
+        match self.hover {
+            Some(h) => h.min(last),
+            None => s,
+        }
     }
 }
 
@@ -590,6 +704,7 @@ impl Plugin for DialoguePlugin {
         app.insert_resource(DialogueScreen::new(talks, unattended))
             .init_resource::<WorldHeld>()
             .init_resource::<FreeLook>()
+            .init_resource::<ViewInput>()
             // After the keys of a script's menu (a key that answers a message box is not
             // also a choice), before the frame's scripts (a choice's line starts in the
             // frame it was made).
@@ -608,7 +723,7 @@ pub fn held(g: &Game) -> bool {
 
 /// The test aid's due steps and the player's keys and clicks, as actions on the runtime.
 #[allow(clippy::too_many_arguments)]
-fn input(
+pub(crate) fn input(
     keys: Res<ButtonInput<KeyCode>>,
     controls: ControlInput,
     scroll: Res<AccumulatedMouseScroll>,
@@ -620,8 +735,11 @@ fn input(
     mut screen: ResMut<DialogueScreen>,
     mut script: ResMut<ScriptState>,
     mut sim: ResMut<SimState>,
+    mut view_input: ResMut<ViewInput>,
 ) {
     use KeyCode::*;
+    // Taken whatever happens below: what a view asked is for this frame only.
+    let asked = std::mem::take(&mut *view_input);
     // Like the scripts: not under the pause menu, not before the player stands in the
     // world.
     if paused.0 || phys.player.is_none() {
@@ -682,7 +800,7 @@ fn input(
     let choosing = speaking.is_none() && !conv.choices.is_empty();
     let key = (conv.actor, conv.lines);
     if sc.list != Some(key) {
-        (sc.list, sc.selected) = (Some(key), 0);
+        (sc.list, sc.selected, sc.framed) = (Some(key), 0, false);
     }
     sc.talk_since.get_or_insert(now);
     match speaking {
@@ -702,6 +820,10 @@ fn input(
         }
         return;
     }
+    let list_now = list_id(&rt.game);
+    let mut asked = asked.for_list(list_now.as_ref());
+    // What the view asked is held to its list; the hand-built buttons carry theirs below.
+    let by_tiles = asked.list.is_some();
     let offered = offers(&rt.game, &conv.choices);
     let chosen_for = |since: Option<f32>, limit: f32| since.is_some_and(|t| now - t >= limit);
 
@@ -773,34 +895,38 @@ fn input(
                 act = Some((Act::BreakOff, "Shift+Tab"));
             }
         } else if speaking.is_some() {
-            if confirm || controls.mouse.just_pressed(MouseButton::Left) {
-                act = Some((Act::Skip, "key or click"));
+            if confirm || controls.mouse.just_pressed(MouseButton::Left) || asked.skip {
+                act = Some((Act::Skip, if asked.skip { "tile click" } else { "key or click" }));
             }
         } else if choosing {
             let len = conv.choices.len();
             let digits = [Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9];
             let pads = [Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8, Numpad9];
-            let mut selected = sc.selected.min(len - 1);
             let wheel = scroll.delta.y;
-            if keys.any_just_pressed([ArrowUp, KeyW]) || wheel > 0.0 {
-                selected = selected.saturating_sub(1);
-            }
-            if keys.any_just_pressed([ArrowDown, KeyS]) || wheel < 0.0 {
-                selected = (selected + 1).min(len - 1);
-            }
-            let mut clicked = None;
-            for (i, b) in &clicks {
+            // The hand-built buttons ask as the tiles do, for the list they were spawned or last
+            // brought up to date for.
+            for (i, b) in clicks.iter().filter(|(_, b)| b.1 == list_now) {
                 match i {
-                    PointerState::Pressed => clicked = Some(b.0),
-                    PointerState::Hovered => selected = b.0.min(len - 1),
+                    PointerState::Pressed => asked.pick = Some(b.0),
+                    PointerState::Hovered => asked.hover = Some(b.0),
                     PointerState::None => {}
                 }
             }
+            let (up, down) = (keys.any_just_pressed([ArrowUp, KeyW]) || wheel > 0.0, keys.any_just_pressed([ArrowDown, KeyS]) || wheel < 0.0);
+            // The list drawn from its file opens with nothing framed and the first press frames
+            // the first choice [observed: capture of the original, private job dialogue, 1280 x 720: `_highlight_y` -1,
+            // then 0, 58, 116 on Down]. The hand-built menu's first choice stands framed at open.
+            let first_press = by_tiles && !sc.framed;
+            let moved_by_key = up || down;
+            let selected = asked.selection(sc.selected, len, up && !first_press, down && !first_press);
+            sc.framed |= moved_by_key || asked.hover.is_some();
+            sc.keyed += u64::from(moved_by_key);
+            let clicked = asked.pick;
             sc.selected = selected;
             if let Some(i) = (0..9).find(|&i| keys.just_pressed(digits[i]) || keys.just_pressed(pads[i])).filter(|&i| i < len) {
                 act = Some((Act::Choose(i), "number key"));
             } else if let Some(i) = clicked.filter(|&i| i < len) {
-                act = Some((Act::Choose(i), "click"));
+                act = Some((Act::Choose(i), if by_tiles { "tile click" } else { "click" }));
             } else if confirm {
                 act = Some((Act::Choose(selected), "Enter"));
             } else if keys.just_pressed(Tab) {
@@ -828,7 +954,7 @@ fn input(
             (Some(e), Act::Leave { .. }) => info!("dialogue: Tab refused: {e}"),
             (Some(e), _) => warn!("dialogue: {op} by {by}: {e}"),
             (None, Act::BreakOff) => info!("dialogue: the conversation is broken off ({by})"),
-            (None, _) => debug!("dialogue: {op} {index:?} by {by}"),
+            (None, _) => info!("dialogue: {op} {index:?} by {by}"),
         }
         notes.push(serde_json::json!({"kind": "talk_input", "op": op, "index": index, "by": by, "error": error}));
     }
@@ -875,9 +1001,10 @@ fn sync_state(
 
 // ---- drawing ----------------------------------------------------------------------------
 
-/// A clickable choice (its index in the offered list), drawn by `crate::dialogue_menu`.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct ChoiceButton(pub usize);
+/// A clickable choice, drawn by `crate::dialogue_menu`: its index in the offered list and the
+/// list it stands for on screen.
+#[derive(Component, Clone, Debug)]
+pub struct ChoiceButton(pub usize, pub Option<ListId>);
 
 /// Hand the menu what it shows and the selection.
 fn draw(script: Option<Res<ScriptState>>, sim: Res<SimState>, screen: Res<DialogueScreen>, mut menu: ResMut<DialogueMenu>) {
@@ -887,6 +1014,10 @@ fn draw(script: Option<Res<ScriptState>>, sim: Res<SimState>, screen: Res<Dialog
     }
     if menu.selected != screen.selected {
         menu.selected = screen.selected;
+    }
+    let list = script.as_ref().and_then(|s| s.rt.as_ref()).and_then(|rt| list_id(&rt.game));
+    if menu.list != list {
+        menu.list = list;
     }
 }
 
@@ -994,6 +1125,42 @@ mod tests {
         assert_eq!(shown_text("{Laughs}"), "");
         // A choice's row reads without its note too.
         assert_eq!(row_label("{lie} I'm with the NCR.", "TopicLie", None), "I'm with the NCR.");
+    }
+
+    fn list(lines: u32, topics: &[u32]) -> ListId {
+        ListId::for_test(lines, topics)
+    }
+
+    #[test]
+    fn a_views_input_holds_for_the_list_it_was_read_on() {
+        let asked = ViewInput { list: Some(list(3, &[1, 2])), pick: Some(1), ..default() };
+        // The same list: taken as it is.
+        assert_eq!(asked.clone().for_list(Some(&list(3, &[1, 2]))).pick, Some(1));
+        // A click still queued finds another list void: a line said since, other topics, no
+        // conversation.
+        for now in [list(4, &[1, 2]), list(3, &[1, 3]), list(3, &[])] {
+            assert_eq!(asked.clone().for_list(Some(&now)), ViewInput::default(), "{now:?}");
+        }
+        assert_eq!(asked.for_list(None), ViewInput::default());
+        // Nothing asked stays nothing.
+        assert_eq!(ViewInput::default().for_list(Some(&list(3, &[1]))), ViewInput::default());
+    }
+
+    #[test]
+    fn the_selection_takes_the_keys_the_step_and_the_pointer_in_the_list() {
+        let none = ViewInput::default();
+        assert_eq!(none.selection(1, 4, false, false), 1);
+        assert_eq!(none.selection(1, 4, true, false), 0);
+        assert_eq!(none.selection(3, 4, false, true), 3, "the last stays the last");
+        assert_eq!(none.selection(0, 4, true, false), 0, "the first stays the first");
+        // A list that got shorter since.
+        assert_eq!(none.selection(7, 4, false, false), 3);
+        // The pointer has the last word, inside the list.
+        let hover = |h| ViewInput { hover: Some(h), ..default() };
+        assert_eq!(hover(2).selection(0, 4, false, true), 2);
+        assert_eq!(hover(9).selection(0, 4, false, false), 3);
+        // No choices: nothing to overrun.
+        assert_eq!(none.selection(0, 0, true, true), 0);
     }
 
     #[test]

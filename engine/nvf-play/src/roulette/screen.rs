@@ -60,7 +60,7 @@ pub struct RouletteButton(pub RouletteInput);
 
 fn view_key(s: &Session, has_view: bool, view_w: f32) -> String {
     format!(
-        "{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}:{has_view}:{view_w:.0}",
+        "{}:{}:{}:{}:{}:{:?}:{:?}:{}:{}:{has_view}:{view_w:.0}:{:?}",
         s.bet,
         s.table.total(),
         s.chips,
@@ -69,7 +69,8 @@ fn view_key(s: &Session, has_view: bool, view_w: f32) -> String {
         s.status,
         std::mem::discriminant(&s.phase),
         s.help.is_some(),
-        s.can_place()
+        s.can_place(),
+        crate::pad::labels(),
     )
 }
 
@@ -116,7 +117,8 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Roulet
             r.spawn((full.clone(), ImageNode { color: Color::srgb(light, light, light), ..ImageNode::new(v.image.clone()) }));
         });
     }
-    root.with_children(|r| {
+    // The menu at the UI scale, in the middle of the view (`crate::interface::menu_frame`, #1631).
+    root.with_children(|r| crate::interface::in_menu_frame(r, crate::interface::MIDDLE, |r| {
         // The status lines.
         let lines = s.status.clone().unwrap_or_else(|| if s.phase == Phase::Betting { s.bet_lines() } else { [String::new(), String::new()] });
         let status = Node { position_type: PositionType::Absolute, left: u(STATUS.x), top: u(STATUS.y), width: u(800.0), height: u(2.0 * STATUS_STEP), ..default() };
@@ -148,13 +150,14 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Roulet
             });
             let betting = s.phase == Phase::Betting && s.help.is_none();
             let any = !s.table.bets.is_empty();
+            let h = |k: KeyCode| crate::pad::hint(&[k], crate::pad::at_menu(fnv_game::roulette::MENU_CODE));
             let buttons = [
-                ("Place Bet", "W)", RouletteInput::Place, betting && s.can_place()),
-                ("Remove Bet", "F)", RouletteInput::Remove, betting && any),
-                ("Finish Bet", "S)", RouletteInput::Spin, betting && any),
-                ("Decrease Bet", "Q)", RouletteInput::Decrease, betting && s.bet > s.table.min_bet),
-                ("Increase Bet", "E)", RouletteInput::Increase, betting && s.bet < s.table.max_bet),
-                ("Exit", "R)", RouletteInput::Exit, betting),
+                ("Place Bet", h(KeyCode::KeyW), RouletteInput::Place, betting && s.can_place()),
+                ("Remove Bet", h(KeyCode::KeyF), RouletteInput::Remove, betting && any),
+                ("Finish Bet", h(KeyCode::KeyS), RouletteInput::Spin, betting && any),
+                ("Decrease Bet", h(KeyCode::KeyQ), RouletteInput::Decrease, betting && s.bet > s.table.min_bet),
+                ("Increase Bet", h(KeyCode::KeyE), RouletteInput::Increase, betting && s.bet < s.table.max_bet),
+                ("Exit", h(KeyCode::KeyR), RouletteInput::Exit, betting),
             ];
             let column = Node { position_type: PositionType::Absolute, right: u(BUTTONS_RIGHT), top: u(BUTTONS_TOP), width: u(0.0), height: u(6.0 * BUTTON_H), ..default() };
             m.spawn(column).with_children(|b| {
@@ -162,7 +165,7 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Roulet
                     let color = if on { bright } else { dim };
                     let y = i as f32 * BUTTON_H;
                     let w = c.text_in(b, FontKind::Menu, label, 0.0, y + 9.0, true, color);
-                    c.text_in(b, FontKind::Menu, hint, HINT_GAP, y + 9.0, false, color);
+                    c.text_in(b, FontKind::Menu, &hint, HINT_GAP, y + 9.0, false, color);
                     if on {
                         b.spawn((Button, RouletteButton(cmd), at(-w - 10.0, y, w + 20.0 + HINT_GAP + 30.0, BUTTON_H)));
                     }
@@ -172,5 +175,5 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&Roulet
         if let Some(h) = &s.help {
             crate::lockpick::help::spawn(r, c, h, view_w);
         }
-    });
+    }));
 }

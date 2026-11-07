@@ -41,7 +41,7 @@ fn item(kind: ItemKind) -> BaseData {
     BaseData::Item(Item { kind, value: Some(1), money: None, weight: Some(0.5), slots: None, projectile: None, health: None, non_playable: false, cant_drop: false, armor_class: Default::default(), power_armor: false, armor_dr: None, armor_dt: None, weapon_damage: None, weight_mods: [0.0; 3], drawable: false, not_for_npcs: false, thrown: false, quest_item: false, icon: None, placed_count: None, teaches: None, cant_be_taken: false, modulates_voice: false, weapon_traits: None })
 }
 
-fn placed(id: u32, base: u32, cell: u32) -> PlacedRef {
+pub(crate) fn placed(id: u32, base: u32, cell: u32) -> PlacedRef {
     PlacedRef {
         id: FormId(id),
         sig: *b"REFR",
@@ -144,6 +144,7 @@ fn boxed(half: f32) -> CollisionObject {
         shape: Shape::Box { half_extents: [half; 3] }.into(),
         shell: 0.0,
         material: None,
+        wind: false,
     }
 }
 

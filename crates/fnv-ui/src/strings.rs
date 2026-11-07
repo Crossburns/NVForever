@@ -34,6 +34,9 @@ pub type Entry = (&'static str, &'static str, &'static str);
 /// its neighbours, its place). None is looked up in the original (no screenshots, no
 /// setting readings, no lists of values), and none is changed on purpose: a short
 /// generic label is the word the use calls for. Menu files' comments are not copied.
+/// One more source is allowed [owner decision 2026-11-06, #1740, LEGAL.md]: a name or
+/// term the data files' own shown text already uses, spelled as the data spells it, with
+/// the record cited in the entry (`sStatsSpecial`'s "S.P.E.C.I.A.L.").
 ///
 /// Left out on purpose:
 /// - `sMorphine`: FalloutNV.esm has its GMST, so the load order answers it;
@@ -165,7 +168,7 @@ pub const BUILT_IN: &[Entry] = &[
     ("sStatsRadResist", "Rad Resist", "setting name + stats_menu.xml: the label beside the level"),
     ("sStatsSkills", "Skills", "setting name + stats_menu.xml: a page's tail line"),
     ("sStatsSLPAbbrev", "SLP", "setting name + stats_menu.xml (a page tab), hud_main_menu.xml (the Hardcore word)"),
-    ("sStatsSpecial", "SPECIAL", "setting name + stats_menu.xml: a page's tail line"),
+    ("sStatsSpecial", "S.P.E.C.I.A.L.", "setting name + stats_menu.xml: a page's tail line; the system's name as FalloutNV.esm's own text spells it [observed: PERK IntenseTraining's description, MESG HelpDrugs, MESG CG04VaultExitMessage's button \"Edit S.P.E.C.I.A.L.\"] (LEGAL.md, owner 2026-11-06, #1740)"),
     ("sStatsStatus", "Status", "setting name + stats_menu.xml: a page's tail line"),
     ("sStatsXP", "XP", "setting name + stats_menu.xml (a headline card), hud_main_menu.xml (the XP label)"),
     ("sStimpak", "Use Stimpak", "setting name + surgerymenu.xml: a button"),

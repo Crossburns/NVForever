@@ -58,9 +58,11 @@ Assumptions (defaults chosen while the user was away; easy to revisit):
   one LAND with a wrong zlib checksum (FalloutNV.esm; shipped defect *or* local damage —
   [hypothesis], see §5); one REFR whose FormID uses a master index beyond the master list
   (GunRunnersArsenal.esm); one dangling reference (DeadMoney INFO 0x01011B23 →
-  0x010108DD); two QUST DATA subrecords only 2 bytes long where the documented layout
-  needs at least 4 (FalloutNV.esm 0x0001E5CA and 0x0002242A — both have old form versions
-  1 and 2, so an older legacy layout is the likely explanation [hypothesis]).
+  0x010108DD); two QUST DATA subrecords only 2 bytes long (FalloutNV.esm 0x0001E5CA
+  RadioTenpenny and 0x0002242A GenericSupMutBehemoth, old form versions 2 and 1): they end
+  after the documented flags and priority bytes [documented: xEdit QUST DATA; observed:
+  flags 0x05 and 0x01, priority 0], and since #1001 the schema's `unused` is optional too,
+  so they decode.
 
 Tolerance policy (spec section 7): structural overruns are hard errors with offsets;
 everything else (unknown signatures, mis-sized data, checksum anomalies, unmappable
@@ -108,7 +110,7 @@ Measured 2026-10-09 (`fnvtool esm coverage --schema schemas/fnv`, all 10 masters
 
 | Plugin | Decoded | Pairs fully decoded | Trailing | Errors |
 |---|---|---|---|---|
-| FalloutNV.esm | 94.74 % of 2,321,456 | 972 / 1,155 | 0 | 2 |
+| FalloutNV.esm | 94.74 % of 2,321,456 | 972 / 1,155 | 0 | 0 (2 before #1001) |
 | DeadMoney.esm | 95.50 % of 160,880 | 747 / 889 | 0 | 0 |
 | HonestHearts.esm | 93.80 % of 179,706 | 718 / 848 | 0 | 0 |
 | OldWorldBlues.esm | 96.86 % of 225,669 | 720 / 854 | 0 | 0 |
@@ -116,7 +118,7 @@ Measured 2026-10-09 (`fnvtool esm coverage --schema schemas/fnv`, all 10 masters
 | GunRunnersArsenal.esm | 94.05 % of 6,853 | 231 / 259 | 0 | 0 |
 | Caravan/Classic/Mercenary/TribalPack | 98.61 / 94.27 / 97.47 / 100 % | 63/64, 95/97, 70/72, 51/51 | 0 | 0 |
 
-The 2 errors are the two 2-byte QUST DATA (§2.3). The 8 WATR DATA "trailing" of the
+The 2 errors were the two 2-byte QUST DATA (§2.3); they decode since #1001 (2026-11-06). The 8 WATR DATA "trailing" of the
 previous measurement were the older 186-byte DATA form (visual data plus damage, in the 8
 FalloutNV.esm waters without DNAM); since 2026-10-09 the schema has size-decided unions
 and decodes both forms [documented: xEdit WATR; observed: 70 × 2 bytes, 8 × 186 bytes].
@@ -159,8 +161,7 @@ The records below stay hand-read because schema v1 cannot say their layout:
 
 Records the schema could express but has no entry for yet, read by hand at runtime
 [observed: `esm coverage` lists them unknown; readers in `crates/fnv-game/src/data.rs`,
-`crafting.rs`, `caravan.rs`]: RCPE, RCCT, CDCK, AVIF (ANAM), VTYP (DNAM); LSCT DATA is read
-by nothing. CSNO and CCRD have entries (`objects.json`) but `casino.rs` and `caravan.rs`
+`crafting.rs`, `caravan.rs`]: RCPE, RCCT, CDCK, AVIF (ANAM), VTYP (DNAM). CSNO and CCRD have entries (`objects.json`) but `casino.rs` and `caravan.rs`
 still slice their bytes. Each needs an xEdit-sourced entry where missing (schemas/README.md)
 and its reader switched to the decoded fields, as was done for CLAS; the masters' totals in
 `tools/smoke/expected/esm-coverage.toml` move with each new entry.

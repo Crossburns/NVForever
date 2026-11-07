@@ -141,6 +141,16 @@ pub struct Conversation {
     pub ending: bool,
 }
 
+/// Which screen of which conversation is up, as one number, for input queued on it: the
+/// conversation (`serial`, counted up for each started), the lines said so far, and the
+/// response being said, with choices or nothing being said as 0 [design: a stale click must
+/// not act on what replaced its screen, dialogue-menu.md §6.5]. 0 without a conversation.
+pub fn conversation_stamp(serial: u32, c: Option<&Conversation>) -> u64 {
+    let Some(c) = c else { return 0 };
+    let response = c.line.as_ref().map_or(0, |l| (l.response as u64 & 0xF_FFFF) + 1);
+    (u64::from(serial) << 40) | ((u64::from(c.lines) & 0xF_FFFF) << 20) | response | (1 << 63)
+}
+
 /// Whether a line may be said in a conversation between two actors: only Conversation
 /// lines (INFO DATA type Conversation, the Conversation tab), never the Topics tab's
 /// lines, which are said to the player [owner ruling 2026-10-11: "the dialogue between
@@ -191,6 +201,10 @@ pub(crate) enum Says {
     Actor,
     /// A radio station's placed reference (`crate::radio`).
     Station,
+    /// The speaker a script's Say or SayTo names, when no line of the topic passes the
+    /// fixed-speaker check: it says a fixed speaker's line in that speaker's stead
+    /// ([`Game::say_by_script`]). The other checks are an actor's.
+    InStead,
 }
 
 /// A topic a line leads to ([`Game::links_after`]): by the line's own choices (TCLT,
@@ -242,7 +256,10 @@ impl<'a> Game<'a> {
     ///   own GetIsID condition, 167 of them the end slides (fixed speaker a Boomer or
     ///   another character, GetIsID Narrator), which the narrator says
     ///   [hypothesis: the condition is the run-time rule and the field a leftover;
-    ///   docs/handoff/mq-walkthrough-2026-10-27.md];
+    ///   docs/handoff/mq-walkthrough-2026-10-27.md]. A script's Say or SayTo whose topic
+    ///   has no line passing this check, judged from the data alone
+    ///   ([`Game::no_line_for_speaker`]), tries the lines without it
+    ///   ([`Game::say_by_script`], [`Says::InStead`]);
     /// - the line's quest is running and the quest's own conditions pass [owner
     ///   statement 2026-10-10: every actor has the line as long as the quest is active
     ///   and the conditions are met; documented: Quest Data Tab: quest conditions gate
@@ -253,6 +270,23 @@ impl<'a> Game<'a> {
     ///   target [documented: Category:Conditions, Run On].
     pub fn can_say(&mut self, speaker: FormId, listener: Option<FormId>, info: FormId) -> bool {
         self.can_say_as(speaker, listener, info, Says::Actor)
+    }
+
+    /// The fixed-speaker (ANAM) check alone, from the data: the line names a fixed speaker
+    /// that is neither `speaker` nor its base, and has no GetIsID condition of its own
+    /// ([`Game::can_say`]). It does not look at run-time state (Say Once, conditions).
+    pub(crate) fn fixed_speaker_refuses(&self, def: &InfoDef, speaker: FormId) -> bool {
+        def.speaker.is_some_and(|s| !def.conditions.iter().any(is_own_id_condition) && s != speaker && Some(s) != crate::functions::base_of(self, speaker))
+    }
+
+    /// Whether every line of `topic` ([`GameData::lines_tried`]) fails the fixed-speaker
+    /// check for `speaker` ([`Game::fixed_speaker_refuses`]), decided from the data alone:
+    /// the case in which a script's Say or SayTo says a fixed speaker's line in the
+    /// speaker's stead ([`Game::say_by_script`]). A topic with no lines is not one.
+    pub(crate) fn no_line_for_speaker(&self, speaker: FormId, topic: FormId) -> bool {
+        let data = self.data;
+        let lines = data.lines_tried(topic);
+        !lines.is_empty() && lines.iter().all(|i| data.infos.get(i).is_some_and(|def| self.fixed_speaker_refuses(def, speaker)))
     }
 
     /// [`Game::can_say`] for an actor or a radio station. A station is not held to a
@@ -279,10 +313,8 @@ impl<'a> Game<'a> {
                 }
             }
         }
-        if let Some(s) = def.speaker.filter(|_| says == Says::Actor && !def.conditions.iter().any(is_own_id_condition)) {
-            if s != speaker && Some(s) != crate::functions::base_of(self, speaker) {
-                return false;
-            }
+        if says == Says::Actor && self.fixed_speaker_refuses(def, speaker) {
+            return false;
         }
         if let Some(q) = def.quest {
             if !self.quests.get(&q).is_some_and(|s| s.running) {
@@ -296,7 +328,7 @@ impl<'a> Game<'a> {
         }
         // A voice type without Allow Default Dialog says only lines conditioned on it; not
         // the player's own lines (its voice types lack the flag, observed).
-        if says == Says::Actor && speaker != FormId::PLAYER_REF && def.speaker.is_none() && self.voice_without_default(speaker) && !def.conditions.iter().any(|c| VOICE_GATE_FUNCTIONS.contains(&c.function)) {
+        if says != Says::Station && speaker != FormId::PLAYER_REF && def.speaker.is_none() && self.voice_without_default(speaker) && !def.conditions.iter().any(|c| VOICE_GATE_FUNCTIONS.contains(&c.function)) {
             return false;
         }
         self.conditions_pass(&def.conditions, Some(speaker), listener, &format!("INFO {info}"))
@@ -595,6 +627,7 @@ impl<'a> Game<'a> {
             self.say_line(actor, listener, topic, info, LineKind::Greeting);
             return Ok(info);
         }
+        self.dialogue_serial = self.dialogue_serial.wrapping_add(1);
         self.dialogue = Some(Conversation { actor, through, line: None, choices: Vec::new(), topic_list: false, lines: 0, then: None, ending: false });
         self.extra.entry(actor).or_default().talked_to_pc = true;
         self.emit(EventKind::DialogueStarted { actor, topic });
@@ -625,6 +658,8 @@ impl<'a> Game<'a> {
             c.choices.clear();
             c.lines += 1;
         }
+        // The line is up, whether or not a script of it runs: whoever started it reads it next.
+        self.dialogue_transition();
         self.emit_response(actor, def, info, 0);
         self.run_line_result(actor, def, false);
         if def.has(info_flag::RUN_IMMEDIATELY) {
@@ -644,6 +679,11 @@ impl<'a> Game<'a> {
     fn run_line_result(&mut self, actor: FormId, def: &InfoDef, end: bool) {
         let data = self.data;
         if let Some(u) = if end { def.end } else { def.begin } {
+            // An end script runs as the line goes: what it reads is up by then. A begin script
+            // comes right after the line's own transition.
+            if end {
+                self.dialogue_transition();
+            }
             self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(actor) });
             self.run_result(u, RunCtx { self_ref: Some(actor), action_ref: None, quest: def.quest });
         }
@@ -681,8 +721,25 @@ impl<'a> Game<'a> {
                 }
             }
         }
+        let moved = self.dialogue.as_ref().and_then(|c| c.line.as_ref()).is_some_and(|l| l.response != line.response);
         if let Some(c) = self.dialogue.as_mut() {
             c.line = Some(line);
+        }
+        if moved {
+            self.dialogue_transition();
+        }
+    }
+
+    /// Tell [`Game::ui_dialogue_hook`] of a conversation that has moved on: the line or
+    /// response begun or over, the choices offered. In the middle of the runtime's own work, as
+    /// a script that runs next is to read what is up already.
+    pub fn dialogue_transition(&mut self) {
+        if self.dialogue.is_none() {
+            return;
+        }
+        if let Some(mut hook) = self.ui_dialogue_hook.take() {
+            hook(self);
+            self.ui_dialogue_hook = Some(hook);
         }
     }
 
@@ -756,6 +813,7 @@ impl<'a> Game<'a> {
             c.choices = choices;
             c.topic_list = def.choices.is_empty();
         }
+        self.dialogue_transition();
     }
 
     /// StartConversation with the player from `speaker` farther than [`WALK_UP_REACH`]
@@ -1007,6 +1065,13 @@ impl<'a> Game<'a> {
             Some(d) => d,
             None => data.choice_text(c.topic, c.info),
         }
+    }
+
+    /// [`Game::choice_text`] as the menu shows it, its player string codes expanded
+    /// ([`Game::expand_codes`]; FalloutNV.esm's topics read "The name's &PCName;."
+    /// [observed]).
+    pub fn shown_choice_text(&self, c: &Choice) -> String {
+        self.expand_codes(self.choice_text(c))
     }
 
     /// Whether the player is dim: Intelligence at or below
@@ -1407,6 +1472,24 @@ impl ListKey {
 
 #[cfg(test)]
 mod list_order_tests {
+    #[test]
+    fn the_conversation_stamp_tells_screens_apart() {
+        use super::{conversation_stamp, Conversation, Line};
+        use fnv_sim::FormId;
+        let line = |response| Line { topic: FormId(1), info: FormId(2), response, remaining: 1.0 };
+        let talk = |l: Option<Line>, lines| Conversation { actor: FormId(3), through: None, line: l, choices: Vec::new(), topic_list: false, lines, then: None, ending: false };
+        assert_eq!(conversation_stamp(7, None), 0);
+        let first = conversation_stamp(7, Some(&talk(Some(line(0)), 1)));
+        assert_ne!(first, 0);
+        assert_eq!(first, conversation_stamp(7, Some(&talk(Some(line(0)), 1))));
+        // The next response of the line; the choices after it; the next line; the same actor's
+        // next conversation at the same place.
+        assert_ne!(first, conversation_stamp(7, Some(&talk(Some(line(1)), 1))));
+        assert_ne!(first, conversation_stamp(7, Some(&talk(None, 1))));
+        assert_ne!(first, conversation_stamp(7, Some(&talk(Some(line(0)), 2))));
+        assert_ne!(first, conversation_stamp(8, Some(&talk(Some(line(0)), 1))));
+    }
+
     use super::ListKey;
 
     #[test]

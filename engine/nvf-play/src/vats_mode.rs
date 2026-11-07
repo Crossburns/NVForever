@@ -27,6 +27,9 @@
 //!   `final_chance`: the part's BPTD To Hit Chance, the weapon's skill, the spread at the
 //!   mark's distance, the player's to-hit perks, Concentrated Fire, the 95 % cap) is worked
 //!   out again every frame and drawn as "NN%" beside its "x" ([`draw_labels`]).
+//!   Before marking, the actor under or nearest the crosshair shows every body part's
+//!   chance on the part, the same work as a mark's ([`spot_on`]), the part under the
+//!   crosshair bracketed and brighter ([`draw_previews`], §17.5).
 //! - **Helpers and AP perks** (§18): with Mysterious Stranger or Miss Fortune, a mark's
 //!   attack may bring the helper beside the player, who fires one shot of their own
 //!   weapon at the mark (an `ActorFire`) and fades away; Friendly Help doubles the odds.
@@ -53,7 +56,7 @@
 //! Log lines (smoke tests read them): `vats mode: on (…)`, `vats mode: refused: …`,
 //! `vats mode: marked …`, `vats mode: mark refused: …`, `vats mode: unmarked …`,
 //! `vats mode: firing …`, `vats mode: shot k of n …` (`burst`, `throw`, `swing` for the
-//! other kinds, and `closing on …` before a swing), `vats mode: off (…)`, and at exit
+//! other kinds, and `closing on …` before a swing), `vats mode: preview …`, `vats mode: off (…)`, and at exit
 //! `vats mode summary: …`.
 
 use bevy::ecs::system::SystemParam;
@@ -370,6 +373,10 @@ pub struct VatsMode {
     regen_mult: Option<f64>,
     /// SOUN FormIDs by Editor ID, found on first use.
     sounds: Option<HashMap<String, FormId>>,
+    /// Every body part's chance on the actor under or nearest the crosshair, before it is
+    /// marked (§17.5), and the parts list it is built from (kept for its room).
+    preview: Preview,
+    preview_list: Vec<Option<u8>>,
     pub stats: VatsStats,
 }
 
@@ -756,6 +763,7 @@ fn update(
         (Phase::Marking, None) => {
             follow(v, &phys);
             rechance(v, &combat, player.eye());
+            preview(v, &combat, &parts, script.as_deref_mut(), &mut sim, &mut phys, &player, &control);
             if keys.toggle {
                 end(v, "V pressed again", &mut sounds);
             } else if keys.unmark {
@@ -864,6 +872,7 @@ fn try_enter(v: &mut VatsMode, combat: &Combat, mut script: Option<&mut ScriptSt
     }
     v.phase = Phase::Marking;
     v.spots.clear();
+    v.preview = Preview::default();
     v.run = None;
     v.fired = 0;
     v.started = 0;
@@ -917,6 +926,7 @@ fn end(v: &mut VatsMode, why: &str, sounds: &mut Sounds) {
     v.entered_at = None;
     v.queue = MarkQueue::default();
     v.spots.clear();
+    v.preview = Preview::default();
     v.blow_lands = false;
 }
 
@@ -937,6 +947,257 @@ fn follow(v: &mut VatsMode, phys: &PhysState) {
             s.point = p;
         }
     }
+}
+
+/// Why an actor cannot be marked (§6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bar {
+    Dead,
+    /// Cloaked, and the player has no Enhanced Sensors.
+    Cloaked,
+    /// No VATS Melee, with a melee weapon in hand.
+    NoVatsMelee,
+}
+
+/// Whether `actor` may be marked (§6): `Ok(true)` when it is cloaked and Enhanced Sensors
+/// lets it be marked all the same.
+fn barred(v: &VatsMode, mut script: Option<&mut ScriptState>, sim: &mut SimState, actor: u32) -> Result<bool, Bar> {
+    if crate::combat::is_dead(script.as_deref(), actor) {
+        return Err(Bar::Dead);
+    }
+    // A cloaked actor (Invisibility or Chameleon at least 1: a Stealth Boy, a Nightkin's
+    // cloak) is not marked unless the player has Enhanced Sensors, whose entry point 69 Has
+    // Improved Detection gives "VATS targeting of cloaked enemies" [documented: GECK wiki
+    // Perk entry points; hypothesis: the actor values are what "cloaked" reads]
+    // (perk-entry-points.md §13).
+    let mut cloaked = false;
+    if let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
+        let (c, sensors) = crate::script::with_world(rt, sim, |rt| {
+            let g = &mut rt.game;
+            let av = |g: &mut fnv_game::Game, v: u16| fnv_game::functions::actor_value_capped(g, FormId(actor), v);
+            let cloaked = av(g, fnv_game::detection::INVISIBILITY) >= 1.0 || av(g, fnv_game::detection::CHAMELEON) >= 1.0;
+            (cloaked, cloaked && g.player_has_entry(fnv_game::perks::HAS_IMPROVED_DETECTION))
+        });
+        if c && !sensors {
+            return Err(Bar::Cloaked);
+        }
+        cloaked = c;
+    }
+    // "The player cannot go into VATS with this NPC if he has a melee weapon equipped"
+    // [documented: GECK wiki Category:NPC, No VATS Melee] (actor-flags.md §1).
+    let melee = v.weapon.as_ref().is_some_and(|w| w.style == AttackStyle::Melee);
+    // The base from the simulation: the game's world is not attached outside its turn.
+    let flagged = melee
+        && sim.base_of(actor).is_some_and(|b| script.as_deref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| { let (seed, at) = sim.pick(&rt.game, FormId(actor)); rt.game.data.no_vats_melee(b, seed, at) }));
+    if flagged {
+        return Err(Bar::NoVatsMelee);
+    }
+    Ok(cloaked)
+}
+
+/// What a mark on `actor`'s `part` at `point` is (§17.2, §17.3): the names, the part's
+/// base chance and size, the to-hit perks seeing it as the shot, and its chance now; with
+/// the perks' names for the log. A mark and the preview of a part (§17.5) both come from
+/// here, so the preview's figure is the one the mark then shows.
+#[allow(clippy::too_many_arguments)]
+fn spot_on(v: &VatsMode, combat: &Combat, parts: &ActorParts, script: Option<&mut ScriptState>, sim: &mut SimState, player: &Player, actor: u32, part: Option<u8>, point: [f32; 3], earlier: u32) -> (Spot, Vec<String>) {
+    let bp = combat.vats_part(parts, actor, part);
+    let part_name = match (part, bp.as_ref().and_then(|b| b.name.clone())) {
+        (Some(crate::hitvol::WEAPON_PART), _) => "its weapon".to_string(),
+        (_, Some(n)) => n,
+        (Some(p), None) => format!("part {p}"),
+        (None, None) => "whole".to_string(),
+    };
+    let condition = bp.as_ref().and_then(|b| b.actor_value.as_deref()).and_then(fnv_game::combat::limb_condition);
+    let name = sim.base_of(actor).and_then(|b| sim.name(b).map(str::to_string)).unwrap_or_else(|| "?".into());
+    // The part's base chance (§17.2): its BPTD To Hit Chance; an actor without
+    // parts, or the weapon it holds, our own.
+    let (base, size) = match (part, bp.as_ref()) {
+        (Some(WEAPON_PART), _) => (HELD_WEAPON_TO_HIT, SIZE_HELD_WEAPON),
+        (_, Some(b)) => (b.to_hit_chance as f32, fnv_combat::vats::part_size(b.actor_value.as_deref())),
+        (_, None) => (WHOLE_TO_HIT, SIZE_TORSO),
+    };
+    // The to-hit perks see this mark as the shot (§17.3).
+    let shot = v.weapon.as_ref().map(|w| fnv_game::vats::VatsShot {
+        weapon: w.id,
+        target: FormId(actor),
+        distance: crate::combat::distance(player.eye(), point) as f64,
+        condition,
+        success: false,
+        height: (point[2] - player.feet[2]) as f64,
+    });
+    let (perks, names) = match (shot, script.and_then(|s| s.rt.as_mut())) {
+        (Some(shot), Some(rt)) => with_world(rt, sim, |rt| {
+            let perks = rt.game.vats_hit_perks(shot);
+            let names: Vec<String> = perks.ops.iter().map(|(p, _)| rt.game.data.name(*p)).collect();
+            (perks, names)
+        }),
+        _ => (HitPerks::default(), Vec::new()),
+    };
+    let mut spot = Spot { point, name, part: part_name, condition, base, size, perks, earlier, chance: 0.0, landed: None };
+    if let Some(w) = v.weapon.as_ref() {
+        spot.chance = chance_of(&spot, w, player.eye(), combat.vats_cone);
+    }
+    (spot, names)
+}
+
+/// One body part's chance before it is marked (§17.5).
+#[derive(Debug, Clone, Default)]
+struct PreviewPart {
+    /// The part (`None`: the whole actor, one capsule).
+    part: Option<u8>,
+    /// What a mark on it would be: its point now and its chance now.
+    spot: Spot,
+    /// Drawn this frame: in sight and not marked already.
+    shown: bool,
+    /// The part the crosshair is on: a click marks it.
+    under: bool,
+}
+
+/// The actor whose parts' chances are shown before marking (§17.5).
+#[derive(Debug, Clone, Default)]
+struct Preview {
+    actor: Option<u32>,
+    parts: Vec<PreviewPart>,
+    /// Real seconds when the parts (and their perks) were last worked out.
+    built_at: f64,
+}
+
+/// The preview's actor, when the crosshair is not on one, is the nearest valid actor
+/// within this angle of the crosshair's line, degrees [design].
+pub const PREVIEW_CONE: f32 = 10.0;
+/// The preview's parts, their names and their perks are worked out again this often,
+/// real seconds (their points and chances every frame) [design: the perks' conditions
+/// may read the distance; four times a second keeps them as fresh as the eye can tell].
+const PREVIEW_REBUILD: f64 = 0.25;
+/// The most preview labels drawn at once [engineering choice: a skeleton's parts and its
+/// weapon].
+const MAX_PREVIEW: usize = 24;
+
+/// The shots' filter: through what the character passes and the actors' walking
+/// capsules (their hit volumes are their bodies).
+fn shot_filter(phys: &PhysState) -> Filter {
+    let mut filter = Filter { exclude_layers: layers::shot_ignores(), ..Default::default() };
+    filter.exclude.extend(phys.npcs.values().map(|b| b.ch.key()));
+    filter
+}
+
+/// The actor to preview (§17.5) and, when the crosshair is on it, the part it is on: the
+/// one under the crosshair, else the nearest living actor with a hit volume within
+/// [`PREVIEW_CONE`] of the crosshair's line, in reach and in sight.
+fn preview_target(phys: &mut PhysState, script: Option<&ScriptState>, from: [f32; 3], dir: [f32; 3], reach: f32, filter: &Filter) -> Option<(u32, Option<Option<u8>>)> {
+    if let Some(h) = phys.ray(from, dir, reach, filter.clone()) {
+        if let Owner::Actor { form_id, part, .. } = h.owner {
+            if !crate::combat::is_dead(script, form_id) {
+                return Some((form_id, Some((part != fnv_phys::actors::WHOLE).then_some(part))));
+            }
+        }
+    }
+    let cos_cone = PREVIEW_CONE.to_radians().cos();
+    let mut best: Option<(f32, u32, [f32; 3])> = None;
+    for actor in phys.world.actor_volumes() {
+        if actor == FormId::PLAYER_REF.0 {
+            continue;
+        }
+        let Some(p) = phys.world.actor_aim_point(actor) else { continue };
+        let d = [p[0] - from[0], p[1] - from[1], p[2] - from[2]];
+        let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        if !(1.0..=reach).contains(&len) {
+            continue;
+        }
+        let cos = (d[0] * dir[0] + d[1] * dir[1] + d[2] * dir[2]) / len;
+        if cos < cos_cone || best.is_some_and(|b| cos <= b.0) || crate::combat::is_dead(script, actor) {
+            continue;
+        }
+        best = Some((cos, actor, p));
+    }
+    let (_, actor, p) = best?;
+    in_sight(phys, from, p, filter).then_some((actor, None))
+}
+
+/// Whether the line from `from` to `to` meets no world before it: an actor's volume in
+/// the way does not hide it [design].
+fn in_sight(phys: &mut PhysState, from: [f32; 3], to: [f32; 3], filter: &Filter) -> bool {
+    let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    if len < 1.0 {
+        return true;
+    }
+    let dir = [d[0] / len, d[1] / len, d[2] / len];
+    match phys.ray(from, dir, len, filter.clone()) {
+        None => true,
+        Some(h) => matches!(h.owner, Owner::Actor { .. }) || h.distance >= len - 2.0,
+    }
+}
+
+/// The parts an actor's preview shows: each body part its hit volume has a capsule for
+/// (the weapon it holds too), in the body part data's order; the whole actor with one
+/// capsule.
+fn parts_of(phys: &PhysState, parts: &ActorParts, actor: u32, out: &mut Vec<Option<u8>>) {
+    out.clear();
+    if phys.world.actor_part_count(actor) > 0 {
+        if let Some(posed) = parts.by_ref.get(&actor) {
+            for s in &posed.segments {
+                if !out.contains(&Some(s.part)) && phys.world.actor_part_center(actor, s.part).is_some() {
+                    out.push(Some(s.part));
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push(None);
+    }
+}
+
+/// While marking, every body part's chance on the previewed actor (§17.5): the actor and
+/// its parts' spots are worked out again when the actor changes and every
+/// [`PREVIEW_REBUILD`]; their points, chances and sight every frame.
+#[allow(clippy::too_many_arguments)]
+fn preview(v: &mut VatsMode, combat: &Combat, parts: &ActorParts, mut script: Option<&mut ScriptState>, sim: &mut SimState, phys: &mut PhysState, player: &Player, control: &PlayerControl) {
+    let (from, dir) = Crosshair::ray(control.crosshair.as_ref(), player.eye(), player.look_dir());
+    let reach = v.weapon.as_ref().map_or(REACH, |w| w.reach);
+    let filter = shot_filter(phys);
+    let target = preview_target(phys, script.as_deref(), from, dir, reach, &filter);
+    let actor = target.map(|t| t.0);
+    let under = target.and_then(|t| t.1);
+    let mut pv = std::mem::take(&mut v.preview);
+    if actor != pv.actor || v.now - pv.built_at >= PREVIEW_REBUILD {
+        let changed = actor != pv.actor;
+        pv.actor = actor;
+        pv.built_at = v.now;
+        pv.parts.clear();
+        if let Some(actor) = actor.filter(|&a| barred(v, script.as_deref_mut(), sim, a).is_ok()) {
+            let mut list = std::mem::take(&mut v.preview_list);
+            parts_of(phys, parts, actor, &mut list);
+            for &part in list.iter().take(MAX_PREVIEW) {
+                let Some(point) = point_of(phys, actor, part) else { continue };
+                let (spot, _) = spot_on(v, combat, parts, script.as_deref_mut(), sim, player, actor, part, point, 0);
+                pv.parts.push(PreviewPart { part, spot, shown: false, under: false });
+            }
+            v.preview_list = list;
+            if changed {
+                let name = pv.parts.first().map_or("?", |p| p.spot.name.as_str());
+                let figures: Vec<String> = pv.parts.iter().map(|p| format!("{} {}", p.spot.part, chance_text(p.spot.chance))).collect();
+                info!("vats mode: preview {name} {actor:08X}: {}", figures.join(", "));
+            }
+        }
+    }
+    if let (Some(actor), Some(w)) = (pv.actor, v.weapon.as_ref()) {
+        let eye = player.eye();
+        let one = pv.parts.len() == 1;
+        for p in &mut pv.parts {
+            if let Some(at) = point_of(phys, actor, p.part) {
+                p.spot.point = at;
+            }
+            p.spot.chance = chance_of(&p.spot, w, eye, combat.vats_cone);
+            // With one capsule the whole actor is under the crosshair whenever it is.
+            p.under = under.is_some_and(|u| one || u == p.part);
+            // A part marked already shows its mark's label only.
+            let marked = v.queue.marks().iter().any(|m| m.target.0 == actor && m.part == p.part);
+            p.shown = !marked && in_sight(phys, from, p.spot.point, &filter);
+        }
+    }
+    v.preview = pv;
 }
 
 /// Left click: mark the actor (and body part) under the crosshair (§6, §7.2).
@@ -981,88 +1242,40 @@ fn mark(
         info!("vats mode: nothing to mark under the crosshair");
         return;
     };
-    if crate::combat::is_dead(script.as_deref(), actor) {
-        info!("vats mode: {actor:08X} is dead: not marked");
-        return;
-    }
-    // A cloaked actor (Invisibility or Chameleon at least 1: a Stealth Boy, a Nightkin's
-    // cloak) is not marked unless the player has Enhanced Sensors, whose entry point 69 Has
-    // Improved Detection gives "VATS targeting of cloaked enemies" [documented: GECK wiki
-    // Perk entry points; hypothesis: the actor values are what "cloaked" reads]
-    // (perk-entry-points.md §13).
-    if let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
-        let (cloaked, sensors) = crate::script::with_world(rt, sim, |rt| {
-            let g = &mut rt.game;
-            let av = |g: &mut fnv_game::Game, v: u16| fnv_game::functions::actor_value_capped(g, FormId(actor), v);
-            let cloaked = av(g, fnv_game::detection::INVISIBILITY) >= 1.0 || av(g, fnv_game::detection::CHAMELEON) >= 1.0;
-            (cloaked, cloaked && g.player_has_entry(fnv_game::perks::HAS_IMPROVED_DETECTION))
-        });
-        if cloaked && !sensors {
+    match barred(v, script.as_deref_mut(), sim, actor) {
+        Err(Bar::Dead) => {
+            info!("vats mode: {actor:08X} is dead: not marked");
+            return;
+        }
+        Err(Bar::Cloaked) => {
             v.stats.refused += 1;
             info!("vats mode: {actor:08X} is cloaked: not marked (Enhanced Sensors would let the player mark it)");
             return;
         }
-        if cloaked {
-            info!("vats mode: {actor:08X} is cloaked: marked through Enhanced Sensors");
+        Err(Bar::NoVatsMelee) => {
+            v.stats.refused += 1;
+            info!("vats mode: {actor:08X} is flagged No VATS Melee: not marked with a melee weapon");
+            return;
         }
-    }
-    // "The player cannot go into VATS with this NPC if he has a melee weapon equipped"
-    // [documented: GECK wiki Category:NPC, No VATS Melee] (actor-flags.md §1).
-    let melee = v.weapon.as_ref().is_some_and(|w| w.style == AttackStyle::Melee);
-    // The base from the simulation: the game's world is not attached outside its turn.
-    let flagged = sim.base_of(actor).is_some_and(|b| script.as_deref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| { let (seed, at) = sim.pick(&rt.game, FormId(actor)); rt.game.data.no_vats_melee(b, seed, at) }));
-    if melee && flagged {
-        v.stats.refused += 1;
-        info!("vats mode: {actor:08X} is flagged No VATS Melee: not marked with a melee weapon");
-        return;
+        Ok(true) => info!("vats mode: {actor:08X} is cloaked: marked through Enhanced Sensors"),
+        Ok(false) => {}
     }
     let ap_now = player_ap(script.as_deref_mut(), sim).map_or(f32::INFINITY, |a| a.0);
     let earlier = v.queue.marks().iter().filter(|m| m.target.0 == actor && m.part == part).count() as u32;
     match v.queue.push(FormId(actor), part, ap_now) {
         Ok(k) => {
-            let bp = combat.vats_part(parts, actor, part);
-            let part_name = match (part, bp.as_ref().and_then(|b| b.name.clone())) {
-                (Some(crate::hitvol::WEAPON_PART), _) => "its weapon".to_string(),
-                (_, Some(n)) => n,
-                (Some(p), None) => format!("part {p}"),
-                (None, None) => "whole".to_string(),
-            };
-            let condition = bp.as_ref().and_then(|b| b.actor_value.as_deref()).and_then(fnv_game::combat::limb_condition);
-            let name = sim.base_of(actor).and_then(|b| sim.name(b).map(str::to_string)).unwrap_or_else(|| "?".into());
             let point = point_of(phys, actor, part).or(hit.map(|h| h.point)).unwrap_or(from);
             v.stats.marks += 1;
-            // The part's base chance (§17.2): its BPTD To Hit Chance; an actor without
-            // parts, or the weapon it holds, our own.
-            let (base, size) = match (part, bp.as_ref()) {
-                (Some(WEAPON_PART), _) => (HELD_WEAPON_TO_HIT, SIZE_HELD_WEAPON),
-                (_, Some(b)) => (b.to_hit_chance as f32, fnv_combat::vats::part_size(b.actor_value.as_deref())),
-                (_, None) => (WHOLE_TO_HIT, SIZE_TORSO),
-            };
-            // The to-hit perks see this mark as the shot (§17.3).
-            let shot = v.weapon.as_ref().map(|w| fnv_game::vats::VatsShot {
-                weapon: w.id,
-                target: FormId(actor),
-                distance: crate::combat::distance(player.eye(), point) as f64,
-                condition,
-                success: false,
-                height: (point[2] - player.feet[2]) as f64,
-            });
-            let (perks, names) = match (shot, script.and_then(|s| s.rt.as_mut())) {
-                (Some(shot), Some(rt)) => with_world(rt, sim, |rt| {
-                    let perks = rt.game.vats_hit_perks(shot);
-                    let names: Vec<String> = perks.ops.iter().map(|(p, _)| rt.game.data.name(*p)).collect();
-                    (perks, names)
-                }),
-                _ => (HitPerks::default(), Vec::new()),
-            };
-            let mut spot = Spot { point, name, part: part_name, condition, base, size, perks, earlier, chance: 0.0, landed: None };
-            if let Some(w) = v.weapon.as_ref() {
-                spot.chance = chance_of(&spot, w, player.eye(), combat.vats_cone);
-            }
+            let (spot, names) = spot_on(v, combat, parts, script, sim, player, actor, part, point, earlier);
             let perk_text = if names.is_empty() { String::new() } else { format!(", perks {}", names.join(", ")) };
             let cf = if spot.perks.concentrated_fire && earlier > 0 { format!(", concentrated fire +{earlier}") } else { String::new() };
+            // What the preview showed for this part (§17.5): the same figure.
+            let previewed = match v.preview.parts.iter().find(|p| earlier == 0 && v.preview.actor == Some(actor) && p.part == part) {
+                Some(p) => format!("; previewed {}", chance_text(p.spot.chance)),
+                None => String::new(),
+            };
             info!(
-                "vats mode: marked {} {actor:08X} ({}), mark {k}; {:.0} AP reserved, {} AP left; {:.0}% to hit (base {:.0}{perk_text}{cf}); {:.0} units, skill {:.0}, cone {}",
+                "vats mode: marked {} {actor:08X} ({}), mark {k}; {:.0} AP reserved, {} AP left; {:.0}% to hit (base {:.0}{perk_text}{cf}); {:.0} units, skill {:.0}, cone {}{previewed}",
                 spot.name,
                 spot.part,
                 v.queue.reserved(),
@@ -1443,6 +1656,9 @@ fn tell_scripts(v: &VatsMode, script: Option<&mut ScriptState>, player: &Player)
 struct MarkCross(usize);
 
 fn spawn_marks(mut commands: Commands) {
+    for i in 0..MAX_PREVIEW {
+        commands.spawn((Node { position_type: PositionType::Absolute, ..default() }, Visibility::Hidden, GlobalZIndex(5), PreviewLabel { i, shown: String::new(), width: 0.0 }));
+    }
     for i in 0..MAX_DRAWN {
         commands.spawn((Node { position_type: PositionType::Absolute, ..default() }, Visibility::Hidden, GlobalZIndex(5), MarkLabel { i, shown: String::new() }));
     }
@@ -1551,6 +1767,121 @@ fn draw_labels(
     }
 }
 
+/// A previewed part's chance (§17.5): `shown` is the text its glyphs now spell, `width`
+/// that text's width in interface units.
+#[derive(Component)]
+struct PreviewLabel {
+    i: usize,
+    shown: String,
+    width: f32,
+}
+
+/// The part under the crosshair's preview: the amber lifted this far towards white,
+/// brighter than the marks' [design].
+const PREVIEW_UNDER_LIFT: f32 = 0.75;
+const PREVIEW_UNDER_COLOUR: Color = Color::srgb(
+    crate::interface::AMBER[0] + (1.0 - crate::interface::AMBER[0]) * PREVIEW_UNDER_LIFT,
+    crate::interface::AMBER[1] + (1.0 - crate::interface::AMBER[1]) * PREVIEW_UNDER_LIFT,
+    crate::interface::AMBER[2] + (1.0 - crate::interface::AMBER[2]) * PREVIEW_UNDER_LIFT,
+);
+
+impl VatsMode {
+    /// The preview labels to draw (§17.5), while marking only: each shown part's point,
+    /// its text and whether the crosshair is on it.
+    fn previewed(&self) -> impl Iterator<Item = (&PreviewPart, [f32; 3])> {
+        let on = self.phase == Phase::Marking;
+        self.preview.parts.iter().filter(move |p| on && p.shown).map(|p| (p, p.spot.point))
+    }
+}
+
+/// A previewed part's label (§17.5): its name in small letters and its chance,
+/// "head 41%"; the whole actor's chance alone; the part under the crosshair in brackets,
+/// "[head 41%]" [design: NVForever's own wording].
+pub fn preview_text(out: &mut String, part: &str, chance: f32, under: bool) {
+    use std::fmt::Write;
+    out.clear();
+    if under {
+        out.push('[');
+    }
+    match part {
+        "whole" => {}
+        "its weapon" => out.push_str("weapon "),
+        _ => {
+            for c in part.chars() {
+                out.extend(c.to_lowercase());
+            }
+            out.push(' ');
+        }
+    }
+    let _ = write!(out, "{:.0}%", chance.clamp(0.0, 100.0));
+    if under {
+        out.push(']');
+    }
+}
+
+/// Put each previewed part's chance on its point (§17.5): centred on it, a label that
+/// would overlap one placed before it moved down a line, so a far actor's labels stay
+/// apart.
+#[allow(clippy::too_many_arguments)]
+fn draw_previews(
+    mut commands: Commands,
+    vats: Res<VatsMode>,
+    windows: Query<&Window>,
+    cameras: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
+    data: Option<Res<GameData>>,
+    mut images: ResMut<Assets<Image>>,
+    formats: Option<Res<CompressedImageFormatSupport>>,
+    mut face_: Local<Option<Face>>,
+    mut text: Local<String>,
+    mut placed: Local<Vec<[f32; 4]>>,
+    mut labels: Query<(Entity, &mut PreviewLabel, &mut Node, &mut Visibility)>,
+) {
+    let height = windows.iter().next().map_or(720.0, |w| w.height());
+    let px = height / 960.0;
+    let tall = LABEL_HEIGHT * px;
+    let camera = cameras.single().ok();
+    placed.clear();
+    let mut shown = vats.previewed();
+    // The labels in their order (the query's is not theirs).
+    let mut order: [Option<Entity>; MAX_PREVIEW] = [None; MAX_PREVIEW];
+    for (e, label, _, _) in &labels {
+        if let Some(slot) = order.get_mut(label.i) {
+            *slot = Some(e);
+        }
+    }
+    for e in order.into_iter().flatten() {
+        let Ok((e, mut label, mut node, mut vis)) = labels.get_mut(e) else { continue };
+        let next = shown.next();
+        let at = next.zip(camera).and_then(|((_, p), (cam, t))| cam.world_to_viewport(t, space::to_bevy(p)).ok());
+        let want = if at.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        let (Some(at), Some((p, _))) = (at, next) else { continue };
+        preview_text(&mut text, &p.spot.part, p.spot.chance, p.under);
+        if label.shown != *text {
+            let f = face_.get_or_insert_with(|| font_face(LABEL_FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
+            let colour = if p.under { PREVIEW_UNDER_COLOUR } else { LABEL_COLOUR };
+            let line = f.font.lines(&text, None).into_iter().next();
+            label.width = line.as_ref().map_or(0.0, |l| l.width);
+            commands.entity(e).despawn_related::<Children>().with_children(|c| {
+                if let Some(line) = &line {
+                    set_line(c, f, line, 0.0, LABEL_BASE, colour);
+                }
+            });
+            label.shown.clone_from(&text);
+        }
+        let w = label.width * px;
+        let (x, mut y) = (at.x - w / 2.0, at.y - tall / 2.0);
+        while placed.iter().any(|r| x < r[0] + r[2] && r[0] < x + w && y < r[1] + r[3] && r[1] < y + tall) {
+            y += tall;
+        }
+        placed.push([x, y, w, tall]);
+        node.left = Val::Px(x);
+        node.top = Val::Px(y);
+    }
+}
+
 fn report(mut exit: MessageReader<AppExit>, vats: Res<VatsMode>) {
     if exit.read().next().is_none() {
         return;
@@ -1577,7 +1908,7 @@ impl Plugin for VatsModePlugin {
             .add_systems(Startup, spawn_marks)
             .add_systems(Update, read_keys.after(PlaySet::Input).after(crate::control::enforce_locks).after(crate::player::encumbered_walks).before(PlaySet::Physics))
             .add_systems(Update, update.in_set(PlaySet::Activation).in_set(VatsUpdate).before(crate::combat::fire))
-            .add_systems(Update, (draw_marks, draw_labels).after(PlaySet::Activation))
+            .add_systems(Update, (draw_marks, draw_labels, draw_previews).after(PlaySet::Activation))
             .add_systems(Last, report);
     }
 }
@@ -1634,6 +1965,42 @@ mod tests {
         assert_eq!(chance_of(&again, &gun, [0.0; 3], Some(2.0)), near);
         let cf = Spot { perks: HitPerks { ops: Vec::new(), concentrated_fire: true }, ..again };
         assert!((chance_of(&cf, &gun, [0.0; 3], Some(2.0)) - (near + 10.0)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_preview_figure_is_the_marks_chance() {
+        let gun = InHand { id: FormId(1), reach: REACH, style: AttackStyle::Single, melee_reach: 0.0, sight_fov: 0.0, skill: 45.0, hit: HitTuning::default() };
+        let head = Spot { point: [900.0, 0.0, 60.0], part: "Head".into(), base: 30.0, size: 0.4, ..Default::default() };
+        let mut v = VatsMode { phase: Phase::Marking, queue: MarkQueue::new(20.0, 1, 100), weapon: Some(gun.clone()), ..Default::default() };
+        let previewed = chance_of(&head, &gun, [0.0; 3], Some(1.5));
+        v.preview = Preview { actor: Some(7), parts: vec![PreviewPart { part: Some(1), spot: Spot { chance: previewed, ..head.clone() }, shown: true, under: true }], built_at: 0.0 };
+        // Marked, the part's chance is worked out again the marks' way: the same figure.
+        v.queue.push(FormId(7), Some(1), f32::INFINITY).unwrap();
+        v.spots.push(head);
+        let combat_cone = Some(1.5);
+        for s in &mut v.spots {
+            s.chance = chance_of(s, v.weapon.as_ref().unwrap(), [0.0; 3], combat_cone);
+        }
+        assert_eq!(chance_text(v.spots[0].chance), chance_text(previewed));
+        assert_eq!(v.previewed().count(), 1);
+        v.phase = Phase::Firing;
+        assert_eq!(v.previewed().count(), 0, "nothing is previewed while firing");
+        v.phase = Phase::Marking;
+        v.preview.parts[0].shown = false;
+        assert_eq!(v.previewed().count(), 0, "a hidden or marked part is not drawn");
+    }
+
+    #[test]
+    fn a_preview_label_names_the_part() {
+        let mut t = String::new();
+        preview_text(&mut t, "Head", 41.4, false);
+        assert_eq!(t, "head 41%");
+        preview_text(&mut t, "Left Arm", 7.6, true);
+        assert_eq!(t, "[left arm 8%]");
+        preview_text(&mut t, "whole", 62.0, false);
+        assert_eq!(t, "62%");
+        preview_text(&mut t, "its weapon", 120.0, false);
+        assert_eq!(t, "weapon 100%");
     }
 
     #[test]

@@ -44,6 +44,41 @@ use bevy::prelude::*;
 use bevy::anti_alias::fxaa::Fxaa;
 use bevy::anti_alias::smaa::Smaa;
 use bevy::render::camera::{MipBias, TemporalJitter};
+use crate::fsr::{FsrQuality, FsrUpscaling};
+
+/// The command line and saved settings expose the same upscaling modes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum FsrMode {
+    #[default]
+    Off,
+    NativeAa,
+    Quality,
+    Balanced,
+    Performance,
+    UltraPerformance,
+}
+
+impl FsrMode {
+    pub fn quality(self) -> Option<FsrQuality> {
+        match self {
+            Self::Off => None,
+            Self::NativeAa => Some(FsrQuality::NativeAa),
+            Self::Quality => Some(FsrQuality::Quality),
+            Self::Balanced => Some(FsrQuality::Balanced),
+            Self::Performance => Some(FsrQuality::Performance),
+            Self::UltraPerformance => Some(FsrQuality::UltraPerformance),
+        }
+    }
+}
+
+pub const FSR_CHOICES: [(&str, FsrMode); 6] = [
+    ("Off", FsrMode::Off),
+    ("Native AA", FsrMode::NativeAa),
+    ("Quality", FsrMode::Quality),
+    ("Balanced", FsrMode::Balanced),
+    ("Performance", FsrMode::Performance),
+    ("Ultra Performance", FsrMode::UltraPerformance),
+];
 
 /// The look as a whole (`--graphics`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -90,6 +125,8 @@ pub struct Graphics {
     pub sharpen: bool,
     pub anisotropic: bool,
     pub screen_aa: ScreenAa,
+    /// FSR replaces the selected AA while active; UI is drawn at output resolution.
+    pub fsr: Option<FsrQuality>,
     pub light_shafts: bool,
     pub water_reflections: bool,
     /// Water mirrors the world through the reflection camera (`reflection.rs`; on in
@@ -134,6 +171,7 @@ impl Graphics {
             // and the owner plays with 8x multisampling (docs/design/graphics-enhanced.md
             // §3.6). The shadow filter stays Bevy's default too (§3.9).
             screen_aa: ScreenAa::Off,
+            fsr: None,
             light_shafts: on,
             water_reflections: on,
             water_mirror: true,
@@ -203,7 +241,11 @@ impl Graphics {
             (self.shadow_filter == ShadowFilteringMethod::Hardware2x2, "hardware 2x2 shadow filtering"),
             (self.shadow_filter == ShadowFilteringMethod::Temporal, "temporal shadow filtering"),
         ];
-        let on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
+        let mut on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
+        if self.fsr.is_some() {
+            on.retain(|n| !matches!(*n, "FXAA" | "SMAA" | "temporal anti-aliasing"));
+            on.push("FSR 3.1 upscaling");
+        }
         if on.is_empty() {
             "vanilla (no engine-level improvements)".to_string()
         } else {
@@ -237,7 +279,13 @@ pub const AA_CHOICES: [(&str, ScreenAa, Msaa); 7] = [
     ("TAA", ScreenAa::Taa, Msaa::Off),
 ];
 
-/// The anti-aliasing choice now, an index of [`AA_CHOICES`].
+/// Whether FSR replaces native AA on this device.
+pub fn fsr_active(world: &World) -> bool {
+    world.resource::<Graphics>().fsr.is_some() && world.get_resource::<crate::fsr::FsrSupport>().is_some_and(|s| s.0)
+}
+
+/// The saved native anti-aliasing choice, an index of [`AA_CHOICES`]. It is kept
+/// while FSR is active, so switching FSR off restores it.
 pub fn aa_choice(world: &World) -> usize {
     let (aa, msaa) = (world.resource::<Graphics>().screen_aa, world.resource::<MsaaSetting>().0);
     AA_CHOICES.iter().position(|&(_, a, m)| a == aa && (aa != ScreenAa::Off || m == msaa)).unwrap_or(0)
@@ -341,7 +389,7 @@ impl Plugin for GraphicsPlugin {
         app.insert_resource(g)
             .insert_resource(MsaaSetting(self.1))
             .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
-            .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin))
+            .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin, crate::fsr::FsrPlugin))
             .add_systems(Startup, |g: Res<Graphics>| info!("graphics: {}", g.describe()))
             .add_systems(Update, (apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky)).chain());
         if let Some(ft) = self.2.clone().filter(|f| f.every > 0.0) {
@@ -577,32 +625,53 @@ fn apply(
     mut commands: Commands,
     g: Res<Graphics>,
     msaa: Res<MsaaSetting>,
+    fsr_support: Res<crate::fsr::FsrSupport>,
     mut sky: ResMut<SkyState>,
-    cams: Query<(Entity, &Msaa), With<FlyCam>>,
+    cams: Query<(Entity, &Msaa, Option<&FsrUpscaling>, Has<crate::taa::TemporalAa>, Has<Fxaa>, Has<Smaa>), With<FlyCam>>,
     suns: Query<(Entity, &DirectionalLight), With<Sun>>,
     eye: Res<crate::eye_adapt::EyeCurve>,
-    mut done: Local<Option<(Graphics, Msaa, usize)>>,
+    cutouts: Option<ResMut<nvf_assets::nif_material::BlendedCutouts>>,
+    mut done: Local<Option<(Graphics, Msaa, bool, Vec<Entity>)>>,
 ) {
     let cam_count = cams.iter().count();
-    let suns_count = suns.iter().count();
-    if cam_count == 0 || suns_count == 0 {
+    if cam_count == 0 {
         return;
     }
-    if done.as_ref().is_some_and(|(d, m, n)| *d == *g && *m == msaa.0 && *n == cam_count + suns_count) {
+    let fsr = g.fsr.filter(|_| fsr_support.0);
+    // Blended shapes that draw the same as cut-outs (the corn rows) are cut-outs for FSR,
+    // which needs their depth and motion (nif_material::BlendedCutouts).
+    if let Some(mut cutouts) = cutouts {
+        cutouts.set_if_neq(nvf_assets::nif_material::BlendedCutouts(fsr.is_some()));
+    }
+    let want_msaa = if g.screen_aa == ScreenAa::Off && fsr.is_none() { msaa.0 } else { Msaa::Off };
+    let aa_matches = cams.iter().all(|(_, actual_msaa, actual_fsr, taa, fxaa, smaa)| {
+        *actual_msaa == want_msaa && actual_fsr.map(|f| f.quality) == fsr
+            && taa == (g.screen_aa == ScreenAa::Taa && fsr.is_none())
+            && fxaa == (g.screen_aa == ScreenAa::Fxaa && fsr.is_none())
+            && smaa == (g.screen_aa == ScreenAa::Smaa && fsr.is_none())
+    });
+    let mut entities: Vec<Entity> = cams.iter().map(|c| c.0).chain(suns.iter().map(|s| s.0)).collect();
+    entities.sort_unstable();
+    if aa_matches && done.as_ref().is_some_and(|(d, m, supported, previous)| *d == *g && *m == msaa.0 && *supported == fsr_support.0 && *previous == entities) {
         return;
     }
     let first = done.is_none();
-    let msaa_changed = done.is_some_and(|(_, m, _)| m != msaa.0);
-    *done = Some((*g, msaa.0, cam_count + suns_count));
-    for (cam, cam_msaa) in &cams {
+    let msaa_changed = done.as_ref().is_some_and(|(previous, saved, supported, _)| {
+        let previous_effective = if previous.screen_aa == ScreenAa::Off && previous.fsr.filter(|_| *supported).is_none() { *saved } else { Msaa::Off };
+        previous_effective != want_msaa || *saved != msaa.0
+    });
+    let fsr_changed = done.as_ref().is_none_or(|(previous, _, supported, _)| previous.fsr.filter(|_| *supported) != fsr);
+    *done = Some((*g, msaa.0, fsr_support.0, entities));
+    for (cam, cam_msaa, ..) in &cams {
         let mut e = commands.entity(cam);
         if g.ambient_occlusion {
             e.insert(AmbientOcclusion::default());
         } else {
             e.remove::<AmbientOcclusion>();
         }
-        if g.bloom || g.sharpen {
-            e.insert(PostEffects::new(g.bloom, g.sharpen));
+        // FSR already runs its own RCAS sharpening; do not sharpen the picture twice.
+        if g.bloom || (g.sharpen && fsr.is_none()) {
+            e.insert(PostEffects::new(g.bloom, g.sharpen && fsr.is_none()));
         } else {
             e.remove::<PostEffects>();
         }
@@ -615,6 +684,9 @@ fn apply(
             e.insert((bevy::camera::Hdr, crate::post::glow_bloom(), crate::post::ImageSpaceGlow));
         } else {
             e.remove::<(bevy::post_process::bloom::Bloom, bevy::camera::Hdr, crate::post::ImageSpaceGlow)>();
+        }
+        if fsr.is_some() {
+            e.insert(bevy::camera::Hdr);
         }
         // Eye adaptation (eye_adapt.rs) and the bright pass need the HDR view; each has
         // its own switch.
@@ -629,21 +701,31 @@ fn apply(
             e.remove::<crate::post::BrightPass>();
         }
         // Anti-aliasing after the picture replaces the multisampling.
-        let want_msaa = if g.screen_aa == ScreenAa::Off { msaa.0 } else { Msaa::Off };
         if *cam_msaa != want_msaa {
             e.insert(want_msaa);
         }
-        if g.screen_aa == ScreenAa::Taa {
+        if g.screen_aa == ScreenAa::Taa && fsr.is_none() {
             e.insert(crate::taa::components());
         } else {
             e.remove::<(crate::taa::TemporalAa, TemporalJitter, MipBias)>();
         }
-        if g.screen_aa == ScreenAa::Fxaa {
+        if let Some(quality) = fsr {
+            e.insert((
+                FsrUpscaling { quality, sharpness: if g.sharpen { 0.2 } else { 0.0 } },
+                bevy::core_pipeline::prepass::DepthPrepass,
+                bevy::core_pipeline::prepass::MotionVectorPrepass,
+                TemporalJitter::default(),
+                MipBias(-1.0),
+            ));
+        } else {
+            e.remove::<(FsrUpscaling, bevy::core_pipeline::prepass::MotionVectorPrepass)>();
+        }
+        if g.screen_aa == ScreenAa::Fxaa && fsr.is_none() {
             e.insert(Fxaa::default());
         } else {
             e.remove::<Fxaa>();
         }
-        if g.screen_aa == ScreenAa::Smaa {
+        if g.screen_aa == ScreenAa::Smaa && fsr.is_none() {
             e.insert(Smaa::default());
         } else {
             e.remove::<Smaa>();
@@ -674,13 +756,116 @@ fn apply(
         info!("graphics: {}", g.describe());
     }
     if msaa_changed {
-        info!("graphics: multisampling {}", msaa_name(msaa.0));
+        info!("graphics: multisampling {}", msaa_name(want_msaa));
+    }
+    if let Some(quality) = fsr.filter(|_| fsr_changed) {
+        info!("graphics: FSR {quality:?} active; native anti-aliasing off");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn aa_app(screen_aa: ScreenAa, supported: bool) -> (App, Entity) {
+        let mut app = App::new();
+        let mut graphics = Graphics::preset(Preset::Vanilla);
+        graphics.screen_aa = screen_aa;
+        app.insert_resource(graphics)
+            .insert_resource(MsaaSetting(Msaa::Sample8))
+            .insert_resource(crate::fsr::FsrSupport(supported))
+            .init_resource::<SkyState>()
+            .init_resource::<Assets<bevy::post_process::auto_exposure::AutoExposureCompensationCurve>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<crate::eye_adapt::EyeCurve>()
+            .add_systems(Update, apply);
+        let camera = app.world_mut().spawn((FlyCam { yaw: 0.0, pitch: 0.0, speed: 800.0 }, Msaa::Sample8)).id();
+        app.world_mut().spawn((Sun, DirectionalLight::default()));
+        (app, camera)
+    }
+
+    fn assert_native_aa(app: &App, camera: Entity, selected: ScreenAa) {
+        let camera = app.world().entity(camera);
+        assert!(!camera.contains::<FsrUpscaling>());
+        assert_eq!(*camera.get::<Msaa>().unwrap(), if selected == ScreenAa::Off { Msaa::Sample8 } else { Msaa::Off });
+        assert_eq!(camera.contains::<crate::taa::TemporalAa>(), selected == ScreenAa::Taa);
+        assert_eq!(camera.contains::<TemporalJitter>(), selected == ScreenAa::Taa);
+        assert_eq!(camera.contains::<MipBias>(), selected == ScreenAa::Taa);
+        assert_eq!(camera.contains::<Fxaa>(), selected == ScreenAa::Fxaa);
+        assert_eq!(camera.contains::<Smaa>(), selected == ScreenAa::Smaa);
+        assert!(!camera.contains::<bevy::core_pipeline::prepass::MotionVectorPrepass>());
+    }
+
+    #[test]
+    fn fsr_exclusively_owns_aa_and_off_restores_the_saved_native_choice() {
+        for selected in [ScreenAa::Off, ScreenAa::Taa, ScreenAa::Fxaa, ScreenAa::Smaa] {
+            for quality in FSR_CHOICES.into_iter().filter_map(|(_, m)| m.quality()) {
+                let (mut app, camera) = aa_app(selected, true);
+                app.update();
+                assert_native_aa(&app, camera, selected);
+
+                app.world_mut().resource_mut::<Graphics>().fsr = Some(quality);
+                app.update();
+                let entity = app.world().entity(camera);
+                assert_eq!(entity.get::<FsrUpscaling>().unwrap().quality, quality);
+                assert_eq!(*entity.get::<Msaa>().unwrap(), Msaa::Off);
+                assert!(!entity.contains::<crate::taa::TemporalAa>());
+                assert!(!entity.contains::<Fxaa>());
+                assert!(!entity.contains::<Smaa>());
+                assert!(entity.contains::<TemporalJitter>());
+                assert!(entity.contains::<bevy::core_pipeline::prepass::MotionVectorPrepass>());
+                assert!(entity.contains::<bevy::core_pipeline::prepass::DepthPrepass>());
+                assert_eq!(app.world().resource::<Graphics>().screen_aa, selected, "FSR preserves the saved native AA choice");
+
+                app.world_mut().resource_mut::<Graphics>().fsr = None;
+                app.update();
+                assert_native_aa(&app, camera, selected);
+            }
+        }
+    }
+
+    #[test]
+    fn fsr_aa_is_applied_without_a_sun_to_replacement_cameras_and_repairs_conflicting_components() {
+        let (mut app, old) = aa_app(ScreenAa::Off, true);
+        let suns: Vec<Entity> = app.world_mut().query_filtered::<Entity, With<Sun>>().iter(app.world()).collect();
+        for sun in suns { app.world_mut().despawn(sun); }
+        app.world_mut().resource_mut::<Graphics>().fsr = Some(FsrQuality::NativeAa);
+        app.update();
+        assert_eq!(*app.world().get::<Msaa>(old).unwrap(), Msaa::Off);
+        assert!(app.world().get::<FsrUpscaling>(old).is_some());
+
+        app.world_mut().despawn(old);
+        let camera = app.world_mut().spawn((FlyCam { yaw: 0.0, pitch: 0.0, speed: 800.0 }, Msaa::Sample8)).id();
+        app.update();
+        assert_eq!(*app.world().get::<Msaa>(camera).unwrap(), Msaa::Off);
+        assert!(app.world().get::<FsrUpscaling>(camera).is_some(), "same camera count, different camera");
+
+        app.world_mut().entity_mut(camera).insert((Msaa::Sample8, crate::taa::TemporalAa::default(), Fxaa::default(), Smaa::default()));
+        app.update();
+        let entity = app.world().entity(camera);
+        assert_eq!(*entity.get::<Msaa>().unwrap(), Msaa::Off);
+        assert!(!entity.contains::<crate::taa::TemporalAa>() && !entity.contains::<Fxaa>() && !entity.contains::<Smaa>());
+        let tick = entity.get_ref::<FsrUpscaling>().unwrap().last_changed();
+        app.update();
+        assert_eq!(app.world().entity(camera).get_ref::<FsrUpscaling>().unwrap().last_changed(), tick, "stable frames do not reset the camera components");
+
+        app.world_mut().resource_mut::<crate::fsr::FsrSupport>().0 = false;
+        app.update();
+        assert_native_aa(&app, camera, ScreenAa::Off);
+        app.world_mut().resource_mut::<crate::fsr::FsrSupport>().0 = true;
+        app.update();
+        assert_eq!(*app.world().get::<Msaa>(camera).unwrap(), Msaa::Off);
+    }
+
+    #[test]
+    fn unsupported_fsr_keeps_native_aa_active() {
+        for selected in [ScreenAa::Off, ScreenAa::Taa, ScreenAa::Fxaa, ScreenAa::Smaa] {
+            let (mut app, camera) = aa_app(selected, false);
+            app.world_mut().resource_mut::<Graphics>().fsr = Some(FsrQuality::Quality);
+            app.update();
+            assert_native_aa(&app, camera, selected);
+        }
+    }
 
     #[test]
     fn the_moon_casts_cheaper_shadows_and_none_at_the_horizon() {

@@ -787,7 +787,8 @@
         "type": {
          "array": "u8",
          "count": 2
-        }
+        },
+        "optional": true
        },
        {
         "name": "quest_delay",
@@ -797,7 +798,7 @@
       ]
      },
      "confidence": "documented",
-     "note": "xEdit wbDefinitionsFNV.pas QUST record; SetOptionalFrom(3)"
+     "note": "xEdit wbDefinitionsFNV.pas QUST record; SetOptionalFrom(3). Two FalloutNV.esm records end after flags and priority (2 bytes): RadioTenpenny 0x0001E5CA (form version 2, flags 0x05) and GenericSupMutBehemoth 0x0002242A (form version 1, flags 0x01), so unused is optional too (#1001)"
     },
     "INDX": {
      "name": "Stage Index",
@@ -2691,6 +2692,99 @@
      "type": "formid",
      "confidence": "documented",
      "note": "fopdoc FalloutNV/Records/LSCR (tes5edit.github.io/fopdoc, from xEdit wbDefinitionsFNV.pas); an LSCT record. Observed: every LSCR of FalloutNV.esm names StandardLoadingTip"
+    }
+   }
+  },
+  "LSCT": {
+   "name": "Load Screen Type",
+   "confidence": "documented",
+   "subrecords": {
+    "DATA": {
+     "name": "Data",
+     "type": {
+      "struct": [
+       {
+        "name": "type",
+        "type": "u32"
+       },
+       {
+        "name": "x",
+        "type": "u32"
+       },
+       {
+        "name": "y",
+        "type": "u32"
+       },
+       {
+        "name": "width",
+        "type": "u32"
+       },
+       {
+        "name": "height",
+        "type": "u32"
+       },
+       {
+        "name": "orientation",
+        "type": "f32"
+       },
+       {
+        "name": "font_1",
+        "type": "u32"
+       },
+       {
+        "name": "font_1_red",
+        "type": "f32"
+       },
+       {
+        "name": "font_1_green",
+        "type": "f32"
+       },
+       {
+        "name": "font_1_blue",
+        "type": "f32"
+       },
+       {
+        "name": "font_1_alignment",
+        "type": "u32"
+       },
+       {
+        "name": "unknown_1",
+        "type": {
+         "array": "u8",
+         "count": 20
+        }
+       },
+       {
+        "name": "font_2",
+        "type": "u32"
+       },
+       {
+        "name": "font_2_red",
+        "type": "f32"
+       },
+       {
+        "name": "font_2_green",
+        "type": "f32"
+       },
+       {
+        "name": "font_2_blue",
+        "type": "f32"
+       },
+       {
+        "name": "unknown_2",
+        "type": {
+         "array": "u8",
+         "count": 4
+        }
+       },
+       {
+        "name": "stats",
+        "type": "u32"
+       }
+      ]
+     },
+     "confidence": "documented",
+     "note": "fopdoc FalloutNV/Records/LSCT (tes5edit.github.io/fopdoc, from xEdit wbDefinitionsFNV.pas): type 0 none, 1 XP progress, 2 objective, 3 tip, 4 stats; alignment 1 left, 2 centre, 4 right; the colours are floats of 0 to 255 [observed: the one LSCT of FalloutNV.esm, docs/spec-notes/loading-screens.md]. 88 bytes"
     }
    }
   },

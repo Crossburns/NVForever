@@ -63,7 +63,7 @@ use crate::script::{with_world, ScriptState};
 use crate::sfx::PlaySound;
 use crate::sim::SimState;
 use crate::{Location, PlayState, PlayWorld};
-use bevy::audio::{ChannelCount, Decodable, Sample, SampleRate, Source};
+use bevy::audio::{AudioSinkPlayback, ChannelCount, Decodable, Sample, SampleRate, Source};
 use crate::audio_out::{AddAudioSource, SoundCategory};
 use bevy::prelude::*;
 use fnv_combat::rng::SplitMix;
@@ -429,7 +429,7 @@ struct Battle {
 #[derive(Resource)]
 pub struct Music {
     /// File bytes by archive path; `None`: not there.
-    files: HashMap<String, Option<Arc<[u8]>>>,
+    pub files: crate::file_bytes::FileBytes,
     folders: HashMap<String, Vec<String>>,
     /// CELL `XCMO` and WRLD `ZNAM` by FormID.
     types: HashMap<u32, Option<u32>>,
@@ -461,12 +461,15 @@ pub struct Music {
     pub deaths: u32,
     /// Level-up music started ([`MusicCues::level_up`]).
     pub level_ups: u32,
+    /// SetMusicState 1 holds the music where it is until SetMusicState 2 (or 0)
+    /// [documented: SetMusicState].
+    paused: bool,
 }
 
 impl Default for Music {
     fn default() -> Self {
         Music {
-            files: HashMap::new(),
+            files: Default::default(),
             folders: HashMap::new(),
             types: HashMap::new(),
             regions: HashMap::new(),
@@ -489,6 +492,7 @@ impl Default for Music {
             stingers: 0,
             deaths: 0,
             level_ups: 0,
+            paused: false,
         }
     }
 }
@@ -512,6 +516,8 @@ pub struct MusicCues {
     /// default objects' Level Up Music plays once, if its file is there (#991).
     pub level_up: bool,
     requests: Vec<FormId>,
+    /// SetMusicState's requests (`fnv_game::nvse_ttw`): 0 stop, 1 pause, 2 resume.
+    states: Vec<u8>,
     next: f32,
 }
 
@@ -561,6 +567,7 @@ fn cues(
 ) {
     let Some(rt) = script.and_then(|s| s.into_inner().rt.as_mut()) else { return };
     cues.requests.append(&mut rt.game.music_requests);
+    cues.states.append(&mut rt.game.take_music_states());
     rt.game.gaps.music_any = cues.playing;
     cues.dead = rt.game.is_dead(FormId::PLAYER_REF);
     let now = time.elapsed_secs();
@@ -623,21 +630,17 @@ impl Music {
             }
             return None;
         };
-        if !self.files.contains_key(&path) {
-            let read = match vfs.read(&path) {
-                Some(Ok(b)) => Some(Arc::<[u8]>::from(b)),
-                Some(Err(e)) => {
-                    warn!("music: {path}: {e}");
-                    None
-                }
-                None => {
-                    warn!("music: {path}: not in the game's files");
-                    None
-                }
-            };
-            self.files.insert(path.clone(), read);
-        }
-        self.files[&path].clone()
+        self.files.get_or_read(&path, || match vfs.read(&path) {
+            Some(Ok(b)) => Some(Arc::<[u8]>::from(b)),
+            Some(Err(e)) => {
+                warn!("music: {path}: {e}");
+                None
+            }
+            None => {
+                warn!("music: {path}: not in the game's files");
+                None
+            }
+        })
     }
 
     /// Start what is wanted, silent, with its layers fading in.
@@ -734,6 +737,7 @@ fn play(
     (main_menu, intro): (Option<Res<crate::main_menu::MainMenu>>, Option<Res<crate::intro::Intro>>),
     sfx: Option<Res<crate::sfx::Sfx>>,
     poker: Option<Res<crate::poker::PokerScreen>>,
+    sinks: Query<&AudioSink, With<MusicSound>>,
 ) {
     let (Some(mut music), Some(places), Some(player), Some(data)) = (music, places, player, data) else { return };
     let music = &mut *music;
@@ -747,6 +751,38 @@ fn play(
     // casino's station (`crate::poker`).
     let front = main_menu.is_some_and(|m| m.open) || intro.is_some_and(|i| i.silences_music()) || poker.is_some_and(|p| p.0.is_some());
     let audible = settings.play && settings.volume > 0.0 && !front;
+
+    // SetMusicState [documented: SetMusicState]: 1 pauses what plays, 2 resumes it; 0
+    // stops the music a script played (PlayMusic), otherwise the place's music starts
+    // again from its beginning. Stopping also ends a pause [hypothesis].
+    for s in std::mem::take(&mut cues.states) {
+        match s {
+            1 => music.paused = true,
+            2 => music.paused = false,
+            _ => {
+                music.paused = false;
+                if let Some(mut old) = music.script.take() {
+                    info!("music: SetMusicState 0 stops {}", old.name);
+                    old.target = [0.0; 3];
+                    old.fade = 0.0;
+                    music.leaving.push(old);
+                } else if let Some(mut old) = music.current.take() {
+                    info!("music: SetMusicState 0 starts {} again", old.name);
+                    old.target = [0.0; 3];
+                    old.fade = 0.0;
+                    music.leaving.push(old);
+                }
+            }
+        }
+        info!("music: SetMusicState {s}{}", if music.paused { ", paused" } else { "" });
+    }
+    for sink in &sinks {
+        match (music.paused, sink.is_paused()) {
+            (true, false) => sink.pause(),
+            (false, true) => sink.play(),
+            _ => {}
+        }
+    }
 
     // Music scripts asked for: beside the place's music.
     for m in std::mem::take(&mut cues.requests) {
@@ -1052,6 +1088,13 @@ fn report(mut exit: MessageReader<AppExit>, music: Option<Res<Music>>) {
 
 pub struct MusicPlugin;
 
+/// Let go of the music's files nothing plays ([`crate::file_bytes`]).
+fn release_files(real: Res<Time<Real>>, limits: Option<Res<nvf_assets::KeepLimits>>, x: Option<ResMut<Music>>) {
+    if let Some(mut x) = x {
+        x.files.sweep(real.elapsed_secs_f64(), crate::file_bytes::limits(limits));
+    }
+}
+
 impl Plugin for MusicPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MusicSettings>()
@@ -1061,7 +1104,7 @@ impl Plugin for MusicPlugin {
             .add_systems(Startup, init)
             // Its stingers are sound effects: before sfx plays them (crate::sfx::SfxSet).
             .add_systems(Update, (cues.after(crate::PlaySet::Scripts), play.after(crate::PlaySet::Activation)).chain().before(crate::sfx::SfxSet))
-            .add_systems(Last, report);
+            .add_systems(Last, (release_files, report));
         crate::settings::add_setting(
             app,
             crate::settings::Setting {

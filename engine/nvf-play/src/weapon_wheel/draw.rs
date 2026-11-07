@@ -360,7 +360,9 @@ fn draw(
     let mut slice = |m: &mut ChildSpawnerCommands, u: SliceUniform| {
         m.spawn((at(0.0, 0.0, SIZE, SIZE), MaterialNode(materials.add(SliceMaterial { u }))));
     };
-    commands.spawn((WheelRoot, full, GlobalZIndex(105))).with_children(|r| {
+    // At the UI scale the wheel keeps to the view's middle (#1631); the darkening above
+    // covers the view.
+    commands.spawn((WheelRoot, crate::interface::framed_root(full, crate::interface::MIDDLE), GlobalZIndex(105))).with_children(|r| {
         r.spawn(at(left, top, SIZE, SIZE)).with_children(|m| {
             picture(m, kit, data, &mut images, bc, MATTE, at(0.0, 0.0, SIZE, SIZE), Color::BLACK.with_alpha(0.88));
             for i in 0..s.slices.len() {

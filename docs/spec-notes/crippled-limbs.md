@@ -183,15 +183,77 @@ them.
 - **The player's limbs** take `fCombatPlayerLimbDamageMult` (0.5) of the limb damage
   (`Game::limb_damage`) [observed: the value; hypothesis: it scales the damage the
   player's limbs take rather than the damage the player does to others' limbs].
+  Observer check 3 (o17_air limbs_10mm, 38 hits from a trooper's 10mm Pistol on a
+  mortal player) measured body Health loss 16.06, arm or leg condition loss 16.06,
+  torso Endurance Condition loss 6.69, and head Health loss 32.12 with Perception
+  Condition loss 20.075. A larger head hit lost 76.12 Health and 47.575 Perception
+  Condition [observed]. With maximum Health 200 [hypothesis: that run did not record
+  base Health], DefaultBodyPartData's shares (arms and legs 25 %, torso 60 %, head
+  20 %, ×2 Health), and Limb Dmg Mult 1, the existing formula gives all four losses:
+  `damage before the part multiplier × Limb Dmg Mult × 0.5 × 100 /
+  (max Health × part health % / 100)` [design: `Game::damage_limb`, `limb_hit`].
+  The ratios between parts follow from the shares; nothing cancels the halving and
+  no formula change is needed under that maximum-Health hypothesis. The synthetic
+  test `player_limb_losses_fit_the_10mm_capture_at_200_maximum_health` pins those
+  values [design: `crates/fnv-game/tests/synthetic.rs`].
+- **Shots and blows on the player** now select a part from the single character
+  capsule's hit point in either view, then match its condition in the human body
+  part data [design: `nvf_play::combat::player_body_part`, combat-rules.md §12,
+  issue #1345]. The height and side bands are [hypothesis]; shots use the selected
+  part's Health multiplier. Blows keep their existing Health calculation and use
+  damage left after blocking for limb loss [hypothesis: melee's part multipliers
+  are unmeasured]. Creatures keep the multiplier of the weapon this path already
+  supplies (Fists when unarmed) [hypothesis]. God mode takes neither Health nor
+  limb condition; zero-damage hits lose no limb condition [design: `hit_player`,
+  `limb_hit`]. Every actual loss logs `combat: the player's <limb> takes <loss>,
+  condition <condition>`; `track_limbs` already logs newly crippled player limbs
+  [design: `combat.rs`].
 - **Explosions** (built, `nvf_play::combat::blast_limb_hits`, `Game::blast_limbs`): a
   blast damages limbs as well as Health [documented: GECK wiki GetHitLimbDamage, which
   returns 0 for an explosion "even if the explosion dealt limb damage"]. It has no hit
-  location (GetHitLocation −1, jip-hit-info.md §1), so it is spread over the body: each
-  limb of the actor's body part data, once per limb condition, takes the blast's damage
+  location (GetHitLocation −1, jip-hit-info.md §1). Since 2026-11-06 (#1741) it takes
+  shares of the blast's damage to Health: the torso (Endurance Condition) 1/30, the
+  legs (Left and Right Mobility Condition) 0.24 together, the head, arms and brain
+  nothing, at any distance inside the blast [observed 2026-11-06, o25_limbs, observer
+  check 74: frag mines and a grenade at a human's feet, one NPC, Ringo, after `SetAV
+  Health 5000`]. NVForever takes the shares in condition points straight off the
+  condition as a fall's leg (physics.md §6.12: no pool, no player limb multiplier, no
+  perks), the same at any maximum Health [hypothesis: measured only at 5000 Health
+  and only on an NPC; a share of the limb's pool (of maximum Health, as shots use)
+  fits the same numbers and would do 25–50× more at a normal NPC's 100–200 Health, and
+  the player was never measured; rerun open under observer check 74]. NVForever gives the left leg 0.16 and the right 0.08, all 0.24 to a
+  body part data with one of them [hypothesis: the original put it all on the left leg
+  twice and 2:1 three times; the simplest rule that fits the 2:1 runs], times the
+  weapon's Limb Dmg Mult (1 for a blast without a weapon; 1 on both measured weapons)
+  and the difficulty, as Health is [hypothesis], and the same shares for a blast at any
+  height and on creatures [hypothesis: only a human was measured]. So one frag mine no
+  longer cripples arms or the head. Before that, each limb of the actor's body part
+  data, once per limb condition, took the blast's damage
   after armour times the weapon's Limb Dmg Mult (1 for a blast without a weapon), then
   the difficulty and the two rules above, as a shot's limb damage [hypothesis: every
-  limb takes the full amount; no game setting or page gives the share; owner-review 41,
-  observer check 74]. A blast that kills or knocks out does no limb damage. The limb
+  limb takes the full amount; no game setting or page gives the share; owner-review 41].
+  The original does not [observed 2026-11-06, capture o25_limbs, `nvftest`: Ringo at
+  Health 5000, the player in god mode 900 units off, MineFragExplosion 0x0007078B placed
+  by Ringo's PlaceAtMe at 0, 64 and 128 units in front and 64 to his right, then
+  GrenadeFragExplosion 0x000179DA at 0, conditions restored between]:
+
+  | blast | Health lost | torso (Endurance) | left leg | right leg | head, arms, brain |
+  |---|---|---|---|---|---|
+  | mine, 0 | 99.95 | 3.33 | 23.99 | 0 | 0 |
+  | mine, 64 in front | 96.99 | 3.27 | 15.68 | 7.84 | 0 |
+  | mine, 128 in front | 98.97 | 3.33 | 16.00 | 8.00 | 0 |
+  | mine, 64 to the right | 98.00 | 3.27 | 23.52 | 0 | 0 |
+  | grenade, 0 | 123.0 | 4.10 | 19.68 | 9.84 | 0 |
+
+  So the torso lost 1/30 of the Health damage every time and the legs 0.24 of it
+  together, all on the left leg or split 2:1 left and right; the head, arms and brain
+  lost nothing, the damage did not fall with distance out to 128 units, and Ringo was
+  not knocked down. A reading that fits all five [hypothesis]: the blast's damage is
+  split in 1/12.5 shares (0.08), each share hitting one body part with that part's
+  limb damage share as a shot does (the torso's 0.4167 of observer check 3: 0.08 ×
+  0.4167 = 1/30; a leg 1.0 per share, three shares to the legs). Which parts the
+  shares reach (the legs only here, a blast at the feet) is open: a blast at head
+  height would show it. A blast that kills or knocks out does no limb damage. The limb
   damage counts as the blast's hit (`nvf_play::combat::hit_actor`): a limb it cripples
   makes it a crippling hit, so the actor staggers once (the player flinches) by the rule
   in §3, an arm it cripples disarms, and the "limb crippled" HUD line shows for the

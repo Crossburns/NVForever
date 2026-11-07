@@ -211,6 +211,10 @@ impl Source for UiFiles {
     fn game_string(&self, name: &str) -> Option<String> {
         self.strings.get(name)
     }
+
+    fn game_string_is_built_in(&self, name: &str) -> bool {
+        matches!(self.strings.lookup(name), Some((_, fnv_ui::strings::Origin::BuiltIn)))
+    }
 }
 
 /// The text of the game setting `name` for the engine's own menus that stand in for menu
