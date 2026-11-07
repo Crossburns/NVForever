@@ -122,6 +122,8 @@ pub fn track(
     bindings: Option<Res<Bindings>>,
     mut hold: ResMut<HotkeyHold>,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     let items = pip.open() && pip.page == super::Page::Items && !repair.is_open() && !modding.is_open();
     let now = if items { hold.aid.or_else(|| bindings.as_ref().and_then(|b| held_slot(b, &keys))) } else { None };
     if now != hold.slot {

@@ -103,10 +103,12 @@ pub const PERSON_ATTACK_SECONDS: f64 = 21.0;
 pub const AGGRO_ATTACK_SHARE: f64 = 0.5;
 
 impl Game<'_> {
-    /// `actor`'s aggro radius in game units when its AI data turns the behaviour on.
+    /// `actor`'s aggro radius in game units when its AI data turns the behaviour on
+    /// (LNSetAggroRadius's radius first, `nvse_lutana`).
     pub fn aggro_radius(&self, actor: FormId) -> Option<f64> {
-        let d = self.def_following(actor, |d| d.template_ai)?;
-        (d.aggro_radius_behavior && d.aggro_radius > 0).then_some(d.aggro_radius as f64)
+        let (id, d) = self.template_source(crate::functions::base_of(self, actor)?, actor, |d| d.template_ai)?;
+        let r = self.other.lutana.aggro_radius.get(&id).copied().unwrap_or(d.aggro_radius);
+        (d.aggro_radius_behavior && r > 0).then_some(r as f64)
     }
 
     /// Whether `actor`'s current package allows aggro radius behaviour (module notes).

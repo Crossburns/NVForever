@@ -740,6 +740,10 @@ pub(crate) trait TextureSource {
     fn texture(&mut self, raw_path: &str, srgb: bool) -> Option<Handle<Image>>;
     /// Whether the texture of `h` has no alpha channel ([`lacks_alpha`]).
     fn lacks_alpha(&self, h: &Handle<Image>) -> bool;
+    /// Whether the texture at a NIF texture path has a cut-out mask in its alpha
+    /// (`texture::AlphaShares::is_mask`), read from the archives again: asked only for the
+    /// few shapes [`blended_cutout`] concerns.
+    fn alpha_is_mask(&self, raw_path: &str) -> bool;
 }
 
 /// The main thread's textures: the cache and the image store.
@@ -758,6 +762,42 @@ impl TextureSource for StoreTextures<'_> {
     fn lacks_alpha(&self, h: &Handle<Image>) -> bool {
         self.images.get(h).is_some_and(lacks_alpha)
     }
+
+    fn alpha_is_mask(&self, raw_path: &str) -> bool {
+        crate::texture::texture_alpha_shares(raw_path, self.data).is_some_and(|s| s.is_mask())
+    }
+}
+
+/// The alpha cut of a blended cut-out (`NifSurface::blended_cutout`) [engineering choice:
+/// half way; the masks it applies to have under 13% of their texels between clear and
+/// opaque, and the game's single corn plants cut the same texture at 124 of 255].
+pub(crate) const BLENDED_CUTOUT_CUT: f32 = 0.5;
+
+/// Whether a shape drawn blended draws the same as a cut-out, and its cut if so: it blends
+/// SRC_ALPHA / INV_SRC_ALPHA and tests alpha (below [`BLEND_TEST_CUT`], or it would be
+/// drawn alpha-tested already), and nothing but its base texture sets its alpha, which is
+/// a cut-out mask (`mask`, asked last): no vertex-alpha cut, material alpha 1, no alpha
+/// animation, view-angle falloff, light, decal, refraction or hair shading. Where alpha is
+/// 0 or 1, blending and testing give the same pixels; they differ only on the mask's edge
+/// texels. The game's corn rows (`scol\scolmaizerow1b.nif`, flags 0x12ED, threshold 0,
+/// `maize_d.dds`) are such shapes [observed]; dirty glass (`nvposter01.nif`, the same
+/// flags, `marquee.dds` 40% in between) is not. Survey: docs/design/fsr-upscaling.md
+/// "Blended cut-outs". The test function (bits 10-12) is not asked: such a shape is drawn blended
+/// whatever its function ([`alpha_mode`] below the cut), so the cut-out draws the pixels the
+/// blend does, as FSR's switch needs.
+pub(crate) fn blended_cutout(props: &Props, cut: Option<f32>, alpha_mode: AlphaMode, mask: impl FnOnce() -> bool) -> Option<f32> {
+    let (flags, threshold) = props.alpha?;
+    let source_over = (flags >> 1) & 0xF == 6 && (flags >> 5) & 0xF == 7;
+    let tested = flags & 0x200 != 0 && threshold < BLEND_TEST_CUT;
+    let alpha_from_texture_only = cut.is_none()
+        && props.material_alpha.unwrap_or(1.0) >= 1.0
+        && !props.animated_alpha
+        && props.falloff.is_none()
+        && !props.unlit
+        && !props.decal
+        && props.refraction.is_none()
+        && !props.hair;
+    (matches!(alpha_mode, AlphaMode::Blend) && source_over && tested && alpha_from_texture_only && mask()).then_some(BLENDED_CUTOUT_CUT)
 }
 
 /// The material for a shape's properties; also returns the base texture path when it
@@ -786,6 +826,7 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
     let normal = normal.filter(|_| has_uv && mesh.generate_tangents().is_ok());
     let cut = blend_cut(props, mesh);
     let alpha_mode = if cut.is_some() { AlphaMode::Blend } else { shape_alpha_mode(props) };
+    let cutout = blended_cutout(props, cut, alpha_mode, || props.textures.first().is_some_and(|t| !t.is_empty() && textures.alpha_is_mask(t)));
     let gloss = props.glossiness.unwrap_or(10.0);
     // Emitted light × glow map, or uniform without a glow map. Not scaled by the camera
     // exposure (Bevy's default emissive_exposure_weight 0).
@@ -820,6 +861,7 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
         material.extension.falloff = f.params;
     }
     material.extension.alpha_cut = cut.unwrap_or(0.0);
+    material.extension.blended_cutout = cutout;
     if props.hair && cut.is_none() && matches!(alpha_mode, AlphaMode::Blend) {
         material.extension.alpha_cut = HAIR_DEPTH_CUT;
         material.extension.depth_write = true;
@@ -1182,6 +1224,54 @@ mod tests {
         }
         fn lacks_alpha(&self, _: &Handle<Image>) -> bool {
             false
+        }
+        fn alpha_is_mask(&self, _: &str) -> bool {
+            false
+        }
+    }
+
+    /// Textures whose alpha is a cut-out mask when their path says "mask".
+    struct MaskTextures;
+    impl TextureSource for MaskTextures {
+        fn texture(&mut self, _: &str, _: bool) -> Option<Handle<Image>> {
+            None
+        }
+        fn lacks_alpha(&self, _: &Handle<Image>) -> bool {
+            false
+        }
+        fn alpha_is_mask(&self, raw_path: &str) -> bool {
+            raw_path.contains("mask")
+        }
+    }
+
+    #[test]
+    fn blended_shapes_with_a_cut_out_mask_are_blended_cutouts() {
+        let quad = || {
+            let mut m = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+            m.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+            m
+        };
+        // The corn rows: blend SRC_ALPHA / INV_SRC_ALPHA, test GREATER 0 (0x12ED), lit.
+        let corn = Props { alpha: Some((0x12ED, 0)), textures: vec![r"landscape\plants\maize_mask.dds".into()], ..Default::default() };
+        let (m, _) = shape_material_with(&corn, &mut quad(), &mut MaskTextures);
+        assert!(matches!(m.base.alpha_mode, AlphaMode::Blend), "drawn blended until FSR asks");
+        assert_eq!(m.extension.blended_cutout, Some(BLENDED_CUTOUT_CUT));
+        // Translucent texture alpha (dirty glass), or no texture: stays blended only.
+        assert_eq!(shape_material_with(&corn, &mut quad(), &mut NoTextures).0.extension.blended_cutout, None);
+        // Anything else that sets alpha keeps it a real blend.
+        for props in [
+            Props { material_alpha: Some(0.5), ..corn.clone() },
+            Props { animated_alpha: true, ..corn.clone() },
+            Props { unlit: true, ..corn.clone() },
+            Props { decal: true, ..corn.clone() },
+            Props { hair: true, ..corn.clone() },
+            Props { refraction: Some(1.0), ..corn.clone() },
+            // Not tested, additive, or tested at a cut that already makes it a cut-out.
+            Props { alpha: Some((0x12ED & !0x200, 0)), ..corn.clone() },
+            Props { alpha: Some((0x12ED & !(0xF << 5), 0)), ..corn.clone() },
+            Props { alpha: Some((0x12ED, 128)), ..corn.clone() },
+        ] {
+            assert_eq!(shape_material_with(&props, &mut quad(), &mut MaskTextures).0.extension.blended_cutout, None, "{props:?}");
         }
     }
 

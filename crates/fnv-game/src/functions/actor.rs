@@ -844,6 +844,10 @@ fn factions_now(g: &Game, r: FormId) -> Vec<FormId> {
 /// else FACT XNAM, else neutral (0) [documented: catalogue notes of
 /// GetFactionCombatReaction: 0 neutral for unlisted pairs, 1 enemy, 2 ally, 3 friend].
 pub fn reaction(g: &Game, a: FormId, b: FormId) -> i64 {
+    // SetAllyTemp's and SetEnemyTemp's first (`nvse_showoff3`).
+    if let Some(&v) = g.showoff.temp_reactions.get(&(a, b)) {
+        return v;
+    }
     if let Some(&v) = g.forms.faction_reactions.get(&a).and_then(|m| m.get(&b)) {
         return v;
     }
@@ -933,6 +937,8 @@ pub fn get_faction_relation(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, 
 /// or neutral (1) [documented: catalogue notes].
 pub fn set_enemy(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let (f1, f2) = (a.form(0)?, a.form(1)?);
+    g.showoff.temp_reactions.remove(&(f1, f2));
+    g.showoff.temp_reactions.remove(&(f2, f1));
     let v = |x: f64| if x != 0.0 { 0 } else { 1 };
     let (r12, r21) = (v(a.num_or(2, 0.0)), v(a.num_or(3, 0.0)));
     g.forms.faction_reactions.entry(f1).or_default().insert(f2, r12);
@@ -945,6 +951,8 @@ pub fn set_enemy(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
 /// or friend (1) [documented: catalogue notes].
 pub fn set_ally(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let (f1, f2) = (a.form(0)?, a.form(1)?);
+    g.showoff.temp_reactions.remove(&(f1, f2));
+    g.showoff.temp_reactions.remove(&(f2, f1));
     let v = |x: f64| if x != 0.0 { 3 } else { 2 };
     let (r12, r21) = (v(a.num_or(2, 0.0)), v(a.num_or(3, 0.0)));
     g.forms.faction_reactions.entry(f1).or_default().insert(f2, r12);

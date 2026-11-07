@@ -945,6 +945,9 @@ impl TextureSource for Stores<'_> {
     fn lacks_alpha(&self, h: &Handle<Image>) -> bool {
         self.textures.lacks_alpha(h)
     }
+    fn alpha_is_mask(&self, raw_path: &str) -> bool {
+        self.textures.alpha_is_mask(raw_path)
+    }
 }
 
 impl ModelSink for Stores<'_> {
@@ -1005,6 +1008,9 @@ impl TextureSource for Deferred {
     }
     fn lacks_alpha(&self, h: &Handle<Image>) -> bool {
         self.formats.get(&h.id()).is_some_and(|&f| crate::nif_spawn::format_lacks_alpha(f))
+    }
+    fn alpha_is_mask(&self, raw_path: &str) -> bool {
+        crate::texture::texture_alpha_shares(raw_path, &self.data).is_some_and(|s| s.is_mask())
     }
 }
 

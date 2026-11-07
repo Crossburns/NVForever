@@ -270,8 +270,11 @@ impl Game<'_> {
 
     /// The player found the map marker `marker` (the engine's discovery): "discover a
     /// map marker" challenges, and those on Locations Discovered, which is counted from
-    /// the found markers rather than by `count_stat` (`Game::misc_stat`).
+    /// the found markers rather than by `count_stat` (`Game::misc_stat`). JIP's
+    /// location-discover event runs first, with the marker's reference [documented:
+    /// SetOnLocationDiscoverEventHandler].
     pub fn challenge_marker_found(&mut self, marker: FormId) {
+        self.jip_event("locationdiscover", None, vec![fnv_script::vm::XVal::Ref(marker.0)]);
         let data = self.data;
         for c in self.challenge_list(kind::DISCOVER_MARKER) {
             let d = &data.challenge_defs[&c];
