@@ -222,6 +222,7 @@ pub(crate) struct MenuInputs<'w, 's> {
     wheel_title: ResMut<'w, super::container_menu::TileWheelTitle>,
     /// The trait menu's state, the writer's and this input's.
     traits: Option<ResMut<'w, super::trait_menu::TraitTiles>>,
+    tags: Option<ResMut<'w, super::tag_menu::TagTiles>>,
     /// The hand-built trait menu's rows, while they stand.
     trait_hand_built: Query<'w, 's, (), With<crate::chargen::lists::ListRow>>,
     /// The dialogue menu's one decision, what it asks of the conversation, and its scroll.
@@ -252,6 +253,7 @@ impl MenuInputs<'_, '_> {
         out.extend(super::container_menu::takes_input(self.barter.as_ref().and_then(|b| b.menu()), self.quantity().is_some()));
         if self.trait_hand_built.is_empty() {
             out.extend(self.traits.as_ref().and_then(|t| t.takes()));
+            out.extend(self.tags.as_ref().and_then(|t| t.takes()));
         }
         if quantity_tiled(menus.quantity, game, self.quantity().is_some(), self.container.menu.is_some() || self.barter.as_ref().is_some_and(|b| b.menu().is_some())) {
             out.extend(game.ui_tree.menu(QUANTITY_MENU));
@@ -461,6 +463,9 @@ impl MenuInputs<'_, '_> {
             if self.traits.as_mut().filter(|t| t.menu.is_some()).is_some_and(|t| super::trait_menu::follow_click(t, ui, c, at, held, physical).is_some()) {
                 continue;
             }
+            if self.tags.as_mut().filter(|t| t.menu.is_some()).is_some_and(|t| super::selection_menu::follow_click(t, ui, c, at, held, physical).is_some()) {
+                continue;
+            }
             if self.follow_item_menu(ui, c, at, Pressed { held, shift, physical }, &mut row_acted).is_some() {
                 continue;
             }
@@ -519,6 +524,9 @@ impl MenuInputs<'_, '_> {
         }
         if let Some(t) = self.traits.as_mut().filter(|t| t.takes().is_some()) {
             super::trait_menu::follow_pointer(t, ui, report, at, moved);
+        }
+        if let Some(t) = self.tags.as_mut().filter(|t| t.takes().is_some()) {
+            super::selection_menu::follow_pointer(t, ui, report, at, moved);
         }
         slider
     }
@@ -705,6 +713,7 @@ pub(crate) fn feed(
     if let Some(t) = inputs.traits.as_mut().filter(|t| t.menu.is_some()) {
         t.hold_drag(held);
     }
+    if let Some(t) = inputs.tags.as_mut().filter(|t| t.menu.is_some()) { t.hold_drag(held); }
     // The pointer on the menus as drawn at the UI scale (#1631): the dialogue menu keeps to
     // the view's bottom when it takes input alone, the others to its middle (`super::draw`).
     // The test aid's place is in the tree's units already and is read as given, through no
@@ -743,6 +752,7 @@ pub(crate) fn feed(
         if let Some(t) = inputs.traits.as_ref().filter(|t| t.menu.is_some()) {
             t.rewrite(&mut rt.game.ui_tree);
         }
+        if let Some(t) = inputs.tags.as_ref().filter(|t| t.menu.is_some()) { t.rewrite(&mut rt.game.ui_tree); }
         // Where the pointer rests when a menu takes input again is no move onto a row.
         *inputs.last_at = cursor();
         return;
@@ -758,7 +768,7 @@ pub(crate) fn feed(
     // The tutorial menu's triggers stand for its own keys (`crate::pad::menu_buttons`), which
     // a press of them would otherwise turn a page with twice: here and through the file.
     // [design] X stands for R in the container and A in barter (the same table).
-    let pad_menu = crate::pad::MenuAt { code: tutorial.map(|_| fnv_game::game::menus::TUTORIAL).or(inputs.container.menu.map(|_| crate::script::MENU_CONTAINER)).or(inputs.barter.as_ref().and_then(|b| b.menu()).map(|_| crate::script::MENU_BARTER)).or(inputs.traits.as_ref().and_then(|t| t.takes()).map(|_| fnv_game::game::menus::TRAITS)), tab: 0 };
+    let pad_menu = crate::pad::MenuAt { code: tutorial.map(|_| fnv_game::game::menus::TUTORIAL).or(inputs.container.menu.map(|_| crate::script::MENU_CONTAINER)).or(inputs.barter.as_ref().and_then(|b| b.menu()).map(|_| crate::script::MENU_BARTER)).or(inputs.traits.as_ref().and_then(|t| t.takes()).map(|_| fnv_game::game::menus::TRAITS)).or(inputs.tags.as_ref().and_then(|t| t.takes()).map(|_| fnv_game::game::menus::TAG_SKILLS)), tab: 0 };
     let physical = frame_keys(&mut input, &devices, &mut rt.game, pad_menu);
     // The dialogue menu's pointer decides on what was drawn (`super::dialog_menu`).
     if let (Some(_), [_], Some(d)) = (dialog_menu, taking.as_slice(), inputs.dialog.as_ref()) {
@@ -805,6 +815,7 @@ pub(crate) fn feed(
     if let Some(t) = inputs.traits.as_ref().filter(|t| t.menu.is_some()) {
         t.rewrite(&mut rt.game.ui_tree);
     }
+    if let Some(t) = inputs.tags.as_ref().filter(|t| t.menu.is_some()) { t.rewrite(&mut rt.game.ui_tree); }
 }
 
 /// Read the test aid at start.
@@ -1062,6 +1073,14 @@ mod tests {
         // 960 units to the height: at 1280 x 720, a pixel is 4/3 of a unit.
         assert_eq!(to_units(Vec2::new(640.0, 360.0), 720.0), (853.3333333333334, 480.0));
         assert_eq!(to_units(Vec2::new(0.0, 960.0), 960.0), (0.0, 960.0));
+    }
+    #[test]
+    fn the_tag_menus_physical_keys_act_once_and_script_keys_still_act() {
+        let menu = super::super::tag_menu::TAG_MENU;
+        for key in super::super::trait_menu::HAND_BUILT_KEYS {
+            assert!(!super::super::menus::key_click_acts(menu, key, &[key]));
+            assert!(super::super::menus::key_click_acts(menu, key, &[]));
+        }
     }
 
     /// #1631: a tile menu drawn at the UI scale (its root `crate::interface::framed_root`,

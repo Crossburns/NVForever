@@ -490,8 +490,8 @@ Chet, read with JIP] Selling, with caps coming to the player, reads
 `_ArrowDirection` 2 and `BM_CapsFlow/x` 830.33; 1 or no direction gives x 810.33.
 The purses show the setting's Caps word, three spaces, and the number (`Caps   900`).
 The normal flow alpha is 255; a sale beyond the merchant's purse reads 64 and dims
-its icon, amount and Caps word. [documented: `barter_menu.xml`, names and trait
-relationships supplied for this review] Direction 1 selects the icon's `_filename_1`
+its icon, amount and Caps word. [documented: `barter_menu.xml`, read privately from the user's
+install] Direction 1 selects the icon's `_filename_1`
 (`barter_arrow_buy.dds`), direction 2 its `_filename_2` (`barter_arrow_sell.dds`),
 through successive copies of the direction and `_filename_`. The flow, icon and
 amount shift conditionally for direction 2; the flow's alpha is set in code and
@@ -514,7 +514,7 @@ Chet, read with JIP] `_IsContainerListSelected` is -1 on opening without a selec
 0 with a player row selected and 1 with a merchant row selected; leaving all rows
 retains the last value. Moving the pointer onto a row of the other list selects it
 and moves focus (`left_selected`, `right_selected_cursor`). [documented:
-`barter_menu.xml`, names and trait relationships supplied for this review]
+`barter_menu.xml`, read privately from the user's install]
 `BM_Items_FocusRect` (id 0) and `BM_Container_FocusRect` (id 1) are hotrects with
 targets following the merchant-focus trait and its inverse. The lists' `_enabled`
 follow its inverse for the player and its copy for the merchant. This differs from
@@ -602,8 +602,8 @@ hypotheses borrowed from the container runs. The file has no
 subtitle tile, so the model's own refusal note stays as a small hand-built overlay
 at its existing place (`menu/look.rs::spawn_note`), alongside the dimmed flow
 [design: the contract's paths and `menu::note`]. Those words are the model's own
-functional error messages: "You don't have enough caps." and
-"<merchant> doesn't have enough caps." (`menu/model.rs::accept`), or the engine's
+functional error message "You don't have enough caps." (`menu/model.rs::accept`),
+or the engine's
 "Cannot..." errors (`plain_error`). They are not transcribed lines. This piece remains separate to
 preserve the feedback without inventing a tile in the file. Blur uses the existing
 tile-menu blur path at radius 3
