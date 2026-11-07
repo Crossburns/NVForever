@@ -360,9 +360,9 @@ fn string_dimensions_by_the_engines_measure() {
     // [design] Headless outputs are deterministic, including through compiled locals.
     let r = run(&mut g, "GetStringUIDimensions", &[s("some words"), x(3.0), x(80.0)]);
     assert_eq!(array(&g, &r).into_iter().map(|(_, v)| v).collect::<Vec<_>>(), vec![x(0.0); 4]);
-    let script = "float w\nfloat h\nfloat lines\nlet w := -11\nlet h := -22\nlet lines := -33\nGetStringUIDimensions \"some words\" 3 80 w h lines\nSetFunctionValue (ar_List w, h, lines)";
-    let r = query(&mut g, script);
-    assert_eq!(array(&g, &r).into_iter().map(|(_, v)| v).collect::<Vec<_>>(), vec![x(0.0); 3]);
+    let script = "float w\nfloat h\nfloat lines\nlet w := -11\nlet h := -22\nlet lines := -33\nGetStringUIDimensions \"some words\" 3 80 w h lines\nSetFunctionValue (w * 1000000 + h * 1000 + lines)";
+    // The outputs packed in one number: a function's own array is let go when it ends.
+    assert_eq!(query(&mut g, script), x(0.0), "the sentinels are overwritten with zeros");
     // A stub: 10 units a letter, wrapped at the width, 20 a line in font 3.
     g.ui_extra.measure = Some(Box::new(|font, text, wrap| {
         let w = text.chars().count() as f64 * 10.0;
@@ -372,8 +372,7 @@ fn string_dimensions_by_the_engines_measure() {
     let r = run(&mut g, "GetStringUIDimensions", &[s("some words"), x(3.0), x(80.0)]);
     let vals: Vec<XVal> = array(&g, &r).into_iter().map(|(_, v)| v).collect();
     assert_eq!(vals, vec![x(0.0), x(80.0), x(40.0), x(2.0)]);
-    let r = query(&mut g, script);
-    assert_eq!(array(&g, &r).into_iter().map(|(_, v)| v).collect::<Vec<_>>(), vec![x(80.0), x(40.0), x(2.0)]);
+    assert_eq!(query(&mut g, script), x(80_040_002.0));
 }
 
 #[test]
