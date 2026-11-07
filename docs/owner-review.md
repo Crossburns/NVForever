@@ -120,7 +120,10 @@ the spec it links to.
     prediction and a spring (2026-11-07, after "every bump" on roads): road ripples are
     about 2.5-3x smoother, but running onto a steep hill the body is drawn up to 8 units
     below the feet for a moment (up to 24 units allowed; over 48 counts as a teleport). A
-    step-up counts from 0.25 units of rise. Smooth enough, or too floaty?
+    step-up counts from 0.25 units of rise. Where a slope or stairs end the body carries
+    on up a little: up to 4.8 units over the top of a 30° slope and 4.2 over the top
+    stair at a run (2.7 and 1.2 walking; the old rule never overshot) [observed: replays,
+    physics §6.11]. Smooth enough, or too floaty?
     ([physics §6.8.1, §6.9.1](spec-notes/physics.md))
 15. **Third-person aim.** Shots and the activate prompt go to what is under the
     third-person crosshair, but the shot still leaves from the eye, so cover near you

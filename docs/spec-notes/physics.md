@@ -2434,6 +2434,23 @@ and 427 for the drawn height over 597 steps. The exit report says how many steps
 player's lift took in, its largest value, and the RMS vertical acceleration of the feet
 and of the drawn height while walking on the ground (`StepLift::rough`); smoke
 `camper-steps`, `road-run-smooth`.
+
+**Stopping and the top of a slope** (2026-11-07, review of PR #1806) [design]: the
+prediction is never more than 2 × the horizontal distance walked per step (a 63° grade,
+`MAX_GRADE`), so standing still it is 0; without that, stopping after running up a 30°
+slope left the prediction at 173 units/s and the body drawn 11.4 units above the feet
+for as long as it stood (7.8 after a walk). Where the ground falls short of the
+prediction by more than the step allowance while the body is already drawn past the
+feet that way (a slope's top edge), the prediction is set to that step's sample at once
+instead of filtered. Remaining overshoot [observed: synthetic replays in the module's
+tests, 2026-11-07]: running (5 units a step) up a 30° slope onto the level, the body is
+drawn up to 4.8 units over the top (before: 9.9), walking (2.5) 2.7 (6.1); at the top of
+a flight of stairs (8-unit risers, 12-unit treads) up to 4.2 over the top step running
+and 1.2 walking, as before: on stairs the prediction is learnt from the flight's mean
+rise and the treads' level steps stay within the step allowance, so it carries on past
+the last riser for about 0.2 s. The first rule never overshot either. The two changes
+leave the synthetic road-ripple and rough-ground replays unchanged (RMS 217 and 362
+units/s²); the trace numbers above were measured before them.
 ### 6.12 Fall damage (playtest list 7 item 21, 2026-10-23; `engine/nvf-play/src/falls.rs`)
 
 - **Settings** [observed: FalloutNV.esm GMST]: `fJumpFallHeightMin` 600,

@@ -18,7 +18,11 @@
 //!   walked once the filter has caught up; a step, a bump, a facet's kink or a snap down
 //!   is not, and is smoothed. A step does not feed the filter: each sample may differ
 //!   from the prediction by at most the horizontal distance walked × [`STEP_SLOPE`], so
-//!   the drawn height does not overshoot the top of a step. In the air, swimming or put
+//!   the drawn height does not overshoot the top of a step. The prediction is never more
+//!   than [`MAX_GRADE`] × the horizontal distance walked (standing still it is 0, so
+//!   stopping on a slope does not leave the body drawn above the feet), and where the
+//!   ground falls short of it by more than a step while the body is already drawn past
+//!   the feet that way (the top of a slope) it is dropped at once. In the air, swimming or put
 //!   somewhere (a change over [`JUMP`]) nothing is taken up and the speed starts again
 //!   from 0.
 //! - **How fast** [design]: [`OMEGA`] for a small lift, stiffer the larger it is (×2 at
@@ -35,6 +39,9 @@ pub const SPEED_SECONDS: f32 = 0.2;
 /// Most a speed sample may differ from the prediction, per unit walked [design: steeper
 /// is a step and is left out of the prediction].
 pub const STEP_SLOPE: f32 = 0.4;
+/// Most vertical speed predicted per unit walked [design: a 63° grade, steeper than the
+/// controller climbs]; standing still nothing is predicted.
+pub const MAX_GRADE: f32 = 2.0;
 /// The spring's angular frequency for a small lift, 1/s [design].
 pub const OMEGA: f32 = 8.0;
 /// The spring is twice as stiff at a lift of this many units, three times at twice it
@@ -131,7 +138,19 @@ impl StepLift {
         if on_ground && dt > 0.0 {
             let (predicted, most) = (self.speed * dt, horizontal * STEP_SLOPE);
             let sample = dz.clamp(predicted - most, predicted + most);
-            self.speed += (sample / dt - self.speed) * (dt / SPEED_SECONDS).min(1.0);
+            // The ground fell short of the prediction by more than a step while the body
+            // is already drawn past the feet the same way (the top of a slope): the
+            // prediction is dropped at once rather than carried on over the kink.
+            let ahead = self.lift * self.speed > 0.0 && (dz - predicted) * self.speed < 0.0;
+            if ahead && (dz - predicted).abs() > most {
+                self.speed = sample / dt;
+            } else {
+                self.speed += (sample / dt - self.speed) * (dt / SPEED_SECONDS).min(1.0);
+            }
+            // Never more than [`MAX_GRADE`] per unit walked: standing still, nothing is
+            // predicted.
+            let bound = MAX_GRADE * horizontal / dt;
+            self.speed = self.speed.clamp(-bound, bound);
         }
         self.rough.step(dz, dz + self.lift - self.prev, on_ground && horizontal > 0.5, dt);
         self.most = self.most.max(self.prev.abs());
@@ -244,6 +263,66 @@ mod tests {
             h.extend(std::iter::repeat_n(10.0, 90));
             let top = walk(&mut lift, &h, horizontal).into_iter().fold(0.0, f32::max);
             assert!(top < 10.75, "drawn {top} over a 10-unit step at {horizontal} a step");
+        }
+    }
+
+    /// Up a 30° slope at `per` units a step for two seconds, then `then` units a step on
+    /// the level for two more.
+    fn slope_then_level(per: f32, then: f32) -> (Vec<f32>, Vec<f32>, StepLift) {
+        let (mut lift, mut h, mut drawn) = (StepLift::default(), vec![0.0f32; 30], Vec::new());
+        for _ in 0..30 {
+            lift.step(0.0, per, true, DT);
+            drawn.push(lift.lift);
+        }
+        for i in 0..240 {
+            let (dz, horizontal) = if i < 120 { (per * 0.57735, per) } else { (0.0, then) };
+            let z = h.last().unwrap() + dz;
+            h.push(z);
+            lift.step(dz, horizontal, true, DT);
+            drawn.push(z + lift.lift);
+        }
+        (h, drawn, lift)
+    }
+
+    #[test]
+    fn stopping_on_a_slope_settles() {
+        for per in [2.5, 5.0] {
+            let (_, _, lift) = slope_then_level(per, 0.0);
+            assert!(lift.lift.abs() < 0.05, "drawn {} above the feet a second after stopping at {per} a step", lift.lift);
+            assert_eq!(lift.speed, 0.0);
+        }
+    }
+
+    #[test]
+    fn the_top_of_a_slope_is_overshot_by_little() {
+        // [observed: this replay, 2026-11-07] before the prediction was dropped at the
+        // kink: 9.9 at a run, 6.1 at a walk; now 4.8 and 2.7.
+        for (per, most) in [(2.5, 3.0), (5.0, 5.0)] {
+            let (h, drawn, _) = slope_then_level(per, per);
+            let top = h[150];
+            let over = drawn.iter().map(|d| d - top).fold(f32::MIN, f32::max);
+            assert!(over < most, "drawn {over} over the top of the slope at {per} a step");
+        }
+    }
+
+    #[test]
+    fn a_flight_of_stairs_is_climbed_smoothly_and_overshot_by_little() {
+        // 8-unit risers, 12-unit treads, ten of them; [observed: this replay, 2026-11-07]
+        // up to 4.2 over the top step at a run, 1.2 at a walk (the prediction carries on
+        // past the last riser; see physics.md §6.11).
+        for (per, most) in [(2.5, 1.5), (5.0, 4.5)] {
+            let mut lift = StepLift::default();
+            let (mut x, mut h) = (0.0f32, vec![0.0f32; 30]);
+            for _ in 0..240 {
+                x += per;
+                h.push(((x / 12.0).floor() * 8.0).min(80.0));
+            }
+            let drawn = walk(&mut lift, &h, per);
+            let over = drawn.iter().map(|d| d - 80.0).fold(f32::MIN, f32::max);
+            assert!(over < most, "drawn {over} over the top step at {per} a step");
+            let jumps = drawn.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
+            assert!(jumps < 8.0 * 0.6, "largest drawn change in a step {jumps}");
+            assert!(lift.lift.abs() < 0.05, "settled: {}", lift.lift);
         }
     }
 
