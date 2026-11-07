@@ -819,6 +819,6 @@ owner to add to its pull request or issue (owner, 2026-10-29).
       still the model's. Its quantity prompt follows automatically, or stays hand-built
       when its file is missing or short. Strings are audited in section 9: settings,
       record text, numbers or our own words. The container numbers reused for barter
-      and root arrow direction are hypotheses, awaiting captures. Synthetic tests cover
-      the adapter and a model sale. Smoke `tiles-barter`, `tiles-barter-quantity`,
-      `barter-default-drawing` includes 1280x720 shots; compiled, not run by the writer.
+      and root arrow direction were checked against a capture of the original at 1280 x 720
+      (barter-menu.md section 9). Synthetic tests cover the adapter and a model sale. Smoke
+      `tiles-barter`, `tiles-barter-quantity`, `barter-default-drawing` includes 1280x720 shots.
