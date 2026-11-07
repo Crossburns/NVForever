@@ -13145,6 +13145,26 @@ run_seconds = 30
 expect = ["effect shader: Flames01 on "]
 
 [[scenario]]
+name = "burn-first-person"
+source = "issue #1772: the reporter sees the inside of the burning player's head and body in orange in first person [observed]; overlays and add-ons follow the camera's view of the third-person body [design: docs/spec-notes/effect-shaders.md §4, §8]"
+note = "The player starts in first person, starts Flames01 at 8 s and switches to third person at 13 s. Compare fp_no_fire.png, fp_on_fire.png and tp_on_fire.png: first person must stay clear, and third person must show the burn. The visibility logs must go from no covered meshes seen to some seen."
+areas = ["effect-shaders", "particles", "render"]
+paths = [
+  "engine/nvforever/src/effect_shaders.rs", "engine/nvforever/src/effect_particles.rs",
+  "engine/nvforever/src/player_body.rs", "engine/nvforever/src/shot_fx.rs", "engine/nvforever/src/particles.rs",
+  "docs/spec-notes/effect-shaders.md",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "8:call:player:PlayMagicShaderVisuals:0x0005F9B6", NVF_PLAY_TEST_CONTROL = "13:view", NVF_PLAY_TEST_SHOTS = "7:fp_no_fire.png,11:fp_on_fire.png,17:tp_on_fire.png" }
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice", "--no-messages"]
+run_seconds = 22
+expect = [
+  "effect shader: Flames01 on ",
+  { re = 'effect shader: Flames01 on the player: the camera sees 0 of [1-9]\d* covered meshes', label = "the burning body is unseen in first person" },
+  { re = 'effect shader: Flames01 on the player: the camera sees (?P<n>[1-9]\d*) of [1-9]\d* covered meshes', range = [1, 1000], label = "the burning body is seen in third person" },
+  { gap = [ { re = 'effect shader: Flames01 on the player: the camera sees 0 of [1-9]\d* covered meshes' }, { re = 'effect shader: Flames01 on the player: the camera sees [1-9]\d* of [1-9]\d* covered meshes' } ], range = [0.1, 100], label = "the hidden burn precedes the visible burn" },
+]
+
+[[scenario]]
 name = "b29-spray-follows-sequence"
 source = "docs/spec-notes/particles.md §7.5 (Volare! spot check 2026-10-24): the rising B-29 is drawn by script_draw when the detonator enables it, and the detonator plays its Forward (the rise, #710); its 39 particle systems (b29_riseanim.nif) emit from its rig root and take their emitter and bomb keys from the sequence the plane plays (§6.7), where before the first sequence's keyless false read as always on and white specks covered the hillside; set off the detonator and look at the plane from the panel; frames in target/smoke (b29_spray_rise.png during the spray, b29_spray_after.png after the rise)"
 areas = ["particles", "effects"]
