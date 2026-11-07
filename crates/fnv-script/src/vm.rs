@@ -304,7 +304,19 @@ pub trait Host {
     fn make_lambda(&mut self, _l: &XExpr) -> Result<XVal, String> {
         Err("lambdas are not run by this host".into())
     }
+    /// JIP's ScriptWait: whether the last call asked the running block to wait, and for
+    /// how many processing cycles. The VM asks after every statement; answering takes the
+    /// request. The VM then stops the run ([`Exit::Waiting`]) and keeps where it stood
+    /// ([`Vm::take_wait`]) for [`Vm::resume`].
+    fn take_wait(&mut self) -> Option<u32> {
+        None
+    }
 }
+
+/// Where a waiting run stands (JIP's ScriptWait): from the block's statement list down,
+/// at each level the statement's index and, for an `If`, the arm that was taken (the
+/// number of arms for its `Else`); the last entry is the statement that asked to wait.
+pub type WaitPoint = Vec<(usize, usize)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RunOpts {
@@ -337,6 +349,8 @@ enum Flow {
     Continue,
     /// `GoTo n`: up to the statement list that holds `Label n`.
     GoTo(i32),
+    /// ScriptWait: up to the top, the place kept in [`Vm::wait`].
+    Wait,
 }
 
 /// How a run ended.
@@ -346,6 +360,8 @@ pub enum Exit {
     Finished,
     /// A `Return` statement ended the run.
     Returned,
+    /// ScriptWait stopped the run; [`Vm::take_wait`] says where and for how long.
+    Waiting,
 }
 
 pub struct Vm<'t, 'h> {
@@ -353,11 +369,68 @@ pub struct Vm<'t, 'h> {
     host: &'h mut dyn Host,
     opts: RunOpts,
     steps: u64,
+    /// A ScriptWait's cycles and place, built as the run unwinds (innermost first).
+    wait: Option<(u32, WaitPoint)>,
+    /// Inside a loop or a chain of stray markers, where a place cannot be kept: a
+    /// ScriptWait there does not wait [decision: JIP's pages say nothing of loops].
+    no_wait: u32,
 }
 
 impl<'t, 'h> Vm<'t, 'h> {
     pub fn new(table: &'t FunctionTable, host: &'h mut dyn Host, opts: RunOpts) -> Self {
-        Vm { table, host, opts, steps: 0 }
+        Vm { table, host, opts, steps: 0, wait: None, no_wait: 0 }
+    }
+
+    /// After a run that ended [`Exit::Waiting`]: the cycles to wait and the place to
+    /// resume from (outermost first), for [`Vm::resume`].
+    pub fn take_wait(&mut self) -> Option<(u32, WaitPoint)> {
+        self.wait.take().map(|(n, mut p)| {
+            p.reverse();
+            (n, p)
+        })
+    }
+
+    /// Go on with a run that waited, after the statement that asked to (`at` from
+    /// [`Vm::take_wait`]). The `If` arms on the way are not tested again; a place that no
+    /// longer names an `If` arm ends the run.
+    pub fn resume(&mut self, stmts: &[Stmt], at: &[(usize, usize)]) -> Result<Exit, VmError> {
+        Ok(Self::exit(self.list_resume(stmts, false, at)?))
+    }
+
+    fn exit(f: Flow) -> Exit {
+        match f {
+            Flow::Return => Exit::Returned,
+            Flow::Wait => Exit::Waiting,
+            Flow::Normal | Flow::Leave | Flow::Break | Flow::Continue | Flow::GoTo(_) => Exit::Finished,
+        }
+    }
+
+    fn list_resume(&mut self, stmts: &[Stmt], in_else: bool, at: &[(usize, usize)]) -> Result<Flow, VmError> {
+        let Some(&(i, arm)) = at.first() else { return Ok(Flow::Normal) };
+        if at.len() == 1 {
+            return self.list_from(stmts, in_else, i + 1);
+        }
+        let Some(Stmt::If { arms, otherwise }) = stmts.get(i) else { return Ok(Flow::Normal) };
+        let body = match arms.get(arm) {
+            Some(a) => Some((&a.body, false)),
+            None => otherwise.as_ref().map(|o| (o, true)),
+        };
+        let Some((b, is_else)) = body else { return Ok(Flow::Normal) };
+        match self.list_resume(b, is_else, &at[1..])? {
+            Flow::GoTo(n) => match label_at(stmts, n) {
+                Some(to) => return self.list_from(stmts, in_else, to),
+                None => return Ok(Flow::GoTo(n)),
+            },
+            Flow::Wait => {
+                if let Some(w) = self.wait.as_mut() {
+                    w.1.push((i, arm));
+                }
+                return Ok(Flow::Wait);
+            }
+            f @ (Flow::Return | Flow::Break | Flow::Continue) => return Ok(f),
+            Flow::Normal | Flow::Leave => {}
+        }
+        self.list_from(stmts, in_else, i + 1)
     }
 
     /// Statements executed so far.
@@ -367,10 +440,7 @@ impl<'t, 'h> Vm<'t, 'h> {
 
     /// Run a statement list (a block body, or the top of a result script).
     pub fn run(&mut self, stmts: &[Stmt]) -> Result<Exit, VmError> {
-        Ok(match self.list(stmts, false)? {
-            Flow::Return => Exit::Returned,
-            Flow::Normal | Flow::Leave | Flow::Break | Flow::Continue | Flow::GoTo(_) => Exit::Finished,
-        })
+        Ok(Self::exit(self.list(stmts, false)?))
     }
 
     /// Evaluate one expression (conditions, tests).
@@ -453,7 +523,12 @@ impl<'t, 'h> Vm<'t, 'h> {
     ///   the same chain, §2.6): one branch of the chain has run, so reaching it ends the
     ///   chain, as running into the next marker of an ordinary chain does [hypothesis].
     fn list(&mut self, stmts: &[Stmt], in_else: bool) -> Result<Flow, VmError> {
-        let mut i = 0;
+        self.list_from(stmts, in_else, 0)
+    }
+
+    /// [`Vm::list`] from the statement at `start`.
+    fn list_from(&mut self, stmts: &[Stmt], in_else: bool, start: usize) -> Result<Flow, VmError> {
+        let mut i = start;
         while i < stmts.len() {
             self.step()?;
             match &stmts[i] {
@@ -468,18 +543,18 @@ impl<'t, 'h> Vm<'t, 'h> {
                 }
                 Stmt::If { arms, otherwise } => {
                     let mut taken = None;
-                    for a in arms {
+                    for (k, a) in arms.iter().enumerate() {
                         let hold = self.eval(&a.cond)?.truthy();
                         if self.host.take_return() {
                             return Ok(Flow::Return);
                         }
                         if hold {
-                            taken = Some((&a.body, false));
+                            taken = Some((&a.body, false, k));
                             break;
                         }
                     }
-                    let body = taken.or(otherwise.as_ref().map(|o| (o, true)));
-                    if let Some((b, is_else)) = body {
+                    let body = taken.or(otherwise.as_ref().map(|o| (o, true, arms.len())));
+                    if let Some((b, is_else, k)) = body {
                         match self.list(b, is_else)? {
                             Flow::GoTo(n) => match label_at(stmts, n) {
                                 Some(at) => {
@@ -488,6 +563,12 @@ impl<'t, 'h> Vm<'t, 'h> {
                                 }
                                 None => return Ok(Flow::GoTo(n)),
                             },
+                            Flow::Wait => {
+                                if let Some(w) = self.wait.as_mut() {
+                                    w.1.push((i, k));
+                                }
+                                return Ok(Flow::Wait);
+                            }
                             f @ (Flow::Return | Flow::Break | Flow::Continue) => return Ok(f),
                             Flow::Normal | Flow::Leave => {}
                         }
@@ -524,15 +605,21 @@ impl<'t, 'h> Vm<'t, 'h> {
                     if !go {
                         break;
                     }
-                    match self.list(body, false)? {
+                    self.no_wait += 1;
+                    let f = self.list(body, false);
+                    self.no_wait -= 1;
+                    match f? {
                         Flow::Return => return Ok(Flow::Return),
                         Flow::Break => break,
                         f @ Flow::GoTo(_) => return Ok(f),
-                        Flow::Normal | Flow::Leave | Flow::Continue => {}
+                        Flow::Normal | Flow::Leave | Flow::Continue | Flow::Wait => {}
                     }
                 },
                 Stmt::ForEach { head, body } => {
-                    if let f @ (Flow::Return | Flow::GoTo(_)) = self.foreach(head, body)? {
+                    self.no_wait += 1;
+                    let f = self.foreach(head, body);
+                    self.no_wait -= 1;
+                    if let f @ (Flow::Return | Flow::GoTo(_)) = f? {
                         return Ok(f);
                     }
                 }
@@ -557,7 +644,10 @@ impl<'t, 'h> Vm<'t, 'h> {
                     }
                 }
                 Stmt::Unmatched { .. } => {
-                    let (flow, next) = self.stray_chain(stmts, i)?;
+                    self.no_wait += 1;
+                    let r = self.stray_chain(stmts, i);
+                    self.no_wait -= 1;
+                    let (flow, next) = r?;
                     if matches!(flow, Flow::Return | Flow::Break | Flow::Continue) {
                         return Ok(flow);
                     }
@@ -581,6 +671,12 @@ impl<'t, 'h> Vm<'t, 'h> {
             }
             if let Some(x) = self.host.ext() {
                 x.sweep();
+            }
+            if let Some(n) = self.host.take_wait() {
+                if self.no_wait == 0 {
+                    self.wait = Some((n, vec![(i, 0)]));
+                    return Ok(Flow::Wait);
+                }
             }
             i += 1;
         }
@@ -1657,7 +1753,7 @@ impl Vm<'_, '_> {
                     match self.list(body, false)? {
                         f @ (Flow::Return | Flow::GoTo(_)) => break f,
                         Flow::Break => break Flow::Normal,
-                        Flow::Normal | Flow::Leave | Flow::Continue => {}
+                        Flow::Normal | Flow::Leave | Flow::Continue | Flow::Wait => {}
                     }
                     i += 1;
                 };
@@ -1671,7 +1767,7 @@ impl Vm<'_, '_> {
                     match self.list(body, false)? {
                         f @ (Flow::Return | Flow::GoTo(_)) => return Ok(f),
                         Flow::Break => break,
-                        Flow::Normal | Flow::Leave | Flow::Continue => {}
+                        Flow::Normal | Flow::Leave | Flow::Continue | Flow::Wait => {}
                     }
                 }
                 Ok(Flow::Normal)
@@ -1691,7 +1787,7 @@ impl Vm<'_, '_> {
                     match self.list(body, false)? {
                         f @ (Flow::Return | Flow::GoTo(_)) => return Ok(f),
                         Flow::Break => break,
-                        Flow::Normal | Flow::Leave | Flow::Continue => {}
+                        Flow::Normal | Flow::Leave | Flow::Continue | Flow::Wait => {}
                     }
                 }
                 // After a container's loop the variable holds no form, a copy made inside

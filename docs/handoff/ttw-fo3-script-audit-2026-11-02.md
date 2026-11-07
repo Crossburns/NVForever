@@ -175,3 +175,21 @@ two unnamed ones added to the catalogue as `observed-only` entries; scripts.md �
 
 With these §1 is done (ShowSPECIALBookMenuParams was already built, `ui::
 show_special_book_menu`).
+
+## Outcome, §2 (2026-11-06, #1408)
+
+All fifteen extender functions of §2 run (docs/spec-notes/jip-ttw-functions.md):
+- The eight JIP event registrations already worked by the one `SetOn…EventHandler` rule;
+  what was missing was firing projectile impact, menu open and close, key up (and down),
+  crafting and location discovery (jip-events.md §5). Hit and use-aid-item fired
+  already.
+- Built (`crates/fnv-game/src/nvse_ttw.rs`): ScriptWait with IsScriptWaiting and
+  StopScriptWaiting (the VM keeps the place and resumes there), MarkActivatorAshPile,
+  AttachAshPileEx, DonnerReedKuruParty, SetMusicState (the engine pauses, resumes and
+  stops its music), InitExtraMiscStat (ModExtraMiscStat now adds to it; the stats go in
+  the save).
+- Kept as state only: SetTerminalUIModel (the terminal menu does not draw the art yet).
+
+Still open: §3 (the GetCommandOpcode capture with ShowOff and ttw_nvse, then
+TTW_EnableRadioFix and InitRockItLauncher), the Pip-Boy listing the extra misc stats,
+and the coverage tool's extender blind spot (the Totals' note).

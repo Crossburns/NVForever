@@ -291,6 +291,9 @@ fn roll(
     if !credits.open {
         return;
     }
+    // The roll fills the view at every UI scale: its lines come in at the view's bottom and
+    // leave at its top [design: #1631, not a menu].
+    let _full = crate::interface::original_units();
     paused.0 = true;
     let screen = windows.single().map_or(Vec2::new(1280.0, 960.0), |w| Vec2::new(960.0 * w.width() / w.height().max(1.0), 960.0));
     credits.scroll += SPEED * time.delta_secs();
