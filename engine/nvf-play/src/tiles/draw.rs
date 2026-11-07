@@ -940,6 +940,7 @@ pub(crate) struct View<'w, 's> {
     stats: Option<ResMut<'w, super::stats_menu::StatsTiles>>,
     /// T15c: the container menu, when this frame's writer has it drawn from its tiles.
     container: Option<Res<'w, super::container_menu::ContainerTiles>>,
+    barter: Option<Res<'w, super::barter_menu::BarterTiles>>,
     /// The trait menu, when this frame's writer has it drawn from its tiles.
     traits: Option<Res<'w, super::trait_menu::TraitTiles>>,
     tags: Option<Res<'w, super::tag_menu::TagTiles>>,
@@ -971,6 +972,7 @@ pub(crate) struct MenusDrawn {
     /// The Pip-Boy's S.P.E.C.I.A.L. page, in the Pip-Boy's image.
     stats: Drawn,
     container: Drawn,
+    barter: Drawn,
     traits: Drawn,
     tags: Drawn,
     dialog: Drawn,
@@ -1021,13 +1023,15 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: V
     // The prompt drawn only while open: its tree drops at the next frame's sync.
     let prompt_open = view.active.as_ref().and_then(|a| a.0.as_ref()).is_some_and(|m| m.quantity.is_some());
     let container_on = view.container.as_ref().is_some_and(|c| c.menu.is_some());
+    let barter_on = view.barter.as_ref().is_some_and(|b| b.menu().is_some());
     let mut blur_now = super::menus::TileMenuBlur::default();
     for (name, on, z, drawn) in [
         (super::menus::MESSAGE_MENU, game.is_some_and(|g| super::menus::message_tiled(switch.message, g)), MESSAGE_Z, &mut others.message),
-        (super::menus::QUANTITY_MENU, game.is_some_and(|g| super::menus::quantity_tiled(switch.quantity, g, prompt_open, container_on)), QUANTITY_Z, &mut others.quantity),
+        (super::menus::QUANTITY_MENU, game.is_some_and(|g| super::menus::quantity_tiled(switch.quantity, g, prompt_open, container_on || barter_on)), QUANTITY_Z, &mut others.quantity),
         (super::wait_menu::SLEEP_WAIT_MENU, game.is_some_and(|g| super::wait_menu::tiled(switch.sleep_wait, g)), SLEEP_WAIT_Z, &mut others.sleep_wait),
         (super::tutorial_menu::TUTORIAL_MENU, game.is_some_and(|g| super::tutorial_menu::tiled(switch.tutorial, g)), TUTORIAL_Z, &mut others.tutorial),
         (super::container_menu::CONTAINER_MENU, container_on, CONTAINER_Z, &mut others.container),
+        (super::barter_menu::BARTER_MENU, barter_on, CONTAINER_Z, &mut others.barter),
         // One decision with the hand-built menu's and, below, the blur's (`trait_menu::drawn`).
         (super::trait_menu::TRAIT_MENU, view.traits.as_ref().is_some_and(|t| super::trait_menu::drawn(t, view.chargen.as_ref().and_then(|c| c.traits_open()), game).is_some()), TRAIT_Z, &mut others.traits),
         (super::tag_menu::TAG_MENU, view.tags.as_ref().is_some_and(|t| super::tag_menu::drawn(t, view.chargen.as_ref().and_then(|c| c.tags_open()), game).is_some()), TRAIT_Z, &mut others.tags),
@@ -1038,6 +1042,7 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: V
         // The blur behind the menu follows this very decision, not the switch or the menu's id.
         blur_now.tutorial |= name == super::tutorial_menu::TUTORIAL_MENU && menu.is_some();
         blur_now.container |= name == super::container_menu::CONTAINER_MENU && menu.is_some();
+        blur_now.barter |= name == super::barter_menu::BARTER_MENU && menu.is_some();
         blur_now.traits |= name == super::trait_menu::TRAIT_MENU && menu.is_some();
         blur_now.tags |= name == super::tag_menu::TAG_MENU && menu.is_some();
         let pieces = match menu {
