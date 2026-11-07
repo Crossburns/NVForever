@@ -46,7 +46,7 @@ pub struct TileMenus {
     pub message: bool,
     /// `QuantityMenu` (T15a): the "How many?" prompt of the container, barter and inventory menus from its
     /// file, the hand-built prompt (`crate::menu::look::spawn_quantity`) not spawned
-    /// (`super::menus`). Off, a container menu drawn from its tiles still brings its own.
+    /// (`super::menus`). Off, an item menu drawn from its tiles still brings its own.
     pub quantity: bool,
     /// `StartMenu` (T11): the pause menu's Mods entry, when a mod added tiles to the
     /// start menu, opens a page drawing them (`super::mods`).
@@ -64,6 +64,8 @@ pub struct TileMenus {
     /// (`crate::menu::look`) not spawned (`super::container_menu`), and its prompt from
     /// `QuantityMenu`'s while it is so drawn (`super::menus::quantity_tiled`).
     pub container: bool,
+    /// `BarterMenu`: barter from its file, including its quantity prompt [design: section 9].
+    pub barter: bool,
     /// `TraitMenu`: the trait menu from its file, the hand-built one (`crate::chargen::lists`)
     /// not spawned (`super::trait_menu`).
     pub traits: bool,
@@ -97,6 +99,8 @@ impl TileMenus {
                 menus.stats = true;
             } else if name.eq_ignore_ascii_case(super::container_menu::CONTAINER_MENU) {
                 menus.container = true;
+            } else if name.eq_ignore_ascii_case(super::barter_menu::BARTER_MENU) {
+                menus.barter = true;
             } else if name.eq_ignore_ascii_case(super::trait_menu::TRAIT_MENU) {
                 menus.traits = true;
             } else if name.eq_ignore_ascii_case(super::tag_menu::TAG_MENU) {
@@ -139,15 +143,15 @@ pub(crate) fn setup(app: &mut App) {
 
 impl TileMenus {
     /// The menus the switch acts on, in its order.
-    pub const NAMES: [&str; 11] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::tutorial_menu::TUTORIAL_MENU, super::container_menu::CONTAINER_MENU, super::trait_menu::TRAIT_MENU, super::tag_menu::TAG_MENU, super::mods::START_MENU, super::stats_menu::STATS_MENU, super::dialog_menu::DIALOG_MENU];
+    pub const NAMES: [&str; 12] = [super::draw::HUD_MENU, super::menus::MESSAGE_MENU, super::menus::QUANTITY_MENU, super::wait_menu::SLEEP_WAIT_MENU, super::tutorial_menu::TUTORIAL_MENU, super::container_menu::CONTAINER_MENU, super::barter_menu::BARTER_MENU, super::trait_menu::TRAIT_MENU, super::tag_menu::TAG_MENU, super::mods::START_MENU, super::stats_menu::STATS_MENU, super::dialog_menu::DIALOG_MENU];
 
-    /// The start-up line's end: the menus drawn from tiles, or none, and that the container's
+    /// The start-up line's end: the menus drawn from tiles, or none, and that an item menu's
     /// prompt follows it when its own switch is off (`super::menus::quantity_tiled`).
     pub fn line(&self) -> String {
-        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.tutorial, self.container, self.traits, self.tags, self.start, self.stats, self.dialog]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
+        let on: Vec<&str> = Self::NAMES.into_iter().zip([self.hud, self.message, self.quantity, self.sleep_wait, self.tutorial, self.container, self.barter, self.traits, self.tags, self.start, self.stats, self.dialog]).filter(|(_, on)| *on).map(|(n, _)| n).collect();
         if on.is_empty() {
             "no menu drawn from tiles".into()
-        } else if self.container && !self.quantity {
+        } else if (self.container || self.barter) && !self.quantity {
             format!("{} drawn from tiles; its QuantityMenu prompt follows", on.join(", "))
         } else {
             format!("{} drawn from tiles", on.join(", "))
@@ -527,13 +531,17 @@ mod tests {
         assert_eq!(t15b.line(), "SleepWaitMenu, TutorialMenu drawn from tiles");
         assert!(!TileMenus::parse("sleepwaitmenu").0.tutorial, "off unless named");
         assert_eq!(TileMenus::parse("QuantityMenu").0, TileMenus { quantity: true, ..TileMenus::default() });
-        // T15c: the container menu, alone and with its prompt; the barter menu not built yet.
+        // [design] Each item menu can bring its own prompt.
+        let barter = TileMenus { barter: true, ..TileMenus::default() };
+        assert_eq!(TileMenus::parse(" barterMENU "), (barter, Vec::new()));
+        assert_eq!(barter.line(), "BarterMenu drawn from tiles; its QuantityMenu prompt follows");
+        assert!(!TileMenus::default().barter);
         let container = TileMenus { container: true, ..TileMenus::default() };
         assert_eq!(TileMenus::parse("containermenu"), (container, Vec::new()));
         assert_eq!(container.line(), "ContainerMenu drawn from tiles; its QuantityMenu prompt follows");
-        let both = (TileMenus { container: true, quantity: true, ..TileMenus::default() }, vec!["BarterMenu".to_string()]);
+        let both = (TileMenus { container: true, quantity: true, barter: true, ..TileMenus::default() }, vec![]);
         assert_eq!(TileMenus::parse("ContainerMenu,QuantityMenu,BarterMenu"), both);
-        assert_eq!(both.0.line(), "QuantityMenu, ContainerMenu drawn from tiles");
+        assert_eq!(both.0.line(), "QuantityMenu, ContainerMenu, BarterMenu drawn from tiles");
         // [design] Each character selection page is independently opt-in.
         let traits = TileMenus { traits: true, ..TileMenus::default() };
         assert_eq!(TileMenus::parse("traitmenu, CharGenMenu"), (TileMenus { tags: true, ..traits }, Vec::new()));
