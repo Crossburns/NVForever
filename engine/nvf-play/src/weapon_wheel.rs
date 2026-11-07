@@ -405,7 +405,8 @@ fn read(
     if let Some(n) = aid.pressed {
         f.pressed = Some(n);
     }
-    let k = windows.single().map_or(1.0, |w| 960.0 / w.height().max(1.0));
+    // The pointer's travel in units of the wheel as drawn, at the UI scale (#1631).
+    let k = windows.single().map_or(1.0, |w| 960.0 / w.height().max(1.0)) / crate::interface::unit_scale();
     f.moved = motion.delta * k;
     if let Some(p) = aid.point {
         f.moved = p - wheel.open.map_or(Vec2::ZERO, |o| o.pointer);

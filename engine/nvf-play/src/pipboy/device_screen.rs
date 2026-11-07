@@ -317,6 +317,8 @@ pub fn draw(
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
 ) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     let Some(screen) = screen else { return };
     let want = wanted(&pip);
     if want == !layers.is_empty() {
@@ -382,6 +384,8 @@ pub fn draw(
 /// held in the picture, not a phase kept across the pause [design]. Logged once each time
 /// the treatment comes on, on the first sweep.
 pub fn sweep(time: Res<Time<Real>>, paused: Res<crate::pause::Paused>, mut fx: ResMut<ScreenFx>, mut beams: Query<(&mut Node, &mut Visibility), With<ScreenFxBeam>>) {
+    // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
+    let _canvas = crate::interface::original_units();
     if paused.0 {
         return;
     }

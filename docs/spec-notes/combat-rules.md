@@ -291,7 +291,36 @@ each the identity by default. Reading PERK records is a later step.
     A flame goes on through actors, hitting each once.
   - Projectiles flagged to pass small-transparent colliders go through them.
   - Gravity is the PROJ value × the world's 9.81 m/s² at 70 units per metre
-    [hypothesis; the owner plans projectile captures to tune this].
+    [observed for a missile: o26_gl below].
+  - **Measured in the original (o26_gl, 2026-11-06, `nvfairport`, the runway, first
+    person; the newest live projectile's position every game loop by `GetFirstRef 51`,
+    times from GameHour at TimeScale 30; issue #1471).** The Grenade Launcher's
+    `40mmGrenLaunchProjectile` (Missile, speed 1,750, gravity 1.5) flew at **1,750
+    units/s** (1,750-1,753 in all four shots) under **1,030-1,039 units/s²**, that is 1.5
+    × 686.7 [observed]: the PROJ speed and the gravity rule above, as built. The shots,
+    from 110-140 units above the ground and 55 units ahead of the player:
+
+    | Aim (GetAngle X) | Launch angle | First ground hit | Flight |
+    |---|---|---|---|
+    | 0 (attack key held 4 loops) | -0.3° | 793 units | 0.45 s |
+    | -15 | 16.2° | 1,944 units | 1.16 s |
+    | -30 | 30.3° | 2,815 units | 1.86 s |
+    | 0, `player.FireWeapon` | 0.3° | 821 units | 0.47 s |
+
+    The round went off at its first ground hit; it did not bounce or roll. The launch
+    angle was 1.2° above the aim at -15 and 0.3° at -30 [observed]. So speed and gravity
+    do not make NVForever's round fall short; what is left to compare is where and in
+    which direction ours leaves the launcher (issue #1471).
+  - A thrown frag grenade (`GrenadeFragProjectile`, Lobber, speed 1,200, gravity 1.0;
+    the attack held 30 loops, aimed level) went **about 950 units/s across the ground**
+    over its first 0.35 s (952 by a straight-line fit; not 1,200), slowing to about 830
+    and then 660 units/s before it touched down; its height over those 0.61 s fits a
+    fall under about 490 units/s² from a slight downward start (a rough fit, less than
+    the 686.7 rule) [observed]; **first touched the
+    ground 534 units out after 0.61 s**, then bounced low (under 15 units) and **rolled
+    on to 1,206 units by 2.47 s**, still moving when the record ended [observed, same
+    campaign]. NVForever throws it at the PROJ speed (times the throwing perks); whether
+    ours rolls was not checked here.
 - **Explosions.**
   - Without Alt. Trigger, the explosion goes off on impact.
   - With it, a lobber bounces (× its bouncy multiplier, else `default_bounce`) and
@@ -1151,7 +1180,7 @@ From the ESM audit (gap 5). Code: `fnv_combat::data::ProjectileStats::lands_as_w
 ## 13. Open points
 
 - Every [design] number is a first guess for the owner to tune in play.
-- Projectile gravity units and speeds: the owner's projectile capture round.
+- Projectile gravity and speed: the Grenade Launcher's round matches the PROJ speed × the 686.7 rule (§5, o26_gl); a thrown frag grenade went about 950 units/s across the ground, not its PROJ 1,200, and slowed in the air (§5).
 - `fCombatDistance`, the melee reach base: not in the masters and not documented; 107
   is fitted to the NPCs' swings (§10). The player's own reach in the original is not
   measured.

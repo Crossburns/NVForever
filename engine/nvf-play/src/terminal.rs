@@ -1012,6 +1012,9 @@ fn draw(
     mut faces: Local<Option<screen::Faces>>,
     mut shown: Local<Option<String>>,
 ) {
+    // The screen is laid out in its own texture, at its size whatever the UI scale; the
+    // picture of it on the window scales (`screen::spawn_backdrop`, #1631).
+    let _canvas = crate::interface::original_units();
     let key = screen.0.as_ref().map(view_key);
     let on = ((time.elapsed_secs() / screen::BLINK_SECONDS) as u32).is_multiple_of(2);
     if key == *shown {

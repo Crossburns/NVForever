@@ -121,7 +121,8 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, now: f32, view_w: f3
     let dim = amber(DIM);
     let light = if s.help.is_some() { UNDER_HELP } else { 1.0 };
     let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
-    commands.spawn((SlotsRoot, full.clone(), GlobalZIndex(106), BackgroundColor(Color::BLACK))).with_children(|r| {
+    // The menu at the UI scale, in the middle of the view (`crate::interface::menu_frame`, #1631).
+    commands.spawn((SlotsRoot, full.clone(), GlobalZIndex(106), BackgroundColor(Color::BLACK))).with_children(|r| crate::interface::in_menu_frame(r, crate::interface::MIDDLE, |r| {
         // The payout list takes the reels' place while it shows.
         if s.payouts {
             payouts(r, c, s, view_w);
@@ -175,7 +176,7 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, now: f32, view_w: f3
         if let Some(h) = &s.help {
             crate::lockpick::help::spawn(r, c, h, view_w);
         }
-    });
+    }));
 }
 
 /// The three reels: each a window three symbols high, the symbols running down while it
