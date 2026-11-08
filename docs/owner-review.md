@@ -436,3 +436,12 @@ Not a gameplay decision, and not needed before phase M5. The script host (an aut
 route with no compiler) runs either Lua or GECK/xNVSE-style script compiled by
 NVForever's own compiler. Hooks for ESP scripts are a third option.
 [code-mods](design/code-mods.md) §12.1, §17 item 8.
+
+## High and Dry: two more plugins reported (2026-11-08)
+
+- **UI Organizer at 2.30, itr-nvse at 1.0.8.** On the rule of the Stewie's Tweaks ruling
+  ("the dll is present, just in engine"): eleven High and Dry mods stop with "requires UI
+  Organizer 2.30" though `fnv_ui::uio` injects their lists' XML, and SD Dynamic Encounters
+  stops with "ITR 1.0.8+" though the ITR calls it makes after the check are built
+  (`crate::vm::jip::PLUGINS`). *If you rule otherwise:* those mods show their requirement
+  message boxes again and stay off.

@@ -100,7 +100,14 @@ pub const JIP_NAMES: [&str; 1] = ["JIP NVSE Plugin"];
 /// Stewie's Tweaks is reported at 941, the lowest TTW 3.4 accepts, and ttw_nvse at 1,
 /// as TTW only asks whether it is there. Most of Stewie's tweaks themselves are not
 /// built (ext-small.md).
-pub const PLUGINS: [(&str, f64); 8] = [
+///
+/// Two more on the same rule, for High and Dry's start-up checks [design, 2026-11-08,
+/// owner-review]: "UI Organizer Plugin" at 230 (2.30, the version eleven of its mods
+/// require): that plugin's work is injecting the XML its lists name into menus, which
+/// `fnv_ui::uio` does; and "itr-nvse" at 108 (1.0.8, SD Dynamic Encounters' minimum,
+/// whose calls after the check, CanPathToRef and MoveToGround, are built in
+/// `fnv_game::nvse_itr2`).
+pub const PLUGINS: [(&str, f64); 10] = [
     ("JIP NVSE Plugin", JIP_VERSION),
     ("JIP LN NVSE", JIP_VERSION),
     ("ShowOffNVSE Plugin", 184.0),
@@ -109,6 +116,8 @@ pub const PLUGINS: [(&str, f64); 8] = [
     ("MCM Extensions", 1.0),
     ("lStewieAl's Tweaks", 941.0),
     ("ttw_nvse", 1.0),
+    ("UI Organizer Plugin", 230.0),
+    ("itr-nvse", 108.0),
 ];
 
 impl Vm<'_, '_> {
