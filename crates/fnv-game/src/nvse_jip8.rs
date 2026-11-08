@@ -76,13 +76,12 @@ const PC_LEVEL_MULT: u64 = 1 << 7;
 /// level or level mult, 1 calc min, 2 calc max; the fields: xEdit ACBS].
 const LEVELING: [&str; 3] = ["level_or_level_mult_raw", "calc_min", "calc_max"];
 
-/// The MGEF flag IDs a script may set [documented: SetBaseEffectFlag's table].
-const BASE_EFFECT_FLAGS: [u32; 18] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 19, 20, 24, 27, 28];
-
 /// The water traits 2-50 in WATR DNAM's order [documented: GetWaterTrait's table, which
 /// follows the record: 2-5 unknown, 6 sun power … 50 layer 3 amplitude; the fields: xEdit
 /// WATR, the schema's `WaterVisual`]. 9 and 15 are unused bytes and read 0; 12-14 are
-/// colours.
+/// colours. The original reads 15 as a value the record does not hold (6.53e-39, bits
+/// 0x00471CFE, where the bytes are 0) [observed: jip8], something of its own at run
+/// time; NVForever keeps the record's 0 [decision: no record value to give].
 const WATER_TRAITS: [&str; 49] = [
     "unknown_0",
     "unknown_1",
@@ -141,13 +140,16 @@ const WATER_TRAITS: [&str; 49] = [
 const PERCEPTION_CONDITION: u16 = 25;
 
 impl Game<'_> {
-    /// A base actor's actor effects (SPLO) in record order, AddBaseEffectListEffect's
-    /// and RemoveBaseEffectListEffect's changes first.
+    /// A base actor's actor effects (SPLO), the record's last first [observed: jip8,
+    /// the Super Mutant's two in reverse record order], AddBaseEffectListEffect's and
+    /// RemoveBaseEffectListEffect's changes first.
     pub fn actor_effects(&self, base: FormId) -> Vec<FormId> {
         if let Some(v) = self.other.jip8.actor_effects.get(&base) {
             return v.clone();
         }
-        self.data.record_all(base, "SPLO").into_iter().filter_map(|v| json_form(Some(v))).collect()
+        let mut v: Vec<FormId> = self.data.record_all(base, "SPLO").into_iter().filter_map(|v| json_form(Some(v))).collect();
+        v.reverse();
+        v
     }
 
     /// A base effect's flags (MGEF DATA), SetBaseEffectFlag's change first.
@@ -256,8 +258,10 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             if let (Some(a), Some(path)) = (actor_at(g, 2), usize::try_from(t).ok().and_then(|t| LEVELING.get(t))) {
                 let mult = t == 0 && g.num_field8(a, "ACBS", "flags") as u64 & PC_LEVEL_MULT != 0;
                 let v = num(args, 1, f64::NAN) * if mult { 1000.0 } else { 1.0 };
-                // u16 fields.
+                // u16 fields; calc max not below calc min [observed: jip8, Angela's calc
+                // max set to 0 reads her calc min, 1].
                 if let Some(v) = field_number(v.round(), 0.0, 65535.0) {
+                    let v = if t == 2 { v.max(g.num_field8(a, "ACBS", "calc_min")) } else { v };
                     g.set_field8(a, "ACBS", path, XVal::Num(v));
                 }
             }
@@ -285,13 +289,14 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             XVal::Ref(if i >= 0.0 { all.get(i as usize).map_or(0, |f| f.0) } else { 0 })
         }
         // `effect [base]`: only an actor effect (SPEL) [documented: "the specified Actor
-        // Effect"]; once in the list [hypothesis].
+        // Effect"]; added at the front, once [observed: jip8, after two adds the list is
+        // one longer and the old first is second].
         "addbaseeffectlisteffect" | "removebaseeffectlisteffect" => {
             let (Some(e), Some(a)) = (of_sig(g, form(args, 0), b"SPEL"), actor_at(g, 1)) else { return Some(Ok(zero)) };
             let mut list = g.actor_effects(a);
             if name == "addbaseeffectlisteffect" {
                 if !list.contains(&e) {
-                    list.push(e);
+                    list.insert(0, e);
                 }
             } else {
                 list.retain(|&x| x != e);
@@ -344,18 +349,18 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // [documented: the pages; the fields: xEdit ALCH].
         "getaddictionchance" => XVal::Num(of_sig(g, form(args, 0), b"ALCH").map_or(0.0, |a| g.num_field8(a, "ENIT", "addiction_chance"))),
         "setaddictionchance" => {
-            // A chance, 0-1 [hypothesis: the page's example, 0.2].
-            if let (Some(a), Some(c)) = (of_sig(g, form(args, 0), b"ALCH"), field_number(num(args, 1, f64::NAN), 0.0, 1.0)) {
+            // Kept as given, 50, 1.5 and -0.5 too [observed: jip8]; an f32 field.
+            if let (Some(a), Some(c)) = (of_sig(g, form(args, 0), b"ALCH"), field_number(num(args, 1, f64::NAN), F32.0, F32.1)) {
                 g.set_field8(a, "ENIT", "addiction_chance", XVal::Num(c));
             }
             zero
         }
         "getaddictioneffect" => XVal::Ref(of_sig(g, form(args, 0), b"ALCH").and_then(|a| as_ref(crate::nvse::record_value(g, a, "ENIT", "withdrawal_effect"))).map_or(0, |f| f.0)),
         "setaddictioneffect" => {
-            // An actor effect, or none [documented: "actorEffect"; hypothesis: none].
-            let e = form(args, 1);
-            if let Some(a) = of_sig(g, form(args, 0), b"ALCH").filter(|_| e.is_none_or(|e| g.data.sig(e) == Some(*b"SPEL"))) {
-                g.set_field8(a, "ENIT", "withdrawal_effect", XVal::Ref(e.map_or(0, |e| e.0)));
+            // An actor effect; none is ignored [documented: "actorEffect"; observed: jip8,
+            // none leaves Cateye's effect].
+            if let (Some(a), Some(e)) = (of_sig(g, form(args, 0), b"ALCH"), of_sig(g, form(args, 1), b"SPEL")) {
+                g.set_field8(a, "ENIT", "withdrawal_effect", XVal::Ref(e.0));
             }
             zero
         }
@@ -371,11 +376,12 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `effect flag set`: the flags of the page's table only [documented].
+        // `effect flag set`: any of DATA's 32 bits, not only the page's table's
+        // [documented: the table; observed: jip8, flag 11 is set].
         "setbaseeffectflag" => {
             let k = num(args, 1, -1.0);
             let m = form(args, 0).filter(|f| g.data.magic_effects.contains_key(f));
-            if let Some(m) = m.filter(|_| k.fract() == 0.0 && BASE_EFFECT_FLAGS.contains(&(k as u32)) && k >= 0.0) {
+            if let Some(m) = m.filter(|_| k.fract() == 0.0 && (0.0..32.0).contains(&k)) {
                 let flags = g.base_effect_flags(m);
                 let bit = 1u32 << (k as u32);
                 let new = if num(args, 2, 0.0) != 0.0 { flags | bit } else { flags & !bit };
@@ -383,19 +389,18 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `effect flag set`: an actor effect's 0, 2, 4-7, an object effect's 0 and 2, an
-        // ingestible's 0-2 [documented: the page's tables]; SPEL SPIT, ENCH and ALCH ENIT
-        // [the fields: xEdit].
+        // `effect flag set`: any of the flags byte's bits 0-7, not only the page's tables'
+        // [documented: the tables; observed: jip8, every bit tried sticks on all three];
+        // SPEL SPIT, ENCH and ALCH ENIT [the fields: xEdit].
         "seteffectflag" => {
             let k = num(args, 1, -1.0);
             let Some(f) = form(args, 0) else { return Some(Ok(zero)) };
-            let (sub, ok): (&str, &[u32]) = match g.data.sig(f).as_ref() {
-                Some(b"SPEL") => ("SPIT", &[0, 2, 4, 5, 6, 7]),
-                Some(b"ENCH") => ("ENIT", &[0, 2]),
-                Some(b"ALCH") => ("ENIT", &[0, 1, 2]),
+            let sub = match g.data.sig(f).as_ref() {
+                Some(b"SPEL") => "SPIT",
+                Some(b"ENCH" | b"ALCH") => "ENIT",
                 _ => return Some(Ok(zero)),
             };
-            if k >= 0.0 && k.fract() == 0.0 && ok.contains(&(k as u32)) {
+            if (0.0..8.0).contains(&k) && k.fract() == 0.0 {
                 let flags = g.num_field8(f, sub, "flags") as u64;
                 let bit = 1u64 << (k as u32);
                 let new = if num(args, 2, 0.0) != 0.0 { flags | bit } else { flags & !bit };
@@ -422,13 +427,18 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `weapon slot effect`: DNAM effect_mod1-3, 0-14 [documented: the page's table;
-        // the JohnnyGuitar note's 15 and 16 are not taken].
+        // `weapon slot effect`: DNAM effect_mod1-3, 1-16; 0 (none) is ignored [documented:
+        // the page's table, 0-14, and the JohnnyGuitar note; observed: jip8, 0 leaves the
+        // effect and 15 is stored; hypothesis: 16, the enum's last].
         "setweaponitemmodeffect" | "setweaponitemmodvalue" => {
             let slot = num(args, 1, 0.0);
             let Some(w) = of_sig(g, form(args, 0), b"WEAP").filter(|_| (1.0..=3.0).contains(&slot)) else { return Some(Ok(zero)) };
-            let (path, range) = if name == "setweaponitemmodeffect" { ("effect_mod", (0.0, 14.0)) } else { ("value_a_mod", F32) };
-            if let Some(v) = field_number(num(args, 2, f64::NAN), range.0, range.1) {
+            let (path, range) = if name == "setweaponitemmodeffect" { ("effect_mod", (1.0, 16.0)) } else { ("value_a_mod", F32) };
+            let raw = num(args, 2, f64::NAN);
+            if range != F32 && !(1.0..=16.0).contains(&raw) {
+                return Some(Ok(zero));
+            }
+            if let Some(v) = field_number(raw, range.0, range.1) {
                 let v = if range == F32 { v } else { v.trunc() };
                 g.set_field8(w, "DNAM", &format!("{path}{}", slot as u8), XVal::Num(v));
             }
@@ -513,11 +523,15 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             XVal::Num(of_sig(g, form(args, 0), b"IDLE").map_or(0.0, |i| g.num_field8(i, "DATA", path)))
         }
         "setidlelooptimes" => {
+            // Each clamped to a u8, the max raised to the min [observed: jip8, 300 2 reads
+            // 255 255].
             if let Some(i) = of_sig(g, form(args, 0), b"IDLE") {
-                for (k, path) in [(1, "loop_min"), (2, "loop_max")] {
-                    if let Some(v) = field_number(num(args, k, f64::NAN), U8.0, U8.1) {
-                        g.set_field8(i, "DATA", path, XVal::Num(v.trunc()));
-                    }
+                if let Some(v) = field_number(num(args, 1, f64::NAN), U8.0, U8.1) {
+                    g.set_field8(i, "DATA", "loop_min", XVal::Num(v.trunc()));
+                }
+                if let Some(v) = field_number(num(args, 2, f64::NAN), U8.0, U8.1) {
+                    let min = g.num_field8(i, "DATA", "loop_min");
+                    g.set_field8(i, "DATA", "loop_max", XVal::Num(v.trunc().max(min)));
                 }
             }
             zero
@@ -539,12 +553,13 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             zero
         }
         // ---- cells and water
-        // `cell flag set`: 0-7 DATA's bits, 8-16 the lighting template inherit flags
-        // (LNAM bits 0-8) [documented: the page's table; the bits: xEdit CELL; hypothesis:
-        // that 8-16 are LNAM's, in its order].
+        // `cell flag set`: 0-7 DATA's bits (4 too, which the table leaves out), 8-16 the
+        // lighting template inherit flags (LNAM bits 0-8) [documented: the page's table;
+        // the bits: xEdit CELL; observed: jip8, 4 is set, and GetCellFlag 8-16 follow LNAM
+        // in this order on Doc Mitchell's house and the saloon].
         "setcellflag" => {
             let k = num(args, 1, -1.0);
-            let Some(c) = of_sig(g, form(args, 0), b"CELL").filter(|_| (0.0..=16.0).contains(&k) && k.fract() == 0.0 && k != 4.0) else { return Some(Ok(zero)) };
+            let Some(c) = of_sig(g, form(args, 0), b"CELL").filter(|_| (0.0..=16.0).contains(&k) && k.fract() == 0.0) else { return Some(Ok(zero)) };
             let (sub, b) = if k < 8.0 { ("DATA", k as u32) } else { ("LNAM", k as u32 - 8) };
             let flags = g.num_field8(c, sub, "") as u64;
             let new = if num(args, 2, 0.0) != 0.0 { flags | 1 << b } else { flags & !(1 << b) };

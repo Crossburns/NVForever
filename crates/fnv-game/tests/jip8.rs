@@ -97,7 +97,7 @@ fn plugin_bytes() -> Vec<u8> {
         edid(b"NPC_", TEMPLATE, "TestTemplate", &[sub(b"ACBS", acbs(0, 1, 0, 0))]),
     ]
     .concat();
-    let crea = edid(b"CREA", CREA, "TestCreature", &[sub(b"ACBS", acbs(0, 3, 0, 0)), sub(b"PNAM", u32s(&[BPTD])), sub(b"MODL", z("creatures\\gecko\\skeleton.nif"))]);
+    let crea = edid(b"CREA", CREA, "TestCreature", &[sub(b"ACBS", acbs(0, 3, 0, 0)), sub(b"PNAM", u32s(&[BPTD])), sub(b"SPLO", u32s(&[SPEL])), sub(b"SPLO", u32s(&[SPEL2])), sub(b"MODL", z("creatures\\gecko\\skeleton.nif"))]);
     let misc = [edid(b"MISC", MISC, "TestDeathItem", &[]), edid(b"MISC", MISC2, "TestDeathItem2", &[])].concat();
     let fact = [edid(b"FACT", FACT, "TestFaction", &[]), edid(b"FACT", FACT2, "TestFaction2", &[])].concat();
     let flst = edid(b"FLST", FLST, "TestFactionList", &[sub(b"LNAM", u32s(&[FACT2]))]);
@@ -218,6 +218,9 @@ fn actor_base_data() {
     assert_eq!(g.num_field(FormId(NPC_MULT), "ACBS", "level_or_level_mult_raw"), 750.0);
     q(&mut g, "SetActorLevelingData 1 5 TestNPC");
     assert_eq!(n(&mut g, "GetActorLevelingData 1 TestNPC"), 5.0);
+    // Calc max not below calc min [observed: jip8].
+    q(&mut g, "SetActorLevelingData 2 0 TestNPC");
+    assert_eq!(n(&mut g, "GetActorLevelingData 2 TestNPC"), 5.0);
     assert_eq!(n(&mut g, "GetActorLevelingData 3 TestNPC"), 0.0);
     // Base faction rank, -1 when not a member [documented].
     assert_eq!(n(&mut g, "GetBaseFactionRank TestFaction TestNPC"), 2.0);
@@ -252,11 +255,13 @@ fn factions_and_combat_actions() {
 fn actor_effects_ingestibles_and_base_effects() {
     let f = fixture();
     let mut g = game(&f);
-    // SPLO [documented: GetNumActorEffects, GetNthActorEffect].
+    // SPLO [documented: GetNumActorEffects, GetNthActorEffect]; the record's last first,
+    // an added one at the front [observed: jip8].
+    assert_eq!((n(&mut g, "GetNumActorEffects TestCreature"), n(&mut g, "GetNthActorEffect 0 TestCreature"), n(&mut g, "GetNthActorEffect 1 TestCreature")), (2.0, f64::from(SPEL2), f64::from(SPEL)));
     assert_eq!((n(&mut g, "GetNumActorEffects TestNPC"), n(&mut g, "GetNthActorEffect 0 TestNPC")), (1.0, f64::from(SPEL)));
     q(&mut g, "AddBaseEffectListEffect TestAbility2 TestNPC");
     q(&mut g, "AddBaseEffectListEffect TestAbility2 TestNPC");
-    assert_eq!((n(&mut g, "GetNumActorEffects TestNPC"), n(&mut g, "GetNthActorEffect 1 TestNPC")), (2.0, f64::from(SPEL2)));
+    assert_eq!((n(&mut g, "GetNumActorEffects TestNPC"), n(&mut g, "GetNthActorEffect 0 TestNPC"), n(&mut g, "GetNthActorEffect 1 TestNPC")), (2.0, f64::from(SPEL2), f64::from(SPEL)));
     q(&mut g, "RemoveBaseEffectListEffect TestAbility TestNPC");
     assert_eq!((n(&mut g, "GetNumActorEffects TestNPC"), n(&mut g, "GetNthActorEffect 0 TestNPC")), (1.0, f64::from(SPEL2)));
     assert_eq!(n(&mut g, "GetNthActorEffect 5 TestNPC"), 0.0);
@@ -264,8 +269,14 @@ fn actor_effects_ingestibles_and_base_effects() {
     assert!((n(&mut g, "GetAddictionChance TestChem") - 0.1).abs() < 1e-6);
     q(&mut g, "SetAddictionChance TestChem 0.25");
     assert_eq!(n(&mut g, "GetAddictionChance TestChem"), 0.25);
+    // Kept as given [observed: jip8, 50, 1.5, -0.5].
+    q(&mut g, "SetAddictionChance TestChem 1.5");
+    assert_eq!(n(&mut g, "GetAddictionChance TestChem"), 1.5);
     assert_eq!(n(&mut g, "GetAddictionEffect TestChem"), f64::from(SPEL));
     q(&mut g, "SetAddictionEffect TestChem TestAbility2");
+    assert_eq!(n(&mut g, "GetAddictionEffect TestChem"), f64::from(SPEL2));
+    // None is ignored [observed: jip8].
+    q(&mut g, "SetAddictionEffect TestChem 0");
     assert_eq!(n(&mut g, "GetAddictionEffect TestChem"), f64::from(SPEL2));
     // A script effect's script; not a script effect, none [documented: "script-type"].
     assert_eq!(n(&mut g, "GetBaseEffectScript TestScriptEffect"), f64::from(SCPT));
@@ -273,20 +284,22 @@ fn actor_effects_ingestibles_and_base_effects() {
     assert_eq!(n(&mut g, "GetBaseEffectScript TestScriptEffect"), f64::from(SCPT2));
     q(&mut g, "SetBaseEffectScript TestEffect TestScript2");
     assert_eq!(n(&mut g, "GetBaseEffectScript TestEffect"), 0.0);
-    // Base effect flags, read by GetBaseEffectFlag; 11 is not in the table.
+    // Base effect flags, read by GetBaseEffectFlag; 11, not in the table, too [observed:
+    // jip8].
     assert_eq!(n(&mut g, "GetBaseEffectFlag TestEffect 2"), 1.0);
     q(&mut g, "SetBaseEffectFlag TestEffect 2 0");
     q(&mut g, "SetBaseEffectFlag TestEffect 0 1");
     q(&mut g, "SetBaseEffectFlag TestEffect 11 1");
-    assert_eq!((n(&mut g, "GetBaseEffectFlag TestEffect 2"), n(&mut g, "GetBaseEffectFlag TestEffect 0"), n(&mut g, "GetBaseEffectFlag TestEffect 11")), (0.0, 1.0, 0.0));
-    // Effect flags of each kind, read by GetEffectFlag [documented: the three tables].
+    assert_eq!((n(&mut g, "GetBaseEffectFlag TestEffect 2"), n(&mut g, "GetBaseEffectFlag TestEffect 0"), n(&mut g, "GetBaseEffectFlag TestEffect 11")), (0.0, 1.0, 1.0));
+    // Effect flags of each kind, read by GetEffectFlag; any bit 0-7 [observed: jip8].
     assert_eq!(n(&mut g, "GetEffectFlag TestChem 1"), 1.0);
     q(&mut g, "SetEffectFlag TestChem 2 1");
     q(&mut g, "SetEffectFlag TestChem 1 0");
     assert_eq!((n(&mut g, "GetEffectFlag TestChem 1"), n(&mut g, "GetEffectFlag TestChem 2")), (0.0, 1.0));
     q(&mut g, "SetEffectFlag TestAbility 7 1");
     q(&mut g, "SetEffectFlag TestAbility 1 1");
-    assert_eq!((n(&mut g, "GetEffectFlag TestAbility 7"), n(&mut g, "GetEffectFlag TestAbility 1")), (1.0, 0.0));
+    q(&mut g, "SetEffectFlag TestAbility 8 1");
+    assert_eq!((n(&mut g, "GetEffectFlag TestAbility 7"), n(&mut g, "GetEffectFlag TestAbility 1"), n(&mut g, "GetEffectFlag TestAbility 8")), (1.0, 1.0, 0.0));
     q(&mut g, "SetEffectFlag TestEnchant 2 1");
     assert_eq!(n(&mut g, "GetEffectFlag TestEnchant 2"), 1.0);
 }
@@ -309,6 +322,11 @@ fn weapons() {
     q(&mut g, "SetWeaponItemModEffect TestGun 3 11");
     q(&mut g, "SetWeaponItemModValue TestGun 3 6.5");
     assert_eq!((n(&mut g, "GetWeaponItemModEffect 3 TestGun"), n(&mut g, "GetWeaponItemModValue1 3 TestGun")), (11.0, 6.5));
+    // 0 is ignored, 15 stored [observed: jip8].
+    q(&mut g, "SetWeaponItemModEffect TestGun 3 0");
+    assert_eq!(n(&mut g, "GetWeaponItemModEffect 3 TestGun"), 11.0);
+    q(&mut g, "SetWeaponItemModEffect TestGun 1 15");
+    assert_eq!(n(&mut g, "GetWeaponItemModEffect 1 TestGun"), 15.0);
     // The slot with the type [documented: WeaponHasModType].
     assert_eq!(n(&mut g, "WeaponHasModType TestGun 11"), 3.0);
     assert_eq!(n(&mut g, "WeaponHasModType TestGun 3"), 0.0);
@@ -337,6 +355,9 @@ fn idles_and_body_parts() {
     assert_eq!((n(&mut g, "GetIdleLoopTimes TestIdle 0"), n(&mut g, "GetIdleLoopTimes TestIdle 1")), (1.0, 3.0));
     q(&mut g, "SetIdleLoopTimes TestIdle 2 4");
     assert_eq!((n(&mut g, "GetIdleLoopTimes TestIdle 0"), n(&mut g, "GetIdleLoopTimes TestIdle 1")), (2.0, 4.0));
+    // The min a u8, the max not below it [observed: jip8, 300 2 reads 255 255].
+    q(&mut g, "SetIdleLoopTimes TestIdle 300 2");
+    assert_eq!((n(&mut g, "GetIdleLoopTimes TestIdle 0"), n(&mut g, "GetIdleLoopTimes TestIdle 1")), (255.0, 255.0));
     // The torso's limb model; the head has none; no brain part.
     assert_eq!(s(&mut g, "GetBodyPartReplacementModel TestBodyParts 0"), "torso_rep.nif");
     assert_eq!(s(&mut g, "GetBodyPartReplacementModel TestBodyParts 1"), "");
@@ -360,6 +381,8 @@ fn cells_and_water() {
     q(&mut g, "SetCellFlag TestCell 1 0");
     q(&mut g, "SetCellFlag TestCell 5 1");
     q(&mut g, "SetCellFlag TestCell 16 1");
+    q(&mut g, "SetCellFlag TestCell 4 1");
+    assert_eq!(n(&mut g, "GetCellFlag TestCell 4"), 1.0);
     assert_eq!((n(&mut g, "GetCellFlag TestCell 1"), n(&mut g, "GetCellFlag TestCell 5"), n(&mut g, "GetCellFlag TestCell 16")), (0.0, 1.0, 1.0));
     // Water form and effect, read by GetCellWaterForm and GetWaterFormEffect.
     assert_eq!(n(&mut g, "GetCellWaterForm TestCell"), f64::from(WATR));
