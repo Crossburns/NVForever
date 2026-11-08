@@ -476,7 +476,7 @@ fn throw_gore(
                 wanted.push((m.clone(), if scale > 0.0 { scale } else { 1.0 }));
             }
         }
-        let loaded: Vec<Option<Arc<PreparedModel>>> = wanted.iter().map(|(m, _)| models.model(&fnv_actor::resolve::mesh_path(m))).collect();
+        let loaded: Vec<Option<Arc<PreparedModel>>> = wanted.iter().map(|(m, _)| models.model_with_cpu(&fnv_actor::resolve::mesh_path(m))).collect();
         if loaded.iter().any(Option::is_none) && tries < 3 {
             gore.waiting.push((e, tries + 1));
             continue;
@@ -632,7 +632,7 @@ fn throw_object_debris(
                 wanted.push((m.clone(), 1.0));
             }
         }
-        let loaded: Vec<Option<Arc<PreparedModel>>> = wanted.iter().map(|(m, _)| models.model(&fnv_actor::resolve::mesh_path(m))).collect();
+        let loaded: Vec<Option<Arc<PreparedModel>>> = wanted.iter().map(|(m, _)| models.model_with_cpu(&fnv_actor::resolve::mesh_path(m))).collect();
         if loaded.iter().any(Option::is_none) && tries < 3 {
             waiting.push((d, tries + 1));
             continue;
@@ -693,8 +693,11 @@ fn piece_box(meshes: &Assets<Mesh>, pm: &PreparedModel, shapes: &[(Affine3A, usi
     let mut lo = Vec3::splat(f32::MAX);
     let mut hi = Vec3::splat(f32::MIN);
     for (rel, si) in shapes {
-        let Some(m) = meshes.get(&pm.shapes[*si].mesh) else { continue };
-        let Some(bevy::mesh::VertexAttributeValues::Float32x3(ps)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { continue };
+        // A drawn mesh's vertices go to the render world when Bevy extracts it; the
+        // pieces' models keep a CPU copy for this (`model_with_cpu`).
+        let shape = &pm.shapes[*si];
+        let Some(m) = shape.cpu.as_deref().or_else(|| meshes.get(&shape.mesh)) else { continue };
+        let Ok(Some(bevy::mesh::VertexAttributeValues::Float32x3(ps))) = m.try_attribute_option(Mesh::ATTRIBUTE_POSITION) else { continue };
         for p in ps {
             let v = rel.transform_point3(Vec3::from(*p));
             lo = lo.min(v);
