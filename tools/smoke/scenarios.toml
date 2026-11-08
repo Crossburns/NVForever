@@ -4428,6 +4428,34 @@ expect = [
 ]
 
 [[scenario]]
+name = "cpu-placement"
+source = "#1842: on a processor with L3 domains of different sizes (dual-CCD X3D Ryzens) the game runs on the largest and sizes Bevy's pools to it; elsewhere nothing is done (engine/nvforever/src/cpu_placement.rs, docs/design/frame-rate-audit.md §6). The start logs one line saying what was found and done; which one depends on the machine"
+areas = ["performance", "startup"]
+paths = ["engine/nvforever/src/cpu_placement.rs"]
+args = ["--cell", "GSDocMitchellHouse"]
+run_seconds = 8
+expect = [
+  { re = 'cpu placement: (one L3 domain, nothing to do|no L3 domain found, nothing to do|more than one processor group, nothing to do|only done on Windows so far, nothing to do|L3 domains .*; (all the same size, nothing to do|no single largest, nothing to do|the largest has \d+ LPs \(under 8\), nothing to do|affinity already set, left alone|restricted to the \d+ [KM]iB domain \(\d+ LPs\), task pools \d+))$', label = "the start says what it found and did" },
+]
+forbid = [
+  { text = "restricting failed", label = "placing the process on the domain is refused" },
+  { text = "topology not read", label = "the processor's caches cannot be read" },
+  { text = "process placement not read", label = "the process's affinity cannot be read" },
+]
+
+[[scenario]]
+name = "cpu-placement-off"
+source = "#1842: --cpu-cache-placement off (as NVForever.ini's [Settings] cpu-cache-placement=off) leaves the process on every processor (engine/nvforever/src/cpu_placement.rs)"
+areas = ["performance", "startup"]
+paths = ["engine/nvforever/src/cpu_placement.rs"]
+args = ["--cell", "GSDocMitchellHouse", "--cpu-cache-placement", "off"]
+run_seconds = 8
+expect = [
+  { text = "cpu placement: off by setting (--cpu-cache-placement off)", label = "the setting turns it off" },
+]
+forbid = [{ text = "restricted to the", label = "nothing is restricted when it is off" }]
+
+[[scenario]]
 name = "crash-report"
 source = "owner's playtest 2026-10-11 (crash outside Crimson Caravan, nothing logged): the run log and a crash report for a panic (engine/nvforever/src/crash.rs)"
 areas = ["crash"]

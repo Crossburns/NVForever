@@ -587,3 +587,76 @@ Still left in the submission:
   (about 33 multi-drawn sets) takes as long as the depth prepass, about 0.45 ms, so most
   of it is not per draw. [hypothesis] It is the bindless material slabs' resources being
   tracked for each pass (above).
+
+## 6. CPU placement on processors with unequal L3 domains (#1842, 2026-11-08)
+
+Some processors split their L3 cache into domains of different sizes: AMD's dual-CCD X3D
+parts have one CCD with the stacked cache (96 MiB) and one without (32 MiB). Windows
+schedules the game's threads over both. On such a machine the game now runs on the
+logical processors of the largest L3 and sizes Bevy's task pools to them
+(`engine/nvforever/src/cpu_placement.rs`); every other machine is left exactly as before.
+
+**Measurements.** Ryzen 9 7945HX3D (two CCDs; 96 MiB L3 on logical processors 0-15, 32 MiB
+on 16-31), RTX 5070 Ti, profile build of main 01df32361, 1920x1080, enhanced look, vsync
+off, standing 60 s, mean frame time [observed 2026-11-08, Ryzen 9 7945HX3D, the process
+restricted by a hard affinity mask]:
+
+| Scene | Whole CPU | 96 MiB domain only |
+|---|---|---|
+| Goodsprings, noon | 17.50 ms | 12.57 ms |
+| Primm, noon | 17.23 ms | 12.48 ms |
+| The Strip, night | 17.00 ms | 12.18 ms |
+
+Every main- and render-thread span was 30-70 % slower on the whole CPU, as code waiting
+on memory would be [observed, same runs; the cause is a hypothesis]. Earlier on the same
+machine (#1416): 15.37 → 12.09 ms standing at Goodsprings on the 96 MiB domain, and 15.25 ms
+on the 32 MiB domain alone [observed, #1416], so it is the large cache that helps, not
+running on one CCD. Bevy kept sizing its pools for 32 processors when restricted (I/O 4,
+async 4, compute 24: 24 compute threads for 16 processors); a budget of 16 threads (I/O 4,
+async 4, compute 8) screened slightly faster still [observed, #1416, single screens].
+Marking the program as a game in the Xbox Game Bar gives the same on this machine through
+AMD's driver (#1416's closing comment), but only with the chipset driver, Game Mode, the
+Balanced power plan and the player ticking that box [hypothesis: AMD's and Microsoft's
+public material, not checked].
+
+**Rules** (`cpu_placement::decide`, unit tests on synthetic topologies). Windows only; read
+with `GetLogicalProcessorInformationEx` (level-3 unified caches). Nothing is done (no
+affinity or CPU-set call, Bevy's pools exactly as before; only the log line is new)
+unless all hold:
+
+1. one processor group (64 logical processors or fewer);
+2. two or more L3 domains, one strictly larger than every other (two equal 32 MiB L3s, a
+   single-CCD part such as the 7800X3D or 9800X3D, Intel's single L3: nothing);
+3. that domain has at least 8 logical processors (a 7900X3D's cache CCD has 12 and
+   qualifies; 6 with SMT off does not, as the game's own threads and the I/O and async
+   pools would crowd the main and render threads [hypothesis]);
+4. the process is not restricted already: its affinity mask is the system's and it has no
+   default CPU sets (`start /affinity`, Process Lasso or the player chose: left alone).
+
+Then the process's default CPU sets (and the running main thread's) become the domain's
+processors and Bevy's `TaskPoolOptions::max_total_threads` the domain's processor count.
+It runs in `main()` right after the command line is read, before any thread starts.
+**CPU sets rather than the affinity mask**: `SetProcessDefaultCpuSets` is the mechanism
+Microsoft documents for games, it is not inherited by the processes the game starts (the
+load hand-off's relaunch decides again), and it leaves the affinity mask as the system's,
+so rule 4 still means someone else chose. The measurements above used a hard affinity
+mask; that CPU sets give the same frame times is to be measured [hypothesis].
+
+**Which CCD on a 7950X3D / 9950X3D.** There the cache CCD clocks lower than the other one
+(a few hundred MHz). The largest L3 is still chosen: on this machine the cache domain beat
+the whole CPU by about 28 % and the small domain alone gained nothing, more than a clock
+lead of under 10 % could give back [hypothesis for those parts; needs one of them].
+`off` is there for a player who measures otherwise.
+
+**Setting.** `cpu-cache-placement=auto|off` in `[Settings]` of NVForever.ini (default
+`auto`, read at start only); `--cpu-cache-placement auto|off` wins over it for one run,
+for A/B runs. The start logs one line, e.g. `cpu placement: L3 domains 96 MiB (16 LPs),
+32 MiB (16 LPs); restricted to the 96 MiB domain (16 LPs), task pools 16`, or `cpu
+placement: one L3 domain, nothing to do`, `... all the same size, nothing to do`, `...
+affinity already set, left alone`, `cpu placement: off by setting (...)`; smoke scenarios
+`cpu-placement` and `cpu-placement-off` match it.
+
+**Left to do.** Linux (`/sys/devices/system/cpu/cpu*/cache/index3`, `sched_setaffinity`,
+same rules). Putting the background threads (generated-terrain bake, read pool) on the
+other domain with `SetThreadSelectedCpuSets`, leaving the cache domain to the main,
+render and compute threads [hypothesis]. A row on the settings page.
