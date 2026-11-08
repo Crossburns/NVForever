@@ -1001,12 +1001,13 @@ pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVa
         // ---- ShowOff's JSON files, under the game's folder (`read_root`) ----
         // `filepath [jsonPointer] [parserMode] [useCache]`: the value at the pointer (the
         // root for ""), converted (`json_to_xval`); kept in the cache when asked
-        // [documented: ReadFromJSON]. A missing file, a parse error or a pointer to
-        // nothing gives 0 [hypothesis: the page names no failure value].
+        // [documented: ReadFromJSON]. A missing file gives no value: the call fails
+        // [observed 2026-11-08: showoff4.readjson.missing, TestExpr 0]; a file that is not
+        // JSON likewise, a pointer to nothing 0 [hypothesis].
         "readfromjson" => {
             let path = text(args, 0).unwrap_or_default();
             let pointer = text(args, 1).unwrap_or_default();
-            let Some(root) = json_file(g, &path) else { return Some(Ok(zero)) };
+            let Some(root) = json_file(g, &path) else { return Some(Err(format!("ReadFromJSON: no JSON file {path}"))) };
             if num(args, 3, 0.0) != 0.0 {
                 g.mod_files.showoff_json.insert(norm(&path), root.clone());
             }
