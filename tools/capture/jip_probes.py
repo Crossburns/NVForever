@@ -6089,6 +6089,295 @@ SUP3_PROBES = (
 )
 
 
+# jip6 and jip7 (writes, session only, each change put back where a getter allows; #1006):
+# JIP LN batches 6 and 7 (docs/spec-notes/jip-records-6.md, jip-records-7.md) on
+# FalloutNV.esm forms [observed: fnvtool esm inventory and decode]: FusionGenerator01 (DEST,
+# VATS targetable, four stages; stage 2 Cap Damage + Destroy, explosion 0x7015E and a
+# replacement model), the 10mm round (no destruction data; clip 12, consumed 0x140AA7 at 20%),
+# VStreetCrBrahmin2 (damage 8, reach 32, sounds from 0x28047, one model),
+# CrSuperMutantDeadMinigunRubyHill (two models, weapon list 0x3A15E), Craig Boone (an NPC),
+# VCGTutorialJump (MESG, flags 0, 10 s), 10mmBulletProjectile, GrenadeFragExplosion,
+# BaseBallBatMetalImpact (IPCT), the 10mm pistol (impact data set 0x19083),
+# ThrownImpactDataSet, NVWastelandClear and Hazy, NVDefaultClimate (two weathers),
+# AmmoEffectMagnumDTReduction, ArmorLeather (no class flags).
+JP = {"fusion": "81932", "ammo": "4241", "brahmin": "17B587", "mutant": "17AF62", "boone": "92BD2",
+      "msg": "16768C", "proj": "2CD5F", "expl": "179DA", "ipct": "6C666", "pistol": "434F", "ipds": "176A12",
+      "ipdsold": "19083", "clear": "FFC88", "hazy": "100A4E", "climate": "8809B", "amef": "17BA46",
+      "leather": "20423", "stageexpl": "7015E", "casing": "140AA7", "brsounds": "28047", "light": "1E879"}
+JP_DECLS = ("ref rP\nref rObj\nref rOther\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fC\n"
+            "string_var sText\narray_var aList\narray_var aKeys\nBegin Function { }\n")
+
+
+def _jp(set_, pid, body, text=False):
+    return (f"{set_}.{pid}", JP_DECLS + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _jpv(set_, pid, key, expr, text=False):
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return _jp(set_, pid, _form("rObj", JP[key]) + rd, bool(text))
+
+
+# A setter's result and the value read back, the old value put back, and the read again.
+def _jpset(set_, pid, key, save, setter, read, restore, other=None):
+    pre = _form("rObj", JP[key]) + (_form("rOther", JP[other]) if other else "")
+    return _jp(set_, pid, pre + f"let fSave := {save}\nlet fRes := {setter}\nlet fA := {read}\n{restore}\n"
+               'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA (' + read + "))", True)
+
+
+# A setter with no restore read (a form or text field): result, then the read as text.
+def _jpset_form(set_, pid, key, setter, read, restore, other=None):
+    pre = _form("rObj", JP[key]) + (_form("rOther", JP[other]) if other else "")
+    return _jp(set_, pid, pre + f"let fRes := {setter}\nlet rItem := {read}\n{restore}\n"
+               'SetFunctionValue (sv_Construct "%g %z %z" fRes (GetFormIDString rItem) (GetFormIDString (' + read + ")))", True)
+
+
+# An array of strings or numbers, "size: v v ..." in key order.
+def _jparr(set_, pid, key, expr):
+    return _jp(set_, pid, _form("rObj", JP[key]) + f"let aList := {expr}\nlet aKeys := ar_Keys aList\nlet fA := ar_Size aKeys\n"
+               'let sText := sv_Construct "%g:" fA\nlet fB := 0\nwhile fB < fA\nlet fC := aKeys[fB]\n'
+               'let sText := sv_Construct "%z %z" sText (aList[fC])\nlet fB += 1\nloop\nSetFunctionValue sText', True)
+
+
+J6, J7 = "jip6", "jip7"
+JIP6_PROBES = (
+    # ---- destruction data: reads of every stage and trait, a trait past 4 and a stage past the end
+    [_jpv(J6, f"dest.target.{k}", k, "GetDestructionDataTargetable rObj") for k in ("fusion", "ammo")]
+    + [_jpv(J6, f"dest.stages.{k}", k, "GetDestructionDataNumStages rObj") for k in ("fusion", "ammo")]
+    + [_jpv(J6, f"dest.trait.{i}.{t}", "fusion", f"GetNthDestructionStageTrait rObj {i} {t}") for i in range(0, 5) for t in range(0, 6)]
+    + [_jpv(J6, f"dest.expl.{i}", "fusion", f"GetNthDestructionStageExplosion rObj {i}", "form") for i in (1, 2, 4)]
+    + [_jpv(J6, f"dest.debris.{i}", "fusion", f"GetNthDestructionStageDebris rObj {i}", "form") for i in (2,)]
+    + [_jpv(J6, f"dest.repl.{i}", "fusion", f"GetNthDestructionStageReplacement rObj {i}", True) for i in (1, 2, 5)]
+    + [_jpv(J6, "dest.trait.ammo", "ammo", "GetNthDestructionStageTrait rObj 0 0")]
+    # setters: targetable, a trait in and out of range, flags past the table, NaN-free extremes
+    + [_jpset(J6, "dest.settarget.0", "fusion", "GetDestructionDataTargetable rObj", "SetDestructionDataTargetable rObj 0",
+              "GetDestructionDataTargetable rObj", "SetDestructionDataTargetable rObj 1")]
+    + [_jpset(J6, f"dest.settrait.{i}.{t}.{v}", "fusion", f"GetNthDestructionStageTrait rObj {i} {t}",
+              f"SetNthDestructionStageTrait rObj {i} {t} {v}", f"GetNthDestructionStageTrait rObj {i} {t}",
+              f"SetNthDestructionStageTrait rObj {i} {t} fSave")
+       for i, t, v in ((1, 0, 50), (1, 0, 150), (1, 0, -5), (1, 1, 3.5), (1, 2, 300), (1, 3, 8), (1, 3, 7), (1, 4, 3), (1, 5, 9))]
+    + [_jpset_form(J6, "dest.setexpl.none", "fusion", "SetNthDestructionStageExplosion rObj 2",
+                   "GetNthDestructionStageExplosion rObj 2", "SetNthDestructionStageExplosion rObj 2 rOther", "stageexpl")]
+    + [_jp(J6, "dest.setrepl", _form("rObj", JP["fusion"]) + 'let fRes := SetNthDestructionStageReplacement rObj 1 "nvf\\probe.nif"\n'
+           'let sText := GetNthDestructionStageReplacement rObj 1\n'
+           'SetFunctionValue (sv_Construct "%g [%z]" fRes sText)', True)]
+    # add and remove stages: at an index inside, past the end, and removing past the end
+    + [_jp(J6, "dest.add.1", _form("rObj", JP["fusion"]) + "let fRes := AddDestructionStage rObj 1 60 9\n"
+           "let fA := GetDestructionDataNumStages rObj\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g %g %g" fRes fA (GetNthDestructionStageTrait rObj 1 0) '
+           "(GetNthDestructionStageTrait rObj 1 2) (GetNthDestructionStageTrait rObj 2 0) (GetNthDestructionStageTrait rObj 2 2))", True),
+       _jp(J6, "dest.remove.1", _form("rObj", JP["fusion"]) + "let fRes := RemoveDestructionStage rObj 1\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fRes (GetDestructionDataNumStages rObj) '
+           "(GetNthDestructionStageTrait rObj 1 0) (GetNthDestructionStageTrait rObj 1 2))", True),
+       _jp(J6, "dest.add.99", _form("rObj", JP["fusion"]) + "let fRes := AddDestructionStage rObj 99 10 7\n"
+           "let fA := GetDestructionDataNumStages rObj\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fRes fA (GetNthDestructionStageTrait rObj 4 0) '
+           "(GetNthDestructionStageTrait rObj 3 0))", True),
+       _jp(J6, "dest.remove.last", _form("rObj", JP["fusion"]) + "let fA := GetDestructionDataNumStages rObj\n"
+           "let fRes := RemoveDestructionStage rObj (fA - 1)\n"
+           'SetFunctionValue (sv_Construct "%g %g" fRes (GetDestructionDataNumStages rObj))', True),
+       _jpv(J6, "dest.remove.99", "fusion", "RemoveDestructionStage rObj 99"),
+       _jpv(J6, "dest.add.none", "ammo", "AddDestructionStage rObj 0 50 1")]
+    # ---- creatures
+    + [_jpv(J6, f"cr.damage.{k}", k, "GetCreatureDamage rObj") for k in ("brahmin", "mutant", "boone")]
+    + [_jp(J6, "cr.damage.ref", "SetFunctionValue (rP.GetCreatureDamage)")]
+    + [_jpv(J6, f"cr.reach.{k}", k, "GetCreatureReach rObj") for k in ("brahmin", "mutant", "boone")]
+    + [_jpv(J6, f"cr.weaplist.{k}", k, "GetCreatureWeaponList rObj", "form") for k in ("brahmin", "mutant")]
+    + [_jpv(J6, f"cr.sounds.{k}", k, "GetCreatureSoundsTemplate rObj", "form") for k in ("brahmin", "mutant", "boone")]
+    + [_jparr(J6, f"cr.models.{k}", k, "GetCreatureModels rObj") for k in ("brahmin", "mutant")]
+    + [_jpv(J6, f"cr.hasmodel.{n}", "mutant", f'CreatureHasModel "{p}" rObj')
+       for n, p in (("exact", "NV_SM_v2_1_base.NIF"), ("case", "nv_sm_v2_1_base.nif"), ("none", "brahmin.nif"))]
+    + [_jpset(J6, f"cr.setdamage.{v}", "brahmin", "GetCreatureDamage rObj", f"SetCreatureDamage {v} rObj",
+              "GetCreatureDamage rObj", "SetCreatureDamage fSave rObj") for v in (99, 40000, -3)]
+    + [_jpset_form(J6, "cr.setsounds.none", "brahmin", "SetCreatureSoundsTemplate rObj", "GetCreatureSoundsTemplate rObj",
+                   "SetCreatureSoundsTemplate rObj rOther", "brsounds")]
+    + [_jp(J6, "cr.toggle.off", _form("rObj", JP["mutant"]) + 'let fRes := ToggleCreatureModel "smspinebreakerheavy.nif" 0 rObj\n'
+           'let fA := CreatureHasModel "smspinebreakerheavy.nif" rObj\nlet fB := ar_Size (GetCreatureModels rObj)\n'
+           'let fC := ToggleCreatureModel "smspinebreakerheavy.nif" 1 rObj\n'
+           'SetFunctionValue (sv_Construct "%g %g %g %g %g" fRes fA fB fC (ar_Size (GetCreatureModels rObj)))', True),
+       _jpv(J6, "cr.toggle.notlisted", "mutant", 'ToggleCreatureModel "brahmin.nif" 1 rObj')]
+    # ---- messages
+    + [_jpv(J6, "msg.flags", "msg", "GetMessageFlags rObj"), _jpv(J6, "msg.disabled", "msg", "GetMessageDisabled rObj")]
+    + [_jpset(J6, f"msg.setflags.{v}", "msg", "GetMessageFlags rObj", f"SetMessageFlags rObj {v}", "GetMessageFlags rObj",
+              "SetMessageFlags rObj fSave") for v in (3, 1, 8)]
+    + [_jpset(J6, "msg.setdisabled", "msg", "GetMessageDisabled rObj", "SetMessageDisabled rObj 1", "GetMessageDisabled rObj",
+              "SetMessageDisabled rObj fSave")]
+    + [_jp(J6, f"msg.settime.{n}", _form("rObj", JP["msg"]) + f"let fRes := SetMessageDisplayTime rObj {v}\n"
+           "SetMessageDisplayTime rObj 10\nSetFunctionValue fRes") for n, v in (("7", 7), ("neg", -1))]
+    + [_jp(J6, "msg.crafting", "let fA := ToggleCraftingMessages 0\nlet fB := ToggleCraftingMessages 1\n"
+           'SetFunctionValue (sv_Construct "%g %g" fA fB)', True)]
+)
+
+JIP7_PROBES = (
+    # ---- ammunition
+    [_jpset(J7, f"ammo.trait.{t}.{v}", "ammo", f"GetAmmoTraitNumeric rObj {t}", f"SetAmmoTraitNumeric rObj {t} {v}",
+            f"GetAmmoTraitNumeric rObj {t}", f"SetAmmoTraitNumeric rObj {t} fSave")
+     for t, v in ((0, 2.5), (1, 3), (1, -5), (2, 150), (2, 35.5), (3, 300), (3, 7.6))]
+    + [_jpv(J7, f"ammo.read.{n}", "ammo", e) for n, e in (("speed", "GetAmmoSpeed rObj"),
+       ("consumed", "GetAmmoConsumedPercent rObj"), ("effects", "GetNumAmmoEffects rObj"))]
+    + [_jpset_form(J7, "ammo.setproj", "ammo", "SetAmmoProjectile rObj rOther", "GetAmmoProjectile rObj",
+                   "SetAmmoProjectile rObj", "proj"),
+       _jpset_form(J7, "ammo.setcasing.none", "ammo", "SetAmmoCasing rObj", "GetAmmoCasing rObj",
+                   "SetAmmoCasing rObj rOther", "casing")]
+    + [_jp(J7, "ammo.effects.addremove", _form("rObj", JP["ammo"]) + _form("rOther", JP["amef"])
+           + "let fA := AddAmmoEffect rObj rOther\nlet fB := AddAmmoEffect rObj rOther\nlet fC := GetNumAmmoEffects rObj\n"
+           "let rItem := GetNthAmmoEffect rObj 0\nlet fRes := RemoveAmmoEffect rObj rOther\nlet fSave := RemoveAmmoEffect rObj rOther\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %z %g %g %g" fA fB fC (GetFormIDString rItem) fRes fSave (GetNumAmmoEffects rObj))', True)]
+    + [_jpset(J7, f"amef.trait.{t}.{v}", "amef", f"GetAmmoEffectTraitNumeric rObj {t}",
+              f"SetAmmoEffectTraitNumeric rObj {t} {v}", f"GetAmmoEffectTraitNumeric rObj {t}",
+              f"SetAmmoEffectTraitNumeric rObj {t} fSave") for t, v in ((0, 9), (0, 3), (1, 5), (2, 0.5))]
+    # ---- projectiles and explosions
+    + [_jpv(J7, f"proj.trait.{t}", "proj", f"GetProjectileTraitNumeric rObj {t}") for t in range(0, 16)]
+    + [_jpset(J7, f"proj.settrait.{t}.{v}", "proj", f"GetProjectileTraitNumeric rObj {t}",
+              f"SetProjectileTraitNumeric rObj {t} {v}", f"GetProjectileTraitNumeric rObj {t}",
+              f"SetProjectileTraitNumeric rObj {t} fSave")
+       for t, v in ((0, 99), (0, 2), (1, 1.5), (2, 1000), (4, 2), (14, 5), (14, 2))]
+    + [_jpset_form(J7, "proj.setlight", "proj", "SetProjectileLight rObj rOther", "GetProjectileLight rObj",
+                   "SetProjectileLight rObj", "light"),
+       _jp(J7, "proj.setflash", _form("rObj", JP["proj"]) + 'let fRes := SetProjectileMuzzleFlash rObj "nvf\\probe.nif"\n'
+           'let sText := GetProjectileMuzzleFlash rObj\n'
+           'SetProjectileMuzzleFlash rObj "Effects\\MuzzleFlashes\\HandGunMuzzleFlash01.NIF"\n'
+           'SetFunctionValue (sv_Construct "%g [%z]" fRes sText)', True)]
+    + [_jpv(J7, f"expl.trait.{t}", "expl", f"GetExplosionTraitNumeric rObj {t}") for t in range(0, 9)]
+    + [_jpset(J7, f"expl.settrait.{t}.{v}", "expl", f"GetExplosionTraitNumeric rObj {t}",
+              f"SetExplosionTraitNumeric rObj {t} {v}", f"GetExplosionTraitNumeric rObj {t}",
+              f"SetExplosionTraitNumeric rObj {t} fSave") for t, v in ((1, 200), (7, 9), (7, 1), (2, -10))]
+    # ---- impact data
+    + [_jpv(J7, f"ipct.trait.{t}", "ipct", f"GetImpactDataTrait rObj {t}", "form" if t in (5, 6, 7) else False)
+       for t in range(0, 19)]
+    + [_jpset(J7, f"ipct.settrait.{t}.{v}", "ipct", f"GetImpactDataTrait rObj {r}", f"SetImpactDataTraitNumeric rObj {t} {v}",
+              f"GetImpactDataTrait rObj {r}", f"SetImpactDataTraitNumeric rObj {t} fSave")
+       for t, r, v in ((0, 0, 0.5), (1, 1, 5), (13, 16, 99), (13, 16, 6), (14, 17, 300300300), (14, 17, 10020030))]
+    + [_jp(J7, "ipct.setform.sound1", _form("rObj", JP["ipct"]) + _form("rOther", JP["brsounds"])
+           + "let rItem := GetImpactDataTrait rObj 6\nlet fRes := SetImpactDataTraitForm rObj 1 rOther\n"
+           "let rP := GetImpactDataTrait rObj 6\nSetImpactDataTraitForm rObj 1 rItem\n"
+           'SetFunctionValue (sv_Construct "%g %z %z %z" fRes (GetFormIDString rItem) (GetFormIDString rP) '
+           "(GetFormIDString (GetImpactDataTrait rObj 6)))", True)]
+    + [_jp(J7, "ipds.set", _form("rObj", JP["pistol"]) + _form("rOther", JP["ipds"]) + _form("rItem", JP["ipdsold"])
+           + "let fRes := SetImpactDataSet rObj rOther\nSetImpactDataSet rObj rItem\nSetFunctionValue fRes")]
+    + [_jpv(J7, f"mat.{k}", k, "GetImpactMaterialType rObj") for k in ("boone", "brahmin", "ammo")]
+    + [_jpset(J7, f"mat.set.{v}", "boone", "GetImpactMaterialType rObj", f"SetImpactMaterialType {v} rObj",
+              "GetImpactMaterialType rObj", "SetImpactMaterialType fSave rObj") for v in (5, 15, 11)]
+    # ---- weathers and climates
+    + [_jpv(J7, "wthr.precip", "clear", "GetWeatherPrecipitationModel rObj", True)]
+    + [_jpv(J7, f"wthr.tex.{l}", "clear", f"GetWeatherTexture rObj {l}", True) for l in range(0, 5)]
+    + [_jp(J7, "wthr.settex.0", _form("rObj", JP["clear"]) + 'let fRes := SetWeatherTexture rObj 0 "nvf\\probe.dds"\n'
+           'let sText := GetWeatherTexture rObj 0\nSetWeatherTexture rObj 0 "sky\\alpha.dds"\n'
+           'SetFunctionValue (sv_Construct "%g [%z]" fRes sText)', True),
+       _jp(J7, "wthr.override", "let fA := SetWeatherTransitionTimeOverride 5\nlet fB := SetWeatherTransitionTimeOverride 0\n"
+           'SetFunctionValue (sv_Construct "%g %g" fA fB)', True)]
+    + [_jpv(J7, "clmt.count", "climate", "GetClimateNumWeatherTypes rObj")]
+    + [_jp(J7, "clmt.addremove", _form("rObj", JP["climate"]) + _form("rOther", JP["hazy"])
+           + "let fA := ClimateAddWeatherType rObj rOther 50\nlet fB := GetClimateNumWeatherTypes rObj\n"
+           "let fC := ClimateAddWeatherType rObj rOther 70\nlet fSave := GetClimateNumWeatherTypes rObj\n"
+           "let fRes := ClimateRemoveWeatherType rObj rOther\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g %g %g %g" fA fB fC fSave (GetClimateNthWeatherChance rObj (fSave - 1)) fRes '
+           "(GetClimateNumWeatherTypes rObj))", True),
+       _jp(J7, "clmt.remove.absent", _form("rObj", JP["climate"]) + _form("rOther", JP["hazy"])
+           + "SetFunctionValue (ClimateRemoveWeatherType rObj rOther)"),
+       _jp(J7, "clmt.add.chance", _form("rObj", JP["climate"]) + _form("rOther", JP["hazy"])
+           + "let fA := ClimateAddWeatherType rObj rOther 150\nlet fB := GetClimateNumWeatherTypes rObj\n"
+           "let fC := GetClimateNthWeatherChance rObj (fB - 1)\nClimateRemoveWeatherType rObj rOther\n"
+           'SetFunctionValue (sv_Construct "%g %g %g" fA fB fC)', True)]
+    # ---- armour
+    + [_jpv(J7, f"armor.class.{k}", k, "GetArmorClass rObj") for k in ("leather",)]
+    + [_jpset(J7, f"armor.setclass.{v}", "leather", "GetArmorClass rObj", f"SetArmorClass rObj {v}", "GetArmorClass rObj",
+              "SetArmorClass rObj fSave") for v in (3, 2, 0, 4)]
+    + [_jp(J7, "armor.setrct", _form("rObj", JP["leather"]) + 'let fRes := SetArmorRCT rObj "nvf\\probe.rct"\n'
+           'SetFunctionValue (sv_Construct "%g [%z]" fRes (GetArmorRCT rObj))', True),
+       _jp(J7, "armor.condpenalty", "let fA := SetArmorConditionPenalty\nlet fB := SetArmorConditionPenalty 1.5\n"
+           "let fC := SetArmorConditionPenalty 3\nlet fRes := SetArmorConditionPenalty -1\nSetArmorConditionPenalty 1\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g %g" fA fB fC fRes (SetArmorConditionPenalty))', True),
+       _jp(J7, "armor.maxpercent", "let fA := SetDamageToArmorMaxPercent\nlet fB := SetDamageToArmorMaxPercent 0.5\n"
+           "let fC := SetDamageToArmorMaxPercent 2\nSetDamageToArmorMaxPercent fA\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB fC (SetDamageToArmorMaxPercent))', True)]
+)
+
+
+# jip6b and jip7b: a second round (2026-11-08) on the rows jip6/jip7 found to differ: the
+# rule behind out-of-range values, the default decal data of an impact without DODT
+# against RipperImpactOrganic's own (min/max 8/24, colour (63, 63, 63)), and what a turned-on
+# model not in the list, an added stage on a form without destruction data and the caps leave.
+JP.update({"ripper": "177874"})
+J6B, J7B = "jip6b", "jip7b"
+JIP6B_PROBES = (
+    [_jpset(J6B, f"dest.hp.{n}", "fusion", "GetNthDestructionStageTrait rObj 1 0", f"SetNthDestructionStageTrait rObj 1 0 {v}",
+            "GetNthDestructionStageTrait rObj 1 0", "SetNthDestructionStageTrait rObj 1 0 fSave")
+     for n, v in (("0", 0), ("100", 100), ("101", 101), ("120", 120), ("200", 200), ("255", 255), ("256", 256),
+                  ("m1", -1), ("m5", -5), ("m100", -100), ("1000", 1000))]
+    + [_jpset(J6B, f"dest.stage.{n}", "fusion", "GetNthDestructionStageTrait rObj 1 2", f"SetNthDestructionStageTrait rObj 1 2 {v}",
+              "GetNthDestructionStageTrait rObj 1 2", "SetNthDestructionStageTrait rObj 1 2 fSave")
+       for n, v in (("2", 2), ("3", 3), ("4", 4), ("10", 10), ("255", 255), ("256", 256), ("300", 300), ("m1", -1))]
+    + [_jpset(J6B, f"dest.selfdmg.{n}", "fusion", "GetNthDestructionStageTrait rObj 1 1", f"SetNthDestructionStageTrait rObj 1 1 {v}",
+              "GetNthDestructionStageTrait rObj 1 1", "SetNthDestructionStageTrait rObj 1 1 fSave")
+       for n, v in (("7", 7), ("m2", -2), ("70000", 70000))]
+    + [_jpset(J6B, f"dest.debris.{n}", "fusion", "GetNthDestructionStageTrait rObj 1 4", f"SetNthDestructionStageTrait rObj 1 4 {v}",
+              "GetNthDestructionStageTrait rObj 1 4", "SetNthDestructionStageTrait rObj 1 4 fSave")
+       for n, v in (("300", 300), ("m1", -1))]
+    + [_jp(J6B, "dest.add.none", _form("rObj", JP["ammo"]) + "let fRes := AddDestructionStage rObj 0 50 1\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fRes (GetDestructionDataNumStages rObj) '
+           "(GetNthDestructionStageTrait rObj 0 0) (GetDestructionDataTargetable rObj))", True),
+       _jp(J6B, "dest.add.end", _form("rObj", JP["fusion"]) + "let fA := GetDestructionDataNumStages rObj\n"
+           "let fRes := AddDestructionStage rObj fA 10 3\nlet fB := GetDestructionDataNumStages rObj\n"
+           "let fC := RemoveDestructionStage rObj fA\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g %g" fA fRes fB fC (GetDestructionDataNumStages rObj))', True),
+       _jp(J6B, "dest.add.0", _form("rObj", JP["fusion"]) + "let fRes := AddDestructionStage rObj 0 99 0\n"
+           "let fB := GetNthDestructionStageTrait rObj 0 0\nlet fC := RemoveDestructionStage rObj 0\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fRes fB fC (GetNthDestructionStageTrait rObj 0 0))', True)]
+    + [_jpset(J6B, f"cr.dmg.{n}", "brahmin", "GetCreatureDamage rObj", f"SetCreatureDamage {v} rObj",
+              "GetCreatureDamage rObj", "SetCreatureDamage fSave rObj")
+       for n, v in (("32767", 32767), ("65535", 65535), ("65536", 65536), ("70000", 70000), ("m1", -1))]
+    + [_jp(J6B, "cr.toggle.add", _form("rObj", JP["mutant"]) + 'let fRes := ToggleCreatureModel "brahmin.nif" 1 rObj\n'
+           'let fA := ar_Size (GetCreatureModels rObj)\nlet fB := CreatureHasModel "brahmin.nif" rObj\n'
+           'let fC := ToggleCreatureModel "brahmin.nif" 0 rObj\n'
+           'SetFunctionValue (sv_Construct "%g %g %g %g %g" fRes fA fB fC (ar_Size (GetCreatureModels rObj)))', True),
+       _jp(J6B, "cr.toggle.offagain", _form("rObj", JP["mutant"]) + 'let fA := ToggleCreatureModel "smspinebreakerheavy.nif" 0 rObj\n'
+           'let fB := ToggleCreatureModel "smspinebreakerheavy.nif" 0 rObj\nlet fC := ar_Size (GetCreatureModels rObj)\n'
+           'let fRes := ToggleCreatureModel "smspinebreakerheavy.nif" 1 rObj\n'
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB fC fRes)', True),
+       _jp(J6B, "msg.crafting.twice", "let fA := ToggleCraftingMessages 1\nlet fB := ToggleCraftingMessages 0\n"
+           "let fC := ToggleCraftingMessages 0\nlet fRes := ToggleCraftingMessages 1\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB fC fRes)', True),
+       _jp(J6B, "dest.setexpl.result", _form("rObj", JP["fusion"]) + _form("rOther", JP["stageexpl"])
+           + "let fRes := SetNthDestructionStageExplosion rObj 2 rOther\nSetFunctionValue fRes"),
+       _jp(J6B, "dest.settarget.result", _form("rObj", JP["fusion"])
+           + "let fRes := SetDestructionDataTargetable rObj 1\nSetFunctionValue fRes")]
+)
+JIP7B_PROBES = (
+    [_jpset(J7B, f"ammo.clip.{n}", "ammo", "GetAmmoTraitNumeric rObj 3", f"SetAmmoTraitNumeric rObj 3 {v}",
+            "GetAmmoTraitNumeric rObj 3", "SetAmmoTraitNumeric rObj 3 fSave") for n, v in (("255", 255), ("256", 256), ("m1", -1), ("511", 511))]
+    + [_jpset(J7B, f"ammo.pps.{n}", "ammo", "GetAmmoTraitNumeric rObj 1", f"SetAmmoTraitNumeric rObj 1 {v}",
+              "GetAmmoTraitNumeric rObj 1", "SetAmmoTraitNumeric rObj 1 fSave") for n, v in (("1.5", 1.5), ("m2.5", -2.5))]
+    + [_jpset(J7B, f"amef.{t}.{n}", "amef", f"GetAmmoEffectTraitNumeric rObj {t}", f"SetAmmoEffectTraitNumeric rObj {t} {v}",
+              f"GetAmmoEffectTraitNumeric rObj {t}", f"SetAmmoEffectTraitNumeric rObj {t} fSave")
+       for t, n, v in ((0, "5", 5), (0, "6", 6), (0, "m1", -1), (1, "2", 2), (1, "3", 3), (2, "m4", -4))]
+    + [_jpset(J7B, f"proj.{t}.{n}", "proj", f"GetProjectileTraitNumeric rObj {t}", f"SetProjectileTraitNumeric rObj {t} {v}",
+              f"GetProjectileTraitNumeric rObj {t}", f"SetProjectileTraitNumeric rObj {t} fSave")
+       for t, n, v in ((0, "16", 16), (0, "17", 17), (0, "0", 0), (0, "4", 4), (0, "3", 3), (14, "3", 3), (14, "m1", -1), (14, "0", 0))]
+    + [_jpset(J7B, f"expl.7.{n}", "expl", "GetExplosionTraitNumeric rObj 7", f"SetExplosionTraitNumeric rObj 7 {v}",
+              "GetExplosionTraitNumeric rObj 7", "SetExplosionTraitNumeric rObj 7 fSave") for n, v in (("m1", -1), ("3", 3), ("300", 300))]
+    + [_jp(J7B, f"ipct.colour.{k}", _form("rObj", JP[k]) + 'SetFunctionValue (sv_Construct "%.0f" (GetImpactDataTrait rObj 17))', True)
+       for k in ("ipct", "ripper")]
+    + [_jpv(J7B, f"ipct.ripper.{t}", "ripper", f"GetImpactDataTrait rObj {t}") for t in (8, 9, 10, 11, 12, 13, 14, 15, 16)]
+    + [_jpset(J7B, f"ipct.flags.{n}", "ipct", "GetImpactDataTrait rObj 16", f"SetImpactDataTraitNumeric rObj 13 {v}",
+              "GetImpactDataTrait rObj 16", "SetImpactDataTraitNumeric rObj 13 fSave") for n, v in (("16", 16), ("255", 255), ("256", 256), ("m1", -1))]
+    + [_jp(J7B, f"ipct.setcolour.{n}", _form("rObj", JP["ripper"]) + "let fSave := GetImpactDataTrait rObj 17\n"
+           f"let fRes := SetImpactDataTraitNumeric rObj 14 {v}\nlet fA := GetImpactDataTrait rObj 17\n"
+           "SetImpactDataTraitNumeric rObj 14 fSave\n"
+           'SetFunctionValue (sv_Construct "%.0f %g %.0f %.0f" fSave fRes fA (GetImpactDataTrait rObj 17))', True)
+       for n, v in (("255255255", 255255255), ("255255256", 255255256), ("300", 300), ("m1", -1), ("16777215", 16777215))]
+    + [_jp(J7B, "ipct.setform.sound", _form("rObj", JP["ipct"]) + _form("rOther", "5FD18")
+           + "let fRes := SetImpactDataTraitForm rObj 2 rOther\nlet rItem := GetImpactDataTrait rObj 7\n"
+           "SetImpactDataTraitForm rObj 2\n"
+           'SetFunctionValue (sv_Construct "%g %z %z" fRes (GetFormIDString rItem) (GetFormIDString (GetImpactDataTrait rObj 7)))', True)]
+    + [_jp(J7B, "armor.maxpercent.range", "let fA := SetDamageToArmorMaxPercent 2\nlet fB := SetDamageToArmorMaxPercent -1\n"
+           "let fC := SetDamageToArmorMaxPercent\nSetDamageToArmorMaxPercent 1\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB fC (SetDamageToArmorMaxPercent))', True),
+       _jp(J7B, "armor.condpenalty.neg", "let fA := SetArmorConditionPenalty -1\nlet fB := SetArmorConditionPenalty\n"
+           "SetArmorConditionPenalty 1\n"
+           'SetFunctionValue (sv_Construct "%g %g %g" fA fB (SetArmorConditionPenalty))', True)]
+)
+
+
 SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PROBES, "jip-events": EVENT_PROBES,
         "jip-hits": HIT_PROBES, "jip-records": RECORD_PROBES, "nvse-forms": NVSE_FORM_PROBES, "nvse-vars": VAR_PROBES,
         "nvse-refs": REF_PROBES, "nvse-controls": CONTROL_PROBES, "nvse-actors": ACTOR_PROBES,
@@ -6170,6 +6459,8 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
                 "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
+SETS.update({"jip6": JIP6_PROBES, "jip7": JIP7_PROBES, "jip6b": JIP6B_PROBES, "jip7b": JIP7B_PROBES})  # JIP 6/7 probes (#1006)
+WRITING_SETS |= {"jip6", "jip7", "jip6b", "jip7b"}
 
 
 def script(body):
