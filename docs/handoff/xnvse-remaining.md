@@ -142,6 +142,11 @@ probed, lab L5.ext.jg5 88 of 88).
 Census after it: 649 (JohnnyGuitar 216 → 184).
 With JIP batch 8 merged: 602 (JIP 201, JohnnyGuitar 184) [observed: the extender_census
 test, 2026-11-08].
+JohnnyGuitar batch 6: 37 (#1007, ext-jg6.md: actor values by code, UnsetAV, life states,
+temporary ingestible effects, available perks, hotkey slots, the owner's trespass alarm,
+visited and expired cells, lighting template cells, the moon phase, radios, talking
+activator actors, prompt overrides, primitives, effect shaders, armed mines, CallPerRef and
+CallPerMobileObject; probe set jg6 written, not run yet). JohnnyGuitar 184 → 147.
 
 **The plugin libraries: 1,519 left** (recounted with #1022's census). JIP LN 349,
 JohnnyGuitar 313, SUP 184, LU 145, ShowOff 139, ITR 119, One111 51, CacheUI 45, PP 42,

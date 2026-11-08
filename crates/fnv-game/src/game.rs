@@ -545,6 +545,9 @@ pub struct FormChanges {
     /// ResetInterior: interior cells reset at their next load (`crate::respawn`).
     #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty", default)]
     pub expired_cells: std::collections::BTreeSet<FormId>,
+    /// Every cell the player's loaded area has held (IsCellVisited, `crate::nvse_jg6`).
+    #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty", default)]
+    pub visited_cells: std::collections::BTreeSet<FormId>,
     /// RemapWaterType: water type → the one drawn in its place ([`Game::water_type`]).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub water_remaps: BTreeMap<FormId, FormId>,
@@ -4427,6 +4430,7 @@ impl<'a> Game<'a> {
         // before anything in them runs (`crate::respawn`).
         self.cells_left(&left);
         let reset: Vec<FormId> = new.iter().copied().filter(|&c| self.cell_entered(c).is_some()).collect();
+        self.forms.visited_cells.extend(new.iter().copied());
         // Their encounter zones get a level, their actors and containers theirs, before
         // anything rolls their carried items (`crate::zones`).
         for &c in &new {

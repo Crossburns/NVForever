@@ -5346,6 +5346,94 @@ JG5_PROBES = (
 )
 
 
+# jg6 (writes, session only, each change put back; #1007): JohnnyGuitar batch 6
+# (docs/spec-notes/ext-jg6.md) on FalloutNV.esm forms [observed: fnvtool esm inventory and
+# decode]: Doc Mitchell's reference, his house (GSDocMitchellHouse), its door and the couch
+# trigger (XPRM box), the NovacInterior and RepconnFacility lighting templates, Radio New
+# Vegas' talking activator, the Goodsprings schoolhouse. RemovePrimitive cannot be put back
+# and is not probed.
+JG6 = {"docref": "104C0F", "dochouse": "103DF9", "docdoor": "103E61", "couchtrigger": "1055B9",
+       "novacltmp": "172A59", "repconnltmp": "17389F", "rnv": "14DF02", "schoolhouse": "108F39"}
+
+
+def _jg6(pid, body, text=False):
+    return (f"jg6.{pid}", "ref rP\nref rObj\nref rOther\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fC\n"
+            "string_var sText\nstring_var sSave\narray_var aList\nBegin Function { }\n"
+            + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _jg6v(pid, key, expr, text=False):
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return _jg6(pid, _form("rObj", JG6[key]) + rd, bool(text))
+
+
+JG6_PROBES = (
+    # 1. actor values by code on the player, each change put back: ModAVAlt Luck +1 and the
+    # modifier's filters (1 permanent, 2 temporary, 3 both, 4, none), DamageAVAlt and
+    # RestoreAVAlt on Health, ForceAVAlt then UnforceAV (documented as doing nothing)
+    [_jg6("av.mod", "let fSave := rP.GetAV Luck\nrP.ModActorValueAlt 11 1\nlet fA := rP.GetAV Luck\n"
+          "let sText := sv_Construct \"%g %g %g %g %g\" (fA - fSave) (rP.GetActorValueModifierAlt Luck 1) "
+          "(rP.GetActorValueModifierAlt Luck 2) (rP.GetActorValueModifierAlt Luck 3) (rP.GetActorValueModifierAlt Luck 4)\n"
+          'let sText := sv_Construct "%z %g" sText (rP.GetActorValueModifierAlt Luck)\n'
+          "rP.ModActorValueAlt 11 -1\nSetFunctionValue (sv_Construct \"%z %g\" sText ((rP.GetAV Luck) - fSave))", True),
+     _jg6("av.damage", "let fSave := rP.GetAV Health\nrP.DamageActorValueAlt 16 5\nlet fA := rP.GetAV Health\n"
+          "rP.RestoreActorValueAlt 16 5\nSetFunctionValue (sv_Construct \"%g %g\" (fA - fSave) ((rP.GetAV Health) - fSave))", True),
+     _jg6("av.force.unforce", "let fSave := rP.GetAV Luck\nrP.ForceActorValueAlt 11 (fSave + 2)\nlet fA := rP.GetAV Luck\n"
+          "rP.UnforceAV Luck\nlet fB := rP.GetAV Luck\nrP.ForceAV Luck fSave\n"
+          'SetFunctionValue (sv_Construct "%g %g %g" (fA - fSave) (fB - fSave) ((rP.GetAV Luck) - fSave))', True),
+     # SetAVAlt then UnsetAV on Doc's Luck: whether UnsetAV puts the first base back
+     _jg6("av.set.unset", _form("rObj", JG6["docref"]) + "let fSave := rObj.GetBaseAV Luck\nrObj.SetActorValueAlt 11 (fSave + 3)\n"
+          "let fA := rObj.GetBaseAV Luck\nrObj.SetAV Luck (fSave + 4)\nlet fB := rObj.GetBaseAV Luck\nrObj.UnsetAV Luck\n"
+          "let fC := rObj.GetBaseAV Luck\nrObj.SetAV Luck fSave\n"
+          'SetFunctionValue (sv_Construct "%g %g %g %g" (fA - fSave) (fB - fSave) (fC - fSave) ((rObj.GetBaseAV Luck) - fSave))', True),
+     _jg6("karma.alt", "let fSave := rP.GetAV Karma\nRewardKarmaAlt 1\nlet fA := rP.GetAV Karma\nRewardKarmaAlt -1\n"
+          'SetFunctionValue (sv_Construct "%g %g" (fA - fSave) ((rP.GetAV Karma) - fSave))', True)]
+    # 2. actor states
+    + [_jg6("life.player", "SetFunctionValue (rP.GetLifeState)"),
+       _jg6v("life.doc", "docref", "rObj.GetLifeState"),
+       _jg6v("dialogue.doc", "docref", "rObj.IsInDialogueWithPlayer"),
+       _jg6("furniture.player", "SetFunctionValue (GetFormIDString (rP.GetCurrentFurnitureRef))", True),
+       _jg6("healthdamage.player", "SetFunctionValue (rP.HasHealthDamageEffect)"),
+       _jg6("tempingestible.size", "let aList := GetTempIngestibleEffects\nSetFunctionValue (ar_Size aList)"),
+       _jg6("perks.available", "let aList := GetAvailablePerks\nSetFunctionValue (ar_Size aList)"),
+       _jg6("shaders.player", "let aList := rP.GetPlayingEffectShaders\nSetFunctionValue (ar_Size aList)"),
+       _jg6("minearmedex.player", "SetFunctionValue (rP.GetMineArmedEx)")]
+    # 3. cells: Doc's house and the schoolhouse visited, expired; the player's own cell
+    + [_jg6v(f"cell.visited.{k}", k, "IsCellVisited rObj") for k in ("dochouse", "schoolhouse")]
+    + [_jg6v(f"cell.expired.{k}", k, "IsCellExpired rObj") for k in ("dochouse", "schoolhouse")]
+    + [_jg6("cell.expired.here", "SetFunctionValue (IsCellExpired (rP.GetParentCell))"),
+       _jg6("cell.buffered", 'SetFunctionValue (sv_Construct "%g %g" (ar_Size (GetBufferedCellsAlt 0)) (ar_Size (GetBufferedCellsAlt 1)))', True)]
+    # 4. lighting templates: a cell on record or not; set to Doc's house, read, put back
+    + [_jg6v(f"ltmp.cell.{k}", k, "GetLightingTemplateCell rObj", "form") for k in ("novacltmp", "repconnltmp")]
+    + [_jg6("ltmp.set", _form("rObj", JG6["novacltmp"]) + _form("rOther", JG6["dochouse"])
+            + "let rItem := GetLightingTemplateCell rObj\nSetLightingTemplateCell rObj rOther\nlet sText := GetFormIDString (GetLightingTemplateCell rObj)\n"
+            'SetLightingTemplateCell rObj rItem\nSetFunctionValue (sv_Construct "%z %z" sText (GetFormIDString (GetLightingTemplateCell rObj)))', True)]
+    # 5. the moon, the frame time (as > 0), radios, talking activators
+    + [_jg6("moon", "SetFunctionValue (GetMoonPhase)"),
+       _jg6("secondspassed", "SetFunctionValue ((GameGetSecondsPassed) > 0)"),
+       _jg6("radios", "let aList := GetAllGameRadios\nlet fA := ar_Size aList\nlet fB := 0\nlet fC := 0\nwhile fB < fA\n"
+            "let rObj := aList[fB]\nif eval (GetFormIDString (rObj.GetBaseObject)) == \"0014DF02\"\nlet fC += 1\nendif\nlet fB += 1\nloop\n"
+            'SetFunctionValue (sv_Construct "%g %g" fA fC)', True),
+       _jg6v("tact.actor.rnv", "rnv", "GetTalkingActivatorActor rObj", "form")]
+    # 6. a reference's prompt override, set and put back; the couch trigger's primitive
+    + [_jg6("prompt.door", _form("rObj", JG6["docdoor"]) + "let sSave := rObj.GetRefActivationPromptOverride\n"
+            'rObj.SetRefActivationPromptOverride "NvfProbe"\nlet sText := rObj.GetRefActivationPromptOverride\n'
+            'rObj.SetRefActivationPromptOverride $sSave\nSetFunctionValue (sv_Construct "[%z] [%z] [%z]" sSave sText (rObj.GetRefActivationPromptOverride))', True),
+       _jg6v("primitive.couch", "couchtrigger", "rObj.GetPrimitiveType"),
+       _jg6v("primitive.door", "docdoor", "rObj.GetPrimitiveType")]
+    # 7. calls per reference, counted in an array the lambda appends to: the NPCs (42) of
+    # Doc's house, every reference of it against GetRefsInCell, the high-level actors
+    # against GetActorsByProcessingLevel 0
+    + [_jg6("callperref.npc", _form("rObj", JG6["dochouse"]) + 'let aList := ar_Construct "array"\n'
+            "CallPerRef ({ref r} => ar_Append aList r) 42 0 0 rObj\nSetFunctionValue (ar_Size aList)"),
+       _jg6("callperref.all", _form("rObj", JG6["dochouse"]) + 'let aList := ar_Construct "array"\n'
+            "CallPerRef ({ref r} => ar_Append aList r) 0 0 0 rObj\n"
+            'SetFunctionValue (sv_Construct "%g %g" (ar_Size aList) (ar_Size (GetRefsInCell rObj 0)))', True),
+       _jg6("callpermobile.high", 'let aList := ar_Construct "array"\nCallPerMobileObject ({ref r} => ar_Append aList r) 0\n'
+            'SetFunctionValue (sv_Construct "%g %g" (ar_Size aList) (ar_Size (GetActorsByProcessingLevel 0)))', True)]
+)
+
+
 # pp (writes, session only, each change put back where the plugin allows; #1014): ppNVSE
 # (docs/spec-notes/ext-pp.md), installed as VanillaPluginsPlus.dll, on FalloutNV.esm forms
 # [observed: fnvtool esm inventory; fnvtool dialogue lines]: the baseball bat, the 10mm
@@ -6156,6 +6244,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "jg1": JG1_PROBES,
         "jg2": JG2_PROBES,
         "jg5": JG5_PROBES,
+        "jg6": JG6_PROBES,
         "one111": ONE111_PROBES,
         "jip5": JIP5_PROBES,
         "jip8": JIP8_PROBES,
@@ -6169,7 +6258,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jg6", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
 
 
 def script(body):
