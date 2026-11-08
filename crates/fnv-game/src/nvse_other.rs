@@ -85,6 +85,9 @@ pub struct OtherState {
     pub jip6: crate::nvse_jip6::Jip6State,
     /// JIP batch 7's lists and settings: ammo effects, climate weathers, armour (`nvse_jip7`).
     pub jip7: crate::nvse_jip7::Jip7State,
+    /// JIP batch 8's changes: actor effects, base effects, water effects, excluded combat
+    /// actions (`nvse_jip8`).
+    pub jip8: crate::nvse_jip8::Jip8State,
 }
 
 /// The bit of DisablePlayerControlsAltEx's flags for each control group, in the order of

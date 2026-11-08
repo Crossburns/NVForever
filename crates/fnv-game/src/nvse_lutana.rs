@@ -454,7 +454,8 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // GetWaterFormEffect]; with no water, the player's cell's [hypothesis].
         "getwaterformeffect" => {
             let w = form(args, 0).or_else(|| g.cell_of(FormId::PLAYER_REF).and_then(|c| cell_water(g, c)));
-            reff(w.and_then(|w| g.data.water_effects.get(&w).copied()))
+            // SetWaterFormEffect's change first (`crate::nvse_jip8`).
+            reff(w.and_then(|w| g.water_effect(w)))
         }
         // `ref.GetZone`: the encounter zone of the reference's parent cell
         // [documented: GetZone], SetCellEncounterZone's change first (`nvse_jg2`).
