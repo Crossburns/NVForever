@@ -1178,6 +1178,34 @@
    },
    "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
    "tags": ["ext", "sup", "probes", "sup5"]
+  },
+  {
+   "id": "L5.ext.jg3",
+   "layer": 5,
+   "description": "JohnnyGuitar batch 3 (#1007; docs/spec-notes/ext-jg3.md): effect shaders' numeric traits (the colours packed as one number) and texture paths, media sets' numeric, string and sound traits, casinos' chips and winnings, terminals' menu items (count, texts, notes, sub menus, flags) and GetQuestDelay, each setter set, read back and put back; set jg3 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Two calls that crashed the original are not probed (a media set's missing sound, a terminal item past the list). Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/jg3.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/jg3.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "jg", "probes", "jg3"]
+  },
+  {
+   "id": "L5.ext.jg4",
+   "layer": 5,
+   "description": "JohnnyGuitar batch 4 (#1007; docs/spec-notes/ext-jg4.md): idle markers' animations and traits and their setters, regions' weather lists (order, nth entries, membership, override, priority, add, remove, clear), race flags and faction members (rank, template factions, order), each change undone; set jg4 of tools/capture/jip_probes.py, keyed by probe id, steps in order. GetNthRegionWeatherGlobal on an entry without a global crashed the original and is not probed there. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/jg4.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/jg4.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "jg", "probes", "jg4"]
   }
  ]
 }
