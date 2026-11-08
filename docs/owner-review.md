@@ -350,10 +350,11 @@ by runtime-compiled queries (tools/capture/jip_probes.py), results in the jip-* 
 - **`GetLNVersion` returns 57.3** in your game, where the wiki says it always returns 0;
   NVForever follows the game.
 - **UI functions (J8):** *answered 2026-10-26*, a tile tree (extender-compat.md §5.6 A).
-- **Three wiki pages missing from the export:** *Auxiliary Variables*, *RefMap Array* and
-  *Template:ModIndexOverride*. The game showed that a `*` name prefix makes an auxiliary
-  variable temporary. It did not show how a variable becomes private or public
-  (docs/spec-notes/jip-variable-stores.md §1). Exporting those three pages settles it.
+- **Two wiki pages missing from the export:** *Auxiliary Variables* and *RefMap Array*
+  (export them by exact title: the 2026-11-08 category exports held only the function
+  pages). *Template:ModIndexOverride* came in 2026-11-08: a private variable belongs to its
+  plugin's mod index. The `*` name prefix makes a variable temporary [observed]; what makes
+  it public is still open (docs/spec-notes/jip-variable-stores.md §1).
 - **JIP implementation choices (J4–J7, branch claude/ext-compiler, 2026-10-26).**
   *Check* any you would rather have differently:
   - An invalid regular expression is an extender run-time error (the statement fails,

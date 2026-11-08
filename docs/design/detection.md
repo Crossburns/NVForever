@@ -105,8 +105,21 @@ must make up the rest [hypothesis: the point lights are added]. NVForever measur
 since 2026-11-06 (engine/nvforever/src/detection.rs `light_at`): no daylight factor, and
 the lights' brightest channel instead of their luminance.
 
-Still open: a shaded spot outdoors at noon (NVForever gives a shaded target the weather's
-ambient [hypothesis]) and a lamp's share at a known distance.
+A lamp's share [observed: job o29_light, 2026-11-08, `nvfairport`]: in SLGoodspringsCave
+INT (ambient alone 36.08), the player moved by `MoveTo` to set offsets in x and y from one
+RedLight (0x0015319B, radius 384, colour (255, 57, 47); the next lamp 511 units off) read
+100 out to 192 units, about 95–97 at 256, 67–70 at 320 (one 97 on the -x side, where the
+floor was 80 units lower), and the ambient 36.08 at 384 and 512 (one 67.6 at +384, the
+same as the read before it, perhaps not yet refreshed). So a lamp's share ends at its
+radius. Ours, ambient + 100 × (1 − (d/r)²) on the horizontal offset, gives 91.6 at 256
+and 66.7 at 320: within about 5 [hypothesis: the falloff's exact form; the distance is
+measured from the lamp to the player's position, not the chest].
+
+A shaded spot outdoors is still open: at noon in NVWastelandClear, 14 spots from the
+Goodsprings gas station's SCOLgsGasStation origin out to 800 units (and one 2,800 units
+off) all read 100 [observed, same job], but which of them stood under its canopy is not
+known, so this neither confirms nor rules out shade. Next: a spot whose roof is known
+(an interior-like overhang checked by a frame).
 
 ## 4. `fnvtool actor detect`
 
