@@ -179,40 +179,64 @@ def log_since(capture_dir, since):
 # --------------------------------------------------------------------------- the game
 
 class Game:
-    """The original game's process (Windows). Replaced by a fake in the tests."""
+    """The original game's process (Windows). Replaced by a fake in the tests.
+
+    Only the game this run starts is watched and closed: a copy already running (the
+    owner playing) makes the run refuse to start, since the game allows one copy and a
+    second exits at once, and closing by name would close the player's game too."""
 
     def __init__(self, game_dir):
         self.game_dir = game_dir
+        self.before = set()
+
+    @staticmethod
+    def pids():
+        r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {GAME_EXE}", "/FO", "CSV", "/NH"],
+                           capture_output=True, text=True, check=False)
+        out = set()
+        for line in r.stdout.splitlines():
+            cells = [c.strip('"') for c in line.split('","')]
+            if len(cells) > 1 and cells[0].lower() == GAME_EXE.lower() and cells[1].isdigit():
+                out.add(int(cells[1]))
+        return out
 
     def check(self):
         """A problem text if the game cannot be started from this folder, else None."""
         if not os.path.isfile(os.path.join(self.game_dir, LOADER_EXE)):
             return f"no {LOADER_EXE} in {self.game_dir} (install xNVSE first)"
+        if self.pids():
+            return f"{GAME_EXE} is already running (close it first: the game runs one copy at a time)"
         return None
 
+    def ours(self):
+        return self.pids() - self.before
+
     def running(self):
-        r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {GAME_EXE}", "/FO", "CSV", "/NH"],
-                           capture_output=True, text=True, check=False)
-        return GAME_EXE.lower() in r.stdout.lower()
+        return bool(self.ours())
 
     def responding(self):
-        """False if Windows reports the game's window as not responding."""
-        r = subprocess.run(["tasklist", "/V", "/FI", f"IMAGENAME eq {GAME_EXE}", "/FO", "CSV", "/NH"],
-                           capture_output=True, text=True, check=False)
-        return "not responding" not in r.stdout.lower()
+        """False if Windows reports this run's game window as not responding."""
+        for pid in self.ours():
+            r = subprocess.run(["tasklist", "/V", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                               capture_output=True, text=True, check=False)
+            if "not responding" in r.stdout.lower():
+                return False
+        return True
 
     def launch(self):
+        self.before = self.pids()
         loader = os.path.join(self.game_dir, LOADER_EXE)
         # The loader starts the game and injects xNVSE; it may exit straight away, so
-        # the game is watched by process name, not through this handle.
+        # the game is watched by its process id, not through this handle.
         subprocess.Popen([loader], cwd=self.game_dir)
 
     def kill(self):
-        subprocess.run(["taskkill", "/IM", GAME_EXE, "/F"], capture_output=True, check=False)
+        for pid in self.ours():
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, check=False)
 
 
 def run(jobs, names, capture_dir, game, save, timeout, menu_console=None, quit_console=None,
-        kill_on_timeout=False, clock=time.time, sleep=time.sleep, poll=2.0):
+        kill_on_timeout=False, clock=time.time, sleep=time.sleep, poll=2.0, hung_seconds=HUNG_SECONDS):
     """Start the game for an automatic run and wait. Returns the report (dict)."""
     jobs_dir = os.path.join(capture_dir, "jobs")
     os.makedirs(jobs_dir, exist_ok=True)
@@ -258,8 +282,8 @@ def run(jobs, names, capture_dir, game, save, timeout, menu_console=None, quit_c
                 break
             if alive and not game.responding():
                 hung_since = now if hung_since is None else hung_since
-                if now - hung_since > HUNG_SECONDS:
-                    outcome = f"the game stopped responding for {HUNG_SECONDS} s (hung; see the log for the last step)"
+                if now - hung_since > hung_seconds:
+                    outcome = f"the game stopped responding for {hung_seconds} s (hung; see the log for the last step)"
                     break
             else:
                 hung_since = None
@@ -368,6 +392,9 @@ def main(argv=None, game=None, clock=time.time, sleep=time.sleep):
                     help="console line run at the main menu (repeatable; default: load <save>)")
     ap.add_argument("--quit-console", action="append", metavar="LINE",
                     help="console line run when no job is left (repeatable; default: qqq)")
+    ap.add_argument("--hung-seconds", type=int, default=HUNG_SECONDS,
+                    help=f"seconds the game may stay Not Responding before the run is given up (default {HUNG_SECONDS}; "
+                         "a large modded load order can take longer to load)")
     ap.add_argument("--no-quit", action="store_true", help="leave the game running at the end")
     ap.add_argument("--kill-on-timeout", action="store_true", help="close the game if the run times out or the game hangs")
     ap.add_argument("--trace-dir", help="also write <job>.trace.json goldens (fnv.sim.trace/1) for ended jobs here")
@@ -395,7 +422,7 @@ def main(argv=None, game=None, clock=time.time, sleep=time.sleep):
         print(f"capture_run: could not back up the rolling saves: {e}", file=sys.stderr)
         return 1
     report = run(jobs, names, args.capture_dir, game, args.save, args.timeout, args.menu_console,
-                 quit_console, args.kill_on_timeout, clock=clock, sleep=sleep)
+                 quit_console, args.kill_on_timeout, clock=clock, sleep=sleep, hung_seconds=args.hung_seconds)
     changed = saves_changes(before, saves_listing(args.saves_dir))
     if changed:
         report["saves_changed"] = changed
