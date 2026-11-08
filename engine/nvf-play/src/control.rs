@@ -572,6 +572,7 @@ const NOT_BUILT: [Control; 0] = [];
 type HoldClock<'w> = (Option<Res<'w, Time<Real>>>, Option<Res<'w, crate::tweaks::TweakSettings>>);
 
 /// Toggles, holds, the third-person zoom; see the module notes.
+#[allow(clippy::too_many_arguments)]
 pub fn read_controls(
     input: ControlInput,
     time: Res<Time>,
