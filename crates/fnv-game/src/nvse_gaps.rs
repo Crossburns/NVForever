@@ -1388,8 +1388,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "ispcincombat" => yes(g.awareness.hunted(FormId::PLAYER_REF)),
         // Nothing to reload: the engine draws the equipped models as they are.
         "reloadequippedmodels" => zero,
-        // NVForever is no 32-bit program [observed: gaps4, 0].
-        "getislaa" => zero,
+        // Whether the program may use more than 2 GB (the 4 GB patch). The original
+        // without the patch answers 0 [observed: gaps4]; NVForever is a 64-bit program with
+        // no such limit, so it answers 1 [design, owner 2026-11-08: TTW's start-up check
+        // `GetIsLAA == 0` showed "4GB patch missing" (TTW4GBMissingMessage)].
+        "getislaa" => XVal::Num(1.0),
         // The open menu's code, 0 in game mode [observed: gaps3, 0].
         "getactivemenumode" => XVal::Num(g.menu.map_or(0.0, f64::from)),
         // [observed: gaps3, 1]

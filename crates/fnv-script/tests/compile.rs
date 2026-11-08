@@ -930,6 +930,25 @@ end",
     assert_eq!(h.text(9), "FalloutNV.esm:104C0C");
 }
 
+/// Tale of Two Wastelands' start-up checks pass for the plugins built into the engine:
+/// Stewie's Tweaks at TTW's minimum 941 and its own ttw_nvse (ext-version.md §5).
+#[test]
+fn ttws_plugin_checks_find_the_plugins_built_in() {
+    let h = run(
+        "float s
+float t
+float u
+begin GameMode
+let s := GetPluginVersion \"lStewieAl's Tweaks\"
+let t := IsPluginInstalled \"ttw_nvse\"
+let u := IsPluginInstalled \"Not A Plugin\"
+end",
+    );
+    assert_eq!(h.0[&1], Value::Num(941.0));
+    assert_eq!(h.0[&2], Value::Num(1.0));
+    assert_eq!(h.0[&3], Value::Num(0.0));
+}
+
 #[test]
 fn fatan_follows_the_games_approximation() {
     // [observed: jip-probes rules1 and rules2 (#1025), eight and ten decimals].
