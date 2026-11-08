@@ -47,6 +47,19 @@ pub enum ExtCmd {
         #[arg(long)]
         functions: Option<PathBuf>,
     },
+    /// What the load order's scripts need that NVForever does not have: compiled scripts
+    /// that do not fully decode, Script Runner files that do not compile, extender
+    /// functions the VM does not handle (fnv.ext.coverage/1).
+    Coverage {
+        #[command(flatten)]
+        lo: LoadOrderArgs,
+        /// Layer 1 schema directory (schemas/fnv).
+        #[arg(long)]
+        schema: PathBuf,
+        /// Function catalogue (default: ../script/functions.json next to --schema).
+        #[arg(long)]
+        functions: Option<PathBuf>,
+    },
     /// Run one probe set's quests headless (tools/capture/ext-probes/<set>) and collect
     /// the EXTPROBE lines they print, as the in-game collector does (fnv.ext.probes/1).
     Probes {
@@ -190,6 +203,10 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             let mut doc = probes_doc(&probes, &lines);
             doc["runs"] = json!(runs);
             Ok(doc)
+        }
+        ExtCmd::Coverage { lo, schema, functions } => {
+            let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
+            crate::ext_coverage::coverage(&lo, &schema, &fp)
         }
         ExtCmd::ScriptRunner { lo, schema, functions, roots, run } => script_runner(&lo, &schema, functions, roots, run),
         ExtCmd::Queries { lo, schema, functions, steps, start_cell, save, trace, ini, config } => {
@@ -431,6 +448,11 @@ pub(crate) fn fmt_g6(x: f64) -> String {
 pub(crate) struct Catalogue(HashMap<String, (String, String)>);
 
 impl Catalogue {
+    /// The origin (JIP, NVSE, …) the catalogue gives a function, by name or alias.
+    pub(crate) fn origin(&self, name: &str) -> String {
+        self.0.get(&name.to_ascii_lowercase()).map(|e| e.1.clone()).unwrap_or_default()
+    }
+
     pub(crate) fn load(path: &Path) -> anyhow::Result<Catalogue> {
         let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
         let doc: Value = serde_json::from_str(&text).with_context(|| path.display().to_string())?;
