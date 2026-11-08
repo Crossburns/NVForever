@@ -85,6 +85,8 @@ pub struct OtherState {
     pub jip6: crate::nvse_jip6::Jip6State,
     /// JIP batch 7's lists and settings: ammo effects, climate weathers, armour (`nvse_jip7`).
     pub jip7: crate::nvse_jip7::Jip7State,
+    /// JohnnyGuitar batch 5's record changes (`nvse_jg5`).
+    pub jg5: crate::nvse_jg5::Jg5State,
 }
 
 /// The bit of DisablePlayerControlsAltEx's flags for each control group, in the order of

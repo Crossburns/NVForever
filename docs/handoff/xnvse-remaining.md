@@ -131,6 +131,12 @@ SUP batch 3: 21 (#1008, ext-sup3.md: the fly camera's place, the angles to a poi
 an angle and distance, the INI readers; probed, lab L5.ext.sup3 29 of 35, the rest explained; an
 axis argument beside a reference named `Z` fixed in the compiler). Census after it: 697 (SUP
 122 → 101), with batch 2 merged: 681 (SUP 114 → 93).
+JohnnyGuitar batch 5: 32 (#1007, ext-jg5.md: alternate textures, FaceGen model flags and
+icons, worldspace map textures and zones, region map names (REGN RDMP added to the schema)
+and the location name, camera shots, body part strings, explosion and projectile sounds,
+equip types, recipe and weapon mod lookups, actor effect types, the time played, GetRGBColor;
+probed, lab L5.ext.jg5 88 of 88).
+Census after it: 649 (JohnnyGuitar 216 → 184).
 
 **The plugin libraries: 1,519 left** (recounted with #1022's census). JIP LN 349,
 JohnnyGuitar 313, SUP 184, LU 145, ShowOff 139, ITR 119, One111 51, CacheUI 45, PP 42,

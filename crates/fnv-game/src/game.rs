@@ -2123,6 +2123,8 @@ impl fnv_script::compile::Env for GameEnv<'_, '_> {
 
 impl<'a> Game<'a> {
     pub fn new(data: &'a GameData, mut world: World<'a>, cfg: GameConfig) -> Game<'a> {
+        // GetTimePlayed counts from the first game the process makes (`nvse_jg5`).
+        crate::nvse_jg5::mark_launch();
         // Placed actors carry their template's items (template flag "Inventory").
         // Each at the level it would be fixed at now (`crate::zones`); a cell load fixes it.
         let player_level = world.config().player_level;
