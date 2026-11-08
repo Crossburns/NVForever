@@ -314,6 +314,8 @@ fn watched(g: &mut Game, ctx: &Ctx, a: &Args, f: fn(&mut Game, &Ctx, &Args) -> R
 }
 
 pub fn set_actor_value_watched(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    // UnsetAV's base to go back to (`crate::nvse_jg6`).
+    crate::nvse_jg6::note_set_av(g, ctx, a);
     watched(g, ctx, a, set_actor_value)
 }
 pub fn mod_actor_value_watched(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {

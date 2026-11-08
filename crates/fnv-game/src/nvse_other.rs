@@ -76,6 +76,9 @@ pub struct OtherState {
     /// the record's (`nvse_jg4`, read through `nvse_jg4::idle_marker` and
     /// `nvse_jg4::region_weathers`).
     pub idle_markers: HashMap<FormId, crate::package::IdleCollection>,
+    /// SetIdleMarkerTraitNumeric's flags, the whole byte as set (the collection keeps
+    /// only the two bits it plays by; `nvse_jg4`).
+    pub idle_marker_flags: HashMap<FormId, u8>,
     pub region_weathers: HashMap<FormId, crate::data::RegionWeathers>,
     /// ITR NVSE's state (`nvse_itr1`).
     pub itr: crate::nvse_itr1::ItrState,
@@ -88,8 +91,13 @@ pub struct OtherState {
     /// JIP batch 8's changes: actor effects, base effects, water effects, excluded combat
     /// actions (`nvse_jip8`).
     pub jip8: crate::nvse_jip8::Jip8State,
+    /// JIP batch 9's switches and what the engine tells: the HUD cursor, volumes, fonts,
+    /// colours, immortal mode, disabled interaction types (`nvse_jip9`).
+    pub jip9: crate::nvse_jip9::Jip9State,
     /// JohnnyGuitar batch 5's record changes (`nvse_jg5`).
     pub jg5: crate::nvse_jg5::Jg5State,
+    /// JohnnyGuitar batch 6's state (`nvse_jg6`).
+    pub jg6: crate::nvse_jg6::Jg6State,
 }
 
 /// The bit of DisablePlayerControlsAltEx's flags for each control group, in the order of

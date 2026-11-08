@@ -168,6 +168,8 @@ pub(crate) fn placed_ref(id: u32) -> fnv_sim::refs::PlacedRef {
         radius: None,
         encounter_zone: None,
         level_modifier: None,
+        map_marker: None,
+        radio: None,
     }
 }
 
@@ -283,6 +285,8 @@ pub(crate) mod test_world {
             radius: None,
             encounter_zone: None,
             level_modifier: None,
+            map_marker: None,
+            radio: None,
         }
     }
 
