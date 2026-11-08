@@ -1740,6 +1740,9 @@ pub struct GameSnapshot {
     pub queued: Vec<QueuedBox>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub speech: Vec<Speech>,
+    /// Live inventory explosives, on the saved `time` clock (pickpocket.md section 5).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub planted: Vec<crate::pickpocket::Planted>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub said: BTreeSet<(FormId, FormId)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1879,8 +1882,9 @@ impl GameSnapshot {
     /// dropped), script instances whose key or script is gone, magic effects whose effect,
     /// source, target or script is gone (and their effect scripts; a co-op player's
     /// likewise), NX form variables naming a gone form, and the radio station
-    /// or weather shown. A dropped reference's detection state and place among the fighters
-    /// go with it: in Combat and not among them, it would start a fight on the next tick.
+    /// or weather shown. Live plants lose missing victims, items and object effects;
+    /// their witness lists lose missing or dropped references. A dropped reference's
+    /// detection state and place among the fighters go with it: in Combat and not among them, it would start a fight on the next tick.
     /// Other fields keep the gone ID, which names no form: a lookup of it
     /// fails as one of any form that does not exist [hypothesis: the original's behaviour
     /// with a missing plugin is not documented]. Returns how many were dropped.
@@ -1889,6 +1893,12 @@ impl GameSnapshot {
         let dropped: BTreeSet<FormId> = self.sim.refs.iter().filter(|(_, r)| gone(r.base) || r.cell.is_some_and(&gone)).map(|(&id, _)| id).collect();
         self.sim.refs.retain(|id, _| !dropped.contains(id));
         n += dropped.len();
+        let before = self.planted.len();
+        self.planted.retain(|p| !gone(p.victim) && !dropped.contains(&p.victim) && !gone(p.item) && !p.blast.enchantment.is_some_and(&gone));
+        n += before - self.planted.len();
+        for p in &mut self.planted {
+            p.seen_by.retain(|w| !gone(*w) && !dropped.contains(w));
+        }
         self.awareness.retain(|id, _| !dropped.contains(id));
         if let Some(fighting) = &mut self.fighting {
             fighting.retain(|id| !dropped.contains(id));
@@ -2798,7 +2808,7 @@ impl<'a> Game<'a> {
                 return Some(id);
             }
         }
-        let bytes = crate::mod_files::read_data(&format!("nvse\\user_defined_functions\\{key}"))?;
+        let bytes = crate::mod_files::read_data_file(&format!("nvse\\user_defined_functions\\{key}"))?;
         // UTF-8 when it is, else 8-bit text in this run's code page (#1439).
         let src = std::str::from_utf8(&bytes).map_or_else(|_| fnv_util::text::decode(&bytes), str::to_owned);
         let id = self.compile_source(&format!("CompileScript {path}"), src)?;
@@ -4105,7 +4115,8 @@ impl<'a> Game<'a> {
 
     /// The speaker starts saying the line `info` outside a conversation with the player:
     /// a line it was saying stops, the line is remembered for Say Once, and its begin
-    /// result script runs ([`Game::say`]; [`LineKind`]). A line of a conversation
+    /// result script runs, followed by a Run Immediately end result (dialogue.md section
+    /// 3.6 [design]; [`Game::say`]; [`LineKind`]). A line of a conversation
     /// between actors lasts as long as its first response.
     pub(crate) fn say_line(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, info: FormId, kind: LineKind) {
         let data = self.data;
@@ -4124,11 +4135,17 @@ impl<'a> Game<'a> {
         self.emit(EventKind::LineStarted { speaker, target, topic, info, seconds });
         self.cover_info(info);
         let (say_to, greeting, hello) = (kind == LineKind::SayTo, kind == LineKind::Greeting, kind == LineKind::Hello);
-        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, farewell: false, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: false });
+        // [design] Mark this line before callbacks can finish it or replace it.
+        let immediate = def.has(crate::data::info_flag::RUN_IMMEDIATELY);
+        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, farewell: false, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: immediate });
         if let Some(&first) = def.response_order().first() {
             self.ask_response_idles(speaker, target, info, first);
         }
         if let Some(u) = def.begin {
+            self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(speaker) });
+            self.run_result(u, RunCtx { self_ref: Some(speaker), action_ref: None, quest: def.quest });
+        }
+        if let Some(u) = def.end.filter(|_| immediate) {
             self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(speaker) });
             self.run_result(u, RunCtx { self_ref: Some(speaker), action_ref: None, quest: def.quest });
         }
@@ -5328,6 +5345,7 @@ impl<'a> Game<'a> {
             boxes: self.boxes.clone(),
             queued: self.queued.clone(),
             speech: self.speech.clone(),
+            planted: self.pickpocket.planted.clone(),
             said: self.said.clone(),
             said_day: self.said_day.clone(),
             said_day_days_clock: true,
@@ -5406,6 +5424,7 @@ impl<'a> Game<'a> {
         // An older snapshot has no `queued`: each box its own showing, buttons not known.
         g.align_queued();
         g.speech = s.speech.clone();
+        g.pickpocket.planted = s.planted.clone();
         g.said = s.said.clone();
         if s.said_day_days_clock {
             g.said_day = s.said_day.clone();

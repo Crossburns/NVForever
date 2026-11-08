@@ -118,7 +118,12 @@ fn files() {
     static WRITE: std::sync::Once = std::sync::Once::new();
     WRITE.call_once(|| {
         std::fs::create_dir_all(dir.join("NVSE/Plugins")).unwrap();
+        std::fs::create_dir_all(dir.join("NVSE/user_defined_functions")).unwrap();
         std::fs::create_dir_all(dir.join("Config/vheyes-nvse")).unwrap();
+        std::fs::write(
+            dir.join("NVSE/user_defined_functions/TileProbe.txt"),
+            "Begin Function { }\nSetUIFloat \"HUDMainMenu/Probe/_calls\" ((GetUIFloat \"HUDMainMenu/Probe/_calls\") + 1)\nEnd\n",
+        ).unwrap();
         std::fs::write(dir.join("NVSE/Plugins/nvse_stewie_tweaks.ini"), "[Tweaks]\r\nbJumpWhileAiming=1\r\n[Cookable Grenades]\r\nsSoundName=\"WPNGrenadeBeep\"\r\n").unwrap();
         std::fs::write(dir.join("Config/vheyes-nvse/QueuedCommand.txt"), "SetGlobalTimeMultiplier 2\r\n").unwrap();
     });
@@ -136,6 +141,35 @@ fn q(g: &mut Game, body: &str) -> XVal {
 
 fn n(v: f64) -> XVal {
     XVal::Num(v)
+}
+
+#[test]
+fn compile_script_from_loose_root_runs_as_a_tile_callback() {
+    files();
+    let f = fixture();
+    let mut g = game(&f);
+    // [design: script_input.rs, mod_files.rs] The home mods layer is a read root;
+    // the host VFS reader does not contain this loose callback.
+    assert!(fnv_game::mod_files::read_data("nvse\\user_defined_functions\\tileprobe.txt").is_none());
+    let src = MemSource::default().with(
+        "menus\\probe.xml",
+        r#"<menu name="HUDMainMenu"><rect name="Probe"><_probe>1</_probe><_calls>0</_calls></rect></menu>"#,
+    );
+    g.ui_tree.load_menu(&src, "menus\\probe.xml").unwrap();
+    g.ui_tree.update();
+    let callback = q(&mut g, "SetFunctionValue (CompileScript \"tileprobe.txt\")");
+    assert!(matches!(callback, XVal::Ref(id) if id != 0), "{callback:?}");
+    assert_eq!(q(&mut g, "SetFunctionValue (GetUDFFromFile \"TileProbe.txt\")"), callback);
+    assert_eq!(q(&mut g, "SetFunctionValue (CompileScript \"missing.txt\")"), XVal::Ref(0));
+    q(&mut g, "SetTileScript \"hudmainmenu/PROBE/_PROBE\" (CompileScript \"TileProbe.txt\")");
+    g.tick();
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/Probe/_calls"), Some(1.0));
+    g.ui_tree.set_float("HUDMainMenu\\Probe\\_probe", 0.0);
+    g.tick();
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/Probe/_calls"), Some(1.0));
+    g.ui_tree.set_float("HUDMainMenu/Probe/_probe", 1.0);
+    g.tick();
+    assert_eq!(g.ui_tree.get_float("HUDMainMenu/Probe/_calls"), Some(2.0));
 }
 
 fn s(v: &str) -> XVal {

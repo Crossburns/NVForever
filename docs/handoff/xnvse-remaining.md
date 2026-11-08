@@ -127,6 +127,10 @@ SUP batch 2: 16 (#1008, ext-sup2.md: the dialogue setters of SUP with JohnnyGuit
 topics, said-once and parent-topic functions and ShowOff's response-text setters, read by the
 dialogue through `crate::dialogue_edits`; probed, lab L5.ext.sup2 37 of 38). Census after it:
 702 (SUP 122 → 114, JohnnyGuitar 222 → 216, ShowOff 73 → 71).
+SUP batch 3: 21 (#1008, ext-sup3.md: the fly camera's place, the angles to a point, positions at
+an angle and distance, the INI readers; probed, lab L5.ext.sup3 29 of 35, the rest explained; an
+axis argument beside a reference named `Z` fixed in the compiler). Census after it: 697 (SUP
+122 → 101), with batch 2 merged: 681 (SUP 114 → 93).
 
 **The plugin libraries: 1,519 left** (recounted with #1022's census). JIP LN 349,
 JohnnyGuitar 313, SUP 184, LU 145, ShowOff 139, ITR 119, One111 51, CacheUI 45, PP 42,

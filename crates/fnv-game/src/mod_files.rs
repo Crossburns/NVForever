@@ -470,10 +470,52 @@ fn num(args: &[XVal], k: usize, dflt: f64) -> f64 {
     }
 }
 
+/// The text of the INI file SUP's readers name (argument 0, from the game's folder,
+/// [`ModFiles::read_root`]), its UTF-8 byte order mark taken off (read as three
+/// characters, `read_root` keeping each byte).
+fn sup_ini(g: &Game, args: &[XVal]) -> Option<String> {
+    let t = g.mod_files.read_root(text(args, 0)?.trim())?;
+    Some(t.strip_prefix("\u{ef}\u{bb}\u{bf}").map(str::to_string).unwrap_or(t))
+}
+
 /// The functions of this file; `None` for any other name.
 pub(crate) fn call(g: &mut Game, name: &str, args: &[XVal]) -> Option<Result<XVal, String>> {
     let zero = XVal::Num(0.0);
     let v = match name {
+        // ---- SUP's INI readers, any file under the game's folder ----
+        // `path section key`, the path from the game's folder with `/` or `\`, the
+        // section and key in any case, a UTF-8 byte order mark and spaces before a
+        // section's bracket passed over [documented: ReadINIFloatFromFile, "relative to
+        // the game folder"; observed: sup3 ini.float.*]. A missing key or file gives 0,
+        // the Alt form NaN [documented; observed: ini.float.missing, ini.alt.*]. A path
+        // that leaves the game folder is not read [decision: mod_files::on_disk, the
+        // charter; the original read one, sup3 ini.float.outside].
+        "readinifloatfromfile" | "readinifloatfromfilealt" | "readinistringfromfile" => {
+            let found = sup_ini(g, args).and_then(|t| ini_get(&t, &text(args, 1).unwrap_or_default().trim().to_ascii_lowercase(), text(args, 2).unwrap_or_default().trim()));
+            match (name, found) {
+                ("readinistringfromfile", v) => XVal::Str(v.unwrap_or_default()),
+                (_, Some(v)) => XVal::Num(num_of(&v)),
+                ("readinifloatfromfilealt", None) => XVal::Num(f64::NAN),
+                _ => zero,
+            }
+        }
+        // `path section`: the section's keys; `path`: the file's sections; each sorted
+        // [observed: sup3 ini.keys, JohnnyGuitar.ini's nine [MAIN] keys from
+        // bFixDeathVoicelines to bReset3rdPersonCamera, not in the file's order;
+        // hypothesis: without regard to case, and the sections the same]. A missing file
+        // gives no array [observed: ini.sections.nofile].
+        "readinisectionkeysfromfile" | "readinisectionsfromfile" => {
+            let Some(t) = sup_ini(g, args) else { return Some(Ok(zero)) };
+            let mut names: Vec<String> = if name == "readinisectionsfromfile" {
+                ini_sections(&t)
+            } else {
+                ini_section(&t, &text(args, 1).unwrap_or_default().trim().to_ascii_lowercase()).into_iter().map(|(k, _)| k).collect()
+            };
+            names.sort_by_key(|n| n.to_ascii_lowercase());
+            names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+            let entries = names.into_iter().enumerate().map(|(i, n)| (XKey::Num(i as f64), XVal::Str(n))).collect();
+            XVal::Array(g.ext.new_array(ArrayKind::List, entries))
+        }
         // ---- JIP's array files, under the game's folder ----
         // `path append array [transpose]`: a list is one line of tab-separated values; a
         // list of lists is its columns side by side (transposed: its rows); appending

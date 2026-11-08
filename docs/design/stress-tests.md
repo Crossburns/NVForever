@@ -103,7 +103,46 @@ the requested sequence finishes.
   - actors, actors with a non-finite position, ragdolls, projectiles in flight;
   - where the backend reports it (Vulkan, DX12), the GPU allocator's allocated and
     reserved megabytes and its memory blocks. The tour watches allocated and reserved
-    for leaks.
+    for leaks;
+  - the window's own counts, before the place: `startup frames`, `hidden frames`
+    (behind a loading screen), `phase changes` (frames a loading screen went up or came
+    down in) and `window <ms> ms`, its real length. The frame mean and worst cover only
+    the seen frames; a window with `phase changes` over 0 held a transition, and its
+    place is where it ended (the tour report counts such windows). The window starts
+    again when start-up ends.
+
+  Each frame is judged at one pair of boundaries (issue #1415). The sampler runs once a
+  frame in `First` and takes its own instant there; a frame is the time from one run to
+  the next, and its phase (start-up, behind a loading screen, seen), its cell and actor
+  counts and the place come from the same two runs [design:
+  `engine/nvforever/src/stress_sample.rs`, `Samples::step`, `frame`]. A frame whose two
+  boundaries saw different phases is in no frame time; when slow it is logged as
+  `stress hitch (across a phase change, hidden to seen): …, from <place> to <place>`,
+  its raw time without a claim on whether the loading or the game took it (the tour
+  report lists those apart). The first run only sets the baseline: no frame is counted
+  for it [observed #1415: a 674 ms seen hitch logged just after the start's screen came
+  down, and the first window carried the travel destination's place].
+
+  **What the frame time measures.** The `stress sample:` frame mean and worst, the
+  `stress frames:` figures, the `stress actors:` frame figures, `stress start-up:` and
+  every `stress hitch` line measure the main thread's loop from one `First` to the next:
+  the frame's own schedules, the wait at extraction for the render thread to finish the
+  frame before, extraction and the window events [design: bevy_render 0.20.1
+  `pipelined_rendering.rs:115-136`]. Before issue #1415 they used `Time<Real>`'s delta,
+  the time between the instants the render world sends after each render schedule
+  [design: bevy_render 0.20.1 `lib.rs:464,522-524`], which `First` receives, or
+  `Instant::now()` when none is queued [design: bevy_time 0.20.1 `lib.rs:163,180`]. Under
+  pipelined rendering (bevy's default plugins keep it, and so does nvforever [design:
+  bevy_internal 0.20.1 `default_plugins.rs:56-57`]) that delta can be the frame before's,
+  so it cannot be paired with what one boundary saw: a long frame a loading screen came
+  down in could arrive one boundary late and count as a seen hitch [design: code reading,
+  not reproduced live]. Both clocks tick once a frame and a run of frames' total telescopes
+  to the time between its end instants, so means over a run of seen frames should agree up
+  to the instants at its ends [hypothesis]; single frames, the worst and the 1 % low can differ by
+  which frame a stall lands in and by the two clocks' jitter, and the first frame (zero
+  under `Time<Real>`) is no longer counted. Figures from before and after the change are
+  not strictly comparable. Frame telemetry's `duration_ns` still uses `Time<Real>`'s
+  delta (docs/design/frame-telemetry.md §2).
 
   Beside each sample, `stress gpu labels:` lists the allocator's memory by label, largest
   first. Game textures are labelled by their folder (`textures\clutter`, `generated lod`).
@@ -118,7 +157,8 @@ the requested sequence finishes.
   materials are counted only (one per GRAS, TREE, WATR form). Interface pictures are
   read from `stress gpu labels` (`textures\interface`) (#904).
 
-  At the exit, `stress frames:` gives the whole run's frame-time mean, 1 % low and worst.
+  At the exit, `stress frames:` gives the whole run's frame-time mean, 1 % low and worst,
+  and the frames left out: behind loading screens, and across a phase change.
 
 ## 3. cells
 
