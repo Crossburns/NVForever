@@ -137,7 +137,14 @@ at exit. Smoke: `flamer-burns-player`, `flamer-burns-npc`, `radscorpion-poison`,
   went on at 4 a second (renewed, not doubled) until he died 8 s after the second hit
   [observed: campaign o26_burn, 2026-11-06, `nvfairport`, issue #973]. So the glob, its
   projectile and a player caster all give ours; what is left is an NPC caster (an NPC
-  firing at a target crashed the game three times in 2026-11-01 setups).
+  firing at a target crashed the game three times in 2026-11-01 setups). A 2026-11-08
+  try (campaign o29_burn, `nvfairport`) gave a spawned NCR trooper the Incinerator, turned
+  it to a restrained trooper about 250 units off with SetAngle and called `FireWeapon`
+  on it: in both sessions the glob went off at the shooter at once (OnHit on two
+  non-actor references and on the god-mode player 100 units behind it), and the target
+  kept its 50 Health, so nothing was learned of the burn [observed]. Next: the shooter
+  with the player out of the way and no other actor within 300 units of its muzzle, or
+  StartCombat on the restrained target instead of FireWeapon.
 - Several cazador stings: one poison refreshed, or several adding up?
 - Does a radscorpion poison with every attack or only its forward power attack (built:
   only the forward power attack)? How often does it sting?

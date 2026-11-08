@@ -107,6 +107,7 @@ pub mod script_input;
 pub mod script_draw;
 pub mod script_events;
 pub mod script_hud;
+pub mod sup_shots;
 pub mod script_trigger;
 pub mod settings;
 pub mod start_menu;
@@ -352,6 +353,7 @@ impl Plugin for PlayPlugin {
             .add_plugins((chargen::ChargenPlugin, creator::CreatorPlugin, fade::FadePlugin))
             .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin))
             .add_plugins(perk_marks::PerkMarksPlugin)
+            .add_plugins(sup_shots::SupShotsPlugin)
             .add_plugins(tiles::TilesPlugin)
             .add_plugins(pipboy::PipBoyPlugin)
             .add_plugins(terminal::TerminalPlugin)
