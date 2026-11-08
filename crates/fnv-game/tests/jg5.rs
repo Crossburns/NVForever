@@ -285,7 +285,14 @@ fn weapon_and_armor_alt_textures() {
     assert_eq!(map_at(&mut g, "GetAltTexturesEx TestWeapon", 3), TXST2);
     assert_eq!(map_at(&mut g, "GetAltTexturesEx TestWeapon", 2), 0);
     assert_eq!(map_at(&mut g, "GetAltTexturesEx TestArmor 3", 2), TXST2);
-    assert_eq!(map_at(&mut g, "GetAltTexturesEx TestArmor", 0), TXST1, "model 1 without an ID");
+    // Without a model ID, model 3 [observed: jg5, MS18RangerBattlearmor].
+    assert_eq!(map_at(&mut g, "GetAltTexturesEx TestArmor", 2), TXST2);
+    assert_eq!(map_at(&mut g, "GetAltTexturesEx TestArmor", 0), 0);
+    // A model outside 1-4 gives no array [observed: jg5, ar_Size -1].
+    for expr in ["GetArmorAltTextures TestArmor 5", "GetAltTexturesEx TestArmor 0"] {
+        let size = q(&mut g, &format!("array_var a\nlet a := {expr}\nSetFunctionValue (ar_Size a)"));
+        assert_eq!(size, XVal::Num(-1.0), "{expr}");
+    }
     // Replace one, add one [documented: SetWeaponAltTexture and its note].
     assert_eq!(n(&mut g, "SetWeaponAltTexture TestWeapon 1 TestTextures2"), 1.0);
     assert_eq!(n(&mut g, "SetWeaponAltTexture TestWeapon 7 TestTextures1"), 1.0);
@@ -361,23 +368,25 @@ fn region_map_names_and_location_name() {
     let mut g = game(&f);
     // [documented: GetRegionMapName; the field: RDMP after an RDAT of type 4].
     assert_eq!(s(&mut g, "GetRegionMapName TestRegionHigh"), "High Place");
-    assert_eq!(s(&mut g, "GetRegionMapName TestRegionBare"), "");
-    // [documented: GetLocationName]: the highest map priority of the cell's regions.
+    // No map data fails the call [observed: jg5, "script call failed"].
+    let fails = |g: &mut Game, body: &str| g.run_query(&format!("Begin Function {{ }}\n{body}\nEnd\n"), RunCtx::default()).is_err();
+    assert!(fails(&mut g, "string_var sOut\nlet sOut := GetRegionMapName TestRegionBare"));
+    assert!(fails(&mut g, "string_var sOut\nlet sOut := GetLocationName"), "no calling reference");
+    // [documented: GetLocationName; observed: jg5]: the first map name in XCLR order.
     let loc = |g: &mut Game, r: &str| match q(g, &format!("ref rX\nset rX to {r}\nstring_var sOut\nlet sOut := rX.GetLocationName\nSetFunctionValue sOut")) {
         XVal::Str(s) => s,
         v => panic!("{r}: {v:?}"),
     };
-    assert_eq!(loc(&mut g, "TestRefOut"), "High Place");
+    assert_eq!(loc(&mut g, "TestRefOut"), "Low Place", "listed first, though of lower priority");
     assert_eq!(loc(&mut g, "TestRefBare"), "Test World", "no region: the worldspace's name");
     assert_eq!(loc(&mut g, "TestRefIn"), "Test Room", "indoors: the cell's name");
-    // [documented: SetRegionMapName: a region without map data gains it].
-    q(&mut g, "SetRegionMapName TestRegionHigh \"Higher Place\"");
-    q(&mut g, "SetRegionMapName TestRegionBare \"Bare Place\"");
+    // [documented: SetRegionMapName: a region without map data gains it; observed: jg5, 1].
+    assert_eq!(n(&mut g, "SetRegionMapName TestRegionHigh \"Higher Place\""), 1.0);
+    assert_eq!(n(&mut g, "SetRegionMapName TestRegionBare \"Bare Place\""), 1.0);
     assert_eq!(s(&mut g, "GetRegionMapName TestRegionHigh"), "Higher Place");
     assert_eq!(s(&mut g, "GetRegionMapName TestRegionBare"), "Bare Place");
-    assert_eq!(loc(&mut g, "TestRefOut"), "Higher Place");
-    q(&mut g, "SetRegionMapName TestRegionHigh \"\"");
-    assert_eq!(loc(&mut g, "TestRefOut"), "Low Place", "an empty name is passed over");
+    q(&mut g, "SetRegionMapName TestRegionLow \"\"");
+    assert_eq!(loc(&mut g, "TestRefOut"), "Higher Place", "an empty name is passed over");
 }
 
 #[test]
@@ -395,17 +404,20 @@ fn camera_shot_traits() {
     assert_eq!(n(&mut g, "GetCameraShotTraitNumeric TestShot 9"), 0.0);
     q(&mut g, "SetCameraShotFlags TestShot 33");
     q(&mut g, "SetCameraShotImageSpaceModifier TestShot TestModifier2");
-    q(&mut g, "SetCameraShotTraitNumeric TestShot 0 1");
-    q(&mut g, "SetCameraShotTraitNumeric TestShot 1 7");
-    q(&mut g, "SetCameraShotTraitNumeric TestShot 6 2.5");
+    // 1 when set; a code outside the table is kept [observed: jg5, location 7 reads 7].
+    assert_eq!(n(&mut g, "SetCameraShotTraitNumeric TestShot 0 1"), 1.0);
+    assert_eq!(n(&mut g, "SetCameraShotTraitNumeric TestShot 1 7"), 1.0);
+    assert_eq!(n(&mut g, "SetCameraShotTraitNumeric TestShot 6 2.5"), 1.0);
+    assert_eq!(n(&mut g, "SetCameraShotTraitNumeric TestShot 9 1"), 0.0);
     assert_eq!(n(&mut g, "GetCameraShotFlags TestShot"), 33.0);
     assert_eq!(n(&mut g, "GetCameraShotImageSpaceModifier TestShot"), f64::from(IMAD2));
     assert_eq!(n(&mut g, "GetCameraShotTraitNumeric TestShot 0"), 1.0);
-    assert_eq!(n(&mut g, "GetCameraShotTraitNumeric TestShot 1"), 2.0, "a location outside the table changes nothing");
+    assert_eq!(n(&mut g, "GetCameraShotTraitNumeric TestShot 1"), 7.0);
     assert_eq!(n(&mut g, "GetCameraShotTraitNumeric TestShot 6"), 2.5);
-    // The kill camera reads the changed shot.
+    // The kill camera reads the changed shot, keeping the last valid location.
     let shot = fnv_game::nvse_jg5::camera_shot(&g, FormId(CAMS)).unwrap();
     assert_eq!((shot.flags, shot.imod, shot.max_time), (33, Some(FormId(IMAD2)), 2.5));
+    assert_eq!(shot.location, fnv_game::camera_paths::ShotActor::Target);
     q(&mut g, "SetCameraShotImageSpaceModifier TestShot TestThing");
     assert_eq!(n(&mut g, "GetCameraShotImageSpaceModifier TestShot"), f64::from(IMAD2), "not a modifier");
     q(&mut g, "SetCameraShotImageSpaceModifier TestShot");
@@ -444,9 +456,11 @@ fn sounds_equip_types_and_lookups() {
     q(&mut g, "SetProjectileSound TestProjectile 2 TestSound");
     // [documented: SetEquipType, read by GetEquipType].
     assert_eq!(n(&mut g, "GetEquipType TestDrink"), 13.0);
-    q(&mut g, "SetEquipType TestDrink 12");
+    // 0-13 taken, giving 1; -1 and 40 refused [observed: jg5, the Stimpak].
+    assert_eq!(n(&mut g, "SetEquipType TestDrink 12"), 1.0);
     assert_eq!(n(&mut g, "GetEquipType TestDrink"), 12.0);
-    q(&mut g, "SetEquipType TestDrink 40");
+    assert_eq!(n(&mut g, "SetEquipType TestDrink 40"), 0.0);
+    assert_eq!(n(&mut g, "SetEquipType TestDrink -1"), 0.0);
     assert_eq!(n(&mut g, "GetEquipType TestDrink"), 12.0, "outside the table");
     // [documented: GetRecipeCategoryFlags, 1 a subcategory].
     assert_eq!(n(&mut g, "GetRecipeCategoryFlags TestSubCategory"), 1.0);
@@ -472,6 +486,18 @@ fn time_played_counts_up() {
     let mins = n(&mut g, "GetTimePlayed 2");
     // Each read is a little later than the one before.
     assert!(ms >= 0.0 && secs >= ms / 1000.0 && mins * 60.0 >= secs && mins * 60.0 < secs + 1.0, "{ms} {secs} {mins}");
+    assert_eq!(n(&mut g, "GetTimePlayed 3"), 0.0, "another unit [observed: jg5]");
     std::thread::sleep(std::time::Duration::from_millis(20));
     assert!(n(&mut g, "GetTimePlayed 0") >= ms + 15.0);
+}
+
+#[test]
+fn rgb_color_packs_channels() {
+    let f = fixture();
+    let mut g = game(&f);
+    // [observed: jg5, R × 65536 + G × 256 + B].
+    assert_eq!(n(&mut g, "GetRGBColor 255 128 1"), 16744449.0);
+    assert_eq!(n(&mut g, "GetRGBColor 1 0 0"), 65536.0);
+    assert_eq!(n(&mut g, "GetRGBColor 0 0 1"), 1.0);
+    assert_eq!(n(&mut g, "GetRGBColor 255 255 255"), 16777215.0);
 }

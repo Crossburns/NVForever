@@ -38,6 +38,9 @@ pub struct Jg5State {
     /// The camera shots a script changed, whole copies of the record's (read through
     /// [`camera_shot`]).
     pub camera_shots: HashMap<FormId, CameraShotDef>,
+    /// SetCameraShotTraitNumeric's codes for traits 0-2 as given, kept even when outside
+    /// the field's table [observed: jg5, trait 1 set to 7 reads 7].
+    pub shot_codes: HashMap<(FormId, i64), i64>,
 }
 
 /// When the process made its first game: GetTimePlayed counts from it.
@@ -77,6 +80,12 @@ fn text(args: &[XVal], k: usize) -> Option<String> {
         XVal::Str(s) => Some(s.clone()),
         _ => None,
     }
+}
+
+/// The game's "script call failed": worded as the VM's NoReference, which stops the
+/// script (as `nvse_jippp`'s ClampToGround does).
+fn failed(name: &str) -> Option<Result<XVal, String>> {
+    Some(Err(fnv_script::vm::VmError::NoReference(name.to_string()).to_string()))
 }
 
 fn yes(b: bool) -> XVal {
@@ -267,9 +276,12 @@ fn interior(g: &Game, cell: FormId) -> bool {
 }
 
 /// The location name of a reference [documented: GetLocationName: "interior cell name,
-/// worldspace name or a Region Map Data name"; hypothesis, as the Pip-Boy's place
-/// (pipboy.md): indoors the cell's name; outdoors the map name of the regions the cell is
-/// in (CELL XCLR), the highest priority first, else the worldspace's name].
+/// worldspace name or a Region Map Data name"; observed: jg5's travel job, Doc Mitchell's
+/// House indoors, Goodsprings outdoors, "Mojave Wasteland" in a cell whose regions have no
+/// map data]: indoors the cell's name; outdoors the first map name among the regions the
+/// cell is in, in CELL XCLR order [observed: a name SetRegionMapName gave Goodsprings'
+/// first region won over VMapGoodspringsRegion's at priority 50; hypothesis: the list's
+/// order decides, not the priority], else the worldspace's name.
 fn location_name(g: &Game, r: FormId) -> String {
     let Some(cell) = g.cell_of(r) else { return String::new() };
     let name = |f: FormId| match crate::nvse::record_value(g, f, "FULL", "") {
@@ -280,16 +292,8 @@ fn location_name(g: &Game, r: FormId) -> String {
         return name(cell);
     }
     let regions: Vec<FormId> = g.data.record_fields.get(&cell).into_iter().flatten().filter(|(s, _)| s == b"XCLR").flat_map(|(_, v)| v.as_array().cloned().unwrap_or_else(|| vec![v.clone()])).filter_map(|v| hex_form(Some(&v))).collect();
-    let mut best: Option<(String, u8)> = None;
-    for reg in regions {
-        if let Some((n, p)) = region_map(g, reg).filter(|(n, _)| !n.is_empty()) {
-            if best.as_ref().is_none_or(|(_, bp)| p > *bp) {
-                best = Some((n, p));
-            }
-        }
-    }
-    match best {
-        Some((n, _)) => n,
+    match regions.into_iter().find_map(|reg| region_map(g, reg).map(|m| m.0).filter(|n| !n.is_empty())) {
+        Some(n) => n,
         None => g.world.placed.world_of(cell).map(name).unwrap_or_default(),
     }
 }
@@ -305,20 +309,32 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // record order [documented: GetWeaponAltTextures]; `armor model`, models 1-4
         // [documented: GetArmorAltTextures].
         "getweaponalttextures" | "getarmoralttextures" => {
+            // Sorted by 3D index [observed: jg5, dynamite's record has 2, 0, 1 and the game
+            // lists 0, 1, 2]; an armour model outside 1-4 gives no array [observed: jg5,
+            // models 0 and 5 read ar_Size -1].
             let f = form(args, 0);
+            if name == "getarmoralttextures" && of_sig(g, f, b"ARMO").is_some() && !(1..=4).contains(&index(args, 1).unwrap_or(0)) {
+                return Some(Ok(XVal::Array(0)));
+            }
             let sub = f.and_then(|f| alt_sub(g, f, index(args, 1)).filter(|_| (name == "getweaponalttextures") == (g.data.sig(f) == Some(*b"WEAP"))));
-            let sets: Vec<FormId> = match (f, sub) {
-                (Some(f), Some(sub)) => alt_textures(g, f, sub).iter().map(|a| a.texture_set).collect(),
+            let mut rows = match (f, sub) {
+                (Some(f), Some(sub)) => alt_textures(g, f, sub),
                 _ => Vec::new(),
             };
-            list(g, sets.into_iter().map(|t| XVal::Ref(t.0)))
+            rows.sort_by_key(|a| a.index);
+            list(g, rows.into_iter().map(|a| XVal::Ref(a.texture_set.0)))
         }
         // `form [model]`: a map from each 3D index to its texture set [documented:
-        // GetAltTexturesEx]; an armour without a model ID reads model 1 [hypothesis: the
-        // page says the argument "should be used"].
+        // GetAltTexturesEx]; an armour without a model ID reads model 3, the male world
+        // model [observed: jg5, MS18RangerBattlearmor and the radiation suit], and a model
+        // outside 1-4 gives no array [observed: jg5, models 0 and 5].
         "getalttexturesex" => {
             let f = form(args, 0);
-            let rows: Vec<AltTexture> = f.and_then(|f| Some((f, alt_sub(g, f, Some(index(args, 1).unwrap_or(1)))?))).map(|(f, s)| alt_textures(g, f, s)).unwrap_or_default();
+            let model = index(args, 1).unwrap_or(3);
+            if of_sig(g, f, b"ARMO").is_some() && !(1..=4).contains(&model) {
+                return Some(Ok(XVal::Array(0)));
+            }
+            let rows: Vec<AltTexture> = f.and_then(|f| Some((f, alt_sub(g, f, Some(model))?))).map(|(f, s)| alt_textures(g, f, s)).unwrap_or_default();
             let entries = rows.iter().map(|a| (XKey::Num(f64::from(a.index)), XVal::Ref(a.texture_set.0))).collect();
             XVal::Array(g.ext.new_array(ArrayKind::Map, entries))
         }
@@ -407,20 +423,27 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             XVal::Num(1.0)
         }
         // ---- regions ----
-        // `region`: the map name (RDMP), "" when it has no map data [documented:
-        // GetRegionMapName]; `region name`, a region without map data gaining it
-        // [documented: SetRegionMapName], at priority 0 [hypothesis].
-        "getregionmapname" => XVal::Str(of_sig(g, form(args, 0), b"REGN").and_then(|r| region_map(g, r)).map(|m| m.0).unwrap_or_default()),
+        // `region`: the map name (RDMP) [documented: GetRegionMapName]; a region without
+        // map data fails the call [observed: jg5, 0x123CE3, "script call failed";
+        // hypothesis: a form that is no region too]. `region name`: a region without map
+        // data gains it [documented: SetRegionMapName; observed: jg5], at priority 0
+        // [hypothesis]; 1 when done [observed: jg5].
+        "getregionmapname" => match of_sig(g, form(args, 0), b"REGN").and_then(|r| region_map(g, r)) {
+            Some(m) => XVal::Str(m.0),
+            None => return failed(name),
+        },
         "setregionmapname" => {
-            if let (Some(r), Some(n)) = (of_sig(g, form(args, 0), b"REGN"), text(args, 1)) {
-                let priority = region_map(g, r).map_or(0, |m| m.1);
-                g.other.jg5.region_maps.insert(r, (n, priority));
-            }
-            zero
+            let (Some(r), Some(n)) = (of_sig(g, form(args, 0), b"REGN"), text(args, 1)) else { return Some(Ok(zero)) };
+            let priority = region_map(g, r).map_or(0, |m| m.1);
+            g.other.jg5.region_maps.insert(r, (n, priority));
+            XVal::Num(1.0)
         }
-        // `ref.GetLocationName`, the player without a reference [hypothesis]; "" for no
-        // name [documented: the page's note on 5.18].
-        "getlocationname" => XVal::Str(location_name(g, subject.unwrap_or(FormId::PLAYER_REF))),
+        // `ref.GetLocationName`; without a reference the call fails [observed: jg5,
+        // "script call failed"]; "" for no name [documented: the page's note on 5.18].
+        "getlocationname" => match subject {
+            Some(r) => XVal::Str(location_name(g, r)),
+            None => return failed(name),
+        },
         // ---- sounds ----
         // `explosion which sound`: 1 sound 1, 2 sound 2 (EXPL DATA) [documented:
         // SetExplosionSound], read by GetExplosionTraitForm; `projectile which sound`:
@@ -444,14 +467,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // ---- items ----
         // `item type`: the equip type (ETYP), a reference's base's, read by GetEquipType
-        // [documented: SetEquipType and the Equip Type table, -1 none … 13 alcohol]; a
-        // type outside the table changes nothing [hypothesis].
+        // [documented: SetEquipType and the Equip Type table]; 0-13 are taken and give 1,
+        // -1 (none) and anything past 13 change nothing and give 0 [observed: jg5, the
+        // Stimpak set to 5, 40 and -1].
         "setequiptype" => {
             let f = form(args, 0).or(subject).map(|f| base(g, f));
-            if let (Some(f), Some(t @ -1..=13)) = (f, index(args, 1)) {
-                g.field_overrides.insert((f, "ETYP/".into()), XVal::Num(t as f64));
-            }
-            zero
+            let (Some(f), Some(t @ 0..=13)) = (f, index(args, 1)) else { return Some(Ok(zero)) };
+            g.field_overrides.insert((f, "ETYP/".into()), XVal::Num(t as f64));
+            XVal::Num(1.0)
         }
         // `category`: its flags, 1 a subcategory (RCCT DATA) [documented:
         // GetRecipeCategoryFlags].
@@ -507,12 +530,18 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // `shot trait [value]`: 0 action, 1 location, 2 target (their codes), 3-5 the
         // player's, target's and global time multipliers, 6 max time, 7 min time, 8 target
-        // % between actors [documented: Get/SetCameraShotTraitNumeric's notes]; a code
-        // outside the field's table or a number that is not finite changes nothing
-        // [hypothesis].
+        // % between actors [documented: Get/SetCameraShotTraitNumeric's notes; observed:
+        // jg5, CamDefaultShoot]. The setter gives 1 when it set the trait [observed: jg5,
+        // traits 1 and 6]; a code is kept as given even outside the field's table
+        // [observed: jg5, location 7 reads 7], the kill camera keeping the shot's last
+        // valid one; a number that is not finite changes nothing [hypothesis].
         "getcamerashottraitnumeric" => {
-            let c = form(args, 0).and_then(|s| camera_shot(g, s));
-            XVal::Num(match (c, index(args, 1)) {
+            let (shot, t) = (form(args, 0), index(args, 1));
+            if let Some(&code) = shot.zip(t).and_then(|k| g.other.jg5.shot_codes.get(&k)) {
+                return Some(Ok(XVal::Num(code as f64)));
+            }
+            let c = shot.and_then(|s| camera_shot(g, s));
+            XVal::Num(match (c, t) {
                 (Some(c), Some(0)) => f64::from(action_code(c.action)),
                 (Some(c), Some(1)) => f64::from(actor_code(c.location)),
                 (Some(c), Some(2)) => f64::from(actor_code(c.target)),
@@ -528,8 +557,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "setcamerashottraitnumeric" => {
             let (t, v) = (index(args, 1), num(args, 2, f64::NAN));
             let float = crate::nvse::field_number(v, crate::nvse::F32.0, crate::nvse::F32.1).map(|x| x as f32);
-            let code = (v.fract() == 0.0).then_some(v as i64);
-            if let Some(c) = form(args, 0).and_then(|s| shot_mut(g, s)) {
+            let code = (v.is_finite() && v.fract() == 0.0).then_some(v as i64);
+            let shot = form(args, 0);
+            let done = match t {
+                Some(0..=2) => code.is_some(),
+                Some(3..=8) => float.is_some(),
+                _ => false,
+            };
+            if let Some(c) = shot.and_then(|s| shot_mut(g, s)) {
                 match t {
                     Some(0) => c.action = code.and_then(action_of).unwrap_or(c.action),
                     Some(1) => c.location = code.and_then(actor_of).unwrap_or(c.location),
@@ -542,8 +577,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                     Some(8) => c.target_pct = float.unwrap_or(c.target_pct),
                     _ => {}
                 }
+            } else {
+                return Some(Ok(zero));
             }
-            zero
+            if let (Some(s), Some(t @ 0..=2), Some(code)) = (shot, t, code) {
+                g.other.jg5.shot_codes.insert((s, t), code);
+            }
+            yes(done)
         }
         // ---- body parts ----
         // `bpd part trait`: 1 the part node (BPNN), 2 the VATS target (BPNT), 3 the IK
@@ -564,16 +604,22 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // ---- time ----
         // `[unit]`: the time since the executable started, 0 milliseconds, 1 seconds,
-        // 2 minutes [documented: GetTimePlayed]; another unit reads milliseconds
-        // [hypothesis]. NVForever counts from its first game (`mark_launch`).
+        // 2 minutes [documented: GetTimePlayed; observed: jg5, ratios 1000 and 60]; no unit
+        // reads milliseconds, another unit 0 [observed: jg5, unit 3]. NVForever counts from
+        // its first game (`mark_launch`).
         "gettimeplayed" => {
             let secs = LAUNCH.get().map_or(0.0, |t| t.elapsed().as_secs_f64());
-            XVal::Num(match index(args, 0) {
-                Some(1) => secs,
-                Some(2) => secs / 60.0,
-                _ => secs * 1000.0,
+            XVal::Num(match args.first().map(|_| index(args, 0)) {
+                None | Some(Some(0)) => secs * 1000.0,
+                Some(Some(1)) => secs,
+                Some(Some(2)) => secs / 60.0,
+                Some(_) => 0.0,
             })
         }
+        // `r g b`: the colour packed as R × 65536 + G × 256 + B [documented: GetRGBColor;
+        // observed: jg5, 255 128 1 reads 16744449, 1 0 0 65536, 0 0 1 1]; channels are
+        // taken whole, as given [hypothesis: the probes stayed in 0-255].
+        "getrgbcolor" => XVal::Num(num(args, 0, 0.0).trunc() * 65536.0 + num(args, 1, 0.0).trunc() * 256.0 + num(args, 2, 0.0).trunc()),
         _ => return None,
     };
     let _ = ctx;
