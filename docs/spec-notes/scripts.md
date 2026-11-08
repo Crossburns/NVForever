@@ -178,7 +178,7 @@ the unknown opcode 0x127C) decodes with values only [observed]. The functions an
   [observed].
 - **enum, animation group**: PlayGroup 864, IsAnimPlaying 114 (codes 0 Idle, 2
   SpecialIdle, 3 Forward, 4 Backward, 5 Left, 6 Right, 7–10 Fast*, 15 TurnLeft, 17 Aim,
-  24 Equip, 25 Unequip [observed]).
+  24 Equip, 25 Unequip [observed]); from High and Dry plugins' bytes, each name lined up with the code its PlayGroup or IsAnimPlaying call compiled to: 1 DynamicIdle, 50 Attack5, 62 Attack7, 223 Stagger, 227 JumpStart, 228 JumpLoop [observed 2026-11-08]. Other names (TurnRight, AimIS, AimUp …): open until bytes show their codes.
 - **enum, sex**: GetIsSex 6, GetPCIsSex 8, SexChange 12 (0 Male, 1 Female).
 - **enum, misc stat**: ModPCMiscStat 6, GetPCMiscStat 4 (the source writes the stat name
   quoted, `"Corpses Eaten"`; the bytes hold the code).
