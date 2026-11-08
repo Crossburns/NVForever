@@ -250,10 +250,30 @@ fn restricted_line(topology: &Topology, d: &Domain, pools: usize) -> String {
     )
 }
 
-/// The CPU set IDs of the logical processors in `mask` (group 0), from the system's CPU
-/// sets as (group, logical processor index, ID).
-pub fn ids_for_mask(sets: &[(u16, u8, u32)], mask: u64) -> Vec<u32> {
-    sets.iter().filter(|&&(group, lp, _)| group == 0 && lp < 64 && mask & (1u64 << lp) != 0).map(|&(_, _, id)| id).collect()
+/// One of the system's CPU sets: its group, logical processor index, ID, and whether this
+/// process may use it (not allocated to another process for its exclusive use).
+pub type CpuSet = (u16, u8, u32, bool);
+
+/// The CPU set IDs of the logical processors in `mask` (group 0), only when every one of
+/// them has a CPU set this process may use: a domain partly reserved elsewhere is left
+/// alone, as the game would run on fewer processors than its task pools are sized for.
+pub fn ids_for_mask(sets: &[CpuSet], mask: u64) -> Result<Vec<u32>, String> {
+    let mut ids = Vec::new();
+    let mut covered = 0u64;
+    for &(group, lp, id, usable) in sets {
+        if group != 0 || lp >= 64 || mask & (1u64 << lp) == 0 {
+            continue;
+        }
+        if !usable {
+            return Err(format!("logical processor {lp} is reserved for another process"));
+        }
+        ids.push(id);
+        covered |= 1u64 << lp;
+    }
+    if ids.is_empty() || covered != mask {
+        return Err(format!("{} of the domain's {} logical processors have a CPU set", covered.count_ones(), mask.count_ones()));
+    }
+    Ok(ids)
 }
 
 /// What `place` found and did, logged once the log is up ([`Placement::report`]).
@@ -310,7 +330,7 @@ mod os {
 
 #[cfg(windows)]
 mod os {
-    use super::{decide, idle_line, ids_for_mask, restricted_line, Decision, Domain, Topology};
+    use super::{decide, idle_line, ids_for_mask, restricted_line, CpuSet, Decision, Domain, Topology};
     use std::mem::size_of;
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER};
     use windows_sys::Win32::System::SystemInformation::{
@@ -319,8 +339,14 @@ mod os {
     };
     use windows_sys::Win32::System::Threading::{
         GetActiveProcessorGroupCount, GetCurrentProcess, GetCurrentThread, GetProcessAffinityMask, GetProcessDefaultCpuSets,
-        SetProcessDefaultCpuSets, SetThreadSelectedCpuSets,
+        GetThreadSelectedCpuSets, SetProcessDefaultCpuSets, SetThreadSelectedCpuSets,
     };
+
+    /// `SYSTEM_CPU_SET_INFORMATION` flag bits [documented: Microsoft Learn,
+    /// "SYSTEM_CPU_SET_INFORMATION structure": Parked, Allocated, AllocatedToTargetProcess,
+    /// RealTime, in that bit order].
+    const ALLOCATED: u8 = 0x2;
+    const ALLOCATED_TO_TARGET_PROCESS: u8 = 0x4;
 
     /// Where each record's union starts: after its two 4-byte header fields
     /// (`Relationship`/`Size`, `Size`/`Type`), at the union's 8-byte alignment [design:
@@ -427,11 +453,21 @@ mod os {
         if ok == 0 && last_error() != ERROR_INSUFFICIENT_BUFFER {
             return Err(format!("GetProcessDefaultCpuSets failed, error {}", last_error()));
         }
+        if count > 0 {
+            return Ok(true);
+        }
+        // A launcher may also have chosen the main thread's own sets, which win over the
+        // process default; those are left alone too.
+        // SAFETY: a pseudo-handle for this thread; a null buffer of length 0 asks for the count.
+        let ok = unsafe { GetThreadSelectedCpuSets(GetCurrentThread(), std::ptr::null_mut(), 0, &mut count) };
+        if ok == 0 && last_error() != ERROR_INSUFFICIENT_BUFFER {
+            return Err(format!("GetThreadSelectedCpuSets failed, error {}", last_error()));
+        }
         Ok(count > 0)
     }
 
-    /// The system's CPU sets as (group, logical processor index, ID).
-    fn cpu_sets() -> Result<Vec<(u16, u8, u32)>, String> {
+    /// The system's CPU sets as (group, logical processor index, ID, usable by this process).
+    fn cpu_sets() -> Result<Vec<CpuSet>, String> {
         // SAFETY: a pseudo-handle for this process; no memory is shared.
         let process = unsafe { GetCurrentProcess() };
         let mut len = 0u32;
@@ -458,7 +494,10 @@ mod os {
             if kind == CpuSetInformation && size >= BODY + size_of::<SYSTEM_CPU_SET_INFORMATION_0_0>() {
                 // SAFETY: the record holds a whole CpuSet body at BODY (checked above); plain data.
                 let set = unsafe { bytes.as_ptr().add(at + BODY).cast::<SYSTEM_CPU_SET_INFORMATION_0_0>().read_unaligned() };
-                out.push((set.Group, set.LogicalProcessorIndex, set.Id));
+                // SAFETY: the flags union is a plain u8 in every variant.
+                let flags = unsafe { set.Anonymous1.AllFlags };
+                let usable = flags & ALLOCATED == 0 || flags & ALLOCATED_TO_TARGET_PROCESS != 0;
+                out.push((set.Group, set.LogicalProcessorIndex, set.Id, usable));
             }
             at += size;
         }
@@ -467,18 +506,20 @@ mod os {
 
     /// The process's default CPU sets, and the main thread's own, to the domain's.
     fn restrict(domain: &Domain) -> Result<(), String> {
-        let ids = ids_for_mask(&cpu_sets()?, domain.mask);
-        if ids.is_empty() {
-            return Err("no CPU set on the domain's processors".to_string());
-        }
+        let ids = ids_for_mask(&cpu_sets()?, domain.mask)?;
         // SAFETY: a pseudo-handle for this process; `ids` is a valid slice of its length.
         if unsafe { SetProcessDefaultCpuSets(GetCurrentProcess(), ids.as_ptr(), ids.len() as u32) } == 0 {
             return Err(format!("SetProcessDefaultCpuSets failed, error {}", last_error()));
         }
-        // The main thread already runs: give it the same sets itself (module notes). Not
-        // fatal if refused: the process default still covers every thread made from here on.
+        // The main thread already runs: give it the same sets itself (module notes). If that
+        // is refused, the process default is cleared again, so a failure changes nothing.
         // SAFETY: a pseudo-handle for this thread; `ids` is a valid slice of its length.
-        let _ = unsafe { SetThreadSelectedCpuSets(GetCurrentThread(), ids.as_ptr(), ids.len() as u32) };
+        if unsafe { SetThreadSelectedCpuSets(GetCurrentThread(), ids.as_ptr(), ids.len() as u32) } == 0 {
+            let err = last_error();
+            // SAFETY: a null list of length 0 clears the process's default CPU sets.
+            unsafe { SetProcessDefaultCpuSets(GetCurrentProcess(), std::ptr::null(), 0) };
+            return Err(format!("SetThreadSelectedCpuSets failed, error {err}"));
+        }
         Ok(())
     }
 }
@@ -624,11 +665,21 @@ mod tests {
     fn cpu_set_ids_follow_the_domains_processors() {
         // IDs as Windows numbers them (256 up), one per logical processor of group 0, and a
         // second group's set that must not be taken.
-        let sets: Vec<(u16, u8, u32)> = (0..32u8).map(|lp| (0, lp, 256 + u32::from(lp))).chain([(1, 0, 900)]).collect();
-        let ids = ids_for_mask(&sets, dom(96, 0, 16).mask);
-        assert_eq!(ids, (256..272).collect::<Vec<u32>>());
-        assert_eq!(ids_for_mask(&sets, dom(32, 16, 16).mask), (272..288).collect::<Vec<u32>>());
-        assert!(ids_for_mask(&sets, 0).is_empty());
+        let sets: Vec<CpuSet> = (0..32u8).map(|lp| (0, lp, 256 + u32::from(lp), true)).chain([(1, 0, 900, true)]).collect();
+        assert_eq!(ids_for_mask(&sets, dom(96, 0, 16).mask), Ok((256..272).collect::<Vec<u32>>()));
+        assert_eq!(ids_for_mask(&sets, dom(32, 16, 16).mask), Ok((272..288).collect::<Vec<u32>>()));
+        assert!(ids_for_mask(&sets, 0).is_err());
+    }
+
+    #[test]
+    fn a_domain_not_wholly_usable_is_left_alone() {
+        // One processor of the cache CCD reserved for another process (e.g. real-time audio).
+        let mut sets: Vec<CpuSet> = (0..32u8).map(|lp| (0, lp, 256 + u32::from(lp), true)).collect();
+        sets[3].3 = false;
+        assert_eq!(ids_for_mask(&sets, dom(96, 0, 16).mask), Err("logical processor 3 is reserved for another process".to_string()));
+        // A processor of the domain without any CPU set.
+        let sets: Vec<CpuSet> = (0..32u8).filter(|&lp| lp != 5).map(|lp| (0, lp, 256 + u32::from(lp), true)).collect();
+        assert_eq!(ids_for_mask(&sets, dom(96, 0, 16).mask), Err("15 of the domain's 16 logical processors have a CPU set".to_string()));
     }
 
     #[test]
