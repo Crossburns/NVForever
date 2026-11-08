@@ -102,7 +102,17 @@ fn the_cursor_traits() {
     assert_eq!(n(&mut g, "GetCursorTrait 1"), 32.0);
     q(&mut g, "SetCursorTrait 0 100");
     assert_eq!(n(&mut g, "GetCursorTrait 0"), 100.0);
-    // [documented: SetCursorTraitGradual 0 200 50 4]: 200 at once, 50 after 4 seconds.
+    // Out of menus a gradual change leaves the value read as it was [observed: sup6
+    // cursor.gradual, cursor.gradual.next].
+    q(&mut g, "SetCursorTraitGradual 0 200 50 4");
+    assert_eq!(n(&mut g, "GetCursorTrait 0"), 100.0);
+    g.time += 1.0;
+    assert_eq!(n(&mut g, "GetCursorTrait 0"), 100.0);
+    q(&mut g, "SetCursorTraitGradual 0");
+    assert_eq!(n(&mut g, "GetCursorTrait 0"), 100.0);
+    // In a menu [documented: SetCursorTraitGradual 0 200 50 4]: 200 at once, 50 after 4
+    // seconds.
+    g.loading = true;
     q(&mut g, "SetCursorTraitGradual 0 200 50 4");
     assert_eq!(n(&mut g, "GetCursorTrait 0"), 200.0);
     g.time += 2.0;
@@ -111,6 +121,7 @@ fn the_cursor_traits() {
     q(&mut g, "SetCursorTraitGradual 0");
     g.time += 5.0;
     assert_eq!(n(&mut g, "GetCursorTrait 0"), 125.0);
+    g.loading = false;
 }
 
 #[test]
@@ -130,14 +141,23 @@ fn the_debug_texts() {
 fn the_screen_fonts_plugins_and_the_hud() {
     let f = fixture();
     let mut g = game(&f);
-    g.sup.window = (1920.0, 1080.0);
-    g.sup.fonts = vec![(20.0, 24.0), (16.0, 18.0)];
-    assert_eq!(n(&mut g, "GetScreenTrait 2"), 1920.0);
-    assert_eq!(n(&mut g, "GetScreenTrait 3"), 1080.0);
-    // [documented: GetFontTrait 1 0, font 1's base height].
-    assert_eq!(n(&mut g, "GetFontTrait 1 0"), 20.0);
-    assert_eq!(n(&mut g, "GetFontTrait 2 1"), 18.0);
+    // No window: 0 [decision].
+    assert_eq!(n(&mut g, "GetScreenTrait 0"), 0.0);
+    g.sup.window = (1280.0, 720.0);
+    // [observed: sup6 screen, 1706.67 960 1280 720 1.33333].
+    let r = |x: f64| (x * 100.0).round() / 100.0;
+    assert_eq!(r(n(&mut g, "GetScreenTrait 0")), 1706.67);
+    assert_eq!(n(&mut g, "GetScreenTrait 1"), 960.0);
+    assert_eq!(n(&mut g, "GetScreenTrait 2"), 1280.0);
+    assert_eq!(n(&mut g, "GetScreenTrait 3"), 720.0);
+    assert_eq!(r(n(&mut g, "GetScreenTrait 4")), 1.33);
+    // Both traits the file's line height; font 9 0 [observed: sup6 fonts].
+    g.sup.fonts = vec![31.0, 26.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 40.0];
+    assert_eq!(n(&mut g, "GetFontTrait 1 0"), 31.0);
+    assert_eq!(n(&mut g, "GetFontTrait 1 1"), 31.0);
+    assert_eq!(n(&mut g, "GetFontTrait 2 1"), 26.0);
     assert_eq!(n(&mut g, "GetFontTrait 9 0"), 0.0);
+    assert_eq!(fnv_game::nvse_sup6::font_line_height(&31f32.to_le_bytes()), 31.0);
     // TES4 CNAM and SNAM [documented: GetModTraitSTR].
     assert_eq!(s(&mut g, "GetModTraitSTR 0 0"), "An Author");
     assert_eq!(s(&mut g, "GetModTraitSTR 0 1"), "What it does");

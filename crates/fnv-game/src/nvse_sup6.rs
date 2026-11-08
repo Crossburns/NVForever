@@ -44,6 +44,32 @@ pub struct DebugText {
     pub zoom: f32,
 }
 
+/// The font files by number 1-9 [documented: Fallout_default.ini `[Fonts]`; the engine's
+/// `nvf_play::interface::FONT_FILES`].
+pub const FONT_FILES: [&str; 9] = [
+    "textures\\fonts\\glow_monofonto_large.fnt",
+    "textures\\fonts\\monofonto_large.fnt",
+    "textures\\fonts\\glow_monofonto_medium.fnt",
+    "textures\\fonts\\monofonto_verylarge02_dialogs2.fnt",
+    "textures\\fonts\\fixedsys_comp_uniform_width.fnt",
+    "textures\\fonts\\glow_monofonto_vl_dialogs.fnt",
+    "textures\\fonts\\baked-in_monofonto_large.fnt",
+    "textures\\fonts\\glow_futura_caps_large.fnt",
+    "textures\\fonts\\nvfont_test.fnt",
+];
+
+/// GetFontTrait answers fonts 1-8; font 9 reads 0 [observed: sup6 fonts].
+pub const LOADED_FONTS: usize = 8;
+
+/// GetModTraitSTR's text for a header without the field [observed: sup6 modtraits].
+const NO_TEXT: &str = "(null)";
+
+/// A font file's line height, its first number (a little-endian float) [documented:
+/// fonts.md §2]; 0 for a file too short.
+pub fn font_line_height(bytes: &[u8]) -> f64 {
+    bytes.get(..4).map_or(0.0, |b| f64::from(f32::from_le_bytes([b[0], b[1], b[2], b[3]])))
+}
+
 /// The default size of a debug text's letters [hypothesis].
 pub const DEBUG_TEXT_ZOOM: f32 = 16.0;
 
@@ -102,8 +128,9 @@ pub struct SupState {
     pub fake_moves: Vec<(f32, f32)>,
     /// The window's size in pixels.
     pub window: (f64, f64),
-    /// By font number 1-8 (index 0 is font 1): the base height and the line height.
-    pub fonts: Vec<(f64, f64)>,
+    /// By font number (index 0 is font 1): the file's line height, which GetFontTrait
+    /// gives as both the base and the line height [observed: sup6 fonts].
+    pub fonts: Vec<f64>,
     pub lockpick: Option<LockpickView>,
     /// SetBobbyPinHealth's new health, for the engine's menu.
     pub pin_health: Option<f32>,
@@ -183,6 +210,20 @@ impl SupState {
         }
     }
 
+    /// A cursor trait as GetCursorTrait reads it: in a menu its value at `now`, out of
+    /// menus the value as it was before a gradual change [observed: sup6 cursor.gradual].
+    pub fn cursor_read(&self, k: usize, now: f64, menu: bool) -> f64 {
+        if menu {
+            return self.cursor_value(k, now);
+        }
+        let Some(c) = self.cursor.get(k) else { return 0.0 };
+        match (k, c.value.is_nan()) {
+            (1, true) => self.cursor_size.0,
+            (2, true) => self.cursor_size.1,
+            _ => c.value,
+        }
+    }
+
     /// Every cursor trait at `now`, for the engine.
     pub fn cursor_values(&self, now: f64) -> [f64; CURSOR_TRAITS] {
         std::array::from_fn(|k| self.cursor_value(k, now))
@@ -195,7 +236,10 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
     let menu = g.in_menu() || g.loading;
     let v = match name {
         // ---- the mouse ----
-        // `xOut yOut`: the system's pointer [documented: GetMousePosition].
+        // `xOut yOut`: the system's pointer [documented: GetMousePosition]. The original's
+        // runtime compiler refused this and GetMouseMovement with their variables
+        // [observed: sup6 mouse.pos, mouse.moves], as SUP's other getters into variables
+        // (ext-sup3.md); scripts compiled ahead keep the pages' form.
         "getmouseposition" => {
             let (x, y) = g.sup.mouse.pos;
             outputs(g, 0.0, &[x, y])
@@ -231,9 +275,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // ---- the cursor's look ----
         // [documented: GetCursorTrait, SetCursorTrait, the traits 0-5]. The colours and
         // the alpha are 0-255 [hypothesis: as the UI's rgb traits].
+        // Out of menus a gradual change does not move the value read: it reads what it
+        // read before the change [observed: sup6 cursor.gradual, 255 at the call, and
+        // cursor.gradual.next, a frame on still outside 50-200 and the same after the
+        // stop; hypothesis: the change runs only while the cursor is shown].
         "getcursortrait" => {
             let k = num(args, 0, -1.0);
-            XVal::Num(if (0.0..CURSOR_TRAITS as f64).contains(&k) { g.sup.cursor_value(k as usize, g.time) } else { 0.0 })
+            XVal::Num(if (0.0..CURSOR_TRAITS as f64).contains(&k) { g.sup.cursor_read(k as usize, g.time, menu) } else { 0.0 })
         }
         "setcursortrait" => {
             let k = num(args, 0, -1.0);
@@ -253,7 +301,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             if (0.0..CURSOR_TRAITS as f64).contains(&k) {
                 let k = k as usize;
                 let now = g.time;
-                let here = g.sup.cursor_value(k, now);
+                let here = g.sup.cursor_read(k, now, menu);
                 let fin = |i: usize| num(args, i, 0.0).is_finite().then(|| num(args, i, 0.0));
                 g.sup.cursor[k] = match args.len() {
                     0 | 1 => CursorTrait { value: here, gradual: None },
@@ -262,7 +310,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                         let mode = num(args, 4, 0.0) as i64;
                         let mode = if (0..=3).contains(&mode) { mode as u8 } else { 0 };
                         let (s, e, d) = (fin(1).unwrap_or(here), fin(2).unwrap_or(here), fin(3).unwrap_or(0.0).max(0.0));
-                        CursorTrait { value: e, gradual: Some((s, e, d, mode, now)) }
+                        // `value` keeps the value read out of menus (above).
+                        CursorTrait { value: g.sup.cursor[k].value, gradual: Some((s, e, d, mode, now)) }
                     }
                 };
             }
@@ -304,29 +353,37 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             zero
         }
         // ---- the screen ----
-        // [documented: GetScreenTrait] 0, 1 the UI's width and height (screen()), 2, 3 the
-        // window's pixels, 4 screen()'s resolutionconverter.
+        // [documented: GetScreenTrait] 0, 1 the UI's width and height, 2, 3 the window's
+        // pixels, 4 the resolution converter. The UI's size is in interface units with no
+        // menu open too: 960 high and 960 x width/height wide, the converter 960/height
+        // [observed: sup6 screen, `1706.67 960 1280 720 1.33333` in a 1280 x 720 window;
+        // the hud_menus capture of 2026-10-31, menu-xml.md]. No window (a headless run):
+        // 0 for all five [decision: the values are the window's].
         "getscreentrait" => {
-            let screen = g.ui_tree.screen();
-            let tr = |g: &Game, t: &str| match g.ui_tree.tile(screen).get(t) {
-                Some(fnv_ui::Value::Num(x)) => *x,
-                _ => 0.0,
-            };
-            XVal::Num(match num(args, 0, -1.0) as i32 {
-                0 => tr(g, "width"),
-                1 => tr(g, "height"),
-                2 => g.sup.window.0,
-                3 => g.sup.window.1,
-                4 => tr(g, "resolutionconverter"),
+            let (w, h) = g.sup.window;
+            let has = w > 0.0 && h > 0.0;
+            XVal::Num(match (has, num(args, 0, -1.0) as i32) {
+                (false, _) => 0.0,
+                (true, 0) => 960.0 * w / h,
+                (true, 1) => 960.0,
+                (true, 2) => w,
+                (true, 3) => h,
+                (true, 4) => 960.0 / h,
                 _ => 0.0,
             })
         }
-        // `font trait`: 0 the base height, 1 the line height [documented: GetFontTrait]; a
-        // font the engine has not loaded 0 [hypothesis].
+        // `font trait`: 0 the base height, 1 the line height [documented: GetFontTrait];
+        // both are the font file's line height, its first number, in fonts 1-8, and font 9
+        // reads 0 0 [observed: sup6 fonts, `31/31 31/31 26/26 36/36 25/25 34/34 36/36
+        // 52/52 0/0`; fonts.md, monofonto_large 31 and glow_monofonto_vl_dialogs 34]. The
+        // engine gives its fonts (the install's own files); with none given (a headless
+        // run) the default files are read [`FONT_FILES`].
         "getfonttrait" => {
             let f = num(args, 0, 0.0) as i64;
-            let t = num(args, 1, 0.0) as i32;
-            let v = usize::try_from(f - 1).ok().and_then(|i| g.sup.fonts.get(i)).map_or(0.0, |&(b, l)| if t == 1 { l } else { b });
+            if g.sup.fonts.is_empty() {
+                g.sup.fonts = FONT_FILES.iter().map(|p| font_line_height(&crate::mod_files::read_data(p).unwrap_or_default())).collect();
+            }
+            let v = usize::try_from(f - 1).ok().filter(|&i| i < LOADED_FONTS).and_then(|i| g.sup.fonts.get(i)).copied().unwrap_or(0.0);
             XVal::Num(v)
         }
         // `modIndex trait`: the plugin's author (0) and description (1), TES4's CNAM and
@@ -335,8 +392,10 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let i = num(args, 0, -1.0);
             let t = num(args, 1, -1.0) as i32;
             let v = (i >= 0.0).then(|| g.data.plugin_texts.get(i as usize)).flatten().map(|(a, d)| match t {
-                0 => a.clone(),
-                1 => d.clone(),
+                // A text the header lacks reads "(null)" [observed: sup6 modtraits,
+                // FalloutNV.esm's description].
+                0 => a.clone().unwrap_or_else(|| NO_TEXT.into()),
+                1 => d.clone().unwrap_or_else(|| NO_TEXT.into()),
                 _ => String::new(),
             });
             XVal::Str(v.unwrap_or_default())

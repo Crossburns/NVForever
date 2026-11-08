@@ -60,14 +60,15 @@ fn tell(
     if notches != 0.0 {
         sup.mouse.last_wheel = sup.mouse.wheel;
     }
-    // The fonts' heights, once (fonts 1-9, `crate::interface::FONT_FILES`).
+    // The fonts' line heights, once (fonts 1-9, `crate::interface::FONT_FILES`, the
+    // install's own files).
     if sup.fonts.is_empty() {
         if let Some(data) = data.as_deref() {
             sup.fonts = crate::interface::FONT_FILES
                 .iter()
                 .map(|f| {
                     let font = data.vfs.read(&crate::interface::font_file(f)).and_then(|r| r.ok()).and_then(|b| fnv_font::Font::parse(&b).ok());
-                    font.map_or((0.0, 0.0), |f| (f64::from(f.size), f64::from(f.glyphs.iter().map(|g| g.height).fold(0.0, f32::max))))
+                    font.map_or(0.0, |f| f64::from(f.size))
                 })
                 .collect();
         }
