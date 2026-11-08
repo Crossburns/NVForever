@@ -1060,7 +1060,9 @@ fn play(
     }
 
     let dt = time.delta_secs();
-    let volume = if settings.play && !front { settings.volume.max(0.0) } else { 0.0 };
+    // The player's tweak turns the music down in a conversation [design: docs/design/tweaks.md].
+    let talk = if *state.get() == PlayState::Dialogue { tweaks.as_ref().map_or(1.0, |t| t.dialogue_music_volume) } else { 1.0 };
+    let volume = if settings.play && !front { settings.volume.max(0.0) * talk } else { 0.0 };
     for t in music.current.iter_mut().chain(music.script.iter_mut()).chain(music.leaving.iter_mut()) {
         for k in 0..3 {
             t.level[k] = fade_step(t.level[k], t.target[k], dt, t.fade);

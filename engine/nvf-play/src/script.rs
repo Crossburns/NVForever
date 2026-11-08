@@ -1369,6 +1369,10 @@ impl EffectCtx for PlayCtx<'_> {
         self.display(form)
     }
 
+    fn tweaks(&self) -> Option<&fnv_game::tweaks::Tweaks> {
+        Some(&self.game.tweaks)
+    }
+
     fn is_actor_base(&self, base: FormId) -> bool {
         fnv_game::ai::is_actor_base(self.sim.world.forms, base)
     }

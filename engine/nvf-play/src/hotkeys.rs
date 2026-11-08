@@ -63,6 +63,16 @@ pub enum Refused {
 }
 
 impl Hotkeys {
+    /// Empty slot `index` when it holds `slot` already (the Deselect Hotkeys tweak);
+    /// whether it did.
+    pub fn clear_if_holding(&mut self, index: usize, slot: Slot) -> bool {
+        let holds = self.0.get(index).is_some_and(|s| s.is_some_and(|s| s.item == slot.item && s.mods == slot.mods));
+        if holds {
+            self.0[index] = None;
+        }
+        holds
+    }
+
     /// Put `slot` in slot `index`; returns the slot it moved from, if it was in another.
     pub fn assign(&mut self, index: usize, slot: Slot, kind: Option<ItemKind>) -> Result<Option<usize>, Refused> {
         if index == AMMO_SWAP {
@@ -216,6 +226,16 @@ mod tests {
 
     fn slot(item: u32) -> Slot {
         Slot { item, mods: 0 }
+    }
+
+    #[test]
+    fn the_deselect_tweak_empties_the_slot_an_item_has() {
+        let mut h = Hotkeys::default();
+        assert_eq!(h.assign(4, slot(10), Some(ItemKind::Weapon)), Ok(None));
+        assert!(!h.clear_if_holding(5, slot(10)), "another slot is left alone");
+        assert!(!h.clear_if_holding(4, slot(11)), "another item is left alone");
+        assert!(h.clear_if_holding(4, slot(10)));
+        assert!(!h.clear_if_holding(4, slot(10)), "empty now");
     }
 
     #[test]

@@ -27,10 +27,40 @@ pub struct Tweaks {
     // ---- screen ----
     /// `bRemoveChemWarnOffIMOD`: a chem wearing off plays no screen effect.
     pub no_chem_wore_off_effect: bool,
+    // ---- menus (read through the game by the engine's menus) ----
+    /// `bNoSkillMessageIfIncreaseIsZero`: reading a skill book that gives no points shows
+    /// no message.
+    pub no_book_message_without_gain: bool,
+    /// `bCapitalizeRecipeCategories`: the crafting menu's categories in capitals.
+    pub capitalize_recipe_categories: bool,
+    /// `bShowWeaponAmmoUseInMenus`: a weapon that uses more than one round a shot says
+    /// how many beside its ammo in the Pip-Boy.
+    pub show_weapon_ammo_use: bool,
+    /// `bShowBookEffects`: a skill book says what it teaches in the Pip-Boy.
+    pub show_book_effects: bool,
+    /// `bSkipSkillMenuIfNoPointsToAssign`: a level-up with no skill points to spend but
+    /// a perk to choose opens on the perks.
+    pub skip_skill_page_without_points: bool,
+    /// `bFasterHackingTransition`: a successful hack opens the terminal sooner.
+    pub faster_hacking_transition: bool,
+    /// `bMapRemembersPosition`: the Pip-Boy map opens where it was left.
+    pub remember_map_position: bool,
 }
 
 impl Default for Tweaks {
     fn default() -> Tweaks {
-        Tweaks { xp_multiplier: 1.0, power_armor_needs_no_training: false, sleep_in_owned_beds: false, no_chem_wore_off_effect: false }
+        Tweaks {
+            xp_multiplier: 1.0,
+            power_armor_needs_no_training: false,
+            sleep_in_owned_beds: false,
+            no_chem_wore_off_effect: false,
+            no_book_message_without_gain: false,
+            capitalize_recipe_categories: false,
+            show_weapon_ammo_use: false,
+            show_book_effects: false,
+            skip_skill_page_without_points: false,
+            faster_hacking_transition: false,
+            remember_map_position: false,
+        }
     }
 }

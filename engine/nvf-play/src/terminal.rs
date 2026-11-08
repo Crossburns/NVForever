@@ -625,7 +625,10 @@ pub fn step_cursor(p: &Puzzle, cursor: usize, dx: i32, dy: i32) -> usize {
     }
 }
 
-fn keys(keys: Res<ButtonInput<KeyCode>>, screen: Res<TerminalScreen>, mut out: MessageWriter<TerminalInput>) {
+/// How long the granted screen stays with the Faster Hacking tweak [design: docs/design/tweaks.md].
+const FAST_GRANTED_SECONDS: f32 = 0.5;
+
+fn keys(keys: Res<ButtonInput<KeyCode>>, screen: Res<TerminalScreen>, mut out: MessageWriter<TerminalInput>, tweaks: Option<Res<crate::tweaks::TweakSettings>>) {
     use KeyCode::*;
     let Some(s) = screen.0.as_ref() else { return };
     let mut send = |i| {
@@ -643,6 +646,16 @@ fn keys(keys: Res<ButtonInput<KeyCode>>, screen: Res<TerminalScreen>, mut out: M
         send(TerminalInput::Select);
     }
     let hacking = matches!(s.page, Page::Hacking(_));
+    // The player's tweak: 1 to 9 and 0 (the tenth) choose a row [design: docs/design/tweaks.md].
+    if !hacking && tweaks.is_some_and(|t| t.numbered_terminal_keys) {
+        let digits = [Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Digit0];
+        let pads = [Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8, Numpad9, Numpad0];
+        if let Some(row) = (0..10).find(|&i| keys.just_pressed(digits[i]) || keys.just_pressed(pads[i])) {
+            send(TerminalInput::Row(row));
+            send(TerminalInput::Select);
+            return;
+        }
+    }
     if keys.any_just_pressed([ArrowUp, KeyW]) {
         send(TerminalInput::Step(0, -1));
     }
@@ -966,7 +979,10 @@ fn timers(time: AidTime, mut screen: ResMut<TerminalScreen>, mut sim: ResMut<Sim
     let Page::Hacking(h) = &s.page else { return };
     let Some(ended) = h.ended else { return };
     let won = h.puzzle.state == GameState::Granted;
-    if now - ended < if won { GRANTED_SECONDS } else { LOCKED_SECONDS } {
+    // The player's tweak keeps the granted screen up briefly only [design: docs/design/tweaks.md].
+    let fast = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.faster_hacking_transition);
+    let granted = if fast { FAST_GRANTED_SECONDS } else { GRANTED_SECONDS };
+    if now - ended < if won { granted } else { LOCKED_SECONDS } {
         return;
     }
     let Some(rt) = script.as_mut().and_then(|s| s.rt.as_mut()) else { return };

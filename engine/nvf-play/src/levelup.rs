@@ -159,8 +159,13 @@ fn sync(mut st: ResMut<LevelUpMenu>, script: Option<ResMut<ScriptState>>, sim: O
     }
     st.open = with_game(&mut script, &mut sim, |g| {
         let level = g.player_level() as i32;
-        let m = LevelUp::open(g, level);
+        let mut m = LevelUp::open(g, level);
         info!("levelup: menu open, level {level}, {} skill points, perk {}", m.skills.points, if m.perk_due { "due" } else { "not due" });
+        // The player's tweak: nothing to spend on skills, so straight to the perks [design: docs/design/tweaks.md].
+        if g.tweaks.skip_skill_page_without_points && m.skills.points == 0 && m.perk_due {
+            info!("levelup: no skill points to spend, the perks page first (tweak)");
+            m.to_perks(rules::PerkSheet::of_player(g, level));
+        }
         m
     });
     sounds.write(UiSound { menu: UiMenu::LevelUp, event: UiEvent::Opened });

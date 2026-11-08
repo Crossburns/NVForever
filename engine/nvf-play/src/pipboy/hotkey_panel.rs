@@ -137,8 +137,13 @@ pub fn track(
 }
 
 /// Put a row's item in the held slot; returns the line the panel then shows.
-pub fn assign_row(hotkeys: &mut Hotkeys, slot: usize, r: &Row) -> String {
+pub fn assign_row(hotkeys: &mut Hotkeys, slot: usize, r: &Row, deselect: bool) -> String {
     let s = Slot { item: r.item.0, mods: r.mods };
+    // The player's tweak: the slot it has already takes it off [design: docs/design/tweaks.md].
+    if deselect && hotkeys.clear_if_holding(slot, s) {
+        info!("hotkeys: slot {} emptied ({} was in it)", slot + 1, r.name);
+        return String::new();
+    }
     match hotkeys.assign(slot, s, r.kind) {
         Ok(from) => {
             let moved = from.map_or_else(String::new, |f| format!(" (moved from slot {})", f + 1));

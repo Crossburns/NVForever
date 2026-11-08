@@ -232,7 +232,9 @@ fn view(rt: &mut crate::script::Runtime, sim: &mut SimState, open: &Open) -> Vie
         let data = rt.game.data;
         let all = listed(rt, open.category);
         // The subcategories in the list, by name.
-        let mut subs: Vec<(String, FormId)> = all.iter().filter_map(|r| r.subcategory).filter(|s| *s != open.category).map(|s| (data.recipe_categories.get(&s).map_or_else(String::new, |c| c.name.clone()), s)).collect();
+        // The player's tweak shows them in capitals [design: docs/design/tweaks.md].
+        let caps = rt.game.tweaks.capitalize_recipe_categories;
+        let mut subs: Vec<(String, FormId)> = all.iter().filter_map(|r| r.subcategory).filter(|s| *s != open.category).map(|s| (data.recipe_categories.get(&s).map_or_else(String::new, |c| if caps { c.name.to_uppercase() } else { c.name.clone() }), s)).collect();
         subs.sort();
         subs.dedup();
         let filter = subs.get(open.filter.wrapping_sub(1)).map(|s| s.1);

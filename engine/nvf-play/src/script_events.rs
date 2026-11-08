@@ -130,6 +130,10 @@ pub trait EffectCtx {
     fn quest_listed(&self, quest: FormId, besides: &[i32]) -> bool;
     /// `MESG` DNAM "Message Box" flag.
     fn is_message_box(&self, message: FormId) -> bool;
+    /// The player's tweaks (`fnv_game::tweaks`), when there is a game.
+    fn tweaks(&self) -> Option<&fnv_game::tweaks::Tweaks> {
+        None
+    }
     /// The icon file and the seconds of a message that is not a box, as [`Note`] has
     /// them.
     fn message_look(&self, message: FormId) -> (Option<String>, Option<f32>);
@@ -382,6 +386,8 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
             // A skill book read: "<Skill> increased to <value>" with the skill's icon
             // [hypothesis: wording and icon NVForever's, the original's line is not in
             // the plugins; docs/spec-notes/skill-books.md §5].
+            // The player's tweak: no line for a book that gave nothing [design: docs/design/tweaks.md].
+            EventKind::BookRead { actor, points, .. } if *actor == player && *points == 0.0 && ctx.tweaks().is_some_and(|t| t.no_book_message_without_gain) => {}
             EventKind::BookRead { actor, value, skill, .. } if *actor == player => {
                 let (name, icon) = ctx.skill_look(*skill);
                 out.push(ScriptEffect::Notify(Note { text: format!("{name} increased to {}", value.round()), icon, seconds: None }));

@@ -21,7 +21,7 @@ use fnv_game::tweaks::Tweaks;
 pub const GROUP: &str = "Tweaks";
 
 /// Every tweak's value. `Default`: the original's behaviour.
-#[derive(Resource, Debug, Clone, Default, PartialEq)]
+#[derive(Resource, Debug, Clone, PartialEq)]
 pub struct TweakSettings {
     /// The part the game's rules read (`fnv_game::Game::tweaks`).
     pub game: Tweaks,
@@ -55,6 +55,48 @@ pub struct TweakSettings {
     pub no_reputation_messages: bool,
     /// `bDisableExplosionInFaceIMOD`: a nearby explosion does not blur the screen.
     pub no_explosion_blur: bool,
+    /// `bRemoveSneakLabel`: no [HIDDEN] / [DETECTED] label while sneaking.
+    pub no_sneak_label: bool,
+    /// `bVatsExitKey`: a right click ends a kill camera.
+    pub kill_cam_exit_key: bool,
+    /// `bNumberedComputerHotkeys`: 1 to 9 and 0 choose a terminal's rows.
+    pub numbered_terminal_keys: bool,
+    /// `bDeselectHotkeys`: assigning an item to the hotkey it has takes it off.
+    pub deselect_hotkeys: bool,
+    /// `bScaleMusicVolumeDuringDialogue`/`fDialogueMusicVolumeMult`: the music's volume
+    /// in a conversation, as a part of its own; 1 changes nothing.
+    pub dialogue_music_volume: f32,
+    /// `bScaleRadioSongVolumeDuringDialogue`/`fDialogueSongVolumeMult`: the radio's.
+    pub dialogue_radio_volume: f32,
+}
+
+impl Default for TweakSettings {
+    fn default() -> TweakSettings {
+        TweakSettings {
+            game: Tweaks::default(),
+            no_karma_messages: false,
+            no_xp_messages: false,
+            no_quest_failed_popup: false,
+            no_location_popup: false,
+            no_objective_popup: false,
+            disable_fast_travel: false,
+            midair_fast_travel: false,
+            fast_travel_enemies_nearby: false,
+            fast_travel_overencumbered: false,
+            no_red_crosshair: false,
+            hide_enemy_markers: false,
+            no_combat_music: false,
+            no_loading_tips: false,
+            no_reputation_messages: false,
+            no_explosion_blur: false,
+            no_sneak_label: false,
+            kill_cam_exit_key: false,
+            numbered_terminal_keys: false,
+            deselect_hotkeys: false,
+            dialogue_music_volume: 1.0,
+            dialogue_radio_volume: 1.0,
+        }
+    }
 }
 
 /// The value of a tweak, for modules that only have the world.
@@ -98,6 +140,33 @@ fn shown_factor(v: f32) -> String {
     format!("x{:.1}", factor(v))
 }
 
+/// A slider row of the Tweaks tab for a part (0 to 100% in fives) in the field
+/// `$($f).+` of [`TweakSettings`].
+macro_rules! part {
+    ($app:expr, $key:literal, $label:literal, $note:literal, $($f:ident).+) => {
+        add_setting(
+            $app,
+            Setting::slider(
+                concat!("tweak-", $key),
+                GROUP,
+                $label,
+                $note,
+                Slider {
+                    get: |w| w.get_resource::<TweakSettings>().map_or(1.0, |t| t.$($f).+),
+                    set: |w, v| {
+                        if let Some(mut t) = w.get_resource_mut::<TweakSettings>() {
+                            t.$($f).+ = v;
+                        }
+                    },
+                    min: 0.0,
+                    step: 0.05,
+                    shown: None,
+                },
+            ),
+        )
+    };
+}
+
 pub struct TweaksPlugin;
 
 impl Plugin for TweaksPlugin {
@@ -138,12 +207,28 @@ impl Plugin for TweaksPlugin {
         // ---- HUD ----
         switch!(app, "no-red-crosshair", "No Red Crosshair", "The crosshair keeps its colour over hostile actors. (Stewie's Tweaks bNoRedCrosshairOnEnemies)", no_red_crosshair);
         switch!(app, "hide-enemy-markers", "No Enemies on the Compass", "Hostile actors are left off the compass. (Stewie's Tweaks bHideEnemyMarkers)", hide_enemy_markers);
+        switch!(app, "no-sneak-label", "No Sneak Label", "Sneaking shows no Hidden / Detected label on the HUD. (Stewie's Tweaks bRemoveSneakLabel)", no_sneak_label);
         switch!(app, "no-reputation-messages", "Quiet Reputation", "Reputation changes put up no box and play no sound; the Pip-Boy still shows them. (Stewie's Tweaks bNoReputationMessages)", no_reputation_messages);
         // ---- sound and screen ----
         switch!(app, "no-combat-music", "No Battle Music", "Fights do not switch the music to battle tracks. (Stewie's Tweaks bDisableCombatMusic)", no_combat_music);
         switch!(app, "no-loading-tips", "No Loading Tips", "Loading screens show their picture without the tip. (Stewie's Tweaks bDisableLoadingScreenTips)", no_loading_tips);
         switch!(app, "no-explosion-blur", "No Explosion Blur", "A blast close by does not blur the screen. (Stewie's Tweaks bDisableExplosionInFaceIMOD)", no_explosion_blur);
         switch!(app, "no-chem-wore-off", "No Chem Wore-Off Effect", "A chem wearing off plays no screen effect. (Stewie's Tweaks bRemoveChemWarnOffIMOD)", game.no_chem_wore_off_effect);
+        // ---- VATS ----
+        switch!(app, "kill-cam-exit-key", "Skip Kill Camera", "A right click ends a kill camera at once. (Stewie's Tweaks bVatsExitKey)", kill_cam_exit_key);
+        // ---- menus ----
+        switch!(app, "skip-skill-page", "Perks First When No Points", "A level-up with no skill points to spend opens on the perks. (Stewie's Tweaks bSkipSkillMenuIfNoPointsToAssign)", game.skip_skill_page_without_points);
+        switch!(app, "no-empty-book-message", "No Message for Spent Books", "A skill book that gives no points (the skill at its top) shows no message. (Stewie's Tweaks bNoSkillMessageIfIncreaseIsZero)", game.no_book_message_without_gain);
+        switch!(app, "recipe-caps", "Recipe Categories in Capitals", "The crafting menu's categories are shown in capitals. (Stewie's Tweaks bCapitalizeRecipeCategories)", game.capitalize_recipe_categories);
+        switch!(app, "weapon-ammo-use", "Rounds per Shot", "A weapon that uses more than one round a shot says how many beside its ammo in the Pip-Boy. (Stewie's Tweaks bShowWeaponAmmoUseInMenus)", game.show_weapon_ammo_use);
+        switch!(app, "book-effects", "Skill Book Effects", "A skill book says which skill it raises and by how much in the Pip-Boy. (Stewie's Tweaks bShowBookEffects)", game.show_book_effects);
+        switch!(app, "deselect-hotkeys", "Unassign Hotkeys", "Assigning an item to the hotkey it already has takes it off. (Stewie's Tweaks bDeselectHotkeys)", deselect_hotkeys);
+        switch!(app, "map-remembers", "Map Remembers Its Place", "The Pip-Boy maps open where they were left. (Stewie's Tweaks bMapRemembersPosition)", game.remember_map_position);
+        switch!(app, "terminal-number-keys", "Number Keys on Terminals", "1 to 9 and 0 choose a terminal's rows. (Stewie's Tweaks bNumberedComputerHotkeys)", numbered_terminal_keys);
+        switch!(app, "faster-hacking", "Faster Hacking Exit", "A successful hack opens the terminal after half a second. (Stewie's Tweaks bFasterHackingTransition)", game.faster_hacking_transition);
+        // ---- conversations ----
+        part!(app, "dialogue-music", "Music While Talking", "The music's volume in a conversation, as a part of its own; 100% changes nothing. (Stewie's Tweaks bScaleMusicVolumeDuringDialogue)", dialogue_music_volume);
+        part!(app, "dialogue-radio", "Radio While Talking", "The radio's volume in a conversation, as a part of its own; 100% changes nothing. (Stewie's Tweaks bScaleRadioSongVolumeDuringDialogue)", dialogue_radio_volume);
         // ---- rest ----
         switch!(app, "sleep-in-owned-beds", "Sleep in Owned Beds", "A bed that belongs to someone else can be slept in. (Stewie's Tweaks bSleepInOwnedBeds)", game.sleep_in_owned_beds);
         // ---- items ----

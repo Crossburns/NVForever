@@ -292,8 +292,13 @@ fn update(
     mut control: ResMut<PlayerControl>,
     mut models: ModelCtx,
     setting: Option<Res<KillCamSetting>>,
+    mouse: Option<Res<ButtonInput<MouseButton>>>,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     let setting = setting.map_or_else(KillCamSetting::default, |s| *s);
+    // The player's tweak: a right click ends the camera [design: docs/design/tweaks.md;
+    // the plugin also uses Tab, which opens the Pip-Boy here].
+    let skip_key = tweaks.is_some_and(|t| t.kill_cam_exit_key) && mouse.is_some_and(|m| m.just_pressed(MouseButton::Right));
     let cam = &mut *cam;
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
     let playing = *state.get() == PlayState::Playing;
@@ -381,6 +386,8 @@ fn update(
         Some("the player died")
     } else if !playing {
         Some("a menu opened")
+    } else if skip_key {
+        Some("the player skipped it")
     } else {
         None
     };

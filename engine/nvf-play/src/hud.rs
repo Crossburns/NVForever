@@ -505,6 +505,7 @@ fn gather(
     (vats, wheel): (Option<Res<crate::vats_mode::VatsMode>>, Option<Res<crate::weapon_wheel::WeaponWheel>>),
     driven: Option<Res<crate::player::ViewDriven>>,
     kill_cam: Option<Res<crate::kill_cam::KillCam>>,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     // [documented: GECK wiki DisablePlayerControls, the movement flag: "HUD is partially
     // disabled: Action Points, Health, Crosshair".]
@@ -531,7 +532,8 @@ fn gather(
     if let Some(c) = &combat {
         now.weapon = c.hud_weapon(&sim);
     }
-    let sneaking = control.is_some_and(|c| c.sneak);
+    // The player's tweak leaves the sneak label off [design: docs/design/tweaks.md].
+    let sneaking = control.is_some_and(|c| c.sneak) && !tweaks.is_some_and(|t| t.no_sneak_label);
     if let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
         now.sneak = sneaking.then(|| sneak_now(&rt.game));
         (now.health, now.action_points) = with_world(rt, &mut sim, |rt| {

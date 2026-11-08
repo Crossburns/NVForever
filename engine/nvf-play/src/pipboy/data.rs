@@ -663,7 +663,10 @@ fn listed(g: &fnv_game::game::Game, q: FormId, s: &fnv_game::quest::QuestState) 
 /// The Pip-Boy came up on this page: the maps centre on the player, the quest list on
 /// the active quest.
 fn opened(st: &mut DataState, game: &Game) {
-    st.centre = [None, None];
+    // The player's tweak leaves the maps where they were [design: docs/design/tweaks.md].
+    if !game.script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.remember_map_position) {
+        st.centre = [None, None];
+    }
     st.cursor = [None, None];
     st.boxed = false;
     st.text_first = 0.0;

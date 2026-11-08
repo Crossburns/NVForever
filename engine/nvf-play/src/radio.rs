@@ -738,7 +738,10 @@ fn play(
     data: Option<Res<nvf_assets::GameData>>,
     (mut assets, mut panned): (ResMut<Assets<RadioSound>>, ResMut<Assets<Panned<RadioSound>>>),
     (sinks, mut placed): (Query<&AudioSink, With<RadioEntity>>, Query<&mut SoundAt, With<RadioEntity>>),
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
+    // The player's tweak turns the radio down in a conversation [design: docs/design/tweaks.md].
+    let talk = if *state.get() == PlayState::Dialogue { tweaks.as_ref().map_or(1.0, |t| t.dialogue_radio_volume) } else { 1.0 };
     let (Some(places), Some(sfx), Some(player), Some(data)) = (places, sfx, player, data) else { return };
     let Some(bank) = voice.bank.clone() else { return };
     let Some(rt) = script.rt.as_mut() else { return };
@@ -766,7 +769,7 @@ fn play(
         interior: loc.interior,
         position: radio.outdoors.filter(|(w, _)| *w == loc.world).map_or(eye, |(_, p)| p),
     };
-    let volume = settings.volume.max(0.0);
+    let volume = settings.volume.max(0.0) * talk;
     let static_sound = radio.static_sound.get_or_insert_with(|| sfx.forms.sounds.values().find(|s| s.edid.as_deref() == Some(STATIC_SOUND)).cloned()).clone();
 
     // Receivers of this place switched on or off since the last frame.

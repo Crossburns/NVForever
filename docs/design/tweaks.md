@@ -79,6 +79,29 @@ thresholds, Quiet Experience's per-source switches, the quest-failed "only if st
 option, Quiet Reputation's per-kind switches, the compass's "show enemies that fire"
 option.
 
+## Third batch (2026-11-08, Viva New Vegas's first)
+
+| Row | INI key | Where |
+|---|---|---|
+| No Sneak Label | `bRemoveSneakLabel` | `hud::gather` and the tile HUD (`tiles`) |
+| Skip Kill Camera | `bVatsExitKey` | `kill_cam::update`: a right click (Tab is the Pip-Boy here) |
+| Number Keys on Terminals | `bNumberedComputerHotkeys` | `terminal::keys`: 1-9, 0 the tenth, outside the hacking page |
+| Unassign Hotkeys | `bDeselectHotkeys` | `Hotkeys::clear_if_holding` from `hotkey_panel::assign_row` |
+| Music While Talking (slider) | `bScaleMusicVolumeDuringDialogue` | `music::play`, in `PlayState::Dialogue` |
+| Radio While Talking (slider) | `bScaleRadioSongVolumeDuringDialogue` | `radio::play`, in `PlayState::Dialogue` |
+| Perks First When No Points | `bSkipSkillMenuIfNoPointsToAssign` | `levelup::sync` |
+| No Message for Spent Books | `bNoSkillMessageIfIncreaseIsZero` | `script_events::effects` (`EffectCtx::tweaks`) |
+| Recipe Categories in Capitals | `bCapitalizeRecipeCategories` | `crafting::view` |
+| Rounds per Shot | `bShowWeaponAmmoUseInMenus` | `pipboy::items::info_of` (WEAP ammo use) |
+| Skill Book Effects | `bShowBookEffects` | `pipboy::items::info_of` (the points with the perks applied) |
+| Map Remembers Its Place | `bMapRemembersPosition` | `pipboy::data::opened` |
+| Faster Hacking Exit | `bFasterHackingTransition` | `terminal::timers`: 0.5 s instead of 2 s |
+
+Menu tweaks that code holding the game reads (the Pip-Boy's item info, crafting, the
+level-up menu, the terminal's timers) are kept in `fnv_game::tweaks` too, so no system
+needs another parameter; the catalogue's notes say where NVForever already does what a
+tweak asks ("already so").
+
 ## Next
 
 The "to do" rows, the ones Viva New Vegas turns on first. Not yet: reading a player's
@@ -90,8 +113,8 @@ game's Data folder, read-only).
 <!-- generated: the table below lists every tweak of AllTweaks.json (v9.87) by its INI key -->
 | Status | Count |
 |---|---|
-| done | 22 |
-| to do | 581 |
+| done | 53 |
+| to do | 550 |
 | unsure, skipped | 17 |
 | n/a | 15 |
 | skipped: fix | 10 |
@@ -302,42 +325,45 @@ game's Data folder, read-only).
 
 | INI key | Status | VNV on | Options | Note |
 |---|---|---|---|---|
+| `bBetterAutoWalk` | done | yes | 1 | already so: strafing does not end auto-walk |
+| `bConsoleHistoryNoStoreDuplicates` | done | yes |  | already so: the console keeps no repeated line |
+| `bDecreasedDialogueClickDelay` | done | yes |  | already so: topics can be chosen at once |
+| `bDelayPostCombatLevelUp` | done | yes |  | already so: the level-up menu waits for combat to end (after_combat) |
+| `bDelayPostCombatReputationPopup` | done | yes |  | already so: the reputation box waits for combat to end |
+| `bDeselectHotkeys` | done | yes |  | Unassign Hotkeys |
+| `bFasterEnterLockpickMenu` | done | yes |  | already so: the lockpick menu opens at once |
+| `bFasterHackingTransition` | done | yes |  | Faster Hacking Exit (0.5 s instead of 2 s) |
+| `bFasterSaveMenuClose` | done | yes |  | already so: saving leaves the pause menu open, no wait |
+| `bHideCrosshairInKillcams` | done | yes |  | already so: no crosshair in a kill camera |
+| `bHideHealthbarInKillcams` | done | yes |  | already so: the HUD is hidden in a kill camera |
+| `bLeftAndRightCancelEachOther` | done | yes |  | already so: left and right held together cancel |
+| `bNoSkillMessageIfIncreaseIsZero` | done | yes |  | No Message for Spent Books (the two-decimal option is moot: book points are whole) |
+| `bScaleMusicVolumeDuringDialogue` | done | yes | 1 | Music While Talking (slider) |
+| `bScaleRadioSongVolumeDuringDialogue` | done | yes | 1 | Radio While Talking (slider) |
+| `bSkipIntroVideo` | done | yes |  | already so: the intro plays only after New Game and any key skips it |
+| `bVatsExitKey` | done | yes | 1 | Skip Kill Camera (right click; Tab is the Pip-Boy key here) |
+| `bDisableCompanionKillcam` | done |  |  | already so: only the player's VATS kills start a kill camera |
 | `bDisableExplosionInFaceIMOD` | done |  |  | No Explosion Blur |
 | `bMidairFastTravel` | done |  |  | Fast Travel in the Air |
+| `bNoMapMarkerAddedPopup` | done |  |  | already so: NVForever shows no marker-added popup |
 | `bNoReputationMessages` | done |  | 5 | Quiet Reputation (box and sound together; per-kind options not built) |
+| `bRandomizeKillcamMode` | done |  |  | n/a: NVForever has one kill camera kind |
 | `bRemoveChemWarnOffIMOD` | done |  |  | No Chem Wore-Off Effect |
-| `bBetterAutoWalk` | to do | yes | 1 |  |
 | `bBetterPickupPrompt` | to do | yes |  |  |
-| `bConsoleHistoryNoStoreDuplicates` | to do | yes |  |  |
 | `bCrouchWhileEquippingWeapons` | to do | yes |  |  |
-| `bDecreasedDialogueClickDelay` | to do | yes |  |  |
-| `bDelayPostCombatLevelUp` | to do | yes |  |  |
-| `bDelayPostCombatReputationPopup` | to do | yes |  |  |
-| `bDeselectHotkeys` | to do | yes |  |  |
 | `bDoubleTapReloadToChangeAmmoType` | to do | yes | 2 |  |
 | `bFasterControllerPOVRotate` | to do | yes |  |  |
-| `bFasterEnterLockpickMenu` | to do | yes |  |  |
-| `bFasterHackingTransition` | to do | yes |  |  |
-| `bFasterSaveMenuClose` | to do | yes |  |  |
 | `bGodmodePreventsLegCrippleSound` | to do | yes |  |  |
-| `bHideCrosshairInKillcams` | to do | yes |  |  |
-| `bHideHealthbarInKillcams` | to do | yes |  |  |
-| `bLeftAndRightCancelEachOther` | to do | yes |  |  |
 | `bLessRestrictiveVATSMenu` | to do | yes |  |  |
 | `bNonSelectablePlayerInConsole` | to do | yes |  |  |
-| `bNoSkillMessageIfIncreaseIsZero` | to do | yes |  |  |
 | `bPipboyLightAndHolsteringIgnoreTimescale` | to do | yes |  |  |
 | `bQueueWeaponHolsteringWhileAnimsPlay` | to do | yes |  |  |
-| `bReloadingWithNoAmmoSwapsAmmoTypes` | to do | yes |  |  |
+| `bReloadingWithNoAmmoSwapsAmmoTypes` | to do | yes |  | combat::fire is at the system parameter limit |
 | `bRestore2Hotkey` | unsure, skipped | yes | 2 | needs the plugin's own menu XML |
-| `bScaleMusicVolumeDuringDialogue` | to do | yes | 1 |  |
-| `bScaleRadioSongVolumeDuringDialogue` | to do | yes | 1 |  |
 | `bSelectUnavailableRadios` | to do | yes |  |  |
 | `bShiftIgnoresFriendlyVATS` | to do | yes | 1 |  |
 | `bShiftScreenshotHidesMenus` | to do | yes |  |  |
 | `bSkipDeathcamHotkey` | to do | yes | 2 |  |
-| `bSkipIntroVideo` | to do | yes |  |  |
-| `bVatsExitKey` | to do | yes | 1 |  |
 | `bActivatingDoesntStandUp` | to do |  |  |  |
 | `bAddItemUsesItemIcon` | unsure, skipped |  |  | needs an icon replacer |
 | `bAddNightVisionToggle` | to do |  | 4 |  |
@@ -349,7 +375,6 @@ game's Data folder, read-only).
 | `bAllowWeaponHotkeysAndPipBoyWhileReloading` | to do |  |  |  |
 | `bAllowWeaponHotkeysWhileEquipping` | to do |  |  |  |
 | `bAllowWeaponHotkeysWhileFiring` | to do |  |  |  |
-| `bDisableCompanionKillcam` | to do |  |  |  |
 | `bDisableHitShader` | to do |  | 1 | NVForever draws no hit shader yet |
 | `bDisableHolsteredWeaponFOVZoom` | to do |  |  |  |
 | `bDisableInteriorFog` | to do |  | 1 |  |
@@ -385,7 +410,6 @@ game's Data folder, read-only).
 | `bNoKillcamKillSound` | to do |  |  |  |
 | `bNoKnockdownInGodmode` | to do |  |  |  |
 | `bNoLTRTOnPipboy` | n/a |  |  | the original's controller texture swap |
-| `bNoMapMarkerAddedPopup` | to do |  |  |  |
 | `bNoPipboyIdleAnims` | to do |  |  |  |
 | `bNoPoisonConfirm` | to do |  |  |  |
 | `bNoScreenshotPopup` | to do |  | 3 | NVForever shows no screenshot message yet |
@@ -395,7 +419,6 @@ game's Data folder, read-only).
 | `bPopupMenusDontMoveCursor` | to do |  |  |  |
 | `bPreventBushPassthroughSounds` | to do |  |  |  |
 | `bQuestTextVisibleWhileAiming` | to do |  |  |  |
-| `bRandomizeKillcamMode` | to do |  |  |  |
 | `bRemoveFollowerTopics` | to do |  |  |  |
 | `bRemoveLandingAnim` | to do |  |  |  |
 | `bRepairRequiresWeaponSkill` | to do |  |  |  |
@@ -424,12 +447,13 @@ game's Data folder, read-only).
 | `bNoRedCrosshairOnEnemies` | done |  |  | No Red Crosshair (native and tile HUD alike) |
 | `bNoXPMessages` | done |  | 7 | Quiet Experience (all sources at once; LEVEL UP still shows) |
 | `bRemoveQuestObjectiveAddedText` | done |  | 1 | No Objective List |
+| `bRemoveSneakLabel` | done |  |  | No Sneak Label (native and tile HUD) |
 | `bAddRGBSliders` | to do | yes | 1 |  |
-| `bDescriptiveMarkerAddedMessage` | to do | yes |  |  |
-| `bEnemyHealthbarShowBuffedHP` | to do | yes |  |  |
+| `bDescriptiveMarkerAddedMessage` | to do | yes |  | NVForever shows no marker-added popup |
+| `bEnemyHealthbarShowBuffedHP` | to do | yes |  | max_health leaves out temporary modifiers; choose how bars share them |
 | `bHideGrenadeIndicatorForNoDamageExplosions` | to do | yes |  |  |
 | `bHideRedCrosshairOnDistantInvisibleTargets` | to do | yes |  |  |
-| `bMorePreciseRadMeter` | to do | yes | 1 |  |
+| `bMorePreciseRadMeter` | to do | yes | 1 | unclear whether the HUD gain or the Pip-Boy total is meant |
 | `bArmorConditionLabel` | to do |  | 9 |  |
 | `bColoredHUDBars` | to do |  | 2 |  |
 | `bColorWeaponCndLabel` | to do |  | 2 |  |
@@ -473,7 +497,6 @@ game's Data folder, read-only).
 | `bRaceMenuAllowFemaleFacialHair` | to do |  |  |  |
 | `bRecentlyDeadNPCIndicator` | to do |  | 4 |  |
 | `bRemoveDeadNPCCrippleCriticalMessages` | to do |  |  |  |
-| `bRemoveSneakLabel` | to do |  |  | two places draw it (hud.rs and the tile HUD) |
 | `bScopeVisibleAPHP` | to do |  | 1 |  |
 | `bShowDoorsOnCompass` | to do |  | 5 |  |
 | `bShowNearestUndiscoveredLocation` | to do |  | 2 |  |
@@ -490,37 +513,38 @@ game's Data folder, read-only).
 
 | INI key | Status | VNV on | Options | Note |
 |---|---|---|---|---|
+| `bCapitalizeRecipeCategories` | done | yes |  | Recipe Categories in Capitals |
+| `bInstantContinueButton` | done | yes |  | already so: Continue loads at once |
+| `bMapRemembersPosition` | done | yes | 1 | Map Remembers Its Place (in the session; the save-persistent option not built) |
+| `bNumberedComputerHotkeys` | done | yes | 1 | Number Keys on Terminals (1-9, 0 the tenth; the number prefix option not built) |
+| `bNumberedDialogHotkeys` | done | yes | 2 | already so for 1-9 (the 0 key and number prefixes not built) |
+| `bShowBookEffects` | done | yes | 1 | Skill Book Effects |
+| `bShowWeaponAmmoUseInMenus` | done | yes |  | Rounds per Shot |
+| `bSkipSkillMenuIfNoPointsToAssign` | done | yes |  | Perks First When No Points |
+| `bTakeAllInCompanionContainers` | done | yes |  | already so: Take All shows for companions |
 | `bDisableLoadingScreenTips` | done |  |  | No Loading Tips |
 | `bNoExitConfirm` | done |  |  | already so: the main menu's Quit asks nothing |
+| `bSavingDoesntClosePauseMenu` | done |  |  | already so: saving leaves the pause menu open |
 | `bBarterShowCapsChange` | to do | yes | 1 |  |
-| `bCapitalizeRecipeCategories` | to do | yes |  |  |
 | `bChallengeMenuIcons` | unsure, skipped | yes |  | needs another mod (challenge icons) |
 | `bClickingShowsTerminalText` | to do | yes |  |  |
 | `bColorRecentlyAddedMapMarkers` | to do | yes |  |  |
 | `bConsoleNumpadSupport` | to do | yes |  |  |
 | `bDisplayItemEffectTotals` | to do | yes |  |  |
-| `bHideCursorInDialog` | to do | yes | 1 |  |
+| `bHideCursorInDialog` | to do | yes | 1 | the pointer logic (player::grab_cursor) is shared with every menu |
 | `bImprovedRaceMenu` | to do | yes | 3 |  |
-| `bInstantContinueButton` | to do | yes |  |  |
 | `bLevelUpScrollWheelSupport` | to do | yes |  |  |
 | `bLivingAnatomyShowDR` | to do | yes | 1 |  |
 | `bMainMenuContinueIcon` | to do | yes |  |  |
-| `bMapRemembersPosition` | to do | yes | 1 |  |
-| `bNumberedComputerHotkeys` | to do | yes | 1 |  |
-| `bNumberedDialogHotkeys` | to do | yes | 2 |  |
 | `bPlaceMarkersAtLocations` | to do | yes | 1 |  |
-| `bRecurringChallengeIndicator` | to do | yes | 1 |  |
+| `bRecurringChallengeIndicator` | to do | yes | 1 | challenges::Row has no recurring flag yet |
 | `bRememberPipboyScrollPositions` | to do | yes |  |  |
 | `bRemoveDownloadsButton` | n/a | yes |  | NVForever has no Downloads button |
 | `bSaveCharacterSelector` | unsure, skipped | yes | 1 | needs the plugin's own menu XML |
 | `bSeparateHorizontalSensitivity` | to do | yes |  |  |
-| `bShowBookEffects` | to do | yes | 1 |  |
-| `bShowWeaponAmmoUseInMenus` | to do | yes |  |  |
 | `bShowWeaponPoisonEffects` | to do | yes |  |  |
-| `bSkipSkillMenuIfNoPointsToAssign` | to do | yes |  |  |
 | `bSortEquipableAmmo` | to do | yes |  |  |
 | `bSynchronizeContainerCategories` | to do | yes | 1 |  |
-| `bTakeAllInCompanionContainers` | to do | yes |  |  |
 | `b12HourPipboyClock` | to do |  |  |  |
 | `b24HourSleepWaitClock` | to do |  |  |  |
 | `bAddInventoryDropItemHotkey` | to do |  |  |  |
@@ -588,7 +612,6 @@ game's Data folder, read-only).
 | `bRepairItemsPreview` | to do |  | 1 |  |
 | `bReputationShowsFameInfamy` | to do |  | 3 |  |
 | `bRightClickChangesToPreviousContainerCategory` | to do |  |  |  |
-| `bSavingDoesntClosePauseMenu` | to do |  |  |  |
 | `bShowActiveQuestNotesShowsAllStartedQuests` | to do |  |  |  |
 | `bShowAlternateAmmoTypesAvailableInMenus` | to do |  |  |  |
 | `bShowBarterTotalWhenOverSellLimit` | to do |  |  |  |
@@ -683,7 +706,7 @@ game's Data folder, read-only).
 | `bBetterFlycam` | to do | yes | 5 |  |
 | `bCompressDuplicateConsoleMessages` | to do | yes |  |  |
 | `bConsoleBackground` | unsure, skipped | yes |  | needs the plugin's own menu XML |
-| `bConsolePrintsIncludeTimestamp` | to do | yes | 1 |  |
+| `bConsolePrintsIncludeTimestamp` | to do | yes | 1 | the console print path also writes the scof file |
 | `bConsoleTextShadow` | to do | yes |  |  |
 | `bCustomScreenshotFormat` | n/a | yes | 1 | NVForever writes its own screenshots |
 | `bDontAllowConsoleTillLoadingIsDone` | n/a | yes |  | the original's start-up order |
@@ -695,13 +718,13 @@ game's Data folder, read-only).
 | `bMultithreadedHackingMenu` | n/a | yes |  | performance work on the original |
 | `bNoDespawnVisibleStuckProjectiles` | to do | yes |  |  |
 | `bNoInteriorBlackLoadingScreen` | to do | yes | 1 |  |
-| `bNoPlayerNameLimit` | to do | yes |  |  |
+| `bNoPlayerNameLimit` | to do | yes |  | the name box is laid out for 24 characters; check its drawing first |
 | `bPartialReloads` | unsure, skipped | yes |  | depends on animation file naming conventions not yet checked |
 | `bPowerArmorPreventsScreenBlood` | to do | yes |  |  |
 | `bRadioStaticDecreasesSongVolume` | to do | yes |  |  |
-| `bRememberConsoleHistory` | to do | yes | 1 |  |
+| `bRememberConsoleHistory` | to do | yes | 1 | needs a file in the NVForever home |
 | `bUseAnimVariants` | unsure, skipped | yes | 3 | depends on animation file naming conventions not yet checked |
-| `bVATSStopFollowingDeadTargets` | to do | yes |  |  |
+| `bVATSStopFollowingDeadTargets` | to do | yes |  | needs the kill camera shot's start frame kept |
 | `bWeaponImpactEffects` | to do | yes |  |  |
 | `bAllowDuplicateControlBinds` | to do |  |  |  |
 | `bAlternateLevelupSounds` | to do |  | 4 |  |
