@@ -548,6 +548,10 @@ pub struct FormChanges {
     /// Every cell the player's loaded area has held (IsCellVisited, `crate::nvse_jg6`).
     #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty", default)]
     pub visited_cells: std::collections::BTreeSet<FormId>,
+    /// ShowOff's ResetInteriorAlt: cells reset at their next load with their dead
+    /// respawning actors brought back (`crate::respawn`) [documented: ResetInteriorAlt].
+    #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty", default)]
+    pub expired_cells_full: std::collections::BTreeSet<FormId>,
     /// RemapWaterType: water type → the one drawn in its place ([`Game::water_type`]).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub water_remaps: BTreeMap<FormId, FormId>,
@@ -5330,7 +5334,19 @@ impl<'a> Game<'a> {
     // ---- snapshots -----------------------------------------------------------------
 
     pub fn snapshot(&self) -> GameSnapshot {
-        let sim = self.world.snapshot();
+        let mut sim = self.world.snapshot();
+        // SetOwnershipTemp's owners are not saved: the owner before it is (`nvse_showoff4`).
+        let mut forms = self.forms.clone();
+        for (&t, &before) in &self.showoff.temp_owners {
+            if let Some(st) = sim.refs.get_mut(&t) {
+                st.extra.owner = before;
+            } else {
+                match before {
+                    Some(o) => forms.cell_owners.insert(t, o),
+                    None => forms.cell_owners.remove(&t),
+                };
+            }
+        }
         GameSnapshot {
             format: SNAPSHOT_FORMAT.into(),
             ext: self.ext.clone(),
@@ -5361,7 +5377,7 @@ impl<'a> Game<'a> {
             time: self.time,
             pending_onload: self.pending_onload.clone(),
             rng_word_pos: self.rng.get_word_pos().to_string(),
-            forms: self.forms.clone(),
+            forms,
             effects: self.effects.clone(),
             next_effect: self.next_effect,
             image_modifiers: self.image_modifiers.clone(),
@@ -5778,7 +5794,7 @@ impl Host for Exec<'_, '_> {
             // Its own buttons: no Message form to count them from (`Game::queued`).
             self.game.show_box_buttons(none, count);
         } else {
-            self.game.queue_corner_message();
+            self.game.queue_corner_message(text, "", crate::nvse_hud::CORNER_SECONDS);
         }
     }
 
