@@ -4661,7 +4661,8 @@ impl<'a> Game<'a> {
             let names: Vec<String> = by.iter().map(|a| self.data.name(a.perk)).collect();
             tracing::info!("perks: drinking from {target}: rads x {rads:.4} ({})", names.join(", "));
         }
-        let Some(&spell) = self.data.water_effects.get(&water) else {
+        // SetWaterFormEffect's change first (`crate::nvse_jip8`).
+        let Some(spell) = self.water_effect(water) else {
             tracing::info!("drink: {target}'s water {water} has no actor effect");
             return;
         };
@@ -5911,7 +5912,8 @@ impl Host for Exec<'_, '_> {
     }
 
     fn body_part_name(&mut self, form: u32, part: i64) -> Option<String> {
-        self.game.data.body_part_name(FormId(form), part)
+        // SetBodyPartName's change first (`crate::nvse_jip8`).
+        self.game.body_part_text(FormId(form), part, "BPTN").or_else(|| self.game.data.body_part_name(FormId(form), part))
     }
 
     fn calling_plugin(&mut self) -> Option<String> {
