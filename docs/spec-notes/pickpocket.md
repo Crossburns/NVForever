@@ -165,8 +165,25 @@ FalloutNV.esm: timer 2.0 s, freak-out 0.1 s [observed].
 - GetPlantedExplosive is 1 from the freak-out time until it goes off.
 - Not built: the "Detonates" variant (DetonatePlacedExplosives); the item shown as "Live"
   in the pocket; the victim not using or dropping it; the victim looking around during
-  the panic and spotting a player nearby (#1640 item 5); keeping a fuse in a save
-  (#1592 §3).
+  the panic and spotting a player nearby (#1640 item 5).
+
+[design] Active plants cross saves as the default-empty, omitted-when-empty `planted`
+field of `GameSnapshot` (`crates/fnv-game/src/game.rs`, `snapshot`/`restore`). Each plant
+keeps its victim, item, absolute placement time `at`, blast description and accumulated
+`seen_by` witnesses (`crates/fnv-game/src/pickpocket.rs`, `Explosive`/`Planted`). The fuse
+uses saved `Game::time`, seconds advanced only outside menus, loading and FreezeTime.
+Loading neither restarts the fuse nor ages it by wall time or calendar hours. Cached
+pickpocket rules are read afresh; `blast_witnesses`, used only around synchronous kill
+processing, starts empty. A witness seen earlier in the fuse still counts after loading.
+
+[design] `GameSnapshot::drop_gone` removes plants with a missing victim, item or required
+explosion object effect after `fnv_save::remap_json` remaps the serialized FormIDs. It also
+removes plants on references dropped because their saved base or cell disappeared, and
+removes missing or dropped witnesses. Older snapshots without `planted` load with no live
+plants; inventory alone cannot reconstruct their historical fuse times. This additive
+JSON field changes none of the container version 1, `nvf.save.body/1`,
+`nvf.engine.state/1` or `fnv.game.state/1` identifiers (`engine/nvf-play/src/save.rs`,
+`crates/fnv-save/src/lib.rs`, `crates/fnv-game/src/game.rs`).
 
 ## 6. Checks
 
@@ -180,3 +197,13 @@ Unit tests: `fnv_game::pickpocket::tests::chance_follows_the_wiki`; in
 `crates/fnv-game/tests/idles.rs`: `the_panic_idle_is_the_root_naming_get_planted_explosive`. Smoke:
 `pickpocket-steal` (sneaking, E on Goodsprings' Sunny Smiles opens her pocket; one take
 is logged as unseen or caught); `pickpocket-plant-dynamite` (Dynamite placed on Chet while sneaking goes live, he plays `PanicGrenadePlant`, it goes off and kills him, and no faction turns: a Frag Grenade is worth 150 caps, which leaves a 16% chance, so the seeded roll would catch it).
+
+[design] Save regressions in `crates/fnv-game/tests/factions.rs` cross JSON and
+`World::restore` before/after freakout, retain remaining fuse time and witnesses, consume
+each item once, count deaths/stats once, cover harmless and multiple plants, and load an
+older save without the field. `crates/fnv-game/tests/synthetic.rs` covers reordered and
+missing plugins, including victims removed with their saved base/cell and transient
+witness reset. Smoke `pickpocket-save-write` saves a live fuse while the console pauses
+it; `pickpocket-save-load` uses an authored load hook to query the plant before time
+advances, then requires one blast/death and the consumed item. Run the pair in that order
+with their isolated NVForever home. These scenarios require runtime validation.

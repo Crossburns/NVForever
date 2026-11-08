@@ -22310,6 +22310,62 @@ expect = [
 forbid = ["pipboy: warm-up start", "pipboy: warm-up asked", "pipboy: first raise held", "menu request ignored"]
 manual = "This control must ask new pipelines at the first raise; otherwise the comparison is inconclusive. Compare its first_a through first_d with the warm run for the old screen fault. Pipeline compile durations and the last screen/glare ready lines determine the faulty interval; do not infer an unmeasured duration from the shot schedule. The shader-defs line for the last screen/glare pipeline to become ready identifies the candidate variant in the blue/brown depth fight; confirm against the corresponding shots."
 
+
+[[scenario]]
+name = "stress-comparison-inputs"
+source = "[design] docs/design/stress-comparisons.md: current frame-capture, profile and legacy stress log inputs used together by the comparison reader; log contract only, JSONL validation is in synthetic harness tests"
+areas = ["profiling"]
+paths = ["tools/stress/", "engine/nvforever/src/frame_telemetry/", "engine/nvforever/src/stress_sample.rs", "engine/nvforever/src/profile.rs"]
+env = { NVF_PLAY_TEST_FRAME_TELEMETRY = "18", NVF_PLAY_TEST_FRAME_TELEMETRY_RUN_ID = "stress_compare_smoke", NVF_PLAY_TEST_FRAME_TELEMETRY_SCENARIO_ID = "indoor_sample", NVF_PLAY_TEST_SAMPLE = "2", NVF_PLAY_TEST_PROFILE = "2" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 25
+expect = [
+  { re = 'frame telemetry: capturing 18 s to .* \(frames\)', count = 1, label = "one frames-only capture starts beside legacy sampling and profiling" },
+  { re = 'frame telemetry: .* complete \(duration_limit\), [1-9]\d* frames, gameplay p50 \d', count = 1, label = "the terminal summary confirms a complete gameplay capture" },
+  { re = 'frame telemetry: .*flush unconfirmed', max = 0, label = "the final flush is confirmed" },
+  { re = 'stress sample: t [\d.]+ s, frames [1-9]\d*, frame mean [\d.]+ ms, frame worst [\d.]+ ms, entities \d+', min = 1, label = "current coarse sample fields are present" },
+  { re = 'stress frames: [1-9]\d* frames, mean [\d.]+ ms, 1% low [\d.]+ ms \([\d.]+ fps\), worst [\d.]+ ms; \d+ behind loading screens left out', count = 1, label = "the unchanged release-budget population has its own exit summary" },
+  { re = 'profile: [\d.]+ s, [1-9]\d* frames, frame mean [\d.]+ ms(?:, cpu [\d.]+ ms a frame)?; ', min = 1, label = "current profile window format is present" },
+]
+
+[[scenario]]
+name = "pickpocket-save-write"
+source = "[design] issue #1592 finding 3; docs/spec-notes/pickpocket.md section 5: an active inventory fuse is saved on Game::time; run with pickpocket-save-load"
+note = "[design] Uses pickpocket-plant-dynamite's placement, then opens the console half a second after the pocket closes. Queries the live plant and saves; the console stays open until exit. The isolated fixture home supplies only an authored load hook. The fuse runs on through the console, so the save is taken inside it; the live query checks that."
+areas = ["save", "crime", "menus"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/pickpocket.rs", "crates/fnv-game/tests/factions.rs", "crates/fnv-game/tests/synthetic.rs", "engine/nvf-play/src/pickpocket.rs", "engine/nvf-play/src/save.rs", "tools/smoke/fixtures/pickpocket-save-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/pickpocket-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00104C79", NVF_PLAY_TEST_FACE = "7:00104C79", NVF_PLAY_TEST_CONSOLE = "2:player.setav sneak 100;2.3:close;11.5:GSChetRef.GetPlantedExplosive;11.6:GSChetRef.GetDead;11.7:GSChetRef.GetItemCount WeapNVDynamite;12:save nvf-planted", NVF_PLAY_TEST_SCRIPT = "0.5:call:GSChetRef:SetRestrained:1,6:call:player:RemoveAllItems,6.5:call:player:AddItem:WeapNVDynamite:1", NVF_PLAY_TEST_CONTROL = "4:sneak", NVF_PLAY_TEST_KEYS = "8:e,9.5:left,10:enter,11:e" }
+args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 17
+expect = [
+  { re = 'pickpocket: planted Dynamite x1 \(live, explosion', count = 1, label = "one live dynamite planted" },
+  { re = 'console: GetPlantedExplosive on GSChetRef >> 1\.00', count = 1, label = "the saved fuse is past freakout" },
+  { re = 'console: GetDead on GSChetRef >> 0\.00', count = 1, label = "Chet is alive at the save" },
+  { re = 'console: GetItemCount on GSChetRef >> 1\.00', count = 1, label = "one dynamite in his pocket" },
+  { re = 'save: wrote .*nvf-planted\.nvfsave \(manual, ', count = 1, label = "the active fuse is saved" },
+]
+order = [["pickpocket: planted Dynamite", "console: GetPlantedExplosive on GSChetRef >> 1.00", { re = 'save: wrote .*nvf-planted\.nvfsave' }]]
+
+[[scenario]]
+name = "pickpocket-save-load"
+source = "[design] issue #1592 finding 3; docs/spec-notes/pickpocket.md section 5: restore the plant before advancing time, then explode and kill exactly once"
+note = "[design] Run after pickpocket-save-write in the same isolated home. gl_nvfplant.txt queries GetPlantedExplosive, GetDead and GetItemCount before the first tick. Resuming must consume the saved dynamite and kill Chet once; later console queries check the final state."
+areas = ["save", "crime", "menus"]
+paths = ["crates/fnv-game/src/game.rs", "crates/fnv-game/src/pickpocket.rs", "crates/fnv-game/tests/factions.rs", "crates/fnv-game/tests/synthetic.rs", "engine/nvf-play/src/pickpocket.rs", "engine/nvf-play/src/save.rs", "tools/smoke/fixtures/pickpocket-save-home/"]
+env = { NVFOREVER_HOME = "{repo}/tools/smoke/fixtures/pickpocket-save-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_CONSOLE = "12:GSChetRef.GetPlantedExplosive;12.2:GSChetRef.GetDead;12.4:GSChetRef.GetItemCount WeapNVDynamite;13:close" }
+args = ["--play", "--load", "nvf-planted", "--no-voice", "--no-messages"]
+run_seconds = 17
+expect = [
+  { text = 'script: print "nvf planted load live=1 dead=0 count=1"', count = 1, label = "the load hook sees a live saved plant before time advances" },
+  { text = "script runner: gl_nvfplant.txt ran (game load)", count = 1, label = "the authored load hook ran" },
+  { re = "pickpocket: Dynamite explodes in 0x00104C79's pocket: it dies", count = 1, label = "exactly one saved blast and death" },
+  { re = 'crime: murder against GSChetRef 0x00104C79;', count = 1, label = "one murder is judged" },
+  { re = 'console: GetPlantedExplosive on GSChetRef >> 0\.00', count = 1, label = "the plant has gone" },
+  { re = 'console: GetDead on GSChetRef >> 1\.00', count = 1, label = "Chet is dead" },
+  { re = 'console: GetItemCount on GSChetRef >> 0\.00', count = 1, label = "the dynamite was consumed" },
+]
+order = [[{ text = 'script: print "nvf planted load live=1 dead=0 count=1"' }, { re = "pickpocket: Dynamite explodes in 0x00104C79's pocket: it dies" }, "console: GetDead on GSChetRef >> 1.00"]]
+
 [[scenario]]
 name = "ui-string-dimensions"
 source = "[documented: GetStringUIDimensions] width, height and line-count output variables; [design: ui_more.rs, tiles/draw.rs] owned localized metrics are installed before the authored restart script; wrapping and explicit newlines share the renderer's layout"

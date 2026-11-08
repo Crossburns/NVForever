@@ -19,6 +19,10 @@ python tools/stress run soak   ... [--towns ...] [--event-every S] [--aid NVF_PL
 
 `NVF_EXE`, `NVF_DATA` and `NVF_FNVTOOL` stand in for the three paths, as for smoke.
 `--no-locks` skips the locks on a machine of your own. `--name` names the run's folder.
+`tour`, `battle` and `soak` also take `--repetitions N` (a positive integer) and an
+optional caller-supplied `--build-label TEXT`. Repetitions run serially in `run-001`,
+`run-002`, … below the named run folder; existing names are never reused. Do not use
+`--no-locks` for a shared machine.
 
 ## 1. How a run is made (tools/stress/stress/lib.py)
 
@@ -43,7 +47,24 @@ python tools/stress run soak   ... [--towns ...] [--event-every S] [--aid NVF_PL
   out). Each group lists the cells or runs that hit it.
 
 Every run writes `target/stress/<test>/<run>/results.json` (everything) and `report.md`
-(the summary to read first). The launch logs and command lines sit beside them.
+(the summary to read first). The launch logs and command lines sit beside them. Tour,
+battle and soak results have a provenance manifest: the runner checkout identity,
+executable and fnvtool file hashes, requested INI hash, requested arguments/aids, masters,
+and platform facts. It records unavailable information explicitly; an executable's hash is
+not treated as its source revision and its build features are unknown unless the caller
+labels the build. Effective saved settings, adapter/backend/driver, and cache state are
+likewise unknown until the engine reports them.
+
+With `--repetitions`, the top-level folder has `comparison.json` and `comparison.md`; each
+child keeps the ordinary `results.json` and `report.md`. The comparison retains every row,
+but aggregates only successful rows with background-CPU samples below the runner's busy
+threshold. Rows are `busy`, `unknown`, or `below_busy_threshold`; the latter means only
+that the runner's warning did not trigger, not that the machine was quiet. An aggregate
+with no eligible rows is unavailable, never zero. It summarizes only the existing mean,
+slowest-1%-mean, and worst frame metrics; the slowest-1% mean is not p99.
+After each completed child the top-level comparison index is written as `incomplete`, so a
+stopped sequence still names its completed repetitions; it becomes `complete` only after
+the requested sequence finishes.
 
 ## 2. The engine's aids (engine/nvf-play/src/stress.rs, engine/nvforever/src/stress_sample.rs)
 
@@ -352,6 +373,14 @@ Primm tour 1 % low 31 ms, worst 173 ms; 10-a-side battle 1 % low 33–44 ms, wor
 was 1,344 ms. When one fails, run it again with a profile build and
 `--aid NVF_PLAY_TEST_PROFILE=5` for the spans of each slow frame. The battle places all its
 fighters at once (`ai::draw_and_place`, about 130 ms), which play does not.
+
+### 6.2 Comparing two builds
+
+[design] `compare tour`, `compare battle` and `compare soak` use four measured launches per side in ABBA order after one discarded warm-up each, with separate homes, metadata, early frame captures and retained coarse metrics (`tools/stress/stress/comparison.py:1`). The versioned `comparison.json` and `comparison.md` retain every launch and explain exclusions, spread and verdicts. See [reproducible stress comparisons](stress-comparisons.md) for the ten-second settle, thirty-second window, validation rules, accepted thresholds and the pending scene and continuous-movement coverage; captures cover only the first sixty seconds, so later laps retain coarse results.
+
+```powershell
+python tools/stress compare battle --exe-base '<base.exe>' --exe-candidate '<candidate.exe>' --base-label base --candidate-label candidate --data '<Data>' --ini '<NVForever.ini>' --name battle-abba --per-side 10 --seconds 90 --repetitions 4 --order ABBA --warmup 1 --settle-seconds 10 --measure-seconds 30 --telemetry-seconds 60
+```
 
 ## 7. Adding a test
 
