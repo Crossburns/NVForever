@@ -131,6 +131,9 @@ fn find(root: Entity, name: &str, nodes: &NodeQuery, rig: &HashMap<Entity, Strin
     all.iter().map(|(e, _)| *e).find(|&e| name_of(e, nodes, rig) == name).or_else(|| all.iter().map(|(e, _)| *e).find(|&e| name_of(e, nodes, rig).eq_ignore_ascii_case(name)))
 }
 
+/// The material side of [`mirror`]: the data files, the shapes' materials, the assets.
+type Materials<'w, 's> = (Option<Res<'w, GameData>>, Query<'w, 's, &'static MeshMaterial3d<NifMaterial>>, Option<ResMut<'w, Assets<NifMaterial>>>);
+
 #[allow(clippy::too_many_arguments)]
 fn mirror(
     mut script: Option<ResMut<ScriptState>>,
@@ -140,7 +143,7 @@ fn mirror(
     mut nodes: NodeQuery,
     mut commands: Commands,
     mut mem: Local<Memory>,
-    (data, drawn, mut assets): (Option<Res<GameData>>, Query<&MeshMaterial3d<NifMaterial>>, Option<ResMut<Assets<NifMaterial>>>),
+    (data, drawn, mut assets): Materials,
 ) {
     let Memory { logged, held, tables, materials, owned } = &mut *mem;
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
@@ -213,8 +216,8 @@ fn mirror(
                 let Ok(handle) = drawn.get(e) else { continue };
                 match owned.get(&e).filter(|h| *h == &handle.0).cloned() {
                     Some(h) => {
-                        if let Some(m) = assets.get_mut(&h) {
-                            set_material(m, &vals);
+                        if let Some(mut m) = assets.get_mut(&h) {
+                            set_material(&mut m, &vals);
                         }
                     }
                     None => {
@@ -273,6 +276,7 @@ fn mirror(
                 let shown = if *n == 0 { base.clone() } else { format!("{base}:{}", *n - 1) };
                 *n += 1;
                 let (z, y, x) = t.rotation.to_euler(EulerRot::ZYX);
+                let material = materials.get(&(r.0, shown.clone())).or_else(|| table.get(&base)).copied();
                 Some(SceneNode {
                     name: shown,
                     parent,
@@ -280,7 +284,7 @@ fn mirror(
                     rotation: [x.to_degrees(), y.to_degrees(), z.to_degrees()],
                     scale: t.scale.x,
                     flags: u32::from(hidden),
-                    material: materials.get(&(r.0, shown.clone())).or_else(|| table.get(&base)).copied(),
+                    material,
                 })
             })
             .collect();
