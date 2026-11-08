@@ -68,10 +68,19 @@ assumes and what is still to be checked.
   finds its file [hypothesis: that a localized install's file names use the plugins'
   code page; every vanilla English name is ASCII, the same in all three code pages].
 - **How it is chosen.** `NVF_CODE_PAGE`, else `[Text] CodePage=` in NVForever's own
-  `NVForever.ini` (1252, 1251 or 1250), else Windows-1252 (the English install's, the release this engine targets) [hypothesis]. It is not
-  detected from the install yet: which setting of a localized install names its
-  language (an INI key such as `sLanguage`, a file of its own) was not looked at, so
-  none is read.
+  `NVForever.ini` (1252, 1251 or 1250), else read from the plugins' text, else
+  Windows-1252 (the English install's, the release this engine targets) [hypothesis].
+  No setting of the install names it: a Russian install's `Fallout_default.ini` says
+  `sLanguage=ENGLISH` [observed: the owner's Russian install, 2026-11-08]. So the text
+  of the plugins loaded is sampled (their names and dialogue lines, `FULL` and `NAM1`,
+  `fnv_esm::text_guess`, #1443): a plugin whose letters are mostly bytes 0xC0 to 0xFF
+  is Cyrillic in Windows-1251, where those bytes are the Cyrillic letters [documented:
+  WHATWG windows-1251 index], and Western European text has only its few accented
+  letters there; 1251 is chosen when such plugins hold more of those bytes than the
+  others [design; hypothesis: one Russian install looked at]. Windows-1250 is not told
+  apart from 1252 this way and is still set by hand. The start's log says when the
+  plugins chose it. The game's language plugins (`<master>_lang.esp`) are turned on in
+  NVForever's plugin list when it first lists them (`fnv_install::plugins`).
 - **Every code page here maps all 256 bytes** to a character (the WHATWG tables in
   `encoding_rs`; an undefined slot becomes the C1 control of the same value), so text read
   and written again keeps its bytes [documented: WHATWG Encoding Standard, the
