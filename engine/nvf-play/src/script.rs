@@ -2134,6 +2134,8 @@ pub(crate) fn run_scripts(
                 info!("on screen: {}", note.text.trim().replace('\n', " / "));
                 corner.push(note);
             }
+            // ShowOff's ToggleQuestMessages 0: no quest line is shown (`UiRequests::quest_messages_off`).
+            ScriptEffect::Quest(n) if rt.game.ui.quest_messages_off => info!("quest message dropped (ToggleQuestMessages 0): {}", crate::quest_messages::describe(&n)),
             ScriptEffect::Quest(n) => {
                 info!("quest message: {}", crate::quest_messages::describe(&n));
                 quest_lines.push(n);
