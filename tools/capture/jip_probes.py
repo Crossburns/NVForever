@@ -5246,6 +5246,87 @@ JIP8_PROBES = (
            "(GetBodyPartReplacementModel rObj 2))", True)]
 )
 
+# jip9 (writes, session only, each switch and value put back; #1006): JIP batch 9
+# (docs/spec-notes/jip-ui-9.md): the switches' states without an argument and after one,
+# put back; the cursor outside MenuMode; the volumes and their defaults; SetFontFile's
+# result; immortal mode; interaction by type; the hotkeys' inventory references; the
+# Pip-Boy radio; the enemy health bar's actor; GetPosEx and the NIF block values in
+# script variables on the player (Bip01 Head, its world place against GetPos; UpperBody,
+# the body shape, for the material values, none of which the batch knows).
+def _j9(pid, body, text=False):
+    return (f"jip9.{pid}", "ref rP\nref rObj\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fX\nfloat fY\nfloat fZ\n"
+            "string_var sText\nBegin Function { }\n" + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _j9v(pid, expr):
+    return _j9(pid, f"SetFunctionValue ({expr})")
+
+
+# A switch read, set, read, put back and read again.
+def _j9switch(pid, fn, value):
+    return _j9(pid, f"let fSave := {fn}\nlet fRes := {fn} {value}\nlet fA := {fn}\n{fn} fSave\n"
+               f'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA ({fn}))', True)
+
+
+def _j9xyz(pid, call):
+    return _j9(pid, "let fX := -1\nlet fY := -1\nlet fZ := -1\n" f"let fRes := {call}\n"
+               'SetFunctionValue (sv_Construct "%g %.3f %.3f %.3f" fRes fX fY fZ)', True)
+
+
+JIP9_PROBES = (
+    [_j9switch("hudcursor", "ToggleHUDCursor", 1),
+     _j9switch("mouse.1", "ToggleMouseMovement", 1),
+     _j9switch("mouse.9", "ToggleMouseMovement", 9),
+     _j9switch("vanity", "ToggleVanityWheel", 0),
+     _j9switch("camcoll", "ToggleCameraCollision", 0),
+     _j9switch("immortal.1", "ToggleImmortalMode", 1),
+     _j9switch("immortal.5", "ToggleImmortalMode", 5)]
+    # Outside MenuMode and the HUD cursor [hypothesis: 0].
+    + [_j9v(f"cursor.{a}{x}", f"GetCursorPos {a} {x}") for a in ("X", "Y") for x in (0, 1)]
+    + [_j9v(f"volume.{t}", f"GetGameVolume {t}") for t in range(0, 7)]
+    + [_j9("volume.set", "let fSave := GetGameVolume 4\nSetGameVolume 4 30\nlet fA := GetGameVolume 4\n"
+           "SetGameVolume 4 150\nlet fB := GetGameVolume 4\nSetGameVolume 4\nlet fRes := GetGameVolume 4\n"
+           "SetGameVolume 4 fSave\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g %g" fSave fA fB fRes (GetGameVolume 4))', True)]
+    + [_j9v("font.set.9", 'SetFontFile 9 "textures\\fonts\\glow_monofonto_large.fnt"'),
+       _j9v("font.set.missing", 'SetFontFile 2 "textures\\fonts\\nvf no such font.fnt"'),
+       _j9("font.get.2", "SetFunctionValue (GetFontFile 2)", True)]
+    + [_j9("interact.type", "let fSave := GetInteractionDisabledType 28\nSetInteractionDisabledType 1 28\n"
+           "let fA := GetInteractionDisabledType 28\nlet fB := GetInteractionDisabledType 21\nSetInteractionDisabledType fSave 28\n"
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fA fB (GetInteractionDisabledType 28))', True)]
+    + [_j9(f"hotkey.{k}", f"let rItem := GetHotkeyItemRef {k}\nlet rObj := GetHotkeyItem {k}\n"
+           'if rItem\nlet sText := GetFormIDString (rItem.GetBaseObject)\nelse\nlet sText := "none"\nendif\n'
+           'SetFunctionValue (sv_Construct "%z %z" sText (GetFormIDString rObj))', True) for k in range(1, 9)]
+    # The same item put on its own key again: the result.
+    + [_j9("hotkey.reset", "let fRes := -1\nlet rItem := GetHotkeyItemRef 1\nif rItem\nlet fRes := rItem.SetHotkeyItemRef 1\nendif\n"
+           "let fA := -1\nif rItem\nlet fA := rItem.SetHotkeyItemRef 2\nendif\n"
+           'SetFunctionValue (sv_Construct "%g %g" fRes fA)', True)]
+    + [_j9("radio", 'let rObj := GetPipboyRadio\nSetFunctionValue (GetFormIDString rObj)', True),
+       _j9("enemytarget", 'let rObj := GetEnemyHealthTarget\nSetFunctionValue (GetFormIDString rObj)', True)]
+    + [_j9xyz("posex", "0\nrP.GetPosEx fX fY fZ"),
+       _j9("posex.getpos", 'SetFunctionValue (sv_Construct "%.3f %.3f %.3f" (rP.GetPos X) (rP.GetPos Y) (rP.GetPos Z))', True)]
+    + [_j9xyz(f"niftrans.head.{w}", f'rP.GetNifBlockTranslationAlt "Bip01 Head" fX fY fZ {w}') for w in (0, 1)]
+    + [_j9xyz(f"nifrot.head.{w}", f'rP.GetNifBlockRotationAlt "Bip01 Head" fX fY fZ {w}') for w in range(0, 4)]
+    + [_j9xyz("niftrans.missing", 'rP.GetNifBlockTranslationAlt "NvfNoSuchBlock" fX fY fZ 1')]
+    # The rows above, with declared script variables for the outputs, did not compile in
+    # the original [observed 2026-11-08]; the same calls with the variables declared
+    # inline, as mods' script-runner files write them (ext-script-runner.md).
+    + [_j9("posex.inline", "rP.GetPosEx (float fP) (float fQ) (float fW)\n"
+           'SetFunctionValue (sv_Construct "%.3f %.3f %.3f" fP fQ fW)', True),
+       _j9("nifrot.head.inline", 'let fRes := rP.GetNifBlockRotationAlt "Bip01 Head" (float fP) (float fQ) (float fW) 0\n'
+           'SetFunctionValue (sv_Construct "%g" fRes)', True)]
+    # GetNifBlockTranslation with an axis, the Fallout 3 plugin's form, did not compile
+    # [observed 2026-11-08: niftrans.head.plain]; JIP's takes getWorld and gives an array.
+    + [_j9v("niftrans.head.array", 'ar_Size (rP.GetNifBlockTranslation "Bip01 Head" 1)')]
+    + [_j9v(f"material.upperbody.{i}", f'rP.GetMaterialPropertyValue "UpperBody" {i}') for i in range(0, 10)]
+    + [_j9("material.set", 'let fSave := rP.GetMaterialPropertyValue "UpperBody" 7\n'
+           'let fRes := rP.SetMaterialPropertyValue "UpperBody" 7 0.5\nlet fA := rP.GetMaterialPropertyValue "UpperBody" 7\n'
+           'rP.SetMaterialPropertyValue "UpperBody" 7 fSave\n'
+           'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA (rP.GetMaterialPropertyValue "UpperBody" 7))', True),
+       _j9v("material.missing", 'rP.GetMaterialPropertyValue "NvfNoSuchBlock" 7')]
+)
+
+
 
 # jg5 (writes, session only, each change put back where the plugin allows; #1007):
 # JohnnyGuitar batch 5 (docs/spec-notes/ext-jg5.md) on FalloutNV.esm forms [observed:
@@ -5343,6 +5424,101 @@ JG5_PROBES = (
     + [_jg5(f"equip.set.{v}", _form("rObj", JG5["stimpak"]) + f"let fSave := GetEquipType rObj\nlet fRes := SetEquipType rObj {v}\n"
             "let fA := GetEquipType rObj\nSetEquipType rObj fSave\n"
             'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA (GetEquipType rObj))', True) for v in (5, 40, -1)]
+)
+
+
+# jg6 (writes, session only, each change put back; #1007): JohnnyGuitar batch 6
+# (docs/spec-notes/ext-jg6.md) on FalloutNV.esm forms [observed: fnvtool esm inventory and
+# decode]: Doc Mitchell's reference, his house (GSDocMitchellHouse), its door and the couch
+# trigger (XPRM box), the NovacInterior and RepconnFacility lighting templates, Radio New
+# Vegas' talking activator, the Goodsprings schoolhouse. RemovePrimitive cannot be put back
+# and is not probed.
+JG6 = {"docref": "104C0F", "dochouse": "103DF9", "docdoor": "103E61", "couchtrigger": "1055B9",
+       "novacltmp": "172A59", "repconnltmp": "17389F", "rnv": "14DF02", "schoolhouse": "108F39"}
+
+
+def _jg6(pid, body, text=False):
+    return (f"jg6.{pid}", "ref rP\nref rObj\nref rOther\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fC\n"
+            "string_var sText\nstring_var sSave\narray_var aList\nBegin Function { }\n"
+            + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _jg6v(pid, key, expr, text=False):
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return _jg6(pid, _form("rObj", JG6[key]) + rd, bool(text))
+
+
+JG6_PROBES = (
+    # 1. actor values by code on the player, each change put back: ModAVAlt Luck +1 and the
+    # modifier's filters (1 permanent, 2 temporary, 3 both, 4, none), DamageAVAlt and
+    # RestoreAVAlt on Health, ForceAVAlt then UnforceAV (documented as doing nothing)
+    [_jg6("av.mod", "let fSave := rP.GetAV Luck\nrP.ModActorValueAlt 11 1\nlet fA := rP.GetAV Luck\n"
+          "let sText := sv_Construct \"%g %g %g %g %g\" (fA - fSave) (rP.GetActorValueModifierAlt Luck 1) "
+          "(rP.GetActorValueModifierAlt Luck 2) (rP.GetActorValueModifierAlt Luck 3) (rP.GetActorValueModifierAlt Luck 4)\n"
+          'let sText := sv_Construct "%z %g" sText (rP.GetActorValueModifierAlt Luck)\n'
+          "rP.ModActorValueAlt 11 -1\nSetFunctionValue (sv_Construct \"%z %g\" sText ((rP.GetAV Luck) - fSave))", True),
+     _jg6("av.damage", "let fSave := rP.GetAV Health\nrP.DamageActorValueAlt 16 5\nlet fA := rP.GetAV Health\n"
+          "rP.RestoreActorValueAlt 16 5\nSetFunctionValue (sv_Construct \"%g %g\" (fA - fSave) ((rP.GetAV Health) - fSave))", True),
+     _jg6("av.force.unforce", "let fSave := rP.GetAV Luck\nrP.ForceActorValueAlt 11 (fSave + 2)\nlet fA := rP.GetAV Luck\n"
+          "rP.UnforceAV Luck\nlet fB := rP.GetAV Luck\nrP.ForceAV Luck fSave\n"
+          'SetFunctionValue (sv_Construct "%g %g %g" (fA - fSave) (fB - fSave) ((rP.GetAV Luck) - fSave))', True),
+     # SetAVAlt then UnsetAV on Doc's Luck: whether UnsetAV puts the first base back
+     _jg6("av.set.unset", _form("rObj", JG6["docref"]) + "let fSave := rObj.GetBaseAV Luck\nrObj.SetActorValueAlt 11 (fSave + 3)\n"
+          "let fA := rObj.GetBaseAV Luck\nrObj.SetAV Luck (fSave + 4)\nlet fB := rObj.GetBaseAV Luck\nrObj.UnsetAV Luck\n"
+          "let fC := rObj.GetBaseAV Luck\nrObj.SetAV Luck fSave\n"
+          'SetFunctionValue (sv_Construct "%g %g %g %g" (fA - fSave) (fB - fSave) (fC - fSave) ((rObj.GetBaseAV Luck) - fSave))', True),
+     _jg6("karma.alt", "let fSave := rP.GetAV Karma\nRewardKarmaAlt 1\nlet fA := rP.GetAV Karma\nRewardKarmaAlt -1\n"
+          'SetFunctionValue (sv_Construct "%g %g" (fA - fSave) ((rP.GetAV Karma) - fSave))', True)]
+    # 2. actor states
+    + [_jg6("life.player", "SetFunctionValue (rP.GetLifeState)"),
+       _jg6v("life.doc", "docref", "rObj.GetLifeState"),
+       _jg6v("dialogue.doc", "docref", "rObj.IsInDialogueWithPlayer"),
+       # GetCurrentFurnitureRef is registered without a return type (nvse.log: RegisterCommand,
+       # where the form getters that compiled are RegTypedCommand), so its result is a number
+       # GetFormIDString does not take [observed 2026-11-08: did not compile]; `set` keeps it.
+       _jg6("furniture.player", "set rObj to rP.GetCurrentFurnitureRef\nSetFunctionValue (GetFormIDString rObj)", True),
+       _jg6("healthdamage.player", "SetFunctionValue (rP.HasHealthDamageEffect)"),
+       _jg6("tempingestible.size", "let aList := GetTempIngestibleEffects\nSetFunctionValue (ar_Size aList)"),
+       _jg6("perks.available", "let aList := GetAvailablePerks\nSetFunctionValue (ar_Size aList)"),
+       _jg6("shaders.player", "let aList := rP.GetPlayingEffectShaders\nSetFunctionValue (ar_Size aList)"),
+       _jg6("minearmedex.player", "SetFunctionValue (rP.GetMineArmedEx)")]
+    # 3. cells: Doc's house and the schoolhouse visited, expired; the player's own cell
+    + [_jg6v(f"cell.visited.{k}", k, "IsCellVisited rObj") for k in ("dochouse", "schoolhouse")]
+    + [_jg6v(f"cell.expired.{k}", k, "IsCellExpired rObj") for k in ("dochouse", "schoolhouse")]
+    + [_jg6("cell.expired.here", "SetFunctionValue (IsCellExpired (rP.GetParentCell))"),
+       _jg6("cell.buffered", 'SetFunctionValue (sv_Construct "%g %g" (ar_Size (GetBufferedCellsAlt 0)) (ar_Size (GetBufferedCellsAlt 1)))', True)]
+    # 4. lighting templates: a cell on record or not; set to Doc's house, read, put back
+    + [_jg6v(f"ltmp.cell.{k}", k, "GetLightingTemplateCell rObj", "form") for k in ("novacltmp", "repconnltmp")]
+    + [_jg6("ltmp.set", _form("rObj", JG6["novacltmp"]) + _form("rOther", JG6["dochouse"])
+            + "let rItem := GetLightingTemplateCell rObj\nSetLightingTemplateCell rObj rOther\nlet sText := GetFormIDString (GetLightingTemplateCell rObj)\n"
+            'SetLightingTemplateCell rObj rItem\nSetFunctionValue (sv_Construct "%z %z" sText (GetFormIDString (GetLightingTemplateCell rObj)))', True)]
+    # 5. the moon, the frame time (as > 0), radios, talking activators
+    + [_jg6("moon", "SetFunctionValue (GetMoonPhase)"),
+       _jg6("secondspassed", "SetFunctionValue ((GameGetSecondsPassed) > 0)"),
+       _jg6("radios", "let aList := GetAllGameRadios\nlet fA := ar_Size aList\nlet fB := 0\nlet fC := 0\nwhile fB < fA\n"
+            "let rObj := aList[fB]\nif eval (GetFormIDString (rObj.GetBaseObject)) == \"0014DF02\"\nlet fC += 1\nendif\nlet fB += 1\nloop\n"
+            'SetFunctionValue (sv_Construct "%g %g" fA fC)', True),
+       _jg6v("tact.actor.rnv", "rnv", "GetTalkingActivatorActor rObj", "form")]
+    # 6. a reference's prompt override, set; the couch trigger's primitive. A string
+    # argument takes no `$sSave` here [observed 2026-11-08: jg6.prompt.door did not compile,
+    # as jip8's trial], so the door keeps "NvfProbe" for the session; nothing after reads it.
+    + [_jg6("prompt.door", _form("rObj", JG6["docdoor"]) + "let sSave := rObj.GetRefActivationPromptOverride\n"
+            'rObj.SetRefActivationPromptOverride "NvfProbe"\n'
+            'SetFunctionValue (sv_Construct "[%z] [%z]" sSave (rObj.GetRefActivationPromptOverride))', True),
+       _jg6v("primitive.couch", "couchtrigger", "rObj.GetPrimitiveType"),
+       _jg6v("primitive.door", "docdoor", "rObj.GetPrimitiveType")]
+    # 7. calls per reference, counted in an array the lambda appends to: the NPCs (42) of
+    # Doc's house, every reference of it against GetRefsInCell, the high-level actors
+    # against GetActorsByProcessingLevel 0. The lambdas are `Begin Function` blocks: the
+    # arrow form `({ref r} => ar_Append aList r)` did not compile here [observed 2026-11-08,
+    # all three rows; hypothesis: the arrow form or the one-letter name, not isolated].
+    + [_jg6("callperref.npc", _form("rObj", JG6["dochouse"]) + 'let aList := ar_Construct "array"\n'
+            "CallPerRef (Begin Function {ref rA}\nar_Append aList rA\nEnd) 42 0 0 rObj\nSetFunctionValue (ar_Size aList)"),
+       _jg6("callperref.all", _form("rObj", JG6["dochouse"]) + 'let aList := ar_Construct "array"\n'
+            "CallPerRef (Begin Function {ref rA}\nar_Append aList rA\nEnd) 0 0 0 rObj\n"
+            'SetFunctionValue (sv_Construct "%g %g" (ar_Size aList) (ar_Size (GetRefsInCell rObj 0)))', True),
+       _jg6("callpermobile.high", 'let aList := ar_Construct "array"\nCallPerMobileObject (Begin Function {ref rA}\nar_Append aList rA\nEnd) 0\n'
+            'SetFunctionValue (sv_Construct "%g %g" (ar_Size aList) (ar_Size (GetActorsByProcessingLevel 0)))', True)]
 )
 
 
@@ -6086,6 +6262,514 @@ SUP3_PROBES = (
        # Outside the game folder: the original may read it; NVForever reads only under the
        # game folder (mod_files::on_disk; ext-sup3.md).
        _sup3("ini.float.outside", "SetFunctionValue (ReadINIFloatFromFile \"../Fallout New Vegas/Data/NVSE/Plugins/supNVSE.ini\" \"Settings\" \"bTFCPosOnLoadFix\")", False)]
+)
+
+
+# lu2 (writes, session only, each change put back; #1009): Lutana batch 2
+# (docs/spec-notes/ext-lutana.md §9) through JIP LN: radio data of the pages' own
+# references (RNVTARef; AlienRadioBeaconREF is FO3's and not in FalloutNV.esm, so the
+# radius rows read Camp Guardian's NVCGRadioREF 13D7A2 instead [observed: fnvtool esm
+# decode, XRDO radius 5000, Radius, static 50, position reference 14ADB9]), skill
+# magazines, the quest items switch, form counts by type, the plugins of Scotch, and
+# SetIngestibleFlag on the page's Jalapeno, put back.
+_LU2_HEAD = "ref rP\nref rObj\nref rOther\narray_var aR\nfloat fRes\nfloat fA\nBegin Function { }\n"
+
+
+def _lu2(pid, body, text=False):
+    return (f"lu2.{pid}", _LU2_HEAD + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _lu2v(pid, expr, text=False):
+    return _lu2(pid, f"SetFunctionValue ({expr})", text)
+
+
+LU2_PROBES = (
+    [_lu2v("radio.rnv.is", "RNVTARef.IsRadioRef"),
+     _lu2v("radio.rnv.type", "RNVTARef.GetRadioBroadcastType"),
+     # The AlienRadioBeaconREF rows (the pages' FO3 example) did not compile in the original
+     # nor here: no such editor ID in the load order [observed 2026-11-08].
+     _lu2("radio.cg.radius", _form("rObj", "13D7A2") + "SetFunctionValue (rObj.GetRadioRadius)"),
+     _lu2("radio.cg.static", _form("rObj", "13D7A2") + "SetFunctionValue (rObj.GetRadioStatic)"),
+     _lu2("radio.cg.type", _form("rObj", "13D7A2") + "SetFunctionValue (rObj.GetRadioBroadcastType)"),
+     # GetRadioPosRef is registered with no return type (nvse.log), so `set` takes it first
+     _lu2("radio.cg.posref", _form("rObj", "13D7A2") + "set rOther to rObj.GetRadioPosRef\nSetFunctionValue (GetFormIDString rOther)", True),
+     _lu2v("radio.player.is", "rP.IsRadioRef"),
+     _lu2("radio.cg.set", _form("rObj", "13D7A2") + "rObj.SetRadioRadius 2000\nlet fRes := rObj.GetRadioRadius\nrObj.SetRadioRadius 5000\nSetFunctionValue fRes"),
+     _lu2v("marker.player", "rP.IsMapMarker"),
+     _lu2v("magazine.explosives", "IsSkillMagazine MagazineNVExplosives"),
+     _lu2("magazine.stimpak", _form("rObj", NF["stimpak"]) + "SetFunctionValue (IsSkillMagazine rObj)"),
+     _lu2v("questitems", "GetShowQuestItems"),
+     # GetFormCountType takes the array's ID (an integer since JIP v40, the page): an array
+     # variable as the page's example; `(ar_List …)` in its place did not compile [observed 2026-11-08]
+     _lu2("formcount.alch", _form("rObj", NF["stimpak"]) + "let aR := ar_List rObj, rObj, rP\nlet fRes := GetFormCountType aR, 47\nSetFunctionValue fRes"),
+     _lu2("formmods.scotch", "let aR := GetFormMods Scotch\nSetFunctionValue (sv_Construct \"%g %z\" (ar_Size aR) (aR[0]))", True),
+     _lu2("ingestible.food", "let fRes := GetIngestibleFlag JalapenoPepper 2\nSetIngestibleFlag JalapenoPepper 2 0\nlet fA := GetIngestibleFlag JalapenoPepper 2\n"
+          "SetIngestibleFlag JalapenoPepper 2 1\nSetFunctionValue (sv_Construct \"%g %g %g\" fRes fA (GetIngestibleFlag JalapenoPepper 2))", True)]
+)
+
+# sup6 (writes, session only; #1008): SUP batch 6 (docs/spec-notes/ext-sup6.md): the
+# mouse, the cursor's traits, the debug texts, the screen, fonts and plugin headers, the
+# HUD's visibility flags, the lockpick menu and the throw held, all with no menu open
+# and nobody at the controls. Writes restored: the cursor's alpha set back to what it
+# read, the debug text destroyed, the HUD flags written back. One step per frame.
+def _sup6(pid, body, text=True):
+    return (f"sup6.{pid}", "float fA\nfloat fB\nfloat fX\nfloat fY\nstring_var sText\nBegin Function { }\n" + body, text, None, "")
+
+
+SUP6_PROBES = (
+    # The cursor at rest (hypothesis: 255, the arrow's size, 255 255 255).
+    [_sup6("cursor.rest", "SetFunctionValue (sv_Construct \"%g %g %g %g %g %g\" (GetCursorTrait 0) (GetCursorTrait 1) (GetCursorTrait 2) "
+           "(GetCursorTrait 3) (GetCursorTrait 4) (GetCursorTrait 5))"),
+     _sup6("cursor.set", "let fA := GetCursorTrait 0\nSetCursorTrait 0 100\nlet fB := GetCursorTrait 0\nSetCursorTrait 0 fA\n"
+           "SetFunctionValue (sv_Construct \"%g %g %g\" fA fB (GetCursorTrait 0))"),
+     # Gradual: 200 to 50 over 2 seconds, read at once and a frame on (between the two
+     # ends), then stopped and set back.
+     _sup6("cursor.gradual", "SetCursorTraitGradual 0 200 50 2\nSetFunctionValue (GetCursorTrait 0)", False),
+     _sup6("cursor.gradual.next", "let fA := GetCursorTrait 0\nSetCursorTraitGradual 0\nlet fB := GetCursorTrait 0\nSetCursorTrait 0 255\n"
+           "SetFunctionValue (sv_Construct \"%g %g\" ((fA > 50) && (fA <= 200)) (fA == fB))"),
+     # Debug texts (hypothesis: exists 1 after create, 0 after destroy).
+     _sup6("debugtext", "DebugTextCreate \"NVFProbeText\" 100 100 \"probe\"\nlet fA := DebugTextExists \"NVFProbeText\"\n"
+           "DebugTextSetPos \"NVFProbeText\" 200 200\nDebugTextSetString \"NVFProbeText\" \"probe 2\"\nDebugTextSetZoom \"NVFProbeText\" 20\n"
+           "DebugTextDestroy \"NVFProbeText\"\nSetFunctionValue (sv_Construct \"%g %g %g\" fA (DebugTextExists \"NVFProbeText\") (DebugTextExists \"NVFNoSuchText\"))"),
+     # The mouse out of menus (hypothesis: 0 0 and 0).
+     _sup6("mouse.moves", "GetMouseMovement fX fY 0\nlet fA := fX\nlet fB := fY\nGetMouseMovement fX fY 1\n"
+           "SetFunctionValue (sv_Construct \"%g %g %g %g %g %g\" fA fB fX fY (GetMouseWheelMovement 0) (GetMouseWheelMovement 1))"),
+     _sup6("mouse.pos", "GetMousePosition fX fY\nSetFunctionValue (sv_Construct \"%g\" ((fX >= 0) && (fY >= 0)))"),
+     # The screen [documented: GetScreenTrait 0-4].
+     _sup6("screen", "SetFunctionValue (sv_Construct \"%g %g %g %g %g\" (GetScreenTrait 0) (GetScreenTrait 1) (GetScreenTrait 2) "
+           "(GetScreenTrait 3) (GetScreenTrait 4))"),
+     # The fonts' heights (hypothesis: base = the file's line height, line = the tallest glyph).
+     _sup6("fonts", "let sText := \"\"\nlet fA := 1\nwhile fA <= 9\nlet sText := sText + (sv_Construct \"%g/%g \" (GetFontTrait fA 0) (GetFontTrait fA 1))\n"
+           "let fA += 1\nloop\nSetFunctionValue sText"),
+     # FalloutNV.esm's author and description [documented].
+     _sup6("modtraits", "SetFunctionValue (sv_Construct \"[%z] [%z] [%z]\" (GetModTraitSTR 0 0) (GetModTraitSTR 0 1) (GetModTraitSTR 0 2))"),
+     # The machine (NVForever's decision: 0); recorded only.
+     _sup6("pctraits", "SetFunctionValue (sv_Construct \"%g %g %g\" ((GetPCTrait 0) > 0) ((GetPCTrait 2) > 0) ((GetPCTrait 6) > 0))"),
+     # The HUD flags as JohnnyGuitar's override [documented]: read, set, put back.
+     _sup6("hudflags", "let fA := GetHUDVisibilityFlags\nSetHUDVisibilityFlags 512\nlet fB := GetHUDVisibilityOverride\n"
+           "SetHUDVisibilityFlags fA\nSetFunctionValue (sv_Construct \"%g %g %g\" fA fB (GetHUDVisibilityFlags))"),
+     # The lockpick menu shut [documented: -1]; SetBobbyPinHealth shut (hypothesis: -1).
+     _sup6("lockpick.shut", "SetFunctionValue (sv_Construct \"%g %g %g %g\" (GetLockPickMenuValue 0) (GetLockPickMenuValue 1) "
+           "(GetLockPickMenuValue 2) (SetBobbyPinHealth))"),
+     # The throw held at rest (hypothesis: 0 before any throw).
+     _sup6("grenade", "SetFunctionValue (GetGrenadeTimeHeld)", False)]
+)
+
+
+# showoff5 (writes, session only, each change put back; #1010): ShowOff batch 5
+# (docs/spec-notes/ext-showoff.md §8): the level-up menu opened by ShowSkillMenu and closed
+# again in the same step, the shot switches' reads, fast travel, AP costs, item values,
+# VATS reads and the player's small states, on the player, Doc Mitchell and the 10mm pistol.
+_SO5_HEAD = "ref rP\nref rDoc\nref rObj\nref rInv\nfloat fRes\nfloat fA\nfloat fB\nBegin Function { }\n"
+
+
+def _so5(pid, body, text=False):
+    return (f"showoff5.{pid}", _SO5_HEAD + _form("rP", NF["player"]) + _form("rDoc", NF["docref"]) + body, text, None, "")
+
+
+def _so5v(pid, expr, text=False):
+    return _so5(pid, f"SetFunctionValue ({expr})", text)
+
+
+SHOWOFF5_PROBES = (
+    [_so5v("levelup.page.closed", "GetLevelUpMenuCurrentPage"),
+     _so5v("levelup.points.closed", "GetLevelUpMenuPoints"),
+     _so5v("levelup.setpage.closed", "SetLevelUpMenuCurrentPage 1"),
+     # Opened and closed in one step: the page, the points to allot and allotted, the
+     # perks, and what closing returns [hypothesis: the menu reads at once].
+     _so5("levelup.skillmenu", "let fRes := ShowSkillMenu 3\nlet fA := GetLevelUpMenuCurrentPage\nlet fB := GetLevelUpMenuPoints\n"
+          "SetFunctionValue (sv_Construct \"%g %g %g %g %g %g\" fRes fA fB (GetLevelUpMenuPoints 0 1) (GetLevelUpMenuPoints 1) (SetLevelUpMenuCurrentPage 2))", True),
+     _so5v("levelup.after", "GetLevelUpMenuCurrentPage"),
+     _so5v("hitscan.read", "SetForceDrawHitscanProjectiles"),
+     _so5v("tracer.read", "SetProjectileTracerChanceOverride"),
+     _so5v("travel.override", "GetPCHasScriptedFastTravelOverride"),
+     _so5v("travel.can", "GetPCCanFastTravel"),
+     _so5("ap.pistol", _form("rObj", NF["pistol10"]) + "SetFunctionValue (sv_Construct \"%g %g %g\" (GetCalculatedAPCost 0 rObj) (GetCalculatedAPCost 1 rObj) (GetCalculatedAPCost 2 rObj))", True),
+     # Fists (no weapon override): the unarmed costs, the uppercut and the cross.
+     _so5("ap.fists", _form("rObj", "1F4") + "SetFunctionValue (sv_Construct \"%g %g %g\" (GetCalculatedAPCost 0 rObj) (GetCalculatedAPCost 1 rObj) (GetCalculatedAPCost 2 rObj))", True),
+     _so5v("vats.engage", "GetVATSMaxEngageDistance"),
+     _so5v("vats.target.doc", "rDoc.GetVATSTargetable"),
+     _so5v("vats.target.player", "rP.GetVATSTargetable"),
+     # The keyboard layout: "q" or "Q" [hypothesis: NVForever returns "" without the layout].
+     _so5v("ansi.16", "ToANSIChar 16 1", True),
+     _so5v("ansi.2", "ToANSIChar 2 1", True),
+     _so5v("invisible.doc", "rDoc.IsActorInvisibleToPlayer"),
+     _so5v("combatactors.player", "rP.GetNumCombatActorsFromActor"),
+     # rP.GetHitLocationLingering on the unhurt player crashed the original [observed
+     # 2026-11-08]: left out.
+     _so5v("nightvision", "PlayerHasNightVisionActive"),
+     _so5v("drinking", "PlayerIsDrinkingPlacedWater"),
+     _so5v("prompt", "GetIsActivationPromptShown"),
+     _so5v("looking", "IsPlayerLookingAround"),
+     _so5("usage.stimpak", _form("rObj", NF["stimpak"]) + "SetFunctionValue (rP.GetSpellUsageNumEx rObj)"),
+     # A placed 10mm pistol's value at its condition; with the barter flag outside barter.
+     _so5("itemvalue.pistol", _form("rObj", NF["pistol10"]) + "let rInv := rP.PlaceAtMe rObj 1\nlet fA := rInv.GetCalculatedItemValue\nlet fB := rInv.GetCalculatedItemValue 1\nrInv.Disable\nrInv.MarkForDelete\n"
+          "SetFunctionValue (sv_Construct \"%g %g\" fA fB)", True),
+     _so5v("explosion.none", "rP.GetExplosionRefRadius"),
+     _so5v("stuck.none", "rP.GetProjectileRefIsStuck"),
+     _so5("stagger.player", "SetFunctionValue (rP.ForceHitStaggerReaction)"),
+     _so5("recoil.player", "SetFunctionValue (rP.ForceRecoilAnim)")]
+)
+
+# lutana1 (writes, session only, each change put back; #1009, PR #1776): Lutana batch 1
+# (docs/spec-notes/ext-lutana.md, crates/fnv-game/src/nvse_lutana.rs), the 92 functions on
+# main, run through the installed JIP LN. FalloutNV.esm forms [observed: fnvtool esm
+# inventory and decode; world refs]:
+# - CHAL: NVChallengeKillOne (Kill from a Form List, threshold 250, flags 2, interval 50,
+#   value3 4), NVChallengeStarts (Hit an Enemy, flags 7, values 1/3/1), NVChallengeVault34
+#   (SNAM Vault34MapMarker), NVChallengeAimingOptional (XNAM 0x15EAD2), NVChallengeFreeRadical
+#   (SNAM 0x15167), NVChallengeCaravanMaster (Misc Stat, Start Disabled).
+# - CSNO: AtomicWranglerCasinoData (soft 17, payout 1.2, 1 deck, shuffle 0.35, max 5000),
+#   GomorrahCasinoData (no soft 17, 1.5, 3 decks, 0.2, 9000); every reel stop 2.
+# - RCPE (DATA, RCIL/RCOD/RCQY raw-read): RecipeBighornerSteak (Survival 44 at 50, in
+#   BigHornerMeat x1, out BighornerSteak x1), RecipeHealingPowder (skill -1, level 0),
+#   RecipeMassPurifiedWater (out 0x151A3 x4); SpareParts in RecipeWeaponRepairKit and
+#   RecipeBreakdownScrapMetalLead (the page's example); DrainedSmallEnergyCell in two
+#   recipes that both make AmmoSmallEnergyCell; BrocFlower in three (two Campfire).
+# - NPC_: DocMitchell (services 1151, no ZNAM, no aggro radius), vTopsBartender02 (own
+#   services 16, "Use AI Data" from vTopsBartender01, services 1148), VHDOliverRangerSniper
+#   (aggro radius 200), CraigBoone (ZNAM 0xC80B6). Refs: DocMitchellREF, VMS21Cachino
+#   (0x11118D, in Gomorrah01, XEZN GomorrahZone).
+# - PERK: FourEyes (trait), ActionBoy (abilities 0x1718B7, 0x31D90), BuiltToDestroy
+#   (ability, then an entry point), FortuneFinder (quest+stage, quest Generic 0x38B2),
+#   CalmHeartPerk (not playable).
+# - WRLD FreesideWorld and WastelandNVmini (WNAM WastelandNV), WastelandNV (no WNAM, NAM2
+#   Potomac 0x30009, DNAM water -2300). CELL: the start cell 0xDEB16 (9,-29; XCLW 3.4e38,
+#   no XCWT), GSDocMitchellHouse (interior, XCLW -2147483648, no XCWT).
+# - WATR NVCleanWater (XNAM 0xB878F). ECZN Vault11Zone (Never Resets), GomorrahZone (none).
+#   LVLI CapsChangeFortuneFinder (LVLG 0x645CC), CondNCRGamblerOutfit (no LVLG).
+# - ACTI GoodspringsRadio (RNAM vCountryRadio, VNAM 0x36C2A), AverageWaterValve (SNAM
+#   EMTWaterPressure, VNAM 0x1F92B), TrapGasValve (no RNAM/SNAM). TACT RadioNewVegasTA.
+# - TERM VFSFistoTerminal (Average, PNAM 0x1344A3; ref 0x11F8CB), VMS49CommTerminal
+#   (Requires Key), HVSelfDestructTerminal (Very Hard), VNovacTerminalManny (no PNAM).
+#   Doors: 0x10DAFA (Gomorrah, lock 50, key VMS21GomorrahKey 0x11BC7F), 0xFB28A (JailDoor01,
+#   ref flag 0x100 Inaccessible), 0x10D6AC (XAPD False). DocMitchellDresserRef (flags
+#   0x2000400).
+# - Playable: Caravan Shotgun Cass (not), 10mm pistol, Caucasian (DATA flags 1), Ghoul (0),
+#   HairCurly (1), HairWavyOld (0), EyeBlue (1), eyeReanimate (0).
+# - WEAP WeapLaserRifle (crit flags 1, kill impulse 0, impulse distance 0), WeapSuperSledge
+#   (VATS MaulerKnockdownSpell). LSCR EnclaveLoadScreen01 (WMI1 StandardLoadingTip).
+# - LIGH OfficeLightKeyNeutral (radius 200), Fire420; ref HVRangerFireLight 0xE5196 (XRDS
+#   -16.59). NOTE VStripEpicureNote. FLST NPCFollowersLIST.
+# Read-and-put-back order: every setter row reads, sets, reads, restores and reads again.
+# Not restorable for certain: none (AddNoteNS is followed by RemoveNote when the note was
+# not held; the key added for PlayerHasKey is removed again).
+LU1 = {
+    # challenges
+    "killone": "15EB3A", "starts": "15EB1F", "vault34": "15EB3D", "aiming": "15EB10", "freerad": "15EAF2",
+    "caravan": "16BA4E", "stimpak": "15169",
+    # casinos
+    "wrangler": "144C42", "gomorrah": "140521",
+    # recipes and items
+    "steak": "175AA9", "meat": "16D5BA", "steakout": "175AA8", "powder": "13B2C2", "masswater": "13D3C5",
+    "water151": "151A3", "spare": "31944", "lead": "140C2F", "drained": "12115E", "broc": "13B2BA",
+    "reloadbench": "153621", "breakdown": "140AB5", "campfire": "13B2C0", "aid": "13E119", "caps": "F",
+    # actors
+    "doc": "104C0C", "docref": "104C0F", "tender2": "129552", "tender1": "129551", "sniper": "14F3C3",
+    "boone": "92BD2", "cachino": "11118D", "alcohol": "66988",
+    # perks
+    "foureyes": "135EC4", "actionboy": "31DBA", "builtto": "137B02", "fortune": "31DE3", "calmheart": "167723",
+    # worlds, cells, water, zones, lists
+    "freeside": "10BEEA", "wasteland": "DA726", "mini": "148C05", "startcell": "DEB16", "doccell": "103DF9",
+    "cleanwater": "1009CA", "vault11zone": "E9081", "gomzone": "10CC90", "capslist": "645D5", "outfitlist": "17B7E3",
+    # activators, terminals, locks
+    "gsradio": "109085", "valve": "1699B6", "gasvalve": "47A97", "rnv": "14DF02", "radiosound": "36C2A",
+    "fisto": "11F8BF", "fistoref": "11F8CB", "commterm": "14B048", "selfdestruct": "1645E2", "manny": "CCFC7",
+    "epicure": "162B5B", "zoaradoor": "10DAFA", "zoarakey": "11BC7F", "jaildoor": "FB28A", "elevator": "10D6AC",
+    "dresser": "103E37", "docdoor": "103E61",
+    # flags and playability
+    "cassgun": "176E55", "pistol": "434F", "caucasian": "19", "ghoul": "3B3E", "haircurly": "5DC7F",
+    "hairwavyold": "44527", "eyeblue": "4253", "eyereanimate": "1A",
+    # weapons, load screens, lights, lists
+    "laser": "4336", "sledge": "4352", "withdrawal": "33067", "loadscreen": "166D93", "loadtype": "166D58",
+    "officelight": "4DFDB", "fire420": "4477", "fireref": "E5196", "followers": "BC4BB",
+}
+
+_LU1H = ("ref rP\nref rObj\nref rOther\nref rItem\nref rKey\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fC\n"
+         "string_var sText\narray_var aList\narray_var aKeys\nBegin Function { }\n")
+
+
+def _lu1(pid, body, text=False):
+    return (f"lu1.{pid}", _LU1H + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _lu1v(pid, key, expr, text=False):
+    """One getter on rObj; text "form" prints the form ID."""
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return _lu1(pid, _form("rObj", LU1[key]) + rd, bool(text))
+
+
+def _lu1o(pid, key, other, expr, text=False):
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return _lu1(pid, _form("rObj", LU1[key]) + _form("rOther", LU1[other]) + rd, bool(text))
+
+
+def _lu1set(pid, key, read, setter, restore, other=None):
+    """A number setter (a bare line): old value, the value read back, then after the
+    restore the value read again."""
+    pre = _form("rObj", LU1[key]) + (_form("rOther", LU1[other]) if other else "")
+    return _lu1(pid, pre + f"let fSave := {read}\n{setter}\nlet fA := {read}\n{restore}\n"
+                'SetFunctionValue (sv_Construct "%g %g %g" fSave fA (' + read + "))", True)
+
+
+def _lu1fset(pid, key, other, read, setter, restore):
+    """A form setter: the old form (kept in rItem), the form read back, the form after the
+    restore."""
+    pre = _form("rObj", LU1[key]) + _form("rOther", LU1[other])
+    return _lu1(pid, pre + f"let rItem := {read}\n{setter}\nlet sText := GetFormIDString ({read})\n{restore}\n"
+                'SetFunctionValue (sv_Construct "%z %z %z" (GetFormIDString rItem) sText (GetFormIDString (' + read + ")))", True)
+
+
+def _lu1arr(pid, pre, expr):
+    """A list as "size: index=form ...", in the array's own order."""
+    return _lu1(pid, pre + f"let aList := {expr}\nlet aKeys := ar_Keys aList\nlet fA := ar_Size aKeys\n"
+                'let sText := sv_Construct "%g:" fA\nlet fB := 0\nwhile fB < fA\nlet fC := aKeys[fB]\nlet rItem := aList[fC]\n'
+                'let sText := sv_Construct "%z %g=%z" sText fC (GetFormIDString rItem)\nlet fB += 1\nloop\nSetFunctionValue sText', True)
+
+
+def _lu1f(*keys):
+    return "".join(_form(v, LU1[k]) for v, k in zip(("rObj", "rOther", "rKey"), keys))
+
+
+LUTANA1_PROBES = (
+    # ---- 1. challenges
+    [_lu1v(f"chal.type.{k}", k, "GetChallengeType rObj") for k in ("killone", "starts", "vault34", "caravan", "freerad")]
+    + [_lu1v(f"chal.{f.lower()}.{k}", k, f"GetChallenge{f} rObj") for k in ("killone", "starts")
+       for f in ("Threshold", "Interval", "Flags", "Value1", "Value2", "Value3")]
+    + [_lu1v("chal.form1.vault34", "vault34", "GetChallengeForm1 rObj", "form"),
+       _lu1v("chal.form2.aiming", "aiming", "GetChallengeForm2 rObj", "form"),
+       _lu1v("chal.form1.none", "killone", "GetChallengeForm1 rObj", "form"),
+       # Not a challenge: 0 [hypothesis].
+       _lu1v("chal.threshold.notchal", "caps", "GetChallengeThreshold rObj")]
+    + [_lu1set(f"chal.set{f.lower()}.{n}", "killone", f"GetChallenge{f} rObj", f"SetChallenge{f} rObj {v}",
+               f"SetChallenge{f} rObj fSave")
+       for f, n, v in (("Threshold", "300", "300"), ("Threshold", "neg", "-5"), ("Threshold", "frac", "12.7"),
+                       ("Interval", "7", "7"), ("Flags", "5", "5"), ("Value1", "3", "3"), ("Value2", "9", "9"),
+                       ("Value3", "2", "2"))]
+    + [_lu1fset("chal.setform1", "freerad", "stimpak", "GetChallengeForm1 rObj", "SetChallengeForm1 rObj rOther",
+                "SetChallengeForm1 rObj rItem"),
+       _lu1fset("chal.setform2", "aiming", "stimpak", "GetChallengeForm2 rObj", "SetChallengeForm2 rObj rOther",
+                "SetChallengeForm2 rObj rItem")]
+    # ---- 2. casinos
+    + [_lu1v(f"csno.{f.lower()}.{k}", k, f"GetCasino{f} rObj") for k in ("wrangler", "gomorrah")
+       for f in ("BJ17Stand", "BJPayout", "MaxWinnings", "NumDecks", "ShufflePercent")]
+    # Symbols 1-7; 0 and 8 outside [hypothesis: 0].
+    + [_lu1v(f"csno.reel.{s}", "gomorrah", f"GetCasinoReelStops rObj {s}") for s in (1, 7, 0, 8)]
+    + [_lu1set(f"csno.set{f.lower()}.{n}", "gomorrah", f"GetCasino{f} rObj", f"SetCasino{f} rObj {v}",
+               f"SetCasino{f} rObj fSave")
+       for f, n, v in (("BJ17Stand", "1", "1"), ("BJ17Stand", "5", "5"), ("BJPayout", "2", "2.25"),
+                       ("MaxWinnings", "500", "500"), ("MaxWinnings", "neg", "-1"), ("NumDecks", "6", "6"),
+                       ("NumDecks", "0", "0"), ("ShufflePercent", "half", "0.5"), ("ShufflePercent", "over", "1.5"),
+                       ("ShufflePercent", "neg", "-0.2"))]
+    + [_lu1set(f"csno.setreel.{s}.{v}", "gomorrah", f"GetCasinoReelStops rObj {s}", f"SetCasinoReelStops rObj {s} {v}",
+               f"SetCasinoReelStops rObj {s} fSave") for s, v in ((4, 1), (7, 9), (8, 3))]
+    # ---- 3. recipes
+    + [_lu1o("rcpe.incount.meat", "steak", "meat", "GetRecipeInputCount rObj rOther"),
+       _lu1o("rcpe.incount.caps", "steak", "caps", "GetRecipeInputCount rObj rOther"),
+       _lu1o("rcpe.outcount.steak", "steak", "steakout", "GetRecipeOutputCount rObj rOther"),
+       _lu1o("rcpe.outcount.water4", "masswater", "water151", "GetRecipeOutputCount rObj rOther"),
+       _lu1v("rcpe.skill.steak", "steak", "GetRecipeRequiredSkill rObj"),
+       _lu1v("rcpe.level.steak", "steak", "GetRecipeRequiredSkillLevel rObj"),
+       # DATA skill -1 "none" [hypothesis: -1, level 0].
+       _lu1v("rcpe.skill.powder", "powder", "GetRecipeRequiredSkill rObj"),
+       _lu1v("rcpe.level.powder", "powder", "GetRecipeRequiredSkillLevel rObj")]
+    + [_lu1set("rcpe.setskill.40", "steak", "GetRecipeRequiredSkill rObj", "SetRecipeRequiredSkill rObj 40",
+               "SetRecipeRequiredSkill rObj fSave"),
+       # A code below 0 [hypothesis: removes the skill]; level read after, both put back.
+       _lu1("rcpe.setskill.neg", _lu1f("steak") + "let fSave := GetRecipeRequiredSkillLevel rObj\n"
+            "SetRecipeRequiredSkill rObj -1\nlet fA := GetRecipeRequiredSkill rObj\nlet fB := GetRecipeRequiredSkillLevel rObj\n"
+            "SetRecipeRequiredSkill rObj 44\nSetRecipeRequiredSkillLevel rObj fSave\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB (GetRecipeRequiredSkill rObj) (GetRecipeRequiredSkillLevel rObj))', True),
+       _lu1set("rcpe.setlevel.75", "steak", "GetRecipeRequiredSkillLevel rObj", "SetRecipeRequiredSkillLevel rObj 75",
+               "SetRecipeRequiredSkillLevel rObj fSave"),
+       # A recipe without a skill [hypothesis: nothing changes].
+       _lu1set("rcpe.setlevel.noskill", "powder", "GetRecipeRequiredSkillLevel rObj", "SetRecipeRequiredSkillLevel rObj 30",
+               "SetRecipeRequiredSkillLevel rObj fSave")]
+    # Add a new input (at the end?), again (summed or a second entry?), a count of 0, then
+    # remove it: counts and the input list after each step.
+    + [_lu1("rcpe.addinput", _lu1f("steak", "caps") + "AddRecipeInputForm rObj rOther 3\nlet fA := GetRecipeInputCount rObj rOther\n"
+            "AddRecipeInputForm rObj rOther 2\nlet fB := GetRecipeInputCount rObj rOther\nlet aList := GetRecipeInputForms rObj\n"
+            "let fC := ar_Size aList\nRemoveRecipeInputForm rObj rOther\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g %g" fA fB fC (GetRecipeInputCount rObj rOther) (ar_Size (GetRecipeInputForms rObj)))', True),
+       _lu1arr("rcpe.addinput.order", _lu1f("steak", "caps") + "AddRecipeInputForm rObj rOther 1\n",
+               "GetRecipeInputForms rObj"),
+       _lu1("rcpe.addinput.order.restore", _lu1f("steak", "caps") + "RemoveRecipeInputForm rObj rOther\n"
+            "SetFunctionValue (ar_Size (GetRecipeInputForms rObj))"),
+       _lu1("rcpe.addinput.zero", _lu1f("steak", "caps") + "AddRecipeInputForm rObj rOther 0\nlet fA := GetRecipeInputCount rObj rOther\n"
+            "let fB := ar_Size (GetRecipeInputForms rObj)\nRemoveRecipeInputForm rObj rOther\n"
+            'SetFunctionValue (sv_Construct "%g %g %g" fA fB (ar_Size (GetRecipeInputForms rObj)))', True),
+       # An item already listed: added to its count [hypothesis] or a second entry; put
+       # back by removing it and adding the one.
+       _lu1("rcpe.addinput.existing", _lu1f("steak", "meat") + "AddRecipeInputForm rObj rOther 2\nlet fA := GetRecipeInputCount rObj rOther\n"
+            "let fB := ar_Size (GetRecipeInputForms rObj)\nRemoveRecipeInputForm rObj rOther\nlet fC := ar_Size (GetRecipeInputForms rObj)\n"
+            "AddRecipeInputForm rObj rOther 1\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g %g" fA fB fC (GetRecipeInputCount rObj rOther) (ar_Size (GetRecipeInputForms rObj)))', True),
+       _lu1("rcpe.replaceinput", _lu1f("steak", "meat", "caps") + "ReplaceRecipeInputForm rObj rOther rKey\n"
+            "let fA := GetRecipeInputCount rObj rOther\nlet fB := GetRecipeInputCount rObj rKey\nReplaceRecipeInputForm rObj rKey rOther\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB (GetRecipeInputCount rObj rOther) (GetRecipeInputCount rObj rKey))', True)]
+    + [_lu1set(f"rcpe.setincount.{v}", "steak", "GetRecipeInputCount rObj rOther", f"SetRecipeInputCount rObj rOther {v}",
+               "SetRecipeInputCount rObj rOther fSave", "meat") for v in (3, 0)]
+    # An item not listed [hypothesis: not added].
+    + [_lu1("rcpe.setincount.unlisted", _lu1f("steak", "caps") + "SetRecipeInputCount rObj rOther 2\nlet fA := GetRecipeInputCount rObj rOther\n"
+            "let fB := ar_Size (GetRecipeInputForms rObj)\nif fA > 0\nRemoveRecipeInputForm rObj rOther\nendif\n"
+            'SetFunctionValue (sv_Construct "%g %g %g" fA fB (GetRecipeInputCount rObj rOther))', True),
+       _lu1("rcpe.addoutput", _lu1f("steak", "caps") + "AddRecipeOutputForm rObj rOther 2\nlet fA := GetRecipeOutputCount rObj rOther\n"
+            "let fB := ar_Size (GetRecipeOutputForms rObj)\nRemoveRecipeOutputForm rObj rOther\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB (GetRecipeOutputCount rObj rOther) (ar_Size (GetRecipeOutputForms rObj)))', True),
+       _lu1("rcpe.replaceoutput", _lu1f("steak", "steakout", "caps") + "ReplaceRecipeOutputForm rObj rOther rKey\n"
+            "let fA := GetRecipeOutputCount rObj rOther\nlet fB := GetRecipeOutputCount rObj rKey\nReplaceRecipeOutputForm rObj rKey rOther\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB (GetRecipeOutputCount rObj rOther) (GetRecipeOutputCount rObj rKey))', True)]
+    + [_lu1set(f"rcpe.setoutcount.{v}", "steak", "GetRecipeOutputCount rObj rOther", f"SetRecipeOutputCount rObj rOther {v}",
+               "SetRecipeOutputCount rObj rOther fSave", "steakout") for v in (4, 0)]
+    # GetFormRecipes / GetFormRecipeOutputs: the page's SpareParts example, with the
+    # category and a subcategory; the order of a long list (Lead) [hypothesis: FormID];
+    # outputs each once (DrainedSmallEnergyCell's two recipes make one item).
+    + [_lu1arr("rcpe.formrecipes.spare", _lu1f("spare"), "GetFormRecipes rObj"),
+       _lu1arr("rcpe.formrecipes.spare.bench", _lu1f("spare", "reloadbench"), "GetFormRecipes rObj rOther"),
+       _lu1arr("rcpe.formrecipes.spare.breakdown", _lu1f("spare", "breakdown"), "GetFormRecipes rObj rOther"),
+       _lu1arr("rcpe.formrecipes.broc", _lu1f("broc"), "GetFormRecipes rObj"),
+       _lu1arr("rcpe.formrecipes.broc.campfire", _lu1f("broc", "campfire"), "GetFormRecipes rObj rOther"),
+       _lu1arr("rcpe.formrecipes.lead", _lu1f("lead"), "GetFormRecipes rObj"),
+       _lu1arr("rcpe.formrecipes.caps", _lu1f("caps"), "GetFormRecipes rObj"),
+       _lu1arr("rcpe.recipeoutputs.spare", _lu1f("spare"), "GetFormRecipeOutputs rObj"),
+       _lu1arr("rcpe.recipeoutputs.spare.bench", _lu1f("spare", "reloadbench"), "GetFormRecipeOutputs rObj rOther"),
+       _lu1arr("rcpe.recipeoutputs.drained", _lu1f("drained"), "GetFormRecipeOutputs rObj"),
+       _lu1arr("rcpe.recipeoutputs.broc.aid", _lu1f("broc", "aid"), "GetFormRecipeOutputs rObj rOther")]
+    # ---- 4. actors
+    + [_lu1v("actor.haseffect.alcohol", "alcohol", "rP.ActorHasEffect rObj"),
+       # Not a base effect.
+       _lu1v("actor.haseffect.caps", "caps", "rP.ActorHasEffect rObj")]
+    + [_lu1v(f"actor.service.doc.{b}", "doc", f"GetServiceFlag rObj {b}") for b in (1, 1024, 131072, 3, 0)]
+    # Own AI data 16 (Food), template's 1148 (Alcohol … Misc, no Armor) with "Use AI Data"
+    # [hypothesis: the template's].
+    + [_lu1v(f"actor.service.tender2.{b}", "tender2", f"GetServiceFlag rObj {b}") for b in (4, 16)]
+    + [_lu1set("actor.setservice.doc", "doc", "GetServiceFlag rObj 131072", "SetServiceFlag rObj 131072 1",
+               "SetServiceFlag rObj 131072 fSave"),
+       _lu1set("actor.setservice.doc.clear", "doc", "GetServiceFlag rObj 16", "SetServiceFlag rObj 16 0",
+               "SetServiceFlag rObj 16 fSave"),
+       # Which record a templated NPC's change lands on: the NPC's and its template's.
+       _lu1("actor.setservice.tender2", _lu1f("tender2", "tender1") + "SetServiceFlag rObj 2 1\n"
+            "let fA := GetServiceFlag rObj 2\nlet fB := GetServiceFlag rOther 2\nSetServiceFlag rObj 2 0\nSetServiceFlag rOther 2 0\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fA fB (GetServiceFlag rObj 2) (GetServiceFlag rOther 2))', True)]
+    + [_lu1v(f"actor.aggro.{k}", k, "LNGetAggroRadius rObj") for k in ("sniper", "doc")]
+    + [_lu1v("actor.aggro.ref", "docref", "rObj.LNGetAggroRadius"),
+       _lu1set("actor.setaggro.500", "sniper", "LNGetAggroRadius rObj", "LNSetAggroRadius 500 rObj", "LNSetAggroRadius fSave rObj"),
+       _lu1set("actor.setaggro.neg", "sniper", "LNGetAggroRadius rObj", "LNSetAggroRadius -5 rObj", "LNSetAggroRadius fSave rObj")]
+    + [_lu1v(f"actor.combatstyle.{k}", k, "GetCombatStyle rObj", "form") for k in ("boone", "doc")]
+    # A reference: Doc (no ZNAM) [hypothesis: 0, no DefaultCombatstyle], Cachino, the player.
+    + [_lu1v(f"actor.combatstyle.ref.{k}", k, "rObj.GetCombatStyle", "form") for k in ("docref", "cachino")]
+    + [_lu1("actor.combatstyle.player", "SetFunctionValue (GetFormIDString (rP.GetCombatStyle))", True)]
+    # ---- 5. perks, worlds, cells, water, zones, leveled lists
+    + [_lu1v(f"perk.istrait.{k}", k, "IsTrait rObj") for k in ("foureyes", "actionboy", "caps")]
+    + [_lu1v(f"perk.entryform.{k}.{i}", k, f"GetNthPerkEntryForm rObj {i}", "form")
+       for k, i in (("actionboy", 0), ("actionboy", 1), ("actionboy", 2), ("actionboy", -1), ("builtto", 0),
+                    ("builtto", 1), ("fortune", 0))]
+    + [_lu1v(f"world.parent.{k}", k, "GetWorldspaceParentWorldspace rObj", "form") for k in ("freeside", "wasteland")]
+    + [_lu1v("world.parent.alias", "mini", "GetWorldParentWorld rObj", "form")]
+    + [_lu1v(f"cell.waterform.{k}", k, "GetCellWaterForm rObj", "form") for k in ("startcell", "doccell")]
+    + [_lu1("cell.waterform.none", "SetFunctionValue (GetFormIDString (GetCellWaterForm))", True)]
+    # XCLW 3.4e38 in the start cell [hypothesis: the world's -2300]; the interior's
+    # -2147483648; no cell, the player's.
+    + [_lu1v(f"cell.waterheight.{k}", k, "GetCellWaterHeight rObj") for k in ("startcell", "doccell")]
+    + [_lu1("cell.waterheight.none", "SetFunctionValue (GetCellWaterHeight)"),
+       _lu1set("cell.setwaterheight", "doccell", "GetCellWaterHeight rObj", "SetCellWaterHeight 100.5 rObj",
+               "SetCellWaterHeight fSave rObj")]
+    # A string map "x"/"y"; an interior [hypothesis: an empty map].
+    + [_lu1(f"cell.coords.{k}", _lu1f(k) + "let aList := GetCellCoords rObj\nlet fA := ar_Size aList\nlet fB := -999\nlet fC := -999\n"
+            'if fA > 0\nlet fB := aList["x"]\nlet fC := aList["y"]\nendif\nSetFunctionValue (sv_Construct "%g %g %g" fA fB fC)', True)
+       for k in ("startcell", "doccell")]
+    + [_lu1("cell.coords.none", "let aList := GetCellCoords\nlet fA := ar_Size aList\nlet fB := -999\nlet fC := -999\n"
+            'if fA > 0\nlet fB := aList["x"]\nlet fC := aList["y"]\nendif\nSetFunctionValue (sv_Construct "%g %g %g" fA fB fC)', True),
+       _lu1v("water.effect.clean", "cleanwater", "GetWaterFormEffect rObj", "form"),
+       # No water [hypothesis: the player's cell's water, Potomac's WaterHeal4Bad].
+       _lu1("water.effect.none", "SetFunctionValue (GetFormIDString (GetWaterFormEffect))", True)]
+    + [_lu1v(f"zone.ref.{k}", k, "rObj.GetZone", "form") for k in ("cachino", "docref")]
+    + [_lu1("zone.player", "SetFunctionValue (GetFormIDString (rP.GetZone))", True)]
+    + [_lu1v(f"zone.flag.{k}.{b}", k, f"GetZoneFlag rObj {b}") for k in ("vault11zone", "gomzone") for b in (1, 2, 3)]
+    + [_lu1set(f"zone.setflag.{b}", "gomzone", f"GetZoneFlag rObj {b}", f"SetZoneFlag rObj {b} 1", f"SetZoneFlag rObj {b} fSave")
+       for b in (1, 2)]
+    + [_lu1v(f"lvl.chancenoneglobal.{k}", k, "GetChanceNoneGlobal rObj", "form") for k in ("capslist", "outfitlist")]
+    # ---- 6. activators, terminals, locks
+    + [_lu1v(f"acti.radio.{k}", k, "GetActivatorRadioStation rObj", "form") for k in ("gsradio", "gasvalve")]
+    + [_lu1fset("acti.setradio", "gsradio", "rnv", "GetActivatorRadioStation rObj", "SetActivatorRadioStation rOther rObj",
+                "SetActivatorRadioStation rItem rObj"),
+       _lu1fset("acti.setsoundactivate", "valve", "radiosound", "GetActivatorSoundActivate rObj",
+                "SetActivatorSoundActivate rOther rObj", "SetActivatorSoundActivate rItem rObj"),
+       _lu1fset("acti.setsoundlooping", "valve", "radiosound", "GetActivatorSoundLooping rObj",
+                "SetActivatorSoundLooping rOther rObj", "SetActivatorSoundLooping rItem rObj"),
+       # Not an activator (a terminal) [hypothesis: nothing changes, reads 0].
+       _lu1fset("acti.setradio.term", "fisto", "rnv", "GetActivatorRadioStation rObj", "SetActivatorRadioStation rOther rObj",
+                "SetActivatorRadioStation rItem rObj")]
+    + [_lu1v(f"term.lock.{k}", k, "GetTerminalLock rObj") for k in ("fisto", "commterm", "selfdestruct", "manny")]
+    + [_lu1v("term.lock.ref", "fistoref", "rObj.GetTerminalLock"),
+       _lu1v("term.note.fisto", "fisto", "GetPasswordNote rObj", "form"),
+       _lu1v("term.note.manny", "manny", "GetPasswordNote rObj", "form"),
+       _lu1v("term.note.ref", "fistoref", "rObj.GetPasswordNote", "form"),
+       _lu1fset("term.setnote", "fisto", "epicure", "GetPasswordNote rObj", "SetPasswordNote rOther rObj", "SetPasswordNote rItem rObj")]
+    + [_lu1v(f"lock.lockedout.{k}", k, "GetLockedOut rObj") for k in ("zoaradoor", "jaildoor", "fistoref", "docdoor")]
+    + [_lu1v("lock.lockedout.calling", "jaildoor", "rObj.GetLockedOut"),
+       # 1, 2, then 7 [hypothesis: nothing], then 0, on a locked door and on a terminal.
+       _lu1("lock.setlockedout.door", _lu1f("zoaradoor") + "let fSave := GetLockedOut rObj\nSetLockedOut 1 rObj\nlet fA := GetLockedOut rObj\n"
+            "SetLockedOut 2 rObj\nlet fB := GetLockedOut rObj\nSetLockedOut 7 rObj\nlet fC := GetLockedOut rObj\nSetLockedOut fSave rObj\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g %g" fSave fA fB fC (GetLockedOut rObj))', True),
+       _lu1("lock.setlockedout.term", _lu1f("fistoref") + "let fSave := GetLockedOut rObj\nSetLockedOut 1 rObj\nlet fA := GetLockedOut rObj\n"
+            "SetLockedOut 2 rObj\nlet fB := GetLockedOut rObj\nSetLockedOut fSave rObj\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fA fB (GetLockedOut rObj))', True),
+       # The key carried, then not; the key added silently and taken back.
+       _lu1("lock.haskey.door", _lu1f("zoaradoor", "caps", "zoarakey") + "let fSave := rP.GetItemCount rKey\nlet fA := rObj.PlayerHasKey\n"
+            "rP.AddItem rKey 1 1\nlet fB := rObj.PlayerHasKey\nrP.RemoveItem rKey 1 1\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g %g" fSave fA fB (rObj.PlayerHasKey) (rP.GetItemCount rKey))', True),
+       _lu1v("lock.haskey.term", "fistoref", "rObj.PlayerHasKey"),
+       _lu1v("lock.haskey.nolock", "docdoor", "rObj.PlayerHasKey")]
+    + [_lu1v(f"apd.{k}", k, "IsParentActivateOnly rObj") for k in ("elevator", "docref")]
+    + [_lu1v("apd.calling", "elevator", "rObj.IsParentActivateOnly")]
+    # ---- 7. flags, playability, weapons, load screens, misc
+    # The dresser's record flags 0x2000400; 16 and 8 are runtime flags in the page's table
+    # [hypothesis: the game sets "Form initialized" on loaded forms].
+    + [_lu1v(f"flag.dresser.{b}", "dresser", f"GetFormFlag rObj {b}") for b in (1024, 33554432, 33555456, 32, 16, 8, 0)]
+    + [_lu1v(f"flag.pistol.{b}", "pistol", f"GetFormFlag rObj {b}") for b in (16, 64)]
+    + [_lu1set("flag.set.2", "killone", "GetFormFlag rObj 2", "SetFormFlag rObj 2 1", "SetFormFlag rObj 2 fSave")]
+    + [_lu1v(f"playable.{k}", k, "LNIsPlayable rObj") for k in ("cassgun", "pistol", "caucasian", "ghoul", "haircurly",
+                                                                  "hairwavyold", "eyeblue", "eyereanimate", "actionboy",
+                                                                  "calmheart", "caps")]
+    + [_lu1set(f"playable.set.{k}", k, "LNIsPlayable rObj", f"LNSetIsPlayable {v} rObj", "LNSetIsPlayable fSave rObj")
+       for k, v in (("caucasian", 0), ("hairwavyold", 1), ("eyereanimate", 1), ("calmheart", 1), ("pistol", 0))]
+    + [_lu1set("weap.setcritflags.0", "laser", "GetWeaponCritFlags rObj", "SetWeaponCritFlags rObj 0", "SetWeaponCritFlags rObj fSave"),
+       _lu1set("weap.setcritflags.300", "laser", "GetWeaponCritFlags rObj", "SetWeaponCritFlags rObj 300", "SetWeaponCritFlags rObj fSave"),
+       _lu1set("weap.setkillimpulse", "laser", "GetWeaponKillImpulse rObj", "SetWeaponKillImpulse rObj 15.3",
+               "SetWeaponKillImpulse rObj fSave"),
+       _lu1set("weap.setimpulsedist", "laser", "GetWeaponImpulseDistance rObj", "SetWeaponImpulseDistance rObj 3.1",
+               "SetWeaponImpulseDistance rObj fSave"),
+       _lu1fset("weap.setvatseffect", "sledge", "withdrawal", "GetWeaponVATSEffect rObj", "SetWeaponVATSEffect rObj rOther",
+                "SetWeaponVATSEffect rObj rItem"),
+       _lu1v("lscr.type", "loadscreen", "GetLoadScreenType rObj", "form"),
+       _lu1fset("lscr.settype", "loadscreen", "loadtype", "GetLoadScreenType rObj", "SetLoadScreenType rObj rOther",
+                "SetLoadScreenType rObj rItem"),
+       # Not a load screen type [hypothesis: refused].
+       _lu1fset("lscr.settype.caps", "loadscreen", "caps", "GetLoadScreenType rObj", "SetLoadScreenType rObj rOther",
+                "SetLoadScreenType rObj rItem"),
+       _lu1("misc.pccanusepa", "SetFunctionValue (GetPCCanUsePowerArmor)"),
+       _lu1("misc.defaultmessagetime", "SetFunctionValue (GetDefaultMessageTime)"),
+       # The third name JIP LN may not register [observed: the plugin's strings]; alone.
+       _lu1("misc.messagedisplaytime", "SetFunctionValue (GetMessageDisplayTime)"),
+       _lu1("misc.mdt", "SetFunctionValue (GetMDT)"),
+       _lu1("misc.setdmt", "let fSave := GetDefaultMessageTime\nSetDefaultMessageTime 3.5\nlet fA := GetDefaultMessageTime\n"
+            "SetDMT 0\nlet fB := GetDefaultMessageTime\nSetDMT -2\nlet fC := GetDefaultMessageTime\nSetDefaultMessageTime fSave\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g %g" fSave fA fB fC (GetDefaultMessageTime))', True),
+       _lu1("misc.addnotens", _lu1f("epicure") + "let fSave := GetHasNote rObj\nAddNoteNS rObj\nlet fA := GetHasNote rObj\n"
+            "if fSave == 0\nRemoveNote rObj\nendif\n"
+            'SetFunctionValue (sv_Construct "%g %g %g" fSave fA (GetHasNote rObj))', True),
+       # The format only: the value is the clock's.
+       _lu1("misc.timestamp", "SetFunctionValue (GetTimeStamp)", True),
+       _lu1("misc.timestamp.len", "let sText := GetTimeStamp\nSetFunctionValue (sv_Length sText)"),
+       _lu1v("misc.crosshairinlist", "followers", "CrosshairRefInList rObj")]
+    + [_lu1v(f"radius.base.{k}", k, "GetRadius rObj") for k in ("officelight", "fire420")]
+    # A reference's XRDS of -16.59 [hypothesis: read as it is]; the player (none).
+    + [_lu1v("radius.ref.fire", "fireref", "rObj.GetRadius"),
+       _lu1("radius.ref.player", "SetFunctionValue (rP.GetRadius)")]
+    + [_lu1set(f"radius.set.base.{n}", "officelight", "GetRadius rObj", f"SetRadius {v} rObj", "SetRadius fSave rObj")
+       for n, v in (("300", "300"), ("frac", "12.5"), ("neg", "-5"))]
+    + [_lu1set("radius.set.ref", "fireref", "rObj.GetRadius", "rObj.SetRadius 50", "rObj.SetRadius fSave")]
 )
 
 
@@ -6997,9 +7681,8 @@ SUP5_PROBES = (
            f"SetFunctionValue (sv_Construct \"%g %g [%z] %g [%z] %g\" fA (ExcelReadFloat \"{_SUP5_A}\" 0 0 0) "
            f"(ExcelReadString \"{_SUP5_A}\" 0 1 0) (ExcelReadFloat \"{_SUP5_A}\" 0 2 0) "
            f"(ExcelReadString \"{_SUP5_A}\" 0 3 0) (ExcelGetCellValueType \"{_SUP5_A}\" 0 3 0))"),
-     _sup5("xl.arr.row", "let aIn := ar_Construct \"array\"\nar_Append aIn 7\nar_Append aIn 8\n"
-           f"let fA := ExcelArrayToFile \"{_SUP5_A}\" 1 0 0 aIn 1\n"
-           f"SetFunctionValue (sv_Construct \"%g %g %g\" fA (ExcelReadFloat \"{_SUP5_A}\" 1 0 1) (ExcelGetRowCount \"{_SUP5_A}\" 1))"),
+     # xl.arr.row (ExcelArrayToFile along a row onto sheet 1 of a one-sheet workbook)
+     # crashed the original [observed 2026-11-08]: left out.
      # Back as an array, a gap at rows 4-5 and a form at row 6 (hypothesis: gaps passed over).
      _sup5("xl.arr.from", f"ExcelWriteString \"{_SUP5_A}\" 0 6 0 \"*FalloutNV.esm:000014\"\n"
            f"let aList := ExcelArrayFromFile \"{_SUP5_A}\" 0 0 0\n"
@@ -7397,14 +8080,18 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "rules1": RULES1_PROBES,
         "rules2": RULES2_PROBES,
         "showoff2": SHOWOFF2_PROBES,
+        "lu2": LU2_PROBES,
+        "showoff5": SHOWOFF5_PROBES,
         "showoff4": SHOWOFF4_PROBES,
         "tmpl1": TMPL1_PROBES,
         "jg1": JG1_PROBES,
         "jg2": JG2_PROBES,
         "jg5": JG5_PROBES,
+        "jg6": JG6_PROBES,
         "one111": ONE111_PROBES,
         "jip5": JIP5_PROBES,
         "jip8": JIP8_PROBES,
+        "jip9": JIP9_PROBES,
         "pp": PP_PROBES,
         "format1": FORMAT1_PROBES,
         "tmpl2": TMPL2_PROBES,
@@ -7412,11 +8099,14 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "itr": ITR_PROBES,
         "sup2": SUP2_PROBES,
         "sup3": SUP3_PROBES,
+        "sup6": SUP6_PROBES,
         "sup5": SUP5_PROBES}
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3", "showoff4", "sup5"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3", "showoff4", "sup5", "jip9", "jg6", "showoff5", "sup6", "lu2"}
+SETS.update({"lutana1": LUTANA1_PROBES})
+WRITING_SETS |= {"lutana1"}
 SETS.update({"jg3": JG3_PROBES, "jg4": JG4_PROBES})
 WRITING_SETS |= {"jg3", "jg4"}
 SETS.update({"sup1": SUP1_PROBES, "showoff3": SHOWOFF3_PROBES})

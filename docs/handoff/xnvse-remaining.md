@@ -142,6 +142,28 @@ probed, lab L5.ext.jg5 88 of 88).
 Census after it: 649 (JohnnyGuitar 216 → 184).
 With JIP batch 8 merged: 602 (JIP 201, JohnnyGuitar 184) [observed: the extender_census
 test, 2026-11-08].
+JIP batch 9: 23 (#1006, jip-ui-9.md: the HUD cursor, the mouse, vanity wheel and camera
+collision switches, CloseActiveMenu, the hotkeys' inventory references, the Pip-Boy radio,
+the game volumes, SetFontFile, SetSystemColor, the health bar's actor, immortal mode,
+interaction by type, GetPosEx, the NIF block material values and the Alt translation and
+rotation; engine side in `script_switches.rs` and `nif_mirror.rs`; not probed). Census
+after it: 579 (JIP 201 → 178).
+JohnnyGuitar batch 6: 37 (#1007, ext-jg6.md: actor values by code, UnsetAV, life states,
+temporary ingestible effects, available perks, hotkey slots, the owner's trespass alarm,
+visited and expired cells, lighting template cells, the moon phase, radios, talking
+activator actors, prompt overrides, primitives, effect shaders, armed mines, CallPerRef and
+CallPerMobileObject; probe set jg6 written, not run yet). JohnnyGuitar 184 → 147.
+ShowOff batch 5: the last 37 (#1010, ext-showoff.md §8: the level-up and pause menus on request, live
+explosions, the shot switches, fast travel, detection and combat counts, VATS and item values, the
+player's small states; from the pages, not probed). Census after it, beside batch 4: 565 (ShowOff 71 → 34;
+0 with batch 4).
+SUP batch 6: 22 (#1008, ext-sup6.md: the mouse, the cursor's traits, debug texts, the screen,
+fonts and plugin header texts, the HUD flags as JohnnyGuitar's override, the lockpick menu and
+the throw held, the engine's side in nvf_play::sup_screen and cursor.rs; GetPCTrait 0 by
+decision; not probed yet, set sup6). Census after it: 580 (SUP 93 → 71).
+Lutana batch 2: 29 (#1009, ext-lutana.md §9: map markers and radio data decoded on placed references,
+hotkey units, the INI writers, skill magazines, ingestible flags, the quest items switch, form counts and
+form plugins; from the pages and the records, not probed). Census after it: 573 (LU 53 → 24).
 ShowOff batch 4: 34 (#1010, ext-showoff.md §7: matrices and quaternions, SayTo topics, the INI cache,
 JSON files and folders through NVForever's layer, the pickpocket, quest-message and ammo-regen
 switches, the corner-message handler, ResetInteriorAlt, SetOwnershipTemp, the enable-parent
