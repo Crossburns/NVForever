@@ -344,10 +344,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // whether they were [documented: SetForceDrawHitscanProjectiles].
         "setforcedrawhitscanprojectiles" => {
             let was = g.showoff.b5.force_draw_hitscan;
-            match num(args, 0, -1.0) {
-                x if x == 0.0 => g.showoff.b5.force_draw_hitscan = false,
-                x if x == 1.0 => g.showoff.b5.force_draw_hitscan = true,
-                _ => {}
+            let x = num(args, 0, -1.0);
+            if x == 0.0 || x == 1.0 {
+                g.showoff.b5.force_draw_hitscan = x == 1.0;
             }
             yes(was)
         }
@@ -360,11 +359,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 Some(false) => 0.0,
                 Some(true) => 1.0,
             };
-            match num(args, 0, -2.0) {
-                x if x == -1.0 => g.showoff.b5.tracer_override = None,
-                x if x == 0.0 => g.showoff.b5.tracer_override = Some(false),
-                x if x == 1.0 => g.showoff.b5.tracer_override = Some(true),
-                _ => {}
+            let x = num(args, 0, -2.0);
+            if x == -1.0 {
+                g.showoff.b5.tracer_override = None;
+            } else if x == 0.0 || x == 1.0 {
+                g.showoff.b5.tracer_override = Some(x == 1.0);
             }
             XVal::Num(before)
         }
