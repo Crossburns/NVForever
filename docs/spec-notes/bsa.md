@@ -42,6 +42,17 @@ All integers little-endian.
    listed under Anomalies]. The writer packs blocks in record order; `rewrite` keeps an
    archive's own block order and name-block tail so the exceptions still rebuild.
 
+## 1a. Version 103 (Oblivion's) in New Vegas mods
+
+Mods for New Vegas ship version-103 archives too: High and Dry's `JIP Companions Command &
+Control - Assets.bsa` (2 folders, 215 files, archive flags 0x707) loads in the original
+game [observed 2026-11-08: the mod works there; NVForever refused to start on it]. Read
+with this note's layout unchanged (header, folder records, file records, name blocks,
+compressed blocks as below), **except that flag 0x100 adds no path prefix**: all 215 files
+decode to their stated sizes and start with their format's magic (`Gamebryo File Format`,
+`DDS `) with no prefix taken off, and none does with one [observed 2026-11-08]. Name
+hashes: not checked for 103 [open].
+
 ## Archive flags
 
 | Bit | Meaning | Status |

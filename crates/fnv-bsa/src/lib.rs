@@ -52,7 +52,7 @@ pub enum BsaError {
     Io(io::Error),
     #[error("not a BSA archive (bad magic)")]
     NotBsa,
-    #[error("unsupported BSA version {0} (expected 104)")]
+    #[error("unsupported BSA version {0} (expected 104 or 103)")]
     UnsupportedVersion(u32),
     #[error("Xbox 360 (big-endian) archives are not supported")]
     BigEndian,
@@ -234,7 +234,9 @@ impl Archive {
             file_flags: c.u16().unwrap(),
             file_flags_padding: c.u16().unwrap(),
         };
-        if header.version != 104 {
+        // 103 (Oblivion's) has 104's header, folder and file records and blocks; mods for
+        // New Vegas ship it, and the game reads them (bsa.md §1a) [observed].
+        if header.version != 104 && header.version != 103 {
             return Err(BsaError::UnsupportedVersion(header.version));
         }
         if header.archive_flags & flags::XBOX360 != 0 {
@@ -464,8 +466,10 @@ impl Archive {
         (self.header.archive_flags & flags::COMPRESSED_DEFAULT != 0) ^ r.toggles_compression()
     }
 
+    /// Whether file data starts with the file's path. Version 103 sets the 0x100 flag
+    /// without any such prefix (bsa.md §1a) [observed].
     pub fn embeds_names(&self) -> bool {
-        self.header.archive_flags & flags::EMBED_FILE_NAMES != 0
+        self.header.version == 104 && self.header.archive_flags & flags::EMBED_FILE_NAMES != 0
     }
 
     /// The exact stored bytes of a file's data block (still compressed, with any
@@ -1169,8 +1173,8 @@ mod tests {
         let mut bad = good.clone();
         bad[0] = b'X';
         assert!(matches!(check_bytes(&bad), Err(BsaError::NotBsa)));
-        // Bad version (Oblivion's 103, Skyrim SE's 105).
-        for v in [103u32, 105] {
+        // Bad version (Morrowind-era 100, Skyrim SE's 105); 103 is read (bsa.md §1a).
+        for v in [100u32, 105] {
             let mut bad = good.clone();
             bad[4..8].copy_from_slice(&v.to_le_bytes());
             assert!(matches!(check_bytes(&bad), Err(BsaError::UnsupportedVersion(x)) if x == v));
