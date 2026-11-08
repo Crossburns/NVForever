@@ -630,7 +630,12 @@ unless all hold:
 3. that domain has at least 8 logical processors (a 7900X3D's cache CCD has 12 and
    qualifies; 6 with SMT off does not, as the game's own threads and the I/O and async
    pools would crowd the main and render threads [hypothesis]);
-4. the process is not restricted already: its affinity mask is the system's and it has no
+4. that domain has at least as many logical processors as every other domain, so the game
+   never trades threads for cache: every dual-CCD X3D part has two CCDs of one core count
+   and qualifies, while a Ryzen AI 300 "Strix Point" laptop part (4 full cores sharing
+   16 MiB, 8 compact cores sharing 8 MiB [hypothesis: from AMD's public specifications,
+   not checked here]) is left alone, as moving it would give up 16 of its 24 threads;
+5. the process is not restricted already: its affinity mask is the system's and it has no
    default CPU sets (`start /affinity`, Process Lasso or the player chose: left alone).
 
 Then the process's default CPU sets (and the running main thread's) become the domain's

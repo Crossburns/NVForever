@@ -8,7 +8,11 @@
 //! thread, audio, the read pool, the driver's threads) starts there too. Nothing is done
 //! unless all hold ([`decide`]): one processor group; two or more L3 domains; one domain
 //! strictly larger than every other; that domain has at least [`MIN_LPS`] logical
-//! processors; nobody has restricted the process already (its affinity mask is the
+//! processors and at least as many as every other domain (the game never trades threads
+//! for cache: every dual-CCD X3D part has two CCDs of one core count, while e.g. a Ryzen
+//! AI 300 "Strix Point" laptop part, whose 4 full cores share 16 MiB and 8 compact cores
+//! 8 MiB [hypothesis: from AMD's public specifications, not checked here], is left alone);
+//! nobody has restricted the process already (its affinity mask is the
 //! system's and it has no default CPU sets: `start /affinity`, Process Lasso or the
 //! player chose, and that choice is left alone). Equal L3s (single-CCD parts, non-X3D
 //! dual-CCD parts, Intel, Threadripper) are left as they are: on every such machine no
@@ -131,6 +135,9 @@ pub enum Decision {
     NoSingleLargest,
     /// The largest has fewer than [`MIN_LPS`] logical processors (how many it has).
     TooSmall(u32),
+    /// Another domain has more logical processors than the largest L3's (its count, the
+    /// most any other has): moving there would give up threads.
+    FewerThreads(u32, u32),
     /// Someone already chose where the process runs.
     AlreadySet,
     /// Put the process on this domain.
@@ -174,6 +181,10 @@ pub fn decide(topology: &Topology, already_set: bool) -> Decision {
     }
     if largest.lps() < MIN_LPS {
         return Decision::TooSmall(largest.lps());
+    }
+    let most_elsewhere = d[1..].iter().map(|x| x.lps()).max().unwrap_or(0);
+    if most_elsewhere > largest.lps() {
+        return Decision::FewerThreads(largest.lps(), most_elsewhere);
     }
     if already_set {
         return Decision::AlreadySet;
@@ -224,6 +235,7 @@ fn idle_line(topology: &Topology, decision: Decision) -> String {
         Decision::SameSize => format!("cpu placement: {doms}; all the same size, nothing to do"),
         Decision::NoSingleLargest => format!("cpu placement: {doms}; no single largest, nothing to do"),
         Decision::TooSmall(n) => format!("cpu placement: {doms}; the largest has {n} LPs (under {MIN_LPS}), nothing to do"),
+        Decision::FewerThreads(n, m) => format!("cpu placement: {doms}; the largest has {n} LPs, another {m}, nothing to do"),
         Decision::AlreadySet => format!("cpu placement: {doms}; affinity already set, left alone"),
         Decision::Restrict(d) => restricted_line(topology, &d, pool_threads(&d)),
     }
@@ -508,6 +520,23 @@ mod tests {
         let t = Topology::new(vec![dom(96, 0, 6), dom(32, 6, 6)], false);
         assert_eq!(decide(&t, false), Decision::TooSmall(6));
         assert_eq!(idle_line(&t, Decision::TooSmall(6)), "cpu placement: L3 domains 96 MiB (6 LPs), 32 MiB (6 LPs); the largest has 6 LPs (under 8), nothing to do");
+    }
+
+    #[test]
+    fn a_larger_cache_on_fewer_threads_is_left_alone() {
+        // Ryzen AI 9 HX 370 ("Strix Point"): 4 Zen 5 cores (8 LPs) share 16 MiB, 8 Zen 5c
+        // cores (16 LPs) share 8 MiB. Moving to the 16 MiB domain would give up 16 threads.
+        let t = Topology::new(vec![dom(16, 0, 8), dom(8, 8, 16)], false);
+        assert_eq!(decide(&t, false), Decision::FewerThreads(8, 16));
+        assert_eq!(
+            idle_line(&t, Decision::FewerThreads(8, 16)),
+            "cpu placement: L3 domains 16 MiB (8 LPs), 8 MiB (16 LPs); the largest has 8 LPs, another 16, nothing to do"
+        );
+        // No restriction is asked for, so the pools keep their defaults.
+        assert_eq!(decide(&t, false).domain(), None);
+        // A cache CCD with as many LPs as the other still acts (every dual-CCD X3D part).
+        let t = Topology::new(vec![dom(96, 0, 16), dom(32, 16, 16)], false);
+        assert_eq!(decide(&t, false), Decision::Restrict(dom(96, 0, 16)));
     }
 
     #[test]
