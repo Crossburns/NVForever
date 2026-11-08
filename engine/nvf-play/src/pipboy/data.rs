@@ -185,7 +185,7 @@ const CLICK_SLOP: f32 = 6.0;
 /// §3).
 const POPUP_W: f32 = 520.0;
 const POPUP_PAD: f32 = 30.0;
-const POPUP_ROW_PAD: f32 = 16.0;
+const POPUP_ROW_PAD: f32 = 20.0;
 const POPUP_FRAME_PAD: f32 = 42.0;
 /// The local map: game units to one canvas unit at a magnification of 1 [observed:
 /// fitted to the owner's Local Map screenshot, where the gas station's door (-75242, 4076)
@@ -1632,7 +1632,9 @@ fn popup(p: &mut ChildSpawnerCommands, c: &mut Ctx, q: &Popup) {
         if i == q.selected {
             c.boxed(p, frame, amber(LINE), Some(amber(FILL.0).with_alpha(FILL.1 / 255.0)));
         }
-        c.text(p, 2, b, mid.x, y + POPUP_ROW_PAD / 2.0, Align::Centre, amber(TEXT));
+        // The text stands at the bottom of its row, as the message box's buttons do
+        // (message-menu.md section 2: a row is the text and 20, the text at its bottom).
+        c.text(p, 2, b, mid.x, y + POPUP_ROW_PAD, Align::Centre, amber(TEXT));
         p.spawn((at(frame.min.x, frame.min.y, frame.width(), frame.height()), PopupHit(i), Pickable::default())).observe(on_popup_over).observe(on_popup_click);
     }
 }
