@@ -235,41 +235,6 @@ fn actor_of(code: i64) -> Option<ShotActor> {
     })
 }
 
-/// The strings of the part of body-part data `bptd` whose type (BPND part_type) is
-/// `part`, by subrecord: a part starts at its BPTN, or at a BPNN when the part before
-/// has had its BPND, and runs to the next one [documented: xEdit BPTD, schema combat.json:
-/// BPTN, BPNN, BPNT, BPNI before BPND; NAM1, NAM4, NAM5 after it].
-fn body_part_strings(g: &Game, bptd: FormId, part: i64) -> Option<HashMap<[u8; 4], String>> {
-    let subs = g.data.record_fields.get(&bptd)?;
-    let mut cur: HashMap<[u8; 4], String> = HashMap::new();
-    let mut cur_type: Option<i64> = None;
-    let mut has_data = false;
-    let mut found: Option<HashMap<[u8; 4], String>> = None;
-    for (sig, v) in subs {
-        let starts = sig == b"BPTN" || (sig == b"BPNN" && (has_data || cur.contains_key(b"BPNN")));
-        if starts && (has_data || !cur.is_empty()) {
-            if cur_type == Some(part) {
-                found = Some(std::mem::take(&mut cur));
-                break;
-            }
-            cur.clear();
-            cur_type = None;
-            has_data = false;
-        }
-        match sig {
-            b"BPND" => {
-                cur_type = v.get("part_type").and_then(Json::as_i64);
-                has_data = true;
-            }
-            b"BPTN" | b"BPNN" | b"BPNT" | b"BPNI" | b"NAM1" | b"NAM4" => {
-                cur.insert(*sig, v.as_str().unwrap_or_default().to_string());
-            }
-            _ => {}
-        }
-    }
-    found.or_else(|| (cur_type == Some(part)).then_some(cur))
-}
-
 /// The CELL DATA interior flag (bit 0).
 fn interior(g: &Game, cell: FormId) -> bool {
     matches!(crate::nvse::record_value(g, cell, "DATA", ""), Some(XVal::Num(x)) if (x as u64) & 1 != 0)
@@ -591,16 +556,18 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // another trait or a part the data lacks [documented: GetBodyPartTraitString's
         // tables; the subrecords: schema combat.json].
         "getbodyparttraitstring" => {
-            let sub: Option<&[u8; 4]> = match index(args, 2) {
-                Some(1) => Some(b"BPNN"),
-                Some(2) => Some(b"BPNT"),
-                Some(3) => Some(b"BPNI"),
-                Some(4) => Some(b"BPTN"),
-                Some(5) => Some(b"NAM4"),
+            // Through `Game::body_part_text`, so SetBodyPartName's change reads back
+            // (`crate::nvse_jip8`).
+            let sub = match index(args, 2) {
+                Some(1) => Some("BPNN"),
+                Some(2) => Some("BPNT"),
+                Some(3) => Some("BPNI"),
+                Some(4) => Some("BPTN"),
+                Some(5) => Some("NAM4"),
                 _ => None,
             };
-            let parts = of_sig(g, form(args, 0), b"BPTD").zip(index(args, 1)).and_then(|(b, p)| body_part_strings(g, b, p));
-            XVal::Str(parts.zip(sub).and_then(|(m, s)| m.get(s).cloned()).unwrap_or_default())
+            let text = of_sig(g, form(args, 0), b"BPTD").zip(index(args, 1)).zip(sub).and_then(|((b, p), s)| g.body_part_text(b, p, s));
+            XVal::Str(text.unwrap_or_default())
         }
         // ---- time ----
         // `[unit]`: the time since the executable started, 0 milliseconds, 1 seconds,

@@ -441,6 +441,12 @@ fn body_part_trait_strings() {
     assert_eq!(s(&mut g, "GetBodyPartTraitString TestBodyParts 1 5"), "HeadBone");
     assert_eq!(s(&mut g, "GetBodyPartTraitString TestBodyParts 2 1"), "", "no such part");
     assert_eq!(s(&mut g, "GetBodyPartTraitString TestBodyParts 0 6"), "", "no such trait");
+    // SetBodyPartName's change (JIP batch 8) reads back as trait 4; the other traits stay.
+    q(&mut g, "SetBodyPartName TestBodyParts 0 \"Chest\"");
+    assert_eq!(s(&mut g, "GetBodyPartTraitString TestBodyParts 0 4"), "Chest");
+    assert_eq!(s(&mut g, "GetBodyPartTraitString TestBodyParts 0 1"), "Bip01 Spine");
+    q(&mut g, "SetBodyPartName TestBodyParts 2 \"Tail\"");
+    assert_eq!(s(&mut g, "GetBodyPartTraitString TestBodyParts 2 4"), "", "no such part");
 }
 
 #[test]

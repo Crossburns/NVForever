@@ -101,15 +101,16 @@ fn plugin_bytes() -> Vec<u8> {
     let misc = [edid(b"MISC", MISC, "TestDeathItem", &[]), edid(b"MISC", MISC2, "TestDeathItem2", &[])].concat();
     let fact = [edid(b"FACT", FACT, "TestFaction", &[]), edid(b"FACT", FACT2, "TestFaction2", &[])].concat();
     let flst = edid(b"FLST", FLST, "TestFactionList", &[sub(b"LNAM", u32s(&[FACT2]))]);
-    // SPIT: type, cost, level, flags 0.
-    let spit = || sub(b"SPIT", [u32s(&[4, 0, 0]), vec![0, 0, 0, 0]].concat());
-    let spel = [edid(b"SPEL", SPEL, "TestAbility", &[spit()]), edid(b"SPEL", SPEL2, "TestAbility2", &[spit()])].concat();
+    // SPIT: type, cost, level, flags (TestAbility's bit 4, so a set keeps the record's
+    // other bits; TestAbility2's 0).
+    let spit = |flags: u8| sub(b"SPIT", [u32s(&[4, 0, 0]), vec![flags, 0, 0, 0]].concat());
+    let spel = [edid(b"SPEL", SPEL, "TestAbility", &[spit(16)]), edid(b"SPEL", SPEL2, "TestAbility2", &[spit(0)])].concat();
     // ENIT: value, flags 1 (food), unused, withdrawal SPEL, chance 0.1, sound.
     let alch = edid(b"ALCH", ALCH, "TestChem", &[sub(b"ENIT", [5i32.to_le_bytes().to_vec(), vec![2, 0, 0, 0], u32s(&[SPEL]), f32b(0.1), u32s(&[0])].concat())]);
     let mgefs = [mgef(MGEF, "TestEffect", 1 << 2, 0, 0), mgef(MGEF_SCRIPT, "TestScriptEffect", 0, SCPT, 1)].concat();
     let scpt = [edid(b"SCPT", SCPT, "TestScript", &[]), edid(b"SCPT", SCPT2, "TestScript2", &[])].concat();
-    // ENIT: type, charge, cost, flags 0, unused.
-    let ench = edid(b"ENCH", ENCH, "TestEnchant", &[sub(b"ENIT", [u32s(&[2, 0, 0]), vec![0, 0, 0, 0]].concat())]);
+    // ENIT: type, charge, cost, flags 1 (bit 0), unused.
+    let ench = edid(b"ENCH", ENCH, "TestEnchant", &[sub(b"ENIT", [u32s(&[2, 0, 0]), vec![1, 0, 0, 0]].concat())]);
     let weap = edid(b"WEAP", WEAP, "TestGun", &[sub(b"MODL", z("weapons\\gun.nif")), sub(b"VNAM", u32s(&[1]))]);
     let imod = edid(b"IMOD", IMOD, "TestMod", &[]);
     // IDLE DATA: section, loop 1-3, unused, replay delay, flags, unused.
@@ -296,12 +297,17 @@ fn actor_effects_ingestibles_and_base_effects() {
     q(&mut g, "SetEffectFlag TestChem 2 1");
     q(&mut g, "SetEffectFlag TestChem 1 0");
     assert_eq!((n(&mut g, "GetEffectFlag TestChem 1"), n(&mut g, "GetEffectFlag TestChem 2")), (0.0, 1.0));
+    // An actor effect's SPIT flags and an object effect's ENIT flags are the record's
+    // own, and a set keeps their other bits.
+    assert_eq!((n(&mut g, "GetEffectFlag TestAbility 4"), n(&mut g, "GetEffectFlag TestAbility 7")), (1.0, 0.0));
+    assert_eq!((n(&mut g, "GetEffectFlag TestEnchant 0"), n(&mut g, "GetEffectFlag TestEnchant 2")), (1.0, 0.0));
     q(&mut g, "SetEffectFlag TestAbility 7 1");
     q(&mut g, "SetEffectFlag TestAbility 1 1");
     q(&mut g, "SetEffectFlag TestAbility 8 1");
     assert_eq!((n(&mut g, "GetEffectFlag TestAbility 7"), n(&mut g, "GetEffectFlag TestAbility 1"), n(&mut g, "GetEffectFlag TestAbility 8")), (1.0, 1.0, 0.0));
+    assert_eq!(n(&mut g, "GetEffectFlag TestAbility 4"), 1.0);
     q(&mut g, "SetEffectFlag TestEnchant 2 1");
-    assert_eq!(n(&mut g, "GetEffectFlag TestEnchant 2"), 1.0);
+    assert_eq!((n(&mut g, "GetEffectFlag TestEnchant 2"), n(&mut g, "GetEffectFlag TestEnchant 0")), (1.0, 1.0));
 }
 
 #[test]
