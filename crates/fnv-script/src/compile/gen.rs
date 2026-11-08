@@ -1047,6 +1047,21 @@ impl<'a> Gen<'a> {
                 self.loops += 1;
             }
             Kw::ForEach(toks) => {
+                // `foreach (x <- a)`: one pair of parentheses around the whole head
+                // [observed: High and Dry plugins' sources written so carry the GECK's
+                // compiled ForEach bytes].
+                let wrapped = toks.len() >= 2 && toks[0].kind == lex::XKind::Open && toks[toks.len() - 1].kind == lex::XKind::Close && {
+                    let mut depth = 0i32;
+                    toks.iter().enumerate().all(|(i, t)| {
+                        depth += match t.kind {
+                            lex::XKind::Open => 1,
+                            lex::XKind::Close => -1,
+                            _ => 0,
+                        };
+                        depth > 0 || i == toks.len() - 1
+                    })
+                };
+                let toks = if wrapped { &toks[1..toks.len() - 1] } else { &toks[..] };
                 let arrow = toks.iter().position(|t| t.is(lex::XKind::Op, "<-"));
                 let head = arrow.and_then(|k| {
                     let var = self.xwhole(&toks[..k])?;

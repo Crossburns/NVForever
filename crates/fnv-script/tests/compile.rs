@@ -648,6 +648,12 @@ fn foreach_walks_an_array_and_a_string() {
 }
 
 #[test]
+fn foreach_head_may_be_parenthesised() {
+    let h = run("array_var a\narray_var e\nfloat sum\nbegin GameMode\nlet a := Ar_Range 1, 3\nforeach (e <- a)\n  let sum += e[\"value\"]\nloop\nend");
+    assert_eq!(h.0[&3], Value::Num(6.0));
+}
+
+#[test]
 fn array_functions() {
     let h = run(
         "array_var a\narray_var b\nfloat f\nfloat g\nfloat k\nstring_var t\nbegin GameMode\nlet a := Ar_List 3, 1, 2\nlet b := Ar_Sort a\nlet f := b[0] * 100 + b[2]\nAr_Append a, 7\nAr_Insert a, 0, 9\nlet g := Ar_Erase a, 1:2\nlet k := Ar_Find 7, a\nlet t := TypeOf (Ar_Construct \"stringmap\")\nAr_Dump a\nend",
