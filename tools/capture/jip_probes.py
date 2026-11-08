@@ -6451,6 +6451,276 @@ LUTANA1_PROBES = (
 )
 
 
+# Set jg3: JohnnyGuitar batch 3 (docs/spec-notes/ext-jg3.md; #1007). Forms are
+# FalloutNV.esm records checked with fnvtool esm inventory / decode [observed 2026-11-08]:
+#  EFSH NukeAtomShader 446D3 (ICON "", ICO2 Effects\FXDustSmallGen01.dds, NAM7 set; fill
+#   colour 75,222,39, edge 154,222,131; z test "Equal To"), fxCateye 15FF5F (flags 8).
+#  MSET musSetINCFreeside 16BA51 (Incidental, HNAM=INAM musINCCreepy 16B41B, no NAM2-7),
+#   musSetLOCCorpRuinsDayABC 176E3F (Location, NAM2-7, PNAM 63, KNAM 66.6),
+#   musSetBTTLRuralGood4Full 14E8AC (Battle, PNAM 80 with an unknown bit 0x40, HNAM 14E8DA,
+#   INAM 14E8DB), musSetOldFO3Dungeon3 166BFD (Location, only NAM2 and NAM5).
+#  CSNO Gomorrah 140521 (chip 139FE0), Tops 144C3F (chip 144C3B), UltraLuxe 144C40,
+#   VikkiVance 144C41, AtomicWrangler 144C42; CHIP UltraLuxeChip 144C3C.
+#  TERM V34SecurityNorthTerminal 13253C (5 items; INAM on 0-3, TNAM 13253D on 4, RNAM ""),
+#   GameTerminalSubMenuEast 9596E (10 items, ANAM 2 on 0-7, item 8 RNAM "You walk to the
+#   west..."), SupplyOfficerContrerasTerminal EFB7B (one item, ANAM 3),
+#   NellisArrayTerminalCompleted 1672C6 (no items); NOTE V34FloodingAltWarningNote 132543;
+#   TERM GameTerminalSubMenuNorth 95966.
+#  QUST VERLegionVets 17A836 (delay 33), Patch04Quest00 17BA15 (0.1), ComplexSceneScriptPS3
+#   17B713 (0.001), VCG02 10A214 (0).
+# Every setter row puts the old value back before it ends.
+
+JG3 = {"nuke": "446D3", "cateye": "15FF5F", "freeside": "16BA51", "corp": "176E3F", "bttl": "14E8AC",
+       "dung": "166BFD", "creepy": "16B41B", "gomorrah": "140521", "tops": "144C3F", "ultra": "144C40",
+       "vikki": "144C41", "wrangler": "144C42", "ultrachip": "144C3C", "v34": "13253C", "east": "9596E",
+       "contreras": "EFB7B", "nellis": "1672C6", "altnote": "132543", "northterm": "95966",
+       "legion": "17A836", "patch04": "17BA15", "complex": "17B713", "vcg02": "10A214", "pistol": "434F",
+       "caps": "F"}
+
+
+def _jg3(pid, body, text=False):
+    return (f"jg3.{pid}", "ref rP\nref rObj\nref rOther\nref rItem\nref rNone\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\n"
+            "string_var sText\nstring_var sSave\nBegin Function { }\n" + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _jg3v(pid, key, expr, text=False):
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return _jg3(pid, _form("rObj", JG3[key]) + rd, bool(text))
+
+
+# A numeric setter: old value, the setter's result (or "-" for a void setter), the value
+# read back, then the old value put back and read again.
+def _jg3set(pid, key, read, setter, restore, void=False):
+    res = f"{setter}\nlet fRes := -1\n" if void else f"let fRes := {setter}\n"
+    return _jg3(pid, _form("rObj", JG3[key]) + f"let fSave := {read}\n{res}let fA := {read}\n{restore}\n"
+                'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA (' + read + "))", True)
+
+
+EFSH_SET = (  # trait, new value [hypothesis targets in comments]
+    (13, 1.5),   # documented float
+    (0, 2.7),    # flags keep whole numbers
+    (1, 5.5),    # an enum keeps whole numbers
+    (4, 255),    # the fill colour: how one number makes three channels
+    (42, 7.25),  # the last trait the setter's page lists
+    (43, 9),     # past the setter's 0-42
+    (47, 1),     # past every table
+)
+
+JG3_PROBES = (
+    # ---- effect shader traits: every id, the colours (4, 14) and past the table
+    [_jg3v(f"efsh.trait.nuke.{t}", "nuke", f"GetEffectShaderTraitNumeric rObj {t}") for t in list(range(0, 48)) + [-1]]
+    + [_jg3v(f"efsh.trait.cateye.{t}", "cateye", f"GetEffectShaderTraitNumeric rObj {t}") for t in (0, 4, 13, 14, 23, 27)]
+    + [_jg3v("efsh.trait.notefsh", "freeside", "GetEffectShaderTraitNumeric rObj 0")]
+    + [_jg3set(f"efsh.set.nuke.{t}", "nuke", f"GetEffectShaderTraitNumeric rObj {t}",
+               f"SetEffectShaderTraitNumeric rObj {t} {v}", f"SetEffectShaderTraitNumeric rObj {t} fSave") for t, v in EFSH_SET]
+    + [_jg3("efsh.set.notefsh", _form("rObj", JG3["freeside"]) + "let fRes := SetEffectShaderTraitNumeric rObj 13 1.5\n"
+            'SetFunctionValue (sv_Construct "%g %g" fRes (GetMediaSetTraitNumeric rObj 0))', True)]
+    # ---- effect shader textures: "" for a missing one, past the table
+    + [_jg3v(f"efsh.tex.nuke.{i}", "nuke", f"GetEffectShaderTexturePath rObj {i}", True) for i in (0, 1, 2, 3, -1)]
+    + [_jg3v("efsh.tex.cateye.1", "cateye", "GetEffectShaderTexturePath rObj 1", True)]
+    + [_jg3("efsh.settex.nuke.1", _form("rObj", JG3["nuke"])
+            + 'SetEffectShaderTexturePath rObj 1 "Effects\\NvfProbe.dds"\nlet sText := GetEffectShaderTexturePath rObj 1\n'
+            'SetEffectShaderTexturePath rObj 1 "Effects\\FXDustSmallGen01.dds"\n'
+            'SetFunctionValue (sv_Construct "[%z] [%z]" sText (GetEffectShaderTexturePath rObj 1))', True)]
+    # ---- media sets: numeric traits (the type's numbers: -1 none, 0 battle .. 3 incidental)
+    + [_jg3v(f"mset.num.{k}.{t}", k, f"GetMediaSetTraitNumeric rObj {t}") for k in ("freeside", "corp") for t in range(0, 18)]
+    + [_jg3v(f"mset.num.{k}.{t}", k, f"GetMediaSetTraitNumeric rObj {t}")
+       for k, t in (("bttl", 0), ("bttl", 13), ("dung", 0), ("corp", 18), ("corp", -1))]
+    + [_jg3v("mset.num.notmset", "nuke", "GetMediaSetTraitNumeric rObj 1")]
+    + [_jg3set(f"mset.set.corp.{t}", "corp", f"GetMediaSetTraitNumeric rObj {t}", f"SetMediaSetTraitNumeric rObj {t} {v}",
+               f"SetMediaSetTraitNumeric rObj {t} fSave", void=True) for t, v in ((8, 50.5), (0, 2.6), (13, 5.5), (14, 7.25))]
+    # ---- media sets: sound paths, missing ones and past the table
+    + [_jg3v(f"mset.str.corp.{t}", "corp", f"GetMediaSetTraitString rObj {t}", True) for t in (0, 1, 2, 3, 4, 5, 6, -1)]
+    + [_jg3v(f"mset.str.dung.{t}", "dung", f"GetMediaSetTraitString rObj {t}", True) for t in (0, 1, 3)]
+    + [_jg3("mset.setstr.corp.0", _form("rObj", JG3["corp"])
+            + 'SetMediaSetTraitString rObj 0 "loc\\NvfProbe.mp3"\nlet sText := GetMediaSetTraitString rObj 0\n'
+            'SetMediaSetTraitString rObj 0 "loc\\corporateruins\\mus_loc_corpruins_day_1low.mp3"\n'
+            'SetFunctionValue (sv_Construct "[%z] [%z]" sText (GetMediaSetTraitString rObj 0))', True)]
+    # ---- media sets: sound forms; a non-sound form and none given to the setter
+    + [_jg3v(f"mset.sound.{k}.{t}", k, f"GetMediaSetTraitSound rObj {t}", "form")
+       for k, t in (("bttl", 0), ("bttl", 1), ("freeside", 0), ("freeside", 1), ("bttl", 2))]  # ("corp", 0) crashed the game [observed 2026-11-08]
+    + [_jg3(f"mset.setsound.bttl.{n}", _form("rObj", JG3["bttl"]) + _form("rOther", JG3[o])
+            + "let rItem := GetMediaSetTraitSound rObj 0\nSetMediaSetTraitSound rObj 0 rOther\nlet sText := GetFormIDString (GetMediaSetTraitSound rObj 0)\n"
+            "SetMediaSetTraitSound rObj 0 rItem\n"
+            'SetFunctionValue (sv_Construct "%z %z %z" (GetFormIDString rItem) sText (GetFormIDString (GetMediaSetTraitSound rObj 0)))', True)
+       for n, o in (("sound", "creepy"), ("notsound", "pistol"))]
+    + [_jg3("mset.setsound.bttl.none", _form("rObj", JG3["bttl"])
+            + "let rItem := GetMediaSetTraitSound rObj 1\nSetMediaSetTraitSound rObj 1 rNone\nlet sText := GetFormIDString (GetMediaSetTraitSound rObj 1)\n"
+            "SetMediaSetTraitSound rObj 1 rItem\n"
+            'SetFunctionValue (sv_Construct "%z %z %z" (GetFormIDString rItem) sText (GetFormIDString (GetMediaSetTraitSound rObj 1)))', True)]
+    # ---- casinos: chips, winnings
+    + [_jg3v(f"casino.chip.{k}", k, "GetCasinoChip rObj", "form") for k in ("gomorrah", "tops", "ultra", "vikki", "wrangler", "nuke")]
+    + [_jg3(f"casino.setchip.tops.{n}", _form("rObj", JG3["tops"]) + _form("rOther", JG3[o])
+            + "let rItem := GetCasinoChip rObj\nSetCasinoChip rObj rOther\nlet sText := GetFormIDString (GetCasinoChip rObj)\n"
+            "SetCasinoChip rObj rItem\n"
+            'SetFunctionValue (sv_Construct "%z %z %z" (GetFormIDString rItem) sText (GetFormIDString (GetCasinoChip rObj)))', True)
+       for n, o in (("chip", "ultrachip"), ("notchip", "caps"))]
+    + [_jg3v(f"casino.win.{k}", k, "GetCasinoWinnings rObj") for k in ("gomorrah", "tops", "ultra", "vikki", "wrangler", "nuke")]
+    + [_jg3set(f"casino.setwin.tops.{n}", "tops", "GetCasinoWinnings rObj", f"SetCasinoWinnings rObj {v}",
+               "SetCasinoWinnings rObj fSave", void=True) for n, v in (("1234", 1234), ("frac", 2.7), ("neg", -50))]
+    # ---- terminals: counts, texts (textID 1/2, a bad textID, past the list)
+    + [_jg3v(f"term.count.{k}", k, "GetTerminalMenuItemCount rObj") for k in ("v34", "east", "contreras", "nellis", "corp")]
+    + [_jg3v(f"term.text.{k}.{w}.{i}", k, f"GetTerminalMenuItemText rObj {w} {i}", True)
+       for k, w, i in (("v34", 1, 0), ("v34", 2, 0), ("v34", 1, 4), ("v34", 0, 0),
+                       ("v34", 3, 0), ("east", 2, 0), ("east", 2, 8))]
+    # an item past the list (v34 5 or -1, nellis 0: it has none) crashed the game [observed 2026-11-08]
+    + [_jg3v(f"term.note.v34.{i}", "v34", f"GetTerminalMenuItemNote rObj {i}", "form") for i in (0, 3, 4)]
+    + [_jg3v(f"term.submenu.{k}.{i}", k, f"GetTerminalMenuItemSubmenu rObj {i}", "form") for k, i in (("v34", 0), ("v34", 4), ("east", 9))]
+    + [_jg3v(f"term.flags.{k}.{i}", k, f"GetTerminalMenuItemFlags rObj {i}")
+       for k, i in (("east", 0), ("east", 8), ("contreras", 0), ("v34", 0), ("v34", 7))]
+    + [_jg3("term.settext.v34.1.4", _form("rObj", JG3["v34"])
+            + 'SetTerminalMenuItemText rObj 1 4 "NvfProbe"\nlet sText := GetTerminalMenuItemText rObj 1 4\n'
+            'SetTerminalMenuItemText rObj 1 4 "System"\n'
+            'SetFunctionValue (sv_Construct "[%z] [%z]" sText (GetTerminalMenuItemText rObj 1 4))', True),
+       _jg3("term.settext.east.2.8", _form("rObj", JG3["east"])
+            + 'SetTerminalMenuItemText rObj 2 8 "NvfProbe"\nlet sText := GetTerminalMenuItemText rObj 2 8\n'
+            'SetTerminalMenuItemText rObj 2 8 "You walk to the west..."\n'
+            'SetFunctionValue (sv_Construct "[%z] [%z]" sText (GetTerminalMenuItemText rObj 2 8))', True)]
+    + [_jg3(f"term.set{fn.lower()}.{n}", _form("rObj", JG3[k]) + _form("rOther", JG3[o])
+            + f"let rItem := GetTerminalMenuItem{fn} rObj {i}\nSetTerminalMenuItem{fn} rObj {i} rOther\n"
+            f"let sText := GetFormIDString (GetTerminalMenuItem{fn} rObj {i})\nSetTerminalMenuItem{fn} rObj {i} rItem\n"
+            f'SetFunctionValue (sv_Construct "%z %z %z" (GetFormIDString rItem) sText (GetFormIDString (GetTerminalMenuItem{fn} rObj {i})))', True)
+       for fn, n, k, i, o in (("Note", "v34.0", "v34", 0, "altnote"), ("Note", "v34.0.notnote", "v34", 0, "northterm"),
+                              ("Submenu", "v34.4", "v34", 4, "northterm"), ("Submenu", "v34.4.notterm", "v34", 4, "altnote"))]
+    + [_jg3set(f"term.setflags.{k}.{i}.{v}", k, f"GetTerminalMenuItemFlags rObj {i}", f"SetTerminalMenuItemFlags rObj {i} {v}",
+               f"SetTerminalMenuItemFlags rObj {i} fSave", void=True) for k, i, v in (("east", 0, 7), ("v34", 4, 1), ("v34", 4, 6))]
+    # ---- quest delay: the record's, 0 (the default), after SetQuestDelay, not a quest
+    + [_jg3v(f"quest.delay.{k}", k, "GetQuestDelay rObj") for k in ("legion", "patch04", "complex", "vcg02", "corp")]
+    + [_jg3set("quest.setdelay.legion", "legion", "GetQuestDelay rObj", "SetQuestDelay rObj 2.5", "SetQuestDelay rObj fSave", void=True)]
+)
+
+
+# Set jg4: JohnnyGuitar batch 4 (docs/spec-notes/ext-jg4.md; #1007). Forms are
+# FalloutNV.esm records checked with fnvtool esm inventory / decode [observed 2026-11-08]:
+#  IDLM TopsGuardMarker 17179B (flags 0, timer 0, 3 idles), VES03WastelandHunterIdleMarker12
+#   15AD22 (flags 1, timer 3, 4 idles), DefaultSuperMutantIdleMarkerGroundGrab 63301
+#   (flags 4, timer 5, 1 idle), VStripFluffPortMarker 16A940 (no IDLF/IDLT/IDLA);
+#   IDLE LooseReadPaperOnHandA 5DB21, 2hrCrouch 269B8.
+#  REGN NewVegasRegion 104160 (RDAT flags 1, priority 100; NVWastelandClearNight 176574 100
+#   global VNight 176537, NVWastelandClear FFC88 100), GSWeatherRegion 123CE3 (flags 0,
+#   priority 100; NVWastelandGS 1237D7 100), WeatherMegaton 73EB4 (flags 1; two weathers
+#   at chance 0 with globals 73A79, 73A78), NVUrbanRegion 173566 (85/15),
+#   VMapGoodspringsRegion 15FF5E and DC01 A0B (no weather block).
+#  RACE Caucasian 19 (Playable), CaucasianChild 42C2 (Child), Ghoul 3B3E, TestQACaucasian
+#   33184 (flags 0; the only race the setters touch).
+#  FACT GoodspringsRingoFaction 162CAB, GoodspringsMilitiaFaction 15EC58, VBooneRogueFaction
+#   152978, the mercenary faction 173EEF (only NVMercenaryMale lists it; NVMercenaryFemaleF
+#   takes factions from it by template), NCR A46E7.
+# Every setter row puts the old value back before it ends.
+
+JG4 = {"tops": "17179B", "hunter": "15AD22", "grab": "63301", "nodata": "16A940", "paper": "5DB21", "crouch": "269B8",
+       "nv": "104160", "gs": "123CE3", "megaton": "73EB4", "urban": "173566", "gsmap": "15FF5E", "dc01": "A0B",
+       "clear": "FFC88", "clearnight": "176574", "gsweather": "1237D7", "vnight": "176537",
+       "megw1": "64609", "megw2": "6A076", "megg1": "73A79", "megg2": "73A78",
+       "caucasian": "19", "child": "42C2", "ghoul": "3B3E", "testqa": "33184",
+       "ringo": "162CAB", "militia": "15EC58", "boonerogue": "152978", "mercfac": "173EEF", "ncr": "A46E7"}
+
+
+def _jg4(pid, body, text=False):
+    return (f"jg4.{pid}", "ref rP\nref rObj\nref rOther\nref rItem\nref rThird\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fC\n"
+            "int iA\nstring_var sText\nstring_var sSave\narray_var aList\narray_var aKeys\narray_var aSave\nBegin Function { }\n"
+            + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _jg4v(pid, key, expr, text=False):
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return _jg4(pid, _form("rObj", JG4[key]) + rd, bool(text))
+
+
+# Appends aList as "size: key=form ..." to sText (keys in the array's own order).
+_JG4_LIST = ('let aKeys := ar_Keys aList\nlet fA := ar_Size aKeys\nlet sText := sv_Construct "%z %g:" sText fA\nlet fB := 0\n'
+             'while fB < fA\nlet fC := aKeys[fB]\nlet rItem := aList[fC]\n'
+             'let sText := sv_Construct "%z %g=%z" sText fC (GetFormIDString rItem)\nlet fB += 1\nloop\n')
+
+
+def _jg4arr(pid, key, expr, pre=""):
+    return _jg4(pid, _form("rObj", JG4[key]) + pre + f'let sText := sv_Construct "a"\nlet aList := {expr}\n' + _JG4_LIST
+                + "SetFunctionValue sText", True)
+
+
+def _jg4set(pid, key, read, setter, restore):
+    return _jg4(pid, _form("rObj", JG4[key]) + f"let fSave := {read}\n{setter}\nlet fA := {read}\n{restore}\n"
+                'SetFunctionValue (sv_Construct "%g %g %g" fSave fA (' + read + "))", True)
+
+
+# A region's weather list after `change`, then `undo`, then the list again.
+def _jg4reg(pid, key, change, undo, extra=""):
+    return _jg4(pid, _form("rObj", JG4[key]) + _form("rOther", JG4["clear"]) + _form("rThird", JG4["vnight"])
+                + 'let sText := sv_Construct "a"\n' + change + "let aList := GetRegionWeathers rObj\n" + _JG4_LIST + extra
+                + undo + "let aList := GetRegionWeathers rObj\n" + _JG4_LIST + "SetFunctionValue sText", True)
+
+
+JG4_PROBES = (
+    # ---- idle markers: animations (record order), traits 1-3 and outside the table
+    [_jg4arr(f"idlm.anims.{k}", k, "GetIdleMarkerAnimations rObj") for k in ("tops", "hunter", "grab", "nodata", "ringo")]
+    + [_jg4v(f"idlm.trait.{k}.{t}", k, f"GetIdleMarkerTraitNumeric rObj {t}") for k in ("tops", "hunter", "grab", "nodata") for t in range(0, 5)]
+    + [_jg4set(f"idlm.settrait.hunter.{t}.{n}", "hunter", f"GetIdleMarkerTraitNumeric rObj {t}",
+               f"SetIdleMarkerTraitNumeric rObj {t} {v}", f"SetIdleMarkerTraitNumeric rObj {t} fSave")
+       for t, n, v in ((2, "7.5", 7.5), (2, "neg", -1), (1, "5", 5), (1, "2", 2), (1, "0", 0), (3, "1", 1), (0, "9", 9))]
+    # one entry replaced, then put back; past the list; a form that is not an idle
+    + [_jg4(f"idlm.setanim.hunter.{n}", _form("rObj", JG4["hunter"]) + _form("rOther", JG4[o])
+            + "let aSave := GetIdleMarkerAnimations rObj\n" + (f"let rThird := aSave[{i}]\n" if 0 <= i < 4 else "")
+            + f"SetIdleMarkerAnimation rObj {i} rOther\nlet aList := GetIdleMarkerAnimations rObj\n"
+            'let sText := sv_Construct "a"\n' + _JG4_LIST
+            + (f"SetIdleMarkerAnimation rObj {i} rThird\n" if 0 <= i < 4 else "let iA := aSave\nSetIdleMarkerAnimations rObj iA\n")
+            + "let aList := GetIdleMarkerAnimations rObj\n" + _JG4_LIST + "SetFunctionValue sText", True)
+       for n, i, o in (("0", 0, "paper"), ("3", 3, "paper"), ("9", 9, "paper"), ("neg", -1, "paper"), ("notidle", 0, "testqa"))]
+    # the whole list from an array (the count follows), with a non-idle entry, then put back
+    + [_jg4(f"idlm.setanims.tops.{n}", _form("rObj", JG4["tops"]) + _form("rOther", JG4["paper"]) + _form("rThird", JG4[t])
+            + "let aSave := GetIdleMarkerAnimations rObj\nlet aList := ar_List rOther rThird rOther\nlet iA := aList\n"
+            "SetIdleMarkerAnimations rObj iA\nlet fRes := GetIdleMarkerTraitNumeric rObj 3\nlet aList := GetIdleMarkerAnimations rObj\n"
+            'let sText := sv_Construct "n%g" fRes\n' + _JG4_LIST + "let iA := aSave\nSetIdleMarkerAnimations rObj iA\n"
+            "let aList := GetIdleMarkerAnimations rObj\n" + _JG4_LIST
+            + 'SetFunctionValue (sv_Construct "%z n%g" sText (GetIdleMarkerTraitNumeric rObj 3))', True)
+       for n, t in (("idles", "crouch"), ("notidle", "testqa"))]
+    # ---- region weathers: lists, nth entries (past the list), membership
+    + [_jg4arr(f"regn.weathers.{k}", k, "GetRegionWeathers rObj") for k in ("nv", "gs", "megaton", "urban", "gsmap", "tops")]
+    + [_jg4v(f"regn.nth.{k}.{i}.{f}", k, f"GetNthRegionWeather{fn} rObj {i}", "form" if f != "chance" else False)
+       for k, i in (("nv", 0), ("nv", 1), ("nv", 2), ("nv", -1), ("megaton", 0), ("megaton", 1), ("urban", 1), ("gsmap", 0))
+       for f, fn in (("type", "Type"), ("chance", "Chance"), ("global", "Global"))
+       if (k, i, f) != ("urban", 1, "global")]  # GetNthRegionWeatherGlobal on NVUrbanRegion 1, and on GSWeatherRegion 1 after AddRegionWeather, crashed the game [observed 2026-11-08]
+    + [_jg4(f"regn.in.{k}.{w}", _form("rObj", JG4[k]) + _form("rOther", JG4[w]) + "SetFunctionValue (IsWeatherInRegion rObj rOther)")
+       for k, w in (("nv", "clearnight"), ("nv", "gsweather"), ("gs", "gsweather"), ("gsmap", "gsweather"))]
+    + [_jg4v(f"regn.override.{k}", k, "GetRegionWeatherOverride rObj") for k in ("nv", "gs", "megaton", "gsmap")]
+    + [_jg4v(f"regn.priority.{k}", k, "GetRegionWeatherPriority rObj") for k in ("nv", "gs", "megaton", "urban", "gsmap")]
+    + [_jg4set(f"regn.setoverride.gs.{v}", "gs", "GetRegionWeatherOverride rObj", f"SetRegionWeatherOverride rObj {v}",
+               "SetRegionWeatherOverride rObj fSave") for v in (1, 2)]
+    + [_jg4set("regn.setoverride.nv.0", "nv", "GetRegionWeatherOverride rObj", "SetRegionWeatherOverride rObj 0",
+               "SetRegionWeatherOverride rObj fSave")]
+    + [_jg4set(f"regn.setpriority.gs.{n}", "gs", "GetRegionWeatherPriority rObj", f"SetRegionWeatherPriority rObj {v}",
+               "SetRegionWeatherPriority rObj fSave") for n, v in (("50", 50), ("300", 300), ("neg", -5), ("frac", 20.6))]
+    # add (chance, global, a chance over 100, one already listed), remove, clear; each undone
+    + [_jg4reg("regn.add.gs", "gs", "AddRegionWeather rObj rOther 40\n", "RemoveRegionWeather rObj rOther\n",
+               'let sText := sv_Construct "%z c%g" sText (GetNthRegionWeatherChance rObj 1)\n'),
+       _jg4reg("regn.add.gs.global", "gs", "AddRegionWeather rObj rOther 30 rThird\n", "RemoveRegionWeather rObj rOther\n",
+               'let sText := sv_Construct "%z c%g" sText (GetNthRegionWeatherChance rObj 1)\n'),
+       _jg4reg("regn.add.gs.150", "gs", "AddRegionWeather rObj rOther 150\n", "RemoveRegionWeather rObj rOther\n",
+               'let sText := sv_Construct "%z c%g" sText (GetNthRegionWeatherChance rObj 1)\n'),
+       # NVWastelandGS is listed already at 100: listed twice, or its chance changed? Undone by
+       # clearing and adding it back at 100.
+       _jg4reg("regn.add.gs.dup", "gs", _form("rOther", JG4["gsweather"]) + "AddRegionWeather rObj rOther 50\n",
+               "ClearRegionWeathers rObj\nAddRegionWeather rObj rOther 100\n",
+               'let sText := sv_Construct "%z c%g" sText (GetNthRegionWeatherChance rObj 0)\n'),
+       _jg4reg("regn.remove.gs.notlisted", "gs", "RemoveRegionWeather rObj rOther\n", ""),
+       # a region without a weather block (DC01, far from the player): gains one?
+       _jg4reg("regn.add.dc01", "dc01", "AddRegionWeather rObj rOther 60\n", "ClearRegionWeathers rObj\n",
+               'let sText := sv_Construct "%z o%g p%g" sText (GetRegionWeatherOverride rObj) (GetRegionWeatherPriority rObj)\n'),
+       # WeatherMegaton (Capital Wasteland) cleared, then its two entries added back as in the record
+       _jg4reg("regn.clear.megaton", "megaton", "ClearRegionWeathers rObj\n",
+               _form("rOther", JG4["megw1"]) + _form("rThird", JG4["megg1"]) + "AddRegionWeather rObj rOther 0 rThird\n"
+               + _form("rOther", JG4["megw2"]) + _form("rThird", JG4["megg2"]) + "AddRegionWeather rObj rOther 0 rThird\n",
+               'let sText := sv_Construct "%z o%g p%g" sText (GetRegionWeatherOverride rObj) (GetRegionWeatherPriority rObj)\n')]
+    # ---- race flags: GetRaceFlag reads, SetRaceFlag on TestQACaucasian only (0, 2, another flag, a value of 5)
+    + [_jg4v(f"race.get.{k}.{f}", k, f"GetRaceFlag rObj {f}") for k in ("caucasian", "child", "ghoul", "testqa") for f in (0, 1, 2)]
+    + [_jg4set(f"race.set.testqa.{f}.{v}", "testqa", f"GetRaceFlag rObj {f}", f"SetRaceFlag rObj {f} {v}", f"SetRaceFlag rObj {f} fSave")
+       for f, v in ((0, 1), (2, 1), (1, 1), (3, 1), (0, 5))]
+    # ---- faction members: rank filter, template-inherited factions, not a faction
+    + [_jg4arr(f"fact.members.{k}", k, "GetFactionMembers rObj") for k in ("ringo", "militia", "boonerogue", "mercfac", "testqa")]
+    + [_jg4arr(f"fact.members.militia.{r}", "militia", f"GetFactionMembers rObj {r}") for r in (0, 1, 2, -1)]
+    + [_jg4("fact.members.ncr.size", _form("rObj", JG4["ncr"]) + "SetFunctionValue (ar_Size (GetFactionMembers rObj))")]
+)
+
+
 # sup1 + showoff3 probe sets (drafted 2026-11-08 for the observer session).
 # Exec'd into jip_probes' namespace: uses _form and NF from there.
 #
@@ -7511,6 +7781,8 @@ WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-sette
                 "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3", "showoff4", "sup5"}
 SETS.update({"lutana1": LUTANA1_PROBES})
 WRITING_SETS |= {"lutana1"}
+SETS.update({"jg3": JG3_PROBES, "jg4": JG4_PROBES})
+WRITING_SETS |= {"jg3", "jg4"}
 SETS.update({"sup1": SUP1_PROBES, "showoff3": SHOWOFF3_PROBES})
 WRITING_SETS |= {"showoff3"}
 SETS.update({"jip6": JIP6_PROBES, "jip7": JIP7_PROBES, "jip6b": JIP6B_PROBES, "jip7b": JIP7B_PROBES})  # JIP 6/7 probes (#1006)
