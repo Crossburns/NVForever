@@ -148,3 +148,33 @@ Left because NVForever lacks the system or the data, or the page does not say en
   two events need the event dispatcher's cell-change hook.
 - Deprecated (GetMessageDisplayTime, the third name JIP LN does not register, is built, §7):
   GetCellRefs, SetVariableFloat; BaseAddItemHealth (deprecated, "doesn't work properly").
+
+## 9. Batch 2 (2026-11-08, #1009, `nvse_lu2.rs` and `mod_files.rs`)
+
+The owner asked on 2026-11-08 to finish every function; this batch adds the pieces §8
+named as missing for 29 of the 53: the map marker and radio data of a placed reference
+(`fnv_sim::refs::PlacedRef::map_marker`, `::radio`, decoded from REFR XMRK/FNAM/TNAM and
+XRDO by the schema's layout), the hotkeys' unit data, the INI writers through NVForever's
+file layer, and the plugins that hold a form (`GameData::form_overrides`). From the pages
+and the records [documented], not probed: probe set `lu2` (`tools/capture/jip_probes.py`,
+lab `L5.ext.lu2`) is written, not run. Tests: `crates/fnv-game/tests/lutana2.rs`.
+
+| Function | NVForever |
+|---|---|
+| IsMapMarker, GetMapMarkerHidden, GetMapMarkerTravel, GetMapMarkerType | a reference with XMRK; FNAM 4 "Show All" Hidden, 2 Can Travel To; TNAM's type, 0 None … 14 Vault [documented: the pages' tables; xEdit REFR] |
+| SetMapMarkerHidden, SetMapMarkerTravel, SetMapMarkerVisible, SetMapMarkerType | the flag (1 Visible) or type for the session (`Game::marker_flags`, `::marker_kind`); the Pip-Boy map's fast-travel check reads the flags as set (`pipboy::data::travel::travel_target`) [documented]. The map's icons and its visibility test still read the record [not built: follow-up]. The page's "permanent state" after ShowMap is not kept: nothing is saved [hypothesis] |
+| IsRadioRef, GetRadioBroadcastType, GetRadioRadius, GetRadioStatic, GetRadioPosRef and the four setters | XRDO: the range type 0 Radius … 4 Current Cell, the radius, the static percentage, the exterior position reference; set for the session, GetAvailableRadios' copy too (`nvse_gaps::RadioSite`) [documented]. The engine's radio plays from the record [not built: follow-up] |
+| ClearAllHotkeys, SetHotkey `index item health mods` | the eight keys cleared; SetHotkeyItem with the unit's health and mod flags kept beside it [documented]; an item the player carries [hypothesis, as SetHotkeyItem] |
+| SaveHotkeys, RestoreHotkeys `array` | an array of eight [item, health, mods] lists and back [documented: deprecated, "returns an array that can be passed to RestoreHotkeys"; hypothesis: the layout] |
+| SetINISection `section map [file]`, RemoveINIKey `Section:Key [file]`, RemoveINISection `section [file]` | under `Data\Config` in NVForever's layer (`mod_files.rs`), the calling mod's file by default, numbers as LU writes them; a missing key or section writes nothing [documented; hypothesis for the last] |
+| IsSkillMagazine `ingestible` | an effect with a condition HasPerk Retention or Comprehension, the perks found by Editor ID [documented] |
+| SetIngestibleFlag `ingestible flag value` | 2 Food, 4 Medicine on ENIT for the session; GetIngestibleFlag and the Medicine and Survival boosts read it (`Game::ingest_on`) [documented]; the vendors' categories read the record [not built] |
+| GetShowQuestItems | SetShowQuestItems' switch, on by default [documented]; SetShowQuestItems is built too (opcode 0x114E [observed: command_opcodes.json]); the engine's inventory lists quest items either way [not built] |
+| GetFormCountType `array type` | the forms of the array of that GetType code [documented] |
+| GetFormMods `form` | the plugins defining or overriding it, in load order [documented: the example] |
+
+Left for batch 3 (24): appearance and base swaps (CopyFaceGenFrom, SetRace, SetBaseForm,
+LNSetActorTemplate, SetActorTemplateFlag), EquipItemData, SetEquippedData, SetPerkRank,
+the perk entry setters, the activator prompt, ANIO and LSCT fields, SetLoadScreenTexture,
+GetPlayerRegions, OnCellEnter, OnCellExit, GetCellRefs, SetVariableFloat,
+BaseAddItemHealth.

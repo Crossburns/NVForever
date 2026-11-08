@@ -1058,6 +1058,20 @@
    "tags": ["ext", "itr", "probes"]
   },
   {
+   "id": "L5.ext.lu2",
+   "layer": 5,
+   "description": "Lutana batch 2 through JIP LN (#1009; docs/spec-notes/ext-lutana.md section 9): radio data of the pages' references, skill magazines, the quest items switch, form counts by type, the plugins of a form, SetIngestibleFlag put back; set lu2 of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/lu2.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/lu2.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "lu", "probes", "lu2"]
+  },
+  {
    "id": "L5.ext.pp",
    "layer": 5,
    "description": "ppNVSE (#1014; docs/spec-notes/ext-pp.md), installed as VanillaPluginsPlus.dll: AX variables, form instances, extended item-mod slots, the sighting node, topic prompts, the camera rotation, line files and the Devkit getters with no Devkit; set pp of tools/capture/jip_probes.py, keyed by probe id, steps in order. Oracle and candidate as L5.ext.jip.getters.",

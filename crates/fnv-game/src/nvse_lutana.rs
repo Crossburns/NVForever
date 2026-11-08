@@ -18,6 +18,8 @@ use std::collections::HashMap;
 /// What this batch's setters changed, for the session.
 #[derive(Debug, Default)]
 pub struct LutanaState {
+    /// Batch 2's state: map markers, radio data, hotkey units (`nvse_lu2`).
+    pub lu2: crate::nvse_lu2::State,
     /// Whole copies of the records a setter changed, read by the getters (and by
     /// [`challenge`], [`casino`], [`recipe`]).
     pub challenges: HashMap<FormId, ChallengeDef>,

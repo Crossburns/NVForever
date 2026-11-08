@@ -306,6 +306,14 @@ pub fn form_type_code(sig: &[u8; 4]) -> Option<i32> {
     })
 }
 
+/// `SetShowQuestItems flag`: quest items shown (1, the default) or hidden (0) in the
+/// player's inventory [documented: catalogue summary]; LU's GetShowQuestItems reads it.
+/// The engine's inventory lists them either way [not built: hiding them].
+pub fn set_show_quest_items(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
+    g.player.show_quest_items = Some(a.num_or(0, 1.0) != 0.0);
+    none()
+}
+
 /// `container.RemoveAllTypedItems [target] [retainOwnership] [suppressMessages]
 /// [typeCode] [exceptionList]` [documented: GECK wiki RemoveAllTypedItems]: the items
 /// of the form type (all with no code or −1, none with 0) leave the container, except

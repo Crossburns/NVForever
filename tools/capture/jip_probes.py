@@ -6089,6 +6089,41 @@ SUP3_PROBES = (
 )
 
 
+# lu2 (writes, session only, each change put back; #1009): Lutana batch 2
+# (docs/spec-notes/ext-lutana.md §9) through JIP LN: radio data of the pages' own
+# references (RNVTARef, AlienRadioBeaconREF), skill magazines, the quest items switch,
+# form counts by type, the plugins of Scotch, and SetIngestibleFlag on the page's
+# Jalapeno, put back.
+_LU2_HEAD = "ref rP\nref rObj\narray_var aR\nfloat fRes\nfloat fA\nBegin Function { }\n"
+
+
+def _lu2(pid, body, text=False):
+    return (f"lu2.{pid}", _LU2_HEAD + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _lu2v(pid, expr, text=False):
+    return _lu2(pid, f"SetFunctionValue ({expr})", text)
+
+
+LU2_PROBES = (
+    [_lu2v("radio.rnv.is", "RNVTARef.IsRadioRef"),
+     _lu2v("radio.rnv.type", "RNVTARef.GetRadioBroadcastType"),
+     _lu2v("radio.beacon.radius", "AlienRadioBeaconREF.GetRadioRadius"),
+     _lu2v("radio.beacon.static", "AlienRadioBeaconREF.GetRadioStatic"),
+     _lu2v("radio.beacon.type", "AlienRadioBeaconREF.GetRadioBroadcastType"),
+     _lu2v("radio.beacon.posref", "GetFormIDString (AlienRadioBeaconREF.GetRadioPosRef)", True),
+     _lu2v("radio.player.is", "rP.IsRadioRef"),
+     _lu2("radio.beacon.set", "AlienRadioBeaconREF.SetRadioRadius 2000\nlet fRes := AlienRadioBeaconREF.GetRadioRadius\nAlienRadioBeaconREF.SetRadioRadius 6000\nSetFunctionValue fRes"),
+     _lu2v("marker.player", "rP.IsMapMarker"),
+     _lu2v("magazine.explosives", "IsSkillMagazine MagazineNVExplosives"),
+     _lu2("magazine.stimpak", _form("rObj", NF["stimpak"]) + "SetFunctionValue (IsSkillMagazine rObj)"),
+     _lu2v("questitems", "GetShowQuestItems"),
+     _lu2("formcount.alch", _form("rObj", NF["stimpak"]) + "SetFunctionValue (GetFormCountType (ar_List rObj, rObj, rP) 47)"),
+     _lu2("formmods.scotch", "let aR := GetFormMods Scotch\nSetFunctionValue (sv_Construct \"%g %z\" (ar_Size aR) (aR[0]))", True),
+     _lu2("ingestible.food", "let fRes := GetIngestibleFlag JalapenoPepper 2\nSetIngestibleFlag JalapenoPepper 2 0\nlet fA := GetIngestibleFlag JalapenoPepper 2\n"
+          "SetIngestibleFlag JalapenoPepper 2 1\nSetFunctionValue (sv_Construct \"%g %g %g\" fRes fA (GetIngestibleFlag JalapenoPepper 2))", True)]
+)
+
 SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PROBES, "jip-events": EVENT_PROBES,
         "jip-hits": HIT_PROBES, "jip-records": RECORD_PROBES, "nvse-forms": NVSE_FORM_PROBES, "nvse-vars": VAR_PROBES,
         "nvse-refs": REF_PROBES, "nvse-controls": CONTROL_PROBES, "nvse-actors": ACTOR_PROBES,
@@ -6152,6 +6187,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "rules1": RULES1_PROBES,
         "rules2": RULES2_PROBES,
         "showoff2": SHOWOFF2_PROBES,
+        "lu2": LU2_PROBES,
         "tmpl1": TMPL1_PROBES,
         "jg1": JG1_PROBES,
         "jg2": JG2_PROBES,
@@ -6169,7 +6205,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "lu2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
 
 
 def script(body):

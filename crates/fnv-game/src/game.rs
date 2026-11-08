@@ -765,6 +765,10 @@ pub struct PlayerState {
     /// Miscellaneous statistics by code (ModPCMiscStat).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub misc_stats: BTreeMap<u16, f64>,
+    /// SetShowQuestItems: quest items shown in the player's inventory (`None`: never set,
+    /// shown) [documented: SetShowQuestItems, "Shows (1, default)"].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub show_quest_items: Option<bool>,
     /// Map markers ShowMap made visible.
     #[serde(skip_serializing_if = "BTreeSet::is_empty", default)]
     pub map_markers: BTreeSet<FormId>,
