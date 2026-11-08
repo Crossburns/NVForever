@@ -5736,6 +5736,109 @@ SUP2_PROBES = (
 )
 
 
+# sup3 (writes, session only; #1008): SUP batch 3 (docs/spec-notes/ext-sup3.md): the free
+# (TFC) camera's position, angles and raw rotation, the calculated angles and positions,
+# and the INI readers. One step per game frame: the camera is turned on by Con_TFC in one
+# row and read in the next; positions are printed relative to the player's, so the rows do
+# not hang on where the save stands. The camera is turned off again in the last camera
+# row. The INI rows read the plugins' own INI files in Data\NVSE\Plugins (read only).
+def _sup3(pid, body, text=True):
+    return (f"sup3.{pid}", "ref rP\nfloat fA\nfloat fB\nfloat fC\nfloat fD\nfloat fX\nfloat fY\nfloat fZ\nstring_var sText\n"
+            "array_var aList\nBegin Function { }\n" + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _sup3_rel():
+    """The camera's position less the player's, as text."""
+    return ("SetFunctionValue (sv_Construct \"%.1f %.1f %.1f\" ((GetTFCPos X) - (rP.GetPos X)) "
+            "((GetTFCPos Y) - (rP.GetPos Y)) ((GetTFCPos Z) - (rP.GetPos Z)))")
+
+
+_SUP3_ANGLES = ("SetFunctionValue (sv_Construct \"%.4f %.4f %.4f %.4f\" (GetTFCAngle X) (GetTFCAngle Z) "
+                "(GetTFCRot X) (GetTFCRot Y))")
+
+_SUP3_INI = {"sup": "Data/NVSE/Plugins/supNVSE.ini", "jg": "Data/NVSE/Plugins/JohnnyGuitar.ini",
+             "jip": "Data/NVSE/Plugins/jip_nvse.ini"}
+
+
+def _sup3_list(expr):
+    return (f"let aList := {expr}\nlet fA := ar_Size aList\nif fA > 0\n"
+            "SetFunctionValue (sv_Construct \"%g|%z|%z\" fA (aList[0]) (aList[fA - 1]))\nelse\n"
+            "SetFunctionValue (sv_Construct \"%g\" fA)\nendif")
+
+
+SUP3_PROBES = (
+    # The camera before it flies [documented: GetTFCPos, GetTFCAngle, GetTFCRot].
+    [_sup3("cam.off.pos", _sup3_rel()),
+     _sup3("cam.off.angles", _SUP3_ANGLES),
+     _sup3("cam.off.player", "SetFunctionValue (sv_Construct \"%.4f %.4f\" (rP.GetAngle X) (rP.GetAngle Z))"),
+     _sup3("cam.on", "Con_TFC\nSetFunctionValue 1", False),
+     _sup3("cam.on.pos", _sup3_rel()),
+     _sup3("cam.on.angles", _SUP3_ANGLES),
+     # Positions [documented: SetTFCPos, SetTFCPosEx, GetTFCPosEx].
+     _sup3("cam.setpos", "let fA := SetTFCPos X ((rP.GetPos X) + 100)\nSetTFCPos Y ((rP.GetPos Y) - 50)\n"
+           "SetTFCPos Z ((rP.GetPos Z) + 25)\n"
+           "SetFunctionValue (sv_Construct \"%g %.1f %.1f %.1f\" fA ((GetTFCPos X) - (rP.GetPos X)) "
+           "((GetTFCPos Y) - (rP.GetPos Y)) ((GetTFCPos Z) - (rP.GetPos Z)))"),
+     _sup3("cam.setpos.next", _sup3_rel()),
+     _sup3("cam.setposex", "let fX := (rP.GetPos X) + 10\nlet fY := (rP.GetPos Y) + 20\nlet fZ := (rP.GetPos Z) + 30\n"
+           "let fA := SetTFCPosEx fX fY fZ\nlet fB := GetTFCPosEx fX fY fZ\n"
+           "SetFunctionValue (sv_Construct \"%g %g %.1f %.1f %.1f\" fA fB (fX - (rP.GetPos X)) (fY - (rP.GetPos Y)) (fZ - (rP.GetPos Z)))"),
+     # Angles and the raw rotation [documented: SetTFCAngle, SetTFCRot, …Ex; GetTFCAngle's
+     # note: "not the RAW value but a rotation value converted to angle"].
+     _sup3("cam.setangle.x", "let fA := SetTFCAngle X 30\nSetFunctionValue (sv_Construct \"%g %.4f %.4f %.4f %.4f\" fA (GetTFCAngle X) (GetTFCAngle Z) (GetTFCRot X) (GetTFCRot Y))"),
+     _sup3("cam.setangle.z", "SetTFCAngle Z 45\n" + _SUP3_ANGLES),
+     _sup3("cam.setangle.next", _SUP3_ANGLES),
+     _sup3("cam.setangle.wide", "SetTFCAngle Z 400\nSetTFCAngle X -100\n" + _SUP3_ANGLES),
+     _sup3("cam.setrot.x", "let fA := SetTFCRot X 0.5\nSetFunctionValue (sv_Construct \"%g %.4f %.4f %.4f %.4f\" fA (GetTFCAngle X) (GetTFCAngle Z) (GetTFCRot X) (GetTFCRot Y))"),
+     _sup3("cam.setrot.y", "SetTFCRot Y 1\n" + _SUP3_ANGLES),
+     _sup3("cam.angleex", "SetTFCAngleEx 10 20\nlet fA := GetTFCAngleEx fA fB\nGetTFCRotEx fC fD\n"
+           "SetFunctionValue (sv_Construct \"%.4f %.4f %.4f %.4f\" fA fB fC fD)"),
+     _sup3("cam.rotex", "SetTFCRotEx 0.25 0.75\nGetTFCRotEx fC fD\nGetTFCAngleEx fA fB\n"
+           "SetFunctionValue (sv_Construct \"%.4f %.4f %.4f %.4f\" fA fB fC fD)"),
+     # The angle to look at a point from the camera [documented: GetCalculatedAngleX/Z
+     # ForTFCCamera], the camera put at the player's feet first.
+     _sup3("cam.calc.x", "let fX := rP.GetPos X\nlet fY := rP.GetPos Y\nlet fZ := rP.GetPos Z\nSetTFCPosEx fX fY fZ\n"
+           "SetFunctionValue (sv_Construct \"%.4f %.4f %.4f %.4f\" (GetCalculatedAngleXForTFCCamera (fX + 100) fY (fZ + 100)) "
+           "(GetCalculatedAngleXForTFCCamera fX (fY + 100) (fZ - 100)) (GetCalculatedAngleXForTFCCamera fX (fY + 100) fZ) "
+           "(GetCalculatedAngleXForTFCCamera fX (fY + 30) (fZ + 40)))"),
+     _sup3("cam.calc.z", "let fX := rP.GetPos X\nlet fY := rP.GetPos Y\nSetTFCPosEx fX fY (rP.GetPos Z)\n"
+           "SetFunctionValue (sv_Construct \"%.4f %.4f %.4f %.4f %.4f\" (GetCalculatedAngleZForTFCCamera (fX + 100) fY) "
+           "(GetCalculatedAngleZForTFCCamera fX (fY + 100)) (GetCalculatedAngleZForTFCCamera (fX - 100) fY) "
+           "(GetCalculatedAngleZForTFCCamera fX (fY - 100)) (GetCalculatedAngleZForTFCCamera (fX + 100) (fY + 100)))"),
+     _sup3("cam.off2", "Con_TFC\nSetFunctionValue 1", False),
+     _sup3("cam.off2.pos", _sup3_rel()),
+     _sup3("cam.off2.angles", _SUP3_ANGLES)]
+    # Positions around a reference or a point [documented: GetCalculatedPos,
+    # GetCalculatedPosAlt].
+    + [_sup3(f"calc.pos.{a}", f"rP.GetCalculatedPos {a} 25 fX fY\n"
+             "SetFunctionValue (sv_Construct \"%.3f %.3f\" (fX - (rP.GetPos X)) (fY - (rP.GetPos Y)))") for a in (0, 90, 45, -90, 180)]
+    + [_sup3(f"calc.alt.{a}", f"let fA := GetCalculatedPosAlt {a} 25 fX fY 100 200\n"
+             "SetFunctionValue (sv_Construct \"%g %.3f %.3f\" fA fX fY)") for a in (0, 90, 30)]
+    # The INI readers [documented: ReadINIFloatFromFile, …Alt, ReadINIStringFromFile,
+    # ReadINISectionKeysFromFile, ReadINISectionsFromFile].
+    + [_sup3("ini.float.bom", f"SetFunctionValue (ReadINIFloatFromFile \"{_SUP3_INI['sup']}\" \"Settings\" \"bTFCPosOnLoadFix\")", False),
+       _sup3("ini.float.case", f"SetFunctionValue (ReadINIFloatFromFile \"{_SUP3_INI['jg']}\" \"Main\" \"bFixItemStackCount\")", False),
+       _sup3("ini.float.space", f"SetFunctionValue (ReadINIFloatFromFile \"{_SUP3_INI['jip']}\" \"GamePatches\" \"bIgnoreDTDRFix\")", False),
+       _sup3("ini.float.missing", f"SetFunctionValue (ReadINIFloatFromFile \"{_SUP3_INI['jg']}\" \"MAIN\" \"bNoSuchKey\")", False),
+       _sup3("ini.alt.found", f"SetFunctionValue (ReadINIFloatFromFileAlt \"{_SUP3_INI['jg']}\" \"MAIN\" \"bFixItemStackCount\")", False),
+       _sup3("ini.alt.missing", f"let fA := ReadINIFloatFromFileAlt \"{_SUP3_INI['jg']}\" \"MAIN\" \"bNoSuchKey\"\n"
+             "SetFunctionValue (sv_Construct \"%g\" (IsNumberNAN fA))"),
+       _sup3("ini.alt.nofile", "let fA := ReadINIFloatFromFileAlt \"Data/NVSE/Plugins/NoSuchFile.ini\" \"MAIN\" \"bX\"\n"
+             "SetFunctionValue (sv_Construct \"%g\" (IsNumberNAN fA))"),
+       _sup3("ini.float.backslash", "SetFunctionValue (ReadINIFloatFromFile \"Data\\\\NVSE\\\\Plugins\\\\JohnnyGuitar.ini\" \"MAIN\" \"bFixItemStackCount\")", False),
+       _sup3("ini.string", f"SetFunctionValue (sv_Construct \"[%z]\" (ReadINIStringFromFile \"{_SUP3_INI['jip']}\" \"GamePatches\" \"bIgnoreDTDRFix\"))"),
+       _sup3("ini.string.missing", f"SetFunctionValue (sv_Construct \"[%z]\" (ReadINIStringFromFile \"{_SUP3_INI['jg']}\" \"MAIN\" \"bNoSuchKey\"))"),
+       _sup3("ini.keys", _sup3_list(f"ReadINISectionKeysFromFile \"{_SUP3_INI['jg']}\" \"MAIN\"")),
+       _sup3("ini.keys.case", _sup3_list(f"ReadINISectionKeysFromFile \"{_SUP3_INI['jg']}\" \"main\"")),
+       _sup3("ini.sections.sup", _sup3_list(f"ReadINISectionsFromFile \"{_SUP3_INI['sup']}\"")),
+       _sup3("ini.sections.jip", _sup3_list(f"ReadINISectionsFromFile \"{_SUP3_INI['jip']}\"")),
+       _sup3("ini.sections.nofile", _sup3_list("ReadINISectionsFromFile \"Data/NVSE/Plugins/NoSuchFile.ini\"")),
+       # Outside the game folder: the original may read it; NVForever reads only under the
+       # game folder (mod_files::on_disk; ext-sup3.md).
+       _sup3("ini.float.outside", "SetFunctionValue (ReadINIFloatFromFile \"../Fallout New Vegas/Data/NVSE/Plugins/supNVSE.ini\" \"Settings\" \"bTFCPosOnLoadFix\")", False)]
+)
+
+
 SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PROBES, "jip-events": EVENT_PROBES,
         "jip-hits": HIT_PROBES, "jip-records": RECORD_PROBES, "nvse-forms": NVSE_FORM_PROBES, "nvse-vars": VAR_PROBES,
         "nvse-refs": REF_PROBES, "nvse-controls": CONTROL_PROBES, "nvse-actors": ACTOR_PROBES,
@@ -5809,11 +5912,12 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "tmpl2": TMPL2_PROBES,
         "tmpl3": TMPL3_PROBES,
         "itr": ITR_PROBES,
-        "sup2": SUP2_PROBES}
+        "sup2": SUP2_PROBES,
+        "sup3": SUP3_PROBES}
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jip5", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jip5", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
 
 
 def script(body):

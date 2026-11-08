@@ -19526,6 +19526,24 @@ expect = [
 ]
 
 [[scenario]]
+name = "tfc-script-place"
+source = "[observed: sup3 cam.setpos, cam.setangle.wide] SUP batch 3 (#1008, ext-sup3.md §1): with the free camera on, a script's SetTFCPos and SetTFCAngle move it (nvf_play::free_cam takes Game::ui.camera.tfc) and read back as set, 400 not wrapped; [design] the camera starts where tfc leaves it"
+areas = ["camera", "scripts", "console"]
+paths = [
+  "crates/fnv-game/src/nvse_sup3.rs", "crates/fnv-game/src/functions/camera.rs",
+  "engine/nvf-play/src/free_cam.rs",
+]
+env = { NVF_PLAY_TEST_GOTO = "1:-68375:4800:8600", NVF_PLAY_TEST_CONSOLE = "10:tfc;10.5:close;12:SetTFCAngle Z 400;12.2:SetTFCPos X -68000;12.5:close;14:PrintC \"nvf tfc %g %g\", (GetTFCPos X), (GetTFCAngle Z);14.5:close;16:tfc;16.5:close" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice"]
+run_seconds = 18
+expect = [
+  { re = 'free camera: on \(mode 0', label = "tfc frees the camera" },
+  { re = 'free camera: a script put it at \(-68000, ', label = "the engine moves the camera where the script set it" },
+  { re = 'script: print "nvf tfc -68000 400"', label = "the place reads back as set, the heading not wrapped" },
+  { re = 'free camera: off', label = "tfc puts the camera back" },
+]
+
+[[scenario]]
 name = "ui-hud-code-traits"
 source = "[observed: hud.md §14] T4a: HUD places at 16:10 (visibility is in the unit tests: the console line runs with the console open, a PlayState::Menu that hides NVForever's HUD); [design] GetUIFloat through the console beside the current drawing"
 areas = ["ui", "scripts", "console"]

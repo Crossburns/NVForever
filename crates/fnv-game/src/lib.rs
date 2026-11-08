@@ -103,6 +103,7 @@ pub mod nvse_knvse;
 pub mod nvse_small;
 pub mod script_runner;
 pub mod nvse_sup1;
+pub mod nvse_sup3;
 pub mod nvse_dialogue;
 pub mod nvse_vheyes;
 pub mod nvse_one111;
