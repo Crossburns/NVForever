@@ -218,6 +218,9 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
     if let Some(r) = crate::nvse_jg4::call(g, ctx, name, subject, args) {
         return Some(r);
     }
+    if let Some(r) = crate::nvse_jg5::call(g, ctx, name, subject, args) {
+        return Some(r);
+    }
     if let Some(r) = crate::nvse_sup1::call(g, ctx, name, subject, args) {
         return Some(r);
     }

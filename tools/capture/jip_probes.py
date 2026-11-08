@@ -5247,6 +5247,105 @@ JIP8_PROBES = (
 )
 
 
+# jg5 (writes, session only, each change put back where the plugin allows; #1007):
+# JohnnyGuitar batch 5 (docs/spec-notes/ext-jg5.md) on FalloutNV.esm forms [observed:
+# fnvtool esm inventory and decode; fnvtool world alt-textures]: VaultSuit21 (alternate
+# textures on the male biped model, index 0, and the female biped, 0 and 6),
+# ArmorRadiationSuit (none on the male biped), MS18RangerBattlearmor, WeapNVDynamiteNoDrop (indices 2, 0, 1),
+# VMapGoodspringsRegion (map name "Goodsprings") and 0x123CE3 (the other region of the
+# Goodsprings cell, no map data), CamDefaultShoot, NVGecko and DefaultBodyPartData, the
+# Stimpak, Jet, WithdrawalJet and the 10mm pistol, Doc Mitchell's reference. The player's
+# own location name needs travel (console steps) and is not in this set.
+JG5 = {"vs21": "104184", "radsuit": "33078", "dynamite": "10108D", "gsregion": "15FF5E", "gsother": "123CE3",
+       "cams": "1B2C2", "gecko": "10CD74", "defaultbpd": "1D", "stimpak": "15169", "jet": "15164",
+       "withdrawal": "33067", "pistol": "434F", "docref": "104C0F", "ranger": "23030"}
+
+
+def _jg5(pid, body, text=False):
+    return (f"jg5.{pid}", "ref rP\nref rObj\nref rOther\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fC\n"
+            "float fD\nfloat fE\nstring_var sText\nstring_var sSave\narray_var aList\narray_var aKeys\nBegin Function { }\n"
+            + _form("rP", NF["player"]) + body, text, None, "")
+
+
+def _jg5v(pid, key, expr, text=False):
+    rd = f"SetFunctionValue (GetFormIDString ({expr}))" if text == "form" else f"SetFunctionValue ({expr})"
+    return _jg5(pid, _form("rObj", JG5[key]) + rd, bool(text))
+
+
+# An array or map as "size: key=form ...", keys in the array's own order.
+def _jg5arr(pid, key, expr):
+    return _jg5(pid, _form("rObj", JG5[key]) + f"let aList := {expr}\nlet aKeys := ar_Keys aList\nlet fA := ar_Size aKeys\n"
+                'let sText := sv_Construct "%g:" fA\nlet fB := 0\nwhile fB < fA\nlet fC := aKeys[fB]\nlet rItem := aList[fC]\n'
+                'let sText := sv_Construct "%z %g=%z" sText fC (GetFormIDString rItem)\nlet fB += 1\nloop\nSetFunctionValue sText', True)
+
+
+JG5_PROBES = (
+    # 1. how GetRGBColor packs the channels (whole numbers)
+    [_jg5(f"rgb.{r}.{g}.{b}", f'SetFunctionValue (sv_Construct "%.0f" (GetRGBColor {r} {g} {b}))', True)
+     for r, g, b in ((255, 128, 1), (1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 0, 0), (255, 255, 255))]
+    # 2. GetTimePlayed's units, as ratios (the values themselves differ run to run): 0/1,
+    # 1/2, 3/0 and no argument/0, and whether unit 1 has a fraction.
+    + [_jg5("time.units", "let fA := GetTimePlayed 0\nlet fB := GetTimePlayed 1\nlet fC := GetTimePlayed 2\n"
+            "let fD := GetTimePlayed 3\nlet fE := GetTimePlayed\nlet sText := sv_Construct \"t\"\n"
+            'if fB > 0\nlet sText := sv_Construct "%z %.0f" sText (fA / fB)\nendif\n'
+            'if fC > 0\nlet sText := sv_Construct "%z %.0f" sText (fB / fC)\nelse\nlet sText := sv_Construct "%z c0" sText\nendif\n'
+            'if fA > 0\nlet sText := sv_Construct "%z %.2f %.2f" sText (fD / fA) (fE / fA)\nendif\n'
+            'SetFunctionValue (sv_Construct "%z %g" sText ((fB - (Floor fB)) > 0))', True)]
+    # 3. a reference's location name, without travel: Doc Mitchell in his house
+    + [_jg5("location.docref", _form("rObj", JG5["docref"]) + "SetFunctionValue (rObj.GetLocationName)", True)]
+    # 4. region map names; the region without map data keeps its new name for the session
+    + [_jg5v(f"region.name.{k}", k, "GetRegionMapName rObj", True) for k in ("gsregion", "gsother")]
+    + [_jg5("region.setname.new", _form("rObj", JG5["gsother"]) + 'let fRes := SetRegionMapName rObj "NvfProbe"\n'
+            'SetFunctionValue (sv_Construct "%g [%z]" fRes (GetRegionMapName rObj))', True),
+       _jg5("region.setname.back", _form("rObj", JG5["gsregion"]) + 'let fRes := SetRegionMapName rObj "NvfProbe"\n'
+            'let sText := GetRegionMapName rObj\nSetRegionMapName rObj "Goodsprings"\n'
+            'SetFunctionValue (sv_Construct "%g [%z] [%z]" fRes sText (GetRegionMapName rObj))', True)]
+    # 5. alternate textures of an armour: no model given, then each model, then 5
+    + [_jg5arr("alt.ex.vs21", "vs21", "GetAltTexturesEx rObj"), _jg5arr("alt.ex.radsuit", "radsuit", "GetAltTexturesEx rObj")]
+    + [_jg5arr(f"alt.ex.vs21.{m}", "vs21", f"GetAltTexturesEx rObj {m}") for m in range(0, 6)]
+    + [_jg5arr(f"alt.armor.{k}.{m}", k, f"GetArmorAltTextures rObj {m}") for k in ("vs21", "radsuit") for m in range(1, 6)]
+    # MS18RangerBattlearmor: every model's entries differ (male biped 6, 7, 1; female biped
+    # 4, 1, 5; male world 0), which tells which model the call without one reads.
+    + [_jg5arr("alt.ex.ranger", "ranger", "GetAltTexturesEx rObj")]
+    + [_jg5arr(f"alt.ex.ranger.{m}", "ranger", f"GetAltTexturesEx rObj {m}") for m in range(1, 5)]
+    + [_jg5arr("alt.weapon.dynamite", "dynamite", "GetWeaponAltTextures rObj"),
+       _jg5arr("alt.ex.dynamite", "dynamite", "GetAltTexturesEx rObj")]
+    # 6. the weapon alt-texture setters' results: clearing an index without an entry, a form
+    # that is not a texture set, and index 0's own texture set put back on it
+    + [_jg5("alt.clear.none", _form("rObj", JG5["dynamite"]) + "let fRes := ClearWeaponAltTexture rObj 5\n"
+            'SetFunctionValue (sv_Construct "%g %g" fRes (ar_Size (GetWeaponAltTextures rObj)))', True),
+       _jg5("alt.set.nottxst", _form("rObj", JG5["dynamite"]) + _form("rOther", JG5["stimpak"])
+            + "let fRes := SetWeaponAltTexture rObj 5 rOther\n"
+            'SetFunctionValue (sv_Construct "%g %g" fRes (ar_Size (GetWeaponAltTextures rObj)))', True),
+       _jg5("alt.set.same", _form("rObj", JG5["dynamite"]) + "let aList := GetAltTexturesEx rObj\nlet rOther := aList[0]\n"
+            "let fRes := SetWeaponAltTexture rObj 0 rOther\nlet aList := GetAltTexturesEx rObj\nlet rItem := aList[0]\n"
+            'SetFunctionValue (sv_Construct "%g %z %z %g" fRes (GetFormIDString rOther) (GetFormIDString rItem) '
+            "(ar_Size (GetWeaponAltTextures rObj)))", True)]
+    # 7. actor effect types
+    + [_jg5v(f"effecttype.{k}", k, "GetActorEffectType rObj") for k in ("withdrawal", "jet", "pistol")]
+    # 8. a VATS camera shot's traits and flags; trait 1 set to 7, outside its table
+    + [_jg5v(f"cams.trait.{t}", "cams", f"GetCameraShotTraitNumeric rObj {t}") for t in range(0, 10)]
+    + [_jg5v("cams.flags", "cams", "GetCameraShotFlags rObj"),
+       _jg5v("cams.imod", "cams", "GetCameraShotImageSpaceModifier rObj", "form"),
+       _jg5("cams.settrait.1.7", _form("rObj", JG5["cams"]) + "let fSave := GetCameraShotTraitNumeric rObj 1\n"
+            "let fRes := SetCameraShotTraitNumeric rObj 1 7\nlet fA := GetCameraShotTraitNumeric rObj 1\n"
+            "SetCameraShotTraitNumeric rObj 1 fSave\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA (GetCameraShotTraitNumeric rObj 1))', True),
+       _jg5("cams.settrait.6", _form("rObj", JG5["cams"]) + "let fSave := GetCameraShotTraitNumeric rObj 6\n"
+            "let fRes := SetCameraShotTraitNumeric rObj 6 2.5\nlet fA := GetCameraShotTraitNumeric rObj 6\n"
+            "SetCameraShotTraitNumeric rObj 6 fSave\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA (GetCameraShotTraitNumeric rObj 6))', True)]
+    # 9. body-part strings, the head (part 1) and the torso (part 0)
+    + [_jg5v(f"bpd.{k}.{p}.{t}", k, f"GetBodyPartTraitString rObj {p} {t}", True)
+       for k in ("gecko", "defaultbpd") for p in (0, 1) for t in range(0, 7)]
+    # 10. equip types: one in the table, one outside it, and -1
+    + [_jg5v("equip.stimpak", "stimpak", "GetEquipType rObj")]
+    + [_jg5(f"equip.set.{v}", _form("rObj", JG5["stimpak"]) + f"let fSave := GetEquipType rObj\nlet fRes := SetEquipType rObj {v}\n"
+            "let fA := GetEquipType rObj\nSetEquipType rObj fSave\n"
+            'SetFunctionValue (sv_Construct "%g %g %g %g" fSave fRes fA (GetEquipType rObj))', True) for v in (5, 40, -1)]
+)
+
+
 # pp (writes, session only, each change put back where the plugin allows; #1014): ppNVSE
 # (docs/spec-notes/ext-pp.md), installed as VanillaPluginsPlus.dll, on FalloutNV.esm forms
 # [observed: fnvtool esm inventory; fnvtool dialogue lines]: the baseball bat, the 10mm
@@ -6056,6 +6155,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "tmpl1": TMPL1_PROBES,
         "jg1": JG1_PROBES,
         "jg2": JG2_PROBES,
+        "jg5": JG5_PROBES,
         "one111": ONE111_PROBES,
         "jip5": JIP5_PROBES,
         "jip8": JIP8_PROBES,
@@ -6069,7 +6169,7 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
 
 
 def script(body):

@@ -597,6 +597,9 @@ pub struct RegionDef {
     pub areas: Vec<Vec<[f32; 2]>>,
     /// The weather block (RDAT type 3, then RDWT), when the region has one.
     pub weathers: Option<RegionWeathers>,
+    /// The map block (RDAT type 4, then RDMP), when the region has one: its name and the
+    /// header's priority (schema `sky.json` REGN RDMP).
+    pub map: Option<(String, u8)>,
 }
 
 /// A region's weather block [documented: xEdit wbRegionDataEntries type 3; schema
@@ -3350,6 +3353,11 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
                             })
                             .collect();
                         rg.weathers = Some(RegionWeathers { flags: num(h.and_then(|h| h.get("flags"))) as u8, priority: num(h.and_then(|h| h.get("priority"))) as u8, list });
+                    }
+                    // A map name follows a header of type 4 [observed: VMapGoodspringsRegion].
+                    b"RDMP" if num(header.and_then(|h| h.get("type"))) == 4.0 => {
+                        let name = v.as_ref().and_then(Json::as_str).unwrap_or_default().to_string();
+                        rg.map = Some((name, num(header.and_then(|h| h.get("priority"))) as u8));
                     }
                     b"WNAM" => rg.world = fid(v),
                     b"RPLI" => rg.areas.push(Vec::new()),

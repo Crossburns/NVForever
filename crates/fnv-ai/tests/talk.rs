@@ -572,6 +572,29 @@ fn a_say_to_package_says_its_line_without_a_conversation() {
     assert_eq!(s.talks(), 1);
 }
 
+/// A Say To line to the player waits for a clear line as a force greet does: Officer
+/// Kendall's ambush bark in Tale of Two Wastelands (CG04Security02Ambush) came through
+/// the walls of the player's room and its end script skipped the wake-up's stage 3.
+#[test]
+fn a_say_to_line_to_the_player_waits_for_a_clear_line() {
+    use fnv_game::detection::Detection;
+    let f = fixture();
+    let mut s = sim(&f, R_SAY, [300.0, 100.0, 0.0]);
+    s.game.detection.measures_player = true;
+    let blocked = Detection { clear: false, ..Detection::default() };
+    s.game.detection.record(FormId(R_SAY), FormId(PLAYER), blocked, 0.0);
+    s.run(2.0);
+    let unseen = s.events().iter().filter(|e| matches!(e, AiEvent::TalkUnseen { .. })).count();
+    assert_eq!((s.talks(), unseen), (0, 1), "{:?}", s.events());
+    assert!(!s.game.is_talking(FormId(R_SAY)));
+    let clear = Detection { clear: true, ..Detection::default() };
+    s.game.detection.record(FormId(R_SAY), FormId(PLAYER), clear, s.game.time);
+    s.run(1.0);
+    assert_eq!(s.talks(), 1, "{:?}", s.events());
+    assert!(s.game.dialogue.is_none());
+    assert!(s.game.is_talking(FormId(R_SAY)));
+}
+
 #[test]
 fn a_conversation_between_two_actors_is_not_carried_out() {
     let f = fixture();
