@@ -156,10 +156,11 @@ fn actor_values_by_code() {
     let str0 = n(&mut g, "player.GetActorValue Strength");
     q(&mut g, "player.ModActorValueAlt 5 3");
     assert_eq!(n(&mut g, "player.GetActorValue Strength"), str0 + 3.0);
-    // [documented: GetActorValueModifierAlt: 1 permanent, 2 temporary, 3 or none both].
-    assert_eq!(n(&mut g, "player.GetActorValueModifierAlt Strength 1"), 3.0);
-    assert_eq!(n(&mut g, "player.GetActorValueModifierAlt Strength 2"), 0.0);
-    assert_eq!(n(&mut g, "player.GetActorValueModifierAlt Strength"), 3.0);
+    // GetActorValueModifierAlt reads the effects' modifiers only: ModAV's change is in
+    // none of its filters [observed 2026-11-08: jg6.av.mod].
+    for filter in ["1", "2", "3", "4", ""] {
+        assert_eq!(n(&mut g, &format!("player.GetActorValueModifierAlt Strength {filter}")), 0.0, "filter {filter}");
+    }
     // [documented: DamageActorValueAlt and RestoreActorValueAlt on Health, code 16].
     let hp = n(&mut g, "player.GetActorValue Health");
     q(&mut g, "player.DamageActorValueAlt 16 5");

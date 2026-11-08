@@ -149,14 +149,26 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             zero
         }
-        // `av [filter]`: the modifier from effects and ModAV, 1 the permanent one, 2 the
-        // temporary one, 3 or none both [documented: GetActorValueModifierAlt]; another
-        // filter 0 [hypothesis].
+        // `av [filter]`: the modifier the actor's active effects hold, 1 the permanent
+        // one, 2 the temporary one, 3 or none both [documented: GetActorValueModifierAlt,
+        // "gained from Effects"]. ModAV's change is not in it [observed 2026-11-08: jg6.av.mod,
+        // ModActorValueAlt Luck 1 on the player read 0 with every filter]. Another filter
+        // 0 [observed: filter 4 read 0].
         "getactorvaluemodifieralt" | "getavmodalt" => {
             let a = subject.unwrap_or(FormId::PLAYER_REF);
             let Some(code) = av(g, args, 0) else { return Some(Ok(zero)) };
-            let perm = crate::functions::actor::actor_value_parts(g, a, code).map(|p| p[1]).unwrap_or(0.0);
-            let temp = crate::functions::actor::temporary(g, a, code);
+            let (mut perm, mut temp) = (0.0, 0.0);
+            for e in g.effects.iter().filter(|e| e.target == a && !e.inactive) {
+                let Some(c) = e.change.as_ref() else { continue };
+                if c.code != code || c.kind != crate::aid::ChangeKind::Modifier {
+                    continue;
+                }
+                if c.permanent_pool {
+                    perm += c.applied;
+                } else {
+                    temp += c.applied;
+                }
+            }
             XVal::Num(match args.get(1) {
                 Some(XVal::Num(t)) if *t == 1.0 => perm,
                 Some(XVal::Num(t)) if *t == 2.0 => temp,
@@ -324,15 +336,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // Seconds since the last frame [documented: GameGetSecondsPassed]: the frame step.
         "gamegetsecondspassed" | "ggetsecpass" => XVal::Num(g.cfg.frame_seconds),
-        // `interiors`: the buffered cells, the interiors or the exteriors [documented:
-        // GetBufferedCellsAlt; hypothesis: NVForever keeps no cell buffer beyond the
-        // loaded area, so the loaded cells stand for it], by FormID.
-        "getbufferedcellsalt" => {
-            let want_int = num(args, 0, 0.0) != 0.0;
-            let cells: Vec<FormId> = g.loaded_cells.iter().copied().collect();
-            let out: Vec<XVal> = cells.into_iter().filter(|&c| g.world.placed.world_of(c).is_none() == want_int).map(|c| XVal::Ref(c.0)).collect();
-            list(g, out)
-        }
+        // `interiors`: no array, for the interiors and the exteriors alike [observed
+        // 2026-11-08: jg6.cell.buffered, ar_Size -1 for both with the player outdoors at
+        // the airport, JohnnyGuitar 5.28]. The page calls it deprecated for JIP's
+        // GetBufferedCells [documented: GetBufferedCellsAlt].
+        "getbufferedcellsalt" => XVal::Array(0),
         // ---- radios and talking activators ----
         // The placed references of every radio station (a TACT with the Radio Station
         // header flag, docs/spec-notes/radio.md §2) [documented: GetAllGameRadios], by

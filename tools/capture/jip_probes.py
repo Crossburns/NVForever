@@ -5392,7 +5392,10 @@ JG6_PROBES = (
     + [_jg6("life.player", "SetFunctionValue (rP.GetLifeState)"),
        _jg6v("life.doc", "docref", "rObj.GetLifeState"),
        _jg6v("dialogue.doc", "docref", "rObj.IsInDialogueWithPlayer"),
-       _jg6("furniture.player", "SetFunctionValue (GetFormIDString (rP.GetCurrentFurnitureRef))", True),
+       # GetCurrentFurnitureRef is registered without a return type (nvse.log: RegisterCommand,
+       # where the form getters that compiled are RegTypedCommand), so its result is a number
+       # GetFormIDString does not take [observed 2026-11-08: did not compile]; `set` keeps it.
+       _jg6("furniture.player", "set rObj to rP.GetCurrentFurnitureRef\nSetFunctionValue (GetFormIDString rObj)", True),
        _jg6("healthdamage.player", "SetFunctionValue (rP.HasHealthDamageEffect)"),
        _jg6("tempingestible.size", "let aList := GetTempIngestibleEffects\nSetFunctionValue (ar_Size aList)"),
        _jg6("perks.available", "let aList := GetAvailablePerks\nSetFunctionValue (ar_Size aList)"),
@@ -5415,21 +5418,25 @@ JG6_PROBES = (
             "let rObj := aList[fB]\nif eval (GetFormIDString (rObj.GetBaseObject)) == \"0014DF02\"\nlet fC += 1\nendif\nlet fB += 1\nloop\n"
             'SetFunctionValue (sv_Construct "%g %g" fA fC)', True),
        _jg6v("tact.actor.rnv", "rnv", "GetTalkingActivatorActor rObj", "form")]
-    # 6. a reference's prompt override, set and put back; the couch trigger's primitive
+    # 6. a reference's prompt override, set; the couch trigger's primitive. A string
+    # argument takes no `$sSave` here [observed 2026-11-08: jg6.prompt.door did not compile,
+    # as jip8's trial], so the door keeps "NvfProbe" for the session; nothing after reads it.
     + [_jg6("prompt.door", _form("rObj", JG6["docdoor"]) + "let sSave := rObj.GetRefActivationPromptOverride\n"
-            'rObj.SetRefActivationPromptOverride "NvfProbe"\nlet sText := rObj.GetRefActivationPromptOverride\n'
-            'rObj.SetRefActivationPromptOverride $sSave\nSetFunctionValue (sv_Construct "[%z] [%z] [%z]" sSave sText (rObj.GetRefActivationPromptOverride))', True),
+            'rObj.SetRefActivationPromptOverride "NvfProbe"\n'
+            'SetFunctionValue (sv_Construct "[%z] [%z]" sSave (rObj.GetRefActivationPromptOverride))', True),
        _jg6v("primitive.couch", "couchtrigger", "rObj.GetPrimitiveType"),
        _jg6v("primitive.door", "docdoor", "rObj.GetPrimitiveType")]
     # 7. calls per reference, counted in an array the lambda appends to: the NPCs (42) of
     # Doc's house, every reference of it against GetRefsInCell, the high-level actors
-    # against GetActorsByProcessingLevel 0
+    # against GetActorsByProcessingLevel 0. The lambdas are `Begin Function` blocks: the
+    # arrow form `({ref r} => ar_Append aList r)` did not compile here [observed 2026-11-08,
+    # all three rows; hypothesis: the arrow form or the one-letter name, not isolated].
     + [_jg6("callperref.npc", _form("rObj", JG6["dochouse"]) + 'let aList := ar_Construct "array"\n'
-            "CallPerRef ({ref r} => ar_Append aList r) 42 0 0 rObj\nSetFunctionValue (ar_Size aList)"),
+            "CallPerRef (Begin Function {ref rA}\nar_Append aList rA\nEnd) 42 0 0 rObj\nSetFunctionValue (ar_Size aList)"),
        _jg6("callperref.all", _form("rObj", JG6["dochouse"]) + 'let aList := ar_Construct "array"\n'
-            "CallPerRef ({ref r} => ar_Append aList r) 0 0 0 rObj\n"
+            "CallPerRef (Begin Function {ref rA}\nar_Append aList rA\nEnd) 0 0 0 rObj\n"
             'SetFunctionValue (sv_Construct "%g %g" (ar_Size aList) (ar_Size (GetRefsInCell rObj 0)))', True),
-       _jg6("callpermobile.high", 'let aList := ar_Construct "array"\nCallPerMobileObject ({ref r} => ar_Append aList r) 0\n'
+       _jg6("callpermobile.high", 'let aList := ar_Construct "array"\nCallPerMobileObject (Begin Function {ref rA}\nar_Append aList rA\nEnd) 0\n'
             'SetFunctionValue (sv_Construct "%g %g" (ar_Size aList) (ar_Size (GetActorsByProcessingLevel 0)))', True)]
 )
 
