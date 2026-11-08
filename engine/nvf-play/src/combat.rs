@@ -2114,6 +2114,12 @@ pub(crate) fn player_count(sim: &SimState, item: Option<FormId>) -> u32 {
 /// magazine's own among them: rounds dropped, sold or taken by a script are gone from the
 /// gun too. A weapon that uses no ammo item, a regenerating one and god mode's full
 /// magazine have no rounds in the inventory to follow.
+/// ShowOff's shot switches as the scripts left them: the tracer override (`None` the
+/// chance rolls) and whether hitscan shots are drawn (`fnv_game::nvse_showoff5`).
+fn shot_switches(script: Option<&ScriptState>) -> (Option<bool>, bool) {
+    script.and_then(|s| s.rt.as_ref()).map_or((None, false), |rt| (rt.game.showoff.b5.tracer_override, rt.game.showoff.b5.force_draw_hitscan))
+}
+
 fn magazine_in_hand(magazine: u32, carried: u32, no_ammo: bool, regenerates: bool, god: bool) -> u32 {
     if no_ammo || regenerates || god {
         magazine
@@ -3005,9 +3011,12 @@ pub(crate) fn fire(
                     }
                 }
                 stats.projectiles += shots.len() as u32;
+                // ShowOff's SetProjectileTracerChanceOverride and SetForceDrawHitscanProjectiles.
+                let (tracer_over, draw_hitscan) = shot_switches(script.as_deref());
                 for p in shots {
-                    let rolled = c.rng.next_f32() < tracer_chance || c.tracer_hold.is_some();
-                    let shown = rolled || DRAW_EVERY_PROJECTILE;
+                    let roll = c.rng.next_f32() < tracer_chance;
+                    let rolled = tracer_over.map_or(roll, |o| o && tracer_chance > 0.0) || c.tracer_hold.is_some();
+                    let shown = rolled || DRAW_EVERY_PROJECTILE || (draw_hitscan && p.hitscan);
                     // A line along the shot: for what is too fast to follow (found at
                     // once), and at the tracer chance for the rest [design].
                     let tracer = rolled || (shown && instant(&p));
@@ -4034,9 +4043,11 @@ fn actor_attacks(
             ps.iter_mut().for_each(|p| p.speed_up(m));
         }
         let probe_created = ps.len();
+        let (tracer_over, draw_hitscan) = shot_switches(script.as_deref());
         for p in ps {
-            let rolled = c.rng.next_f32() < tracer_chance || c.tracer_hold.is_some();
-            let shown = rolled || DRAW_EVERY_PROJECTILE;
+            let roll = c.rng.next_f32() < tracer_chance;
+            let rolled = tracer_over.map_or(roll, |o| o && tracer_chance > 0.0) || c.tracer_hold.is_some();
+            let shown = rolled || DRAW_EVERY_PROJECTILE || (draw_hitscan && p.hitscan);
             let tracer = rolled || (shown && instant(&p));
             let dir = vec::normalize(p.vel);
             c.next_visual += 1;
@@ -4536,6 +4547,11 @@ fn fly(
                     }
                 }
             }
+        }
+        // The blast's live reference for the scripts (ShowOff's GetExplosionRefRadius and
+        // GetExplosionRefSource), gone after the frame (`fnv_game::nvse_showoff5`).
+        if let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
+            crate::script::with_world(rt, &mut sim, |rt| rt.game.explosion_placed(id, cause.map(|c| c.actor), at, x.radius));
         }
         let hits = {
             let world = view(&mut phys, script.as_deref(), Some(&sim));

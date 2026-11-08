@@ -23,6 +23,10 @@ pub struct SceneNode {
     pub scale: f32,
     /// The NiAVObject flags; bit 0 hides it.
     pub flags: u32,
+    /// A shape's NiMaterialProperty values in Get/SetMaterialPropertyValue's order:
+    /// specular R G B, emissive R G B, glossiness, alpha, emissive mult [documented: the
+    /// pages' value IDs 0-8]; `None` for a node or a shape without one.
+    pub material: Option<[f32; 9]>,
 }
 
 /// A change a script made, for the engine to apply to the drawn nodes.
@@ -38,6 +42,8 @@ pub enum SceneEdit {
     Insert { r: FormId, target: String, name: String, as_parent: bool },
     /// A model's nodes under `target` (`model` under meshes).
     Attach { r: FormId, target: String, model: String },
+    /// One NiMaterialProperty value of a shape (`id` 0-8, as in [`SceneNode::material`]).
+    Material { r: FormId, node: String, id: usize, v: f32 },
 }
 
 /// The mirror and the queued changes.
@@ -154,8 +160,79 @@ fn axis(v: Option<&XVal>) -> Option<usize> {
     }
 }
 
+/// A result and values for the script variables the VM writes (`Vm::out_call`).
+fn outputs(g: &mut Game, ret: f64, vals: &[f64]) -> XVal {
+    let entries = std::iter::once(ret).chain(vals.iter().copied()).enumerate().map(|(i, v)| (XKey::Num(i as f64), XVal::Num(v))).collect();
+    XVal::Array(g.ext.new_array(ArrayKind::List, entries))
+}
+
+type Mat = [[f32; 3]; 3];
+
+fn mul(a: &Mat, b: &Mat) -> Mat {
+    let mut o = [[0.0; 3]; 3];
+    for (i, row) in o.iter_mut().enumerate() {
+        for (j, c) in row.iter_mut().enumerate() {
+            *c = (0..3).map(|k| a[i][k] * b[k][j]).sum();
+        }
+    }
+    o
+}
+
+fn apply(m: &Mat, v: [f32; 3]) -> [f32; 3] {
+    [0, 1, 2].map(|i| m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2])
+}
+
+/// The rotation of X Y Z angles (radians) taken about the fixed axes in that order,
+/// Rz·Ry·Rx: the mirror's convention (`SceneNode::rotation`, the engine's `EulerRot::ZYX`).
+fn rotation(a: [f32; 3]) -> Mat {
+    let (sx, cx) = a[0].sin_cos();
+    let (sy, cy) = a[1].sin_cos();
+    let (sz, cz) = a[2].sin_cos();
+    let rx = [[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]];
+    let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+    let rz = [[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]];
+    mul(&rz, &mul(&ry, &rx))
+}
+
+/// [`rotation`]'s angles back, in degrees.
+fn extrinsic_angles(m: &Mat) -> [f32; 3] {
+    let y = (-m[2][0]).clamp(-1.0, 1.0).asin();
+    [m[2][1].atan2(m[2][2]), y, m[1][0].atan2(m[0][0])].map(f32::to_degrees)
+}
+
+/// The angles of the same rotation taken about the turning axes, X then Y then Z
+/// (Rx·Ry·Rz), in degrees.
+fn intrinsic_angles(m: &Mat) -> [f32; 3] {
+    let y = m[0][2].clamp(-1.0, 1.0).asin();
+    [(-m[1][2]).atan2(m[2][2]), y, (-m[0][1]).atan2(m[0][0])].map(f32::to_degrees)
+}
+
+/// A node's translation and rotation: as its parent holds it, or (`world`) in the world,
+/// through the nodes above it and the reference's own position and angles. `None`
+/// without the tree or the node.
+fn node_place(g: &mut Game, r: FormId, node: &str, world: bool) -> Option<([f32; 3], Mat)> {
+    let t = g.scene.tree(r)?.clone();
+    let mut i = find(&t, node)?;
+    let local = |n: &SceneNode| (n.translation, rotation(n.rotation.map(f32::to_radians)), n.scale);
+    let (mut pos, mut rot, _) = local(&t[i]);
+    if !world {
+        return Some((pos, rot));
+    }
+    while let Some(p) = t[i].parent {
+        let (pt, pr, ps) = local(&t[p]);
+        pos = apply(&pr, pos.map(|x| x * ps));
+        pos = [pos[0] + pt[0], pos[1] + pt[1], pos[2] + pt[2]];
+        rot = mul(&pr, &rot);
+        i = p;
+    }
+    let (rp, ra) = g.ref_pos_rot(r)?;
+    let rr = rotation(ra);
+    let p = apply(&rr, pos);
+    Some(([p[0] + rp[0], p[1] + rp[1], p[2] + rp[2]], mul(&rr, &rot)))
+}
+
 /// The model file of a base form (MODL), under meshes.
-pub(crate) fn model_of(g: &Game, f: FormId) -> Option<String> {
+pub fn model_of(g: &Game, f: FormId) -> Option<String> {
     let b = crate::functions::base_of(g, f).unwrap_or(f);
     match crate::nvse::record_value(g, b, "MODL", "").or_else(|| crate::nvse::record_value(g, b, "MODL", "model")) {
         Some(XVal::Str(s)) if !s.is_empty() => Some(s),
@@ -314,7 +391,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                     Some(n) => (true, n.to_string()),
                     None => (false, what.to_string()),
                 };
-                let node = SceneNode { name: nm.clone(), parent: if as_parent { t[i].parent } else { Some(i) }, translation: [0.0; 3], rotation: [0.0; 3], scale: 1.0, flags: 0 };
+                let node = SceneNode { name: nm.clone(), parent: if as_parent { t[i].parent } else { Some(i) }, translation: [0.0; 3], rotation: [0.0; 3], scale: 1.0, flags: 0, material: None };
                 t.push(node);
                 if as_parent {
                     let new = t.len() - 1;
@@ -325,6 +402,55 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                 g.scene.edits.push(SceneEdit::Attach { r: target_ref, target: target.to_string(), model: what.to_string() });
             }
             XVal::Num(1.0)
+        }
+        // ---- JIP batch 9 (docs/spec-notes/jip-ui-9.md §3)
+        // `block id`: a value of the block's NiMaterialProperty, 0 without one, a block
+        // of that name or 3D [hypothesis: the page names no failure value].
+        "getmaterialpropertyvalue" => {
+            let id = num(args, 1, -1.0);
+            let Some(t) = g.scene.tree(r) else { return Some(Ok(zero)) };
+            let v = find(t, &text(args, 0)).and_then(|i| t[i].material).filter(|_| (0.0..9.0).contains(&id)).map_or(0.0, |m| m[id as usize]);
+            XVal::Num(f64::from(v))
+        }
+        // `block id value`: the value, for the engine to draw; this reference's only
+        // [hypothesis: the page's note says an inventory reference changes the base's
+        // model]. 0 [hypothesis: as the other setters, though the page names a result].
+        "setmaterialpropertyvalue" => {
+            let (node, id, v) = (text(args, 0), num(args, 1, -1.0), num(args, 2, f64::NAN));
+            if !(0.0..9.0).contains(&id) || !v.is_finite() {
+                return Some(Ok(zero));
+            }
+            let (id, v) = (id as usize, v as f32);
+            let mut found = false;
+            if let Some(t) = g.scene.tree(r) {
+                if let Some(m) = find(t, &node).and_then(|i| t[i].material.as_mut()) {
+                    m[id] = v;
+                    found = true;
+                }
+            }
+            if found {
+                g.scene.edits.push(SceneEdit::Material { r, node, id, v });
+            }
+            zero
+        }
+        // `block [getWorld] [pcModel]` (the three variables taken out by the VM): 1 and
+        // the translation, or 0 and the variables unchanged [documented]. The world
+        // position adds the nodes above and the reference's own place [hypothesis: the
+        // reference's angles turn its model as a node's do]. pcModel is not read: the
+        // mirror has the drawn model only.
+        "getnifblocktranslationalt" => {
+            let world = num(args, 1, 0.0) != 0.0;
+            let Some((pos, _)) = node_place(g, r, &text(args, 0), world) else { return Some(Ok(outputs(g, 0.0, &[]))) };
+            outputs(g, 1.0, &pos.map(f64::from))
+        }
+        // `block [which] [pcModel]`: 0 extrinsic to the parent (as GetNifBlockRotation),
+        // 1 extrinsic in the world, 2 intrinsic to the parent, 3 intrinsic in the world
+        // [documented: the page's table].
+        "getnifblockrotationalt" => {
+            let which = num(args, 1, 0.0) as i64;
+            let Some((_, m)) = node_place(g, r, &text(args, 0), which == 1 || which == 3) else { return Some(Ok(outputs(g, 0.0, &[]))) };
+            let a = if which >= 2 { intrinsic_angles(&m) } else { extrinsic_angles(&m) };
+            outputs(g, 1.0, &a.map(f64::from))
         }
         // `form block`: the form's model has a node of that exact name [observed:
         // "projectilenode" 0 where "ProjectileNode" is 1].
