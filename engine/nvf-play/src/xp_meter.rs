@@ -276,6 +276,7 @@ fn watch(
     mut sounds: MessageWriter<PlaySound>,
     mut sound_forms: Local<HashMap<&'static str, Option<FormId>>>,
     mut cap_logged: Local<bool>,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else {
         meter.set_if_neq(Meter::default());
@@ -289,6 +290,12 @@ fn watch(
     }
     let mut play = |name: &'static str| play_sound(sfx.as_deref(), &mut sound_forms, &mut sounds, name);
     match meter.observe(&now) {
+        // The player's Quiet Experience tweak: a gain that earns no level is not shown
+        // [design: docs/design/tweaks.md]; one that does still brings up LEVEL UP.
+        Some(Seen::Gained { amount, level_up: false }) if tweaks.as_ref().is_some_and(|t| t.no_xp_messages) => {
+            meter.show = None;
+            info!("xp meter: +{amount} XP ({} in all), not shown (Quiet Experience)", now.xp);
+        }
         Some(Seen::Gained { amount, level_up }) => {
             info!("xp meter: +{amount} XP ({} in all): level {}, {:.0} % to {}{}", now.xp, now.level, now.fraction() * 100.0, now.level + 1, if level_up { ", next level earned" } else { "" });
             // Every gain [owner, 2026-10-16: "every time you get experience there is also a

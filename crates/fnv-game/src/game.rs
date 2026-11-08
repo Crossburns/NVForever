@@ -1324,6 +1324,8 @@ pub struct Game<'a> {
     pub ui_pointer: fnv_ui::input::Pointer,
     /// The game's difficulty (`crate::difficulty`): the engine sets it from its settings.
     pub difficulty: crate::difficulty::Difficulty,
+    /// The player's tweaks (`crate::tweaks`): the engine sets them from its settings.
+    pub tweaks: crate::tweaks::Tweaks,
     /// What scripts asked of the engine's combat (`crate::combat::CombatRequest`), for
     /// the engine to take.
     pub combat_requests: Vec<crate::combat::CombatRequest>,
@@ -2207,6 +2209,7 @@ impl<'a> Game<'a> {
             ui_extra: Default::default(),
             ui_pointer: fnv_ui::input::Pointer::default(),
             difficulty: Default::default(),
+            tweaks: Default::default(),
             combat_requests: Vec::new(),
             destruction_changes: Vec::new(),
             due_children: Vec::new(),
@@ -3495,8 +3498,8 @@ impl<'a> Game<'a> {
         // set them again (`functions::navigation::FrameSwitches`).
         self.frame_switches = Default::default();
         // The world refuses power armour on an untrained player (a loaded game's flag
-        // reaches it here too).
-        self.world.set_power_armor_training(self.player.power_armor);
+        // reaches it here too); the player's tweak lets anyone wear it.
+        self.world.set_power_armor_training(self.player.power_armor || self.tweaks.power_armor_needs_no_training);
         // Cannibal's and Mister Sandman's acts that are over (`crate::activate_choices`).
         if !self.perk_acts.is_empty() {
             self.finish_perk_acts();
@@ -5020,7 +5023,8 @@ impl<'a> Game<'a> {
     /// name; hypothesis: when, docs/spec-notes/default-objects.md].
     fn drug_wore_off(&mut self, target: FormId, source: FormId) {
         let chem = self.data.ingestibles.get(&source).is_some_and(|i| i.equip_type == crate::data::IngestibleDef::CHEMS);
-        if target != FormId::PLAYER_REF || !chem || self.effects.iter().any(|x| x.target == target && x.source == source) {
+        // The player's tweak can leave the effect out [design: docs/design/tweaks.md].
+        if target != FormId::PLAYER_REF || !chem || self.tweaks.no_chem_wore_off_effect || self.effects.iter().any(|x| x.target == target && x.source == source) {
             return;
         }
         if let Some(m) = self.data.default_object(crate::data::DefaultObject::DrugWearsOffImageSpace).filter(|m| self.data.image_modifiers.contains_key(m)) {

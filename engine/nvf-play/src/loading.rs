@@ -124,6 +124,8 @@ struct StartHold {
 /// The loading screen's state.
 #[derive(Resource, Default)]
 pub struct Loading {
+    /// The player's tweak: no tip text or band (`crate::tweaks`).
+    pub hide_tips: bool,
     trip: Option<Trip>,
     /// The start of the run, held until the world can be played ([`StartCover`]).
     start: Option<StartHold>,
@@ -459,7 +461,7 @@ fn spawn_screen(commands: &mut Commands, loading: &mut Loading, art: &mut Art, t
         commands.spawn((ImageNode { image_mode: NodeImageMode::Stretch, ..ImageNode::new(image) }, picture_node(), ChildOf(root)));
     }
     // Drawn by `look::fit_tip` (this frame too). No text, no band.
-    if let Some(text) = screen.map(|s| s.text.trim()).filter(|t| !t.is_empty()) {
+    if let Some(text) = screen.map(|s| s.text.trim()).filter(|t| !t.is_empty() && !loading.hide_tips) {
         let style = screen.and_then(|s| s.tip).unwrap_or(TipStyle::FALLBACK);
         let node = Node { position_type: PositionType::Absolute, left: Val::Px(0.0), top: Val::Px(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
         commands.spawn((look::Tip { text: text.to_string(), style, drawn_for: None }, node, ChildOf(root)));

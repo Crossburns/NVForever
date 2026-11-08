@@ -381,7 +381,8 @@ fn refusal(
         if let Some((cell, _)) = g.trespass_cell() {
             return Some((Refusal::Trespassing, format!("the player trespasses in {}", g.data.name(cell))));
         }
-        let owner = bed.filter(|_| sleep).and_then(|b| fnv_game::rest::bed_owned_by_another(g, FormId(b)))?;
+        // The player's tweak lets them sleep in it [design: docs/design/tweaks.md].
+        let owner = bed.filter(|_| sleep && !g.tweaks.sleep_in_owned_beds).and_then(|b| fnv_game::rest::bed_owned_by_another(g, FormId(b)))?;
         Some((Refusal::OwnedBed, format!("the bed belongs to {}", g.data.name(owner))))
     })
 }

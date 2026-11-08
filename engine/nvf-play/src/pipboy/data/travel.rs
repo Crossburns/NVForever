@@ -96,6 +96,15 @@ pub struct Checks {
     pub encumbered: bool,
 }
 
+/// The player's fast-travel tweaks [design: docs/design/tweaks.md]: No Fast Travel
+/// refuses as a script's block does; the others drop their refusal.
+pub fn tweak_checks(c: &mut Checks, t: &crate::tweaks::TweakSettings) {
+    c.script_block |= t.disable_fast_travel;
+    c.in_air &= !t.midair_fast_travel;
+    c.hostiles_near &= !t.fast_travel_enemies_nearby;
+    c.encumbered &= !t.fast_travel_overencumbered;
+}
+
 /// The first refusal that applies, if any.
 pub fn refusal(c: &Checks) -> Option<Refusal> {
     let applies = |r: Refusal| match r {
@@ -218,6 +227,7 @@ pub fn answer(
     mut sim: ResMut<SimState>,
     mut script: Option<ResMut<ScriptState>>,
     (phys, location, actors, cues, world): Around,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     let Some(&FastTravelAsk(marker)) = asks.read().last() else { return };
     let Some(mut st) = state else { return };
@@ -255,7 +265,8 @@ pub fn answer(
         info!("fast travel: over-encumbered, but Has Fast Travel Always (Long Haul) lets the player travel");
     }
     let encumbered = over && !long_haul;
-    let checks = Checks {
+    let tw = tweaks.as_deref().cloned().unwrap_or_default();
+    let mut checks = Checks {
         target: travel_target(&st, script.as_deref(), &m),
         script_block,
         place,
@@ -265,6 +276,7 @@ pub fn answer(
         hostiles_near: hostile.is_some(),
         encumbered,
     };
+    tweak_checks(&mut checks, &tw);
     st.popup = Some(match refusal(&checks) {
         Some(r) => {
             let text = setting_str(&sim, r.setting()).unwrap_or_else(|| r.own_text().to_string());
@@ -403,6 +415,20 @@ pub fn depart(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tweaks_drop_or_add_refusals() {
+        let all = Checks { target: true, in_air: true, combat: true, hostiles_near: true, encumbered: true, ..Checks::default() };
+        let mut c = all;
+        tweak_checks(&mut c, &crate::tweaks::TweakSettings::default());
+        assert_eq!(c, all, "no tweak changes nothing");
+        let t = crate::tweaks::TweakSettings { midair_fast_travel: true, fast_travel_enemies_nearby: true, fast_travel_overencumbered: true, ..Default::default() };
+        tweak_checks(&mut c, &t);
+        assert_eq!(refusal(&c), Some(Refusal::Combat), "combat itself still refuses");
+        let mut open = Checks { target: true, ..Checks::default() };
+        tweak_checks(&mut open, &crate::tweaks::TweakSettings { disable_fast_travel: true, ..Default::default() });
+        assert_eq!(refusal(&open), Some(Refusal::Script));
+    }
 
     #[test]
     fn the_refusals_go_in_order() {

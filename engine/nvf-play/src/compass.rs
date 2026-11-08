@@ -283,7 +283,10 @@ fn gather(
     mut logged: Local<[usize; 5]>,
     mut graph: Local<Option<DoorGraph>>,
     mut logged_quest: Local<Option<(usize, usize)>>,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
+    // The player's tweak leaves hostile actors off the compass [design: docs/design/tweaks.md].
+    let hide_foes = tweaks.is_some_and(|t| t.hide_enemy_markers);
     *poll += time.delta_secs();
     if *poll < POLL || *state.get() != PlayState::Playing {
         return;
@@ -320,6 +323,9 @@ fn gather(
                 }
                 let fighting = g.awareness.get(r).and_then(|a| a.combat_target()).is_some_and(|(t, _)| t == FormId::PLAYER_REF);
                 let hostile = fighting || g.would_attack(r, FormId::PLAYER_REF);
+                if hostile && hide_foes {
+                    continue;
+                }
                 let mark = if hostile { Mark::Hostile } else { Mark::Actor };
                 out.push((Near { mark, at: [at[0], at[1]], body: bodies.contains_key(&r.0).then_some(r.0) }, shown));
             }

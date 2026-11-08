@@ -133,6 +133,28 @@ pub struct QuestMessages {
     pub hold_objectives: bool,
     /// The game's KillQuestUpdates count last acted on (`fnv_game::functions::fo3`).
     updates_killed: u64,
+    /// The kinds of line the player's tweaks leave out (`crate::tweaks`).
+    pub hidden: Hidden,
+}
+
+/// The kinds of line the player's tweaks leave out [design: docs/design/tweaks.md].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Hidden {
+    pub failed: bool,
+    pub discovered: bool,
+    pub objectives: bool,
+}
+
+impl Hidden {
+    /// Whether `n` is left out.
+    pub fn hides(&self, n: &QuestNotice) -> bool {
+        match n {
+            QuestNotice::Failed(_) => self.failed,
+            QuestNotice::Discovered(_) => self.discovered,
+            QuestNotice::Objectives(_) => self.objectives,
+            QuestNotice::Added(_) | QuestNotice::Completed(_) => false,
+        }
+    }
 }
 
 impl QuestMessages {
@@ -140,6 +162,9 @@ impl QuestMessages {
     /// waits last; a line
     /// that says what the last one says is left out, and so is any when too many wait.
     pub fn push(&mut self, n: QuestNotice) {
+        if self.hidden.hides(&n) {
+            return;
+        }
         let quest = |l: &[Objective]| l.first().map(|o| o.quest);
         if let (QuestNotice::Objectives(more), Some(QuestNotice::Objectives(list))) = (&n, self.waiting.back_mut()) {
             if quest(more) != quest(list) {
@@ -403,6 +428,17 @@ fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tweaks_leave_out_their_lines() {
+        let mut q = QuestMessages { hidden: Hidden { failed: true, discovered: true, objectives: true }, ..Default::default() };
+        q.push(QuestNotice::Failed("A".into()));
+        q.push(QuestNotice::Discovered("B".into()));
+        q.push(objectives(&[("C", false)]));
+        assert_eq!(q.waiting(), 0);
+        q.push(QuestNotice::Added("D".into()));
+        assert_eq!(q.waiting(), 1, "added quests still show");
+    }
 
     fn objectives(list: &[(&str, bool)]) -> QuestNotice {
         QuestNotice::Objectives(list.iter().map(|(t, c)| Objective { quest: 1, text: t.to_string(), completed: *c }).collect())

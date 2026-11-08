@@ -420,7 +420,7 @@ pub fn get_casino_winnings_level(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<V
 /// [`refuse_power_armor`]'s box.
 pub fn set_pc_can_use_power_armor(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     g.player.power_armor = a.num(0)? != 0.0;
-    g.world.set_power_armor_training(g.player.power_armor);
+    g.world.set_power_armor_training(g.player.power_armor || g.tweaks.power_armor_needs_no_training);
     none()
 }
 

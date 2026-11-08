@@ -165,6 +165,7 @@ fn show_notes(
     mut stats: ResMut<CrimeStats>,
     corner: Option<ResMut<CornerMessages>>,
     mut sounds: MessageWriter<PlaySound>,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
     let notes = rt.game.crimes.take_notes();
@@ -181,7 +182,8 @@ fn show_notes(
                 stats.karma_first.get_or_insert(now - change);
                 stats.karma_last = Some(now);
                 info!("crime: karma {change:+} for {why}, now {now}");
-                if change == 0.0 {
+                // The player's tweak keeps karma quiet [design: docs/design/tweaks.md].
+                if change == 0.0 || tweaks.as_ref().is_some_and(|t| t.no_karma_messages) {
                     continue;
                 }
                 let (text, image, sound) = match (change > 0.0, change.abs() >= major) {

@@ -240,7 +240,7 @@ fn aim(
     mut target: ResMut<HudTarget>,
     mut aim_hostile: ResMut<AimHostile>,
     combat: Option<Res<Combat>>,
-    (pick, locks): (Option<Res<crate::activate::Target>>, Option<Res<crate::control::ControlLocks>>),
+    (pick, locks, tweaks): (Option<Res<crate::activate::Target>>, Option<Res<crate::control::ControlLocks>>, Option<Res<crate::tweaks::TweakSettings>>),
     mut memory: Local<Memory>,
 ) {
     let dt = time.delta_secs();
@@ -326,6 +326,8 @@ fn aim(
         let anatomy = found.is_some() && rt.game.player_has_entry(fnv_game::perks::SEE_ENEMY_HEALTH);
         (found, foe, anatomy)
     });
+    // The player's tweak keeps the crosshair its own colour [design: docs/design/tweaks.md].
+    let foe = foe && !tweaks.is_some_and(|t| t.no_red_crosshair);
     aim_hostile.set_if_neq(AimHostile(foe));
     let dt = match (found, combat.as_deref()) {
         (Some((id, ..)), Some(c)) if anatomy => Some(crate::combat::target_armor(c, script.as_deref_mut(), &mut sim, FormId(id)).0),

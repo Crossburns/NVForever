@@ -716,6 +716,7 @@ fn explosions(
     time: Res<Time>,
     mut boom: MessageReader<ExplosionFx>,
     (sfx, combat, mut screen): (Option<Res<Sfx>>, Res<Combat>, Option<ResMut<crate::imagespace::ScreenModifiers>>),
+    tweaks: Option<Res<nvf_play::tweaks::TweakSettings>>,
     world: Option<Res<WorldData>>,
     mut models: ModelCtx,
     mut fx: ResMut<ShotFx>,
@@ -776,7 +777,9 @@ fn explosions(
         // them; nothing says the effect weakens towards the edge].
         let stats = combat.forms.explosions.get(&b.explosion);
         if let (Some(s), Some(eye), Some(screen)) = (stats, eye, screen.as_deref_mut()) {
-            if let Some(imod) = s.image_space_modifier.filter(|_| eye.distance(Vec3::from_array(b.point)) <= s.is_radius) {
+            // The player's tweak leaves out the blur of a blast in the face [design: docs/design/tweaks.md].
+        let blur_off = tweaks.as_ref().is_some_and(|t| t.no_explosion_blur);
+        if let Some(imod) = s.image_space_modifier.filter(|_| !blur_off && eye.distance(Vec3::from_array(b.point)) <= s.is_radius) {
                 screen.play(imod.0, time.elapsed_secs());
                 fx.screen_effects += 1;
             }

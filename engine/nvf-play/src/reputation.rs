@@ -185,6 +185,7 @@ pub(crate) fn watch(
     after: Option<Res<crate::after_combat::AfterCombat>>,
     mut shown: ResMut<Shown>,
     mut sounds: MessageWriter<PlaySound>,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
     let g = &mut rt.game;
@@ -208,6 +209,10 @@ pub(crate) fn watch(
         let [inf, fam] = gf::reputation_real(g, rep);
         let name = name(g, rep);
         info!("reputation: {name} {} -> {} (fame {fam}, infamy {inf})", title(f0, i0), title(fame, infamy));
+        // The player's tweak keeps reputation changes quiet [design: docs/design/tweaks.md].
+        if tweaks.as_ref().is_some_and(|t| t.no_reputation_messages) {
+            continue;
+        }
         g.show_box(rep);
         let sound = if fame > f0 { "UIRepGood" } else { "UIRepBad" };
         if let Some(s) = sim.forms.by_edid(sound) {

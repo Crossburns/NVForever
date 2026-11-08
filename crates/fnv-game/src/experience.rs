@@ -79,6 +79,8 @@ pub fn award(g: &mut Game, source: Source, amount: f64) -> f64 {
     }
     let (gained, by) = if amount > 0.0 {
         let (v, by) = g.entry_point(FormId::PLAYER_REF, crate::perks::ADJUST_EXPERIENCE_POINTS, amount);
+        // The player's XP tweak, after the perks [design: docs/design/tweaks.md].
+        let v = v * g.tweaks.xp_multiplier;
         // The factors are 32-bit (1.3 is 1.2999999523): to thousandths first, so that
         // 100 × 1.3 is 130, not 129.
         (((v.max(0.0) * 1000.0).round() / 1000.0).trunc(), by)
