@@ -122,7 +122,7 @@ mod tests {
         let en = text("FalloutNV.esm", "Stimpak Doctor's Bag Café", Windows1252);
         let ru = text("FalloutNV_lang.esp", "Стимулятор Докторский саквояж", Windows1251);
         let fr = text("Mod.esp", "Sacoche de médecin, très utile, déjà vu, à côté, où", Windows1252);
-        assert_eq!(decide(&[en.clone()]), None);
+        assert_eq!(decide(std::slice::from_ref(&en)), None);
         assert_eq!(decide(&[en.clone(), ru.clone()]), Some(Windows1251));
         assert_eq!(decide(&[en, fr.clone()]), None);
         // A Western mod with more high letters than the Russian one outweighs it.
