@@ -1310,3 +1310,137 @@ fn a_planted_kill_counts_for_the_weapon_the_player_holds() {
     assert_eq!((progress(by_fists), progress(by_gun)), (1, 0));
     assert_eq!(g.misc_stat(fnv_game::misc_stats::PEOPLE_KILLED), 1.0);
 }
+
+/// The durable state crosses the actual JSON and world restore boundaries.
+fn restore_plants<'a>(f: &'a Fixture, g: &Game) -> Game<'a> {
+    let snap: fnv_game::game::GameSnapshot = serde_json::from_str(&serde_json::to_string(&g.snapshot()).unwrap()).unwrap();
+    let world = World::restore(&f.forms, &f.refs, &snap.sim).unwrap();
+    Game::restore(&f.data, world, g.cfg, &snap).unwrap()
+}
+
+#[test]
+fn a_saved_plant_keeps_its_remaining_fuse_before_and_after_freakout() {
+    use fnv_game::misc_stats::{PANTS_EXPLODED, PEOPLE_KILLED};
+    use fnv_game::trace::EventKind;
+    let f = fixture();
+    let (victim, item) = (FormId(OWN_REF), FormId(PELT));
+    let rules = fnv_game::pickpocket::Rules::default();
+    for elapsed in [0.05, 0.5] {
+        let mut g = game(&f);
+        g.time = 20.0;
+        g.world.add_item(victim, item, 2).unwrap();
+        g.plant_explosive(victim, item, FRAG).unwrap();
+        let at = g.time;
+        g.time += elapsed;
+        assert_eq!(g.has_planted_explosive(victim), elapsed >= rules.freakout_time);
+        // Transient witnesses and cached rules must not survive a load.
+        g.pickpocket.blast_witnesses.push(FormId(GANGER_A_REF));
+        g.pickpocket.rules.as_mut().unwrap().grenade_timer = 99.0;
+        let mut h = restore_plants(&f, &g);
+        assert_eq!(h.time, g.time);
+        assert_eq!(h.pickpocket.planted, g.pickpocket.planted);
+        assert!(h.pickpocket.rules.is_none());
+        assert!(h.pickpocket.blast_witnesses.is_empty());
+        assert_eq!(h.has_planted_explosive(victim), elapsed >= rules.freakout_time);
+        // Loading and an open menu do not age the fuse, even over many ticks.
+        h.loading = true;
+        h.frames(180);
+        h.loading = false;
+        h.menu = Some(1001);
+        h.frames(180);
+        h.menu = None;
+        assert_eq!(h.time, at + elapsed);
+        assert!(h.tick_planted().is_empty());
+        h.time = at + rules.grenade_timer - 0.01;
+        assert!(h.tick_planted().is_empty());
+        h.time += 0.02;
+        assert_eq!(h.tick_planted(), vec![fnv_game::pickpocket::Blast { victim, item, killed: true }]);
+        assert_eq!(h.world.item_count(victim, item).unwrap(), 1);
+        assert!(h.is_dead(victim));
+        assert_eq!((h.misc_stat(PANTS_EXPLODED), h.misc_stat(PEOPLE_KILLED)), (1.0, 1.0));
+        h.time += 10.0;
+        assert!(h.tick_planted().is_empty());
+        assert_eq!(h.world.item_count(victim, item).unwrap(), 1);
+        assert_eq!((h.misc_stat(PANTS_EXPLODED), h.misc_stat(PEOPLE_KILLED)), (1.0, 1.0));
+        // Completion stays complete through another save too.
+        let mut again = restore_plants(&f, &h);
+        assert!(again.tick_planted().is_empty());
+        assert_eq!(again.misc_stat(PANTS_EXPLODED), 1.0);
+        assert!(h.events.iter().all(|e| !matches!(e.kind, EventKind::CallFailed { .. })));
+    }
+}
+
+#[test]
+fn saved_multiple_plants_keep_their_blasts_and_independent_times() {
+    use fnv_game::misc_stats::{PANTS_EXPLODED, PEOPLE_KILLED};
+    let f = fixture();
+    let mut g = game(&f);
+    let (a, b, item) = (FormId(OWN_REF), FormId(LOAFER_REF), FormId(PELT));
+    let harmless = fnv_game::pickpocket::Explosive { damage: 0.0, resist: Some(av::POISON_RESISTANCE), enchantment: None };
+    for victim in [a, b] {
+        g.world.add_item(victim, item, 1).unwrap();
+    }
+    g.plant_explosive(a, item, harmless).unwrap();
+    let at = g.time;
+    g.time += 0.5;
+    g.plant_explosive(b, item, FRAG).unwrap();
+    g.time += 0.5;
+    let mut h = restore_plants(&f, &g);
+    assert_eq!(h.pickpocket.planted, g.pickpocket.planted);
+    h.time = at + 2.01;
+    assert_eq!(h.tick_planted(), vec![fnv_game::pickpocket::Blast { victim: a, item, killed: false }]);
+    assert!(!h.is_dead(a) && !h.is_dead(b));
+    assert_eq!(h.world.item_count(a, item).unwrap(), 0);
+    assert_eq!(h.world.item_count(b, item).unwrap(), 1);
+    let mut h = restore_plants(&f, &h);
+    h.time = at + 2.51;
+    assert_eq!(h.tick_planted(), vec![fnv_game::pickpocket::Blast { victim: b, item, killed: true }]);
+    assert!(!h.is_dead(a) && h.is_dead(b));
+    assert_eq!(h.world.item_count(b, item).unwrap(), 0);
+    assert_eq!((h.misc_stat(PANTS_EXPLODED), h.misc_stat(PEOPLE_KILLED)), (2.0, 1.0));
+    assert!(h.tick_planted().is_empty());
+}
+
+#[test]
+fn a_saved_plant_retains_witnesses_who_no_longer_see_the_player() {
+    use fnv_game::crime::{Kind, Note as CrimeNote};
+    let f = fixture();
+    let mut g = game(&f);
+    let (victim, witness, player) = (FormId(LOAFER_REF), FormId(GANGER_A_REF), FormId::PLAYER_REF);
+    g.plant_explosive(victim, FormId(PELT), FRAG).unwrap();
+    let at = g.time;
+    g.time += 0.5;
+    g.detection.pairs.insert((witness, player), (Detection { value: 30.0, band: Band::Detected, ..Default::default() }, g.time));
+    assert!(g.tick_planted().is_empty());
+    assert_eq!(g.pickpocket.planted[0].seen_by, vec![witness]);
+    let mut h = restore_plants(&f, &g);
+    assert!(h.crime_witnesses().is_empty());
+    h.time = at + 2.01;
+    assert!(h.tick_planted()[0].killed);
+    let murders: Vec<_> = h.crimes.notes.iter().filter_map(|n| match n {
+        CrimeNote::Crime { kind: Kind::Murder, seen_by, .. } => Some(seen_by.clone()),
+        _ => None,
+    }).collect();
+    assert_eq!(murders, vec![vec![witness]]);
+    assert!(h.pickpocket.blast_witnesses.is_empty());
+}
+
+#[test]
+fn an_old_save_has_no_live_plants_and_empty_plants_are_omitted() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(serde_json::to_value(g.snapshot()).unwrap().get("planted").is_none());
+    let (victim, item) = (FormId(OWN_REF), FormId(PELT));
+    g.world.add_item(victim, item, 1).unwrap();
+    g.plant_explosive(victim, item, FRAG).unwrap();
+    let mut value = serde_json::to_value(g.snapshot()).unwrap();
+    assert!(value.as_object_mut().unwrap().remove("planted").is_some());
+    let snap: fnv_game::game::GameSnapshot = serde_json::from_value(value).unwrap();
+    let world = World::restore(&f.forms, &f.refs, &snap.sim).unwrap();
+    let mut h = Game::restore(&f.data, world, g.cfg, &snap).unwrap();
+    assert!(h.pickpocket.planted.is_empty());
+    h.time += 10.0;
+    assert!(h.tick_planted().is_empty());
+    assert!(!h.is_dead(victim));
+    assert_eq!(h.world.item_count(victim, item).unwrap(), 1);
+}

@@ -4164,3 +4164,67 @@ fn extra_misc_stats_music_states_eaten_corpses_and_terminal_art() {
     run(&mut g, "SetTerminalUIModel TestAdd");
     assert_eq!(g.terminal_ui_model(FormId(0x0000_0901)), None);
 }
+
+#[test]
+fn planted_forms_remap_and_missing_dependencies_are_dropped() {
+    use fnv_game::game::GameSnapshot;
+    use fnv_game::pickpocket::{Explosive, Planted};
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    let victim = FormId(NPC_REF);
+    g.world.get(victim).unwrap();
+    let mut snap = g.snapshot();
+    let extra = FormId(0x01000800);
+    let base_gone = FormId(0xFF000090);
+    let cell_gone = FormId(0xFF000091);
+    let mut reference = snap.sim.refs[&victim].clone();
+    reference.base = extra;
+    snap.sim.refs.insert(base_gone, reference);
+    let mut reference = snap.sim.refs[&victim].clone();
+    reference.cell = Some(extra);
+    snap.sim.refs.insert(cell_gone, reference);
+    let plant = Planted { victim, item: FormId(ACTIVATOR), at: 12.5, blast: Explosive { damage: 3.0, resist: Some(19), enchantment: Some(FormId(ACTIVATOR)) }, seen_by: vec![victim, extra, base_gone, cell_gone] };
+    snap.planted = vec![
+        plant.clone(),
+        Planted { victim: extra, ..plant.clone() },
+        Planted { item: extra, ..plant.clone() },
+        Planted { blast: Explosive { enchantment: Some(extra), ..plant.blast }, ..plant.clone() },
+        Planted { victim: base_gone, ..plant.clone() },
+        Planted { victim: cell_gone, ..plant.clone() },
+    ];
+    let entry = |name: &str| fnv_save::PluginEntry { name: name.into(), size: 0 };
+    let before = [entry("Test.esm"), entry("Extra.esm")];
+    let after = [entry("Extra.esm"), entry("Test.esm")];
+    let mut value = serde_json::to_value(&snap).unwrap();
+    fnv_save::remap_json(&mut value, &fnv_save::PluginRemap::new(&before, &after));
+    let mut moved: GameSnapshot = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(moved.drop_gone(|id| fnv_save::is_gone(id.0)), 0);
+    assert_eq!(moved.planted[0].victim, FormId(NPC_REF | 0x01000000));
+    assert_eq!(moved.planted[0].item, FormId(ACTIVATOR | 0x01000000));
+    assert_eq!(moved.planted[0].blast.enchantment, Some(FormId(ACTIVATOR | 0x01000000)));
+    assert_eq!(moved.planted[0].seen_by, vec![FormId(NPC_REF | 0x01000000), FormId(0x800), base_gone, cell_gone]);
+    assert_eq!(moved.planted[0].at, 12.5);
+    // Moving the plugin back restores every serialized field exactly.
+    fnv_save::remap_json(&mut value, &fnv_save::PluginRemap::new(&after, &before));
+    let back: GameSnapshot = serde_json::from_value(value).unwrap();
+    assert_eq!(back, snap);
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert_eq!(h.pickpocket.planted, snap.planted);
+    assert!(h.pickpocket.blast_witnesses.is_empty());
+
+    let mut value = serde_json::to_value(&snap).unwrap();
+    fnv_save::remap_json(&mut value, &fnv_save::PluginRemap::new(&before, &[entry("Test.esm")]));
+    let mut back: GameSnapshot = serde_json::from_value(value).unwrap();
+    assert_eq!(back.drop_gone(|id| fnv_save::is_gone(id.0)), 7, "two removed references and five plants");
+    assert_eq!(back.planted, vec![Planted { seen_by: vec![victim], ..plant }]);
+    assert!(!back.sim.refs.contains_key(&base_gone) && !back.sim.refs.contains_key(&cell_gone));
+    let world = World::restore(&f.forms, &f.refs, &back.sim).unwrap();
+    let h = Game::restore(&f.data, world, g.cfg, &back).unwrap();
+    assert_eq!(h.pickpocket.planted, back.planted);
+    // Cleanup also handles a gone witness supplied directly in a record field.
+    back.planted[0].seen_by.push(extra);
+    assert_eq!(back.drop_gone(|id| id == extra), 0);
+    assert_eq!(back.planted[0].seen_by, vec![victim]);
+}
