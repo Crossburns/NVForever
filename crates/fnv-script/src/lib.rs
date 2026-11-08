@@ -23,6 +23,7 @@ pub mod resolve;
 pub mod table;
 pub mod unit;
 pub mod vm;
+pub mod xbytes;
 
 pub use decode::{decode, Decoded, Issue, Report};
 pub use ir::{Arg, Arm, Block, Call, Expr, Marker, Op, Program, RefIndex, Stmt, Token, VarLetter, VarRef, VarSlot};

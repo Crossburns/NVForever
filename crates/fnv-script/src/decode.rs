@@ -81,53 +81,53 @@ pub struct Decoded {
 }
 
 /// Little-endian reader over a byte slice that never panics.
-struct Rd<'a> {
-    b: &'a [u8],
-    i: usize,
+pub(crate) struct Rd<'a> {
+    pub(crate) b: &'a [u8],
+    pub(crate) i: usize,
 }
 
 impl<'a> Rd<'a> {
-    fn new(b: &'a [u8]) -> Self {
+    pub(crate) fn new(b: &'a [u8]) -> Self {
         Rd { b, i: 0 }
     }
-    fn left(&self) -> usize {
+    pub(crate) fn left(&self) -> usize {
         self.b.len() - self.i
     }
-    fn peek(&self) -> Option<u8> {
+    pub(crate) fn peek(&self) -> Option<u8> {
         self.b.get(self.i).copied()
     }
-    fn peek_at(&self, k: usize) -> Option<u8> {
+    pub(crate) fn peek_at(&self, k: usize) -> Option<u8> {
         self.b.get(self.i + k).copied()
     }
-    fn u8(&mut self) -> Option<u8> {
+    pub(crate) fn u8(&mut self) -> Option<u8> {
         let v = self.peek()?;
         self.i += 1;
         Some(v)
     }
-    fn u16(&mut self) -> Option<u16> {
+    pub(crate) fn u16(&mut self) -> Option<u16> {
         let s = self.b.get(self.i..self.i + 2)?;
         self.i += 2;
         Some(u16::from_le_bytes([s[0], s[1]]))
     }
-    fn u32(&mut self) -> Option<u32> {
+    pub(crate) fn u32(&mut self) -> Option<u32> {
         let s = self.b.get(self.i..self.i + 4)?;
         self.i += 4;
         Some(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
     }
-    fn i32(&mut self) -> Option<i32> {
+    pub(crate) fn i32(&mut self) -> Option<i32> {
         self.u32().map(|v| v as i32)
     }
-    fn f64(&mut self) -> Option<f64> {
+    pub(crate) fn f64(&mut self) -> Option<f64> {
         let s = self.b.get(self.i..self.i + 8)?;
         self.i += 8;
         Some(f64::from_le_bytes(s.try_into().ok()?))
     }
-    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+    pub(crate) fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         let s = self.b.get(self.i..self.i + n)?;
         self.i += n;
         Some(s)
     }
-    fn rest(&mut self) -> &'a [u8] {
+    pub(crate) fn rest(&mut self) -> &'a [u8] {
         let s = &self.b[self.i..];
         self.i = self.b.len();
         s
@@ -197,6 +197,8 @@ enum Piece {
     ForEach(XForEach),
     Loop,
     Stmt(Stmt),
+    /// A statement that changes nothing (the GECK's `Begin _GameMode` marks).
+    Nothing,
 }
 
 /// An open loop while nesting is rebuilt: its head, the `If` frames open outside it, and
@@ -232,7 +234,7 @@ impl Ctx<'_> {
 
 /// A tagged value (`ParamEnc::Value`). With `allow_refvar`, `r` + u16 followed by `s`/`f`
 /// is read as one remote variable; otherwise `r` + u16 alone is a reference.
-fn tagged_value(r: &mut Rd<'_>, allow_refvar: bool) -> Option<Arg> {
+pub(crate) fn tagged_value(r: &mut Rd<'_>, allow_refvar: bool) -> Option<Arg> {
     let t = r.peek()?;
     let save = r.i;
     let v = (|| {
@@ -447,7 +449,13 @@ fn expr(c: &mut Ctx<'_>, bytes: &[u8]) -> Expr {
                     let opcode = r.u16()?;
                     let len = r.u16()?;
                     let blob = r.take(len as usize)?;
-                    Token::Call { call: call(c, on, opcode, blob) }
+                    // An extender call the GECK compiled into a condition: `eval`'s
+                    // expression, or the call, as a tree (crate::xbytes).
+                    if let Some(e) = geck_extender_call(c, on, opcode, blob) {
+                        Token::X { e }
+                    } else {
+                        Token::Call { call: call(c, on, opcode, blob) }
+                    }
                 }
                 _ if on.is_none() => {
                     let s = r.i;
@@ -515,6 +523,9 @@ fn piece(c: &mut Ctx<'_>, f: &Flat<'_>) -> Piece {
         c.issue("raw_statement", format!("0x{:04X}: {why}", f.opcode));
         Piece::Stmt(Stmt::Raw { opcode: f.opcode, body: f.body.to_vec() })
     };
+    if let Some(p) = geck_extender(c, f) {
+        return p;
+    }
     if f.opcode >= op::FIRST_FUNCTION && f.opcode != 0xFFFF {
         return Piece::Stmt(Stmt::Call { call: call(c, f.on, f.opcode, f.body) });
     }
@@ -527,6 +538,13 @@ fn piece(c: &mut Ctx<'_>, f: &Flat<'_>) -> Piece {
         op::BEGIN => {
             let (Some(event), Some(len)) = (r.u16(), r.u32()) else { return raw(c, "short Begin") };
             let rest = r.rest();
+            // `Begin Function {…}` as the GECK writes it, with its parameter list
+            // (crate::xbytes) [observed: ext-bytecode.md §4].
+            if event == crate::xbytes::op::FUNCTION_EVENT {
+                if let Some(p) = crate::xbytes::function_params(rest) {
+                    return Piece::Begin { event: FUNCTION_BLOCK, len, params: Some(p) };
+                }
+            }
             let params = params(c, rest, None);
             Piece::Begin { event, len, params }
         }
@@ -584,6 +602,56 @@ fn piece(c: &mut Ctx<'_>, f: &Flat<'_>) -> Piece {
     }
 }
 
+/// The GECK's extender statements (ext-bytecode.md §1), and extender functions called as
+/// statements, read into the tree (crate::xbytes); `None` leaves the statement to the base
+/// game's reading.
+fn geck_extender(c: &mut Ctx<'_>, f: &Flat<'_>) -> Option<Piece> {
+    use crate::xbytes as xb;
+    if f.opcode < xb::op::FIRST_EXTENDER || f.opcode == 0xFFFF {
+        return None;
+    }
+    let t = c.table;
+    let empty = f.body.is_empty();
+    Some(match f.opcode {
+        xb::op::LET => Piece::Stmt(Stmt::Let { expr: xb::single(t, f.body)? }),
+        xb::op::WHILE => Piece::While(xb::single(t, f.body.get(4..)?)?),
+        xb::op::FOREACH => Piece::ForEach(xb::foreach_head(t, f.body.get(4..)?)?),
+        xb::op::LOOP if empty => Piece::Loop,
+        xb::op::CONTINUE if empty => Piece::Stmt(Stmt::Continue),
+        xb::op::BREAK if empty => Piece::Stmt(Stmt::Break),
+        xb::op::MARK_BEGIN | xb::op::MARK_END if empty => Piece::Nothing,
+        _ => Piece::Stmt(Stmt::Eval { expr: geck_extender_call(c, f.on, f.opcode, f.body)? }),
+    })
+}
+
+/// A compiled extender call as a tree: `eval`'s one argument itself, any other call of an
+/// extender opcode with its arguments.
+fn geck_extender_call(c: &mut Ctx<'_>, on: Option<RefIndex>, opcode: u16, blob: &[u8]) -> Option<XExpr> {
+    use crate::xbytes as xb;
+    if opcode < xb::op::FIRST_EXTENDER {
+        return None;
+    }
+    let t = c.table;
+    if opcode == xb::op::EVAL {
+        return xb::single(t, blob);
+    }
+    if t.get(opcode).is_some() && plain_call_reads(t, opcode, blob) {
+        return None;
+    }
+    let func = if t.get(opcode).is_some() { FuncId::Opcode(opcode) } else { FuncId::Name(t.opcode_names.get(&opcode)?.clone()) };
+    let args = xb::args(t, opcode, blob)?;
+    c.report.calls += 1;
+    Some(XExpr::Call { call: XCall { on: on.map(|r| Box::new(XExpr::Ref { r })), func, args } })
+}
+
+/// Whether the base game's parameter reading takes all of a call's bytes (NVForever's own
+/// compiled calls, and numbered extender functions in that form).
+fn plain_call_reads(t: &FunctionTable, opcode: u16, blob: &[u8]) -> bool {
+    let mut probe = Ctx { table: t, report: Report::default(), stmt: 0 };
+    let _ = params(&mut probe, blob, Some(opcode));
+    probe.report.raw_args == 0
+}
+
 /// An open `If` while nesting is rebuilt.
 struct Frame {
     arms: Vec<Arm>,
@@ -606,6 +674,13 @@ impl Frame {
 
 /// Decode compiled script bytes.
 pub fn decode(bytes: &[u8], table: &FunctionTable) -> Decoded {
+    crate::xbytes::enter();
+    let d = decode_unit(bytes, table);
+    crate::xbytes::leave();
+    d
+}
+
+fn decode_unit(bytes: &[u8], table: &FunctionTable) -> Decoded {
     let flats = split(bytes);
     let mut c = Ctx { table, report: Report::default(), stmt: 0 };
     let mut prog = Program::default();
@@ -661,6 +736,7 @@ pub fn decode(bytes: &[u8], table: &FunctionTable) -> Decoded {
         c.stmt = i;
         let p = piece(&mut c, f);
         match p {
+            Piece::Nothing => {}
             Piece::ScriptName => {
                 if i != 0 || prog.script_name {
                     c.issue("misplaced_scriptname", String::new());

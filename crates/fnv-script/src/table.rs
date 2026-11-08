@@ -25,6 +25,9 @@ pub const CONSOLE_OPCODE_BASE: u16 = 0xF000;
 
 /// The encodings file compiled into the crate.
 pub const ENCODINGS_JSON: &str = include_str!("../data/encodings.json");
+/// The script extenders' commands by opcode, as the original game listed them
+/// (schemas/script/opcode_names.json, DumpDocs) [observed].
+pub const OPCODE_NAMES_JSON: &str = include_str!("../../../schemas/script/opcode_names.json");
 
 #[derive(Debug, thiserror::Error)]
 pub enum TableError {
@@ -141,6 +144,10 @@ pub struct FunctionTable {
     /// console's), by lower-case name and alias: their parameters, for the compiler's
     /// extender grammar (docs/spec-notes/script-compiler.md).
     pub unnumbered: HashMap<String, Unnumbered>,
+    /// The extenders' opcodes (0x1400 and up) by number, as the original game names them
+    /// (`OPCODE_NAMES_JSON`): to name the calls in bytes the GECK compiled with an
+    /// extender loaded. Not used by the compiler.
+    pub opcode_names: HashMap<u16, String>,
     by_name: HashMap<String, u16>,
 }
 
@@ -360,6 +367,13 @@ impl FunctionTable {
             if let Some(u) = t.unnumbered.get_mut(&name.to_ascii_lowercase()) {
                 for p in extra.as_array().into_iter().flatten().filter_map(Value::as_str) {
                     u.params.push(Param { name: p.to_string(), wiki_type: None, kind: "unknown".into(), optional: true });
+                }
+            }
+        }
+        if let Ok(names) = serde_json::from_str::<Value>(OPCODE_NAMES_JSON) {
+            for (k, v) in names.get("names").and_then(Value::as_object).into_iter().flatten() {
+                if let (Some(op), Some(n)) = (parse_hex16(k), v.as_str()) {
+                    t.opcode_names.insert(op, n.to_string());
                 }
             }
         }

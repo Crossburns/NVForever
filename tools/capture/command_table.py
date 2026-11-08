@@ -190,6 +190,21 @@ def merge(table, catalogue):
     return added
 
 
+def opcodes(table):
+    """Opcode -> command name, every command the table has (fnv.script.opcode_names/1)."""
+    names = {}
+    for c in table["commands"]:
+        if c["opcode"]:
+            names[c["opcode"]] = c["name"]
+    return {
+        "format": "fnv.script.opcode_names/1",
+        "source": "observed: xNVSE DumpDocs in the original game with High and Dry's plugins "
+                  "(xNVSE 6.4.9 and 54 plugins), 2026-11-08 (tools/capture/command_table.py); "
+                  "used to name the extender opcodes in compiled scripts",
+        "names": dict(sorted(names.items())),
+    }
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -200,7 +215,18 @@ def main(argv=None):
     m.add_argument("table")
     m.add_argument("--functions", default="schemas/script/functions.json")
     m.add_argument("--check", action="store_true")
+    o = sub.add_parser("opcodes")
+    o.add_argument("table")
+    o.add_argument("-o", "--output", default="schemas/script/opcode_names.json")
     a = ap.parse_args(argv)
+    if a.cmd == "opcodes":
+        with open(a.table, encoding="utf-8") as f:
+            doc = opcodes(json.load(f))
+        with open(a.output, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(doc, f, indent=0, ensure_ascii=False)
+            f.write("\n")
+        print(f"{len(doc['names'])} opcodes")
+        return 0
     if a.cmd == "parse":
         with open(a.log, encoding="utf-8", errors="replace") as f:
             commands = parse(f.read())

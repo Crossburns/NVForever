@@ -195,3 +195,105 @@ pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path, 
         "script_runner_compile": compile,
     }))
 }
+
+/// Whether compiled bytes hold an extender opcode (0x1400 and up): a statement, or a call
+/// in a condition or `set` expression (` X` + opcode).
+fn extender_bytes(b: &[u8]) -> bool {
+    let mut i = 0;
+    while i + 4 <= b.len() {
+        let op = u16::from_le_bytes([b[i], b[i + 1]]);
+        let n = u16::from_le_bytes([b[i + 2], b[i + 3]]) as usize;
+        if op >= 0x1400 && op != 0xFFFF {
+            return true;
+        }
+        let body = &b[(i + 4).min(b.len())..(i + 4 + n).min(b.len())];
+        if matches!(op, 0x15 | 0x16 | 0x18) && body.windows(3).any(|w| w[0] == b'X' && u16::from_le_bytes([w[1], w[2]]) >= 0x1400) {
+            return true;
+        }
+        i += 4 + n;
+    }
+    false
+}
+
+/// Drop what two readings of one program may differ in without meaning anything: a
+/// variable's `s`/`f` letter and ref flag, a number's text, a lambda's number.
+fn normal(v: &mut Value) {
+    match v {
+        Value::Object(m) => {
+            m.remove("letter");
+            m.remove("form");
+            if m.get("x").and_then(Value::as_str) == Some("num") {
+                m.remove("text");
+            }
+            if m.get("x").and_then(Value::as_str) == Some("lambda") {
+                m.remove("index");
+            }
+            for x in m.values_mut() {
+                normal(x);
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(normal),
+        _ => {}
+    }
+}
+
+/// `ext bytes-check`: every unit whose bytes call the extender, read from those bytes
+/// (fnv_script::xbytes) and compiled from its source; how many read fully, and how many
+/// of those give the program the source does.
+pub(crate) fn bytes_check(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path, samples: Option<&Path>) -> anyhow::Result<Value> {
+    let ftext = std::fs::read_to_string(functions).with_context(|| functions.display().to_string())?;
+    let fjson: Value = serde_json::from_str(&ftext).with_context(|| functions.display().to_string())?;
+    let table = FunctionTable::load(functions).with_context(|| functions.display().to_string())?;
+    let plugins = open_load_order(lo)?;
+    let order = LoadOrder::new(&plugins)?;
+    let schema = Schema::load_dir(schema_dir)?;
+    let (units, _) = read_load_order(&order, &schema);
+    let refs = fnv_sim::RefTable::build(&order, &schema);
+    fnv_game::source_compile::set_mode(fnv_game::source_compile::Mode::Always);
+    let data = fnv_game::GameData::build(&order, &schema, table.clone(), &fjson, &refs);
+    let compiled: std::collections::HashMap<String, &fnv_game::data::Compiled> = data.units.iter().map(|c| (c.unit.key(), c)).collect();
+    let (mut ext, mut read, mut agree, mut differ, mut no_source) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut unread: BTreeMap<String, u64> = BTreeMap::new();
+    let mut diffs = String::new();
+    for u in units.iter().filter(|u| u.has_scda && extender_bytes(&u.bytes)) {
+        ext += 1;
+        let d = fnv_script::decode(&u.bytes, &table);
+        if d.report.raw_total() > 0 || !d.report.issues.is_empty() {
+            let why = d.report.issues.first().map(|i| format!("{}: {}", i.kind, i.detail.chars().take(40).collect::<String>())).unwrap_or_else(|| "raw".into());
+            *unread.entry(why).or_default() += 1;
+            continue;
+        }
+        read += 1;
+        let Some(c) = compiled.get(&u.key()) else { continue };
+        if u.source.is_none() || c.unit.bytes == u.bytes {
+            no_source += 1;
+            continue;
+        }
+        let mut a = serde_json::to_value(&d.program)?;
+        let mut b = serde_json::to_value(&c.program)?;
+        normal(&mut a);
+        normal(&mut b);
+        if a == b {
+            agree += 1;
+        } else {
+            differ += 1;
+            if diffs.len() < 400_000 {
+                diffs.push_str(&format!("===== {}\n--- bytes\n{a}\n--- source\n{b}\n", u.key()));
+            }
+        }
+    }
+    if let Some(p) = samples {
+        std::fs::write(p, diffs)?;
+    }
+    let mut unread: Vec<_> = unread.into_iter().collect();
+    unread.sort_by(|a, b| b.1.cmp(&a.1));
+    Ok(json!({
+        "format": "fnv.ext.bytes_check/1",
+        "units_calling_the_extender": ext,
+        "read_from_bytes": read,
+        "agree_with_source": agree,
+        "differ_from_source": differ,
+        "read_but_no_source_compile_to_compare": no_source,
+        "not_read": unread.iter().take(30).map(|(k, n)| json!({"why": k, "units": n})).collect::<Vec<_>>(),
+    }))
+}

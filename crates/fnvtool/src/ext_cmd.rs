@@ -63,6 +63,21 @@ pub enum ExtCmd {
         #[arg(long)]
         sources: Option<PathBuf>,
     },
+    /// Every unit whose bytes call the extender, read from those bytes and compiled from
+    /// its source: how many read fully and agree (fnv.ext.bytes_check/1).
+    BytesCheck {
+        #[command(flatten)]
+        lo: LoadOrderArgs,
+        /// Layer 1 schema directory (schemas/fnv).
+        #[arg(long)]
+        schema: PathBuf,
+        /// Function catalogue (default: ../script/functions.json next to --schema).
+        #[arg(long)]
+        functions: Option<PathBuf>,
+        /// Write the programs that differ here (private: mod scripts).
+        #[arg(long)]
+        samples: Option<PathBuf>,
+    },
     /// Run one probe set's quests headless (tools/capture/ext-probes/<set>) and collect
     /// the EXTPROBE lines they print, as the in-game collector does (fnv.ext.probes/1).
     Probes {
@@ -207,6 +222,10 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             doc["runs"] = json!(runs);
             Ok(doc)
         }
+        ExtCmd::BytesCheck { lo, schema, functions, samples } => {
+            let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
+            crate::ext_coverage::bytes_check(&lo, &schema, &fp, samples.as_deref())
+        }
         ExtCmd::Coverage { lo, schema, functions, sources } => {
             let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
             crate::ext_coverage::coverage(&lo, &schema, &fp, sources.as_deref())
@@ -303,6 +322,10 @@ fn dump_units(units: &[ScriptUnit], table: &FunctionTable, plugin: Option<&str>,
     for (n, u) in units_to_dump(units, plugin, all).into_iter().enumerate() {
         let file = format!("{n:04}.scda");
         std::fs::write(dir.join(&file), &u.bytes).with_context(|| file.clone())?;
+        // With --all, each unit's source beside its bytes (`<n>.txt`), to line the two up.
+        if let (true, Some(src)) = (all, u.source.as_deref()) {
+            std::fs::write(dir.join(format!("{n:04}.txt")), src).with_context(|| file.clone())?;
+        }
         index.push(json!({
             "file": file,
             "key": u.key(),
