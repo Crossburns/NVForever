@@ -1084,6 +1084,20 @@
    },
    "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
    "tags": ["ext", "jg", "probes", "jg3"]
+  },
+  {
+   "id": "L5.ext.jg4",
+   "layer": 5,
+   "description": "JohnnyGuitar batch 4 (#1007; docs/spec-notes/ext-jg4.md): idle markers' animations and traits and their setters, regions' weather lists (order, nth entries, membership, override, priority, add, remove, clear), race flags and faction members (rank, template factions, order), each change undone; set jg4 of tools/capture/jip_probes.py, keyed by probe id, steps in order. GetNthRegionWeatherGlobal on an entry without a global crashed the original and is not probed there. Oracle and candidate as L5.ext.jip.getters.",
+   "oracle": {"golden": "jip/jg4.json"},
+   "candidate": {
+    "argv": ["{candidate}", "ext", "queries", "{data_dir}", "FalloutNV.esm", "DeadMoney.esm", "HonestHearts.esm", "OldWorldBlues.esm", "LonesomeRoad.esm",
+             "TribalPack.esm", "MercenaryPack.esm", "ClassicPack.esm", "CaravanPack.esm", "GunRunnersArsenal.esm",
+             "NVFExtProbe.esp", "--schema", "{schema_dir}",
+             "--steps", "{lab_root}/../tools/capture/jip-probes/jg4.steps.json", "--start-cell", "0x000DEB16"]
+   },
+   "comparator": {"kind": "keyed", "select": "/rows", "key": "id", "fields": ["value"]},
+   "tags": ["ext", "jg", "probes", "jg4"]
   }
 ]
 }
