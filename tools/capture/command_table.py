@@ -118,7 +118,8 @@ def entry(c):
     params = []
     for p in c["params"]:
         name, _, ty = p["type"].rpartition(":")
-        q = {"name": name.strip() or None, "type": ty.strip(), "kind": kind_of(p["type"])}
+        # The compiler counts named parameters; an unlabelled one is named by its type.
+        q = {"name": name.strip() or ty.strip().lower(), "type": ty.strip(), "kind": kind_of(p["type"])}
         if p["optional"]:
             q["optional"] = True
         params.append(q)
@@ -137,6 +138,35 @@ def entry(c):
     if c["returns"]:
         e["returns"] = {"type": c["returns"].lower(), "name": None}
     return e
+
+
+def extend(table, catalogue):
+    """Catalogue rows with fewer parameters than the game reports get the rest appended
+    (optional, as the game types them). Left alone: functions taking any number of
+    values (a `...` or format parameter, or more than 4 missing), and rows this tool
+    added."""
+    by = {c["name"].lower(): c for c in table["commands"]}
+    out = []
+    for f in catalogue["functions"]:
+        c = by.get(f["name"].lower())
+        have = f.get("params") or []
+        if not c or f.get("family") != "extender" or f.get("opcode_evidence") == "observed: DumpDocs":
+            continue
+        # Statements the compiler parses itself, not calls.
+        if f["name"].lower() in ("break", "continue", "foreach", "while", "loop", "let", "eval", "call"):
+            continue
+        extra = c["params"][len(have):]
+        if not extra or len(extra) > 4:
+            continue
+        if any(p.get("name", "").startswith("...") or "format" in (p.get("name", "") + (p.get("type") or "")).lower() for p in have):
+            continue
+        for p in entry({**c, "params": extra})["params"]:
+            p["optional"] = True
+            have.append(p)
+        f["params"] = have
+        f["params_evidence"] = "observed: DumpDocs lists %d parameters" % len(c["params"])
+        out.append(f["name"])
+    return out
 
 
 def merge(table, catalogue):
@@ -186,6 +216,8 @@ def main(argv=None):
     with open(a.functions, encoding="utf-8") as f:
         catalogue = json.load(f)
     added = merge(table, catalogue)
+    extended = extend(table, catalogue)
+    print(f"{len(extended)} rows given the game's further parameters: " + ", ".join(extended[:20]) + (" …" if len(extended) > 20 else ""))
     by = {}
     for e in added:
         by[e["origin"]] = by.get(e["origin"], 0) + 1

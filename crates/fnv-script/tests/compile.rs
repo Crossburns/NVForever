@@ -1148,14 +1148,15 @@ fn values_follow_variables_among_dispatched_arguments() {
 
 #[test]
 fn a_call_lines_surplus_arguments_are_dropped() {
-    // ln_B42Optics.txt hands SetJohnnyOnRenderUpdateEventHandler (three parameters) four:
-    // the fourth is dropped with a warning, as the vanilla compiler drops them (#1470).
-    let (c, _) = build("begin GameMode\nSetJohnnyOnRenderUpdateEventHandler 1 (begin function {}\nDispatchEventAlt \"B42OCND\" 0\nfloat xiR = 1\nend) 0 0\nend");
+    // SetJohnnyOnRenderUpdateEventHandler takes four parameters (the game's DumpDocs; its
+    // wiki page shows three, so ln_B42Optics.txt's fourth is not surplus): a fifth is
+    // dropped with a warning, as the vanilla compiler drops them (#1470).
+    let (c, _) = build("begin GameMode\nSetJohnnyOnRenderUpdateEventHandler 1 (begin function {}\nDispatchEventAlt \"B42OCND\" 0\nfloat xiR = 1\nend) 0 0 0\nend");
     let warned: Vec<_> = c.diags.iter().filter(|d| d.kind == "surplus_arguments").collect();
     assert!(warned.len() == 1 && !warned[0].error, "{:?}", c.diags);
     // What reading the dropped ones registered is put back: no reference entry for
     // Caps001, no warning for the bare word, and the next lambda keeps the next number.
-    let (c, p) = build("begin GameMode\nSetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC \"a\") 0 Caps001 Nothing ({} => PrintC \"b\")\nSetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC \"c\") 0\nend");
+    let (c, p) = build("begin GameMode\nSetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC \"a\") 0 0 Caps001 Nothing ({} => PrintC \"b\")\nSetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC \"c\") 0\nend");
     assert!(c.refs.is_empty(), "{:?}", c.refs);
     assert_eq!(c.diags.iter().map(|d| d.kind).collect::<Vec<_>>(), ["surplus_arguments"]);
     let lambdas: Vec<u32> = body(&p).iter().filter_map(|s| match s {
@@ -1167,7 +1168,7 @@ fn a_call_lines_surplus_arguments_are_dropped() {
     }).collect();
     assert_eq!(lambdas, [0, 1]);
     // An argument that cannot be read is not dropped: the line fails.
-    let c = compile("begin GameMode\nSetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC \"a\") 0 Nobody.GetAV Luck\nend", &table(), &World, None);
+    let c = compile("begin GameMode\nSetJohnnyOnRenderUpdateEventHandler 1 ({} => PrintC \"a\") 0 0 Nobody.GetAV Luck\nend", &table(), &World, None);
     assert!(c.errors().any(|d| d.kind == "syntax"), "{:?}", c.diags);
 }
 
@@ -1184,3 +1185,4 @@ fn this_is_get_self() {
     let l = lets("ref r\nfloat f\nbegin GameMode\nlet r := this\nlet f := this.GetAV Confidence\nend");
     assert_eq!(l, ["(v1 Set= 10CE())", "(v2 Set= 10CE().100E(#1))"]);
 }
+
