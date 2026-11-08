@@ -73,6 +73,21 @@ pub(crate) struct MenuFiles<'w, 's> {
 }
 
 impl MenuFiles<'_, '_> {
+    /// Install before startup/load scripts, and retry if GameData arrived later.
+    /// Game::restore creates fresh UiExtra, so every new game gets its own cache [design].
+    pub(crate) fn install_measure(&self, game: &mut fnv_game::Game<'_>) {
+        if game.ui_extra.measure.is_some() {
+            return;
+        }
+        let Some(data) = self.data.as_ref() else { return };
+        let vfs = data.vfs.clone();
+        game.ui_extra.measure = Some(draw::string_measure(move |number| {
+            let path = crate::interface::font_file(crate::interface::FONT_FILES[number as usize - 1]);
+            let bytes = vfs.read(&path)?.ok()?;
+            fnv_font::Font::parse(&bytes).ok()
+        }));
+    }
+
     pub(crate) fn load(&self, game: &mut fnv_game::Game<'_>, world: &fnv_sim::World<'_>) {
         let Some(data) = self.data.as_ref() else { return };
         let files = UiFiles::new(data.vfs.clone(), world);
@@ -89,6 +104,7 @@ impl MenuFiles<'_, '_> {
     }
 
     pub(crate) fn write(&self, game: &mut fnv_game::Game<'_>) {
+        self.install_measure(game);
         if game.ui_files.is_none() {
             return;
         }
@@ -958,6 +974,49 @@ impl Plugin for TilesPlugin {
 mod tests {
     use super::*;
     use fnv_ui::{MemSource, Ui};
+
+    #[test]
+    fn string_metrics_install_when_source_arrives_and_again_after_restore() {
+        fn install(files: MenuFiles, mut scripts: ResMut<ScriptState>) {
+            files.install_measure(&mut scripts.rt.as_mut().unwrap().game);
+        }
+        let mut app = App::new();
+        app.insert_resource(ScriptState::over_no_plugins()).add_systems(Update, install);
+        app.update();
+        assert!(app.world().resource::<ScriptState>().rt.as_ref().unwrap().game.ui_extra.measure.is_none());
+
+        // A synthetic, empty source: installation must not depend on GPU assets or a HUD.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target-check").join(format!("string-metrics-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let schema = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/nif");
+        app.insert_resource(GameData::open_for_plugins(&dir, &[] as &[&str], &schema).unwrap());
+        app.update();
+        {
+            let mut scripts = app.world_mut().resource_mut::<ScriptState>();
+            let game = &mut scripts.rt.as_mut().unwrap().game;
+            assert!(game.ui_extra.measure.is_some());
+            assert_eq!(game.ui_extra.measure.as_ref().unwrap()(9.0, "ab", 0.0), (0.0, 0.0, 0.0));
+            // A later frame preserves the installed callback rather than replacing its cache.
+            game.ui_extra.measure = Some(Box::new(|_, _, _| (12.0, 34.0, 1.0)));
+        }
+        app.update();
+        {
+            let mut scripts = app.world_mut().resource_mut::<ScriptState>();
+            let game = &mut scripts.rt.as_mut().unwrap().game;
+            assert_eq!(game.ui_extra.measure.as_ref().unwrap()(9.0, "ab", 0.0), (12.0, 34.0, 1.0));
+            let snapshot = game.snapshot();
+            let world = fnv_sim::World::restore(game.world.forms, game.world.placed, &snapshot.sim).unwrap();
+            *game = fnv_game::Game::restore(game.data, world, game.cfg, &snapshot).unwrap();
+            assert!(game.ui_extra.measure.is_none());
+        }
+        // This is the same installation used before the restart/load script runners.
+        app.update();
+        let scripts = app.world().resource::<ScriptState>();
+        let game = &scripts.rt.as_ref().unwrap().game;
+        assert_eq!(game.ui_extra.measure.as_ref().unwrap()(9.0, "ab", 0.0), (0.0, 0.0, 0.0));
+        drop(app);
+        std::fs::remove_dir(&dir).unwrap();
+    }
 
     #[test]
     fn fallback_reasons_are_warned_once_across_reopens() {

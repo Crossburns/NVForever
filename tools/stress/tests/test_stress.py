@@ -385,6 +385,62 @@ class TourTest(unittest.TestCase):
         self.assertEqual((s["t"], s["entities"], s["bodies"], s["refs drawn"], s["frame mean"]), (5.0, 10000, 3050, 2000, 16.7))
         self.assertTrue(s["at"].startswith("WastelandNV cell -17,1"))
 
+    def test_solver_fields_and_phase_window_fields_read_together(self):
+        line = (self.sample(5, 10000)
+                .replace("audio 4", "models cached 7, textures cached 9, audio 4")
+                .replace("bodies 3000/10/40", "bodies 3000/10/40, bodies awake 12, contact pairs 13, manifolds 14, "
+                         "solver contacts 15, joints 16, solver ms 1/2/3/4/5/6")
+                .replace("projectiles 0", "projectiles 0, gpu allocated 101, gpu reserved 202, gpu blocks 3, "
+                         "startup frames 0, hidden frames 12, phase changes 1, window 2004 ms"))
+        self.assertEqual(tour.parse_sample(line), {
+            "t": 5, "frames": 60, "frame mean": 16.7, "frame worst": 30.1,
+            "entities": 10000, "refs drawn": 2000, "meshes": 900, "images": 1200, "materials": 300,
+            "models cached": 7, "textures cached": 9, "audio": 4, "cells": 25, "bodies": 3050,
+            "bodies awake": 12, "contact pairs": 13, "manifolds": 14, "solver contacts": 15,
+            "joints": 16, "solver ms": 21, "actors": 12, "nan actors": 0, "ragdolls": 0,
+            "projectiles": 0, "gpu allocated": 101, "gpu reserved": 202, "gpu blocks": 3,
+            "startup frames": 0, "hidden frames": 12, "phase changes": 1, "window": 2004,
+            "at": "WastelandNV cell -17,1 Goodsprings, position 1, 2, 3",
+        })
+
+    def test_a_window_across_a_phase_change_is_flagged(self):
+        """Issue #1415: a window a loading screen came down in says so; the old line (no
+        window fields) still reads."""
+        line = (self.sample(5.1, 9000).replace(", at WastelandNV", ", startup frames 0, hidden frames 12, phase changes 1, "
+                                                "window 2004 ms, at WastelandNV"))
+        s = tour.parse_sample(line)
+        self.assertEqual((s["hidden frames"], s["phase changes"], s["window"], s["startup frames"]), (12, 1, 2004, 0))
+        self.assertTrue(s["at"].startswith("WastelandNV cell -17,1"))
+        self.assertEqual(s["entities"], 9000)
+        old = tour.parse_sample(self.sample(7, 9000))
+        self.assertNotIn("phase changes", old)
+        self.assertEqual(tour.windows_across_changes([s, old]), 1)
+
+    def test_hitches_across_a_phase_change_are_kept_apart(self):
+        lines = [
+            "INFO nvforever::stress_sample: stress hitch (across a phase change, hidden to seen): 674 ms at t 4.6 s, "
+            "0 cells loaded in it (0 ms), 0 actors drawn in it (0 ms), from WastelandNV cell -17,1 Goodsprings, "
+            "position 1, 2, 3 to WastelandNV cell -17,1 Goodsprings, position 1, 2, 3",
+            "INFO nvforever::stress_sample: stress hitch: 300 ms at t 9.0 s, 1 cells loaded in it (180 ms), "
+            "0 actors drawn in it (0 ms), at WastelandNV cell -16,1",
+            "INFO nvforever::stress_sample: stress frames: 500 frames, mean 16.00 ms, 1% low 40.00 ms (25.0 fps), "
+            "worst 300.00 ms; 40 behind loading screens left out, 1 across a phase change left out",
+        ]
+        crossing = tour.crossing_hitches(lines)
+        self.assertEqual(len(crossing), 1)
+        h = crossing[0]
+        self.assertEqual((h["from"], h["to"], h["ms"], h["t"], h["cells"]), ("hidden", "seen", 674.0, 4.6, 0))
+        self.assertEqual(h["from_at"], "WastelandNV cell -17,1 Goodsprings, position 1, 2, 3")
+        self.assertEqual(h["at"], "WastelandNV cell -17,1 Goodsprings, position 1, 2, 3")
+        # Not a seen hitch: the slowest-hitches table and the soak's causes leave it out.
+        _, seen = tour.startup_and_hitches(lines)
+        self.assertEqual([x["ms"] for x in seen], [300.0])
+        m = tour.LEFT_OUT.search(lines[2])
+        self.assertEqual((m.group(1), m.group(2)), ("40", "1"))
+        self.assertTrue(tour.FRAMES.search(lines[2]))
+        old = tour.LEFT_OUT.search("stress frames: 5 frames, mean 1.00 ms, 1% low 1.00 ms (1.0 fps), worst 1.00 ms; 3 behind loading screens left out")
+        self.assertEqual((old.group(1), old.group(2)), ("3", None))
+
     def test_a_count_that_stays_up_on_coming_back_is_a_possible_leak(self):
         lines = []
         for lap in (1, 2, 3):

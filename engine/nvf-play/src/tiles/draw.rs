@@ -73,10 +73,49 @@ pub fn font_number(font: f64) -> u8 {
 /// line after the first [observed: hud_menus capture 2026-10-31, the text tiles' `height`
 /// in fonts 1-8 at one to three lines, fonts.md §3.1]; an empty string is one line high.
 pub fn measure(font: &Font, number: u8, text: &str, wrap: Option<f64>) -> (f64, f64) {
+    let (width, height, _) = dimensions(font, number, text, wrap);
+    (width, height)
+}
+
+/// The renderer's text layout including its actual line count [design: shared by
+/// GetStringUIDimensions; height includes glyph extents and is not a line counter].
+pub fn dimensions(font: &Font, number: u8, text: &str, wrap: Option<f64>) -> (f64, f64, f64) {
     let lines = font.lines(text, wrap.filter(|w| *w > 0.0).map(|w| w as f32));
     let width = lines.iter().map(|l| l.width).fold(0.0, f32::max);
     let height = tallest_glyph(font) + lines.len().saturating_sub(1) as f32 * line_pitch(number, font);
-    (f64::from(width), f64::from(height))
+    (f64::from(width), f64::from(height), lines.len() as f64)
+}
+
+/// Owned metrics, independent of font atlas uploads. Failed reads are retried at most
+/// once a second when queried; successful fonts are parsed once [design].
+#[derive(Default)]
+struct StringMetrics {
+    fonts: HashMap<u8, Font>,
+    retry_after: HashMap<u8, std::time::Duration>,
+}
+
+impl StringMetrics {
+    fn measure(&mut self, number: u8, text: &str, wrap: f64, now: std::time::Duration, load: &impl Fn(u8) -> Option<Font>) -> (f64, f64, f64) {
+        if !self.fonts.contains_key(&number) && self.retry_after.get(&number).is_none_or(|&after| now >= after) {
+            if let Some(font) = load(number) {
+                self.fonts.insert(number, font);
+                self.retry_after.remove(&number);
+            } else {
+                self.retry_after.insert(number, now + std::time::Duration::from_secs(1));
+            }
+        }
+        self.fonts.get(&number).map_or((0.0, 0.0, 0.0), |f| dimensions(f, number, text, Some(wrap)))
+    }
+}
+
+/// A session's owned font source and metrics for script queries. No Bevy resources or
+/// texture handles enter the callback [design]. All font IDs use the renderer's selector.
+pub(crate) fn string_measure(load: impl Fn(u8) -> Option<Font> + Send + Sync + 'static) -> fnv_game::ui_more::Measure {
+    let cache = std::sync::Mutex::new(StringMetrics::default());
+    let start = std::time::Instant::now();
+    Box::new(move |font, text, wrap| {
+        cache.lock().map_or((0.0, 0.0, 0.0), |mut cache| cache.measure(font_number(font), text, wrap, start.elapsed(), &load))
+    })
 }
 
 /// A text tile's size as the code writes it into a tile-drawn menu (T15a,
@@ -1782,6 +1821,39 @@ mod tests {
         assert_eq!(measure(&font, 7, "ab cd", Some(40.0)), (30.0, 31.0 + 38.0));
         assert_eq!(measure(&font, 9, "ab cd", Some(40.0)), (30.0, 62.0));
         assert_eq!(measure(&font, 7, "", None), (0.0, 31.0));
+    }
+
+    #[test]
+    fn string_dimensions_share_layout_and_count_lines_directly() {
+        let font = tall_font(36.0, 42.0);
+        assert_eq!(dimensions(&font, 7, "ab cd", Some(40.0)), (30.0, 80.0, 2.0));
+        assert_eq!(dimensions(&font, 7, "ab\n\ncd", None), (30.0, 118.0, 3.0));
+        assert_eq!(dimensions(&font, 7, "", None), (0.0, 42.0, 1.0));
+        let other = tall_font(52.0, 64.0);
+        assert_eq!(dimensions(&other, 8, "ab\ncd", None), (30.0, 116.0, 2.0));
+        let measure = string_measure(move |n| Some(if n == 8 { other.clone() } else { font.clone() }));
+        assert_eq!(measure(8.0, "ab\ncd", 0.0), (30.0, 116.0, 2.0));
+        assert_eq!(measure(0.0, "ab", -1.0), (30.0, 42.0, 1.0));
+    }
+
+    #[test]
+    fn unavailable_metrics_retry_without_reparsing_every_frame() {
+        use std::cell::Cell;
+        use std::time::Duration;
+        let mut cache = StringMetrics::default();
+        let available = Cell::new(false);
+        let reads = Cell::new(0);
+        let load = |_: u8| {
+            reads.set(reads.get() + 1);
+            available.get().then(|| plain_font(29.0, 10.0))
+        };
+        assert_eq!(cache.measure(9, "ab", 0.0, Duration::ZERO, &load), (0.0, 0.0, 0.0));
+        available.set(true);
+        assert_eq!(cache.measure(9, "ab", 0.0, Duration::from_millis(500), &load), (0.0, 0.0, 0.0));
+        assert_eq!(reads.get(), 1);
+        assert_eq!(cache.measure(9, "ab", 0.0, Duration::from_secs(1), &load), (20.0, 29.0, 1.0));
+        assert_eq!(cache.measure(9, "ab cd", 25.0, Duration::from_secs(2), &load), (20.0, 58.0, 2.0));
+        assert_eq!(reads.get(), 2);
     }
 
     /// A stand-in font whose tallest glyph picture is `tallest` high.
