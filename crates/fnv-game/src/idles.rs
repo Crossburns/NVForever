@@ -562,7 +562,8 @@ impl<'a> Game<'a> {
     /// Category:Dialogue, each response can name an idle for the speaker and one for the
     /// listener].
     pub(crate) fn ask_response_idles(&mut self, speaker: FormId, listener: Option<FormId>, info: FormId, response: usize) {
-        let Some(r) = self.data.infos.get(&info).and_then(|d| d.responses.get(response)) else { return };
+        let dv = self.dialogue_view();
+        let Some(r) = dv.info(&info).and_then(|d| d.responses.get(response)) else { return };
         let (s, l) = (r.speaker_idle, r.listener_idle);
         if let Some(idle) = s {
             self.ask_idle(speaker, idle, IdleSource::Speaker);
