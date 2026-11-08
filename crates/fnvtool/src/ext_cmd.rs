@@ -59,6 +59,9 @@ pub enum ExtCmd {
         /// Function catalogue (default: ../script/functions.json next to --schema).
         #[arg(long)]
         functions: Option<PathBuf>,
+        /// Also write each failing unit's source text here (keep it private: mod text).
+        #[arg(long)]
+        sources: Option<PathBuf>,
     },
     /// Run one probe set's quests headless (tools/capture/ext-probes/<set>) and collect
     /// the EXTPROBE lines they print, as the in-game collector does (fnv.ext.probes/1).
@@ -204,9 +207,9 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             doc["runs"] = json!(runs);
             Ok(doc)
         }
-        ExtCmd::Coverage { lo, schema, functions } => {
+        ExtCmd::Coverage { lo, schema, functions, sources } => {
             let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
-            crate::ext_coverage::coverage(&lo, &schema, &fp)
+            crate::ext_coverage::coverage(&lo, &schema, &fp, sources.as_deref())
         }
         ExtCmd::ScriptRunner { lo, schema, functions, roots, run } => script_runner(&lo, &schema, functions, roots, run),
         ExtCmd::Queries { lo, schema, functions, steps, start_cell, save, trace, ini, config } => {

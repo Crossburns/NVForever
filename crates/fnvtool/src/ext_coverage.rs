@@ -71,7 +71,7 @@ fn probe(g: &mut fnv_game::game::Game<'_>, name: &str) -> (&'static str, String)
     }
 }
 
-pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path) -> anyhow::Result<Value> {
+pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path, sources: Option<&Path>) -> anyhow::Result<Value> {
     // `@file` names a plugin list (one per line, `#` comments and MO2's `*` marks allowed):
     // a 200-plugin load order does not fit on one command line.
     let mut plugins = Vec::new();
@@ -176,6 +176,17 @@ pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path) 
     for f in &data.source_failures {
         let plugin = units.iter().map(|u| u.plugin.as_str()).find(|p| f.starts_with(*p)).unwrap_or("?");
         by_plugin.entry(plugin.to_string()).or_default().push(f);
+    }
+    if let Some(dir) = sources {
+        std::fs::create_dir_all(dir)?;
+        let mut out = String::new();
+        for f in &data.source_failures {
+            let key = f.split(": line ").next().unwrap_or(f);
+            if let Some(src) = units.iter().find(|u| u.key() == key).and_then(|u| u.source.as_deref()) {
+                out.push_str(&format!("===== {f}\n{src}\n"));
+            }
+        }
+        std::fs::write(dir.join("source_failures.txt"), out)?;
     }
     let mut fails: Vec<_> = by_plugin.into_iter().collect();
     fails.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
