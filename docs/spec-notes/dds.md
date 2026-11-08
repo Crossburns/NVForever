@@ -67,7 +67,17 @@ in the game is not known.
 - Cube maps (capabilities-2 value 0xFE00: cube map with all six faces [documented: MS
   DDS]) store six faces one after another, each a full mip chain. Six files are cube maps.
 - The bytes after the 128-byte header equal the sum above exactly; no file has trailing
-  data.
+  data (the game's own archives).
+
+## 2a. Mods' textures (High and Dry, 2026-11-08)
+
+- Trailing bytes: the Decent Prospector Saloon textures hold 79 to 81 bytes more than
+  their layout needs (`decentprospectorsaloonlog01.dds`: 2,796,295 for 2,796,216)
+  [observed]; the levels are read from the start and the rest left unread. Fewer bytes
+  than the layout still fail. That the original draws them so: [hypothesis].
+- Pixel-format flags 0x80000004 (FourCC plus 0x80000000) with `DXT5`, on normal maps
+  (`streetsignssuburb_n.dds`, `streetsignsurban_n.dds`) [observed]: read as the FourCC
+  row; the high bit is taken for an exporter's mark [hypothesis].
 
 ## 4. Naming conventions [hypothesis, to verify against shaders and the NIF texture sets]
 

@@ -94,6 +94,8 @@ impl Format {
 }
 
 const PF_FOURCC: u32 = 0x4;
+/// Set beside PF_FOURCC by some exporters on normal maps (dds.md §2a).
+const PF_FOURCC_HIGH_BIT: u32 = 0x8000_0000;
 const PF_RGB: u32 = 0x40;
 const PF_ALPHA_PIXELS: u32 = 0x1;
 const PF_LUMINANCE: u32 = 0x20000;
@@ -104,7 +106,8 @@ impl PixelFormat {
     /// The format named in dds.md §2, or a description of an unknown one.
     pub fn format(&self) -> Result<Format, String> {
         // The rows of dds.md §2 match on the whole flags value.
-        if self.flags == PF_FOURCC {
+        // A FourCC format may also carry 0x80000000 (dds.md §2a) [observed].
+        if self.flags == PF_FOURCC || self.flags == PF_FOURCC | PF_FOURCC_HIGH_BIT {
             return match &self.fourcc {
                 b"DXT1" => Ok(Format::Dxt1),
                 b"DXT3" => Ok(Format::Dxt3),
@@ -243,7 +246,8 @@ impl<'a> Dds<'a> {
         let format = header.pixel_format.format().map_err(DdsError::Unsupported)?;
         let payload = &data[HEADER_LEN..];
         let expected = header.expected_size(format);
-        if payload.len() != expected || header.levels() > 32 {
+        // Bytes past the layout are left unread (dds.md §2a); fewer cannot be drawn.
+        if payload.len() < expected || header.levels() > 32 {
             return Err(DdsError::SizeMismatch { expected, actual: payload.len() });
         }
         let mut levels = Vec::new();
@@ -487,6 +491,16 @@ mod tests {
         assert_eq!(t.levels[0].iter().map(|l| l.len()).collect::<Vec<_>>(), [16, 8, 8, 8]);
         let short = build(8, 4, 4, PF_FOURCC, b"DXT1", 0, [0; 4], 0, 39);
         assert_eq!(Dds::parse(&short).unwrap_err(), DdsError::SizeMismatch { expected: 40, actual: 39 });
+        // Trailing bytes are left unread (dds.md §2a).
+        let long = build(8, 4, 4, PF_FOURCC, b"DXT1", 0, [0; 4], 0, 121);
+        let t = Dds::parse(&long).unwrap();
+        assert_eq!(t.levels[0].iter().map(|l| l.len()).collect::<Vec<_>>(), [16, 8, 8, 8]);
+    }
+
+    #[test]
+    fn fourcc_with_the_high_bit() {
+        let d = build(4, 4, 1, PF_FOURCC | PF_FOURCC_HIGH_BIT, b"DXT5", 0, [0; 4], 0, 16);
+        assert_eq!(Dds::parse(&d).unwrap().format, Format::Dxt5);
     }
 
     #[test]
