@@ -294,6 +294,10 @@ PARAM_FIXES = {
 # e.g. "GetConditionFormOneFloat HitReactionIdles 0 1"; the template says
 # GetConditionFormOneInt / SetConditionFormOneInt].
 NAME_FIXES = {
+    # The template's name has a space for the underscore, so only "Ar" was kept
+    # [documented: the page's link, Ar_SortEditor; observed 2026-11-08: a variable aR
+    # compiles in the original with JohnnyGuitar loaded, so no command is named Ar].
+    "Ar SortEditor": "Ar_SortEditor",
     "GetConditionFormOneFloat": "GetConditionFormOneFloat",
     "SetConditionFormOneFloat": "SetConditionFormOneFloat",
     "SetConditionFormOneForm": "SetConditionFormOneForm",
