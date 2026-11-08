@@ -148,6 +148,17 @@ the game volumes, SetFontFile, SetSystemColor, the health bar's actor, immortal 
 interaction by type, GetPosEx, the NIF block material values and the Alt translation and
 rotation; engine side in `script_switches.rs` and `nif_mirror.rs`; not probed). Census
 after it: 579 (JIP 201 → 178).
+ShowOff batch 4: 34 (#1010, ext-showoff.md §7: matrices and quaternions, SayTo topics, the INI cache,
+JSON files and folders through NVForever's layer, the pickpocket, quest-message and ammo-regen
+switches, the corner-message handler, ResetInteriorAlt, SetOwnershipTemp, the enable-parent
+functions; from the pages, not probed). Census after it: 568 (ShowOff 71 → 37).
+SUP batch 5: 42 (#1008, ext-sup5.md: Excel workbooks (an .xls reader and writer of our own,
+MS-CFB/MS-XLS), JSON files, file sizes and times, the load-order dump, screenshots through the
+engine and QR codes; the network, desktop, clipboard and system-font functions give their
+nothing values by the owner's decisions of 2026-11-08; not probed yet, set sup5). Census after
+it: 560 (SUP 93 → 51).
+With both ShowOff batch 4 and SUP batch 5 merged: 526 (ShowOff 37, SUP 51) [hypothesis: 602 − 34 − 42;
+the extender_census test decides].
 
 **The plugin libraries: 1,519 left** (recounted with #1022's census). JIP LN 349,
 JohnnyGuitar 313, SUP 184, LU 145, ShowOff 139, ITR 119, One111 51, CacheUI 45, PP 42,
