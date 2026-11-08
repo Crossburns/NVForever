@@ -6089,6 +6089,119 @@ SUP3_PROBES = (
 )
 
 
+# sup5 (writes files; #1008): SUP batch 5 (docs/spec-notes/ext-sup5.md): Excel workbooks,
+# JSON files, file sizes and times, the load-order dump, screenshots and QR codes. The rows
+# write under the game folder's NVFProbe\sup5 (Excel, JSON through ppNVSE's pWriteFile, the
+# QR code), SUPNVSE.log in the game folder, and one screenshot in
+# Data\textures\SUPScreenshots\NVFProbe, which the screenshot rows delete again. No script
+# can remove the rest: after the run, delete the game folder's NVFProbe folder and
+# SUPNVSE.log by hand. Nothing touches the save. The network and dialog functions are not
+# probed (decisions: no network, no dialogs; a dialog would halt the game).
+def _sup5(pid, body, text=True):
+    return (f"sup5.{pid}", "float fA\nfloat fB\nstring_var sText\narray_var aList\narray_var aIn\nref rP\n"
+            "Begin Function { }\n" + _form("rP", NF["player"]) + body, text, None, "")
+
+
+_SUP5_X = "NVFProbe\\sup5\\book"
+_SUP5_A = "NVFProbe\\sup5\\arr"
+_SUP5_N = "NVFProbe\\sup5\\none"
+_SUP5_JSON = "NVFProbe\\sup5\\probe.json"
+
+
+def _sup5_list(expr):
+    return (f"let aList := {expr}\nlet fA := ar_Size aList\nif fA > 0\n"
+            "SetFunctionValue (sv_Construct \"%g|%z|%z\" fA (aList[0]) (aList[fA - 1]))\nelse\n"
+            "SetFunctionValue (sv_Construct \"%g\" fA)\nendif")
+
+
+SUP5_PROBES = (
+    # A missing workbook: -1 [documented: every Excel page's note]; ReadString's text is
+    # NVForever's hypothesis "".
+    [_sup5("xl.missing", f"SetFunctionValue (sv_Construct \"%g %g %g %g\" (ExcelReadFloat \"{_SUP5_N}\" 0 0 0) "
+           f"(ExcelGetWorkSheetCount \"{_SUP5_N}\") (ExcelGetRowCount \"{_SUP5_N}\" 0) (ExcelGetCellValueType \"{_SUP5_N}\" 0 0 0))"),
+     _sup5("xl.missing.string", f"SetFunctionValue (sv_Construct \"[%z]\" (ExcelReadString \"{_SUP5_N}\" 0 0 0))"),
+     # Writes: the returns, then the values' types (hypothesis: a written number is a
+     # float, 2, a whole one too).
+     _sup5("xl.write", f"let fA := ExcelWriteFloat \"{_SUP5_X}\" 0 0 0 10\nlet fB := ExcelWriteString \"{_SUP5_X}\" 0 4 1 \"MyText\"\n"
+           "SetFunctionValue (sv_Construct \"%g %g\" fA fB)"),
+     _sup5("xl.read", f"SetFunctionValue (sv_Construct \"%g [%z] %g %g %g\" (ExcelReadFloat \"{_SUP5_X}\" 0 0 0) "
+           f"(ExcelReadString \"{_SUP5_X}\" 0 4 1) (ExcelGetCellValueType \"{_SUP5_X}\" 0 0 0) "
+           f"(ExcelGetCellValueType \"{_SUP5_X}\" 0 4 1) (ExcelGetCellValueType \"{_SUP5_X}\" 0 1 1))"),
+     _sup5("xl.types", f"ExcelWriteFloat \"{_SUP5_X}\" 0 1 0 3.25\nExcelWriteString \"{_SUP5_X}\" 0 2 0 \"\"\n"
+           f"SetFunctionValue (sv_Construct \"%g %g\" (ExcelGetCellValueType \"{_SUP5_X}\" 0 1 0) (ExcelGetCellValueType \"{_SUP5_X}\" 0 2 0))"),
+     # Across kinds (hypothesis: a text cell's number 0, a number cell's text "").
+     _sup5("xl.cross", f"SetFunctionValue (sv_Construct \"%g [%z]\" (ExcelReadFloat \"{_SUP5_X}\" 0 4 1) (ExcelReadString \"{_SUP5_X}\" 0 0 0))"),
+     # Rows and columns in use (hypothesis: the last used + 1, here 5 and 2).
+     _sup5("xl.counts", f"SetFunctionValue (sv_Construct \"%g %g %g\" (ExcelGetRowCount \"{_SUP5_X}\" 0) (ExcelGetColCount \"{_SUP5_X}\" 0) "
+           f"(ExcelGetWorkSheetCount \"{_SUP5_X}\"))"),
+     # A sheet past the last (hypothesis: the sheets between made, named Sheet1, Sheet2, Sheet3).
+     _sup5("xl.sheet3", f"let fA := ExcelWriteFloat \"{_SUP5_X}\" 2 0 0 1.5\n"
+           f"SetFunctionValue (sv_Construct \"%g %g [%z] [%z] [%z]\" fA (ExcelGetWorkSheetCount \"{_SUP5_X}\") "
+           f"(ExcelSetSheetName \"{_SUP5_X}\" 0) (ExcelSetSheetName \"{_SUP5_X}\" 1) (ExcelSetSheetName \"{_SUP5_X}\" 2))"),
+     # A missing sheet (hypothesis: -1, -1 and "").
+     _sup5("xl.missing.sheet", f"SetFunctionValue (sv_Construct \"%g %g [%z]\" (ExcelGetRowCount \"{_SUP5_X}\" 7) "
+           f"(ExcelReadFloat \"{_SUP5_X}\" 7 0 0) (ExcelSetSheetName \"{_SUP5_X}\" 7))"),
+     # Renaming: cut to 31 [documented]; the return (hypothesis: the new name).
+     _sup5("xl.rename", f"SetFunctionValue (sv_Construct \"[%z] [%z]\" (ExcelSetSheetName \"{_SUP5_X}\" 1 \"A name far longer than thirty-one letters\") "
+           f"(ExcelSetSheetName \"{_SUP5_X}\" 1))"),
+     # Erasing (hypothesis: 1 each; the erased sheet kept, so 3 sheets).
+     _sup5("xl.erase", f"let fA := ExcelEraseCell \"{_SUP5_X}\" 0 4 1\nlet fB := ExcelEraseSheet \"{_SUP5_X}\" 2\n"
+           f"SetFunctionValue (sv_Construct \"%g %g %g %g %g\" fA fB (ExcelGetCellValueType \"{_SUP5_X}\" 0 4 1) "
+           f"(ExcelGetRowCount \"{_SUP5_X}\" 2) (ExcelGetWorkSheetCount \"{_SUP5_X}\"))"),
+     # An array down a column, the player as a name [documented: "Courier"].
+     _sup5("xl.arr.to", "let aIn := ar_Construct \"array\"\nar_Append aIn 2\nar_Append aIn \"MyString\"\nar_Append aIn 3.5\nar_Append aIn rP\n"
+           f"let fA := ExcelArrayToFile \"{_SUP5_A}\" 0 0 0 aIn\n"
+           f"SetFunctionValue (sv_Construct \"%g %g [%z] %g [%z] %g\" fA (ExcelReadFloat \"{_SUP5_A}\" 0 0 0) "
+           f"(ExcelReadString \"{_SUP5_A}\" 0 1 0) (ExcelReadFloat \"{_SUP5_A}\" 0 2 0) "
+           f"(ExcelReadString \"{_SUP5_A}\" 0 3 0) (ExcelGetCellValueType \"{_SUP5_A}\" 0 3 0))"),
+     _sup5("xl.arr.row", "let aIn := ar_Construct \"array\"\nar_Append aIn 7\nar_Append aIn 8\n"
+           f"let fA := ExcelArrayToFile \"{_SUP5_A}\" 1 0 0 aIn 1\n"
+           f"SetFunctionValue (sv_Construct \"%g %g %g\" fA (ExcelReadFloat \"{_SUP5_A}\" 1 0 1) (ExcelGetRowCount \"{_SUP5_A}\" 1))"),
+     # Back as an array, a gap at rows 4-5 and a form at row 6 (hypothesis: gaps passed over).
+     _sup5("xl.arr.from", f"ExcelWriteString \"{_SUP5_A}\" 0 6 0 \"*FalloutNV.esm:000014\"\n"
+           f"let aList := ExcelArrayFromFile \"{_SUP5_A}\" 0 0 0\n"
+           "SetFunctionValue (sv_Construct \"%g %g %z %g %z %i\" (ar_Size aList) (aList[0]) (aList[1]) (aList[2]) (aList[3]) "
+           "(aList[(ar_Size aList) - 1]))"),
+     _sup5("xl.arr.missing", f"let aList := ExcelArrayFromFile \"{_SUP5_N}\" 0 0 0\nSetFunctionValue (ar_Size aList)", False),
+     # JSON: the file written by pWriteFile as one line; %q is a double quote.
+     _sup5("json.write", "let aIn := ar_Construct \"array\"\n"
+           "ar_Append aIn (sv_Construct \"{%qname%q:%qJoe%q,%qlevel%q:7,%qinv%q:[1,%qtwo%q],%qpos%q:{%qx%q:1.5}}\")\n"
+           f"SetFunctionValue (pWriteFile \"{_SUP5_JSON}\" aIn)", False),
+     # [documented: JSONIsFileValid's table] valid, missing, not .json, outside.
+     _sup5("json.valid", f"SetFunctionValue (sv_Construct \"%g %g %g %g\" (JSONIsFileValid \"{_SUP5_JSON}\") "
+           f"(JSONIsFileValid \"{_SUP5_N}.json\") (JSONIsFileValid \"{_SUP5_X}.xls\") (JSONIsFileValid \"..\\NVFProbe\\probe.json\"))"),
+     # The values (hypothesis: a value in a one-element list, a list as itself, an object
+     # as a map; a dotted path; no array for a missing key).
+     _sup5("json.name", _sup5_list(f"JSONGetValue \"{_SUP5_JSON}\" \"name\" 0")),
+     _sup5("json.level", _sup5_list(f"JSONGetValue \"{_SUP5_JSON}\" \"level\" 0")),
+     _sup5("json.inv", _sup5_list(f"JSONGetValue \"{_SUP5_JSON}\" \"inv\" 1")),
+     _sup5("json.pos", f"let aList := JSONGetValue \"{_SUP5_JSON}\" \"pos\" 0\nSetFunctionValue (sv_Construct \"%g %g\" (ar_Size aList) (aList[\"x\"]))"),
+     _sup5("json.path", _sup5_list(f"JSONGetValue \"{_SUP5_JSON}\" \"pos.x\" 0")),
+     _sup5("json.missing", f"let aList := JSONGetValue \"{_SUP5_JSON}\" \"nope\" 0\nSetFunctionValue (ar_Size aList)", False),
+     # Sizes and times (hypothesis: missing -1; the time as year … second).
+     _sup5("file.size", f"SetFunctionValue (sv_Construct \"%g %g\" (GetFileSize \"{_SUP5_JSON}\") (GetFileSize \"{_SUP5_N}.txt\"))"),
+     _sup5("file.time", f"let aList := GetFileTime \"{_SUP5_JSON}\" 2\nlet fA := ar_Size aList\n"
+           "SetFunctionValue (sv_Construct \"%g|%g|%g\" fA (aList[0]) (aList[1]))"),
+     _sup5("file.time.missing", f"let aList := GetFileTime \"{_SUP5_N}.txt\" 2\nSetFunctionValue (ar_Size aList)", False),
+     _sup5("file.timestr", f"let sText := GetFileTimeSTR \"{_SUP5_JSON}\" 2 0\n"
+           f"SetFunctionValue (sv_Construct \"%g %g [%z]\" (sv_Length sText) (sv_Find \"/\" sText) (GetFileTimeSTR \"{_SUP5_N}.txt\" 2 0))"),
+     # The load-order dump's line count, first and last lines (hypothesis: "00 FalloutNV.esm").
+     _sup5("dump.lo", "DumpLoadOrder\nlet aList := pReadFile \"SUPNVSE.log\"\nlet fA := ar_Size aList\n"
+           "SetFunctionValue (sv_Construct \"%g|%z|%z\" fA (aList[0]) (aList[fA - 1]))"),
+     # A part of the screen as a PNG, its size, then deleted [documented: DeleteScreenshot,
+     # -1 missing, -2 outside]; the success value is NVForever's hypothesis 1.
+     _sup5("shot.take", "CaptureScreenshotAlt \"NVFProbe\" \"shot\" 0 100 0 50 4 1 0\nSetFunctionValue 1", False),
+     _sup5("shot.size", "SetFunctionValue (GetFileSize \"Data\\textures\\SUPScreenshots\\NVFProbe\\shot.png\")", False),
+     _sup5("shot.delete", "SetFunctionValue (sv_Construct \"%g %g %g\" (DeleteScreenshot \"NVFProbe\" \"shot.png\") "
+           "(DeleteScreenshot \"NVFProbe\" \"shot.png\") (DeleteScreenshot \"..\\..\" \"shot.png\"))"),
+     # The QR code: where it goes (the game folder or Data) and its size (hypothesis: the
+     # game folder, 10 pixels a module).
+     _sup5("qr.make", "TextToQRCode \"NVFProbe\\sup5\\qr\" \"I love bacon\" 0\nSetFunctionValue 1", False),
+     _sup5("qr.where", "SetFunctionValue (sv_Construct \"%g %g\" (GetFileSize \"NVFProbe\\sup5\\qr.png\") (GetFileSize \"Data\\NVFProbe\\sup5\\qr.png\"))"),
+     _sup5("nothing.program", "SetFunctionValue (IsProgramRunning \"nvf_no_such_program.exe\")", False)]
+)
+
+
 # jip6 and jip7 (writes, session only, each change put back where a getter allows; #1006):
 # JIP LN batches 6 and 7 (docs/spec-notes/jip-records-6.md, jip-records-7.md) on
 # FalloutNV.esm forms [observed: fnvtool esm inventory and decode]: FusionGenerator01 (DEST,
@@ -6454,11 +6567,12 @@ SETS = {"jip-getters": PROBES, "jip-forms": FORM_PROBES, "jip-stores": STORE_PRO
         "tmpl3": TMPL3_PROBES,
         "itr": ITR_PROBES,
         "sup2": SUP2_PROBES,
-        "sup3": SUP3_PROBES}
+        "sup3": SUP3_PROBES,
+        "sup5": SUP5_PROBES}
 # Sets whose probes write (into the session only, see STORE_PROBES, EVENT_PROBES, HIT_PROBES
 # and VAR_PROBES).
 WRITING_SETS = {"jip-stores", "jip-events", "jip-hits", "nvse-vars", "nvse-setters", "nvse-data", "nvse-inv",
-                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3"}
+                "nvse-second", "nvse-fourth", "jip-fifth", "nvse-fifth", "nvse-sixth", "nvse-seventh", "nvse-eighth", "lu-leveled", "nvse-flags", "ini-files", "jip-n7", "player-state", "mcm", "plugin-odds", "lu-leveled2", "projectile", "sky-sound", "knvse-anim", "nif-blocks", "nvse-events", "jip-events2", "nvse-leftovers", "save-set", "save-read", "rgb-ui", "gaps1", "gaps2", "gaps3", "gaps4", "gaps5", "gaps6", "gaps7", "gaps8", "gaps9", "gaps10", "gaps11", "plugins1", "plugins2", "plugins3", "engine1", "engine2", "engine3", "glta-order", "data1", "data2", "data3", "anim1", "anim2", "reload1", "sound1", "proj1", "controls1", "hud1", "showoff1", "atk1", "jip4", "rules1", "rules2", "showoff2", "jg1", "jg2", "jg5", "jip5", "jip8", "tmpl3", "knvse2", "itr", "one111", "pp", "jipppln", "sup2", "sup3", "sup5"}
 SETS.update({"jip6": JIP6_PROBES, "jip7": JIP7_PROBES, "jip6b": JIP6B_PROBES, "jip7b": JIP7B_PROBES})  # JIP 6/7 probes (#1006)
 WRITING_SETS |= {"jip6", "jip7", "jip6b", "jip7b"}
 
