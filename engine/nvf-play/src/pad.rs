@@ -292,7 +292,7 @@ impl Glyph {
             Glyph::Cross => {
                 // A solid X: two flat-ended arms crossing the middle, each a box of
                 // half length `l` along its diagonal and half width `t` [design].
-                let (l, t) = (0.90, 0.14);
+                let (l, t) = (0.90, 0.09);
                 let s = std::f32::consts::FRAC_1_SQRT_2; // cos and sin of 45 degrees.
                 let arm1 = box_distance(Vec2::new(p.x * s + p.y * s, -p.x * s + p.y * s), l, t);
                 let arm2 = box_distance(Vec2::new(p.x * s - p.y * s, p.x * s + p.y * s), l, t);
@@ -300,19 +300,19 @@ impl Glyph {
             }
             Glyph::Circle => {
                 // A ring: outer radius `outer`, the band `thickness` wide.
-                let (outer, thickness) = (0.68, 0.26);
+                let (outer, thickness) = (0.68, 0.17);
                 (p.length() - outer).max(outer - thickness - p.length())
             }
             Glyph::Square => {
                 // A ring: outer half side `outer`, `thickness` wide, corners eased a touch.
-                let (outer, thickness, radius) = (0.66, 0.26, 0.04);
+                let (outer, thickness, radius) = (0.66, 0.17, 0.04);
                 let inner = outer - thickness;
                 rounded_box_distance(p, outer, radius).max(-rounded_box_distance(p, inner, (radius - thickness).max(0.0)))
             }
             Glyph::Triangle => {
                 // A ring of three edges `t` thick; the apex points up (y down in the
                 // picture, so the apex's y is negative).
-                let t = 0.13;
+                let t = 0.085;
                 let (a, b, c) = (Vec2::new(0.0, -0.5625), Vec2::new(0.625, 0.5625), Vec2::new(-0.625, 0.5625));
                 segment(p, a, b).min(segment(p, b, c)).min(segment(p, c, a)) - t
             }
@@ -331,8 +331,9 @@ impl Glyph {
         // ink.
         let d = self.distance(p);
         // A solid core with a narrow soft edge: the font's stroke holds a solid band, so
-        // the glyph must too, or it reads as blurred rather than lit.
-        let x = ((d + 0.04) / 0.26).clamp(0.0, 1.0);
+        // the glyph must too, or it reads as blurred rather than lit. The ramp is narrower
+        // than the stroke, so the thinner strokes above keep a solid core.
+        let x = ((d + 0.02) / 0.12).clamp(0.0, 1.0);
         let body = 1.0 - x * x * (3.0 - 2.0 * x);
         // A faint amber halo outside the body, the glow the fonts bake in. It fades out
         // before the picture's edge so the tile's boundary never shows.
