@@ -310,8 +310,8 @@ impl Glyph {
                 rounded_box_distance(p, outer, radius).max(-rounded_box_distance(p, inner, (radius - thickness).max(0.0)))
             }
             Glyph::Triangle => {
-                // A ring of three edges `t` thick; the apex points up (y down in the
-                // picture, so the apex's y is negative).
+                // A ring of three edges, each of half-thickness `t`; the apex points up
+                // (y down in the picture, so the apex's y is negative).
                 let t = 0.085;
                 let (a, b, c) = (Vec2::new(0.0, -0.5625), Vec2::new(0.625, 0.5625), Vec2::new(-0.625, 0.5625));
                 segment(p, a, b).min(segment(p, b, c)).min(segment(p, c, a)) - t
@@ -341,7 +341,7 @@ impl Glyph {
         (body + halo).clamp(0.0, 1.0)
     }
 
-    /// The glyph as a white picture, its outline in the alpha (tinted by the node's colour).
+    /// The glyph as a white picture, its ink in the alpha (tinted by the node's colour).
     pub fn image(self, size: u32) -> Image {
         use bevy::asset::RenderAssetUsages;
         use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
