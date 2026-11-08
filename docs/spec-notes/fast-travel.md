@@ -3,8 +3,9 @@
 Tags as in `nif.md`: `[documented]` cites a page or file, `[observed]` says what was
 looked at, `[hypothesis]` is a reading that nothing has confirmed yet. `[design]` marks
 what is NVForever's own. Implementation: `engine/nvf-play/src/pipboy/data/travel.rs`
-(the rules, the box's model, the trip) and `pipboy/data.rs` (the click on the map and
-the box drawn over it). The Pip-Boy itself: `pipboy.md` §5.3.
+(the rules, the box's model, the trip) and `pipboy/data.rs` (the click on the map — or
+the controller's A on a marker — and the box drawn over it). The Pip-Boy itself:
+`pipboy.md` §5.3.
 
 ## 1. Sources
 
