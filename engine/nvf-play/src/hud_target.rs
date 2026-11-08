@@ -85,6 +85,8 @@ pub struct TargetHealth {
     pub hostile: bool,
     /// With Living Anatomy: its health and DT.
     pub anatomy: Option<(f32, f32)>,
+    /// The target's DR for the line too (the Living Anatomy DR tweak, `crate::tweaks`).
+    pub anatomy_dr: Option<f32>,
 }
 
 impl TargetHealth {
@@ -92,7 +94,11 @@ impl TargetHealth {
     /// whole and the DT to two places [observed: the original's "HP:250 DT:15.00", the
     /// owner's screenshot 2026-10-24].
     pub fn anatomy_line(&self) -> Option<String> {
-        self.anatomy.map(|(h, dt)| format!("HP:{:.0} DT:{:.2}", h.max(0.0), dt))
+        // The player's tweak adds the DR, whole [design: docs/design/tweaks.md].
+        self.anatomy.map(|(h, dt)| match self.anatomy_dr {
+            Some(dr) => format!("HP:{:.0} DT:{:.2} DR:{:.0}", h.max(0.0), dt, dr),
+            None => format!("HP:{:.0} DT:{:.2}", h.max(0.0), dt),
+        })
     }
 }
 
@@ -334,16 +340,18 @@ fn aim(
         (found, foe, anatomy)
     });
     // The player's tweak keeps the crosshair its own colour [design: docs/design/tweaks.md].
-    let foe = foe && !tweaks.is_some_and(|t| t.no_red_crosshair);
+    let foe = foe && !tweaks.as_ref().is_some_and(|t| t.no_red_crosshair);
     aim_hostile.set_if_neq(AimHostile(foe));
-    let dt = match (found, combat.as_deref()) {
-        (Some((id, ..)), Some(c)) if anatomy => Some(crate::combat::target_armor(c, script.as_deref_mut(), &mut sim, FormId(id)).0),
+    let armor = match (found, combat.as_deref()) {
+        (Some((id, ..)), Some(c)) if anatomy => Some(crate::combat::target_armor(c, script.as_deref_mut(), &mut sim, FormId(id))),
         _ => None,
     };
+    let dt = armor.map(|a| a.0);
+    let anatomy_dr = armor.map(|a| a.1).filter(|_| tweaks.as_ref().is_some_and(|t| t.living_anatomy_dr));
     *held = held_next(kept, found.map(|f| f.0), aimed);
     let now = found.map(|(form_id, health, hp, hostile, _)| {
         let name = sim.ref_name(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), form_id).unwrap_or_default().to_string();
-        TargetHealth { form_id, name, health, hostile, anatomy: dt.map(|dt| (hp, dt)) }
+        TargetHealth { form_id, name, health, hostile, anatomy: dt.map(|dt| (hp, dt)), anatomy_dr }
     });
     let key = |t: &Option<TargetHealth>| t.as_ref().map(|t| (t.form_id, (t.health * 100.0).round() as i32, t.anatomy_line()));
     if key(&target.0) != key(&now) {
@@ -372,10 +380,12 @@ mod tests {
 
     #[test]
     fn living_anatomy_reads_as_the_original() {
-        let t = |anatomy| TargetHealth { form_id: 1, name: "Deathclaw".into(), health: 1.0, hostile: true, anatomy };
+        let t = |anatomy| TargetHealth { form_id: 1, name: "Deathclaw".into(), health: 1.0, hostile: true, anatomy, anatomy_dr: None };
         assert_eq!(t(Some((250.0, 15.0))).anatomy_line().as_deref(), Some("HP:250 DT:15.00"));
         assert_eq!(t(Some((-3.0, 0.5))).anatomy_line().as_deref(), Some("HP:0 DT:0.50"));
         assert_eq!(t(None).anatomy_line(), None);
+        let with_dr = TargetHealth { anatomy_dr: Some(20.4), ..t(Some((250.0, 15.0))) };
+        assert_eq!(with_dr.anatomy_line().as_deref(), Some("HP:250 DT:15.00 DR:20"), "the DR tweak");
     }
 
     /// A hurt actor out of combat: nothing picked, no prompt, not hit, not held.

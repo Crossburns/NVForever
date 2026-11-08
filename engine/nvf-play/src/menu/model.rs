@@ -709,6 +709,9 @@ pub struct MenuModel {
     pub lists: [Listing; 2],
     /// The category each column shows.
     pub category: [Category; 2],
+    /// The two columns change category together (the Matching Categories tweak, set
+    /// by `crate::tweaks`).
+    pub sync_categories: bool,
     /// The player's encumbrance, or why it is unknown.
     pub encumbrance: Result<Encumbrance, String>,
     /// Heading: the container's or merchant's name, or "Inventory".
@@ -875,6 +878,7 @@ impl MenuModel {
             filtered: [0; 2],
             lists: [Listing::default(), Listing::default()],
             category: [Category::All; 2],
+            sync_categories: false,
             encumbrance: Err(String::new()),
             title,
             status: None,
@@ -1180,6 +1184,12 @@ impl MenuModel {
                 self.folder = None;
                 self.selected[i] = 0;
                 self.scroll[i] = 0;
+                if self.sync_categories {
+                    let o = 1 - i;
+                    self.category[o] = cat;
+                    self.selected[o] = 0;
+                    self.scroll[o] = 0;
+                }
                 if let Err(e) = self.refresh(world) {
                     self.status = Some(format!("Cannot list the inventories: {e}"));
                 }
@@ -1192,6 +1202,13 @@ impl MenuModel {
                 self.category[i] = self.category[i].step(by);
                 self.selected[i] = 0;
                 self.scroll[i] = 0;
+                // The player's tweak keeps the other side on the same category [design: docs/design/tweaks.md].
+                if self.sync_categories {
+                    let o = 1 - i;
+                    self.category[o] = self.category[i];
+                    self.selected[o] = 0;
+                    self.scroll[o] = 0;
+                }
                 if let Err(e) = self.refresh(world) {
                     self.status = Some(format!("Cannot list the inventories: {e}"));
                 }

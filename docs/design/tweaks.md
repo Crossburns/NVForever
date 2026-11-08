@@ -107,6 +107,15 @@ option.
 | Invisible Foes Stay Hidden | `bHideRedCrosshairOnDistantInvisibleTargets` | `hud_target::aim` (Invisibility or Chameleon ≥ 1) |
 | Quiet Landings in God Mode | `bGodmodePreventsLegCrippleSound` | `falls::hurt` |
 
+## Fifth batch (2026-11-08)
+
+| Row | INI key | Where |
+|---|---|---|
+| Count Repeated Console Lines | `bCompressDuplicateConsoleMessages` | `Console::print` (`line -#n`) |
+| Console Times | `bConsolePrintsIncludeTimestamp` | `Console::print` (`[mm:ss]` since the first line) |
+| Living Anatomy Shows DR | `bLivingAnatomyShowDR` | `hud_target::aim`, `TargetHealth::anatomy_line` |
+| Matching Categories | `bSynchronizeContainerCategories` | `MenuModel` `Category`/`SetCategory` (`sync_categories`) |
+
 Menu tweaks that code holding the game reads (the Pip-Boy's item info, crafting, the
 level-up menu, the terminal's timers) are kept in `fnv_game::tweaks` too, so no system
 needs another parameter; the catalogue's notes say where NVForever already does what a
@@ -123,8 +132,8 @@ game's Data folder, read-only).
 <!-- generated: the table below lists every tweak of AllTweaks.json (v9.87) by its INI key -->
 | Status | Count |
 |---|---|
-| done | 67 |
-| to do | 536 |
+| done | 71 |
+| to do | 532 |
 | unsure, skipped | 17 |
 | n/a | 15 |
 | skipped: fix | 10 |
@@ -528,12 +537,14 @@ game's Data folder, read-only).
 | `bConsoleNumpadSupport` | done | yes |  | already so: numpad digits type into the console (with Num Lock) |
 | `bImprovedRaceMenu` | done | yes | 3 | already so: the creator camera pans and zooms close |
 | `bInstantContinueButton` | done | yes |  | already so: Continue loads at once |
+| `bLivingAnatomyShowDR` | done | yes | 1 | Living Anatomy Shows DR (the decimal and zero-hiding options not built) |
 | `bMapRemembersPosition` | done | yes | 1 | Map Remembers Its Place (in the session; the save-persistent option not built) |
 | `bNumberedComputerHotkeys` | done | yes | 1 | Number Keys on Terminals (1-9, 0 the tenth; the number prefix option not built) |
 | `bNumberedDialogHotkeys` | done | yes | 2 | already so for 1-9 (the 0 key and number prefixes not built) |
 | `bShowBookEffects` | done | yes | 1 | Skill Book Effects |
 | `bShowWeaponAmmoUseInMenus` | done | yes |  | Rounds per Shot |
 | `bSkipSkillMenuIfNoPointsToAssign` | done | yes |  | Perks First When No Points |
+| `bSynchronizeContainerCategories` | done | yes | 1 | Matching Categories (the option for emptying a category not built) |
 | `bTakeAllInCompanionContainers` | done | yes |  | already so: Take All shows for companions |
 | `bDisableLoadingScreenTips` | done |  |  | No Loading Tips |
 | `bNoExitConfirm` | done |  |  | already so: the main menu's Quit asks nothing |
@@ -544,7 +555,6 @@ game's Data folder, read-only).
 | `bDisplayItemEffectTotals` | to do | yes |  | aid_preview returns totals only; the per-second part is lost |
 | `bHideCursorInDialog` | to do | yes | 1 | the pointer logic (player::grab_cursor) is shared with every menu |
 | `bLevelUpScrollWheelSupport` | to do | yes |  | the wheel scrolls the rows; needs the hovered row to take it |
-| `bLivingAnatomyShowDR` | to do | yes | 1 | Living Anatomy shows HP and DT; DR not yet |
 | `bMainMenuContinueIcon` | to do | yes |  | thumbnails are on the load page only |
 | `bPlaceMarkersAtLocations` | to do | yes | 1 | placing a marker on the map is not built |
 | `bRecurringChallengeIndicator` | to do | yes | 1 | challenges::Row has no recurring flag yet |
@@ -554,7 +564,6 @@ game's Data folder, read-only).
 | `bSeparateHorizontalSensitivity` | to do | yes |  | one mouse sensitivity; mouse_look is at 15 parameters |
 | `bShowWeaponPoisonEffects` | to do | yes |  | NVForever has no weapon poison yet |
 | `bSortEquipableAmmo` | to do | yes |  | rows sort by name (menu/model.rs sort_rows) |
-| `bSynchronizeContainerCategories` | to do | yes | 1 | each side keeps its own category |
 | `b12HourPipboyClock` | to do |  |  |  |
 | `b24HourSleepWaitClock` | to do |  |  |  |
 | `bAddInventoryDropItemHotkey` | to do |  |  |  |
@@ -710,6 +719,8 @@ game's Data folder, read-only).
 
 | INI key | Status | VNV on | Options | Note |
 |---|---|---|---|---|
+| `bCompressDuplicateConsoleMessages` | done | yes |  | Count Repeated Console Lines |
+| `bConsolePrintsIncludeTimestamp` | done | yes | 1 | Console Times (time since the game started; a wall-clock format would need a date crate) |
 | `bMeleeImpactEffectsFollowTarget` | done | yes |  | already so: decals on actors hang from a bone |
 | `bPowerArmorPreventsScreenBlood` | done | yes |  | No Screen Blood in Power Armor (any hit while power armor is worn on the body; hits are not told apart by body part here) |
 | `bRadioStaticDecreasesSongVolume` | done | yes |  | already so: the song fades as the static rises |
@@ -717,9 +728,7 @@ game's Data folder, read-only).
 | `bArmorPreventsBloodDecals` | to do | yes |  | the impact is sent before DT is worked out |
 | `bArmorSoundsPlayIn3D` | to do | yes |  | the player's foley plays at the listener (anim_sounds player_keys) |
 | `bBetterFlycam` | to do | yes | 5 | up/down and wheel speed are already there; auto-move is not |
-| `bCompressDuplicateConsoleMessages` | to do | yes |  | console print pushes every line |
 | `bConsoleBackground` | unsure, skipped | yes |  | needs the plugin's own menu XML |
-| `bConsolePrintsIncludeTimestamp` | to do | yes | 1 | the console print path also writes the scof file |
 | `bConsoleTextShadow` | to do | yes |  | the console draws green text on a dark panel, no shadow |
 | `bCustomScreenshotFormat` | n/a | yes | 1 | NVForever writes its own screenshots |
 | `bDontAllowConsoleTillLoadingIsDone` | n/a | yes |  | the original's start-up order |

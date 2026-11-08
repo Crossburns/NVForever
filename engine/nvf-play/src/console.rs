@@ -122,6 +122,27 @@ pub struct Console {
     recording: Option<Vec<String>>,
     /// `SetConsoleOuputFile`: the file every console line is added to.
     out_file: Option<std::path::PathBuf>,
+    /// The player's tweaks (`crate::tweaks`): a line said again right after itself
+    /// becomes `line -#n`; every line starts with the time since the game started.
+    pub compress_repeats: bool,
+    pub timestamps: bool,
+    /// The last line printed and how many times running, for `compress_repeats`.
+    repeat: Option<(String, u32)>,
+}
+
+/// When the console's clock starts: the first line printed (the game's start, near
+/// enough) [design: docs/design/tweaks.md].
+static CLOCK: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// `[mm:ss]` since [`CLOCK`] started, `[h:mm:ss]` past an hour.
+fn stamp(seconds: u64) -> String {
+    let (h, m, s) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if h > 0 { format!("[{h}:{m:02}:{s:02}] ") } else { format!("[{m:02}:{s:02}] ") }
+}
+
+/// The text a line said `n` times running shows (`n` from 2) [design: docs/design/tweaks.md].
+fn repeated(line: &str, n: u32) -> String {
+    format!("{line} -#{n}")
 }
 
 /// Render toggles the console asked for, for the renderer (nvforever) to switch and
@@ -183,8 +204,27 @@ impl Console {
     }
 
     fn print(&mut self, line: impl Into<String>) {
-        let line = line.into();
+        let mut line = line.into();
+        let since = CLOCK.get_or_init(std::time::Instant::now).elapsed().as_secs();
         info!("console: {line}");
+        // The Compress Repeats tweak: a single line said again replaces itself.
+        if self.compress_repeats && !line.contains('\n') {
+            if let Some((last, n)) = self.repeat.as_mut().filter(|(last, _)| *last == line) {
+                *n += 1;
+                let shown = repeated(last, *n);
+                if let Some(l) = self.lines.last_mut() {
+                    *l = if self.timestamps { format!("{}{shown}", stamp(since)) } else { shown };
+                }
+                self.scroll = 0;
+                return;
+            }
+            self.repeat = Some((line.clone(), 1));
+        } else {
+            self.repeat = None;
+        }
+        if self.timestamps {
+            line = format!("{}{line}", stamp(since));
+        }
         if let Some(path) = &self.out_file {
             use std::io::Write;
             let added = std::fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut f| writeln!(f, "{line}"));
@@ -1444,6 +1484,22 @@ fn compiled(g: &mut fnv_game::Game, call: &ConsoleCall, on: Option<FormId>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tweaks_count_repeats_and_stamp_lines() {
+        let mut c = Console { compress_repeats: true, ..Default::default() };
+        for _ in 0..3 {
+            c.print("same");
+        }
+        c.print("other");
+        c.print("same");
+        assert_eq!(c.lines, ["same -#3", "other", "same"]);
+        assert_eq!(stamp(75), "[01:15] ");
+        assert_eq!(stamp(3725), "[1:02:05] ");
+        let mut c = Console { timestamps: true, ..Default::default() };
+        c.print("x");
+        assert!(c.lines[0].starts_with('[') && c.lines[0].ends_with("] x"));
+    }
 
     #[test]
     fn rbat_and_scof_write_plain_names_in_nvforevers_folder_only() {

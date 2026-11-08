@@ -80,6 +80,17 @@ pub struct TweakSettings {
     pub no_red_crosshair_on_cloaked: bool,
     /// `bGodmodePreventsLegCrippleSound`: no hard-landing sound for the player in god mode.
     pub god_mode_quiet_landing: bool,
+    /// `bCompressDuplicateConsoleMessages`: a console line said again right after
+    /// itself is counted on the same line.
+    pub console_compress_repeats: bool,
+    /// `bConsolePrintsIncludeTimestamp`: console lines start with the time since the
+    /// game started.
+    pub console_timestamps: bool,
+    /// `bLivingAnatomyShowDR`: Living Anatomy's line shows the DR too.
+    pub living_anatomy_dr: bool,
+    /// `bSynchronizeContainerCategories`: a container's or barter's two lists change
+    /// category together.
+    pub sync_categories: bool,
 }
 
 impl Default for TweakSettings {
@@ -112,6 +123,10 @@ impl Default for TweakSettings {
             power_armor_no_screen_blood: false,
             no_red_crosshair_on_cloaked: false,
             god_mode_quiet_landing: false,
+            console_compress_repeats: false,
+            console_timestamps: false,
+            living_anatomy_dr: false,
+            sync_categories: false,
         }
     }
 }
@@ -252,6 +267,10 @@ impl Plugin for TweaksPlugin {
         switch!(app, "power-armor-no-screen-blood", "No Screen Blood in Power Armor", "Hits put no blood on the screen while power armor is worn. (Stewie's Tweaks bPowerArmorPreventsScreenBlood)", power_armor_no_screen_blood);
         switch!(app, "no-red-crosshair-cloaked", "Invisible Foes Stay Hidden", "An invisible foe does not turn the crosshair red. (Stewie's Tweaks bHideRedCrosshairOnDistantInvisibleTargets)", no_red_crosshair_on_cloaked);
         switch!(app, "god-mode-quiet-landing", "Quiet Landings in God Mode", "In god mode the player's hard landings make no pain sound. (Stewie's Tweaks bGodmodePreventsLegCrippleSound)", god_mode_quiet_landing);
+        switch!(app, "console-compress-repeats", "Count Repeated Console Lines", "A console line said again right after itself is counted on one line (line -#2). (Stewie's Tweaks bCompressDuplicateConsoleMessages)", console_compress_repeats);
+        switch!(app, "console-timestamps", "Console Times", "Console lines start with the time since the game started. (Stewie's Tweaks bConsolePrintsIncludeTimestamp)", console_timestamps);
+        switch!(app, "living-anatomy-dr", "Living Anatomy Shows DR", "With Living Anatomy the target's line shows its Damage Resistance as well. (Stewie's Tweaks bLivingAnatomyShowDR)", living_anatomy_dr);
+        switch!(app, "sync-categories", "Matching Categories", "In containers and barter both lists change category together. (Stewie's Tweaks bSynchronizeContainerCategories)", sync_categories);
         // ---- rest ----
         switch!(app, "sleep-in-owned-beds", "Sleep in Owned Beds", "A bed that belongs to someone else can be slept in. (Stewie's Tweaks bSleepInOwnedBeds)", game.sleep_in_owned_beds);
         // ---- items ----
@@ -260,13 +279,24 @@ impl Plugin for TweaksPlugin {
 }
 
 /// Hand the game's part to the running game when it differs, and log the change.
-fn sync(tweaks: Res<TweakSettings>, mut script: Option<ResMut<ScriptState>>, quests: Option<ResMut<crate::quest_messages::QuestMessages>>, loading: Option<ResMut<crate::loading::Loading>>) {
+fn sync(tweaks: Res<TweakSettings>, mut script: Option<ResMut<ScriptState>>, quests: Option<ResMut<crate::quest_messages::QuestMessages>>, loading: Option<ResMut<crate::loading::Loading>>, console: Option<ResMut<crate::console::Console>>, mut active: Option<ResMut<crate::menu::ActiveMenu>>) {
     if let Some(mut l) = loading {
         if l.hide_tips != tweaks.no_loading_tips {
             l.hide_tips = tweaks.no_loading_tips;
         }
     }
     let hidden = crate::quest_messages::Hidden { failed: tweaks.no_quest_failed_popup, discovered: tweaks.no_location_popup, objectives: tweaks.no_objective_popup };
+    if let Some(m) = active.as_deref_mut().and_then(|a| a.0.as_mut()) {
+        if m.sync_categories != tweaks.sync_categories {
+            m.sync_categories = tweaks.sync_categories;
+        }
+    }
+    if let Some(mut c) = console {
+        if (c.compress_repeats, c.timestamps) != (tweaks.console_compress_repeats, tweaks.console_timestamps) {
+            c.compress_repeats = tweaks.console_compress_repeats;
+            c.timestamps = tweaks.console_timestamps;
+        }
+    }
     if let Some(mut q) = quests {
         if q.hidden != hidden {
             q.hidden = hidden;

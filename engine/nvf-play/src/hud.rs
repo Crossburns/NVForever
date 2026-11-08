@@ -1087,7 +1087,7 @@ mod tests {
     fn enemy_ink_tracks_hostility_without_rebuilding_any_children() {
         use crate::hud_target::TargetHealth;
         let mut app = App::new();
-        app.insert_resource(HudTarget(Some(TargetHealth { form_id: 1, name: "Target".into(), health: 0.5, hostile: false, anatomy: Some((50.0, 2.0)) })))
+        app.insert_resource(HudTarget(Some(TargetHealth { form_id: 1, name: "Target".into(), health: 0.5, hostile: false, anatomy: Some((50.0, 2.0)), anatomy_dr: None })))
             .add_systems(Update, enemy_colours);
         let bracket = app.world_mut().spawn(ImageNode::default()).id();
         let tick = app.world_mut().spawn(BackgroundColor(Color::WHITE)).id();
