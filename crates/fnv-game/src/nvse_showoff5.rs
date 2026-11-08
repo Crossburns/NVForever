@@ -205,8 +205,12 @@ fn distance_between(g: &Game, a: FormId, b: FormId) -> Option<f64> {
 /// An item's value at its condition: `fItemConditionValueBase`, `…Mult` and `…Exp` over
 /// the condition's tens of percent, as the barter menu prices it
 /// (`nvf_play::menu::barter::Prices::value_at`; the GECK wiki's defaults 0, 0.0316, 1.5).
-fn value_at(g: &Game, value: f64, condition: Option<f32>) -> f64 {
-    let Some(c) = condition else { return value };
+/// An item with a health and no condition of its own is at full condition, and the
+/// formula holds there too: a fresh 10mm pistol (Value 750) is worth 749, not 750
+/// [observed 2026-11-08: showoff5.itemvalue.pistol, 750 · 0.0316 · 10^1.5 = 749.46]; an
+/// item with no health keeps its Value.
+fn value_at(g: &Game, value: f64, condition: Option<f32>, has_health: bool) -> f64 {
+    let Some(c) = condition.or(has_health.then_some(1.0)) else { return value };
     let s = |n: &str, d: f64| crate::combat::setting(g, n, d);
     let (base, mult, exp) = (s("fItemConditionValueBase", 0.0), s("fItemConditionValueMult", 0.0316), s("fItemConditionValueExp", 1.5));
     let tens = f64::from(c.clamp(0.0, 1.0)) * 10.0;
@@ -286,6 +290,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let n = num(args, 0, -1.0) as i32;
             let count = if n > -1 { n } else { i32::from(crate::levelup::perk_due(g, level)) * crate::levelup::PERKS_PER_LEVEL as i32 };
             g.showoff.b5.levelup.open_as = Some(LevelUpOpen { perks_only: true, count: Some(count), title: text(args, 1) });
+            // Read at once, before the engine's first frame [hypothesis, as ShowSkillMenu's].
+            g.showoff.b5.levelup.page = Some(1);
+            g.showoff.b5.levelup.points = [0, 0, count, 0];
             g.open_menu(crate::game::menus::LEVEL_UP);
             yes(true)
         }
@@ -303,6 +310,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 return Some(Ok(zero));
             }
             g.showoff.b5.levelup.open_as = Some(LevelUpOpen { perks_only: false, count: Some(points), title: text(args, 2) });
+            // The page and the points read at once, in the same script [observed 2026-11-08:
+            // showoff5.levelup.skillmenu, ShowSkillMenu 3 then page 0, points 3, allotted 0,
+            // perks 0]; the engine keeps them from its first frame on.
+            g.showoff.b5.levelup.page = Some(0);
+            g.showoff.b5.levelup.points = [points, 0, 0, 0];
             g.open_menu(crate::game::menus::LEVEL_UP);
             yes(true)
         }
@@ -316,7 +328,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             zero
         }
         // ---- live explosions [documented: Get/SetExplosionRefRadius, Get/SetExplosionRefSource] ----
-        "getexplosionrefradius" => XVal::Num(subject.and_then(|r| g.explosion_radius(r)).map_or(0.0, f64::from)),
+        // -1 for a reference that is no live explosion [observed 2026-11-08:
+        // showoff5.explosion.none, the player].
+        "getexplosionrefradius" => XVal::Num(subject.and_then(|r| g.explosion_radius(r)).map_or(-1.0, f64::from)),
         "setexplosionrefradius" => match subject.and_then(|r| g.showoff.b5.explosions.get_mut(&r)) {
             Some(e) => {
                 e.radius = num(args, 0, 0.0).max(0.0) as f32;
@@ -448,17 +462,15 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let ignore = num(args, 0, 0.0) != 0.0 && crate::functions::actor::av_code(g, "IgnoreCrippledLimbs").ok().is_some_and(|c| crate::functions::actor::actor_value(g, a, c).unwrap_or(0.0) > 0.0);
             yes(hit && !ignore)
         }
-        // 1 for an actor with a melee or unarmed weapon out [documented: ForceRecoilAnim,
-        // "typically only works for melee/unarmed weapons"; hypothesis: only those]; the
-        // recoil is not played [not built].
+        // The recoil is not played [not built; documented: ForceRecoilAnim, "typically only
+        // works for melee/unarmed weapons"]. 1 for the player [observed 2026-11-08: showoff5.recoil.player, at the airport
+        // test ground; the save's weapon and whether it was out not recorded]: 1 for any
+        // living actor, whatever it holds [hypothesis: the page's "only works" is about
+        // the animation showing].
         "forcerecoilanim" => {
             let Some(a) = subject else { return Some(Ok(zero)) };
-            let out = g.extra.get(&a).is_some_and(|e| e.weapon_out);
-            let melee = match crate::functions::items::equipped_weapon(g, a) {
-                Some(w) => matches!(crate::nvse::record_value(g, w, "DNAM", "animation_type"), Some(XVal::Num(t)) if t <= 2.0),
-                None => true,
-            };
-            yes(out && melee)
+            let actor = a == FormId::PLAYER_REF || matches!(g.world.placed.get(a).map(|p| &p.sig), Some(b"ACHR" | b"ACRE"));
+            yes(actor && !g.is_dead(a))
         }
         // `[killer]`: KillActor on every loaded actor hostile to the player [documented:
         // KillAllHostiles; hypothesis: "within range" is the loaded area, as
@@ -495,7 +507,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 },
             };
             let Some(value) = g.world.forms.item(item).and_then(|i| i.value) else { return Some(Ok(XVal::Num(-1.0))) };
-            let mut v = value_at(g, f64::from(value), condition);
+            let has_health = g.world.forms.item(item).is_some_and(|i| i.health.is_some_and(|h| h > 0));
+            let mut v = value_at(g, f64::from(value), condition, has_health);
             if num(args, 0, 0.0) != 0.0 && holder.is_some() && g.menu_open(crate::game::menus::BARTER) {
                 let skill = crate::functions::actor::actor_value(g, FormId::PLAYER_REF, crate::actor_values::BARTER).unwrap_or(0.0);
                 let s = |n: &str, d: f64| crate::combat::setting(g, n, d);
@@ -505,7 +518,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                     (s("fBarterBuyBase", 1.55) + skill * s("fBarterBuyMult", -0.45) / 100.0).max(1.0)
                 };
             }
-            XVal::Num(v)
+            // A whole number, the fraction dropped [observed: 749.46 shows as 749;
+            // hypothesis: truncated rather than rounded].
+            XVal::Num(v.trunc())
         }
         // `whatAttack [weapon]`: the AP of the player's weapon (fists without one): 0 the
         // weapon's own (its override, else its animation type's setting), 1 a melee
@@ -519,28 +534,36 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 Some(XVal::Num(t)) => t as i64,
                 _ => 0,
             };
-            let unarmed = anim == 0;
+            // Fists (the player's weapon when none is equipped) cost the unarmed setting,
+            // their own override AP 18 aside [observed 2026-11-08: showoff5.ap.fists 22,
+            // FalloutNV.esm's fActionPointsAttackUnarmed]; another weapon's override counts
+            // [observed: ap.pistol 17, the 10mm pistol's override].
+            let fists = w == FormId(0x1F4);
             let own = || {
-                let over = matches!(field(g, "DNAM", "flags2"), Some(XVal::Num(f)) if (f as u64) & (1 << 3) != 0);
+                let over = !fists && matches!(field(g, "DNAM", "flags2"), Some(XVal::Num(f)) if (f as u64) & (1 << 3) != 0);
                 match field(g, "DNAM", "override_action_points") {
                     Some(XVal::Num(ap)) if over => ap,
                     _ => anim_ap(g, anim),
                 }
             };
+            // 1 and 2 give 0 for the fists and for a gun [observed 2026-11-08: ap.fists and
+            // ap.pistol "x 0 0", the unarmed uppercut and cross settings not read]; a melee
+            // weapon's 1 is its VATS attack's AP [documented; not observed].
+            let melee = anim == 1 || anim == 2;
             let ap = match num(args, 0, 0.0) as i64 {
-                1 if unarmed => crate::combat::setting(g, "fUpperCutAPCost", 0.0),
-                1 => match field(g, "VATS", "ap") {
+                1 if melee => match field(g, "VATS", "ap") {
                     Some(XVal::Num(x)) if x > 0.0 => x,
-                    _ => own(),
+                    _ => 0.0,
                 },
-                2 if unarmed => crate::combat::setting(g, "fCrossAPCost", 0.0),
+                1 | 2 => 0.0,
                 _ => own(),
             };
             XVal::Num(ap.round())
         }
         // fVATSMaxEngageDistance [documented: GetVATSMaxEngageDistance; the Tweaks
-        // setting is not NVForever's].
-        "getvatsmaxengagedistance" => XVal::Num(crate::combat::setting(g, "fVATSMaxEngageDistance", 0.0)),
+        // setting is not NVForever's]; 5000 when no plugin sets it [observed 2026-11-08:
+        // showoff5.vats.engage 5000 with the base game and DLCs, which do not].
+        "getvatsmaxengagedistance" => XVal::Num(crate::combat::setting(g, "fVATSMaxEngageDistance", 5000.0)),
         // Whether VATS could target the reference: enabled and present, an actor alive,
         // another reference by SetVATSTargetable or its destruction data [documented:
         // GetVATSTargetable, "if passing a disabled reference, this function returns
@@ -550,8 +573,15 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             if !g.world.is_enabled(r).unwrap_or(false) || !g.present(r) {
                 return Some(Ok(zero));
             }
-            let actor = matches!(g.world.placed.get(r).map(|p| &p.sig), Some(b"ACHR" | b"ACRE")) || r == FormId::PLAYER_REF;
-            yes(if actor { !g.is_dead(r) && r != FormId::PLAYER_REF } else { g.vats_targetable(r) })
+            // The player counts [observed 2026-11-08: showoff5.vats.target.player 1]; an
+            // actor out of the loaded cells does not [observed: vats.target.doc 0, Doc
+            // Mitchell in his house while the player stood at the airport test ground;
+            // hypothesis: the unloaded cell is the reason].
+            if r == FormId::PLAYER_REF {
+                return Some(Ok(yes(!g.is_dead(r))));
+            }
+            let actor = matches!(g.world.placed.get(r).map(|p| &p.sig), Some(b"ACHR" | b"ACRE"));
+            yes(if actor { !g.is_dead(r) && crate::functions::refs::in_loaded_cell(g, r) } else { g.vats_targetable(r) })
         }
         // A key's character on the user's keyboard layout [documented: ToANSIChar]: the
         // layout is the operating system's, which no game→engine channel carries, so ""

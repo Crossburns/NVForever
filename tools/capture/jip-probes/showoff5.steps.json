@@ -100,11 +100,6 @@
    "field": "value"
   },
   {
-   "query": "ref rP\nref rDoc\nref rObj\nref rInv\nfloat fRes\nfloat fA\nfloat fB\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rDoc := GetFormFromMod \"FalloutNV.esm\" \"104C0F\"\nSetFunctionValue (rP.GetHitLocationLingering)\nEnd\n",
-   "label": "showoff5.hitlocation.player",
-   "field": "value"
-  },
-  {
    "query": "ref rP\nref rDoc\nref rObj\nref rInv\nfloat fRes\nfloat fA\nfloat fB\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet rDoc := GetFormFromMod \"FalloutNV.esm\" \"104C0F\"\nSetFunctionValue (PlayerHasNightVisionActive)\nEnd\n",
    "label": "showoff5.nightvision",
    "field": "value"

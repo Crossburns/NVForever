@@ -93,6 +93,9 @@ fn the_level_up_menu_and_the_pause_menu_take_the_asks() {
     let ask = g.showoff.b5.levelup.open_as.clone().unwrap();
     assert!(!ask.perks_only);
     assert_eq!(ask.count, Some(5));
+    // Read at once, before the engine's first frame [observed 2026-11-08:
+    // showoff5.levelup.skillmenu].
+    assert_eq!((n(&mut g, "GetLevelUpMenuPage"), n(&mut g, "GetLevelUpMenuPoints"), n(&mut g, "GetLevelUpMenuPoints 1")), (0.0, 5.0, 0.0));
     // The engine reports the page and points each frame; here by hand.
     g.showoff.b5.levelup.page = Some(0);
     g.showoff.b5.levelup.points = [5, 2, 0, 0];
@@ -127,6 +130,7 @@ fn live_explosions_and_the_shot_switches() {
         }
     };
     assert_eq!(on(&mut g, "GetExplosionRefRadius"), 256.0);
+    assert_eq!(n(&mut g, "player.GetExplosionRefRadius"), -1.0, "no explosion [observed]");
     assert_eq!(on(&mut g, "GetExplosionRefSource"), f64::from(FormId::PLAYER_REF.0));
     assert_eq!(on(&mut g, "SetExplosionRefRadius 100.5"), 1.0);
     assert_eq!(g.explosion_radius(r), Some(100.5));
@@ -149,6 +153,7 @@ fn travel_ap_and_removing_items() {
     assert_eq!(n(&mut g, "GetPCCanFastTravel"), 0.0);
     // The pistol's AP: fActionPointsAttackPistol, 20 without the setting.
     assert_eq!(n(&mut g, "GetCalculatedAPCost 0 TestPistol"), 20.0);
+    assert_eq!(n(&mut g, "GetCalculatedAPCost 1 TestPistol") + n(&mut g, "GetCalculatedAPCost 2 TestPistol"), 0.0, "a gun's 1 and 2 [observed]");
     assert_eq!(s(&mut g, "string_var t\nlet t := ToANSIChar 16\nSetFunctionValue t"), "");
     // RemoveAllItemsShowOff: the non-playable item stays unless flag 8.
     let inv = g.world.inventory_mut(FormId::PLAYER_REF).unwrap();

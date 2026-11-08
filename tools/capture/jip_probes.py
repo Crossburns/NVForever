@@ -6128,7 +6128,8 @@ SHOWOFF5_PROBES = (
      _so5v("ansi.2", "ToANSIChar 2 1", True),
      _so5v("invisible.doc", "rDoc.IsActorInvisibleToPlayer"),
      _so5v("combatactors.player", "rP.GetNumCombatActorsFromActor"),
-     _so5v("hitlocation.player", "rP.GetHitLocationLingering"),
+     # rP.GetHitLocationLingering on the unhurt player crashed the original [observed
+     # 2026-11-08]: left out.
      _so5v("nightvision", "PlayerHasNightVisionActive"),
      _so5v("drinking", "PlayerIsDrinkingPlacedWater"),
      _so5v("prompt", "GetIsActivationPromptShown"),
