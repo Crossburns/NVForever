@@ -6,13 +6,13 @@
 //! VM answers "not built yet", or that no handler takes, is missing).
 
 use crate::esm_cmd::open_load_order;
-use crate::ext_cmd::{scan_source, Catalogue};
+use crate::ext_cmd::{bytecode_uses_extender, scan_source, Catalogue};
 use crate::LoadOrderArgs;
 use anyhow::Context;
 use fnv_esm::{LoadOrder, Schema};
 use fnv_game::trace::EventKind;
 use fnv_script::unit::read_load_order;
-use fnv_script::{decode, FunctionTable};
+use fnv_script::FunctionTable;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -72,6 +72,19 @@ fn probe(g: &mut fnv_game::game::Game<'_>, name: &str) -> (&'static str, String)
 }
 
 pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path) -> anyhow::Result<Value> {
+    // `@file` names a plugin list (one per line, `#` comments and MO2's `*` marks allowed):
+    // a 200-plugin load order does not fit on one command line.
+    let mut plugins = Vec::new();
+    for p in &lo.plugins {
+        match p.strip_prefix('@') {
+            Some(f) => {
+                let text = std::fs::read_to_string(f).with_context(|| f.to_string())?;
+                plugins.extend(text.lines().map(|l| l.trim().trim_start_matches('*')).filter(|l| !l.is_empty() && !l.starts_with('#')).map(str::to_string));
+            }
+            None => plugins.push(p.clone()),
+        }
+    }
+    let lo = &LoadOrderArgs { data_dir: lo.data_dir.clone(), plugins };
     // Mods' files as the engine sees them: the Data folder and its archives, read-only.
     let vfs = std::sync::Arc::new(fnv_vfs::Vfs::open_for_plugins(&lo.data_dir, &lo.plugins).ok());
     let v2 = vfs.clone();
@@ -92,55 +105,22 @@ pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path) 
     let schema = Schema::load_dir(schema_dir)?;
     let (units, _) = read_load_order(&order, &schema);
 
-    // 1. Decoding: a unit with any raw piece or issue does not run as written.
+    // 1. The plugins' scripts: the functions their sources name, and the units that use
+    // the extender with no source to compile (NVForever runs those from source only).
     let mut used: BTreeMap<String, Use> = BTreeMap::new();
-    let mut decode_fail: BTreeMap<String, (u64, u64)> = BTreeMap::new();
-    let mut issue_kinds: BTreeMap<String, (u64, Vec<String>)> = BTreeMap::new();
-    // (kind, opcode) -> (units, plugins) for the opcode-keyed issues.
-    let mut by_opcode: BTreeMap<(String, String), (u64, BTreeMap<String, u64>)> = BTreeMap::new();
-    let (mut compiled_units, mut failed_units) = (0u64, 0u64);
+    let mut no_source: BTreeMap<String, u64> = BTreeMap::new();
     for u in &units {
-        if let Some(src) = &u.source {
-            let locals: HashSet<String> = u.variables.iter().map(|v| v.name.to_ascii_lowercase()).collect();
-            for (k, n) in scan_source(src, &locals, &cat).functions {
-                let e = used.entry(k).or_default();
-                e.calls += n;
-                *e.users.entry(u.plugin.clone()).or_default() += n;
-            }
-        }
-        if !u.has_scda || u.bytes.is_empty() {
-            continue;
-        }
-        compiled_units += 1;
-        let d = decode(&u.bytes, &table);
-        let entry = decode_fail.entry(u.plugin.clone()).or_default();
-        entry.0 += 1;
-        if d.report.raw_total() > 0 || !d.report.issues.is_empty() {
-            failed_units += 1;
-            entry.1 += 1;
-            let mut seen = HashSet::new();
-            for i in &d.report.issues {
-                if matches!(i.kind, "unknown_opcode" | "raw_params") {
-                    let op = i.detail.split(':').next().unwrap_or("").trim().to_string();
-                    if seen.insert((i.kind, op.clone())) {
-                        let e = by_opcode.entry((i.kind.to_string(), op)).or_default();
-                        e.0 += 1;
-                        *e.1.entry(u.plugin.clone()).or_default() += 1;
-                    }
-                }
-                let k = issue_kinds.entry(i.kind.to_string()).or_default();
-                k.0 += 1;
-                if k.1.len() < 5 {
-                    k.1.push(format!("{} {:?}: {}", u.plugin, u.owner, i.detail));
+        match &u.source {
+            Some(src) => {
+                let locals: HashSet<String> = u.variables.iter().map(|v| v.name.to_ascii_lowercase()).collect();
+                for (k, n) in scan_source(src, &locals, &cat).functions {
+                    let e = used.entry(k).or_default();
+                    e.calls += n;
+                    *e.users.entry(u.plugin.clone()).or_default() += n;
                 }
             }
-            if d.report.issues.is_empty() {
-                let k = issue_kinds.entry("raw_only".into()).or_default();
-                k.0 += 1;
-                if k.1.len() < 5 {
-                    k.1.push(format!("{} {:?}", u.plugin, u.owner));
-                }
-            }
+            None if u.has_scda && bytecode_uses_extender(&u.bytes, &table) => *no_source.entry(u.plugin.clone()).or_default() += 1,
+            None => {}
         }
     }
 
@@ -191,30 +171,29 @@ pub(crate) fn coverage(lo: &LoadOrderArgs, schema_dir: &Path, functions: &Path) 
         }
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-    let mut fails: Vec<(&String, &(u64, u64))> = decode_fail.iter().filter(|(_, v)| v.1 > 0).collect();
-    fails.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+    // Source compiles that failed, by plugin (the key starts with the plugin's name).
+    let mut by_plugin: BTreeMap<String, Vec<&String>> = BTreeMap::new();
+    for f in &data.source_failures {
+        let plugin = units.iter().map(|u| u.plugin.as_str()).find(|p| f.starts_with(*p)).unwrap_or("?");
+        by_plugin.entry(plugin.to_string()).or_default().push(f);
+    }
+    let mut fails: Vec<_> = by_plugin.into_iter().collect();
+    fails.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
     Ok(json!({
-        "format": "fnv.ext.coverage/1",
+        "format": "fnv.ext.coverage/2",
         "summary": {
             "plugins": order.plugins.len(),
-            "compiled_units": compiled_units,
-            "units_not_fully_decoded": failed_units,
+            "units_run_from_source": data.issues.count("script_compiled_from_source"),
+            "units_source_does_not_compile": data.source_failures.len(),
+            "units_extender_without_source": no_source.values().sum::<u64>(),
             "script_runner_files": sr.len(),
             "script_runner_compile_failures": compile.len(),
             "extender_functions_used": used.len(),
             "functions": by_status,
         },
         "functions_not_handled": rows.into_iter().map(|r| r.2).collect::<Vec<_>>(),
-        "decode_issue_kinds": issue_kinds.iter().map(|(k, (n, s))| json!({"kind": k, "units": n, "samples": s})).collect::<Vec<_>>(),
-        "decode_by_opcode": {
-            let mut v: Vec<_> = by_opcode.iter().collect();
-            v.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
-            v.iter().map(|((k, op), (n, ps))| {
-                let name = u16::from_str_radix(op.trim_start_matches("0x"), 16).ok().and_then(|o| data.table.get(o)).map(|f| f.name.clone());
-                json!({"kind": k, "opcode": op, "name": name, "units": n, "plugins": ps.len(), "top": ps.keys().take(5).collect::<Vec<_>>()})
-            }).collect::<Vec<_>>()
-        },
-        "decode_failures_by_plugin": fails.iter().map(|(p, (n, f))| json!({"plugin": p, "units": n, "failed": f})).collect::<Vec<_>>(),
+        "source_failures_by_plugin": fails.iter().map(|(p, v)| json!({"plugin": p, "units": v.len(), "samples": v.iter().take(4).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+        "extender_without_source": no_source,
         "script_runner_compile": compile,
     }))
 }

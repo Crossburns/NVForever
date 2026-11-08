@@ -1091,6 +1091,9 @@ pub struct GameData {
     /// the class flags].
     pub class_services: HashMap<FormId, u32>,
     pub issues: Issues,
+    /// Every unit whose source was compiled because its bytes cannot run and did not
+    /// compile, with the compiler's first error (`source_compile::apply`).
+    pub source_failures: Vec<String>,
     pub read_issues: ReadIssues,
 }
 
@@ -1930,6 +1933,7 @@ impl GameData {
             radiation_markers,
             class_services: HashMap::new(),
             issues: Issues::default(),
+            source_failures: Vec::new(),
             read_issues: ReadIssues::default(),
         };
         // Decode every unit once.
@@ -1972,7 +1976,7 @@ impl GameData {
         let table = std::mem::take(&mut d.table);
         if long_way {
             let recompiled = crate::source_compile::compile_picked(lo, &table, &units);
-            crate::source_compile::apply(&mut units, recompiled, &mut d.issues);
+            crate::source_compile::apply(&mut units, recompiled, &mut d.issues, &mut d.source_failures);
         }
         let recompiled = std::thread::scope(|scope| {
             let compile = scope.spawn(|| if long_way { crate::source_compile::Recompiled::none() } else { crate::source_compile::compile_picked(lo, &table, &units) });
@@ -2266,7 +2270,7 @@ impl GameData {
             recompiled
         });
         d.table = table;
-        crate::source_compile::apply(&mut units, recompiled, &mut d.issues);
+        crate::source_compile::apply(&mut units, recompiled, &mut d.issues, &mut d.source_failures);
         d.units = units;
         clock.lap("source compile results put in");
         for stages in d.need_stages.values_mut() {

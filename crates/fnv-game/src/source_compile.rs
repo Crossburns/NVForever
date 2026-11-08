@@ -179,7 +179,7 @@ pub(crate) fn compile_picked(lo: &LoadOrder<'_>, table: &FunctionTable, units: &
 
 /// Put [`compile_picked`]'s results in, in place. Units whose source does not compile keep
 /// their bytes (noted in `issues`).
-pub(crate) fn apply(units: &mut [Compiled], recompiled: Recompiled, issues: &mut Issues) {
+pub(crate) fn apply(units: &mut [Compiled], recompiled: Recompiled, issues: &mut Issues, failures: &mut Vec<String>) {
     for (i, r) in recompiled.0 {
         match r {
             // The seed keeps every existing index; names the lists lacked come after them.
@@ -192,7 +192,10 @@ pub(crate) fn apply(units: &mut [Compiled], recompiled: Recompiled, issues: &mut
                 c.program = program;
                 c.raw = raw;
             }
-            Err(e) => issues.note("script_source_does_not_compile", || e),
+            Err(e) => {
+                issues.note("script_source_does_not_compile", || e.clone());
+                failures.push(e);
+            }
         }
     }
 }
