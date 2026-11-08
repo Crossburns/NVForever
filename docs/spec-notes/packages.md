@@ -256,6 +256,15 @@ location, in cell (radius ignored), near reference; the radius is editable.
 - **Travel**: go to the destination, using navmesh preferred triangles "but not in
   interiors"; stop at the edge of the destination radius; the destination must be on the
   navmesh. Package idles play at the destination.
+  - **At an xMarkerHeading** (built 2026-11-08) [documented: GECK wiki, NPC population,
+    level-design.md: the heading version "shows which way an actor standing there will
+    face"]: an actor whose package location is "near reference" an xMarkerHeading (the
+    engine's base 0x34) turns, once there, to the marker's heading at the standing turn
+    rate (`fnv_ai` `marker_heading`, set in `settle`, for every package type that
+    settles there; a sandbox keeps its own). Owner report (TTW, the G.O.A.T.): Mr.
+    Brotch at `CG03MrBrotchTeachMarker` (heading 22°, towards the desks) faced the lab
+    bench, the heading he walked in with. Whether the original turns for a radius other
+    than 0 (his `CG03MrBrotchGiveGOAT` has 20) is not known; ours turns for any.
 - **Sandbox**: ambient behaviour within the location radius: it scores nearby objects
   (food, furniture, idle markers, other actors), weights them by a per-kind probability
   that drops to zero for the kind just chosen and rises for the others; sleep start
