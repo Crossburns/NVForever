@@ -5307,9 +5307,17 @@ JIP9_PROBES = (
        _j9("posex.getpos", 'SetFunctionValue (sv_Construct "%.3f %.3f %.3f" (rP.GetPos X) (rP.GetPos Y) (rP.GetPos Z))', True)]
     + [_j9xyz(f"niftrans.head.{w}", f'rP.GetNifBlockTranslationAlt "Bip01 Head" fX fY fZ {w}') for w in (0, 1)]
     + [_j9xyz(f"nifrot.head.{w}", f'rP.GetNifBlockRotationAlt "Bip01 Head" fX fY fZ {w}') for w in range(0, 4)]
-    + [_j9xyz("niftrans.missing", 'rP.GetNifBlockTranslationAlt "NvfNoSuchBlock" fX fY fZ 1'),
-       _j9("niftrans.head.plain", 'let sText := sv_Construct "%.3f %.3f %.3f" (rP.GetNifBlockTranslation "Bip01 Head" X) '
-           '(rP.GetNifBlockTranslation "Bip01 Head" Y) (rP.GetNifBlockTranslation "Bip01 Head" Z)\nSetFunctionValue sText', True)]
+    + [_j9xyz("niftrans.missing", 'rP.GetNifBlockTranslationAlt "NvfNoSuchBlock" fX fY fZ 1')]
+    # The rows above, with declared script variables for the outputs, did not compile in
+    # the original [observed 2026-11-08]; the same calls with the variables declared
+    # inline, as mods' script-runner files write them (ext-script-runner.md).
+    + [_j9("posex.inline", "rP.GetPosEx (float fP) (float fQ) (float fW)\n"
+           'SetFunctionValue (sv_Construct "%.3f %.3f %.3f" fP fQ fW)', True),
+       _j9("nifrot.head.inline", 'let fRes := rP.GetNifBlockRotationAlt "Bip01 Head" (float fP) (float fQ) (float fW) 0\n'
+           'SetFunctionValue (sv_Construct "%g" fRes)', True)]
+    # GetNifBlockTranslation with an axis, the Fallout 3 plugin's form, did not compile
+    # [observed 2026-11-08: niftrans.head.plain]; JIP's takes getWorld and gives an array.
+    + [_j9v("niftrans.head.array", 'ar_Size (rP.GetNifBlockTranslation "Bip01 Head" 1)')]
     + [_j9v(f"material.upperbody.{i}", f'rP.GetMaterialPropertyValue "UpperBody" {i}') for i in range(0, 10)]
     + [_j9("material.set", 'let fSave := rP.GetMaterialPropertyValue "UpperBody" 7\n'
            'let fRes := rP.SetMaterialPropertyValue "UpperBody" 7 0.5\nlet fA := rP.GetMaterialPropertyValue "UpperBody" 7\n'

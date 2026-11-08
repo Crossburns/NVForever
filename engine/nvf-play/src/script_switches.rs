@@ -117,7 +117,7 @@ fn sync(
     j.enemy_target = target.and_then(|t| t.0.as_ref().map(|h| FormId(h.form_id)));
     let Ok(mut window) = windows.single_mut() else { return };
     let size = (f64::from(window.width()), f64::from(window.height()));
-    j.window = size;
+    j.window = Some(size);
     if let Some((x, y, xml)) = j.cursor_warp.take() {
         // XML units are the interface's 960-high frame (`crate::tiles::input::to_units`).
         let per = size.1.max(1.0) / 960.0;

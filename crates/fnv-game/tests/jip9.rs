@@ -110,41 +110,51 @@ fn s(g: &mut Game, body: &str) -> String {
 fn the_hud_cursor_and_the_mouse_switches() {
     let f = fixture();
     let mut g = game(&f);
-    // Asked without an argument, the state [documented].
+    // The state before the call, so asked without an argument the state [observed: jip9
+    // hudcursor 0 0 1 0].
     assert_eq!(n(&mut g, "ToggleHUDCursor"), 0.0);
-    assert_eq!(n(&mut g, "ToggleHUDCursor 1"), 1.0);
+    assert_eq!(n(&mut g, "ToggleHUDCursor 1"), 0.0);
     assert_eq!(n(&mut g, "ToggleHUDCursor"), 1.0);
     // Any menu switches it off [documented].
     g.open_menu(1002);
     assert_eq!(n(&mut g, "ToggleHUDCursor"), 0.0);
-    assert_eq!(n(&mut g, "ToggleHUDCursor 1"), 0.0, "not while a menu is open");
+    q(&mut g, "ToggleHUDCursor 1");
+    assert_eq!(n(&mut g, "ToggleHUDCursor"), 0.0, "not while a menu is open");
     // CloseActiveMenu closes the menu on top [documented].
     q(&mut g, "CloseActiveMenu");
     assert_eq!(g.menu, None);
     g.open_menu(1002);
     q(&mut g, "CloseActiveMenu 1");
     assert_eq!(g.menu, None);
-    // The mouse's axes: 0-3, the state after [documented].
+    // The mouse's axes: 0-3 [documented], the state before; 9 keeps its two low bits
+    // [observed: jip9 mouse.1 and mouse.9, 3 3 1 3].
     assert_eq!(n(&mut g, "ToggleMouseMovement"), 3.0);
-    assert_eq!(n(&mut g, "ToggleMouseMovement 1"), 1.0);
+    assert_eq!(n(&mut g, "ToggleMouseMovement 2"), 3.0);
+    assert_eq!(n(&mut g, "ToggleMouseMovement"), 2.0);
+    assert_eq!(n(&mut g, "ToggleMouseMovement 9"), 2.0);
     assert_eq!(n(&mut g, "ToggleMouseMovement"), 1.0);
-    assert_eq!(n(&mut g, "ToggleMouseMovement 9"), 3.0);
     // The vanity wheel and the camera's collision are on until turned off.
     assert_eq!((n(&mut g, "ToggleVanityWheel"), n(&mut g, "ToggleCameraCollision")), (1.0, 1.0));
-    assert_eq!((n(&mut g, "ToggleVanityWheel 0"), n(&mut g, "ToggleCameraCollision 0")), (0.0, 0.0));
+    assert_eq!((n(&mut g, "ToggleVanityWheel 0"), n(&mut g, "ToggleCameraCollision 0")), (1.0, 1.0));
+    assert_eq!((n(&mut g, "ToggleVanityWheel"), n(&mut g, "ToggleCameraCollision")), (0.0, 0.0));
     let j = &g.other.jip9;
-    assert!(!j.vanity_wheel && !j.camera_collision && j.mouse_axes == 3);
+    assert!(!j.vanity_wheel && !j.camera_collision && j.mouse_axes == 1);
 }
 
 #[test]
 fn the_cursor_where_the_engine_tells_it() {
     let f = fixture();
     let mut g = game(&f);
+    // No window told and no INI: 1280 by 720; outside MenuMode and the HUD cursor the
+    // pointer is its centre [observed: jip9 cursor.*, 640 360 and 853.333 480].
+    assert_eq!((n(&mut g, "GetCursorPos X"), n(&mut g, "GetCursorPos Y")), (640.0, 360.0));
+    let x1 = n(&mut g, "GetCursorPos X 1");
+    assert!((x1 - 853.333).abs() < 1e-3, "{x1}");
+    assert_eq!(n(&mut g, "GetCursorPos Y 1"), 480.0);
     // A window twice the interface's height: two pixels a unit.
-    g.other.jip9.window = (2560.0, 1920.0);
+    g.other.jip9.window = Some((2560.0, 1920.0));
     g.other.jip9.cursor_px = Some((640.0, 480.0));
-    // Outside MenuMode and the HUD cursor, 0 [hypothesis].
-    assert_eq!(n(&mut g, "GetCursorPos X"), 0.0);
+    assert_eq!(n(&mut g, "GetCursorPos X"), 1280.0, "the centre");
     q(&mut g, "ToggleHUDCursor 1");
     assert_eq!((n(&mut g, "GetCursorPos X"), n(&mut g, "GetCursorPos Y")), (640.0, 480.0));
     // In XML coordinates: the tree's pointer, else the pixels over two.
@@ -157,6 +167,15 @@ fn the_cursor_where_the_engine_tells_it() {
     assert_eq!(n(&mut g, "GetCursorPos X"), 200.0);
     q(&mut g, "ToggleHUDCursor 0\nSetCursorPos 5 5");
     assert_eq!(g.other.jip9.cursor_warp, Some((100.0, 50.0, true)), "not outside the cursor's modes");
+}
+
+#[test]
+fn a_headless_window_is_the_ini_display_size() {
+    let mut f = fixture();
+    f.data.ini_texts = vec!["[Display]\niSize W=1920\niSize H=1080\n".into()];
+    let mut g = game(&f);
+    assert_eq!((n(&mut g, "GetCursorPos X"), n(&mut g, "GetCursorPos Y")), (960.0, 540.0));
+    assert_eq!((n(&mut g, "GetCursorPos X 1"), n(&mut g, "GetCursorPos Y 1")), (853.3333333333334, 480.0));
 }
 
 #[test]
@@ -195,10 +214,11 @@ fn radio_volumes_fonts_colours_and_the_health_bar() {
     assert_eq!(all, [100.0, 50.0, 60.0, 100.0, 60.0, 50.0]);
     assert_eq!(n(&mut g, "GetGameVolume 6"), 0.0);
     q(&mut g, "SetGameVolume 4 30\nSetGameVolume 1 150");
-    assert_eq!((n(&mut g, "GetGameVolume 4"), n(&mut g, "GetGameVolume 1")), (30.0, 100.0));
+    // Past 100 nothing changes [observed: jip9 volume.set].
+    assert_eq!((n(&mut g, "GetGameVolume 4"), n(&mut g, "GetGameVolume 1")), (30.0, 50.0));
     q(&mut g, "SetGameVolume 4");
     assert_eq!(n(&mut g, "GetGameVolume 4"), 60.0, "back to the default");
-    assert_eq!(g.other.jip9.volume_sets, [(4, 30.0), (1, 100.0), (4, 60.0)]);
+    assert_eq!(g.other.jip9.volume_sets, [(4, 30.0), (4, 60.0)]);
     // Fonts: only types 1-8 and 10-89, and a file that is there.
     assert_eq!(n(&mut g, "SetFontFile 9 \"textures\\fonts\\x.fnt\""), 0.0);
     assert_eq!(n(&mut g, "SetFontFile 2 \"textures\\fonts\\no such file.fnt\""), 0.0);
@@ -218,9 +238,12 @@ fn immortal_mode_keeps_the_player_alive() {
     let mut g = game(&f);
     q(&mut g, "player.SetActorValue Health 100");
     let health = |g: &mut Game| n(g, "player.GetActorValue Health");
+    // The mode before the call; 5 is kept and read back, and holds nothing [observed:
+    // jip9 immortal.5 0 0 5 0; hypothesis: no effect].
     assert_eq!(n(&mut g, "ToggleImmortalMode"), 0.0);
-    assert_eq!(n(&mut g, "ToggleImmortalMode 2"), 2.0);
-    assert_eq!(n(&mut g, "ToggleImmortalMode 5"), 2.0, "not a mode");
+    assert_eq!(n(&mut g, "ToggleImmortalMode 5"), 0.0);
+    assert_eq!((n(&mut g, "ToggleImmortalMode"), f64::from(g.immortal_mode())), (5.0, 0.0));
+    assert_eq!(n(&mut g, "ToggleImmortalMode 2"), 5.0);
     let r = g.hit(FormId::PLAYER_REF, 30.0, HitInfo { location: -1, ..HitInfo::default() });
     assert_eq!((r.dealt, health(&mut g)), (0.0, 100.0), "no damage in mode 2");
     q(&mut g, "ToggleImmortalMode 1");

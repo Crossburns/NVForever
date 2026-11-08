@@ -250,10 +250,21 @@
    "text": true
   },
   {
-   "query": "ref rP\nref rObj\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fX\nfloat fY\nfloat fZ\nstring_var sText\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet sText := sv_Construct \"%.3f %.3f %.3f\" (rP.GetNifBlockTranslation \"Bip01 Head\" X) (rP.GetNifBlockTranslation \"Bip01 Head\" Y) (rP.GetNifBlockTranslation \"Bip01 Head\" Z)\nSetFunctionValue sText\nEnd\n",
-   "label": "jip9.niftrans.head.plain",
+   "query": "ref rP\nref rObj\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fX\nfloat fY\nfloat fZ\nstring_var sText\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nrP.GetPosEx (float fP) (float fQ) (float fW)\nSetFunctionValue (sv_Construct \"%.3f %.3f %.3f\" fP fQ fW)\nEnd\n",
+   "label": "jip9.posex.inline",
    "field": "value",
    "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fX\nfloat fY\nfloat fZ\nstring_var sText\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nlet fRes := rP.GetNifBlockRotationAlt \"Bip01 Head\" (float fP) (float fQ) (float fW) 0\nSetFunctionValue (sv_Construct \"%g\" fRes)\nEnd\n",
+   "label": "jip9.nifrot.head.inline",
+   "field": "value",
+   "text": true
+  },
+  {
+   "query": "ref rP\nref rObj\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fX\nfloat fY\nfloat fZ\nstring_var sText\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nSetFunctionValue (ar_Size (rP.GetNifBlockTranslation \"Bip01 Head\" 1))\nEnd\n",
+   "label": "jip9.niftrans.head.array",
+   "field": "value"
   },
   {
    "query": "ref rP\nref rObj\nref rItem\nfloat fRes\nfloat fSave\nfloat fA\nfloat fB\nfloat fX\nfloat fY\nfloat fZ\nstring_var sText\nBegin Function { }\nlet rP := GetFormFromMod \"FalloutNV.esm\" \"14\"\nSetFunctionValue (rP.GetMaterialPropertyValue \"UpperBody\" 0)\nEnd\n",

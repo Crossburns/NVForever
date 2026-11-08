@@ -38,8 +38,9 @@ pub struct Jip9State {
     pub cursor_warp: Option<(f64, f64, bool)>,
     /// The cursor in the window's pixels from its top left, as the engine last told it.
     pub cursor_px: Option<(f64, f64)>,
-    /// The window's size in pixels, as the engine last told it.
-    pub window: (f64, f64),
+    /// The window's size in pixels, as the engine last told it; `None` until it does
+    /// (a headless run: the INI's display size, [`window`]).
+    pub window: Option<(f64, f64)>,
     /// The game volumes 0-100 in GetGameVolume's order, as the engine last told them
     /// (SetGameVolume's change at once).
     pub volumes: [f32; 6],
@@ -53,8 +54,9 @@ pub struct Jip9State {
     pub colour_sets: Vec<(u8, [u8; 3])>,
     /// The actor whose health bar the HUD shows, as the engine last told it.
     pub enemy_target: Option<FormId>,
-    /// ToggleImmortalMode: 0 off, 1 health not below 1, 2 no health or limb damage.
-    pub immortal: u8,
+    /// ToggleImmortalMode's value as set, any number [observed: jip9 immortal.5 reads 5
+    /// back]; 1 health not below 1, 2 no health or limb damage, others off.
+    pub immortal: i64,
     /// SetInteractionDisabledType's form type codes.
     pub disabled_types: BTreeSet<i32>,
 }
@@ -68,7 +70,7 @@ impl Default for Jip9State {
             camera_collision: true,
             cursor_warp: None,
             cursor_px: None,
-            window: (1280.0, 960.0),
+            window: None,
             volumes: DEFAULT_VOLUMES,
             volume_sets: Vec::new(),
             fonts: BTreeMap::new(),
@@ -113,10 +115,26 @@ fn axis(v: Option<&XVal>) -> Option<usize> {
     }
 }
 
+/// The window's size in pixels: as the engine told it, else the game INI's display size
+/// (`iSize W` and `iSize H` under `[Display]`, FalloutPrefs.ini) when the host gave INI
+/// text, else 1280 by 720 [observed: jip9 cursor.*, the original's pointer sat at 640 360
+/// pixels, 853.333 480 units, on an install whose FalloutPrefs.ini says iSize W=1280,
+/// iSize H=720; decision: the same size when no INI names one].
+pub fn window(g: &mut Game) -> (f64, f64) {
+    if let Some(w) = g.other.jip9.window {
+        return w;
+    }
+    let mut ini = |k: &str| g.ini_number(k).filter(|v| *v > 0.0);
+    match (ini("isize w:display"), ini("isize h:display")) {
+        (Some(w), Some(h)) => (w, h),
+        _ => (1280.0, 720.0),
+    }
+}
+
 /// Window pixels per interface (XML) unit: the interface is 960 units high at any window
 /// size [documented: menu-xml.md §3, the engine's `tiles::input::to_units`].
-fn px_per_unit(g: &Game) -> f64 {
-    g.other.jip9.window.1.max(1.0) / 960.0
+fn px_per_unit(g: &mut Game) -> f64 {
+    window(g).1.max(1.0) / 960.0
 }
 
 impl Game<'_> {
@@ -139,7 +157,12 @@ impl Game<'_> {
     /// The player's immortal mode (ToggleImmortalMode): 0 off, 1 Health not below 1,
     /// 2 no Health or limb damage.
     pub fn immortal_mode(&self) -> u8 {
-        self.other.jip9.immortal
+        // Another value is kept and read back [observed: jip9 immortal.5]; it holds
+        // nothing [hypothesis: the page names 0-2 only].
+        match self.other.jip9.immortal {
+            m @ (1 | 2) => m as u8,
+            _ => 0,
+        }
     }
 
     /// A menu opened: the HUD cursor goes off [documented: ToggleHUDCursor, "switched off
@@ -165,24 +188,31 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
     let zero = XVal::Num(0.0);
     let v = match name {
         // ---- the cursor, the mouse, the camera
-        // `[toggle]`: the state after it [documented: "return whether cursor mode is
-        // active"]. Not while a menu is open [hypothesis: a menu switches it off].
+        // `[toggle]`: the state before it, so without an argument the state [observed:
+        // jip9 hudcursor, 0 from `ToggleHUDCursor 1` with it off, 1 asked after; the
+        // page's "return whether cursor mode is active"]. The switches below answer the
+        // same way [observed: jip9 mouse.*, vanity, camcoll, immortal.*]. Not while a
+        // menu is open [hypothesis: a menu switches it off].
         "togglehudcursor" => {
+            let was = g.other.jip9.hud_cursor;
             if let Some(on) = toggle(args) {
                 g.other.jip9.hud_cursor = on && g.menu.is_none();
             }
-            yes(g.other.jip9.hud_cursor)
+            yes(was)
         }
-        // `axis [useXML]`: in MenuMode or with the HUD cursor, else 0 [hypothesis: the
-        // page gives no value outside them]. Screen coordinates are the window's pixels
-        // from its top left [documented: "(0, 0) is at the top-left corner"]; XML ones the
-        // interface's units, the pointer the tile tree hits with.
+        // `axis [useXML]`. Screen coordinates are the window's pixels from its top left
+        // [documented: "(0, 0) is at the top-left corner"]; XML ones the interface's
+        // units, the pointer the tile tree hits with. Outside MenuMode and the HUD cursor
+        // the pointer is the window's centre [observed: jip9 cursor.X0 640, Y0 360,
+        // X1 853.333, Y1 480 on a 1280 by 720 window].
         "getcursorpos" => {
             let (Some(a), xml) = (axis(args.first()), num(args, 1).is_some_and(|x| x != 0.0)) else { return Some(Ok(zero)) };
-            if g.menu.is_none() && !g.other.jip9.hud_cursor {
-                return Some(Ok(zero));
-            }
             let per = px_per_unit(g);
+            if g.menu.is_none() && !g.other.jip9.hud_cursor {
+                let (w, h) = window(g);
+                let c = if a == 0 { w / 2.0 } else { h / 2.0 };
+                return Some(Ok(XVal::Num(if xml { c / per } else { c })));
+            }
             let at = if xml {
                 g.ui_pointer.at.or_else(|| g.other.jip9.cursor_px.map(|(x, y)| (x / per, y / per)))
             } else {
@@ -204,24 +234,27 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             zero
         }
         // `[flags]`: 0 both off, 1 horizontal only, 2 vertical only, 3 both [documented];
-        // the state after it.
+        // the two low bits are kept [observed: jip9 mouse.9, 9 reads back 1].
         "togglemousemovement" => {
+            let was = g.other.jip9.mouse_axes;
             if let Some(f) = num(args, 0) {
-                g.other.jip9.mouse_axes = (f as i64).clamp(0, 3) as u8;
+                g.other.jip9.mouse_axes = ((f as i64) & 3) as u8;
             }
-            XVal::Num(f64::from(g.other.jip9.mouse_axes))
+            XVal::Num(f64::from(was))
         }
         "togglevanitywheel" => {
+            let was = g.other.jip9.vanity_wheel;
             if let Some(on) = toggle(args) {
                 g.other.jip9.vanity_wheel = on;
             }
-            yes(g.other.jip9.vanity_wheel)
+            yes(was)
         }
         "togglecameracollision" => {
+            let was = g.other.jip9.camera_collision;
             if let Some(on) = toggle(args) {
                 g.other.jip9.camera_collision = on;
             }
-            yes(g.other.jip9.camera_collision)
+            yes(was)
         }
         // `[closeAll]`: the open menu closes as the player's OK does, or every one
         // [documented]. Nothing is returned [documented: no return type].
@@ -271,12 +304,19 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             let Some(t) = num(args, 0).map(|t| t as i64).and_then(|t| usize::try_from(t).ok()).filter(|&t| t < 6) else { return Some(Ok(zero)) };
             XVal::Num(f64::from(g.other.jip9.volumes[t]))
         }
-        // `type [level]`: clamped to 0-100 [hypothesis]; left out, the default.
+        // `type [level]`: a level past 100 changes nothing [observed: jip9 volume.set,
+        // 30 then 150 reads 30], nor one below 0 [hypothesis: likewise]; left out, the
+        // default [observed: music back to 60].
         "setgamevolume" => {
             if let Some(t) = num(args, 0).map(|t| t as i64).and_then(|t| usize::try_from(t).ok()).filter(|&t| t < 6) {
-                let v = num(args, 1).map_or(DEFAULT_VOLUMES[t], |v| v.clamp(0.0, 100.0) as f32);
-                g.other.jip9.volumes[t] = v;
-                g.other.jip9.volume_sets.push((t, v));
+                let v = match num(args, 1) {
+                    None => Some(DEFAULT_VOLUMES[t]),
+                    Some(v) => (0.0..=100.0).contains(&v).then_some(v as f32),
+                };
+                if let Some(v) = v {
+                    g.other.jip9.volumes[t] = v;
+                    g.other.jip9.volume_sets.push((t, v));
+                }
             }
             zero
         }
@@ -306,14 +346,14 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         }
         // ---- the HUD's enemy health bar: its actor, else none [documented].
         "getenemyhealthtarget" => XVal::Ref(g.other.jip9.enemy_target.map_or(0, |f| f.0)),
-        // ---- the player's immortal mode: `[mode]` 0-2, the mode after it [documented].
+        // ---- the player's immortal mode: `[mode]` 0-2 [documented]; any value is kept
+        // and read back [observed: jip9 immortal.5]; the mode before it.
         "toggleimmortalmode" => {
+            let was = g.other.jip9.immortal;
             if let Some(m) = num(args, 0) {
-                if (0.0..=2.0).contains(&m) {
-                    g.other.jip9.immortal = m as u8;
-                }
+                g.other.jip9.immortal = m as i64;
             }
-            XVal::Num(f64::from(g.other.jip9.immortal))
+            XVal::Num(was as f64)
         }
         // ---- interaction by form type: `disable type` / `type` [documented]
         "setinteractiondisabledtype" => {
