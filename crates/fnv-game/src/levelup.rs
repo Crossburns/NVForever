@@ -263,7 +263,8 @@ impl PerkSheet {
             })
             .collect();
         rows.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then_with(|| a.2.cmp(&b.2)).then(a.3.cmp(&b.3)));
-        PerkSheet { perks: rows.iter().map(|r| r.3).collect(), available: rows.iter().map(|r| r.0).collect(), chosen: BTreeSet::new(), count: PERKS_PER_LEVEL }
+        // The player's tweak can let more than one be taken [design: docs/design/tweaks.md].
+        PerkSheet { perks: rows.iter().map(|r| r.3).collect(), available: rows.iter().map(|r| r.0).collect(), chosen: BTreeSet::new(), count: g.tweaks.perks_per_level.max(1) }
     }
 
     /// A sheet of perks that can all be taken (tests).

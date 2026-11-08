@@ -116,6 +116,23 @@ option.
 | Living Anatomy Shows DR | `bLivingAnatomyShowDR` | `hud_target::aim`, `TargetHealth::anatomy_line` |
 | Matching Categories | `bSynchronizeContainerCategories` | `MenuModel` `Category`/`SetCategory` (`sync_categories`) |
 
+## Sixth batch (2026-11-08, gameplay)
+
+| Row | INI key | Where |
+|---|---|---|
+| Perks per Level (1–5) | `iPerksPerLevel` | `PerkSheet::of_player` |
+| S.P.E.C.I.A.L. Points (30–70) | `bCustomSpecialPoints` | `SpecialSheet::for_menu` when no script set a total |
+| Pick Any Lock | `bPickLocksWithoutSkill` | `lockpick::opening` (the skill asked of `may_pick`) |
+| Hack Any Terminal | `bHackTerminalsWithoutSkill` | `terminal::opening` |
+| No Terminal Lockout | `bNoLockFailedTerminals` | `terminal::hacked` |
+| No Casino Bans | `bNoCasinoBans` | `casino::opening` |
+| Search the Unconscious | `bLootUnconsciousVictims` | `activate::actor_action_in` |
+| Pickpocket Worn Items | `bPickpocketWornItems` | `Game::pickpocket_worn` |
+| No Sneak Criticals | `bNoSneakAttacksCriticals` | `combat::sneak_attack` |
+| Reload Only When Empty | `bDisableReloadingNonEmptyClip` | `combat::fire` |
+| Fast Travel Takes No Time | `bNoFastTravelTimeChange` | `travel::go` |
+| Falls in Power Armor (x0–x2) | `bPowerArmorScalesFallDamage` | `falls::hurt` (`tweaks::wears_power_armor`) |
+
 Menu tweaks that code holding the game reads (the Pip-Boy's item info, crafting, the
 level-up menu, the terminal's timers) are kept in `fnv_game::tweaks` too, so no system
 needs another parameter; the catalogue's notes say where NVForever already does what a
@@ -132,8 +149,8 @@ game's Data folder, read-only).
 <!-- generated: the table below lists every tweak of AllTweaks.json (v9.87) by its INI key -->
 | Status | Count |
 |---|---|
-| done | 71 |
-| to do | 532 |
+| done | 83 |
+| to do | 520 |
 | unsure, skipped | 17 |
 | n/a | 15 |
 | skipped: fix | 10 |
@@ -142,17 +159,24 @@ game's Data folder, read-only).
 
 | INI key | Status | VNV on | Options | Note |
 |---|---|---|---|---|
+| `bCustomSpecialPoints` | done |  | 1 | S.P.E.C.I.A.L. Points (30 to 70; a script's own total still wins) |
 | `bDisableFastTravel` | done |  |  | No Fast Travel |
+| `bDisableReloadingNonEmptyClip` | done |  | 2 | Reload Only When Empty (the energy-only and looping options not built) |
 | `bFastTravelOverencumbered` | done |  |  | Fast Travel Encumbered |
 | `bJumpWhileOverencumbered` | done |  |  | already so: NVForever never refuses the jump when over-encumbered |
+| `bLootUnconsciousVictims` | done |  |  | Search the Unconscious |
 | `bNoDialogueZoom` | done |  |  | already a row: Gameplay tab, dialogue-zoom |
+| `bNoLockFailedTerminals` | done |  |  | No Terminal Lockout |
+| `bPickLocksWithoutSkill` | done |  | 1 | Pick Any Lock (the lock plays as before; the difficulty option not built) |
 | `bPowerArmorNeedsNoTraining` | done |  |  | Power Armor Without Training |
+| `bPowerArmorScalesFallDamage` | done |  | 2 | Falls in Power Armor (slider; applies to everyone, the player-only option not built) |
 | `bReduceXP` | done |  | 2 | Experience Earned (slider, x0 to x2) |
+| `iPerksPerLevel` | done |  | 1 | Perks per Level (1 to 5) |
 | `bHiddenFragsFix` | to do | yes |  | NPCs' own unplayable explosives are hidden from the pickpocket list |
 | `bMoreFrequentNPCLightUpdates` | unsure, skipped | yes | 1 | NVForever lights actors its own way; unclear what to change |
 | `bActorsStickToSlopes` | to do |  | 2 |  |
 | `bAdjustableScopeZoom` | to do |  | 14 |  |
-| `bAgilityScalesJumpHeight` | to do |  | 1 |  |
+| `bAgilityScalesJumpHeight` | to do |  | 1 | jump height is a fixed character param; needs a small system with Agility |
 | `bAgilityScalesMovementSpeed` | to do |  | 3 |  |
 | `bAimingSpeed` | to do |  | 2 |  |
 | `bAimingUnholstersWeapons` | to do |  |  |  |
@@ -175,8 +199,6 @@ game's Data folder, read-only).
 | `bCripplingDoesntDisarm` | to do |  |  |  |
 | `bCritChanceIgnoresFireRate` | to do |  |  |  |
 | `bCustomArmorConditionPenalty` | to do |  | 1 |  |
-| `bCustomSpecialPoints` | to do |  | 1 |  |
-| `bDisableReloadingNonEmptyClip` | to do |  | 2 |  |
 | `bDisarmRequiresSkill` | to do |  | 2 |  |
 | `bDrowningDrainsAP` | to do |  |  |  |
 | `bEncumbranceIncludesGrabbedItems` | to do |  |  |  |
@@ -188,18 +210,18 @@ game's Data folder, read-only).
 | `bFallDeathsCauseDismemberment` | to do |  |  |  |
 | `bFastTravelCostsSpecialNukaBottles` | to do |  | 3 |  |
 | `bForceLockpickNoBreakLock` | to do |  | 3 |  |
-| `bFreeWildWasteland` | to do |  |  |  |
+| `bFreeWildWasteland` | to do |  |  | the trait sheet needs to know which trait is free |
 | `bFrenzyGrantsPlayerXP` | to do |  |  |  |
 | `bGodModePreventsJamAnims` | to do |  |  |  |
 | `bGrabbingItemsIsCrime` | to do |  | 1 |  |
-| `bHardcoreTweaks` | to do |  | 3 |  |
+| `bHardcoreTweaks` | to do |  | 3 | unsure which way each option goes outside Hardcore |
 | `bHipFireAnimsWhileScoped` | unsure, skipped |  |  | depends on alternate animations |
 | `bHittingWeaponsDoesntDamageThem` | to do |  |  |  |
 | `bHoldToActivate` | to do |  | 9 |  |
 | `bHoldToHolsterMeleeWeapons` | to do |  |  |  |
 | `bHostilesPrioritizePlayer` | to do |  | 3 |  |
 | `bImprovedHacking` | to do |  | 10 |  |
-| `bJumpingCostsAP` | to do |  | 3 |  |
+| `bJumpingCostsAP` | to do |  | 3 | nothing drains AP outside VATS yet |
 | `bJumpSwimsUpwards` | to do |  | 2 |  |
 | `bKeepFallHeightOnLoad` | to do |  |  |  |
 | `bLevelDifferenceAffectsCombatXP` | to do |  | 2 |  |
@@ -207,11 +229,10 @@ game's Data folder, read-only).
 | `bLockNeedsKeyShowName` | to do |  |  |  |
 | `bLockpickForceBonusNearSweetSpot` | to do |  | 2 |  |
 | `bLockpickRememberBobbyPinAngle` | to do |  |  |  |
-| `bLootUnconsciousVictims` | to do |  |  |  |
-| `bLuckDoesntAffectGambling` | to do |  | 1 |  |
+| `bLuckDoesntAffectGambling` | to do |  | 1 | already so? no Luck in the gambling rules found; check the original first |
 | `bMapSelectableCompanions` | to do |  | 2 |  |
 | `bMarkNearbyLocationsOnMap` | to do |  | 1 |  |
-| `bModifySkillPointsEarned` | to do |  | 2 |  |
+| `bModifySkillPointsEarned` | to do |  | 2 | levelup::points_for has the game; two numbers to choose |
 | `bMousewheelScrollsWeaponHotkeys` | to do |  | 1 |  |
 | `bMovementPenalties` | to do |  | 11 |  |
 | `bNoAmmoFromTakingNPCWeapon` | to do |  |  |  |
@@ -219,27 +240,24 @@ game's Data folder, read-only).
 | `bNoCompanionItemDamage` | to do |  |  |  |
 | `bNoDamageMeleeWeaponIfTargetDead` | to do |  |  |  |
 | `bNoEnvironmentRadiationInFullPowerArmor` | to do |  |  |  |
-| `bNoFastTravelIfLegsCrippled` | to do |  | 1 |  |
+| `bNoFastTravelIfLegsCrippled` | to do |  | 1 | a new refusal needs its own text (no game setting exists for it) |
 | `bNoFreeBarterItems` | to do |  | 1 |  |
 | `bNoGrabOwnedItems` | to do |  |  |  |
 | `bNoLockEncounterZoneLevels` | unsure, skipped |  |  | encounter-zone level locking not yet checked in NVForever |
-| `bNoLockFailedTerminals` | to do |  |  |  |
 | `bNoPlayerStaggerAnims` | to do |  |  |  |
 | `bNoSkillTags` | to do |  | 6 |  |
 | `bNPCsDetectMineExplosions` | to do |  |  |  |
 | `bNPCsDropLiveGrenades` | to do |  |  |  |
 | `bNPCsEarnAmmoCasings` | to do |  |  |  |
 | `bNPCsTakeLimbFallDamage` | to do |  |  |  |
-| `bOnlyAllowWaitWhileSitting` | to do |  | 3 |  |
+| `bOnlyAllowWaitWhileSitting` | to do |  | 3 | a new wait refusal needs its own text |
 | `bOverencumberedTweak` | to do |  | 8 |  |
 | `bPerBulletLoopingReloads` | to do |  | 2 |  |
 | `bPerksAffectFistWeaponSpeed` | to do |  |  |  |
-| `bPickLocksWithoutSkill` | to do |  | 1 |  |
 | `bPickpocketCaughtCausesDetection` | to do |  |  |  |
 | `bPickpocketFleeingActors` | to do |  |  |  |
 | `bPickpocketOverhaul` | to do |  | 15 |  |
 | `bPlantingLiveGrenadesRequiresWeaponSkill` | to do |  |  |  |
-| `bPowerArmorScalesFallDamage` | to do |  | 2 |  |
 | `bPowerArmorScalesLimbDamage` | to do |  | 3 |  |
 | `bPowerAttackIfBlocking` | to do |  | 1 |  |
 | `bPreventHittingHolsteredWeapons` | to do |  | 2 |  |
@@ -257,7 +275,7 @@ game's Data folder, read-only).
 | `bRepairsRewardXP` | to do |  | 1 |  |
 | `bReviveUnconsciousCompanions` | to do |  | 3 |  |
 | `bRunAndGunAPInCombatOnly` | to do |  |  |  |
-| `bRunningCostsAP` | to do |  | 8 |  |
+| `bRunningCostsAP` | to do |  | 8 | nothing drains AP outside VATS yet |
 | `bRunSlowerInWater` | to do |  | 1 |  |
 | `bScalePlayerMeleeReach` | to do |  | 3 |  |
 | `bScaleWeaponVolume` | to do |  | 2 |  |
@@ -269,7 +287,7 @@ game's Data folder, read-only).
 | `bSleepHealingMinDuration` | to do |  | 2 |  |
 | `bSleepOnChairs` | to do |  |  |  |
 | `bSlowBreathRegen` | to do |  | 2 |  |
-| `bSneakAttackWithoutCrouching` | to do |  |  |  |
+| `bSneakAttackWithoutCrouching` | to do |  |  | sneaking comes from control.sneak (melee) and the projectile; both need the switch |
 | `bSneakingDoesntForcePowerAttacks` | unsure, skipped |  |  | depends on separate animations |
 | `bSpeedMultScalesJumpHeight` | to do |  |  |  |
 | `bStealingSendsNoAlarm` | to do |  |  |  |
@@ -288,10 +306,9 @@ game's Data folder, read-only).
 | `bVATSTargetPlayerProjectiles` | to do |  |  |  |
 | `bVATSThrowablesUseVisibility` | to do |  |  |  |
 | `bWeaponModdingSkillRequirement` | to do |  |  |  |
-| `bWeightlessWornArmor` | to do |  | 1 |  |
-| `bWeightlessWornPowerArmor` | to do |  | 3 |  |
-| `iMaxCharacterLevel` | to do |  | 1 |  |
-| `iPerksPerLevel` | to do |  | 1 |  |
+| `bWeightlessWornArmor` | to do |  | 1 | WeightRules::unit gets no equipped flag; see bWeightlessItems |
+| `bWeightlessWornPowerArmor` | to do |  | 3 | WeightRules::unit gets no equipped flag; see bWeightlessItems |
+| `iMaxCharacterLevel` | to do |  | 1 | experience::level_cap adds 5 per story add-on; choose how the cap is set |
 
 ### Combat
 
@@ -299,6 +316,7 @@ game's Data folder, read-only).
 |---|---|---|---|---|
 | `bDisableCombatMusic` | done |  |  | No Battle Music |
 | `bHideEnemyMarkers` | done |  | 1 | No Enemies on the Compass (the firing-enemies option is not built) |
+| `bNoSneakAttacksCriticals` | done |  |  | No Sneak Criticals |
 | `bAllowTeammatesUseMeltdown` | to do |  |  |  |
 | `bAutoWeaponNoFiringDelay` | to do |  | 1 |  |
 | `bBloodyMessGibTargetedLimbOnly` | to do |  |  |  |
@@ -312,27 +330,26 @@ game's Data folder, read-only).
 | `bFirstPersonVATS` | to do |  |  |  |
 | `bHoldAndReleaseThrowables` | to do |  | 1 |  |
 | `bIgnoreCompanionsVATS` | to do |  | 1 |  |
-| `bKillsRewardAP` | to do |  | 1 |  |
+| `bKillsRewardAP` | to do |  | 1 | restoring AP outside VATS needs a small helper first |
 | `bLocationalMeleeDamage` | to do |  | 3 |  |
 | `bMaxVATSDistanceUsesWeaponRange` | to do |  | 3 |  |
 | `bNoCompanionKillXP` | to do |  | 1 |  |
 | `bNoDisarmCompanions` | to do |  |  |  |
-| `bNoHealingInCombat` | to do |  | 1 |  |
+| `bNoHealingInCombat` | to do |  | 1 | the refusal belongs before MenuModel::apply takes the item |
 | `bNoPipBoyInCombat` | to do |  | 5 |  |
 | `bNoScaleNpcDamageByCondition` | to do |  |  |  |
 | `bNoScaleNpcDamageResistanceByCondition` | to do |  |  |  |
 | `bNoScaleNpcDamageThresholdByCondition` | to do |  |  |  |
 | `bNoSelfExplosionDamage` | to do |  |  |  |
 | `bNoSelfMeltdownDamage` | to do |  | 3 |  |
-| `bNoSneakAttacksCriticals` | to do |  |  |  |
 | `bNoVATSTargetInvisible` | to do |  |  |  |
-| `bNoWeaponConditionDamagePenalty` | to do |  |  |  |
+| `bNoWeaponConditionDamagePenalty` | to do |  |  | condition_mult is a free function; needs a Rules field (serialized) |
 | `bNPCsCanDisarmPlayer` | to do |  |  |  |
 | `bNPCsCanSneakCritPlayer` | to do |  |  |  |
 | `bPlayerMeleeDamageIgnoresScale` | to do |  |  |  |
 | `bPlayerNonMeleeDamageIgnoresScale` | to do |  |  |  |
 | `bPowerAttackWhileOverencumbered` | to do |  |  |  |
-| `bRemoveWeaponDamageBuffer` | to do |  |  |  |
+| `bRemoveWeaponDamageBuffer` | to do |  |  | condition_mult is a free function; needs a Rules field (serialized) |
 | `bScaleCriticalDamage` | to do |  | 1 | needs a field on fnv-combat Rules; check what its serialized dumps feed first |
 | `bSneakCriticalsHeadshotsOnly` | to do |  |  |  |
 | `bSneakCriticalsOnlyMeleeWeapons` | to do |  |  |  |
@@ -700,20 +717,20 @@ game's Data folder, read-only).
 | INI key | Status | VNV on | Options | Note |
 |---|---|---|---|---|
 | `bFastTravelWithEnemiesNearby` | done |  |  | Fast Travel Near Enemies |
+| `bHackTerminalsWithoutSkill` | done |  |  | Hack Any Terminal |
+| `bNoCasinoBans` | done |  |  | No Casino Bans |
+| `bPickpocketWornItems` | done |  | 1 | Pickpocket Worn Items (the holstered-weapons-only option not built) |
 | `bSleepInOwnedBeds` | done |  |  | Sleep in Owned Beds |
 | `bAddSetHomeCommand` | to do |  |  |  |
 | `bAllowPickpocketIfAlreadyCaught` | to do |  |  |  |
 | `bDebugLockpickMenu` | to do |  |  |  |
 | `bGodModeAllowsCraftingWithoutRequirements` | to do |  |  |  |
-| `bHackTerminalsWithoutSkill` | to do |  |  |  |
-| `bNoCasinoBans` | to do |  |  |  |
 | `bNoHackingRetryDelay` | to do |  |  |  |
 | `bNoMaxCasinoBet` | to do |  |  |  |
-| `bPickpocketWornItems` | to do |  | 1 |  |
 | `bReallocateSkillPointsOnLevelup` | to do |  |  |  |
 | `bSleepWaitAnywhere` | to do |  | 6 |  |
 | `bWeightlessAidItems` | to do |  |  |  |
-| `bWeightlessItems` | to do |  | 5 |  |
+| `bWeightlessItems` | to do |  | 5 | WeightRules is saved with the world; a new field needs a serde default first |
 
 ### Misc
 
@@ -724,6 +741,7 @@ game's Data folder, read-only).
 | `bMeleeImpactEffectsFollowTarget` | done | yes |  | already so: decals on actors hang from a bone |
 | `bPowerArmorPreventsScreenBlood` | done | yes |  | No Screen Blood in Power Armor (any hit while power armor is worn on the body; hits are not told apart by body part here) |
 | `bRadioStaticDecreasesSongVolume` | done | yes |  | already so: the song fades as the static rises |
+| `bNoFastTravelTimeChange` | done |  |  | Fast Travel Takes No Time |
 | `bAllowKeyboardAndMouseWithControllerConnected` | to do | yes |  | the Input Device setting picks one device; needs both at once |
 | `bArmorPreventsBloodDecals` | to do | yes |  | the impact is sent before DT is worked out |
 | `bArmorSoundsPlayIn3D` | to do | yes |  | the player's foley plays at the listener (anim_sounds player_keys) |
@@ -763,7 +781,7 @@ game's Data folder, read-only).
 | `bDisableControllerDeadzones` | to do |  | 2 |  |
 | `bDisableGodmodeOnLoad` | to do |  |  |  |
 | `bDisableRegionBordersKeepMessage` | to do |  |  |  |
-| `bDisableSellingItems` | to do |  |  |  |
+| `bDisableSellingItems` | to do |  |  | MenuModel::apply has no game; a flag set at barter open |
 | `bDisableStealthEffectInPipboy` | to do |  |  |  |
 | `bDisableWeaponHotkeys` | to do |  |  |  |
 | `bDisarmingMinesPicksThemUp` | to do |  |  |  |
@@ -780,7 +798,6 @@ game's Data folder, read-only).
 | `bNoAltTabPause` | to do |  | 1 |  |
 | `bNoAmmoCasings` | to do |  |  | NVForever gives no casings yet |
 | `bNoAudioDistortion` | to do |  | 1 |  |
-| `bNoFastTravelTimeChange` | to do |  |  |  |
 | `bNoHotkeyEquipSounds` | to do |  |  |  |
 | `bNoPipboyOnAltTab` | n/a |  |  | the original's alt-tab handling |
 | `bNoScrollwheelPOVChange` | to do |  | 2 |  |

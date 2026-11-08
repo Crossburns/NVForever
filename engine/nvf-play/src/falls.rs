@@ -200,12 +200,15 @@ fn hurt(
     tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     // The player's tweak: no hard-landing sound for the player in god mode [design: docs/design/tweaks.md].
-    let quiet_god = tweaks.is_some_and(|t| t.god_mode_quiet_landing) && crate::combat::god_mode();
+    let quiet_god = tweaks.as_ref().is_some_and(|t| t.god_mode_quiet_landing) && crate::combat::god_mode();
     for f in fell.read() {
         let rules = *falls.rules.get_or_insert_with(|| FallRules::from_world(&sim.world));
         // ITR's SetFallDamageMult: the actor's multiplier, else the global one
         // (`fnv_game::nvse_itr1`, docs/spec-notes/ext-itr.md §2).
         let mult = script.as_deref().and_then(|s| s.rt.as_ref()).map_or(1.0, |rt| rt.game.fall_damage_mult(f.actor));
+        // The player's tweak scales the fall in power armour [design: docs/design/tweaks.md].
+        let armored = tweaks.as_ref().map_or(1.0, |t| t.power_armor_fall_damage).ne(&1.0) && crate::tweaks::wears_power_armor(&sim.world, f.actor);
+        let mult = if armored { mult * f64::from(tweaks.as_ref().map_or(1.0, |t| t.power_armor_fall_damage)) } else { mult };
         let dmg = rules.damage(f.height) * mult as f32;
         if dmg <= 0.0 {
             debug!("falls: {} lands from {:.0} units, no damage (from {:.0})", f.actor, f.height, rules.min);

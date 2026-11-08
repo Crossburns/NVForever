@@ -357,7 +357,8 @@ fn actor_action(rt: Option<&mut crate::script::Runtime>, sim: &mut SimState, id:
 
 fn actor_action_in(g: &mut fnv_game::Game, creature: bool, id: u32, talkers: &mut HashMap<u32, (bool, f64)>) -> Action {
     let r = FormId(id);
-    if g.is_dead(r) {
+    // The player's tweak lets an unconscious actor be searched as a dead one is [design: docs/design/tweaks.md].
+    if g.is_dead(r) || (g.tweaks.loot_unconscious && g.knockout(r).is_some()) {
         return Action::Search;
     }
     let fighting_player = g.awareness.get(r).is_some_and(|a| a.state.in_combat() && a.targets.contains_key(&FormId::PLAYER_REF));

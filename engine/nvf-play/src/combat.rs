@@ -2479,8 +2479,10 @@ fn companion_nerve(script: Option<&mut ScriptState>, sim: &mut SimState, actor: 
 /// as does every target without a script runtime.
 fn sneak_attack(script: Option<&ScriptState>, attacker: FormId, sneaking: bool, target: FormId) -> bool {
     use fnv_game::detection::Band;
+    // The player's tweak takes the sneak critical away [design: docs/design/tweaks.md].
     attacker == FormId::PLAYER_REF
         && sneaking
+        && !script.and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.no_sneak_criticals)
         && script.and_then(|s| s.rt.as_ref()).is_none_or(|rt| rt.game.detection.get(target, FormId::PLAYER_REF).is_none_or(|d| d.band != Band::Detected))
 }
 
@@ -2813,6 +2815,9 @@ pub(crate) fn fire(
     let carried = total.saturating_sub(cycle.magazine);
     let was_winding = matches!(cycle.phase, fnv_combat::attack::Phase::WindUp { .. });
     cycle.regen_frozen = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.showoff.ammo_regen_frozen);
+    // The player's tweak: no reload until the magazine is empty [design: docs/design/tweaks.md].
+    let empty_only = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.reload_only_when_empty);
+    let reload = reload && !(empty_only && cycle.magazine > 0);
     let events = cycle.step(&c.tuning, Input { trigger: control.trigger, reload: reload && !god, dt, carried });
     // A pull whose shot waits for the clip's `Hit` key: the clip starts now (`wind_ups`).
     if !was_winding && cycle.timing.fire_delay > 0.0 && matches!(cycle.phase, fnv_combat::attack::Phase::WindUp { .. }) {

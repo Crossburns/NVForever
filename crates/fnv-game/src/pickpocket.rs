@@ -212,7 +212,7 @@ impl Game<'_> {
     /// EquippedItems 1, and the victim is no child ("Child actors still cannot have their
     /// equipped items stolen" [documented: SetPlayerCanPickpocketEquippedItems]).
     pub fn pickpocket_worn(&self, victim: FormId) -> bool {
-        self.pickpocket.worn_items && !self.actor_race(victim).is_some_and(|race| self.data.child_races.contains(&race))
+        (self.pickpocket.worn_items || self.tweaks.pickpocket_worn_items) && !self.actor_race(victim).is_some_and(|race| self.data.child_races.contains(&race))
     }
 
     /// The rules as read from the load order.

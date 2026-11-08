@@ -145,7 +145,8 @@ pub fn opening(g: &Game, casino: FormId, chips: u32, max: u32) -> Result<(), Clo
         return Err(Closed::NoCasino);
     }
     let earnings = g.player.casino_earnings.get(&casino).copied().unwrap_or(0);
-    if winnings_level(earnings, max) >= 4 || g.player.casino_levels.get(&casino).is_some_and(|&l| l >= 4) {
+    // The player's tweak: no ban [design: docs/design/tweaks.md].
+    if !g.tweaks.no_casino_bans && (winnings_level(earnings, max) >= 4 || g.player.casino_levels.get(&casino).is_some_and(|&l| l >= 4)) {
         return Err(Closed::Banned);
     }
     if chips == 0 {

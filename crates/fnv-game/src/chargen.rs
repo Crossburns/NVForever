@@ -148,6 +148,9 @@ impl SpecialSheet {
                 }
                 crate::functions::ui::SpecialMenu::Set(n) => s.total = n,
             }
+        } else {
+            // The player's tweak sets the total when no script did [design: docs/design/tweaks.md].
+            s.total = g.tweaks.special_points;
         }
         s
     }

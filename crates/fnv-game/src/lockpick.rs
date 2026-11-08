@@ -497,7 +497,9 @@ pub fn opening(g: &mut Game, reference: FormId, skill: f32) -> Opening {
     if again {
         tracing::info!("lockpick: {reference} is broken; Ignore Broken Lock (Infiltrator) gives one more try");
     }
-    match may_pick(level, skill, n, broken && !again) {
+    // The player's tweak: the skill is not asked for (the lock itself plays as before) [design: docs/design/tweaks.md].
+    let asked = if g.tweaks.pick_locks_without_skill { skill.max(100.0) } else { skill };
+    match may_pick(level, asked, n, broken && !again) {
         Ok(()) => Opening::Pick { level, skill, pins: n },
         Err(r) => Opening::Refused(r),
     }

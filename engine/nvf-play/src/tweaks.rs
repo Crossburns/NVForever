@@ -13,7 +13,7 @@
 //! modules read the rest from the resource.
 
 use crate::script::ScriptState;
-use crate::settings::{add_setting, Setting, Slider};
+use crate::settings::{add_setting, choice_index, choice_part, Setting, Slider};
 use bevy::prelude::*;
 use fnv_game::tweaks::Tweaks;
 
@@ -91,7 +91,24 @@ pub struct TweakSettings {
     /// `bSynchronizeContainerCategories`: a container's or barter's two lists change
     /// category together.
     pub sync_categories: bool,
+    /// `bNoFastTravelTimeChange`: fast travel takes no time.
+    pub no_travel_time: bool,
+    /// `bPowerArmorScalesFallDamage`/`fFallDamageMult`: fall damage to anyone in power
+    /// armour is multiplied by this; 1 changes nothing.
+    pub power_armor_fall_damage: f32,
 }
+
+/// Whether `actor` wears power armour on the upper body.
+pub fn wears_power_armor(world: &fnv_sim::World, actor: fnv_sim::FormId) -> bool {
+    use fnv_sim::forms::ItemKind;
+    world.equipment(actor).unwrap_or_default().into_iter().filter_map(|i| world.forms.item(i)).any(|it| it.kind == ItemKind::Armor && it.power_armor && it.slots.is_some_and(|s| s & fnv_game::detection::UPPER_BODY != 0))
+}
+
+/// The perks-per-level choices (1 to 5) and the S.P.E.C.I.A.L. totals (30 to 70 by 2).
+const PERKS: usize = 5;
+const SPECIAL_LOW: i32 = 30;
+const SPECIAL_STEP: i32 = 2;
+const SPECIALS: usize = 21;
 
 impl Default for TweakSettings {
     fn default() -> TweakSettings {
@@ -127,6 +144,8 @@ impl Default for TweakSettings {
             console_timestamps: false,
             living_anatomy_dr: false,
             sync_categories: false,
+            no_travel_time: false,
+            power_armor_fall_damage: 1.0,
         }
     }
 }
@@ -156,6 +175,15 @@ macro_rules! switch {
             },
         )
     };
+}
+
+/// The S.P.E.C.I.A.L. total of choice `i`, and back.
+fn special_total(i: usize) -> i32 {
+    SPECIAL_LOW + SPECIAL_STEP * i as i32
+}
+
+fn special_index(total: i32) -> usize {
+    (((total - SPECIAL_LOW) / SPECIAL_STEP).max(0) as usize).min(SPECIALS - 1)
 }
 
 /// A multiplier as a slider: the part `v` is the factor `2v` (0 to 2 in tenths, 1 in the
@@ -271,6 +299,74 @@ impl Plugin for TweaksPlugin {
         switch!(app, "console-timestamps", "Console Times", "Console lines start with the time since the game started. (Stewie's Tweaks bConsolePrintsIncludeTimestamp)", console_timestamps);
         switch!(app, "living-anatomy-dr", "Living Anatomy Shows DR", "With Living Anatomy the target's line shows its Damage Resistance as well. (Stewie's Tweaks bLivingAnatomyShowDR)", living_anatomy_dr);
         switch!(app, "sync-categories", "Matching Categories", "In containers and barter both lists change category together. (Stewie's Tweaks bSynchronizeContainerCategories)", sync_categories);
+        // ---- batch 6: gameplay ----
+        add_setting(
+            app,
+            Setting::slider(
+                "tweak-perks-per-level",
+                GROUP,
+                "Perks per Level",
+                "How many perks a level-up's perk page lets the player take; 1 changes nothing. (Stewie's Tweaks iPerksPerLevel)",
+                Slider::choice(
+                    PERKS,
+                    |w| choice_part(w.get_resource::<TweakSettings>().map_or(1, |t| t.game.perks_per_level).clamp(1, PERKS) - 1, PERKS),
+                    |w, v| {
+                        if let Some(mut t) = w.get_resource_mut::<TweakSettings>() {
+                            t.game.perks_per_level = choice_index(v, PERKS) + 1;
+                        }
+                    },
+                    |v| (choice_index(v, PERKS) + 1).to_string(),
+                ),
+            ),
+        );
+        add_setting(
+            app,
+            Setting::slider(
+                "tweak-special-points",
+                GROUP,
+                "S.P.E.C.I.A.L. Points",
+                "The total the S.P.E.C.I.A.L. menu lets the player share out (when no script set one); 40 changes nothing. (Stewie's Tweaks bCustomSpecialPoints)",
+                Slider::choice(
+                    SPECIALS,
+                    |w| choice_part(special_index(w.get_resource::<TweakSettings>().map_or(fnv_game::chargen::SPECIAL_POINTS, |t| t.game.special_points)), SPECIALS),
+                    |w, v| {
+                        if let Some(mut t) = w.get_resource_mut::<TweakSettings>() {
+                            t.game.special_points = special_total(choice_index(v, SPECIALS));
+                        }
+                    },
+                    |v| special_total(choice_index(v, SPECIALS)).to_string(),
+                ),
+            ),
+        );
+        switch!(app, "pick-without-skill", "Pick Any Lock", "A lock above the player's Lockpick skill can still be picked. (Stewie's Tweaks bPickLocksWithoutSkill)", game.pick_locks_without_skill);
+        switch!(app, "hack-without-skill", "Hack Any Terminal", "A terminal above the player's Science skill can still be hacked. (Stewie's Tweaks bHackTerminalsWithoutSkill)", game.hack_terminals_without_skill);
+        switch!(app, "no-terminal-lockout", "No Terminal Lockout", "A failed hack does not lock the terminal. (Stewie's Tweaks bNoLockFailedTerminals)", game.no_terminal_lockout);
+        switch!(app, "no-casino-bans", "No Casino Bans", "Winning big never bans the player from a casino. (Stewie's Tweaks bNoCasinoBans)", game.no_casino_bans);
+        switch!(app, "loot-unconscious", "Search the Unconscious", "An unconscious actor can be searched like a dead one. (Stewie's Tweaks bLootUnconsciousVictims)", game.loot_unconscious);
+        switch!(app, "pickpocket-worn", "Pickpocket Worn Items", "What an actor wears can be pickpocketed (never a child's). (Stewie's Tweaks bPickpocketWornItems)", game.pickpocket_worn_items);
+        switch!(app, "no-sneak-criticals", "No Sneak Criticals", "The player's sneak attacks are not criticals. (Stewie's Tweaks bNoSneakAttacksCriticals)", game.no_sneak_criticals);
+        switch!(app, "reload-when-empty", "Reload Only When Empty", "The player cannot reload a magazine that still has rounds. (Stewie's Tweaks bDisableReloadingNonEmptyClip)", game.reload_only_when_empty);
+        switch!(app, "no-travel-time", "Fast Travel Takes No Time", "Fast travel moves the clock (and hardcore needs) on by nothing. (Stewie's Tweaks bNoFastTravelTimeChange)", no_travel_time);
+        add_setting(
+            app,
+            Setting::slider(
+                "tweak-power-armor-fall",
+                GROUP,
+                "Falls in Power Armor",
+                "Fall damage to anyone in power armor is multiplied by this; x1.0 changes nothing. (Stewie's Tweaks bPowerArmorScalesFallDamage)",
+                Slider {
+                    get: |w| part(w.get_resource::<TweakSettings>().map_or(1.0, |t| f64::from(t.power_armor_fall_damage))),
+                    set: |w, v| {
+                        if let Some(mut t) = w.get_resource_mut::<TweakSettings>() {
+                            t.power_armor_fall_damage = factor(v) as f32;
+                        }
+                    },
+                    min: 0.0,
+                    step: 0.05,
+                    shown: Some(shown_factor),
+                },
+            ),
+        );
         // ---- rest ----
         switch!(app, "sleep-in-owned-beds", "Sleep in Owned Beds", "A bed that belongs to someone else can be slept in. (Stewie's Tweaks bSleepInOwnedBeds)", game.sleep_in_owned_beds);
         // ---- items ----
@@ -319,6 +415,15 @@ mod tests {
         assert_eq!(part(1.0), 0.5);
         assert_eq!(shown_factor(0.75), "x1.5");
         assert_eq!(part(9.0), 1.0, "brought into the slider");
+    }
+
+    #[test]
+    fn the_special_slider_keeps_forty_and_its_ends() {
+        assert_eq!(special_total(special_index(40)), 40);
+        assert_eq!(special_total(0), SPECIAL_LOW);
+        assert_eq!(special_total(SPECIALS - 1), 70);
+        assert_eq!(special_index(5), 0, "below the slider");
+        assert_eq!(special_index(99), SPECIALS - 1, "above it");
     }
 
     #[test]

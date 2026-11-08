@@ -113,7 +113,9 @@ pub fn opening(g: &mut Game, reference: FormId, base: FormId, sci: f32) -> Optio
         tracing::info!("terminal: {reference} is locked out; Ignore Locked Terminal (Computer Whiz) gives one more try");
     }
     let s = Settings::default();
-    Some(match hacking::may_hack(sci, difficulty, &s) {
+    // The player's tweak: the skill is not asked for (the words are as before) [design: docs/design/tweaks.md].
+    let asked = if g.tweaks.hack_terminals_without_skill { sci.max(100.0) } else { sci };
+    Some(match hacking::may_hack(asked, difficulty, &s) {
         Err(r) => Opening::Refused(r),
         Ok(()) => Opening::Hack { difficulty, words: hacking::word_count(sci, difficulty, &s) },
     })
@@ -169,6 +171,11 @@ pub fn lock_level(g: &Game, reference: FormId) -> i32 {
 /// The hacking game ended; a hacked terminal gives the player its XP ([`xp`]). The
 /// experience earned.
 pub fn hacked(g: &mut Game, reference: FormId, success: bool) -> f64 {
+    // The player's tweak: a failure leaves the terminal as it was [design: docs/design/tweaks.md].
+    if !success && g.tweaks.no_terminal_lockout {
+        tracing::info!("terminal: {reference} hack failed; not locked out (tweak)");
+        return 0.0;
+    }
     let a = if success { Access::Hacked } else { Access::LockedOut };
     // Locked out again on Computer Whiz's try: that try is spent.
     if g.terminals.access.insert(reference, a) == Some(Access::LockedOut) && !success {

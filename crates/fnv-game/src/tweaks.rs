@@ -45,6 +45,31 @@ pub struct Tweaks {
     pub faster_hacking_transition: bool,
     /// `bMapRemembersPosition`: the Pip-Boy map opens where it was left.
     pub remember_map_position: bool,
+    // ---- character ----
+    /// `iPerksPerLevel`: perks chosen at a level-up's perk page; 1 changes nothing.
+    pub perks_per_level: usize,
+    /// `bCustomSpecialPoints`/`iNumPointsToAllocate`: the S.P.E.C.I.A.L. menu's total
+    /// when no script set one; 40 changes nothing.
+    pub special_points: i32,
+    // ---- locks, terminals, casinos ----
+    /// `bPickLocksWithoutSkill`: a lock above the player's skill can be picked.
+    pub pick_locks_without_skill: bool,
+    /// `bHackTerminalsWithoutSkill`: a terminal above the player's skill can be hacked.
+    pub hack_terminals_without_skill: bool,
+    /// `bNoLockFailedTerminals`: a failed hack does not lock the terminal.
+    pub no_terminal_lockout: bool,
+    /// `bNoCasinoBans`: winning big never bans the player from a casino.
+    pub no_casino_bans: bool,
+    // ---- actors ----
+    /// `bLootUnconsciousVictims`: an unconscious actor can be searched.
+    pub loot_unconscious: bool,
+    /// `bPickpocketWornItems`: what an actor wears can be pickpocketed.
+    pub pickpocket_worn_items: bool,
+    // ---- combat ----
+    /// `bNoSneakAttacksCriticals`: the player's sneak attacks are not criticals.
+    pub no_sneak_criticals: bool,
+    /// `bDisableReloadingNonEmptyClip`: the player reloads only an empty magazine.
+    pub reload_only_when_empty: bool,
 }
 
 impl Default for Tweaks {
@@ -61,6 +86,16 @@ impl Default for Tweaks {
             skip_skill_page_without_points: false,
             faster_hacking_transition: false,
             remember_map_position: false,
+            perks_per_level: crate::levelup::PERKS_PER_LEVEL,
+            special_points: crate::chargen::SPECIAL_POINTS,
+            pick_locks_without_skill: false,
+            hack_terminals_without_skill: false,
+            no_terminal_lockout: false,
+            no_casino_bans: false,
+            loot_unconscious: false,
+            pickpocket_worn_items: false,
+            no_sneak_criticals: false,
+            reload_only_when_empty: false,
         }
     }
 }

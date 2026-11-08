@@ -321,6 +321,7 @@ pub fn go(
     location: Res<Location>,
     mut pending: ResMut<Pending>,
     mut menu: MessageWriter<MenuInput>,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     let Some(&FastTravelGo(marker)) = goes.read().last() else { return };
     let Some(m) = state.as_ref().and_then(|st| st.markers.iter().flatten().find(|m| m.form == marker).cloned()) else { return };
@@ -343,7 +344,8 @@ pub fn go(
     };
     let distance = from.map_or(0.0, |f| (dest.pos[0] - f[0]).hypot(dest.pos[1] - f[1]));
     let scale = sim.world.time_scale().unwrap_or(OWN_TIME_SCALE);
-    let hours = travel_hours(distance, crate::player::MoveSpeeds::OBSERVED.walk, scale);
+    // The player's tweak: no time passes on the trip (and so no needs) [design: docs/design/tweaks.md].
+    let hours = if tweaks.is_some_and(|t| t.no_travel_time) { 0.0 } else { travel_hours(distance, crate::player::MoveSpeeds::OBSERVED.walk, scale) };
     let travel = Travel { world, interior, feet: dest.pos, heading_deg: crate::activate::outcome::heading_deg(dest.rot) };
     info!(
         "fast travel: to {} ({}): arrive at {} {:?}, {:.0} units away, {hours:.2} hours on the clock",
