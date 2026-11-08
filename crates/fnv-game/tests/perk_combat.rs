@@ -364,7 +364,7 @@ fn weight_perks_change_the_players_load() {
     g.player.perks.insert(FormId(HEAVY), 1);
     g.player.perks.insert(FormId(HOARDER), 1);
     g.sync_perk_weights();
-    assert_eq!(g.world.weight_rules(P), WeightRules { light: Some((2.0, 0.5)), heavy_weapons: Some((perks::HEAVY_WEAPON_WEIGHT, 0.5)) });
+    assert_eq!(g.world.weight_rules(P), WeightRules { light: Some((2.0, 0.5)), heavy_weapons: Some((perks::HEAVY_WEAPON_WEIGHT, 0.5)), ..Default::default() });
     let after = g.world.encumbrance(P).map(|e| e.capacity);
     if let (Ok(b), Ok(a)) = (before, after) {
         assert!((a - b - 25.0).abs() < 1e-6, "Hoarder: {b} -> {a}");

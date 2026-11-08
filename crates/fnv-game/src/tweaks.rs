@@ -70,6 +70,14 @@ pub struct Tweaks {
     pub no_sneak_criticals: bool,
     /// `bDisableReloadingNonEmptyClip`: the player reloads only an empty magazine.
     pub reload_only_when_empty: bool,
+    // ---- weight ----
+    /// `bWeightlessItems`: item kinds that weigh nothing (`fnv_sim::inventory`'s
+    /// `WEIGHTLESS_*` bits).
+    pub weightless_kinds: u8,
+    /// `bWeightlessWornArmor`: worn armour weighs nothing.
+    pub weightless_worn_armor: bool,
+    /// `bWeightlessWornPowerArmor`: worn power armour weighs nothing.
+    pub weightless_worn_power_armor: bool,
 }
 
 impl Default for Tweaks {
@@ -96,6 +104,9 @@ impl Default for Tweaks {
             pickpocket_worn_items: false,
             no_sneak_criticals: false,
             reload_only_when_empty: false,
+            weightless_kinds: 0,
+            weightless_worn_armor: false,
+            weightless_worn_power_armor: false,
         }
     }
 }

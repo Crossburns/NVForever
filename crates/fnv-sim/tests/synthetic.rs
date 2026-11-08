@@ -2386,7 +2386,7 @@ fn snapshot_carries_run_time_state_and_leaves_session_edits() {
     w.set_inventory_source(id(SAFE_REF), None);
     w.set_power_armor_training(true);
     w.set_carry_bonus(p, 25.0);
-    let rules = WeightRules { light: Some((2.0, 0.5)), heavy_weapons: None };
+    let rules = WeightRules { light: Some((2.0, 0.5)), heavy_weapons: None, ..Default::default() };
     w.set_weight_rules(p, rules);
     // Session only.
     w.change_setting("fAVDCarryWeightsBase", Setting::Float(300.0)).unwrap();

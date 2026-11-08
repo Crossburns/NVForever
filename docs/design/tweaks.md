@@ -133,6 +133,17 @@ option.
 | Fast Travel Takes No Time | `bNoFastTravelTimeChange` | `travel::go` |
 | Falls in Power Armor (x0–x2) | `bPowerArmorScalesFallDamage` | `falls::hurt` (`tweaks::wears_power_armor`) |
 
+## Seventh batch (2026-11-08, weight)
+
+| Row | INI key | Where |
+|---|---|---|
+| Weightless Armor / Aid / Ammo / Weapons / Misc Items | `bWeightlessItems` | `fnv_sim::inventory::WeightRules::weightless` (bits), filled by `Game::sync_perk_weights` |
+| Worn Armor Weighs Nothing | `bWeightlessWornArmor` | the same, for equipped armour |
+| Worn Power Armor Weighs Nothing | `bWeightlessWornPowerArmor` | the same, for equipped power armour |
+
+`WeightRules` is saved with the world; its new fields have serde defaults, so older
+saves load, and the frame's sync sets them from the settings again.
+
 Menu tweaks that code holding the game reads (the Pip-Boy's item info, crafting, the
 level-up menu, the terminal's timers) are kept in `fnv_game::tweaks` too, so no system
 needs another parameter; the catalogue's notes say where NVForever already does what a
@@ -149,8 +160,8 @@ game's Data folder, read-only).
 <!-- generated: the table below lists every tweak of AllTweaks.json (v9.87) by its INI key -->
 | Status | Count |
 |---|---|
-| done | 83 |
-| to do | 520 |
+| done | 87 |
+| to do | 516 |
 | unsure, skipped | 17 |
 | n/a | 15 |
 | skipped: fix | 10 |
@@ -171,6 +182,8 @@ game's Data folder, read-only).
 | `bPowerArmorNeedsNoTraining` | done |  |  | Power Armor Without Training |
 | `bPowerArmorScalesFallDamage` | done |  | 2 | Falls in Power Armor (slider; applies to everyone, the player-only option not built) |
 | `bReduceXP` | done |  | 2 | Experience Earned (slider, x0 to x2) |
+| `bWeightlessWornArmor` | done |  | 1 | Worn Armor Weighs Nothing (weightless; the scale option not built) |
+| `bWeightlessWornPowerArmor` | done |  | 3 | Worn Power Armor Weighs Nothing (weightless; the scale and requirement options not built) |
 | `iPerksPerLevel` | done |  | 1 | Perks per Level (1 to 5) |
 | `bHiddenFragsFix` | to do | yes |  | NPCs' own unplayable explosives are hidden from the pickpocket list |
 | `bMoreFrequentNPCLightUpdates` | unsure, skipped | yes | 1 | NVForever lights actors its own way; unclear what to change |
@@ -306,8 +319,6 @@ game's Data folder, read-only).
 | `bVATSTargetPlayerProjectiles` | to do |  |  |  |
 | `bVATSThrowablesUseVisibility` | to do |  |  |  |
 | `bWeaponModdingSkillRequirement` | to do |  |  |  |
-| `bWeightlessWornArmor` | to do |  | 1 | WeightRules::unit gets no equipped flag; see bWeightlessItems |
-| `bWeightlessWornPowerArmor` | to do |  | 3 | WeightRules::unit gets no equipped flag; see bWeightlessItems |
 | `iMaxCharacterLevel` | to do |  | 1 | experience::level_cap adds 5 per story add-on; choose how the cap is set |
 
 ### Combat
@@ -721,6 +732,8 @@ game's Data folder, read-only).
 | `bNoCasinoBans` | done |  |  | No Casino Bans |
 | `bPickpocketWornItems` | done |  | 1 | Pickpocket Worn Items (the holstered-weapons-only option not built) |
 | `bSleepInOwnedBeds` | done |  |  | Sleep in Owned Beds |
+| `bWeightlessAidItems` | done |  |  | covered by Weightless Aid (in Hardcore too) |
+| `bWeightlessItems` | done |  | 5 | Weightless Armor / Aid / Ammo / Weapons / Misc Items (five rows) |
 | `bAddSetHomeCommand` | to do |  |  |  |
 | `bAllowPickpocketIfAlreadyCaught` | to do |  |  |  |
 | `bDebugLockpickMenu` | to do |  |  |  |
@@ -729,8 +742,6 @@ game's Data folder, read-only).
 | `bNoMaxCasinoBet` | to do |  |  |  |
 | `bReallocateSkillPointsOnLevelup` | to do |  |  |  |
 | `bSleepWaitAnywhere` | to do |  | 6 |  |
-| `bWeightlessAidItems` | to do |  |  |  |
-| `bWeightlessItems` | to do |  | 5 | WeightRules is saved with the world; a new field needs a serde default first |
 
 ### Misc
 

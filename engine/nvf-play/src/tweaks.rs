@@ -200,6 +200,28 @@ fn shown_factor(v: f32) -> String {
     format!("x{:.1}", factor(v))
 }
 
+/// An on/off row for one `WEIGHTLESS_*` bit of the game's `weightless_kinds`.
+macro_rules! weightless {
+    ($app:expr, $key:literal, $label:literal, $note:literal, $bit:expr) => {
+        add_setting(
+            $app,
+            Setting {
+                key: concat!("tweak-", $key),
+                group: GROUP,
+                label: $label,
+                note: $note,
+                get: |w| w.get_resource::<TweakSettings>().is_some_and(|t| t.game.weightless_kinds & $bit != 0),
+                set: |w, on| {
+                    if let Some(mut t) = w.get_resource_mut::<TweakSettings>() {
+                        t.game.weightless_kinds = if on { t.game.weightless_kinds | $bit } else { t.game.weightless_kinds & !$bit };
+                    }
+                },
+                slider: None,
+            },
+        )
+    };
+}
+
 /// A slider row of the Tweaks tab for a part (0 to 100% in fives) in the field
 /// `$($f).+` of [`TweakSettings`].
 macro_rules! part {
@@ -367,6 +389,14 @@ impl Plugin for TweaksPlugin {
                 },
             ),
         );
+        // ---- weight ----
+        weightless!(app, "weightless-armor", "Weightless Armor", "Armor weighs nothing. (Stewie's Tweaks bWeightlessItems, bArmor)", fnv_sim::inventory::WEIGHTLESS_ARMOR);
+        weightless!(app, "weightless-aid", "Weightless Aid", "Aid items weigh nothing. (Stewie's Tweaks bWeightlessItems, bAid)", fnv_sim::inventory::WEIGHTLESS_AID);
+        weightless!(app, "weightless-ammo", "Weightless Ammo", "Ammo weighs nothing (it only weighs anything in Hardcore). (Stewie's Tweaks bWeightlessItems, bAmmo)", fnv_sim::inventory::WEIGHTLESS_AMMO);
+        weightless!(app, "weightless-weapons", "Weightless Weapons", "Weapons weigh nothing. (Stewie's Tweaks bWeightlessItems, bWeapons)", fnv_sim::inventory::WEIGHTLESS_WEAPONS);
+        weightless!(app, "weightless-misc", "Weightless Misc Items", "Misc items weigh nothing. (Stewie's Tweaks bWeightlessItems, bMisc)", fnv_sim::inventory::WEIGHTLESS_MISC);
+        switch!(app, "weightless-worn-armor", "Worn Armor Weighs Nothing", "Armor weighs nothing while worn. (Stewie's Tweaks bWeightlessWornArmor)", game.weightless_worn_armor);
+        switch!(app, "weightless-worn-power-armor", "Worn Power Armor Weighs Nothing", "Power armor weighs nothing while worn. (Stewie's Tweaks bWeightlessWornPowerArmor)", game.weightless_worn_power_armor);
         // ---- rest ----
         switch!(app, "sleep-in-owned-beds", "Sleep in Owned Beds", "A bed that belongs to someone else can be slept in. (Stewie's Tweaks bSleepInOwnedBeds)", game.sleep_in_owned_beds);
         // ---- items ----
