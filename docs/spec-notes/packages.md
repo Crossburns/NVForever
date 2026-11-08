@@ -434,6 +434,19 @@ normal package behavior"]:
     CMNY): it picks it up (the default activation); flora: it harvests it; furniture: it
     sits (or lies) on it; an actor, a container or anything else: it goes up to it (for a
     specific reference, within the target's distance);
+  - furniture another actor sits on, or is on its way to, is passed over, and the
+    furniture it sets off to is kept for it, as for Use Item At (since 2026-11-08)
+    [hypothesis, from an owner report: in Tale of Two Wastelands nobody looked to sit at
+    the school desks in the G.O.A.T.]. Fallout 3's classroom (CG03, `Fallout3.esm`) seats
+    its students by Find packages (`CG03AmataTakeTest`, `CG03ButchTakeTest`,
+    `CG03PaulTakeTest`, `CG03WallyTakeTest`, `CG03SusieMackTakeTest`,
+    `CG03FreddieTakeTest`, `CG03ChristineKendallTakeTest`; target object type Furniture,
+    search near `CG03ClassroomMarker` radius 350, Run In Sequence `LooseSitTakingTest*`
+    idles) [observed: `fnvtool ai show`, TTW 3.4 load order]. Before, Amata and Wally both
+    went to Christine Kendall's desk and Butch and Paul to Susie Mack's, each pair beside
+    one already seated ("cannot use …: in use"), and only three students sat [observed in
+    ours]. The 16 Find packages of the New Vegas masters that look for furniture follow
+    the same rule;
   - a dead actor carrying what it looks for: it takes one from the body;
   - **Allow Killing**: it attacks a living actor it looks for, or one carrying what it
     looks for (the geckos' and stalkers' "Find Food" packages with object type Food and
